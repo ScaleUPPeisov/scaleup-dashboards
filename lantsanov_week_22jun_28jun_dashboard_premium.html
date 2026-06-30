@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ИП Ланцанов С. Ш. · недельная аналитика WB · 22–28.06.2026</title>
+<style>
+:root {
+  --bg:#080d17; --bg2:#0b1320; --card:rgba(255,255,255,.066); --card2:rgba(255,255,255,.095);
+  --line:rgba(255,255,255,.13); --text:#f4f7fb; --muted:#9aa8bb; --soft:#c9d4e5;
+  --blue:#79a7ff; --cyan:#60e7ff; --green:#61eaa2; --red:#ff6b7b; --orange:#ffbc66; --violet:#a78bfa;
+  --shadow:0 22px 70px rgba(0,0,0,.38); --radius:24px;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0; background: radial-gradient(circle at top left, rgba(64,100,255,.22), transparent 31rem), radial-gradient(circle at 83% 9%, rgba(76,231,255,.12), transparent 30rem), linear-gradient(180deg,#08101c 0%, #0a0f18 48%, #070b13 100%); color:var(--text); font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;}
+body:before{content:"";position:fixed;inset:0;pointer-events:none;background-image:linear-gradient(rgba(255,255,255,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);background-size:48px 48px;mask-image:linear-gradient(to bottom,black,transparent 82%);}
+body:after{content:"";position:fixed;inset:-20%;pointer-events:none;background:conic-gradient(from 180deg at 50% 50%, rgba(121,167,255,.08), transparent, rgba(96,231,255,.08), transparent, rgba(167,139,250,.08));filter:blur(80px);animation:aurora 18s ease-in-out infinite alternate;}
+@keyframes aurora{0%{transform:translate3d(-2%,0,0) rotate(0deg)}100%{transform:translate3d(2%,1%,0) rotate(8deg)}}
+.wrap{max-width:1440px;margin:0 auto;padding:28px 24px 80px;position:relative;z-index:1}
+.header{display:grid;grid-template-columns:1fr auto;gap:20px;align-items:start;padding:24px;border:1px solid var(--line);border-radius:28px;background:linear-gradient(135deg, rgba(255,255,255,.09), rgba(255,255,255,.035));box-shadow:var(--shadow);backdrop-filter:blur(20px);overflow:hidden;position:relative}
+.header:before{content:"";position:absolute;inset:-1px;background:linear-gradient(90deg,transparent,rgba(121,167,255,.35),transparent);height:1px;animation:scan 5s linear infinite}
+@keyframes scan{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+.brand{display:flex;align-items:center;gap:18px}
+.logo{width:72px;height:72px;border-radius:18px;object-fit:cover;box-shadow:0 15px 35px rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.18)}
+.kicker{font-size:13px;letter-spacing:.18em;text-transform:uppercase;color:var(--cyan);font-weight:800}
+h1{margin:8px 0 8px;font-size:clamp(28px,4vw,54px);line-height:1.02;letter-spacing:-.04em}
+.sub{color:var(--soft);font-size:16px;line-height:1.5;max-width:920px}
+.pillrow{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+.pill{border:1px solid var(--line);padding:8px 12px;border-radius:999px;background:rgba(255,255,255,.06);color:#dce8f8;font-size:13px}
+.status{display:grid;gap:10px;min-width:240px}
+.status .badge{padding:14px 16px;border-radius:18px;background:rgba(97,234,162,.09);border:1px solid rgba(97,234,162,.28);color:#d6ffe7}
+.status .badge b{display:block;font-size:22px;margin-bottom:4px}
+.tabs{position:sticky;top:0;z-index:20;display:flex;gap:8px;overflow:auto;padding:14px 0 10px;margin:16px 0 18px;background:linear-gradient(180deg,rgba(8,13,23,.96),rgba(8,13,23,.72),transparent);backdrop-filter:blur(14px)}
+.tabbtn{border:1px solid var(--line);background:rgba(255,255,255,.075);color:#d8e2f2;padding:11px 14px;border-radius:14px;font-weight:750;white-space:nowrap;cursor:pointer;transition:.25s}
+.tabbtn:hover,.tabbtn.active{background:linear-gradient(135deg, rgba(121,167,255,.32), rgba(96,231,255,.18));border-color:rgba(121,167,255,.55);transform:translateY(-1px)}
+.tab{display:none;animation:fadeUp .55s ease both}
+.tab.active{display:block}
+.grid{display:grid;gap:16px}
+.grid.kpis{grid-template-columns:repeat(4,minmax(0,1fr));margin-bottom:16px}
+.grid.two{grid-template-columns:1.2fr .8fr}
+.grid.three{grid-template-columns:repeat(3,1fr)}
+.card{border:1px solid var(--line);border-radius:var(--radius);background:linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.045));box-shadow:var(--shadow);padding:20px;backdrop-filter:blur(18px);position:relative;overflow:hidden}
+.card:after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(135deg,rgba(255,255,255,.11),transparent 32%,transparent 70%,rgba(121,167,255,.055));opacity:.75}
+.card>*{position:relative;z-index:2}
+.card:hover{border-color:rgba(121,167,255,.42);transform:translateY(-2px);transition:.25s}
+.kpi{min-height:148px}
+.kpi .label{color:var(--muted);font-size:13px;font-weight:800;text-transform:uppercase;letter-spacing:.07em}
+.kpi .num{font-size:32px;font-weight:900;letter-spacing:-.03em;margin:14px 0 7px}
+.kpi .delta{font-weight:850;font-size:13px}
+.up{color:var(--green)} .down{color:var(--red)} .warn{color:var(--orange)}
+.spark{height:6px;background:rgba(255,255,255,.09);border-radius:999px;overflow:hidden;margin-top:18px}
+.spark i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--blue),var(--cyan));animation:grow 1.3s ease both}
+@keyframes grow{from{width:0}}
+h2{margin:0 0 8px;font-size:26px;letter-spacing:-.025em}
+h3{margin:0 0 12px;font-size:18px;letter-spacing:-.015em}
+.note{color:var(--muted);line-height:1.55}
+.bigcall{font-size:22px;line-height:1.3;font-weight:850;letter-spacing:-.02em}
+.chart{width:100%;height:350px;border-radius:18px;background:rgba(2,7,13,.28);border:1px solid rgba(255,255,255,.08);padding:14px}
+.chart.small{height:280px}
+.legend{display:flex;gap:12px;flex-wrap:wrap;margin:10px 0 0;color:var(--muted);font-size:13px}
+.legend span:before{content:"";display:inline-block;width:9px;height:9px;border-radius:99px;margin-right:7px;background:var(--c)}
+.tooltip{position:fixed;z-index:1000;background:rgba(8,13,23,.96);border:1px solid rgba(255,255,255,.22);border-radius:14px;padding:10px 12px;color:#fff;box-shadow:0 18px 50px rgba(0,0,0,.45);font-size:13px;line-height:1.45;pointer-events:none;opacity:0;transform:translate(-50%,-110%);transition:opacity .1s}
+svg text{font-family:inherit;fill:#9aa8bb;font-size:11px}
+.axis{stroke:rgba(255,255,255,.1);stroke-width:1}
+.gridline{stroke:rgba(255,255,255,.075);stroke-width:1}
+.line{fill:none;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 0 8px rgba(121,167,255,.25));stroke-dasharray:1200;stroke-dashoffset:1200;animation:draw 1.6s ease forwards}
+.line2{animation-delay:.2s}
+@keyframes draw{to{stroke-dashoffset:0}}
+.area{opacity:.13}
+.dot{cursor:pointer;transition:.18s}
+.dot:hover{r:7;filter:drop-shadow(0 0 10px currentColor)}
+.bar{rx:7;cursor:pointer;transform-origin:bottom;animation:barGrow .9s ease both}
+@keyframes barGrow{from{transform:scaleY(0);opacity:.2}to{transform:scaleY(1);opacity:1}}
+.table{width:100%;border-collapse:collapse;overflow:hidden;border-radius:18px}
+.table th,.table td{padding:12px 11px;border-bottom:1px solid rgba(255,255,255,.09);text-align:left;font-size:14px}
+.table th{color:#aebbd0;font-size:12px;text-transform:uppercase;letter-spacing:.07em;background:rgba(255,255,255,.05)}
+.table tr:hover td{background:rgba(121,167,255,.07)}
+.sku-tag{font-weight:900;color:#fff}
+.badge2{display:inline-flex;align-items:center;gap:6px;padding:6px 9px;border-radius:999px;font-size:12px;font-weight:850;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.07)}
+.danger{background:rgba(255,107,123,.12);border-color:rgba(255,107,123,.24);color:#ffd9de}
+.success{background:rgba(97,234,162,.12);border-color:rgba(97,234,162,.24);color:#d6ffe7}
+.info{background:rgba(121,167,255,.12);border-color:rgba(121,167,255,.24);color:#d8e6ff}
+.timeline{display:grid;gap:12px}
+.step{display:grid;grid-template-columns:36px 1fr;gap:13px;align-items:start}
+.step .n{width:36px;height:36px;border-radius:12px;background:linear-gradient(135deg,var(--blue),var(--cyan));display:grid;place-items:center;font-weight:950;color:#06101f;box-shadow:0 12px 26px rgba(96,231,255,.19)}
+.step b{display:block;margin-bottom:4px}
+.step p{margin:0;color:var(--muted);line-height:1.45}
+.funnel{display:grid;gap:10px}
+.frow{display:grid;grid-template-columns:150px 1fr 100px;gap:12px;align-items:center}
+.track{height:15px;border-radius:999px;background:rgba(255,255,255,.08);overflow:hidden}
+.track i{height:100%;display:block;border-radius:999px;background:linear-gradient(90deg,var(--blue),var(--cyan));animation:grow 1.1s ease both}
+.footer{margin-top:20px;color:var(--muted);text-align:center;font-size:13px}
+.reveal{opacity:0;transform:translateY(16px);animation:fadeUp .7s ease forwards}
+@keyframes fadeUp{to{opacity:1;transform:none}}
+@media (max-width:1080px){.grid.kpis{grid-template-columns:repeat(2,1fr)}.grid.two,.grid.three{grid-template-columns:1fr}.header{grid-template-columns:1fr}}
+@media (max-width:640px){.wrap{padding:16px 12px 60px}.grid.kpis{grid-template-columns:1fr}.frow{grid-template-columns:1fr}.chart{height:300px}}
+</style>
+</head>
+<body>
+<div class="tooltip" id="tip"></div>
+<div class="wrap">
+  <section class="header reveal">
+    <div>
+      <div class="brand">
+        <img class="logo" src="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wAARCAFAAUADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD5Eooor0jiCiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKBQB6B4P8C6Fqng3/hJNc8TnR4PtTW3NvvXcACOQc5PPbtVweDPhl3+KC/T7A1MOP8AhnJfX+3v/ZTXm1eLRpV8TKpL20opSaSSjsvWLZ31JU6SiuRO6T6/5np//CHfCsHDfFFvw056cvg34TE8/FOQD/sGv/hXnOkaXqWsXq2WlWFzfXLDIigjLtj1wO3vWvrngbxhodmbzVfDeo2tsPvStCSq/UjOPxq5YeUZKEsVK76e5f8A9JJVVNXVJW+f+Z2S+DPhFnn4qzY/7Bj/AOFTL4L+Df8AF8V7j/wWv/hXnz+FvEKeGR4mbSp/7GJA+2Agxgk7QDg8HPFJ4Y8L+IPE800Ph/Sp9RlgUNKkONyg9Dgmn9WnZy+syst/g/8AkRe1V7eyX4/5non/AAhXwYx/yVe5P/cNb/Crmi/Df4T6zq1tpWl/E+7ub26cRwxDTyC7HtkgCuA1r4d+N9F0ybU9W8N3tnZQgGSaXaFXJwO/rVn4IY/4W74Xz0/tFP61lUo1FRnVp4mTsn/I1ov8JUZxc1CVNK/r/mYHizTE0XxRqujxytMljeS26yMMFwjlckdicVmV0XxPwPiR4lA/6Ctz/wCjGrna9WhJzpRk92kck1aTQUUUVsQFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQB6Sf+Tchz/zHv8A2WvOIo2llSJBlnYKv1JwK9GBz+zoVx017r/wCvPtN/5CNr/12T/0IV5uXuyq/wCOR2YneHoj6xS00j4Q/C68u7K1Sa4t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NP1uS2W7mmusq9tvkZGt1WIqfKbJEgJA3x4POea83op8itYOc9PvL/4cLc6XqVuV+1/YvJu41R3iLfYDGWZGjUK/n7cbSwPLEireoa3oNraWMFmugahdJb6SbKxWwRCl0scRuGmmKhWRxvRgXPLDIXbmvJaKXJ5hznpmvX/gXSvEd14cFnLd6Lb2ywR3toInnE32gTsxY5DgD9ySD0XIyDg2NV8ReCn0PUItHitrbWnur+S0upLFWiEL3IaOLYU+Vmj4V/4ACuF3bh5XRT5A5z0D4n/8I/50djpb2FpJ5TapeLCBIBdT7M2iPHldsYBI52jLDrXn9FFNKyJbuFFFFUIKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooA//9k=" alt="ScaleUP">
+        <div>
+          <div class="kicker">ScaleUP Analytics · Wildberries</div>
+          <h1>ИП Ланцанов С. Ш. · недельная аналитика</h1>
+        </div>
+      </div>
+      <div class="sub">Период продаж и остатков: <b>22–28 июня 2026</b>. Категория: <b>Фонари спортивные</b>. Отчёт собран по воронке продаж, остаткам, географии заказов и статистике складов.</div>
+      <div class="pillrow">
+        <span class="pill">Артикулы WB: 768257607 / 937244231</span><span class="pill">Сравнение: 15–21 июня</span><span class="pill">Фокус: поставки + масштабирование</span><span class="pill">Формат: клиентский недельный отчёт</span>
+      </div>
+    </div>
+    <div class="status">
+      <div class="badge"><b>+172%</b>рост заказов к прошлой неделе</div>
+      <div class="badge" style="background:rgba(255,107,123,.08);border-color:rgba(255,107,123,.25);color:#ffdde2"><b>8 шт</b>текущий остаток на конец периода</div>
+    </div>
+  </section>
+
+  <nav class="tabs reveal" style="animation-delay:.08s">
+    <button class="tabbtn active" data-tab="overview">Обзор</button>
+    <button class="tabbtn" data-tab="products">Товары</button>
+    <button class="tabbtn" data-tab="funnel">Воронка</button>
+    <button class="tabbtn" data-tab="stocks">Остатки</button>
+    <button class="tabbtn" data-tab="geo">География</button>
+    <button class="tabbtn" data-tab="actions">Действия</button>
+  </nav>
+
+  <section id="overview" class="tab active">
+    <div class="grid kpis">
+      <div class="card kpi reveal"><div class="label">Заказы</div><div class="num count" data-value="98">0</div><div class="delta up">+172% к 36 шт</div><div class="spark"><i style="width:98%"></i></div></div>
+      <div class="card kpi reveal" style="animation-delay:.05s"><div class="label">Сумма заказов</div><div class="num count money" data-value="94079">0</div><div class="delta up">+152% к 37 310 ₽</div><div class="spark"><i style="width:94%"></i></div></div>
+      <div class="card kpi reveal" style="animation-delay:.1s"><div class="label">Переходы в карточку</div><div class="num count" data-value="1524">0</div><div class="delta up">+104% к 746</div><div class="spark"><i style="width:76%"></i></div></div>
+      <div class="card kpi reveal" style="animation-delay:.15s"><div class="label">Текущий остаток</div><div class="num count" data-value="8">0</div><div class="delta down">критически мало для темпа 14 заказов/день</div><div class="spark"><i style="width:8%;background:linear-gradient(90deg,var(--red),var(--orange))"></i></div></div>
+    </div>
+    <div class="grid two">
+      <div class="card reveal">
+        <h2>Неделя дала резкий рост, но товар упёрся в остатки</h2>
+        <p class="bigcall">Заказы выросли с <span class="up">36 до 98 шт</span>, сумма заказов — с <span class="up">37 310 ₽ до 94 079 ₽</span>. Воронка сильная: 302 корзины, 32% конверсия из корзины в заказ и 97% выкупа.</p>
+        <p class="note">Главный риск не в спросе, а в товарном остатке. Артикул 768257607 закончил остаток на складе Рязань к 27 июня, после чего 28 июня заказы просели до 1 шт. При текущем спросе масштабировать рекламу без поставки опасно: бюджет будет вести покупателей в карточку, где товар быстро заканчивается.</p>
+      </div>
+      <div class="card reveal" style="animation-delay:.08s">
+        <h3>Ключевые изменения к прошлой неделе</h3>
+        <div class="funnel">
+          <div class="frow"><b>Переходы</b><div class="track"><i style="width:100%"></i></div><span class="up">+104%</span></div>
+          <div class="frow"><b>Корзины</b><div class="track"><i style="width:100%"></i></div><span class="up">+177%</span></div>
+          <div class="frow"><b>Заказы</b><div class="track"><i style="width:100%"></i></div><span class="up">+172%</span></div>
+          <div class="frow"><b>Выкупы</b><div class="track"><i style="width:34%"></i></div><span class="up">+3%</span></div>
+          <div class="frow"><b>Локальность</b><div class="track"><i style="width:21%;background:linear-gradient(90deg,var(--red),var(--orange))"></i></div><span class="down">21%</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="card reveal" style="margin-top:16px">
+      <h2>Динамика по дням</h2>
+      <p class="note">Наведи на точки и столбцы: покажет точные переходы, корзины, заказы и выручку.</p>
+      <div class="chart" id="dailyChart"></div>
+      <div class="legend"><span style="--c:var(--blue)">Переходы</span><span style="--c:var(--green)">Заказы</span><span style="--c:var(--cyan)">Выручка</span></div>
+    </div>
+  </section>
+
+  <section id="products" class="tab">
+    <div class="grid two">
+      <div class="card"><h2>Сравнение артикулов</h2><div class="chart small" id="skuRevenueChart"></div></div>
+      <div class="card"><h2>Доля выручки</h2><div class="chart small" id="skuDonut"></div></div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h2>Товарная таблица</h2>
+      <table class="table" id="skuTable"></table>
+    </div>
+    <div class="grid two" style="margin-top:16px">
+      <div class="card">
+        <h3>768257607 — основной драйвер недели</h3>
+        <p class="note">Даёт основную выручку и заказы, но остаток на складе обнулился. Нельзя резко масштабировать рекламу без новой поставки. Приоритет: срочно довезти товар и восстановить остаток минимум под 7–10 дней продаж.</p>
+      </div>
+      <div class="card">
+        <h3>937244231 — рабочий дубль / поддержка</h3>
+        <p class="note">Дал 14 заказов и 17 640 ₽ заказов, остаток 8 шт на Туле, оборачиваемость 4д 7ч. Карточку можно держать в тесте и использовать для подстраховки, но тоже нужен запас.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="funnel" class="tab">
+    <div class="grid two">
+      <div class="card"><h2>Воронка продаж</h2><div class="chart small" id="funnelChart"></div></div>
+      <div class="card"><h2>Конверсии</h2><div class="chart small" id="conversionChart"></div></div>
+    </div>
+    <div class="grid three" style="margin-top:16px">
+      <div class="card"><h3>Корзина</h3><div class="num" style="font-size:34px;font-weight:950">20%</div><p class="note">Конверсия в корзину выросла против 15% прошлой недели. Это хороший сигнал: карточка и оффер цепляют трафик.</p></div>
+      <div class="card"><h3>Заказ</h3><div class="num" style="font-size:34px;font-weight:950">32%</div><p class="note">Конверсия из корзины в заказ почти на уровне прошлой недели. Узкое место сейчас не в заказе, а в остатке и географии.</p></div>
+      <div class="card"><h3>Выкуп</h3><div class="num" style="font-size:34px;font-weight:950">97%</div><p class="note">Выкуп высокий. Это значит, что продукт не просто заказывают — его фактически забирают. Можно масштабировать после поставки.</p></div>
+    </div>
+  </section>
+
+  <section id="stocks" class="tab">
+    <div class="grid two">
+      <div class="card"><h2>Остатки по дням</h2><div class="chart" id="stockChart"></div></div>
+      <div class="card"><h2>Склады и путь к покупателю</h2><div class="chart" id="warehouseChart"></div></div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h2>Главный риск: закончился основной артикул</h2>
+      <p class="bigcall">768257607: остаток на Рязани снизился с <span class="up">76 шт</span> до <span class="down">0 шт</span> за неделю. 937244231: текущий остаток <span class="warn">8 шт</span>.</p>
+      <p class="note">При среднем темпе 14 заказов в день общий текущий остаток не покрывает даже один полноценный день продаж. Сначала поставка, затем расширение рекламы.</p>
+      <table class="table" id="stockTable"></table>
+    </div>
+  </section>
+
+  <section id="geo" class="tab">
+    <div class="grid two">
+      <div class="card"><h2>Доля заказов по регионам</h2><div class="chart" id="regionChart"></div></div>
+      <div class="card"><h2>Локальность</h2><div class="chart" id="localChart"></div></div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h2>Вывод по географии</h2>
+      <p class="bigcall">61,5% заказов идёт из Южного и Северо-Кавказского региона, но локальность там 0%, доставка около 3 дней.</p>
+      <p class="note">Складская логика не совпадает со спросом. Центральный регион локален на 100%, но даёт только 11,5% заказов. Для роста продаж и снижения сроков доставки нужно проработать поставку ближе к Южному региону, а также поддержать Центральный, где уже есть локальность.</p>
+    </div>
+  </section>
+
+  <section id="actions" class="tab">
+    <div class="grid two">
+      <div class="card">
+        <h2>План работ на следующую неделю</h2>
+        <div class="timeline">
+          <div class="step"><div class="n">1</div><div><b>Срочно восстановить остаток 768257607</b><p>Основная карточка делает 84 заказа из 98, но к концу недели остаток обнулился. Минимальная цель — запас на 7–10 дней продаж.</p></div></div>
+          <div class="step"><div class="n">2</div><div><b>Не масштабировать рекламу до поставки</b><p>Трафик есть, конверсия есть, но без товара рост рекламы приведёт к потере бюджета и просадке доступности.</p></div></div>
+          <div class="step"><div class="n">3</div><div><b>937244231 держать как тестовый дубль</b><p>Карточка даёт заказы и имеет более высокий чек. Нужно довести остаток до 30–50 шт и проверить масштабируемость.</p></div></div>
+          <div class="step"><div class="n">4</div><div><b>Перераспределить поставки по географии</b><p>Южный и Северо-Кавказский регион даёт 61,5% заказов при 0% локальности. Это прямой резерв ускорения доставки и роста конверсии.</p></div></div>
+          <div class="step"><div class="n">5</div><div><b>Сохранить контроль воронки</b><p>Ежедневно смотреть переходы, корзины, заказы и наличие. Если остаток ниже 20–30 шт — снижать ставки, чтобы не сливать трафик.</p></div></div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Приоритеты</h2>
+        <table class="table">
+          <tr><th>Направление</th><th>Решение</th><th>Приоритет</th></tr>
+          <tr><td>Поставка 768257607</td><td>Срочно</td><td><span class="badge2 danger">Критично</span></td></tr>
+          <tr><td>Реклама 768257607</td><td>Включать/усиливать только после остатка</td><td><span class="badge2 info">Высокий</span></td></tr>
+          <tr><td>Тест 937244231</td><td>Оставить, но пополнить</td><td><span class="badge2 success">Средний+</span></td></tr>
+          <tr><td>Южный регион</td><td>Проработать логистику/склад</td><td><span class="badge2 danger">Высокий</span></td></tr>
+          <tr><td>Карточки</td><td>Сохранять SEO и визуал, так как конверсия сильная</td><td><span class="badge2 info">Постоянно</span></td></tr>
+        </table>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h2>Итоговый управленческий вывод</h2>
+      <p class="bigcall">Кабинет показывает сильный спрос и готов к масштабированию, но рост сейчас ограничен остатками. Главная задача — не искать спрос, а обеспечить товаром продажи.</p>
+      <p class="note">После восстановления остатка по 768257607 можно аккуратно усиливать рекламу и тестировать 937244231 как второй SKU. До поставки — сохранять контроль бюджета и не перегревать кампании.</p>
+    </div>
+  </section>
+
+  <div class="footer">ScaleUP · недельная аналитика WB · данные из выгрузок кабинета за 22–28.06.2026</div>
+</div>
+<script id="data" type="application/json">{"summary": {"period": "22–28.06.2026", "prevPeriod": "15–21.06.2026", "seller": "ИП Ланцанов С. Ш.", "category": "Фонари спортивные", "orders": 98, "ordersPrev": 36, "ordersGrowth": 172.2, "revenue": 94079, "revenuePrev": 37310, "revenueGrowth": 152.2, "visits": 1524, "visitsPrev": 746, "visitsGrowth": 104.3, "carts": 302, "cartsPrev": 109, "cartsGrowth": 177.1, "buyouts": 32, "buyoutsPrev": 31, "buyoutGrowth": 3.2, "cartCv": 20.0, "cartCvPrev": 15.0, "orderCv": 32.0, "orderCvPrev": 33.0, "buyoutPct": 97.0, "buyoutPctPrev": 100.0, "avgPrice": 960, "avgPricePrev": 1036, "avgOrdersDay": 14.0, "avgOrdersDayPrev": 5.1, "delivery": "2д 7ч", "deliveryPrev": "2д 7ч", "local": 21.0, "localPrev": 28.0, "localDelta": -7.0, "currentStock": 8, "stockValue": 10077}, "daily": [{"date": "22.06", "visits": 179, "carts": 32, "orders": 11, "buyouts": 10, "revenue": 10360, "cartCv": 17.9, "orderCv": 34.4}, {"date": "23.06", "visits": 195, "carts": 37, "orders": 9, "buyouts": 7, "revenue": 8890, "cartCv": 19.0, "orderCv": 24.3}, {"date": "24.06", "visits": 207, "carts": 41, "orders": 16, "buyouts": 7, "revenue": 15960, "cartCv": 19.8, "orderCv": 39.0}, {"date": "25.06", "visits": 312, "carts": 73, "orders": 17, "buyouts": 5, "revenue": 15820, "cartCv": 23.4, "orderCv": 23.3}, {"date": "26.06", "visits": 398, "carts": 77, "orders": 27, "buyouts": 2, "revenue": 25970, "cartCv": 19.3, "orderCv": 35.1}, {"date": "27.06", "visits": 169, "carts": 37, "orders": 17, "buyouts": 1, "revenue": 16170, "cartCv": 21.9, "orderCv": 45.9}, {"date": "28.06", "visits": 64, "carts": 5, "orders": 1, "buyouts": 0, "revenue": 910, "cartCv": 7.8, "orderCv": 20.0}], "skus": [{"sku": "768257607", "sellerArt": "фонарь кемпинговый", "name": "Кемпинговый фонарь светильник светодиодный", "visits": 1048, "carts": 229, "orders": 84, "buyouts": 26, "revenue": 76440, "buyoutSum": 23660, "cancel": 1, "cartCv": 21.9, "orderCv": 36.7, "buyoutPct": 31.3, "avgPrice": 910, "revenueShare": 81.2, "ratingCard": 10.0, "ratingReview": 4.9, "stock": 0, "stockValue": 0, "inToCustomer": 59, "inFromCustomer": 4, "price": 910, "turnover": "—"}, {"sku": "937244231", "sellerArt": "фонарь кемпинговый нов", "name": "Кемпинговый фонарь светильник светодиодный", "visits": 476, "carts": 73, "orders": 14, "buyouts": 6, "revenue": 17640, "buyoutSum": 7560, "cancel": 0, "cartCv": 15.3, "orderCv": 19.2, "buyoutPct": 42.9, "avgPrice": 1260, "revenueShare": 18.8, "ratingCard": 10.0, "ratingReview": 5.0, "stock": 8, "stockValue": 10077, "inToCustomer": 11, "inFromCustomer": 0, "price": 1260, "turnover": "4д 7ч"}], "regions": [{"region": "Южный и Северо-Кавказский", "share": 61.5, "wb_share": 17.7, "local": 0.0, "nonlocal": 100.0, "delivery": "2д 23ч"}, {"region": "Дальневосточный и Сибирский", "share": 14.1, "wb_share": 13.3, "local": 0.0, "nonlocal": 100.0, "delivery": "3д 13ч"}, {"region": "Центральный", "share": 11.5, "wb_share": 31.6, "local": 100.0, "nonlocal": 0.0, "delivery": "1д 0ч"}, {"region": "Беларусь", "share": 7.7, "wb_share": 4.0, "local": 0.0, "nonlocal": 100.0, "delivery": "2д 1ч"}, {"region": "Приволжский", "share": 3.8, "wb_share": 15.8, "local": 0.0, "nonlocal": 100.0, "delivery": "1д 14ч"}, {"region": "Уральский", "share": 1.3, "wb_share": 7.6, "local": 0.0, "nonlocal": 100.0, "delivery": "1д 17ч"}], "regionDetail": [{"sku": "768257607", "region": "Южный и Северо-Кавказский", "delivery": "3д 0ч", "orders": 40.0, "local": 0.0, "nonlocal": 40.0}, {"sku": "768257607", "region": "Дальневосточный и Сибирский", "delivery": "3д 13ч", "orders": 10.0, "local": 0.0, "nonlocal": 10.0}, {"sku": "768257607", "region": "Беларусь", "delivery": "2д 6ч", "orders": 5.0, "local": 0.0, "nonlocal": 5.0}, {"sku": "768257607", "region": "Приволжский", "delivery": "1д 14ч", "orders": 3.0, "local": 0.0, "nonlocal": 3.0}, {"sku": "768257607", "region": "Уральский", "delivery": "1д 17ч", "orders": 1.0, "local": 0.0, "nonlocal": 1.0}, {"sku": "768257607", "region": "Центральный", "delivery": "1д 0ч", "orders": 8.0, "local": 8.0, "nonlocal": 0.0}, {"sku": "937244231", "region": "Южный и Северо-Кавказский", "delivery": "2д 22ч", "orders": 8.0, "local": 0.0, "nonlocal": 8.0}, {"sku": "937244231", "region": "Беларусь", "delivery": "1д 2ч", "orders": 1.0, "local": 0.0, "nonlocal": 1.0}, {"sku": "937244231", "region": "Дальневосточный и Сибирский", "delivery": "-", "orders": 1.0, "local": 0.0, "nonlocal": 1.0}, {"sku": "937244231", "region": "Центральный", "delivery": "0д 23ч", "orders": 1.0, "local": 1.0, "nonlocal": 0.0}], "stockChart": [{"date": "22.06", "768257607": 76, "937244231": 20, "total": 96}, {"date": "23.06", "768257607": 70, "937244231": 18, "total": 88}, {"date": "24.06", "768257607": 57, "937244231": 15, "total": 72}, {"date": "25.06", "768257607": 42, "937244231": 13, "total": 55}, {"date": "26.06", "768257607": 18, "937244231": 12, "total": 30}, {"date": "27.06", "768257607": 0, "937244231": 8, "total": 8}, {"date": "28.06", "768257607": 0, "937244231": 8, "total": 8}], "regStock": [{"region": "Центральный", "warehouse": "Тула", "stock": 8.0, "value": 10077.0, "turnover": "4д 7ч", "to_customer": 1.0, "from_customer": 0.0}, {"region": "Центральный", "warehouse": "Остальные", "stock": 0.0, "value": 0.0, "turnover": ">999д", "to_customer": 61.0, "from_customer": 3.0}, {"region": "Центральный", "warehouse": "Котовск", "stock": 0.0, "value": 0.0, "turnover": "0ч", "to_customer": 1.0, "from_customer": 0.0}, {"region": "Центральный", "warehouse": "Электросталь", "stock": 0.0, "value": 0.0, "turnover": "0ч", "to_customer": 1.0, "from_customer": 0.0}, {"region": "Центральный", "warehouse": "Рязань (Тюшевское)", "stock": 0.0, "value": 0.0, "turnover": "0ч", "to_customer": 4.0, "from_customer": 0.0}, {"region": "Дальневосточный и Сибирский", "warehouse": "Кемерово", "stock": 0.0, "value": 0.0, "turnover": "0ч", "to_customer": 1.0, "from_customer": 0.0}, {"region": "Дальневосточный и Сибирский", "warehouse": "Абакан 2", "stock": 0.0, "value": 0.0, "turnover": ">999д", "to_customer": 0.0, "from_customer": 1.0}, {"region": "Приволжский", "warehouse": "СЦ Нижний Новгород Ларина", "stock": 0.0, "value": 0.0, "turnover": "0ч", "to_customer": 1.0, "from_customer": 0.0}], "skuName": {"768257607": "768257607 · старый", "937244231": "937244231 · новый"}}</script>
+<script>
+const DATA = JSON.parse(document.getElementById('data').textContent);
+const tip = document.getElementById('tip');
+const fmt = n => Math.round(Number(n)||0).toLocaleString('ru-RU');
+const money = n => fmt(n)+' ₽';
+function showTip(e, html){ tip.innerHTML=html; tip.style.left=e.clientX+'px'; tip.style.top=e.clientY+'px'; tip.style.opacity=1; }
+function hideTip(){ tip.style.opacity=0; }
+
+document.querySelectorAll('.tabbtn').forEach(btn=>btn.addEventListener('click',()=>{
+  document.querySelectorAll('.tabbtn').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  btn.classList.add('active'); document.getElementById(btn.dataset.tab).classList.add('active');
+  setTimeout(renderAll,80);
+}));
+
+const observer = new IntersectionObserver(entries=>{entries.forEach(en=>{if(en.isIntersecting) en.target.classList.add('reveal')})},{threshold:.08});
+document.querySelectorAll('.card').forEach(el=>observer.observe(el));
+
+function animateCounters(){
+  document.querySelectorAll('.count').forEach(el=>{
+    const target=Number(el.dataset.value||0); let start=null;
+    const isMoney=el.classList.contains('money');
+    function step(ts){ if(!start) start=ts; const p=Math.min((ts-start)/1100,1); const val=target*(1-Math.pow(1-p,3)); el.textContent=(isMoney?money(val):fmt(val)); if(p<1) requestAnimationFrame(step); }
+    requestAnimationFrame(step);
+  });
+}
+animateCounters();
+
+function svgEl(tag, attrs={}, parent=null){ const el=document.createElementNS('http://www.w3.org/2000/svg',tag); for(const [k,v] of Object.entries(attrs)) el.setAttribute(k,v); if(parent) parent.appendChild(el); return el; }
+function clear(id){ const node=document.getElementById(id); if(node) node.innerHTML=''; return node; }
+function dims(node){ return {w:Math.max(node.clientWidth,320), h:Math.max(node.clientHeight,260)}; }
+function scale(v,min,max,a,b){ return max===min ? (a+b)/2 : a+(v-min)/(max-min)*(b-a); }
+
+function renderLineBar(id, data){
+ const node=clear(id); if(!node) return; const {w,h}=dims(node); const pad={l:48,r:22,t:24,b:38};
+ const svg=svgEl('svg',{width:w,height:h,viewBox:`0 0 ${w} ${h}`},node);
+ const maxV=Math.max(...data.map(d=>d.visits))*1.15, maxO=Math.max(...data.map(d=>d.orders))*1.35, maxR=Math.max(...data.map(d=>d.revenue))*1.2;
+ for(let i=0;i<5;i++){ const y=pad.t+i*(h-pad.t-pad.b)/4; svgEl('line',{x1:pad.l,y1:y,x2:w-pad.r,y2:y,class:'gridline'},svg); }
+ const x=(i)=>scale(i,0,data.length-1,pad.l,w-pad.r); const yV=(v)=>scale(v,0,maxV,h-pad.b,pad.t); const yO=(v)=>scale(v,0,maxO,h-pad.b,pad.t); const yR=(v)=>scale(v,0,maxR,h-pad.b,pad.t);
+ data.forEach((d,i)=>{ const bw=(w-pad.l-pad.r)/data.length*.52; const bx=x(i)-bw/2; const bh=h-pad.b-yO(d.orders); const rect=svgEl('rect',{x:bx,y:yO(d.orders),width:bw,height:bh,fill:'rgba(97,234,162,.42)',class:'bar'},svg); rect.style.animationDelay=(i*.055)+'s'; rect.addEventListener('mousemove',e=>showTip(e,`<b>${d.date}</b><br>Заказы: <b>${fmt(d.orders)} шт</b><br>Выручка: <b>${money(d.revenue)}</b><br>Корзины: ${fmt(d.carts)}<br>Переходы: ${fmt(d.visits)}`)); rect.addEventListener('mouseleave',hideTip); });
+ const ptsV=data.map((d,i)=>`${x(i)},${yV(d.visits)}`).join(' '); svgEl('polyline',{points:ptsV,stroke:'var(--blue)',class:'line',fill:'none'},svg);
+ const ptsR=data.map((d,i)=>`${x(i)},${yR(d.revenue)}`).join(' '); svgEl('polyline',{points:ptsR,stroke:'var(--cyan)',class:'line line2',fill:'none'},svg);
+ data.forEach((d,i)=>{
+   const cx=x(i); svgEl('text',{x:cx,y:h-14,'text-anchor':'middle'},svg).textContent=d.date;
+   const dot=svgEl('circle',{cx,cy:yV(d.visits),r:4,fill:'var(--blue)',class:'dot'},svg); dot.addEventListener('mousemove',e=>showTip(e,`<b>${d.date}</b><br>Переходы: <b>${fmt(d.visits)}</b><br>Конв. в корзину: ${d.cartCv}%`)); dot.addEventListener('mouseleave',hideTip);
+   const dot2=svgEl('circle',{cx,cy:yR(d.revenue),r:4,fill:'var(--cyan)',class:'dot'},svg); dot2.addEventListener('mousemove',e=>showTip(e,`<b>${d.date}</b><br>Выручка заказов: <b>${money(d.revenue)}</b><br>Заказы: ${fmt(d.orders)}`)); dot2.addEventListener('mouseleave',hideTip);
+ });
+}
+
+function renderBar(id, data, key, labelKey, opts={}){
+ const node=clear(id); if(!node) return; const {w,h}=dims(node); const pad={l:56,r:18,t:24,b:52}; const svg=svgEl('svg',{width:w,height:h,viewBox:`0 0 ${w} ${h}`},node);
+ const max=Math.max(...data.map(d=>Number(d[key])||0),1)*1.2; for(let i=0;i<5;i++){const y=pad.t+i*(h-pad.t-pad.b)/4; svgEl('line',{x1:pad.l,y1:y,x2:w-pad.r,y2:y,class:'gridline'},svg);}
+ const bw=(w-pad.l-pad.r)/data.length*.55;
+ data.forEach((d,i)=>{const x=pad.l+(i+.5)*(w-pad.l-pad.r)/data.length-bw/2; const y=scale(d[key],0,max,h-pad.b,pad.t); const rect=svgEl('rect',{x,y,width:bw,height:h-pad.b-y,fill:opts.color||'rgba(121,167,255,.62)',class:'bar'},svg); rect.style.animationDelay=(i*.08)+'s'; rect.addEventListener('mousemove',e=>showTip(e,`<b>${d[labelKey]}</b><br>${opts.label||key}: <b>${opts.money?money(d[key]):fmt(d[key])}</b>`)); rect.addEventListener('mouseleave',hideTip); svgEl('text',{x:x+bw/2,y:h-20,'text-anchor':'middle'},svg).textContent=String(d[labelKey]).slice(0,18); });
+}
+function renderDonut(id, data){
+ const node=clear(id); if(!node) return; const {w,h}=dims(node); const svg=svgEl('svg',{width:w,height:h,viewBox:`0 0 ${w} ${h}`},node); const cx=w/2, cy=h/2, r=Math.min(w,h)*.32, sw=28; const total=data.reduce((s,d)=>s+d.revenue,0); let a=-Math.PI/2; const colors=['var(--blue)','var(--cyan)','var(--green)','var(--violet)'];
+ data.forEach((d,i)=>{ const da=(d.revenue/total)*Math.PI*2; const a2=a+da; const x1=cx+r*Math.cos(a),y1=cy+r*Math.sin(a),x2=cx+r*Math.cos(a2),y2=cy+r*Math.sin(a2); const large=da>Math.PI?1:0; const path=svgEl('path',{d:`M ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2}`,stroke:colors[i%colors.length],'stroke-width':sw,fill:'none','stroke-linecap':'round',class:'line'},svg); path.addEventListener('mousemove',e=>showTip(e,`<b>${d.sku}</b><br>Выручка: <b>${money(d.revenue)}</b><br>Доля: ${d.revenueShare}%<br>Заказы: ${fmt(d.orders)}`)); path.addEventListener('mouseleave',hideTip); a=a2; });
+ svgEl('text',{x:cx,y:cy-4,'text-anchor':'middle',style:'font-size:30px;fill:#fff;font-weight:900'},svg).textContent=fmt(total);
+ svgEl('text',{x:cx,y:cy+22,'text-anchor':'middle',style:'font-size:12px;fill:#9aa8bb'},svg).textContent='₽ заказов';
+}
+function renderFunnel(id){
+ const s=DATA.summary; const data=[{name:'Переходы',v:s.visits},{name:'Корзины',v:s.carts},{name:'Заказы',v:s.orders},{name:'Выкупы',v:s.buyouts}];
+ renderBar(id,data,'v','name',{label:'Количество'});
+}
+function renderConversion(id){
+ const s=DATA.summary; const data=[{name:'В корзину',v:s.cartCv},{name:'В заказ',v:s.orderCv},{name:'Выкуп',v:s.buyoutPct},{name:'Локальность',v:s.local}];
+ renderBar(id,data,'v','name',{label:'Процент',color:'rgba(96,231,255,.58)'});
+}
+function renderStock(id){
+ const node=clear(id); if(!node) return; const {w,h}=dims(node); const pad={l:42,r:18,t:26,b:36}; const svg=svgEl('svg',{width:w,height:h,viewBox:`0 0 ${w} ${h}`},node);
+ const skus=DATA.skus.map(s=>s.sku); const max=Math.max(...DATA.stockChart.flatMap(d=>skus.map(s=>d[s]||0)),1)*1.15; const x=i=>scale(i,0,DATA.stockChart.length-1,pad.l,w-pad.r); const y=v=>scale(v,0,max,h-pad.b,pad.t);
+ for(let i=0;i<5;i++){const yy=pad.t+i*(h-pad.t-pad.b)/4; svgEl('line',{x1:pad.l,y1:yy,x2:w-pad.r,y2:yy,class:'gridline'},svg);}
+ const colors=['var(--red)','var(--cyan)'];
+ skus.forEach((sku,idx)=>{ const pts=DATA.stockChart.map((d,i)=>`${x(i)},${y(d[sku]||0)}`).join(' '); svgEl('polyline',{points:pts,stroke:colors[idx],class:'line',fill:'none'},svg); DATA.stockChart.forEach((d,i)=>{const dot=svgEl('circle',{cx:x(i),cy:y(d[sku]||0),r:4,fill:colors[idx],class:'dot'},svg); dot.addEventListener('mousemove',e=>showTip(e,`<b>${d.date}</b><br>${sku}: <b>${fmt(d[sku]||0)} шт</b>`)); dot.addEventListener('mouseleave',hideTip);}); });
+ DATA.stockChart.forEach((d,i)=>svgEl('text',{x:x(i),y:h-12,'text-anchor':'middle'},svg).textContent=d.date);
+}
+function renderWarehouse(id){
+ const data=DATA.regStock.filter(d=>d.stock>0 || d.to_customer>0 || d.from_customer>0).map(d=>({name:d.warehouse, stock:d.stock, to:d.to_customer, from:d.from_customer}));
+ const node=clear(id); if(!node) return; const {w,h}=dims(node); const pad={l:120,r:18,t:24,b:28}; const svg=svgEl('svg',{width:w,height:h,viewBox:`0 0 ${w} ${h}`},node); const max=Math.max(...data.map(d=>d.stock+d.to+d.from),1)*1.15; const rowH=(h-pad.t-pad.b)/data.length;
+ data.forEach((d,i)=>{ const y=pad.t+i*rowH+rowH*.22; svgEl('text',{x:12,y:y+12,style:'font-size:11px;fill:#aebbd0'},svg).textContent=d.name.slice(0,18); let x=pad.l; [['stock','var(--green)','Остаток'],['to','var(--blue)','В пути к покупателю'],['from','var(--red)','В пути от покупателя']].forEach(([k,c,l])=>{const ww=scale(d[k],0,max,0,w-pad.l-pad.r); const rect=svgEl('rect',{x,y,width:ww,height:14,fill:c,opacity:.75,rx:7,class:'bar'},svg); rect.addEventListener('mousemove',e=>showTip(e,`<b>${d.name}</b><br>${l}: <b>${fmt(d[k])} шт</b>`)); rect.addEventListener('mouseleave',hideTip); x+=ww; }); });
+}
+function renderRegion(id){ renderBar(id, DATA.regions, 'share', 'region', {label:'Доля заказов, %', color:'rgba(167,139,250,.6)'}); }
+function renderLocal(id){
+ const data=DATA.regions.map(d=>({region:d.region, local:d.local, nonlocal:d.nonlocal, share:d.share, delivery:d.delivery}));
+ const node=clear(id); if(!node) return; const {w,h}=dims(node); const pad={l:140,r:20,t:24,b:34}; const svg=svgEl('svg',{width:w,height:h,viewBox:`0 0 ${w} ${h}`},node); const rowH=(h-pad.t-pad.b)/data.length;
+ data.forEach((d,i)=>{ const y=pad.t+i*rowH+rowH*.22; svgEl('text',{x:12,y:y+12,style:'font-size:11px;fill:#aebbd0'},svg).textContent=d.region.slice(0,19); const w1=scale(d.local,0,100,0,w-pad.l-pad.r); const w2=scale(d.nonlocal,0,100,0,w-pad.l-pad.r); const r1=svgEl('rect',{x:pad.l,y,width:w1,height:14,fill:'var(--green)',rx:7,class:'bar'},svg); const r2=svgEl('rect',{x:pad.l+w1,y,width:w2,height:14,fill:'var(--red)',rx:7,class:'bar',opacity:.72},svg); [r1,r2].forEach(r=>{r.addEventListener('mousemove',e=>showTip(e,`<b>${d.region}</b><br>Локальные: ${d.local}%<br>Не локальные: ${d.nonlocal}%<br>Доставка: ${d.delivery}<br>Доля заказов: ${d.share}%`)); r.addEventListener('mouseleave',hideTip);}); });
+}
+function renderSkuTable(){
+ const rows=DATA.skus.map(s=>`<tr><td><span class="sku-tag">${s.sku}</span><br><span class="note">${s.sellerArt}</span></td><td>${fmt(s.orders)} шт<br><span class="note">${money(s.revenue)}</span></td><td>${fmt(s.visits)}</td><td>${s.cartCv}%</td><td>${s.orderCv}%</td><td>${s.buyoutPct}%</td><td>${fmt(s.stock)} шт</td><td>${s.stock===0?'<span class="badge2 danger">пополнить</span>':'<span class="badge2 info">контроль</span>'}</td></tr>`).join('');
+ document.getElementById('skuTable').innerHTML=`<tr><th>Артикул</th><th>Заказы / сумма</th><th>Переходы</th><th>Корзина</th><th>Заказ</th><th>Выкуп</th><th>Остаток</th><th>Решение</th></tr>${rows}`;
+}
+function renderStockTable(){
+ const rows=DATA.skus.map(s=>`<tr><td><span class="sku-tag">${s.sku}</span><br><span class="note">Цена: ${money(s.price)}</span></td><td>${fmt(s.stock)} шт</td><td>${money(s.stockValue)}</td><td>${fmt(s.inToCustomer)} шт</td><td>${fmt(s.inFromCustomer)} шт</td><td>${s.turnover}</td><td>${s.stock<20?'<span class="badge2 danger">дефицит</span>':'<span class="badge2 success">норма</span>'}</td></tr>`).join('');
+ document.getElementById('stockTable').innerHTML=`<tr><th>Артикул</th><th>Текущий остаток</th><th>Стоимость</th><th>В пути к покупателю</th><th>Возвраты</th><th>Оборачиваемость</th><th>Статус</th></tr>${rows}`;
+}
+function renderAll(){
+ renderLineBar('dailyChart', DATA.daily);
+ renderBar('skuRevenueChart', DATA.skus, 'revenue', 'sku', {label:'Сумма заказов', money:true});
+ renderDonut('skuDonut', DATA.skus);
+ renderFunnel('funnelChart'); renderConversion('conversionChart'); renderStock('stockChart'); renderWarehouse('warehouseChart'); renderRegion('regionChart'); renderLocal('localChart'); renderSkuTable(); renderStockTable();
+}
+window.addEventListener('resize',()=>{ clearTimeout(window.__r); window.__r=setTimeout(renderAll,180); });
+renderAll();
+</script>
+</body>
+</html>
