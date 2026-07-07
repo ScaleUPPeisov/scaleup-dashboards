@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ИП Ланцанов С. Ш. · недельная аналитика WB</title>
+<style>
+:root{
+  --bg:#07101d; --bg2:#0b1727; --panel:rgba(255,255,255,.075); --panel2:rgba(255,255,255,.105);
+  --stroke:rgba(255,255,255,.12); --text:#eff6ff; --muted:#91a2b8; --violet:#8b5cf6; --blue:#38bdf8; --green:#22c55e; --red:#ef4444; --amber:#f59e0b; --pink:#ec4899;
+}
+*{box-sizing:border-box} body{margin:0;background:radial-gradient(circle at 15% -10%,rgba(56,189,248,.17),transparent 34%),radial-gradient(circle at 88% 6%,rgba(139,92,246,.18),transparent 32%),radial-gradient(circle at 50% 110%,rgba(34,197,94,.12),transparent 36%),linear-gradient(135deg,var(--bg),#081522 52%,#07111f);font-family:Inter,Segoe UI,Arial,sans-serif;color:var(--text);}
+body:before{content:"";position:fixed;inset:0;background-image:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);background-size:44px 44px;mask-image:linear-gradient(to bottom,rgba(0,0,0,.9),transparent);pointer-events:none}
+.wrap{max-width:1440px;margin:0 auto;padding:26px 26px 80px;position:relative}
+.hero{display:grid;grid-template-columns:1fr auto;gap:22px;align-items:center;padding:28px;border:1px solid var(--stroke);background:linear-gradient(135deg,rgba(255,255,255,.11),rgba(255,255,255,.045));border-radius:28px;box-shadow:0 24px 80px rgba(0,0,0,.32);overflow:hidden;position:relative;animation:fadeUp .7s ease both}
+.hero:after{content:"";position:absolute;width:520px;height:520px;border-radius:50%;right:-220px;top:-240px;background:radial-gradient(circle,rgba(56,189,248,.28),transparent 68%);animation:float 8s ease-in-out infinite}
+.hero:before{content:"";position:absolute;inset:-2px;background:linear-gradient(110deg,transparent,rgba(255,255,255,.16),transparent);transform:translateX(-100%);animation:shine 5.5s ease-in-out infinite}
+.logoBox{display:flex;gap:18px;align-items:center;position:relative;z-index:1} .logoBox img{width:86px;height:86px;border-radius:22px;object-fit:cover;border:1px solid rgba(255,255,255,.16);box-shadow:0 0 32px rgba(56,189,248,.14)}
+.eyebrow{color:#a7f3d0;font-weight:800;letter-spacing:.13em;text-transform:uppercase;font-size:12px;margin-bottom:8px} h1{font-size:42px;line-height:1.05;margin:0 0 10px} .subtitle{color:var(--muted);font-size:16px;max-width:820px}
+.pillRow{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px} .pill{padding:9px 13px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid var(--stroke);color:#dbeafe;font-size:13px}
+.score{position:relative;z-index:1;text-align:right} .score .big{font-size:58px;font-weight:900;background:linear-gradient(90deg,#fff,#93c5fd);-webkit-background-clip:text;color:transparent} .score .label{color:var(--muted);font-size:13px}
+.tabs{position:sticky;top:0;z-index:10;margin:18px 0;display:flex;gap:10px;flex-wrap:wrap;padding:12px;border:1px solid var(--stroke);border-radius:22px;background:rgba(7,16,29,.78);backdrop-filter:blur(16px)}
+.tab{border:1px solid transparent;background:transparent;color:#bfd1e7;padding:11px 14px;border-radius:14px;font-weight:800;cursor:pointer;transition:.2s} .tab.active,.tab:hover{background:linear-gradient(135deg,rgba(139,92,246,.34),rgba(56,189,248,.18));border-color:rgba(255,255,255,.18);color:white;transform:translateY(-1px)}
+.section{display:none;animation:fadeUp .45s ease both} .section.active{display:block}
+.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:16px} .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px} .grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
+.card{background:linear-gradient(180deg,var(--panel),rgba(255,255,255,.045));border:1px solid var(--stroke);border-radius:24px;padding:20px;box-shadow:0 16px 44px rgba(0,0,0,.18);position:relative;overflow:hidden;animation:fadeUp .65s ease both}
+.card:hover{transform:translateY(-3px);border-color:rgba(56,189,248,.36);box-shadow:0 26px 60px rgba(0,0,0,.28);transition:.22s}
+.kpi .title{color:var(--muted);font-size:13px;font-weight:800;text-transform:uppercase;letter-spacing:.08em} .kpi .val{font-size:34px;font-weight:900;margin:10px 0 4px} .kpi .sub{color:#a8b7cc;font-size:13px}
+.good{color:var(--green)} .bad{color:#ff6b6b} .warn{color:#fbbf24} .blue{color:#67e8f9}
+h2{font-size:26px;margin:22px 0 14px} h3{font-size:18px;margin:0 0 14px} .muted{color:var(--muted)}
+.chart{height:280px;position:relative} svg{width:100%;height:100%;overflow:visible} .axis{stroke:rgba(255,255,255,.12);stroke-width:1} .line{fill:none;stroke-width:3.5;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 0 10px rgba(56,189,248,.35));stroke-dasharray:1000;stroke-dashoffset:1000;animation:draw 1.6s ease forwards} .dot{cursor:pointer;transition:.2s} .dot:hover{r:7;filter:drop-shadow(0 0 10px rgba(255,255,255,.7))}
+.bars{display:flex;align-items:flex-end;gap:10px;height:240px;padding:20px 4px 8px;border-bottom:1px solid rgba(255,255,255,.14)} .bar{flex:1;border-radius:12px 12px 4px 4px;min-height:3px;background:linear-gradient(180deg,var(--blue),var(--violet));height:0;animation:grow .9s ease forwards;position:relative;cursor:pointer} .bar.alt{background:linear-gradient(180deg,#34d399,#38bdf8)} .bar.warnbar{background:linear-gradient(180deg,#fbbf24,#f97316)} .bar.badbar{background:linear-gradient(180deg,#fb7185,#f97316)}
+.labels{display:flex;gap:10px;color:var(--muted);font-size:12px;margin-top:8px} .labels span{flex:1;text-align:center}
+table{width:100%;border-collapse:separate;border-spacing:0 10px} th{text-align:left;color:#9fb1c8;font-size:12px;text-transform:uppercase;letter-spacing:.08em;padding:0 12px} td{padding:14px 12px;background:rgba(255,255,255,.055);border-top:1px solid var(--stroke);border-bottom:1px solid var(--stroke)} td:first-child{border-left:1px solid var(--stroke);border-radius:14px 0 0 14px} td:last-child{border-right:1px solid var(--stroke);border-radius:0 14px 14px 0} .right{text-align:right} .tag{display:inline-flex;align-items:center;padding:6px 10px;border-radius:999px;font-weight:800;font-size:12px;background:rgba(139,92,246,.18);border:1px solid rgba(139,92,246,.35)} .tag.green{background:rgba(34,197,94,.15);border-color:rgba(34,197,94,.35)} .tag.red{background:rgba(239,68,68,.15);border-color:rgba(239,68,68,.35)} .tag.warn{background:rgba(245,158,11,.15);border-color:rgba(245,158,11,.35)}
+.note{border-left:4px solid var(--blue);padding:14px 16px;background:rgba(56,189,248,.08);border-radius:16px;color:#d6ecff} .danger{border-left-color:var(--red);background:rgba(239,68,68,.08)} .success{border-left-color:var(--green);background:rgba(34,197,94,.08)}
+.timeline{display:grid;gap:14px} .step{display:grid;grid-template-columns:100px 1fr;gap:16px;align-items:start;padding:16px;border-radius:18px;background:rgba(255,255,255,.055);border:1px solid var(--stroke)} .step b{color:#fff}
+.tooltip{position:fixed;pointer-events:none;background:#020617;color:#fff;border:1px solid rgba(255,255,255,.18);padding:10px 12px;border-radius:12px;font-size:12px;box-shadow:0 18px 40px rgba(0,0,0,.35);opacity:0;transform:translate(-50%,-120%);z-index:999;white-space:nowrap}
+@keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}} @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(18px)}} @keyframes draw{to{stroke-dashoffset:0}} @keyframes grow{to{height:var(--h)}} @keyframes shine{0%{transform:translateX(-100%)}42%,100%{transform:translateX(100%)}}
+@media(max-width:900px){.grid4,.grid3,.grid2,.hero{grid-template-columns:1fr}.score{text-align:left}h1{font-size:32px}}
+</style>
+</head>
+<body>
+<div class="tooltip" id="tooltip"></div>
+<div class="wrap">
+  <div class="hero">
+    <div class="logoBox">
+      <img src="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wAARCAFAAUADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD5Eooor0jiCiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKBQB6B4P8C6Fqng3/hJNc8TnR4PtTW3NvvXcACOQc5PPbtVweDPhl3+KC/T7A1MOP8AhnJfX+3v/ZTXm1eLRpV8TKpL20opSaSSjsvWLZ31JU6SiuRO6T6/5np//CHfCsHDfFFvw056cvg34TE8/FOQD/sGv/hXnOkaXqWsXq2WlWFzfXLDIigjLtj1wO3vWvrngbxhodmbzVfDeo2tsPvStCSq/UjOPxq5YeUZKEsVK76e5f8A9JJVVNXVJW+f+Z2S+DPhFnn4qzY/7Bj/AOFTL4L+Df8AF8V7j/wWv/hXnz+FvEKeGR4mbSp/7GJA+2Agxgk7QDg8HPFJ4Y8L+IPE800Ph/Sp9RlgUNKkONyg9Dgmn9WnZy+syst/g/8AkRe1V7eyX4/5non/AAhXwYx/yVe5P/cNb/Crmi/Df4T6zq1tpWl/E+7ub26cRwxDTyC7HtkgCuA1r4d+N9F0ybU9W8N3tnZQgGSaXaFXJwO/rVn4IY/4W74Xz0/tFP61lUo1FRnVp4mTsn/I1ov8JUZxc1CVNK/r/mYHizTE0XxRqujxytMljeS26yMMFwjlckdicVmV0XxPwPiR4lA/6Ctz/wCjGrna9WhJzpRk92kck1aTQUUUVsQFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQB6Sf+Tchz/zHv8A2WvOIo2llSJBlnYKv1JwK9GBz+zoVx017r/wCvPtN/5CNr/12T/0IV5uXuyq/wCOR2YneHoj6xS00j4Q/C68u7K1Sa4t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NP1uS2W7mmusq9tvkZGt1WIqfKbJEgJA3x4POea83op8itYOc9PvL/4cLc6XqVuV+1/YvJu41R3iLfYDGWZGjUK/n7cbSwPLEireoa3oNraWMFmugahdJb6SbKxWwRCl0scRuGmmKhWRxvRgXPLDIXbmvJaKXJ5hznpmvX/gXSvEd14cFnLd6Lb2ywR3toInnE32gTsxY5DgD9ySD0XIyDg2NV8ReCn0PUItHitrbWnur+S0upLFWiEL3IaOLYU+Vmj4V/4ACuF3bh5XRT5A5z0D4n/8I/50djpb2FpJ5TapeLCBIBdT7M2iPHldsYBI52jLDrXn9FFNKyJbuFFFFUIKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooA//9k=" alt="ScaleUP" />
+      <div>
+        <div class="eyebrow">ScaleUP Analytics · Wildberries</div>
+        <h1>ИП Ланцанов С. Ш. · недельная аналитика</h1>
+        <div class="subtitle">Фонари спортивные · продажи 29.06–05.07.2026 · остатки 29.06–05.07.2026 · фокус на динамике спроса, остатках, региональном покрытии и плане действий.</div>
+        <div class="pillRow">
+          <span class="pill">Заказы: <b>81 шт</b></span>
+          <span class="pill">Сумма заказов: <b>76 160 ₽</b></span>
+          <span class="pill">Переходы: <b>1 177</b></span>
+          <span class="pill">Остатки: <b>108 шт / 136 059 ₽</b></span>
+        </div>
+      </div>
+    </div>
+    <div class="score"><div class="big">81</div><div class="label">заказ за неделю<br>при росте локальности до 27%</div></div>
+  </div>
+
+  <div class="tabs">
+    <button class="tab active" data-tab="overview">Обзор</button>
+    <button class="tab" data-tab="products">Товары</button>
+    <button class="tab" data-tab="funnel">Воронка</button>
+    <button class="tab" data-tab="stocks">Остатки</button>
+    <button class="tab" data-tab="geo">География</button>
+    <button class="tab" data-tab="actions">Действия</button>
+  </div>
+
+  <section class="section active" id="overview">
+    <div class="grid4">
+      <div class="card kpi"><div class="title">Сумма заказов</div><div class="val">76 160 ₽</div><div class="sub">81 заказ · средний чек 940 ₽</div></div>
+      <div class="card kpi"><div class="title">Динамика к прошлой неделе</div><div class="val bad">−19%</div><div class="sub">94 079 ₽ → 76 160 ₽</div></div>
+      <div class="card kpi"><div class="title">Конверсия в заказ</div><div class="val blue">28%</div><div class="sub">по отчету WB · было 32%</div></div>
+      <div class="card kpi"><div class="title">Локальные заказы</div><div class="val good">27%</div><div class="sub">рост с 21% · доставка быстрее</div></div>
+    </div>
+    <div class="grid2" style="margin-top:16px">
+      <div class="card"><h3>Динамика заказов и выручки по дням</h3><div id="lineRevenue" class="chart"></div></div>
+      <div class="card"><h3>Неделя против предыдущей</h3><div id="barCompare" class="chart"></div></div>
+    </div>
+    <div class="grid3" style="margin-top:16px">
+      <div class="card"><h3>Основной драйвер</h3><div class="note success"><b>768257607</b><br>77 заказов / 71 120 ₽. Карточка делает 93,3% заказов недели и остаётся основой продаж.</div></div>
+      <div class="card"><h3>Зона роста</h3><div class="note"><b>937244231</b><br>4 заказа / 5 040 ₽, высокий средний чек 1 260 ₽ и фактический выкуп 75%. SKU стоит развивать отдельным тестом, но остаток всего 4 шт.</div></div>
+      <div class="card"><h3>Главный риск</h3><div class="note danger"><b>Региональная концентрация.</b><br>108 шт текущего остатка лежат только в Центральном регионе. По остальным регионам есть отсутствие товара и упущенный спрос.</div></div>
+    </div>
+  </section>
+
+  <section class="section" id="products">
+    <h2>Товары недели</h2>
+    <div class="grid2">
+      <div class="card"><h3>Заказы по SKU</h3><div id="barProducts" class="chart"></div></div>
+      <div class="card"><h3>Выручка по SKU</h3><div id="barRevenueProducts" class="chart"></div></div>
+    </div>
+    <div class="card" style="margin-top:16px"><table><thead><tr><th>Артикул</th><th>Товар</th><th class="right">Переходы</th><th class="right">Корзины</th><th class="right">Заказы</th><th class="right">Сумма</th><th class="right">Факт. выкуп</th><th class="right">Остаток</th><th>Решение</th></tr></thead><tbody>
+      <tr><td><b>768257607</b><br><span class='muted'>фонарь кемпинговый</span></td><td>Кемпинговый фонарь светильник светодиодный</td><td class='right'>1 082</td><td class='right'>275<br><span class='muted'>25,4%</span></td><td class='right'><b>77</b><br><span class='muted'>7,1% от переходов</span></td><td class='right'>71 120 ₽</td><td class='right'>33,8%</td><td class='right'>104</td><td>Оставить основным SKU, держать рекламу и остатки</td></tr>
+      <tr><td><b>937244231</b><br><span class='muted'>фонарь кемпинговый нов</span></td><td>Кемпинговый фонарь светильник светодиодный</td><td class='right'>95</td><td class='right'>13<br><span class='muted'>13,7%</span></td><td class='right'><b>4</b><br><span class='muted'>4,2% от переходов</span></td><td class='right'>5 040 ₽</td><td class='right'>75%</td><td class='right'>4</td><td>Тестировать отдельно после пополнения остатка</td></tr>
+    </tbody></table></div>
+  </section>
+
+  <section class="section" id="funnel">
+    <h2>Воронка продаж</h2>
+    <div class="grid4">
+      <div class="card kpi"><div class="title">Переходы</div><div class="val">1 177</div><div class="sub">−22,8% к прошлой неделе</div></div>
+      <div class="card kpi"><div class="title">Корзины</div><div class="val">288</div><div class="sub">CR в корзину 24%</div></div>
+      <div class="card kpi"><div class="title">Заказы</div><div class="val">81</div><div class="sub">CR в заказ 28%</div></div>
+      <div class="card kpi"><div class="title">Выкуплено</div><div class="val">29 шт</div><div class="sub">по заказам периода на дату отчёта</div></div>
+    </div>
+    <div class="grid2" style="margin-top:16px"><div class="card"><h3>Воронка: переходы → корзины → заказы</h3><div id="barFunnel" class="chart"></div></div><div class="card"><h3>Заказы по дням</h3><div id="barDailyOrders" class="chart"></div></div></div>
+    <div class="card" style="margin-top:16px"><div class="note"><b>Вывод по воронке:</b> конверсия в корзину выросла с 20% до 24%, но трафика стало меньше. Основная задача следующей недели — вернуть объём переходов и не допустить потери продаж из-за ограниченного распределения остатков.</div></div>
+  </section>
+
+  <section class="section" id="stocks">
+    <h2>Остатки и склады</h2>
+    <div class="grid4">
+      <div class="card kpi"><div class="title">Текущий остаток</div><div class="val">108 шт</div><div class="sub">136 059 ₽ в товаре</div></div>
+      <div class="card kpi"><div class="title">В пути к покупателю</div><div class="val warn">70 шт</div><div class="sub">активный поток заказов</div></div>
+      <div class="card kpi"><div class="title">Упущенные заказы</div><div class="val bad">74 шт</div><div class="sub">по 768257607 из-за отсутствия товара</div></div>
+      <div class="card kpi"><div class="title">Риск склада</div><div class="val warn">1 регион</div><div class="sub">остаток сконцентрирован в ЦФО</div></div>
+    </div>
+    <div class="grid2" style="margin-top:16px"><div class="card"><h3>Остатки по SKU</h3><div id="stockBars" class="chart"></div></div><div class="card"><h3>Остатки по складам</h3><div id="warehouseBars" class="chart"></div></div></div>
+    <div class="card" style="margin-top:16px"><table><thead><tr><th>Склад</th><th>Регион</th><th class="right">Остаток</th><th class="right">Заказы</th><th class="right">В пути</th><th class="right">Упущенный спрос</th><th>Вывод</th></tr></thead><tbody>
+      <tr><td><b>Рязань</b></td><td>Центральный</td><td class='right'>104</td><td class='right'>72</td><td class='right'>21</td><td class='right'>9,3</td><td>основной склад продаж</td></tr>
+      <tr><td><b>Тула</b></td><td>Центральный</td><td class='right'>4</td><td class='right'>4</td><td class='right'>0</td><td class='right'>0</td><td>точечное покрытие, остаток мал</td></tr>
+      <tr><td><b>Екатеринбург</b></td><td>Уральский</td><td class='right'>0</td><td class='right'>1</td><td class='right'>0</td><td class='right'>9,3</td><td>добавить поставку для регионального покрытия</td></tr>
+      <tr><td><b>Симферополь / Юг</b></td><td>Юг + СКФО</td><td class='right'>0</td><td class='right'>2</td><td class='right'>3</td><td class='right'>18,6</td><td>есть движение, нужен минимальный запас</td></tr>
+    </tbody></table></div>
+  </section>
+
+  <section class="section" id="geo">
+    <h2>География и региональное покрытие</h2>
+    <div class="grid2">
+      <div class="card"><h3>Остатки / заказы по регионам</h3><div id="geoBars" class="chart"></div></div>
+      <div class="card"><h3>Упущенные заказы по регионам</h3><div id="lostBars" class="chart"></div></div>
+    </div>
+    <div class="grid3" style="margin-top:16px">
+      <div class="card"><h3>Центр</h3><div class="note success"><b>Рязань + Тула</b><br>Сейчас закрывают почти весь товарный запас. Для ЦФО оставить основной объём, но не держать весь товар только здесь.</div></div>
+      <div class="card"><h3>Урал</h3><div class="note"><b>Екатеринбург</b><br>Остаток 0, есть заказы и упущенный спрос. Нужна тестовая региональная поставка.</div></div>
+      <div class="card"><h3>Юг</h3><div class="note"><b>Симферополь / ЮФО</b><br>Есть движение в пути, но нет текущего остатка. Нужно дать минимальный запас, чтобы сократить срок доставки.</div></div>
+    </div>
+  </section>
+
+  <section class="section" id="actions">
+    <h2>План работы на неделю</h2>
+    <div class="timeline">
+      <div class="step"><b>1 день</b><div><b>Зафиксировать 768257607 как основной SKU.</b><br><span class="muted">Карточка дала 77 заказов и 71 120 ₽. Её не отключать, а контролировать остаток, ставку и позицию в выдаче.</span></div></div>
+      <div class="step"><b>1–2 день</b><div><b>Разнести остатки по регионам.</b><br><span class="muted">Сейчас 108 шт лежат только в Центральном регионе. Для снижения доставки и роста локальности добавить минимум в Екатеринбург и Юг.</span></div></div>
+      <div class="step"><b>2–3 день</b><div><b>Отдельно протестировать 937244231.</b><br><span class="muted">SKU имеет высокий средний чек 1 260 ₽ и 75% фактического выкупа, но остаток всего 4 шт. Сначала пополнить, потом запускать отдельный тест.</span></div></div>
+      <div class="step"><b>3–5 день</b><div><b>Вернуть трафик до уровня прошлой недели.</b><br><span class="muted">Переходы упали с 1 524 до 1 177. При этом корзина стала лучше: 24% против 20%. Нужно усиливать трафик на рабочий SKU.</span></div></div>
+      <div class="step"><b>7 дней</b><div><b>Контроль поставок и упущенного спроса.</b><br><span class="muted">По 768257607 зафиксировано около 74 упущенных заказов на 93 487 ₽. Это главный аргумент в пользу распределения остатков и своевременной поставки.</span></div></div>
+    </div>
+  </section>
+</div>
+<script>
+const DATA = {"daily": [{"date": "29.06", "visits": 51, "cart": 4, "orders": 0, "rev": 0, "buyouts": 0}, {"date": "30.06", "visits": 55, "cart": 4, "orders": 3, "rev": 3780, "buyouts": 3}, {"date": "01.07", "visits": 46, "cart": 7, "orders": 1, "rev": 910, "buyouts": 1}, {"date": "02.07", "visits": 211, "cart": 93, "orders": 14, "rev": 13090, "buyouts": 5}, {"date": "03.07", "visits": 213, "cart": 46, "orders": 21, "rev": 19110, "buyouts": 11}, {"date": "04.07", "visits": 326, "cart": 79, "orders": 24, "rev": 21840, "buyouts": 7}, {"date": "05.07", "visits": 275, "cart": 55, "orders": 18, "rev": 17430, "buyouts": 2}], "products": [{"art": "768257607", "seller": "фонарь кемпинговый", "name": "Кемпинговый фонарь светильник светодиодный", "visits": 1082, "cart": 275, "orders": 77, "rev": 71120, "buyouts": 26, "stock": 104, "stock_value": 131021, "cr_cart": 25.4, "cr_order": 7.1, "buyout_fact": 33.8, "avg_price": 924, "lost_orders": 74.24, "lost_sum": 93487}, {"art": "937244231", "seller": "фонарь кемпинговый нов", "name": "Кемпинговый фонарь светильник светодиодный", "visits": 95, "cart": 13, "orders": 4, "rev": 5040, "buyouts": 3, "stock": 4, "stock_value": 5038, "cr_cart": 13.7, "cr_order": 4.2, "buyout_fact": 75.0, "avg_price": 1260, "lost_orders": 0, "lost_sum": 0}], "warehouses": [{"wh": "Рязань", "region": "Центральный", "stock": 104, "value": 131021, "orders": 72, "in_buyer": 21, "lost": 9.28}, {"wh": "Тула", "region": "Центральный", "stock": 4, "value": 5038, "orders": 4, "in_buyer": 0, "lost": 0}, {"wh": "В пути / остальные", "region": "Центральный + регионы", "stock": 0, "value": 0, "orders": 5, "in_buyer": 49, "lost": 74.24}, {"wh": "Екатеринбург", "region": "Уральский", "stock": 0, "value": 0, "orders": 1, "in_buyer": 0, "lost": 9.28}, {"wh": "Симферополь", "region": "Юг", "stock": 0, "value": 0, "orders": 0, "in_buyer": 3, "lost": 9.28}], "funnel": [{"stage": "Переходы", "value": 1177}, {"stage": "Корзины", "value": 288}, {"stage": "Заказы", "value": 81}, {"stage": "Выкупы", "value": 29}], "compare": [{"metric": "Переходы", "current": 1177, "prev": 1524}, {"metric": "Корзины", "current": 288, "prev": 302}, {"metric": "Заказы", "current": 81, "prev": 98}, {"metric": "Выручка", "current": 76160, "prev": 94079}], "regions": [{"region": "Центральный", "stock": 108, "orders": 78, "lost": 37.12}, {"region": "Уральский", "stock": 0, "orders": 1, "lost": 9.28}, {"region": "Юг + СКФО", "stock": 0, "orders": 2, "lost": 18.56}, {"region": "ДФО и Сибирь", "stock": 0, "orders": 0, "lost": 9.28}], "search_actions": [{"task": "Удержать основной SKU 768257607", "level": 92}, {"task": "Развернуть остатки по регионам", "level": 86}, {"task": "Тестировать 937244231 отдельной РК", "level": 64}, {"task": "Закрыть out-of-stock по регионам", "level": 95}]};
+const fmt = n => new Intl.NumberFormat('ru-RU').format(Math.round(n));
+const money = n => fmt(n)+' ₽';
+function tip(el,text){ el.addEventListener('mousemove',e=>{const t=document.getElementById('tooltip');t.innerHTML=text;t.style.left=e.clientX+'px';t.style.top=e.clientY+'px';t.style.opacity=1;}); el.addEventListener('mouseleave',()=>document.getElementById('tooltip').style.opacity=0); }
+function lineChart(id, data, key1, key2){
+ const box=document.getElementById(id); const w=box.clientWidth||600,h=260,p=34; const max=Math.max(...data.map(d=>Math.max(d[key1],d[key2]||0)))*1.15||1;
+ const x=i=>p+i*(w-2*p)/(data.length-1); const y=v=>h-p-v/max*(h-2*p);
+ const pts1=data.map((d,i)=>[x(i),y(d[key1])]); const pts2=key2?data.map((d,i)=>[x(i),y(d[key2])]):[];
+ let svg=`<svg viewBox="0 0 ${w} ${h}"><line class="axis" x1="${p}" y1="${h-p}" x2="${w-p}" y2="${h-p}"/>`;
+ svg += `<polyline class="line" style="stroke:#38bdf8" points="${pts1.map(p=>p.join(',')).join(' ')}"/>`;
+ if(key2) svg += `<polyline class="line" style="stroke:#8b5cf6;animation-delay:.15s" points="${pts2.map(p=>p.join(',')).join(' ')}"/>`;
+ data.forEach((d,i)=>{svg+=`<circle class="dot" cx="${x(i)}" cy="${y(d[key1])}" r="4" fill="#38bdf8" data-tip="${d.date}<br>${key1==='rev'?'Выручка':key1}: ${key1==='rev'?money(d[key1]):fmt(d[key1])}"/>`; if(key2) svg+=`<circle class="dot" cx="${x(i)}" cy="${y(d[key2])}" r="4" fill="#8b5cf6" data-tip="${d.date}<br>${key2==='orders'?'Заказы':key2}: ${fmt(d[key2])}"/>`; svg+=`<text x="${x(i)}" y="${h-8}" fill="#8aa0b8" font-size="11" text-anchor="middle">${d.date}</text>`;});
+ svg+='</svg>'; box.innerHTML=svg; box.querySelectorAll('[data-tip]').forEach(el=>tip(el,el.dataset.tip));
+}
+function barChart(id, data, labelKey, valueKey, opts={}){
+ const box=document.getElementById(id); const max=Math.max(...data.map(d=>Math.abs(d[valueKey])))*1.12||1;
+ const bars=data.map((d,i)=>{let v=d[valueKey]; let h=Math.max(3,Math.abs(v)/max*100); let cls=v<0?'badbar':(opts.warn?'warnbar':(opts.alt?'alt':'')); return `<div class="bar ${cls}" style="--h:${h}%" data-tip="${d[labelKey]}<br>${opts.money?money(v):fmt(v)}${opts.suffix||''}"></div>`;}).join('');
+ const labels=data.map(d=>`<span>${String(d[labelKey]).slice(0,10)}</span>`).join('');
+ box.innerHTML=`<div class="bars">${bars}</div><div class="labels">${labels}</div>`; box.querySelectorAll('[data-tip]').forEach(el=>tip(el,el.dataset.tip));
+}
+function groupedCompare(id, data){
+ const box=document.getElementById(id); const max=Math.max(...data.flatMap(d=>[d.current,d.prev]))*1.15||1;
+ const rows=data.map(d=>`<div style="display:grid;grid-template-columns:120px 1fr;gap:12px;align-items:center;margin:12px 0"><div class="muted">${d.metric}</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;height:34px"><div class="bar alt" style="--h:100%;height:100%;width:${Math.max(3,d.current/max*100)}%" data-tip="${d.metric} текущая неделя: ${d.metric==='Выручка'?money(d.current):fmt(d.current)}"></div><div class="bar" style="--h:100%;height:100%;width:${Math.max(3,d.prev/max*100)}%" data-tip="${d.metric} прошлая неделя: ${d.metric==='Выручка'?money(d.prev):fmt(d.prev)}"></div></div></div>`).join('');
+ box.innerHTML=`<div style="padding-top:8px">${rows}</div><div class="muted" style="font-size:12px;margin-top:14px">Зелёный — текущая неделя, фиолетовый — предыдущая.</div>`; box.querySelectorAll('[data-tip]').forEach(el=>tip(el,el.dataset.tip));
+}
+function renderCharts(){
+ lineChart('lineRevenue', DATA.daily, 'rev', 'orders');
+ groupedCompare('barCompare', DATA.compare);
+ barChart('barProducts', DATA.products, 'art', 'orders');
+ barChart('barRevenueProducts', DATA.products, 'art', 'rev', {money:true, alt:true});
+ barChart('barFunnel', DATA.funnel, 'stage', 'value', {alt:true});
+ barChart('barDailyOrders', DATA.daily, 'date', 'orders');
+ barChart('stockBars', DATA.products, 'art', 'stock', {alt:true});
+ barChart('warehouseBars', DATA.warehouses, 'wh', 'stock', {warn:true});
+ barChart('geoBars', DATA.regions, 'region', 'orders', {alt:true});
+ barChart('lostBars', DATA.regions, 'region', 'lost', {warn:true});
+}
+renderCharts(); window.addEventListener('resize',()=>setTimeout(renderCharts,120));
+document.querySelectorAll('.tab').forEach(btn=>btn.addEventListener('click',()=>{document.querySelectorAll('.tab').forEach(b=>b.classList.remove('active'));btn.classList.add('active');document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));document.getElementById(btn.dataset.tab).classList.add('active');setTimeout(renderCharts,80);}));
+</script>
+</body>
+</html>
