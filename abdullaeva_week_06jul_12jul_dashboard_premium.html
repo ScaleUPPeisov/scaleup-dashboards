@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>ИП Абдуллаева Л. Г. · Laura Kidswear · 06–12.07.2026</title>
+<style>
+:root{
+ --bg:#050b16;--bg2:#071321;--panel:rgba(255,255,255,.068);--panel2:rgba(255,255,255,.105);
+ --stroke:rgba(255,255,255,.115);--text:#f5f8ff;--muted:#91a3bb;--blue:#38bdf8;--violet:#8b5cf6;
+ --cyan:#67e8f9;--green:#22c55e;--amber:#f59e0b;--red:#fb7185;--pink:#ec4899;
+}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;min-height:100vh;color:var(--text);font-family:Inter,Segoe UI,Arial,sans-serif;background:
+radial-gradient(circle at 10% -8%,rgba(56,189,248,.17),transparent 34%),
+radial-gradient(circle at 88% 0%,rgba(139,92,246,.21),transparent 31%),
+radial-gradient(circle at 55% 80%,rgba(236,72,153,.08),transparent 34%),
+linear-gradient(135deg,var(--bg),#071424 54%,#06101d)}
+body:before{content:"";position:fixed;inset:0;pointer-events:none;background-image:
+linear-gradient(rgba(255,255,255,.024) 1px,transparent 1px),
+linear-gradient(90deg,rgba(255,255,255,.024) 1px,transparent 1px);
+background-size:46px 46px;mask-image:linear-gradient(to bottom,#000 0%,transparent 92%)}
+.wrap{max-width:1480px;margin:auto;padding:28px 26px 84px;position:relative}
+.hero{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:26px;align-items:center;padding:30px;
+border:1px solid var(--stroke);border-radius:30px;overflow:hidden;background:linear-gradient(135deg,rgba(255,255,255,.115),rgba(255,255,255,.035));
+box-shadow:0 28px 95px rgba(0,0,0,.38);animation:fadeUp .7s ease both}
+.hero:after{content:"";position:absolute;right:-230px;top:-270px;width:560px;height:560px;border-radius:50%;
+background:radial-gradient(circle,rgba(56,189,248,.3),rgba(139,92,246,.1) 42%,transparent 70%);animation:float 8s ease-in-out infinite}
+.brand{display:flex;gap:18px;align-items:center;position:relative;z-index:2}
+.brand img{width:88px;height:88px;border-radius:24px;object-fit:cover;border:1px solid rgba(255,255,255,.18);box-shadow:0 0 36px rgba(56,189,248,.16)}
+.eyebrow{font-size:12px;font-weight:900;letter-spacing:.14em;text-transform:uppercase;color:#a7f3d0;margin-bottom:9px}
+h1{font-size:42px;line-height:1.05;margin:0 0 10px;letter-spacing:-.035em}
+.subtitle{font-size:16px;color:var(--muted);max-width:880px;line-height:1.55}
+.pills{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}
+.pill{padding:9px 13px;border-radius:999px;background:rgba(255,255,255,.075);border:1px solid var(--stroke);font-size:13px;color:#dbeafe}
+.score{position:relative;z-index:2;text-align:right;min-width:260px}
+.score .value{font-size:56px;font-weight:950;letter-spacing:-.045em;background:linear-gradient(90deg,#fff,#bae6fd);-webkit-background-clip:text;color:transparent}
+.score .label{font-size:13px;color:var(--muted);line-height:1.45}
+.tabs{position:sticky;top:0;z-index:40;margin:18px 0;display:flex;gap:9px;flex-wrap:wrap;padding:12px;border:1px solid var(--stroke);
+border-radius:22px;background:rgba(5,11,22,.82);backdrop-filter:blur(18px);box-shadow:0 14px 45px rgba(0,0,0,.2)}
+.tab{border:1px solid transparent;background:transparent;color:#bed0e8;padding:11px 14px;border-radius:14px;font-weight:850;cursor:pointer;transition:.22s}
+.tab:hover,.tab.active{color:white;transform:translateY(-1px);border-color:rgba(255,255,255,.16);background:linear-gradient(135deg,rgba(139,92,246,.34),rgba(56,189,248,.18))}
+.section{display:none;animation:fadeUp .48s ease both}.section.active{display:block}
+.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}.grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
+.card{position:relative;padding:21px;border:1px solid var(--stroke);border-radius:24px;overflow:hidden;
+background:linear-gradient(180deg,var(--panel),rgba(255,255,255,.04));box-shadow:0 17px 48px rgba(0,0,0,.2);
+transition:.22s;animation:fadeUp .68s ease both}
+.card:hover{transform:translateY(-3px);border-color:rgba(56,189,248,.36);box-shadow:0 28px 68px rgba(0,0,0,.31)}
+.card:before{content:"";position:absolute;inset:0;background:linear-gradient(120deg,transparent,rgba(255,255,255,.025),transparent);transform:translateX(-100%);transition:.7s}
+.card:hover:before{transform:translateX(100%)}
+.kpi .title{font-size:12px;font-weight:850;text-transform:uppercase;letter-spacing:.09em;color:var(--muted)}
+.kpi .value{font-size:34px;font-weight:950;letter-spacing:-.035em;margin:10px 0 5px}
+.kpi .sub{font-size:13px;color:#a9b8ca;line-height:1.45}
+.delta{display:inline-flex;align-items:center;gap:5px;padding:5px 8px;border-radius:999px;font-size:12px;font-weight:900;margin-top:10px}
+.delta.up{background:rgba(34,197,94,.13);color:#86efac;border:1px solid rgba(34,197,94,.24)}.delta.down{background:rgba(251,113,133,.13);color:#fda4af;border:1px solid rgba(251,113,133,.24)}
+.good{color:var(--green)}.warn{color:#fbbf24}.bad{color:var(--red)}.blue{color:var(--cyan)}
+h2{font-size:27px;margin:23px 0 15px;letter-spacing:-.025em}h3{font-size:18px;margin:0 0 14px}
+.muted{color:var(--muted)}.chart{height:300px;position:relative}
+.note{border-left:4px solid var(--blue);border-radius:16px;padding:15px 17px;background:rgba(56,189,248,.08);line-height:1.55;color:#d9efff}
+.note.success{border-left-color:var(--green);background:rgba(34,197,94,.08)}.note.warn{border-left-color:var(--amber);background:rgba(245,158,11,.08)}.note.danger{border-left-color:var(--red);background:rgba(251,113,133,.08)}
+.miniStat{display:flex;justify-content:space-between;gap:16px;align-items:end;margin:14px 0 8px}.miniStat b{font-size:25px}.miniStat span{font-size:12px;color:var(--muted)}
+.progress{height:9px;border-radius:99px;background:rgba(255,255,255,.08);overflow:hidden}.progress span{display:block;height:100%;width:0;border-radius:inherit;background:linear-gradient(90deg,var(--blue),var(--violet));animation:progress 1.4s .25s ease forwards}
+table{width:100%;border-collapse:separate;border-spacing:0 10px}th{text-align:left;padding:0 12px;color:#9fb1c8;font-size:11px;text-transform:uppercase;letter-spacing:.085em}
+td{padding:14px 12px;background:rgba(255,255,255,.052);border-top:1px solid var(--stroke);border-bottom:1px solid var(--stroke);vertical-align:top}
+td:first-child{border-left:1px solid var(--stroke);border-radius:14px 0 0 14px}td:last-child{border-right:1px solid var(--stroke);border-radius:0 14px 14px 0}.right{text-align:right}
+.tag{display:inline-flex;padding:5px 8px;border-radius:999px;font-size:10px;font-weight:950;letter-spacing:.05em;border:1px solid rgba(255,255,255,.13);margin-bottom:7px}
+.tag.core{color:#86efac;background:rgba(34,197,94,.13)}.tag.grow{color:#67e8f9;background:rgba(56,189,248,.13)}.tag.watch{color:#fde68a;background:rgba(245,158,11,.13)}.tag.risk{color:#fda4af;background:rgba(251,113,133,.13)}.tag.stop{color:#cbd5e1;background:rgba(148,163,184,.12)}
+.decision{font-size:12px;color:#b7c5d7;line-height:1.45}
+.timeline{display:grid;gap:14px}.step{display:grid;grid-template-columns:120px 1fr;gap:18px;padding:18px;border-radius:20px;border:1px solid var(--stroke);background:rgba(255,255,255,.052)}
+.step .when{font-weight:950;color:#dbeafe}.step .text{color:#b8c6d8;line-height:1.5}.step .text b{color:white}
+.legend{display:flex;gap:18px;flex-wrap:wrap;margin:0 0 10px;color:var(--muted);font-size:12px}.legend i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px}
+.tooltip{position:fixed;pointer-events:none;z-index:999;opacity:0;transform:translate(-50%,-118%);background:#020617;color:#fff;border:1px solid rgba(255,255,255,.18);border-radius:12px;padding:10px 12px;font-size:12px;box-shadow:0 18px 44px rgba(0,0,0,.42);white-space:nowrap}
+svg{width:100%;height:100%;overflow:visible}.axis{stroke:rgba(255,255,255,.13)}.gridline{stroke:rgba(255,255,255,.06)}.line{fill:none;stroke-width:3.7;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1400;stroke-dashoffset:1400;animation:draw 1.8s ease forwards}.area{opacity:.14}.dot{cursor:pointer;transition:.2s}.dot:hover{r:7;filter:drop-shadow(0 0 10px rgba(255,255,255,.72))}
+.bars{display:flex;align-items:flex-end;gap:11px;height:250px;padding:22px 5px 8px;border-bottom:1px solid rgba(255,255,255,.14)}.bar{flex:1;min-height:4px;height:0;border-radius:12px 12px 4px 4px;background:linear-gradient(180deg,var(--blue),var(--violet));animation:grow .95s ease forwards;cursor:pointer}.bar.alt{background:linear-gradient(180deg,#34d399,#38bdf8)}.bar.warnbar{background:linear-gradient(180deg,#fbbf24,#f97316)}.bar.badbar{background:linear-gradient(180deg,#fb7185,#e11d48)}
+.labels{display:flex;gap:11px;margin-top:9px;color:var(--muted);font-size:11px}.labels span{flex:1;text-align:center;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.donutWrap{height:270px;display:grid;place-items:center;position:relative}.donutCenter{position:absolute;text-align:center}.donutCenter b{font-size:36px}.donutCenter span{display:block;font-size:12px;color:var(--muted);margin-top:4px}
+@keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(18px)}}@keyframes draw{to{stroke-dashoffset:0}}@keyframes grow{to{height:var(--h)}}@keyframes progress{to{width:var(--w)}}
+@media(max-width:1050px){.grid4,.grid3,.grid2,.hero{grid-template-columns:1fr}.score{text-align:left}.wrap{padding:16px 14px 64px}h1{font-size:32px}table{min-width:1050px}.card:has(table){overflow:auto}}
+</style>
+</head>
+<body>
+<div class="tooltip" id="tooltip"></div>
+<div class="wrap">
+
+<header class="hero">
+ <div class="brand">
+   <img src="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wAARCAFAAUADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD5Eooor0jiCiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKBQB6B4P8C6Fqng3/hJNc8TnR4PtTW3NvvXcACOQc5PPbtVweDPhl3+KC/T7A1MOP8AhnJfX+3v/ZTXm1eLRpV8TKpL20opSaSSjsvWLZ31JU6SiuRO6T6/5np//CHfCsHDfFFvw056cvg34TE8/FOQD/sGv/hXnOkaXqWsXq2WlWFzfXLDIigjLtj1wO3vWvrngbxhodmbzVfDeo2tsPvStCSq/UjOPxq5YeUZKEsVK76e5f8A9JJVVNXVJW+f+Z2S+DPhFnn4qzY/7Bj/AOFTL4L+Df8AF8V7j/wWv/hXnz+FvEKeGR4mbSp/7GJA+2Agxgk7QDg8HPFJ4Y8L+IPE800Ph/Sp9RlgUNKkONyg9Dgmn9WnZy+syst/g/8AkRe1V7eyX4/5non/AAhXwYx/yVe5P/cNb/Crmi/Df4T6zq1tpWl/E+7ub26cRwxDTyC7HtkgCuA1r4d+N9F0ybU9W8N3tnZQgGSaXaFXJwO/rVn4IY/4W74Xz0/tFP61lUo1FRnVp4mTsn/I1ov8JUZxc1CVNK/r/mYHizTE0XxRqujxytMljeS26yMMFwjlckdicVmV0XxPwPiR4lA/6Ctz/wCjGrna9WhJzpRk92kck1aTQUUUVsQFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQB6Sf+Tchz/zHv8A2WvOIo2llSJBlnYKv1JwK9GBz+zoVx017r/wCvPtN/5CNr/12T/0IV5uXuyq/wCOR2YneHoj6xS00j4Q/C68u7K1Sa4t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NP1uS2W7mmusq9tvkZGt1WIqfKbJEgJA3x4POea83op8itYOc9PvL/4cLc6XqVuV+1/YvJu41R3iLfYDGWZGjUK/n7cbSwPLEireoa3oNraWMFmugahdJb6SbKxWwRCl0scRuGmmKhWRxvRgXPLDIXbmvJaKXJ5hznpmvX/gXSvEd14cFnLd6Lb2ywR3toInnE32gTsxY5DgD9ySD0XIyDg2NV8ReCn0PUItHitrbWnur+S0upLFWiEL3IaOLYU+Vmj4V/4ACuF3bh5XRT5A5z0D4n/8I/50djpb2FpJ5TapeLCBIBdT7M2iPHldsYBI52jLDrXn9FFNKyJbuFFFFUIKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooA//9k=" alt="ScaleUP">
+   <div>
+     <div class="eyebrow">ScaleUP Analytics · Wildberries</div>
+     <h1>ИП Абдуллаева Л. Г. · Laura Kidswear</h1>
+     <div class="subtitle">Недельная аналитика за 06–12.07.2026: продажи, конверсия, товарная матрица, остатки, склады и региональная логистика.</div>
+     <div class="pills">
+       <span class="pill">Заказы: <b>20 шт</b></span>
+       <span class="pill">Сумма: <b>119 980 ₽</b></span>
+       <span class="pill">Выкуп: <b>40%</b></span>
+       <span class="pill">Остатки: <b>111 шт / 600 858 ₽</b></span>
+     </div>
+   </div>
+ </div>
+ <div class="score">
+   <div class="value">119 980 ₽</div>
+   <div class="label">сумма заказов за неделю<br>при среднем чеке 5 999 ₽</div>
+ </div>
+</header>
+
+<nav class="tabs">
+ <button class="tab active" data-tab="overview">Обзор</button>
+ <button class="tab" data-tab="products">Товары</button>
+ <button class="tab" data-tab="funnel">Воронка</button>
+ <button class="tab" data-tab="stocks">Остатки</button>
+ <button class="tab" data-tab="geo">География</button>
+ <button class="tab" data-tab="actions">Действия</button>
+</nav>
+
+<section class="section active" id="overview">
+ <div class="grid4">
+   <div class="card kpi"><div class="title">Сумма заказов</div><div class="value">119 980 ₽</div><div class="sub">прошлая неделя: 121 173 ₽</div><div class="delta down">-1.0%</div></div>
+   <div class="card kpi"><div class="title">Заказы</div><div class="value">20 шт</div><div class="sub">прошлая неделя: 29 шт</div><div class="delta down">-31.0%</div></div>
+   <div class="card kpi"><div class="title">Средний чек</div><div class="value good">5 999 ₽</div><div class="sub">прошлая неделя: 4 178 ₽</div><div class="delta up">+43.6%</div></div>
+   <div class="card kpi"><div class="title">Выкуп на дату отчёта</div><div class="value blue">40%</div><div class="sub">8 выкупов из 20 заказов · 3 отмены</div><div class="delta up">+12.4 п.п.</div></div>
+ </div>
+
+ <div class="grid2" style="margin-top:16px">
+   <div class="card">
+     <h3>Динамика суммы заказов и заказов по дням</h3>
+     <div class="legend"><span><i style="background:#38bdf8"></i>Сумма заказов</span><span><i style="background:#8b5cf6"></i>Заказы</span></div>
+     <div id="revenueLine" class="chart"></div>
+   </div>
+   <div class="card">
+     <h3>Сравнение с предыдущей неделей</h3>
+     <div id="comparisonBars" class="chart"></div>
+   </div>
+ </div>
+
+ <div class="grid3" style="margin-top:16px">
+   <div class="card">
+     <h3>Управленческий вывод</h3>
+     <div class="note success"><b>Выручка практически сохранена: −1%.</b><br>При снижении числа заказов с 29 до 20 средний чек вырос до 5 999 ₽. Это компенсировало падение объёма.</div>
+   </div>
+   <div class="card">
+     <h3>Узкое место</h3>
+     <div class="note danger"><b>Трафик вырос на 55%, но заказов стало меньше.</b><br>Конверсия переход → заказ снизилась с 0.59% до 0.26%.</div>
+   </div>
+   <div class="card">
+     <h3>Логистический приоритет</h3>
+     <div class="note warn"><b>72% текущего остатка сосредоточено в Электростали.</b><br>Юг и Приволжье формируют 55% заказов, поэтому следующее распределение лучше делать ближе к этим регионам.</div>
+   </div>
+ </div>
+</section>
+
+<section class="section" id="products">
+ <h2>Товарная аналитика</h2>
+ <div class="card">
+  <table>
+   <thead><tr><th>Артикул</th><th>Товар</th><th class="right">Переходы</th><th class="right">Корзины</th><th class="right">Заказы</th><th class="right">Выкуп</th><th class="right">Сумма</th><th class="right">Остаток</th><th>Решение</th></tr></thead>
+   <tbody>
+    <tr>
+      <td><b>920526252</b><br><span class="muted">wb4njk3vba</span></td>
+      <td>Платье для девочки хлопковое летнее, праздничное</td>
+      <td class="right">2 480</td>
+      <td class="right">48<br><span class="muted">1.94%</span></td>
+      <td class="right"><b>7</b><br><span class="muted">0.28% от трафика</span></td>
+      <td class="right">4 / 57.1%</td>
+      <td class="right">44 793 ₽</td>
+      <td class="right">38 шт<br><span class="muted">240 869 ₽</span></td>
+      <td><span class="tag core">CORE</span><br><span class="decision">Лидер недели: удерживать наличие, усилить карточку и не допускать потери размерного ряда.</span></td>
+    </tr>
+
+    <tr>
+      <td><b>920529481</b><br><span class="muted">wb2m4rba6e</span></td>
+      <td>Платье для девочки хлопковое летнее, праздничное</td>
+      <td class="right">851</td>
+      <td class="right">14<br><span class="muted">1.65%</span></td>
+      <td class="right"><b>4</b><br><span class="muted">0.47% от трафика</span></td>
+      <td class="right">0 / 0.0%</td>
+      <td class="right">25 596 ₽</td>
+      <td class="right">3 шт<br><span class="muted">19 197 ₽</span></td>
+      <td><span class="tag risk">RISK</span><br><span class="decision">Заказы есть, но выкупы не подтверждены: не масштабировать до следующей проверки.</span></td>
+    </tr>
+
+    <tr>
+      <td><b>1153619413</b><br><span class="muted">wbyggq482</span></td>
+      <td>Платье для девочки хлопковое летнее, праздничное</td>
+      <td class="right">734</td>
+      <td class="right">11<br><span class="muted">1.5%</span></td>
+      <td class="right"><b>3</b><br><span class="muted">0.41% от трафика</span></td>
+      <td class="right">1 / 33.3%</td>
+      <td class="right">19 197 ₽</td>
+      <td class="right">19 шт<br><span class="muted">121 585 ₽</span></td>
+      <td><span class="tag watch">WATCH</span><br><span class="decision">Под контроль: проверить размеры, цену и причины отмен.</span></td>
+    </tr>
+
+    <tr>
+      <td><b>920544232</b><br><span class="muted">wb4a7y983q</span></td>
+      <td>Платье для девочки летнее из батиста, праздничное</td>
+      <td class="right">705</td>
+      <td class="right">14<br><span class="muted">1.99%</span></td>
+      <td class="right"><b>3</b><br><span class="muted">0.43% от трафика</span></td>
+      <td class="right">2 / 66.7%</td>
+      <td class="right">13 197 ₽</td>
+      <td class="right">11 шт<br><span class="muted">49 889 ₽</span></td>
+      <td><span class="tag grow">GROW</span><br><span class="decision">Перспективный SKU: поддерживать органику и аккуратно тестировать продвижение.</span></td>
+    </tr>
+
+    <tr>
+      <td><b>920519652</b><br><span class="muted">wb2v393yh2</span></td>
+      <td>Платье для девочки хлопковое летнее, праздничное</td>
+      <td class="right">808</td>
+      <td class="right">19<br><span class="muted">2.35%</span></td>
+      <td class="right"><b>2</b><br><span class="muted">0.25% от трафика</span></td>
+      <td class="right">0 / 0.0%</td>
+      <td class="right">12 798 ₽</td>
+      <td class="right">3 шт<br><span class="muted">14 597 ₽</span></td>
+      <td><span class="tag risk">RISK</span><br><span class="decision">Заказы есть, но выкупы не подтверждены: не масштабировать до следующей проверки.</span></td>
+    </tr>
+
+    <tr>
+      <td><b>920554815</b><br><span class="muted">wb62jan3gm</span></td>
+      <td>Платье для девочки летнее из батиста, праздничное</td>
+      <td class="right">620</td>
+      <td class="right">5<br><span class="muted">0.81%</span></td>
+      <td class="right"><b>1</b><br><span class="muted">0.16% от трафика</span></td>
+      <td class="right">1 / 100.0%</td>
+      <td class="right">4 399 ₽</td>
+      <td class="right">30 шт<br><span class="muted">116 828 ₽</span></td>
+      <td><span class="tag grow">GROW</span><br><span class="decision">Перспективный SKU: поддерживать органику и аккуратно тестировать продвижение.</span></td>
+    </tr>
+
+    <tr>
+      <td><b>920515364</b><br><span class="muted">wb2cj3zqyu</span></td>
+      <td>Платье для девочки хлопковое летнее, праздничное</td>
+      <td class="right">170</td>
+      <td class="right">0<br><span class="muted">0.0%</span></td>
+      <td class="right"><b>0</b><br><span class="muted">0.0% от трафика</span></td>
+      <td class="right">0 / 0.0%</td>
+      <td class="right">0 ₽</td>
+      <td class="right">1 шт<br><span class="muted">6 399 ₽</span></td>
+      <td><span class="tag stop">STOP</span><br><span class="decision">Трафик без заказов: сначала обновить карточку/цену, затем тестировать рекламу.</span></td>
+    </tr>
+
+    <tr>
+      <td><b>920522034</b><br><span class="muted">wb38x1vf46</span></td>
+      <td>Платье для девочки хлопковое летнее, праздничное</td>
+      <td class="right">598</td>
+      <td class="right">3<br><span class="muted">0.5%</span></td>
+      <td class="right"><b>0</b><br><span class="muted">0.0% от трафика</span></td>
+      <td class="right">0 / 0.0%</td>
+      <td class="right">0 ₽</td>
+      <td class="right">1 шт<br><span class="muted">6 399 ₽</span></td>
+      <td><span class="tag stop">STOP</span><br><span class="decision">Трафик без заказов: сначала обновить карточку/цену, затем тестировать рекламу.</span></td>
+    </tr>
+
+    <tr>
+      <td><b>920524086</b><br><span class="muted">wb2zrxxcue</span></td>
+      <td>Платье хлопковое летнее, праздничное</td>
+      <td class="right">629</td>
+      <td class="right">16<br><span class="muted">2.54%</span></td>
+      <td class="right"><b>0</b><br><span class="muted">0.0% от трафика</span></td>
+      <td class="right">0 / 0.0%</td>
+      <td class="right">0 ₽</td>
+      <td class="right">5 шт<br><span class="muted">25 095 ₽</span></td>
+      <td><span class="tag stop">STOP</span><br><span class="decision">Трафик без заказов: сначала обновить карточку/цену, затем тестировать рекламу.</span></td>
+    </tr></tbody>
+  </table>
+ </div>
+</section>
+
+<section class="section" id="funnel">
+ <h2>Воронка продаж</h2>
+ <div class="grid4">
+   <div class="card kpi"><div class="title">Переходы</div><div class="value">7 595</div><div class="sub">было 4 893</div><div class="delta up">+55.2%</div></div>
+   <div class="card kpi"><div class="title">Корзины</div><div class="value">130</div><div class="sub">CR в корзину 1.71% · было 2.35%</div><div class="delta up">+13.0% по количеству</div></div>
+   <div class="card kpi"><div class="title">Заказы</div><div class="value">20</div><div class="sub">CR переход → заказ 0.26%</div><div class="delta down">-31.0%</div></div>
+   <div class="card kpi"><div class="title">Отложили</div><div class="value">86</div><div class="sub">дополнительный тёплый спрос</div></div>
+ </div>
+ <div class="grid2" style="margin-top:16px">
+   <div class="card"><h3>Переходы → корзины → заказы → выкупы</h3><div id="funnelBars" class="chart"></div></div>
+   <div class="card"><h3>Трафик и корзины по дням</h3><div class="legend"><span><i style="background:#38bdf8"></i>Переходы</span><span><i style="background:#8b5cf6"></i>Корзины</span></div><div id="trafficLine" class="chart"></div></div>
+ </div>
+ <div class="card" style="margin-top:16px">
+   <div class="note danger"><b>Главная задача — вернуть эффективность трафика.</b><br>Переходов стало значительно больше, но карточки конвертируют слабее. Нужно проверить первое фото, цены, скидки, размерный ряд, отзывы и позиции по ключевым запросам у SKU с высоким трафиком и нулевыми заказами.</div>
+ </div>
+</section>
+
+<section class="section" id="stocks">
+ <h2>Остатки и склады</h2>
+ <div class="grid4">
+   <div class="card kpi"><div class="title">Остаток общий</div><div class="value">111 шт</div><div class="sub">600 858 ₽ в товаре</div></div>
+   <div class="card kpi"><div class="title">Электросталь</div><div class="value warn">80 шт</div><div class="sub">72% всего остатка · оборачиваемость 15д 4ч</div></div>
+   <div class="card kpi"><div class="title">Юг</div><div class="value">10 шт</div><div class="sub">Краснодар + Невинномысск при доле заказов 30%</div></div>
+   <div class="card kpi"><div class="title">В пути к покупателю</div><div class="value">14 шт</div><div class="sub">часть товара уже участвует в продажах</div></div>
+ </div>
+ <div class="grid2" style="margin-top:16px">
+   <div class="card"><h3>Остатки по SKU</h3><div id="skuStocks" class="chart"></div></div>
+   <div class="card"><h3>Остатки по складам</h3><div id="warehouseStocks" class="chart"></div></div>
+ </div>
+ <div class="card" style="margin-top:16px">
+   <table>
+    <thead><tr><th>Склад</th><th class="right">Остаток</th><th class="right">Стоимость</th><th class="right">В пути</th><th>Оборачиваемость</th><th>Решение</th></tr></thead>
+    <tbody>
+    <tr>
+      <td><b>Электросталь</b><br><span class="muted">Центральный</span></td>
+      <td class="right">80 шт</td>
+      <td class="right">454 687 ₽</td>
+      <td class="right">1 шт</td>
+      <td>15д 4ч</td>
+      <td>Не усиливать крупной поставкой</td>
+    </tr>
+
+    <tr>
+      <td><b>Краснодар</b><br><span class="muted">Южный и Северо-Кавказский</span></td>
+      <td class="right">6 шт</td>
+      <td class="right">30 445 ₽</td>
+      <td class="right">0 шт</td>
+      <td>>999д</td>
+      <td>Поддерживать точечно по размерному спросу</td>
+    </tr>
+
+    <tr>
+      <td><b>Екатеринбург - Перспективная 14</b><br><span class="muted">Уральский</span></td>
+      <td class="right">6 шт</td>
+      <td class="right">29 145 ₽</td>
+      <td class="right">0 шт</td>
+      <td>>999д</td>
+      <td>Поддерживать точечно по размерному спросу</td>
+    </tr>
+
+    <tr>
+      <td><b>Тула</b><br><span class="muted">Центральный</span></td>
+      <td class="right">4 шт</td>
+      <td class="right">18 947 ₽</td>
+      <td class="right">0 шт</td>
+      <td>>999д</td>
+      <td>Поддерживать точечно по размерному спросу</td>
+    </tr>
+
+    <tr>
+      <td><b>Невинномысск</b><br><span class="muted">Южный и Северо-Кавказский</span></td>
+      <td class="right">4 шт</td>
+      <td class="right">18 347 ₽</td>
+      <td class="right">0 шт</td>
+      <td>>999д</td>
+      <td>Поддерживать точечно по размерному спросу</td>
+    </tr>
+
+    <tr>
+      <td><b>Казань</b><br><span class="muted">Приволжский</span></td>
+      <td class="right">3 шт</td>
+      <td class="right">14 598 ₽</td>
+      <td class="right">0 шт</td>
+      <td>>999д</td>
+      <td>Поддерживать точечно по размерному спросу</td>
+    </tr>
+
+    <tr>
+      <td><b>Рязань (Тюшевское)</b><br><span class="muted">Центральный</span></td>
+      <td class="right">2 шт</td>
+      <td class="right">7 848 ₽</td>
+      <td class="right">0 шт</td>
+      <td>>999д</td>
+      <td>Поддерживать точечно по размерному спросу</td>
+    </tr>
+
+    <tr>
+      <td><b>Коледино</b><br><span class="muted">Центральный</span></td>
+      <td class="right">2 шт</td>
+      <td class="right">7 848 ₽</td>
+      <td class="right">0 шт</td>
+      <td>>999д</td>
+      <td>Поддерживать точечно по размерному спросу</td>
+    </tr>
+
+    <tr>
+      <td><b>Новосемейкино</b><br><span class="muted">Приволжский</span></td>
+      <td class="right">2 шт</td>
+      <td class="right">8 499 ₽</td>
+      <td class="right">0 шт</td>
+      <td>>999д</td>
+      <td>Поддерживать точечно по размерному спросу</td>
+    </tr>
+
+    <tr>
+      <td><b>Воронеж WB</b><br><span class="muted">Центральный</span></td>
+      <td class="right">1 шт</td>
+      <td class="right">6 399 ₽</td>
+      <td class="right">0 шт</td>
+      <td>>999д</td>
+      <td>Поддерживать точечно по размерному спросу</td>
+    </tr>
+
+    <tr>
+      <td><b>Ташкент 1  WB</b><br><span class="muted">Узбекистан</span></td>
+      <td class="right">1 шт</td>
+      <td class="right">4 099 ₽</td>
+      <td class="right">0 шт</td>
+      <td>>999д</td>
+      <td>Поддерживать точечно по размерному спросу</td>
+    </tr>
+
+    <tr>
+      <td><b>Остальные</b><br><span class="muted">Центральный</span></td>
+      <td class="right">0 шт</td>
+      <td class="right">0 ₽</td>
+      <td class="right">13 шт</td>
+      <td>>999д</td>
+      <td>Поддерживать точечно по размерному спросу</td>
+    </tr></tbody>
+   </table>
+ </div>
+</section>
+
+<section class="section" id="geo">
+ <h2>География заказов</h2>
+ <div class="grid2">
+   <div class="card"><h3>Доля заказов по регионам</h3><div id="geoBars" class="chart"></div></div>
+   <div class="card">
+     <h3>Локальность заказов</h3>
+     <div class="donutWrap" id="localityDonut"><div class="donutCenter"><b>45%</b><span>локальных заказов</span></div></div>
+     <div class="note warn"><b>55% спроса приходится на Юг и Приволжье.</b><br>В этих регионах локальность низкая: 16,7% на Юге и 0% в Приволжье.</div>
+   </div>
+ </div>
+ <div class="card" style="margin-top:16px">
+  <table>
+   <thead><tr><th>Регион</th><th class="right">Доля заказов</th><th class="right">Локальность</th><th>Доставка</th><th>Решение</th></tr></thead>
+   <tbody>
+    <tr>
+      <td><b>Центральный</b></td>
+      <td class="right">45.0%</td>
+      <td class="right">88.9%</td>
+      <td>1д 12ч</td>
+      <td><span class="tag core">Покрытие сильное — поддерживать</span></td>
+    </tr>
+
+    <tr>
+      <td><b>Южный и Северо-Кавказский</b></td>
+      <td class="right">30.0%</td>
+      <td class="right">16.7%</td>
+      <td>2д 1ч</td>
+      <td><span class="tag risk">Приоритет для следующего распределения поставки</span></td>
+    </tr>
+
+    <tr>
+      <td><b>Приволжский</b></td>
+      <td class="right">25.0%</td>
+      <td class="right">0.0%</td>
+      <td>2д 5ч</td>
+      <td><span class="tag risk">Приоритет для следующего распределения поставки</span></td>
+    </tr></tbody>
+  </table>
+ </div>
+</section>
+
+<section class="section" id="actions">
+ <h2>План действий на неделю</h2>
+ <div class="timeline">
+   <div class="step"><div class="when">Сейчас</div><div class="text"><b>Разобрать SKU с трафиком без заказов.</b><br>В первую очередь 920524086, 920522034 и 920515364: проверить первое фото, цену, размерную сетку, наличие нужных размеров и позиции относительно конкурентов.</div></div>
+   <div class="step"><div class="when">1–2 дня</div><div class="text"><b>Удержать и усилить SKU 920526252.</b><br>Он дал 7 заказов и 44 793 ₽. Сохранить наличие ходовых размеров и аккуратно поддерживать продвижение.</div></div>
+   <div class="step"><div class="when">Поставка</div><div class="text"><b>Не усиливать Электросталь крупной партией.</b><br>При следующем распределении больше внимания Югу и Приволжью, но поставку делать размерно и по фактическому спросу.</div></div>
+   <div class="step"><div class="when">Контроль</div><div class="text"><b>SKU 920529481 и 920519652 не масштабировать до подтверждения выкупов.</b><br>Заказы есть, но выкуп на дату отчёта не сформирован. Сначала проверить динамику следующей недели.</div></div>
+   <div class="step"><div class="when">7 дней</div><div class="text"><b>Вернуть конверсию переход → заказ минимум к 0,55–0,60%.</b><br>Трафик уже вырос; следующий резерв — качество карточек, цена и полнота размерного ряда.</div></div>
+ </div>
+</section>
+
+</div>
+<script>
+const DATA={"daily": [{"date": "06.07", "visits": 1223, "cart": 14, "wish": 14, "orders": 3, "buyouts": 1, "cancelled": 1, "revenue": 19197}, {"date": "07.07", "visits": 1277, "cart": 25, "wish": 19, "orders": 3, "buyouts": 3, "cancelled": 0, "revenue": 17197}, {"date": "08.07", "visits": 1197, "cart": 21, "wish": 16, "orders": 2, "buyouts": 0, "cancelled": 1, "revenue": 10798}, {"date": "09.07", "visits": 769, "cart": 12, "wish": 5, "orders": 3, "buyouts": 2, "cancelled": 0, "revenue": 17197}, {"date": "10.07", "visits": 1015, "cart": 19, "wish": 11, "orders": 1, "buyouts": 0, "cancelled": 0, "revenue": 6399}, {"date": "11.07", "visits": 913, "cart": 12, "wish": 9, "orders": 5, "buyouts": 1, "cancelled": 1, "revenue": 31995}, {"date": "12.07", "visits": 1201, "cart": 27, "wish": 12, "orders": 3, "buyouts": 1, "cancelled": 0, "revenue": 17197}], "products": [{"art": 920526252, "seller": "wb4njk3vba", "name": "Платье для девочки хлопковое летнее, праздничное", "visits": 2480, "cart": 48, "wish": 37, "orders": 7, "buyouts": 4, "cancelled": 0, "revenue": 44793, "stock": 38, "stock_value": 240869, "to_customer": 4, "from_customer": 0, "cr_cart": 1.94, "cr_order": 0.28, "buyout_rate": 57.1}, {"art": 920529481, "seller": "wb2m4rba6e", "name": "Платье для девочки хлопковое летнее, праздничное", "visits": 851, "cart": 14, "wish": 7, "orders": 4, "buyouts": 0, "cancelled": 2, "revenue": 25596, "stock": 3, "stock_value": 19197, "to_customer": 2, "from_customer": 4, "cr_cart": 1.65, "cr_order": 0.47, "buyout_rate": 0.0}, {"art": 1153619413, "seller": "wbyggq482", "name": "Платье для девочки хлопковое летнее, праздничное", "visits": 734, "cart": 11, "wish": 4, "orders": 3, "buyouts": 1, "cancelled": 1, "revenue": 19197, "stock": 19, "stock_value": 121585, "to_customer": 1, "from_customer": 0, "cr_cart": 1.5, "cr_order": 0.41, "buyout_rate": 33.3}, {"art": 920544232, "seller": "wb4a7y983q", "name": "Платье для девочки летнее из батиста, праздничное", "visits": 705, "cart": 14, "wish": 8, "orders": 3, "buyouts": 2, "cancelled": 0, "revenue": 13197, "stock": 11, "stock_value": 49889, "to_customer": 2, "from_customer": 0, "cr_cart": 1.99, "cr_order": 0.43, "buyout_rate": 66.7}, {"art": 920519652, "seller": "wb2v393yh2", "name": "Платье для девочки хлопковое летнее, праздничное", "visits": 808, "cart": 19, "wish": 10, "orders": 2, "buyouts": 0, "cancelled": 0, "revenue": 12798, "stock": 3, "stock_value": 14597, "to_customer": 2, "from_customer": 1, "cr_cart": 2.35, "cr_order": 0.25, "buyout_rate": 0.0}, {"art": 920554815, "seller": "wb62jan3gm", "name": "Платье для девочки летнее из батиста, праздничное", "visits": 620, "cart": 5, "wish": 5, "orders": 1, "buyouts": 1, "cancelled": 0, "revenue": 4399, "stock": 30, "stock_value": 116828, "to_customer": 0, "from_customer": 0, "cr_cart": 0.81, "cr_order": 0.16, "buyout_rate": 100.0}, {"art": 920515364, "seller": "wb2cj3zqyu", "name": "Платье для девочки хлопковое летнее, праздничное", "visits": 170, "cart": 0, "wish": 5, "orders": 0, "buyouts": 0, "cancelled": 0, "revenue": 0, "stock": 1, "stock_value": 6399, "to_customer": 3, "from_customer": 0, "cr_cart": 0.0, "cr_order": 0.0, "buyout_rate": 0.0}, {"art": 920522034, "seller": "wb38x1vf46", "name": "Платье для девочки хлопковое летнее, праздничное", "visits": 598, "cart": 3, "wish": 5, "orders": 0, "buyouts": 0, "cancelled": 0, "revenue": 0, "stock": 1, "stock_value": 6399, "to_customer": 0, "from_customer": 1, "cr_cart": 0.5, "cr_order": 0.0, "buyout_rate": 0.0}, {"art": 920524086, "seller": "wb2zrxxcue", "name": "Платье хлопковое летнее, праздничное", "visits": 629, "cart": 16, "wish": 5, "orders": 0, "buyouts": 0, "cancelled": 0, "revenue": 0, "stock": 5, "stock_value": 25095, "to_customer": 0, "from_customer": 1, "cr_cart": 2.54, "cr_order": 0.0, "buyout_rate": 0.0}], "warehouses": [{"warehouse": "Электросталь", "region": "Центральный", "stock": 80, "value": 454687, "turnover": "15д 4ч", "to_customer": 1, "from_customer": 0}, {"warehouse": "Тула", "region": "Центральный", "stock": 4, "value": 18947, "turnover": ">999д", "to_customer": 0, "from_customer": 0}, {"warehouse": "Рязань (Тюшевское)", "region": "Центральный", "stock": 2, "value": 7848, "turnover": ">999д", "to_customer": 0, "from_customer": 0}, {"warehouse": "Коледино", "region": "Центральный", "stock": 2, "value": 7848, "turnover": ">999д", "to_customer": 0, "from_customer": 0}, {"warehouse": "Воронеж WB", "region": "Центральный", "stock": 1, "value": 6399, "turnover": ">999д", "to_customer": 0, "from_customer": 0}, {"warehouse": "Остальные", "region": "Центральный", "stock": 0, "value": 0, "turnover": ">999д", "to_customer": 13, "from_customer": 4}, {"warehouse": "Краснодар", "region": "Южный и Северо-Кавказский", "stock": 6, "value": 30445, "turnover": ">999д", "to_customer": 0, "from_customer": 0}, {"warehouse": "Невинномысск", "region": "Южный и Северо-Кавказский", "stock": 4, "value": 18347, "turnover": ">999д", "to_customer": 0, "from_customer": 0}, {"warehouse": "Екатеринбург - Перспективная 14", "region": "Уральский", "stock": 6, "value": 29145, "turnover": ">999д", "to_customer": 0, "from_customer": 0}, {"warehouse": "Казань", "region": "Приволжский", "stock": 3, "value": 14598, "turnover": ">999д", "to_customer": 0, "from_customer": 1}, {"warehouse": "Новосемейкино", "region": "Приволжский", "stock": 2, "value": 8499, "turnover": ">999д", "to_customer": 0, "from_customer": 0}, {"warehouse": "Ташкент 1  WB", "region": "Узбекистан", "stock": 1, "value": 4099, "turnover": ">999д", "to_customer": 0, "from_customer": 0}], "regions": [{"region": "Центральный", "share": 45.0, "locality": 88.9, "nonlocal": 11.1, "delivery": "1д 12ч"}, {"region": "Южный и Северо-Кавказский", "share": 30.0, "locality": 16.7, "nonlocal": 83.3, "delivery": "2д 1ч"}, {"region": "Приволжский", "share": 25.0, "locality": 0.0, "nonlocal": 100.0, "delivery": "2д 5ч"}], "comparison": [{"metric": "Переходы", "current": 7595, "previous": 4893}, {"metric": "Корзины", "current": 130, "previous": 115}, {"metric": "Заказы", "current": 20, "previous": 29}, {"metric": "Выкупы", "current": 8, "previous": 8}]};
+const tooltip=document.getElementById('tooltip');
+const fmt=n=>new Intl.NumberFormat('ru-RU').format(Math.round(n));
+function bindTip(el,html){el.addEventListener('mousemove',e=>{tooltip.innerHTML=html;tooltip.style.left=e.clientX+'px';tooltip.style.top=e.clientY+'px';tooltip.style.opacity=1});el.addEventListener('mouseleave',()=>tooltip.style.opacity=0)}
+function barChart(id,data,labelKey,valueKey,opt={}){
+ const box=document.getElementById(id);if(!box)return;const vals=data.map(d=>Math.abs(+d[valueKey]||0));const max=Math.max(...vals,1)*1.1;
+ const bars=data.map((d,i)=>{const v=+d[valueKey]||0,h=Math.max(3,Math.abs(v)/max*100);let cls=opt.alt?'alt':opt.warn?'warnbar':opt.bad?'badbar':'';return `<div class="bar ${cls}" style="--h:${h}%;animation-delay:${i*.065}s" data-tip="${d[labelKey]}<br><b>${fmt(v)}${opt.suffix||''}</b>"></div>`}).join('');
+ const labels=data.map(d=>`<span title="${d[labelKey]}">${String(d[labelKey]).slice(0,14)}</span>`).join('');
+ box.innerHTML=`<div class="bars">${bars}</div><div class="labels">${labels}</div>`;box.querySelectorAll('[data-tip]').forEach(el=>bindTip(el,el.dataset.tip))
+}
+function groupedBars(id,data){
+ const box=document.getElementById(id);if(!box)return;const max=Math.max(...data.flatMap(d=>[d.current,d.previous]),1)*1.1;
+ let html='<div class="bars">';
+ data.forEach((d,i)=>{html+=`<div style="flex:1;height:100%;display:flex;align-items:flex-end;gap:5px"><div class="bar alt" style="--h:${Math.max(3,d.current/max*100)}%;animation-delay:${i*.07}s" data-tip="${d.metric}<br>Текущий период: <b>${fmt(d.current)}</b>"></div><div class="bar" style="--h:${Math.max(3,d.previous/max*100)}%;animation-delay:${i*.07+.08}s" data-tip="${d.metric}<br>Прошлый период: <b>${fmt(d.previous)}</b>"></div></div>`});html+='</div><div class="labels">'+data.map(d=>`<span>${d.metric}</span>`).join('')+'</div>';box.innerHTML=html;box.querySelectorAll('[data-tip]').forEach(el=>bindTip(el,el.dataset.tip))
+}
+function lineChart(id,data,key1,key2,label1,label2){
+ const box=document.getElementById(id);if(!box)return;const w=Math.max(box.clientWidth||620,380),h=275,p=38;
+ const max=Math.max(...data.map(d=>Math.max(+d[key1]||0,+d[key2]||0)),1)*1.14;
+ const x=i=>data.length===1?w/2:p+i*(w-2*p)/(data.length-1),y=v=>h-p-(+v||0)/max*(h-2*p);
+ const pts1=data.map((d,i)=>[x(i),y(d[key1])]),pts2=data.map((d,i)=>[x(i),y(d[key2])]);
+ let svg=`<svg viewBox="0 0 ${w} ${h}"><defs><linearGradient id="${id}g" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#38bdf8" stop-opacity=".45"/><stop offset="100%" stop-color="#38bdf8" stop-opacity="0"/></linearGradient></defs>`;
+ for(let g=0;g<4;g++){const gy=p+g*(h-2*p)/3;svg+=`<line class="gridline" x1="${p}" y1="${gy}" x2="${w-p}" y2="${gy}"/>`}
+ svg+=`<polygon class="area" fill="url(#${id}g)" points="${p},${h-p} ${pts1.map(q=>q.join(',')).join(' ')} ${w-p},${h-p}"/>`;
+ svg+=`<polyline class="line" stroke="#38bdf8" points="${pts1.map(q=>q.join(',')).join(' ')}"/><polyline class="line" stroke="#8b5cf6" style="animation-delay:.14s" points="${pts2.map(q=>q.join(',')).join(' ')}"/>`;
+ data.forEach((d,i)=>{svg+=`<circle class="dot" cx="${x(i)}" cy="${y(d[key1])}" r="4" fill="#38bdf8" data-tip="${d.date}<br>${label1}: <b>${fmt(d[key1])}</b>"/><circle class="dot" cx="${x(i)}" cy="${y(d[key2])}" r="4" fill="#8b5cf6" data-tip="${d.date}<br>${label2}: <b>${fmt(d[key2])}</b>"/><text x="${x(i)}" y="${h-9}" fill="#8aa0b8" font-size="11" text-anchor="middle">${d.date}</text>`});
+ box.innerHTML=svg+'</svg>';box.querySelectorAll('[data-tip]').forEach(el=>bindTip(el,el.dataset.tip))
+}
+function donut(id,value){
+ const box=document.getElementById(id);if(!box)return;const r=88,c=2*Math.PI*r,dash=c*value/100;
+ box.insertAdjacentHTML('afterbegin',`<svg viewBox="0 0 230 230" style="width:230px;height:230px"><circle cx="115" cy="115" r="${r}" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="18"/><circle cx="115" cy="115" r="${r}" fill="none" stroke="url(#dg)" stroke-width="18" stroke-linecap="round" stroke-dasharray="${dash} ${c-dash}" transform="rotate(-90 115 115)" style="filter:drop-shadow(0 0 10px rgba(56,189,248,.35));animation:draw 1.5s ease both"/><defs><linearGradient id="dg"><stop stop-color="#38bdf8"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient></defs></svg>`)
+}
+function render(){
+ lineChart('revenueLine',DATA.daily,'revenue','orders','Сумма заказов','Заказы');
+ groupedBars('comparisonBars',DATA.comparison);
+ barChart('funnelBars',[{stage:'Переходы',v:7595},{stage:'Корзины',v:130},{stage:'Заказы',v:20},{stage:'Выкупы',v:8}],'stage','v',{alt:true});
+ lineChart('trafficLine',DATA.daily,'visits','cart','Переходы','Корзины');
+ barChart('skuStocks',DATA.products,'art','stock',{alt:true});
+ barChart('warehouseStocks',DATA.warehouses.filter(x=>x.stock>0),'warehouse','stock',{alt:true});
+ barChart('geoBars',DATA.regions,'region','share',{suffix:'%'});
+ if(!document.querySelector('#localityDonut svg'))donut('localityDonut',45.015);
+}
+render();window.addEventListener('resize',()=>setTimeout(render,110));
+document.querySelectorAll('.tab').forEach(btn=>btn.addEventListener('click',()=>{document.querySelectorAll('.tab').forEach(b=>b.classList.remove('active'));btn.classList.add('active');document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));document.getElementById(btn.dataset.tab).classList.add('active');setTimeout(render,80)}));
+</script>
+</body>
+</html>
