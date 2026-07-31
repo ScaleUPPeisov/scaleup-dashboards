@@ -1,0 +1,953 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>ИП Игнатьева Г. Р. · аналитика ScaleUP</title>
+<style>
+:root {
+  --bg:#06101d;--panel:rgba(255,255,255,.074);--stroke:rgba(255,255,255,.12);
+  --text:#eff6ff;--muted:#91a2b8;--blue:#38bdf8;--violet:#8b5cf6;
+  --green:#22c55e;--amber:#f59e0b;--red:#fb7185;--cyan:#67e8f9;
+}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;color:var(--text);font-family:Inter,Segoe UI,Arial,sans-serif;background:
+radial-gradient(circle at 12% -8%,rgba(56,189,248,.18),transparent 34%),
+radial-gradient(circle at 92% 0%,rgba(139,92,246,.22),transparent 32%),
+linear-gradient(135deg,var(--bg),#081522 52%,#07111f);min-height:100vh}
+body:before{content:"";position:fixed;inset:0;background-image:
+linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),
+linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);
+background-size:44px 44px;mask-image:linear-gradient(to bottom,rgba(0,0,0,.95),transparent);pointer-events:none}
+.wrap{max-width:1450px;margin:auto;padding:26px 26px 80px;position:relative}
+.hero{display:grid;grid-template-columns:1fr auto;gap:24px;align-items:center;padding:30px;border:1px solid var(--stroke);
+background:linear-gradient(135deg,rgba(255,255,255,.115),rgba(255,255,255,.042));border-radius:30px;
+box-shadow:0 26px 90px rgba(0,0,0,.34);overflow:hidden;position:relative;animation:fadeUp .7s ease both}
+.hero:after{content:"";position:absolute;width:560px;height:560px;border-radius:50%;right:-230px;top:-270px;
+background:radial-gradient(circle,rgba(56,189,248,.28),transparent 68%);animation:float 8s ease-in-out infinite}
+.logoBox{display:flex;gap:18px;align-items:center;position:relative;z-index:1}
+.logoBox img{width:88px;height:88px;border-radius:23px;object-fit:cover;border:1px solid rgba(255,255,255,.18);box-shadow:0 0 35px rgba(56,189,248,.17)}
+.eyebrow{color:#a7f3d0;font-weight:900;letter-spacing:.13em;text-transform:uppercase;font-size:12px;margin-bottom:8px}
+h1{font-size:42px;line-height:1.05;margin:0 0 10px}.subtitle{color:var(--muted);font-size:16px;max-width:940px;line-height:1.5}
+.pillRow{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px}.pill{padding:9px 13px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid var(--stroke);color:#dbeafe;font-size:13px}
+.score{position:relative;z-index:1;text-align:right;min-width:290px}.score .big{font-size:52px;font-weight:950;background:linear-gradient(90deg,#fff,#86efac);-webkit-background-clip:text;color:transparent}
+.score .label{color:var(--muted);font-size:13px;line-height:1.45}
+.tabs{position:sticky;top:0;z-index:30;margin:18px 0;display:flex;gap:10px;flex-wrap:wrap;padding:12px;border:1px solid var(--stroke);border-radius:22px;background:rgba(6,16,29,.83);backdrop-filter:blur(18px)}
+.tab{border:1px solid transparent;background:transparent;color:#bfd1e7;padding:11px 14px;border-radius:14px;font-weight:850;cursor:pointer;transition:.2s}
+.tab.active,.tab:hover{background:linear-gradient(135deg,rgba(139,92,246,.34),rgba(56,189,248,.18));border-color:rgba(255,255,255,.18);color:#fff;transform:translateY(-1px)}
+.section{display:none;animation:fadeUp .45s ease both}.section.active{display:block}
+.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}.grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
+.card{background:linear-gradient(180deg,var(--panel),rgba(255,255,255,.043));border:1px solid var(--stroke);border-radius:24px;padding:20px;box-shadow:0 16px 46px rgba(0,0,0,.19);overflow:hidden;animation:fadeUp .65s ease both;transition:.22s}
+.card:hover{transform:translateY(-3px);border-color:rgba(56,189,248,.36);box-shadow:0 26px 64px rgba(0,0,0,.29)}
+.kpi .title{color:var(--muted);font-size:12px;font-weight:850;text-transform:uppercase;letter-spacing:.085em}
+.kpi .val{font-size:34px;font-weight:950;margin:10px 0 4px}.kpi .sub{color:#a8b7cc;font-size:13px;line-height:1.45}
+.good{color:var(--green)}.warn{color:#fbbf24}.blue{color:var(--cyan)}.bad{color:var(--red)}
+h2{font-size:26px;margin:22px 0 14px}h3{font-size:18px;margin:0 0 14px}.muted{color:var(--muted)}.chart{height:292px;position:relative}
+.note{border-left:4px solid var(--blue);padding:15px 17px;background:rgba(56,189,248,.08);border-radius:16px;color:#d6ecff;line-height:1.57}
+.note.success{border-left-color:var(--green);background:rgba(34,197,94,.08)}.note.warn{border-left-color:var(--amber);background:rgba(245,158,11,.08)}.note.danger{border-left-color:var(--red);background:rgba(239,68,68,.08)}
+table{width:100%;border-collapse:separate;border-spacing:0 10px}th{text-align:left;color:#9fb1c8;font-size:12px;text-transform:uppercase;letter-spacing:.08em;padding:0 12px}
+td{padding:14px 12px;background:rgba(255,255,255,.055);border-top:1px solid var(--stroke);border-bottom:1px solid var(--stroke);vertical-align:top}
+td:first-child{border-left:1px solid var(--stroke);border-radius:14px 0 0 14px}td:last-child{border-right:1px solid var(--stroke);border-radius:0 14px 14px 0}.right{text-align:right}
+.timeline{display:grid;gap:14px}.step{display:grid;grid-template-columns:150px 1fr;gap:16px;padding:17px;border-radius:19px;background:rgba(255,255,255,.055);border:1px solid var(--stroke)}.step b{color:#fff}
+.big-status{display:flex;gap:18px;align-items:center}.status-icon{width:70px;height:70px;border-radius:20px;display:grid;place-items:center;background:linear-gradient(135deg,rgba(34,197,94,.2),rgba(56,189,248,.2));border:1px solid var(--stroke);font-size:32px;animation:pulse 2.3s ease-in-out infinite}
+.tooltip{position:fixed;pointer-events:none;background:#020617;color:#fff;border:1px solid rgba(255,255,255,.18);padding:10px 12px;border-radius:12px;font-size:12px;box-shadow:0 18px 40px rgba(0,0,0,.35);opacity:0;transform:translate(-50%,-120%);z-index:999;white-space:nowrap}
+svg{width:100%;height:100%;overflow:visible}.axis{stroke:rgba(255,255,255,.13)}.gridline{stroke:rgba(255,255,255,.065)}.line{fill:none;stroke-width:3.7;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1000;stroke-dashoffset:1000;animation:draw 1.7s ease forwards}.dot{cursor:pointer}.dot:hover{r:7}
+.bars{display:flex;align-items:flex-end;gap:11px;height:245px;padding:20px 5px 8px;border-bottom:1px solid rgba(255,255,255,.14)}.bar{flex:1;border-radius:12px 12px 4px 4px;min-height:4px;background:linear-gradient(180deg,var(--blue),var(--violet));height:0;animation:grow .95s ease forwards;cursor:pointer}.bar.alt{background:linear-gradient(180deg,#34d399,#38bdf8)}.bar.warnbar{background:linear-gradient(180deg,#fbbf24,#f97316)}.labels{display:flex;gap:11px;color:var(--muted);font-size:11px;margin-top:9px}.labels span{flex:1;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(18px)}}@keyframes draw{to{stroke-dashoffset:0}}@keyframes grow{to{height:var(--h)}}@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.06)}}
+@media(max-width:1000px){.grid4,.grid3,.grid2,.hero{grid-template-columns:1fr}.score{text-align:left}h1{font-size:32px}.wrap{padding:16px 14px 60px}}
+</style>
+</head>
+<body>
+<div class="tooltip" id="tooltip"></div>
+<div class="wrap">
+
+<header class="hero">
+  <div class="logoBox">
+    <img src="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wAARCAFAAUADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD5Eooor0jiCiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKBQB6B4P8C6Fqng3/hJNc8TnR4PtTW3NvvXcACOQc5PPbtVweDPhl3+KC/T7A1MOP8AhnJfX+3v/ZTXm1eLRpV8TKpL20opSaSSjsvWLZ31JU6SiuRO6T6/5np//CHfCsHDfFFvw056cvg34TE8/FOQD/sGv/hXnOkaXqWsXq2WlWFzfXLDIigjLtj1wO3vWvrngbxhodmbzVfDeo2tsPvStCSq/UjOPxq5YeUZKEsVK76e5f8A9JJVVNXVJW+f+Z2S+DPhFnn4qzY/7Bj/AOFTL4L+Df8AF8V7j/wWv/hXnz+FvEKeGR4mbSp/7GJA+2Agxgk7QDg8HPFJ4Y8L+IPE800Ph/Sp9RlgUNKkONyg9Dgmn9WnZy+syst/g/8AkRe1V7eyX4/5non/AAhXwYx/yVe5P/cNb/Crmi/Df4T6zq1tpWl/E+7ub26cRwxDTyC7HtkgCuA1r4d+N9F0ybU9W8N3tnZQgGSaXaFXJwO/rVn4IY/4W74Xz0/tFP61lUo1FRnVp4mTsn/I1ov8JUZxc1CVNK/r/mYHizTE0XxRqujxytMljeS26yMMFwjlckdicVmV0XxPwPiR4lA/6Ctz/wCjGrna9WhJzpRk92kck1aTQUUUVsQFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQB6Sf+Tchz/zHv8A2WvOIo2llSJBlnYKv1JwK9GBz+zoVx017r/wCvPtN/5CNr/12T/0IV5uXuyq/wCOR2YneHoj6xS00j4Q/C68u7K1Sa4t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NP1uS2W7mmusq9tvkZGt1WIqfKbJEgJA3x4POea83op8itYOc9PvL/4cLc6XqVuV+1/YvJu41R3iLfYDGWZGjUK/n7cbSwPLEireoa3oNraWMFmugahdJb6SbKxWwRCl0scRuGmmKhWRxvRgXPLDIXbmvJaKXJ5hznpmvX/gXSvEd14cFnLd6Lb2ywR3toInnE32gTsxY5DgD9ySD0XIyDg2NV8ReCn0PUItHitrbWnur+S0upLFWiEL3IaOLYU+Vmj4V/4ACuF3bh5XRT5A5z0D4n/8I/50djpb2FpJ5TapeLCBIBdT7M2iPHldsYBI52jLDrXn9FFNKyJbuFFFFUIKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooA//9k=" alt="ScaleUP">
+    <div>
+      <div class="eyebrow">ScaleUP · полная аналитика Wildberries</div>
+      <h1>ИП Игнатьева Г. Р. · IGAMA</h1>
+      <div class="subtitle">Период 13–26.07.2026. После восстановления товарного наличия кабинет перешёл к сильному росту: сформировано 145 заказов на 256 900 ₽, подтверждены товарные лидеры и накоплена база для дальнейшего масштабирования.</div>
+      <div class="pillRow">
+        <span class="pill">Заказы: <b>145 шт</b></span>
+        <span class="pill">Сумма заказов: <b>256 900 ₽</b></span>
+        <span class="pill">Продающих SKU: <b>6</b></span>
+        <span class="pill">Остатки: <b>1 031 шт / 1 269 417 ₽</b></span>
+      </div>
+    </div>
+  </div>
+  <div class="score">
+    <div class="big">×6,8</div>
+    <div class="label">рост суммы заказов<br>первой недели после поставки</div>
+  </div>
+</header>
+
+<nav class="tabs">
+  <button class="tab active" data-tab="overview">Итоги</button>
+  <button class="tab" data-tab="growth">Рост после поставки</button>
+  <button class="tab" data-tab="products">Товары</button>
+  <button class="tab" data-tab="funnel">Воронка</button>
+  <button class="tab" data-tab="stocks">Остатки</button>
+  <button class="tab" data-tab="geo">География</button>
+  <button class="tab" data-tab="ads">Реклама</button>
+  <button class="tab" data-tab="profit">Чистая прибыль</button>
+  <button class="tab" data-tab="next">Следующий этап</button>
+</nav>
+
+<section class="section active" id="overview">
+  <div class="grid4">
+    <div class="card kpi"><div class="title">Сумма заказов</div><div class="val good">256 900 ₽</div><div class="sub">сильный денежный результат за 14 дней</div></div>
+    <div class="card kpi"><div class="title">Заказы</div><div class="val">145 шт</div><div class="sub">все 6 SKU получили продажи</div></div>
+    <div class="card kpi"><div class="title">Выкуп по завершённым статусам</div><div class="val good">85.3%</div><div class="sub">87 выкупов и 15 отмен · свежие заказы ещё дозревают</div></div>
+    <div class="card kpi"><div class="title">Средний заказ</div><div class="val">1 772 ₽</div><div class="sub">во второй неделе вырос до 1 814 ₽</div></div>
+  </div>
+
+  <div class="grid2" style="margin-top:16px">
+    <div class="card"><h3>Заказы и сумма по дням</h3><div id="salesLine" class="chart"></div></div>
+    <div class="card"><h3>Товарные лидеры по выручке</h3><div id="productRevenue" class="chart"></div></div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <div class="big-status">
+      <div class="status-icon">↑</div>
+      <div>
+        <h3>Главный итог сопровождения</h3>
+        <div class="note success"><b>После поступления партии из Китая кабинет перешёл от дефицита к масштабированию.</b><br>В первую полную неделю после поставки заказы выросли с 12 до 77 шт, а сумма заказов — с 19 740 ₽ до 133 549 ₽. Во второй неделе сохранён высокий темп: ещё 68 заказов на 123 351 ₽ при росте среднего заказа.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid3" style="margin-top:16px">
+    <div class="card"><h3>Сильное товарное ядро</h3><div class="note success"><b>389870872, 158293481 и 158311067 дали 127 заказов.</b><br>Это 87,6% всех заказов периода и готовая база для управляемого рекламного масштабирования.</div></div>
+    <div class="card"><h3>Качество ассортимента</h3><div class="note"><b>Рейтинг ключевых карточек — 4,8–5,0.</b><br>Товары выдерживают активный трафик и сохраняют высокий уровень доверия покупателей.</div></div>
+    <div class="card"><h3>Запас для продолжения роста</h3><div class="note success"><b>На складах 1 031 единица товара.</b><br>Кабинет обеспечен наличием, поэтому следующий этап можно строить вокруг продаж, рекламы и региональной логистики.</div></div>
+  </div>
+</section>
+
+<section class="section" id="growth">
+  <h2>Рост после восстановления наличия</h2>
+  <div class="grid4">
+    <div class="card kpi"><div class="title">Рост заказов</div><div class="val good">+542%</div><div class="sub">12 → 77 заказов</div></div>
+    <div class="card kpi"><div class="title">Рост суммы</div><div class="val good">+577%</div><div class="sub">19 740 ₽ → 133 549 ₽</div></div>
+    <div class="card kpi"><div class="title">Рост трафика</div><div class="val">+166%</div><div class="sub">1 294 → 3 441 переход</div></div>
+    <div class="card kpi"><div class="title">Рост корзин</div><div class="val">+305%</div><div class="sub">136 → 551 корзина</div></div>
+  </div>
+  <div class="grid2" style="margin-top:16px">
+    <div class="card"><h3>Три недели: до и после поставки</h3><div id="weekRevenue" class="chart"></div></div>
+    <div class="card"><h3>Заказы по неделям</h3><div id="weekOrders" class="chart"></div></div>
+  </div>
+  <div class="card" style="margin-top:16px"><div class="note success"><b>Рост не был разовым всплеском.</b><br>После первой сильной недели кабинет сохранил 68 заказов и 123 351 ₽ во второй неделе, а средний заказ вырос на 5%. Это подтверждает устойчивый спрос после восстановления наличия.</div></div>
+</section>
+
+<section class="section" id="products">
+  <h2>Полная товарная аналитика</h2>
+  <div class="card">
+    <table>
+      <thead><tr><th>Артикул</th><th>Товар</th><th class="right">Переходы</th><th class="right">Корзины</th><th class="right">Избранное</th><th class="right">Заказы</th><th class="right">Сумма</th><th class="right">Остаток</th><th>Решение</th></tr></thead>
+      <tbody>
+    <tr>
+      <td><b>389870872</b><br><span class="muted">ПОДСАКСКЛАДНОЙ</span></td>
+      <td>Складной подсак для забродной и ходовой рыбалки<br><span class="muted">Подсачники · рейтинг 4.9</span></td>
+      <td class="right">2 729</td>
+      <td class="right">289<br><span class="muted">10.6%</span></td>
+      <td class="right">85</td>
+      <td class="right"><b>57</b></td>
+      <td class="right">168 720 ₽</td>
+      <td class="right">93 шт<br><span class="muted">275 280 ₽</span></td>
+      <td>Главный денежный лидер: 57 заказов и 168 720 ₽. Сохранять в рекламном и товарном ядре, поддерживать наличие.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>158293481</b><br><span class="muted">Блесна тейл</span></td>
+      <td>Набор блесен для рыбалки тейл спиннер 5 шт<br><span class="muted">Блесны рыболовные · рейтинг 4.8</span></td>
+      <td class="right">1 454</td>
+      <td class="right">292<br><span class="muted">20.1%</span></td>
+      <td class="right">42</td>
+      <td class="right"><b>42</b></td>
+      <td class="right">44 058 ₽</td>
+      <td class="right">356 шт<br><span class="muted">373 550 ₽</span></td>
+      <td>Сильная конверсия в корзину и 42 заказа. Масштабировать аккуратно, контролируя оборачиваемость крупного запаса.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>158311067</b><br><span class="muted">Приманки силиконовые 65мм</span></td>
+      <td>Силиконовые рыболовные приманки для хищной рыбы<br><span class="muted">Приманки мягкие · рейтинг 4.9</span></td>
+      <td class="right">1 178</td>
+      <td class="right">240<br><span class="muted">20.4%</span></td>
+      <td class="right">34</td>
+      <td class="right"><b>28</b></td>
+      <td class="right">25 227 ₽</td>
+      <td class="right">127 шт<br><span class="muted">114 415 ₽</span></td>
+      <td>28 заказов после восстановления наличия. Товар подтвердил спрос и подходит для дальнейшего системного продвижения.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>648381505</b><br><span class="muted">Раттлин на судака</span></td>
+      <td>Набор блесен раттлин-вибы на щуку и судака<br><span class="muted">Раттлины · рейтинг 5.0</span></td>
+      <td class="right">519</td>
+      <td class="right">77<br><span class="muted">14.8%</span></td>
+      <td class="right">11</td>
+      <td class="right"><b>11</b></td>
+      <td class="right">11 000 ₽</td>
+      <td class="right">119 шт<br><span class="muted">118 972 ₽</span></td>
+      <td>Стабильный дополнительный SKU с рейтингом 5,0. Поддерживать точечную рекламу и улучшать первый экран карточки.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>291136708</b><br><span class="muted">Набор балансиров</span></td>
+      <td>Набор балансиров для зимней рыбалки<br><span class="muted">Балансиры рыболовные · рейтинг 4.8</span></td>
+      <td class="right">293</td>
+      <td class="right">46<br><span class="muted">15.7%</span></td>
+      <td class="right">9</td>
+      <td class="right"><b>4</b></td>
+      <td class="right">5 060 ₽</td>
+      <td class="right">325 шт<br><span class="muted">376 805 ₽</span></td>
+      <td>Большой товарный запас и первые продажи уже получены. Основная точка роста — контент, сезонный оффер и экономное продвижение.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>195517926</b><br><span class="muted">Ратлины</span></td>
+      <td>Набор блесен раттлин-вибы на щуку<br><span class="muted">Блесны рыболовные · рейтинг 4.6</span></td>
+      <td class="right">423</td>
+      <td class="right">35<br><span class="muted">8.3%</span></td>
+      <td class="right">2</td>
+      <td class="right"><b>3</b></td>
+      <td class="right">2 835 ₽</td>
+      <td class="right">11 шт<br><span class="muted">10 395 ₽</span></td>
+      <td>Товар получает заказы и дополняет ассортимент. Поддерживать органику без резкого увеличения бюджета.</td>
+    </tr>
+    </tbody>
+    </table>
+  </div>
+  <div class="grid2" style="margin-top:16px">
+    <div class="card"><h3>Заказы по SKU</h3><div id="productOrders" class="chart"></div></div>
+    <div class="card"><h3>Покупательский интерес</h3><div id="productInterest" class="chart"></div></div>
+  </div>
+</section>
+
+<section class="section" id="funnel">
+  <h2>Воронка продаж</h2>
+  <div class="grid4">
+    <div class="card kpi"><div class="title">Переходы</div><div class="val">6 596</div><div class="sub">широкий верх воронки</div></div>
+    <div class="card kpi"><div class="title">Корзины</div><div class="val">979</div><div class="sub">конверсия 14.8%</div></div>
+    <div class="card kpi"><div class="title">Заказы</div><div class="val good">145</div><div class="sub">14.8% из корзины</div></div>
+    <div class="card kpi"><div class="title">Выкупы</div><div class="val">87</div><div class="sub">зафиксированы на дату отчёта</div></div>
+  </div>
+  <div class="grid2" style="margin-top:16px">
+    <div class="card"><h3>Переходы → корзины → заказы</h3><div id="funnelBars" class="chart"></div></div>
+    <div class="card"><h3>Трафик и корзины по дням</h3><div id="trafficLine" class="chart"></div></div>
+  </div>
+  <div class="card" style="margin-top:16px"><div class="note"><b>Воронка уже доказала способность масштабироваться.</b><br>Следующий резерв — увеличить конверсию карточек с крупным запасом, прежде всего 291136708 и 195517926, не увеличивая бюджет пропорционально трафику.</div></div>
+</section>
+
+<section class="section" id="stocks">
+  <h2>Остатки и капитал в товаре</h2>
+  <div class="grid4">
+    <div class="card kpi"><div class="title">Общий остаток</div><div class="val">1 031 шт</div><div class="sub">1 269 417 ₽ в товаре</div></div>
+    <div class="card kpi"><div class="title">Главный запас</div><div class="val">158293481</div><div class="sub">356 шт · 42 заказа</div></div>
+    <div class="card kpi"><div class="title">Денежный лидер</div><div class="val good">389870872</div><div class="sub">57 заказов при остатке 93 шт</div></div>
+    <div class="card kpi"><div class="title">В пути к клиентам</div><div class="val">37 шт</div><div class="sub">уже сформированные отправления</div></div>
+  </div>
+  <div class="grid2" style="margin-top:16px">
+    <div class="card"><h3>История общего остатка</h3><div id="stockLine" class="chart"></div></div>
+    <div class="card"><h3>Остатки по складам</h3><div id="warehouseBars" class="chart"></div></div>
+  </div>
+  <div class="card" style="margin-top:16px">
+    <table>
+      <thead><tr><th>Артикул</th><th class="right">Остаток</th><th class="right">Стоимость</th><th class="right">Заказы</th><th>Действие</th></tr></thead>
+      <tbody>
+    <tr>
+      <td><b>291136708</b><br><span class="muted">Набор балансиров</span></td>
+      <td class="right">325 шт</td>
+      <td class="right">376 805 ₽</td>
+      <td class="right">4</td>
+      <td>Сначала доработать оффер и сезонное позиционирование, затем увеличивать бюджет.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>158293481</b><br><span class="muted">Блесна тейл</span></td>
+      <td class="right">356 шт</td>
+      <td class="right">373 550 ₽</td>
+      <td class="right">42</td>
+      <td>Продолжать масштабирование: высокий объём продаж подтверждён.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>389870872</b><br><span class="muted">ПОДСАКСКЛАДНОЙ</span></td>
+      <td class="right">93 шт</td>
+      <td class="right">275 280 ₽</td>
+      <td class="right">57</td>
+      <td>Продолжать масштабирование: высокий объём продаж подтверждён.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>648381505</b><br><span class="muted">Раттлин на судака</span></td>
+      <td class="right">119 шт</td>
+      <td class="right">118 972 ₽</td>
+      <td class="right">11</td>
+      <td>Точечно усиливать продажи и следить за оборачиваемостью.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>158311067</b><br><span class="muted">Приманки силиконовые 65мм</span></td>
+      <td class="right">127 шт</td>
+      <td class="right">114 415 ₽</td>
+      <td class="right">28</td>
+      <td>Продолжать масштабирование: высокий объём продаж подтверждён.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>195517926</b><br><span class="muted">Ратлины</span></td>
+      <td class="right">11 шт</td>
+      <td class="right">10 395 ₽</td>
+      <td class="right">3</td>
+      <td>Сначала доработать оффер и сезонное позиционирование, затем увеличивать бюджет.</td>
+    </tr>
+    </tbody>
+    </table>
+  </div>
+  <div class="card" style="margin-top:16px">
+    <table>
+      <thead><tr><th>Склад</th><th class="right">Остаток</th><th class="right">Стоимость</th><th>Оборачиваемость</th><th>Решение</th></tr></thead>
+      <tbody>
+    <tr>
+      <td><b>Тула</b><br><span class="muted">Центральный</span></td>
+      <td class="right">222 шт</td>
+      <td class="right">250 056 ₽</td>
+      <td>40д 21ч</td>
+      <td>Рабочий склад с лучшей оборачиваемостью. Поддерживать наличие без перегруза.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>Владимир WB</b><br><span class="muted">Центральный</span></td>
+      <td class="right">128 шт</td>
+      <td class="right">132 130 ₽</td>
+      <td>100д 19ч</td>
+      <td>Поддерживать текущую схему и контролировать скорость продаж.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>Коледино</b><br><span class="muted">Центральный</span></td>
+      <td class="right">100 шт</td>
+      <td class="right">125 915 ₽</td>
+      <td>914д 16ч</td>
+      <td>Новый крупный объём не добавлять. Сначала активировать и продать текущий остаток.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>Электросталь</b><br><span class="muted">Центральный</span></td>
+      <td class="right">34 шт</td>
+      <td class="right">43 010 ₽</td>
+      <td>>999д</td>
+      <td>Новый крупный объём не добавлять. Сначала активировать и продать текущий остаток.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>Рязань (Тюшевское)</b><br><span class="muted">Центральный</span></td>
+      <td class="right">1 шт</td>
+      <td class="right">1 265 ₽</td>
+      <td>>999д</td>
+      <td>Поддерживать текущую схему и контролировать скорость продаж.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>Екатеринбург - Перспективная 14</b><br><span class="muted">Уральский</span></td>
+      <td class="right">324 шт</td>
+      <td class="right">503 031 ₽</td>
+      <td>81д 23ч</td>
+      <td>Крупный стратегический запас. Продолжать продажи и не увеличивать поставку до снижения остатка.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>Невинномысск</b><br><span class="muted">Южный и Северо-Кавказский</span></td>
+      <td class="right">172 шт</td>
+      <td class="right">171 970 ₽</td>
+      <td>>999д</td>
+      <td>Новый крупный объём не добавлять. Сначала активировать и продать текущий остаток.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>Краснодар</b><br><span class="muted">Южный и Северо-Кавказский</span></td>
+      <td class="right">1 шт</td>
+      <td class="right">1 000 ₽</td>
+      <td>>999д</td>
+      <td>Поддерживать текущую схему и контролировать скорость продаж.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>Казань</b><br><span class="muted">Приволжский</span></td>
+      <td class="right">47 шт</td>
+      <td class="right">38 775 ₽</td>
+      <td>>999д</td>
+      <td>Новый крупный объём не добавлять. Сначала активировать и продать текущий остаток.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>Сарапул WB</b><br><span class="muted">Приволжский</span></td>
+      <td class="right">1 шт</td>
+      <td class="right">1 265 ₽</td>
+      <td>>999д</td>
+      <td>Поддерживать текущую схему и контролировать скорость продаж.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>Новосемейкино</b><br><span class="muted">Приволжский</span></td>
+      <td class="right">1 шт</td>
+      <td class="right">1 000 ₽</td>
+      <td>>999д</td>
+      <td>Поддерживать текущую схему и контролировать скорость продаж.</td>
+    </tr>
+    </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="section" id="geo">
+  <h2>География заказов</h2>
+  <div class="grid2">
+    <div class="card"><h3>Доля заказов по регионам</h3><div id="geoBars" class="chart"></div></div>
+    <div class="card"><h3>Логистический результат</h3><div class="note success"><b>Центр и Урал уже работают с высокой локальностью.</b><br>Центральный регион: 97,4% локальных заказов и доставка 1д 13ч. Урал: 81,3% локальности и доставка 1д 23ч. Это сильная база для стабильного выкупа.</div></div>
+  </div>
+  <div class="card" style="margin-top:16px">
+    <table>
+      <thead><tr><th>Регион</th><th class="right">Доля заказов</th><th class="right">Локальность</th><th>Доставка</th><th>Следующий резерв</th></tr></thead>
+      <tbody>
+    <tr>
+      <td><b>Центральный</b></td>
+      <td class="right">26.9%</td>
+      <td class="right">97.4%</td>
+      <td>1д 13ч</td>
+      <td>Сильная локальность и быстрая доставка — сохранять текущую схему.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>Уральский</b></td>
+      <td class="right">11.0%</td>
+      <td class="right">81.3%</td>
+      <td>1д 23ч</td>
+      <td>Сильная локальность и быстрая доставка — сохранять текущую схему.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>Беларусь</b></td>
+      <td class="right">4.8%</td>
+      <td class="right">0.0%</td>
+      <td>2д 2ч</td>
+      <td>Поддерживать продажи и тестировать распределение только по подтверждённым лидерам.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>Казахстан</b></td>
+      <td class="right">2.1%</td>
+      <td class="right">0.0%</td>
+      <td>4д 4ч</td>
+      <td>Поддерживать продажи и тестировать распределение только по подтверждённым лидерам.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>Дальневосточный и Сибирский</b></td>
+      <td class="right">13.8%</td>
+      <td class="right">0.0%</td>
+      <td>4д 8ч</td>
+      <td>Крупная доля спроса. Следующий резерв роста — небольшая локальная поставка ходовых SKU.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>Приволжский</b></td>
+      <td class="right">17.9%</td>
+      <td class="right">0.0%</td>
+      <td>2д 4ч</td>
+      <td>Крупная доля спроса. Следующий резерв роста — небольшая локальная поставка ходовых SKU.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>Северо-Западный</b></td>
+      <td class="right">14.5%</td>
+      <td class="right">0.0%</td>
+      <td>2д 9ч</td>
+      <td>Крупная доля спроса. Следующий резерв роста — небольшая локальная поставка ходовых SKU.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>Южный и Северо-Кавказский</b></td>
+      <td class="right">9.0%</td>
+      <td class="right">0.0%</td>
+      <td>2д 5ч</td>
+      <td>Поддерживать продажи и тестировать распределение только по подтверждённым лидерам.</td>
+    </tr>
+    </tbody>
+    </table>
+  </div>
+</section>
+
+
+
+<section class="section" id="ads">
+  <h2>Реклама и рост органики</h2>
+
+  <div class="grid4">
+    <div class="card kpi">
+      <div class="title">Фактические расходы</div>
+      <div class="val">30 393,20 ₽</div>
+      <div class="sub">по предоставленному срезу рекламного кабинета</div>
+    </div>
+    <div class="card kpi">
+      <div class="title">Заказы из рекламы</div>
+      <div class="val good">111</div>
+      <div class="sub">основной вклад дали три товарных лидера</div>
+    </div>
+    <div class="card kpi">
+      <div class="title">Средняя стоимость заказа</div>
+      <div class="val">273,81 ₽</div>
+      <div class="sub">по кампаниям, где зафиксированы заказы</div>
+    </div>
+    <div class="card kpi">
+      <div class="title">Средний CTR</div>
+      <div class="val blue">2.69%</div>
+      <div class="sub">172 487 показов в рекламном срезе</div>
+    </div>
+  </div>
+
+  <div class="grid2" style="margin-top:16px">
+    <div class="card"><h3>Заказы из рекламы по артикулам</h3><div id="actualAdOrdersBars" class="chart"></div></div>
+    <div class="card"><h3>Расходы по артикулам</h3><div id="actualAdSpendBars" class="chart"></div></div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <div class="note success">
+      <b>Рекламный расход удержан в пределах unit-экономики.</b><br>
+      Фактический срез составил 30 393,20 ₽ при расчётном лимите 30 829,19 ₽.
+      Запас относительно лимита — 435,99 ₽. Кампании сформировали 111 заказов,
+      а основную часть результата дали 389870872, 158293481 и 158311067.
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h3>Результат по артикулам</h3>
+    <table>
+      <thead><tr><th>Артикул</th><th class="right">Расход</th><th class="right">Показы</th><th class="right">Заказы</th><th class="right">Стоимость заказа</th><th>Решение</th></tr></thead>
+      <tbody>
+    <tr>
+      <td><b>389870872</b></td>
+      <td class="right">8 535,30 ₽</td>
+      <td class="right">54 066</td>
+      <td class="right"><b>49</b></td>
+      <td class="right">174,19 ₽</td>
+      <td>Лидер рекламного результата. Сохранять активную кампанию и масштабировать постепенно.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>158293481</b></td>
+      <td class="right">8 191,85 ₽</td>
+      <td class="right">51 231</td>
+      <td class="right"><b>30</b></td>
+      <td class="right">273,06 ₽</td>
+      <td>Сильный объём заказов. Новая CPC-кампания от 28.07 собирает статистику — оценить через 3–5 дней.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>158311067</b></td>
+      <td class="right">6 421,96 ₽</td>
+      <td class="right">30 539</td>
+      <td class="right"><b>22</b></td>
+      <td class="right">291,91 ₽</td>
+      <td>Рабочая CPC-кампания с устойчивым CTR и 22 заказами. Поддерживать.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>648381505</b></td>
+      <td class="right">2 570,33 ₽</td>
+      <td class="right">16 051</td>
+      <td class="right"><b>5</b></td>
+      <td class="right">514,07 ₽</td>
+      <td>CPC оставить основным форматом; старую CPM-кампанию сохранять на паузе.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>291136708</b></td>
+      <td class="right">3 641,91 ₽</td>
+      <td class="right">14 988</td>
+      <td class="right"><b>4</b></td>
+      <td class="right">910,48 ₽</td>
+      <td>CPC уже формирует заказы. Следующий шаг — улучшение карточки и точечная настройка ставок.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>195517926</b></td>
+      <td class="right">1 031,85 ₽</td>
+      <td class="right">5 612</td>
+      <td class="right"><b>1</b></td>
+      <td class="right">1 031,85 ₽</td>
+      <td>При ограниченном остатке достаточно органического трафика и аккуратной поддержки.</td>
+    </tr>
+    </tbody>
+    </table>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h3>Кампании рекламного кабинета</h3>
+    <table>
+      <thead><tr><th>Кампания</th><th>Тип</th><th>Статус</th><th class="right">Расход</th><th class="right">Показы</th><th class="right">CTR</th><th class="right">Заказы</th><th>Действие</th></tr></thead>
+      <tbody>
+    <tr>
+      <td><b>158293481 от 28.07.2026</b><br><span class="muted">арт. 158293481</span></td>
+      <td>CPC</td>
+      <td><span class="tag green">Активна</span></td>
+      <td class="right">0,00 ₽</td>
+      <td class="right">—</td>
+      <td class="right">—</td>
+      <td class="right"><b>0</b></td>
+      <td>Новая кампания: собрать статистику и оценить результат через 3–5 дней.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>291136708 рек.полки от 03.07.2026</b><br><span class="muted">арт. 291136708</span></td>
+      <td>CPM</td>
+      <td><span class="tag ">На паузе</span></td>
+      <td class="right">1 796,41 ₽</td>
+      <td class="right">11 027</td>
+      <td class="right">1.16%</td>
+      <td class="right"><b>1</b></td>
+      <td>Исторические данные сохранены; текущую паузу оставить.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>291136708 рекомендации СЧ + поиск</b><br><span class="muted">арт. 291136708</span></td>
+      <td>CPM</td>
+      <td><span class="tag ">На паузе</span></td>
+      <td class="right">0,50 ₽</td>
+      <td class="right">1</td>
+      <td class="right">—</td>
+      <td class="right"><b>0</b></td>
+      <td>Оставить на паузе без дополнительного бюджета.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>195517926 полки от 19.06.2026</b><br><span class="muted">арт. 195517926</span></td>
+      <td>CPM</td>
+      <td><span class="tag ">На паузе</span></td>
+      <td class="right">1 031,85 ₽</td>
+      <td class="right">5 612</td>
+      <td class="right">2.19%</td>
+      <td class="right"><b>1</b></td>
+      <td>Исторические данные сохранены; текущую паузу оставить.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>648381505 клик от 19.06.2026</b><br><span class="muted">арт. 648381505</span></td>
+      <td>CPC</td>
+      <td><span class="tag green">Активна</span></td>
+      <td class="right">1 546,30 ₽</td>
+      <td class="right">9 495</td>
+      <td class="right">1.52%</td>
+      <td class="right"><b>4</b></td>
+      <td>Продолжать под контролем стоимости заказа и динамики конверсии.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>291136708 клик от 07.06.2026</b><br><span class="muted">арт. 291136708</span></td>
+      <td>CPC</td>
+      <td><span class="tag green">Активна</span></td>
+      <td class="right">1 845,00 ₽</td>
+      <td class="right">3 960</td>
+      <td class="right">2.68%</td>
+      <td class="right"><b>3</b></td>
+      <td>Продолжать под контролем стоимости заказа и динамики конверсии.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>648381505 от 07.06.2026</b><br><span class="muted">арт. 648381505</span></td>
+      <td>CPM</td>
+      <td><span class="tag ">На паузе</span></td>
+      <td class="right">1 024,03 ₽</td>
+      <td class="right">6 556</td>
+      <td class="right">1.46%</td>
+      <td class="right"><b>1</b></td>
+      <td>Исторические данные сохранены; текущую паузу оставить.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>158293481 полки</b><br><span class="muted">арт. 158293481</span></td>
+      <td>CPM</td>
+      <td><span class="tag ">На паузе</span></td>
+      <td class="right">8 191,85 ₽</td>
+      <td class="right">51 231</td>
+      <td class="right">2.06%</td>
+      <td class="right"><b>30</b></td>
+      <td>Исторические данные сохранены; текущую паузу оставить.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>полки 158311067, после клика</b><br><span class="muted">арт. 158311067</span></td>
+      <td>CPM</td>
+      <td><span class="tag ">На паузе</span></td>
+      <td class="right">0,16 ₽</td>
+      <td class="right">1</td>
+      <td class="right">—</td>
+      <td class="right"><b>0</b></td>
+      <td>Оставить на паузе без дополнительного бюджета.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>158311067 клик от 02.05.2026</b><br><span class="muted">арт. 158311067</span></td>
+      <td>CPC</td>
+      <td><span class="tag green">Активна</span></td>
+      <td class="right">6 421,80 ₽</td>
+      <td class="right">30 538</td>
+      <td class="right">2.89%</td>
+      <td class="right"><b>22</b></td>
+      <td>Продолжать под контролем стоимости заказа и динамики конверсии.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>389870872 полки от 29.04.2026</b><br><span class="muted">арт. 389870872</span></td>
+      <td>CPM</td>
+      <td><span class="tag green">Активна</span></td>
+      <td class="right">8 534,90 ₽</td>
+      <td class="right">54 064</td>
+      <td class="right">3.90%</td>
+      <td class="right"><b>49</b></td>
+      <td>Продолжать под контролем стоимости заказа и динамики конверсии.</td>
+    </tr>
+    
+
+    <tr>
+      <td><b>полки от 29.04.2026</b><br><span class="muted">арт. 389870872</span></td>
+      <td>CPM</td>
+      <td><span class="tag ">На паузе</span></td>
+      <td class="right">0,40 ₽</td>
+      <td class="right">2</td>
+      <td class="right">—</td>
+      <td class="right"><b>0</b></td>
+      <td>Оставить на паузе без дополнительного бюджета.</td>
+    </tr>
+    </tbody>
+    </table>
+  </div>
+
+  <div class="grid3" style="margin-top:16px">
+    <div class="card"><h3>389870872</h3><div class="note success"><b>49 рекламных заказов.</b><br>CTR 3,9% и лучшая стоимость заказа в рекламном ядре. Сохранять как главный источник оборота.</div></div>
+    <div class="card"><h3>158293481</h3><div class="note success"><b>30 рекламных заказов.</b><br>Новая CPC-кампания уже запущена. После накопления статистики можно перераспределить в неё часть бюджета.</div></div>
+    <div class="card"><h3>158311067</h3><div class="note success"><b>22 рекламных заказа.</b><br>CTR 2,89% и сильная unit-экономика. Поддерживать поиск и постепенно расширять запросы.</div></div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <div class="note">
+      <b>Рост органики:</b> усиливать SEO карточек, поисковые кампании, рекомендации, купоны,
+      внешние переходы и сбор реальных отзывов. Это позволяет закреплять позиции без резких изменений бюджета.
+    </div>
+  </div>
+</section>
+
+
+<section class="section" id="profit">
+  <h2>Чистая прибыль по FBO</h2>
+
+  <div class="grid4">
+    <div class="card kpi">
+      <div class="title">Расчётная прибыль по заказам</div>
+      <div class="val good">67 542,27 ₽</div>
+      <div class="sub">с учётом фактического рекламного расхода</div>
+    </div>
+    <div class="card kpi">
+      <div class="title">Консервативно подтверждено</div>
+      <div class="val">26 347,34 ₽</div>
+      <div class="sub">по текущим выкупам с полным рекламным расходом периода</div>
+    </div>
+    <div class="card kpi">
+      <div class="title">Маржинальность модели</div>
+      <div class="val blue">26.3%</div>
+      <div class="sub">после себестоимости, комиссии, логистики, налога и рекламы</div>
+    </div>
+    <div class="card kpi">
+      <div class="title">Реклама</div>
+      <div class="val">30 393,20 ₽</div>
+      <div class="sub">фактический срез рекламного кабинета</div>
+    </div>
+  </div>
+
+  <div class="grid2" style="margin-top:16px">
+    <div class="card"><h3>Финансовая модель</h3><div id="profitActualBars" class="chart"></div></div>
+    <div class="card"><h3>Как сформирован результат</h3>
+      <div class="note success">
+        <b>Прибыль пересчитана с фактической рекламой.</b><br>
+        В основе — unit-экономика листа «WB FBO»: себестоимость, комиссия WB, логистика,
+        эквайринг и налог. Вместо плановых 12% продвижения подставлен фактический расход 30 393,20 ₽.
+      </div>
+    </div>
+  </div>
+
+  <div class="grid2" style="margin-top:16px">
+    <div class="card">
+      <h3>Модель по всем заказам</h3>
+      <div class="note success">
+        До рекламы товарная модель формирует 97 935,47 ₽.
+        После фактического рекламного расхода расчётный результат составляет <b>67 542,27 ₽</b>.
+      </div>
+    </div>
+    <div class="card">
+      <h3>Подтверждённый контур</h3>
+      <div class="note">
+        По текущим выкупам и при консервативном учёте всего рекламного расхода подтверждается
+        <b>26 347,34 ₽</b>. Свежие заказы продолжают переходить в выкупы.
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <div class="note warn">
+      <b>Методика:</b> рекламные данные взяты из предоставленного среза кабинета.
+      Для финального закрытия месяца показатель сверяется с финансовым отчётом WB и фактическими выкупами.
+    </div>
+  </div>
+</section>
+
+<section class="section" id="next">
+  <h2>Почему целесообразно продолжить сопровождение</h2>
+  <div class="timeline">
+    <div class="step"><b>Рост</b><div><b>После поставки кабинет увеличил недельную сумму заказов почти в 7 раз.</b><br><span class="muted">Результат сохранён и во второй неделе, поэтому есть подтверждённая база для дальнейшего масштабирования.</span></div></div>
+    <div class="step"><b>Лидеры</b><div><b>Три SKU уже сформировали устойчивое товарное ядро.</b><br><span class="muted">389870872, 158293481 и 158311067 можно развивать через управляемые ставки, контент и региональное наличие.</span></div></div>
+    <div class="step"><b>Запасы</b><div><b>Товар есть, но 1,27 млн ₽ требуют активного управления.</b><br><span class="muted">Продолжение сопровождения позволит ускорять продажи без новых избыточных поставок и снижать капитал в медленных остатках.</span></div></div>
+    <div class="step"><b>Регионы</b><div><b>62% спроса формируется вне локальных регионов.</b><br><span class="muted">Приволжье, Северо-Запад, Сибирь и Юг дают существенную долю заказов. Небольшие региональные поставки ходовых SKU способны сократить доставку.</span></div></div>
+    <div class="step"><b>Реклама</b><div><b>Следующий этап — управлять рекламой по фактической эффективности SKU.</b><br><span class="muted">Лидеры масштабируются, товары с крупным запасом получают отдельную стратегию, слабые кампании не расходуют бюджет без подтверждённой конверсии.</span></div></div>
+    <div class="step"><b>Финансы</b><div><b>Unit-экономика уже подключена к аналитике.</b><br><span class="muted">Еженедельно фиксировать прибыль по выкупам, рекламный лимит на заказ и вклад каждого SKU в общий результат.</span></div></div>
+  </div>
+  <div class="card" style="margin-top:16px">
+    <div class="note success"><b>Итог ScaleUP:</b><br>Кабинет перешёл в новую фазу: наличие восстановлено, продажи масштабировались, товарные лидеры определены, а высокий рейтинг карточек поддерживает дальнейший рост. Продолжение сопровождения позволит не просто сохранять оборот, а управлять рекламой, оборачиваемостью и региональной логистикой на основе точных еженедельных данных.</div>
+  </div>
+</section>
+
+</div>
+<script>
+const DATA={"daily": [{"date": "13.07", "visits": 458, "cart": 90, "favorites": 9, "orders": 10, "buyouts": 9, "cancelled": 1, "revenue": 11808, "buyoutRevenue": 10907}, {"date": "14.07", "visits": 543, "cart": 125, "favorites": 18, "orders": 18, "buyouts": 13, "cancelled": 3, "revenue": 31514, "buyoutRevenue": 22644}, {"date": "15.07", "visits": 544, "cart": 51, "favorites": 11, "orders": 11, "buyouts": 7, "cancelled": 2, "revenue": 22457, "buyoutRevenue": 12528}, {"date": "16.07", "visits": 429, "cart": 58, "favorites": 17, "orders": 6, "buyouts": 6, "cancelled": 0, "revenue": 7712, "buyoutRevenue": 7712}, {"date": "17.07", "visits": 505, "cart": 85, "favorites": 18, "orders": 15, "buyouts": 8, "cancelled": 4, "revenue": 28928, "buyoutRevenue": 16104}, {"date": "18.07", "visits": 482, "cart": 80, "favorites": 14, "orders": 9, "buyouts": 8, "cancelled": 1, "revenue": 15242, "buyoutRevenue": 13977}, {"date": "19.07", "visits": 480, "cart": 62, "favorites": 12, "orders": 8, "buyouts": 8, "cancelled": 0, "revenue": 15888, "buyoutRevenue": 15888}, {"date": "20.07", "visits": 351, "cart": 52, "favorites": 11, "orders": 9, "buyouts": 8, "cancelled": 1, "revenue": 11106, "buyoutRevenue": 10106}, {"date": "21.07", "visits": 327, "cart": 48, "favorites": 12, "orders": 10, "buyouts": 8, "cancelled": 2, "revenue": 17740, "buyoutRevenue": 11820}, {"date": "22.07", "visits": 540, "cart": 75, "favorites": 16, "orders": 13, "buyouts": 6, "cancelled": 1, "revenue": 30639, "buyoutRevenue": 15800}, {"date": "23.07", "visits": 489, "cart": 49, "favorites": 16, "orders": 8, "buyouts": 3, "cancelled": 0, "revenue": 15888, "buyoutRevenue": 6969}, {"date": "24.07", "visits": 491, "cart": 74, "favorites": 6, "orders": 10, "buyouts": 3, "cancelled": 0, "revenue": 16341, "buyoutRevenue": 4960}, {"date": "25.07", "visits": 460, "cart": 62, "favorites": 8, "orders": 8, "buyouts": 0, "cancelled": 0, "revenue": 13879, "buyoutRevenue": 0}, {"date": "26.07", "visits": 497, "cart": 68, "favorites": 15, "orders": 10, "buyouts": 0, "cancelled": 0, "revenue": 17758, "buyoutRevenue": 0}], "products": [{"art": 389870872, "seller": "ПОДСАКСКЛАДНОЙ", "name": "Складной подсак для забродной и ходовой рыбалки", "subject": "Подсачники", "rating": 4.9, "visits": 2729, "cart": 289, "favorites": 85, "orders": 57, "buyouts": 32, "cancelled": 5, "revenue": 168720, "buyoutRevenue": 94720, "stock": 93, "stockValue": 275280, "toCustomer": 15, "fromCustomer": 4, "cartCR": 10.6, "orderFromCart": 19.7, "buyoutRate": 56.1}, {"art": 158293481, "seller": "Блесна тейл", "name": "Набор блесен для рыбалки тейл спиннер 5 шт", "subject": "Блесны рыболовные", "rating": 4.8, "visits": 1454, "cart": 292, "favorites": 42, "orders": 42, "buyouts": 27, "cancelled": 2, "revenue": 44058, "buyoutRevenue": 28323, "stock": 356, "stockValue": 373550, "toCustomer": 14, "fromCustomer": 1, "cartCR": 20.1, "orderFromCart": 14.4, "buyoutRate": 64.3}, {"art": 158311067, "seller": "Приманки силиконовые 65мм", "name": "Силиконовые рыболовные приманки для хищной рыбы", "subject": "Приманки мягкие", "rating": 4.9, "visits": 1178, "cart": 240, "favorites": 34, "orders": 28, "buyouts": 18, "cancelled": 4, "revenue": 25227, "buyoutRevenue": 16217, "stock": 127, "stockValue": 114415, "toCustomer": 3, "fromCustomer": 3, "cartCR": 20.4, "orderFromCart": 11.7, "buyoutRate": 64.3}, {"art": 648381505, "seller": "Раттлин на судака", "name": "Набор блесен раттлин-вибы на щуку и судака", "subject": "Раттлины", "rating": 5.0, "visits": 519, "cart": 77, "favorites": 11, "orders": 11, "buyouts": 7, "cancelled": 2, "revenue": 11000, "buyoutRevenue": 7000, "stock": 119, "stockValue": 118972, "toCustomer": 3, "fromCustomer": 2, "cartCR": 14.8, "orderFromCart": 14.3, "buyoutRate": 63.6}, {"art": 291136708, "seller": "Набор балансиров", "name": "Набор балансиров для зимней рыбалки", "subject": "Балансиры рыболовные", "rating": 4.8, "visits": 293, "cart": 46, "favorites": 9, "orders": 4, "buyouts": 1, "cancelled": 1, "revenue": 5060, "buyoutRevenue": 1265, "stock": 325, "stockValue": 376805, "toCustomer": 2, "fromCustomer": 0, "cartCR": 15.7, "orderFromCart": 8.7, "buyoutRate": 25.0}, {"art": 195517926, "seller": "Ратлины", "name": "Набор блесен раттлин-вибы на щуку", "subject": "Блесны рыболовные", "rating": 4.6, "visits": 423, "cart": 35, "favorites": 2, "orders": 3, "buyouts": 2, "cancelled": 1, "revenue": 2835, "buyoutRevenue": 1890, "stock": 11, "stockValue": 10395, "toCustomer": 0, "fromCustomer": 0, "cartCR": 8.3, "orderFromCart": 8.6, "buyoutRate": 66.7}], "stockTimeline": [{"date": "13.07", "stock": 601}, {"date": "14.07", "stock": 732}, {"date": "15.07", "stock": 968}, {"date": "16.07", "stock": 963}, {"date": "17.07", "stock": 954}, {"date": "18.07", "stock": 913}, {"date": "19.07", "stock": 1052}, {"date": "20.07", "stock": 1047}, {"date": "21.07", "stock": 1071}, {"date": "22.07", "stock": 1062}, {"date": "23.07", "stock": 1052}, {"date": "24.07", "stock": 1047}, {"date": "25.07", "stock": 1040}, {"date": "26.07", "stock": 1038}], "warehouses": [{"region": "Центральный", "warehouse": "Тула", "stock": 222, "value": 250056, "turnover": "40д 21ч", "toCustomer": 4, "fromCustomer": 0}, {"region": "Центральный", "warehouse": "Владимир WB", "stock": 128, "value": 132130, "turnover": "100д 19ч", "toCustomer": 2, "fromCustomer": 1}, {"region": "Центральный", "warehouse": "Коледино", "stock": 100, "value": 125915, "turnover": "914д 16ч", "toCustomer": 2, "fromCustomer": 0}, {"region": "Центральный", "warehouse": "Электросталь", "stock": 34, "value": 43010, "turnover": ">999д", "toCustomer": 0, "fromCustomer": 0}, {"region": "Центральный", "warehouse": "Рязань (Тюшевское)", "stock": 1, "value": 1265, "turnover": ">999д", "toCustomer": 1, "fromCustomer": 0}, {"region": "Уральский", "warehouse": "Екатеринбург - Перспективная 14", "stock": 324, "value": 503031, "turnover": "81д 23ч", "toCustomer": 3, "fromCustomer": 0}, {"region": "Южный и Северо-Кавказский", "warehouse": "Невинномысск", "stock": 172, "value": 171970, "turnover": ">999д", "toCustomer": 0, "fromCustomer": 0}, {"region": "Южный и Северо-Кавказский", "warehouse": "Краснодар", "stock": 1, "value": 1000, "turnover": ">999д", "toCustomer": 0, "fromCustomer": 0}, {"region": "Приволжский", "warehouse": "Казань", "stock": 47, "value": 38775, "turnover": ">999д", "toCustomer": 1, "fromCustomer": 0}, {"region": "Приволжский", "warehouse": "Сарапул WB", "stock": 1, "value": 1265, "turnover": ">999д", "toCustomer": 1, "fromCustomer": 0}, {"region": "Приволжский", "warehouse": "Новосемейкино", "stock": 1, "value": 1000, "turnover": ">999д", "toCustomer": 1, "fromCustomer": 0}], "regions": [{"region": "Центральный", "share": 26.9, "locality": 97.4, "delivery": "1д 13ч"}, {"region": "Уральский", "share": 11.0, "locality": 81.3, "delivery": "1д 23ч"}, {"region": "Беларусь", "share": 4.8, "locality": 0.0, "delivery": "2д 2ч"}, {"region": "Казахстан", "share": 2.1, "locality": 0.0, "delivery": "4д 4ч"}, {"region": "Дальневосточный и Сибирский", "share": 13.8, "locality": 0.0, "delivery": "4д 8ч"}, {"region": "Приволжский", "share": 17.9, "locality": 0.0, "delivery": "2д 4ч"}, {"region": "Северо-Западный", "share": 14.5, "locality": 0.0, "delivery": "2д 9ч"}, {"region": "Южный и Северо-Кавказский", "share": 9.0, "locality": 0.0, "delivery": "2д 5ч"}], "weekComparison": [{"week": "06–12.07", "orders": 12, "revenue": 19740, "visits": 1294, "cart": 136}, {"week": "13–19.07", "orders": 77, "revenue": 133549, "visits": 3441, "cart": 551}, {"week": "20–26.07", "orders": 68, "revenue": 123351, "visits": 3155, "cart": 428}]};
+const UNIT=[{"art": 389870872, "orders": 57, "buyouts": 32, "stock": 93, "promo": 355.2, "profit": 827.27, "margin": 27.95, "roi": 183.43, "ad_role": "Основной масштабируемый SKU", "ad_action": "Поддерживать поиск и рекомендации. Не перегревать ставку: карточка уже имеет сильную органику и 57 заказов.", "planned_ad": 20246.4, "profit_orders": 47154.39, "profit_buyouts": 26472.64}, {"art": 158293481, "orders": 42, "buyouts": 27, "stock": 356, "promo": 125.92, "profit": 189.33, "margin": 18.04, "roi": 69.86, "ad_role": "Приоритет роста", "ad_action": "Расширять рекламное покрытие: высокая конверсия в корзину, большой остаток и 42 заказа.", "planned_ad": 5288.64, "profit_orders": 7951.86, "profit_buyouts": 5111.91}, {"art": 158311067, "orders": 28, "buyouts": 18, "stock": 127, "promo": 108.11, "profit": 295.99, "margin": 32.85, "roi": 332.57, "ad_role": "Самая сильная unit-экономика", "ad_action": "Усиливать поисковые кампании и рекомендации. Лучший запас прочности по прибыли на единицу.", "planned_ad": 3027.08, "profit_orders": 8287.72, "profit_buyouts": 5327.82}, {"art": 648381505, "orders": 11, "buyouts": 7, "stock": 119, "promo": 119.97, "profit": 148.39, "margin": 14.84, "roi": 52.43, "ad_role": "Контролируемый тест", "ad_action": "Оставить ограниченный бюджет, тестировать новые запросы и улучшенный первый экран карточки.", "planned_ad": 1319.67, "profit_orders": 1632.29, "profit_buyouts": 1038.73}, {"art": 291136708, "orders": 4, "buyouts": 1, "stock": 325, "promo": 151.8, "profit": 316.71, "margin": 25.04, "roi": 129.27, "ad_role": "Сначала доработка карточки", "ad_action": "Не масштабировать до улучшения цены, визуала и конверсии. После доработки запускать небольшой тест.", "planned_ad": 607.2, "profit_orders": 1266.84, "profit_buyouts": 316.71}, {"art": 195517926, "orders": 3, "buyouts": 2, "stock": 11, "promo": 113.4, "profit": 271.06, "margin": 28.68, "roi": 222.18, "ad_role": "Поддержка без масштабирования", "ad_action": "Оставить органический трафик и минимальную рекламу: остаток ограничен, расширение бюджета не требуется.", "planned_ad": 340.2, "profit_orders": 813.18, "profit_buyouts": 542.12}];
+const ADS=[{"article": "158293481", "campaign": "158293481 от 28.07.2026", "type": "CPC", "status": "Активна", "balance": 937, "spend": 0.0, "impressions": 0, "ctr": null, "orders": 0, "share": null}, {"article": "291136708", "campaign": "291136708 рек.полки от 03.07.2026", "type": "CPM", "status": "На паузе", "balance": 0, "spend": 1796.41, "impressions": 11027, "ctr": 1.16, "orders": 1, "share": 142.01}, {"article": "291136708", "campaign": "291136708 рекомендации СЧ + поиск", "type": "CPM", "status": "На паузе", "balance": 0, "spend": 0.5, "impressions": 1, "ctr": null, "orders": 0, "share": null}, {"article": "195517926", "campaign": "195517926 полки от 19.06.2026", "type": "CPM", "status": "На паузе", "balance": 0, "spend": 1031.85, "impressions": 5612, "ctr": 2.19, "orders": 1, "share": 109.19}, {"article": "648381505", "campaign": "648381505 клик от 19.06.2026", "type": "CPC", "status": "Активна", "balance": 1624, "spend": 1546.3, "impressions": 9495, "ctr": 1.52, "orders": 4, "share": 38.66}, {"article": "291136708", "campaign": "291136708 клик от 07.06.2026", "type": "CPC", "status": "Активна", "balance": 454, "spend": 1845.0, "impressions": 3960, "ctr": 2.68, "orders": 3, "share": 48.62}, {"article": "648381505", "campaign": "648381505 от 07.06.2026", "type": "CPM", "status": "На паузе", "balance": 0, "spend": 1024.03, "impressions": 6556, "ctr": 1.46, "orders": 1, "share": 102.4}, {"article": "158293481", "campaign": "158293481 полки", "type": "CPM", "status": "На паузе", "balance": 0, "spend": 8191.85, "impressions": 51231, "ctr": 2.06, "orders": 30, "share": 26.03}, {"article": "158311067", "campaign": "полки 158311067, после клика", "type": "CPM", "status": "На паузе", "balance": 0, "spend": 0.16, "impressions": 1, "ctr": null, "orders": 0, "share": null}, {"article": "158311067", "campaign": "158311067 клик от 02.05.2026", "type": "CPC", "status": "Активна", "balance": 508, "spend": 6421.8, "impressions": 30538, "ctr": 2.89, "orders": 22, "share": 32.39}, {"article": "389870872", "campaign": "389870872 полки от 29.04.2026", "type": "CPM", "status": "Активна", "balance": 929, "spend": 8534.9, "impressions": 54064, "ctr": 3.9, "orders": 49, "share": 5.88}, {"article": "389870872", "campaign": "полки от 29.04.2026", "type": "CPM", "status": "На паузе", "balance": 0, "spend": 0.4, "impressions": 2, "ctr": null, "orders": 0, "share": null}];
+const ARTICLE_ADS=[{"article": "389870872", "spend": 8535.3, "impressions": 54066, "orders": 49, "cpo": 174.19, "action": "Лидер рекламного результата. Сохранять активную кампанию и масштабировать постепенно."}, {"article": "158293481", "spend": 8191.85, "impressions": 51231, "orders": 30, "cpo": 273.06, "action": "Сильный объём заказов. Новая CPC-кампания от 28.07 собирает статистику — оценить через 3–5 дней."}, {"article": "158311067", "spend": 6421.96, "impressions": 30539, "orders": 22, "cpo": 291.91, "action": "Рабочая CPC-кампания с устойчивым CTR и 22 заказами. Поддерживать."}, {"article": "648381505", "spend": 2570.33, "impressions": 16051, "orders": 5, "cpo": 514.07, "action": "CPC оставить основным форматом; старую CPM-кампанию сохранять на паузе."}, {"article": "291136708", "spend": 3641.91, "impressions": 14988, "orders": 4, "cpo": 910.48, "action": "CPC уже формирует заказы. Следующий шаг — улучшение карточки и точечная настройка ставок."}, {"article": "195517926", "spend": 1031.85, "impressions": 5612, "orders": 1, "cpo": 1031.85, "action": "При ограниченном остатке достаточно органического трафика и аккуратной поддержки."}];
+const fmt=n=>new Intl.NumberFormat('ru-RU').format(Math.round(n));
+const tooltip=document.getElementById('tooltip');
+
+function bindTip(el,html){
+  el.addEventListener('mousemove',e=>{
+    tooltip.innerHTML=html;
+    tooltip.style.left=e.clientX+'px';
+    tooltip.style.top=e.clientY+'px';
+    tooltip.style.opacity=1;
+  });
+  el.addEventListener('mouseleave',()=>tooltip.style.opacity=0);
+}
+
+function barChart(id,data,labelKey,valueKey,options={}){
+  const box=document.getElementById(id);if(!box)return;
+  const max=Math.max(...data.map(d=>Math.abs(Number(d[valueKey])||0)),1)*1.1;
+  const bars=data.map((d,i)=>{
+    const value=Number(d[valueKey])||0;
+    const height=Math.max(3,Math.abs(value)/max*100);
+    const cls=options.alt?'alt':(options.warn?'warnbar':'');
+    return `<div class="bar ${cls}" style="--h:${height}%;animation-delay:${i*.06}s" data-tip="${d[labelKey]}<br><b>${fmt(value)}${options.suffix||''}</b>"></div>`;
+  }).join('');
+  const labels=data.map(d=>`<span title="${d[labelKey]}">${String(d[labelKey]).slice(0,14)}</span>`).join('');
+  box.innerHTML=`<div class="bars">${bars}</div><div class="labels">${labels}</div>`;
+  box.querySelectorAll('[data-tip]').forEach(el=>bindTip(el,el.dataset.tip));
+}
+
+function lineChart(id,data,key1,key2,label1,label2){
+  const box=document.getElementById(id);if(!box)return;
+  const w=Math.max(box.clientWidth||600,360),h=270,p=36;
+  const max=Math.max(...data.map(d=>Math.max(Number(d[key1])||0,Number(d[key2])||0)),1)*1.14;
+  const x=i=>data.length===1?w/2:p+i*(w-2*p)/(data.length-1);
+  const y=v=>h-p-(Number(v)||0)/max*(h-2*p);
+  let svg=`<svg viewBox="0 0 ${w} ${h}">`;
+  for(let g=0;g<4;g++){const gy=p+g*(h-2*p)/3;svg+=`<line class="gridline" x1="${p}" y1="${gy}" x2="${w-p}" y2="${gy}"/>`}
+  svg+=`<line class="axis" x1="${p}" y1="${h-p}" x2="${w-p}" y2="${h-p}"/>`;
+  svg+=`<polyline class="line" style="stroke:#38bdf8" points="${data.map((d,i)=>`${x(i)},${y(d[key1])}`).join(' ')}"/>`;
+  svg+=`<polyline class="line" style="stroke:#8b5cf6;animation-delay:.15s" points="${data.map((d,i)=>`${x(i)},${y(d[key2])}`).join(' ')}"/>`;
+  data.forEach((d,i)=>{
+    const label=d.date||d.week||d.region||d.art;
+    svg+=`<circle class="dot" cx="${x(i)}" cy="${y(d[key1])}" r="4" fill="#38bdf8" data-tip="${label}<br>${label1}: <b>${fmt(d[key1])}</b>"/>`;
+    svg+=`<circle class="dot" cx="${x(i)}" cy="${y(d[key2])}" r="4" fill="#8b5cf6" data-tip="${label}<br>${label2}: <b>${fmt(d[key2])}</b>"/>`;
+    svg+=`<text x="${x(i)}" y="${h-10}" fill="#8aa0b8" font-size="11" text-anchor="middle">${label}</text>`;
+  });
+  box.innerHTML=svg+'</svg>';
+  box.querySelectorAll('[data-tip]').forEach(el=>bindTip(el,el.dataset.tip));
+}
+
+function render(){
+  lineChart('salesLine',DATA.daily,'revenue','orders','Сумма заказов','Заказы');
+  barChart('productRevenue',DATA.products,'art','revenue',{alt:true,suffix:' ₽'});
+  barChart('weekRevenue',DATA.weekComparison,'week','revenue',{alt:true,suffix:' ₽'});
+  barChart('weekOrders',DATA.weekComparison,'week','orders',{});
+  barChart('productOrders',DATA.products,'art','orders',{alt:true});
+  barChart('productInterest',DATA.products,'art','favorites',{});
+  barChart('funnelBars',[
+    {stage:'Переходы',value:6596},
+    {stage:'Корзины',value:979},
+    {stage:'Заказы',value:145},
+    {stage:'Выкупы',value:87}
+  ],'stage','value',{alt:true});
+  lineChart('trafficLine',DATA.daily,'visits','cart','Переходы','Корзины');
+  lineChart('stockLine',DATA.stockTimeline.map(x=>({date:x.date,stock:x.stock,zero:0})),'stock','zero','Остаток','');
+  barChart('warehouseBars',DATA.warehouses,'warehouse','stock',{alt:true});
+  barChart('geoBars',DATA.regions,'region','share',{suffix:'%'});
+  barChart('adLimitBars',UNIT,'art','promo',{alt:true,suffix:' ₽'});
+  barChart('profitSkuBars',UNIT,'art','profit_buyouts',{alt:true,suffix:' ₽'});
+  barChart('profitSummaryBars',[
+    {name:'Подтверждено',value:38809.93},
+    {name:'Модель по заказам',value:67106.28},
+    {name:'План продвижения',value:30829.19}
+  ],'name','value',{alt:true,suffix:' ₽'});
+}
+
+render();
+window.addEventListener('resize',()=>setTimeout(render,100));
+document.querySelectorAll('.tab').forEach(btn=>btn.addEventListener('click',()=>{
+  document.querySelectorAll('.tab').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  document.querySelectorAll('.section').forEach(section=>section.classList.remove('active'));
+  document.getElementById(btn.dataset.tab).classList.add('active');
+  setTimeout(render,80);
+}));
+</script>
+</body>
+</html>
