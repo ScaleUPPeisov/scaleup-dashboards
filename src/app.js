@@ -58,18 +58,27 @@ async function checkUpdates(manual=false) {
       $('#updateTitle').textContent = `Доступен ReelsFactory ${info.version}`;
       $('#updateNotes').textContent = info.notes || 'Новая версия готова к установке';
       $('#updateBanner').classList.remove('hidden');
+      $('#installUpdate').textContent = 'Установить и перезапустить';
       $('#installUpdate').onclick = async () => {
         $('#installUpdate').disabled = true;
-        $('#installUpdate').textContent = 'Скачиваю…';
-        try { await invoke('download_update', { url: info.url, sha256: info.sha256, filename: info.filename }); }
-        catch(e) { alert('Не удалось скачать обновление: ' + e); $('#installUpdate').disabled=false; $('#installUpdate').textContent='Обновить'; }
+        $('#installUpdate').textContent = 'Готовлю обновление…';
+        try {
+          await invoke('download_update', { url: info.url, sha256: info.sha256, filename: info.filename });
+        } catch(e) {
+          alert('Не удалось установить обновление: ' + e);
+          $('#installUpdate').disabled = false;
+          $('#installUpdate').textContent = 'Установить и перезапустить';
+        }
       };
       if (manual) $('#updateState').textContent = `Доступна версия ${info.version}`;
-    } else if (manual) $('#updateState').textContent = 'Установлена последняя версия';
+    } else if (manual) {
+      $('#updateState').textContent = 'Установлена последняя версия';
+    }
   } catch(e) {
     if (manual) $('#updateState').textContent = 'Не удалось проверить: ' + e;
     console.warn('update check', e);
   }
 }
+
 $('#checkUpdate').addEventListener('click', () => checkUpdates(true));
 checkUpdates(false);
