@@ -1,13 +1,13 @@
 {
-  "version": "0.3.1",
-  "notes": "MusicForge AI v0.3.1: ещё более быстрый Draft Preview — 10–12 секунд аудио и 2–3 Turbo шага. Это контрольный релиз для проверки встроенного онлайн-обновления из v0.3.",
-  "sha256": "7a941b19fc015df252b13b2c05fcd883a39fceb28a596bbff77b95f3c251b030",
+  "version": "0.4.0",
+  "notes": "MusicForge AI v0.4: 10-секундный 1-step Preview, фоновый прогрев AI, Upload Audio, Cover, Remix, Extend и исправленный updater. Обновления теперь могут скачиваться в фоне и уведомляют, когда готовы к установке.",
+  "sha256": "85e49c009efdcb1ecec0ecbe662c3acf89ec57d5fa34baabba919a01306e517b",
   "parts": [
-    "https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/musicforge-updates/0.3.1/part-00.bin",
-    "https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/musicforge-updates/0.3.1/part-01.bin",
-    "https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/musicforge-updates/0.3.1/part-02.bin",
-    "https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/musicforge-updates/0.3.1/part-03.bin",
-    "https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/musicforge-updates/0.3.1/part-04.bin",
-    "https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/musicforge-updates/0.3.1/part-05.bin"
+    "https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/musicforge-updates/0.4.0/part-00.bin",
+    "https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/musicforge-updates/0.4.0/part-01.bin",
+    "https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/musicforge-updates/0.4.0/part-02.bin",
+    "https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/musicforge-updates/0.4.0/part-03.bin",
+    "https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/musicforge-updates/0.4.0/part-04.bin",
+    "https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/musicforge-updates/0.4.0/part-05.bin"
   ]
 }
