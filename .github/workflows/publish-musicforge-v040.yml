@@ -1,0 +1,55 @@
+name: Publish MusicForge v0.4.0 updater files
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish-musicforge-v040.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      ARTIFACT_URL: 'https://sdmntprukwest.oaiusercontent.com/files/00000000-8be8-8243-b73a-2d459a83ebe2/raw?se=2026-08-23T17%3A47%3A34Z&sp=r&sv=2026-02-06&sr=b&scid=6c716a2f-aa1a-5644-a008-263c7acffc1a&skoid=c30e7ce7-1f51-4051-a377-288cdba21c02&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-08-23T08%3A54%3A59Z&ske=2026-08-24T08%3A54%3A59Z&sks=b&skv=2026-02-06&sig=xWxuZcM4FHO0%2BHky8oI3rY1q50r1sYYQ/bf1eBxrFQk%3D'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Download and verify release
+        run: |
+          set -euo pipefail
+          curl -L --fail --retry 3 --connect-timeout 20 "$ARTIFACT_URL" -o /tmp/artifact.zip
+          unzip -t /tmp/artifact.zip
+          mkdir -p /tmp/mfv040
+          unzip -q /tmp/artifact.zip -d /tmp/mfv040
+          test -f /tmp/mfv040/MusicForge-AI-v0.4.0-Mac-M1.zip
+          echo '85e49c009efdcb1ecec0ecbe662c3acf89ec57d5fa34baabba919a01306e517b  /tmp/mfv040/MusicForge-AI-v0.4.0-Mac-M1.zip' | sha256sum -c -
+      - name: Publish chunks and manifest
+        run: |
+          set -euo pipefail
+          OUT='musicforge-updates/0.4.0'
+          rm -rf "$OUT"
+          mkdir -p "$OUT"
+          split -b 20M -d -a 2 --additional-suffix=.bin /tmp/mfv040/MusicForge-AI-v0.4.0-Mac-M1.zip "$OUT/part-"
+          python3 - <<'PY'
+          import json,pathlib
+          version='0.4.0'; root=pathlib.Path('musicforge-updates')/version
+          files=sorted(root.glob('part-*.bin'))
+          base='https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/'
+          manifest={
+            'version':version,
+            'notes':'MusicForge AI v0.4: 10-секундный 1-step Preview, фоновый прогрев AI, Upload Audio, Cover, Remix, Extend и исправленный updater. Обновления теперь могут скачиваться в фоне и уведомляют, когда готовы к установке.',
+            'sha256':'85e49c009efdcb1ecec0ecbe662c3acf89ec57d5fa34baabba919a01306e517b',
+            'parts':[base+str(p).replace('\\','/') for p in files]
+          }
+          pathlib.Path('musicforge-updates/latest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n')
+          print(json.dumps(manifest,ensure_ascii=False,indent=2))
+          PY
+          git config user.name 'MusicForge Release Bot'
+          git config user.email 'peisov.business@gmail.com'
+          git add musicforge-updates/0.4.0 musicforge-updates/latest.json
+          git commit -m 'release: publish MusicForge AI v0.4.0 updater payload'
+          git push origin main
