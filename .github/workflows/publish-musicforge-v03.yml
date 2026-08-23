@@ -1,0 +1,69 @@
+name: Publish MusicForge v0.3 updater files
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish-musicforge-v03.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      ARTIFACT_URL: 'https://sdmntprnortheu.oaiusercontent.com/files/00000000-3050-81f4-afa9-979448cce85f/raw?se=2026-08-23T17%3A29%3A37Z&sp=r&sv=2026-02-06&sr=b&scid=35fe5c4b-0b7a-55c6-8814-531bef5cb67f&skoid=c30e7ce7-1f51-4051-a377-288cdba21c02&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-08-23T08%3A09%3A07Z&ske=2026-08-24T08%3A09%3A07Z&sks=b&skv=2026-02-06&sig=dMqUuTJfyHYdcAlqBKsjNQU3DUdX80Komwm7A0jEYAA%3D'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download verified build artifact
+        run: |
+          set -euo pipefail
+          curl -L --fail --retry 3 --connect-timeout 20 "$ARTIFACT_URL" -o /tmp/musicforge-artifact.zip
+          unzip -t /tmp/musicforge-artifact.zip
+          mkdir -p /tmp/mfv03
+          unzip -q /tmp/musicforge-artifact.zip -d /tmp/mfv03
+          test -f /tmp/mfv03/MusicForge-AI-v0.3-Mac-M1.zip
+          echo '8843389d12630f22bc6a50a80dd1edfe36893707186a5c44cb48205507001ddd  /tmp/mfv03/MusicForge-AI-v0.3-Mac-M1.zip' | sha256sum -c -
+
+      - name: Split updater payload and write manifest
+        run: |
+          set -euo pipefail
+          VERSION='0.3.0'
+          OUT="musicforge-updates/${VERSION}"
+          rm -rf "$OUT"
+          mkdir -p "$OUT"
+          split -b 20M -d -a 2 --additional-suffix=.bin /tmp/mfv03/MusicForge-AI-v0.3-Mac-M1.zip "$OUT/part-"
+          mapfile -t FILES < <(find "$OUT" -type f -name 'part-*.bin' | sort)
+          python3 - <<'PY'
+          import json, pathlib
+          version='0.3.0'
+          root=pathlib.Path('musicforge-updates')/version
+          files=sorted(root.glob('part-*.bin'))
+          base='https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/'
+          manifest={
+            'version': version,
+            'notes': 'MusicForge AI v0.3: быстрый Preview 10–15 секунд на M1, прогрев модели, встроенная проверка обновлений, macOS-уведомления, скачивание, проверка SHA-256 и установка с перезапуском.',
+            'sha256': '8843389d12630f22bc6a50a80dd1edfe36893707186a5c44cb48205507001ddd',
+            'parts': [base+str(p).replace('\\','/') for p in files]
+          }
+          pathlib.Path('musicforge-updates/latest.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2)+'\n')
+          print(json.dumps(manifest, ensure_ascii=False, indent=2))
+          PY
+          ls -lh "$OUT" musicforge-updates/latest.json
+
+      - name: Commit update channel
+        run: |
+          set -euo pipefail
+          git config user.name 'MusicForge Release Bot'
+          git config user.email 'peisov.business@gmail.com'
+          git add musicforge-updates/0.3.0 musicforge-updates/latest.json
+          if git diff --cached --quiet; then
+            echo 'Already published.'
+            exit 0
+          fi
+          git commit -m 'release: publish MusicForge AI v0.3 updater payload'
+          git push origin main
