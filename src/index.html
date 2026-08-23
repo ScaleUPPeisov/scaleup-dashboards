@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ReelsFactory</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="updateBanner" class="update-banner hidden">
+    <div><b id="updateTitle">Доступно обновление</b><span id="updateNotes"></span></div>
+    <button id="installUpdate">Обновить</button>
+  </div>
+  <div class="shell">
+    <aside>
+      <div class="brand"><span class="bolt">⚡</span><div><strong>ReelsFactory</strong><small>AI Video Studio · v0.2.0</small></div></div>
+      <button class="nav active" data-page="home">Главная</button>
+      <button class="nav" data-page="projects">Проекты</button>
+      <button class="nav" data-page="settings">Настройки</button>
+      <div class="side-note"><b>v0.2 Core</b><span>Без скрытой обрезки.<br>Субтитры локально.</span></div>
+    </aside>
+    <main>
+      <section id="home" class="page active">
+        <header><div><span class="eyebrow">LOCAL · PRIVATE · APPLE SILICON</span><h1>Из видео — готовый Reels.<br><em>Без самодеятельности приложения.</em></h1><p>По умолчанию сохраняем полную длительность и весь кадр. Любая обрезка — только по твоему выбору.</p></div><div class="badge">M1<br><small>Native</small></div></header>
+
+        <div class="grid">
+          <div class="card source-card">
+            <div class="card-title"><span>1</span><div><b>Исходное видео</b><small>MP4 · MOV · M4V</small></div></div>
+            <button id="pickVideo" class="drop"><b>＋ Выбрать видео</b><span id="videoPath">Файл ещё не выбран</span></button>
+          </div>
+          <div class="card">
+            <div class="card-title"><span>2</span><div><b>Формат кадра</b><small>Никакого скрытого crop</small></div></div>
+            <label class="option"><input type="radio" name="aspect" value="original" checked><div><b>Оригинал</b><span>Размер и весь кадр сохраняются</span></div></label>
+            <label class="option"><input type="radio" name="aspect" value="fit916"><div><b>9:16 · Fit</b><span>1080×1920, без обрезки краёв</span></div></label>
+            <label class="option danger"><input type="radio" name="aspect" value="crop916"><div><b>9:16 · Crop</b><span>Заполнить экран с обрезкой — только вручную</span></div></label>
+          </div>
+          <div class="card">
+            <div class="card-title"><span>3</span><div><b>Автосубтитры</b><small>Whisper локально на Mac</small></div></div>
+            <label class="switch-row"><div><b>Создать субтитры</b><span>Речь распознаётся локально, без платного API</span></div><input id="captions" type="checkbox" checked></label>
+            <div class="caption-preview"><span>СУБТИТРЫ БУДУТ</span><strong>такими — крупно и читаемо</strong></div>
+          </div>
+        </div>
+
+        <div class="actionbar">
+          <div class="status"><i id="statusDot"></i><div><b id="statusTitle">Готов к работе</b><span id="statusText">Выбери видео и нажми «Создать»</span></div></div>
+          <button id="render" class="primary" disabled>Создать видео →</button>
+        </div>
+        <div id="result" class="result hidden"><div><b>✓ Видео готово</b><span id="resultPath"></span></div><button id="showResult">Показать в Finder</button></div>
+      </section>
+
+      <section id="projects" class="page"><h2>Проекты</h2><div class="empty card"><b>История локальных экспортов</b><p>В этой версии проекты не подменяются демо-данными. После первого экспорта результат остаётся на твоём Mac.</p></div></section>
+      <section id="settings" class="page"><h2>Настройки</h2><div class="settings-grid"><div class="card"><b>Обновления</b><p>Проверка выполняется при каждом запуске через GitHub release-канал.</p><button id="checkUpdate" class="secondary">Проверить обновления</button><small id="updateState">Текущая версия: 0.2.0</small></div><div class="card"><b>Модель субтитров</b><p>Whisper Base скачивается один раз и хранится локально в Application Support.</p><small>Первый запуск субтитров потребует интернет для загрузки модели.</small></div></div></section>
+    </main>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
