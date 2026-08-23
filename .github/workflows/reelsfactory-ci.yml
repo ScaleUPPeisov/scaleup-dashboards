@@ -1,0 +1,65 @@
+name: ReelsFactory macOS CI
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-reelsfactory:
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'reelsfactory-desktop'
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Rust ARM64
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - name: Install frontend deps
+        run: npm install --no-audit --no-fund
+      - name: Build AVFoundation helper
+        run: |
+          mkdir -p src-tauri/binaries
+          swiftc native/VideoProcessor.swift -O -target arm64-apple-macos13.0 -o src-tauri/binaries/reelsfactory-video-aarch64-apple-darwin -framework AVFoundation -framework AppKit -framework QuartzCore -framework CoreMedia
+          chmod +x src-tauri/binaries/reelsfactory-video-aarch64-apple-darwin
+      - name: Build local Whisper engine
+        run: |
+          git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git /tmp/whisper.cpp
+          cmake -S /tmp/whisper.cpp -B /tmp/whisper.cpp/build -DBUILD_SHARED_LIBS=OFF -DGGML_METAL=ON -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_BUILD_TYPE=Release
+          cmake --build /tmp/whisper.cpp/build --config Release -j 4 --target whisper-cli
+          cp /tmp/whisper.cpp/build/bin/whisper-cli src-tauri/binaries/whisper-cli-aarch64-apple-darwin
+          chmod +x src-tauri/binaries/whisper-cli-aarch64-apple-darwin
+      - name: Frontend build
+        run: npm run build
+      - name: Rust check
+        run: cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
+      - name: Build DMG
+        run: npx tauri build --target aarch64-apple-darwin --bundles app,dmg
+      - name: Prepare artifact
+        id: meta
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          DMG=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -name '*.dmg' -type f | head -1)
+          test -f "$DMG"
+          cp "$DMG" "ReelsFactory_${VERSION}_M1.dmg"
+          SHA=$(shasum -a 256 "ReelsFactory_${VERSION}_M1.dmg" | awk '{print $1}')
+          printf '{"version":"%s","sha256":"%s","file":"ReelsFactory_%s_M1.dmg"}\n' "$VERSION" "$SHA" "$VERSION" > reelsfactory-manifest.json
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ReelsFactory-${{ steps.meta.outputs.version }}-M1
+          path: |
+            ReelsFactory_${{ steps.meta.outputs.version }}_M1.dmg
+            reelsfactory-manifest.json
+          if-no-files-found: error
+      - name: Publish updater release
+        if: github.head_ref == 'reelsfactory-desktop'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="reelsfactory-v${{ steps.meta.outputs.version }}"
+          gh release delete "$TAG" --yes 2>/dev/null || true
+          gh release create "$TAG" "ReelsFactory_${{ steps.meta.outputs.version }}_M1.dmg" reelsfactory-manifest.json --title "ReelsFactory v${{ steps.meta.outputs.version }}" --notes "v${{ steps.meta.outputs.version }}: полный экспорт без скрытой обрезки; 9:16 Fit без потери кадра; локальные автосубтитры Whisper; проверка обновлений при запуске."
