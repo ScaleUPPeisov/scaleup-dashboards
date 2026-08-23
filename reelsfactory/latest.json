@@ -1,0 +1,11 @@
+{
+  "version": "0.1.0",
+  "notes": "ReelsFactory 0.1.0 — initial Mac Apple Silicon test release.",
+  "pub_date": "2026-08-23T20:43:00+07:00",
+  "platforms": {
+    "darwin-aarch64": {
+      "signature": "bootstrap-no-update",
+      "url": "https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/reelsfactory-updates/reelsfactory/NO_UPDATE_PLACEHOLDER"
+    }
+  }
+}
