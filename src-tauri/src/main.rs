@@ -1,9 +1,14 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{fs, path::{Path, PathBuf}, process::Command};
+use std::{fs, fs::File, path::{Path, PathBuf}, process::{Command, Stdio}};
+
+const UPDATE_CHANNEL: &str = "https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/reelsfactory-desktop/update-channel.json";
 
 #[derive(Debug, Serialize)]
 struct UpdateInfo { available: bool, version: String, notes: String, url: String, sha256: String, filename: String }
+
+#[derive(Debug, Deserialize)]
+struct ChannelInfo { version: String, notes: String, source_url: String, sha256: Option<String> }
 
 #[derive(Debug, Deserialize, Serialize)]
 struct Caption { start: f64, end: f64, text: String }
@@ -16,6 +21,12 @@ fn bin_path(name: &str) -> Result<PathBuf, String> {
     let triple = dir.join(format!("{}-aarch64-apple-darwin", name));
     if triple.exists() { return Ok(triple); }
     Err(format!("Не найден модуль {}", name))
+}
+
+fn current_app_path() -> Result<PathBuf, String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    exe.parent().and_then(|p|p.parent()).and_then(|p|p.parent())
+        .map(Path::to_path_buf).ok_or("Не удалось определить ReelsFactory.app".into())
 }
 
 fn run(mut cmd: Command, label: &str) -> Result<(), String> {
@@ -128,63 +139,67 @@ fn reveal_file(path:String)->Result<(),String>{
     run(c,"Finder")
 }
 
-fn semver(v:&str)->Vec<u32>{v.trim_start_matches('v').split('.').take(3).map(|x|x.parse().unwrap_or(0)).collect()}
+fn semver(v:&str)->Vec<u32>{
+    v.trim_start_matches('v').split('.').take(3).map(|x|x.parse().unwrap_or(0)).collect()
+}
 
 #[tauri::command]
 fn check_for_update(app: tauri::AppHandle) -> Result<UpdateInfo,String>{
     let current=app.package_info().version.to_string();
-    let out=Command::new("/usr/bin/curl")
-        .args(["-fsSL","-H","Accept: application/vnd.github+json","https://api.github.com/repos/ScaleUPPeisov/scaleup-dashboards/releases?per_page=20"])
-        .output().map_err(|e|e.to_string())?;
-    if !out.status.success(){return Err("GitHub update channel недоступен".into())}
-    let releases:serde_json::Value=serde_json::from_slice(&out.stdout).map_err(|e|e.to_string())?;
-    let Some(arr)=releases.as_array() else{return Err("Некорректный ответ update channel".into())};
-    for rel in arr{
-        let tag=rel["tag_name"].as_str().unwrap_or("");
-        if !tag.starts_with("reelsfactory-v"){continue}
-        let version=tag.trim_start_matches("reelsfactory-v").to_string();
-        if semver(&version)<=semver(&current){
-            return Ok(UpdateInfo{available:false,version:current,notes:String::new(),url:String::new(),sha256:String::new(),filename:String::new()})
-        }
-        let assets=rel["assets"].as_array().cloned().unwrap_or_default();
-        let dmg=assets.iter().find(|a|a["name"].as_str().unwrap_or("").ends_with(".dmg")).ok_or("В релизе нет DMG")?;
-        let manifest=assets.iter().find(|a|a["name"].as_str().unwrap_or("")=="reelsfactory-manifest.json");
-        let mut sha=String::new();
-        if let Some(m)=manifest {
-            if let Some(u)=m["browser_download_url"].as_str(){
-                if let Ok(o)=Command::new("/usr/bin/curl").args(["-fsSL",u]).output(){
-                    if let Ok(j)=serde_json::from_slice::<serde_json::Value>(&o.stdout){
-                        sha=j["sha256"].as_str().unwrap_or("").to_string();
-                    }
-                }
-            }
-        }
-        return Ok(UpdateInfo{
-            available:true,
-            version,
-            notes:rel["body"].as_str().unwrap_or("Новое обновление ReelsFactory").to_string(),
-            url:dmg["browser_download_url"].as_str().unwrap_or("").to_string(),
-            sha256:sha,
-            filename:dmg["name"].as_str().unwrap_or("ReelsFactory.dmg").to_string()
-        })
-    }
-    Ok(UpdateInfo{available:false,version:current,notes:String::new(),url:String::new(),sha256:String::new(),filename:String::new()})
+    let out=Command::new("/usr/bin/curl").args(["-fsSL","--connect-timeout","8",UPDATE_CHANNEL]).output().map_err(|e|e.to_string())?;
+    if !out.status.success(){return Err("Канал обновлений ReelsFactory недоступен".into())}
+    let channel:ChannelInfo=serde_json::from_slice(&out.stdout).map_err(|e|format!("Некорректный update-channel: {}",e))?;
+    let available=semver(&channel.version)>semver(&current);
+    Ok(UpdateInfo{
+        available,
+        version:channel.version,
+        notes:channel.notes,
+        url:channel.source_url,
+        sha256:channel.sha256.unwrap_or_default(),
+        filename:"ReelsFactory-update-source.zip".into()
+    })
 }
 
 #[tauri::command]
-async fn download_update(url:String,sha256:String,filename:String)->Result<(),String>{
-    let dest=dirs::download_dir().ok_or("Не найдена папка Загрузки")?.join(filename);
+async fn download_update(app: tauri::AppHandle, url:String, sha256:String, filename:String)->Result<(),String>{
+    let stamp=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e|e.to_string())?.as_secs();
+    let work=std::env::temp_dir().join(format!("reelsfactory-self-update-{}",stamp));
+    let extracted=work.join("src");
+    fs::create_dir_all(&extracted).map_err(|e|e.to_string())?;
+    let zip=work.join(if filename.is_empty(){"ReelsFactory-update-source.zip"}else{&filename});
+
     let mut c=Command::new("/usr/bin/curl");
-    c.args(["-L","--fail","--progress-bar","-o"]).arg(&dest).arg(&url);
+    c.args(["-L","--fail","--retry","3","-o"]).arg(&zip).arg(&url);
     run(c,"Скачивание обновления")?;
     if !sha256.is_empty(){
-        let bytes=fs::read(&dest).map_err(|e|e.to_string())?;
+        let bytes=fs::read(&zip).map_err(|e|e.to_string())?;
         let got=format!("{:x}",Sha256::digest(&bytes));
         if got!=sha256{return Err("Контрольная сумма обновления не совпала".into())}
     }
-    let mut o=Command::new("/usr/bin/open");
-    o.arg(&dest);
-    run(o,"Открытие обновления")
+
+    let mut unzip=Command::new("/usr/bin/ditto");
+    unzip.args(["-x","-k"]).arg(&zip).arg(&extracted);
+    run(unzip,"Распаковка обновления")?;
+    let root=fs::read_dir(&extracted).map_err(|e|e.to_string())?
+        .filter_map(Result::ok).map(|e|e.path()).find(|p|p.is_dir())
+        .ok_or("Не найдены исходники обновления")?;
+    let script=root.join("scripts/self_update.zsh");
+    if !script.exists(){return Err("В обновлении отсутствует self_update.zsh".into())}
+
+    let log_dir=dirs::home_dir().ok_or("Не найдена домашняя папка")?.join("Library/Logs/ReelsFactory");
+    fs::create_dir_all(&log_dir).map_err(|e|e.to_string())?;
+    let log_path=log_dir.join("update.log");
+    let stdout=File::create(&log_path).map_err(|e|e.to_string())?;
+    let stderr=stdout.try_clone().map_err(|e|e.to_string())?;
+    let current_app=current_app_path()?;
+    let whisper=bin_path("whisper-cli")?;
+
+    Command::new("/bin/zsh")
+        .arg(&script).arg(&current_app).arg(&whisper)
+        .stdout(Stdio::from(stdout)).stderr(Stdio::from(stderr)).stdin(Stdio::null())
+        .spawn().map_err(|e|format!("Не удалось запустить установщик: {}",e))?;
+    app.exit(0);
+    Ok(())
 }
 
 fn main(){
