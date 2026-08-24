@@ -1,0 +1,31 @@
+name: Probe LeVo SongGeneration Space
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/probe-levo.yml'
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '24' }
+      - name: Inspect LeVo API
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/levo && cd /tmp/levo
+          npm init -y >/dev/null 2>&1
+          npm i --no-audit --no-fund @gradio/client
+          node --input-type=module <<'NODE'
+          import {Client} from '@gradio/client'; import fs from 'node:fs';
+          for (const id of ['waytan22/SongGeneration-LeVo','tencent/SongGeneration']) {
+            try { const c=await Client.connect(id); const api=await c.view_api(); console.log('CONNECTED',id); console.log(JSON.stringify(api,null,2).slice(0,120000)); fs.writeFileSync('/tmp/levo-api.json',JSON.stringify({id,api},null,2)); break; }
+            catch(e){ console.error('FAIL',id,e?.message||e); }
+          }
+          NODE
+      - uses: actions/upload-artifact@v4
+        with: { name: levo-api, path: /tmp/levo-api.json, if-no-files-found: ignore }

@@ -1,0 +1,8 @@
+MusicForge AI v0.4.2 Cloud Safe
+- Cloud-first generation using official ACE-Step/ACE-Step Space
+- Local AI blocked below 24 GB unified memory
+- Stops orphan Local AI process at startup
+- 10-second Preview
+- Full cloud render capped at 60 seconds for stabilization
+- Better generation error messages
+- Built-in updater remains enabled

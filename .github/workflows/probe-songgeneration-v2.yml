@@ -1,0 +1,44 @@
+name: Probe SongGeneration v2 Space
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/probe-songgeneration-v2.yml'
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Probe Tencent SongPrep API
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/sg && cd /tmp/sg
+          npm init -y >/dev/null 2>&1
+          npm install --no-audit --no-fund @gradio/client
+          node --input-type=module <<'NODE'
+          import { Client } from '@gradio/client';
+          import fs from 'node:fs';
+          const candidates=['tencent/SongPrep','tencent/SongGeneration'];
+          for(const id of candidates){
+            try{
+              const c=await Client.connect(id);
+              const api=await c.view_api();
+              console.log('SPACE',id);
+              console.log(JSON.stringify(api,null,2).slice(0,120000));
+              fs.writeFileSync('/tmp/songgen-api.json',JSON.stringify({id,api},null,2));
+              break;
+            }catch(e){console.error('FAIL',id,String(e?.message||e));}
+          }
+          NODE
+      - uses: actions/upload-artifact@v4
+        with:
+          name: songgeneration-v2-api
+          path: /tmp/songgen-api.json
+          if-no-files-found: ignore

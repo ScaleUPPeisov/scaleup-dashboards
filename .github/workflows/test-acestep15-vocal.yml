@@ -1,0 +1,52 @@
+name: Test ACE-Step 1.5 vocal quality route
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/test-acestep15-vocal.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Generate Russian vocal sample through ACE-Step 1.5
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/a15 && cd /tmp/a15
+          npm init -y >/dev/null 2>&1
+          npm install --no-audit --no-fund @gradio/client
+          node --input-type=module <<'NODE'
+          import { Client } from '@gradio/client';
+          import fs from 'node:fs';
+          const c=await Client.connect('ACE-Step/Ace-Step-v1.5');
+          const r=await c.predict('/generation_wrapper',{
+            selected_model:'acestep-v15-turbo', generation_mode:'custom', simple_query_input:'', simple_vocal_language:'ru',
+            param_4:'modern emotional Russian pop, full instrumental backing, strong drums and bass, melodic piano and synths, expressive natural male lead vocal blended into the music, catchy chorus, polished stereo mix, no spoken voice, no a cappella',
+            param_5:'[Verse]\nНочь за окном, и город не спит\nСердце стучит, попадая в бит\n\n[Chorus]\nЯ выбираю свет впереди\nМузыка рядом, только иди',
+            param_6:110,param_7:'A minor',param_8:'4',param_9:'ru',param_10:8,param_11:7.0,param_12:true,param_13:'-1',param_14:null,param_15:20,param_16:1,param_17:null,param_18:'',param_19:0.0,param_20:-1,param_21:'Fill the audio semantic mask based on the given conditions:',param_22:1.0,param_23:'text2music',param_24:false,param_25:0.0,param_26:1.0,param_27:3.0,param_28:'ode',param_29:'',param_30:'mp3',param_31:0.85,param_32:true,param_33:2.0,param_34:0,param_35:0.9,param_36:'NO USER INPUT',param_37:true,param_38:true,param_39:true,param_41:false,param_42:true,param_43:false,param_44:false,param_45:0.5,param_46:8,param_47:null,param_48:[],param_49:false
+          });
+          fs.writeFileSync('/tmp/a15-result.json',JSON.stringify(r,null,2));
+          console.log(JSON.stringify(r.data,null,2).slice(0,20000));
+          const candidates=[];
+          const walk=x=>{if(!x)return;if(typeof x==='string'&&x.startsWith('http'))candidates.push(x);else if(Array.isArray(x))x.forEach(walk);else if(typeof x==='object'){if(x.url)candidates.push(x.url);Object.values(x).forEach(walk)}}; walk(r.data);
+          const url=candidates.find(x=>/audio|file|mp3|wav|flac/i.test(x))||candidates[0];
+          if(!url) throw new Error('No audio URL returned');
+          const res=await fetch(url); if(!res.ok) throw new Error('audio HTTP '+res.status);
+          const b=Buffer.from(await res.arrayBuffer()); fs.writeFileSync('/tmp/a15.mp3',b); console.log('AUDIO_BYTES',b.length);
+          if(b.length<10000) throw new Error('audio too small');
+          NODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: acestep15-vocal-test
+          path: |
+            /tmp/a15-result.json
+            /tmp/a15.mp3
+          if-no-files-found: ignore

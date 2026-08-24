@@ -4,9 +4,7 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - '.github/workflows/build-musicforge-v041-signed.yml'
-      - 'musicforge-build/v041/**'
-      - 'musicforge-build/v042/**'
+      - '.github/workflows/build-musicforge-v043-bridge.yml'
 
 permissions:
   contents: read
@@ -21,7 +19,7 @@ jobs:
         with:
           node-version: '24'
 
-      - name: Restore Cloud Safe 0.4.2 source
+      - name: Restore verified Cloud Safe base
         shell: bash
         run: |
           set -euo pipefail
@@ -38,16 +36,17 @@ jobs:
           patch -p1 --forward --batch < /tmp/v042.patch
           grep -q '"version": "0.4.2"' package.json
 
-      - name: Fix updater bundle path and bump 0.4.4
+      - name: Apply v0.4.4 updater fix
         shell: bash
         run: |
           set -euo pipefail
           cd /tmp/musicforge-src
           python3 - <<'PY'
           from pathlib import Path
-          p=Path('package.json'); p.write_text(p.read_text().replace('"version": "0.4.2"','"version": "0.4.4"'))
+          p=Path('package.json'); s=p.read_text().replace('"version": "0.4.2"','"version": "0.4.4"'); p.write_text(s)
           for f in ['renderer/app.js','renderer/index.html']:
               p=Path(f); p.write_text(p.read_text().replace('0.4.2','0.4.4'))
+
           p=Path('main.js'); s=p.read_text()
           old="""async function installDownloadedUpdate() {
   if (!downloadedUpdate?.appPath || !exists(downloadedUpdate.appPath)) throw new Error('Сначала скачай обновление.');
@@ -71,8 +70,9 @@ async function installDownloadedUpdate() {
   const currentApp = currentAppBundlePath();
   if (!currentApp) throw new Error('Не удалось определить путь к текущему MusicForge AI.app.');
 """
-          if old not in s: raise SystemExit('old updater block missing')
+          if old not in s: raise SystemExit('Updater target block not found')
           p.write_text(s.replace(old,new,1))
+
           p=Path('renderer/app.js'); s=p.read_text()
           anchor="const $$ = (sel) => Array.from(document.querySelectorAll(sel));"
           helper="""
@@ -84,31 +84,50 @@ function cleanIpcError(error) {
 }
 """
           if 'function cleanIpcError' not in s:
-              if anchor not in s: raise SystemExit('renderer anchor missing')
+              if anchor not in s: raise SystemExit('Renderer helper anchor not found')
               s=s.replace(anchor,anchor+helper,1)
           s=s.replace("detail: e.message || String(e)","detail: cleanIpcError(e)")
           s=s.replace("toast(e.message || String(e), 5000)","toast(cleanIpcError(e), 5000)")
           p.write_text(s)
           PY
+          grep -q '"version": "0.4.4"' package.json
 
-      - name: Updater regression tests
+      - name: Validate JavaScript and updater paths
         shell: bash
         run: |
           set -euo pipefail
           node --check /tmp/musicforge-src/main.js
           node --check /tmp/musicforge-src/preload.js
           node --check /tmp/musicforge-src/renderer/app.js
-          grep -q '"version": "0.4.4"' /tmp/musicforge-src/package.json
-          ! grep -q "path.resolve(path.dirname(process.execPath), '../../..')" /tmp/musicforge-src/main.js
-          grep -q 'function currentAppBundlePath' /tmp/musicforge-src/main.js
-          grep -q 'function cleanIpcError' /tmp/musicforge-src/renderer/app.js
+          cd /tmp/musicforge-src
           node <<'NODE'
           const path=require('path');
-          function f(execPath){const resolved=path.resolve(execPath);const marker=`${path.sep}Contents${path.sep}MacOS${path.sep}`;const i=resolved.lastIndexOf(marker);if(i>0){const b=resolved.slice(0,i);if(b.endsWith('.app'))return b;}const fallback=path.resolve(path.dirname(execPath),'../..');return fallback.endsWith('.app')?fallback:null;}
-          const cases=[['/Applications/MusicForge AI.app/Contents/MacOS/MusicForge AI','/Applications/MusicForge AI.app'],['/Users/test/Downloads/MusicForge AI.app/Contents/MacOS/MusicForge AI','/Users/test/Downloads/MusicForge AI.app']];
-          for(const [a,b] of cases){if(f(a)!==b)throw new Error(`${a} -> ${f(a)}`)}
-          console.log('Updater bundle path regression OK');
+          function currentAppBundlePath(execPath) {
+            const resolved=path.resolve(execPath);
+            const marker=`${path.sep}Contents${path.sep}MacOS${path.sep}`;
+            const markerIndex=resolved.lastIndexOf(marker);
+            if(markerIndex>0){const bundle=resolved.slice(0,markerIndex);if(bundle.endsWith('.app')) return bundle;}
+            const fallback=path.resolve(path.dirname(execPath),'../..');
+            return fallback.endsWith('.app') ? fallback : null;
+          }
+          const tests=[
+            ['/Applications/MusicForge AI.app/Contents/MacOS/MusicForge AI','/Applications/MusicForge AI.app'],
+            ['/Users/test/Downloads/MusicForge AI.app/Contents/MacOS/MusicForge AI','/Users/test/Downloads/MusicForge AI.app'],
+            ['/Users/test/Desktop/MusicForge AI.app/Contents/MacOS/MusicForge AI','/Users/test/Desktop/MusicForge AI.app']
+          ];
+          for(const [input,expected] of tests){const actual=currentAppBundlePath(input);if(actual!==expected)throw new Error(`${input} -> ${actual}; expected ${expected}`);}
+          console.log('Updater .app path tests OK');
           NODE
+          python3 - <<'PY'
+          from pathlib import Path
+          main=Path('main.js').read_text(); js=Path('renderer/app.js').read_text()
+          assert 'function currentAppBundlePath' in main
+          assert "path.resolve(path.dirname(process.execPath), '../../..')" not in main
+          assert 'cleanIpcError' in js
+          boot=main.split('app.whenReady().then',1)[1].split("app.on('before-quit'",1)[0]
+          assert 'startEngine()' not in boot
+          print('Updater regression checks OK')
+          PY
 
       - name: Install dependencies
         working-directory: /tmp/musicforge-src
@@ -132,7 +151,7 @@ function cleanIpcError(error) {
           input_path: '/tmp/musicforge-src/dist/MusicForge AI-darwin-arm64/MusicForge AI.app'
           output_path: '/tmp/musicforge-signed/MusicForge AI.app'
 
-      - name: Verify and archive
+      - name: Create updater ZIP
         shell: bash
         run: |
           set -euo pipefail
@@ -149,7 +168,9 @@ function cleanIpcError(error) {
           z=zipfile.ZipFile('/tmp/MusicForge-AI-v0.4.4-Mac-M1.zip')
           i=z.getinfo('MusicForge AI.app/Contents/MacOS/MusicForge AI')
           assert ((i.external_attr>>16)&0xffff)&stat.S_IXUSR
-          assert len([x for x in z.infolist() if stat.S_ISLNK((x.external_attr>>16)&0xffff)])>=3
+          links=[x for x in z.infolist() if stat.S_ISLNK((x.external_attr>>16)&0xffff)]
+          assert len(links)>=3
+          print('Updater ZIP OK; symlinks:',len(links))
           PY
 
       - uses: actions/upload-artifact@v4
