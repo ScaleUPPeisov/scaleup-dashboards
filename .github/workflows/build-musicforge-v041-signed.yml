@@ -5,6 +5,11 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/build-musicforge-v041-signed.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-musicforge-v041-signed.yml'
+      - 'musicforge-build/v041/**'
 
 permissions:
   contents: read
