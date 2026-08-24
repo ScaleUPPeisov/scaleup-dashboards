@@ -35,8 +35,6 @@ jobs:
           base64 -d /tmp/v042.b64 | gzip -dc > /tmp/v042.patch
           cd /tmp/musicforge-src
           patch -p1 --forward --batch < /tmp/v042.patch
-          base64 -d "$GITHUB_WORKSPACE/musicforge-build/v042/patch2.gz.b64" | gzip -dc > /tmp/v042-2.patch
-          patch -p1 --forward --batch < /tmp/v042-2.patch
           grep -q '"version": "0.4.2"' package.json
 
       - name: Apply v0.5.0 rebuild
