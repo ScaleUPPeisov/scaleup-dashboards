@@ -1,0 +1,112 @@
+name: ReelsFactory v0.3 ARM64 Validation
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate-v030:
+    if: github.head_ref == 'reelsfactory-v030-fast'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify Apple Silicon runner
+        run: |
+          set -euo pipefail
+          uname -m
+          test "$(uname -m)" = "arm64"
+
+      - name: Setup Rust ARM64
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Build native video engine and run video/caption regression tests
+        run: |
+          set -euo pipefail
+          npm install --no-audit --no-fund
+          mkdir -p src-tauri/binaries
+          swiftc native/VideoProcessor.swift -O -target arm64-apple-macos13.0 \
+            -o src-tauri/binaries/reelsfactory-video-aarch64-apple-darwin \
+            -framework AVFoundation -framework AppKit -framework QuartzCore -framework CoreMedia -framework CoreVideo -framework Vision
+          chmod +x src-tauri/binaries/reelsfactory-video-aarch64-apple-darwin
+          src-tauri/binaries/reelsfactory-video-aarch64-apple-darwin self-test | tee /tmp/rf-self.log
+          grep -q 'RF_SELF_TEST_OK' /tmp/rf-self.log
+
+          swiftc native/CaptionRegression.swift -O -target arm64-apple-macos13.0 \
+            -o /tmp/rf-caption-test \
+            -framework AVFoundation -framework AppKit -framework CoreMedia -framework CoreVideo
+          /tmp/rf-caption-test "$PWD/src-tauri/binaries/reelsfactory-video-aarch64-apple-darwin" | tee /tmp/rf-caption.log
+          grep -q 'RF_CAPTION_TEST_OK' /tmp/rf-caption.log
+
+      - name: Build local Whisper ARM64 Metal
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/whisper.cpp
+          git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git /tmp/whisper.cpp
+          cmake -S /tmp/whisper.cpp -B /tmp/whisper.cpp/build \
+            -DBUILD_SHARED_LIBS=OFF -DGGML_METAL=ON -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_BUILD_TYPE=Release
+          cmake --build /tmp/whisper.cpp/build --config Release -j 4 --target whisper-cli
+          cp /tmp/whisper.cpp/build/bin/whisper-cli src-tauri/binaries/whisper-cli-aarch64-apple-darwin
+          chmod +x src-tauri/binaries/whisper-cli-aarch64-apple-darwin
+          file src-tauri/binaries/whisper-cli-aarch64-apple-darwin | grep -q arm64
+
+      - name: Validate AI Cut, frontend and Rust
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./package.json').version")
+          test "$VERSION" = '0.3.0'
+          npm run build
+          grep -q "$VERSION" dist/app.js
+          grep -q "selectedStyle = 'dynamic'" dist/app.js
+          grep -q 'id="highlightKeywords" type="checkbox" checked' dist/index.html
+          cargo test --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
+          cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
+
+      - name: Build, sign and verify ReelsFactory.app
+        run: |
+          set -euo pipefail
+          npx tauri build --target aarch64-apple-darwin --bundles app
+          APP='src-tauri/target/aarch64-apple-darwin/release/bundle/macos/ReelsFactory.app'
+          test -d "$APP"
+          while IFS= read -r -d '' FILE; do
+            if /usr/bin/file "$FILE" | /usr/bin/grep -q 'Mach-O'; then
+              /usr/bin/codesign --force --sign - --timestamp=none "$FILE"
+            fi
+          done < <(/usr/bin/find "$APP/Contents" -type f -perm -111 -print0)
+          /usr/bin/codesign --force --deep --sign - --timestamp=none "$APP"
+          /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP"
+
+      - name: Create verified DMG and manifest
+        id: release
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./package.json').version")
+          APP='src-tauri/target/aarch64-apple-darwin/release/bundle/macos/ReelsFactory.app'
+          STAGE=/tmp/rf-v030-dmg
+          DMG="ReelsFactory_${VERSION}_M1.dmg"
+          rm -rf "$STAGE" "$DMG"
+          mkdir -p "$STAGE"
+          /usr/bin/ditto "$APP" "$STAGE/ReelsFactory.app"
+          ln -s /Applications "$STAGE/Applications"
+          /usr/bin/hdiutil create -volname "ReelsFactory ${VERSION}" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
+          ATTACH=$(/usr/bin/hdiutil attach -nobrowse -readonly "$DMG")
+          MOUNT=$(printf '%s\n' "$ATTACH" | /usr/bin/sed -n 's#^.*\(/Volumes/.*\)$#\1#p' | /usr/bin/tail -1)
+          /usr/bin/codesign --verify --deep --strict "$MOUNT/ReelsFactory.app"
+          test -x "$MOUNT/ReelsFactory.app/Contents/MacOS/ReelsFactory"
+          /usr/bin/hdiutil detach "$MOUNT" -quiet
+          SHA=$(/usr/bin/shasum -a 256 "$DMG" | /usr/bin/awk '{print $1}')
+          printf '{"version":"%s","sha256":"%s","file":"%s"}\n' "$VERSION" "$SHA" "$DMG" > reelsfactory-manifest.json
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ReelsFactory-${{ steps.release.outputs.version }}-M1-AI-CUT
+          path: |
+            ReelsFactory_${{ steps.release.outputs.version }}_M1.dmg
+            reelsfactory-manifest.json
+          if-no-files-found: error
