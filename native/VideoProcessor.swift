@@ -2,11 +2,22 @@ import Foundation
 import AVFoundation
 import AppKit
 import QuartzCore
+import Vision
 
 struct Caption: Codable {
     let start: Double
     let end: Double
     let text: String
+}
+
+struct EditSegment: Codable {
+    let start: Double
+    let end: Double
+}
+
+struct FaceSample {
+    let outputTime: Double
+    let centerX: CGFloat?
 }
 
 enum RFError: Error, CustomStringConvertible {
@@ -110,97 +121,260 @@ func attributedCaption(_ raw: String, style: String, highlight: Bool, fontSize: 
     return result
 }
 
+func emphasisScore(_ text: String) -> Int {
+    let upper = text.uppercased()
+    var score = 0
+    if upper.contains("?") || upper.contains("!") { score += 2 }
+    if upper.rangeOfCharacter(from: .decimalDigits) != nil { score += 2 }
+
+    let keywords = [
+        "ВАЖНО", "ГЛАВНОЕ", "ОШИБКА", "ПРИБЫЛ", "ДЕНЬГ", "ПРОДАЖ", "РЕЗУЛЬТАТ", "СЕКРЕТ", "ПОЧЕМУ", "КАК ", "НИКОГДА", "ВСЕГДА", "РЕКЛАМ",
+        "IMPORTANT", "MISTAKE", "PROFIT", "MONEY", "SALES", "RESULT", "SECRET", "WHY", "HOW ", "NEVER", "ALWAYS", "REVENUE"
+    ]
+    if keywords.contains(where: { upper.contains($0) }) { score += 2 }
+
+    let wordCount = upper.split(separator: " ").count
+    if wordCount >= 3 && wordCount <= 10 { score += 1 }
+    return score
+}
+
+func zoomFactor(at time: Double, captions: [Caption], mode: String) -> CGFloat {
+    guard mode != "off" else { return 1.0 }
+    let amount: CGFloat = mode == "dynamic" ? 1.085 : 1.045
+    for caption in captions {
+        guard emphasisScore(caption.text) >= 2 else { continue }
+        let accentEnd = min(caption.end, caption.start + 0.75)
+        if time >= caption.start && time <= accentEnd { return amount }
+    }
+    return 1.0
+}
+
+func detectFaceCenter(generator: AVAssetImageGenerator, at seconds: Double) -> CGFloat? {
+    let time = CMTime(seconds: seconds, preferredTimescale: 600)
+    guard let image = try? generator.copyCGImage(at: time, actualTime: nil) else { return nil }
+    let request = VNDetectFaceRectanglesRequest()
+    let handler = VNImageRequestHandler(cgImage: image, options: [:])
+    do {
+        try handler.perform([request])
+        guard let faces = request.results, !faces.isEmpty else { return nil }
+        let best = faces.max { lhs, rhs in
+            lhs.boundingBox.width * lhs.boundingBox.height < rhs.boundingBox.width * rhs.boundingBox.height
+        }
+        return best.map { CGFloat($0.boundingBox.midX) }
+    } catch {
+        return nil
+    }
+}
+
+func buildFaceSamples(asset: AVAsset, segments: [EditSegment], enabled: Bool) -> [FaceSample] {
+    guard enabled else { return [] }
+    let generator = AVAssetImageGenerator(asset: asset)
+    generator.appliesPreferredTrackTransform = true
+    generator.requestedTimeToleranceBefore = CMTime(seconds: 0.12, preferredTimescale: 600)
+    generator.requestedTimeToleranceAfter = CMTime(seconds: 0.12, preferredTimescale: 600)
+    generator.maximumSize = CGSize(width: 720, height: 720)
+
+    var result: [FaceSample] = []
+    var outputCursor = 0.0
+    var smoothed: CGFloat?
+
+    for segment in segments {
+        let duration = max(0.0, segment.end - segment.start)
+        var local = 0.0
+        while local <= duration + 0.001 {
+            let sourceTime = min(segment.end, segment.start + local)
+            let detected = detectFaceCenter(generator: generator, at: sourceTime)
+            if let detected {
+                if let old = smoothed {
+                    smoothed = old * 0.72 + detected * 0.28
+                } else {
+                    smoothed = detected
+                }
+            }
+            result.append(FaceSample(outputTime: outputCursor + local, centerX: smoothed))
+            local += 0.55
+        }
+        outputCursor += duration
+    }
+    return result
+}
+
+func framingTransform(
+    baseTransform: CGAffineTransform,
+    orientedSize: CGSize,
+    renderSize: CGSize,
+    mode: String,
+    faceCenterX: CGFloat?,
+    zoom: CGFloat
+) -> CGAffineTransform {
+    let sx = renderSize.width / orientedSize.width
+    let sy = renderSize.height / orientedSize.height
+    let baseScale: CGFloat
+    switch mode {
+    case "crop916", "face916": baseScale = max(sx, sy)
+    case "fit916": baseScale = min(sx, sy)
+    default: baseScale = 1.0
+    }
+
+    let finalScale = baseScale * zoom
+    let scaledWidth = orientedSize.width * finalScale
+    let scaledHeight = orientedSize.height * finalScale
+
+    var tx = (renderSize.width - scaledWidth) / 2.0
+    if mode == "face916", let faceCenterX {
+        let desired = renderSize.width * 0.50 - (orientedSize.width * faceCenterX * finalScale)
+        let minTx = min(0, renderSize.width - scaledWidth)
+        let maxTx = max(0, renderSize.width - scaledWidth)
+        tx = min(max(desired, minTx), maxTx)
+    }
+    let ty = (renderSize.height - scaledHeight) / 2.0
+
+    var transform = baseTransform.concatenating(CGAffineTransform(scaleX: finalScale, y: finalScale))
+    transform = transform.concatenating(
+        CGAffineTransform(
+            translationX: tx / max(finalScale, 0.0001),
+            y: ty / max(finalScale, 0.0001)
+        )
+    )
+    return transform
+}
+
 func render(
     _ input: String,
     _ output: String,
     _ captionsPath: String,
+    _ segmentsPath: String,
     _ mode: String,
     _ captionStyle: String,
-    _ highlightKeywords: Bool
+    _ highlightKeywords: Bool,
+    _ zoomMode: String
 ) throws {
     let asset = AVURLAsset(url: URL(fileURLWithPath: input))
     guard let sourceVideo = asset.tracks(withMediaType: .video).first else {
         throw RFError.message("В файле нет видеодорожки")
     }
 
-    let composition = AVMutableComposition()
-    guard let videoTrack = composition.addMutableTrack(
-        withMediaType: .video,
-        preferredTrackID: kCMPersistentTrackID_Invalid
-    ) else {
-        throw RFError.message("Не удалось создать видеодорожку")
+    let captionData = try Data(contentsOf: URL(fileURLWithPath: captionsPath))
+    let captions = (try? JSONDecoder().decode([Caption].self, from: captionData)) ?? []
+    let segmentData = try Data(contentsOf: URL(fileURLWithPath: segmentsPath))
+    var segments = (try? JSONDecoder().decode([EditSegment].self, from: segmentData)) ?? []
+    if segments.isEmpty {
+        segments = [EditSegment(start: 0, end: CMTimeGetSeconds(asset.duration))]
     }
 
-    try videoTrack.insertTimeRange(
-        CMTimeRange(start: .zero, duration: asset.duration),
-        of: sourceVideo,
-        at: .zero
-    )
+    let composition = AVMutableComposition()
+    guard let videoTrack = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else {
+        throw RFError.message("Не удалось создать видеодорожку")
+    }
+    let sourceAudio = asset.tracks(withMediaType: .audio).first
+    let audioTrack = sourceAudio == nil ? nil : composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
 
-    if let sourceAudio = asset.tracks(withMediaType: .audio).first,
-       let audioTrack = composition.addMutableTrack(
-        withMediaType: .audio,
-        preferredTrackID: kCMPersistentTrackID_Invalid
-       ) {
-        try audioTrack.insertTimeRange(
-            CMTimeRange(start: .zero, duration: asset.duration),
-            of: sourceAudio,
-            at: .zero
-        )
+    var cursor = CMTime.zero
+    for segment in segments {
+        let start = CMTime(seconds: max(0, segment.start), preferredTimescale: 600)
+        let duration = CMTime(seconds: max(0.01, segment.end - segment.start), preferredTimescale: 600)
+        let range = CMTimeRange(start: start, duration: duration)
+        try videoTrack.insertTimeRange(range, of: sourceVideo, at: cursor)
+        if let sourceAudio, let audioTrack {
+            try audioTrack.insertTimeRange(range, of: sourceAudio, at: cursor)
+        }
+        cursor = CMTimeAdd(cursor, duration)
     }
 
     let (baseTransform, orientedSize) = normalizedTransform(sourceVideo)
     let renderSize: CGSize = mode == "original" ? orientedSize : CGSize(width: 1080, height: 1920)
-    let sx = renderSize.width / orientedSize.width
-    let sy = renderSize.height / orientedSize.height
-
-    let scale: CGFloat
-    if mode == "crop916" {
-        scale = max(sx, sy)
-    } else if mode == "fit916" {
-        scale = min(sx, sy)
-    } else {
-        scale = 1.0
-    }
-
-    let scaledSize = CGSize(width: orientedSize.width * scale, height: orientedSize.height * scale)
-    let tx = (renderSize.width - scaledSize.width) / 2.0
-    let ty = (renderSize.height - scaledSize.height) / 2.0
-
-    var transform = baseTransform.concatenating(CGAffineTransform(scaleX: scale, y: scale))
-    transform = transform.concatenating(
-        CGAffineTransform(
-            translationX: tx / max(scale, 0.0001),
-            y: ty / max(scale, 0.0001)
-        )
-    )
+    let outputDuration = CMTimeGetSeconds(composition.duration)
 
     let instruction = AVMutableVideoCompositionInstruction()
-    instruction.timeRange = CMTimeRange(start: .zero, duration: asset.duration)
-
+    instruction.timeRange = CMTimeRange(start: .zero, duration: composition.duration)
     let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: videoTrack)
-    layerInstruction.setTransform(transform, at: .zero)
-    instruction.layerInstructions = [layerInstruction]
 
+    let faceSamples = buildFaceSamples(asset: asset, segments: segments, enabled: mode == "face916")
+    var timeline = Set<Double>()
+    timeline.insert(0)
+    timeline.insert(max(0, outputDuration))
+    var tick = 0.0
+    while tick < outputDuration {
+        timeline.insert(tick)
+        tick += 0.40
+    }
+    for sample in faceSamples { timeline.insert(sample.outputTime) }
+    for caption in captions {
+        timeline.insert(caption.start)
+        timeline.insert(min(caption.end, caption.start + 0.75))
+        timeline.insert(caption.end)
+    }
+    let times = timeline.filter { $0 >= 0 && $0 <= outputDuration }.sorted()
+
+    func faceAt(_ time: Double) -> CGFloat? {
+        guard !faceSamples.isEmpty else { return nil }
+        var nearest = faceSamples[0]
+        var bestDistance = abs(nearest.outputTime - time)
+        for sample in faceSamples.dropFirst() {
+            let distance = abs(sample.outputTime - time)
+            if distance < bestDistance {
+                nearest = sample
+                bestDistance = distance
+            }
+        }
+        return nearest.centerX
+    }
+
+    if times.count <= 1 {
+        let transform = framingTransform(
+            baseTransform: baseTransform,
+            orientedSize: orientedSize,
+            renderSize: renderSize,
+            mode: mode,
+            faceCenterX: faceAt(0),
+            zoom: zoomFactor(at: 0, captions: captions, mode: zoomMode)
+        )
+        layerInstruction.setTransform(transform, at: .zero)
+    } else {
+        for index in 0..<(times.count - 1) {
+            let startSeconds = times[index]
+            let endSeconds = times[index + 1]
+            if endSeconds - startSeconds < 0.01 { continue }
+            let startTransform = framingTransform(
+                baseTransform: baseTransform,
+                orientedSize: orientedSize,
+                renderSize: renderSize,
+                mode: mode,
+                faceCenterX: faceAt(startSeconds),
+                zoom: zoomFactor(at: startSeconds, captions: captions, mode: zoomMode)
+            )
+            let endTransform = framingTransform(
+                baseTransform: baseTransform,
+                orientedSize: orientedSize,
+                renderSize: renderSize,
+                mode: mode,
+                faceCenterX: faceAt(endSeconds),
+                zoom: zoomFactor(at: endSeconds, captions: captions, mode: zoomMode)
+            )
+            layerInstruction.setTransformRamp(
+                fromStart: startTransform,
+                toEnd: endTransform,
+                timeRange: CMTimeRange(
+                    start: CMTime(seconds: startSeconds, preferredTimescale: 600),
+                    duration: CMTime(seconds: endSeconds - startSeconds, preferredTimescale: 600)
+                )
+            )
+        }
+    }
+
+    instruction.layerInstructions = [layerInstruction]
     let videoComposition = AVMutableVideoComposition()
     videoComposition.renderSize = renderSize
     let sourceFPS = sourceVideo.nominalFrameRate > 0 ? min(sourceVideo.nominalFrameRate, 60.0) : 30.0
-    videoComposition.frameDuration = CMTime(
-        value: 1,
-        timescale: CMTimeScale(max(24.0, sourceFPS).rounded())
-    )
+    videoComposition.frameDuration = CMTime(value: 1, timescale: CMTimeScale(max(24.0, sourceFPS).rounded()))
     videoComposition.instructions = [instruction]
 
     let parentLayer = CALayer()
     parentLayer.frame = CGRect(origin: .zero, size: renderSize)
     parentLayer.backgroundColor = NSColor.black.cgColor
-
     let videoLayer = CALayer()
     videoLayer.frame = parentLayer.bounds
     parentLayer.addSublayer(videoLayer)
-
-    let captionData = try Data(contentsOf: URL(fileURLWithPath: captionsPath))
-    let captions = (try? JSONDecoder().decode([Caption].self, from: captionData)) ?? []
 
     for caption in captions {
         let textLayer = CATextLayer()
@@ -215,13 +389,7 @@ func render(
         default: relativeFontSize = 0.052
         }
         let fontSize = max(28.0, renderSize.width * relativeFontSize)
-        textLayer.string = attributedCaption(
-            caption.text,
-            style: captionStyle,
-            highlight: highlightKeywords,
-            fontSize: fontSize
-        )
-
+        textLayer.string = attributedCaption(caption.text, style: captionStyle, highlight: highlightKeywords, fontSize: fontSize)
         textLayer.cornerRadius = captionStyle == "minimal" ? 0 : 12
         if captionStyle == "minimal" {
             textLayer.backgroundColor = NSColor.clear.cgColor
@@ -233,12 +401,7 @@ func render(
         let width = renderSize.width * (captionStyle == "bold" ? 0.92 : 0.86)
         let height = max(100.0, renderSize.height * (captionStyle == "bold" ? 0.13 : 0.105))
         let y = captionStyle == "podcast" ? renderSize.height * 0.15 : renderSize.height * 0.10
-        textLayer.frame = CGRect(
-            x: (renderSize.width - width) / 2.0,
-            y: y,
-            width: width,
-            height: height
-        )
+        textLayer.frame = CGRect(x: (renderSize.width - width) / 2.0, y: y, width: width, height: height)
         textLayer.opacity = 0
 
         let opacity = CAKeyframeAnimation(keyPath: "opacity")
@@ -260,28 +423,20 @@ func render(
             pop.fillMode = .both
             textLayer.add(pop, forKey: "captionPop")
         }
-
         parentLayer.addSublayer(textLayer)
     }
 
-    videoComposition.animationTool = AVVideoCompositionCoreAnimationTool(
-        postProcessingAsVideoLayer: videoLayer,
-        in: parentLayer
-    )
+    videoComposition.animationTool = AVVideoCompositionCoreAnimationTool(postProcessingAsVideoLayer: videoLayer, in: parentLayer)
 
-    guard let session = AVAssetExportSession(
-        asset: composition,
-        presetName: AVAssetExportPresetHighestQuality
-    ) else {
+    guard let session = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetHighestQuality) else {
         throw RFError.message("Не удалось создать видео-экспорт")
     }
-
     let outputURL = URL(fileURLWithPath: output)
     try? FileManager.default.removeItem(at: outputURL)
     session.outputURL = outputURL
     session.outputFileType = .mp4
     session.videoComposition = videoComposition
-    session.timeRange = CMTimeRange(start: .zero, duration: asset.duration)
+    session.timeRange = CMTimeRange(start: .zero, duration: composition.duration)
     session.shouldOptimizeForNetworkUse = true
     try waitExport(session)
 }
@@ -289,7 +444,7 @@ func render(
 do {
     let arguments = CommandLine.arguments
     guard arguments.count >= 3 else {
-        throw RFError.message("Usage: probe input | extract-audio input output | render input output captions.json mode style highlight")
+        throw RFError.message("Usage: probe input | extract-audio input output | render input output captions.json segments.json mode style highlight zoom")
     }
 
     switch arguments[1] {
@@ -299,14 +454,9 @@ do {
         guard arguments.count >= 4 else { throw RFError.message("extract-audio args missing") }
         try extractAudio(arguments[2], arguments[3])
     case "render":
-        guard arguments.count >= 8 else { throw RFError.message("render args missing") }
+        guard arguments.count >= 10 else { throw RFError.message("render args missing") }
         try render(
-            arguments[2],
-            arguments[3],
-            arguments[4],
-            arguments[5],
-            arguments[6],
-            arguments[7] == "1"
+            arguments[2], arguments[3], arguments[4], arguments[5], arguments[6], arguments[7], arguments[8] == "1", arguments[9]
         )
     default:
         throw RFError.message("Unknown command")
