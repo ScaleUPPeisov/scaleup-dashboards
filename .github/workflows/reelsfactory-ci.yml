@@ -28,8 +28,14 @@ jobs:
           mkdir -p src-tauri/binaries
           swiftc native/VideoProcessor.swift -O -target arm64-apple-macos13.0 \
             -o src-tauri/binaries/reelsfactory-video-aarch64-apple-darwin \
-            -framework AVFoundation -framework AppKit -framework QuartzCore -framework CoreMedia -framework Vision
+            -framework AVFoundation -framework AppKit -framework QuartzCore -framework CoreMedia -framework CoreVideo -framework Vision
           chmod +x src-tauri/binaries/reelsfactory-video-aarch64-apple-darwin
+          file src-tauri/binaries/reelsfactory-video-aarch64-apple-darwin | grep -q arm64
+
+          echo "Running native export regression test..."
+          src-tauri/binaries/reelsfactory-video-aarch64-apple-darwin self-test | tee /tmp/reelsfactory-self-test.log
+          grep -q "RF_SELF_TEST_OK" /tmp/reelsfactory-self-test.log
+
           rm -rf /tmp/whisper.cpp
           git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git /tmp/whisper.cpp
           cmake -S /tmp/whisper.cpp -B /tmp/whisper.cpp/build \
@@ -37,16 +43,16 @@ jobs:
           cmake --build /tmp/whisper.cpp/build --config Release -j 4 --target whisper-cli
           cp /tmp/whisper.cpp/build/bin/whisper-cli src-tauri/binaries/whisper-cli-aarch64-apple-darwin
           chmod +x src-tauri/binaries/whisper-cli-aarch64-apple-darwin
-          file src-tauri/binaries/reelsfactory-video-aarch64-apple-darwin | grep -q arm64
           file src-tauri/binaries/whisper-cli-aarch64-apple-darwin | grep -q arm64
 
-      - name: Validate frontend and Rust
+      - name: Validate frontend, Smart Cuts and Rust
         run: |
           set -euo pipefail
           VERSION=$(node -p "require('./package.json').version")
           npm run build
           grep -q "$VERSION" dist/app.js
           grep -q "$VERSION" dist/index.html
+          cargo test --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
           cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
 
       - name: Build and sign ReelsFactory app
