@@ -25,6 +25,7 @@
   "bundle": {
     "active": true,
     "targets": ["app", "dmg"],
+    "icon": [],
     "macOS": { "minimumSystemVersion": "13.0" },
     "externalBin": [
       "binaries/reelsfactory-video",
