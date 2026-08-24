@@ -27,8 +27,11 @@ struct ChannelInfo {
     release_time: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 struct Caption { start: f64, end: f64, text: String }
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct EditSegment { start: f64, end: f64 }
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -60,6 +63,13 @@ fn run(mut cmd: Command, label: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn probe_path(path: &Path) -> Result<VideoProbe, String> {
+    let helper = bin_path("reelsfactory-video")?;
+    let out = Command::new(helper).arg("probe").arg(path).output().map_err(|e| e.to_string())?;
+    if !out.status.success() { return Err(String::from_utf8_lossy(&out.stderr).trim().to_string()); }
+    serde_json::from_slice::<VideoProbe>(&out.stdout).map_err(|e| format!("Некорректные метаданные видео: {}", e))
+}
+
 #[tauri::command]
 fn pick_video() -> Option<String> {
     let out = Command::new("/usr/bin/osascript")
@@ -76,10 +86,7 @@ async fn probe_video(input: String) -> Result<VideoProbe, String> {
     if !p.exists() { return Err("Исходный файл не найден".into()); }
     let ext = p.extension().and_then(|x| x.to_str()).unwrap_or("").to_ascii_lowercase();
     if !["mp4", "mov", "m4v"].contains(&ext.as_str()) { return Err("Поддерживаются MP4, MOV и M4V".into()); }
-    let helper = bin_path("reelsfactory-video")?;
-    let out = Command::new(helper).arg("probe").arg(&p).output().map_err(|e| e.to_string())?;
-    if !out.status.success() { return Err(String::from_utf8_lossy(&out.stderr).trim().to_string()); }
-    serde_json::from_slice::<VideoProbe>(&out.stdout).map_err(|e| format!("Некорректные метаданные видео: {}", e))
+    probe_path(&p)
 }
 
 fn model_path() -> Result<PathBuf, String> {
@@ -120,8 +127,87 @@ fn parse_srt(path: &Path) -> Result<Vec<Caption>, String> {
     Ok(result)
 }
 
+fn cut_parameters(intensity: &str) -> (f64, f64) {
+    match intensity {
+        "low" => (1.60, 0.35),
+        "high" => (0.68, 0.14),
+        _ => (1.00, 0.22),
+    }
+}
+
+fn build_segments(captions: &[Caption], duration: f64, enabled: bool, intensity: &str) -> Vec<EditSegment> {
+    let duration = duration.max(0.01);
+    if !enabled || captions.is_empty() { return vec![EditSegment { start: 0.0, end: duration }]; }
+
+    let (threshold, padding) = cut_parameters(intensity);
+    let mut result = Vec::new();
+    let first = &captions[0];
+    let mut current_start = if first.start > threshold { (first.start - padding).max(0.0) } else { 0.0 };
+    let mut speech_end = first.end.min(duration);
+
+    for caption in captions.iter().skip(1) {
+        let start = caption.start.max(0.0).min(duration);
+        let end = caption.end.max(start).min(duration);
+        let gap = start - speech_end;
+        if gap > threshold {
+            let keep_end = (speech_end + padding).min(duration);
+            if keep_end - current_start > 0.08 {
+                result.push(EditSegment { start: current_start, end: keep_end });
+            }
+            current_start = (start - padding).max(0.0);
+        }
+        speech_end = speech_end.max(end);
+    }
+
+    let trailing_gap = duration - speech_end;
+    let final_end = if trailing_gap > threshold { (speech_end + padding).min(duration) } else { duration };
+    if final_end - current_start > 0.08 { result.push(EditSegment { start: current_start, end: final_end }); }
+    if result.is_empty() { vec![EditSegment { start: 0.0, end: duration }] } else { result }
+}
+
+fn remap_captions(captions: &[Caption], segments: &[EditSegment]) -> Vec<Caption> {
+    let mut result = Vec::new();
+    let mut output_cursor = 0.0;
+    for segment in segments {
+        let seg_duration = (segment.end - segment.start).max(0.0);
+        for caption in captions {
+            let overlap_start = caption.start.max(segment.start);
+            let overlap_end = caption.end.min(segment.end);
+            if overlap_end - overlap_start <= 0.02 { continue; }
+            result.push(Caption {
+                start: output_cursor + (overlap_start - segment.start),
+                end: output_cursor + (overlap_end - segment.start),
+                text: caption.text.clone(),
+            });
+        }
+        output_cursor += seg_duration;
+    }
+    result
+}
+
+fn transcribe(input_path: &Path, helper: &Path, work: &Path) -> Result<Vec<Caption>, String> {
+    let audio=work.join("audio.m4a");
+    let wav=work.join("audio.wav");
+    let mut c=Command::new(helper); c.arg("extract-audio").arg(input_path).arg(&audio); run(c,"Извлечение аудио")?;
+    let mut a=Command::new("/usr/bin/afconvert"); a.args(["-f","WAVE","-d","LEI16@16000","-c","1"]).arg(&audio).arg(&wav); run(a,"Подготовка аудио")?;
+    let model=ensure_model()?;
+    let whisper=bin_path("whisper-cli")?;
+    let prefix=work.join("transcript");
+    let mut w=Command::new(whisper); w.args(["-m"]).arg(model).arg("-f").arg(&wav).args(["-l","auto","-osrt","-of"]).arg(&prefix); run(w,"Распознавание речи")?;
+    parse_srt(&PathBuf::from(format!("{}.srt",prefix.display())))
+}
+
 #[tauri::command(rename_all = "camelCase")]
-async fn process_video(input: String, aspect: String, captions: bool, caption_style: String, highlight_keywords: bool) -> Result<String, String> {
+async fn process_video(
+    input: String,
+    aspect: String,
+    captions: bool,
+    caption_style: String,
+    highlight_keywords: bool,
+    smart_cuts: bool,
+    cut_intensity: String,
+    zoom_mode: String,
+) -> Result<String, String> {
     let input_path=PathBuf::from(&input);
     if !input_path.exists(){return Err("Исходный файл не найден".into())}
     let desktop=dirs::desktop_dir().ok_or("Не найден рабочий стол")?;
@@ -130,23 +216,37 @@ async fn process_video(input: String, aspect: String, captions: bool, caption_st
     let helper=bin_path("reelsfactory-video")?;
     let work=std::env::temp_dir().join(format!("reelsfactory-{}",stamp));
     fs::create_dir_all(&work).map_err(|e|e.to_string())?;
-    let captions_json=work.join("captions.json");
 
-    if captions {
-        let audio=work.join("audio.m4a"); let wav=work.join("audio.wav");
-        let mut c=Command::new(&helper); c.arg("extract-audio").arg(&input_path).arg(&audio); run(c,"Извлечение аудио")?;
-        let mut a=Command::new("/usr/bin/afconvert"); a.args(["-f","WAVE","-d","LEI16@16000","-c","1"]).arg(&audio).arg(&wav); run(a,"Подготовка аудио")?;
-        let model=ensure_model()?; let whisper=bin_path("whisper-cli")?; let prefix=work.join("transcript");
-        let mut w=Command::new(whisper); w.args(["-m"]).arg(model).arg("-f").arg(&wav).args(["-l","auto","-osrt","-of"]).arg(&prefix); run(w,"Распознавание речи")?;
-        let srt=PathBuf::from(format!("{}.srt",prefix.display())); let parsed=parse_srt(&srt)?;
-        fs::write(&captions_json,serde_json::to_vec(&parsed).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
-    } else { fs::write(&captions_json,"[]").map_err(|e|e.to_string())?; }
+    let metadata = probe_path(&input_path)?;
+    let needs_transcript = captions || smart_cuts || zoom_mode != "off";
+    let transcript = if needs_transcript { transcribe(&input_path, &helper, &work)? } else { Vec::new() };
+    let segments = build_segments(&transcript, metadata.duration, smart_cuts, &cut_intensity);
+    let remapped = remap_captions(&transcript, &segments);
+
+    let analysis_json=work.join("analysis-captions.json");
+    let rendered_json=work.join("captions.json");
+    let segments_json=work.join("segments.json");
+    fs::write(&analysis_json,serde_json::to_vec(&remapped).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
+    let visible_captions: Vec<Caption> = if captions { remapped.clone() } else { Vec::new() };
+    fs::write(&rendered_json,serde_json::to_vec(&visible_captions).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
+    fs::write(&segments_json,serde_json::to_vec(&segments).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
 
     let safe_style = match caption_style.as_str() { "clean"|"dynamic"|"bold"|"minimal"|"podcast" => caption_style, _ => "clean".into() };
+    let safe_zoom = match zoom_mode.as_str() { "soft"|"dynamic" => zoom_mode, _ => "off".into() };
+    let safe_aspect = match aspect.as_str() { "fit916"|"crop916"|"face916"|"original" => aspect, _ => "face916".into() };
+
     let mut r=Command::new(&helper);
-    r.arg("render").arg(&input_path).arg(&output).arg(&captions_json).arg(&aspect).arg(&safe_style).arg(if highlight_keywords{"1"}else{"0"});
+    r.arg("render")
+      .arg(&input_path)
+      .arg(&output)
+      .arg(&rendered_json)
+      .arg(&segments_json)
+      .arg(&safe_aspect)
+      .arg(&safe_style)
+      .arg(if highlight_keywords{"1"}else{"0"})
+      .arg(&safe_zoom);
     let result=run(r,"Экспорт видео");
-    if result.is_ok(){let _=fs::remove_dir_all(&work);} else {let _=fs::remove_dir_all(&work);}
+    let _=fs::remove_dir_all(&work);
     result?;
     Ok(output.to_string_lossy().to_string())
 }
