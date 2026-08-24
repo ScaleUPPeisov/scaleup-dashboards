@@ -1,0 +1,35 @@
+name: Probe ACE-Step v1 Space
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/probe-acestep-v1-space.yml'
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Inspect official v1 Space API
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/v1probe && cd /tmp/v1probe
+          npm init -y >/dev/null 2>&1
+          npm install --no-audit --no-fund @gradio/client
+          node --input-type=module <<'NODE'
+          import { Client } from '@gradio/client';
+          import fs from 'node:fs';
+          const app = await Client.connect('ACE-Step/ACE-Step');
+          const api = await app.view_api();
+          fs.writeFileSync('/tmp/acestep-v1-api.json', JSON.stringify(api,null,2));
+          console.log(JSON.stringify(api,null,2).slice(0,30000));
+          NODE
+      - uses: actions/upload-artifact@v4
+        with:
+          name: acestep-v1-api
+          path: /tmp/acestep-v1-api.json
