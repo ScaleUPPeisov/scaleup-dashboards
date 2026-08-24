@@ -24,7 +24,7 @@ ReelsFactory is a macOS Apple Silicon desktop app for turning raw talking-head v
 - In-app update checks against ReelsFactory GitHub releases
 - Update installation from verified DMG + SHA-256 manifest
 - Previous app backup before replacement
-- Native ARM64 regression tests for rotated metadata, 9:16 export and black-bar prevention
+- Native ARM64 regression tests for rotated metadata, 9:16 export, black-bar prevention and actual caption burn-in
 
 ## Update workflow
 
