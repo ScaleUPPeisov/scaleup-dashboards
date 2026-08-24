@@ -33,15 +33,24 @@ struct GithubRelease {
 #[derive(Debug, Deserialize)]
 struct ReleaseManifest { version: String, sha256: String, file: String }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 struct Caption { start: f64, end: f64, text: String }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 struct EditSegment { start: f64, end: f64 }
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct VideoProbe { duration: f64, width: u32, height: u32, fps: f64, size: u64 }
+
+#[derive(Debug, Clone, Copy)]
+struct CutProfile {
+    threshold: f64,
+    padding: f64,
+    min_segment: f64,
+    min_removed_gap: f64,
+    min_keep_ratio: f64,
+}
 
 fn bin_path(name: &str) -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
@@ -143,33 +152,50 @@ fn parse_srt(path: &Path) -> Result<Vec<Caption>, String> {
     Ok(result)
 }
 
-fn cut_parameters(intensity: &str) -> (f64, f64) {
-    match intensity { "low" => (1.60, 0.35), "high" => (0.68, 0.14), _ => (1.00, 0.22) }
+fn cut_profile(intensity: &str) -> CutProfile {
+    match intensity {
+        "low" => CutProfile { threshold: 3.00, padding: 0.55, min_segment: 1.35, min_removed_gap: 1.10, min_keep_ratio: 0.82 },
+        "high" => CutProfile { threshold: 1.45, padding: 0.30, min_segment: 0.90, min_removed_gap: 0.62, min_keep_ratio: 0.58 },
+        _ => CutProfile { threshold: 2.15, padding: 0.42, min_segment: 1.10, min_removed_gap: 0.82, min_keep_ratio: 0.70 },
+    }
 }
 
 fn build_segments(captions: &[Caption], duration: f64, enabled: bool, intensity: &str) -> Vec<EditSegment> {
     let duration = duration.max(0.01);
     if !enabled || captions.is_empty() { return vec![EditSegment { start: 0.0, end: duration }]; }
-    let (threshold, padding) = cut_parameters(intensity);
+    let profile = cut_profile(intensity);
+
     let mut result = Vec::new();
-    let first = &captions[0];
-    let mut current_start = if first.start > threshold { (first.start - padding).max(0.0) } else { 0.0 };
-    let mut speech_end = first.end.min(duration);
+    let mut current_start = 0.0;
+    let mut speech_end = captions[0].end.clamp(0.0, duration);
+
     for caption in captions.iter().skip(1) {
-        let start = caption.start.max(0.0).min(duration);
+        let start = caption.start.clamp(0.0, duration);
         let end = caption.end.max(start).min(duration);
         let gap = start - speech_end;
-        if gap > threshold {
-            let keep_end = (speech_end + padding).min(duration);
-            if keep_end - current_start > 0.08 { result.push(EditSegment { start: current_start, end: keep_end }); }
-            current_start = (start - padding).max(0.0);
+        if gap > profile.threshold {
+            let keep_end = (speech_end + profile.padding).min(duration);
+            let next_start = (start - profile.padding).max(0.0);
+            let removed = next_start - keep_end;
+            let kept_clip = keep_end - current_start;
+            if removed >= profile.min_removed_gap && kept_clip >= profile.min_segment {
+                result.push(EditSegment { start: current_start, end: keep_end });
+                current_start = next_start;
+            }
         }
         speech_end = speech_end.max(end);
     }
-    let trailing_gap = duration - speech_end;
-    let final_end = if trailing_gap > threshold { (speech_end + padding).min(duration) } else { duration };
-    if final_end - current_start > 0.08 { result.push(EditSegment { start: current_start, end: final_end }); }
-    if result.is_empty() { vec![EditSegment { start: 0.0, end: duration }] } else { result }
+
+    if duration - current_start >= 0.08 {
+        result.push(EditSegment { start: current_start, end: duration });
+    }
+    if result.is_empty() { return vec![EditSegment { start: 0.0, end: duration }]; }
+
+    let kept: f64 = result.iter().map(|s| (s.end - s.start).max(0.0)).sum();
+    if kept / duration < profile.min_keep_ratio {
+        return vec![EditSegment { start: 0.0, end: duration }];
+    }
+    result
 }
 
 fn remap_captions(captions: &[Caption], segments: &[EditSegment]) -> Vec<Caption> {
@@ -291,6 +317,7 @@ MOUNT=$(printf '%s\n' "$ATTACH" | /usr/bin/sed -n 's#^.*\(/Volumes/.*\)$#\1#p' |
 NEW_APP="$MOUNT/ReelsFactory.app"
 if [[ ! -d "$NEW_APP" ]]; then NEW_APP=$(/usr/bin/find "$MOUNT" -type d -name 'ReelsFactory.app' -print | /usr/bin/head -1); fi
 [[ -d "$NEW_APP" ]] || exit 22
+/usr/bin/codesign --verify --deep --strict "$NEW_APP" || exit 25
 BACKUP="${CURRENT%.app}.previous.app"
 rm -rf "$BACKUP"
 if [[ -d "$CURRENT" ]]; then mv "$CURRENT" "$BACKUP" || exit 23; fi
@@ -300,6 +327,11 @@ if ! /usr/bin/ditto "$NEW_APP" "$CURRENT"; then
   exit 24
 fi
 /usr/bin/xattr -dr com.apple.quarantine "$CURRENT" >/dev/null 2>&1 || true
+/usr/bin/codesign --verify --deep --strict "$CURRENT" || {
+  rm -rf "$CURRENT"
+  [[ -d "$BACKUP" ]] && mv "$BACKUP" "$CURRENT"
+  exit 26
+}
 cleanup
 MOUNT=""
 /usr/bin/open "$CURRENT"
@@ -317,4 +349,43 @@ fn main(){
       .invoke_handler(tauri::generate_handler![pick_video,probe_video,process_video,reveal_file,open_file,check_for_update,download_update])
       .run(tauri::generate_context!())
       .expect("error while running ReelsFactory");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cap(start: f64, end: f64) -> Caption {
+        Caption { start, end, text: "speech".into() }
+    }
+
+    #[test]
+    fn normal_short_pauses_are_not_cut() {
+        let c = vec![cap(0.2, 1.0), cap(1.7, 2.5), cap(3.3, 4.0)];
+        assert_eq!(build_segments(&c, 5.0, true, "medium"), vec![EditSegment { start: 0.0, end: 5.0 }]);
+    }
+
+    #[test]
+    fn long_internal_pause_is_cut_but_head_and_tail_survive() {
+        let c = vec![cap(0.3, 2.0), cap(5.3, 7.0)];
+        let s = build_segments(&c, 8.0, true, "medium");
+        assert_eq!(s.len(), 2);
+        assert!((s[0].start - 0.0).abs() < 0.001);
+        assert!((s[1].end - 8.0).abs() < 0.001);
+        assert!(s[0].end < s[1].start);
+    }
+
+    #[test]
+    fn noisy_transcript_cannot_destroy_most_of_video() {
+        let c = vec![cap(0.2, 0.4), cap(2.5, 2.7), cap(5.0, 5.2), cap(7.5, 7.7)];
+        let s = build_segments(&c, 10.0, true, "medium");
+        let kept: f64 = s.iter().map(|x| x.end - x.start).sum();
+        assert!(kept >= 7.0 - 0.001);
+    }
+
+    #[test]
+    fn disabled_smart_cuts_preserve_exact_duration() {
+        let c = vec![cap(2.0, 3.0)];
+        assert_eq!(build_segments(&c, 9.5, false, "high"), vec![EditSegment { start: 0.0, end: 9.5 }]);
+    }
 }
