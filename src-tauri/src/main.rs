@@ -6,51 +6,27 @@ const RELEASES_API: &str = "https://api.github.com/repos/ScaleUPPeisov/scaleup-d
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct UpdateInfo {
-    available: bool,
-    version: String,
-    notes: String,
-    url: String,
-    sha256: String,
-    filename: String,
-    release_date: String,
-    release_time: String,
-}
+struct UpdateInfo { available: bool, version: String, notes: String, url: String, sha256: String, filename: String, release_date: String, release_time: String }
 
 #[derive(Debug, Deserialize)]
 struct GithubAsset { name: String, browser_download_url: String }
-
 #[derive(Debug, Deserialize)]
-struct GithubRelease {
-    tag_name: String,
-    body: Option<String>,
-    published_at: Option<String>,
-    assets: Vec<GithubAsset>,
-    draft: bool,
-    prerelease: bool,
-}
-
+struct GithubRelease { tag_name: String, body: Option<String>, published_at: Option<String>, assets: Vec<GithubAsset>, draft: bool, prerelease: bool }
 #[derive(Debug, Deserialize)]
 struct ReleaseManifest { version: String, sha256: String, file: String }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 struct Caption { start: f64, end: f64, text: String }
-
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 struct EditSegment { start: f64, end: f64 }
-
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct VideoProbe { duration: f64, width: u32, height: u32, fps: f64, size: u64 }
 
 #[derive(Debug, Clone, Copy)]
-struct CutProfile {
-    threshold: f64,
-    padding: f64,
-    min_segment: f64,
-    min_removed_gap: f64,
-    min_keep_ratio: f64,
-}
+struct CutProfile { threshold: f64, padding: f64, min_segment: f64, min_removed_gap: f64, min_keep_ratio: f64 }
+#[derive(Debug, Clone)]
+struct AiCandidate { start: f64, end: f64, score: f64, first: usize, last: usize }
 
 fn bin_path(name: &str) -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
@@ -64,8 +40,7 @@ fn bin_path(name: &str) -> Result<PathBuf, String> {
 
 fn current_app_path() -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    exe.parent().and_then(|p|p.parent()).and_then(|p|p.parent())
-        .map(Path::to_path_buf).ok_or("Не удалось определить ReelsFactory.app".into())
+    exe.parent().and_then(|p|p.parent()).and_then(|p|p.parent()).map(Path::to_path_buf).ok_or("Не удалось определить ReelsFactory.app".into())
 }
 
 fn run(mut cmd: Command, label: &str) -> Result<(), String> {
@@ -79,12 +54,8 @@ fn run(mut cmd: Command, label: &str) -> Result<(), String> {
 }
 
 fn curl_bytes(url: &str, label: &str) -> Result<Vec<u8>, String> {
-    let out = Command::new("/usr/bin/curl")
-        .args(["-fsSL", "--connect-timeout", "10", "--retry", "3", "-H", "Accept: application/vnd.github+json", "-A", "ReelsFactory-Updater"])
-        .arg(url).output().map_err(|e| format!("{}: {}", label, e))?;
-    if !out.status.success() {
-        return Err(format!("{}: {}", label, String::from_utf8_lossy(&out.stderr).trim()));
-    }
+    let out = Command::new("/usr/bin/curl").args(["-fsSL", "--connect-timeout", "10", "--retry", "3", "-H", "Accept: application/vnd.github+json", "-A", "ReelsFactory-Updater"]).arg(url).output().map_err(|e| format!("{}: {}", label, e))?;
+    if !out.status.success() { return Err(format!("{}: {}", label, String::from_utf8_lossy(&out.stderr).trim())); }
     Ok(out.stdout)
 }
 
@@ -97,9 +68,7 @@ fn probe_path(path: &Path) -> Result<VideoProbe, String> {
 
 #[tauri::command]
 fn pick_video() -> Option<String> {
-    let out = Command::new("/usr/bin/osascript")
-        .args(["-e", "POSIX path of (choose file with prompt \"Choose video for ReelsFactory\" of type {\"public.movie\"})"])
-        .output().ok()?;
+    let out = Command::new("/usr/bin/osascript").args(["-e", "POSIX path of (choose file with prompt \"Choose video for ReelsFactory\" of type {\"public.movie\"})"]).output().ok()?;
     if !out.status.success() { return None; }
     let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
     if p.is_empty() { None } else { Some(p) }
@@ -125,8 +94,7 @@ fn ensure_model() -> Result<PathBuf, String> {
     if path.exists() && fs::metadata(&path).map(|m| m.len() > 100_000_000).unwrap_or(false) { return Ok(path); }
     let tmp = path.with_extension("download");
     let mut c = Command::new("/usr/bin/curl");
-    c.args(["-L", "--fail", "--retry", "3", "--progress-bar", "-o"]).arg(&tmp)
-      .arg("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin");
+    c.args(["-L", "--fail", "--retry", "3", "--progress-bar", "-o"]).arg(&tmp).arg("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin");
     run(c, "Загрузка Whisper-модели")?;
     fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
     Ok(path)
@@ -147,7 +115,8 @@ fn parse_srt(path: &Path) -> Result<Vec<Caption>, String> {
         let mut lines=block.lines(); let _idx=lines.next(); let ts=match lines.next(){Some(v)=>v,None=>continue};
         let pair:Vec<&str>=ts.split(" --> ").collect(); if pair.len()!=2{continue}
         let (Some(start),Some(end))=(srt_time(pair[0]),srt_time(pair[1])) else {continue};
-        let text=lines.collect::<Vec<_>>().join(" ").trim().to_string(); if !text.is_empty(){result.push(Caption{start,end,text});}
+        let text=lines.collect::<Vec<_>>().join(" ").trim().to_string();
+        if !text.is_empty() && end > start { result.push(Caption{start,end,text}); }
     }
     Ok(result)
 }
@@ -160,15 +129,13 @@ fn cut_profile(intensity: &str) -> CutProfile {
     }
 }
 
-fn build_segments(captions: &[Caption], duration: f64, enabled: bool, intensity: &str) -> Vec<EditSegment> {
+fn build_pause_segments(captions: &[Caption], duration: f64, enabled: bool, intensity: &str) -> Vec<EditSegment> {
     let duration = duration.max(0.01);
     if !enabled || captions.is_empty() { return vec![EditSegment { start: 0.0, end: duration }]; }
     let profile = cut_profile(intensity);
-
     let mut result = Vec::new();
     let mut current_start = 0.0;
     let mut speech_end = captions[0].end.clamp(0.0, duration);
-
     for caption in captions.iter().skip(1) {
         let start = caption.start.clamp(0.0, duration);
         let end = caption.end.max(start).min(duration);
@@ -185,17 +152,99 @@ fn build_segments(captions: &[Caption], duration: f64, enabled: bool, intensity:
         }
         speech_end = speech_end.max(end);
     }
-
-    if duration - current_start >= 0.08 {
-        result.push(EditSegment { start: current_start, end: duration });
-    }
+    if duration - current_start >= 0.08 { result.push(EditSegment { start: current_start, end: duration }); }
     if result.is_empty() { return vec![EditSegment { start: 0.0, end: duration }]; }
-
     let kept: f64 = result.iter().map(|s| (s.end - s.start).max(0.0)).sum();
-    if kept / duration < profile.min_keep_ratio {
-        return vec![EditSegment { start: 0.0, end: duration }];
-    }
+    if kept / duration < profile.min_keep_ratio { return vec![EditSegment { start: 0.0, end: duration }]; }
     result
+}
+
+fn caption_score(c: &Caption, total_duration: f64) -> f64 {
+    let text = c.text.to_lowercase();
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let duration = (c.end - c.start).max(0.25);
+    let density = words.len() as f64 / duration;
+    let mut score = 1.0;
+    if (4..=22).contains(&words.len()) { score += 1.0; }
+    if density >= 1.6 && density <= 4.8 { score += 0.8; }
+    if text.contains('?') { score += 1.15; }
+    if text.contains('!') { score += 0.65; }
+    if text.chars().any(|ch| ch.is_ascii_digit()) { score += 0.75; }
+    let hooks = ["как ","почему","главн","важн","секрет","ошиб","нельзя","нужно","смотри","вот ","результат","деньг","рубл","продаж","клиент","перв","лучше","если ","what ","how ","why ","secret","mistake","important","result","money","client","best "];
+    for key in hooks { if text.contains(key) { score += 0.38; } }
+    let fillers = ["ээ", "эм", "ну ", "короче", "в общем", "типа", "как бы", "uh", "um ", "you know"];
+    for filler in fillers { if text.contains(filler) { score -= 0.38; } }
+    if c.start <= (total_duration * 0.18).max(12.0) { score += 0.32; }
+    if duration > 8.0 { score -= (duration - 8.0) * 0.08; }
+    score
+}
+
+fn ai_target_duration(duration: f64, intensity: &str) -> f64 {
+    if duration <= 42.0 { return duration; }
+    match intensity {
+        "high" => 34.0_f64.min(duration * 0.58).max(24.0),
+        "low" => 58.0_f64.min(duration * 0.72).max(32.0),
+        _ => 46.0_f64.min(duration * 0.64).max(28.0),
+    }
+}
+
+fn build_ai_segments(captions: &[Caption], duration: f64, enabled: bool, intensity: &str) -> Vec<EditSegment> {
+    let duration = duration.max(0.01);
+    if !enabled || captions.is_empty() { return vec![EditSegment { start: 0.0, end: duration }]; }
+    if duration <= 58.0 || captions.len() < 5 { return build_pause_segments(captions, duration, true, intensity); }
+
+    let target = ai_target_duration(duration, intensity);
+    let mut candidates: Vec<AiCandidate> = Vec::new();
+    for i in 0..captions.len() {
+        let mut score_sum = 0.0;
+        let max_j = (i + 6).min(captions.len());
+        for j in i..max_j {
+            score_sum += caption_score(&captions[j], duration);
+            let start = captions[i].start.max(0.0);
+            let end = captions[j].end.min(duration);
+            let span = end - start;
+            if span > 21.0 { break; }
+            if span < 5.0 { continue; }
+            let count = (j - i + 1) as f64;
+            let mut score = score_sum / count;
+            score += (count.min(4.0) - 1.0) * 0.12;
+            if span >= 7.0 && span <= 15.0 { score += 0.45; }
+            let mut internal_gap = 0.0;
+            for k in i..j { internal_gap += (captions[k+1].start - captions[k].end).max(0.0); }
+            score -= internal_gap * 0.16;
+            candidates.push(AiCandidate { start, end, score, first: i, last: j });
+        }
+    }
+    candidates.sort_by(|a,b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+
+    let mut selected: Vec<AiCandidate> = Vec::new();
+    let mut total = 0.0;
+    for c in candidates {
+        let overlaps = selected.iter().any(|s| !(c.last < s.first || c.first > s.last));
+        if overlaps { continue; }
+        let span = c.end - c.start;
+        if !selected.is_empty() && total + span > target * 1.12 { continue; }
+        selected.push(c);
+        total += span;
+        if total >= target * 0.88 || selected.len() >= 5 { break; }
+    }
+
+    if selected.is_empty() { return build_pause_segments(captions, duration, true, intensity); }
+    selected.sort_by(|a,b| a.start.partial_cmp(&b.start).unwrap_or(std::cmp::Ordering::Equal));
+    let mut result: Vec<EditSegment> = selected.into_iter().map(|c| EditSegment {
+        start: (c.start - 0.18).max(0.0),
+        end: (c.end + 0.24).min(duration)
+    }).collect();
+
+    let mut merged: Vec<EditSegment> = Vec::new();
+    for seg in result.drain(..) {
+        if let Some(last) = merged.last_mut() {
+            if seg.start - last.end < 0.38 { last.end = last.end.max(seg.end); continue; }
+        }
+        merged.push(seg);
+    }
+    let kept: f64 = merged.iter().map(|s| (s.end-s.start).max(0.0)).sum();
+    if kept < 12.0 { build_pause_segments(captions, duration, true, intensity) } else { merged }
 }
 
 fn remap_captions(captions: &[Caption], segments: &[EditSegment]) -> Vec<Caption> {
@@ -214,6 +263,25 @@ fn remap_captions(captions: &[Caption], segments: &[EditSegment]) -> Vec<Caption
     result
 }
 
+fn compact_captions(captions: &[Caption], style: &str) -> Vec<Caption> {
+    let max_words = match style { "dynamic"|"bold" => 4, "clean" => 6, "podcast" => 7, _ => 8 };
+    let mut out = Vec::new();
+    for c in captions {
+        let words: Vec<&str> = c.text.split_whitespace().collect();
+        if words.is_empty() { continue; }
+        if words.len() <= max_words { out.push(c.clone()); continue; }
+        let chunks: Vec<&[&str]> = words.chunks(max_words).collect();
+        let total = (c.end-c.start).max(0.35);
+        let step = total / chunks.len() as f64;
+        for (idx, chunk) in chunks.iter().enumerate() {
+            let start = c.start + step * idx as f64;
+            let end = if idx + 1 == chunks.len() { c.end } else { (start + step).min(c.end) };
+            out.push(Caption { start, end, text: chunk.join(" ") });
+        }
+    }
+    out
+}
+
 fn transcribe(input_path: &Path, helper: &Path, work: &Path) -> Result<Vec<Caption>, String> {
     let audio=work.join("audio.m4a"); let wav=work.join("audio.wav");
     let mut c=Command::new(helper); c.arg("extract-audio").arg(input_path).arg(&audio); run(c,"Извлечение аудио")?;
@@ -229,7 +297,7 @@ async fn process_video(input: String, aspect: String, captions: bool, caption_st
     if !input_path.exists(){return Err("Исходный файл не найден".into())}
     let desktop=dirs::desktop_dir().ok_or("Не найден рабочий стол")?;
     let stamp=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e|e.to_string())?.as_secs();
-    let output=desktop.join(format!("ReelsFactory-{}.mp4",stamp));
+    let output=desktop.join(format!("ReelsFactory-AI-{}.mp4",stamp));
     let helper=bin_path("reelsfactory-video")?;
     let work=std::env::temp_dir().join(format!("reelsfactory-{}",stamp));
     fs::create_dir_all(&work).map_err(|e|e.to_string())?;
@@ -237,14 +305,23 @@ async fn process_video(input: String, aspect: String, captions: bool, caption_st
     let metadata = probe_path(&input_path)?;
     let needs_transcript = captions || smart_cuts || zoom_mode != "off";
     let transcript = if needs_transcript { transcribe(&input_path, &helper, &work)? } else { Vec::new() };
-    let segments = build_segments(&transcript, metadata.duration, smart_cuts, &cut_intensity);
+    if needs_transcript && transcript.is_empty() {
+        let _=fs::remove_dir_all(&work);
+        return Err("AI не получил транскрипт речи. Экспорт остановлен, чтобы не создавать пустой ролик без монтажа и субтитров.".into());
+    }
+
+    let segments = build_ai_segments(&transcript, metadata.duration, smart_cuts, &cut_intensity);
     let remapped = remap_captions(&transcript, &segments);
     let rendered_json=work.join("captions.json"); let segments_json=work.join("segments.json");
-    let visible_captions: Vec<Caption> = if captions { remapped.clone() } else { Vec::new() };
+    let visible_captions: Vec<Caption> = if captions { compact_captions(&remapped, &caption_style) } else { Vec::new() };
+    if captions && visible_captions.is_empty() {
+        let _=fs::remove_dir_all(&work);
+        return Err("Субтитры включены, но AI не сформировал ни одного caption-блока. Экспорт отменён.".into());
+    }
     fs::write(&rendered_json,serde_json::to_vec(&visible_captions).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
     fs::write(&segments_json,serde_json::to_vec(&segments).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
 
-    let safe_style = match caption_style.as_str() { "clean"|"dynamic"|"bold"|"minimal"|"podcast" => caption_style, _ => "clean".into() };
+    let safe_style = match caption_style.as_str() { "clean"|"dynamic"|"bold"|"minimal"|"podcast" => caption_style, _ => "dynamic".into() };
     let safe_zoom = match zoom_mode.as_str() { "soft"|"dynamic" => zoom_mode, _ => "off".into() };
     let safe_aspect = match aspect.as_str() { "fit916"|"crop916"|"face916"|"original" => aspect, _ => "face916".into() };
     let mut r=Command::new(&helper);
@@ -345,47 +422,48 @@ echo "SUCCESS"
 }
 
 fn main(){
-    tauri::Builder::default()
-      .invoke_handler(tauri::generate_handler![pick_video,probe_video,process_video,reveal_file,open_file,check_for_update,download_update])
-      .run(tauri::generate_context!())
-      .expect("error while running ReelsFactory");
+    tauri::Builder::default().invoke_handler(tauri::generate_handler![pick_video,probe_video,process_video,reveal_file,open_file,check_for_update,download_update]).run(tauri::generate_context!()).expect("error while running ReelsFactory");
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn cap(start: f64, end: f64) -> Caption {
-        Caption { start, end, text: "speech".into() }
-    }
+    fn cap(start: f64, end: f64) -> Caption { Caption { start, end, text: "обычная речь".into() } }
+    fn text_cap(start:f64,end:f64,text:&str)->Caption{Caption{start,end,text:text.into()}}
 
     #[test]
     fn normal_short_pauses_are_not_cut() {
         let c = vec![cap(0.2, 1.0), cap(1.7, 2.5), cap(3.3, 4.0)];
-        assert_eq!(build_segments(&c, 5.0, true, "medium"), vec![EditSegment { start: 0.0, end: 5.0 }]);
+        assert_eq!(build_pause_segments(&c, 5.0, true, "medium"), vec![EditSegment { start: 0.0, end: 5.0 }]);
     }
-
     #[test]
     fn long_internal_pause_is_cut_but_head_and_tail_survive() {
         let c = vec![cap(0.3, 2.0), cap(5.3, 7.0)];
-        let s = build_segments(&c, 8.0, true, "medium");
-        assert_eq!(s.len(), 2);
-        assert!((s[0].start - 0.0).abs() < 0.001);
-        assert!((s[1].end - 8.0).abs() < 0.001);
-        assert!(s[0].end < s[1].start);
+        let s = build_pause_segments(&c, 8.0, true, "medium");
+        assert_eq!(s.len(), 2); assert!((s[0].start).abs() < 0.001); assert!((s[1].end - 8.0).abs() < 0.001); assert!(s[0].end < s[1].start);
     }
-
     #[test]
-    fn noisy_transcript_cannot_destroy_most_of_video() {
-        let c = vec![cap(0.2, 0.4), cap(2.5, 2.7), cap(5.0, 5.2), cap(7.5, 7.7)];
-        let s = build_segments(&c, 10.0, true, "medium");
-        let kept: f64 = s.iter().map(|x| x.end - x.start).sum();
-        assert!(kept >= 6.8 - 0.001);
+    fn ai_montage_shortens_long_talking_head() {
+        let mut c=Vec::new();
+        for i in 0..24 { let s=i as f64*6.2; c.push(text_cap(s,s+4.7,if i%5==0{"Почему это важно? Вот главный результат 100 рублей"}else{"мы продолжаем обычное объяснение темы без лишних слов"})); }
+        let seg=build_ai_segments(&c,160.0,true,"medium");
+        let kept:f64=seg.iter().map(|x|x.end-x.start).sum();
+        assert!(kept >= 20.0 && kept <= 58.0, "kept={kept}");
+        assert!(seg.len() >= 2);
     }
-
     #[test]
-    fn disabled_smart_cuts_preserve_exact_duration() {
-        let c = vec![cap(2.0, 3.0)];
-        assert_eq!(build_segments(&c, 9.5, false, "high"), vec![EditSegment { start: 0.0, end: 9.5 }]);
+    fn ai_segments_are_chronological_and_non_overlapping() {
+        let mut c=Vec::new(); for i in 0..20 {let s=i as f64*7.0;c.push(text_cap(s,s+5.0,if i==8{"Как получить лучший результат?"}else{"нормальная полезная фраза"}));}
+        let s=build_ai_segments(&c,150.0,true,"high");
+        for pair in s.windows(2){assert!(pair[0].end <= pair[1].start);}
+    }
+    #[test]
+    fn compact_dynamic_captions_have_at_most_four_words() {
+        let c=vec![text_cap(0.0,3.0,"раз два три четыре пять шесть семь восемь")];
+        let out=compact_captions(&c,"dynamic"); assert_eq!(out.len(),2); assert!(out.iter().all(|x|x.text.split_whitespace().count()<=4));
+    }
+    #[test]
+    fn disabled_ai_preserves_exact_duration() {
+        let c=vec![cap(2.0,3.0)]; assert_eq!(build_ai_segments(&c,9.5,false,"high"),vec![EditSegment{start:0.0,end:9.5}]);
     }
 }
