@@ -1,0 +1,70 @@
+name: Publish MusicForge v0.4.3 OTA
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish-musicforge-v043.yml'
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download verified v0.4.3 artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -L --fail --retry 3 \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            'https://api.github.com/repos/ScaleUPPeisov/scaleup-dashboards/actions/artifacts/9511123216/zip' \
+            -o /tmp/artifact.zip
+          unzip -t /tmp/artifact.zip
+          rm -rf /tmp/mfv043 && mkdir -p /tmp/mfv043
+          unzip -q /tmp/artifact.zip -d /tmp/mfv043
+          test -f /tmp/mfv043/MusicForge-AI-v0.4.3-Mac-M1.zip
+          echo '521c6f677ca6430561556306edfc3218c492a6f32f9d8b87b79b17cf090d2269  /tmp/mfv043/MusicForge-AI-v0.4.3-Mac-M1.zip' | sha256sum -c -
+          unzip -t /tmp/mfv043/MusicForge-AI-v0.4.3-Mac-M1.zip
+
+      - name: Publish OTA chunks and manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION='0.4.3'
+          OUT="musicforge-updates/$VERSION"
+          rm -rf "$OUT"
+          mkdir -p "$OUT"
+          split -b 20M -d -a 2 --additional-suffix=.bin /tmp/mfv043/MusicForge-AI-v0.4.3-Mac-M1.zip "$OUT/part-"
+          python3 - <<'PY'
+          import json,pathlib
+          version='0.4.3'
+          sha='521c6f677ca6430561556306edfc3218c492a6f32f9d8b87b79b17cf090d2269'
+          root=pathlib.Path('musicforge-updates')/version
+          files=sorted(root.glob('part-*.bin'))
+          assert files
+          base='https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/'
+          manifest={
+            'version':version,
+            'notes':'MusicForge AI 0.4.3 OTA Bridge: восстановлен рабочий канал интернет-обновлений для версии 0.4.2. Cloud Safe сохранён: тяжёлая локальная модель не стартует при открытии приложения. Это мост к следующему крупному релизу 0.5.',
+            'sha256':sha,
+            'parts':[base+str(p).replace('\\','/') for p in files]
+          }
+          pathlib.Path('musicforge-updates/latest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n')
+          print(json.dumps(manifest,ensure_ascii=False,indent=2))
+          PY
+          git config user.name 'MusicForge Release Bot'
+          git config user.email 'peisov.business@gmail.com'
+          git add "musicforge-updates/$VERSION" musicforge-updates/latest.json
+          git commit -m 'release: publish MusicForge AI v0.4.3 OTA bridge'
+          git push origin main
