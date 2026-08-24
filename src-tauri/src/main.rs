@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{fs, fs::File, path::{Path, PathBuf}, process::{Command, Stdio}};
+use std::{fs, os::unix::fs::PermissionsExt, path::{Path, PathBuf}, process::{Command, Stdio}};
 
-const UPDATE_CHANNEL: &str = "https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/reelsfactory-desktop/update-channel.json";
+const RELEASES_API: &str = "https://api.github.com/repos/ScaleUPPeisov/scaleup-dashboards/releases?per_page=100";
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -18,13 +18,26 @@ struct UpdateInfo {
 }
 
 #[derive(Debug, Deserialize)]
-struct ChannelInfo {
+struct GithubAsset {
+    name: String,
+    browser_download_url: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GithubRelease {
+    tag_name: String,
+    body: Option<String>,
+    published_at: Option<String>,
+    assets: Vec<GithubAsset>,
+    draft: bool,
+    prerelease: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReleaseManifest {
     version: String,
-    notes: String,
-    source_url: String,
-    sha256: Option<String>,
-    release_date: Option<String>,
-    release_time: Option<String>,
+    sha256: String,
+    file: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -61,6 +74,18 @@ fn run(mut cmd: Command, label: &str) -> Result<(), String> {
         return Err(format!("{}: {} {}", label, err.trim(), stdout.trim()));
     }
     Ok(())
+}
+
+fn curl_bytes(url: &str, label: &str) -> Result<Vec<u8>, String> {
+    let out = Command::new("/usr/bin/curl")
+        .args(["-fsSL", "--connect-timeout", "10", "--retry", "3", "-H", "Accept: application/vnd.github+json", "-A", "ReelsFactory-Updater"])
+        .arg(url)
+        .output()
+        .map_err(|e| format!("{}: {}", label, e))?;
+    if !out.status.success() {
+        return Err(format!("{}: {}", label, String::from_utf8_lossy(&out.stderr).trim()));
+    }
+    Ok(out.stdout)
 }
 
 fn probe_path(path: &Path) -> Result<VideoProbe, String> {
@@ -138,27 +163,22 @@ fn cut_parameters(intensity: &str) -> (f64, f64) {
 fn build_segments(captions: &[Caption], duration: f64, enabled: bool, intensity: &str) -> Vec<EditSegment> {
     let duration = duration.max(0.01);
     if !enabled || captions.is_empty() { return vec![EditSegment { start: 0.0, end: duration }]; }
-
     let (threshold, padding) = cut_parameters(intensity);
     let mut result = Vec::new();
     let first = &captions[0];
     let mut current_start = if first.start > threshold { (first.start - padding).max(0.0) } else { 0.0 };
     let mut speech_end = first.end.min(duration);
-
     for caption in captions.iter().skip(1) {
         let start = caption.start.max(0.0).min(duration);
         let end = caption.end.max(start).min(duration);
         let gap = start - speech_end;
         if gap > threshold {
             let keep_end = (speech_end + padding).min(duration);
-            if keep_end - current_start > 0.08 {
-                result.push(EditSegment { start: current_start, end: keep_end });
-            }
+            if keep_end - current_start > 0.08 { result.push(EditSegment { start: current_start, end: keep_end }); }
             current_start = (start - padding).max(0.0);
         }
         speech_end = speech_end.max(end);
     }
-
     let trailing_gap = duration - speech_end;
     let final_end = if trailing_gap > threshold { (speech_end + padding).min(duration) } else { duration };
     if final_end - current_start > 0.08 { result.push(EditSegment { start: current_start, end: final_end }); }
@@ -223,10 +243,8 @@ async fn process_video(
     let segments = build_segments(&transcript, metadata.duration, smart_cuts, &cut_intensity);
     let remapped = remap_captions(&transcript, &segments);
 
-    let analysis_json=work.join("analysis-captions.json");
     let rendered_json=work.join("captions.json");
     let segments_json=work.join("segments.json");
-    fs::write(&analysis_json,serde_json::to_vec(&remapped).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
     let visible_captions: Vec<Caption> = if captions { remapped.clone() } else { Vec::new() };
     fs::write(&rendered_json,serde_json::to_vec(&visible_captions).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
     fs::write(&segments_json,serde_json::to_vec(&segments).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
@@ -259,31 +277,121 @@ fn open_file(path:String)->Result<(),String>{ let mut c=Command::new("/usr/bin/o
 
 fn semver(v:&str)->Vec<u32>{ v.trim_start_matches('v').split('.').take(3).map(|x|x.parse().unwrap_or(0)).collect() }
 
+fn reels_version(tag: &str) -> Option<String> {
+    tag.strip_prefix("reelsfactory-v").map(|v| v.to_string())
+}
+
 #[tauri::command]
 fn check_for_update(app: tauri::AppHandle) -> Result<UpdateInfo,String>{
     let current=app.package_info().version.to_string();
-    let out=Command::new("/usr/bin/curl").args(["-fsSL","--connect-timeout","8",UPDATE_CHANNEL]).output().map_err(|e|e.to_string())?;
-    if !out.status.success(){return Err("Канал обновлений ReelsFactory недоступен".into())}
-    let channel:ChannelInfo=serde_json::from_slice(&out.stdout).map_err(|e|format!("Некорректный update-channel: {}",e))?;
-    let available=semver(&channel.version)>semver(&current);
-    Ok(UpdateInfo{available,version:channel.version,notes:channel.notes,url:channel.source_url,sha256:channel.sha256.unwrap_or_default(),filename:"ReelsFactory-update-source.zip".into(),release_date:channel.release_date.unwrap_or_default(),release_time:channel.release_time.unwrap_or_default()})
+    let bytes=curl_bytes(RELEASES_API,"Проверка обновлений")?;
+    let releases:Vec<GithubRelease>=serde_json::from_slice(&bytes).map_err(|e|format!("Некорректный ответ GitHub Releases: {}",e))?;
+
+    let mut candidates:Vec<(Vec<u32>,String,GithubRelease)>=releases.into_iter()
+        .filter(|r| !r.draft && !r.prerelease)
+        .filter_map(|r| reels_version(&r.tag_name).map(|v|(semver(&v),v,r)))
+        .collect();
+    candidates.sort_by(|a,b| a.0.cmp(&b.0));
+    let (_,version,release)=candidates.pop().ok_or("Релизы ReelsFactory пока не опубликованы")?;
+
+    let dmg=release.assets.iter().find(|a| a.name == format!("ReelsFactory_{}_M1.dmg",version))
+        .or_else(|| release.assets.iter().find(|a| a.name.starts_with("ReelsFactory_") && a.name.ends_with("_M1.dmg")))
+        .ok_or("В релизе отсутствует ReelsFactory DMG")?;
+    let manifest_asset=release.assets.iter().find(|a|a.name=="reelsfactory-manifest.json")
+        .ok_or("В релизе отсутствует контрольный manifest")?;
+    let manifest_bytes=curl_bytes(&manifest_asset.browser_download_url,"Проверка manifest")?;
+    let manifest:ReleaseManifest=serde_json::from_slice(&manifest_bytes).map_err(|e|format!("Некорректный manifest: {}",e))?;
+    if manifest.version!=version || manifest.file!=dmg.name || manifest.sha256.len()!=64 {
+        return Err("Manifest обновления не соответствует DMG".into());
+    }
+
+    let (release_date,release_time)=release.published_at.as_deref().and_then(|s|s.split_once('T'))
+        .map(|(d,t)|(d.to_string(),t.trim_end_matches('Z').to_string()))
+        .unwrap_or_else(||("".into(),"".into()));
+    let available=semver(&version)>semver(&current);
+    Ok(UpdateInfo{
+        available,
+        version,
+        notes:release.body.unwrap_or_default(),
+        url:dmg.browser_download_url.clone(),
+        sha256:manifest.sha256,
+        filename:dmg.name.clone(),
+        release_date,
+        release_time,
+    })
 }
 
 #[tauri::command]
 async fn download_update(app: tauri::AppHandle, url:String, sha256:String, filename:String)->Result<(),String>{
+    if !filename.starts_with("ReelsFactory_") || !filename.ends_with("_M1.dmg") {
+        return Err("Недопустимое имя файла обновления".into());
+    }
+    if sha256.len()!=64 { return Err("Обновление не имеет валидной SHA-256 подписи manifest".into()); }
+
     let stamp=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e|e.to_string())?.as_secs();
-    let work=std::env::temp_dir().join(format!("reelsfactory-self-update-{}",stamp)); let extracted=work.join("src"); fs::create_dir_all(&extracted).map_err(|e|e.to_string())?;
-    let zip=work.join(if filename.is_empty(){"ReelsFactory-update-source.zip"}else{&filename});
-    let mut c=Command::new("/usr/bin/curl"); c.args(["-L","--fail","--retry","3","-o"]).arg(&zip).arg(&url); run(c,"Скачивание обновления")?;
-    if !sha256.is_empty(){let bytes=fs::read(&zip).map_err(|e|e.to_string())?;let got=format!("{:x}",Sha256::digest(&bytes));if got!=sha256{return Err("Контрольная сумма обновления не совпала".into())}}
-    let mut unzip=Command::new("/usr/bin/ditto"); unzip.args(["-x","-k"]).arg(&zip).arg(&extracted); run(unzip,"Распаковка обновления")?;
-    let root=fs::read_dir(&extracted).map_err(|e|e.to_string())?.filter_map(Result::ok).map(|e|e.path()).find(|p|p.is_dir()).ok_or("Не найдены исходники обновления")?;
-    let script=root.join("scripts/self_update.zsh"); if !script.exists(){return Err("В обновлении отсутствует self_update.zsh".into())}
-    let log_dir=dirs::home_dir().ok_or("Не найдена домашняя папка")?.join("Library/Logs/ReelsFactory"); fs::create_dir_all(&log_dir).map_err(|e|e.to_string())?;
-    let log_path=log_dir.join("update.log"); let stdout=File::create(&log_path).map_err(|e|e.to_string())?; let stderr=stdout.try_clone().map_err(|e|e.to_string())?;
-    let current_app=current_app_path()?; let whisper=bin_path("whisper-cli")?;
-    Command::new("/bin/zsh").arg(&script).arg(&current_app).arg(&whisper).stdout(Stdio::from(stdout)).stderr(Stdio::from(stderr)).stdin(Stdio::null()).spawn().map_err(|e|format!("Не удалось запустить установщик: {}",e))?;
-    app.exit(0); Ok(())
+    let work=std::env::temp_dir().join(format!("reelsfactory-update-{}",stamp));
+    fs::create_dir_all(&work).map_err(|e|e.to_string())?;
+    let dmg=work.join("ReelsFactory-update.dmg");
+
+    let mut c=Command::new("/usr/bin/curl");
+    c.args(["-L","--fail","--retry","3","--connect-timeout","15","-A","ReelsFactory-Updater","-o"]).arg(&dmg).arg(&url);
+    run(c,"Скачивание обновления")?;
+    let bytes=fs::read(&dmg).map_err(|e|e.to_string())?;
+    let got=format!("{:x}",Sha256::digest(&bytes));
+    if got!=sha256 { return Err("Контрольная сумма DMG не совпала. Обновление отменено".into()); }
+
+    let current_app=current_app_path()?;
+    let log_dir=dirs::home_dir().ok_or("Не найдена домашняя папка")?.join("Library/Logs/ReelsFactory");
+    fs::create_dir_all(&log_dir).map_err(|e|e.to_string())?;
+    let log_path=log_dir.join("update.log");
+    let script=work.join("install-update.zsh");
+    let script_body=r#"#!/bin/zsh
+set -u
+DMG="$1"
+CURRENT="$2"
+LOG="$3"
+exec >>"$LOG" 2>&1
+
+echo "===== ReelsFactory DMG update $(date) ====="
+sleep 2
+MOUNT=""
+cleanup(){
+  if [[ -n "$MOUNT" ]]; then /usr/bin/hdiutil detach "$MOUNT" -quiet >/dev/null 2>&1 || true; fi
+}
+trap cleanup EXIT
+
+ATTACH=$(/usr/bin/hdiutil attach -nobrowse -readonly "$DMG") || exit 20
+MOUNT=$(printf '%s\n' "$ATTACH" | /usr/bin/sed -n 's#^.*\(/Volumes/.*\)$#\1#p' | /usr/bin/tail -1)
+[[ -d "$MOUNT" ]] || exit 21
+NEW_APP=$(/usr/bin/find "$MOUNT" -maxdepth 2 -type d -name 'ReelsFactory.app' -print -quit)
+[[ -d "$NEW_APP" ]] || exit 22
+
+BACKUP="${CURRENT%.app}.previous.app"
+rm -rf "$BACKUP"
+if [[ -d "$CURRENT" ]]; then mv "$CURRENT" "$BACKUP" || exit 23; fi
+if ! /usr/bin/ditto "$NEW_APP" "$CURRENT"; then
+  rm -rf "$CURRENT"
+  [[ -d "$BACKUP" ]] && mv "$BACKUP" "$CURRENT"
+  exit 24
+fi
+/usr/bin/xattr -dr com.apple.quarantine "$CURRENT" >/dev/null 2>&1 || true
+cleanup
+MOUNT=""
+/usr/bin/open "$CURRENT"
+/usr/bin/osascript -e 'display notification "Обновление установлено" with title "ReelsFactory"' >/dev/null 2>&1 || true
+echo "SUCCESS"
+"#;
+    fs::write(&script,script_body).map_err(|e|e.to_string())?;
+    let mut permissions=fs::metadata(&script).map_err(|e|e.to_string())?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script,permissions).map_err(|e|e.to_string())?;
+
+    Command::new("/bin/zsh")
+        .arg(&script).arg(&dmg).arg(&current_app).arg(&log_path)
+        .stdout(Stdio::null()).stderr(Stdio::null()).stdin(Stdio::null())
+        .spawn().map_err(|e|format!("Не удалось запустить установку обновления: {}",e))?;
+    app.exit(0);
+    Ok(())
 }
 
 fn main(){
