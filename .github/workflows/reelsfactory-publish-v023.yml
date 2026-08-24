@@ -1,61 +1,10 @@
-name: Publish ReelsFactory v0.2.3
+name: Retired ReelsFactory v0.2.3 publisher
 
 on:
-  pull_request:
-    branches: [main]
-
-permissions:
-  contents: write
-  actions: read
+  workflow_dispatch:
 
 jobs:
-  publish:
-    if: github.head_ref == 'reelsfactory-publish-v023'
+  retired:
     runs-on: ubuntu-latest
     steps:
-      - name: Download prevalidated macOS ARM64 artifact
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          mkdir -p release
-          gh api \
-            -H 'Accept: application/vnd.github+json' \
-            "/repos/${GITHUB_REPOSITORY}/actions/artifacts/9510866235/zip" > /tmp/reelsfactory-v023.zip
-          unzip -q /tmp/reelsfactory-v023.zip -d release
-          ls -lah release
-
-      - name: Verify manifest and release files
-        run: |
-          set -euo pipefail
-          cd release
-          test -f ReelsFactory_0.2.3_M1.dmg
-          test -f ReelsFactory_0.2.3_M1_Installer.zip
-          test -f reelsfactory-manifest.json
-          python3 - <<'PY'
-          import hashlib, json, pathlib
-          root = pathlib.Path('.')
-          manifest = json.loads((root/'reelsfactory-manifest.json').read_text())
-          assert manifest['version'] == '0.2.3', manifest
-          assert manifest['file'] == 'ReelsFactory_0.2.3_M1.dmg', manifest
-          got = hashlib.sha256((root/manifest['file']).read_bytes()).hexdigest()
-          assert got == manifest['sha256'], (got, manifest['sha256'])
-          print('MANIFEST_OK', got)
-          PY
-
-      - name: Publish GitHub release for in-app updater
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          TAG='reelsfactory-v0.2.3'
-          gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes 2>/dev/null || true
-          gh release create "$TAG" \
-            release/ReelsFactory_0.2.3_M1.dmg \
-            release/ReelsFactory_0.2.3_M1_Installer.zip \
-            release/reelsfactory-manifest.json \
-            --repo "$GITHUB_REPOSITORY" \
-            --target reelsfactory-desktop \
-            --title 'ReelsFactory v0.2.3' \
-            --notes 'ReelsFactory v0.2.3 — исправлено авто-кадрирование 9:16: Face Tracking с fallback на человека целиком, защита от ухода кадра за границы, более плавное сопровождение объекта. Smart Cuts переработан: короткие паузы сохраняются, длинная тишина удаляется, начало и конец ролика защищены, чрезмерная нарезка блокируется. Нативные macOS ARM64 regression-тесты, AVFoundation export, rotated-metadata test, no-black-bars test, Rust tests, codesign, DMG и GUI installer — пройдены.'
-          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json tagName,name,url,assets
+      - run: echo 'ReelsFactory v0.2.3 is already published; use the current release pipeline.'
