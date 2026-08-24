@@ -163,6 +163,7 @@ func emphasisScore(_ text: String) -> Int {
 
 func zoomFactor(at time: Double, captions: [Caption], mode: String) -> CGFloat {
     guard mode != "off" else { return 1.0 }
+    // v0.2.3: softer zooms. The old 8.5% jump looked like a camera error on portrait crops.
     let amount: CGFloat = mode == "dynamic" ? 1.055 : 1.025
     for caption in captions {
         guard emphasisScore(caption.text) >= 2 else { continue }
@@ -175,15 +176,26 @@ func zoomFactor(at time: Double, captions: [Caption], mode: String) -> CGFloat {
 func detectFaceCenter(generator: AVAssetImageGenerator, at seconds: Double) -> CGFloat? {
     let time = CMTime(seconds: seconds, preferredTimescale: 600)
     guard let image = try? generator.copyCGImage(at: time, actualTime: nil) else { return nil }
-    let request = VNDetectFaceRectanglesRequest()
+    let faceRequest = VNDetectFaceRectanglesRequest()
+    let humanRequest = VNDetectHumanRectanglesRequest()
     let handler = VNImageRequestHandler(cgImage: image, options: [:])
     do {
-        try handler.perform([request])
-        guard let faces = request.results, !faces.isEmpty else { return nil }
-        let best = faces.max { lhs, rhs in
-            lhs.boundingBox.width * lhs.boundingBox.height < rhs.boundingBox.width * rhs.boundingBox.height
+        try handler.perform([faceRequest, humanRequest])
+        if let faces = faceRequest.results, !faces.isEmpty {
+            let best = faces.max { lhs, rhs in
+                lhs.boundingBox.width * lhs.boundingBox.height < rhs.boundingBox.width * rhs.boundingBox.height
+            }
+            if let center = best.map({ CGFloat($0.boundingBox.midX) }) { return center }
         }
-        return best.map { CGFloat($0.boundingBox.midX) }
+        // Talking-head footage often loses the face when the person leans down or turns away.
+        // In that case keep the person in frame using the full human rectangle instead of snapping to center.
+        if let humans = humanRequest.results, !humans.isEmpty {
+            let best = humans.max { lhs, rhs in
+                lhs.boundingBox.width * lhs.boundingBox.height < rhs.boundingBox.width * rhs.boundingBox.height
+            }
+            return best.map { CGFloat($0.boundingBox.midX) }
+        }
+        return nil
     } catch {
         return nil
     }
@@ -203,6 +215,7 @@ func buildFaceSamples(asset: AVAsset, segments: [EditSegment], enabled: Bool) ->
     var misses = 0
 
     for (segmentIndex, segment) in segments.enumerated() {
+        // After a real Smart Cut, reacquire instead of dragging the previous shot's crop into the new shot.
         if segmentIndex > 0 {
             smoothed = nil
             misses = 0
@@ -215,6 +228,7 @@ func buildFaceSamples(asset: AVAsset, segments: [EditSegment], enabled: Bool) ->
             if let detected {
                 let safeDetected = clamp(detected, CGFloat(0.04), CGFloat(0.96))
                 if let old = smoothed {
+                    // Limit per-sample camera travel, then low-pass it to stop nervous horizontal shaking.
                     let limited = old + clamp(safeDetected - old, CGFloat(-0.055), CGFloat(0.055))
                     smoothed = old * 0.82 + limited * 0.18
                 } else {
@@ -223,6 +237,7 @@ func buildFaceSamples(asset: AVAsset, segments: [EditSegment], enabled: Bool) ->
                 misses = 0
             } else {
                 misses += 1
+                // If Vision loses the face, gently return toward center instead of freezing at an old edge forever.
                 if misses >= 4, let old = smoothed {
                     smoothed = old * 0.94 + 0.5 * 0.06
                 }
@@ -261,6 +276,7 @@ func framingTransform(
     var offsetX = (renderSize.width - scaledWidth) / 2.0
     if mode == "face916", let rawFaceCenterX = faceCenterX {
         var face = clamp(rawFaceCenterX, CGFloat(0.04), CGFloat(0.96))
+        // Dead-zone around the center prevents tiny face detector fluctuations from moving the camera.
         if abs(face - 0.5) < 0.055 { face = 0.5 }
         let desired = renderSize.width * 0.50 - orientedSize.width * face * finalScale
         let lower = min(CGFloat(0), renderSize.width - scaledWidth)
@@ -269,6 +285,9 @@ func framingTransform(
     }
     let offsetY = (renderSize.height - scaledHeight) / 2.0
 
+    // IMPORTANT: build the final matrix explicitly in OUTPUT coordinates.
+    // The previous concatenation order applied part of the translation in pre-rotation/source
+    // coordinates, which could push the image outside the 1080x1920 canvas and expose black bars.
     let p = g.preferredTransform
     return CGAffineTransform(
         a: p.a * finalScale,
@@ -476,6 +495,8 @@ func render(
     session.shouldOptimizeForNetworkUse = true
     try waitExport(session)
 }
+
+// MARK: - Built-in export regression tests
 
 func assertCropCoverage(naturalSize: CGSize, preferredTransform: CGAffineTransform, faceCenter: CGFloat?) throws {
     let g = geometry(naturalSize: naturalSize, preferredTransform: preferredTransform)
