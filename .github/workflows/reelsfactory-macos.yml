@@ -29,15 +29,17 @@ jobs:
       - name: Install frontend deps
         run: npm install --no-audit --no-fund
 
-      - name: Build native AVFoundation + Vision helper
+      - name: Build native AVFoundation + Vision helper and run export regression
         run: |
           set -euo pipefail
           mkdir -p src-tauri/binaries
           swiftc native/VideoProcessor.swift -O -target arm64-apple-macos13.0 \
             -o src-tauri/binaries/reelsfactory-video-aarch64-apple-darwin \
-            -framework AVFoundation -framework AppKit -framework QuartzCore -framework CoreMedia -framework Vision
+            -framework AVFoundation -framework AppKit -framework QuartzCore -framework CoreMedia -framework CoreVideo -framework Vision
           chmod +x src-tauri/binaries/reelsfactory-video-aarch64-apple-darwin
           file src-tauri/binaries/reelsfactory-video-aarch64-apple-darwin | grep -q arm64
+          src-tauri/binaries/reelsfactory-video-aarch64-apple-darwin self-test | tee /tmp/reelsfactory-self-test.log
+          grep -q "RF_SELF_TEST_OK" /tmp/reelsfactory-self-test.log
 
       - name: Build local Whisper engine
         run: |
@@ -52,13 +54,14 @@ jobs:
           chmod +x src-tauri/binaries/whisper-cli-aarch64-apple-darwin
           file src-tauri/binaries/whisper-cli-aarch64-apple-darwin | grep -q arm64
 
-      - name: Frontend build
+      - name: Frontend build and Smart Cuts tests
         run: |
           set -euo pipefail
           VERSION=$(node -p "require('./package.json').version")
           npm run build
           grep -q "$VERSION" dist/app.js
           grep -q "$VERSION" dist/index.html
+          cargo test --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
 
       - name: Rust check
         run: cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
@@ -119,7 +122,7 @@ jobs:
           VERSION="${{ steps.meta.outputs.version }}"
           APP="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/ReelsFactory.app"
           INSTALLER="/tmp/ReelsFactory Installer.app"
-          rm -rf "$INSTALLER" "ReelsFactory_${VERSION}_M1_Installer.zip"
+          rm -rf "$INSTALLER" "ReelsFactory_${VERSION}_M1_Installer.zip" /tmp/installer-check
           mkdir -p "$INSTALLER/Contents/MacOS" "$INSTALLER/Contents/Resources"
           /usr/bin/ditto "$APP" "$INSTALLER/Contents/Resources/ReelsFactory.app"
 
@@ -220,4 +223,4 @@ jobs:
             "ReelsFactory_${{ steps.meta.outputs.version }}_M1_Installer.zip" \
             reelsfactory-manifest.json \
             --title "ReelsFactory v${{ steps.meta.outputs.version }}" \
-            --notes "ReelsFactory v${{ steps.meta.outputs.version }} — corrected Apple Silicon distribution baseline. Complete ad-hoc code signing, one-click GUI bootstrap installer with quarantine cleanup, signed-app DMG for future in-app updates, Smart Cuts, Apple Vision Face Tracking, Auto Zoom, local Whisper captions, RU/EN and Projects."
+            --notes "ReelsFactory v${{ steps.meta.outputs.version }} — fixed 9:16 render geometry that could expose black canvas; face tracking now uses bounded smooth motion and recenters safely; Auto Zoom is softer; Smart Cuts only removes clearly long internal dead air, preserves head/tail and falls back to the full clip if transcript timing would over-cut. Release is blocked unless synthetic landscape + rotated-metadata exports pass a real AVFoundation no-black-bars pixel test and Smart Cuts regression tests."
