@@ -74,13 +74,11 @@ jobs:
           set -euo pipefail
           APP="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/ReelsFactory.app"
           test -d "$APP"
-
           while IFS= read -r -d '' FILE; do
             if /usr/bin/file "$FILE" | /usr/bin/grep -q 'Mach-O'; then
               /usr/bin/codesign --force --sign - --timestamp=none "$FILE"
             fi
           done < <(/usr/bin/find "$APP/Contents" -type f -perm -111 -print0)
-
           /usr/bin/codesign --force --deep --sign - --timestamp=none "$APP"
           /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP"
           /usr/bin/file "$APP/Contents/MacOS/ReelsFactory" | /usr/bin/grep -q arm64
@@ -100,7 +98,6 @@ jobs:
           ln -s /Applications "$STAGE/Applications"
           /usr/bin/hdiutil create -volname "ReelsFactory ${VERSION}" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
           test -f "$DMG"
-
           ATTACH=$(/usr/bin/hdiutil attach -nobrowse -readonly "$DMG")
           MOUNT=$(printf '%s\n' "$ATTACH" | /usr/bin/sed -n 's#^.*\(/Volumes/.*\)$#\1#p' | /usr/bin/tail -1)
           test -d "$MOUNT/ReelsFactory.app"
@@ -109,7 +106,6 @@ jobs:
           /usr/bin/file "$MOUNT/ReelsFactory.app/Contents/MacOS/ReelsFactory" | /usr/bin/grep -q arm64
           /usr/bin/plutil -lint "$MOUNT/ReelsFactory.app/Contents/Info.plist"
           /usr/bin/hdiutil detach "$MOUNT" -quiet
-
           SHA=$(/usr/bin/shasum -a 256 "$DMG" | /usr/bin/awk '{print $1}')
           printf '{"version":"%s","sha256":"%s","file":"ReelsFactory_%s_M1.dmg"}\n' "$VERSION" "$SHA" "$VERSION" > reelsfactory-manifest.json
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -125,7 +121,6 @@ jobs:
           rm -rf "$INSTALLER" "ReelsFactory_${VERSION}_M1_Installer.zip" /tmp/installer-check
           mkdir -p "$INSTALLER/Contents/MacOS" "$INSTALLER/Contents/Resources"
           /usr/bin/ditto "$APP" "$INSTALLER/Contents/Resources/ReelsFactory.app"
-
           cat > "$INSTALLER/Contents/Info.plist" <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -142,19 +137,13 @@ jobs:
           </dict></plist>
           PLIST
           printf 'APPL????' > "$INSTALLER/Contents/PkgInfo"
-
           cat > "$INSTALLER/Contents/Resources/install_payload.zsh" <<'PAYLOAD'
           #!/bin/zsh
           set -euo pipefail
-          SOURCE="$1"
-          TARGET="$2"
-          BACKUP="${TARGET%.app}.previous.app"
+          SOURCE="$1"; TARGET="$2"; BACKUP="${TARGET%.app}.previous.app"
           /bin/rm -rf "$BACKUP"
           if [[ -d "$TARGET" ]]; then /bin/mv "$TARGET" "$BACKUP"; fi
-          rollback() {
-            /bin/rm -rf "$TARGET"
-            if [[ -d "$BACKUP" ]]; then /bin/mv "$BACKUP" "$TARGET"; fi
-          }
+          rollback(){ /bin/rm -rf "$TARGET"; [[ -d "$BACKUP" ]] && /bin/mv "$BACKUP" "$TARGET" || true; }
           trap rollback ERR
           /usr/bin/ditto "$SOURCE" "$TARGET"
           /usr/bin/xattr -dr com.apple.quarantine "$TARGET" >/dev/null 2>&1 || true
@@ -162,18 +151,12 @@ jobs:
           trap - ERR
           PAYLOAD
           chmod +x "$INSTALLER/Contents/Resources/install_payload.zsh"
-
           cat > "$INSTALLER/Contents/MacOS/installer" <<'INSTALLER_SCRIPT'
           #!/bin/zsh
           set -u
           ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-          SOURCE="$ROOT/Resources/ReelsFactory.app"
-          HELPER="$ROOT/Resources/install_payload.zsh"
-          TARGET="/Applications/ReelsFactory.app"
-          fail() {
-            /usr/bin/osascript -e 'display dialog "Установка ReelsFactory не завершена. Старая версия не удалена или восстановлена." with title "ReelsFactory Installer" buttons {"OK"} default button 1 with icon stop' >/dev/null 2>&1 || true
-            exit 1
-          }
+          SOURCE="$ROOT/Resources/ReelsFactory.app"; HELPER="$ROOT/Resources/install_payload.zsh"; TARGET="/Applications/ReelsFactory.app"
+          fail(){ /usr/bin/osascript -e 'display dialog "Установка ReelsFactory не завершена. Старая версия не удалена или восстановлена." with title "ReelsFactory Installer" buttons {"OK"} default button 1 with icon stop' >/dev/null 2>&1 || true; exit 1; }
           /usr/bin/codesign --verify --deep --strict "$SOURCE" || fail
           /usr/bin/osascript - "$HELPER" "$SOURCE" "$TARGET" <<'APPLESCRIPT' || fail
           on run argv
@@ -190,7 +173,6 @@ jobs:
           exit 0
           INSTALLER_SCRIPT
           chmod +x "$INSTALLER/Contents/MacOS/installer"
-
           /usr/bin/codesign --force --deep --sign - --timestamp=none "$INSTALLER"
           /usr/bin/codesign --verify --deep --strict --verbose=2 "$INSTALLER"
           cd /tmp
