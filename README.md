@@ -2,12 +2,13 @@
 
 ReelsFactory is a macOS Apple Silicon desktop app for turning raw talking-head video into vertical Reels.
 
-## Release baseline: v0.2.1
+## Release baseline: v0.2.3
 
 - Tauri 2 desktop shell
 - Native AVFoundation video pipeline
-- Apple Vision face-aware 9:16 reframing
-- Smart Cuts based on recognized speech pauses
+- Apple Vision face-aware 9:16 reframing with person fallback
+- Corrected 9:16 crop geometry with canvas-boundary protection
+- Smart Cuts with conservative pause removal and anti-overcut safety
 - Auto Zoom accents
 - Local Whisper captions (RU/EN auto recognition)
 - Caption presets and keyword emphasis
@@ -18,6 +19,7 @@ ReelsFactory is a macOS Apple Silicon desktop app for turning raw talking-head v
 - In-app update checks against ReelsFactory GitHub releases
 - Update installation from verified DMG + SHA-256 manifest
 - Previous app backup before replacement
+- Native ARM64 regression tests for rotated metadata, 9:16 export and black-bar prevention
 
 ## Update workflow
 
