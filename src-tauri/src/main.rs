@@ -156,7 +156,7 @@ fn cut_profile(intensity: &str) -> CutProfile {
     match intensity {
         "low" => CutProfile { threshold: 3.00, padding: 0.55, min_segment: 1.35, min_removed_gap: 1.10, min_keep_ratio: 0.82 },
         "high" => CutProfile { threshold: 1.45, padding: 0.30, min_segment: 0.90, min_removed_gap: 0.62, min_keep_ratio: 0.58 },
-        _ => CutProfile { threshold: 2.15, padding: 0.42, min_segment: 1.10, min_removed_gap: 0.82, min_keep_ratio: 0.70 },
+        _ => CutProfile { threshold: 2.15, padding: 0.42, min_segment: 1.10, min_removed_gap: 0.82, min_keep_ratio: 0.68 },
     }
 }
 
@@ -380,7 +380,7 @@ mod tests {
         let c = vec![cap(0.2, 0.4), cap(2.5, 2.7), cap(5.0, 5.2), cap(7.5, 7.7)];
         let s = build_segments(&c, 10.0, true, "medium");
         let kept: f64 = s.iter().map(|x| x.end - x.start).sum();
-        assert!(kept >= 7.0 - 0.001);
+        assert!(kept >= 6.8 - 0.001);
     }
 
     #[test]
