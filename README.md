@@ -40,3 +40,5 @@ A release is blocked unless the macOS ARM64 CI passes AI Cut duration/ordering t
 6. Installed ReelsFactory detects the release and offers **Install and restart** without Terminal commands.
 
 ReelsFactory remains isolated from the ScaleUP dashboard application even though its development branch currently lives in the same repository.
+
+<!-- v0.3.0 validation sync -->
