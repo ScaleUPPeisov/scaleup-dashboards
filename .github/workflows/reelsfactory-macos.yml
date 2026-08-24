@@ -12,40 +12,84 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
-      - name: Verify toolchain
+
+      - name: Verify Apple Silicon toolchain
         run: |
+          set -euo pipefail
           uname -m
           node --version
           swift --version
           rustc --version
+
       - name: Setup Rust ARM64
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin
+
       - name: Install frontend deps
         run: npm install --no-audit --no-fund
-      - name: Build native AVFoundation helper
+
+      - name: Build native AVFoundation + Vision helper
         run: |
+          set -euo pipefail
           mkdir -p src-tauri/binaries
-          swiftc native/VideoProcessor.swift -O -target arm64-apple-macos13.0 -o src-tauri/binaries/reelsfactory-video-aarch64-apple-darwin -framework AVFoundation -framework AppKit -framework QuartzCore -framework CoreMedia -framework Vision
+          swiftc native/VideoProcessor.swift -O -target arm64-apple-macos13.0 \
+            -o src-tauri/binaries/reelsfactory-video-aarch64-apple-darwin \
+            -framework AVFoundation -framework AppKit -framework QuartzCore -framework CoreMedia -framework Vision
           chmod +x src-tauri/binaries/reelsfactory-video-aarch64-apple-darwin
+          file src-tauri/binaries/reelsfactory-video-aarch64-apple-darwin | grep arm64
+
       - name: Build local Whisper engine
         run: |
+          set -euo pipefail
+          rm -rf /tmp/whisper.cpp
           git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git /tmp/whisper.cpp
-          cmake -S /tmp/whisper.cpp -B /tmp/whisper.cpp/build -DBUILD_SHARED_LIBS=OFF -DGGML_METAL=ON -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_BUILD_TYPE=Release
+          cmake -S /tmp/whisper.cpp -B /tmp/whisper.cpp/build \
+            -DBUILD_SHARED_LIBS=OFF -DGGML_METAL=ON \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_BUILD_TYPE=Release
           cmake --build /tmp/whisper.cpp/build --config Release -j 4 --target whisper-cli
           cp /tmp/whisper.cpp/build/bin/whisper-cli src-tauri/binaries/whisper-cli-aarch64-apple-darwin
           chmod +x src-tauri/binaries/whisper-cli-aarch64-apple-darwin
-      - name: Frontend check
-        run: npm run build
+          file src-tauri/binaries/whisper-cli-aarch64-apple-darwin | grep arm64
+
+      - name: Frontend build
+        run: |
+          set -euo pipefail
+          npm run build
+          grep -q "0.2.1" dist/app.js
+          grep -q "0.2.1" dist/index.html
+
       - name: Rust check
         run: cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
+
       - name: Build ReelsFactory DMG
         run: npx tauri build --target aarch64-apple-darwin --bundles app,dmg
+
+      - name: Verify app bundle and mounted DMG
+        run: |
+          set -euo pipefail
+          APP="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/ReelsFactory.app"
+          test -d "$APP"
+          test -x "$APP/Contents/MacOS/ReelsFactory"
+          plutil -lint "$APP/Contents/Info.plist"
+
+          DMG=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -name '*.dmg' -type f | head -1)
+          test -f "$DMG"
+          ATTACH=$(hdiutil attach -nobrowse -readonly "$DMG")
+          MOUNT=$(printf '%s\n' "$ATTACH" | sed -n 's#^.*\(/Volumes/.*\)$#\1#p' | tail -1)
+          test -d "$MOUNT/ReelsFactory.app"
+          test -x "$MOUNT/ReelsFactory.app/Contents/MacOS/ReelsFactory"
+          for i in $(seq 1 100); do
+            test -f "$MOUNT/ReelsFactory.app/Contents/Info.plist"
+            plutil -lint "$MOUNT/ReelsFactory.app/Contents/Info.plist" >/dev/null
+          done
+          hdiutil detach "$MOUNT" -quiet
+
       - name: Prepare release
         id: meta
         shell: bash
         run: |
+          set -euo pipefail
           VERSION=$(node -p "require('./package.json').version")
           DMG=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -name '*.dmg' -type f | head -1)
           test -f "$DMG"
@@ -53,10 +97,26 @@ jobs:
           SHA=$(shasum -a 256 "ReelsFactory_${VERSION}_M1.dmg" | awk '{print $1}')
           printf '{"version":"%s","sha256":"%s","file":"ReelsFactory_%s_M1.dmg"}\n' "$VERSION" "$SHA" "$VERSION" > reelsfactory-manifest.json
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-      - name: Publish GitHub release
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Upload CI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ReelsFactory-${{ steps.meta.outputs.version }}-M1
+          path: |
+            ReelsFactory_${{ steps.meta.outputs.version }}_M1.dmg
+            reelsfactory-manifest.json
+          if-no-files-found: error
+
+      - name: Publish updater release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           TAG="reelsfactory-v${{ steps.meta.outputs.version }}"
           gh release delete "$TAG" --yes 2>/dev/null || true
-          gh release create "$TAG" "ReelsFactory_${{ steps.meta.outputs.version }}_M1.dmg" reelsfactory-manifest.json --title "ReelsFactory v${{ steps.meta.outputs.version }}" --notes "ReelsFactory: local Whisper captions, Smart Cuts, Apple Vision face tracking and native AVFoundation export."
+          gh release create "$TAG" \
+            "ReelsFactory_${{ steps.meta.outputs.version }}_M1.dmg" \
+            reelsfactory-manifest.json \
+            --title "ReelsFactory v${{ steps.meta.outputs.version }}" \
+            --notes "ReelsFactory v${{ steps.meta.outputs.version }} — Apple Silicon release baseline. Smart Cuts, Apple Vision Face Tracking, Auto Zoom, local Whisper captions, RU/EN interface, Projects, DMG installer and verified in-app DMG updater with SHA-256 validation and rollback backup."
