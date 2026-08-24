@@ -31,8 +31,7 @@ jobs:
           echo 'a43fbd32cd672a384ba000840ba6cda808557819434298d9b260cd781d876a69  /tmp/musicforge-source.zip' | sha256sum -c -
           rm -rf /tmp/musicforge-src && mkdir -p /tmp/musicforge-src
           unzip -q /tmp/musicforge-source.zip -d /tmp/musicforge-src
-          cat musicforge-build/v042/patch-part-*.b64 2>/dev/null > /tmp/v042.b64 || cp musicforge-build/v042/patch.gz.b64 /tmp/v042.b64
-          base64 -d /tmp/v042.b64 | gzip -dc > /tmp/v042.patch
+          base64 -d musicforge-build/v042/patch.gz.b64 | gzip -dc > /tmp/v042.patch
           cd /tmp/musicforge-src
           patch -p1 --forward --batch < /tmp/v042.patch
           grep -q '"version": "0.4.2"' package.json
