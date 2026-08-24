@@ -36,6 +36,13 @@ jobs:
           src-tauri/binaries/reelsfactory-video-aarch64-apple-darwin self-test | tee /tmp/reelsfactory-self-test.log
           grep -q "RF_SELF_TEST_OK" /tmp/reelsfactory-self-test.log
 
+          echo "Running caption burn-in regression test..."
+          swiftc native/CaptionRegression.swift -O -target arm64-apple-macos13.0 \
+            -o /tmp/reelsfactory-caption-test \
+            -framework AVFoundation -framework AppKit -framework CoreMedia -framework CoreVideo
+          /tmp/reelsfactory-caption-test "$PWD/src-tauri/binaries/reelsfactory-video-aarch64-apple-darwin" | tee /tmp/reelsfactory-caption-test.log
+          grep -q "RF_CAPTION_TEST_OK" /tmp/reelsfactory-caption-test.log
+
           rm -rf /tmp/whisper.cpp
           git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git /tmp/whisper.cpp
           cmake -S /tmp/whisper.cpp -B /tmp/whisper.cpp/build \
@@ -45,13 +52,15 @@ jobs:
           chmod +x src-tauri/binaries/whisper-cli-aarch64-apple-darwin
           file src-tauri/binaries/whisper-cli-aarch64-apple-darwin | grep -q arm64
 
-      - name: Validate frontend, Smart Cuts and Rust
+      - name: Validate frontend, AI Cut and Rust
         run: |
           set -euo pipefail
           VERSION=$(node -p "require('./package.json').version")
           npm run build
           grep -q "$VERSION" dist/app.js
           grep -q "$VERSION" dist/index.html
+          grep -q "selectedStyle = 'dynamic'" dist/app.js
+          grep -q 'id="highlightKeywords" type="checkbox" checked' dist/index.html
           cargo test --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
           cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
 
