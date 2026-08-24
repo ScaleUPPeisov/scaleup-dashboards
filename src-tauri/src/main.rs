@@ -18,10 +18,7 @@ struct UpdateInfo {
 }
 
 #[derive(Debug, Deserialize)]
-struct GithubAsset {
-    name: String,
-    browser_download_url: String,
-}
+struct GithubAsset { name: String, browser_download_url: String }
 
 #[derive(Debug, Deserialize)]
 struct GithubRelease {
@@ -34,11 +31,7 @@ struct GithubRelease {
 }
 
 #[derive(Debug, Deserialize)]
-struct ReleaseManifest {
-    version: String,
-    sha256: String,
-    file: String,
-}
+struct ReleaseManifest { version: String, sha256: String, file: String }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct Caption { start: f64, end: f64, text: String }
@@ -79,9 +72,7 @@ fn run(mut cmd: Command, label: &str) -> Result<(), String> {
 fn curl_bytes(url: &str, label: &str) -> Result<Vec<u8>, String> {
     let out = Command::new("/usr/bin/curl")
         .args(["-fsSL", "--connect-timeout", "10", "--retry", "3", "-H", "Accept: application/vnd.github+json", "-A", "ReelsFactory-Updater"])
-        .arg(url)
-        .output()
-        .map_err(|e| format!("{}: {}", label, e))?;
+        .arg(url).output().map_err(|e| format!("{}: {}", label, e))?;
     if !out.status.success() {
         return Err(format!("{}: {}", label, String::from_utf8_lossy(&out.stderr).trim()));
     }
@@ -153,11 +144,7 @@ fn parse_srt(path: &Path) -> Result<Vec<Caption>, String> {
 }
 
 fn cut_parameters(intensity: &str) -> (f64, f64) {
-    match intensity {
-        "low" => (1.60, 0.35),
-        "high" => (0.68, 0.14),
-        _ => (1.00, 0.22),
-    }
+    match intensity { "low" => (1.60, 0.35), "high" => (0.68, 0.14), _ => (1.00, 0.22) }
 }
 
 fn build_segments(captions: &[Caption], duration: f64, enabled: bool, intensity: &str) -> Vec<EditSegment> {
@@ -194,11 +181,7 @@ fn remap_captions(captions: &[Caption], segments: &[EditSegment]) -> Vec<Caption
             let overlap_start = caption.start.max(segment.start);
             let overlap_end = caption.end.min(segment.end);
             if overlap_end - overlap_start <= 0.02 { continue; }
-            result.push(Caption {
-                start: output_cursor + (overlap_start - segment.start),
-                end: output_cursor + (overlap_end - segment.start),
-                text: caption.text.clone(),
-            });
+            result.push(Caption { start: output_cursor + (overlap_start - segment.start), end: output_cursor + (overlap_end - segment.start), text: caption.text.clone() });
         }
         output_cursor += seg_duration;
     }
@@ -206,28 +189,16 @@ fn remap_captions(captions: &[Caption], segments: &[EditSegment]) -> Vec<Caption
 }
 
 fn transcribe(input_path: &Path, helper: &Path, work: &Path) -> Result<Vec<Caption>, String> {
-    let audio=work.join("audio.m4a");
-    let wav=work.join("audio.wav");
+    let audio=work.join("audio.m4a"); let wav=work.join("audio.wav");
     let mut c=Command::new(helper); c.arg("extract-audio").arg(input_path).arg(&audio); run(c,"Извлечение аудио")?;
     let mut a=Command::new("/usr/bin/afconvert"); a.args(["-f","WAVE","-d","LEI16@16000","-c","1"]).arg(&audio).arg(&wav); run(a,"Подготовка аудио")?;
-    let model=ensure_model()?;
-    let whisper=bin_path("whisper-cli")?;
-    let prefix=work.join("transcript");
+    let model=ensure_model()?; let whisper=bin_path("whisper-cli")?; let prefix=work.join("transcript");
     let mut w=Command::new(whisper); w.args(["-m"]).arg(model).arg("-f").arg(&wav).args(["-l","auto","-osrt","-of"]).arg(&prefix); run(w,"Распознавание речи")?;
     parse_srt(&PathBuf::from(format!("{}.srt",prefix.display())))
 }
 
 #[tauri::command(rename_all = "camelCase")]
-async fn process_video(
-    input: String,
-    aspect: String,
-    captions: bool,
-    caption_style: String,
-    highlight_keywords: bool,
-    smart_cuts: bool,
-    cut_intensity: String,
-    zoom_mode: String,
-) -> Result<String, String> {
+async fn process_video(input: String, aspect: String, captions: bool, caption_style: String, highlight_keywords: bool, smart_cuts: bool, cut_intensity: String, zoom_mode: String) -> Result<String, String> {
     let input_path=PathBuf::from(&input);
     if !input_path.exists(){return Err("Исходный файл не найден".into())}
     let desktop=dirs::desktop_dir().ok_or("Не найден рабочий стол")?;
@@ -242,9 +213,7 @@ async fn process_video(
     let transcript = if needs_transcript { transcribe(&input_path, &helper, &work)? } else { Vec::new() };
     let segments = build_segments(&transcript, metadata.duration, smart_cuts, &cut_intensity);
     let remapped = remap_captions(&transcript, &segments);
-
-    let rendered_json=work.join("captions.json");
-    let segments_json=work.join("segments.json");
+    let rendered_json=work.join("captions.json"); let segments_json=work.join("segments.json");
     let visible_captions: Vec<Caption> = if captions { remapped.clone() } else { Vec::new() };
     fs::write(&rendered_json,serde_json::to_vec(&visible_captions).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
     fs::write(&segments_json,serde_json::to_vec(&segments).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
@@ -252,17 +221,8 @@ async fn process_video(
     let safe_style = match caption_style.as_str() { "clean"|"dynamic"|"bold"|"minimal"|"podcast" => caption_style, _ => "clean".into() };
     let safe_zoom = match zoom_mode.as_str() { "soft"|"dynamic" => zoom_mode, _ => "off".into() };
     let safe_aspect = match aspect.as_str() { "fit916"|"crop916"|"face916"|"original" => aspect, _ => "face916".into() };
-
     let mut r=Command::new(&helper);
-    r.arg("render")
-      .arg(&input_path)
-      .arg(&output)
-      .arg(&rendered_json)
-      .arg(&segments_json)
-      .arg(&safe_aspect)
-      .arg(&safe_style)
-      .arg(if highlight_keywords{"1"}else{"0"})
-      .arg(&safe_zoom);
+    r.arg("render").arg(&input_path).arg(&output).arg(&rendered_json).arg(&segments_json).arg(&safe_aspect).arg(&safe_style).arg(if highlight_keywords{"1"}else{"0"}).arg(&safe_zoom);
     let result=run(r,"Экспорт видео");
     let _=fs::remove_dir_all(&work);
     result?;
@@ -271,80 +231,48 @@ async fn process_video(
 
 #[tauri::command]
 fn reveal_file(path:String)->Result<(),String>{ let mut c=Command::new("/usr/bin/open"); c.args(["-R"]).arg(path); run(c,"Finder") }
-
 #[tauri::command]
 fn open_file(path:String)->Result<(),String>{ let mut c=Command::new("/usr/bin/open"); c.arg(path); run(c,"Open") }
 
 fn semver(v:&str)->Vec<u32>{ v.trim_start_matches('v').split('.').take(3).map(|x|x.parse().unwrap_or(0)).collect() }
-
-fn reels_version(tag: &str) -> Option<String> {
-    tag.strip_prefix("reelsfactory-v").map(|v| v.to_string())
-}
+fn reels_version(tag: &str) -> Option<String> { tag.strip_prefix("reelsfactory-v").map(|v| v.to_string()) }
 
 #[tauri::command]
 fn check_for_update(app: tauri::AppHandle) -> Result<UpdateInfo,String>{
     let current=app.package_info().version.to_string();
     let bytes=curl_bytes(RELEASES_API,"Проверка обновлений")?;
     let releases:Vec<GithubRelease>=serde_json::from_slice(&bytes).map_err(|e|format!("Некорректный ответ GitHub Releases: {}",e))?;
-
-    let mut candidates:Vec<(Vec<u32>,String,GithubRelease)>=releases.into_iter()
-        .filter(|r| !r.draft && !r.prerelease)
-        .filter_map(|r| reels_version(&r.tag_name).map(|v|(semver(&v),v,r)))
-        .collect();
+    let mut candidates:Vec<(Vec<u32>,String,GithubRelease)>=releases.into_iter().filter(|r| !r.draft && !r.prerelease).filter_map(|r| reels_version(&r.tag_name).map(|v|(semver(&v),v,r))).collect();
     candidates.sort_by(|a,b| a.0.cmp(&b.0));
     let (_,version,release)=candidates.pop().ok_or("Релизы ReelsFactory пока не опубликованы")?;
-
-    let dmg=release.assets.iter().find(|a| a.name == format!("ReelsFactory_{}_M1.dmg",version))
-        .or_else(|| release.assets.iter().find(|a| a.name.starts_with("ReelsFactory_") && a.name.ends_with("_M1.dmg")))
-        .ok_or("В релизе отсутствует ReelsFactory DMG")?;
-    let manifest_asset=release.assets.iter().find(|a|a.name=="reelsfactory-manifest.json")
-        .ok_or("В релизе отсутствует контрольный manifest")?;
+    let dmg=release.assets.iter().find(|a| a.name == format!("ReelsFactory_{}_M1.dmg",version)).or_else(|| release.assets.iter().find(|a| a.name.starts_with("ReelsFactory_") && a.name.ends_with("_M1.dmg"))).ok_or("В релизе отсутствует ReelsFactory DMG")?;
+    let manifest_asset=release.assets.iter().find(|a|a.name=="reelsfactory-manifest.json").ok_or("В релизе отсутствует контрольный manifest")?;
     let manifest_bytes=curl_bytes(&manifest_asset.browser_download_url,"Проверка manifest")?;
     let manifest:ReleaseManifest=serde_json::from_slice(&manifest_bytes).map_err(|e|format!("Некорректный manifest: {}",e))?;
-    if manifest.version!=version || manifest.file!=dmg.name || manifest.sha256.len()!=64 {
-        return Err("Manifest обновления не соответствует DMG".into());
-    }
-
-    let (release_date,release_time)=release.published_at.as_deref().and_then(|s|s.split_once('T'))
-        .map(|(d,t)|(d.to_string(),t.trim_end_matches('Z').to_string()))
-        .unwrap_or_else(||("".into(),"".into()));
+    if manifest.version!=version || manifest.file!=dmg.name || manifest.sha256.len()!=64 { return Err("Manifest обновления не соответствует DMG".into()); }
+    let (release_date,release_time)=release.published_at.as_deref().and_then(|s|s.split_once('T')).map(|(d,t)|(d.to_string(),t.trim_end_matches('Z').to_string())).unwrap_or_else(||("".into(),"".into()));
     let available=semver(&version)>semver(&current);
-    Ok(UpdateInfo{
-        available,
-        version,
-        notes:release.body.unwrap_or_default(),
-        url:dmg.browser_download_url.clone(),
-        sha256:manifest.sha256,
-        filename:dmg.name.clone(),
-        release_date,
-        release_time,
-    })
+    Ok(UpdateInfo{available,version,notes:release.body.unwrap_or_default(),url:dmg.browser_download_url.clone(),sha256:manifest.sha256,filename:dmg.name.clone(),release_date,release_time})
 }
 
 #[tauri::command]
 async fn download_update(app: tauri::AppHandle, url:String, sha256:String, filename:String)->Result<(),String>{
-    if !filename.starts_with("ReelsFactory_") || !filename.ends_with("_M1.dmg") {
-        return Err("Недопустимое имя файла обновления".into());
-    }
+    if !filename.starts_with("ReelsFactory_") || !filename.ends_with("_M1.dmg") { return Err("Недопустимое имя файла обновления".into()); }
     if sha256.len()!=64 { return Err("Обновление не имеет валидной SHA-256 подписи manifest".into()); }
-
     let stamp=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e|e.to_string())?.as_secs();
     let work=std::env::temp_dir().join(format!("reelsfactory-update-{}",stamp));
     fs::create_dir_all(&work).map_err(|e|e.to_string())?;
     let dmg=work.join("ReelsFactory-update.dmg");
-
     let mut c=Command::new("/usr/bin/curl");
     c.args(["-L","--fail","--retry","3","--connect-timeout","15","-A","ReelsFactory-Updater","-o"]).arg(&dmg).arg(&url);
     run(c,"Скачивание обновления")?;
-    let bytes=fs::read(&dmg).map_err(|e|e.to_string())?;
-    let got=format!("{:x}",Sha256::digest(&bytes));
+    let bytes=fs::read(&dmg).map_err(|e|e.to_string())?; let got=format!("{:x}",Sha256::digest(&bytes));
     if got!=sha256 { return Err("Контрольная сумма DMG не совпала. Обновление отменено".into()); }
 
     let current_app=current_app_path()?;
     let log_dir=dirs::home_dir().ok_or("Не найдена домашняя папка")?.join("Library/Logs/ReelsFactory");
     fs::create_dir_all(&log_dir).map_err(|e|e.to_string())?;
-    let log_path=log_dir.join("update.log");
-    let script=work.join("install-update.zsh");
+    let log_path=log_dir.join("update.log"); let script=work.join("install-update.zsh");
     let script_body=r#"#!/bin/zsh
 set -u
 DMG="$1"
@@ -355,17 +283,14 @@ exec >>"$LOG" 2>&1
 echo "===== ReelsFactory DMG update $(date) ====="
 sleep 2
 MOUNT=""
-cleanup(){
-  if [[ -n "$MOUNT" ]]; then /usr/bin/hdiutil detach "$MOUNT" -quiet >/dev/null 2>&1 || true; fi
-}
+cleanup(){ if [[ -n "$MOUNT" ]]; then /usr/bin/hdiutil detach "$MOUNT" -quiet >/dev/null 2>&1 || true; fi }
 trap cleanup EXIT
-
 ATTACH=$(/usr/bin/hdiutil attach -nobrowse -readonly "$DMG") || exit 20
 MOUNT=$(printf '%s\n' "$ATTACH" | /usr/bin/sed -n 's#^.*\(/Volumes/.*\)$#\1#p' | /usr/bin/tail -1)
 [[ -d "$MOUNT" ]] || exit 21
-NEW_APP=$(/usr/bin/find "$MOUNT" -maxdepth 2 -type d -name 'ReelsFactory.app' -print -quit)
+NEW_APP="$MOUNT/ReelsFactory.app"
+if [[ ! -d "$NEW_APP" ]]; then NEW_APP=$(/usr/bin/find "$MOUNT" -type d -name 'ReelsFactory.app' -print | /usr/bin/head -1); fi
 [[ -d "$NEW_APP" ]] || exit 22
-
 BACKUP="${CURRENT%.app}.previous.app"
 rm -rf "$BACKUP"
 if [[ -d "$CURRENT" ]]; then mv "$CURRENT" "$BACKUP" || exit 23; fi
@@ -382,16 +307,9 @@ MOUNT=""
 echo "SUCCESS"
 "#;
     fs::write(&script,script_body).map_err(|e|e.to_string())?;
-    let mut permissions=fs::metadata(&script).map_err(|e|e.to_string())?.permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(&script,permissions).map_err(|e|e.to_string())?;
-
-    Command::new("/bin/zsh")
-        .arg(&script).arg(&dmg).arg(&current_app).arg(&log_path)
-        .stdout(Stdio::null()).stderr(Stdio::null()).stdin(Stdio::null())
-        .spawn().map_err(|e|format!("Не удалось запустить установку обновления: {}",e))?;
-    app.exit(0);
-    Ok(())
+    let mut permissions=fs::metadata(&script).map_err(|e|e.to_string())?.permissions(); permissions.set_mode(0o755); fs::set_permissions(&script,permissions).map_err(|e|e.to_string())?;
+    Command::new("/bin/zsh").arg(&script).arg(&dmg).arg(&current_app).arg(&log_path).stdout(Stdio::null()).stderr(Stdio::null()).stdin(Stdio::null()).spawn().map_err(|e|format!("Не удалось запустить установку обновления: {}",e))?;
+    app.exit(0); Ok(())
 }
 
 fn main(){
