@@ -9,13 +9,13 @@ on:
 jobs:
   generate:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - name: Generate 10 second cloud preview
+      - name: Initialize cloud model and generate 10 second preview
         shell: bash
         run: |
           set -euo pipefail
@@ -27,58 +27,29 @@ jobs:
           import fs from 'node:fs';
           const app = await Client.connect('ACE-Step/Ace-Step-v1.5');
           console.log('connected');
-          const result = await app.predict('/generation_wrapper', {
-            selected_model: 'acestep-v15-turbo',
-            generation_mode: 'custom',
-            simple_query_input: '',
-            simple_vocal_language: 'unknown',
-            param_4: 'uplifting modern electronic pop instrumental, bright synth hook, punchy drums, original melody, no vocals',
-            param_5: '',
-            param_6: 118,
-            param_7: '',
-            param_8: '4',
-            param_9: 'unknown',
-            param_10: 1,
-            param_11: 7.0,
-            param_12: true,
-            param_13: '-1',
-            param_14: null,
-            param_15: 10,
-            param_16: 1,
-            param_17: null,
-            param_18: '',
-            param_19: 0.0,
-            param_20: -1,
-            param_21: 'Fill the audio semantic mask based on the given conditions:',
-            param_22: 1.0,
-            param_23: 'text2music',
-            param_24: false,
-            param_25: 0.0,
-            param_26: 1.0,
-            param_27: 3.0,
-            param_28: 'ode',
-            param_29: '',
-            param_30: 'mp3',
-            param_31: 0.85,
-            param_32: false,
-            param_33: 2.0,
-            param_34: 0,
-            param_35: 0.9,
-            param_36: 'NO USER INPUT',
-            param_37: false,
-            param_38: false,
-            param_39: true,
-            param_41: false,
-            param_42: true,
-            param_43: false,
-            param_44: false,
-            param_45: 0.5,
-            param_46: 8,
-            param_47: null,
-            param_48: [],
-            param_49: false
+          const init = await app.predict('/lambda_1', {
+            param_0: '/home/user/app/data/checkpoints',
+            param_1: 'acestep-v15-turbo',
+            param_2: 'auto',
+            param_3: false,
+            param_4: 'acestep-5Hz-lm-1.7B',
+            param_5: 'pt',
+            param_6: false,
+            param_7: false,
+            param_8: false
           });
-          console.log('RESULT_KEYS', Object.keys(result));
+          console.log('INIT', JSON.stringify(init.data, null, 2).slice(0,5000));
+          const result = await app.predict('/generation_wrapper', {
+            selected_model: 'acestep-v15-turbo', generation_mode: 'custom', simple_query_input: '', simple_vocal_language: 'unknown',
+            param_4: 'uplifting modern electronic pop instrumental, bright synth hook, punchy drums, original melody, no vocals',
+            param_5: '', param_6: 118, param_7: '', param_8: '4', param_9: 'unknown', param_10: 1, param_11: 7.0,
+            param_12: true, param_13: '-1', param_14: null, param_15: 10, param_16: 1, param_17: null, param_18: '',
+            param_19: 0.0, param_20: -1, param_21: 'Fill the audio semantic mask based on the given conditions:', param_22: 1.0,
+            param_23: 'text2music', param_24: false, param_25: 0.0, param_26: 1.0, param_27: 3.0, param_28: 'ode', param_29: '',
+            param_30: 'mp3', param_31: 0.85, param_32: false, param_33: 2.0, param_34: 0, param_35: 0.9,
+            param_36: 'NO USER INPUT', param_37: false, param_38: false, param_39: true, param_41: false, param_42: true,
+            param_43: false, param_44: false, param_45: 0.5, param_46: 8, param_47: null, param_48: [], param_49: false
+          });
           console.log('RESULT_DATA', JSON.stringify(result.data, null, 2).slice(0,20000));
           fs.writeFileSync('/tmp/cloud-result.json', JSON.stringify(result, null, 2));
           const first = result?.data?.[0];
