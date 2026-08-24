@@ -8,8 +8,17 @@ mkdirSync('dist', { recursive: true });
 cpSync('src', 'dist', { recursive: true });
 
 for (const file of ['dist/app.js', 'dist/index.html']) {
-  const raw = readFileSync(file, 'utf8');
-  writeFileSync(file, raw.replaceAll('0.2.0', version), 'utf8');
+  let raw = readFileSync(file, 'utf8').replaceAll('0.2.0', version);
+  if (file.endsWith('app.js')) {
+    raw = raw
+      .replace("let selectedStyle = 'clean';", "let selectedStyle = 'dynamic';")
+      .replace("let zoomMode = 'soft';", "let zoomMode = 'dynamic';")
+      .replace("applyEditPreset('clean');", "selectSegment('#stylePicker','dynamic');applyEditPreset('dynamic');");
+  }
+  if (file.endsWith('index.html')) {
+    raw = raw.replace('id="highlightKeywords" type="checkbox"', 'id="highlightKeywords" type="checkbox" checked');
+  }
+  writeFileSync(file, raw, 'utf8');
 }
 
-console.log(`ReelsFactory frontend built · v${version}`);
+console.log(`ReelsFactory frontend built · v${version} · AI Dynamic default`);
