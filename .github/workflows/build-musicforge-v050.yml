@@ -31,9 +31,12 @@ jobs:
           echo 'a43fbd32cd672a384ba000840ba6cda808557819434298d9b260cd781d876a69  /tmp/musicforge-source.zip' | sha256sum -c -
           rm -rf /tmp/musicforge-src && mkdir -p /tmp/musicforge-src
           unzip -q /tmp/musicforge-source.zip -d /tmp/musicforge-src
-          base64 -d musicforge-build/v042/patch.gz.b64 | gzip -dc > /tmp/v042.patch
+          cat musicforge-build/v042/patch-parts/part-*.txt > /tmp/v042.b64
+          base64 -d /tmp/v042.b64 | gzip -dc > /tmp/v042.patch
           cd /tmp/musicforge-src
           patch -p1 --forward --batch < /tmp/v042.patch
+          base64 -d "$GITHUB_WORKSPACE/musicforge-build/v042/patch2.gz.b64" | gzip -dc > /tmp/v042-2.patch
+          patch -p1 --forward --batch < /tmp/v042-2.patch
           grep -q '"version": "0.4.2"' package.json
 
       - name: Apply v0.5.0 rebuild
@@ -63,7 +66,8 @@ jobs:
           assert 'const QUEUE_MAX = 100' in main
           assert "generationBackend: 'cloud'" in main
           assert 'processQueue' in main and 'enqueueBatch' in main
-          assert 'startEngine()' not in main.split('app.whenReady().then',1)[1].split("app.on('before-quit'",1)[0]
+          boot=main.split('app.whenReady().then',1)[1].split("app.on('before-quit'",1)[0]
+          assert 'startEngine()' not in boot
           ids=set(re.findall(r"\$\('#([^']+)'\)",js))
           missing=sorted(i for i in ids if f'id="{i}"' not in html)
           assert not missing, missing
@@ -83,14 +87,10 @@ jobs:
           import { Client } from '@gradio/client';
           const app=await Client.connect('ACE-Step/ACE-Step');
           const result=await app.predict('/__call__',{
-            audio_duration:10,
-            prompt:'modern pop instrumental, clear drums, bass, piano, wide stereo mix, original melody',
-            lyrics:'[Instrumental]',
-            infer_step:10,guidance_scale:15,scheduler_type:'euler',cfg_type:'apg',omega_scale:10,
-            manual_seeds:null,guidance_interval:0.5,guidance_interval_decay:0,min_guidance_scale:3,
-            use_erg_tag:true,use_erg_lyric:false,use_erg_diffusion:true,oss_steps:null,
-            guidance_scale_text:0,guidance_scale_lyric:0,audio2audio_enable:false,ref_audio_strength:0.5,
-            ref_audio_input:null,lora_name_or_path:'none'
+            audio_duration:10,prompt:'modern pop instrumental, clear drums, bass, piano, wide stereo mix, original melody',lyrics:'[Instrumental]',
+            infer_step:10,guidance_scale:15,scheduler_type:'euler',cfg_type:'apg',omega_scale:10,manual_seeds:null,
+            guidance_interval:0.5,guidance_interval_decay:0,min_guidance_scale:3,use_erg_tag:true,use_erg_lyric:false,use_erg_diffusion:true,
+            oss_steps:null,guidance_scale_text:0,guidance_scale_lyric:0,audio2audio_enable:false,ref_audio_strength:0.5,ref_audio_input:null,lora_name_or_path:'none'
           });
           const file=result?.data?.[0]; const url=file?.url;
           if(!url) throw new Error('No cloud audio URL');
