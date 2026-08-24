@@ -8,48 +8,139 @@
 </head>
 <body>
   <div id="updateBanner" class="update-banner hidden">
-    <div><b id="updateTitle">Доступно обновление</b><span id="updateNotes"></span></div>
-    <button id="installUpdate">Обновить</button>
+    <div><b id="updateTitle"></b><span id="updateNotes"></span></div>
+    <button id="installUpdate" class="primary small"></button>
   </div>
+
   <div class="shell">
     <aside>
-      <div class="brand"><span class="bolt">⚡</span><div><strong>ReelsFactory</strong><small>AI Video Studio · v0.2.0</small></div></div>
-      <button class="nav active" data-page="home">Главная</button>
-      <button class="nav" data-page="projects">Проекты</button>
-      <button class="nav" data-page="settings">Настройки</button>
-      <div class="side-note"><b>v0.2 Core</b><span>Без скрытой обрезки.<br>Субтитры локально.</span></div>
+      <div class="brand">
+        <div class="brand-mark">RF</div>
+        <div><strong>ReelsFactory</strong><small>AI Reels Editor · v0.2.0</small></div>
+      </div>
+      <nav>
+        <button class="nav active" data-page="home" data-i18n="navHome"></button>
+        <button class="nav" data-page="projects" data-i18n="navProjects"></button>
+        <button class="nav" data-page="settings" data-i18n="navSettings"></button>
+      </nav>
+      <div class="performance-pill"><i></i><span>60 FPS UI</span></div>
     </aside>
+
     <main>
       <section id="home" class="page active">
-        <header><div><span class="eyebrow">LOCAL · PRIVATE · APPLE SILICON</span><h1>Из видео — готовый Reels.<br><em>Без самодеятельности приложения.</em></h1><p>По умолчанию сохраняем полную длительность и весь кадр. Любая обрезка — только по твоему выбору.</p></div><div class="badge">M1<br><small>Native</small></div></header>
+        <header class="hero">
+          <div>
+            <span class="eyebrow">APPLE SILICON · LOCAL FIRST</span>
+            <h1 data-i18n="heroTitle"></h1>
+            <p data-i18n="heroText"></p>
+          </div>
+          <div class="hero-actions">
+            <button id="pickVideoTop" class="primary" data-i18n="createReel"></button>
+          </div>
+        </header>
 
-        <div class="grid">
-          <div class="card source-card">
-            <div class="card-title"><span>1</span><div><b>Исходное видео</b><small>MP4 · MOV · M4V</small></div></div>
-            <button id="pickVideo" class="drop"><b>＋ Выбрать видео</b><span id="videoPath">Файл ещё не выбран</span></button>
+        <section id="dropZone" class="drop-zone" tabindex="0">
+          <div class="drop-icon">↓</div>
+          <div>
+            <b data-i18n="dropTitle"></b>
+            <span data-i18n="dropSub"></span>
           </div>
-          <div class="card">
-            <div class="card-title"><span>2</span><div><b>Формат кадра</b><small>Никакого скрытого crop</small></div></div>
-            <label class="option"><input type="radio" name="aspect" value="original" checked><div><b>Оригинал</b><span>Размер и весь кадр сохраняются</span></div></label>
-            <label class="option"><input type="radio" name="aspect" value="fit916"><div><b>9:16 · Fit</b><span>1080×1920, без обрезки краёв</span></div></label>
-            <label class="option danger"><input type="radio" name="aspect" value="crop916"><div><b>9:16 · Crop</b><span>Заполнить экран с обрезкой — только вручную</span></div></label>
+          <button id="pickVideo" class="secondary" data-i18n="chooseFile"></button>
+        </section>
+
+        <section id="sourcePanel" class="source-panel hidden">
+          <div class="preview-wrap"><video id="sourcePreview" controls playsinline></video></div>
+          <div class="source-info">
+            <div class="source-head"><div><span class="eyebrow" data-i18n="sourceVideo"></span><h3 id="videoName">—</h3></div><button id="replaceVideo" class="ghost" data-i18n="replace"></button></div>
+            <div class="meta-grid">
+              <div><span data-i18n="duration"></span><b id="videoDuration">—</b></div>
+              <div><span data-i18n="resolution"></span><b id="videoResolution">—</b></div>
+              <div><span>FPS</span><b id="videoFps">—</b></div>
+              <div><span data-i18n="fileSize"></span><b id="videoSize">—</b></div>
+            </div>
           </div>
-          <div class="card">
-            <div class="card-title"><span>3</span><div><b>Автосубтитры</b><small>Whisper локально на Mac</small></div></div>
-            <label class="switch-row"><div><b>Создать субтитры</b><span>Речь распознаётся локально, без платного API</span></div><input id="captions" type="checkbox" checked></label>
-            <div class="caption-preview"><span>СУБТИТРЫ БУДУТ</span><strong>такими — крупно и читаемо</strong></div>
+        </section>
+
+        <section class="workflow-grid">
+          <div class="panel">
+            <div class="panel-head"><div><span class="step">01</span><div><b data-i18n="editStyle"></b><small data-i18n="editStyleSub"></small></div></div></div>
+            <div class="segmented three" id="stylePicker">
+              <button class="active" data-value="clean">Clean</button>
+              <button data-value="dynamic">Dynamic</button>
+              <button data-value="viral">Viral</button>
+            </div>
+            <p class="context-note" id="styleHint"></p>
           </div>
-        </div>
+
+          <div class="panel">
+            <div class="panel-head"><div><span class="step">02</span><div><b data-i18n="contentGoal"></b><small data-i18n="contentGoalSub"></small></div></div></div>
+            <select id="goalSelect">
+              <option value="sales" data-i18n="goalSales"></option>
+              <option value="expert" data-i18n="goalExpert"></option>
+              <option value="personal" data-i18n="goalPersonal"></option>
+              <option value="educational" data-i18n="goalEducational"></option>
+              <option value="storytelling" data-i18n="goalStory"></option>
+              <option value="entertainment" data-i18n="goalEntertainment"></option>
+            </select>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head"><div><span class="step">03</span><div><b data-i18n="frameMode"></b><small data-i18n="frameModeSub"></small></div></div></div>
+            <div class="segmented" id="framePicker">
+              <button class="active" data-value="fit916">9:16 Fit</button>
+              <button data-value="crop916">Center Crop</button>
+            </div>
+            <div class="availability"><span class="dot amber"></span><span data-i18n="faceTrackingPending"></span></div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head"><div><span class="step">04</span><div><b data-i18n="captions"></b><small data-i18n="captionsSub"></small></div></div><label class="toggle"><input id="captions" type="checkbox" checked><span></span></label></div>
+            <select id="captionStyle">
+              <option value="clean">Clean</option>
+              <option value="dynamic">Dynamic</option>
+              <option value="bold">Bold</option>
+              <option value="minimal">Minimal</option>
+              <option value="podcast">Podcast</option>
+            </select>
+            <label class="inline-check"><input id="highlightKeywords" type="checkbox"><span data-i18n="highlightKeywords"></span></label>
+          </div>
+        </section>
+
+        <section class="reality-check">
+          <div><b data-i18n="engineNow"></b><span data-i18n="engineNowText"></span></div>
+          <div class="engine-tags"><span>Whisper</span><span>AVFoundation</span><span>9:16</span><span>H.264/AAC</span></div>
+        </section>
 
         <div class="actionbar">
-          <div class="status"><i id="statusDot"></i><div><b id="statusTitle">Готов к работе</b><span id="statusText">Выбери видео и нажми «Создать»</span></div></div>
-          <button id="render" class="primary" disabled>Создать видео →</button>
+          <div class="status"><i id="statusDot"></i><div><b id="statusTitle"></b><span id="statusText"></span></div></div>
+          <button id="render" class="primary large" disabled data-i18n="makeReel"></button>
         </div>
-        <div id="result" class="result hidden"><div><b>✓ Видео готово</b><span id="resultPath"></span></div><button id="showResult">Показать в Finder</button></div>
+
+        <div id="result" class="result hidden">
+          <div><b data-i18n="ready"></b><span id="resultPath"></span></div>
+          <div class="result-actions"><button id="previewResult" class="secondary" data-i18n="preview"></button><button id="showResult" class="secondary" data-i18n="showFinder"></button></div>
+        </div>
       </section>
 
-      <section id="projects" class="page"><h2>Проекты</h2><div class="empty card"><b>История локальных экспортов</b><p>В этой версии проекты не подменяются демо-данными. После первого экспорта результат остаётся на твоём Mac.</p></div></section>
-      <section id="settings" class="page"><h2>Настройки</h2><div class="settings-grid"><div class="card"><b>Обновления</b><p>Проверка выполняется при каждом запуске через GitHub release-канал.</p><button id="checkUpdate" class="secondary">Проверить обновления</button><small id="updateState">Текущая версия: 0.2.0</small></div><div class="card"><b>Модель субтитров</b><p>Whisper Base скачивается один раз и хранится локально в Application Support.</p><small>Первый запуск субтитров потребует интернет для загрузки модели.</small></div></div></section>
+      <section id="projects" class="page">
+        <div class="page-head"><div><span class="eyebrow">REELSFACTORY</span><h2 data-i18n="projectsTitle"></h2><p data-i18n="projectsSub"></p></div></div>
+        <div id="projectsList" class="projects-list"></div>
+        <div id="projectsEmpty" class="empty panel"><b data-i18n="projectsEmpty"></b><p data-i18n="projectsEmptySub"></p></div>
+      </section>
+
+      <section id="settings" class="page">
+        <div class="page-head"><div><span class="eyebrow">REELSFACTORY</span><h2 data-i18n="settingsTitle"></h2></div></div>
+        <div class="settings-stack">
+          <div class="panel setting-row"><div><b data-i18n="language"></b><span data-i18n="languageSub"></span></div><div class="segmented compact" id="langPicker"><button data-value="ru">Русский</button><button data-value="en">English</button></div></div>
+          <div class="panel setting-row"><div><b data-i18n="performance"></b><span data-i18n="performanceSub"></span></div><label class="toggle"><input id="reduceEffects" type="checkbox" checked><span></span></label></div>
+          <div class="panel setting-row"><div><b data-i18n="exportDefault"></b><span data-i18n="exportDefaultSub"></span></div><select id="exportDefault"><option value="balanced">Balanced</option><option value="fast">Fast</option><option value="high">High</option></select></div>
+          <div class="panel update-center">
+            <div><b data-i18n="updateCenter"></b><span id="updateState"></span></div>
+            <div class="update-meta"><div><span data-i18n="currentVersion"></span><b>0.2.0</b></div><div><span data-i18n="latestVersion"></span><b id="latestVersion">—</b></div><div><span data-i18n="releaseDate"></span><b id="releaseDate">—</b></div><div><span data-i18n="releaseTime"></span><b id="releaseTime">—</b></div></div>
+            <div class="update-actions"><button id="checkUpdate" class="secondary" data-i18n="checkUpdates"></button></div>
+          </div>
+        </div>
+      </section>
     </main>
   </div>
   <script src="app.js"></script>
