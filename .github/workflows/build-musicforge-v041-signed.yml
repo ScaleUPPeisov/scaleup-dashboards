@@ -5,6 +5,11 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/build-musicforge-v041-signed.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-musicforge-v041-signed.yml'
+      - 'musicforge-build/v041/**'
 
 permissions:
   contents: read
@@ -14,11 +19,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-
       - name: Restore and verify source
         shell: bash
         run: |
@@ -29,14 +32,12 @@ jobs:
           base64 -d /tmp/musicforge-source.b64 > /tmp/musicforge-source.zip
           echo 'a43fbd32cd672a384ba000840ba6cda808557819434298d9b260cd781d876a69  /tmp/musicforge-source.zip' | sha256sum -c -
           unzip -t /tmp/musicforge-source.zip
-          rm -rf /tmp/musicforge-src
-          mkdir -p /tmp/musicforge-src
+          rm -rf /tmp/musicforge-src && mkdir -p /tmp/musicforge-src
           unzip -q /tmp/musicforge-source.zip -d /tmp/musicforge-src
           grep -q '"version": "0.4.1"' /tmp/musicforge-src/package.json
           grep -q "ACESTEP_NO_INIT: 'true'" /tmp/musicforge-src/main.js
           grep -q "ACESTEP_INIT_LLM: 'false'" /tmp/musicforge-src/main.js
           ! grep -q 'engineBootPromise = startEngine' /tmp/musicforge-src/main.js
-
       - name: Validate JavaScript and Safe Mode
         run: |
           set -euo pipefail
@@ -46,60 +47,46 @@ jobs:
           python3 - <<'PY'
           import pathlib
           p=pathlib.Path('/tmp/musicforge-src')
-          main=(p/'main.js').read_text()
-          html=(p/'renderer/index.html').read_text()
+          main=(p/'main.js').read_text(); html=(p/'renderer/index.html').read_text()
           assert "ACESTEP_NO_INIT: 'true'" in main
           assert "ACESTEP_INIT_LLM: 'false'" in main
-          assert "app.whenReady().then" in main
           boot=main.split("app.whenReady().then",1)[1].split("app.on('before-quit'",1)[0]
-          assert 'startEngine()' not in boot, 'AI must not auto-start on launch'
+          assert 'startEngine()' not in boot
           assert "stopEngine('auto')" in main
           assert "thinking = false" in main
           assert 'Safe Mode' in html
-          print('Safe Mode source validation passed')
           PY
-
       - name: Install dependencies
         working-directory: /tmp/musicforge-src
         run: npm install --no-audit --no-fund
-
       - name: Package Darwin ARM64 bundle
         working-directory: /tmp/musicforge-src
         run: |
           set -euo pipefail
           npm run package:mac
           APP='dist/MusicForge AI-darwin-arm64/MusicForge AI.app'
-          test -d "$APP"
-          test -x "$APP/Contents/MacOS/MusicForge AI"
-          test -f "$APP/Contents/Resources/app.asar"
-          file "$APP/Contents/MacOS/MusicForge AI" | tee /tmp/main-file.txt
-          grep -q 'Mach-O 64-bit arm64' /tmp/main-file.txt
-          file "$APP/Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework" | tee /tmp/framework-file.txt
-          grep -q 'Mach-O 64-bit arm64' /tmp/framework-file.txt
+          test -d "$APP" && test -x "$APP/Contents/MacOS/MusicForge AI" && test -f "$APP/Contents/Resources/app.asar"
+          file "$APP/Contents/MacOS/MusicForge AI" | grep -q 'Mach-O 64-bit arm64'
+          file "$APP/Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework" | grep -q 'Mach-O 64-bit arm64'
           test -L "$APP/Contents/Frameworks/Electron Framework.framework/Electron Framework"
           test -L "$APP/Contents/Frameworks/Electron Framework.framework/Resources"
           test -L "$APP/Contents/Frameworks/Electron Framework.framework/Versions/Current"
-
       - name: Ad-hoc sign complete macOS app
         uses: indygreg/apple-code-sign-action@v1
         with:
           input_path: '/tmp/musicforge-src/dist/MusicForge AI-darwin-arm64/MusicForge AI.app'
           output_path: '/tmp/musicforge-signed/MusicForge AI.app'
-
       - name: Verify signed output structure
         shell: bash
         run: |
           set -euo pipefail
           APP='/tmp/musicforge-signed/MusicForge AI.app'
-          test -d "$APP"
-          test -x "$APP/Contents/MacOS/MusicForge AI"
-          test -f "$APP/Contents/Resources/app.asar"
+          test -d "$APP" && test -x "$APP/Contents/MacOS/MusicForge AI" && test -f "$APP/Contents/Resources/app.asar"
           file "$APP/Contents/MacOS/MusicForge AI" | grep -q 'Mach-O 64-bit arm64'
           test -L "$APP/Contents/Frameworks/Electron Framework.framework/Electron Framework"
           test -L "$APP/Contents/Frameworks/Electron Framework.framework/Resources"
           test -L "$APP/Contents/Frameworks/Electron Framework.framework/Versions/Current"
           find "$APP" -name '_CodeSignature' -type d -print | head -20
-
       - name: Create macOS-safe ZIP and verify metadata
         shell: bash
         run: |
@@ -107,21 +94,17 @@ jobs:
           cd /tmp/musicforge-signed
           zip -qry -y '/tmp/MusicForge-AI-v0.4.1-Mac-M1-SIGNED.zip' 'MusicForge AI.app'
           unzip -t '/tmp/MusicForge-AI-v0.4.1-Mac-M1-SIGNED.zip'
-          sha256sum '/tmp/MusicForge-AI-v0.4.1-Mac-M1-SIGNED.zip' | tee /tmp/release.sha256
+          sha256sum '/tmp/MusicForge-AI-v0.4.1-Mac-M1-SIGNED.zip'
           python3 - <<'PY'
           import zipfile, stat
-          path='/tmp/MusicForge-AI-v0.4.1-Mac-M1-SIGNED.zip'
-          z=zipfile.ZipFile(path)
-          main='MusicForge AI.app/Contents/MacOS/MusicForge AI'
-          info=z.getinfo(main)
+          z=zipfile.ZipFile('/tmp/MusicForge-AI-v0.4.1-Mac-M1-SIGNED.zip')
+          info=z.getinfo('MusicForge AI.app/Contents/MacOS/MusicForge AI')
           mode=(info.external_attr >> 16) & 0xffff
-          assert mode & stat.S_IXUSR, f'main executable lost +x: {oct(mode)}'
+          assert mode & stat.S_IXUSR
           links=[i for i in z.infolist() if stat.S_ISLNK((i.external_attr >> 16) & 0xffff)]
-          assert len(links) >= 3, f'framework symlinks lost: {len(links)}'
+          assert len(links) >= 3
           assert any(i.filename.endswith('Contents/Resources/app.asar') for i in z.infolist())
-          print('ZIP metadata OK; executable=', oct(mode), 'symlinks=', len(links))
           PY
-
       - uses: actions/upload-artifact@v4
         with:
           name: MusicForge-AI-v0.4.1-Mac-M1-SIGNED
