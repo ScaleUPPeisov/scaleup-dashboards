@@ -1,17 +1,31 @@
-# ReelsFactory v0.2.0 — macOS Apple Silicon
+# ReelsFactory
 
-Рабочий релиз вместо foundation-only v0.1.
+ReelsFactory is a macOS Apple Silicon desktop app for turning raw talking-head video into vertical Reels.
 
-## Исправлено
-- Полная длительность исходника по умолчанию: приложение не режет видео само.
-- Original — сохраняет весь кадр.
-- 9:16 Fit — 1080×1920 без скрытого crop.
-- 9:16 Crop существует только как явный ручной выбор.
-- Автосубтитры через локальный whisper.cpp без платного API.
-- Whisper Base скачивается один раз в Application Support.
-- Субтитры прожигаются в итоговое видео через AVFoundation/CoreAnimation.
-- Проверка GitHub release-канала при запуске и баннер «Доступно обновление».
-- Кнопка обновления скачивает DMG, проверяет SHA-256 и открывает его.
+## Release baseline: v0.2.1
 
-## Важно про переход с v0.1
-v0.1 была собрана с updater endpoint, который не был развернут. Поэтому v0.2 — одноразовая ручная миграция. Начиная с v0.2 приложение само видит следующие GitHub-релизы.
+- Tauri 2 desktop shell
+- Native AVFoundation video pipeline
+- Apple Vision face-aware 9:16 reframing
+- Smart Cuts based on recognized speech pauses
+- Auto Zoom accents
+- Local Whisper captions (RU/EN auto recognition)
+- Caption presets and keyword emphasis
+- MP4 / MOV / M4V import with real metadata
+- Projects history for completed local exports
+- Full RU / EN interface
+- Apple Silicon DMG distribution
+- In-app update checks against ReelsFactory GitHub releases
+- Update installation from verified DMG + SHA-256 manifest
+- Previous app backup before replacement
+
+## Update workflow
+
+1. Develop on `reelsfactory-desktop`.
+2. Bump the version.
+3. Commit a release with `release: ReelsFactory ...`.
+4. GitHub Actions builds the Apple Silicon DMG and manifest.
+5. The release is published under the `reelsfactory-vX.Y.Z` tag.
+6. Installed ReelsFactory detects the release and offers **Install and restart** without Terminal commands.
+
+ReelsFactory remains isolated from the ScaleUP dashboard application even though its development branch currently lives in the same repository.
