@@ -23,7 +23,7 @@ jobs:
       - name: Build AVFoundation helper
         run: |
           mkdir -p src-tauri/binaries
-          swiftc native/VideoProcessor.swift -O -target arm64-apple-macos13.0 -o src-tauri/binaries/reelsfactory-video-aarch64-apple-darwin -framework AVFoundation -framework AppKit -framework QuartzCore -framework CoreMedia
+          swiftc native/VideoProcessor.swift -O -target arm64-apple-macos13.0 -o src-tauri/binaries/reelsfactory-video-aarch64-apple-darwin -framework AVFoundation -framework AppKit -framework QuartzCore -framework CoreMedia -framework Vision
           chmod +x src-tauri/binaries/reelsfactory-video-aarch64-apple-darwin
       - name: Build local Whisper engine
         run: |
@@ -62,4 +62,4 @@ jobs:
         run: |
           TAG="reelsfactory-v${{ steps.meta.outputs.version }}"
           gh release delete "$TAG" --yes 2>/dev/null || true
-          gh release create "$TAG" "ReelsFactory_${{ steps.meta.outputs.version }}_M1.dmg" reelsfactory-manifest.json --title "ReelsFactory v${{ steps.meta.outputs.version }}" --notes "v${{ steps.meta.outputs.version }}: полный экспорт без скрытой обрезки; 9:16 Fit без потери кадра; локальные автосубтитры Whisper; проверка обновлений при запуске."
+          gh release create "$TAG" "ReelsFactory_${{ steps.meta.outputs.version }}_M1.dmg" reelsfactory-manifest.json --title "ReelsFactory v${{ steps.meta.outputs.version }}" --notes "Validation build: local Whisper captions, Smart Cuts, Apple Vision face tracking and native AVFoundation export."
