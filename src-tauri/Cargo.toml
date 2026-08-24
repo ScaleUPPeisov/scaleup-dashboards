@@ -1,7 +1,7 @@
 [package]
 name = "reelsfactory"
-version = "0.2.3"
-description = "ReelsFactory macOS video studio"
+version = "0.3.0"
+description = "ReelsFactory macOS AI reels studio"
 authors = ["ScaleUP"]
 edition = "2021"
 
