@@ -1,0 +1,76 @@
+name: Test ACE-Step v1 Cloud Generation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/test-acestep-v1-generate.yml'
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Generate 10 second preview on official v1 Space
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/acev1 && cd /tmp/acev1
+          npm init -y >/dev/null 2>&1
+          npm install --no-audit --no-fund @gradio/client
+          node --input-type=module <<'NODE'
+          import { Client } from '@gradio/client';
+          import fs from 'node:fs';
+          const app = await Client.connect('ACE-Step/ACE-Step');
+          console.log('connected');
+          const result = await app.predict('/__call__', {
+            audio_duration: 10,
+            prompt: 'modern electronic pop instrumental, bright synth hook, punchy drums, original melody, energetic',
+            lyrics: '[Instrumental]',
+            infer_step: 10,
+            guidance_scale: 15,
+            scheduler_type: 'euler',
+            cfg_type: 'apg',
+            omega_scale: 10,
+            manual_seeds: null,
+            guidance_interval: 0.5,
+            guidance_interval_decay: 0,
+            min_guidance_scale: 3,
+            use_erg_tag: true,
+            use_erg_lyric: false,
+            use_erg_diffusion: true,
+            oss_steps: null,
+            guidance_scale_text: 0,
+            guidance_scale_lyric: 0,
+            audio2audio_enable: false,
+            ref_audio_strength: 0.5,
+            ref_audio_input: null,
+            lora_name_or_path: 'none'
+          });
+          console.log('RESULT', JSON.stringify(result.data,null,2).slice(0,10000));
+          fs.writeFileSync('/tmp/v1-result.json', JSON.stringify(result,null,2));
+          const first=result?.data?.[0];
+          let url=typeof first==='string'?first:(first?.url||first?.path||'');
+          if (!url) throw new Error('No audio returned');
+          if (url.startsWith('/')) url='https://ace-step-ace-step.hf.space'+url;
+          if (!url.startsWith('http') && first?.url) url=first.url;
+          console.log('AUDIO',JSON.stringify(first));
+          if (!url.startsWith('http')) throw new Error('No HTTP audio URL: '+url);
+          const r=await fetch(url);
+          if(!r.ok) throw new Error('download '+r.status);
+          const buf=Buffer.from(await r.arrayBuffer());
+          fs.writeFileSync('/tmp/v1-preview.wav',buf);
+          console.log('BYTES',buf.length);
+          if(buf.length<10000) throw new Error('audio too small');
+          NODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: acestep-v1-generation-test
+          path: |
+            /tmp/v1-result.json
+            /tmp/v1-preview.wav
+          if-no-files-found: ignore
