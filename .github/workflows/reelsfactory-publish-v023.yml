@@ -1,10 +1,8 @@
 name: Publish ReelsFactory v0.2.3
 
 on:
-  push:
+  pull_request:
     branches: [main]
-    paths:
-      - '.github/workflows/reelsfactory-publish-v023.yml'
 
 permissions:
   contents: write
@@ -12,7 +10,7 @@ permissions:
 
 jobs:
   publish:
-    if: startsWith(github.event.head_commit.message, 'release-publish: ReelsFactory v0.2.3')
+    if: github.head_ref == 'reelsfactory-publish-v023'
     runs-on: ubuntu-latest
     steps:
       - name: Download prevalidated macOS ARM64 artifact
@@ -61,5 +59,3 @@ jobs:
             --title 'ReelsFactory v0.2.3' \
             --notes 'ReelsFactory v0.2.3 — исправлено авто-кадрирование 9:16: Face Tracking с fallback на человека целиком, защита от ухода кадра за границы, более плавное сопровождение объекта. Smart Cuts переработан: короткие паузы сохраняются, длинная тишина удаляется, начало и конец ролика защищены, чрезмерная нарезка блокируется. Нативные macOS ARM64 regression-тесты, AVFoundation export, rotated-metadata test, no-black-bars test, Rust tests, codesign, DMG и GUI installer — пройдены.'
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json tagName,name,url,assets
-
-# publish trigger 2
