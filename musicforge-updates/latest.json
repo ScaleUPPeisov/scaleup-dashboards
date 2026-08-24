@@ -1,13 +1,13 @@
 {
-  "version": "0.3.1",
-  "notes": "Stable fallback: v0.4.0 temporarily withdrawn because automatic background AI startup can overload unified memory on some M1 Macs. Stay on v0.3.1 until the Safe Mode release is fully signed and validated.",
-  "sha256": "7a941b19fc015df252b13b2c05fcd883a39fceb28a596bbff77b95f3c251b030",
+  "version": "0.4.3",
+  "notes": "MusicForge AI 0.4.3 OTA Bridge: восстановлен рабочий канал интернет-обновлений для версии 0.4.2. Cloud Safe сохранён: тяжёлая локальная модель не стартует при открытии приложения. Это мост к следующему крупному релизу 0.5.",
+  "sha256": "521c6f677ca6430561556306edfc3218c492a6f32f9d8b87b79b17cf090d2269",
   "parts": [
-    "https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/musicforge-updates/0.3.1/part-00.bin",
-    "https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/musicforge-updates/0.3.1/part-01.bin",
-    "https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/musicforge-updates/0.3.1/part-02.bin",
-    "https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/musicforge-updates/0.3.1/part-03.bin",
-    "https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/musicforge-updates/0.3.1/part-04.bin",
-    "https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/musicforge-updates/0.3.1/part-05.bin"
+    "https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/musicforge-updates/0.4.3/part-00.bin",
+    "https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/musicforge-updates/0.4.3/part-01.bin",
+    "https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/musicforge-updates/0.4.3/part-02.bin",
+    "https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/musicforge-updates/0.4.3/part-03.bin",
+    "https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/musicforge-updates/0.4.3/part-04.bin",
+    "https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/musicforge-updates/0.4.3/part-05.bin"
   ]
 }
