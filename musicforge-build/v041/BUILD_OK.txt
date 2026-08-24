@@ -1,0 +1,4 @@
+MusicForge AI v0.4.1 Safe signed build passed CI run 32687804819.
+Artifact: MusicForge-AI-v0.4.1-Mac-M1-SIGNED
+Inner release SHA-256: 0f5844b467dc1f43daf02d342c2f062abf8e33c7940e22c12fff406e9fcfc8c2
+Verified after artifact download: Mach-O arm64 main executable, executable mode 0755, 14 symlinks, app.asar present, _CodeSignature present, Safe Mode markers present.
