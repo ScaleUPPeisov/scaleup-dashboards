@@ -1,0 +1,70 @@
+name: Test ACE-Step Cloud Generation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/test-acestep-cloud-generate.yml'
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Generate 10 second cloud preview
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/acetest && cd /tmp/acetest
+          npm init -y >/dev/null 2>&1
+          npm install --no-audit --no-fund @gradio/client
+          node --input-type=module <<'NODE'
+          import { Client } from '@gradio/client';
+          import fs from 'node:fs';
+          const app = await Client.connect('ACE-Step/Ace-Step-v1.5');
+          console.log('connected');
+          const result = await app.predict('/generation_wrapper', {
+            selected_model: 'acestep-v15-turbo',
+            generation_mode: 'simple',
+            simple_query_input: 'uplifting modern electronic pop instrumental, bright synth hook, punchy drums, original melody',
+            simple_vocal_language: 'unknown',
+            param_10: 1,
+            param_12: true,
+            param_15: 10,
+            param_16: 1,
+            param_23: 'text2music',
+            param_30: 'mp3',
+            param_32: false,
+            param_43: false,
+            param_44: false
+          });
+          console.log('RESULT_KEYS', Object.keys(result));
+          console.log('RESULT_DATA', JSON.stringify(result.data, null, 2).slice(0,20000));
+          fs.writeFileSync('/tmp/cloud-result.json', JSON.stringify(result, null, 2));
+          const first = result?.data?.[0];
+          let url = null;
+          if (typeof first === 'string' && first.startsWith('http')) url = first;
+          if (first && typeof first === 'object') url = first.url || first.path || null;
+          console.log('FIRST_AUDIO', JSON.stringify(first));
+          if (!url) throw new Error('No audio URL/path returned');
+          if (url.startsWith('/')) url = 'https://ace-step-ace-step-v1-5.hf.space' + url;
+          if (!url.startsWith('http')) throw new Error('Returned audio is not an HTTP URL: '+url);
+          const r = await fetch(url);
+          if (!r.ok) throw new Error('Audio download failed '+r.status+' '+url);
+          const buf = Buffer.from(await r.arrayBuffer());
+          fs.writeFileSync('/tmp/cloud-preview.mp3', buf);
+          console.log('AUDIO_BYTES', buf.length, 'URL', url);
+          if (buf.length < 10000) throw new Error('Audio file unexpectedly small');
+          NODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: acestep-cloud-generation-test
+          path: |
+            /tmp/cloud-result.json
+            /tmp/cloud-preview.mp3
+          if-no-files-found: ignore
