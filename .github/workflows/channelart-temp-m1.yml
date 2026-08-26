@@ -11,7 +11,7 @@ permissions:
 jobs:
   build-channelart-m1:
     if: github.head_ref == 'channelart-build-v010'
-    runs-on: macos-14
+    runs-on: macos-13
     steps:
       - name: Checkout ChannelArt build branch
         uses: actions/checkout@v4
