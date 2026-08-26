@@ -58,7 +58,7 @@ jobs:
           step runner_arch bash -lc 'uname -a; test "$(uname -s)" = Darwin; test "$(uname -m)" = arm64'
 
           if [ "$STATUS" = "verified" ]; then
-            cat channelart-source.part*.b64 | tr -d '\n\r' | base64 --decode > /tmp/channelart-source.zip
+            cat channelart-e8-*.b64 | tr -d '\n\r' | base64 --decode > /tmp/channelart-source.zip
             GOT="$(shasum -a 256 /tmp/channelart-source.zip | awk '{print $1}')"
             EXPECTED="f9088ed4b7ba7844384315faeba93180c7adbdfab64cb43138e02cacc0184f81"
             if [ "$GOT" != "$EXPECTED" ]; then fail source_checksum 41; fi
