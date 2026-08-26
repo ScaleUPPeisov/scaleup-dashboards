@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   build-channelart-m1:
-    runs-on: macos-13
+    runs-on: macos-latest
     steps:
       - name: Checkout ChannelArt build branch
         uses: actions/checkout@v4
