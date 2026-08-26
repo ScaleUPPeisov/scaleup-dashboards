@@ -11,7 +11,7 @@ permissions:
 jobs:
   build-channelart-m1:
     if: github.head_ref == 'channelart-build-v010'
-    runs-on: macos-15
+    runs-on: macos-14
     steps:
       - name: Checkout ChannelArt build branch
         uses: actions/checkout@v4
@@ -40,7 +40,7 @@ jobs:
           STATUS="verified"; FAILED_STEP=""; ERROR_CODE=0
           fail(){ STATUS="failed"; FAILED_STEP="$1"; ERROR_CODE="$2"; echo "CHANNELART_FAIL step=$FAILED_STEP code=$ERROR_CODE"; }
           step(){ local name="$1"; shift; [ "$STATUS" != "verified" ] && return 0; echo "===== $name ====="; "$@"; local rc=$?; [ $rc -ne 0 ] && fail "$name" "$rc"; }
-          step runner_arch bash -lc 'uname -a; test "$(uname -s)" = Darwin; test "$(uname -m)" = arm64'
+          step macos_runner bash -lc 'uname -a; test "$(uname -s)" = Darwin'
           if [ "$STATUS" = verified ]; then
             cat channelart-e8-*.b64 | tr -d '\n\r' | base64 --decode > /tmp/channelart-source.zip
             GOT="$(shasum -a 256 /tmp/channelart-source.zip | awk '{print $1}')"
@@ -59,13 +59,16 @@ jobs:
           if [ "$STATUS" = verified ]; then
             APP="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -type d -name '*.app' -print -quit)"
             DMG="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -maxdepth 1 -type f -name '*.dmg' -print -quit)"
-            [ ! -d "$APP" ] || [ ! -f "$DMG" ] && fail bundle_missing 51
+            if [ ! -d "$APP" ] || [ ! -f "$DMG" ]; then fail bundle_missing 51; fi
           fi
           if [ "$STATUS" = verified ]; then
             BID="$(/usr/bin/plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist" 2>/dev/null)"
             VER="$(/usr/bin/plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist" 2>/dev/null)"
+            EXE="$(/usr/bin/plutil -extract CFBundleExecutable raw -o - "$APP/Contents/Info.plist" 2>/dev/null)"
+            ARCHS="$(lipo -archs "$APP/Contents/MacOS/$EXE" 2>/dev/null)"
             [ "$BID" != "ai.channelart.factory" ] && fail bundle_id 52
             [ "$VER" != "0.1.0" ] && fail bundle_version 53
+            echo "$ARCHS" | grep -qw arm64 || fail executable_not_arm64 54
           fi
           cd "$ROOT"
           [ "$STATUS" = verified ] && cp "$ROOT/ChannelArtFactory-v0.1.0/$DMG" channelart-artifact/ChannelArt-Factory-0.1.0-M1.dmg
