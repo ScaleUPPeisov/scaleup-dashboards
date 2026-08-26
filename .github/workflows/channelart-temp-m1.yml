@@ -1,16 +1,17 @@
 name: ChannelArt Factory temporary M1 build
 
 on:
-  pull_request:
+  push:
     branches: [main]
-    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'channelart-run-trigger-*.txt'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   build-channelart-m1:
-    if: github.head_ref == 'channelart-build-v010'
     runs-on: macos-13
     steps:
       - name: Checkout ChannelArt build branch
