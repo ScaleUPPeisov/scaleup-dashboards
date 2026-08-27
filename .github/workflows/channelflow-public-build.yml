@@ -96,11 +96,13 @@ jobs:
         working-directory: .channelflow-build
         run: cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
 
-      - name: Build ChannelFlow app and DMG
+      - name: Build ad-hoc signed ChannelFlow app and DMG
         working-directory: .channelflow-build
+        env:
+          APPLE_SIGNING_IDENTITY: '-'
         run: npx tauri build --target aarch64-apple-darwin --bundles app,dmg
 
-      - name: Verify and collect installer
+      - name: Verify signature and collect installer
         working-directory: .channelflow-build
         shell: bash
         run: |
@@ -112,16 +114,21 @@ jobs:
           test -s "$DMG"
           test -n "$APP"
           test -d "$APP/Contents"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -dv --verbose=4 "$APP" 2>&1 | tee /tmp/channelflow-codesign.txt
+          file "$APP/Contents/MacOS/channelflow"
+          plutil -lint "$APP/Contents/Info.plist"
           mkdir -p release-files
-          cp "$DMG" release-files/ChannelFlow-0.2.0-macOS-AppleSilicon.dmg
-          ditto -c -k --sequesterRsrc --keepParent "$APP" release-files/ChannelFlow-0.2.0-macOS-AppleSilicon.app.zip
+          cp "$DMG" release-files/ChannelFlow-0.2.1-macOS-AppleSilicon.dmg
+          ditto -c -k --sequesterRsrc --keepParent "$APP" release-files/ChannelFlow-0.2.1-macOS-AppleSilicon.app.zip
+          cp /tmp/channelflow-codesign.txt release-files/CODESIGN.txt
           shasum -a 256 release-files/* | tee release-files/SHA256SUMS.txt
           ls -lah release-files
 
       - name: Upload ChannelFlow installer
         uses: actions/upload-artifact@v4
         with:
-          name: ChannelFlow-macOS-AppleSilicon-v0.2.0
+          name: ChannelFlow-macOS-AppleSilicon-v0.2.1
           path: .channelflow-build/release-files/*
           if-no-files-found: error
           retention-days: 30
