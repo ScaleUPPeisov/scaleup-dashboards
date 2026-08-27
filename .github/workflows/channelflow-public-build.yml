@@ -26,6 +26,7 @@ jobs:
           tar -xzf /tmp/channelflow-source.tar.gz -C .channelflow-build
           test -f .channelflow-build/package.json
           test -f .channelflow-build/src-tauri/tauri.conf.json
+          cp channelflow-build/system.rs.fixed .channelflow-build/src-tauri/src/system.rs
 
       - name: Setup Node 22
         uses: actions/setup-node@v4
