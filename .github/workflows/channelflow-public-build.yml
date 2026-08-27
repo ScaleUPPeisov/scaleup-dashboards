@@ -19,7 +19,7 @@ jobs:
         run: |
           set -euo pipefail
           cat channelflow-build/source.part* > /tmp/channelflow-source.b64
-          base64 --decode /tmp/channelflow-source.b64 > /tmp/channelflow-source.tar.gz
+          base64 -D -i /tmp/channelflow-source.b64 -o /tmp/channelflow-source.tar.gz
           echo "65310baaeb22a00961ef4d0d2b2e1dda72bbcf71ab5bf1753b9941e8692938fb  /tmp/channelflow-source.tar.gz" | shasum -a 256 -c -
           rm -rf .channelflow-build
           mkdir .channelflow-build
@@ -49,7 +49,7 @@ jobs:
           set -euo pipefail
           mkdir -p src-tauri/icons/icon.iconset
           python3 - <<'PYICON'
-          import struct,zlib,os,math
+          import struct,zlib,os
           def chunk(t,d):
               return struct.pack('>I',len(d))+t+d+struct.pack('>I',zlib.crc32(t+d)&0xffffffff)
           def png(path,n):
@@ -58,18 +58,14 @@ jobs:
                   raw.append(0)
                   for x in range(n):
                       u=x/max(1,n-1); v=y/max(1,n-1)
-                      r=int(7 + 20*u)
-                      g=int(18 + 95*u + 45*(1-v))
-                      b=int(31 + 160*(1-v) + 30*u)
+                      r=int(7 + 20*u); g=int(18 + 95*u + 45*(1-v)); b=int(31 + 160*(1-v) + 30*u)
                       cx=(x-n*.5)/(n*.5); cy=(y-n*.5)/(n*.5)
-                      if cx*cx+cy*cy > .90:
-                          r,g,b=7,12,20
+                      if cx*cx+cy*cy > .90: r,g,b=7,12,20
                       raw += bytes((max(0,min(255,r)),max(0,min(255,g)),max(0,min(255,b)),255))
               data=b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',n,n,8,6,0,0,0))+chunk(b'IDAT',zlib.compress(bytes(raw),9))+chunk(b'IEND',b'')
               open(path,'wb').write(data)
           os.makedirs('src-tauri/icons',exist_ok=True)
-          for n,name in [(32,'32x32.png'),(128,'128x128.png'),(256,'128x128@2x.png'),(1024,'icon-1024.png')]:
-              png('src-tauri/icons/'+name,n)
+          for n,name in [(32,'32x32.png'),(128,'128x128.png'),(256,'128x128@2x.png'),(1024,'icon-1024.png')]: png('src-tauri/icons/'+name,n)
           PYICON
           sips -z 16 16 src-tauri/icons/icon-1024.png --out src-tauri/icons/icon.iconset/icon_16x16.png >/dev/null
           sips -z 32 32 src-tauri/icons/icon-1024.png --out src-tauri/icons/icon.iconset/icon_16x16@2x.png >/dev/null
