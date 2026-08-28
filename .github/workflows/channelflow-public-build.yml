@@ -28,6 +28,49 @@ jobs:
           test -f .channelflow-build/src-tauri/tauri.conf.json
           cp channelflow-build/system.rs.fixed .channelflow-build/src-tauri/src/system.rs
 
+      - name: Patch ChannelFlow 0.2.1 fixes
+        working-directory: .channelflow-build
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          for rel in ['package.json','src-tauri/Cargo.toml','src-tauri/tauri.conf.json','src/api.ts','src/App.tsx']:
+              p=Path(rel); s=p.read_text(); s=s.replace('0.2.0','0.2.1').replace('27.08.2026','28.08.2026'); p.write_text(s)
+
+          p=Path('src-tauri/tauri.conf.json'); s=p.read_text()
+          s=s.replace('https://channelflow-updates.vercel.app/api/update?target={{target}}&arch={{arch}}&current_version={{current_version}}','https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/channelflow-updates/latest.json')
+          s=s.replace('https://channelflow-updates.vercel.app','https://raw.githubusercontent.com')
+          p.write_text(s)
+
+          p=Path('src-tauri/src/lib.rs'); s=p.read_text()
+          s=s.replace('system::diagnostics,youtube::youtube_channel_stats','system::diagnostics,system::default_workspace,youtube::youtube_channel_stats')
+          p.write_text(s)
+
+          p=Path('src/api.ts'); s=p.read_text()
+          s=s.replace("diagnostics:(workspace:string)=>invoke<Diagnostics>('diagnostics',{workspace}),","diagnostics:(workspace:string)=>invoke<Diagnostics>('diagnostics',{workspace}),\n  defaultWorkspace:()=>invoke<string>('default_workspace'),")
+          p.write_text(s)
+
+          p=Path('src/App.tsx'); s=p.read_text()
+          needle="  useEffect(()=>{if(booted&&settings.autoCheckUpdates){const t=window.setTimeout(()=>api.checkUpdate().then(u=>{if(u?.version)setUpdate(u)}).catch(()=>{}),1800);return()=>window.clearTimeout(t)}},[booted,settings.autoCheckUpdates]);"
+          hook=needle+"\n  useEffect(()=>{if(booted&&!settings.workspace){api.defaultWorkspace().then(p=>{if(p){useApp.getState().patchSettings({workspace:p});useApp.getState().log(`Workspace создан автоматически: ${p}`);}}).catch(e=>useApp.getState().log(`Не удалось создать Workspace: ${String(e)}`,'warn'))}},[booted,settings.workspace]);"
+          if needle not in s: raise SystemExit('auto-update hook patch target not found')
+          s=s.replace(needle,hook)
+          s=s.replace('После подключения production endpoint обновления устанавливаются внутри приложения и перезапускают его автоматически.','Канал обновлений подключён. Новые версии проверяются внутри приложения, скачиваются и устанавливаются без Terminal.')
+          old='<button className="settingsAction" onClick={async()=>{try{setDiag(await api.diagnostics(settings.workspace))}catch(e){setDiag({ok:false,notes:[String(e)]})}}}>ЗАПУСТИТЬ ПРОВЕРКУ</button>{diag&&<div className="diag">'
+          new='<button className="settingsAction" onClick={async()=>{try{let ws=settings.workspace;if(!ws){ws=await api.defaultWorkspace();patch({workspace:ws});}setDiag(await api.diagnostics(ws))}catch(e){setDiag({ok:false,notes:[String(e)]})}}}>ЗАПУСТИТЬ ПРОВЕРКУ</button>{!settings.workspace&&<button className="settingsAction primary" onClick={async()=>{try{const p=await api.defaultWorkspace();patch({workspace:p});setDiag(await api.diagnostics(p));toast("Workspace создан")}catch(e){toast(String(e))}}}>СОЗДАТЬ WORKSPACE АВТОМАТИЧЕСКИ</button>}{diag&&<div className="diag">'
+          if old not in s: raise SystemExit('diagnostics patch target not found')
+          s=s.replace(old,new)
+          s=s.replace('<h4>28.08.2026 • 0.2.1</h4><ul>','<h4>28.08.2026 • 0.2.1</h4><ul><li>Исправлен канал обновлений: больше нет ошибки invalid release JSON.</li><li>Workspace автоматически создаётся в Документы/ChannelFlow при первом запуске.</li><li>Диагностика сама восстанавливает отсутствующий Workspace и повторно проверяет запись.</li>')
+          s=s.replace('ChannelFlow 0.2 • macOS Apple Silicon','ChannelFlow 0.2.1 • macOS Apple Silicon')
+          p.write_text(s)
+
+          Path('RELEASE_NOTES.md').write_text('''# ChannelFlow 0.2.1\n\n- Исправлена ошибка `Could not fetch a valid release JSON from the remote`.\n- Подключён стабильный канал обновлений.\n- Workspace автоматически создаётся в `Документы/ChannelFlow` при первом запуске.\n- Диагностика автоматически восстанавливает Workspace и проверяет права записи.\n''')
+          PY
+          grep -R "0.2.1" package.json src-tauri/Cargo.toml src-tauri/tauri.conf.json src/api.ts src/App.tsx >/dev/null
+          grep -R "raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/channelflow-updates/latest.json" src-tauri/tauri.conf.json >/dev/null
+          grep -R "default_workspace" src-tauri/src/lib.rs src-tauri/src/system.rs >/dev/null
+
       - name: Setup Node 22
         uses: actions/setup-node@v4
         with:
