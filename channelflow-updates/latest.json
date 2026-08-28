@@ -1,0 +1,11 @@
+{
+  "version": "0.2.1",
+  "notes": "ChannelFlow 0.2.1: исправлен канал обновлений и автоматическое создание Workspace.",
+  "pub_date": "2026-08-28T02:15:00Z",
+  "platforms": {
+    "darwin-aarch64": {
+      "signature": "placeholder-current-version-no-download",
+      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards"
+    }
+  }
+}
