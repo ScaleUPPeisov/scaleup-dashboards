@@ -24,6 +24,7 @@ jobs:
           rm -rf .channelflow-v040
           mkdir .channelflow-v040
           tar -xzf /tmp/channelflow-v040.tar.gz -C .channelflow-v040
+          cp channelflow-v040/files.rs.fixed .channelflow-v040/src-tauri/src/files.rs
           test -f .channelflow-v040/package.json
           test -f .channelflow-v040/src-tauri/Cargo.toml
           grep -q '"version": "0.4.0"' .channelflow-v040/package.json
