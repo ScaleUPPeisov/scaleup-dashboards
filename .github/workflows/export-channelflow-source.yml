@@ -1,0 +1,30 @@
+name: Export ChannelFlow source
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/export-channelflow-source.yml']
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: channelflow-build-temp
+      - name: Restore source
+        run: |
+          set -euo pipefail
+          cat channelflow-build/source.part* > /tmp/channelflow-source.b64
+          base64 -d /tmp/channelflow-source.b64 > /tmp/channelflow-source.tar.gz
+          echo "65310baaeb22a00961ef4d0d2b2e1dda72bbcf71ab5bf1753b9941e8692938fb  /tmp/channelflow-source.tar.gz" | sha256sum -c -
+          mkdir exported
+          tar -xzf /tmp/channelflow-source.tar.gz -C exported
+          cp channelflow-build/system.rs.fixed exported/src-tauri/src/system.rs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ChannelFlow-source-base
+          path: exported
+          retention-days: 1
