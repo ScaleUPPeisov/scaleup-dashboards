@@ -1,0 +1,122 @@
+name: ChannelFlow 0.3 fixed macOS build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-macos-arm64:
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat channelflow-build/source.part* > /tmp/channelflow-source.b64
+          base64 -D -i /tmp/channelflow-source.b64 -o /tmp/channelflow-source.tar.gz
+          echo "65310baaeb22a00961ef4d0d2b2e1dda72bbcf71ab5bf1753b9941e8692938fb  /tmp/channelflow-source.tar.gz" | shasum -a 256 -c -
+          rm -rf .channelflow-build && mkdir .channelflow-build
+          tar -xzf /tmp/channelflow-source.tar.gz -C .channelflow-build
+          cp channelflow-build/system.rs.fixed .channelflow-build/src-tauri/src/system.rs
+      - name: Patch 0.3.0 with fixed metadata parser
+        working-directory: .channelflow-build
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > src/metadata.ts <<'TS'
+          export type ImportedMetadata={number?:number;channel?:string;title?:string;description?:string;tags?:string[];publishAt?:string;source:string};
+          function numberFrom(value:unknown,source=''){const explicit=Number(value||0);if(Number.isFinite(explicit)&&explicit>0)return Math.trunc(explicit);const text=String(value??'')+' '+source;const m=text.match(/(?:video[_\s-]*|№\s*|^)(\d{1,6})/i)||text.match(/(\d{1,6})/);return m?Number(m[1]):undefined}
+          function tagsFrom(value:unknown){if(Array.isArray(value))return value.map(String).map(x=>x.trim()).filter(Boolean);if(typeof value==='string')return value.split(/[,;\n]/).map(x=>x.trim().replace(/^#/,'')).filter(Boolean);return undefined}
+          function dateFrom(value:unknown){if(!value)return undefined;const d=new Date(String(value));return Number.isNaN(d.getTime())?undefined:d.toISOString()}
+          function objectRow(raw:any,source:string,key=''):ImportedMetadata|null{if(raw==null)return null;if(typeof raw!=='object')raw={title:String(raw)};const ref=raw.video??raw.videoId??raw.file??raw.filename??raw.name??raw.id??key;const row:ImportedMetadata={number:numberFrom(raw.number??raw.videoNumber??ref,source),channel:String(raw.channel??raw.channelName??raw.channel_id??'').trim()||undefined,title:String(raw.title??raw.nameTitle??raw.название??'').trim()||undefined,description:String(raw.description??raw.desc??raw.описание??'').trim()||undefined,tags:tagsFrom(raw.tags??raw.keywords??raw.теги),publishAt:dateFrom(raw.publishAt??raw.publish_date??raw.publishDate??raw.date??raw.дата),source};return row.title||row.description||row.tags?.length||row.number?row:null}
+          function parseCsv(text:string,source:string){const rows:string[][]=[];let row:string[]=[],cell='',quoted=false;for(let i=0;i<text.length;i++){const c=text[i];if(c==='"'){if(quoted&&text[i+1]==='"'){cell+='"';i++}else quoted=!quoted}else if(c===','&&!quoted){row.push(cell);cell=''}else if((c==='\n'||c==='\r')&&!quoted){if(c==='\r'&&text[i+1]==='\n')i++;row.push(cell);if(row.some(x=>x.trim()))rows.push(row);row=[];cell=''}else cell+=c}row.push(cell);if(row.some(x=>x.trim()))rows.push(row);if(rows.length<2)return [];const head=rows[0].map(x=>x.trim().toLowerCase());return rows.slice(1).map(r=>{const o:any={};head.forEach((h,i)=>o[h]=r[i]??'');return objectRow({number:o.number||o.video||o.video_number||o['номер'],channel:o.channel||o['канал'],title:o.title||o['название'],description:o.description||o['описание'],tags:o.tags||o['теги']||o.keywords,publishAt:o.publishat||o.publish_date||o.date||o['дата']},source)}).filter(Boolean) as ImportedMetadata[]}
+          function field(block:string,names:string[],multi=false){const n=names.join('|');const re=multi?new RegExp(`(?:^|\\n)\\s*(?:${n})\\s*[:\\-]\\s*([\\s\\S]*?)(?=\\n\\s*(?:TITLE|НАЗВАНИЕ|DESCRIPTION|ОПИСАНИЕ|TAGS|ТЕГИ|DATE|ДАТА|CHANNEL|КАНАЛ)\\s*[:\\-]|$)`,'i'):new RegExp(`(?:^|\\n)\\s*(?:${n})\\s*[:\\-]\\s*(.+)`,'i');return block.match(re)?.[1]?.trim()}
+          function parseTxt(text:string,source:string){const clean=text.replace(/\r/g,'').trim();if(!clean)return [];const chunks=clean.split(/\n\s*---+\s*\n|\n(?=\s*(?:VIDEO[_\s-]*\d+|№\s*\d+))/i).filter(Boolean);const out:ImportedMetadata[]=[];for(const block of chunks){const title=field(block,['TITLE','НАЗВАНИЕ']);const description=field(block,['DESCRIPTION','ОПИСАНИЕ'],true);const tags=tagsFrom(field(block,['TAGS','ТЕГИ']));const channel=field(block,['CHANNEL','КАНАЛ']);const publishAt=dateFrom(field(block,['DATE','ДАТА','PUBLISH_AT','PUBLISH DATE']));const explicitVideo=/(?:VIDEO[_\s-]*|№\s*)\d+/i.test(block);const number=numberFrom(block.match(/(?:VIDEO[_\s-]*|№\s*)(\d+)/i)?.[1],source);if(title||description||tags?.length||channel||publishAt||explicitVideo)out.push({number,channel,title,description,tags,publishAt,source})}if(!out.length){const lines=clean.split('\n').map(x=>x.trim()).filter(Boolean);const number=numberFrom(undefined,source);if(lines.length)out.push({number,title:lines[0],description:lines.slice(1).join('\n')||undefined,source})}return out}
+          export function parseMetadataFile(name:string,text:string):ImportedMetadata[]{const lower=name.toLowerCase(),trim=text.trim();if(lower.endsWith('.json')||trim.startsWith('{')||trim.startsWith('[')){try{const data=JSON.parse(trim);let list:any[]=[];if(Array.isArray(data))list=data;else if(Array.isArray(data.videos))list=data.videos;else if(Array.isArray(data.items))list=data.items;else if(data&&typeof data==='object'&&('title'in data||'description'in data||'tags'in data||'number'in data||'video'in data))list=[data];else if(data&&typeof data==='object')list=Object.entries(data).map(([key,value])=>typeof value==='object'&&value?{...(value as any),__key:key}:{__key:key,title:String(value)});const rows=list.map((r:any)=>objectRow(r,name,r.__key||'')).filter(Boolean) as ImportedMetadata[];if(rows.length)return rows}catch{}}if(lower.endsWith('.csv')){const rows=parseCsv(text,name);if(rows.length)return rows}return parseTxt(text,name)}
+          TS
+          cat > tests/metadata.test.ts <<'TS'
+          import {describe,it,expect} from 'vitest';import {parseMetadataFile} from '../src/metadata';
+          describe('metadata import',()=>{
+          it('json array',()=>{const r=parseMetadataFile('batch.json','[{"video":"Video_7","title":"A","description":"B","tags":["x","y"]}]');expect(r[0].number).toBe(7);expect(r[0].tags).toEqual(['x','y'])});
+          it('json map',()=>{const r=parseMetadataFile('batch.json','{"Video_12":{"title":"Night","tags":"deep, house"}}');expect(r[0].number).toBe(12);expect(r[0].title).toBe('Night')});
+          it('csv',()=>{const r=parseMetadataFile('batch.csv','number,title,description,tags\n3,"Hello, world",Desc,"a;b"');expect(r[0].number).toBe(3);expect(r[0].title).toBe('Hello, world');expect(r[0].tags).toEqual(['a','b'])});
+          it('labelled txt',()=>{const r=parseMetadataFile('Video_004.txt','VIDEO_004\nTITLE: Test\nDESCRIPTION: Long text\nTAGS: one, two');expect(r[0].number).toBe(4);expect(r[0].description).toBe('Long text')});
+          it('plain txt uses filename number',()=>{const r=parseMetadataFile('Video_009.txt','My title\nMy description');expect(r[0].number).toBe(9);expect(r[0].title).toBe('My title');expect(r[0].description).toBe('My description')});
+          });
+          TS
+          python3 - <<'PY'
+          from pathlib import Path
+          for rel in ['package.json','src-tauri/Cargo.toml','src-tauri/tauri.conf.json','src/api.ts','src/App.tsx']:
+            p=Path(rel);s=p.read_text().replace('0.2.0','0.3.0').replace('27.08.2026','30.08.2026');p.write_text(s)
+          p=Path('src-tauri/tauri.conf.json');s=p.read_text().replace('https://channelflow-updates.vercel.app/api/update?target={{target}}&arch={{arch}}&current_version={{current_version}}','https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/channelflow-updates/latest.json').replace('https://channelflow-updates.vercel.app','https://raw.githubusercontent.com');p.write_text(s)
+          p=Path('src-tauri/src/lib.rs');s=p.read_text().replace('system::diagnostics,youtube::youtube_channel_stats','system::diagnostics,system::default_workspace,youtube::youtube_channel_stats');p.write_text(s)
+          p=Path('src/api.ts');s=p.read_text().replace("diagnostics:(workspace:string)=>invoke<Diagnostics>('diagnostics',{workspace}),","diagnostics:(workspace:string)=>invoke<Diagnostics>('diagnostics',{workspace}),\n  defaultWorkspace:()=>invoke<string>('default_workspace'),").replace("current:'0.2.0'","current:'0.3.0'");p.write_text(s)
+          p=Path('src/App.tsx');s=p.read_text();s="import { parseMetadataFile, type ImportedMetadata } from './metadata';\n"+s
+          needle="  useEffect(()=>{if(booted&&settings.autoCheckUpdates){const t=window.setTimeout(()=>api.checkUpdate().then(u=>{if(u?.version)setUpdate(u)}).catch(()=>{}),1800);return()=>window.clearTimeout(t)}},[booted,settings.autoCheckUpdates]);"
+          if needle in s:s=s.replace(needle,needle+"\n  useEffect(()=>{if(booted&&!settings.workspace){api.defaultWorkspace().then(p=>{if(p){useApp.getState().patchSettings({workspace:p});useApp.getState().log(`Workspace создан автоматически: ${p}`);}}).catch(()=>{})}},[booted,settings.workspace]);")
+          old='<button className="settingsAction" onClick={async()=>{try{setDiag(await api.diagnostics(settings.workspace))}catch(e){setDiag({ok:false,notes:[String(e)]})}}}>ЗАПУСТИТЬ ПРОВЕРКУ</button>{diag&&<div className="diag">'
+          new='<button className="settingsAction" onClick={async()=>{try{let ws=settings.workspace;if(!ws){ws=await api.defaultWorkspace();patch({workspace:ws});}setDiag(await api.diagnostics(ws))}catch(e){setDiag({ok:false,notes:[String(e)]})}}}>ЗАПУСТИТЬ ПРОВЕРКУ</button>{diag&&<div className="diag">'
+          s=s.replace(old,new)
+          start=s.index('function Publisher(){');end=s.index('function Settings(',start)
+          publisher='''function Publisher(){const channels=useApp(s=>s.channels),jobs=useApp(s=>s.jobs),patchJob=useApp(s=>s.patchJob),toast=useApp(s=>s.toast),setPage=useApp(s=>s.setPage);const ready=jobs.filter(j=>j.status==='READY_UPLOAD'||j.status==='SCHEDULED');const [metaRows,setMetaRows]=useState<ImportedMetadata[]>([]),[metaChannel,setMetaChannel]=useState(channels[0]?.id||''),[metaFiles,setMetaFiles]=useState<string[]>([]);const metaInput=useRef<HTMLInputElement>(null);useEffect(()=>{if(!metaChannel&&channels[0])setMetaChannel(channels[0].id)},[channels,metaChannel]);async function readMetadata(files:FileList|null){if(!files?.length)return;const rows:ImportedMetadata[]=[];const names:string[]=[];for(const file of Array.from(files)){rows.push(...parseMetadataFile(file.name,await file.text()));names.push(file.name)}setMetaRows(rows);setMetaFiles(names);toast(rows.length?`Метаданные: найдено ${rows.length} записей`:'Метаданные не распознаны')}function findJob(row:ImportedMetadata,used:Set<string>,index:number){const named=row.channel?channels.find(c=>c.id===row.channel||c.name.toLowerCase()===row.channel?.toLowerCase()):undefined;const channelId=named?.id||metaChannel||undefined;const pool=jobs.filter(j=>(!channelId||j.channelId===channelId)&&!used.has(j.id));return row.number?pool.find(j=>j.number===row.number):(pool[index]||pool[0])}function applyMetadata(){const used=new Set<string>();let matched=0,missed=0;metaRows.forEach((row,index)=>{const j=findJob(row,used,index);if(!j){missed++;return}used.add(j.id);const x:any={};if(row.title)x.title=row.title;if(row.description)x.description=row.description;if(row.tags?.length)x.tags=row.tags;if(row.publishAt)x.publishAt=row.publishAt;patchJob(j.id,x);matched++});toast(`Метаданные применены: ${matched}${missed?` • не найдено: ${missed}`:''}`)}return <><input ref={metaInput} hidden type="file" multiple accept=".json,.txt,.csv" onChange={e=>{readMetadata(e.target.files);e.currentTarget.value=''}}/><PageHeader eyebrow="PUBLISHER" title="Публикации YouTube" text="Загрузи файл метаданных — ChannelFlow привяжет title, description, tags и дату к Video_XXX и сохранит их до YouTube." actions={<button className="primary" onClick={()=>metaInput.current?.click()}>+ ЗАГРУЗИТЬ МЕТАДАННЫЕ</button>}/><div className="metadataPanel"><div className="metadataHead"><div><small>METADATA INBOX</small><h3>Видео + название + описание + теги</h3><p>JSON, TXT и CSV. Совпадение по Video_001/номеру; без номера — по очереди выбранного канала.</p></div><div className="metadataControls"><select value={metaChannel} onChange={e=>setMetaChannel(e.target.value)}><option value="">Все каналы</option>{channels.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select><button className="ghost" onClick={()=>metaInput.current?.click()}>ВЫБРАТЬ</button><button className="primary" disabled={!metaRows.length} onClick={applyMetadata}>ПРИМЕНИТЬ К ВИДЕО</button></div></div>{metaFiles.length>0&&<div className="metadataSummary"><span>Файлов <b>{metaFiles.length}</b></span><span>Записей <b>{metaRows.length}</b></span><span>Video_XXX <b>{metaRows.filter(r=>r.number).length}</b></span><button onClick={()=>{setMetaRows([]);setMetaFiles([])}}>ОЧИСТИТЬ</button></div>}<div className="metadataPreview">{metaRows.slice(0,6).map((r,i)=><div className="metaRow" key={`${r.source}-${i}`}><span><b>{r.number?`VIDEO_${String(r.number).padStart(3,'0')}`:`СТРОКА ${i+1}`}</b><small>{r.source}</small></span><strong>{r.title||'Без названия'}</strong><em>{r.tags?.length?`${r.tags.length} тегов`:'без тегов'}</em></div>)}</div><details className="metadataHelp"><summary>Пример JSON</summary><pre>{`[{\n "video":"Video_001",\n "title":"Название",\n "description":"Описание",\n "tags":["deep house","music"]\n}]`}</pre></details></div><div className="publisherNotice"><b>Метаданные сохраняются вместе с задачей</b><p>После применения они остаются у Video_XXX через рендер и очередь публикации.</p><button onClick={()=>setPage('settings')}>ОТКРЫТЬ НАСТРОЙКИ</button></div>{ready.length===0?<Empty title="Нет готовых MP4" text="Метаданные можно загрузить заранее. После final.mp4 задача появится здесь с сохранёнными данными." action="В ПРОИЗВОДСТВО" onClick={()=>setPage('production')}/>:<div className="publishList">{ready.map(j=>{const c=channels.find(c=>c.id===j.channelId);return <div className="publishCard" key={j.id}><div className="thumb"><span>▶</span><small>VIDEO_{String(j.number).padStart(3,'0')}</small></div><div className="publishMeta"><small>{c?.name}</small><input value={j.title} maxLength={100} onChange={e=>patchJob(j.id,{title:e.target.value})}/><textarea value={j.description} onChange={e=>patchJob(j.id,{description:e.target.value})}/><input value={j.tags.join(', ')} onChange={e=>patchJob(j.id,{tags:e.target.value.split(',').map(x=>x.trim()).filter(Boolean)})}/></div><div className="publishSide"><label>Дата<input type="datetime-local" value={j.publishAt?new Date(new Date(j.publishAt).getTime()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,16):''} onChange={e=>patchJob(j.id,{publishAt:new Date(e.target.value).toISOString()})}/></label><span className={`publishState ${j.status.toLowerCase()}`}>{statusLabel[j.status]}</span></div></div>})}</div>}</>}\n\n'''
+          s=s[:start]+publisher+s[end:]
+          s=s.replace('ChannelFlow 0.2 • macOS Apple Silicon','ChannelFlow 0.3.0 • macOS Apple Silicon').replace('Версия 0.2.0','Версия 0.3.0').replace('<span>Версия <b>0.2.0</b></span>','<span>Версия <b>0.3.0</b></span>').replace('<span>Обновлено <b>27.08.2026</b></span>','<span>Обновлено <b>30.08.2026</b></span>')
+          p.write_text(s)
+          css=Path('src/styles.css');css.write_text(css.read_text()+'''\n.metadataPanel{margin-bottom:18px;padding:20px;border:1px solid rgba(84,210,255,.18);border-radius:18px;background:linear-gradient(135deg,rgba(9,24,40,.92),rgba(12,18,31,.96))}.metadataHead{display:flex;justify-content:space-between;gap:22px;align-items:flex-start}.metadataHead p{max-width:720px;opacity:.72}.metadataControls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.metadataSummary{display:flex;gap:18px;align-items:center;margin-top:16px;padding:11px 14px;border-radius:12px;background:rgba(255,255,255,.035)}.metadataSummary button{margin-left:auto}.metadataPreview{display:grid;gap:7px;margin-top:12px}.metaRow{display:grid;grid-template-columns:180px 1fr 100px;gap:12px;align-items:center;padding:10px 12px;border-radius:11px;background:rgba(255,255,255,.028)}.metaRow span{display:flex;flex-direction:column}.metaRow small{opacity:.55}.metaRow strong{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.metaRow em{font-style:normal;text-align:right;opacity:.62}.metadataHelp{margin-top:12px}.metadataHelp pre{white-space:pre-wrap;padding:12px;border-radius:10px;background:rgba(0,0,0,.22)}\n''')
+          Path('RELEASE_NOTES.md').write_text('# ChannelFlow 0.3.0\n\n- Metadata Inbox: JSON / TXT / CSV.\n- Автосопоставление title, description, tags и publishAt с Video_XXX.\n- Исправлен plain TXT: первая строка = title, остальные = description.\n- Данные сохраняются вместе с задачей до Publisher.\n- Update Center остаётся в Настройках.\n')
+          PY
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - uses: dtolnay/rust-toolchain@stable
+        with: {targets: aarch64-apple-darwin}
+      - uses: Swatinem/rust-cache@v2
+        with: {workspaces: './.channelflow-build/src-tauri -> target'}
+      - name: Generate icon
+        working-directory: .channelflow-build
+        run: |
+          mkdir -p src-tauri/icons/icon.iconset
+          python3 - <<'PY'
+          import struct,zlib,os
+          def c(t,d):return struct.pack('>I',len(d))+t+d+struct.pack('>I',zlib.crc32(t+d)&0xffffffff)
+          def p(path,n):
+            raw=bytearray()
+            for y in range(n):
+              raw.append(0)
+              for x in range(n):raw+=bytes((8,45+int(80*x/max(n-1,1)),90+int(120*(1-y/max(n-1,1))),255))
+            open(path,'wb').write(b'\x89PNG\r\n\x1a\n'+c(b'IHDR',struct.pack('>IIBBBBB',n,n,8,6,0,0,0))+c(b'IDAT',zlib.compress(bytes(raw),9))+c(b'IEND',b''))
+          for n,name in [(32,'32x32.png'),(128,'128x128.png'),(256,'128x128@2x.png'),(1024,'icon-1024.png')]:p('src-tauri/icons/'+name,n)
+          PY
+          for spec in '16 16 icon_16x16.png' '32 32 icon_16x16@2x.png' '32 32 icon_32x32.png' '64 64 icon_32x32@2x.png' '128 128 icon_128x128.png' '256 256 icon_128x128@2x.png' '256 256 icon_256x256.png' '512 512 icon_256x256@2x.png' '512 512 icon_512x512.png'; do set -- $spec; sips -z $1 $2 src-tauri/icons/icon-1024.png --out src-tauri/icons/icon.iconset/$3 >/dev/null; done
+          cp src-tauri/icons/icon-1024.png src-tauri/icons/icon.iconset/icon_512x512@2x.png
+          iconutil -c icns src-tauri/icons/icon.iconset -o src-tauri/icons/icon.icns
+      - name: Install
+        working-directory: .channelflow-build
+        run: npm install --no-audit --no-fund
+      - name: Tests
+        working-directory: .channelflow-build
+        run: npm run test
+      - name: Frontend
+        working-directory: .channelflow-build
+        run: npm run build
+      - name: Rust
+        working-directory: .channelflow-build
+        run: cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
+      - name: Build DMG
+        working-directory: .channelflow-build
+        env: {APPLE_SIGNING_IDENTITY: '-'}
+        run: npx tauri build --target aarch64-apple-darwin --bundles app,dmg
+      - name: Verify
+        working-directory: .channelflow-build
+        run: |
+          set -euo pipefail
+          B=src-tauri/target/aarch64-apple-darwin/release/bundle
+          D=$(find "$B/dmg" -name '*.dmg' -type f -print -quit); A=$(find "$B/macos" -name '*.app' -type d -print -quit)
+          test -s "$D"; codesign --verify --deep --strict --verbose=2 "$A"; plutil -lint "$A/Contents/Info.plist"
+          mkdir release-files; cp "$D" release-files/ChannelFlow-0.3.0-macOS-AppleSilicon.dmg; cp RELEASE_NOTES.md release-files/; shasum -a 256 release-files/* > release-files/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ChannelFlow-macOS-AppleSilicon-v0.3.0
+          path: .channelflow-build/release-files/*
+          retention-days: 30
