@@ -43,6 +43,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: .channelflow-v040/src-tauri
+          cache-on-failure: true
 
       - name: Generate app icons
         working-directory: .channelflow-v040
@@ -78,23 +79,35 @@ jobs:
         working-directory: .channelflow-v040
         run: cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
 
-      - name: Build ChannelFlow DMG
+      - name: Build ChannelFlow app and DMG
         working-directory: .channelflow-v040
         run: npx tauri build --target aarch64-apple-darwin --bundles app,dmg
 
-      - name: Verify app and DMG
+      - name: Re-sign, verify and package checked DMG
         working-directory: .channelflow-v040
         shell: bash
         run: |
           set -euo pipefail
           APP=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)
-          DMG=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -maxdepth 1 -name '*.dmg' -print -quit)
           test -n "$APP" && test -d "$APP/Contents"
-          test -n "$DMG" && test -s "$DMG"
-          codesign --verify --deep --strict "$APP"
-          file "$APP/Contents/MacOS/ChannelFlow" | grep -E 'arm64|Mach-O 64-bit executable arm64'
-          mkdir -p release
-          cp "$DMG" release/ChannelFlow-0.4.0-macOS-AppleSilicon.dmg
+          BIN=$(find "$APP/Contents/MacOS" -maxdepth 1 -type f -perm -111 -print -quit)
+          test -n "$BIN" && test -s "$BIN"
+          file "$BIN" | tee /tmp/channelflow-file.txt
+          grep -E 'arm64|Mach-O 64-bit executable arm64' /tmp/channelflow-file.txt
+
+          # macOS 26 runner can produce an incomplete ad-hoc resource envelope.
+          # Re-sign the finished bundle, then verify the exact app we put into the DMG.
+          mkdir -p "$APP/Contents/Resources"
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+
+          rm -rf /tmp/channelflow-dmg-root release
+          mkdir -p /tmp/channelflow-dmg-root release
+          ditto "$APP" /tmp/channelflow-dmg-root/ChannelFlow.app
+          ln -s /Applications /tmp/channelflow-dmg-root/Applications
+          hdiutil create -volname "ChannelFlow 0.4.0" -srcfolder /tmp/channelflow-dmg-root -ov -format UDZO release/ChannelFlow-0.4.0-macOS-AppleSilicon.dmg
+          hdiutil verify release/ChannelFlow-0.4.0-macOS-AppleSilicon.dmg
+          test -s release/ChannelFlow-0.4.0-macOS-AppleSilicon.dmg
           cp RELEASE_NOTES.md release/RELEASE_NOTES.md
           shasum -a 256 release/ChannelFlow-0.4.0-macOS-AppleSilicon.dmg > release/SHA256.txt
 
