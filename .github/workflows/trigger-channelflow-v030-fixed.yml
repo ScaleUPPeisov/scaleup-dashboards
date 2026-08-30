@@ -1,0 +1,22 @@
+name: Trigger ChannelFlow 0.3 fixed build
+on:
+  push:
+    branches: [channelflow-build-temp]
+    paths: ['.github/workflows/trigger-channelflow-v030-fixed.yml']
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Dispatch fixed macOS build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl --fail-with-body -L -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/ScaleUPPeisov/scaleup-dashboards/actions/workflows/channelflow-v030-fixed.yml/dispatches \
+            -d '{"ref":"channelflow-build-temp"}'
