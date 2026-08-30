@@ -37,20 +37,9 @@ jobs:
           from pathlib import Path
           for rel in ['package.json','src-tauri/Cargo.toml','src-tauri/tauri.conf.json','src/api.ts','src/App.tsx']:
               p=Path(rel); s=p.read_text(); s=s.replace('0.2.0','0.2.1').replace('27.08.2026','28.08.2026'); p.write_text(s)
-
-          p=Path('src-tauri/tauri.conf.json'); s=p.read_text()
-          s=s.replace('https://channelflow-updates.vercel.app/api/update?target={{target}}&arch={{arch}}&current_version={{current_version}}','https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/channelflow-updates/latest.json')
-          s=s.replace('https://channelflow-updates.vercel.app','https://raw.githubusercontent.com')
-          p.write_text(s)
-
-          p=Path('src-tauri/src/lib.rs'); s=p.read_text()
-          s=s.replace('system::diagnostics,youtube::youtube_channel_stats','system::diagnostics,system::default_workspace,youtube::youtube_channel_stats')
-          p.write_text(s)
-
-          p=Path('src/api.ts'); s=p.read_text()
-          s=s.replace("diagnostics:(workspace:string)=>invoke<Diagnostics>('diagnostics',{workspace}),","diagnostics:(workspace:string)=>invoke<Diagnostics>('diagnostics',{workspace}),\n  defaultWorkspace:()=>invoke<string>('default_workspace'),")
-          p.write_text(s)
-
+          p=Path('src-tauri/tauri.conf.json'); s=p.read_text(); s=s.replace('https://channelflow-updates.vercel.app/api/update?target={{target}}&arch={{arch}}&current_version={{current_version}}','https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/channelflow-updates/latest.json').replace('https://channelflow-updates.vercel.app','https://raw.githubusercontent.com'); p.write_text(s)
+          p=Path('src-tauri/src/lib.rs'); s=p.read_text(); s=s.replace('system::diagnostics,youtube::youtube_channel_stats','system::diagnostics,system::default_workspace,youtube::youtube_channel_stats'); p.write_text(s)
+          p=Path('src/api.ts'); s=p.read_text(); s=s.replace("diagnostics:(workspace:string)=>invoke<Diagnostics>('diagnostics',{workspace}),","diagnostics:(workspace:string)=>invoke<Diagnostics>('diagnostics',{workspace}),\n  defaultWorkspace:()=>invoke<string>('default_workspace'),"); p.write_text(s)
           p=Path('src/App.tsx'); s=p.read_text()
           needle="  useEffect(()=>{if(booted&&settings.autoCheckUpdates){const t=window.setTimeout(()=>api.checkUpdate().then(u=>{if(u?.version)setUpdate(u)}).catch(()=>{}),1800);return()=>window.clearTimeout(t)}},[booted,settings.autoCheckUpdates]);"
           hook=needle+"\n  useEffect(()=>{if(booted&&!settings.workspace){api.defaultWorkspace().then(p=>{if(p){useApp.getState().patchSettings({workspace:p});useApp.getState().log(`Workspace создан автоматически: ${p}`);}}).catch(e=>useApp.getState().log(`Не удалось создать Workspace: ${String(e)}`,'warn'))}},[booted,settings.workspace]);"
@@ -64,28 +53,35 @@ jobs:
           s=s.replace('<h4>28.08.2026 • 0.2.1</h4><ul>','<h4>28.08.2026 • 0.2.1</h4><ul><li>Исправлен канал обновлений: больше нет ошибки invalid release JSON.</li><li>Workspace автоматически создаётся в Документы/ChannelFlow при первом запуске.</li><li>Диагностика сама восстанавливает отсутствующий Workspace и повторно проверяет запись.</li>')
           s=s.replace('ChannelFlow 0.2 • macOS Apple Silicon','ChannelFlow 0.2.1 • macOS Apple Silicon')
           p.write_text(s)
-
-          Path('RELEASE_NOTES.md').write_text('''# ChannelFlow 0.2.1\n\n- Исправлена ошибка `Could not fetch a valid release JSON from the remote`.\n- Подключён стабильный канал обновлений.\n- Workspace автоматически создаётся в `Документы/ChannelFlow` при первом запуске.\n- Диагностика автоматически восстанавливает Workspace и проверяет права записи.\n''')
           PY
-          grep -R "0.2.1" package.json src-tauri/Cargo.toml src-tauri/tauri.conf.json src/api.ts src/App.tsx >/dev/null
-          grep -R "raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/channelflow-updates/latest.json" src-tauri/tauri.conf.json >/dev/null
-          grep -R "default_workspace" src-tauri/src/lib.rs src-tauri/src/system.rs >/dev/null
+
+      - name: Inspect Publisher and store source
+        working-directory: .channelflow-build
+        shell: bash
+        run: |
+          echo '=== FILES ==='
+          find src -maxdepth 2 -type f -print
+          echo '=== PUBLISHER CONTEXT ==='
+          grep -n -C 20 -E 'Publisher|PUBLISH|Видео|video|metadata|Метадан' src/App.tsx || true
+          echo '=== STORE ==='
+          cat src/store.ts 2>/dev/null || true
+          echo '=== TYPES ==='
+          cat src/types.ts 2>/dev/null || true
+          echo '=== API ==='
+          cat src/api.ts
 
       - name: Setup Node 22
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin
-
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: './.channelflow-build/src-tauri -> target'
-
       - name: Generate ChannelFlow icon
         working-directory: .channelflow-build
         shell: bash
@@ -94,20 +90,16 @@ jobs:
           mkdir -p src-tauri/icons/icon.iconset
           python3 - <<'PYICON'
           import struct,zlib,os
-          def chunk(t,d):
-              return struct.pack('>I',len(d))+t+d+struct.pack('>I',zlib.crc32(t+d)&0xffffffff)
+          def chunk(t,d): return struct.pack('>I',len(d))+t+d+struct.pack('>I',zlib.crc32(t+d)&0xffffffff)
           def png(path,n):
               raw=bytearray()
               for y in range(n):
                   raw.append(0)
                   for x in range(n):
-                      u=x/max(1,n-1); v=y/max(1,n-1)
-                      r=int(7 + 20*u); g=int(18 + 95*u + 45*(1-v)); b=int(31 + 160*(1-v) + 30*u)
-                      cx=(x-n*.5)/(n*.5); cy=(y-n*.5)/(n*.5)
-                      if cx*cx+cy*cy > .90: r,g,b=7,12,20
-                      raw += bytes((max(0,min(255,r)),max(0,min(255,g)),max(0,min(255,b)),255))
-              data=b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',n,n,8,6,0,0,0))+chunk(b'IDAT',zlib.compress(bytes(raw),9))+chunk(b'IEND',b'')
-              open(path,'wb').write(data)
+                      u=x/max(1,n-1); v=y/max(1,n-1); r=int(7+20*u); g=int(18+95*u+45*(1-v)); b=int(31+160*(1-v)+30*u); cx=(x-n*.5)/(n*.5); cy=(y-n*.5)/(n*.5)
+                      if cx*cx+cy*cy>.90: r,g,b=7,12,20
+                      raw+=bytes((max(0,min(255,r)),max(0,min(255,g)),max(0,min(255,b)),255))
+              open(path,'wb').write(b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',n,n,8,6,0,0,0))+chunk(b'IDAT',zlib.compress(bytes(raw),9))+chunk(b'IEND',b''))
           os.makedirs('src-tauri/icons',exist_ok=True)
           for n,name in [(32,'32x32.png'),(128,'128x128.png'),(256,'128x128@2x.png'),(1024,'icon-1024.png')]: png('src-tauri/icons/'+name,n)
           PYICON
@@ -122,29 +114,23 @@ jobs:
           sips -z 512 512 src-tauri/icons/icon-1024.png --out src-tauri/icons/icon.iconset/icon_512x512.png >/dev/null
           cp src-tauri/icons/icon-1024.png src-tauri/icons/icon.iconset/icon_512x512@2x.png
           iconutil -c icns src-tauri/icons/icon.iconset -o src-tauri/icons/icon.icns
-
       - name: Install dependencies
         working-directory: .channelflow-build
         run: npm install --no-audit --no-fund
-
       - name: Unit tests
         working-directory: .channelflow-build
         run: npm run test
-
       - name: Frontend production build
         working-directory: .channelflow-build
         run: npm run build
-
       - name: Rust check ARM64
         working-directory: .channelflow-build
         run: cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
-
       - name: Build ad-hoc signed ChannelFlow app and DMG
         working-directory: .channelflow-build
         env:
           APPLE_SIGNING_IDENTITY: '-'
         run: npx tauri build --target aarch64-apple-darwin --bundles app,dmg
-
       - name: Verify signature and collect installer
         working-directory: .channelflow-build
         shell: bash
@@ -153,25 +139,16 @@ jobs:
           BUNDLE="src-tauri/target/aarch64-apple-darwin/release/bundle"
           DMG="$(find "$BUNDLE/dmg" -maxdepth 1 -type f -name '*.dmg' -print -quit)"
           APP="$(find "$BUNDLE/macos" -maxdepth 1 -type d -name '*.app' -print -quit)"
-          test -n "$DMG"
-          test -s "$DMG"
-          test -n "$APP"
-          test -d "$APP/Contents"
+          test -n "$DMG"; test -s "$DMG"; test -n "$APP"; test -d "$APP/Contents"
           codesign --verify --deep --strict --verbose=2 "$APP"
-          codesign -dv --verbose=4 "$APP" 2>&1 | tee /tmp/channelflow-codesign.txt
-          file "$APP/Contents/MacOS/channelflow"
-          plutil -lint "$APP/Contents/Info.plist"
           mkdir -p release-files
           cp "$DMG" release-files/ChannelFlow-0.2.1-macOS-AppleSilicon.dmg
           ditto -c -k --sequesterRsrc --keepParent "$APP" release-files/ChannelFlow-0.2.1-macOS-AppleSilicon.app.zip
-          cp /tmp/channelflow-codesign.txt release-files/CODESIGN.txt
           shasum -a 256 release-files/* | tee release-files/SHA256SUMS.txt
-          ls -lah release-files
-
       - name: Upload ChannelFlow installer
         uses: actions/upload-artifact@v4
         with:
-          name: ChannelFlow-macOS-AppleSilicon-v0.2.1
+          name: ChannelFlow-macOS-AppleSilicon-v0.2.1-debug
           path: .channelflow-build/release-files/*
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 7
