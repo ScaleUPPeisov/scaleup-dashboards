@@ -1,0 +1,10 @@
+name: ChannelFlow 0.3 fixed macOS build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  proxy-note:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Registered workflow; build implementation is maintained on channelflow-build-temp."
