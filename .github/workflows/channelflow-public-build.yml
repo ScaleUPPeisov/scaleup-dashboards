@@ -25,50 +25,150 @@ jobs:
           mkdir .channelflow-build
           tar -xzf /tmp/channelflow-source.tar.gz -C .channelflow-build
           test -f .channelflow-build/package.json
-          test -f .channelflow-build/src-tauri/tauri.conf.json
           cp channelflow-build/system.rs.fixed .channelflow-build/src-tauri/src/system.rs
 
-      - name: Patch ChannelFlow 0.2.1 fixes
+      - name: Patch ChannelFlow 0.3.0
         working-directory: .channelflow-build
         shell: bash
         run: |
           set -euo pipefail
+          cat > src/metadata.ts <<'TS'
+          export type ImportedMetadata={number?:number;channel?:string;title?:string;description?:string;tags?:string[];publishAt?:string;source:string};
+
+          function numberFrom(value:unknown,source=''){
+            const explicit=Number(value||0);
+            if(Number.isFinite(explicit)&&explicit>0)return Math.trunc(explicit);
+            const text=String(value??'')+' '+source;
+            const m=text.match(/(?:video[_\s-]*|№\s*|^)(\d{1,6})/i)||text.match(/(\d{1,6})/);
+            return m?Number(m[1]):undefined;
+          }
+          function tagsFrom(value:unknown){
+            if(Array.isArray(value))return value.map(String).map(x=>x.trim()).filter(Boolean);
+            if(typeof value==='string')return value.split(/[,;\n]/).map(x=>x.trim().replace(/^#/,'')).filter(Boolean);
+            return undefined;
+          }
+          function dateFrom(value:unknown){
+            if(!value)return undefined;
+            const d=new Date(String(value));
+            return Number.isNaN(d.getTime())?undefined:d.toISOString();
+          }
+          function objectRow(raw:any,source:string,key=''):ImportedMetadata|null{
+            if(raw==null)return null;
+            if(typeof raw!=='object')raw={title:String(raw)};
+            const ref=raw.video??raw.videoId??raw.file??raw.filename??raw.name??raw.id??key;
+            const row:ImportedMetadata={
+              number:numberFrom(raw.number??raw.videoNumber??ref,source),
+              channel:String(raw.channel??raw.channelName??raw.channel_id??'').trim()||undefined,
+              title:String(raw.title??raw.nameTitle??raw.название??'').trim()||undefined,
+              description:String(raw.description??raw.desc??raw.описание??'').trim()||undefined,
+              tags:tagsFrom(raw.tags??raw.keywords??raw.теги),
+              publishAt:dateFrom(raw.publishAt??raw.publish_date??raw.publishDate??raw.date??raw.дата),
+              source
+            };
+            return row.title||row.description||row.tags?.length||row.number?row:null;
+          }
+          function parseCsv(text:string,source:string){
+            const rows:string[][]=[];let row:string[]=[],cell='',quoted=false;
+            for(let i=0;i<text.length;i++){const c=text[i];if(c==='"'){if(quoted&&text[i+1]==='"'){cell+='"';i++}else quoted=!quoted}else if(c===','&&!quoted){row.push(cell);cell=''}else if((c==='\n'||c==='\r')&&!quoted){if(c==='\r'&&text[i+1]==='\n')i++;row.push(cell);if(row.some(x=>x.trim()))rows.push(row);row=[];cell=''}else cell+=c}
+            row.push(cell);if(row.some(x=>x.trim()))rows.push(row);if(rows.length<2)return [];
+            const head=rows[0].map(x=>x.trim().toLowerCase());
+            return rows.slice(1).map(r=>{const o:any={};head.forEach((h,i)=>o[h]=r[i]??'');return objectRow({number:o.number||o.video||o['video_number']||o['номер'],channel:o.channel||o['канал'],title:o.title||o['название'],description:o.description||o['описание'],tags:o.tags||o['теги']||o.keywords,publishAt:o.publishat||o.publish_date||o.date||o['дата']},source)}).filter(Boolean) as ImportedMetadata[];
+          }
+          function field(block:string,names:string[],multi=false){
+            const n=names.join('|');
+            const re=multi?new RegExp(`(?:^|\\n)\\s*(?:${n})\\s*[:\\-]\\s*([\\s\\S]*?)(?=\\n\\s*(?:TITLE|НАЗВАНИЕ|DESCRIPTION|ОПИСАНИЕ|TAGS|ТЕГИ|DATE|ДАТА|CHANNEL|КАНАЛ)\\s*[:\\-]|$)`,'i'):new RegExp(`(?:^|\\n)\\s*(?:${n})\\s*[:\\-]\\s*(.+)`,'i');
+            return block.match(re)?.[1]?.trim();
+          }
+          function parseTxt(text:string,source:string){
+            const clean=text.replace(/\r/g,'').trim();if(!clean)return [];
+            const chunks=clean.split(/\n\s*---+\s*\n|\n(?=\s*(?:VIDEO[_\s-]*\d+|№\s*\d+))/i).filter(Boolean);
+            const out:ImportedMetadata[]=[];
+            for(const block of chunks){
+              const title=field(block,['TITLE','НАЗВАНИЕ']);
+              const description=field(block,['DESCRIPTION','ОПИСАНИЕ'],true);
+              const tags=tagsFrom(field(block,['TAGS','ТЕГИ']));
+              const channel=field(block,['CHANNEL','КАНАЛ']);
+              const publishAt=dateFrom(field(block,['DATE','ДАТА','PUBLISH_AT','PUBLISH DATE']));
+              const number=numberFrom(block.match(/(?:VIDEO[_\s-]*|№\s*)(\d+)/i)?.[1],source);
+              if(title||description||tags?.length||number)out.push({number,channel,title,description,tags,publishAt,source});
+            }
+            if(!out.length){const lines=clean.split('\n').map(x=>x.trim()).filter(Boolean);const number=numberFrom(undefined,source);if(lines.length)out.push({number,title:lines[0],description:lines.slice(1).join('\n')||undefined,source});}
+            return out;
+          }
+          export function parseMetadataFile(name:string,text:string):ImportedMetadata[]{
+            const lower=name.toLowerCase(),trim=text.trim();
+            if(lower.endsWith('.json')||trim.startsWith('{')||trim.startsWith('[')){
+              try{const data=JSON.parse(trim);let list:any[]=[];
+                if(Array.isArray(data))list=data;
+                else if(Array.isArray(data.videos))list=data.videos;
+                else if(Array.isArray(data.items))list=data.items;
+                else if(data&&typeof data==='object'&&('title'in data||'description'in data||'tags'in data||'number'in data||'video'in data))list=[data];
+                else if(data&&typeof data==='object')list=Object.entries(data).map(([key,value])=>typeof value==='object'&&value?{...(value as any),__key:key}:{__key:key,title:String(value)});
+                const rows=list.map((r:any)=>objectRow(r,name,r.__key||'')).filter(Boolean) as ImportedMetadata[];if(rows.length)return rows;
+              }catch{}
+            }
+            if(lower.endsWith('.csv')){const rows=parseCsv(text,name);if(rows.length)return rows;}
+            return parseTxt(text,name);
+          }
+          TS
+
+          cat > tests/metadata.test.ts <<'TS'
+          import {describe,it,expect} from 'vitest';
+          import {parseMetadataFile} from '../src/metadata';
+          describe('metadata import',()=>{
+            it('parses JSON arrays',()=>{const r=parseMetadataFile('batch.json','[{"video":"Video_7","title":"A","description":"B","tags":["x","y"]}]');expect(r[0].number).toBe(7);expect(r[0].tags).toEqual(['x','y'])});
+            it('parses JSON maps',()=>{const r=parseMetadataFile('batch.json','{"Video_12":{"title":"Night","tags":"deep, house"}}');expect(r[0].number).toBe(12);expect(r[0].title).toBe('Night')});
+            it('parses CSV',()=>{const r=parseMetadataFile('batch.csv','number,title,description,tags\n3,"Hello, world",Desc,"a;b"');expect(r[0].number).toBe(3);expect(r[0].title).toBe('Hello, world');expect(r[0].tags).toEqual(['a','b'])});
+            it('parses labelled txt',()=>{const r=parseMetadataFile('Video_004.txt','VIDEO_004\nTITLE: Test\nDESCRIPTION: Long text\nTAGS: one, two');expect(r[0].number).toBe(4);expect(r[0].description).toBe('Long text')});
+            it('uses filename for plain txt',()=>{const r=parseMetadataFile('Video_009.txt','My title\nMy description');expect(r[0].number).toBe(9);expect(r[0].title).toBe('My title')});
+          });
+          TS
+
           python3 - <<'PY'
           from pathlib import Path
+          # Version + existing 0.2.1 stability fixes.
           for rel in ['package.json','src-tauri/Cargo.toml','src-tauri/tauri.conf.json','src/api.ts','src/App.tsx']:
-              p=Path(rel); s=p.read_text(); s=s.replace('0.2.0','0.2.1').replace('27.08.2026','28.08.2026'); p.write_text(s)
-          p=Path('src-tauri/tauri.conf.json'); s=p.read_text(); s=s.replace('https://channelflow-updates.vercel.app/api/update?target={{target}}&arch={{arch}}&current_version={{current_version}}','https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/channelflow-updates/latest.json').replace('https://channelflow-updates.vercel.app','https://raw.githubusercontent.com'); p.write_text(s)
-          p=Path('src-tauri/src/lib.rs'); s=p.read_text(); s=s.replace('system::diagnostics,youtube::youtube_channel_stats','system::diagnostics,system::default_workspace,youtube::youtube_channel_stats'); p.write_text(s)
-          p=Path('src/api.ts'); s=p.read_text(); s=s.replace("diagnostics:(workspace:string)=>invoke<Diagnostics>('diagnostics',{workspace}),","diagnostics:(workspace:string)=>invoke<Diagnostics>('diagnostics',{workspace}),\n  defaultWorkspace:()=>invoke<string>('default_workspace'),"); p.write_text(s)
-          p=Path('src/App.tsx'); s=p.read_text()
+              p=Path(rel);s=p.read_text();s=s.replace('0.2.0','0.3.0').replace('27.08.2026','30.08.2026');p.write_text(s)
+          p=Path('src-tauri/tauri.conf.json');s=p.read_text();s=s.replace('https://channelflow-updates.vercel.app/api/update?target={{target}}&arch={{arch}}&current_version={{current_version}}','https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/channelflow-updates/latest.json').replace('https://channelflow-updates.vercel.app','https://raw.githubusercontent.com');p.write_text(s)
+          p=Path('src-tauri/src/lib.rs');s=p.read_text();s=s.replace('system::diagnostics,youtube::youtube_channel_stats','system::diagnostics,system::default_workspace,youtube::youtube_channel_stats');p.write_text(s)
+          p=Path('src/api.ts');s=p.read_text();s=s.replace("diagnostics:(workspace:string)=>invoke<Diagnostics>('diagnostics',{workspace}),","diagnostics:(workspace:string)=>invoke<Diagnostics>('diagnostics',{workspace}),\n  defaultWorkspace:()=>invoke<string>('default_workspace'),");p.write_text(s)
+
+          p=Path('src/App.tsx');s=p.read_text()
+          s="import { parseMetadataFile, type ImportedMetadata } from './metadata';\n"+s
           needle="  useEffect(()=>{if(booted&&settings.autoCheckUpdates){const t=window.setTimeout(()=>api.checkUpdate().then(u=>{if(u?.version)setUpdate(u)}).catch(()=>{}),1800);return()=>window.clearTimeout(t)}},[booted,settings.autoCheckUpdates]);"
           hook=needle+"\n  useEffect(()=>{if(booted&&!settings.workspace){api.defaultWorkspace().then(p=>{if(p){useApp.getState().patchSettings({workspace:p});useApp.getState().log(`Workspace создан автоматически: ${p}`);}}).catch(e=>useApp.getState().log(`Не удалось создать Workspace: ${String(e)}`,'warn'))}},[booted,settings.workspace]);"
-          if needle not in s: raise SystemExit('auto-update hook patch target not found')
+          if needle not in s: raise SystemExit('auto-update hook target not found')
           s=s.replace(needle,hook)
-          s=s.replace('После подключения production endpoint обновления устанавливаются внутри приложения и перезапускают его автоматически.','Канал обновлений подключён. Новые версии проверяются внутри приложения, скачиваются и устанавливаются без Terminal.')
+          s=s.replace('После подключения production endpoint обновления устанавливаются внутри приложения и перезапускают его автоматически.','Канал обновлений подключён. Проверка версии работает из приложения; установочный канал для следующих подписанных релизов будет использовать этот же Update Center.')
           old='<button className="settingsAction" onClick={async()=>{try{setDiag(await api.diagnostics(settings.workspace))}catch(e){setDiag({ok:false,notes:[String(e)]})}}}>ЗАПУСТИТЬ ПРОВЕРКУ</button>{diag&&<div className="diag">'
           new='<button className="settingsAction" onClick={async()=>{try{let ws=settings.workspace;if(!ws){ws=await api.defaultWorkspace();patch({workspace:ws});}setDiag(await api.diagnostics(ws))}catch(e){setDiag({ok:false,notes:[String(e)]})}}}>ЗАПУСТИТЬ ПРОВЕРКУ</button>{!settings.workspace&&<button className="settingsAction primary" onClick={async()=>{try{const p=await api.defaultWorkspace();patch({workspace:p});setDiag(await api.diagnostics(p));toast("Workspace создан")}catch(e){toast(String(e))}}}>СОЗДАТЬ WORKSPACE АВТОМАТИЧЕСКИ</button>}{diag&&<div className="diag">'
-          if old not in s: raise SystemExit('diagnostics patch target not found')
+          if old not in s: raise SystemExit('diagnostics target not found')
           s=s.replace(old,new)
-          s=s.replace('<h4>28.08.2026 • 0.2.1</h4><ul>','<h4>28.08.2026 • 0.2.1</h4><ul><li>Исправлен канал обновлений: больше нет ошибки invalid release JSON.</li><li>Workspace автоматически создаётся в Документы/ChannelFlow при первом запуске.</li><li>Диагностика сама восстанавливает отсутствующий Workspace и повторно проверяет запись.</li>')
-          s=s.replace('ChannelFlow 0.2 • macOS Apple Silicon','ChannelFlow 0.2.1 • macOS Apple Silicon')
-          p.write_text(s)
-          PY
 
-      - name: Inspect Publisher and store source
-        working-directory: .channelflow-build
-        shell: bash
-        run: |
-          echo '=== FILES ==='
-          find src -maxdepth 2 -type f -print
-          echo '=== PUBLISHER CONTEXT ==='
-          grep -n -C 20 -E 'Publisher|PUBLISH|Видео|video|metadata|Метадан' src/App.tsx || true
-          echo '=== STORE ==='
-          cat src/store.ts 2>/dev/null || true
-          echo '=== TYPES ==='
-          cat src/types.ts 2>/dev/null || true
-          echo '=== API ==='
-          cat src/api.ts
+          start=s.index('function Publisher(){')
+          end=s.index('function Settings(',start)
+          publisher=r'''function Publisher(){const channels=useApp(s=>s.channels),jobs=useApp(s=>s.jobs),patchJob=useApp(s=>s.patchJob),toast=useApp(s=>s.toast),setPage=useApp(s=>s.setPage);const ready=jobs.filter(j=>j.status==='READY_UPLOAD'||j.status==='SCHEDULED');const [metaRows,setMetaRows]=useState<ImportedMetadata[]>([]),[metaChannel,setMetaChannel]=useState(channels[0]?.id||''),[metaFiles,setMetaFiles]=useState<string[]>([]);const metaInput=useRef<HTMLInputElement>(null);useEffect(()=>{if(!metaChannel&&channels[0])setMetaChannel(channels[0].id)},[channels,metaChannel]);async function readMetadata(files:FileList|null){if(!files?.length)return;const rows:ImportedMetadata[]=[];const names:string[]=[];for(const file of Array.from(files)){try{rows.push(...parseMetadataFile(file.name,await file.text()));names.push(file.name)}catch(e){toast(`Не удалось прочитать ${file.name}: ${String(e)}`)}}setMetaRows(rows);setMetaFiles(names);toast(rows.length?`Метаданные: найдено ${rows.length} записей`:'Метаданные не распознаны')}function matchingJob(row:ImportedMetadata,used:Set<string>,index:number){const namedChannel=row.channel?channels.find(c=>c.id===row.channel||c.name.toLowerCase()===row.channel?.toLowerCase()):undefined;const channelId=namedChannel?.id||metaChannel||undefined;const pool=jobs.filter(j=>(!channelId||j.channelId===channelId)&&!used.has(j.id));if(row.number)return pool.find(j=>j.number===row.number);return pool[index]||pool[0]}function applyMetadata(){if(!metaRows.length){toast('Сначала выбери файл метаданных');return}const used=new Set<string>();let matched=0,missed=0;metaRows.forEach((row,index)=>{const job=matchingJob(row,used,index);if(!job){missed++;return}used.add(job.id);const patch:any={};if(row.title)patch.title=row.title;if(row.description)patch.description=row.description;if(row.tags?.length)patch.tags=row.tags;if(row.publishAt)patch.publishAt=row.publishAt;patchJob(job.id,patch);matched++});toast(`Метаданные применены: ${matched}${missed?` • не найдено: ${missed}`:''}`)}const preview=metaRows.slice(0,6);return <>
+          <input ref={metaInput} hidden type="file" multiple accept=".json,.txt,.csv,application/json,text/plain,text/csv" onChange={e=>{readMetadata(e.target.files);e.currentTarget.value=''}}/>
+          <PageHeader eyebrow="PUBLISHER" title="Публикации YouTube" text="Загрузи файл метаданных один раз — ChannelFlow привяжет title, description, tags и дату к Video_XXX и сохранит их до YouTube." actions={<button className="primary" onClick={()=>metaInput.current?.click()}>+ ЗАГРУЗИТЬ МЕТАДАННЫЕ</button>}/>
+          <div className="metadataPanel"><div className="metadataHead"><div><small>METADATA INBOX</small><h3>Видео + название + описание + теги</h3><p>Поддержка JSON, TXT и CSV. Совпадение идёт по Video_001 / номеру. Если номер не указан — записи распределяются по порядку выбранного канала.</p></div><div className="metadataControls"><select value={metaChannel} onChange={e=>setMetaChannel(e.target.value)}><option value="">Все каналы</option>{channels.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select><button className="ghost" onClick={()=>metaInput.current?.click()}>ВЫБРАТЬ ФАЙЛЫ</button><button className="primary" disabled={!metaRows.length} onClick={applyMetadata}>ПРИМЕНИТЬ К ВИДЕО</button></div></div>{metaFiles.length>0&&<div className="metadataSummary"><span>Файлов <b>{metaFiles.length}</b></span><span>Записей <b>{metaRows.length}</b></span><span>С номерами Video_XXX <b>{metaRows.filter(r=>r.number).length}</b></span><button onClick={()=>{setMetaRows([]);setMetaFiles([])}}>ОЧИСТИТЬ</button></div>}{preview.length>0&&<div className="metadataPreview">{preview.map((r,i)=><div className="metaRow" key={`${r.source}-${i}`}><span><b>{r.number?`VIDEO_${String(r.number).padStart(3,'0')}`:`СТРОКА ${i+1}`}</b><small>{r.channel||channels.find(c=>c.id===metaChannel)?.name||'канал по очереди'} • {r.source}</small></span><strong>{r.title||'Без названия'}</strong><em>{r.tags?.length?`${r.tags.length} тегов`:'теги не указаны'}</em></div>)}</div>}<details className="metadataHelp"><summary>Формат файла — пример</summary><pre>{`[{\n  "video": "Video_001",\n  "title": "Название ролика",\n  "description": "Описание",\n  "tags": ["deep house", "music"],\n  "publishAt": "2026-09-01T18:00:00+07:00"\n}]`}</pre></details></div>
+          <div className="publisherNotice"><b>Метаданные сохраняются вместе с задачей</b><p>После применения они остаются у Video_XXX через рендер и очередь публикации. Когда OAuth-загрузка YouTube активна, Publisher использует эти поля автоматически — повторно копировать текст не потребуется.</p><button onClick={()=>setPage('settings')}>ОТКРЫТЬ НАСТРОЙКИ</button></div>
+          {ready.length===0?<Empty title="Нет готовых MP4" text="Метаданные уже можно загрузить заранее. Когда ENDLUME создаст final.mp4, задача появится здесь с сохранённым title / description / tags." action="В ПРОИЗВОДСТВО" onClick={()=>setPage('production')}/>:<div className="publishList">{ready.map(j=>{const c=channels.find(c=>c.id===j.channelId);return <div className="publishCard" key={j.id}><div className="thumb"><span>▶</span><small>VIDEO_{String(j.number).padStart(3,'0')}</small></div><div className="publishMeta"><small>{c?.name}</small><input value={j.title} maxLength={100} onChange={e=>patchJob(j.id,{title:e.target.value})}/><textarea value={j.description} onChange={e=>patchJob(j.id,{description:e.target.value})}/><input value={j.tags.join(', ')} onChange={e=>patchJob(j.id,{tags:e.target.value.split(',').map(x=>x.trim()).filter(Boolean)})}/></div><div className="publishSide"><label>Дата<input type="datetime-local" value={j.publishAt?new Date(new Date(j.publishAt).getTime()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,16):''} onChange={e=>patchJob(j.id,{publishAt:new Date(e.target.value).toISOString()})}/></label><span className={`publishState ${j.status.toLowerCase()}`}>{statusLabel[j.status]}</span>{j.status==='READY_UPLOAD'&&<button className="primary" onClick={()=>toast('Видео и метаданные готовы к YouTube. OAuth-загрузка подключается через Update Center.')}>ГОТОВО К YOUTUBE ✓</button>}</div></div>})}</div>}</>}
+          
+          '''
+          s=s[:start]+publisher+s[end:]
+          s=s.replace('ChannelFlow 0.2 • macOS Apple Silicon','ChannelFlow 0.3.0 • macOS Apple Silicon').replace('ChannelFlow 0.2.1 • macOS Apple Silicon','ChannelFlow 0.3.0 • macOS Apple Silicon')
+          s=s.replace('Версия 0.3.0 • встроенный подписанный Tauri Updater. Канал обновлений подключён. Новые версии проверяются внутри приложения, скачиваются и устанавливаются без Terminal.','Версия 0.3.0 • Update Center. Проверка версии выполняется внутри ChannelFlow; следующие подписанные релизы будут устанавливаться через эту же вкладку без Terminal.')
+          marker='<h4>30.08.2026 • 0.3.0</h4><ul>'
+          if marker in s:s=s.replace(marker,marker+'<li>Metadata Inbox: импорт JSON, TXT и CSV для партии видео.</li><li>Автосопоставление метаданных с Video_XXX по номеру или очереди канала.</li><li>Title, description, tags и publishAt сохраняются в задаче до момента YouTube.</li><li>Добавлен предпросмотр импортированных записей и отчёт о совпадениях.</li>')
+          p.write_text(s)
+
+          css=Path('src/styles.css');c=css.read_text();c+='''\n.metadataPanel{margin-bottom:18px;padding:20px;border:1px solid rgba(84,210,255,.18);border-radius:18px;background:linear-gradient(135deg,rgba(9,24,40,.92),rgba(12,18,31,.96));box-shadow:0 18px 48px rgba(0,0,0,.16)}.metadataHead{display:flex;justify-content:space-between;gap:22px;align-items:flex-start}.metadataHead small{letter-spacing:.14em;opacity:.65}.metadataHead h3{margin:5px 0 6px}.metadataHead p{max-width:760px;margin:0;opacity:.72;line-height:1.5}.metadataControls{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end}.metadataControls select{min-width:170px}.metadataSummary{display:flex;gap:18px;align-items:center;margin-top:16px;padding:11px 14px;border-radius:12px;background:rgba(255,255,255,.035)}.metadataSummary button{margin-left:auto}.metadataPreview{display:grid;gap:7px;margin-top:12px}.metaRow{display:grid;grid-template-columns:190px 1fr 110px;gap:12px;align-items:center;padding:10px 12px;border-radius:11px;background:rgba(255,255,255,.028)}.metaRow span{display:flex;flex-direction:column}.metaRow small{opacity:.55;margin-top:2px}.metaRow strong{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.metaRow em{font-style:normal;text-align:right;opacity:.62}.metadataHelp{margin-top:12px}.metadataHelp summary{cursor:pointer;opacity:.72}.metadataHelp pre{white-space:pre-wrap;padding:12px;border-radius:10px;background:rgba(0,0,0,.22);font-size:12px;line-height:1.45}@media(max-width:1050px){.metadataHead{flex-direction:column}.metadataControls{justify-content:flex-start}.metaRow{grid-template-columns:150px 1fr}.metaRow em{display:none}}\n''';css.write_text(c)
+
+          Path('RELEASE_NOTES.md').write_text('''# ChannelFlow 0.3.0\n\n- Metadata Inbox для JSON / TXT / CSV.\n- Массовое сопоставление title, description, tags и publishAt с Video_XXX.\n- Поддержка файлов вида Video_001.txt и JSON/CSV-пакетов на десятки видео.\n- Метаданные сохраняются в локальной задаче и проходят с ней до Publisher.\n- Обновлён Update Center и changelog.\n- Сохранены автоматический Workspace, диагностика и 60 FPS UI.\n''')
+          PY
+          grep -R "0.3.0" package.json src-tauri/Cargo.toml src-tauri/tauri.conf.json src/api.ts src/App.tsx >/dev/null
+          grep -R "Metadata Inbox" src/App.tsx RELEASE_NOTES.md >/dev/null
+          grep -R "parseMetadataFile" src/App.tsx src/metadata.ts tests/metadata.test.ts >/dev/null
 
       - name: Setup Node 22
         uses: actions/setup-node@v4
@@ -90,18 +190,18 @@ jobs:
           mkdir -p src-tauri/icons/icon.iconset
           python3 - <<'PYICON'
           import struct,zlib,os
-          def chunk(t,d): return struct.pack('>I',len(d))+t+d+struct.pack('>I',zlib.crc32(t+d)&0xffffffff)
+          def chunk(t,d):return struct.pack('>I',len(d))+t+d+struct.pack('>I',zlib.crc32(t+d)&0xffffffff)
           def png(path,n):
               raw=bytearray()
               for y in range(n):
                   raw.append(0)
                   for x in range(n):
-                      u=x/max(1,n-1); v=y/max(1,n-1); r=int(7+20*u); g=int(18+95*u+45*(1-v)); b=int(31+160*(1-v)+30*u); cx=(x-n*.5)/(n*.5); cy=(y-n*.5)/(n*.5)
-                      if cx*cx+cy*cy>.90: r,g,b=7,12,20
+                      u=x/max(1,n-1);v=y/max(1,n-1);r=int(7+20*u);g=int(18+95*u+45*(1-v));b=int(31+160*(1-v)+30*u);cx=(x-n*.5)/(n*.5);cy=(y-n*.5)/(n*.5)
+                      if cx*cx+cy*cy>.90:r,g,b=7,12,20
                       raw+=bytes((max(0,min(255,r)),max(0,min(255,g)),max(0,min(255,b)),255))
               open(path,'wb').write(b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',n,n,8,6,0,0,0))+chunk(b'IDAT',zlib.compress(bytes(raw),9))+chunk(b'IEND',b''))
           os.makedirs('src-tauri/icons',exist_ok=True)
-          for n,name in [(32,'32x32.png'),(128,'128x128.png'),(256,'128x128@2x.png'),(1024,'icon-1024.png')]: png('src-tauri/icons/'+name,n)
+          for n,name in [(32,'32x32.png'),(128,'128x128.png'),(256,'128x128@2x.png'),(1024,'icon-1024.png')]:png('src-tauri/icons/'+name,n)
           PYICON
           sips -z 16 16 src-tauri/icons/icon-1024.png --out src-tauri/icons/icon.iconset/icon_16x16.png >/dev/null
           sips -z 32 32 src-tauri/icons/icon-1024.png --out src-tauri/icons/icon.iconset/icon_16x16@2x.png >/dev/null
@@ -126,12 +226,12 @@ jobs:
       - name: Rust check ARM64
         working-directory: .channelflow-build
         run: cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
-      - name: Build ad-hoc signed ChannelFlow app and DMG
+      - name: Build ChannelFlow app and DMG
         working-directory: .channelflow-build
         env:
           APPLE_SIGNING_IDENTITY: '-'
         run: npx tauri build --target aarch64-apple-darwin --bundles app,dmg
-      - name: Verify signature and collect installer
+      - name: Verify and collect installer
         working-directory: .channelflow-build
         shell: bash
         run: |
@@ -139,16 +239,20 @@ jobs:
           BUNDLE="src-tauri/target/aarch64-apple-darwin/release/bundle"
           DMG="$(find "$BUNDLE/dmg" -maxdepth 1 -type f -name '*.dmg' -print -quit)"
           APP="$(find "$BUNDLE/macos" -maxdepth 1 -type d -name '*.app' -print -quit)"
-          test -n "$DMG"; test -s "$DMG"; test -n "$APP"; test -d "$APP/Contents"
+          test -n "$DMG";test -s "$DMG";test -n "$APP";test -d "$APP/Contents"
           codesign --verify --deep --strict --verbose=2 "$APP"
+          file "$APP/Contents/MacOS/channelflow"
+          plutil -lint "$APP/Contents/Info.plist"
           mkdir -p release-files
-          cp "$DMG" release-files/ChannelFlow-0.2.1-macOS-AppleSilicon.dmg
-          ditto -c -k --sequesterRsrc --keepParent "$APP" release-files/ChannelFlow-0.2.1-macOS-AppleSilicon.app.zip
+          cp "$DMG" release-files/ChannelFlow-0.3.0-macOS-AppleSilicon.dmg
+          ditto -c -k --sequesterRsrc --keepParent "$APP" release-files/ChannelFlow-0.3.0-macOS-AppleSilicon.app.zip
+          cp RELEASE_NOTES.md release-files/
           shasum -a 256 release-files/* | tee release-files/SHA256SUMS.txt
+          ls -lah release-files
       - name: Upload ChannelFlow installer
         uses: actions/upload-artifact@v4
         with:
-          name: ChannelFlow-macOS-AppleSilicon-v0.2.1-debug
+          name: ChannelFlow-macOS-AppleSilicon-v0.3.0
           path: .channelflow-build/release-files/*
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 30
