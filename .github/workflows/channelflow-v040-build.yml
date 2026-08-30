@@ -1,0 +1,105 @@
+name: ChannelFlow 0.4 macOS Apple Silicon
+
+on:
+  push:
+    branches: [channelflow-v040-build]
+  workflow_dispatch:
+
+jobs:
+  build-macos-arm64:
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restore and verify ChannelFlow source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat channelflow-v040/source.part* > /tmp/channelflow-v040.b64
+          base64 -D -i /tmp/channelflow-v040.b64 -o /tmp/channelflow-v040.tar.gz
+          echo "bd6296ae943e1756fb3b3e0dcf61436b6c61e77de88834321bf82388d12c2bd1  /tmp/channelflow-v040.tar.gz" | shasum -a 256 -c -
+          rm -rf .channelflow-v040
+          mkdir .channelflow-v040
+          tar -xzf /tmp/channelflow-v040.tar.gz -C .channelflow-v040
+          test -f .channelflow-v040/package.json
+          test -f .channelflow-v040/src-tauri/Cargo.toml
+          grep -q '"version": "0.4.0"' .channelflow-v040/package.json
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .channelflow-v040/src-tauri
+
+      - name: Generate app icons
+        working-directory: .channelflow-v040
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          w=h=1024
+          bg=(21,210,196)
+          fg=(4,24,37)
+          with open('/tmp/channelflow.ppm','wb') as f:
+              f.write(f'P6\n{w} {h}\n255\n'.encode())
+              for y in range(h):
+                  row=bytearray()
+                  for x in range(w):
+                      inside = 350 <= x <= 720 and abs(y-512) <= (x-350)*0.62
+                      row += bytes(fg if inside else bg)
+                  f.write(row)
+          PY
+          sips -s format png /tmp/channelflow.ppm --out /tmp/channelflow.png >/dev/null
+          npm install --no-audit --no-fund
+          npx tauri icon /tmp/channelflow.png
+
+      - name: Unit tests
+        working-directory: .channelflow-v040
+        run: npm test
+
+      - name: Frontend production build
+        working-directory: .channelflow-v040
+        run: npm run build
+
+      - name: Rust ARM64 check
+        working-directory: .channelflow-v040
+        run: cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
+
+      - name: Build ChannelFlow DMG
+        working-directory: .channelflow-v040
+        run: npx tauri build --target aarch64-apple-darwin --bundles app,dmg
+
+      - name: Verify app and DMG
+        working-directory: .channelflow-v040
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)
+          DMG=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -maxdepth 1 -name '*.dmg' -print -quit)
+          test -n "$APP" && test -d "$APP/Contents"
+          test -n "$DMG" && test -s "$DMG"
+          codesign --verify --deep --strict "$APP"
+          file "$APP/Contents/MacOS/ChannelFlow" | grep -E 'arm64|Mach-O 64-bit executable arm64'
+          mkdir -p release
+          cp "$DMG" release/ChannelFlow-0.4.0-macOS-AppleSilicon.dmg
+          cp RELEASE_NOTES.md release/RELEASE_NOTES.md
+          shasum -a 256 release/ChannelFlow-0.4.0-macOS-AppleSilicon.dmg > release/SHA256.txt
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChannelFlow-macOS-AppleSilicon-v0.4.0
+          path: .channelflow-v040/release/
+          retention-days: 30
