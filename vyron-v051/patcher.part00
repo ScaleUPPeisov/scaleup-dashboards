@@ -1,0 +1,85 @@
+from pathlib import Path
+import json,re
+root=Path('.vyron-v051')
+
+def must_replace(path, old, new):
+    p=root/path
+    s=p.read_text()
+    if old not in s:
+        raise SystemExit(f'marker not found in {path}: {old[:120]!r}')
+    p.write_text(s.replace(old,new,1))
+
+def append_once(path, marker, text):
+    p=root/path; s=p.read_text()
+    if marker not in s: p.write_text(s+'\n'+text+'\n')
+
+# versions
+p=root/'package.json'; d=json.loads(p.read_text()); d['version']='0.5.1'; p.write_text(json.dumps(d,ensure_ascii=False,indent=2)+'\n')
+p=root/'src-tauri/tauri.conf.json'; d=json.loads(p.read_text()); d['version']='0.5.1'; p.write_text(json.dumps(d,ensure_ascii=False,indent=2)+'\n')
+for path in ['src-tauri/Cargo.toml']:
+    p=root/path; s=p.read_text(); p.write_text(s.replace('version = "0.5.0"','version = "0.5.1"',1))
+p=root/'package-lock.json'; d=json.loads(p.read_text()); d['version']='0.5.1';
+if '' in d.get('packages',{}): d['packages']['']['version']='0.5.1'
+p.write_text(json.dumps(d,ensure_ascii=False,indent=2)+'\n')
+p=root/'src-tauri/Cargo.lock'; s=p.read_text(); s,n=re.subn(r'(name = "channelflow"\nversion = ")0\.5\.0("\n)',r'\g<1>0.5.1\2',s,count=1); 
+if n!=1: raise SystemExit('Cargo.lock app version marker missing')
+p.write_text(s)
+
+# types
+must_replace(Path('src/types.ts'),
+"export type Page='dashboard'|'autopilot'|'channels'|'production'|'content'|'competitors'|'analytics'|'publisher'|'settings';",
+"export type Page='dashboard'|'autopilot'|'channels'|'production'|'content'|'competitors'|'analytics'|'existing'|'publisher'|'settings';")
+append_once(Path('src/types.ts'),'export type YoutubeExistingVideo=',"""export type YoutubeExistingVideo={
+  id:string; position:number; title:string; description:string; tags:string[]; categoryId:string;
+  publishedAt?:string; privacyStatus:string; publishAt?:string; thumbnail?:string; selected:boolean;
+  applyState?:'idle'|'saving'|'done'|'error'; error?:string;
+};""")
+
+# API
+must_replace(Path('src/api.ts'),
+"  youtubeUpload:(profileId:string,jobId:string,filePath:string,title:string,description:string,tags:string[],publishAt:string|undefined,categoryId:string)=>invoke<YoutubeUploadResult>('youtube_upload_video',{profileId,jobId,filePath,title,description,tags,publishAt,categoryId}),",
+"  youtubeUpload:(profileId:string,jobId:string,filePath:string,title:string,description:string,tags:string[],publishAt:string|undefined,categoryId:string)=>invoke<YoutubeUploadResult>('youtube_upload_video',{profileId,jobId,filePath,title,description,tags,publishAt,categoryId}),\n  youtubeListExisting:(profileId:string,maxResults=30)=>invoke<any>('youtube_list_existing_videos',{profileId,maxResults}),\n  youtubeUpdateExisting:(profileId:string,videoId:string,title:string,description:string,tags:string[],publishAt?:string)=>invoke<any>('youtube_update_existing_video',{profileId,videoId,title,description,tags,publishAt}),")
+
+# Existing-video helpers
+(root/'src/youtubeExisting.ts').write_text(r'''import type { YoutubeExistingVideo } from './types';
+import type { ImportedMetadata } from './metadata';
+export function orderedExistingVideos(videos:YoutubeExistingVideo[],order:'oldest'|'newest'){
+  const copy=[...videos]; return order==='oldest'?copy.reverse():copy;
+}
+export function buildExistingSchedule(videos:YoutubeExistingVideo[],startIso:string,cadenceDays:number){
+  const start=new Date(startIso); const step=Math.max(1,cadenceDays)*86400000;
+  return videos.map((v,i)=>({...v,publishAt:new Date(start.getTime()+i*step).toISOString()}));
+}
+export function overlayExistingMetadata(videos:YoutubeExistingVideo[],meta:ImportedMetadata[]){
+  return videos.map((v,i)=>{const m=meta.find(x=>x.number===i+1)||meta[i]; if(!m)return v; return {...v,title:m.title||v.title,description:m.description||v.description,tags:m.tags?.length?m.tags:v.tags};});
+}
+''')
+(root/'tests/youtubeExisting.test.ts').write_text(r'''import {describe,it,expect} from 'vitest';
+import {buildExistingSchedule,orderedExistingVideos,overlayExistingMetadata} from '../src/youtubeExisting';
+const v=(id:string)=>({id,position:0,title:id,description:'',tags:[],categoryId:'10',privacyStatus:'private',selected:true});
+describe('existing youtube manager',()=>{
+ it('orders oldest first',()=>expect(orderedExistingVideos([v('new'),v('old')],'oldest').map(x=>x.id)).toEqual(['old','new']));
+ it('builds cadence schedule',()=>{const r=buildExistingSchedule([v('1'),v('2')],'2026-09-01T10:00:00.000Z',2);expect(r[1].publishAt).toBe('2026-09-03T10:00:00.000Z')});
+ it('overlays metadata',()=>expect(overlayExistingMetadata([v('1')],[{title:'A',description:'B',tags:['x'],source:'x'}])[0].title).toBe('A'));
+});
+''')
+
+# Rust OAuth + existing video commands
+y=root/'src-tauri/src/youtube.rs'; s=y.read_text()
+s=s.replace('struct OAuthProfile{id:String,client_id:String,channel_id:Option<String>,channel_title:Option<String>,access_token:String,refresh_token:String,expires_at:i64,connected_at:String}',
+'''struct OAuthProfile{id:String,client_id:String,channel_id:Option<String>,channel_title:Option<String>,access_token:String,refresh_token:String,expires_at:i64,connected_at:String,#[serde(default)] scopes:Vec<String>}''',1)
+s=s.replace('let scope="https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly";',
+'''let scope="https://www.googleapis.com/auth/youtube.force-ssl";let scopes=scope.split_whitespace().map(str::to_string).collect::<Vec<_>>();''',1)
+s=s.replace('connected_at:Utc::now().to_rfc3339()};let mut s=load_store(&app)?;',
+'connected_at:Utc::now().to_rfc3339(),scopes:scopes.clone()};let mut s=load_store(&app)?;',1)
+marker='#[tauri::command]\npub async fn youtube_channel_stats'
+if marker not in s: raise SystemExit('youtube_channel_stats marker missing')
+insert=r'''
+fn youtube_error(v:&Value,fallback:&str)->String{v.pointer("/error/message").and_then(|x|x.as_str()).or_else(||v.get("error_description").and_then(|x|x.as_str())).unwrap_or(fallback).to_string()}
+
+#[tauri::command]
+pub async fn youtube_list_existing_videos(app:AppHandle,profile_id:String,max_results:Option<u32>)->Result<Value,String>{
+ let (token,profile)=valid_access_token(&app,&profile_id).await?;let limit=max_results.unwrap_or(30).clamp(1,200) as usize;let client=reqwest::Client::new();
+ let r=client.get("https://www.googleapis.com/youtube/v3/channels").bearer_auth(&token).query(&[("part","contentDetails"),("mine","true")]).send().await.map_err(|e|format!("YouTube channel: {e}"))?;let st=r.status();let cv:Value=r.json().await.map_err(|e|e.to_string())?;if !st.is_success(){return Err(youtube_error(&cv,"Не удалось получить канал YouTube"))}let uploads=cv.pointer("/items/0/contentDetails/relatedPlaylists/uploads").and_then(|x|x.as_str()).ok_or_else(||"YouTube не вернул playlist загрузок".to_string())?;
+ let mut ids=Vec::<String>::new();let mut page:Option<String>=None;while ids.len()<limit{let mut q=client.get("https://www.googleapis.com/youtube/v3/playlistItems").bearer_auth(&token).query(&[("part","contentDetails"),("playlistId",uploads),("maxResults","50")]);if let Some(ref t)=page{q=q.query(&[("pageToken",t.as_str())]);}let r=q.send().await.map_err(|e|format!("YouTube uploads: {e}"))?;let st=r.status();let v:Value=r.json().await.map_err(|e|e.to_string())?;if !st.is_success(){return Err(youtube_error(&v,"Не удалось получить список загрузок"))}if let Some(items)=v.get("items").and_then(|x|x.as_array()){for item in items{if ids.len()>=limit{break}if let Some(id)=item.pointer("/contentDetails/videoId").and_then(|x|x.as_str()){ids.push(id.to_string())}}}page=v.get("nextPageToken").and_then(|x|x.as_str()).map(str::to_string);if page.is_none(){break}}
+ let mut by_id=std::collections::HashMap::<String,Value>::new();for chunk in ids.chunks(50){let joined=chunk.join(",");let r=client.get("https://www.googleapis.com/youtube/v3/videos").bearer_auth(&token).query(&[("part","snippet,status"),("id",joined.as_str())]).send().await.map_err(
