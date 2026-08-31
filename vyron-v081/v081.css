@@ -1,0 +1,5 @@
+.existingToolbar label:nth-of-type(5){min-width:180px}
+.dateConflictCard{border-color:rgba(245,158,11,.48)!important;box-shadow:0 0 0 1px rgba(245,158,11,.08) inset}
+.dateConflict{display:inline-flex;align-items:center;min-height:20px;padding:2px 7px;border-radius:7px;border:1px solid rgba(245,158,11,.34);background:rgba(245,158,11,.09);color:#f7bd57;font-size:10px;font-weight:700;white-space:nowrap}
+.existingSchedule{gap:6px}
+@media(max-width:1180px){.existingToolbar label:nth-of-type(5){min-width:150px}}
