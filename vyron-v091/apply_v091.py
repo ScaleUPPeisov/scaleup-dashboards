@@ -18,13 +18,22 @@ except Exception as e:
 if not decoded.startswith('untrusted comment:'):
     raise SystemExit('TAURI_UPDATER_PUBLIC_KEY decoded payload is not a Tauri/minisign public key box')
 
-# Package version.
+# Package version and a pinned Tauri CLI release that contains the empty-password
+# updater-key fix. Do not allow npm to resolve an older signer implementation.
 p = ROOT / 'package.json'
 d = json.loads(p.read_text())
 d['version'] = VERSION
+found_cli = False
+for section in ('dependencies', 'devDependencies'):
+    if '@tauri-apps/cli' in d.get(section, {}):
+        d[section]['@tauri-apps/cli'] = '2.10.1'
+        found_cli = True
+if not found_cli:
+    d.setdefault('devDependencies', {})['@tauri-apps/cli'] = '2.10.1'
 p.write_text(json.dumps(d, ensure_ascii=False, indent=2) + '\n')
 
-# Lockfile version, without touching dependency graph.
+# Lockfile version only; npm install in CI resolves the pinned CLI without a
+# destructive dependency migration.
 p = ROOT / 'package-lock.json'
 d = json.loads(p.read_text())
 d['version'] = VERSION
