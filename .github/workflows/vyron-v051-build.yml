@@ -34,29 +34,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cat vyron-v051/overrides.part* > /tmp/vyron-v051-overrides.b64
-          base64 -D -i /tmp/vyron-v051-overrides.b64 -o /tmp/vyron-v051-overrides.tar.gz
-          tar -tzf /tmp/vyron-v051-overrides.tar.gz >/tmp/vyron-v051-files.txt
-          grep -q '^src-tauri/src/youtube.rs$' /tmp/vyron-v051-files.txt
-          grep -q '^src/youtubeExisting.ts$' /tmp/vyron-v051-files.txt
-          grep -q '^tests/youtubeExisting.test.ts$' /tmp/vyron-v051-files.txt
-          tar -xzf /tmp/vyron-v051-overrides.tar.gz -C .vyron-v051
-          python3 - <<'PY'
-          import json, pathlib, re
-          root = pathlib.Path('.vyron-v051')
-          lock = root / 'package-lock.json'
-          data = json.loads(lock.read_text())
-          data['version'] = '0.5.1'
-          if '' in data.get('packages', {}):
-              data['packages']['']['version'] = '0.5.1'
-          lock.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n')
-          cargo = root / 'src-tauri' / 'Cargo.lock'
-          text = cargo.read_text()
-          text, n = re.subn(r'(name = "channelflow"\nversion = ")0\.5\.0("\n)', r'\g<1>0.5.1\2', text, count=1)
-          if n != 1:
-              raise SystemExit('Could not patch channelflow Cargo.lock version')
-          cargo.write_text(text)
-          PY
+          cat vyron-v051/patcher.part00 vyron-v051/patcher.part01 vyron-v051/patcher.part02 > /tmp/apply_vyron051.py
+          echo "6a0b2287b7face63d1b33cec342101b83a1e0160ed0f0c9ad9a6b62ba13744fe  /tmp/apply_vyron051.py" | shasum -a 256 -c -
+          python3 /tmp/apply_vyron051.py
           python3 -m json.tool .vyron-v051/package.json >/dev/null
           python3 -m json.tool .vyron-v051/src-tauri/tauri.conf.json >/dev/null
           grep -q '"version": "0.5.1"' .vyron-v051/package.json
@@ -64,7 +44,7 @@ jobs:
           grep -q 'youtube_list_existing_videos' .vyron-v051/src-tauri/src/youtube.rs
           grep -q 'youtube_update_existing_video' .vyron-v051/src-tauri/src/youtube.rs
           grep -q 'youtube.force-ssl' .vyron-v051/src-tauri/src/youtube.rs
-          grep -q 'УЖЕ НА YOUTUBE' .vyron-v051/src/App.tsx
+          grep -q 'Уже на YouTube' .vyron-v051/src/App.tsx
 
       - name: Setup Node
         uses: actions/setup-node@v4
