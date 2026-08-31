@@ -1,0 +1,83 @@
+name: Publish ChannelFlow 0.4.0
+
+on:
+  push:
+    branches: [channelflow-v040-build]
+    paths:
+      - '.github/workflows/channelflow-v040-publish.yml'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download verified ChannelFlow 0.4.0 artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          gh run download 33324940460 \
+            --repo "${GITHUB_REPOSITORY}" \
+            --name "ChannelFlow-macOS-AppleSilicon-v0.4.0" \
+            --dir release
+          test -s release/ChannelFlow-0.4.0-macOS-AppleSilicon.dmg
+          test -s release/SHA256.txt
+          cd release
+          echo "e6e5cdf0c2558b9ac9016ef86caaac182b761c98a5536cf27d9f6624b6188ca9  ChannelFlow-0.4.0-macOS-AppleSilicon.dmg" | sha256sum -c -
+
+      - name: Prepare release notes
+        run: |
+          cat > release/RELEASE_NOTES-0.4.0.md <<'EOF'
+          # ChannelFlow 0.4.0
+
+          Production release for macOS Apple Silicon.
+
+          - Channel Factory integrated into ChannelFlow with 60-day reserve planning, priorities and production statuses.
+          - Autopilot and Inbox workflow for images, music and metadata.
+          - One image creates one future Video_XXX project with project manifest.
+          - ENDLUME Studio bridge and project status refresh.
+          - OpenAI integration layer for content/metadata generation.
+          - YouTube OAuth/upload integration layer and publication workflow.
+          - Competitor/public YouTube analytics modules.
+          - Same owner-license compatibility as ENDLUME Studio.
+          - 60 FPS-oriented interface and diagnostics.
+          - Atomic local state writes, backups and error logging.
+
+          Build validation: 14/14 unit tests passed, frontend production build passed, Rust ARM64 check passed, app/DMG build passed, final ad-hoc code-sign verification passed.
+          EOF
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view v0.4.0 --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload v0.4.0 \
+              release/ChannelFlow-0.4.0-macOS-AppleSilicon.dmg \
+              release/SHA256.txt \
+              --repo "${GITHUB_REPOSITORY}" --clobber
+          else
+            gh release create v0.4.0 \
+              release/ChannelFlow-0.4.0-macOS-AppleSilicon.dmg \
+              release/SHA256.txt \
+              --repo "${GITHUB_REPOSITORY}" \
+              --target "${GITHUB_SHA}" \
+              --title "ChannelFlow 0.4.0" \
+              --notes-file release/RELEASE_NOTES-0.4.0.md \
+              --latest
+          fi
+
+      - name: Verify published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release view v0.4.0 --repo "${GITHUB_REPOSITORY}" --json tagName,name,isDraft,isPrerelease,url,assets
