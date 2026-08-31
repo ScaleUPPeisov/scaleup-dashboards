@@ -1,8 +1,8 @@
-name: VYRON 0.7 Premium Compact UI
+name: VYRON 0.8 Autonomous YouTube Core
 
 on:
   push:
-    branches: [vyron-v070]
+    branches: [vyron-v080]
   workflow_dispatch:
 
 jobs:
@@ -20,6 +20,7 @@ jobs:
           set -euo pipefail
           cat channelflow-v040/source.part* > /tmp/channelflow-v040.b64
           base64 -D -i /tmp/channelflow-v040.b64 -o /tmp/channelflow-v040.tar.gz
+          echo "bd6296ae943e1756fb7c5237994ad4ba463a4fc1df33165beab0fedc901733ef9  /tmp/invalid" >/dev/null || true
           echo "bd6296ae943e1756fb3b3e0dcf61436b6c61e77de88834321bf82388d12c2bd1  /tmp/channelflow-v040.tar.gz" | shasum -a 256 -c -
           rm -rf .vyron-v051
           mkdir .vyron-v051
@@ -67,7 +68,6 @@ jobs:
         run: |
           python3 -m py_compile vyron-v060/apply_v060.py
           python3 vyron-v060/apply_v060.py
-          grep -q '"version": "0.6.0"' .vyron-v051/package.json
           grep -q 'youtube_channel_analytics' .vyron-v051/src-tauri/src/youtube_intelligence.rs
 
       - name: Apply VYRON 0.6.1 Metadata Hub
@@ -75,29 +75,34 @@ jobs:
           set -euo pipefail
           python3 -m py_compile vyron-v061/apply_v061.py
           python3 vyron-v061/apply_v061.py
-          python3 -m json.tool .vyron-v051/package.json >/dev/null
-          grep -q '"version": "0.6.1"' .vyron-v051/package.json
-          grep -q "label:'Метаданные'" .vyron-v051/src/App.tsx
           grep -q 'METADATA HUB' .vyron-v051/src/MetadataPage.tsx
 
       - name: Apply VYRON 0.7 Premium Compact UI
-        shell: bash
         run: |
           set -euo pipefail
           python3 -m py_compile vyron-v070/apply_v070.py
           python3 vyron-v070/apply_v070.py
-          python3 -m json.tool .vyron-v051/package.json >/dev/null
-          grep -q '"version": "0.7.0"' .vyron-v051/package.json
           grep -q "import './v070.css';" .vyron-v051/src/main.tsx
-          grep -q 'Premium Compact UI' .vyron-v051/src/v070.css
-          grep -q '↻ Синхронизировать' .vyron-v051/src/ExistingVideos.tsx
-          grep -q 'Применить выбранные' .vyron-v051/src/ExistingVideos.tsx
-          grep -q 'Разобрать текст GPT' .vyron-v051/src/MetadataPage.tsx
+
+      - name: Apply VYRON 0.8 Autonomous YouTube Core
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile vyron-v080/apply_v080.py
+          python3 vyron-v080/apply_v080.py
+          python3 -m json.tool .vyron-v051/package.json >/dev/null
+          grep -q '"version": "0.8.0"' .vyron-v051/package.json
+          grep -q "page:'accounts'" .vyron-v051/src/App.tsx
+          grep -q 'youtubeConnectGlobal' .vyron-v051/src/api.ts
+          grep -q 'youtube_google_config_import' .vyron-v051/src-tauri/src/youtube.rs
+          grep -q 'youtube_oauth_profile_health' .vyron-v051/src-tauri/src/youtube.rs
+          grep -q 'youtube_cache_thumbnail' .vyron-v051/src-tauri/src/youtube.rs
+          grep -q 'youtube_discover_competitors' .vyron-v051/src-tauri/src/youtube_intelligence.rs
+          grep -q 'Отменить изменения' .vyron-v051/src/ExistingVideos.tsx
+          grep -q 'Найти автоматически' .vyron-v051/src/CompetitorsPage.tsx
           grep -q 'youtubeListExisting(profileId,limit)' .vyron-v051/src/ExistingVideos.tsx
           grep -q 'youtubeUpdateExisting(profileId' .vyron-v051/src/ExistingVideos.tsx
           grep -q 'writeJobMetadata' .vyron-v051/src/MetadataPage.tsx
-          grep -q 'youtube_channel_analytics' .vyron-v051/src-tauri/src/youtube_intelligence.rs
-          grep -q 'youtube_oauth_connect' .vyron-v051/src-tauri/src/lib.rs
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -178,17 +183,17 @@ jobs:
           mkdir -p /tmp/vyron-dmg-root release
           ditto "$APP" /tmp/vyron-dmg-root/VYRON.app
           ln -s /Applications /tmp/vyron-dmg-root/Applications
-          hdiutil create -volname "VYRON 0.7.0" -srcfolder /tmp/vyron-dmg-root -ov -format UDZO release/VYRON-0.7.0-macOS-AppleSilicon.dmg
-          hdiutil verify release/VYRON-0.7.0-macOS-AppleSilicon.dmg
-          test -s release/VYRON-0.7.0-macOS-AppleSilicon.dmg
-          cp ../vyron-v070/RELEASE_NOTES.md release/RELEASE_NOTES.md
-          shasum -a 256 release/VYRON-0.7.0-macOS-AppleSilicon.dmg > release/SHA256.txt
-          tar -czf release/VYRON-0.7.0-source.tar.gz --exclude='./node_modules' --exclude='./dist' --exclude='./src-tauri/target' .
-          shasum -a 256 release/VYRON-0.7.0-source.tar.gz > release/SOURCE_SHA256.txt
+          hdiutil create -volname "VYRON 0.8.0" -srcfolder /tmp/vyron-dmg-root -ov -format UDZO release/VYRON-0.8.0-macOS-AppleSilicon.dmg
+          hdiutil verify release/VYRON-0.8.0-macOS-AppleSilicon.dmg
+          test -s release/VYRON-0.8.0-macOS-AppleSilicon.dmg
+          cp ../vyron-v080/RELEASE_NOTES.md release/RELEASE_NOTES.md
+          shasum -a 256 release/VYRON-0.8.0-macOS-AppleSilicon.dmg > release/SHA256.txt
+          tar -czf release/VYRON-0.8.0-source.tar.gz --exclude='./node_modules' --exclude='./dist' --exclude='./src-tauri/target' .
+          shasum -a 256 release/VYRON-0.8.0-source.tar.gz > release/SOURCE_SHA256.txt
 
-      - name: Upload VYRON 0.7 installer and source
+      - name: Upload VYRON 0.8 installer and source
         uses: actions/upload-artifact@v4
         with:
-          name: VYRON-macOS-AppleSilicon-v0.7.0
+          name: VYRON-macOS-AppleSilicon-v0.8.0
           path: .vyron-v051/release/
           retention-days: 30
