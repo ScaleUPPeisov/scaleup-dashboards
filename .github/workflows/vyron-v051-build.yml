@@ -25,7 +25,8 @@ jobs:
           mkdir .vyron-v051
           tar -xzf /tmp/channelflow-v040.tar.gz -C .vyron-v051
           cp channelflow-v040/files.rs.fixed .vyron-v051/src-tauri/src/files.rs
-          python3 vyron-v050/rebrand.py
+          sed 's/\.vyron-v050/.vyron-v051/g' vyron-v050/rebrand.py > /tmp/rebrand-v051.py
+          python3 /tmp/rebrand-v051.py
           cp vyron-v050/system.rs .vyron-v051/src-tauri/src/system.rs
           cp vyron-v050/storage.rs .vyron-v051/src-tauri/src/storage.rs
 
