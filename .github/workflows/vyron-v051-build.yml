@@ -43,6 +43,16 @@ jobs:
             printf 'version = 3\n\n[[package]]\nname = "channelflow"\nversion = "0.5.0"\n' > .vyron-v051/src-tauri/Cargo.lock
           fi
           python3 /tmp/apply_vyron051.py
+          python3 - <<'PYFIX'
+          from pathlib import Path
+          p=Path('.vyron-v051/src-tauri/src/youtube.rs')
+          s=p.read_text()
+          old='old_status.get("privacyStatus").and_then(|x|x.as_str())!="private"'
+          new='old_status.get("privacyStatus").and_then(|x|x.as_str())!=Some("private")'
+          if old not in s:
+              raise SystemExit('privacyStatus Option marker missing')
+          p.write_text(s.replace(old,new,1))
+          PYFIX
           python3 -m json.tool .vyron-v051/package.json >/dev/null
           python3 -m json.tool .vyron-v051/src-tauri/tauri.conf.json >/dev/null
           grep -q '"version": "0.5.1"' .vyron-v051/package.json
