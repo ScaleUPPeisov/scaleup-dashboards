@@ -1,8 +1,8 @@
-name: VYRON 0.8 Autonomous YouTube Core
+name: VYRON 0.8.1 Date Sorting
 
 on:
   push:
-    branches: [vyron-v080]
+    branches: [vyron-v081]
   workflow_dispatch:
 
 jobs:
@@ -104,6 +104,21 @@ jobs:
           grep -q 'youtubeUpdateExisting(profileId' .vyron-v051/src/ExistingVideos.tsx
           grep -q 'writeJobMetadata' .vyron-v051/src/MetadataPage.tsx
 
+      - name: Apply VYRON 0.8.1 chronological sorting
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile vyron-v081/apply_v081.py
+          python3 vyron-v081/apply_v081.py
+          python3 -m json.tool .vyron-v051/package.json >/dev/null
+          grep -q '"version": "0.8.1"' .vyron-v051/package.json
+          grep -q 'Сортировка списка' .vyron-v051/src/ExistingVideos.tsx
+          grep -q 'dateAsc' .vyron-v051/src/ExistingVideos.tsx
+          grep -q 'Совпадает дата' .vyron-v051/src/ExistingVideos.tsx
+          grep -q "import './v081.css';" .vyron-v051/src/main.tsx
+          grep -q 'youtubeListExisting(profileId,limit)' .vyron-v051/src/ExistingVideos.tsx
+          grep -q 'youtubeUpdateExisting(profileId' .vyron-v051/src/ExistingVideos.tsx
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -183,17 +198,17 @@ jobs:
           mkdir -p /tmp/vyron-dmg-root release
           ditto "$APP" /tmp/vyron-dmg-root/VYRON.app
           ln -s /Applications /tmp/vyron-dmg-root/Applications
-          hdiutil create -volname "VYRON 0.8.0" -srcfolder /tmp/vyron-dmg-root -ov -format UDZO release/VYRON-0.8.0-macOS-AppleSilicon.dmg
-          hdiutil verify release/VYRON-0.8.0-macOS-AppleSilicon.dmg
-          test -s release/VYRON-0.8.0-macOS-AppleSilicon.dmg
-          cp ../vyron-v080/RELEASE_NOTES.md release/RELEASE_NOTES.md
-          shasum -a 256 release/VYRON-0.8.0-macOS-AppleSilicon.dmg > release/SHA256.txt
-          tar -czf release/VYRON-0.8.0-source.tar.gz --exclude='./node_modules' --exclude='./dist' --exclude='./src-tauri/target' .
-          shasum -a 256 release/VYRON-0.8.0-source.tar.gz > release/SOURCE_SHA256.txt
+          hdiutil create -volname "VYRON 0.8.1" -srcfolder /tmp/vyron-dmg-root -ov -format UDZO release/VYRON-0.8.1-macOS-AppleSilicon.dmg
+          hdiutil verify release/VYRON-0.8.1-macOS-AppleSilicon.dmg
+          test -s release/VYRON-0.8.1-macOS-AppleSilicon.dmg
+          cp ../vyron-v081/RELEASE_NOTES.md release/RELEASE_NOTES.md
+          shasum -a 256 release/VYRON-0.8.1-macOS-AppleSilicon.dmg > release/SHA256.txt
+          tar -czf release/VYRON-0.8.1-source.tar.gz --exclude='./node_modules' --exclude='./dist' --exclude='./src-tauri/target' .
+          shasum -a 256 release/VYRON-0.8.1-source.tar.gz > release/SOURCE_SHA256.txt
 
-      - name: Upload VYRON 0.8 installer and source
+      - name: Upload VYRON 0.8.1 installer and source
         uses: actions/upload-artifact@v4
         with:
-          name: VYRON-macOS-AppleSilicon-v0.8.0
+          name: VYRON-macOS-AppleSilicon-v0.8.1
           path: .vyron-v051/release/
           retention-days: 30
