@@ -1,5 +1,47 @@
 from pathlib import Path
-import base64
+import json,re,shutil
 root=Path('.vyron-v051')
-files={}
-...
+for name in ['AnalyticsPage.tsx','CompetitorsPage.tsx','ExistingVideos.tsx','youtubeIntelligence.ts','v060.css']:
+    shutil.copy2(Path('vyron-v060')/name, root/'src'/name)
+shutil.copy2('vyron-v060/youtube_intelligence.rs', root/'src-tauri/src/youtube_intelligence.rs')
+p=root/'src/types.ts'; s=p.read_text()
+s=s.replace('  stats?:{subscribers?:number; views?:number; videos?:number; updatedAt?:string};\n};','  stats?:{subscribers?:number; views?:number; videos?:number; updatedAt?:string};\n  analytics?:ChannelAnalytics;\n};')
+s=s.replace('export type Competitor={id:string;channelId:string;name:string;url:string;subscribers?:number;views?:number;videos?:number;updatedAt?:string;note?:string};',"""export type AnalyticsPoint={date:string;views:number;watchMinutes:number;subscribersGained:number;subscribersLost:number};
+export type AnalyticsTopVideo={id:string;title:string;thumbnail?:string;views:number;watchMinutes:number;averageViewDuration:number;averageViewPercentage:number;likes:number;comments:number;shares:number};
+export type AnalyticsBreakdown={key:string;views:number;watchMinutes:number};
+export type ChannelAnalytics={periodDays:number;updatedAt:string;views:number;watchMinutes:number;averageViewDuration:number;averageViewPercentage:number;subscribersGained:number;subscribersLost:number;likes:number;comments:number;shares:number;daily:AnalyticsPoint[];topVideos:AnalyticsTopVideo[];trafficSources:AnalyticsBreakdown[];countries:AnalyticsBreakdown[]};
+export type CompetitorSnapshot={at:string;subscribers:number;views:number;videos:number;recentAverageViews?:number};
+export type CompetitorVideo={id:string;title:string;thumbnail?:string;publishedAt?:string;views:number;likes:number;comments:number};
+export type Competitor={id:string;channelId:string;name:string;url:string;youtubeChannelId?:string;thumbnail?:string;subscribers?:number;views?:number;videos?:number;recentAverageViews?:number;lastVideoAt?:string;latestVideos?:CompetitorVideo[];history?:CompetitorSnapshot[];updatedAt?:string;note?:string};""")
+s=s.replace('  openaiApiKey:string; openaiModel:string; youtubeOAuthClientId:string; youtubeCategoryId:string;\n};','  openaiApiKey:string; openaiModel:string; youtubeOAuthClientId:string; youtubeCategoryId:string;\n  youtubeIntelligenceAutoRefresh:boolean; youtubeIntelligenceRefreshMin:number;\n};')
+p.write_text(s)
+p=root/'src/store.ts'; s=p.read_text();s=s.replace("  openaiApiKey:'',openaiModel:'',youtubeOAuthClientId:'',youtubeCategoryId:'10'\n};","  openaiApiKey:'',openaiModel:'',youtubeOAuthClientId:'',youtubeCategoryId:'10',\n  youtubeIntelligenceAutoRefresh:true,youtubeIntelligenceRefreshMin:180\n};");s=s.replace('version:5','version:6');p.write_text(s)
+p=root/'src/api.ts'; s=p.read_text();s=s.replace("import type { AppState, Diagnostics, InboxScan, LicenseStatus, VideoJob, YoutubeProfile } from './types';","import type { AppState, ChannelAnalytics, Competitor, Diagnostics, InboxScan, LicenseStatus, VideoJob, YoutubeProfile } from './types';");s=s.replace("  youtubeStats:(apiKey:string,channelId:string)=>invoke<any>('youtube_channel_stats',{apiKey,channelId}),","  youtubeStats:(apiKey:string,channelId:string)=>invoke<any>('youtube_channel_stats',{apiKey,channelId}),\n  youtubeAnalytics:(profileId:string,days=28)=>invoke<ChannelAnalytics&{publicStats?:any}>('youtube_channel_analytics',{profileId,days}),\n  youtubeCompetitorSnapshot:(profileId:string,channelRef:string)=>invoke<Partial<Competitor>&{channelId:string}>('youtube_competitor_snapshot',{profileId,channelRef}),");s=s.replace("current:'0.5.3'","current:'0.6.0'");p.write_text(s)
+p=root/'src/main.tsx'; s=p.read_text();
+if "./v060.css" not in s:s=s.replace("import './styles.css';","import './styles.css';\nimport './v060.css';")
+p.write_text(s)
+p=root/'src/App.tsx'; s=p.read_text();s=s.replace("import { ExistingVideos } from './ExistingVideos';","import { ExistingVideos } from './ExistingVideos';\nimport { AnalyticsPage } from './AnalyticsPage';\nimport { CompetitorsPage } from './CompetitorsPage';\nimport { refreshYoutubeIntelligence } from './youtubeIntelligence';")
+s=s.replace("  useEffect(()=>{if(!booted||!settings.autopilotEnabled)return;void runAutopilotCycle();const ms=Math.max(10,settings.autopilotIntervalSec||30)*1000;const id=window.setInterval(()=>void runAutopilotCycle(),ms);return()=>window.clearInterval(id)},[booted,settings.autopilotEnabled,settings.autopilotIntervalSec]);","  useEffect(()=>{if(!booted||!settings.autopilotEnabled)return;void runAutopilotCycle();const ms=Math.max(10,settings.autopilotIntervalSec||30)*1000;const id=window.setInterval(()=>void runAutopilotCycle(),ms);return()=>window.clearInterval(id)},[booted,settings.autopilotEnabled,settings.autopilotIntervalSec]);\n  useEffect(()=>{if(!booted||!settings.youtubeIntelligenceAutoRefresh)return;const first=window.setTimeout(()=>void refreshYoutubeIntelligence(false),8000);const ms=Math.max(15,settings.youtubeIntelligenceRefreshMin||180)*60_000;const id=window.setInterval(()=>void refreshYoutubeIntelligence(false),ms);return()=>{window.clearTimeout(first);window.clearInterval(id)}},[booted,settings.youtubeIntelligenceAutoRefresh,settings.youtubeIntelligenceRefreshMin]);")
+s=s.replace("page==='competitors'?<Competitors/>:page==='analytics'?<Analytics/>","page==='competitors'?<CompetitorsPage/>:page==='analytics'?<AnalyticsPage/>")
+s=s.replace('VYRON 0.5.2 • macOS Apple Silicon','VYRON 0.6.0 • macOS Apple Silicon').replace('<span className="crumb">VYRON 0.5.2</span>','<span className="crumb">VYRON 0.6.0</span>').replace('Версия 0.5.3. Проверка версии работает внутри приложения.','Версия 0.6.0. Проверка версии работает внутри приложения.').replace("update.current||'0.5.3'","update.current||'0.6.0'").replace('<span>Версия <b>0.5.2</b></span>','<span>Версия <b>0.6.0</b></span>')
+needle='<div className="settingsCard"><h3>YouTube Data API Key</h3><p>Только публичная статистика своих каналов и конкурентов.</p><input className="wideInput" type="password" placeholder="AIza…" value={s.youtubeApiKey} onChange={e=>patch({youtubeApiKey:e.target.value.trim()})}/></div>'
+card='<div className="settingsCard"><h3>YouTube Intelligence</h3><p>Автоматически обновляет приватную аналитику своих каналов и публичные показатели конкурентов, пока VYRON запущен.</p><Toggle label="Автообновление аналитики" text="Обновлять подключённые каналы и список конкурентов без ручной кнопки." value={s.youtubeIntelligenceAutoRefresh} onChange={v=>patch({youtubeIntelligenceAutoRefresh:v})}/><label className="compactLabel">Интервал, минут<input type="number" min="15" max="1440" value={s.youtubeIntelligenceRefreshMin} onChange={e=>patch({youtubeIntelligenceRefreshMin:Math.max(15,+e.target.value||180)})}/></label><small className="note">Для приватной аналитики включи YouTube Analytics API в Google Cloud и один раз переподключи OAuth после установки 0.6.0. Конкуренты используют только публичные данные.</small></div>'
+if needle in s:s=s.replace(needle,card+needle,1)
+p.write_text(s)
+p=root/'src-tauri/src/youtube.rs'; s=p.read_text();s=s.replace('let scope="https://www.googleapis.com/auth/youtube.force-ssl";','let scope="https://www.googleapis.com/auth/youtube.force-ssl https://www.googleapis.com/auth/yt-analytics.readonly";')
+anchor='async fn valid_access_token(app:&AppHandle,profile_id:&str)->Result<(String,OAuthProfile),String>{';idx=s.find(anchor)
+if idx<0: raise SystemExit('valid_access_token missing')
+pos=s.find('async fn upload_offset',idx)
+helper='pub(crate) async fn access_token_and_scopes(app:&AppHandle,profile_id:&str)->Result<(String,Vec<String>),String>{let (token,profile)=valid_access_token(app,profile_id).await?;Ok((token,profile.scopes))}\n\n'
+s=s[:pos]+helper+s[pos:]
+s=s.replace('"thumbnail":sn.pointer("/thumbnails/medium/url").and_then(|x|x.as_str())','"thumbnail":sn.pointer("/thumbnails/maxres/url").or_else(||sn.pointer("/thumbnails/standard/url")).or_else(||sn.pointer("/thumbnails/high/url")).or_else(||sn.pointer("/thumbnails/medium/url")).or_else(||sn.pointer("/thumbnails/default/url")).and_then(|x|x.as_str())')
+p.write_text(s)
+p=root/'src-tauri/src/lib.rs';s=p.read_text().replace('mod youtube;','mod youtube;\nmod youtube_intelligence;');s=s.replace('youtube::youtube_channel_stats,youtube::youtube_oauth_profiles','youtube::youtube_channel_stats,youtube_intelligence::youtube_channel_analytics,youtube_intelligence::youtube_competitor_snapshot,youtube::youtube_oauth_profiles');p.write_text(s)
+p=root/'src-tauri/tauri.conf.json';d=json.loads(p.read_text());d['version']='0.6.0';d['app']['security']['csp']=d['app']['security']['csp'].replace("img-src 'self' asset: http://asset.localhost data: blob:;","img-src 'self' asset: http://asset.localhost data: blob: https://i.ytimg.com https://yt3.ggpht.com https://*.googleusercontent.com;");p.write_text(json.dumps(d,ensure_ascii=False,indent=2)+'\n')
+for rel in ['package.json','package-lock.json']:
+ p=root/rel;d=json.loads(p.read_text());d['version']='0.6.0';
+ if rel.endswith('lock.json'):d.get('packages',{}).get('',{}).update({'version':'0.6.0'})
+ p.write_text(json.dumps(d,ensure_ascii=False,indent=2)+'\n')
+p=root/'src-tauri/Cargo.toml';s=p.read_text();s=re.sub(r'^version = "0\.5\.3"$','version = "0.6.0"',s,count=1,flags=re.M);p.write_text(s)
+p=root/'src-tauri/Cargo.lock';s=p.read_text().replace('name = "channelflow"\nversion = "0.5.3"','name = "channelflow"\nversion = "0.6.0"',1);p.write_text(s)
+print('VYRON 0.6.0 patch applied')
