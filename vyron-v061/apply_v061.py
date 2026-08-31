@@ -11,5 +11,5 @@ for rel in ['package.json','src-tauri/tauri.conf.json']:
  p=root/rel; d=json.loads(p.read_text()); d['version']='0.6.1'; p.write_text(json.dumps(d,ensure_ascii=False,indent=2)+'\n')
 p=root/'package-lock.json'; d=json.loads(p.read_text()); d['version']='0.6.1'; d.setdefault('packages',{}).setdefault('',{})['version']='0.6.1'; p.write_text(json.dumps(d,ensure_ascii=False,indent=2)+'\n')
 p=root/'src-tauri/Cargo.toml'; s=p.read_text(); s,n=re.subn(r'^version = "0\.6\.0"$', 'version = "0.6.1"', s, count=1, flags=re.M); assert n==1; p.write_text(s)
-p=root/'src-tauri/Cargo.lock'; s=p.read_text(); old='name = "channelflow"\nversion = "0.6.0"'; assert old in s; p.write_text(s.replace(old,'name = "channelflow"\nversion = "0.6.1"',1))
+p=root/'src-tauri/Cargo.lock'; s=p.read_text(); s,n=re.subn(r'(name = "channelflow"\nversion = ")[^"]+("\n)',r'\g<1>0.6.1\2',s,count=1); assert n==1; p.write_text(s)
 print('VYRON 0.6.1 Metadata Hub applied')
