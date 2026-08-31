@@ -23,60 +23,45 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-          import re
           p=Path('.github/workflows/vyron-v091-updater-bootstrap.yml')
           s=p.read_text()
-          replacement=r'''      - name: Validate and normalize updater trust secrets
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -n "${TAURI_SIGNING_PRIVATE_KEY:-}" || { echo 'TAURI_SIGNING_PRIVATE_KEY is missing'; exit 1; }
-          test -n "${TAURI_UPDATER_PUBLIC_KEY:-}" || { echo 'TAURI_UPDATER_PUBLIC_KEY is missing'; exit 1; }
-          python3 - <<'PYKEY'
-          import base64, os
-
-          def decode_box(value):
-              try:
-                  return base64.b64decode(value.strip(), validate=True).decode('utf-8')
-              except Exception:
-                  return None
-
-          def normalize(name, kind):
-              raw=os.environ[name].strip()
-              box=decode_box(raw)
-              if box and box.startswith('untrusted comment:'):
-                  normalized=raw
-              else:
-                  try:
-                      outer=base64.b64decode(raw, validate=True).decode('utf-8').strip()
-                  except Exception as e:
-                      raise SystemExit(f'{name}: invalid Tauri updater key encoding: {e}')
-                  box=decode_box(outer)
-                  if not box or not box.startswith('untrusted comment:'):
-                      raise SystemExit(f'{name}: not a Tauri/minisign key')
-                  normalized=outer
-              first=box.splitlines()[0].lower()
-              if kind=='private' and 'secret key' not in first:
-                  raise SystemExit(f'{name}: expected secret key')
-              if kind=='public' and 'public key' not in first:
-                  raise SystemExit(f'{name}: expected public key')
-              return normalized
-
-          sk=normalize('TAURI_SIGNING_PRIVATE_KEY','private')
-          pk=normalize('TAURI_UPDATER_PUBLIC_KEY','public')
-          with open(os.environ['GITHUB_ENV'],'a') as f:
-              f.write(f'TAURI_SIGNING_PRIVATE_KEY={sk}\n')
-              f.write(f'TAURI_UPDATER_PUBLIC_KEY={pk}\n')
-          print('Updater secret formats normalized: OK')
-          PYKEY
-'''
-          pattern=r"      - name: Validate updater trust secrets\n.*?(?=      - name: Restore verified VYRON base\n)"
-          s2,n=re.subn(pattern,replacement,s,count=1,flags=re.S)
-          if n!=1: raise SystemExit(f'expected one updater validation block, got {n}')
-          p.write_text(s2)
+          marker="      - name: Validate updater trust secrets\n"
+          if 'Normalize updater trust secrets' not in s:
+              lines=[
+                  "      - name: Normalize updater trust secrets",
+                  "        shell: bash",
+                  "        run: |",
+                  "          set -euo pipefail",
+                  "          python3 - <<'PYKEY'",
+                  "          import base64, os",
+                  "          def box(value):",
+                  "              try: return base64.b64decode(value.strip(), validate=True).decode('utf-8')",
+                  "              except Exception: return None",
+                  "          def normalize(name):",
+                  "              raw=os.environ[name].strip()",
+                  "              d=box(raw)",
+                  "              if d and d.startswith('untrusted comment:'): return raw",
+                  "              try: outer=base64.b64decode(raw, validate=True).decode('utf-8').strip()",
+                  "              except Exception as e: raise SystemExit(f'{name}: invalid updater key encoding: {e}')",
+                  "              d=box(outer)",
+                  "              if not d or not d.startswith('untrusted comment:'): raise SystemExit(f'{name}: not a Tauri key')",
+                  "              return outer",
+                  "          sk=normalize('TAURI_SIGNING_PRIVATE_KEY')",
+                  "          pk=normalize('TAURI_UPDATER_PUBLIC_KEY')",
+                  "          with open(os.environ['GITHUB_ENV'],'a') as f:",
+                  "              f.write(f'TAURI_SIGNING_PRIVATE_KEY={sk}\\n')",
+                  "              f.write(f'TAURI_UPDATER_PUBLIC_KEY={pk}\\n')",
+                  "          print('Updater secrets normalized: OK')",
+                  "          PYKEY",
+                  "",
+              ]
+              insert='\n'.join(lines)
+              if marker not in s: raise SystemExit('validation marker missing')
+              s=s.replace(marker,insert+marker,1)
+              p.write_text(s)
           PY
           git diff --check
-          grep -q 'Validate and normalize updater trust secrets' .github/workflows/vyron-v091-updater-bootstrap.yml
+          grep -q 'Normalize updater trust secrets' .github/workflows/vyron-v091-updater-bootstrap.yml
 
       - name: Commit workflow fix
         shell: bash
