@@ -1,0 +1,68 @@
+name: VYRON 0.8.1 Source Inspection
+
+on:
+  push:
+    branches: [vyron-v090-inspect]
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore verified VYRON base
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat channelflow-v040/source.part* > /tmp/channelflow-v040.b64
+          base64 -d /tmp/channelflow-v040.b64 > /tmp/channelflow-v040.tar.gz
+          echo "bd6296ae943e1756fb3b3e0dcf61436b6c61e77de88834321bf82388d12c2bd1  /tmp/channelflow-v040.tar.gz" | sha256sum -c -
+          rm -rf .vyron-v051 && mkdir .vyron-v051
+          tar -xzf /tmp/channelflow-v040.tar.gz -C .vyron-v051
+          cp channelflow-v040/files.rs.fixed .vyron-v051/src-tauri/src/files.rs
+          sed 's/\.vyron-v050/.vyron-v051/g' vyron-v050/rebrand.py > /tmp/rebrand-v051.py
+          python3 /tmp/rebrand-v051.py
+          cp vyron-v050/system.rs .vyron-v051/src-tauri/src/system.rs
+          cp vyron-v050/storage.rs .vyron-v051/src-tauri/src/storage.rs
+
+      - name: Apply VYRON patches through 0.8.1
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat vyron-v051/patcher.part00 vyron-v051/patcher.part01 vyron-v051/patcher.part02 > /tmp/apply_vyron051.py
+          if [ ! -f .vyron-v051/package-lock.json ]; then printf '%s\n' '{"name":"channelflow","version":"0.5.0","lockfileVersion":3,"requires":true,"packages":{"":{"name":"channelflow","version":"0.5.0"}}}' > .vyron-v051/package-lock.json; fi
+          if [ ! -f .vyron-v051/src-tauri/Cargo.lock ]; then printf 'version = 3\n\n[[package]]\nname = "channelflow"\nversion = "0.5.0"\n' > .vyron-v051/src-tauri/Cargo.lock; fi
+          python3 /tmp/apply_vyron051.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('.vyron-v051/src-tauri/src/youtube.rs');s=p.read_text();s=s.replace('old_status.get("privacyStatus").and_then(|x|x.as_str())!="private"','old_status.get("privacyStatus").and_then(|x|x.as_str())!=Some("private")',1);p.write_text(s)
+          PY
+          python3 vyron-v052/apply_v052.py
+          python3 vyron-v053/apply_v053.py
+          python3 vyron-v060/apply_v060.py
+          python3 vyron-v061/apply_v061.py
+          python3 vyron-v070/apply_v070.py
+          python3 vyron-v080/apply_v080.py
+          python3 vyron-v080/fix_v080_rust.py
+          python3 vyron-v081/apply_v081.py
+
+      - name: Print frontend architecture
+        shell: bash
+        run: |
+          cd .vyron-v051
+          for f in src/App.tsx src/store.ts src/types.ts src/api.ts src/Dashboard.tsx src/Channels.tsx src/Autopilot.tsx src/Settings.tsx src/Publisher.tsx src/ExistingVideos.tsx src/MetadataPage.tsx src/AnalyticsPage.tsx src/CompetitorsPage.tsx; do
+            echo "===== FILE: $f ====="
+            if [ -f "$f" ]; then cat "$f"; else echo "MISSING"; fi
+          done
+
+      - name: Print backend architecture
+        shell: bash
+        run: |
+          cd .vyron-v051
+          for f in src-tauri/src/lib.rs src-tauri/src/youtube.rs src-tauri/src/youtube_intelligence.rs src-tauri/src/storage.rs src-tauri/tauri.conf.json src-tauri/Cargo.toml package.json; do
+            echo "===== FILE: $f ====="
+            if [ -f "$f" ]; then cat "$f"; else echo "MISSING"; fi
+          done
