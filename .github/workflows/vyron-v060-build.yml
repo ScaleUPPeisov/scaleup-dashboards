@@ -1,0 +1,178 @@
+name: VYRON 0.6 YouTube Intelligence
+
+on:
+  push:
+    branches: [vyron-v060]
+  workflow_dispatch:
+
+jobs:
+  build-macos-arm64:
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restore verified VYRON 0.5 base
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat channelflow-v040/source.part* > /tmp/channelflow-v040.b64
+          base64 -D -i /tmp/channelflow-v040.b64 -o /tmp/channelflow-v040.tar.gz
+          echo "bd6296ae943e1756fb3b3e0dcf61436b6c61e77de88834321bf82388d12c2bd1  /tmp/channelflow-v040.tar.gz" | shasum -a 256 -c -
+          rm -rf .vyron-v051
+          mkdir .vyron-v051
+          tar -xzf /tmp/channelflow-v040.tar.gz -C .vyron-v051
+          cp channelflow-v040/files.rs.fixed .vyron-v051/src-tauri/src/files.rs
+          sed 's/\.vyron-v050/.vyron-v051/g' vyron-v050/rebrand.py > /tmp/rebrand-v051.py
+          python3 /tmp/rebrand-v051.py
+          cp vyron-v050/system.rs .vyron-v051/src-tauri/src/system.rs
+          cp vyron-v050/storage.rs .vyron-v051/src-tauri/src/storage.rs
+
+      - name: Apply VYRON 0.5.1 Existing Videos Manager
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat vyron-v051/patcher.part00 vyron-v051/patcher.part01 vyron-v051/patcher.part02 > /tmp/apply_vyron051.py
+          echo "6a0b2287b7face63d1b33cec342101b83a1e0160ed0f0c9ad9a6b62ba13744fe  /tmp/apply_vyron051.py" | shasum -a 256 -c -
+          if [ ! -f .vyron-v051/package-lock.json ]; then
+            printf '%s\n' '{"name":"channelflow","version":"0.5.0","lockfileVersion":3,"requires":true,"packages":{"":{"name":"channelflow","version":"0.5.0"}}}' > .vyron-v051/package-lock.json
+          fi
+          if [ ! -f .vyron-v051/src-tauri/Cargo.lock ]; then
+            printf 'version = 3\n\n[[package]]\nname = "channelflow"\nversion = "0.5.0"\n' > .vyron-v051/src-tauri/Cargo.lock
+          fi
+          python3 /tmp/apply_vyron051.py
+          python3 - <<'PYFIX'
+          from pathlib import Path
+          p=Path('.vyron-v051/src-tauri/src/youtube.rs')
+          s=p.read_text()
+          old='old_status.get("privacyStatus").and_then(|x|x.as_str())!="private"'
+          new='old_status.get("privacyStatus").and_then(|x|x.as_str())!=Some("private")'
+          if old not in s:
+              raise SystemExit('privacyStatus Option marker missing')
+          p.write_text(s.replace(old,new,1))
+          PYFIX
+
+      - name: Apply VYRON 0.5.2 OAuth reliability fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile vyron-v052/apply_v052.py
+          python3 vyron-v052/apply_v052.py
+
+      - name: Apply VYRON 0.5.3 OAuth client secret fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile vyron-v053/apply_v053.py
+          python3 vyron-v053/apply_v053.py
+
+      - name: Apply VYRON 0.6 YouTube Intelligence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile vyron-v060/apply_v060.py
+          python3 vyron-v060/apply_v060.py
+          python3 -m json.tool .vyron-v051/package.json >/dev/null
+          python3 -m json.tool .vyron-v051/src-tauri/tauri.conf.json >/dev/null
+          grep -q '"version": "0.6.0"' .vyron-v051/package.json
+          grep -q 'yt-analytics.readonly' .vyron-v051/src-tauri/src/youtube.rs
+          grep -q 'youtube_channel_analytics' .vyron-v051/src-tauri/src/youtube_intelligence.rs
+          grep -q 'youtube_competitor_snapshot' .vyron-v051/src-tauri/src/youtube_intelligence.rs
+          grep -q 'AnalyticsPage' .vyron-v051/src/App.tsx
+          grep -q 'https://i.ytimg.com' .vyron-v051/src-tauri/tauri.conf.json
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .vyron-v051/src-tauri
+          cache-on-failure: true
+
+      - name: Install JS dependencies
+        working-directory: .vyron-v051
+        run: npm install --no-audit --no-fund
+
+      - name: Generate VYRON app icon
+        working-directory: .vyron-v051
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          w=h=1024
+          bg=(5,16,28); cyan=(52,221,255); mint=(83,242,189)
+          with open('/tmp/vyron.ppm','wb') as f:
+              f.write(f'P6\n{w} {h}\n255\n'.encode())
+              for y in range(h):
+                  row=bytearray()
+                  for x in range(w):
+                      dx=min(x,1023-x); dy=min(y,1023-y)
+                      inside_bg = dx>90 and dy>90
+                      left = abs((x-270) - (y-260)*0.43) < 58 and 260 < y < 770
+                      right = abs((x-754) + (y-260)*0.43) < 58 and 260 < y < 770
+                      tip = ((x-512)**2 + (y-760)**2) < 72**2
+                      px = cyan if left else mint if (right or tip) else bg if inside_bg else (3,10,18)
+                      row += bytes(px)
+                  f.write(row)
+          PY
+          sips -s format png /tmp/vyron.ppm --out /tmp/vyron.png >/dev/null
+          npx tauri icon /tmp/vyron.png
+
+      - name: Unit tests
+        working-directory: .vyron-v051
+        run: npm test
+
+      - name: Frontend production build
+        working-directory: .vyron-v051
+        run: npm run build
+
+      - name: Rust ARM64 check
+        working-directory: .vyron-v051
+        run: cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
+
+      - name: Build VYRON app and DMG
+        working-directory: .vyron-v051
+        run: npx tauri build --target aarch64-apple-darwin --bundles app,dmg
+
+      - name: Verify app and package checked DMG
+        working-directory: .vyron-v051
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)
+          test -n "$APP" && test -d "$APP/Contents"
+          BIN=$(find "$APP/Contents/MacOS" -maxdepth 1 -type f -perm -111 -print -quit)
+          test -n "$BIN" && test -s "$BIN"
+          file "$BIN" | tee /tmp/vyron-file.txt
+          grep -E 'arm64|Mach-O 64-bit executable arm64' /tmp/vyron-file.txt
+          mkdir -p "$APP/Contents/Resources"
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          rm -rf /tmp/vyron-dmg-root release
+          mkdir -p /tmp/vyron-dmg-root release
+          ditto "$APP" /tmp/vyron-dmg-root/VYRON.app
+          ln -s /Applications /tmp/vyron-dmg-root/Applications
+          hdiutil create -volname "VYRON 0.6.0" -srcfolder /tmp/vyron-dmg-root -ov -format UDZO release/VYRON-0.6.0-macOS-AppleSilicon.dmg
+          hdiutil verify release/VYRON-0.6.0-macOS-AppleSilicon.dmg
+          test -s release/VYRON-0.6.0-macOS-AppleSilicon.dmg
+          cp ../vyron-v060/RELEASE_NOTES.md release/RELEASE_NOTES.md
+          shasum -a 256 release/VYRON-0.6.0-macOS-AppleSilicon.dmg > release/SHA256.txt
+          tar -czf release/VYRON-0.6.0-source.tar.gz --exclude='./node_modules' --exclude='./dist' --exclude='./src-tauri/target' .
+          shasum -a 256 release/VYRON-0.6.0-source.tar.gz > release/SOURCE_SHA256.txt
+
+      - name: Upload VYRON 0.6 installer and source
+        uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-macOS-AppleSilicon-v0.6.0
+          path: .vyron-v051/release/
+          retention-days: 30
