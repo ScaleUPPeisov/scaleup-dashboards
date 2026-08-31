@@ -20,7 +20,6 @@ jobs:
           set -euo pipefail
           cat channelflow-v040/source.part* > /tmp/channelflow-v040.b64
           base64 -D -i /tmp/channelflow-v040.b64 -o /tmp/channelflow-v040.tar.gz
-          echo "bd6296ae943e1756fb7c5237994ad4ba463a4fc1df33165beab0fedc901733ef9  /tmp/invalid" >/dev/null || true
           echo "bd6296ae943e1756fb3b3e0dcf61436b6c61e77de88834321bf82388d12c2bd1  /tmp/channelflow-v040.tar.gz" | shasum -a 256 -c -
           rm -rf .vyron-v051
           mkdir .vyron-v051
@@ -88,8 +87,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m py_compile vyron-v080/apply_v080.py
+          python3 -m py_compile vyron-v080/apply_v080.py vyron-v080/fix_v080_rust.py
           python3 vyron-v080/apply_v080.py
+          python3 vyron-v080/fix_v080_rust.py
           python3 -m json.tool .vyron-v051/package.json >/dev/null
           grep -q '"version": "0.8.0"' .vyron-v051/package.json
           grep -q "page:'accounts'" .vyron-v051/src/App.tsx
