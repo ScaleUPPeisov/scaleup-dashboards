@@ -1,0 +1,38 @@
+name: Export ChannelFlow 0.4 source for VYRON rebrand
+
+on:
+  push:
+    branches: [vyron-rebrand]
+  workflow_dispatch:
+
+jobs:
+  export-source:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restore verified source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat channelflow-v040/source.part* > /tmp/channelflow-v040.b64
+          base64 -d /tmp/channelflow-v040.b64 > /tmp/channelflow-v040.tar.gz
+          echo "bd6296ae943e1756fb3b3e0dcf61436b6c61e77de88834321bf82388d12c2bd1  /tmp/channelflow-v040.tar.gz" | sha256sum -c -
+          rm -rf source
+          mkdir source
+          tar -xzf /tmp/channelflow-v040.tar.gz -C source
+          cp channelflow-v040/files.rs.fixed source/src-tauri/src/files.rs
+          tar -czf ChannelFlow-0.4.0-source.tar.gz -C source .
+          sha256sum ChannelFlow-0.4.0-source.tar.gz > ChannelFlow-0.4.0-source.sha256
+
+      - name: Upload source archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChannelFlow-0.4.0-source-for-VYRON
+          path: |
+            ChannelFlow-0.4.0-source.tar.gz
+            ChannelFlow-0.4.0-source.sha256
+          retention-days: 7
