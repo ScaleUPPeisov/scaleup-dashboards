@@ -1,0 +1,63 @@
+name: Publish VYRON 0.5.0
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/vyron-v050-publish.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  ARTIFACT_ID: '9749657522'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download verified VYRON artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" > /tmp/vyron.zip
+          mkdir -p /tmp/vyron-release
+          unzip -q /tmp/vyron.zip -d /tmp/vyron-release
+          ls -lah /tmp/vyron-release
+          test -s /tmp/vyron-release/VYRON-0.5.0-macOS-AppleSilicon.dmg
+          expected=$(awk '{print $1}' /tmp/vyron-release/SHA256.txt)
+          actual=$(sha256sum /tmp/vyron-release/VYRON-0.5.0-macOS-AppleSilicon.dmg | awk '{print $1}')
+          test "$expected" = "$actual"
+          echo "DMG SHA256 verified: $actual"
+
+      - name: Publish VYRON 0.5.0 release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view v0.5.0 >/dev/null 2>&1; then
+            gh release delete v0.5.0 --yes --cleanup-tag
+          fi
+          gh release create v0.5.0 \
+            /tmp/vyron-release/VYRON-0.5.0-macOS-AppleSilicon.dmg \
+            /tmp/vyron-release/SHA256.txt \
+            /tmp/vyron-release/VYRON-0.5.0-source.tar.gz \
+            /tmp/vyron-release/SOURCE_SHA256.txt \
+            --target vyron-rebrand \
+            --title "VYRON 0.5.0 — CONTENT OS" \
+            --notes-file /tmp/vyron-release/RELEASE_NOTES.md
+
+      - name: Verify published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release view v0.5.0 --json tagName,name,isDraft,isPrerelease,url,assets
