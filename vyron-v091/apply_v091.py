@@ -32,8 +32,8 @@ if not found_cli:
     d.setdefault('devDependencies', {})['@tauri-apps/cli'] = '2.10.1'
 p.write_text(json.dumps(d, ensure_ascii=False, indent=2) + '\n')
 
-# Lockfile version only; npm install in CI resolves the pinned CLI without a
-# destructive dependency migration.
+# NPM root package version. npm install in CI resolves the pinned CLI and keeps
+# the dependency graph consistent.
 p = ROOT / 'package-lock.json'
 d = json.loads(p.read_text())
 d['version'] = VERSION
@@ -54,7 +54,7 @@ updater['endpoints'] = [
 ]
 p.write_text(json.dumps(d, ensure_ascii=False, indent=2) + '\n')
 
-# Rust crate version only; preserve crate name/identifier/storage compatibility.
+# Rust crate version. Preserve crate name/identifier/storage compatibility.
 p = ROOT / 'src-tauri/Cargo.toml'
 s = p.read_text()
 s, n = re.subn(r'^version = "0\.9\.0"$', f'version = "{VERSION}"', s, count=1, flags=re.M)
@@ -62,13 +62,18 @@ if n != 1:
     raise SystemExit('Cargo.toml 0.9.0 version marker missing')
 p.write_text(s)
 
+# Cargo.lock is generated metadata. Older reconstructed bases may still contain
+# 0.8.1 here even after the 0.9.0 patch; update a matching local package marker
+# when present, otherwise leave the lockfile to cargo check/build to reconcile.
 p = ROOT / 'src-tauri/Cargo.lock'
 s = p.read_text()
-old = 'name = "channelflow"\nversion = "0.9.0"'
-new = f'name = "channelflow"\nversion = "{VERSION}"'
-if old not in s:
-    raise SystemExit('Cargo.lock VYRON package marker missing')
-p.write_text(s.replace(old, new, 1))
+for crate_name in ('channelflow', 'vyron'):
+    pattern = rf'(name = "{re.escape(crate_name)}"\nversion = ")(?:0\.8\.1|0\.9\.0)(")'
+    s2, n = re.subn(pattern, rf'\g<1>{VERSION}\2', s, count=1)
+    if n:
+        s = s2
+        break
+p.write_text(s)
 
 # Visible/runtime current-version fallbacks. Do not touch API/business logic.
 for rel in ['src/App.tsx', 'src/api.ts', 'src/SettingsOS.tsx']:
