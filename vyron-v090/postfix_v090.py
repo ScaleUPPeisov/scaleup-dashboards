@@ -12,7 +12,6 @@ new="onClick={async()=>{try{setUpdate(await api.checkUpdate())}catch(e){setUpdat
 if old not in s:
     raise SystemExit('SettingsOS manual update handler marker missing')
 s=s.replace(old,new,1)
-# Do not claim the updater is cryptographically signed from a static diagnostics label.
 s=s.replace("{label:'Updater',status:'Tauri signed updater подключён',ok:true}","{label:'Updater',status:'Update Center настроен',detail:'Подпись новой версии проверяет Tauri updater при установке.'}",1)
 p.write_text(s)
 
@@ -41,26 +40,29 @@ if old not in s:
 s=s.replace(old,new,1)
 p.write_text(s)
 
-# Backend generator fix: patch_backend_v090 replaces the old function name but the old
-# signature/body can remain directly after the new verified update function. Remove only
-# that exact legacy duplicate, preserving the following youtube_channel_stats command.
+# Backend generator fix. The replacement in patch_backend_v090 intentionally starts at
+# the old function name, so the old argument tail can be concatenated immediately after
+# the new function's closing brace as `}(app:AppHandle,...)`. Remove from the exact old
+# argument signature up to (but not including) youtube_channel_stats.
 p=project/'src-tauri/src/youtube.rs'
 s=p.read_text()
-legacy_tail=re.compile(
-    r'\n\(app:AppHandle,profile_id:String,video_id:String,title:String,description:String,tags:Vec<String>,publish_at:Option<String>\)->Result<Value,String>\{.*?\n\}\n\n#\[tauri::command\]\npub async fn youtube_channel_stats',
-    re.S,
-)
-s2,n=legacy_tail.subn('\n\n#[tauri::command]\npub async fn youtube_channel_stats',s,count=1)
-if n!=1:
-    raise SystemExit(f'Legacy youtube_update_existing_video tail: expected 1, got {n}')
-if s2.count('pub async fn youtube_update_existing_video(')!=1:
-    raise SystemExit('Expected exactly one youtube_update_existing_video after cleanup')
-if 'privacy_status:Option<String>' not in s2 or '"verified":true' not in s2:
+legacy_start='(app:AppHandle,profile_id:String,video_id:String,title:String,description:String,tags:Vec<String>,publish_at:Option<String>)->Result<Value,String>{'
+next_command='#[tauri::command]\npub async fn youtube_channel_stats'
+start=s.find(legacy_start)
+end=s.find(next_command,start if start>=0 else 0)
+if start<0 or end<0 or end<=start:
+    raise SystemExit(f'Legacy youtube update tail bounds invalid: start={start}, end={end}')
+s=s[:start]+'\n\n'+s[end:]
+if s.count('pub async fn youtube_update_existing_video(')!=1:
+    raise SystemExit(f'Expected exactly one youtube_update_existing_video, got {s.count("pub async fn youtube_update_existing_video(")}')
+if 'privacy_status:Option<String>' not in s or '"verified":true' not in s:
     raise SystemExit('Verified YouTube update implementation missing after cleanup')
-p.write_text(s2)
+if legacy_start in s:
+    raise SystemExit('Legacy YouTube update signature still present after cleanup')
+p.write_text(s)
 
-# The analytics payload intentionally contains many real metrics in one serde_json::json!
-# tree. Raise the crate macro expansion ceiling instead of dropping fields.
+# The analytics payload contains many real metrics in one serde_json::json! tree.
+# Raise the crate macro expansion ceiling instead of dropping fields.
 p=project/'src-tauri/src/lib.rs'
 s=p.read_text()
 limit='#![recursion_limit = "512"]\n'
