@@ -1,0 +1,11 @@
+{
+  "version": "0.5.0",
+  "notes": "VYRON 0.5.0: новое имя Content OS, сохранение данных ChannelFlow и безопасная миграция Workspace.",
+  "pub_date": "2026-08-31T07:45:00Z",
+  "platforms": {
+    "darwin-aarch64": {
+      "signature": "current-version-no-download",
+      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/tag/v0.5.0"
+    }
+  }
+}
