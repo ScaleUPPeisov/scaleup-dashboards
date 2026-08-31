@@ -63,9 +63,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m py_compile vyron-v090/apply_v090.py vyron-v090/patch_backend_v090.py
+          python3 -m py_compile vyron-v090/apply_v090.py vyron-v090/patch_backend_v090.py vyron-v090/postfix_v090.py
           python3 vyron-v090/apply_v090.py
           python3 vyron-v090/patch_backend_v090.py
+          python3 vyron-v090/postfix_v090.py
           python3 - <<'PY'
           from pathlib import Path
           p=Path('.vyron-v051/src-tauri/src/youtube_intelligence.rs')
