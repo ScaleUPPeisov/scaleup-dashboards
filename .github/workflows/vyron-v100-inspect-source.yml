@@ -36,7 +36,7 @@ jobs:
           OUT=vyron-v100/source-snapshot
           rm -rf "$OUT"
           mkdir -p "$OUT/src" "$OUT/src-tauri/src"
-          for f in App.tsx api.ts store.ts types.ts autopilotRuntime.ts autopilotCore.ts DashboardOS.tsx ChannelsOS.tsx ProductionOS.tsx AnalyticsPage.tsx CompetitorsPage.tsx YouTubeCenter.tsx SettingsOS.tsx MetadataPage.tsx youtubeQuota.ts youtubeIntelligence.ts styles.css; do
+          for f in App.tsx api.ts store.ts types.ts autopilotRuntime.ts autopilotCore.ts DashboardOS.tsx ChannelsOS.tsx ProductionOS.tsx AnalyticsPage.tsx CompetitorsPage.tsx YouTubeCenter.tsx SettingsOS.tsx MetadataPage.tsx ExistingVideos.tsx PublisherOS.tsx AccountsPage.tsx QuotaMeter.tsx youtubeQuota.ts youtubeIntelligence.ts youtubeExisting.ts youtubeWorkflow.ts styles.css; do
             if [ -f "/tmp/vyron099/src/$f" ]; then cp "/tmp/vyron099/src/$f" "$OUT/src/$f"; fi
           done
           for f in lib.rs youtube.rs youtube_intelligence.rs storage.rs system.rs; do
@@ -55,5 +55,5 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add vyron-v100/source-snapshot
           if git diff --cached --quiet; then echo 'snapshot unchanged'; exit 0; fi
-          git commit -m 'chore(vyron): snapshot released 0.9.9 source for 1.0 upgrade'
+          git commit -m 'chore(vyron): refresh 0.9.9 source snapshot for 1.0 audit'
           git push origin HEAD:vyron-v0100-zero-quota-production
