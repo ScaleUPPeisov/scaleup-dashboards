@@ -24,6 +24,17 @@ jobs:
       - uses: actions/setup-node@v4
         with: {node-version: '22'}
       - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux Tauri system dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential pkg-config curl wget file \
+            libglib2.0-dev libgtk-3-dev libwebkit2gtk-4.1-dev \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+          pkg-config --modversion glib-2.0
+          pkg-config --modversion webkit2gtk-4.1
       - name: Install JS
         working-directory: .vyron-v100
         run: npm install --no-audit --no-fund
@@ -33,12 +44,6 @@ jobs:
       - name: TypeScript production build
         working-directory: .vyron-v100
         run: npm run build
-      - name: Rust tests
-        working-directory: .vyron-v100
-        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
-      - name: Cargo check
-        working-directory: .vyron-v100
-        run: cargo check --manifest-path src-tauri/Cargo.toml
       - name: Zero Quota static contract
         working-directory: .vyron-v100
         shell: bash
@@ -51,8 +56,19 @@ jobs:
           grep -q 'QuotaMeter' src/YouTubeCenter.tsx
           grep -q 'YouTubeDataTools' src/YouTubeCenter.tsx
           grep -q 'ProductionWorkspace' src/ProductionOS.tsx
+          grep -q 'production-workspace:v1' src/ProductionWorkspace.tsx
+          grep -q 'metadata-draft:v1' src/MetadataPage.tsx
+          grep -q 'existing-cache:v1' src/ExistingVideos.tsx
           ! grep -q 'setTimeout(()=>void sync(),350)' src/ExistingVideos.tsx
           ! grep -q 'setTimeout(()=>void loadYoutube(),350)' src/MetadataPage.tsx
           grep -q 'chunks(50)' src-tauri/src/youtube.rs
           grep -q 'metadata_needed' src-tauri/src/youtube.rs
+          grep -q 'youtube_backup_existing_videos' src-tauri/src/youtube.rs
+          grep -q 'youtube_update_existing_video' src-tauri/src/youtube.rs
           grep -q '"version": "1.0.0"' package.json
+      - name: Rust tests
+        working-directory: .vyron-v100
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+      - name: Cargo check
+        working-directory: .vyron-v100
+        run: cargo check --manifest-path src-tauri/Cargo.toml
