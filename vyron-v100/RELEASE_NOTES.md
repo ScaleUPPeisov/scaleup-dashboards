@@ -1,32 +1,28 @@
-# VYRON 1.0.0 — Zero Quota Production
+# VYRON 1.0.1 — Local Quota Reset
 
 Дата релиза: 01.09.2026
 
 ## Главное
 
-VYRON 1.0 переводит приложение на строгую модель: вся подготовка выполняется локально, а YouTube API используется только внутри рабочей зоны **YouTube** и только после явного действия пользователя.
+VYRON теперь показывает время следующего сброса YouTube Data API **по локальному времени компьютера пользователя**, а не только техническое `00:00 PT`.
 
-## Что изменено
+## Что изменено в 1.0.1
 
-- Удалены фоновые YouTube Intelligence polling/timers со startup и глобального App.
-- Autopilot больше физически не может загружать видео в YouTube в фоне. Он обслуживает только локальный Production + ENDLUME pipeline.
-- «Каналы», «Аналитика», «Конкуренты» и «Настройки» переведены на локальный cache/state без YouTube Data API.
-- Проверка OAuth health, ручное обновление аналитики и поиск/обновление конкурентов централизованы внутри **YouTube**.
-- Убрана автоматическая синхронизация Existing Videos при входе/возврате на вкладку.
-- Убрана автоматическая загрузка YouTube-видео в Metadata при входе/возврате.
-- Existing Videos сохраняет рабочую таблицу, выбранные видео, baseline, последнюю синхронизацию и Undo state локально.
-- Persistent Metadata Draft сохранён: SEO pack, parsed records, mapping, порядок, фильтры, расписание и выбранные видео переживают переходы и перезапуск.
-- Добавлен persistent Production Workspace по каждому каналу: проект, цель, материалы, рендер, SEO, проверка, расписание, готовность к YouTube.
-- Production остаётся полностью без YouTube API.
-- Quota Meter отображается только в YouTube.
-- Сохранён рабочий Rust YouTube writer: skip identical update, batch list до 50 videoId, combined metadata+schedule update, ownership validation, backup/undo и verification.
-- Существующие OAuth/token storage, Tauri identifier, updater endpoint/public key, ENDLUME integration и persistent storage не переименовывались и не заменялись.
-- Добавлен premium UI polish с лёгкими transform/opacity анимациями без тяжёлых blur/shadow animations.
+- В Quota Meter поле «Сброс» заменено на **«Сброс по вашему времени»**.
+- Следующий `00:00 America/Los_Angeles` автоматически переводится в системный часовой пояс macOS.
+- Учитывается переход Pacific Time между PDT и PST, поэтому время пересчитывается автоматически и не захардкожено.
+- Для компьютера с часовым поясом Красноярска отображается примерно **14:00 летом** и **15:00 зимой**.
+- Рядом сохраняется техническая подпись `00:00 PT`, чтобы было понятно, от какого правила Google идёт расчёт.
+- Сообщение при исчерпании квоты также показывает точные локальные дату и время следующего сброса.
 
-## Совместимость
+## Сохранено без изменений
 
-VYRON 1.0.0 обновляется поверх 0.9.9 через существующий подписанный Tauri updater. Старый AppState остаётся совместимым; потенциально опасные legacy-флаги background YouTube refresh/autoupload при hydrate принудительно мигрируются в `false`.
+- Zero Quota архитектура VYRON 1.0.
+- YouTube API вызывается только внутри рабочей зоны YouTube и после явного действия пользователя.
+- Production работает локально без YouTube API.
+- Existing Videos cache, Metadata Draft, Production Workspace и Undo persistence сохранены.
+- OAuth/token storage, Tauri identifier, updater endpoint/public key, ENDLUME integration и Rust YouTube writer не менялись.
 
-## Zero Regression Gates
+## Проверки релиза
 
-Релиз публикуется только после PASS: frontend unit tests, TypeScript production build, Rust tests, cargo check ARM64, Zero Quota contract checks, Tauri ARM64 build, app codesign verification, DMG verification и updater signature artifact verification.
+1.0.1 публикуется только после PASS: frontend tests, TypeScript production build, Rust tests, cargo check ARM64, Zero Quota/local-reset contract, private-key leak scan, Tauri ARM64 build, app codesign, DMG verify и updater signature verify против доверенного ключа VYRON 0.9.9/1.0.0.
