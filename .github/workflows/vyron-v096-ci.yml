@@ -35,8 +35,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m py_compile vyron-v096/apply_v096.py
+          python3 -m py_compile vyron-v096/apply_v096.py vyron-v096/postfix_v096.py
           python3 vyron-v096/apply_v096.py
+          python3 vyron-v096/postfix_v096.py
           grep -q '"version": "0.9.6"' .vyron-v051/package.json
           grep -q '"version": "0.9.6"' .vyron-v051/src-tauri/tauri.conf.json
           grep -q '^version = "0.9.6"$' .vyron-v051/src-tauri/Cargo.toml
