@@ -36,10 +36,18 @@ def main()->None:
     if dry.returncode!=0: fail('VYRON 0.9.9 dry-run failed:\n'+dry.stdout+'\n'+dry.stderr)
     run=subprocess.run(['patch','-p1','-d',str(ROOT),'-i',str(patch_file)],capture_output=True,text=True)
     if run.returncode!=0: fail('VYRON 0.9.9 patch failed:\n'+run.stdout+'\n'+run.stderr)
+
+    quota_meter=ROOT/'src/QuotaMeter.tsx'
+    quota_text=quota_meter.read_text()
+    old='saveYoutubeQuotaPlan({channels,videos});'
+    new='saveYoutubeQuotaPlan({channels,videosPerChannel:videos});'
+    if old not in quota_text: fail('VYRON 0.9.9 quota planner TypeScript postfix target not found')
+    quota_meter.write_text(quota_text.replace(old,new,1))
+
     pkg=json.loads((ROOT/'package.json').read_text())
     if pkg.get('version')!=VERSION: fail('package.json version is not 0.9.9')
     checks={
-      'src/QuotaMeter.tsx':['YOUTUBE API QUOTA','Live estimate','Сохранить план','Google Cloud Monitoring'],
+      'src/QuotaMeter.tsx':['YOUTUBE API QUOTA','Live estimate','Сохранить план','Google Cloud Monitoring','videosPerChannel'],
       'src/youtubeQuota.ts':['youtubeQuotaUsage','recordYoutubeCommand','buildYoutubeQuotaPlan','ESTIMATED_VIDEO_WRITE_UNITS'],
       'src/api.ts':['getVersion','appVersion','recordYoutubeCommand'],
       'src/YouTubeCenter.tsx':['QuotaMeter'],
@@ -51,6 +59,7 @@ def main()->None:
         for mark in marks:
             if mark not in text: fail(f'Missing VYRON 0.9.9 marker {mark} in {rel}')
     print(f'VYRON {VERSION} quota planner patch applied: {len(patch)} bytes')
+    print('VYRON 0.9.9 quota planner TypeScript fix applied')
     print(f'patch sha256={EXPECTED_PATCH_SHA256}')
 
 if __name__=='__main__': main()
