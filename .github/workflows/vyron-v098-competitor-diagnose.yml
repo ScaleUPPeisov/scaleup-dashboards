@@ -1,0 +1,34 @@
+name: VYRON 0.9.8 Competitor Diagnose
+on:
+  push:
+    branches: [main]
+    paths: ['vyron-v098-competitor-diagnose-trigger.txt']
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore VYRON 0.9.7 source
+        run: |
+          set -euo pipefail
+          mkdir src097
+          curl -fL --retry 3 'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v0.9.7/VYRON-0.9.7-source.tar.gz' -o /tmp/v097.tar.gz
+          tar -xzf /tmp/v097.tar.gz -C src097
+      - name: Print competitor command and call sites
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          for rel in ['src-tauri/src/youtube.rs','src/api.ts','src/CompetitorsPage.tsx','src/youtubeIntelligence.ts']:
+            p=Path('src097')/rel
+            if not p.exists(): continue
+            t=p.read_text()
+            print('\n########',rel,'########')
+            for key in ['youtube_compare_competitors','youtubeCompareCompetitors','Сравнить в YouTube','compareCompetitors']:
+              pos=0
+              while True:
+                i=t.find(key,pos)
+                if i<0:break
+                print('\n===',key,'@',i,'===')
+                print(t[max(0,i-1800):i+3500])
+                pos=i+len(key)
+          PY
