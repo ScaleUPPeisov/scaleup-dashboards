@@ -7,5 +7,7 @@ new='''if let Some(p)=publish{\n  match chrono::DateTime::parse_from_rfc3339(p){
 if old not in s:
     raise SystemExit('VYRON 0.9.6 publishAt delimiter marker not found')
 s=s.replace(old,new,1)
+s=s.replace('sd.push("publishAt")','sd.push("publishAt".to_string())')
+s=s.replace('sd.push("privacyStatus")','sd.push("privacyStatus".to_string())')
 p.write_text(s)
-print('VYRON 0.9.6 publishAt delimiter fixed')
+print('VYRON 0.9.6 Rust postfix applied: publishAt delimiter + verify String types')
