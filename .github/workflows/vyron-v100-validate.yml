@@ -1,0 +1,58 @@
+name: VYRON 1.0 Zero Regression Validate
+
+on:
+  push:
+    branches: [vyron-v0100-zero-quota-production]
+    paths: ['vyron-v100-validate-trigger.txt']
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore released 0.9.9 baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .vyron-v100 && mkdir .vyron-v100
+          curl -fL --retry 3 'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v0.9.9/VYRON-0.9.9-source.tar.gz' -o /tmp/v099.tar.gz
+          echo 'ca4415aa175a9126813009df56f7d8e27c7fdf82fb25ca54fe22e0782faef7b7  /tmp/v099.tar.gz' | sha256sum -c -
+          tar -xzf /tmp/v099.tar.gz -C .vyron-v100
+      - name: Apply VYRON 1.0 patch
+        run: python3 vyron-v100/apply_v100.py .vyron-v100
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install JS
+        working-directory: .vyron-v100
+        run: npm install --no-audit --no-fund
+      - name: Frontend tests
+        working-directory: .vyron-v100
+        run: npm test
+      - name: TypeScript production build
+        working-directory: .vyron-v100
+        run: npm run build
+      - name: Rust tests
+        working-directory: .vyron-v100
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+      - name: Cargo check
+        working-directory: .vyron-v100
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+      - name: Zero Quota static contract
+        working-directory: .vyron-v100
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! grep -R 'refreshYoutubeIntelligence' src/App.tsx
+          ! grep -R 'youtubeProfileHealth\|refreshChannelAnalytics\|youtubeDiscoverCompetitors' src/ChannelsOS.tsx src/AnalyticsPage.tsx src/CompetitorsPage.tsx src/SettingsOS.tsx
+          ! grep -R 'youtubeUpload' src/autopilotRuntime.ts
+          ! grep -R 'QuotaMeter' src/App.tsx src/SettingsOS.tsx
+          grep -q 'QuotaMeter' src/YouTubeCenter.tsx
+          grep -q 'YouTubeDataTools' src/YouTubeCenter.tsx
+          grep -q 'ProductionWorkspace' src/ProductionOS.tsx
+          ! grep -q 'setTimeout(()=>void sync(),350)' src/ExistingVideos.tsx
+          ! grep -q 'setTimeout(()=>void loadYoutube(),350)' src/MetadataPage.tsx
+          grep -q 'chunks(50)' src-tauri/src/youtube.rs
+          grep -q 'metadata_needed' src-tauri/src/youtube.rs
+          grep -q '"version": "1.0.0"' package.json
