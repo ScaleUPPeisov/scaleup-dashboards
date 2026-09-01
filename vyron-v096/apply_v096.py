@@ -6,13 +6,12 @@ PART=Path('vyron-v096')
 VERSION='0.9.6'
 EXPECTED_LEN=139856
 EXPECTED_SHA='f8f416b0e2f424c56d407c95a5ef085b68f8d257e0637fbfc8285fb0584cc95c'
-PARTS=['payload.part00', 'payload.part01', 'payload.part02', 'payload.part03', 'payload.part04', 'payload.part05', 'payload.part06', 'payload.part07']
 def fail(m): raise SystemExit(m)
 def main():
     if not ROOT.is_dir(): fail('VYRON source root missing')
-    missing=[n for n in PARTS if not (PART/n).is_file()]
-    if missing: fail(f'Missing VYRON 0.9.6 payload parts: {missing}')
-    encoded=''.join((PART/n).read_text().strip() for n in PARTS)
+    payload=PART/'payload.b64'
+    if not payload.is_file(): fail('Missing VYRON 0.9.6 payload')
+    encoded=payload.read_text().strip()
     if len(encoded)!=EXPECTED_LEN: fail(f'payload length {len(encoded)} != {EXPECTED_LEN}')
     raw=base64.b64decode(encoded,validate=True)
     digest=hashlib.sha256(raw).hexdigest()
