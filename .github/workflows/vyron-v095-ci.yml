@@ -1,0 +1,95 @@
+name: VYRON 0.9.5 Operational Overhaul CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'vyron-v095-ci-trigger.txt'
+      - '.github/workflows/vyron-v095-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate-macos-arm64:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout VYRON 0.9.5 payload
+        uses: actions/checkout@v4
+        with:
+          ref: vyron-v100-operational-overhaul
+
+      - name: Restore released VYRON 0.9.4 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .vyron-v051 && mkdir .vyron-v051
+          curl -fL --retry 3 'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v0.9.4/VYRON-0.9.4-source.tar.gz' -o /tmp/v094.tar.gz
+          tar -xzf /tmp/v094.tar.gz -C .vyron-v051
+          test -f .vyron-v051/package.json
+          grep -q '"version": "0.9.4"' .vyron-v051/package.json
+
+      - name: Decode and apply VYRON 0.9.5 payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64,gzip,io,tarfile
+          from pathlib import Path
+          parts=sorted(Path('vyron-v095').glob('payload.part*'))
+          if not parts: raise SystemExit('No VYRON 0.9.5 payload parts')
+          encoded=''.join(p.read_text().strip() for p in parts)
+          raw=base64.b64decode(encoded)
+          Path('/tmp/v095-payload.tar.gz').write_bytes(raw)
+          with tarfile.open('/tmp/v095-payload.tar.gz','r:gz') as tf:
+              names=tf.getnames()
+              print('Payload files:')
+              for n in names: print(n)
+              tf.extractall('.vyron-v051')
+          PY
+          grep -q '"version": "0.9.5"' .vyron-v051/package.json
+          grep -R -q 'Выбрать все' .vyron-v051/src
+          grep -R -q 'ОЦЕНКА' .vyron-v051/src
+          grep -R -q '100' .vyron-v051/src/SettingsOS.tsx
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .vyron-v051/src-tauri
+          cache-on-failure: true
+
+      - name: Install dependencies
+        working-directory: .vyron-v051
+        run: npm install --no-audit --no-fund
+      - name: Unit tests
+        working-directory: .vyron-v051
+        run: npm test
+      - name: Frontend production build
+        working-directory: .vyron-v051
+        run: npm run build
+      - name: Rust ARM64 check
+        working-directory: .vyron-v051
+        run: cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
+
+      - name: Required operational markers
+        working-directory: .vyron-v051
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -R -q 'PRIVATE' src
+          grep -R -q 'SCHEDULED' src
+          grep -R -q 'PUBLIC' src
+          grep -R -q 'Последние 30 Private' src
+          grep -R -q 'Выбрать все' src
+          grep -R -q 'ОЦЕНКА' src
+          echo 'VYRON 0.9.5 operational markers: OK'
