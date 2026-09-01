@@ -1,0 +1,95 @@
+name: VYRON 0.9.6 YouTube Metadata Write CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'vyron-v096-ci-trigger.txt'
+      - '.github/workflows/vyron-v096-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate-macos-arm64:
+    runs-on: macos-latest
+    timeout-minutes: 55
+    steps:
+      - name: Checkout VYRON 0.9.6 patch
+        uses: actions/checkout@v4
+        with:
+          ref: vyron-v096-metadata-write-fix
+
+      - name: Restore released VYRON 0.9.5 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .vyron-v051 && mkdir .vyron-v051
+          curl -fL --retry 3 'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v0.9.5/VYRON-0.9.5-source.tar.gz' -o /tmp/v095.tar.gz
+          tar -xzf /tmp/v095.tar.gz -C .vyron-v051
+          test -f .vyron-v051/package.json
+          grep -q '"version": "0.9.5"' .vyron-v051/package.json
+
+      - name: Apply VYRON 0.9.6 write fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile vyron-v096/apply_v096.py
+          python3 vyron-v096/apply_v096.py
+          grep -q '"version": "0.9.6"' .vyron-v051/package.json
+          grep -q '"version": "0.9.6"' .vyron-v051/src-tauri/tauri.conf.json
+          grep -q '^version = "0.9.6"$' .vyron-v051/src-tauri/Cargo.toml
+          ! grep -q 'catch{err++}' .vyron-v051/src/MetadataPage.tsx
+          grep -q 'metadataVerified' .vyron-v051/src/MetadataPage.tsx
+          grep -q 'scheduleError' .vyron-v051/src/MetadataPage.tsx
+          grep -q 'Phase 1: metadata only' .vyron-v051/src-tauri/src/youtube.rs
+          grep -q 'Phase 2: privacy/schedule' .vyron-v051/src-tauri/src/youtube.rs
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .vyron-v051/src-tauri
+          cache-on-failure: true
+
+      - name: Install dependencies
+        working-directory: .vyron-v051
+        run: npm install --no-audit --no-fund
+
+      - name: Frontend unit tests
+        working-directory: .vyron-v051
+        run: npm test
+
+      - name: Frontend production build
+        working-directory: .vyron-v051
+        run: npm run build
+
+      - name: Rust write-safety unit tests
+        working-directory: .vyron-v051
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib --target aarch64-apple-darwin youtube_write_tests
+
+      - name: Rust ARM64 check
+        working-directory: .vyron-v051
+        run: cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
+
+      - name: Required write-contract markers
+        working-directory: .vyron-v051
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'youtube_sanitize_tags' src-tauri/src/youtube.rs
+          grep -q 'youtube_truncate_utf8_bytes' src-tauri/src/youtube.rs
+          grep -q 'error/errors/0/reason' src-tauri/src/youtube.rs
+          grep -q 'YOUTUBE WRITE REPORT' src/MetadataPage.tsx
+          grep -q 'Применяю ${applyProgress' src/MetadataPage.tsx
+          echo 'VYRON 0.9.6 YouTube write contract: OK'
