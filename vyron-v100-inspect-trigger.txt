@@ -1,1 +1,1 @@
-VYRON 1.0 source snapshot trigger 2026-09-01
+VYRON 1.0 source snapshot trigger 2026-09-01 expanded
