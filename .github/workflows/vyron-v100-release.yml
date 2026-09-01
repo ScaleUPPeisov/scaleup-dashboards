@@ -16,20 +16,18 @@ jobs:
     env:
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-      TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
       APPLE_SIGNING_IDENTITY: "-"
       GH_TOKEN: ${{ github.token }}
     steps:
       - name: Checkout upgrade branch
         uses: actions/checkout@v4
 
-      - name: Validate updater trust secrets
+      - name: Validate updater signing secret
         shell: bash
         run: |
           set -euo pipefail
           test -n "${TAURI_SIGNING_PRIVATE_KEY:-}" || { echo 'TAURI_SIGNING_PRIVATE_KEY missing'; exit 1; }
-          test -n "${TAURI_UPDATER_PUBLIC_KEY:-}" || { echo 'TAURI_UPDATER_PUBLIC_KEY missing'; exit 1; }
-          echo 'Updater signing secrets are present; Tauri will validate the private key while creating updater artifacts.'
+          echo 'Updater signing private key is present; final artifact signature will be verified against the 0.9.9 embedded public key.'
 
       - name: Restore released VYRON 0.9.9 baseline
         shell: bash
@@ -40,6 +38,16 @@ jobs:
           echo 'ca4415aa175a9126813009df56f7d8e27c7fdf82fb25ca54fe22e0782faef7b7  /tmp/v099.tar.gz' | shasum -a 256 -c -
           tar -xzf /tmp/v099.tar.gz -C .vyron-v100
           grep -q '"version": "0.9.9"' .vyron-v100/package.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          conf=json.loads(Path('.vyron-v100/src-tauri/tauri.conf.json').read_text())
+          key=conf['plugins']['updater']['pubkey'].strip()
+          if not key: raise SystemExit('0.9.9 embedded updater public key missing')
+          Path('/tmp/vyron-v099-pubkey.txt').write_text(key)
+          Path('/tmp/vyron-v099-identifier.txt').write_text(conf['identifier'])
+          print('0.9.9 updater trust baseline captured')
+          PY
 
       - name: Apply VYRON 1.0.0 upgrade
         run: python3 vyron-v100/apply_v100.py .vyron-v100
@@ -49,7 +57,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import json,os
+          import json
           from pathlib import Path
           pkg=json.loads(Path('.vyron-v100/package.json').read_text())
           conf=json.loads(Path('.vyron-v100/src-tauri/tauri.conf.json').read_text())
@@ -58,9 +66,10 @@ jobs:
           assert conf['bundle']['createUpdaterArtifacts'] is True
           u=conf['plugins']['updater']
           assert u['endpoints']==['https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/vyron-updates/latest.json']
-          assert u['pubkey']==os.environ['TAURI_UPDATER_PUBLIC_KEY'].strip()
+          assert u['pubkey'].strip()==Path('/tmp/vyron-v099-pubkey.txt').read_text().strip()
+          assert conf['identifier']==Path('/tmp/vyron-v099-identifier.txt').read_text()
           print('Identifier:',conf['identifier'])
-          print('Updater identity/endpoint unchanged: OK')
+          print('Updater identity, embedded public key and endpoint unchanged from 0.9.9: OK')
           PY
 
       - name: Setup Node
@@ -141,6 +150,20 @@ jobs:
       - name: Build ARM64 app, DMG and signed updater artifacts
         working-directory: .vyron-v100
         run: npx tauri build --target aarch64-apple-darwin --bundles app,dmg
+
+      - name: Verify updater signature against 0.9.9 trust key
+        working-directory: .vyron-v100
+        shell: bash
+        run: |
+          set -euo pipefail
+          UPDATER=$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name '*.app.tar.gz' -print -quit)
+          SIG=$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name '*.app.tar.gz.sig' -print -quit)
+          test -n "$UPDATER" && test -s "$UPDATER"
+          test -n "$SIG" && test -s "$SIG"
+          command -v minisign >/dev/null 2>&1 || brew install minisign
+          base64 -D -i /tmp/vyron-v099-pubkey.txt -o /tmp/vyron-v099.pub
+          minisign -Vm "$UPDATER" -p /tmp/vyron-v099.pub -x "$SIG"
+          echo 'Updater signature matches embedded VYRON 0.9.9 trust key: PASS'
 
       - name: Verify and package release
         working-directory: .vyron-v100
