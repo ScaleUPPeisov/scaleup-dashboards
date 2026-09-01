@@ -1,0 +1,34 @@
+name: VYRON 0.9.8 Diagnose
+
+on:
+  push:
+    branches: [main]
+    paths: ['vyron-v098-diagnose-trigger.txt']
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore VYRON 0.9.7 source
+        run: |
+          set -euo pipefail
+          mkdir src097
+          curl -fL --retry 3 'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v0.9.7/VYRON-0.9.7-source.tar.gz' -o /tmp/v097.tar.gz
+          tar -xzf /tmp/v097.tar.gz -C src097
+      - name: Print schedule verifier and MetadataPage state
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          y=Path('src097/src-tauri/src/youtube.rs').read_text()
+          for key in ['fn same_publish_time','let verify=client.get("https://www.googleapis.com/youtube/v3/videos")','scheduleVerified']:
+              i=y.find(key)
+              print('\n===',key,'===')
+              print(y[max(0,i-700):i+2500] if i>=0 else 'NOT FOUND')
+          m=Path('src097/src/MetadataPage.tsx').read_text()
+          for key in ['useState<ImportedMetadata','selectedYt','setRows','useEffect(()=>{setCadence','function MetadataPage','export function MetadataPage']:
+              i=m.find(key)
+              print('\n===',key,'===')
+              print(m[max(0,i-1200):i+3500] if i>=0 else 'NOT FOUND')
+          PY
