@@ -45,13 +45,16 @@ p.write_text(s)
 p=ROOT/'src/MetadataPage.tsx'; s=p.read_text()
 anchor='''type ApplyReport={metadataOk:number;total:number;scheduleOk:number;scheduleTotal:number;failed:number;issues:ApplyIssue[]};'''
 if anchor not in s: raise SystemExit('MetadataPage ApplyReport marker missing')
-helper='''\nfunction resolveKratPublishAt(raw:string|undefined,base:string|undefined){const v=(raw||'').trim();if(/^\\d{4}-\\d{2}-\\d{2}T/.test(v))return v;if(!base)return undefined;const m=v.match(/(?:^|\\s)(\\d{1,2}):(\\d{2})(?:\\s*(?:KRAT|UTC\\+?7))?/i);if(!m)return base;const d=new Date(base);if(Number.isNaN(d.getTime()))return base;const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Krasnoyarsk',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(d);const get=(t:string)=>parts.find(x=>x.type===t)?.value||'';const hh=String(Math.max(0,Math.min(23,Number(m[1])))).padStart(2,'0');const mm=String(Math.max(0,Math.min(59,Number(m[2])))).padStart(2,'0');return `${get('year')}-${get('month')}-${get('day')}T${hh}:${mm}:00+07:00`}\n'''
+helper='''\nexport function resolveKratPublishAt(raw:string|undefined,base:string|undefined){const v=(raw||'').trim();if(/^\\d{4}-\\d{2}-\\d{2}T/.test(v))return v;if(!base)return undefined;const m=v.match(/(?:^|\\s)(\\d{1,2}):(\\d{2})(?:\\s*(?:KRAT|UTC\\+?7))?/i);if(!m)return base;const d=new Date(base);if(Number.isNaN(d.getTime()))return base;const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Krasnoyarsk',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(d);const get=(t:string)=>parts.find(x=>x.type===t)?.value||'';const hh=String(Math.max(0,Math.min(23,Number(m[1])))).padStart(2,'0');const mm=String(Math.max(0,Math.min(59,Number(m[2])))).padStart(2,'0');return `${get('year')}-${get('month')}-${get('day')}T${hh}:${mm}:00+07:00`}\n'''
 s=s.replace(anchor,anchor+helper,1)
 old="const publishAt=v.privacyStatus==='private'?(r.publishAt||scheduleById.get(v.id)||v.publishAt):v.publishAt;const result=await api.youtubeUpdateExisting(profileId,v.id,r.title||v.title,r.description||v.description,r.tags?.length?r.tags:v.tags,publishAt,v.privacyStatus);if(result.metadataVerified)metadataOk++;else{failed++;issues.push({videoId:v.id,title:v.title,phase:'metadata',error:'YouTube не подтвердил title/description/tags'});continue}if(result.scheduleRequested){scheduleTotal++;if(result.scheduleVerified)scheduleOk++;else issues.push({videoId:v.id,title:v.title,phase:'schedule',error:result.scheduleError||'YouTube не подтвердил расписание'})}"
 new="const basePublishAt=scheduleById.get(v.id)||v.publishAt;const publishAt=v.privacyStatus==='private'?resolveKratPublishAt(r.publishAt,basePublishAt):v.publishAt;const result=await api.youtubeUpdateExisting(profileId,v.id,r.title||v.title,r.description||v.description,r.tags?.length?r.tags:v.tags,publishAt,v.privacyStatus);if(result.metadataAccepted!==false)metadataOk++;else{failed++;issues.push({videoId:v.id,title:v.title,phase:'metadata',error:'YouTube не принял title/description/tags'});continue}if(result.scheduleRequested){scheduleTotal++;if(result.scheduleVerified)scheduleOk++;else issues.push({videoId:v.id,title:v.title,phase:'schedule',error:result.scheduleError||'YouTube не подтвердил расписание'})}"
 if old not in s: raise SystemExit('0.9.6 applyYoutube decision block not found')
 s=s.replace(old,new,1)
 p.write_text(s)
+
+# Regression test: Word pack time-only KRAT must inherit the planned date and become RFC3339 +07:00.
+(ROOT/'src/MetadataPage.schedule.test.ts').write_text('''import {describe,it,expect} from "vitest";\nimport {resolveKratPublishAt} from "./MetadataPage";\ndescribe("KRAT schedule",()=>{it("combines PUBLISH TIME with planned date",()=>{expect(resolveKratPublishAt("04:00 KRAT","2026-09-02T18:00:00+07:00")).toBe("2026-09-02T04:00:00+07:00")});it("keeps explicit RFC3339",()=>{expect(resolveKratPublishAt("2026-09-05T04:00:00+07:00","2026-09-02T18:00:00+07:00")).toBe("2026-09-05T04:00:00+07:00")})});\n''')
 
 # ---------- Version bump ----------
 for rel in ['package.json','package-lock.json','src-tauri/tauri.conf.json']:
@@ -71,6 +74,7 @@ for rel in ['src/App.tsx','src/SettingsOS.tsx']:
 checks={
  'src-tauri/src/youtube.rs':['metadata_verify_pending','youtube_metadata_diff','tokio::time::sleep','metadataAccepted'],
  'src/MetadataPage.tsx':['resolveKratPublishAt','Asia/Krasnoyarsk','metadataAccepted!==false'],
+ 'src/MetadataPage.schedule.test.ts':['04:00 KRAT','2026-09-02T04:00:00+07:00'],
 }
 for rel,marks in checks.items():
  text=(ROOT/rel).read_text()
