@@ -1,4 +1,4 @@
-name: VYRON 1.0.0 Zero Quota Production Release
+name: VYRON 1.0.1 Local Quota Reset Release
 
 on:
   push:
@@ -69,7 +69,7 @@ jobs:
           print('0.9.9 updater trust baseline captured')
           PY
 
-      - name: Apply VYRON 1.0.0 upgrade
+      - name: Apply VYRON 1.0.1 upgrade
         run: python3 vyron-v100/apply_v100.py .vyron-v100
 
       - name: Verify immutable identity and updater trust
@@ -81,8 +81,8 @@ jobs:
           from pathlib import Path
           pkg=json.loads(Path('.vyron-v100/package.json').read_text())
           conf=json.loads(Path('.vyron-v100/src-tauri/tauri.conf.json').read_text())
-          assert pkg['version']=='1.0.0'
-          assert conf['version']=='1.0.0'
+          assert pkg['version']=='1.0.1'
+          assert conf['version']=='1.0.1'
           assert conf['bundle']['createUpdaterArtifacts'] is True
           u=conf['plugins']['updater']
           baseline=Path('/tmp/vyron-v099-pubkey.txt').read_text().strip()
@@ -130,7 +130,7 @@ jobs:
         working-directory: .vyron-v100
         run: cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
 
-      - name: Zero Quota and persistence contracts
+      - name: Zero Quota, local reset and persistence contracts
         working-directory: .vyron-v100
         shell: bash
         run: |
@@ -145,6 +145,10 @@ jobs:
           grep -q 'production-workspace:v1' src/ProductionWorkspace.tsx
           grep -q 'metadata-draft:v1' src/MetadataPage.tsx
           grep -q 'existing-cache:v1' src/ExistingVideos.tsx
+          grep -q 'Сброс по вашему времени' src/QuotaMeter.tsx
+          grep -q 'youtubeQuotaResetLocalInfo' src/QuotaMeter.tsx
+          grep -q 'nextYoutubeQuotaResetAt' src/youtubeQuota.ts
+          grep -q 'America/Los_Angeles' src/youtubeQuota.ts
           ! grep -q 'setTimeout(()=>void sync(),350)' src/ExistingVideos.tsx
           ! grep -q 'setTimeout(()=>void loadYoutube(),350)' src/MetadataPage.tsx
           grep -q 'metadata_needed' src-tauri/src/youtube.rs
@@ -184,8 +188,8 @@ jobs:
           test -n "$SIG" && test -s "$SIG"
           command -v minisign >/dev/null 2>&1 || brew install minisign
           base64 -D -i /tmp/vyron-v099-pubkey.txt -o /tmp/vyron-v099.pub
-          base64 -D -i "$SIG" -o /tmp/vyron-v100.minisig
-          minisign -Vm "$UPDATER" -p /tmp/vyron-v099.pub -x /tmp/vyron-v100.minisig
+          base64 -D -i "$SIG" -o /tmp/vyron-v101.minisig
+          minisign -Vm "$UPDATER" -p /tmp/vyron-v099.pub -x /tmp/vyron-v101.minisig
           echo 'Updater signature matches embedded VYRON 0.9.9 trust key: PASS'
 
       - name: Verify and package release
@@ -203,25 +207,25 @@ jobs:
           test -n "$BUILT_DMG" && test -s "$BUILT_DMG"
           test -n "$UPDATER" && test -s "$UPDATER"
           test -n "$SIG" && test -s "$SIG"
-          file "$BIN" | tee /tmp/vyron-v100-file.txt
-          grep -E 'arm64|Mach-O 64-bit executable arm64' /tmp/vyron-v100-file.txt
+          file "$BIN" | tee /tmp/vyron-v101-file.txt
+          grep -E 'arm64|Mach-O 64-bit executable arm64' /tmp/vyron-v101-file.txt
           codesign --verify --deep --strict --verbose=2 "$APP"
           hdiutil verify "$BUILT_DMG"
           rm -rf release && mkdir release
-          cp "$BUILT_DMG" release/VYRON-1.0.0-macOS-AppleSilicon.dmg
+          cp "$BUILT_DMG" release/VYRON-1.0.1-macOS-AppleSilicon.dmg
           cp "$UPDATER" release/VYRON.app.tar.gz
           cp "$SIG" release/VYRON.app.tar.gz.sig
           cp ../vyron-v100/RELEASE_NOTES.md release/RELEASE_NOTES.md
-          shasum -a 256 release/VYRON-1.0.0-macOS-AppleSilicon.dmg > release/SHA256.txt
+          shasum -a 256 release/VYRON-1.0.1-macOS-AppleSilicon.dmg > release/SHA256.txt
           shasum -a 256 release/VYRON.app.tar.gz > release/UPDATER_SHA256.txt
-          tar -czf release/VYRON-1.0.0-source.tar.gz --exclude='./node_modules' --exclude='./dist' --exclude='./src-tauri/target' --exclude='./release' .
-          shasum -a 256 release/VYRON-1.0.0-source.tar.gz > release/SOURCE_SHA256.txt
+          tar -czf release/VYRON-1.0.1-source.tar.gz --exclude='./node_modules' --exclude='./dist' --exclude='./src-tauri/target' --exclude='./release' .
+          shasum -a 256 release/VYRON-1.0.1-source.tar.gz > release/SOURCE_SHA256.txt
           python3 - <<'PY'
           import datetime,json
           from pathlib import Path
           sig=Path('release/VYRON.app.tar.gz.sig').read_text().strip()
           if not sig: raise SystemExit('empty updater signature')
-          data={'version':'1.0.0','notes':Path('release/RELEASE_NOTES.md').read_text(),'pub_date':datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace('+00:00','Z'),'platforms':{'darwin-aarch64':{'url':'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v1.0.0/VYRON.app.tar.gz','signature':sig}}}
+          data={'version':'1.0.1','notes':Path('release/RELEASE_NOTES.md').read_text(),'pub_date':datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace('+00:00','Z'),'platforms':{'darwin-aarch64':{'url':'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v1.0.1/VYRON.app.tar.gz','signature':sig}}}
           Path('release/latest.json').write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
           PY
 
@@ -230,11 +234,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if gh release view v1.0.0 >/dev/null 2>&1; then
-            gh release upload v1.0.0 release/* --clobber
-            gh release edit v1.0.0 --title 'VYRON 1.0.0 — Zero Quota Production' --notes-file release/RELEASE_NOTES.md
+          if gh release view v1.0.1 >/dev/null 2>&1; then
+            gh release upload v1.0.1 release/* --clobber
+            gh release edit v1.0.1 --title 'VYRON 1.0.1 — Local Quota Reset' --notes-file release/RELEASE_NOTES.md
           else
-            gh release create v1.0.0 release/* --target "$GITHUB_SHA" --title 'VYRON 1.0.0 — Zero Quota Production' --notes-file release/RELEASE_NOTES.md
+            gh release create v1.0.1 release/* --target "$GITHUB_SHA" --title 'VYRON 1.0.1 — Local Quota Reset' --notes-file release/RELEASE_NOTES.md
           fi
 
       - name: Publish signed live updater feed
@@ -251,7 +255,7 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add vyron-updates/latest.json
           if ! git diff --cached --quiet; then
-            git commit -m 'release(vyron): publish 1.0.0 updater feed'
+            git commit -m 'release(vyron): publish 1.0.1 updater feed'
             git push origin HEAD:main
           fi
 
@@ -262,16 +266,16 @@ jobs:
           URL='https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/vyron-updates/latest.json'
           ok=0
           for i in 1 2 3 4 5 6; do
-            if curl -fsSL "${URL}?v=1.0.0-${i}" -o /tmp/live-latest.json && python3 - <<'PY'
+            if curl -fsSL "${URL}?v=1.0.1-${i}" -o /tmp/live-latest.json && python3 - <<'PY'
           import json
           x=json.load(open('/tmp/live-latest.json'))
-          assert x['version']=='1.0.0'
+          assert x['version']=='1.0.1'
           p=x['platforms']['darwin-aarch64']
-          assert p['url'].endswith('/v1.0.0/VYRON.app.tar.gz')
+          assert p['url'].endswith('/v1.0.1/VYRON.app.tar.gz')
           assert len(p['signature'].strip())>20
           PY
             then ok=1; break; fi
             sleep 5
           done
           test "$ok" = 1
-          echo 'VYRON 1.0.0 live updater feed: PASS'
+          echo 'VYRON 1.0.1 live updater feed: PASS'
