@@ -10,7 +10,6 @@ import subprocess
 ROOT=Path('.vyron-v051')
 PAYLOAD=Path('vyron-v098/patch.gz.b64')
 VERSION='0.9.8'
-EXPECTED_B64_SHA256='05188747ad7a6c13b150eb74764cb63dc1152b652972f698b75cd11a43529447'
 EXPECTED_PATCH_SHA256='a9a552507239c08706f6c88c7488b0af756bc49585a72c306b59cee68b85b874'
 
 def fail(msg:str)->None: raise SystemExit(msg)
@@ -20,10 +19,9 @@ def main()->None:
     pkg=json.loads((ROOT/'package.json').read_text())
     if pkg.get('version')!='0.9.7': fail(f"Expected VYRON 0.9.7 base, got {pkg.get('version')}")
     raw_b64=PAYLOAD.read_bytes().strip()
-    if hashlib.sha256(raw_b64).hexdigest()!=EXPECTED_B64_SHA256: fail('VYRON 0.9.8 payload base64 SHA mismatch')
     try: patch=gzip.decompress(base64.b64decode(raw_b64,validate=True))
     except Exception as exc: fail(f'VYRON 0.9.8 payload decode failed: {exc}')
-    if hashlib.sha256(patch).hexdigest()!=EXPECTED_PATCH_SHA256: fail('VYRON 0.9.8 patch SHA mismatch')
+    if hashlib.sha256(patch).hexdigest()!=EXPECTED_PATCH_SHA256: fail('VYRON 0.9.8 decoded patch SHA mismatch')
     patch_file=Path('/tmp/vyron-v098.patch');patch_file.write_bytes(patch)
     dry=subprocess.run(['patch','-p2','--dry-run','-d',str(ROOT),'-i',str(patch_file)],capture_output=True,text=True)
     if dry.returncode!=0: fail('VYRON 0.9.8 dry-run failed:\n'+dry.stdout+'\n'+dry.stderr)
