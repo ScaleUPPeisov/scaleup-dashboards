@@ -31,37 +31,25 @@ jobs:
           test -f .vyron-v051/package.json
           grep -q '"version": "0.9.4"' .vyron-v051/package.json
 
-      - name: Decode and apply VYRON 0.9.5 payload
+      - name: Verify and apply VYRON 0.9.5 payload
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          import base64,gzip,io,tarfile
-          from pathlib import Path
-          parts=sorted(Path('vyron-v095').glob('payload.part*'))
-          if not parts: raise SystemExit('No VYRON 0.9.5 payload parts')
-          encoded=''.join(p.read_text().strip() for p in parts)
-          raw=base64.b64decode(encoded)
-          Path('/tmp/v095-payload.tar.gz').write_bytes(raw)
-          with tarfile.open('/tmp/v095-payload.tar.gz','r:gz') as tf:
-              names=tf.getnames()
-              print('Payload files:')
-              for n in names: print(n)
-              tf.extractall('.vyron-v051')
-          PY
+          python3 vyron-v095/apply_v095.py
           grep -q '"version": "0.9.5"' .vyron-v051/package.json
-          grep -R -q 'Выбрать все' .vyron-v051/src
-          grep -R -q 'ОЦЕНКА' .vyron-v051/src
-          grep -R -q '100' .vyron-v051/src/SettingsOS.tsx
+          grep -q '"version": "0.9.5"' .vyron-v051/src-tauri/tauri.conf.json
+          grep -q '^version = "0.9.5"$' .vyron-v051/src-tauri/Cargo.toml
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin
+
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
@@ -71,12 +59,15 @@ jobs:
       - name: Install dependencies
         working-directory: .vyron-v051
         run: npm install --no-audit --no-fund
+
       - name: Unit tests
         working-directory: .vyron-v051
         run: npm test
+
       - name: Frontend production build
         working-directory: .vyron-v051
         run: npm run build
+
       - name: Rust ARM64 check
         working-directory: .vyron-v051
         run: cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
