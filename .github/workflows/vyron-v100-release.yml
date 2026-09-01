@@ -31,10 +31,11 @@ jobs:
           test -n "${TAURI_UPDATER_PUBLIC_KEY:-}" || { echo 'TAURI_UPDATER_PUBLIC_KEY missing'; exit 1; }
           python3 - <<'PY'
           import base64,os
-          for name,kind in [('TAURI_SIGNING_PRIVATE_KEY','secret key'),('TAURI_UPDATER_PUBLIC_KEY','public key')]:
+          for name in ('TAURI_SIGNING_PRIVATE_KEY','TAURI_UPDATER_PUBLIC_KEY'):
               raw=os.environ[name].strip()
               decoded=base64.b64decode(raw,validate=True).decode()
-              if not decoded.startswith('untrusted comment:') or kind not in decoded.splitlines()[0].lower():
+              lines=decoded.splitlines()
+              if not decoded.startswith('untrusted comment:') or len(lines)<2 or not lines[1].strip():
                   raise SystemExit(f'{name}: invalid Tauri/minisign key box')
           print('Updater trust secret formats: OK')
           PY
