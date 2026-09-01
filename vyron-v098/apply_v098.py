@@ -18,7 +18,9 @@ def main()->None:
     if not ROOT.is_dir(): fail('VYRON source root missing')
     pkg=json.loads((ROOT/'package.json').read_text())
     if pkg.get('version')!='0.9.7': fail(f"Expected VYRON 0.9.7 base, got {pkg.get('version')}")
-    raw_b64=PAYLOAD.read_bytes().strip()
+    # GitHub may wrap a large Base64 text file across lines. Strip ASCII
+    # whitespace only; the decoded patch is still verified by SHA256 below.
+    raw_b64=b''.join(PAYLOAD.read_bytes().split())
     try: patch=gzip.decompress(base64.b64decode(raw_b64,validate=True))
     except Exception as exc: fail(f'VYRON 0.9.8 payload decode failed: {exc}')
     if hashlib.sha256(patch).hexdigest()!=EXPECTED_PATCH_SHA256: fail('VYRON 0.9.8 decoded patch SHA mismatch')
