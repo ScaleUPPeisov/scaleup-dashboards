@@ -184,7 +184,8 @@ jobs:
           test -n "$SIG" && test -s "$SIG"
           command -v minisign >/dev/null 2>&1 || brew install minisign
           base64 -D -i /tmp/vyron-v099-pubkey.txt -o /tmp/vyron-v099.pub
-          minisign -Vm "$UPDATER" -p /tmp/vyron-v099.pub -x "$SIG"
+          base64 -D -i "$SIG" -o /tmp/vyron-v100.minisig
+          minisign -Vm "$UPDATER" -p /tmp/vyron-v099.pub -x /tmp/vyron-v100.minisig
           echo 'Updater signature matches embedded VYRON 0.9.9 trust key: PASS'
 
       - name: Verify and package release
