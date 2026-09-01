@@ -1,0 +1,1 @@
+VYRON 0.9.7 signed release trigger — verify + KRAT schedule fix
