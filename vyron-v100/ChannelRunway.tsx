@@ -1,6 +1,7 @@
 import React,{useEffect,useMemo,useState} from 'react';
 import {useApp} from './store';
 import {dateKeyInZone,formatDateKeyRu,nextKrasnoyarskSixAt,readChannelRunwayState,recalculateChannelRunway,subscribeChannelRunway,type ChannelRunwayRow,type RunwayStatus} from './channelRunway';
+import './ChannelRunway.css';
 
 const statusLabel:Record<RunwayStatus,string>={safe:'ЗАПАС БОЛЬШОЙ',plan:'ПОСТАВИТЬ В ПЛАН',prepare:'ГОТОВИТЬ ПАЧКУ',urgent:'СРОЧНО',empty:'РАСПИСАНИЕ ЗАКОНЧИЛОСЬ',nodata:'НЕТ ДАННЫХ'};
 const statusIcon:Record<RunwayStatus,string>={safe:'●',plan:'●',prepare:'●',urgent:'●',empty:'●',nodata:'○'};
