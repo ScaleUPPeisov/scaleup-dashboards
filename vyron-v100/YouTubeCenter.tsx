@@ -4,7 +4,7 @@ import {MetadataPage} from './MetadataPage';
 import {PublisherOS} from './PublisherOS';
 import {AccountsPage} from './AccountsPage';
 import {YouTubeDataTools} from './YouTubeDataTools';
-import {ChannelRunway} from './ChannelRunway';
+import {ChannelRunway} from './ChannelRunwayPanel';
 import {useApp} from './store';
 import {QuotaMeter} from './QuotaMeter';
 
