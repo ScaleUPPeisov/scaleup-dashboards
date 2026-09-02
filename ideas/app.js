@@ -1,5 +1,6 @@
 const API = 'https://zwukfrzgezpctzfdidng.supabase.co/functions/v1/ideas-api';
 const VAPID_PUBLIC = 'BNK1wT5668BYOi2OhjbZVG24ndAgx8K7BoiFUavWwxnGK1CNOmsgYYGfdak_BjtUDV9SvjPjnZfEUWEETZwMJe0';
+const APP_VERSION = '2.2.0';
 const $ = (id) => document.getElementById(id);
 
 const state = {
@@ -122,8 +123,14 @@ async function ensureServiceWorker() {
 async function currentSubscription() {
   try {
     const reg = await ensureServiceWorker();
-    return reg.pushManager ? reg.pushManager.getSubscription() : null;
+    return reg.pushManager ? await reg.pushManager.getSubscription() : null;
   } catch { return null; }
+}
+function pushPermissionError() {
+  if (notificationPermission() === 'denied') {
+    return new Error('Уведомления выключены в iOS. Открой Настройки → Уведомления → Ideas');
+  }
+  return new Error('Разрешение на уведомления не выдано');
 }
 async function enablePush({ quiet = false } = {}) {
   if (!notificationsSupported()) throw new Error('На этом устройстве push-уведомления не поддерживаются');
@@ -132,11 +139,12 @@ async function enablePush({ quiet = false } = {}) {
     throw new Error('Сначала добавь Ideas на экран Домой');
   }
   let permission = notificationPermission();
+  if (permission === 'denied') throw pushPermissionError();
   if (permission !== 'granted') {
     if (quiet) return false;
     permission = await Notification.requestPermission();
   }
-  if (permission !== 'granted') throw new Error('Разрешение на уведомления не выдано');
+  if (permission !== 'granted') throw pushPermissionError();
   const reg = await ensureServiceWorker();
   if (!reg.pushManager) throw new Error('Push-уведомления недоступны в этой версии iOS');
   let subscription = await reg.pushManager.getSubscription();
@@ -150,7 +158,8 @@ function renderSettings() {
   $('linkState').textContent = s.paired ? 'Готово' : 'Ожидает второго устройства';
   $('pushState').textContent = s.ownPushReady && notificationPermission() === 'granted' ? 'Включены' : 'Нужна настройка';
   $('partnerState').textContent = s.partnerPushReady ? 'Готово' : s.paired ? 'Нужна настройка' : 'Не подключено';
-  $('repairBtn').textContent = s.ownPushReady ? 'Проверить уведомления' : 'Включить уведомления';
+  $('repairBtn').textContent = s.ownPushReady ? 'Переподключить уведомления' : 'Включить уведомления';
+  if ($('versionState')) $('versionState').textContent = APP_VERSION;
 }
 
 async function refreshStatus({ autoRepair = true, quiet = false } = {}) {
@@ -162,8 +171,11 @@ async function refreshStatus({ autoRepair = true, quiet = false } = {}) {
     if (s.pairCode) { state.pairCode=s.pairCode; localStorage.setItem('ideas.pairCode',s.pairCode); }
     if (s.pairCodeExpiresAt) { state.pairCodeExpiresAt=s.pairCodeExpiresAt; localStorage.setItem('ideas.pairCodeExpiresAt',s.pairCodeExpiresAt); }
 
-    if (autoRepair && notificationsSupported() && isStandalone() && notificationPermission() === 'granted' && !s.ownPushReady) {
-      try { await enablePush({quiet:true}); state.status = await api('status'); } catch {}
+    if (autoRepair && notificationsSupported() && isStandalone() && notificationPermission() === 'granted') {
+      const localSub = await currentSubscription();
+      if (!localSub || !s.ownPushReady) {
+        try { await enablePush({quiet:true}); state.status = await api('status'); } catch {}
+      }
     }
 
     if (!state.status.paired) { showSetup('created'); return; }
@@ -184,8 +196,12 @@ async function joinPair() {
   const pairCode=$('codeInput').value.replace(/\D/g,'').slice(0,6);
   if(pairCode.length!==6) return toast('Введи 6 цифр');
   $('confirmJoinBtn').disabled=true;
-  try { const data=await api('join_pair',{pairCode}); saveSession(data); showSetup('notifyOnly'); }
-  catch(e){ toast(e.message==='Срок действия кода истёк'?'Попроси новый код':e.message); }
+  try {
+    const data=await api('join_pair',{pairCode});
+    saveSession(data);
+    $('codeInput').value='';
+    showSetup('notifyOnly');
+  } catch(e){ toast(e.message==='Срок действия кода истёк'?'Попроси новый код':e.message); }
   finally { $('confirmJoinBtn').disabled=false; }
 }
 async function rotateCode() {
@@ -202,13 +218,19 @@ async function activateUpdates() {
   const btn=$('notifyOnly').classList.contains('hidden')?$('enableBtn'):$('notifyBtn');
   btn.disabled=true;
   try { await enablePush(); toast('Готово'); await refreshStatus({autoRepair:false}); }
-  catch(e){ toast(e.message,2400); }
+  catch(e){ toast(e.message,3000); }
   finally { btn.disabled=false; }
 }
 async function repairPush() {
   $('repairBtn').disabled=true;
-  try { await enablePush(); await refreshStatus({autoRepair:false,quiet:true}); renderSettings(); toast('Уведомления работают'); }
-  catch(e){ toast(e.message,2400); }
+  try {
+    const old = await currentSubscription();
+    if (old) { try { await old.unsubscribe(); } catch {} }
+    await enablePush();
+    await refreshStatus({autoRepair:false,quiet:true});
+    renderSettings();
+    toast('Уведомления подключены');
+  } catch(e){ toast(e.message,3000); }
   finally { $('repairBtn').disabled=false; }
 }
 async function disconnect() {
@@ -230,9 +252,9 @@ async function sendSignal() {
     const result=await api('send_signal');
     if(result.sent>0) toast('Подборка обновлена');
   } catch(e) {
-    if(/уведомлен|экран Домой|разрешен/i.test(e.message)) showSetup('notifyOnly');
+    if(/уведомлен|экран Домой|разрешен|iOS/i.test(e.message)) showSetup('notifyOnly');
     if(/Второе устройство/i.test(e.message)) showSetup('created');
-    toast(e.message.includes('втор')?'Подборка пока недоступна':e.message,2200);
+    toast(e.message.includes('втор')?'Подборка пока недоступна':e.message,2600);
   } finally { setTimeout(()=>setMainBusy(false),700); }
 }
 
