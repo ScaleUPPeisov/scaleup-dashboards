@@ -14,7 +14,7 @@ def copy(name:str):
 def main():
     if not (ROOT/'package.json').exists(): fail('VYRON source root missing')
     # This patch is intentionally isolated from apply_v100.py and public release workflow.
-    for name in ['channelRunway.ts','ChannelRunway.tsx','ChannelRunwayRuntime.tsx','channelRunway.test.ts']:
+    for name in ['channelRunway.ts','ChannelRunway.tsx','ChannelRunwayRuntime.tsx','ChannelRunway.css','channelRunway.test.ts']:
         copy(name)
 
     app=ROOT/'src/App.tsx';s=app.read_text()
@@ -30,8 +30,9 @@ def main():
 
     checks={
       'src/channelRunway.ts':['vyron:channel-runway:v1','Asia/Krasnoyarsk','nextKrasnoyarskSixAt','ESTIMATED_VIDEO_WRITE_UNITS'],
-      'src/ChannelRunway.tsx':['CHANNEL RUNWAY','0 API units','Открыть синхронизацию'],
+      'src/ChannelRunway.tsx':['CHANNEL RUNWAY','0 API units','Открыть синхронизацию','ChannelRunway.css'],
       'src/ChannelRunwayRuntime.tsx':['shouldRunDailyChannelRunway','nextKrasnoyarskSixAt'],
+      'src/ChannelRunway.css':['Channel Runway — isolated styles only'],
       'src/YouTubeCenter.tsx':['ChannelRunway','План каналов'],
       'src/App.tsx':['ChannelRunwayRuntime'],
     }
