@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "app.ideas.mobile",
+      "sha256_cert_fingerprints": [
+        "36:68:DD:65:12:CC:2D:3F:C6:D5:A2:E4:57:70:FB:BC:E1:89:D6:63:B6:A4:B8:69:5B:24:C5:5F:F6:B8:49:37"
+      ]
+    }
+  }
+]
