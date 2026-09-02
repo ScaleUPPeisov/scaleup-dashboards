@@ -1,0 +1,176 @@
+name: VYRON Channel Runway Check — NO RELEASE
+
+on:
+  push:
+    branches: [vyron-channel-runway-implementation]
+    paths: ['vyron-runway-check-trigger.txt']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: macos-latest
+    timeout-minutes: 70
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+      APPLE_SIGNING_IDENTITY: "-"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Normalize updater keys for test build
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64,os
+          def dec(v):
+              try:return base64.b64decode(v.strip(),validate=True).decode()
+              except Exception:return None
+          def norm(name,kind):
+              raw=os.environ[name].strip();once=dec(raw)
+              if once and once.startswith('untrusted comment:'): out,box=raw,once
+              else:
+                  if not once: raise SystemExit(f'{name}: invalid encoding')
+                  out=once.strip();box=dec(out)
+                  if not box or not box.startswith('untrusted comment:'): raise SystemExit(f'{name}: invalid Tauri key')
+              if kind not in box.splitlines()[0].lower(): raise SystemExit(f'{name}: wrong key type')
+              return out
+          sk=norm('TAURI_SIGNING_PRIVATE_KEY','secret key');pk=norm('TAURI_UPDATER_PUBLIC_KEY','public key')
+          print(f'::add-mask::{sk}')
+          with open(os.environ['GITHUB_ENV'],'a') as f:f.write(f'TAURI_SIGNING_PRIVATE_KEY={sk}\nTAURI_UPDATER_PUBLIC_KEY={pk}\n')
+          PY
+
+      - name: Restore exact VYRON 0.9.9 release source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .vyron-check && mkdir .vyron-check
+          curl -fL --retry 3 'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v0.9.9/VYRON-0.9.9-source.tar.gz' -o /tmp/v099.tar.gz
+          echo 'ca4415aa175a9126813009df56f7d8e27c7fdf82fb25ca54fe22e0782faef7b7  /tmp/v099.tar.gz' | shasum -a 256 -c -
+          tar -xzf /tmp/v099.tar.gz -C .vyron-check
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          c=json.loads(Path('.vyron-check/src-tauri/tauri.conf.json').read_text())
+          Path('/tmp/vyron-pubkey.txt').write_text(c['plugins']['updater']['pubkey'].strip())
+          Path('/tmp/vyron-identifier.txt').write_text(c['identifier'])
+          PY
+
+      - name: Apply current released 1.0.1 layer
+        run: python3 vyron-v100/apply_v100.py .vyron-check
+
+      - name: Snapshot protected files
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          r=Path('.vyron-check')
+          files=['src/ExistingVideos.tsx','src/MetadataPage.tsx','src/ProductionOS.tsx','src/ProductionWorkspace.tsx','src/SettingsOS.tsx','src/QuotaMeter.tsx','src/youtubeQuota.ts','src/AccountsPage.tsx','src/store.ts','src/autopilotRuntime.ts','src/api.ts','src-tauri/src/youtube.rs','src-tauri/tauri.conf.json','src-tauri/Cargo.toml']
+          Path('/tmp/protected.json').write_text(json.dumps({p:hashlib.sha256((r/p).read_bytes()).hexdigest() for p in files},sort_keys=True))
+          PY
+
+      - name: Apply isolated Channel Runway layer
+        run: python3 vyron-v100/apply_channel_runway.py .vyron-check
+
+      - name: Verify protected files unchanged
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          r=Path('.vyron-check');before=json.loads(Path('/tmp/protected.json').read_text())
+          changed=[p for p,h in before.items() if hashlib.sha256((r/p).read_bytes()).hexdigest()!=h]
+          if changed: raise SystemExit('Protected files changed: '+', '.join(changed))
+          c=json.loads((r/'src-tauri/tauri.conf.json').read_text())
+          assert c['identifier']==Path('/tmp/vyron-identifier.txt').read_text()
+          assert c['plugins']['updater']['pubkey'].strip()==Path('/tmp/vyron-pubkey.txt').read_text().strip()
+          print('Protected files / identifier / updater trust: PASS')
+          PY
+
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - uses: dtolnay/rust-toolchain@stable
+        with: {targets: aarch64-apple-darwin}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .vyron-check/src-tauri
+          cache-on-failure: true
+
+      - name: Install JS
+        working-directory: .vyron-check
+        run: npm install --no-audit --no-fund
+      - name: Frontend tests
+        working-directory: .vyron-check
+        run: npm test
+      - name: TypeScript production build
+        working-directory: .vyron-check
+        run: npm run build
+      - name: Rust tests
+        working-directory: .vyron-check
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+      - name: Cargo check ARM64
+        working-directory: .vyron-check
+        run: cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
+
+      - name: Static Zero Quota and Runway contract
+        working-directory: .vyron-check
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'ChannelRunwayRuntime' src/App.tsx
+          grep -q 'План каналов' src/YouTubeCenter.tsx
+          grep -q 'vyron:channel-runway:v1' src/channelRunway.ts
+          grep -q 'vyron:existing-cache:v1:' src/channelRunway.ts
+          grep -q 'Asia/Krasnoyarsk' src/channelRunway.ts
+          grep -q '0 API units' src/ChannelRunway.tsx
+          ! grep -R "from './api'\|api\.\|invoke(\|youtubeListExisting\|youtubeUpdateExisting\|youtubeProfileHealth\|refreshChannelAnalytics\|youtubeDiscoverCompetitors" src/channelRunway.ts src/ChannelRunway.tsx src/ChannelRunwayRuntime.tsx
+          ! grep -R 'refreshYoutubeIntelligence' src/App.tsx
+          ! grep -R 'youtubeUpload' src/autopilotRuntime.ts
+          ! grep -R 'QuotaMeter' src/App.tsx src/SettingsOS.tsx
+          grep -q 'QuotaMeter' src/YouTubeCenter.tsx
+          ! grep -q 'setTimeout(()=>void sync(),350)' src/ExistingVideos.tsx
+          ! grep -q 'setTimeout(()=>void loadYoutube(),350)' src/MetadataPage.tsx
+          grep -q 'metadata_needed' src-tauri/src/youtube.rs
+          grep -q 'chunks(50)' src-tauri/src/youtube.rs
+          echo 'Static contracts: PASS'
+
+      - name: Scan private updater key leakage
+        working-directory: .vyron-check
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          secret=os.environ['TAURI_SIGNING_PRIVATE_KEY'].strip().encode()
+          for root in [Path('src'),Path('dist'),Path('src-tauri/src')]:
+              for p in root.rglob('*') if root.exists() else []:
+                  if p.is_file() and secret and secret in p.read_bytes(): raise SystemExit(f'PRIVATE KEY LEAK: {p}')
+          print('Private key leak scan: PASS')
+          PY
+
+      - name: Build signed ARM64 app and DMG for validation only
+        working-directory: .vyron-check
+        run: npx tauri build --target aarch64-apple-darwin --bundles app,dmg
+
+      - name: Verify signed test build
+        working-directory: .vyron-check
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)
+          DMG=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -name '*.dmg' -print -quit)
+          UPDATER=$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name '*.app.tar.gz' -print -quit)
+          SIG=$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name '*.app.tar.gz.sig' -print -quit)
+          test -d "$APP" && test -s "$DMG" && test -s "$UPDATER" && test -s "$SIG"
+          command -v minisign >/dev/null 2>&1 || brew install minisign
+          base64 -D -i /tmp/vyron-pubkey.txt -o /tmp/vyron.pub
+          base64 -D -i "$SIG" -o /tmp/runway.minisig
+          minisign -Vm "$UPDATER" -p /tmp/vyron.pub -x /tmp/runway.minisig
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          hdiutil verify "$DMG"
+          echo 'FULL CHECK PASS — TEST BUILD ONLY, NOTHING PUBLISHED'
