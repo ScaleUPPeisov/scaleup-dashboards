@@ -99,7 +99,10 @@ export function deriveRunwayRecord(
   known=true
 ):ChannelRunwayRecord{
   const current=now.getTime();
+  // YouTube Scheduled is represented as privacyStatus=private + future status.publishAt.
+  // Ignore public/unlisted/unknown items even if malformed/stale data happens to contain publishAt.
   const scheduled=videos
+    .filter(v=>v.privacyStatus==='private')
     .map(v=>({at:v.publishAt?Date.parse(v.publishAt):Number.NaN,publishAt:v.publishAt}))
     .filter(v=>Number.isFinite(v.at)&&v.at>current)
     .sort((a,b)=>a.at-b.at);
