@@ -124,11 +124,12 @@ jobs:
           set -euo pipefail
           grep -q 'ChannelRunwayRuntime' src/App.tsx
           grep -q 'План каналов' src/YouTubeCenter.tsx
+          grep -q 'ChannelRunwayPanel' src/YouTubeCenter.tsx
           grep -q 'vyron:channel-runway:v1' src/channelRunway.ts
           grep -q 'vyron:existing-cache:v1:' src/channelRunway.ts
           grep -q 'Asia/Krasnoyarsk' src/channelRunway.ts
-          grep -q '0 API units' src/ChannelRunway.tsx
-          ! grep -R "from './api'\|api\.\|invoke(\|youtubeListExisting\|youtubeUpdateExisting\|youtubeProfileHealth\|refreshChannelAnalytics\|youtubeDiscoverCompetitors" src/channelRunway.ts src/ChannelRunway.tsx src/ChannelRunwayRuntime.tsx
+          grep -q '0 API units' src/ChannelRunwayPanel.tsx
+          ! grep -R "from './api'\|api\.\|invoke(\|youtubeListExisting\|youtubeUpdateExisting\|youtubeProfileHealth\|refreshChannelAnalytics\|youtubeDiscoverCompetitors" src/channelRunway.ts src/ChannelRunwayPanel.tsx src/ChannelRunwayRuntime.tsx
           ! grep -R 'refreshYoutubeIntelligence' src/App.tsx
           ! grep -R 'youtubeUpload' src/autopilotRuntime.ts
           ! grep -R 'QuotaMeter' src/App.tsx src/SettingsOS.tsx
