@@ -1,0 +1,119 @@
+name: VYRON 1.0.4 Production Manager Validation
+
+on:
+  push:
+    branches: [vyron-v104-production-manager-dev]
+    paths: ['vyron-v104-validation-trigger.txt']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: macos-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore exact released VYRON 1.0.3
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .vyron-v104 && mkdir .vyron-v104
+          curl -fL --retry 3 'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v1.0.3/VYRON-1.0.3-source.tar.gz' -o /tmp/v103.tar.gz
+          echo 'c2d8353fd0455a407018a262bc97cbe2471b8794be37f58f01af05900c9765f9  /tmp/v103.tar.gz' | shasum -a 256 -c -
+          tar -xzf /tmp/v103.tar.gz -C .vyron-v104
+          grep -q '"version": "1.0.3"' .vyron-v104/package.json
+      - name: Capture protected 1.0.3 contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd .vyron-v104
+          shasum -a 256 src-tauri/src/youtube.rs src-tauri/src/storage.rs src-tauri/src/files.rs src/api.ts src/store.ts src/types.ts > /tmp/protected-v103.sha
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          c=json.loads(Path('src-tauri/tauri.conf.json').read_text())
+          Path('/tmp/v103-identifier').write_text(c['identifier'])
+          Path('/tmp/v103-pubkey').write_text(c['plugins']['updater']['pubkey'])
+          Path('/tmp/v103-endpoints').write_text(json.dumps(c['plugins']['updater']['endpoints']))
+          PY
+      - name: Apply VYRON 1.0.4 Production Manager
+        run: python3 vyron-v100/apply_v104.py .vyron-v104
+      - name: Verify immutable core and version
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd .vyron-v104
+          shasum -a 256 -c /tmp/protected-v103.sha
+          python3 - <<'PY'
+          import json,hashlib
+          from pathlib import Path
+          p=json.loads(Path('package.json').read_text());c=json.loads(Path('src-tauri/tauri.conf.json').read_text())
+          assert p['version']=='1.0.4' and c['version']=='1.0.4'
+          assert c['identifier']==Path('/tmp/v103-identifier').read_text()
+          assert c['plugins']['updater']['pubkey']==Path('/tmp/v103-pubkey').read_text()
+          assert json.dumps(c['plugins']['updater']['endpoints'])==Path('/tmp/v103-endpoints').read_text()
+          core=Path('src-tauri/src/production_manager.rs').read_bytes().split(b'\n#[cfg(test)]\nmod production_manager_tests;')[0]
+          assert hashlib.sha256(core).hexdigest()=='28254d42041ab1fedf387c429818640207bd465fb39c9c7b6fc1fe4d71dc4c82'
+          assert hashlib.sha256(Path('src/ProductionManager.tsx').read_bytes()).hexdigest()=='66e53f2f477483e8a016059b2eab160a47b8f0d0207c076638685319c0c8cd05'
+          print('Identity, updater trust, protected source and overlay SHA: PASS')
+          PY
+      - name: Zero Quota Production contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd .vyron-v104
+          ! grep -RniE 'youtube_upload_video|youtube_list_existing_videos|youtube_update_existing_video|youtube_channel_analytics|youtube_channel_stats|youtube_oauth_profile_health|ytInvoke|googleapis\.com' src/ProductionManager.tsx src/ProductionStatusBridge.tsx src/productionManagerApi.ts src-tauri/src/production_manager.rs
+          grep -q "invoke<BuildResult>('build_production_batch'" src/productionManagerApi.ts
+          grep -q 'Автосборка' src/ProductionOS.tsx
+          grep -q '<ProductionStatusBridge/>' src/App.tsx
+          grep -q 'ProductionManager' src/ProductionOS.tsx
+          grep -q 'production_manager::build_production_batch' src-tauri/src/lib.rs
+          grep -q 'Command::new("open").arg(&app)' src-tauri/src/production_manager.rs
+          ! grep -q 'remove_file.*source\|remove_dir_all.*music' src-tauri/src/production_manager.rs
+          grep -q 'fs::copy(&src,&dst)' src-tauri/src/production_manager.rs
+          grep -q 'sequence_fingerprints' src-tauri/src/production_manager.rs
+          grep -q 'checkpoint.json' src-tauri/src/production_manager.rs
+          grep -q 'build-requests.json' src-tauri/src/production_manager.rs
+          echo 'Production Manager Zero Quota/path/persistence contracts: PASS'
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Setup Rust ARM64
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .vyron-v104/src-tauri
+          cache-on-failure: true
+      - name: Install JS dependencies
+        working-directory: .vyron-v104
+        run: npm install --no-audit --no-fund
+      - name: Existing frontend tests
+        working-directory: .vyron-v104
+        run: npm test
+      - name: TypeScript production build
+        working-directory: .vyron-v104
+        run: npm run build
+      - name: Rust + Production acceptance tests
+        working-directory: .vyron-v104
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib -- --nocapture
+      - name: Cargo check ARM64
+        working-directory: .vyron-v104
+        run: cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
+      - name: Legacy YouTube writer regression contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd .vyron-v104
+          grep -q 'chunks(50)' src-tauri/src/youtube.rs
+          grep -q 'metadata_needed' src-tauri/src/youtube.rs
+          grep -q "const ytInvoke" src/api.ts
+          grep -q "youtubeUpload:" src/api.ts
+          grep -q 'existing-cache:v1' src/ExistingVideos.tsx
+          grep -q 'metadata-draft:v1' src/MetadataPage.tsx
+          echo 'Legacy OAuth/YouTube/SEO contracts preserved: PASS'
