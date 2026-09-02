@@ -1,0 +1,149 @@
+name: VYRON 1.0.5 Image Import Regression Gate
+
+on:
+  push:
+    branches: [vyron-v105-image-import-fix]
+    paths:
+      - 'vyron-v100/apply_v105.py'
+      - '.github/workflows/vyron-v105-image-import-validation.yml'
+      - 'vyron-v105-validation-trigger.txt'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore exact released VYRON 1.0.4
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .vyron-v105 && mkdir .vyron-v105
+          curl -fL --retry 3 'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v1.0.4/VYRON-1.0.4-source.tar.gz' -o /tmp/v104.tar.gz
+          echo '2c3baa07b3d4bcaacb6201412543f4b4799f8ea721b4178bd9b6124a834ac784  /tmp/v104.tar.gz' | shasum -a 256 -c -
+          tar -xzf /tmp/v104.tar.gz -C .vyron-v105
+          grep -q '"version": "1.0.4"' .vyron-v105/package.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          c=json.loads(Path('.vyron-v105/src-tauri/tauri.conf.json').read_text())
+          Path('/tmp/v104-identifier').write_text(c['identifier'])
+          Path('/tmp/v104-pubkey').write_text(c['plugins']['updater']['pubkey'])
+          Path('/tmp/v104-endpoints').write_text(json.dumps(c['plugins']['updater']['endpoints']))
+          PY
+
+      - name: Snapshot all untouched source files
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd .vyron-v105
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          allowed={
+            'package.json','package-lock.json','src-tauri/Cargo.toml','src-tauri/tauri.conf.json',
+            'src/App.tsx','src/ProductionManager.tsx','src/productionManagerApi.ts',
+            'src-tauri/src/production_manager.rs','src-tauri/src/production_manager_tests.rs'
+          }
+          roots=[Path('src'),Path('src-tauri/src')]
+          extra=[Path('package.json'),Path('package-lock.json'),Path('src-tauri/Cargo.toml'),Path('src-tauri/tauri.conf.json')]
+          files=[]
+          for root in roots:
+            if root.exists(): files += [p for p in root.rglob('*') if p.is_file()]
+          files += [p for p in extra if p.is_file()]
+          snap={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in files if str(p) not in allowed}
+          Path('/tmp/v104-untouched.json').write_text(json.dumps(snap,sort_keys=True))
+          protected=['src-tauri/src/youtube.rs','src-tauri/src/storage.rs','src-tauri/src/files.rs','src/api.ts','src/store.ts','src/types.ts']
+          Path('/tmp/v104-protected.json').write_text(json.dumps({p:hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in protected},sort_keys=True))
+          print('Untouched snapshot:',len(snap),'files')
+          PY
+
+      - name: Apply only VYRON 1.0.5 image-import fix
+        run: python3 vyron-v100/apply_v105.py .vyron-v105
+
+      - name: Prove scope, identity, updater trust and Zero Quota
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd .vyron-v105
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          old=json.loads(Path('/tmp/v104-untouched.json').read_text())
+          changed=[]
+          for f,h in old.items():
+            p=Path(f)
+            if not p.is_file() or hashlib.sha256(p.read_bytes()).hexdigest()!=h: changed.append(f)
+          assert not changed, f'UNRELATED FILES CHANGED: {changed}'
+          protected=json.loads(Path('/tmp/v104-protected.json').read_text())
+          for f,h in protected.items(): assert hashlib.sha256(Path(f).read_bytes()).hexdigest()==h, f'PROTECTED FILE CHANGED: {f}'
+          pkg=json.loads(Path('package.json').read_text());cfg=json.loads(Path('src-tauri/tauri.conf.json').read_text())
+          assert pkg['version']=='1.0.5' and cfg['version']=='1.0.5'
+          assert cfg['identifier']==Path('/tmp/v104-identifier').read_text()
+          assert cfg['plugins']['updater']['pubkey']==Path('/tmp/v104-pubkey').read_text()
+          assert json.dumps(cfg['plugins']['updater']['endpoints'])==Path('/tmp/v104-endpoints').read_text()
+          assert cfg['plugins']['updater']['endpoints']==['https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/vyron-updates/latest.json']
+          print('Scope/identity/updater/protected files: PASS')
+          PY
+          R=src-tauri/src/production_manager.rs
+          ! grep -Fq 'if seen.contains(&key){continue;} seen.insert(key.clone());' "$R"
+          grep -Fq 'struct ImportProbe' "$R"
+          grep -Fq 'import_candidate_ready' "$R"
+          grep -Fq '.partial' "$R"
+          grep -Fq 'production-import-error' "$R"
+          grep -Fq 'normalize_import_runtime' "$R"
+          grep -Fq 'VYRON не может читать папку Downloads' "$R"
+          grep -Fq 'productionManagerApi.importStatus(workspace,channelId)' src/ProductionManager.tsx
+          grep -Fq "listen('production-import-error'" src/productionManagerApi.ts
+          ! grep -RniE 'youtube_upload_video|youtube_list_existing_videos|youtube_update_existing_video|youtube_channel_analytics|youtube_channel_stats|youtube_oauth_profile_health|ytInvoke|googleapis\.com' src/ProductionManager.tsx src/productionManagerApi.ts src-tauri/src/production_manager.rs
+          echo 'Image-import source + Zero Quota contracts: PASS'
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup Rust ARM64
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .vyron-v105/src-tauri
+          cache-on-failure: true
+
+      - name: Install JS dependencies
+        working-directory: .vyron-v105
+        run: npm install --no-audit --no-fund
+
+      - name: Frontend tests
+        working-directory: .vyron-v105
+        run: npm test
+
+      - name: TypeScript production build
+        working-directory: .vyron-v105
+        run: npm run build
+
+      - name: Rust regression tests including zero-byte download race
+        working-directory: .vyron-v105
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib -- --nocapture
+
+      - name: Cargo check ARM64
+        working-directory: .vyron-v105
+        run: cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
+
+      - name: Final import regression assertions
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd .vyron-v105
+          grep -Fq 'acceptance_import_candidate_retries_zero_byte_until_stable' src-tauri/src/production_manager_tests.rs
+          grep -Fq 'acceptance_persisted_active_import_is_not_reported_alive_without_runtime_watcher' src-tauri/src/production_manager_tests.rs
+          echo 'VYRON 1.0.5 image import regression gate: PASS'
