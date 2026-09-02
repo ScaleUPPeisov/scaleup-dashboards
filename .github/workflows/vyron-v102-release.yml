@@ -1,0 +1,328 @@
+name: VYRON 1.0.2 Channel Runway Release
+
+on:
+  push:
+    branches: [vyron-channel-runway-dev]
+    paths: ['vyron-v102-release-trigger.txt']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vyron-v102-release
+  cancel-in-progress: false
+
+jobs:
+  release-macos-arm64:
+    runs-on: macos-latest
+    timeout-minutes: 70
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+      APPLE_SIGNING_IDENTITY: "-"
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout release source
+        uses: actions/checkout@v4
+
+      - name: Verify expected release branch and current live version
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = "vyron-channel-runway-dev"
+          curl -fsSL 'https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/vyron-updates/latest.json' -o /tmp/current-live.json
+          python3 - <<'PY'
+          import json
+          x=json.load(open('/tmp/current-live.json'))
+          assert x['version']=='1.0.1', f"Expected live 1.0.1 before 1.0.2 release, got {x['version']}"
+          print('Current live updater is 1.0.1: OK')
+          PY
+
+      - name: Normalize updater keys exactly like signed 1.0.1
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${TAURI_SIGNING_PRIVATE_KEY:-}" || exit 1
+          test -n "${TAURI_UPDATER_PUBLIC_KEY:-}" || exit 1
+          python3 - <<'PY'
+          import base64, os
+          def dec(v):
+              try:return base64.b64decode(v.strip(),validate=True).decode()
+              except Exception:return None
+          def norm(name,kind):
+              raw=os.environ[name].strip(); once=dec(raw)
+              if once and once.startswith('untrusted comment:'): out,box=raw,once
+              else:
+                  if not once: raise SystemExit(f'{name}: invalid encoding')
+                  out=once.strip(); box=dec(out)
+                  if not box or not box.startswith('untrusted comment:'): raise SystemExit(f'{name}: not a Tauri key')
+              if kind not in box.splitlines()[0].lower(): raise SystemExit(f'{name}: wrong key type')
+              return out
+          sk=norm('TAURI_SIGNING_PRIVATE_KEY','secret key');pk=norm('TAURI_UPDATER_PUBLIC_KEY','public key')
+          print(f'::add-mask::{sk}')
+          with open(os.environ['GITHUB_ENV'],'a') as f:f.write(f'TAURI_SIGNING_PRIVATE_KEY={sk}\nTAURI_UPDATER_PUBLIC_KEY={pk}\n')
+          print('Updater key normalization: OK')
+          PY
+
+      - name: Restore exact released VYRON 0.9.9 baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .vyron-v100 && mkdir .vyron-v100
+          curl -fL --retry 3 'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v0.9.9/VYRON-0.9.9-source.tar.gz' -o /tmp/v099.tar.gz
+          echo 'ca4415aa175a9126813009df56f7d8e27c7fdf82fb25ca54fe22e0782faef7b7  /tmp/v099.tar.gz' | shasum -a 256 -c -
+          tar -xzf /tmp/v099.tar.gz -C .vyron-v100
+          grep -q '"version": "0.9.9"' .vyron-v100/package.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          conf=json.loads(Path('.vyron-v100/src-tauri/tauri.conf.json').read_text())
+          key=conf['plugins']['updater']['pubkey'].strip()
+          if not key: raise SystemExit('0.9.9 embedded updater public key missing')
+          Path('/tmp/vyron-v099-pubkey.txt').write_text(key)
+          Path('/tmp/vyron-v099-identifier.txt').write_text(conf['identifier'])
+          print('0.9.9 updater trust baseline captured')
+          PY
+
+      - name: Apply verified VYRON 1.0.1 base
+        run: python3 vyron-v100/apply_v100.py .vyron-v100
+
+      - name: Apply Channel Runway 1.0.2 overlay
+        run: python3 vyron-v100/apply_channel_runway.py .vyron-v100
+
+      - name: Verify version and immutable updater trust
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          pkg=json.loads(Path('.vyron-v100/package.json').read_text())
+          conf=json.loads(Path('.vyron-v100/src-tauri/tauri.conf.json').read_text())
+          assert pkg['version']=='1.0.2'
+          assert conf['version']=='1.0.2'
+          assert conf['bundle']['createUpdaterArtifacts'] is True
+          baseline=Path('/tmp/vyron-v099-pubkey.txt').read_text().strip()
+          assert conf['plugins']['updater']['pubkey'].strip()==baseline
+          assert os.environ['TAURI_UPDATER_PUBLIC_KEY'].strip()==baseline
+          assert conf['plugins']['updater']['endpoints']==['https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/vyron-updates/latest.json']
+          assert conf['identifier']==Path('/tmp/vyron-v099-identifier.txt').read_text()
+          print('VYRON 1.0.2 identity/updater trust unchanged: PASS')
+          PY
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup Rust ARM64
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .vyron-v100/src-tauri
+          cache-on-failure: true
+
+      - name: Install JS dependencies
+        working-directory: .vyron-v100
+        run: npm install --no-audit --no-fund
+
+      - name: Frontend tests
+        working-directory: .vyron-v100
+        run: npm test
+
+      - name: TypeScript production build
+        working-directory: .vyron-v100
+        run: npm run build
+
+      - name: Zero Quota + Channel Runway release contracts
+        working-directory: .vyron-v100
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! grep -R 'refreshYoutubeIntelligence' src/App.tsx
+          ! grep -R 'youtubeProfileHealth\|refreshChannelAnalytics\|youtubeDiscoverCompetitors' src/ChannelsOS.tsx src/AnalyticsPage.tsx src/CompetitorsPage.tsx src/SettingsOS.tsx
+          ! grep -R 'youtubeUpload' src/autopilotRuntime.ts
+          ! grep -R 'QuotaMeter' src/App.tsx src/SettingsOS.tsx
+          grep -q 'QuotaMeter' src/YouTubeCenter.tsx
+          grep -q 'ChannelRunway' src/YouTubeCenter.tsx
+          grep -q 'ChannelRunwayScheduler' src/App.tsx
+          grep -q 'vyron:channel-runway:v1' src/channelRunwayCore.ts
+          grep -q 'Asia/Krasnoyarsk' src/channelRunwayCore.ts
+          grep -q '06:00 Asia/Krasnoyarsk' src/ChannelRunway.tsx
+          grep -q "v.privacyStatus!=='private'" src/channelRunwayCore.ts
+          ! grep -R "from './api'\|api\.\|youtubeListExisting\|youtubeUpdateExisting\|youtubeProfileHealth\|youtubeAnalytics(" src/channelRunwayCore.ts src/channelRunwayStore.ts src/ChannelRunwayScheduler.tsx
+          test "$(grep -o 'api.youtubeListExisting' src/ChannelRunway.tsx | wc -l | tr -d ' ')" = "1"
+          grep -q 'onClick={()=>void syncChannel(channel)}' src/ChannelRunway.tsx
+          ! grep -E 'useEffect.*syncChannel|useEffect.*youtubeListExisting' src/ChannelRunway.tsx
+          grep -q 'existing-cache:v1' src/ExistingVideos.tsx
+          grep -q 'metadata-draft:v1' src/MetadataPage.tsx
+          grep -q 'production-workspace:v1' src/ProductionWorkspace.tsx
+          grep -q 'Сброс по вашему времени' src/QuotaMeter.tsx
+          grep -q 'chunks(50)' src-tauri/src/youtube.rs
+          grep -q 'metadata_needed' src-tauri/src/youtube.rs
+          grep -q 'youtube_backup_existing_videos' src-tauri/src/youtube.rs
+          grep -q 'youtube_update_existing_video' src-tauri/src/youtube.rs
+          echo 'Zero Quota + Channel Runway release contracts: PASS'
+
+      - name: Rust tests
+        working-directory: .vyron-v100
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+
+      - name: Cargo check ARM64
+        working-directory: .vyron-v100
+        run: cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
+
+      - name: Prevent updater private key leakage
+        working-directory: .vyron-v100
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          secret=os.environ['TAURI_SIGNING_PRIVATE_KEY'].strip().encode()
+          for root in [Path('src'),Path('dist'),Path('src-tauri/src')]:
+              if not root.exists(): continue
+              for p in root.rglob('*'):
+                  if p.is_file() and secret and secret in p.read_bytes():
+                      raise SystemExit(f'PRIVATE UPDATER KEY LEAK: {p}')
+          print('Private updater key leak scan: OK')
+          PY
+
+      - name: Build ARM64 app DMG and signed updater artifacts
+        working-directory: .vyron-v100
+        run: npx tauri build --target aarch64-apple-darwin --bundles app,dmg
+
+      - name: Verify updater signature against existing VYRON trust key
+        working-directory: .vyron-v100
+        shell: bash
+        run: |
+          set -euo pipefail
+          UPDATER=$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name '*.app.tar.gz' -print -quit)
+          SIG=$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name '*.app.tar.gz.sig' -print -quit)
+          test -n "$UPDATER" && test -s "$UPDATER"
+          test -n "$SIG" && test -s "$SIG"
+          command -v minisign >/dev/null 2>&1 || brew install minisign
+          base64 -D -i /tmp/vyron-v099-pubkey.txt -o /tmp/vyron-existing.pub
+          base64 -D -i "$SIG" -o /tmp/vyron-v102.minisig
+          minisign -Vm "$UPDATER" -p /tmp/vyron-existing.pub -x /tmp/vyron-v102.minisig
+          echo 'Updater signature verification: PASS'
+
+      - name: Verify and package release
+        working-directory: .vyron-v100
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)
+          BIN=$(find "$APP/Contents/MacOS" -maxdepth 1 -type f -perm -111 -print -quit)
+          BUILT_DMG=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -name '*.dmg' -print -quit)
+          UPDATER=$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name '*.app.tar.gz' -print -quit)
+          SIG=$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name '*.app.tar.gz.sig' -print -quit)
+          test -n "$APP" && test -d "$APP/Contents"
+          test -n "$BIN" && test -s "$BIN"
+          test -n "$BUILT_DMG" && test -s "$BUILT_DMG"
+          test -n "$UPDATER" && test -s "$UPDATER"
+          test -n "$SIG" && test -s "$SIG"
+          file "$BIN" | tee /tmp/vyron-v102-file.txt
+          grep -E 'arm64|Mach-O 64-bit executable arm64' /tmp/vyron-v102-file.txt
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          hdiutil verify "$BUILT_DMG"
+          rm -rf release && mkdir release
+          cp "$BUILT_DMG" release/VYRON-1.0.2-macOS-AppleSilicon.dmg
+          cp "$UPDATER" release/VYRON.app.tar.gz
+          cp "$SIG" release/VYRON.app.tar.gz.sig
+          cp ../vyron-v100/RELEASE_NOTES_1.0.2.md release/RELEASE_NOTES.md
+          shasum -a 256 release/VYRON-1.0.2-macOS-AppleSilicon.dmg > release/SHA256.txt
+          shasum -a 256 release/VYRON.app.tar.gz > release/UPDATER_SHA256.txt
+          tar -czf release/VYRON-1.0.2-source.tar.gz --exclude='./node_modules' --exclude='./dist' --exclude='./src-tauri/target' --exclude='./release' .
+          shasum -a 256 release/VYRON-1.0.2-source.tar.gz > release/SOURCE_SHA256.txt
+          python3 - <<'PY'
+          import datetime,json
+          from pathlib import Path
+          sig=Path('release/VYRON.app.tar.gz.sig').read_text().strip()
+          if not sig: raise SystemExit('empty updater signature')
+          data={
+            'version':'1.0.2',
+            'notes':Path('release/RELEASE_NOTES.md').read_text(),
+            'pub_date':datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace('+00:00','Z'),
+            'platforms':{'darwin-aarch64':{
+              'url':'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v1.0.2/VYRON.app.tar.gz',
+              'signature':sig
+            }}
+          }
+          Path('release/latest.json').write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
+          PY
+
+      - name: Publish GitHub release v1.0.2
+        working-directory: .vyron-v100
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view v1.0.2 >/dev/null 2>&1; then
+            gh release upload v1.0.2 release/* --clobber
+            gh release edit v1.0.2 --title 'VYRON 1.0.2 — Channel Runway' --notes-file release/RELEASE_NOTES.md
+          else
+            gh release create v1.0.2 release/* --target "$GITHUB_SHA" --title 'VYRON 1.0.2 — Channel Runway' --notes-file release/RELEASE_NOTES.md
+          fi
+
+      - name: Publish signed live updater feed
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          rm -rf /tmp/vyron-main
+          git worktree add /tmp/vyron-main origin/main
+          mkdir -p /tmp/vyron-main/vyron-updates
+          cp .vyron-v100/release/latest.json /tmp/vyron-main/vyron-updates/latest.json
+          cd /tmp/vyron-main
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add vyron-updates/latest.json
+          if ! git diff --cached --quiet; then
+            git commit -m 'release(vyron): publish 1.0.2 updater feed'
+            git push origin HEAD:main
+          fi
+
+      - name: Verify published release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release view v1.0.2 --json tagName,name,isDraft,isPrerelease,assets > /tmp/v102-release.json
+          python3 - <<'PY'
+          import json
+          x=json.load(open('/tmp/v102-release.json'))
+          assert x['tagName']=='v1.0.2'
+          assert x['isDraft'] is False and x['isPrerelease'] is False
+          names={a['name'] for a in x['assets']}
+          required={'VYRON-1.0.2-macOS-AppleSilicon.dmg','VYRON.app.tar.gz','VYRON.app.tar.gz.sig','latest.json','RELEASE_NOTES.md','SHA256.txt','UPDATER_SHA256.txt','SOURCE_SHA256.txt','VYRON-1.0.2-source.tar.gz'}
+          missing=required-names
+          if missing: raise SystemExit(f'Missing release assets: {sorted(missing)}')
+          print('GitHub release assets: PASS')
+          PY
+
+      - name: Verify live updater feed
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL='https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/vyron-updates/latest.json'
+          ok=0
+          for i in 1 2 3 4 5 6 7 8; do
+            if curl -fsSL "${URL}?v=1.0.2-${i}" -o /tmp/live-latest.json && python3 - <<'PY'
+          import json
+          x=json.load(open('/tmp/live-latest.json'))
+          assert x['version']=='1.0.2'
+          p=x['platforms']['darwin-aarch64']
+          assert p['url'].endswith('/v1.0.2/VYRON.app.tar.gz')
+          assert len(p['signature'].strip())>20
+          PY
+            then ok=1; break; fi
+            sleep 5
+          done
+          test "$ok" = 1
+          echo 'VYRON 1.0.2 live updater feed: PASS'
