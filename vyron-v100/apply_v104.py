@@ -18,12 +18,6 @@ def decode_parts(names, expected_sha):
     if got!=expected_sha: raise SystemExit(f'SHA mismatch {names}: {got}')
     return raw
 
-def patch(path, old, new, count=1):
-    p=require(TARGET/path);s=p.read_text()
-    if old not in s: raise SystemExit(f'PATCH ANCHOR MISSING {path}: {old[:90]!r}')
-    s=s.replace(old,new,count)
-    p.write_text(s)
-
 def copy_text(src, dst):
     p=TARGET/dst;p.parent.mkdir(parents=True,exist_ok=True);p.write_text((BUNDLE/src).read_text())
 
@@ -34,9 +28,8 @@ copy_tests=BUNDLE/'production_manager_tests.rs'
 (TARGET/'src-tauri/src/production_manager_tests.rs').write_text(copy_tests.read_text())
 with (TARGET/'src-tauri/src/production_manager.rs').open('a') as f:f.write('\n#[cfg(test)]\nmod production_manager_tests;\n')
 
-# Final React manager payload.
-ui=decode_parts(['ProductionManager.tsx.part00','ProductionManager.tsx.part01'],'66e53f2f477483e8a016059b2eab160a47b8f0d0207c076638685319c0c8cd05')
-(TARGET/'src/ProductionManager.tsx').write_bytes(ui)
+# React UI is stored as normal UTF-8 source so packaging cannot corrupt it.
+copy_text('ProductionManager.tsx','src/ProductionManager.tsx')
 copy_text('productionManagerApi.ts','src/productionManagerApi.ts')
 copy_text('ProductionStatusBridge.tsx','src/ProductionStatusBridge.tsx')
 copy_text('production-manager.css','src/production-manager.css')
@@ -82,7 +75,6 @@ if '<ProductionStatusBridge/>' not in s:
     anchor='<ChannelRunwayScheduler/>'
     if anchor not in s: raise SystemExit('App scheduler render anchor missing')
     s=s.replace(anchor,anchor+'<ProductionStatusBridge/>',1)
-s=s.replace('VYRON 1.0.3','VYRON 1.0.4')
 s=s.replace('VYRON 1.0.3','VYRON 1.0.4')
 p.write_text(s)
 
