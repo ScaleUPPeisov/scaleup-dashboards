@@ -14,7 +14,7 @@ def copy(name:str):
 def main():
     if not (ROOT/'package.json').exists(): fail('VYRON source root missing')
     # This patch is intentionally isolated from apply_v100.py and public release workflow.
-    for name in ['channelRunway.ts','ChannelRunway.tsx','ChannelRunwayRuntime.tsx','ChannelRunway.css','channelRunway.test.ts']:
+    for name in ['channelRunway.ts','ChannelRunwayPanel.tsx','ChannelRunwayRuntime.tsx','ChannelRunway.css','channelRunway.test.ts']:
         copy(name)
 
     app=ROOT/'src/App.tsx';s=app.read_text()
@@ -30,10 +30,10 @@ def main():
 
     checks={
       'src/channelRunway.ts':['vyron:channel-runway:v1','Asia/Krasnoyarsk','nextKrasnoyarskSixAt','ESTIMATED_VIDEO_WRITE_UNITS'],
-      'src/ChannelRunway.tsx':['CHANNEL RUNWAY','0 API units','Открыть синхронизацию','ChannelRunway.css'],
+      'src/ChannelRunwayPanel.tsx':['CHANNEL RUNWAY','0 API units','Открыть синхронизацию','ChannelRunway.css'],
       'src/ChannelRunwayRuntime.tsx':['shouldRunDailyChannelRunway','nextKrasnoyarskSixAt'],
       'src/ChannelRunway.css':['Channel Runway — isolated styles only'],
-      'src/YouTubeCenter.tsx':['ChannelRunway','План каналов'],
+      'src/YouTubeCenter.tsx':['ChannelRunway','План каналов','ChannelRunwayPanel'],
       'src/App.tsx':['ChannelRunwayRuntime'],
     }
     for rel,marks in checks.items():
@@ -41,7 +41,7 @@ def main():
         for mark in marks:
             if mark not in text: fail(f'Channel Runway contract missing {mark} in {rel}')
     forbidden=['youtubeListExisting','youtubeUpdateExisting','youtubeProfileHealth','refreshChannelAnalytics','youtubeDiscoverCompetitors','api.','invoke(']
-    joined='\n'.join((ROOT/'src'/n).read_text() for n in ['channelRunway.ts','ChannelRunway.tsx','ChannelRunwayRuntime.tsx'])
+    joined='\n'.join((ROOT/'src'/n).read_text() for n in ['channelRunway.ts','ChannelRunwayPanel.tsx','ChannelRunwayRuntime.tsx'])
     for mark in forbidden:
         if mark in joined: fail(f'Channel Runway must remain local-only: {mark}')
     print('VYRON Channel Runway isolated patch applied: local-only / no release')
