@@ -1,6 +1,6 @@
 const API = 'https://zwukfrzgezpctzfdidng.supabase.co/functions/v1/ideas-api';
 const VAPID_PUBLIC = 'BNK1wT5668BYOi2OhjbZVG24ndAgx8K7BoiFUavWwxnGK1CNOmsgYYGfdak_BjtUDV9SvjPjnZfEUWEETZwMJe0';
-const APP_VERSION = '2.3.0';
+const APP_VERSION = '2.4.0';
 const $ = (id) => document.getElementById(id);
 
 const state = {
@@ -12,6 +12,16 @@ const state = {
   busy: false,
   refreshing: false,
 };
+
+let deferredInstallPrompt = null;
+window.addEventListener('beforeinstallprompt', (event) => {
+  event.preventDefault();
+  deferredInstallPrompt = event;
+});
+window.addEventListener('appinstalled', () => {
+  deferredInstallPrompt = null;
+  setTimeout(() => toast('Ideas установлено. Теперь открой его с иконки'), 200);
+});
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function timeout(promise, ms, message) {
@@ -37,6 +47,7 @@ function clearSession() {
 }
 function hasSession() { return Boolean(state.deviceId && state.deviceSecret); }
 function isIOS() { return /iphone|ipad|ipod/i.test(navigator.userAgent); }
+function isAndroid() { return /android/i.test(navigator.userAgent); }
 function isStandalone() { return matchMedia('(display-mode: standalone)').matches || navigator.standalone === true; }
 function online() { return navigator.onLine !== false; }
 function notificationsSupported() { return 'Notification' in window && 'serviceWorker' in navigator; }
@@ -122,6 +133,30 @@ function urlBase64ToUint8Array(base64String) {
   return Uint8Array.from([...atob(base64)].map((c) => c.charCodeAt(0)));
 }
 
+async function requireInstalledApp(quiet = false) {
+  if (isIOS() && !isStandalone()) {
+    if (!quiet) showSetup(hasSession() ? 'notifyOnly' : 'choice');
+    throw new Error('Сначала добавь Ideas на экран Домой');
+  }
+  if (isAndroid() && !isStandalone()) {
+    if (quiet) return false;
+    if (deferredInstallPrompt) {
+      try {
+        await deferredInstallPrompt.prompt();
+        const choice = await deferredInstallPrompt.userChoice;
+        deferredInstallPrompt = null;
+        if (choice?.outcome === 'accepted') {
+          throw new Error('Ideas установлено. Открой приложение с иконки и включи обновления');
+        }
+      } catch (e) {
+        if (/установлено/.test(e?.message || '')) throw e;
+      }
+    }
+    throw new Error('На Android сначала установи Ideas: меню Chrome ⋮ → Установить приложение');
+  }
+  return true;
+}
+
 async function waitForActivatedRegistration(reg) {
   if (reg.active) return reg;
   const worker = reg.installing || reg.waiting;
@@ -144,7 +179,7 @@ async function waitForActivatedRegistration(reg) {
 async function ensureServiceWorker() {
   if (!('serviceWorker' in navigator)) throw new Error('Уведомления не поддерживаются этим браузером');
   const reg = await timeout(
-    navigator.serviceWorker.register('./sw.js?v=5', { scope: './', updateViaCache: 'none' }),
+    navigator.serviceWorker.register('./sw.js?v=6', { scope: './', updateViaCache: 'none' }),
     6000,
     'Не удалось запустить службу уведомлений'
   );
@@ -161,16 +196,14 @@ async function currentSubscription() {
 }
 function pushPermissionError() {
   if (notificationPermission() === 'denied') {
-    return new Error('Уведомления запрещены. Открой Настройки iPhone → Уведомления → Ideas');
+    return new Error('Уведомления запрещены. Открой настройки устройства → Уведомления → Ideas');
   }
   return new Error('Разрешение на уведомления не выдано');
 }
 async function enablePush({ quiet = false, progress = null } = {}) {
   if (!notificationsSupported()) throw new Error('На этом устройстве push-уведомления не поддерживаются');
-  if (isIOS() && !isStandalone()) {
-    if (!quiet) showSetup(hasSession() ? 'notifyOnly' : 'choice');
-    throw new Error('Сначала добавь Ideas на экран Домой');
-  }
+  const installed = await requireInstalledApp(quiet);
+  if (!installed) return false;
 
   let permission = notificationPermission();
   if (permission === 'denied') throw pushPermissionError();
@@ -183,14 +216,14 @@ async function enablePush({ quiet = false, progress = null } = {}) {
 
   progress?.('Подключаю…');
   const reg = await ensureServiceWorker();
-  if (!reg.pushManager) throw new Error('Push-уведомления недоступны в этой версии iOS');
+  if (!reg.pushManager) throw new Error('Push-уведомления недоступны в этой версии браузера');
 
   let subscription = await timeout(reg.pushManager.getSubscription(), 5000, 'Не удалось проверить push-подписку');
   if (!subscription) {
     subscription = await timeout(
       reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC) }),
       10000,
-      'iPhone не создал push-подписку. Закрой Ideas и открой снова'
+      'Не удалось создать push-подписку. Закрой Ideas и открой снова'
     );
   }
   await api('subscribe', { subscription: subscription.toJSON() });
@@ -268,7 +301,7 @@ async function activateUpdates(event) {
     await sleep(350);
     await refreshStatus({autoRepair:false});
   } catch(e) {
-    toast(e.message || 'Не удалось включить уведомления', 4200);
+    toast(e.message || 'Не удалось включить уведомления', 5200);
   } finally {
     setTimeout(() => { btn.textContent = original; btn.disabled = false; }, 450);
   }
@@ -284,7 +317,7 @@ async function repairPush() {
     await refreshStatus({autoRepair:false,quiet:true});
     renderSettings();
     toast('Уведомления подключены');
-  } catch(e){ toast(e.message,4200); }
+  } catch(e){ toast(e.message,5200); }
   finally { btn.textContent=original; btn.disabled=false; }
 }
 async function disconnect() {
@@ -306,9 +339,9 @@ async function sendSignal() {
     const result=await api('send_signal');
     if(result.sent>0) toast('Подборка обновлена');
   } catch(e) {
-    if(/уведомлен|экран Домой|разрешен|iOS|push/i.test(e.message)) showSetup('notifyOnly');
+    if(/уведомлен|экран Домой|разрешен|iOS|push|установи Ideas/i.test(e.message)) showSetup('notifyOnly');
     if(/Второе устройство/i.test(e.message)) showSetup('created');
-    toast(e.message.includes('втор')?'Подборка пока недоступна':e.message,3000);
+    toast(e.message.includes('втор')?'Подборка пока недоступна':e.message,4200);
   } finally { setTimeout(()=>setMainBusy(false),700); }
 }
 
