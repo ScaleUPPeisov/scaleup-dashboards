@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-title" content="Ideas" />
   <meta name="format-detection" content="telephone=no" />
   <title>Ideas</title>
-  <link rel="manifest" href="./manifest.webmanifest?v=4" />
+  <link rel="manifest" href="./manifest.webmanifest?v=5" />
   <link rel="icon" href="./icon.svg" type="image/svg+xml" />
   <link rel="apple-touch-icon" href="./icon.svg" />
   <style>
@@ -26,9 +26,9 @@
     <div id="notifyOnly" class="hidden"><h1>Обновления</h1><p>Разреши уведомления один раз, чтобы новые подборки могли появляться, когда Ideas закрыто.</p><div id="installHint2" class="install hidden"></div><button id="notifyBtn" class="btn">Включить обновления</button><p class="mini">iPhone покажет системное окно разрешения. Его можно изменить позже в настройках iOS.</p></div>
     <div id="settingsPanel" class="hidden"><div class="settings-head"><h1>Ideas</h1><button id="closeSettingsBtn" class="close" aria-label="Закрыть">×</button></div><div class="settings-list"><div class="setting"><span>Синхронизация</span><span id="linkState">Проверка…</span></div><div class="setting"><span>Обновления</span><span id="pushState">Проверка…</span></div><div class="setting"><span>Другое устройство</span><span id="partnerState">Проверка…</span></div></div><div id="installHint3" class="install hidden"><b>На iPhone:</b> установи Ideas через «Поделиться» → «На экран Домой».</div><div class="settings-actions"><button id="testPushBtn" class="btn">Проверить уведомление</button><button id="repairBtn" class="btn secondary">Переподключить обновления</button><button id="disconnectBtn" class="btn danger">Сбросить синхронизацию</button></div><p class="mini">Ideas хранит только техническую связь устройств и push-подписку.</p></div>
   </section></div>
-  <script src="./app.js?v=4" defer></script>
+  <script src="./app.js?v=5" defer></script>
   <script>
     window.addEventListener('DOMContentLoaded',()=>{const need=/iphone|ipad|ipod/i.test(navigator.userAgent)&&!(matchMedia('(display-mode: standalone)').matches||navigator.standalone===true);const msg='<b>На iPhone:</b> «Поделиться» → «На экран Домой», затем открой Ideas уже с домашнего экрана.';for(const id of ['installHint','installHint2','installHint3']){const el=document.getElementById(id);if(el&&need){el.innerHTML=msg;el.classList.remove('hidden')}}});
-    window.addEventListener('load',()=>{const b=document.getElementById('testPushBtn');if(!b)return;b.addEventListener('click',async()=>{b.disabled=true;try{if(typeof enablePush==='function')await enablePush();const r=await api('test_self_push');toast(r.sent?'Тест отправлен':'Не удалось отправить')}catch(e){toast(e.message||'Ошибка',2800)}finally{b.disabled=false}})});
+    window.addEventListener('load',()=>{const b=document.getElementById('testPushBtn');if(!b)return;b.addEventListener('click',async()=>{b.disabled=true;const old=b.textContent;b.textContent='Проверяю…';try{if(typeof enablePush==='function')await enablePush({progress:(t)=>b.textContent=t});const r=await api('test_self_push');toast(r.sent?'Тест отправлен':'Не удалось отправить')}catch(e){toast(e.message||'Ошибка',4200)}finally{b.textContent=old;b.disabled=false}})});
   </script>
 </body></html>
