@@ -13,7 +13,7 @@ export type ChannelRunwayRow={
  channelId:string;channelName:string;enabled:boolean;cadenceDays:number;targetBufferDays:number;
  scheduledUntil?:string;scheduledVideoCount:number;averagePublishIntervalDays:number;lastScheduleSync?:string;
  lastLocalCalculation:string;runwayDays?:number;nextProductionDate?:string;batchVideos:number;batchCoverageDays:number;
- quotaCostEstimate:number;status:RunwayStatus;priorityRank:number;
+ quotaCostEstimate:number;status:RunwayStatus;priorityRank:number;hasScheduleData:boolean;sourceRevision?:string;
 };
 export type ChannelRunwayPlan={
  totalChannels:number;enabledChannels:number;attention:number;critical:number;safe:number;noData:number;
@@ -23,14 +23,14 @@ export type ChannelRunwayPlan={
 };
 export type ChannelRunwayState={version:1;calculatedAt:string;calculationDateKrasnoyarsk:string;channelSignature:string;rows:Record<string,ChannelRunwayRow>;plan:ChannelRunwayPlan};
 
-type ExistingCache={version:1;updatedAt?:string;videos?:YoutubeExistingVideo[]};
+type ExistingCache={version:1;updatedAt?:string;videos?:YoutubeExistingVideo[];baseline?:Record<string,YoutubeExistingVideo>;syncInfo?:unknown};
 type ProductionWorkspaceState={version:1;byChannel?:Record<string,{target?:number}>};
 
 const clamp=(n:number,min:number,max:number)=>Math.min(max,Math.max(min,n));
 const safePositive=(n:unknown,fallback:number)=>{const x=Number(n);return Number.isFinite(x)&&x>0?x:fallback};
 const dateParts=(d:Date,timeZone:string)=>new Intl.DateTimeFormat('en-CA',{timeZone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(d);
 const part=(p:Intl.DateTimeFormatPart[],type:string)=>Number(p.find(x=>x.type===type)?.value||0);
-export function dateKeyInZone(input:Date|string, timeZone=KRASNOYARSK_TZ){const d=input instanceof Date?input:new Date(input);if(!Number.isFinite(d.getTime()))return'';const p=dateParts(d,timeZone);return `${part(p,'year')}-${String(part(p,'month')).padStart(2,'0')}-${String(part(p,'day')).padStart(2,'0')}`}
+export function dateKeyInZone(input:Date|string,timeZone=KRASNOYARSK_TZ){const d=input instanceof Date?input:new Date(input);if(!Number.isFinite(d.getTime()))return'';const p=dateParts(d,timeZone);return `${part(p,'year')}-${String(part(p,'month')).padStart(2,'0')}-${String(part(p,'day')).padStart(2,'0')}`}
 const dateKeyUtc=(key:string)=>{const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(key);return m?Date.UTC(+m[1],+m[2]-1,+m[3]):NaN};
 export function addDaysToDateKey(key:string,days:number){const t=dateKeyUtc(key);if(!Number.isFinite(t))return'';const d=new Date(t+Math.trunc(days)*DAY);return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`}
 export function daysBetweenDateKeys(from:string,to:string){const a=dateKeyUtc(from),b=dateKeyUtc(to);return Number.isFinite(a)&&Number.isFinite(b)?Math.round((b-a)/DAY):0}
@@ -50,7 +50,7 @@ export function nextKrasnoyarskSixAt(now=new Date()){
  if(candidate.getTime()<=now.getTime()+500){const base=new Date(Date.UTC(y,m-1,d)+DAY);candidate=zonedWallToInstant(base.getUTCFullYear(),base.getUTCMonth()+1,base.getUTCDate(),6,0,KRASNOYARSK_TZ)}
  return candidate;
 }
-export function isAtOrAfterKrasnoyarskSix(now=new Date()){const fmt=new Intl.DateTimeFormat('en-US',{timeZone:KRASNOYARSK_TZ,hour:'2-digit',minute:'2-digit',hourCycle:'h23'});const p=fmt.formatToParts(now);return part(p,'hour')>6||(part(p,'hour')===6&&part(p,'minute')>=0)}
+export function isAtOrAfterKrasnoyarskSix(now=new Date()){const fmt=new Intl.DateTimeFormat('en-US',{timeZone:KRASNOYARSK_TZ,hour:'2-digit',minute:'2-digit',hourCycle:'h23'});const p=fmt.formatToParts(now);return part(p,'hour')>=6}
 
 export function statusForRunway(days?:number):{status:RunwayStatus;priorityRank:number}{
  if(days===undefined)return{status:'nodata',priorityRank:2};
@@ -67,20 +67,35 @@ function readProductionTargets(){const out:Record<string,number>={};try{const x=
 export function readChannelRunwayState():ChannelRunwayState|undefined{try{const x=JSON.parse(localStorage.getItem(CHANNEL_RUNWAY_KEY)||'null');return x?.version===1?x:undefined}catch{return}}
 function emit(){try{window.dispatchEvent(new Event(CHANNEL_RUNWAY_EVENT))}catch{}}
 export function subscribeChannelRunway(cb:()=>void){window.addEventListener(CHANNEL_RUNWAY_EVENT,cb);return()=>window.removeEventListener(CHANNEL_RUNWAY_EVENT,cb)}
+function scheduleRevision(videos:YoutubeExistingVideo[]){return videos.filter(v=>Boolean(v.publishAt)).map(v=>`${v.id}:${v.privacyStatus}:${v.publishAt||''}`).sort().join('|')}
+function authoritativeCacheVideos(cache:ExistingCache){
+ const hasBaselineField=Object.prototype.hasOwnProperty.call(cache,'baseline');
+ if(hasBaselineField){const baseline=Object.values(cache.baseline||{});return{known:baseline.length>0||Boolean(cache.syncInfo),videos:baseline}}
+ const legacy=cache.videos||[];return{known:legacy.length>0,videos:legacy};
+}
 
 export function buildChannelRunwayRows(channels:Channel[],cacheByChannel:Record<string,ExistingCache|undefined>,productionTargets:Record<string,number>,now=new Date(),previous?:ChannelRunwayState){
  const rows:Record<string,ChannelRunwayRow>={};const nowMs=now.getTime();const calculatedAt=now.toISOString();
  for(const c of channels){
   const cadence=Math.max(1,safePositive(c.cadenceDays,1));const defaultBatch=Math.max(1,Math.ceil(safePositive(c.targetBufferDays,60)/cadence));const batchVideos=Math.max(1,Math.floor(productionTargets[c.id]||defaultBatch));const batchCoverageDays=Math.max(1,Math.round(batchVideos*cadence));const quotaCostEstimate=batchVideos*ESTIMATED_VIDEO_WRITE_UNITS+(1+2*Math.max(1,Math.ceil(batchVideos/50)));
-  const cache=cacheByChannel[c.id];const prev=previous?.rows?.[c.id];let scheduledUntil=prev?.scheduledUntil,scheduledVideoCount=prev?.scheduledVideoCount||0,averagePublishIntervalDays=prev?.averagePublishIntervalDays||cadence,lastScheduleSync=prev?.lastScheduleSync;
+  const cache=cacheByChannel[c.id];const prev=previous?.rows?.[c.id];
+  let scheduledUntil=prev?.scheduledUntil,scheduledVideoCount=prev?.scheduledVideoCount||0,averagePublishIntervalDays=prev?.averagePublishIntervalDays||cadence,lastScheduleSync=prev?.lastScheduleSync,sourceRevision=prev?.sourceRevision;
+  let hasScheduleData=prev?.hasScheduleData??Boolean(prev&&(prev.scheduledUntil||prev.runwayDays!==undefined));
   if(cache){
-   const scheduled=(cache.videos||[]).filter(v=>Boolean(v.publishAt)&&v.privacyStatus!=='public'&&Date.parse(v.publishAt!)>nowMs).sort((a,b)=>Date.parse(a.publishAt!)-Date.parse(b.publishAt!));
-   scheduledVideoCount=scheduled.length;scheduledUntil=scheduled.at(-1)?.publishAt;lastScheduleSync=cache.updatedAt;
-   if(scheduled.length>=2){const diffs=scheduled.slice(1).map((v,i)=>(Date.parse(v.publishAt!)-Date.parse(scheduled[i].publishAt!))/DAY).filter(n=>Number.isFinite(n)&&n>0);if(diffs.length)averagePublishIntervalDays=Math.round((diffs.reduce((a,b)=>a+b,0)/diffs.length)*10)/10}
-   else averagePublishIntervalDays=cadence;
+   const source=authoritativeCacheVideos(cache);
+   if(source.known){
+    hasScheduleData=true;
+    const nextRevision=scheduleRevision(source.videos);
+    const scheduled=source.videos.filter(v=>Boolean(v.publishAt)&&v.privacyStatus!=='public'&&Date.parse(v.publishAt!)>nowMs).sort((a,b)=>Date.parse(a.publishAt!)-Date.parse(b.publishAt!));
+    scheduledVideoCount=scheduled.length;scheduledUntil=scheduled.at(-1)?.publishAt;
+    if(nextRevision!==sourceRevision)lastScheduleSync=cache.updatedAt||calculatedAt;
+    sourceRevision=nextRevision;
+    if(scheduled.length>=2){const diffs=scheduled.slice(1).map((v,i)=>(Date.parse(v.publishAt!)-Date.parse(scheduled[i].publishAt!))/DAY).filter(n=>Number.isFinite(n)&&n>0);averagePublishIntervalDays=diffs.length?Math.round((diffs.reduce((a,b)=>a+b,0)/diffs.length)*10)/10:cadence}
+    else averagePublishIntervalDays=cadence;
+   }
   }
-  const runwayDays=runwayDaysFor(scheduledUntil,now);const leadDays=clamp(Math.round(batchCoverageDays*.75),14,45);const scheduledKey=scheduledUntil?dateKeyInZone(scheduledUntil):'';const nextProductionDate=scheduledKey?addDaysToDateKey(scheduledKey,-leadDays):undefined;const st=statusForRunway(runwayDays);
-  rows[c.id]={channelId:c.id,channelName:c.name,enabled:c.enabled,cadenceDays:cadence,targetBufferDays:Math.max(1,safePositive(c.targetBufferDays,batchCoverageDays)),scheduledUntil,scheduledVideoCount,averagePublishIntervalDays,lastScheduleSync,lastLocalCalculation:calculatedAt,runwayDays,nextProductionDate,batchVideos,batchCoverageDays,quotaCostEstimate,status:st.status,priorityRank:st.priorityRank};
+  const runwayDays=scheduledUntil?runwayDaysFor(scheduledUntil,now):(hasScheduleData?0:undefined);const leadDays=clamp(Math.round(batchCoverageDays*.75),14,45);const scheduledKey=scheduledUntil?dateKeyInZone(scheduledUntil):'';const nextProductionDate=scheduledKey?addDaysToDateKey(scheduledKey,-leadDays):(hasScheduleData?dateKeyInZone(now):undefined);const st=statusForRunway(runwayDays);
+  rows[c.id]={channelId:c.id,channelName:c.name,enabled:c.enabled,cadenceDays:cadence,targetBufferDays:Math.max(1,safePositive(c.targetBufferDays,batchCoverageDays)),scheduledUntil,scheduledVideoCount,averagePublishIntervalDays,lastScheduleSync,lastLocalCalculation:calculatedAt,runwayDays,nextProductionDate,batchVideos,batchCoverageDays,quotaCostEstimate,status:st.status,priorityRank:st.priorityRank,hasScheduleData,sourceRevision};
  }
  return rows;
 }
