@@ -1,4 +1,4 @@
-const CACHE = 'ideas-shell-v2';
+const CACHE = 'ideas-shell-v3';
 const SHELL = ['./','./index.html','./app.js?v=2','./manifest.webmanifest','./icon.svg'];
 
 self.addEventListener('install',(event)=>{
