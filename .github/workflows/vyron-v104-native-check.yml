@@ -1,0 +1,63 @@
+name: VYRON 1.0.4 Production Manager Native Gate
+
+on:
+  push:
+    branches: [vyron-v104-production-manager-dev]
+    paths: ['vyron-v104-native-check-trigger.txt']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore exact released VYRON 1.0.3
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .v104-native && mkdir .v104-native
+          curl -fL --retry 3 'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v1.0.3/VYRON-1.0.3-source.tar.gz' -o /tmp/v103.tar.gz
+          echo 'c2d8353fd0455a407018a262bc97cbe2471b8794be37f58f01af05900c9765f9  /tmp/v103.tar.gz' | shasum -a 256 -c -
+          tar -xzf /tmp/v103.tar.gz -C .v104-native
+      - name: Decode exact Production Manager core
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat vyron-v100/production-manager-v104/production_manager.part00 \
+              vyron-v100/production-manager-v104/production_manager.part01 \
+              vyron-v100/production-manager-v104/production_manager.part02 \
+              | base64 -D | gzip -dc > .v104-native/src-tauri/src/production_manager.rs
+          echo '28254d42041ab1fedf387c429818640207bd465fb39c9c7b6fc1fe4d71dc4c82  .v104-native/src-tauri/src/production_manager.rs' | shasum -a 256 -c -
+      - name: Register module without changing protected code
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('.v104-native/src-tauri/src/lib.rs')
+          s=p.read_text()
+          assert 'mod production_manager;' not in s
+          s=s.replace('mod ai;','mod ai;\nmod production_manager;')
+          anchor='            ai::ai_generate_metadata\n'
+          commands='            production_manager::start_production_import,production_manager::stop_production_import,production_manager::production_import_status,production_manager::set_production_music_library,production_manager::index_production_music_library,production_manager::build_production_batch,production_manager::resume_production_batch,production_manager::read_production_batch_status,production_manager::list_production_batches,production_manager::production_channel_state,production_manager::validate_production_batch,production_manager::open_production_batch_in_endlume,\n'
+          assert anchor in s
+          s=s.replace(anchor,commands+anchor)
+          p.write_text(s)
+          PY
+      - name: Setup Rust ARM64
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - name: Cargo check ARM64
+        working-directory: .v104-native
+        run: cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
+      - name: Zero YouTube contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! grep -nE 'youtube_|YouTube|ytInvoke|googleapis' .v104-native/src-tauri/src/production_manager.rs
+          echo 'Production Manager native Zero YouTube: PASS'
