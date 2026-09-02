@@ -1,10 +1,13 @@
 use super::*;
 
+fn wav_bytes(seed:u8)->Vec<u8>{
+    let data=vec![seed;32];let mut b=Vec::new();b.extend_from_slice(b"RIFF");b.extend_from_slice(&(36u32+data.len() as u32).to_le_bytes());b.extend_from_slice(b"WAVEfmt ");b.extend_from_slice(&16u32.to_le_bytes());b.extend_from_slice(&1u16.to_le_bytes());b.extend_from_slice(&1u16.to_le_bytes());b.extend_from_slice(&8000u32.to_le_bytes());b.extend_from_slice(&16000u32.to_le_bytes());b.extend_from_slice(&2u16.to_le_bytes());b.extend_from_slice(&16u16.to_le_bytes());b.extend_from_slice(b"data");b.extend_from_slice(&(data.len() as u32).to_le_bytes());b.extend_from_slice(&data);b
+}
 fn fixture(images:usize,tracks:usize)->(PathBuf,String,String){
     let root=std::env::temp_dir().join(format!("vyron-pm-{}",Uuid::new_v4()));fs::create_dir_all(&root).unwrap();
     let workspace=root.join("workspace");fs::create_dir_all(&workspace).unwrap();let cid="channel-test".to_string();let cname="NEON".to_string();
     let music=root.join("music");fs::create_dir_all(&music).unwrap();
-    for i in 0..tracks{fs::write(music.join(format!("track_{i:03}.mp3")),format!("audio-{i}-{}",Uuid::new_v4()).as_bytes()).unwrap();}
+    for i in 0..tracks{fs::write(music.join(format!("track_{i:03}.wav")),wav_bytes((i%251) as u8+1)).unwrap();}
     set_production_music_library(workspace.to_string_lossy().into_owned(),cid.clone(),cname.clone(),music.to_string_lossy().into_owned()).unwrap();
     let imp=root.join("imports");fs::create_dir_all(&imp).unwrap();let mut collected=Vec::new();
     for i in 0..images{let p=imp.join(format!("{:03}.jpg",i+1));fs::write(&p,format!("image-{i}").as_bytes()).unwrap();collected.push(CollectedImage{id:Uuid::new_v4().to_string(),number:(i+1) as u32,path:p.to_string_lossy().into_owned(),source_path:p.to_string_lossy().into_owned(),captured_at:Utc::now().to_rfc3339()});}
