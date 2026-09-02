@@ -43,6 +43,7 @@ type ExistingCache={
   version?:number;
   updatedAt?:string;
   videos?:YoutubeExistingVideo[];
+  baseline?:Record<string,YoutubeExistingVideo>;
   syncInfo?:unknown;
 };
 
@@ -59,6 +60,12 @@ function channelUnknown(channel:Channel,now:Date){
   return deriveRunwayRecord(channel,[],now,undefined,false);
 }
 
+function confirmedBaseline(cache:ExistingCache|undefined){
+  if(!cache)return[] as YoutubeExistingVideo[];
+  const values=cache.baseline&&typeof cache.baseline==='object'?Object.values(cache.baseline):[];
+  return values.filter(Boolean);
+}
+
 export function recalculateChannelRunway(
   channels:Channel[],
   now=new Date(),
@@ -68,13 +75,24 @@ export function recalculateChannelRunway(
   const previous=loadChannelRunwayStore(storage);
   const next:ChannelRunwayStore={...previous,version:1,channels:{...previous.channels},lastLocalCalculation:now.toISOString()};
   for(const channel of channels){
-    const cached=readExistingRunwayCache(channel.id,storage);
-    const cacheKnown=Boolean(cached&&(Array.isArray(cached.videos)||cached.syncInfo));
-    if(cacheKnown){
-      next.channels[channel.id]=deriveRunwayRecord(channel,cached?.videos||[],now,cached?.updatedAt,true);
+    const prior=previous.channels[channel.id];
+
+    // Explicit Channel Runway sync is authoritative. Daily recalculation only advances the calendar.
+    if(prior?.lastScheduleSync){
+      next.channels[channel.id]=recalculateRunwayRecord({...prior,channelName:channel.name},now);
       continue;
     }
-    const prior=previous.channels[channel.id];
+
+    // Existing Videos stores drafts/selections in `videos`, so they are never used as YouTube truth here.
+    // Bootstrap only from its baseline. An empty cache without syncInfo means "Нет данных", not 0 days.
+    const cached=readExistingRunwayCache(channel.id,storage);
+    const baseline=confirmedBaseline(cached);
+    const cacheKnown=Boolean(cached?.syncInfo||baseline.length);
+    if(cacheKnown){
+      next.channels[channel.id]=deriveRunwayRecord(channel,baseline,now,undefined,true);
+      continue;
+    }
+
     next.channels[channel.id]=prior?recalculateRunwayRecord({...prior,channelName:channel.name},now):channelUnknown(channel,now);
   }
   const validIds=new Set(channels.map(c=>c.id));
