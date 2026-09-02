@@ -1,0 +1,3 @@
+VYRON 1.0.5 Image Import Reliability
+validation_run=33659855618
+validated=zero-byte-retry,stable-copy,downloads-permission,stale-session,zero-quota
