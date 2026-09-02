@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no" />
+  <meta name="theme-color" content="#f6f3ef" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Ideas" />
+  <title>Ideas</title>
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="./icon.svg" />
+  <style>
+    :root{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",sans-serif;color:#181716;background:#f6f3ef}
+    *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+    html,body{margin:0;min-height:100%;background:#f6f3ef}
+    body{min-height:100dvh;overflow-x:hidden}
+    button,input{font:inherit}
+    .app{max-width:720px;margin:0 auto;padding:calc(env(safe-area-inset-top) + 18px) 16px calc(env(safe-area-inset-bottom) + 30px)}
+    header{display:flex;align-items:center;justify-content:space-between;padding:2px 2px 18px;position:sticky;top:0;z-index:6;background:linear-gradient(#f6f3ef 72%,rgba(246,243,239,0))}
+    .brand{font-size:26px;font-weight:780;letter-spacing:-1px}.status{font-size:12px;color:#7c766f;background:#ebe6df;padding:7px 10px;border-radius:999px}
+    .grid{columns:2;column-gap:10px;min-height:64vh}.tile{break-inside:avoid;margin:0 0 10px;border-radius:20px;overflow:hidden;position:relative;background:#ddd;box-shadow:0 3px 12px rgba(40,30,20,.05)}
+    .tile::after{content:"";display:block;padding-bottom:var(--h)}
+    .t1{background:linear-gradient(145deg,#d9c6ad,#847366)}.t2{background:linear-gradient(155deg,#a2b6ae,#e5ddd2)}.t3{background:linear-gradient(145deg,#c7a9a3,#6f7d86)}.t4{background:linear-gradient(150deg,#b6a893,#efe5d6)}.t5{background:linear-gradient(140deg,#758082,#cac1b5)}.t6{background:linear-gradient(155deg,#d4b9a1,#b07f6c)}
+    .action-wrap{position:fixed;left:0;right:0;bottom:calc(env(safe-area-inset-bottom) + 18px);z-index:10;padding:0 18px;display:flex;justify-content:center;pointer-events:none}
+    .main-btn{width:min(560px,100%);height:58px;border:0;border-radius:18px;background:#1d1b19;color:white;font-weight:700;font-size:16px;box-shadow:0 14px 32px rgba(24,21,18,.22);pointer-events:auto;transition:transform .16s ease,opacity .16s ease}
+    .main-btn:active{transform:scale(.985)}.main-btn:disabled{opacity:.55}
+    .overlay{position:fixed;inset:0;z-index:30;background:rgba(26,23,20,.22);backdrop-filter:blur(18px);display:flex;align-items:flex-end;justify-content:center;padding:16px}
+    .sheet{width:min(560px,100%);background:#fff;border-radius:28px;padding:24px;box-shadow:0 24px 80px rgba(0,0,0,.18);margin-bottom:env(safe-area-inset-bottom)}
+    .sheet h1{font-size:27px;line-height:1.05;margin:0 0 10px;letter-spacing:-1px}.sheet p{margin:0 0 18px;color:#716a64;line-height:1.4;font-size:14px}
+    .row{display:flex;gap:10px}.btn{border:0;border-radius:15px;padding:14px 16px;font-weight:700;flex:1;background:#1d1b19;color:#fff}.btn.secondary{background:#eee9e3;color:#26221f}.btn:disabled{opacity:.5}
+    .code{font-size:38px;font-weight:800;letter-spacing:6px;text-align:center;background:#f5f2ee;border-radius:18px;padding:18px 8px;margin:10px 0 16px;font-variant-numeric:tabular-nums}
+    input{width:100%;height:54px;border:1px solid #ded8d1;border-radius:15px;padding:0 16px;font-size:20px;letter-spacing:4px;text-align:center;outline:none;background:#faf8f5}
+    .hint{margin-top:12px!important;font-size:12px!important}.hidden{display:none!important}
+    .toast{position:fixed;z-index:50;left:50%;top:calc(env(safe-area-inset-top) + 22px);transform:translate(-50%,-18px);background:#1d1b19;color:#fff;padding:10px 14px;border-radius:999px;font-size:13px;opacity:0;transition:.2s;pointer-events:none;white-space:nowrap}.toast.show{opacity:1;transform:translate(-50%,0)}
+    .install{background:#f5f2ee;border-radius:18px;padding:14px 15px;margin-bottom:14px;font-size:13px;color:#625c56;line-height:1.4}.mini{font-size:12px;color:#8b837c;text-align:center;margin-top:12px}
+    @media (min-width:640px){.grid{columns:3}}
+    @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header><div class="brand">Ideas</div><div id="status" class="status">Подборки</div></header>
+    <main class="grid" aria-hidden="true">
+      <div class="tile t1" style="--h:132%"></div><div class="tile t2" style="--h:86%"></div><div class="tile t3" style="--h:118%"></div><div class="tile t4" style="--h:94%"></div><div class="tile t5" style="--h:126%"></div><div class="tile t6" style="--h:88%"></div><div class="tile t2" style="--h:115%"></div><div class="tile t4" style="--h:98%"></div>
+    </main>
+  </div>
+
+  <div class="action-wrap"><button id="mainBtn" class="main-btn">Посмотреть свежую подборку</button></div>
+  <div id="toast" class="toast">Обновлено</div>
+
+  <div id="setup" class="overlay hidden">
+    <section class="sheet">
+      <h1>Настроить подборки</h1>
+      <p id="setupText">Свяжи два устройства один раз. После этого обновления будут приходить автоматически.</p>
+      <div id="installHint" class="install hidden"><b>На iPhone:</b> открой меню «Поделиться» → «На экран Домой», затем открой Ideas с домашнего экрана.</div>
+      <div id="choice" class="row">
+        <button id="createBtn" class="btn">Создать связь</button>
+        <button id="joinBtn" class="btn secondary">Ввести код</button>
+      </div>
+      <div id="created" class="hidden">
+        <p>На втором устройстве выбери «Ввести код» и введи:</p>
+        <div id="pairCode" class="code">------</div>
+        <button id="enableBtn" class="btn">Включить обновления</button>
+      </div>
+      <div id="joining" class="hidden">
+        <input id="codeInput" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000" />
+        <div class="row" style="margin-top:12px"><button id="backBtn" class="btn secondary">Назад</button><button id="confirmJoinBtn" class="btn">Подключить</button></div>
+      </div>
+      <div id="notifyOnly" class="hidden">
+        <p>Последний шаг — разрешить уведомления для обновлений подборок.</p>
+        <button id="notifyBtn" class="btn">Включить обновления</button>
+      </div>
+      <p class="mini">Оба устройства подключаются добровольно по одному коду.</p>
+    </section>
+  </div>
+
+  <script src="./app.js" defer></script>
+</body>
+</html>
