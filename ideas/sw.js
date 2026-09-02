@@ -1,28 +1,51 @@
-self.addEventListener('install', () => self.skipWaiting());
-self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
+const CACHE = 'ideas-shell-v2';
+const SHELL = ['./','./index.html','./app.js?v=2','./manifest.webmanifest','./icon.svg'];
 
-self.addEventListener('push', (event) => {
-  let data = { title: 'Ideas', body: 'Посмотреть свежую подборку' };
-  try { data = { ...data, ...(event.data ? event.data.json() : {}) }; } catch {}
-  event.waitUntil(self.registration.showNotification(data.title || 'Ideas', {
-    body: data.body || 'Посмотреть свежую подборку',
-    icon: './icon.svg',
-    badge: './icon.svg',
-    tag: 'ideas-fresh-selection',
-    renotify: true,
-    silent: false,
-    data: { url: self.registration.scope },
+self.addEventListener('install',(event)=>{
+  event.waitUntil(caches.open(CACHE).then((c)=>c.addAll(SHELL).catch(()=>{})).then(()=>self.skipWaiting()));
+});
+self.addEventListener('activate',(event)=>{
+  event.waitUntil((async()=>{
+    const keys=await caches.keys();
+    await Promise.all(keys.filter((k)=>k.startsWith('ideas-shell-')&&k!==CACHE).map((k)=>caches.delete(k)));
+    await self.clients.claim();
+  })());
+});
+
+self.addEventListener('fetch',(event)=>{
+  const req=event.request;
+  if(req.method!=='GET') return;
+  const url=new URL(req.url);
+  if(url.origin!==self.location.origin) return;
+  event.respondWith((async()=>{
+    try {
+      const fresh=await fetch(req,{cache:'no-store'});
+      if(fresh.ok){ const c=await caches.open(CACHE); c.put(req,fresh.clone()).catch(()=>{}); }
+      return fresh;
+    } catch {
+      return (await caches.match(req)) || (await caches.match('./index.html')) || Response.error();
+    }
+  })());
+});
+
+self.addEventListener('push',(event)=>{
+  let data={title:'Ideas',body:'Посмотреть свежую подборку'};
+  try{data={...data,...(event.data?event.data.json():{})}}catch{}
+  event.waitUntil(self.registration.showNotification(data.title||'Ideas',{
+    body:data.body||'Посмотреть свежую подборку',
+    tag:'ideas-fresh-selection',
+    renotify:true,
+    silent:false,
+    data:{url:self.registration.scope},
   }));
 });
 
-self.addEventListener('notificationclick', (event) => {
+self.addEventListener('notificationclick',(event)=>{
   event.notification.close();
-  event.waitUntil((async () => {
-    const scope = self.registration.scope;
-    const list = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-    for (const client of list) {
-      if (client.url.startsWith(scope) && 'focus' in client) return client.focus();
-    }
-    if (self.clients.openWindow) return self.clients.openWindow(scope);
+  event.waitUntil((async()=>{
+    const scope=self.registration.scope;
+    const list=await self.clients.matchAll({type:'window',includeUncontrolled:true});
+    for(const client of list){if(client.url.startsWith(scope)&&'focus' in client){await client.focus();return;}}
+    if(self.clients.openWindow) await self.clients.openWindow(scope);
   })());
 });
