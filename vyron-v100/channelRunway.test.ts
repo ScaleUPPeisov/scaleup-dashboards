@@ -44,6 +44,18 @@ describe('Channel Runway core',()=>{
     expect(record.status).toBe('large');
   });
 
+  it('counts only true YouTube Scheduled private + future publishAt',()=>{
+    const now=new Date('2026-09-02T08:00:00Z');
+    const good=scheduled('2026-10-01T04:00:00+07:00');
+    const malformedPublic={...scheduled('2026-12-01T04:00:00+07:00'),id:'public',privacyStatus:'public' as const};
+    const malformedUnlisted={...scheduled('2026-11-01T04:00:00+07:00'),id:'unlisted',privacyStatus:'unlisted' as const};
+    const past=scheduled('2026-09-01T04:00:00+07:00');
+    const record=deriveRunwayRecord(channel(),[good,malformedPublic,malformedUnlisted,past],now,now.toISOString(),true);
+    expect(record.scheduledVideoCount).toBe(1);
+    expect(record.scheduledUntil).toBe('2026-10-01');
+    expect(record.runwayDays).toBe(29);
+  });
+
   it('status dates use Krasnoyarsk calendar regardless of system timezone',()=>{
     expect(krasnoyarskClock(new Date('2026-09-01T17:30:00Z')).dateKey).toBe('2026-09-02');
     expect(subtractCalendarDays('2026-12-01',45)).toBe('2026-10-17');
