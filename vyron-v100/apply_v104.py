@@ -30,6 +30,9 @@ def copy_text(src, dst):
 # Final native source: immutable verified payload.
 native=decode_parts(['production_manager.part00','production_manager.part01','production_manager.part02'],'28254d42041ab1fedf387c429818640207bd465fb39c9c7b6fc1fe4d71dc4c82')
 (TARGET/'src-tauri/src/production_manager.rs').write_bytes(native)
+copy_tests=BUNDLE/'production_manager_tests.rs'
+(TARGET/'src-tauri/src/production_manager_tests.rs').write_text(copy_tests.read_text())
+with (TARGET/'src-tauri/src/production_manager.rs').open('a') as f:f.write('\n#[cfg(test)]\nmod production_manager_tests;\n')
 
 # Final React manager payload.
 ui=decode_parts(['ProductionManager.tsx.part00','ProductionManager.tsx.part01'],'66e53f2f477483e8a016059b2eab160a47b8f0d0207c076638685319c0c8cd05')
