@@ -26,7 +26,7 @@ native=decode_parts(['production_manager.part00','production_manager.part01','pr
 (TARGET/'src-tauri/src/production_manager.rs').write_bytes(native)
 copy_tests=BUNDLE/'production_manager_tests.rs'
 (TARGET/'src-tauri/src/production_manager_tests.rs').write_text(copy_tests.read_text())
-with (TARGET/'src-tauri/src/production_manager.rs').open('a') as f:f.write('\n#[cfg(test)]\nmod production_manager_tests;\n')
+with (TARGET/'src-tauri/src/production_manager.rs').open('a') as f:f.write('\n#[cfg(test)]\n#[path = "production_manager_tests.rs"]\nmod production_manager_tests;\n')
 
 # React UI is stored as normal UTF-8 source so packaging cannot corrupt it.
 copy_text('ProductionManager.tsx','src/ProductionManager.tsx')
