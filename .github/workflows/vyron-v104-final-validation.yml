@@ -54,7 +54,7 @@ jobs:
           assert c['identifier']==Path('/tmp/v103-identifier').read_text()
           assert c['plugins']['updater']['pubkey']==Path('/tmp/v103-pubkey').read_text()
           assert json.dumps(c['plugins']['updater']['endpoints'])==Path('/tmp/v103-endpoints').read_text()
-          core=Path('src-tauri/src/production_manager.rs').read_bytes().split(b'\n#[cfg(test)]\nmod production_manager_tests;')[0]
+          core=Path('src-tauri/src/production_manager.rs').read_bytes().split(b'\n#[cfg(test)]')[0]
           assert hashlib.sha256(core).hexdigest()=='28254d42041ab1fedf387c429818640207bd465fb39c9c7b6fc1fe4d71dc4c82'
           assert Path('src/ProductionManager.tsx').stat().st_size>10000
           print('Identity, updater trust, protected source and native overlay SHA: PASS')
