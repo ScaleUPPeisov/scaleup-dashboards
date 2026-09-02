@@ -9,6 +9,7 @@ const state = {
   pairCodeExpiresAt: localStorage.getItem('ideas.pairCodeExpiresAt') || '',
   status: null,
   busy: false,
+  refreshing: false,
 };
 
 function saveSession(data) {
@@ -30,6 +31,8 @@ function hasSession() { return Boolean(state.deviceId && state.deviceSecret); }
 function isIOS() { return /iphone|ipad|ipod/i.test(navigator.userAgent); }
 function isStandalone() { return matchMedia('(display-mode: standalone)').matches || navigator.standalone === true; }
 function online() { return navigator.onLine !== false; }
+function notificationsSupported() { return 'Notification' in window && 'serviceWorker' in navigator && 'PushManager' in window; }
+function notificationPermission() { return 'Notification' in window ? Notification.permission : 'unsupported'; }
 
 async function api(action, extra = {}) {
   if (!online()) throw new Error('Нет подключения к интернету');
@@ -73,7 +76,7 @@ function setMainBusy(busy) {
 }
 function setView(mode) {
   ['choice','created','joining','notifyOnly','settingsPanel'].forEach((id) => $(id).classList.toggle('hidden', id !== mode));
-  $('installHint').classList.toggle('hidden', !(isIOS() && !isStandalone() && ['created','notifyOnly','settingsPanel'].includes(mode)));
+  $('installHint').classList.toggle('hidden', !(isIOS() && !isStandalone() && mode === 'created'));
 }
 function showSetup(mode = 'choice') {
   $('setup').classList.remove('hidden');
@@ -120,12 +123,12 @@ async function currentSubscription() {
   try { return (await ensureServiceWorker()).pushManager.getSubscription(); } catch { return null; }
 }
 async function enablePush({ quiet = false } = {}) {
+  if (!notificationsSupported()) throw new Error('На этом устройстве push-уведомления не поддерживаются');
   if (isIOS() && !isStandalone()) {
-    if (!quiet) { showSetup(hasSession() ? 'notifyOnly' : 'choice'); $('installHint').classList.remove('hidden'); }
+    if (!quiet) showSetup(hasSession() ? 'notifyOnly' : 'choice');
     throw new Error('Сначала добавь Ideas на экран Домой');
   }
-  if (!('Notification' in window)) throw new Error('Уведомления не поддерживаются');
-  let permission = Notification.permission;
+  let permission = notificationPermission();
   if (permission !== 'granted') {
     if (quiet) return false;
     permission = await Notification.requestPermission();
@@ -141,101 +144,92 @@ async function enablePush({ quiet = false } = {}) {
 function renderSettings() {
   const s = state.status || {};
   $('linkState').textContent = s.paired ? 'Готово' : 'Ожидает второго устройства';
-  $('pushState').textContent = s.ownPushReady && Notification.permission === 'granted' ? 'Включены' : 'Нужна настройка';
+  $('pushState').textContent = s.ownPushReady && notificationPermission() === 'granted' ? 'Включены' : 'Нужна настройка';
   $('partnerState').textContent = s.partnerPushReady ? 'Готово' : s.paired ? 'Нужна настройка' : 'Не подключено';
   $('repairBtn').textContent = s.ownPushReady ? 'Проверить уведомления' : 'Включить уведомления';
 }
 
-async function refreshStatus({ autoRepair = true } = {}) {
-  if (!hasSession()) return;
+async function refreshStatus({ autoRepair = true, quiet = false } = {}) {
+  if (!hasSession() || state.refreshing) return;
+  state.refreshing = true;
   try {
     const s = await api('status');
     state.status = s;
     if (s.pairCode) { state.pairCode=s.pairCode; localStorage.setItem('ideas.pairCode',s.pairCode); }
     if (s.pairCodeExpiresAt) { state.pairCodeExpiresAt=s.pairCodeExpiresAt; localStorage.setItem('ideas.pairCodeExpiresAt',s.pairCodeExpiresAt); }
 
-    if (autoRepair && isStandalone() && Notification.permission === 'granted' && !s.ownPushReady) {
+    if (autoRepair && notificationsSupported() && isStandalone() && notificationPermission() === 'granted' && !s.ownPushReady) {
       try { await enablePush({quiet:true}); state.status = await api('status'); } catch {}
     }
 
-    if (!state.status.paired) {
-      showSetup('created');
-      return;
-    }
-    if (Notification.permission !== 'granted' || !state.status.ownPushReady) {
-      showSetup('notifyOnly');
-      return;
-    }
+    if (!state.status.paired) { showSetup('created'); return; }
+    if (notificationPermission() !== 'granted' || !state.status.ownPushReady) { showSetup('notifyOnly'); return; }
     hideSetup();
   } catch (e) {
-    if (e.status !== 401) toast('Нет связи с сервером');
-  }
+    if (!quiet && e.status !== 401) toast('Нет связи с сервером');
+  } finally { state.refreshing = false; }
 }
 
 async function createPair() {
   $('createBtn').disabled = true;
-  try {
-    const data = await api('create_pair');
-    saveSession(data);
-    showSetup('created');
-  } catch (e) { toast(e.message); }
-  finally { $('createBtn').disabled = false; }
+  try { const data=await api('create_pair'); saveSession(data); showSetup('created'); }
+  catch(e){ toast(e.message); }
+  finally { $('createBtn').disabled=false; }
 }
 async function joinPair() {
-  const pairCode = $('codeInput').value.replace(/\D/g,'').slice(0,6);
-  if (pairCode.length !== 6) return toast('Введи 6 цифр');
-  $('confirmJoinBtn').disabled = true;
-  try {
-    const data = await api('join_pair',{pairCode});
-    saveSession(data);
-    showSetup('notifyOnly');
-  } catch (e) { toast(e.message === 'Срок действия кода истёк' ? 'Попроси новый код' : e.message); }
-  finally { $('confirmJoinBtn').disabled = false; }
+  const pairCode=$('codeInput').value.replace(/\D/g,'').slice(0,6);
+  if(pairCode.length!==6) return toast('Введи 6 цифр');
+  $('confirmJoinBtn').disabled=true;
+  try { const data=await api('join_pair',{pairCode}); saveSession(data); showSetup('notifyOnly'); }
+  catch(e){ toast(e.message==='Срок действия кода истёк'?'Попроси новый код':e.message); }
+  finally { $('confirmJoinBtn').disabled=false; }
 }
 async function rotateCode() {
-  $('rotateCodeBtn').disabled = true;
+  $('rotateCodeBtn').disabled=true;
   try {
-    const data = await api('rotate_code');
+    const data=await api('rotate_code');
     state.pairCode=data.pairCode; state.pairCodeExpiresAt=data.pairCodeExpiresAt;
     localStorage.setItem('ideas.pairCode',state.pairCode); localStorage.setItem('ideas.pairCodeExpiresAt',state.pairCodeExpiresAt);
     updateCodeView(); toast('Новый код готов');
-  } catch(e) { toast(e.message); }
-  finally { $('rotateCodeBtn').disabled = false; }
+  } catch(e){ toast(e.message); }
+  finally { $('rotateCodeBtn').disabled=false; }
 }
 async function activateUpdates() {
-  const btn = $('notifyOnly').classList.contains('hidden') ? $('enableBtn') : $('notifyBtn');
-  btn.disabled = true;
+  const btn=$('notifyOnly').classList.contains('hidden')?$('enableBtn'):$('notifyBtn');
+  btn.disabled=true;
   try { await enablePush(); toast('Готово'); await refreshStatus({autoRepair:false}); }
-  catch(e) { toast(e.message,2400); }
-  finally { btn.disabled = false; }
+  catch(e){ toast(e.message,2400); }
+  finally { btn.disabled=false; }
 }
 async function repairPush() {
   $('repairBtn').disabled=true;
-  try { await enablePush(); await refreshStatus({autoRepair:false}); renderSettings(); toast('Уведомления работают'); }
+  try { await enablePush(); await refreshStatus({autoRepair:false,quiet:true}); renderSettings(); toast('Уведомления работают'); }
   catch(e){ toast(e.message,2400); }
   finally { $('repairBtn').disabled=false; }
 }
 async function disconnect() {
-  if (!confirm('Разорвать связь между двумя устройствами?')) return;
+  if(!confirm('Разорвать связь между двумя устройствами?')) return;
   $('disconnectBtn').disabled=true;
-  try { await api('disconnect'); } catch(e) { if (e.status !== 401) return toast(e.message); }
-  try { const sub=await currentSubscription(); if(sub) await sub.unsubscribe(); } catch {}
-  clearSession(); $('codeInput').value=''; showSetup('choice'); toast('Связь удалена');
-  $('disconnectBtn').disabled=false;
+  try {
+    try { await api('disconnect'); } catch(e) { if(e.status!==401) throw e; }
+    try { const sub=await currentSubscription(); if(sub) await sub.unsubscribe(); } catch {}
+    clearSession(); $('codeInput').value=''; showSetup('choice'); toast('Связь удалена');
+  } catch(e){ toast(e.message); }
+  finally { $('disconnectBtn').disabled=false; }
 }
 async function sendSignal() {
-  if (state.busy) return;
-  if (!hasSession()) return showSetup('choice');
+  if(state.busy) return;
+  if(!hasSession()) return showSetup('choice');
   setMainBusy(true);
   try {
-    if (Notification.permission !== 'granted') await enablePush();
-    const result = await api('send_signal');
-    if (result.sent > 0) toast('Подборка обновлена');
+    if(notificationPermission()!=='granted') await enablePush();
+    const result=await api('send_signal');
+    if(result.sent>0) toast('Подборка обновлена');
   } catch(e) {
-    if (/уведомлен|экран Домой|разрешен/i.test(e.message)) showSetup('notifyOnly');
-    if (/Второе устройство/i.test(e.message)) showSetup('created');
-    toast(e.message.includes('втор') ? 'Подборка пока недоступна' : e.message,2200);
-  } finally { setTimeout(() => setMainBusy(false),700); }
+    if(/уведомлен|экран Домой|разрешен/i.test(e.message)) showSetup('notifyOnly');
+    if(/Второе устройство/i.test(e.message)) showSetup('created');
+    toast(e.message.includes('втор')?'Подборка пока недоступна':e.message,2200);
+  } finally { setTimeout(()=>setMainBusy(false),700); }
 }
 
 $('createBtn').addEventListener('click',createPair);
@@ -246,8 +240,8 @@ $('enableBtn').addEventListener('click',activateUpdates);
 $('notifyBtn').addEventListener('click',activateUpdates);
 $('rotateCodeBtn').addEventListener('click',rotateCode);
 $('mainBtn').addEventListener('click',sendSignal);
-$('settingsBtn').addEventListener('click',async()=>{ if(!hasSession()) return showSetup('choice'); await refreshStatus({autoRepair:false}); showSetup('settingsPanel'); });
-$('closeSettingsBtn').addEventListener('click',()=>hideSetup());
+$('settingsBtn').addEventListener('click',async()=>{ if(!hasSession()) return showSetup('choice'); await refreshStatus({autoRepair:false,quiet:true}); showSetup('settingsPanel'); });
+$('closeSettingsBtn').addEventListener('click',hideSetup);
 $('repairBtn').addEventListener('click',repairPush);
 $('disconnectBtn').addEventListener('click',disconnect);
 $('codeInput').addEventListener('input',(e)=>{ e.target.value=e.target.value.replace(/\D/g,'').slice(0,6); });
@@ -257,6 +251,7 @@ window.addEventListener('load',async()=>{
   try { await ensureServiceWorker(); } catch {}
   if(!hasSession()) showSetup('choice'); else await refreshStatus();
 });
-window.addEventListener('online',()=>{ if(hasSession()) refreshStatus(); });
+window.addEventListener('online',()=>{ if(hasSession()) refreshStatus({quiet:true}); });
 window.addEventListener('offline',()=>toast('Нет подключения к интернету'));
-document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible'&&hasSession()) refreshStatus(); });
+document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible'&&hasSession()) refreshStatus({quiet:true}); });
+setInterval(()=>{ if(document.visibilityState==='visible'&&hasSession()) refreshStatus({quiet:true}); },8000);
