@@ -1,0 +1,40 @@
+name: VYRON 1.0.4 Production Manager Source Inspect
+
+on:
+  push:
+    branches: [vyron-v104-production-manager-dev]
+    paths: ['vyron-v104-inspect-trigger.txt']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore exact released VYRON 1.0.3 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .inspect-v103 && mkdir .inspect-v103
+          curl -fL --retry 3 'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v1.0.3/VYRON-1.0.3-source.tar.gz' -o /tmp/v103.tar.gz
+          echo 'c2d8353fd0455a407018a262bc97cbe2471b8794be37f58f01af05900c9765f9  /tmp/v103.tar.gz' | shasum -a 256 -c -
+          tar -xzf /tmp/v103.tar.gz -C .inspect-v103
+          grep -q '"version": "1.0.3"' .inspect-v103/package.json
+      - name: Print Production and navigation contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd .inspect-v103
+          for f in src/ProductionOS.tsx src/ProductionWorkspace.tsx src/YouTubeCenter.tsx src/App.tsx src/store.ts src/api.ts src-tauri/src/lib.rs src-tauri/src/main.rs src-tauri/Cargo.toml src-tauri/tauri.conf.json package.json; do
+            echo "===== $f ====="
+            if [ -f "$f" ]; then sed -n '1,260p' "$f"; else echo MISSING; fi
+          done
+      - name: Print Tauri command inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd .inspect-v103
+          grep -RniE '#\[tauri::command\]|invoke_handler|Command::new|open::|shell|dialog|fs::|std::fs|tokio::fs|ENDLUME|endlume' src-tauri/src src | head -n 500 || true
