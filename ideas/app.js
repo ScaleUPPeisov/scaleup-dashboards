@@ -1,6 +1,6 @@
 const API = 'https://zwukfrzgezpctzfdidng.supabase.co/functions/v1/ideas-api';
 const VAPID_PUBLIC = 'BNK1wT5668BYOi2OhjbZVG24ndAgx8K7BoiFUavWwxnGK1CNOmsgYYGfdak_BjtUDV9SvjPjnZfEUWEETZwMJe0';
-const APP_VERSION = '2.2.0';
+const APP_VERSION = '2.3.0';
 const $ = (id) => document.getElementById(id);
 
 const state = {
@@ -13,6 +13,13 @@ const state = {
   refreshing: false,
 };
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+function timeout(promise, ms, message) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(message)), ms)),
+  ]);
+}
 function saveSession(data) {
   state.deviceId = data.deviceId;
   state.deviceSecret = data.deviceSecret;
@@ -114,41 +121,78 @@ function urlBase64ToUint8Array(base64String) {
   const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
   return Uint8Array.from([...atob(base64)].map((c) => c.charCodeAt(0)));
 }
+
+async function waitForActivatedRegistration(reg) {
+  if (reg.active) return reg;
+  const worker = reg.installing || reg.waiting;
+  if (!worker) {
+    await sleep(250);
+    const again = await navigator.serviceWorker.getRegistration('./');
+    if (again?.active) return again;
+    throw new Error('Служба уведомлений ещё не запустилась');
+  }
+  await new Promise((resolve, reject) => {
+    const onState = () => {
+      if (worker.state === 'activated') resolve();
+      if (worker.state === 'redundant') reject(new Error('Не удалось запустить службу уведомлений'));
+    };
+    worker.addEventListener('statechange', onState);
+    onState();
+  });
+  return reg;
+}
 async function ensureServiceWorker() {
   if (!('serviceWorker' in navigator)) throw new Error('Уведомления не поддерживаются этим браузером');
-  const reg = await navigator.serviceWorker.register('./sw.js', { scope: './', updateViaCache: 'none' });
-  try { await reg.update(); } catch {}
-  return navigator.serviceWorker.ready;
+  const reg = await timeout(
+    navigator.serviceWorker.register('./sw.js?v=5', { scope: './', updateViaCache: 'none' }),
+    6000,
+    'Не удалось запустить службу уведомлений'
+  );
+  try { await timeout(reg.update(), 2500, ''); } catch {}
+  if (reg.active) return reg;
+  return timeout(waitForActivatedRegistration(reg), 7000, 'Служба уведомлений запускается слишком долго. Закрой Ideas и открой снова');
 }
 async function currentSubscription() {
   try {
-    const reg = await ensureServiceWorker();
-    return reg.pushManager ? await reg.pushManager.getSubscription() : null;
+    let reg = await navigator.serviceWorker.getRegistration('./');
+    if (!reg?.active) reg = await ensureServiceWorker();
+    return reg.pushManager ? await timeout(reg.pushManager.getSubscription(), 5000, 'Не удалось проверить push-подписку') : null;
   } catch { return null; }
 }
 function pushPermissionError() {
   if (notificationPermission() === 'denied') {
-    return new Error('Уведомления выключены в iOS. Открой Настройки → Уведомления → Ideas');
+    return new Error('Уведомления запрещены. Открой Настройки iPhone → Уведомления → Ideas');
   }
   return new Error('Разрешение на уведомления не выдано');
 }
-async function enablePush({ quiet = false } = {}) {
+async function enablePush({ quiet = false, progress = null } = {}) {
   if (!notificationsSupported()) throw new Error('На этом устройстве push-уведомления не поддерживаются');
   if (isIOS() && !isStandalone()) {
     if (!quiet) showSetup(hasSession() ? 'notifyOnly' : 'choice');
     throw new Error('Сначала добавь Ideas на экран Домой');
   }
+
   let permission = notificationPermission();
   if (permission === 'denied') throw pushPermissionError();
   if (permission !== 'granted') {
     if (quiet) return false;
+    progress?.('Разреши уведомления…');
     permission = await Notification.requestPermission();
   }
   if (permission !== 'granted') throw pushPermissionError();
+
+  progress?.('Подключаю…');
   const reg = await ensureServiceWorker();
   if (!reg.pushManager) throw new Error('Push-уведомления недоступны в этой версии iOS');
-  let subscription = await reg.pushManager.getSubscription();
-  if (!subscription) subscription = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC) });
+
+  let subscription = await timeout(reg.pushManager.getSubscription(), 5000, 'Не удалось проверить push-подписку');
+  if (!subscription) {
+    subscription = await timeout(
+      reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC) }),
+      10000,
+      'iPhone не создал push-подписку. Закрой Ideas и открой снова'
+    );
+  }
   await api('subscribe', { subscription: subscription.toJSON() });
   return true;
 }
@@ -159,7 +203,6 @@ function renderSettings() {
   $('pushState').textContent = s.ownPushReady && notificationPermission() === 'granted' ? 'Включены' : 'Нужна настройка';
   $('partnerState').textContent = s.partnerPushReady ? 'Готово' : s.paired ? 'Нужна настройка' : 'Не подключено';
   $('repairBtn').textContent = s.ownPushReady ? 'Переподключить уведомления' : 'Включить уведомления';
-  if ($('versionState')) $('versionState').textContent = APP_VERSION;
 }
 
 async function refreshStatus({ autoRepair = true, quiet = false } = {}) {
@@ -182,14 +225,14 @@ async function refreshStatus({ autoRepair = true, quiet = false } = {}) {
     if (notificationPermission() !== 'granted' || !state.status.ownPushReady) { showSetup('notifyOnly'); return; }
     hideSetup();
   } catch (e) {
-    if (!quiet && e.status !== 401) toast('Нет связи с сервером');
+    if (!quiet && e.status !== 401) toast(e.message || 'Нет связи с сервером', 2600);
   } finally { state.refreshing = false; }
 }
 
 async function createPair() {
   $('createBtn').disabled = true;
   try { const data=await api('create_pair'); saveSession(data); showSetup('created'); }
-  catch(e){ toast(e.message); }
+  catch(e){ toast(e.message,2600); }
   finally { $('createBtn').disabled=false; }
 }
 async function joinPair() {
@@ -201,7 +244,7 @@ async function joinPair() {
     saveSession(data);
     $('codeInput').value='';
     showSetup('notifyOnly');
-  } catch(e){ toast(e.message==='Срок действия кода истёк'?'Попроси новый код':e.message); }
+  } catch(e){ toast(e.message==='Срок действия кода истёк'?'Попроси новый код':e.message,2600); }
   finally { $('confirmJoinBtn').disabled=false; }
 }
 async function rotateCode() {
@@ -211,27 +254,38 @@ async function rotateCode() {
     state.pairCode=data.pairCode; state.pairCodeExpiresAt=data.pairCodeExpiresAt;
     localStorage.setItem('ideas.pairCode',state.pairCode); localStorage.setItem('ideas.pairCodeExpiresAt',state.pairCodeExpiresAt);
     updateCodeView(); toast('Новый код готов');
-  } catch(e){ toast(e.message); }
+  } catch(e){ toast(e.message,2600); }
   finally { $('rotateCodeBtn').disabled=false; }
 }
-async function activateUpdates() {
-  const btn=$('notifyOnly').classList.contains('hidden')?$('enableBtn'):$('notifyBtn');
-  btn.disabled=true;
-  try { await enablePush(); toast('Готово'); await refreshStatus({autoRepair:false}); }
-  catch(e){ toast(e.message,3000); }
-  finally { btn.disabled=false; }
+async function activateUpdates(event) {
+  const btn = event?.currentTarget || ($('notifyOnly').classList.contains('hidden') ? $('enableBtn') : $('notifyBtn'));
+  const original = btn.textContent;
+  btn.disabled = true;
+  try {
+    await enablePush({ progress: (text) => { btn.textContent = text; } });
+    btn.textContent = 'Готово ✓';
+    toast('Уведомления включены');
+    await sleep(350);
+    await refreshStatus({autoRepair:false});
+  } catch(e) {
+    toast(e.message || 'Не удалось включить уведомления', 4200);
+  } finally {
+    setTimeout(() => { btn.textContent = original; btn.disabled = false; }, 450);
+  }
 }
 async function repairPush() {
-  $('repairBtn').disabled=true;
+  const btn=$('repairBtn');
+  const original=btn.textContent;
+  btn.disabled=true;
   try {
     const old = await currentSubscription();
     if (old) { try { await old.unsubscribe(); } catch {} }
-    await enablePush();
+    await enablePush({progress:(t)=>{btn.textContent=t;}});
     await refreshStatus({autoRepair:false,quiet:true});
     renderSettings();
     toast('Уведомления подключены');
-  } catch(e){ toast(e.message,3000); }
-  finally { $('repairBtn').disabled=false; }
+  } catch(e){ toast(e.message,4200); }
+  finally { btn.textContent=original; btn.disabled=false; }
 }
 async function disconnect() {
   if(!confirm('Разорвать связь между двумя устройствами?')) return;
@@ -240,7 +294,7 @@ async function disconnect() {
     try { await api('disconnect'); } catch(e) { if(e.status!==401) throw e; }
     try { const sub=await currentSubscription(); if(sub) await sub.unsubscribe(); } catch {}
     clearSession(); $('codeInput').value=''; showSetup('choice'); toast('Связь удалена');
-  } catch(e){ toast(e.message); }
+  } catch(e){ toast(e.message,2600); }
   finally { $('disconnectBtn').disabled=false; }
 }
 async function sendSignal() {
@@ -252,9 +306,9 @@ async function sendSignal() {
     const result=await api('send_signal');
     if(result.sent>0) toast('Подборка обновлена');
   } catch(e) {
-    if(/уведомлен|экран Домой|разрешен|iOS/i.test(e.message)) showSetup('notifyOnly');
+    if(/уведомлен|экран Домой|разрешен|iOS|push/i.test(e.message)) showSetup('notifyOnly');
     if(/Второе устройство/i.test(e.message)) showSetup('created');
-    toast(e.message.includes('втор')?'Подборка пока недоступна':e.message,2600);
+    toast(e.message.includes('втор')?'Подборка пока недоступна':e.message,3000);
   } finally { setTimeout(()=>setMainBusy(false),700); }
 }
 
@@ -274,10 +328,10 @@ $('codeInput').addEventListener('input',(e)=>{ e.target.value=e.target.value.rep
 $('codeInput').addEventListener('keydown',(e)=>{ if(e.key==='Enter') joinPair(); });
 
 window.addEventListener('load',async()=>{
-  try { await ensureServiceWorker(); } catch {}
-  if(!hasSession()) showSetup('choice'); else await refreshStatus();
+  ensureServiceWorker().catch(()=>{});
+  if(!hasSession()) showSetup('choice'); else await refreshStatus({autoRepair:false});
 });
 window.addEventListener('online',()=>{ if(hasSession()) refreshStatus({quiet:true}); });
 window.addEventListener('offline',()=>toast('Нет подключения к интернету'));
-document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible'&&hasSession()) refreshStatus({quiet:true}); });
-setInterval(()=>{ if(document.visibilityState==='visible'&&hasSession()) refreshStatus({quiet:true}); },8000);
+document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible'&&hasSession()) refreshStatus({quiet:true,autoRepair:false}); });
+setInterval(()=>{ if(document.visibilityState==='visible'&&hasSession()) refreshStatus({quiet:true,autoRepair:false}); },12000);
