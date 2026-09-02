@@ -1,12 +1,15 @@
 {
+  "id": "./",
   "name": "Ideas",
   "short_name": "Ideas",
   "description": "Fresh visual selections",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
+  "orientation": "portrait",
   "background_color": "#f6f3ef",
   "theme_color": "#f6f3ef",
+  "categories": ["lifestyle", "photo"],
   "icons": [
     {
       "src": "./icon.svg",
