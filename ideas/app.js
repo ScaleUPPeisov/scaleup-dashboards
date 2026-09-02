@@ -31,7 +31,7 @@ function hasSession() { return Boolean(state.deviceId && state.deviceSecret); }
 function isIOS() { return /iphone|ipad|ipod/i.test(navigator.userAgent); }
 function isStandalone() { return matchMedia('(display-mode: standalone)').matches || navigator.standalone === true; }
 function online() { return navigator.onLine !== false; }
-function notificationsSupported() { return 'Notification' in window && 'serviceWorker' in navigator && 'PushManager' in window; }
+function notificationsSupported() { return 'Notification' in window && 'serviceWorker' in navigator; }
 function notificationPermission() { return 'Notification' in window ? Notification.permission : 'unsupported'; }
 
 async function api(action, extra = {}) {
@@ -120,7 +120,10 @@ async function ensureServiceWorker() {
   return navigator.serviceWorker.ready;
 }
 async function currentSubscription() {
-  try { return (await ensureServiceWorker()).pushManager.getSubscription(); } catch { return null; }
+  try {
+    const reg = await ensureServiceWorker();
+    return reg.pushManager ? reg.pushManager.getSubscription() : null;
+  } catch { return null; }
 }
 async function enablePush({ quiet = false } = {}) {
   if (!notificationsSupported()) throw new Error('На этом устройстве push-уведомления не поддерживаются');
@@ -135,6 +138,7 @@ async function enablePush({ quiet = false } = {}) {
   }
   if (permission !== 'granted') throw new Error('Разрешение на уведомления не выдано');
   const reg = await ensureServiceWorker();
+  if (!reg.pushManager) throw new Error('Push-уведомления недоступны в этой версии iOS');
   let subscription = await reg.pushManager.getSubscription();
   if (!subscription) subscription = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC) });
   await api('subscribe', { subscription: subscription.toJSON() });
