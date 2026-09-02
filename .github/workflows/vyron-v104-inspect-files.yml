@@ -1,0 +1,30 @@
+name: VYRON 1.0.4 Native Files Inspect
+
+on:
+  push:
+    branches: [vyron-v104-production-manager-dev]
+    paths: ['vyron-v104-files-inspect-trigger.txt']
+
+permissions:
+  contents: read
+
+jobs:
+  inspect-files:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore exact VYRON 1.0.3
+        run: |
+          set -euo pipefail
+          mkdir .v103
+          curl -fL 'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v1.0.3/VYRON-1.0.3-source.tar.gz' -o /tmp/v103.tar.gz
+          echo 'c2d8353fd0455a407018a262bc97cbe2471b8794be37f58f01af05900c9765f9  /tmp/v103.tar.gz' | shasum -a 256 -c -
+          tar -xzf /tmp/v103.tar.gz -C .v103
+      - name: Files native source
+        run: |
+          echo '===== files.rs 1-560 ====='
+          sed -n '1,560p' .v103/src-tauri/src/files.rs
+          echo '===== types.ts ====='
+          sed -n '1,300p' .v103/src/types.ts
+          echo '===== package tests ====='
+          find .v103/src .v103/src-tauri -maxdepth 3 -type f \( -name '*test*' -o -name '*spec*' \) -print | sort
