@@ -76,6 +76,38 @@ describe('Channel Runway persistence and 06:00 KRAT scheduler',()=>{
     expect(recalculated.channels.neon.runwayDays).toBe(89);
   });
 
+  it('empty Existing Videos cache is no-data, not falsely ended',()=>{
+    const storage=new MemoryStorage();
+    storage.setItem('vyron:existing-cache:v1:neon',JSON.stringify({version:1,updatedAt:'2026-09-02T08:00:00Z',videos:[],baseline:{},syncInfo:null}));
+    const result=recalculateChannelRunway([channel()],new Date('2026-09-02T08:00:00Z'),false,storage as any);
+    expect(result.channels.neon.status).toBe('no-data');
+    expect(result.channels.neon.runwayDays).toBeUndefined();
+    expect(result.channels.neon.scheduledUntil).toBeUndefined();
+  });
+
+  it('uses Existing Videos baseline instead of unsaved local draft dates',()=>{
+    const storage=new MemoryStorage();
+    const baseline=scheduled('2026-10-01T04:00:00+07:00');
+    const draft=scheduled('2026-12-01T04:00:00+07:00');
+    storage.setItem('vyron:existing-cache:v1:neon',JSON.stringify({
+      version:1,updatedAt:'2026-09-02T08:00:00Z',videos:[draft],baseline:{[baseline.id]:baseline},syncInfo:{complete:true}
+    }));
+    const result=recalculateChannelRunway([channel()],new Date('2026-09-02T08:00:00Z'),false,storage as any);
+    expect(result.channels.neon.scheduledUntil).toBe('2026-10-01');
+    expect(result.channels.neon.runwayDays).toBe(29);
+  });
+
+  it('explicit Channel Runway YouTube sync stays authoritative over opaque Existing Videos cache',()=>{
+    const storage=new MemoryStorage();
+    const now=new Date('2026-09-02T08:00:00Z');
+    upsertChannelRunwayFromYoutube(channel(),[scheduled('2026-12-01T04:00:00+07:00')],now,storage as any);
+    const stale=scheduled('2026-10-01T04:00:00+07:00');
+    storage.setItem('vyron:existing-cache:v1:neon',JSON.stringify({version:1,videos:[stale],baseline:{[stale.id]:stale},syncInfo:{complete:true}}));
+    const result=recalculateChannelRunway([channel()],new Date('2026-09-03T08:00:00Z'),false,storage as any);
+    expect(result.channels.neon.scheduledUntil).toBe('2026-12-01');
+    expect(result.channels.neon.runwayDays).toBe(89);
+  });
+
   it('does not run before 06:00 Krasnoyarsk and runs at 06:00',()=>{
     const storage=new MemoryStorage();
     const before=new Date('2026-09-01T22:59:00Z');
