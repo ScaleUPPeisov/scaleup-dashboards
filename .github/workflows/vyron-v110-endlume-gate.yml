@@ -5,6 +5,7 @@ on:
     paths:
       - 'vyron-v110/apply_v110_endlume.py'
       - 'vyron-v110/apply_v110_endlume_fix.py'
+      - 'vyron-v110/apply_v110_endlume_bridge_fix.py'
       - '.github/workflows/vyron-v110-endlume-gate.yml'
       - 'vyron-v110-endlume-trigger.txt'
   workflow_dispatch:
@@ -35,6 +36,7 @@ jobs:
         run: |
           python3 vyron-v110/apply_v110_endlume.py /tmp/v110-src
           python3 vyron-v110/apply_v110_endlume_fix.py /tmp/v110-src
+          python3 vyron-v110/apply_v110_endlume_bridge_fix.py /tmp/v110-src
       - name: Static selected handoff contracts
         shell: bash
         run: |
