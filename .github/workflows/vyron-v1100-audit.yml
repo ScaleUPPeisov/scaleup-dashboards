@@ -1,0 +1,77 @@
+name: VYRON 1.1.0 Master Simplification Audit
+on:
+  push:
+    branches: [vyron-v1100-master-simplification]
+    paths: ['vyron-v1100-audit-trigger.txt']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore exact released VYRON 1.0.15 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/v1100-src /tmp/v1100-assets
+          mkdir -p /tmp/v1100-src /tmp/v1100-assets
+          gh release download v1.0.15 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-1.0.15-source.tar.gz' --pattern 'SOURCE_SHA256.txt' --dir /tmp/v1100-assets
+          E=$(awk '{print $1;exit}' /tmp/v1100-assets/SOURCE_SHA256.txt)
+          G=$(sha256sum /tmp/v1100-assets/VYRON-1.0.15-source.tar.gz|awk '{print $1}')
+          test "$E" = "$G"
+          tar -xzf /tmp/v1100-assets/VYRON-1.0.15-source.tar.gz -C /tmp/v1100-src
+          echo 'EXACT VYRON 1.0.15 RELEASE SOURCE: PASS'
+      - name: Source map
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/v1100-src
+          echo '===== src top-level ====='
+          find src -maxdepth 1 -type f -print | sort
+          echo '===== Rust modules ====='
+          find src-tauri/src -maxdepth 1 -type f -print | sort
+      - name: UI navigation dashboard settings audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/v1100-src
+          echo '===== BRAND / SIDEBAR / TOPBAR / HOME / SETTINGS ====='
+          grep -RniE 'VYRON|function Sidebar|function Topbar|function Home|page===|SettingsOS|Update Center|О программе|Лиценз' src/App.tsx src/SettingsOS.tsx src 2>/dev/null | head -n 450 || true
+      - name: YouTube upload and quota audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/v1100-src
+          echo '===== QUOTA FILES / METHODS ====='
+          grep -RniE 'quota|videos\.insert|videos\.update|thumbnails|upload|youtubeUpload|youtube_update|youtube.*insert|uploadLimitExceeded|dailyLimit' src src-tauri/src 2>/dev/null | head -n 850 || true
+      - name: Production ENDLUME audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/v1100-src
+          echo '===== PRODUCTION / ENDLUME HANDOFF ====='
+          grep -RniE 'handoff|ENDLUME|endlume|selectedProject|selected.*project|render|status\.json|projectIds|manifestPath' src/ProductionManager.tsx src/productionManagerApi.ts src/ProductionStatusBridge.tsx src-tauri/src/production_manager.rs src-tauri/src 2>/dev/null | head -n 900 || true
+      - name: Metadata request graph audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/v1100-src
+          echo '===== METADATA APPLY ====='
+          grep -nE 'applyYoutube|youtubeUpdateExisting|youtubeBackupExisting|loadYoutube|thumbnails|publishAt|schedule' src/MetadataPage.tsx | head -n 350 || true
+          echo '===== api.ts YouTube surface ====='
+          grep -nE 'youtube|quota|upload|thumbnail|appVersion' src/api.ts | head -n 450 || true
+      - name: Exact relevant source excerpts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/v1100-src
+          for f in src/App.tsx src/SettingsOS.tsx src/YoutubeOS.tsx src/HomeOS.tsx src/youtubeQuota.ts src/api.ts src/ProductionManager.tsx src/productionManagerApi.ts src/ProductionStatusBridge.tsx src-tauri/src/youtube.rs; do
+            if [ -f "$f" ]; then
+              echo "===== FILE $f ====="
+              sed -n '1,520p' "$f"
+            fi
+          done
