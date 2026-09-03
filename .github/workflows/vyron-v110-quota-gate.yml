@@ -23,6 +23,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          rm -rf /tmp/v110q-assets /tmp/v110q-src
           mkdir -p /tmp/v110q-assets /tmp/v110q-src
           gh release download v1.0.15 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-1.0.15-source.tar.gz' --pattern 'SOURCE_SHA256.txt' --dir /tmp/v110q-assets
           test "$(awk '{print $1;exit}' /tmp/v110q-assets/SOURCE_SHA256.txt)" = "$(shasum -a 256 /tmp/v110q-assets/VYRON-1.0.15-source.tar.gz|awk '{print $1}')"
@@ -43,15 +44,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: /tmp/v110q-src/package-lock.json
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin
       - name: Frontend tests and build
         working-directory: /tmp/v110q-src
         run: |
-          npm ci
+          npm install --no-audit --no-fund
           npm test
           npm run build
       - name: Rust tests and ARM64 check
