@@ -23,25 +23,11 @@ jobs:
           GOT="$(sha256sum /tmp/v1014-assets/VYRON-1.0.14-source.tar.gz | awk '{print $1}')"
           test "$EXPECTED" = "$GOT"
           tar -xzf /tmp/v1014-assets/VYRON-1.0.14-source.tar.gz -C /tmp/v1014-src
-      - name: Locate image validation and counting code
+      - name: Locate image validation and batch image creation code
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          root=Path('/tmp/v1014-src')
-          needles=['должно быть 1','изображений:','image_count','images.len()','images.len','validate_batch','production_validate','image_extensions','is_image']
-          for p in root.rglob('*'):
-              if not p.is_file() or any(x in p.parts for x in ['node_modules','target','.git']): continue
-              try:s=p.read_text(errors='ignore')
-              except Exception:continue
-              hits=[n for n in needles if n in s]
-              if not hits:continue
-              print(f'\n===== {p.relative_to(root)} hits={hits} =====')
-              lines=s.splitlines()
-              for i,line in enumerate(lines,1):
-                  if any(n in line for n in needles):
-                      a=max(1,i-12);b=min(len(lines),i+22)
-                      print(f'--- lines {a}-{b} around {i} ---')
-                      for j in range(a,b+1):print(f'{j:04d}: {lines[j-1]}')
-          PY
+          echo '===== production_manager.rs 470-635 ====='
+          sed -n '470,635p' /tmp/v1014-src/src-tauri/src/production_manager.rs
+          echo '===== all image-copy/count references ====='
+          grep -RniE 'image_path|image\.png|copy\([^\n]*image|images\.len|изображений:' /tmp/v1014-src/src-tauri/src/production_manager.rs /tmp/v1014-src/src 2>/dev/null || true
