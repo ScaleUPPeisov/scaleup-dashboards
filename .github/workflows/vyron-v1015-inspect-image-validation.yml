@@ -1,0 +1,47 @@
+name: VYRON 1.0.15 Inspect Image Validation
+on:
+  push:
+    branches: [vyron-v1015-image-validation-hotfix]
+    paths: ['vyron-v1015-inspect-trigger.txt']
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download exact VYRON 1.0.14 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/v1014-src /tmp/v1014-assets
+          mkdir -p /tmp/v1014-src /tmp/v1014-assets
+          gh release download v1.0.14 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-1.0.14-source.tar.gz' --pattern 'SOURCE_SHA256.txt' --dir /tmp/v1014-assets
+          EXPECTED="$(awk '{print $1;exit}' /tmp/v1014-assets/SOURCE_SHA256.txt)"
+          GOT="$(sha256sum /tmp/v1014-assets/VYRON-1.0.14-source.tar.gz | awk '{print $1}')"
+          test "$EXPECTED" = "$GOT"
+          tar -xzf /tmp/v1014-assets/VYRON-1.0.14-source.tar.gz -C /tmp/v1014-src
+      - name: Locate image validation and counting code
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          root=Path('/tmp/v1014-src')
+          needles=['должно быть 1','изображений:','image_count','images.len()','images.len','validate_batch','production_validate','image_extensions','is_image']
+          for p in root.rglob('*'):
+              if not p.is_file() or any(x in p.parts for x in ['node_modules','target','.git']): continue
+              try:s=p.read_text(errors='ignore')
+              except Exception:continue
+              hits=[n for n in needles if n in s]
+              if not hits:continue
+              print(f'\n===== {p.relative_to(root)} hits={hits} =====')
+              lines=s.splitlines()
+              for i,line in enumerate(lines,1):
+                  if any(n in line for n in needles):
+                      a=max(1,i-12);b=min(len(lines),i+22)
+                      print(f'--- lines {a}-{b} around {i} ---')
+                      for j in range(a,b+1):print(f'{j:04d}: {lines[j-1]}')
+          PY
