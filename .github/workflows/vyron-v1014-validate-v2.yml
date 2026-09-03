@@ -1,0 +1,100 @@
+name: VYRON 1.0.14 Schedule Patterns Validate v2
+on:
+  push:
+    branches: [vyron-v1014-schedule-patterns]
+    paths: ['vyron-v1014-v2-trigger.txt']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate-macos-arm64:
+    runs-on: macos-latest
+    timeout-minutes: 100
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: vyron-v1014-schedule-patterns
+          fetch-depth: 0
+      - name: Restore exact released VYRON 1.0.13 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .vyron-v1014 /tmp/v1013-assets
+          mkdir -p .vyron-v1014 /tmp/v1013-assets
+          gh release download v1.0.13 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-1.0.13-source.tar.gz' --pattern 'SOURCE_SHA256.txt' --dir /tmp/v1013-assets
+          EXPECTED="$(awk '{print $1; exit}' /tmp/v1013-assets/SOURCE_SHA256.txt)"
+          GOT="$(shasum -a 256 /tmp/v1013-assets/VYRON-1.0.13-source.tar.gz | awk '{print $1}')"
+          test "$EXPECTED" = "$GOT"
+          tar -xzf /tmp/v1013-assets/VYRON-1.0.13-source.tar.gz -C .vyron-v1014
+          grep -q '"version": "1.0.13"' .vyron-v1014/package.json
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          root=Path('.vyron-v1014');conf=json.loads((root/'src-tauri/tauri.conf.json').read_text())
+          Path('/tmp/v1013-id').write_text(conf['identifier']);Path('/tmp/v1013-pub').write_text(conf['plugins']['updater']['pubkey']);Path('/tmp/v1013-endpoints').write_text(json.dumps(conf['plugins']['updater']['endpoints']))
+          protected=['src-tauri/src/youtube.rs','src-tauri/src/storage.rs','src-tauri/src/system.rs','src-tauri/src/updater_bridge.rs','src/AnalyticsPage.tsx','src/CompetitorsPage.tsx','src/PublisherOS.tsx','src/ProductionStatusBridge.tsx','src/autopilotRuntime.ts','src/RecoveryGate.tsx','src/NotificationStack.tsx','src/notificationCenter.ts','src/ProductionManager.tsx']
+          Path('/tmp/v1013-protected.json').write_text(json.dumps({p:hashlib.sha256((root/p).read_bytes()).hexdigest() for p in protected if (root/p).exists()},sort_keys=True))
+          PY
+      - name: Apply 1.0.14 patches
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile vyron-v1014/apply_v1014_pattern.py vyron-v1014/apply_v1014_docx.py vyron-v1014/apply_v1014_cleanup.py ci-v1014/ui_runner.py
+          cd .vyron-v1014
+          python3 ../vyron-v1014/apply_v1014_pattern.py
+          python3 ../ci-v1014/ui_runner.py
+          python3 ../vyron-v1014/apply_v1014_docx.py
+          python3 ../vyron-v1014/apply_v1014_cleanup.py
+      - name: Static contracts
+        working-directory: .vyron-v1014
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          p=json.loads(Path('package.json').read_text());c=json.loads(Path('src-tauri/tauri.conf.json').read_text())
+          assert p['version']=='1.0.14' and c['version']=='1.0.14'
+          assert c['identifier']==Path('/tmp/v1013-id').read_text();assert c['plugins']['updater']['pubkey']==Path('/tmp/v1013-pub').read_text();assert json.dumps(c['plugins']['updater']['endpoints'])==Path('/tmp/v1013-endpoints').read_text()
+          for f,h in json.loads(Path('/tmp/v1013-protected.json').read_text()).items(): assert hashlib.sha256(Path(f).read_bytes()).hexdigest()==h,f'OUT OF SCOPE: {f}'
+          meta=Path('src/MetadataPage.tsx').read_text();sched=Path('src/channelSchedule.ts').read_text();validator=Path('src/metadata.ts').read_text();types=Path('src/types.ts').read_text();cc=Path('src/CommandCenter.tsx').read_text();runway=Path('src/ChannelRunway.tsx').read_text()
+          for x in ['scheduleMode?:','publishIntervalDays?:','publishDays?:','pauseDays?:','patternAnchorDate?:']: assert x in types
+          for x in ['generatePatternSchedule','isPatternPublishDate','scheduleAverageIntervalDays','scheduleDescription']: assert x in sched
+          for x in ['Каждый день','Через день','3 дня / 1 пауза','Настроить','Календарь цикла']: assert x in meta
+          assert "strategy==='pattern'" in meta and 'patternGenerated.dates' in meta
+          assert 'scheduleDescription(next.channel)' in cc and 'scheduleDescription(channel)' in runway
+          assert 'rows.length>=need' in validator and 'rows.length<selectedYt.length' in meta and 'rows.length!==selectedYt.length' not in meta
+          print('1.0.14 static contracts: PASS')
+          PY
+          ! grep -RniE 'youtube_upload_video|youtube_list_existing_videos|youtube_update_existing_video|youtube_channel_analytics|googleapis\.com' src/channelSchedule.ts src/CommandCenter.tsx src/ChannelRunway.tsx src/metadataCoverage.test.ts src/channelSchedule.test.ts
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - uses: dtolnay/rust-toolchain@stable
+        with: {targets: aarch64-apple-darwin}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .vyron-v1014/src-tauri
+          cache-on-failure: true
+      - name: Frontend regression
+        working-directory: .vyron-v1014
+        run: |
+          set -euo pipefail
+          npm install --no-audit --no-fund
+          npm test
+          npm run build
+      - name: Rust regression and ARM64 check
+        working-directory: .vyron-v1014
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path src-tauri/Cargo.toml --lib -- --nocapture
+          cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
+      - name: Final report
+        run: |
+          echo '✅ VYRON 1.0.14 validation PASS'
+          echo '✅ 3/1 calendar pattern + persistent anchor'
+          echo '✅ pause days do not shift on occupied slots'
+          echo '✅ interval mode backward compatible'
+          echo '✅ DOCX surplus accepted; shortage rejected'
+          echo '✅ Production plan count ignored by Metadata validation'
