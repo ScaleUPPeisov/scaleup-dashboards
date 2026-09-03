@@ -1,1 +1,1 @@
-validate VYRON 1.0.6 Production Autobuild ad-hoc signing final gate
+publish VYRON 1.0.6 Production Autobuild final release
