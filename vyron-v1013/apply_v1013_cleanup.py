@@ -12,6 +12,13 @@ must(old_component.exists(),'NotificationCenter.tsx generated component missing'
 if new_component.exists(): new_component.unlink()
 old_component.rename(new_component)
 
+# React 19 typings require an explicit initial useRef value.
+s=new_component.read_text()
+old="const timer=useRef<number|undefined>(),remaining=useRef(item.durationMs??0),started=useRef(0);"
+must(old in s,'NotificationStack timer ref marker missing')
+s=s.replace(old,"const timer=useRef<number|undefined>(undefined),remaining=useRef(item.durationMs??0),started=useRef(0);",1)
+new_component.write_text(s)
+
 p=Path('src/App.tsx');s=p.read_text();s=s.replace("import {NotificationCenter} from './NotificationCenter';","import {NotificationCenter} from './NotificationStack';",1);s=s.replace("page=useApp(s=>s.page),setPage=useApp(s=>s.setPage),notice=useApp(s=>s.notice),log=useApp(s=>s.log)","page=useApp(s=>s.page),setPage=useApp(s=>s.setPage),log=useApp(s=>s.log)",1);p.write_text(s)
 p=Path('src/ProductionManager.tsx');s=p.read_text();s=s.replace("import {notifyError,notifyInfo,notifySuccess,notifyWarning} from './notificationCenter';","import {notifyInfo,notifySuccess} from './notificationCenter';",1);p.write_text(s)
 p=Path('src/channelSchedule.ts');s=p.read_text();s=s.replace("const lastScheduledAt=scheduled.at(-1),lastPublishedAt=published.at(-1);","const lastScheduledAt=scheduled.length?scheduled[scheduled.length-1]:undefined,lastPublishedAt=published.length?published[published.length-1]:undefined;",1);p.write_text(s)
