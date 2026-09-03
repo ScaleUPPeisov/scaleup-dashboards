@@ -1,0 +1,27 @@
+name: VYRON 1.0.12 Inspect Production Workspace
+on:
+  push:
+    branches: [vyron-v1012-ux-storage-command-center]
+    paths: ['vyron-v1012-workspace-inspect-trigger.txt']
+permissions:
+  contents: write
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: vyron-v1012-ux-storage-command-center
+          fetch-depth: 0
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/v1011-src /tmp/v1011-assets; mkdir -p /tmp/v1011-src /tmp/v1011-assets
+          gh release download v1.0.11 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-1.0.11-source.tar.gz' --dir /tmp/v1011-assets
+          tar -xzf /tmp/v1011-assets/VYRON-1.0.11-source.tar.gz -C /tmp/v1011-src
+          for f in src/ProductionWorkspace.tsx src/autopilotCore.ts src/v095.css src/v090.css; do mkdir -p "_inspect_v1012/$(dirname "$f")"; cp "/tmp/v1011-src/$f" "_inspect_v1012/$f"; done
+      - run: |
+          git config user.name 'github-actions[bot]'; git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add _inspect_v1012
+          if ! git diff --cached --quiet; then git commit -m 'chore(vyron): inspect production workspace source'; git push origin HEAD:vyron-v1012-ux-storage-command-center; fi
