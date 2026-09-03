@@ -1,0 +1,39 @@
+name: VYRON 1.0.15 ENDLUME Image Validation Hotfix Release
+on:
+  push:
+    branches: [vyron-v1015-image-validation-hotfix]
+    paths: ['vyron-v1015-release-trigger.txt']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: vyron-v1015-release
+  cancel-in-progress: false
+jobs:
+  release-macos-arm64:
+    runs-on: macos-latest
+    timeout-minutes: 160
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+      APPLE_SIGNING_IDENTITY: "-"
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: vyron-v1015-image-validation-hotfix
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .vyron-v1015-release/src-tauri
+          cache-on-failure: true
+      - name: Build, verify, sign and publish VYRON 1.0.15
+        shell: bash
+        run: bash vyron-v1015/release_v1015.sh
