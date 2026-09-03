@@ -1,0 +1,42 @@
+name: VYRON 1.0.11 Materials Storage Inspect
+
+on:
+  push:
+    branches: [vyron-v1011-project-location]
+    paths:
+      - '.github/workflows/vyron-v1011-inspect-materials-storage.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore exact VYRON 1.0.10 source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/vyron-src /tmp/vyron-assets
+          mkdir -p /tmp/vyron-src /tmp/vyron-assets
+          gh release download v1.0.10 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-1.0.10-source.tar.gz' --pattern 'SOURCE_SHA256.txt' --dir /tmp/vyron-assets
+          EXPECTED="$(awk '{print $1; exit}' /tmp/vyron-assets/SOURCE_SHA256.txt)"
+          GOT="$(sha256sum /tmp/vyron-assets/VYRON-1.0.10-source.tar.gz | awk '{print $1}')"
+          test "$EXPECTED" = "$GOT"
+          tar -xzf /tmp/vyron-assets/VYRON-1.0.10-source.tar.gz -C /tmp/vyron-src
+      - name: Inspect Materials and manual project paths
+        run: |
+          set -euo pipefail
+          cd /tmp/vyron-src
+          echo '=== SOURCE FILES WITH MATERIALS / PREPARE / IMPORT ==='
+          grep -RniE 'Материал|Materials|prepare_job_folder|import_images|prepareJob|workspace|job\.folder|folderPath' src src-tauri/src/files.rs | head -n 800 || true
+          echo '=== files.rs ==='
+          nl -ba src-tauri/src/files.rs | sed -n '1,520p'
+          echo '=== Production page candidates ==='
+          for f in src/*Production*.tsx src/*Materials*.tsx src/App.tsx src/store.ts src/types.ts; do
+            [ -f "$f" ] || continue
+            echo "===== $f ====="
+            nl -ba "$f" | grep -Ei -C 10 'Материал|import|prepare|folder|workspace|image|audio|project' | head -n 500 || true
+          done
