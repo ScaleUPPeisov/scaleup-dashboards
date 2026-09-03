@@ -1,1 +1,1 @@
-validate v2
+validate v2 after A-Z channel dropdowns and occupied-slot invariant fix
