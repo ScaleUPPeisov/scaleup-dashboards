@@ -1,0 +1,43 @@
+name: VYRON 1.0.11 Project Location Inspect
+
+on:
+  push:
+    branches: [vyron-v1011-project-location]
+    paths:
+      - '.github/workflows/vyron-v1011-inspect-project-location.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore exact VYRON 1.0.10 source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/vyron-src /tmp/vyron-assets
+          mkdir -p /tmp/vyron-src /tmp/vyron-assets
+          gh release download v1.0.10 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-1.0.10-source.tar.gz' --pattern 'SOURCE_SHA256.txt' --dir /tmp/vyron-assets
+          EXPECTED="$(awk '{print $1; exit}' /tmp/vyron-assets/SOURCE_SHA256.txt)"
+          GOT="$(sha256sum /tmp/vyron-assets/VYRON-1.0.10-source.tar.gz | awk '{print $1}')"
+          test "$EXPECTED" = "$GOT"
+          tar -xzf /tmp/vyron-assets/VYRON-1.0.10-source.tar.gz -C /tmp/vyron-src
+          echo '=== VERSION ==='
+          grep -n '"version"' /tmp/vyron-src/package.json | head
+      - name: Inspect project location code
+        run: |
+          set -euo pipefail
+          cd /tmp/vyron-src
+          for f in src/ProductionManager.tsx src/productionPrefs.ts src/productionManagerApi.ts src-tauri/src/production_manager.rs src-tauri/src/lib.rs src-tauri/capabilities/default.json package.json; do
+            echo
+            echo "===== FILE: $f ====="
+            if [ -f "$f" ]; then
+              nl -ba "$f" | grep -Ei -C 8 'workspace|root|folder|directory|path|dialog|open\(|select|production|output|volume|external|project' | head -n 260 || true
+            else
+              echo 'MISSING'
+            fi
+          done
