@@ -1,0 +1,112 @@
+name: VYRON 1.0.15 Image Validation Hotfix Validate
+on:
+  push:
+    branches: [vyron-v1015-image-validation-hotfix]
+    paths: ['vyron-v1015-validate-trigger.txt']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate-macos-arm64:
+    runs-on: macos-latest
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: vyron-v1015-image-validation-hotfix
+          fetch-depth: 0
+      - name: Restore exact released VYRON 1.0.14 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .vyron-v1015 /tmp/v1014-hotfix-assets
+          mkdir -p .vyron-v1015 /tmp/v1014-hotfix-assets
+          gh release download v1.0.14 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-1.0.14-source.tar.gz' --pattern 'SOURCE_SHA256.txt' --dir /tmp/v1014-hotfix-assets
+          EXPECTED="$(awk '{print $1;exit}' /tmp/v1014-hotfix-assets/SOURCE_SHA256.txt)"
+          GOT="$(shasum -a 256 /tmp/v1014-hotfix-assets/VYRON-1.0.14-source.tar.gz | awk '{print $1}')"
+          test "$EXPECTED" = "$GOT"
+          tar -xzf /tmp/v1014-hotfix-assets/VYRON-1.0.14-source.tar.gz -C .vyron-v1015
+          grep -q '"version": "1.0.14"' .vyron-v1015/package.json
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          root=Path('.vyron-v1015')
+          protected=[
+            'src-tauri/src/youtube.rs','src-tauri/src/storage.rs','src-tauri/src/system.rs','src-tauri/src/updater_bridge.rs','src-tauri/src/files.rs',
+            'src/ProductionManager.tsx','src/productionManagerApi.ts','src/MetadataPage.tsx','src/ExistingVideos.tsx','src/PublisherOS.tsx','src/ProductionOS.tsx','src/ProductionWorkspace.tsx',
+            'src/CommandCenter.tsx','src/ChannelRunway.tsx','src/RecoveryGate.tsx','src/NotificationStack.tsx','src/notificationCenter.ts','src/channelSchedule.ts','src/channelSort.ts','src/autopilotRuntime.ts'
+          ]
+          Path('/tmp/v1014-protected-hotfix.json').write_text(json.dumps({p:hashlib.sha256((root/p).read_bytes()).hexdigest() for p in protected if (root/p).exists()},sort_keys=True))
+          conf=json.loads((root/'src-tauri/tauri.conf.json').read_text())
+          Path('/tmp/v1014-id-hotfix').write_text(conf['identifier'])
+          Path('/tmp/v1014-pub-hotfix').write_text(conf['plugins']['updater']['pubkey'])
+          Path('/tmp/v1014-endpoints-hotfix').write_text(json.dumps(conf['plugins']['updater']['endpoints']))
+          print('Exact released 1.0.14 source: PASS')
+          PY
+      - name: Apply targeted 1.0.15 patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile vyron-v1015/apply_v1015_image_validation.py
+          cd .vyron-v1015
+          python3 ../vyron-v1015/apply_v1015_image_validation.py
+      - name: Static scope and behavior contracts
+        working-directory: .vyron-v1015
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          p=json.loads(Path('package.json').read_text());c=json.loads(Path('src-tauri/tauri.conf.json').read_text())
+          assert p['version']=='1.0.15' and c['version']=='1.0.15'
+          assert c['identifier']==Path('/tmp/v1014-id-hotfix').read_text()
+          assert c['plugins']['updater']['pubkey']==Path('/tmp/v1014-pub-hotfix').read_text()
+          assert json.dumps(c['plugins']['updater']['endpoints'])==Path('/tmp/v1014-endpoints-hotfix').read_text()
+          for f,h in json.loads(Path('/tmp/v1014-protected-hotfix.json').read_text()).items():
+              assert hashlib.sha256(Path(f).read_bytes()).hexdigest()==h,f'OUT OF SCOPE: {f}'
+          rust=Path('src-tauri/src/production_manager.rs').read_text()
+          assert 'project_has_renderable_image' in rust
+          assert 'nonempty_image' in rust
+          assert 'multiple_images_are_valid_for_endlume' in rust
+          assert 'one_manifest_image_is_valid' in rust
+          assert 'hidden_phantom_image_does_not_make_empty_project_valid' in rust
+          assert 'images.len()!=1' not in rust
+          assert 'изображений: {}, должно быть 1' not in rust
+          assert 'errs.push("изображение не найдено".to_string())' in rust
+          assert 'fs::copy(&p.image_source,tmp.join(&p.image_name))' in rust, 'builder image copy changed unexpectedly'
+          print('1.0.15 image validation contracts: PASS')
+          PY
+          ! grep -RniE 'youtube_upload_video|youtube_list_existing_videos|youtube_update_existing_video|youtube_channel_analytics|googleapis\.com' src-tauri/src/production_manager.rs
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - uses: dtolnay/rust-toolchain@stable
+        with: {targets: aarch64-apple-darwin}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .vyron-v1015/src-tauri
+          cache-on-failure: true
+      - name: Frontend regression
+        working-directory: .vyron-v1015
+        run: |
+          set -euo pipefail
+          npm install --no-audit --no-fund
+          npm test
+          npm run build
+      - name: Rust regression and Apple Silicon check
+        working-directory: .vyron-v1015
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path src-tauri/Cargo.toml --lib -- --nocapture
+          cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
+      - name: Final report
+        run: |
+          echo '✅ VYRON 1.0.15 validation PASS'
+          echo '✅ one image valid'
+          echo '✅ multiple images valid'
+          echo '✅ hidden phantom files ignored as fallback images'
+          echo '✅ zero usable images still rejected'
+          echo '✅ ENDLUME owns multi-image transitions'
+          echo '✅ existing 1.0.14 production/UI/YouTube/updater behavior preserved'
