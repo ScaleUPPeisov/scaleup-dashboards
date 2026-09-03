@@ -34,7 +34,8 @@ jobs:
           from pathlib import Path
           root=Path('.vyron-v1014');conf=json.loads((root/'src-tauri/tauri.conf.json').read_text())
           Path('/tmp/v1013-id').write_text(conf['identifier']);Path('/tmp/v1013-pub').write_text(conf['plugins']['updater']['pubkey']);Path('/tmp/v1013-endpoints').write_text(json.dumps(conf['plugins']['updater']['endpoints']))
-          protected=['src-tauri/src/youtube.rs','src-tauri/src/storage.rs','src-tauri/src/system.rs','src-tauri/src/updater_bridge.rs','src/AnalyticsPage.tsx','src/CompetitorsPage.tsx','src/PublisherOS.tsx','src/ProductionStatusBridge.tsx','src/autopilotRuntime.ts','src/RecoveryGate.tsx','src/NotificationStack.tsx','src/notificationCenter.ts','src/ProductionManager.tsx']
+          # Files below are still hard protected. Analytics/Competitors/Publisher are intentionally excluded because 1.0.14 changes only their channel dropdown ordering.
+          protected=['src-tauri/src/youtube.rs','src-tauri/src/storage.rs','src-tauri/src/system.rs','src-tauri/src/updater_bridge.rs','src/ProductionStatusBridge.tsx','src/autopilotRuntime.ts','src/RecoveryGate.tsx','src/NotificationStack.tsx','src/notificationCenter.ts','src/ProductionManager.tsx']
           Path('/tmp/v1013-protected.json').write_text(json.dumps({p:hashlib.sha256((root/p).read_bytes()).hexdigest() for p in protected if (root/p).exists()},sort_keys=True))
           PY
       - name: Apply 1.0.14 patches
@@ -66,9 +67,13 @@ jobs:
           assert "strategy==='pattern'" in meta and 'patternGenerated.dates' in meta
           assert 'scheduleDescription(next.channel)' in cc and 'scheduleDescription(channel)' in runway
           assert 'rows.length>=need' in validator and 'rows.length<selectedYt.length' in meta and 'rows.length!==selectedYt.length' not in meta
+          assert Path('src/channelSort.ts').exists() and Path('src/channelSort.test.ts').exists()
+          for f in ['src/MetadataPage.tsx','src/ExistingVideos.tsx','src/PublisherOS.tsx','src/ProductionOS.tsx','src/ProductionWorkspace.tsx','src/YouTubeDataTools.tsx','src/AnalyticsPage.tsx','src/CompetitorsPage.tsx']:
+              assert 'sortChannelsAlphabetically(channels)' in Path(f).read_text(), f'A-Z missing: {f}'
+          assert 'sortChannelsAlphabetically' not in cc, 'Command Center priority must not be alphabetically sorted'
           print('1.0.14 static contracts: PASS')
           PY
-          ! grep -RniE 'youtube_upload_video|youtube_list_existing_videos|youtube_update_existing_video|youtube_channel_analytics|googleapis\.com' src/channelSchedule.ts src/CommandCenter.tsx src/ChannelRunway.tsx src/metadataCoverage.test.ts src/channelSchedule.test.ts
+          ! grep -RniE 'youtube_upload_video|youtube_list_existing_videos|youtube_update_existing_video|youtube_channel_analytics|googleapis\.com' src/channelSchedule.ts src/CommandCenter.tsx src/ChannelRunway.tsx src/metadataCoverage.test.ts src/channelSchedule.test.ts src/channelSort.ts src/channelSort.test.ts
       - uses: actions/setup-node@v4
         with: {node-version: '22'}
       - uses: dtolnay/rust-toolchain@stable
@@ -98,3 +103,4 @@ jobs:
           echo '✅ interval mode backward compatible'
           echo '✅ DOCX surplus accepted; shortage rejected'
           echo '✅ Production plan count ignored by Metadata validation'
+          echo '✅ channel selection dropdowns A-Z; Command Center priority untouched'
