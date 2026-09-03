@@ -49,6 +49,7 @@ jobs:
           python3 "$GITHUB_WORKSPACE/vyron-v200/apply_v200_persistence_recovery.py" .
           python3 "$GITHUB_WORKSPACE/vyron-v200/apply_v200_intelligence_errors.py" .
           python3 "$GITHUB_WORKSPACE/vyron-v200/apply_v200_autopilot_attention.py" .
+          python3 "$GITHUB_WORKSPACE/vyron-v200/apply_v200_settings_importfix.py" .
           python3 "$GITHUB_WORKSPACE/vyron-v200/apply_v200_version.py" .
       - name: Final architecture and acceptance contracts
         shell: bash
