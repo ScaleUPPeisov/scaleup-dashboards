@@ -1,4 +1,6 @@
-VYRON 1.1.0 signed release trigger
+VYRON 1.1.0 signed release trigger v2
 combined-gate=33762168195
 combined-conclusion=success
-triggered-at=2026-09-03T13:39:00Z
+release-script=vyron-v110/release_v110_v2.sh
+retry-after-release-assertion-fix=true
+triggered-at=2026-09-03T13:45:00Z
