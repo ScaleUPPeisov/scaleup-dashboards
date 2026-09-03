@@ -1,1 +1,1 @@
-inspect cross-device move operations
+inspect released 1.0.9 cross-device paths v2
