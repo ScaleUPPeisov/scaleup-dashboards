@@ -38,13 +38,14 @@ jobs:
           mkdir -p vyron-v200/audit-v120/src vyron-v200/audit-v120/rust
           find /tmp/v120/src -maxdepth 1 -type f | sed 's#^/tmp/v120/##' | sort > vyron-v200/audit-v120/FILE_LIST.txt
           for f in \
-            App.tsx DashboardOS.tsx SettingsOS.tsx PublisherOS.tsx MetadataPage.tsx ExistingVideos.tsx \
+            App.tsx DashboardOS.tsx SettingsOS.tsx PublisherOS.tsx MetadataPage.tsx ExistingVideos.tsx AccountsPage.tsx ChannelsOS.tsx \
             AnalyticsPage.tsx CompetitorsPage.tsx YouTubeCenter.tsx YouTubeCalendar.tsx YouTubeDataPage.tsx YouTubeDataTools.tsx \
-            CommandCenter.tsx ChannelRunway.tsx store.ts types.ts api.ts youtubeQuota.ts youtubePublishSafety.ts publishCenterCore.ts notificationCenter.ts \
+            CommandCenter.tsx ChannelRunway.tsx store.ts types.ts api.ts metadata.ts styles.css production-manager.css \
+            youtubeQuota.ts youtubePublishSafety.ts publishCenterCore.ts notificationCenter.ts NotificationStack.tsx \
             autopilotCore.ts autopilotRuntime.ts youtubeIntelligence.ts youtubeWorkflow.ts youtubeExisting.ts; do
             if [ -f "/tmp/v120/src/$f" ]; then cp "/tmp/v120/src/$f" "vyron-v200/audit-v120/src/$f"; fi
           done
-          for f in youtube.rs youtube_intelligence.rs storage.rs system.rs files.rs updater_bridge.rs license.rs production_manager.rs; do
+          for f in lib.rs youtube.rs youtube_intelligence.rs storage.rs system.rs files.rs updater_bridge.rs license.rs production_manager.rs; do
             if [ -f "/tmp/v120/src-tauri/src/$f" ]; then cp "/tmp/v120/src-tauri/src/$f" "vyron-v200/audit-v120/rust/$f"; fi
           done
           python3 - <<'PY'
@@ -60,6 +61,6 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add vyron-v200/audit-v120
           if ! git diff --cached --quiet; then
-            git commit -m 'audit(vyron): snapshot exact released 1.2.0 final modules'
+            git commit -m 'audit(vyron): snapshot exact released 1.2.0 final ui and backend'
             git push origin HEAD:vyron-yt-peisov-2.0.0-final
           fi
