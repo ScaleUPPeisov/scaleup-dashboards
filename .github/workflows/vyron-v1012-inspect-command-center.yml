@@ -1,0 +1,47 @@
+name: VYRON 1.0.12 Inspect Command Center
+
+on:
+  push:
+    branches: [vyron-v1012-ux-storage-command-center]
+    paths: ['vyron-v1012-command-inspect-trigger.txt']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: vyron-v1012-ux-storage-command-center
+          fetch-depth: 0
+      - name: Restore exact VYRON 1.0.11 source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/v1011-src /tmp/v1011-assets
+          mkdir -p /tmp/v1011-src /tmp/v1011-assets
+          gh release download v1.0.11 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-1.0.11-source.tar.gz' --dir /tmp/v1011-assets
+          tar -xzf /tmp/v1011-assets/VYRON-1.0.11-source.tar.gz -C /tmp/v1011-src
+      - name: Capture Command Center and styles
+        run: |
+          set -euo pipefail
+          for f in src/CommandCenter.tsx src/commandCenterCore.ts src/commandCenter.test.ts src/ChannelRunway.tsx; do
+            test -f "/tmp/v1011-src/$f"
+            mkdir -p "_inspect_v1012/$(dirname "$f")"
+            cp "/tmp/v1011-src/$f" "_inspect_v1012/$f"
+          done
+          grep -RliE 'commandCenter|commandGrid|commandBlock|pmStorage|pmBuilder|productionManager|productionTabs|productionPipeline' /tmp/v1011-src/src --include='*.css' --include='*.tsx' | sed 's#^/tmp/v1011-src/##' | sort > _inspect_v1012/STYLE_MATCH_FILES.txt || true
+          while IFS= read -r f; do
+            case "$f" in *.css) mkdir -p "_inspect_v1012/$(dirname "$f")"; cp "/tmp/v1011-src/$f" "_inspect_v1012/$f";; esac
+          done < _inspect_v1012/STYLE_MATCH_FILES.txt
+      - name: Commit snapshot
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add _inspect_v1012
+          if ! git diff --cached --quiet; then git commit -m 'chore(vyron): inspect command center and production styles'; git push origin HEAD:vyron-v1012-ux-storage-command-center; fi
