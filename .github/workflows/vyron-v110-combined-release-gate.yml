@@ -46,13 +46,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for f in vyron-v120/apply_v120_core.py vyron-v120/apply_v120_dashboard_settings.py vyron-v120/apply_v120_youtube_backend.py vyron-v120/apply_v120_publish.py vyron-v120/apply_v120_metadata_quota.py vyron-v120/apply_v120_production.py; do python3 -m py_compile "$f"; done
+          for f in vyron-v120/apply_v120_core.py vyron-v120/apply_v120_dashboard_settings.py vyron-v120/apply_v120_youtube_backend.py vyron-v120/apply_v120_publish.py vyron-v120/apply_v120_metadata_quota.py vyron-v120/apply_v120_production.py vyron-v120/apply_v120_testfix.py; do python3 -m py_compile "$f"; done
           python3 vyron-v120/apply_v120_core.py .vyron-v120
           python3 vyron-v120/apply_v120_dashboard_settings.py .vyron-v120
           python3 vyron-v120/apply_v120_youtube_backend.py .vyron-v120
           python3 vyron-v120/apply_v120_publish.py .vyron-v120
           python3 vyron-v120/apply_v120_metadata_quota.py .vyron-v120
           python3 vyron-v120/apply_v120_production.py .vyron-v120
+          python3 vyron-v120/apply_v120_testfix.py .vyron-v120
       - name: Architecture and literal acceptance contracts
         working-directory: .vyron-v120
         shell: bash
