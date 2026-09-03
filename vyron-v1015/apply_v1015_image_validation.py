@@ -21,29 +21,33 @@ if p.exists():
     p.write_text(json.dumps(x,ensure_ascii=False,indent=2)+'\n')
 
 p=Path('src-tauri/src/production_manager.rs');s=p.read_text()
+helper_marker='''fn is_image(p: &Path) -> bool { IMAGE_EXT.contains(&ext(p).as_str()) }
+fn is_audio(p: &Path) -> bool { AUDIO_EXT.contains(&ext(p).as_str()) }'''
+helper_new='''fn is_image(p: &Path) -> bool { IMAGE_EXT.contains(&ext(p).as_str()) }
+fn is_audio(p: &Path) -> bool { AUDIO_EXT.contains(&ext(p).as_str()) }
+fn nonempty_image(p:&Path)->bool{p.is_file()&&is_image(p)&&fs::metadata(p).map(|m|m.len()>0).unwrap_or(false)}
+fn project_has_renderable_image(folder:&Path,manifest_image:&Path)->bool{
+    if nonempty_image(manifest_image){return true;}
+    fs::read_dir(folder).ok().into_iter().flatten().filter_map(Result::ok).any(|e|{
+        let name=e.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') {return false;}
+        let ft=match e.file_type(){Ok(x)=>x,Err(_)=>return false};
+        if !ft.is_file(){return false;}
+        nonempty_image(&e.path())
+    })
+}'''
+must(helper_marker in s,'image helper marker not found');s=s.replace(helper_marker,helper_new,1)
+
 old='''        let images=fs::read_dir(folder).ok().into_iter().flatten().filter_map(Result::ok).map(|e|e.path()).filter(|x|x.is_file()&&is_image(x)).collect::<Vec<_>>();
         if images.len()!=1{errs.push(format!("изображений: {}, должно быть 1",images.len()));}'''
 new='''        // VYRON validates renderability, not the number of visual assets. ENDLUME owns
         // multi-image transitions and may legitimately use 1, 2 or more images.
-        // Prefer the exact manifest image produced by VYRON. Only fall back to scanning
-        // the project folder when that manifest path was manually changed or removed.
-        let manifest_image=Path::new(&p.image_path);
-        let manifest_image_ok=manifest_image.is_file()
-            && is_image(manifest_image)
-            && fs::metadata(manifest_image).map(|m|m.len()>0).unwrap_or(false);
-        if !manifest_image_ok {
-            let has_any_image=fs::read_dir(folder).ok().into_iter().flatten().filter_map(Result::ok).any(|e|{
-                let name=e.file_name().to_string_lossy().to_string();
-                if name.starts_with('.') { return false; }
-                let ft=match e.file_type(){Ok(x)=>x,Err(_)=>return false};
-                if !ft.is_file(){return false;}
-                let q=e.path();
-                is_image(&q)&&fs::metadata(&q).map(|m|m.len()>0).unwrap_or(false)
-            });
-            if !has_any_image{errs.push("изображение не найдено".to_string());}
+        // Prefer the exact manifest image produced by VYRON. If it was manually changed
+        // or removed, accept any other non-hidden supported image in the project folder.
+        if !project_has_renderable_image(folder,Path::new(&p.image_path)){
+            errs.push("изображение не найдено".to_string());
         }'''
-must(old in s,'exact 1-image validator block not found')
-s=s.replace(old,new,1)
+must(old in s,'exact 1-image validator block not found');s=s.replace(old,new,1)
 must('изображений: {}, должно быть 1' not in s,'legacy exact-one error still present')
 must('images.len()!=1' not in s,'legacy exact-one condition still present')
 
@@ -59,45 +63,32 @@ mod v1015_image_validation_tests {
         fs::create_dir_all(&p).unwrap();
         p
     }
-    fn has_renderable_image(folder:&Path,manifest:&Path)->bool{
-        let manifest_ok=manifest.is_file()&&is_image(manifest)&&fs::metadata(manifest).map(|m|m.len()>0).unwrap_or(false);
-        if manifest_ok{return true;}
-        fs::read_dir(folder).ok().into_iter().flatten().filter_map(Result::ok).any(|e|{
-            let name=e.file_name().to_string_lossy().to_string();
-            if name.starts_with('.') {return false;}
-            let ft=match e.file_type(){Ok(x)=>x,Err(_)=>return false};
-            if !ft.is_file(){return false;}
-            let q=e.path();is_image(&q)&&fs::metadata(&q).map(|m|m.len()>0).unwrap_or(false)
-        })
-    }
 
     #[test]
     fn one_manifest_image_is_valid(){
         let d=temp_project("one");let img=d.join("image.png");fs::write(&img,b"png").unwrap();
-        assert!(has_renderable_image(&d,&img));let _=fs::remove_dir_all(d);
+        assert!(project_has_renderable_image(&d,&img));let _=fs::remove_dir_all(d);
     }
 
     #[test]
     fn multiple_images_are_valid_for_endlume(){
         let d=temp_project("many");let img=d.join("image.png");fs::write(&img,b"png").unwrap();fs::write(d.join("transition.jpg"),b"jpg").unwrap();
-        assert!(has_renderable_image(&d,&img));let _=fs::remove_dir_all(d);
+        assert!(project_has_renderable_image(&d,&img));let _=fs::remove_dir_all(d);
     }
 
     #[test]
     fn fallback_image_is_valid_if_manifest_path_was_changed(){
         let d=temp_project("fallback");fs::write(d.join("other.webp"),b"webp").unwrap();
-        assert!(has_renderable_image(&d,&d.join("missing.png")));let _=fs::remove_dir_all(d);
+        assert!(project_has_renderable_image(&d,&d.join("missing.png")));let _=fs::remove_dir_all(d);
     }
 
     #[test]
     fn hidden_phantom_image_does_not_make_empty_project_valid(){
         let d=temp_project("hidden");fs::write(d.join(".phantom.png"),b"hidden").unwrap();
-        assert!(!has_renderable_image(&d,&d.join("missing.png")));let _=fs::remove_dir_all(d);
+        assert!(!project_has_renderable_image(&d,&d.join("missing.png")));let _=fs::remove_dir_all(d);
     }
 }
 '''
-must('mod v1015_image_validation_tests' not in s,'tests already present')
-s=s.rstrip()+test+'\n'
-p.write_text(s)
+must('mod v1015_image_validation_tests' not in s,'tests already present');s=s.rstrip()+test+'\n';p.write_text(s)
 
 print('VYRON 1.0.15 image validation hotfix applied')
