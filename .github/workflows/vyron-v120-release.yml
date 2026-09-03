@@ -1,0 +1,36 @@
+name: VYRON YT PEISOV 1.2.0 Signed Release
+on:
+  push:
+    branches: [vyron-yt-peisov-1.2.0-full-master]
+    paths: ['vyron-v120-release-trigger.txt']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: vyron-v120-release
+  cancel-in-progress: false
+jobs:
+  release-macos-arm64:
+    runs-on: macos-latest
+    timeout-minutes: 180
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+      APPLE_SIGNING_IDENTITY: "-"
+      VITE_BUILD_DATE: '2026-09-03'
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: vyron-yt-peisov-1.2.0-full-master
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - name: Build, verify, sign and publish VYRON YT PEISOV 1.2.0
+        shell: bash
+        run: bash vyron-v120/release_v120.sh
