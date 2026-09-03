@@ -58,7 +58,9 @@ must(anchor in s,'watcher import-dir anchor missing')
 if '[image-collector] session started' not in s:
     s=s.replace(anchor,anchor+start_log,1)
 
-import_log='''                eprintln!("[image-collector] imported channel={} session={} count={} source={}",channel_id,session.session_id,session.collected.len(),key);\n'''
+# `key` is moved into CollectedImage.source_path, so diagnostics read the source
+# back from the persisted item instead of borrowing a moved String.
+import_log='''                eprintln!("[image-collector] imported channel={} session={} count={} source={}",channel_id,session.session_id,session.collected.len(),session.collected.last().map(|x|x.source_path.as_str()).unwrap_or(""));\n'''
 anchor='                session.collected.push(item);\n'
 must(anchor in s,'collector persisted item anchor missing')
 if '[image-collector] imported' not in s:
@@ -66,7 +68,7 @@ if '[image-collector] imported' not in s:
 
 # Existing recursive scanner must keep case-insensitive image support and hidden
 # file filtering. We intentionally do not modify files.rs/manual import.
-must('name.starts_with(\'.\')' in s,'hidden-file guard missing')
+must("name.starts_with('.')" in s,'hidden-file guard missing')
 
 # Regression test: a file present in the startup snapshot MUST remain collectible
 # when it was not already persisted in the current import session.
