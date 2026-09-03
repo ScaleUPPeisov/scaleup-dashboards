@@ -1,105 +1,60 @@
-name: VYRON 1.1.0 Combined Release Gate
+name: VYRON 1.2.0 Exact 1.1.0 Full Master Inspect
 on:
   push:
-    branches: [vyron-yt-peisov-1.1.0-dev]
+    branches: [vyron-yt-peisov-1.2.0-full-master]
     paths:
-      - 'vyron-v110/apply_v110_endlume.py'
-      - 'vyron-v110/apply_v110_endlume_fix.py'
-      - 'vyron-v110/apply_v110_endlume_bridge_fix.py'
-      - 'vyron-v110/apply_v110_quota.py'
-      - 'vyron-v110/apply_v110_quota_fix.py'
-      - 'vyron-v110/apply_v110_version.py'
       - '.github/workflows/vyron-v110-combined-release-gate.yml'
-      - 'vyron-v110-combined-trigger.txt'
+      - 'vyron-v120-combined-trigger.txt'
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
-  combined:
-    runs-on: macos-latest
-    timeout-minutes: 55
+  inspect:
+    runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: vyron-yt-peisov-1.1.0-dev
-      - name: Restore and verify exact VYRON 1.0.15 source
+          ref: vyron-yt-peisov-1.2.0-full-master
+      - name: Restore exact released VYRON 1.1.0
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf /tmp/v110-final-assets /tmp/v110-final-src /tmp/v110-protected
-          mkdir -p /tmp/v110-final-assets /tmp/v110-final-src /tmp/v110-protected
-          gh release download v1.0.15 --repo ScaleUPPeisov/scaleup-dashboards \
-            --pattern 'VYRON-1.0.15-source.tar.gz' --pattern 'SOURCE_SHA256.txt' \
-            --dir /tmp/v110-final-assets
-          EXPECTED="$(awk '{print $1;exit}' /tmp/v110-final-assets/SOURCE_SHA256.txt)"
-          GOT="$(shasum -a 256 /tmp/v110-final-assets/VYRON-1.0.15-source.tar.gz | awk '{print $1}')"
+          rm -rf /tmp/v120-src /tmp/v120-assets
+          mkdir -p /tmp/v120-src /tmp/v120-assets
+          gh release download v1.1.0 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-1.1.0-source.tar.gz' --pattern 'SOURCE_SHA256.txt' --dir /tmp/v120-assets
+          EXPECTED="$(awk '{print $1;exit}' /tmp/v120-assets/SOURCE_SHA256.txt)"
+          GOT="$(sha256sum /tmp/v120-assets/VYRON-1.1.0-source.tar.gz|awk '{print $1}')"
           test "$EXPECTED" = "$GOT"
-          tar -xzf /tmp/v110-final-assets/VYRON-1.0.15-source.tar.gz -C /tmp/v110-final-src
-          for f in src-tauri/src/updater_bridge.rs src-tauri/src/license.rs src-tauri/src/storage.rs src-tauri/src/files.rs src-tauri/src/system.rs; do
-            shasum -a 256 "/tmp/v110-final-src/$f" | awk '{print $1}' >> /tmp/v110-protected/before.sha256
-          done
-          grep -E '"identifier"|"pubkey"|"endpoints"' /tmp/v110-final-src/src-tauri/tauri.conf.json | sed 's/^[[:space:]]*//' > /tmp/v110-protected/tauri-before.txt
-      - name: Apply complete VYRON 1.1.0 patch set
+          tar -xzf /tmp/v120-assets/VYRON-1.1.0-source.tar.gz -C /tmp/v120-src
+          echo "SOURCE_SHA=$GOT"
+          grep -q '"version": "1.1.0"' /tmp/v120-src/package.json
+      - name: App dashboard settings map
         shell: bash
         run: |
-          set -euo pipefail
-          python3 vyron-v110/apply_v110_endlume.py /tmp/v110-final-src
-          python3 vyron-v110/apply_v110_endlume_fix.py /tmp/v110-final-src
-          python3 vyron-v110/apply_v110_endlume_bridge_fix.py /tmp/v110-final-src
-          python3 vyron-v110/apply_v110_quota.py /tmp/v110-final-src
-          python3 vyron-v110/apply_v110_quota_fix.py /tmp/v110-final-src
-          python3 vyron-v110/apply_v110_version.py /tmp/v110-final-src
-      - name: Regression and architecture contracts
+          for f in App.tsx DashboardOS.tsx SettingsOS.tsx; do
+            echo "===== $f ====="
+            grep -nE 'VYRON|Dashboard|Главная|sidebar|nav|Settings|Настройки|О программе|Лиценз|Обновлен|quota|Quota|Дата|date|Production|YouTube|section|tab' /tmp/v120-src/src/$f | head -n 320 || true
+          done
+      - name: Production ENDLUME map
         shell: bash
         run: |
-          set -euo pipefail
-          cd /tmp/v110-final-src
-          grep -q '"version": "1.1.0"' package.json
-          grep -q '^version = "1.1.0"' src-tauri/Cargo.toml
-          grep -q '"version": "1.1.0"' src-tauri/tauri.conf.json
-          grep -q 'selected_project_ids:Option<Vec<String>>' src-tauri/src/production_manager.rs
-          grep -q 'validate_production_projects' src-tauri/src/production_manager.rs
-          grep -q 'ENDLUME_ALREADY_SENT' src-tauri/src/production_manager.rs
-          grep -q '.vyron-handoff-' src-tauri/src/production_manager.rs
-          grep -q 'ОТПРАВИТЬ В ENDLUME ({selectedProjectIds.length})' src/ProductionManager.tsx
-          grep -q 'readProductionPrefs' src/ProductionStatusBridge.tsx
-          ! grep -q 'loadProductionPrefs' src/ProductionStatusBridge.tsx
-          grep -q "'videos.update':{bucket:'general',cost:50" src/youtubeQuota.ts
-          grep -q "'videos.insert':{bucket:'videoUploads',cost:1" src/youtubeQuota.ts
-          grep -q 'America/Los_Angeles' src/youtubeQuota.ts
-          grep -q 'subscribeYoutubeQuotaClock' src/youtubeQuota.ts
-          grep -q 'youtube-api-request' src-tauri/src/youtube.rs
-          grep -q 'emit_youtube_api_request(&app,"videos.insert"' src-tauri/src/youtube.rs
-          ! grep -q 'googleapis.com' src-tauri/src/production_manager.rs
-          grep -q "const GUARD_KEY='vyron:youtube-quota-guard:v1'" src/youtubeQuota.ts
-          grep -q 'youtube-oauth.json' src-tauri/src/youtube.rs
-          grep -q 'google-config.json' src-tauri/src/youtube.rs
-          : > /tmp/v110-protected/after.sha256
-          for f in src-tauri/src/updater_bridge.rs src-tauri/src/license.rs src-tauri/src/storage.rs src-tauri/src/files.rs src-tauri/src/system.rs; do
-            shasum -a 256 "$f" | awk '{print $1}' >> /tmp/v110-protected/after.sha256
+          for f in ProductionOS.tsx ProductionManager.tsx ProductionStatusBridge.tsx productionManagerApi.ts; do
+            echo "===== $f ====="
+            grep -nE 'Рендер|Публика|render|publish|ENDLUME|selected|project|batch|status|progress|handoff|openEndlume|validateProjects|SENT|READY_UPLOAD|tab|section' /tmp/v120-src/src/$f | head -n 360 || true
           done
-          diff -u /tmp/v110-protected/before.sha256 /tmp/v110-protected/after.sha256
-          grep -E '"identifier"|"pubkey"|"endpoints"' src-tauri/tauri.conf.json | sed 's/^[[:space:]]*//' > /tmp/v110-protected/tauri-after.txt
-          diff -u /tmp/v110-protected/tauri-before.txt /tmp/v110-protected/tauri-after.txt
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin
-      - name: Frontend regression suite and build
-        working-directory: /tmp/v110-final-src
+      - name: Metadata publisher quota map
+        shell: bash
         run: |
-          npm install --no-audit --no-fund
-          npm test
-          npm run build
-      - name: Rust regression suite
-        working-directory: /tmp/v110-final-src/src-tauri
-        run: cargo test --lib
-      - name: Apple Silicon compile gate
-        working-directory: /tmp/v110-final-src/src-tauri
-        run: cargo check --target aarch64-apple-darwin
-      - name: Gate summary
-        run: echo 'VYRON 1.1.0 combined release candidate is green'
+          for f in MetadataPage.tsx PublisherOS.tsx api.ts youtubeQuota.ts types.ts; do
+            echo "===== $f ====="
+            grep -nE 'thumbnail|DOCX|Word|metadata|publishAt|schedule|privacy|quota|Quota|upload|videos.update|videos.insert|selected|channel|sortChannels|Apply|Примен|queue|job' /tmp/v120-src/src/$f | head -n 420 || true
+          done
+      - name: Rust upload thumbnail license updater map
+        shell: bash
+        run: |
+          for f in youtube.rs lib.rs license.rs updater_bridge.rs production_manager.rs; do
+            echo "===== src-tauri/src/$f ====="
+            grep -nE 'youtube_upload|videos.insert|thumbnails|thumbnail|upload|daily|quota|license|updater|version|production|ENDLUME|selected_project_ids|command' /tmp/v120-src/src-tauri/src/$f | head -n 420 || true
+          done
