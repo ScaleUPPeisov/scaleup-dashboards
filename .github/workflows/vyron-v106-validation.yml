@@ -37,7 +37,7 @@ jobs:
           Path('/tmp/v106-trust.json').write_text(json.dumps({'identifier':c['identifier'],'pubkey':c['plugins']['updater']['pubkey'],'endpoints':c['plugins']['updater']['endpoints']},sort_keys=True))
           PY
       - name: Apply VYRON 1.0.6 Production-only overlay
-        run: python3 vyron-v100/apply_v106.py .v106
+        run: python3 vyron-v100/run_v106.py .v106
       - name: Prove scope, Zero Quota and contracts
         shell: bash
         run: |
