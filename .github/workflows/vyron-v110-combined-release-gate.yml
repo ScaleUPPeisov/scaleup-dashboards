@@ -38,9 +38,9 @@ jobs:
           test "$EXPECTED" = "$GOT"
           tar -xzf /tmp/v110-final-assets/VYRON-1.0.15-source.tar.gz -C /tmp/v110-final-src
           for f in src-tauri/src/updater_bridge.rs src-tauri/src/license.rs src-tauri/src/storage.rs src-tauri/src/files.rs src-tauri/src/system.rs; do
-            shasum -a 256 "/tmp/v110-final-src/$f" >> /tmp/v110-protected/before.sha256
+            shasum -a 256 "/tmp/v110-final-src/$f" | awk '{print $1}' >> /tmp/v110-protected/before.sha256
           done
-          grep -E '"identifier"|"pubkey"|"endpoints"' /tmp/v110-final-src/src-tauri/tauri.conf.json > /tmp/v110-protected/tauri-before.txt
+          grep -E '"identifier"|"pubkey"|"endpoints"' /tmp/v110-final-src/src-tauri/tauri.conf.json | sed 's/^[[:space:]]*//' > /tmp/v110-protected/tauri-before.txt
       - name: Apply complete VYRON 1.1.0 patch set
         shell: bash
         run: |
@@ -78,10 +78,10 @@ jobs:
           grep -q 'google-config.json' src-tauri/src/youtube.rs
           : > /tmp/v110-protected/after.sha256
           for f in src-tauri/src/updater_bridge.rs src-tauri/src/license.rs src-tauri/src/storage.rs src-tauri/src/files.rs src-tauri/src/system.rs; do
-            shasum -a 256 "$f" >> /tmp/v110-protected/after.sha256
+            shasum -a 256 "$f" | awk '{print $1}' >> /tmp/v110-protected/after.sha256
           done
           diff -u /tmp/v110-protected/before.sha256 /tmp/v110-protected/after.sha256
-          grep -E '"identifier"|"pubkey"|"endpoints"' src-tauri/tauri.conf.json > /tmp/v110-protected/tauri-after.txt
+          grep -E '"identifier"|"pubkey"|"endpoints"' src-tauri/tauri.conf.json | sed 's/^[[:space:]]*//' > /tmp/v110-protected/tauri-after.txt
           diff -u /tmp/v110-protected/tauri-before.txt /tmp/v110-protected/tauri-after.txt
       - uses: actions/setup-node@v4
         with:
