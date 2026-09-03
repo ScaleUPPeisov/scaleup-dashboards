@@ -1,0 +1,68 @@
+name: VYRON 1.0.12 Inspect Exact 1.0.11
+
+on:
+  push:
+    branches: [vyron-v1012-ux-storage-command-center]
+    paths: ['vyron-v1012-inspect-trigger.txt']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: vyron-v1012-ux-storage-command-center
+          fetch-depth: 0
+      - name: Restore exact VYRON 1.0.11 source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/v1011-src /tmp/v1011-assets _inspect_v1012
+          mkdir -p /tmp/v1011-src /tmp/v1011-assets _inspect_v1012
+          gh release download v1.0.11 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-1.0.11-source.tar.gz' --pattern 'SOURCE_SHA256.txt' --dir /tmp/v1011-assets
+          EXPECTED="$(awk '{print $1; exit}' /tmp/v1011-assets/SOURCE_SHA256.txt)"
+          GOT="$(sha256sum /tmp/v1011-assets/VYRON-1.0.11-source.tar.gz | awk '{print $1}')"
+          test "$EXPECTED" = "$GOT"
+          tar -xzf /tmp/v1011-assets/VYRON-1.0.11-source.tar.gz -C /tmp/v1011-src
+          grep -q '"version": "1.0.11"' /tmp/v1011-src/package.json
+      - name: Capture relevant exact source
+        run: |
+          set -euo pipefail
+          for f in \
+            src/ProductionOS.tsx \
+            src/productionPrefs.ts \
+            src/productionManagerApi.ts \
+            src/ProductionManager.tsx \
+            src/YouTubeCenter.tsx \
+            src/store.ts \
+            src/types.ts \
+            src/api.ts \
+            src/App.css \
+            src/index.css \
+            src/styles.css \
+            src-tauri/src/production_manager.rs \
+            src-tauri/src/files.rs \
+            src-tauri/src/lib.rs; do
+              if [ -f "/tmp/v1011-src/$f" ]; then
+                mkdir -p "_inspect_v1012/$(dirname "$f")"
+                cp "/tmp/v1011-src/$f" "_inspect_v1012/$f"
+              fi
+          done
+          find /tmp/v1011-src/src -maxdepth 2 -type f | sed 's#^/tmp/v1011-src/##' | sort > _inspect_v1012/SRC_FILES.txt
+          grep -RniE 'Командный центр|Command Center|runway|Production forecast|Attention Center|NETWORK PLAN|Очередь каналов' /tmp/v1011-src/src > _inspect_v1012/COMMAND_CENTER_MATCHES.txt || true
+          grep -RniE 'chooseProductionRoot|openFolder|Открыть в Finder|Выбрать основную папку|Для этого канала|projectCount|tracksPerProject|MAX_IMAGES|Array\(30\)|slice\(0,30\)|30 изображ' /tmp/v1011-src/src /tmp/v1011-src/src-tauri/src > _inspect_v1012/PRODUCTION_MATCHES.txt || true
+      - name: Commit inspection snapshot
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add _inspect_v1012
+          if ! git diff --cached --quiet; then
+            git commit -m 'chore(vyron): inspect exact 1.0.11 UX/storage source'
+            git push origin HEAD:vyron-v1012-ux-storage-command-center
+          fi
