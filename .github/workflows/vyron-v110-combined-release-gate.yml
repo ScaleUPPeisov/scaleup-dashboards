@@ -67,7 +67,13 @@ jobs:
           assert conf.get('productName')==identity['productName'],'technical productName changed'
           assert conf['plugins']['updater']['pubkey']==identity['pubkey'],'updater pubkey changed'
           assert conf['plugins']['updater']['endpoints']==identity['endpoints'],'updater endpoints changed'
-          for f,h in json.loads(Path('/tmp/v120-protected.json').read_text()).items():assert hashlib.sha256(Path(f).read_bytes()).hexdigest()==h,f'protected module changed: {f}'
+          for f,h in json.loads(Path('/tmp/v120-protected.json').read_text()).items():
+              data=Path(f).read_bytes();actual=hashlib.sha256(data).hexdigest()
+              if actual==h:continue
+              if f.endswith('.tsx'):
+                  normalized=data.decode().replace('VYRON YT PEISOV','VYRON').encode()
+                  assert hashlib.sha256(normalized).hexdigest()==h,f'protected UI changed beyond visible branding: {f}'
+              else:raise AssertionError(f'protected module changed: {f}')
           all_tsx='\n'.join(p.read_text() for p in Path('src').glob('*.tsx'))
           for literal in ['VYRON YT PEISOV','ПУБЛИКАЦИЯ НА YOUTUBE','О программе','Лицензия','Эта операция потратит','После операции останется']:
               assert literal in all_tsx,literal
@@ -75,7 +81,7 @@ jobs:
           dash=Path('src/DashboardOS.tsx').read_text();assert 'MORNING CONTROL CENTER' not in dash and 'ТРЕБУЕТ ВНИМАНИЯ' in dash and 'ОТКРЫТЬ ПУБЛИКАЦИЮ' in dash
           settings=Path('src/SettingsOS.tsx').read_text();assert "['license','Лицензия']" in settings and "['about','О программе']" in settings and 'youtubePublishSafeMode' in settings
           prod=Path('src/ProductionOS.tsx').read_text();assert ">Рендер</button>" not in prod and ">Публикация</button>" not in prod and '>ENDLUME</button>' in prod
-          pub=Path('src/PublisherOS.tsx').read_text();
+          pub=Path('src/PublisherOS.tsx').read_text()
           for x in ['ПРОВЕРИТЬ НА ОДНОМ','ЗАГРУЗИТЬ ${selected.length} ВИДЕО НА YOUTUBE','safeDailyUploadLimit','youtubeFileFingerprint','youtubeSetThumbnail','acquireChannelUploadLock','reserveYoutubeQuota']:
               assert x in pub,x
           meta=Path('src/MetadataPage.tsx').read_text();assert 'metadataQuotaPlan' in meta and 'reserveYoutubeQuota(operationId,metadataQuotaPlan)' in meta and 'Word может содержать больше записей' in meta
