@@ -73,7 +73,7 @@ jobs:
           grep -q 'youtube-api-request' src-tauri/src/youtube.rs
           grep -q 'emit_youtube_api_request(&app,"videos.insert"' src-tauri/src/youtube.rs
           ! grep -q 'googleapis.com' src-tauri/src/production_manager.rs
-          grep -q "const KEY='vyron:youtube-quota-guard:v1'" src/youtubeQuota.ts
+          grep -q "const GUARD_KEY='vyron:youtube-quota-guard:v1'" src/youtubeQuota.ts
           grep -q 'youtube-oauth.json' src-tauri/src/youtube.rs
           grep -q 'google-config.json' src-tauri/src/youtube.rs
           : > /tmp/v110-protected/after.sha256
