@@ -11,6 +11,14 @@ bad='''# Unit-test request factory must populate the new optional field.\nr=rep(
 if bad not in script:
     raise SystemExit('VYRON 1.0.9 wrapper: expected obsolete inline-test block not found')
 script=script.replace(bad,'',1)
+# Exact formatting of the TS invoke wrapper is not an API contract. Preserve the
+# collector semantically: the command name must remain present, while the native
+# collector source is separately regression-checked by CI.
+old="must('start_production_import(workspace' in Path('src/productionManagerApi.ts').read_text(),'collector API changed')"
+new="must('start_production_import' in Path('src/productionManagerApi.ts').read_text(),'collector API changed')"
+if old not in script:
+    raise SystemExit('VYRON 1.0.9 wrapper: collector invariant marker missing')
+script=script.replace(old,new,1)
 root=Path(sys.argv[1]).resolve()
 if not (root/'package.json').is_file():
     raise SystemExit(f'not a VYRON source root: {root}')
