@@ -1,0 +1,15 @@
+import {describe,expect,it} from 'vitest';
+import {deriveChannelScheduleState,generatePatternSchedule,isPatternPublishDate} from './channelSchedule';
+import type {Channel,YoutubeExistingVideo} from './types';
+const base:Channel={id:'c',name:'Channel',slug:'c',cadenceDays:2,targetBufferDays:60,publishHour:18,publishMinute:0,language:'EN',genre:'Music',country:'FR',minTracks:10,targetDurationMin:120,enabled:true,seo:{titlePatterns:[],descriptionTemplate:'',tags:[],banned:[]}};
+const v=(id:string,publishAt?:string):YoutubeExistingVideo=>({id,position:0,title:id,description:'',tags:[],categoryId:'10',privacyStatus:'private',publishAt,selected:false});
+const pattern=(extra:Partial<Channel>={}):Channel=>({...base,scheduleMode:'pattern',publishDays:3,pauseDays:1,patternAnchorDate:'2026-09-15',...extra});
+describe('VYRON calendar schedule strategies',()=>{
+ it('keeps old cadence channels backward compatible as interval mode',()=>{const s=deriveChannelScheduleState(base,[v('x','2026-09-13T18:00:00+07:00')]);expect(s.scheduleMode).toBe('interval');expect(s.nextAvailableAt).toBe('2026-09-15T11:00:00.000Z')});
+ it('3/1 calendar slots are deterministic from anchor',()=>{const p={publishDays:3,pauseDays:1,anchorDate:'2026-09-15'};expect(isPatternPublishDate('2026-09-15',p)).toBe(true);expect(isPatternPublishDate('2026-09-16',p)).toBe(true);expect(isPatternPublishDate('2026-09-17',p)).toBe(true);expect(isPatternPublishDate('2026-09-18',p)).toBe(false);expect(isPatternPublishDate('2026-09-19',p)).toBe(true)});
+ it('preview shows pause days and creates exactly requested video dates',()=>{const c=pattern();const g=generatePatternSchedule(c,[],10);expect(g.dates).toHaveLength(10);expect(g.calendar.slice(0,5).map(x=>x.kind)).toEqual(['video','video','video','pause','video']);expect(g.dates[0]).toBe('2026-09-15T11:00:00.000Z');expect(g.dates[9]).toBe('2026-09-27T11:00:00.000Z')});
+ it('continues in the middle of an existing 3/1 cycle',()=>{const c=pattern({patternAnchorDate:'2026-09-01'});const rows=[v('9','2026-09-09T18:00:00+07:00'),v('10','2026-09-10T18:00:00+07:00')];const g=generatePatternSchedule(c,rows,4);expect(g.dates.map(x=>x.slice(0,10))).toEqual(['2026-09-11','2026-09-13','2026-09-14','2026-09-15']);expect(g.calendar.some(x=>x.date==='2026-09-12'&&x.kind==='pause')).toBe(true)});
+ it('occupied publish slot is skipped without moving pause day',()=>{const c=pattern();const rows=[v('busy','2026-09-16T18:00:00+07:00')];const g=generatePatternSchedule(c,rows,4);expect(g.dates.map(x=>x.slice(0,10))).toEqual(['2026-09-17','2026-09-19','2026-09-20','2026-09-21']);expect(g.calendar.some(x=>x.date==='2026-09-16')).toBe(false);expect(g.calendar.find(x=>x.date==='2026-09-18')?.kind).toBe('pause')});
+ it('34 videos produce 34 slots without duplicate dates',()=>{const g=generatePatternSchedule(pattern(),[],34);expect(g.dates).toHaveLength(34);expect(new Set(g.dates.map(x=>x.slice(0,10))).size).toBe(34)});
+ it('different channels keep different strategies',()=>{expect(deriveChannelScheduleState(base,[]).scheduleMode).toBe('interval');expect(deriveChannelScheduleState(pattern(),[]).scheduleMode).toBe('pattern')});
+});

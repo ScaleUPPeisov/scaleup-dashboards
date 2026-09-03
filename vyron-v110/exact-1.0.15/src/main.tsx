@@ -1,0 +1,12 @@
+import React from 'react';
+import { createRoot } from 'react-dom/client';
+import { App } from './App';
+import './styles.css';
+import './v060.css';
+import './v070.css';
+import './v080.css';
+import './v081.css';
+import './v090.css';
+import './v095.css';
+import './production-manager.css';
+createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);
