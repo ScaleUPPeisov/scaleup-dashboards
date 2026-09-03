@@ -1,1 +1,1 @@
-validate VYRON 1.0.6 Production Autobuild final signing-normalized gate
+validate VYRON 1.0.6 Production Autobuild ad-hoc signing final gate
