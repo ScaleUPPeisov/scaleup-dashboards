@@ -6,6 +6,29 @@ ROOT="$PWD"
 WORK="$ROOT/.vyron-v200-release"
 ASSETS='/tmp/vyron-v200-release-base'
 
+test -n "${TAURI_SIGNING_PRIVATE_KEY:-}"
+test -n "${TAURI_UPDATER_PUBLIC_KEY:-}"
+python3 - <<'PY'
+import base64,os
+def dec(v):
+    try:return base64.b64decode(v.strip(),validate=True).decode()
+    except Exception:return None
+def norm(name,kind):
+    raw=os.environ[name].strip();once=dec(raw)
+    if once and once.startswith('untrusted comment:'):out,box=raw,once
+    else:
+        if not once:raise SystemExit(f'{name}: invalid encoding')
+        out=once.strip();box=dec(out)
+        if not box or not box.startswith('untrusted comment:'):raise SystemExit(f'{name}: not a Tauri key')
+    if kind not in box.splitlines()[0].lower():raise SystemExit(f'{name}: wrong key type')
+    return out
+sk=norm('TAURI_SIGNING_PRIVATE_KEY','secret key');pk=norm('TAURI_UPDATER_PUBLIC_KEY','public key')
+print(f'::add-mask::{sk}')
+with open(os.environ['GITHUB_ENV'],'a') as f:f.write(f'TAURI_SIGNING_PRIVATE_KEY={sk}\nTAURI_UPDATER_PUBLIC_KEY={pk}\n')
+PY
+export TAURI_SIGNING_PRIVATE_KEY="$(grep '^TAURI_SIGNING_PRIVATE_KEY=' "$GITHUB_ENV"|tail -1|cut -d= -f2-)"
+export TAURI_UPDATER_PUBLIC_KEY="$(grep '^TAURI_UPDATER_PUBLIC_KEY=' "$GITHUB_ENV"|tail -1|cut -d= -f2-)"
+
 rm -rf "$WORK" "$ASSETS"
 mkdir -p "$WORK" "$ASSETS"
 gh release download v1.2.0 --repo "$REPO" --pattern 'VYRON-1.2.0-source.tar.gz' --pattern 'SOURCE_SHA256.txt' --dir "$ASSETS"
@@ -34,13 +57,14 @@ python3 "$ROOT/vyron-v200/apply_v200_rust_fingerprintfix.py" .
 python3 "$ROOT/vyron-v200/apply_v200_version.py" .
 
 python3 - <<'PY'
-import json
+import json,os
 from pathlib import Path
 p=json.loads(Path('package.json').read_text());c=json.loads(Path('src-tauri/tauri.conf.json').read_text())
 assert p['version']=='2.0.0' and c['version']=='2.0.0'
 assert c['identifier']==Path('/tmp/v200-release-id').read_text()
 assert c.get('productName','')==Path('/tmp/v200-release-product').read_text()
 assert c['plugins']['updater']['pubkey']==Path('/tmp/v200-release-pub').read_text()
+assert c['plugins']['updater']['pubkey'].strip()==os.environ['TAURI_UPDATER_PUBLIC_KEY'].strip(),'secret/public key mismatch'
 assert json.dumps(c['plugins']['updater']['endpoints'])==Path('/tmp/v200-release-endpoints').read_text()
 rust=Path('src-tauri/src/youtube.rs').read_text()
 assert 'fn local_file_fingerprint(path:&Path)->Result<Value,String>' in rust
