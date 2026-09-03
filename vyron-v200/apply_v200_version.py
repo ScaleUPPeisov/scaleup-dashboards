@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 from pathlib import Path
-import json,re,sys
+import json,re,subprocess,sys
 ROOT=Path(sys.argv[1] if len(sys.argv)>1 else '.')
+# Final small compatibility patch: the persistent Publisher is created earlier in
+# the chain, so route its visible failures through the human Error Center here.
+errorfix=Path(__file__).with_name('apply_v200_publisher_errorfix.py')
+subprocess.run([sys.executable,str(errorfix),str(ROOT)],check=True)
 version='2.0.0'
 p=ROOT/'package.json';x=json.loads(p.read_text());x['version']=version;p.write_text(json.dumps(x,ensure_ascii=False,indent=2)+'\n')
 p=ROOT/'src-tauri/tauri.conf.json';x=json.loads(p.read_text());x['version']=version
