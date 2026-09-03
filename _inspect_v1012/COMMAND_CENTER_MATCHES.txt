@@ -1,0 +1,211 @@
+/tmp/v1011-src/src/commandCenter.test.ts:3:import type {ChannelRunwayRecord} from './channelRunwayCore';
+/tmp/v1011-src/src/commandCenter.test.ts:35:const runway=(days:number):ChannelRunwayRecord=>({
+/tmp/v1011-src/src/commandCenter.test.ts:37:  lastScheduleSync:'2026-09-02T08:00:00Z',lastLocalCalculation:'2026-09-02T08:00:00Z',runwayDays:days,nextProductionDate:'2026-10-17',
+/tmp/v1011-src/src/commandCenter.test.ts:41:describe('Command Center local planning',()=>{
+/tmp/v1011-src/src/commandCenter.test.ts:42:  it('creates 30-video batch after existing runway without API data',()=>{
+/tmp/v1011-src/src/commandCenter.test.ts:65:  it('builds attention from cached runway and local jobs',()=>{
+/tmp/v1011-src/src/commandCenter.test.ts:66:    const items=buildAttentionItems([channel()],{neon:runway(10)},[job(1),job(2,{tags:[]})],30);
+/tmp/v1011-src/src/commandCenter.test.ts:72:    const result=productionForecast([channel()],{neon:runway(10)},[job(1)],30,new Date('2026-09-02T08:00:00Z'));
+/tmp/v1011-src/src/commandCenter.test.ts:84:describe('Command Center persistence',()=>{
+/tmp/v1011-src/src/ChannelRunwayScheduler.tsx:3:import {maybeRunDailyChannelRunway} from './channelRunwayStore';
+/tmp/v1011-src/src/ChannelRunwayScheduler.tsx:5:export function ChannelRunwayScheduler(){
+/tmp/v1011-src/src/ChannelRunwayScheduler.tsx:9:    const tick=()=>{void maybeRunDailyChannelRunway(channels,new Date())};
+/tmp/v1011-src/src/YouTubeCenter.tsx:7:import {ChannelRunway} from './ChannelRunway';
+/tmp/v1011-src/src/YouTubeCenter.tsx:12:type Tab='uploaded'|'metadata'|'queue'|'calendar'|'command'|'runway'|'data'|'accounts';
+/tmp/v1011-src/src/YouTubeCenter.tsx:16: const tabs:[Tab,string][]=[['uploaded','Загруженные'],['metadata','Метаданные'],['queue','Очередь'],['calendar','Календарь'],['command','Командный центр'],['runway','План каналов'],['data','Данные YouTube'],['accounts','Аккаунты']];
+/tmp/v1011-src/src/YouTubeCenter.tsx:17: return <><div className="youtubeCenterHead"><div><small>YOUTUBE CENTER • API ZONE</small><h1>YouTube</h1><p>Единственная зона VYRON, где разрешены YouTube API-вызовы. Синхронизация и обновления запускаются только твоим действием.</p></div><div className="youtubeTabs">{tabs.map(([id,label])=><button key={id} className={tab===id?'active':''} onClick={()=>setTab(id)}>{label}</button>)}</div></div><QuotaMeter compact defaultChannels={Math.max(1,channels.length)}/><div className="youtubePolicyNotice"><b>ZERO HIDDEN QUOTA</b><span>Нет startup sync, polling, background refresh или API-запросов при возврате на вкладку.</span></div>{tab==='uploaded'&&<ExistingVideos/>}{tab==='metadata'&&<MetadataPage/>}{tab==='queue'&&<PublisherOS/>}{tab==='command'&&<CommandCenter/>}{tab==='runway'&&<ChannelRunway/>}{tab==='data'&&<YouTubeDataTools/>}{tab==='accounts'&&<AccountsPage/>}{tab==='calendar'&&<section className="panel calendarPanel"><div className="panelHead"><div><small>ALL CHANNELS</small><h3>Календарь публикаций</h3><p>Локальные даты из project state / YouTube queue.</p></div><span>{calendar.length} публикаций</span></div>{calendar.length===0?<div className="empty"><b>Публикаций пока нет</b><p>Когда у видео появится publishAt, оно будет показано здесь.</p></div>:<div className="calendarList">{calendar.map(j=>{const c=channels.find(x=>x.id===j.channelId);return <div className="calendarRow" key={j.id}><time>{new Date(j.publishAt!).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'})}</time><span><b>{c?.name||'Канал удалён'}</b><small>VIDEO_{String(j.number).padStart(3,'0')} • {j.title||'Без названия'}</small></span><em className={`publishState ${j.status.toLowerCase()}`}>{j.status}</em>{j.youtubeVideoId&&<small>YT: {j.youtubeVideoId}</small>}</div>})}</div>}</section>}</>
+/tmp/v1011-src/src/commandCenterCore.ts:2:import type {ChannelRunwayRecord} from './channelRunwayCore';
+/tmp/v1011-src/src/commandCenterCore.ts:3:import {calendarDaysBetween,krasnoyarskClock} from './channelRunwayCore';
+/tmp/v1011-src/src/commandCenterCore.ts:88:  runway:Record<string,ChannelRunwayRecord>,
+/tmp/v1011-src/src/commandCenterCore.ts:94:    const r=runway[channel.id];
+/tmp/v1011-src/src/commandCenterCore.ts:96:    if(!r||r.runwayDays===undefined){
+/tmp/v1011-src/src/commandCenterCore.ts:98:    }else if(r.runwayDays<=14){
+/tmp/v1011-src/src/commandCenterCore.ts:99:      items.push({channelId:channel.id,channelName:channel.name,severity:'critical',title:`Запас ${r.runwayDays} дн.`,detail:'Новая пачка нужна в приоритетном порядке.'});
+/tmp/v1011-src/src/commandCenterCore.ts:100:    }else if(r.runwayDays<=30){
+/tmp/v1011-src/src/commandCenterCore.ts:101:      items.push({channelId:channel.id,channelName:channel.name,severity:'warning',title:`Запас ${r.runwayDays} дн.`,detail:'Пора готовить следующую пачку.'});
+/tmp/v1011-src/src/commandCenterCore.ts:102:    }else if(r.runwayDays<=45){
+/tmp/v1011-src/src/commandCenterCore.ts:103:      items.push({channelId:channel.id,channelName:channel.name,severity:'info',title:`Запас ${r.runwayDays} дн.`,detail:'Канал уже нужно поставить в производственный план.'});
+/tmp/v1011-src/src/commandCenterCore.ts:118:  runway:Record<string,ChannelRunwayRecord>,
+/tmp/v1011-src/src/commandCenterCore.ts:127:    const r=runway[channel.id];
+/tmp/v1011-src/src/commandCenterCore.ts:128:    if(r?.runwayDays!==undefined){
+/tmp/v1011-src/src/commandCenterCore.ts:129:      if(r.runwayDays<=45)dueNow++;
+/tmp/v1011-src/src/commandCenterCore.ts:130:      if(r.runwayDays<=14)critical++;
+/tmp/v1011-src/src/channelRunwayCore.ts:3:export const CHANNEL_RUNWAY_STORAGE_KEY='vyron:channel-runway:v1';
+/tmp/v1011-src/src/channelRunwayCore.ts:5:export const RUNWAY_PLAN_THRESHOLD_DAYS=45;
+/tmp/v1011-src/src/channelRunwayCore.ts:7:export type ChannelRunwayStatus='large'|'plan'|'prepare'|'urgent'|'ended'|'no-data';
+/tmp/v1011-src/src/channelRunwayCore.ts:8:export type ChannelRunwayPriority='low'|'normal'|'high'|'critical'|'unknown';
+/tmp/v1011-src/src/channelRunwayCore.ts:10:export type ChannelRunwayRecord={
+/tmp/v1011-src/src/channelRunwayCore.ts:18:  runwayDays?:number;
+/tmp/v1011-src/src/channelRunwayCore.ts:20:  priority:ChannelRunwayPriority;
+/tmp/v1011-src/src/channelRunwayCore.ts:21:  status:ChannelRunwayStatus;
+/tmp/v1011-src/src/channelRunwayCore.ts:66:export function runwayStatus(days:number|undefined,known=true):ChannelRunwayStatus{
+/tmp/v1011-src/src/channelRunwayCore.ts:75:export function runwayPriority(status:ChannelRunwayStatus):ChannelRunwayPriority{
+/tmp/v1011-src/src/channelRunwayCore.ts:94:export function deriveRunwayRecord(
+/tmp/v1011-src/src/channelRunwayCore.ts:100:):ChannelRunwayRecord{
+/tmp/v1011-src/src/channelRunwayCore.ts:113:  const runwayDays=known?(rawDays===undefined?0:Math.max(0,rawDays)):undefined;
+/tmp/v1011-src/src/channelRunwayCore.ts:114:  const status=runwayStatus(runwayDays,known);
+/tmp/v1011-src/src/channelRunwayCore.ts:123:    runwayDays,
+/tmp/v1011-src/src/channelRunwayCore.ts:124:    nextProductionDate:scheduledUntil?subtractCalendarDays(scheduledUntil,RUNWAY_PLAN_THRESHOLD_DAYS):undefined,
+/tmp/v1011-src/src/channelRunwayCore.ts:125:    priority:runwayPriority(status),
+/tmp/v1011-src/src/channelRunwayCore.ts:130:export function recalculateRunwayRecord(record:ChannelRunwayRecord,now=new Date()):ChannelRunwayRecord{
+/tmp/v1011-src/src/channelRunwayCore.ts:134:  const runwayDays=known?(raw===undefined?0:Math.max(0,raw)):undefined;
+/tmp/v1011-src/src/channelRunwayCore.ts:135:  const status=runwayStatus(runwayDays,known);
+/tmp/v1011-src/src/channelRunwayCore.ts:139:    runwayDays,
+/tmp/v1011-src/src/channelRunwayCore.ts:140:    nextProductionDate:record.scheduledUntil?subtractCalendarDays(record.scheduledUntil,RUNWAY_PLAN_THRESHOLD_DAYS):undefined,
+/tmp/v1011-src/src/channelRunwayCore.ts:141:    priority:runwayPriority(status),
+/tmp/v1011-src/src/channelRunwayCore.ts:146:export function compareRunwayRecords(a:ChannelRunwayRecord,b:ChannelRunwayRecord){
+/tmp/v1011-src/src/channelRunwayCore.ts:147:  const ad=a.runwayDays,bd=b.runwayDays;
+/tmp/v1011-src/src/channelRunwayCore.ts:168:export function quotaRiskCount(records:ChannelRunwayRecord[],todayCapacity:number,fullDayCapacity:number){
+/tmp/v1011-src/src/channelRunwayCore.ts:170:    .filter(r=>r.runwayDays!==undefined)
+/tmp/v1011-src/src/channelRunwayCore.ts:171:    .sort(compareRunwayRecords)
+/tmp/v1011-src/src/channelRunwayCore.ts:172:    .reduce((count,r,index)=>count+(Number(r.runwayDays)<=processingDayOffset(index,todayCapacity,fullDayCapacity)?1:0),0);
+/tmp/v1011-src/src/CommandCenter.tsx:4:  compareRunwayRecords,
+/tmp/v1011-src/src/CommandCenter.tsx:6:  type ChannelRunwayRecord
+/tmp/v1011-src/src/CommandCenter.tsx:7:} from './channelRunwayCore';
+/tmp/v1011-src/src/CommandCenter.tsx:8:import {loadChannelRunwayStore,subscribeChannelRunway} from './channelRunwayStore';
+/tmp/v1011-src/src/CommandCenter.tsx:44:  const [runway,setRunway]=useState(()=>loadChannelRunwayStore());
+/tmp/v1011-src/src/CommandCenter.tsx:53:    const offRunway=subscribeChannelRunway(()=>setRunway(loadChannelRunwayStore()));
+/tmp/v1011-src/src/CommandCenter.tsx:56:    return()=>{offRunway();offLocal();offQuota()};
+/tmp/v1011-src/src/CommandCenter.tsx:60:  const rows=useMemo(()=>active.map(channel=>({channel,record:runway.channels[channel.id]}))
+/tmp/v1011-src/src/CommandCenter.tsx:62:      if(a.record&&b.record)return compareRunwayRecords(a.record,b.record);
+/tmp/v1011-src/src/CommandCenter.tsx:65:    }),[active,runway]);
+/tmp/v1011-src/src/CommandCenter.tsx:74:  const forecast=productionForecast(active,runway.channels,jobs,batchSize,new Date());
+/tmp/v1011-src/src/CommandCenter.tsx:75:  const attention=buildAttentionItems(active,runway.channels,jobs,batchSize);
+/tmp/v1011-src/src/CommandCenter.tsx:83:    const next=buildLocalBatchPlan(selected,batchCount,runway.channels[selected.id]?.scheduledUntil,new Date());
+/tmp/v1011-src/src/CommandCenter.tsx:90:      <div><small>VYRON COMMAND CENTER • LOCAL INTELLIGENCE</small><h3>Командный центр</h3><p>Что делать сегодня, какой канал следующий, сколько уже готово и как распределить производство без фоновых YouTube-запросов.</p></div>
+/tmp/v1011-src/src/CommandCenter.tsx:96:      <div><small>НУЖНО В ПЛАН</small><b>{forecast.dueNow}</b><em>runway ≤ 45 дней</em></div>
+/tmp/v1011-src/src/CommandCenter.tsx:97:      <div><small>КРИТИЧЕСКИЕ</small><b>{forecast.critical}</b><em>runway ≤ 14 дней</em></div>
+/tmp/v1011-src/src/CommandCenter.tsx:107:        <div className="commandBlockHead"><div><small>ATTENTION CENTER</small><h4>Что требует внимания</h4></div><span>{attention.length}</span></div>
+/tmp/v1011-src/src/CommandCenter.tsx:112:        <div className="commandBlockHead"><div><small>PRODUCTION FORECAST</small><h4>Производственный прогноз</h4></div><span>0 API</span></div>
+/tmp/v1011-src/src/CommandCenter.tsx:118:        <p>Command Center не обновляет YouTube сам. Свежесть Scheduled берётся из Channel Runway; ручная синхронизация остаётся во вкладке «План каналов».</p>
+/tmp/v1011-src/src/CommandCenter.tsx:123:      <div className="commandBlockHead"><div><small>NETWORK PLAN</small><h4>Очередь каналов</h4></div><span>{rows.length}</span></div>
+/tmp/v1011-src/src/CommandCenter.tsx:128:          const runwayDays=record?.runwayDays;
+/tmp/v1011-src/src/CommandCenter.tsx:129:          const status:ChannelRunwayRecord['status']=record?.status||'no-data';
+/tmp/v1011-src/src/CommandCenter.tsx:132:            <span className={`commandRunway ${status}`}>{runwayDays===undefined?'—':`${runwayDays} дн.`}</span>
+/tmp/v1011-src/src/CommandCenter.tsx:133:            <span>{runwayDays===undefined?'—':runwayDays<=45?'Сейчас':dateLabel(record?.nextProductionDate)}</span>
+/tmp/v1011-src/src/CommandCenter.tsx:155:        </div>:<div className="commandEmpty"><b>Пачка ещё не создана</b><span>Если есть подтверждённый Scheduled runway, первая дата будет поставлена после последнего запланированного видео с учётом cadence канала.</span></div>}
+/tmp/v1011-src/src/ChannelRunway.tsx:6:  compareRunwayRecords,
+/tmp/v1011-src/src/ChannelRunway.tsx:10:  type ChannelRunwayRecord
+/tmp/v1011-src/src/ChannelRunway.tsx:11:} from './channelRunwayCore';
+/tmp/v1011-src/src/ChannelRunway.tsx:13:  loadChannelRunwayStore,
+/tmp/v1011-src/src/ChannelRunway.tsx:14:  recalculateChannelRunway,
+/tmp/v1011-src/src/ChannelRunway.tsx:15:  subscribeChannelRunway,
+/tmp/v1011-src/src/ChannelRunway.tsx:16:  upsertChannelRunwayFromYoutube
+/tmp/v1011-src/src/ChannelRunway.tsx:17:} from './channelRunwayStore';
+/tmp/v1011-src/src/ChannelRunway.tsx:27:const statusMeta:Record<ChannelRunwayRecord['status'],{label:string;icon:string}>={
+/tmp/v1011-src/src/ChannelRunway.tsx:65:export function ChannelRunway(){
+/tmp/v1011-src/src/ChannelRunway.tsx:67:  const [snapshot,setSnapshot]=useState(()=>loadChannelRunwayStore());
+/tmp/v1011-src/src/ChannelRunway.tsx:72:    setSnapshot(recalculateChannelRunway(channels,new Date(),false));
+/tmp/v1011-src/src/ChannelRunway.tsx:73:    const off=subscribeChannelRunway(()=>setSnapshot(loadChannelRunwayStore()));
+/tmp/v1011-src/src/ChannelRunway.tsx:81:    .filter((x):x is {channel:Channel;record:ChannelRunwayRecord}=>Boolean(x.record))
+/tmp/v1011-src/src/ChannelRunway.tsx:82:    .sort((a,b)=>compareRunwayRecords(a.record,b.record)),[active,snapshot]);
+/tmp/v1011-src/src/ChannelRunway.tsx:88:  const attention=rows.filter(x=>x.record.runwayDays!==undefined&&x.record.runwayDays<=45);
+/tmp/v1011-src/src/ChannelRunway.tsx:89:  const reserve=rows.filter(x=>Number(x.record.runwayDays)>45);
+/tmp/v1011-src/src/ChannelRunway.tsx:90:  const critical=rows.filter(x=>x.record.runwayDays!==undefined&&x.record.runwayDays<=14);
+/tmp/v1011-src/src/ChannelRunway.tsx:91:  const unknown=rows.filter(x=>x.record.runwayDays===undefined);
+/tmp/v1011-src/src/ChannelRunway.tsx:98:  const next=rows.find(x=>x.record.runwayDays!==undefined);
+/tmp/v1011-src/src/ChannelRunway.tsx:102:  const calm=critical.length===0&&riskCount===0&&(next?.record.runwayDays??0)>45;
+/tmp/v1011-src/src/ChannelRunway.tsx:109:      const nextStore=upsertChannelRunwayFromYoutube(channel,result.videos||[],new Date());
+/tmp/v1011-src/src/ChannelRunway.tsx:118:  return <section className="panel channelRunway">
+/tmp/v1011-src/src/ChannelRunway.tsx:119:    <div className="runwayHead">
+/tmp/v1011-src/src/ChannelRunway.tsx:120:      <div><small>CHANNEL RUNWAY • LOCAL PLANNER</small><h3>План каналов</h3><p>Запас публикаций, очередь производства и квотный план считаются локально. Ежедневный пересчёт — 06:00 Asia/Krasnoyarsk, 0 API units.</p></div>
+/tmp/v1011-src/src/ChannelRunway.tsx:124:    <div className="runwaySummary">
+/tmp/v1011-src/src/ChannelRunway.tsx:135:    <div className={`runwayAdvice ${calm?'good':riskCount?'danger':'work'}`}>
+/tmp/v1011-src/src/ChannelRunway.tsx:137:      <span>{tempo?`При текущем запасе ориентир — ${tempoLabel(tempo)} `:''}{next?`Следующий: ${next.channel.name}, запас ${next.record.runwayDays??'—'} дней.`:'Сначала синхронизируй расписание каналов.'}{riskCount?` Риск не успеть: ${riskCount}.`:''}</span>
+/tmp/v1011-src/src/ChannelRunway.tsx:140:    <div className="runwayTable">
+/tmp/v1011-src/src/ChannelRunway.tsx:141:      <div className="runwayRow runwayTh">
+/tmp/v1011-src/src/ChannelRunway.tsx:144:      {rows.length===0?<div className="empty"><b>Нет активных каналов</b><p>Channel Runway не создаёт демонстрационные данные.</p></div>:rows.map(({channel,record})=>{
+/tmp/v1011-src/src/ChannelRunway.tsx:146:        return <div className="runwayRow" key={channel.id}>
+/tmp/v1011-src/src/ChannelRunway.tsx:147:          <span className="runwayChannel"><b>{channel.name}</b><small>{syncLabel(record.lastScheduleSync)}</small></span>
+/tmp/v1011-src/src/ChannelRunway.tsx:149:          <span className={`runwayDays ${record.status}`}>{record.runwayDays===undefined?'—':`${record.runwayDays} дн.`}</span>
+/tmp/v1011-src/src/ChannelRunway.tsx:150:          <span>{record.runwayDays===undefined?'—':record.scheduledVideoCount}</span>
+/tmp/v1011-src/src/ChannelRunway.tsx:151:          <span>{record.runwayDays===undefined?'—':record.averagePublishIntervalDays?`1 / ${String(record.averagePublishIntervalDays).replace('.',',')} дн.`:`≈ 1 / ${channel.cadenceDays} дн.`}</span>
+/tmp/v1011-src/src/ChannelRunway.tsx:152:          <span>{record.runwayDays===undefined?'—':record.runwayDays<=45?'Сейчас':dateLabel(record.nextProductionDate)}</span>
+/tmp/v1011-src/src/ChannelRunway.tsx:153:          <span className={`runwayStatus ${record.status}`}><i>{meta.icon}</i>{meta.label}</span>
+/tmp/v1011-src/src/ChannelRunway.tsx:159:    <div className="runwayFoot">
+/tmp/v1011-src/src/styles.css:31:/* Channel Runway — additive only */
+/tmp/v1011-src/src/styles.css:32:.channelRunway{padding:18px}.runwayHead{display:flex;justify-content:space-between;gap:18px;align-items:flex-start;margin-bottom:14px}.runwayHead h3{margin:4px 0;font-size:22px}.runwayHead p{margin:0;max-width:820px;color:var(--muted,#8c9bab)}
+/tmp/v1011-src/src/styles.css:33:.runwaySummary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin-bottom:12px}.runwaySummary>div{display:grid;gap:4px;padding:11px 12px;border:1px solid rgba(255,255,255,.07);border-radius:12px;background:rgba(255,255,255,.025)}.runwaySummary small{font-size:9px;letter-spacing:.07em;color:var(--muted,#8c9bab)}.runwaySummary b{font-size:18px}.runwaySummary em{font-style:normal;font-size:10px;color:#8193a3}
+/tmp/v1011-src/src/styles.css:34:.runwayAdvice{display:flex;gap:10px;align-items:center;margin-bottom:12px;padding:10px 12px;border-radius:11px;border:1px solid rgba(52,221,255,.14);background:rgba(52,221,255,.04);font-size:11px}.runwayAdvice b{white-space:nowrap}.runwayAdvice span{color:#9fb0bf}.runwayAdvice.good{border-color:rgba(83,242,189,.18);background:rgba(83,242,189,.045)}.runwayAdvice.good b{color:#53f2bd}.runwayAdvice.danger{border-color:rgba(255,93,117,.2);background:rgba(255,93,117,.05)}.runwayAdvice.danger b{color:#ff7188}
+/tmp/v1011-src/src/styles.css:35:.runwayTable{overflow-x:auto;border:1px solid rgba(255,255,255,.07);border-radius:12px}.runwayRow{display:grid;grid-template-columns:minmax(170px,1.25fr) 120px 95px 70px 120px 110px minmax(170px,1.15fr) 170px;gap:8px;align-items:center;min-width:1050px;padding:10px 11px;border-top:1px solid rgba(255,255,255,.055);font-size:11px}.runwayRow:first-child{border-top:0}.runwayTh{min-height:34px;background:rgba(255,255,255,.025);font-size:9px;letter-spacing:.06em;color:#748697;text-transform:uppercase}.runwayChannel{display:grid;gap:3px}.runwayChannel small{color:#6f8292}.runwayDays{font-weight:800}.runwayDays.large{color:#53f2bd}.runwayDays.plan{color:#e4cc65}.runwayDays.prepare{color:#ffae57}.runwayDays.urgent,.runwayDays.ended{color:#ff7188}.runwayStatus{display:flex;gap:7px;align-items:center;font-size:9px;font-weight:800;letter-spacing:.035em}.runwayStatus i{font-style:normal;font-size:11px}.runwayStatus.large{color:#53f2bd}.runwayStatus.plan{color:#e4cc65}.runwayStatus.prepare{color:#ffae57}.runwayStatus.urgent,.runwayStatus.ended{color:#ff7188}.runwayStatus.no-data{color:#7f91a1}.runwayRow button{min-height:30px;padding:6px 8px;font-size:9px;letter-spacing:.04em}
+/tmp/v1011-src/src/styles.css:36:.runwayFoot{display:flex;flex-wrap:wrap;gap:10px 18px;margin-top:11px;color:#748697;font-size:10px}.runwayFoot b{color:#aebfcd}
+/tmp/v1011-src/src/styles.css:37:@media(max-width:1100px){.runwaySummary{grid-template-columns:repeat(2,minmax(0,1fr))}.runwayAdvice{align-items:flex-start;flex-direction:column}}
+/tmp/v1011-src/src/styles.css:39:/* VYRON Command Center 1.0.3 — additive only */
+/tmp/v1011-src/src/styles.css:40:.commandCenter{display:flex;flex-direction:column;gap:16px}.commandCenterHead{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.commandCenterHead h3{margin:4px 0 6px}.commandCenterHead p{margin:0;max-width:860px}.commandSummary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.commandSummary>div{padding:14px;border:1px solid var(--border);border-radius:14px;background:rgba(255,255,255,.018);display:flex;flex-direction:column;gap:4px;min-height:92px}.commandSummary small,.commandBlockHead small{font-size:10px;letter-spacing:.11em;opacity:.62}.commandSummary b{font-size:22px;line-height:1.1}.commandSummary em{font-style:normal;font-size:11px;opacity:.6}.commandGrid{display:grid;grid-template-columns:1.2fr .8fr;gap:12px}.commandBlock{border:1px solid var(--border);border-radius:16px;padding:14px;background:rgba(255,255,255,.015)}.commandBlockHead{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}.commandBlockHead h4{margin:3px 0 0;font-size:15px}.commandBlockHead>span{font-size:11px;opacity:.7}.attentionList{display:flex;flex-direction:column;gap:8px}.attentionItem{display:flex;align-items:flex-start;gap:9px;padding:10px 11px;border-radius:12px;background:rgba(255,255,255,.025)}.attentionItem>i{width:7px;height:7px;border-radius:50%;margin-top:5px;background:currentColor;flex:none}.attentionItem span{display:flex;flex-direction:column;gap:2px}.attentionItem b{font-size:12px}.attentionItem small{font-size:11px;opacity:.62}.attentionItem.critical{color:#ff7d7d}.attentionItem.warning{color:#f3bd66}.attentionItem.info{color:#8ab5ff}.commandEmpty{display:flex;flex-direction:column;gap:4px;padding:18px 10px;opacity:.72}.commandEmpty b{font-size:13px}.commandEmpty span{font-size:11px}.forecastFacts{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.forecastFacts>div{padding:12px;border-radius:12px;background:rgba(255,255,255,.025);display:flex;flex-direction:column;gap:4px}.forecastFacts b{font-size:18px}.forecastFacts span{font-size:10px;line-height:1.35;opacity:.62}.forecastBlock p,.batchPreview p{font-size:11px;line-height:1.5;opacity:.58;margin:12px 0 0}.commandTable{display:flex;flex-direction:column}.commandRow{display:grid;grid-template-columns:1.35fr .7fr .9fr .9fr 1fr 1fr;align-items:center;gap:10px;min-height:48px;padding:7px 9px;border-top:1px solid var(--border)}.commandTh{min-height:34px;border-top:0;opacity:.52;font-size:10px;text-transform:uppercase;letter-spacing:.07em}.commandRow>span{min-width:0;font-size:11px}.commandRow>span:first-child{display:flex;flex-direction:column;gap:2px}.commandRow b{font-size:12px}.commandRow small{font-size:10px;opacity:.55}.commandRunway.large{color:#78d89a}.commandRunway.plan{color:#e9cf72}.commandRunway.prepare{color:#efad61}.commandRunway.urgent,.commandRunway.ended{color:#ff7d7d}.commandRunway.no-data{opacity:.55}.batchControls{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap}.batchControls label{display:flex;flex-direction:column;gap:5px;font-size:10px;opacity:.8}.batchControls select,.batchControls input{min-height:34px;border-radius:9px}.batchControls input{width:110px}.batchControls button{min-height:34px}.batchControls .secondary{opacity:.72}.batchPreview{margin-top:12px}.batchPreviewHead{display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:8px}.batchPreviewHead>span,.batchItems>span{padding:10px;border:1px solid var(--border);border-radius:11px;display:flex;flex-direction:column;gap:2px;background:rgba(255,255,255,.018)}.batchPreviewHead b,.batchItems b{font-size:11px}.batchPreviewHead small,.batchItems small{font-size:10px;opacity:.58}.batchItems{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:7px;margin-top:8px}.batchMore{opacity:.7}@media(max-width:1100px){.commandSummary{grid-template-columns:repeat(2,minmax(0,1fr))}.commandGrid{grid-template-columns:1fr}.commandRow{grid-template-columns:1.2fr .7fr .9fr .8fr}.commandRow>span:nth-child(5),.commandRow>span:nth-child(6),.commandTh>span:nth-child(5),.commandTh>span:nth-child(6){display:none}.batchItems{grid-template-columns:repeat(3,minmax(0,1fr))}}@media(max-width:760px){.commandCenterHead{flex-direction:column}.commandSummary{grid-template-columns:1fr 1fr}.commandRow{grid-template-columns:1.3fr .8fr}.commandRow>span:nth-child(3),.commandRow>span:nth-child(4),.commandTh>span:nth-child(3),.commandTh>span:nth-child(4){display:none}.batchPreviewHead{grid-template-columns:1fr}.batchItems{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/tmp/v1011-src/src/App.tsx:18:import { ChannelRunwayScheduler } from './ChannelRunwayScheduler';
+/tmp/v1011-src/src/App.tsx:62:  return <div className="appShell"><ChannelRunwayScheduler/><ProductionStatusBridge/><Sidebar page={page} setPage={setPage}/><main className="main"><Topbar/><div className="pageWrap" key={page}>{screen}</div></main>{settings.fpsMonitor&&<FpsMonitor/>}{notice&&<div className="toast">{notice}</div>}{update&&<UpdateNotice update={update} onLater={()=>setUpdate(null)}/>}<div className="bgGlow a"/><div className="bgGlow b"/></div>
+/tmp/v1011-src/src/channelRunwayStore.ts:3:  CHANNEL_RUNWAY_STORAGE_KEY,
+/tmp/v1011-src/src/channelRunwayStore.ts:4:  deriveRunwayRecord,
+/tmp/v1011-src/src/channelRunwayStore.ts:6:  recalculateRunwayRecord,
+/tmp/v1011-src/src/channelRunwayStore.ts:7:  type ChannelRunwayRecord
+/tmp/v1011-src/src/channelRunwayStore.ts:8:} from './channelRunwayCore';
+/tmp/v1011-src/src/channelRunwayStore.ts:10:export type ChannelRunwayStore={
+/tmp/v1011-src/src/channelRunwayStore.ts:14:  channels:Record<string,ChannelRunwayRecord>;
+/tmp/v1011-src/src/channelRunwayStore.ts:18:const EVENT='vyron-channel-runway';
+/tmp/v1011-src/src/channelRunwayStore.ts:21:function defaultStore():ChannelRunwayStore{return{version:1,channels:{}}}
+/tmp/v1011-src/src/channelRunwayStore.ts:25:export function loadChannelRunwayStore(storage:StorageLike|undefined=browserStorage()):ChannelRunwayStore{
+/tmp/v1011-src/src/channelRunwayStore.ts:28:    const raw=storage.getItem(CHANNEL_RUNWAY_STORAGE_KEY);
+/tmp/v1011-src/src/channelRunwayStore.ts:30:    const parsed=JSON.parse(raw) as ChannelRunwayStore;
+/tmp/v1011-src/src/channelRunwayStore.ts:36:export function saveChannelRunwayStore(value:ChannelRunwayStore,storage:StorageLike|undefined=browserStorage()){
+/tmp/v1011-src/src/channelRunwayStore.ts:37:  if(storage)storage.setItem(CHANNEL_RUNWAY_STORAGE_KEY,JSON.stringify(value));
+/tmp/v1011-src/src/channelRunwayStore.ts:50:export function readExistingRunwayCache(channelId:string,storage:StorageLike|undefined=browserStorage()):ExistingCache|undefined{
+/tmp/v1011-src/src/channelRunwayStore.ts:60:  return deriveRunwayRecord(channel,[],now,undefined,false);
+/tmp/v1011-src/src/channelRunwayStore.ts:69:export function recalculateChannelRunway(
+/tmp/v1011-src/src/channelRunwayStore.ts:75:  const previous=loadChannelRunwayStore(storage);
+/tmp/v1011-src/src/channelRunwayStore.ts:76:  const next:ChannelRunwayStore={...previous,version:1,channels:{...previous.channels},lastLocalCalculation:now.toISOString()};
+/tmp/v1011-src/src/channelRunwayStore.ts:80:    // Explicit Channel Runway sync is authoritative. Daily recalculation only advances the calendar.
+/tmp/v1011-src/src/channelRunwayStore.ts:82:      next.channels[channel.id]=recalculateRunwayRecord({...prior,channelName:channel.name},now);
+/tmp/v1011-src/src/channelRunwayStore.ts:88:    const cached=readExistingRunwayCache(channel.id,storage);
+/tmp/v1011-src/src/channelRunwayStore.ts:92:      next.channels[channel.id]=deriveRunwayRecord(channel,baseline,now,undefined,true);
+/tmp/v1011-src/src/channelRunwayStore.ts:96:    next.channels[channel.id]=prior?recalculateRunwayRecord({...prior,channelName:channel.name},now):channelUnknown(channel,now);
+/tmp/v1011-src/src/channelRunwayStore.ts:101:  return saveChannelRunwayStore(next,storage);
+/tmp/v1011-src/src/channelRunwayStore.ts:104:export function upsertChannelRunwayFromYoutube(
+/tmp/v1011-src/src/channelRunwayStore.ts:110:  const current=loadChannelRunwayStore(storage);
+/tmp/v1011-src/src/channelRunwayStore.ts:111:  const record=deriveRunwayRecord(channel,videos,now,now.toISOString(),true);
+/tmp/v1011-src/src/channelRunwayStore.ts:112:  const next:ChannelRunwayStore={
+/tmp/v1011-src/src/channelRunwayStore.ts:118:  return saveChannelRunwayStore(next,storage);
+/tmp/v1011-src/src/channelRunwayStore.ts:121:export function shouldRunDailyChannelRunway(store:ChannelRunwayStore,now=new Date()){
+/tmp/v1011-src/src/channelRunwayStore.ts:127:export function maybeRunDailyChannelRunway(
+/tmp/v1011-src/src/channelRunwayStore.ts:132:  const current=loadChannelRunwayStore(storage);
+/tmp/v1011-src/src/channelRunwayStore.ts:133:  if(!shouldRunDailyChannelRunway(current,now))return false;
+/tmp/v1011-src/src/channelRunwayStore.ts:134:  recalculateChannelRunway(channels,now,true,storage);
+/tmp/v1011-src/src/channelRunwayStore.ts:138:export function subscribeChannelRunway(cb:()=>void){
+/tmp/v1011-src/src/channelRunway.test.ts:5:  deriveRunwayRecord,
+/tmp/v1011-src/src/channelRunway.test.ts:10:} from './channelRunwayCore';
+/tmp/v1011-src/src/channelRunway.test.ts:12:  loadChannelRunwayStore,
+/tmp/v1011-src/src/channelRunway.test.ts:13:  maybeRunDailyChannelRunway,
+/tmp/v1011-src/src/channelRunway.test.ts:14:  recalculateChannelRunway,
+/tmp/v1011-src/src/channelRunway.test.ts:15:  saveChannelRunwayStore,
+/tmp/v1011-src/src/channelRunway.test.ts:16:  shouldRunDailyChannelRunway,
+/tmp/v1011-src/src/channelRunway.test.ts:17:  upsertChannelRunwayFromYoutube
+/tmp/v1011-src/src/channelRunway.test.ts:18:} from './channelRunwayStore';
+/tmp/v1011-src/src/channelRunway.test.ts:37:describe('Channel Runway core',()=>{
+/tmp/v1011-src/src/channelRunway.test.ts:40:    const record=deriveRunwayRecord(channel(),[scheduled('2026-12-01T04:00:00+07:00')],new Date('2026-09-02T08:00:00Z'),'2026-09-02T08:00:00Z',true);
+/tmp/v1011-src/src/channelRunway.test.ts:42:    expect(record.runwayDays).toBe(90);
+/tmp/v1011-src/src/channelRunway.test.ts:53:    const record=deriveRunwayRecord(channel(),[good,malformedPublic,malformedUnlisted,past],now,now.toISOString(),true);
+/tmp/v1011-src/src/channelRunway.test.ts:56:    expect(record.runwayDays).toBe(29);
+/tmp/v1011-src/src/channelRunway.test.ts:71:      deriveRunwayRecord(channel({id:'a',name:'A'}),[scheduled('2026-09-03T04:00:00+07:00')],now,now.toISOString(),true),
+/tmp/v1011-src/src/channelRunway.test.ts:72:      deriveRunwayRecord(channel({id:'b',name:'B'}),[scheduled('2026-09-04T04:00:00+07:00')],now,now.toISOString(),true),
+/tmp/v1011-src/src/channelRunway.test.ts:73:      deriveRunwayRecord(channel({id:'c',name:'C'}),[scheduled('2026-09-20T04:00:00+07:00')],now,now.toISOString(),true)
+/tmp/v1011-src/src/channelRunway.test.ts:79:describe('Channel Runway persistence and 06:00 KRAT scheduler',()=>{
+/tmp/v1011-src/src/channelRunway.test.ts:83:    upsertChannelRunwayFromYoutube(channel(),[scheduled('2026-12-01T04:00:00+07:00')],now,storage as any);
+/tmp/v1011-src/src/channelRunway.test.ts:84:    const loaded=loadChannelRunwayStore(storage as any);
+/tmp/v1011-src/src/channelRunway.test.ts:86:    const recalculated=recalculateChannelRunway([channel()],new Date('2026-09-03T08:00:00Z'),false,storage as any);
+/tmp/v1011-src/src/channelRunway.test.ts:88:    expect(recalculated.channels.neon.runwayDays).toBe(89);
+/tmp/v1011-src/src/channelRunway.test.ts:94:    const result=recalculateChannelRunway([channel()],new Date('2026-09-02T08:00:00Z'),false,storage as any);
+/tmp/v1011-src/src/channelRunway.test.ts:96:    expect(result.channels.neon.runwayDays).toBeUndefined();
+/tmp/v1011-src/src/channelRunway.test.ts:107:    const result=recalculateChannelRunway([channel()],new Date('2026-09-02T08:00:00Z'),false,storage as any);
+/tmp/v1011-src/src/channelRunway.test.ts:109:    expect(result.channels.neon.runwayDays).toBe(29);
+/tmp/v1011-src/src/channelRunway.test.ts:112:  it('explicit Channel Runway YouTube sync stays authoritative over opaque Existing Videos cache',()=>{
+/tmp/v1011-src/src/channelRunway.test.ts:115:    upsertChannelRunwayFromYoutube(channel(),[scheduled('2026-12-01T04:00:00+07:00')],now,storage as any);
+/tmp/v1011-src/src/channelRunway.test.ts:118:    const result=recalculateChannelRunway([channel()],new Date('2026-09-03T08:00:00Z'),false,storage as any);
+/tmp/v1011-src/src/channelRunway.test.ts:120:    expect(result.channels.neon.runwayDays).toBe(89);
+/tmp/v1011-src/src/channelRunway.test.ts:127:    const initial=loadChannelRunwayStore(storage as any);
+/tmp/v1011-src/src/channelRunway.test.ts:128:    expect(shouldRunDailyChannelRunway(initial,before)).toBe(false);
+/tmp/v1011-src/src/channelRunway.test.ts:129:    expect(maybeRunDailyChannelRunway([channel()],before,storage as any)).toBe(false);
+/tmp/v1011-src/src/channelRunway.test.ts:130:    expect(maybeRunDailyChannelRunway([channel()],atSix,storage as any)).toBe(true);
+/tmp/v1011-src/src/channelRunway.test.ts:131:    const after=loadChannelRunwayStore(storage as any);
+/tmp/v1011-src/src/channelRunway.test.ts:133:    expect(shouldRunDailyChannelRunway(after,new Date('2026-09-02T08:00:00Z'))).toBe(false);
+/tmp/v1011-src/src/channelRunway.test.ts:138:    saveChannelRunwayStore({version:1,lastKrasnoyarskDate:'2026-09-01',channels:{}},storage as any);
+/tmp/v1011-src/src/channelRunway.test.ts:140:    expect(maybeRunDailyChannelRunway([channel()],launch,storage as any)).toBe(true);
+/tmp/v1011-src/src/channelRunway.test.ts:141:    expect(maybeRunDailyChannelRunway([channel()],launch,storage as any)).toBe(false);
