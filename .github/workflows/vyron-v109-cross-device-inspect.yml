@@ -13,17 +13,19 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Restore exact 1.0.8 source and inspect move operations
+      - name: Restore released 1.0.9 source and inspect all move operations
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           rm -rf /tmp/v109src /tmp/v109assets
           mkdir -p /tmp/v109src /tmp/v109assets
-          gh release download v1.0.8 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-1.0.8-source.tar.gz' --dir /tmp/v109assets
-          tar -xzf /tmp/v109assets/VYRON-1.0.8-source.tar.gz -C /tmp/v109src
+          gh release download v1.0.9 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-1.0.9-source.tar.gz' --dir /tmp/v109assets
+          tar -xzf /tmp/v109assets/VYRON-1.0.9-source.tar.gz -C /tmp/v109src
           cd /tmp/v109src
-          echo '=== rename/copy operations ==='
-          grep -RniE 'fs::rename|std::fs::rename|rename\(' src-tauri/src/production_manager.rs || true
-          echo '=== production execute/build context ==='
-          grep -nE 'execute_plan|copy|rename|image|project_dir|batch_root' src-tauri/src/production_manager.rs | head -n 180
+          echo '=== ALL RUST RENAMES ==='
+          grep -RniE 'fs::rename|std::fs::rename|rename\(' src-tauri/src || true
+          echo '=== UPDATE/INSTALL/COPY/MOVE ==='
+          grep -RniE 'update|updater|install|rename|copy|temp_dir|Applications|current_exe|app_handle' src-tauri/src | head -n 500 || true
+          echo '=== FRONTEND UPDATE INVOKES ==='
+          grep -RniE 'updat|install|restart|invoke' src | head -n 300 || true
