@@ -1,0 +1,62 @@
+name: VYRON 1.2.0 Inspect Exact 1.1.0
+on:
+  push:
+    branches: [vyron-yt-peisov-1.2.0-full-master]
+    paths: ['vyron-v120-inspect-trigger.txt']
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore exact VYRON 1.1.0 release source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/v120-src /tmp/v120-assets
+          mkdir -p /tmp/v120-src /tmp/v120-assets
+          gh release download v1.1.0 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-1.1.0-source.tar.gz' --pattern 'SOURCE_SHA256.txt' --dir /tmp/v120-assets
+          EXPECTED="$(awk '{print $1;exit}' /tmp/v120-assets/SOURCE_SHA256.txt)"
+          GOT="$(sha256sum /tmp/v120-assets/VYRON-1.1.0-source.tar.gz|awk '{print $1}')"
+          test "$EXPECTED" = "$GOT"
+          tar -xzf /tmp/v120-assets/VYRON-1.1.0-source.tar.gz -C /tmp/v120-src
+          echo "SOURCE_SHA=$GOT"
+          echo '=== TOP LEVEL ==='
+          find /tmp/v120-src/src -maxdepth 1 -type f -printf '%f\n' | sort
+          echo '=== TARGET LINE COUNTS ==='
+          wc -l /tmp/v120-src/src/{App.tsx,DashboardOS.tsx,ProductionOS.tsx,ProductionManager.tsx,SettingsOS.tsx,MetadataPage.tsx,PublisherOS.tsx,api.ts,youtubeQuota.ts,types.ts,styles.css} 2>/dev/null || true
+      - name: Inspect app navigation branding dashboard settings
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in App.tsx DashboardOS.tsx SettingsOS.tsx; do
+            echo "===== $f ====="
+            grep -nE 'VYRON|Dashboard|Главная|sidebar|nav|route|Settings|Настройки|О программе|Лиценз|Обновлен|quota|Quota|date|Дата|Production|YouTube' /tmp/v120-src/src/$f | head -n 240 || true
+          done
+      - name: Inspect production and ENDLUME UI
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in ProductionOS.tsx ProductionManager.tsx ProductionStatusBridge.tsx productionManagerApi.ts; do
+            echo "===== $f ====="
+            grep -nE 'Рендер|Публика|render|publish|ENDLUME|selected|project|batch|status|progress|handoff|openEndlume|validateProjects|SENT|READY_UPLOAD' /tmp/v120-src/src/$f | head -n 300 || true
+          done
+      - name: Inspect metadata publisher quota APIs
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in MetadataPage.tsx PublisherOS.tsx api.ts youtubeQuota.ts types.ts; do
+            echo "===== $f ====="
+            grep -nE 'thumbnail|DOCX|Word|metadata|publishAt|schedule|privacy|quota|Quota|upload|videos.update|videos.insert|selected|channel|A → Z|sortChannels|Apply|Примен' /tmp/v120-src/src/$f | head -n 360 || true
+          done
+      - name: Inspect Rust upload thumbnail license updater commands
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in youtube.rs lib.rs license.rs updater_bridge.rs production_manager.rs; do
+            echo "===== src-tauri/src/$f ====="
+            grep -nE 'youtube_upload|videos.insert|thumbnails|thumbnail|upload|daily|quota|license|updater|version|production|ENDLUME|selected_project_ids' /tmp/v120-src/src-tauri/src/$f | head -n 360 || true
+          done
