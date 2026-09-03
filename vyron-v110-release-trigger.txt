@@ -1,0 +1,4 @@
+VYRON 1.1.0 signed release trigger
+combined-gate=33762168195
+combined-conclusion=success
+triggered-at=2026-09-03T13:39:00Z
