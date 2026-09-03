@@ -1,4 +1,4 @@
-name: VYRON 1.2.0 Exact 1.1.0 Full Master Inspect
+name: VYRON 1.2.0 Exact Write Graph Inspect
 on:
   push:
     branches: [vyron-yt-peisov-1.2.0-full-master]
@@ -28,33 +28,28 @@ jobs:
           GOT="$(sha256sum /tmp/v120-assets/VYRON-1.1.0-source.tar.gz|awk '{print $1}')"
           test "$EXPECTED" = "$GOT"
           tar -xzf /tmp/v120-assets/VYRON-1.1.0-source.tar.gz -C /tmp/v120-src
-          echo "SOURCE_SHA=$GOT"
           grep -q '"version": "1.1.0"' /tmp/v120-src/package.json
-      - name: App dashboard settings map
+      - name: YouTube exact update and backup graph
         shell: bash
         run: |
-          for f in App.tsx DashboardOS.tsx SettingsOS.tsx; do
-            echo "===== $f ====="
-            grep -nE 'VYRON|Dashboard|Главная|sidebar|nav|Settings|Настройки|О программе|Лиценз|Обновлен|quota|Quota|Дата|date|Production|YouTube|section|tab' /tmp/v120-src/src/$f | head -n 320 || true
-          done
-      - name: Production ENDLUME map
+          echo '===== youtube.rs 150-270 ====='
+          sed -n '150,270p' /tmp/v120-src/src-tauri/src/youtube.rs
+          echo '===== all method events ====='
+          grep -n 'emit_youtube_api_request' /tmp/v120-src/src-tauri/src/youtube.rs /tmp/v120-src/src-tauri/src/youtube_intelligence.rs || true
+      - name: YouTube Center exact tabs
         shell: bash
         run: |
-          for f in ProductionOS.tsx ProductionManager.tsx ProductionStatusBridge.tsx productionManagerApi.ts; do
-            echo "===== $f ====="
-            grep -nE 'Рендер|Публика|render|publish|ENDLUME|selected|project|batch|status|progress|handoff|openEndlume|validateProjects|SENT|READY_UPLOAD|tab|section' /tmp/v120-src/src/$f | head -n 360 || true
-          done
-      - name: Metadata publisher quota map
+          echo '===== YouTubeCenter.tsx ====='
+          sed -n '1,260p' /tmp/v120-src/src/YouTubeCenter.tsx
+      - name: Channel and Settings types
         shell: bash
         run: |
-          for f in MetadataPage.tsx PublisherOS.tsx api.ts youtubeQuota.ts types.ts; do
-            echo "===== $f ====="
-            grep -nE 'thumbnail|DOCX|Word|metadata|publishAt|schedule|privacy|quota|Quota|upload|videos.update|videos.insert|selected|channel|sortChannels|Apply|Примен|queue|job' /tmp/v120-src/src/$f | head -n 420 || true
-          done
-      - name: Rust upload thumbnail license updater map
+          echo '===== types.ts 1-75 ====='
+          sed -n '1,75p' /tmp/v120-src/src/types.ts
+          echo '===== store defaults/settings ====='
+          grep -nE 'default.*settings|const default|Settings|safe|autoUpload|youtubeCategory|create.*channel|cadenceDays' /tmp/v120-src/src/store.ts /tmp/v120-src/src/defaults.ts /tmp/v120-src/src/*.ts 2>/dev/null | head -n 300 || true
+      - name: Existing file picker commands
         shell: bash
         run: |
-          for f in youtube.rs lib.rs license.rs updater_bridge.rs production_manager.rs; do
-            echo "===== src-tauri/src/$f ====="
-            grep -nE 'youtube_upload|videos.insert|thumbnails|thumbnail|upload|daily|quota|license|updater|version|production|ENDLUME|selected_project_ids|command' /tmp/v120-src/src-tauri/src/$f | head -n 420 || true
-          done
+          echo '===== file picker API ====='
+          grep -nE 'chooseImages|choose.*Folder|choose.*File|dialog|open\(' /tmp/v120-src/src/api.ts /tmp/v120-src/src-tauri/src/files.rs /tmp/v120-src/src-tauri/src/system.rs | head -n 260 || true
