@@ -1,0 +1,29 @@
+name: VYRON 1.0.9 Cross Device Inspect
+
+on:
+  push:
+    branches: [vyron-v109-production-storage-release]
+    paths: ['vyron-v109-cross-device-inspect-trigger.txt']
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore exact 1.0.8 source and inspect move operations
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/v109src /tmp/v109assets
+          mkdir -p /tmp/v109src /tmp/v109assets
+          gh release download v1.0.8 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-1.0.8-source.tar.gz' --dir /tmp/v109assets
+          tar -xzf /tmp/v109assets/VYRON-1.0.8-source.tar.gz -C /tmp/v109src
+          cd /tmp/v109src
+          echo '=== rename/copy operations ==='
+          grep -RniE 'fs::rename|std::fs::rename|rename\(' src-tauri/src/production_manager.rs || true
+          echo '=== production execute/build context ==='
+          grep -nE 'execute_plan|copy|rename|image|project_dir|batch_root' src-tauri/src/production_manager.rs | head -n 180
