@@ -4,6 +4,7 @@ on:
     branches: [vyron-yt-peisov-1.1.0-dev]
     paths:
       - 'vyron-v110/apply_v110_quota.py'
+      - 'vyron-v110/apply_v110_quota_fix.py'
       - '.github/workflows/vyron-v110-quota-gate.yml'
       - 'vyron-v110-quota-trigger.txt'
   workflow_dispatch:
@@ -29,7 +30,9 @@ jobs:
           test "$(awk '{print $1;exit}' /tmp/v110q-assets/SOURCE_SHA256.txt)" = "$(shasum -a 256 /tmp/v110q-assets/VYRON-1.0.15-source.tar.gz|awk '{print $1}')"
           tar -xzf /tmp/v110q-assets/VYRON-1.0.15-source.tar.gz -C /tmp/v110q-src
       - name: Apply quota patch
-        run: python3 vyron-v110/apply_v110_quota.py /tmp/v110q-src
+        run: |
+          python3 vyron-v110/apply_v110_quota.py /tmp/v110q-src
+          python3 vyron-v110/apply_v110_quota_fix.py /tmp/v110q-src
       - name: Static quota contracts
         shell: bash
         run: |
