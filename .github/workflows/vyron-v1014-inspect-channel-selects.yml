@@ -1,0 +1,38 @@
+name: VYRON 1.0.14 Inspect Channel Dropdowns
+on:
+  push:
+    branches: [vyron-v1014-schedule-patterns]
+    paths: ['vyron-v1014-channel-select-inspect-trigger.txt']
+permissions:
+  contents: write
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: vyron-v1014-schedule-patterns
+          fetch-depth: 0
+      - shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/v1013-src /tmp/v1013-assets _inspect_v1014
+          mkdir -p /tmp/v1013-src /tmp/v1013-assets _inspect_v1014
+          gh release download v1.0.13 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-1.0.13-source.tar.gz' --dir /tmp/v1013-assets
+          tar -xzf /tmp/v1013-assets/VYRON-1.0.13-source.tar.gz -C /tmp/v1013-src
+          grep -RIl --include='*.tsx' -E 'channels\.map|channelId|<select' /tmp/v1013-src/src | while read f; do
+            if grep -qE 'channels\.map|channels\.filter|channels\.find' "$f"; then
+              rel="${f#/tmp/v1013-src/}"
+              mkdir -p "_inspect_v1014/$(dirname "$rel")"
+              cp "$f" "_inspect_v1014/$rel"
+            fi
+          done
+          grep -RniE 'channels\.map|<select|channelId' _inspect_v1014/src > _inspect_v1014/channel_selects.txt || true
+      - shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]';git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add _inspect_v1014
+          if ! git diff --cached --quiet;then git commit -m 'chore(vyron): inspect channel dropdown source';git push origin HEAD:vyron-v1014-schedule-patterns;fi
