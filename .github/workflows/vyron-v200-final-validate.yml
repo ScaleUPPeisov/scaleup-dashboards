@@ -50,6 +50,7 @@ jobs:
           python3 "$GITHUB_WORKSPACE/vyron-v200/apply_v200_intelligence_errors.py" .
           python3 "$GITHUB_WORKSPACE/vyron-v200/apply_v200_autopilot_attention.py" .
           python3 "$GITHUB_WORKSPACE/vyron-v200/apply_v200_settings_importfix.py" .
+          python3 "$GITHUB_WORKSPACE/vyron-v200/apply_v200_rust_fingerprintfix.py" .
           python3 "$GITHUB_WORKSPACE/vyron-v200/apply_v200_version.py" .
       - name: Final architecture and acceptance contracts
         shell: bash
@@ -70,6 +71,7 @@ jobs:
           assert 'vyron:youtube-publish-workspaces:v2' in workspace
           for token in ['youtube_upload_sessions','youtube_resume_upload','youtube_cancel_upload_session','youtube-upload-sessions.json','PersistedUploadSession']:
               assert token in rust or token in lib,token
+          assert 'fn local_file_fingerprint(path:&Path)->Result<Value,String>' in rust
           m=re.search(r'pub async fn youtube_resume_upload.*?(?=\n#\[tauri::command\]|\Z)',rust,re.S);assert m,'resume function missing';resume=m.group(0);assert 'videos.insert' not in resume and 'emit_youtube_api_request' not in resume,'resume must not create/charge second videos.insert'
           assert 'Продолжить' in pub and 'Черновик' in pub and 'request plan' in pub
           assert 'humanizeError' in pub and 'UPLOAD_INTERRUPTED' in errors
@@ -78,15 +80,13 @@ jobs:
           for token in ['SAFE_MODE_REQUIRED','SAFE_DAILY_LIMIT_REQUIRED','DUPLICATE','SCHEDULE_REQUIRED']:
               assert token in core,token
           assert 'runYoutubeAutopilotForChannel' in auto and 'youtubeUploadSessions' in auto and 'reserveYoutubeQuota' in auto
-          assert 'Автопубликация YouTube' in settings and 'window.confirm' in settings
+          assert 'Автопубликация YouTube' in settings and 'window.confirm' in settings and 'notifyWarning' in settings
           assert 'analyticsInsights' in analytics and 'ЧТО ИЗМЕНИЛОСЬ / ЧТО ДЕЛАТЬ' in analytics
           assert 'competitorInsights' in competitors and 'LOCAL OPPORTUNITY RADAR' in competitors
           assert 'youtubeCacheFresh' in Path('src/youtubeIntelligence.ts').read_text() and 'markYoutubeCache' in Path('src/ExistingVideos.tsx').read_text()
           assert 'youtubeUploadSessions' in dash and 'Views 28d' in dash and 'ТРЕБУЕТ ВНИМАНИЯ' in dash
-          # Pure/local modules must not introduce Google/YouTube HTTP calls.
           for f in ['src/publishWorkspaceState.ts','src/errorCenter.ts','src/youtubeCache.ts','src/analyticsInsights.ts','src/competitorInsights.ts','src/youtubeAutopilotCore.ts']:
               s=Path(f).read_text();assert 'googleapis.com' not in s and 'fetch(' not in s,f
-          # Visible brand is final, while technical product identity stays compatible.
           assert 'VYRON YT PEISOV' in Path('src/App.tsx').read_text()
           print('VYRON YT PEISOV 2.0.0 final contracts: PASS')
           PY
