@@ -1,0 +1,68 @@
+name: VYRON 1.1.0 Selective ENDLUME Gate
+on:
+  push:
+    branches: [vyron-yt-peisov-1.1.0-dev]
+    paths:
+      - 'vyron-v110/apply_v110_endlume.py'
+      - 'vyron-v110/apply_v110_endlume_fix.py'
+      - '.github/workflows/vyron-v110-endlume-gate.yml'
+      - 'vyron-v110-endlume-trigger.txt'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  gate:
+    runs-on: macos-latest
+    timeout-minutes: 40
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: vyron-yt-peisov-1.1.0-dev
+      - name: Restore exact released VYRON 1.0.15 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/v110-assets /tmp/v110-src
+          gh release download v1.0.15 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-1.0.15-source.tar.gz' --pattern 'SOURCE_SHA256.txt' --dir /tmp/v110-assets
+          EXPECTED="$(awk '{print $1;exit}' /tmp/v110-assets/SOURCE_SHA256.txt)"
+          GOT="$(shasum -a 256 /tmp/v110-assets/VYRON-1.0.15-source.tar.gz|awk '{print $1}')"
+          test "$EXPECTED" = "$GOT"
+          tar -xzf /tmp/v110-assets/VYRON-1.0.15-source.tar.gz -C /tmp/v110-src
+      - name: Apply selective ENDLUME patch
+        run: |
+          python3 vyron-v110/apply_v110_endlume.py /tmp/v110-src
+          python3 vyron-v110/apply_v110_endlume_fix.py /tmp/v110-src
+      - name: Static selected handoff contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/v110-src
+          grep -q 'selected_project_ids:Option<Vec<String>>' src-tauri/src/production_manager.rs
+          grep -q 'validate_production_projects' src-tauri/src/production_manager.rs
+          grep -q 'ENDLUME_ALREADY_SENT' src-tauri/src/production_manager.rs
+          grep -q '.vyron-handoff-' src-tauri/src/production_manager.rs
+          grep -q 'ОТПРАВИТЬ В ENDLUME ({selectedProjectIds.length})' src/ProductionManager.tsx
+          grep -q 'readProductionPrefs' src/ProductionStatusBridge.tsx
+          ! grep -q 'loadProductionPrefs' src/ProductionStatusBridge.tsx
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: /tmp/v110-src/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - name: Frontend tests and production build
+        working-directory: /tmp/v110-src
+        run: |
+          npm ci
+          npm test
+          npm run build
+      - name: Rust tests
+        working-directory: /tmp/v110-src/src-tauri
+        run: cargo test --lib
+      - name: Apple Silicon check
+        working-directory: /tmp/v110-src/src-tauri
+        run: cargo check --target aarch64-apple-darwin
