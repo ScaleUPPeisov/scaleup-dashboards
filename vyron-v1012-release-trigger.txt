@@ -1,0 +1,1 @@
+release VYRON 1.0.12 after green validation
