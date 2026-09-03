@@ -1,0 +1,50 @@
+name: VYRON 1.0.6 Baseline Inspect
+
+on:
+  push:
+    branches: [vyron-v106-production-autobuild-dev]
+    paths: ['vyron-v106-inspect-trigger.txt']
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore exact released VYRON 1.0.5
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .v105 && mkdir .v105
+          curl -fL --retry 3 'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v1.0.5/VYRON-1.0.5-source.tar.gz' -o /tmp/v105.tar.gz
+          tar -xzf /tmp/v105.tar.gz -C .v105
+          grep -q '"version": "1.0.5"' .v105/package.json
+          shasum -a 256 /tmp/v105.tar.gz
+      - name: Print Production frontend contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd .v105
+          for f in src/ProductionOS.tsx src/ProductionWorkspace.tsx src/ProductionManager.tsx src/productionManagerApi.ts src/store.ts src/types.ts src/App.tsx src/v100.css; do
+            echo "===== $f ====="
+            if [ -f "$f" ]; then sed -n '1,520p' "$f"; else echo MISSING; fi
+          done
+      - name: Print Production native contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd .v105
+          for f in src-tauri/src/production_manager.rs src-tauri/src/production_manager_tests.rs src-tauri/src/lib.rs src-tauri/Cargo.toml src-tauri/tauri.conf.json; do
+            echo "===== $f ====="
+            if [ -f "$f" ]; then sed -n '1,1200p' "$f"; else echo MISSING; fi
+          done
+      - name: Protected hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd .v105
+          for f in src-tauri/src/youtube.rs src-tauri/src/storage.rs src/api.ts src/store.ts src/types.ts src/YouTubeCenter.tsx src/AnalyticsPage.tsx src/CompetitorsPage.tsx src/SettingsOS.tsx src-tauri/tauri.conf.json; do
+            [ -f "$f" ] && shasum -a 256 "$f"
+          done
