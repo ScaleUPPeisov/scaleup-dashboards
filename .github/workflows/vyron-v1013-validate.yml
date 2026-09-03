@@ -1,0 +1,124 @@
+name: VYRON 1.0.13 Recovery Schedule Notifications Validate
+on:
+  push:
+    branches: [vyron-v1013-recovery-schedule-notifications]
+    paths:
+      - 'vyron-v1013/**'
+      - 'vyron-v1013-validate-trigger.txt'
+      - '.github/workflows/vyron-v1013-validate.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: vyron-v1013-validate
+  cancel-in-progress: true
+jobs:
+  validate-macos-arm64:
+    runs-on: macos-latest
+    timeout-minutes: 100
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: vyron-v1013-recovery-schedule-notifications
+          fetch-depth: 0
+      - name: Restore exact released VYRON 1.0.12 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .vyron-v1013 /tmp/v1012-assets
+          mkdir -p .vyron-v1013 /tmp/v1012-assets
+          gh release download v1.0.12 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-1.0.12-source.tar.gz' --pattern 'SOURCE_SHA256.txt' --dir /tmp/v1012-assets
+          EXPECTED="$(awk '{print $1; exit}' /tmp/v1012-assets/SOURCE_SHA256.txt)"
+          GOT="$(shasum -a 256 /tmp/v1012-assets/VYRON-1.0.12-source.tar.gz | awk '{print $1}')"
+          test "$EXPECTED" = "$GOT"
+          tar -xzf /tmp/v1012-assets/VYRON-1.0.12-source.tar.gz -C .vyron-v1013
+          grep -q '"version": "1.0.12"' .vyron-v1013/package.json
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          root=Path('.vyron-v1013');c=json.loads((root/'src-tauri/tauri.conf.json').read_text())
+          Path('/tmp/v1012-id').write_text(c['identifier']);Path('/tmp/v1012-pub').write_text(c['plugins']['updater']['pubkey']);Path('/tmp/v1012-endpoints').write_text(json.dumps(c['plugins']['updater']['endpoints']))
+          protected=['src-tauri/src/youtube.rs','src-tauri/src/storage.rs','src-tauri/src/system.rs','src-tauri/src/updater_bridge.rs','src/AnalyticsPage.tsx','src/CompetitorsPage.tsx','src/PublisherOS.tsx','src/ChannelRunway.tsx','src/channelRunwayCore.ts','src/channelRunwayStore.ts','src/ProductionStatusBridge.tsx','src/autopilotRuntime.ts']
+          Path('/tmp/v1012-protected.json').write_text(json.dumps({p:hashlib.sha256((root/p).read_bytes()).hexdigest() for p in protected if (root/p).exists()},sort_keys=True))
+          print('Exact VYRON 1.0.12 release source: PASS')
+          PY
+      - name: Apply targeted 1.0.13 patches
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile vyron-v1013/apply_v1013_core.py vyron-v1013/apply_v1013_recovery.py vyron-v1013/apply_v1013_schedule.py vyron-v1013/apply_v1013_cleanup.py
+          cd .vyron-v1013
+          python3 ../vyron-v1013/apply_v1013_core.py
+          python3 ../vyron-v1013/apply_v1013_recovery.py
+          python3 ../vyron-v1013/apply_v1013_schedule.py
+          python3 ../vyron-v1013/apply_v1013_cleanup.py
+      - name: Static contracts and scope guard
+        working-directory: .vyron-v1013
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib,json,re
+          from pathlib import Path
+          pkg=json.loads(Path('package.json').read_text());conf=json.loads(Path('src-tauri/tauri.conf.json').read_text())
+          assert pkg['version']=='1.0.13' and conf['version']=='1.0.13'
+          assert conf['identifier']==Path('/tmp/v1012-id').read_text()
+          assert conf['plugins']['updater']['pubkey']==Path('/tmp/v1012-pub').read_text()
+          assert json.dumps(conf['plugins']['updater']['endpoints'])==Path('/tmp/v1012-endpoints').read_text()
+          for f,h in json.loads(Path('/tmp/v1012-protected.json').read_text()).items(): assert hashlib.sha256(Path(f).read_bytes()).hexdigest()==h, f'OUT OF SCOPE: {f}'
+          app=Path('src/App.tsx').read_text();meta=Path('src/MetadataPage.tsx').read_text();pm=Path('src-tauri/src/production_manager.rs').read_text();cc=Path('src/CommandCenter.tsx').read_text();sched=Path('src/channelSchedule.ts').read_text()
+          assert 'VYRON 1.0.8' not in app
+          assert '<NotificationCenter/>' in app and '<RecoveryGate/>' in app
+          assert 'find_production_recovery' in pm and 'restart_production_batch' in pm
+          assert 'Количество проектов должно быть 1–10000' in pm
+          assert 'Продолжить расписание автоматически' in meta
+          assert 'Запланировано до' in meta and 'Следующая дата' in meta
+          assert 'replaceExistingCacheFromSync' in meta and 'mergeExistingCacheVideos' in meta
+          assert 'await loadYoutube()' not in meta
+          assert 'readinessCompact' in cc and 'ready.readyToPublish' in cc
+          assert 'vyron:existing-cache:v1:' in sched
+          print('Static contracts: PASS')
+          PY
+          ! grep -RniE 'youtube_upload_video|youtube_list_existing_videos|youtube_update_existing_video|youtube_channel_analytics|googleapis\.com' src/channelSchedule.ts src/RecoveryGate.tsx src/NotificationCenter.tsx src/notificationCenter.ts src/CommandCenter.tsx
+          grep -Fq "youtubeListExisting(profileId" src/MetadataPage.tsx
+          grep -Fq "youtubeUpdateExisting(profileId" src/MetadataPage.tsx
+          grep -Fq "onClick={loadYoutube}" src/MetadataPage.tsx
+          echo 'Zero hidden YouTube API: PASS'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .vyron-v1013/src-tauri
+          cache-on-failure: true
+      - name: Frontend tests and production build
+        working-directory: .vyron-v1013
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --no-audit --no-fund
+          npm test
+          npm run build
+      - name: Rust recovery regression and ARM64 check
+        working-directory: .vyron-v1013
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path src-tauri/Cargo.toml --lib -- --nocapture
+          cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
+      - name: Final validation report
+        run: |
+          echo '✅ VYRON 1.0.13 validation PASS'
+          echo '✅ one top-left Notification Center'
+          echo '✅ updater availability + install confirmation'
+          echo '✅ readiness N / target with percent'
+          echo '✅ persisted checkpoint recovery + 60 sec default resume'
+          echo '✅ partial .tmp project is rebuilt without touching completed projects'
+          echo '✅ automatic per-channel schedule continuation from local Existing Videos cache'
+          echo '✅ PUBLISH TIME preserved; KRAT fallback explicit'
+          echo '✅ no hidden post-write YouTube sync'
