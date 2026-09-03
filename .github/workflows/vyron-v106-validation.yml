@@ -13,8 +13,33 @@ jobs:
   validate:
     runs-on: macos-latest
     timeout-minutes: 90
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
+      - name: Normalize updater signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${TAURI_SIGNING_PRIVATE_KEY:-}"
+          python3 - <<'PY'
+          import base64,os
+          def dec(v):
+              try:return base64.b64decode(v.strip(),validate=True).decode()
+              except Exception:return None
+          raw=os.environ['TAURI_SIGNING_PRIVATE_KEY'].strip();once=dec(raw)
+          if once and once.startswith('untrusted comment:'):
+              out,box=raw,once
+          else:
+              if not once: raise SystemExit('TAURI_SIGNING_PRIVATE_KEY: invalid encoding')
+              out=once.strip();box=dec(out)
+              if not box or not box.startswith('untrusted comment:'): raise SystemExit('TAURI_SIGNING_PRIVATE_KEY: not a Tauri key')
+          if 'secret key' not in box.splitlines()[0].lower(): raise SystemExit('TAURI_SIGNING_PRIVATE_KEY: wrong key type')
+          print(f'::add-mask::{out}')
+          with open(os.environ['GITHUB_ENV'],'a') as f:f.write(f'TAURI_SIGNING_PRIVATE_KEY={out}\n')
+          print('Updater signing key normalization: PASS')
+          PY
       - name: Restore exact released VYRON 1.0.5
         shell: bash
         run: |
@@ -93,11 +118,8 @@ jobs:
       - name: Cargo check ARM64
         working-directory: .v106
         run: cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
-      - name: Build unsigned validation ARM64 app
+      - name: Build validation ARM64 app
         working-directory: .v106
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npx tauri build --target aarch64-apple-darwin --bundles app
       - name: Verify final ARM64 app and Production contracts
         working-directory: .v106
