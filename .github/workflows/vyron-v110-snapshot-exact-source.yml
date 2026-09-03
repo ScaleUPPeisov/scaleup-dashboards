@@ -1,0 +1,70 @@
+name: VYRON 1.1.0 Snapshot Exact 1.0.15 Source
+on:
+  push:
+    branches: [vyron-yt-peisov-1.1.0-dev]
+    paths:
+      - '.github/workflows/vyron-v110-snapshot-exact-source.yml'
+      - 'vyron-v110-snapshot-trigger.txt'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: vyron-v110-snapshot
+  cancel-in-progress: false
+jobs:
+  snapshot:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: vyron-yt-peisov-1.1.0-dev
+          fetch-depth: 0
+      - name: Restore and verify exact VYRON 1.0.15 release source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/vyron-v110-exact /tmp/vyron-v110-assets
+          mkdir -p /tmp/vyron-v110-exact /tmp/vyron-v110-assets
+          gh release download v1.0.15 --repo ScaleUPPeisov/scaleup-dashboards \
+            --pattern 'VYRON-1.0.15-source.tar.gz' \
+            --pattern 'SOURCE_SHA256.txt' \
+            --dir /tmp/vyron-v110-assets
+          EXPECTED="$(awk '{print $1;exit}' /tmp/vyron-v110-assets/SOURCE_SHA256.txt)"
+          GOT="$(shasum -a 256 /tmp/vyron-v110-assets/VYRON-1.0.15-source.tar.gz | awk '{print $1}')"
+          test "$EXPECTED" = "$GOT"
+          tar -xzf /tmp/vyron-v110-assets/VYRON-1.0.15-source.tar.gz -C /tmp/vyron-v110-exact
+          grep -q '"version": "1.0.15"' /tmp/vyron-v110-exact/package.json
+      - name: Create review snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf vyron-v110/exact-1.0.15
+          mkdir -p vyron-v110/exact-1.0.15/src vyron-v110/exact-1.0.15/src-tauri
+          cp -R /tmp/vyron-v110-exact/src/. vyron-v110/exact-1.0.15/src/
+          mkdir -p vyron-v110/exact-1.0.15/src-tauri/src
+          cp -R /tmp/vyron-v110-exact/src-tauri/src/. vyron-v110/exact-1.0.15/src-tauri/src/
+          cp /tmp/vyron-v110-exact/package.json vyron-v110/exact-1.0.15/package.json
+          cp /tmp/vyron-v110-exact/package-lock.json vyron-v110/exact-1.0.15/package-lock.json 2>/dev/null || true
+          cp /tmp/vyron-v110-exact/src-tauri/Cargo.toml vyron-v110/exact-1.0.15/src-tauri/Cargo.toml
+          cp /tmp/vyron-v110-exact/src-tauri/tauri.conf.json vyron-v110/exact-1.0.15/src-tauri/tauri.conf.json
+          cp /tmp/vyron-v110-assets/SOURCE_SHA256.txt vyron-v110/exact-1.0.15/SOURCE_SHA256.txt
+          cat > vyron-v110/exact-1.0.15/README.md <<'EOF'
+# Exact released VYRON 1.0.15 review snapshot
+This folder is a read-only review snapshot restored from the published `VYRON-1.0.15-source.tar.gz` asset and verified against the published `SOURCE_SHA256.txt`.
+It is not the build root. VYRON 1.1.0 patch/release workflows must restore the official 1.0.15 release archive again and apply deterministic patches there.
+EOF
+      - name: Commit snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add vyron-v110/exact-1.0.15
+          if ! git diff --cached --quiet; then
+            git commit -m 'audit(vyron): snapshot exact released 1.0.15 source'
+            git push origin HEAD:vyron-yt-peisov-1.1.0-dev
+          fi
+      - run: echo 'Exact 1.0.15 source snapshot committed'
