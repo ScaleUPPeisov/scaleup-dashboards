@@ -16,7 +16,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p /tmp/v109
+          rm -rf /tmp/v109 && mkdir -p /tmp/v109
+          rm -f /tmp/VYRON-1.0.8-source.tar.gz
           gh release download v1.0.8 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-1.0.8-source.tar.gz' --dir /tmp
           tar -xzf /tmp/VYRON-1.0.8-source.tar.gz -C /tmp/v109
           echo '=== VERSION ==='
@@ -41,3 +42,13 @@ jobs:
           N=$(grep -n 'pub struct BuildRequest' /tmp/v109/src-tauri/src/production_manager.rs | head -1 | cut -d: -f1 || true); if [ -n "$N" ]; then A=$((N-15)); [ $A -lt 1 ] && A=1; B=$((N+90)); sed -n "${A},${B}p" /tmp/v109/src-tauri/src/production_manager.rs; fi
           echo '=== NATIVE CONTEXT PLAN ==='
           N=$(grep -n 'fn plan_build' /tmp/v109/src-tauri/src/production_manager.rs | head -1 | cut -d: -f1 || true); if [ -n "$N" ]; then A=$((N-20)); [ $A -lt 1 ] && A=1; B=$((N+150)); sed -n "${A},${B}p" /tmp/v109/src-tauri/src/production_manager.rs; fi
+      - name: Native registration and dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== LIB COMMANDS ==='
+          grep -n -E 'production_manager|build_production_batch|invoke_handler' /tmp/v109/src-tauri/src/lib.rs | head -n 160
+          echo '=== CARGO ==='
+          cat /tmp/v109/src-tauri/Cargo.toml
+          echo '=== APP API OPEN LOCAL ==='
+          grep -n -E 'openLocal|chooseWorkspace|defaultWorkspace' /tmp/v109/src/api.ts | head -n 80
