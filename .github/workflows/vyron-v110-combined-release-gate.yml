@@ -1,22 +1,118 @@
-name: VYRON 1.2.0 Metadata Apply Inspect
+name: VYRON 1.2.0 FULL MASTER Validation
 on:
   push:
     branches: [vyron-yt-peisov-1.2.0-full-master]
-    paths: ['.github/workflows/vyron-v110-combined-release-gate.yml']
+    paths:
+      - 'vyron-v120-validation-trigger.txt'
+      - '.github/workflows/vyron-v110-combined-release-gate.yml'
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
-  inspect:
-    runs-on: ubuntu-latest
-    env: {GH_TOKEN: '${{ github.token }}'}
+  validate-macos-arm64:
+    runs-on: macos-latest
+    timeout-minutes: 150
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VITE_BUILD_DATE: '2026-09-03'
     steps:
       - uses: actions/checkout@v4
-        with: {ref: vyron-yt-peisov-1.2.0-full-master}
-      - name: Restore exact 1.1.0 and print Metadata apply
+        with:
+          ref: vyron-yt-peisov-1.2.0-full-master
+          fetch-depth: 0
+      - name: Restore and verify exact released VYRON 1.1.0
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf /tmp/v120-src /tmp/v120-assets;mkdir -p /tmp/v120-src /tmp/v120-assets
-          gh release download v1.1.0 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-1.1.0-source.tar.gz' --dir /tmp/v120-assets
-          tar -xzf /tmp/v120-assets/VYRON-1.1.0-source.tar.gz -C /tmp/v120-src
-          nl -ba /tmp/v120-src/src/MetadataPage.tsx | sed -n '1,155p'
+          rm -rf .vyron-v120 /tmp/v120-assets
+          mkdir -p .vyron-v120 /tmp/v120-assets
+          gh release download v1.1.0 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-1.1.0-source.tar.gz' --pattern 'SOURCE_SHA256.txt' --dir /tmp/v120-assets
+          EXPECTED="$(awk '{print $1;exit}' /tmp/v120-assets/SOURCE_SHA256.txt)"
+          GOT="$(shasum -a 256 /tmp/v120-assets/VYRON-1.1.0-source.tar.gz|awk '{print $1}')"
+          test "$EXPECTED" = "$GOT"
+          test "$GOT" = '7a0215f734a911fa7754d7f22c5033fe97fcf346ccee9e34a6e43a7664fc18d1'
+          tar -xzf /tmp/v120-assets/VYRON-1.1.0-source.tar.gz -C .vyron-v120
+          grep -q '"version": "1.1.0"' .vyron-v120/package.json
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          r=Path('.vyron-v120');c=json.loads((r/'src-tauri/tauri.conf.json').read_text())
+          Path('/tmp/v120-identity.json').write_text(json.dumps({'identifier':c['identifier'],'productName':c.get('productName'),'pubkey':c['plugins']['updater']['pubkey'],'endpoints':c['plugins']['updater']['endpoints']},sort_keys=True))
+          protected=['src-tauri/src/license.rs','src-tauri/src/storage.rs','src-tauri/src/files.rs','src-tauri/src/system.rs','src-tauri/src/updater_bridge.rs','src-tauri/src/production_manager.rs','src/ProductionManager.tsx','src/ProductionStatusBridge.tsx','src/productionManagerApi.ts','src/channelSchedule.ts','src/channelSort.ts','src/metadata.ts','src/youtubeExisting.ts','src/notificationCenter.ts','src/NotificationStack.tsx','src/RecoveryGate.tsx']
+          Path('/tmp/v120-protected.json').write_text(json.dumps({f:hashlib.sha256((r/f).read_bytes()).hexdigest() for f in protected},sort_keys=True))
+          print('Exact VYRON 1.1.0 source verified')
+          PY
+      - name: Apply complete 1.2.0 patch set
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in vyron-v120/apply_v120_core.py vyron-v120/apply_v120_dashboard_settings.py vyron-v120/apply_v120_youtube_backend.py vyron-v120/apply_v120_publish.py vyron-v120/apply_v120_metadata_quota.py vyron-v120/apply_v120_production.py; do python3 -m py_compile "$f"; done
+          python3 vyron-v120/apply_v120_core.py .vyron-v120
+          python3 vyron-v120/apply_v120_dashboard_settings.py .vyron-v120
+          python3 vyron-v120/apply_v120_youtube_backend.py .vyron-v120
+          python3 vyron-v120/apply_v120_publish.py .vyron-v120
+          python3 vyron-v120/apply_v120_metadata_quota.py .vyron-v120
+          python3 vyron-v120/apply_v120_production.py .vyron-v120
+      - name: Architecture and literal acceptance contracts
+        working-directory: .vyron-v120
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib,json,re
+          from pathlib import Path
+          pkg=json.loads(Path('package.json').read_text());conf=json.loads(Path('src-tauri/tauri.conf.json').read_text());identity=json.loads(Path('/tmp/v120-identity.json').read_text())
+          assert pkg['version']=='1.2.0' and conf['version']=='1.2.0'
+          assert conf['identifier']==identity['identifier'],'bundle identifier changed'
+          assert conf.get('productName')==identity['productName'],'technical productName changed'
+          assert conf['plugins']['updater']['pubkey']==identity['pubkey'],'updater pubkey changed'
+          assert conf['plugins']['updater']['endpoints']==identity['endpoints'],'updater endpoints changed'
+          for f,h in json.loads(Path('/tmp/v120-protected.json').read_text()).items():assert hashlib.sha256(Path(f).read_bytes()).hexdigest()==h,f'protected module changed: {f}'
+          all_tsx='\n'.join(p.read_text() for p in Path('src').glob('*.tsx'))
+          for literal in ['VYRON YT PEISOV','ПУБЛИКАЦИЯ НА YOUTUBE','О программе','Лицензия','Эта операция потратит','После операции останется']:
+              assert literal in all_tsx,literal
+          app=Path('src/App.tsx').read_text();assert "year:'numeric'" in app and 'subscribeYoutubeQuotaClock' in app and 'quotaCountdown' in app
+          dash=Path('src/DashboardOS.tsx').read_text();assert 'MORNING CONTROL CENTER' not in dash and 'ТРЕБУЕТ ВНИМАНИЯ' in dash and 'ОТКРЫТЬ ПУБЛИКАЦИЮ' in dash
+          settings=Path('src/SettingsOS.tsx').read_text();assert "['license','Лицензия']" in settings and "['about','О программе']" in settings and 'youtubePublishSafeMode' in settings
+          prod=Path('src/ProductionOS.tsx').read_text();assert ">Рендер</button>" not in prod and ">Публикация</button>" not in prod and '>ENDLUME</button>' in prod
+          pub=Path('src/PublisherOS.tsx').read_text();
+          for x in ['ПРОВЕРИТЬ НА ОДНОМ','ЗАГРУЗИТЬ ${selected.length} ВИДЕО НА YOUTUBE','safeDailyUploadLimit','youtubeFileFingerprint','youtubeSetThumbnail','acquireChannelUploadLock','reserveYoutubeQuota']:
+              assert x in pub,x
+          meta=Path('src/MetadataPage.tsx').read_text();assert 'metadataQuotaPlan' in meta and 'reserveYoutubeQuota(operationId,metadataQuotaPlan)' in meta and 'Word может содержать больше записей' in meta
+          quota=Path('src/youtubeQuota.ts').read_text();assert 'youtubeOperationActualCost' in quota and "'videos.update':{bucket:'general',cost:50" in quota and "'thumbnails.set':{bucket:'general',cost:50" in quota
+          qm=Path('src/QuotaMeter.tsx').read_text();assert 'setInterval' not in qm and 'subscribeYoutubeQuotaClock' in qm
+          yt=Path('src-tauri/src/youtube.rs').read_text();assert 'youtube_set_thumbnail' in yt and 'emit_youtube_api_request(&app,"thumbnails.set"' in yt and 'youtube_file_fingerprint' in yt
+          assert 'googleapis.com' not in Path('src/youtubePublishSafety.ts').read_text()
+          print('FULL MASTER static contracts PASS')
+          PY
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - name: Frontend tests and production build
+        working-directory: .vyron-v120
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --no-audit --no-fund
+          npm test
+          npm run build
+      - name: Rust regression suite
+        working-directory: .vyron-v120
+        shell: bash
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib -- --nocapture
+      - name: Apple Silicon compile gate
+        working-directory: .vyron-v120
+        shell: bash
+        run: cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
+      - name: Final summary
+        run: |
+          echo '✅ VYRON YT PEISOV 1.2.0 FULL MASTER validation PASS'
+          echo '✅ Branding + Topbar quota clock'
+          echo '✅ Operational Dashboard'
+          echo '✅ Production simplified to Overview / Materials / Projects / ENDLUME'
+          echo '✅ Publish Center + DOCX + thumbnails + quota preflight + 24h safety + duplicate lock'
+          echo '✅ Metadata exact quota preflight'
+          echo '✅ Settings License / About'
