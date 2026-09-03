@@ -1,0 +1,3 @@
+release 1.2.0 2026-09-03
+validation_run=33769400754
+validation_job=100695448329
