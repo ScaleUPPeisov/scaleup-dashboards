@@ -1,0 +1,149 @@
+name: VYRON 1.0.12 UX Storage Validate
+
+on:
+  push:
+    branches: [vyron-v1012-ux-storage-command-center]
+    paths:
+      - 'vyron-v1012/**'
+      - 'vyron-v1012-validate-trigger.txt'
+      - '.github/workflows/vyron-v1012-validate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-v1012-ux-storage-validate
+  cancel-in-progress: true
+
+jobs:
+  validate-macos-arm64:
+    runs-on: macos-latest
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout candidate branch
+        uses: actions/checkout@v4
+        with:
+          ref: vyron-v1012-ux-storage-command-center
+          fetch-depth: 0
+
+      - name: Restore exact released VYRON 1.0.11 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .vyron-v1012 /tmp/v1011-assets
+          mkdir -p .vyron-v1012 /tmp/v1011-assets
+          gh release download v1.0.11 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-1.0.11-source.tar.gz' --pattern 'SOURCE_SHA256.txt' --dir /tmp/v1011-assets
+          EXPECTED="$(awk '{print $1; exit}' /tmp/v1011-assets/SOURCE_SHA256.txt)"
+          GOT="$(shasum -a 256 /tmp/v1011-assets/VYRON-1.0.11-source.tar.gz | awk '{print $1}')"
+          test "$EXPECTED" = "$GOT"
+          tar -xzf /tmp/v1011-assets/VYRON-1.0.11-source.tar.gz -C .vyron-v1012
+          grep -q '"version": "1.0.11"' .vyron-v1012/package.json
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          root=Path('.vyron-v1012')
+          protected=[
+            'src/api.ts','src-tauri/src/youtube.rs','src-tauri/src/storage.rs','src-tauri/src/system.rs',
+            'src-tauri/src/updater_bridge.rs','src/store.ts','src/types.ts','src/AnalyticsPage.tsx',
+            'src/CompetitorsPage.tsx','src/ExistingVideos.tsx','src/MetadataPage.tsx','src/PublisherOS.tsx',
+            'src/ChannelRunway.tsx','src/channelRunwayCore.ts','src/channelRunwayStore.ts',
+            'src/ProductionStatusBridge.tsx','src/autopilotRuntime.ts'
+          ]
+          hashes={}
+          for p in protected:
+              f=root/p
+              if f.exists(): hashes[p]=hashlib.sha256(f.read_bytes()).hexdigest()
+          Path('/tmp/v1011-protected.json').write_text(json.dumps(hashes,sort_keys=True))
+          conf=json.loads((root/'src-tauri/tauri.conf.json').read_text())
+          Path('/tmp/v1011-id').write_text(conf['identifier'])
+          Path('/tmp/v1011-pub').write_text(conf['plugins']['updater']['pubkey'])
+          Path('/tmp/v1011-endpoints').write_text(json.dumps(conf['plugins']['updater']['endpoints']))
+          print('Exact VYRON 1.0.11 release source: PASS')
+          PY
+
+      - name: Apply 1.0.12 targeted patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile vyron-v1012/apply_v1012.py
+          cd .vyron-v1012
+          python3 ../vyron-v1012/apply_v1012.py
+
+      - name: Static scope and UX contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd .vyron-v1012
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          p=json.loads(Path('package.json').read_text()); c=json.loads(Path('src-tauri/tauri.conf.json').read_text())
+          assert p['version']=='1.0.12' and c['version']=='1.0.12'
+          assert c['identifier']==Path('/tmp/v1011-id').read_text()
+          assert c['plugins']['updater']['pubkey']==Path('/tmp/v1011-pub').read_text()
+          assert json.dumps(c['plugins']['updater']['endpoints'])==Path('/tmp/v1011-endpoints').read_text()
+          for f,h in json.loads(Path('/tmp/v1011-protected.json').read_text()).items():
+              assert hashlib.sha256(Path(f).read_bytes()).hexdigest()==h, f'OUT-OF-SCOPE FILE CHANGED: {f}'
+          api=Path('src/productionManagerApi.ts').read_text()
+          files=Path('src-tauri/src/files.rs').read_text()
+          pm=Path('src/ProductionManager.tsx').read_text()
+          pos=Path('src/ProductionOS.tsx').read_text()
+          cc=Path('src/CommandCenter.tsx').read_text()
+          assert "defaultPath:defaultPath||undefined" in api
+          assert "invoke<void>('reveal_path',{path})" in api
+          assert 'if is_dir { vec![path.as_os_str().to_os_string()] }' in files
+          assert 'ОБНОВИТЬ БИБЛИОТЕКУ' in pm and 'max="10000"' in pm
+          for label in ['Обзор','Материалы','Сборка проектов','Рендер','Публикация']: assert label in pos
+          for bad in ['youtubeQuota','units','runway ≤','ATTENTION CENTER','PRODUCTION FORECAST','NETWORK PLAN','LOCAL • 0 API']:
+              assert bad not in cc, bad
+          assert 'Что делать дальше' in cc and 'Открыть производство' in cc
+          print('VYRON 1.0.12 static UX/storage contracts: PASS')
+          PY
+          ! grep -RniE 'youtube_upload_video|youtube_list_existing_videos|youtube_update_existing_video|youtube_channel_analytics|googleapis\.com' src/CommandCenter.tsx src/ProductionOS.tsx src/ProductionManager.tsx src/productionManagerApi.ts tests/v1012_ux_storage.test.ts
+          grep -Fq 'prepare_updater_tempdir' src/api.ts
+          grep -Fq '.vyron-updater-tmp' src-tauri/src/updater_bridge.rs
+          echo 'Zero hidden YouTube quota + updater regression: PASS'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .vyron-v1012/src-tauri
+          cache-on-failure: true
+
+      - name: Frontend regression
+        working-directory: .vyron-v1012
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --no-audit --no-fund
+          npm test
+          npm run build
+
+      - name: Rust tests and ARM64 check
+        working-directory: .vyron-v1012
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path src-tauri/Cargo.toml --lib -- --nocapture
+          cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
+
+      - name: Final no-scope-drift report
+        working-directory: .vyron-v1012
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '✅ VYRON 1.0.12 validation PASS'
+          echo '✅ Finder directory open semantics guarded by Rust test'
+          echo '✅ folder pickers have deterministic defaultPath'
+          echo '✅ actual counts are separated from planning targets'
+          echo '✅ project count supports 1..10000'
+          echo '✅ Command Center is local/human-first with no new YouTube API'
+          echo '✅ existing updater/OAuth/analytics/competitors/ENDLUME status bridge unchanged'
