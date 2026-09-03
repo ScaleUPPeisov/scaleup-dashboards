@@ -1,0 +1,119 @@
+name: VYRON YT PEISOV 2.0.0 Final Validate
+on:
+  push:
+    branches: [vyron-yt-peisov-2.0.0-final]
+    paths: ['vyron-v200-validate-trigger.txt']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate-macos-arm64:
+    runs-on: macos-latest
+    timeout-minutes: 180
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VITE_BUILD_DATE: 2026-09-03
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: vyron-yt-peisov-2.0.0-final
+          fetch-depth: 0
+      - name: Restore and verify exact released VYRON 1.2.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/v200-work /tmp/v200-assets
+          mkdir -p /tmp/v200-work /tmp/v200-assets
+          gh release download v1.2.0 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-1.2.0-source.tar.gz' --pattern 'SOURCE_SHA256.txt' --dir /tmp/v200-assets
+          expected="$(awk '{print $1;exit}' /tmp/v200-assets/SOURCE_SHA256.txt)"
+          got="$(shasum -a 256 /tmp/v200-assets/VYRON-1.2.0-source.tar.gz | awk '{print $1}')"
+          test "$expected" = "$got"
+          tar -xzf /tmp/v200-assets/VYRON-1.2.0-source.tar.gz -C /tmp/v200-work
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          r=Path('/tmp/v200-work');p=json.loads((r/'package.json').read_text());c=json.loads((r/'src-tauri/tauri.conf.json').read_text())
+          assert p['version']=='1.2.0'
+          Path('/tmp/v200-id').write_text(c['identifier'])
+          Path('/tmp/v200-pub').write_text(c['plugins']['updater']['pubkey'])
+          Path('/tmp/v200-endpoints').write_text(json.dumps(c['plugins']['updater']['endpoints']))
+          protected=['src-tauri/src/updater_bridge.rs','src-tauri/src/license.rs','src-tauri/src/storage.rs','src-tauri/src/system.rs','src-tauri/src/files.rs','src-tauri/src/production_manager.rs','src-tauri/src/youtube_intelligence.rs','src/ProductionManager.tsx','src/ProductionOS.tsx','src/ProductionStatusBridge.tsx','src/productionManagerApi.ts','src/productionPrefs.ts','src/channelSchedule.ts','src/channelSort.ts','src/youtubeQuota.ts']
+          Path('/tmp/v200-protected.json').write_text(json.dumps({f:hashlib.sha256((r/f).read_bytes()).hexdigest() for f in protected},sort_keys=True))
+          print('Exact 1.2.0 baseline verified:',p['version'])
+          PY
+      - name: Apply complete VYRON 2.0.0 final patch set
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/v200-work
+          python3 "$GITHUB_WORKSPACE/vyron-v200/apply_v200_persistence_recovery.py" .
+          python3 "$GITHUB_WORKSPACE/vyron-v200/apply_v200_intelligence_errors.py" .
+          python3 "$GITHUB_WORKSPACE/vyron-v200/apply_v200_autopilot_attention.py" .
+          python3 "$GITHUB_WORKSPACE/vyron-v200/apply_v200_version.py" .
+      - name: Final architecture and acceptance contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/v200-work
+          python3 - <<'PY'
+          import hashlib,json,re
+          from pathlib import Path
+          p=json.loads(Path('package.json').read_text());c=json.loads(Path('src-tauri/tauri.conf.json').read_text())
+          assert p['version']=='2.0.0' and c['version']=='2.0.0'
+          assert c['identifier']==Path('/tmp/v200-id').read_text()
+          assert c['plugins']['updater']['pubkey']==Path('/tmp/v200-pub').read_text()
+          assert json.dumps(c['plugins']['updater']['endpoints'])==Path('/tmp/v200-endpoints').read_text()
+          for f,h in json.loads(Path('/tmp/v200-protected.json').read_text()).items():
+              got=hashlib.sha256(Path(f).read_bytes()).hexdigest();assert got==h,f'PROTECTED CORE CHANGED: {f}'
+          pub=Path('src/PublisherOS.tsx').read_text();workspace=Path('src/publishWorkspaceState.ts').read_text();rust=Path('src-tauri/src/youtube.rs').read_text();lib=Path('src-tauri/src/lib.rs').read_text();auto=Path('src/youtubeAutopilot.ts').read_text();core=Path('src/youtubeAutopilotCore.ts').read_text();settings=Path('src/SettingsOS.tsx').read_text();store=Path('src/store.ts').read_text();analytics=Path('src/AnalyticsPage.tsx').read_text();competitors=Path('src/CompetitorsPage.tsx').read_text();dash=Path('src/DashboardOS.tsx').read_text();errors=Path('src/errorCenter.ts').read_text();cache=Path('src/youtubeCache.ts').read_text()
+          assert 'vyron:youtube-publish-workspaces:v2' in workspace
+          for token in ['youtube_upload_sessions','youtube_resume_upload','youtube_cancel_upload_session','youtube-upload-sessions.json','PersistedUploadSession']:
+              assert token in rust or token in lib,token
+          m=re.search(r'pub async fn youtube_resume_upload.*?(?=\n#\[tauri::command\]|\Z)',rust,re.S);assert m,'resume function missing';resume=m.group(0);assert 'videos.insert' not in resume and 'emit_youtube_api_request' not in resume,'resume must not create/charge second videos.insert'
+          assert 'Продолжить' in pub and 'Черновик' in pub and 'request plan' in pub
+          assert 'humanizeError' in pub and 'UPLOAD_INTERRUPTED' in errors
+          assert "autoUploadYoutube:false" in store
+          assert 'autoUploadYoutube:false,youtubeIntelligenceAutoRefresh' not in store,'hydrate still forces auto upload off'
+          for token in ['SAFE_MODE_REQUIRED','SAFE_DAILY_LIMIT_REQUIRED','DUPLICATE','SCHEDULE_REQUIRED']:
+              assert token in core,token
+          assert 'runYoutubeAutopilotForChannel' in auto and 'youtubeUploadSessions' in auto and 'reserveYoutubeQuota' in auto
+          assert 'Автопубликация YouTube' in settings and 'window.confirm' in settings
+          assert 'analyticsInsights' in analytics and 'ЧТО ИЗМЕНИЛОСЬ / ЧТО ДЕЛАТЬ' in analytics
+          assert 'competitorInsights' in competitors and 'LOCAL OPPORTUNITY RADAR' in competitors
+          assert 'youtubeCacheFresh' in Path('src/youtubeIntelligence.ts').read_text() and 'markYoutubeCache' in Path('src/ExistingVideos.tsx').read_text()
+          assert 'youtubeUploadSessions' in dash and 'Views 28d' in dash and 'ТРЕБУЕТ ВНИМАНИЯ' in dash
+          # Pure/local modules must not introduce Google/YouTube HTTP calls.
+          for f in ['src/publishWorkspaceState.ts','src/errorCenter.ts','src/youtubeCache.ts','src/analyticsInsights.ts','src/competitorInsights.ts','src/youtubeAutopilotCore.ts']:
+              s=Path(f).read_text();assert 'googleapis.com' not in s and 'fetch(' not in s,f
+          # Visible brand is final, while technical product identity stays compatible.
+          assert 'VYRON YT PEISOV' in Path('src/App.tsx').read_text()
+          print('VYRON YT PEISOV 2.0.0 final contracts: PASS')
+          PY
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - name: Frontend tests and production build
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/v200-work
+          npm install --no-audit --no-fund
+          npm test
+          npm run build
+      - name: Rust regression suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/v200-work
+          cargo test --manifest-path src-tauri/Cargo.toml --lib -- --nocapture
+      - name: Apple Silicon compile gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/v200-work
+          cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
+      - name: Final summary
+        run: echo 'VYRON YT PEISOV 2.0.0 FINAL VALIDATION PASS'
