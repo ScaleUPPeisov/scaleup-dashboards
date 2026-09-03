@@ -1,0 +1,47 @@
+name: VYRON 1.0.9 Patch Validate
+on:
+  push:
+    branches: [vyron-v109-production-storage-release]
+    paths: ['vyron-v109-patch-validate-trigger.txt']
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore exact 1.0.8 source
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/v109src /tmp/v109assets; mkdir -p /tmp/v109src /tmp/v109assets
+          gh release download v1.0.8 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-1.0.8-source.tar.gz' --dir /tmp/v109assets
+          tar -xzf /tmp/v109assets/VYRON-1.0.8-source.tar.gz -C /tmp/v109src
+      - name: Apply 1.0.9 patch
+        run: |
+          set -euo pipefail
+          python3 -m py_compile vyron-v100/run_apply_v109.py vyron-v100/apply_v109.py
+          python3 vyron-v100/run_apply_v109.py /tmp/v109src
+      - name: Static regression contracts
+        run: |
+          set -euo pipefail
+          cd /tmp/v109src
+          grep -Fq 'outputWorkspace?:string' src/productionManagerApi.ts
+          grep -Fq 'production_storage_status' src-tauri/src/lib.rs
+          grep -Fq 'let output_workspace=resolve_output_workspace(req)?;' src-tauri/src/production_manager.rs
+          grep -Fq 'history_path(&plan.request.workspace' src-tauri/src/production_manager.rs
+          grep -Fq "const KEY='vyron:production-manager:v2';" src/productionPrefs.ts
+          grep -Fq 'start_production_import' src-tauri/src/production_manager.rs
+          grep -Fq 'collector_seen_at_start(&session,&baseline)' src-tauri/src/production_manager.rs
+          grep -Fq 'acceptance_separate_output_workspace_preserves_source_state' src-tauri/src/production_manager_tests.rs
+          grep -Fq 'acceptance_missing_external_output_never_falls_back_to_internal_workspace' src-tauri/src/production_manager_tests.rs
+          ! grep -RniE 'youtube_upload_video|youtube_list_existing_videos|youtube_update_existing_video|youtube_channel_analytics|youtube_channel_stats|googleapis\.com' src/ProductionManager.tsx src/productionManagerApi.ts src/productionPrefs.ts src-tauri/src/production_manager.rs
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - name: Frontend compile and tests
+        working-directory: /tmp/v109src
+        run: |
+          npm install --no-audit --no-fund
+          npm test
+          npm run build
