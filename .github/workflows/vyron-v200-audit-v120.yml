@@ -39,8 +39,9 @@ jobs:
           find /tmp/v120/src -maxdepth 1 -type f | sed 's#^/tmp/v120/##' | sort > vyron-v200/audit-v120/FILE_LIST.txt
           for f in \
             App.tsx DashboardOS.tsx SettingsOS.tsx PublisherOS.tsx MetadataPage.tsx ExistingVideos.tsx \
-            AnalyticsOS.tsx CompetitorsOS.tsx CompetitorOS.tsx YouTubeCenter.tsx CommandCenter.tsx ChannelRunway.tsx \
-            store.ts types.ts api.ts youtubeQuota.ts youtubePublishSafety.ts publishCenterCore.ts notificationCenter.ts; do
+            AnalyticsPage.tsx CompetitorsPage.tsx YouTubeCenter.tsx YouTubeCalendar.tsx YouTubeDataPage.tsx YouTubeDataTools.tsx \
+            CommandCenter.tsx ChannelRunway.tsx store.ts types.ts api.ts youtubeQuota.ts youtubePublishSafety.ts publishCenterCore.ts notificationCenter.ts \
+            autopilotCore.ts autopilotRuntime.ts youtubeIntelligence.ts youtubeWorkflow.ts youtubeExisting.ts; do
             if [ -f "/tmp/v120/src/$f" ]; then cp "/tmp/v120/src/$f" "vyron-v200/audit-v120/src/$f"; fi
           done
           for f in youtube.rs youtube_intelligence.rs storage.rs system.rs files.rs updater_bridge.rs license.rs production_manager.rs; do
@@ -49,18 +50,16 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           root=Path('/tmp/v120')
-          names=[p.name for p in (root/'src').glob('*') if p.is_file()]
           terms=['Analytics','Compet','Revenue','Cache','Sync','Attention','Error','Autopilot','Publisher','Youtube']
           hits=[]
           for p in (root/'src').glob('*'):
-              if p.is_file() and any(t.lower() in p.name.lower() for t in terms):
-                  hits.append(p.name)
+              if p.is_file() and any(t.lower() in p.name.lower() for t in terms): hits.append(p.name)
           Path('vyron-v200/audit-v120/AUDIT_INDEX.md').write_text('# Exact VYRON 1.2.0 audit snapshot\n\nVersion: 1.2.0\n\nRelevant files found:\n'+'\n'.join(f'- {x}' for x in sorted(hits))+'\n')
           PY
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add vyron-v200/audit-v120
           if ! git diff --cached --quiet; then
-            git commit -m 'audit(vyron): snapshot exact released 1.2.0 gaps'
+            git commit -m 'audit(vyron): snapshot exact released 1.2.0 final modules'
             git push origin HEAD:vyron-yt-peisov-2.0.0-final
           fi
