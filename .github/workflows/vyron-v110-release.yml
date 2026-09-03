@@ -30,10 +30,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: .vyron-v110-release/src-tauri
-          cache-on-failure: true
       - name: Build, verify, sign and publish VYRON 1.1.0
         shell: bash
-        run: bash vyron-v110/release_v110.sh
+        run: bash vyron-v110/release_v110_v2.sh
