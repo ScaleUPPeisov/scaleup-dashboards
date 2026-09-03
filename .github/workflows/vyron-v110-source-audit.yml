@@ -1,0 +1,103 @@
+name: VYRON YT PEISOV 1.1.0 Source Audit
+on:
+  push:
+    branches: [vyron-yt-peisov-1.1.0-dev]
+    paths:
+      - '.github/workflows/vyron-v110-source-audit.yml'
+      - 'vyron-v110-audit-trigger.txt'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: vyron-v110-source-audit
+  cancel-in-progress: false
+jobs:
+  audit:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: vyron-yt-peisov-1.1.0-dev
+          fetch-depth: 0
+      - name: Restore exact released 1.0.15 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .vyron-v110-audit /tmp/vyron-v110-assets
+          mkdir -p .vyron-v110-audit /tmp/vyron-v110-assets
+          gh release download v1.0.15 --repo ScaleUPPeisov/scaleup-dashboards \
+            --pattern 'VYRON-1.0.15-source.tar.gz' \
+            --pattern 'SOURCE_SHA256.txt' \
+            --dir /tmp/vyron-v110-assets
+          EXPECTED="$(awk '{print $1;exit}' /tmp/vyron-v110-assets/SOURCE_SHA256.txt)"
+          GOT="$(shasum -a 256 /tmp/vyron-v110-assets/VYRON-1.0.15-source.tar.gz | awk '{print $1}')"
+          test "$EXPECTED" = "$GOT"
+          tar -xzf /tmp/vyron-v110-assets/VYRON-1.0.15-source.tar.gz -C .vyron-v110-audit
+          grep -q '"version": "1.0.15"' .vyron-v110-audit/package.json
+      - name: Generate architecture audit report
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT='.vyron-v110-audit'
+          OUT='vyron-v110-source-audit.md'
+          {
+            echo '# VYRON 1.0.15 exact release source audit'
+            echo
+            echo '## Identity / versions'
+            python3 - <<'PY'
+          import json
+          from pathlib import Path
+          r=Path('.vyron-v110-audit')
+          p=json.loads((r/'package.json').read_text())
+          c=json.loads((r/'src-tauri/tauri.conf.json').read_text())
+          print(f"- package version: {p.get('version')}")
+          print(f"- tauri version: {c.get('version')}")
+          print(f"- productName: {c.get('productName')}")
+          print(f"- identifier: {c.get('identifier')}")
+          print(f"- updater endpoints: {c.get('plugins',{}).get('updater',{}).get('endpoints')}")
+          PY
+            echo
+            echo '## src file tree'
+            find "$ROOT/src" -maxdepth 2 -type f | sed "s#^$ROOT/##" | sort | sed 's/^/- `/' | sed 's/$/`/'
+            echo
+            echo '## Rust source tree'
+            find "$ROOT/src-tauri/src" -maxdepth 2 -type f | sed "s#^$ROOT/##" | sort | sed 's/^/- `/' | sed 's/$/`/'
+            echo
+            echo '## Branding / navigation / settings / dashboard symbols'
+            grep -RniE 'VYRON|Sidebar|Topbar|Dashboard|Главная|Настройки|Settings|About|Лиценз|License|Update Center|Notification' "$ROOT/src" --include='*.ts' --include='*.tsx' | head -n 500 || true
+            echo
+            echo '## YouTube / quota / metadata / publish symbols'
+            grep -RniE 'quota|Quota|youtube|YouTube|videos\.update|videos\.insert|thumbnail|Metadata|Publisher|upload|schedule|DOCX|docx' "$ROOT/src" "$ROOT/src-tauri/src" --include='*.ts' --include='*.tsx' --include='*.rs' | head -n 1200 || true
+            echo
+            echo '## ENDLUME / project handoff / status symbols'
+            grep -RniE 'ENDLUME|endlume|selectedProject|projectIds|handoff|batch\.json|status\.json|render|ProductionManager' "$ROOT/src" "$ROOT/src-tauri/src" --include='*.ts' --include='*.tsx' --include='*.rs' | head -n 900 || true
+            echo
+            echo '## Persistence / recovery / queue symbols'
+            grep -RniE 'localStorage|persist|storage|Recovery|queue|pending|completed|fingerprint|hash|uploadSession' "$ROOT/src" "$ROOT/src-tauri/src" --include='*.ts' --include='*.tsx' --include='*.rs' | head -n 900 || true
+            echo
+            echo '## package scripts and dependencies'
+            python3 - <<'PY'
+          import json
+          p=json.load(open('.vyron-v110-audit/package.json'))
+          print('```json')
+          print(json.dumps({'scripts':p.get('scripts',{}),'dependencies':p.get('dependencies',{}),'devDependencies':p.get('devDependencies',{})},ensure_ascii=False,indent=2))
+          print('```')
+          PY
+          } > "$OUT"
+          wc -l "$OUT"
+      - name: Commit audit report only
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add vyron-v110-source-audit.md
+          if ! git diff --cached --quiet; then
+            git commit -m 'audit(vyron): exact 1.0.15 source map for 1.1.0'
+            git push origin HEAD:vyron-yt-peisov-1.1.0-dev
+          fi
+      - name: Final
+        run: echo 'VYRON 1.1.0 exact 1.0.15 source audit complete'
