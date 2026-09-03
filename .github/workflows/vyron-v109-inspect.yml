@@ -1,0 +1,43 @@
+name: VYRON 1.0.9 Inspect Exact 1.0.8 Source
+on:
+  push:
+    branches: [vyron-v109-production-storage-release]
+    paths: ['vyron-v109-inspect-trigger.txt']
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore exact 1.0.8 release source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/v109
+          gh release download v1.0.8 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-1.0.8-source.tar.gz' --dir /tmp
+          tar -xzf /tmp/VYRON-1.0.8-source.tar.gz -C /tmp/v109
+          echo '=== VERSION ==='
+          grep -n '"version"' /tmp/v109/package.json | head
+      - name: ProductionManager workspace lines
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== PRODUCTION MANAGER workspace/context ==='
+          grep -n -E 'workspace|buildBatch|refreshState|pmReadiness|pmHero|pmCard|openLocal' /tmp/v109/src/ProductionManager.tsx | head -n 160
+          echo '=== PRODUCTION PREFS ==='
+          cat /tmp/v109/src/productionPrefs.ts
+          echo '=== API ==='
+          cat /tmp/v109/src/productionManagerApi.ts
+      - name: Native build root lines
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== NATIVE BUILD REQUEST / PLAN / ROOT ==='
+          grep -n -E 'struct BuildRequest|workspace|batch_root|root_path|rootPath|plan_build|execute_plan|build_production_batch|channel_root|batch' /tmp/v109/src-tauri/src/production_manager.rs | head -n 260
+          echo '=== NATIVE CONTEXT 1 ==='
+          N=$(grep -n 'pub struct BuildRequest' /tmp/v109/src-tauri/src/production_manager.rs | head -1 | cut -d: -f1 || true); if [ -n "$N" ]; then A=$((N-15)); [ $A -lt 1 ] && A=1; B=$((N+90)); sed -n "${A},${B}p" /tmp/v109/src-tauri/src/production_manager.rs; fi
+          echo '=== NATIVE CONTEXT PLAN ==='
+          N=$(grep -n 'fn plan_build' /tmp/v109/src-tauri/src/production_manager.rs | head -1 | cut -d: -f1 || true); if [ -n "$N" ]; then A=$((N-20)); [ $A -lt 1 ] && A=1; B=$((N+150)); sed -n "${A},${B}p" /tmp/v109/src-tauri/src/production_manager.rs; fi
