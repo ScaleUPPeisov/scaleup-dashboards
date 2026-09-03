@@ -1,0 +1,112 @@
+name: VYRON 1.0.6 Production Autobuild Validate
+
+on:
+  push:
+    branches: [vyron-v106-production-autobuild-dev]
+    paths: ['vyron-v106-validate-trigger.txt']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore exact released VYRON 1.0.5
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .v106 && mkdir .v106
+          curl -fL --retry 3 'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v1.0.5/VYRON-1.0.5-source.tar.gz' -o /tmp/v105.tar.gz
+          echo 'bff2b5c0b8ae49cedf702bf6388410f4290baceda0dd671a3eea303a1625e047  /tmp/v105.tar.gz' | shasum -a 256 -c -
+          tar -xzf /tmp/v105.tar.gz -C .v106
+          grep -q '"version": "1.0.5"' .v106/package.json
+      - name: Snapshot protected core and updater trust
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          root=Path('.v106')
+          protected=['src-tauri/src/youtube.rs','src-tauri/src/storage.rs','src-tauri/src/files.rs','src/api.ts','src/store.ts','src/types.ts','src/YouTubeCenter.tsx','src/AnalyticsPage.tsx','src/CompetitorsPage.tsx','src/SettingsOS.tsx']
+          Path('/tmp/v106-protected.json').write_text(json.dumps({p:hashlib.sha256((root/p).read_bytes()).hexdigest() for p in protected},sort_keys=True))
+          c=json.loads((root/'src-tauri/tauri.conf.json').read_text())
+          Path('/tmp/v106-trust.json').write_text(json.dumps({'identifier':c['identifier'],'pubkey':c['plugins']['updater']['pubkey'],'endpoints':c['plugins']['updater']['endpoints']},sort_keys=True))
+          PY
+      - name: Apply VYRON 1.0.6 Production-only overlay
+        run: python3 vyron-v100/apply_v106.py .v106
+      - name: Prove scope, Zero Quota and contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd .v106
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          p=json.loads(Path('package.json').read_text());c=json.loads(Path('src-tauri/tauri.conf.json').read_text())
+          assert p['version']=='1.0.6' and c['version']=='1.0.6'
+          trust=json.loads(Path('/tmp/v106-trust.json').read_text())
+          assert c['identifier']==trust['identifier']=='studio.channelflow.desktop'
+          assert c['plugins']['updater']['pubkey']==trust['pubkey']
+          assert c['plugins']['updater']['endpoints']==trust['endpoints']==['https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/vyron-updates/latest.json']
+          protected=json.loads(Path('/tmp/v106-protected.json').read_text())
+          for f,h in protected.items(): assert hashlib.sha256(Path(f).read_bytes()).hexdigest()==h, f'PROTECTED FILE CHANGED: {f}'
+          print('Protected core/updater trust: PASS')
+          PY
+          grep -Fq "vyron:production-manager:v2" src/productionPrefs.ts
+          grep -Fq "recursive_images(&downloads)" src-tauri/src/production_manager.rs
+          grep -Fq '"alphabetical"' src-tauri/src/production_manager.rs
+          grep -Fq 'delete_production_batch_projects' src-tauri/src/production_manager.rs
+          grep -Fq 'production_endlume_handoff_consumed' src-tauri/src/production_manager.rs
+          grep -Fq '[10,15,20,30]' src/ProductionManager.tsx
+          grep -Fq 'type="range"' src/ProductionManager.tsx
+          grep -Fq 'Удалить выбранные' src/ProductionManager.tsx
+          grep -Fq 'Удалить все' src/ProductionManager.tsx
+          ! grep -RniE 'youtube_upload_video|youtube_list_existing_videos|youtube_update_existing_video|youtube_channel_analytics|youtube_channel_stats|youtube_oauth_profile_health|googleapis\.com' src/ProductionOS.tsx src/ProductionWorkspace.tsx src/ProductionManager.tsx src/productionManagerApi.ts src/productionPrefs.ts src-tauri/src/production_manager.rs
+          echo 'Production-only + Zero Quota contracts: PASS'
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - name: Setup Rust ARM64
+        uses: dtolnay/rust-toolchain@stable
+        with: {targets: aarch64-apple-darwin}
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .v106/src-tauri
+          cache-on-failure: true
+      - name: Install JS dependencies
+        working-directory: .v106
+        run: npm install --no-audit --no-fund
+      - name: Frontend tests
+        working-directory: .v106
+        run: npm test
+      - name: TypeScript production build
+        working-directory: .v106
+        run: npm run build
+      - name: Rust Production acceptance tests
+        working-directory: .v106
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib -- --nocapture
+      - name: Cargo check ARM64
+        working-directory: .v106
+        run: cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
+      - name: Build unsigned validation ARM64 app
+        working-directory: .v106
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npx tauri build --target aarch64-apple-darwin --bundles app
+      - name: Verify final ARM64 app and Production contracts
+        working-directory: .v106
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)
+          test -d "$APP"
+          test "$(/usr/bin/plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = "studio.channelflow.desktop"
+          test "$(/usr/bin/plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = "1.0.6"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          echo 'VYRON 1.0.6 NO-PUBLISH validation: PASS'
