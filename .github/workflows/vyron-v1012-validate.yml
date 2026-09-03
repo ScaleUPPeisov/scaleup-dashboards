@@ -68,9 +68,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m py_compile vyron-v1012/apply_v1012.py
+          python3 -m py_compile vyron-v1012/apply_v1012.py vyron-v1012/apply_v1012_test_contract.py
           cd .vyron-v1012
           python3 ../vyron-v1012/apply_v1012.py
+          python3 ../vyron-v1012/apply_v1012_test_contract.py
 
       - name: Static scope and UX contracts
         shell: bash
