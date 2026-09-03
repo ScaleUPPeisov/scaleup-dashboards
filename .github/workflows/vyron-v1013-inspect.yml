@@ -1,0 +1,44 @@
+name: VYRON 1.0.13 Inspect Release Source
+on:
+  push:
+    branches: [vyron-v1013-recovery-schedule-notifications]
+    paths: ['vyron-v1013-inspect-trigger.txt']
+permissions:
+  contents: write
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: vyron-v1013-recovery-schedule-notifications
+          fetch-depth: 0
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/v1012-src /tmp/v1012-assets _inspect_v1013
+          mkdir -p /tmp/v1012-src /tmp/v1012-assets _inspect_v1013
+          gh release download v1.0.12 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-1.0.12-source.tar.gz' --dir /tmp/v1012-assets
+          tar -xzf /tmp/v1012-assets/VYRON-1.0.12-source.tar.gz -C /tmp/v1012-src
+          cd /tmp/v1012-src
+          cp package.json /tmp/${GITHUB_RUN_ID}-package.json
+          {
+            grep -RIlE 'Metadata|Метаданн|PUBLISH TIME|publishInterval|scheduledUntil|schedule|toast\(|notify|notification|updater|checkUpdate|downloadAndInstall|ProductionManager|production_build_batch|batch_build|handoff|ENDLUME|recovery|checkpoint|journal' src src-tauri/src 2>/dev/null || true
+          } | sort -u | head -120 > /tmp/v1013-files.txt
+          cd "$GITHUB_WORKSPACE"
+          cp /tmp/${GITHUB_RUN_ID}-package.json _inspect_v1013/package.json
+          while IFS= read -r f; do
+            [ -f "/tmp/v1012-src/$f" ] || continue
+            mkdir -p "_inspect_v1013/$(dirname "$f")"
+            cp "/tmp/v1012-src/$f" "_inspect_v1013/$f"
+          done < /tmp/v1013-files.txt
+          cp /tmp/v1013-files.txt _inspect_v1013/MATCHED_FILES.txt
+      - run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add _inspect_v1013
+          if ! git diff --cached --quiet; then
+            git commit -m 'chore(vyron): inspect 1.0.12 recovery schedule notification source'
+            git push origin HEAD:vyron-v1013-recovery-schedule-notifications
+          fi
