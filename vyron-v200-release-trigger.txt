@@ -1,4 +1,6 @@
 VYRON YT PEISOV 2.0.0
-release=2
+release=3
 validated_run=33779755928
 signing_fix=f47056b095a021b4baf24dd480c01b537b752c7e
+publish_fix=d0db6ed5d0824238c20dd7fcb460f31c2696fedf
+workflow_fix=6deab52b6da0239198aec37230d527b97b1dc37f
