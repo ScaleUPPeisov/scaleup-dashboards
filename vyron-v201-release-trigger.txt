@@ -1,0 +1,8 @@
+VYRON 2.0.1 signed release
+validated_run=33895696566
+validated_job=101097677697
+validated_sha=61d808d77138216063178a5026043fb7826801ff
+frontend_tests=84/84
+rust_tests=29/29
+apple_silicon_check=PASS
+fix=quota-rollover-manual-sync
