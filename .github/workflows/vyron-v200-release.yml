@@ -25,17 +25,67 @@ jobs:
         with:
           ref: vyron-yt-peisov-2.0.0-final
           fetch-depth: 0
+
+      - name: Detect already-published verified VYRON 2.0.0
+        id: published
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! gh release view v2.0.0 --repo ScaleUPPeisov/scaleup-dashboards --json tagName,assets > /tmp/vyron-v200-existing-release.json 2>/dev/null; then
+            echo 'ready=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          gh api 'repos/ScaleUPPeisov/scaleup-dashboards/contents/vyron-updates/latest.json?ref=main' --jq .content | tr -d '\n' | base64 --decode > /tmp/vyron-v200-existing-feed.json
+          if python3 - <<'PY'
+          import json
+          r=json.load(open('/tmp/vyron-v200-existing-release.json'))
+          x=json.load(open('/tmp/vyron-v200-existing-feed.json'))
+          names={a['name'] for a in r.get('assets',[])}
+          required={'VYRON-2.0.0-macOS-AppleSilicon.dmg','VYRON.app.tar.gz','VYRON.app.tar.gz.sig','VYRON-2.0.0-source.tar.gz','SOURCE_SHA256.txt','UPDATER_SHA256.txt','latest.json'}
+          assert r.get('tagName')=='v2.0.0'
+          assert required <= names, sorted(required-names)
+          assert x.get('version')=='2.0.0'
+          p=x.get('platforms',{}).get('darwin-aarch64',{})
+          assert p.get('url','').endswith('/v2.0.0/VYRON.app.tar.gz')
+          assert p.get('signature')
+          print('Existing VYRON 2.0.0 release + updater feed: VERIFIED')
+          PY
+          then
+            echo 'ready=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'ready=false' >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/setup-node@v4
+        if: steps.published.outputs.ready != 'true'
         with:
           node-version: '22'
       - uses: dtolnay/rust-toolchain@stable
+        if: steps.published.outputs.ready != 'true'
         with:
           targets: aarch64-apple-darwin
       - name: Rebuild and sign exact VYRON 2.0.0
+        if: steps.published.outputs.ready != 'true'
         shell: bash
         run: bash vyron-v200/release_build_v200.sh
       - name: Verify, publish release and switch updater feed
+        if: steps.published.outputs.ready != 'true'
         shell: bash
         run: bash vyron-v200/release_publish_v200.sh
+      - name: Verify already-published release is client-visible
+        if: steps.published.outputs.ready == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL -H 'Cache-Control: no-cache' 'https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/vyron-updates/latest.json' -o /tmp/vyron-v200-raw-feed.json
+          python3 - <<'PY'
+          import json
+          x=json.load(open('/tmp/vyron-v200-raw-feed.json'))
+          assert x.get('version')=='2.0.0',x.get('version')
+          p=x.get('platforms',{}).get('darwin-aarch64',{})
+          assert p.get('url','').endswith('/v2.0.0/VYRON.app.tar.gz')
+          assert p.get('signature')
+          print('CLIENT-VISIBLE RAW UPDATER 2.0.0: PASS')
+          PY
       - name: Final release summary
         run: echo 'VYRON YT PEISOV 2.0.0 SIGNED RELEASE PASS'
