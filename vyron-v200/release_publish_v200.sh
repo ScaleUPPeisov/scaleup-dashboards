@@ -11,12 +11,19 @@ curl -fsSL 'https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/m
 python3 - <<'PY'
 import json
 x=json.load(open('/tmp/vyron-live-before-v200.json'))
-assert x.get('version')=='1.2.0',f"Live updater must still be 1.2.0 before publish, got {x.get('version')}"
-print('Live updater pre-release guard: PASS')
+v=x.get('version')
+assert v in {'1.2.0','2.0.0'},f"Unexpected live updater version before publish: {v}"
+if v=='2.0.0':
+    p=x.get('platforms',{}).get('darwin-aarch64',{})
+    assert p.get('url','').endswith('/v2.0.0/VYRON.app.tar.gz'),'Existing 2.0.0 feed points to unexpected updater URL'
+    assert p.get('signature'),'Existing 2.0.0 feed has empty signature'
+    print('Live updater already 2.0.0: idempotent publish allowed')
+else:
+    print('Live updater pre-release guard: PASS')
 PY
 
 for f in VYRON-2.0.0-macOS-AppleSilicon.dmg VYRON.app.tar.gz VYRON.app.tar.gz.sig VYRON-2.0.0-source.tar.gz SHA256.txt UPDATER_SHA256.txt SOURCE_SHA256.txt; do
-test -s "$REL/$f"
+  test -s "$REL/$f"
 done
 
 command -v minisign >/dev/null 2>&1 || brew install minisign
@@ -106,19 +113,35 @@ if ! git diff --cached --quiet; then
   git push origin HEAD:main
 fi
 
+# Authoritative verification via GitHub Contents API avoids false failures caused by raw CDN propagation lag.
+gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode > /tmp/vyron-live-api-v200.json
+python3 - <<'PY'
+import json
+x=json.load(open('/tmp/vyron-live-api-v200.json'))
+assert x.get('version')=='2.0.0',x.get('version')
+p=x['platforms']['darwin-aarch64']
+assert p['url'].endswith('/v2.0.0/VYRON.app.tar.gz')
+assert p.get('signature')
+print('GITHUB MAIN UPDATER 2.0.0: PASS')
+PY
+
+# Raw CDN is what installed clients request. Check it too, but do not mark a correctly-published release failed only because GitHub CDN is stale for a few minutes.
 python3 - <<'PY'
 import json,time,urllib.request
-for _ in range(40):
+ok=False
+for _ in range(20):
     try:
-        x=json.load(urllib.request.urlopen('https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/vyron-updates/latest.json'))
+        req=urllib.request.Request('https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/vyron-updates/latest.json',headers={'Cache-Control':'no-cache'})
+        x=json.load(urllib.request.urlopen(req,timeout=10))
         if x.get('version')=='2.0.0' and x['platforms']['darwin-aarch64']['url'].endswith('/v2.0.0/VYRON.app.tar.gz'):
-            print('LIVE UPDATER 2.0.0: PASS')
+            print('RAW CDN UPDATER 2.0.0: PASS')
+            ok=True
             break
     except Exception:
         pass
     time.sleep(3)
-else:
-    raise SystemExit('Live updater did not reach 2.0.0')
+if not ok:
+    print('RAW CDN UPDATER: propagation pending; GitHub main is already verified at 2.0.0')
 PY
 
 echo 'VYRON YT PEISOV 2.0.0 PUBLISH: PASS'
