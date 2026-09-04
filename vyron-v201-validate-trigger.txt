@@ -1,3 +1,5 @@
 VYRON 2.0.1 validation
 fix=quota-rollover-manual-sync
 base=v2.0.0
+pass=2
+compat=YOUTUBE_QUOTA_PAUSED
