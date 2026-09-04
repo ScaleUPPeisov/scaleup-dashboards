@@ -1,0 +1,111 @@
+name: VYRON YT PEISOV 2.0.1 Final Validate
+on:
+  push:
+    branches: [vyron-yt-peisov-2.0.0-final]
+    paths: ['vyron-v201-validate-trigger.txt']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate-macos-arm64:
+    runs-on: macos-latest
+    timeout-minutes: 180
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VITE_BUILD_DATE: 2026-09-04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: vyron-yt-peisov-2.0.0-final
+          fetch-depth: 0
+      - name: Restore exact released VYRON 1.2.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/v201-work /tmp/v201-assets
+          mkdir -p /tmp/v201-work /tmp/v201-assets
+          gh release download v1.2.0 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-1.2.0-source.tar.gz' --pattern 'SOURCE_SHA256.txt' --dir /tmp/v201-assets
+          expected="$(awk '{print $1;exit}' /tmp/v201-assets/SOURCE_SHA256.txt)"
+          got="$(shasum -a 256 /tmp/v201-assets/VYRON-1.2.0-source.tar.gz | awk '{print $1}')"
+          test "$expected" = "$got"
+          tar -xzf /tmp/v201-assets/VYRON-1.2.0-source.tar.gz -C /tmp/v201-work
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          r=Path('/tmp/v201-work');p=json.loads((r/'package.json').read_text());c=json.loads((r/'src-tauri/tauri.conf.json').read_text())
+          assert p['version']=='1.2.0'
+          Path('/tmp/v201-id').write_text(c['identifier'])
+          Path('/tmp/v201-product').write_text(c.get('productName',''))
+          Path('/tmp/v201-pub').write_text(c['plugins']['updater']['pubkey'])
+          Path('/tmp/v201-endpoints').write_text(json.dumps(c['plugins']['updater']['endpoints']))
+          print('Exact 1.2.0 baseline verified')
+          PY
+      - name: Apply VYRON 2.0.0 plus 2.0.1 hotfix
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/v201-work
+          python3 "$GITHUB_WORKSPACE/vyron-v200/apply_v200_persistence_recovery.py" .
+          python3 "$GITHUB_WORKSPACE/vyron-v200/apply_v200_intelligence_errors.py" .
+          python3 "$GITHUB_WORKSPACE/vyron-v200/apply_v200_autopilot_attention.py" .
+          python3 "$GITHUB_WORKSPACE/vyron-v200/apply_v200_settings_importfix.py" .
+          python3 "$GITHUB_WORKSPACE/vyron-v200/apply_v200_rust_fingerprintfix.py" .
+          python3 "$GITHUB_WORKSPACE/vyron-v200/apply_v200_version.py" .
+          python3 "$GITHUB_WORKSPACE/vyron-v201/apply_v201_quota_rollover_fix.py" .
+          python3 "$GITHUB_WORKSPACE/vyron-v201/apply_v201_version.py" .
+      - name: 2.0.1 acceptance contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/v201-work
+          python3 - <<'PY'
+          import json,re
+          from pathlib import Path
+          p=json.loads(Path('package.json').read_text());c=json.loads(Path('src-tauri/tauri.conf.json').read_text())
+          assert p['version']=='2.0.1' and c['version']=='2.0.1'
+          assert c['identifier']==Path('/tmp/v201-id').read_text()
+          assert c.get('productName','')==Path('/tmp/v201-product').read_text()
+          assert c['plugins']['updater']['pubkey']==Path('/tmp/v201-pub').read_text()
+          assert json.dumps(c['plugins']['updater']['endpoints'])==Path('/tmp/v201-endpoints').read_text()
+          q=Path('src/youtubeQuota.ts').read_text();m=Path('src/MetadataPage.tsx').read_text();r=Path('src-tauri/src/youtube.rs').read_text()
+          for token in ['shouldClearYoutubeQuotaGuard','beginManualYoutubeQuotaProbe',"s.includes('quotaexceeded')",'ptDate?:string']:
+              assert token in q,token
+          assert "s.includes('quota')||" not in q,'broad local quota relatch remains'
+          assert "if(!beginManualYoutubeQuotaProbe())" in m
+          assert "setSyncStatus('↻ Запрашиваю актуальные видео у YouTube…')" in m
+          assert 'nextPageToken' in r and 'playlistItems.list' in r and 'videos.list' in r
+          fn=re.search(r'pub async fn youtube_list_existing_videos.*?(?=\n#\[tauri::command\]|\Z)',r,re.S);assert fn
+          assert 'search.list' not in fn.group(0)
+          assert 'replaceExistingCacheFromSync(channelId,videos,r)' in m
+          assert Path('src/youtubeQuotaRollover.test.ts').exists()
+          assert 'fn local_file_fingerprint(path:&Path)->Result<Value,String>' in r
+          print('VYRON YT PEISOV 2.0.1 acceptance contracts: PASS')
+          PY
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - name: Frontend tests and production build
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/v201-work
+          npm install --no-audit --no-fund
+          npm test
+          npm run build
+      - name: Rust regression suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/v201-work
+          cargo test --manifest-path src-tauri/Cargo.toml --lib -- --nocapture
+      - name: Apple Silicon compile gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/v201-work
+          cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
+      - name: Final summary
+        run: echo 'VYRON YT PEISOV 2.0.1 FINAL VALIDATION PASS'
