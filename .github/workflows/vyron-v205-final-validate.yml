@@ -1,0 +1,101 @@
+name: VYRON YT PEISOV 2.0.5 Final Validate
+on:
+  push:
+    branches: [vyron-yt-peisov-2.0.0-final]
+    paths: ['vyron-v205-validate-trigger.txt']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate-macos-arm64:
+    runs-on: macos-latest
+    timeout-minutes: 180
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VITE_BUILD_DATE: 2026-09-05
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: vyron-yt-peisov-2.0.0-final
+          fetch-depth: 0
+      - name: Restore exact released VYRON 1.2.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/v205-work /tmp/v205-assets
+          mkdir -p /tmp/v205-work /tmp/v205-assets
+          gh release download v1.2.0 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-1.2.0-source.tar.gz' --pattern 'SOURCE_SHA256.txt' --dir /tmp/v205-assets
+          expected="$(awk '{print $1;exit}' /tmp/v205-assets/SOURCE_SHA256.txt)"
+          got="$(shasum -a 256 /tmp/v205-assets/VYRON-1.2.0-source.tar.gz | awk '{print $1}')"
+          test "$expected" = "$got"
+          tar -xzf /tmp/v205-assets/VYRON-1.2.0-source.tar.gz -C /tmp/v205-work
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          r=Path('/tmp/v205-work');c=json.loads((r/'src-tauri/tauri.conf.json').read_text())
+          Path('/tmp/v205-id').write_text(c['identifier']);Path('/tmp/v205-product').write_text(c.get('productName',''));Path('/tmp/v205-pub').write_text(c['plugins']['updater']['pubkey'])
+          PY
+      - name: Apply VYRON 2.0.5 patch chain
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/v205-work
+          python3 "$GITHUB_WORKSPACE/vyron-v200/apply_v200_persistence_recovery.py" .
+          python3 "$GITHUB_WORKSPACE/vyron-v200/apply_v200_intelligence_errors.py" .
+          python3 "$GITHUB_WORKSPACE/vyron-v200/apply_v200_autopilot_attention.py" .
+          python3 "$GITHUB_WORKSPACE/vyron-v200/apply_v200_settings_importfix.py" .
+          python3 "$GITHUB_WORKSPACE/vyron-v200/apply_v200_rust_fingerprintfix.py" .
+          python3 "$GITHUB_WORKSPACE/vyron-v200/apply_v200_version.py" .
+          python3 "$GITHUB_WORKSPACE/vyron-v201/apply_v201_quota_rollover_fix.py" .
+          python3 "$GITHUB_WORKSPACE/vyron-v201/apply_v201_version.py" .
+          python3 "$GITHUB_WORKSPACE/vyron-v202/apply_v202_studio_draft_bridge.py" .
+          python3 "$GITHUB_WORKSPACE/vyron-v202/apply_v202_version.py" .
+          python3 "$GITHUB_WORKSPACE/vyron-v203/apply_v203_oauth_discovery.py" .
+          python3 "$GITHUB_WORKSPACE/vyron-v203/apply_v203_version.py" .
+          python3 "$GITHUB_WORKSPACE/vyron-v204/apply_v204_selectall_crash_fix.py" .
+          python3 "$GITHUB_WORKSPACE/vyron-v204/apply_v204_version.py" .
+          python3 "$GITHUB_WORKSPACE/vyron-v205/apply_v205_updater_discovery.py" .
+          python3 "$GITHUB_WORKSPACE/vyron-v205/apply_v205_version.py" .
+      - name: 2.0.5 acceptance contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/v205-work
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=json.loads(Path('package.json').read_text());c=json.loads(Path('src-tauri/tauri.conf.json').read_text())
+          assert p['version']=='2.0.5' and c['version']=='2.0.5'
+          assert c['identifier']==Path('/tmp/v205-id').read_text();assert c.get('productName','')==Path('/tmp/v205-product').read_text();assert c['plugins']['updater']['pubkey']==Path('/tmp/v205-pub').read_text()
+          expected=['https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/latest/download/latest.json','https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/vyron-updates/latest.json']
+          assert c['plugins']['updater']['endpoints']==expected
+          api=Path('src/api.ts').read_text();policy=Path('src/updaterPolicy.ts').read_text();y=Path('src/youtubeExisting.ts').read_text();yt=Path('src-tauri/src/youtube.rs').read_text()
+          assert 'check(UPDATER_CHECK_OPTIONS)' in api and "from './updaterPolicy'" in api
+          assert "'Cache-Control':'no-cache, no-store, max-age=0'" in policy and "'Pragma':'no-cache'" in policy
+          assert Path('src/updaterPolicy.test.ts').exists()
+          assert 'meta:(ImportedMetadata|undefined)[]=[]' in y and 'meta.find(x=>x?.number===i+1)' in y and Path('src/youtubeExisting.selectAll.test.ts').exists()
+          assert '("forMine","true")' in yt
+          print('VYRON 2.0.5 updater + select-all contracts: PASS')
+          PY
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - name: Frontend tests and production build
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/v205-work
+          npm install --no-audit --no-fund
+          npm test
+          npm run build
+      - name: Rust regression suite
+        shell: bash
+        run: cd /tmp/v205-work && cargo test --manifest-path src-tauri/Cargo.toml --lib -- --nocapture
+      - name: Apple Silicon compile gate
+        shell: bash
+        run: cd /tmp/v205-work && cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
+      - name: Final summary
+        run: echo 'VYRON YT PEISOV 2.0.5 FINAL VALIDATION PASS'
