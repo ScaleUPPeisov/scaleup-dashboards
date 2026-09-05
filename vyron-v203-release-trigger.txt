@@ -1,0 +1,6 @@
+release=2.0.3
+feature=oauth-browser-independent-video-discovery
+validation_run=33950800154
+validation_head=7c10bf11ce89f188c4f6e039fa78d742db60e6f3
+build_script=339bffeb376b35436c9d7aad8cf5b7db7e1c373c
+publish_script=7a79f8041814bd4a1df07f4ce1c4b21c9f6ad76a
