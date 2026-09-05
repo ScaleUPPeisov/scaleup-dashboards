@@ -1,3 +1,5 @@
 version=2.0.3
 feature=oauth-browser-independent-video-discovery
 source=v1.2.0-exact
+validation=2
+testfix=7d0d650d6e285b0dddcab0b57e398c04385ff682
