@@ -1,0 +1,2 @@
+VYRON 2.0.5 signed release trigger
+2026-09-05 updater discovery anti-cache + dual endpoint fix
