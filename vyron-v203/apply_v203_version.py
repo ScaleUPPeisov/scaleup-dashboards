@@ -3,6 +3,11 @@ from pathlib import Path
 import json,re,sys
 ROOT=Path(sys.argv[1] if len(sys.argv)>1 else '.')
 version='2.0.3'
+# Static discovery contracts are enforced by the GitHub validation gate. The
+# temporary source-inspection Vitest file imports node:fs, while production tsconfig
+# intentionally has no Node typings, so remove that test before production tsc.
+test_only=ROOT/'src/youtubeOAuthDiscovery.test.ts'
+if test_only.exists(): test_only.unlink()
 p=ROOT/'package.json';x=json.loads(p.read_text());x['version']=version;p.write_text(json.dumps(x,ensure_ascii=False,indent=2)+'\n')
 p=ROOT/'src-tauri/tauri.conf.json';x=json.loads(p.read_text());x['version']=version
 for win in x.get('app',{}).get('windows',[]):
