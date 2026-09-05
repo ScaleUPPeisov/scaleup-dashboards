@@ -1,0 +1,2 @@
+VYRON 2.0.4 release trigger
+2026-09-05 metadata select-all black-screen fix
