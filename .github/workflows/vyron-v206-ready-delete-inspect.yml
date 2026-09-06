@@ -14,9 +14,12 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
-        with: {ref: vyron-yt-peisov-2.0.6, fetch-depth: 0}
+        with:
+          ref: vyron-yt-peisov-2.0.6
+          fetch-depth: 0
       - uses: actions/setup-node@v4
-        with: {node-version: '22'}
+        with:
+          node-version: '22'
       - uses: dtolnay/rust-toolchain@stable
       - name: Reconstruct exact VYRON 2.0.6 source and apply all patches
         shell: bash
@@ -66,4 +69,6 @@ jobs:
           cargo test --manifest-path src-tauri/Cargo.toml --lib -- --nocapture
           cargo check --manifest-path src-tauri/Cargo.toml
       - name: Fast gate verdict
-        run: echo 'PASS: VYRON 2.0.6 ready-video removal + publishAt + frontend + Rust regression'
+        shell: bash
+        run: |
+          echo 'PASS: VYRON 2.0.6 ready-video removal + publishAt + frontend + Rust regression'
