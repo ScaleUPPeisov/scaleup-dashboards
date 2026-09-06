@@ -12,10 +12,10 @@ s=s.replace('.vyron-v205-release','.vyron-v206-release').replace('/tmp/vyron-v20
 for name in ('id','product','pub','endpoints'):
     s=s.replace(f'/tmp/v205-release-{name}',f'/tmp/v206-release-{name}')
 # Append only the 2.0.6 publisher patch after the already-proven 2.0.5 chain.
-needle='python3 \\"$ROOT/vyron-v205/apply_v205_version.py\\" .'
+needle='python3 "$ROOT/vyron-v205/apply_v205_version.py" .'
 if needle not in s:
     raise SystemExit('v206 build: v205 version anchor missing')
-s=s.replace(needle,needle+'\\npython3 \\"$ROOT/vyron-v206/apply_v206_publisher_flow.py\\" .\\npython3 \\"$ROOT/vyron-v206/apply_v206_version.py\\" .',1)
+s=s.replace(needle,needle+'\\npython3 "$ROOT/vyron-v206/apply_v206_publisher_flow.py" .\\npython3 "$ROOT/vyron-v206/apply_v206_version.py" .',1)
 s=s.replace('2.0.5','2.0.6')
 s=s.replace('VYRON-2.0.5-macOS-AppleSilicon.dmg','VYRON-2.0.6-macOS-AppleSilicon.dmg')
 s=s.replace('VYRON-2.0.5-source.tar.gz','VYRON-2.0.6-source.tar.gz')
@@ -42,7 +42,7 @@ assert "j.title,j.description,j.tags,publishAt" in pub
 assert "'В ОЧЕРЕДИ'" in pub
 assert "scheduleMode:PublishScheduleMode" in state and "scheduleMode:'file'" in state
 assert "timeZone:'Asia/Krasnoyarsk'" in sched and "T${time}:00+07:00" in sched
-assert 'publisherSchedule.test.ts' in [x.name for x in (r/'src').iterdir()]
+assert (r/'src/publisherSchedule.test.ts').exists()
 assert '"snippet":{"title":title' in yt and '"description":description' in yt and '"tags":tags' in yt
 assert 'status["publishAt"]' in yt and 'part=snippet,status' in yt
 assert 'youtube_resume_upload' in yt
