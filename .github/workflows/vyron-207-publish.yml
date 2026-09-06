@@ -1,0 +1,106 @@
+name: VYRON 2.0.7 Publish
+
+on:
+  push:
+    branches:
+      - release/vyron-2.0.7
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vyron-207-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Rebuild signed candidate and publish 2.0.7
+    runs-on: macos-14
+    timeout-minutes: 100
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+    steps:
+      - name: Checkout exact release commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Prove release branch is based on gated candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REF_NAME}" = 'release/vyron-2.0.7'
+          git merge-base --is-ancestor 4d50007743eca3cee2e57c4fe8b3cdc9b5fe6055 HEAD
+          test -s vyron-v207/release_build_v207.sh
+          test -s vyron-v207/release_publish_v207.sh
+
+      - name: Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Rust Apple Silicon target
+        run: rustup target add aarch64-apple-darwin
+
+      - name: Verify signing material
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$TAURI_SIGNING_PRIVATE_KEY"
+          test -n "$TAURI_UPDATER_PUBLIC_KEY"
+
+      - name: Rebuild and run full 2.0.7 release gate
+        shell: bash
+        run: bash vyron-v207/release_build_v207.sh
+
+      - name: Recheck user-reported shortcomings
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          r=Path('.vyron-v207-release')
+          pm=(r/'src-tauri/src/production_manager.rs').read_text()
+          production=(r/'src/ProductionManager.tsx').read_text()
+          publisher=(r/'src/PublisherOS.tsx').read_text()
+          accounts=(r/'src/AccountsPage.tsx').read_text()
+          channels=(r/'src/ChannelsOS.tsx').read_text()
+          for token in ('join("Downloads")','recursive_images(&downloads)','VYRON не может читать папку Downloads','Файлы и папки','collector_seen_at_start'):
+              assert token in pm,token
+          assert 'session.collected.iter().map(|x|x.source_path.clone()).collect()' in pm
+          assert 'youtubeProfileId' not in production and 'youtubeChannelId' not in production
+          assert '+ Будущий канал' in channels and 'findFutureChannelMatch' in accounts
+          for token in ('Обложки YouTube — не менять','Video Uploads сегодня','Каждый день','2/2','3/1','Удалить выбранные'):
+              assert token in publisher,token
+          print('VYRON 2.0.7 USER SHORTCOMINGS: PASS')
+          PY
+
+      - name: Publish GitHub release and updater feed
+        shell: bash
+        run: bash vyron-v207/release_publish_v207.sh
+
+      - name: Verify public release and authoritative updater
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release view v2.0.7 --repo "$GITHUB_REPOSITORY" --json tagName,assets > /tmp/vyron207-release.json
+          python3 - <<'PY'
+          import json
+          x=json.load(open('/tmp/vyron207-release.json'))
+          assert x['tagName']=='v2.0.7'
+          names={a['name'] for a in x['assets']}
+          required={'VYRON-2.0.7-macOS-AppleSilicon.dmg','VYRON.app.tar.gz','VYRON.app.tar.gz.sig','VYRON-2.0.7-source.tar.gz','latest.json'}
+          assert required<=names,sorted(required-names)
+          PY
+          gh api "repos/$GITHUB_REPOSITORY/contents/vyron-updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode > /tmp/vyron207-live.json
+          python3 - <<'PY'
+          import json
+          x=json.load(open('/tmp/vyron207-live.json'))
+          assert x.get('version')=='2.0.7',x.get('version')
+          p=x['platforms']['darwin-aarch64']
+          assert p['url'].endswith('/v2.0.7/VYRON.app.tar.gz') and p.get('signature')
+          print('VYRON 2.0.7 PUBLIC RELEASE + UPDATER: PASS')
+          PY
