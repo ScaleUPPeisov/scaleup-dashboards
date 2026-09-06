@@ -21,16 +21,11 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          ROOT="$PWD"
-          WORK="$RUNNER_TEMP/vyron-v206-inspect"
-          ASSETS="$RUNNER_TEMP/vyron-v120-source"
+          ROOT="$PWD"; WORK="$RUNNER_TEMP/vyron-v206-inspect"; ASSETS="$RUNNER_TEMP/vyron-v120-source"
           rm -rf "$WORK" "$ASSETS"; mkdir -p "$WORK" "$ASSETS"
           gh release download v1.2.0 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-1.2.0-source.tar.gz' --pattern 'SOURCE_SHA256.txt' --dir "$ASSETS"
-          EXPECTED="$(awk '{print $1;exit}' "$ASSETS/SOURCE_SHA256.txt")"
-          GOT="$(shasum -a 256 "$ASSETS/VYRON-1.2.0-source.tar.gz"|awk '{print $1}')"
-          test "$EXPECTED" = "$GOT"
-          tar -xzf "$ASSETS/VYRON-1.2.0-source.tar.gz" -C "$WORK"
-          cd "$WORK"
+          EXPECTED="$(awk '{print $1;exit}' "$ASSETS/SOURCE_SHA256.txt")"; GOT="$(shasum -a 256 "$ASSETS/VYRON-1.2.0-source.tar.gz"|awk '{print $1}')"; test "$EXPECTED" = "$GOT"
+          tar -xzf "$ASSETS/VYRON-1.2.0-source.tar.gz" -C "$WORK"; cd "$WORK"
           python3 "$ROOT/vyron-v200/apply_v200_persistence_recovery.py" .
           python3 "$ROOT/vyron-v200/apply_v200_intelligence_errors.py" .
           python3 "$ROOT/vyron-v200/apply_v200_autopilot_attention.py" .
@@ -50,21 +45,8 @@ jobs:
           python3 "$ROOT/vyron-v206/apply_v206_publisher_flow.py" .
           python3 "$ROOT/vyron-v206/apply_v206_version.py" .
           echo "VYRON_INSPECT_WORK=$WORK" >> "$GITHUB_ENV"
-          node -e "const p=require('$WORK/package.json'); console.log('VERSION',p.version)"
-      - name: Print exact source anchors for safe local removal
+      - name: Print exact mutation anchors
         shell: bash
         run: |
-          set -Eeuo pipefail
-          cd "$VYRON_INSPECT_WORK"
-          echo '===== FULL PublisherOS.tsx ====='
-          nl -ba src/PublisherOS.tsx
-          echo '===== FULL lib.rs ====='
-          nl -ba src-tauri/src/lib.rs
-          echo '===== FULL Cargo.toml ====='
-          nl -ba src-tauri/Cargo.toml
-          echo '===== CSS FILES ====='
-          find src -maxdepth 2 -type f -name '*.css' -print
-          echo '===== MODAL / DANGER / BUTTON STYLE HINTS ====='
-          grep -RInE 'modal|backdrop|danger|destructive|button.*red|\.publish' src --include='*.css' --include='*.tsx' | head -240 || true
-          echo '===== LOCAL FILE COMMAND HINTS ====='
-          grep -RInE '#\[tauri::command\]|reveal_path|remove_file|delete|trash|rename\(' src-tauri/src/files.rs src-tauri/src/storage.rs src-tauri/src/production_manager.rs 2>/dev/null | head -240 || true
+          set -Eeuo pipefail; cd "$VYRON_INSPECT_WORK"
+          for f in src/api.ts src/publishWorkspaceState.ts src/types.ts src-tauri/src/lib.rs src-tauri/Cargo.toml package.json; do echo "===== $f ====="; nl -ba "$f"; done
