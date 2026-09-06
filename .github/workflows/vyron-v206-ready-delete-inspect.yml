@@ -14,9 +14,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: vyron-yt-peisov-2.0.6
-          fetch-depth: 0
+        with: {ref: vyron-yt-peisov-2.0.6, fetch-depth: 0}
       - name: Reconstruct exact VYRON 2.0.6 candidate source
         shell: bash
         run: |
@@ -24,29 +22,23 @@ jobs:
           ROOT="$PWD"; WORK="$RUNNER_TEMP/vyron-v206-inspect"; ASSETS="$RUNNER_TEMP/vyron-v120-source"
           rm -rf "$WORK" "$ASSETS"; mkdir -p "$WORK" "$ASSETS"
           gh release download v1.2.0 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-1.2.0-source.tar.gz' --pattern 'SOURCE_SHA256.txt' --dir "$ASSETS"
-          EXPECTED="$(awk '{print $1;exit}' "$ASSETS/SOURCE_SHA256.txt")"; GOT="$(shasum -a 256 "$ASSETS/VYRON-1.2.0-source.tar.gz"|awk '{print $1}')"; test "$EXPECTED" = "$GOT"
+          test "$(awk '{print $1;exit}' "$ASSETS/SOURCE_SHA256.txt")" = "$(shasum -a 256 "$ASSETS/VYRON-1.2.0-source.tar.gz"|awk '{print $1}')"
           tar -xzf "$ASSETS/VYRON-1.2.0-source.tar.gz" -C "$WORK"; cd "$WORK"
-          python3 "$ROOT/vyron-v200/apply_v200_persistence_recovery.py" .
-          python3 "$ROOT/vyron-v200/apply_v200_intelligence_errors.py" .
-          python3 "$ROOT/vyron-v200/apply_v200_autopilot_attention.py" .
-          python3 "$ROOT/vyron-v200/apply_v200_settings_importfix.py" .
-          python3 "$ROOT/vyron-v200/apply_v200_rust_fingerprintfix.py" .
-          python3 "$ROOT/vyron-v200/apply_v200_version.py" .
-          python3 "$ROOT/vyron-v201/apply_v201_quota_rollover_fix.py" .
-          python3 "$ROOT/vyron-v201/apply_v201_version.py" .
-          python3 "$ROOT/vyron-v202/apply_v202_studio_draft_bridge.py" .
-          python3 "$ROOT/vyron-v202/apply_v202_version.py" .
-          python3 "$ROOT/vyron-v203/apply_v203_oauth_discovery.py" .
-          python3 "$ROOT/vyron-v203/apply_v203_version.py" .
-          python3 "$ROOT/vyron-v204/apply_v204_selectall_crash_fix.py" .
-          python3 "$ROOT/vyron-v204/apply_v204_version.py" .
-          python3 "$ROOT/vyron-v205/apply_v205_updater_discovery.py" .
-          python3 "$ROOT/vyron-v205/apply_v205_version.py" .
-          python3 "$ROOT/vyron-v206/apply_v206_publisher_flow.py" .
-          python3 "$ROOT/vyron-v206/apply_v206_version.py" .
+          for s in \
+            vyron-v200/apply_v200_persistence_recovery.py vyron-v200/apply_v200_intelligence_errors.py vyron-v200/apply_v200_autopilot_attention.py vyron-v200/apply_v200_settings_importfix.py vyron-v200/apply_v200_rust_fingerprintfix.py vyron-v200/apply_v200_version.py \
+            vyron-v201/apply_v201_quota_rollover_fix.py vyron-v201/apply_v201_version.py \
+            vyron-v202/apply_v202_studio_draft_bridge.py vyron-v202/apply_v202_version.py \
+            vyron-v203/apply_v203_oauth_discovery.py vyron-v203/apply_v203_version.py \
+            vyron-v204/apply_v204_selectall_crash_fix.py vyron-v204/apply_v204_version.py \
+            vyron-v205/apply_v205_updater_discovery.py vyron-v205/apply_v205_version.py \
+            vyron-v206/apply_v206_publisher_flow.py vyron-v206/apply_v206_version.py; do python3 "$ROOT/$s" .; done
           echo "VYRON_INSPECT_WORK=$WORK" >> "$GITHUB_ENV"
-      - name: Print exact mutation anchors
+      - name: Print exact job-state removal anchors
         shell: bash
         run: |
           set -Eeuo pipefail; cd "$VYRON_INSPECT_WORK"
-          for f in src/api.ts src/publishWorkspaceState.ts src/types.ts src-tauri/src/lib.rs src-tauri/Cargo.toml package.json; do echo "===== $f ====="; nl -ba "$f"; done
+          echo '===== store job mutators ====='
+          grep -nE 'removeJob|removeJobs|patchJob|setJobs|jobs:' src/store.ts || true
+          echo '===== store full ====='; nl -ba src/store.ts
+          echo '===== ProductionOS deletion helper ====='
+          grep -n -C 8 'deleteJobs' src/ProductionOS.tsx || true
