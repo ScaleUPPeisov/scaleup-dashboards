@@ -10,7 +10,7 @@ permissions:
 
 concurrency:
   group: vyron-207-publish
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   publish:
