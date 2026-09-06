@@ -12,11 +12,14 @@ s=s.replace('.vyron-v205-release','.vyron-v206-release').replace('/tmp/vyron-v20
 s=s.replace('/tmp/v205-release-','/tmp/v206-release-')
 # The v205 generator itself contains a dynamic f-string for those temp paths.
 s=s.replace("f'/tmp/v205-release-{name}'","f'/tmp/v206-release-{name}'")
-# Append only the 2.0.6 publisher patches after the already-proven 2.0.5 chain.
+# This occurrence lives inside the Python generator embedded in v205. Preserve
+# a literal \n escape there; inserting a physical newline would break that
+# generator before the actual 2.0.6 build starts.
 needle='python3 "$ROOT/vyron-v205/apply_v205_version.py" .'
 if needle not in s:
     raise SystemExit('v206 build: v205 version anchor missing')
-s=s.replace(needle,needle+'\npython3 "$ROOT/vyron-v206/apply_v206_publisher_flow.py" .\npython3 "$ROOT/vyron-v206/apply_v206_ready_video_delete.py" .\npython3 "$ROOT/vyron-v206/apply_v206_release_blockers_fix.py" .\npython3 "$ROOT/vyron-v206/apply_v206_version.py" .',1)
+extra='\\npython3 "$ROOT/vyron-v206/apply_v206_publisher_flow.py" .\\npython3 "$ROOT/vyron-v206/apply_v206_ready_video_delete.py" .\\npython3 "$ROOT/vyron-v206/apply_v206_release_blockers_fix.py" .\\npython3 "$ROOT/vyron-v206/apply_v206_version.py" .'
+s=s.replace(needle,needle+extra,1)
 s=s.replace('2.0.5','2.0.6')
 s=s.replace('VYRON-2.0.5-macOS-AppleSilicon.dmg','VYRON-2.0.6-macOS-AppleSilicon.dmg')
 s=s.replace('VYRON-2.0.5-source.tar.gz','VYRON-2.0.6-source.tar.gz')
