@@ -2,6 +2,46 @@
 set -euo pipefail
 ROOT="$PWD"
 
+# Normalize updater signing material in THIS shell before any child build.
+# Historical release builders normalize the repository secrets internally, but
+# those exports do not propagate back to this parent shell. 2.0.10 performs a
+# second Tauri build after the 2.0.9 proof, so it must use the same normalized
+# Tauri key representation rather than the original (possibly double-base64)
+# GitHub secret.
+test -n "${TAURI_SIGNING_PRIVATE_KEY:-}"
+test -n "${TAURI_UPDATER_PUBLIC_KEY:-}"
+python3 - <<'PY'
+import base64,os
+from pathlib import Path
+
+def dec(v):
+    try:return base64.b64decode(v.strip(),validate=True).decode()
+    except Exception:return None
+
+def norm(name,kind):
+    raw=os.environ[name].strip();once=dec(raw)
+    if once and once.startswith('untrusted comment:'):
+        out,box=raw,once
+    else:
+        if not once:raise SystemExit(f'{name}: invalid encoding')
+        out=once.strip();box=dec(out)
+        if not box or not box.startswith('untrusted comment:'):
+            raise SystemExit(f'{name}: not a Tauri key')
+    if kind not in box.splitlines()[0].lower():
+        raise SystemExit(f'{name}: wrong key type')
+    return out
+
+sk=norm('TAURI_SIGNING_PRIVATE_KEY','secret key')
+pk=norm('TAURI_UPDATER_PUBLIC_KEY','public key')
+Path('/tmp/vyron-v210-signing-key').write_text(sk)
+Path('/tmp/vyron-v210-updater-pubkey').write_text(pk)
+os.chmod('/tmp/vyron-v210-signing-key',0o600)
+os.chmod('/tmp/vyron-v210-updater-pubkey',0o600)
+print('VYRON 2.0.10 updater signing material normalized: PASS')
+PY
+export TAURI_SIGNING_PRIVATE_KEY="$(cat /tmp/vyron-v210-signing-key)"
+export TAURI_UPDATER_PUBLIC_KEY="$(cat /tmp/vyron-v210-updater-pubkey)"
+
 # First prove the exact published 2.0.9 source/security/functionality from scratch.
 bash "$ROOT/vyron-v209/release_build_v209.sh"
 rm -rf "$ROOT/.vyron-v210-release"
