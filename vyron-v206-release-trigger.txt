@@ -1,0 +1,3 @@
+VYRON 2.0.6 SIGNED RELEASE
+Pre-release gate 34025918807: GREEN.
+Publish exact reconstructed 2.0.6 only after full tests, ARM64 signed app, DMG and updater artifacts verification.
