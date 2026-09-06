@@ -1,3 +1,3 @@
-VYRON 2.0.6 pre-release validation trigger pass 3
-Scope: publisher thumbnails off, live Video Uploads, automatic DOCX mapping, schedules file/daily/2-2/3-1, queue label.
-No publication before green validation.
+VYRON 2.0.6 FINAL pre-release validation after ready-video removal and release-blocker fixes.
+Scope: thumbnails unchanged/no thumbnails.set, live Video Uploads, automatic DOCX mapping, schedules file/daily/2-2/3-1, publishAt in initial videos.insert, queue label, safe local ready-video removal, macOS Trash, 0 YouTube API for removal, persistence, 40-video regression.
+Release only after this gate is green.
