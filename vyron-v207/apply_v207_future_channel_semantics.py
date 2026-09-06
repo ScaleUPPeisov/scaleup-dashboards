@@ -68,6 +68,14 @@ if old in s:
     s=s.replace(old,"const missing=channels.filter(c=>c.enabled&&!isFutureChannel(c)&&(!c.youtubeProfileId||!c.safeDailyUploadLimit));",1)
     w(p,s)
 
+# Vitest executes these integration tests in Node, while the production tsconfig
+# intentionally does not include @types/node. Keep a narrow test-only module shim
+# so `tsc` can compile the test files without adding Node types to the app runtime.
+w('src/v207-test-node-shim.d.ts',r'''declare module 'node:fs' {
+ export function readFileSync(path:string,encoding:'utf8'):string;
+}
+''')
+
 w('src/futureChannelSemantics.test.ts',r'''import {describe,expect,it} from 'vitest';import {readFileSync} from 'node:fs';
 describe('future channel semantics',()=>{
  it('does not rename local production identity after YouTube bind or analytics sync',()=>{const a=readFileSync('src/AccountsPage.tsx','utf8'),y=readFileSync('src/youtubeIntelligence.ts','utf8');expect(a).not.toContain('name:p.channelTitle||exact.name');expect(y).not.toContain('name:ps.title||channel.name')});
