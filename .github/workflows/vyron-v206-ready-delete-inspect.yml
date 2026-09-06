@@ -37,7 +37,7 @@ jobs:
             vyron-v203/apply_v203_oauth_discovery.py vyron-v203/apply_v203_version.py \
             vyron-v204/apply_v204_selectall_crash_fix.py vyron-v204/apply_v204_version.py \
             vyron-v205/apply_v205_updater_discovery.py vyron-v205/apply_v205_version.py \
-            vyron-v206/apply_v206_publisher_flow.py vyron-v206/apply_v206_ready_video_delete.py vyron-v206/apply_v206_version.py; do python3 "$ROOT/$s" .; done
+            vyron-v206/apply_v206_publisher_flow.py vyron-v206/apply_v206_ready_video_delete.py vyron-v206/apply_v206_release_blockers_fix.py vyron-v206/apply_v206_version.py; do python3 "$ROOT/$s" .; done
           echo "VYRON_FAST_WORK=$WORK" >> "$GITHUB_ENV"
           node -e "const p=require('$WORK/package.json');if(p.version!=='2.0.6')process.exit(1);console.log('VERSION',p.version)"
       - name: Prove local deletion and publishAt contracts
@@ -55,6 +55,8 @@ jobs:
           ! grep -Fq 'remove_dir_all' src-tauri/src/local_delete.rs
           grep -Fq "preflightBlocked=!selected.length||!profileId||!quotaPlan.affordable||missingSchedule>0" src/PublisherOS.tsx
           grep -Fq "if(!publishAt)throw new Error('PUBLISH_AT_REQUIRED" src/PublisherOS.tsx
+          grep -Fq "x?'import':(j.metadataSource||'template')" src/PublisherOS.tsx
+          grep -Fq "source:'test'" src/publishRemoval.test.ts
       - name: Frontend tests and production build
         shell: bash
         run: |
