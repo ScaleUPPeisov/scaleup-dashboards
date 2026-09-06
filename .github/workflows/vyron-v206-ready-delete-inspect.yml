@@ -56,42 +56,15 @@ jobs:
         run: |
           set -Eeuo pipefail
           cd "$VYRON_INSPECT_WORK"
-          python3 - <<'PY'
-          from pathlib import Path
-          def contexts(path, needles, radius=10):
-              p=Path(path)
-              if not p.exists():
-                  print(f'--- MISSING {path} ---'); return
-              lines=p.read_text(errors='replace').splitlines()
-              print(f'\n===== {path} ({len(lines)} lines) =====')
-              hits=[]
-              for i,line in enumerate(lines):
-                  if any(n.lower() in line.lower() for n in needles): hits.append(i)
-              shown=set()
-              for i in hits[:24]:
-                  a=max(0,i-radius); b=min(len(lines),i+radius+1)
-                  key=(a,b)
-                  if any(not (b<x or a>y) for x,y in shown): continue
-                  shown.add(key)
-                  print(f'--- lines {a+1}-{b} ---')
-                  for j in range(a,b): print(f'{j+1:5}: {lines[j]}')
-          contexts('src/PublisherOS.tsx',['type VideoJob','interface VideoJob','channelJobs','selectedIds','READY_UPLOAD','UPLOADING','youtubeUpload','effectivePublishAt','toggle','Готовые MP4','Готовые видео','selected.map','jobs.map'],14)
-          contexts('src/publishWorkspaceState.ts',['PublishWorkspaceDraft','selectedIds','metadata','scheduleMode','save','load'],14)
-          contexts('src/api.ts',['invoke(','youtubeUpload','trash','delete','remove'],12)
-          contexts('src-tauri/src/lib.rs',['generate_handler','youtube','command','delete','trash'],18)
-          contexts('src-tauri/src/main.rs',['generate_handler','youtube','command','delete','trash'],18)
-          contexts('src-tauri/Cargo.toml',['dependencies','trash','tauri','serde'],8)
-          for path in ['src/store.ts','src/types.ts','src/youtubeUpload.ts','src-tauri/src/youtube.rs']:
-              contexts(path,['VideoJob','patchJob','updateJob','status','finalPath','outputFile','path'],10)
-          PY
-      - name: Inventory likely source files
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          cd "$VYRON_INSPECT_WORK"
-          echo '=== VideoJob declarations ==='
-          grep -RInE 'type VideoJob|interface VideoJob' src src-tauri/src 2>/dev/null | head -40 || true
-          echo '=== invoke handler locations ==='
-          grep -RIn 'generate_handler!' src-tauri/src 2>/dev/null | head -20 || true
-          echo '=== publish ready/filter locations ==='
-          grep -RInE 'READY_UPLOAD|selectedIds|finalPath|outputFile' src/PublisherOS.tsx src/publishWorkspaceState.ts src/store.ts 2>/dev/null | head -160 || true
+          echo '===== FULL PublisherOS.tsx ====='
+          nl -ba src/PublisherOS.tsx
+          echo '===== FULL lib.rs ====='
+          nl -ba src-tauri/src/lib.rs
+          echo '===== FULL Cargo.toml ====='
+          nl -ba src-tauri/Cargo.toml
+          echo '===== CSS FILES ====='
+          find src -maxdepth 2 -type f -name '*.css' -print
+          echo '===== MODAL / DANGER / BUTTON STYLE HINTS ====='
+          grep -RInE 'modal|backdrop|danger|destructive|button.*red|\.publish' src --include='*.css' --include='*.tsx' | head -240 || true
+          echo '===== LOCAL FILE COMMAND HINTS ====='
+          grep -RInE '#\[tauri::command\]|reveal_path|remove_file|delete|trash|rename\(' src-tauri/src/files.rs src-tauri/src/storage.rs src-tauri/src/production_manager.rs 2>/dev/null | head -240 || true
