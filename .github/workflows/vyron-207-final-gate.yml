@@ -44,6 +44,33 @@ jobs:
         shell: bash
         run: bash vyron-v207/release_build_v207.sh
 
+      - name: User shortcomings regression contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          r=Path('.vyron-v207-release')
+          pm=(r/'src-tauri/src/production_manager.rs').read_text()
+          ui=(r/'src/ProductionManager.tsx').read_text()
+          publisher=(r/'src/PublisherOS.tsx').read_text()
+          accounts=(r/'src/AccountsPage.tsx').read_text()
+          channels=(r/'src/ChannelsOS.tsx').read_text()
+          # Downloads collector: real ~/Downloads, recursive image discovery,
+          # macOS permission error, pre-existing files remain collectable.
+          for token in ('join("Downloads")','recursive_images(&downloads)','VYRON не может читать папку Downloads','Файлы и папки','collector_seen_at_start'):
+              assert token in pm, token
+          assert 'session.collected.iter().map(|x|x.source_path.clone()).collect()' in pm
+          # Production stays local-channel based before YouTube binding.
+          assert 'youtubeProfileId' not in ui and 'youtubeChannelId' not in ui
+          # Future channels and delayed OAuth binding remain visible.
+          assert '+ Будущий канал' in channels and 'findFutureChannelMatch' in accounts
+          # Publisher 2.0.6 contracts requested by user.
+          for token in ('Обложки YouTube — не менять','Video Uploads сегодня','Каждый день','2/2','3/1','Удалить выбранные'):
+              assert token in publisher, token
+          print('USER SHORTCOMINGS REGRESSION CONTRACTS: PASS')
+          PY
+
       - name: Final artifact contracts
         shell: bash
         run: |
