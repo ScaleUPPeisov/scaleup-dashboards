@@ -9,8 +9,9 @@ s=Path(sys.argv[1]).read_text()
 # Keep the complete proven 2.0.5 chain, but isolate all temporary/output paths.
 s=s.replace('/tmp/vyron-release-build-205.sh','/tmp/vyron-release-build-206-inner.sh')
 s=s.replace('.vyron-v205-release','.vyron-v206-release').replace('/tmp/vyron-v205-release-base','/tmp/vyron-v206-release-base')
-for name in ('id','product','pub','endpoints'):
-    s=s.replace(f'/tmp/v205-release-{name}',f'/tmp/v206-release-{name}')
+s=s.replace('/tmp/v205-release-','/tmp/v206-release-')
+# The v205 generator itself contains a dynamic f-string for those temp paths.
+s=s.replace("f'/tmp/v205-release-{name}'","f'/tmp/v206-release-{name}'")
 # Append only the 2.0.6 publisher patch after the already-proven 2.0.5 chain.
 needle='python3 "$ROOT/vyron-v205/apply_v205_version.py" .'
 if needle not in s:
