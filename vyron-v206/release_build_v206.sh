@@ -16,7 +16,7 @@ s=s.replace("f'/tmp/v205-release-{name}'","f'/tmp/v206-release-{name}'")
 needle='python3 "$ROOT/vyron-v205/apply_v205_version.py" .'
 if needle not in s:
     raise SystemExit('v206 build: v205 version anchor missing')
-s=s.replace(needle,needle+'\npython3 "$ROOT/vyron-v206/apply_v206_publisher_flow.py" .\npython3 "$ROOT/vyron-v206/apply_v206_ready_video_delete.py" .\npython3 "$ROOT/vyron-v206/apply_v206_version.py" .',1)
+s=s.replace(needle,needle+'\npython3 "$ROOT/vyron-v206/apply_v206_publisher_flow.py" .\npython3 "$ROOT/vyron-v206/apply_v206_ready_video_delete.py" .\npython3 "$ROOT/vyron-v206/apply_v206_release_blockers_fix.py" .\npython3 "$ROOT/vyron-v206/apply_v206_version.py" .',1)
 s=s.replace('2.0.5','2.0.6')
 s=s.replace('VYRON-2.0.5-macOS-AppleSilicon.dmg','VYRON-2.0.6-macOS-AppleSilicon.dmg')
 s=s.replace('VYRON-2.0.5-source.tar.gz','VYRON-2.0.6-source.tar.gz')
