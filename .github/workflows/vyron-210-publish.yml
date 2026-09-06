@@ -1,0 +1,119 @@
+name: VYRON 2.0.10 Release History Publish
+
+on:
+  push:
+    branches:
+      - release/vyron-2.0.10
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vyron-210-publish
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    name: Rebuild exact release history build and publish 2.0.10
+    runs-on: macos-14
+    timeout-minutes: 140
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: '-'
+    steps:
+      - name: Checkout exact release commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Prove release identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'release/vyron-2.0.10'
+          git merge-base --is-ancestor ada42d5475ead6c864de6b5f53e63dfdb388f7fd HEAD
+          test -s vyron-v210/release_build_v210.sh
+          test -s vyron-v210/release_publish_v210.sh
+
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Rust Apple Silicon target
+        run: rustup target add aarch64-apple-darwin
+
+      - name: Verify signing material
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$TAURI_SIGNING_PRIVATE_KEY"
+          test -n "$TAURI_UPDATER_PUBLIC_KEY"
+          test "$APPLE_SIGNING_IDENTITY" = '-'
+
+      - name: Rebuild and rerun full stable + 2.0.10 gate
+        shell: bash
+        run: bash vyron-v210/release_build_v210.sh
+
+      - name: Recheck requested history UI and unchanged core
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          r=Path('.vyron-v210-release')
+          h=(r/'src/VyronReleaseHistory.tsx').read_text();s=(r/'src/SettingsOS.tsx').read_text()
+          for token in ('История обновлений','ЧТО СДЕЛАНО • ОТ И ДО','Видео-обзор обновления','▶ Смотреть от и до','ОФЛАЙН • БЕЗ YOUTUBE API'):
+              assert token in h,token
+          for v in ('2.0.10','2.0.9','2.0.8','2.0.7','2.0.6','2.0.5','2.0.4','2.0.3','2.0.2','2.0.1','2.0.0','1.2.0','1.1.0','1.0.0'):
+              assert f"version:'{v}'" in h,v
+          assert 'api.checkUpdate()' in s and 'update.install((p:number)' in s
+          sec=(r/'src-tauri/src/security.rs').read_text();st=(r/'src-tauri/src/storage.rs').read_text();yt=(r/'src-tauri/src/youtube.rs').read_text()
+          prod=(r/'src/ProductionOS.tsx').read_text();pm=(r/'src-tauri/src/production_manager.rs').read_text();pub=(r/'src/PublisherOS.tsx').read_text();acc=(r/'src/AccountsPage.tsx').read_text()
+          assert 'set_generic_password' in sec and 'get_generic_password' in sec and '0o600' in sec
+          assert 'hydrate_state_secrets' in st and 'skip_serializing' in yt
+          assert '+ Будущий канал' in prod and 'setChannelId(created.id)' in prod
+          assert 'join("Downloads")' in pm and 'recursive_images(&downloads)' in pm
+          assert 'Обложки YouTube — не менять' in pub and 'Video Uploads сегодня' in pub
+          assert 'const future=findFutureChannelMatch(state.channels,p.channelTitle)' in acc
+          print('VYRON 2.0.10 HISTORY + CORE COMPATIBILITY: PASS')
+          PY
+
+      - name: Verify app signature before publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP=.vyron-v210-release/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/VYRON.app
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -dv --verbose=4 "$APP" 2>&1 | grep -q 'Signature=adhoc'
+
+      - name: Publish GitHub release and updater feed
+        shell: bash
+        run: bash vyron-v210/release_publish_v210.sh
+
+      - name: Verify public release and updater
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release view v2.0.10 --repo "$GITHUB_REPOSITORY" --json tagName,assets,isDraft,isPrerelease,targetCommitish > /tmp/vyron210-release.json
+          python3 - <<'PY'
+          import json
+          x=json.load(open('/tmp/vyron210-release.json'))
+          assert x['tagName']=='v2.0.10'
+          assert not x['isDraft'] and not x['isPrerelease']
+          names={a['name'] for a in x['assets']}
+          required={'VYRON-2.0.10-macOS-AppleSilicon.dmg','VYRON.app.tar.gz','VYRON.app.tar.gz.sig','VYRON-2.0.10-source.tar.gz','latest.json'}
+          assert required<=names,sorted(required-names)
+          PY
+          gh api "repos/$GITHUB_REPOSITORY/contents/vyron-updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode > /tmp/vyron210-live.json
+          python3 - <<'PY'
+          import json
+          x=json.load(open('/tmp/vyron210-live.json'))
+          assert x.get('version')=='2.0.10',x.get('version')
+          p=x['platforms']['darwin-aarch64']
+          assert p['url'].endswith('/v2.0.10/VYRON.app.tar.gz') and p.get('signature')
+          print('VYRON 2.0.10 PUBLIC RELEASE + UPDATER: PASS')
+          PY
