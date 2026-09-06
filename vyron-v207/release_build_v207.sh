@@ -15,7 +15,7 @@ s=s.replace("f'/tmp/v205-release-{name}'","f'/tmp/v207-release-{name}'")
 needle='python3 "$ROOT/vyron-v205/apply_v205_version.py" .'
 if needle not in s:
     raise SystemExit('v207 build: v205 version anchor missing')
-extra='\\npython3 "$ROOT/vyron-v206/apply_v206_publisher_flow.py" .\\npython3 "$ROOT/vyron-v206/apply_v206_ready_video_delete.py" .\\npython3 "$ROOT/vyron-v206/apply_v206_release_blockers_fix.py" .\\npython3 "$ROOT/vyron-v206/apply_v206_version.py" .\\npython3 "$ROOT/vyron-v207/apply_v207_future_channels.py" .\\npython3 "$ROOT/vyron-v207/apply_v207_version.py" .'
+extra='\\npython3 "$ROOT/vyron-v206/apply_v206_publisher_flow.py" .\\npython3 "$ROOT/vyron-v206/apply_v206_ready_video_delete.py" .\\npython3 "$ROOT/vyron-v206/apply_v206_release_blockers_fix.py" .\\npython3 "$ROOT/vyron-v206/apply_v206_version.py" .\\npython3 "$ROOT/vyron-v207/apply_v207_future_channels.py" .\\npython3 "$ROOT/vyron-v207/apply_v207_future_channel_semantics.py" .\\npython3 "$ROOT/vyron-v207/apply_v207_version.py" .'
 s=s.replace(needle,needle+extra,1)
 s=s.replace('2.0.5','2.0.7')
 s=s.replace('VYRON-2.0.5-macOS-AppleSilicon.dmg','VYRON-2.0.7-macOS-AppleSilicon.dmg')
@@ -60,14 +60,20 @@ assert 'status["publishAt"]' in yt and 'part=snippet,status' in yt
 assert 'youtube_resume_upload' in yt
 
 # Future-channel architecture and UI.
-identity=(r/'src/channelIdentity.ts').read_text();accounts=(r/'src/AccountsPage.tsx').read_text();channels=(r/'src/ChannelsOS.tsx').read_text();production=(r/'src/ProductionManager.tsx').read_text()
+identity=(r/'src/channelIdentity.ts').read_text();accounts=(r/'src/AccountsPage.tsx').read_text();channels=(r/'src/ChannelsOS.tsx').read_text();production=(r/'src/ProductionManager.tsx').read_text();dash=(r/'src/DashboardOS.tsx').read_text();intel=(r/'src/youtubeIntelligence.ts').read_text();auto=(r/'src/youtubeAutopilot.ts').read_text();settings=(r/'src/SettingsOS.tsx').read_text()
 assert "normalize('NFKC')" in identity and 'findFutureChannelMatch' in identity and 'matches.length===1' in identity
 assert 'youtubeChannelId===p.channelId||x.youtubeProfileId===p.id' in accounts
 assert "const future=findFutureChannelMatch(state.channels,p.channelTitle)" in accounts
 assert "mode:'future'" in accounts and "mode:'created'" in accounts
+assert 'name:p.channelTitle||exact.name' not in accounts
 assert '+ Будущий канал' in channels and 'Создать будущий канал' in channels and 'БУДУЩИЙ • YouTube не подключён' in channels
 assert 'hasChannelNameConflict' in channels and "setPage(isFutureChannel(c)?'accounts':'youtube')" in channels
+assert "if(!isFutureChannel(c)){if(!c.youtubeProfileId)n-=25;if(!c.analytics)n-=15}" in channels
 assert 'youtubeProfileId' not in production and 'youtubeChannelId' not in production
-assert (r/'src/channelIdentity.test.ts').exists() and (r/'src/futureChannelFlow.test.ts').exists()
+assert '!isFutureChannel(c)&&!c.youtubeProfileId' in dash and '!isFutureChannel(c)&&settings.autoUploadYoutube' in dash
+assert 'name:ps.title||channel.name' not in intel
+assert 'if(!s.autoUploadYoutube||!s.youtubePublishSafeMode||!channel.youtubeProfileId||!channel.safeDailyUploadLimit)return' in auto
+if 'const missing=channels.filter' in settings: assert 'c.enabled&&!isFutureChannel(c)&&(!c.youtubeProfileId||!c.safeDailyUploadLimit)' in settings
+assert (r/'src/channelIdentity.test.ts').exists() and (r/'src/futureChannelFlow.test.ts').exists() and (r/'src/futureChannelSemantics.test.ts').exists()
 print('VYRON 2.0.7 future channels + 2.0.6 regression contracts: PASS')
 PY
