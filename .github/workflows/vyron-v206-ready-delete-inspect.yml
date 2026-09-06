@@ -1,0 +1,97 @@
+name: VYRON 2.0.6 Ready Delete Inspect
+on:
+  push:
+    branches: [vyron-yt-peisov-2.0.6]
+    paths: ['vyron-v206-ready-delete-inspect-trigger.txt']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: vyron-yt-peisov-2.0.6
+          fetch-depth: 0
+      - name: Reconstruct exact VYRON 2.0.6 candidate source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ROOT="$PWD"
+          WORK="$RUNNER_TEMP/vyron-v206-inspect"
+          ASSETS="$RUNNER_TEMP/vyron-v120-source"
+          rm -rf "$WORK" "$ASSETS"; mkdir -p "$WORK" "$ASSETS"
+          gh release download v1.2.0 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-1.2.0-source.tar.gz' --pattern 'SOURCE_SHA256.txt' --dir "$ASSETS"
+          EXPECTED="$(awk '{print $1;exit}' "$ASSETS/SOURCE_SHA256.txt")"
+          GOT="$(shasum -a 256 "$ASSETS/VYRON-1.2.0-source.tar.gz"|awk '{print $1}')"
+          test "$EXPECTED" = "$GOT"
+          tar -xzf "$ASSETS/VYRON-1.2.0-source.tar.gz" -C "$WORK"
+          cd "$WORK"
+          python3 "$ROOT/vyron-v200/apply_v200_persistence_recovery.py" .
+          python3 "$ROOT/vyron-v200/apply_v200_intelligence_errors.py" .
+          python3 "$ROOT/vyron-v200/apply_v200_autopilot_attention.py" .
+          python3 "$ROOT/vyron-v200/apply_v200_settings_importfix.py" .
+          python3 "$ROOT/vyron-v200/apply_v200_rust_fingerprintfix.py" .
+          python3 "$ROOT/vyron-v200/apply_v200_version.py" .
+          python3 "$ROOT/vyron-v201/apply_v201_quota_rollover_fix.py" .
+          python3 "$ROOT/vyron-v201/apply_v201_version.py" .
+          python3 "$ROOT/vyron-v202/apply_v202_studio_draft_bridge.py" .
+          python3 "$ROOT/vyron-v202/apply_v202_version.py" .
+          python3 "$ROOT/vyron-v203/apply_v203_oauth_discovery.py" .
+          python3 "$ROOT/vyron-v203/apply_v203_version.py" .
+          python3 "$ROOT/vyron-v204/apply_v204_selectall_crash_fix.py" .
+          python3 "$ROOT/vyron-v204/apply_v204_version.py" .
+          python3 "$ROOT/vyron-v205/apply_v205_updater_discovery.py" .
+          python3 "$ROOT/vyron-v205/apply_v205_version.py" .
+          python3 "$ROOT/vyron-v206/apply_v206_publisher_flow.py" .
+          python3 "$ROOT/vyron-v206/apply_v206_version.py" .
+          echo "VYRON_INSPECT_WORK=$WORK" >> "$GITHUB_ENV"
+          node -e "const p=require('$WORK/package.json'); console.log('VERSION',p.version)"
+      - name: Print exact source anchors for safe local removal
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd "$VYRON_INSPECT_WORK"
+          python3 - <<'PY'
+          from pathlib import Path
+          def contexts(path, needles, radius=10):
+              p=Path(path)
+              if not p.exists():
+                  print(f'--- MISSING {path} ---'); return
+              lines=p.read_text(errors='replace').splitlines()
+              print(f'\n===== {path} ({len(lines)} lines) =====')
+              hits=[]
+              for i,line in enumerate(lines):
+                  if any(n.lower() in line.lower() for n in needles): hits.append(i)
+              shown=set()
+              for i in hits[:24]:
+                  a=max(0,i-radius); b=min(len(lines),i+radius+1)
+                  key=(a,b)
+                  if any(not (b<x or a>y) for x,y in shown): continue
+                  shown.add(key)
+                  print(f'--- lines {a+1}-{b} ---')
+                  for j in range(a,b): print(f'{j+1:5}: {lines[j]}')
+          contexts('src/PublisherOS.tsx',['type VideoJob','interface VideoJob','channelJobs','selectedIds','READY_UPLOAD','UPLOADING','youtubeUpload','effectivePublishAt','toggle','Готовые MP4','Готовые видео','selected.map','jobs.map'],14)
+          contexts('src/publishWorkspaceState.ts',['PublishWorkspaceDraft','selectedIds','metadata','scheduleMode','save','load'],14)
+          contexts('src/api.ts',['invoke(','youtubeUpload','trash','delete','remove'],12)
+          contexts('src-tauri/src/lib.rs',['generate_handler','youtube','command','delete','trash'],18)
+          contexts('src-tauri/src/main.rs',['generate_handler','youtube','command','delete','trash'],18)
+          contexts('src-tauri/Cargo.toml',['dependencies','trash','tauri','serde'],8)
+          for path in ['src/store.ts','src/types.ts','src/youtubeUpload.ts','src-tauri/src/youtube.rs']:
+              contexts(path,['VideoJob','patchJob','updateJob','status','finalPath','outputFile','path'],10)
+          PY
+      - name: Inventory likely source files
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd "$VYRON_INSPECT_WORK"
+          echo '=== VideoJob declarations ==='
+          grep -RInE 'type VideoJob|interface VideoJob' src src-tauri/src 2>/dev/null | head -40 || true
+          echo '=== invoke handler locations ==='
+          grep -RIn 'generate_handler!' src-tauri/src 2>/dev/null | head -20 || true
+          echo '=== publish ready/filter locations ==='
+          grep -RInE 'READY_UPLOAD|selectedIds|finalPath|outputFile' src/PublisherOS.tsx src/publishWorkspaceState.ts src/store.ts 2>/dev/null | head -160 || true
