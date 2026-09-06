@@ -49,7 +49,7 @@ for version in ('2.0.10','2.0.9','2.0.8','2.0.7','2.0.6','2.0.5','2.0.4','2.0.3'
     assert f"version:'{version}'" in hist,version
 for date in ('06.09.2026','05.09.2026','04.09.2026','03.09.2026','01.09.2026'):
     assert date in hist,date
-for token in ('ИСТОРИЯ ОБНОВЛЕНИЙ','История обновлений','ЧТО СДЕЛАНО • ОТ И ДО','Видео-обзор обновления','▶ Смотреть от и до','ОФЛАЙН • БЕЗ YOUTUBE API','window.setInterval','3200'):
+for token in ('RELEASE HISTORY','История обновлений','ЧТО СДЕЛАНО • ОТ И ДО','Видео-обзор обновления','▶ Смотреть от и до','ОФЛАЙН • БЕЗ YOUTUBE API','window.setInterval','3200'):
     assert token in hist,token
 assert (r/'src/VyronReleaseHistory.test.ts').exists()
 print('VYRON 2.0.10 RELEASE HISTORY UI CONTRACT: PASS')
