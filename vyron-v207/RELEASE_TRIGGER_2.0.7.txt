@@ -1,0 +1,3 @@
+VYRON 2.0.7 release pipeline trigger.
+Source candidate: 14731066a4880720395c9c2669a6b4bdf88a2b83
+The publish workflow must rebuild and pass the full release gate before publishing.
