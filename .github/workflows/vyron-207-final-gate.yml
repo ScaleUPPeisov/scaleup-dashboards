@@ -29,7 +29,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
 
       - name: Rust Apple Silicon target
         run: rustup target add aarch64-apple-darwin
