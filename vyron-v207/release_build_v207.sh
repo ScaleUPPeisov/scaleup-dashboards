@@ -67,7 +67,8 @@ assert "const future=findFutureChannelMatch(state.channels,p.channelTitle)" in a
 assert "mode:'future'" in accounts and "mode:'created'" in accounts
 assert 'name:p.channelTitle||exact.name' not in accounts
 assert '+ Будущий канал' in channels and 'Создать будущий канал' in channels and 'БУДУЩИЙ • YouTube не подключён' in channels
-assert 'hasChannelNameConflict' in channels and "setPage(isFutureChannel(c)?'accounts':'youtube')" in channels
+assert 'hasChannelNameConflict' in channels and "setPage('youtube')}>{isFutureChannel(c)?'Подключить YouTube позже':'Открыть YouTube'}" in channels
+assert "setPage(isFutureChannel(c)?'accounts':'youtube')" not in channels
 assert "if(!isFutureChannel(c)){if(!c.youtubeProfileId)n-=25;if(!c.analytics)n-=15}" in channels
 assert 'youtubeProfileId' not in production and 'youtubeChannelId' not in production
 assert '!isFutureChannel(c)&&!c.youtubeProfileId' in dash and '!isFutureChannel(c)&&settings.autoUploadYoutube' in dash
