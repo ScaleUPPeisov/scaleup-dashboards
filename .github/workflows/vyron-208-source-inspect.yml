@@ -24,35 +24,40 @@ jobs:
           gh release download v1.2.0 --repo "$GITHUB_REPOSITORY" --pattern 'VYRON-1.2.0-source.tar.gz' --dir /tmp/vyron208-base
           tar -xzf /tmp/vyron208-base/VYRON-1.2.0-source.tar.gz -C /tmp/vyron208-inspect
           cd /tmp/vyron208-inspect
-          python3 "$GITHUB_WORKSPACE/vyron-v200/apply_v200_persistence_recovery.py" .
-          python3 "$GITHUB_WORKSPACE/vyron-v200/apply_v200_intelligence_errors.py" .
-          python3 "$GITHUB_WORKSPACE/vyron-v200/apply_v200_autopilot_attention.py" .
-          python3 "$GITHUB_WORKSPACE/vyron-v200/apply_v200_settings_importfix.py" .
-          python3 "$GITHUB_WORKSPACE/vyron-v200/apply_v200_rust_fingerprintfix.py" .
-          python3 "$GITHUB_WORKSPACE/vyron-v200/apply_v200_version.py" .
-          python3 "$GITHUB_WORKSPACE/vyron-v201/apply_v201_quota_rollover_fix.py" .
-          python3 "$GITHUB_WORKSPACE/vyron-v201/apply_v201_version.py" .
-          python3 "$GITHUB_WORKSPACE/vyron-v202/apply_v202_studio_draft_bridge.py" .
-          python3 "$GITHUB_WORKSPACE/vyron-v202/apply_v202_version.py" .
-          python3 "$GITHUB_WORKSPACE/vyron-v203/apply_v203_oauth_discovery.py" .
-          python3 "$GITHUB_WORKSPACE/vyron-v203/apply_v203_version.py" .
-          python3 "$GITHUB_WORKSPACE/vyron-v204/apply_v204_selectall_crash_fix.py" .
-          python3 "$GITHUB_WORKSPACE/vyron-v204/apply_v204_version.py" .
-          python3 "$GITHUB_WORKSPACE/vyron-v205/apply_v205_updater_discovery.py" .
-          python3 "$GITHUB_WORKSPACE/vyron-v205/apply_v205_version.py" .
-          python3 "$GITHUB_WORKSPACE/vyron-v206/apply_v206_publisher_flow.py" .
-          python3 "$GITHUB_WORKSPACE/vyron-v206/apply_v206_ready_video_delete.py" .
-          python3 "$GITHUB_WORKSPACE/vyron-v206/apply_v206_release_blockers_fix.py" .
-          python3 "$GITHUB_WORKSPACE/vyron-v206/apply_v206_version.py" .
-          python3 "$GITHUB_WORKSPACE/vyron-v207/apply_v207_future_channels.py" .
-          python3 "$GITHUB_WORKSPACE/vyron-v207/apply_v207_future_channel_semantics.py" .
-          python3 "$GITHUB_WORKSPACE/vyron-v207/apply_v207_version.py" .
-          echo '===== ProductionManager imports/state/select area ====='
+          for cmd in \
+            'vyron-v200/apply_v200_persistence_recovery.py' \
+            'vyron-v200/apply_v200_intelligence_errors.py' \
+            'vyron-v200/apply_v200_autopilot_attention.py' \
+            'vyron-v200/apply_v200_settings_importfix.py' \
+            'vyron-v200/apply_v200_rust_fingerprintfix.py' \
+            'vyron-v200/apply_v200_version.py' \
+            'vyron-v201/apply_v201_quota_rollover_fix.py' \
+            'vyron-v201/apply_v201_version.py' \
+            'vyron-v202/apply_v202_studio_draft_bridge.py' \
+            'vyron-v202/apply_v202_version.py' \
+            'vyron-v203/apply_v203_oauth_discovery.py' \
+            'vyron-v203/apply_v203_version.py' \
+            'vyron-v204/apply_v204_selectall_crash_fix.py' \
+            'vyron-v204/apply_v204_version.py' \
+            'vyron-v205/apply_v205_updater_discovery.py' \
+            'vyron-v205/apply_v205_version.py' \
+            'vyron-v206/apply_v206_publisher_flow.py' \
+            'vyron-v206/apply_v206_ready_video_delete.py' \
+            'vyron-v206/apply_v206_release_blockers_fix.py' \
+            'vyron-v206/apply_v206_version.py' \
+            'vyron-v207/apply_v207_future_channels.py' \
+            'vyron-v207/apply_v207_future_channel_semantics.py' \
+            'vyron-v207/apply_v207_version.py'; do
+              python3 "$GITHUB_WORKSPACE/$cmd" .
+          done
           python3 - <<'PY'
           from pathlib import Path
-          s=Path('src/ProductionManager.tsx').read_text()
-          for needle in ('export function','channels.map','<select','Импортировать изображения','channelId','setChannel'):
-              print('\n---',needle,'---')
-              pos=s.find(needle)
-              if pos>=0: print(s[max(0,pos-900):min(len(s),pos+1800)])
+          for filename in ('src/ProductionOS.tsx','src/ProductionManager.tsx'):
+              s=Path(filename).read_text()
+              print('\n===== '+filename+' =====')
+              for needle in ('export function','<select','channels.map','selectedChannelId','patchPrefs','Импортировать','ProductionManager'):
+                  pos=s.find(needle)
+                  if pos>=0:
+                      print('\n--- '+needle+' ---')
+                      print(s[max(0,pos-1200):min(len(s),pos+2600)])
           PY
