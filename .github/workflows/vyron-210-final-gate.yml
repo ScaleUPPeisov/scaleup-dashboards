@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: vyron-210-final-gate
+  cancel-in-progress: true
+
 jobs:
   macos-release-history-final:
     name: macOS Apple Silicon — history UI + full 2.0.9 regression
