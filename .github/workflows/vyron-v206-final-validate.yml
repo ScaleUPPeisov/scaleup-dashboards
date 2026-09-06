@@ -1,0 +1,47 @@
+name: VYRON YT PEISOV 2.0.6 Final Validate
+on:
+  push:
+    branches: [vyron-yt-peisov-2.0.6]
+    paths: ['vyron-v206-validate-trigger.txt']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: vyron-v206-final-validate
+  cancel-in-progress: true
+jobs:
+  validate-macos-arm64:
+    runs-on: macos-latest
+    timeout-minutes: 180
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+      APPLE_SIGNING_IDENTITY: '-'
+      VITE_BUILD_DATE: '2026-09-06'
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: vyron-yt-peisov-2.0.6
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - name: Full 2.0.6 tests, ARM64 compile, signed app and DMG build
+        shell: bash
+        run: bash vyron-v206/release_build_v206.sh
+      - name: Verify 2.0.6 artifacts exist but do not publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d .vyron-v206-release
+          find .vyron-v206-release -type f -name 'VYRON-2.0.6-macOS-AppleSilicon.dmg' -print -quit | grep -q .
+          find .vyron-v206-release -type f -name 'VYRON.app.tar.gz' -print -quit | grep -q .
+          find .vyron-v206-release -type f -name 'VYRON.app.tar.gz.sig' -print -quit | grep -q .
+          echo 'PRE-PUBLISH ONLY: no GitHub Release or updater feed was changed.'
+      - name: Final summary
+        run: echo 'VYRON YT PEISOV 2.0.6 PRE-RELEASE VALIDATION PASS'
