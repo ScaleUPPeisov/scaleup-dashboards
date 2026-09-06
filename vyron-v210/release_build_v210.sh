@@ -7,6 +7,11 @@ bash "$ROOT/vyron-v209/release_build_v209.sh"
 rm -rf "$ROOT/.vyron-v210-release"
 mv "$ROOT/.vyron-v209-release" "$ROOT/.vyron-v210-release"
 WORK="$ROOT/.vyron-v210-release"
+
+# IMPORTANT: Rust/Tauri build metadata stores absolute workspace paths.
+# The v209 -> v210 workspace rename makes that cache invalid, so rebuild it
+# from zero instead of allowing stale .vyron-v209-release paths into v210.
+rm -rf "$WORK/src-tauri/target"
 cd "$WORK"
 
 # Fingerprint all functional/security paths that this UI-only update must not touch.
@@ -27,6 +32,7 @@ CORE_FILES=(
 shasum -a 256 "${CORE_FILES[@]}" > /tmp/vyron-v210-core-before.sha256
 
 python3 "$ROOT/vyron-v210/apply_v210_release_history.py" .
+python3 "$ROOT/vyron-v210/apply_v210_release_history_accuracy.py" .
 python3 "$ROOT/vyron-v210/apply_v210_version.py" .
 
 # Zero functional drift outside the isolated Settings history UI.
@@ -44,15 +50,20 @@ assert '<VyronReleaseHistory currentVersion={installedVersion||\'2.0.10\'}/>' in
 # Existing updater is still present with the exact APIs/actions used by 2.0.9.
 for token in ('async function checkForUpdate()','api.checkUpdate()','async function installUpdate()','update.install((p:number)=>','Установить и перезапустить','Проверить обновления'):
     assert token in settings,token
-# History from the first public VYRON release through this release.
-for version in ('2.0.10','2.0.9','2.0.8','2.0.7','2.0.6','2.0.5','2.0.4','2.0.3','2.0.2','2.0.1','2.0.0','1.2.0','1.1.0','1.0.0'):
-    assert f"version:'{version}'" in hist,version
-for date in ('06.09.2026','05.09.2026','04.09.2026','03.09.2026','01.09.2026'):
+# Complete public VYRON history from 1.0.0 through 2.0.10.
+versions=[f'2.0.{i}' for i in range(10,-1,-1)]+['1.2.0','1.1.0']+[f'1.0.{i}' for i in range(15,-1,-1)]
+for version in versions:
+    assert hist.count(f"version:'{version}'")==1,version
+assert len(re.findall(r"version:'[0-9]+\.[0-9]+\.[0-9]+'",hist))==29
+for date in ('06.09.2026','05.09.2026','04.09.2026','03.09.2026','02.09.2026','01.09.2026'):
     assert date in hist,date
 for token in ('RELEASE HISTORY','История обновлений','ЧТО СДЕЛАНО • ОТ И ДО','Видео-обзор обновления','▶ Смотреть от и до','ОФЛАЙН • БЕЗ YOUTUBE API','window.setInterval','3200'):
     assert token in hist,token
+# Accuracy sentinels sourced from the original release notes/scripts.
+for token in ('Local Quota Reset','Channel Runway','Command Center','Production Manager','Image Import Reliability','Production Autobuild','Downloads Image Collector Hotfix','macOS Downloads Permission Hotfix','Production Storage','macOS Updater EXDEV Hotfix','Project Storage Fix','Production UX & Storage Fix','Recovery, Smart Schedule & Notifications','Schedule Patterns, Flexible DOCX & A-Z Channels','ENDLUME Image Validation Hotfix','Cache-Control: no-cache, no-store, max-age=0','99 выбранных видео и 0 DOCX-строк','127.0.0.1:19470','uploads playlist pipeline без search.list'):
+    assert token in hist,token
 assert (r/'src/VyronReleaseHistory.test.ts').exists()
-print('VYRON 2.0.10 RELEASE HISTORY UI CONTRACT: PASS')
+print('VYRON 2.0.10 COMPLETE RELEASE HISTORY UI CONTRACT: PASS — 29 releases')
 PY
 
 # Run the complete app test/build matrix again after the isolated UI patch.
@@ -84,4 +95,4 @@ shasum -a 256 release/VYRON.app.tar.gz > release/UPDATER_SHA256.txt
 tar -czf release/VYRON-2.0.10-source.tar.gz --exclude='./node_modules' --exclude='./dist' --exclude='./src-tauri/target' --exclude='./release' .
 shasum -a 256 release/VYRON-2.0.10-source.tar.gz > release/SOURCE_SHA256.txt
 
-echo 'VYRON 2.0.10 release history + full 2.0.9 regression gate: PASS'
+echo 'VYRON 2.0.10 complete release history + full 2.0.9 regression gate: PASS'
