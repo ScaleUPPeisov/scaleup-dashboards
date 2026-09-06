@@ -1,4 +1,4 @@
-name: VYRON 2.0.6 Ready Delete Inspect
+name: VYRON 2.0.6 Ready Delete Fast Gate
 on:
   push:
     branches: [vyron-yt-peisov-2.0.6]
@@ -7,19 +7,22 @@ on:
 permissions:
   contents: read
 jobs:
-  inspect:
+  fast-gate:
     runs-on: macos-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
         with: {ref: vyron-yt-peisov-2.0.6, fetch-depth: 0}
-      - name: Reconstruct exact VYRON 2.0.6 candidate source
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Reconstruct exact VYRON 2.0.6 source and apply all patches
         shell: bash
         run: |
           set -Eeuo pipefail
-          ROOT="$PWD"; WORK="$RUNNER_TEMP/vyron-v206-inspect"; ASSETS="$RUNNER_TEMP/vyron-v120-source"
+          ROOT="$PWD"; WORK="$RUNNER_TEMP/vyron-v206-fast"; ASSETS="$RUNNER_TEMP/vyron-v120-source"
           rm -rf "$WORK" "$ASSETS"; mkdir -p "$WORK" "$ASSETS"
           gh release download v1.2.0 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-1.2.0-source.tar.gz' --pattern 'SOURCE_SHA256.txt' --dir "$ASSETS"
           test "$(awk '{print $1;exit}' "$ASSETS/SOURCE_SHA256.txt")" = "$(shasum -a 256 "$ASSETS/VYRON-1.2.0-source.tar.gz"|awk '{print $1}')"
@@ -31,14 +34,36 @@ jobs:
             vyron-v203/apply_v203_oauth_discovery.py vyron-v203/apply_v203_version.py \
             vyron-v204/apply_v204_selectall_crash_fix.py vyron-v204/apply_v204_version.py \
             vyron-v205/apply_v205_updater_discovery.py vyron-v205/apply_v205_version.py \
-            vyron-v206/apply_v206_publisher_flow.py vyron-v206/apply_v206_version.py; do python3 "$ROOT/$s" .; done
-          echo "VYRON_INSPECT_WORK=$WORK" >> "$GITHUB_ENV"
-      - name: Print exact job-state removal anchors
+            vyron-v206/apply_v206_publisher_flow.py vyron-v206/apply_v206_ready_video_delete.py vyron-v206/apply_v206_version.py; do python3 "$ROOT/$s" .; done
+          echo "VYRON_FAST_WORK=$WORK" >> "$GITHUB_ENV"
+          node -e "const p=require('$WORK/package.json');if(p.version!=='2.0.6')process.exit(1);console.log('VERSION',p.version)"
+      - name: Prove local deletion and publishAt contracts
         shell: bash
         run: |
-          set -Eeuo pipefail; cd "$VYRON_INSPECT_WORK"
-          echo '===== store job mutators ====='
-          grep -nE 'removeJob|removeJobs|patchJob|setJobs|jobs:' src/store.ts || true
-          echo '===== store full ====='; nl -ba src/store.ts
-          echo '===== ProductionOS deletion helper ====='
-          grep -n -C 8 'deleteJobs' src/ProductionOS.tsx || true
+          set -Eeuo pipefail; cd "$VYRON_FAST_WORK"
+          grep -Fq 'Удалить выбранные' src/PublisherOS.tsx
+          grep -Fq 'Убрать только из VYRON' src/PublisherOS.tsx
+          grep -Fq 'Удалить из VYRON и с диска' src/PublisherOS.tsx
+          grep -Fq 'YouTube API: 0' src/PublisherOS.tsx
+          grep -Fq "invoke<{trashed:boolean;missing:boolean}>('trash_local_file'" src/api.ts
+          grep -Fq 'trash::delete(&p)' src-tauri/src/local_delete.rs
+          ! grep -Fiq 'youtube' src-tauri/src/local_delete.rs
+          ! grep -Fiq 'youtube' src/publishRemoval.ts
+          ! grep -Fq 'remove_dir_all' src-tauri/src/local_delete.rs
+          grep -Fq "preflightBlocked=!selected.length||!profileId||!quotaPlan.affordable||missingSchedule>0" src/PublisherOS.tsx
+          grep -Fq "if(!publishAt)throw new Error('PUBLISH_AT_REQUIRED" src/PublisherOS.tsx
+      - name: Frontend tests and production build
+        shell: bash
+        run: |
+          set -Eeuo pipefail; cd "$VYRON_FAST_WORK"
+          npm install
+          npm test
+          npm run build
+      - name: Rust tests and compile
+        shell: bash
+        run: |
+          set -Eeuo pipefail; cd "$VYRON_FAST_WORK"
+          cargo test --manifest-path src-tauri/Cargo.toml --lib -- --nocapture
+          cargo check --manifest-path src-tauri/Cargo.toml
+      - name: Fast gate verdict
+        run: echo 'PASS: VYRON 2.0.6 ready-video removal + publishAt + frontend + Rust regression'
