@@ -10,7 +10,7 @@ WORK="$ROOT/.vyron-v212-release"
 rm -rf "$WORK/src-tauri/target"
 cd "$WORK"
 
-# Fingerprint everything outside the requested image-material path.
+# Fingerprint everything outside the requested image-material/status-header paths.
 CORE_FILES=(
   src/PublisherOS.tsx src/MetadataPage.tsx src/ShortsFactory.tsx src/ShortsMetadata.tsx
   src/channelIdentity.ts src/AccountsPage.tsx src/ChannelsOS.tsx src/youtubeAutopilot.ts
@@ -19,10 +19,11 @@ CORE_FILES=(
 shasum -a 256 "${CORE_FILES[@]}" > /tmp/vyron-v212-core-before.sha256
 
 python3 "$ROOT/vyron-v212/apply_v212_image_folder_import.py" .
+python3 "$ROOT/vyron-v212/apply_v212_channel_status_header.py" .
 python3 "$ROOT/vyron-v212/apply_v212_release_history.py" .
 python3 "$ROOT/vyron-v212/apply_v212_version.py" .
 
-# The requested feature may touch only Production image collection, API wiring, lib registration, tests, version/history/styles if needed.
+# Requested work must not drift Publisher/YouTube/OAuth/Shorts/security core.
 shasum -a 256 -c /tmp/vyron-v212-core-before.sha256
 
 python3 - <<'PY'
@@ -46,7 +47,18 @@ for token in ('start_production_import','spawn_import_watcher','downloads_dir()'
 # No project prerequisite in folder import block.
 block=rust[rust.index('pub fn import_production_image_folder'):rust.index('pub fn set_production_music_library')]
 assert 'BuildRequest' not in block and 'project_count' not in block
-print('VYRON 2.0.12 IMAGE FOLDER IMPORT STATIC CONTRACT: PASS')
+# Header: split channel status without YouTube requests and expose local error details by click.
+headers=[]
+for f in (r/'src').rglob('*.tsx'):
+    x=f.read_text()
+    if ' API • ' in x and ' БЕЗ API' in x and 'window.alert' in x and 'Ошибок нет' in x:
+        headers.append((f,x))
+assert len(headers)==1,headers
+hf,h=headers[0]
+assert 'youtubeProfileId' in h
+assert h.count('window.alert')==1
+assert 'fetch(' not in h[h.index(' API • ')-500:h.index(' API • ')+500]
+print('VYRON 2.0.12 IMAGE FOLDER + STATUS HEADER STATIC CONTRACT: PASS —',hf)
 PY
 
 npm test
@@ -62,4 +74,4 @@ test -d "$APP" -a -s "$DMG"
 test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = '2.0.12'
 codesign --verify --deep --strict --verbose=2 "$APP"
 hdiutil verify "$DMG"
-echo 'VYRON 2.0.12 IMAGE FOLDER IMPORT FULL GATE: PASS'
+echo 'VYRON 2.0.12 IMAGE FOLDER + STATUS HEADER FULL GATE: PASS'
