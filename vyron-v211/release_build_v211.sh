@@ -44,7 +44,7 @@ assert p['version']=='2.0.11' and c['version']=='2.0.11'
 for f in ('src/shortsCore.ts','src/ShortsFactory.tsx','src/ShortsMetadata.tsx','src/MetadataTabs.tsx','src-tauri/src/shorts_factory.rs'):assert (r/f).is_file(),f
 prod=(r/'src/ProductionOS.tsx').read_text();meta=(r/'src/ShortsMetadata.tsx').read_text();core=(r/'src/shortsCore.ts').read_text();rust=(r/'src-tauri/src/shorts_factory.rs').read_text();quota=(r/'src/QuotaMeter.tsx').read_text();hist=(r/'src/VyronReleaseHistory.tsx').read_text()
 for token in ('SHORTS','СОЗДАТЬ SHORTS','<ShortsFactory'):assert token in prod,token
-for token in ('METADATA_READY','ВОЗОБНОВИТЬ ЗАГРУЗКУ','shortsValidateFile','youtubeVideoId','Asia/Krasnoyarsk'):assert token in meta,token
+for token in ('METADATA_READY','ВОЗОБНОВИТЬ ЗАГРУЗКУ','shortsValidateFile','youtubeVideoId','todayKrasnoyarskDate','shortsScheduleSlots'):assert token in meta,token
 for token in ('recordUsedSegments','planSegments','recoverInterruptedShorts','shortOutputPath','shortUploadsToday'):assert token in core,token
 for token in ('h264_videotoolbox','libx264','.part.mp4','1080','1920','shorts_render_segment','real_ffmpeg_fixture_if_enabled'):assert token in rust,token
 for token in ('Long Videos','Shorts','Total Video Uploads'):assert token in quota,token
