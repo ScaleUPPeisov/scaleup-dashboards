@@ -1,0 +1,60 @@
+name: VYRON 2.0.11 Publish
+on:
+  push:
+    branches:
+      - release/vyron-2.0.11
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: vyron-211-publish
+  cancel-in-progress: true
+jobs:
+  publish:
+    name: Rebuild, verify and publish 2.0.11
+    runs-on: macos-14
+    timeout-minutes: 160
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: '-'
+    steps:
+      - name: Checkout exact release commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Prove release branch is based on gated candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin candidate/vyron-2.0.11-shorts-factory
+          git merge-base --is-ancestor origin/candidate/vyron-2.0.11-shorts-factory "$GITHUB_SHA"
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Rust Apple Silicon target
+        run: rustup target add aarch64-apple-darwin
+      - name: FFmpeg and FFprobe
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then brew install ffmpeg; fi
+      - name: Rebuild and rerun full release gate
+        shell: bash
+        run: bash vyron-v211/release_build_v211.sh
+      - name: Publish GitHub Release and authoritative updater
+        shell: bash
+        run: bash vyron-v211/release_publish_v211.sh
+      - name: Verify public release
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release view v2.0.11 --repo ScaleUPPeisov/scaleup-dashboards --json tagName,targetCommitish,assets > /tmp/v211-public.json
+          python3 - <<'PY'
+          import json,os
+          r=json.load(open('/tmp/v211-public.json'));assert r['tagName']=='v2.0.11';assert r['targetCommitish']==os.environ['GITHUB_SHA'];names={x['name'] for x in r['assets']};assert 'VYRON-2.0.11-macOS-AppleSilicon.dmg' in names;assert 'VYRON.app.tar.gz.sig' in names
+          print('PUBLIC VYRON 2.0.11: PASS')
+          PY
