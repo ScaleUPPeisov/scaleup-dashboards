@@ -1,0 +1,87 @@
+name: VYRON 2.0.12 Publish
+on:
+  push:
+    branches:
+      - release/vyron-2.0.12
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: vyron-212-publish
+  cancel-in-progress: true
+jobs:
+  publish:
+    name: Rebuild, verify and publish 2.0.12
+    runs-on: macos-14
+    timeout-minutes: 180
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: '-'
+    steps:
+      - name: Checkout exact release commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Prove release branch contains approved 2.0.12 candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor fb2902b705a0bd19a87d491fab003e2cdea47c6b "$GITHUB_SHA"
+
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Rust Apple Silicon target
+        run: rustup target add aarch64-apple-darwin
+
+      - name: FFmpeg and FFprobe
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+            brew install ffmpeg
+          fi
+
+      - name: Verify signing material
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$TAURI_SIGNING_PRIVATE_KEY"
+          test -n "$TAURI_UPDATER_PUBLIC_KEY"
+
+      - name: Rebuild and rerun full 2.0.12 release gate
+        shell: bash
+        run: bash vyron-v212/release_build_v212.sh
+
+      - name: Publish GitHub Release and authoritative updater
+        shell: bash
+        run: bash vyron-v212/release_publish_v212.sh
+
+      - name: Verify public 2.0.12 release and updater
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release view v2.0.12 --repo ScaleUPPeisov/scaleup-dashboards --json tagName,targetCommitish,isDraft,isPrerelease,assets > /tmp/v212-public.json
+          gh api 'repos/ScaleUPPeisov/scaleup-dashboards/contents/vyron-updates/latest.json?ref=main' --jq .content | tr -d '\n' | base64 --decode > /tmp/v212-live.json
+          python3 - <<'PY'
+          import json,os
+          r=json.load(open('/tmp/v212-public.json'))
+          assert r['tagName']=='v2.0.12'
+          assert r['targetCommitish']==os.environ['GITHUB_SHA']
+          assert not r['isDraft'] and not r['isPrerelease']
+          names={x['name'] for x in r['assets']}
+          required={'VYRON-2.0.12-macOS-AppleSilicon.dmg','VYRON.app.tar.gz','VYRON.app.tar.gz.sig','latest.json'}
+          assert required<=names,sorted(required-names)
+          u=json.load(open('/tmp/v212-live.json'))
+          assert u['version']=='2.0.12'
+          p=u['platforms']['darwin-aarch64']
+          assert p['url'].endswith('/v2.0.12/VYRON.app.tar.gz')
+          assert p.get('signature')
+          print('PUBLIC VYRON 2.0.12 + UPDATER: PASS')
+          PY
