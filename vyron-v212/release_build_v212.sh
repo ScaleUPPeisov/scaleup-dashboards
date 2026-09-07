@@ -10,7 +10,7 @@ WORK="$ROOT/.vyron-v212-release"
 rm -rf "$WORK/src-tauri/target"
 cd "$WORK"
 
-# Fingerprint everything outside the requested image-material/status-header paths.
+# Fingerprint protected Publisher/YouTube/OAuth/Shorts/security core.
 CORE_FILES=(
   src/PublisherOS.tsx src/MetadataPage.tsx src/ShortsFactory.tsx src/ShortsMetadata.tsx
   src/channelIdentity.ts src/AccountsPage.tsx src/ChannelsOS.tsx src/youtubeAutopilot.ts
@@ -19,6 +19,7 @@ CORE_FILES=(
 shasum -a 256 "${CORE_FILES[@]}" > /tmp/vyron-v212-core-before.sha256
 
 python3 "$ROOT/vyron-v212/apply_v212_image_folder_import.py" .
+python3 "$ROOT/vyron-v212/apply_v212_delete_all_projects.py" .
 python3 "$ROOT/vyron-v212/apply_v212_channel_status_header.py" .
 python3 "$ROOT/vyron-v212/apply_v212_release_history.py" .
 python3 "$ROOT/vyron-v212/apply_v212_version.py" .
@@ -32,8 +33,8 @@ import json
 r=Path('.')
 p=json.loads((r/'package.json').read_text());c=json.loads((r/'src-tauri/tauri.conf.json').read_text())
 assert p['version']=='2.0.12' and c['version']=='2.0.12'
-pm=(r/'src/ProductionManager.tsx').read_text();api=(r/'src/productionManagerApi.ts').read_text();rust=(r/'src-tauri/src/production_manager.rs').read_text();lib=(r/'src-tauri/src/lib.rs').read_text();hist=(r/'src/VyronReleaseHistory.tsx').read_text()
-for token in ('НАЧАТЬ СБОР','ИМПОРТ ИЗ ПАПКИ','chooseImageFolder','importImageFolder'):
+pm=(r/'src/ProductionManager.tsx').read_text();api=(r/'src/productionManagerApi.ts').read_text();rust=(r/'src-tauri/src/production_manager.rs').read_text();tests=(r/'src-tauri/src/production_manager_tests.rs').read_text();lib=(r/'src-tauri/src/lib.rs').read_text();hist=(r/'src/VyronReleaseHistory.tsx').read_text()
+for token in ('НАЧАТЬ СБОР','ИМПОРТ ИЗ ПАПКИ','chooseImageFolder','importImageFolder','УДАЛИТЬ ВСЕ ПРОЕКТЫ','deleteAllChannelProjects','window.confirm'):
     assert token in pm,token
 for token in ('chooseImageFolder','importImageFolder','import_production_image_folder'):
     assert token in api,token
@@ -47,6 +48,13 @@ for token in ('start_production_import','spawn_import_watcher','downloads_dir()'
 # No project prerequisite in folder import block.
 block=rust[rust.index('pub fn import_production_image_folder'):rust.index('pub fn set_production_music_library')]
 assert 'BuildRequest' not in block and 'project_count' not in block
+# Global project cleanup must reuse the existing safe per-batch deletion path.
+delete_block=pm[pm.index('async function deleteAllChannelProjects()'):pm.index('async function resume(batch:BatchSummary)')]
+for token in ('for(const batch of batches)','productionManagerApi.status(batch.manifestPath)','productionManagerApi.deleteBatchProjects(batch.manifestPath,ids)','Изображения, музыкальная библиотека и настройки канала останутся'):
+    assert token in delete_block,token
+for forbidden in ('deleteJobFolder','stopImport','setMusicLibrary'):
+    assert forbidden not in delete_block,forbidden
+assert 'acceptance_delete_all_projects_preserves_images_music_and_channel_state' in tests
 # Header: split channel status without YouTube requests and expose local error details by click.
 headers=[]
 for f in (r/'src').rglob('*.tsx'):
@@ -58,7 +66,7 @@ hf,h=headers[0]
 assert 'youtubeProfileId' in h
 assert h.count('window.alert')==1
 assert 'fetch(' not in h[h.index(' API • ')-500:h.index(' API • ')+500]
-print('VYRON 2.0.12 IMAGE FOLDER + STATUS HEADER STATIC CONTRACT: PASS —',hf)
+print('VYRON 2.0.12 IMAGE FOLDER + DELETE ALL + STATUS HEADER STATIC CONTRACT: PASS —',hf)
 PY
 
 npm test
@@ -74,4 +82,4 @@ test -d "$APP" -a -s "$DMG"
 test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = '2.0.12'
 codesign --verify --deep --strict --verbose=2 "$APP"
 hdiutil verify "$DMG"
-echo 'VYRON 2.0.12 IMAGE FOLDER + STATUS HEADER FULL GATE: PASS'
+echo 'VYRON 2.0.12 IMAGE FOLDER + DELETE ALL + STATUS HEADER FULL GATE: PASS'

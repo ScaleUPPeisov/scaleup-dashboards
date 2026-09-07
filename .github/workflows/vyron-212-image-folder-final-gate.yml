@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   macos-image-folder-final:
-    name: macOS Apple Silicon — image folder import + full regression
+    name: macOS Apple Silicon — image folder + delete all + full regression
     runs-on: macos-14
     timeout-minutes: 170
     env:
@@ -45,14 +45,17 @@ jobs:
       - name: Build 2.0.12 and run full inherited regression
         shell: bash
         run: bash vyron-v212/release_build_v212.sh
-      - name: Verify requested second button and persistent image pool
+      - name: Verify image folder pool and delete-all contract
         shell: bash
         run: |
           set -euo pipefail
           R=.vyron-v212-release
           grep -q 'ИМПОРТ ИЗ ПАПКИ' "$R/src/ProductionManager.tsx"
           grep -q 'НАЧАТЬ СБОР' "$R/src/ProductionManager.tsx"
+          grep -q 'УДАЛИТЬ ВСЕ ПРОЕКТЫ' "$R/src/ProductionManager.tsx"
+          grep -q 'deleteAllChannelProjects' "$R/src/ProductionManager.tsx"
           grep -q 'import_production_image_folder' "$R/src-tauri/src/production_manager.rs"
           grep -q 'acceptance_folder_import_same_folder_twice_is_duplicate_safe' "$R/src-tauri/src/production_manager_tests.rs"
           grep -q 'acceptance_folder_import_multiple_folders_accumulates_for_later_build' "$R/src-tauri/src/production_manager_tests.rs"
-          echo 'VYRON 2.0.12 SECOND IMAGE SOURCE CONTRACT: PASS'
+          grep -q 'acceptance_delete_all_projects_preserves_images_music_and_channel_state' "$R/src-tauri/src/production_manager_tests.rs"
+          echo 'VYRON 2.0.12 IMAGE POOL + DELETE ALL CONTRACT: PASS'
