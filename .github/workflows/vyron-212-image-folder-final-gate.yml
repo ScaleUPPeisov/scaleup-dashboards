@@ -1,0 +1,58 @@
+name: VYRON 2.0.12 Image Folder Import Final Gate
+on:
+  push:
+    branches:
+      - feature/vyron-image-folder-import
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: vyron-212-image-folder-final-gate
+  cancel-in-progress: true
+jobs:
+  macos-image-folder-final:
+    name: macOS Apple Silicon — image folder import + full regression
+    runs-on: macos-14
+    timeout-minutes: 170
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: '-'
+    steps:
+      - name: Checkout exact feature commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Rust Apple Silicon target
+        run: rustup target add aarch64-apple-darwin
+      - name: FFmpeg and FFprobe for inherited Shorts gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then brew install ffmpeg; fi
+      - name: Verify signing material
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$TAURI_SIGNING_PRIVATE_KEY"
+          test -n "$TAURI_UPDATER_PUBLIC_KEY"
+      - name: Build 2.0.12 and run full inherited regression
+        shell: bash
+        run: bash vyron-v212/release_build_v212.sh
+      - name: Verify requested second button and persistent image pool
+        shell: bash
+        run: |
+          set -euo pipefail
+          R=.vyron-v212-release
+          grep -q 'ИМПОРТ ИЗ ПАПКИ' "$R/src/ProductionManager.tsx"
+          grep -q 'НАЧАТЬ СБОР' "$R/src/ProductionManager.tsx"
+          grep -q 'import_production_image_folder' "$R/src-tauri/src/production_manager.rs"
+          grep -q 'acceptance_folder_import_same_folder_twice_is_duplicate_safe' "$R/src-tauri/src/production_manager_tests.rs"
+          grep -q 'acceptance_folder_import_multiple_folders_accumulates_for_later_build' "$R/src-tauri/src/production_manager_tests.rs"
+          echo 'VYRON 2.0.12 SECOND IMAGE SOURCE CONTRACT: PASS'
