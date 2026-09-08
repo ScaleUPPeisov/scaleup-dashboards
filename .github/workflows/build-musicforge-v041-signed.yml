@@ -59,39 +59,39 @@ jobs:
               p=Path(f); p.write_text(p.read_text().replace('0.4.2','0.4.4'))
           p=Path('main.js'); s=p.read_text()
           old="""async function installDownloadedUpdate() {
-  if (!downloadedUpdate?.appPath || !exists(downloadedUpdate.appPath)) throw new Error('Сначала скачай обновление.');
-  const currentApp = path.resolve(path.dirname(process.execPath), '../../..');
-  if (!currentApp.endsWith('.app')) throw new Error('Автоустановка доступна только из установленного .app.');
-"""
+            if (!downloadedUpdate?.appPath || !exists(downloadedUpdate.appPath)) throw new Error('Сначала скачай обновление.');
+            const currentApp = path.resolve(path.dirname(process.execPath), '../../..');
+            if (!currentApp.endsWith('.app')) throw new Error('Автоустановка доступна только из установленного .app.');
+          """
           new="""function currentAppBundlePath(execPath = process.execPath) {
-  const resolved = path.resolve(execPath);
-  const marker = `${path.sep}Contents${path.sep}MacOS${path.sep}`;
-  const markerIndex = resolved.lastIndexOf(marker);
-  if (markerIndex > 0) {
-    const bundle = resolved.slice(0, markerIndex);
-    if (bundle.endsWith('.app')) return bundle;
-  }
-  const fallback = path.resolve(path.dirname(execPath), '../..');
-  return fallback.endsWith('.app') ? fallback : null;
-}
+            const resolved = path.resolve(execPath);
+            const marker = `${path.sep}Contents${path.sep}MacOS${path.sep}`;
+            const markerIndex = resolved.lastIndexOf(marker);
+            if (markerIndex > 0) {
+              const bundle = resolved.slice(0, markerIndex);
+              if (bundle.endsWith('.app')) return bundle;
+            }
+            const fallback = path.resolve(path.dirname(execPath), '../..');
+            return fallback.endsWith('.app') ? fallback : null;
+          }
 
-async function installDownloadedUpdate() {
-  if (!downloadedUpdate?.appPath || !exists(downloadedUpdate.appPath)) throw new Error('Сначала скачай обновление.');
-  const currentApp = currentAppBundlePath();
-  if (!currentApp) throw new Error('Не удалось определить путь к текущему MusicForge AI.app.');
-"""
+          async function installDownloadedUpdate() {
+            if (!downloadedUpdate?.appPath || !exists(downloadedUpdate.appPath)) throw new Error('Сначала скачай обновление.');
+            const currentApp = currentAppBundlePath();
+            if (!currentApp) throw new Error('Не удалось определить путь к текущему MusicForge AI.app.');
+          """
           if old not in s: raise SystemExit('Updater block missing')
           p.write_text(s.replace(old,new,1))
           p=Path('renderer/app.js'); s=p.read_text()
           anchor="const $$ = (sel) => Array.from(document.querySelectorAll(sel));"
           helper="""
 
-function cleanIpcError(error) {
-  return String(error?.message || error || 'Неизвестная ошибка')
-    .replace(/^Error invoking remote method '[^']+': Error:\\s*/i, '')
-    .replace(/^Error:\\s*/i, '');
-}
-"""
+          function cleanIpcError(error) {
+            return String(error?.message || error || 'Неизвестная ошибка')
+              .replace(/^Error invoking remote method '[^']+': Error:\\s*/i, '')
+              .replace(/^Error:\\s*/i, '');
+          }
+          """
           if 'function cleanIpcError' not in s:
               if anchor not in s: raise SystemExit('Renderer anchor missing')
               s=s.replace(anchor,anchor+helper,1)
