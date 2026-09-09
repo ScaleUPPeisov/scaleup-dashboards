@@ -1,0 +1,178 @@
+name: VYRON 2.0.14 YouTube Publish Recovery + Production Release
+
+on:
+  push:
+    branches:
+      - release/vyron-2.0.14-youtube-publish-recovery
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vyron-214-youtube-publish-recovery-release
+  cancel-in-progress: true
+
+jobs:
+  final-test:
+    name: Final Test — macOS Apple Silicon
+    runs-on: macos-14
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: '-'
+    steps:
+      - name: Checkout exact hotfix commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run complete VYRON 2.0.14 gate
+        id: gate
+        continue-on-error: true
+        shell: bash
+        run: bash vyron-v214/release_build_v214.sh
+
+      - name: Final green/red summary
+        if: always()
+        shell: bash
+        run: |
+          if [ '${{ steps.gate.outcome }}' = 'success' ]; then
+            {
+              echo '# VYRON 2.0.14 FINAL TEST ✅'
+              echo
+              echo '| Проверка | Результат |'
+              echo '|---|---|'
+              echo '| Exact 2.0.13 source + patch SHA | ✅ |'
+              echo '| YouTube last-scheduled-date synchronization | ✅ |'
+              echo '| Past publishAt preflight block | ✅ |'
+              echo '| Error Center delete one / clear all | ✅ |'
+              echo '| Real backend upload detail retained | ✅ |'
+              echo '| Full frontend tests/build | ✅ |'
+              echo '| Rust tests + ARM64 check | ✅ |'
+              echo '| Tauri Apple Silicon + codesign + DMG | ✅ |'
+              echo '| Updater package/signature | ✅ |'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo '# VYRON 2.0.14 FINAL TEST ❌'
+              echo
+              echo 'Publish recovery gate failed. Production release is blocked.'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Block release on red test
+        if: steps.gate.outcome != 'success'
+        run: exit 1
+
+      - name: Upload exact tested candidate
+        if: steps.gate.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-2.0.14-final-candidate
+          path: .vyron-v214-release/release/
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Publish VYRON 2.0.14
+    needs: final-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ScaleUPPeisov/scaleup-dashboards
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@v4
+
+      - name: Download exact green candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: VYRON-2.0.14-final-candidate
+          path: release
+
+      - name: Verify files and create updater manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in VYRON-2.0.14-macOS-AppleSilicon.dmg VYRON.app.tar.gz VYRON.app.tar.gz.sig VYRON-2.0.14-source.tar.gz SHA256.txt UPDATER_SHA256.txt SOURCE_SHA256.txt FINAL_TEST_REPORT.md; do test -s "release/$f"; done
+          cat > release/RELEASE_NOTES.md <<'EOF'
+          # VYRON YT PEISOV 2.0.14 — YouTube Publish Recovery
+
+          - Publisher теперь синхронизирует выбранный OAuth-канал с YouTube перед пакетной публикацией.
+          - Для «Каждый день / 2/2 / 3/1» VYRON находит самую позднюю уже запланированную публикацию и предлагает начать со следующей даты.
+          - Если запланированных роликов нет, выбирается ближайшая безопасная будущая дата/время по Красноярску.
+          - publishAt в прошлом блокируется до videos.insert, поэтому сохранённая старая дата больше не должна отправляться в YouTube.
+          - Добавлена ручная кнопка «Синхронизировать с YouTube» и статус schedule sync в preflight.
+          - Error Center: можно удалить одну ошибку задачи, удалить одну запись истории или очистить все ошибки вместе со счётчиком.
+          - Ошибки upload/resume сохраняют реальные технические детали backend/YouTube вместо одной общей фразы.
+          - Сохранены Keychain Recovery 2.0.13, safe cleanup 2.0.12 и функции Publisher/Existing Videos/Quota 2.0.11.
+
+          Exact candidate опубликован только после полного macOS Apple Silicon gate.
+          EOF
+          python3 - <<'PY'
+          import json,datetime,pathlib
+          rel=pathlib.Path('release')
+          sig=(rel/'VYRON.app.tar.gz.sig').read_text().strip()
+          notes=(rel/'RELEASE_NOTES.md').read_text()
+          x={'version':'2.0.14','notes':notes,'pub_date':datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00','Z'),'platforms':{'darwin-aarch64':{'url':'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.0.14/VYRON.app.tar.gz','signature':sig}}}
+          (rel/'latest.json').write_text(json.dumps(x,ensure_ascii=False,indent=2)+'\n')
+          PY
+          test "$(python3 -c "import json;print(json.load(open('release/latest.json'))['version'])")" = '2.0.14'
+
+      - name: Publish exact tested GitHub Release
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view v2.0.14 --repo "$REPO" >/dev/null 2>&1; then
+            gh release edit v2.0.14 --repo "$REPO" --title 'VYRON YT PEISOV 2.0.14 — YouTube Publish Recovery' --notes-file release/RELEASE_NOTES.md --draft=false --prerelease=false
+          else
+            gh release create v2.0.14 --repo "$REPO" --target "$GITHUB_SHA" --title 'VYRON YT PEISOV 2.0.14 — YouTube Publish Recovery' --notes-file release/RELEASE_NOTES.md
+          fi
+          gh release upload v2.0.14 --repo "$REPO" --clobber \
+            release/VYRON-2.0.14-macOS-AppleSilicon.dmg \
+            release/VYRON.app.tar.gz \
+            release/VYRON.app.tar.gz.sig \
+            release/VYRON-2.0.14-source.tar.gz \
+            release/SHA256.txt release/UPDATER_SHA256.txt release/SOURCE_SHA256.txt \
+            release/FINAL_TEST_REPORT.md release/RELEASE_NOTES.md release/latest.json
+
+      - name: Activate updater 2.0.13 → 2.0.14
+        shell: bash
+        run: |
+          set -euo pipefail
+          CURRENT=$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | base64 --decode)
+          CURRENT_VERSION=$(printf '%s' "$CURRENT" | python3 -c 'import sys,json;print(json.load(sys.stdin)["version"])')
+          test "$CURRENT_VERSION" = '2.0.13' -o "$CURRENT_VERSION" = '2.0.14'
+          OLD_SHA=$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .sha)
+          CONTENT=$(base64 -w0 release/latest.json)
+          gh api --method PUT "repos/$REPO/contents/vyron-updates/latest.json" \
+            -f message='VYRON updater: 2.0.14 YouTube publish recovery' -f content="$CONTENT" -f sha="$OLD_SHA" -f branch=main >/dev/null
+
+      - name: Verify public production release
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh release view v2.0.14 --repo "$REPO" --json isDraft --jq '.isDraft|tostring')" = 'false'
+          test "$(gh release view v2.0.14 --repo "$REPO" --json isPrerelease --jq '.isPrerelease|tostring')" = 'false'
+          ASSETS=$(gh release view v2.0.14 --repo "$REPO" --json assets --jq '.assets[].name')
+          for f in VYRON-2.0.14-macOS-AppleSilicon.dmg VYRON.app.tar.gz VYRON.app.tar.gz.sig VYRON-2.0.14-source.tar.gz latest.json FINAL_TEST_REPORT.md; do grep -qx "$f" <<<"$ASSETS"; done
+          LIVE=$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | base64 --decode)
+          test "$(printf '%s' "$LIVE" | python3 -c 'import sys,json;print(json.load(sys.stdin)["version"])')" = '2.0.14'
+          echo 'VYRON 2.0.14 PRODUCTION RELEASE: PASS'
+          {
+            echo '# Production Release ✅'
+            echo
+            echo '- ✅ GitHub Release v2.0.14 published'
+            echo '- ✅ DMG / updater / signature / source published'
+            echo '- ✅ updater feed main: 2.0.14'
+          } >> "$GITHUB_STEP_SUMMARY"
