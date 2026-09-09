@@ -39,7 +39,12 @@ pass 'Signing material normalized'
 
 say 'Reconstruct and verify 2.0.11 patch payload'
 rm -rf "$PATCH_DIR"; mkdir -p "$PATCH_DIR"
-cat "$ROOT/vyron-v211/payload.aa" "$ROOT/vyron-v211/payload.ab" "$ROOT/vyron-v211/payload.ac" "$ROOT/vyron-v211/payload.ad" "$ROOT/vyron-v211/payload.ae" "$ROOT/vyron-v211/payload.af" "$ROOT/vyron-v211/payload.ag" "$ROOT/vyron-v211/payload.ah" | base64 --decode > /tmp/vyron-v211-portable.tgz
+python3 - "$ROOT" <<'PY'
+import base64,pathlib,sys
+root=pathlib.Path(sys.argv[1])/'vyron-v211'
+data=''.join((root/f'payload.a{c}').read_text().strip() for c in 'abcdefgh')
+pathlib.Path('/tmp/vyron-v211-portable.tgz').write_bytes(base64.b64decode(data,validate=True))
+PY
 GOT_PATCH="$(shasum -a 256 /tmp/vyron-v211-portable.tgz|awk '{print $1}')"
 test "$GOT_PATCH" = "$PATCH_SHA"
 tar -xzf /tmp/vyron-v211-portable.tgz -C "$PATCH_DIR"
