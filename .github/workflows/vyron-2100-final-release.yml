@@ -1,0 +1,276 @@
+name: VYRON 2.1.0 Full Gate + Production Release
+
+on:
+  push:
+    branches:
+      - release/vyron-2.1.0-shorts-buffer-storage
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vyron-2100-production-release
+  cancel-in-progress: true
+
+jobs:
+  final-gate:
+    name: Final Gate — macOS Apple Silicon
+    runs-on: macos-14
+    timeout-minutes: 180
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: '-'
+    steps:
+      - name: Checkout exact 2.1.0 release commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Rust Apple Silicon target
+        run: rustup target add aarch64-apple-darwin
+
+      - name: FFmpeg and FFprobe
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then brew install ffmpeg; fi
+          ffmpeg -version | head -1
+          ffprobe -version | head -1
+
+      - name: Run deterministic 2.1.0 full gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          exec > >(tee "$GITHUB_WORKSPACE/vyron-2100-gate.log") 2>&1
+          ROOT="$GITHUB_WORKSPACE"
+          V214_SHA='84456d5e9c982057805078d0604cf90654d893d8'
+          SHORTS_SHA='549ac4175c7745092509010ce928110958870ccc'
+
+          echo '==> Fetch pinned recovery + Shorts build inputs'
+          git fetch --no-tags origin "$V214_SHA" "$SHORTS_SHA"
+          git checkout "$V214_SHA" -- vyron-v214
+          git checkout "$SHORTS_SHA" -- vyron-v211
+
+          echo '==> Repair deterministic 2.0.14 payload source (use canonical b64 file, not stale split parts)'
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('vyron-v214/release_build_v214.sh')
+          s=p.read_text()
+          old='''PARTS="$ROOT/vyron-v214/parts"\ntest -d "$PARTS"\nB64="$RUNNER_TEMP/v214.patch.gz.b64"\nPATCH="$RUNNER_TEMP/v214.patch"\ncat "$PARTS"/part*.txt > "$B64"'''
+          new='''B64="$ROOT/vyron-v214/v214.patch.gz.b64"\nPATCH="$RUNNER_TEMP/v214.patch"\ntest -s "$B64"'''
+          if old not in s: raise SystemExit('v214 payload anchor missing')
+          p.write_text(s.replace(old,new,1))
+          PY
+
+          echo '==> Build and test recovery base from exact released 2.0.13 source'
+          bash vyron-v214/release_build_v214.sh
+          WORK="$ROOT/.vyron-v214-release"
+          test -d "$WORK"
+          test "$(node -p "require('$WORK/package.json').version")" = '2.0.14'
+
+          echo '==> Apply previously green Shorts Factory implementation to recovery base'
+          rm -rf "$WORK/src-tauri/target" "$WORK/release"
+          python3 "$ROOT/vyron-v211/apply_v211_shorts_factory.py" "$WORK"
+
+          echo '==> Set final product version 2.1.0'
+          python3 - "$WORK" <<'PY'
+          from pathlib import Path
+          import json,re,sys
+          r=Path(sys.argv[1]); v='2.1.0'
+          for rel in ('package.json','src-tauri/tauri.conf.json'):
+              p=r/rel; x=json.loads(p.read_text()); x['version']=v
+              if rel.endswith('tauri.conf.json'):
+                  for win in x.get('app',{}).get('windows',[]):
+                      if 'title' in win: win['title']='VYRON YT PEISOV'
+              p.write_text(json.dumps(x,ensure_ascii=False,indent=2)+'\n')
+          p=r/'package-lock.json'
+          if p.exists():
+              x=json.loads(p.read_text()); x['version']=v
+              if isinstance(x.get('packages'),dict) and isinstance(x['packages'].get(''),dict): x['packages']['']['version']=v
+              p.write_text(json.dumps(x,ensure_ascii=False,indent=2)+'\n')
+          p=r/'src-tauri/Cargo.toml'; s=p.read_text(); m=re.search(r'(?ms)^\[package\]\n(.*?)(?=^\[|\Z)',s)
+          if not m: raise SystemExit('Cargo package section missing')
+          sec=re.sub(r'(?m)^version\s*=\s*"[^"]+"',f'version = "{v}"',m.group(0),count=1)
+          p.write_text(s[:m.start()]+sec+s[m.end():])
+          PY
+
+          cd "$WORK"
+          echo '==> Static 2.1.0 contracts + preservation checks'
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,os
+          r=Path('.')
+          p=json.loads((r/'package.json').read_text()); c=json.loads((r/'src-tauri/tauri.conf.json').read_text())
+          assert p['version']=='2.1.0' and c['version']=='2.1.0'
+          assert c['identifier']=='studio.channelflow.desktop'
+          assert c['plugins']['updater']['pubkey'].strip()==os.environ['TAURI_UPDATER_PUBLIC_KEY'].strip()
+          for f in ('src/shortsCore.ts','src/ShortsFactory.tsx','src/ShortsMetadata.tsx','src/MetadataTabs.tsx','src-tauri/src/shorts_factory.rs','src-tauri/src/storage.rs','src-tauri/src/production_manager.rs','src/ProductionManager.tsx'): assert (r/f).is_file(),f
+          prod=(r/'src/ProductionOS.tsx').read_text(); rust=(r/'src-tauri/src/shorts_factory.rs').read_text(); core=(r/'src/shortsCore.ts').read_text(); meta=(r/'src/ShortsMetadata.tsx').read_text(); yt=(r/'src-tauri/src/youtube.rs').read_text(); ex=(r/'src/ExistingVideos.tsx').read_text(); sec=(r/'src-tauri/src/security.rs').read_text(); storage=(r/'src-tauri/src/storage.rs').read_text(); pm=(r/'src-tauri/src/production_manager.rs').read_text()
+          for t in ('SHORTS','СОЗДАТЬ SHORTS','<ShortsFactory'): assert t in prod,t
+          for t in ('h264_videotoolbox','libx264','.part.mp4','1080','1920','shorts_render_segment','real_ffmpeg_fixture_if_enabled'): assert t in rust,t
+          for t in ('recordUsedSegments','planSegments','recoverInterruptedShorts','shortOutputPath','shortUploadsToday'): assert t in core,t
+          for t in ('METADATA_READY','ВОЗОБНОВИТЬ ЗАГРУЗКУ','shortsValidateFile','youtubeVideoId','todayKrasnoyarskDate','shortsScheduleSlots'): assert t in meta,t
+          for t in ('Category ID','Плейлист','authoritative backup','Последний Apply','Последний Undo'): assert t in ex,t
+          for t in ('youtube_playlist_membership','playlistItems.insert','playlistItems.delete','YOUTUBE_UPLOAD_CHUNK_BYTES:usize=32*1024*1024'): assert t in yt,t
+          for t in ('security_keychain_diagnostics','keychain_diagnostics_roundtrip','set_secret_for_autosave'): assert t in sec,t
+          for t in ('sanitized_state_for_disk','secure_state_for_disk_best_effort','securityWarning'): assert t in storage,t
+          assert 'production_storage_status' in pm
+          pub=(r/'src/PublisherOS.tsx').read_text(); err=(r/'src/errorCenter.ts').read_text()
+          for t in ('syncScheduleFromYoutube','pastSchedule','Синхронизировать с YouTube'): assert t in pub,t
+          for t in ('SCHEDULE_REJECTED','KEYCHAIN_AUTH_FAILED','KEYCHAIN_CANCELED','KEYCHAIN_LOCKED'): assert t in err,t
+          print('VYRON 2.1.0 STATIC + PRESERVATION CONTRACTS: PASS')
+          PY
+
+          echo '==> Full frontend tests'
+          npm test
+          echo '==> Frontend production build'
+          npm run build
+          echo '==> Rust tests including real local 1080x1920 Shorts fixture'
+          VYRON_SHORTS_REAL_TEST=1 cargo test --manifest-path src-tauri/Cargo.toml --lib -- --nocapture
+          echo '==> ARM64 compile check'
+          cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
+
+          echo '==> Build final Apple Silicon app + DMG + signed updater'
+          rm -rf src-tauri/target/aarch64-apple-darwin/release/bundle
+          npx tauri build --target aarch64-apple-darwin --bundles app,dmg
+          APP=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)
+          DMG=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -name '*.dmg' -print -quit)
+          UPDATER=$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name '*.app.tar.gz' -print -quit)
+          SIG=$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name '*.app.tar.gz.sig' -print -quit)
+          test -d "$APP" -a -s "$DMG" -a -s "$UPDATER" -a -s "$SIG"
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = 'studio.channelflow.desktop'
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = '2.1.0'
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          hdiutil verify "$DMG"
+
+          echo '==> Package exact tested 2.1.0 candidate'
+          rm -rf release; mkdir release
+          cp "$DMG" release/VYRON-2.1.0-macOS-AppleSilicon.dmg
+          cp "$UPDATER" release/VYRON.app.tar.gz
+          cp "$SIG" release/VYRON.app.tar.gz.sig
+          shasum -a 256 release/VYRON-2.1.0-macOS-AppleSilicon.dmg > release/SHA256.txt
+          shasum -a 256 release/VYRON.app.tar.gz > release/UPDATER_SHA256.txt
+          tar -czf release/VYRON-2.1.0-source.tar.gz --exclude='./node_modules' --exclude='./dist' --exclude='./src-tauri/target' --exclude='./release' .
+          shasum -a 256 release/VYRON-2.1.0-source.tar.gz > release/SOURCE_SHA256.txt
+          cat > release/RELEASE_NOTES.md <<'EOF'
+          # VYRON YT PEISOV 2.1.0 — Shorts Factory + Production Storage
+
+          - Добавлен Shorts Factory для READY_UPLOAD Long Video: пакетная нарезка, 1080×1920, hardware-first FFmpeg, безопасный `.part.mp4`, FFprobe validation и восстановление очереди.
+          - YouTube Metadata разделён на VIDEO / SHORTS; отдельные Shorts metadata, расписание Asia/Krasnoyarsk, защита от повторного videos.insert и resumable upload.
+          - Сохранены Production Manager / Content & Storage pipeline и безопасное управление локальными производственными файлами.
+          - Включены исправления Existing Videos: category, playlist, authoritative backup, verified Apply/Undo и quota accounting.
+          - Включены Keychain Recovery и YouTube Publisher schedule recovery: синхронизация с YouTube и блокировка publishAt в прошлом.
+          - Полный macOS Apple Silicon gate проходит до публикации; реальный YouTube-канал CI не изменяет.
+          EOF
+          cat > release/FINAL_TEST_REPORT.md <<'EOF'
+          # VYRON 2.1.0 — FINAL TEST
+          - ✅ Exact released 2.0.13 source verified before recovery patch
+          - ✅ YouTube Publisher recovery contracts
+          - ✅ Existing Videos category / playlist / authoritative backup / verified Undo preserved
+          - ✅ Keychain recovery preserved
+          - ✅ Production Storage / Production Manager preserved
+          - ✅ Shorts Factory static contracts
+          - ✅ Full frontend tests + production build
+          - ✅ Rust tests
+          - ✅ Real local FFmpeg/FFprobe Shorts fixture (1080×1920)
+          - ✅ ARM64 cargo check
+          - ✅ Tauri Apple Silicon app + DMG
+          - ✅ codesign verify
+          - ✅ hdiutil DMG verify
+          - ✅ signed updater package generated
+
+          CI does not mutate a real YouTube channel; live YouTube mutation is not claimed as part of this automated gate.
+          EOF
+          echo 'VYRON 2.1.0 FULL GATE: PASS'
+
+      - name: Upload gate log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-2.1.0-gate-log
+          path: vyron-2100-gate.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload exact green candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-2.1.0-final-candidate
+          path: .vyron-v214-release/release/
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Publish VYRON 2.1.0
+    needs: final-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ScaleUPPeisov/scaleup-dashboards
+    steps:
+      - name: Checkout exact release commit
+        uses: actions/checkout@v4
+
+      - name: Download exact green candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: VYRON-2.1.0-final-candidate
+          path: release
+
+      - name: Create updater manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in VYRON-2.1.0-macOS-AppleSilicon.dmg VYRON.app.tar.gz VYRON.app.tar.gz.sig VYRON-2.1.0-source.tar.gz SHA256.txt UPDATER_SHA256.txt SOURCE_SHA256.txt FINAL_TEST_REPORT.md RELEASE_NOTES.md; do test -s "release/$f"; done
+          python3 - <<'PY'
+          import json,datetime,pathlib
+          r=pathlib.Path('release'); sig=(r/'VYRON.app.tar.gz.sig').read_text().strip(); notes=(r/'RELEASE_NOTES.md').read_text()
+          x={'version':'2.1.0','notes':notes,'pub_date':datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00','Z'),'platforms':{'darwin-aarch64':{'url':'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.0/VYRON.app.tar.gz','signature':sig}}}
+          (r/'latest.json').write_text(json.dumps(x,ensure_ascii=False,indent=2)+'\n')
+          PY
+
+      - name: Publish exact tested GitHub Release
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view v2.1.0 --repo "$REPO" >/dev/null 2>&1; then
+            gh release edit v2.1.0 --repo "$REPO" --title 'VYRON YT PEISOV 2.1.0 — Shorts Factory + Production Storage' --notes-file release/RELEASE_NOTES.md --draft=false --prerelease=false
+          else
+            gh release create v2.1.0 --repo "$REPO" --target "$GITHUB_SHA" --title 'VYRON YT PEISOV 2.1.0 — Shorts Factory + Production Storage' --notes-file release/RELEASE_NOTES.md
+          fi
+          gh release upload v2.1.0 --repo "$REPO" --clobber \
+            release/VYRON-2.1.0-macOS-AppleSilicon.dmg release/VYRON.app.tar.gz release/VYRON.app.tar.gz.sig \
+            release/VYRON-2.1.0-source.tar.gz release/SHA256.txt release/UPDATER_SHA256.txt release/SOURCE_SHA256.txt \
+            release/FINAL_TEST_REPORT.md release/RELEASE_NOTES.md release/latest.json
+
+      - name: Activate updater to 2.1.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          OLD_SHA=$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .sha)
+          CURRENT=$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | base64 --decode | python3 -c 'import sys,json;print(json.load(sys.stdin)["version"])')
+          case "$CURRENT" in 2.0.13|2.0.14|2.1.0) ;; *) echo "Unexpected live updater $CURRENT"; exit 1;; esac
+          CONTENT=$(base64 -w0 release/latest.json)
+          gh api --method PUT "repos/$REPO/contents/vyron-updates/latest.json" -f message='VYRON updater: 2.1.0 Shorts Factory + Production Storage' -f content="$CONTENT" -f sha="$OLD_SHA" -f branch=main >/dev/null
+
+      - name: Verify public production release
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh release view v2.1.0 --repo "$REPO" --json isDraft --jq '.isDraft|tostring')" = false
+          test "$(gh release view v2.1.0 --repo "$REPO" --json isPrerelease --jq '.isPrerelease|tostring')" = false
+          ASSETS=$(gh release view v2.1.0 --repo "$REPO" --json assets --jq '.assets[].name')
+          for f in VYRON-2.1.0-macOS-AppleSilicon.dmg VYRON.app.tar.gz VYRON.app.tar.gz.sig VYRON-2.1.0-source.tar.gz latest.json FINAL_TEST_REPORT.md; do grep -qx "$f" <<<"$ASSETS"; done
+          LIVE=$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | base64 --decode)
+          test "$(printf '%s' "$LIVE" | python3 -c 'import sys,json;print(json.load(sys.stdin)["version"])')" = '2.1.0'
+          echo 'VYRON 2.1.0 PRODUCTION RELEASE: PASS'
