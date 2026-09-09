@@ -1,0 +1,87 @@
+);
++  assert!(keychain_error("read","x",INTERACTION_NOT_ALLOWED,"locked").starts_with("KEYCHAIN_INTERACTION_REQUIRED:"));
++  assert!(keychain_error("read","x",USER_CANCELED,"cancel").starts_with("KEYCHAIN_USER_CANCELED:"));
++ }
++ #[test]
++ #[cfg(target_os="macos")]
++ fn keychain_diagnostics_roundtrip(){
++  let v=security_keychain_diagnostics().unwrap();
++  assert_eq!(v.get("ok").and_then(|x|x.as_bool()),Some(true));
++  assert_eq!(v.get("status").and_then(|x|x.as_str()),Some("KEYCHAIN_OK"));
++ }
++ #[test]
+  #[cfg(target_os="macos")]
+  fn keychain_roundtrip(){
+   use std::time::{SystemTime,UNIX_EPOCH};
+diff -ruN v212src/src-tauri/src/storage.rs v213src/src-tauri/src/storage.rs
+--- v212src/src-tauri/src/storage.rs	2026-09-09 13:56:57.064701319 +0000
++++ v213src/src-tauri/src/storage.rs	2026-09-09 14:37:20.971677795 +0000
+@@ -20,15 +20,27 @@
+ fn state_secret(state:&Value,key:&str)->String{state.get("settings").and_then(Value::as_object).and_then(|x|x.get(key)).and_then(Value::as_str).unwrap_or("").to_string()}
+ fn set_state_secret(state:&mut Value,key:&str,value:&str){if let Some(x)=state.get_mut("settings").and_then(Value::as_object_mut){x.insert(key.into(),json!(value));}}
+ 
++fn sanitized_state_for_disk(state:&Value)->Value{
++ let mut disk=state.clone();
++ for field in ["youtubeApiKey","openaiApiKey"]{set_state_secret(&mut disk,field,"");}
++ disk
++}
+ fn secure_state_for_disk(state:&Value)->Result<(Value,bool),String>{
+- let mut disk=state.clone();let mut migrated=false;
++ let disk=sanitized_state_for_disk(state);let mut migrated=false;
+  for (field,account) in [("youtubeApiKey",STATE_YOUTUBE_API_KEY),("openaiApiKey",STATE_OPENAI_API_KEY)]{
+   let value=state_secret(state,field);
+   if !value.is_empty(){security::set_secret(account,&value)?;migrated=true;}
+-  set_state_secret(&mut disk,field,"");
+  }
+  Ok((disk,migrated))
+ }
++fn secure_state_for_disk_best_effort(state:&Value)->(Value,Vec<String>){
++ let disk=sanitized_state_for_disk(state);let mut warnings=Vec::new();
++ for (field,account) in [("youtubeApiKey",STATE_YOUTUBE_API_KEY),("openaiApiKey",STATE_OPENAI_API_KEY)]{
++  let value=state_secret(state,field);
++  if !value.is_empty(){if let Err(e)=security::set_secret_for_autosave(account,&value){warnings.push(e)}}
++ }
++ (disk,warnings)
++}
+ fn hydrate_state_secrets(mut state:Value)->Value{
+  for (field,account) in [("youtubeApiKey",STATE_YOUTUBE_API_KEY),("openaiApiKey",STATE_OPENAI_API_KEY)]{
+   if let Ok(Some(value))=security::get_secret(account){set_state_secret(&mut state,field,&value)}
+@@ -111,8 +123,23 @@
+ }
+ 
+ #[tauri::command]
+-pub fn save_state(app: AppHandle, state: Value) -> Result<(), String> {
++pub fn save_state(app: AppHandle, state: Value) -> Result<Value, String> {
+     let p = state_file(&app)?;
+-    let (disk,_)=secure_state_for_disk(&state)?;
+-    atomic_write(&p,&disk)
++    let (disk,warnings)=secure_state_for_disk_best_effort(&state);
++    atomic_write(&p,&disk)?;
++    Ok(json!({"ok":true,"securityWarning":warnings.first().cloned(),"securityWarnings":warnings.len()}))
++}
++
++#[cfg(test)]
++mod v213_storage_tests{
++ use super::*;
++ #[test]
++ fn sanitized_state_never_writes_api_secrets_to_disk(){
++  let state=json!({"settings":{"youtubeApiKey":"AIza-secret","openaiApiKey":"sk-secret","workspace":"/tmp/vyron"},"channels":[{"id":"c1"}]});
++  let disk=sanitized_state_for_disk(&state);
++  assert_eq!(disk.pointer("/settings/youtubeApiKey").and_then(Value::as_str),Some(""));
++  assert_eq!(disk.pointer("/settings/openaiApiKey").and_then(Value::as_str),Some(""));
++  assert_eq!(disk.pointer("/settings/workspace").and_then(Value::as_str),Some("/tmp/vyron"));
++  assert_eq!(disk.pointer("/channels/0/id").and_then(Value::as_str),Some("c1"));
++ }
+ }
+diff -ruN v212src/src-tauri/tauri.conf.json v213src/src-tauri/tauri.conf.json
+--- v212src/src-tauri/tauri.conf.json	2026-09-09 13:56:57.556616286 +0000
++++ v213src/src-tauri/tauri.conf.json	2026-09-09 14:33:47.395797729 +0000
+@@ -1,7 +1,7 @@
+ {
+   "$schema": "https://schema.tauri.app/config/2",
+   "productName": "VYRON",
+-  "version": "2.0.12",
++  "version": "2.0.13",
+   "identifier": "studio.channelflow.desktop",
+   "build": {
+     "beforeDevCommand": "npm run dev",
