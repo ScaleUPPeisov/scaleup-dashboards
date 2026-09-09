@@ -1,0 +1,38 @@
+).toLocaleString('ru-RU')}</small><span>{l.message}</span></div>):<p>Событий пока нет.</p>}</div></section></div>}</>
+ }
+diff -ruN v212src/src/api.ts v213src/src/api.ts
+--- v212src/src/api.ts	2026-09-09 13:56:57.066186383 +0000
++++ v213src/src/api.ts	2026-09-09 14:33:47.395274946 +0000
+@@ -15,6 +15,8 @@
+ export type YoutubeUploadSession={jobId:string;profileId:string;filePath:string;total:number;offset:number;createdAt:string;updatedAt:string;operationId?:string};
+ export type YoutubeFileFingerprint={fingerprint:string;size:number;modifiedAt:number;path:string};
+ export type GoogleConfigStatus={configured:boolean;projectId?:string;clientIdMasked?:string;hasSecret:boolean;hasApiKey:boolean};
++export type StateSaveResult={ok:boolean;securityWarning?:string|null;securityWarnings?:number};
++export type KeychainDiagnostic={ok:boolean;status:string;service?:string};
+ export type YoutubeProfileHealth={ok:boolean;status:string;channelId?:string;channelTitle?:string;thumbnail?:string;expiresAt?:number;analyticsAuthorized?:boolean;monetaryAuthorized?:boolean;error?:string};
+ export type ExistingVideoSyncResult={channelId?:string;channelTitle?:string;youtubeFound:number;received:number;requested:number;privateCount:number;publicCount:number;scheduledCount:number;unlistedCount?:number;complete:boolean;draftCandidateCount?:number;searchSupplementCount?:number;searchUsed?:boolean;playlistFound?:number;videos:import('./types').YoutubeExistingVideo[]};
+ export type CompetitorCandidate={channelId:string;name:string;url:string;thumbnail?:string;subscribers?:number;views?:number;videos?:number;similarity:number};
+@@ -26,7 +28,8 @@
+   studioDraftsList:()=>invoke<{drafts:StudioDraftBridgeItem[];port:number;running:boolean}>('studio_drafts_list'),
+   studioDraftsClear:()=>invoke<{ok:boolean}>('studio_drafts_clear'),
+   loadState:()=>invoke<AppState>('load_state'),
+-  saveState:(state:AppState)=>invoke<void>('save_state',{state}),
++  saveState:(state:AppState)=>invoke<StateSaveResult>('save_state',{state}),
++  securityKeychainDiagnostics:()=>invoke<KeychainDiagnostic>('security_keychain_diagnostics'),
+   license:()=>invoke<LicenseStatus>('license_status'),
+   activate:(key:string)=>invoke<LicenseStatus>('activate_license',{key}),
+   diagnostics:(workspace:string)=>invoke<Diagnostics>('diagnostics',{workspace}),
+diff -ruN v212src/src/errorCenter.ts v213src/src/errorCenter.ts
+--- v212src/src/errorCenter.ts	2026-09-09 13:56:57.066103381 +0000
++++ v213src/src/errorCenter.ts	2026-09-09 14:37:20.971769681 +0000
+@@ -3,6 +3,11 @@
+ const lower=(e:unknown)=>String(e??'').toLocaleLowerCase('ru-RU');
+ export function humanizeError(error:unknown,context:ErrorContext='generic'):HumanError{
+  const detail=String(error??'Неизвестная ошибка'),s=lower(error);
++ if(s.includes('keychain_auth_failed')||s.includes('osstatus=-25293')||s.includes('osstatus -25293')||s.includes('passphrase you entered is not correct'))return{code:'KEYCHAIN_AUTH_FAILED',title:'macOS не разрешила доступ к Связке ключей',message:'Пароль связки ключей был отклонён или старая запись VYRON недоступна. Проекты и готовые MP4 сохранены. Откройте Настройки → Диагностика → macOS Keychain и запустите проверку.',detail,retryable:true,action:'open-settings'};
++ if(s.includes('keychain_user_canceled')||s.includes('osstatus=-128')||s.includes('osstatus -128'))return{code:'KEYCHAIN_CANCELED',title:'Доступ к Связке ключей отменён',message:'Системный запрос macOS был закрыт или отменён. Локальные проекты сохранены; YouTube OAuth/API-секреты могут быть временно недоступны. Повторите проверку Keychain из Диагностики.',detail,retryable:true,action:'open-settings'};
++ if(s.includes('keychain_interaction_required')||s.includes('osstatus=-25308')||s.includes('osstatus -25308'))return{code:'KEYCHAIN_LOCKED',title:'Связка ключей требует разблокировки',message:'macOS не может сейчас показать или завершить подтверждение Keychain. Разблокируйте связку «Вход» и запустите проверку в Настройки → Диагностика.',detail,retryable:true,action:'open-settings'};
++ if(s.includes('keychain_autosave_paused'))return{code:'KEYCHAIN_AUTOSAVE_PAUSED',title:'Keychain временно приостановлен',message:'После отказа macOS VYRON больше не вызывает системный пароль при каждом autosave. Проекты и очередь продолжают сохраняться. Для восстановления защищённых OAuth/API-секретов запустите Настройки → Диагностика → macOS Keychain.',detail,retryable:true,action:'open-settings'};
++ if(s.includes('keychain_error')||s.includes('keychain read')||s.includes('keychain write')||s.includes('keychain delete'))return{code:'KEYCHAIN',title:'Проблема с macOS Keychain',message:'Локальное состояние VYRON сохранено, но защищённые OAuth/API-секреты требуют проверки. Откройте Настройки → Диагностика → macOS Keychain.',detail,retryable:true,action:'open-settings'};
+  if(s.includes('upload_interrupted')||s.includes('можно продолжить позже'))return{code:'UPLOAD_INTERRUPTED',title:'Загрузка прервана',message:'Прогресс сохранён. Подключение можно восстановить и продолжить видео без повторной загрузки с нуля.',detail,retryable:true,action:'resume-upload'};
+  if(s.inclu
