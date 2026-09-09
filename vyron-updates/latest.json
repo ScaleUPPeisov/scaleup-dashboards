@@ -1,11 +1,11 @@
 {
   "version": "2.0.12",
   "notes": "# VYRON YT PEISOV 2.0.12 — Cleanup Command Hotfix\n\n- Исправлена ошибка `Command cleanup_completed_production_assets not found`.\n- Tauri-команда очистки project assets теперь зарегистрирована в `generate_handler` и доступна из UI.\n- Добавлен regression-тест полной цепочки UI invoke → Rust backend → Tauri command registration.\n- Сохранены два подтверждения перед массовой очисткой.\n- Очистка по-прежнему работает только для Completed-проектов с существующим готовым MP4 и не удаляет `Rendered/*.mp4`.\n- Все функции VYRON 2.0.11 сохранены; обновлена история изменений в Настройки → Обновления.\n\nДо публикации exact candidate прошёл полный macOS Apple Silicon gate.\n",
-  "pub_date": "2026-09-09T14:10:51.978865Z",
+  "pub_date": "2026-09-09T14:22:51.858062Z",
   "platforms": {
     "darwin-aarch64": {
       "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.0.12/VYRON.app.tar.gz",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM1dtSWIvUTdUZWJxL0tCZ2YvOEpURDdoZjNJOVFDeld3dUs1dU9zTTIrZVJpamJ2M2YwUUNjdVFJQU9lRGdlVmZFYndUajJyTlZXZ0RuTk1RVm5YRFFvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4OTYzMDI1CWZpbGU6VllST04uYXBwLnRhci5negozYXNPRmF6cGdZUFZMa1I1cjd0UXpHVmRVSldHV1ROUGQ0T0xUVkJUSG5MNzhMVWYwTnluN3gwQlBrSlNVRmt0emZtV1UxanhWR0pncTRaaDBUdThDQT09Cg=="
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM2VvUUZDQWRBVUVFWVJyTUpnajNCMUgxNlFYQitNL04vNitpT2NUU0tFL25vWThrNCtzMnI0emxNbHZydVpvREpJb0ZFUThPaVhPUVR6b2VYVmRFT2dFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4OTYzNzQ3CWZpbGU6VllST04uYXBwLnRhci5negpwNXB6UW9ldC9rSkQvM1RUbDhWa3VLRDNTb0dZa3FublVmaU5pWjlkamhIbk12RW5QM09NUk13Z1dvL1VDTXdFaTVrdThkRExSVm5ZS3I1OWMrWTdCdz09Cg=="
     }
   }
 }
