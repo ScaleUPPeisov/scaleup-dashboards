@@ -42,7 +42,7 @@ rm -rf "$PATCH_DIR"; mkdir -p "$PATCH_DIR"
 python3 - "$ROOT" <<'PY'
 import base64,pathlib,sys
 root=pathlib.Path(sys.argv[1])/'vyron-v211'
-data=''.join((root/f'payload.a{c}').read_text().strip() for c in 'abcdefgh')
+data=''.join(''.join((root/f'payload.a{c}').read_text().split()) for c in 'abcdefgh')
 pathlib.Path('/tmp/vyron-v211-portable.tgz').write_bytes(base64.b64decode(data,validate=True))
 PY
 GOT_PATCH="$(shasum -a 256 /tmp/vyron-v211-portable.tgz|awk '{print $1}')"
