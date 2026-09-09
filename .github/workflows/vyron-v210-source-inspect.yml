@@ -32,34 +32,15 @@ jobs:
           test -f "$ROOT/package.json"
           test -f "$ROOT/src-tauri/src/youtube.rs"
           echo "ROOT=$ROOT" >> "$GITHUB_ENV"
-          find "$ROOT" -maxdepth 2 -type f | sort | head -200
       - name: Locate YouTube Apply implementation
         shell: bash
         run: |
           set -euo pipefail
-          echo '=== youtube_update_existing_video ==='
           grep -RIn --exclude-dir=node_modules --exclude-dir=target 'youtube_update_existing_video\|youtubeUpdateExisting\|Promise.race\|AbortController\|timeout' "$ROOT/src" "$ROOT/src-tauri/src" || true
-          echo '=== quota/apply references ==='
           grep -RIn --exclude-dir=node_modules --exclude-dir=target 'Apply\|Применить\|quota\|preflight' "$ROOT/src" | grep -Ei 'youtube|existing|metadata|quota|preflight' | head -300 || true
-      - name: Stage exact files for analysis
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p /tmp/vyron-source-inspect/src /tmp/vyron-source-inspect/src-tauri/src /tmp/vyron-source-inspect/tests
-          cp "$ROOT/src-tauri/src/youtube.rs" /tmp/vyron-source-inspect/src-tauri/src/youtube.rs
-          cp "$ROOT/src/api.ts" /tmp/vyron-source-inspect/src/api.ts
-          for f in "$ROOT"/src/*YouTube* "$ROOT"/src/*Youtube* "$ROOT"/src/*Metadata* "$ROOT"/src/*metadata* "$ROOT"/src/*Quota* "$ROOT"/src/*quota* "$ROOT"/src/*Publisher*; do
-            [ -f "$f" ] && cp "$f" /tmp/vyron-source-inspect/src/ || true
-          done
-          for f in "$ROOT"/tests/*youtube* "$ROOT"/tests/*metadata*; do
-            [ -f "$f" ] && cp "$f" /tmp/vyron-source-inspect/tests/ || true
-          done
-          cp "$ROOT/package.json" /tmp/vyron-source-inspect/package.json
-          cp "$ROOT/src-tauri/tauri.conf.json" /tmp/vyron-source-inspect/tauri.conf.json
-          tar -czf /tmp/VYRON-2.0.9-apply-inspect.tar.gz -C /tmp vyron-source-inspect
       - uses: actions/upload-artifact@v4
         with:
-          name: VYRON-2.0.9-apply-inspect
-          path: /tmp/VYRON-2.0.9-apply-inspect.tar.gz
+          name: VYRON-2.0.9-exact-source
+          path: /tmp/vyron210/VYRON-2.0.9-source.tar.gz
           if-no-files-found: error
           retention-days: 3
