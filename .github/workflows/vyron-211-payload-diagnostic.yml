@@ -1,0 +1,24 @@
+name: VYRON 2.0.11 Patch Payload Diagnostic
+
+on:
+  push:
+    branches:
+      - release/vyron-2.0.11
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconstruct payload and print SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat vyron-v211/payload.aa vyron-v211/payload.ab vyron-v211/payload.ac vyron-v211/payload.ad vyron-v211/payload.ae vyron-v211/payload.af vyron-v211/payload.ag vyron-v211/payload.ah | base64 --decode > /tmp/vyron-v211-portable.tgz
+          echo "ACTUAL_PATCH_SHA=$(sha256sum /tmp/vyron-v211-portable.tgz | awk '{print $1}')"
+          tar -tzf /tmp/vyron-v211-portable.tgz
+          echo 'PAYLOAD_ARCHIVE_VALID=1'
