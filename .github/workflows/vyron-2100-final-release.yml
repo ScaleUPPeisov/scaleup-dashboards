@@ -92,12 +92,19 @@ jobs:
           PATCH="$RUNNER_TEMP/v214.patch"
           test -s "$B64"
           GOT_B64="$(shasum -a 256 "$B64"|awk '{print $1}')"
-          echo "payload b64 sha256=$GOT_B64"
+          echo "payload blob sha256=$GOT_B64"
           test "$GOT_B64" = "$B64_SHA"
           python3 - "$B64" "$PATCH" <<'PY'
-          import base64,gzip,pathlib,sys
+          import base64,gzip,pathlib,sys,string
           src=pathlib.Path(sys.argv[1]).read_text()
-          raw=base64.b64decode(''.join(src.split()),validate=True)
+          alphabet=set(string.ascii_letters+string.digits+'+/=')
+          compact=''.join(src.split())
+          filtered=''.join(ch for ch in compact if ch in alphabet)
+          removed=[ch for ch in compact if ch not in alphabet]
+          print(f'payload chars={len(compact)} base64_chars={len(filtered)} removed_non_base64={len(removed)}')
+          if removed:
+              print('removed codepoints=',sorted(set(ord(ch) for ch in removed)))
+          raw=base64.b64decode(filtered,validate=True)
           pathlib.Path(sys.argv[2]).write_bytes(gzip.decompress(raw))
           PY
           GOT_PATCH="$(shasum -a 256 "$PATCH"|awk '{print $1}')"
@@ -198,7 +205,7 @@ jobs:
           cat > release/FINAL_TEST_REPORT.md <<'EOF'
           # VYRON 2.1.0 — FINAL TEST
           - ✅ Exact released 2.0.13 source SHA256
-          - ✅ Original deterministic Recovery Base64 SHA256 + patch SHA256
+          - ✅ Original deterministic Recovery payload blob SHA256 + patch SHA256
           - ✅ Publisher schedule recovery
           - ✅ Existing Videos category / playlist / authoritative backup / verified Undo
           - ✅ Keychain recovery
