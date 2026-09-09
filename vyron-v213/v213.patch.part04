@@ -1,0 +1,83 @@
+...EMPTY_STATE,...s,version:7,channels:(s.channels||[]).map(normalizeChannel),jobs:(s.jobs||[]).map(normalizeJob),competitors:s.competitors||[],settings:{...DEFAULT_SETTINGS,...s.settings,youtubeIntelligenceAutoRefresh:false},logs:s.logs||[],booted:true}),
+   setPage:page=>set({page}),
+-  persist:async()=>{const s=get();const state:AppState={version:7,channels:s.channels,jobs:s.jobs,competitors:s.competitors,settings:s.settings,logs:s.logs};await api.saveState(state)},
++  persist:async()=>{const s=get();const state:AppState={version:7,channels:s.channels,jobs:s.jobs,competitors:s.competitors,settings:s.settings,logs:s.logs};const result=await api.saveState(state);if(result?.securityWarning){const h=humanizeError(result.securityWarning,'storage');notifyWarning(h.title,h.message,{operationId:'keychain-autosave-warning'})}},
+   addChannel:p=>{
+     const id=crypto.randomUUID();const name=(p.name||'Новый канал').trim();const defaultTracks=get().settings.tracksPerVideo||10;
+     const channel:Channel={id,name,slug:slugify(name),cadenceDays:p.cadenceDays||2,targetBufferDays:p.targetBufferDays||60,publishHour:p.publishHour??18,publishMinute:p.publishMinute??0,language:p.language||'RU',genre:p.genre||'Music',country:p.country||'Россия',minTracks:p.minTracks||defaultTracks,targetDurationMin:p.targetDurationMin||get().settings.endlumeTargetDurationMin||120,enabled:p.enabled??true,youtubeProfileId:p.youtubeProfileId,youtubeChannelId:p.youtubeChannelId,seo:p.seo||{titlePatterns:['{topic} • Session {number}','{genre} — {topic} | Mix {number}'],descriptionTemplate:'{title}\n\nНовая подборка в стиле {genre}.',tags:[p.genre||'music','mix','playlist'],banned:[],aiPrompt:''}};
+diff -ruN v212src/src/v213KeychainRecovery.test.ts v213src/src/v213KeychainRecovery.test.ts
+--- v212src/src/v213KeychainRecovery.test.ts	1970-01-01 00:00:00.000000000 +0000
++++ v213src/src/v213KeychainRecovery.test.ts	2026-09-09 14:37:20.971826906 +0000
+@@ -0,0 +1,39 @@
++import {describe,it,expect} from 'vitest';
++import {readFileSync} from 'node:fs';
++import {humanizeError} from './errorCenter';
++const read=(p:string)=>readFileSync(decodeURIComponent(new URL(p,import.meta.url).pathname),'utf8');
++
++describe('VYRON 2.0.13 Keychain recovery contracts',()=>{
++ it('maps Keychain authentication failures to an actionable error',()=>{
++  const h=humanizeError('KEYCHAIN_AUTH_FAILED: osstatus=-25293','storage');
++  expect(h.code).toBe('KEYCHAIN_AUTH_FAILED');
++  expect(h.title).toContain('Связке ключей');
++  expect(h.message).toContain('Настройки → Диагностика');
++ });
++ it('maps canceled and interaction-required Keychain states separately',()=>{
++  expect(humanizeError('KEYCHAIN_USER_CANCELED: osstatus=-128','storage').code).toBe('KEYCHAIN_CANCELED');
++  expect(humanizeError('KEYCHAIN_INTERACTION_REQUIRED: osstatus=-25308','storage').code).toBe('KEYCHAIN_LOCKED');
++ });
++ it('connects Diagnostics UI to a registered Tauri Keychain probe',()=>{
++  const api=read('./api.ts'),ui=read('./SettingsOS.tsx'),rust=read('../src-tauri/src/security.rs'),lib=read('../src-tauri/src/lib.rs');
++  expect(api).toContain("invoke<KeychainDiagnostic>('security_keychain_diagnostics')");
++  expect(ui).toContain('runKeychainDiagnostics');
++  expect(ui).toContain('Проверить Keychain');
++  expect(rust).toContain('pub fn security_keychain_diagnostics');
++  const start=lib.indexOf('tauri::generate_handler!['),end=lib.indexOf('])',start),handler=lib.slice(start,end);
++  expect(handler).toContain('security::security_keychain_diagnostics');
++  expect((handler.match(/security::security_keychain_diagnostics/g)||[]).length).toBe(1);
++ });
++ it('keeps state autosave non-secret and best-effort when Keychain is unavailable',()=>{
++  const storage=read('../src-tauri/src/storage.rs'),store=read('./store.ts');
++  expect(storage).toContain('secure_state_for_disk_best_effort');
++  expect(storage).toContain('securityWarning');
++  expect(storage).toContain('set_secret_for_autosave');
++  expect(storage).toContain('sanitized_state_for_disk');
++  expect(store).toContain("operationId:'keychain-autosave-warning'");
++  expect(store).toContain('notifyWarning');
++  const security=read('../src-tauri/src/security.rs');
++  expect(security).toContain('KEYCHAIN_ACCESS_BLOCKED');
++  expect(security).toContain('KEYCHAIN_AUTOSAVE_PAUSED');
++ });
++});
+diff -ruN v212src/src-tauri/Cargo.lock v213src/src-tauri/Cargo.lock
+--- v212src/src-tauri/Cargo.lock	2026-09-09 13:56:57.558282008 +0000
++++ v213src/src-tauri/Cargo.lock	2026-09-09 14:33:47.396009081 +0000
+@@ -481,7 +481,7 @@
+ 
+ [[package]]
+ name = "channelflow"
+-version = "2.0.12"
++version = "2.0.13"
+ dependencies = [
+  "base64 0.22.1",
+  "chrono",
+diff -ruN v212src/src-tauri/Cargo.toml v213src/src-tauri/Cargo.toml
+--- v212src/src-tauri/Cargo.toml	2026-09-09 13:56:57.558089684 +0000
++++ v213src/src-tauri/Cargo.toml	2026-09-09 14:33:47.395872649 +0000
+@@ -1,6 +1,6 @@
+ [package]
+ name = "channelflow"
+-version = "2.0.12"
++version = "2.0.13"
+ description = "VYRON Content Operating System"
+ authors = ["VYRON"]
+ edition = "2021"
+diff -ruN v212src/src-tauri/src/lib.rs v213src/src-tauri/src/lib.rs
+--- v212src/src-tauri/src/lib.rs	2026-09-09 13:56:57.556315181 +0000
++++ v213src/src-tauri/src/lib.rs	2026-09-09 14:33:47.395069833 +0000
+@@ -22,7 +22,7 @@
+         .plugin(tauri_plugin_notification::init())
+         .invoke_handler(tauri::generate_handler![studio_drafts::studio_drafts_start_bridge,studio_drafts::studio_drafts_list,studio_drafts::studio_drafts_clear,updater_bridge::prepare_updater_tempdir,
+             license::license_status,license::activate_license,
+-            storage::load_state,storage::save_state,
++            storage::load_state,storage::save_state,security::security_keychain_diagnostics,
+             files::import_images,files::add_tracks,files::refresh_job,files::prepare_job_folder,files::ensure_channel_inbox,files::scan_channel_inbox,files::ingest_tracks,fil
