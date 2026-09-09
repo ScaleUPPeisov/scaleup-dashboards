@@ -48,7 +48,6 @@ jobs:
           SOURCE_SHA='d9f6345b597d41018b9a439c3eda2558e33936c6b605ac2b8052955b4e088717'
           V214_SHA='84456d5e9c982057805078d0604cf90654d893d8'
           SHORTS_SHA='549ac4175c7745092509010ce928110958870ccc'
-          B64_SHA='70fc11cb5deaff78251749ec6b2b1e726c2bb1e815a878675c3ccc9359a30390'
           PATCH_SHA='80c951a30d8822b654ce9bb0b58a3068ab9260cc29fbd31d91b26a2d1739654a'
 
           echo '==> Normalize Tauri signing material'
@@ -89,7 +88,6 @@ jobs:
           B64="$RUNNER_TEMP/v214.patch.gz.b64"
           PATCH="$RUNNER_TEMP/v214.patch"
           cat "$ROOT/vyron-v214/parts"/part*.txt > "$B64"
-          test "$(shasum -a 256 "$B64"|awk '{print $1}')" = "$B64_SHA"
           python3 - "$B64" "$PATCH" <<'PY'
           import base64,gzip,pathlib,sys
           text=pathlib.Path(sys.argv[1]).read_text()
