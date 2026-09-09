@@ -47,7 +47,7 @@ pathlib.Path('/tmp/vyron-v211-portable.tgz').write_bytes(base64.b64decode(data,v
 PY
 GOT_PATCH="$(shasum -a 256 /tmp/vyron-v211-portable.tgz|awk '{print $1}')"
 test "$GOT_PATCH" = "$PATCH_SHA"
-tar -xzf /tmp/vyron-v211-portable.tgz -C "$PATCH_DIR"
+tar -xzf /tmp/vyron-v211-portable.tgz -C "$PATCH_DIR" --strip-components=1
 for n in {1..8}; do test -f "$PATCH_DIR/step${n}_"*.py; done
 pass "Patch SHA256 $PATCH_SHA"
 
