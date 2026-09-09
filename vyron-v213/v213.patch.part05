@@ -1,0 +1,90 @@
+es::ingest_cover,files::write_job_metadata,files::enqueue_render,files::reveal_path,files::open_endlume,local_delete::trash_local_file,
+             system::diagnostics,system::default_workspace,
+             youtube::youtube_channel_stats,youtube::youtube_oauth_browsers,youtube_intelligence::youtube_channel_analytics,youtube_intelligence::youtube_competitor_snapshot,youtube_intelligence::youtube_discover_competitors,youtube::youtube_oauth_profiles,youtube::youtube_google_config_status,youtube::youtube_google_config_import,youtube::youtube_oauth_connect_global,youtube::youtube_oauth_profile_health,youtube::youtube_cache_thumbnail,youtube::youtube_oauth_connect,youtube::youtube_oauth_disconnect,youtube::youtube_upload_video,youtube::youtube_resume_upload,youtube::youtube_upload_sessions,youtube::youtube_cancel_upload_session,youtube::youtube_set_thumbnail,youtube::youtube_file_fingerprint,youtube::youtube_list_existing_videos,youtube::youtube_backup_existing_videos,youtube::youtube_update_existing_video,youtube::youtube_list_playlists,youtube::youtube_playlist_membership,
+diff -ruN v212src/src-tauri/src/security.rs v213src/src-tauri/src/security.rs
+--- v212src/src-tauri/src/security.rs	2026-09-09 13:56:57.064510827 +0000
++++ v213src/src-tauri/src/security.rs	2026-09-09 14:38:12.706976848 +0000
+@@ -1,14 +1,34 @@
+-use std::{fs,path::Path};
++use std::{fs,path::Path,sync::atomic::{AtomicBool,Ordering}};
+ 
+ const SERVICE:&str="com.scaleup.vyron.security";
+ const ITEM_NOT_FOUND:i32=-25300;
++const AUTH_FAILED:i32=-25293;
++const INTERACTION_NOT_ALLOWED:i32=-25308;
++const USER_CANCELED:i32=-128;
++static KEYCHAIN_ACCESS_BLOCKED:AtomicBool=AtomicBool::new(false);
++
++fn keychain_error(kind:&str,account:&str,code:i32,detail:&str)->String{
++ if matches!(code,AUTH_FAILED|INTERACTION_NOT_ALLOWED|USER_CANCELED){KEYCHAIN_ACCESS_BLOCKED.store(true,Ordering::SeqCst);}
++ match code{
++  AUTH_FAILED=>format!("KEYCHAIN_AUTH_FAILED: macOS Keychain отклонил пароль или доступ к записи VYRON. operation={kind}; account={account}; osstatus={code}; detail={detail}"),
++  INTERACTION_NOT_ALLOWED=>format!("KEYCHAIN_INTERACTION_REQUIRED: macOS Keychain требует подтверждение пользователя, но диалог сейчас недоступен. operation={kind}; account={account}; osstatus={code}; detail={detail}"),
++  USER_CANCELED=>format!("KEYCHAIN_USER_CANCELED: запрос доступа к macOS Keychain был отменён. operation={kind}; account={account}; osstatus={code}; detail={detail}"),
++  _=>format!("KEYCHAIN_ERROR: Keychain {kind} {account}: {detail} (OSStatus {code})"),
++ }
++}
+ 
+ #[cfg(target_os="macos")]
+ pub fn set_secret(account:&str,value:&str)->Result<(),String>{
+  use security_framework::passwords::{delete_generic_password,set_generic_password};
+  if value.is_empty(){
+-  match delete_generic_password(SERVICE,account){Ok(())=>Ok(()),Err(e) if e.code()==ITEM_NOT_FOUND=>Ok(()),Err(e)=>Err(format!("Keychain delete {account}: {e}"))}
+- }else{set_generic_password(SERVICE,account,value.as_bytes()).map_err(|e|format!("Keychain write {account}: {e}"))}
++  match delete_generic_password(SERVICE,account){
++   Ok(())=>Ok(()),
++   Err(e) if e.code()==ITEM_NOT_FOUND=>Ok(()),
++   Err(e)=>Err(keychain_error("delete",account,e.code(),&e.to_string())),
++  }
++ }else{
++  set_generic_password(SERVICE,account,value.as_bytes()).map_err(|e|keychain_error("write",account,e.code(),&e.to_string()))
++ }
+ }
+ #[cfg(not(target_os="macos"))]
+ pub fn set_secret(_account:&str,_value:&str)->Result<(),String>{Err("VYRON secure storage requires macOS Keychain".into())}
+@@ -17,9 +37,9 @@
+ pub fn get_secret(account:&str)->Result<Option<String>,String>{
+  use security_framework::passwords::get_generic_password;
+  match get_generic_password(SERVICE,account){
+-  Ok(v)=>String::from_utf8(v).map(Some).map_err(|_|format!("Keychain value {account} is not UTF-8")),
++  Ok(v)=>String::from_utf8(v).map(Some).map_err(|_|format!("KEYCHAIN_ERROR: Keychain value {account} is not UTF-8")),
+   Err(e) if e.code()==ITEM_NOT_FOUND=>Ok(None),
+-  Err(e)=>Err(format!("Keychain read {account}: {e}")),
++  Err(e)=>Err(keychain_error("read",account,e.code(),&e.to_string())),
+  }
+ }
+ #[cfg(not(target_os="macos"))]
+@@ -27,6 +47,27 @@
+ 
+ pub fn delete_secret(account:&str)->Result<(),String>{set_secret(account,"")}
+ 
++pub fn set_secret_for_autosave(account:&str,value:&str)->Result<(),String>{
++ if KEYCHAIN_ACCESS_BLOCKED.load(Ordering::SeqCst){return Err("KEYCHAIN_AUTOSAVE_PAUSED: защищённое хранилище временно приостановлено после отказа macOS Keychain; локальное состояние сохраняется без повторного системного запроса".into())}
++ set_secret(account,value)
++}
++
++#[tauri::command]
++pub fn security_keychain_diagnostics()->Result<serde_json::Value,String>{
++ KEYCHAIN_ACCESS_BLOCKED.store(false,Ordering::SeqCst);
++ #[cfg(target_os="macos")]{
++  use std::time::{SystemTime,UNIX_EPOCH};
++  let account=format!("diagnostic.{}.{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos());
++  let secret="vyron-keychain-diagnostic";
++  set_secret(&account,secret)?;
++  let read=get_secret(&account)?;
++  let _=delete_secret(&account);
++  if read.as_deref()!=Some(secret){return Err("KEYCHAIN_ERROR: диагностическая запись прочитана некорректно".into())}
++  return Ok(serde_json::json!({"ok":true,"status":"KEYCHAIN_OK","service":SERVICE}));
++ }
++ #[cfg(not(target_os="macos"))]{Ok(serde_json::json!({"ok":false,"status":"UNSUPPORTED"}))}
++}
++
+ pub fn private_permissions(path:&Path)->Result<(),String>{
+  #[cfg(unix)]{
+   use std::os::unix::fs::PermissionsExt;
+@@ -47,6 +88,19 @@
+ mod tests{
+  use super::*;
+  #[test]
++ fn keychain_errors_are_actionable(){
++  assert!(keychain_error("read","x",AUTH_FAILED,"bad").starts_with("KEYCHAIN_AUTH_FAILED:")
