@@ -49,7 +49,7 @@ jobs:
           V214_SHA='84456d5e9c982057805078d0604cf90654d893d8'
           V214_PAYLOAD_SHA='e917c0c26ea9701e141948a83e05f4733268190d'
           SHORTS_SHA='549ac4175c7745092509010ce928110958870ccc'
-          B64_SHA='70fc11cb5deaff78251749ec6b2b1e726c2bb1e815a878675c3ccc9359a30390'
+          B64_SHA='57dd14ab8422aaf545c7d61b2e4fa4f15ab3340a2055675cbd3d50d3afbdbc5c'
           PATCH_SHA='80c951a30d8822b654ce9bb0b58a3068ab9260cc29fbd31d91b26a2d1739654a'
 
           echo '==> Normalize Tauri signing material'
@@ -177,7 +177,6 @@ jobs:
           test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = '2.1.0'
           codesign --verify --deep --strict --verbose=2 "$APP"
           hdiutil verify "$DMG"
-
           echo '==> Package exact tested candidate'
           rm -rf release; mkdir release
           cp "$DMG" release/VYRON-2.1.0-macOS-AppleSilicon.dmg
