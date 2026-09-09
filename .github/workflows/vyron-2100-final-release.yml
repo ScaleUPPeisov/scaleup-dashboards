@@ -48,6 +48,7 @@ jobs:
           SOURCE_SHA='d9f6345b597d41018b9a439c3eda2558e33936c6b605ac2b8052955b4e088717'
           V214_SHA='84456d5e9c982057805078d0604cf90654d893d8'
           SHORTS_SHA='549ac4175c7745092509010ce928110958870ccc'
+          B64_SHA='70fc11cb5deaff78251749ec6b2b1e726c2bb1e815a878675c3ccc9359a30390'
           PATCH_SHA='80c951a30d8822b654ce9bb0b58a3068ab9260cc29fbd31d91b26a2d1739654a'
 
           echo '==> Normalize Tauri signing material'
@@ -84,23 +85,43 @@ jobs:
           tar -xzf "$BASE/VYRON-2.0.13-source.tar.gz" -C "$WORK"
           test "$(node -p "require('$WORK/package.json').version")" = '2.0.13'
 
-          echo '==> Reconstruct, decode and verify canonical YouTube Publish Recovery patch'
+          echo '==> Reconstruct and cryptographically verify canonical YouTube Publish Recovery patch'
           PATCH="$RUNNER_TEMP/v214.patch"
-          python3 - "$ROOT/vyron-v214/parts" "$PATCH" <<'PY'
+          python3 - "$ROOT/vyron-v214/parts" "$PATCH" "$B64_SHA" "$PATCH_SHA" <<'PY'
           import base64,gzip,hashlib,pathlib,sys
           parts=sorted(pathlib.Path(sys.argv[1]).glob('part*.txt'))
-          if not parts:
-              raise SystemExit('no v214 payload parts found')
-          raw_chunks=[]
-          for p in parts:
-              text=''.join(p.read_text().split())
-              chunk=base64.b64decode(text,validate=True)
-              print(f'{p.name}: base64={len(text)} decoded={len(chunk)}')
-              raw_chunks.append(chunk)
-          raw=b''.join(raw_chunks)
+          out=pathlib.Path(sys.argv[2]); expected_b64=sys.argv[3]; expected_patch=sys.argv[4]
+          if len(parts)!=7: raise SystemExit(f'expected 7 payload parts, got {len(parts)}')
+          texts=[''.join(p.read_text().split()) for p in parts]
+          print('payload lengths:', [len(t) for t in texts])
+          joined=''.join(texts)
+          current=hashlib.sha256(joined.encode()).hexdigest()
+          print('current joined b64 sha256=',current)
+          if current != expected_b64:
+              # The archived v214 payload has one known overlong shard (part03: 4690 chars).
+              # Recover only a candidate that exactly matches the canonical B64 SHA from release_build_v214.sh.
+              idx=3
+              target_len=4000
+              extra=len(texts[idx])-target_len
+              if extra <= 0: raise SystemExit('canonical b64 mismatch and no overlong part03 to repair')
+              found=None
+              for pos in range(len(texts[idx])-extra+1):
+                  repaired=texts[idx][:pos]+texts[idx][pos+extra:]
+                  candidate=''.join(texts[:idx]+[repaired]+texts[idx+1:])
+                  if hashlib.sha256(candidate.encode()).hexdigest()==expected_b64:
+                      found=(pos,candidate)
+                      break
+              if found is None:
+                  raise SystemExit(f'could not reconstruct canonical B64 SHA; part03 extra={extra}')
+              print(f'canonical B64 recovered by removing {extra} chars from part03 at offset {found[0]}')
+              joined=found[1]
+          assert hashlib.sha256(joined.encode()).hexdigest()==expected_b64
+          raw=base64.b64decode(joined,validate=True)
           patch=gzip.decompress(raw)
-          print('reconstructed patch sha256=',hashlib.sha256(patch).hexdigest())
-          pathlib.Path(sys.argv[2]).write_bytes(patch)
+          patch_sha=hashlib.sha256(patch).hexdigest()
+          print('reconstructed patch sha256=',patch_sha)
+          if patch_sha!=expected_patch: raise SystemExit('canonical patch SHA mismatch')
+          out.write_bytes(patch)
           PY
           test "$(shasum -a 256 "$PATCH"|awk '{print $1}')" = "$PATCH_SHA"
           cd "$WORK"
@@ -199,7 +220,7 @@ jobs:
           cat > release/FINAL_TEST_REPORT.md <<'EOF'
           # VYRON 2.1.0 — FINAL TEST
           - ✅ Exact released 2.0.13 source SHA256
-          - ✅ Recovery patch SHA256
+          - ✅ Recovery Base64 SHA256 + patch SHA256
           - ✅ Publisher schedule recovery
           - ✅ Existing Videos category / playlist / authoritative backup / verified Undo
           - ✅ Keychain recovery
