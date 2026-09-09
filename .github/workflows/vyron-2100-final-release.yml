@@ -85,14 +85,22 @@ jobs:
           test "$(node -p "require('$WORK/package.json').version")" = '2.0.13'
 
           echo '==> Reconstruct, decode and verify canonical YouTube Publish Recovery patch'
-          B64="$RUNNER_TEMP/v214.patch.gz.b64"
           PATCH="$RUNNER_TEMP/v214.patch"
-          cat "$ROOT/vyron-v214/parts"/part*.txt > "$B64"
-          python3 - "$B64" "$PATCH" <<'PY'
-          import base64,gzip,pathlib,sys
-          text=pathlib.Path(sys.argv[1]).read_text()
-          raw=base64.b64decode(''.join(text.split()),validate=True)
-          pathlib.Path(sys.argv[2]).write_bytes(gzip.decompress(raw))
+          python3 - "$ROOT/vyron-v214/parts" "$PATCH" <<'PY'
+          import base64,gzip,hashlib,pathlib,sys
+          parts=sorted(pathlib.Path(sys.argv[1]).glob('part*.txt'))
+          if not parts:
+              raise SystemExit('no v214 payload parts found')
+          raw_chunks=[]
+          for p in parts:
+              text=''.join(p.read_text().split())
+              chunk=base64.b64decode(text,validate=True)
+              print(f'{p.name}: base64={len(text)} decoded={len(chunk)}')
+              raw_chunks.append(chunk)
+          raw=b''.join(raw_chunks)
+          patch=gzip.decompress(raw)
+          print('reconstructed patch sha256=',hashlib.sha256(patch).hexdigest())
+          pathlib.Path(sys.argv[2]).write_bytes(patch)
           PY
           test "$(shasum -a 256 "$PATCH"|awk '{print $1}')" = "$PATCH_SHA"
           cd "$WORK"
