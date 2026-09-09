@@ -1,0 +1,199 @@
+name: VYRON 2.0.11 Final Test + Production Release
+
+on:
+  push:
+    branches:
+      - release/vyron-2.0.11
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vyron-211-production-release
+  cancel-in-progress: true
+
+jobs:
+  final-test:
+    name: Final Test — macOS Apple Silicon
+    runs-on: macos-14
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: '-'
+    steps:
+      - name: Checkout exact release commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run complete VYRON 2.0.11 gate
+        id: gate
+        continue-on-error: true
+        shell: bash
+        run: bash vyron-v211/release_build_v211.sh
+
+      - name: Final green/red summary
+        if: always()
+        shell: bash
+        run: |
+          if [ '${{ steps.gate.outcome }}' = 'success' ]; then
+            {
+              echo '# VYRON 2.0.11 FINAL TEST ✅'
+              echo
+              echo '| Проверка | Результат |'
+              echo '|---|---|'
+              echo '| Exact source + patch SHA | ✅ |'
+              echo '| Publisher schedule file/daily/2-2/3-1 + time | ✅ |'
+              echo '| Publisher metadata + upload quota + recovery | ✅ |'
+              echo '| Project asset cleanup + MP4 preservation | ✅ |'
+              echo '| Error Center + dated Updates history | ✅ |'
+              echo '| Category + playlist + backup + Undo | ✅ |'
+              echo '| Quota plan/fact/delta | ✅ |'
+              echo '| Frontend tests/build | ✅ |'
+              echo '| Rust tests + ARM64 check | ✅ |'
+              echo '| Tauri Apple Silicon + codesign + DMG | ✅ |'
+              echo '| Updater package/signature | ✅ |'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo '# VYRON 2.0.11 FINAL TEST ❌'
+              echo
+              echo 'Критический gate не пройден. Production release заблокирован.'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Block release on red test
+        if: steps.gate.outcome != 'success'
+        run: exit 1
+
+      - name: Upload exact tested candidate
+        if: steps.gate.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-2.0.11-final-candidate
+          path: .vyron-v211-release/release/
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Publish VYRON 2.0.11
+    needs: final-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ScaleUPPeisov/scaleup-dashboards
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@v4
+
+      - name: Download exact green candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: VYRON-2.0.11-final-candidate
+          path: release
+
+      - name: Verify release files and create updater manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in VYRON-2.0.11-macOS-AppleSilicon.dmg VYRON.app.tar.gz VYRON.app.tar.gz.sig VYRON-2.0.11-source.tar.gz SHA256.txt UPDATER_SHA256.txt SOURCE_SHA256.txt FINAL_TEST_REPORT.md; do test -s "release/$f"; done
+          cat > release/RELEASE_NOTES.md <<'EOF'
+          # VYRON YT PEISOV 2.0.11 — Production Completion
+
+          ## Publisher
+          - Исправлен выбор расписания: «Из файла», «Каждый день», «2/2», «3/1», отдельное время и preview дат.
+          - DATE + PUBLISH TIME корректно объединяются в publishAt.
+          - Перед videos.insert заново берутся title, description, tags и publishAt нужного VIDEO_XXX.
+          - Resumable upload использует 32 MiB chunks; новая сессия не делает лишний стартовый status-probe; recovery сохранён.
+          - Quota показывает стоимость партии, plan/fact/delta, Video Uploads и сколько роликов ещё доступно сегодня.
+
+          ## Production / UX
+          - Добавлена безопасная очистка project assets с двумя подтверждениями: удаляются только копии image/music завершённых проектов, готовые MP4 сохраняются.
+          - Ошибки справа сверху кликабельны и открывают Error Center с реальной историей.
+          - Настройки → Обновления показывают историю изменений по датам для 2.0.9, 2.0.10 и 2.0.11.
+
+          ## Existing Videos
+          - Добавлено изменение Category ID.
+          - Добавлены playlist add/remove с pre-read и обязательной post-write проверкой.
+          - Backup берётся owner-authorized videos.list непосредственно перед write.
+          - Undo проверяется YouTube и не запускает скрытый общий sync.
+          - Показаны quota План / Факт / Разница / Осталось.
+          - Verified Apply и account isolation из 2.0.10 сохранены.
+
+          Полный macOS Apple Silicon final gate прошёл до публикации этого точного candidate.
+          EOF
+          python3 - <<'PY'
+          import json,datetime,pathlib
+          rel=pathlib.Path('release')
+          notes=(rel/'RELEASE_NOTES.md').read_text()
+          sig=(rel/'VYRON.app.tar.gz.sig').read_text().strip()
+          x={
+            'version':'2.0.11',
+            'notes':notes,
+            'pub_date':datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00','Z'),
+            'platforms':{'darwin-aarch64':{
+              'url':'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.0.11/VYRON.app.tar.gz',
+              'signature':sig,
+            }},
+          }
+          (rel/'latest.json').write_text(json.dumps(x,ensure_ascii=False,indent=2)+'\n')
+          PY
+          test "$(python3 -c "import json;print(json.load(open('release/latest.json'))['version'])")" = '2.0.11'
+
+      - name: Publish exact tested GitHub Release
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view v2.0.11 --repo "$REPO" >/dev/null 2>&1; then
+            gh release edit v2.0.11 --repo "$REPO" --title 'VYRON YT PEISOV 2.0.11 — Production Completion' --notes-file release/RELEASE_NOTES.md --draft=false --prerelease=false
+          else
+            gh release create v2.0.11 --repo "$REPO" --target "$GITHUB_SHA" --title 'VYRON YT PEISOV 2.0.11 — Production Completion' --notes-file release/RELEASE_NOTES.md
+          fi
+          gh release upload v2.0.11 --repo "$REPO" --clobber \
+            release/VYRON-2.0.11-macOS-AppleSilicon.dmg \
+            release/VYRON.app.tar.gz \
+            release/VYRON.app.tar.gz.sig \
+            release/VYRON-2.0.11-source.tar.gz \
+            release/SHA256.txt release/UPDATER_SHA256.txt release/SOURCE_SHA256.txt \
+            release/FINAL_TEST_REPORT.md release/RELEASE_NOTES.md release/latest.json
+
+      - name: Activate updater 2.0.10 → 2.0.11
+        shell: bash
+        run: |
+          set -euo pipefail
+          CURRENT=$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | base64 --decode)
+          CURRENT_VERSION=$(printf '%s' "$CURRENT" | python3 -c 'import sys,json;print(json.load(sys.stdin)["version"])')
+          test "$CURRENT_VERSION" = '2.0.10' -o "$CURRENT_VERSION" = '2.0.11'
+          OLD_SHA=$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .sha)
+          CONTENT=$(base64 -w0 release/latest.json)
+          gh api --method PUT "repos/$REPO/contents/vyron-updates/latest.json" \
+            -f message='VYRON updater: 2.0.11' -f content="$CONTENT" -f sha="$OLD_SHA" -f branch=main >/dev/null
+
+      - name: Verify public production release
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh release view v2.0.11 --repo "$REPO" --json isDraft,isPrerelease --jq '.isDraft|tostring')" = 'false'
+          test "$(gh release view v2.0.11 --repo "$REPO" --json isPrerelease --jq '.isPrerelease|tostring')" = 'false'
+          ASSETS=$(gh release view v2.0.11 --repo "$REPO" --json assets --jq '.assets[].name')
+          for f in VYRON-2.0.11-macOS-AppleSilicon.dmg VYRON.app.tar.gz VYRON.app.tar.gz.sig VYRON-2.0.11-source.tar.gz latest.json FINAL_TEST_REPORT.md; do grep -qx "$f" <<<"$ASSETS"; done
+          LIVE=$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | base64 --decode)
+          test "$(printf '%s' "$LIVE" | python3 -c 'import sys,json;print(json.load(sys.stdin)["version"])')" = '2.0.11'
+          echo 'VYRON 2.0.11 PRODUCTION RELEASE: PASS'
+          {
+            echo '# Production Release ✅'
+            echo
+            echo '- ✅ GitHub Release v2.0.11 published'
+            echo '- ✅ DMG / updater / signature / source published'
+            echo '- ✅ updater feed main: 2.0.11'
+          } >> "$GITHUB_STEP_SUMMARY"
