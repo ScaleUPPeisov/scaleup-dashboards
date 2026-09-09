@@ -69,6 +69,16 @@ p=Path(sys.argv[1]); s=p.read_text()
 s=s.replace("readFileSync(new URL(p,import.meta.url),'utf8')", "readFileSync(decodeURIComponent(new URL(p,import.meta.url).pathname),'utf8')")
 p.write_text(s)
 PY2
+python3 - "$WORK/src-tauri/src/production_manager.rs" <<'PY2'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); s=p.read_text()
+old='if m.projects.is_empty(){atomic_json(&mp,&m)?;atomic_json(&status_path,&st)?;return Ok(DeleteResult{deleted_project_ids,deleted_job_ids,batch:None})}'
+new='if m.projects.is_empty(){fs::remove_dir_all(&broot).map_err(|e|format!("Не удалось удалить batch: {e}"))?;return Ok(DeleteResult{deleted_project_ids,deleted_job_ids,batch:None})}'
+if old not in s: raise SystemExit('delete-all regression restore anchor missing')
+s=s.replace(old,new,1)
+p.write_text(s)
+PY2
 cd "$WORK"
 
 say 'Static requested-feature and regression contracts'
@@ -97,7 +107,7 @@ undo=ex[ex.index('async function undo()'):ex.index(' const displayDate=')]; asse
 prod=(r/'src/ProductionManager.tsx').read_text(); rustprod=(r/'src-tauri/src/production_manager.rs').read_text()
 assert prod.count('window.confirm(')>=2 and 'УДАЛИТЬ ВСЕ PROJECT ASSETS' in prod
 assert 'cleanup_completed_production_assets' in rustprod and 'render_status!="Completed"' in rustprod and 'output_path.is_file()' in rustprod
-assert 'fs::remove_dir_all(&broot)' not in rustprod
+cleanup_block=rustprod[rustprod.index('fn cleanup_completed_assets'):rustprod.index('pub fn delete_production_batch_projects')]; assert 'remove_dir_all' not in cleanup_block
 app=(r/'src/App.tsx').read_text(); settings=(r/'src/SettingsOS.tsx').read_text(); history=(r/'src/releaseHistory.ts').read_text()
 assert 'setErrorsOpen(true)' in app and 'Ошибки VYRON' in app
 assert 'Что менялось по дням' in settings
