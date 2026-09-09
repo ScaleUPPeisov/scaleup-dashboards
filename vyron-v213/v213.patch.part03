@@ -1,0 +1,37 @@
+des('upload_session_expired')||s.includes('resumable session истек'))return{code:'UPLOAD_SESSION_EXPIRED',title:'Сессия YouTube истекла',message:'Старая resumable-сессия больше недействительна. Проверьте канал перед новым запуском, чтобы исключить дубль.',detail,retryable:false,action:'check-file'};
+  if(s.includes('upload_file_changed'))return{code:'UPLOAD_FILE_CHANGED',title:'Видео изменилось после начала загрузки',message:'Размер исходного файла изменился. Продолжение старой сессии заблокировано для защиты от повреждения.',detail,retryable:false,action:'check-file'};
+diff -ruN v212src/src/releaseHistory.ts v213src/src/releaseHistory.ts
+--- v212src/src/releaseHistory.ts	2026-09-09 13:56:57.558421695 +0000
++++ v213src/src/releaseHistory.ts	2026-09-09 14:33:47.395577433 +0000
+@@ -1,5 +1,6 @@
+ export type ReleaseHistoryEntry={date:string;version:string;title:string;items:string[]};
+ export const VYRON_RELEASE_HISTORY:ReleaseHistoryEntry[]=[
++ {date:'09.09.2026',version:'2.0.13',title:'Keychain Recovery & Storage Resilience',items:['Ошибки macOS Keychain больше не превращаются в безликое «VYRON сохранил текущее состояние»: показывается конкретно отказ пароля, отмена или необходимость разблокировки.','Autosave локальных проектов/очереди больше не блокируется из-за недоступного Keychain; секреты по-прежнему не записываются в state.json.','Настройки → Диагностика получили отдельную проверку macOS Keychain через временную тестовую запись.','Добавлены regression-тесты Keychain error mapping, Tauri registration и безопасного state persistence.']},
+  {date:'09.09.2026',version:'2.0.12',title:'Hotfix очистки project assets',items:['Исправлена регистрация Tauri-команды cleanup_completed_production_assets: кнопка очистки project assets теперь вызывает реальный backend вместо ошибки «Command not found».','Добавлен regression-тест цепочки UI invoke → Rust command → tauri::generate_handler registration.','Безопасная очистка сохранена: удаляются только image/music завершённых проектов с существующим готовым MP4; Rendered/*.mp4 не удаляются.']},
+  {date:'09.09.2026',version:'2.0.11',title:'Production, Publisher и YouTube controls',items:['Publisher: явные режимы «Из файла / Каждый день / 2/2 / 3/1» и время публикации с preview дат.','Publisher: metadata-файл является источником title, description, tags и publishAt непосредственно перед videos.insert.','Publisher: ускорен resumable upload без лишнего стартового probe; увеличен безопасный размер chunk.','Production: двойное подтверждение очистки всех завершённых project assets; готовые MP4 не удаляются.','Topbar: кликабельный центр ошибок с историей.','YouTube quota: стоимость партии, plan/fact/delta и сколько uploads доступно сегодня.','Existing Videos: category, playlist, authoritative backup и verified Undo без скрытого sync.']},
+  {date:'09.09.2026',version:'2.0.10',title:'Verified YouTube Apply',items:['После каждого videos.update выполняется обязательный owner-authorized videos.list.','Успех только после проверки title, description, tags, publishAt и privacyStatus.','Quota preflight учитывает обязательную verification read; скрытый fallback update удалён.']},
+diff -ruN v212src/src/store.ts v213src/src/store.ts
+--- v212src/src/store.ts	2026-09-09 13:56:57.067239359 +0000
++++ v213src/src/store.ts	2026-09-09 14:33:47.395348915 +0000
+@@ -2,7 +2,8 @@
+ import { api } from './api';
+ import type { AppState, Channel, Competitor, Page, Settings, VideoJob } from './types';
+ import { generateMetadata, slugify } from './core';
+-import {notifyLegacy} from './notificationCenter';
++import {notifyError,notifyLegacy,notifyWarning} from './notificationCenter';
++import {humanizeError} from './errorCenter';
+ import {redactSensitive} from './securityRedaction';
+ 
+ export const DEFAULT_SETTINGS:Settings={
+@@ -27,7 +28,7 @@
+ };
+ 
+ let saveTimer:number|undefined;
+-function scheduleSave(){window.clearTimeout(saveTimer);saveTimer=window.setTimeout(()=>{void useApp.getState().persist()},180)}
++function scheduleSave(){window.clearTimeout(saveTimer);saveTimer=window.setTimeout(()=>{void useApp.getState().persist().catch(e=>{const h=humanizeError(e,'storage');notifyError(h.title,h.message,{operationId:'state-save-failed'})})},180)}
+ function normalizeJob(j:VideoJob):VideoJob{return {...j,tags:Array.isArray(j.tags)?j.tags:[],metadataSource:j.metadataSource||'template',uploadProgress:j.uploadProgress||0}}
+ function normalizeChannel(c:Channel):Channel{return {...c,minTracks:c.minTracks||10,targetBufferDays:c.targetBufferDays||60,cadenceDays:c.cadenceDays||4,seo:{titlePatterns:c.seo?.titlePatterns?.length?c.seo.titlePatterns:['{topic} • Session {number}'],descriptionTemplate:c.seo?.descriptionTemplate||'{title}\n\n{genre}',tags:c.seo?.tags||[],banned:c.seo?.banned||[],aiPrompt:c.seo?.aiPrompt}}}
+ 
+@@ -35,7 +36,7 @@
+   ...EMPTY_STATE,page:'dashboard',booted:false,
+   hydrate:s=>set({
