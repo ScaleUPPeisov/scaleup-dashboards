@@ -1,11 +1,11 @@
 {
-  "version": "2.0.12",
-  "notes": "# VYRON YT PEISOV 2.0.12 — Cleanup Command Hotfix\n\n- Исправлена ошибка `Command cleanup_completed_production_assets not found`.\n- Tauri-команда очистки project assets теперь зарегистрирована в `generate_handler` и доступна из UI.\n- Добавлен regression-тест полной цепочки UI invoke → Rust backend → Tauri command registration.\n- Сохранены два подтверждения перед массовой очисткой.\n- Очистка по-прежнему работает только для Completed-проектов с существующим готовым MP4 и не удаляет `Rendered/*.mp4`.\n- Все функции VYRON 2.0.11 сохранены; обновлена история изменений в Настройки → Обновления.\n\nДо публикации exact candidate прошёл полный macOS Apple Silicon gate.\n",
-  "pub_date": "2026-09-09T14:22:51.858062Z",
+  "version": "2.0.13",
+  "notes": "# VYRON YT PEISOV 2.0.13 — Keychain Recovery\n\n- Исправлено безликое сообщение «VYRON сохранил текущее состояние…» при реальной ошибке macOS Keychain.\n- Отдельно распознаются: неверный/отклонённый пароль Keychain, отменённый системный запрос и заблокированная интеракция.\n- После отказа Keychain VYRON не вызывает системный пароль заново при каждом autosave в текущем сеансе.\n- Локальные проекты, очередь и несекретные настройки продолжают сохраняться даже при временно недоступном Keychain.\n- API keys по-прежнему не записываются в `state.json`; при проблеме защищённого сохранения показывается отдельное предупреждение.\n- В Настройки → Диагностика добавлена кнопка «Проверить Keychain»: создаётся, читается и удаляется только временная тестовая запись.\n- Добавлены frontend/Rust regression-тесты и настоящий Keychain read/write/delete roundtrip на macOS runner.\n- Сохранены исправление очистки project assets 2.0.12 и все функции Publisher/Existing Videos/Quota 2.0.11.\n\nExact candidate опубликован только после полного macOS Apple Silicon gate.\n",
+  "pub_date": "2026-09-09T14:57:21.366339Z",
   "platforms": {
     "darwin-aarch64": {
-      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.0.12/VYRON.app.tar.gz",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM2VvUUZDQWRBVUVFWVJyTUpnajNCMUgxNlFYQitNL04vNitpT2NUU0tFL25vWThrNCtzMnI0emxNbHZydVpvREpJb0ZFUThPaVhPUVR6b2VYVmRFT2dFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4OTYzNzQ3CWZpbGU6VllST04uYXBwLnRhci5negpwNXB6UW9ldC9rSkQvM1RUbDhWa3VLRDNTb0dZa3FublVmaU5pWjlkamhIbk12RW5QM09NUk13Z1dvL1VDTXdFaTVrdThkRExSVm5ZS3I1OWMrWTdCdz09Cg=="
+      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.0.13/VYRON.app.tar.gz",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM1ZxVC9OakNYQ1dQSVk1Nm1oQkk0T3hCVjg0T0NrRWhvK09uRUdXY3ZaRlkwc2ZsZ3JpczFBNjdWNklsN3A5dis4ZkFTTzZpbVVYOTJYZ3Y1TW1KUFFvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4OTY1ODE1CWZpbGU6VllST04uYXBwLnRhci5negpLTTNzVFdYUW5acjh0eHJ5R28wNlBkN3daaitDeHJzUC8yK1E2TEM5TTVUU05nZW8rYmJkd3FrTW15NWNmZGJoWlpKZmpRN1oxOFBPZmdFSVhjZEpEdz09Cg=="
     }
   }
 }
