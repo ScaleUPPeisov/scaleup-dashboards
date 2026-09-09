@@ -1,0 +1,60 @@
+name: VYRON 2.0.10 Production Publish
+
+on:
+  push:
+    branches:
+      - release/vyron-2.0.10
+    paths:
+      - '.github/workflows/vyron-210-publish.yml'
+      - 'vyron-v210/release_publish_v210.sh'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+
+concurrency:
+  group: vyron-210-production-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish exact tested VYRON 2.0.10 candidate
+    runs-on: macos-14
+    timeout-minutes: 35
+    steps:
+      - name: Checkout release branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify publish inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'release/vyron-2.0.10'
+          test -n "$TAURI_UPDATER_PUBLIC_KEY"
+          test -s vyron-v210/release_publish_v210.sh
+
+      - name: Publish tested candidate and updater feed
+        shell: bash
+        run: bash vyron-v210/release_publish_v210.sh
+
+      - name: Verify public production release
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh api 'repos/ScaleUPPeisov/scaleup-dashboards/releases/latest' --jq .tag_name)" = 'v2.0.10'
+          gh api 'repos/ScaleUPPeisov/scaleup-dashboards/contents/vyron-updates/latest.json?ref=main' --jq .content | tr -d '\n' | base64 --decode > /tmp/latest-v210.json
+          python3 - <<'PY'
+          import json
+          x=json.load(open('/tmp/latest-v210.json'))
+          assert x['version']=='2.0.10'
+          p=x['platforms']['darwin-aarch64']
+          assert p['url'].endswith('/v2.0.10/VYRON.app.tar.gz')
+          assert p['signature']
+          print('VYRON 2.0.10 PUBLIC PRODUCTION VERIFICATION: PASS')
+          PY
