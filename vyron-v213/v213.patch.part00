@@ -1,0 +1,30 @@
+diff -ruN v212src/package.json v213src/package.json
+--- v212src/package.json	2026-09-09 13:56:57.556488527 +0000
++++ v213src/package.json	2026-09-09 14:33:47.395704571 +0000
+@@ -1,7 +1,7 @@
+ {
+   "name": "vyron",
+   "private": true,
+-  "version": "2.0.12",
++  "version": "2.0.13",
+   "type": "module",
+   "scripts": {
+     "dev": "vite --port 1421",
+diff -ruN v212src/src/SettingsOS.tsx v213src/src/SettingsOS.tsx
+--- v212src/src/SettingsOS.tsx	2026-09-09 13:56:57.065341385 +0000
++++ v213src/src/SettingsOS.tsx	2026-09-09 14:33:47.395458207 +0000
+@@ -15,10 +15,11 @@
+ 
+ export function SettingsOS({license}:{license:LicenseStatus}){
+  const s=useApp(x=>x.settings),patch=useApp(x=>x.patchSettings),logs=useApp(x=>x.logs),channels=useApp(x=>x.channels),setPage=useApp(x=>x.setPage);
+- const [tab,setTab]=useState<Tab>('general'),[update,setUpdate]=useState<any>(),[progress,setProgress]=useState<number|null>(null),[stage,setStage]=useState(''),[diag,setDiag]=useState<DiagRow[]>([]),[checking,setChecking]=useState(false),[installedVersion,setInstalledVersion]=useState('');
++ const [tab,setTab]=useState<Tab>('general'),[update,setUpdate]=useState<any>(),[progress,setProgress]=useState<number|null>(null),[stage,setStage]=useState(''),[diag,setDiag]=useState<DiagRow[]>([]),[checking,setChecking]=useState(false),[keychainChecking,setKeychainChecking]=useState(false),[keychainDiag,setKeychainDiag]=useState<DiagRow|undefined>(),[installedVersion,setInstalledVersion]=useState('');
+  useEffect(()=>{void api.appVersion().then(setInstalledVersion).catch(()=>{})},[]);const mode:AutopilotMode=s.autopilotMode||'off';
+  const setMode=(m:AutopilotMode)=>patch({autopilotMode:m,autopilotEnabled:m!=='off',autoUploadYoutube:false});
+  async function runDiagnostics(){setChecking(true);try{let ws=s.workspace;if(!ws){ws=await api.defaultWorkspace();patch({workspace:ws})}const core=await api.diagnostics(ws);setDiag([{label:'Local Core',status:core.ok?'Готово':'Требует внимания',ok:core.ok},{label:'Workspace',status:core.workspaceWritable?'Доступен для записи':'Проблема записи',ok:core.workspaceWritable},{label:'ENDLUME',status:s.endlumePath?'Путь настроен':'Не выбран',ok:Boolean(s.endlumePath)},{label:'Лицензия',status:license.valid?licenseName(license):'Не активирована',ok:license.valid},{label:'Updater',status:'Signed updater подключён',ok:true},{label:'YouTube',status:'Проверяется только явным действием во вкладке YouTube',detail:'Диагностика не расходует YouTube Data API quota.'}])}catch(e){setDiag([{label:'Диагностика',status:'Ошибка',ok:false,detail:String(e)}])}finally{setChecking(false)}}
++ async function runKeychainDiagnostics(){setKeychainChecking(true);try{const result=await api.securityKeychainDiagnostics();setKeychainDiag({label:'macOS Keychain',status:result.ok?'Доступ подтверждён':'Требует внимания',ok:result.ok,detail:result.ok?'Тестовая запись VYRON успешно создана, прочитана и удалена.':result.status});if(result.ok)notifySuccess('macOS Keychain доступен','VYRON может читать и сохранять защищённые OAuth/API-секреты.',{operationId:'keychain-diagnostic-ok'})}catch(e){const h=humanizeError(e,'storage');setKeychainDiag({label:'macOS Keychain',status:h.title,ok:false,detail:h.detail});notifyError(h.title,h.message,{operationId:'keychain-diagnostic-error'})}finally{setKeychainChecking(false)}}
+  async function checkForUpdate(){try{const next=await api.checkUpdate();setUpdate(next);if(next?.none)notifySuccess('VYRON YT PEISOV обновлён',`Установлена актуальная версия ${next.current||installedVersion||'—'}.`,{operationId:`update-latest:${next.current||installedVersion}`});else if(next?.version)notifyInfo(`Доступно обновление VYRON YT PEISOV ${next.version}`,'Можно установить и перезапустить приложение.',{operationId:`settings-update:${next.version}`})}catch(e){const h=humanizeError(e,'update');setUpdate({error:h.detail});notifyError(h.title,h.message)}}
+  async function installUpdate(){setProgress(0);setStage('Загрузка');localStorage.setItem('vyron:update-installing-version',String(update.version||''));try{await update.install((p:number)=>{setProgress(p);if(p>=100)setStage('Проверка подписи и установка')})}catch(e){localStorage.removeItem('vyron:update-installing-version');setProgress(null);setStage('Обновление не установлено. Текущая версия сохранена.');{const h=humanizeError(e,'update');notifyError(h.title,h.message)}}}
+  const tabs:[Tab,string][]=[['general','Общие'],['youtube','YouTube'],['endlume','ENDLUME'],['updates','Обновления'],['license','Лицензия'],['about','О программе'],['diagnostics','Диагностика']];
+@@ -29,5 +30,5 @@
+  {tab==='updates'&&<div className="settingsStack"><section className="settingsCard updateMasterCard"><small>UPDATE CENTER</small><h3>Обновления</h3><div className="settingsInfoGrid"><span><small>Текущая версия</small><b>{installedVersion||'—'}</b></span><span><small>Автопроверка</small><b>{s.autoCheckUpdates?'ON':'OFF'}</b></span></div><Toggle label="Проверять автоматически" text="Signed updater; YouTube API не используется." value={s.autoCheckUpdates} onChange={v=>patch({autoCheckUpdates:v})}/><button className="settingsAction" onClick={checkForUpdate}>Проверить обновления</button>{update?.none&&<div className="successBox">Установлена актуальная версия {update.current||installedVersion||'—'}.</div>}{update?.version&&<div className="updateFound"><b>Дост
