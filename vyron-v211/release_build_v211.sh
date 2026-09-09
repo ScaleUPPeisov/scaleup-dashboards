@@ -39,12 +39,12 @@ pass 'Signing material normalized'
 
 say 'Reconstruct and verify 2.0.11 patch payload'
 rm -rf "$PATCH_DIR"; mkdir -p "$PATCH_DIR"
-python3 - "$ROOT" <<'PY'
+python3 - "$ROOT" <<'PY2'
 import base64,pathlib,sys
 root=pathlib.Path(sys.argv[1])/'vyron-v211'
 data=''.join(''.join((root/f'payload.a{c}').read_text().split()) for c in 'abcdefgh')
 pathlib.Path('/tmp/vyron-v211-portable.tgz').write_bytes(base64.b64decode(data,validate=True))
-PY
+PY2
 GOT_PATCH="$(shasum -a 256 /tmp/vyron-v211-portable.tgz|awk '{print $1}')"
 test "$GOT_PATCH" = "$PATCH_SHA"
 tar -xzf /tmp/vyron-v211-portable.tgz -C "$PATCH_DIR" --strip-components=1
@@ -62,19 +62,18 @@ pass "Official 2.0.10 source SHA256 $SOURCE_SHA"
 
 say 'Apply deterministic 2.0.11 patch'
 for f in "$PATCH_DIR"/step{1..8}_*.py; do python3 "$f" "$WORK"; done
-python3 - "$WORK/src/v211FeatureContracts.test.ts" <<'PY'
+python3 - "$WORK/src/v211FeatureContracts.test.ts" <<'PY2'
 from pathlib import Path
 import sys
 p=Path(sys.argv[1]); s=p.read_text()
-s=s.replace("import {readFileSync} from 'node:fs';", "import {readFileSync} from 'node:fs';\nimport {fileURLToPath} from 'node:url';")
-s=s.replace("readFileSync(new URL(p,import.meta.url),'utf8')", "readFileSync(fileURLToPath(new URL(p,import.meta.url)),'utf8')")
+s=s.replace("readFileSync(new URL(p,import.meta.url),'utf8')", "readFileSync(decodeURIComponent(new URL(p,import.meta.url).pathname),'utf8')")
 p.write_text(s)
-PY
+PY2
 cd "$WORK"
 
 say 'Static requested-feature and regression contracts'
 python3 - <<'PY'
-import json,os
+import json,os,re
 from pathlib import Path
 r=Path('.')
 p=json.loads((r/'package.json').read_text()); c=json.loads((r/'src-tauri/tauri.conf.json').read_text())
