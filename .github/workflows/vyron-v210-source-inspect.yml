@@ -1,0 +1,64 @@
+name: VYRON 2.0.10 Source Inspect
+
+on:
+  push:
+    branches:
+      - release/vyron-2.0.10
+    paths:
+      - '.github/workflows/vyron-v210-source-inspect.yml'
+      - 'vyron-v210/**'
+
+permissions:
+  contents: read
+
+actions: {}
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download exact 2.0.9 source snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/vyron210
+          cd /tmp/vyron210
+          gh release download v2.0.9 --repo "$GITHUB_REPOSITORY" --pattern 'VYRON-2.0.9-source.tar.gz'
+          echo '946695817baf9956117701664441c40c01002dc492aaf52350c7628937d7ceee  VYRON-2.0.9-source.tar.gz' | sha256sum -c -
+          mkdir source
+          tar -xzf VYRON-2.0.9-source.tar.gz -C source
+          ROOT="$(find source -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+          if [ -z "$ROOT" ]; then ROOT=source; fi
+          echo "ROOT=$ROOT" >> "$GITHUB_ENV"
+          find "$ROOT" -maxdepth 2 -type f | sort | head -200
+      - name: Locate YouTube Apply implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== youtube_update_existing_video ==='
+          grep -RIn --exclude-dir=node_modules --exclude-dir=target 'youtube_update_existing_video\|youtubeUpdateExisting\|Promise.race\|AbortController\|timeout' "$ROOT/src" "$ROOT/src-tauri/src" || true
+          echo '=== quota/apply references ==='
+          grep -RIn --exclude-dir=node_modules --exclude-dir=target 'Apply\|Применить\|quota\|preflight' "$ROOT/src" | grep -Ei 'youtube|existing|metadata|quota|preflight' | head -300 || true
+      - name: Stage exact files for analysis
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/vyron-source-inspect/src /tmp/vyron-source-inspect/src-tauri/src
+          cp "$ROOT/src-tauri/src/youtube.rs" /tmp/vyron-source-inspect/src-tauri/src/youtube.rs
+          cp "$ROOT/src/api.ts" /tmp/vyron-source-inspect/src/api.ts
+          for f in "$ROOT"/src/*YouTube* "$ROOT"/src/*Youtube* "$ROOT"/src/*Metadata* "$ROOT"/src/*metadata* "$ROOT"/src/*Quota* "$ROOT"/src/*quota* "$ROOT"/src/*Publisher*; do
+            [ -f "$f" ] && cp "$f" /tmp/vyron-source-inspect/src/ || true
+          done
+          cp "$ROOT/package.json" /tmp/vyron-source-inspect/package.json
+          cp "$ROOT/src-tauri/tauri.conf.json" /tmp/vyron-source-inspect/tauri.conf.json
+          tar -czf /tmp/VYRON-2.0.9-apply-inspect.tar.gz -C /tmp vyron-source-inspect
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-2.0.9-apply-inspect
+          path: /tmp/VYRON-2.0.9-apply-inspect.tar.gz
+          if-no-files-found: error
+          retention-days: 3
