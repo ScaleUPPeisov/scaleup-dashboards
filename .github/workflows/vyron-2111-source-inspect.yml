@@ -1,4 +1,4 @@
-name: VYRON 2.1.1 Source Inspect NO PUBLISH
+name: VYRON 2.1.1 OAuth Inspect NO PUBLISH
 
 on:
   push:
@@ -14,32 +14,49 @@ permissions:
 jobs:
   inspect:
     runs-on: macos-14
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
-      - name: Download exact published source
+      - name: Prepare exact 2.1.0 and patched 2.1.1
         shell: bash
         run: |
           set -Eeuo pipefail
-          mkdir -p "$RUNNER_TEMP/src" "$RUNNER_TEMP/app"
+          rm -rf "$RUNNER_TEMP/src" "$RUNNER_TEMP/original" "$RUNNER_TEMP/patched"
+          mkdir -p "$RUNNER_TEMP/src" "$RUNNER_TEMP/original" "$RUNNER_TEMP/patched"
           gh release download v2.1.0 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-2.1.0-source.tar.gz' --dir "$RUNNER_TEMP/src"
-          tar -xzf "$RUNNER_TEMP/src/VYRON-2.1.0-source.tar.gz" -C "$RUNNER_TEMP/app"
-      - name: Inspect exact anchors
+          tar -xzf "$RUNNER_TEMP/src/VYRON-2.1.0-source.tar.gz" -C "$RUNNER_TEMP/original"
+          cp -R "$RUNNER_TEMP/original/." "$RUNNER_TEMP/patched/"
+          python3 vyron-v2111/apply_v2111_youtube_runtime_repair.py "$RUNNER_TEMP/patched"
+          python3 vyron-v2111/apply_v2111_gatefix1.py "$RUNNER_TEMP/patched"
+          python3 vyron-v2111/apply_v2111_gatefix2.py "$RUNNER_TEMP/patched"
+          python3 vyron-v2111/apply_v2111_shorts_folder.py "$RUNNER_TEMP/patched"
+          python3 vyron-v2111/apply_v2111_global_cleanup.py "$RUNNER_TEMP/patched" || true
+          python3 vyron-v2111/apply_v2111_global_cleanup_finish.py "$RUNNER_TEMP/patched"
+          python3 vyron-v2111/apply_v2111_cleanup_test_layout.py "$RUNNER_TEMP/patched"
+      - name: Locate OAuth refresh token keychain paths
         shell: bash
         run: |
           set -Eeuo pipefail
-          ROOT="$RUNNER_TEMP/app"
-          for spec in \
-            'src/ProductionOS.tsx:1:90' \
-            'src/productionManagerApi.ts:1:90' \
-            'src/shortsCore.ts:1:150' \
-            'src-tauri/src/local_delete.rs:1:120' \
-            'src-tauri/Cargo.toml:1:180'; do
-            f="${spec%%:*}"; rest="${spec#*:}"; a="${rest%%:*}"; b="${rest##*:}"
-            echo "=== FILE $f ==="
-            sed -n "${a},${b}p" "$ROOT/$f"
+          for ROOT in "$RUNNER_TEMP/original" "$RUNNER_TEMP/patched"; do
+            echo "=== ROOT $ROOT ==="
+            echo '--- refresh/access/offline/token hits ---'
+            grep -RniE 'refresh_token|refreshToken|access_token|accessToken|offline|prompt.*consent|access_type|grant_type.*refresh|oauth' "$ROOT/src" "$ROOT/src-tauri/src" | head -n 500 || true
+            echo '--- keychain/security framework hits ---'
+            grep -RniE 'keychain|security-framework|SecKeychain|set_password|get_password|delete_password|GenericPassword|service.*vyron|service.*youtube|profile.*token' "$ROOT/src" "$ROOT/src-tauri/src" | head -n 500 || true
           done
-          echo '=== NOTIFICATION IMPORTS ==='
-          grep -RniE "import .*notify(Error|Success|Info)|from './.*notify|from './notifications|from './errorCenter'" "$ROOT/src" | head -n 120 || true
+      - name: Show auth-related exact files and patch diff
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          O="$RUNNER_TEMP/original"; P="$RUNNER_TEMP/patched"
+          FILES=$(grep -RliE 'refresh_token|refreshToken|access_type|prompt.*consent|keychain|GenericPassword' "$O/src" "$O/src-tauri/src" | sed "s#$O/##" | sort -u)
+          for f in $FILES; do
+            echo "=== ORIGINAL $f ==="
+            sed -n '1,420p' "$O/$f"
+            echo "=== PATCHED $f ==="
+            sed -n '1,420p' "$P/$f" || true
+            echo "=== DIFF $f ==="
+            diff -u "$O/$f" "$P/$f" || true
+          done
