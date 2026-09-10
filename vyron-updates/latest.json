@@ -1,11 +1,11 @@
 {
-  "version": "2.0.13",
-  "notes": "# VYRON YT PEISOV 2.0.13 — Keychain Recovery\n\n- Исправлено безликое сообщение «VYRON сохранил текущее состояние…» при реальной ошибке macOS Keychain.\n- Отдельно распознаются: неверный/отклонённый пароль Keychain, отменённый системный запрос и заблокированная интеракция.\n- После отказа Keychain VYRON не вызывает системный пароль заново при каждом autosave в текущем сеансе.\n- Локальные проекты, очередь и несекретные настройки продолжают сохраняться даже при временно недоступном Keychain.\n- API keys по-прежнему не записываются в `state.json`; при проблеме защищённого сохранения показывается отдельное предупреждение.\n- В Настройки → Диагностика добавлена кнопка «Проверить Keychain»: создаётся, читается и удаляется только временная тестовая запись.\n- Добавлены frontend/Rust regression-тесты и настоящий Keychain read/write/delete roundtrip на macOS runner.\n- Сохранены исправление очистки project assets 2.0.12 и все функции Publisher/Existing Videos/Quota 2.0.11.\n\nExact candidate опубликован только после полного macOS Apple Silicon gate.\n",
-  "pub_date": "2026-09-09T14:57:21.366339Z",
+  "version": "2.1.0",
+  "notes": "# VYRON YT PEISOV 2.1.0 — Shorts Factory + Production Repair\n\n- Добавлен Shorts Factory: Long → вертикальные Shorts 1080×1920 с реальным FFmpeg pipeline.\n- Shorts получили metadata workflow, расписание и синхронизацию реального `publishAt` с YouTube.\n- Long и Shorts используют единый future-safe scheduler без коллизий занятых слотов.\n- Добавлены Content Buffer и Storage Manager с безопасным архивированием без автоматического удаления исходников.\n- Усилен Error Center: очистка истории не меняет ERROR-задачи на SUCCESS; повторная ошибка снова отображается корректно.\n- Batch upload больше не засыпает интерфейс десятками toast: причины сохраняются в Error Center, наружу выводится агрегированное уведомление.\n- Сохранены Keychain recovery, cleanup, category/playlist, backup, quota и предыдущие production fixes.\n- Релиз публикуется только из exact signed candidate после полного macOS Apple Silicon gate.\n",
+  "pub_date": "2026-09-10T07:24:25.930266Z",
   "platforms": {
     "darwin-aarch64": {
-      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.0.13/VYRON.app.tar.gz",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM1ZxVC9OakNYQ1dQSVk1Nm1oQkk0T3hCVjg0T0NrRWhvK09uRUdXY3ZaRlkwc2ZsZ3JpczFBNjdWNklsN3A5dis4ZkFTTzZpbVVYOTJYZ3Y1TW1KUFFvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4OTY1ODE1CWZpbGU6VllST04uYXBwLnRhci5negpLTTNzVFdYUW5acjh0eHJ5R28wNlBkN3daaitDeHJzUC8yK1E2TEM5TTVUU05nZW8rYmJkd3FrTW15NWNmZGJoWlpKZmpRN1oxOFBPZmdFSVhjZEpEdz09Cg=="
+      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.0/VYRON.app.tar.gz",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM2NZQTFSOS9NQzdVV3NIdnM4UnFkd3pUdURXMW5vWE9JNkc0eVE0OTFaNTMydlpnL0s2MjRLWDhFVVZlSUNKS2IwNDVsazR5RFgrRGs4SnNqRzZqNmdrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MDI1MDQwCWZpbGU6VllST04uYXBwLnRhci5negpFYktydlJ2U21HaU1XYU1vQXpJUDdPM1dyM0F3akwwRXhycW1mbVh1WnJlaU9razkzUzVGb25GS0RjMWZ6NTVrekN3aXZITUNuWFVvWWlrNDdzRUVBZz09Cg=="
     }
   }
 }
