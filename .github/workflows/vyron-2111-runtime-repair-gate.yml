@@ -57,6 +57,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           python3 vyron-v2111/apply_v2111_youtube_runtime_repair.py "$GITHUB_WORKSPACE/.vyron-2111-release"
+          python3 vyron-v2111/apply_v2111_gatefix1.py "$GITHUB_WORKSPACE/.vyron-2111-release"
           test "$(node -p "require('$GITHUB_WORKSPACE/.vyron-2111-release/package.json').version")" = '2.1.1'
           python3 - "$GITHUB_WORKSPACE/.vyron-2111-release/src-tauri/tauri.conf.json" <<'PY'
           import json,sys
@@ -76,6 +77,7 @@ jobs:
           grep -q "verify_uploaded_video" "$ROOT/src-tauri/src/youtube.rs"
           grep -q "SCHEDULE_IN_PAST" "$ROOT/src-tauri/src/youtube.rs"
           grep -q "UPLOAD_VERIFY_FAILED" "$ROOT/src/PublisherOS.tsx"
+          grep -q "message:youtubeRootMessage(detail)" "$ROOT/src/errorCenter.ts"
           ! grep -q '>ЗАГРУЗИТЬ {selected.length} ВИДЕО НА YOUTUBE</button>' "$ROOT/src/PublisherOS.tsx"
           echo 'STATIC RUNTIME CONTRACTS: PASS'
 
