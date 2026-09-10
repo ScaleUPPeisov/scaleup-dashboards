@@ -52,10 +52,19 @@ p=root/'src/shortsCore.ts'
 s=p.read_text()
 s=s.replace("import {addCalendarDays} from './channelSchedule';\n",'')
 s=s.replace("import {publisherKrasnoyarskIso,todayKrasnoyarskDate} from './publisherSchedule';","import {publisherUnifiedChannelSlots} from './publisherSchedule';")
+s=s.replace("export type ShortScheduleOptions={startDate:string;times:string[];count:number;occupied?:string[]};","export type ShortScheduleOptions={startDate:string;times:string[];count:number;occupied?:string[];now?:Date};",1)
 old="export function shortsScheduleSlots(opts:ShortScheduleOptions){const times=[...new Set(opts.times.filter(t=>/^(?:[01]\\d|2[0-3]):[0-5]\\d$/.test(t)))].sort();if(!times.length)throw new Error('Добавьте хотя бы одно время публикации');const wanted=Math.max(0,Math.floor(opts.count));const occupied=new Set((opts.occupied||[]).filter(Boolean));let date=/^\\d{4}-\\d{2}-\\d{2}$/.test(opts.startDate)?opts.startDate:todayKrasnoyarskDate(),guard=0;const out:string[]=[];while(out.length<wanted&&guard++<20000){for(const time of times){const iso=publisherKrasnoyarskIso(date,time);if(iso&&!occupied.has(iso)){out.push(iso);occupied.add(iso);if(out.length>=wanted)break}}date=addCalendarDays(date,1)}if(out.length!==wanted)throw new Error('Не удалось построить расписание Shorts');return out}"
-new="export function shortsScheduleSlots(opts:ShortScheduleOptions){return publisherUnifiedChannelSlots({...opts,now:new Date()})}"
+new="export function shortsScheduleSlots(opts:ShortScheduleOptions){return publisherUnifiedChannelSlots({...opts,now:opts.now||new Date()})}"
 if old not in s:
     raise SystemExit('shortsCore independent scheduler anchor missing')
+s=s.replace(old,new,1);p.write_text(s)
+
+# Update the historical deterministic unit test so it supplies an explicit clock.
+# Production still defaults to the real current time, which is required to reject past publishAt.
+p=root/'src/shortsCore.test.ts';s=p.read_text()
+old="shortsScheduleSlots({startDate:'2026-09-10',times:['10:00','15:00','20:00'],count:6})"
+new="shortsScheduleSlots({startDate:'2026-09-10',times:['10:00','15:00','20:00'],count:6,now:new Date('2026-09-10T00:00:00.000Z')})"
+if old not in s: raise SystemExit('historical Shorts schedule test anchor missing')
 s=s.replace(old,new,1);p.write_text(s)
 
 # -----------------------------------------------------------------------------
