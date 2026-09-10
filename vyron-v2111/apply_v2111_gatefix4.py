@@ -43,7 +43,10 @@ describe('VYRON 2.1.1 YouTube frontend → Tauri invoke',()=>{
  });
  it('youtubeUpload propagates the real Tauri backend failure',async()=>{
   mocks.invoke.mockRejectedValue(new Error('YOUTUBE_UPLOAD_INIT 400: invalidPublishAt'));
-  await expect(api.youtubeUpload('p','j','/tmp/a.mov','T','D',[],'2030-01-01T00:00:00Z','10','op')).rejects.toThrow('invalidPublishAt');
+  let caught:unknown;
+  try{await api.youtubeUpload('p','j','/tmp/a.mov','T','D',[],'2030-01-01T00:00:00Z','10','op')}catch(err){caught=err}
+  expect(caught).toBeInstanceOf(Error);
+  expect(String((caught as Error).message)).toContain('invalidPublishAt');
  });
 });
 ''')
