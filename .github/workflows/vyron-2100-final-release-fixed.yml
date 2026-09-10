@@ -98,6 +98,17 @@ jobs:
           echo '==> Apply safe Storage Manager archive'
           python3 "$RUNNER_TEMP/apply_v2100_direct.py" "$WORK" storage
 
+          echo '==> Fix generated safe archive Rust statement boundary'
+          python3 - "$WORK/src-tauri/src/production_manager.rs" <<'PY'
+          from pathlib import Path
+          import sys
+          p=Path(sys.argv[1]);s=p.read_text()
+          old='if tmp.exists(){let _=fs::remove_file(&tmp)}fs::copy'
+          new='if tmp.exists(){let _=fs::remove_file(&tmp);}fs::copy'
+          if old not in s: raise SystemExit('safe archive Rust statement anchor missing')
+          p.write_text(s.replace(old,new,1))
+          PY
+
           echo '==> Repair generated archive regression test escaping'
           cat > "$WORK/src/v2100StorageArchive.test.ts" <<'EOF'
           import {describe,expect,it} from 'vitest';
