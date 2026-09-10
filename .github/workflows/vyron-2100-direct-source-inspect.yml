@@ -62,3 +62,10 @@ jobs:
                 seen.add(key)
                 for j in range(a,b): print(f'{j+1:05d}: {lines[j]}')
           PY
+      - name: Upload exact verified source for repair analysis
+        uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-2.0.13-exact-source
+          path: /tmp/vyron213asset/VYRON-2.0.13-source.tar.gz
+          if-no-files-found: error
+          retention-days: 3
