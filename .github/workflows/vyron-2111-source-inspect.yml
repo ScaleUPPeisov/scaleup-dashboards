@@ -1,4 +1,4 @@
-name: VYRON 2.1.1 OAuth Inspect NO PUBLISH
+name: VYRON 2.1.1 OAuth Health Inspect NO PUBLISH
 
 on:
   push:
@@ -14,49 +14,36 @@ permissions:
 jobs:
   inspect:
     runs-on: macos-14
-    timeout-minutes: 20
+    timeout-minutes: 15
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
-      - name: Prepare exact 2.1.0 and patched 2.1.1
+      - name: Download exact released 2.1.0 source
         shell: bash
         run: |
           set -Eeuo pipefail
-          rm -rf "$RUNNER_TEMP/src" "$RUNNER_TEMP/original" "$RUNNER_TEMP/patched"
-          mkdir -p "$RUNNER_TEMP/src" "$RUNNER_TEMP/original" "$RUNNER_TEMP/patched"
+          rm -rf "$RUNNER_TEMP/src" "$RUNNER_TEMP/app"
+          mkdir -p "$RUNNER_TEMP/src" "$RUNNER_TEMP/app"
           gh release download v2.1.0 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-2.1.0-source.tar.gz' --dir "$RUNNER_TEMP/src"
-          tar -xzf "$RUNNER_TEMP/src/VYRON-2.1.0-source.tar.gz" -C "$RUNNER_TEMP/original"
-          cp -R "$RUNNER_TEMP/original/." "$RUNNER_TEMP/patched/"
-          python3 vyron-v2111/apply_v2111_youtube_runtime_repair.py "$RUNNER_TEMP/patched"
-          python3 vyron-v2111/apply_v2111_gatefix1.py "$RUNNER_TEMP/patched"
-          python3 vyron-v2111/apply_v2111_gatefix2.py "$RUNNER_TEMP/patched"
-          python3 vyron-v2111/apply_v2111_shorts_folder.py "$RUNNER_TEMP/patched"
-          python3 vyron-v2111/apply_v2111_global_cleanup.py "$RUNNER_TEMP/patched" || true
-          python3 vyron-v2111/apply_v2111_global_cleanup_finish.py "$RUNNER_TEMP/patched"
-          python3 vyron-v2111/apply_v2111_cleanup_test_placement_fix.py "$RUNNER_TEMP/patched"
-      - name: Locate OAuth refresh token keychain paths
+          tar -xzf "$RUNNER_TEMP/src/VYRON-2.1.0-source.tar.gz" -C "$RUNNER_TEMP/app"
+      - name: Exact OAuth health and reconnect anchors
         shell: bash
         run: |
           set -Eeuo pipefail
-          for ROOT in "$RUNNER_TEMP/original" "$RUNNER_TEMP/patched"; do
-            echo "=== ROOT $ROOT ==="
-            echo '--- refresh/access/offline/token hits ---'
-            grep -RniE 'refresh_token|refreshToken|access_token|accessToken|offline|prompt.*consent|access_type|grant_type.*refresh|oauth' "$ROOT/src" "$ROOT/src-tauri/src" | head -n 500 || true
-            echo '--- keychain/security framework hits ---'
-            grep -RniE 'keychain|security-framework|SecKeychain|set_password|get_password|delete_password|GenericPassword|service.*vyron|service.*youtube|profile.*token' "$ROOT/src" "$ROOT/src-tauri/src" | head -n 500 || true
-          done
-      - name: Show auth-related exact files and patch diff
+          ROOT="$RUNNER_TEMP/app"
+          echo '=== OAUTH RS HEALTH/REFRESH CONTEXT ==='
+          grep -n -B 25 -A 45 -E 'reauth_required|reauthRequired|refresh_access_token|load_tokens|delete_password|SERVICE|youtube-profile-|oauth_disconnect|disconnect|reconnect|enrich' "$ROOT/src-tauri/src/oauth.rs" || true
+          echo '=== ALL REAUTH REFERENCES ==='
+          grep -Rni -B 8 -A 16 -E 'reauthRequired|reauth_required' "$ROOT/src" "$ROOT/src-tauri/src" || true
+          echo '=== ALL KEYCHAIN SERVICE / ACCOUNT FORMATS ==='
+          grep -Rni -B 4 -A 10 -E 'const SERVICE|youtube-profile-|set_password_bytes|get_password_bytes|delete_password|keychain' "$ROOT/src-tauri/src" || true
+          echo '=== TOKEN STORAGE OUTSIDE OAUTH.RS ==='
+          grep -Rni -B 4 -A 10 -E 'refresh_token|refreshToken|access_token|accessToken|oauth.*token|token.*oauth' "$ROOT/src" "$ROOT/src-tauri/src" | grep -v '/oauth.rs' || true
+          echo '=== LOCAL STORAGE / FILE STORAGE CANDIDATES ==='
+          grep -Rni -B 3 -A 8 -E 'localStorage|sessionStorage|write.*token|read.*token|token.*json|oauth.*json|credentials|credential' "$ROOT/src" "$ROOT/src-tauri/src" || true
+      - name: Show exact OAuth file
         shell: bash
         run: |
           set -Eeuo pipefail
-          O="$RUNNER_TEMP/original"; P="$RUNNER_TEMP/patched"
-          FILES=$(grep -RliE 'refresh_token|refreshToken|access_type|prompt.*consent|keychain|GenericPassword' "$O/src" "$O/src-tauri/src" | sed "s#$O/##" | sort -u)
-          for f in $FILES; do
-            echo "=== ORIGINAL $f ==="
-            sed -n '1,420p' "$O/$f"
-            echo "=== PATCHED $f ==="
-            sed -n '1,420p' "$P/$f" || true
-            echo "=== DIFF $f ==="
-            diff -u "$O/$f" "$P/$f" || true
-          done
+          sed -n '1,520p' "$RUNNER_TEMP/app/src-tauri/src/oauth.rs"
