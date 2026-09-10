@@ -33,41 +33,37 @@ jobs:
         run: |
           set -euo pipefail
           ROOT="$RUNNER_TEMP/vyron211diag"
+          echo '===== PublisherOS header ====='
+          sed -n '1,35p' "$ROOT/src/PublisherOS.tsx"
           python3 - "$ROOT/src/PublisherOS.tsx" <<'PY'
           from pathlib import Path
           import sys
           s=Path(sys.argv[1]).read_text()
           needles=['const selected','selected=','selectedJobs','selectedIds','effectivePublishAt','missingMetadata','missingSchedule','preflightBlocked','runBatch','ЗАГРУЗИТЬ','ПРОВЕРИТЬ НА ОДНОМ','toggle','selectAll','selected.length','quotaPlan']
-          lines=s.splitlines()
-          print('===== PublisherOS targeted lines =====')
-          hits=set()
+          lines=s.splitlines(); print('===== PublisherOS targeted lines ====='); hits=set()
           for i,line in enumerate(lines):
               if any(n.lower() in line.lower() for n in needles):
                   for j in range(max(0,i-2),min(len(lines),i+3)): hits.add(j)
           for j in sorted(hits): print(f'{j+1:04d}: {lines[j]}')
           print('===== END PublisherOS =====')
           PY
-      - name: Print YouTube frontend API and Rust command flow
+      - name: Print state metadata and API boundaries
         shell: bash
         run: |
           set -euo pipefail
           ROOT="$RUNNER_TEMP/vyron211diag"
-          python3 - "$ROOT" <<'PY'
-          from pathlib import Path
-          import sys
-          root=Path(sys.argv[1])
-          files=['src/publisherApi.ts','src/youtubeApi.ts','src-tauri/src/lib.rs','src-tauri/src/youtube.rs','src/publisherSchedule.ts','src/publisherMetadata.ts']
-          needles=['youtube','upload','insert','invoke','publishat','schedule','selected','profile','resumable','start_upload','execute','preflight']
-          for rel in files:
-              p=root/rel
-              if not p.exists(): continue
-              print(f'===== {rel} =====')
-              lines=p.read_text().splitlines();hits=set()
-              for i,line in enumerate(lines):
-                  if any(n in line.lower() for n in needles):
-                      for j in range(max(0,i-1),min(len(lines),i+2)): hits.add(j)
-              for j in sorted(hits): print(f'{j+1:04d}: {lines[j]}')
-          PY
+          for f in src/publishWorkspaceState.ts src/publisherMetadata.ts src/metadataImport.ts src/types.ts src/tauriApi.ts src/api.ts; do
+            if [ -f "$ROOT/$f" ]; then echo "===== $f ====="; sed -n '1,260p' "$ROOT/$f"; fi
+          done
+      - name: Print YouTube Rust upload core
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/vyron211diag"
+          echo '===== youtube.rs upload area ====='
+          sed -n '160,230p' "$ROOT/src-tauri/src/youtube.rs"
+          echo '===== lib.rs invoke handler ====='
+          sed -n '20,35p' "$ROOT/src-tauri/src/lib.rs"
       - name: Inventory relevant tests
         shell: bash
         run: |
