@@ -1,0 +1,71 @@
+name: VYRON 2.1.0 Assemble Inspect
+
+on:
+  push:
+    branches:
+      - release/vyron-2.1.0-production-repair-shorts
+    paths:
+      - '.github/workflows/vyron-2100-assemble-inspect.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  assemble:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Assemble current pre-repair 2.1.0 tree from exact 2.0.13
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE"; WORK=/tmp/vyron210-assembled; BASE=/tmp/vyron210-base
+          rm -rf "$WORK" "$BASE"; mkdir -p "$WORK" "$BASE"
+          gh release download v2.0.13 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-2.0.13-source.tar.gz' --dir "$BASE"
+          test "$(sha256sum "$BASE/VYRON-2.0.13-source.tar.gz"|awk '{print $1}')" = d9f6345b597d41018b9a439c3eda2558e33936c6b605ac2b8052955b4e088717
+          tar -xzf "$BASE/VYRON-2.0.13-source.tar.gz" -C "$WORK"
+          git fetch --no-tags origin 549ac4175c7745092509010ce928110958870ccc
+          git checkout 549ac4175c7745092509010ce928110958870ccc -- vyron-v211
+          cp "$ROOT/vyron-v2100/apply_v2100_direct.py" /tmp/apply.py
+          python3 - /tmp/apply.py "$WORK/src/releaseHistory.ts" <<'PY'
+          from pathlib import Path
+          import re,sys
+          script=Path(sys.argv[1]); source=Path(sys.argv[2]).read_text()
+          m=re.search(r'export const\s+\w+(?::[^=\n]+)?\s*=\s*\[',source)
+          if not m: raise SystemExit('release history anchor missing')
+          data=script.read_text(); old="marker='export const RELEASE_HISTORY=['"
+          if old not in data: raise SystemExit('transform marker missing')
+          script.write_text(data.replace(old,'marker='+repr(m.group(0)),1))
+          PY
+          python3 /tmp/apply.py "$WORK" recovery
+          python3 - "$ROOT/vyron-v211/apply_v211_shorts_factory.py" <<'PY'
+          from pathlib import Path
+          import sys
+          p=Path(sys.argv[1]);s=p.read_text();start="p=root/'src-tauri/src/lib.rs';s=p.read_text()";end="p=root/'src/ProductionOS.tsx';s=p.read_text()";i=s.find(start);j=s.find(end,i+1)
+          if i<0 or j<0: raise SystemExit('shorts lib patch block missing')
+          robust="""p=root/'src-tauri/src/lib.rs';s=p.read_text()
+          if 'mod shorts_factory;' not in s:
+           a='mod production_manager;'
+           if a not in s: raise SystemExit('lib module anchor missing')
+           s=s.replace(a,a+'\\nmod shorts_factory;',1)
+          a='production_manager::cleanup_completed_production_assets,'
+          if a not in s: raise SystemExit('lib stable cleanup anchor missing')
+          s=s.replace(a,a+'shorts_factory::shorts_probe_source,shorts_factory::shorts_validate_file,shorts_factory::shorts_render_segment,',1);p.write_text(s)
+
+          """
+          p.write_text(s[:i]+robust+s[j:])
+          PY
+          python3 "$ROOT/vyron-v211/apply_v211_shorts_factory.py" "$WORK"
+          python3 /tmp/apply.py "$WORK" storage
+          tar -czf /tmp/VYRON-2.1.0-pre-repair-assembled.tar.gz -C "$WORK" .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-2.1.0-pre-repair-assembled
+          path: /tmp/VYRON-2.1.0-pre-repair-assembled.tar.gz
+          retention-days: 3
