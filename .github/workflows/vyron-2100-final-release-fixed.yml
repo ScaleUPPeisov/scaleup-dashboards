@@ -78,7 +78,7 @@ jobs:
           tar -xzf "$BASE/VYRON-2.0.13-source.tar.gz" -C "$WORK"
           test "$(node -p "require('$WORK/package.json').version")" = '2.0.13'
 
-          echo '==> Reconstruct exact 2.0.14 recovery patch from immutable parts'
+          echo '==> Cryptographically recover exact 2.0.14 patch from corrupted immutable transport'
           PARTS="$ROOT/vyron-v214/parts"
           PATCH="$RUNNER_TEMP/v214.patch"
           python3 - "$PARTS" "$PATCH" <<'PYREC'
@@ -87,31 +87,48 @@ jobs:
           out = pathlib.Path(sys.argv[2])
           expected_patch = '80c951a30d8822b654ce9bb0b58a3068ab9260cc29fbd31d91b26a2d1739654a'
           names = [f'part{i:02d}.txt' for i in range(7)]
-          decoded = []
+          parts = []
           for name in names:
               p = parts_dir / name
               if not p.is_file():
                   raise SystemExit(f'missing recovery part: {name}')
-              compact = ''.join(p.read_text().split())
-              rem = len(compact) % 4
-              if rem == 1:
-                  raise SystemExit(f'{name}: impossible base64 length {len(compact)} mod4=1')
-              padded = compact + ('=' * ((-len(compact)) % 4))
+              s = ''.join(p.read_text().split())
+              allowed = set('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=')
+              if any(ch not in allowed for ch in s):
+                  raise SystemExit(f'{name}: non-base64 transport character')
+              parts.append(s)
+          lengths = [len(x) for x in parts]
+          print('transport part lengths=', lengths)
+          if lengths[:3] != [4000,4000,4000] or lengths[4:6] != [4000,4000] or lengths[6] != 2472:
+              raise SystemExit(f'unexpected immutable transport layout: {lengths}')
+          excess = len(parts[3]) - 4000
+          if excess != 690:
+              raise SystemExit(f'part03 corruption shape changed: expected 690 excess chars, got {excess}')
+
+          prefix = ''.join(parts[:3])
+          p3 = parts[3]
+          suffix = ''.join(parts[4:])
+          matches = []
+          gzip_candidates = 0
+          for pos in range(len(p3) - excess + 1):
+              encoded = prefix + p3[:pos] + p3[pos+excess:] + suffix
               try:
-                  chunk = base64.b64decode(padded, validate=True)
-              except Exception as e:
-                  raise SystemExit(f'{name}: strict base64 decode failed: {e}')
-              print(f'{name}: chars={len(compact)} mod4={rem} added_padding={len(padded)-len(compact)} decoded={len(chunk)}')
-              decoded.append(chunk)
-          gz = b''.join(decoded)
-          try:
-              patch = gzip.decompress(gz)
-          except Exception as e:
-              raise SystemExit(f'recovery gzip failed after deterministic padding: {e}')
-          got = hashlib.sha256(patch).hexdigest()
-          print('recovery patch sha256=', got)
-          if got != expected_patch:
-              raise SystemExit(f'recovery patch SHA mismatch: {got} != {expected_patch}')
+                  raw = base64.b64decode(encoded, validate=True)
+                  patch = gzip.decompress(raw)
+              except Exception:
+                  continue
+              gzip_candidates += 1
+              got = hashlib.sha256(patch).hexdigest()
+              if got == expected_patch:
+                  matches.append((pos, patch, p3[pos:pos+excess], len(raw)))
+          print('valid gzip candidates=', gzip_candidates, 'exact SHA matches=', len(matches))
+          if len(matches) != 1:
+              raise SystemExit(f'cryptographic recovery failed: expected exactly one {expected_patch} match, got {len(matches)}')
+          pos, patch, removed, raw_len = matches[0]
+          print('recovered part03 insertion offset=', pos)
+          print('removed transport sha256=', hashlib.sha256(removed.encode()).hexdigest())
+          print('recovered gzip bytes=', raw_len, 'patch bytes=', len(patch))
+          print('recovery patch sha256=', hashlib.sha256(patch).hexdigest())
           out.write_bytes(patch)
           PYREC
           cd "$WORK"
