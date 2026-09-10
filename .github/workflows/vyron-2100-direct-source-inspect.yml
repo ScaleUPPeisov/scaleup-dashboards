@@ -1,0 +1,61 @@
+name: VYRON 2.1.0 Direct Source Inspect
+
+on:
+  push:
+    branches: [release/vyron-2.1.0-shorts-buffer-storage]
+    paths:
+      - '.github/workflows/vyron-2100-direct-source-inspect.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ScaleUPPeisov/scaleup-dashboards
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download exact 2.0.13 source and inspect patch anchors
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/vyron213src /tmp/vyron213asset
+          mkdir -p /tmp/vyron213src /tmp/vyron213asset
+          gh release download v2.0.13 --repo "$REPO" --pattern 'VYRON-2.0.13-source.tar.gz' --dir /tmp/vyron213asset
+          got=$(sha256sum /tmp/vyron213asset/VYRON-2.0.13-source.tar.gz | awk '{print $1}')
+          test "$got" = d9f6345b597d41018b9a439c3eda2558e33936c6b605ac2b8052955b4e088717
+          tar -xzf /tmp/vyron213asset/VYRON-2.0.13-source.tar.gz -C /tmp/vyron213src
+          python3 - <<'PY'
+          from pathlib import Path
+          r=Path('/tmp/vyron213src')
+          specs={
+            'src/PublisherOS.tsx':['scheduleStart=draft.scheduleStartDate||todayKrasnoyarskDate()','resolvedUploadMetadata','handlePublish','youtubeListExisting','publishAt','scheduleStartDate'],
+            'src/publisherSchedule.ts':['export','Asia/Krasnoyarsk','publishAt','schedule'],
+            'src/errorCenter.ts':['SCHEDULE','UNKNOWN','map','error'],
+            'src/App.tsx':['Очистить историю','errorHistory','notification','Убрать ошибку'],
+            'src/errorHistory.ts':['export function','append','clear','remove'],
+            'src/notificationCenter.ts':['technicalDetail','appendErrorHistory','export type','interface'],
+            'src/api.ts':['youtubeListExisting','youtube','invoke'],
+            'src-tauri/src/youtube.rs':['youtube_list_existing_videos','publishAt','videos.list','status','snippet','contentDetails'],
+            'src-tauri/src/lib.rs':['youtube_list_existing','generate_handler'],
+            'src/releaseHistory.ts':['2.0.13','2.0.12','version:'],
+          }
+          for rel,needles in specs.items():
+            p=r/rel
+            print('\n'+'='*100+'\nFILE',rel,'exists=',p.exists())
+            if not p.exists(): continue
+            lines=p.read_text(errors='replace').splitlines()
+            seen=set()
+            for needle in needles:
+              hits=[i for i,x in enumerate(lines) if needle in x]
+              print(f'\n-- NEEDLE {needle!r} HITS {len(hits)}')
+              for i in hits[:8]:
+                a=max(0,i-12); b=min(len(lines),i+18)
+                key=(a,b)
+                if key in seen: continue
+                seen.add(key)
+                for j in range(a,b): print(f'{j+1:05d}: {lines[j]}')
+          PY
