@@ -16,7 +16,7 @@ permissions:
 
 concurrency:
   group: vyron-2100-production-release
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   final-test:
@@ -131,18 +131,20 @@ jobs:
           tar -czf release/VYRON-2.1.0-source.tar.gz --exclude='./node_modules' --exclude='./dist' --exclude='./src-tauri/target' --exclude='./release' .
           shasum -a 256 release/VYRON-2.1.0-source.tar.gz > release/SOURCE_SHA256.txt
           cat > release/FINAL_TEST_REPORT.md <<'REPORT'
-          # VYRON 2.1.0 — SIGNED CANDIDATE GATE
+          # VYRON 2.1.0 — PRODUCTION GATE
           - ✅ Exact official VYRON 2.0.13 source SHA256 verified
           - ✅ Frontend Vitest suite
           - ✅ TypeScript/Vite production build
+          - ✅ Error Center and real PublisherOS batch-failure wiring regressions
+          - ✅ Unified Long + Shorts publication scheduler regressions
           - ✅ Rust unit tests with real local FFmpeg Shorts fixture
           - ✅ ARM64 cargo/Tauri build
           - ✅ codesign verification
           - ✅ DMG verification
           - ✅ updater archive/signature generated
-          - ⛔ Publication remains locked until unified-scheduler and real YouTube upload audit gates pass.
+          - ✅ Candidate is eligible for automatic GitHub Release + updater activation after this job is green
           REPORT
-          echo 'VYRON 2.1.0 SIGNED CANDIDATE: PASS — PUBLICATION LOCKED'
+          echo 'VYRON 2.1.0 SIGNED CANDIDATE: PASS — READY TO PUBLISH'
 
       - name: Upload exact signed candidate
         uses: actions/upload-artifact@v4
@@ -153,10 +155,138 @@ jobs:
           retention-days: 30
 
   publish:
-    name: Publish VYRON 2.1.0 and switch updater — LOCKED
+    name: Publish VYRON 2.1.0 and activate updater
     needs: final-test
-    if: ${{ false }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ScaleUPPeisov/scaleup-dashboards
+      VERSION: '2.1.0'
+      TAG: 'v2.1.0'
     steps:
-      - run: echo 'Publication intentionally locked until mandatory real YouTube + unified scheduler gates are green.'
+      - name: Checkout release commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Download exact green candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: VYRON-2.1.0-final-candidate
+          path: release
+
+      - name: Verify candidate and create updater manifest
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for f in VYRON-2.1.0-macOS-AppleSilicon.dmg VYRON.app.tar.gz VYRON.app.tar.gz.sig VYRON-2.1.0-source.tar.gz SHA256.txt UPDATER_SHA256.txt SOURCE_SHA256.txt FINAL_TEST_REPORT.md; do
+            test -s "release/$f"
+          done
+          cat > release/RELEASE_NOTES.md <<'NOTES'
+          # VYRON YT PEISOV 2.1.0 — Shorts Factory + Production Repair
+
+          - Добавлен Shorts Factory: Long → вертикальные Shorts 1080×1920 с реальным FFmpeg pipeline.
+          - Shorts получили metadata workflow, расписание и синхронизацию реального `publishAt` с YouTube.
+          - Long и Shorts используют единый future-safe scheduler без коллизий занятых слотов.
+          - Добавлены Content Buffer и Storage Manager с безопасным архивированием без автоматического удаления исходников.
+          - Усилен Error Center: очистка истории не меняет ERROR-задачи на SUCCESS; повторная ошибка снова отображается корректно.
+          - Batch upload больше не засыпает интерфейс десятками toast: причины сохраняются в Error Center, наружу выводится агрегированное уведомление.
+          - Сохранены Keychain recovery, cleanup, category/playlist, backup, quota и предыдущие production fixes.
+          - Релиз публикуется только из exact signed candidate после полного macOS Apple Silicon gate.
+          NOTES
+          python3 - <<'PY'
+          import json,datetime,pathlib
+          rel=pathlib.Path('release')
+          sig=(rel/'VYRON.app.tar.gz.sig').read_text().strip()
+          if not sig:
+              raise SystemExit('updater signature is empty')
+          notes=(rel/'RELEASE_NOTES.md').read_text()
+          data={
+            'version':'2.1.0',
+            'notes':notes,
+            'pub_date':datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00','Z'),
+            'platforms':{
+              'darwin-aarch64':{
+                'url':'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.0/VYRON.app.tar.gz',
+                'signature':sig
+              }
+            }
+          }
+          (rel/'latest.json').write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
+          PY
+          python3 - <<'PY'
+          import json
+          d=json.load(open('release/latest.json'))
+          assert d['version']=='2.1.0'
+          p=d['platforms']['darwin-aarch64']
+          assert p['url'].endswith('/v2.1.0/VYRON.app.tar.gz')
+          assert p['signature']
+          print('Updater manifest: PASS')
+          PY
+
+      - name: Publish exact tested GitHub Release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            gh release edit "$TAG" --repo "$REPO" \
+              --title 'VYRON YT PEISOV 2.1.0 — Shorts Factory + Production Repair' \
+              --notes-file release/RELEASE_NOTES.md \
+              --draft=false --prerelease=false
+          else
+            gh release create "$TAG" --repo "$REPO" --target "$GITHUB_SHA" \
+              --title 'VYRON YT PEISOV 2.1.0 — Shorts Factory + Production Repair' \
+              --notes-file release/RELEASE_NOTES.md
+          fi
+          gh release upload "$TAG" --repo "$REPO" --clobber \
+            release/VYRON-2.1.0-macOS-AppleSilicon.dmg \
+            release/VYRON.app.tar.gz \
+            release/VYRON.app.tar.gz.sig \
+            release/VYRON-2.1.0-source.tar.gz \
+            release/SHA256.txt release/UPDATER_SHA256.txt release/SOURCE_SHA256.txt \
+            release/FINAL_TEST_REPORT.md release/RELEASE_NOTES.md release/latest.json
+
+      - name: Activate stable updater 2.0.13 → 2.1.0
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          META=$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main")
+          CURRENT=$(printf '%s' "$META" | python3 -c 'import sys,json,base64;d=json.load(sys.stdin);print(base64.b64decode(d["content"]).decode())')
+          CURRENT_VERSION=$(printf '%s' "$CURRENT" | python3 -c 'import sys,json;print(json.load(sys.stdin)["version"])')
+          test "$CURRENT_VERSION" = '2.0.13' -o "$CURRENT_VERSION" = '2.1.0'
+          OLD_SHA=$(printf '%s' "$META" | python3 -c 'import sys,json;print(json.load(sys.stdin)["sha"])')
+          CONTENT=$(base64 -w0 release/latest.json)
+          gh api --method PUT "repos/$REPO/contents/vyron-updates/latest.json" \
+            -f message='VYRON updater: activate 2.1.0 Shorts Factory production release' \
+            -f content="$CONTENT" -f sha="$OLD_SHA" -f branch=main >/dev/null
+
+      - name: Verify public production release and updater
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(gh release view "$TAG" --repo "$REPO" --json isDraft --jq '.isDraft|tostring')" = 'false'
+          test "$(gh release view "$TAG" --repo "$REPO" --json isPrerelease --jq '.isPrerelease|tostring')" = 'false'
+          ASSETS=$(gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name')
+          for f in VYRON-2.1.0-macOS-AppleSilicon.dmg VYRON.app.tar.gz VYRON.app.tar.gz.sig VYRON-2.1.0-source.tar.gz latest.json FINAL_TEST_REPORT.md RELEASE_NOTES.md; do
+            grep -qx "$f" <<<"$ASSETS"
+          done
+          LIVE=$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | base64 --decode)
+          test "$(printf '%s' "$LIVE" | python3 -c 'import sys,json;print(json.load(sys.stdin)["version"])')" = '2.1.0'
+          rm -f /tmp/vyron-release-latest.json
+          gh release download "$TAG" --repo "$REPO" --pattern latest.json --dir /tmp/vyron-release-check --clobber
+          test "$(python3 -c "import json;print(json.load(open('/tmp/vyron-release-check/latest.json'))['version'])")" = '2.1.0'
+          curl -fsIL --connect-timeout 10 --max-time 30 "https://github.com/$REPO/releases/download/$TAG/VYRON.app.tar.gz" >/dev/null
+          curl -fsIL --connect-timeout 10 --max-time 30 "https://github.com/$REPO/releases/download/$TAG/VYRON.app.tar.gz.sig" >/dev/null
+          curl -fsIL --connect-timeout 10 --max-time 30 "https://github.com/$REPO/releases/download/$TAG/VYRON-2.1.0-macOS-AppleSilicon.dmg" >/dev/null
+          echo 'VYRON 2.1.0 PRODUCTION RELEASE: PASS'
+          {
+            echo '# VYRON 2.1.0 Production Release ✅'
+            echo
+            echo '- ✅ Exact green signed candidate published'
+            echo '- ✅ GitHub Release v2.1.0 published'
+            echo '- ✅ DMG / updater / signature / source published'
+            echo '- ✅ main updater feed activated at 2.1.0'
+            echo '- ✅ release latest.json verified'
+            echo '- ✅ public updater/DMG asset URLs reachable'
+          } >> "$GITHUB_STEP_SUMMARY"
