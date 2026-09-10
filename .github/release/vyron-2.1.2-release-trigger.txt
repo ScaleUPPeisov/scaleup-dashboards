@@ -1,0 +1,9 @@
+VYRON 2.1.2 FINAL PRODUCTION RELEASE
+
+oauth_fix_commit=1900844484ab4ec98f60af3e73fa68bb9454033d
+final_regression_candidate=b1b49cd347614a337766d249137149508111e5d9
+final_regression_run=34508041156
+final_regression_job=102974950150
+full_regression=PASS
+past_date_isolation=PASS
+release=2.1.2
