@@ -1,0 +1,89 @@
+name: VYRON 2.0.14 Payload Diagnostic FIXED
+
+on:
+  push:
+    branches: [release/vyron-2.1.0-shorts-buffer-storage]
+    paths:
+      - '.github/workflows/vyron-214-payload-diagnostic-fixed.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Inspect immutable 2.0.14 payload parts
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout 84456d5e9c982057805078d0604cf90654d893d8 -- vyron-v214/parts
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64,gzip,hashlib
+
+          parts=sorted(Path('vyron-v214/parts').glob('part*.txt'))
+          expected='80c951a30d8822b654ce9bb0b58a3068ab9260cc29fbd31d91b26a2d1739654a'
+          print('parts:', [p.name for p in parts])
+          vals=[]
+          for p in parts:
+              s=''.join(p.read_text().split())
+              vals.append(s)
+              eq=[i for i,c in enumerate(s) if c=='=']
+              print(p.name,'len=',len(s),'mod4=',len(s)%4,'eq_count=',len(eq),'eq_pos=',eq[:20], 'start=',repr(s[:12]),'end=',repr(s[-24:]))
+              try:
+                  b=base64.b64decode(s,validate=True)
+                  print('  individual strict: PASS bytes=',len(b),'head=',b[:8].hex(),'tail=',b[-8:].hex())
+              except Exception as e:
+                  print('  individual strict: FAIL',type(e).__name__,str(e))
+
+          joined=''.join(vals)
+          print('joined len=',len(joined),'sha=',hashlib.sha256(joined.encode()).hexdigest(),'eq_count=',joined.count('='),'eq_positions=',[i for i,c in enumerate(joined) if c=='='])
+
+          def check(label, raw):
+              print(label,'raw bytes=',len(raw),'raw head=',raw[:12].hex())
+              try:
+                  patch=gzip.decompress(raw)
+                  sha=hashlib.sha256(patch).hexdigest()
+                  print(label,'GZIP PASS patch bytes=',len(patch),'patch sha=',sha,'EXPECTED=',sha==expected)
+                  print('patch head=',repr(patch[:100]))
+              except Exception as e:
+                  print(label,'GZIP FAIL',type(e).__name__,str(e))
+
+          try:
+              check('joined-strict',base64.b64decode(joined,validate=True))
+          except Exception as e:
+              print('joined-strict BASE64 FAIL',type(e).__name__,str(e))
+
+          try:
+              raw=b''.join(base64.b64decode(s,validate=True) for s in vals)
+              check('individual-concat',raw)
+          except Exception as e:
+              print('individual-concat BASE64 FAIL',type(e).__name__,str(e))
+
+          try:
+              depad=''.join(s.rstrip('=') for s in vals[:-1])+vals[-1]
+              depad += '=' * (-len(depad)%4)
+              check('depad-intermediate',base64.b64decode(depad,validate=True))
+          except Exception as e:
+              print('depad-intermediate BASE64 FAIL',type(e).__name__,str(e))
+
+          # Also test whether part00 is an accidentally duplicated prefix/payload wrapper.
+          for start in range(len(vals)):
+              candidate=''.join(vals[start:])
+              try:
+                  raw=base64.b64decode(candidate,validate=True)
+                  try:
+                      patch=gzip.decompress(raw)
+                  except Exception:
+                      continue
+                  sha=hashlib.sha256(patch).hexdigest()
+                  print('suffix',start,'GZIP PASS sha=',sha,'EXPECTED=',sha==expected)
+              except Exception:
+                  pass
+          PY
