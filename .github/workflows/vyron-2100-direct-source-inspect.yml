@@ -1,9 +1,9 @@
-# trigger direct-source inspection
 name: VYRON 2.1.0 Direct Source Inspect
 
 on:
   push:
-    branches: [release/vyron-2.1.0-shorts-buffer-storage]
+    branches:
+      - release/vyron-2.1.0-production-repair-shorts
     paths:
       - '.github/workflows/vyron-2100-direct-source-inspect.yml'
   workflow_dispatch:
@@ -13,13 +13,15 @@ permissions:
 
 jobs:
   inspect:
+    name: Inspect exact VYRON 2.0.13 release source
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
       GH_TOKEN: ${{ github.token }}
       REPO: ScaleUPPeisov/scaleup-dashboards
     steps:
       - uses: actions/checkout@v4
-      - name: Download exact 2.0.13 source and inspect patch anchors
+      - name: Download exact 2.0.13 source and inspect repair anchors
         shell: bash
         run: |
           set -euo pipefail
@@ -33,16 +35,16 @@ jobs:
           from pathlib import Path
           r=Path('/tmp/vyron213src')
           specs={
-            'src/PublisherOS.tsx':['scheduleStart=draft.scheduleStartDate||todayKrasnoyarskDate()','resolvedUploadMetadata','handlePublish','youtubeListExisting','publishAt','scheduleStartDate'],
-            'src/publisherSchedule.ts':['export','Asia/Krasnoyarsk','publishAt','schedule'],
-            'src/errorCenter.ts':['SCHEDULE','UNKNOWN','map','error'],
-            'src/App.tsx':['Очистить историю','errorHistory','notification','Убрать ошибку'],
-            'src/errorHistory.ts':['export function','append','clear','remove'],
-            'src/notificationCenter.ts':['technicalDetail','appendErrorHistory','export type','interface'],
-            'src/api.ts':['youtubeListExisting','youtube','invoke'],
-            'src-tauri/src/youtube.rs':['youtube_list_existing_videos','publishAt','videos.list','status','snippet','contentDetails'],
+            'src/PublisherOS.tsx':['async function runBatch','notifyError','youtubeUpload','effectivePublishAt','youtubeListExisting','scheduleStartDate'],
+            'src/publisherSchedule.ts':['publisherScheduleDates','publisherSchedulePreview','publisherKrasnoyarskIso','todayKrasnoyarskDate'],
+            'src/errorCenter.ts':['humanizeError','UNKNOWN','SCHEDULE','operation failed','state saved'],
+            'src/App.tsx':['Очистить историю','jobErrors','errorCount','errorHistory'],
+            'src/errorHistory.ts':['appendErrorHistory','clearErrorHistory','localStorage'],
+            'src/notificationCenter.ts':['notifyError','appendErrorHistory','AppNotification','notify('],
+            'src/api.ts':['youtubeUpload','youtubeUpdateExisting','youtubeListExisting','onYoutubeApiRequest'],
+            'src-tauri/src/youtube.rs':['youtube_upload','youtube_list_existing_videos','videos.insert','videos.list','publishAt','scheduleAccepted'],
+            'src-tauri/src/production_manager.rs':['Strict','master integrity','frames=','packets=','ffprobe'],
             'src-tauri/src/lib.rs':['youtube_list_existing','generate_handler'],
-            'src/releaseHistory.ts':['2.0.13','2.0.12','version:'],
           }
           for rel,needles in specs.items():
             p=r/rel
@@ -51,10 +53,10 @@ jobs:
             lines=p.read_text(errors='replace').splitlines()
             seen=set()
             for needle in needles:
-              hits=[i for i,x in enumerate(lines) if needle in x]
+              hits=[i for i,x in enumerate(lines) if needle.lower() in x.lower()]
               print(f'\n-- NEEDLE {needle!r} HITS {len(hits)}')
-              for i in hits[:8]:
-                a=max(0,i-12); b=min(len(lines),i+18)
+              for i in hits[:10]:
+                a=max(0,i-16); b=min(len(lines),i+24)
                 key=(a,b)
                 if key in seen: continue
                 seen.add(key)
