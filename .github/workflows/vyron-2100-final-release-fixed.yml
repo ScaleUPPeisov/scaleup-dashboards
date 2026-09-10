@@ -1,4 +1,4 @@
-name: VYRON 2.1.0 Source Inspection Storage
+name: VYRON 2.1.0 Direct Source Gate
 
 on:
   push:
@@ -10,26 +10,103 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: vyron-2100-direct-source-gate
+  cancel-in-progress: true
+
 jobs:
-  inspect-source:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+  final-gate:
+    name: Direct Source Gate — macOS Apple Silicon
+    runs-on: macos-14
+    timeout-minutes: 180
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
-      - name: Print exact storage source corridors
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Toolchain
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/vyron-src"
-          gh release download v2.0.13 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-2.0.13-source.tar.gz' --dir "$RUNNER_TEMP"
-          test "$(sha256sum "$RUNNER_TEMP/VYRON-2.0.13-source.tar.gz"|awk '{print $1}')" = 'd9f6345b597d41018b9a439c3eda2558e33936c6b605ac2b8052955b4e088717'
-          tar -xzf "$RUNNER_TEMP/VYRON-2.0.13-source.tar.gz" -C "$RUNNER_TEMP/vyron-src"
-          cd "$RUNNER_TEMP/vyron-src"
-          echo '===== production_manager.rs storage/archive grep ====='
-          grep -nEi 'storage|archive|cleanup|delete|remove|source|rendered|final' src-tauri/src/production_manager.rs | head -260 || true
-          echo '===== ProductionManager.tsx storage/archive grep ====='
-          grep -nEi 'storage|archive|cleanup|delete|remove|source|rendered|final|храни|архив|очист' src/ProductionManager.tsx | head -260 || true
-          echo '===== productionManagerApi.ts ====='
-          nl -ba src/productionManagerApi.ts | sed -n '1,220p'
+          rustup target add aarch64-apple-darwin
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then brew install ffmpeg; fi
+      - name: Build and test direct-source VYRON 2.1.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          exec > >(tee "$GITHUB_WORKSPACE/vyron-2100-gate.log") 2>&1
+          ROOT="$GITHUB_WORKSPACE"
+          WORK="$ROOT/.vyron-2100-release"
+          BASE="$RUNNER_TEMP/vyron-base"
+          SOURCE_SHA='d9f6345b597d41018b9a439c3eda2558e33936c6b605ac2b8052955b4e088717'
+          SHORTS_SHA='549ac4175c7745092509010ce928110958870ccc'
+
+          echo '==> Fetch pinned Shorts Factory implementation'
+          git fetch --no-tags origin "$SHORTS_SHA"
+          git checkout "$SHORTS_SHA" -- vyron-v211
+
+          echo '==> Verify exact official VYRON 2.0.13 source'
+          rm -rf "$WORK" "$BASE"; mkdir -p "$WORK" "$BASE"
+          gh release download v2.0.13 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-2.0.13-source.tar.gz' --dir "$BASE"
+          test "$(shasum -a 256 "$BASE/VYRON-2.0.13-source.tar.gz"|awk '{print $1}')" = "$SOURCE_SHA"
+          tar -xzf "$BASE/VYRON-2.0.13-source.tar.gz" -C "$WORK"
+          test "$(node -p "require('$WORK/package.json').version")" = '2.0.13'
+
+          echo '==> Apply direct YouTube publish/error recovery'
+          python3 "$ROOT/vyron-v2100/apply_v2100_direct.py" "$WORK" recovery
+          echo '==> Apply Shorts Factory'
+          python3 "$ROOT/vyron-v211/apply_v211_shorts_factory.py" "$WORK"
+          echo '==> Apply safe Storage Manager archive'
+          python3 "$ROOT/vyron-v2100/apply_v2100_direct.py" "$WORK" storage
+          cd "$WORK"
+
+          echo '==> Static contracts'
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          r=Path('.')
+          pkg=json.loads((r/'package.json').read_text()); conf=json.loads((r/'src-tauri/tauri.conf.json').read_text())
+          assert pkg['version']=='2.1.0' and conf['version']=='2.1.0'
+          assert conf['identifier']=='studio.channelflow.desktop'
+          for f in ['src/shortsCore.ts','src/ShortsFactory.tsx','src/ShortsMetadata.tsx','src/MetadataTabs.tsx','src-tauri/src/shorts_factory.rs','src/v2100PublishRecovery.test.ts','src/v2100StorageArchive.test.ts']:
+              assert (r/f).is_file(),f
+          pub=(r/'src/PublisherOS.tsx').read_text(); sched=(r/'src/publisherSchedule.ts').read_text(); app=(r/'src/App.tsx').read_text(); err=(r/'src/errorCenter.ts').read_text(); notify=(r/'src/notificationCenter.ts').read_text(); prod=(r/'src/ProductionOS.tsx').read_text(); short=(r/'src-tauri/src/shorts_factory.rs').read_text(); pm=(r/'src-tauri/src/production_manager.rs').read_text(); pma=(r/'src/productionManagerApi.ts').read_text(); pui=(r/'src/ProductionManager.tsx').read_text(); lib=(r/'src-tauri/src/lib.rs').read_text(); yt=(r/'src-tauri/src/youtube.rs').read_text(); runway=(r/'src/channelRunwayCore.ts').read_text()
+          for t in ('syncScheduleFromYoutube','api.youtubeListExisting(profileId,1000)','pastSchedule','Синхронизировать с YouTube','Последняя дата на YouTube','technicalDetail:h.detail'): assert t in pub,t
+          for t in ('latestYoutubeScheduledPublishAt','suggestedScheduleStartDate','nextFutureScheduleDate','isFuturePublishAt','Asia/Krasnoyarsk'): assert t in sched,t
+          for t in ('SCHEDULE_IN_PAST','SCHEDULE_REJECTED'): assert t in err,t
+          for t in ('Очистить все ошибки','Убрать ошибку','Технические детали'): assert t in app,t
+          assert 'technicalDetail?:string' in notify
+          for t in ('SHORTS','СОЗДАТЬ SHORTS','<ShortsFactory'): assert t in prod,t
+          for t in ('h264_videotoolbox','libx264','.part.mp4','1080','1920','shorts_render_segment','real_ffmpeg_fixture_if_enabled'): assert t in short,t
+          assert 'runwayDays' in runway and 'scheduledUntil' in runway
+          for t in ('archive_production_rendered_videos','ArchiveRenderedResult','fs::copy','source rendered MP4 is COPY-ONLY'): assert t in pm,t
+          assert 'archiveRenderedVideos' in pma and 'АРХИВ MP4' in pui and 'Исходные видео останутся на месте' in pui
+          assert 'production_manager::archive_production_rendered_videos' in lib
+          assert '"publishAt":st.get("publishAt")' in yt
+          print('STATIC CONTRACTS PASS')
+          PY
+
+          echo '==> Frontend tests and production build'
+          npm ci --no-audit --no-fund
+          npm test
+          npm run build
+
+          echo '==> Rust tests including real local Shorts fixture'
+          VYRON_SHORTS_REAL_TEST=1 cargo test --manifest-path src-tauri/Cargo.toml --lib -- --nocapture
+          echo '==> ARM64 compile check'
+          cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
+          echo '==> Tauri application compile without publishing/signing'
+          npx tauri build --target aarch64-apple-darwin --no-bundle
+          echo 'VYRON 2.1.0 DIRECT SOURCE GATE: PASS'
+      - name: Upload gate log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-2.1.0-direct-source-gate-log
+          path: vyron-2100-gate.log
+          if-no-files-found: warn
+          retention-days: 14
