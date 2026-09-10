@@ -74,7 +74,7 @@ jobs:
 
           replacements = [
               ("V214_PAYLOAD_SHA='e917c0c26ea9701e141948a83e05f4733268190d'\n", ""),
-              ("B64_SHA='57dd14ab8422aaf545c7d61b2e4fa4f15ab3340a2055675cbd3d50d3afbdbc5c'", "B64_SHA='70fc11cb5deaff78251749ec6b2b1e726c2bb1e815a878675c3ccc9359a30390'"),
+              ("B64_SHA='57dd14ab8422aaf545c7d61b2e4fa4f15ab3340a2055675cbd3d50d3afbdbc5c'", "B64_SHA='183851559b236fab3731641e76deeaec259be67dc1e9feae0c8720e280ecce4c'"),
               ('git fetch --no-tags origin "$V214_SHA" "$V214_PAYLOAD_SHA" "$SHORTS_SHA"', 'git fetch --no-tags origin "$V214_SHA" "$SHORTS_SHA"'),
               ('git checkout "$V214_PAYLOAD_SHA" -- vyron-v214/v214.patch.gz.b64\n', ''),
               ('B64="$ROOT/vyron-v214/v214.patch.gz.b64"\nPATCH="$RUNNER_TEMP/v214.patch"\ntest -s "$B64"', 'PARTS="$ROOT/vyron-v214/parts"\ntest -d "$PARTS"\nB64="$RUNNER_TEMP/v214.patch.gz.b64"\nPATCH="$RUNNER_TEMP/v214.patch"\ncat "$PARTS"/part*.txt > "$B64"\ntest -s "$B64"'),
@@ -102,7 +102,7 @@ jobs:
               "SOURCE_SHA='d9f6345b597d41018b9a439c3eda2558e33936c6b605ac2b8052955b4e088717'",
               "V214_SHA='84456d5e9c982057805078d0604cf90654d893d8'",
               "SHORTS_SHA='549ac4175c7745092509010ce928110958870ccc'",
-              "B64_SHA='70fc11cb5deaff78251749ec6b2b1e726c2bb1e815a878675c3ccc9359a30390'",
+              "B64_SHA='183851559b236fab3731641e76deeaec259be67dc1e9feae0c8720e280ecce4c'",
               "PATCH_SHA='80c951a30d8822b654ce9bb0b58a3068ab9260cc29fbd31d91b26a2d1739654a'",
               'cat "$PARTS"/part*.txt > "$B64"',
           ]
