@@ -1,0 +1,206 @@
+name: VYRON 2.1.0 Full Gate + Production Release FIXED
+
+on:
+  push:
+    branches: [release/vyron-2.1.0-shorts-buffer-storage]
+    paths:
+      - '.github/workflows/vyron-2100-final-release-fixed.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vyron-2100-production-release-fixed
+  cancel-in-progress: true
+
+jobs:
+  final-gate:
+    name: Final Gate — macOS Apple Silicon
+    runs-on: macos-14
+    timeout-minutes: 180
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: '-'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup target add aarch64-apple-darwin
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+            brew install ffmpeg
+          fi
+          ffmpeg -version | head -1
+          ffprobe -version | head -1
+
+      - name: Prepare corrected pinned 2.1.0 gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          ORIGINAL_COMMIT='701594f5f72383cc6a15ca46f0af7ba870eef1be'
+          ORIGINAL="$RUNNER_TEMP/vyron-2100-original.yml"
+          FIXED="$RUNNER_TEMP/vyron-2100-gate-fixed.sh"
+          git show "$ORIGINAL_COMMIT:.github/workflows/vyron-2100-final-release.yml" > "$ORIGINAL"
+          python3 - "$ORIGINAL" "$FIXED" <<'PY'
+          from pathlib import Path
+          import sys
+
+          src = Path(sys.argv[1]).read_text()
+          step = "      - name: Run complete deterministic 2.1.0 gate\n"
+          run_marker = "        run: |\n"
+          end_marker = "\n      - name: Upload gate log"
+          a = src.index(step)
+          b = src.index(run_marker, a) + len(run_marker)
+          e = src.index(end_marker, b)
+          block = src[b:e]
+          lines = []
+          for line in block.splitlines():
+              if line.startswith("          "):
+                  line = line[10:]
+              lines.append(line)
+          script = "\n".join(lines) + "\n"
+          needle = "raw=base64.b64decode(filtered,validate=True)"
+          replacement = "filtered += '=' * (-len(filtered) % 4)\nraw=base64.b64decode(filtered,validate=True)"
+          if script.count(needle) != 1:
+              raise SystemExit(f"decoder anchor count={script.count(needle)}")
+          script = script.replace(needle, replacement, 1)
+          if "PATCH_SHA='80c951a30d8822b654ce9bb0b58a3068ab9260cc29fbd31d91b26a2d1739654a'" not in script:
+              raise SystemExit("pinned patch SHA missing")
+          Path(sys.argv[2]).write_text(script)
+          print("Pinned gate extracted; deterministic Base64 padding fix applied exactly once")
+          PY
+          chmod +x "$FIXED"
+
+      - name: Run corrected deterministic 2.1.0 gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash "$RUNNER_TEMP/vyron-2100-gate-fixed.sh"
+
+      - name: Upload gate log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-2.1.0-gate-log
+          path: vyron-2100-gate.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload exact green candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-2.1.0-final-candidate
+          path: .vyron-2100-release/release/
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Publish VYRON 2.1.0
+    needs: final-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ScaleUPPeisov/scaleup-dashboards
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: VYRON-2.1.0-final-candidate
+          path: release
+
+      - name: Create updater manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in VYRON-2.1.0-macOS-AppleSilicon.dmg VYRON.app.tar.gz VYRON.app.tar.gz.sig VYRON-2.1.0-source.tar.gz SHA256.txt UPDATER_SHA256.txt SOURCE_SHA256.txt FINAL_TEST_REPORT.md RELEASE_NOTES.md; do
+            test -s "release/$f"
+          done
+          python3 - <<'PY'
+          import json,datetime,pathlib
+          r=pathlib.Path('release')
+          sig=(r/'VYRON.app.tar.gz.sig').read_text().strip()
+          notes=(r/'RELEASE_NOTES.md').read_text()
+          data={
+              'version':'2.1.0',
+              'notes':notes,
+              'pub_date':datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00','Z'),
+              'platforms':{
+                  'darwin-aarch64':{
+                      'url':'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.0/VYRON.app.tar.gz',
+                      'signature':sig
+                  }
+              }
+          }
+          (r/'latest.json').write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
+          PY
+
+      - name: Publish exact tested release
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view v2.1.0 --repo "$REPO" >/dev/null 2>&1; then
+            gh release edit v2.1.0 --repo "$REPO" \
+              --title 'VYRON YT PEISOV 2.1.0 — Shorts Factory + Production Storage' \
+              --notes-file release/RELEASE_NOTES.md \
+              --draft=false --prerelease=false
+          else
+            gh release create v2.1.0 --repo "$REPO" --target "$GITHUB_SHA" \
+              --title 'VYRON YT PEISOV 2.1.0 — Shorts Factory + Production Storage' \
+              --notes-file release/RELEASE_NOTES.md
+          fi
+          gh release upload v2.1.0 --repo "$REPO" --clobber \
+            release/VYRON-2.1.0-macOS-AppleSilicon.dmg \
+            release/VYRON.app.tar.gz \
+            release/VYRON.app.tar.gz.sig \
+            release/VYRON-2.1.0-source.tar.gz \
+            release/SHA256.txt \
+            release/UPDATER_SHA256.txt \
+            release/SOURCE_SHA256.txt \
+            release/FINAL_TEST_REPORT.md \
+            release/RELEASE_NOTES.md \
+            release/latest.json
+
+      - name: Activate updater
+        shell: bash
+        run: |
+          set -euo pipefail
+          OLD_SHA=$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .sha)
+          CURRENT=$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | base64 --decode | python3 -c 'import sys,json;print(json.load(sys.stdin)["version"])')
+          case "$CURRENT" in
+            2.0.13|2.0.14|2.1.0) ;;
+            *) echo "Unexpected live updater $CURRENT"; exit 1 ;;
+          esac
+          CONTENT=$(base64 -w0 release/latest.json)
+          gh api --method PUT "repos/$REPO/contents/vyron-updates/latest.json" \
+            -f message='VYRON updater: 2.1.0' \
+            -f content="$CONTENT" \
+            -f sha="$OLD_SHA" \
+            -f branch=main >/dev/null
+
+      - name: Verify production
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh release view v2.1.0 --repo "$REPO" --json isDraft --jq '.isDraft|tostring')" = false
+          test "$(gh release view v2.1.0 --repo "$REPO" --json isPrerelease --jq '.isPrerelease|tostring')" = false
+          ASSETS=$(gh release view v2.1.0 --repo "$REPO" --json assets --jq '.assets[].name')
+          for f in VYRON-2.1.0-macOS-AppleSilicon.dmg VYRON.app.tar.gz VYRON.app.tar.gz.sig VYRON-2.1.0-source.tar.gz latest.json FINAL_TEST_REPORT.md; do
+            grep -qx "$f" <<<"$ASSETS"
+          done
+          LIVE=$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | base64 --decode)
+          test "$(printf '%s' "$LIVE" | python3 -c 'import sys,json;print(json.load(sys.stdin)["version"])')" = 2.1.0
+          echo 'VYRON 2.1.0 PRODUCTION RELEASE: PASS'
