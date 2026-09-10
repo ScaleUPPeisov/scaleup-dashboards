@@ -1,0 +1,70 @@
+name: VYRON 2.1.0 Full Regression NO PUBLISH
+
+on:
+  push:
+    branches:
+      - test/vyron-2.1.0-full-regression-20260910
+    paths:
+      - '.github/workflows/vyron-2100-full-regression-temp.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-2100-full-regression-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  full-regression:
+    name: Full Regression — macOS Apple Silicon — NO PUBLISH
+    runs-on: macos-14
+    timeout-minutes: 180
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout exact test branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run exact VYRON 2.1.0 repair gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup target add aarch64-apple-darwin
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then brew install ffmpeg; fi
+          python3 -m venv "$RUNNER_TEMP/vyron-ci-python"
+          source "$RUNNER_TEMP/vyron-ci-python/bin/activate"
+          python -m pip install --quiet --disable-pip-version-check pyyaml
+          python - <<'PY' > "$RUNNER_TEMP/vyron-direct-gate.sh"
+          import yaml
+          from pathlib import Path
+          p=Path('.github/workflows/vyron-2100-final-release-fixed.yml')
+          data=yaml.safe_load(p.read_text())
+          for step in data['jobs']['final-gate']['steps']:
+              if step.get('name')=='Build and test direct-source VYRON 2.1.0':
+                  print(step['run'])
+                  break
+          else:
+              raise SystemExit('direct-source gate step not found')
+          PY
+          test -s "$RUNNER_TEMP/vyron-direct-gate.sh"
+          bash "$RUNNER_TEMP/vyron-direct-gate.sh"
+          test -f "$GITHUB_WORKSPACE/.vyron-2100-release/package.json"
+          test "$(node -p "require('$GITHUB_WORKSPACE/.vyron-2100-release/package.json').version")" = '2.1.0'
+          echo 'VYRON 2.1.0 FULL REGRESSION: PASS'
+
+      - name: Upload full regression log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-2.1.0-full-regression-log
+          path: vyron-2100-gate.log
+          if-no-files-found: warn
+          retention-days: 14
