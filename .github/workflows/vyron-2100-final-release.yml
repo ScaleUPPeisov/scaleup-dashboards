@@ -47,9 +47,8 @@ jobs:
           BASE="$RUNNER_TEMP/vyron-base"
           SOURCE_SHA='d9f6345b597d41018b9a439c3eda2558e33936c6b605ac2b8052955b4e088717'
           V214_SHA='84456d5e9c982057805078d0604cf90654d893d8'
-          V214_PAYLOAD_SHA='e917c0c26ea9701e141948a83e05f4733268190d'
           SHORTS_SHA='549ac4175c7745092509010ce928110958870ccc'
-          B64_SHA='57dd14ab8422aaf545c7d61b2e4fa4f15ab3340a2055675cbd3d50d3afbdbc5c'
+          B64_SHA='70fc11cb5deaff78251749ec6b2b1e726c2bb1e815a878675c3ccc9359a30390'
           PATCH_SHA='80c951a30d8822b654ce9bb0b58a3068ab9260cc29fbd31d91b26a2d1739654a'
 
           echo '==> Normalize Tauri signing material'
@@ -74,10 +73,9 @@ jobs:
           export TAURI_SIGNING_PRIVATE_KEY="$(grep '^TAURI_SIGNING_PRIVATE_KEY=' "$GITHUB_ENV"|tail -1|cut -d= -f2-)"
           export TAURI_UPDATER_PUBLIC_KEY="$(grep '^TAURI_UPDATER_PUBLIC_KEY=' "$GITHUB_ENV"|tail -1|cut -d= -f2-)"
 
-          echo '==> Fetch pinned recovery, original deterministic payload and previously green Shorts implementation'
-          git fetch --no-tags origin "$V214_SHA" "$V214_PAYLOAD_SHA" "$SHORTS_SHA"
+          echo '==> Fetch pinned recovery parts and previously green Shorts implementation'
+          git fetch --no-tags origin "$V214_SHA" "$SHORTS_SHA"
           git checkout "$V214_SHA" -- vyron-v214
-          git checkout "$V214_PAYLOAD_SHA" -- vyron-v214/v214.patch.gz.b64
           git checkout "$SHORTS_SHA" -- vyron-v211
 
           echo '==> Verify exact released VYRON 2.0.13 source'
@@ -87,24 +85,18 @@ jobs:
           tar -xzf "$BASE/VYRON-2.0.13-source.tar.gz" -C "$WORK"
           test "$(node -p "require('$WORK/package.json').version")" = '2.0.13'
 
-          echo '==> Verify and decode original deterministic YouTube Publish Recovery payload'
-          B64="$ROOT/vyron-v214/v214.patch.gz.b64"
+          echo '==> Rebuild and verify deterministic YouTube Publish Recovery payload from canonical parts'
+          B64="$RUNNER_TEMP/v214.patch.gz.b64"
           PATCH="$RUNNER_TEMP/v214.patch"
+          cat "$ROOT/vyron-v214/parts"/part*.txt > "$B64"
           test -s "$B64"
           GOT_B64="$(shasum -a 256 "$B64"|awk '{print $1}')"
           echo "payload blob sha256=$GOT_B64"
           test "$GOT_B64" = "$B64_SHA"
           python3 - "$B64" "$PATCH" <<'PY'
-          import base64,gzip,pathlib,sys,string
+          import base64,gzip,pathlib,sys
           src=pathlib.Path(sys.argv[1]).read_text()
-          alphabet=set(string.ascii_letters+string.digits+'+/=')
-          compact=''.join(src.split())
-          filtered=''.join(ch for ch in compact if ch in alphabet)
-          removed=[ch for ch in compact if ch not in alphabet]
-          print(f'payload chars={len(compact)} base64_chars={len(filtered)} removed_non_base64={len(removed)}')
-          if removed:
-              print('removed codepoints=',sorted(set(ord(ch) for ch in removed)))
-          raw=base64.b64decode(filtered,validate=True)
+          raw=base64.b64decode(''.join(src.split()),validate=True)
           pathlib.Path(sys.argv[2]).write_bytes(gzip.decompress(raw))
           PY
           GOT_PATCH="$(shasum -a 256 "$PATCH"|awk '{print $1}')"
@@ -205,7 +197,7 @@ jobs:
           cat > release/FINAL_TEST_REPORT.md <<'EOF'
           # VYRON 2.1.0 — FINAL TEST
           - ✅ Exact released 2.0.13 source SHA256
-          - ✅ Original deterministic Recovery payload blob SHA256 + patch SHA256
+          - ✅ Canonical recovery payload parts SHA256 + patch SHA256
           - ✅ Publisher schedule recovery
           - ✅ Existing Videos category / playlist / authoritative backup / verified Undo
           - ✅ Keychain recovery
