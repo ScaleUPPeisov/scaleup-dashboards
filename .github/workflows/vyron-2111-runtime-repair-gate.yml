@@ -1,0 +1,127 @@
+name: VYRON 2.1.1 Runtime Repair Gate NO PUBLISH
+
+on:
+  push:
+    branches:
+      - release/vyron-2.1.1-youtube-runtime-repair
+    paths:
+      - 'vyron-v2111/**'
+      - '.github/workflows/vyron-2111-runtime-repair-gate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-2111-runtime-repair-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: Full runtime regression — macOS Apple Silicon
+    runs-on: macos-14
+    timeout-minutes: 75
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout repair branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Prepare exact published 2.1.0 source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rustup target add aarch64-apple-darwin
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then brew install ffmpeg; fi
+          rm -rf "$GITHUB_WORKSPACE/.vyron-2111-release" "$RUNNER_TEMP/vyron2111-source"
+          mkdir -p "$GITHUB_WORKSPACE/.vyron-2111-release" "$RUNNER_TEMP/vyron2111-source"
+          gh release download v2.1.0 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-2.1.0-source.tar.gz' --pattern 'SOURCE_SHA256.txt' --dir "$RUNNER_TEMP/vyron2111-source"
+          cd "$RUNNER_TEMP/vyron2111-source"
+          expected="$(awk '{print $1}' SOURCE_SHA256.txt)"
+          actual="$(shasum -a 256 VYRON-2.1.0-source.tar.gz | awk '{print $1}')"
+          test -n "$expected"
+          test "$expected" = "$actual"
+          tar -xzf VYRON-2.1.0-source.tar.gz -C "$GITHUB_WORKSPACE/.vyron-2111-release"
+          test "$(node -p "require('$GITHUB_WORKSPACE/.vyron-2111-release/package.json').version")" = '2.1.0'
+          echo "SOURCE_SHA256=$actual"
+
+      - name: Apply VYRON 2.1.1 runtime repair
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 vyron-v2111/apply_v2111_youtube_runtime_repair.py "$GITHUB_WORKSPACE/.vyron-2111-release"
+          test "$(node -p "require('$GITHUB_WORKSPACE/.vyron-2111-release/package.json').version")" = '2.1.1'
+          python3 - "$GITHUB_WORKSPACE/.vyron-2111-release/src-tauri/tauri.conf.json" <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1]));assert d['version']=='2.1.1';assert d['identifier']=='studio.channelflow.desktop'
+          PY
+
+      - name: Static runtime contracts
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ROOT="$GITHUB_WORKSPACE/.vyron-2111-release"
+          grep -q "canonicalSelectedJobs(channelJobs,draft.selectedIds)" "$ROOT/src/PublisherOS.tsx"
+          grep -q "publisherUploadButtonLabel(selected.length,uploadableSelected.length)" "$ROOT/src/PublisherOS.tsx"
+          grep -q "let batch=uploadableSelected.slice" "$ROOT/src/PublisherOS.tsx"
+          grep -q "method:'videos.list'" "$ROOT/src/PublisherOS.tsx"
+          grep -q "video/quicktime" "$ROOT/src-tauri/src/youtube.rs"
+          grep -q "verify_uploaded_video" "$ROOT/src-tauri/src/youtube.rs"
+          grep -q "SCHEDULE_IN_PAST" "$ROOT/src-tauri/src/youtube.rs"
+          grep -q "UPLOAD_VERIFY_FAILED" "$ROOT/src/PublisherOS.tsx"
+          ! grep -q '>ЗАГРУЗИТЬ {selected.length} ВИДЕО НА YOUTUBE</button>' "$ROOT/src/PublisherOS.tsx"
+          echo 'STATIC RUNTIME CONTRACTS: PASS'
+
+      - name: Frontend unit integration and production build
+        shell: bash
+        working-directory: .vyron-2111-release
+        run: |
+          set -Eeuo pipefail
+          npm ci
+          npm test
+          npm run build
+
+      - name: Rust tests including upload contracts and real Shorts FFmpeg
+        shell: bash
+        working-directory: .vyron-2111-release
+        env:
+          VYRON_TEST_REAL_FFMPEG: '1'
+        run: |
+          set -Eeuo pipefail
+          cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: ARM64 cargo check
+        shell: bash
+        working-directory: .vyron-2111-release
+        run: |
+          set -Eeuo pipefail
+          cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
+
+      - name: Tauri ARM64 runtime build no publish
+        shell: bash
+        working-directory: .vyron-2111-release
+        run: |
+          set -Eeuo pipefail
+          npx tauri build --target aarch64-apple-darwin --no-bundle
+          BIN="src-tauri/target/aarch64-apple-darwin/release/channelflow"
+          test -x "$BIN"
+          file "$BIN" | grep -q 'arm64'
+          echo 'VYRON 2.1.1 RUNTIME REPAIR GATE: PASS'
+
+      - name: Upload gate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-2.1.1-runtime-repair-gate-${{ github.run_number }}
+          path: |
+            .vyron-2111-release/src/v2111PublisherRuntime.test.ts
+            .vyron-2111-release/src/v2111PublisherWiring.test.ts
+          if-no-files-found: warn
+          retention-days: 14
