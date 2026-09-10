@@ -53,7 +53,7 @@ jobs:
           ORIGINAL="$RUNNER_TEMP/vyron-2100-original.yml"
           FIXED="$RUNNER_TEMP/vyron-2100-gate-fixed.sh"
           git show "$ORIGINAL_COMMIT:.github/workflows/vyron-2100-final-release.yml" > "$ORIGINAL"
-          python3 - "$ORIGINAL" "$FIXED" <<'PY'
+          python3 - "$ORIGINAL" "$FIXED" <<'PYFIX'
           from pathlib import Path
           import sys
 
@@ -74,43 +74,29 @@ jobs:
 
           replacements = [
               ("V214_PAYLOAD_SHA='e917c0c26ea9701e141948a83e05f4733268190d'\n", ""),
-              ("B64_SHA='57dd14ab8422aaf545c7d61b2e4fa4f15ab3340a2055675cbd3d50d3afbdbc5c'",
-               "B64_SHA='70fc11cb5deaff78251749ec6b2b1e726c2bb1e815a878675c3ccc9359a30390'"),
-              ('git fetch --no-tags origin "$V214_SHA" "$V214_PAYLOAD_SHA" "$SHORTS_SHA"',
-               'git fetch --no-tags origin "$V214_SHA" "$SHORTS_SHA"'),
+              ("B64_SHA='57dd14ab8422aaf545c7d61b2e4fa4f15ab3340a2055675cbd3d50d3afbdbc5c'", "B64_SHA='70fc11cb5deaff78251749ec6b2b1e726c2bb1e815a878675c3ccc9359a30390'"),
+              ('git fetch --no-tags origin "$V214_SHA" "$V214_PAYLOAD_SHA" "$SHORTS_SHA"', 'git fetch --no-tags origin "$V214_SHA" "$SHORTS_SHA"'),
               ('git checkout "$V214_PAYLOAD_SHA" -- vyron-v214/v214.patch.gz.b64\n', ''),
-              ('B64="$ROOT/vyron-v214/v214.patch.gz.b64"\nPATCH="$RUNNER_TEMP/v214.patch"\ntest -s "$B64"',
-               'PARTS="$ROOT/vyron-v214/parts"\ntest -d "$PARTS"\nB64="$RUNNER_TEMP/v214.patch.gz.b64"\nPATCH="$RUNNER_TEMP/v214.patch"\ncat "$PARTS"/part*.txt > "$B64"\ntest -s "$B64"'),
+              ('B64="$ROOT/vyron-v214/v214.patch.gz.b64"\nPATCH="$RUNNER_TEMP/v214.patch"\ntest -s "$B64"', 'PARTS="$ROOT/vyron-v214/parts"\ntest -d "$PARTS"\nB64="$RUNNER_TEMP/v214.patch.gz.b64"\nPATCH="$RUNNER_TEMP/v214.patch"\ncat "$PARTS"/part*.txt > "$B64"\ntest -s "$B64"'),
           ]
           for old, new in replacements:
               if script.count(old) != 1:
                   raise SystemExit(f"replacement anchor count={script.count(old)} for {old[:80]!r}")
               script = script.replace(old, new, 1)
 
-          old_decoder = '''python3 - "$B64" "$PATCH" <<'PY'
-import base64,gzip,pathlib,sys,string
-src=pathlib.Path(sys.argv[1]).read_text()
-alphabet=set(string.ascii_letters+string.digits+'+/=')
-compact=''.join(src.split())
-filtered=''.join(ch for ch in compact if ch in alphabet)
-removed=[ch for ch in compact if ch not in alphabet]
-print(f'payload chars={len(compact)} base64_chars={len(filtered)} removed_non_base64={len(removed)}')
-if removed:
-    print('removed codepoints=',sorted(set(ord(ch) for ch in removed)))
-raw=base64.b64decode(filtered,validate=True)
-pathlib.Path(sys.argv[2]).write_bytes(gzip.decompress(raw))
-PY'''
-          new_decoder = '''python3 - "$B64" "$PATCH" <<'PY'
-import base64,gzip,pathlib,sys
-src=pathlib.Path(sys.argv[1]).read_text()
-compact=''.join(src.split())
-print(f'payload chars={len(compact)}')
-raw=base64.b64decode(compact,validate=True)
-pathlib.Path(sys.argv[2]).write_bytes(gzip.decompress(raw))
-PY'''
-          if script.count(old_decoder) != 1:
-              raise SystemExit(f"decoder block count={script.count(old_decoder)}")
-          script = script.replace(old_decoder, new_decoder, 1)
+          d0 = script.index('python3 - "$B64" "$PATCH" <<\'PY\'\n')
+          d1 = script.index('\nPY\nGOT_PATCH=', d0) + len('\nPY')
+          new_decoder = "\n".join([
+              'python3 - "$B64" "$PATCH" <<\'PY\'',
+              'import base64,gzip,pathlib,sys',
+              'src=pathlib.Path(sys.argv[1]).read_text()',
+              "compact=''.join(src.split())",
+              "print(f'payload chars={len(compact)}')",
+              'raw=base64.b64decode(compact,validate=True)',
+              'pathlib.Path(sys.argv[2]).write_bytes(gzip.decompress(raw))',
+              'PY',
+          ])
+          script = script[:d0] + new_decoder + script[d1:]
 
           required = [
               "SOURCE_SHA='d9f6345b597d41018b9a439c3eda2558e33936c6b605ac2b8052955b4e088717'",
@@ -123,12 +109,12 @@ PY'''
           for token in required:
               if token not in script:
                   raise SystemExit(f"required pinned token missing: {token}")
-          if 'v214.patch.gz.b64" -- vyron-v214/v214.patch.gz.b64' in script or 'V214_PAYLOAD_SHA' in script:
-              raise SystemExit('damaged monolithic payload path still present')
+          if 'V214_PAYLOAD_SHA' in script:
+              raise SystemExit('damaged monolithic payload reference still present')
 
           Path(sys.argv[2]).write_text(script)
           print("Pinned gate extracted; 2.0.14 payload source switched to original verified part01..part06")
-          PY
+          PYFIX
           chmod +x "$FIXED"
 
       - name: Run corrected deterministic 2.1.0 gate
@@ -182,17 +168,7 @@ PY'''
           r=pathlib.Path('release')
           sig=(r/'VYRON.app.tar.gz.sig').read_text().strip()
           notes=(r/'RELEASE_NOTES.md').read_text()
-          data={
-              'version':'2.1.0',
-              'notes':notes,
-              'pub_date':datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00','Z'),
-              'platforms':{
-                  'darwin-aarch64':{
-                      'url':'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.0/VYRON.app.tar.gz',
-                      'signature':sig
-                  }
-              }
-          }
+          data={'version':'2.1.0','notes':notes,'pub_date':datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00','Z'),'platforms':{'darwin-aarch64':{'url':'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.0/VYRON.app.tar.gz','signature':sig}}}
           (r/'latest.json').write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
           PY
 
@@ -201,26 +177,17 @@ PY'''
         run: |
           set -euo pipefail
           if gh release view v2.1.0 --repo "$REPO" >/dev/null 2>&1; then
-            gh release edit v2.1.0 --repo "$REPO" \
-              --title 'VYRON YT PEISOV 2.1.0 — Shorts Factory + Production Storage' \
-              --notes-file release/RELEASE_NOTES.md \
-              --draft=false --prerelease=false
+            gh release edit v2.1.0 --repo "$REPO" --title 'VYRON YT PEISOV 2.1.0 — Shorts Factory + Production Storage' --notes-file release/RELEASE_NOTES.md --draft=false --prerelease=false
           else
-            gh release create v2.1.0 --repo "$REPO" --target "$GITHUB_SHA" \
-              --title 'VYRON YT PEISOV 2.1.0 — Shorts Factory + Production Storage' \
-              --notes-file release/RELEASE_NOTES.md
+            gh release create v2.1.0 --repo "$REPO" --target "$GITHUB_SHA" --title 'VYRON YT PEISOV 2.1.0 — Shorts Factory + Production Storage' --notes-file release/RELEASE_NOTES.md
           fi
           gh release upload v2.1.0 --repo "$REPO" --clobber \
             release/VYRON-2.1.0-macOS-AppleSilicon.dmg \
             release/VYRON.app.tar.gz \
             release/VYRON.app.tar.gz.sig \
             release/VYRON-2.1.0-source.tar.gz \
-            release/SHA256.txt \
-            release/UPDATER_SHA256.txt \
-            release/SOURCE_SHA256.txt \
-            release/FINAL_TEST_REPORT.md \
-            release/RELEASE_NOTES.md \
-            release/latest.json
+            release/SHA256.txt release/UPDATER_SHA256.txt release/SOURCE_SHA256.txt \
+            release/FINAL_TEST_REPORT.md release/RELEASE_NOTES.md release/latest.json
 
       - name: Activate updater
         shell: bash
@@ -233,11 +200,7 @@ PY'''
             *) echo "Unexpected live updater $CURRENT"; exit 1 ;;
           esac
           CONTENT=$(base64 -w0 release/latest.json)
-          gh api --method PUT "repos/$REPO/contents/vyron-updates/latest.json" \
-            -f message='VYRON updater: 2.1.0' \
-            -f content="$CONTENT" \
-            -f sha="$OLD_SHA" \
-            -f branch=main >/dev/null
+          gh api --method PUT "repos/$REPO/contents/vyron-updates/latest.json" -f message='VYRON updater: 2.1.0' -f content="$CONTENT" -f sha="$OLD_SHA" -f branch=main >/dev/null
 
       - name: Verify production
         shell: bash
@@ -246,9 +209,7 @@ PY'''
           test "$(gh release view v2.1.0 --repo "$REPO" --json isDraft --jq '.isDraft|tostring')" = false
           test "$(gh release view v2.1.0 --repo "$REPO" --json isPrerelease --jq '.isPrerelease|tostring')" = false
           ASSETS=$(gh release view v2.1.0 --repo "$REPO" --json assets --jq '.assets[].name')
-          for f in VYRON-2.1.0-macOS-AppleSilicon.dmg VYRON.app.tar.gz VYRON.app.tar.gz.sig VYRON-2.1.0-source.tar.gz latest.json FINAL_TEST_REPORT.md; do
-            grep -qx "$f" <<<"$ASSETS"
-          done
+          for f in VYRON-2.1.0-macOS-AppleSilicon.dmg VYRON.app.tar.gz VYRON.app.tar.gz.sig VYRON-2.1.0-source.tar.gz latest.json FINAL_TEST_REPORT.md; do grep -qx "$f" <<<"$ASSETS"; done
           LIVE=$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | base64 --decode)
           test "$(printf '%s' "$LIVE" | python3 -c 'import sys,json;print(json.load(sys.stdin)["version"])')" = 2.1.0
           echo 'VYRON 2.1.0 PRODUCTION RELEASE: PASS'
