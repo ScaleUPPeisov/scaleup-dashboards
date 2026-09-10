@@ -1,0 +1,60 @@
+name: VYRON 2.0.14 Part03 Exact Recovery
+
+on:
+  push:
+    branches: [release/vyron-2.1.0-shorts-buffer-storage]
+    paths:
+      - '.github/workflows/vyron-v214-part03-recovery.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Exhaustive 690-character insertion recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          V214_SHA='84456d5e9c982057805078d0604cf90654d893d8'
+          git fetch --no-tags origin "$V214_SHA"
+          git checkout "$V214_SHA" -- vyron-v214/parts
+          python3 - <<'PY'
+          import base64,gzip,hashlib,pathlib
+          root=pathlib.Path('vyron-v214/parts')
+          parts=[''.join((root/f'part{i:02d}.txt').read_text().split()) for i in range(7)]
+          target='80c951a30d8822b654ce9bb0b58a3068ab9260cc29fbd31d91b26a2d1739654a'
+          p3=parts[3]
+          excess=len(p3)-4000
+          print('part_lengths=',[len(x) for x in parts],'part03_excess=',excess)
+          if excess != 690:
+              raise SystemExit(f'unexpected part03 excess: {excess}')
+          prefix=''.join(parts[:3]); suffix=''.join(parts[4:])
+          hits=[]
+          valid_gzip=0
+          for pos in range(len(p3)-excess+1):
+              candidate=prefix+p3[:pos]+p3[pos+excess:]+suffix
+              try:
+                  raw=base64.b64decode(candidate,validate=True)
+                  patch=gzip.decompress(raw)
+              except Exception:
+                  continue
+              valid_gzip += 1
+              sha=hashlib.sha256(patch).hexdigest()
+              if sha == target:
+                  hits.append((pos,p3[pos:pos+excess],len(raw),len(patch)))
+                  print('EXACT_MATCH position=',pos,'removed_len=',excess,'gzip_len=',len(raw),'patch_len=',len(patch))
+          print('valid_gzip_candidates=',valid_gzip,'exact_matches=',len(hits))
+          if len(hits)!=1:
+              raise SystemExit(f'expected exactly one cryptographic recovery, got {len(hits)}')
+          pos,removed,gzlen,patchlen=hits[0]
+          print('RECOVERY_POSITION=',pos)
+          print('REMOVED_SHA256=',hashlib.sha256(removed.encode()).hexdigest())
+          print('RECOVERY_PATCH_SHA256=',target)
+          print('RECOVERY_PASS')
+          PY
