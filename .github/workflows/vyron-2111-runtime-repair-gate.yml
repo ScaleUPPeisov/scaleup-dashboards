@@ -58,6 +58,7 @@ jobs:
           set -Eeuo pipefail
           python3 vyron-v2111/apply_v2111_youtube_runtime_repair.py "$GITHUB_WORKSPACE/.vyron-2111-release"
           python3 vyron-v2111/apply_v2111_gatefix1.py "$GITHUB_WORKSPACE/.vyron-2111-release"
+          python3 vyron-v2111/apply_v2111_gatefix2.py "$GITHUB_WORKSPACE/.vyron-2111-release"
           test "$(node -p "require('$GITHUB_WORKSPACE/.vyron-2111-release/package.json').version")" = '2.1.1'
           python3 - "$GITHUB_WORKSPACE/.vyron-2111-release/src-tauri/tauri.conf.json" <<'PY'
           import json,sys
