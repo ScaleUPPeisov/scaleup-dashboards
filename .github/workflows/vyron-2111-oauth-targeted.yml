@@ -7,6 +7,7 @@ on:
     paths:
       - '.github/scripts/apply_v2111_oauth_keychain_recovery.py'
       - '.github/scripts/apply_v2111_oauth_orphan_recovery.py'
+      - '.github/scripts/apply_v2111_oauth_orphan_testfix.py'
       - '.github/workflows/vyron-2111-oauth-targeted.yml'
   workflow_dispatch:
 
@@ -64,6 +65,7 @@ jobs:
           python3 vyron-v2111/apply_v2111_cleanup_test_placement_fix.py "$ROOT"
           python3 .github/scripts/apply_v2111_oauth_keychain_recovery.py "$ROOT"
           python3 .github/scripts/apply_v2111_oauth_orphan_recovery.py "$ROOT"
+          python3 .github/scripts/apply_v2111_oauth_orphan_testfix.py "$ROOT"
           grep -Fq 'list_secret_accounts' "$ROOT/src-tauri/src/security.rs"
           grep -Fq 'orphan_keychain_candidates_with' "$ROOT/src-tauri/src/youtube.rs"
           grep -Fq 'validate_orphan_candidate_live' "$ROOT/src-tauri/src/youtube.rs"
