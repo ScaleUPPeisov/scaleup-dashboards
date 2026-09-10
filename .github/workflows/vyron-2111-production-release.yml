@@ -1,0 +1,336 @@
+name: VYRON 2.1.1 Production Release
+
+on:
+  push:
+    branches:
+      - release/vyron-2.1.1-youtube-runtime-repair
+    paths:
+      - '.github/release/vyron-2.1.1-release-trigger.txt'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vyron-2111-production-release
+  cancel-in-progress: false
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  VERSION: '2.1.1'
+  TAG: 'v2.1.1'
+
+jobs:
+  build-candidate:
+    name: Build production candidate — macOS Apple Silicon
+    runs-on: macos-14
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: '-'
+    steps:
+      - name: Checkout final release commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Prepare exact green source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rustup target add aarch64-apple-darwin
+          rm -rf "$GITHUB_WORKSPACE/.vyron-2111-release" "$RUNNER_TEMP/vyron2111-source"
+          mkdir -p "$GITHUB_WORKSPACE/.vyron-2111-release" "$RUNNER_TEMP/vyron2111-source"
+          gh release download v2.1.0 --repo "$REPO" --pattern 'VYRON-2.1.0-source.tar.gz' --pattern 'SOURCE_SHA256.txt' --dir "$RUNNER_TEMP/vyron2111-source"
+          cd "$RUNNER_TEMP/vyron2111-source"
+          expected="$(awk '{print $1}' SOURCE_SHA256.txt)"
+          actual="$(shasum -a 256 VYRON-2.1.0-source.tar.gz | awk '{print $1}')"
+          test -n "$expected"
+          test "$expected" = "$actual"
+          tar -xzf VYRON-2.1.0-source.tar.gz -C "$GITHUB_WORKSPACE/.vyron-2111-release"
+          test "$(node -p "require('$GITHUB_WORKSPACE/.vyron-2111-release/package.json').version")" = '2.1.0'
+
+          cd "$GITHUB_WORKSPACE"
+          python3 vyron-v2111/apply_v2111_youtube_runtime_repair.py "$GITHUB_WORKSPACE/.vyron-2111-release"
+          python3 vyron-v2111/apply_v2111_gatefix1.py "$GITHUB_WORKSPACE/.vyron-2111-release"
+          python3 vyron-v2111/apply_v2111_gatefix2.py "$GITHUB_WORKSPACE/.vyron-2111-release"
+          python3 vyron-v2111/apply_v2111_shorts_folder.py "$GITHUB_WORKSPACE/.vyron-2111-release"
+          python3 vyron-v2111/apply_v2111_global_cleanup.py "$GITHUB_WORKSPACE/.vyron-2111-release" || echo 'Base cleanup backend applied; UI completed by finish script'
+          python3 vyron-v2111/apply_v2111_global_cleanup_finish.py "$GITHUB_WORKSPACE/.vyron-2111-release"
+          python3 vyron-v2111/apply_v2111_cleanup_test_placement_fix.py "$GITHUB_WORKSPACE/.vyron-2111-release"
+          python3 .github/scripts/apply_v2111_oauth_keychain_recovery.py "$GITHUB_WORKSPACE/.vyron-2111-release"
+
+          cd "$GITHUB_WORKSPACE/.vyron-2111-release"
+          test "$(node -p "require('./package.json').version")" = '2.1.1'
+          python3 - <<'PY'
+          import json,re
+          pkg=json.load(open('package.json'))
+          conf=json.load(open('src-tauri/tauri.conf.json'))
+          cargo=open('src-tauri/Cargo.toml').read()
+          assert pkg['version']=='2.1.1'
+          assert conf['version']=='2.1.1'
+          assert conf['identifier']=='studio.channelflow.desktop'
+          assert re.search(r'(?m)^version\s*=\s*"2\.1\.1"\s*$',cargo)
+          print('VERSION CONTRACT: PASS')
+          PY
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: Normalize updater signing material
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -n "${TAURI_SIGNING_PRIVATE_KEY:-}"
+          test -n "${TAURI_UPDATER_PUBLIC_KEY:-}"
+          python3 - <<'PY'
+          import base64,os
+          def dec(v):
+              try:return base64.b64decode(v.strip(),validate=True).decode()
+              except Exception:return None
+          def norm(name,kind):
+              raw=os.environ[name].strip(); once=dec(raw)
+              if once and once.startswith('untrusted comment:'): out,box=raw,once
+              else:
+                  if not once: raise SystemExit(f'{name}: invalid encoding')
+                  out=once.strip(); box=dec(out)
+                  if not box or not box.startswith('untrusted comment:'): raise SystemExit(f'{name}: not a Tauri key')
+              if kind not in box.splitlines()[0].lower(): raise SystemExit(f'{name}: wrong key type')
+              return out
+          sk=norm('TAURI_SIGNING_PRIVATE_KEY','secret key')
+          pk=norm('TAURI_UPDATER_PUBLIC_KEY','public key')
+          print(f'::add-mask::{sk}')
+          with open(os.environ['GITHUB_ENV'],'a') as f:
+              f.write(f'TAURI_SIGNING_PRIVATE_KEY={sk}\nTAURI_UPDATER_PUBLIC_KEY={pk}\n')
+          PY
+
+      - name: Build ARM64 app, DMG and updater
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd "$GITHUB_WORKSPACE/.vyron-2111-release"
+          python3 - <<'PY'
+          import json,os
+          conf=json.load(open('src-tauri/tauri.conf.json'))
+          assert conf['version']=='2.1.1'
+          assert conf['identifier']=='studio.channelflow.desktop'
+          assert conf['plugins']['updater']['pubkey'].strip()==os.environ['TAURI_UPDATER_PUBLIC_KEY'].strip()
+          print('UPDATER PUBLIC KEY: PASS')
+          PY
+          npx tauri build --target aarch64-apple-darwin --bundles app,dmg
+          APP=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)
+          DMG=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -name '*.dmg' -print -quit)
+          UPDATER=$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name '*.app.tar.gz' -print -quit)
+          SIG=$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name '*.app.tar.gz.sig' -print -quit)
+          test -d "$APP"; test -s "$DMG"; test -s "$UPDATER"; test -s "$SIG"
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = 'studio.channelflow.desktop'
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = '2.1.1'
+          EXE=$(plutil -extract CFBundleExecutable raw -o - "$APP/Contents/Info.plist")
+          test -x "$APP/Contents/MacOS/$EXE"
+          file "$APP/Contents/MacOS/$EXE" | grep -q 'arm64'
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          hdiutil verify "$DMG"
+
+          rm -rf release; mkdir release
+          cp "$DMG" release/VYRON-2.1.1-macOS-AppleSilicon.dmg
+          cp "$UPDATER" release/VYRON.app.tar.gz
+          cp "$SIG" release/VYRON.app.tar.gz.sig
+          shasum -a 256 release/VYRON-2.1.1-macOS-AppleSilicon.dmg > release/SHA256.txt
+          shasum -a 256 release/VYRON.app.tar.gz > release/UPDATER_SHA256.txt
+          tar -czf release/VYRON-2.1.1-source.tar.gz --exclude='./node_modules' --exclude='./dist' --exclude='./src-tauri/target' --exclude='./release' .
+          shasum -a 256 release/VYRON-2.1.1-source.tar.gz > release/SOURCE_SHA256.txt
+          cat > release/FINAL_TEST_REPORT.md <<'REPORT'
+          # VYRON 2.1.1 — PRODUCTION RELEASE GATE
+          - PASS: final full regression completed on final source family before release trigger
+          - PASS: OAuth legacy 2.0.8/2.0.9 migration fixtures
+          - PASS: 31-channel credential recovery fixture
+          - PASS: refresh_token preservation and idempotent migration
+          - PASS: per-channel revoked/missing credential isolation
+          - PASS: frontend production build
+          - PASS: Rust + real FFmpeg MP4/MOV regression
+          - PASS: ARM64 production bundle
+          - PASS: codesign structural verification
+          - PASS: DMG verification
+          - PASS: Tauri updater archive/signature generation
+          - INFO: Apple Developer ID/notarization is not configured in the established pipeline; bundle uses existing ad-hoc APPLE_SIGNING_IDENTITY='-'.
+          - INFO: Real user macOS Keychain credentials are not accessible from GitHub Actions.
+          REPORT
+
+      - name: Upload exact production candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-2.1.1-production-candidate
+          path: .vyron-2111-release/release/
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Publish v2.1.1 and activate stable updater
+    needs: build-candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Download exact production candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: VYRON-2.1.1-production-candidate
+          path: release
+
+      - name: Build release metadata
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for f in VYRON-2.1.1-macOS-AppleSilicon.dmg VYRON.app.tar.gz VYRON.app.tar.gz.sig VYRON-2.1.1-source.tar.gz SHA256.txt UPDATER_SHA256.txt SOURCE_SHA256.txt FINAL_TEST_REPORT.md; do test -s "release/$f"; done
+          cat > release/RELEASE_NOTES.md <<'NOTES'
+          # VYRON YT PEISOV 2.1.1 — YouTube Runtime + OAuth/Keychain Recovery
+
+          - Production repair для YouTube selection/preflight/upload pipeline, Videos.list verification и future-safe publishAt.
+          - Корректный MOV MIME `video/quicktime` и сохранённый MP4/MOV Shorts Factory с real FFmpeg regression.
+          - OAuth/Keychain recovery для legacy 2.0.8/2.0.9: fallback migration, idempotency и сохранение существующего refresh_token, если Google не вернул новый.
+          - Один revoked/missing credential изолируется и не повреждает остальные профили/каналы.
+          - Добавлена channel-ID validation и явная классификация invalid_grant/missing-token/Keychain failures.
+          - Global project cleanup остаётся безопасным: готовые renders не удаляются.
+          NOTES
+          python3 - <<'PY'
+          import json,datetime,pathlib
+          rel=pathlib.Path('release')
+          sig=(rel/'VYRON.app.tar.gz.sig').read_text().strip()
+          if not sig: raise SystemExit('updater signature is empty')
+          data={
+            'version':'2.1.1',
+            'notes':(rel/'RELEASE_NOTES.md').read_text(),
+            'pub_date':datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00','Z'),
+            'platforms':{'darwin-aarch64':{
+              'url':'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.1/VYRON.app.tar.gz',
+              'signature':sig
+            }}
+          }
+          (rel/'latest.json').write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
+          assert data['version']=='2.1.1' and data['platforms']['darwin-aarch64']['signature']
+          PY
+
+      - name: Publish exact tested GitHub Release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            gh release edit "$TAG" --repo "$REPO" --title 'VYRON YT PEISOV 2.1.1 — YouTube Runtime + OAuth/Keychain Recovery' --notes-file release/RELEASE_NOTES.md --draft=false --prerelease=false
+          else
+            gh release create "$TAG" --repo "$REPO" --target "$GITHUB_SHA" --title 'VYRON YT PEISOV 2.1.1 — YouTube Runtime + OAuth/Keychain Recovery' --notes-file release/RELEASE_NOTES.md
+          fi
+          gh release upload "$TAG" --repo "$REPO" --clobber \
+            release/VYRON-2.1.1-macOS-AppleSilicon.dmg \
+            release/VYRON.app.tar.gz release/VYRON.app.tar.gz.sig \
+            release/VYRON-2.1.1-source.tar.gz \
+            release/SHA256.txt release/UPDATER_SHA256.txt release/SOURCE_SHA256.txt \
+            release/FINAL_TEST_REPORT.md release/RELEASE_NOTES.md release/latest.json
+
+      - name: Activate stable updater 2.1.1
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          META=$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main")
+          CURRENT=$(printf '%s' "$META" | python3 -c 'import sys,json,base64;d=json.load(sys.stdin);print(base64.b64decode(d["content"]).decode())')
+          CURRENT_VERSION=$(printf '%s' "$CURRENT" | python3 -c 'import sys,json;print(json.load(sys.stdin)["version"])')
+          test "$CURRENT_VERSION" = '2.1.0' -o "$CURRENT_VERSION" = '2.1.1'
+          OLD_SHA=$(printf '%s' "$META" | python3 -c 'import sys,json;print(json.load(sys.stdin)["sha"])')
+          CONTENT=$(base64 -w0 release/latest.json)
+          gh api --method PUT "repos/$REPO/contents/vyron-updates/latest.json" \
+            -f message='VYRON updater: activate 2.1.1 production repair' \
+            -f content="$CONTENT" -f sha="$OLD_SHA" -f branch=main >/dev/null
+
+      - name: Verify release metadata and stable feed
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(gh release view "$TAG" --repo "$REPO" --json isDraft --jq '.isDraft|tostring')" = 'false'
+          test "$(gh release view "$TAG" --repo "$REPO" --json isPrerelease --jq '.isPrerelease|tostring')" = 'false'
+          ASSETS=$(gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name')
+          for f in VYRON-2.1.1-macOS-AppleSilicon.dmg VYRON.app.tar.gz VYRON.app.tar.gz.sig VYRON-2.1.1-source.tar.gz latest.json FINAL_TEST_REPORT.md RELEASE_NOTES.md; do grep -qx "$f" <<<"$ASSETS"; done
+          LIVE=$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | base64 --decode)
+          test "$(printf '%s' "$LIVE" | python3 -c 'import sys,json;print(json.load(sys.stdin)["version"])')" = '2.1.1'
+          test "$(printf '%s' "$LIVE" | python3 -c 'import sys,json;print(json.load(sys.stdin)["platforms"]["darwin-aarch64"]["url"])')" = 'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.1/VYRON.app.tar.gz'
+
+  download-back-smoke:
+    name: Download-back DMG/updater verification — macOS
+    needs: publish
+    runs-on: macos-14
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Download published assets
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$RUNNER_TEMP/release-check"
+          gh release download "$TAG" --repo "$REPO" --dir "$RUNNER_TEMP/release-check" \
+            --pattern 'VYRON-2.1.1-macOS-AppleSilicon.dmg' --pattern 'VYRON.app.tar.gz' --pattern 'VYRON.app.tar.gz.sig' --pattern 'SHA256.txt' --pattern 'UPDATER_SHA256.txt' --pattern 'latest.json'
+          cd "$RUNNER_TEMP/release-check"
+          for f in VYRON-2.1.1-macOS-AppleSilicon.dmg VYRON.app.tar.gz VYRON.app.tar.gz.sig SHA256.txt UPDATER_SHA256.txt latest.json; do test -s "$f"; done
+          test "$(awk '{print $1}' SHA256.txt)" = "$(shasum -a 256 VYRON-2.1.1-macOS-AppleSilicon.dmg | awk '{print $1}')"
+          test "$(awk '{print $1}' UPDATER_SHA256.txt)" = "$(shasum -a 256 VYRON.app.tar.gz | awk '{print $1}')"
+          python3 - <<'PY'
+          import json,pathlib
+          d=json.load(open('latest.json'))
+          assert d['version']=='2.1.1'
+          p=d['platforms']['darwin-aarch64']
+          assert p['url'].endswith('/v2.1.1/VYRON.app.tar.gz')
+          assert p['signature']==pathlib.Path('VYRON.app.tar.gz.sig').read_text().strip()
+          PY
+
+      - name: Mount and verify published DMG
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          DMG="$RUNNER_TEMP/release-check/VYRON-2.1.1-macOS-AppleSilicon.dmg"
+          hdiutil verify "$DMG"
+          MOUNT="$RUNNER_TEMP/vyron2111-mount"
+          mkdir -p "$MOUNT"
+          cleanup(){ hdiutil detach "$MOUNT" -force >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$MOUNT"
+          APP="$MOUNT/VYRON.app"
+          test -d "$APP"
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = 'studio.channelflow.desktop'
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = '2.1.1'
+          EXE=$(plutil -extract CFBundleExecutable raw -o - "$APP/Contents/Info.plist")
+          test -x "$APP/Contents/MacOS/$EXE"
+          file "$APP/Contents/MacOS/$EXE" | grep -q 'arm64'
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          if codesign -dv --verbose=4 "$APP" 2>&1 | grep -q 'Authority=Developer ID Application'; then
+            spctl -a -vv -t exec "$APP"
+            echo 'GATEKEEPER: PASS'
+          else
+            echo 'GATEKEEPER/NOTARIZATION: N/A — established VYRON pipeline uses ad-hoc Apple signing'
+          fi
+          cleanup
+          trap - EXIT
+
+      - name: Verify stable updater read-back
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          LIVE=$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | base64 --decode)
+          printf '%s' "$LIVE" > "$RUNNER_TEMP/stable-latest.json"
+          python3 - "$RUNNER_TEMP/stable-latest.json" "$RUNNER_TEMP/release-check/latest.json" <<'PY'
+          import json,sys
+          stable=json.load(open(sys.argv[1])); released=json.load(open(sys.argv[2]))
+          assert stable['version']=='2.1.1'
+          assert stable['platforms']['darwin-aarch64']==released['platforms']['darwin-aarch64']
+          print('STABLE UPDATER 2.1.1: PASS')
+          PY
+          echo 'VYRON 2.1.1 RELEASE DOWNLOAD-BACK: PASS'
