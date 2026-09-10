@@ -87,13 +87,20 @@ jobs:
           d0 = script.index('python3 - "$B64" "$PATCH" <<\'PY\'\n')
           d1 = script.index('\nPY\nGOT_PATCH=', d0) + len('\nPY')
           new_decoder = "\n".join([
-              'python3 - "$B64" "$PATCH" <<\'PY\'',
-              'import base64,gzip,pathlib,sys',
-              'src=pathlib.Path(sys.argv[1]).read_text()',
-              "compact=''.join(src.split())",
-              "print(f'payload chars={len(compact)}')",
-              'raw=base64.b64decode(compact,validate=True)',
-              'pathlib.Path(sys.argv[2]).write_bytes(gzip.decompress(raw))',
+              'python3 - "$PARTS" "$PATCH" <<\'PY\'',
+              'import base64,gzip,hashlib,pathlib,sys',
+              'parts=sorted(pathlib.Path(sys.argv[1]).glob("part*.txt"))',
+              'if [p.name for p in parts] != [f"part{i:02d}.txt" for i in range(7)]: raise SystemExit(f"unexpected parts: {[p.name for p in parts]}")',
+              'chunks=[]',
+              'for p in parts:',
+              "    compact=''.join(p.read_text().split())",
+              '    print(f"{p.name}: chars={len(compact)} mod4={len(compact)%4} padding={compact.count(chr(61))}")',
+              '    chunks.append(base64.b64decode(compact,validate=True))',
+              'raw=b"".join(chunks)',
+              'print(f"decoded gzip bytes={len(raw)} sha256={hashlib.sha256(raw).hexdigest()}")',
+              'patch=gzip.decompress(raw)',
+              'print(f"decoded patch bytes={len(patch)} sha256={hashlib.sha256(patch).hexdigest()}")',
+              'pathlib.Path(sys.argv[2]).write_bytes(patch)',
               'PY',
           ])
           script = script[:d0] + new_decoder + script[d1:]
@@ -113,7 +120,7 @@ jobs:
               raise SystemExit('damaged monolithic payload reference still present')
 
           Path(sys.argv[2]).write_text(script)
-          print("Pinned gate extracted; 2.0.14 payload source switched to original verified part01..part06")
+          print("Pinned gate extracted; immutable part00..part06 are decoded independently and final patch SHA remains mandatory")
           PYFIX
           chmod +x "$FIXED"
 
