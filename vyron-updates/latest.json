@@ -1,11 +1,11 @@
 {
-  "version": "2.1.1",
-  "notes": "# VYRON YT PEISOV 2.1.1 — YouTube Runtime + OAuth/Keychain Recovery\n\n- Production repair для YouTube selection/preflight/upload pipeline, Videos.list verification и future-safe publishAt.\n- Корректный MOV MIME `video/quicktime` и сохранённый MP4/MOV Shorts Factory с real FFmpeg regression.\n- OAuth/Keychain recovery для legacy 2.0.8/2.0.9: fallback migration, idempotency и сохранение существующего refresh_token, если Google не вернул новый.\n- Один revoked/missing credential изолируется и не повреждает остальные профили/каналы.\n- Добавлена channel-ID validation и явная классификация invalid_grant/missing-token/Keychain failures.\n- Global project cleanup остаётся безопасным: готовые renders не удаляются.\n",
-  "pub_date": "2026-09-10T14:39:55.530988Z",
+  "version": "2.1.2",
+  "notes": "# VYRON 2.1.2\n\nProduction patch release with validated OAuth orphan recovery, channel-identity-safe credential migration, refresh-token preservation, reconnect UUID consistency, per-channel isolation, past-date batch isolation, YouTube upload verification, Shorts MP4/MOV regression and production cleanup protections.\n",
+  "pub_date": "2026-09-10T17:39:30.312771Z",
   "platforms": {
     "darwin-aarch64": {
-      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.1/VYRON.app.tar.gz",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM2VVT1VZVkw2ZUxxcGQ4UHhlMmFhMFdudWFPT1pYT0t1ZEpMODhXYXJuM1ZqWUxMcjZGQjdCK2hieU4xTFp3MnZ1Slo2dUJXZjF1bGtIZkFYVlE3c3cwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MDUxMTcwCWZpbGU6VllST04uYXBwLnRhci5negorbjVQQ3JjS2YrOU9DL1dlY1JnaEFtM29wd2lqaCtRem9RVlJrTW1YMG8xRG9FeVQwbmJaTWJPellVcXZxYUE2RHZJYWFPd0ZBZkZIQTBTV1BHdUZEUT09Cg=="
+      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.2/VYRON.app.tar.gz",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM1VkRmh3Y3F6SEZYUHVpTkFaVXh1VW40TGxQSUU5SHhQcDFVRmpSdXd6NWIyUjNxc1hlaXF6QXRSVTRPUzRta1RkcXR0ZU9aeHRzTTdsblNKLzN6bHdZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MDYxOTUyCWZpbGU6VllST04uYXBwLnRhci5negpyREVtYkZJa2Q3cGMzMGVHVDlhcnZxakw0S1FORzkyNnRsaTJmQkpCY3lxVGdnTHFudUs2dVZlb2ptVFkwcXp0SHE1c0Q0M2NSUzRZSW41Tm90VkxBZz09Cg=="
     }
   }
 }
