@@ -32,6 +32,45 @@ export function batchFailureToast(failures:BatchFailure[]){
 }
 ''')
 
+# Error notifications may be presentation-only when each root cause was already persisted.
+p=root/'src/notificationCenter.ts'
+s=p.read_text()
+old="export type NotificationOptions={operationId?:string;durationMs?:number|null;actions?:NotificationAction[];technicalDetail?:string};"
+new="export type NotificationOptions={operationId?:string;durationMs?:number|null;actions?:NotificationAction[];technicalDetail?:string;persistError?:boolean};"
+if old not in s:
+    raise SystemExit('notification options anchor missing')
+s=s.replace(old,new,1)
+old="if(type==='error')appendErrorHistory(detail.title,detail.message||'',detail.technicalDetail||'');"
+new="if(type==='error'&&options.persistError!==false)appendErrorHistory(detail.title,detail.message||'',detail.technicalDetail||'');"
+if old not in s:
+    raise SystemExit('notification persistence anchor missing')
+s=s.replace(old,new,1)
+p.write_text(s)
+
+# Wire batch policy into the real PublisherOS upload loop.
+p=root/'src/PublisherOS.tsx'
+s=p.read_text()
+anchor="import {removeSelectedPublishItems} from './publishRemoval';"
+if anchor not in s:
+    raise SystemExit('PublisherOS import anchor missing')
+s=s.replace(anchor,anchor+"\nimport {appendErrorHistory} from './errorHistory';\nimport {batchFailureToast,type BatchFailure} from './errorPresentationPolicy';",1)
+old="setBusy(true);let completed=0,stopped=false;try{for(const j of batch){"
+new="setBusy(true);let completed=0,stopped=false;const batchFailures:BatchFailure[]=[];try{for(const j of batch){"
+if old not in s:
+    raise SystemExit('PublisherOS batch state anchor missing')
+s=s.replace(old,new,1)
+old=r"""{const h=humanizeError(e,'upload');patchJob(j.id,{status:'ERROR',error:h.message});notifyError(h.title,`VIDEO_${String(j.number).padStart(3,'0')}: ${h.message}`,{technicalDetail:h.detail})}"""
+new=r"""{const h=humanizeError(e,'upload'),message=`VIDEO_${String(j.number).padStart(3,'0')}: ${h.message}`;patchJob(j.id,{status:'ERROR',error:h.message});appendErrorHistory(h.title,message,h.detail);batchFailures.push({id:j.id,message,technicalDetail:h.detail})}"""
+if old not in s:
+    raise SystemExit('PublisherOS per-item generic error anchor missing')
+s=s.replace(old,new,1)
+old="if(completed){const dg=quotaDelta(plan.buckets.general.required,actual.buckets.general)"
+new="const failureToast=batchFailureToast(batchFailures);if(failureToast)notifyError(failureToast.title,failureToast.message,{operationId:`publish-failures:${operationId}`,persistError:false});if(completed){const dg=quotaDelta(plan.buckets.general.required,actual.buckets.general)"
+if old not in s:
+    raise SystemExit('PublisherOS aggregate failure toast anchor missing')
+s=s.replace(old,new,1)
+p.write_text(s)
+
 (root/'src/v2100ErrorCenterSemantics.test.ts').write_text(r'''import {describe,expect,it} from 'vitest';
 import {batchFailureToast,clearErrorPresentation,errorPresentationCount} from './errorPresentationPolicy';
 import {readFileSync} from 'node:fs';
@@ -65,7 +104,19 @@ describe('VYRON 2.1 Error Center semantics',()=>{
   expect(section).toContain('clearErrorHistory()');
   expect(section).not.toContain("status:'SUCCESS'");
  });
+ it('real PublisherOS persists every generic batch failure but emits one aggregate error toast',()=>{
+  const pub=readFileSync('src/PublisherOS.tsx','utf8'),notify=readFileSync('src/notificationCenter.ts','utf8');
+  expect(pub).toContain("import {appendErrorHistory} from './errorHistory'");
+  expect(pub).toContain("import {batchFailureToast,type BatchFailure} from './errorPresentationPolicy'");
+  expect(pub).toContain('const batchFailures:BatchFailure[]=[]');
+  expect(pub).toContain('appendErrorHistory(h.title,message,h.detail)');
+  expect(pub).toContain('batchFailures.push({id:j.id,message,technicalDetail:h.detail})');
+  expect(pub).toContain('const failureToast=batchFailureToast(batchFailures)');
+  expect(pub).toContain('persistError:false');
+  expect(notify).toContain('persistError?:boolean');
+  expect(notify).toContain("type==='error'&&options.persistError!==false");
+ });
 });
 ''')
 
-print('VYRON 2.1.0 Error Center hardening applied')
+print('VYRON 2.1.0 Error Center hardening applied: clear semantics + real batch aggregation wiring')
