@@ -72,15 +72,26 @@ jobs:
           echo '==> Apply direct YouTube publish/error recovery'
           python3 "$RUNNER_TEMP/apply_v2100_direct.py" "$WORK" recovery
 
-          echo '==> Adapt pinned Shorts registration anchor to released 2.0.13'
+          echo '==> Adapt pinned Shorts command registration to released 2.0.13'
           python3 - "$ROOT/vyron-v211/apply_v211_shorts_factory.py" <<'PY'
           from pathlib import Path
           import sys
           p=Path(sys.argv[1]);s=p.read_text()
-          old='production_manager::delete_production_job_folder,production_manager::open_production_batch_in_endlume'
-          new='production_manager::delete_production_job_folder,production_manager::cleanup_completed_production_assets,production_manager::open_production_batch_in_endlume'
-          if old not in s: raise SystemExit('historical Shorts lib anchor substring missing')
-          p.write_text(s.replace(old,new,1))
+          start="p=root/'src-tauri/src/lib.rs';s=p.read_text()"
+          end="p=root/'src/ProductionOS.tsx';s=p.read_text()"
+          i=s.find(start);j=s.find(end,i+1)
+          if i<0 or j<0: raise SystemExit('historical Shorts lib patch block not found')
+          robust="""p=root/'src-tauri/src/lib.rs';s=p.read_text()
+          if 'mod shorts_factory;' not in s:
+           a='mod production_manager;'
+           if a not in s: raise SystemExit('lib module anchor missing')
+           s=s.replace(a,a+'\\nmod shorts_factory;',1)
+          a='production_manager::cleanup_completed_production_assets,'
+          if a not in s: raise SystemExit('lib stable cleanup anchor missing')
+          s=s.replace(a,a+'shorts_factory::shorts_probe_source,shorts_factory::shorts_validate_file,shorts_factory::shorts_render_segment,',1);p.write_text(s)
+
+          """
+          p.write_text(s[:i]+robust+s[j:])
           PY
           echo '==> Apply Shorts Factory'
           python3 "$ROOT/vyron-v211/apply_v211_shorts_factory.py" "$WORK"
