@@ -23,24 +23,23 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          mkdir -p "$RUNNER_TEMP/src"
+          mkdir -p "$RUNNER_TEMP/src" "$RUNNER_TEMP/app"
           gh release download v2.1.0 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-2.1.0-source.tar.gz' --dir "$RUNNER_TEMP/src"
-          mkdir -p "$RUNNER_TEMP/app"
           tar -xzf "$RUNNER_TEMP/src/VYRON-2.1.0-source.tar.gz" -C "$RUNNER_TEMP/app"
-      - name: Inspect Shorts Production cleanup anchors
+      - name: Inspect exact anchors
         shell: bash
         run: |
           set -Eeuo pipefail
           ROOT="$RUNNER_TEMP/app"
-          echo '=== RELEVANT FILES ==='
-          find "$ROOT/src" "$ROOT/src-tauri/src" -maxdepth 2 -type f | sed "s#$ROOT/##" | grep -Ei 'short|production|cleanup|api|main|lib|storage' | sort || true
-          echo '=== SHORTS REFERENCES ==='
-          grep -RniE 'ShortsFactory|SHORTS FACTORY|create_short|shorts_' "$ROOT/src" "$ROOT/src-tauri/src" | head -n 240 || true
-          echo '=== PRODUCTION/CLEANUP REFERENCES ==='
-          grep -RniE 'delete.*project|remove.*project|cleanup|trash|project.*path|production.*root|workspace' "$ROOT/src" "$ROOT/src-tauri/src" | head -n 320 || true
-          for f in "$ROOT/src/ShortsFactory.tsx" "$ROOT/src/ProductionPage.tsx" "$ROOT/src/Production.tsx" "$ROOT/src/api.ts" "$ROOT/src-tauri/src/production_manager.rs" "$ROOT/src-tauri/src/shorts_factory.rs" "$ROOT/src-tauri/src/lib.rs" "$ROOT/src-tauri/src/main.rs"; do
-            if [ -f "$f" ]; then
-              echo "=== FILE ${f#$ROOT/} ==="
-              sed -n '1,420p' "$f"
-            fi
+          for spec in \
+            'src/ProductionOS.tsx:1:90' \
+            'src/productionManagerApi.ts:1:90' \
+            'src/shortsCore.ts:1:150' \
+            'src-tauri/src/local_delete.rs:1:120' \
+            'src-tauri/Cargo.toml:1:180'; do
+            f="${spec%%:*}"; rest="${spec#*:}"; a="${rest%%:*}"; b="${rest##*:}"
+            echo "=== FILE $f ==="
+            sed -n "${a},${b}p" "$ROOT/$f"
           done
+          echo '=== NOTIFICATION IMPORTS ==='
+          grep -RniE "import .*notify(Error|Success|Info)|from './.*notify|from './notifications|from './errorCenter'" "$ROOT/src" | head -n 120 || true
