@@ -138,7 +138,7 @@ jobs:
           BIN="src-tauri/target/aarch64-apple-darwin/release/channelflow"
           test -x "$BIN"
           file "$BIN" | grep -q 'arm64'
-          "$BIN" --version >/dev/null 2>&1 || true
+          otool -hv "$BIN" | grep -q 'ARM64'
           echo 'VYRON 2.1.1 MASTER REPAIR GATE: PASS'
 
       - name: Upload gate evidence
