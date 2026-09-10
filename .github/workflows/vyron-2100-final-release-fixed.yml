@@ -1,4 +1,4 @@
-name: VYRON 2.1.0 Source Inspection Notifications
+name: VYRON 2.1.0 Source Inspection Storage
 
 on:
   push:
@@ -18,7 +18,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
-      - name: Print exact released source corridors
+      - name: Print exact storage source corridors
         shell: bash
         run: |
           set -euo pipefail
@@ -27,7 +27,9 @@ jobs:
           test "$(sha256sum "$RUNNER_TEMP/VYRON-2.0.13-source.tar.gz"|awk '{print $1}')" = 'd9f6345b597d41018b9a439c3eda2558e33936c6b605ac2b8052955b4e088717'
           tar -xzf "$RUNNER_TEMP/VYRON-2.0.13-source.tar.gz" -C "$RUNNER_TEMP/vyron-src"
           cd "$RUNNER_TEMP/vyron-src"
-          for f in src/notificationCenter.ts src/api.ts src/types.ts src/YouTubeCenter.tsx src/QuotaMeter.tsx; do
-            echo "===== $f ====="
-            nl -ba "$f" | sed -n '1,180p'
-          done
+          echo '===== production_manager.rs storage/archive grep ====='
+          grep -nEi 'storage|archive|cleanup|delete|remove|source|rendered|final' src-tauri/src/production_manager.rs | head -260 || true
+          echo '===== ProductionManager.tsx storage/archive grep ====='
+          grep -nEi 'storage|archive|cleanup|delete|remove|source|rendered|final|храни|архив|очист' src/ProductionManager.tsx | head -260 || true
+          echo '===== productionManagerApi.ts ====='
+          nl -ba src/productionManagerApi.ts | sed -n '1,220p'
