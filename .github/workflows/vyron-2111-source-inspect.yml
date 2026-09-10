@@ -1,0 +1,46 @@
+name: VYRON 2.1.1 Source Inspect NO PUBLISH
+
+on:
+  push:
+    branches:
+      - release/vyron-2.1.1-youtube-runtime-repair
+    paths:
+      - '.github/workflows/vyron-2111-source-inspect.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: macos-14
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download exact published source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$RUNNER_TEMP/src"
+          gh release download v2.1.0 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-2.1.0-source.tar.gz' --dir "$RUNNER_TEMP/src"
+          mkdir -p "$RUNNER_TEMP/app"
+          tar -xzf "$RUNNER_TEMP/src/VYRON-2.1.0-source.tar.gz" -C "$RUNNER_TEMP/app"
+      - name: Inspect Shorts Production cleanup anchors
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ROOT="$RUNNER_TEMP/app"
+          echo '=== RELEVANT FILES ==='
+          find "$ROOT/src" "$ROOT/src-tauri/src" -maxdepth 2 -type f | sed "s#$ROOT/##" | grep -Ei 'short|production|cleanup|api|main|lib|storage' | sort || true
+          echo '=== SHORTS REFERENCES ==='
+          grep -RniE 'ShortsFactory|SHORTS FACTORY|create_short|shorts_' "$ROOT/src" "$ROOT/src-tauri/src" | head -n 240 || true
+          echo '=== PRODUCTION/CLEANUP REFERENCES ==='
+          grep -RniE 'delete.*project|remove.*project|cleanup|trash|project.*path|production.*root|workspace' "$ROOT/src" "$ROOT/src-tauri/src" | head -n 320 || true
+          for f in "$ROOT/src/ShortsFactory.tsx" "$ROOT/src/ProductionPage.tsx" "$ROOT/src/Production.tsx" "$ROOT/src/api.ts" "$ROOT/src-tauri/src/production_manager.rs" "$ROOT/src-tauri/src/shorts_factory.rs" "$ROOT/src-tauri/src/lib.rs" "$ROOT/src-tauri/src/main.rs"; do
+            if [ -f "$f" ]; then
+              echo "=== FILE ${f#$ROOT/} ==="
+              sed -n '1,420p' "$f"
+            fi
+          done
