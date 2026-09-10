@@ -1,11 +1,11 @@
 {
-  "version": "2.1.0",
-  "notes": "# VYRON YT PEISOV 2.1.0 — Shorts Factory + Production Repair\n\n- Добавлен Shorts Factory: Long → вертикальные Shorts 1080×1920 с реальным FFmpeg pipeline.\n- Shorts получили metadata workflow, расписание и синхронизацию реального `publishAt` с YouTube.\n- Long и Shorts используют единый future-safe scheduler без коллизий занятых слотов.\n- Добавлены Content Buffer и Storage Manager с безопасным архивированием без автоматического удаления исходников.\n- Усилен Error Center: очистка истории не меняет ERROR-задачи на SUCCESS; повторная ошибка снова отображается корректно.\n- Batch upload больше не засыпает интерфейс десятками toast: причины сохраняются в Error Center, наружу выводится агрегированное уведомление.\n- Сохранены Keychain recovery, cleanup, category/playlist, backup, quota и предыдущие production fixes.\n- Релиз публикуется только из exact signed candidate после полного macOS Apple Silicon gate.\n",
-  "pub_date": "2026-09-10T07:24:25.930266Z",
+  "version": "2.1.1",
+  "notes": "# VYRON YT PEISOV 2.1.1 — YouTube Runtime + OAuth/Keychain Recovery\n\n- Production repair для YouTube selection/preflight/upload pipeline, Videos.list verification и future-safe publishAt.\n- Корректный MOV MIME `video/quicktime` и сохранённый MP4/MOV Shorts Factory с real FFmpeg regression.\n- OAuth/Keychain recovery для legacy 2.0.8/2.0.9: fallback migration, idempotency и сохранение существующего refresh_token, если Google не вернул новый.\n- Один revoked/missing credential изолируется и не повреждает остальные профили/каналы.\n- Добавлена channel-ID validation и явная классификация invalid_grant/missing-token/Keychain failures.\n- Global project cleanup остаётся безопасным: готовые renders не удаляются.\n",
+  "pub_date": "2026-09-10T14:39:55.530988Z",
   "platforms": {
     "darwin-aarch64": {
-      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.0/VYRON.app.tar.gz",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM2NZQTFSOS9NQzdVV3NIdnM4UnFkd3pUdURXMW5vWE9JNkc0eVE0OTFaNTMydlpnL0s2MjRLWDhFVVZlSUNKS2IwNDVsazR5RFgrRGs4SnNqRzZqNmdrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MDI1MDQwCWZpbGU6VllST04uYXBwLnRhci5negpFYktydlJ2U21HaU1XYU1vQXpJUDdPM1dyM0F3akwwRXhycW1mbVh1WnJlaU9razkzUzVGb25GS0RjMWZ6NTVrekN3aXZITUNuWFVvWWlrNDdzRUVBZz09Cg=="
+      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.1/VYRON.app.tar.gz",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM2VVT1VZVkw2ZUxxcGQ4UHhlMmFhMFdudWFPT1pYT0t1ZEpMODhXYXJuM1ZqWUxMcjZGQjdCK2hieU4xTFp3MnZ1Slo2dUJXZjF1bGtIZkFYVlE3c3cwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MDUxMTcwCWZpbGU6VllST04uYXBwLnRhci5negorbjVQQ3JjS2YrOU9DL1dlY1JnaEFtM29wd2lqaCtRem9RVlJrTW1YMG8xRG9FeVQwbmJaTWJPellVcXZxYUE2RHZJYWFPd0ZBZkZIQTBTV1BHdUZEUT09Cg=="
     }
   }
 }
