@@ -20,7 +20,7 @@ jobs:
   gate:
     name: Full runtime regression — macOS Apple Silicon
     runs-on: macos-14
-    timeout-minutes: 75
+    timeout-minutes: 90
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -52,24 +52,27 @@ jobs:
           test "$(node -p "require('$GITHUB_WORKSPACE/.vyron-2111-release/package.json').version")" = '2.1.0'
           echo "SOURCE_SHA256=$actual"
 
-      - name: Apply VYRON 2.1.1 runtime repair
+      - name: Apply VYRON 2.1.1 master repair
         shell: bash
         run: |
           set -Eeuo pipefail
           python3 vyron-v2111/apply_v2111_youtube_runtime_repair.py "$GITHUB_WORKSPACE/.vyron-2111-release"
           python3 vyron-v2111/apply_v2111_gatefix1.py "$GITHUB_WORKSPACE/.vyron-2111-release"
           python3 vyron-v2111/apply_v2111_gatefix2.py "$GITHUB_WORKSPACE/.vyron-2111-release"
+          python3 vyron-v2111/apply_v2111_shorts_folder.py "$GITHUB_WORKSPACE/.vyron-2111-release"
+          python3 vyron-v2111/apply_v2111_global_cleanup.py "$GITHUB_WORKSPACE/.vyron-2111-release"
           test "$(node -p "require('$GITHUB_WORKSPACE/.vyron-2111-release/package.json').version")" = '2.1.1'
           python3 - "$GITHUB_WORKSPACE/.vyron-2111-release/src-tauri/tauri.conf.json" <<'PY'
           import json,sys
           d=json.load(open(sys.argv[1]));assert d['version']=='2.1.1';assert d['identifier']=='studio.channelflow.desktop'
           PY
 
-      - name: Static runtime contracts
+      - name: Static master contracts
         shell: bash
         run: |
           set -Eeuo pipefail
           ROOT="$GITHUB_WORKSPACE/.vyron-2111-release"
+          # YouTube runtime
           grep -q "canonicalSelectedJobs(channelJobs,draft.selectedIds)" "$ROOT/src/PublisherOS.tsx"
           grep -q "publisherUploadButtonLabel(selected.length,uploadableSelected.length)" "$ROOT/src/PublisherOS.tsx"
           grep -q "let batch=uploadableSelected.slice" "$ROOT/src/PublisherOS.tsx"
@@ -80,7 +83,19 @@ jobs:
           grep -q "UPLOAD_VERIFY_FAILED" "$ROOT/src/PublisherOS.tsx"
           grep -q "message:youtubeRootMessage(detail)" "$ROOT/src/errorCenter.ts"
           ! grep -q '>ЗАГРУЗИТЬ {selected.length} ВИДЕО НА YOUTUBE</button>' "$ROOT/src/PublisherOS.tsx"
-          echo 'STATIC RUNTIME CONTRACTS: PASS'
+          # Folder-based Shorts
+          grep -q "ВЫБРАТЬ ПАПКУ С ВИДЕО" "$ROOT/src/ShortsFactory.tsx"
+          grep -q "shortsScanFolder" "$ROOT/src/ShortsFactory.tsx"
+          grep -q "shorts_scan_folder" "$ROOT/src-tauri/src/shorts_factory.rs"
+          grep -q 'Some("mp4")|Some("mov")' "$ROOT/src-tauri/src/shorts_factory.rs"
+          ! grep -q "Shorts Factory принимает только готовый MP4" "$ROOT/src-tauri/src/shorts_factory.rs"
+          # Global all-channel project cleanup
+          grep -q "ОЧИСТИТЬ PROJECT-ПАПКИ ВСЕХ КАНАЛОВ" "$ROOT/src/ProductionOS.tsx"
+          grep -q "preview_global_production_project_cleanup" "$ROOT/src-tauri/src/production_manager.rs"
+          grep -q "execute_global_production_project_cleanup" "$ROOT/src-tauri/src/production_manager.rs"
+          grep -q "trash::delete(path)" "$ROOT/src-tauri/src/production_manager.rs"
+          grep -q "ГОТОВЫЕ ВИДЕО НЕ УДАЛЯЮТСЯ" "$ROOT/src/ProductionOS.tsx"
+          echo 'STATIC MASTER CONTRACTS: PASS'
 
       - name: Frontend unit integration and production build
         shell: bash
@@ -91,11 +106,12 @@ jobs:
           npm test
           npm run build
 
-      - name: Rust tests including upload contracts and real Shorts FFmpeg
+      - name: Rust tests including real MP4 and MOV Shorts FFmpeg
         shell: bash
         working-directory: .vyron-2111-release
         env:
           VYRON_TEST_REAL_FFMPEG: '1'
+          VYRON_SHORTS_REAL_TEST: '1'
         run: |
           set -Eeuo pipefail
           cargo test --manifest-path src-tauri/Cargo.toml
@@ -116,15 +132,19 @@ jobs:
           BIN="src-tauri/target/aarch64-apple-darwin/release/channelflow"
           test -x "$BIN"
           file "$BIN" | grep -q 'arm64'
-          echo 'VYRON 2.1.1 RUNTIME REPAIR GATE: PASS'
+          "$BIN" --version >/dev/null 2>&1 || true
+          echo 'VYRON 2.1.1 MASTER REPAIR GATE: PASS'
 
       - name: Upload gate evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: VYRON-2.1.1-runtime-repair-gate-${{ github.run_number }}
+          name: VYRON-2.1.1-master-repair-gate-${{ github.run_number }}
           path: |
             .vyron-2111-release/src/v2111PublisherRuntime.test.ts
             .vyron-2111-release/src/v2111PublisherWiring.test.ts
+            .vyron-2111-release/src/v2111TauriInvoke.test.ts
+            .vyron-2111-release/src/v2111ShortsFolder.test.ts
+            .vyron-2111-release/src/v2111GlobalCleanup.test.ts
           if-no-files-found: warn
           retention-days: 14
