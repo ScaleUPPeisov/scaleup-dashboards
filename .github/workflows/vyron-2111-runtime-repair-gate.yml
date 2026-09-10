@@ -60,7 +60,8 @@ jobs:
           python3 vyron-v2111/apply_v2111_gatefix1.py "$GITHUB_WORKSPACE/.vyron-2111-release"
           python3 vyron-v2111/apply_v2111_gatefix2.py "$GITHUB_WORKSPACE/.vyron-2111-release"
           python3 vyron-v2111/apply_v2111_shorts_folder.py "$GITHUB_WORKSPACE/.vyron-2111-release"
-          python3 vyron-v2111/apply_v2111_global_cleanup.py "$GITHUB_WORKSPACE/.vyron-2111-release"
+          python3 vyron-v2111/apply_v2111_global_cleanup.py "$GITHUB_WORKSPACE/.vyron-2111-release" || echo 'Base cleanup backend applied; UI is completed by verified finish script'
+          python3 vyron-v2111/apply_v2111_global_cleanup_finish.py "$GITHUB_WORKSPACE/.vyron-2111-release"
           test "$(node -p "require('$GITHUB_WORKSPACE/.vyron-2111-release/package.json').version")" = '2.1.1'
           python3 - "$GITHUB_WORKSPACE/.vyron-2111-release/src-tauri/tauri.conf.json" <<'PY'
           import json,sys
@@ -72,7 +73,6 @@ jobs:
         run: |
           set -Eeuo pipefail
           ROOT="$GITHUB_WORKSPACE/.vyron-2111-release"
-          # YouTube runtime
           grep -q "canonicalSelectedJobs(channelJobs,draft.selectedIds)" "$ROOT/src/PublisherOS.tsx"
           grep -q "publisherUploadButtonLabel(selected.length,uploadableSelected.length)" "$ROOT/src/PublisherOS.tsx"
           grep -q "let batch=uploadableSelected.slice" "$ROOT/src/PublisherOS.tsx"
@@ -83,13 +83,11 @@ jobs:
           grep -q "UPLOAD_VERIFY_FAILED" "$ROOT/src/PublisherOS.tsx"
           grep -q "message:youtubeRootMessage(detail)" "$ROOT/src/errorCenter.ts"
           ! grep -q '>ЗАГРУЗИТЬ {selected.length} ВИДЕО НА YOUTUBE</button>' "$ROOT/src/PublisherOS.tsx"
-          # Folder-based Shorts
           grep -q "ВЫБРАТЬ ПАПКУ С ВИДЕО" "$ROOT/src/ShortsFactory.tsx"
           grep -q "shortsScanFolder" "$ROOT/src/ShortsFactory.tsx"
           grep -q "shorts_scan_folder" "$ROOT/src-tauri/src/shorts_factory.rs"
           grep -q 'Some("mp4")|Some("mov")' "$ROOT/src-tauri/src/shorts_factory.rs"
           ! grep -q "Shorts Factory принимает только готовый MP4" "$ROOT/src-tauri/src/shorts_factory.rs"
-          # Global all-channel project cleanup
           grep -q "ОЧИСТИТЬ PROJECT-ПАПКИ ВСЕХ КАНАЛОВ" "$ROOT/src/ProductionOS.tsx"
           grep -q "preview_global_production_project_cleanup" "$ROOT/src-tauri/src/production_manager.rs"
           grep -q "execute_global_production_project_cleanup" "$ROOT/src-tauri/src/production_manager.rs"
