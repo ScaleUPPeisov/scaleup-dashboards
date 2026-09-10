@@ -64,16 +64,24 @@ jobs:
           script=Path(sys.argv[1]); source=Path(sys.argv[2]).read_text()
           matches=list(re.finditer(r'export const\s+\w+(?::[^=\n]+)?\s*=\s*\[',source))
           if not matches: raise SystemExit('actual releaseHistory export array not found')
-          marker=matches[0].group(0)
-          data=script.read_text()
-          old="marker='export const RELEASE_HISTORY=['"
+          marker=matches[0].group(0); data=script.read_text(); old="marker='export const RELEASE_HISTORY=['"
           if old not in data: raise SystemExit('transformer releaseHistory marker declaration missing')
-          script.write_text(data.replace(old,'marker='+repr(marker),1))
-          print('releaseHistory anchor:',marker)
+          script.write_text(data.replace(old,'marker='+repr(marker),1)); print('releaseHistory anchor:',marker)
           PY
 
           echo '==> Apply direct YouTube publish/error recovery'
           python3 "$RUNNER_TEMP/apply_v2100_direct.py" "$WORK" recovery
+
+          echo '==> Adapt pinned Shorts registration anchor to released 2.0.13'
+          python3 - "$ROOT/vyron-v211/apply_v211_shorts_factory.py" <<'PY'
+          from pathlib import Path
+          import sys
+          p=Path(sys.argv[1]);s=p.read_text()
+          old='production_manager::delete_production_job_folder,production_manager::open_production_batch_in_endlume'
+          new='production_manager::delete_production_job_folder,production_manager::cleanup_completed_production_assets,production_manager::open_production_batch_in_endlume'
+          if old not in s: raise SystemExit('historical Shorts lib anchor substring missing')
+          p.write_text(s.replace(old,new,1))
+          PY
           echo '==> Apply Shorts Factory'
           python3 "$ROOT/vyron-v211/apply_v211_shorts_factory.py" "$WORK"
           echo '==> Apply safe Storage Manager archive'
