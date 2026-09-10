@@ -28,46 +28,53 @@ jobs:
           gh release download v2.1.0 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-2.1.0-source.tar.gz' --dir "$RUNNER_TEMP/vyron211diag"
           tar -xzf "$RUNNER_TEMP/vyron211diag/VYRON-2.1.0-source.tar.gz" -C "$RUNNER_TEMP/vyron211diag"
           test "$(node -p "require('$RUNNER_TEMP/vyron211diag/package.json').version")" = '2.1.0'
-      - name: Print exact PublisherOS runtime data flow
+      - name: Print PublisherOS selection and runtime data flow
         shell: bash
         run: |
           set -euo pipefail
           ROOT="$RUNNER_TEMP/vyron211diag"
-          echo '===== PublisherOS header ====='
-          sed -n '1,35p' "$ROOT/src/PublisherOS.tsx"
-          python3 - "$ROOT/src/PublisherOS.tsx" <<'PY'
+          sed -n '1,95p' "$ROOT/src/PublisherOS.tsx"
+      - name: Print metadata parser and schedule normalization
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/vyron211diag"
+          echo '===== metadata.ts ====='
+          sed -n '1,360p' "$ROOT/src/metadata.ts"
+          echo '===== publisherMetadata.ts ====='
+          sed -n '1,220p' "$ROOT/src/publisherMetadata.ts"
+          echo '===== publisherSchedule.ts ====='
+          sed -n '1,220p' "$ROOT/src/publisherSchedule.ts"
+      - name: Print error mapping and notification center
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/vyron211diag"
+          echo '===== errorCenter.ts ====='
+          sed -n '1,320p' "$ROOT/src/errorCenter.ts"
+          echo '===== notificationCenter.ts ====='
+          sed -n '1,280p' "$ROOT/src/notificationCenter.ts"
+      - name: Print upload frontend and backend boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/vyron211diag"
+          grep -nE 'youtubeUpload:|ytInvoke|youtube_upload_video|youtube_resume_upload|youtube_list_existing' "$ROOT/src/api.ts" "$ROOT/src-tauri/src/lib.rs" || true
+          sed -n '160,230p' "$ROOT/src-tauri/src/youtube.rs"
+      - name: Diagnose exact broken contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/vyron211diag"
+          python3 - "$ROOT" <<'PY'
           from pathlib import Path
           import sys
-          s=Path(sys.argv[1]).read_text()
-          needles=['const selected','selected=','selectedJobs','selectedIds','effectivePublishAt','missingMetadata','missingSchedule','preflightBlocked','runBatch','ЗАГРУЗИТЬ','ПРОВЕРИТЬ НА ОДНОМ','toggle','selectAll','selected.length','quotaPlan']
-          lines=s.splitlines(); print('===== PublisherOS targeted lines ====='); hits=set()
-          for i,line in enumerate(lines):
-              if any(n.lower() in line.lower() for n in needles):
-                  for j in range(max(0,i-2),min(len(lines),i+3)): hits.add(j)
-          for j in sorted(hits): print(f'{j+1:04d}: {lines[j]}')
-          print('===== END PublisherOS =====')
+          root=Path(sys.argv[1]); pub=(root/'src/PublisherOS.tsx').read_text(); yt=(root/'src-tauri/src/youtube.rs').read_text(); pm=(root/'src/publisherMetadata.ts').read_text()
+          print('button_zero_label=', 'ЗАГРУЗИТЬ {selected.length} ВИДЕО НА YOUTUBE' in pub)
+          print('button_blocked_zero=', '!selected.length' in pub and 'preflightBlocked' in pub)
+          print('hardcoded_mp4_chunk=', '.header("Content-Type","video/mp4")' in yt)
+          print('hardcoded_mp4_init=', '.header("X-Upload-Content-Type","video/mp4")' in yt)
+          print('upload_has_post_insert_verify=', 'UPLOAD_VERIFY' in yt or 'videos.list verification' in yt)
+          print('date_only_returns_raw=', 'if(row.publishAt)return row.publishAt' in pm)
           PY
-      - name: Print state metadata and API boundaries
-        shell: bash
-        run: |
-          set -euo pipefail
-          ROOT="$RUNNER_TEMP/vyron211diag"
-          for f in src/publishWorkspaceState.ts src/publisherMetadata.ts src/metadataImport.ts src/types.ts src/tauriApi.ts src/api.ts; do
-            if [ -f "$ROOT/$f" ]; then echo "===== $f ====="; sed -n '1,260p' "$ROOT/$f"; fi
-          done
-      - name: Print YouTube Rust upload core
-        shell: bash
-        run: |
-          set -euo pipefail
-          ROOT="$RUNNER_TEMP/vyron211diag"
-          echo '===== youtube.rs upload area ====='
-          sed -n '160,230p' "$ROOT/src-tauri/src/youtube.rs"
-          echo '===== lib.rs invoke handler ====='
-          sed -n '20,35p' "$ROOT/src-tauri/src/lib.rs"
-      - name: Inventory relevant tests
-        shell: bash
-        run: |
-          set -euo pipefail
-          ROOT="$RUNNER_TEMP/vyron211diag"
-          find "$ROOT/src" "$ROOT/tests" -type f \( -name '*test.ts' -o -name '*test.tsx' \) 2>/dev/null | sort | grep -Ei 'publish|youtube|schedule|quota|metadata|error|selection' || true
           echo 'DIAGNOSE COMPLETE'
