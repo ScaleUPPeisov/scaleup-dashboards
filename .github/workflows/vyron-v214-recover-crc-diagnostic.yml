@@ -1,0 +1,77 @@
+name: VYRON 2.0.14 Recovery CRC Diagnostic
+
+on:
+  push:
+    branches: [release/vyron-2.1.0-shorts-buffer-storage]
+    paths:
+      - '.github/workflows/vyron-v214-recover-crc-diagnostic.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify exact recovery bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          V214_SHA='84456d5e9c982057805078d0604cf90654d893d8'
+          git fetch --no-tags origin "$V214_SHA"
+          git checkout "$V214_SHA" -- vyron-v214/parts
+          python3 - <<'PY'
+          import base64, gzip, hashlib, pathlib, struct, zlib
+
+          root=pathlib.Path('vyron-v214/parts')
+          expected='80c951a30d8822b654ce9bb0b58a3068ab9260cc29fbd31d91b26a2d1739654a'
+          chunks=[]
+          for i in range(7):
+              p=root/f'part{i:02d}.txt'
+              s=''.join(p.read_text().split())
+              if len(s)%4 == 1:
+                  raise SystemExit(f'{p.name}: impossible base64 length')
+              padded=s+'='*((-len(s))%4)
+              b=base64.b64decode(padded,validate=True)
+              print(p.name,'chars',len(s),'decoded',len(b),'tail',b[-8:].hex())
+              chunks.append(b)
+          gz=b''.join(chunks)
+          print('combined_gzip_bytes',len(gz),'head',gz[:16].hex(),'tail',gz[-16:].hex())
+
+          try:
+              out=gzip.decompress(gz)
+              print('gzip.decompress sha256',hashlib.sha256(out).hexdigest(),'len',len(out))
+          except Exception as e:
+              print('gzip.decompress failed:',repr(e))
+
+          if gz[:3] != b'\x1f\x8b\x08':
+              raise SystemExit('not gzip/deflate')
+          flg=gz[3]
+          pos=10
+          if flg & 4:
+              xlen=int.from_bytes(gz[pos:pos+2],'little'); pos += 2+xlen
+          if flg & 8:
+              pos=gz.index(b'\0',pos)+1
+          if flg & 16:
+              pos=gz.index(b'\0',pos)+1
+          if flg & 2:
+              pos += 2
+          d=zlib.decompressobj(-zlib.MAX_WBITS)
+          out=d.decompress(gz[pos:]) + d.flush()
+          got=hashlib.sha256(out).hexdigest()
+          print('raw_deflate eof',d.eof,'unused',len(d.unused_data),'unconsumed',len(d.unconsumed_tail))
+          print('raw_deflate sha256',got,'len',len(out))
+          if d.unused_data:
+              print('unused_head',d.unused_data[:24].hex())
+              if len(d.unused_data)>=8:
+                  crc,isize=struct.unpack('<II',d.unused_data[:8])
+                  actual_crc=zlib.crc32(out)&0xffffffff
+                  print('trailer_crc',hex(crc),'actual_crc',hex(actual_crc),'trailer_isize',isize,'actual_isize',len(out)&0xffffffff)
+          if got != expected:
+              raise SystemExit(f'raw DEFLATE output SHA mismatch: {got} != {expected}')
+          print('RECOVERY_PATCH_EXACT_SHA_PASS')
+          PY
