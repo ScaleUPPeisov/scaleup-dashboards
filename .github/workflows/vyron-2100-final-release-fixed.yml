@@ -37,6 +37,8 @@ jobs:
           set -euo pipefail
           rustup target add aarch64-apple-darwin
           if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then brew install ffmpeg; fi
+          command -v ffmpeg
+          command -v ffprobe
       - name: Build and test direct-source VYRON 2.1.0
         shell: bash
         run: |
@@ -103,6 +105,10 @@ jobs:
           PY
           echo '==> Apply Shorts Factory'
           python3 "$ROOT/vyron-v211/apply_v211_shorts_factory.py" "$WORK"
+
+          echo '==> Apply 2.1.0 production hardening (unified scheduler)'
+          python3 "$ROOT/vyron-v2100/apply_v2100_hardening.py" "$WORK"
+
           echo '==> Apply safe Storage Manager archive'
           python3 "$RUNNER_TEMP/apply_v2100_direct.py" "$WORK" storage
 
@@ -151,11 +157,13 @@ jobs:
           pkg=json.loads((r/'package.json').read_text()); conf=json.loads((r/'src-tauri/tauri.conf.json').read_text())
           assert pkg['version']=='2.1.0' and conf['version']=='2.1.0'
           assert conf['identifier']=='studio.channelflow.desktop'
-          for f in ['src/shortsCore.ts','src/ShortsFactory.tsx','src/ShortsMetadata.tsx','src/MetadataTabs.tsx','src-tauri/src/shorts_factory.rs','src/v2100PublishRecovery.test.ts','src/v2100StorageArchive.test.ts']:
+          for f in ['src/shortsCore.ts','src/ShortsFactory.tsx','src/ShortsMetadata.tsx','src/MetadataTabs.tsx','src-tauri/src/shorts_factory.rs','src/v2100PublishRecovery.test.ts','src/v2100UnifiedSchedule.test.ts','src/v2100StorageArchive.test.ts']:
               assert (r/f).is_file(),f
-          pub=(r/'src/PublisherOS.tsx').read_text(); sched=(r/'src/publisherSchedule.ts').read_text(); app=(r/'src/App.tsx').read_text(); err=(r/'src/errorCenter.ts').read_text(); notify=(r/'src/notificationCenter.ts').read_text(); prod=(r/'src/ProductionOS.tsx').read_text(); short=(r/'src-tauri/src/shorts_factory.rs').read_text(); pm=(r/'src-tauri/src/production_manager.rs').read_text(); pma=(r/'src/productionManagerApi.ts').read_text(); pui=(r/'src/ProductionManager.tsx').read_text(); lib=(r/'src-tauri/src/lib.rs').read_text(); yt=(r/'src-tauri/src/youtube.rs').read_text(); runway=(r/'src/channelRunwayCore.ts').read_text()
+          pub=(r/'src/PublisherOS.tsx').read_text(); sched=(r/'src/publisherSchedule.ts').read_text(); sm=(r/'src/ShortsMetadata.tsx').read_text(); sc=(r/'src/shortsCore.ts').read_text(); app=(r/'src/App.tsx').read_text(); err=(r/'src/errorCenter.ts').read_text(); notify=(r/'src/notificationCenter.ts').read_text(); prod=(r/'src/ProductionOS.tsx').read_text(); short=(r/'src-tauri/src/shorts_factory.rs').read_text(); pm=(r/'src-tauri/src/production_manager.rs').read_text(); pma=(r/'src/productionManagerApi.ts').read_text(); pui=(r/'src/ProductionManager.tsx').read_text(); lib=(r/'src-tauri/src/lib.rs').read_text(); yt=(r/'src-tauri/src/youtube.rs').read_text(); runway=(r/'src/channelRunwayCore.ts').read_text()
           for t in ('syncScheduleFromYoutube','api.youtubeListExisting(profileId,1000)','pastSchedule','Синхронизировать с YouTube','Последняя дата на YouTube','technicalDetail:h.detail'): assert t in pub,t
-          for t in ('latestYoutubeScheduledPublishAt','suggestedScheduleStartDate','nextFutureScheduleDate','isFuturePublishAt','Asia/Krasnoyarsk'): assert t in sched,t
+          for t in ('latestYoutubeScheduledPublishAt','suggestedScheduleStartDate','nextFutureScheduleDate','isFuturePublishAt','publisherUnifiedChannelSlots','Asia/Krasnoyarsk'): assert t in sched,t
+          assert 'return publisherUnifiedChannelSlots' in sc and 'date=addCalendarDays(date,1)' not in sc
+          for t in ('scheduleSynced','youtubeScheduleRows','YouTube является source of truth'): assert t in sm,t
           for t in ('SCHEDULE_IN_PAST','SCHEDULE_REJECTED'): assert t in err,t
           for t in ('Очистить все ошибки','Убрать ошибку','Технические детали'): assert t in app,t
           assert 'technicalDetail?:string' in notify
