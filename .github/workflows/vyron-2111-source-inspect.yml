@@ -1,4 +1,4 @@
-name: VYRON OAuth 2.0.8 vs 2.0.9 Inspect NO PUBLISH
+name: VYRON OAuth History Inspect NO PUBLISH
 
 on:
   push:
@@ -19,37 +19,42 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
-      - name: Download exact released 2.0.8 and 2.0.9 sources
+      - name: Download exact released sources
         shell: bash
         run: |
           set -Eeuo pipefail
-          rm -rf "$RUNNER_TEMP/v208" "$RUNNER_TEMP/v209" "$RUNNER_TEMP/src208" "$RUNNER_TEMP/src209"
-          mkdir -p "$RUNNER_TEMP/v208" "$RUNNER_TEMP/v209" "$RUNNER_TEMP/src208" "$RUNNER_TEMP/src209"
-          gh release download v2.0.8 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-2.0.8-source.tar.gz' --dir "$RUNNER_TEMP/src208"
-          gh release download v2.0.9 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-2.0.9-source.tar.gz' --dir "$RUNNER_TEMP/src209"
-          tar -xzf "$RUNNER_TEMP/src208/VYRON-2.0.8-source.tar.gz" -C "$RUNNER_TEMP/v208"
-          tar -xzf "$RUNNER_TEMP/src209/VYRON-2.0.9-source.tar.gz" -C "$RUNNER_TEMP/v209"
-      - name: Compare OAuth and secret storage
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          for V in v208 v209; do
-            ROOT="$RUNNER_TEMP/$V"
-            echo "=== $V YOUTUBE SECRET STORAGE ==="
-            grep -Rni -B 8 -A 18 -E 'OAuthProfile|refresh_token|access_token|client_secret|youtube-oauth.json|oauth_key|const SERVICE|set_secret|get_secret|write_profile_secrets|hydrate_profile_secrets|legacy' "$ROOT/src-tauri/src" | head -n 900 || true
+          for V in 2.0.8 2.0.9 2.1.0; do
+            SAFE="${V//./}"
+            mkdir -p "$RUNNER_TEMP/v$SAFE" "$RUNNER_TEMP/src$SAFE"
+            gh release download "v$V" --repo ScaleUPPeisov/scaleup-dashboards --pattern "VYRON-$V-source.tar.gz" --dir "$RUNNER_TEMP/src$SAFE"
+            tar -xzf "$RUNNER_TEMP/src$SAFE/VYRON-$V-source.tar.gz" -C "$RUNNER_TEMP/v$SAFE"
           done
-          echo '=== YOUTUBE.RS DIFF 2.0.8 -> 2.0.9 ==='
-          diff -u "$RUNNER_TEMP/v208/src-tauri/src/youtube.rs" "$RUNNER_TEMP/v209/src-tauri/src/youtube.rs" || true
-          echo '=== SECURITY.RS 2.0.9 ==='
-          if [ -f "$RUNNER_TEMP/v209/src-tauri/src/security.rs" ]; then sed -n '1,240p' "$RUNNER_TEMP/v209/src-tauri/src/security.rs"; fi
-          echo '=== SECURITY.RS 2.0.8 ==='
-          if [ -f "$RUNNER_TEMP/v208/src-tauri/src/security.rs" ]; then sed -n '1,240p' "$RUNNER_TEMP/v208/src-tauri/src/security.rs"; else echo 'NO security.rs in 2.0.8'; fi
-      - name: Inspect migration and backups specifically
+      - name: Build OAuth history evidence
         shell: bash
         run: |
           set -Eeuo pipefail
-          for V in v208 v209; do
-            ROOT="$RUNNER_TEMP/$V"
-            echo "=== $V BACKUP/MIGRATION ==="
-            grep -Rni -B 10 -A 22 -E 'with_extension\("bak"|\.bak|backup|legacy|migration|write_oauth_metadata|write_profile_secrets|load_store' "$ROOT/src-tauri/src" | head -n 800 || true
+          OUT="$RUNNER_TEMP/oauth-history"
+          mkdir -p "$OUT"
+          : > "$OUT/REPORT.txt"
+          for SPEC in '208:2.0.8' '209:2.0.9' '210:2.1.0'; do
+            SAFE="${SPEC%%:*}"; VER="${SPEC##*:}"; ROOT="$RUNNER_TEMP/v$SAFE"; DEST="$OUT/$VER"
+            mkdir -p "$DEST"
+            for F in src-tauri/src/youtube.rs src-tauri/src/security.rs src-tauri/src/storage.rs src-tauri/src/main.rs src-tauri/tauri.conf.json src-tauri/Cargo.toml; do
+              [ -f "$ROOT/$F" ] && { mkdir -p "$DEST/$(dirname "$F")"; cp "$ROOT/$F" "$DEST/$F"; }
+            done
+            {
+              echo "=== VYRON $VER ==="
+              grep -Rni -B 8 -A 18 -E 'OAuthProfile|refresh_token|access_token|client_secret|youtube-oauth.json|oauth_key|const SERVICE|set_secret|get_secret|write_profile_secrets|hydrate_profile_secrets|legacy|keychain|bundle|identifier' "$ROOT/src-tauri/src" | head -n 1600 || true
+              echo
+            } >> "$OUT/REPORT.txt"
           done
+          echo '=== YOUTUBE.RS DIFF 2.0.8 -> 2.0.9 ===' >> "$OUT/REPORT.txt"
+          diff -u "$RUNNER_TEMP/v208/src-tauri/src/youtube.rs" "$RUNNER_TEMP/v209/src-tauri/src/youtube.rs" >> "$OUT/REPORT.txt" || true
+          echo '=== YOUTUBE.RS DIFF 2.0.9 -> 2.1.0 ===' >> "$OUT/REPORT.txt"
+          diff -u "$RUNNER_TEMP/v209/src-tauri/src/youtube.rs" "$RUNNER_TEMP/v210/src-tauri/src/youtube.rs" >> "$OUT/REPORT.txt" || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vyron-oauth-history
+          path: ${{ runner.temp }}/oauth-history
+          if-no-files-found: error
+          retention-days: 3
