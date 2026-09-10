@@ -1,4 +1,4 @@
-name: VYRON 2.1.0 Source Inspection Exact
+name: VYRON 2.1.0 Source Inspection Notifications
 
 on:
   push:
@@ -27,15 +27,7 @@ jobs:
           test "$(sha256sum "$RUNNER_TEMP/VYRON-2.0.13-source.tar.gz"|awk '{print $1}')" = 'd9f6345b597d41018b9a439c3eda2558e33936c6b605ac2b8052955b4e088717'
           tar -xzf "$RUNNER_TEMP/VYRON-2.0.13-source.tar.gz" -C "$RUNNER_TEMP/vyron-src"
           cd "$RUNNER_TEMP/vyron-src"
-          for f in src/publisherSchedule.ts src/publisherSchedule.test.ts src/errorHistory.ts src/errorCenter.ts; do
+          for f in src/notificationCenter.ts src/api.ts src/types.ts src/YouTubeCenter.tsx src/QuotaMeter.tsx; do
             echo "===== $f ====="
-            nl -ba "$f"
+            nl -ba "$f" | sed -n '1,180p'
           done
-          echo '===== APP TOPBAR 1-90 ====='
-          nl -ba src/App.tsx | sed -n '1,90p'
-          echo '===== PUBLISHER 1-90 ====='
-          nl -ba src/PublisherOS.tsx | sed -n '1,90p'
-          echo '===== CHANNEL CACHE 1-65 ====='
-          nl -ba src/channelSchedule.ts | sed -n '1,65p'
-          echo '===== YOUTUBE CACHE ====='
-          nl -ba src/youtubeCache.ts | sed -n '1,160p'
