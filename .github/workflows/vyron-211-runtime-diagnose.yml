@@ -1,0 +1,77 @@
+name: VYRON 2.1.1 Runtime Diagnose NO PUBLISH
+
+on:
+  push:
+    branches:
+      - release/vyron-2.1.1-youtube-runtime-repair
+    paths:
+      - '.github/workflows/vyron-211-runtime-diagnose.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    name: Diagnose published 2.1.0 YouTube pipeline
+    runs-on: macos-14
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download published 2.1.0 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/vyron211diag"
+          gh release download v2.1.0 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-2.1.0-source.tar.gz' --dir "$RUNNER_TEMP/vyron211diag"
+          tar -xzf "$RUNNER_TEMP/vyron211diag/VYRON-2.1.0-source.tar.gz" -C "$RUNNER_TEMP/vyron211diag"
+          test "$(node -p "require('$RUNNER_TEMP/vyron211diag/package.json').version")" = '2.1.0'
+      - name: Print exact PublisherOS runtime data flow
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/vyron211diag"
+          python3 - "$ROOT/src/PublisherOS.tsx" <<'PY'
+          from pathlib import Path
+          import sys
+          s=Path(sys.argv[1]).read_text()
+          needles=['const selected','selected=','selectedJobs','selectedIds','effectivePublishAt','missingMetadata','missingSchedule','preflightBlocked','runBatch','ЗАГРУЗИТЬ','ПРОВЕРИТЬ НА ОДНОМ','toggle','selectAll','selected.length','quotaPlan']
+          lines=s.splitlines()
+          print('===== PublisherOS targeted lines =====')
+          hits=set()
+          for i,line in enumerate(lines):
+              if any(n.lower() in line.lower() for n in needles):
+                  for j in range(max(0,i-2),min(len(lines),i+3)): hits.add(j)
+          for j in sorted(hits): print(f'{j+1:04d}: {lines[j]}')
+          print('===== END PublisherOS =====')
+          PY
+      - name: Print YouTube frontend API and Rust command flow
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/vyron211diag"
+          python3 - "$ROOT" <<'PY'
+          from pathlib import Path
+          import sys
+          root=Path(sys.argv[1])
+          files=['src/publisherApi.ts','src/youtubeApi.ts','src-tauri/src/lib.rs','src-tauri/src/youtube.rs','src/publisherSchedule.ts','src/publisherMetadata.ts']
+          needles=['youtube','upload','insert','invoke','publishat','schedule','selected','profile','resumable','start_upload','execute','preflight']
+          for rel in files:
+              p=root/rel
+              if not p.exists(): continue
+              print(f'===== {rel} =====')
+              lines=p.read_text().splitlines();hits=set()
+              for i,line in enumerate(lines):
+                  if any(n in line.lower() for n in needles):
+                      for j in range(max(0,i-1),min(len(lines),i+2)): hits.add(j)
+              for j in sorted(hits): print(f'{j+1:04d}: {lines[j]}')
+          PY
+      - name: Inventory relevant tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/vyron211diag"
+          find "$ROOT/src" "$ROOT/tests" -type f \( -name '*test.ts' -o -name '*test.tsx' \) 2>/dev/null | sort | grep -Ei 'publish|youtube|schedule|quota|metadata|error|selection' || true
+          echo 'DIAGNOSE COMPLETE'
