@@ -6,6 +6,7 @@ on:
       - release/vyron-2.1.1-youtube-runtime-repair
     paths:
       - 'vyron-v2111/**'
+      - '.github/scripts/apply_v2111_oauth_keychain_recovery.py'
       - '.github/workflows/vyron-2111-runtime-repair-gate.yml'
   workflow_dispatch:
 
@@ -56,15 +57,17 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          python3 vyron-v2111/apply_v2111_youtube_runtime_repair.py "$GITHUB_WORKSPACE/.vyron-2111-release"
-          python3 vyron-v2111/apply_v2111_gatefix1.py "$GITHUB_WORKSPACE/.vyron-2111-release"
-          python3 vyron-v2111/apply_v2111_gatefix2.py "$GITHUB_WORKSPACE/.vyron-2111-release"
-          python3 vyron-v2111/apply_v2111_shorts_folder.py "$GITHUB_WORKSPACE/.vyron-2111-release"
-          python3 vyron-v2111/apply_v2111_global_cleanup.py "$GITHUB_WORKSPACE/.vyron-2111-release" || echo 'Base cleanup backend applied; UI is completed by verified finish script'
-          python3 vyron-v2111/apply_v2111_global_cleanup_finish.py "$GITHUB_WORKSPACE/.vyron-2111-release"
-          python3 vyron-v2111/apply_v2111_cleanup_test_placement_fix.py "$GITHUB_WORKSPACE/.vyron-2111-release"
-          test "$(node -p "require('$GITHUB_WORKSPACE/.vyron-2111-release/package.json').version")" = '2.1.1'
-          python3 - "$GITHUB_WORKSPACE/.vyron-2111-release/src-tauri/tauri.conf.json" <<'PY'
+          ROOT="$GITHUB_WORKSPACE/.vyron-2111-release"
+          python3 vyron-v2111/apply_v2111_youtube_runtime_repair.py "$ROOT"
+          python3 vyron-v2111/apply_v2111_gatefix1.py "$ROOT"
+          python3 vyron-v2111/apply_v2111_gatefix2.py "$ROOT"
+          python3 vyron-v2111/apply_v2111_shorts_folder.py "$ROOT"
+          python3 vyron-v2111/apply_v2111_global_cleanup.py "$ROOT" || echo 'Base cleanup backend applied; UI is completed by verified finish script'
+          python3 vyron-v2111/apply_v2111_global_cleanup_finish.py "$ROOT"
+          python3 vyron-v2111/apply_v2111_cleanup_test_placement_fix.py "$ROOT"
+          python3 .github/scripts/apply_v2111_oauth_keychain_recovery.py "$ROOT"
+          test "$(node -p "require('$ROOT/package.json').version")" = '2.1.1'
+          python3 - "$ROOT/src-tauri/tauri.conf.json" <<'PY'
           import json,sys
           d=json.load(open(sys.argv[1]));assert d['version']=='2.1.1';assert d['identifier']=='studio.channelflow.desktop'
           PY
@@ -94,6 +97,10 @@ jobs:
           grep -q "execute_global_production_project_cleanup" "$ROOT/src-tauri/src/production_manager.rs"
           grep -q "trash::delete(path)" "$ROOT/src-tauri/src/production_manager.rs"
           grep -q "ГОТОВЫЕ ВИДЕО НЕ УДАЛЯЮТСЯ" "$ROOT/src/ProductionOS.tsx"
+          grep -q "preserved_refresh_token" "$ROOT/src-tauri/src/youtube.rs"
+          grep -q "OAUTH_INVALID_GRANT" "$ROOT/src-tauri/src/youtube.rs"
+          grep -q "CHANNEL_MISMATCH" "$ROOT/src-tauri/src/youtube.rs"
+          grep -q "v2111_oauth_recovery_tests" "$ROOT/src-tauri/src/youtube.rs"
           echo 'STATIC MASTER CONTRACTS: PASS'
 
       - name: Frontend unit integration and production build
@@ -105,7 +112,7 @@ jobs:
           npm test
           npm run build
 
-      - name: Rust tests including real MP4 and MOV Shorts FFmpeg
+      - name: Rust tests including OAuth recovery and real MP4/MOV Shorts FFmpeg
         shell: bash
         working-directory: .vyron-2111-release
         env:
@@ -145,5 +152,6 @@ jobs:
             .vyron-2111-release/src/v2111TauriInvoke.test.ts
             .vyron-2111-release/src/v2111ShortsFolder.test.ts
             .vyron-2111-release/src/v2111GlobalCleanup.test.ts
+            .vyron-2111-release/src-tauri/src/youtube.rs
           if-no-files-found: warn
           retention-days: 14
