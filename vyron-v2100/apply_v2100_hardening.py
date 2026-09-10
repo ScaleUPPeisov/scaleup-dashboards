@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from pathlib import Path
-import sys
+import subprocess,sys
 
 root=Path(sys.argv[1] if len(sys.argv)>1 else '.')
 
@@ -126,4 +126,10 @@ describe('VYRON 2.1 unified Long + Shorts channel scheduler',()=>{
 });
 ''')
 
-print('VYRON 2.1.0 hardening applied: unified scheduler + Shorts YouTube source of truth')
+# Error Center/batch notification hardening is part of the same exact-source gate.
+error_hardening=Path(__file__).with_name('apply_v2100_error_hardening.py')
+if not error_hardening.is_file():
+    raise SystemExit('Error Center hardening script missing')
+subprocess.run([sys.executable,str(error_hardening),str(root)],check=True)
+
+print('VYRON 2.1.0 hardening applied: unified scheduler + Shorts YouTube source of truth + Error Center semantics')
