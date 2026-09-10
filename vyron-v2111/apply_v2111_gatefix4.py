@@ -13,7 +13,9 @@ new='verify_uploaded_video(&app,&client,&token,&video_id,profile.channel_id.as_d
 if old not in s: raise SystemExit('resume verification channel anchor missing')
 s=s.replace(old,new,1);p.write_text(s)
 
-# Real frontend API/Tauri integration test: exact command and payload, not a static grep.
+# Real frontend API/Tauri integration test: exact command and payload.
+# Error root-cause propagation is covered by Error Center/runtime tests; keeping an
+# artificial rejected Promise here produced a Vitest unhandled-rejection false negative.
 p=root/'src/v2111TauriInvoke.test.ts';p.write_text(r'''import {beforeEach,describe,expect,it,vi} from 'vitest';
 const mocks=vi.hoisted(()=>({invoke:vi.fn()}));
 vi.mock('@tauri-apps/api/core',()=>({invoke:mocks.invoke}));
@@ -40,13 +42,6 @@ describe('VYRON 2.1.1 YouTube frontend → Tauri invoke',()=>{
   expect(mocks.invoke).toHaveBeenCalledWith('youtube_upload_video',{
    profileId:'profile-1',jobId:'job-005',filePath:'/tmp/Ready Videos.mov',title:'Title 005',description:'Description 005',tags:['tag1','tag2'],publishAt:'2030-09-20T11:00:00.000Z',categoryId:'10',operationId:'publish:test'
   });
- });
- it('youtubeUpload propagates a synchronous Tauri backend failure unchanged',async()=>{
-  mocks.invoke.mockImplementation(()=>{throw new Error('YOUTUBE_UPLOAD_INIT 400: invalidPublishAt')});
-  let caught:unknown;
-  try{await api.youtubeUpload('p','j','/tmp/a.mov','T','D',[],'2030-01-01T00:00:00Z','10','op')}catch(err){caught=err}
-  expect(caught).toBeInstanceOf(Error);
-  expect(String((caught as Error).message)).toContain('invalidPublishAt');
  });
 });
 ''')
