@@ -1,4 +1,4 @@
-name: VYRON 2.1.0 Fixed Full Gate + Production Release
+name: VYRON 2.1.0 Source Inspection
 
 on:
   push:
@@ -8,235 +8,31 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-
-concurrency:
-  group: vyron-2100-fixed-production-release
-  cancel-in-progress: true
+  contents: read
 
 jobs:
-  final-gate:
-    name: Final Gate — macOS Apple Silicon
-    runs-on: macos-14
-    timeout-minutes: 180
-    env:
-      GH_TOKEN: ${{ github.token }}
-      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-      TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
-      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-      APPLE_SIGNING_IDENTITY: '-'
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - name: Toolchain
-        shell: bash
-        run: |
-          set -euo pipefail
-          rustup target add aarch64-apple-darwin
-          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then brew install ffmpeg; fi
-          ffmpeg -version | head -1
-          ffprobe -version | head -1
-      - name: Build fixed full-gate script from pinned release gate
-        shell: bash
-        run: |
-          set -euo pipefail
-          GATE_SHA='701594f5f72383cc6a15ca46f0af7ba870eef1be'
-          git fetch --no-tags origin "$GATE_SHA"
-          git show "$GATE_SHA:.github/workflows/vyron-2100-final-release.yml" > "$RUNNER_TEMP/original-gate.yml"
-          python3 - "$RUNNER_TEMP/original-gate.yml" "$RUNNER_TEMP/run-fixed-gate.sh" <<'PYORCH'
-          from pathlib import Path
-          import sys
-
-          src = Path(sys.argv[1]).read_text()
-          marker = "      - name: Run complete deterministic 2.1.0 gate\n        shell: bash\n        run: |\n"
-          if marker not in src:
-              raise SystemExit('Pinned gate run block not found')
-          start = src.index(marker) + len(marker)
-          end_marker = "\n      - name: Upload gate log"
-          end = src.index(end_marker, start)
-          block = src[start:end]
-          lines = block.splitlines()
-          script = '\n'.join(line[10:] if line.startswith('          ') else line for line in lines) + '\n'
-
-          a = script.index("echo '==> Fetch pinned recovery")
-          bmark = 'patch -p1 < "$PATCH"'
-          b = script.index(bmark, a) + len(bmark)
-
-          replacement = r'''echo '==> Fetch pinned recovery parts and previously green Shorts implementation'
-          git fetch --no-tags origin "$V214_SHA" "$SHORTS_SHA"
-          git checkout "$V214_SHA" -- vyron-v214
-          git checkout "$SHORTS_SHA" -- vyron-v211
-
-          echo '==> Verify exact released VYRON 2.0.13 source'
-          rm -rf "$WORK" "$BASE"; mkdir -p "$WORK" "$BASE"
-          gh release download v2.0.13 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-2.0.13-source.tar.gz' --dir "$BASE"
-          test "$(shasum -a 256 "$BASE/VYRON-2.0.13-source.tar.gz"|awk '{print $1}')" = "$SOURCE_SHA"
-          tar -xzf "$BASE/VYRON-2.0.13-source.tar.gz" -C "$WORK"
-          test "$(node -p "require('$WORK/package.json').version")" = '2.0.13'
-
-          echo '==> Cryptographically recover exact 2.0.14 patch from corrupted immutable transport'
-          PARTS="$ROOT/vyron-v214/parts"
-          PATCH="$RUNNER_TEMP/v214.patch"
-          python3 - "$PARTS" "$PATCH" <<'PYREC'
-          import base64, gzip, hashlib, pathlib, sys
-          parts_dir = pathlib.Path(sys.argv[1])
-          out = pathlib.Path(sys.argv[2])
-          expected_patch = '80c951a30d8822b654ce9bb0b58a3068ab9260cc29fbd31d91b26a2d1739654a'
-          names = [f'part{i:02d}.txt' for i in range(7)]
-          parts = []
-          for name in names:
-              p = parts_dir / name
-              if not p.is_file():
-                  raise SystemExit(f'missing recovery part: {name}')
-              s = ''.join(p.read_text().split())
-              allowed = set('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=')
-              if any(ch not in allowed for ch in s):
-                  raise SystemExit(f'{name}: non-base64 transport character')
-              parts.append(s)
-          lengths = [len(x) for x in parts]
-          print('transport part lengths=', lengths)
-          if lengths[:3] != [4000,4000,4000] or lengths[4:6] != [4000,4000] or lengths[6] != 2472:
-              raise SystemExit(f'unexpected immutable transport layout: {lengths}')
-          excess = len(parts[3]) - 4000
-          if excess != 690:
-              raise SystemExit(f'part03 corruption shape changed: expected 690 excess chars, got {excess}')
-
-          prefix = ''.join(parts[:3])
-          p3 = parts[3]
-          suffix = ''.join(parts[4:])
-          matches = []
-          gzip_candidates = 0
-          for pos in range(len(p3) - excess + 1):
-              encoded = prefix + p3[:pos] + p3[pos+excess:] + suffix
-              try:
-                  raw = base64.b64decode(encoded, validate=True)
-                  patch = gzip.decompress(raw)
-              except Exception:
-                  continue
-              gzip_candidates += 1
-              got = hashlib.sha256(patch).hexdigest()
-              if got == expected_patch:
-                  matches.append((pos, patch, p3[pos:pos+excess], len(raw)))
-          print('valid gzip candidates=', gzip_candidates, 'exact SHA matches=', len(matches))
-          if len(matches) != 1:
-              raise SystemExit(f'cryptographic recovery failed: expected exactly one {expected_patch} match, got {len(matches)}')
-          pos, patch, removed, raw_len = matches[0]
-          print('recovered part03 insertion offset=', pos)
-          print('removed transport sha256=', hashlib.sha256(removed.encode()).hexdigest())
-          print('recovered gzip bytes=', raw_len, 'patch bytes=', len(patch))
-          print('recovery patch sha256=', hashlib.sha256(patch).hexdigest())
-          out.write_bytes(patch)
-          PYREC
-          cd "$WORK"
-          patch -p1 < "$PATCH"'''
-
-          script = script[:a] + replacement + script[b:]
-          Path(sys.argv[2]).write_text('#!/usr/bin/env bash\nset -euo pipefail\n' + script)
-          PYORCH
-          chmod +x "$RUNNER_TEMP/run-fixed-gate.sh"
-      - name: Run complete deterministic 2.1.0 gate
-        shell: bash
-        run: |
-          set -euo pipefail
-          "$RUNNER_TEMP/run-fixed-gate.sh"
-      - name: Upload gate log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: VYRON-2.1.0-gate-log
-          path: vyron-2100-gate.log
-          if-no-files-found: warn
-          retention-days: 14
-      - name: Upload exact green candidate
-        uses: actions/upload-artifact@v4
-        with:
-          name: VYRON-2.1.0-final-candidate
-          path: .vyron-2100-release/release/
-          if-no-files-found: error
-          retention-days: 30
-
-  publish:
-    name: Publish VYRON 2.1.0
-    needs: final-gate
+  inspect-source:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     env:
       GH_TOKEN: ${{ github.token }}
-      REPO: ScaleUPPeisov/scaleup-dashboards
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: VYRON-2.1.0-final-candidate
-          path: release
-      - name: Create updater manifest
+      - name: Extract exact released source and inspect recovery integration points
         shell: bash
         run: |
           set -euo pipefail
-          for f in VYRON-2.1.0-macOS-AppleSilicon.dmg VYRON.app.tar.gz VYRON.app.tar.gz.sig VYRON-2.1.0-source.tar.gz SHA256.txt UPDATER_SHA256.txt SOURCE_SHA256.txt FINAL_TEST_REPORT.md RELEASE_NOTES.md; do test -s "release/$f"; done
-          python3 - <<'PY'
-          import json,datetime,pathlib
-          r=pathlib.Path('release')
-          sig=(r/'VYRON.app.tar.gz.sig').read_text().strip()
-          notes=(r/'RELEASE_NOTES.md').read_text()
-          data={
-            'version':'2.1.0',
-            'notes':notes,
-            'pub_date':datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00','Z'),
-            'platforms':{
-              'darwin-aarch64':{
-                'url':'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.0/VYRON.app.tar.gz',
-                'signature':sig
-              }
-            }
-          }
-          (r/'latest.json').write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
-          PY
-      - name: Publish exact tested release
-        shell: bash
-        run: |
-          set -euo pipefail
-          if gh release view v2.1.0 --repo "$REPO" >/dev/null 2>&1; then
-            gh release edit v2.1.0 --repo "$REPO" --title 'VYRON YT PEISOV 2.1.0 — Shorts Factory + Production Storage' --notes-file release/RELEASE_NOTES.md --draft=false --prerelease=false
-          else
-            gh release create v2.1.0 --repo "$REPO" --target "$GITHUB_SHA" --title 'VYRON YT PEISOV 2.1.0 — Shorts Factory + Production Storage' --notes-file release/RELEASE_NOTES.md
-          fi
-          gh release upload v2.1.0 --repo "$REPO" --clobber \
-            release/VYRON-2.1.0-macOS-AppleSilicon.dmg \
-            release/VYRON.app.tar.gz \
-            release/VYRON.app.tar.gz.sig \
-            release/VYRON-2.1.0-source.tar.gz \
-            release/SHA256.txt \
-            release/UPDATER_SHA256.txt \
-            release/SOURCE_SHA256.txt \
-            release/FINAL_TEST_REPORT.md \
-            release/RELEASE_NOTES.md \
-            release/latest.json
-      - name: Activate updater
-        shell: bash
-        run: |
-          set -euo pipefail
-          OLD_SHA=$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .sha)
-          CURRENT=$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | base64 --decode | python3 -c 'import sys,json;print(json.load(sys.stdin)["version"])')
-          case "$CURRENT" in 2.0.13|2.0.14|2.1.0) ;; *) echo "Unexpected live updater $CURRENT"; exit 1;; esac
-          CONTENT=$(base64 -w0 release/latest.json)
-          gh api --method PUT "repos/$REPO/contents/vyron-updates/latest.json" \
-            -f message='VYRON updater: 2.1.0' \
-            -f content="$CONTENT" \
-            -f sha="$OLD_SHA" \
-            -f branch=main >/dev/null
-      - name: Verify production
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(gh release view v2.1.0 --repo "$REPO" --json isDraft --jq '.isDraft|tostring')" = false
-          test "$(gh release view v2.1.0 --repo "$REPO" --json isPrerelease --jq '.isPrerelease|tostring')" = false
-          ASSETS=$(gh release view v2.1.0 --repo "$REPO" --json assets --jq '.assets[].name')
-          for f in VYRON-2.1.0-macOS-AppleSilicon.dmg VYRON.app.tar.gz VYRON.app.tar.gz.sig VYRON-2.1.0-source.tar.gz latest.json FINAL_TEST_REPORT.md; do grep -qx "$f" <<<"$ASSETS"; done
-          LIVE=$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | base64 --decode)
-          test "$(printf '%s' "$LIVE" | python3 -c 'import sys,json;print(json.load(sys.stdin)["version"])')" = 2.1.0
-          echo 'VYRON 2.1.0 PRODUCTION RELEASE: PASS'
+          mkdir -p "$RUNNER_TEMP/vyron-src"
+          gh release download v2.0.13 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-2.0.13-source.tar.gz' --dir "$RUNNER_TEMP"
+          GOT=$(sha256sum "$RUNNER_TEMP/VYRON-2.0.13-source.tar.gz" | awk '{print $1}')
+          test "$GOT" = 'd9f6345b597d41018b9a439c3eda2558e33936c6b605ac2b8052955b4e088717'
+          tar -xzf "$RUNNER_TEMP/VYRON-2.0.13-source.tar.gz" -C "$RUNNER_TEMP/vyron-src"
+          cd "$RUNNER_TEMP/vyron-src"
+          echo '=== TOP ==='
+          find . -maxdepth 2 -type f | sort | head -250
+          echo '=== RELEVANT FILES ==='
+          find . -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.js' -o -name '*.rs' \) | grep -Ei 'publish|schedule|youtube|upload|error|channel|notification' | sort | head -250 || true
+          echo '=== SYMBOL MATCHES ==='
+          grep -RniE --include='*.ts' --include='*.tsx' --include='*.js' --include='*.rs' 'publishAt|schedule|scheduled|uploadError|lastError|errorHistory|Error Center|ошиб|youtube.*upload|upload.*youtube|clear.*error|error.*clear' . | head -500 || true
+          echo '=== PACKAGE ==='
+          cat package.json
