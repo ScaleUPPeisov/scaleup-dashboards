@@ -1,4 +1,4 @@
-name: VYRON 2.1.0 Source Inspection
+name: VYRON 2.1.0 Source Inspection Exact
 
 on:
   push:
@@ -18,21 +18,24 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
-      - name: Extract exact released source and inspect recovery integration points
+      - name: Print exact released source corridors
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/vyron-src"
           gh release download v2.0.13 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-2.0.13-source.tar.gz' --dir "$RUNNER_TEMP"
-          GOT=$(sha256sum "$RUNNER_TEMP/VYRON-2.0.13-source.tar.gz" | awk '{print $1}')
-          test "$GOT" = 'd9f6345b597d41018b9a439c3eda2558e33936c6b605ac2b8052955b4e088717'
+          test "$(sha256sum "$RUNNER_TEMP/VYRON-2.0.13-source.tar.gz"|awk '{print $1}')" = 'd9f6345b597d41018b9a439c3eda2558e33936c6b605ac2b8052955b4e088717'
           tar -xzf "$RUNNER_TEMP/VYRON-2.0.13-source.tar.gz" -C "$RUNNER_TEMP/vyron-src"
           cd "$RUNNER_TEMP/vyron-src"
-          echo '=== TOP ==='
-          find . -maxdepth 2 -type f | sort | head -250
-          echo '=== RELEVANT FILES ==='
-          find . -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.js' -o -name '*.rs' \) | grep -Ei 'publish|schedule|youtube|upload|error|channel|notification' | sort | head -250 || true
-          echo '=== SYMBOL MATCHES ==='
-          grep -RniE --include='*.ts' --include='*.tsx' --include='*.js' --include='*.rs' 'publishAt|schedule|scheduled|uploadError|lastError|errorHistory|Error Center|ошиб|youtube.*upload|upload.*youtube|clear.*error|error.*clear' . | head -500 || true
-          echo '=== PACKAGE ==='
-          cat package.json
+          for f in src/publisherSchedule.ts src/publisherSchedule.test.ts src/errorHistory.ts src/errorCenter.ts; do
+            echo "===== $f ====="
+            nl -ba "$f"
+          done
+          echo '===== APP TOPBAR 1-90 ====='
+          nl -ba src/App.tsx | sed -n '1,90p'
+          echo '===== PUBLISHER 1-90 ====='
+          nl -ba src/PublisherOS.tsx | sed -n '1,90p'
+          echo '===== CHANNEL CACHE 1-65 ====='
+          nl -ba src/channelSchedule.ts | sed -n '1,65p'
+          echo '===== YOUTUBE CACHE ====='
+          nl -ba src/youtubeCache.ts | sed -n '1,160p'
