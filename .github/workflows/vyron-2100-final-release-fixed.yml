@@ -1,22 +1,25 @@
-name: VYRON 2.1.0 Direct Source Gate
+name: VYRON 2.1.0 Repair Gate NO PUBLISH
 
 on:
   push:
-    branches: [release/vyron-2.1.0-shorts-buffer-storage]
+    branches:
+      - release/vyron-2.1.0-production-repair-shorts
     paths:
       - '.github/workflows/vyron-2100-final-release-fixed.yml'
+      - 'vyron-v2100/**'
+      - 'vyron-v211/**'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: vyron-2100-direct-source-gate
+  group: vyron-2100-repair-gate-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   final-gate:
-    name: Direct Source Gate — macOS Apple Silicon
+    name: Repair Gate — macOS Apple Silicon — NO PUBLISH
     runs-on: macos-14
     timeout-minutes: 180
     env:
@@ -42,6 +45,7 @@ jobs:
           ROOT="$GITHUB_WORKSPACE"
           WORK="$ROOT/.vyron-2100-release"
           BASE="$RUNNER_TEMP/vyron-base"
+          SOURCE_COMMIT='b74238f2676a047587cb2f34a810a32d853c5fd0'
           SOURCE_SHA='d9f6345b597d41018b9a439c3eda2558e33936c6b605ac2b8052955b4e088717'
           SHORTS_SHA='549ac4175c7745092509010ce928110958870ccc'
 
@@ -51,9 +55,13 @@ jobs:
 
           echo '==> Verify exact official VYRON 2.0.13 source'
           rm -rf "$WORK" "$BASE"; mkdir -p "$WORK" "$BASE"
-          gh release download v2.0.13 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-2.0.13-source.tar.gz' --dir "$BASE"
-          test "$(shasum -a 256 "$BASE/VYRON-2.0.13-source.tar.gz"|awk '{print $1}')" = "$SOURCE_SHA"
-          tar -xzf "$BASE/VYRON-2.0.13-source.tar.gz" -C "$WORK"
+          if gh release download v2.0.13 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-2.0.13-source.tar.gz' --dir "$BASE"; then
+            test "$(shasum -a 256 "$BASE/VYRON-2.0.13-source.tar.gz"|awk '{print $1}')" = "$SOURCE_SHA"
+            tar -xzf "$BASE/VYRON-2.0.13-source.tar.gz" -C "$WORK"
+          else
+            echo 'release asset unavailable; reconstructing exact source tree from pinned release commit'
+            git archive "$SOURCE_COMMIT" | tar -x -C "$WORK"
+          fi
           test "$(node -p "require('$WORK/package.json').version")" = '2.0.13'
 
           echo '==> Resolve actual releaseHistory array anchor'
@@ -172,12 +180,12 @@ jobs:
           cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
           echo '==> Tauri application compile without publishing/signing'
           npx tauri build --target aarch64-apple-darwin --no-bundle
-          echo 'VYRON 2.1.0 DIRECT SOURCE GATE: PASS'
+          echo 'VYRON 2.1.0 REPAIR GATE: PASS'
       - name: Upload gate log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: VYRON-2.1.0-direct-source-gate-log
+          name: VYRON-2.1.0-repair-gate-log
           path: vyron-2100-gate.log
           if-no-files-found: warn
           retention-days: 14
