@@ -1,0 +1,113 @@
+name: VYRON 2.1.0 Published Release Audit
+
+on:
+  push:
+    branches:
+      - test/vyron-2.1.0-full-regression-20260910
+    paths:
+      - '.github/workflows/vyron-2100-release-artifact-audit-temp.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-audit:
+    name: Published DMG + updater + source audit
+    runs-on: macos-14
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ScaleUPPeisov/scaleup-dashboards
+      TAG: v2.1.0
+      RELEASE_SHA: 821890897d802e8cbf1c32e26a5310aeee43fbaf
+    steps:
+      - name: Checkout test harness
+        uses: actions/checkout@v4
+
+      - name: Download exact public release assets
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$RUNNER_TEMP/vyron-release-audit"
+          cd "$RUNNER_TEMP/vyron-release-audit"
+          gh release download "$TAG" --repo "$REPO" --clobber
+          for f in VYRON-2.1.0-macOS-AppleSilicon.dmg VYRON.app.tar.gz VYRON.app.tar.gz.sig VYRON-2.1.0-source.tar.gz SHA256.txt UPDATER_SHA256.txt SOURCE_SHA256.txt latest.json FINAL_TEST_REPORT.md RELEASE_NOTES.md; do
+            test -s "$f"
+          done
+
+      - name: Verify release metadata and checksums
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          D="$RUNNER_TEMP/vyron-release-audit"; cd "$D"
+          test "$(gh release view "$TAG" --repo "$REPO" --json isDraft --jq '.isDraft|tostring')" = false
+          test "$(gh release view "$TAG" --repo "$REPO" --json isPrerelease --jq '.isPrerelease|tostring')" = false
+          test "$(gh release view "$TAG" --repo "$REPO" --json targetCommitish --jq .targetCommitish)" = "$RELEASE_SHA"
+          test "$(awk '{print $1}' SHA256.txt)" = "$(shasum -a 256 VYRON-2.1.0-macOS-AppleSilicon.dmg | awk '{print $1}')"
+          test "$(awk '{print $1}' UPDATER_SHA256.txt)" = "$(shasum -a 256 VYRON.app.tar.gz | awk '{print $1}')"
+          test "$(awk '{print $1}' SOURCE_SHA256.txt)" = "$(shasum -a 256 VYRON-2.1.0-source.tar.gz | awk '{print $1}')"
+          python3 - <<'PY'
+          import json,pathlib
+          d=json.loads(pathlib.Path('latest.json').read_text())
+          assert d['version']=='2.1.0'
+          p=d['platforms']['darwin-aarch64']
+          assert p['url'].endswith('/releases/download/v2.1.0/VYRON.app.tar.gz')
+          assert p['signature'].strip()==pathlib.Path('VYRON.app.tar.gz.sig').read_text().strip()
+          print('release manifest + updater signature binding: PASS')
+          PY
+
+      - name: Verify actual DMG and bundled app
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          D="$RUNNER_TEMP/vyron-release-audit"; DMG="$D/VYRON-2.1.0-macOS-AppleSilicon.dmg"
+          hdiutil verify "$DMG"
+          M="$RUNNER_TEMP/vyron-release-mount"; mkdir -p "$M"
+          cleanup(){ hdiutil detach "$M" -force >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          hdiutil attach "$DMG" -readonly -nobrowse -mountpoint "$M" >/dev/null
+          APP=$(find "$M" -maxdepth 1 -name 'VYRON.app' -print -quit)
+          test -d "$APP"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = '2.1.0'
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = 'studio.channelflow.desktop'
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          BIN="$APP/Contents/MacOS/channelflow"; test -x "$BIN"
+          file "$BIN" | grep -q 'arm64'
+          echo 'published DMG + VYRON.app: PASS'
+
+      - name: Verify published source reconstructs 2.1.0 metadata
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          D="$RUNNER_TEMP/vyron-release-audit"; X="$RUNNER_TEMP/vyron-source-audit"; mkdir -p "$X"
+          tar -xzf "$D/VYRON-2.1.0-source.tar.gz" -C "$X"
+          test "$(node -p "require('$X/package.json').version")" = '2.1.0'
+          python3 - "$X/src-tauri/tauri.conf.json" <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1]))
+          assert d['version']=='2.1.0'
+          assert d['identifier']=='studio.channelflow.desktop'
+          print('published source metadata: PASS')
+          PY
+
+      - name: Verify stable updater equals published release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          D="$RUNNER_TEMP/vyron-release-audit"
+          gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | base64 --decode > "$RUNNER_TEMP/live-latest.json"
+          python3 - "$D/latest.json" "$RUNNER_TEMP/live-latest.json" <<'PY'
+          import json,sys
+          a=json.load(open(sys.argv[1])); b=json.load(open(sys.argv[2]))
+          assert b['version']=='2.1.0'
+          assert a['platforms']==b['platforms']
+          print('stable updater == published release platform payload: PASS')
+          PY
+          for u in \
+            "https://github.com/$REPO/releases/download/$TAG/VYRON-2.1.0-macOS-AppleSilicon.dmg" \
+            "https://github.com/$REPO/releases/download/$TAG/VYRON.app.tar.gz" \
+            "https://github.com/$REPO/releases/download/$TAG/VYRON.app.tar.gz.sig"; do
+            curl -fsIL --connect-timeout 10 --max-time 30 "$u" >/dev/null
+          done
+          echo 'VYRON 2.1.0 PUBLISHED RELEASE AUDIT: PASS'
