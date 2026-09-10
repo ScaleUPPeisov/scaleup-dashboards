@@ -28,6 +28,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          echo 'DIRECT_SOURCE_INSPECT=2'
           rm -rf /tmp/vyron213src /tmp/vyron213asset
           mkdir -p /tmp/vyron213src /tmp/vyron213asset
           gh release download v2.0.13 --repo "$REPO" --pattern 'VYRON-2.0.13-source.tar.gz' --dir /tmp/vyron213asset
@@ -60,7 +61,7 @@ jobs:
               hits=[i for i,x in enumerate(lines) if needle in x]
               print(f'-- {needle!r}: {len(hits)} hit(s)')
               for i in hits[:12]:
-                a=max(0,i-10); b=min(len(lines),i+16)
+                a=max(0,i-14); b=min(len(lines),i+22)
                 if (a,b) in emitted: continue
                 emitted.add((a,b))
                 for j in range(a,b): print(f'{j+1:05d}: {lines[j]}')
