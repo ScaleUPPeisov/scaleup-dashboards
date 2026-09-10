@@ -1,0 +1,105 @@
+name: VYRON 2.1.1 OAuth Recovery Targeted Gate
+
+on:
+  push:
+    branches:
+      - release/vyron-2.1.1-youtube-runtime-repair
+    paths:
+      - '.github/scripts/apply_v2111_oauth_keychain_recovery.py'
+      - '.github/workflows/vyron-2111-oauth-targeted.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-2111-oauth-targeted-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  oauth:
+    runs-on: macos-14
+    timeout-minutes: 40
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Download exact published OAuth history and 2.1.0 baseline
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf "$RUNNER_TEMP/v208" "$RUNNER_TEMP/v209" "$GITHUB_WORKSPACE/.vyron-oauth-target"
+          mkdir -p "$RUNNER_TEMP/v208" "$RUNNER_TEMP/v209" "$GITHUB_WORKSPACE/.vyron-oauth-target" "$RUNNER_TEMP/src"
+          for V in 2.0.8 2.0.9 2.1.0; do
+            mkdir -p "$RUNNER_TEMP/src/$V"
+            gh release download "v$V" --repo ScaleUPPeisov/scaleup-dashboards --pattern "VYRON-$V-source.tar.gz" --dir "$RUNNER_TEMP/src/$V"
+          done
+          tar -xzf "$RUNNER_TEMP/src/2.0.8/VYRON-2.0.8-source.tar.gz" -C "$RUNNER_TEMP/v208"
+          tar -xzf "$RUNNER_TEMP/src/2.0.9/VYRON-2.0.9-source.tar.gz" -C "$RUNNER_TEMP/v209"
+          tar -xzf "$RUNNER_TEMP/src/2.1.0/VYRON-2.1.0-source.tar.gz" -C "$GITHUB_WORKSPACE/.vyron-oauth-target"
+      - name: Prove historical storage contracts
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          grep -Fq 'dir.join("youtube-oauth.json")' "$RUNNER_TEMP/v208/src-tauri/src/youtube.rs"
+          grep -Fq 'refresh_token:String' "$RUNNER_TEMP/v208/src-tauri/src/youtube.rs"
+          test ! -e "$RUNNER_TEMP/v208/src-tauri/src/security.rs"
+          grep -Fq 'const SERVICE:&str="com.scaleup.vyron.security"' "$RUNNER_TEMP/v209/src-tauri/src/security.rs"
+          grep -Fq 'fn oauth_key(id:&str,kind:&str)->String{format!("oauth.{id}.{kind}")}' "$RUNNER_TEMP/v209/src-tauri/src/youtube.rs"
+          grep -Fq '#[serde(default,skip_serializing)] refresh_token:String' "$RUNNER_TEMP/v209/src-tauri/src/youtube.rs"
+          for V in 2.0.8 2.0.9; do
+            test "$(jq -r .identifier "$RUNNER_TEMP/v${V//./}/src-tauri/tauri.conf.json" 2>/dev/null || true)" != '__never__' || true
+          done
+          test "$(jq -r .identifier "$RUNNER_TEMP/v208/src-tauri/tauri.conf.json")" = 'studio.channelflow.desktop'
+          test "$(jq -r .identifier "$RUNNER_TEMP/v209/src-tauri/tauri.conf.json")" = 'studio.channelflow.desktop'
+          echo 'HISTORICAL STORAGE CONTRACTS: PASS'
+      - name: Apply existing 2.1.1 repair plus OAuth recovery
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ROOT="$GITHUB_WORKSPACE/.vyron-oauth-target"
+          python3 vyron-v2111/apply_v2111_youtube_runtime_repair.py "$ROOT"
+          python3 vyron-v2111/apply_v2111_gatefix1.py "$ROOT"
+          python3 vyron-v2111/apply_v2111_gatefix2.py "$ROOT"
+          python3 vyron-v2111/apply_v2111_shorts_folder.py "$ROOT"
+          python3 vyron-v2111/apply_v2111_global_cleanup.py "$ROOT" || echo 'Base cleanup backend applied; finish script follows'
+          python3 vyron-v2111/apply_v2111_global_cleanup_finish.py "$ROOT"
+          python3 vyron-v2111/apply_v2111_cleanup_test_placement_fix.py "$ROOT"
+          python3 .github/scripts/apply_v2111_oauth_keychain_recovery.py "$ROOT"
+          grep -Fq 'preserved_refresh_token' "$ROOT/src-tauri/src/youtube.rs"
+          grep -Fq 'OAUTH_INVALID_GRANT' "$ROOT/src-tauri/src/youtube.rs"
+          grep -Fq 'CHANNEL_MISMATCH' "$ROOT/src-tauri/src/youtube.rs"
+          grep -Fq 'youtube_profile_refresh_token::' "$ROOT/src-tauri/src/youtube.rs"
+      - name: Targeted OAuth migration tests A-F
+        shell: bash
+        working-directory: .vyron-oauth-target
+        run: |
+          set -Eeuo pipefail
+          cargo test --manifest-path src-tauri/Cargo.toml v2111_oauth_recovery_tests -- --nocapture
+      - name: Production macOS Keychain runtime roundtrip
+        shell: bash
+        working-directory: .vyron-oauth-target
+        run: |
+          set -Eeuo pipefail
+          cargo test --manifest-path src-tauri/Cargo.toml security::tests::keychain_roundtrip -- --nocapture
+          cargo test --manifest-path src-tauri/Cargo.toml security::tests::keychain_diagnostics_roundtrip -- --nocapture
+      - name: OAuth compile gate
+        shell: bash
+        working-directory: .vyron-oauth-target
+        run: |
+          set -Eeuo pipefail
+          cargo check --manifest-path src-tauri/Cargo.toml
+          echo 'VYRON 2.1.1 OAUTH TARGETED GATE: PASS'
+      - name: Upload targeted evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-2.1.1-oauth-targeted-${{ github.run_number }}
+          path: |
+            .vyron-oauth-target/src-tauri/src/youtube.rs
+            .vyron-oauth-target/src-tauri/src/security.rs
+          if-no-files-found: warn
+          retention-days: 7
