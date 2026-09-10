@@ -1,4 +1,4 @@
-name: VYRON 2.1.1 OAuth Health Inspect NO PUBLISH
+name: VYRON OAuth 2.0.8 vs 2.0.9 Inspect NO PUBLISH
 
 on:
   push:
@@ -14,36 +14,42 @@ permissions:
 jobs:
   inspect:
     runs-on: macos-14
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
-      - name: Download exact released 2.1.0 source
+      - name: Download exact released 2.0.8 and 2.0.9 sources
         shell: bash
         run: |
           set -Eeuo pipefail
-          rm -rf "$RUNNER_TEMP/src" "$RUNNER_TEMP/app"
-          mkdir -p "$RUNNER_TEMP/src" "$RUNNER_TEMP/app"
-          gh release download v2.1.0 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-2.1.0-source.tar.gz' --dir "$RUNNER_TEMP/src"
-          tar -xzf "$RUNNER_TEMP/src/VYRON-2.1.0-source.tar.gz" -C "$RUNNER_TEMP/app"
-      - name: Exact OAuth health and reconnect anchors
+          rm -rf "$RUNNER_TEMP/v208" "$RUNNER_TEMP/v209" "$RUNNER_TEMP/src208" "$RUNNER_TEMP/src209"
+          mkdir -p "$RUNNER_TEMP/v208" "$RUNNER_TEMP/v209" "$RUNNER_TEMP/src208" "$RUNNER_TEMP/src209"
+          gh release download v2.0.8 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-2.0.8-source.tar.gz' --dir "$RUNNER_TEMP/src208"
+          gh release download v2.0.9 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-2.0.9-source.tar.gz' --dir "$RUNNER_TEMP/src209"
+          tar -xzf "$RUNNER_TEMP/src208/VYRON-2.0.8-source.tar.gz" -C "$RUNNER_TEMP/v208"
+          tar -xzf "$RUNNER_TEMP/src209/VYRON-2.0.9-source.tar.gz" -C "$RUNNER_TEMP/v209"
+      - name: Compare OAuth and secret storage
         shell: bash
         run: |
           set -Eeuo pipefail
-          ROOT="$RUNNER_TEMP/app"
-          echo '=== OAUTH RS HEALTH/REFRESH CONTEXT ==='
-          grep -n -B 25 -A 45 -E 'reauth_required|reauthRequired|refresh_access_token|load_tokens|delete_password|SERVICE|youtube-profile-|oauth_disconnect|disconnect|reconnect|enrich' "$ROOT/src-tauri/src/oauth.rs" || true
-          echo '=== ALL REAUTH REFERENCES ==='
-          grep -Rni -B 8 -A 16 -E 'reauthRequired|reauth_required' "$ROOT/src" "$ROOT/src-tauri/src" || true
-          echo '=== ALL KEYCHAIN SERVICE / ACCOUNT FORMATS ==='
-          grep -Rni -B 4 -A 10 -E 'const SERVICE|youtube-profile-|set_password_bytes|get_password_bytes|delete_password|keychain' "$ROOT/src-tauri/src" || true
-          echo '=== TOKEN STORAGE OUTSIDE OAUTH.RS ==='
-          grep -Rni -B 4 -A 10 -E 'refresh_token|refreshToken|access_token|accessToken|oauth.*token|token.*oauth' "$ROOT/src" "$ROOT/src-tauri/src" | grep -v '/oauth.rs' || true
-          echo '=== LOCAL STORAGE / FILE STORAGE CANDIDATES ==='
-          grep -Rni -B 3 -A 8 -E 'localStorage|sessionStorage|write.*token|read.*token|token.*json|oauth.*json|credentials|credential' "$ROOT/src" "$ROOT/src-tauri/src" || true
-      - name: Show exact OAuth file
+          for V in v208 v209; do
+            ROOT="$RUNNER_TEMP/$V"
+            echo "=== $V YOUTUBE SECRET STORAGE ==="
+            grep -Rni -B 8 -A 18 -E 'OAuthProfile|refresh_token|access_token|client_secret|youtube-oauth.json|oauth_key|const SERVICE|set_secret|get_secret|write_profile_secrets|hydrate_profile_secrets|legacy' "$ROOT/src-tauri/src" | head -n 900 || true
+          done
+          echo '=== YOUTUBE.RS DIFF 2.0.8 -> 2.0.9 ==='
+          diff -u "$RUNNER_TEMP/v208/src-tauri/src/youtube.rs" "$RUNNER_TEMP/v209/src-tauri/src/youtube.rs" || true
+          echo '=== SECURITY.RS 2.0.9 ==='
+          if [ -f "$RUNNER_TEMP/v209/src-tauri/src/security.rs" ]; then sed -n '1,240p' "$RUNNER_TEMP/v209/src-tauri/src/security.rs"; fi
+          echo '=== SECURITY.RS 2.0.8 ==='
+          if [ -f "$RUNNER_TEMP/v208/src-tauri/src/security.rs" ]; then sed -n '1,240p' "$RUNNER_TEMP/v208/src-tauri/src/security.rs"; else echo 'NO security.rs in 2.0.8'; fi
+      - name: Inspect migration and backups specifically
         shell: bash
         run: |
           set -Eeuo pipefail
-          sed -n '1,520p' "$RUNNER_TEMP/app/src-tauri/src/oauth.rs"
+          for V in v208 v209; do
+            ROOT="$RUNNER_TEMP/$V"
+            echo "=== $V BACKUP/MIGRATION ==="
+            grep -Rni -B 10 -A 22 -E 'with_extension\("bak"|\.bak|backup|legacy|migration|write_oauth_metadata|write_profile_secrets|load_store' "$ROOT/src-tauri/src" | head -n 800 || true
+          done
