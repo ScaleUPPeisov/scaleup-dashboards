@@ -1,0 +1,162 @@
+name: VYRON 2.1.2 Final Full Regression NO PUBLISH
+
+on:
+  push:
+    branches:
+      - release/vyron-2.1.2
+    paths:
+      - 'vyron-v212/**'
+      - '.github/workflows/vyron-212-final-regression.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-212-final-regression
+  cancel-in-progress: true
+
+jobs:
+  full-regression:
+    name: Final full regression — macOS Apple Silicon
+    runs-on: macos-14
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VYRON_TEST_REAL_FFMPEG: '1'
+      VYRON_SHORTS_REAL_TEST: '1'
+    steps:
+      - name: Checkout release candidate
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Assemble exact 2.1.2 source from published baseline
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rustup target add aarch64-apple-darwin
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then brew install ffmpeg; fi
+          ROOT="$GITHUB_WORKSPACE/.vyron-212-final"
+          SRC="$RUNNER_TEMP/vyron212-source"
+          rm -rf "$ROOT" "$SRC"
+          mkdir -p "$ROOT" "$SRC"
+          gh release download v2.1.0 --repo ScaleUPPeisov/scaleup-dashboards --pattern 'VYRON-2.1.0-source.tar.gz' --pattern 'SOURCE_SHA256.txt' --dir "$SRC"
+          cd "$SRC"
+          expected="$(awk '{print $1}' SOURCE_SHA256.txt)"
+          actual="$(shasum -a 256 VYRON-2.1.0-source.tar.gz | awk '{print $1}')"
+          test -n "$expected"
+          test "$expected" = "$actual"
+          tar -xzf VYRON-2.1.0-source.tar.gz -C "$ROOT"
+
+          cd "$GITHUB_WORKSPACE"
+          python3 vyron-v2111/apply_v2111_youtube_runtime_repair.py "$ROOT"
+          python3 vyron-v2111/apply_v2111_gatefix1.py "$ROOT"
+          python3 vyron-v2111/apply_v2111_gatefix2.py "$ROOT"
+          python3 vyron-v2111/apply_v2111_shorts_folder.py "$ROOT"
+          python3 vyron-v2111/apply_v2111_global_cleanup.py "$ROOT" || echo 'Base cleanup backend applied; finish script follows'
+          python3 vyron-v2111/apply_v2111_global_cleanup_finish.py "$ROOT"
+          python3 vyron-v2111/apply_v2111_cleanup_test_placement_fix.py "$ROOT"
+          python3 .github/scripts/apply_v2111_oauth_keychain_recovery.py "$ROOT"
+          python3 .github/scripts/apply_v2111_oauth_orphan_recovery.py "$ROOT"
+          python3 .github/scripts/apply_v2111_oauth_orphan_testfix.py "$ROOT"
+          python3 vyron-v212/apply_v212_release.py "$ROOT"
+
+          node -e "const p=require('$ROOT/package.json'); if(p.version!=='2.1.2') process.exit(1)"
+          python3 - "$ROOT" <<'PY'
+          import json,re,sys,pathlib
+          root=pathlib.Path(sys.argv[1])
+          conf=json.load(open(root/'src-tauri/tauri.conf.json'))
+          cargo=(root/'src-tauri/Cargo.toml').read_text()
+          assert conf['version']=='2.1.2'
+          assert conf['identifier']=='studio.channelflow.desktop'
+          assert re.search(r'(?m)^version\s*=\s*"2\.1\.2"\s*$',cargo)
+          print('VERSION 2.1.2 CONTRACT: PASS')
+          PY
+
+      - name: Static production contracts
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ROOT="$GITHUB_WORKSPACE/.vyron-212-final"
+          grep -Fq "canonicalSelectedJobs(channelJobs,draft.selectedIds)" "$ROOT/src/PublisherOS.tsx"
+          grep -Fq "let batch=uploadableSelected.slice" "$ROOT/src/PublisherOS.tsx"
+          grep -Fq "PAST_SCHEDULE" "$ROOT/src/publisherRuntime.ts"
+          grep -Fq "past schedule blocks only affected video" "$ROOT/src/v2111PublisherRuntime.test.ts"
+          grep -Fq "method:'videos.list'" "$ROOT/src/PublisherOS.tsx"
+          grep -Fq "verify_uploaded_video" "$ROOT/src-tauri/src/youtube.rs"
+          grep -Fq 'video/quicktime' "$ROOT/src-tauri/src/youtube.rs"
+          grep -Fq "shorts_scan_folder" "$ROOT/src-tauri/src/shorts_factory.rs"
+          grep -Fq 'Some("mp4")|Some("mov")' "$ROOT/src-tauri/src/shorts_factory.rs"
+          grep -Fq "preview_global_production_project_cleanup" "$ROOT/src-tauri/src/production_manager.rs"
+          grep -Fq "execute_global_production_project_cleanup" "$ROOT/src-tauri/src/production_manager.rs"
+          grep -Fq "trash::delete(path)" "$ROOT/src-tauri/src/production_manager.rs"
+          grep -Fq "list_secret_accounts" "$ROOT/src-tauri/src/security.rs"
+          grep -Fq "orphan_keychain_candidates_with" "$ROOT/src-tauri/src/youtube.rs"
+          grep -Fq "validate_orphan_candidate_live" "$ROOT/src-tauri/src/youtube.rs"
+          grep -Fq "migrate_validated_orphan_with" "$ROOT/src-tauri/src/youtube.rs"
+          grep -Fq "preserved_refresh_token" "$ROOT/src-tauri/src/youtube.rs"
+          grep -Fq "reconnect_profile_id" "$ROOT/src-tauri/src/youtube.rs"
+          echo 'STATIC CONTRACTS: PASS'
+
+      - name: Frontend tests
+        working-directory: .vyron-212-final
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm ci --no-audit --no-fund
+          npm test
+
+      - name: TypeScript
+        working-directory: .vyron-212-final
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npx tsc --noEmit --pretty false
+
+      - name: Production frontend build
+        working-directory: .vyron-212-final
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm run build
+
+      - name: Rust tests with real FFmpeg MP4 and MOV
+        working-directory: .vyron-212-final
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: ARM64 compile gate
+        working-directory: .vyron-212-final
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
+          npx tauri build --target aarch64-apple-darwin --no-bundle
+          BIN="src-tauri/target/aarch64-apple-darwin/release/channelflow"
+          test -x "$BIN"
+          file "$BIN" | grep -q 'arm64'
+          otool -hv "$BIN" | grep -q 'ARM64'
+          echo 'VYRON 2.1.2 FINAL FULL REGRESSION: PASS'
+
+      - name: Upload regression evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-2.1.2-final-regression-${{ github.run_number }}
+          path: |
+            .vyron-212-final/package.json
+            .vyron-212-final/src/PublisherOS.tsx
+            .vyron-212-final/src/publisherRuntime.ts
+            .vyron-212-final/src/v2111PublisherRuntime.test.ts
+            .vyron-212-final/src-tauri/src/youtube.rs
+            .vyron-212-final/src-tauri/src/security.rs
+          if-no-files-found: warn
+          retention-days: 14
