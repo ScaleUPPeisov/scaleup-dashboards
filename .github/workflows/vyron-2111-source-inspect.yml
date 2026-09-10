@@ -39,12 +39,20 @@ jobs:
           for SPEC in '208:2.0.8' '209:2.0.9' '210:2.1.0'; do
             SAFE="${SPEC%%:*}"; VER="${SPEC##*:}"; ROOT="$RUNNER_TEMP/v$SAFE"; DEST="$OUT/$VER"
             mkdir -p "$DEST"
-            for F in src-tauri/src/youtube.rs src-tauri/src/security.rs src-tauri/src/storage.rs src-tauri/src/main.rs src-tauri/tauri.conf.json src-tauri/Cargo.toml; do
+            for F in src-tauri/src/youtube.rs src-tauri/src/security.rs src-tauri/src/storage.rs src-tauri/src/main.rs src-tauri/tauri.conf.json src-tauri/Cargo.toml package.json; do
               [ -f "$ROOT/$F" ] && { mkdir -p "$DEST/$(dirname "$F")"; cp "$ROOT/$F" "$DEST/$F"; }
             done
             {
-              echo "=== VYRON $VER ==="
-              grep -Rni -B 8 -A 18 -E 'OAuthProfile|refresh_token|access_token|client_secret|youtube-oauth.json|oauth_key|const SERVICE|set_secret|get_secret|write_profile_secrets|hydrate_profile_secrets|legacy|keychain|bundle|identifier' "$ROOT/src-tauri/src" | head -n 1600 || true
+              echo "=== VYRON $VER: credential-related files ==="
+              find "$ROOT" -type f \
+                -not -path '*/node_modules/*' -not -path '*/target/*' \
+                \( -iname '*oauth*' -o -iname '*token*' -o -iname '*credential*' -o -iname '*keychain*' -o -iname '*youtube*' -o -iname '*security*' -o -iname '*storage*' \) \
+                | sed "s#^$ROOT/##" | sort | head -n 300 || true
+              echo "=== VYRON $VER: exact storage/keychain evidence ==="
+              grep -Rni -B 10 -A 24 -E 'refresh_token|access_token|youtube-oauth\.json|keyring|keychain|SERVICE|service_name|account|youtube:|oauth_key|OAuthProfile|LegacyTokenStore|set_secret|get_secret|write_profile_secrets|hydrate_profile_secrets|config_dir|app_data|app_data_dir|localStorage|sqlite|tauri.store|credential|remove_password|delete_credential|clear_credentials|reset_oauth|remove_file' \
+                "$ROOT/src-tauri" "$ROOT/src" 2>/dev/null | head -n 2600 || true
+              echo "=== VYRON $VER: identifiers ==="
+              grep -Rni -B 4 -A 8 -E 'identifier|bundle|productName|package.name|com\.|ru\.|app_id|appId' "$ROOT/src-tauri/tauri.conf.json" "$ROOT/src-tauri/Cargo.toml" "$ROOT/package.json" 2>/dev/null | head -n 300 || true
               echo
             } >> "$OUT/REPORT.txt"
           done
@@ -52,6 +60,11 @@ jobs:
           diff -u "$RUNNER_TEMP/v208/src-tauri/src/youtube.rs" "$RUNNER_TEMP/v209/src-tauri/src/youtube.rs" >> "$OUT/REPORT.txt" || true
           echo '=== YOUTUBE.RS DIFF 2.0.9 -> 2.1.0 ===' >> "$OUT/REPORT.txt"
           diff -u "$RUNNER_TEMP/v209/src-tauri/src/youtube.rs" "$RUNNER_TEMP/v210/src-tauri/src/youtube.rs" >> "$OUT/REPORT.txt" || true
+      - name: Print OAuth history evidence
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat "$RUNNER_TEMP/oauth-history/REPORT.txt"
       - uses: actions/upload-artifact@v4
         with:
           name: vyron-oauth-history
