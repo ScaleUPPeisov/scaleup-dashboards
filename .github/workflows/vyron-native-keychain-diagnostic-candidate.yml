@@ -61,7 +61,10 @@ jobs:
           tar -xzf VYRON-2.1.2-source.tar.gz -C "$ROOT"
 
           cd "$GITHUB_WORKSPACE"
-          cat .github/scripts/vyron_native_keychain_repair.py.gz.b64.part00 \
+          cat .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.00 \
+              .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.01 \
+              .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.02 \
+              .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.03 \
               .github/scripts/vyron_native_keychain_repair.py.gz.b64.part01 \
               .github/scripts/vyron_native_keychain_repair.py.gz.b64.part02 \
             | base64 --decode | gunzip > "$PATCH"
