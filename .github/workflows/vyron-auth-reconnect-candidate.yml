@@ -95,7 +95,8 @@ jobs:
           grep -q 'resolveOAuthMissingErrors' src/AuthRecoveryCenter.tsx
           grep -q 'Уникальных профилей для входа' src/AuthRecoveryCenter.tsx
           grep -q 'Переподключить следующий' src/AuthRecoveryCenter.tsx
-          grep -q 'Восстановление каналов' src/SettingsOS.tsx
+          grep -q '<AuthRecoveryCenter/>' src/SettingsOS.tsx
+          grep -q 'Восстановление каналов' src/AuthRecoveryCenter.tsx
           grep -q 'SKIPPED_PAST_DATE' src/PublisherOS.tsx
           if grep -q 'dump-keychain' src-tauri/src/security.rs; then
             echo 'ERROR: shell Keychain enumeration survived native repair'
