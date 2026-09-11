@@ -63,7 +63,8 @@ jobs:
           cd "$GITHUB_WORKSPACE"
           cat .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.00 \
               .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.01 \
-              .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.02 \
+              .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.02a \
+              .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.02b \
               .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.03 \
               .github/scripts/vyron_native_keychain_repair.py.gz.b64.part01 \
               .github/scripts/vyron_native_keychain_repair.py.gz.b64.part02 \
