@@ -71,6 +71,7 @@ jobs:
             | base64 --decode | gunzip > "$PATCH"
           test "$(shasum -a 256 "$PATCH" | awk '{print $1}')" = '4196bc3e2199e3e038120f37128eb2d5ccb412177c25436a751b9f5ec53fe7ea'
           python3 "$PATCH" "$ROOT"
+          python3 .github/scripts/apply_native_keychain_compilefix.py "$ROOT"
 
           cd "$ROOT"
           test "$(node -p "require('./package.json').version")" = '2.1.2'
