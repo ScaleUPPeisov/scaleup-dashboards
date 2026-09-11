@@ -2,4 +2,4 @@ VYRON 2.1.2 native Keychain diagnostic candidate
 base stable commit: f83bad42c88d04e89089f44d978f2653d28441ee
 stable release: NOT MODIFIED
 purpose: native Security.framework recovery + explicit taxonomy + real-Mac diagnostic + past-date auto repair
-candidate attempt: 2
+candidate attempt: 3
