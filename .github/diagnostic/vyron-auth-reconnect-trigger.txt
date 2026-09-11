@@ -4,4 +4,4 @@ historical token search: CLOSED
 stable release: NOT MODIFIED
 stable updater: NOT MODIFIED
 scope: friendly missing-token UI + unique-profile reconnect queue + validated existing UUID reconnect + resolved active errors + ARM64 candidate only
-candidate attempt: final-recovery-1
+candidate attempt: final-recovery-2
