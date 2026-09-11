@@ -1,0 +1,5 @@
+VYRON 2.1.2 existing-profile reauthorization candidate
+source of truth: real-Mac inventory proves zero recoverable refresh tokens
+stable release: NOT MODIFIED
+stable updater: NOT MODIFIED
+scope: 31↔17 mapping + existing UUID reconnect + A-J targeted tests + ARM64 candidate only
