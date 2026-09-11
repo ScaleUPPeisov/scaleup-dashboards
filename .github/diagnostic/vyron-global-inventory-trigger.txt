@@ -1,0 +1,5 @@
+VYRON 2.1.2 real-Mac global local Keychain inventory candidate
+stable release: NOT MODIFIED
+stable updater: NOT MODIFIED
+YouTube API calls: NONE
+purpose: package installable ARM64 candidate with Settings -> OAuth Diagnostics -> Global Keychain Inventory
