@@ -142,7 +142,8 @@ jobs:
           test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = 'studio.channelflow.desktop'
           EXE=$(plutil -extract CFBundleExecutable raw -o - "$APP/Contents/Info.plist")
           file "$APP/Contents/MacOS/$EXE" | grep -q 'arm64'
-          strings "$APP/Contents/MacOS/$EXE" | grep -q 'security_oauth_inventory'
+          strings "$APP/Contents/MacOS/$EXE" > "$RUNNER_TEMP/vyron-inventory-binary-strings.txt"
+          grep -q 'security_oauth_inventory' "$RUNNER_TEMP/vyron-inventory-binary-strings.txt"
           codesign --verify --deep --strict --verbose=2 "$APP"
           hdiutil verify "$DMG"
 
