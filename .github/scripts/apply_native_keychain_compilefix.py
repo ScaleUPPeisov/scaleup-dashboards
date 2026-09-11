@@ -7,6 +7,7 @@ p=root/'src-tauri/src/youtube.rs'
 s=p.read_text()
 
 s=s.replace('let mut audits=Vec::new(),matched=Vec::new();','let mut audits=Vec::new();let mut matched=Vec::new();')
+s=s.replace('let first=matched[0].candidate.modified_rank.as_deref(),second=matched[1].candidate.modified_rank.as_deref();','let first=matched[0].candidate.modified_rank.as_deref();let second=matched[1].candidate.modified_rank.as_deref();')
 
 def remove_module(text,module_name):
     marker=f'mod {module_name}'
