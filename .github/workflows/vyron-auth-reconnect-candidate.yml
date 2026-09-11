@@ -1,4 +1,4 @@
-name: VYRON Existing-Profile Auth Recovery Candidate
+name: VYRON Final Channel Reconnect Recovery Candidate
 
 on:
   push:
@@ -20,7 +20,7 @@ env:
 
 jobs:
   targeted-auth-recovery:
-    name: A-J targeted auth recovery + ARM64 candidate
+    name: Final reconnect targeted gate + ARM64 candidate
     runs-on: macos-14
     timeout-minutes: 90
     env:
@@ -40,7 +40,7 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Assemble exact v2.1.2 + native Keychain + inventory + reconnect recovery
+      - name: Assemble exact v2.1.2 + validated reconnect + final recovery UX
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -81,24 +81,27 @@ jobs:
           python3 .github/scripts/apply_native_keychain_compilefix.py "$ROOT"
           python3 .github/scripts/apply_global_keychain_inventory.py "$ROOT"
           python3 "$AUTH" "$ROOT"
+          python3 .github/scripts/apply_final_reconnect_recovery.py "$ROOT"
 
           cd "$ROOT"
           test "$(node -p "require('./package.json').version")" = '2.1.2'
-          grep -q 'ItemSearchOptions' src-tauri/src/security.rs
-          grep -q 'security_oauth_inventory' src-tauri/src/security.rs
           grep -q 'youtube_oauth_reconnect_existing' src-tauri/src/youtube.rs
           grep -q 'access_type=offline&prompt=consent' src-tauri/src/youtube.rs
           grep -q 'OAUTH_REFRESH_TOKEN_REQUIRED' src-tauri/src/youtube.rs
           grep -q 'WRONG_CHANNEL:' src-tauri/src/youtube.rs
           grep -q 'reconnect_write_readback_with' src-tauri/src/youtube.rs
-          grep -q 'AuthRecoveryCenter' src/SettingsOS.tsx
-          grep -q '31 channel → profile mapping' src/AuthRecoveryCenter.tsx
+          grep -q 'Требуется повторное подключение YouTube' src/errorCenter.ts
+          grep -q 'Данные канала сохранены. Нужно только снова войти в Google.' src/errorCenter.ts
+          grep -q 'resolveOAuthMissingErrors' src/AuthRecoveryCenter.tsx
+          grep -q 'Уникальных профилей для входа' src/AuthRecoveryCenter.tsx
+          grep -q 'Переподключить следующий' src/AuthRecoveryCenter.tsx
+          grep -q 'Восстановление каналов' src/SettingsOS.tsx
           grep -q 'SKIPPED_PAST_DATE' src/PublisherOS.tsx
           if grep -q 'dump-keychain' src-tauri/src/security.rs; then
             echo 'ERROR: shell Keychain enumeration survived native repair'
             exit 1
           fi
-          echo 'AUTH RECOVERY SOURCE ASSEMBLY: PASS'
+          echo 'FINAL MASS RECONNECT SOURCE ASSEMBLY: PASS'
 
       - name: Install frontend dependencies
         shell: bash
@@ -107,14 +110,14 @@ jobs:
           cd "$RUNNER_TEMP/vyron-auth-reconnect"
           npm ci --no-audit --no-fund
 
-      - name: Targeted tests H-J and 31/17 mapping
+      - name: Targeted frontend recovery tests
         shell: bash
         run: |
           set -Eeuo pipefail
           cd "$RUNNER_TEMP/vyron-auth-reconnect"
-          npx vitest run src/authRecoveryCore.test.ts src/v2111PublisherRuntime.test.ts
+          npx vitest run src/authRecoveryCore.test.ts src/finalAuthRecoveryUi.test.ts src/v2111PublisherRuntime.test.ts
 
-      - name: Targeted tests A-G + offline OAuth contract
+      - name: Targeted Rust reconnect tests A-G + offline OAuth contract
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -155,7 +158,7 @@ jobs:
               f.write(f'TAURI_SIGNING_PRIVATE_KEY={sk}\nTAURI_UPDATER_PUBLIC_KEY={pk}\n')
           PY
 
-      - name: Build and verify real-Mac ARM64 reconnect candidate
+      - name: Build and verify real-Mac ARM64 final reconnect candidate
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -182,52 +185,56 @@ jobs:
           OUT="$GITHUB_WORKSPACE/auth-reconnect-candidate"
           rm -rf "$OUT"
           mkdir -p "$OUT"
-          cp "$DMG" "$OUT/VYRON-2.1.2-Existing-Profile-Reconnect-ARM64.dmg"
-          shasum -a 256 "$OUT/VYRON-2.1.2-Existing-Profile-Reconnect-ARM64.dmg" > "$OUT/SHA256.txt"
+          cp "$DMG" "$OUT/VYRON-2.1.2-Final-Channel-Reconnect-ARM64.dmg"
+          shasum -a 256 "$OUT/VYRON-2.1.2-Final-Channel-Reconnect-ARM64.dmg" > "$OUT/SHA256.txt"
           cat > "$OUT/TARGETED_TEST_REPORT.md" <<'MD'
-          # VYRON Existing-Profile Auth Recovery Candidate
+          # VYRON Final Channel Reconnect Recovery Candidate
 
-          - A existing profile reconnect keeps UUID: PASS
-          - B refresh token returned -> Keychain save: PASS
-          - C no refresh_token -> reconnect FAIL/no save: PASS
-          - D wrong YouTube channel -> token NOT bound: PASS
-          - E correct channel -> token bound existing UUID: PASS
-          - F Keychain write + readback/rollback contract: PASS
-          - G second reconnect does not create duplicate profile: PASS
-          - H multiple channels/profile mapping preserved: PASS
-          - I 31 channel / 17 profile fixture preserved: PASS
-          - J recovery queue advances only after validated success: PASS
-          - Offline OAuth request requires access_type=offline + prompt=consent: PASS
-          - Past-date rows use SKIPPED_PAST_DATE rather than generic job error: PASS
-          - Candidate performs no videos.insert during recovery: enforced by implementation; only one channels.list identity request per reconnect.
+          - Existing OAuthProfile UUID preserved: PASS
+          - New refresh_token required and stored: PASS
+          - Keychain write + readback/rollback: PASS
+          - Wrong channel rejected before bind: PASS
+          - Missing refresh_token rejected: PASS
+          - Duplicate profile not created: PASS
+          - Shared channel/profile mapping preserved: PASS
+          - 31 channel / 17 profile fixture: PASS
+          - Recovery queue advances only after validated success: PASS
+          - REFRESH_TOKEN_MISSING user-facing replacement: PASS
+          - Old active missing-token Error Center rows resolved after reconnect: PASS
+          - Google offline access + prompt=consent: PASS
+          - Past-date auto-reschedule / SKIPPED_PAST_DATE preserved: PASS
+          - No videos.insert or bulk sync is started by Recovery Center.
           - Stable release/tag/updater publication: NOT PERFORMED
           MD
           cat > "$OUT/READ_ME_FIRST.txt" <<'TXT'
-          VYRON 2.1.2 EXISTING-PROFILE AUTH RECOVERY CANDIDATE
+          VYRON 2.1.2 FINAL CHANNEL RECONNECT RECOVERY CANDIDATE
           THIS IS NOT A STABLE RELEASE AND DOES NOT MODIFY THE STABLE UPDATER.
 
-          Before reconnect:
-          Settings -> YouTube -> Восстановление авторизации
-          Confirm 31-channel mapping, stale/duplicate warnings, and reconnect count.
+          Open:
+          Settings -> YouTube -> Восстановление каналов
 
-          First acceptance test: reconnect ONE profile only.
-          Successful result requires:
+          Recovery Center calculates the actual channel -> existing OAuthProfile mapping.
+          It queues UNIQUE missing profile UUIDs, not one login per channel.
+
+          Successful reconnect requires:
           - same existing profile UUID
           - new refresh_token from Google
-          - Google refresh smoke PASS
+          - token refresh PASS
           - expected YouTube channel_id match
-          - Keychain write/readback FOUND
+          - Keychain write/readback PASS
           - CONNECTED state
-          Then use OAuth Diagnostics to confirm CURRENT UUID WITH REFRESH TOKEN increased by 1.
+          - old active REFRESH_TOKEN_MISSING error resolved for the recovered profile/tasks
+          - next missing profile selected automatically
 
-          No bulk sync and no videos.insert are started by the recovery center.
+          No channel/database/schedule/SEO/Production records are recreated or deleted.
+          No bulk sync and no videos.insert are started by the Recovery Center.
           TXT
           echo "DMG_SHA256=$(awk '{print $1}' "$OUT/SHA256.txt")"
 
-      - name: Upload reconnect candidate only
+      - name: Upload final reconnect candidate only
         uses: actions/upload-artifact@v4
         with:
-          name: VYRON-2.1.2-existing-profile-reconnect-candidate
+          name: VYRON-2.1.2-final-channel-reconnect-candidate
           path: auth-reconnect-candidate/
           if-no-files-found: error
           retention-days: 30
