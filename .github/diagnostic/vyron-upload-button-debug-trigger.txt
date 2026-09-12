@@ -1,2 +1,2 @@
-inspect exact final reconnect candidate upload button path
-2026-09-12
+inspect exact final reconnect candidate upload lock and stale recovery state
+2026-09-12 attempt 2
