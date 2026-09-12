@@ -72,7 +72,7 @@ install('src/dynamicUploadQuota.test.ts', read_b64('dynamicUploadQuota.test.ts')
 
 publisher = (root / 'src/PublisherOS.tsx').read_text()
 settings = (root / 'src/SettingsOS.tsx').read_text()
-for contract in ('youtubeQuotaProjectKey', 'youtubeUploadQuotaSnapshot', 'uploadQuotaCapacity'):
+for contract in ('youtubeQuotaProjectIdentity', 'youtubeUploadQuotaState', 'publisherVideoCapacity'):
     if contract not in publisher:
         raise SystemExit(f'PublisherOS v2 contract missing: {contract}')
 for contract in ('YOUTUBE API · UPLOAD QUOTA', 'Дневной лимит videos.insert'):
