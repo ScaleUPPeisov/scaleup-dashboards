@@ -1,62 +1,74 @@
-name: VYRON 2.1.2 Production Release
+name: VYRON 2.1.2 Final Regression and Production Release
 
 on:
   push:
     branches:
-      - release/vyron-2.1.2
+      - repair/vyron-native-keychain-diagnostic
     paths:
-      - '.github/release/vyron-2.1.2-release-trigger.txt'
+      - '.github/workflows/vyron-212-production-release.yml'
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: vyron-212-production-release
+  group: vyron-212-final-production-release
   cancel-in-progress: false
 
 env:
   REPO: ScaleUPPeisov/scaleup-dashboards
   VERSION: '2.1.2'
   TAG: 'v2.1.2'
+  FEATURE_COMMIT: '0419211a312df1c2cb907dc70faad3eca92b9192'
+  BUNDLE_ID: 'studio.channelflow.desktop'
 
 jobs:
-  build-candidate:
-    name: Build production candidate — macOS Apple Silicon
+  final-regression:
+    name: One final full regression — exact production source
     runs-on: macos-14
-    timeout-minutes: 120
+    timeout-minutes: 150
     env:
       GH_TOKEN: ${{ github.token }}
-      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-      TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
-      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-      APPLE_SIGNING_IDENTITY: '-'
+      VYRON_TEST_REAL_FFMPEG: '1'
+      VYRON_SHORTS_REAL_TEST: '1'
     steps:
-      - name: Checkout final release commit
+      - name: Checkout final release HEAD
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0
 
-      - name: Verify final commit checkout is clean
+      - name: Prove production HEAD and feature ancestry
         shell: bash
         run: |
           set -Eeuo pipefail
+          test "$(git branch --show-current)" = 'repair/vyron-native-keychain-diagnostic'
+          git cat-file -e "$FEATURE_COMMIT^{commit}"
+          git merge-base --is-ancestor "$FEATURE_COMMIT" "$GITHUB_SHA"
+          git diff --name-only "$FEATURE_COMMIT..$GITHUB_SHA" > "$RUNNER_TEMP/post-feature-paths.txt"
+          test "$(wc -l < "$RUNNER_TEMP/post-feature-paths.txt" | tr -d ' ')" = '1'
+          grep -Fxq '.github/workflows/vyron-212-production-release.yml' "$RUNNER_TEMP/post-feature-paths.txt"
           test -z "$(git status --porcelain)"
-          echo "FINAL_RELEASE_COMMIT=$GITHUB_SHA"
+          echo "FINAL_RELEASE_HEAD=$GITHUB_SHA"
+          echo "SOURCE_FEATURE_COMMIT=$FEATURE_COMMIT"
 
       - name: Node 22
         uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      - name: Assemble exact green 2.1.2 source
+      - name: Assemble exact final source and overlay lifecycle feature
         shell: bash
         run: |
           set -Eeuo pipefail
           rustup target add aarch64-apple-darwin
-          ROOT="$GITHUB_WORKSPACE/.vyron-212-release"
-          SRC="$RUNNER_TEMP/vyron212-source"
-          rm -rf "$ROOT" "$SRC"
-          mkdir -p "$ROOT" "$SRC"
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then brew install ffmpeg; fi
+
+          ROOT="$GITHUB_WORKSPACE/.vyron-212-final"
+          SRC="$RUNNER_TEMP/vyron212-base"
+          LEGACY="$RUNNER_TEMP/vyron-legacy"
+          rm -rf "$ROOT" "$SRC" "$LEGACY"
+          mkdir -p "$ROOT" "$SRC" "$LEGACY"
+
           gh release download v2.1.0 --repo "$REPO" --pattern 'VYRON-2.1.0-source.tar.gz' --pattern 'SOURCE_SHA256.txt' --dir "$SRC"
           cd "$SRC"
           expected="$(awk '{print $1}' SOURCE_SHA256.txt)"
@@ -78,6 +90,42 @@ jobs:
           python3 .github/scripts/apply_v2111_oauth_orphan_testfix.py "$ROOT"
           python3 vyron-v212/apply_v212_release.py "$ROOT"
 
+          git diff-tree --no-commit-id --name-only -r "$FEATURE_COMMIT" > "$RUNNER_TEMP/feature-files.txt"
+          copied=0
+          while IFS= read -r rel; do
+            case "$rel" in
+              src/*|src-tauri/*|tests/*|package.json|package-lock.json|vite.config.*|tsconfig*.json)
+                mkdir -p "$ROOT/$(dirname "$rel")"
+                git show "$FEATURE_COMMIT:$rel" > "$ROOT/$rel"
+                git show "$FEATURE_COMMIT:$rel" | cmp -s - "$ROOT/$rel"
+                copied=$((copied+1))
+                ;;
+            esac
+          done < "$RUNNER_TEMP/feature-files.txt"
+          test "$copied" -ge 10
+
+          for f in \
+            src/storageLifecycle.ts \
+            src/storageLifecycle.test.ts \
+            src/PublisherOS.tsx \
+            src/v2111PublisherWiring.test.ts \
+            src-tauri/src/local_delete.rs \
+            src-tauri/src/production_manager.rs \
+            src-tauri/src/storage.rs \
+            src-tauri/src/youtube.rs; do
+            test -s "$ROOT/$f"
+          done
+
+          for V in 2.0.8 2.0.9; do
+            mkdir -p "$LEGACY/$V/src"
+            gh release download "v$V" --repo "$REPO" --pattern "VYRON-$V-source.tar.gz" --dir "$LEGACY/$V"
+            tar -xzf "$LEGACY/$V/VYRON-$V-source.tar.gz" -C "$LEGACY/$V/src"
+          done
+          grep -Fq 'dir.join("youtube-oauth.json")' "$LEGACY/2.0.8/src/src-tauri/src/youtube.rs"
+          grep -Fq 'refresh_token:String' "$LEGACY/2.0.8/src/src-tauri/src/youtube.rs"
+          grep -Fq 'const SERVICE:&str="com.scaleup.vyron.security"' "$LEGACY/2.0.9/src/src-tauri/src/security.rs"
+          grep -Fq 'fn oauth_key(id:&str,kind:&str)->String{format!("oauth.{id}.{kind}")}' "$LEGACY/2.0.9/src/src-tauri/src/youtube.rs"
+
           cd "$ROOT"
           python3 - <<'PY'
           import json,re
@@ -88,10 +136,134 @@ jobs:
           assert conf['version']=='2.1.2'
           assert conf['identifier']=='studio.channelflow.desktop'
           assert re.search(r'(?m)^version\s*=\s*"2\.1\.2"\s*$',cargo)
-          print('VERSION CONTRACT: PASS')
+          assert conf.get('bundle',{}).get('createUpdaterArtifacts') is True
+          print('VERSION/BUNDLE CONTRACT: PASS')
           PY
+
+      - name: Static production contracts
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ROOT="$GITHUB_WORKSPACE/.vyron-212-final"
+          grep -Fq "method:'videos.list'" "$ROOT/src/PublisherOS.tsx"
+          grep -Fq 'publishAt' "$ROOT/src/PublisherOS.tsx"
+          grep -Fq 'ZERO-API PRE-FLIGHT' "$ROOT/src/PublisherOS.tsx"
+          grep -Fq 'successfulUploadForHash' "$ROOT/src/PublisherOS.tsx"
+          grep -Fq 'uploadHistory' "$ROOT/src/PublisherOS.tsx"
+          grep -Fq 'verify_uploaded_video' "$ROOT/src-tauri/src/youtube.rs"
+          grep -Fq 'video/quicktime' "$ROOT/src-tauri/src/youtube.rs"
+          grep -Fq 'list_secret_accounts' "$ROOT/src-tauri/src/security.rs"
+          grep -Fq 'orphan_keychain_candidates_with' "$ROOT/src-tauri/src/youtube.rs"
+          grep -Fq 'validate_orphan_candidate_live' "$ROOT/src-tauri/src/youtube.rs"
+          grep -Fq 'migrate_validated_orphan_with' "$ROOT/src-tauri/src/youtube.rs"
+          grep -Fq 'preserved_refresh_token' "$ROOT/src-tauri/src/youtube.rs"
+          grep -Fq 'reconnect_profile_id' "$ROOT/src-tauri/src/youtube.rs"
+          grep -Fq 'shorts_scan_folder' "$ROOT/src-tauri/src/shorts_factory.rs"
+          grep -Fq 'Some("mp4")|Some("mov")' "$ROOT/src-tauri/src/shorts_factory.rs"
+          grep -Fq 'SAFE_TO_CLEAN' "$ROOT/src/storageLifecycle.ts"
+          grep -Fq "status==='UPLOADED'" "$ROOT/src/storageLifecycle.ts"
+          grep -Fq 'youtubeVideoId' "$ROOT/src/storageLifecycle.ts"
+          grep -Fq 'trash::delete' "$ROOT/src-tauri/src/local_delete.rs"
+          grep -Fq 'verified_uploaded_job_ids' "$ROOT/src-tauri/src/production_manager.rs"
+          grep -Fq 'trash::delete' "$ROOT/src-tauri/src/production_manager.rs"
+          echo 'STATIC CONTRACTS: PASS'
+
+      - name: Freeze exact source for build after gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/.green-source"
+          tar -czf "$GITHUB_WORKSPACE/.green-source/VYRON-2.1.2-green-source.tar.gz" \
+            --exclude='./node_modules' --exclude='./dist' --exclude='./src-tauri/target' \
+            -C "$GITHUB_WORKSPACE/.vyron-212-final" .
+          shasum -a 256 "$GITHUB_WORKSPACE/.green-source/VYRON-2.1.2-green-source.tar.gz" > "$GITHUB_WORKSPACE/.green-source/GREEN_SOURCE_SHA256.txt"
+
+      - name: Frontend full project tests
+        working-directory: .vyron-212-final
+        shell: bash
+        run: |
+          set -Eeuo pipefail
           npm ci --no-audit --no-fund
+          npm test
+
+      - name: TypeScript
+        working-directory: .vyron-212-final
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npx tsc --noEmit --pretty false
+
+      - name: Frontend production build
+        working-directory: .vyron-212-final
+        shell: bash
+        run: |
+          set -Eeuo pipefail
           npm run build
+
+      - name: Rust full tests including OAuth and real FFmpeg MP4/MOV
+        working-directory: .vyron-212-final
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cargo test --manifest-path src-tauri/Cargo.toml -- --nocapture
+          echo 'VYRON 2.1.2 FINAL FULL REGRESSION: PASS'
+
+      - name: Upload exact green source only after regression PASS
+        uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-2.1.2-green-source
+          path: .green-source/
+          if-no-files-found: error
+          retention-days: 30
+
+  build-candidate:
+    name: ARM64 production build from green source
+    needs: final-regression
+    runs-on: macos-14
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: '-'
+    steps:
+      - name: Download exact green source
+        uses: actions/download-artifact@v4
+        with:
+          name: VYRON-2.1.2-green-source
+          path: green-source
+
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify and extract green source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          expected="$(awk '{print $1}' green-source/GREEN_SOURCE_SHA256.txt)"
+          actual="$(shasum -a 256 green-source/VYRON-2.1.2-green-source.tar.gz | awk '{print $1}')"
+          test -n "$expected"
+          test "$expected" = "$actual"
+          ROOT="$GITHUB_WORKSPACE/.vyron-212-release"
+          rm -rf "$ROOT"
+          mkdir -p "$ROOT"
+          tar -xzf green-source/VYRON-2.1.2-green-source.tar.gz -C "$ROOT"
+          python3 - <<'PY'
+          import json,re
+          root='.vyron-212-release'
+          pkg=json.load(open(f'{root}/package.json'))
+          conf=json.load(open(f'{root}/src-tauri/tauri.conf.json'))
+          cargo=open(f'{root}/src-tauri/Cargo.toml').read()
+          assert pkg['version']=='2.1.2'
+          assert conf['version']=='2.1.2'
+          assert conf['identifier']=='studio.channelflow.desktop'
+          assert re.search(r'(?m)^version\s*=\s*"2\.1\.2"\s*$',cargo)
+          PY
+          cd "$ROOT"
+          npm ci --no-audit --no-fund
 
       - name: Normalize updater signing material
         shell: bash
@@ -120,7 +292,7 @@ jobs:
               f.write(f'TAURI_SIGNING_PRIVATE_KEY={sk}\nTAURI_UPDATER_PUBLIC_KEY={pk}\n')
           PY
 
-      - name: Build ARM64 app DMG and updater
+      - name: Build real ARM64 app DMG updater archive and signature
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -143,48 +315,54 @@ jobs:
           test -s "$DMG"
           test -s "$UPDATER"
           test -s "$SIG"
-          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = 'studio.channelflow.desktop'
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = "$BUNDLE_ID"
           test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = '2.1.2'
           EXE=$(plutil -extract CFBundleExecutable raw -o - "$APP/Contents/Info.plist")
           test -x "$APP/Contents/MacOS/$EXE"
           file "$APP/Contents/MacOS/$EXE" | grep -q 'arm64'
           otool -hv "$APP/Contents/MacOS/$EXE" | grep -q 'ARM64'
           codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -dv --verbose=4 "$APP" 2>&1 | grep -qi 'Signature=adhoc'
           hdiutil verify "$DMG"
 
           MOUNT="$RUNNER_TEMP/vyron212-build-mount"
-          mkdir -p "$MOUNT"
+          rm -rf "$MOUNT"; mkdir -p "$MOUNT"
           hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$MOUNT"
+          trap 'hdiutil detach "$MOUNT" >/dev/null 2>&1 || true' EXIT
           test -d "$MOUNT/VYRON.app"
           test "$(plutil -extract CFBundleShortVersionString raw -o - "$MOUNT/VYRON.app/Contents/Info.plist")" = '2.1.2'
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$MOUNT/VYRON.app/Contents/Info.plist")" = "$BUNDLE_ID"
           MEXE=$(plutil -extract CFBundleExecutable raw -o - "$MOUNT/VYRON.app/Contents/Info.plist")
           test -x "$MOUNT/VYRON.app/Contents/MacOS/$MEXE"
           file "$MOUNT/VYRON.app/Contents/MacOS/$MEXE" | grep -q 'arm64'
           codesign --verify --deep --strict --verbose=2 "$MOUNT/VYRON.app"
           hdiutil detach "$MOUNT"
+          trap - EXIT
 
-          rm -rf release
-          mkdir release
+          rm -rf release; mkdir release
           cp "$DMG" release/VYRON-2.1.2-macOS-AppleSilicon.dmg
           cp "$UPDATER" release/VYRON.app.tar.gz
           cp "$SIG" release/VYRON.app.tar.gz.sig
+          cp "$GITHUB_WORKSPACE/green-source/VYRON-2.1.2-green-source.tar.gz" release/VYRON-2.1.2-source.tar.gz
           shasum -a 256 release/VYRON-2.1.2-macOS-AppleSilicon.dmg > release/SHA256.txt
           shasum -a 256 release/VYRON.app.tar.gz > release/UPDATER_SHA256.txt
-          tar -czf release/VYRON-2.1.2-source.tar.gz --exclude='./node_modules' --exclude='./dist' --exclude='./src-tauri/target' --exclude='./release' .
           shasum -a 256 release/VYRON-2.1.2-source.tar.gz > release/SOURCE_SHA256.txt
-          cat > release/FINAL_TEST_REPORT.md <<'REPORT'
-          # VYRON 2.1.2 — PRODUCTION RELEASE
-          - PASS: final full regression completed on exact 2.1.2 source family before release trigger
-          - PASS: OAuth orphan UUID recovery regression and channel identity isolation
-          - PASS: past-date item isolation; valid batch items continue
-          - PASS: frontend tests, TypeScript and production build
-          - PASS: Rust tests including real FFmpeg MP4/MOV
-          - PASS: YouTube selection/preflight, publishAt and Videos.list contracts
-          - PASS: cleanup protections
-          - PASS: ARM64 app and executable
-          - PASS: ad-hoc codesign verification (established production architecture)
-          - PASS: DMG verify and mount
-          - PASS: updater archive/signature generation
+          cat > release/FINAL_TEST_REPORT.md <<REPORT
+          # VYRON 2.1.2 — FINAL RELEASE EVIDENCE
+          - Source feature commit: 0419211a312df1c2cb907dc70faad3eca92b9192
+          - Final release HEAD: $GITHUB_SHA
+          - PASS: one final full regression on exact source used for this build
+          - PASS: Storage Lifecycle / Duplicate Guard / persistent upload history
+          - PASS: Project → Render → verified upload / Safe Cleanup / system Trash
+          - PASS: frontend / TypeScript / production frontend build / Rust
+          - PASS: YouTube upload, videos.list verification, publishAt and scheduling contracts
+          - PASS: OAuth/Keychain legacy contracts and full Rust regression
+          - PASS: Shorts Factory and real FFmpeg MP4/MOV regression
+          - PASS: ARM64 VYRON.app and executable
+          - PASS: DMG verify + mount
+          - PASS: ad-hoc codesign verification (established VYRON signing mechanism)
+          - NOTARIZATION: N/A — ad-hoc signing; no Developer ID notarization claimed
+          - PASS: updater archive and updater signature generated
           REPORT
 
       - name: Upload exact production candidate
@@ -196,7 +374,7 @@ jobs:
           retention-days: 30
 
   publish:
-    name: Publish GitHub v2.1.2
+    name: Publish stable GitHub v2.1.2
     needs: build-candidate
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -209,64 +387,55 @@ jobs:
           name: VYRON-2.1.2-production-candidate
           path: release
 
-      - name: Build release metadata
+      - name: Validate release payload and notes
         shell: bash
         run: |
           set -Eeuo pipefail
           for f in VYRON-2.1.2-macOS-AppleSilicon.dmg VYRON.app.tar.gz VYRON.app.tar.gz.sig VYRON-2.1.2-source.tar.gz SHA256.txt UPDATER_SHA256.txt SOURCE_SHA256.txt FINAL_TEST_REPORT.md; do
             test -s "release/$f"
           done
+          test -n "$(cat release/VYRON.app.tar.gz.sig)"
           cat > release/RELEASE_NOTES.md <<'NOTES'
           # VYRON 2.1.2
 
-          Production patch release with validated OAuth orphan recovery, channel-identity-safe credential migration, refresh-token preservation, reconnect UUID consistency, per-channel isolation, past-date batch isolation, YouTube upload verification, Shorts MP4/MOV regression and production cleanup protections.
-          NOTES
-          python3 - <<'PY'
-          import json,datetime,pathlib
-          rel=pathlib.Path('release')
-          sig=(rel/'VYRON.app.tar.gz.sig').read_text().strip()
-          if not sig: raise SystemExit('updater signature is empty')
-          data={
-            'version':'2.1.2',
-            'notes':(rel/'RELEASE_NOTES.md').read_text(),
-            'pub_date':datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00','Z'),
-            'platforms':{'darwin-aarch64':{
-              'url':'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.2/VYRON.app.tar.gz',
-              'signature':sig
-            }}
-          }
-          (rel/'latest.json').write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
-          assert data['version']=='2.1.2'
-          assert data['platforms']['darwin-aarch64']['signature']
-          PY
+          Stable Apple Silicon production release from the current VYRON production source. Includes the verified OAuth/Keychain repair, YouTube upload/scheduling repair, Shorts Factory, cleanup protections, persistent upload lifecycle/history, duplicate SHA-256 upload guard, project-to-render upload proof and guarded macOS system Trash cleanup.
 
-      - name: Publish exact tested GitHub Release
+          Signing: existing ad-hoc production mechanism. Apple Developer notarization is not claimed for this build.
+          NOTES
+
+      - name: Replace stale v2.1.2 and publish exact tested release HEAD
         shell: bash
         run: |
           set -Eeuo pipefail
           if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
-            echo "v2.1.2 already exists; refusing to overwrite"
-            exit 1
+            gh release delete "$TAG" --repo "$REPO" --cleanup-tag --yes
           fi
-          gh release create "$TAG" --repo "$REPO" --target "$GITHUB_SHA" --title 'VYRON 2.1.2' --notes-file release/RELEASE_NOTES.md
+          if gh api "repos/$REPO/git/ref/tags/$TAG" >/dev/null 2>&1; then
+            gh api --method DELETE "repos/$REPO/git/refs/tags/$TAG" >/dev/null
+          fi
+          gh release create "$TAG" --repo "$REPO" --target "$GITHUB_SHA" --title 'VYRON v2.1.2' --notes-file release/RELEASE_NOTES.md --latest
           gh release upload "$TAG" --repo "$REPO" \
             release/VYRON-2.1.2-macOS-AppleSilicon.dmg \
             release/VYRON.app.tar.gz release/VYRON.app.tar.gz.sig \
             release/VYRON-2.1.2-source.tar.gz \
             release/SHA256.txt release/UPDATER_SHA256.txt release/SOURCE_SHA256.txt \
-            release/FINAL_TEST_REPORT.md release/RELEASE_NOTES.md release/latest.json
+            release/FINAL_TEST_REPORT.md release/RELEASE_NOTES.md
+
           test "$(gh release view "$TAG" --repo "$REPO" --json isDraft --jq '.isDraft|tostring')" = 'false'
           test "$(gh release view "$TAG" --repo "$REPO" --json isPrerelease --jq '.isPrerelease|tostring')" = 'false'
+          tag_sha="$(gh api "repos/$REPO/git/ref/tags/$TAG" --jq '.object.sha')"
+          test "$tag_sha" = "$GITHUB_SHA"
+          echo "TAG_TARGET=$tag_sha"
 
   download-back:
-    name: Download-back release verification — macOS
+    name: Download-back published DMG verification
     needs: publish
     runs-on: macos-14
     timeout-minutes: 30
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      - name: Download artifacts from GitHub Release
+      - name: Download only from actual GitHub Release and verify
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -275,66 +444,68 @@ jobs:
             --pattern 'VYRON-2.1.2-macOS-AppleSilicon.dmg' \
             --pattern 'VYRON.app.tar.gz' \
             --pattern 'VYRON.app.tar.gz.sig' \
-            --pattern 'SHA256.txt' \
-            --pattern 'latest.json'
+            --pattern 'SHA256.txt'
           cd release-back
-          for f in VYRON-2.1.2-macOS-AppleSilicon.dmg VYRON.app.tar.gz VYRON.app.tar.gz.sig SHA256.txt latest.json; do test -s "$f"; done
+          for f in VYRON-2.1.2-macOS-AppleSilicon.dmg VYRON.app.tar.gz VYRON.app.tar.gz.sig SHA256.txt; do test -s "$f"; done
           expected="$(awk '{print $1}' SHA256.txt)"
           actual="$(shasum -a 256 VYRON-2.1.2-macOS-AppleSilicon.dmg | awk '{print $1}')"
           test -n "$expected"
           test "$expected" = "$actual"
+          test -n "$(cat VYRON.app.tar.gz.sig)"
           echo "DOWNLOAD_BACK_SHA256=$actual"
 
           hdiutil verify VYRON-2.1.2-macOS-AppleSilicon.dmg
           MOUNT="$RUNNER_TEMP/vyron212-release-mount"
-          mkdir -p "$MOUNT"
+          rm -rf "$MOUNT"; mkdir -p "$MOUNT"
           hdiutil attach VYRON-2.1.2-macOS-AppleSilicon.dmg -nobrowse -readonly -mountpoint "$MOUNT"
+          trap 'hdiutil detach "$MOUNT" >/dev/null 2>&1 || true' EXIT
           test -d "$MOUNT/VYRON.app"
           test "$(plutil -extract CFBundleShortVersionString raw -o - "$MOUNT/VYRON.app/Contents/Info.plist")" = '2.1.2'
-          test "$(plutil -extract CFBundleIdentifier raw -o - "$MOUNT/VYRON.app/Contents/Info.plist")" = 'studio.channelflow.desktop'
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$MOUNT/VYRON.app/Contents/Info.plist")" = "$BUNDLE_ID"
           EXE=$(plutil -extract CFBundleExecutable raw -o - "$MOUNT/VYRON.app/Contents/Info.plist")
           test -x "$MOUNT/VYRON.app/Contents/MacOS/$EXE"
           file "$MOUNT/VYRON.app/Contents/MacOS/$EXE" | grep -q 'arm64'
           otool -hv "$MOUNT/VYRON.app/Contents/MacOS/$EXE" | grep -q 'ARM64'
           codesign --verify --deep --strict --verbose=2 "$MOUNT/VYRON.app"
+          codesign -dv --verbose=4 "$MOUNT/VYRON.app" 2>&1 | grep -qi 'Signature=adhoc'
+          echo 'NOTARIZATION: N/A (ad-hoc signing)'
           hdiutil detach "$MOUNT"
-
-          python3 - <<'PY'
-          import json,pathlib
-          rel=pathlib.Path('.')
-          meta=json.loads((rel/'latest.json').read_text())
-          sig=(rel/'VYRON.app.tar.gz.sig').read_text().strip()
-          assert meta['version']=='2.1.2'
-          assert meta['platforms']['darwin-aarch64']['url']=='https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.2/VYRON.app.tar.gz'
-          assert meta['platforms']['darwin-aarch64']['signature']==sig
-          print('DOWNLOAD-BACK + UPDATER SIGNATURE: PASS')
-          PY
+          trap - EXIT
+          echo 'DOWNLOAD-BACK: PASS'
 
   activate-stable:
-    name: Activate stable updater 2.1.2
+    name: Stable updater 2.1.2 after download-back PASS
     needs: download-back
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      - name: Download verified updater metadata
+      - name: Generate stable updater metadata from published signature
         shell: bash
         run: |
           set -Eeuo pipefail
           mkdir stable
-          gh release download "$TAG" --repo "$REPO" --dir stable --pattern 'latest.json' --pattern 'VYRON.app.tar.gz.sig'
+          gh release download "$TAG" --repo "$REPO" --dir stable --pattern 'VYRON.app.tar.gz.sig'
           python3 - <<'PY'
-          import json,pathlib
-          meta=json.loads(pathlib.Path('stable/latest.json').read_text())
-          sig=pathlib.Path('stable/VYRON.app.tar.gz.sig').read_text().strip()
-          assert meta['version']=='2.1.2'
-          assert set(meta['platforms'])=={'darwin-aarch64'}
-          assert meta['platforms']['darwin-aarch64']['url']=='https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.2/VYRON.app.tar.gz'
-          assert meta['platforms']['darwin-aarch64']['signature']==sig and sig
+          import json,datetime,pathlib
+          rel=pathlib.Path('stable')
+          sig=(rel/'VYRON.app.tar.gz.sig').read_text().strip()
+          if not sig: raise SystemExit('updater signature is empty')
+          data={
+            'version':'2.1.2',
+            'notes':'VYRON 2.1.2 stable Apple Silicon release',
+            'pub_date':datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00','Z'),
+            'platforms':{'darwin-aarch64':{
+              'url':'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.2/VYRON.app.tar.gz',
+              'signature':sig
+            }}
+          }
+          (rel/'latest.json').write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
           PY
+          gh release upload "$TAG" --repo "$REPO" stable/latest.json --clobber
 
-      - name: Activate stable feed only after download-back PASS
+      - name: Activate stable feed only now
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -348,21 +519,33 @@ jobs:
           OLD_SHA=$(printf '%s' "$META" | python3 -c 'import sys,json;print(json.load(sys.stdin)["sha"])')
           CONTENT=$(base64 -w0 stable/latest.json)
           gh api --method PUT "repos/$REPO/contents/vyron-updates/latest.json" \
-            -f message='VYRON updater: activate 2.1.2' \
+            -f message='VYRON updater: activate 2.1.2 final production release' \
             -f content="$CONTENT" -f sha="$OLD_SHA" -f branch=main >/dev/null
 
-      - name: Verify stable updater 2.1.2
+      - name: Read back real stable metadata and final release identity
         shell: bash
         run: |
           set -Eeuo pipefail
           LIVE=$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | base64 --decode)
+          gh release download "$TAG" --repo "$REPO" --dir stable --pattern 'latest.json' --clobber
           python3 - "$LIVE" <<'PY'
-          import json,sys
-          d=json.loads(sys.argv[1])
-          assert d['version']=='2.1.2'
-          assert set(d['platforms'])=={'darwin-aarch64'}
-          p=d['platforms']['darwin-aarch64']
-          assert p['url']=='https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.2/VYRON.app.tar.gz'
-          assert p['signature']
-          print('STABLE UPDATER 2.1.2: PASS')
+          import json,sys,pathlib
+          live=json.loads(sys.argv[1])
+          asset=json.loads(pathlib.Path('stable/latest.json').read_text())
+          sig=pathlib.Path('stable/VYRON.app.tar.gz.sig').read_text().strip()
+          for d in (live,asset):
+              assert d['version']=='2.1.2'
+              assert set(d['platforms'])=={'darwin-aarch64'}
+              p=d['platforms']['darwin-aarch64']
+              assert p['url']=='https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.2/VYRON.app.tar.gz'
+              assert p['signature']==sig and sig
+          assert live['platforms']['darwin-aarch64']['signature']==asset['platforms']['darwin-aarch64']['signature']
+          print('STABLE UPDATER READ-BACK: PASS')
           PY
+          tag_sha="$(gh api "repos/$REPO/git/ref/tags/$TAG" --jq '.object.sha')"
+          test "$tag_sha" = "$GITHUB_SHA"
+          test "$(gh release view "$TAG" --repo "$REPO" --json isDraft --jq '.isDraft|tostring')" = 'false'
+          test "$(gh release view "$TAG" --repo "$REPO" --json isPrerelease --jq '.isPrerelease|tostring')" = 'false'
+          gh release view "$TAG" --repo "$REPO" --json url,tagName,targetCommitish,isDraft,isPrerelease,assets
+          echo "FINAL_RELEASE_COMMIT=$GITHUB_SHA"
+          echo 'VYRON 2.1.2 RELEASE PIPELINE: PASS'
