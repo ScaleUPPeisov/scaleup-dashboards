@@ -24,7 +24,7 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Assemble exact current VYRON source and apply feature patch
+      - name: Assemble exact current VYRON source and apply verified feature patch
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -60,44 +60,38 @@ jobs:
           cd "$ROOT"
           patch -p1 --forward < "$PATCH"
           python3 "$GITHUB_WORKSPACE/.github/scripts/fix_storage_feature_tests.py" "$ROOT"
+          python3 "$GITHUB_WORKSPACE/.github/scripts/fix_storage_rust_gate.py" "$ROOT"
           test "$(node -p "require('./package.json').version")" = '2.1.2'
           test -f src/storageLifecycle.ts
-          test -f src/storageLifecycle.test.ts
+          test -f src-tauri/src/production_manager_tests.rs
           rg -q "version:8" src/store.ts
           rg -q "uploadHistory" src/types.ts src/store.ts src/PublisherOS.tsx
           rg -q "full_file_sha256" src-tauri/src/youtube.rs
+          rg -q "delete_production_batch_projects_inner" src-tauri/src/production_manager.rs
           rg -q "trash::delete" src-tauri/src/local_delete.rs src-tauri/src/production_manager.rs
           echo "ASSEMBLED=$ROOT" >> "$GITHUB_ENV"
 
-      - name: Install dependencies
+      - name: Rust format compile and targeted lifecycle tests
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd "$ASSEMBLED/src-tauri"
+          cargo fmt
+          cargo fmt --check
+          cargo check
+          cargo test production_manager_tests -- --nocapture
+          cargo test local_delete::tests -- --nocapture
+          cargo test v213_storage_tests -- --nocapture
+          cargo test v120_youtube_local_tests -- --nocapture
+          cargo test v211_cleanup_assets_tests -- --nocapture
+          cargo test v2111_global_project_cleanup_tests -- --nocapture
+
+      - name: Install frontend dependencies
         shell: bash
         run: |
           set -Eeuo pipefail
           cd "$ASSEMBLED"
           npm ci --no-audit --no-fund
-
-      - name: Targeted frontend lifecycle tests
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          cd "$ASSEMBLED"
-          npx vitest run \
-            src/storageLifecycle.test.ts \
-            src/v2111PublisherWiring.test.ts \
-            src/youtubePublishSafety.test.ts \
-            src/v2111GlobalCleanup.test.ts \
-            src/v2100StorageArchive.test.ts
-
-      - name: Targeted Rust lifecycle tests
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          cd "$ASSEMBLED/src-tauri"
-          cargo test v213_storage_tests -- --nocapture
-          cargo test v120_youtube_local_tests -- --nocapture
-          cargo test local_delete::tests -- --nocapture
-          cargo test v211_cleanup_assets_tests -- --nocapture
-          cargo test v2111_global_project_cleanup_tests -- --nocapture
 
       - name: TypeScript and frontend production build
         shell: bash
@@ -106,13 +100,6 @@ jobs:
           cd "$ASSEMBLED"
           npx tsc --noEmit
           npm run build
-
-      - name: Rust compile gate
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          cd "$ASSEMBLED/src-tauri"
-          cargo check
 
       - name: Storage feature source safety review
         shell: bash
@@ -134,14 +121,23 @@ jobs:
               i=s.find(a); j=s.find(b,i+len(a))
               if i<0 or j<=i: raise SystemExit(f'cleanup section missing: {a}')
               return s[i:j]
-          checks=[
-              section('pub fn delete_production_job_folder','fn folder_stats'),
-              section('fn cleanup_completed_assets','pub fn cleanup_completed_production_assets'),
-              section('pub fn delete_production_batch_projects','pub fn open_production_batch_in_endlume'),
-          ]
-          for block in checks:
+          direct=section('pub fn delete_production_job_folder','fn folder_stats')
+          cleanup=section('fn cleanup_completed_assets','pub fn cleanup_completed_production_assets')
+          batch=section('fn delete_production_batch_projects_inner','#[tauri::command]\npub fn delete_production_batch_projects')
+          wrapper=section('pub fn delete_production_batch_projects(app: AppHandle','pub fn open_production_batch_in_endlume') if 'pub fn delete_production_batch_projects(app: AppHandle' in s else section('pub fn delete_production_batch_projects(app:AppHandle','pub fn open_production_batch_in_endlume')
+          for block in (direct,cleanup,batch):
               if 'trash::delete' not in block: raise SystemExit('cleanup path does not use system Trash')
               if 'fs::remove_file(' in block or 'fs::remove_dir_all(' in block: raise SystemExit('destructive delete remains in user project cleanup path')
+          for required in ('verified_uploaded_job_ids(&app)','delete_production_batch_projects_inner(&verified'):
+              if required not in wrapper.replace(' ', '') and required.replace(' ','') not in wrapper.replace(' ',''):
+                  raise SystemExit('Tauri safe delete wrapper no longer delegates through verified proof')
+          if 'if !verified.contains(job)' not in batch and 'if!verified.contains(job)' not in batch.replace(' ',''):
+              raise SystemExit('verified upload proof guard missing')
+          if 'output_path.is_file()' not in batch.replace(' ', ''):
+              raise SystemExit('render existence guard missing')
+          verified=s[s.find('fn verified_uploaded_job_ids'):s.find('fn safe_cleanup_root')]
+          if 'youtubeVideoId' not in verified or 'UPLOADED' not in verified:
+              raise SystemExit('verified videoId invariant missing')
           PY
           PATCH="$RUNNER_TEMP/storage.patch"
           changed=$(grep '^+++ b/' "$PATCH" | sed 's#^+++ b/##' | sort)
@@ -161,7 +157,8 @@ jobs:
             src/types.ts src/store.ts src/storageLifecycle.ts src/storageLifecycle.test.ts src/api.ts \
             src/youtubePublishSafety.ts src/PublisherOS.tsx src/ProductionManager.tsx src/ProductionOS.tsx \
             src/productionManagerApi.ts src/v2111PublisherWiring.test.ts \
-            src-tauri/src/storage.rs src-tauri/src/youtube.rs src-tauri/src/local_delete.rs src-tauri/src/production_manager.rs; do
+            src-tauri/src/storage.rs src-tauri/src/youtube.rs src-tauri/src/local_delete.rs \
+            src-tauri/src/production_manager.rs src-tauri/src/production_manager_tests.rs; do
             mkdir -p "$OUT/$(dirname "$f")"
             cp "$f" "$OUT/$f"
           done
