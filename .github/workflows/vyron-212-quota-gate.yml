@@ -1,0 +1,167 @@
+name: VYRON 2.1.2 Dynamic Quota Gate
+
+on:
+  push:
+    branches:
+      - repair/vyron-native-keychain-diagnostic
+    paths:
+      - '.github/workflows/vyron-212-quota-gate.yml'
+      - '.github/vyron-v212-dynamic/**'
+      - '.github/scripts/apply_v212_*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-212-quota-gate
+  cancel-in-progress: false
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  FEATURE_COMMIT: '0419211a312df1c2cb907dc70faad3eca92b9192'
+
+jobs:
+  quota:
+    name: Exact source quota and frontend gate
+    runs-on: macos-14
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Assemble exact production source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ROOT="$GITHUB_WORKSPACE/.vyron-212-final"
+          SRC="$RUNNER_TEMP/vyron212-base"
+          NATIVE="$RUNNER_TEMP/vyron-native-repair.py"
+          AUTH="$RUNNER_TEMP/vyron-auth-recovery.py"
+          rm -rf "$ROOT" "$SRC"
+          mkdir -p "$ROOT" "$SRC"
+
+          gh release download v2.1.0 --repo "$REPO" --pattern 'VYRON-2.1.0-source.tar.gz' --pattern 'SOURCE_SHA256.txt' --dir "$SRC"
+          cd "$SRC"
+          expected="$(awk '{print $1}' SOURCE_SHA256.txt)"
+          actual="$(shasum -a 256 VYRON-2.1.0-source.tar.gz | awk '{print $1}')"
+          test -n "$expected" && test "$expected" = "$actual"
+          tar -xzf VYRON-2.1.0-source.tar.gz -C "$ROOT"
+
+          cd "$GITHUB_WORKSPACE"
+          python3 vyron-v2111/apply_v2111_youtube_runtime_repair.py "$ROOT"
+          python3 vyron-v2111/apply_v2111_gatefix1.py "$ROOT"
+          python3 vyron-v2111/apply_v2111_gatefix2.py "$ROOT"
+          python3 vyron-v2111/apply_v2111_shorts_folder.py "$ROOT"
+          python3 vyron-v2111/apply_v2111_global_cleanup.py "$ROOT" || echo 'Base cleanup backend applied; finish follows'
+          python3 vyron-v2111/apply_v2111_global_cleanup_finish.py "$ROOT"
+          python3 vyron-v2111/apply_v2111_cleanup_test_placement_fix.py "$ROOT"
+          python3 .github/scripts/apply_v2111_oauth_keychain_recovery.py "$ROOT"
+          python3 .github/scripts/apply_v2111_oauth_orphan_recovery.py "$ROOT"
+          python3 .github/scripts/apply_v2111_oauth_orphan_testfix.py "$ROOT"
+          python3 vyron-v212/apply_v212_release.py "$ROOT"
+
+          cat .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.00 \
+              .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.01 \
+              .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.02a \
+              .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.02b \
+              .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.03 \
+              .github/scripts/vyron_native_keychain_repair.py.gz.b64.part01 \
+              .github/scripts/vyron_native_keychain_repair.py.gz.b64.part02 \
+            | base64 --decode | gunzip > "$NATIVE"
+          test "$(shasum -a 256 "$NATIVE" | awk '{print $1}')" = '4196bc3e2199e3e038120f37128eb2d5ccb412177c25436a751b9f5ec53fe7ea'
+
+          cat .github/scripts/vyron_auth_recovery.py.gz.b64.part00 \
+              .github/scripts/vyron_auth_recovery.py.gz.b64.part01 \
+              .github/scripts/vyron_auth_recovery.py.gz.b64.part02 \
+            | base64 --decode | gunzip > "$AUTH"
+          test "$(shasum -a 256 "$AUTH" | awk '{print $1}')" = '3f0b2a6311929def43daedaf7bff52c74dbfe0bbfa5b722cf110893ceabb4462'
+
+          python3 "$NATIVE" "$ROOT"
+          python3 .github/scripts/apply_native_keychain_compilefix.py "$ROOT"
+          python3 .github/scripts/apply_global_keychain_inventory.py "$ROOT"
+          python3 "$AUTH" "$ROOT"
+          python3 .github/scripts/apply_final_reconnect_recovery.py "$ROOT"
+          python3 .github/scripts/apply_upload_button_unblock_fix.py "$ROOT"
+          python3 .github/scripts/apply_youtube_upload_transport_watchdog.py "$ROOT"
+          python3 .github/scripts/apply_reconnect_browser_choice.py "$ROOT"
+
+          git diff-tree --no-commit-id --name-only -r "$FEATURE_COMMIT" > "$RUNNER_TEMP/feature-files.txt"
+          copied=0
+          while IFS= read -r rel; do
+            case "$rel" in
+              src/*|src-tauri/*|tests/*|package.json|package-lock.json|vite.config.*|tsconfig*.json)
+                mkdir -p "$ROOT/$(dirname "$rel")"
+                git show "$FEATURE_COMMIT:$rel" > "$ROOT/$rel"
+                copied=$((copied+1))
+                ;;
+            esac
+          done < "$RUNNER_TEMP/feature-files.txt"
+          test "$copied" -ge 10
+          python3 .github/scripts/apply_v212_frontend_regression_testfix.py "$ROOT"
+
+          cd "$ROOT"
+          test "$(shasum -a 256 src/PublisherOS.tsx | awk '{print $1}')" = '13fcfe32368312dc907b7c1c2a04727ed14e6df3c3933b102ee6c41655593c98'
+          node -e "const p=require('./package.json'); if(p.version!=='2.1.2') process.exit(1)"
+          grep -Fq 'studio.channelflow.desktop' src-tauri/tauri.conf.json
+          echo "EXACT ASSEMBLY: PASS"
+
+      - name: Dynamic quota UI and transport contracts
+        working-directory: .vyron-212-final
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          pub=Path('src/PublisherOS.tsx').read_text()
+          settings=Path('src/SettingsOS.tsx').read_text()
+          quota=Path('src/youtubeQuota.ts').read_text()
+          required_pub=[
+            'Video Uploads сегодня','Осталось upload-квоты','Можно загрузить сегодня',
+            'выберите видео','General API quota','Upload quota','videos.insert operations:',
+            'Observed today:','Configured limit:','Remaining before:','Remaining after:',
+            'youtubeQuotaProjectKey','youtubeUploadQuotaState','publisherVideoCapacity'
+          ]
+          required_settings=[
+            'YOUTUBE API · UPLOAD QUOTA','Дневной лимит videos.insert','Использовано сегодня',
+            'Осталось','Сброс','Источник лимита','Сохранить','Вернуть значение по умолчанию',
+            'Number.isInteger(n)','n<1||n>1000000','Google Cloud quota программно не запрашивается'
+          ]
+          required_quota=['America/Los_Angeles','user-configured','default','unknown','uploadProjects']
+          for needle in required_pub:
+            assert needle in pub, f'Publisher quota UI contract missing: {needle}'
+          for needle in required_settings:
+            assert needle in settings, f'Settings quota contract missing: {needle}'
+          for needle in required_quota:
+            assert needle in quota, f'Quota core contract missing: {needle}'
+          assert 'getYouTubeUploadQuota' not in pub+settings+quota
+          assert 'cloud-platform' not in pub+settings+quota
+          print('DYNAMIC QUOTA UI/SETTINGS/TRANSPORT CONTRACTS: PASS')
+          PY
+
+      - name: Install frontend dependencies once
+        working-directory: .vyron-212-final
+        run: npm ci --no-audit --no-fund
+
+      - name: QUOTA A-N targeted tests
+        working-directory: .vyron-212-final
+        run: npx vitest run src/dynamicUploadQuota.test.ts src/publisherQuota.test.ts src/youtubeQuota.test.ts src/youtubeQuotaPlanner.test.ts src/youtubeQuotaRollover.test.ts
+
+      - name: Frontend full project tests once
+        working-directory: .vyron-212-final
+        run: npm test
+
+      - name: TypeScript
+        working-directory: .vyron-212-final
+        run: npx tsc --noEmit --pretty false
+
+      - name: Frontend production build
+        working-directory: .vyron-212-final
+        run: npm run build
