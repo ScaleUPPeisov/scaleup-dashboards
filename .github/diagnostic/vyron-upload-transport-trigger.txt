@@ -1,0 +1,4 @@
+VYRON 2.1.2 real-Mac YouTube resumable upload transport watchdog candidate
+reason: Studio remains at 0% while VYRON stalls on a confirmed offset
+stable release: NOT MODIFIED
+stable updater: NOT MODIFIED
