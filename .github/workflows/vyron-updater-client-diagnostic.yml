@@ -1,0 +1,138 @@
+name: VYRON Updater Client Diagnostic
+
+on:
+  push:
+    branches:
+      - repair/vyron-native-keychain-diagnostic
+    paths:
+      - '.github/workflows/vyron-updater-client-diagnostic.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+
+jobs:
+  diagnose:
+    name: Released clients / feeds / public key / downloads
+    runs-on: macos-14
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 31b810ae4be4c2937deb440dd4be2d24137c7c29
+          fetch-depth: 0
+
+      - name: Download released source archives and DMGs
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p diag/releases diag/src diag/dmg
+          for v in 2.0.13 2.1.0 2.1.1 2.1.2; do
+            mkdir -p "diag/releases/$v" "diag/src/$v"
+            gh release download "v$v" --repo "$REPO" --dir "diag/releases/$v" --pattern '*source.tar.gz'
+            src=$(find "diag/releases/$v" -maxdepth 1 -name '*source.tar.gz' -print -quit)
+            test -n "$src" && test -s "$src"
+            tar -xzf "$src" -C "diag/src/$v"
+          done
+          for v in 2.0.13 2.1.0 2.1.1 2.1.2; do
+            mkdir -p "diag/dmg/$v"
+            gh release download "v$v" --repo "$REPO" --dir "diag/dmg/$v" --pattern '*.dmg' || true
+          done
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Extract exact source updater contracts
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import json,pathlib,re
+          out=[]
+          for v in ['2.0.13','2.1.0','2.1.1','2.1.2']:
+              root=pathlib.Path('diag/src')/v
+              confs=list(root.rglob('tauri.conf.json'))
+              if not confs:
+                  raise SystemExit(f'{v}: tauri.conf.json missing')
+              conf=json.loads(confs[0].read_text())
+              updater=(conf.get('plugins') or {}).get('updater') or {}
+              endpoints=updater.get('endpoints')
+              pubkey=updater.get('pubkey')
+              matches=[]
+              for p in root.rglob('*'):
+                  if not p.is_file() or p.stat().st_size>3_000_000: continue
+                  try: t=p.read_text(errors='ignore')
+                  except Exception: continue
+                  if any(x in t for x in ['channelflow-updates','vyron-updates','latest.json','plugin-updater','downloadAndInstall','checkForUpdates','relaunch']):
+                      hits=[]
+                      for line in t.splitlines():
+                          if any(x in line for x in ['channelflow-updates','vyron-updates','latest.json','plugin-updater','downloadAndInstall','checkForUpdates','relaunch']):
+                              hits.append(line.strip()[:500])
+                      if hits: matches.append({'path':str(p.relative_to(root)),'hits':hits[:30]})
+              out.append({'version':v,'tauri_conf':str(confs[0].relative_to(root)),'endpoints':endpoints,'pubkey':pubkey,'matches':matches})
+          pathlib.Path('diag/source-updater-report.json').write_text(json.dumps(out,ensure_ascii=False,indent=2))
+          print(pathlib.Path('diag/source-updater-report.json').read_text())
+          PY
+
+      - name: Inspect released DMG apps and embedded updater strings
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          : > diag/released-app-report.txt
+          for v in 2.0.13 2.1.0 2.1.1 2.1.2; do
+            dmg=$(find "diag/dmg/$v" -maxdepth 1 -name '*.dmg' -print -quit || true)
+            echo "===== $v =====" | tee -a diag/released-app-report.txt
+            if [ -z "$dmg" ]; then echo 'DMG: MISSING' | tee -a diag/released-app-report.txt; continue; fi
+            echo "DMG=$dmg" | tee -a diag/released-app-report.txt
+            m="$RUNNER_TEMP/vyron-$v"
+            rm -rf "$m"; mkdir -p "$m"
+            hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$m" >/dev/null
+            app=$(find "$m" -maxdepth 1 -name '*.app' -print -quit)
+            test -d "$app"
+            echo "CFBundleShortVersionString=$(plutil -extract CFBundleShortVersionString raw -o - "$app/Contents/Info.plist")" | tee -a diag/released-app-report.txt
+            echo "CFBundleVersion=$(plutil -extract CFBundleVersion raw -o - "$app/Contents/Info.plist" 2>/dev/null || echo MISSING)" | tee -a diag/released-app-report.txt
+            echo "CFBundleIdentifier=$(plutil -extract CFBundleIdentifier raw -o - "$app/Contents/Info.plist")" | tee -a diag/released-app-report.txt
+            echo '-- endpoint strings --' | tee -a diag/released-app-report.txt
+            grep -RaoE 'https?://[^"[:space:]<>]+' "$app/Contents" 2>/dev/null | grep -E 'latest\.json|channelflow-updates|vyron-updates|githubusercontent|releases/download' | sort -u | tee -a diag/released-app-report.txt || true
+            echo '-- relevant literal strings --' | tee -a diag/released-app-report.txt
+            grep -RaoE 'channelflow-updates|vyron-updates|latest\.json|darwin-aarch64|downloadAndInstall|UPDATER_[A-Z_]+' "$app/Contents" 2>/dev/null | sort -u | head -100 | tee -a diag/released-app-report.txt || true
+            exe=$(plutil -extract CFBundleExecutable raw -o - "$app/Contents/Info.plist")
+            echo '-- binary strings --' | tee -a diag/released-app-report.txt
+            strings "$app/Contents/MacOS/$exe" | grep -E 'channelflow-updates|vyron-updates|latest\.json|githubusercontent|darwin-aarch64' | sort -u | head -100 | tee -a diag/released-app-report.txt || true
+            hdiutil detach "$m" >/dev/null
+          done
+          cat diag/released-app-report.txt
+
+      - name: Verify manifest and release-asset network downloads
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p diag/network
+          CANON='https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/vyron-updates/latest.json'
+          LEGACY='https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/channelflow-updates/latest.json'
+          curl -L --fail --show-error -D diag/network/canonical.headers -o diag/network/canonical.json "$CANON"
+          curl -L --fail --show-error -D diag/network/legacy.headers -o diag/network/legacy.json "$LEGACY"
+          python3 - <<'PY'
+          import json
+          for p in ['diag/network/canonical.json','diag/network/legacy.json']:
+              d=json.load(open(p)); print(p,d['version'],list(d.get('platforms',{})))
+          PY
+          curl -L --fail --show-error -D diag/network/updater.headers -o diag/network/VYRON.app.tar.gz 'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.2/VYRON.app.tar.gz'
+          curl -L --fail --show-error -D diag/network/dmg.headers -o diag/network/VYRON-2.1.2-macOS-AppleSilicon.dmg 'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.2/VYRON-2.1.2-macOS-AppleSilicon.dmg'
+          test -s diag/network/VYRON.app.tar.gz
+          test -s diag/network/VYRON-2.1.2-macOS-AppleSilicon.dmg
+          echo "UPDATER_BYTES=$(stat -f%z diag/network/VYRON.app.tar.gz)"
+          echo "UPDATER_SHA256=$(shasum -a 256 diag/network/VYRON.app.tar.gz | awk '{print $1}')"
+          echo "DMG_BYTES=$(stat -f%z diag/network/VYRON-2.1.2-macOS-AppleSilicon.dmg)"
+          echo "DMG_SHA256=$(shasum -a 256 diag/network/VYRON-2.1.2-macOS-AppleSilicon.dmg | awk '{print $1}')"
+          test "$(shasum -a 256 diag/network/VYRON-2.1.2-macOS-AppleSilicon.dmg | awk '{print $1}')" = 'cd2cb8c1efccb4e29cc8ed458d2a157e6346579d236c35dbff99d7c36c408116'
+
+      - name: Upload updater diagnostic evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: vyron-updater-client-diagnostic
+          path: diag/
+          if-no-files-found: error
+          retention-days: 14
