@@ -59,17 +59,7 @@ jobs:
           test "$(shasum -a 256 "$PATCH" | awk '{print $1}')" = '8de54616bdacd812684c3ec326f330a5f44dabf68b525898634e89b7aa5e4e61'
           cd "$ROOT"
           patch -p1 --forward < "$PATCH"
-          python3 - <<'PY'
-          from pathlib import Path
-          p=Path('src/storageLifecycle.test.ts')
-          lines=p.read_text().splitlines()
-          replacement="  it('verification failure clears videoId/uploadedAt before any persistent success',()=>{const idx=pub.indexOf(\"if(uploaded.verified===false)\");expect(idx).toBeGreaterThanOrEqual(0);const fail=pub.indexOf('youtubeVideoId:undefined',idx);const persist=pub.indexOf('persistVerifiedUpload(j,c,uploaded.videoId',idx);expect(fail).toBeGreaterThan(idx);expect(persist).toBeGreaterThan(fail)});"
-          lines=[replacement if 'verification failure clears videoId/uploadedAt before any persistent success' in line else line for line in lines]
-          p.write_text('\n'.join(lines)+'\n')
-          q=Path('src/v2111PublisherWiring.test.ts')
-          s=q.read_text().replace('canonicalSelectedJobs(channelJobs,draft.selectedIds)','canonicalSelectedJobs(selectableJobs,draft.selectedIds)')
-          q.write_text(s)
-          PY
+          python3 "$GITHUB_WORKSPACE/.github/scripts/fix_storage_feature_tests.py" "$ROOT"
           test "$(node -p "require('./package.json').version")" = '2.1.2'
           test -f src/storageLifecycle.ts
           test -f src/storageLifecycle.test.ts
