@@ -1,0 +1,71 @@
+name: VYRON Storage Lifecycle Source Inventory 2
+
+on:
+  push:
+    branches: [repair/vyron-native-keychain-diagnostic]
+    paths: ['.github/diagnostic/vyron-storage-lifecycle-inventory2-trigger.txt']
+
+permissions:
+  contents: read
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  BASE_TAG: v2.1.2
+
+jobs:
+  inventory:
+    runs-on: macos-14
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble exact current candidate source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ROOT="$RUNNER_TEMP/vyron-storage-inventory2"
+          SRC="$RUNNER_TEMP/vyron-source"
+          NATIVE="$RUNNER_TEMP/native.py"
+          AUTH="$RUNNER_TEMP/auth.py"
+          rm -rf "$ROOT" "$SRC" && mkdir -p "$ROOT" "$SRC"
+          gh release download "$BASE_TAG" --repo "$REPO" --dir "$SRC" --pattern 'VYRON-2.1.2-source.tar.gz' --pattern 'SOURCE_SHA256.txt'
+          cd "$SRC"
+          test "$(awk '{print $1}' SOURCE_SHA256.txt)" = "$(shasum -a 256 VYRON-2.1.2-source.tar.gz | awk '{print $1}')"
+          tar -xzf VYRON-2.1.2-source.tar.gz -C "$ROOT"
+          cd "$GITHUB_WORKSPACE"
+          cat .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.00 .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.01 .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.02a .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.02b .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.03 .github/scripts/vyron_native_keychain_repair.py.gz.b64.part01 .github/scripts/vyron_native_keychain_repair.py.gz.b64.part02 | base64 --decode | gunzip > "$NATIVE"
+          cat .github/scripts/vyron_auth_recovery.py.gz.b64.part00 .github/scripts/vyron_auth_recovery.py.gz.b64.part01 .github/scripts/vyron_auth_recovery.py.gz.b64.part02 | base64 --decode | gunzip > "$AUTH"
+          python3 "$NATIVE" "$ROOT"
+          python3 .github/scripts/apply_native_keychain_compilefix.py "$ROOT"
+          python3 .github/scripts/apply_global_keychain_inventory.py "$ROOT"
+          python3 "$AUTH" "$ROOT"
+          python3 .github/scripts/apply_final_reconnect_recovery.py "$ROOT"
+          python3 .github/scripts/apply_upload_button_unblock_fix.py "$ROOT"
+          python3 .github/scripts/apply_youtube_upload_transport_watchdog.py "$ROOT"
+          python3 .github/scripts/apply_reconnect_browser_choice.py "$ROOT"
+          echo "ASSEMBLED=$ROOT" >> "$GITHUB_ENV"
+
+      - name: Collect production cleanup implementation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ROOT="$ASSEMBLED"
+          OUT="$GITHUB_WORKSPACE/storage-source-inventory2"
+          mkdir -p "$OUT/src" "$OUT/src-tauri/src"
+          cd "$ROOT"
+          for f in \
+            src/ProductionManager.tsx src/ProductionWorkspace.tsx src/productionManagerApi.ts src/productionPrefs.ts \
+            src/publishRemoval.ts src/publishWorkspaceState.ts src/youtubePublishSafety.ts src/publisherRuntime.ts \
+            src-tauri/src/production_manager.rs src-tauri/src/local_delete.rs src-tauri/src/files.rs src-tauri/src/shorts_factory.rs; do
+            if [ -f "$f" ]; then mkdir -p "$OUT/$(dirname "$f")"; cp "$f" "$OUT/$f"; fi
+          done
+          find src src-tauri/src -maxdepth 2 -type f | sort > "$OUT/ALL_FILES.txt"
+          printf '\n=== cleanup/delete/render/upload matches ===\n'
+          grep -RniE 'cleanup|trash|delete|remove_file|remove_dir|render|finalPath|final_path|Ready Videos|youtubeVideoId|uploadFingerprint|fingerprint' src src-tauri/src | head -n 1200 || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-current-storage-source-inventory2
+          path: storage-source-inventory2/
+          retention-days: 3
