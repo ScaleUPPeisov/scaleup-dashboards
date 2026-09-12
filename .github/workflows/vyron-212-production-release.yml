@@ -56,7 +56,7 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Assemble exact final source and overlay lifecycle feature
+      - name: Assemble exact final production source
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -66,6 +66,8 @@ jobs:
           ROOT="$GITHUB_WORKSPACE/.vyron-212-final"
           SRC="$RUNNER_TEMP/vyron212-base"
           LEGACY="$RUNNER_TEMP/vyron-legacy"
+          NATIVE="$RUNNER_TEMP/vyron-native-repair.py"
+          AUTH="$RUNNER_TEMP/vyron-auth-recovery.py"
           rm -rf "$ROOT" "$SRC" "$LEGACY"
           mkdir -p "$ROOT" "$SRC" "$LEGACY"
 
@@ -116,6 +118,33 @@ jobs:
             test -s "$ROOT/$f"
           done
 
+          # Apply the current production OAuth/Keychain/upload repair stack AFTER
+          # the lifecycle overlay so no later feature overlay can erase these fixes.
+          cat .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.00 \
+              .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.01 \
+              .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.02a \
+              .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.02b \
+              .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.03 \
+              .github/scripts/vyron_native_keychain_repair.py.gz.b64.part01 \
+              .github/scripts/vyron_native_keychain_repair.py.gz.b64.part02 \
+            | base64 --decode | gunzip > "$NATIVE"
+          test "$(shasum -a 256 "$NATIVE" | awk '{print $1}')" = '4196bc3e2199e3e038120f37128eb2d5ccb412177c25436a751b9f5ec53fe7ea'
+
+          cat .github/scripts/vyron_auth_recovery.py.gz.b64.part00 \
+              .github/scripts/vyron_auth_recovery.py.gz.b64.part01 \
+              .github/scripts/vyron_auth_recovery.py.gz.b64.part02 \
+            | base64 --decode | gunzip > "$AUTH"
+          test "$(shasum -a 256 "$AUTH" | awk '{print $1}')" = '3f0b2a6311929def43daedaf7bff52c74dbfe0bbfa5b722cf110893ceabb4462'
+
+          python3 "$NATIVE" "$ROOT"
+          python3 .github/scripts/apply_native_keychain_compilefix.py "$ROOT"
+          python3 .github/scripts/apply_global_keychain_inventory.py "$ROOT"
+          python3 "$AUTH" "$ROOT"
+          python3 .github/scripts/apply_final_reconnect_recovery.py "$ROOT"
+          python3 .github/scripts/apply_upload_button_unblock_fix.py "$ROOT"
+          python3 .github/scripts/apply_youtube_upload_transport_watchdog.py "$ROOT"
+          python3 .github/scripts/apply_reconnect_browser_choice.py "$ROOT"
+
           for V in 2.0.8 2.0.9; do
             mkdir -p "$LEGACY/$V/src"
             gh release download "v$V" --repo "$REPO" --pattern "VYRON-$V-source.tar.gz" --dir "$LEGACY/$V"
@@ -128,7 +157,7 @@ jobs:
 
           cd "$ROOT"
           python3 - <<'PY'
-          import json,re
+          import json,re,pathlib
           pkg=json.load(open('package.json'))
           conf=json.load(open('src-tauri/tauri.conf.json'))
           cargo=open('src-tauri/Cargo.toml').read()
@@ -137,6 +166,14 @@ jobs:
           assert conf['identifier']=='studio.channelflow.desktop'
           assert re.search(r'(?m)^version\s*=\s*"2\.1\.2"\s*$',cargo)
           assert conf.get('bundle',{}).get('createUpdaterArtifacts') is True
+          lock=pathlib.Path('package-lock.json')
+          if lock.exists():
+              data=json.loads(lock.read_text())
+              if 'version' in data: assert data['version']=='2.1.2'
+              root=data.get('packages',{}).get('',{})
+              if 'version' in root: assert root['version']=='2.1.2'
+          for text in (json.dumps(pkg),json.dumps(conf),cargo):
+              assert '2.1.3' not in text
           print('VERSION/BUNDLE CONTRACT: PASS')
           PY
 
@@ -145,27 +182,80 @@ jobs:
         run: |
           set -Eeuo pipefail
           ROOT="$GITHUB_WORKSPACE/.vyron-212-final"
+
+          # YouTube upload/preflight/verification/schedule contracts.
           grep -Fq "method:'videos.list'" "$ROOT/src/PublisherOS.tsx"
           grep -Fq 'publishAt' "$ROOT/src/PublisherOS.tsx"
           grep -Fq 'ZERO-API PRE-FLIGHT' "$ROOT/src/PublisherOS.tsx"
-          grep -Fq 'successfulUploadForHash' "$ROOT/src/PublisherOS.tsx"
-          grep -Fq 'uploadHistory' "$ROOT/src/PublisherOS.tsx"
           grep -Fq 'verify_uploaded_video' "$ROOT/src-tauri/src/youtube.rs"
           grep -Fq 'video/quicktime' "$ROOT/src-tauri/src/youtube.rs"
-          grep -Fq 'list_secret_accounts' "$ROOT/src-tauri/src/security.rs"
-          grep -Fq 'orphan_keychain_candidates_with' "$ROOT/src-tauri/src/youtube.rs"
-          grep -Fq 'validate_orphan_candidate_live' "$ROOT/src-tauri/src/youtube.rs"
-          grep -Fq 'migrate_validated_orphan_with' "$ROOT/src-tauri/src/youtube.rs"
-          grep -Fq 'preserved_refresh_token' "$ROOT/src-tauri/src/youtube.rs"
-          grep -Fq 'reconnect_profile_id' "$ROOT/src-tauri/src/youtube.rs"
-          grep -Fq 'shorts_scan_folder' "$ROOT/src-tauri/src/shorts_factory.rs"
-          grep -Fq 'Some("mp4")|Some("mov")' "$ROOT/src-tauri/src/shorts_factory.rs"
+          grep -Fq 'SKIPPED_PAST_DATE' "$ROOT/src/PublisherOS.tsx"
+
+          # Persistent lifecycle, duplicate guard, cleanup and system Trash.
+          grep -Fq 'successfulUploadForHash' "$ROOT/src/PublisherOS.tsx"
+          grep -Fq 'uploadHistory' "$ROOT/src/PublisherOS.tsx"
           grep -Fq 'SAFE_TO_CLEAN' "$ROOT/src/storageLifecycle.ts"
           grep -Fq "status==='UPLOADED'" "$ROOT/src/storageLifecycle.ts"
           grep -Fq 'youtubeVideoId' "$ROOT/src/storageLifecycle.ts"
           grep -Fq 'trash::delete' "$ROOT/src-tauri/src/local_delete.rs"
           grep -Fq 'verified_uploaded_job_ids' "$ROOT/src-tauri/src/production_manager.rs"
           grep -Fq 'trash::delete' "$ROOT/src-tauri/src/production_manager.rs"
+
+          # Shorts MP4/MOV contracts.
+          grep -Fq 'shorts_scan_folder' "$ROOT/src-tauri/src/shorts_factory.rs"
+          grep -Fq 'Some("mp4")' "$ROOT/src-tauri/src/shorts_factory.rs"
+          grep -Fq 'Some("mov")' "$ROOT/src-tauri/src/shorts_factory.rs"
+
+          # Current native Keychain diagnostic/recovery contracts.
+          grep -Fq 'ItemSearchOptions' "$ROOT/src-tauri/src/security.rs"
+          grep -Fq 'ItemClass::generic_password()' "$ROOT/src-tauri/src/security.rs"
+          grep -Fq 'load_attributes(true)' "$ROOT/src-tauri/src/security.rs"
+          grep -Fq 'Limit::All' "$ROOT/src-tauri/src/security.rs"
+          grep -Fq 'security_oauth_inventory' "$ROOT/src-tauri/src/security.rs"
+          if grep -Fq 'dump-keychain' "$ROOT/src-tauri/src/security.rs"; then
+            echo 'ERROR: shell dump-keychain survived current native repair'
+            exit 1
+          fi
+          grep -Fq 'youtube_oauth_recovery_diagnostic' "$ROOT/src-tauri/src/youtube.rs"
+          grep -Fq 'KEYCHAIN_ACCESS_DENIED' "$ROOT/src-tauri/src/youtube.rs"
+          grep -Fq 'REFRESH_TOKEN_REVOKED' "$ROOT/src-tauri/src/youtube.rs"
+          grep -Fq 'CHANNEL_ID_MISMATCH' "$ROOT/src-tauri/src/youtube.rs"
+
+          # Existing-profile reconnect must require a fresh offline refresh token.
+          grep -Fq 'youtube_oauth_reconnect_existing' "$ROOT/src-tauri/src/youtube.rs"
+          grep -Fq 'access_type=offline&prompt=consent' "$ROOT/src-tauri/src/youtube.rs"
+          grep -Fq 'OAUTH_REFRESH_TOKEN_REQUIRED' "$ROOT/src-tauri/src/youtube.rs"
+          grep -Fq 'WRONG_CHANNEL:' "$ROOT/src-tauri/src/youtube.rs"
+          grep -Fq 'reconnect_write_readback_with' "$ROOT/src-tauri/src/youtube.rs"
+          grep -Fq 'resolveOAuthMissingErrors' "$ROOT/src/AuthRecoveryCenter.tsx"
+          grep -Fq 'Уникальных профилей для входа' "$ROOT/src/AuthRecoveryCenter.tsx"
+          grep -Fq 'Переподключить следующий' "$ROOT/src/AuthRecoveryCenter.tsx"
+          grep -Fq '<AuthRecoveryCenter/>' "$ROOT/src/SettingsOS.tsx"
+
+          # Upload button/runtime lock must not regress to stale persisted lock.
+          grep -Fq 'runtimeLocks:ChannelUploadLock' "$ROOT/src/youtubePublishSafety.ts"
+          if grep -Fq "LOCKS='vyron:youtube-publish-locks:v1'" "$ROOT/src/youtubePublishSafety.ts"; then
+            echo 'ERROR: obsolete persistent frontend upload lock survived'
+            exit 1
+          fi
+          grep -Fq 'СНАЧАЛА СИНХРОНИЗИРУЙТЕ РАСПИСАНИЕ' "$ROOT/src/PublisherOS.tsx"
+          grep -Fq 'Почему загрузка сейчас недоступна' "$ROOT/src/PublisherOS.tsx"
+
+          # Upload transport watchdog/resume contracts.
+          grep -Fq 'YOUTUBE_UPLOAD_CHUNK_BYTES:usize=8*1024*1024' "$ROOT/src-tauri/src/youtube.rs"
+          grep -Fq 'YOUTUBE_UPLOAD_REQUEST_TIMEOUT_SECS:u64=120' "$ROOT/src-tauri/src/youtube.rs"
+          grep -Fq 'connect_timeout(Duration::from_secs(YOUTUBE_UPLOAD_CONNECT_TIMEOUT_SECS))' "$ROOT/src-tauri/src/youtube.rs"
+          grep -Fq 'timeout(Duration::from_secs(YOUTUBE_UPLOAD_REQUEST_TIMEOUT_SECS))' "$ROOT/src-tauri/src/youtube.rs"
+          grep -Fq 'resumable_status(&client,&session.session_url,token,session.total)' "$ROOT/src-tauri/src/youtube.rs"
+
+          # Reconnect browser choice/current production UX.
+          grep -Fq 'api.youtubeOauthBrowsers()' "$ROOT/src/AuthRecoveryCenter.tsx"
+          grep -Fq 'setBrowserOpen(true)' "$ROOT/src/AuthRecoveryCenter.tsx"
+          grep -Fq 'chooseBrowser(target.profileId)' "$ROOT/src/AuthRecoveryCenter.tsx"
+          grep -Fq 'chooseBrowser(r.profileId)' "$ROOT/src/AuthRecoveryCenter.tsx"
+          grep -Fq "youtube_oauth_reconnect_existing',{profileId,browser}" "$ROOT/src/AuthRecoveryCenter.tsx"
+          grep -Fq 'Браузер по умолчанию' "$ROOT/src/reconnectBrowserChoiceCore.ts"
+
           echo 'STATIC CONTRACTS: PASS'
 
       - name: Freeze exact source for build after gate
@@ -355,8 +445,8 @@ jobs:
           - PASS: Storage Lifecycle / Duplicate Guard / persistent upload history
           - PASS: Project → Render → verified upload / Safe Cleanup / system Trash
           - PASS: frontend / TypeScript / production frontend build / Rust
-          - PASS: YouTube upload, videos.list verification, publishAt and scheduling contracts
-          - PASS: OAuth/Keychain legacy contracts and full Rust regression
+          - PASS: YouTube upload, videos.list verification, publishAt and scheduling
+          - PASS: current native OAuth/Keychain recovery stack and legacy contracts
           - PASS: Shorts Factory and real FFmpeg MP4/MOV regression
           - PASS: ARM64 VYRON.app and executable
           - PASS: DMG verify + mount
@@ -398,7 +488,7 @@ jobs:
           cat > release/RELEASE_NOTES.md <<'NOTES'
           # VYRON 2.1.2
 
-          Stable Apple Silicon production release from the current VYRON production source. Includes the verified OAuth/Keychain repair, YouTube upload/scheduling repair, Shorts Factory, cleanup protections, persistent upload lifecycle/history, duplicate SHA-256 upload guard, project-to-render upload proof and guarded macOS system Trash cleanup.
+          Stable Apple Silicon production release from the current VYRON production source. Includes the verified OAuth/Keychain repair stack, YouTube upload/scheduling repair, Shorts Factory, cleanup protections, persistent upload lifecycle/history, duplicate SHA-256 upload guard, project-to-render upload proof and guarded macOS system Trash cleanup.
 
           Signing: existing ad-hoc production mechanism. Apple Developer notarization is not claimed for this build.
           NOTES
