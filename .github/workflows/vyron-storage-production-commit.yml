@@ -1,0 +1,140 @@
+name: VYRON Storage Lifecycle Production Commit
+
+on:
+  push:
+    branches: [test/vyron-storage-lifecycle-gate]
+    paths: ['.github/diagnostic/vyron-storage-production-commit-trigger.txt']
+
+permissions:
+  contents: write
+  actions: read
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  PRODUCTION_BRANCH: repair/vyron-native-keychain-diagnostic
+  EXPECTED_PARENT: cd7cc1621d42289b17771b669a5d7ebe9c4e06c2
+  VERIFIED_RUN: '34687964348'
+  VERIFIED_ARTIFACT: VYRON-storage-lifecycle-verified-source
+
+jobs:
+  commit-verified-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout exact production branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.PRODUCTION_BRANCH }}
+          fetch-depth: 1
+          persist-credentials: true
+
+      - name: Verify production parent is unchanged
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_PARENT"
+          test "$(git branch --show-current)" = "$PRODUCTION_BRANCH"
+
+      - name: Download already-verified source artifact
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          VERIFIED="$RUNNER_TEMP/verified-storage-source"
+          rm -rf "$VERIFIED" && mkdir -p "$VERIFIED"
+          gh run download "$VERIFIED_RUN" --repo "$REPO" --name "$VERIFIED_ARTIFACT" --dir "$VERIFIED"
+          cd "$VERIFIED"
+          cat > "$RUNNER_TEMP/verified.sha256" <<'EOF'
+          6ada6a8ab9379b2f724e90c2bb35f6f3deef373e8e38c799d1876c428a8a45d8  src-tauri/src/local_delete.rs
+          925ce16432386103ccad9074feadcd07d97e8f7c16c1b54932bc1dd429b27ef5  src-tauri/src/production_manager.rs
+          4a1a05f29f45e4264c9bd9ede9f9919a09d4a3139a85fd3de2f3a0fee78fa349  src-tauri/src/production_manager_tests.rs
+          ea37bd3fe46a144451d42a75de254f9d26e940dc8729c9e0869784b3b3d58857  src-tauri/src/storage.rs
+          4c44fb9959f356ba01e8b0da1143cdb74567bbe38fb66f81dc2f2ebe75f80ee8  src-tauri/src/youtube.rs
+          8c558d9b294c0ceedea65961dcafc6e6053ba7d5c39aceba22edf0c638a3c380  src/ProductionManager.tsx
+          103dbc52ffc6639b790013d8a5be0c3cd9a0091024a07323fdddd0e743391d26  src/ProductionOS.tsx
+          03f9a9916b33dc473bd18f91ed159ee9f83e85773ec64b0f9edb0a4f56bac55a  src/PublisherOS.tsx
+          613acc8008c0a59e69f869396348c4d9eb426e6eece6770c514a70cdf3d61038  src/api.ts
+          406bf2b5174011b7cae6622ed8efea5df8a746e268dfb94251523c279e90b791  src/productionManagerApi.ts
+          8a2a3b50f396a7af4b166921dc79efeffd13d8dbf6f2fcb51608856ec51b11ec  src/storageLifecycle.test.ts
+          28ade04007ebb4c86c91f80a5611756cb66fa67a381ca7d9f180077c47a65fb7  src/storageLifecycle.ts
+          5633f8f77e3471676ec78d2d96785c291be1f09e211708632a4ef0d41c21cb9d  src/store.ts
+          dc8b0d377174a4233e7f1740803a649e98aa43706c1ddbf173f547183c7bbc38  src/types.ts
+          9d6ef2d05aaa110545c3259531073979b08bc703469acfbbdc159c003a481b9e  src/v2111PublisherWiring.test.ts
+          5d862b6ca66322e2c8cff886e01fbf388e17b924f97dbcdd31d36f5065980efe  src/youtubePublishSafety.ts
+          dd9a2f7b3fa39a70fed2d11ec619ecfe30727d96af94336d89bdeea68e1e4911  tests/stateMigration_v095.test.ts
+          EOF
+          sed -i 's/^          //' "$RUNNER_TEMP/verified.sha256"
+          sha256sum -c "$RUNNER_TEMP/verified.sha256"
+          actual="$(find . -type f | sed 's#^./##' | sort)"
+          expected="$(awk '{print $2}' "$RUNNER_TEMP/verified.sha256" | sort)"
+          test "$actual" = "$expected"
+          echo "VERIFIED=$VERIFIED" >> "$GITHUB_ENV"
+
+      - name: Install verified source into production working tree
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd "$GITHUB_WORKSPACE"
+          mapfile -t files < <(awk '{print $2}' "$RUNNER_TEMP/verified.sha256")
+          for f in "${files[@]}"; do
+            mkdir -p "$(dirname "$f")"
+            cp "$VERIFIED/$f" "$f"
+          done
+          git add -- "${files[@]}"
+          test -n "$(git diff --cached --name-only)"
+          bad="$(git diff --cached --name-only | grep -Ev '^(src/|src-tauri/src/|tests/stateMigration_v095\.test\.ts$)' || true)"
+          test -z "$bad"
+          forbidden="$(git diff --cached --name-only | grep -Ei '(^package\.json$|tauri\.conf|updater|release|\.dmg$|\.app$|\.tar\.gz$)' || true)"
+          test -z "$forbidden"
+          git diff --cached --check
+
+      - name: Final production source safety check
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          command -v rg >/dev/null || sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep
+          test "$(node -p "require('./package.json').version")" = '2.1.2'
+          rg -q 'version: *8' src/store.ts
+          rg -q 'uploadHistory' src/types.ts src/store.ts src/PublisherOS.tsx
+          rg -q 'successfulUploadForHash' src/storageLifecycle.ts
+          rg -q 'full_file_sha256' src-tauri/src/youtube.rs
+          rg -q 'delete_production_batch_projects_inner' src-tauri/src/production_manager.rs
+          rg -q 'verified_uploaded_job_ids\(&app\)' src-tauri/src/production_manager.rs
+          rg -q 'verified YouTube upload proof' src-tauri/src/production_manager.rs src-tauri/src/production_manager_tests.rs
+          rg -q 'youtubeVideoId' src-tauri/src/production_manager.rs
+          rg -q 'SAFE_TO_CLEAN' src-tauri/src/production_manager.rs
+          rg -q 'trash::delete' src-tauri/src/local_delete.rs src-tauri/src/production_manager.rs
+          python3 - <<'PY'
+          from pathlib import Path
+          ld=Path('src-tauri/src/local_delete.rs').read_text()
+          production=ld.split('#[cfg(test)]',1)[0]
+          assert 'fs::remove_file(' not in production
+          assert 'fs::remove_dir_all(' not in production
+          pm=Path('src-tauri/src/production_manager.rs').read_text()
+          assert 'fn delete_production_batch_projects_inner' in pm
+          assert 'pub fn delete_production_batch_projects(' in pm
+          assert 'app: AppHandle' in pm
+          assert 'let verified = verified_uploaded_job_ids(&app);' in pm
+          assert 'if !verified.contains(job)' in pm
+          assert 'row.render_status != "Completed"' in pm
+          assert 'output_path.is_file()' in pm
+          assert 'trash::delete(&safe)' in pm
+          tests=Path('src-tauri/src/production_manager_tests.rs').read_text()
+          assert 'delete_production_batch_projects_inner(' in tests
+          assert 'verified YouTube upload proof' in tests
+          PY
+
+      - name: Commit verified feature to production branch
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git config user.name 'ScaleUPPeisov'
+          git config user.email 'peisov.business@gmail.com'
+          echo 'Staged source files:'
+          git diff --cached --name-only
+          git commit -m 'feat: add persistent upload lifecycle and duplicate guard'
+          COMMIT="$(git rev-parse HEAD)"
+          test "$(git rev-parse HEAD^)" = "$EXPECTED_PARENT"
+          git push origin "HEAD:$PRODUCTION_BRANCH"
+          echo "PRODUCTION_COMMIT=$COMMIT"
