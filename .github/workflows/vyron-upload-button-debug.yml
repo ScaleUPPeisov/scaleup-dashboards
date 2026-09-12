@@ -44,12 +44,11 @@ jobs:
           python3 "$AUTH" "$ROOT"
           python3 .github/scripts/apply_final_reconnect_recovery.py "$ROOT"
           cd "$ROOT"
-          echo '=== BUTTON / HANDLER MATCHES ==='
-          grep -n -E 'ЗАГРУЗИТЬ|ПРОВЕРИТЬ НА ОДНОМ|upload|Upload|publishing|isUploading|busy|ОШИБКА|ЗАГРУЖАЕТСЯ' src/PublisherOS.tsx | tail -n 220 || true
-          echo '=== BUTTON REGION ==='
-          L=$(grep -n 'ЗАГРУЗИТЬ.*ВИДЕО НА YOUTUBE' src/PublisherOS.tsx | tail -1 | cut -d: -f1 || true)
-          if [ -n "$L" ]; then S=$((L-90)); [ "$S" -lt 1 ] && S=1; E=$((L+45)); nl -ba src/PublisherOS.tsx | sed -n "${S},${E}p"; fi
-          echo '=== UPLOAD FUNCTIONS ==='
-          grep -n -E 'function .*upload|const .*upload|async .*upload|run.*upload|start.*upload|handle.*upload|publishSelected|execute.*batch' src/PublisherOS.tsx || true
-          echo '=== STATUS FILTERS ==='
-          grep -n -E 'status.*(ERROR|UPLOADING|READY)|ERROR.*status|UPLOADING.*status|selected.*filter|filter.*selected' src/PublisherOS.tsx || true
+          echo '=== PUBLISHER INIT/EFFECTS ==='
+          nl -ba src/PublisherOS.tsx | sed -n '25,72p'
+          echo '=== YOUTUBE PUBLISH SAFETY ==='
+          nl -ba src/youtubePublishSafety.ts | sed -n '1,260p'
+          echo '=== PREFLIGHT RUNTIME ==='
+          nl -ba src/publisherRuntime.ts | sed -n '1,240p'
+          echo '=== UPLOAD SESSIONS API / BACKEND REFERENCES ==='
+          grep -R -n -E 'youtubeUploadSessions|youtube_upload_sessions|cancel_upload_session|uploadSessions|UPLOADING' src src-tauri/src | head -n 260 || true
