@@ -1,0 +1,107 @@
+name: VYRON 2.1.3 Updater Targeted Gate v2
+
+on:
+  push:
+    branches: [repair/vyron-native-keychain-diagnostic]
+    paths: ['.github/workflows/vyron-213-updater-targeted-v2.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  BASE_SOURCE_SHA256: 8a1ad7475cf147774ef714d222fc924138ae14831d6760e78aecf5e28c27dbed
+  PUBLISHEROS_SHA256: 13fcfe32368312dc907b7c1c2a04727ed14e6df3c3933b102ee6c41655593c98
+
+jobs:
+  targeted:
+    runs-on: macos-14
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - name: Restore exact released 2.1.2 and apply updater hotfix
+        env: {GH_TOKEN: '${{ github.token }}'}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf base hotfix source-download green-source
+          mkdir -p base hotfix source-download
+          gh release download v2.1.2 --repo "$REPO" --dir source-download --pattern 'VYRON-2.1.2-source.tar.gz' --pattern 'SOURCE_SHA256.txt'
+          test "$(awk '{print $1}' source-download/SOURCE_SHA256.txt)" = "$BASE_SOURCE_SHA256"
+          test "$(shasum -a 256 source-download/VYRON-2.1.2-source.tar.gz|awk '{print $1}')" = "$BASE_SOURCE_SHA256"
+          tar -xzf source-download/VYRON-2.1.2-source.tar.gz -C base
+          cp -R base/. hotfix/
+          python3 .github/scripts/apply_v213_updater_hotfix.py hotfix
+      - name: Prove updater-only diff and contracts
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import hashlib,json,pathlib
+          a=pathlib.Path('base'); b=pathlib.Path('hotfix')
+          def hs(root): return {str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in root.rglob('*') if p.is_file()}
+          aa,bb=hs(a),hs(b)
+          changed={k for k in set(aa)|set(bb) if aa.get(k)!=bb.get(k)}
+          allowed={'package.json','package-lock.json','src-tauri/Cargo.toml','src-tauri/Cargo.lock','src-tauri/tauri.conf.json','src/updaterPolicy.ts','src/api.ts','src/App.tsx','src/SettingsOS.tsx','src/updaterHotfix.test.ts'}
+          assert changed==allowed,(sorted(changed),sorted(allowed-changed),sorted(changed-allowed))
+          assert bb['src/PublisherOS.tsx']=='13fcfe32368312dc907b7c1c2a04727ed14e6df3c3933b102ee6c41655593c98'
+          for p in ['src/storageLifecycle.ts','src-tauri/src/youtube.rs','src-tauri/src/shorts_factory.rs','src/PublisherOS.tsx']:
+            assert aa[p]==bb[p],p
+          conf=json.load(open(b/'src-tauri/tauri.conf.json'))
+          assert conf['version']=='2.1.3' and conf['identifier']=='studio.channelflow.desktop'
+          assert conf['bundle']['createUpdaterArtifacts'] is True
+          assert conf['plugins']['updater']['endpoints'][0]=='https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/vyron-updates/latest.json'
+          assert conf['plugins']['updater']['endpoints'][1]=='https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/latest/download/latest.json'
+          assert conf['plugins']['updater']['pubkey']=='dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEREODQ1NDdERTI1MEYxQzAKUldUQThWRGlmVlNFM1RHdW5WQnE2eG9BYTBnQlNmbUtmVU84UHJQMUNvZWZ4Qmo0L2hYcUd4UDEK'
+          caps=json.load(open(b/'src-tauri/capabilities/default.json'))['permissions']; assert 'updater:default' in caps and 'process:default' in caps
+          app=(b/'src/App.tsx').read_text(); policy=(b/'src/updaterPolicy.ts').read_text(); api=(b/'src/api.ts').read_text(); settings=(b/'src/SettingsOS.tsx').read_text()
+          updater_line=next(x for x in app.splitlines() if 'settings.autoCheckUpdates' in x and 'api.checkUpdate()' in x)
+          assert '.catch(e=>' in updater_line and '.catch(()=>{})' not in updater_line
+          assert 'appendErrorHistory' in updater_line
+          for token in ['UPDATER_MANIFEST_FETCH_FAILED','UPDATER_ARCHIVE_DOWNLOAD_FAILED','UPDATER_SIGNATURE_INVALID','UPDATER_PLATFORM_NOT_FOUND']:
+            assert token in policy
+          assert 'downloadAndInstall' in api and 'await relaunch()' in api
+          assert 'appendErrorHistory' in settings
+          print('UPDATER-ONLY DIFF: PASS')
+          print('\n'.join(sorted(changed)))
+          PY
+      - name: Targeted updater tests
+        working-directory: hotfix
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm ci --no-audit --no-fund
+          npx vitest run src/updaterPolicy.test.ts src/updaterHotfix.test.ts src/v2111TauriInvoke.test.ts
+      - name: TypeScript
+        working-directory: hotfix
+        run: npx tsc --noEmit
+      - name: Frontend production build
+        working-directory: hotfix
+        run: npm run build
+      - name: Tauri metadata contract
+        working-directory: hotfix/src-tauri
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cargo metadata --no-deps --format-version 1 >/tmp/meta.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/meta.json')); p=next(x for x in d['packages'] if x['name']=='channelflow'); assert p['version']=='2.1.3'
+          PY
+      - name: Package tested source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir green-source
+          tar -czf green-source/VYRON-2.1.3-updater-hotfix-source.tar.gz --exclude='./node_modules' --exclude='./dist' --exclude='./src-tauri/target' -C hotfix .
+          (cd green-source && shasum -a 256 VYRON-2.1.3-updater-hotfix-source.tar.gz > SOURCE_SHA256.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-2.1.3-updater-hotfix-green-source
+          path: green-source/
+          if-no-files-found: error
+          retention-days: 30
