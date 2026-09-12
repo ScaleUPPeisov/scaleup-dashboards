@@ -1,4 +1,2 @@
 run storage lifecycle + duplicate upload guard targeted gate
-retry: macOS base64 decode fixed
-retry: ripgrep available
-retry: corrected exact feature assertions
+retry: normalized generated storage regression fixtures
