@@ -43,8 +43,11 @@ jobs:
           test "$(git branch --show-current)" = 'repair/vyron-native-keychain-diagnostic'
           git cat-file -e "$FEATURE_COMMIT^{commit}"
           git merge-base --is-ancestor "$FEATURE_COMMIT" "$GITHUB_SHA"
-          bad="$(git diff --name-only "$FEATURE_COMMIT..$GITHUB_SHA" | grep -Ev '^\.github/workflows/vyron-212-(production-release|final-release-v2)\.yml$' || true)"
+          changed="$(git diff --name-only "$FEATURE_COMMIT..$GITHUB_SHA")"
+          bad="$(printf '%s\n' "$changed" | grep -Ev '^(\.github/scripts/apply_v212_[^/]+\.py|\.github/vyron-v212-dynamic/[^/]+|\.github/workflows/vyron-212-[^/]+\.yml)$' || true)"
           test -z "$bad" || { echo "Unexpected post-feature source changes:"; echo "$bad"; exit 1; }
+          direct="$(printf '%s\n' "$changed" | grep -E '^(src/|src-tauri/|tests/|package\.json$|package-lock\.json$|vite\.config\.|tsconfig)' || true)"
+          test -z "$direct" || { echo "Direct production-source edits after feature commit are forbidden:"; echo "$direct"; exit 1; }
           test -z "$(git status --porcelain)"
           echo "RELEASE_HEAD=$GITHUB_SHA"
           echo "FEATURE_COMMIT=$FEATURE_COMMIT"
@@ -127,6 +130,10 @@ jobs:
           done < "$RUNNER_TEMP/feature-files.txt"
           test "$copied" -ge 10
 
+          # Canonical post-feature overlay: stale-contract fixes, schedule continuation,
+          # and dynamic per-project upload quota. This is the exact source tested and built.
+          python3 .github/scripts/apply_v212_frontend_regression_testfix.py "$ROOT"
+
           for V in 2.0.8 2.0.9; do
             mkdir -p "$LEGACY/$V/src"
             gh release download "v$V" --repo "$REPO" --pattern "VYRON-$V-source.tar.gz" --dir "$LEGACY/$V"
@@ -138,6 +145,7 @@ jobs:
           grep -Fq 'fn oauth_key(id:&str,kind:&str)->String{format!("oauth.{id}.{kind}")}' "$LEGACY/2.0.9/src/src-tauri/src/youtube.rs"
 
           cd "$ROOT"
+          test "$(shasum -a 256 src/PublisherOS.tsx | awk '{print $1}')" = '13fcfe32368312dc907b7c1c2a04727ed14e6df3c3933b102ee6c41655593c98'
           python3 - <<'PY'
           import json,re,pathlib
           pkg=json.load(open('package.json'))
@@ -156,10 +164,10 @@ jobs:
               if 'version' in root: assert root['version']=='2.1.2'
           for text in (json.dumps(pkg),json.dumps(conf),cargo):
               assert '2.1.3' not in text
-          print('VERSION/BUNDLE CONTRACT: PASS')
+          print('VERSION/BUNDLE/PUBLISHEROS CONTRACT: PASS')
           PY
 
-      - name: Static contracts — diagnostic and whitespace-safe
+      - name: Static contracts — final exact source
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -170,6 +178,13 @@ jobs:
             'videos.list verification':('src/PublisherOS.tsx','videos.list'),
             'publishAt scheduling':('src/PublisherOS.tsx','publishAt'),
             'zero-api preflight':('src/PublisherOS.tsx','ZERO-API PRE-FLIGHT'),
+            'schedule continuation':('src/scheduleContinuation.ts','recommendScheduleContinuation'),
+            'schedule sync blocker':('src/PublisherOS.tsx','СНАЧАЛА СИНХРОНИЗИРУЙТЕ РАСПИСАНИЕ'),
+            'quota project identity':('src/youtubeQuota.ts','youtubeQuotaProjectIdentity'),
+            'quota per-project state':('src/youtubeQuota.ts','uploadProjects'),
+            'quota LA reset timezone':('src/youtubeQuota.ts','America/Los_Angeles'),
+            'quota settings UI':('src/SettingsOS.tsx','YOUTUBE API · UPLOAD QUOTA'),
+            'quota selected capacity':('src/publisherQuota.ts','publisherVideoCapacity'),
             'verification backend':('src-tauri/src/youtube.rs','verify_uploaded_video'),
             'MOV MIME':('src-tauri/src/youtube.rs','video/quicktime'),
             'SHA256 fingerprint backend':('src-tauri/src/youtube.rs','youtube_file_fingerprint'),
@@ -203,7 +218,6 @@ jobs:
             'auth reconnect queue':('src/AuthRecoveryCenter.tsx','Переподключить следующий'),
             'auth center mounted':('src/SettingsOS.tsx','AuthRecoveryCenter'),
             'runtime upload lock':('src/youtubePublishSafety.ts','runtimeLocks'),
-            'schedule sync blocker':('src/PublisherOS.tsx','СНАЧАЛА СИНХРОНИЗИРУЙТЕ РАСПИСАНИЕ'),
             'upload blocked reason UI':('src/PublisherOS.tsx','Почему загрузка сейчас недоступна'),
             'finite upload timeout':('src-tauri/src/youtube.rs','YOUTUBE_UPLOAD_REQUEST_TIMEOUT_SECS'),
             'resumable status recovery':('src-tauri/src/youtube.rs','resumable_status'),
@@ -216,6 +230,9 @@ jobs:
               p=root/path
               if not p.is_file(): bad.append(f'{label}: missing {path}'); continue
               if needle not in p.read_text(errors='ignore'): bad.append(f'{label}: missing token {needle!r} in {path}')
+          joined=''.join((root/p).read_text(errors='ignore') for p in ['src/PublisherOS.tsx','src/SettingsOS.tsx','src/youtubeQuota.ts'])
+          if 'getYouTubeUploadQuota' in joined: bad.append('forbidden fake Google quota API remains')
+          if 'cloud-platform' in joined: bad.append('forbidden hidden cloud-platform scope remains')
           security=(root/'src-tauri/src/security.rs').read_text(errors='ignore')
           if 'dump-keychain' in security: bad.append('forbidden shell dump-keychain remains')
           locks=(root/'src/youtubePublishSafety.ts').read_text(errors='ignore')
@@ -224,7 +241,7 @@ jobs:
               print('STATIC CONTRACTS: FAIL')
               print('\n'.join(bad))
               raise SystemExit(1)
-          print(f'STATIC CONTRACTS: PASS ({len(checks)} positive + 2 negative checks)')
+          print(f'STATIC CONTRACTS: PASS ({len(checks)} positive + 4 negative checks)')
           PY
 
       - name: Freeze exact green candidate source
@@ -236,6 +253,7 @@ jobs:
             --exclude='./node_modules' --exclude='./dist' --exclude='./src-tauri/target' \
             -C .vyron-212-final .
           shasum -a 256 .green-source/VYRON-2.1.2-green-source.tar.gz > .green-source/GREEN_SOURCE_SHA256.txt
+          echo "RELEASED_212_SOURCE_SHA256=$(awk '{print $1}' .green-source/GREEN_SOURCE_SHA256.txt)"
 
       - name: Frontend full project tests
         working-directory: .vyron-212-final
@@ -378,10 +396,12 @@ jobs:
           - Feature commit: 0419211a312df1c2cb907dc70faad3eca92b9192
           - Release HEAD: $GITHUB_SHA
           - Final full regression: PASS
+          - Schedule continuation A-G / YouTube sync / manual start / conflict isolation: PASS
+          - Dynamic Upload Quota A-N / per-project migration / LA DST reset / Zero-API: PASS
           - Storage Lifecycle / Duplicate Guard / upload history: PASS
           - Project → Render → Upload / Safe Cleanup / system Trash: PASS
           - Frontend / TypeScript / production frontend build / Rust: PASS
-          - YouTube verification / publishAt / scheduling / upload transport: PASS
+          - YouTube verification / publishAt / scheduling / upload transport watchdog: PASS
           - OAuth/Keychain regression and legacy contracts: PASS
           - Shorts real FFmpeg MP4/MOV: PASS
           - ARM64 app / DMG mount / codesign: PASS
@@ -409,24 +429,46 @@ jobs:
         with:
           name: VYRON-2.1.2-definitive-release
           path: release
-      - name: Publish v2.1.2 on exact release HEAD
+      - name: Publish or safely update v2.1.2 on exact release HEAD
         shell: bash
         run: |
           set -Eeuo pipefail
           for f in VYRON-2.1.2-macOS-AppleSilicon.dmg VYRON.app.tar.gz VYRON.app.tar.gz.sig VYRON-2.1.2-source.tar.gz SHA256.txt UPDATER_SHA256.txt SOURCE_SHA256.txt FINAL_TEST_REPORT.md; do test -s "release/$f"; done
           cat > release/RELEASE_NOTES.md <<'NOTES'
           # VYRON 2.1.2
-          Stable Apple Silicon release from the current production source. Includes OAuth/Keychain repair, YouTube upload/scheduling repair, Shorts Factory, persistent upload lifecycle/history, duplicate SHA-256 guard, project-to-render upload proof and protected macOS system Trash cleanup.
+          Stable Apple Silicon release from the exact final tested production source. Includes OAuth/Keychain repair, YouTube upload/scheduling repair, schedule continuation, Dynamic Upload Quota per API project, Shorts Factory, persistent upload lifecycle/history, duplicate SHA-256 guard, project-to-render upload proof and protected macOS system Trash cleanup.
 
           Signing uses the existing ad-hoc production mechanism; Apple notarization is not claimed.
           NOTES
-          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then gh release delete "$TAG" --repo "$REPO" --cleanup-tag --yes; fi
-          if gh api "repos/$REPO/git/ref/tags/$TAG" >/dev/null 2>&1; then gh api --method DELETE "repos/$REPO/git/refs/tags/$TAG" >/dev/null; fi
-          gh release create "$TAG" --repo "$REPO" --target "$GITHUB_SHA" --title 'VYRON v2.1.2' --notes-file release/RELEASE_NOTES.md --latest
-          gh release upload "$TAG" --repo "$REPO" \
+
+          if gh api "repos/$REPO/git/ref/tags/$TAG" >/dev/null 2>&1; then
+            gh api --method PATCH "repos/$REPO/git/refs/tags/$TAG" -f sha="$GITHUB_SHA" -F force=true >/dev/null
+          else
+            gh api --method POST "repos/$REPO/git/refs" -f ref="refs/tags/$TAG" -f sha="$GITHUB_SHA" >/dev/null
+          fi
+
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            RID=$(gh api "repos/$REPO/releases/tags/$TAG" --jq .id)
+            BODY=$(cat release/RELEASE_NOTES.md)
+            gh api --method PATCH "repos/$REPO/releases/$RID" \
+              -f tag_name="$TAG" -f target_commitish="$GITHUB_SHA" -f name='VYRON v2.1.2' \
+              -f body="$BODY" -F draft=false -F prerelease=false -f make_latest=true >/dev/null
+          else
+            gh release create "$TAG" --repo "$REPO" --target "$GITHUB_SHA" --title 'VYRON v2.1.2' --notes-file release/RELEASE_NOTES.md --latest
+          fi
+
+          gh release upload "$TAG" --repo "$REPO" --clobber \
             release/VYRON-2.1.2-macOS-AppleSilicon.dmg release/VYRON.app.tar.gz release/VYRON.app.tar.gz.sig \
             release/VYRON-2.1.2-source.tar.gz release/SHA256.txt release/UPDATER_SHA256.txt release/SOURCE_SHA256.txt \
             release/FINAL_TEST_REPORT.md release/RELEASE_NOTES.md
+
+          RID=$(gh api "repos/$REPO/releases/tags/$TAG" --jq .id)
+          gh api "repos/$REPO/releases/$RID/assets?per_page=100" --paginate --jq '.[]|[.id,.name]|@tsv' | while IFS=$'\t' read -r asset_id name; do
+            case "$name" in
+              VYRON-2.1.2-macOS-AppleSilicon.dmg|VYRON.app.tar.gz|VYRON.app.tar.gz.sig|VYRON-2.1.2-source.tar.gz|SHA256.txt|UPDATER_SHA256.txt|SOURCE_SHA256.txt|FINAL_TEST_REPORT.md|RELEASE_NOTES.md) ;;
+              *) gh api --method DELETE "repos/$REPO/releases/assets/$asset_id" >/dev/null ;;
+            esac
+          done
           test "$(gh release view "$TAG" --repo "$REPO" --json isDraft --jq '.isDraft|tostring')" = false
           test "$(gh release view "$TAG" --repo "$REPO" --json isPrerelease --jq '.isPrerelease|tostring')" = false
           test "$(gh api "repos/$REPO/git/ref/tags/$TAG" --jq '.object.sha')" = "$GITHUB_SHA"
@@ -445,14 +487,19 @@ jobs:
           set -Eeuo pipefail
           mkdir back
           gh release download "$TAG" --repo "$REPO" --dir back \
-            --pattern 'VYRON-2.1.2-macOS-AppleSilicon.dmg' --pattern 'VYRON.app.tar.gz' --pattern 'VYRON.app.tar.gz.sig' --pattern 'SHA256.txt'
+            --pattern 'VYRON-2.1.2-macOS-AppleSilicon.dmg' --pattern 'VYRON.app.tar.gz' --pattern 'VYRON.app.tar.gz.sig' \
+            --pattern 'SHA256.txt' --pattern 'UPDATER_SHA256.txt'
           cd back
-          for f in VYRON-2.1.2-macOS-AppleSilicon.dmg VYRON.app.tar.gz VYRON.app.tar.gz.sig SHA256.txt; do test -s "$f"; done
+          for f in VYRON-2.1.2-macOS-AppleSilicon.dmg VYRON.app.tar.gz VYRON.app.tar.gz.sig SHA256.txt UPDATER_SHA256.txt; do test -s "$f"; done
           expected=$(awk '{print $1}' SHA256.txt)
           actual=$(shasum -a 256 VYRON-2.1.2-macOS-AppleSilicon.dmg | awk '{print $1}')
           test -n "$expected" && test "$expected" = "$actual"
+          updater_expected=$(awk '{print $1}' UPDATER_SHA256.txt)
+          updater_actual=$(shasum -a 256 VYRON.app.tar.gz | awk '{print $1}')
+          test -n "$updater_expected" && test "$updater_expected" = "$updater_actual"
           test -n "$(cat VYRON.app.tar.gz.sig)"
           echo "DOWNLOAD_BACK_SHA256=$actual"
+          echo "UPDATER_DOWNLOAD_BACK_SHA256=$updater_actual"
           hdiutil verify VYRON-2.1.2-macOS-AppleSilicon.dmg
           MOUNT="$RUNNER_TEMP/vyron212-release-mount"
           mkdir -p "$MOUNT"
@@ -479,12 +526,16 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      - name: Build updater metadata from the published signature
+      - name: Build updater metadata from published release assets
         shell: bash
         run: |
           set -Eeuo pipefail
           mkdir stable
-          gh release download "$TAG" --repo "$REPO" --dir stable --pattern 'VYRON.app.tar.gz.sig'
+          gh release download "$TAG" --repo "$REPO" --dir stable \
+            --pattern 'VYRON.app.tar.gz' --pattern 'VYRON.app.tar.gz.sig' --pattern 'UPDATER_SHA256.txt'
+          expected=$(awk '{print $1}' stable/UPDATER_SHA256.txt)
+          actual=$(shasum -a 256 stable/VYRON.app.tar.gz | awk '{print $1}')
+          test -n "$expected" && test "$expected" = "$actual"
           python3 - <<'PY'
           import json,datetime,pathlib
           p=pathlib.Path('stable'); sig=(p/'VYRON.app.tar.gz.sig').read_text().strip()
@@ -504,7 +555,7 @@ jobs:
           gh api --method PUT "repos/$REPO/contents/vyron-updates/latest.json" \
             -f message='VYRON updater: activate 2.1.2 definitive release' -f content="$CONTENT" -f sha="$OLD_SHA" -f branch=main >/dev/null
 
-      - name: Read back real stable metadata
+      - name: Read back real stable metadata and downloadable archive
         shell: bash
         run: |
           set -Eeuo pipefail
