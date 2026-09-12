@@ -1,0 +1,1 @@
+inventory production_manager/local_delete/files for Storage Lifecycle
