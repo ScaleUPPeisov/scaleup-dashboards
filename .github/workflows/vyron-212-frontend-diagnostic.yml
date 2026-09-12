@@ -151,14 +151,16 @@ jobs:
           print('VERSION/BUNDLE CONTRACT: PASS')
           PY
 
-      - name: Capture assembled schedule sources
+      - name: Capture assembled diagnostic sources
         shell: bash
         run: |
           set -Eeuo pipefail
-          mkdir -p schedule-source
+          mkdir -p diagnostic-source
           for f in \
             src/publisherSchedule.ts \
             src/publisherSchedule.test.ts \
+            src/scheduleContinuation.ts \
+            src/scheduleContinuation.test.ts \
             src/PublisherOS.tsx \
             src/publisherMetadata.ts \
             src/publisherRuntime.ts \
@@ -167,15 +169,28 @@ jobs:
             src/channelSchedule.ts \
             src/channelSchedule.test.ts \
             src/MetadataPage.schedule.test.ts \
+            src/youtubeQuota.ts \
+            src/youtubeQuota.test.ts \
+            src/youtubeQuotaPlanner.test.ts \
+            src/youtubeQuotaRollover.test.ts \
+            src/publisherQuota.ts \
+            src/publisherQuota.test.ts \
+            src/youtubePublishSafety.ts \
+            src/youtubePublishSafety.test.ts \
+            src/store.ts \
+            src/types.ts \
+            src/SettingsOS.tsx \
+            src/SettingsPage.tsx \
             src-tauri/src/youtube.rs; do
-            if [ -f ".vyron-212-final/$f" ]; then mkdir -p "schedule-source/$(dirname "$f")"; cp ".vyron-212-final/$f" "schedule-source/$f"; fi
+            if [ -f ".vyron-212-final/$f" ]; then mkdir -p "diagnostic-source/$(dirname "$f")"; cp ".vyron-212-final/$f" "diagnostic-source/$f"; fi
           done
+          find .vyron-212-final/src -maxdepth 1 -type f \( -iname '*setting*' -o -iname '*quota*' \) -print0 | while IFS= read -r -d '' f; do rel="${f#.vyron-212-final/}"; mkdir -p "diagnostic-source/$(dirname "$rel")"; cp "$f" "diagnostic-source/$rel"; done
 
-      - name: Upload assembled schedule sources
+      - name: Upload assembled diagnostic sources
         uses: actions/upload-artifact@v4
         with:
-          name: vyron-212-assembled-schedule-source
-          path: schedule-source/
+          name: vyron-212-assembled-diagnostic-source
+          path: diagnostic-source/
           if-no-files-found: error
           retention-days: 7
 
