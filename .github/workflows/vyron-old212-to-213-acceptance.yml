@@ -1,0 +1,201 @@
+name: VYRON Real Old Client 2.1.2 → 2.1.3 Acceptance
+
+on:
+  push:
+    branches: [repair/vyron-native-keychain-diagnostic]
+    paths: ['.github/workflows/vyron-old212-to-213-acceptance.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  OLD_RUN: '34508993436'
+  OLD_ARTIFACT: 'VYRON-2.1.2-production-candidate'
+
+jobs:
+  acceptance:
+    runs-on: macos-14
+    timeout-minutes: 25
+    steps:
+      - name: Restore actual previously-published 2.1.2 app
+        shell: bash
+        env: {GH_TOKEN: '${{ github.token }}'}
+        run: |
+          set -Eeuo pipefail
+          mkdir old
+          gh run download "$OLD_RUN" --repo "$REPO" -n "$OLD_ARTIFACT" -D old
+          test -s old/VYRON-2.1.2-macOS-AppleSilicon.dmg
+          M="$RUNNER_TEMP/old212-dmg"; mkdir -p "$M"
+          hdiutil attach old/VYRON-2.1.2-macOS-AppleSilicon.dmg -nobrowse -readonly -mountpoint "$M" >/dev/null
+          cp -R "$M/VYRON.app" "$RUNNER_TEMP/VYRON.app"
+          hdiutil detach "$M" >/dev/null
+          APP="$RUNNER_TEMP/VYRON.app"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = '2.1.2'
+          test "$(plutil -extract CFBundleVersion raw -o - "$APP/Contents/Info.plist")" = '2.1.2'
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = 'studio.channelflow.desktop'
+          chmod -R u+rwX "$APP"
+          xattr -dr com.apple.quarantine "$APP" || true
+          echo "TEST_APP=$APP" >> "$GITHUB_ENV"
+          echo 'OLD CLIENT START VERSION: 2.1.2'
+
+      - name: Seed isolated valid app state
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          DATA="$HOME/Library/Application Support/studio.channelflow.desktop"
+          rm -rf "$DATA"; mkdir -p "$DATA"
+          cat > "$DATA/license.json" <<'JSON'
+          {"valid":true,"type":"ci-updater-acceptance","expiresAt":null,"maskedKey":"CI••••TEST"}
+          JSON
+          cat > "$DATA/state.json" <<'JSON'
+          {"version":8,"channels":[],"jobs":[],"competitors":[],"settings":{"workspace":"","endlumePath":"","youtubeApiKey":"","autoCheckUpdates":true,"reduceMotion":false,"fpsMonitor":false},"logs":[],"uploadHistory":[],"fingerprintCache":{},"projectLifecycle":{}}
+          JSON
+
+      - name: Launch real old app and prove 2.1.3 is found
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          open -na "$TEST_APP"
+          for i in {1..30}; do
+            pgrep -if "$TEST_APP/Contents/MacOS/channelflow" >/dev/null && break
+            sleep 1
+          done
+          pgrep -if "$TEST_APP/Contents/MacOS/channelflow" >/dev/null
+          found=0
+          for i in {1..30}; do
+            text=$(osascript <<'APPLESCRIPT' || true
+          tell application "System Events"
+            try
+              set p to first application process whose name is "channelflow"
+              set out to ""
+              repeat with e in entire contents of window 1 of p
+                try
+                  set n to name of e as text
+                  if n is not "missing value" then set out to out & n & linefeed
+                end try
+              end repeat
+              return out
+            on error
+              return ""
+            end try
+          end tell
+          APPLESCRIPT
+            )
+            printf '%s\n' "$text" > /tmp/update-ui.txt
+            if printf '%s\n' "$text" | grep -Fq '2.1.3' && printf '%s\n' "$text" | grep -Fq 'ОБНОВИТЬ'; then found=1; break; fi
+            sleep 1
+          done
+          cat /tmp/update-ui.txt
+          test "$found" = 1
+          echo 'OLD CLIENT CHECK UPDATE: 2.1.3 FOUND — PASS'
+
+      - name: Press real ОБНОВИТЬ button in old app
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          osascript <<'APPLESCRIPT'
+          tell application "System Events"
+            set p to first application process whose name is "channelflow"
+            set targetButton to missing value
+            repeat with e in entire contents of window 1 of p
+              try
+                if (name of e as text) is "ОБНОВИТЬ" then
+                  set targetButton to e
+                  exit repeat
+                end if
+              end try
+            end repeat
+            if targetButton is missing value then error "ОБНОВИТЬ button not found"
+            try
+              perform action "AXPress" of targetButton
+            on error
+              click targetButton
+            end try
+          end tell
+          APPLESCRIPT
+          echo 'REAL UPDATE BUTTON PRESSED'
+
+      - name: Wait for download, install and relaunch
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          old_pid=$(pgrep -if "$TEST_APP/Contents/MacOS/channelflow" | head -1 || true)
+          echo "OLD_PID=$old_pid"
+          upgraded=0
+          relaunched=0
+          for i in {1..180}; do
+            if [ -f "$TEST_APP/Contents/Info.plist" ]; then
+              v=$(plutil -extract CFBundleShortVersionString raw -o - "$TEST_APP/Contents/Info.plist" 2>/dev/null || true)
+              if [ "$v" = '2.1.3' ]; then upgraded=1; fi
+            fi
+            new_pid=$(pgrep -if "$TEST_APP/Contents/MacOS/channelflow" | head -1 || true)
+            if [ "$upgraded" = 1 ] && [ -n "$new_pid" ] && [ "$new_pid" != "$old_pid" ]; then relaunched=1; break; fi
+            sleep 1
+          done
+          echo "BUNDLE_UPGRADED=$upgraded"
+          echo "RELAUNCHED=$relaunched"
+          test "$upgraded" = 1
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$TEST_APP/Contents/Info.plist")" = '2.1.3'
+          test "$(plutil -extract CFBundleVersion raw -o - "$TEST_APP/Contents/Info.plist")" = '2.1.3'
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$TEST_APP/Contents/Info.plist")" = 'studio.channelflow.desktop'
+          EXE=$(plutil -extract CFBundleExecutable raw -o - "$TEST_APP/Contents/Info.plist")
+          file "$TEST_APP/Contents/MacOS/$EXE" | grep -q arm64
+          codesign --verify --deep --strict --verbose=2 "$TEST_APP"
+          test "$relaunched" = 1
+          echo "NEW_PID=$(pgrep -if "$TEST_APP/Contents/MacOS/channelflow" | head -1)"
+          echo 'OLD 2.1.2 → DOWNLOAD → INSTALL → RELAUNCH → 2.1.3: PASS'
+
+      - name: Prove same-version client is now up to date
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sleep 5
+          text=$(osascript <<'APPLESCRIPT' || true
+          tell application "System Events"
+            try
+              set p to first application process whose name is "channelflow"
+              set out to ""
+              repeat with e in entire contents of window 1 of p
+                try
+                  set n to name of e as text
+                  if n is not "missing value" then set out to out & n & linefeed
+                end try
+              end repeat
+              return out
+            on error
+              return ""
+            end try
+          end tell
+          APPLESCRIPT
+          )
+          printf '%s\n' "$text" > /tmp/post-update-ui.txt
+          cat /tmp/post-update-ui.txt
+          if printf '%s\n' "$text" | grep -Fq 'Новое обновление' && printf '%s\n' "$text" | grep -Fq 'ОБНОВИТЬ'; then
+            echo 'Unexpected same-version update prompt'; exit 1
+          fi
+          echo 'SAME VERSION 2.1.3 → UP TO DATE: PASS'
+
+      - name: Capture acceptance evidence
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p /tmp/vyron-acceptance
+          cp /tmp/update-ui.txt /tmp/vyron-acceptance/before-update-ui.txt 2>/dev/null || true
+          cp /tmp/post-update-ui.txt /tmp/vyron-acceptance/after-update-ui.txt 2>/dev/null || true
+          if [ -f "$TEST_APP/Contents/Info.plist" ]; then plutil -p "$TEST_APP/Contents/Info.plist" > /tmp/vyron-acceptance/final-info-plist.txt || true; fi
+          screencapture -x /tmp/vyron-acceptance/final-screen.png || true
+          ps aux | grep -Ei 'VYRON|channelflow' | grep -v grep > /tmp/vyron-acceptance/processes.txt || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vyron-old212-to-213-acceptance-evidence
+          path: /tmp/vyron-acceptance/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Cleanup
+        if: always()
+        shell: bash
+        run: pkill -if 'VYRON|channelflow' || true
