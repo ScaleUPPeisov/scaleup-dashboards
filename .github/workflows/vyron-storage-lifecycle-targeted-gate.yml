@@ -28,6 +28,7 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
+          brew install ripgrep
           ROOT="$RUNNER_TEMP/vyron-storage-gate"
           SRC="$RUNNER_TEMP/vyron-source"
           NATIVE="$RUNNER_TEMP/native.py"
