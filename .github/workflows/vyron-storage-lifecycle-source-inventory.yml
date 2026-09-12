@@ -1,0 +1,81 @@
+name: VYRON Storage Lifecycle Source Inventory
+
+on:
+  push:
+    branches: [repair/vyron-native-keychain-diagnostic]
+    paths: ['.github/diagnostic/vyron-storage-lifecycle-inventory-trigger.txt']
+
+permissions:
+  contents: read
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  BASE_TAG: v2.1.2
+
+jobs:
+  inventory:
+    runs-on: macos-14
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble exact current candidate source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ROOT="$RUNNER_TEMP/vyron-storage-inventory"
+          SRC="$RUNNER_TEMP/vyron-source"
+          NATIVE="$RUNNER_TEMP/native.py"
+          AUTH="$RUNNER_TEMP/auth.py"
+          rm -rf "$ROOT" "$SRC" && mkdir -p "$ROOT" "$SRC"
+          gh release download "$BASE_TAG" --repo "$REPO" --dir "$SRC" --pattern 'VYRON-2.1.2-source.tar.gz' --pattern 'SOURCE_SHA256.txt'
+          cd "$SRC"
+          test "$(awk '{print $1}' SOURCE_SHA256.txt)" = "$(shasum -a 256 VYRON-2.1.2-source.tar.gz | awk '{print $1}')"
+          tar -xzf VYRON-2.1.2-source.tar.gz -C "$ROOT"
+          cd "$GITHUB_WORKSPACE"
+          cat .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.00 .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.01 .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.02a .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.02b .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.03 .github/scripts/vyron_native_keychain_repair.py.gz.b64.part01 .github/scripts/vyron_native_keychain_repair.py.gz.b64.part02 | base64 --decode | gunzip > "$NATIVE"
+          cat .github/scripts/vyron_auth_recovery.py.gz.b64.part00 .github/scripts/vyron_auth_recovery.py.gz.b64.part01 .github/scripts/vyron_auth_recovery.py.gz.b64.part02 | base64 --decode | gunzip > "$AUTH"
+          python3 "$NATIVE" "$ROOT"
+          python3 .github/scripts/apply_native_keychain_compilefix.py "$ROOT"
+          python3 .github/scripts/apply_global_keychain_inventory.py "$ROOT"
+          python3 "$AUTH" "$ROOT"
+          python3 .github/scripts/apply_final_reconnect_recovery.py "$ROOT"
+          python3 .github/scripts/apply_upload_button_unblock_fix.py "$ROOT"
+          python3 .github/scripts/apply_youtube_upload_transport_watchdog.py "$ROOT"
+          python3 .github/scripts/apply_reconnect_browser_choice.py "$ROOT"
+          echo "ASSEMBLED=$ROOT" >> "$GITHUB_ENV"
+
+      - name: Collect storage/upload source subset
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ROOT="$ASSEMBLED"
+          OUT="$GITHUB_WORKSPACE/storage-source-inventory"
+          mkdir -p "$OUT/src" "$OUT/src-tauri/src"
+          cd "$ROOT"
+          for f in \
+            src/PublisherOS.tsx src/ProductionOS.tsx src/StorageManager.tsx src/SettingsOS.tsx \
+            src/store.ts src/types.ts src/api.ts src/youtubePublishSafety.ts src/publisherRuntime.ts \
+            src-tauri/src/youtube.rs src-tauri/src/lib.rs src-tauri/src/main.rs src-tauri/src/storage.rs \
+            src-tauri/src/production.rs src-tauri/src/commands.rs; do
+            if [ -f "$f" ]; then mkdir -p "$OUT/$(dirname "$f")"; cp "$f" "$OUT/$f"; fi
+          done
+          rg -l -i 'storage|cleanup|trash|ready videos|ready_videos|render|project|remove_file|remove_dir|youtube.*upload|video_id|videoId|uploaded|fingerprint|sha256' src src-tauri/src | sort > "$OUT/MATCHING_FILES.txt" || true
+          while IFS= read -r f; do
+            case "$f" in
+              *.ts|*.tsx|*.rs)
+                if [ ! -f "$OUT/$f" ]; then mkdir -p "$OUT/$(dirname "$f")"; cp "$f" "$OUT/$f"; fi
+                ;;
+            esac
+          done < "$OUT/MATCHING_FILES.txt"
+          printf '\n=== MATCH SUMMARY ===\n'
+          cat "$OUT/MATCHING_FILES.txt"
+          printf '\n=== STORAGE/CLEANUP SYMBOLS ===\n'
+          rg -n -i 'cleanup|trash|storage manager|remove_file|remove_dir|ready videos|ready_videos|videoId|video_id|upload.*complete|render.*complete|project.*render|output_path' src src-tauri/src | head -n 500 || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-current-storage-source-inventory
+          path: storage-source-inventory/
+          retention-days: 3
