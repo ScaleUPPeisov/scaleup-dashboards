@@ -1,2 +1,2 @@
 run storage lifecycle + duplicate upload guard targeted gate
-retry: final Rust blockers only; frontend 34/34 already passed
+retry: TypeScript v8 fixture and remaining build/safety only
