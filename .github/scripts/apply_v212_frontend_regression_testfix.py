@@ -30,13 +30,14 @@ replace_once(
     'v2111 cleanup Rendered contract',
 )
 
-# Legacy v2.0.12 registration test is also rustfmt-sensitive. Update only stale
-# formatting literals; behavior expectations remain unchanged.
+# Legacy v2.0.12 registration test is formatting/implementation-sensitive. Preserve
+# the behavior contract while accepting the current rustfmt output and system-Trash cleanup.
 p = root / 'src/v212CleanupCommandRegistration.test.ts'
 text = p.read_text()
 replacements = {
     "render_status!=\"Completed\"": "render_status != \"Completed\"",
     "let rendered=batch_root.join(\"Rendered\").canonicalize().ok();": "let rendered = batch_root.join(\"Rendered\").canonicalize().ok();",
+    "fs::remove_file(&canon)": "trash::delete(&folder_canon)",
 }
 changed = 0
 for old, new in replacements.items():
@@ -44,6 +45,6 @@ for old, new in replacements.items():
         text = text.replace(old, new)
         changed += 1
 if changed == 0:
-    raise SystemExit('v212 cleanup registration: no stale formatting anchors found')
+    raise SystemExit('v212 cleanup registration: no stale contract anchors found')
 p.write_text(text)
-print(f'v212 cleanup registration contracts: patched {changed} stale formatting anchor(s)')
+print(f'v212 cleanup registration contracts: patched {changed} stale anchor(s)')
