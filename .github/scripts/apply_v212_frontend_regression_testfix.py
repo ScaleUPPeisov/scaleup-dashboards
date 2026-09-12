@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from pathlib import Path
+import subprocess
 import sys
 
 root = Path(sys.argv[1] if len(sys.argv) > 1 else '.')
@@ -48,3 +49,6 @@ if changed == 0:
     raise SystemExit('v212 cleanup registration: no stale contract anchors found')
 p.write_text(text)
 print(f'v212 cleanup registration contracts: patched {changed} stale anchor(s)')
+
+schedule_patch = Path(__file__).with_name('apply_v212_schedule_continuation.py')
+subprocess.run([sys.executable, str(schedule_patch), str(root)], check=True)
