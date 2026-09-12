@@ -1,0 +1,1 @@
+snapshot current assembled VYRON source for storage lifecycle implementation
