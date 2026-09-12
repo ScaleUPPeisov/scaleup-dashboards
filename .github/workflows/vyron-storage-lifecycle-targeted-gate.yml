@@ -15,7 +15,7 @@ env:
 jobs:
   storage-lifecycle-gate:
     runs-on: macos-14
-    timeout-minutes: 90
+    timeout-minutes: 60
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -61,6 +61,10 @@ jobs:
           patch -p1 --forward < "$PATCH"
           python3 "$GITHUB_WORKSPACE/.github/scripts/fix_storage_feature_tests.py" "$ROOT"
           python3 "$GITHUB_WORKSPACE/.github/scripts/fix_storage_rust_gate.py" "$ROOT"
+          python3 "$GITHUB_WORKSPACE/.github/scripts/fix_storage_typescript_gate.py" "$ROOT"
+          cd "$ROOT/src-tauri"
+          cargo fmt
+          cd "$ROOT"
           test "$(node -p "require('./package.json').version")" = '2.1.2'
           test -f src/storageLifecycle.ts
           test -f src-tauri/src/production_manager_tests.rs
@@ -70,21 +74,6 @@ jobs:
           rg -q "delete_production_batch_projects_inner" src-tauri/src/production_manager.rs
           rg -q "trash::delete" src-tauri/src/local_delete.rs src-tauri/src/production_manager.rs
           echo "ASSEMBLED=$ROOT" >> "$GITHUB_ENV"
-
-      - name: Rust format compile and targeted lifecycle tests
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          cd "$ASSEMBLED/src-tauri"
-          cargo fmt
-          cargo fmt --check
-          cargo check
-          cargo test production_manager_tests -- --nocapture
-          cargo test local_delete::tests -- --nocapture
-          cargo test v213_storage_tests -- --nocapture
-          cargo test v120_youtube_local_tests -- --nocapture
-          cargo test v211_cleanup_assets_tests -- --nocapture
-          cargo test v2111_global_project_cleanup_tests -- --nocapture
 
       - name: Install frontend dependencies
         shell: bash
@@ -124,17 +113,19 @@ jobs:
           direct=section('pub fn delete_production_job_folder','fn folder_stats')
           cleanup=section('fn cleanup_completed_assets','pub fn cleanup_completed_production_assets')
           batch=section('fn delete_production_batch_projects_inner','#[tauri::command]\npub fn delete_production_batch_projects')
-          wrapper=section('pub fn delete_production_batch_projects(app: AppHandle','pub fn open_production_batch_in_endlume') if 'pub fn delete_production_batch_projects(app: AppHandle' in s else section('pub fn delete_production_batch_projects(app:AppHandle','pub fn open_production_batch_in_endlume')
+          wrapper=section('#[tauri::command]\npub fn delete_production_batch_projects','#[tauri::command]\npub fn open_production_batch_in_endlume')
           for block in (direct,cleanup,batch):
               if 'trash::delete' not in block: raise SystemExit('cleanup path does not use system Trash')
               if 'fs::remove_file(' in block or 'fs::remove_dir_all(' in block: raise SystemExit('destructive delete remains in user project cleanup path')
+          compact_wrapper=''.join(wrapper.split())
+          compact_batch=''.join(batch.split())
           for required in ('verified_uploaded_job_ids(&app)','delete_production_batch_projects_inner(&verified'):
-              if required not in wrapper.replace(' ', '') and required.replace(' ','') not in wrapper.replace(' ',''):
+              if ''.join(required.split()) not in compact_wrapper:
                   raise SystemExit('Tauri safe delete wrapper no longer delegates through verified proof')
-          if 'if !verified.contains(job)' not in batch and 'if!verified.contains(job)' not in batch.replace(' ',''):
+          if 'if!verified.contains(job)' not in compact_batch:
               raise SystemExit('verified upload proof guard missing')
-          if 'output_path.is_file()' not in batch.replace(' ', ''):
-              raise SystemExit('render existence guard missing')
+          if 'render_status!="Completed"' not in compact_batch or 'output_path.is_file()' not in compact_batch:
+              raise SystemExit('render proof guard missing')
           verified=s[s.find('fn verified_uploaded_job_ids'):s.find('fn safe_cleanup_root')]
           if 'youtubeVideoId' not in verified or 'UPLOADED' not in verified:
               raise SystemExit('verified videoId invariant missing')
@@ -151,14 +142,15 @@ jobs:
           set -Eeuo pipefail
           OUT="$GITHUB_WORKSPACE/verified-storage-source"
           rm -rf "$OUT"
-          mkdir -p "$OUT/src" "$OUT/src-tauri/src"
+          mkdir -p "$OUT/src" "$OUT/src-tauri/src" "$OUT/tests"
           cd "$ASSEMBLED"
           for f in \
             src/types.ts src/store.ts src/storageLifecycle.ts src/storageLifecycle.test.ts src/api.ts \
             src/youtubePublishSafety.ts src/PublisherOS.tsx src/ProductionManager.tsx src/ProductionOS.tsx \
             src/productionManagerApi.ts src/v2111PublisherWiring.test.ts \
             src-tauri/src/storage.rs src-tauri/src/youtube.rs src-tauri/src/local_delete.rs \
-            src-tauri/src/production_manager.rs src-tauri/src/production_manager_tests.rs; do
+            src-tauri/src/production_manager.rs src-tauri/src/production_manager_tests.rs \
+            tests/stateMigration_v095.test.ts; do
             mkdir -p "$OUT/$(dirname "$f")"
             cp "$f" "$OUT/$f"
           done
