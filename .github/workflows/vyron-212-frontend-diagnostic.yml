@@ -6,6 +6,10 @@ on:
       - repair/vyron-native-keychain-diagnostic
     paths:
       - '.github/workflows/vyron-212-frontend-diagnostic.yml'
+      - '.github/scripts/apply_v212_*'
+      - 'src/**'
+      - 'src-tauri/**'
+      - 'tests/**'
   workflow_dispatch:
 
 permissions:
