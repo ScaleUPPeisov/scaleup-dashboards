@@ -59,6 +59,38 @@ jobs:
           test "$(shasum -a 256 "$PATCH" | awk '{print $1}')" = '8de54616bdacd812684c3ec326f330a5f44dabf68b525898634e89b7aa5e4e61'
           cd "$ROOT"
           patch -p1 --forward < "$PATCH"
+          python3 - <<'PY'
+          from pathlib import Path
+          files=[Path('src/storageLifecycle.test.ts'),Path('src/v2111PublisherWiring.test.ts')]
+          def fix_line(line):
+              if 'persistVerifiedUpload' not in line:
+                  return line
+              out=[]; bal=0; quote=None; esc=False
+              for ch in line:
+                  if quote is not None:
+                      out.append(ch)
+                      if esc:
+                          esc=False
+                      elif ch=='\\':
+                          esc=True
+                      elif ch==quote:
+                          quote=None
+                      continue
+                  if ch in ("'",'"','`'):
+                      quote=ch; out.append(ch); continue
+                  if ch=='(':
+                      bal+=1; out.append(ch); continue
+                  if ch==')':
+                      if bal==0:
+                          continue
+                      bal-=1; out.append(ch); continue
+                  out.append(ch)
+              return ''.join(out)
+          for p in files:
+              text=p.read_text()
+              fixed='\n'.join(fix_line(line) for line in text.splitlines())+'\n'
+              p.write_text(fixed)
+          PY
           test "$(node -p "require('./package.json').version")" = '2.1.2'
           test -f src/storageLifecycle.ts
           test -f src/storageLifecycle.test.ts
