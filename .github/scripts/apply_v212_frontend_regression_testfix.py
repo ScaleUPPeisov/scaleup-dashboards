@@ -50,14 +50,15 @@ if changed == 0:
 p.write_text(text)
 print(f'v212 cleanup registration contracts: patched {changed} stale anchor(s)')
 
-# The schedule continuation UI now has an explicit unsynced action instead of the
-# old generic label. Keep the recovery contract aligned with the production UX.
-replace_once(
-    root / 'src/v2100PublishRecovery.test.ts',
-    "expect(publisher).toContain('Синхронизировать с YouTube')",
-    "expect(publisher).toContain('Получить актуальное расписание канала')",
-    'publish recovery schedule sync UI contract',
-)
-
 schedule_patch = Path(__file__).with_name('apply_v212_schedule_continuation.py')
 subprocess.run([sys.executable, str(schedule_patch), str(root)], check=True)
+
+# The schedule continuation patch replaces the old generic sync control with an
+# explicit unsynced action. Apply the legacy recovery-test contract after that
+# production patch so the assertion follows the actual assembled UI.
+replace_once(
+    root / 'src/v2100PublishRecovery.test.ts',
+    "Синхронизировать с YouTube",
+    "Получить актуальное расписание канала",
+    'publish recovery schedule sync UI contract',
+)
