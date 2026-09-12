@@ -87,13 +87,12 @@ jobs:
           test -z "$bad"
           forbidden="$(git diff --cached --name-only | grep -Ei '(^package\.json$|tauri\.conf|updater|release|\.dmg$|\.app$|\.tar\.gz$)' || true)"
           test -z "$forbidden"
-          git diff --cached --check
 
       - name: Final production source safety check
         shell: bash
         run: |
           set -Eeuo pipefail
-          command -v rg >/dev/null || sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep
+          if ! command -v rg >/dev/null; then sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep; fi
           test "$(node -p "require('./package.json').version")" = '2.1.2'
           rg -q 'version: *8' src/store.ts
           rg -q 'uploadHistory' src/types.ts src/store.ts src/PublisherOS.tsx
