@@ -1,11 +1,11 @@
 {
   "version": "2.1.2",
-  "notes": "# VYRON 2.1.2\n\nProduction patch release with validated OAuth orphan recovery, channel-identity-safe credential migration, refresh-token preservation, reconnect UUID consistency, per-channel isolation, past-date batch isolation, YouTube upload verification, Shorts MP4/MOV regression and production cleanup protections.\n",
-  "pub_date": "2026-09-10T17:39:30.312771Z",
+  "notes": "VYRON 2.1.2 stable Apple Silicon release from frozen production source 31b810ae4be4c2937deb440dd4be2d24137c7c29",
+  "pub_date": "2026-09-12T16:51:32.855791Z",
   "platforms": {
     "darwin-aarch64": {
       "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.2/VYRON.app.tar.gz",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM1VkRmh3Y3F6SEZYUHVpTkFaVXh1VW40TGxQSUU5SHhQcDFVRmpSdXd6NWIyUjNxc1hlaXF6QXRSVTRPUzRta1RkcXR0ZU9aeHRzTTdsblNKLzN6bHdZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MDYxOTUyCWZpbGU6VllST04uYXBwLnRhci5negpyREVtYkZJa2Q3cGMzMGVHVDlhcnZxakw0S1FORzkyNnRsaTJmQkpCY3lxVGdnTHFudUs2dVZlb2ptVFkwcXp0SHE1c0Q0M2NSUzRZSW41Tm90VkxBZz09Cg=="
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM1phYUFZZVZhWWlqd3B0cXZrWVFDOW9KZ2dLbHVlN3ZEVWhHQWJ3ekhyQ0I3ZDFla3pTSTNBZWZES0tvSjVaKzloV0F1TmxQNTBKbFNkMFZ3cFIrYWdZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MjMxODczCWZpbGU6VllST04uYXBwLnRhci5negpSSGxCYUlqVTFJd1lzR1dKR3F0RDNManFKUTZqSGl0YVowdm94emF0NTlnbUNtbjBXRjBmMEFsUkFHeFpWc0hyNXBMYUJlWDR1Zk50N2NhWFBYWG9EQT09Cg=="
     }
   }
 }
