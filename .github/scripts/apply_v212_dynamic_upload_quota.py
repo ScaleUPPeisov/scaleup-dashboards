@@ -21,9 +21,6 @@ EXPECTED = {
     'src/dynamicUploadQuota.test.ts': '8c5486708ec49da90c64017263f3053de6f98491f06d5cc27860609149d08b45',
 }
 
-PUBLISHER_V2_PREFIX = 'PublisherOS.v2.tsx'
-PUBLISHER_V2_PARTS = [f'PublisherOS.v2.tsx.gz.b64.part{i:02d}' for i in range(9)]
-
 
 def read_b64(name: str) -> bytes:
     p = snap / f'{name}.gz.b64'
@@ -32,20 +29,18 @@ def read_b64(name: str) -> bytes:
     return base64.b64decode(''.join(p.read_text().split()), validate=True)
 
 
-def read_publisher_v2_chunks() -> bytes:
-    # Fail closed: production assembly uses the canonical v2 payload only.
-    # Legacy PublisherOS.tsx.gz.b64(.part*) files may remain for forensics,
-    # but they are never read here and can never be used as a fallback.
-    actual = sorted(p.name for p in snap.glob(f'{PUBLISHER_V2_PREFIX}.gz.b64.part*'))
-    if actual != PUBLISHER_V2_PARTS:
-        missing = sorted(set(PUBLISHER_V2_PARTS) - set(actual))
-        extra = sorted(set(actual) - set(PUBLISHER_V2_PARTS))
-        raise SystemExit(f'PublisherOS v2 transport mismatch; missing={missing}, extra={extra}')
-    encoded = ''.join(''.join((snap / name).read_text().split()) for name in PUBLISHER_V2_PARTS)
+def read_exact_chunks(prefix: str, count: int) -> bytes:
+    expected = [f'{prefix}.gz.b64.part{i:02d}' for i in range(count)]
+    actual = sorted(p.name for p in snap.glob(f'{prefix}.gz.b64.part*'))
+    if actual != expected:
+        missing = sorted(set(expected) - set(actual))
+        extra = sorted(set(actual) - set(expected))
+        raise SystemExit(f'{prefix} transport mismatch; missing={missing}, extra={extra}')
+    encoded = ''.join(''.join((snap / name).read_text().split()) for name in expected)
     try:
         return base64.b64decode(encoded, validate=True)
     except Exception as exc:
-        raise SystemExit(f'PublisherOS v2 base64 decode failed: {exc}') from exc
+        raise SystemExit(f'{prefix} base64 decode failed: {exc}') from exc
 
 
 def install(rel: str, compressed: bytes) -> None:
@@ -69,15 +64,19 @@ def install(rel: str, compressed: bytes) -> None:
 
 install('src/youtubeQuota.ts', read_b64('youtubeQuota.ts'))
 install('src/api.ts', read_b64('api.ts'))
-install('src/PublisherOS.tsx', read_publisher_v2_chunks())
-install('src/SettingsOS.tsx', read_b64('SettingsOS.tsx'))
+install('src/PublisherOS.tsx', read_exact_chunks('PublisherOS.v2.tsx', 9))
+install('src/SettingsOS.tsx', read_exact_chunks('SettingsOS.v2.tsx', 5))
 install('src/publisherQuota.ts', read_b64('publisherQuota.ts'))
 install('src/publisherQuota.test.ts', read_b64('publisherQuota.test.ts'))
 install('src/dynamicUploadQuota.test.ts', read_b64('dynamicUploadQuota.test.ts'))
 
 publisher = (root / 'src/PublisherOS.tsx').read_text()
+settings = (root / 'src/SettingsOS.tsx').read_text()
 for contract in ('youtubeQuotaProjectKey', 'youtubeUploadQuotaSnapshot', 'uploadQuotaCapacity'):
     if contract not in publisher:
         raise SystemExit(f'PublisherOS v2 contract missing: {contract}')
-print('PublisherOS transport contract: NEW V2 PAYLOAD ONLY')
+for contract in ('YOUTUBE API · UPLOAD QUOTA', 'Дневной лимит videos.insert'):
+    if contract not in settings:
+        raise SystemExit(f'SettingsOS v2 contract missing: {contract}')
+print('Dynamic quota transport contract: V2 SPLIT PAYLOADS ONLY')
 print('VYRON 2.1.2 dynamic upload quota overlay: APPLIED')
