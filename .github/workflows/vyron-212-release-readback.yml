@@ -1,0 +1,99 @@
+name: VYRON 2.1.2 Published Release Read-Back
+
+on:
+  push:
+    branches:
+      - repair/vyron-native-keychain-diagnostic
+    paths:
+      - '.github/workflows/vyron-212-release-readback.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  TAG: 'v2.1.2'
+  FROZEN_RELEASE_COMMIT: '31b810ae4be4c2937deb440dd4be2d24137c7c29'
+
+jobs:
+  readback:
+    name: Verify published release and stable updater only
+    runs-on: macos-14
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+    steps:
+      - name: Download public release updater assets
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir release-readback
+          gh release download "$TAG" --repo "$REPO" --dir release-readback \
+            --pattern latest.json --pattern VYRON.app.tar.gz --pattern VYRON.app.tar.gz.sig --pattern UPDATER_SHA256.txt
+          for f in latest.json VYRON.app.tar.gz VYRON.app.tar.gz.sig UPDATER_SHA256.txt; do test -s "release-readback/$f"; done
+          test "$(awk '{print $1}' release-readback/UPDATER_SHA256.txt)" = "$(shasum -a 256 release-readback/VYRON.app.tar.gz | awk '{print $1}')"
+
+      - name: Read production updater and compare exact published signature
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | base64 --decode > live-latest.json
+          python3 - <<'PY'
+          import json,pathlib
+          live=json.loads(pathlib.Path('live-latest.json').read_text())
+          asset=json.loads(pathlib.Path('release-readback/latest.json').read_text())
+          sig=pathlib.Path('release-readback/VYRON.app.tar.gz.sig').read_text().strip()
+          expected_url='https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.2/VYRON.app.tar.gz'
+          for label,d in [('production',live),('release-asset',asset)]:
+            assert d['version']=='2.1.2',(label,d.get('version'))
+            assert set(d['platforms'])=={'darwin-aarch64'},(label,d.get('platforms'))
+            p=d['platforms']['darwin-aarch64']
+            assert p['url']==expected_url,(label,p.get('url'))
+            assert p['signature']==sig and sig,(label,'signature mismatch')
+          assert live['platforms']['darwin-aarch64']['signature']==asset['platforms']['darwin-aarch64']['signature']
+          print('UPDATER METADATA READ-BACK: PASS')
+          PY
+
+      - name: Cryptographically verify downloaded updater archive
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -n "${TAURI_UPDATER_PUBLIC_KEY:-}"
+          if ! command -v minisign >/dev/null; then brew install minisign; fi
+          python3 - <<'PY'
+          import base64,os,pathlib
+          raw=os.environ['TAURI_UPDATER_PUBLIC_KEY'].strip()
+          once=base64.b64decode(raw,validate=True).decode()
+          if once.startswith('untrusted comment:'):
+            pub=base64.b64decode(raw,validate=True)
+          else:
+            pub=base64.b64decode(once.strip(),validate=True)
+          sig=base64.b64decode(pathlib.Path('release-readback/VYRON.app.tar.gz.sig').read_text().strip(),validate=True)
+          pathlib.Path('/tmp/vyron-readback.pub').write_bytes(pub)
+          pathlib.Path('/tmp/vyron-readback.minisig').write_bytes(sig)
+          PY
+          minisign -Vm release-readback/VYRON.app.tar.gz -p /tmp/vyron-readback.pub -x /tmp/vyron-readback.minisig
+          echo 'UPDATER ARCHIVE/SIGNATURE READ-BACK: PASS'
+
+      - name: Verify final tag and stable release state
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(gh api "repos/$REPO/git/ref/tags/$TAG" --jq '.object.sha')" = "$FROZEN_RELEASE_COMMIT"
+          REL=$(gh api "repos/$REPO/releases/tags/$TAG")
+          python3 - "$REL" <<'PY'
+          import json,sys
+          d=json.loads(sys.argv[1])
+          assert d['tag_name']=='v2.1.2'
+          assert d['target_commitish']=='31b810ae4be4c2937deb440dd4be2d24137c7c29'
+          assert d['draft'] is False and d['prerelease'] is False
+          names={a['name'] for a in d['assets']}
+          required={'VYRON-2.1.2-macOS-AppleSilicon.dmg','VYRON.app.tar.gz','VYRON.app.tar.gz.sig','VYRON-2.1.2-source.tar.gz','SHA256.txt','UPDATER_SHA256.txt','SOURCE_SHA256.txt','FINAL_TEST_REPORT.md','RELEASE_NOTES.md','latest.json'}
+          assert required<=names,required-names
+          print(d['html_url'])
+          print('PUBLISHED RELEASE READ-BACK: PASS')
+          PY
+          echo 'STABLE UPDATER: 2.1.2'
+          echo 'VYRON 2.1.2 RELEASED'
