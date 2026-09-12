@@ -21,26 +21,46 @@ EXPECTED = {
     'src/dynamicUploadQuota.test.ts': '8c5486708ec49da90c64017263f3053de6f98491f06d5cc27860609149d08b45',
 }
 
+PUBLISHER_V2_PREFIX = 'PublisherOS.v2.tsx'
+PUBLISHER_V2_PARTS = [f'PublisherOS.v2.tsx.gz.b64.part{i:02d}' for i in range(9)]
+
 
 def read_b64(name: str) -> bytes:
     p = snap / f'{name}.gz.b64'
-    return base64.b64decode(''.join(p.read_text().split()))
+    if not p.is_file():
+        raise SystemExit(f'missing snapshot: {p.name}')
+    return base64.b64decode(''.join(p.read_text().split()), validate=True)
 
 
-def read_chunks(prefix: str) -> bytes:
-    parts = sorted(snap.glob(f'{prefix}.gz.b64.part*'))
-    if not parts:
-        raise SystemExit(f'no snapshot chunks for {prefix}')
-    encoded = ''.join(''.join(p.read_text().split()) for p in parts)
-    return base64.b64decode(encoded)
+def read_publisher_v2_chunks() -> bytes:
+    # Fail closed: production assembly uses the canonical v2 payload only.
+    # Legacy PublisherOS.tsx.gz.b64(.part*) files may remain for forensics,
+    # but they are never read here and can never be used as a fallback.
+    actual = sorted(p.name for p in snap.glob(f'{PUBLISHER_V2_PREFIX}.gz.b64.part*'))
+    if actual != PUBLISHER_V2_PARTS:
+        missing = sorted(set(PUBLISHER_V2_PARTS) - set(actual))
+        extra = sorted(set(actual) - set(PUBLISHER_V2_PARTS))
+        raise SystemExit(f'PublisherOS v2 transport mismatch; missing={missing}, extra={extra}')
+    encoded = ''.join(''.join((snap / name).read_text().split()) for name in PUBLISHER_V2_PARTS)
+    try:
+        return base64.b64decode(encoded, validate=True)
+    except Exception as exc:
+        raise SystemExit(f'PublisherOS v2 base64 decode failed: {exc}') from exc
 
 
 def install(rel: str, compressed: bytes) -> None:
-    data = gzip.decompress(compressed)
+    try:
+        data = gzip.decompress(compressed)
+    except Exception as exc:
+        raise SystemExit(f'{rel}: gzip decompress failed: {exc}') from exc
     actual = hashlib.sha256(data).hexdigest()
     expected = EXPECTED[rel]
     if actual != expected:
         raise SystemExit(f'{rel}: snapshot sha256 mismatch: {actual} != {expected}')
+    try:
+        data.decode('utf-8')
+    except UnicodeDecodeError as exc:
+        raise SystemExit(f'{rel}: snapshot is not valid UTF-8: {exc}') from exc
     out = root / rel
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(data)
@@ -49,10 +69,15 @@ def install(rel: str, compressed: bytes) -> None:
 
 install('src/youtubeQuota.ts', read_b64('youtubeQuota.ts'))
 install('src/api.ts', read_b64('api.ts'))
-install('src/PublisherOS.tsx', read_chunks('PublisherOS.tsx'))
+install('src/PublisherOS.tsx', read_publisher_v2_chunks())
 install('src/SettingsOS.tsx', read_b64('SettingsOS.tsx'))
 install('src/publisherQuota.ts', read_b64('publisherQuota.ts'))
 install('src/publisherQuota.test.ts', read_b64('publisherQuota.test.ts'))
 install('src/dynamicUploadQuota.test.ts', read_b64('dynamicUploadQuota.test.ts'))
 
+publisher = (root / 'src/PublisherOS.tsx').read_text()
+for contract in ('youtubeQuotaProjectKey', 'youtubeUploadQuotaSnapshot', 'uploadQuotaCapacity'):
+    if contract not in publisher:
+        raise SystemExit(f'PublisherOS v2 contract missing: {contract}')
+print('PublisherOS transport contract: NEW V2 PAYLOAD ONLY')
 print('VYRON 2.1.2 dynamic upload quota overlay: APPLIED')
