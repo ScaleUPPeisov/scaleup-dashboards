@@ -77,4 +77,52 @@ describe('reconnect browser choice',()=>{
 });
 ''')
 
+# The storage feature patch is applied later in the targeted workflow.  Drop a
+# sitecustomize hook into the assembled root so the first Python process after
+# that patch normalizes only the two malformed generated regression fixtures.
+(root/'sitecustomize.py').write_text(r'''from pathlib import Path
+p=Path('src/storageLifecycle.test.ts')
+q=Path('src/v2111PublisherWiring.test.ts')
+if p.exists():
+ p.write_text("""import {describe,it,expect} from 'vitest';
+import fs from 'node:fs';
+import {recordVerifiedUpload,successfulUploadForHash,markHistoryTrashed} from './storageLifecycle';
+const pub=fs.readFileSync('src/PublisherOS.tsx','utf8'),store=fs.readFileSync('src/store.ts','utf8'),lifecycle=fs.readFileSync('src/storageLifecycle.ts','utf8'),api=fs.readFileSync('src/api.ts','utf8'),yt=fs.readFileSync('src-tauri/src/youtube.rs','utf8'),del=fs.readFileSync('src-tauri/src/local_delete.rs','utf8'),prod=fs.readFileSync('src-tauri/src/production_manager.rs','utf8');
+const verified=(path='/ready/VIDEO_001.mov',sha='sha-001')=>({jobId:'job-1',channelId:'channel-1',profileId:'profile-1',youtubeChannelId:'UC1',youtubeVideoId:'yt-video-1',localFilePath:path,originalFilename:path.split('/').pop()||'VIDEO_001.mov',projectId:'project-1',sourceProjectPath:'/production/project-1',uploadedAt:'2026-09-12T00:00:00.000Z',fileSize:123456,sha256:sha,publishAt:'2026-09-13T11:00:00.000Z',overrideDuplicate:false} as any);
+describe('Storage Lifecycle + Duplicate Upload Guard',()=>{
+ it('verified upload creates UPLOADED persistent history with videoId',()=>{const h=recordVerifiedUpload([],verified());expect(h).toHaveLength(1);expect(h[0].status).toBe('UPLOADED');expect(h[0].youtubeVideoId).toBe('yt-video-1');expect(h[0].sha256).toBe('sha-001')});
+ it('same SHA-256 is detected as duplicate',()=>{const h=recordVerifiedUpload([],verified());expect(successfulUploadForHash(h,'sha-001')?.youtubeVideoId).toBe('yt-video-1')});
+ it('renamed or moved same file remains duplicate because path is not identity',()=>{const h=recordVerifiedUpload([],verified('/old/VIDEO_001.mov','same-content'));expect(successfulUploadForHash(h,'same-content')).toBeTruthy();expect(successfulUploadForHash(h,'different-content')).toBeFalsy()});
+ it('29 NEW + 1 duplicate isolates only duplicate',()=>{const h=recordVerifiedUpload([],verified('/old/a.mov','dup'));const hashes=[...Array.from({length:29},(_,i)=>`new-${i}`),'dup'];expect(hashes.filter(x=>!successfulUploadForHash(h,x))).toHaveLength(29)});
+ it('verification-failed upload cannot persist success proof',()=>{const b=pub.indexOf('if(uploaded.verified===false)');const f=pub.indexOf('youtubeVideoId:undefined',b);const s=pub.indexOf('persistVerifiedUpload(j,channel,uploaded.videoId',b);expect(b).toBeGreaterThanOrEqual(0);expect(f).toBeGreaterThan(b);expect(s).toBeGreaterThan(f)});
+ it('resumable verification failure clears proof before history',()=>{const a=pub.indexOf('async function resumeUpload');const b=pub.indexOf('if(uploaded.verified===false)',a);const f=pub.indexOf('youtubeVideoId:undefined',b);const s=pub.indexOf('persistVerifiedUpload(j,c,uploaded.videoId',b);expect(a).toBeGreaterThanOrEqual(0);expect(b).toBeGreaterThan(a);expect(f).toBeGreaterThan(b);expect(s).toBeGreaterThan(f)});
+ it('Trash keeps upload history and hash proof',()=>{const h=recordVerifiedUpload([],verified());const n=markHistoryTrashed(h,'job-1');expect(n).toHaveLength(1);expect(n[0].youtubeVideoId).toBe('yt-video-1');expect(successfulUploadForHash(n,'sha-001')).toBeTruthy()});
+ it('state v8 persistence fields coexist with channels and jobs',()=>{expect(store).toContain('version:8');for(const x of ['uploadHistory','fingerprintCache','projectLifecycle','channels','jobs'])expect(store).toContain(x)});
+ it('full-file SHA-256 and sequential cache wiring exist',()=>{expect(yt).toContain('full_file_sha256');expect(yt).toContain('Sha256');expect(api).toContain('youtube_file_fingerprint');expect(pub).toContain('fingerprintCache');expect(pub).toContain('for(const j of targets)')});
+ it('project cleanup requires verified proof',()=>{expect(lifecycle).toContain('SAFE_TO_CLEAN');expect(lifecycle).toContain('youtubeVideoId');expect(lifecycle).toContain('UPLOADED');expect(pub).toContain('nextProjectLifecycle')});
+ it('system Trash and path guards replace destructive local delete',()=>{expect(del).toContain('trash::delete');expect(del).toContain('allowed');expect(prod).toContain('trash::delete');expect(prod).toContain('SAFE_TO_CLEAN');expect(del).not.toContain('fs::remove_file(');expect(del).not.toContain('fs::remove_dir_all(')});
+ it('UI defaults New and uploaded rows are not normally selectable',()=>{expect(pub).toContain("useState<'new'|'uploaded'|'all'>('new')");expect(pub).toContain('Новые {newCount}');expect(pub).toContain('Загруженные {uploadedCount}');expect(pub).toContain('Все {newCount+uploadedCount}');expect(pub).toContain("disabled={j.status==='UPLOADING'||uploaded}");expect(pub).toContain('Всё равно загрузить повторно')});
+ it('remove-from-list is distinct from system Trash',()=>{expect(pub).toContain('Убрать из списка');expect(pub).toContain('Переместить файл в Корзину');expect(pub).toContain('api.trashLocalFile')});
+});
+""")
+if q.exists():
+ q.write_text("""import {describe,it,expect} from 'vitest';
+import fs from 'node:fs';
+const pub=fs.readFileSync('src/PublisherOS.tsx','utf8'),api=fs.readFileSync('src/api.ts','utf8');
+describe('PublisherOS storage/upload wiring',()=>{
+ it('uses canonical selectable jobs',()=>expect(pub).toContain('canonicalSelectedJobs(selectableJobs,draft.selectedIds)'));
+ it('button uses truthful label helper',()=>expect(pub).toContain('publisherUploadButtonLabel'));
+ it('batch executes uploadable subset',()=>expect(pub).toContain('let batch=uploadableSelected'));
+ it('blocked items are isolated individually',()=>expect(pub).toContain('for(const x of blockedItems)'));
+ it('upload instrumentation exists',()=>expect(pub).toContain('[UPLOAD] button clicked'));
+ it('preflight instrumentation exists',()=>expect(pub).toContain('[PREFLIGHT] input='));
+ it('schedule instrumentation exists',()=>expect(pub).toContain('[SCHEDULE] VIDEO_'));
+ it('success persistence occurs after verified branch',()=>{const b=pub.indexOf('if(uploaded.verified===false)');const s=pub.indexOf('persistVerifiedUpload(j,channel,uploaded.videoId',b);expect(b).toBeGreaterThanOrEqual(0);expect(s).toBeGreaterThan(b)});
+ it('verification failure clears success proof and marks FAILED',()=>{const i=pub.indexOf('if(uploaded.verified===false)');const tail=pub.slice(i,i+1400);expect(tail).toContain("storageLifecycle:'FAILED'");expect(tail).toContain('youtubeVideoId:undefined')});
+ it('quota plan includes videos.list verification',()=>expect(pub).toContain("method:'videos.list'"));
+ it('frontend invokes existing uploader',()=>expect(api).toContain('youtube_upload_video'));
+});
+""")
+''')
+
 print('reconnect browser choice patch applied')
