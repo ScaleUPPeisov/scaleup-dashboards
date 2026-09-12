@@ -1,2 +1,2 @@
 inspect exact current candidate resumable upload body transfer and progress accounting
-2026-09-12 attempt 3
+2026-09-12 attempt 4
