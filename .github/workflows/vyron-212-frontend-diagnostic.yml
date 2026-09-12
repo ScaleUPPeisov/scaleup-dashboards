@@ -113,6 +113,8 @@ jobs:
           done < "$RUNNER_TEMP/feature-files.txt"
           test "$copied" -ge 10
 
+          python3 .github/scripts/apply_v212_frontend_regression_testfix.py "$ROOT"
+
           for V in 2.0.8 2.0.9; do
             mkdir -p "$LEGACY/$V/src"
             gh release download "v$V" --repo "$REPO" --pattern "VYRON-$V-source.tar.gz" --dir "$LEGACY/$V"
