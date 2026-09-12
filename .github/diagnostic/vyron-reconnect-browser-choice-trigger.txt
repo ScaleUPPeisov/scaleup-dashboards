@@ -1,0 +1,4 @@
+VYRON 2.1.2 reconnect browser picker candidate
+reason: recovery UI previously forced preferred/default browser with no per-channel choice
+stable release: NOT MODIFIED
+stable updater: NOT MODIFIED
