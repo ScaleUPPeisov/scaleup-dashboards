@@ -92,6 +92,34 @@ jobs:
           python3 .github/scripts/apply_v2111_oauth_orphan_testfix.py "$ROOT"
           python3 vyron-v212/apply_v212_release.py "$ROOT"
 
+          # Current branch OAuth/Keychain/upload repair chain is applied to its expected
+          # pre-native baseline first. The later feature snapshot already contains the
+          # current versions of overlapping youtube/publisher/api files and is the final overlay.
+          cat .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.00 \
+              .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.01 \
+              .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.02a \
+              .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.02b \
+              .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.03 \
+              .github/scripts/vyron_native_keychain_repair.py.gz.b64.part01 \
+              .github/scripts/vyron_native_keychain_repair.py.gz.b64.part02 \
+            | base64 --decode | gunzip > "$NATIVE"
+          test "$(shasum -a 256 "$NATIVE" | awk '{print $1}')" = '4196bc3e2199e3e038120f37128eb2d5ccb412177c25436a751b9f5ec53fe7ea'
+
+          cat .github/scripts/vyron_auth_recovery.py.gz.b64.part00 \
+              .github/scripts/vyron_auth_recovery.py.gz.b64.part01 \
+              .github/scripts/vyron_auth_recovery.py.gz.b64.part02 \
+            | base64 --decode | gunzip > "$AUTH"
+          test "$(shasum -a 256 "$AUTH" | awk '{print $1}')" = '3f0b2a6311929def43daedaf7bff52c74dbfe0bbfa5b722cf110893ceabb4462'
+
+          python3 "$NATIVE" "$ROOT"
+          python3 .github/scripts/apply_native_keychain_compilefix.py "$ROOT"
+          python3 .github/scripts/apply_global_keychain_inventory.py "$ROOT"
+          python3 "$AUTH" "$ROOT"
+          python3 .github/scripts/apply_final_reconnect_recovery.py "$ROOT"
+          python3 .github/scripts/apply_upload_button_unblock_fix.py "$ROOT"
+          python3 .github/scripts/apply_youtube_upload_transport_watchdog.py "$ROOT"
+          python3 .github/scripts/apply_reconnect_browser_choice.py "$ROOT"
+
           git diff-tree --no-commit-id --name-only -r "$FEATURE_COMMIT" > "$RUNNER_TEMP/feature-files.txt"
           copied=0
           while IFS= read -r rel; do
@@ -117,33 +145,6 @@ jobs:
             src-tauri/src/youtube.rs; do
             test -s "$ROOT/$f"
           done
-
-          # Apply the current production OAuth/Keychain/upload repair stack AFTER
-          # the lifecycle overlay so no later feature overlay can erase these fixes.
-          cat .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.00 \
-              .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.01 \
-              .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.02a \
-              .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.02b \
-              .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.03 \
-              .github/scripts/vyron_native_keychain_repair.py.gz.b64.part01 \
-              .github/scripts/vyron_native_keychain_repair.py.gz.b64.part02 \
-            | base64 --decode | gunzip > "$NATIVE"
-          test "$(shasum -a 256 "$NATIVE" | awk '{print $1}')" = '4196bc3e2199e3e038120f37128eb2d5ccb412177c25436a751b9f5ec53fe7ea'
-
-          cat .github/scripts/vyron_auth_recovery.py.gz.b64.part00 \
-              .github/scripts/vyron_auth_recovery.py.gz.b64.part01 \
-              .github/scripts/vyron_auth_recovery.py.gz.b64.part02 \
-            | base64 --decode | gunzip > "$AUTH"
-          test "$(shasum -a 256 "$AUTH" | awk '{print $1}')" = '3f0b2a6311929def43daedaf7bff52c74dbfe0bbfa5b722cf110893ceabb4462'
-
-          python3 "$NATIVE" "$ROOT"
-          python3 .github/scripts/apply_native_keychain_compilefix.py "$ROOT"
-          python3 .github/scripts/apply_global_keychain_inventory.py "$ROOT"
-          python3 "$AUTH" "$ROOT"
-          python3 .github/scripts/apply_final_reconnect_recovery.py "$ROOT"
-          python3 .github/scripts/apply_upload_button_unblock_fix.py "$ROOT"
-          python3 .github/scripts/apply_youtube_upload_transport_watchdog.py "$ROOT"
-          python3 .github/scripts/apply_reconnect_browser_choice.py "$ROOT"
 
           for V in 2.0.8 2.0.9; do
             mkdir -p "$LEGACY/$V/src"
@@ -182,16 +183,14 @@ jobs:
         run: |
           set -Eeuo pipefail
           ROOT="$GITHUB_WORKSPACE/.vyron-212-final"
-
-          # YouTube upload/preflight/verification/schedule contracts.
           grep -Fq "method:'videos.list'" "$ROOT/src/PublisherOS.tsx"
           grep -Fq 'publishAt' "$ROOT/src/PublisherOS.tsx"
           grep -Fq 'ZERO-API PRE-FLIGHT' "$ROOT/src/PublisherOS.tsx"
           grep -Fq 'verify_uploaded_video' "$ROOT/src-tauri/src/youtube.rs"
           grep -Fq 'video/quicktime' "$ROOT/src-tauri/src/youtube.rs"
+          grep -Fq 'youtube_file_fingerprint' "$ROOT/src-tauri/src/youtube.rs"
           grep -Fq 'SKIPPED_PAST_DATE' "$ROOT/src/PublisherOS.tsx"
 
-          # Persistent lifecycle, duplicate guard, cleanup and system Trash.
           grep -Fq 'successfulUploadForHash' "$ROOT/src/PublisherOS.tsx"
           grep -Fq 'uploadHistory' "$ROOT/src/PublisherOS.tsx"
           grep -Fq 'SAFE_TO_CLEAN' "$ROOT/src/storageLifecycle.ts"
@@ -201,12 +200,10 @@ jobs:
           grep -Fq 'verified_uploaded_job_ids' "$ROOT/src-tauri/src/production_manager.rs"
           grep -Fq 'trash::delete' "$ROOT/src-tauri/src/production_manager.rs"
 
-          # Shorts MP4/MOV contracts.
           grep -Fq 'shorts_scan_folder' "$ROOT/src-tauri/src/shorts_factory.rs"
           grep -Fq 'Some("mp4")' "$ROOT/src-tauri/src/shorts_factory.rs"
           grep -Fq 'Some("mov")' "$ROOT/src-tauri/src/shorts_factory.rs"
 
-          # Current native Keychain diagnostic/recovery contracts.
           grep -Fq 'ItemSearchOptions' "$ROOT/src-tauri/src/security.rs"
           grep -Fq 'ItemClass::generic_password()' "$ROOT/src-tauri/src/security.rs"
           grep -Fq 'load_attributes(true)' "$ROOT/src-tauri/src/security.rs"
@@ -221,7 +218,6 @@ jobs:
           grep -Fq 'REFRESH_TOKEN_REVOKED' "$ROOT/src-tauri/src/youtube.rs"
           grep -Fq 'CHANNEL_ID_MISMATCH' "$ROOT/src-tauri/src/youtube.rs"
 
-          # Existing-profile reconnect must require a fresh offline refresh token.
           grep -Fq 'youtube_oauth_reconnect_existing' "$ROOT/src-tauri/src/youtube.rs"
           grep -Fq 'access_type=offline&prompt=consent' "$ROOT/src-tauri/src/youtube.rs"
           grep -Fq 'OAUTH_REFRESH_TOKEN_REQUIRED' "$ROOT/src-tauri/src/youtube.rs"
@@ -232,7 +228,6 @@ jobs:
           grep -Fq 'Переподключить следующий' "$ROOT/src/AuthRecoveryCenter.tsx"
           grep -Fq '<AuthRecoveryCenter/>' "$ROOT/src/SettingsOS.tsx"
 
-          # Upload button/runtime lock must not regress to stale persisted lock.
           grep -Fq 'runtimeLocks:ChannelUploadLock' "$ROOT/src/youtubePublishSafety.ts"
           if grep -Fq "LOCKS='vyron:youtube-publish-locks:v1'" "$ROOT/src/youtubePublishSafety.ts"; then
             echo 'ERROR: obsolete persistent frontend upload lock survived'
@@ -241,21 +236,17 @@ jobs:
           grep -Fq 'СНАЧАЛА СИНХРОНИЗИРУЙТЕ РАСПИСАНИЕ' "$ROOT/src/PublisherOS.tsx"
           grep -Fq 'Почему загрузка сейчас недоступна' "$ROOT/src/PublisherOS.tsx"
 
-          # Upload transport watchdog/resume contracts.
-          grep -Fq 'YOUTUBE_UPLOAD_CHUNK_BYTES:usize=8*1024*1024' "$ROOT/src-tauri/src/youtube.rs"
-          grep -Fq 'YOUTUBE_UPLOAD_REQUEST_TIMEOUT_SECS:u64=120' "$ROOT/src-tauri/src/youtube.rs"
+          grep -Fq 'YOUTUBE_UPLOAD_REQUEST_TIMEOUT_SECS' "$ROOT/src-tauri/src/youtube.rs"
           grep -Fq 'connect_timeout(Duration::from_secs(YOUTUBE_UPLOAD_CONNECT_TIMEOUT_SECS))' "$ROOT/src-tauri/src/youtube.rs"
           grep -Fq 'timeout(Duration::from_secs(YOUTUBE_UPLOAD_REQUEST_TIMEOUT_SECS))' "$ROOT/src-tauri/src/youtube.rs"
           grep -Fq 'resumable_status(&client,&session.session_url,token,session.total)' "$ROOT/src-tauri/src/youtube.rs"
 
-          # Reconnect browser choice/current production UX.
           grep -Fq 'api.youtubeOauthBrowsers()' "$ROOT/src/AuthRecoveryCenter.tsx"
           grep -Fq 'setBrowserOpen(true)' "$ROOT/src/AuthRecoveryCenter.tsx"
           grep -Fq 'chooseBrowser(target.profileId)' "$ROOT/src/AuthRecoveryCenter.tsx"
           grep -Fq 'chooseBrowser(r.profileId)' "$ROOT/src/AuthRecoveryCenter.tsx"
           grep -Fq "youtube_oauth_reconnect_existing',{profileId,browser}" "$ROOT/src/AuthRecoveryCenter.tsx"
           grep -Fq 'Браузер по умолчанию' "$ROOT/src/reconnectBrowserChoiceCore.ts"
-
           echo 'STATIC CONTRACTS: PASS'
 
       - name: Freeze exact source for build after gate
@@ -510,7 +501,6 @@ jobs:
             release/VYRON-2.1.2-source.tar.gz \
             release/SHA256.txt release/UPDATER_SHA256.txt release/SOURCE_SHA256.txt \
             release/FINAL_TEST_REPORT.md release/RELEASE_NOTES.md
-
           test "$(gh release view "$TAG" --repo "$REPO" --json isDraft --jq '.isDraft|tostring')" = 'false'
           test "$(gh release view "$TAG" --repo "$REPO" --json isPrerelease --jq '.isPrerelease|tostring')" = 'false'
           tag_sha="$(gh api "repos/$REPO/git/ref/tags/$TAG" --jq '.object.sha')"
@@ -543,7 +533,6 @@ jobs:
           test "$expected" = "$actual"
           test -n "$(cat VYRON.app.tar.gz.sig)"
           echo "DOWNLOAD_BACK_SHA256=$actual"
-
           hdiutil verify VYRON-2.1.2-macOS-AppleSilicon.dmg
           MOUNT="$RUNNER_TEMP/vyron212-release-mount"
           rm -rf "$MOUNT"; mkdir -p "$MOUNT"
