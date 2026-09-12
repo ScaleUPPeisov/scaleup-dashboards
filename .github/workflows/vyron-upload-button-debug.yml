@@ -1,0 +1,55 @@
+name: VYRON Upload Button Exact Source Diagnostic
+
+on:
+  push:
+    branches:
+      - repair/vyron-native-keychain-diagnostic
+    paths:
+      - '.github/diagnostic/vyron-upload-button-debug-trigger.txt'
+
+permissions:
+  contents: read
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  BASE_TAG: v2.1.2
+
+jobs:
+  inspect:
+    runs-on: macos-14
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconstruct exact current candidate source and inspect upload path
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ROOT="$RUNNER_TEMP/vyron-upload-debug"
+          SRC="$RUNNER_TEMP/vyron-source"
+          NATIVE="$RUNNER_TEMP/native.py"
+          AUTH="$RUNNER_TEMP/auth.py"
+          rm -rf "$ROOT" "$SRC" && mkdir -p "$ROOT" "$SRC"
+          gh release download "$BASE_TAG" --repo "$REPO" --dir "$SRC" --pattern 'VYRON-2.1.2-source.tar.gz' --pattern 'SOURCE_SHA256.txt'
+          cd "$SRC"
+          test "$(awk '{print $1}' SOURCE_SHA256.txt)" = "$(shasum -a 256 VYRON-2.1.2-source.tar.gz | awk '{print $1}')"
+          tar -xzf VYRON-2.1.2-source.tar.gz -C "$ROOT"
+          cd "$GITHUB_WORKSPACE"
+          cat .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.00 .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.01 .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.02a .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.02b .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.03 .github/scripts/vyron_native_keychain_repair.py.gz.b64.part01 .github/scripts/vyron_native_keychain_repair.py.gz.b64.part02 | base64 --decode | gunzip > "$NATIVE"
+          cat .github/scripts/vyron_auth_recovery.py.gz.b64.part00 .github/scripts/vyron_auth_recovery.py.gz.b64.part01 .github/scripts/vyron_auth_recovery.py.gz.b64.part02 | base64 --decode | gunzip > "$AUTH"
+          python3 "$NATIVE" "$ROOT"
+          python3 .github/scripts/apply_native_keychain_compilefix.py "$ROOT"
+          python3 .github/scripts/apply_global_keychain_inventory.py "$ROOT"
+          python3 "$AUTH" "$ROOT"
+          python3 .github/scripts/apply_final_reconnect_recovery.py "$ROOT"
+          cd "$ROOT"
+          echo '=== BUTTON / HANDLER MATCHES ==='
+          grep -n -E 'ЗАГРУЗИТЬ|ПРОВЕРИТЬ НА ОДНОМ|upload|Upload|publishing|isUploading|busy|ОШИБКА|ЗАГРУЖАЕТСЯ' src/PublisherOS.tsx | tail -n 220 || true
+          echo '=== BUTTON REGION ==='
+          L=$(grep -n 'ЗАГРУЗИТЬ.*ВИДЕО НА YOUTUBE' src/PublisherOS.tsx | tail -1 | cut -d: -f1 || true)
+          if [ -n "$L" ]; then S=$((L-90)); [ "$S" -lt 1 ] && S=1; E=$((L+45)); nl -ba src/PublisherOS.tsx | sed -n "${S},${E}p"; fi
+          echo '=== UPLOAD FUNCTIONS ==='
+          grep -n -E 'function .*upload|const .*upload|async .*upload|run.*upload|start.*upload|handle.*upload|publishSelected|execute.*batch' src/PublisherOS.tsx || true
+          echo '=== STATUS FILTERS ==='
+          grep -n -E 'status.*(ERROR|UPLOADING|READY)|ERROR.*status|UPLOADING.*status|selected.*filter|filter.*selected' src/PublisherOS.tsx || true
