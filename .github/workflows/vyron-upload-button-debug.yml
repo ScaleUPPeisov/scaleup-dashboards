@@ -22,7 +22,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
-      - name: Reconstruct exact current candidate source and inspect upload path
+      - name: Reconstruct exact current candidate source and inspect upload transport
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -43,12 +43,13 @@ jobs:
           python3 .github/scripts/apply_global_keychain_inventory.py "$ROOT"
           python3 "$AUTH" "$ROOT"
           python3 .github/scripts/apply_final_reconnect_recovery.py "$ROOT"
+          python3 .github/scripts/apply_upload_button_unblock.py "$ROOT"
           cd "$ROOT"
-          echo '=== PUBLISHER INIT/EFFECTS ==='
-          nl -ba src/PublisherOS.tsx | sed -n '25,72p'
-          echo '=== YOUTUBE PUBLISH SAFETY ==='
-          nl -ba src/youtubePublishSafety.ts | sed -n '1,260p'
-          echo '=== PREFLIGHT RUNTIME ==='
-          nl -ba src/publisherRuntime.ts | sed -n '1,240p'
-          echo '=== UPLOAD SESSIONS API / BACKEND REFERENCES ==='
-          grep -R -n -E 'youtubeUploadSessions|youtube_upload_sessions|cancel_upload_session|uploadSessions|UPLOADING' src src-tauri/src | head -n 260 || true
+          echo '=== YOUTUBE UPLOAD FUNCTION LOCATIONS ==='
+          grep -n -E 'youtube_upload_video|youtube_resume_upload|resumable|Content-Range|content-range|Range|upload-progress|youtube-progress|emit.*progress|offset|chunk' src-tauri/src/youtube.rs | head -n 320 || true
+          echo '=== YOUTUBE.RS 300-470 ==='
+          nl -ba src-tauri/src/youtube.rs | sed -n '300,470p'
+          echo '=== YOUTUBE.RS 470-650 ==='
+          nl -ba src-tauri/src/youtube.rs | sed -n '470,650p'
+          echo '=== API PROGRESS EVENT ==='
+          grep -R -n -E 'youtube-progress|youtube_progress|onYoutubeProgress|uploadProgress' src src-tauri/src | head -n 220 || true
