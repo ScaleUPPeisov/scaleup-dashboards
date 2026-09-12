@@ -1,0 +1,92 @@
+name: VYRON Old Client UI Preflight
+
+on:
+  push:
+    branches: [repair/vyron-native-keychain-diagnostic]
+    paths: ['.github/workflows/vyron-old-client-ui-preflight.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  OLD_RUN: '34508993436'
+  OLD_ARTIFACT: 'VYRON-2.1.2-production-candidate'
+
+jobs:
+  preflight:
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+      - name: Download actual old 2.1.2 production artifact
+        env: {GH_TOKEN: '${{ github.token }}'}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir old
+          gh run download "$OLD_RUN" --repo "$REPO" -n "$OLD_ARTIFACT" -D old
+          test -s old/VYRON-2.1.2-macOS-AppleSilicon.dmg
+          M="$RUNNER_TEMP/old-dmg"; mkdir -p "$M"
+          hdiutil attach old/VYRON-2.1.2-macOS-AppleSilicon.dmg -nobrowse -readonly -mountpoint "$M" >/dev/null
+          cp -R "$M/VYRON.app" "$RUNNER_TEMP/VYRON-old-2.1.2.app"
+          hdiutil detach "$M" >/dev/null
+          APP="$RUNNER_TEMP/VYRON-old-2.1.2.app"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = '2.1.2'
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = 'studio.channelflow.desktop'
+          echo "OLD_APP=$APP" >> "$GITHUB_ENV"
+      - name: Seed isolated valid local app state without owner key
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          DATA="$HOME/Library/Application Support/studio.channelflow.desktop"
+          rm -rf "$DATA"; mkdir -p "$DATA"
+          cat > "$DATA/license.json" <<'JSON'
+          {"valid":true,"type":"ci-updater-acceptance","expiresAt":null,"maskedKey":"CI••••TEST"}
+          JSON
+          cat > "$DATA/state.json" <<'JSON'
+          {"version":8,"channels":[],"jobs":[],"competitors":[],"settings":{"workspace":"","endlumePath":"","youtubeApiKey":"","autoCheckUpdates":true,"reduceMotion":false,"fpsMonitor":false},"logs":[],"uploadHistory":[],"fingerprintCache":{},"projectLifecycle":{}}
+          JSON
+      - name: Launch actual old app and inspect UI automation path
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          xattr -dr com.apple.quarantine "$OLD_APP" || true
+          open -na "$OLD_APP"
+          for i in {1..30}; do
+            if pgrep -f "$OLD_APP/Contents/MacOS" >/dev/null || pgrep -if 'VYRON|channelflow' >/dev/null; then break; fi
+            sleep 1
+          done
+          ps aux | grep -Ei 'VYRON|channelflow' | grep -v grep | tee /tmp/vyron-procs.txt
+          test -s /tmp/vyron-procs.txt
+          sleep 4
+          osascript <<'APPLESCRIPT' | tee /tmp/ui.txt
+          tell application "System Events"
+            set out to ""
+            repeat with p in application processes
+              set n to name of p
+              if n contains "VYRON" or n contains "channelflow" then
+                set out to out & "PROCESS=" & n & linefeed
+                try
+                  repeat with w in windows of p
+                    set out to out & "WINDOW=" & (name of w as text) & linefeed
+                    try
+                      repeat with b in buttons of w
+                        set out to out & "BUTTON=" & (name of b as text) & linefeed
+                      end repeat
+                    end try
+                  end repeat
+                end try
+              end if
+            end repeat
+            return out
+          end tell
+          APPLESCRIPT
+          grep -q 'PROCESS=' /tmp/ui.txt
+          echo 'REAL OLD APP UI AUTOMATION PREFLIGHT: PASS'
+      - name: Cleanup
+        if: always()
+        shell: bash
+        run: |
+          pkill -if 'VYRON|channelflow' || true
