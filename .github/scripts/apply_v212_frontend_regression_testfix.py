@@ -62,3 +62,6 @@ replace_once(
     "Получить актуальное расписание канала",
     'publish recovery schedule sync UI contract',
 )
+
+quota_patch = Path(__file__).with_name('apply_v212_dynamic_upload_quota.py')
+subprocess.run([sys.executable, str(quota_patch), str(root)], check=True)
