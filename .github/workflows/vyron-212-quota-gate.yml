@@ -127,7 +127,7 @@ jobs:
             'Video Uploads сегодня','Осталось upload-квоты','Можно загрузить сегодня',
             'выберите видео','General API quota','Upload quota','videos.insert operations:',
             'Observed today:','Configured limit:','Remaining before:','Remaining after:',
-            'youtubeQuotaProjectKey','youtubeUploadQuotaState','publisherVideoCapacity'
+            'youtubeQuotaProjectIdentity','youtubeUploadQuotaState','publisherVideoCapacity'
           ]
           required_settings=[
             'YOUTUBE API · UPLOAD QUOTA','Дневной лимит videos.insert','Использовано сегодня',
