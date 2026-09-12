@@ -1,0 +1,110 @@
+name: VYRON Old 2.1.2 Update UI Inspect
+
+on:
+  push:
+    branches: [repair/vyron-native-keychain-diagnostic]
+    paths: ['.github/workflows/vyron-old212-update-ui-inspect.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  OLD_RUN: '34508993436'
+  OLD_ARTIFACT: 'VYRON-2.1.2-production-candidate'
+
+jobs:
+  inspect:
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+      - name: Restore actual old public 2.1.2 app
+        shell: bash
+        env: {GH_TOKEN: '${{ github.token }}'}
+        run: |
+          set -Eeuo pipefail
+          mkdir old
+          gh run download "$OLD_RUN" --repo "$REPO" -n "$OLD_ARTIFACT" -D old
+          M="$RUNNER_TEMP/old212-dmg"; mkdir -p "$M"
+          hdiutil attach old/VYRON-2.1.2-macOS-AppleSilicon.dmg -nobrowse -readonly -mountpoint "$M" >/dev/null
+          cp -R "$M/VYRON.app" "$RUNNER_TEMP/VYRON-old-2.1.2.app"
+          hdiutil detach "$M" >/dev/null
+          APP="$RUNNER_TEMP/VYRON-old-2.1.2.app"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = '2.1.2'
+          echo "OLD_APP=$APP" >> "$GITHUB_ENV"
+      - name: Seed isolated state and launch
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          DATA="$HOME/Library/Application Support/studio.channelflow.desktop"
+          rm -rf "$DATA"; mkdir -p "$DATA"
+          cat > "$DATA/license.json" <<'JSON'
+          {"valid":true,"type":"ci-updater-acceptance","expiresAt":null,"maskedKey":"CI••••TEST"}
+          JSON
+          cat > "$DATA/state.json" <<'JSON'
+          {"version":8,"channels":[],"jobs":[],"competitors":[],"settings":{"workspace":"","endlumePath":"","youtubeApiKey":"","autoCheckUpdates":true,"reduceMotion":false,"fpsMonitor":false},"logs":[],"uploadHistory":[],"fingerprintCache":{},"projectLifecycle":{}}
+          JSON
+          xattr -dr com.apple.quarantine "$OLD_APP" || true
+          open -na "$OLD_APP"
+          for i in {1..30}; do pgrep -if "$OLD_APP/Contents/MacOS/channelflow" >/dev/null && break; sleep 1; done
+          sleep 10
+      - name: Dump full accessibility tree after updater check
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          osascript <<'APPLESCRIPT' > /tmp/ax.txt
+          on safeProp(e, p)
+            try
+              if p is "role" then return role of e as text
+              if p is "subrole" then return subrole of e as text
+              if p is "name" then return name of e as text
+              if p is "description" then return description of e as text
+              if p is "value" then return value of e as text
+              if p is "position" then return position of e as text
+              if p is "size" then return size of e as text
+            on error
+              return ""
+            end try
+            return ""
+          end safeProp
+          tell application "System Events"
+            set targetProc to first application process whose name is "channelflow"
+            set out to "PROCESS=" & name of targetProc & linefeed
+            repeat with w in windows of targetProc
+              set out to out & "WINDOW=" & (name of w as text) & linefeed
+              try
+                set elems to entire contents of w
+                repeat with e in elems
+                  set r to my safeProp(e,"role")
+                  set sr to my safeProp(e,"subrole")
+                  set n to my safeProp(e,"name")
+                  set d to my safeProp(e,"description")
+                  set v to my safeProp(e,"value")
+                  set pos to my safeProp(e,"position")
+                  set sz to my safeProp(e,"size")
+                  if n is not "" or d is not "" or v is not "" or r contains "Button" or r contains "StaticText" then
+                    set out to out & "E|role=" & r & "|subrole=" & sr & "|name=" & n & "|desc=" & d & "|value=" & v & "|pos=" & pos & "|size=" & sz & linefeed
+                  end if
+                end repeat
+              end try
+            end repeat
+            return out
+          end tell
+          APPLESCRIPT
+          cat /tmp/ax.txt
+          grep -Ei '2\.1\.3|обнов|update|available' /tmp/ax.txt || true
+          screencapture -x /tmp/vyron-old212-update.png || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vyron-old212-update-ui-inspect
+          path: |
+            /tmp/ax.txt
+            /tmp/vyron-old212-update.png
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Cleanup
+        if: always()
+        shell: bash
+        run: pkill -if 'VYRON|channelflow' || true
