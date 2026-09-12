@@ -13,6 +13,8 @@ const api=fs.readFileSync('src/api.ts','utf8');
 const yt=fs.readFileSync('src-tauri/src/youtube.rs','utf8');
 const del=fs.readFileSync('src-tauri/src/local_delete.rs','utf8');
 const prod=fs.readFileSync('src-tauri/src/production_manager.rs','utf8');
+const delProd=del.split('#[cfg(test)]',1)[0];
+const prodProd=prod.split('#[cfg(test)]',1)[0];
 
 const verified=(path='/ready/VIDEO_001.mov',sha='sha-001')=>({
  jobId:'job-1',channelId:'channel-1',profileId:'profile-1',youtubeChannelId:'UC1',youtubeVideoId:'yt-video-1',
@@ -31,7 +33,7 @@ describe('Storage Lifecycle + Duplicate Upload Guard',()=>{
  it('state v8 migration fields are persistent and old datasets remain in store schema',()=>{expect(store).toContain('version:8');expect(store).toContain('uploadHistory');expect(store).toContain('fingerprintCache');expect(store).toContain('projectLifecycle');expect(store).toContain('channels');expect(store).toContain('jobs')});
  it('full-file SHA-256 and cache metadata are wired',()=>{expect(yt).toContain('full_file_sha256');expect(yt).toContain('Sha256');expect(api).toContain('youtube_file_fingerprint');expect(pub).toContain('fingerprintCache');expect(pub).toContain('for(const j of targets)')});
  it('project safe cleanup requires verified upload proof',()=>{expect(lifecycle).toContain('SAFE_TO_CLEAN');expect(lifecycle).toContain('youtubeVideoId');expect(lifecycle).toContain('UPLOADED');expect(pub).toContain('nextProjectLifecycle')});
- it('production media deletion uses system Trash and guarded roots',()=>{expect(del).toContain('trash::delete');expect(del).toContain('allowed');expect(prod).toContain('trash::delete');expect(prod).toContain('SAFE_TO_CLEAN');expect(del).not.toContain('fs::remove_file(');expect(del).not.toContain('fs::remove_dir_all(')});
+ it('production media deletion uses system Trash and guarded roots',()=>{expect(delProd).toContain('trash::delete');expect(delProd).toContain('allowed');expect(prodProd).toContain('trash::delete');expect(prodProd).toContain('SAFE_TO_CLEAN');expect(delProd).not.toContain('fs::remove_file(');expect(delProd).not.toContain('fs::remove_dir_all(');expect(prodProd).not.toContain('fs::remove_file(');expect(prodProd).not.toContain('fs::remove_dir_all(')});
  it('UI defaults to New and uploaded items are not normally selectable',()=>{expect(pub).toContain("useState<'new'|'uploaded'|'all'>('new')");expect(pub).toContain('Новые {newCount}');expect(pub).toContain('Загруженные {uploadedCount}');expect(pub).toContain('Все {newCount+uploadedCount}');expect(pub).toContain("disabled={j.status==='UPLOADING'||uploaded}");expect(pub).toContain('Всё равно загрузить повторно')});
  it('remove from list and physical Trash are distinct actions',()=>{expect(pub).toContain('Убрать из списка');expect(pub).toContain('Переместить файл в Корзину');expect(pub).toContain('api.trashLocalFile')});
 });
