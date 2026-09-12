@@ -1,2 +1,2 @@
 run storage lifecycle + duplicate upload guard targeted gate
-retry: cleanup assertions scoped to user asset delete paths
+retry: final Rust blockers only; frontend 34/34 already passed
