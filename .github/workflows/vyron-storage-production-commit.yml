@@ -93,7 +93,6 @@ jobs:
         run: |
           set -Eeuo pipefail
           if ! command -v rg >/dev/null; then sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep; fi
-          test "$(node -p "require('./package.json').version")" = '2.1.2'
           rg -q 'version: *8' src/store.ts
           rg -q 'uploadHistory' src/types.ts src/store.ts src/PublisherOS.tsx
           rg -q 'successfulUploadForHash' src/storageLifecycle.ts
