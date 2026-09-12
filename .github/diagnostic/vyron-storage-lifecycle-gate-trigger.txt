@@ -1,4 +1,4 @@
 run storage lifecycle + duplicate upload guard targeted gate
 retry: macOS base64 decode fixed
 retry: ripgrep available
-retry: corrected feature test syntax
+retry: corrected exact feature assertions
