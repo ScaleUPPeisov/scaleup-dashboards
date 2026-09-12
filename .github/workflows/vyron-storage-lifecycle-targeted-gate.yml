@@ -123,14 +123,25 @@ jobs:
           rg -q "successfulUploadForHash" src/storageLifecycle.ts
           rg -q "verification" src/PublisherOS.tsx
           rg -q "youtubeVideoId:undefined" src/PublisherOS.tsx
-          ! rg -n "remove_file\(|remove_dir_all\(" src-tauri/src/local_delete.rs
-          rg -q "trash::delete" src-tauri/src/local_delete.rs
+          rg -q "trash::delete" src-tauri/src/local_delete.rs src-tauri/src/production_manager.rs
           python3 - <<'PY'
           from pathlib import Path
+          ld=Path('src-tauri/src/local_delete.rs').read_text().split('#[cfg(test)]',1)[0]
+          if 'fs::remove_file(' in ld or 'fs::remove_dir_all(' in ld:
+              raise SystemExit('destructive production media delete remains in local_delete')
           s=Path('src-tauri/src/production_manager.rs').read_text()
-          prod=s.split('#[cfg(test)]',1)[0]
-          bad=[x for x in ('fs::remove_file(', 'fs::remove_dir_all(') if x in prod]
-          if bad: raise SystemExit('destructive production cleanup remains: '+','.join(bad))
+          def section(a,b):
+              i=s.find(a); j=s.find(b,i+len(a))
+              if i<0 or j<=i: raise SystemExit(f'cleanup section missing: {a}')
+              return s[i:j]
+          checks=[
+              section('pub fn delete_production_job_folder','fn folder_stats'),
+              section('fn cleanup_completed_assets','pub fn cleanup_completed_production_assets'),
+              section('pub fn delete_production_batch_projects','pub fn open_production_batch_in_endlume'),
+          ]
+          for block in checks:
+              if 'trash::delete' not in block: raise SystemExit('cleanup path does not use system Trash')
+              if 'fs::remove_file(' in block or 'fs::remove_dir_all(' in block: raise SystemExit('destructive delete remains in user project cleanup path')
           PY
           PATCH="$RUNNER_TEMP/storage.patch"
           changed=$(grep '^+++ b/' "$PATCH" | sed 's#^+++ b/##' | sort)
