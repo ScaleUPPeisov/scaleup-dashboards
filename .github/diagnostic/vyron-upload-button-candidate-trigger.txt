@@ -1,0 +1,4 @@
+VYRON 2.1.2 upload button unblock candidate
+root cause: hidden schedule-sync gate + persistent frontend upload lock
+stable release: NOT MODIFIED
+stable updater: NOT MODIFIED
