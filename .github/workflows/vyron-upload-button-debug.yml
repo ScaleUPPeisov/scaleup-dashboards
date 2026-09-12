@@ -43,7 +43,7 @@ jobs:
           python3 .github/scripts/apply_global_keychain_inventory.py "$ROOT"
           python3 "$AUTH" "$ROOT"
           python3 .github/scripts/apply_final_reconnect_recovery.py "$ROOT"
-          python3 .github/scripts/apply_upload_button_unblock.py "$ROOT"
+          python3 .github/scripts/apply_upload_button_unblock_fix.py "$ROOT"
           cd "$ROOT"
           echo '=== YOUTUBE UPLOAD FUNCTION LOCATIONS ==='
           grep -n -E 'youtube_upload_video|youtube_resume_upload|resumable|Content-Range|content-range|Range|upload-progress|youtube-progress|emit.*progress|offset|chunk' src-tauri/src/youtube.rs | head -n 320 || true
