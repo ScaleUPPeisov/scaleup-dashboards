@@ -1,0 +1,11 @@
+import type {FingerprintCacheEntry,ProjectLifecycleRecord,UploadHistoryRecord,VideoJob} from './types';
+
+export const STORAGE_STATE_VERSION=8;
+export function successfulUploadForHash(history:UploadHistoryRecord[],sha256:string){const h=sha256.trim().toLowerCase();return history.slice().reverse().find(x=>x.status==='UPLOADED'&&Boolean(x.youtubeVideoId)&&x.sha256.toLowerCase()===h)}
+export function duplicateUploadIds(jobs:VideoJob[],fingerprints:Record<string,{sha256:string}>,history:UploadHistoryRecord[],allowOverrideIds:Set<string>=new Set()){return jobs.filter(j=>{if(allowOverrideIds.has(j.id))return false;const fp=fingerprints[j.id];return Boolean(fp&&successfulUploadForHash(history,fp.sha256))}).map(j=>j.id)}
+export function recordVerifiedUpload(history:UploadHistoryRecord[],record:Omit<UploadHistoryRecord,'id'|'status'>){if(!record.youtubeVideoId?.trim())throw new Error('VERIFIED_VIDEO_ID_REQUIRED');if(!record.sha256?.trim())throw new Error('SHA256_REQUIRED');return[...history,{...record,id:crypto.randomUUID(),status:'UPLOADED' as const}]}
+export function cacheHit(entry:FingerprintCacheEntry|undefined,size:number,mtimeMs:number){return Boolean(entry&&entry.size===size&&entry.mtimeMs===mtimeMs&&/^[a-f0-9]{64}$/i.test(entry.sha256))}
+export function nextProjectLifecycle(base:ProjectLifecycleRecord,history:UploadHistoryRecord[]){const proof=base.jobId?history.slice().reverse().find(x=>x.jobId===base.jobId&&x.status==='UPLOADED'&&Boolean(x.youtubeVideoId)):undefined;return{...base,status:(base.renderExists&&base.renderPath&&proof?'SAFE_TO_CLEAN':'RENDERED') as ProjectLifecycleRecord['status'],youtubeVideoId:proof?.youtubeVideoId,uploadedAt:proof?.uploadedAt,updatedAt:new Date().toISOString()}}
+export function canSafelyCleanProject(x:ProjectLifecycleRecord){return x.status==='SAFE_TO_CLEAN'&&Boolean(x.renderExists&&x.renderPath&&x.youtubeVideoId&&x.jobId)}
+export function uploadedJobs(history:UploadHistoryRecord[]){return new Set(history.filter(x=>x.status==='UPLOADED'&&Boolean(x.youtubeVideoId)).map(x=>x.jobId))}
+export function markHistoryTrashed(history:UploadHistoryRecord[],jobId:string,at=new Date().toISOString()){return history.map(x=>x.jobId===jobId&&x.status==='UPLOADED'&&!x.trashedAt?{...x,trashedAt:at}:x)}
