@@ -151,6 +151,34 @@ jobs:
           print('VERSION/BUNDLE CONTRACT: PASS')
           PY
 
+      - name: Capture assembled schedule sources
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p schedule-source
+          for f in \
+            src/publisherSchedule.ts \
+            src/publisherSchedule.test.ts \
+            src/PublisherOS.tsx \
+            src/publisherMetadata.ts \
+            src/publisherRuntime.ts \
+            src/publishWorkspaceState.ts \
+            src/api.ts \
+            src/channelSchedule.ts \
+            src/channelSchedule.test.ts \
+            src/MetadataPage.schedule.test.ts \
+            src-tauri/src/youtube.rs; do
+            if [ -f ".vyron-212-final/$f" ]; then mkdir -p "schedule-source/$(dirname "$f")"; cp ".vyron-212-final/$f" "schedule-source/$f"; fi
+          done
+
+      - name: Upload assembled schedule sources
+        uses: actions/upload-artifact@v4
+        with:
+          name: vyron-212-assembled-schedule-source
+          path: schedule-source/
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Frontend full project tests with captured output
         working-directory: .vyron-212-final
         shell: bash
