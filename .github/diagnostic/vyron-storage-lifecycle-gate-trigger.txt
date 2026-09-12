@@ -1,2 +1,2 @@
 run storage lifecycle + duplicate upload guard targeted gate
-retry: exact normalized regression fixtures invoked
+retry: production-only destructive-delete assertions
