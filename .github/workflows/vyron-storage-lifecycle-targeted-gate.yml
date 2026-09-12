@@ -1,0 +1,142 @@
+name: VYRON Storage Lifecycle Targeted Gate
+
+on:
+  push:
+    branches: [test/vyron-storage-lifecycle-gate]
+    paths: ['.github/diagnostic/vyron-storage-lifecycle-gate-trigger.txt']
+
+permissions:
+  contents: read
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  BASE_TAG: v2.1.2
+
+jobs:
+  storage-lifecycle-gate:
+    runs-on: macos-14
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Assemble exact current VYRON source and apply feature patch
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ROOT="$RUNNER_TEMP/vyron-storage-gate"
+          SRC="$RUNNER_TEMP/vyron-source"
+          NATIVE="$RUNNER_TEMP/native.py"
+          AUTH="$RUNNER_TEMP/auth.py"
+          B64="$RUNNER_TEMP/storage.patch.gz.b64"
+          PATCH="$RUNNER_TEMP/storage.patch"
+          rm -rf "$ROOT" "$SRC" && mkdir -p "$ROOT" "$SRC"
+          gh release download "$BASE_TAG" --repo "$REPO" --dir "$SRC" --pattern 'VYRON-2.1.2-source.tar.gz' --pattern 'SOURCE_SHA256.txt'
+          cd "$SRC"
+          test "$(awk '{print $1}' SOURCE_SHA256.txt)" = "$(shasum -a 256 VYRON-2.1.2-source.tar.gz | awk '{print $1}')"
+          tar -xzf VYRON-2.1.2-source.tar.gz -C "$ROOT"
+          cd "$GITHUB_WORKSPACE"
+          cat .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.00 .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.01 .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.02a .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.02b .github/scripts/vyron_native_keychain_repair.py.gz.b64.p00.03 .github/scripts/vyron_native_keychain_repair.py.gz.b64.part01 .github/scripts/vyron_native_keychain_repair.py.gz.b64.part02 | base64 --decode | gunzip > "$NATIVE"
+          test "$(shasum -a 256 "$NATIVE" | awk '{print $1}')" = '4196bc3e2199e3e038120f37128eb2d5ccb412177c25436a751b9f5ec53fe7ea'
+          cat .github/scripts/vyron_auth_recovery.py.gz.b64.part00 .github/scripts/vyron_auth_recovery.py.gz.b64.part01 .github/scripts/vyron_auth_recovery.py.gz.b64.part02 | base64 --decode | gunzip > "$AUTH"
+          test "$(shasum -a 256 "$AUTH" | awk '{print $1}')" = '3f0b2a6311929def43daedaf7bff52c74dbfe0bbfa5b722cf110893ceabb4462'
+          python3 "$NATIVE" "$ROOT"
+          python3 .github/scripts/apply_native_keychain_compilefix.py "$ROOT"
+          python3 .github/scripts/apply_global_keychain_inventory.py "$ROOT"
+          python3 "$AUTH" "$ROOT"
+          python3 .github/scripts/apply_final_reconnect_recovery.py "$ROOT"
+          python3 .github/scripts/apply_upload_button_unblock_fix.py "$ROOT"
+          python3 .github/scripts/apply_youtube_upload_transport_watchdog.py "$ROOT"
+          python3 .github/scripts/apply_reconnect_browser_choice.py "$ROOT"
+          cat .github/scripts/storage_patch_chunk.{00,01,02,03,04,05,06,07,08,09,10} > "$B64"
+          test "$(shasum -a 256 "$B64" | awk '{print $1}')" = '0e94244b9569df91d33f32e558eee15f06945b7abf150c88cb1a9d4fd3185ffe'
+          base64 --decode "$B64" | gunzip > "$PATCH"
+          test "$(shasum -a 256 "$PATCH" | awk '{print $1}')" = '8de54616bdacd812684c3ec326f330a5f44dabf68b525898634e89b7aa5e4e61'
+          cd "$ROOT"
+          patch -p1 --forward < "$PATCH"
+          test "$(node -p "require('./package.json').version")" = '2.1.2'
+          test -f src/storageLifecycle.ts
+          test -f src/storageLifecycle.test.ts
+          rg -q "version:8" src/store.ts
+          rg -q "uploadHistory" src/types.ts src/store.ts src/PublisherOS.tsx
+          rg -q "full_file_sha256" src-tauri/src/youtube.rs
+          rg -q "trash::delete" src-tauri/src/local_delete.rs src-tauri/src/production_manager.rs
+          echo "ASSEMBLED=$ROOT" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd "$ASSEMBLED"
+          npm ci --no-audit --no-fund
+
+      - name: Targeted frontend lifecycle tests
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd "$ASSEMBLED"
+          npx vitest run \
+            src/storageLifecycle.test.ts \
+            src/v2111PublisherWiring.test.ts \
+            src/youtubePublishSafety.test.ts \
+            src/v2111GlobalCleanup.test.ts \
+            src/v2100StorageArchive.test.ts
+
+      - name: Targeted Rust lifecycle tests
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd "$ASSEMBLED/src-tauri"
+          cargo test v213_storage_tests -- --nocapture
+          cargo test v120_youtube_local_tests -- --nocapture
+          cargo test local_delete::tests -- --nocapture
+          cargo test v211_cleanup_assets_tests -- --nocapture
+          cargo test v2111_global_project_cleanup_tests -- --nocapture
+
+      - name: Frontend regression, TypeScript and production build
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd "$ASSEMBLED"
+          npm test -- --run
+          npx tsc --noEmit
+          npm run build
+
+      - name: Rust compile gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd "$ASSEMBLED/src-tauri"
+          cargo check
+
+      - name: Storage feature source safety review
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd "$ASSEMBLED"
+          # Persistent lifecycle + duplicate proof contracts.
+          rg -q "sha256" src/storageLifecycle.ts src/types.ts
+          rg -q "successfulUploadForHash" src/storageLifecycle.ts
+          rg -q "verification" src/PublisherOS.tsx
+          rg -q "youtubeVideoId:undefined" src/PublisherOS.tsx
+          # User production-media deletion must use Trash in the touched backend modules.
+          ! rg -n "remove_file\(|remove_dir_all\(" src-tauri/src/local_delete.rs
+          rg -q "trash::delete" src-tauri/src/local_delete.rs
+          # Cleanup backend may use remove_dir_all only in cfg(test) fixtures; production section before cfg(test) must not.
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('src-tauri/src/production_manager.rs').read_text()
+          prod=s.split('#[cfg(test)]',1)[0]
+          bad=[x for x in ('fs::remove_file(', 'fs::remove_dir_all(') if x in prod]
+          if bad: raise SystemExit('destructive production cleanup remains: '+','.join(bad))
+          PY
+          # Scope review: no package/version/updater/OAuth/schedule/Shorts/ENDLUME/SEO files are in feature patch headers.
+          PATCH="$RUNNER_TEMP/storage.patch"
+          changed=$(grep '^+++ b/' "$PATCH" | sed 's#^+++ b/##' | sort)
+          printf '%s\n' "$changed"
+          forbidden=$(printf '%s\n' "$changed" | grep -E '(^package\.json$|tauri\.conf|updater|OAuth|oauth|schedule|Shorts|ENDLUME|endlume|SEO|seo)' || true)
+          test -z "$forbidden"
