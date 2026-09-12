@@ -54,7 +54,7 @@ jobs:
           python3 .github/scripts/apply_reconnect_browser_choice.py "$ROOT"
           cat .github/scripts/storage_patch_chunk.{00,01,02,03,04,05,06,07,08,09,10} > "$B64"
           test "$(shasum -a 256 "$B64" | awk '{print $1}')" = '0e94244b9569df91d33f32e558eee15f06945b7abf150c88cb1a9d4fd3185ffe'
-          base64 --decode "$B64" | gunzip > "$PATCH"
+          base64 --decode < "$B64" | gunzip > "$PATCH"
           test "$(shasum -a 256 "$PATCH" | awk '{print $1}')" = '8de54616bdacd812684c3ec326f330a5f44dabf68b525898634e89b7aa5e4e61'
           cd "$ROOT"
           patch -p1 --forward < "$PATCH"
@@ -118,15 +118,12 @@ jobs:
         run: |
           set -Eeuo pipefail
           cd "$ASSEMBLED"
-          # Persistent lifecycle + duplicate proof contracts.
           rg -q "sha256" src/storageLifecycle.ts src/types.ts
           rg -q "successfulUploadForHash" src/storageLifecycle.ts
           rg -q "verification" src/PublisherOS.tsx
           rg -q "youtubeVideoId:undefined" src/PublisherOS.tsx
-          # User production-media deletion must use Trash in the touched backend modules.
           ! rg -n "remove_file\(|remove_dir_all\(" src-tauri/src/local_delete.rs
           rg -q "trash::delete" src-tauri/src/local_delete.rs
-          # Cleanup backend may use remove_dir_all only in cfg(test) fixtures; production section before cfg(test) must not.
           python3 - <<'PY'
           from pathlib import Path
           s=Path('src-tauri/src/production_manager.rs').read_text()
@@ -134,7 +131,6 @@ jobs:
           bad=[x for x in ('fs::remove_file(', 'fs::remove_dir_all(') if x in prod]
           if bad: raise SystemExit('destructive production cleanup remains: '+','.join(bad))
           PY
-          # Scope review: no package/version/updater/OAuth/schedule/Shorts/ENDLUME/SEO files are in feature patch headers.
           PATCH="$RUNNER_TEMP/storage.patch"
           changed=$(grep '^+++ b/' "$PATCH" | sed 's#^+++ b/##' | sort)
           printf '%s\n' "$changed"
