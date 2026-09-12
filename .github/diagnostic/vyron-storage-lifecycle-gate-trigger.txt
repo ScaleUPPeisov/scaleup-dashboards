@@ -1,2 +1,2 @@
 run storage lifecycle + duplicate upload guard targeted gate
-retry: production-only destructive-delete assertions
+retry: cleanup assertions scoped to user asset delete paths
