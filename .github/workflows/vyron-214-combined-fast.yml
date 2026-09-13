@@ -1,0 +1,100 @@
+name: VYRON 2.1.4 Combined Shorts Gate
+on:
+  push:
+    branches: [feature/vyron-google-project-diagnostics]
+    paths: ['.github/workflows/vyron-214-combined-fast.yml']
+  workflow_dispatch:
+permissions: {contents: read, actions: read}
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  BASE_RUN: '34740865727'
+  BASE_ARTIFACT: VYRON-2.1.4-keychain-prompt-fix-green-source
+  BASE_SHA: b707ba58a7e9aedbdba9d2a4a8a940668de689ab7aa3e145b3dbdbf207bd14ff
+jobs:
+  combined:
+    runs-on: macos-14-arm64
+    timeout-minutes: 55
+    env: {GH_TOKEN: '${{ github.token }}', APPLE_SIGNING_IDENTITY: '-'}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - name: Restore exact Keychain green and apply Shorts overlays
+        shell: bash
+        run: |
+          set -Eeuo pipefail; rm -rf base work frozen build out evidence; mkdir -p base work frozen build out evidence
+          gh run download "$BASE_RUN" --repo "$REPO" -n "$BASE_ARTIFACT" -D base
+          T=base/VYRON-2.1.4-keychain-prompt-fix-dev-source.tar.gz; test "$(shasum -a 256 "$T"|awk '{print $1}')" = "$BASE_SHA"
+          tar -xzf "$T" -C work; cp -R work before
+          python3 .github/scripts/apply_v214_shorts_media_fix.py work
+          python3 .github/scripts/apply_v214_shorts_media_tests.py work
+          python3 - <<'PY'
+          import hashlib,pathlib
+          def h(r): return {str(p.relative_to(r)):hashlib.sha256(p.read_bytes()).hexdigest() for p in r.rglob('*') if p.is_file()}
+          a,b=pathlib.Path('before'),pathlib.Path('work'); A,B=h(a),h(b); c=sorted(k for k in set(A)|set(B) if A.get(k)!=B.get(k)); assert c==['src-tauri/src/shorts_factory.rs'],c
+          s=(b/'src-tauri/src/shorts_factory.rs').read_text(); assert 'Command::new("ffprobe")' not in s; assert 'FFPROBE_NOT_FOUND' in s and '/opt/homebrew/bin' in s and '/usr/local/bin' in s
+          PY
+      - name: Prove old Finder PATH ENOENT and capture tools
+        shell: bash
+        run: |
+          set -Eeuo pipefail; [ -x /opt/homebrew/bin/ffprobe ] || brew install ffmpeg
+          { command -v ffprobe || true; command -v ffmpeg || true; ls -l /opt/homebrew/bin/ffprobe /opt/homebrew/bin/ffmpeg; file /opt/homebrew/bin/ffprobe /opt/homebrew/bin/ffmpeg; /opt/homebrew/bin/ffprobe -version|head -1; /opt/homebrew/bin/ffmpeg -version|head -1; } | tee evidence/media-tools.txt
+          cat >/tmp/repro.rs <<'RS'
+          use std::process::Command;fn main(){match Command::new("ffprobe").arg("-version").output(){Ok(_)=>println!("SUCCESS"),Err(e)=>println!("raw_os_error={:?} {}",e.raw_os_error(),e)}}
+          RS
+          rustc /tmp/repro.rs -o /tmp/repro; env PATH=/usr/bin:/bin:/usr/sbin:/sbin /tmp/repro | tee evidence/root-cause.txt; grep -Fq 'raw_os_error=Some(2)' evidence/root-cause.txt
+      - name: Targeted Shorts real-media tests
+        shell: bash
+        working-directory: work/src-tauri
+        env: {VYRON_SHORTS_REAL_TEST: '1'}
+        run: |
+          set -Eeuo pipefail
+          for t in filter_contract folder_scan_accepts_mp4_mov_and_ignores_other_files bundled_candidate_has_priority path_fallback_resolves_executable missing_ffprobe_is_structured finder_like_path_resolves_media_tools_if_enabled real_ffmpeg_fixture_if_enabled real_ffmpeg_mov_fixture_if_enabled real_unicode_mov_probe_and_render_if_enabled; do cargo test "$t" --lib -- --nocapture | tee "/tmp/$t"; grep -Eq '1 passed; 0 failed' "/tmp/$t"; done
+      - name: Keychain targeted safety regression
+        shell: bash
+        working-directory: work/src-tauri
+        run: |
+          set -Eeuo pipefail
+          for t in passive_profile_listing_zero_secret_store_calls selected_profile_hydration_reads_only_selected_secret session_cache_second_access_has_zero_backend_reads post_save_verification_uses_session_cache denial_guard_blocks_retry_loop google_project_diagnostic_is_metadata_only_and_secret_redacted sanitized_state_never_writes_api_secrets_to_disk; do cargo test "$t" --lib -- --nocapture | tee "/tmp/k-$t"; grep -Eq '1 passed; 0 failed' "/tmp/k-$t"; done
+          ! grep -n 'security::get_secret(' src/youtube.rs
+      - name: Frontend targeted TypeScript build
+        shell: bash
+        working-directory: work
+        run: |
+          set -Eeuo pipefail; npm ci --no-audit --no-fund
+          npx vitest run src/v2111ShortsFolder.test.ts src/shortsCore.test.ts src/keychainPassiveArchitecture.test.ts src/googleProjectDiagnostics.test.ts
+          npx tsc --noEmit; npm run build
+      - name: Freeze combined 2.1.4 source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import json,pathlib,re
+          r=pathlib.Path('work')
+          for n in ['package.json','package-lock.json']:
+           p=r/n;x=json.loads(p.read_text());x['version']='2.1.4';
+           if n=='package-lock.json': x.get('packages',{}).get('',{})['version']='2.1.4'
+           p.write_text(json.dumps(x,ensure_ascii=False,indent=2)+'\n')
+          p=r/'src-tauri/tauri.conf.json';x=json.loads(p.read_text());x['version']='2.1.4';p.write_text(json.dumps(x,ensure_ascii=False,indent=2)+'\n')
+          p=r/'src-tauri/Cargo.toml';p.write_text(re.sub(r'(?m)^version = "2\.1\.3"$','version = "2.1.4"',p.read_text(),count=1))
+          p=r/'src-tauri/Cargo.lock';p.write_text(p.read_text().replace('name = "channelflow"\nversion = "2.1.3"','name = "channelflow"\nversion = "2.1.4"',1))
+          PY
+          tar --exclude=node_modules --exclude=src-tauri/target -czf frozen/VYRON-2.1.4-combined-source.tar.gz -C work .
+          shasum -a 256 frozen/VYRON-2.1.4-combined-source.tar.gz | tee frozen/SOURCE_SHA256.txt | tee evidence/combined-source-sha256.txt
+      - name: Build exact frozen ARM64 candidate and Finder-like launch smoke
+        shell: bash
+        run: |
+          set -Eeuo pipefail; tar -xzf frozen/VYRON-2.1.4-combined-source.tar.gz -C build; cd build; npm ci --no-audit --no-fund; rustup target add aarch64-apple-darwin
+          npx tauri build --target aarch64-apple-darwin --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          APP=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name VYRON.app -print -quit); test -d "$APP"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = 2.1.4; test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = studio.channelflow.desktop
+          EXE=$(plutil -extract CFBundleExecutable raw -o - "$APP/Contents/Info.plist"); file "$APP/Contents/MacOS/$EXE" | tee ../evidence/app-binary.txt | grep -q arm64; codesign --verify --deep --strict --verbose=2 "$APP"
+          launchctl setenv PATH '/usr/bin:/bin:/usr/sbin:/sbin'; open -na "$APP"; sleep 5; pgrep -if "$APP/Contents/MacOS/channelflow" >/dev/null; launchctl unsetenv PATH || true; pkill -if "$APP/Contents/MacOS/channelflow" || true
+          ditto -c -k --keepParent "$APP" ../out/VYRON-2.1.4-COMBINED-ARM64-DEV.app.zip
+      - uses: actions/upload-artifact@v4
+        with: {name: VYRON-2.1.4-combined-green-source, path: frozen/, retention-days: 30}
+      - uses: actions/upload-artifact@v4
+        with: {name: VYRON-2.1.4-combined-ARM64-DEV, path: out/VYRON-2.1.4-COMBINED-ARM64-DEV.app.zip, retention-days: 30}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: VYRON-2.1.4-combined-evidence, path: evidence/, if-no-files-found: warn, retention-days: 30}
