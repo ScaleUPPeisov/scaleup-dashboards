@@ -1,0 +1,22 @@
+{
+  "name": "v214-schedule-only",
+  "base_source_sha256": "315f7b8cba142d966619f0eb6d14c2b7dc806ad8e6436d13a3ab4f3338fbde12",
+  "patch_sha256": "7b6b2a8672003bb60be57e469f0a4b345e3e99cd39af21c963c02f85a5e769a8",
+  "before": {
+    "src-tauri/src/lib.rs": "2ded4d2df7e0d8643e6d65c66f414b9535e19b19cf73f15dfe20a5b03392ebc5",
+    "src-tauri/src/youtube.rs": "bb19819e82c79ba6eaa203cc30bb32cc87a9dceff9cf178fb490be496e537a65",
+    "src/YouTubeCenter.tsx": "df0c45feeec3a2f957989d94f061c96492b9a5426355699c0d0634893c18ae73",
+    "src/api.ts": "9eb348557c9d26332b83d4421d03778fe82fa56f44fd740af4cee62f5773f4a8"
+  },
+  "after": {
+    "src-tauri/src/lib.rs": "5e6600ff54b35d1e9f5fd34780357752c7070189a38476d1a12aad4eadf465fe",
+    "src-tauri/src/youtube.rs": "c2ee20be1edc46e878b34f18f0f5647ff4dcd37242abc94267ddadd8934cc04a",
+    "src/ScheduleOS.tsx": "14186218d958ef9a3aeed144ac1eba40dac203c2494d740bd28535c083cb2060",
+    "src/YouTubeCenter.tsx": "cbfecf43ae5350305b87a457e5f1a499e21c2ea7f7b414c5d30dac60d06ce987",
+    "src/api.ts": "6dd4a43f322293e9f065492b40ebf4bc384bf64a61a31b626b7b485b04873f7c",
+    "src/scheduleOnly.css": "e1243cb43b4a6bb947aa59948b7fb1fe214557f18c54090085d0bec59c5179f6",
+    "src/scheduleOnly.test.ts": "e8ff1ce71640704b183a7f54f08c8d21eeed43160e439b5c232b920002574409",
+    "src/scheduleOnly.ts": "3d783c0c42c615e774d484cc1407bae9f5b23b11d2d5a0f81723672480db0b80",
+    "src/scheduleOnlyContracts.test.ts": "0002abec7bfd1efd02928117339128302550bfe89c80d6b1b51ac09b674ec721"
+  }
+}
