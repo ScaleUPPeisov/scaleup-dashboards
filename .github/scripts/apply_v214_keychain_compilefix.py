@@ -35,10 +35,9 @@ const rust=fs.readFileSync(new URL('../src-tauri/src/youtube.rs',import.meta.url
 const storage=fs.readFileSync(new URL('../src-tauri/src/storage.rs',import.meta.url),'utf8');
 const security=fs.readFileSync(new URL('../src-tauri/src/security.rs',import.meta.url),'utf8');''',
 '''import fs from 'node:fs';
-import {fileURLToPath} from 'node:url';
-const rust=fs.readFileSync(fileURLToPath(new URL('../src-tauri/src/youtube.rs',import.meta.url)),'utf8');
-const storage=fs.readFileSync(fileURLToPath(new URL('../src-tauri/src/storage.rs',import.meta.url)),'utf8');
-const security=fs.readFileSync(fileURLToPath(new URL('../src-tauri/src/security.rs',import.meta.url)),'utf8');''')
+const rust=fs.readFileSync(decodeURIComponent(new URL('../src-tauri/src/youtube.rs',import.meta.url).pathname),'utf8');
+const storage=fs.readFileSync(decodeURIComponent(new URL('../src-tauri/src/storage.rs',import.meta.url).pathname),'utf8');
+const security=fs.readFileSync(decodeURIComponent(new URL('../src-tauri/src/security.rs',import.meta.url).pathname),'utf8');''')
 
 sec=read('src-tauri/src/security.rs')
 anchor=''' #[test]\n fn denial_guard_blocks_retry_loop(){'''
