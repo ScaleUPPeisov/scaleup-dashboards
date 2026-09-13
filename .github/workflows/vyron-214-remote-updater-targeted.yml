@@ -88,6 +88,28 @@ jobs:
           PY
           shasum -a 256 "$OVERLAY_DIR/manifest.json" | tee evidence/updater-overlay-manifest-sha256.txt
 
+      - name: Apply test-only Vitest hoist correction
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import hashlib,pathlib,re
+          p=pathlib.Path('work/src/updaterRuntime.test.ts')
+          s=p.read_text()
+          original=s
+          s,n=re.subn(r'const\s+mockApi\s*=\s*\{','const {mockApi}=vi.hoisted(()=>({mockApi:{',s,count=1)
+          assert n==1,'mockApi declaration not found exactly once'
+          pattern=r'\n\};(\s*\n\s*vi\.mock\([\'\"]\./api[\'\"],\s*\(\)\s*=>\s*\(\{api:\s*mockApi\}\)\s*\)\s*;)'
+          s,n=re.subn(pattern,r'\n}}));\1',s,count=1)
+          assert n==1,'mockApi closing marker not found exactly once'
+          assert s!=original
+          p.write_text(s)
+          digest=hashlib.sha256(p.read_bytes()).hexdigest()
+          pathlib.Path('evidence/updater-runtime-testfix-sha256.txt').write_text(digest+'  src/updaterRuntime.test.ts\n')
+          print('TEST-ONLY VITEST HOIST FIX: PASS')
+          print('updaterRuntime.test.ts SHA256='+digest)
+          PY
+
       - name: Remote updater lifecycle, UI, guard and security contracts
         shell: bash
         working-directory: work
@@ -133,7 +155,7 @@ jobs:
           assert 'videos.insert' not in runtime.lower()
           assert 'youtube_update_existing_schedule' not in runtime
           assert 'security::get_secret' not in joined
-          assert '6 * 60 * 60' in runtime or '21600000' in runtime or '21_600_000' in runtime
+          assert re.search(r'6\s*\*\s*60\s*\*\s*60\s*\*\s*1000|21600000|21_600_000',runtime)
           print('CANONICAL ENDPOINTS PRESERVED: PASS')
           print('EXPLICIT UPDATER ERRORS: PASS')
           print('ZERO YOUTUBE/UPLOAD COUPLING: PASS')
