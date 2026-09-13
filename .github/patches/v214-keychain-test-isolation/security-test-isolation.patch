@@ -1,0 +1,66 @@
+--- a/src-tauri/src/security.rs
++++ b/src-tauri/src/security.rs
+@@ -108,22 +108,38 @@
+ #[cfg(test)]
+ mod tests{
+  use super::*;
++ static KEYCHAIN_TEST_STATE_LOCK:std::sync::Mutex<()>=std::sync::Mutex::new(());
++ fn reset_keychain_test_state(){
++  KEYCHAIN_ACCESS_BLOCKED.store(false,Ordering::SeqCst);
++  if let Ok(mut c)=secret_cache().lock(){c.clear();}
++  if let Ok(mut d)=denied_accounts().lock(){d.clear();}
++ }
++ struct KeychainTestGuard{_lock:std::sync::MutexGuard<'static,()>}
++ impl Drop for KeychainTestGuard{fn drop(&mut self){reset_keychain_test_state();}}
++ fn keychain_test_guard()->KeychainTestGuard{
++  let lock=KEYCHAIN_TEST_STATE_LOCK.lock().unwrap_or_else(|e|e.into_inner());
++  reset_keychain_test_state();
++  KeychainTestGuard{_lock:lock}
++ }
+  #[test]
+  fn keychain_errors_are_actionable(){
++  let _guard=keychain_test_guard();
+   assert!(keychain_error("read","x",AUTH_FAILED,"bad").starts_with("KEYCHAIN_AUTH_FAILED:"));
+   assert!(keychain_error("read","x",INTERACTION_NOT_ALLOWED,"locked").starts_with("KEYCHAIN_INTERACTION_REQUIRED:"));
+   assert!(keychain_error("read","x",USER_CANCELED,"cancel").starts_with("KEYCHAIN_USER_CANCELED:"));
+  }
+  #[test]
+  fn session_cache_second_access_has_zero_backend_reads(){
++  let _guard=keychain_test_guard();
+   use std::sync::atomic::{AtomicUsize,Ordering as AO};
+   static READS:AtomicUsize=AtomicUsize::new(0);let account="test.cache.session";invalidate_secret_cache(account);READS.store(0,AO::SeqCst);
+   let first=get_secret_cached_with(account,|_|{READS.fetch_add(1,AO::SeqCst);Ok(Some("secret".into()))}).unwrap();
+   let second=get_secret_cached_with(account,|_|{READS.fetch_add(1,AO::SeqCst);Ok(Some("wrong".into()))}).unwrap();
+-  assert_eq!(first.as_deref(),Some("secret"));assert_eq!(second.as_deref(),Some("secret"));assert_eq!(READS.load(AO::SeqCst),1);invalidate_secret_cache(account);
++  assert_eq!(first.as_deref(),Some("secret"));assert_eq!(second.as_deref(),Some("secret"));assert_eq!(READS.load(AO::SeqCst),1);eprintln!("SESSION_CACHE_BACKEND_READS={}",READS.load(AO::SeqCst));invalidate_secret_cache(account);
+  }
+  #[test]
+  fn post_save_verification_uses_session_cache(){
++  let _guard=keychain_test_guard();
+   use std::sync::atomic::{AtomicUsize,Ordering as AO};
+   static READS:AtomicUsize=AtomicUsize::new(0);let account="test.cache.post-save";invalidate_secret_cache(account);READS.store(0,AO::SeqCst);
+   // set_secret() calls remember_secret() after a successful native write. Model that successful write here without touching the real Keychain.
+@@ -133,6 +149,7 @@
+  }
+  #[test]
+  fn denial_guard_blocks_retry_loop(){
++  let _guard=keychain_test_guard();
+   use std::sync::atomic::{AtomicUsize,Ordering as AO};
+   static READS:AtomicUsize=AtomicUsize::new(0);let account="test.cache.denial";invalidate_secret_cache(account);READS.store(0,AO::SeqCst);
+   let e=get_secret_cached_with(account,|_|{READS.fetch_add(1,AO::SeqCst);Err("KEYCHAIN_ACCESS_DENIED: denied".into())}).unwrap_err();assert!(e.contains("DENIED"));
+@@ -141,6 +158,7 @@
+  #[test]
+  #[cfg(target_os="macos")]
+  fn keychain_diagnostics_roundtrip(){
++  let _guard=keychain_test_guard();
+   let v=security_keychain_diagnostics().unwrap();
+   assert_eq!(v.get("ok").and_then(|x|x.as_bool()),Some(true));
+   assert_eq!(v.get("status").and_then(|x|x.as_str()),Some("KEYCHAIN_OK"));
+@@ -148,6 +166,7 @@
+  #[test]
+  #[cfg(target_os="macos")]
+  fn keychain_roundtrip(){
++  let _guard=keychain_test_guard();
+   use std::time::{SystemTime,UNIX_EPOCH};
+   let id=format!("test-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos());
+   set_secret(&id,"vyron-secret-roundtrip").unwrap();
