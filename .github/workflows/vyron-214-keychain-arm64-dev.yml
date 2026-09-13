@@ -1,0 +1,123 @@
+name: VYRON 2.1.4 Keychain Fix ARM64 Development Candidate
+
+on:
+  push:
+    branches: [feature/vyron-google-project-diagnostics]
+    paths: ['.github/workflows/vyron-214-keychain-arm64-dev.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  GREEN_RUN: '34740865727'
+  GREEN_ARTIFACT: 'VYRON-2.1.4-keychain-prompt-fix-green-source'
+  GREEN_SOURCE_SHA256: 'b707ba58a7e9aedbdba9d2a4a8a940668de689ab7aa3e145b3dbdbf207bd14ff'
+  SOURCE_ARCHIVE: 'VYRON-2.1.4-keychain-prompt-fix-dev-source.tar.gz'
+  APPLE_SIGNING_IDENTITY: '-'
+
+jobs:
+  arm64-development-candidate:
+    runs-on: macos-14
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 1}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+
+      - name: Restore exact Keychain targeted-green source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf green work dev-out evidence
+          mkdir -p green work dev-out evidence
+          gh run download "$GREEN_RUN" --repo "$REPO" -n "$GREEN_ARTIFACT" -D green
+          test -s "green/$SOURCE_ARCHIVE"
+          test -s green/SOURCE_SHA256.txt
+          test "$(awk '{print $1}' green/SOURCE_SHA256.txt)" = "$GREEN_SOURCE_SHA256"
+          test "$(shasum -a 256 "green/$SOURCE_ARCHIVE" | awk '{print $1}')" = "$GREEN_SOURCE_SHA256"
+          tar -xzf "green/$SOURCE_ARCHIVE" -C work
+          test "$(node -p "require('./work/package.json').version")" = '2.1.3'
+          printf '%s\n' "$GREEN_SOURCE_SHA256" > evidence/green-source-sha256.txt
+          printf '%s\n' "$GREEN_RUN" > evidence/green-source-run.txt
+
+      - name: Build exact ARM64 development app
+        shell: bash
+        working-directory: work
+        run: |
+          set -Eeuo pipefail
+          rustup target add aarch64-apple-darwin
+          npm ci --no-audit --no-fund
+          npx tauri build --target aarch64-apple-darwin --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          APP=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)
+          test -d "$APP"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = '2.1.3'
+          test "$(plutil -extract CFBundleVersion raw -o - "$APP/Contents/Info.plist")" = '2.1.3'
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = 'studio.channelflow.desktop'
+          EXE=$(plutil -extract CFBundleExecutable raw -o - "$APP/Contents/Info.plist")
+          file "$APP/Contents/MacOS/$EXE" | tee "$GITHUB_WORKSPACE/evidence/binary-file.txt" | grep -q arm64
+          codesign --verify --deep --strict --verbose=2 "$APP" 2>&1 | tee "$GITHUB_WORKSPACE/evidence/codesign-verify.txt"
+          codesign -dv --verbose=4 "$APP" > "$GITHUB_WORKSPACE/evidence/codesign-details.txt" 2>&1 || true
+          plutil -p "$APP/Contents/Info.plist" > "$GITHUB_WORKSPACE/evidence/info-plist.txt"
+          rm -rf "$RUNNER_TEMP/VYRON-Keychain-Fix.app"
+          cp -R "$APP" "$RUNNER_TEMP/VYRON-Keychain-Fix.app"
+          chmod -R u+rwX "$RUNNER_TEMP/VYRON-Keychain-Fix.app"
+          xattr -dr com.apple.quarantine "$RUNNER_TEMP/VYRON-Keychain-Fix.app" || true
+          echo "DEV_APP=$RUNNER_TEMP/VYRON-Keychain-Fix.app" >> "$GITHUB_ENV"
+          ditto -c -k --keepParent "$APP" "$GITHUB_WORKSPACE/dev-out/VYRON-2.1.4-Keychain-Fix-ARM64-DEV.app.zip"
+          shasum -a 256 "$GITHUB_WORKSPACE/dev-out/VYRON-2.1.4-Keychain-Fix-ARM64-DEV.app.zip" > "$GITHUB_WORKSPACE/evidence/app-zip-sha256.txt"
+
+      - name: Launch development app smoke test
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          open -na "$DEV_APP"
+          ok=0
+          for i in {1..20}; do
+            if pgrep -if 'VYRON-Keychain-Fix.app/Contents/MacOS|studio.channelflow.desktop|/VYRON.app/Contents/MacOS' >/tmp/vyron-pids.txt 2>/dev/null; then ok=1; break; fi
+            sleep 1
+          done
+          cat /tmp/vyron-pids.txt 2>/dev/null | tee evidence/launch-process.txt || true
+          test "$ok" = 1
+          sleep 2
+          screencapture -x evidence/launch-smoke.png || true
+          cat > evidence/STATUS.txt <<TXT
+          VYRON 2.1.4 KEYCHAIN FIX ARM64 DEVELOPMENT CANDIDATE
+          SOURCE SHA256: $GREEN_SOURCE_SHA256
+          SOURCE RUN: $GREEN_RUN
+          APP EXISTS: PASS
+          ARCHITECTURE ARM64: PASS
+          BUNDLE ID studio.channelflow.desktop: PASS
+          CODESIGN VERIFY: PASS
+          APP LAUNCH SMOKE: PASS
+          UPDATER ARTIFACTS: DISABLED FOR DEVELOPMENT ACCEPTANCE ONLY
+          REAL MAC ZERO-PROMPT ACCEPTANCE: NOT YET RUN
+          RELEASED: NO
+          TXT
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: VYRON-2.1.4-keychain-fix-ARM64-DEV
+          path: dev-out/VYRON-2.1.4-Keychain-Fix-ARM64-DEV.app.zip
+          if-no-files-found: error
+          retention-days: 30
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: VYRON-2.1.4-keychain-fix-ARM64-DEV-evidence
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Cleanup
+        if: always()
+        shell: bash
+        run: |
+          pkill -if 'VYRON-Keychain-Fix|VYRON|channelflow' || true
