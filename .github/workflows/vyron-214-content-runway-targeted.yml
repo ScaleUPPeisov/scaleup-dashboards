@@ -1,0 +1,113 @@
+name: VYRON 2.1.4 Content Runway Targeted Gate
+on:
+  push:
+    branches: [feature/vyron-google-project-diagnostics]
+    paths:
+      - '.github/workflows/vyron-214-content-runway-targeted.yml'
+  workflow_dispatch:
+permissions: {contents: read, actions: read}
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  BASE_RUN: '34754240596'
+  BASE_ARTIFACT: VYRON-2.1.4-remote-updater-green-source
+  BASE_SHA: b8d69d342ac3b42ec018e292a335651fdc3288acd0beb829136571959342ef60
+  OVERLAY_DIR: .github/patches/v214-content-runway
+jobs:
+  runway-targeted:
+    runs-on: macos-14
+    timeout-minutes: 35
+    env:
+      GH_TOKEN: '${{ github.token }}'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - name: Restore exact updater-green source and apply Content Runway overlay
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf base work before evidence
+          mkdir -p base work before evidence
+          gh run download "$BASE_RUN" --repo "$REPO" -n "$BASE_ARTIFACT" -D base
+          T=base/VYRON-2.1.4-remote-updater-source.tar.gz
+          ACTUAL=$(shasum -a 256 "$T" | awk '{print $1}')
+          printf 'BASE_SOURCE_SHA256=%s\n' "$ACTUAL" | tee evidence/base-source.txt
+          test "$ACTUAL" = "$BASE_SHA"
+          tar -xzf "$T" -C work
+          cp -R work/. before/
+          python3 .github/scripts/apply_v214_overlay_chunks.py work "$OVERLAY_DIR" | tee evidence/runway-overlay.txt
+          python3 - <<'PY'
+          import hashlib,json,pathlib
+          a,b=pathlib.Path('before'),pathlib.Path('work')
+          m=json.loads(pathlib.Path('.github/patches/v214-content-runway/manifest.json').read_text())
+          assert m['base_source_sha256']=='b8d69d342ac3b42ec018e292a335651fdc3288acd0beb829136571959342ef60'
+          assert m['patch_sha256']=='e9554868011cbc32ee02a48d0a1f3cd43944b3edd67b6c2ef84374d2c17d4393'
+          def sha(p): return hashlib.sha256(p.read_bytes()).hexdigest()
+          def tree(root): return {str(p.relative_to(root)):sha(p) for p in root.rglob('*') if p.is_file()}
+          A,B=tree(a),tree(b)
+          changed=sorted(k for k in set(A)|set(B) if A.get(k)!=B.get(k))
+          expected=sorted(x['path'] for x in m['files'])
+          print('\n'.join(changed)); pathlib.Path('evidence/strict-diff.txt').write_text('\n'.join(changed)+'\n')
+          assert changed==expected,(changed,expected)
+          protected=[
+            'src/updaterRuntime.ts','src/updaterGuard.ts','src/updaterPolicy.ts','src/updaterStore.ts',
+            'src/ScheduleOS.tsx','src/scheduleOnly.ts','src/ShortsFactory.tsx','src/ProductionManager.tsx',
+            'src-tauri/src/security.rs','src-tauri/src/youtube.rs','src-tauri/src/shorts_factory.rs','src-tauri/src/production_manager.rs',
+            'src-tauri/tauri.conf.json'
+          ]
+          for rel in protected: assert A.get(rel)==B.get(rel),rel
+          print('STRICT 4-FILE SCOPE: PASS')
+          print('UPDATER/SCHEDULE/SHORTS/CLEANUP/KEYCHAIN PROTECTED: PASS')
+          PY
+      - name: Content Runway + quota + lifecycle targeted tests
+        shell: bash
+        working-directory: work
+        run: |
+          set -Eeuo pipefail
+          npm ci --no-audit --no-fund
+          npx vitest run \
+            src/contentRunway.test.ts \
+            src/channelRunway.test.ts \
+            src/channelSchedule.test.ts \
+            src/publisherSchedule.test.ts \
+            src/scheduleContinuation.test.ts \
+            src/dynamicUploadQuota.test.ts \
+            src/publisherQuota.test.ts \
+            src/youtubeQuota.test.ts \
+            src/youtubeQuotaPlanner.test.ts \
+            src/youtubeQuotaRollover.test.ts \
+            src/storageLifecycle.test.ts \
+            src/uploadButtonUnblock.test.ts \
+            src/v2100StorageArchive.test.ts \
+            src/v2100PublishRecovery.test.ts \
+            src/v2111PublisherRuntime.test.ts \
+            src/youtubePublishSafety.test.ts 2>&1 | tee ../evidence/targeted-tests.log
+          npx tsc --noEmit 2>&1 | tee ../evidence/typescript.log
+          npm run build 2>&1 | tee ../evidence/frontend-build.log
+      - name: Static zero-API runway and separated-quota contracts
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY' | tee evidence/static-contracts.txt
+          import pathlib
+          root=pathlib.Path('work/src')
+          core=(root/'contentRunway.ts').read_text()
+          ui=(root/'ChannelRunway.tsx').read_text()
+          assert 'api.youtubeListExisting' in ui
+          assert 'buildContentRunway' in ui
+          assert 'youtubeQuotaProjectIdentity' in ui and 'youtubeUploadQuotaState' in ui
+          assert 'publisherKrasnoyarskIso' in core and 'patternFor' in core and 'intervalDaysFor' in core
+          assert 'videos.insert' not in core.lower()
+          assert 'General API' in ui and 'Video Upload' in ui
+          print('LOCAL RUNWAY CALCULATION: PASS')
+          print('EXISTING CADENCE/TIMEZONE ENGINE REUSED: PASS')
+          print('GENERAL API / UPLOAD QUOTA SEPARATED: PASS')
+          print('RUNWAY CALCULATION YOUTUBE WRITES: 0')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: VYRON-2.1.4-content-runway-targeted-evidence
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 30
