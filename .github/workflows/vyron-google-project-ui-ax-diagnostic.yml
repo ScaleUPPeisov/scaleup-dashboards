@@ -1,0 +1,185 @@
+name: VYRON Google Project Diagnostics AX Diagnostic
+
+on:
+  push:
+    branches: [feature/vyron-google-project-diagnostics]
+    paths: ['.github/workflows/vyron-google-project-ui-ax-diagnostic.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  BUILD_RUN: '34736126738'
+  BUILD_ARTIFACT: 'VYRON-google-project-diagnostics-ARM64-DEV-retry'
+  GREEN_SOURCE_SHA256: 'a6d00f2d8bbe38f75f17ba6526973bc759e5d34a442931679b551fbc1a0dc512'
+
+jobs:
+  ax-diagnostic:
+    runs-on: macos-14
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore already-passed ARM64 development app
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf app-in evidence "$RUNNER_TEMP/vyron-ui-unpack" "$RUNNER_TEMP/VYRON-GoogleProject-Diagnostics.app"
+          mkdir -p app-in evidence
+          gh run download "$BUILD_RUN" --repo "$REPO" -n "$BUILD_ARTIFACT" -D app-in
+          ZIP=$(find app-in -name 'VYRON-2.1.3-GoogleProject-Diagnostics-ARM64-DEV.app.zip' -print -quit)
+          test -s "$ZIP"
+          ditto -x -k "$ZIP" "$RUNNER_TEMP/vyron-ui-unpack"
+          APP=$(find "$RUNNER_TEMP/vyron-ui-unpack" -maxdepth 2 -name 'VYRON.app' -print -quit)
+          test -d "$APP"
+          mv "$APP" "$RUNNER_TEMP/VYRON-GoogleProject-Diagnostics.app"
+          APP="$RUNNER_TEMP/VYRON-GoogleProject-Diagnostics.app"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = '2.1.3'
+          EXE=$(plutil -extract CFBundleExecutable raw -o - "$APP/Contents/Info.plist")
+          file "$APP/Contents/MacOS/$EXE" | tee evidence/binary-file.txt | grep -q arm64
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          chmod -R u+rwX "$APP"
+          xattr -dr com.apple.quarantine "$APP" || true
+          echo "DEV_APP=$APP" >> "$GITHUB_ENV"
+          printf '%s\n' "$GREEN_SOURCE_SHA256" > evidence/green-source-sha256.txt
+
+      - name: Seed canonical safe fixture
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          export CLIENT_A='123456789012-abcdefghijklmnop.apps.googleusercontent.com'
+          export CLIENT_C='987654321098-zyxwvutsrqponmlk.apps.googleusercontent.com'
+          export PROJECT_ID='vyron-diagnostics-test-project'
+          python3 <<'PY'
+          import pathlib, subprocess, os
+          lines = pathlib.Path('.github/workflows/vyron-google-project-dev-ui.yml').read_text(encoding='utf-8').splitlines()
+          start = next(i for i,l in enumerate(lines) if l.strip() == '- name: Seed safe local metadata fixture with no secrets')
+          run = next(i for i in range(start, len(lines)) if lines[i] == '        run: |') + 1
+          block=[]
+          for line in lines[run:]:
+              if line and not line.startswith('          '): break
+              block.append(line[10:] if line.startswith('          ') else '')
+          subprocess.run(['bash','-c','set -Eeuo pipefail\n'+'\n'.join(block)], check=True, env=os.environ.copy())
+          PY
+
+      - name: Launch app and capture pre-navigation AX evidence
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          open -na "$DEV_APP"
+          for i in {1..30}; do
+            pgrep -if "$DEV_APP/Contents/MacOS/channelflow" >/dev/null && break
+            sleep 1
+          done
+          PID=$(pgrep -if "$DEV_APP/Contents/MacOS/channelflow" | head -1)
+          test -n "$PID"
+          printf 'PID=%s\n' "$PID" | tee evidence/process.txt
+          sleep 8
+
+          osascript <<'APPLESCRIPT' > evidence/window-metadata.txt
+          tell application "System Events"
+            set p to first application process whose name is "channelflow"
+            set frontmost of p to true
+            delay 1
+            set out to "process=" & (name of p as text) & linefeed
+            set out to out & "frontmost=" & (frontmost of p as text) & linefeed
+            set out to out & "windowCount=" & (count of windows of p as text) & linefeed
+            repeat with w in windows of p
+              try
+                set out to out & "window|name=" & (name of w as text)
+              on error
+                set out to out & "window|name=?"
+              end try
+              try
+                set out to out & "|position=" & (position of w as text)
+              end try
+              try
+                set out to out & "|size=" & (size of w as text)
+              end try
+              set out to out & linefeed
+            end repeat
+            return out
+          end tell
+          APPLESCRIPT
+
+          osascript <<'APPLESCRIPT' > evidence/ax-tree.txt
+          tell application "System Events"
+            set p to first application process whose name is "channelflow"
+            if (count of windows of p) is 0 then return "NO WINDOWS"
+            set els to entire contents of window 1 of p
+            set out to "elementCount=" & (count of els as text) & linefeed
+            repeat with e in els
+              set r to "?"
+              set sr to "?"
+              set n to "?"
+              set d to "?"
+              set v to "?"
+              set h to "?"
+              set pos to "?"
+              set sz to "?"
+              try
+                set r to role of e as text
+              end try
+              try
+                set sr to subrole of e as text
+              end try
+              try
+                set n to name of e as text
+              end try
+              try
+                set d to description of e as text
+              end try
+              try
+                set v to value of e as text
+              end try
+              try
+                set h to help of e as text
+              end try
+              try
+                set pos to position of e as text
+              end try
+              try
+                set sz to size of e as text
+              end try
+              set out to out & r & "|" & sr & "|name=" & n & "|desc=" & d & "|value=" & v & "|help=" & h & "|pos=" & pos & "|size=" & sz & linefeed
+            end repeat
+            return out
+          end tell
+          APPLESCRIPT
+
+          screencapture -x evidence/pre-navigation.png || true
+          echo '--- WINDOW METADATA ---'
+          cat evidence/window-metadata.txt
+          echo '--- AX MATCHES ---'
+          grep -Ei 'Настрой|Settings|YouTube|GOOGLE|CLOUD|VYRON|лиценз|license|главн|home|dashboard' evidence/ax-tree.txt || true
+          echo '--- AX HEAD ---'
+          head -n 250 evidence/ax-tree.txt
+
+      - name: Record diagnostic status
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo 'AX DIAGNOSTIC ONLY — NOT UI ACCEPTANCE'
+            echo 'ARM64 app source: run 34736126738 (build PASS)'
+            echo 'Production source changed by this diagnostic: NO'
+          } > evidence/STATUS.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: VYRON-google-project-diagnostics-ax-evidence
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Cleanup
+        if: always()
+        shell: bash
+        run: |
+          pkill -if 'VYRON|channelflow' || true
