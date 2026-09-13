@@ -50,7 +50,7 @@ jobs:
           test "$(shasum -a 256 "$T" | awk '{print $1}')" = "$BASE_SHA"
           tar -xzf "$T" -C work
           test "$(shasum -a 256 "$PATCH_B64_PATH" | awk '{print $1}')" = "$PATCH_B64_SHA"
-          base64 --decode "$PATCH_B64_PATH" | gunzip > selector.patch
+          base64 -D -i "$PATCH_B64_PATH" | gunzip > selector.patch
           test "$(shasum -a 256 selector.patch | awk '{print $1}')" = "$PATCH_SHA"
           python3 - <<'PY'
           import hashlib,json,os,pathlib
