@@ -11,7 +11,7 @@ env:
   BASE_RUN: '34754240596'
   BASE_ARTIFACT: VYRON-2.1.4-remote-updater-green-source
   BASE_SHA: b8d69d342ac3b42ec018e292a335651fdc3288acd0beb829136571959342ef60
-  OVERLAY_DIR: .github/patches/v214-content-runway-zlib
+  OVERLAY_DIR: .github/patches/v214-content-runway-z2
 jobs:
   runway-targeted:
     runs-on: macos-14
