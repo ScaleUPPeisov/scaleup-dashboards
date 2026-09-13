@@ -1,0 +1,31 @@
+{
+  "name": "v214-remote-updater-ui",
+  "base_source_sha256": "e358f659608517781006a96c1de0a2ea84e485dccfb351576639509821fceb79",
+  "patch_sha256": "ccb15d0940e36e2e47550f71851c7c7f1389cee13c3c47cc647c9124e033f0fd",
+  "before": {
+    "src/App.tsx": "7125ddb7173efa7631dac4abc2e1372f484fb837213c73a84dd512b43217bf69",
+    "src/SettingsOS.tsx": "7d899f3f5f3e64b928b705a872dd054e4a8e472e5959b109eca48e7baaf9e9df",
+    "src/api.ts": "6dd4a43f322293e9f065492b40ebf4bc384bf64a61a31b626b7b485b04873f7c",
+    "src/errorCenter.ts": "7f5f867cff55dc9f33e6144992d2a048a39aaf29284ef4c0261f98f71e332fcd",
+    "src/errorHistory.ts": "3d492bac1a237cc6a8e22d6ed606c1cd59deb572f7fff2cf073ad9540a241267",
+    "src/main.tsx": "9d6189233ae4705d580492e149cd33a868c792224f87f6bce18c2841dbcbc7ed",
+    "src/updaterPolicy.ts": "4b90119b3264f58187b35c2fdb1916f9dac65dfa949e9ca60e5550ea77813a39",
+    "src/updaterHotfix.test.ts": "d5bdd6d3ad70a20cbfb7425d94e482b6436a1b1e2abfb7ca80cb09d1d00b73d9"
+  },
+  "after": {
+    "src/App.tsx": "a969f5aad3fec1c57b4463c40beaad5dd7fa99a476ee0415e208c6faed72f23a",
+    "src/SettingsOS.tsx": "ed8b43d1f30d1f1383bb4e71e8dbb3f5948d1d22fd44a53c449ae9e229171907",
+    "src/api.ts": "69a7f4e35612aa60314095e19ebcd7bc7fb6b45eb784ce120d71ae90cea2726a",
+    "src/errorCenter.ts": "2624c8e9c6e656f929310dac74f7bd573f03c3eb9ab4a91893a5088aa575d648",
+    "src/errorHistory.ts": "c1826c6fc20fa4411ed12961dcc56406fe608007b379e6949457d535731f499f",
+    "src/main.tsx": "1dc4f85a7b9bf262519879bc8371d713b7a7df400e9e8d186e00816a695fdec8",
+    "src/updater-ui.css": "2dec422ad7ea07a2bf025791e5c75d0fcaf5237edf6b784d12c39d8a7670d0c5",
+    "src/updaterGuard.ts": "f110dc737b3115a4f8b48d4a44bf9cf0cd2b242b1abe212690ddaf4bb4693177",
+    "src/updaterRuntime.ts": "c2b9e70c5f8bdc5a904a328e7f7bfacedb00d86e9a2f9f2916285d3d714a4124",
+    "src/updaterPolicy.ts": "1455acd5da8a326f3606f5376dc50a28d345f9d1de9518838c46de94ded15089",
+    "src/updaterGuard.test.ts": "a5317767bfbb131394c94bb53b956ad4229fab2abc53021361c67c6e17814b9e",
+    "src/updaterRuntime.test.ts": "0bbe72565db2a1bf009f896e1487e9449c4c166658c3c4dbf9db205726bf06b7",
+    "src/updaterRemoteContract.test.ts": "666078e33b8dcd1d90cca47b8061dcb48a1092fb2426786a6c63548735259eb8",
+    "src/updaterHotfix.test.ts": "714911f1f3c21e02d8c9b13cf394726f98157ee62c66c0b53b1cb6622008290b"
+  }
+}
