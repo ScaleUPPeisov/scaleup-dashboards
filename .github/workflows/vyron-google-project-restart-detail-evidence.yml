@@ -1,0 +1,116 @@
+name: VYRON Google Project Post-Restart Detail Evidence
+
+on:
+  push:
+    branches: [feature/vyron-google-project-diagnostics]
+    paths: ['.github/workflows/vyron-google-project-restart-detail-evidence.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  BUILD_RUN: '34736126738'
+  BUILD_ARTIFACT: 'VYRON-google-project-diagnostics-ARM64-DEV-retry'
+
+jobs:
+  restart-detail:
+    runs-on: macos-14
+    timeout-minutes: 8
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore verified ARM64 app and safe fixture
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf app-in evidence "$RUNNER_TEMP/vyron-restart-detail" "$RUNNER_TEMP/VYRON-GoogleProject-Diagnostics.app"
+          mkdir -p app-in evidence
+          gh run download "$BUILD_RUN" --repo "$REPO" -n "$BUILD_ARTIFACT" -D app-in
+          ZIP=$(find app-in -name 'VYRON-2.1.3-GoogleProject-Diagnostics-ARM64-DEV.app.zip' -print -quit)
+          test -s "$ZIP"
+          ditto -x -k "$ZIP" "$RUNNER_TEMP/vyron-restart-detail"
+          APP=$(find "$RUNNER_TEMP/vyron-restart-detail" -maxdepth 2 -name 'VYRON.app' -print -quit)
+          test -d "$APP"
+          mv "$APP" "$RUNNER_TEMP/VYRON-GoogleProject-Diagnostics.app"
+          APP="$RUNNER_TEMP/VYRON-GoogleProject-Diagnostics.app"
+          EXE=$(plutil -extract CFBundleExecutable raw -o - "$APP/Contents/Info.plist")
+          file "$APP/Contents/MacOS/$EXE" | grep -q arm64
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          chmod -R u+rwX "$APP"
+          xattr -dr com.apple.quarantine "$APP" || true
+          echo "DEV_APP=$APP" >> "$GITHUB_ENV"
+
+          export CLIENT_A='123456789012-abcdefghijklmnop.apps.googleusercontent.com'
+          export CLIENT_C='987654321098-zyxwvutsrqponmlk.apps.googleusercontent.com'
+          export PROJECT_ID='vyron-diagnostics-test-project'
+          python3 <<'PY'
+          import pathlib, subprocess, os
+          lines=pathlib.Path('.github/workflows/vyron-google-project-dev-ui.yml').read_text(encoding='utf-8').splitlines()
+          s=next(i for i,l in enumerate(lines) if l.strip()=='- name: Seed safe local metadata fixture with no secrets')
+          r=next(i for i in range(s,len(lines)) if lines[i]=='        run: |')+1
+          block=[]
+          for line in lines[r:]:
+              if line and not line.startswith('          '): break
+              block.append(line[10:] if line.startswith('          ') else '')
+          subprocess.run(['bash','-c','set -Eeuo pipefail\n'+'\n'.join(block)],check=True,env=os.environ.copy())
+          PY
+
+      - name: Perform real kill and relaunch then capture persisted details
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          open -na "$DEV_APP"
+          for i in {1..30}; do pgrep -if "$DEV_APP/Contents/MacOS/channelflow" >/dev/null && break; sleep 1; done
+          test -n "$(pgrep -if "$DEV_APP/Contents/MacOS/channelflow" | head -1)"
+          sleep 4
+          pkill -if "$DEV_APP/Contents/MacOS/channelflow" || true
+          sleep 2
+          ! pgrep -if "$DEV_APP/Contents/MacOS/channelflow" >/dev/null
+
+          open -na "$DEV_APP"
+          for i in {1..30}; do pgrep -if "$DEV_APP/Contents/MacOS/channelflow" >/dev/null && break; sleep 1; done
+          test -n "$(pgrep -if "$DEV_APP/Contents/MacOS/channelflow" | head -1)"
+          sleep 6
+          osascript <<'APPLESCRIPT'
+          tell application "System Events"
+            set p to first application process whose name is "channelflow"
+            set frontmost of p to true
+            set position of window 1 of p to {120, 55}
+            set size of window 1 of p to {1200, 760}
+            delay 1
+            set {wx, wy} to position of window 1 of p
+            click at {wx + 92, wy + 352}
+            delay 2
+            click at {wx + 330, wy + 217}
+          end tell
+          APPLESCRIPT
+          sleep 2
+          osascript -e 'tell application "System Events" to key code 121'
+          sleep 2
+          screencapture -x evidence/post-restart-identity.png
+          osascript -e 'tell application "System Events" to key code 121'
+          sleep 2
+          screencapture -x evidence/post-restart-quota-details.png
+          test -s evidence/post-restart-identity.png
+          test -s evidence/post-restart-quota-details.png
+          printf '%s\n' 'REAL KILL + RELAUNCH: PASS' > evidence/STATUS.txt
+          printf '%s\n' 'POST-RESTART IDENTITY SCREENSHOT: PASS' >> evidence/STATUS.txt
+          printf '%s\n' 'POST-RESTART QUOTA DETAIL SCREENSHOT: PASS' >> evidence/STATUS.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: VYRON-google-project-post-restart-detail-evidence
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Cleanup
+        if: always()
+        shell: bash
+        run: pkill -if 'VYRON|channelflow' || true
