@@ -1,0 +1,141 @@
+name: VYRON Google Project Diagnostics UI-Only Retry
+
+on:
+  push:
+    branches: [feature/vyron-google-project-diagnostics]
+    paths: ['.github/workflows/vyron-google-project-ui-only-retry.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  BUILD_RUN: '34736126738'
+  BUILD_ARTIFACT: 'VYRON-google-project-diagnostics-ARM64-DEV-retry'
+  GREEN_SOURCE_SHA256: 'a6d00f2d8bbe38f75f17ba6526973bc759e5d34a442931679b551fbc1a0dc512'
+  CLIENT_A: '123456789012-abcdefghijklmnop.apps.googleusercontent.com'
+  CLIENT_C: '987654321098-zyxwvutsrqponmlk.apps.googleusercontent.com'
+  PROJECT_ID: 'vyron-diagnostics-test-project'
+
+jobs:
+  ui-only-retry:
+    runs-on: macos-14
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore already-passed ARM64 development app
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf app-in evidence
+          mkdir -p app-in evidence
+          gh run download "$BUILD_RUN" --repo "$REPO" -n "$BUILD_ARTIFACT" -D app-in
+          ZIP=$(find app-in -name 'VYRON-2.1.3-GoogleProject-Diagnostics-ARM64-DEV.app.zip' -print -quit)
+          test -s "$ZIP"
+          rm -rf "$RUNNER_TEMP/VYRON-GoogleProject-Diagnostics.app"
+          ditto -x -k "$ZIP" "$RUNNER_TEMP/vyron-ui-unpack"
+          APP=$(find "$RUNNER_TEMP/vyron-ui-unpack" -maxdepth 2 -name 'VYRON.app' -print -quit)
+          test -d "$APP"
+          mv "$APP" "$RUNNER_TEMP/VYRON-GoogleProject-Diagnostics.app"
+          APP="$RUNNER_TEMP/VYRON-GoogleProject-Diagnostics.app"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = '2.1.3'
+          test "$(plutil -extract CFBundleVersion raw -o - "$APP/Contents/Info.plist")" = '2.1.3'
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = 'studio.channelflow.desktop'
+          EXE=$(plutil -extract CFBundleExecutable raw -o - "$APP/Contents/Info.plist")
+          file "$APP/Contents/MacOS/$EXE" | tee evidence/binary-file.txt | grep -q arm64
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          chmod -R u+rwX "$APP"
+          xattr -dr com.apple.quarantine "$APP" || true
+          echo "DEV_APP=$APP" >> "$GITHUB_ENV"
+          printf '%s\n' "$GREEN_SOURCE_SHA256" > evidence/green-source-sha256.txt
+          printf '%s\n' "$BUILD_RUN" > evidence/arm64-build-run.txt
+
+      - name: Execute canonical UI acceptance with AppleScript dictionary fix
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 <<'PY'
+          import os
+          import pathlib
+          import subprocess
+
+          path = pathlib.Path('.github/workflows/vyron-google-project-dev-ui.yml')
+          lines = path.read_text(encoding='utf-8').splitlines()
+          start = next(i for i, line in enumerate(lines) if line.strip() == '- name: Seed safe local metadata fixture with no secrets')
+          end = next(i for i in range(start + 1, len(lines)) if lines[i].strip().startswith('- uses: actions/upload-artifact@'))
+          scripts = []
+          i = start
+          while i < end:
+              if lines[i].startswith('      - name: '):
+                  name = lines[i].split(': ', 1)[1]
+                  j = i + 1
+                  while j < end and not lines[j].startswith('      - name: '):
+                      if lines[j] == '        run: |':
+                          j += 1
+                          block = []
+                          while j < end:
+                              line = lines[j]
+                              if line and not line.startswith('          '):
+                                  break
+                              block.append(line[10:] if line.startswith('          ') else '')
+                              j += 1
+                          scripts.append((name, '\n'.join(block)))
+                          break
+                      j += 1
+                  i = max(j, i + 1)
+              else:
+                  i += 1
+
+          expected = [
+              'Seed safe local metadata fixture with no secrets',
+              'Launch real development VYRON.app',
+              'Open Settings → YouTube in real UI',
+              'Select first OAuth profile and verify project A locally',
+              'Show/copy exact Client ID and run ZERO-API Local Diagnostics',
+              'Switch same-project channel then different-project channel',
+              'Return to project A and physically open official Google Cloud Console',
+              'Restart real app and verify diagnostics persistence',
+              'Final no-secret evidence scan',
+          ]
+          if [name for name, _ in scripts] != expected:
+              raise SystemExit('Canonical acceptance script set changed unexpectedly')
+
+          def fix_applescript_dictionary_scope(script: str) -> str:
+              for signature in ('on pressNamed(p, wanted)', 'on pressNamed(p,wanted)'):
+                  script = script.replace(
+                      signature,
+                      'using terms from application "System Events"\n' + signature,
+                  )
+              script = script.replace(
+                  'end pressNamed\ntell application "System Events"',
+                  'end pressNamed\nend using terms from\ntell application "System Events"',
+              )
+              return script
+
+          for name, script in scripts:
+              script = fix_applescript_dictionary_scope(script)
+              print(f'::group::{name}', flush=True)
+              subprocess.run(['bash', '-c', 'set -Eeuo pipefail\n' + script], check=True, env=os.environ.copy())
+              print('::endgroup::', flush=True)
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: VYRON-google-project-diagnostics-real-ui-evidence-ui-only-retry
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Cleanup
+        if: always()
+        shell: bash
+        run: |
+          pkill -if 'VYRON|channelflow' || true
+          pkill -x Safari || true
+          pkill -x 'Google Chrome' || true
