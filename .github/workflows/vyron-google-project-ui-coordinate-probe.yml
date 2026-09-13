@@ -84,7 +84,7 @@ jobs:
             set p to first application process whose name is "channelflow"
             set frontmost of p to true
             set {wx, wy} to position of window 1 of p
-            click at {wx + 92, wy + 302}
+            click at {wx + 92, wy + 352}
           end tell
           APPLESCRIPT
           sleep 3
