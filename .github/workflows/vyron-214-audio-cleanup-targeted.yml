@@ -37,10 +37,11 @@ jobs:
           cp -R work/. before/
           python3 .github/scripts/apply_v214_overlay_chunks.py work .github/patches/v214-audio-cleanup/shorts | tee evidence/shorts-overlay.txt
           python3 .github/scripts/apply_v214_overlay_chunks.py work .github/patches/v214-audio-cleanup/cleanup | tee evidence/cleanup-overlay.txt
+          python3 .github/scripts/apply_v214_overlay_chunks.py work .github/patches/v214-audio-cleanup/testfix | tee evidence/testfix-overlay.txt
           test ! -e work/src/v214RealMacFollowup.test.ts
           cp .github/patches/v214-audio-cleanup/tests/v214RealMacFollowup.test.ts work/src/v214RealMacFollowup.test.ts
-          test "$(shasum -a 256 work/src/v214RealMacFollowup.test.ts | awk '{print $1}')" = '41174a8b0ba89bac2c4b69f7f7dd42b5c183eb4cc84b40714e7a1b394d81bdaa'
-          { shasum -a 256 .github/patches/v214-audio-cleanup/shorts/manifest.json; shasum -a 256 .github/patches/v214-audio-cleanup/cleanup/manifest.json; shasum -a 256 .github/patches/v214-audio-cleanup/tests/v214RealMacFollowup.test.ts; } | tee evidence/followup-payload-sha256.txt
+          test "$(shasum -a 256 work/src/v214RealMacFollowup.test.ts | awk '{print $1}')" = 'db25a90636d7d913e23878a2796bc8c57b595e72692e2ac707e332bb93597adc'
+          { shasum -a 256 .github/patches/v214-audio-cleanup/shorts/manifest.json; shasum -a 256 .github/patches/v214-audio-cleanup/cleanup/manifest.json; shasum -a 256 .github/patches/v214-audio-cleanup/testfix/manifest.json; shasum -a 256 .github/patches/v214-audio-cleanup/tests/v214RealMacFollowup.test.ts; } | tee evidence/followup-payload-sha256.txt
           python3 - <<'PY'
           import hashlib,pathlib
           def h(root):
