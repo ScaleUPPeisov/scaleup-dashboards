@@ -12,7 +12,7 @@ env:
   BASE_SHA: b707ba58a7e9aedbdba9d2a4a8a940668de689ab7aa3e145b3dbdbf207bd14ff
 jobs:
   combined:
-    runs-on: macos-14-arm64
+    runs-on: macos-14
     timeout-minutes: 55
     env: {GH_TOKEN: '${{ github.token }}', APPLE_SIGNING_IDENTITY: '-'}
     steps:
@@ -86,11 +86,13 @@ jobs:
         run: |
           set -Eeuo pipefail; tar -xzf frozen/VYRON-2.1.4-combined-source.tar.gz -C build; cd build; npm ci --no-audit --no-fund; rustup target add aarch64-apple-darwin
           npx tauri build --target aarch64-apple-darwin --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'
-          APP=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name VYRON.app -print -quit); test -d "$APP"
+          APP_REL=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name VYRON.app -print -quit); test -n "$APP_REL"; APP="$(pwd)/$APP_REL"; test -d "$APP"
           test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = 2.1.4; test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = studio.channelflow.desktop
           EXE=$(plutil -extract CFBundleExecutable raw -o - "$APP/Contents/Info.plist"); file "$APP/Contents/MacOS/$EXE" | tee ../evidence/app-binary.txt | grep -q arm64; codesign --verify --deep --strict --verbose=2 "$APP"
-          launchctl setenv PATH '/usr/bin:/bin:/usr/sbin:/sbin'; open -na "$APP"; sleep 5; pgrep -if "$APP/Contents/MacOS/channelflow" >/dev/null; launchctl unsetenv PATH || true; pkill -if "$APP/Contents/MacOS/channelflow" || true
+          trap 'launchctl unsetenv PATH >/dev/null 2>&1 || true; pkill -if "VYRON|channelflow" >/dev/null 2>&1 || true' EXIT
+          launchctl setenv PATH '/usr/bin:/bin:/usr/sbin:/sbin'; open -na "$APP"; sleep 5; pgrep -if "$APP/Contents/MacOS/$EXE" >/dev/null; launchctl unsetenv PATH || true; pkill -if "$APP/Contents/MacOS/$EXE" || true
           ditto -c -k --keepParent "$APP" ../out/VYRON-2.1.4-COMBINED-ARM64-DEV.app.zip
+          trap - EXIT
       - uses: actions/upload-artifact@v4
         with: {name: VYRON-2.1.4-combined-green-source, path: frozen/, retention-days: 30}
       - uses: actions/upload-artifact@v4
