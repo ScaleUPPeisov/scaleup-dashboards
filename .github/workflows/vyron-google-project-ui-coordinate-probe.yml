@@ -58,7 +58,7 @@ jobs:
           subprocess.run(['bash','-c','set -Eeuo pipefail\n'+'\n'.join(b)],check=True,env=os.environ.copy())
           PY
 
-      - name: Launch, normalize window and click Settings
+      - name: Launch and navigate Settings to YouTube
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -87,8 +87,18 @@ jobs:
             click at {wx + 92, wy + 352}
           end tell
           APPLESCRIPT
+          sleep 2
+          screencapture -x evidence/settings-general.png || true
+          osascript <<'APPLESCRIPT'
+          tell application "System Events"
+            set p to first application process whose name is "channelflow"
+            set frontmost of p to true
+            set {wx, wy} to position of window 1 of p
+            click at {wx + 330, wy + 217}
+          end tell
+          APPLESCRIPT
           sleep 3
-          screencapture -x evidence/after-settings-click.png || true
+          screencapture -x evidence/settings-youtube.png || true
           cat evidence/window-before.txt
 
       - uses: actions/upload-artifact@v4
