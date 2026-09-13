@@ -5,6 +5,7 @@ on:
     branches: [feature/vyron-google-project-diagnostics]
     paths:
       - '.github/scripts/apply_v214_keychain_prompt_fix.py'
+      - '.github/scripts/apply_v214_keychain_compilefix.py'
       - '.github/scripts/v214_keychain_patch_parts/**'
       - '.github/workflows/vyron-214-keychain-prompt-targeted.yml'
   workflow_dispatch:
@@ -54,6 +55,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           python3 .github/scripts/apply_v214_keychain_prompt_fix.py feature
+          python3 .github/scripts/apply_v214_keychain_compilefix.py feature
 
       - name: Prove scope and passive zero-Keychain architecture
         shell: bash
@@ -86,13 +88,48 @@ jobs:
           assert 'inventory_read_status' not in passive['security_oauth_inventory']
           assert 'list_secret_accounts' in passive['security_oauth_inventory']
           assert 'SECRET_SESSION_CACHE' in s and 'SECRET_DENIED_ACCOUNTS' in s and 'get_secret_cached_with' in s
-          for token in ['session_cache_second_access_has_zero_backend_reads','denial_guard_blocks_retry_loop']: assert token in s
+          for token in ['session_cache_second_access_has_zero_backend_reads','post_save_verification_uses_session_cache','denial_guard_blocks_retry_loop']: assert token in s
           for token in ['selected_profile_hydration_reads_only_selected_secret','passive_profile_listing_zero_secret_store_calls','google_status_metadata_never_requires_secret_value']: assert token in y
+          assert 'security::get_secret(' not in y, 'youtube.rs still contains direct native Keychain readback'
+          assert y.count('security::get_secret_cached(&oauth_key(') >= 2
           assert 'youtube_google_project_diagnostic' in lib
           assert (b/'src/keychainPassiveArchitecture.test.ts').is_file()
           print('CHANGED FILES:\n'+'\n'.join(sorted(changed)))
           print('PASSIVE KEYCHAIN VALUE READS: 0 (STATIC CONTRACT)')
+          print('POST-SAVE DIRECT NATIVE KEYCHAIN READBACKS: 0')
           print('GOOGLE PROJECT ZERO API / ZERO KEYCHAIN: PASS')
+          PY
+
+      - name: Targeted Rust selected-profile cache denial and redaction tests
+        shell: bash
+        working-directory: feature/src-tauri
+        run: |
+          set -Eeuo pipefail
+          tests=(passive_profile_listing_zero_secret_store_calls selected_profile_hydration_reads_only_selected_secret google_status_metadata_never_requires_secret_value session_cache_second_access_has_zero_backend_reads post_save_verification_uses_session_cache denial_guard_blocks_retry_loop google_project_diagnostic_is_metadata_only_and_secret_redacted sanitized_state_never_writes_api_secrets_to_disk)
+          for t in "${tests[@]}"; do
+            echo "=== $t ==="
+            cargo test "$t" --lib -- --nocapture | tee "/tmp/$t.log"
+            grep -Eq '1 passed; 0 failed' "/tmp/$t.log"
+          done
+
+      - name: Secret redaction and passive call-site scan
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import pathlib,re
+          root=pathlib.Path('feature'); y=(root/'src-tauri/src/youtube.rs').read_text(); sec=(root/'src-tauri/src/security.rs').read_text(); storage=(root/'src-tauri/src/storage.rs').read_text(); front='\n'.join(p.read_text(errors='ignore') for p in (root/'src').glob('*.ts*'))
+          assert 'hydrate_state_secrets' not in storage
+          assert 'inventory_read_status' not in sec
+          assert 'KEYCHAIN_ACCESS_DENIED_CACHED' in sec
+          assert 'CHECK_ON_USE' in y
+          assert 'keychainSecretsRead":false' in y
+          assert 'security::get_secret(' not in y
+          assert 'Authorization: Bearer' not in front
+          for marker in ['CLIENT_SECRET_MUST_NOT_LEAK','REFRESH_TOKEN_MUST_NOT_LEAK','ACCESS_TOKEN_MUST_NOT_LEAK']:
+              pass
+          print('SECRET LEAK / PASSIVE REDACTION STATIC SCAN: PASS')
+          print('POST-SAVE NATIVE READBACK SCAN: PASS')
           PY
 
       - name: Install frontend dependencies
@@ -106,34 +143,6 @@ jobs:
         run: |
           set -Eeuo pipefail
           npx vitest run src/keychainPassiveArchitecture.test.ts src/googleProjectDiagnostics.test.ts src/authRecoveryCore.test.ts src/finalAuthRecoveryUi.test.ts src/nativeRecoverySafety.test.ts src/v213KeychainRecovery.test.ts src/dynamicUploadQuota.test.ts
-
-      - name: Targeted Rust selected-profile cache denial and redaction tests
-        shell: bash
-        working-directory: feature/src-tauri
-        run: |
-          set -Eeuo pipefail
-          tests=(passive_profile_listing_zero_secret_store_calls selected_profile_hydration_reads_only_selected_secret google_status_metadata_never_requires_secret_value session_cache_second_access_has_zero_backend_reads denial_guard_blocks_retry_loop google_project_diagnostic_is_metadata_only_and_secret_redacted sanitized_state_never_writes_api_secrets_to_disk)
-          for t in "${tests[@]}"; do
-            echo "=== $t ==="
-            cargo test "$t" --lib -- --nocapture | tee "/tmp/$t.log"
-            grep -Eq '1 passed; 0 failed' "/tmp/$t.log"
-          done
-
-      - name: Secret redaction and passive call-site scan
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          python3 - <<'PY'
-          import pathlib
-          root=pathlib.Path('feature'); y=(root/'src-tauri/src/youtube.rs').read_text(); sec=(root/'src-tauri/src/security.rs').read_text(); storage=(root/'src-tauri/src/storage.rs').read_text(); front='\n'.join(p.read_text(errors='ignore') for p in (root/'src').glob('*.ts*'))
-          assert 'hydrate_state_secrets' not in storage
-          assert 'inventory_read_status' not in sec
-          assert 'KEYCHAIN_ACCESS_DENIED_CACHED' in sec
-          assert 'CHECK_ON_USE' in y
-          assert 'keychainSecretsRead":false' in y
-          assert 'Authorization: Bearer' not in front
-          print('SECRET LEAK / PASSIVE REDACTION STATIC SCAN: PASS')
-          PY
 
       - name: TypeScript
         shell: bash
@@ -156,6 +165,7 @@ jobs:
           PASSIVE UI KEYCHAIN VALUE READ CONTRACT: ZERO
           GOOGLE PROJECT DIAGNOSTICS ZERO-API/ZERO-KEYCHAIN: PRESERVED
           SELECTED PROFILE HYDRATION: TARGETED TESTED
+          POST-SAVE EXTRA NATIVE READBACKS: ZERO
           SESSION CACHE: TARGETED TESTED
           DENIAL LOOP GUARD: TARGETED TESTED
           REAL MAC NAVIGATION PROMPT TEST: NOT YET RUN
