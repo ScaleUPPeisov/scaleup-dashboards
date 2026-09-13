@@ -25,6 +25,9 @@ env:
   MANIFEST_PATH: .github/patches/v214-schedule-channel-selector/manifest.json
   PATCH_SHA: 9df8e3f8155f0b8b1d66247190746b0ab949ed03b21ce78ea0eb95978dfcf477
   PATCH_B64_SHA: cf9372e82d6a3552ff99a98b1afeb120d811f219c9bf8f78b6346123e953fb78
+  TESTFIX_PATH: .github/patches/v214-schedule-channel-selector/test-harness-isolation.patch
+  TESTFIX_SHA: 7bbfd42897753e306bfb665acfed6f90f2f74ce6edc503cda463c7b9e1de857b
+  TESTFIX_AFTER_SHA: 976093563b7cb44c6471b33ddb95be2295521145a03ae23ffb4abf32539db3e4
 
 jobs:
   targeted-schedule-selector:
@@ -72,9 +75,13 @@ jobs:
           for item in m['files']:
               p=root/item['path']; assert p.exists() and sha(p)==item['after_sha256'],(item['path'],sha(p),item['after_sha256'])
           print('SELECTOR_OVERLAY_AFTER_SHA=PASS')
-          print('RUNTIME_SCOPE=src/ScheduleOS.tsx,src/scheduleOnly.css')
-          print('TEST_SCOPE=src/scheduleChannelSelector.test.ts')
           PY
+          test "$(shasum -a 256 "$TESTFIX_PATH" | awk '{print $1}')" = "$TESTFIX_SHA"
+          patch -p1 -d work < "$TESTFIX_PATH"
+          test "$(shasum -a 256 work/src/scheduleChannelSelector.test.ts | awk '{print $1}')" = "$TESTFIX_AFTER_SHA"
+          echo 'SELECTOR_TEST_HARNESS_ISOLATION=PASS'
+          echo 'RUNTIME_SCOPE=src/ScheduleOS.tsx,src/scheduleOnly.css'
+          echo 'TEST_SCOPE=src/scheduleChannelSelector.test.ts'
       - name: Install frontend dependencies
         working-directory: work
         run: npm ci --no-audit --no-fund
