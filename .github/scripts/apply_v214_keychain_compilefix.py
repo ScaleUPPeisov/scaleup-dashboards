@@ -29,6 +29,17 @@ replace_once('src-tauri/src/youtube.rs',
 '''security::get_secret(&oauth_key(&profile_id, "refresh_token"))''',
 '''security::get_secret_cached(&oauth_key(&profile_id, "refresh_token"))''')
 
+replace_once('src/keychainPassiveArchitecture.test.ts',
+'''import fs from 'node:fs';
+const rust=fs.readFileSync(new URL('../src-tauri/src/youtube.rs',import.meta.url),'utf8');
+const storage=fs.readFileSync(new URL('../src-tauri/src/storage.rs',import.meta.url),'utf8');
+const security=fs.readFileSync(new URL('../src-tauri/src/security.rs',import.meta.url),'utf8');''',
+'''import fs from 'node:fs';
+import {fileURLToPath} from 'node:url';
+const rust=fs.readFileSync(fileURLToPath(new URL('../src-tauri/src/youtube.rs',import.meta.url)),'utf8');
+const storage=fs.readFileSync(fileURLToPath(new URL('../src-tauri/src/storage.rs',import.meta.url)),'utf8');
+const security=fs.readFileSync(fileURLToPath(new URL('../src-tauri/src/security.rs',import.meta.url)),'utf8');''')
+
 sec=read('src-tauri/src/security.rs')
 anchor=''' #[test]\n fn denial_guard_blocks_retry_loop(){'''
 test=''' #[test]\n fn post_save_verification_uses_session_cache(){\n  use std::sync::atomic::{AtomicUsize,Ordering as AO};\n  static READS:AtomicUsize=AtomicUsize::new(0);let account="test.cache.post-save";invalidate_secret_cache(account);READS.store(0,AO::SeqCst);\n  // set_secret() calls remember_secret() after a successful native write. Model that successful write here without touching the real Keychain.\n  remember_secret(account,"saved-secret");\n  let verified=get_secret_cached_with(account,|_|{READS.fetch_add(1,AO::SeqCst);Ok(Some("backend-should-not-run".into()))}).unwrap();\n  assert_eq!(verified.as_deref(),Some("saved-secret"));assert_eq!(READS.load(AO::SeqCst),0);invalidate_secret_cache(account);\n }\n'''
