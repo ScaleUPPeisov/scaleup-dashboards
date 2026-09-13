@@ -90,17 +90,15 @@ jobs:
           APPLESCRIPT
           sleep 2
           screencapture -x evidence/youtube-top.png || true
-          for N in 1 2 3; do
-            osascript <<'APPLESCRIPT'
-            tell application "System Events"
-              set p to first application process whose name is "channelflow"
-              set frontmost of p to true
-              key code 121
-            end tell
-            APPLESCRIPT
-            sleep 2
-            screencapture -x "evidence/youtube-pagedown-${N}.png" || true
-          done
+          osascript -e 'tell application "System Events" to key code 121'
+          sleep 2
+          screencapture -x evidence/youtube-pagedown-1.png || true
+          osascript -e 'tell application "System Events" to key code 121'
+          sleep 2
+          screencapture -x evidence/youtube-pagedown-2.png || true
+          osascript -e 'tell application "System Events" to key code 121'
+          sleep 2
+          screencapture -x evidence/youtube-pagedown-3.png || true
           cat evidence/window-before.txt
 
       - uses: actions/upload-artifact@v4
