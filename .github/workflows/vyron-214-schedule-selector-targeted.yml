@@ -1,0 +1,102 @@
+name: VYRON 2.1.4 Schedule Channel Selector Targeted
+
+on:
+  push:
+    branches: [feature/vyron-google-project-diagnostics]
+    paths:
+      - '.github/workflows/vyron-214-schedule-selector-targeted.yml'
+      - '.github/patches/v214-schedule-channel-selector/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: vyron-214-schedule-selector-targeted
+  cancel-in-progress: true
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  BASE_RUN: '34761235214'
+  BASE_ARTIFACT: VYRON-2.1.4-final-source
+  BASE_SHA: 4a8c6eba14ee8c5090353ae2ea5047197f831351238a325fcec2d22fcf797fc8
+  PATCH_B64_PATH: .github/patches/v214-schedule-channel-selector/schedule-channel-selector.patch.gz.b64
+  MANIFEST_PATH: .github/patches/v214-schedule-channel-selector/manifest.json
+  PATCH_SHA: 9df8e3f8155f0b8b1d66247190746b0ab949ed03b21ce78ea0eb95978dfcf477
+  PATCH_B64_SHA: cf9372e82d6a3552ff99a98b1afeb120d811f219c9bf8f78b6346123e953fb78
+
+jobs:
+  targeted-schedule-selector:
+    runs-on: macos-14
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: '${{ github.token }}'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Restore previous verified final source and apply selector overlay
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf base work
+          mkdir -p base work
+          gh run download "$BASE_RUN" --repo "$REPO" -n "$BASE_ARTIFACT" -D base
+          T=base/VYRON-2.1.4-final-source.tar.gz
+          test "$(shasum -a 256 "$T" | awk '{print $1}')" = "$BASE_SHA"
+          tar -xzf "$T" -C work
+          test "$(shasum -a 256 "$PATCH_B64_PATH" | awk '{print $1}')" = "$PATCH_B64_SHA"
+          base64 --decode "$PATCH_B64_PATH" | gunzip > selector.patch
+          test "$(shasum -a 256 selector.patch | awk '{print $1}')" = "$PATCH_SHA"
+          python3 - <<'PY'
+          import hashlib,json,os,pathlib
+          root=pathlib.Path('work'); m=json.loads(pathlib.Path(os.environ['MANIFEST_PATH']).read_text())
+          assert m['base_source_sha256']==os.environ['BASE_SHA']
+          assert m['patch_sha256']==os.environ['PATCH_SHA']
+          assert m['patch_b64_sha256']==os.environ['PATCH_B64_SHA']
+          sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
+          for item in m['files']:
+              p=root/item['path']; before=item.get('before_sha256')
+              if before is None: assert not p.exists(),item['path']
+              else: assert p.exists() and sha(p)==before,(item['path'],sha(p) if p.exists() else None,before)
+          print('SELECTOR_BASELINE_SCOPE=PASS')
+          PY
+          patch -p1 -d work < selector.patch
+          python3 - <<'PY'
+          import hashlib,json,os,pathlib
+          root=pathlib.Path('work'); m=json.loads(pathlib.Path(os.environ['MANIFEST_PATH']).read_text()); sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
+          for item in m['files']:
+              p=root/item['path']; assert p.exists() and sha(p)==item['after_sha256'],(item['path'],sha(p),item['after_sha256'])
+          print('SELECTOR_OVERLAY_AFTER_SHA=PASS')
+          print('RUNTIME_SCOPE=src/ScheduleOS.tsx,src/scheduleOnly.css')
+          print('TEST_SCOPE=src/scheduleChannelSelector.test.ts')
+          PY
+      - name: Install frontend dependencies
+        working-directory: work
+        run: npm ci --no-audit --no-fund
+      - name: New channel selector regression
+        working-directory: work
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npx vitest run src/scheduleChannelSelector.test.ts --reporter=verbose
+      - name: Existing Schedule regression scope
+        working-directory: work
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npx vitest run \
+            src/channelSchedule.test.ts \
+            src/publisherSchedule.test.ts \
+            src/scheduleContinuation.test.ts \
+            src/scheduleOnly.test.ts \
+            src/scheduleOnlyContracts.test.ts \
+            src/MetadataPage.schedule.test.ts \
+            src/v2100UnifiedSchedule.test.ts
+      - name: TypeScript selector compile guard
+        working-directory: work
+        run: npx tsc --noEmit --pretty false
