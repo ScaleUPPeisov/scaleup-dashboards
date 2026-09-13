@@ -69,8 +69,6 @@ jobs:
           echo "OLD_PID=$pid" >> "$GITHUB_ENV"
           echo "OLD_PID=$pid"
 
-          # The WKWebView DOM is not exposed through System Events AX on GitHub-hosted macOS.
-          # We still use the real app; wait for its normal automatic updater check, then preserve a screenshot.
           osascript <<'APPLESCRIPT' || true
           tell application "System Events"
             try
@@ -103,10 +101,10 @@ jobs:
           IFS=',' read -r wx wy ww wh <<< "$WINDOW_BOUNDS"
           test -n "$wx"; test -n "$wy"
 
-          # Coordinates are relative to the actual VYRON window, not absolute screen coordinates.
-          # They target the visible ОБНОВИТЬ button in the stable 2.1.2 home-screen update card.
-          cx=$((wx + 442))
-          cy=$((wy + 168))
+          # Target measured from the real 1360x880 VYRON 2.1.2 window captured by this runner.
+          # This is test-harness UI driving only; production VYRON does not use coordinate automation.
+          cx=$((wx + 514))
+          cy=$((wy + 195))
           echo "CLICK_POINT=$cx,$cy"
 
           osascript - "$cx" "$cy" <<'APPLESCRIPT'
