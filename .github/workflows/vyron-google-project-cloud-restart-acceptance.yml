@@ -74,39 +74,96 @@ jobs:
         run: |
           set -Eeuo pipefail
           CAPTURE_APP="$RUNNER_TEMP/VYRONURLCapture.app"
-          CAPTURE_FILE="$RUNNER_TEMP/vyron-captured-url.txt"
+          CAPTURE_FILE="/tmp/vyron-captured-url.txt"
           rm -rf "$CAPTURE_APP" "$CAPTURE_FILE"
-          cat > "$RUNNER_TEMP/urlcapture.applescript" <<APPLESCRIPT
-          on open location theURL
-            do shell script "/bin/printf '%s\\n' " & quoted form of theURL & " > " & quoted form of "$CAPTURE_FILE"
-          end open location
-          APPLESCRIPT
-          osacompile -o "$CAPTURE_APP" "$RUNNER_TEMP/urlcapture.applescript"
-          if ! /usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier com.scaleup.vyron.urlcapture' "$CAPTURE_APP/Contents/Info.plist"; then
-            /usr/libexec/PlistBuddy -c 'Add :CFBundleIdentifier string com.scaleup.vyron.urlcapture' "$CAPTURE_APP/Contents/Info.plist"
-          fi
-          /usr/libexec/PlistBuddy -c 'Delete :CFBundleURLTypes' "$CAPTURE_APP/Contents/Info.plist" 2>/dev/null || true
-          /usr/libexec/PlistBuddy -c 'Add :CFBundleURLTypes array' "$CAPTURE_APP/Contents/Info.plist"
-          /usr/libexec/PlistBuddy -c 'Add :CFBundleURLTypes:0 dict' "$CAPTURE_APP/Contents/Info.plist"
-          /usr/libexec/PlistBuddy -c 'Add :CFBundleURLTypes:0:CFBundleURLName string VYRON URL Capture' "$CAPTURE_APP/Contents/Info.plist"
-          /usr/libexec/PlistBuddy -c 'Add :CFBundleURLTypes:0:CFBundleURLSchemes array' "$CAPTURE_APP/Contents/Info.plist"
-          /usr/libexec/PlistBuddy -c 'Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string https' "$CAPTURE_APP/Contents/Info.plist"
-          /usr/libexec/PlistBuddy -c 'Add :CFBundleURLTypes:0:CFBundleURLSchemes:1 string http' "$CAPTURE_APP/Contents/Info.plist"
-          /usr/libexec/PlistBuddy -c 'Delete :CFBundleDocumentTypes' "$CAPTURE_APP/Contents/Info.plist" 2>/dev/null || true
-          /usr/libexec/PlistBuddy -c 'Add :CFBundleDocumentTypes array' "$CAPTURE_APP/Contents/Info.plist"
-          /usr/libexec/PlistBuddy -c 'Add :CFBundleDocumentTypes:0 dict' "$CAPTURE_APP/Contents/Info.plist"
-          /usr/libexec/PlistBuddy -c 'Add :CFBundleDocumentTypes:0:CFBundleTypeName string Web URL' "$CAPTURE_APP/Contents/Info.plist"
-          /usr/libexec/PlistBuddy -c 'Add :CFBundleDocumentTypes:0:CFBundleTypeRole string Viewer' "$CAPTURE_APP/Contents/Info.plist"
-          /usr/libexec/PlistBuddy -c 'Add :CFBundleDocumentTypes:0:LSHandlerRank string Owner' "$CAPTURE_APP/Contents/Info.plist"
-          /usr/libexec/PlistBuddy -c 'Add :CFBundleDocumentTypes:0:LSItemContentTypes array' "$CAPTURE_APP/Contents/Info.plist"
-          /usr/libexec/PlistBuddy -c 'Add :CFBundleDocumentTypes:0:LSItemContentTypes:0 string public.url' "$CAPTURE_APP/Contents/Info.plist"
-          /usr/libexec/PlistBuddy -c 'Add :CFBundleDocumentTypes:0:LSItemContentTypes:1 string public.html' "$CAPTURE_APP/Contents/Info.plist"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$CAPTURE_APP/Contents/Info.plist")" = 'com.scaleup.vyron.urlcapture'
+          mkdir -p "$CAPTURE_APP/Contents/MacOS"
+
+          cat > "$RUNNER_TEMP/VYRONURLCapture.swift" <<'SWIFT'
+          import AppKit
+          import Carbon
+
+          final class AppDelegate: NSObject, NSApplicationDelegate {
+            let capturePath = "/tmp/vyron-captured-url.txt"
+
+            func applicationWillFinishLaunching(_ notification: Notification) {
+              NSAppleEventManager.shared().setEventHandler(
+                self,
+                andSelector: #selector(handleGetURL(_:withReplyEvent:)),
+                forEventClass: AEEventClass(kInternetEventClass),
+                andEventID: AEEventID(kAEGetURL)
+              )
+            }
+
+            @objc func handleGetURL(_ event: NSAppleEventDescriptor, withReplyEvent replyEvent: NSAppleEventDescriptor) {
+              guard let value = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue else {
+                return
+              }
+              do {
+                try (value + "\n").write(toFile: capturePath, atomically: true, encoding: .utf8)
+              } catch {
+                fputs("capture write failed: \(error)\n", stderr)
+              }
+              DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                NSApp.terminate(nil)
+              }
+            }
+          }
+
+          let app = NSApplication.shared
+          let delegate = AppDelegate()
+          app.delegate = delegate
+          app.setActivationPolicy(.accessory)
+          app.run()
+          SWIFT
+
+          swiftc "$RUNNER_TEMP/VYRONURLCapture.swift" \
+            -framework AppKit -framework Carbon \
+            -o "$CAPTURE_APP/Contents/MacOS/VYRONURLCapture"
+
+          cat > "$CAPTURE_APP/Contents/Info.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key><string>VYRONURLCapture</string>
+            <key>CFBundleDisplayName</key><string>VYRONURLCapture</string>
+            <key>CFBundleExecutable</key><string>VYRONURLCapture</string>
+            <key>CFBundleIdentifier</key><string>com.scaleup.vyron.urlcapture</string>
+            <key>CFBundleVersion</key><string>1</string>
+            <key>CFBundleShortVersionString</key><string>1.0</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>LSUIElement</key><true/>
+            <key>CFBundleURLTypes</key>
+            <array>
+              <dict>
+                <key>CFBundleURLName</key><string>VYRON URL Capture</string>
+                <key>CFBundleURLSchemes</key>
+                <array><string>https</string><string>http</string></array>
+              </dict>
+            </array>
+            <key>CFBundleDocumentTypes</key>
+            <array>
+              <dict>
+                <key>CFBundleTypeName</key><string>Web URL</string>
+                <key>CFBundleTypeRole</key><string>Viewer</string>
+                <key>LSHandlerRank</key><string>Owner</string>
+                <key>LSItemContentTypes</key>
+                <array><string>public.url</string><string>public.html</string></array>
+              </dict>
+            </array>
+          </dict>
+          </plist>
+          PLIST
+
+          plutil -lint "$CAPTURE_APP/Contents/Info.plist"
           codesign --force --deep --sign - "$CAPTURE_APP"
+          codesign --verify --deep --strict --verbose=2 "$CAPTURE_APP"
+          file "$CAPTURE_APP/Contents/MacOS/VYRONURLCapture" | tee evidence/url-capture-binary.txt | grep -q arm64
+
           LSREGISTER='/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
           "$LSREGISTER" -f "$CAPTURE_APP"
 
-          cat > "$RUNNER_TEMP/set-http-default.swift" <<'SWIFT'
+          cat > "$RUNNER_TEMP/set-default.swift" <<'SWIFT'
           import Foundation
           import CoreServices
           let bundle = "com.scaleup.vyron.urlcapture" as CFString
@@ -116,7 +173,7 @@ jobs:
           print("http=\(httpStatus) public.url=\(urlRole) public.html=\(htmlRole)")
           if httpStatus != noErr { exit(1) }
           SWIFT
-          swift "$RUNNER_TEMP/set-http-default.swift" | tee evidence/url-handler-registration.txt
+          swift "$RUNNER_TEMP/set-default.swift" | tee evidence/url-handler-registration.txt
           sleep 2
 
           osascript <<'APPLESCRIPT' | tee evidence/default-browser-prompt.txt
@@ -160,12 +217,14 @@ jobs:
           swift "$RUNNER_TEMP/verify-default.swift" | tee evidence/url-handler-verification.txt
           echo "CAPTURE_FILE=$CAPTURE_FILE" >> "$GITHUB_ENV"
 
+          rm -f "$CAPTURE_FILE"
           open 'https://example.com/vyron-handler-self-test'
           for i in {1..20}; do test -s "$CAPTURE_FILE" && break; sleep 1; done
           test -s "$CAPTURE_FILE"
           SELF=$(cat "$CAPTURE_FILE")
           printf '%s\n' "$SELF" | tee evidence/url-handler-self-test.txt
           test "$SELF" = 'https://example.com/vyron-handler-self-test'
+          echo 'HTTPS CAPTURE HANDLER SELF-TEST: PASS' > evidence/url-handler-self-test-status.txt
           rm -f "$CAPTURE_FILE"
 
       - name: Physically open Google Cloud from VYRON and capture exact URL
@@ -209,8 +268,16 @@ jobs:
           test -s "$CAPTURE_FILE"
           CLOUD_URL=$(cat "$CAPTURE_FILE")
           printf '%s\n' "$CLOUD_URL" | tee evidence/google-cloud-url.txt
-          echo "$CLOUD_URL" | grep -Fq 'https://console.cloud.google.com/'
-          echo "$CLOUD_URL" | grep -Fq "project=$PROJECT_ID"
+          python3 - "$CLOUD_URL" "$PROJECT_ID" <<'PY'
+          import sys, urllib.parse
+          url, project = sys.argv[1:]
+          parsed = urllib.parse.urlparse(url)
+          assert parsed.scheme == 'https', parsed.scheme
+          assert parsed.hostname == 'console.cloud.google.com', parsed.hostname
+          q = urllib.parse.parse_qs(parsed.query)
+          assert q.get('project') == [project], q
+          print('GOOGLE CLOUD EXACT URL STRUCTURE: PASS')
+          PY
           echo 'GOOGLE CLOUD PHYSICAL CLICK + EXACT URL: PASS' > evidence/google-cloud-click.txt
 
       - name: Restart real app and verify diagnostics card returns
@@ -246,8 +313,15 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
+          grep -Fqx 'https://example.com/vyron-handler-self-test' evidence/url-handler-self-test.txt
           grep -Fq 'https://console.cloud.google.com/' evidence/google-cloud-url.txt
           grep -Fq "project=$PROJECT_ID" evidence/google-cloud-url.txt
+          test -s evidence/03-after-restart-project-card.png
+          if grep -R -Eiq 'client_secret|refresh_token|access_token|Authorization: Bearer|private_key|authorization_code' evidence; then
+            echo 'EVIDENCE SECRET LEAK SCAN: FAIL' >&2
+            exit 1
+          fi
+          echo 'EVIDENCE SECRET LEAK SCAN: PASS' > evidence/evidence-secret-leak-scan.txt
           cat > evidence/STATUS.txt <<'TXT'
           FIXTURE ACCEPTANCE SUPPLEMENT — NOT REAL USER PROFILE
           ARM64 APP REUSED FROM VERIFIED BUILD RUN 34736126738
@@ -256,6 +330,7 @@ jobs:
           EXACT GOOGLE CLOUD URL CAPTURE: PASS
           PROJECT-SPECIFIC URL: PASS
           RESTART PHYSICAL NAVIGATION: PASS
+          EVIDENCE SECRET LEAK SCAN: PASS
           PRODUCTION SOURCE MODIFIED: NO
           REAL USER PROFILE TESTED: NO
           TXT
@@ -274,3 +349,4 @@ jobs:
         shell: bash
         run: |
           pkill -if 'VYRON|channelflow|VYRONURLCapture' || true
+          rm -f /tmp/vyron-captured-url.txt
