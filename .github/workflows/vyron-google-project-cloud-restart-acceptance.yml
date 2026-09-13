@@ -82,13 +82,17 @@ jobs:
           end open location
           APPLESCRIPT
           osacompile -o "$CAPTURE_APP" "$RUNNER_TEMP/urlcapture.applescript"
-          /usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier com.scaleup.vyron.urlcapture' "$CAPTURE_APP/Contents/Info.plist"
+          if ! /usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier com.scaleup.vyron.urlcapture' "$CAPTURE_APP/Contents/Info.plist"; then
+            /usr/libexec/PlistBuddy -c 'Add :CFBundleIdentifier string com.scaleup.vyron.urlcapture' "$CAPTURE_APP/Contents/Info.plist"
+          fi
+          /usr/libexec/PlistBuddy -c 'Delete :CFBundleURLTypes' "$CAPTURE_APP/Contents/Info.plist" 2>/dev/null || true
           /usr/libexec/PlistBuddy -c 'Add :CFBundleURLTypes array' "$CAPTURE_APP/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c 'Add :CFBundleURLTypes:0 dict' "$CAPTURE_APP/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c 'Add :CFBundleURLTypes:0:CFBundleURLName string VYRON URL Capture' "$CAPTURE_APP/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c 'Add :CFBundleURLTypes:0:CFBundleURLSchemes array' "$CAPTURE_APP/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c 'Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string https' "$CAPTURE_APP/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c 'Add :CFBundleURLTypes:0:CFBundleURLSchemes:1 string http' "$CAPTURE_APP/Contents/Info.plist"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$CAPTURE_APP/Contents/Info.plist")" = 'com.scaleup.vyron.urlcapture'
           codesign --force --deep --sign - "$CAPTURE_APP"
           LSREGISTER='/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
           "$LSREGISTER" -f "$CAPTURE_APP"
