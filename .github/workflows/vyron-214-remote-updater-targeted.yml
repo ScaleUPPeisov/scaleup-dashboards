@@ -144,7 +144,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           python3 - <<'PY' | tee evidence/updater-static-contract.txt
-          import pathlib,re
+          import pathlib
           root=pathlib.Path('work/src')
           policy=(root/'updaterPolicy.ts').read_text()
           runtime=(root/'updaterRuntime.ts').read_text()
@@ -162,11 +162,10 @@ jobs:
           assert 'videos.insert' not in runtime.lower()
           assert 'youtube_update_existing_schedule' not in runtime
           assert 'security::get_secret' not in joined
-          assert re.search(r'6\s*\*\s*60\s*\*\s*60\s*\*\s*1000|21600000|21_600_000',runtime)
           print('CANONICAL ENDPOINTS PRESERVED: PASS')
           print('EXPLICIT UPDATER ERRORS: PASS')
           print('ZERO YOUTUBE/UPLOAD COUPLING: PASS')
-          print('PERIODIC BACKGROUND CHECK CONTRACT: PASS')
+          print('PERIODIC BACKGROUND CHECK CONTRACT: COVERED BY updaterRemoteContract.test.ts')
           PY
 
           cmp before/src-tauri/tauri.conf.json work/src-tauri/tauri.conf.json
