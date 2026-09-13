@@ -58,7 +58,7 @@ jobs:
           subprocess.run(['bash','-c','set -Eeuo pipefail\n'+'\n'.join(b)],check=True,env=os.environ.copy())
           PY
 
-      - name: Launch and navigate Settings to YouTube
+      - name: Navigate to YouTube and locate Google Cloud card
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -78,27 +78,29 @@ jobs:
             return "position=" & (xy as text) & linefeed & "size=" & (wh as text)
           end tell
           APPLESCRIPT
-          screencapture -x evidence/home-normalized.png || true
           osascript <<'APPLESCRIPT'
           tell application "System Events"
             set p to first application process whose name is "channelflow"
             set frontmost of p to true
             set {wx, wy} to position of window 1 of p
             click at {wx + 92, wy + 352}
-          end tell
-          APPLESCRIPT
-          sleep 2
-          screencapture -x evidence/settings-general.png || true
-          osascript <<'APPLESCRIPT'
-          tell application "System Events"
-            set p to first application process whose name is "channelflow"
-            set frontmost of p to true
-            set {wx, wy} to position of window 1 of p
+            delay 2
             click at {wx + 330, wy + 217}
           end tell
           APPLESCRIPT
-          sleep 3
-          screencapture -x evidence/settings-youtube.png || true
+          sleep 2
+          screencapture -x evidence/youtube-top.png || true
+          for N in 1 2 3; do
+            osascript <<'APPLESCRIPT'
+            tell application "System Events"
+              set p to first application process whose name is "channelflow"
+              set frontmost of p to true
+              key code 121
+            end tell
+            APPLESCRIPT
+            sleep 2
+            screencapture -x "evidence/youtube-pagedown-${N}.png" || true
+          done
           cat evidence/window-before.txt
 
       - uses: actions/upload-artifact@v4
