@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: {node-version: '22'}
-      - name: Restore exact audio-cleanup green source and apply Schedule-only overlay
+      - name: Restore exact audio-cleanup green source and apply Schedule-only overlays
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -36,6 +36,10 @@ jobs:
           tar -xzf "$T" -C work
           cp -R work/. before/
           python3 .github/scripts/apply_v214_overlay_chunks.py work .github/patches/v214-schedule-only | tee evidence/schedule-overlay.txt
+          python3 .github/scripts/apply_v214_overlay_chunks.py work .github/patches/v214-schedule-only-testfix | tee evidence/schedule-testfix.txt
+          python3 .github/scripts/apply_v214_overlay_chunks.py work .github/patches/v214-schedule-only-testfix2 | tee evidence/schedule-testfix2.txt
+          test "$(shasum -a 256 work/src/ScheduleOS.tsx | awk '{print $1}')" = '916d2bb1225657746dcc6a4e14ddc36f51c5f712c5407273547dae1a3bd03396'
+          test "$(shasum -a 256 work/src/scheduleOnlyContracts.test.ts | awk '{print $1}')" = '52465f8ee1a9bc4a09507337fd75f24abd6593e719e6df64e05d7625ccd41838'
           python3 - <<'PY'
           import hashlib,pathlib
           def h(root):
@@ -64,7 +68,11 @@ jobs:
           assert '"snippetWrites":0' in body and '"thumbnailWrites":0' in body and '"playlistWrites":0' in body and '"videosInsert":0' in body
           assert 'security::get_secret(' not in rust
           PY
-          shasum -a 256 .github/patches/v214-schedule-only/manifest.json | tee evidence/overlay-manifest-sha256.txt
+          {
+            shasum -a 256 .github/patches/v214-schedule-only/manifest.json
+            shasum -a 256 .github/patches/v214-schedule-only-testfix/manifest.json
+            shasum -a 256 .github/patches/v214-schedule-only-testfix2/manifest.json
+          } | tee evidence/overlay-manifest-sha256.txt
       - name: Schedule-only frontend S1-S20 and regression contracts
         shell: bash
         working-directory: work
