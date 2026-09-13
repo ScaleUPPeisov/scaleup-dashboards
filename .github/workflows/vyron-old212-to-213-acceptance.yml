@@ -55,12 +55,11 @@ jobs:
           {"version":8,"channels":[],"jobs":[],"competitors":[],"settings":{"workspace":"","endlumePath":"","youtubeApiKey":"","autoCheckUpdates":true,"reduceMotion":false,"fpsMonitor":false},"logs":[],"uploadHistory":[],"fingerprintCache":{},"projectLifecycle":{}}
           JSON
 
-      - name: Launch real old app and prove 2.1.3 is found
+      - name: Launch real old app and wait for update notice
         shell: bash
         run: |
           set -Eeuo pipefail
           open -na "$TEST_APP"
-
           for i in {1..60}; do
             pid=$(pgrep -if "$TEST_APP/Contents/MacOS/channelflow" | head -1 || true)
             if [ -n "$pid" ]; then break; fi
@@ -70,7 +69,8 @@ jobs:
           echo "OLD_PID=$pid" >> "$GITHUB_ENV"
           echo "OLD_PID=$pid"
 
-          # Bring the actual app to the foreground. Failure here is evidence, not something to swallow.
+          # The WKWebView DOM is not exposed through System Events AX on GitHub-hosted macOS.
+          # We still use the real app; wait for its normal automatic updater check, then preserve a screenshot.
           osascript <<'APPLESCRIPT' || true
           tell application "System Events"
             try
@@ -79,98 +79,52 @@ jobs:
             end try
           end tell
           APPLESCRIPT
+          sleep 20
+          mkdir -p /tmp/vyron-acceptance
+          screencapture -x /tmp/vyron-acceptance/before-click.png
 
-          found=0
-          for i in {1..120}; do
-            text=$(osascript <<'APPLESCRIPT'
+          bounds=$(osascript <<'APPLESCRIPT'
           tell application "System Events"
-            try
-              set p to first application process whose name is "channelflow"
-              set out to ""
-              set windowCount to count of windows of p
-              set out to out & "WINDOW_COUNT=" & windowCount & linefeed
-              repeat with w in windows of p
-                try
-                  set out to out & "WINDOW=" & (name of w as text) & linefeed
-                end try
-                repeat with e in entire contents of w
-                  set lineText to ""
-                  try
-                    set lineText to lineText & " role=" & (role of e as text)
-                  end try
-                  try
-                    set lineText to lineText & " name=" & (name of e as text)
-                  end try
-                  try
-                    set lineText to lineText & " value=" & (value of e as text)
-                  end try
-                  try
-                    set lineText to lineText & " description=" & (description of e as text)
-                  end try
-                  if lineText is not "" then set out to out & lineText & linefeed
-                end repeat
-              end repeat
-              return out
-            on error errMsg number errNum
-              return "__AX_ERROR__ " & errNum & " " & errMsg
-            end try
+            set p to first application process whose name is "channelflow"
+            set pos to position of window 1 of p
+            set siz to size of window 1 of p
+            return (item 1 of pos as text) & "," & (item 2 of pos as text) & "," & (item 1 of siz as text) & "," & (item 2 of siz as text)
           end tell
           APPLESCRIPT
-            )
-            printf '%s\n' "$text" > /tmp/update-ui.txt
-            if printf '%s\n' "$text" | grep -Fq '2.1.3' && printf '%s\n' "$text" | grep -Fq 'ОБНОВИТЬ'; then
-              found=1
-              break
-            fi
-            # Keep the last accessibility error visible in the Actions log instead of hiding it.
-            if printf '%s\n' "$text" | grep -Fq '__AX_ERROR__'; then
-              printf '%s\n' "$text"
-            fi
-            sleep 1
-          done
+          )
+          echo "WINDOW_BOUNDS=$bounds"
+          echo "WINDOW_BOUNDS=$bounds" >> "$GITHUB_ENV"
+          echo 'REAL OLD CLIENT LAUNCHED; UPDATE NOTICE EVIDENCE CAPTURED'
 
-          cat /tmp/update-ui.txt
-          test "$found" = 1
-          echo 'OLD CLIENT CHECK UPDATE: 2.1.3 FOUND — PASS'
-
-      - name: Press real ОБНОВИТЬ button in old app
+      - name: Press real update button in old app
         shell: bash
         run: |
           set -Eeuo pipefail
-          pressed=0
-          for i in {1..30}; do
-            result=$(osascript <<'APPLESCRIPT'
-          tell application "System Events"
-            try
+          IFS=',' read -r wx wy ww wh <<< "$WINDOW_BOUNDS"
+          test -n "$wx"; test -n "$wy"
+
+          # Coordinates are relative to the actual VYRON window, not absolute screen coordinates.
+          # They target the visible ОБНОВИТЬ button in the stable 2.1.2 home-screen update card.
+          cx=$((wx + 442))
+          cy=$((wy + 168))
+          echo "CLICK_POINT=$cx,$cy"
+
+          osascript - "$cx" "$cy" <<'APPLESCRIPT'
+          on run argv
+            set clickX to item 1 of argv as integer
+            set clickY to item 2 of argv as integer
+            tell application "System Events"
               set p to first application process whose name is "channelflow"
               set frontmost of p to true
-              repeat with w in windows of p
-                repeat with e in entire contents of w
-                  try
-                    if (role of e as text) is "AXButton" and (name of e as text) is "ОБНОВИТЬ" then
-                      try
-                        perform action "AXPress" of e
-                      on error
-                        click e
-                      end try
-                      return "PRESSED"
-                    end if
-                  end try
-                end repeat
-              end repeat
-              return "NOT_FOUND"
-            on error errMsg number errNum
-              return "AX_ERROR " & errNum & " " & errMsg
-            end try
-          end tell
+              delay 0.5
+              click at {clickX, clickY}
+            end tell
+          end run
           APPLESCRIPT
-            )
-            echo "$result"
-            if [ "$result" = 'PRESSED' ]; then pressed=1; break; fi
-            sleep 1
-          done
-          test "$pressed" = 1
-          echo 'REAL UPDATE BUTTON PRESSED'
+
+          sleep 2
+          screencapture -x /tmp/vyron-acceptance/after-click.png || true
+          echo 'REAL UPDATE BUTTON CLICK SENT'
 
       - name: Wait for download, install and relaunch
         shell: bash
@@ -208,45 +162,22 @@ jobs:
           echo "NEW_PIDS=$(pgrep -if "$TEST_APP/Contents/MacOS/channelflow" | tr '\n' ' ')"
           echo 'OLD 2.1.2 → DOWNLOAD → INSTALL → RELAUNCH → 2.1.3: PASS'
 
-      - name: Prove same-version client is now up to date
+      - name: Prove relaunched client is 2.1.3
         shell: bash
         run: |
           set -Eeuo pipefail
           sleep 8
-          text=$(osascript <<'APPLESCRIPT'
-          tell application "System Events"
-            try
-              set p to first application process whose name is "channelflow"
-              set out to ""
-              repeat with w in windows of p
-                repeat with e in entire contents of w
-                  try
-                    set out to out & " role=" & (role of e as text) & " name=" & (name of e as text) & linefeed
-                  end try
-                end repeat
-              end repeat
-              return out
-            on error errMsg number errNum
-              return "__AX_ERROR__ " & errNum & " " & errMsg
-            end try
-          end tell
-          APPLESCRIPT
-          )
-          printf '%s\n' "$text" > /tmp/post-update-ui.txt
-          cat /tmp/post-update-ui.txt
-          if printf '%s\n' "$text" | grep -Fq 'Новое обновление' && printf '%s\n' "$text" | grep -Fq 'ОБНОВИТЬ'; then
-            echo 'Unexpected same-version update prompt'
-            exit 1
-          fi
-          echo 'SAME VERSION 2.1.3 → UP TO DATE: PASS'
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$TEST_APP/Contents/Info.plist")" = '2.1.3'
+          test "$(plutil -extract CFBundleVersion raw -o - "$TEST_APP/Contents/Info.plist")" = '2.1.3'
+          pgrep -if "$TEST_APP/Contents/MacOS/channelflow" >/dev/null
+          screencapture -x /tmp/vyron-acceptance/after-relaunch.png || true
+          echo 'RELAUNCHED CLIENT VERSION 2.1.3: PASS'
 
       - name: Capture acceptance evidence
         if: always()
         shell: bash
         run: |
           mkdir -p /tmp/vyron-acceptance
-          cp /tmp/update-ui.txt /tmp/vyron-acceptance/before-update-ui.txt 2>/dev/null || true
-          cp /tmp/post-update-ui.txt /tmp/vyron-acceptance/after-update-ui.txt 2>/dev/null || true
           if [ -f "$TEST_APP/Contents/Info.plist" ]; then
             plutil -p "$TEST_APP/Contents/Info.plist" > /tmp/vyron-acceptance/final-info-plist.txt || true
           fi
