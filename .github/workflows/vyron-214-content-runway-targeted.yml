@@ -11,7 +11,7 @@ env:
   BASE_RUN: '34754240596'
   BASE_ARTIFACT: VYRON-2.1.4-remote-updater-green-source
   BASE_SHA: b8d69d342ac3b42ec018e292a335651fdc3288acd0beb829136571959342ef60
-  OVERLAY_DIR: .github/patches/v214-content-runway
+  OVERLAY_DIR: .github/patches/v214-content-runway-zlib
 jobs:
   runway-targeted:
     runs-on: macos-14
@@ -37,9 +37,9 @@ jobs:
           cp -R work/. before/
           python3 .github/scripts/apply_v214_overlay_chunks.py work "$OVERLAY_DIR" | tee evidence/runway-overlay.txt
           python3 - <<'PY'
-          import hashlib,json,pathlib
+          import hashlib,json,pathlib,os
           a,b=pathlib.Path('before'),pathlib.Path('work')
-          m=json.loads(pathlib.Path('.github/patches/v214-content-runway/manifest.json').read_text())
+          m=json.loads((pathlib.Path(os.environ['OVERLAY_DIR'])/'manifest.json').read_text())
           assert m['base_source_sha256']=='b8d69d342ac3b42ec018e292a335651fdc3288acd0beb829136571959342ef60'
           assert m['patch_sha256']=='e9554868011cbc32ee02a48d0a1f3cd43944b3edd67b6c2ef84374d2c17d4393'
           def sha(p): return hashlib.sha256(p.read_bytes()).hexdigest()
@@ -49,6 +49,8 @@ jobs:
           expected=sorted(x['path'] for x in m['files'])
           print('\n'.join(changed)); pathlib.Path('evidence/strict-diff.txt').write_text('\n'.join(changed)+'\n')
           assert changed==expected,(changed,expected)
+          for item in m['files']:
+              assert sha(b/item['path'])==item['after_sha256'],item['path']
           protected=[
             'src/updaterRuntime.ts','src/updaterGuard.ts','src/updaterPolicy.ts','src/updaterStore.ts',
             'src/ScheduleOS.tsx','src/scheduleOnly.ts','src/ShortsFactory.tsx','src/ProductionManager.tsx',
