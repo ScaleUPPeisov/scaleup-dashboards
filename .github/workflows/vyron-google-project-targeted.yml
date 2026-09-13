@@ -53,7 +53,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           python3 - <<'PY'
-          import hashlib,pathlib,re
+          import hashlib,pathlib
           a=pathlib.Path('base'); b=pathlib.Path('feature')
           def hs(root): return {str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in root.rglob('*') if p.is_file() and 'node_modules/' not in str(p)}
           aa,bb=hs(a),hs(b)
@@ -91,7 +91,11 @@ jobs:
       - name: Targeted Rust safe DTO test only
         shell: bash
         working-directory: feature/src-tauri
-        run: cargo test google_project_diagnostic_is_metadata_only_and_secret_redacted --lib -- --exact --nocapture
+        run: |
+          set -Eeuo pipefail
+          cargo test google_project_diagnostic_is_metadata_only_and_secret_redacted --lib -- --nocapture | tee /tmp/google-project-rust-test.txt
+          grep -Eq 'test .*google_project_diagnostic_is_metadata_only_and_secret_redacted .* ok' /tmp/google-project-rust-test.txt
+          grep -Eq '1 passed; 0 failed' /tmp/google-project-rust-test.txt
 
       - name: TypeScript
         shell: bash
