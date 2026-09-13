@@ -92,20 +92,72 @@ jobs:
           /usr/libexec/PlistBuddy -c 'Add :CFBundleURLTypes:0:CFBundleURLSchemes array' "$CAPTURE_APP/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c 'Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string https' "$CAPTURE_APP/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c 'Add :CFBundleURLTypes:0:CFBundleURLSchemes:1 string http' "$CAPTURE_APP/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Delete :CFBundleDocumentTypes' "$CAPTURE_APP/Contents/Info.plist" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c 'Add :CFBundleDocumentTypes array' "$CAPTURE_APP/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Add :CFBundleDocumentTypes:0 dict' "$CAPTURE_APP/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Add :CFBundleDocumentTypes:0:CFBundleTypeName string Web URL' "$CAPTURE_APP/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Add :CFBundleDocumentTypes:0:CFBundleTypeRole string Viewer' "$CAPTURE_APP/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Add :CFBundleDocumentTypes:0:LSHandlerRank string Owner' "$CAPTURE_APP/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Add :CFBundleDocumentTypes:0:LSItemContentTypes array' "$CAPTURE_APP/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Add :CFBundleDocumentTypes:0:LSItemContentTypes:0 string public.url' "$CAPTURE_APP/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Add :CFBundleDocumentTypes:0:LSItemContentTypes:1 string public.html' "$CAPTURE_APP/Contents/Info.plist"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$CAPTURE_APP/Contents/Info.plist")" = 'com.scaleup.vyron.urlcapture'
           codesign --force --deep --sign - "$CAPTURE_APP"
           LSREGISTER='/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
           "$LSREGISTER" -f "$CAPTURE_APP"
-          cat > "$RUNNER_TEMP/set-default.swift" <<'SWIFT'
+
+          cat > "$RUNNER_TEMP/set-http-default.swift" <<'SWIFT'
           import Foundation
           import CoreServices
           let bundle = "com.scaleup.vyron.urlcapture" as CFString
-          let httpsStatus = LSSetDefaultHandlerForURLScheme("https" as CFString, bundle)
           let httpStatus = LSSetDefaultHandlerForURLScheme("http" as CFString, bundle)
-          print("https=\(httpsStatus) http=\(httpStatus)")
-          if httpsStatus != noErr || httpStatus != noErr { exit(1) }
+          let urlRole = LSSetDefaultRoleHandlerForContentType("public.url" as CFString, .viewer, bundle)
+          let htmlRole = LSSetDefaultRoleHandlerForContentType("public.html" as CFString, .viewer, bundle)
+          print("http=\(httpStatus) public.url=\(urlRole) public.html=\(htmlRole)")
+          if httpStatus != noErr { exit(1) }
           SWIFT
-          swift "$RUNNER_TEMP/set-default.swift" | tee evidence/url-handler-registration.txt
+          swift "$RUNNER_TEMP/set-http-default.swift" | tee evidence/url-handler-registration.txt
+          sleep 2
+
+          osascript <<'APPLESCRIPT' | tee evidence/default-browser-prompt.txt
+          tell application "System Events"
+            set out to ""
+            set clicked to false
+            repeat with p in application processes
+              try
+                repeat with w in windows of p
+                  try
+                    repeat with b in buttons of w
+                      try
+                        set bn to name of b as text
+                        if bn is not "missing value" then set out to out & (name of p as text) & " :: " & bn & linefeed
+                        if clicked is false and (bn contains "VYRONURLCapture" or bn contains "Use" or bn contains "Change") and bn does not contain "Keep" and bn does not contain "Cancel" then
+                          click b
+                          set clicked to true
+                        end if
+                      end try
+                    end repeat
+                  end try
+                end repeat
+              end try
+            end repeat
+            return out & "clicked=" & (clicked as text)
+          end tell
+          APPLESCRIPT
+          sleep 3
+
+          cat > "$RUNNER_TEMP/verify-default.swift" <<'SWIFT'
+          import Foundation
+          import CoreServices
+          let bundle = "com.scaleup.vyron.urlcapture"
+          let bundleCF = bundle as CFString
+          let httpsStatus = LSSetDefaultHandlerForURLScheme("https" as CFString, bundleCF)
+          let currentHTTP = LSCopyDefaultHandlerForURLScheme("http" as CFString)?.takeRetainedValue() as String? ?? ""
+          let currentHTTPS = LSCopyDefaultHandlerForURLScheme("https" as CFString)?.takeRetainedValue() as String? ?? ""
+          print("httpsSet=\(httpsStatus) currentHttp=\(currentHTTP) currentHttps=\(currentHTTPS)")
+          if currentHTTP != bundle || currentHTTPS != bundle { exit(1) }
+          SWIFT
+          swift "$RUNNER_TEMP/verify-default.swift" | tee evidence/url-handler-verification.txt
           echo "CAPTURE_FILE=$CAPTURE_FILE" >> "$GITHUB_ENV"
 
           open 'https://example.com/vyron-handler-self-test'
