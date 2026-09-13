@@ -1,0 +1,171 @@
+name: VYRON 2.1.4 Keychain Prompt Targeted Gate
+
+on:
+  push:
+    branches: [feature/vyron-google-project-diagnostics]
+    paths:
+      - '.github/scripts/apply_v214_keychain_prompt_fix.py'
+      - '.github/scripts/v214_keychain_patch_parts/**'
+      - '.github/workflows/vyron-214-keychain-prompt-targeted.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  OLD_GREEN_RUN: '34735206801'
+  OLD_GREEN_ARTIFACT: 'VYRON-google-project-diagnostics-green-source'
+  OLD_GREEN_SHA256: 'a6d00f2d8bbe38f75f17ba6526973bc759e5d34a442931679b551fbc1a0dc512'
+
+jobs:
+  targeted-keychain:
+    runs-on: macos-14
+    timeout-minutes: 35
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 1}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+
+      - name: Restore exact previous diagnostics-green source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf source-download feature before green-source
+          mkdir -p source-download feature green-source
+          gh run download "$OLD_GREEN_RUN" --repo "$REPO" -n "$OLD_GREEN_ARTIFACT" -D source-download
+          TAR=$(find source-download -name 'VYRON-2.1.3-google-project-diagnostics-dev-source.tar.gz' -print -quit)
+          test -s "$TAR"
+          test "$(shasum -a 256 "$TAR" | awk '{print $1}')" = "$OLD_GREEN_SHA256"
+          tar -xzf "$TAR" -C feature
+          cp -R feature before
+          test "$(node -p "require('./feature/package.json').version")" = '2.1.3'
+          test -f feature/src-tauri/src/security.rs
+          test -f feature/src-tauri/src/youtube.rs
+          test -f feature/src-tauri/src/storage.rs
+          test -f feature/src/googleProjectDiagnostics.ts
+
+      - name: Apply Keychain passive-zero runtime fix
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 .github/scripts/apply_v214_keychain_prompt_fix.py feature
+
+      - name: Prove scope and passive zero-Keychain architecture
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import hashlib,pathlib,re
+          a=pathlib.Path('before'); b=pathlib.Path('feature')
+          def hs(root): return {str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in root.rglob('*') if p.is_file() and 'node_modules/' not in str(p)}
+          aa,bb=hs(a),hs(b)
+          changed={k for k in set(aa)|set(bb) if aa.get(k)!=bb.get(k)}
+          allowed={'src/App.tsx','src/AuthRecoveryCenter.tsx','src/authRecoveryFinalCore.ts','src/autopilotRuntime.ts','src/types.ts','src/keychainPassiveArchitecture.test.ts','src-tauri/src/ai.rs','src-tauri/src/security.rs','src-tauri/src/storage.rs','src-tauri/src/youtube.rs'}
+          assert changed==allowed,(sorted(changed),sorted(allowed-changed),sorted(changed-allowed))
+          y=(b/'src-tauri/src/youtube.rs').read_text(); s=(b/'src-tauri/src/security.rs').read_text(); st=(b/'src-tauri/src/storage.rs').read_text(); lib=(b/'src-tauri/src/lib.rs').read_text()
+          def fn_body(src,name):
+              m=re.search(r'(?m)^\s*(?:pub\s+)?(?:async\s+)?fn\s+'+re.escape(name)+r'\b[^\{]*\{',src); assert m,name
+              start=m.start(); i=m.end()-1; depth=0
+              for j in range(i,len(src)):
+                  if src[j]=='{': depth+=1
+                  elif src[j]=='}':
+                      depth-=1
+                      if depth==0:return src[start:j+1]
+              raise AssertionError('unclosed '+name)
+          passive={'youtube_oauth_profiles':fn_body(y,'youtube_oauth_profiles'),'youtube_google_config_status':fn_body(y,'youtube_google_config_status'),'youtube_google_project_diagnostic':fn_body(y,'youtube_google_project_diagnostic'),'load_state':fn_body(st,'load_state'),'security_oauth_inventory':fn_body(s,'security_oauth_inventory')}
+          forbidden=['security::get_secret(','get_secret_cached(','get_generic_password(','hydrate_profile_secrets','recover_store_secrets_with','load_google_config_for_secret_operation']
+          for name,body in passive.items():
+              for token in forbidden: assert token not in body,(name,token)
+          for token in ['security::set_secret(','security::delete_secret(','set_generic_password(','delete_generic_password(']: assert token not in passive['load_state'],('load_state',token)
+          for token in ['reqwest','emit_youtube_api_request','refresh_token','access_token','client_secret','get_secret']: assert token not in passive['youtube_google_project_diagnostic'],('google project diagnostic',token)
+          assert 'inventory_read_status' not in passive['security_oauth_inventory']
+          assert 'list_secret_accounts' in passive['security_oauth_inventory']
+          assert 'SECRET_SESSION_CACHE' in s and 'SECRET_DENIED_ACCOUNTS' in s and 'get_secret_cached_with' in s
+          for token in ['session_cache_second_access_has_zero_backend_reads','denial_guard_blocks_retry_loop']: assert token in s
+          for token in ['selected_profile_hydration_reads_only_selected_secret','passive_profile_listing_zero_secret_store_calls','google_status_metadata_never_requires_secret_value']: assert token in y
+          assert 'youtube_google_project_diagnostic' in lib
+          assert (b/'src/keychainPassiveArchitecture.test.ts').is_file()
+          print('CHANGED FILES:\n'+'\n'.join(sorted(changed)))
+          print('PASSIVE KEYCHAIN VALUE READS: 0 (STATIC CONTRACT)')
+          print('GOOGLE PROJECT ZERO API / ZERO KEYCHAIN: PASS')
+          PY
+
+      - name: Install frontend dependencies
+        shell: bash
+        working-directory: feature
+        run: npm ci --no-audit --no-fund
+
+      - name: Targeted frontend architecture and recovery tests
+        shell: bash
+        working-directory: feature
+        run: |
+          set -Eeuo pipefail
+          npx vitest run src/keychainPassiveArchitecture.test.ts src/googleProjectDiagnostics.test.ts src/authRecoveryCore.test.ts src/finalAuthRecoveryUi.test.ts src/nativeRecoverySafety.test.ts src/v213KeychainRecovery.test.ts src/dynamicUploadQuota.test.ts
+
+      - name: Targeted Rust selected-profile cache denial and redaction tests
+        shell: bash
+        working-directory: feature/src-tauri
+        run: |
+          set -Eeuo pipefail
+          tests=(passive_profile_listing_zero_secret_store_calls selected_profile_hydration_reads_only_selected_secret google_status_metadata_never_requires_secret_value session_cache_second_access_has_zero_backend_reads denial_guard_blocks_retry_loop google_project_diagnostic_is_metadata_only_and_secret_redacted sanitized_state_never_writes_api_secrets_to_disk)
+          for t in "${tests[@]}"; do
+            echo "=== $t ==="
+            cargo test "$t" --lib -- --nocapture | tee "/tmp/$t.log"
+            grep -Eq '1 passed; 0 failed' "/tmp/$t.log"
+          done
+
+      - name: Secret redaction and passive call-site scan
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import pathlib
+          root=pathlib.Path('feature'); y=(root/'src-tauri/src/youtube.rs').read_text(); sec=(root/'src-tauri/src/security.rs').read_text(); storage=(root/'src-tauri/src/storage.rs').read_text(); front='\n'.join(p.read_text(errors='ignore') for p in (root/'src').glob('*.ts*'))
+          assert 'hydrate_state_secrets' not in storage
+          assert 'inventory_read_status' not in sec
+          assert 'KEYCHAIN_ACCESS_DENIED_CACHED' in sec
+          assert 'CHECK_ON_USE' in y
+          assert 'keychainSecretsRead":false' in y
+          assert 'Authorization: Bearer' not in front
+          print('SECRET LEAK / PASSIVE REDACTION STATIC SCAN: PASS')
+          PY
+
+      - name: TypeScript
+        shell: bash
+        working-directory: feature
+        run: npx tsc --noEmit
+
+      - name: Frontend production build
+        shell: bash
+        working-directory: feature
+        run: npm run build
+
+      - name: Package new targeted-green development source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          tar -czf green-source/VYRON-2.1.4-keychain-prompt-fix-dev-source.tar.gz --exclude='./node_modules' --exclude='./dist' --exclude='./src-tauri/target' -C feature .
+          (cd green-source && shasum -a 256 VYRON-2.1.4-keychain-prompt-fix-dev-source.tar.gz > SOURCE_SHA256.txt)
+          cat > green-source/STATUS.txt <<'TXT'
+          VYRON 2.1.4 KEYCHAIN PROMPT TARGETED SOURCE
+          PASSIVE UI KEYCHAIN VALUE READ CONTRACT: ZERO
+          GOOGLE PROJECT DIAGNOSTICS ZERO-API/ZERO-KEYCHAIN: PRESERVED
+          SELECTED PROFILE HYDRATION: TARGETED TESTED
+          SESSION CACHE: TARGETED TESTED
+          DENIAL LOOP GUARD: TARGETED TESTED
+          REAL MAC NAVIGATION PROMPT TEST: NOT YET RUN
+          RELEASED: NO
+          TXT
+          cat green-source/SOURCE_SHA256.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-2.1.4-keychain-prompt-fix-green-source
+          path: green-source/
+          if-no-files-found: error
+          retention-days: 30
