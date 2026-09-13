@@ -97,12 +97,21 @@ jobs:
           p=pathlib.Path('work/src/updaterRuntime.test.ts')
           s=p.read_text()
           original=s
-          s,n=re.subn(r'const\s+mockApi\s*=\s*\{','const {mockApi}=vi.hoisted(()=>({mockApi:{',s,count=1)
-          assert n==1,'mockApi declaration not found exactly once'
-          pattern=r'\n\};(\s*\n\s*vi\.mock\([\'\"]\./api[\'\"],\s*\(\)\s*=>\s*\(\{api:\s*mockApi\}\)\s*\)\s*;)'
-          s,n=re.subn(pattern,r'\n}}));\1',s,count=1)
-          assert n==1,'mockApi closing marker not found exactly once'
+          decl=re.search(r'const\s+mockApi\s*=\s*',s)
+          assert decl,'mockApi declaration not found'
+          vm=re.search(r"vi\.mock\(\s*['\"]\./api['\"]",s[decl.end():])
+          assert vm,'./api vi.mock not found after mockApi declaration'
+          vi_idx=decl.end()+vm.start()
+          semi=s.rfind(';',decl.end(),vi_idx)
+          assert semi>decl.end(),'mockApi declaration terminator not found'
+          rhs=s[decl.end():semi].strip()
+          assert rhs.startswith('{') and rhs.endswith('}'),repr(rhs[:120])
+          between=s[semi+1:vi_idx]
+          replacement='const {mockApi}=vi.hoisted(()=>({mockApi:'+rhs+'}));'
+          s=s[:decl.start()]+replacement+between+s[vi_idx:]
           assert s!=original
+          assert 'const mockApi' not in s
+          assert 'vi.hoisted' in s
           p.write_text(s)
           digest=hashlib.sha256(p.read_bytes()).hexdigest()
           pathlib.Path('evidence/updater-runtime-testfix-sha256.txt').write_text(digest+'  src/updaterRuntime.test.ts\n')
@@ -123,7 +132,6 @@ jobs:
             src/updaterHotfix.test.ts \
             src/updaterPolicy.test.ts 2>&1 | tee ../evidence/updater-tests.log
 
-          # Keep the already-green Schedule-only contract protected while updater UI changes land.
           npx vitest run \
             src/scheduleOnly.test.ts \
             src/scheduleOnlyContracts.test.ts 2>&1 | tee ../evidence/schedule-only-regression.log
@@ -145,7 +153,6 @@ jobs:
           settings=(root/'SettingsOS.tsx').read_text()
           main=(root/'main.tsx').read_text()
           joined='\n'.join([policy,runtime,guard,app,settings,main])
-
           assert 'raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/vyron-updates/latest.json' in policy
           assert 'releases/latest/download/latest.json' in policy
           assert 'UPDATER_SIGNATURE_INVALID' in joined
@@ -162,11 +169,9 @@ jobs:
           print('PERIODIC BACKGROUND CHECK CONTRACT: PASS')
           PY
 
-          # The updater public key/endpoints configuration must be byte-identical to the frozen Schedule-only baseline.
           cmp before/src-tauri/tauri.conf.json work/src-tauri/tauri.conf.json
           printf 'TAURI UPDATER CONFIG/PUBLIC KEY UNCHANGED: PASS\n' | tee -a evidence/updater-static-contract.txt
 
-          # This targeted gate MUST NOT activate the stable 2.1.4 feed.
           if grep -R --line-number --fixed-strings '"version": "2.1.4"' work/vyron-updates 2>/dev/null; then
             echo 'ERROR: stable updater feed was changed to 2.1.4 during targeted gate' >&2
             exit 1
