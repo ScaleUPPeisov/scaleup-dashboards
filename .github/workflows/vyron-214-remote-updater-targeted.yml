@@ -1,0 +1,198 @@
+name: VYRON 2.1.4 Remote Updater Targeted Gate
+on:
+  push:
+    branches: [feature/vyron-google-project-diagnostics]
+    paths:
+      - '.github/workflows/vyron-214-remote-updater-targeted.yml'
+  workflow_dispatch:
+permissions: {contents: read, actions: read}
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  BASE_RUN: '34751593515'
+  BASE_ARTIFACT: VYRON-2.1.4-schedule-only-green-source
+  BASE_SHA: e358f659608517781006a96c1de0a2ea84e485dccfb351576639509821fceb79
+  OVERLAY_DIR: .github/patches/v214-remote-updater-ui
+jobs:
+  updater-targeted:
+    runs-on: macos-14
+    timeout-minutes: 55
+    env:
+      GH_TOKEN: '${{ github.token }}'
+      APPLE_SIGNING_IDENTITY: '-'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+
+      - name: Restore exact Schedule-only green source and apply updater overlay
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf base work before frozen build out evidence
+          mkdir -p base work before frozen build out evidence
+          gh run download "$BASE_RUN" --repo "$REPO" -n "$BASE_ARTIFACT" -D base
+          T=base/VYRON-2.1.4-schedule-only-source.tar.gz
+          ACTUAL=$(shasum -a 256 "$T" | awk '{print $1}')
+          printf 'BASE_RUN=%s\nBASE_SOURCE_SHA256=%s\n' "$BASE_RUN" "$ACTUAL" | tee evidence/base-source.txt
+          test "$ACTUAL" = "$BASE_SHA"
+          tar -xzf "$T" -C work
+          cp -R work/. before/
+
+          python3 - <<'PY'
+          import hashlib,json,pathlib
+          root=pathlib.Path('work')
+          m=json.loads(pathlib.Path('.github/patches/v214-remote-updater-ui/manifest.json').read_text())
+          assert m['base_source_sha256']=='e358f659608517781006a96c1de0a2ea84e485dccfb351576639509821fceb79'
+          assert m['patch_sha256']=='ccb15d0940e36e2e47550f71851c7c7f1389cee13c3c47cc647c9124e033f0fd'
+          def sha(p): return hashlib.sha256(p.read_bytes()).hexdigest()
+          for rel,expected in m['before'].items():
+              actual=sha(root/rel)
+              assert actual==expected,(rel,actual,expected)
+          print('BEFORE HASHES: PASS')
+          PY
+
+          python3 .github/scripts/apply_v214_overlay_chunks.py work "$OVERLAY_DIR" | tee evidence/updater-overlay.txt
+
+          python3 - <<'PY'
+          import hashlib,json,pathlib
+          a,b=pathlib.Path('before'),pathlib.Path('work')
+          m=json.loads(pathlib.Path('.github/patches/v214-remote-updater-ui/manifest.json').read_text())
+          def sha(p): return hashlib.sha256(p.read_bytes()).hexdigest()
+          def tree(root):
+              return {str(p.relative_to(root)):sha(p) for p in root.rglob('*') if p.is_file()}
+          A,B=tree(a),tree(b)
+          changed=sorted(k for k in set(A)|set(B) if A.get(k)!=B.get(k))
+          expected=sorted(m['after'])
+          pathlib.Path('evidence/strict-diff-scope.txt').write_text('\n'.join(changed)+'\n')
+          print('CHANGED FILES:')
+          print('\n'.join(changed))
+          assert changed==expected,(changed,expected)
+          for rel,expected_sha in m['after'].items():
+              actual=sha(b/rel)
+              assert actual==expected_sha,(rel,actual,expected_sha)
+          protected=[
+            'src-tauri/tauri.conf.json',
+            'src-tauri/src/youtube.rs',
+            'src-tauri/src/security.rs',
+            'src-tauri/src/shorts_factory.rs',
+            'src-tauri/src/production_manager.rs',
+            'src/ScheduleOS.tsx',
+            'src/scheduleOnly.ts',
+            'src/ShortsFactory.tsx',
+            'src/ProductionManager.tsx'
+          ]
+          for rel in protected:
+              assert A.get(rel)==B.get(rel),rel
+          print('STRICT 14-FILE SCOPE: PASS')
+          print('PROTECTED MODULES UNCHANGED: PASS')
+          PY
+          shasum -a 256 "$OVERLAY_DIR/manifest.json" | tee evidence/updater-overlay-manifest-sha256.txt
+
+      - name: Remote updater lifecycle, UI, guard and security contracts
+        shell: bash
+        working-directory: work
+        run: |
+          set -Eeuo pipefail
+          npm ci --no-audit --no-fund
+          npx vitest run \
+            src/updaterGuard.test.ts \
+            src/updaterRuntime.test.ts \
+            src/updaterRemoteContract.test.ts \
+            src/updaterHotfix.test.ts \
+            src/updaterPolicy.test.ts 2>&1 | tee ../evidence/updater-tests.log
+
+          # Keep the already-green Schedule-only contract protected while updater UI changes land.
+          npx vitest run \
+            src/scheduleOnly.test.ts \
+            src/scheduleOnlyContracts.test.ts 2>&1 | tee ../evidence/schedule-only-regression.log
+
+          npx tsc --noEmit 2>&1 | tee ../evidence/typescript.log
+          npm run build 2>&1 | tee ../evidence/frontend-build.log
+
+      - name: Static updater safety and stable-feed isolation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY' | tee evidence/updater-static-contract.txt
+          import pathlib,re
+          root=pathlib.Path('work/src')
+          policy=(root/'updaterPolicy.ts').read_text()
+          runtime=(root/'updaterRuntime.ts').read_text()
+          guard=(root/'updaterGuard.ts').read_text()
+          app=(root/'App.tsx').read_text()
+          settings=(root/'SettingsOS.tsx').read_text()
+          main=(root/'main.tsx').read_text()
+          joined='\n'.join([policy,runtime,guard,app,settings,main])
+
+          assert 'raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/vyron-updates/latest.json' in policy
+          assert 'releases/latest/download/latest.json' in policy
+          assert 'UPDATER_SIGNATURE_INVALID' in joined
+          assert 'UPDATER_MANIFEST_FETCH_FAILED' in joined
+          assert 'UPDATER_ARCHIVE_DOWNLOAD_FAILED' in joined
+          assert 'UPDATER_INSTALL_FAILED' in joined
+          assert 'videos.insert' not in runtime.lower()
+          assert 'youtube_update_existing_schedule' not in runtime
+          assert 'security::get_secret' not in joined
+          assert '6 * 60 * 60' in runtime or '21600000' in runtime or '21_600_000' in runtime
+          print('CANONICAL ENDPOINTS PRESERVED: PASS')
+          print('EXPLICIT UPDATER ERRORS: PASS')
+          print('ZERO YOUTUBE/UPLOAD COUPLING: PASS')
+          print('PERIODIC BACKGROUND CHECK CONTRACT: PASS')
+          PY
+
+          # The updater public key/endpoints configuration must be byte-identical to the frozen Schedule-only baseline.
+          cmp before/src-tauri/tauri.conf.json work/src-tauri/tauri.conf.json
+          printf 'TAURI UPDATER CONFIG/PUBLIC KEY UNCHANGED: PASS\n' | tee -a evidence/updater-static-contract.txt
+
+          # This targeted gate MUST NOT activate the stable 2.1.4 feed.
+          if grep -R --line-number --fixed-strings '"version": "2.1.4"' work/vyron-updates 2>/dev/null; then
+            echo 'ERROR: stable updater feed was changed to 2.1.4 during targeted gate' >&2
+            exit 1
+          fi
+          printf 'STABLE FEED 2.1.4 ACTIVATION: NO\n' | tee evidence/stable-feed-isolation.txt
+
+      - name: Freeze remote-updater combined 2.1.4 source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(node -p "require('./work/package.json').version")" = '2.1.4'
+          test "$(python3 -c "import json;print(json.load(open('work/src-tauri/tauri.conf.json'))['version'])")" = '2.1.4'
+          tar --exclude=node_modules --exclude=src-tauri/target -czf frozen/VYRON-2.1.4-remote-updater-source.tar.gz -C work .
+          shasum -a 256 frozen/VYRON-2.1.4-remote-updater-source.tar.gz | tee frozen/SOURCE_SHA256.txt | tee evidence/new-updater-source-sha256.txt
+
+      - name: Build exact frozen ARM64 remote-updater DEV candidate and Finder smoke
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          tar -xzf frozen/VYRON-2.1.4-remote-updater-source.tar.gz -C build
+          cd build
+          npm ci --no-audit --no-fund
+          rustup target add aarch64-apple-darwin
+          npx tauri build --target aarch64-apple-darwin --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          APP_REL=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name VYRON.app -print -quit)
+          test -n "$APP_REL"
+          APP="$(pwd)/$APP_REL"
+          test -d "$APP"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = 2.1.4
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = studio.channelflow.desktop
+          EXE=$(plutil -extract CFBundleExecutable raw -o - "$APP/Contents/Info.plist")
+          file "$APP/Contents/MacOS/$EXE" | tee ../evidence/app-binary.txt | grep -q arm64
+          codesign --verify --deep --strict --verbose=2 "$APP" 2>&1 | tee ../evidence/codesign.txt
+          trap 'launchctl unsetenv PATH >/dev/null 2>&1 || true; pkill -if "VYRON|channelflow" >/dev/null 2>&1 || true' EXIT
+          launchctl setenv PATH '/usr/bin:/bin:/usr/sbin:/sbin'
+          open -na "$APP"
+          sleep 6
+          pgrep -if "$APP/Contents/MacOS/$EXE" >/dev/null
+          printf 'Finder-like PATH launch: PASS\n' | tee ../evidence/finder-launch.txt
+          launchctl unsetenv PATH || true
+          pkill -if "$APP/Contents/MacOS/$EXE" || true
+          ditto -c -k --keepParent "$APP" ../out/VYRON-2.1.4-REMOTE-UPDATER-ARM64-DEV.app.zip
+          trap - EXIT
+
+      - uses: actions/upload-artifact@v4
+        with: {name: VYRON-2.1.4-remote-updater-green-source, path: frozen/, retention-days: 30}
+      - uses: actions/upload-artifact@v4
+        with: {name: VYRON-2.1.4-remote-updater-ARM64-DEV, path: out/VYRON-2.1.4-REMOTE-UPDATER-ARM64-DEV.app.zip, retention-days: 30}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: VYRON-2.1.4-remote-updater-evidence, path: evidence/, if-no-files-found: warn, retention-days: 30}
