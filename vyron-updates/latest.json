@@ -1,11 +1,11 @@
 {
-  "version": "2.1.3",
-  "notes": "VYRON 2.1.3 updater hotfix",
-  "pub_date": "2026-09-12T17:22:15.737377Z",
+  "version": "2.1.4",
+  "notes": "VYRON 2.1.4 — active channel persistence, cross-tab YouTube context, metadata draft restore and operation history",
+  "pub_date": "2026-09-14T01:08:21Z",
   "platforms": {
     "darwin-aarch64": {
-      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.3/VYRON.app.tar.gz",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM1JKTmtFVzVuOE5aRFo3YnZqUVZlZEdyZHdueFJnRmJlaDlSeGh2bVM4VXV1SWlPNlhUZURxL0ZlR2xQSkpSamxUUERUYVQ4RXYweUt4cTBUeHJkUHdRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MjMzNzI5CWZpbGU6VllST04uYXBwLnRhci5negovUHZkQmtzaWwrVFpWZE1SVXhFVkNhRzBnc05JNmVYd0dqMlhjeUVvR1poK3JYSkp1dmxGOVdlNjJkalpHNVFuUXdqVjVpKzBPdmdkVHM3R1FtQmxDZz09Cg=="
+      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.4/VYRON.app.tar.gz",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM1JJSGVOMWN1a1kzR2RES2hpZHNuT1BVTS84WmNWR1FLanIxK0dWRG52V1NHTENVejlEZUNEYU03TUxncUJIczFBWXNRU3phNTFUTW5pcGNzUXpNQndJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MzQ3OTY1CWZpbGU6VllST04uYXBwLnRhci5nego3YUdqRUNBSHdUNEh3eHQrSlUybDlsdmlUbkxFalhPaWVZeGlKTDAwaHR0RktYWFdmWlhFWlBhY2ZLd3FNb3Q5MmxqOEVhc1U1eEJFdzZkeWs3cmhEdz09Cg=="
     }
   }
 }
