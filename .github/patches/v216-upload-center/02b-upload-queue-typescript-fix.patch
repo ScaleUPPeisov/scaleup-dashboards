@@ -1,0 +1,13 @@
+diff --git a/src/uploadQueueRuntime.ts b/src/uploadQueueRuntime.ts
+index 5a91833..1624b61 100644
+--- a/src/uploadQueueRuntime.ts
++++ b/src/uploadQueueRuntime.ts
+@@ -40,7 +40,7 @@ async function executeUpload(spec:ImmutableUploadJob){
+  }catch(error){
+   const pending=await api.youtubeUploadSessions().catch(()=>[]),recoverable=pending.some(x=>x.jobId===spec.jobId);
+   if(recoverable){useApp.getState().patchJob(spec.jobId,{status:'ERROR',storageLifecycle:'UPLOADING',youtubeVideoId:undefined,uploadedAt:undefined,error:'Загрузка прервана — доступно продолжение',uploadInterruptedAt:new Date().toISOString()})}
+-  else{if(attempt)failPublishAttempt(attempt.id,error);const h=humanizeError(error,'upload'),dailyLimit=isYoutubeDailyUploadLimitError(error),quotaError=isYoutubeQuotaError(error);useApp.getState().patchJob(spec.jobId,{status:'ERROR',storageLifecycle:'FAILED',youtubeVideoId:undefined,uploadedAt:undefined,error:dailyLimit?'YouTube остановил загрузки: достигнут лимит загрузок канала':h.message,uploadInterruptedAt:new Date().toISOString()});if(dailyLimit)useApp.getState().updateChannel(spec.channelId,{knownUploadLimitState:'limited',lastDailyLimitError:h.message,lastUploadAt:new Date().toISOString()});appendErrorHistory(h.title,`VIDEO_${String(spec.videoNumber).padStart(3,'0')}: ${h.message}`,h.detail,{errorCode:quotaError?'YOUTUBE_QUOTA':h.code,videoId:spec.jobId,filePath:spec.filePath,stage:'upload-queue'})}
++  else{if(attempt)failPublishAttempt(attempt.id,error);const h=humanizeError(error,'upload'),dailyLimit=isYoutubeDailyUploadLimitError(error),quotaError=isYoutubeQuotaError(error);useApp.getState().patchJob(spec.jobId,{status:'ERROR',storageLifecycle:'FAILED',youtubeVideoId:undefined,uploadedAt:undefined,error:dailyLimit?'YouTube остановил загрузки: достигнут лимит загрузок канала':h.message,uploadInterruptedAt:new Date().toISOString()});if(dailyLimit)useApp.getState().updateChannel(spec.channelId,{knownUploadLimitState:'limited',lastDailyLimitError:h.message,lastUploadAt:new Date().toISOString()});appendErrorHistory(h.title,`VIDEO_${String(spec.videoNumber).padStart(3,'0')}: ${h.message}`,h.detail,{errorCode:quotaError?'YOUTUBE_QUOTA':h.code,videoId:spec.jobId,filePath:spec.filePath,stage:'upload-transfer'})}
+   throw error;
+  }finally{if(quotaReserved)releaseYoutubeQuotaReservation(operationId);if(lock)releaseChannelUploadLock(spec.channelId,lock)}
+ }
