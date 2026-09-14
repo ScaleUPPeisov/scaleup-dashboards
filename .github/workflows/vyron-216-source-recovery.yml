@@ -20,6 +20,7 @@ env:
   FEATURE2_PATCH_SHA256: a76435719952b9478514bd41d62e79df550ccbcadab459e23067de0cc5fb2299
   VERSION_PATCH_SHA256: fd0f4c7cdae36b45946ce62869aa3979a986467b04d5ebe35d2d46281a823be1
   BLOCK2_PATCH_SHA256: 40cfae87b5f7faa41a9fce3070074876552ec4178817acb03c86ecefdadcc959
+  BLOCK2B_PATCH_SHA256: 8f0aa567f9c77f1c1ec2b4cc94e9196a32daaab50787307011789eafa1c53ff3
 
 jobs:
   recover:
@@ -58,10 +59,7 @@ jobs:
           test "$(sha256sum decoded-patches/02-draft-manager.patch | awk '{print $1}')" = "$FEATURE2_PATCH_SHA256"
           cp .github/patches/v215-youtube-productivity/03-version-bump.patch decoded-patches/03-version-bump.patch
           test "$(sha256sum decoded-patches/03-version-bump.patch | awk '{print $1}')" = "$VERSION_PATCH_SHA256"
-          for p in decoded-patches/01-global-channel.patch decoded-patches/02-draft-manager.patch decoded-patches/03-version-bump.patch; do
-            git apply --check --directory=work "$p"
-            git apply --directory=work "$p"
-          done
+          for p in decoded-patches/01-global-channel.patch decoded-patches/02-draft-manager.patch decoded-patches/03-version-bump.patch; do git apply --check --directory=work "$p"; git apply --directory=work "$p"; done
           test "$(node -p "require('./work/package.json').version")" = '2.1.5'
 
       - name: Apply VYRON 2.1.6 Block 1 carrier
@@ -81,13 +79,14 @@ jobs:
           parts=(.github/patches/v216-upload-center/02-multi-channel-upload-queue.parts/*.patchfrag)
           test "${#parts[@]}" -eq 6
           cat "${parts[@]}" > decoded-patches/05-multi-channel-upload-queue.patch.gz.b64
-          base64 -d decoded-patches/05-multi-channel-upload-queue.patch.gz.b64 | gzip -t
           base64 -d decoded-patches/05-multi-channel-upload-queue.patch.gz.b64 | gzip -d > decoded-patches/05-multi-channel-upload-queue.patch
-          ACTUAL=$(sha256sum decoded-patches/05-multi-channel-upload-queue.patch | awk '{print $1}')
-          echo "BLOCK2_ACTUAL_SHA256=$ACTUAL" | tee out/block2-patch.sha256
-          test "$ACTUAL" = "$BLOCK2_PATCH_SHA256"
+          test "$(sha256sum decoded-patches/05-multi-channel-upload-queue.patch | awk '{print $1}')" = "$BLOCK2_PATCH_SHA256"
           git apply --check --directory=work decoded-patches/05-multi-channel-upload-queue.patch
           git apply --directory=work decoded-patches/05-multi-channel-upload-queue.patch
+          cp .github/patches/v216-upload-center/02b-upload-queue-typescript-fix.patch decoded-patches/05b-upload-queue-typescript-fix.patch
+          test "$(sha256sum decoded-patches/05b-upload-queue-typescript-fix.patch | awk '{print $1}')" = "$BLOCK2B_PATCH_SHA256"
+          git apply --check --directory=work decoded-patches/05b-upload-queue-typescript-fix.patch
+          git apply --directory=work decoded-patches/05b-upload-queue-typescript-fix.patch
 
       - name: VYRON 2.1.6 Block 1 and 2 targeted tests
         working-directory: work
