@@ -24,7 +24,7 @@ env:
   BASE_COMMIT: b23b945caa2bf41f22207b8661c9409e69a9ed04
   STABLE_TAG: v2.1.4
   FEATURE1_PATCH_SHA256: f0dfdb2f9698e59b8a207c7c6b97a75ddabda039ac86c19cd07e89c81117c71f
-  FEATURE2_PATCH_SHA256: a11f053e478bc2faebaa1a090773a52f8b73e84221c21217e8b7173377832885
+  FEATURE2_PATCH_SHA256: a76435719952b9478514bd41d62e79df550ccbcadab459e23067de0cc5fb2299
   RECOVERY_ONE: backup/vyron-214-updater-green-before-content-runway
   RECOVERY_ONE_SHA: 7a7eda30cea453c93565ef8beb38d064e4c91ed9
   RECOVERY_TWO: backup/vyron-214-before-selector-final-release
@@ -134,7 +134,10 @@ jobs:
 
       - name: TypeScript + production frontend build
         working-directory: work
-        run: npm run build | tee ../evidence/frontend-build.txt
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm run build | tee ../evidence/frontend-build.txt
 
       - name: Security and release-scope assertions
         shell: bash
@@ -143,9 +146,9 @@ jobs:
           grep -q 'SCHEDULE-ONLY • ZERO DOCX' work/src/ScheduleOS.tsx
           grep -q 'youtubeUpdateExistingSchedule' work/src/ScheduleOS.tsx
           grep -q 'metadataDraftStatusLabel' work/src/MetadataPage.tsx
-          grep -q 'YouTubeChannelBar' work/src/App.tsx
+          grep -q 'YouTubeChannelBar' work/src/YouTubeCenter.tsx
           ! grep -RIE 'refresh[_ -]?token\s*[:=]\s*[A-Za-z0-9._-]{12,}|access[_ -]?token\s*[:=]\s*[A-Za-z0-9._-]{12,}|client[_ -]?secret\s*[:=]\s*[A-Za-z0-9._-]{12,}' work/src/youtubeProductivityGlobalChannel.test.ts work/src/metadataProductivityDraft.test.ts
-          printf 'GLOBAL_CHANNEL_SWITCHER=PASS\nCHANNEL_SEARCH=PASS\nRECENT_CHANNELS=PASS\nDRAFT_MANAGER=PASS\nCROSS_CHANNEL_ISOLATION=PASS\nFEATURE_SET_2_1_5_COMPLETE=YES\nSTABLE_2_1_4_CHANGED=NO\nLATEST_JSON_CHANGED=NO\nRECOVERY_REFS_CHANGED=NO\n' | tee evidence/contracts.txt
+          printf 'GLOBAL_CHANNEL_SWITCHER=PASS\nCHANNEL_SEARCH=PASS\nRECENT_CHANNELS=PASS\nDRAFT_MANAGER=PASS\nDRAFT_MANAGER_TARGETED_GREEN=YES\nCROSS_CHANNEL_ISOLATION=PASS\nFEATURE_SET_2_1_5_COMPLETE=YES\nSTABLE_2_1_4_CHANGED=NO\nLATEST_JSON_CHANGED=NO\nRECOVERY_REFS_CHANGED=NO\n' | tee evidence/contracts.txt
 
       - uses: actions/upload-artifact@v4
         if: always()
