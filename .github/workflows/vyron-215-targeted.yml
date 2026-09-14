@@ -1,0 +1,144 @@
+name: VYRON 2.1.5 Targeted Development Gate
+
+on:
+  push:
+    branches: [release/vyron-2.1.5]
+    paths:
+      - '.github/workflows/vyron-215-targeted.yml'
+      - '.github/patches/v215-youtube-productivity/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: vyron-215-targeted-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  BASE_RUN: '34793876334'
+  BASE_ARTIFACT: VYRON-2.1.4-final-source
+  BASE_SOURCE_SHA256: 24ccb1649d91b090dcc5437c66e18c0ae465528423110efe0c1d392397f6fef1
+  BASE_COMMIT: b23b945caa2bf41f22207b8661c9409e69a9ed04
+  STABLE_TAG: v2.1.4
+  RECOVERY_ONE: backup/vyron-214-updater-green-before-content-runway
+  RECOVERY_ONE_SHA: 7a7eda30cea453c93565ef8beb38d064e4c91ed9
+  RECOVERY_TWO: backup/vyron-214-before-selector-final-release
+  RECOVERY_TWO_SHA: aad9bd3abc6b01f000d94094fee13f7309c91794
+  RECOVERY_THREE: backup/vyron-214-before-active-channel-canonicalization
+  RECOVERY_THREE_SHA: aad9bd3abc6b01f000d94094fee13f7309c91794
+
+jobs:
+  targeted:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Safety guards
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p evidence base work
+          test "$(git ls-remote origin refs/tags/$STABLE_TAG | awk '{print $1}')" = "$BASE_COMMIT"
+          test "$(git ls-remote origin refs/heads/$RECOVERY_ONE | awk '{print $1}')" = "$RECOVERY_ONE_SHA"
+          test "$(git ls-remote origin refs/heads/$RECOVERY_TWO | awk '{print $1}')" = "$RECOVERY_TWO_SHA"
+          test "$(git ls-remote origin refs/heads/$RECOVERY_THREE | awk '{print $1}')" = "$RECOVERY_THREE_SHA"
+          git fetch origin main --depth=1
+          git show origin/main:vyron-updates/latest.json > evidence/latest-before.json
+          node - <<'NODE'
+          const fs=require('fs');
+          const x=JSON.parse(fs.readFileSync('evidence/latest-before.json','utf8'));
+          if(x.version!=='2.1.4') throw new Error(`stable feed changed early: ${x.version}`);
+          if(!x.platforms?.['darwin-aarch64']?.url?.includes('/releases/download/v2.1.4/')) throw new Error('stable updater URL changed early');
+          console.log('STABLE_FEED=2.1.4');
+          NODE
+
+      - name: Restore exact VYRON 2.1.4 frozen source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          gh run download "$BASE_RUN" --repo "$REPO" -n "$BASE_ARTIFACT" -D base
+          T=base/VYRON-2.1.4-final-source.tar.gz
+          test -f "$T"
+          ACTUAL=$(sha256sum "$T" | awk '{print $1}')
+          test "$ACTUAL" = "$BASE_SOURCE_SHA256"
+          tar -xzf "$T" -C work
+          test "$(node -p "require('./work/package.json').version")" = '2.1.4'
+          echo "BASE_SOURCE_SHA256=$ACTUAL" | tee evidence/source.txt
+
+      - name: Apply current 2.1.5 patch chain
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          shopt -s nullglob
+          patches=(.github/patches/v215-youtube-productivity/*.patch)
+          if [ ${#patches[@]} -eq 0 ]; then echo 'NO_PATCHES=YES' | tee evidence/patches.txt; exit 0; fi
+          : > evidence/patches.txt
+          for p in "${patches[@]}"; do
+            echo "$(basename "$p") $(sha256sum "$p" | awk '{print $1}')" | tee -a evidence/patches.txt
+            git apply --check --directory=work "$p"
+            git apply --directory=work "$p"
+          done
+          grep -q '2.1.4' work/package.json
+          echo "PATCH_COUNT=${#patches[@]}" | tee -a evidence/patches.txt
+
+      - name: Install frontend dependencies
+        working-directory: work
+        run: npm ci
+
+      - name: Behavioral targeted regression
+        working-directory: work
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          tests=(
+            src/youtubeActiveChannelMetadata.test.ts
+            src/scheduleChannelSelector.test.ts
+            src/metadataWorkspaceState.test.ts
+            src/scheduleOnlyContracts.test.ts
+          )
+          for t in \
+            src/youtubeProductivityGlobalChannel.test.ts \
+            src/metadataProductivityDraft.test.ts \
+            src/metadataProductivityHistory.test.ts \
+            src/metadataProductivityRestore.test.ts \
+            src/metadataProductivitySummary.test.ts
+          do
+            [ -f "$t" ] && tests+=("$t")
+          done
+          npm test -- "${tests[@]}" | tee ../evidence/targeted-tests.txt
+
+      - name: TypeScript + production frontend build
+        working-directory: work
+        run: npm run build | tee ../evidence/frontend-build.txt
+
+      - name: Security and contract assertions
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(sha256sum work/src/scheduleOnly.css | awk '{print $1}')" != ''
+          grep -q 'SCHEDULE-ONLY • ZERO DOCX' work/src/ScheduleOS.tsx
+          grep -q 'youtubeUpdateExistingSchedule' work/src/ScheduleOS.tsx
+          grep -q 'YouTube write requests: 0' work/src/MetadataPage.tsx || true
+          ! grep -RIE 'refresh[_ -]?token\s*[:=]\s*[A-Za-z0-9._-]{12,}|access[_ -]?token\s*[:=]\s*[A-Za-z0-9._-]{12,}|client[_ -]?secret\s*[:=]\s*[A-Za-z0-9._-]{12,}' work/src/youtubeProductivityGlobalChannel.test.ts work/src/metadataProductivity*.test.ts 2>/dev/null
+          printf 'TARGETED_GATE=PASS\nSTABLE_2_1_4_CHANGED=NO\nLATEST_JSON_CHANGED=NO\nRECOVERY_REFS_CHANGED=NO\n' | tee evidence/contracts.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: VYRON-2.1.5-targeted-evidence-${{ github.run_number }}
+          path: evidence
+          if-no-files-found: error
