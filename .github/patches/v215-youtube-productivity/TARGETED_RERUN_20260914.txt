@@ -1,0 +1,3 @@
+VYRON 2.1.5 targeted rerun marker
+Reason: verify corrected Draft Manager React handler, strict build pipefail, and release-scope assertions.
+Runtime feature scope unchanged: Global YouTube Channel Switcher + Metadata Draft Manager only.
