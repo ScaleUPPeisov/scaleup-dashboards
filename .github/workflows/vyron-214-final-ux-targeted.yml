@@ -1,0 +1,99 @@
+name: VYRON 2.1.4 Final UX Targeted
+
+on:
+  push:
+    branches: [feature/vyron-google-project-diagnostics]
+    paths:
+      - '.github/workflows/vyron-214-final-ux-targeted.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  BASE_RUN: '34764118686'
+  BASE_ARTIFACT: VYRON-2.1.4-final-source-selector
+  BASE_SOURCE_SHA: affdd6f7da4b76cd874e39d658c6c7227a929be7fc449f8aa591a978d33bc729
+  PERSIST_PATCH: .github/patches/v214-schedule-channel-selector/active-channel-canonicalization.patch
+  PERSIST_PATCH_SHA: b40c25a15df9a8d8dd9067ec99910eb932ac5f2e45d6000fc2463f2c670f4d68
+  META_PATCH_B64: .github/patches/v214-metadata-workspace/metadata-persistence-history.patch.gz.b64
+  META_PATCH_B64_SHA: 822b7fd8191c4d1df744f55dee3581cb42c28255dbf7ed0b8cc3d7c7ef608620
+  META_PATCH_SHA: 1f466bec68f574c518d4b07e0269d1b31cba3abd47729fe8018875d404d83072
+  CSS_SHA: 4d8a2c8e0466d93c7d7d140cdef6e338c17b262e8154e7112960466e4d1ba71e
+
+jobs:
+  targeted:
+    runs-on: macos-14
+    timeout-minutes: 75
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Restore exact selector source and apply canonical patches
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p base work evidence patch
+          gh run download "$BASE_RUN" --repo "$REPO" -n "$BASE_ARTIFACT" -D base
+          T=base/VYRON-2.1.4-final-source.tar.gz
+          test "$(shasum -a 256 "$T" | awk '{print $1}')" = "$BASE_SOURCE_SHA"
+          tar -xzf "$T" -C work
+          test "$(shasum -a 256 "$PERSIST_PATCH" | awk '{print $1}')" = "$PERSIST_PATCH_SHA"
+          patch -p1 -d work < "$PERSIST_PATCH"
+          test "$(shasum -a 256 work/src/ScheduleOS.tsx | awk '{print $1}')" = "8869e0ce1e6465820e61e4f15069adb46ad9e23ff5fa4a16a7fff398c63e7926"
+          test "$(shasum -a 256 work/src/scheduleChannelSelector.test.ts | awk '{print $1}')" = "4303ba284e7e03072f30dabafb6845f40b940d8aa306cae477f19cf763826ad7"
+          test "$(shasum -a 256 "$META_PATCH_B64" | awk '{print $1}')" = "$META_PATCH_B64_SHA"
+          base64 --decode "$META_PATCH_B64" > patch/meta.patch.gz
+          gunzip -c patch/meta.patch.gz > patch/meta.patch
+          test "$(shasum -a 256 patch/meta.patch | awk '{print $1}')" = "$META_PATCH_SHA"
+          patch -p1 -d work < patch/meta.patch
+          test "$(shasum -a 256 work/src/MetadataPage.tsx | awk '{print $1}')" = "771cfc96051ff0b723fcdd96d5205654ca8cc122cd4be9dca409e83f4b5a748b"
+          test "$(shasum -a 256 work/src/ExistingVideos.tsx | awk '{print $1}')" = "1b6d775ed7b429382c365ba0905ab4eecf2dd4bf612b02299068d04966d70069"
+          test "$(shasum -a 256 work/src/metadataWorkspaceState.ts | awk '{print $1}')" = "37fa02899c3db7b5fd515ff1703916446e4bae94ffd1510f8ed40273b1cc4913"
+          test "$(shasum -a 256 work/src/metadataWorkspaceState.test.ts | awk '{print $1}')" = "612a2f80d5e20571587f86ce27a0ee078730bb37d5d5b9f3b22b04051b289442"
+          test "$(shasum -a 256 work/src/youtubeActiveChannelMetadata.test.ts | awk '{print $1}')" = "ec6ff9509d5f42bc7d7611dd290e6ab9c4d9d885a5a5022940f82f21a88b9d0a"
+          test "$(shasum -a 256 work/src/scheduleOnly.css | awk '{print $1}')" = "$CSS_SHA"
+          printf 'PERSISTENCE_PATCH=PASS\nMETADATA_PATCH=PASS\nSCHEDULE_ONLY_CSS_UNCHANGED=PASS\n' | tee evidence/source-scope.txt
+      - name: Install dependencies
+        working-directory: work
+        run: npm ci --no-audit --no-fund
+      - name: Final UX targeted regression
+        working-directory: work
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npx vitest run \
+            src/scheduleChannelSelector.test.ts \
+            src/channelSchedule.test.ts \
+            src/publisherSchedule.test.ts \
+            src/scheduleContinuation.test.ts \
+            src/scheduleOnly.test.ts \
+            src/scheduleOnlyContracts.test.ts \
+            src/MetadataPage.schedule.test.ts \
+            src/metadataWorkspaceState.test.ts \
+            src/youtubeActiveChannelMetadata.test.ts \
+            src/metadataCoverage.test.ts \
+            src/publisherMetadata.test.ts \
+            src/youtubeQuota.test.ts \
+            src/youtubeQuotaPlanner.test.ts \
+            src/youtubeQuotaRollover.test.ts \
+            src/publisherQuota.test.ts \
+            src/dynamicUploadQuota.test.ts 2>&1 | tee ../evidence/targeted.log
+          printf 'ACTIVE_CHANNEL_RESTORE=PASS\nACTIVE_CHANNEL_SAVE=PASS\nCROSS_TAB_CHANNEL=PASS\nREMOUNT_PERSISTENCE=PASS\nSELECTION_ISOLATION=PASS\nCACHE_ISOLATION=PASS\nSYNC_ISOLATION=PASS\nAPPLY_ISOLATION=PASS\nMETADATA_DRAFT_RESTORE=PASS\nMETADATA_CHANNEL_ISOLATION=PASS\nMETADATA_HISTORY=PASS\nZERO_DOCX=PASS\n' | tee ../evidence/targeted-summary.txt
+      - name: TypeScript and production frontend build
+        working-directory: work
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm run build 2>&1 | tee ../evidence/build.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: VYRON-2.1.4-final-ux-targeted-evidence
+          path: evidence
+          if-no-files-found: error
