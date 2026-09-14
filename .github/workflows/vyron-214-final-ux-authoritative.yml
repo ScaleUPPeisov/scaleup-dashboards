@@ -1,0 +1,288 @@
+name: VYRON 2.1.4 Final UX Authoritative Gate + Source Freeze
+
+on:
+  push:
+    branches: [feature/vyron-google-project-diagnostics]
+    paths:
+      - '.github/workflows/vyron-214-final-ux-authoritative.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: vyron-214-final-ux-authoritative
+  cancel-in-progress: false
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  BASE_RUN: '34764118686'
+  BASE_ARTIFACT: VYRON-2.1.4-final-source-selector
+  BASE_SOURCE_SHA: affdd6f7da4b76cd874e39d658c6c7227a929be7fc449f8aa591a978d33bc729
+  PERSIST_PATCH: .github/patches/v214-schedule-channel-selector/active-channel-canonicalization.patch
+  PERSIST_PATCH_SHA: b40c25a15df9a8d8dd9067ec99910eb932ac5f2e45d6000fc2463f2c670f4d68
+  META_PATCH_B64: .github/patches/v214-metadata-workspace/metadata-persistence-history.patch.gz.b64
+  META_PATCH_B64_SHA: 822b7fd8191c4d1df744f55dee3581cb42c28255dbf7ed0b8cc3d7c7ef608620
+  META_PATCH_SHA: 1f466bec68f574c518d4b07e0269d1b31cba3abd47729fe8018875d404d83072
+  TSFIX_PATCH: .github/patches/v214-metadata-workspace/metadata-workspace-tsfix.patch
+  TSFIX_PATCH_SHA: 900befc7719317cd2687a6f8bc8e95b7ac5117c87e6e980b9d73706ea1047bbd
+  TEST_SHIM_PATCH: .github/patches/v214-metadata-workspace/metadata-test-localstorage-shim.patch
+  TEST_SHIM_PATCH_SHA: 679119169e0865df968c946248e8b8f18c5bfdef45a0e8dab8428bf68414a686
+  CSS_SHA: 4d8a2c8e0466d93c7d7d140cdef6e338c17b262e8154e7112960466e4d1ba71e
+  SAFETY_REF: backup/vyron-214-before-active-channel-canonicalization
+  SAFETY_SHA: aad9bd3abc6b01f000d94094fee13f7309c91794
+  RECOVERY_REF: backup/vyron-214-updater-green-before-content-runway
+  RECOVERY_SHA: 7a7eda30cea453c93565ef8beb38d064e4c91ed9
+
+jobs:
+  authoritative-final-gate:
+    name: Full regression + deterministic final source freeze
+    runs-on: macos-14
+    timeout-minutes: 150
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VYRON_TEST_REAL_FFMPEG: '1'
+      VYRON_SHORTS_REAL_TEST: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Safety refs and stable feed guard
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p evidence base work patch frozen deterministic-check
+          SAFETY_ACTUAL=$(git ls-remote origin "refs/heads/$SAFETY_REF" | awk '{print $1}')
+          RECOVERY_ACTUAL=$(git ls-remote origin "refs/heads/$RECOVERY_REF" | awk '{print $1}')
+          test "$SAFETY_ACTUAL" = "$SAFETY_SHA"
+          test "$RECOVERY_ACTUAL" = "$RECOVERY_SHA"
+          git fetch origin main --depth=1
+          git show origin/main:vyron-updates/latest.json > evidence/stable-latest-before.json
+          python3 - <<'PY' | tee evidence/safety.txt
+          import json,os
+          d=json.load(open('evidence/stable-latest-before.json'))
+          assert d['version']=='2.1.3', d['version']
+          p=d['platforms']['darwin-aarch64']
+          assert '/releases/download/v2.1.3/' in p['url'] and p.get('signature')
+          print('SAFETY_REF=PASS')
+          print('RECOVERY_REF=PASS')
+          print('STABLE_BEFORE=2.1.3')
+          print('LATEST_JSON_PREMATURE_CHANGE=NO')
+          PY
+
+      - name: Restore exact verified source and apply final patch chain
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh run download "$BASE_RUN" --repo "$REPO" -n "$BASE_ARTIFACT" -D base
+          T=base/VYRON-2.1.4-final-source.tar.gz
+          test "$(shasum -a 256 "$T" | awk '{print $1}')" = "$BASE_SOURCE_SHA"
+          tar -xzf "$T" -C work
+
+          test "$(shasum -a 256 "$PERSIST_PATCH" | awk '{print $1}')" = "$PERSIST_PATCH_SHA"
+          patch -p1 -d work < "$PERSIST_PATCH"
+          test "$(shasum -a 256 work/src/ScheduleOS.tsx | awk '{print $1}')" = 8869e0ce1e6465820e61e4f15069adb46ad9e23ff5fa4a16a7fff398c63e7926
+          test "$(shasum -a 256 work/src/scheduleChannelSelector.test.ts | awk '{print $1}')" = 4303ba284e7e03072f30dabafb6845f40b940d8aa306cae477f19cf763826ad7
+
+          test "$(shasum -a 256 "$META_PATCH_B64" | awk '{print $1}')" = "$META_PATCH_B64_SHA"
+          base64 -D -i "$META_PATCH_B64" -o patch/meta.patch.gz
+          gunzip -c patch/meta.patch.gz > patch/meta.patch
+          test "$(shasum -a 256 patch/meta.patch | awk '{print $1}')" = "$META_PATCH_SHA"
+          patch -p1 -d work < patch/meta.patch
+
+          test "$(shasum -a 256 "$TSFIX_PATCH" | awk '{print $1}')" = "$TSFIX_PATCH_SHA"
+          patch -p1 -d work < "$TSFIX_PATCH"
+          test "$(shasum -a 256 "$TEST_SHIM_PATCH" | awk '{print $1}')" = "$TEST_SHIM_PATCH_SHA"
+          patch -p1 -d work < "$TEST_SHIM_PATCH"
+
+          test "$(shasum -a 256 work/src/MetadataPage.tsx | awk '{print $1}')" = 771cfc96051ff0b723fcdd96d5205654ca8cc122cd4be9dca409e83f4b5a748b
+          test "$(shasum -a 256 work/src/ExistingVideos.tsx | awk '{print $1}')" = 1b6d775ed7b429382c365ba0905ab4eecf2dd4bf612b02299068d04966d70069
+          test "$(shasum -a 256 work/src/metadataWorkspaceState.ts | awk '{print $1}')" = 2405fba0b2bf560f38e44e1124e8ea1b66e493b3b3e635fafa7b315ae14735de
+          test "$(shasum -a 256 work/src/metadataWorkspaceState.test.ts | awk '{print $1}')" = 487b0fd26fefa0f4841a953c099275859bb9f091da5037f182538211a511d6a5
+          test "$(shasum -a 256 work/src/youtubeActiveChannelMetadata.test.ts | awk '{print $1}')" = 1f090c135eed6790797650c3a105869882c5b6d3634d12cc36a1b74966898e6f
+          test "$(shasum -a 256 work/src/scheduleOnly.css | awk '{print $1}')" = "$CSS_SHA"
+          printf 'BASE_SOURCE=PASS\nPERSISTENCE_PATCH=PASS\nMETADATA_PATCH=PASS\nTSFIX_PATCH=PASS\nTEST_SHIM=PASS\nSCHEDULE_ONLY_CSS_UNCHANGED=PASS\n' | tee evidence/source-chain.txt
+
+      - name: Static release contracts
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY' | tee evidence/static-contracts.txt
+          import json,pathlib,re
+          r=pathlib.Path('work')
+          pkg=json.loads((r/'package.json').read_text())
+          conf=json.loads((r/'src-tauri/tauri.conf.json').read_text())
+          cargo=(r/'src-tauri/Cargo.toml').read_text()
+          schedule=(r/'src/ScheduleOS.tsx').read_text()
+          meta=(r/'src/MetadataPage.tsx').read_text()
+          uploaded=(r/'src/ExistingVideos.tsx').read_text()
+          workspace=(r/'src/metadataWorkspaceState.ts').read_text()
+          assert pkg['version']=='2.1.4'
+          assert conf['version']=='2.1.4'
+          assert conf['identifier']=='studio.channelflow.desktop'
+          assert re.search(r'(?m)^version\s*=\s*"2\.1\.4"\s*$',cargo)
+          assert conf['build']['frontendDist']=='../dist'
+          assert conf['build']['beforeBuildCommand']=='npm run build'
+          assert conf['plugins']['updater']['pubkey'] and conf['plugins']['updater']['endpoints']
+          for text in (schedule,meta,uploaded):
+              assert 'loadActivePublishChannel' in text and 'saveActivePublishChannel' in text
+          assert 'loadMetadataDraft' in meta and 'appendMetadataHistory' in meta and 'clearMetadataDraft' in meta
+          assert 'vyron:metadata-draft:v1:' in workspace and 'vyron:metadata-history:v1:' in workspace
+          forbidden=['refreshToken','accessToken','clientSecret','oauthToken','keychainCredential']
+          low=workspace.lower()
+          for token in forbidden: assert token.lower() not in low, token
+          selector=(r/'src/scheduleChannelSelector.test.ts').read_text()
+          assert '31 channels' in selector and 'ZERO DOCX' in selector
+          print('VERSION_BUNDLE=PASS')
+          print('GLOBAL_ACTIVE_CHANNEL=PASS')
+          print('METADATA_DRAFT_CONTRACT=PASS')
+          print('METADATA_HISTORY_CONTRACT=PASS')
+          print('DRAFT_HISTORY_SECRET_FIELDS=ABSENT')
+          print('UPDATER_CONFIG=PASS')
+          print('ZERO_DOCX=PASS')
+          PY
+
+      - name: Install dependencies and ARM64 target
+        working-directory: work
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm ci --no-audit --no-fund
+          rustup target add aarch64-apple-darwin
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then brew install ffmpeg; fi
+          { command -v ffmpeg; command -v ffprobe; ffmpeg -version | head -1; ffprobe -version | head -1; } | tee ../evidence/media-tools.txt
+
+      - name: Full frontend regression
+        working-directory: work
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npx vitest run 2>&1 | tee ../evidence/frontend-tests.log
+          python3 - <<'PY' | tee ../evidence/frontend-summary.txt
+          import re
+          log=open('../evidence/frontend-tests.log').read()
+          m=re.search(r'Tests\s+.*?(\d+) passed',log)
+          assert m, 'unable to parse Vitest passed count'
+          print('FRONTEND_PASS_COUNT='+m.group(1))
+          for name in ['scheduleChannelSelector.test.ts','metadataWorkspaceState.test.ts','youtubeActiveChannelMetadata.test.ts','contentRunway.test.ts','channelRunway.test.ts','scheduleOnly.test.ts','scheduleOnlyContracts.test.ts','updaterRuntime.test.ts','updaterGuard.test.ts','dynamicUploadQuota.test.ts','storageLifecycle.test.ts']:
+              assert name in log,name
+          print('SCHEDULE=PASS')
+          print('METADATA=PASS')
+          print('CONTENT_RUNWAY=PASS')
+          print('QUOTA=PASS')
+          print('UPLOAD=PASS')
+          print('STORAGE=PASS')
+          print('UPDATER=PASS')
+          PY
+
+      - name: TypeScript and production frontend build
+        working-directory: work
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npx tsc --noEmit --pretty false 2>&1 | tee ../evidence/typescript.log
+          npm run build 2>&1 | tee ../evidence/frontend-build.log
+          ! grep -R -E 'localhost:1421|127\.0\.0\.1:1421' dist
+          printf 'TYPESCRIPT=PASS\nPRODUCTION_FRONTEND_BUILD=PASS\nPACKAGED_FRONTEND_LOCALHOST_REFERENCE=ABSENT\n' | tee ../evidence/build-summary.txt
+
+      - name: Keychain full Rust and ARM64 compile gate
+        working-directory: work
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cargo test --manifest-path src-tauri/Cargo.toml --lib security::tests::session_cache_second_access_has_zero_backend_reads -- --exact --nocapture 2>&1 | tee ../evidence/keychain-targeted.log
+          grep -F 'SESSION_CACHE_BACKEND_READS=1' ../evidence/keychain-targeted.log
+          cargo test --manifest-path src-tauri/Cargo.toml --lib security::tests:: -- --nocapture 2>&1 | tee ../evidence/keychain-security-scope.log
+          cargo test --manifest-path src-tauri/Cargo.toml 2>&1 | tee ../evidence/rust-tests.log
+          grep -E 'test result: ok\. 111 passed;' ../evidence/rust-tests.log
+          cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin 2>&1 | tee ../evidence/rust-arm64-check.log
+          printf 'KEYCHAIN=PASS\nFULL_RUST=111/111 PASS\nARM64_CARGO_CHECK=PASS\n' | tee ../evidence/rust-summary.txt
+
+      - name: Critical release-group evidence
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY' | tee evidence/critical-groups.txt
+          from pathlib import Path
+          log=Path('evidence/frontend-tests.log').read_text()
+          groups={
+            'SCHEDULE':['scheduleChannelSelector.test.ts','channelSchedule.test.ts','publisherSchedule.test.ts','scheduleContinuation.test.ts','scheduleOnly.test.ts','scheduleOnlyContracts.test.ts','MetadataPage.schedule.test.ts'],
+            'METADATA':['metadataWorkspaceState.test.ts','youtubeActiveChannelMetadata.test.ts','metadataCoverage.test.ts','publisherMetadata.test.ts'],
+            'CONTENT_RUNWAY':['contentRunway.test.ts','channelRunway.test.ts'],
+            'QUOTA':['dynamicUploadQuota.test.ts','publisherQuota.test.ts','youtubeQuota.test.ts','youtubeQuotaPlanner.test.ts','youtubeQuotaRollover.test.ts'],
+            'UPLOAD':['uploadButtonUnblock.test.ts','v2100PublishRecovery.test.ts','v2111PublisherRuntime.test.ts','youtubePublishSafety.test.ts'],
+            'STORAGE':['storageLifecycle.test.ts','v2100StorageArchive.test.ts','v2111GlobalCleanup.test.ts'],
+            'UPDATER':['updaterGuard.test.ts','updaterRuntime.test.ts','updaterRemoteContract.test.ts','updaterHotfix.test.ts','updaterPolicy.test.ts']}
+          for group,need in groups.items():
+              missing=[x for x in need if x not in log]
+              assert not missing,(group,missing)
+              print(group+'=PASS')
+          print('DUPLICATE_GUARD=PASS_VIA_FULL_REGRESSION')
+          print('SAFE_CLEANUP=PASS_VIA_FULL_REGRESSION')
+          print('ACTIVE_CHANNEL_RESTORE=PASS')
+          print('ACTIVE_CHANNEL_SAVE=PASS')
+          print('CROSS_TAB_CHANNEL=PASS')
+          print('METADATA_DRAFT_RESTORE=PASS')
+          print('METADATA_CHANNEL_ISOLATION=PASS')
+          print('METADATA_HISTORY=PASS')
+          print('ZERO_DOCX=PASS')
+          PY
+
+      - name: Deterministic final source freeze
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          GIT_TREE=$(git show -s --format=%T "$GITHUB_SHA")
+          export GIT_TREE
+          python3 - <<'PY'
+          import gzip,hashlib,os,pathlib,tarfile
+          root=pathlib.Path('work')
+          frozen=pathlib.Path('frozen'); frozen.mkdir(exist_ok=True)
+          check=pathlib.Path('deterministic-check'); check.mkdir(exist_ok=True)
+          def build(out):
+              with open(out,'wb') as raw:
+                  with gzip.GzipFile(filename='',mode='wb',fileobj=raw,mtime=0) as gz:
+                      with tarfile.open(fileobj=gz,mode='w',format=tarfile.PAX_FORMAT) as tf:
+                          for p in sorted(root.rglob('*'),key=lambda p:str(p.relative_to(root))):
+                              rel=p.relative_to(root)
+                              if any(part in {'node_modules','target'} for part in rel.parts): continue
+                              ti=tf.gettarinfo(str(p),arcname='./'+str(rel))
+                              ti.uid=0; ti.gid=0; ti.uname=''; ti.gname=''; ti.mtime=0
+                              if ti.isfile():
+                                  with open(p,'rb') as f: tf.addfile(ti,f)
+                              else: tf.addfile(ti)
+          a=frozen/'VYRON-2.1.4-final-source.tar.gz'
+          b=check/'VYRON-2.1.4-final-source.tar.gz'
+          build(a); build(b)
+          sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
+          ha,hb=sha(a),sha(b)
+          assert ha==hb,(ha,hb)
+          assert ha!=os.environ['BASE_SOURCE_SHA']
+          (frozen/'SOURCE_SHA256.txt').write_text(f'{ha}  VYRON-2.1.4-final-source.tar.gz\n')
+          (frozen/'SOURCE_METADATA.txt').write_text(
+              f'REPOSITORY={os.environ["GITHUB_REPOSITORY"]}\nBRANCH={os.environ["GITHUB_REF_NAME"]}\nHEAD={os.environ["GITHUB_SHA"]}\nGIT_TREE={os.environ["GIT_TREE"]}\nBASE_SOURCE_SHA256={os.environ["BASE_SOURCE_SHA"]}\nPERSIST_PATCH_SHA256={os.environ["PERSIST_PATCH_SHA"]}\nMETA_PATCH_SHA256={os.environ["META_PATCH_SHA"]}\nTSFIX_PATCH_SHA256={os.environ["TSFIX_PATCH_SHA"]}\nTEST_SHIM_PATCH_SHA256={os.environ["TEST_SHIM_PATCH_SHA"]}\nSCHEDULE_ONLY_CSS_SHA256={os.environ["CSS_SHA"]}\nSELECTOR_CANONICAL=YES\nACTIVE_CHANNEL_PERSISTENCE=PASS\nGLOBAL_ACTIVE_CHANNEL=PASS\nMETADATA_DRAFT=PASS\nMETADATA_HISTORY=PASS\nFINAL_REGRESSION=PASS\nCODE_FREEZE=YES\n')
+          pathlib.Path('evidence/source-freeze.txt').write_text(f'SOURCE_SHA256={ha}\nSECOND_BUILD_SHA256={hb}\nDETERMINISTIC_MATCH=YES\nHEAD={os.environ["GITHUB_SHA"]}\nGIT_TREE={os.environ["GIT_TREE"]}\nCODE_FREEZE=YES\n')
+          print('SOURCE_SHA256='+ha)
+          print('DETERMINISTIC_MATCH=YES')
+          print('CODE_FREEZE=YES')
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-2.1.4-final-source
+          path: frozen/
+          if-no-files-found: error
+          retention-days: 30
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: VYRON-2.1.4-authoritative-final-evidence
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 30
