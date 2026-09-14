@@ -20,7 +20,7 @@ env:
   STABLE_TAG: v2.1.4
   FEATURE1_PATCH_SHA256: f0dfdb2f9698e59b8a207c7c6b97a75ddabda039ac86c19cd07e89c81117c71f
   FEATURE2_PATCH_SHA256: a76435719952b9478514bd41d62e79df550ccbcadab459e23067de0cc5fb2299
-  VERSION_PATCH_SHA256: 73ddca909b8d720505647fa63c1ce81b610f80c25f55b250b024af6836f03708
+  VERSION_PATCH_SHA256: fd0f4c7cdae36b45946ce62869aa3979a986467b04d5ebe35d2d46281a823be1
   RECOVERY_ONE: backup/vyron-214-updater-green-before-content-runway
   RECOVERY_ONE_SHA: 7a7eda30cea453c93565ef8beb38d064e4c91ed9
   RECOVERY_TWO: backup/vyron-214-before-selector-final-release
@@ -84,6 +84,7 @@ jobs:
           base64 -d "$P1" | gzip -t
           base64 -d "$P1" | gzip -d > decoded-patches/01-global-channel.patch
           P1_SHA=$(sha256sum decoded-patches/01-global-channel.patch | awk '{print $1}')
+          echo "FEATURE1_ACTUAL_SHA256=$P1_SHA"
           test "$P1_SHA" = "$FEATURE1_PATCH_SHA256"
 
           shopt -s nullglob
@@ -91,10 +92,12 @@ jobs:
           test "${#parts[@]}" -eq 9
           cat "${parts[@]}" > decoded-patches/02-draft-manager.patch
           P2_SHA=$(sha256sum decoded-patches/02-draft-manager.patch | awk '{print $1}')
+          echo "FEATURE2_ACTUAL_SHA256=$P2_SHA"
           test "$P2_SHA" = "$FEATURE2_PATCH_SHA256"
 
           P3=.github/patches/v215-youtube-productivity/03-version-bump.patch
           P3_SHA=$(sha256sum "$P3" | awk '{print $1}')
+          echo "VERSION_ACTUAL_SHA256=$P3_SHA"
           test "$P3_SHA" = "$VERSION_PATCH_SHA256"
           cp "$P3" decoded-patches/03-version-bump.patch
 
@@ -256,12 +259,18 @@ jobs:
           set -Eeuo pipefail
           base64 -D .github/patches/v215-youtube-productivity/01-global-channel.patch.gz.b64 | gzip -t
           base64 -D .github/patches/v215-youtube-productivity/01-global-channel.patch.gz.b64 | gzip -d > decoded-patches/01-global-channel.patch
-          test "$(shasum -a 256 decoded-patches/01-global-channel.patch | awk '{print $1}')" = "$FEATURE1_PATCH_SHA256"
+          P1_SHA=$(shasum -a 256 decoded-patches/01-global-channel.patch | awk '{print $1}')
+          echo "FEATURE1_ACTUAL_SHA256=$P1_SHA"
+          test "$P1_SHA" = "$FEATURE1_PATCH_SHA256"
           parts=(.github/patches/v215-youtube-productivity/02-draft-manager.parts/*.patchfrag)
           test "${#parts[@]}" -eq 9
           cat "${parts[@]}" > decoded-patches/02-draft-manager.patch
-          test "$(shasum -a 256 decoded-patches/02-draft-manager.patch | awk '{print $1}')" = "$FEATURE2_PATCH_SHA256"
-          test "$(shasum -a 256 .github/patches/v215-youtube-productivity/03-version-bump.patch | awk '{print $1}')" = "$VERSION_PATCH_SHA256"
+          P2_SHA=$(shasum -a 256 decoded-patches/02-draft-manager.patch | awk '{print $1}')
+          echo "FEATURE2_ACTUAL_SHA256=$P2_SHA"
+          test "$P2_SHA" = "$FEATURE2_PATCH_SHA256"
+          P3_SHA=$(shasum -a 256 .github/patches/v215-youtube-productivity/03-version-bump.patch | awk '{print $1}')
+          echo "VERSION_ACTUAL_SHA256=$P3_SHA"
+          test "$P3_SHA" = "$VERSION_PATCH_SHA256"
           cp .github/patches/v215-youtube-productivity/03-version-bump.patch decoded-patches/03-version-bump.patch
           for p in decoded-patches/01-global-channel.patch decoded-patches/02-draft-manager.patch decoded-patches/03-version-bump.patch; do
             git apply --check --directory=work "$p"
