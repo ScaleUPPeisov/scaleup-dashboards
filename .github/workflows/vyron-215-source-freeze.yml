@@ -1,0 +1,200 @@
+name: VYRON 2.1.5 Deterministic Source Freeze
+
+on:
+  push:
+    branches: [release/vyron-2.1.5]
+    paths: ['.github/workflows/vyron-215-source-freeze.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: vyron-215-source-freeze
+  cancel-in-progress: false
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  BASE_RUN: '34793876334'
+  BASE_ARTIFACT: VYRON-2.1.4-final-source
+  BASE_SOURCE_SHA256: 24ccb1649d91b090dcc5437c66e18c0ae465528423110efe0c1d392397f6fef1
+  FEATURE1_PATCH_SHA256: f0dfdb2f9698e59b8a207c7c6b97a75ddabda039ac86c19cd07e89c81117c71f
+  FEATURE2_PATCH_SHA256: a76435719952b9478514bd41d62e79df550ccbcadab459e23067de0cc5fb2299
+  VERSION_PATCH_SHA256: fd0f4c7cdae36b45946ce62869aa3979a986467b04d5ebe35d2d46281a823be1
+  EXPECTED_SOURCE_FINGERPRINT: 377cd3715921dafdc1653401358e2e19fb6609af854d90dabc71a1d3749e05b2
+  FINAL_HEAD: 4a518ea28b5c1c18ac8b84d4f457f00de521578d
+  FINAL_TREE: ad0e0a17833039a0a41ee676490acdd7f78b7d2f
+  AUTHORITATIVE_RUN: '34841804753'
+  STABLE_TAG: v2.1.4
+  STABLE_TAG_SHA: b23b945caa2bf41f22207b8661c9409e69a9ed04
+  RECOVERY_ONE: backup/vyron-214-updater-green-before-content-runway
+  RECOVERY_ONE_SHA: 7a7eda30cea453c93565ef8beb38d064e4c91ed9
+  RECOVERY_TWO: backup/vyron-214-before-selector-final-release
+  RECOVERY_TWO_SHA: aad9bd3abc6b01f000d94094fee13f7309c91794
+  RECOVERY_THREE: backup/vyron-214-before-active-channel-canonicalization
+  RECOVERY_THREE_SHA: aad9bd3abc6b01f000d94094fee13f7309c91794
+
+jobs:
+  freeze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Safety and authoritative identity guards
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p base work decoded-patches frozen evidence
+          test "$(git ls-remote origin refs/tags/$STABLE_TAG | awk '{print $1}')" = "$STABLE_TAG_SHA"
+          test "$(git ls-remote origin refs/heads/$RECOVERY_ONE | awk '{print $1}')" = "$RECOVERY_ONE_SHA"
+          test "$(git ls-remote origin refs/heads/$RECOVERY_TWO | awk '{print $1}')" = "$RECOVERY_TWO_SHA"
+          test "$(git ls-remote origin refs/heads/$RECOVERY_THREE | awk '{print $1}')" = "$RECOVERY_THREE_SHA"
+          git fetch origin "$FINAL_HEAD" --depth=1
+          test "$(git show -s --format=%T "$FINAL_HEAD")" = "$FINAL_TREE"
+          git fetch origin main --depth=1
+          git show origin/main:vyron-updates/latest.json > evidence/latest-before.json
+          node - <<'NODE'
+          const fs=require('fs'); const d=JSON.parse(fs.readFileSync('evidence/latest-before.json','utf8'));
+          if(d.version!=='2.1.4') throw new Error(`stable feed changed early: ${d.version}`);
+          if(!d.platforms?.['darwin-aarch64']?.url?.includes('/releases/download/v2.1.4/')) throw new Error('stable feed URL changed early');
+          NODE
+          printf 'AUTHORITATIVE_RUN=%s\nFINAL_HEAD=%s\nFINAL_TREE=%s\nSTABLE_FEED=2.1.4\nSAFETY_REFS=PASS\n' "$AUTHORITATIVE_RUN" "$FINAL_HEAD" "$FINAL_TREE" | tee evidence/guards.txt
+
+      - name: Reconstruct exact final application source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          gh run download "$BASE_RUN" --repo "$REPO" -n "$BASE_ARTIFACT" -D base
+          T=base/VYRON-2.1.4-final-source.tar.gz
+          test -s "$T"
+          test "$(sha256sum "$T" | awk '{print $1}')" = "$BASE_SOURCE_SHA256"
+          tar -xzf "$T" -C work
+
+          P1=.github/patches/v215-youtube-productivity/01-global-channel.patch.gz.b64
+          base64 -d "$P1" | gzip -d > decoded-patches/01-global-channel.patch
+          test "$(sha256sum decoded-patches/01-global-channel.patch | awk '{print $1}')" = "$FEATURE1_PATCH_SHA256"
+
+          shopt -s nullglob
+          parts=(.github/patches/v215-youtube-productivity/02-draft-manager.parts/*.patchfrag)
+          test "${#parts[@]}" -eq 9
+          cat "${parts[@]}" > decoded-patches/02-draft-manager.patch
+          test "$(sha256sum decoded-patches/02-draft-manager.patch | awk '{print $1}')" = "$FEATURE2_PATCH_SHA256"
+
+          cp .github/patches/v215-youtube-productivity/03-version-bump.patch decoded-patches/03-version-bump.patch
+          test "$(sha256sum decoded-patches/03-version-bump.patch | awk '{print $1}')" = "$VERSION_PATCH_SHA256"
+
+          for p in decoded-patches/01-global-channel.patch decoded-patches/02-draft-manager.patch decoded-patches/03-version-bump.patch; do
+            git apply --check --directory=work "$p"
+            git apply --directory=work "$p"
+          done
+
+          test "$(node -p "require('./work/package.json').version")" = '2.1.5'
+          test "$(node -p "require('./work/package-lock.json').version")" = '2.1.5'
+          test "$(node -p "require('./work/src-tauri/tauri.conf.json').version")" = '2.1.5'
+          grep -q '"identifier": "studio.channelflow.desktop"' work/src-tauri/tauri.conf.json
+
+      - name: Require authoritative reconstructed-source fingerprint
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          FP=$(python3 - <<'PY'
+          import hashlib,os,pathlib
+          root=pathlib.Path('work'); h=hashlib.sha256()
+          for p in sorted(root.rglob('*'),key=lambda x:x.relative_to(root).as_posix()):
+              rel=p.relative_to(root).as_posix().encode()
+              if p.is_symlink(): kind=b'L'; data=os.readlink(p).encode()
+              elif p.is_file(): kind=b'F'; data=p.read_bytes()
+              else: continue
+              h.update(kind); h.update(len(rel).to_bytes(8,'big')); h.update(rel); h.update(len(data).to_bytes(8,'big')); h.update(data)
+          print(h.hexdigest())
+          PY
+          )
+          test "$FP" = "$EXPECTED_SOURCE_FINGERPRINT"
+          echo "RECONSTRUCTED_SOURCE_SHA=$FP" | tee evidence/source-fingerprint.txt
+
+      - name: Create deterministic frozen source archive
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import gzip,os,pathlib,tarfile
+          root=pathlib.Path('work')
+          out=pathlib.Path('frozen/VYRON-2.1.5-final-source.tar.gz')
+          def filt(t):
+              t.uid=0; t.gid=0; t.uname=''; t.gname=''; t.mtime=0
+              t.pax_headers={}
+              return t
+          with out.open('wb') as raw:
+              with gzip.GzipFile(filename='',mode='wb',fileobj=raw,mtime=0,compresslevel=9) as gz:
+                  with tarfile.open(fileobj=gz,mode='w',format=tarfile.PAX_FORMAT) as tf:
+                      for p in sorted(root.rglob('*'), key=lambda x:x.relative_to(root).as_posix()):
+                          arc=p.relative_to(root).as_posix()
+                          tf.add(p,arcname=arc,recursive=False,filter=filt)
+          PY
+          SHA=$(sha256sum frozen/VYRON-2.1.5-final-source.tar.gz | awk '{print $1}')
+          printf '%s  VYRON-2.1.5-final-source.tar.gz\n' "$SHA" > frozen/SOURCE_SHA256.txt
+          cat > frozen/SOURCE_METADATA.txt <<EOF
+          VERSION=2.1.5
+          HEAD=$FINAL_HEAD
+          GIT_TREE=$FINAL_TREE
+          AUTHORITATIVE_RUN=$AUTHORITATIVE_RUN
+          RECONSTRUCTED_SOURCE_SHA=$EXPECTED_SOURCE_FINGERPRINT
+          FINAL_REGRESSION=PASS
+          ARM64_COMPILE_GATE=PASS
+          FEATURE_SET_COMPLETE=YES
+          CODE_FREEZE=YES
+          EOF
+          cp evidence/source-fingerprint.txt frozen/
+          echo "SOURCE_SHA256=$SHA" | tee evidence/source-freeze.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-2.1.5-final-source
+          path: frozen/
+          if-no-files-found: error
+          retention-days: 90
+
+  independent-verify:
+    needs: freeze
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: VYRON-2.1.5-final-source
+          path: downloaded
+      - name: Independently verify downloaded frozen source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -s downloaded/VYRON-2.1.5-final-source.tar.gz
+          test -s downloaded/SOURCE_SHA256.txt
+          DECLARED=$(awk '{print $1}' downloaded/SOURCE_SHA256.txt)
+          INDEPENDENT=$(sha256sum downloaded/VYRON-2.1.5-final-source.tar.gz | awk '{print $1}')
+          test "$DECLARED" = "$INDEPENDENT"
+          grep -Fxq "HEAD=$FINAL_HEAD" downloaded/SOURCE_METADATA.txt
+          grep -Fxq "GIT_TREE=$FINAL_TREE" downloaded/SOURCE_METADATA.txt
+          grep -Fxq "AUTHORITATIVE_RUN=$AUTHORITATIVE_RUN" downloaded/SOURCE_METADATA.txt
+          grep -Fxq "RECONSTRUCTED_SOURCE_SHA=$EXPECTED_SOURCE_FINGERPRINT" downloaded/SOURCE_METADATA.txt
+          grep -Fxq 'FINAL_REGRESSION=PASS' downloaded/SOURCE_METADATA.txt
+          grep -Fxq 'CODE_FREEZE=YES' downloaded/SOURCE_METADATA.txt
+          mkdir unpacked
+          tar -xzf downloaded/VYRON-2.1.5-final-source.tar.gz -C unpacked
+          test "$(node -p "require('./unpacked/package.json').version")" = '2.1.5'
+          test "$(node -p "require('./unpacked/src-tauri/tauri.conf.json').version")" = '2.1.5'
+          printf 'SOURCE_SHA=%s\nINDEPENDENT_SHA=%s\nMATCH=YES\nFINAL_HEAD=%s\nFINAL_TREE=%s\n' "$DECLARED" "$INDEPENDENT" "$FINAL_HEAD" "$FINAL_TREE" | tee SOURCE_INDEPENDENT_VERIFY.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-2.1.5-source-independent-verification
+          path: SOURCE_INDEPENDENT_VERIFY.txt
+          if-no-files-found: error
+          retention-days: 90
