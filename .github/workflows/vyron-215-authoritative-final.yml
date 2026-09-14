@@ -1,0 +1,286 @@
+name: VYRON 2.1.5 Authoritative Final Gate
+
+on:
+  push:
+    branches: [release/vyron-2.1.5]
+    paths:
+      - '.github/workflows/vyron-215-authoritative-final.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  BASE_RUN: '34793876334'
+  BASE_ARTIFACT: VYRON-2.1.4-final-source
+  BASE_SOURCE_SHA256: 24ccb1649d91b090dcc5437c66e18c0ae465528423110efe0c1d392397f6fef1
+  BASE_COMMIT: b23b945caa2bf41f22207b8661c9409e69a9ed04
+  STABLE_TAG: v2.1.4
+  FEATURE1_PATCH_SHA256: f0dfdb2f9698e59b8a207c7c6b97a75ddabda039ac86c19cd07e89c81117c71f
+  FEATURE2_PATCH_SHA256: a76435719952b9478514bd41d62e79df550ccbcadab459e23067de0cc5fb2299
+  VERSION_PATCH_SHA256: 73ddca909b8d720505647fa63c1ce81b610f80c25f55b250b024af6836f03708
+  RECOVERY_ONE: backup/vyron-214-updater-green-before-content-runway
+  RECOVERY_ONE_SHA: 7a7eda30cea453c93565ef8beb38d064e4c91ed9
+  RECOVERY_TWO: backup/vyron-214-before-selector-final-release
+  RECOVERY_TWO_SHA: aad9bd3abc6b01f000d94094fee13f7309c91794
+  RECOVERY_THREE: backup/vyron-214-before-active-channel-canonicalization
+  RECOVERY_THREE_SHA: aad9bd3abc6b01f000d94094fee13f7309c91794
+
+jobs:
+  full-regression:
+    name: full-regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Safety guards and exact release scope
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p evidence base work decoded-patches
+          test "$(git ls-remote origin refs/tags/$STABLE_TAG | awk '{print $1}')" = "$BASE_COMMIT"
+          test "$(git ls-remote origin refs/heads/$RECOVERY_ONE | awk '{print $1}')" = "$RECOVERY_ONE_SHA"
+          test "$(git ls-remote origin refs/heads/$RECOVERY_TWO | awk '{print $1}')" = "$RECOVERY_TWO_SHA"
+          test "$(git ls-remote origin refs/heads/$RECOVERY_THREE | awk '{print $1}')" = "$RECOVERY_THREE_SHA"
+          git fetch origin main --depth=1
+          git show origin/main:vyron-updates/latest.json > evidence/latest-before.json
+          node - <<'NODE'
+          const fs=require('fs');
+          const x=JSON.parse(fs.readFileSync('evidence/latest-before.json','utf8'));
+          if(x.version!=='2.1.4') throw new Error(`stable feed changed early: ${x.version}`);
+          if(!x.platforms?.['darwin-aarch64']?.url?.includes('/releases/download/v2.1.4/')) throw new Error('stable updater URL changed early');
+          NODE
+          printf 'STABLE_FEED=2.1.4\nV2_1_4_TAG_UNCHANGED=YES\nRECOVERY_REFS_UNCHANGED=YES\n' | tee evidence/safety.txt
+
+      - name: Restore exact VYRON 2.1.4 frozen source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          gh run download "$BASE_RUN" --repo "$REPO" -n "$BASE_ARTIFACT" -D base
+          T=base/VYRON-2.1.4-final-source.tar.gz
+          test -f "$T"
+          ACTUAL=$(sha256sum "$T" | awk '{print $1}')
+          test "$ACTUAL" = "$BASE_SOURCE_SHA256"
+          tar -xzf "$T" -C work
+          test "$(node -p "require('./work/package.json').version")" = '2.1.4'
+          echo "BASE_SOURCE_SHA256=$ACTUAL" | tee evidence/source-base.txt
+
+      - name: Reconstruct and SHA-verify frozen 2.1.5 patches
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          P1=.github/patches/v215-youtube-productivity/01-global-channel.patch.gz.b64
+          base64 -d "$P1" | gzip -t
+          base64 -d "$P1" | gzip -d > decoded-patches/01-global-channel.patch
+          P1_SHA=$(sha256sum decoded-patches/01-global-channel.patch | awk '{print $1}')
+          test "$P1_SHA" = "$FEATURE1_PATCH_SHA256"
+
+          shopt -s nullglob
+          parts=(.github/patches/v215-youtube-productivity/02-draft-manager.parts/*.patchfrag)
+          test "${#parts[@]}" -eq 9
+          cat "${parts[@]}" > decoded-patches/02-draft-manager.patch
+          P2_SHA=$(sha256sum decoded-patches/02-draft-manager.patch | awk '{print $1}')
+          test "$P2_SHA" = "$FEATURE2_PATCH_SHA256"
+
+          P3=.github/patches/v215-youtube-productivity/03-version-bump.patch
+          P3_SHA=$(sha256sum "$P3" | awk '{print $1}')
+          test "$P3_SHA" = "$VERSION_PATCH_SHA256"
+          cp "$P3" decoded-patches/03-version-bump.patch
+
+          printf 'FEATURE1_PATCH_SHA256=%s\nFEATURE2_PATCH_SHA256=%s\nVERSION_PATCH_SHA256=%s\nPATCH_COUNT=3\n' "$P1_SHA" "$P2_SHA" "$P3_SHA" | tee evidence/patches.txt
+
+      - name: Apply exact 2.1.5 source chain
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for p in decoded-patches/01-global-channel.patch decoded-patches/02-draft-manager.patch decoded-patches/03-version-bump.patch; do
+            git apply --check --directory=work "$p"
+            git apply --directory=work "$p"
+          done
+          test -f work/src/youtubeProductivityGlobalChannel.test.ts
+          test -f work/src/metadataProductivityDraft.test.ts
+          test ! -f work/src/metadataProductivityHistory.test.ts
+          test ! -f work/src/metadataProductivityRestore.test.ts
+          test ! -f work/src/metadataProductivitySummary.test.ts
+          printf 'FEATURE_SET=GLOBAL_CHANNEL+DRAFT_MANAGER\nDEFERRED_2_1_6_EXCLUDED=YES\n' | tee evidence/scope.txt
+
+      - name: Verify all controlled version sources
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(node -p "require('./work/package.json').version")" = '2.1.5'
+          test "$(node -p "require('./work/package-lock.json').version")" = '2.1.5'
+          test "$(node -p "require('./work/package-lock.json').packages[''].version")" = '2.1.5'
+          test "$(node -p "require('./work/src-tauri/tauri.conf.json').version")" = '2.1.5'
+          grep -A4 '^name = "channelflow"$' work/src-tauri/Cargo.lock | grep -q '^version = "2.1.5"$'
+          awk '/^\[package\]/{p=1;next} p&&/^version = /{print;exit}' work/src-tauri/Cargo.toml | grep -q '"2.1.5"'
+          grep -q '"identifier": "studio.channelflow.desktop"' work/src-tauri/tauri.conf.json
+          printf 'VERSION=2.1.5\nBUNDLE_ID=studio.channelflow.desktop\nVERSION_SOURCES=PASS\n' | tee evidence/version.txt
+
+      - name: Install frontend dependencies
+        working-directory: work
+        run: npm ci
+
+      - name: Frontend full suite
+        working-directory: work
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm test | tee ../evidence/frontend-full.txt
+
+      - name: Explicit 2.1.5 targeted regression
+        working-directory: work
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm test -- \
+            src/youtubeActiveChannelMetadata.test.ts \
+            src/scheduleChannelSelector.test.ts \
+            src/metadataWorkspaceState.test.ts \
+            src/scheduleOnlyContracts.test.ts \
+            src/youtubeProductivityGlobalChannel.test.ts \
+            src/metadataProductivityDraft.test.ts | tee ../evidence/targeted-215.txt
+
+      - name: Critical subsystem contracts
+        working-directory: work
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm test -- \
+            src/scheduleOnly.test.ts \
+            src/scheduleOnlyContracts.test.ts \
+            src/scheduleChannelSelector.test.ts \
+            src/MetadataPage.schedule.test.ts \
+            src/metadataWorkspaceState.test.ts \
+            src/youtubeActiveChannelMetadata.test.ts \
+            src/contentRunway.test.ts \
+            src/youtubeQuota.test.ts \
+            src/youtubeQuotaPlanner.test.ts \
+            src/youtubeQuotaRollover.test.ts \
+            src/dynamicUploadQuota.test.ts \
+            src/youtubePublishSafety.test.ts \
+            src/v2111PublisherRuntime.test.ts \
+            src/storageLifecycle.test.ts \
+            src/v2111GlobalCleanup.test.ts \
+            src/keychainPassiveArchitecture.test.ts \
+            src/v213KeychainRecovery.test.ts \
+            src/updaterGuard.test.ts \
+            src/updaterPolicy.test.ts \
+            src/updaterRemoteContract.test.ts \
+            src/updaterRuntime.test.ts | tee ../evidence/critical-contracts.txt
+
+      - name: TypeScript and production frontend build
+        working-directory: work
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm run build | tee ../evidence/frontend-build.txt
+
+      - name: Rust full suite
+        working-directory: work/src-tauri
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cargo test --locked | tee ../../evidence/rust-full.txt
+
+      - name: Static release invariants
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          grep -q 'SCHEDULE-ONLY • ZERO DOCX' work/src/ScheduleOS.tsx
+          grep -q 'youtubeUpdateExistingSchedule' work/src/ScheduleOS.tsx
+          grep -q 'metadataDraftStatusLabel' work/src/MetadataPage.tsx
+          grep -q 'YouTubeChannelBar' work/src/YouTubeCenter.tsx
+          grep -q 'loadMetadataHistory' work/src/metadataWorkspaceState.test.ts
+          grep -q 'remote-updater.json' work/src/updaterRemoteContract.test.ts
+          ! grep -RIE 'refresh[_ -]?token\s*[:=]\s*[A-Za-z0-9._-]{12,}|access[_ -]?token\s*[:=]\s*[A-Za-z0-9._-]{12,}|client[_ -]?secret\s*[:=]\s*[A-Za-z0-9._-]{12,}' work/src/youtubeProductivityGlobalChannel.test.ts work/src/metadataProductivityDraft.test.ts
+          ! grep -RIE 'localhost|127\.0\.0\.1:1421' work/dist 2>/dev/null
+          printf 'SCHEDULE=PASS\nMETADATA=PASS\nMETADATA_HISTORY_2_1_4=PASS\nCONTENT_RUNWAY=PASS\nQUOTA=PASS\nUPLOAD_LIFECYCLE=PASS\nDUPLICATE_GUARD=PASS\nSTORAGE_LIFECYCLE=PASS\nSAFE_CLEANUP=PASS\nKEYCHAIN=PASS\nUPDATER=PASS\nNO_LOCALHOST=PASS\n' | tee evidence/contracts.txt
+
+      - name: Final Linux gate marker
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          printf 'FRONTEND_FULL=PASS\nRUST_FULL=PASS\nTYPESCRIPT=PASS\nPRODUCTION_FRONTEND_BUILD=PASS\nTARGETED_2_1_5=PASS\nFEATURE_SET_COMPLETE=YES\n' | tee evidence/final-linux.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: VYRON-2.1.5-authoritative-linux-evidence
+          path: evidence
+          if-no-files-found: warn
+
+  arm64-cargo-check:
+    name: arm64-cargo-check
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Confirm native ARM64 runner
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(uname -m)" = 'arm64'
+          rustc -vV
+
+      - name: Restore exact VYRON 2.1.4 frozen source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p base work decoded-patches evidence
+          gh run download "$BASE_RUN" --repo "$REPO" -n "$BASE_ARTIFACT" -D base
+          T=base/VYRON-2.1.4-final-source.tar.gz
+          ACTUAL=$(shasum -a 256 "$T" | awk '{print $1}')
+          test "$ACTUAL" = "$BASE_SOURCE_SHA256"
+          tar -xzf "$T" -C work
+
+      - name: Reconstruct exact 2.1.5 source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base64 -D .github/patches/v215-youtube-productivity/01-global-channel.patch.gz.b64 | gzip -t
+          base64 -D .github/patches/v215-youtube-productivity/01-global-channel.patch.gz.b64 | gzip -d > decoded-patches/01-global-channel.patch
+          test "$(shasum -a 256 decoded-patches/01-global-channel.patch | awk '{print $1}')" = "$FEATURE1_PATCH_SHA256"
+          parts=(.github/patches/v215-youtube-productivity/02-draft-manager.parts/*.patchfrag)
+          test "${#parts[@]}" -eq 9
+          cat "${parts[@]}" > decoded-patches/02-draft-manager.patch
+          test "$(shasum -a 256 decoded-patches/02-draft-manager.patch | awk '{print $1}')" = "$FEATURE2_PATCH_SHA256"
+          test "$(shasum -a 256 .github/patches/v215-youtube-productivity/03-version-bump.patch | awk '{print $1}')" = "$VERSION_PATCH_SHA256"
+          cp .github/patches/v215-youtube-productivity/03-version-bump.patch decoded-patches/03-version-bump.patch
+          for p in decoded-patches/01-global-channel.patch decoded-patches/02-draft-manager.patch decoded-patches/03-version-bump.patch; do
+            git apply --check --directory=work "$p"
+            git apply --directory=work "$p"
+          done
+          test "$(node -p "require('./work/package.json').version")" = '2.1.5'
+
+      - name: Native ARM64 cargo check
+        working-directory: work/src-tauri
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(uname -m)" = 'arm64'
+          cargo check --locked | tee ../../evidence/arm64-cargo-check.txt
+          printf 'ARM64_CARGO_CHECK=PASS\nARCH=arm64\n' | tee -a ../../evidence/arm64-cargo-check.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: VYRON-2.1.5-authoritative-arm64-evidence
+          path: evidence
+          if-no-files-found: warn
