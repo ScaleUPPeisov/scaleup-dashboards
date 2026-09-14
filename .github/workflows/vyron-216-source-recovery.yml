@@ -23,9 +23,12 @@ env:
 jobs:
   recover:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
 
       - name: Restore frozen 2.1.4 source
         env:
@@ -48,16 +51,13 @@ jobs:
           P1=.github/patches/v215-youtube-productivity/01-global-channel.patch.gz.b64
           base64 -d "$P1" | gzip -d > decoded-patches/01-global-channel.patch
           test "$(sha256sum decoded-patches/01-global-channel.patch | awk '{print $1}')" = "$FEATURE1_PATCH_SHA256"
-
           shopt -s nullglob
           parts=(.github/patches/v215-youtube-productivity/02-draft-manager.parts/*.patchfrag)
           test "${#parts[@]}" -eq 9
           cat "${parts[@]}" > decoded-patches/02-draft-manager.patch
           test "$(sha256sum decoded-patches/02-draft-manager.patch | awk '{print $1}')" = "$FEATURE2_PATCH_SHA256"
-
           cp .github/patches/v215-youtube-productivity/03-version-bump.patch decoded-patches/03-version-bump.patch
           test "$(sha256sum decoded-patches/03-version-bump.patch | awk '{print $1}')" = "$VERSION_PATCH_SHA256"
-
           for p in decoded-patches/01-global-channel.patch decoded-patches/02-draft-manager.patch decoded-patches/03-version-bump.patch; do
             git apply --check --directory=work "$p"
             git apply --directory=work "$p"
@@ -75,6 +75,15 @@ jobs:
           git apply --directory=work decoded-patches/04-ready-video-inventory.patch
           sha256sum decoded-patches/04-ready-video-inventory.patch | tee out/block1-patch.sha256
 
+      - name: Block 1 clean targeted test
+        working-directory: work
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm ci
+          npm test -- src/readyVideoInventory.test.ts | tee ../out/block1-tests.txt
+          npx tsc --noEmit | tee ../out/block1-typescript.txt
+
       - name: Package authoritative recovered source
         shell: bash
         run: |
@@ -84,6 +93,7 @@ jobs:
           root = pathlib.Path('work')
           h = hashlib.sha256()
           for p in sorted(root.rglob('*'), key=lambda x: x.relative_to(root).as_posix()):
+              if 'node_modules' in p.parts: continue
               rel = p.relative_to(root).as_posix().encode('utf-8')
               if p.is_symlink():
                   kind=b'L'; data=os.readlink(p).encode('utf-8')
@@ -95,7 +105,7 @@ jobs:
               h.update(len(data).to_bytes(8,'big')); h.update(data)
           print(h.hexdigest())
           PY
-          tar -czf out/VYRON-2.1.6-after-block1-source.tar.gz -C work .
+          tar --exclude='./node_modules' -czf out/VYRON-2.1.6-after-block1-source.tar.gz -C work .
           sha256sum out/VYRON-2.1.6-after-block1-source.tar.gz | tee out/archive.sha256
 
       - uses: actions/upload-artifact@v4
