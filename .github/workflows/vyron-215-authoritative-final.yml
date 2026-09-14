@@ -250,14 +250,52 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          grep -q 'SCHEDULE-ONLY • ZERO DOCX' work/src/ScheduleOS.tsx
-          grep -q 'youtubeUpdateExistingSchedule' work/src/ScheduleOS.tsx
-          grep -q 'metadataDraftStatusLabel' work/src/MetadataPage.tsx
-          grep -q 'YouTubeChannelBar' work/src/YouTubeCenter.tsx
-          grep -q 'loadMetadataHistory' work/src/metadataWorkspaceState.test.ts
-          grep -q 'remote-updater.json' work/src/updaterRemoteContract.test.ts
-          ! grep -RIE 'refresh[_ -]?token\s*[:=]\s*[A-Za-z0-9._-]{12,}|access[_ -]?token\s*[:=]\s*[A-Za-z0-9._-]{12,}|client[_ -]?secret\s*[:=]\s*[A-Za-z0-9._-]{12,}' work/src/youtubeProductivityGlobalChannel.test.ts work/src/metadataProductivityDraft.test.ts
-          ! grep -RIE 'localhost|127\.0\.0\.1:1421' work/dist 2>/dev/null
+
+          check_contains() {
+            local name="$1"
+            local pattern="$2"
+            local file="$3"
+            echo "CHECK_START=$name"
+            if grep -q -- "$pattern" "$file"; then
+              echo "CHECK_PASS=$name"
+            else
+              echo "CHECK_FAIL=$name"
+              echo "FILE=$file"
+              echo "PATTERN=$pattern"
+              exit 1
+            fi
+          }
+
+          check_absent() {
+            local name="$1"
+            local pattern="$2"
+            shift 2
+            echo "CHECK_START=$name"
+            if grep -RIE -- "$pattern" "$@" >/dev/null 2>&1; then
+              echo "CHECK_FAIL=$name"
+              echo "PATTERN=$pattern"
+              exit 1
+            else
+              local rc=$?
+              if [ "$rc" -eq 1 ]; then
+                echo "CHECK_PASS=$name"
+              else
+                echo "CHECK_FAIL=$name"
+                echo "GREP_EXIT=$rc"
+                exit "$rc"
+              fi
+            fi
+          }
+
+          check_contains schedule_zero_docx 'SCHEDULE-ONLY • ZERO DOCX' work/src/ScheduleOS.tsx
+          check_contains schedule_update_existing 'youtubeUpdateExistingSchedule' work/src/ScheduleOS.tsx
+          check_contains metadata_draft_status 'metadataDraftStatusLabel' work/src/MetadataPage.tsx
+          check_contains youtube_channel_bar 'YouTubeChannelBar' work/src/YouTubeCenter.tsx
+          check_contains metadata_history_214 'loadMetadataHistory' work/src/metadataWorkspaceState.test.ts
+          check_contains remote_updater_contract 'vyron-updates/latest.json' work/src/updaterRemoteContract.test.ts
+          check_absent no_embedded_oauth_secrets 'refresh[_ -]?token\s*[:=]\s*[A-Za-z0-9._-]{12,}|access[_ -]?token\s*[:=]\s*[A-Za-z0-9._-]{12,}|client[_ -]?secret\s*[:=]\s*[A-Za-z0-9._-]{12,}' work/src/youtubeProductivityGlobalChannel.test.ts work/src/metadataProductivityDraft.test.ts
+          check_absent no_localhost_dist 'localhost|127\.0\.0\.1:1421' work/dist
+
           printf 'SCHEDULE=PASS\nMETADATA=PASS\nMETADATA_HISTORY_2_1_4=PASS\nCONTENT_RUNWAY=PASS\nQUOTA=PASS\nUPLOAD_LIFECYCLE=PASS\nDUPLICATE_GUARD=PASS\nSTORAGE_LIFECYCLE=PASS\nSAFE_CLEANUP=PASS\nKEYCHAIN=PASS\nUPDATER=PASS\nNO_LOCALHOST=PASS\n' | tee evidence/contracts.txt
 
       - name: Final Linux gate marker
