@@ -19,11 +19,12 @@ env:
   FEATURE1_PATCH_SHA256: f0dfdb2f9698e59b8a207c7c6b97a75ddabda039ac86c19cd07e89c81117c71f
   FEATURE2_PATCH_SHA256: a76435719952b9478514bd41d62e79df550ccbcadab459e23067de0cc5fb2299
   VERSION_PATCH_SHA256: fd0f4c7cdae36b45946ce62869aa3979a986467b04d5ebe35d2d46281a823be1
+  BLOCK2_PATCH_SHA256: 40cfae87b5f7faa41a9fce3070074876552ec4178817acb03c86ecefdadcc959
 
 jobs:
   recover:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -44,17 +45,16 @@ jobs:
           tar -xzf "$T" -C work
           test "$(node -p "require('./work/package.json').version")" = '2.1.4'
 
-      - name: Reconstruct and apply exact 2.1.5 source chain
+      - name: Reconstruct exact VYRON 2.1.5 source
         shell: bash
         run: |
           set -Eeuo pipefail
-          P1=.github/patches/v215-youtube-productivity/01-global-channel.patch.gz.b64
-          base64 -d "$P1" | gzip -d > decoded-patches/01-global-channel.patch
+          base64 -d .github/patches/v215-youtube-productivity/01-global-channel.patch.gz.b64 | gzip -d > decoded-patches/01-global-channel.patch
           test "$(sha256sum decoded-patches/01-global-channel.patch | awk '{print $1}')" = "$FEATURE1_PATCH_SHA256"
           shopt -s nullglob
-          parts=(.github/patches/v215-youtube-productivity/02-draft-manager.parts/*.patchfrag)
-          test "${#parts[@]}" -eq 9
-          cat "${parts[@]}" > decoded-patches/02-draft-manager.patch
+          p2=(.github/patches/v215-youtube-productivity/02-draft-manager.parts/*.patchfrag)
+          test "${#p2[@]}" -eq 9
+          cat "${p2[@]}" > decoded-patches/02-draft-manager.patch
           test "$(sha256sum decoded-patches/02-draft-manager.patch | awk '{print $1}')" = "$FEATURE2_PATCH_SHA256"
           cp .github/patches/v215-youtube-productivity/03-version-bump.patch decoded-patches/03-version-bump.patch
           test "$(sha256sum decoded-patches/03-version-bump.patch | awk '{print $1}')" = "$VERSION_PATCH_SHA256"
@@ -64,53 +64,70 @@ jobs:
           done
           test "$(node -p "require('./work/package.json').version")" = '2.1.5'
 
-      - name: Apply confirmed VYRON 2.1.6 Block 1 carrier
+      - name: Apply VYRON 2.1.6 Block 1 carrier
         shell: bash
         run: |
           set -Eeuo pipefail
-          P=.github/patches/v216-upload-center/01-ready-video-inventory.patch.gz.b64
-          base64 -d "$P" | gzip -t
-          base64 -d "$P" | gzip -d > decoded-patches/04-ready-video-inventory.patch
+          base64 -d .github/patches/v216-upload-center/01-ready-video-inventory.patch.gz.b64 | gzip -d > decoded-patches/04-ready-video-inventory.patch
           git apply --check --directory=work decoded-patches/04-ready-video-inventory.patch
           git apply --directory=work decoded-patches/04-ready-video-inventory.patch
           sha256sum decoded-patches/04-ready-video-inventory.patch | tee out/block1-patch.sha256
 
-      - name: Block 1 clean targeted test
+      - name: Reconstruct and apply VYRON 2.1.6 Block 2 carrier
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          shopt -s nullglob
+          parts=(.github/patches/v216-upload-center/02-multi-channel-upload-queue.parts/*.patchfrag)
+          test "${#parts[@]}" -eq 6
+          cat "${parts[@]}" > decoded-patches/05-multi-channel-upload-queue.patch.gz.b64
+          base64 -d decoded-patches/05-multi-channel-upload-queue.patch.gz.b64 | gzip -t
+          base64 -d decoded-patches/05-multi-channel-upload-queue.patch.gz.b64 | gzip -d > decoded-patches/05-multi-channel-upload-queue.patch
+          ACTUAL=$(sha256sum decoded-patches/05-multi-channel-upload-queue.patch | awk '{print $1}')
+          echo "BLOCK2_ACTUAL_SHA256=$ACTUAL" | tee out/block2-patch.sha256
+          test "$ACTUAL" = "$BLOCK2_PATCH_SHA256"
+          git apply --check --directory=work decoded-patches/05-multi-channel-upload-queue.patch
+          git apply --directory=work decoded-patches/05-multi-channel-upload-queue.patch
+
+      - name: VYRON 2.1.6 Block 1 and 2 targeted tests
         working-directory: work
         shell: bash
         run: |
           set -Eeuo pipefail
           npm ci
-          npm test -- src/readyVideoInventory.test.ts | tee ../out/block1-tests.txt
-          npx tsc --noEmit | tee ../out/block1-typescript.txt
+          npm test -- \
+            src/readyVideoInventory.test.ts \
+            src/uploadQueue.test.ts \
+            src/youtubeQuotaAtomic.test.ts \
+            src/youtubeQuota.test.ts \
+            src/youtubeQuotaPlanner.test.ts \
+            src/publisherQuota.test.ts \
+            src/publisherSchedule.test.ts \
+            src/publisherMetadata.test.ts | tee ../out/block12-tests.txt
+          npx tsc --noEmit | tee ../out/block12-typescript.txt
 
-      - name: Package authoritative recovered source
+      - name: Package authoritative source after Block 2
         shell: bash
         run: |
           set -Eeuo pipefail
           python3 - <<'PY' > out/source-fingerprint.txt
           import hashlib, os, pathlib
-          root = pathlib.Path('work')
-          h = hashlib.sha256()
-          for p in sorted(root.rglob('*'), key=lambda x: x.relative_to(root).as_posix()):
+          root=pathlib.Path('work'); h=hashlib.sha256()
+          for p in sorted(root.rglob('*'), key=lambda x:x.relative_to(root).as_posix()):
               if 'node_modules' in p.parts: continue
-              rel = p.relative_to(root).as_posix().encode('utf-8')
-              if p.is_symlink():
-                  kind=b'L'; data=os.readlink(p).encode('utf-8')
-              elif p.is_file():
-                  kind=b'F'; data=p.read_bytes()
-              else:
-                  continue
-              h.update(kind); h.update(len(rel).to_bytes(8,'big')); h.update(rel)
-              h.update(len(data).to_bytes(8,'big')); h.update(data)
+              rel=p.relative_to(root).as_posix().encode()
+              if p.is_symlink(): kind=b'L'; data=os.readlink(p).encode()
+              elif p.is_file(): kind=b'F'; data=p.read_bytes()
+              else: continue
+              h.update(kind); h.update(len(rel).to_bytes(8,'big')); h.update(rel); h.update(len(data).to_bytes(8,'big')); h.update(data)
           print(h.hexdigest())
           PY
-          tar --exclude='./node_modules' -czf out/VYRON-2.1.6-after-block1-source.tar.gz -C work .
-          sha256sum out/VYRON-2.1.6-after-block1-source.tar.gz | tee out/archive.sha256
+          tar --exclude='./node_modules' -czf out/VYRON-2.1.6-after-block2-source.tar.gz -C work .
+          sha256sum out/VYRON-2.1.6-after-block2-source.tar.gz | tee out/archive.sha256
 
       - uses: actions/upload-artifact@v4
         with:
-          name: VYRON-2.1.6-after-block1-source
+          name: VYRON-2.1.6-after-block2-source
           path: out/*
           retention-days: 30
           if-no-files-found: error
