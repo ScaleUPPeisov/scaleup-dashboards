@@ -1,0 +1,149 @@
+name: VYRON 2.1.5 Static Invariant Diagnostic
+
+on:
+  push:
+    branches: [release/vyron-2.1.5]
+    paths:
+      - '.github/workflows/vyron-215-static-diagnostic.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  BASE_RUN: '34793876334'
+  BASE_ARTIFACT: VYRON-2.1.4-final-source
+  BASE_SOURCE_SHA256: 24ccb1649d91b090dcc5437c66e18c0ae465528423110efe0c1d392397f6fef1
+  FEATURE1_PATCH_SHA256: f0dfdb2f9698e59b8a207c7c6b97a75ddabda039ac86c19cd07e89c81117c71f
+  FEATURE2_PATCH_SHA256: a76435719952b9478514bd41d62e79df550ccbcadab459e23067de0cc5fb2299
+  VERSION_PATCH_SHA256: fd0f4c7cdae36b45946ce62869aa3979a986467b04d5ebe35d2d46281a823be1
+
+jobs:
+  diagnose-static-invariants:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Restore and reconstruct exact 2.1.5 source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p base work decoded-patches
+          gh run download "$BASE_RUN" --repo "$REPO" -n "$BASE_ARTIFACT" -D base
+          T=base/VYRON-2.1.4-final-source.tar.gz
+          test -f "$T"
+          test "$(sha256sum "$T" | awk '{print $1}')" = "$BASE_SOURCE_SHA256"
+          tar -xzf "$T" -C work
+
+          P1=.github/patches/v215-youtube-productivity/01-global-channel.patch.gz.b64
+          base64 -d "$P1" | gzip -d > decoded-patches/01-global-channel.patch
+          test "$(sha256sum decoded-patches/01-global-channel.patch | awk '{print $1}')" = "$FEATURE1_PATCH_SHA256"
+
+          shopt -s nullglob
+          parts=(.github/patches/v215-youtube-productivity/02-draft-manager.parts/*.patchfrag)
+          test "${#parts[@]}" -eq 9
+          cat "${parts[@]}" > decoded-patches/02-draft-manager.patch
+          test "$(sha256sum decoded-patches/02-draft-manager.patch | awk '{print $1}')" = "$FEATURE2_PATCH_SHA256"
+
+          cp .github/patches/v215-youtube-productivity/03-version-bump.patch decoded-patches/03-version-bump.patch
+          test "$(sha256sum decoded-patches/03-version-bump.patch | awk '{print $1}')" = "$VERSION_PATCH_SHA256"
+
+          for p in decoded-patches/01-global-channel.patch decoded-patches/02-draft-manager.patch decoded-patches/03-version-bump.patch; do
+            git apply --check --directory=work "$p"
+            git apply --directory=work "$p"
+          done
+          test "$(node -p "require('./work/package.json').version")" = '2.1.5'
+
+      - name: Build exact frontend for negative dist assertion
+        working-directory: work
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm ci
+          npm run build
+
+      - name: Named static release invariants
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          check_contains() {
+            local name="$1"
+            local pattern="$2"
+            local file="$3"
+            echo "CHECK_START=$name"
+            if grep -q -- "$pattern" "$file"; then
+              echo "CHECK_PASS=$name"
+            else
+              echo "CHECK_FAIL=$name"
+              echo "FILE=$file"
+              echo "PATTERN=$pattern"
+              exit 1
+            fi
+          }
+
+          check_absent_files() {
+            local name="$1"
+            local pattern="$2"
+            shift 2
+            echo "CHECK_START=$name"
+            if grep -RIE -- "$pattern" "$@" >/dev/null 2>&1; then
+              echo "CHECK_FAIL=$name"
+              echo "PATTERN=$pattern"
+              printf 'FILES=%s\n' "$*"
+              exit 1
+            else
+              local rc=$?
+              if [ "$rc" -eq 1 ]; then
+                echo "CHECK_PASS=$name"
+              else
+                echo "CHECK_FAIL=$name"
+                echo "GREP_EXIT=$rc"
+                exit "$rc"
+              fi
+            fi
+          }
+
+          check_absent_dir() {
+            local name="$1"
+            local pattern="$2"
+            local dir="$3"
+            echo "CHECK_START=$name"
+            if grep -RIE -- "$pattern" "$dir" >/dev/null 2>&1; then
+              echo "CHECK_FAIL=$name"
+              echo "PATTERN=$pattern"
+              echo "DIR=$dir"
+              exit 1
+            else
+              local rc=$?
+              if [ "$rc" -eq 1 ]; then
+                echo "CHECK_PASS=$name"
+              else
+                echo "CHECK_FAIL=$name"
+                echo "GREP_EXIT=$rc"
+                exit "$rc"
+              fi
+            fi
+          }
+
+          check_contains schedule_zero_docx 'SCHEDULE-ONLY • ZERO DOCX' work/src/ScheduleOS.tsx
+          check_contains schedule_update_existing 'youtubeUpdateExistingSchedule' work/src/ScheduleOS.tsx
+          check_contains metadata_draft_status 'metadataDraftStatusLabel' work/src/MetadataPage.tsx
+          check_contains youtube_channel_bar 'YouTubeChannelBar' work/src/YouTubeCenter.tsx
+          check_contains metadata_history_214 'loadMetadataHistory' work/src/metadataWorkspaceState.test.ts
+          check_contains remote_updater_contract 'remote-updater.json' work/src/updaterRemoteContract.test.ts
+          check_absent_files no_embedded_oauth_secrets 'refresh[_ -]?token\s*[:=]\s*[A-Za-z0-9._-]{12,}|access[_ -]?token\s*[:=]\s*[A-Za-z0-9._-]{12,}|client[_ -]?secret\s*[:=]\s*[A-Za-z0-9._-]{12,}' work/src/youtubeProductivityGlobalChannel.test.ts work/src/metadataProductivityDraft.test.ts
+          check_absent_dir no_localhost_dist 'localhost|127\.0\.0\.1:1421' work/dist
+
+          echo 'ALL_STATIC_INVARIANTS=PASS'
