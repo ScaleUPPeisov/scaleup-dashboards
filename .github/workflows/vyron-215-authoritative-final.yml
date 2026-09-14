@@ -33,6 +33,8 @@ jobs:
     name: full-regression
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    outputs:
+      source_fingerprint: ${{ steps.fingerprint.outputs.source_fingerprint }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -41,6 +43,23 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+
+      - name: Install Linux Tauri system dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            libglib2.0-dev \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            libssl-dev \
+            patchelf
 
       - name: Safety guards and exact release scope
         shell: bash
@@ -130,6 +149,36 @@ jobs:
           awk '/^\[package\]/{p=1;next} p&&/^version = /{print;exit}' work/src-tauri/Cargo.toml | grep -q '"2.1.5"'
           grep -q '"identifier": "studio.channelflow.desktop"' work/src-tauri/tauri.conf.json
           printf 'VERSION=2.1.5\nBUNDLE_ID=studio.channelflow.desktop\nVERSION_SOURCES=PASS\n' | tee evidence/version.txt
+
+      - name: Fingerprint reconstructed source
+        id: fingerprint
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          FP=$(python3 - <<'PY'
+          import hashlib, os, pathlib
+          root = pathlib.Path('work')
+          h = hashlib.sha256()
+          for p in sorted(root.rglob('*'), key=lambda x: x.relative_to(root).as_posix()):
+              rel = p.relative_to(root).as_posix().encode('utf-8')
+              if p.is_symlink():
+                  kind = b'L'
+                  data = os.readlink(p).encode('utf-8')
+              elif p.is_file():
+                  kind = b'F'
+                  data = p.read_bytes()
+              else:
+                  continue
+              h.update(kind)
+              h.update(len(rel).to_bytes(8, 'big'))
+              h.update(rel)
+              h.update(len(data).to_bytes(8, 'big'))
+              h.update(data)
+          print(h.hexdigest())
+          PY
+          )
+          echo "RECONSTRUCTED_SOURCE_SHA=$FP" | tee evidence/source-fingerprint.txt
+          echo "source_fingerprint=$FP" >> "$GITHUB_OUTPUT"
 
       - name: Install frontend dependencies
         working-directory: work
@@ -228,6 +277,8 @@ jobs:
     name: arm64-cargo-check
     runs-on: macos-14
     timeout-minutes: 45
+    outputs:
+      source_fingerprint: ${{ steps.fingerprint.outputs.source_fingerprint }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -257,11 +308,13 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          base64 -D .github/patches/v215-youtube-productivity/01-global-channel.patch.gz.b64 | gzip -t
-          base64 -D .github/patches/v215-youtube-productivity/01-global-channel.patch.gz.b64 | gzip -d > decoded-patches/01-global-channel.patch
+          P1=.github/patches/v215-youtube-productivity/01-global-channel.patch.gz.b64
+          base64 -D -i "$P1" | gzip -t
+          base64 -D -i "$P1" | gzip -d > decoded-patches/01-global-channel.patch
           P1_SHA=$(shasum -a 256 decoded-patches/01-global-channel.patch | awk '{print $1}')
           echo "FEATURE1_ACTUAL_SHA256=$P1_SHA"
           test "$P1_SHA" = "$FEATURE1_PATCH_SHA256"
+          shopt -s nullglob
           parts=(.github/patches/v215-youtube-productivity/02-draft-manager.parts/*.patchfrag)
           test "${#parts[@]}" -eq 9
           cat "${parts[@]}" > decoded-patches/02-draft-manager.patch
@@ -277,6 +330,37 @@ jobs:
             git apply --directory=work "$p"
           done
           test "$(node -p "require('./work/package.json').version")" = '2.1.5'
+          test "$(node -p "require('./work/src-tauri/tauri.conf.json').version")" = '2.1.5'
+
+      - name: Fingerprint reconstructed source
+        id: fingerprint
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          FP=$(python3 - <<'PY'
+          import hashlib, os, pathlib
+          root = pathlib.Path('work')
+          h = hashlib.sha256()
+          for p in sorted(root.rglob('*'), key=lambda x: x.relative_to(root).as_posix()):
+              rel = p.relative_to(root).as_posix().encode('utf-8')
+              if p.is_symlink():
+                  kind = b'L'
+                  data = os.readlink(p).encode('utf-8')
+              elif p.is_file():
+                  kind = b'F'
+                  data = p.read_bytes()
+              else:
+                  continue
+              h.update(kind)
+              h.update(len(rel).to_bytes(8, 'big'))
+              h.update(rel)
+              h.update(len(data).to_bytes(8, 'big'))
+              h.update(data)
+          print(h.hexdigest())
+          PY
+          )
+          echo "RECONSTRUCTED_SOURCE_SHA=$FP" | tee evidence/source-fingerprint.txt
+          echo "source_fingerprint=$FP" >> "$GITHUB_OUTPUT"
 
       - name: Native ARM64 cargo check
         working-directory: work/src-tauri
@@ -284,8 +368,8 @@ jobs:
         run: |
           set -Eeuo pipefail
           test "$(uname -m)" = 'arm64'
-          cargo check --locked | tee ../../evidence/arm64-cargo-check.txt
-          printf 'ARM64_CARGO_CHECK=PASS\nARCH=arm64\n' | tee -a ../../evidence/arm64-cargo-check.txt
+          cargo check --locked --target aarch64-apple-darwin | tee ../../evidence/arm64-cargo-check.txt
+          printf 'ARM64_CARGO_CHECK=PASS\nARCH=arm64\nTARGET=aarch64-apple-darwin\n' | tee -a ../../evidence/arm64-cargo-check.txt
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -293,3 +377,25 @@ jobs:
           name: VYRON-2.1.5-authoritative-arm64-evidence
           path: evidence
           if-no-files-found: warn
+
+  final-authoritative-compare:
+    name: final-authoritative-compare
+    if: ${{ always() }}
+    needs: [full-regression, arm64-cargo-check]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require both jobs green and identical reconstructed source
+        shell: bash
+        env:
+          LINUX_RESULT: ${{ needs.full-regression.result }}
+          ARM64_RESULT: ${{ needs.arm64-cargo-check.result }}
+          LINUX_FP: ${{ needs.full-regression.outputs.source_fingerprint }}
+          ARM64_FP: ${{ needs.arm64-cargo-check.outputs.source_fingerprint }}
+        run: |
+          set -Eeuo pipefail
+          test "$LINUX_RESULT" = success
+          test "$ARM64_RESULT" = success
+          test -n "$LINUX_FP"
+          test -n "$ARM64_FP"
+          test "$LINUX_FP" = "$ARM64_FP"
+          printf 'FINAL_REGRESSION=PASS\nARM64_COMPILE_GATE=PASS\nRECONSTRUCTED_SOURCE_MATCH=YES\nRECONSTRUCTED_SOURCE_SHA=%s\nFEATURE_SET_COMPLETE=YES\n' "$LINUX_FP"
