@@ -1,0 +1,331 @@
+name: VYRON 2.1.4 Final ARM64 Stable Release
+
+on:
+  push:
+    branches: [feature/vyron-google-project-diagnostics]
+    paths: ['.github/workflows/vyron-214-final-stable-release.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: vyron-214-final-stable-release
+  cancel-in-progress: false
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  FINAL_RUN: '34793876334'
+  FINAL_SOURCE_ARTIFACT: VYRON-2.1.4-final-source
+  FINAL_SOURCE_SHA256: 24ccb1649d91b090dcc5437c66e18c0ae465528423110efe0c1d392397f6fef1
+  FINAL_HEAD: b23b945caa2bf41f22207b8661c9409e69a9ed04
+  FINAL_GIT_TREE: 5c1db2e95246d7f96a0ff900a19629c108e57d1d
+  AUTHORITATIVE_RUN: '34793876334'
+  TARGETED_RUN: '34793743629'
+  VERSION: '2.1.4'
+  TAG: v2.1.4
+  BUNDLE_ID: studio.channelflow.desktop
+  EXECUTABLE: channelflow
+  EMBEDDED_UPDATER_KEY: dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEREODQ1NDdERTI1MEYxQzAKUldUQThWRGlmVlNFM1RHdW5WQnE2eG9BYTBnQlNmbUtmVU84UHJQMUNvZWZ4Qmo0L2hYcUd4UDEK
+  SAFETY_REF: backup/vyron-214-before-active-channel-canonicalization
+  SAFETY_SHA: aad9bd3abc6b01f000d94094fee13f7309c91794
+  RECOVERY_REF: backup/vyron-214-updater-green-before-content-runway
+  RECOVERY_SHA: 7a7eda30cea453c93565ef8beb38d064e4c91ed9
+
+jobs:
+  stable:
+    name: Verified freeze -> ARM64 production -> signed updater -> v2.1.4
+    runs-on: macos-14
+    timeout-minutes: 150
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: '-'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Pre-release safety gates
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(uname -m)" = 'arm64'
+          mkdir -p source work production evidence release-check
+          test "$(git ls-remote origin refs/heads/$SAFETY_REF | awk '{print $1}')" = "$SAFETY_SHA"
+          test "$(git ls-remote origin refs/heads/$RECOVERY_REF | awk '{print $1}')" = "$RECOVERY_SHA"
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then echo "ERROR: $TAG already exists before corridor"; exit 1; fi
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then echo "ERROR: release $TAG already exists before corridor"; exit 1; fi
+          git fetch origin main --depth=1
+          git show origin/main:vyron-updates/latest.json > evidence/latest-before.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open('evidence/latest-before.json'))
+          assert d['version']=='2.1.3',d['version']
+          p=d['platforms']['darwin-aarch64']
+          assert '/releases/download/v2.1.3/' in p['url'] and p.get('signature')
+          print('STABLE_FEED_BEFORE=2.1.3')
+          PY
+          printf 'SAFETY_REF=PASS\nRECOVERY_REF=PASS\nTAG_ABSENT_BEFORE=PASS\nRELEASE_ABSENT_BEFORE=PASS\nSTABLE_FEED_BEFORE=2.1.3\n' > evidence/pre-release-safety.txt
+
+      - name: Restore exact authoritative frozen source and independently verify SHA
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh run download "$FINAL_RUN" --repo "$REPO" -n "$FINAL_SOURCE_ARTIFACT" -D source
+          T=source/VYRON-2.1.4-final-source.tar.gz
+          test -s "$T" && test -s source/SOURCE_SHA256.txt && test -s source/SOURCE_METADATA.txt
+          DECLARED=$(awk '{print $1}' source/SOURCE_SHA256.txt)
+          ACTUAL=$(shasum -a 256 "$T" | awk '{print $1}')
+          test "$DECLARED" = "$FINAL_SOURCE_SHA256"
+          test "$ACTUAL" = "$FINAL_SOURCE_SHA256"
+          grep -Fxq "HEAD=$FINAL_HEAD" source/SOURCE_METADATA.txt
+          grep -Fxq "GIT_TREE=$FINAL_GIT_TREE" source/SOURCE_METADATA.txt
+          grep -Fxq 'SELECTOR_CANONICAL=YES' source/SOURCE_METADATA.txt
+          grep -Fxq 'ACTIVE_CHANNEL_PERSISTENCE=PASS' source/SOURCE_METADATA.txt
+          grep -Fxq 'GLOBAL_ACTIVE_CHANNEL=PASS' source/SOURCE_METADATA.txt
+          grep -Fxq 'METADATA_DRAFT=PASS' source/SOURCE_METADATA.txt
+          grep -Fxq 'METADATA_HISTORY=PASS' source/SOURCE_METADATA.txt
+          grep -Fxq 'FINAL_REGRESSION=PASS' source/SOURCE_METADATA.txt
+          grep -Fxq 'CODE_FREEZE=YES' source/SOURCE_METADATA.txt
+          tar -xzf "$T" -C work
+          python3 - <<'PY'
+          import json,re
+          pkg=json.load(open('work/package.json')); conf=json.load(open('work/src-tauri/tauri.conf.json')); cargo=open('work/src-tauri/Cargo.toml').read()
+          assert pkg['version']=='2.1.4'; assert conf['version']=='2.1.4'; assert conf['identifier']=='studio.channelflow.desktop'
+          assert re.search(r'(?m)^version\s*=\s*"2\.1\.4"\s*$',cargo)
+          assert conf['bundle']['createUpdaterArtifacts'] is True
+          assert conf['build']['frontendDist']=='../dist'
+          assert conf['plugins']['updater']['pubkey']=='dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEREODQ1NDdERTI1MEYxQzAKUldUQThWRGlmVlNFM1RHdW5WQnE2eG9BYTBnQlNmbUtmVU84UHJQMUNvZWZ4Qmo0L2hYcUd4UDEK'
+          print('FINAL_SOURCE_IDENTITY=PASS')
+          PY
+          printf 'FINAL_HEAD=%s\nGIT_TREE=%s\nSOURCE_SHA256=%s\nINDEPENDENT_SHA=%s\nMATCH=YES\n' "$FINAL_HEAD" "$FINAL_GIT_TREE" "$DECLARED" "$ACTUAL" | tee evidence/source-identity.txt
+
+      - name: Normalize signing material and prove updater public key unchanged
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -n "${TAURI_SIGNING_PRIVATE_KEY:-}"
+          test -n "${TAURI_UPDATER_PUBLIC_KEY:-}"
+          python3 - <<'PY'
+          import base64,os
+          def dec(v):
+              try:return base64.b64decode(v.strip(),validate=True).decode()
+              except Exception:return None
+          def norm(name,kind):
+              raw=os.environ[name].strip()
+              if raw.startswith('untrusted comment:'):
+                  encoded=base64.b64encode(raw.encode()).decode(); box=raw
+              else:
+                  once=dec(raw)
+                  if once and once.startswith('untrusted comment:'): encoded=raw; box=once
+                  else:
+                      twice=dec(once) if once else None
+                      if twice and twice.startswith('untrusted comment:'): encoded=once.strip(); box=twice
+                      else: raise SystemExit(f'{name}: invalid encoding')
+              if kind not in box.splitlines()[0].lower(): raise SystemExit(f'{name}: wrong key type')
+              return encoded,box
+          sk,_=norm('TAURI_SIGNING_PRIVATE_KEY','secret key')
+          pk,box=norm('TAURI_UPDATER_PUBLIC_KEY','public key')
+          assert pk==os.environ['EMBEDDED_UPDATER_KEY'].strip(),'public updater key changed'
+          with open(os.environ['GITHUB_ENV'],'a') as f: f.write('TAURI_SIGNING_PRIVATE_KEY='+sk+'\nTAURI_UPDATER_PUBLIC_KEY='+pk+'\n')
+          open('/tmp/vyron-updater.pub','w').write(box+'\n')
+          open('evidence/updater-key.txt','w').write('PUBLIC_UPDATER_KEY_CHANGED=NO\nPUBLIC_KEY_MATCH=PASS\n')
+          print('::add-mask::'+sk)
+          print('UPDATER_PUBLIC_KEY=PASS')
+          PY
+
+      - name: Build production ARM64 app DMG and updater payload
+        working-directory: work
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm ci --no-audit --no-fund
+          rustup target add aarch64-apple-darwin
+          npx tauri build --target aarch64-apple-darwin --bundles app,dmg 2>&1 | tee ../evidence/tauri-production-build.log
+          APP=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)
+          DMG=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -name '*.dmg' -print -quit)
+          UPDATER=$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name '*.app.tar.gz' -print -quit)
+          SIG=$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name '*.app.tar.gz.sig' -print -quit)
+          test -d "$APP"; test -s "$DMG"; test -s "$UPDATER"; test -s "$SIG"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = "$VERSION"
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = "$BUNDLE_ID"
+          test "$(plutil -extract CFBundleExecutable raw -o - "$APP/Contents/Info.plist")" = "$EXECUTABLE"
+          test -x "$APP/Contents/MacOS/$EXECUTABLE"
+          file "$APP/Contents/MacOS/$EXECUTABLE" | grep -q 'arm64'
+          otool -hv "$APP/Contents/MacOS/$EXECUTABLE" | grep -q 'ARM64'
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -dv --verbose=4 "$APP" 2>&1 | grep -qi 'Signature=adhoc'
+          hdiutil verify "$DMG"
+          if grep -R -a -E 'localhost:1421|127\.0\.0\.1:1421' "$APP/Contents/Resources"; then echo 'ERROR: packaged localhost reference'; exit 1; fi
+          ditto -c -k --sequesterRsrc --keepParent "$APP" ../production/VYRON.app.zip
+          cp "$DMG" ../production/VYRON-2.1.4-arm64.dmg
+          cp "$UPDATER" ../production/VYRON.app.tar.gz
+          cp "$SIG" ../production/VYRON.app.tar.gz.sig
+          APP_SHA=$(shasum -a 256 "$APP/Contents/MacOS/$EXECUTABLE"|awk '{print $1}')
+          ZIP_SHA=$(shasum -a 256 ../production/VYRON.app.zip|awk '{print $1}')
+          DMG_SHA=$(shasum -a 256 ../production/VYRON-2.1.4-arm64.dmg|awk '{print $1}')
+          UPDATER_SHA=$(shasum -a 256 ../production/VYRON.app.tar.gz|awk '{print $1}')
+          printf '%s  VYRON.app.zip\n' "$ZIP_SHA" > ../production/VYRON.app.zip.sha256
+          printf '%s  VYRON-2.1.4-arm64.dmg\n' "$DMG_SHA" > ../production/VYRON-2.1.4-arm64.dmg.sha256
+          printf '%s  VYRON.app.tar.gz\n' "$UPDATER_SHA" > ../production/VYRON.app.tar.gz.sha256
+          printf 'APP_SHA=%s\nAPP_ZIP_SHA=%s\nDMG_SHA=%s\nUPDATER_SHA=%s\nVERSION=2.1.4\nBUNDLE_ID=%s\nEXECUTABLE=%s\nARCHITECTURE=arm64\nCODESIGN=PASS\nNO_LOCALHOST=PASS\n' "$APP_SHA" "$ZIP_SHA" "$DMG_SHA" "$UPDATER_SHA" "$BUNDLE_ID" "$EXECUTABLE" | tee ../evidence/production.txt
+
+      - name: Verify updater signature against embedded public key
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if ! command -v minisign >/dev/null; then brew install minisign; fi
+          PUB=$(sed -n '2p' /tmp/vyron-updater.pub | tr -d '\r\n')
+          test -n "$PUB"
+          minisign -Vm production/VYRON.app.tar.gz -x production/VYRON.app.tar.gz.sig -P "$PUB" 2>&1 | tee evidence/updater-signature.txt
+          echo 'UPDATER_SIGNATURE=VERIFIED' | tee -a evidence/updater-signature.txt
+
+      - name: Verify DMG payload and Finder-like minimal environment launch
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          MOUNT="$RUNNER_TEMP/vyron214-mount"; rm -rf "$MOUNT"; mkdir -p "$MOUNT"
+          hdiutil attach production/VYRON-2.1.4-arm64.dmg -nobrowse -readonly -mountpoint "$MOUNT"
+          trap 'hdiutil detach "$MOUNT" >/dev/null 2>&1 || true' EXIT
+          APP="$MOUNT/VYRON.app"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = "$VERSION"
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = "$BUNDLE_ID"
+          file "$APP/Contents/MacOS/$EXECUTABLE" | grep -q 'arm64'
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          env -i HOME="$HOME" USER="$USER" PATH='/usr/bin:/bin:/usr/sbin:/sbin' TMPDIR="$RUNNER_TEMP/" "$APP/Contents/MacOS/$EXECUTABLE" > evidence/finder-launch.log 2>&1 &
+          PID=$!; sleep 8
+          if ! kill -0 "$PID" 2>/dev/null; then cat evidence/finder-launch.log; exit 1; fi
+          kill "$PID" || true; wait "$PID" || true
+          echo 'FINDER_LIKE_MINIMAL_PATH_LAUNCH=PASS' | tee evidence/finder-launch.txt
+          hdiutil detach "$MOUNT"; trap - EXIT
+
+      - name: Prepare exact updater manifest and release evidence
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          UPDATER_SHA=$(awk '{print $1}' production/VYRON.app.tar.gz.sha256)
+          SIG_B64=$(base64 < production/VYRON.app.tar.gz.sig | tr -d '\r\n')
+          test -n "$SIG_B64"
+          PUB_DATE=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+          export SIG_B64 PUB_DATE
+          python3 - <<'PY'
+          import json,os
+          d={
+            'version':'2.1.4',
+            'notes':'VYRON 2.1.4 — active channel persistence, cross-tab YouTube context, metadata draft restore and operation history',
+            'pub_date':os.environ['PUB_DATE'],
+            'platforms':{'darwin-aarch64':{
+              'url':'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.4/VYRON.app.tar.gz',
+              'signature':os.environ['SIG_B64']
+            }}
+          }
+          open('production/latest.json','w').write(json.dumps(d,ensure_ascii=False,indent=2)+'\n')
+          PY
+          cat > production/BUILD_SOURCE_IDENTITY.txt <<EOF
+          FINAL_HEAD=$FINAL_HEAD
+          GIT_TREE=$FINAL_GIT_TREE
+          SOURCE_SHA256=$FINAL_SOURCE_SHA256
+          AUTHORITATIVE_RUN=$AUTHORITATIVE_RUN
+          TARGETED_RUN=$TARGETED_RUN
+          VERSION=$VERSION
+          BUNDLE_ID=$BUNDLE_ID
+          EXECUTABLE=$EXECUTABLE
+          ARCHITECTURE=arm64
+          CODESIGN=PASS
+          FINDER_LIKE_LAUNCH=PASS
+          UPDATER_SIGNATURE=VERIFIED
+          PUBLIC_UPDATER_KEY_CHANGED=NO
+          SAFETY_REFS_CHANGED=NO
+          EOF
+          cp evidence/updater-signature.txt production/UPDATER_SIGNATURE_VERIFICATION.txt
+          cp evidence/finder-launch.txt production/FINDER_LAUNCH.txt
+          cp source/VYRON-2.1.4-final-source.tar.gz production/VYRON-2.1.4-final-source.tar.gz
+          cp source/SOURCE_SHA256.txt production/SOURCE_SHA256.txt
+          python3 - <<'PY'
+          import json
+          d=json.load(open('production/latest.json'))
+          assert d['version']=='2.1.4'
+          p=d['platforms']['darwin-aarch64']
+          assert '/releases/download/v2.1.4/' in p['url'] and p['signature']
+          print('LATEST_MANIFEST_PREPARED=PASS')
+          PY
+
+      - name: Publish GitHub Release v2.1.4 only after every production gate passed
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat > release-notes.md <<'EOF'
+          # VYRON 2.1.4
+
+          Stable production release from the verified final VYRON 2.1.4 source freeze.
+
+          - Unified active YouTube channel context across Metadata and Schedule.
+          - Schedule selector supports all connected channels with channel-isolated sync/apply state.
+          - Metadata draft autosave/restore is channel-scoped and resilient across navigation/remount.
+          - Metadata operation history persists actual completed operation facts without OAuth/Keychain secrets.
+          - Full regression, Rust, ARM64, updater, storage, upload, quota, Keychain and schedule gates passed before packaging.
+          - Updater payload is signed and verified against the unchanged embedded updater public key.
+          EOF
+          gh release create "$TAG" \
+            --repo "$REPO" \
+            --target "$FINAL_HEAD" \
+            --title 'VYRON 2.1.4' \
+            --notes-file release-notes.md \
+            production/VYRON.app.zip \
+            production/VYRON.app.zip.sha256 \
+            production/VYRON-2.1.4-arm64.dmg \
+            production/VYRON-2.1.4-arm64.dmg.sha256 \
+            production/VYRON.app.tar.gz \
+            production/VYRON.app.tar.gz.sig \
+            production/VYRON.app.tar.gz.sha256 \
+            production/latest.json \
+            production/BUILD_SOURCE_IDENTITY.txt \
+            production/UPDATER_SIGNATURE_VERIFICATION.txt \
+            production/FINDER_LAUNCH.txt \
+            production/VYRON-2.1.4-final-source.tar.gz \
+            production/SOURCE_SHA256.txt
+
+      - name: Post-release remote verification
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh release view "$TAG" --repo "$REPO" --json tagName,name,isDraft,isPrerelease,targetCommitish,url > evidence/release.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open('evidence/release.json'))
+          assert d['tagName']=='v2.1.4' and d['name']=='VYRON 2.1.4'
+          assert d['isDraft'] is False and d['isPrerelease'] is False
+          print('GITHUB_RELEASE=PUBLISHED')
+          PY
+          rm -rf release-check/*
+          gh release download "$TAG" --repo "$REPO" -D release-check --pattern 'VYRON.app.tar.gz' --pattern 'VYRON.app.tar.gz.sig' --pattern 'latest.json' --pattern 'VYRON.app.tar.gz.sha256'
+          test "$(shasum -a 256 release-check/VYRON.app.tar.gz|awk '{print $1}')" = "$(awk '{print $1}' release-check/VYRON.app.tar.gz.sha256)"
+          cmp -s production/VYRON.app.tar.gz release-check/VYRON.app.tar.gz
+          cmp -s production/VYRON.app.tar.gz.sig release-check/VYRON.app.tar.gz.sig
+          cmp -s production/latest.json release-check/latest.json
+          PUB=$(sed -n '2p' /tmp/vyron-updater.pub | tr -d '\r\n')
+          minisign -Vm release-check/VYRON.app.tar.gz -x release-check/VYRON.app.tar.gz.sig -P "$PUB"
+          echo 'PUBLISHED_UPDATER_SIGNATURE=VERIFIED' | tee evidence/post-release.txt
+          git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null
+          test "$(git ls-remote origin refs/heads/$SAFETY_REF | awk '{print $1}')" = "$SAFETY_SHA"
+          test "$(git ls-remote origin refs/heads/$RECOVERY_REF | awk '{print $1}')" = "$RECOVERY_SHA"
+          echo 'TAG=CREATED' >> evidence/post-release.txt
+          echo 'SAFETY_REFS_CHANGED=NO' >> evidence/post-release.txt
+          echo 'OLD_ARTIFACTS_DELETED=NO' >> evidence/post-release.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: VYRON-2.1.4-STABLE-RELEASE-EVIDENCE
+          path: |
+            production/
+            evidence/
+          if-no-files-found: warn
+          retention-days: 30
