@@ -48,7 +48,7 @@ jobs:
           test "$(shasum -a 256 work/src/ScheduleOS.tsx | awk '{print $1}')" = "8869e0ce1e6465820e61e4f15069adb46ad9e23ff5fa4a16a7fff398c63e7926"
           test "$(shasum -a 256 work/src/scheduleChannelSelector.test.ts | awk '{print $1}')" = "4303ba284e7e03072f30dabafb6845f40b940d8aa306cae477f19cf763826ad7"
           test "$(shasum -a 256 "$META_PATCH_B64" | awk '{print $1}')" = "$META_PATCH_B64_SHA"
-          base64 --decode "$META_PATCH_B64" > patch/meta.patch.gz
+          base64 -D -i "$META_PATCH_B64" -o patch/meta.patch.gz
           gunzip -c patch/meta.patch.gz > patch/meta.patch
           test "$(shasum -a 256 patch/meta.patch | awk '{print $1}')" = "$META_PATCH_SHA"
           patch -p1 -d work < patch/meta.patch
