@@ -1,0 +1,106 @@
+name: VYRON 2.1.6 Source Recovery
+
+on:
+  push:
+    branches: [recovery/vyron-216-authoritative-source]
+    paths:
+      - '.github/workflows/vyron-216-source-recovery.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  BASE_RUN: '34793876334'
+  BASE_ARTIFACT: VYRON-2.1.4-final-source
+  BASE_SOURCE_SHA256: 24ccb1649d91b090dcc5437c66e18c0ae465528423110efe0c1d392397f6fef1
+  FEATURE1_PATCH_SHA256: f0dfdb2f9698e59b8a207c7c6b97a75ddabda039ac86c19cd07e89c81117c71f
+  FEATURE2_PATCH_SHA256: a76435719952b9478514bd41d62e79df550ccbcadab459e23067de0cc5fb2299
+  VERSION_PATCH_SHA256: fd0f4c7cdae36b45946ce62869aa3979a986467b04d5ebe35d2d46281a823be1
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore frozen 2.1.4 source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p base work decoded-patches out
+          gh run download "$BASE_RUN" --repo "$REPO" -n "$BASE_ARTIFACT" -D base
+          T=base/VYRON-2.1.4-final-source.tar.gz
+          test -f "$T"
+          test "$(sha256sum "$T" | awk '{print $1}')" = "$BASE_SOURCE_SHA256"
+          tar -xzf "$T" -C work
+          test "$(node -p "require('./work/package.json').version")" = '2.1.4'
+
+      - name: Reconstruct and apply exact 2.1.5 source chain
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          P1=.github/patches/v215-youtube-productivity/01-global-channel.patch.gz.b64
+          base64 -d "$P1" | gzip -d > decoded-patches/01-global-channel.patch
+          test "$(sha256sum decoded-patches/01-global-channel.patch | awk '{print $1}')" = "$FEATURE1_PATCH_SHA256"
+
+          shopt -s nullglob
+          parts=(.github/patches/v215-youtube-productivity/02-draft-manager.parts/*.patchfrag)
+          test "${#parts[@]}" -eq 9
+          cat "${parts[@]}" > decoded-patches/02-draft-manager.patch
+          test "$(sha256sum decoded-patches/02-draft-manager.patch | awk '{print $1}')" = "$FEATURE2_PATCH_SHA256"
+
+          cp .github/patches/v215-youtube-productivity/03-version-bump.patch decoded-patches/03-version-bump.patch
+          test "$(sha256sum decoded-patches/03-version-bump.patch | awk '{print $1}')" = "$VERSION_PATCH_SHA256"
+
+          for p in decoded-patches/01-global-channel.patch decoded-patches/02-draft-manager.patch decoded-patches/03-version-bump.patch; do
+            git apply --check --directory=work "$p"
+            git apply --directory=work "$p"
+          done
+          test "$(node -p "require('./work/package.json').version")" = '2.1.5'
+
+      - name: Apply confirmed VYRON 2.1.6 Block 1 carrier
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          P=.github/patches/v216-upload-center/01-ready-video-inventory.patch.gz.b64
+          base64 -d "$P" | gzip -t
+          base64 -d "$P" | gzip -d > decoded-patches/04-ready-video-inventory.patch
+          git apply --check --directory=work decoded-patches/04-ready-video-inventory.patch
+          git apply --directory=work decoded-patches/04-ready-video-inventory.patch
+          sha256sum decoded-patches/04-ready-video-inventory.patch | tee out/block1-patch.sha256
+
+      - name: Package authoritative recovered source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY' > out/source-fingerprint.txt
+          import hashlib, os, pathlib
+          root = pathlib.Path('work')
+          h = hashlib.sha256()
+          for p in sorted(root.rglob('*'), key=lambda x: x.relative_to(root).as_posix()):
+              rel = p.relative_to(root).as_posix().encode('utf-8')
+              if p.is_symlink():
+                  kind=b'L'; data=os.readlink(p).encode('utf-8')
+              elif p.is_file():
+                  kind=b'F'; data=p.read_bytes()
+              else:
+                  continue
+              h.update(kind); h.update(len(rel).to_bytes(8,'big')); h.update(rel)
+              h.update(len(data).to_bytes(8,'big')); h.update(data)
+          print(h.hexdigest())
+          PY
+          tar -czf out/VYRON-2.1.6-after-block1-source.tar.gz -C work .
+          sha256sum out/VYRON-2.1.6-after-block1-source.tar.gz | tee out/archive.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-2.1.6-after-block1-source
+          path: out/*
+          retention-days: 30
+          if-no-files-found: error
