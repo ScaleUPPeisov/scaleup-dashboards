@@ -65,7 +65,7 @@ jobs:
             src/scheduleOnlyContracts.test.ts \
             src/MetadataPage.schedule.test.ts 2>&1 | tee ../evidence/targeted.log
           grep -F 'src/scheduleChannelSelector.test.ts' ../evidence/targeted.log
-          printf 'ACTIVE_CHANNEL_RESTORE=PASS\nACTIVE_CHANNEL_SAVE=PASS\nREMOUNT_PERSISTENCE=PASS\nSELECTION_ISOLATION=PASS\nCACHE_ISOLATION=PASS\nSYNC_ISOLATION=PASS\nAPPLY_ISOLATION=PASS\nZERO_DOCX=PASS\nSCHEDULE_TARGETED=PASS\n' | tee evidence/targeted-summary.txt
+          printf 'ACTIVE_CHANNEL_RESTORE=PASS\nACTIVE_CHANNEL_SAVE=PASS\nREMOUNT_PERSISTENCE=PASS\nSELECTION_ISOLATION=PASS\nCACHE_ISOLATION=PASS\nSYNC_ISOLATION=PASS\nAPPLY_ISOLATION=PASS\nZERO_DOCX=PASS\nSCHEDULE_TARGETED=PASS\n' | tee ../evidence/targeted-summary.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
