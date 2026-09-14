@@ -21,6 +21,8 @@ env:
   META_PATCH_B64: .github/patches/v214-metadata-workspace/metadata-persistence-history.patch.gz.b64
   META_PATCH_B64_SHA: 822b7fd8191c4d1df744f55dee3581cb42c28255dbf7ed0b8cc3d7c7ef608620
   META_PATCH_SHA: 1f466bec68f574c518d4b07e0269d1b31cba3abd47729fe8018875d404d83072
+  TSFIX_PATCH: .github/patches/v214-metadata-workspace/metadata-workspace-tsfix.patch
+  TSFIX_PATCH_SHA: 900befc7719317cd2687a6f8bc8e95b7ac5117c87e6e980b9d73706ea1047bbd
   TEST_SHIM_PATCH: .github/patches/v214-metadata-workspace/metadata-test-localstorage-shim.patch
   TEST_SHIM_PATCH_SHA: 679119169e0865df968c946248e8b8f18c5bfdef45a0e8dab8428bf68414a686
   CSS_SHA: 4d8a2c8e0466d93c7d7d140cdef6e338c17b262e8154e7112960466e4d1ba71e
@@ -54,15 +56,17 @@ jobs:
           gunzip -c patch/meta.patch.gz > patch/meta.patch
           test "$(shasum -a 256 patch/meta.patch | awk '{print $1}')" = "$META_PATCH_SHA"
           patch -p1 -d work < patch/meta.patch
+          test "$(shasum -a 256 "$TSFIX_PATCH" | awk '{print $1}')" = "$TSFIX_PATCH_SHA"
+          patch -p1 -d work < "$TSFIX_PATCH"
           test "$(shasum -a 256 "$TEST_SHIM_PATCH" | awk '{print $1}')" = "$TEST_SHIM_PATCH_SHA"
           patch -p1 -d work < "$TEST_SHIM_PATCH"
           test "$(shasum -a 256 work/src/MetadataPage.tsx | awk '{print $1}')" = "771cfc96051ff0b723fcdd96d5205654ca8cc122cd4be9dca409e83f4b5a748b"
           test "$(shasum -a 256 work/src/ExistingVideos.tsx | awk '{print $1}')" = "1b6d775ed7b429382c365ba0905ab4eecf2dd4bf612b02299068d04966d70069"
-          test "$(shasum -a 256 work/src/metadataWorkspaceState.ts | awk '{print $1}')" = "37fa02899c3db7b5fd515ff1703916446e4bae94ffd1510f8ed40273b1cc4913"
+          test "$(shasum -a 256 work/src/metadataWorkspaceState.ts | awk '{print $1}')" = "2405fba0b2bf560f38e44e1124e8ea1b66e493b3b3e635fafa7b315ae14735de"
           test "$(shasum -a 256 work/src/metadataWorkspaceState.test.ts | awk '{print $1}')" = "487b0fd26fefa0f4841a953c099275859bb9f091da5037f182538211a511d6a5"
           test "$(shasum -a 256 work/src/youtubeActiveChannelMetadata.test.ts | awk '{print $1}')" = "1f090c135eed6790797650c3a105869882c5b6d3634d12cc36a1b74966898e6f"
           test "$(shasum -a 256 work/src/scheduleOnly.css | awk '{print $1}')" = "$CSS_SHA"
-          printf 'PERSISTENCE_PATCH=PASS\nMETADATA_PATCH=PASS\nTEST_SHIM_PATCH=PASS\nSCHEDULE_ONLY_CSS_UNCHANGED=PASS\n' | tee evidence/source-scope.txt
+          printf 'PERSISTENCE_PATCH=PASS\nMETADATA_PATCH=PASS\nTSFIX_PATCH=PASS\nTEST_SHIM_PATCH=PASS\nSCHEDULE_ONLY_CSS_UNCHANGED=PASS\n' | tee evidence/source-scope.txt
       - name: Install dependencies
         working-directory: work
         run: npm ci --no-audit --no-fund
