@@ -127,19 +127,20 @@ jobs:
           set -Eeuo pipefail
           python3 - <<'PY'
           from pathlib import Path
+          import re
           p=Path('work/src/uploadCenterWiring.test.ts')
           s=p.read_text()
-          old="readFileSync(new URL(path, import.meta.url), 'utf8')"
-          old2='readFileSync(new URL(path, import.meta.url), "utf8")'
-          if old in s:
-              s=s.replace(old, "readFileSync(new URL(path, import.meta.url).pathname, 'utf8')", 1)
-          elif old2 in s:
-              s=s.replace(old2, 'readFileSync(new URL(path, import.meta.url).pathname, "utf8")', 1)
-          else:
-              raise SystemExit('expected readFileSync(URL) helper not found; refusing blind correction')
+          pattern=re.compile(r"readFileSync\(\s*(new URL\([^\n]*?,\s*import\.meta\.url\))\s*,")
+          matches=list(pattern.finditer(s))
+          print('READFILE_URL_MATCH_COUNT=', len(matches))
+          for m in matches:
+              print('READFILE_URL_MATCH=', m.group(0))
+          if len(matches) != 1:
+              raise SystemExit(f'expected exactly one readFileSync(new URL(..., import.meta.url), ...) helper, got {len(matches)}')
+          s=pattern.sub(lambda m: f"readFileSync({m.group(1)}.pathname,", s, count=1)
           p.write_text(s)
           PY
-          grep -q "new URL(path, import.meta.url).pathname" work/src/uploadCenterWiring.test.ts
+          grep -qE 'readFileSync\(new URL\(.+import\.meta\.url\)\.pathname,' work/src/uploadCenterWiring.test.ts
 
       - name: Canonicalize corrected Block 3 carrier
         shell: bash
