@@ -21,7 +21,9 @@ env:
   VERSION_PATCH_SHA256: fd0f4c7cdae36b45946ce62869aa3979a986467b04d5ebe35d2d46281a823be1
   BLOCK1_PATCH_SHA256: 581452bfa868d5b25cde2a4481e6a4a8cf16c512966f2661a71f8d98570d9038
   BLOCK2_PATCH_SHA256: 40cfae87b5f7faa41a9fce3070074876552ec4178817acb03c86ecefdadcc959
-  BLOCK3_PATCH_SHA256: 5d7c0e258f23252b141603471392e7fb1db11166d4f81a02052197f4129dc8be
+  BLOCK3_VERIFY_RUN: '34913052088'
+  BLOCK3_ARTIFACT: VYRON-2.1.6-block3-evidence
+  BLOCK3_SOURCE_SHA256: bc386a7d7f5c31b2df9f000c71a6c924343cf18f52c01ae1c8745fb98f2c1a59
   BLOCK4_PATCH_SHA256: f62d563240fadfec37bf634c7947b545c106020805262f0ac77f8728db2b77a4
 
 jobs:
@@ -41,10 +43,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           sudo apt-get update
-          sudo apt-get install -y \
-            build-essential pkg-config libglib2.0-dev libgtk-3-dev \
-            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
-            librsvg2-dev libxdo-dev libssl-dev patchelf
+          sudo apt-get install -y build-essential pkg-config libglib2.0-dev libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf
 
       - name: Confirm verify branch ancestry
         shell: bash
@@ -53,7 +52,7 @@ jobs:
           git merge-base --is-ancestor 0e3e608decb7dc40e83c4445947e2e530be13f37 HEAD
           git cat-file -e 0e3e608decb7dc40e83c4445947e2e530be13f37^{commit}
 
-      - name: Restore frozen VYRON 2.1.4 source
+      - name: Restore and reconstruct through Block 2
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -66,11 +65,6 @@ jobs:
           test "$(sha256sum "$T" | awk '{print $1}')" = "$BASE_SOURCE_SHA256"
           tar -xzf "$T" -C work
           test "$(node -p "require('./work/package.json').version")" = '2.1.4'
-
-      - name: Reconstruct exact VYRON 2.1.5
-        shell: bash
-        run: |
-          set -Eeuo pipefail
           base64 -d .github/patches/v215-youtube-productivity/01-global-channel.patch.gz.b64 | gzip -d > decoded/01.patch
           test "$(sha256sum decoded/01.patch | awk '{print $1}')" = "$FEATURE1_PATCH_SHA256"
           shopt -s nullglob
@@ -80,45 +74,39 @@ jobs:
           test "$(sha256sum decoded/02.patch | awk '{print $1}')" = "$FEATURE2_PATCH_SHA256"
           cp .github/patches/v215-youtube-productivity/03-version-bump.patch decoded/03.patch
           test "$(sha256sum decoded/03.patch | awk '{print $1}')" = "$VERSION_PATCH_SHA256"
-          for p in decoded/01.patch decoded/02.patch decoded/03.patch; do
-            git apply --check --directory=work "$p"
-            git apply --directory=work "$p"
-          done
-          test "$(node -p "require('./work/package.json').version")" = '2.1.5'
-
-      - name: Apply verified Blocks 1 and 2
-        shell: bash
-        run: |
-          set -Eeuo pipefail
+          for p in decoded/01.patch decoded/02.patch decoded/03.patch; do git apply --check --directory=work "$p"; git apply --directory=work "$p"; done
           base64 -d .github/patches/v216-upload-center/01-ready-video-inventory.patch.gz.b64 | gzip -d > decoded/04-block1.patch
           test "$(sha256sum decoded/04-block1.patch | awk '{print $1}')" = "$BLOCK1_PATCH_SHA256"
-          git apply --check --directory=work decoded/04-block1.patch
-          git apply --directory=work decoded/04-block1.patch
-          shopt -s nullglob
+          git apply --check --directory=work decoded/04-block1.patch && git apply --directory=work decoded/04-block1.patch
           q=(.github/patches/v216-upload-center/02-multi-channel-upload-queue.parts/*.patchfrag)
           test "${#q[@]}" -eq 6
           cat "${q[@]}" > decoded/05-block2.patch.gz.b64
           base64 -d decoded/05-block2.patch.gz.b64 | gzip -d > decoded/05-block2.patch
           test "$(sha256sum decoded/05-block2.patch | awk '{print $1}')" = "$BLOCK2_PATCH_SHA256"
-          git apply --check --directory=work decoded/05-block2.patch
-          git apply --directory=work decoded/05-block2.patch
+          git apply --check --directory=work decoded/05-block2.patch && git apply --directory=work decoded/05-block2.patch
           git apply --check --directory=work .github/patches/v216-upload-center/02b-upload-queue-typescript-fix.patch
           git apply --directory=work .github/patches/v216-upload-center/02b-upload-queue-typescript-fix.patch
 
-      - name: Apply authoritative persisted Block 3
+      - name: Restore verified Block 3 source after carrier corruption
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -Eeuo pipefail
-          base64 -d .github/patches/v216-upload-center/03-live-progress-and-eta.patch.gz.b64 | gzip -t
-          base64 -d .github/patches/v216-upload-center/03-live-progress-and-eta.patch.gz.b64 | gzip -d > decoded/06-block3.patch
-          ACTUAL=$(sha256sum decoded/06-block3.patch | awk '{print $1}')
-          echo "BLOCK3_ACTUAL_SHA256=$ACTUAL"
-          test "$ACTUAL" = "$BLOCK3_PATCH_SHA256"
-          git apply --check --directory=work decoded/06-block3.patch
-          git apply --directory=work decoded/06-block3.patch
+          mkdir -p block3e
+          gh run download "$BLOCK3_VERIFY_RUN" --repo "$REPO" -n "$BLOCK3_ARTIFACT" -D block3e
+          B3=block3e/VYRON-2.1.6-after-block3-source.tar.gz
+          test -f "$B3"
+          ACTUAL=$(sha256sum "$B3" | awk '{print $1}')
+          echo "BLOCK3_SOURCE_ACTUAL_SHA256=$ACTUAL"
+          test "$ACTUAL" = "$BLOCK3_SOURCE_SHA256"
+          rm -rf work
+          mkdir work
+          tar -xzf "$B3" -C work
           test -f work/src/uploadTelemetry.ts
           test -f work/src/UploadCenter.tsx
           test -f work/src/uploadCenterWiring.test.ts
+          test "$(node -p "require('./work/package.json').version")" = '2.1.5'
 
       - name: Snapshot exact Block 3 source
         shell: bash
@@ -128,9 +116,9 @@ jobs:
           git -C work config user.name 'VYRON CI'
           git -C work config user.email 'vyron-ci@example.invalid'
           git -C work add -A
-          git -C work commit -m 'block3 authoritative source'
+          git -C work commit -m 'block3 verified source 34913052088'
 
-      - name: Verify and apply Block 4 candidate
+      - name: Verify and apply exact Block 4 candidate
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -152,23 +140,7 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          npm test -- \
-            src/activeOperationFacts.test.ts \
-            src/staleOperationReconciliation.test.ts \
-            src/staleOperationWiring.test.ts \
-            src/updaterGuard.test.ts \
-            src/uploadTelemetry.test.ts \
-            src/uploadCenterWiring.test.ts \
-            src/uploadQueue.test.ts \
-            src/youtubeQuotaAtomic.test.ts \
-            src/youtubeQuota.test.ts \
-            src/youtubeQuotaPlanner.test.ts \
-            src/publisherQuota.test.ts \
-            src/readyVideoInventory.test.ts \
-            src/contentRunway.test.ts \
-            src/scheduleOnlyContracts.test.ts \
-            src/updaterRuntime.test.ts \
-            src/updaterPolicy.test.ts | tee ../out/block4-tests.txt
+          npm test -- src/activeOperationFacts.test.ts src/staleOperationReconciliation.test.ts src/staleOperationWiring.test.ts src/updaterGuard.test.ts src/uploadTelemetry.test.ts src/uploadCenterWiring.test.ts src/uploadQueue.test.ts src/youtubeQuotaAtomic.test.ts src/youtubeQuota.test.ts src/youtubeQuotaPlanner.test.ts src/publisherQuota.test.ts src/readyVideoInventory.test.ts src/contentRunway.test.ts src/scheduleOnlyContracts.test.ts src/updaterRuntime.test.ts src/updaterPolicy.test.ts | tee ../out/block4-tests.txt
 
       - name: TypeScript
         working-directory: work
@@ -183,8 +155,7 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          ! grep -RIE 'refresh[_ -]?token\s*[:=]\s*[A-Za-z0-9._-]{12,}|access[_ -]?token\s*[:=]\s*[A-Za-z0-9._-]{12,}|client[_ -]?secret\s*[:=]\s*[A-Za-z0-9._-]{12,}' \
-            src/activeOperationFacts.ts src/renderRuntimeEvidence.ts src/staleOperationReconciliation.ts src/updaterGuard.ts
+          ! grep -RIE 'refresh[_ -]?token\s*[:=]\s*[A-Za-z0-9._-]{12,}|access[_ -]?token\s*[:=]\s*[A-Za-z0-9._-]{12,}|client[_ -]?secret\s*[:=]\s*[A-Za-z0-9._-]{12,}' src/activeOperationFacts.ts src/renderRuntimeEvidence.ts src/staleOperationReconciliation.ts src/updaterGuard.ts
           grep -q 'factualActiveOperationCounts' src/updaterGuard.ts
           ! grep -q "jobs.filter(x=>x.status==='UPLOADING')" src/updaterGuard.ts
           ! grep -q "jobs.filter(x=>x.status==='RENDERING')" src/updaterGuard.ts
