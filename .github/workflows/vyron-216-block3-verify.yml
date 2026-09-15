@@ -204,7 +204,7 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          tar --exclude='./node_modules' --exclude='./.git' -czf out/VYRON-2.1.6-after-block3-source.tar.gz -C work .
+          tar --exclude='./node_modules' --exclude='./.git' --exclude='./src-tauri/target' -czf out/VYRON-2.1.6-after-block3-source.tar.gz -C work .
           sha256sum out/VYRON-2.1.6-after-block3-source.tar.gz > out/source.sha256
 
       - uses: actions/upload-artifact@v4
