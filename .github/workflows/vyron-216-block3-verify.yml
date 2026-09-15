@@ -21,7 +21,7 @@ env:
   VERSION_PATCH_SHA256: fd0f4c7cdae36b45946ce62869aa3979a986467b04d5ebe35d2d46281a823be1
   BLOCK1_PATCH_SHA256: 581452bfa868d5b25cde2a4481e6a4a8cf16c512966f2661a71f8d98570d9038
   BLOCK2_PATCH_SHA256: 40cfae87b5f7faa41a9fce3070074876552ec4178817acb03c86ecefdadcc959
-  BLOCK3_PATCH_SHA256: 2d5d27a3880a92dd8aa75b123a6756b1741bff14a16c21beb50d9311d9bfb4ad
+  BLOCK3_CANDIDATE_SHA256: 2d5d27a3880a92dd8aa75b123a6756b1741bff14a16c21beb50d9311d9bfb4ad
 
 jobs:
   block3:
@@ -84,7 +84,6 @@ jobs:
           test "$(sha256sum decoded/04-block1.patch | awk '{print $1}')" = "$BLOCK1_PATCH_SHA256"
           git apply --check --directory=work decoded/04-block1.patch
           git apply --directory=work decoded/04-block1.patch
-
           shopt -s nullglob
           q=(.github/patches/v216-upload-center/02-multi-channel-upload-queue.parts/*.patchfrag)
           test "${#q[@]}" -eq 6
@@ -95,6 +94,16 @@ jobs:
           git apply --directory=work decoded/05-block2.patch
           git apply --check --directory=work .github/patches/v216-upload-center/02b-upload-queue-typescript-fix.patch
           git apply --directory=work .github/patches/v216-upload-center/02b-upload-queue-typescript-fix.patch
+
+      - name: Snapshot exact Block 2 source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git -C work init
+          git -C work config user.name 'VYRON CI'
+          git -C work config user.email 'vyron-ci@example.invalid'
+          git -C work add -A
+          git -C work commit -m 'block2 authoritative source'
 
       - name: Apply Block 3 candidate
         shell: bash
@@ -107,10 +116,40 @@ jobs:
           base64 -d decoded/06-block3.patch.gz.b64 | gzip -t
           base64 -d decoded/06-block3.patch.gz.b64 | gzip -d > decoded/06-block3.patch
           ACTUAL=$(sha256sum decoded/06-block3.patch | awk '{print $1}')
-          echo "BLOCK3_ACTUAL_SHA256=$ACTUAL"
-          test "$ACTUAL" = "$BLOCK3_PATCH_SHA256"
+          echo "BLOCK3_CANDIDATE_ACTUAL_SHA256=$ACTUAL"
+          test "$ACTUAL" = "$BLOCK3_CANDIDATE_SHA256"
           git apply --check --directory=work decoded/06-block3.patch
           git apply --directory=work decoded/06-block3.patch
+
+      - name: Apply minimal test-only TypeScript correction
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('work/src/uploadCenterWiring.test.ts')
+          s=p.read_text()
+          old="readFileSync(new URL(path, import.meta.url), 'utf8')"
+          old2='readFileSync(new URL(path, import.meta.url), "utf8")'
+          if old in s:
+              s=s.replace(old, "readFileSync(new URL(path, import.meta.url).pathname, 'utf8')", 1)
+          elif old2 in s:
+              s=s.replace(old2, 'readFileSync(new URL(path, import.meta.url).pathname, "utf8")', 1)
+          else:
+              raise SystemExit('expected readFileSync(URL) helper not found; refusing blind correction')
+          p.write_text(s)
+          PY
+          grep -q "new URL(path, import.meta.url).pathname" work/src/uploadCenterWiring.test.ts
+
+      - name: Canonicalize corrected Block 3 carrier
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git -C work diff --binary HEAD > out/03-live-progress-and-eta.patch
+          test -s out/03-live-progress-and-eta.patch
+          sha256sum out/03-live-progress-and-eta.patch | tee out/block3-canonical.sha256
+          gzip -n -c out/03-live-progress-and-eta.patch | base64 -w0 > out/03-live-progress-and-eta.patch.gz.b64
+          echo >> out/03-live-progress-and-eta.patch.gz.b64
 
       - name: Install frontend dependencies
         working-directory: work
@@ -164,7 +203,7 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          tar --exclude='./node_modules' -czf out/VYRON-2.1.6-after-block3-source.tar.gz -C work .
+          tar --exclude='./node_modules' --exclude='./.git' -czf out/VYRON-2.1.6-after-block3-source.tar.gz -C work .
           sha256sum out/VYRON-2.1.6-after-block3-source.tar.gz > out/source.sha256
 
       - uses: actions/upload-artifact@v4
