@@ -131,7 +131,8 @@ jobs:
           test -f "$S"
           test "$(sha256sum "$S" | awk '{print $1}')" = "$BLOCK4_SOURCE_SHA256"
           tar -xzf "$S" -C expected
-          diff -qr --exclude=.git --exclude=node_modules --exclude=target --exclude=dist work expected
+          # src-tauri/gen contains platform-generated Tauri schemas, not authoritative source.
+          diff -qr --exclude=.git --exclude=node_modules --exclude=target --exclude=dist --exclude=gen work expected
 
       - name: Install frontend dependencies
         working-directory: work
