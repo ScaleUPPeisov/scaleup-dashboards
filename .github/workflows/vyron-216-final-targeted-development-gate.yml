@@ -110,7 +110,7 @@ jobs:
         working-directory: work
         run: npm ci
 
-      - name: Full frontend behavioral suite exact 437
+      - name: Full frontend behavioral suite exact 438
         working-directory: work
         shell: bash
         run: |
@@ -121,11 +121,11 @@ jobs:
           s=pathlib.Path('../out/frontend-tests.txt').read_text(errors='replace')
           s=re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]','',s)
           files_ok=bool(re.search(r'Test Files\s+79 passed\s+\(79\)',s))
-          tests_ok=bool(re.search(r'Tests\s+437 passed\s+\(437\)',s))
+          tests_ok=bool(re.search(r'Tests\s+438 passed\s+\(438\)',s))
           if not files_ok or not tests_ok:
               print(f'FRONTEND_COUNT_ASSERTION_FAILED files_ok={files_ok} tests_ok={tests_ok}',file=sys.stderr)
               sys.exit(1)
-          print('FRONTEND=437/437 PASS')
+          print('FRONTEND=438/438 PASS')
           PY
 
       - name: TypeScript
@@ -183,7 +183,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           {
-            echo 'FRONTEND=437/437 PASS'
+            echo 'FRONTEND=438/438 PASS'
             echo 'TYPESCRIPT=PASS'
             echo 'PRODUCTION_BUILD=PASS'
             echo 'RUST_REQUIRED=PASS'
