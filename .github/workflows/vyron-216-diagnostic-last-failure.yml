@@ -13,12 +13,13 @@ permissions:
 
 env:
   REPO: ScaleUPPeisov/scaleup-dashboards
-  EXPECTED_RELEASE_HEAD: 43998685a03f61b2cbd17c7c0d8e033c11dc8d8e
+  EXPECTED_RELEASE_HEAD: 0ea023831aaa1c8524e2b851543b1ac80b6c0cc9
   BLOCK4_VERIFY_RUN: '34915210329'
   BLOCK4_ARTIFACT: VYRON-2.1.6-block4-evidence
   BLOCK4_SOURCE_SHA256: 408aa51de972c0f4c0ed2d4400ece0121c44e497ae8693518f80514117d3b1e4
   ERROR_CENTER_PATCH_SHA256: 485f30067c9999b95d761645916adc3ce69d0e32ffb418db347fc51ce7a20e49
   TEST_CONTRACT_PATCH_SHA256: 7c382132cec2306ab6941a199a5c9d38ae8a2b79c4a74ee270aec664adc7a1d2
+  TEST_SYNTAX_PATCH_SHA256: 0f028ac1eda29c40c3602cc3891a944187f109094f1142a0a0e011e5554d4973
 
 jobs:
   targeted-final-six:
@@ -39,6 +40,7 @@ jobs:
           git merge-base --is-ancestor 426e2ba81af12b7e6a74f8f5ee2a6aac1a9b916d HEAD
           test -f .github/patches/v216-final-fix/05-error-center-queued-failures.patch.gz.b64
           test -f .github/patches/v216-final-fix/06-test-contracts.patch.gz.b64
+          test -f .github/patches/v216-final-fix/07-test-contract-syntax.patch.gz.b64
 
       - uses: actions/setup-node@v4
         with:
@@ -69,9 +71,15 @@ jobs:
           git apply --check --directory=work decoded/06-test-contracts.patch
           git apply --directory=work decoded/06-test-contracts.patch
 
+          base64 -d .github/patches/v216-final-fix/07-test-contract-syntax.patch.gz.b64 | gzip -t
+          base64 -d .github/patches/v216-final-fix/07-test-contract-syntax.patch.gz.b64 | gzip -d > decoded/07-test-syntax.patch
+          test "$(sha256sum decoded/07-test-syntax.patch | awk '{print $1}')" = "$TEST_SYNTAX_PATCH_SHA256"
+          git apply --check --directory=work decoded/07-test-syntax.patch
+          git apply --directory=work decoded/07-test-syntax.patch
+
           git -C work init -q
           git -C work diff --check
-          sha256sum decoded/05-error-center.patch decoded/06-test-contracts.patch | tee out/final-six-patch-sha256.txt
+          sha256sum decoded/05-error-center.patch decoded/06-test-contracts.patch decoded/07-test-syntax.patch | tee out/final-six-patch-sha256.txt
 
       - name: Install frontend dependencies
         working-directory: work
