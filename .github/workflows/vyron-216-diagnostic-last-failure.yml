@@ -13,8 +13,7 @@ permissions:
 
 env:
   REPO: ScaleUPPeisov/scaleup-dashboards
-  VERIFY_SOURCE_HEAD: 3710287abae2a1ef95a9b6ae0017f1ba86b268e7
-  EXPECTED_RELEASE_HEAD: 426e2ba81af12b7e6a74f8f5ee2a6aac1a9b916d
+  EXPECTED_HEAD: 426e2ba81af12b7e6a74f8f5ee2a6aac1a9b916d
   BASE_RUN: '34793876334'
   BASE_ARTIFACT: VYRON-2.1.4-final-source
   BASE_SOURCE_SHA256: 24ccb1649d91b090dcc5437c66e18c0ae465528423110efe0c1d392397f6fef1
@@ -25,38 +24,52 @@ env:
   BLOCK2_PATCH_SHA256: 40cfae87b5f7faa41a9fce3070074876552ec4178817acb03c86ecefdadcc959
   BLOCK3_PATCH_SHA256: 5d7c0e258f23252b141603471392e7fb1db11166d4f81a02052197f4129dc8be
   BLOCK4_PATCH_SHA256: f62d563240fadfec37bf634c7947b545c106020805262f0ac77f8728db2b77a4
+  BLOCK4_VERIFY_RUN: '34915210329'
+  BLOCK4_ARTIFACT: VYRON-2.1.6-block4-evidence
+  BLOCK4_SOURCE_SHA256: 408aa51de972c0f4c0ed2d4400ece0121c44e497ae8693518f80514117d3b1e4
 
 jobs:
   diagnostic:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 75
     steps:
-      - name: Checkout exact verify source identity
+      - name: Checkout actual release branch
         uses: actions/checkout@v4
         with:
-          ref: 3710287abae2a1ef95a9b6ae0017f1ba86b268e7
+          ref: release/vyron-2.1.6
           fetch-depth: 0
 
-      - name: Prove source identity
+      - name: Verify authoritative release history
         shell: bash
         run: |
           set -Eeuo pipefail
-          test "$(git rev-parse HEAD)" = "$VERIFY_SOURCE_HEAD"
-          test "$(git rev-parse HEAD^{tree})" = '213ff77b1a97a2937466fc7e7be00279941ed592'
-          echo "VERIFY_SOURCE_HEAD=$(git rev-parse HEAD)"
-          echo "VERIFY_SOURCE_TREE=$(git rev-parse HEAD^{tree})"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^)" = '0e3e608decb7dc40e83c4445947e2e530be13f37'
+          test "$(git rev-parse HEAD^^)" = 'bfc6c8ec7485a723760954436596580532f495a5'
+          test "$(git rev-parse HEAD^^^)" = 'cf497593b6fa07088f590621baa51f9b978dd35d'
+          test "$(git log -1 --format=%s HEAD)" = 'fix: reconcile stale active operation state'
+          test "$(git log -1 --format=%s HEAD^)" = 'feat: add live upload progress and ETA'
+          test "$(git log -1 --format=%s HEAD^^)" = 'feat: add multi-channel upload queue'
+          test "$(git log -1 --format=%s HEAD^^^)" = 'feat: add per-channel ready video inventory'
 
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      - name: Reconstruct exact runtime-under-test
+      - name: Install Linux/Tauri dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libglib2.0-dev libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf
+
+      - name: Reconstruct authoritative source from actual branch carriers
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -Eeuo pipefail
-          mkdir -p base work decoded diagnostic
+          mkdir -p base work decoded evidence expected out
           gh run download "$BASE_RUN" --repo "$REPO" -n "$BASE_ARTIFACT" -D base
           T=base/VYRON-2.1.4-final-source.tar.gz
           test -f "$T"
@@ -93,50 +106,47 @@ jobs:
           b3=(.github/patches/v216-upload-center/03-live-progress-and-eta.parts/*.patchfrag)
           test "${#b3[@]}" -eq 5
           cat "${b3[@]}" > decoded/06-block3.patch.gz.b64
+          base64 -d decoded/06-block3.patch.gz.b64 | gzip -t
           base64 -d decoded/06-block3.patch.gz.b64 | gzip -d > decoded/06-block3.patch
           test "$(sha256sum decoded/06-block3.patch | awk '{print $1}')" = "$BLOCK3_PATCH_SHA256"
           git apply --check --directory=work decoded/06-block3.patch
           git apply --directory=work decoded/06-block3.patch
+          test -f work/src/uploadTelemetry.ts
+          test -f work/src/UploadCenter.tsx
+          test -f work/src/uploadCenterUi.ts
+          test -f work/src/uploadCenterWiring.test.ts
 
+          base64 -d .github/patches/v216-stale-reconciliation/04-stale-operation-reconciliation.patch.gz.b64 | gzip -t
           base64 -d .github/patches/v216-stale-reconciliation/04-stale-operation-reconciliation.patch.gz.b64 | gzip -d > decoded/07-block4.patch
           test "$(sha256sum decoded/07-block4.patch | awk '{print $1}')" = "$BLOCK4_PATCH_SHA256"
           git apply --check --directory=work decoded/07-block4.patch
           git apply --directory=work decoded/07-block4.patch
           git -C work init -q
           git -C work diff --check
-          printf 'VERIFY_SOURCE_HEAD=%s\nVERIFY_SOURCE_TREE=%s\nRELEASE_RUNTIME_HEAD=%s\n' "$VERIFY_SOURCE_HEAD" '213ff77b1a97a2937466fc7e7be00279941ed592' "$EXPECTED_RELEASE_HEAD" > diagnostic/source-identity.txt
+
+          gh run download "$BLOCK4_VERIFY_RUN" --repo "$REPO" -n "$BLOCK4_ARTIFACT" -D evidence
+          S=evidence/VYRON-2.1.6-after-block4-source.tar.gz
+          test -f "$S"
+          test "$(sha256sum "$S" | awk '{print $1}')" = "$BLOCK4_SOURCE_SHA256"
+          tar -xzf "$S" -C expected
+          diff -qr --exclude=.git --exclude=node_modules --exclude=target --exclude=dist --exclude=gen work expected
 
       - name: Install frontend dependencies
         working-directory: work
         run: npm ci
 
-      - name: Capture exact full frontend failure
-        id: vitest
+      - name: Full frontend behavioral suite
         working-directory: work
         shell: bash
         run: |
-          set +e
-          set -o pipefail
-          npm test 2>&1 | tee ../diagnostic/vitest-full-output.txt
-          code=${PIPESTATUS[0]}
-          echo "$code" > ../diagnostic/vitest-exit-code.txt
-          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
-          exit 0
+          set -Eeuo pipefail
+          npm test | tee ../out/frontend-tests.txt
 
-      - name: Upload complete diagnostic evidence
+      - name: Upload exact frontend evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: VYRON-2.1.6-diagnostic-last-frontend-failure
-          path: diagnostic/*
+          name: VYRON-2.1.6-exact-final-frontend-diagnostic
+          path: out/frontend-tests.txt
           retention-days: 30
           if-no-files-found: error
-
-      - name: Preserve original test result
-        if: always()
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          code='${{ steps.vitest.outputs.exit_code }}'
-          test -n "$code"
-          exit "$code"
