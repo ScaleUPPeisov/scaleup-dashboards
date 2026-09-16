@@ -1,0 +1,105 @@
+name: VYRON 2.1.6 Final Six Targeted Candidate
+
+on:
+  push:
+    branches: [verify/vyron-216-diagnostic-352]
+    paths:
+      - '.github/workflows/vyron-216-final-six-targeted.yml'
+      - '.github/patches/v216-final-six/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  BLOCK4_VERIFY_RUN: '34915210329'
+  BLOCK4_ARTIFACT: VYRON-2.1.6-block4-evidence
+  BLOCK4_SOURCE_SHA256: 408aa51de972c0f4c0ed2d4400ece0121c44e497ae8693518f80514117d3b1e4
+  FINAL6_PATCH_SHA256: aa18d2d1b3ac25f2c22320dcc6ca41e617fe7ed7219d6ada3b5871d0d685735c
+
+jobs:
+  targeted:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: verify/vyron-216-diagnostic-352
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Restore exact verified Block4 source and apply candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p evidence work decoded out
+          gh run download "$BLOCK4_VERIFY_RUN" --repo "$REPO" -n "$BLOCK4_ARTIFACT" -D evidence
+          S=evidence/VYRON-2.1.6-after-block4-source.tar.gz
+          test -f "$S"
+          test "$(sha256sum "$S" | awk '{print $1}')" = "$BLOCK4_SOURCE_SHA256"
+          tar -xzf "$S" -C work
+          base64 -d .github/patches/v216-final-six/05-final-six.patch.gz.b64 | gzip -t
+          base64 -d .github/patches/v216-final-six/05-final-six.patch.gz.b64 | gzip -d > decoded/05-final-six.patch
+          test "$(sha256sum decoded/05-final-six.patch | awk '{print $1}')" = "$FINAL6_PATCH_SHA256"
+          git -C work init -q
+          git -C work apply --check ../decoded/05-final-six.patch
+          git -C work apply ../decoded/05-final-six.patch
+          git -C work diff --check
+          sha256sum decoded/05-final-six.patch > out/candidate.sha256
+
+      - name: Install frontend dependencies
+        working-directory: work
+        run: npm ci
+
+      - name: Former six plus related regressions
+        working-directory: work
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npx vitest run \
+            src/storageLifecycle.test.ts \
+            src/v2100ErrorCenterSemantics.test.ts \
+            src/v2111PublisherWiring.test.ts \
+            src/v211FeatureContracts.test.ts \
+            src/uploadQueue.test.ts \
+            src/uploadCenterWiring.test.ts \
+            src/youtubePublishSafety.test.ts \
+            src/youtubeApplyVerification.test.ts \
+            src/uploadTelemetry.test.ts \
+            src/staleOperationReconciliation.test.ts \
+            | tee ../out/targeted-tests.txt
+
+      - name: TypeScript candidate check
+        working-directory: work
+        run: npx tsc --noEmit
+
+      - name: Candidate invariants
+        working-directory: work
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          grep -q "if(uploaded.verified===false)throw" src/uploadQueueRuntime.ts
+          grep -q "recordVerifiedUpload" src/uploadQueueRuntime.ts
+          grep -q "api.writeJobMetadata" src/uploadQueueRuntime.ts
+          grep -q "api.youtubeUpload" src/uploadQueueRuntime.ts
+          grep -q "appendErrorHistory(failureTitle,failureMessage,failureDetail" src/uploadQueueRuntime.ts
+          grep -q "notifyError(failureTitle,failureMessage" src/uploadQueueRuntime.ts
+          grep -q "persistError:false" src/uploadQueueRuntime.ts
+          grep -q "profileId:spec.profileId,channelId:spec.channelId" src/uploadQueueRuntime.ts
+          grep -q "redactSensitive" src/uploadQueueRuntime.ts
+          echo CANDIDATE_INVARIANTS=PASS | tee ../out/invariants.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: VYRON-2.1.6-final-six-targeted-evidence
+          path: out/*
+          retention-days: 30
+          if-no-files-found: warn
