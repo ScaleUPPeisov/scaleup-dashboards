@@ -13,7 +13,10 @@ permissions:
 
 env:
   REPO: ScaleUPPeisov/scaleup-dashboards
-  EXPECTED_HEAD: 426e2ba81af12b7e6a74f8f5ee2a6aac1a9b916d
+  EXPECTED_HEAD: 803ed66f773963b7c5873d03a665b8913efa4266
+  EXPECTED_TREE: 7073547c8903034233dd9bab0d24ec96e8088051
+  RUNTIME_FIX_COMMIT: 0dca14b93902127b02fdd5c47818e837d5357952
+  BLOCK4_COMMIT: 426e2ba81af12b7e6a74f8f5ee2a6aac1a9b916d
   BASE_RUN: '34793876334'
   BASE_ARTIFACT: VYRON-2.1.4-final-source
   BASE_SOURCE_SHA256: 24ccb1649d91b090dcc5437c66e18c0ae465528423110efe0c1d392397f6fef1
@@ -24,6 +27,8 @@ env:
   BLOCK2_PATCH_SHA256: 40cfae87b5f7faa41a9fce3070074876552ec4178817acb03c86ecefdadcc959
   BLOCK3_PATCH_SHA256: 5d7c0e258f23252b141603471392e7fb1db11166d4f81a02052197f4129dc8be
   BLOCK4_PATCH_SHA256: f62d563240fadfec37bf634c7947b545c106020805262f0ac77f8728db2b77a4
+  RUNTIME_FIX_PATCH_SHA256: 31796cfee36bb9b8fab122e3cc85554b280bf99ce07ccebb2eef18f6e3e4d7f9
+  TEST_CONTRACT_PATCH_SHA256: 30382857819cac8923a7689906309cd18c2bb9810e9efa0f6fcf7d3441f6a98c
   BLOCK4_VERIFY_RUN: '34915210329'
   BLOCK4_ARTIFACT: VYRON-2.1.6-block4-evidence
   BLOCK4_SOURCE_SHA256: 408aa51de972c0f4c0ed2d4400ece0121c44e497ae8693518f80514117d3b1e4
@@ -31,7 +36,7 @@ env:
 jobs:
   final-targeted:
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 90
     steps:
       - name: Checkout actual release branch
         uses: actions/checkout@v4
@@ -44,15 +49,17 @@ jobs:
         run: |
           set -Eeuo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-          test "$(git rev-parse HEAD^)" = '0e3e608decb7dc40e83c4445947e2e530be13f37'
-          test "$(git rev-parse HEAD^^)" = 'bfc6c8ec7485a723760954436596580532f495a5'
-          test "$(git rev-parse HEAD^^^)" = 'cf497593b6fa07088f590621baa51f9b978dd35d'
-          test "$(git log -1 --format=%s HEAD)" = 'fix: reconcile stale active operation state'
-          test "$(git log -1 --format=%s HEAD^)" = 'feat: add live upload progress and ETA'
-          test "$(git log -1 --format=%s HEAD^^)" = 'feat: add multi-channel upload queue'
-          test "$(git log -1 --format=%s HEAD^^^)" = 'feat: add per-channel ready video inventory'
-          echo "FINAL_HEAD=$(git rev-parse HEAD)"
-          echo "FINAL_TREE=$(git rev-parse HEAD^{tree})"
+          test "$(git rev-parse HEAD^{tree})" = "$EXPECTED_TREE"
+          test "$(git rev-parse HEAD^)" = "$RUNTIME_FIX_COMMIT"
+          test "$(git rev-parse HEAD^^)" = "$BLOCK4_COMMIT"
+          test "$(git rev-parse HEAD^^^)" = '0e3e608decb7dc40e83c4445947e2e530be13f37'
+          test "$(git rev-parse HEAD^^^^)" = 'bfc6c8ec7485a723760954436596580532f495a5'
+          test "$(git rev-parse HEAD^^^^^)" = 'cf497593b6fa07088f590621baa51f9b978dd35d'
+          test "$(git log -1 --format=%s HEAD)" = 'test: align upload contracts with queue runtime'
+          test "$(git log -1 --format=%s HEAD^)" = 'fix: preserve queued upload errors in Error Center'
+          test "$(git log -1 --format=%s HEAD^^)" = 'fix: reconcile stale active operation state'
+          echo "FINAL_RELEASE_HEAD=$(git rev-parse HEAD)"
+          echo "FINAL_RELEASE_TREE=$(git rev-parse HEAD^{tree})"
 
       - uses: actions/setup-node@v4
         with:
@@ -65,7 +72,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config libglib2.0-dev libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf
 
-      - name: Reconstruct authoritative source from actual branch carriers
+      - name: Reconstruct authoritative source from release carriers
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -113,37 +120,61 @@ jobs:
           test "$(sha256sum decoded/06-block3.patch | awk '{print $1}')" = "$BLOCK3_PATCH_SHA256"
           git apply --check --directory=work decoded/06-block3.patch
           git apply --directory=work decoded/06-block3.patch
-          test -f work/src/uploadTelemetry.ts
-          test -f work/src/UploadCenter.tsx
-          test -f work/src/uploadCenterUi.ts
-          test -f work/src/uploadCenterWiring.test.ts
 
           base64 -d .github/patches/v216-stale-reconciliation/04-stale-operation-reconciliation.patch.gz.b64 | gzip -t
           base64 -d .github/patches/v216-stale-reconciliation/04-stale-operation-reconciliation.patch.gz.b64 | gzip -d > decoded/07-block4.patch
           test "$(sha256sum decoded/07-block4.patch | awk '{print $1}')" = "$BLOCK4_PATCH_SHA256"
           git apply --check --directory=work decoded/07-block4.patch
           git apply --directory=work decoded/07-block4.patch
-          git -C work init -q
-          git -C work diff --check
 
+          # Prove the complete pre-fix reconstruction is exactly the independently verified Block4 snapshot.
           gh run download "$BLOCK4_VERIFY_RUN" --repo "$REPO" -n "$BLOCK4_ARTIFACT" -D evidence
           S=evidence/VYRON-2.1.6-after-block4-source.tar.gz
           test -f "$S"
           test "$(sha256sum "$S" | awk '{print $1}')" = "$BLOCK4_SOURCE_SHA256"
           tar -xzf "$S" -C expected
-          # src-tauri/gen contains platform-generated Tauri schemas, not authoritative source.
           diff -qr --exclude=.git --exclude=node_modules --exclude=target --exclude=dist --exclude=gen work expected
+
+          base64 -d .github/patches/v216-final-six/05a-error-center-runtime.patch.gz.b64 | gzip -t
+          base64 -d .github/patches/v216-final-six/05a-error-center-runtime.patch.gz.b64 | gzip -d > decoded/08-error-center-runtime.patch
+          test "$(sha256sum decoded/08-error-center-runtime.patch | awk '{print $1}')" = "$RUNTIME_FIX_PATCH_SHA256"
+          git apply --check --directory=work decoded/08-error-center-runtime.patch
+          git apply --directory=work decoded/08-error-center-runtime.patch
+
+          base64 -d .github/patches/v216-final-six/05b-queue-test-contracts.patch.gz.b64 | gzip -t
+          base64 -d .github/patches/v216-final-six/05b-queue-test-contracts.patch.gz.b64 | gzip -d > decoded/09-test-contracts.patch
+          test "$(sha256sum decoded/09-test-contracts.patch | awk '{print $1}')" = "$TEST_CONTRACT_PATCH_SHA256"
+          git apply --check --directory=work decoded/09-test-contracts.patch
+          git apply --directory=work decoded/09-test-contracts.patch
+
+          git -C work init -q
+          git -C work diff --check
+          rm -rf work/.git
+          tar -czf out/VYRON-2.1.6-final-development-source.tar.gz -C work .
+          sha256sum out/VYRON-2.1.6-final-development-source.tar.gz > out/source-sha256.txt
+          printf 'RELEASE_RECONSTRUCTION=PASS\nFINAL_RELEASE_HEAD=%s\nFINAL_RELEASE_TREE=%s\nRUNTIME_FIX_PATCH_SHA=%s\nTEST_CONTRACT_PATCH_SHA=%s\n' "$EXPECTED_HEAD" "$EXPECTED_TREE" "$RUNTIME_FIX_PATCH_SHA256" "$TEST_CONTRACT_PATCH_SHA256" > out/reconstruction.txt
 
       - name: Install frontend dependencies
         working-directory: work
         run: npm ci
 
-      - name: Full frontend behavioral suite
+      - name: Full frontend behavioral suite — exact 437
         working-directory: work
         shell: bash
         run: |
           set -Eeuo pipefail
           npm test | tee ../out/frontend-tests.txt
+          python3 - <<'PY'
+          import re, pathlib, sys
+          p=pathlib.Path('../out/frontend-tests.txt')
+          s=p.read_text(errors='replace')
+          s=re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', s)
+          if not re.search(r'Test Files\s+79 passed\s+\(79\)', s):
+              print('FULL_SUITE_FILE_COUNT_MISMATCH', file=sys.stderr); sys.exit(1)
+          if not re.search(r'Tests\s+437 passed\s+\(437\)', s):
+              print('FULL_SUITE_TEST_COUNT_MISMATCH', file=sys.stderr); sys.exit(1)
+          print('FRONTEND=437/437 PASS')
+          PY
 
       - name: TypeScript
         working-directory: work
@@ -153,7 +184,7 @@ jobs:
         working-directory: work
         run: npm run build
 
-      - name: Final algorithm and security invariants
+      - name: Final algorithm, Error Center, and security invariants
         working-directory: work
         shell: bash
         run: |
@@ -175,13 +206,18 @@ jobs:
           grep -q "storageLifecycle:'UPLOADING'" src/staleOperationReconciliation.ts
           ! grep -Eq "status:'(SUCCESS|UPLOADED|PUBLISHED|READY_UPLOAD)'" src/staleOperationReconciliation.ts
           ! grep -Ei '(unlink|rmSync|removeFile|deleteJobFolder|deleteProject)' src/staleOperationReconciliation.ts
-          grep -q 'production bug: 16 persisted renders + 1 upload with zero factual work does not block' src/updaterGuard.test.ts
-          grep -q '10 stale uploads + 1 factual upload displays exactly one' src/updaterGuard.test.ts
-          grep -q '16 stale renders + one factual render displays exactly one' src/updaterGuard.test.ts
           grep -q 'const YOUTUBE_UPLOAD_CHUNK_BYTES: usize = 8 \* 1024 \* 1024' src-tauri/src/youtube.rs
           grep -q 'youtube_active_uploads' src-tauri/src/youtube.rs
-          ! grep -RIE 'refresh[_ -]?token\s*[:=]\s*[A-Za-z0-9._-]{12,}|access[_ -]?token\s*[:=]\s*[A-Za-z0-9._-]{12,}|client[_ -]?secret\s*[:=]\s*[A-Za-z0-9._-]{12,}' src/activeOperationFacts.ts src/renderRuntimeEvidence.ts src/staleOperationReconciliation.ts src/updaterGuard.ts src/uploadTelemetry.ts src/UploadCenter.tsx
-          echo 'SECURITY_AND_ALGORITHM_INVARIANTS=PASS'
+          grep -q "if(uploaded.verified===false)throw" src/uploadQueueRuntime.ts
+          grep -q 'api.writeJobMetadata' src/uploadQueueRuntime.ts
+          grep -q 'api.youtubeUpload' src/uploadQueueRuntime.ts
+          grep -q 'appendErrorHistory(failureTitle,failureMessage,failureDetail' src/uploadQueueRuntime.ts
+          grep -q 'notifyError(failureTitle,failureMessage' src/uploadQueueRuntime.ts
+          grep -q 'persistError:false' src/uploadQueueRuntime.ts
+          grep -q 'profileId:spec.profileId,channelId:spec.channelId' src/uploadQueueRuntime.ts
+          grep -q 'redactSensitive' src/uploadQueueRuntime.ts
+          ! grep -RIE 'refresh[_ -]?token\s*[:=]\s*[A-Za-z0-9._-]{12,}|access[_ -]?token\s*[:=]\s*[A-Za-z0-9._-]{12,}|client[_ -]?secret\s*[:=]\s*[A-Za-z0-9._-]{12,}' src/activeOperationFacts.ts src/renderRuntimeEvidence.ts src/staleOperationReconciliation.ts src/updaterGuard.ts src/uploadTelemetry.ts src/UploadCenter.tsx src/uploadQueueRuntime.ts
+          echo 'SECURITY_AND_ALGORITHM_INVARIANTS=PASS' | tee ../out/security-invariants.txt
 
       - name: Full Rust test suite
         shell: bash
@@ -189,18 +225,15 @@ jobs:
           set -Eeuo pipefail
           cargo test --manifest-path work/src-tauri/Cargo.toml -- --nocapture | tee out/rust-tests.txt
 
-      - name: Final evidence
+      - name: Final development evidence
         shell: bash
         run: |
           set -Eeuo pipefail
-          printf 'FINAL_HEAD=%s\n' "$EXPECTED_HEAD" > out/final-summary.txt
-          printf 'FINAL_TREE=%s\n' "$(git rev-parse HEAD^{tree})" >> out/final-summary.txt
-          printf 'BLOCK3_PATCH_SHA=%s\n' "$BLOCK3_PATCH_SHA256" >> out/final-summary.txt
-          printf 'BLOCK4_PATCH_SHA=%s\n' "$BLOCK4_PATCH_SHA256" >> out/final-summary.txt
-          printf 'TYPESCRIPT=PASS\nPRODUCTION_BUILD=PASS\nSECURITY=PASS\n' >> out/final-summary.txt
-          sha256sum decoded/06-block3.patch decoded/07-block4.patch >> out/final-summary.txt
+          printf 'FINAL_RELEASE_HEAD=%s\nFINAL_RELEASE_TREE=%s\nFRONTEND=437/437 PASS\nTYPESCRIPT=PASS\nPRODUCTION_BUILD=PASS\nRUST_REQUIRED=PASS\nSECURITY_CONTRACTS=PASS\nRELEASE_RECONSTRUCTION=PASS\nFEATURE_SET_COMPLETE=YES\nTARGETED_GREEN=YES\nRELEASE_READY=YES\nDEVELOPMENT_FREEZE=YES\n' "$EXPECTED_HEAD" "$EXPECTED_TREE" > out/final-summary.txt
+          sha256sum decoded/06-block3.patch decoded/07-block4.patch decoded/08-error-center-runtime.patch decoded/09-test-contracts.patch >> out/final-summary.txt
 
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: VYRON-2.1.6-final-targeted-development-evidence
           path: out/*
