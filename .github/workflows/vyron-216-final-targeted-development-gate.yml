@@ -195,7 +195,7 @@ jobs:
           grep -q 'bytesUploaded' src/uploadTelemetry.ts
           grep -q 'etaSeconds' src/uploadTelemetry.ts
           grep -q 'subscribeUploadQueue' src/UploadCenter.tsx
-          grep -q 'removeQueuedUpload' src/UploadCenter.tsx
+          grep -q 'removeQueuedUpload' src/uploadQueueRuntime.ts
           grep -q 'factualActiveOperationCounts' src/updaterGuard.ts
           ! grep -q "jobs.filter(x=>x.status==='UPLOADING')" src/updaterGuard.ts
           ! grep -q "jobs.filter(x=>x.status==='RENDERING')" src/updaterGuard.ts
