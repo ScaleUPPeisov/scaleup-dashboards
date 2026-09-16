@@ -1,0 +1,196 @@
+name: VYRON 2.1.6 Authoritative Release Regression
+
+on:
+  push:
+    branches: [verify/vyron-216-release-regression]
+    paths:
+      - '.github/workflows/vyron-216-release-regression.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  FINAL_HEAD: 8f0bab2038f823b464c67dbd34e158423e2fb5e6
+  FINAL_TREE: e371750a5856586fa0f851103890f77f8888e90c
+  DEVELOPMENT_HEAD: 803ed66f773963b7c5873d03a665b8913efa4266
+  DEVELOPMENT_TREE: 7073547c8903034233dd9bab0d24ec96e8088051
+  DEVELOPMENT_GREEN_RUN: '35041986816'
+  DEVELOPMENT_ARTIFACT: VYRON-2.1.6-final-targeted-development-evidence
+  DEVELOPMENT_SOURCE_SHA256: 60d9c41db046815a1ca12506fe1b7306daf83f08660ce3c6421aa7ad2938b1ee
+  VERSION_PATCH_SHA256: 032e5e77c3c6f30cccb6ada5f2d905e2f63964d6c61cf0a019ed9ef77d489005
+
+jobs:
+  release-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout exact release carrier history
+        uses: actions/checkout@v4
+        with:
+          ref: release/vyron-2.1.6
+          fetch-depth: 0
+
+      - name: Verify final release identity and version-only delta
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$FINAL_HEAD"
+          test "$(git rev-parse HEAD^{tree})" = "$FINAL_TREE"
+          test "$(git rev-parse HEAD^)" = "$DEVELOPMENT_HEAD"
+          test "$(git rev-parse HEAD^^)" = '0dca14b93902127b02fdd5c47818e837d5357952'
+          test "$(git rev-parse HEAD^^^)" = '426e2ba81af12b7e6a74f8f5ee2a6aac1a9b916d'
+          test "$(git log -1 --format=%s HEAD)" = 'chore: bump VYRON to 2.1.6'
+          test "$(git log -1 --format=%s HEAD^)" = 'test: align upload contracts with queue runtime'
+          test "$(git log -1 --format=%s HEAD^^)" = 'fix: preserve queued upload errors in Error Center'
+          test -f .github/patches/v216-final-six/06-version-bump.patch
+          test -f .github/patches/v216-final-six/06-version-bump.sha256
+          test "$(sha256sum .github/patches/v216-final-six/06-version-bump.patch | awk '{print $1}')" = "$VERSION_PATCH_SHA256"
+          grep -qx "$VERSION_PATCH_SHA256  06-version-bump.patch" .github/patches/v216-final-six/06-version-bump.sha256
+          echo RELEASE_CARRIER_HISTORY=PASS
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Linux/Tauri dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libglib2.0-dev libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf
+
+      - name: Reconstruct final 2.1.6 source from GREEN development source plus version carrier
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p development work out
+          gh run download "$DEVELOPMENT_GREEN_RUN" --repo "$REPO" -n "$DEVELOPMENT_ARTIFACT" -D development
+          T=development/VYRON-2.1.6-final-development-source.tar.gz
+          test -f "$T"
+          test "$(sha256sum "$T" | awk '{print $1}')" = "$DEVELOPMENT_SOURCE_SHA256"
+          grep -q "FINAL_RELEASE_HEAD=$DEVELOPMENT_HEAD" development/reconstruction.txt
+          grep -q "FINAL_RELEASE_TREE=$DEVELOPMENT_TREE" development/reconstruction.txt
+          grep -q 'FRONTEND=437/437 PASS' development/final-summary.txt
+          grep -q 'TARGETED_GREEN=YES' development/final-summary.txt
+          tar -xzf "$T" -C work
+
+          test "$(node -p "require('./work/package.json').version")" = '2.1.5'
+          test "$(node -p "require('./work/src-tauri/tauri.conf.json').version")" = '2.1.5'
+          grep -q '^version = "2.1.5"' work/src-tauri/Cargo.toml
+
+          git -C work init -q
+          git -C work apply --check ../.github/patches/v216-final-six/06-version-bump.patch
+          git -C work apply ../.github/patches/v216-final-six/06-version-bump.patch
+          git -C work diff --check
+          rm -rf work/.git
+
+          test "$(node -p "require('./work/package.json').version")" = '2.1.6'
+          test "$(node -p "require('./work/package-lock.json').version")" = '2.1.6'
+          test "$(node -p "require('./work/package-lock.json').packages[''].version")" = '2.1.6'
+          test "$(node -p "require('./work/src-tauri/tauri.conf.json').version")" = '2.1.6'
+          grep -q '^version = "2.1.6"' work/src-tauri/Cargo.toml
+          awk 'BEGIN{p=0;ok=0} /^name = "channelflow"/{p=1;next} p&&/^version = "2.1.6"$/{ok=1;exit} END{exit !ok}' work/src-tauri/Cargo.lock
+          test "$(node -p "require('./work/src-tauri/tauri.conf.json').identifier")" = 'studio.channelflow.desktop'
+
+          printf 'FINAL_HEAD=%s\nFINAL_TREE=%s\nDEVELOPMENT_SOURCE_SHA256=%s\nVERSION_PATCH_SHA256=%s\nRELEASE_RECONSTRUCTION=PASS\nVERSION=2.1.6\n' "$FINAL_HEAD" "$FINAL_TREE" "$DEVELOPMENT_SOURCE_SHA256" "$VERSION_PATCH_SHA256" > out/reconstruction.txt
+
+      - name: Install frontend dependencies
+        working-directory: work
+        run: npm ci
+
+      - name: Full frontend release regression — exact 437
+        working-directory: work
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm test | tee ../out/frontend-tests.txt
+          python3 - <<'PY'
+          import pathlib,re,sys
+          s=pathlib.Path('../out/frontend-tests.txt').read_text(errors='replace')
+          s=re.sub(r'\x1b\[[0-9;]*[A-Za-z]','',s)
+          checks=[
+            r'Test Files\s+79 passed\s+\(79\)',
+            r'Tests\s+437 passed\s+\(437\)',
+          ]
+          if not all(re.search(x,s) for x in checks):
+              print('FULL_437_RELEASE_REGRESSION_COUNT_MISMATCH',file=sys.stderr);sys.exit(1)
+          required=[
+            'readyVideoInventory.test.ts','uploadQueue.test.ts','uploadTelemetry.test.ts','uploadCenterWiring.test.ts',
+            'v2100ErrorCenterSemantics.test.ts','staleOperationReconciliation.test.ts','updaterGuard.test.ts',
+            'metadataCoverage.test.ts','publisherSchedule.test.ts','contentRunway.test.ts','youtubeQuotaAtomic.test.ts',
+            'storageLifecycle.test.ts','v213KeychainRecovery.test.ts','securityRedaction.test.ts'
+          ]
+          missing=[x for x in required if x not in s]
+          if missing:
+              print('REQUIRED_RELEASE_TEST_FILES_MISSING='+','.join(missing),file=sys.stderr);sys.exit(1)
+          print('FRONTEND=437/437 PASS')
+          print('RELEASE_CONTRACT_TEST_COVERAGE=PASS')
+          PY
+
+      - name: TypeScript release check
+        working-directory: work
+        run: npx tsc --noEmit
+
+      - name: Production frontend build
+        working-directory: work
+        run: npm run build
+
+      - name: Release security and architecture contracts
+        working-directory: work
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(node -p "require('./package.json').version")" = '2.1.6'
+          test "$(node -p "require('./src-tauri/tauri.conf.json').version")" = '2.1.6'
+          test "$(node -p "require('./src-tauri/tauri.conf.json').identifier")" = 'studio.channelflow.desktop'
+          grep -q 'const YOUTUBE_UPLOAD_CHUNK_BYTES: usize = 8 \* 1024 \* 1024' src-tauri/src/youtube.rs
+          grep -q 'youtube_active_uploads' src-tauri/src/youtube.rs
+          grep -q "api.onYoutubeProgress(applyUploadProgressFact)" src/App.tsx
+          ! grep -Eq 'onYoutubeProgress.*patchJob|patchJob.*onYoutubeProgress' src/App.tsx
+          grep -q '<GlobalUploadIndicator/><UploadCenterGlobal/>' src/App.tsx
+          grep -q 'bytesUploaded' src/uploadTelemetry.ts
+          grep -q 'etaSeconds' src/uploadTelemetry.ts
+          grep -q 'subscribeUploadQueue' src/UploadCenter.tsx
+          grep -q 'removeQueuedUpload' src/uploadQueueRuntime.ts
+          grep -q "if(uploaded.verified===false)throw" src/uploadQueueRuntime.ts
+          grep -q 'recordVerifiedUpload' src/uploadQueueRuntime.ts
+          grep -q 'api.writeJobMetadata' src/uploadQueueRuntime.ts
+          grep -q 'api.youtubeUpload' src/uploadQueueRuntime.ts
+          grep -q 'appendErrorHistory(failureTitle,failureMessage,failureDetail' src/uploadQueueRuntime.ts
+          grep -q 'notifyError(failureTitle,failureMessage' src/uploadQueueRuntime.ts
+          grep -q 'persistError:false' src/uploadQueueRuntime.ts
+          grep -q 'profileId:spec.profileId,channelId:spec.channelId' src/uploadQueueRuntime.ts
+          grep -q 'redactSensitive' src/uploadQueueRuntime.ts
+          grep -q 'factualActiveOperationCounts' src/updaterGuard.ts
+          ! grep -q "jobs.filter(x=>x.status==='UPLOADING')" src/updaterGuard.ts
+          ! grep -q "jobs.filter(x=>x.status==='RENDERING')" src/updaterGuard.ts
+          grep -q 'scanFactualRenderRuntime' src/ProductionStatusBridge.tsx
+          grep -q "status:'READY_RENDER'" src/staleOperationReconciliation.ts
+          ! grep -Ei '(unlink|rmSync|removeFile|deleteJobFolder|deleteProject)' src/staleOperationReconciliation.ts
+          ! grep -RIE 'refresh[_ -]?token\s*[:=]\s*[A-Za-z0-9._-]{12,}|access[_ -]?token\s*[:=]\s*[A-Za-z0-9._-]{12,}|client[_ -]?secret\s*[:=]\s*[A-Za-z0-9._-]{12,}' src/activeOperationFacts.ts src/renderRuntimeEvidence.ts src/staleOperationReconciliation.ts src/updaterGuard.ts src/uploadTelemetry.ts src/UploadCenter.tsx src/uploadQueueRuntime.ts
+          echo SECURITY_CONTRACTS=PASS | tee ../out/security-contracts.txt
+
+      - name: Full Rust release regression
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cargo test --manifest-path work/src-tauri/Cargo.toml -- --nocapture | tee out/rust-tests.txt
+
+      - name: Final release regression evidence
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          printf 'FINAL_HEAD=%s\nFINAL_TREE=%s\nFRONTEND=437/437 PASS\nTYPESCRIPT=PASS\nPRODUCTION_BUILD=PASS\nRUST_REQUIRED=PASS\nSECURITY_CONTRACTS=PASS\nRELEASE_RECONSTRUCTION=PASS\nRELEASE_REGRESSION=PASS\nCODE_FREEZE=YES\n' "$FINAL_HEAD" "$FINAL_TREE" > out/final-release-regression.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: VYRON-2.1.6-release-regression-evidence
+          path: out/*
+          retention-days: 30
+          if-no-files-found: error
