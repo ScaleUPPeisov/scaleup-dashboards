@@ -6,11 +6,55 @@ export type ChannelScheduleState={channelId:string;lastPublishedAt?:string;lastS
 export type PatternCalendarDay={date:string;kind:'video'|'pause'|'occupied';publishSlot:boolean;occupied:boolean};
 const EVENT='vyron-channel-schedule-changed';
 export const existingCacheKey=(channelId:string)=>`vyron:existing-cache:v1:${channelId}`;
-export function readExistingCache(channelId:string):ExistingCache|undefined{if(!channelId)return;try{const x=JSON.parse(localStorage.getItem(existingCacheKey(channelId))||'null');return x?.version===1?x:undefined}catch{return}}
+const isRecord=(x:unknown):x is Record<string,unknown>=>Boolean(x)&&typeof x==='object'&&!Array.isArray(x);
+const optionalString=(x:unknown)=>typeof x==='string'&&x.trim()?x:undefined;
+function normalizeExistingVideo(value:unknown,index=0):YoutubeExistingVideo|undefined{
+  if(!isRecord(value))return;
+  const id=optionalString(value.id);
+  if(!id)return;
+  const applyState=['idle','saving','done','error'].includes(String(value.applyState))?value.applyState as YoutubeExistingVideo['applyState']:undefined;
+  const num=(x:unknown)=>Number.isFinite(Number(x))?Number(x):undefined;
+  return{
+    id,
+    position:Number.isFinite(Number(value.position))?Number(value.position):index,
+    title:typeof value.title==='string'?value.title:'',
+    description:typeof value.description==='string'?value.description:'',
+    tags:Array.isArray(value.tags)?value.tags.filter((x):x is string=>typeof x==='string'):[],
+    categoryId:typeof value.categoryId==='string'?value.categoryId:'10',
+    publishedAt:optionalString(value.publishedAt),
+    privacyStatus:typeof value.privacyStatus==='string'?value.privacyStatus:'',
+    publishAt:optionalString(value.publishAt),
+    thumbnail:optionalString(value.thumbnail),
+    duration:optionalString(value.duration),
+    views:num(value.views),likes:num(value.likes),comments:num(value.comments),
+    selected:value.selected===true,
+    applyState,
+    error:optionalString(value.error),
+    channelId:optionalString(value.channelId),
+    verified:typeof value.verified==='boolean'?value.verified:undefined
+  };
+}
+function normalizeVideoArray(value:unknown){return Array.isArray(value)?value.map(normalizeExistingVideo).filter((x):x is YoutubeExistingVideo=>Boolean(x)):[]}
+function normalizeBaseline(value:unknown){
+  if(!isRecord(value))return{} as Record<string,YoutubeExistingVideo>;
+  const out:Record<string,YoutubeExistingVideo>={};
+  let index=0;
+  for(const [key,row] of Object.entries(value)){const video=normalizeExistingVideo(row,index++);if(video)out[key||video.id]=video}
+  return out;
+}
+function normalizeSyncInfo(value:unknown){return value===null||isRecord(value)?value:null}
+export function readExistingCache(channelId:string):ExistingCache|undefined{
+  if(!channelId)return;
+  try{
+    const x=JSON.parse(localStorage.getItem(existingCacheKey(channelId))||'null');
+    if(!isRecord(x)||x.version!==1)return;
+    return{version:1,updatedAt:optionalString(x.updatedAt)||'1970-01-01T00:00:00.000Z',videos:normalizeVideoArray(x.videos),baseline:normalizeBaseline(x.baseline),lastUndo:normalizeVideoArray(x.lastUndo),syncInfo:normalizeSyncInfo(x.syncInfo)};
+  }catch{return}
+}
 export function writeExistingCache(channelId:string,x:ExistingCache){if(!channelId)return;try{localStorage.setItem(existingCacheKey(channelId),JSON.stringify(x));window.dispatchEvent(new CustomEvent(EVENT,{detail:{channelId,updatedAt:x.updatedAt}}))}catch{}}
-const cloneVideo=(v:YoutubeExistingVideo)=>({...v,tags:[...(v.tags||[])]});
-export function replaceExistingCacheFromSync(channelId:string,videos:YoutubeExistingVideo[],syncInfo:any){const rows=videos.map(cloneVideo),baseline=Object.fromEntries(rows.map(v=>[v.id,cloneVideo(v)]));writeExistingCache(channelId,{version:1,updatedAt:new Date().toISOString(),videos:rows,baseline,lastUndo:[],syncInfo})}
-export function mergeExistingCacheVideos(channelId:string,updates:YoutubeExistingVideo[]){const prev=readExistingCache(channelId);const map=new Map((prev?.videos||[]).map(v=>[v.id,cloneVideo(v)]));const base={...(prev?.baseline||{})};for(const u of updates){map.set(u.id,cloneVideo(u));base[u.id]=cloneVideo(u)}writeExistingCache(channelId,{version:1,updatedAt:new Date().toISOString(),videos:[...map.values()],baseline:base,lastUndo:prev?.lastUndo||[],syncInfo:prev?.syncInfo||null})}
+const cloneVideo=(v:YoutubeExistingVideo)=>({...v,tags:[...(Array.isArray(v.tags)?v.tags:[])]});
+export function replaceExistingCacheFromSync(channelId:string,videos:YoutubeExistingVideo[],syncInfo:any){const rows=normalizeVideoArray(videos).map(cloneVideo),baseline=Object.fromEntries(rows.map(v=>[v.id,cloneVideo(v)]));writeExistingCache(channelId,{version:1,updatedAt:new Date().toISOString(),videos:rows,baseline,lastUndo:[],syncInfo:normalizeSyncInfo(syncInfo)})}
+export function mergeExistingCacheVideos(channelId:string,updates:YoutubeExistingVideo[]){const prev=readExistingCache(channelId);const map=new Map((prev?.videos||[]).map(v=>[v.id,cloneVideo(v)]));const base={...(prev?.baseline||{})};for(const u of normalizeVideoArray(updates)){map.set(u.id,cloneVideo(u));base[u.id]=cloneVideo(u)}writeExistingCache(channelId,{version:1,updatedAt:new Date().toISOString(),videos:[...map.values()],baseline:base,lastUndo:prev?.lastUndo||[],syncInfo:prev?.syncInfo||null})}
 const pad=(n:number)=>String(n).padStart(2,'0');
 function parts(iso:string){const d=new Date(iso);if(Number.isNaN(d.getTime()))return;const p=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Krasnoyarsk',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(d);const get=(t:string)=>p.find(x=>x.type===t)?.value||'';return{date:`${get('year')}-${get('month')}-${get('day')}`,time:`${get('hour')}:${get('minute')}`}}
 export function krasDateKey(iso?:string){return iso?parts(iso)?.date:undefined}
@@ -28,10 +72,10 @@ export function scheduleDescription(channel:Channel){return scheduleModeFor(chan
 export function scheduleAverageIntervalDays(channel:Channel){if(scheduleModeFor(channel)==='pattern'){const p=Math.max(1,Math.floor(channel.publishDays||3)),q=Math.max(1,Math.floor(channel.pauseDays||1));return(p+q)/p}return intervalDaysFor(channel)}
 export function isPatternPublishDate(key:string,pattern:SchedulePattern){const cycle=Math.max(2,pattern.publishDays+pattern.pauseDays);const delta=diffDays(pattern.anchorDate,key);if(delta<0)return false;const pos=((delta%cycle)+cycle)%cycle;return pos<pattern.publishDays}
 function toKratIso(date:string,time:string){return new Date(`${date}T${time}:00+07:00`).toISOString()}
-function occupiedDates(videos:YoutubeExistingVideo[],excludeIds:string[]=[]){const excluded=new Set(excludeIds);return new Set(videos.filter(v=>!excluded.has(v.id)).map(v=>krasDateKey(v.publishAt)).filter(Boolean) as string[])}
+function occupiedDates(videos:YoutubeExistingVideo[],excludeIds:string[]=[]){const excluded=new Set(excludeIds);return new Set(normalizeVideoArray(videos).filter(v=>!excluded.has(v.id)).map(v=>krasDateKey(v.publishAt)).filter(Boolean) as string[])}
 export function deriveChannelScheduleState(channel:Channel,videos:YoutubeExistingVideo[],updatedAt?:string,excludeIds:string[]=[]):ChannelScheduleState{
   const mode=scheduleModeFor(channel),interval=intervalDaysFor(channel),publishDays=Math.max(1,Math.floor(channel.publishDays||3)),pauseDays=Math.max(1,Math.floor(channel.pauseDays||1));const defaultTime=`${pad(channel.publishHour||0)}:${pad(channel.publishMinute||0)}`;
-  const excluded=new Set(excludeIds),visible=videos.filter(v=>!excluded.has(v.id));const scheduled=visible.map(v=>v.publishAt).filter((x):x is string=>Boolean(x)&&Number.isFinite(Date.parse(x!))).sort((a,b)=>Date.parse(a)-Date.parse(b));const published=visible.map(v=>v.publishedAt).filter((x):x is string=>Boolean(x)&&Number.isFinite(Date.parse(x!))).sort((a,b)=>Date.parse(a)-Date.parse(b));
+  const excluded=new Set(excludeIds),visible=normalizeVideoArray(videos).filter(v=>!excluded.has(v.id));const scheduled=visible.map(v=>v.publishAt).filter((x):x is string=>Boolean(x)&&Number.isFinite(Date.parse(x!))).sort((a,b)=>Date.parse(a)-Date.parse(b));const published=visible.map(v=>v.publishedAt).filter((x):x is string=>Boolean(x)&&Number.isFinite(Date.parse(x!))).sort((a,b)=>Date.parse(a)-Date.parse(b));
   const lastScheduledAt=scheduled.length?scheduled[scheduled.length-1]:undefined,lastPublishedAt=published.length?published[published.length-1]:undefined,scheduledUntil=krasDateKey(lastScheduledAt),occupied=occupiedDates(visible);
   let nextKey:string|undefined;
   if(mode==='pattern'){
@@ -42,10 +86,10 @@ export function deriveChannelScheduleState(channel:Channel,videos:YoutubeExistin
 }
 export function getChannelScheduleState(channelId:string,channel:Channel,excludeIds:string[]=[]){const cache=readExistingCache(channelId);return deriveChannelScheduleState(channel,cache?.videos||[],cache?.updatedAt,excludeIds)}
 export function generatePatternSchedule(channel:Channel,videos:YoutubeExistingVideo[],count:number,excludeIds:string[]=[]){
-  const pattern=patternFor(channel);if(!pattern)return{dates:[] as string[],calendar:[] as PatternCalendarDay[]};const cacheVideos=readExistingCache(channel.id)?.videos||videos,occupied=occupiedDates(cacheVideos,excludeIds),state=deriveChannelScheduleState(channel,cacheVideos,undefined,excludeIds),time=state.defaultPublishTime;let k=state.nextAvailableAt?krasDateKey(state.nextAvailableAt):pattern.anchorDate;if(!k)return{dates:[],calendar:[]};
+  const pattern=patternFor(channel);if(!pattern)return{dates:[] as string[],calendar:[] as PatternCalendarDay[]};const cacheVideos=readExistingCache(channel.id)?.videos||normalizeVideoArray(videos),occupied=occupiedDates(cacheVideos,excludeIds),state=deriveChannelScheduleState(channel,cacheVideos,undefined,excludeIds),time=state.defaultPublishTime;let k=state.nextAvailableAt?krasDateKey(state.nextAvailableAt):pattern.anchorDate;if(!k)return{dates:[],calendar:[]};
   const dates:string[]=[],calendar:PatternCalendarDay[]=[];let guard=0;
   while(dates.length<count&&guard++<50000){const publishSlot=isPatternPublishDate(k,pattern),busy=occupied.has(k);calendar.push({date:k,kind:publishSlot?(busy?'occupied':'video'):'pause',publishSlot,occupied:busy});if(publishSlot&&!busy){dates.push(toKratIso(k,time));occupied.add(k)}k=addCalendarDays(k,1)}
   return{dates,calendar};
 }
-export function generateIntervalSchedule(channel:Channel,videos:YoutubeExistingVideo[],count:number,excludeIds:string[]=[]){const state=deriveChannelScheduleState(channel,videos,undefined,excludeIds);let k=state.nextAvailableAt?krasDateKey(state.nextAvailableAt):undefined;if(!k)return[];const occupied=occupiedDates(videos,excludeIds),days=intervalDaysFor(channel),time=state.defaultPublishTime,out:string[]=[];let guard=0;while(out.length<count&&guard++<20000){if(!occupied.has(k)){out.push(toKratIso(k,time));occupied.add(k)}k=addCalendarDays(k,days)}return out}
+export function generateIntervalSchedule(channel:Channel,videos:YoutubeExistingVideo[],count:number,excludeIds:string[]=[]){const safeVideos=normalizeVideoArray(videos);const state=deriveChannelScheduleState(channel,safeVideos,undefined,excludeIds);let k=state.nextAvailableAt?krasDateKey(state.nextAvailableAt):undefined;if(!k)return[];const occupied=occupiedDates(safeVideos,excludeIds),days=intervalDaysFor(channel),time=state.defaultPublishTime,out:string[]=[];let guard=0;while(out.length<count&&guard++<20000){if(!occupied.has(k)){out.push(toKratIso(k,time));occupied.add(k)}k=addCalendarDays(k,days)}return out}
 export function subscribeChannelSchedule(cb:(channelId:string)=>void){const fn=(e:Event)=>cb(String((e as CustomEvent<any>).detail?.channelId||''));window.addEventListener(EVENT,fn);return()=>window.removeEventListener(EVENT,fn)}
