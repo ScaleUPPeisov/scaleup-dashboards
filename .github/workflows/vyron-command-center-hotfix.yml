@@ -1,0 +1,35 @@
+name: VYRON Command Center Hotfix
+
+on:
+  push:
+    branches: [hotfix/vyron-command-center-black-screen]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-command-center-hotfix:
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Targeted Command Center regression
+        run: npx vitest run src/commandCenterRuntimeHotfix.test.tsx src/commandCenter.test.ts src/uiHotfix.test.tsx src/uploadCenterWiring.test.ts src/channelRunway.test.ts
+
+      - name: Full frontend suite
+        run: npm test
+
+      - name: TypeScript and frontend build
+        run: npm run build

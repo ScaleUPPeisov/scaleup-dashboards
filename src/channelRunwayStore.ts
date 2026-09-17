@@ -17,10 +17,36 @@ export type ChannelRunwayStore={
 type StorageLike=Pick<Storage,'getItem'|'setItem'>;
 const EVENT='vyron-channel-runway';
 const existingCacheKey=(channelId:string)=>`vyron:existing-cache:v1:${channelId}`;
+const VALID_STATUS=new Set(['large','plan','prepare','urgent','ended','no-data']);
+const VALID_PRIORITY=new Set(['low','normal','high','critical','unknown']);
 
 function defaultStore():ChannelRunwayStore{return{version:1,channels:{}}}
 function browserStorage(){return typeof localStorage==='undefined'?undefined:localStorage}
 function emit(){try{window.dispatchEvent(new Event(EVENT))}catch{}}
+
+function normalizeStoredRecord(id:string,value:unknown):ChannelRunwayRecord|undefined{
+  if(!value||typeof value!=='object')return;
+  const raw=value as Partial<ChannelRunwayRecord>;
+  const channelId=String(raw.channelId||id||'').trim();
+  if(!channelId)return;
+  const channelName=String(raw.channelName||channelId||'Канал без названия').trim()||'Канал без названия';
+  const scheduledVideoCount=Number.isFinite(raw.scheduledVideoCount)?Math.max(0,Math.floor(Number(raw.scheduledVideoCount))):0;
+  const runwayDays=Number.isFinite(raw.runwayDays)?Math.max(0,Number(raw.runwayDays)):undefined;
+  const averagePublishIntervalDays=Number.isFinite(raw.averagePublishIntervalDays)?Number(raw.averagePublishIntervalDays):undefined;
+  const status=VALID_STATUS.has(String(raw.status))?raw.status as ChannelRunwayRecord['status']:'no-data';
+  const priority=VALID_PRIORITY.has(String(raw.priority))?raw.priority as ChannelRunwayRecord['priority']:'unknown';
+  return{
+    ...raw,
+    channelId,
+    channelName,
+    scheduledVideoCount,
+    averagePublishIntervalDays,
+    runwayDays,
+    lastLocalCalculation:typeof raw.lastLocalCalculation==='string'&&raw.lastLocalCalculation?raw.lastLocalCalculation:'1970-01-01T00:00:00.000Z',
+    status,
+    priority
+  } as ChannelRunwayRecord;
+}
 
 export function loadChannelRunwayStore(storage:StorageLike|undefined=browserStorage()):ChannelRunwayStore{
   if(!storage)return defaultStore();
@@ -29,7 +55,17 @@ export function loadChannelRunwayStore(storage:StorageLike|undefined=browserStor
     if(!raw)return defaultStore();
     const parsed=JSON.parse(raw) as ChannelRunwayStore;
     if(parsed?.version!==1||!parsed.channels||typeof parsed.channels!=='object')return defaultStore();
-    return parsed;
+    const channels:Record<string,ChannelRunwayRecord>={};
+    for(const [id,value] of Object.entries(parsed.channels)){
+      const normalized=normalizeStoredRecord(id,value);
+      if(normalized)channels[id]=normalized;
+    }
+    return{
+      version:1,
+      lastLocalCalculation:typeof parsed.lastLocalCalculation==='string'?parsed.lastLocalCalculation:undefined,
+      lastKrasnoyarskDate:typeof parsed.lastKrasnoyarskDate==='string'?parsed.lastKrasnoyarskDate:undefined,
+      channels
+    };
   }catch{return defaultStore()}
 }
 
