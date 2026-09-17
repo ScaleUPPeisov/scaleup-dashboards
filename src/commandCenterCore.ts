@@ -5,6 +5,9 @@ import {calendarDaysBetween,krasnoyarskClock} from './channelRunwayCore';
 export const COMMAND_CENTER_STORAGE_KEY='vyron:command-center:v1';
 const DAY_MS=86_400_000;
 const pad=(n:number)=>String(n).padStart(2,'0');
+const isRecord=(x:unknown):x is Record<string,unknown>=>Boolean(x)&&typeof x==='object'&&!Array.isArray(x);
+const nonEmptyText=(x:unknown)=>typeof x==='string'&&x.trim().length>0;
+const arrayLength=(x:unknown)=>Array.isArray(x)?x.length:0;
 
 export type ProductionReadiness={
   channelId:string;
@@ -69,27 +72,27 @@ export function buildLocalBatchPlan(channel:Channel,count:number,scheduledUntil?
 }
 
 export function productionReadiness(channel:Channel,jobs:VideoJob[],target:number):ProductionReadiness{
-  const rows=jobs.filter(j=>j.channelId===channel.id);
+  const source=Array.isArray(jobs)?jobs:[];
+  const rows=source.filter((j):j is VideoJob=>isRecord(j)&&String(j.channelId||'')===channel.id);
   const safeTarget=Math.max(1,Math.floor(target||1));
-  const covers=rows.filter(j=>Boolean(j.coverPath)).length;
-  const music=rows.filter(j=>j.tracksCount>=j.minTracks).length;
-  const videos=rows.filter(j=>Boolean(j.finalPath)).length;
-  const seo=rows.filter(j=>Boolean(j.title?.trim()&&j.description?.trim()&&j.tags?.length)).length;
-  const schedule=rows.filter(j=>Boolean(j.publishAt)).length;
-  const readyToYoutube=rows.filter(j=>Boolean(j.finalPath&&j.title?.trim()&&j.description?.trim()&&j.tags?.length&&j.publishAt&&j.status!=='ERROR')).length;
+  const covers=rows.filter(j=>nonEmptyText(j.coverPath)).length;
+  const music=rows.filter(j=>Number(j.tracksCount||0)>=Number(j.minTracks||0)&&Number(j.minTracks||0)>0).length;
+  const videos=rows.filter(j=>nonEmptyText(j.finalPath)).length;
+  const seo=rows.filter(j=>nonEmptyText(j.title)&&nonEmptyText(j.description)&&arrayLength(j.tags)>0).length;
+  const schedule=rows.filter(j=>nonEmptyText(j.publishAt)).length;
+  const readyToYoutube=rows.filter(j=>Boolean(nonEmptyText(j.finalPath)&&nonEmptyText(j.title)&&nonEmptyText(j.description)&&arrayLength(j.tags)>0&&nonEmptyText(j.publishAt)&&j.status!=='ERROR')).length;
   const errors=rows.filter(j=>j.status==='ERROR').length;
   const dimensions=[covers,music,videos,seo,schedule].map(n=>Math.min(1,n/safeTarget));
   const progress=Math.round((dimensions.reduce((a,b)=>a+b,0)/dimensions.length)*100);
   return{channelId:channel.id,target:safeTarget,covers,music,videos,seo,schedule,readyToYoutube,errors,progress};
 }
 
-
 export type ChannelProductionReadiness={
   channelId:string;targetProjects:number;createdProjects:number;renderedVideos:number;readyToPublish:number;percent:number;
   covers:number;music:number;seo:number;schedule:number;errors:number;
 };
 export function getChannelProductionReadiness(channel:Channel,jobs:VideoJob[],target:number):ChannelProductionReadiness{
-  const base=productionReadiness(channel,jobs,target);const rows=jobs.filter(j=>j.channelId===channel.id);
+  const base=productionReadiness(channel,jobs,target);const rows=(Array.isArray(jobs)?jobs:[]).filter(j=>isRecord(j)&&String((j as any).channelId||'')===channel.id);
   const percent=Math.max(0,Math.min(100,Math.round((base.readyToYoutube/base.target)*100)));
   return{channelId:channel.id,targetProjects:base.target,createdProjects:rows.length,renderedVideos:base.videos,readyToPublish:base.readyToYoutube,percent,covers:base.covers,music:base.music,seo:base.seo,schedule:base.schedule,errors:base.errors};
 }
@@ -101,27 +104,28 @@ export function buildAttentionItems(
   batchSize:number
 ){
   const items:AttentionItem[]=[];
-  for(const channel of channels.filter(c=>c.enabled)){
-    const r=runway[channel.id];
+  for(const channel of (Array.isArray(channels)?channels:[]).filter(c=>c&&c.enabled)){
+    const r=runway&&typeof runway==='object'?runway[channel.id]:undefined;
     const p=productionReadiness(channel,jobs,batchSize);
+    const channelName=typeof channel.name==='string'&&channel.name.trim()?channel.name:'Канал без названия';
     if(!r||r.runwayDays===undefined){
-      items.push({channelId:channel.id,channelName:channel.name,severity:'warning',title:'Нет подтверждённого расписания',detail:'Нужна ручная синхронизация расписания внутри YouTube.'});
+      items.push({channelId:channel.id,channelName,severity:'warning',title:'Нет подтверждённого расписания',detail:'Нужна ручная синхронизация расписания внутри YouTube.'});
     }else if(r.runwayDays<=14){
-      items.push({channelId:channel.id,channelName:channel.name,severity:'critical',title:`Запас ${r.runwayDays} дн.`,detail:'Новая пачка нужна в приоритетном порядке.'});
+      items.push({channelId:channel.id,channelName,severity:'critical',title:`Запас ${r.runwayDays} дн.`,detail:'Новая пачка нужна в приоритетном порядке.'});
     }else if(r.runwayDays<=30){
-      items.push({channelId:channel.id,channelName:channel.name,severity:'warning',title:`Запас ${r.runwayDays} дн.`,detail:'Пора готовить следующую пачку.'});
+      items.push({channelId:channel.id,channelName,severity:'warning',title:`Запас ${r.runwayDays} дн.`,detail:'Пора готовить следующую пачку.'});
     }else if(r.runwayDays<=45){
-      items.push({channelId:channel.id,channelName:channel.name,severity:'info',title:`Запас ${r.runwayDays} дн.`,detail:'Канал уже нужно поставить в производственный план.'});
+      items.push({channelId:channel.id,channelName,severity:'info',title:`Запас ${r.runwayDays} дн.`,detail:'Канал уже нужно поставить в производственный план.'});
     }
     if(p.videos>p.seo){
-      items.push({channelId:channel.id,channelName:channel.name,severity:'warning',title:`SEO не готово: ${p.videos-p.seo}`,detail:'Есть готовые видео без полного title / description / tags.'});
+      items.push({channelId:channel.id,channelName,severity:'warning',title:`SEO не готово: ${p.videos-p.seo}`,detail:'Есть готовые видео без полного title / description / tags.'});
     }
     if(p.readyToYoutube>0){
-      items.push({channelId:channel.id,channelName:channel.name,severity:'info',title:`Готово к YouTube: ${p.readyToYoutube}`,detail:'Файлы, SEO и локальное расписание уже заполнены.'});
+      items.push({channelId:channel.id,channelName,severity:'info',title:`Готово к YouTube: ${p.readyToYoutube}`,detail:'Файлы, SEO и локальное расписание уже заполнены.'});
     }
   }
   const rank:Record<AttentionSeverity,number>={critical:0,warning:1,info:2};
-  return items.sort((a,b)=>rank[a.severity]-rank[b.severity]||a.channelName.localeCompare(b.channelName,'ru'));
+  return items.sort((a,b)=>rank[a.severity]-rank[b.severity]||String(a.channelName||'').localeCompare(String(b.channelName||''),'ru'));
 }
 
 export function productionForecast(
@@ -131,11 +135,11 @@ export function productionForecast(
   batchSize:number,
   now=new Date()
 ){
-  const active=channels.filter(c=>c.enabled);
+  const active=(Array.isArray(channels)?channels:[]).filter(c=>c&&c.enabled);
   const today=krasnoyarskClock(now).dateKey;
   let dueNow=0,next7Days=0,critical=0,readyToYoutube=0,missingSeo=0;
   for(const channel of active){
-    const r=runway[channel.id];
+    const r=runway&&typeof runway==='object'?runway[channel.id]:undefined;
     if(r?.runwayDays!==undefined){
       if(r.runwayDays<=45)dueNow++;
       if(r.runwayDays<=14)critical++;
