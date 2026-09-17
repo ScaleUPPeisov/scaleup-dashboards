@@ -18,7 +18,7 @@ env:
   REPO: ScaleUPPeisov/scaleup-dashboards
   VERSION: '2.1.6'
   TAG: v2.1.6
-  SOURCE_COMMIT: 298af54db2322e50de4a7d5dbfab45031c5fb07e
+  SOURCE_COMMIT: 1c2da4866c90a353f8ca4e9d97702ffddb74e853
   BUNDLE_ID: studio.channelflow.desktop
   EXECUTABLE: channelflow
   EMBEDDED_UPDATER_KEY: dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEREODQ1NDdERTI1MEYxQzAKUldUQThWRGlmVlNFM1RHdW5WQnE2eG9BYTBnQlNmbUtmVU84UHJQMUNvZWZ4Qmo0L2hYcUd4UDEK
@@ -53,6 +53,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
           python3 - <<'PY'
           import json,re
+          from pathlib import Path
           pkg=json.load(open('package.json'))
           lock=json.load(open('package-lock.json'))
           conf=json.load(open('src-tauri/tauri.conf.json'))
@@ -65,6 +66,21 @@ jobs:
           assert conf['bundle']['createUpdaterArtifacts'] is True
           assert conf['plugins']['updater']['pubkey']==__import__('os').environ['EMBEDDED_UPDATER_KEY']
           assert re.search(r'(?m)^version\s*=\s*"2\.1\.6"\s*$', cargo)
+          seen={}
+          collisions=[]
+          for root in [Path('src'),Path('src-tauri')]:
+              for p in root.rglob('*'):
+                  if not p.is_file():
+                      continue
+                  key=str(p).lower()
+                  prev=seen.get(key)
+                  if prev and prev != str(p):
+                      collisions.append((prev,str(p)))
+                  else:
+                      seen[key]=str(p)
+          if collisions:
+              raise SystemExit('case-colliding paths: '+repr(collisions))
+          print('case-collision guard: PASS')
           PY
           if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
             echo "$TAG already exists"; exit 1
@@ -220,7 +236,7 @@ jobs:
           assert d['tagName']=='v2.1.6'
           assert d['isDraft'] is False
           assert d['isPrerelease'] is False
-          assert d['targetCommitish']=='298af54db2322e50de4a7d5dbfab45031c5fb07e'
+          assert d['targetCommitish']=='1c2da4866c90a353f8ca4e9d97702ffddb74e853'
           names={a['name'] for a in d['assets']}
           required={'VYRON-2.1.6-arm64.dmg','VYRON-2.1.6-arm64.dmg.sha256','VYRON.app.tar.gz','VYRON.app.tar.gz.sha256','VYRON.app.tar.gz.sig','latest.json'}
           assert required <= names
