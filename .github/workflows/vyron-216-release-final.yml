@@ -1,0 +1,246 @@
+name: VYRON 2.1.6 Final Release Gate and Source Freeze
+
+on:
+  push:
+    branches: [verify/vyron-216-release-final]
+    paths: ['.github/workflows/vyron-216-release-final.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: vyron-216-final-release-gate
+  cancel-in-progress: false
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  GREEN_RUN: '35179964217'
+  GREEN_ARTIFACT: VYRON-2.1.6-final-fix-evidence
+  GREEN_SOURCE_SHA256: 276173ae56785f47e9c823047af4cbeb13b9ce1dedf54b0160f1c514ab039415
+  FINAL_FIX_VERIFY_HEAD: 95a5d3f53ff41b1f94f060813d5c10b92b7305d0
+  RELEASE_BRANCH: release/vyron-2.1.6
+  EXPECTED_RELEASE_BRANCH_HEAD: 0ea023831aaa1c8524e2b851543b1ac80b6c0cc9
+  VERSION_PATCH_SHA256: 032e5e77c3c6f30cccb6ada5f2d905e2f63964d6c61cf0a019ed9ef77d489005
+  VERSION: '2.1.6'
+  BUNDLE_ID: studio.channelflow.desktop
+  EMBEDDED_UPDATER_KEY: dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEREODQ1NDdERTI1MEYxQzAKUldUQThWRGlmVlNFM1RHdW5WQnE2eG9BYTBnQlNmbUtmVU84UHJQMUNvZWZ4Qmo0L2hYcUd4UDEK
+
+jobs:
+  release-final:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout final verification carrier
+        uses: actions/checkout@v4
+        with:
+          ref: verify/vyron-216-release-final
+          fetch-depth: 0
+
+      - name: Verify immutable inputs
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD^)" = "$FINAL_FIX_VERIFY_HEAD"
+          test "$(git ls-remote origin refs/heads/$RELEASE_BRANCH | awk '{print $1}')" = "$EXPECTED_RELEASE_BRANCH_HEAD"
+          test "$(git ls-remote origin refs/tags/v2.1.5 | awk '{print $1}')" = '4a518ea28b5c1c18ac8b84d4f457f00de521578d'
+          if git ls-remote --exit-code --tags origin refs/tags/v2.1.6 >/dev/null 2>&1; then echo 'v2.1.6 already exists'; exit 1; fi
+          if gh release view v2.1.6 --repo "$REPO" >/dev/null 2>&1; then echo 'v2.1.6 release already exists'; exit 1; fi
+          echo INPUT_GUARDS=PASS
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Linux Tauri dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libglib2.0-dev libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf rsync
+
+      - name: Reconstruct exact green source and apply controlled version-only delta
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p green work out decoded
+          gh run download "$GREEN_RUN" --repo "$REPO" -n "$GREEN_ARTIFACT" -D green
+          T=green/VYRON-2.1.6-final-fix-source.tar.gz
+          test -s "$T"
+          ACTUAL_GREEN_SHA=$(sha256sum "$T" | awk '{print $1}')
+          test "$ACTUAL_GREEN_SHA" = "$GREEN_SOURCE_SHA256"
+          tar -xzf "$T" -C work
+
+          test "$(node -p "require('./work/package.json').version")" = '2.1.5'
+          test "$(node -p "require('./work/package-lock.json').version")" = '2.1.5'
+          test "$(node -p "require('./work/src-tauri/tauri.conf.json').version")" = '2.1.5'
+          test "$(node -p "require('./work/src-tauri/tauri.conf.json').identifier")" = "$BUNDLE_ID"
+          test "$(node -p "require('./work/src-tauri/tauri.conf.json').plugins.updater.pubkey")" = "$EMBEDDED_UPDATER_KEY"
+
+          git fetch origin verify/vyron-216-release-regression --depth=1
+          git show FETCH_HEAD:.github/patches/v216-final-six/06-version-bump.patch > decoded/06-version-bump.patch
+          test "$(sha256sum decoded/06-version-bump.patch | awk '{print $1}')" = "$VERSION_PATCH_SHA256"
+
+          git -C work init -q
+          git -C work config user.name 'VYRON Release Gate'
+          git -C work config user.email 'actions@users.noreply.github.com'
+          git -C work add -A
+          git -C work commit -qm 'baseline final-fix source'
+          git -C work apply --check ../decoded/06-version-bump.patch
+          git -C work apply ../decoded/06-version-bump.patch
+          git -C work diff --check
+
+          git -C work diff --name-only | sort > out/version-delta-files.txt
+          cat > out/version-delta-expected.txt <<'EOF'
+          package-lock.json
+          package.json
+          src-tauri/Cargo.lock
+          src-tauri/Cargo.toml
+          src-tauri/tauri.conf.json
+          EOF
+          sort -o out/version-delta-expected.txt out/version-delta-expected.txt
+          diff -u out/version-delta-expected.txt out/version-delta-files.txt
+
+          test "$(node -p "require('./work/package.json').version")" = "$VERSION"
+          test "$(node -p "require('./work/package-lock.json').version")" = "$VERSION"
+          test "$(node -p "require('./work/package-lock.json').packages[''].version")" = "$VERSION"
+          test "$(node -p "require('./work/src-tauri/tauri.conf.json').version")" = "$VERSION"
+          test "$(node -p "require('./work/src-tauri/tauri.conf.json').identifier")" = "$BUNDLE_ID"
+          test "$(node -p "require('./work/src-tauri/tauri.conf.json').plugins.updater.pubkey")" = "$EMBEDDED_UPDATER_KEY"
+          grep -q '^version = "2.1.6"' work/src-tauri/Cargo.toml
+          awk 'BEGIN{p=0;ok=0} /^name = "channelflow"/{p=1;next} p&&/^version = "2.1.6"$/{ok=1;exit} END{exit !ok}' work/src-tauri/Cargo.lock
+
+          printf 'GREEN_RUN=%s\nGREEN_SOURCE_SHA256=%s\nVERSION_PATCH_SHA256=%s\nVERSION_ONLY_DELTA=PASS\nRELEASE_RECONSTRUCTION=PASS\n' "$GREEN_RUN" "$GREEN_SOURCE_SHA256" "$VERSION_PATCH_SHA256" | tee out/reconstruction.txt
+
+      - name: Install frontend dependencies
+        working-directory: work
+        run: npm ci --no-audit --no-fund
+
+      - name: Full frontend release regression 438/438
+        working-directory: work
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npx vitest run --reporter=json --outputFile=../out/frontend-tests.json
+          node <<'NODE'
+          const fs=require('fs');
+          const r=JSON.parse(fs.readFileSync('../out/frontend-tests.json','utf8'));
+          const total=r.numTotalTests ?? r.testResults?.reduce((n,s)=>n+(s.assertionResults?.length||0),0);
+          const passed=r.numPassedTests ?? r.testResults?.reduce((n,s)=>n+(s.assertionResults||[]).filter(a=>a.status==='passed').length,0);
+          const failed=r.numFailedTests ?? r.testResults?.reduce((n,s)=>n+(s.assertionResults||[]).filter(a=>a.status==='failed').length,0);
+          console.log(`FRONTEND_TOTAL=${total}`);
+          console.log(`FRONTEND_PASSED=${passed}`);
+          console.log(`FRONTEND_FAILED=${failed}`);
+          if(total!==438||passed!==438||failed!==0)process.exit(1);
+          NODE
+          echo 'FRONTEND=438/438 PASS' | tee out/frontend-summary.txt
+
+      - name: TypeScript release check
+        working-directory: work
+        run: npx tsc --noEmit
+
+      - name: Production frontend build
+        working-directory: work
+        run: npm run build
+
+      - name: Security and release contracts
+        working-directory: work
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(node -p "require('./package.json').version")" = "$VERSION"
+          test "$(node -p "require('./src-tauri/tauri.conf.json').version")" = "$VERSION"
+          test "$(node -p "require('./src-tauri/tauri.conf.json').identifier")" = "$BUNDLE_ID"
+          test "$(node -p "require('./src-tauri/tauri.conf.json').plugins.updater.pubkey")" = "$EMBEDDED_UPDATER_KEY"
+          grep -q 'const YOUTUBE_UPLOAD_CHUNK_BYTES: usize = 8 \* 1024 \* 1024' src-tauri/src/youtube.rs
+          grep -q 'youtube_active_uploads' src-tauri/src/youtube.rs
+          grep -q 'bytesUploaded' src/uploadTelemetry.ts
+          grep -q 'etaSeconds' src/uploadTelemetry.ts
+          grep -q 'subscribeUploadQueue' src/UploadCenter.tsx
+          grep -q 'factualActiveOperationCounts' src/updaterGuard.ts
+          grep -q 'scanFactualRenderRuntime' src/ProductionStatusBridge.tsx
+          grep -q "status:'READY_RENDER'" src/staleOperationReconciliation.ts
+          ! grep -Ei '(unlink|rmSync|removeFile|deleteJobFolder|deleteProject)' src/staleOperationReconciliation.ts
+          ! grep -RIE 'refresh[_ -]?token\s*[:=]\s*[A-Za-z0-9._-]{12,}|access[_ -]?token\s*[:=]\s*[A-Za-z0-9._-]{12,}|client[_ -]?secret\s*[:=]\s*[A-Za-z0-9._-]{12,}' src/activeOperationFacts.ts src/renderRuntimeEvidence.ts src/staleOperationReconciliation.ts src/updaterGuard.ts src/uploadTelemetry.ts src/UploadCenter.tsx src/uploadQueueRuntime.ts
+          echo SECURITY_CONTRACTS=PASS | tee ../out/security-contracts.txt
+
+      - name: Full Rust release regression
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cargo test --manifest-path work/src-tauri/Cargo.toml -- --nocapture 2>&1 | tee out/rust-tests.txt
+          grep -Eq 'test result: ok\.' out/rust-tests.txt
+          ! grep -Eq 'test result: FAILED|[1-9][0-9]* failed' out/rust-tests.txt
+          echo RUST_REQUIRED=PASS | tee out/rust-summary.txt
+
+      - name: Freeze exact verified source on release branch
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf work/node_modules work/dist work/src-tauri/target work/target work/.git
+          git clone -q "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" publish
+          git -C publish checkout -q "$RELEASE_BRANCH"
+          test "$(git -C publish rev-parse HEAD)" = "$EXPECTED_RELEASE_BRANCH_HEAD"
+          rsync -a --delete --delete-excluded --exclude='.git' --exclude='node_modules' --exclude='dist' --exclude='target' work/ publish/
+          test -z "$(rsync -ani --delete --delete-excluded --exclude='.git' --exclude='node_modules' --exclude='dist' --exclude='target' work/ publish/)"
+          git -C publish config user.name 'ScaleUP VYRON Release Bot'
+          git -C publish config user.email 'actions@users.noreply.github.com'
+          git -C publish add -A
+          test -n "$(git -C publish status --porcelain)"
+          git -C publish commit -qm 'chore: freeze verified VYRON 2.1.6 source'
+          FINAL_HEAD=$(git -C publish rev-parse HEAD)
+          FINAL_TREE=$(git -C publish rev-parse HEAD^{tree})
+          git -C publish push -q origin HEAD:"$RELEASE_BRANCH"
+          test "$(git ls-remote origin refs/heads/$RELEASE_BRANCH | awk '{print $1}')" = "$FINAL_HEAD"
+          printf 'FINAL_HEAD=%s\nFINAL_TREE=%s\n' "$FINAL_HEAD" "$FINAL_TREE" | tee out/final-source-identity.txt
+
+      - name: Package immutable final source and metadata
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          FINAL_HEAD=$(awk -F= '/^FINAL_HEAD=/{print $2}' out/final-source-identity.txt)
+          FINAL_TREE=$(awk -F= '/^FINAL_TREE=/{print $2}' out/final-source-identity.txt)
+          tar --exclude=.git --exclude=node_modules --exclude=target --exclude=dist -czf out/VYRON-2.1.6-final-source.tar.gz -C publish .
+          SOURCE_SHA=$(sha256sum out/VYRON-2.1.6-final-source.tar.gz | awk '{print $1}')
+          printf '%s  VYRON-2.1.6-final-source.tar.gz\n' "$SOURCE_SHA" > out/SOURCE_SHA256.txt
+          cat > out/SOURCE_METADATA.txt <<EOF
+          VERSION=2.1.6
+          FINAL_HEAD=$FINAL_HEAD
+          FINAL_TREE=$FINAL_TREE
+          GREEN_RUN=$GREEN_RUN
+          GREEN_SOURCE_SHA256=$GREEN_SOURCE_SHA256
+          VERSION_PATCH_SHA256=$VERSION_PATCH_SHA256
+          FRONTEND=438/438 PASS
+          TYPESCRIPT=PASS
+          PRODUCTION_BUILD=PASS
+          RUST_REQUIRED=PASS
+          SECURITY_CONTRACTS=PASS
+          RELEASE_RECONSTRUCTION=PASS
+          FEATURE_SET_COMPLETE=YES
+          TARGETED_GREEN=YES
+          RELEASE_READY=YES
+          CODE_FREEZE=YES
+          PUBLIC_UPDATER_KEY_CHANGED=NO
+          EOF
+          cp out/SOURCE_METADATA.txt out/final-release-regression.txt
+          echo "SOURCE_SHA256=$SOURCE_SHA" >> out/final-release-regression.txt
+          cat out/final-release-regression.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-2.1.6-final-source
+          path: |
+            out/VYRON-2.1.6-final-source.tar.gz
+            out/SOURCE_SHA256.txt
+            out/SOURCE_METADATA.txt
+            out/final-release-regression.txt
+            out/reconstruction.txt
+            out/version-delta-files.txt
+            out/frontend-summary.txt
+            out/rust-summary.txt
+            out/security-contracts.txt
+          retention-days: 90
+          if-no-files-found: error
