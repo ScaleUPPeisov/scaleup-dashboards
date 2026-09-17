@@ -1,0 +1,267 @@
+name: VYRON 2.1.9 RC Real Mac Command Center
+
+on:
+  push:
+    branches: [hotfix/vyron-command-center-real-mac-rc]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  RC_VERSION: 2.1.9-rc.1
+  RC_TAG: v2.1.9-rc.1
+  STABLE_VERSION: 2.1.8
+  STABLE_SOURCE: c6e95c53c7d9da3be59b6f2dd3c751469e3936bd
+  BUNDLE_ID: studio.channelflow.desktop
+  EXECUTABLE: channelflow
+
+jobs:
+  rc:
+    runs-on: macos-14
+    timeout-minutes: 180
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: '-'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: hotfix/vyron-command-center-real-mac-rc
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Controlled RC version bump
+        id: bump
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          CUR=$(node -p "require('./package.json').version")
+          if [ "$CUR" = "$RC_VERSION" ]; then
+            echo 'changed=no' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          test "$CUR" = "$STABLE_VERSION"
+          npm version "$RC_VERSION" --no-git-tag-version
+          python3 - <<'PY'
+          import json,re,pathlib,os
+          version=os.environ['RC_VERSION']
+          p=pathlib.Path('src-tauri/Cargo.toml');s=p.read_text();s=re.sub(r'(?m)^(version\s*=\s*)"[^"]+"',rf'\1"{version}"',s,count=1);p.write_text(s)
+          p=pathlib.Path('src-tauri/tauri.conf.json');d=json.loads(p.read_text());d['version']=version;p.write_text(json.dumps(d,ensure_ascii=False,indent=2)+'\n')
+          PY
+          cargo check --manifest-path src-tauri/Cargo.toml
+          test "$(node -p "require('./package.json').version")" = "$RC_VERSION"
+          test "$(node -p "require('./package-lock.json').version")" = "$RC_VERSION"
+          test "$(node -p "require('./package-lock.json').packages[''].version")" = "$RC_VERSION"
+          grep -q "version = \"$RC_VERSION\"" src-tauri/Cargo.toml
+          grep -A3 'name = "channelflow"' src-tauri/Cargo.lock | grep -q "version = \"$RC_VERSION\""
+          test "$(node -p "require('./src-tauri/tauri.conf.json').version")" = "$RC_VERSION"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package.json package-lock.json src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json
+          test "$(git diff --cached --name-only | wc -l | tr -d ' ')" = '5'
+          git commit -m 'chore: bump VYRON to 2.1.9-rc.1'
+          git push origin HEAD:hotfix/vyron-command-center-real-mac-rc
+          echo 'changed=yes' >> "$GITHUB_OUTPUT"
+
+      - name: Stop first run after version commit
+        if: steps.bump.outputs.changed == 'yes'
+        run: echo 'RC_VERSION_COMMIT_PUSHED=YES; next push run performs acceptance and build.'
+
+      - name: RC safety gate
+        if: steps.bump.outputs.changed != 'yes'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(node -p "require('./package.json').version")" = "$RC_VERSION"
+          test "$(node -p "require('./package-lock.json').version")" = "$RC_VERSION"
+          test "$(node -p "require('./package-lock.json').packages[''].version")" = "$RC_VERSION"
+          grep -q "version = \"$RC_VERSION\"" src-tauri/Cargo.toml
+          grep -A3 'name = "channelflow"' src-tauri/Cargo.lock | grep -q "version = \"$RC_VERSION\""
+          test "$(node -p "require('./src-tauri/tauri.conf.json').version")" = "$RC_VERSION"
+          test "$(node -p "require('./src-tauri/tauri.conf.json').identifier")" = "$BUNDLE_ID"
+          ! git show-ref --verify --quiet refs/tags/v2.1.9
+          ! gh release view v2.1.9 --repo "$REPO" >/dev/null 2>&1
+          test "$(gh release view v2.1.8 --repo "$REPO" --json targetCommitish --jq .targetCommitish)" = "$STABLE_SOURCE"
+          FEED=$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode)
+          test "$(printf '%s' "$FEED" | python3 -c 'import json,sys;print(json.load(sys.stdin)["version"])')" = "$STABLE_VERSION"
+          echo 'STABLE_TAG_CREATED=NO'
+          echo 'latest.json_CHANGED=NO'
+
+      - name: Install dependencies
+        if: steps.bump.outputs.changed != 'yes'
+        run: npm ci --no-audit --no-fund
+
+      - name: Targeted legacy Command Center regression
+        if: steps.bump.outputs.changed != 'yes'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npx vitest run src/commandCenterRuntimeHotfix.test.tsx src/commandCenter.test.ts
+          echo 'COMMAND_CENTER_LEGACY_TESTS=PASS'
+          echo 'COMMAND_CENTER_31_CHANNEL_TEST=PASS'
+          echo 'COMMAND_CENTER_REOPEN=PASS'
+
+      - name: Full frontend, TypeScript and production build
+        if: steps.bump.outputs.changed != 'yes'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm test
+          npx tsc --noEmit
+          npm run build
+          test -s dist/index.html
+          echo 'FULL_FRONTEND=PASS'
+          echo 'TYPESCRIPT=PASS'
+          echo 'BUILD=PASS'
+
+      - name: Rust full suite
+        if: steps.bump.outputs.changed != 'yes'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cargo test --manifest-path src-tauri/Cargo.toml 2>&1 | tee /tmp/cargo.log
+          grep -q 'test result: ok. 112 passed; 0 failed' /tmp/cargo.log
+          echo 'RUST=112/112 PASS'
+
+      - name: Actual App routing smoke with legacy persisted state
+        if: steps.bump.outputs.changed != 'yes'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm install --no-save --package-lock=false playwright@1.55.0
+          npx playwright install chromium
+          cat > .real-app-smoke.mjs <<'JS'
+          import{chromium}from'playwright';
+          const channels=Array.from({length:31},(_,i)=>({id:`channel-${i+1}`,name:`Channel ${String(i+1).padStart(2,'0')}`,slug:`channel-${i+1}`,cadenceDays:4,targetBufferDays:60,publishHour:18,publishMinute:0,language:'EN',genre:'Music',country:'US',minTracks:10,targetDurationMin:120,enabled:true,youtubeProfileId:`profile-${i+1}`,youtubeChannelId:`youtube-${i+1}`,seo:{titlePatterns:['{topic}'],descriptionTemplate:'{title}',tags:['music'],banned:[]}}));
+          const state={version:8,channels,jobs:[],competitors:[],settings:{workspace:'/tmp/vyron-rc',endlumePath:'',youtubeApiKey:'',autoCheckUpdates:false,reduceMotion:false,fpsMonitor:false,autopilotMode:'off',autopilotEnabled:false,autoCreatePlan:true,autoAssignMusic:true,autoAssignImages:true,autoGenerateMetadata:false,autoQueueRender:true,autoOpenEndlume:false,autoUploadYoutube:false,autopilotIntervalSec:30,tracksPerVideo:10,openaiApiKey:'',openaiModel:'',youtubeOAuthClientId:'',youtubeCategoryId:'10',youtubeIntelligenceAutoRefresh:false,youtubeIntelligenceRefreshMin:30,youtubePublishSafeMode:true,youtubeUploadConcurrency:2,competitorRpmLow:1.2,competitorRpmHigh:4,competitorPoolSize:30,publishedVideoCleanupPolicy:'ask',completedProjectCleanupPolicy:'ask',endlumeTargetDurationMin:120,endlumeTargetRenderSec:35,endlumeTargetFileMinMb:700,endlumeTargetFileMaxMb:1000,endlumePreserveImageQuality:true,endlumeProjectNaming:'VIDEO_{number}'},logs:[],uploadHistory:[],fingerprintCache:{},projectLifecycle:{}};
+          const malformed=[{version:1},{version:1,videos:null,baseline:null,lastUndo:null},{version:1,videos:{},baseline:'legacy',lastUndo:{}},{version:1,videos:'legacy',baseline:[],lastUndo:'legacy'},{version:1,videos:[null],baseline:{bad:null},lastUndo:[null]},{version:1,videos:[{partial:'legacy'}],baseline:{bad:{partial:'legacy'}},lastUndo:[{partial:'legacy'}]},{version:1,videos:[{id:'ok-1',publishAt:'2026-10-01T11:00:00.000Z',privacyStatus:'private'}],baseline:{'ok-1':{id:'ok-1',privacyStatus:'private'}},lastUndo:[{id:'ok-1'}],syncInfo:'legacy'}];
+          const browser=await chromium.launch({headless:true});const page=await browser.newPage({viewport:{width:1440,height:900}});const errors=[];
+          page.on('pageerror',e=>errors.push(String(e)));page.on('console',m=>{if(m.type()==='error')errors.push(m.text())});
+          await page.addInitScript(({state,channels,malformed})=>{
+            localStorage.setItem('vyron:channel-runway:v1',JSON.stringify({version:1,channels:Object.fromEntries(channels.map((c,i)=>[c.id,{channelId:c.id,scheduledVideoCount:i%2?0:undefined,lastLocalCalculation:i%4?'2026-09-01T00:00:00.000Z':undefined,status:i%3?'no-data':undefined,priority:'unknown'}]))}));
+            localStorage.setItem('vyron:production-manager:v2',JSON.stringify({version:2,selectedChannelId:7,tab:'legacy',selectedJobIds:'bad',byChannel:{'channel-1':null,'channel-2':'legacy','channel-3':{projectCount:'30',tracksPerProject:null,selectedProjectIds:'bad',mode:'legacy'}}}));
+            channels.forEach((c,i)=>localStorage.setItem(`vyron:existing-cache:v1:${c.id}`,JSON.stringify(malformed[i%malformed.length])));
+            let cb=1;window.__TAURI_INTERNALS__={transformCallback(fn){const id=cb++;window[`_${id}`]=fn;return id},async invoke(cmd){
+              if(cmd==='load_state')return state;if(cmd==='license_status')return{valid:true,type:'owner-lifetime'};if(cmd==='default_workspace')return'/tmp/vyron-rc';
+              if(cmd==='youtube_active_uploads'||cmd==='youtube_upload_sessions'||cmd==='youtube_oauth_profiles')return[];
+              if(cmd==='youtube_google_config_status')return{configured:false,hasSecret:false,hasApiKey:false};
+              if(cmd.includes('plugin:event|listen'))return cb++;if(cmd.includes('plugin:event|unlisten'))return null;if(cmd.includes('plugin:updater|check'))return null;if(cmd.includes('plugin:app|version'))return'2.1.9-rc.1';
+              if(cmd.includes('plugin:notification|is_permission_granted'))return false;
+              return null
+            },metadata:{currentWindow:{label:'main'},currentWebview:{label:'main',windowLabel:'main'}}};window.confirm=()=>false;
+          },{state,channels,malformed});
+          await page.goto('http://127.0.0.1:1421',{waitUntil:'networkidle'});
+          await page.getByText('VYRON YT PEISOV',{exact:false}).first().waitFor();
+          for(let i=0;i<10;i++){
+            await page.getByRole('button',{name:'Главная',exact:true}).click();
+            await page.getByRole('button',{name:'Командный центр',exact:true}).click();
+            await page.getByText('КОМАНДНЫЙ ЦЕНТР',{exact:true}).waitFor();
+            if(!(await page.locator('.pageWrap').innerText()).trim())throw Error('EMPTY_COMMAND_CENTER');
+            if(await page.getByText('Ошибка интерфейса',{exact:true}).count())throw Error('ERROR_BOUNDARY_VISIBLE');
+          }
+          await page.getByRole('button',{name:'Каналы',exact:true}).click();await page.getByText('КАНАЛЫ',{exact:true}).first().waitFor();
+          await page.getByRole('button',{name:'Главная',exact:true}).click();await page.getByRole('button',{name:'Командный центр',exact:true}).click();await page.getByText('КОМАНДНЫЙ ЦЕНТР',{exact:true}).waitFor();
+          await page.getByRole('button',{name:'Главная',exact:true}).click();await page.getByRole('button',{name:'Открыть Production',exact:true}).click();await page.waitForTimeout(150);
+          await page.getByRole('button',{name:'Главная',exact:true}).click();await page.getByRole('button',{name:'Командный центр',exact:true}).click();await page.getByText('КОМАНДНЫЙ ЦЕНТР',{exact:true}).waitFor();
+          if(errors.length)throw Error('UNCAUGHT:'+errors.join(' | '));
+          console.log('REAL_APP_ROUTE_SMOKE=PASS');console.log('NO_BLACK_SCREEN=PASS');console.log('NAVIGATION=PASS');await browser.close();
+          JS
+          (npx vite --host 127.0.0.1 --port 1421 >/tmp/vite.log 2>&1 & echo $! >/tmp/vite.pid)
+          trap 'kill $(cat /tmp/vite.pid) >/dev/null 2>&1 || true' EXIT
+          for i in {1..80};do curl -fsS http://127.0.0.1:1421 >/dev/null && break;sleep .25;done
+          node ./.real-app-smoke.mjs
+          kill $(cat /tmp/vite.pid) >/dev/null 2>&1 || true
+          trap - EXIT
+          git clean -fdx
+
+      - name: Normalize updater signing key
+        if: steps.bump.outputs.changed != 'yes'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import base64,os
+          raw=os.environ.get('TAURI_SIGNING_PRIVATE_KEY','').strip();assert raw
+          def dec(x):
+            try:return base64.b64decode(x,validate=True).decode()
+            except:return None
+          if raw.startswith('untrusted comment:'):out=base64.b64encode(raw.encode()).decode();box=raw
+          else:
+            one=dec(raw)
+            if one and one.startswith('untrusted comment:'):out=raw;box=one
+            else:box=dec(one) if one else None;assert box and box.startswith('untrusted comment:');out=one.strip()
+          assert 'secret key' in box.splitlines()[0].lower();open(os.environ['GITHUB_ENV'],'a').write('TAURI_SIGNING_PRIVATE_KEY='+out+'\n');print('::add-mask::'+out)
+          PY
+
+      - name: Build ARM64 RC candidate
+        if: steps.bump.outputs.changed != 'yes'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm ci --no-audit --no-fund
+          rustup target add aarch64-apple-darwin
+          npx tauri build --target aarch64-apple-darwin --bundles app,dmg
+          mkdir -p rc
+          APP=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)
+          DMG=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -name '*.dmg' -print -quit)
+          test -d "$APP";test -s "$DMG"
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = "$BUNDLE_ID"
+          test "$(plutil -extract CFBundleExecutable raw -o - "$APP/Contents/Info.plist")" = "$EXECUTABLE"
+          file "$APP/Contents/MacOS/$EXECUTABLE" | grep -q arm64
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          hdiutil verify "$DMG"
+          cp "$DMG" "rc/VYRON-$RC_VERSION-arm64.dmg"
+          shasum -a 256 "rc/VYRON-$RC_VERSION-arm64.dmg" | tee "rc/VYRON-$RC_VERSION-arm64.dmg.sha256"
+          echo 'NATIVE_RC_BUILD=PASS'
+          echo 'CODESIGN=PASS'
+          echo 'DMG_VERIFY=PASS'
+
+      - name: Finder-like RC launch
+        if: steps.bump.outputs.changed != 'yes'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          M="$RUNNER_TEMP/vyron-rc";mkdir -p "$M"
+          hdiutil attach "rc/VYRON-$RC_VERSION-arm64.dmg" -nobrowse -readonly -mountpoint "$M"
+          trap 'hdiutil detach "$M" >/dev/null 2>&1||true' EXIT
+          A="$M/VYRON.app";codesign --verify --deep --strict "$A"
+          env -i HOME="$HOME" USER="$USER" PATH='/usr/bin:/bin:/usr/sbin:/sbin' TMPDIR="$RUNNER_TEMP/" "$A/Contents/MacOS/$EXECUTABLE" >/tmp/rc-launch.log 2>&1 & P=$!
+          sleep 8;kill -0 "$P";kill "$P"||true;wait "$P"||true
+          hdiutil detach "$M";trap - EXIT
+          echo 'FINDER_RC_LAUNCH=PASS'
+
+      - name: Publish RC prerelease only
+        if: steps.bump.outputs.changed != 'yes'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ! gh release view "$RC_TAG" --repo "$REPO" >/dev/null 2>&1
+          cat >/tmp/rc-notes <<'EOF'
+          ## VYRON 2.1.9-rc.1 — Real Mac Command Center candidate
+
+          RC only. Stable updater feed remains on 2.1.8.
+
+          - Normalizes malformed legacy `vyron:existing-cache:v1:<channel>` payloads.
+          - Filters malformed legacy existing-video rows before schedule derivation.
+          - Normalizes legacy Production preferences used by Command Center.
+          - Hardens Command Center readiness calculations against malformed persisted jobs.
+          - Adds visible renderer Error Boundary with redacted diagnostics.
+          - Adds 31-channel legacy-state/reopen regression coverage.
+
+          This candidate must pass physical Command Center testing on the user's actual Mac before any stable 2.1.9 release.
+          EOF
+          gh release create "$RC_TAG" --repo "$REPO" --target "$(git rev-parse HEAD)" --title 'VYRON 2.1.9-rc.1' --prerelease --notes-file /tmp/rc-notes "rc/VYRON-$RC_VERSION-arm64.dmg" "rc/VYRON-$RC_VERSION-arm64.dmg.sha256"
+          FEED=$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode)
+          test "$(printf '%s' "$FEED" | python3 -c 'import json,sys;print(json.load(sys.stdin)["version"])')" = "$STABLE_VERSION"
+          ! gh release view v2.1.9 --repo "$REPO" >/dev/null 2>&1
+          echo 'RC_PRERELEASE_PUBLISHED=YES'
+          echo 'STABLE_TAG_CREATED=NO'
+          echo 'latest.json_CHANGED=NO'
