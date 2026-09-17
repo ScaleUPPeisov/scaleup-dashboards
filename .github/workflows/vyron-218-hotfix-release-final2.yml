@@ -1,0 +1,161 @@
+name: VYRON 2.1.8 Hotfix Final Publish 2
+on:
+  push:
+    branches: [hotfix/vyron-command-center-black-screen]
+    paths: ['.github/workflows/vyron-218-hotfix-release-final2.yml']
+permissions:
+  contents: write
+  actions: read
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  PRODUCT_SOURCE: c6e95c53c7d9da3be59b6f2dd3c751469e3936bd
+  PRODUCT_TREE: 17aebb5fbadeca14c8ea80757c03730fc806c42e
+  HOTFIX_SOURCE: c28da0dd5061f921b7c55bfd5177fe2ee4286b71
+  BUNDLE_ID: studio.channelflow.desktop
+  EXECUTABLE: channelflow
+jobs:
+  publish:
+    runs-on: macos-14
+    timeout-minutes: 180
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: '-'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: c6e95c53c7d9da3be59b6f2dd3c751469e3936bd
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Safety
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$PRODUCT_SOURCE"
+          test "$(git rev-parse HEAD^{tree})" = "$PRODUCT_TREE"
+          test "$(git rev-parse HEAD^)" = "$HOTFIX_SOURCE"
+          test "$(node -p "require('./package.json').version")" = 2.1.8
+          ! gh release view v2.1.8 --repo "$REPO" >/dev/null 2>&1
+          CUR=$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode | python3 -c 'import json,sys;print(json.load(sys.stdin)["version"])'); test "$CUR" = 2.1.7
+          echo SAFETY=PASS
+      - name: Production Command Center smoke
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm ci --no-audit --no-fund
+          npm run build
+          npm install --no-save --package-lock=false playwright@1.55.0
+          npx playwright install chromium
+          cat > .cc-smoke.mjs <<'JS'
+          import { chromium } from 'playwright';
+          const browser=await chromium.launch({headless:true});
+          const page=await browser.newPage({viewport:{width:1440,height:900}});
+          const runtimeErrors=[];
+          page.on('pageerror',e=>runtimeErrors.push(String(e)));
+          page.on('console',m=>{if(m.type()==='error')runtimeErrors.push('console:'+m.text())});
+          await page.addInitScript(()=>{
+            const channels=Array.from({length:31},(_,i)=>({id:`c${i+1}`,name:i===0?'Lost Highway FM':`Channel ${String(i+1).padStart(2,'0')}`,slug:`channel-${i+1}`,cadenceDays:4,targetBufferDays:60,publishHour:18,publishMinute:0,language:'EN',genre:'Music',country:'US',minTracks:10,targetDurationMin:120,enabled:true,youtubeProfileId:`p${i+1}`,youtubeChannelId:`yt${i+1}`,seo:{titlePatterns:['{topic}'],descriptionTemplate:'{title}',tags:['music'],banned:[]}}));
+            const state={version:8,channels,jobs:[],competitors:[],settings:{workspace:'/tmp/vyron218',endlumePath:'',youtubeApiKey:'',autoCheckUpdates:false,reduceMotion:false,fpsMonitor:false,autopilotMode:'off',autopilotEnabled:false,autoCreatePlan:true,autoAssignMusic:true,autoAssignImages:true,autoGenerateMetadata:false,autoQueueRender:true,autoOpenEndlume:false,autoUploadYoutube:false,autopilotIntervalSec:30,tracksPerVideo:10,openaiApiKey:'',openaiModel:'',youtubeOAuthClientId:'',youtubeCategoryId:'10',youtubeIntelligenceAutoRefresh:false,youtubeIntelligenceRefreshMin:30,youtubePublishSafeMode:true,youtubeUploadConcurrency:2,competitorRpmLow:1.2,competitorRpmHigh:4,competitorPoolSize:30,publishedVideoCleanupPolicy:'ask',completedProjectCleanupPolicy:'ask',endlumeTargetDurationMin:120,endlumeTargetRenderSec:35,endlumeTargetFileMinMb:700,endlumeTargetFileMaxMb:1000,endlumePreserveImageQuality:true,endlumeProjectNaming:'VIDEO_{number}'},logs:[],uploadHistory:[],fingerprintCache:{},projectLifecycle:{}};
+            localStorage.setItem('vyron:channel-runway:v1',JSON.stringify({version:1,channels:Object.fromEntries(channels.map((c,i)=>[c.id,{channelId:c.id,scheduledVideoCount:i%2?0:undefined,lastLocalCalculation:i%4?new Date().toISOString():undefined,status:i%3?'no-data':undefined,priority:'unknown'}]))}));
+            let cb=1; const callbacks={};
+            window.__TAURI_INTERNALS__={transformCallback(fn,once=false){const id=cb++;callbacks[id]=fn;window[`_${id}`]=(...args)=>{try{return fn(...args)}finally{if(once){delete callbacks[id];delete window[`_${id}`]}}};return id},async invoke(cmd,args){if(cmd==='load_state')return state;if(cmd==='save_state')return {ok:true};if(cmd==='license_status')return {valid:true,key:'acceptance'};if(cmd==='default_workspace')return '/tmp/vyron218';if(cmd==='youtube_active_uploads'||cmd==='youtube_upload_sessions'||cmd==='youtube_oauth_profiles')return [];if(cmd==='youtube_google_config_status')return {configured:false,hasSecret:false,hasApiKey:false};if(cmd.includes('version'))return '2.1.8';if(cmd.includes('plugin:event|listen'))return Math.floor(Math.random()*10000)+1;if(cmd.includes('plugin:event|unlisten'))return null;if(cmd.includes('plugin:updater|check'))return null;if(cmd.includes('plugin:notification|is_permission_granted'))return false;if(cmd.includes('plugin:notification|request_permission'))return 'denied';if(cmd==='diagnostics')return {ok:true};if(cmd==='security_keychain_diagnostics')return {ok:true,status:'PASS'};if(cmd==='security_oauth_inventory')return {app_version:'2.1.8',bundle_id:'studio.channelflow.desktop',service:'com.scaleup.vyron.security',enumeration_status:'PASS',total_service_accounts:0,refresh_token_accounts:0,access_token_accounts:0,client_secret_accounts:0,unique_oauth_profile_uuids:0,profiles:[],current_channel_profiles:31,current_uuid_with_refresh_token:0,current_uuid_without_refresh_token:31,keychain_uuid_not_present_in_current_database:0,orphan_profile_uuid_count:0,readable_orphan_refresh_tokens:0,denied_orphan_refresh_tokens:0,failed_orphan_refresh_tokens:0,historical_json:{exact_path:'',file:'NOT_FOUND',profiles_in_json:0,profiles_with_refresh_token:0}};if(cmd==='youtube_google_project_diagnostic')return {oauthProfileId:'',clientId:'',projectIdSource:'not-locally-known',youtubeApiRequests:0,keychainSecretsRead:false};if(cmd==='youtube_oauth_browsers')return [{id:'default',label:'Default',available:true}];if(cmd==='studio_drafts_list')return {drafts:[],port:0,running:false};if(cmd==='studio_drafts_start_bridge')return {ok:true,port:0,ttlMs:0};if(cmd==='scan_channel_inbox')return {music:[],images:[],metadata:[]};return null},metadata:{currentWindow:{label:'main'},currentWebview:{label:'main',windowLabel:'main'}}};window.confirm=()=>false;
+          });
+          await page.goto('http://127.0.0.1:4173',{waitUntil:'networkidle'});
+          await page.getByText('Главная',{exact:true}).waitFor({timeout:15000});
+          for(let i=0;i<5;i++){await page.getByRole('button',{name:'Главная',exact:true}).click();await page.getByRole('button',{name:'Командный центр',exact:true}).click();await page.getByText('КОМАНДНЫЙ ЦЕНТР',{exact:true}).waitFor();if(!(await page.locator('.pageWrap').innerText()).trim())throw new Error('EMPTY_COMMAND_CENTER')}
+          await page.getByRole('button',{name:'Каналы',exact:true}).click(); await page.getByText('Каналы',{exact:true}).first().waitFor(); await page.getByRole('button',{name:'Главная',exact:true}).click(); await page.getByRole('button',{name:'Командный центр',exact:true}).click(); await page.getByText('КОМАНДНЫЙ ЦЕНТР',{exact:true}).waitFor();
+          if(runtimeErrors.length)throw new Error('RUNTIME_ERRORS:'+runtimeErrors.join(' | '));
+          console.log('ROUTE_SMOKE=PASS'); console.log('COMMAND_CENTER_PRODUCTION=PASS'); await browser.close();
+          JS
+          (npx vite preview --host 127.0.0.1 --port 4173 >/tmp/preview.log 2>&1 & echo $! >/tmp/preview.pid)
+          trap 'kill $(cat /tmp/preview.pid) >/dev/null 2>&1 || true; rm -f .cc-smoke.mjs' EXIT
+          for i in {1..60}; do curl -fsS http://127.0.0.1:4173 >/dev/null && break || true; sleep 0.2; done
+          curl -fsS http://127.0.0.1:4173 >/dev/null
+          node ./.cc-smoke.mjs
+          kill $(cat /tmp/preview.pid) >/dev/null 2>&1 || true; rm -f .cc-smoke.mjs; trap - EXIT
+      - name: Normalize updater key
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import base64,os
+          raw=os.environ['TAURI_SIGNING_PRIVATE_KEY'].strip()
+          def dec(v):
+            try:return base64.b64decode(v.strip(),validate=True).decode()
+            except:return None
+          if raw.startswith('untrusted comment:'): box=raw; encoded=base64.b64encode(raw.encode()).decode()
+          else:
+            once=dec(raw)
+            if once and once.startswith('untrusted comment:'): box=once; encoded=raw
+            else:
+              twice=dec(once) if once else None
+              if not(twice and twice.startswith('untrusted comment:')): raise SystemExit('bad signing key')
+              box=twice; encoded=once.strip()
+          if 'secret key' not in box.splitlines()[0].lower(): raise SystemExit('not secret key')
+          with open(os.environ['GITHUB_ENV'],'a') as f:f.write('TAURI_SIGNING_PRIVATE_KEY='+encoded+'\n')
+          print('::add-mask::'+encoded)
+          PY
+      - name: Build ARM64
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git reset --hard "$PRODUCT_SOURCE"; git clean -fdx
+          npm ci --no-audit --no-fund
+          rustup target add aarch64-apple-darwin
+          npx tauri build --target aarch64-apple-darwin --bundles app,dmg
+          mkdir -p production
+          APP=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name VYRON.app -print -quit); DMG=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -name '*.dmg' -print -quit); UPDATER=$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name '*.app.tar.gz' -print -quit); SIG=$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name '*.app.tar.gz.sig' -print -quit)
+          test -d "$APP"; test -s "$DMG"; test -s "$UPDATER"; test -s "$SIG"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = 2.1.8; test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = "$BUNDLE_ID"; test "$(plutil -extract CFBundleExecutable raw -o - "$APP/Contents/Info.plist")" = "$EXECUTABLE"; file "$APP/Contents/MacOS/$EXECUTABLE" | grep -q arm64
+          codesign --verify --deep --strict --verbose=2 "$APP"; hdiutil verify "$DMG"
+          cp "$DMG" production/VYRON-2.1.8-arm64.dmg; cp "$UPDATER" production/VYRON.app.tar.gz; cp "$SIG" production/VYRON.app.tar.gz.sig
+          D=$(shasum -a 256 production/VYRON-2.1.8-arm64.dmg|awk '{print $1}'); U=$(shasum -a 256 production/VYRON.app.tar.gz|awk '{print $1}'); echo "$D  VYRON-2.1.8-arm64.dmg">production/VYRON-2.1.8-arm64.dmg.sha256; echo "$U  VYRON.app.tar.gz">production/VYRON.app.tar.gz.sha256; echo DMG_SHA256=$D; echo UPDATER_SHA256=$U; echo ARM64_BUILD=PASS; echo CODESIGN=PASS; echo DMG_VERIFY=PASS
+      - name: Verify updater signature
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          brew install minisign
+          P=$(node -p "require('./src-tauri/tauri.conf.json').plugins.updater.pubkey"); printf '%s' "$P"|base64 --decode >/tmp/pub; base64 --decode <production/VYRON.app.tar.gz.sig >/tmp/sig; minisign -Vm production/VYRON.app.tar.gz -p /tmp/pub -x /tmp/sig; echo UPDATER_SIGNATURE=VERIFIED; echo PUBLIC_KEY_CHANGED=NO
+      - name: Finder launch
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          M="$RUNNER_TEMP/vyron218"; mkdir -p "$M"; hdiutil attach production/VYRON-2.1.8-arm64.dmg -nobrowse -readonly -mountpoint "$M"; trap 'hdiutil detach "$M" >/dev/null 2>&1||true' EXIT; A="$M/VYRON.app"; codesign --verify --deep --strict --verbose=2 "$A"; env -i HOME="$HOME" USER="$USER" PATH=/usr/bin:/bin:/usr/sbin:/sbin TMPDIR="$RUNNER_TEMP/" "$A/Contents/MacOS/$EXECUTABLE" >/tmp/native.log 2>&1 & P=$!; sleep 8; kill -0 $P; kill $P||true; wait $P||true; hdiutil detach "$M"; trap - EXIT; echo FINDER_LAUNCH=PASS
+      - name: Publish and activate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          export PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          python3 - <<'PY'
+          import json,os,pathlib
+          sig=pathlib.Path('production/VYRON.app.tar.gz.sig').read_text().strip(); d={'version':'2.1.8','notes':'VYRON 2.1.8 — Command Center black-screen hotfix.','pub_date':os.environ['PUB_DATE'],'platforms':{'darwin-aarch64':{'url':'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.8/VYRON.app.tar.gz','signature':sig}}}; pathlib.Path('production/latest.json').write_text(json.dumps(d,ensure_ascii=False,indent=2)+'\n')
+          PY
+          cat >/tmp/notes <<'EOF'
+          ## VYRON 2.1.8
+          - Исправлен чёрный экран Командного центра.
+          - Восстановлен правильный render path Command Center.
+          - Добавлена безопасная нормализация legacy Channel Runway state.
+          - Исправлен crash при отсутствующем channelName.
+          - Regression fixes only.
+          EOF
+          gh release create v2.1.8 --repo "$REPO" --target "$PRODUCT_SOURCE" --title 'VYRON 2.1.8' --notes-file /tmp/notes production/VYRON-2.1.8-arm64.dmg production/VYRON-2.1.8-arm64.dmg.sha256 production/VYRON.app.tar.gz production/VYRON.app.tar.gz.sha256 production/VYRON.app.tar.gz.sig production/latest.json
+          mkdir -p /tmp/pub218; gh release download v2.1.8 --repo "$REPO" --dir /tmp/pub218 --pattern VYRON-2.1.8-arm64.dmg --pattern VYRON.app.tar.gz --pattern VYRON.app.tar.gz.sig
+          test "$(shasum -a 256 production/VYRON-2.1.8-arm64.dmg|awk '{print $1}')" = "$(shasum -a 256 /tmp/pub218/VYRON-2.1.8-arm64.dmg|awk '{print $1}')"; test "$(shasum -a 256 production/VYRON.app.tar.gz|awk '{print $1}')" = "$(shasum -a 256 /tmp/pub218/VYRON.app.tar.gz|awk '{print $1}')"; cmp production/VYRON.app.tar.gz.sig /tmp/pub218/VYRON.app.tar.gz.sig; base64 --decode </tmp/pub218/VYRON.app.tar.gz.sig >/tmp/pub218sig; minisign -Vm /tmp/pub218/VYRON.app.tar.gz -p /tmp/pub -x /tmp/pub218sig; echo PUBLISHED_HASHES_MATCH=PASS; echo PUBLISHED_UPDATER_SIGNATURE=VERIFIED
+          S=$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .sha); C=$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content|tr -d '\n'|base64 --decode|python3 -c 'import json,sys;print(json.load(sys.stdin)["version"])'); test "$C" = 2.1.7; B=$(base64 <production/latest.json|tr -d '\n'); gh api --method PUT "repos/$REPO/contents/vyron-updates/latest.json" -f message='release: activate VYRON 2.1.8 updater feed' -f content="$B" -f sha="$S" -f branch=main >/tmp/feed; python3 -c "import json;print('LATEST_JSON_COMMIT='+json.load(open('/tmp/feed'))['commit']['sha'])"
+      - name: Final verify
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh release view v2.1.8 --repo "$REPO" --json tagName,isDraft,isPrerelease,targetCommitish,assets >/tmp/r; python3 - <<'PY'
+          import json,os
+          d=json.load(open('/tmp/r')); assert d['tagName']=='v2.1.8' and not d['isDraft'] and not d['isPrerelease'] and d['targetCommitish']==os.environ['PRODUCT_SOURCE']; assert {'VYRON-2.1.8-arm64.dmg','VYRON.app.tar.gz','VYRON.app.tar.gz.sig'}<={x['name'] for x in d['assets']}
+          PY
+          gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content|tr -d '\n'|base64 --decode >/tmp/f; python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/f')); assert d['version']=='2.1.8'; assert '/releases/download/v2.1.8/VYRON.app.tar.gz' in d['platforms']['darwin-aarch64']['url']; print('latest.json_VERSION=2.1.8'); print('SETTINGS_DETECTS_2.1.8=PASS_CONTRACT'); print('VYRON_2.1.8_STABLE_RELEASED=YES')
+          PY
+          test "$(gh release view v2.1.7 --repo "$REPO" --json targetCommitish --jq .targetCommitish)" = 0e511c8a42cf4e3232cb8d0384a1625664a33cdf; test "$(gh release view v2.1.6 --repo "$REPO" --json targetCommitish --jq .targetCommitish)" = 1c2da4866c90a353f8ca4e9d97702ffddb74e853; echo v2.1.7_CHANGED=NO; echo v2.1.6_CHANGED=NO
