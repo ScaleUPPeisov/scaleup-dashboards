@@ -1,11 +1,11 @@
 {
-  "version": "2.1.7",
-  "notes": "VYRON 2.1.7 stability release: Channels render fix, legacy normalization, compact Dashboard and queued upload removal.",
-  "pub_date": "2026-09-17T12:33:02Z",
+  "version": "2.1.8",
+  "notes": "VYRON 2.1.8 — Command Center black-screen hotfix, render-path restoration and legacy Channel Runway normalization. Regression fixes only.",
+  "pub_date": "2026-09-17T15:04:53Z",
   "platforms": {
     "darwin-aarch64": {
-      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.7/VYRON.app.tar.gz",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM1ZkRkU4Q0hkOGtFNmlZU21GenRBQk5tYWs0VnFLMkltbUcwVVZDMWNTS09MVEFSQmxhcUdzVkczUkUyUStXVVN0Vm1pRkxyRHRidHlYZmZVTDY0WmdjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5NjQ4MzY3CWZpbGU6VllST04uYXBwLnRhci5negp3YnBFYUNWRDdCVWJ1ZHNBL25BZGdRNVA2OUduM3hVSDNibktQc3dHQndsNTdJLzNFanVGR2I0bGZLditkUEVLOXZHaVFzM2Y5TTJkN285cGtQYzhEZz09Cg=="
+      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.8/VYRON.app.tar.gz",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM2FaKzV1RzVUVnl1c1FONnU0TWRra2ZneWU0KytEdFhKTkJPZ2hLNHJ0YXVmZG1Mb1NWK1VNamJab3RuSDZ6SGlBNWljYzVPTkJJd2hEdWgrMVVPUFFFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5NjU3NDcxCWZpbGU6VllST04uYXBwLnRhci5negp3ditIVXM2U1NJWkpHaEl5OG8zUFVxaWJJQlJ3SlBSV2VpdUtqYVIxU2k4VTZpQVRsSUZGbFgzVytYQm5rd1hoY25uTjRkRGkzMTJ4VmVBa3JQVWVBQT09Cg=="
     }
   }
 }
