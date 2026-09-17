@@ -30,11 +30,15 @@ type Store=AppState&{
 let saveTimer:number|undefined;
 function scheduleSave(){window.clearTimeout(saveTimer);saveTimer=window.setTimeout(()=>{void useApp.getState().persist().catch(e=>{const h=humanizeError(e,'storage');notifyError(h.title,h.message,{operationId:'state-save-failed'})})},180)}
 function normalizeJob(j:VideoJob):VideoJob{const lifecycle=j.storageLifecycle||(j.youtubeVideoId?'UPLOADED':j.status==='UPLOADING'?'UPLOADING':j.status==='ERROR'?'FAILED':j.finalPath?'NEW':undefined);return {...j,tags:Array.isArray(j.tags)?j.tags:[],metadataSource:j.metadataSource||'template',uploadProgress:j.uploadProgress||0,storageLifecycle:lifecycle}}
-function normalizeChannel(c:Channel):Channel{return {...c,minTracks:c.minTracks||10,targetBufferDays:c.targetBufferDays||60,cadenceDays:c.cadenceDays||4,seo:{titlePatterns:c.seo?.titlePatterns?.length?c.seo.titlePatterns:['{topic} • Session {number}'],descriptionTemplate:c.seo?.descriptionTemplate||'{title}\n\n{genre}',tags:c.seo?.tags||[],banned:c.seo?.banned||[],aiPrompt:c.seo?.aiPrompt}}}
+export function normalizeChannel(c:Channel):Channel{
+  const raw=c as Partial<Channel>;
+  const name=String(raw.name||raw.slug||raw.youtubeChannelId||'Канал без названия').trim()||'Канал без названия';
+  return {...c,name,slug:String(raw.slug||slugify(name)),genre:String(raw.genre||'Music'),language:String(raw.language||'RU'),country:String(raw.country||'—'),enabled:raw.enabled!==false,minTracks:raw.minTracks||10,targetBufferDays:raw.targetBufferDays||60,cadenceDays:raw.cadenceDays||4,publishHour:Number.isFinite(raw.publishHour)?Number(raw.publishHour):18,publishMinute:Number.isFinite(raw.publishMinute)?Number(raw.publishMinute):0,targetDurationMin:raw.targetDurationMin||120,seo:{titlePatterns:raw.seo?.titlePatterns?.length?raw.seo.titlePatterns:['{topic} • Session {number}'],descriptionTemplate:raw.seo?.descriptionTemplate||'{title}\n\n{genre}',tags:raw.seo?.tags||[],banned:raw.seo?.banned||[],aiPrompt:raw.seo?.aiPrompt}};
+}
 
 export const useApp=create<Store>((set,get)=>({
   ...EMPTY_STATE,page:'dashboard',booted:false,
-  hydrate:s=>set({...EMPTY_STATE,...s,version:8,channels:(s.channels||[]).map(normalizeChannel),jobs:(s.jobs||[]).map(normalizeJob),competitors:s.competitors||[],settings:{...DEFAULT_SETTINGS,...s.settings,youtubeIntelligenceAutoRefresh:false},logs:s.logs||[],uploadHistory:Array.isArray((s as any).uploadHistory)?(s as any).uploadHistory:[],fingerprintCache:(s as any).fingerprintCache||{},projectLifecycle:(s as any).projectLifecycle||{},booted:true}),
+  hydrate:s=>set({...EMPTY_STATE,...s,version:8,channels:(s.channels||[]).filter(Boolean).map(normalizeChannel),jobs:(s.jobs||[]).filter(Boolean).map(normalizeJob),competitors:s.competitors||[],settings:{...DEFAULT_SETTINGS,...s.settings,youtubeIntelligenceAutoRefresh:false},logs:s.logs||[],uploadHistory:Array.isArray((s as any).uploadHistory)?(s as any).uploadHistory:[],fingerprintCache:(s as any).fingerprintCache||{},projectLifecycle:(s as any).projectLifecycle||{},booted:true}),
   setPage:page=>set({page}),
   persist:async()=>{const s=get();const state:AppState={version:8,channels:s.channels,jobs:s.jobs,competitors:s.competitors,settings:s.settings,logs:s.logs,uploadHistory:s.uploadHistory,fingerprintCache:s.fingerprintCache,projectLifecycle:s.projectLifecycle};const result=await api.saveState(state);if(result?.securityWarning){const h=humanizeError(result.securityWarning,'storage');notifyWarning(h.title,h.message,{operationId:'keychain-autosave-warning'})}},
   addChannel:p=>{
@@ -53,8 +57,8 @@ export const useApp=create<Store>((set,get)=>({
   patchSettings:p=>{set(s=>({settings:{...s.settings,...p}}));scheduleSave()},
   recordUploadHistory:r=>{set(s=>({uploadHistory:[...s.uploadHistory,r]}));scheduleSave()},
   replaceUploadHistory:rows=>{set({uploadHistory:rows});scheduleSave()},
-  cacheFingerprint:(path,e)=>{set(s=>({fingerprintCache:{...s.fingerprintCache,[path]:e}}));scheduleSave()},
-  patchProjectLifecycle:(key,p)=>{set(s=>({projectLifecycle:{...s.projectLifecycle,[key]:p}}));scheduleSave()},
+  cacheFingerprint:(path,e)=>{set(s=>({fingerprintCache:{...s.fingerprintCache,[path]:e}});scheduleSave()},
+  patchProjectLifecycle:(key,p)=>{set(s=>({projectLifecycle:{...s.projectLifecycle,[key]:p}});scheduleSave()},
   log:(message,level='info')=>{const safe=redactSensitive(message);set(s=>({logs:[{at:new Date().toISOString(),level,message:safe},...s.logs].slice(0,500)}));scheduleSave()},
   toast:notice=>{notifyLegacy(notice)}
 }));
