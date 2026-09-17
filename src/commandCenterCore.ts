@@ -5,6 +5,9 @@ import {calendarDaysBetween,krasnoyarskClock} from './channelRunwayCore';
 export const COMMAND_CENTER_STORAGE_KEY='vyron:command-center:v1';
 const DAY_MS=86_400_000;
 const pad=(n:number)=>String(n).padStart(2,'0');
+const isRecord=(value:unknown):value is Record<string,unknown>=>Boolean(value)&&typeof value==='object'&&!Array.isArray(value);
+const text=(value:unknown)=>typeof value==='string'?value.trim():'';
+const rowsFor=(jobs:unknown,channelId:string)=>Array.isArray(jobs)?jobs.filter(isRecord).filter(j=>String(j.channelId||'')===channelId):[];
 
 export type ProductionReadiness={
   channelId:string;
@@ -35,7 +38,7 @@ export type AttentionSeverity='critical'|'warning'|'info';
 export type AttentionItem={channelId:string;channelName:string;severity:AttentionSeverity;title:string;detail:string};
 
 export function addCalendarDays(dateKey:string,days:number){
-  const m=dateKey.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const m=String(dateKey||'').match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if(!m)return undefined;
   const t=Date.UTC(Number(m[1]),Number(m[2])-1,Number(m[3]))+Math.round(days)*DAY_MS;
   const d=new Date(t);
@@ -58,8 +61,8 @@ export function buildLocalBatchPlan(channel:Channel,count:number,scheduledUntil?
   }
   return{
     id:`${channel.id}:${now.getTime()}`,
-    channelId:channel.id,
-    channelName:channel.name,
+    channelId:String(channel.id||''),
+    channelName:String(channel.name||channel.id||'Канал без названия'),
     createdAt:now.toISOString(),
     count:safeCount,
     cadenceDays:cadence,
@@ -69,29 +72,29 @@ export function buildLocalBatchPlan(channel:Channel,count:number,scheduledUntil?
 }
 
 export function productionReadiness(channel:Channel,jobs:VideoJob[],target:number):ProductionReadiness{
-  const rows=jobs.filter(j=>j.channelId===channel.id);
-  const safeTarget=Math.max(1,Math.floor(target||1));
-  const covers=rows.filter(j=>Boolean(j.coverPath)).length;
-  const music=rows.filter(j=>j.tracksCount>=j.minTracks).length;
-  const videos=rows.filter(j=>Boolean(j.finalPath)).length;
-  const seo=rows.filter(j=>Boolean(j.title?.trim()&&j.description?.trim()&&j.tags?.length)).length;
-  const schedule=rows.filter(j=>Boolean(j.publishAt)).length;
-  const readyToYoutube=rows.filter(j=>Boolean(j.finalPath&&j.title?.trim()&&j.description?.trim()&&j.tags?.length&&j.publishAt&&j.status!=='ERROR')).length;
+  const channelId=String(channel?.id||'');
+  const rows=rowsFor(jobs,channelId);
+  const safeTarget=Math.max(1,Math.floor(Number.isFinite(target)?target:1));
+  const covers=rows.filter(j=>Boolean(text(j.coverPath))).length;
+  const music=rows.filter(j=>Number.isFinite(j.tracksCount)&&Number.isFinite(j.minTracks)&&Number(j.tracksCount)>=Number(j.minTracks)).length;
+  const videos=rows.filter(j=>Boolean(text(j.finalPath))).length;
+  const seo=rows.filter(j=>Boolean(text(j.title)&&text(j.description)&&Array.isArray(j.tags)&&j.tags.length)).length;
+  const schedule=rows.filter(j=>Boolean(text(j.publishAt))).length;
+  const readyToYoutube=rows.filter(j=>Boolean(text(j.finalPath)&&text(j.title)&&text(j.description)&&Array.isArray(j.tags)&&j.tags.length&&text(j.publishAt)&&j.status!=='ERROR')).length;
   const errors=rows.filter(j=>j.status==='ERROR').length;
   const dimensions=[covers,music,videos,seo,schedule].map(n=>Math.min(1,n/safeTarget));
   const progress=Math.round((dimensions.reduce((a,b)=>a+b,0)/dimensions.length)*100);
-  return{channelId:channel.id,target:safeTarget,covers,music,videos,seo,schedule,readyToYoutube,errors,progress};
+  return{channelId,target:safeTarget,covers,music,videos,seo,schedule,readyToYoutube,errors,progress};
 }
-
 
 export type ChannelProductionReadiness={
   channelId:string;targetProjects:number;createdProjects:number;renderedVideos:number;readyToPublish:number;percent:number;
   covers:number;music:number;seo:number;schedule:number;errors:number;
 };
 export function getChannelProductionReadiness(channel:Channel,jobs:VideoJob[],target:number):ChannelProductionReadiness{
-  const base=productionReadiness(channel,jobs,target);const rows=jobs.filter(j=>j.channelId===channel.id);
+  const base=productionReadiness(channel,jobs,target),rows=rowsFor(jobs,String(channel?.id||''));
   const percent=Math.max(0,Math.min(100,Math.round((base.readyToYoutube/base.target)*100)));
-  return{channelId:channel.id,targetProjects:base.target,createdProjects:rows.length,renderedVideos:base.videos,readyToPublish:base.readyToYoutube,percent,covers:base.covers,music:base.music,seo:base.seo,schedule:base.schedule,errors:base.errors};
+  return{channelId:String(channel?.id||''),targetProjects:base.target,createdProjects:rows.length,renderedVideos:base.videos,readyToPublish:base.readyToYoutube,percent,covers:base.covers,music:base.music,seo:base.seo,schedule:base.schedule,errors:base.errors};
 }
 
 export function buildAttentionItems(
@@ -101,27 +104,29 @@ export function buildAttentionItems(
   batchSize:number
 ){
   const items:AttentionItem[]=[];
-  for(const channel of channels.filter(c=>c.enabled)){
-    const r=runway[channel.id];
+  for(const channel of (Array.isArray(channels)?channels:[]).filter(c=>c?.enabled)){
+    const channelId=String(channel?.id||'');
+    const channelName=String(channel?.name||channelId||'Канал без названия');
+    const r=runway?.[channelId];
     const p=productionReadiness(channel,jobs,batchSize);
     if(!r||r.runwayDays===undefined){
-      items.push({channelId:channel.id,channelName:channel.name,severity:'warning',title:'Нет подтверждённого расписания',detail:'Нужна ручная синхронизация расписания внутри YouTube.'});
+      items.push({channelId,channelName,severity:'warning',title:'Нет подтверждённого расписания',detail:'Нужна ручная синхронизация расписания внутри YouTube.'});
     }else if(r.runwayDays<=14){
-      items.push({channelId:channel.id,channelName:channel.name,severity:'critical',title:`Запас ${r.runwayDays} дн.`,detail:'Новая пачка нужна в приоритетном порядке.'});
+      items.push({channelId,channelName,severity:'critical',title:`Запас ${r.runwayDays} дн.`,detail:'Новая пачка нужна в приоритетном порядке.'});
     }else if(r.runwayDays<=30){
-      items.push({channelId:channel.id,channelName:channel.name,severity:'warning',title:`Запас ${r.runwayDays} дн.`,detail:'Пора готовить следующую пачку.'});
+      items.push({channelId,channelName,severity:'warning',title:`Запас ${r.runwayDays} дн.`,detail:'Пора готовить следующую пачку.'});
     }else if(r.runwayDays<=45){
-      items.push({channelId:channel.id,channelName:channel.name,severity:'info',title:`Запас ${r.runwayDays} дн.`,detail:'Канал уже нужно поставить в производственный план.'});
+      items.push({channelId,channelName,severity:'info',title:`Запас ${r.runwayDays} дн.`,detail:'Канал уже нужно поставить в производственный план.'});
     }
     if(p.videos>p.seo){
-      items.push({channelId:channel.id,channelName:channel.name,severity:'warning',title:`SEO не готово: ${p.videos-p.seo}`,detail:'Есть готовые видео без полного title / description / tags.'});
+      items.push({channelId,channelName,severity:'warning',title:`SEO не готово: ${p.videos-p.seo}`,detail:'Есть готовые видео без полного title / description / tags.'});
     }
     if(p.readyToYoutube>0){
-      items.push({channelId:channel.id,channelName:channel.name,severity:'info',title:`Готово к YouTube: ${p.readyToYoutube}`,detail:'Файлы, SEO и локальное расписание уже заполнены.'});
+      items.push({channelId,channelName,severity:'info',title:`Готово к YouTube: ${p.readyToYoutube}`,detail:'Файлы, SEO и локальное расписание уже заполнены.'});
     }
   }
   const rank:Record<AttentionSeverity,number>={critical:0,warning:1,info:2};
-  return items.sort((a,b)=>rank[a.severity]-rank[b.severity]||a.channelName.localeCompare(b.channelName,'ru'));
+  return items.sort((a,b)=>rank[a.severity]-rank[b.severity]||String(a.channelName||'').localeCompare(String(b.channelName||''),'ru'));
 }
 
 export function productionForecast(
@@ -131,11 +136,11 @@ export function productionForecast(
   batchSize:number,
   now=new Date()
 ){
-  const active=channels.filter(c=>c.enabled);
+  const active=(Array.isArray(channels)?channels:[]).filter(c=>c?.enabled);
   const today=krasnoyarskClock(now).dateKey;
   let dueNow=0,next7Days=0,critical=0,readyToYoutube=0,missingSeo=0;
   for(const channel of active){
-    const r=runway[channel.id];
+    const r=runway?.[String(channel?.id||'')];
     if(r?.runwayDays!==undefined){
       if(r.runwayDays<=45)dueNow++;
       if(r.runwayDays<=14)critical++;

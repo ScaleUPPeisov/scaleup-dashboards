@@ -6,6 +6,7 @@ import {
   recalculateRunwayRecord,
   type ChannelRunwayRecord
 } from './channelRunwayCore';
+import {normalizeExistingVideoList,normalizeExistingVideoRecord} from './channelSchedule';
 
 export type ChannelRunwayStore={
   version:1;
@@ -23,9 +24,11 @@ const VALID_PRIORITY=new Set(['low','normal','high','critical','unknown']);
 function defaultStore():ChannelRunwayStore{return{version:1,channels:{}}}
 function browserStorage(){return typeof localStorage==='undefined'?undefined:localStorage}
 function emit(){try{window.dispatchEvent(new Event(EVENT))}catch{}}
+const isRecord=(value:unknown):value is Record<string,unknown>=>Boolean(value)&&typeof value==='object'&&!Array.isArray(value);
+const safeString=(value:unknown)=>typeof value==='string'&&value.trim()?value:undefined;
 
 function normalizeStoredRecord(id:string,value:unknown):ChannelRunwayRecord|undefined{
-  if(!value||typeof value!=='object')return;
+  if(!isRecord(value))return;
   const raw=value as Partial<ChannelRunwayRecord>;
   const channelId=String(raw.channelId||id||'').trim();
   if(!channelId)return;
@@ -36,16 +39,18 @@ function normalizeStoredRecord(id:string,value:unknown):ChannelRunwayRecord|unde
   const status=VALID_STATUS.has(String(raw.status))?raw.status as ChannelRunwayRecord['status']:'no-data';
   const priority=VALID_PRIORITY.has(String(raw.priority))?raw.priority as ChannelRunwayRecord['priority']:'unknown';
   return{
-    ...raw,
     channelId,
     channelName,
+    scheduledUntil:safeString(raw.scheduledUntil),
     scheduledVideoCount,
     averagePublishIntervalDays,
-    runwayDays,
+    lastScheduleSync:safeString(raw.lastScheduleSync),
     lastLocalCalculation:typeof raw.lastLocalCalculation==='string'&&raw.lastLocalCalculation?raw.lastLocalCalculation:'1970-01-01T00:00:00.000Z',
+    runwayDays,
+    nextProductionDate:safeString(raw.nextProductionDate),
     status,
     priority
-  } as ChannelRunwayRecord;
+  };
 }
 
 export function loadChannelRunwayStore(storage:StorageLike|undefined=browserStorage()):ChannelRunwayStore{
@@ -53,8 +58,8 @@ export function loadChannelRunwayStore(storage:StorageLike|undefined=browserStor
   try{
     const raw=storage.getItem(CHANNEL_RUNWAY_STORAGE_KEY);
     if(!raw)return defaultStore();
-    const parsed=JSON.parse(raw) as ChannelRunwayStore;
-    if(parsed?.version!==1||!parsed.channels||typeof parsed.channels!=='object')return defaultStore();
+    const parsed=JSON.parse(raw) as unknown;
+    if(!isRecord(parsed)||parsed.version!==1||!isRecord(parsed.channels))return defaultStore();
     const channels:Record<string,ChannelRunwayRecord>={};
     for(const [id,value] of Object.entries(parsed.channels)){
       const normalized=normalizeStoredRecord(id,value);
@@ -62,33 +67,50 @@ export function loadChannelRunwayStore(storage:StorageLike|undefined=browserStor
     }
     return{
       version:1,
-      lastLocalCalculation:typeof parsed.lastLocalCalculation==='string'?parsed.lastLocalCalculation:undefined,
-      lastKrasnoyarskDate:typeof parsed.lastKrasnoyarskDate==='string'?parsed.lastKrasnoyarskDate:undefined,
+      lastLocalCalculation:safeString(parsed.lastLocalCalculation),
+      lastKrasnoyarskDate:safeString(parsed.lastKrasnoyarskDate),
       channels
     };
   }catch{return defaultStore()}
 }
 
 export function saveChannelRunwayStore(value:ChannelRunwayStore,storage:StorageLike|undefined=browserStorage()){
-  if(storage)storage.setItem(CHANNEL_RUNWAY_STORAGE_KEY,JSON.stringify(value));
+  const channels:Record<string,ChannelRunwayRecord>={};
+  for(const [id,raw] of Object.entries(isRecord(value?.channels)?value.channels:{})){
+    const normalized=normalizeStoredRecord(id,raw);
+    if(normalized)channels[id]=normalized;
+  }
+  const safe:ChannelRunwayStore={
+    version:1,
+    lastLocalCalculation:safeString(value?.lastLocalCalculation),
+    lastKrasnoyarskDate:safeString(value?.lastKrasnoyarskDate),
+    channels
+  };
+  if(storage)storage.setItem(CHANNEL_RUNWAY_STORAGE_KEY,JSON.stringify(safe));
   emit();
-  return value;
+  return safe;
 }
 
 type ExistingCache={
   version?:number;
   updatedAt?:string;
-  videos?:YoutubeExistingVideo[];
-  baseline?:Record<string,YoutubeExistingVideo>;
-  syncInfo?:unknown;
+  videos:YoutubeExistingVideo[];
+  baseline:Record<string,YoutubeExistingVideo>;
+  syncInfo:Record<string,unknown>|null;
 };
 
 export function readExistingRunwayCache(channelId:string,storage:StorageLike|undefined=browserStorage()):ExistingCache|undefined{
   if(!storage||!channelId)return;
   try{
-    const parsed=JSON.parse(storage.getItem(existingCacheKey(channelId))||'null') as ExistingCache|null;
-    if(!parsed||typeof parsed!=='object')return;
-    return parsed;
+    const parsed=JSON.parse(storage.getItem(existingCacheKey(channelId))||'null') as unknown;
+    if(!isRecord(parsed))return;
+    return{
+      version:typeof parsed.version==='number'?parsed.version:undefined,
+      updatedAt:safeString(parsed.updatedAt),
+      videos:normalizeExistingVideoList(parsed.videos),
+      baseline:normalizeExistingVideoRecord(parsed.baseline),
+      syncInfo:isRecord(parsed.syncInfo)?{...parsed.syncInfo}:null
+    };
   }catch{return}
 }
 
@@ -98,8 +120,7 @@ function channelUnknown(channel:Channel,now:Date){
 
 function confirmedBaseline(cache:ExistingCache|undefined){
   if(!cache)return[] as YoutubeExistingVideo[];
-  const values=cache.baseline&&typeof cache.baseline==='object'?Object.values(cache.baseline):[];
-  return values.filter(Boolean);
+  return Object.values(cache.baseline);
 }
 
 export function recalculateChannelRunway(
@@ -115,12 +136,12 @@ export function recalculateChannelRunway(
 
     // Explicit Channel Runway sync is authoritative. Daily recalculation only advances the calendar.
     if(prior?.lastScheduleSync){
-      next.channels[channel.id]=recalculateRunwayRecord({...prior,channelName:channel.name},now);
+      next.channels[channel.id]=recalculateRunwayRecord({...prior,channelName:String(channel.name||channel.id||'Канал без названия')},now);
       continue;
     }
 
     // Existing Videos stores drafts/selections in `videos`, so they are never used as YouTube truth here.
-    // Bootstrap only from its baseline. An empty cache without syncInfo means "Нет данных", not 0 days.
+    // Bootstrap only from its normalized baseline. An empty cache without syncInfo means "Нет данных", not 0 days.
     const cached=readExistingRunwayCache(channel.id,storage);
     const baseline=confirmedBaseline(cached);
     const cacheKnown=Boolean(cached?.syncInfo||baseline.length);
@@ -129,7 +150,7 @@ export function recalculateChannelRunway(
       continue;
     }
 
-    next.channels[channel.id]=prior?recalculateRunwayRecord({...prior,channelName:channel.name},now):channelUnknown(channel,now);
+    next.channels[channel.id]=prior?recalculateRunwayRecord({...prior,channelName:String(channel.name||channel.id||'Канал без названия')},now):channelUnknown(channel,now);
   }
   const validIds=new Set(channels.map(c=>c.id));
   for(const id of Object.keys(next.channels))if(!validIds.has(id))delete next.channels[id];
@@ -144,7 +165,7 @@ export function upsertChannelRunwayFromYoutube(
   storage:StorageLike|undefined=browserStorage()
 ){
   const current=loadChannelRunwayStore(storage);
-  const record=deriveRunwayRecord(channel,videos,now,now.toISOString(),true);
+  const record=deriveRunwayRecord(channel,normalizeExistingVideoList(videos),now,now.toISOString(),true);
   const next:ChannelRunwayStore={
     ...current,
     version:1,

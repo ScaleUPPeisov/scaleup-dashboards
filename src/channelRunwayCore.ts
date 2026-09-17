@@ -23,6 +23,7 @@ export type ChannelRunwayRecord={
 
 const DAY_MS=86_400_000;
 const pad=(n:number)=>String(n).padStart(2,'0');
+const isRecord=(value:unknown):value is Record<string,unknown>=>Boolean(value)&&typeof value==='object'&&!Array.isArray(value);
 
 function zonedParts(date:Date,timeZone:string){
   const parts=new Intl.DateTimeFormat('en-US',{
@@ -91,6 +92,16 @@ function averageIntervalDays(videos:{at:number}[]){
   return Math.round((sum/count)*100)/100;
 }
 
+function safeScheduledRows(videos:unknown,now:number){
+  if(!Array.isArray(videos))return[] as {at:number;publishAt:string}[];
+  return videos
+    .filter(isRecord)
+    .filter(v=>v.privacyStatus==='private'&&typeof v.publishAt==='string')
+    .map(v=>({at:Date.parse(String(v.publishAt)),publishAt:String(v.publishAt)}))
+    .filter(v=>Number.isFinite(v.at)&&v.at>now)
+    .sort((a,b)=>a.at-b.at);
+}
+
 export function deriveRunwayRecord(
   channel:Pick<Channel,'id'|'name'>,
   videos:Pick<YoutubeExistingVideo,'publishAt'|'privacyStatus'>[],
@@ -99,26 +110,22 @@ export function deriveRunwayRecord(
   known=true
 ):ChannelRunwayRecord{
   const current=now.getTime();
-  // YouTube Scheduled is represented as privacyStatus=private + future status.publishAt.
-  // Ignore public/unlisted/unknown items even if malformed/stale data happens to contain publishAt.
-  const scheduled=videos
-    .filter(v=>v.privacyStatus==='private')
-    .map(v=>({at:v.publishAt?Date.parse(v.publishAt):Number.NaN,publishAt:v.publishAt}))
-    .filter(v=>Number.isFinite(v.at)&&v.at>current)
-    .sort((a,b)=>a.at-b.at);
+  const scheduled=safeScheduledRows(videos,current);
   const last=scheduled.at(-1);
   const scheduledUntil=last?.publishAt?dateKeyInKrasnoyarsk(last.publishAt):undefined;
   const today=krasnoyarskClock(now).dateKey;
   const rawDays=scheduledUntil?calendarDaysBetween(today,scheduledUntil):undefined;
   const runwayDays=known?(rawDays===undefined?0:Math.max(0,rawDays)):undefined;
   const status=runwayStatus(runwayDays,known);
+  const channelId=String(channel?.id||'').trim();
+  const channelName=String(channel?.name||channelId||'Канал без названия').trim()||'Канал без названия';
   return{
-    channelId:channel.id,
-    channelName:channel.name,
+    channelId,
+    channelName,
     scheduledUntil,
     scheduledVideoCount:scheduled.length,
     averagePublishIntervalDays:averageIntervalDays(scheduled),
-    lastScheduleSync,
+    lastScheduleSync:typeof lastScheduleSync==='string'&&lastScheduleSync?lastScheduleSync:undefined,
     lastLocalCalculation:now.toISOString(),
     runwayDays,
     nextProductionDate:scheduledUntil?subtractCalendarDays(scheduledUntil,RUNWAY_PLAN_THRESHOLD_DAYS):undefined,
@@ -135,6 +142,8 @@ export function recalculateRunwayRecord(record:ChannelRunwayRecord,now=new Date(
   const status=runwayStatus(runwayDays,known);
   return{
     ...record,
+    channelId:String(record.channelId||''),
+    channelName:String(record.channelName||record.channelId||'Канал без названия'),
     lastLocalCalculation:now.toISOString(),
     runwayDays,
     nextProductionDate:record.scheduledUntil?subtractCalendarDays(record.scheduledUntil,RUNWAY_PLAN_THRESHOLD_DAYS):undefined,
@@ -144,11 +153,13 @@ export function recalculateRunwayRecord(record:ChannelRunwayRecord,now=new Date(
 }
 
 export function compareRunwayRecords(a:ChannelRunwayRecord,b:ChannelRunwayRecord){
-  const ad=a.runwayDays,bd=b.runwayDays;
-  if(ad===undefined&&bd===undefined)return a.channelName.localeCompare(b.channelName,'ru');
+  const ad=a?.runwayDays,bd=b?.runwayDays;
+  const an=String(a?.channelName||a?.channelId||'Канал без названия');
+  const bn=String(b?.channelName||b?.channelId||'Канал без названия');
+  if(ad===undefined&&bd===undefined)return an.localeCompare(bn,'ru');
   if(ad===undefined)return 1;
   if(bd===undefined)return-1;
-  return ad-bd||String(a.nextProductionDate||'').localeCompare(String(b.nextProductionDate||''))||a.channelName.localeCompare(b.channelName,'ru');
+  return ad-bd||String(a?.nextProductionDate||'').localeCompare(String(b?.nextProductionDate||''))||an.localeCompare(bn,'ru');
 }
 
 export function recommendedProductionIntervalDays(totalChannels:number,batchCoverageDays:number){
@@ -167,7 +178,7 @@ export function processingDayOffset(index:number,todayCapacity:number,fullDayCap
 
 export function quotaRiskCount(records:ChannelRunwayRecord[],todayCapacity:number,fullDayCapacity:number){
   return records
-    .filter(r=>r.runwayDays!==undefined)
+    .filter(r=>r?.runwayDays!==undefined)
     .sort(compareRunwayRecords)
     .reduce((count,r,index)=>count+(Number(r.runwayDays)<=processingDayOffset(index,todayCapacity,fullDayCapacity)?1:0),0);
 }
