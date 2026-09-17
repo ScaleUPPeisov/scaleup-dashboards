@@ -1,0 +1,249 @@
+name: VYRON Command Center Black Screen Hotfix
+
+on:
+  push:
+    branches: [hotfix/vyron-command-center-black-screen-ci-bootstrap-3]
+    paths: ['.github/workflows/vyron-command-center-hotfix.yml']
+
+permissions:
+  contents: write
+
+env:
+  BASE_SHA: 0e511c8a42cf4e3232cb8d0384a1625664a33cdf
+  TARGET_BRANCH: hotfix/vyron-command-center-black-screen
+
+jobs:
+  patch-test-push:
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - name: Checkout bootstrap
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Recreate production black screen on frozen source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git reset --hard "$BASE_SHA"
+          npm ci --no-audit --no-fund
+          cat > src/commandCenterBlackScreen.repro.test.tsx <<'TSX'
+          import React from 'react';
+          import {describe,expect,it} from 'vitest';
+          import {renderToStaticMarkup} from 'react-dom/server';
+          import {CommandCenter} from './CommandCenter';
+          import {CHANNEL_RUNWAY_STORAGE_KEY} from './channelRunwayCore';
+          import {EMPTY_STATE,useApp} from './store';
+
+          class MemoryStorage{
+            private map=new Map<string,string>();
+            getItem(key:string){return this.map.get(key)??null}
+            setItem(key:string,value:string){this.map.set(key,String(value))}
+            removeItem(key:string){this.map.delete(key)}
+            clear(){this.map.clear()}
+            key(index:number){return [...this.map.keys()][index]??null}
+            get length(){return this.map.size}
+          }
+          const channel=(i:number)=>({id:`c-${i}`,name:`Канал ${i}`,slug:`channel-${i}`,cadenceDays:2,targetBufferDays:60,publishHour:18,publishMinute:0,language:'RU',genre:'Music',country:'RU',minTracks:10,targetDurationMin:120,enabled:true,seo:{titlePatterns:[],descriptionTemplate:'',tags:[],banned:[]}} as any);
+
+          describe('Command Center production black screen reproduction',()=>{
+            it('reproduces legacy runway crash before the hotfix',()=>{
+              const storage=new MemoryStorage();
+              Object.defineProperty(globalThis,'localStorage',{value:storage,configurable:true,writable:true});
+              const channels=Array.from({length:31},(_,i)=>channel(i+1));
+              const legacyChannels=Object.fromEntries(channels.map(c=>[c.id,{channelId:c.id,scheduledVideoCount:0,lastLocalCalculation:'2026-09-17T00:00:00.000Z',priority:'unknown',status:'no-data'}]));
+              storage.setItem(CHANNEL_RUNWAY_STORAGE_KEY,JSON.stringify({version:1,channels:legacyChannels}));
+              useApp.getState().hydrate({...EMPTY_STATE,channels,jobs:[],competitors:[],logs:[],uploadHistory:[],fingerprintCache:{},projectLifecycle:{}} as any);
+              let caught:unknown;
+              try{renderToStaticMarkup(<CommandCenter/>)}catch(e){caught=e}
+              console.log(`ACTUAL_EXCEPTION=${String(caught)}`);
+              expect(String(caught)).toContain('localeCompare');
+            });
+          });
+          TSX
+          npx vitest run src/commandCenterBlackScreen.repro.test.tsx --reporter=verbose
+          rm src/commandCenterBlackScreen.repro.test.tsx
+
+      - name: Apply minimal Command Center patch
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          app=Path('src/App.tsx')
+          s=app.read_text()
+          old="import { DashboardOS } from './DashboardOS';\n"
+          assert s.count(old)==1
+          s=s.replace(old,old+"import { CommandCenter } from './CommandCenter';\n",1)
+          old="  {page:'dashboard',icon:'⌂',label:'Главная'},\n  {page:'channels',icon:'▣',label:'Каналы'},"
+          new="  {page:'dashboard',icon:'⌂',label:'Главная'},\n  {page:'autopilot',icon:'◉',label:'Командный центр'},\n  {page:'channels',icon:'▣',label:'Каналы'},"
+          assert s.count(old)==1
+          s=s.replace(old,new,1)
+          old="const screen=page==='dashboard'||page==='autopilot'?<DashboardOS/>:"
+          new="const screen=page==='dashboard'?<DashboardOS/>:page==='autopilot'?<CommandCenter/>:"
+          assert s.count(old)==1
+          s=s.replace(old,new,1)
+          old="{(page==='dashboard'||page==='autopilot')&&<DashboardUploadSummary/>}"
+          new="{page==='dashboard'&&<DashboardUploadSummary/>}"
+          assert s.count(old)==1
+          s=s.replace(old,new,1)
+          app.write_text(s)
+
+          cc=Path('src/CommandCenter.tsx')
+          s=cc.read_text()
+          old=" const rows=useMemo(()=>active.map(channel=>({channel,record:runway.channels[channel.id]})).sort((a,b)=>{if(a.record&&b.record)return compareRunwayRecords(a.record,b.record);if(a.record)return-1;if(b.record)return 1;return a.channel.name.localeCompare(b.channel.name,'ru')}),[active,runway]);"
+          new=" const rows=useMemo(()=>active.map(channel=>{const record=runway.channels?.[channel.id];return{channel,record:record?{...record,channelName:channel.name}:undefined}}).sort((a,b)=>{if(a.record&&b.record)return compareRunwayRecords(a.record,b.record);if(a.record)return-1;if(b.record)return 1;return a.channel.name.localeCompare(b.channel.name,'ru')}),[active,runway]);"
+          assert s.count(old)==1
+          s=s.replace(old,new,1)
+          cc.write_text(s)
+          PY
+
+          cat > src/commandCenterRender.test.tsx <<'TSX'
+          import React from 'react';
+          import {afterEach,beforeEach,describe,expect,it} from 'vitest';
+          import {renderToStaticMarkup} from 'react-dom/server';
+          import {CommandCenter} from './CommandCenter';
+          import {CHANNEL_RUNWAY_STORAGE_KEY} from './channelRunwayCore';
+          import {EMPTY_STATE,useApp} from './store';
+
+          class MemoryStorage{
+            private map=new Map<string,string>();
+            getItem(key:string){return this.map.get(key)??null}
+            setItem(key:string,value:string){this.map.set(key,String(value))}
+            removeItem(key:string){this.map.delete(key)}
+            clear(){this.map.clear()}
+            key(index:number){return [...this.map.keys()][index]??null}
+            get length(){return this.map.size}
+          }
+
+          const channel=(i:number,extra:Record<string,unknown>={})=>({
+            id:`c-${i}`,name:`Канал ${String(i).padStart(2,'0')}`,slug:`channel-${i}`,cadenceDays:2,targetBufferDays:60,
+            publishHour:18,publishMinute:0,language:'RU',genre:'Music',country:'RU',minTracks:10,targetDurationMin:120,enabled:true,
+            seo:{titlePatterns:[],descriptionTemplate:'',tags:[],banned:[]},...extra
+          } as any);
+          const job=(id:string,channelId:string,status:string,extra:Record<string,unknown>={})=>({
+            id,channelId,number:1,folder:`/${id}`,status,createdAt:'2026-09-17T00:00:00.000Z',tracksCount:0,minTracks:10,
+            title:'',description:'',tags:[],...extra
+          } as any);
+
+          let previous:PropertyDescriptor|undefined;
+          let storage:MemoryStorage;
+          beforeEach(()=>{
+            previous=Object.getOwnPropertyDescriptor(globalThis,'localStorage');
+            storage=new MemoryStorage();
+            Object.defineProperty(globalThis,'localStorage',{value:storage,configurable:true,writable:true});
+          });
+          afterEach(()=>{
+            if(previous)Object.defineProperty(globalThis,'localStorage',previous);
+            else delete (globalThis as any).localStorage;
+          });
+          function hydrate(channels:any[],jobs:any[]=[]){
+            useApp.getState().hydrate({...EMPTY_STATE,channels,jobs,competitors:[],logs:[],uploadHistory:[],fingerprintCache:{},projectLifecycle:{}} as any);
+          }
+          function putLegacyRunway(channels:any[]){
+            const records=Object.fromEntries(channels.map(c=>[c.id,{channelId:c.id,scheduledVideoCount:0,lastLocalCalculation:'2026-09-17T00:00:00.000Z',priority:'unknown',status:'no-data'}]));
+            storage.setItem(CHANNEL_RUNWAY_STORAGE_KEY,JSON.stringify({version:1,channels:records}));
+          }
+
+          describe('Command Center production render regression',()=>{
+            it('renders 31 channels with legacy persisted runway records missing channelName',()=>{
+              const channels=Array.from({length:31},(_,i)=>channel(i+1));
+              putLegacyRunway(channels);
+              hydrate(channels,[job('stale-upload','c-1','UPLOADING'),job('stale-render','c-2','RENDERING'),job('failed','c-3','ERROR',{error:'legacy failure'})]);
+              const html=renderToStaticMarkup(<CommandCenter/>);
+              expect(html).toContain('КОМАНДНЫЙ ЦЕНТР');
+              expect(html).toContain('Канал 01');
+              expect(html).toContain('Канал 31');
+              expect(html).toContain('Очередь производства');
+            });
+
+            it('renders a safe empty state with zero channels',()=>{
+              hydrate([]);
+              const html=renderToStaticMarkup(<CommandCenter/>);
+              expect(html).toContain('Нет активных каналов');
+            });
+
+            it('survives five reopen/restart-style renders with the same legacy persisted state',()=>{
+              const channels=[channel(1,{youtubeProfileId:undefined}),channel(2,{name:'Канал без optional metadata'})];
+              putLegacyRunway(channels);
+              for(let i=0;i<5;i++){
+                hydrate(channels,[job(`queued-${i}`,'c-1','READY_UPLOAD',{publishAt:undefined}),job(`failed-${i}`,'c-2','ERROR',{error:'old'})]);
+                expect(()=>renderToStaticMarkup(<CommandCenter/>)).not.toThrow();
+              }
+            });
+          });
+          TSX
+
+      - name: Route and control-chain audit
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          app=Path('src/App.tsx').read_text()
+          cc=Path('src/CommandCenter.tsx').read_text()
+          checks={
+            'COMMAND_CENTER_IMPORT':"import { CommandCenter } from './CommandCenter';" in app,
+            'COMMAND_CENTER_NAV_ENTRY':"{page:'autopilot',icon:'◉',label:'Командный центр'}" in app,
+            'COMMAND_CENTER_ROUTE':"page==='autopilot'?<CommandCenter/>" in app,
+            'OPEN_PRODUCTION_HANDLER':"function openProduction(channelId?:string){if(channelId)patchPrefs({selectedChannelId:channelId});setPage('production')}" in cc,
+            'PRIMARY_CONTROL_WIRED':"onClick={()=>openProduction(next.channel.id)}" in cc,
+            'ROW_CONTROL_WIRED':"onClick={()=>openProduction(channel.id)}" in cc,
+          }
+          for name,ok in checks.items(): print(f'{name}={"PASS" if ok else "FAIL"}')
+          if not all(checks.values()): raise SystemExit('Command Center route/control audit failed')
+          for page,label in [('dashboard','Главная'),('channels','Каналы'),('production','Производство'),('youtube','YouTube'),('analytics','Аналитика'),('competitors','Конкуренты'),('settings','Настройки')]:
+            if f"{{page:'{page}'" not in app: raise SystemExit(f'missing navigation {page}')
+          print('COMMAND_CENTER_NAVIGATION=PASS')
+          print('REFRESH_ACTION=N/A (no refresh control exists in current CommandCenter)')
+          PY
+
+      - name: Targeted Command Center gate
+        run: >-
+          npx vitest run
+          src/commandCenterRender.test.tsx
+          src/commandCenter.test.ts
+          src/channelRunway.test.ts
+          src/productionPrefs.test.ts
+          src/channelIdentity.test.ts
+          src/staleOperationReconciliation.test.ts
+          src/uploadCenterWiring.test.ts
+          src/uiHotfix.test.tsx
+          --reporter=verbose
+
+      - name: Full frontend suite
+        run: npm test
+
+      - name: TypeScript
+        run: npx tsc --noEmit
+
+      - name: Frontend production build
+        run: npm run build
+
+      - name: Create one clean hotfix commit and publish branch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$BASE_SHA"
+          git status --short
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/App.tsx src/CommandCenter.tsx src/commandCenterRender.test.tsx
+          git commit -m 'fix: repair Command Center production black screen'
+          FINAL_SHA=$(git rev-parse HEAD)
+          git fetch origin "$TARGET_BRANCH"
+          REMOTE_SHA=$(git rev-parse "origin/$TARGET_BRANCH")
+          test "$REMOTE_SHA" = "$BASE_SHA"
+          git push --force-with-lease="refs/heads/$TARGET_BRANCH:$REMOTE_SHA" origin "HEAD:refs/heads/$TARGET_BRANCH"
+          echo "FINAL_COMMIT=$FINAL_SHA"
+          echo 'READY_TO_PUBLISH_HOTFIX=YES'
