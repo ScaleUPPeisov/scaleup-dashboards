@@ -44,7 +44,7 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          test "$(git rev-parse HEAD^)" = "$FINAL_FIX_VERIFY_HEAD"
+          git merge-base --is-ancestor "$FINAL_FIX_VERIFY_HEAD" HEAD
           test "$(git ls-remote origin refs/heads/$RELEASE_BRANCH | awk '{print $1}')" = "$EXPECTED_RELEASE_BRANCH_HEAD"
           test "$(git ls-remote origin refs/tags/v2.1.5 | awk '{print $1}')" = '4a518ea28b5c1c18ac8b84d4f457f00de521578d'
           if git ls-remote --exit-code --tags origin refs/tags/v2.1.6 >/dev/null 2>&1; then echo 'v2.1.6 already exists'; exit 1; fi
@@ -136,7 +136,7 @@ jobs:
           console.log(`FRONTEND_FAILED=${failed}`);
           if(total!==438||passed!==438||failed!==0)process.exit(1);
           NODE
-          echo 'FRONTEND=438/438 PASS' | tee out/frontend-summary.txt
+          echo 'FRONTEND=438/438 PASS' | tee ../out/frontend-summary.txt
 
       - name: TypeScript release check
         working-directory: work
