@@ -1,0 +1,3 @@
+import {beforeEach,describe,expect,it} from 'vitest';import {factualActiveRenderCount,factualActiveRenderIds,replaceFactualActiveRenders,resetActiveOperationFactsForTests} from './activeOperationFacts';
+beforeEach(()=>resetActiveOperationFactsForTests());
+describe('factual render runtime facts',()=>{it('uses runtime set rather than persisted rows',()=>{replaceFactualActiveRenders([],1000);expect(factualActiveRenderCount(1000)).toBe(0)});it('counts one actual render exactly once',()=>{replaceFactualActiveRenders(['r1'],1000);expect([...factualActiveRenderIds(1001)]).toEqual(['r1']);expect(factualActiveRenderCount(1001)).toBe(1)});it('expires stale runtime evidence',()=>{replaceFactualActiveRenders(['r1'],1000);expect(factualActiveRenderCount(22000)).toBe(0)})});

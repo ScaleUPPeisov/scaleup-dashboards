@@ -42,7 +42,7 @@ export type Settings={
   autopilotMode:AutopilotMode; autopilotEnabled:boolean; autoCreatePlan:boolean; autoAssignMusic:boolean; autoAssignImages:boolean; autoGenerateMetadata:boolean;
   autoQueueRender:boolean; autoOpenEndlume:boolean; autoUploadYoutube:boolean; autopilotIntervalSec:number; tracksPerVideo:number;
   openaiApiKey:string; openaiModel:string; youtubeOAuthClientId:string; youtubeCategoryId:string;
-  youtubeIntelligenceAutoRefresh:boolean; youtubeIntelligenceRefreshMin:number; youtubePublishSafeMode:boolean;
+  youtubeIntelligenceAutoRefresh:boolean; youtubeIntelligenceRefreshMin:number; youtubePublishSafeMode:boolean; youtubeUploadConcurrency:number;
   competitorRpmLow:number; competitorRpmHigh:number; competitorPoolSize:number;
   publishedVideoCleanupPolicy?:'ask'|'none'|'after3d'|'after7d'; completedProjectCleanupPolicy?:'ask'|'none'|'after3d'|'after7d';
   endlumeTargetDurationMin:number; endlumeTargetRenderSec:number; endlumeTargetFileMinMb:number; endlumeTargetFileMaxMb:number; endlumePreserveImageQuality:boolean; endlumeProjectNaming:string;
@@ -51,7 +51,7 @@ export type LicenseStatus={valid:boolean;type?:'owner-lifetime'|'monthly'|'devel
 export type AppState={version:number;channels:Channel[];jobs:VideoJob[];competitors:Competitor[];settings:Settings;logs:{at:string;level:'info'|'warn'|'error';message:string}[];uploadHistory:UploadHistoryRecord[];fingerprintCache:Record<string,FingerprintCacheEntry>;projectLifecycle:Record<string,ProjectLifecycleRecord>};
 export type Diagnostics={ok:boolean;workspaceWritable:boolean;workspaceExists:boolean;dataDir:string;platform:string;appVersion:string;notes:string[]};
 export type InboxScan={root:string;music:string[];images:string[];metadata:string[]};
-export type YoutubeProfile={id:string;channelId?:string;channelTitle?:string;connectedAt?:string;clientIdMasked?:string;scopes?:string[];analyticsAuthorized?:boolean;monetaryAuthorized?:boolean;preferredBrowser?:string;credentialStatus?:'WORKING'|'RECONNECT_REQUIRED'|'RECOVERABLE'|'KEYCHAIN_ERROR';credentialError?:string|null;identityValidatedAt?:string|null};
+export type YoutubeProfile={id:string;channelId?:string;channelTitle?:string;connectedAt?:string;clientIdMasked?:string;scopes?:string[];analyticsAuthorized?:boolean;monetaryAuthorized?:boolean;preferredBrowser?:string;credentialStatus?:'WORKING'|'RECONNECT_REQUIRED'|'RECOVERABLE'|'KEYCHAIN_ERROR'|'CHECK_ON_USE';credentialError?:string|null;identityValidatedAt?:string|null};
 export type AutopilotSummary={prepared:number;tracksMoved:number;imagesMoved:number;metadataGenerated:number;renderQueued:number;uploads:number;errors:number;notes:string[]};
 
 export type YoutubeExistingVideo={

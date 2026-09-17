@@ -1,0 +1,13 @@
+import {describe,it,expect} from 'vitest';
+import {humanizeError} from './errorCenter';
+import {isOAuthMissingErrorText,resolveOAuthMissingRows,type ErrorHistoryItem} from './errorHistory';
+import {buildFinalRecoveryRows,nextReconnectProfileId,reconnectFailure,reconnectQueue} from './authRecoveryFinalCore';
+
+describe('final real-Mac reconnect recovery',()=>{
+ it('replaces REFRESH_TOKEN_MISSING with user reconnect action',()=>{const h=humanizeError('REFRESH_TOKEN_MISSING: refresh_token отсутствует','oauth');expect(h.title).toBe('Требуется повторное подключение YouTube');expect(h.message).toContain('Данные канала сохранены');expect(h.action).toBe('reconnect')});
+ it('Google callback without refresh_token is explicit failure',()=>{const h=humanizeError('OAUTH_REFRESH_TOKEN_REQUIRED','oauth');expect(h.title).toContain('Google не вернул refresh token');expect(reconnectFailure('OAUTH_REFRESH_TOKEN_REQUIRED').status).toBe('FAILED')});
+ it('31 channels can map to 17 unique profiles and queue only missing profiles',()=>{const profiles=Array.from({length:17},(_,i)=>({id:`p${i}`,channelId:`UC${i}`}));const channels=Array.from({length:31},(_,i)=>({id:`c${i}`,name:`Channel ${i}`,youtubeProfileId:`p${i%17}`,youtubeChannelId:`UC${i%17}`}));const inv=profiles.map((p,i)=>({profile_uuid:p.id,refresh_token_account:i===0?'PRESENT':'ABSENT',refresh_token_read:i===0?'PASS':'NOT_RUN'}));const rows=buildFinalRecoveryRows(channels,profiles,inv);expect(rows).toHaveLength(17);expect(reconnectQueue(rows)).toHaveLength(16);expect(rows[0].status).toBe('CONNECTED');expect(rows.some(r=>r.channels.length>1)).toBe(true)});
+ it('queue moves to next unique missing profile only',()=>{const channels=[{id:'c1',name:'A',youtubeProfileId:'p1',youtubeChannelId:'UC1'},{id:'c2',name:'B',youtubeProfileId:'p2',youtubeChannelId:'UC2'}],profiles=[{id:'p1',channelId:'UC1'},{id:'p2',channelId:'UC2'}],inv:any[]=[];const rows=buildFinalRecoveryRows(channels,profiles,inv);expect(nextReconnectProfileId(rows,'p1')).toBe('p2')});
+ it('wrong channel stays rejected',()=>{expect(reconnectFailure('WRONG_CHANNEL: Expected UC1; Authorized UC2').status).toBe('WRONG CHANNEL')});
+ it('successful reconnect resolves old active REFRESH_TOKEN_MISSING errors without deleting history row',()=>{const rows:ErrorHistoryItem[]=[{id:'1',title:'YouTube error',message:'REFRESH_TOKEN_MISSING',technicalDetail:'profile p1',createdAt:1},{id:'2',title:'Other',message:'network',createdAt:2}];const out=resolveOAuthMissingRows(rows,'p1',['UC1'],100);expect(out).toHaveLength(2);expect(out[0].resolvedAt).toBe(100);expect(out[0].resolvedBy).toContain('p1');expect(out[1].resolvedAt).toBeUndefined();expect(isOAuthMissingErrorText(out[0].message)).toBe(true)});
+});

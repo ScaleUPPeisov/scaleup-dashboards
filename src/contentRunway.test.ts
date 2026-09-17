@@ -1,0 +1,35 @@
+import {beforeEach,describe,expect,it} from 'vitest';
+import type {Channel,ProjectLifecycleRecord,UploadHistoryRecord,VideoJob} from './types';
+import {buildContentRunway,contentRunwayQuotaView,projectReadyPublishSlots,readyContentForChannel} from './contentRunway';
+import {deriveRunwayRecord} from './channelRunwayCore';
+import {setYoutubeUploadQuotaLimit,youtubeUploadQuotaState} from './youtubeQuota';
+
+class MemoryStorage{private m=new Map<string,string>();getItem(k:string){return this.m.get(k)??null}setItem(k:string,v:string){this.m.set(k,String(v))}removeItem(k:string){this.m.delete(k)}clear(){this.m.clear()}key(i:number){return[...this.m.keys()][i]??null}get length(){return this.m.size}}
+const storage=new MemoryStorage();Object.defineProperty(globalThis,'localStorage',{value:storage,configurable:true});
+const channel=(p:Partial<Channel>={}):Channel=>({id:'neon',name:'NEON',slug:'neon',cadenceDays:1,targetBufferDays:60,publishHour:4,publishMinute:0,language:'en',genre:'music',country:'US',minTracks:10,targetDurationMin:120,enabled:true,seo:{titlePatterns:[],descriptionTemplate:'',tags:[],banned:[]},...p});
+const job=(id:string,p:Partial<VideoJob>={}):VideoJob=>({id,channelId:'neon',number:+id.replace(/\D/g,'')||1,folder:`/p/${id}`,status:'READY_UPLOAD',createdAt:'2026-09-01T00:00:00Z',tracksCount:10,minTracks:10,finalPath:`/render/${id}.mov`,title:'t',description:'d',tags:['x'],...p});
+const lifecycle=(id:string,renderExists=true):ProjectLifecycleRecord=>({projectId:`p-${id}`,jobId:id,projectPath:`/project/${id}`,renderPath:`/render/${id}.mov`,status:'RENDERED',renderExists,updatedAt:'2026-09-01T00:00:00Z'});
+const scheduled=(iso:string)=>({id:iso,position:1,title:'x',description:'',tags:[],categoryId:'10',privacyStatus:'private',publishAt:iso,selected:false});
+const now=new Date('2026-09-13T03:00:00Z'); // 10:00 KRAT
+const kratDate=(iso:string)=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Krasnoyarsk',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(iso));
+
+function record(ch=channel(),dates=['2026-10-10T04:00:00+07:00']){return deriveRunwayRecord(ch,dates.map(scheduled),now,now.toISOString(),true)}
+
+describe('Quota-aware Content Runway',()=>{
+ beforeEach(()=>storage.clear());
+ it('daily cadence projects one slot per day after scheduled-through',()=>{const slots=projectReadyPublishSlots(channel(), '2026-10-10',3,now);expect(slots.map(kratDate)).toEqual(['2026-10-11','2026-10-12','2026-10-13'])});
+ it('every-N-days cadence uses authoritative interval',()=>{const slots=projectReadyPublishSlots(channel({cadenceDays:2,publishIntervalDays:2}), '2026-10-10',3,now);expect(slots.map(kratDate)).toEqual(['2026-10-12','2026-10-14','2026-10-16'])});
+ it('zero ready videos ends at already scheduled-through date',()=>{const r=buildContentRunway(channel(),record(),[],[],{}, {},now);expect(r.readyVideoCount).toBe(0);expect(r.projectedRunwayEnd).toBe('2026-10-10')});
+ it('zero future scheduled videos starts from the next future local publishing point',()=>{const r=buildContentRunway(channel(),undefined,[job('1'),job('2')],[],{}, {},now);expect(r.projectedReadySlots.map(kratDate)).toEqual(['2026-09-14','2026-09-15']);expect(r.projectedRunwayEnd).toBe('2026-09-15')});
+ it('scheduled + ready combination extends runway instead of replacing schedule',()=>{const jobs=[job('1'),job('2'),job('3')],lc=Object.fromEntries(jobs.map(j=>[j.id,lifecycle(j.id)]));const r=buildContentRunway(channel(),record(),jobs,[],lc,{},now);expect(r.scheduledThrough).toBe('2026-10-10');expect(r.readyVideoCount).toBe(3);expect(r.projectedRunwayEnd).toBe('2026-10-13')});
+ it('large ready buffer stays deterministic',()=>{const jobs=Array.from({length:100},(_,i)=>job(String(i+1))),lc=Object.fromEntries(jobs.map(j=>[j.id,lifecycle(j.id)]));const a=buildContentRunway(channel(),record(),jobs,[],lc,{},now),b=buildContentRunway(channel(),record(),jobs,[],lc,{},now);expect(a.projectedRunwayEnd).toBe('2027-01-18');expect(b).toEqual(a)});
+ it('duplicate content fingerprint is counted once',()=>{const jobs=[job('1',{uploadFingerprint:'ABC'}),job('2',{uploadFingerprint:'abc'})];expect(readyContentForChannel('neon',jobs,[],{},{}).readyCount).toBe(1)});
+ it('failed, missing and lifecycle-missing render sources are not ready',()=>{const jobs=[job('1',{status:'ERROR'}),job('2',{finalPath:undefined}),job('3')],lc={'3':lifecycle('3',false)};expect(readyContentForChannel('neon',jobs,[],lc,{}).readyCount).toBe(0)});
+ it('already uploaded SHA and uploaded jobs are not counted again',()=>{const h:UploadHistoryRecord[]=[{id:'h',jobId:'old',channelId:'neon',youtubeVideoId:'yt',localFilePath:'/x',originalFilename:'x',uploadedAt:'2026-09-01T00:00:00Z',fileSize:1,sha256:'same',status:'UPLOADED'}];const jobs=[job('1',{uploadFingerprint:'same'}),job('old')];expect(readyContentForChannel('neon',jobs,h,{},{}).readyCount).toBe(0)});
+ it('pattern cadence reuses publish-day/pause-day semantics',()=>{const ch=channel({scheduleMode:'pattern',publishDays:3,pauseDays:1,patternAnchorDate:'2026-10-08'});const slots=projectReadyPublishSlots(ch,'2026-10-10',3,now);expect(slots.map(kratDate)).toEqual(['2026-10-12','2026-10-13','2026-10-14'])});
+ it('Krasnoyarsk boundary is used for runway days',()=>{const r=buildContentRunway(channel(),undefined,[job('1')],[],{}, {},new Date('2026-09-14T00:00:00Z'));expect(kratDate(r.projectedReadySlots[0])).toBe('2026-09-15');expect(r.contentRunwayDays).toBe(1)});
+ it('quota values do not change runway calculation',()=>{const j=[job('1')];const a=buildContentRunway(channel(),record(),j,[],{}, {},now);setYoutubeUploadQuotaLimit('gcp:a',500);const b=buildContentRunway(channel(),record(),j,[],{}, {},now);expect(b.projectedRunwayEnd).toBe(a.projectedRunwayEnd);expect(b.contentRunwayDays).toBe(a.contentRunwayDays)});
+ it('General API and Upload quota remain separate fields',()=>{setYoutubeUploadQuotaLimit('gcp:a',500);const upload=youtubeUploadQuotaState('gcp:a',new Date('2026-09-13T10:00:00Z'));const q=contentRunwayQuotaView({ptDate:'2026-09-13',limit:10000,used:1570,calls:3},upload);expect(q.general).toEqual({used:1570,limit:10000,remaining:8430});expect(q.uploads.limit).toBe(500);expect(q.uploads.remaining).toBe(500)});
+ it('upload quota daily reset is inherited from existing ledger semantics',()=>{localStorage.setItem('vyron:youtube-quota-ledger:v3',JSON.stringify({version:4,ptDate:'2026-09-12',buckets:{general:{limit:10000,used:10,calls:1},search:{limit:100,used:0,calls:0}},uploadProjects:{'gcp:a':{quotaDay:'2026-09-12',used:89,calls:89,configuredLimit:500,limitSource:'user-configured',lastUpdatedAt:'2026-09-12T10:00:00Z'}}}));const q=youtubeUploadQuotaState('gcp:a',new Date('2026-09-14T10:00:00Z'));expect(q.used).toBe(0);expect(q.limit).toBe(500)});
+ it('deficit uses channel target buffer and existing status thresholds',()=>{const r=buildContentRunway(channel({targetBufferDays:60}),record(),[],[],{}, {},now);expect(r.contentRunwayDays).toBe(27);expect(r.deficitDays).toBe(33);expect(r.status).toBe('prepare')});
+});

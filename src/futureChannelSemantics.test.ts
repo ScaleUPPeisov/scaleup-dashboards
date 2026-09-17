@@ -1,0 +1,7 @@
+import {describe,expect,it} from 'vitest';import {readFileSync} from 'node:fs';
+describe('future channel semantics',()=>{
+ it('does not rename local production identity after YouTube bind or analytics sync',()=>{const a=readFileSync('src/AccountsPage.tsx','utf8'),y=readFileSync('src/youtubeIntelligence.ts','utf8');expect(a).not.toContain('name:p.channelTitle||exact.name');expect(y).not.toContain('name:ps.title||channel.name')});
+ it('does not report intentionally future channels as OAuth failures',()=>{const d=readFileSync('src/DashboardOS.tsx','utf8'),c=readFileSync('src/ChannelsOS.tsx','utf8');expect(d).toContain('!isFutureChannel(c)&&!c.youtubeProfileId');expect(d).toContain('!isFutureChannel(c)&&settings.autoUploadYoutube');expect(c).toContain('if(!isFutureChannel(c)){if(!c.youtubeProfileId)n-=25;if(!c.analytics)n-=15}')});
+ it('routes future-channel connection into YouTube Center',()=>{const c=readFileSync('src/ChannelsOS.tsx','utf8');expect(c).toContain("setPage('youtube')}>{isFutureChannel(c)?'Подключить YouTube позже':'Открыть YouTube'}");expect(c).not.toContain("setPage(isFutureChannel(c)?'accounts':'youtube')")});
+ it('keeps YouTube Autopilot hard-gated by OAuth',()=>{const a=readFileSync('src/youtubeAutopilot.ts','utf8');expect(a).toContain('!channel.youtubeProfileId');expect(a).toContain('if(!s.autoUploadYoutube||!s.youtubePublishSafeMode||!channel.youtubeProfileId||!channel.safeDailyUploadLimit)return')});
+});

@@ -1,0 +1,11 @@
+import {describe,expect,it} from 'vitest';import {buildStaleOperationPatches} from './staleOperationReconciliation';import type {VideoJob} from './types';
+const job=(status:VideoJob['status'],id:string,extra:Partial<VideoJob>={})=>({id,channelId:'c',number:1,folder:'/tmp/project',status,createdAt:'2026-09-13T00:00:00Z',tracksCount:10,minTracks:10,title:'T',description:'D',tags:[],...extra}) as VideoJob;
+const ev=(p:Partial<Parameters<typeof buildStaleOperationPatches>[1]>={})=>({uploadsKnown:true,rendersKnown:true,activeUploadIds:new Set<string>(),activeRenderIds:new Set<string>(),uploadSessionIds:new Set<string>(),now:'2026-09-15T00:00:00Z',...p});
+describe('stale active operation reconciliation',()=>{
+it('stale upload with session is recoverable',()=>{const r=buildStaleOperationPatches([job('UPLOADING','u',{finalPath:'/tmp/final.mp4'})],ev({uploadSessionIds:new Set(['u'])}));expect(r[0].patch).toMatchObject({status:'ERROR',storageLifecycle:'UPLOADING'});expect(r[0].patch.finalPath).toBeUndefined()});
+it('stale upload without session is failed, never success',()=>{const r=buildStaleOperationPatches([job('UPLOADING','u')],ev());expect(r[0].patch).toMatchObject({status:'ERROR',storageLifecycle:'FAILED'});expect(r[0].patch.youtubeVideoId).toBeUndefined()});
+it('real upload untouched',()=>expect(buildStaleOperationPatches([job('UPLOADING','u')],ev({activeUploadIds:new Set(['u'])}))).toEqual([]));
+it('stale render becomes READY_RENDER, never READY_UPLOAD',()=>{const r=buildStaleOperationPatches([job('RENDERING','r',{finalPath:'/tmp/existing.mp4'})],ev());expect(r[0].patch.status).toBe('READY_RENDER');expect(r[0].patch.finalPath).toBeUndefined()});
+it('real render untouched',()=>expect(buildStaleOperationPatches([job('RENDERING','r')],ev({activeRenderIds:new Set(['r'])}))).toEqual([]));
+it('unknown evidence never reconciles',()=>expect(buildStaleOperationPatches([job('UPLOADING','u'),job('RENDERING','r')],ev({uploadsKnown:false,rendersKnown:false}))).toEqual([]));
+it('no destructive cleanup fields emitted',()=>{for(const {patch} of buildStaleOperationPatches([job('UPLOADING','u'),job('RENDERING','r')],ev())){expect(patch.folder).toBeUndefined();expect(patch.finalPath).toBeUndefined();expect((patch as any).coverPath).toBeUndefined()}});});

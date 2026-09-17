@@ -1,1 +1,0 @@
-inspect exact v1.0.14 image validation v2

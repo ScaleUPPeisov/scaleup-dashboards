@@ -1,1 +1,0 @@
-validate final 1.0.14 scope: 3/1 + flexible DOCX + A-Z dropdowns

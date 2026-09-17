@@ -72,17 +72,29 @@ fn secure_state_for_disk_best_effort(state: &Value) -> (Value, Vec<String>) {
     }
     (disk, warnings)
 }
-fn hydrate_state_secrets(mut state: Value) -> Value {
-    for (field, account) in [
-        ("youtubeApiKey", STATE_YOUTUBE_API_KEY),
-        ("openaiApiKey", STATE_OPENAI_API_KEY),
-    ] {
-        if let Ok(Some(value)) = security::get_secret(account) {
-            set_state_secret(&mut state, field, &value)
-        }
-    }
-    state
+fn legacy_state_secret_for_operation(app:&AppHandle,field:&str)->Result<Option<String>,String>{
+    let path=state_file(app)?;
+    if !path.exists(){return Ok(None)}
+    let raw=fs::read(&path).map_err(|e|format!("state read: {e}"))?;
+    let state:Value=serde_json::from_slice(&raw).map_err(|e|format!("state parse: {e}"))?;
+    let value=state_secret(&state,field);
+    Ok((!value.is_empty()).then_some(value))
 }
+fn secret_for_operation(app:&AppHandle,field:&str,account:&str)->Result<String,String>{
+    if let Some(v)=security::get_secret_cached(account)?{if !v.is_empty(){return Ok(v)}}
+    if let Some(v)=legacy_state_secret_for_operation(app,field)?{
+        // One-time legacy migration is allowed only from an explicit secret-required operation.
+        security::set_secret(account,&v)?;
+        let path=state_file(app)?;
+        let raw=fs::read(&path).map_err(|e|format!("state read: {e}"))?;
+        let state:Value=serde_json::from_slice(&raw).map_err(|e|format!("state parse: {e}"))?;
+        atomic_write(&path,&sanitized_state_for_disk(&state))?;
+        return Ok(v)
+    }
+    Err(format!("CREDENTIAL_MISSING: {field} is not configured"))
+}
+pub(crate) fn youtube_api_key_for_operation(app:&AppHandle,provided:&str)->Result<String,String>{if !provided.trim().is_empty(){Ok(provided.trim().to_string())}else{secret_for_operation(app,"youtubeApiKey",STATE_YOUTUBE_API_KEY)}}
+pub(crate) fn openai_api_key_for_operation(app:&AppHandle,provided:&str)->Result<String,String>{if !provided.trim().is_empty(){Ok(provided.trim().to_string())}else{secret_for_operation(app,"openaiApiKey",STATE_OPENAI_API_KEY)}}
 
 fn migrated_workspace_path(raw: &str) -> Option<PathBuf> {
     let p = PathBuf::from(raw);
@@ -160,37 +172,13 @@ pub fn load_state(app: AppHandle) -> Value {
         .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
         .unwrap_or_else(default_state);
     let (state, changed) = migrate_state(raw);
-    match secure_state_for_disk(&state) {
-        Ok((disk, migrated)) => {
-            if changed || migrated {
-                if atomic_write(&path, &disk).is_ok() && migrated {
-                    let bak = path.with_extension("bak");
-                    let _ = fs::copy(&path, &bak);
-                    let _ = security::private_permissions(&bak);
-                }
-            } else if path.exists() {
-                let _ = security::private_permissions(&path);
-            }
-            // Any legacy state.bak may still contain old plaintext API keys. Once
-            // Keychain persistence succeeded, replace it with the sanitized snapshot.
-            let bak = path.with_extension("bak");
-            if bak.exists() {
-                if let Ok(bytes) = serde_json::to_vec_pretty(&disk) {
-                    let _ = fs::write(&bak, bytes);
-                    let _ = security::private_permissions(&bak);
-                }
-            }
-            hydrate_state_secrets(disk)
-        }
-        Err(_) => {
-            // Fail-safe compatibility path: keep the legacy file untouched if Keychain
-            // migration is unavailable. Runtime remains usable and no data is destroyed.
-            if changed {
-                let _ = atomic_write(&path, &state);
-            }
-            state
-        }
-    }
+    let legacy_plaintext=!state_secret(&state,"youtubeApiKey").is_empty()||!state_secret(&state,"openaiApiKey").is_empty();
+    let disk=sanitized_state_for_disk(&state);
+    // Passive startup must never read/write Keychain or trigger legacy secret migration.
+    // If legacy plaintext exists, keep the original file untouched until an explicit
+    // secret-required operation performs the one-time migration.
+    if changed&&!legacy_plaintext{let _=atomic_write(&path,&disk);}else if path.exists(){let _=security::private_permissions(&path);}
+    disk
 }
 
 #[tauri::command]

@@ -1,0 +1,27 @@
+import {describe,it,expect} from 'vitest';
+import {canonicalSelectedJobs,publisherPreflightItems,publisherUploadButtonLabel} from './publisherRuntime';
+import {metadataPublishAt} from './publisherMetadata';
+import {humanizeError} from './errorCenter';
+import type {VideoJob} from './types';
+const job=(n:number,p:Partial<VideoJob>={}):VideoJob=>({id:`j${n}`,channelId:'c',number:n,folder:'/tmp',status:'READY_UPLOAD',createdAt:'2026-01-01T00:00:00Z',tracksCount:1,minTracks:1,finalPath:`/tmp/${n}.mov`,title:`Title ${n}`,description:'d',tags:['x'],...p});
+const future='2030-09-20T11:00:00.000Z';
+describe('VYRON 2.1.2 publisher runtime repair',()=>{
+ it('visible 10 selected 10 canonical batch 10',()=>{const jobs=Array.from({length:10},(_,i)=>job(i+1));expect(canonicalSelectedJobs(jobs,jobs.map(x=>x.id))).toHaveLength(10)});
+ it('stale selected IDs are ignored',()=>expect(canonicalSelectedJobs([job(1)],['gone'])).toHaveLength(0));
+ it('selection is sorted by video number',()=>expect(canonicalSelectedJobs([job(3),job(1),job(2)],['j1','j2','j3']).map(x=>x.number)).toEqual([1,2,3]));
+ it('zero selected button says choose videos',()=>expect(publisherUploadButtonLabel(0,0)).toBe('ВЫБЕРИТЕ ВИДЕО'));
+ it('one selected button says upload 1',()=>expect(publisherUploadButtonLabel(1,1)).toContain('ЗАГРУЗИТЬ 1 ВИДЕО'));
+ it('15 selected are represented honestly',()=>expect(publisherUploadButtonLabel(15,15)).toContain('ЗАГРУЗИТЬ 15 ВИДЕО'));
+ it('valid future schedule passes',()=>expect(publisherPreflightItems([job(1)],{getPublishAt:()=>future,safeMode:true,nowMs:Date.parse('2026-09-10T10:00:00Z')}).ready).toHaveLength(1));
+ it('missing schedule blocks only affected video',()=>{const r=publisherPreflightItems([job(1),job(2)],{getPublishAt:j=>j.id==='j1'?undefined:future,safeMode:true,nowMs:0});expect(r.blocked.map(x=>x.id)).toEqual(['j1']);expect(r.ready.map(x=>x.id)).toEqual(['j2'])});
+ it('past schedule blocks only affected video',()=>{const r=publisherPreflightItems([job(1),job(2)],{getPublishAt:j=>j.id==='j1'?'2020-01-01T00:00:00Z':future,safeMode:true,nowMs:Date.parse('2026-01-01T00:00:00Z')});expect(r.blocked).toHaveLength(1);expect(r.ready).toHaveLength(1)});
+ it('missing title blocks only affected video in safe mode',()=>{const r=publisherPreflightItems([job(1,{title:''}),job(2)],{getPublishAt:()=>future,safeMode:true,nowMs:0});expect(r.blocked[0].issues[0].code).toBe('MISSING_TITLE');expect(r.ready[0].id).toBe('j2')});
+ it('duplicate blocks only duplicate video',()=>{const r=publisherPreflightItems([job(1),job(2)],{getPublishAt:()=>future,safeMode:true,duplicateIds:['j1'],nowMs:0});expect(r.blocked.map(x=>x.id)).toEqual(['j1']);expect(r.ready.map(x=>x.id)).toEqual(['j2'])});
+ it('recovery session blocks new insert only for that video',()=>{const r=publisherPreflightItems([job(1),job(2)],{getPublishAt:()=>future,safeMode:true,recoveryIds:['j2'],nowMs:0});expect(r.ready.map(x=>x.id)).toEqual(['j1']);expect(r.blocked[0].issues[0].code).toBe('RECOVERY')});
+ it('missing required thumbnail is per item',()=>{const r=publisherPreflightItems([job(1),job(2)],{getPublishAt:()=>future,safeMode:true,requireThumbnail:true,hasThumbnail:j=>j.id==='j2',nowMs:0});expect(r.blocked.map(x=>x.id)).toEqual(['j1']);expect(r.ready.map(x=>x.id)).toEqual(['j2'])});
+ it('DATE + PUBLISH TIME defaults to Krasnoyarsk +07',()=>expect(metadataPublishAt({number:1,publishAt:'2026-09-20',publishTime:'18:00',source:'x'})).toBe('2026-09-20T11:00:00.000Z'));
+ it('date-only without publish time is not a valid schedule',()=>expect(metadataPublishAt({number:1,publishAt:'2026-09-20',source:'x'})).toBeUndefined());
+ it('Asia/Krasnoyarsk IANA timezone is honored',()=>expect(metadataPublishAt({number:1,publishAt:'2026-09-20',publishTime:'18:00',publishTimezone:'Asia/Krasnoyarsk',source:'x'})).toBe('2026-09-20T11:00:00.000Z'));
+ it('YouTube upload init 400 exposes actual API message',()=>{const h=humanizeError('YOUTUBE_UPLOAD_INIT 400: Invalid value for: publishAt [invalidPublishAt]','upload');expect(h.title).toContain('YouTube');expect(h.message).toContain('Invalid value')});
+ it('unknown upload errors are no longer generic state-saved text',()=>{const h=humanizeError('YOUTUBE_UPLOAD_INIT 500: backend exploded','upload');expect(h.message).toContain('backend exploded');expect(h.message).not.toContain('VYRON сохранил текущее состояние')});
+});

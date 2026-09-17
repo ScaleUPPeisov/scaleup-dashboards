@@ -1,3 +1,0 @@
-VYRON YT PEISOV 2.0.0 FINAL
-exact_base=v1.2.0
-pass=4

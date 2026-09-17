@@ -5,11 +5,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::HashMap,
     fs,
     io::{Read, Seek, Write},
     net::TcpListener,
     path::{Path, PathBuf},
     process::Command,
+    sync::{Mutex, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Emitter, Manager};
@@ -87,7 +89,7 @@ trait OAuthSecretStore {
 struct KeychainOAuthSecretStore;
 impl OAuthSecretStore for KeychainOAuthSecretStore {
     fn get(&self, account: &str) -> Result<Option<String>, String> {
-        security::get_secret(account)
+        security::get_secret_cached(account)
     }
     fn set(&self, account: &str, value: &str) -> Result<(), String> {
         security::set_secret(account, value)
@@ -162,6 +164,24 @@ fn write_profile_secrets(p: &OAuthProfile) -> Result<(), String> {
 fn hydrate_profile_secrets(p: &mut OAuthProfile) -> Result<(), String> {
     hydrate_profile_secrets_with(&KeychainOAuthSecretStore, p)
 }
+fn hydrate_profile_secret_kind_with<S:OAuthSecretStore>(secrets:&S,p:&mut OAuthProfile,kind:&str)->Result<(),String>{
+    let slot=match kind{"client_secret"=>&mut p.client_secret,"access_token"=>&mut p.access_token,"refresh_token"=>&mut p.refresh_token,_=>return Err(format!("UNKNOWN_SECRET_KIND: {kind}"))};
+    if slot.is_empty(){*slot=read_profile_secret_with(secrets,&p.id,kind)?.unwrap_or_default()}
+    Ok(())
+}
+fn hydrate_profile_secret_kind(p:&mut OAuthProfile,kind:&str)->Result<(),String>{hydrate_profile_secret_kind_with(&KeychainOAuthSecretStore,p,kind)}
+fn profile_secret_value<'a>(p:&'a OAuthProfile,kind:&str)->Result<&'a str,String>{match kind{"client_secret"=>Ok(&p.client_secret),"access_token"=>Ok(&p.access_token),"refresh_token"=>Ok(&p.refresh_token),_=>Err(format!("UNKNOWN_SECRET_KIND: {kind}"))}}
+fn set_profile_secret_value(p:&mut OAuthProfile,kind:&str,value:String)->Result<(),String>{match kind{"client_secret"=>p.client_secret=value,"access_token"=>p.access_token=value,"refresh_token"=>p.refresh_token=value,_=>return Err(format!("UNKNOWN_SECRET_KIND: {kind}"))};Ok(())}
+fn hydrate_profile_secret_for_operation(app:&AppHandle,p:&mut OAuthProfile,kind:&str)->Result<(),String>{
+    hydrate_profile_secret_kind(p,kind)?;if !profile_secret_value(p,kind)?.is_empty(){return Ok(())}
+    // Legacy plaintext recovery is explicit and profile-scoped. Never run it from passive metadata loading.
+    let mut raw=load_store_raw_for_explicit_migration(app)?;
+    let Some(raw_profile)=raw.profiles.iter_mut().find(|x|x.id==p.id) else{return Ok(())};
+    let legacy=profile_secret_value(raw_profile,kind)?.to_string();if legacy.is_empty(){return Ok(())}
+    security::set_secret(&oauth_key(&p.id,kind),&legacy)?;set_profile_secret_value(p,kind,legacy)?;set_profile_secret_value(raw_profile,kind,String::new())?;
+    if !raw.profiles.iter().any(has_plaintext_secret){write_oauth_metadata(&store_path(app)?,&raw)?}
+    Ok(())
+}
 fn delete_profile_secrets(id: &str) -> Result<(), String> {
     let secrets = KeychainOAuthSecretStore;
     for kind in ["client_secret", "access_token", "refresh_token"] {
@@ -193,41 +213,29 @@ fn recover_store_secrets_with<S: OAuthSecretStore>(secrets: &S, store: &mut OAut
     }
     all_plaintext_migrated
 }
-fn load_store(app: &AppHandle) -> Result<OAuthStore, String> {
+fn load_store_metadata(app: &AppHandle) -> Result<OAuthStore, String> {
     let p = store_path(app)?;
-    if !p.exists() {
-        return Ok(OAuthStore::default());
-    }
+    if !p.exists() {return Ok(OAuthStore::default())}
     let b = fs::read(&p).map_err(|e| format!("OAUTH_STORE_READ_ERROR: {e}"))?;
     let mut store = serde_json::from_slice::<OAuthStore>(&b).map_err(|e| {
-        let backup = p.with_extension(format!(
-            "corrupt-{}.json",
-            Utc::now().format("%Y%m%d%H%M%S")
-        ));
-        let _ = fs::copy(&p, &backup);
-        let _ = security::private_permissions(&backup);
-        format!(
-            "OAUTH_STORE_CORRUPT: youtube-oauth.json сохранён без удаления; backup={}; error={e}",
-            backup.display()
-        )
+        let backup = p.with_extension(format!("corrupt-{}.json",Utc::now().format("%Y%m%d%H%M%S")));
+        let _=fs::copy(&p,&backup);let _=security::private_permissions(&backup);
+        format!("OAUTH_STORE_CORRUPT: youtube-oauth.json сохранён без удаления; backup={}; error={e}",backup.display())
     })?;
-    let legacy_plaintext = store.profiles.iter().any(has_plaintext_secret);
-    let all_migrated = recover_store_secrets_with(&KeychainOAuthSecretStore, &mut store);
-    if legacy_plaintext && all_migrated {
-        write_oauth_metadata(&p, &store)?;
-    } else {
-        let _ = security::private_permissions(&p);
-    }
+    // Passive metadata load never migrates or hydrates Keychain secrets.
+    for profile in &mut store.profiles{profile.client_secret.clear();profile.access_token.clear();profile.refresh_token.clear();profile.credential_error=None;}
+    let _=security::private_permissions(&p);
     Ok(store)
 }
-fn save_store(app: &AppHandle, s: &OAuthStore) -> Result<(), String> {
-    let p = store_path(app)?;
-    for profile in &s.profiles {
-        if profile.credential_error.is_none() {
-            write_profile_secrets(profile)?;
-        }
-    }
-    write_oauth_metadata(&p, s)
+fn load_store_raw_for_explicit_migration(app:&AppHandle)->Result<OAuthStore,String>{
+    let p=store_path(app)?;if !p.exists(){return Ok(OAuthStore::default())}
+    let b=fs::read(&p).map_err(|e|format!("OAUTH_STORE_READ_ERROR: {e}"))?;
+    serde_json::from_slice::<OAuthStore>(&b).map_err(|e|format!("OAUTH_STORE_CORRUPT: {e}"))
+}
+fn save_store(app:&AppHandle,s:&OAuthStore)->Result<(),String>{write_oauth_metadata(&store_path(app)?,s)}
+fn save_selected_profile(app:&AppHandle,s:&OAuthStore,idx:usize)->Result<(),String>{
+    let p=s.profiles.get(idx).ok_or_else(||"OAUTH_PROFILE_INDEX_MISSING".to_string())?;
+    write_profile_secrets(p)?;write_oauth_metadata(&store_path(app)?,s)
 }
 fn preserved_refresh_token(
     existing: Option<&OAuthProfile>,
@@ -271,6 +279,10 @@ struct GoogleConfig {
     project_id: String,
     #[serde(default, skip_serializing)]
     api_key: String,
+    #[serde(default)]
+    client_secret_present: bool,
+    #[serde(default)]
+    api_key_present: bool,
 }
 fn google_config_path(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
@@ -279,52 +291,34 @@ fn google_config_path(app: &AppHandle) -> Result<PathBuf, String> {
 }
 const GOOGLE_CLIENT_SECRET: &str = "google.client_secret";
 const GOOGLE_API_KEY: &str = "google.api_key";
-fn hydrate_google_secrets(c: &mut GoogleConfig) -> Result<(), String> {
-    if c.client_secret.is_empty() {
-        c.client_secret = security::get_secret(GOOGLE_CLIENT_SECRET)?.unwrap_or_default()
-    }
-    if c.api_key.is_empty() {
-        c.api_key = security::get_secret(GOOGLE_API_KEY)?.unwrap_or_default()
-    }
+fn read_google_config_raw(app:&AppHandle)->Result<GoogleConfig,String>{
+    let p=google_config_path(app)?;if !p.exists(){return Ok(GoogleConfig::default())}
+    let b=fs::read(&p).map_err(|e|format!("Google config read: {e}"))?;
+    serde_json::from_slice(&b).map_err(|e|format!("Google config parse: {e}"))
+}
+fn load_google_config_metadata(app:&AppHandle)->Result<GoogleConfig,String>{
+    let p=google_config_path(app)?;let mut c=read_google_config_raw(app)?;
+    c.client_secret_present|=!c.client_secret.is_empty();c.api_key_present|=!c.api_key.is_empty();
+    c.client_secret.clear();c.api_key.clear();if p.exists(){let _=security::private_permissions(&p);}Ok(c)
+}
+fn hydrate_google_secrets(c:&mut GoogleConfig)->Result<(),String>{
+    if c.client_secret.is_empty(){c.client_secret=security::get_secret_cached(GOOGLE_CLIENT_SECRET)?.unwrap_or_default()}
+    if c.api_key.is_empty(){c.api_key=security::get_secret_cached(GOOGLE_API_KEY)?.unwrap_or_default()}
+    c.client_secret_present|=!c.client_secret.is_empty();c.api_key_present|=!c.api_key.is_empty();Ok(())
+}
+fn write_google_secrets(c:&GoogleConfig)->Result<(),String>{
+    if !c.client_secret.is_empty(){security::set_secret(GOOGLE_CLIENT_SECRET,&c.client_secret)?}
+    if !c.api_key.is_empty(){security::set_secret(GOOGLE_API_KEY,&c.api_key)?}
     Ok(())
 }
-fn write_google_secrets(c: &GoogleConfig) -> Result<(), String> {
-    if !c.client_secret.is_empty() {
-        security::set_secret(GOOGLE_CLIENT_SECRET, &c.client_secret)?;
-    }
-    if !c.api_key.is_empty() {
-        security::set_secret(GOOGLE_API_KEY, &c.api_key)?;
-    }
-    Ok(())
-}
-fn write_google_metadata(path: &Path, c: &GoogleConfig) -> Result<(), String> {
-    let b = serde_json::to_vec_pretty(c).map_err(|e| e.to_string())?;
-    security::write_private_atomic(path, &b)
-}
-fn load_google_config(app: &AppHandle) -> Result<GoogleConfig, String> {
-    let p = google_config_path(app)?;
-    if !p.exists() {
-        let mut c = GoogleConfig::default();
-        hydrate_google_secrets(&mut c)?;
-        return Ok(c);
-    }
-    let b = fs::read(&p).map_err(|e| format!("Google config read: {e}"))?;
-    let mut c: GoogleConfig =
-        serde_json::from_slice(&b).map_err(|e| format!("Google config parse: {e}"))?;
-    let legacy = !c.client_secret.is_empty() || !c.api_key.is_empty();
-    if legacy {
-        write_google_secrets(&c)?;
-        write_google_metadata(&p, &c)?;
-    } else {
-        let _ = security::private_permissions(&p);
-    }
-    hydrate_google_secrets(&mut c)?;
+fn write_google_metadata(path:&Path,c:&GoogleConfig)->Result<(),String>{let b=serde_json::to_vec_pretty(c).map_err(|e|e.to_string())?;security::write_private_atomic(path,&b)}
+fn load_google_config_for_secret_operation(app:&AppHandle)->Result<GoogleConfig,String>{
+    let p=google_config_path(app)?;let mut c=read_google_config_raw(app)?;let legacy=!c.client_secret.is_empty()||!c.api_key.is_empty();
+    if legacy{c.client_secret_present|=!c.client_secret.is_empty();c.api_key_present|=!c.api_key.is_empty();write_google_secrets(&c)?;write_google_metadata(&p,&c)?;}else{hydrate_google_secrets(&mut c)?;}
     Ok(c)
 }
-fn save_google_config(app: &AppHandle, c: &GoogleConfig) -> Result<(), String> {
-    let p = google_config_path(app)?;
-    write_google_secrets(c)?;
-    write_google_metadata(&p, c)
+fn save_google_config(app:&AppHandle,c:&GoogleConfig)->Result<(),String>{
+    let p=google_config_path(app)?;let mut meta=c.clone();meta.client_secret_present|=!meta.client_secret.is_empty();meta.api_key_present|=!meta.api_key.is_empty();write_google_secrets(&meta)?;write_google_metadata(&p,&meta)
 }
 fn masked_client_id(s: &str) -> String {
     if s.len() > 16 {
@@ -336,29 +330,64 @@ fn masked_client_id(s: &str) -> String {
     }
 }
 fn google_config_status_value(c: &GoogleConfig) -> Value {
-    json!({"configured":!c.client_id.trim().is_empty(),"projectId":if c.project_id.is_empty(){Value::Null}else{json!(c.project_id)},"clientIdMasked":if c.client_id.is_empty(){Value::Null}else{json!(masked_client_id(&c.client_id))},"hasSecret":!c.client_secret.is_empty(),"hasApiKey":!c.api_key.is_empty()})
+    json!({"configured":!c.client_id.trim().is_empty(),"projectId":if c.project_id.is_empty(){Value::Null}else{json!(c.project_id)},"clientIdMasked":if c.client_id.is_empty(){Value::Null}else{json!(masked_client_id(&c.client_id))},"hasSecret":c.client_secret_present,"hasApiKey":c.api_key_present})
+}
+#[derive(Debug, Clone, Deserialize, Default)]
+struct SafeGoogleMetadata {
+    #[serde(default)] client_id: String,
+    #[serde(default)] project_id: String,
+}
+#[derive(Debug, Clone, Deserialize, Default)]
+struct SafeOAuthMetadataStore {
+    #[serde(default)] profiles: Vec<SafeOAuthMetadataProfile>,
+}
+#[derive(Debug, Clone, Deserialize, Default)]
+struct SafeOAuthMetadataProfile {
+    #[serde(default)] id: String,
+    #[serde(default)] client_id: String,
+    #[serde(default)] channel_id: Option<String>,
+    #[serde(default)] channel_title: Option<String>,
+}
+fn load_google_metadata_only(app: &AppHandle) -> Result<SafeGoogleMetadata, String> {
+    let p=google_config_path(app)?;
+    if !p.exists(){return Ok(SafeGoogleMetadata::default())}
+    let b=fs::read(&p).map_err(|e|format!("Google metadata read: {e}"))?;
+    serde_json::from_slice(&b).map_err(|e|format!("Google metadata parse: {e}"))
+}
+fn load_oauth_metadata_only(app: &AppHandle) -> Result<SafeOAuthMetadataStore, String> {
+    let p=store_path(app)?;
+    if !p.exists(){return Ok(SafeOAuthMetadataStore::default())}
+    let b=fs::read(&p).map_err(|e|format!("OAUTH_METADATA_READ_ERROR: {e}"))?;
+    serde_json::from_slice(&b).map_err(|e|format!("OAUTH_METADATA_PARSE_ERROR: {e}"))
+}
+fn google_project_diagnostic_value(store:&SafeOAuthMetadataStore,google:&SafeGoogleMetadata,profile_id:&str)->Result<Value,String>{
+    let profile=store.profiles.iter().find(|p|p.id==profile_id).ok_or_else(||"GOOGLE_PROJECT_PROFILE_NOT_FOUND".to_string())?;
+    let client_id=profile.client_id.trim();
+    if client_id.is_empty(){return Err("GOOGLE_PROJECT_CLIENT_ID_NOT_FOUND".into())}
+    let exact_global_client_match=!google.client_id.trim().is_empty()&&google.client_id.trim()==client_id;
+    let project_id=if exact_global_client_match&&!google.project_id.trim().is_empty(){Some(google.project_id.trim())}else{None};
+    Ok(json!({"oauthProfileId":profile.id,"channelId":profile.channel_id,"channelTitle":profile.channel_title,"clientId":client_id,"projectId":project_id,"projectIdSource":if project_id.is_some(){"google-config-exact-client-match"}else{"not-locally-known"},"youtubeApiRequests":0,"keychainSecretsRead":false}))
+}
+#[tauri::command]
+pub fn youtube_google_project_diagnostic(app:AppHandle,profile_id:String)->Result<Value,String>{
+    let store=load_oauth_metadata_only(&app)?;
+    let google=load_google_metadata_only(&app)?;
+    google_project_diagnostic_value(&store,&google,profile_id.trim())
 }
 fn load_or_migrate_google_config(app: &AppHandle) -> Result<GoogleConfig, String> {
-    let mut c = load_google_config(app)?;
+    let mut c = load_google_config_for_secret_operation(app)?;
     if c.client_id.trim().is_empty() {
-        let store = load_store(app)?;
-        if let Some(p) = store
-            .profiles
-            .iter()
-            .find(|p| !p.client_id.trim().is_empty())
-        {
-            c.client_id = p.client_id.clone();
-            c.client_secret = p.client_secret.clone();
-            save_google_config(app, &c)?;
+        let store=load_store_metadata(app)?;
+        if let Some(mut p)=store.profiles.into_iter().find(|p|!p.client_id.trim().is_empty()){
+            hydrate_profile_secret_for_operation(app,&mut p,"client_secret")?;
+            c.client_id=p.client_id;c.client_secret=p.client_secret;c.client_secret_present=!c.client_secret.is_empty();save_google_config(app,&c)?;
         }
     }
     Ok(c)
 }
 #[tauri::command]
 pub fn youtube_google_config_status(app: AppHandle) -> Result<Value, String> {
-    Ok(google_config_status_value(&load_or_migrate_google_config(
-        &app,
-    )?))
+    Ok(google_config_status_value(&load_google_config_metadata(&app)?))
 }
 #[tauri::command]
 pub fn youtube_google_config_import(
@@ -391,16 +420,15 @@ pub fn youtube_google_config_import(
         .unwrap_or("")
         .trim()
         .to_string();
-    let old = load_google_config(&app).unwrap_or_default();
+    let old = load_google_config_for_secret_operation(&app).unwrap_or_default();
+    let client_secret_present=old.client_secret_present||!client_secret.is_empty();
     let c = GoogleConfig {
         client_id,
         client_secret,
         project_id,
-        api_key: if api_key.trim().is_empty() {
-            old.api_key
-        } else {
-            api_key.trim().to_string()
-        },
+        api_key: if api_key.trim().is_empty() {old.api_key}else{api_key.trim().to_string()},
+        client_secret_present,
+        api_key_present:old.api_key_present||!api_key.trim().is_empty(),
     };
     save_google_config(&app, &c)?;
     Ok(google_config_status_value(&c))
@@ -629,20 +657,18 @@ fn query_param(query: &str, key: &str) -> Option<String> {
     })
 }
 
-#[tauri::command]
-pub fn youtube_oauth_profiles(app: AppHandle) -> Result<Value, String> {
-    let s = load_store(&app)?;
-    Ok(json!(s.profiles.into_iter().map(|p|{
+fn oauth_profiles_value(s:OAuthStore)->Value{json!(s.profiles.into_iter().map(|p|{
   let analytics=p.scopes.iter().any(|x|x=="https://www.googleapis.com/auth/yt-analytics.readonly"||x=="https://www.googleapis.com/auth/yt-analytics-monetary.readonly");
   let monetary=p.scopes.iter().any(|x|x=="https://www.googleapis.com/auth/yt-analytics-monetary.readonly");
-  let credential_status=if p.credential_error.is_some(){"KEYCHAIN_ERROR"}else if p.refresh_token.trim().is_empty(){"RECONNECT_REQUIRED"}else if p.identity_validated_channel_id.as_deref()==p.channel_id.as_deref()&&p.identity_validated_at.is_some(){"WORKING"}else{"RECOVERABLE"};
-  json!({"id":p.id,"channelId":p.channel_id,"channelTitle":p.channel_title,"connectedAt":p.connected_at,"clientIdMasked":if p.client_id.len()>12{format!("{}…{}",&p.client_id[..8],&p.client_id[p.client_id.len()-6..])}else{"configured".into()},"scopes":p.scopes,"analyticsAuthorized":analytics,"monetaryAuthorized":monetary,"preferredBrowser":p.preferred_browser,"credentialStatus":credential_status,"credentialError":p.credential_error,"identityValidatedAt":p.identity_validated_at})
- }).collect::<Vec<_>>()))
-}
+  let credential_status=if p.identity_validated_channel_id.as_deref()==p.channel_id.as_deref()&&p.identity_validated_at.is_some(){"CHECK_ON_USE"}else{"RECOVERABLE"};
+  json!({"id":p.id,"channelId":p.channel_id,"channelTitle":p.channel_title,"connectedAt":p.connected_at,"clientIdMasked":if p.client_id.len()>12{format!("{}…{}",&p.client_id[..8],&p.client_id[p.client_id.len()-6..])}else{"configured".into()},"scopes":p.scopes,"analyticsAuthorized":analytics,"monetaryAuthorized":monetary,"preferredBrowser":p.preferred_browser,"credentialStatus":credential_status,"credentialError":Value::Null,"identityValidatedAt":p.identity_validated_at})
+ }).collect::<Vec<_>>())}
+#[tauri::command]
+pub fn youtube_oauth_profiles(app:AppHandle)->Result<Value,String>{Ok(oauth_profiles_value(load_store_metadata(&app)?))}
 
 #[tauri::command]
 pub fn youtube_oauth_disconnect(app: AppHandle, profile_id: String) -> Result<(), String> {
-    let mut s = load_store(&app)?;
+    let mut s = load_store_metadata(&app)?;
     delete_profile_secrets(&profile_id)?;
     s.profiles.retain(|p| p.id != profile_id);
     save_store(&app, &s)
@@ -753,23 +779,13 @@ pub async fn youtube_oauth_connect(
         .and_then(|x| x.as_str())
         .map(str::to_string)
         .unwrap_or_else(|| channel_id.clone());
-    let mut s = load_store(&app)?;
-    let existing = s
-        .profiles
-        .iter()
-        .find(|p| p.channel_id.as_deref() == Some(channel_id.as_str()))
-        .cloned();
-    let refresh =
-        preserved_refresh_token(existing.as_ref(), &client_id, response_refresh.as_deref())?;
-    let profile_id = reconnect_profile_id(existing.as_ref());
-    let effective_secret = if client_secret.is_empty() {
-        existing
-            .as_ref()
-            .map(|p| p.client_secret.clone())
-            .unwrap_or_default()
-    } else {
-        client_secret.clone()
-    };
+    let mut s = load_store_metadata(&app)?;
+    let mut existing = s.profiles.iter().find(|p|p.channel_id.as_deref()==Some(channel_id.as_str())).cloned();
+    if response_refresh.as_deref().map(str::trim).filter(|x|!x.is_empty()).is_none(){if let Some(p)=existing.as_mut(){hydrate_profile_secret_for_operation(&app,p,"refresh_token")?;}}
+    if client_secret.is_empty(){if let Some(p)=existing.as_mut(){hydrate_profile_secret_for_operation(&app,p,"client_secret")?;}}
+    let refresh=preserved_refresh_token(existing.as_ref(),&client_id,response_refresh.as_deref())?;
+    let profile_id=reconnect_profile_id(existing.as_ref());
+    let effective_secret=if client_secret.is_empty(){existing.as_ref().map(|p|p.client_secret.clone()).unwrap_or_default()}else{client_secret.clone()};
     let profile = OAuthProfile {
         id: profile_id.clone(),
         client_id: client_id.clone(),
@@ -789,15 +805,10 @@ pub async fn youtube_oauth_connect(
     s.profiles
         .retain(|p| p.id != profile_id && p.channel_id.as_deref() != Some(channel_id.as_str()));
     s.profiles.push(profile.clone());
-    save_store(&app, &s)?;
-    let verify = load_store(&app)?;
-    if !verify
-        .profiles
-        .iter()
-        .any(|p| p.id == profile.id && !p.refresh_token.trim().is_empty())
-    {
-        return Err("OAUTH_SAVE_VERIFY_FAILED: OAuth профиль/refresh_token не сохранился".into());
-    }
+    let saved_idx=s.profiles.iter().position(|p|p.id==profile.id).ok_or_else(||"OAUTH_SAVE_VERIFY_FAILED".to_string())?;
+    save_selected_profile(&app,&s,saved_idx)?;
+    let found=security::get_secret_cached(&oauth_key(&profile.id,"refresh_token"))?.map(|v|!v.trim().is_empty()).unwrap_or(false);
+    if !found{return Err("OAUTH_SAVE_VERIFY_FAILED: OAuth профиль/refresh_token не сохранился".into())}
     Ok(
         json!({"id":profile.id,"channelId":channel_id,"channelTitle":channel_title,"connectedAt":profile.connected_at,"preferredBrowser":preferred_browser}),
     )
@@ -1360,7 +1371,7 @@ async fn recover_orphan_credential_live(
             .take()
             .ok_or_else(|| "OAUTH_RECOVERY_FAILED: validated candidate missing".to_string())?;
         migrate_validated_orphan_with(&secrets, &mut store.profiles[idx], &validated)?;
-        save_store(app, store)?;
+        save_selected_profile(app,store,idx)?;
         result.error = None;
     }
     Ok(result)
@@ -1496,75 +1507,31 @@ async fn validate_profile_identity(
     profile.identity_validated_at = Some(Utc::now().to_rfc3339());
     Ok(())
 }
-async fn valid_access_token(
-    app: &AppHandle,
-    profile_id: &str,
-) -> Result<(String, OAuthProfile), String> {
-    let mut s = load_store(app)?;
+async fn valid_access_token(app:&AppHandle,profile_id:&str)->Result<(String,OAuthProfile),String>{
+    let mut s=load_store_metadata(app)?;
     let idx=s.profiles.iter().position(|p|p.id==profile_id).ok_or_else(||"CREDENTIAL_MISSING: YouTube OAuth профиль отсутствует во всех current/legacy storage locations".to_string())?;
-    if let Some(e) = s.profiles[idx].credential_error.clone() {
-        return Err(e);
-    }
-    if s.profiles[idx].refresh_token.trim().is_empty() {
-        let recovery = recover_orphan_credential_live(app, &mut s, idx).await?;
-        if !recovery.recovered {
-            return Err(recovery
-                .error
-                .unwrap_or_else(|| "OAUTH_RECOVERY_FAILED".into()));
+    let needs_identity=s.profiles[idx].identity_validated_at.is_none()||s.profiles[idx].identity_validated_channel_id.as_deref()!=s.profiles[idx].channel_id.as_deref();
+    if s.profiles[idx].expires_at>now_ts()+60{
+        hydrate_profile_secret_for_operation(app,&mut s.profiles[idx],"access_token")?;
+        if !s.profiles[idx].access_token.trim().is_empty(){
+            let token=s.profiles[idx].access_token.clone();
+            if needs_identity{validate_profile_identity(app,&mut s.profiles[idx],&token).await?;save_selected_profile(app,&s,idx)?;}
+            return Ok((token,s.profiles[idx].clone()))
         }
     }
-    let needs_identity = s.profiles[idx].identity_validated_at.is_none()
-        || s.profiles[idx].identity_validated_channel_id.as_deref()
-            != s.profiles[idx].channel_id.as_deref();
-    if s.profiles[idx].expires_at > now_ts() + 60 && !s.profiles[idx].access_token.trim().is_empty()
-    {
-        let token = s.profiles[idx].access_token.clone();
-        if needs_identity {
-            validate_profile_identity(app, &mut s.profiles[idx], &token).await?;
-            save_store(app, &s)?;
-        }
-        return Ok((token, s.profiles[idx].clone()));
+    hydrate_profile_secret_for_operation(app,&mut s.profiles[idx],"refresh_token")?;
+    if s.profiles[idx].refresh_token.trim().is_empty(){
+        let recovery=recover_orphan_credential_live(app,&mut s,idx).await?;
+        if !recovery.recovered{return Err(recovery.error.unwrap_or_else(||"OAUTH_RECOVERY_FAILED".into()))}
     }
-    let refresh = s.profiles[idx].refresh_token.clone();
-    let client_id = s.profiles[idx].client_id.clone();
-    let client_secret = s.profiles[idx].client_secret.clone();
-    if refresh.trim().is_empty() {
-        return Err("REFRESH_TOKEN_MISSING: refresh_token отсутствует во всех current/legacy credential locations".into());
-    }
-    let mut refresh_form = vec![
-        ("client_id", client_id.as_str()),
-        ("refresh_token", refresh.as_str()),
-        ("grant_type", "refresh_token"),
-    ];
-    if !client_secret.is_empty() {
-        refresh_form.push(("client_secret", client_secret.as_str()));
-    }
-    let r = reqwest::Client::new()
-        .post("https://oauth2.googleapis.com/token")
-        .form(&refresh_form)
-        .send()
-        .await
-        .map_err(|e| format!("OAUTH_NETWORK_ERROR: token refresh: {e}"))?;
-    let status = r.status();
-    let v: Value = r
-        .json()
-        .await
-        .map_err(|e| format!("OAUTH_REFRESH_JSON_ERROR: {e}"))?;
-    if !status.is_success() {
-        return Err(oauth_refresh_error(&v));
-    }
-    let token = v
-        .get("access_token")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "OAUTH_REFRESH_FAILED: Google response has no access_token".to_string())?
-        .to_string();
-    let expires = v.get("expires_in").and_then(Value::as_i64).unwrap_or(3600);
-    s.profiles[idx].access_token = token.clone();
-    s.profiles[idx].expires_at = now_ts() + expires;
-    validate_profile_identity(app, &mut s.profiles[idx], &token).await?;
-    let profile = s.profiles[idx].clone();
-    save_store(app, &s)?;
-    Ok((token, profile))
+    hydrate_profile_secret_for_operation(app,&mut s.profiles[idx],"client_secret")?;
+    let refresh=s.profiles[idx].refresh_token.clone();let client_id=s.profiles[idx].client_id.clone();let client_secret=s.profiles[idx].client_secret.clone();
+    if refresh.trim().is_empty(){return Err("REFRESH_TOKEN_MISSING: refresh_token отсутствует во всех current/legacy credential locations".into())}
+    let mut refresh_form=vec![("client_id",client_id.as_str()),("refresh_token",refresh.as_str()),("grant_type","refresh_token")];if !client_secret.is_empty(){refresh_form.push(("client_secret",client_secret.as_str()))}
+    let r=reqwest::Client::new().post("https://oauth2.googleapis.com/token").form(&refresh_form).send().await.map_err(|e|format!("OAUTH_NETWORK_ERROR: token refresh: {e}"))?;
+    let status=r.status();let v:Value=r.json().await.map_err(|e|format!("OAUTH_REFRESH_JSON_ERROR: {e}"))?;if !status.is_success(){return Err(oauth_refresh_error(&v))}
+    let token=v.get("access_token").and_then(Value::as_str).ok_or_else(||"OAUTH_REFRESH_FAILED: Google response has no access_token".to_string())?.to_string();let expires=v.get("expires_in").and_then(Value::as_i64).unwrap_or(3600);
+    s.profiles[idx].access_token=token.clone();s.profiles[idx].expires_at=now_ts()+expires;validate_profile_identity(app,&mut s.profiles[idx],&token).await?;let profile=s.profiles[idx].clone();save_selected_profile(app,&s,idx)?;Ok((token,profile))
 }
 
 pub(crate) async fn access_token_and_scopes(
@@ -1614,6 +1581,10 @@ struct PersistedUploadSession {
     created_at: String,
     updated_at: String,
     operation_id: Option<String>,
+    #[serde(default)]
+    channel_id: Option<String>,
+    #[serde(default)]
+    project_id: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct PersistedUploadSessions {
@@ -1684,7 +1655,7 @@ fn get_upload_session(app: &AppHandle, job_id: &str) -> Result<PersistedUploadSe
 }
 #[tauri::command]
 pub fn youtube_upload_sessions(app: AppHandle) -> Result<Value, String> {
-    let rows=load_upload_sessions_store(&app)?.sessions.into_iter().map(|x|json!({"jobId":x.job_id,"profileId":x.profile_id,"filePath":x.file_path,"total":x.total,"offset":x.offset,"createdAt":x.created_at,"updatedAt":x.updated_at,"operationId":x.operation_id})).collect::<Vec<_>>();
+    let rows=load_upload_sessions_store(&app)?.sessions.into_iter().map(|x|json!({"jobId":x.job_id,"profileId":x.profile_id,"filePath":x.file_path,"total":x.total,"offset":x.offset,"createdAt":x.created_at,"updatedAt":x.updated_at,"operationId":x.operation_id,"channelId":x.channel_id,"projectId":x.project_id})).collect::<Vec<_>>();
     Ok(json!(rows))
 }
 #[tauri::command]
@@ -1813,6 +1784,99 @@ async fn verify_uploaded_video(
         json!({"id":actual_id,"channelId":actual_channel,"privacyStatus":item.pointer("/status/privacyStatus").and_then(|x|x.as_str()),"publishAt":item.pointer("/status/publishAt").and_then(|x|x.as_str())}),
     )
 }
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ActiveUploadTelemetry {
+    job_id: String,
+    project_id: Option<String>,
+    channel_id: Option<String>,
+    profile_id: String,
+    file_path: String,
+    bytes_uploaded: u64,
+    total_bytes: u64,
+    progress: f64,
+    started_at: String,
+    last_progress_at: String,
+}
+
+fn active_upload_registry() -> &'static Mutex<HashMap<String, ActiveUploadTelemetry>> {
+    static REGISTRY: OnceLock<Mutex<HashMap<String, ActiveUploadTelemetry>>> = OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn upload_progress_percent(bytes_uploaded: u64, total: u64) -> f64 {
+    if total == 0 { return 0.0; }
+    ((bytes_uploaded.min(total) as f64 / total as f64) * 100.0).clamp(0.0, 100.0)
+}
+
+fn emit_upload_progress(app: &AppHandle, session: &PersistedUploadSession, bytes_uploaded: u64) {
+    let now = Utc::now().to_rfc3339();
+    let progress = upload_progress_percent(bytes_uploaded, session.total);
+    let mut registry = active_upload_registry().lock().unwrap_or_else(|e| e.into_inner());
+    let started_at = registry
+        .get(&session.job_id)
+        .map(|x| x.started_at.clone())
+        .unwrap_or_else(|| now.clone());
+    let row = ActiveUploadTelemetry {
+        job_id: session.job_id.clone(),
+        project_id: session.project_id.clone(),
+        channel_id: session.channel_id.clone(),
+        profile_id: session.profile_id.clone(),
+        file_path: session.file_path.clone(),
+        bytes_uploaded: bytes_uploaded.min(session.total),
+        total_bytes: session.total,
+        progress,
+        started_at,
+        last_progress_at: now.clone(),
+    };
+    registry.insert(session.job_id.clone(), row.clone());
+    drop(registry);
+    let _ = app.emit(
+        "youtube-upload-progress",
+        json!({
+            "jobId":row.job_id,
+            "projectId":row.project_id,
+            "channelId":row.channel_id,
+            "profileId":row.profile_id,
+            "filePath":row.file_path,
+            "bytesUploaded":row.bytes_uploaded,
+            "totalBytes":row.total_bytes,
+            "progress":row.progress,
+            "startedAt":row.started_at,
+            "timestamp":row.last_progress_at,
+            "active":true
+        }),
+    );
+}
+
+struct ActiveUploadGuard {
+    app: AppHandle,
+    job_id: String,
+}
+impl ActiveUploadGuard {
+    fn start(app: &AppHandle, session: &PersistedUploadSession, offset: u64) -> Self {
+        emit_upload_progress(app, session, offset);
+        Self { app: app.clone(), job_id: session.job_id.clone() }
+    }
+}
+impl Drop for ActiveUploadGuard {
+    fn drop(&mut self) {
+        let mut registry = active_upload_registry().lock().unwrap_or_else(|e| e.into_inner());
+        registry.remove(&self.job_id);
+        drop(registry);
+        let _ = self.app.emit(
+            "youtube-upload-progress",
+            json!({"jobId":self.job_id,"active":false,"timestamp":Utc::now().to_rfc3339()}),
+        );
+    }
+}
+
+#[tauri::command]
+pub fn youtube_active_uploads() -> Value {
+    let registry = active_upload_registry().lock().unwrap_or_else(|e| e.into_inner());
+    json!(registry.values().cloned().collect::<Vec<_>>())
+}
+
 const YOUTUBE_UPLOAD_CHUNK_BYTES: usize = 8 * 1024 * 1024;
 const YOUTUBE_UPLOAD_CONNECT_TIMEOUT_SECS: u64 = 20;
 const YOUTUBE_UPLOAD_REQUEST_TIMEOUT_SECS: u64 = 120;
@@ -1855,12 +1919,10 @@ async fn continue_persisted_upload(
     } else {
         (session.offset, None)
     };
+    let _active_guard = ActiveUploadGuard::start(app, session, offset);
     if let Some(v) = already {
         let _ = remove_upload_session(app, &session.job_id);
-        let _ = app.emit(
-            "youtube-upload-progress",
-            json!({"jobId":session.job_id,"progress":100.0}),
-        );
+        emit_upload_progress(app, session, session.total);
         return Ok(v);
     };
     set_upload_session_offset(app, &session.job_id, offset)?;
@@ -1911,11 +1973,7 @@ async fn continue_persisted_upload(
                             .map(|x| x + 1)
                             .unwrap_or(end + 1);
                         set_upload_session_offset(app, &session.job_id, offset)?;
-                        let pct = (offset as f64 / session.total as f64 * 100.0).min(100.0);
-                        let _ = app.emit(
-                            "youtube-upload-progress",
-                            json!({"jobId":session.job_id,"progress":pct}),
-                        );
+                        emit_upload_progress(app, session, offset);
                         completed = true;
                         break;
                     }
@@ -1927,6 +1985,7 @@ async fn continue_persisted_upload(
                             Ok((next, done)) => {
                                 offset = next;
                                 set_upload_session_offset(app, &session.job_id, offset)?;
+                                emit_upload_progress(app, session, offset);
                                 if let Some(v) = done {
                                     final_json = v;
                                     offset = session.total;
@@ -1955,6 +2014,7 @@ async fn continue_persisted_upload(
                     {
                         offset = next;
                         set_upload_session_offset(app, &session.job_id, offset)?;
+                        emit_upload_progress(app, session, offset);
                         if let Some(v) = done {
                             final_json = v;
                             offset = session.total;
@@ -1970,10 +2030,7 @@ async fn continue_persisted_upload(
         }
     }
     let _ = remove_upload_session(app, &session.job_id);
-    let _ = app.emit(
-        "youtube-upload-progress",
-        json!({"jobId":session.job_id,"progress":100.0}),
-    );
+    emit_upload_progress(app, session, session.total);
     Ok(final_json)
 }
 
@@ -1989,6 +2046,8 @@ pub async fn youtube_upload_video(
     publish_at: Option<String>,
     category_id: String,
     operation_id: Option<String>,
+    channel_id: Option<String>,
+    project_id: Option<String>,
 ) -> Result<Value, String> {
     let path = PathBuf::from(&file_path);
     if !path.is_file() {
@@ -2051,6 +2110,8 @@ pub async fn youtube_upload_video(
         created_at: now.clone(),
         updated_at: now,
         operation_id: operation_id.clone(),
+        channel_id,
+        project_id,
     };
     put_upload_session(&app, session.clone())?;
     let final_json = continue_persisted_upload(&app, &session, &token, false).await?;
@@ -2779,6 +2840,48 @@ fn youtube_status_body(
     ns
 }
 
+fn youtube_schedule_snippet_snapshot(sn: &Value) -> Value {
+    let mut out = serde_json::Map::new();
+    for k in [
+        "title",
+        "description",
+        "tags",
+        "categoryId",
+        "defaultLanguage",
+        "defaultAudioLanguage",
+        "thumbnails",
+    ] {
+        if let Some(v) = sn.get(k) {
+            out.insert(k.to_string(), v.clone());
+        }
+    }
+    Value::Object(out)
+}
+fn youtube_schedule_preserved_status_snapshot(status: &Value) -> Value {
+    let mut out = serde_json::Map::new();
+    for k in [
+        "privacyStatus",
+        "embeddable",
+        "license",
+        "publicStatsViewable",
+        "selfDeclaredMadeForKids",
+        "madeForKids",
+        "containsSyntheticMedia",
+    ] {
+        if let Some(v) = status.get(k) {
+            out.insert(k.to_string(), v.clone());
+        }
+    }
+    Value::Object(out)
+}
+fn youtube_schedule_status_payload(video_id: &str, old_status: &Value, publish_at: &str) -> Value {
+    let privacy = old_status
+        .get("privacyStatus")
+        .and_then(|x| x.as_str())
+        .unwrap_or("private");
+    json!({"id":video_id,"status":youtube_status_body(old_status,privacy,Some(publish_at))})
+}
+
 #[tauri::command]
 pub async fn youtube_update_existing_video(
     app: AppHandle,
@@ -2978,6 +3081,142 @@ pub async fn youtube_update_existing_video(
         json!({"id":video_id,"verified":verified,"metadataAccepted":true,"metadataVerified":metadata_verified,"metadataVerifyPending":false,"scheduleRequested":schedule_requested,"scheduleAccepted":true,"scheduleVerified":schedule_verified,"scheduleVerifyPending":false,"scheduleError":if schedule_verified{Value::Null}else{json!("YouTube не подтвердил расписание/privacy")},"verificationError":if verified{Value::Null}else{json!(format!("YouTube returned different values: {}",mismatches.join(", ")))},"mismatches":mismatches,"skipped":false,"appliedTags":wanted_tags_vec.len(),"actual":{"title":gsn.get("title"),"description":gsn.get("description"),"tags":gsn.get("tags"),"categoryId":gsn.get("categoryId"),"publishAt":gst.get("publishAt"),"privacyStatus":gst.get("privacyStatus")}}),
     )
 }
+#[tauri::command]
+pub async fn youtube_update_existing_schedule(
+    app: AppHandle,
+    profile_id: String,
+    video_id: String,
+    publish_at: String,
+    operation_id: Option<String>,
+) -> Result<Value, String> {
+    let (token, profile) = valid_access_token(&app, &profile_id).await?;
+    if !profile.scopes.iter().any(|s| {
+        s == "https://www.googleapis.com/auth/youtube.force-ssl"
+            || s == "https://www.googleapis.com/auth/youtube"
+    }) {
+        return Err("YouTube профиль подключён со старыми правами. Переподключи канал.".into());
+    }
+    let publish = publish_at.trim();
+    let parsed = chrono::DateTime::parse_from_rfc3339(publish)
+        .map_err(|_| "Некорректный publishAt: ожидается RFC3339".to_string())?;
+    if parsed.with_timezone(&Utc) <= Utc::now() {
+        return Err("PAST_DATE: дата публикации уже в прошлом".into());
+    }
+    let client = reqwest::Client::new();
+    emit_youtube_api_request(&app, "videos.list", operation_id.as_deref());
+    let pre = client
+        .get("https://www.googleapis.com/youtube/v3/videos")
+        .bearer_auth(&token)
+        .query(&[("part", "snippet,status"), ("id", video_id.as_str())])
+        .send()
+        .await
+        .map_err(|e| format!("YouTube schedule pre-read: {e}"))?;
+    let pre_status = pre.status();
+    let pre_value: Value = pre.json().await.unwrap_or_else(|_| json!({}));
+    if !pre_status.is_success() {
+        return Err(youtube_error(&pre_value, "Не удалось перечитать расписание видео"));
+    }
+    let item = pre_value
+        .get("items")
+        .and_then(|x| x.as_array())
+        .and_then(|x| x.first())
+        .ok_or_else(|| "Видео не найдено".to_string())?;
+    let snippet = item.get("snippet").cloned().unwrap_or_else(|| json!({}));
+    let old_status = item.get("status").cloned().unwrap_or_else(|| json!({}));
+    if profile.channel_id.as_deref() != snippet.get("channelId").and_then(|x| x.as_str()) {
+        return Err(format!(
+            "BLOCK {}: video.channelId не совпадает с oauthProfile.channelId",
+            video_id
+        ));
+    }
+    let privacy = old_status
+        .get("privacyStatus")
+        .and_then(|x| x.as_str())
+        .unwrap_or("unknown");
+    if privacy == "public" {
+        return Ok(json!({
+            "id":video_id,"verified":true,"skipped":true,"skipReason":"ALREADY_PUBLISHED",
+            "scheduleAccepted":false,"scheduleVerified":true,"metadataPreserved":true,"statusPreserved":true,
+            "snippetWrites":0,"thumbnailWrites":0,"playlistWrites":0,"videosInsert":0,
+            "actual":{"publishAt":old_status.get("publishAt"),"privacyStatus":old_status.get("privacyStatus")}
+        }));
+    }
+    if privacy != "private" {
+        return Ok(json!({
+            "id":video_id,"verified":true,"skipped":true,"skipReason":"UNSUPPORTED_STATE",
+            "scheduleAccepted":false,"scheduleVerified":true,"metadataPreserved":true,"statusPreserved":true,
+            "snippetWrites":0,"thumbnailWrites":0,"playlistWrites":0,"videosInsert":0,
+            "actual":{"publishAt":old_status.get("publishAt"),"privacyStatus":old_status.get("privacyStatus")}
+        }));
+    }
+    let old_publish = old_status.get("publishAt").and_then(|x| x.as_str());
+    if same_publish_time(Some(publish), old_publish) {
+        return Ok(json!({
+            "id":video_id,"verified":true,"skipped":true,"skipReason":"ALREADY_CORRECT",
+            "scheduleAccepted":true,"scheduleVerified":true,"metadataPreserved":true,"statusPreserved":true,
+            "snippetWrites":0,"thumbnailWrites":0,"playlistWrites":0,"videosInsert":0,
+            "actual":{"publishAt":old_status.get("publishAt"),"privacyStatus":old_status.get("privacyStatus")}
+        }));
+    }
+    let snippet_before = youtube_schedule_snippet_snapshot(&snippet);
+    let status_before = youtube_schedule_preserved_status_snapshot(&old_status);
+    let body = youtube_schedule_status_payload(&video_id, &old_status, publish);
+    debug_assert!(body.get("snippet").is_none());
+    emit_youtube_api_request(&app, "videos.update", operation_id.as_deref());
+    let update = client
+        .put("https://www.googleapis.com/youtube/v3/videos")
+        .bearer_auth(&token)
+        .query(&[("part", "status")])
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("YouTube schedule update: {e}"))?;
+    let update_status = update.status();
+    let update_value: Value = update.json().await.unwrap_or_else(|_| json!({}));
+    if !update_status.is_success() {
+        return Err(youtube_error(&update_value, "YouTube не принял новое расписание"));
+    }
+    emit_youtube_api_request(&app, "videos.list", operation_id.as_deref());
+    let verify = client
+        .get("https://www.googleapis.com/youtube/v3/videos")
+        .bearer_auth(&token)
+        .query(&[("part", "snippet,status"), ("id", video_id.as_str())])
+        .send()
+        .await
+        .map_err(|e| format!("YouTube schedule verify: {e}"))?;
+    let verify_status = verify.status();
+    let verify_value: Value = verify.json().await.unwrap_or_else(|_| json!({}));
+    if !verify_status.is_success() {
+        return Err(youtube_error(&verify_value, "YouTube не подтвердил новое расписание"));
+    }
+    let got = verify_value
+        .get("items")
+        .and_then(|x| x.as_array())
+        .and_then(|x| x.first())
+        .ok_or_else(|| "Видео отсутствует в контрольном videos.list".to_string())?;
+    let got_snippet = got.get("snippet").cloned().unwrap_or_else(|| json!({}));
+    let got_status = got.get("status").cloned().unwrap_or_else(|| json!({}));
+    let publish_ok = same_publish_time(Some(publish), got_status.get("publishAt").and_then(|x| x.as_str()));
+    let privacy_ok = got_status.get("privacyStatus").and_then(|x| x.as_str()) == Some(privacy);
+    let metadata_preserved = youtube_schedule_snippet_snapshot(&got_snippet) == snippet_before;
+    let status_preserved = youtube_schedule_preserved_status_snapshot(&got_status) == status_before;
+    let verified = publish_ok && privacy_ok && metadata_preserved && status_preserved;
+    let mut mismatches = Vec::<String>::new();
+    if !publish_ok { mismatches.push("publishAt".into()); }
+    if !privacy_ok { mismatches.push("privacyStatus".into()); }
+    if !metadata_preserved { mismatches.push("snippet_changed".into()); }
+    if !status_preserved { mismatches.push("status_field_changed".into()); }
+    Ok(json!({
+        "id":video_id,"verified":verified,"skipped":false,"skipReason":Value::Null,
+        "scheduleAccepted":true,"scheduleVerified":publish_ok&&privacy_ok,
+        "metadataPreserved":metadata_preserved,"statusPreserved":status_preserved,
+        "snippetWrites":0,"thumbnailWrites":0,"playlistWrites":0,"videosInsert":0,
+        "mismatches":mismatches,
+        "before":{"publishAt":old_status.get("publishAt"),"privacyStatus":old_status.get("privacyStatus"),"snippet":snippet_before,"preservedStatus":status_before},
+        "actual":{"publishAt":got_status.get("publishAt"),"privacyStatus":got_status.get("privacyStatus"),"snippet":youtube_schedule_snippet_snapshot(&got_snippet),"preservedStatus":youtube_schedule_preserved_status_snapshot(&got_status)}
+    }))
+}
+
 #[tauri::command]
 pub async fn youtube_list_playlists(
     app: AppHandle,
@@ -3198,9 +3437,7 @@ pub async fn youtube_channel_stats(
     api_key: String,
     channel_id: String,
 ) -> Result<Value, String> {
-    if api_key.trim().is_empty() {
-        return Err("YouTube API Key не указан".into());
-    }
+    let api_key=crate::storage::youtube_api_key_for_operation(&app,&api_key)?;
     if channel_id.trim().is_empty() {
         return Err("Channel ID не указан".into());
     }
@@ -3354,6 +3591,22 @@ mod v2111_oauth_recovery_tests {
             Ok(())
         }
     }
+    #[test]
+    fn google_project_diagnostic_is_metadata_only_and_secret_redacted() {
+        let store: SafeOAuthMetadataStore=serde_json::from_str(r#"{"profiles":[{"id":"p99","client_id":"123456789012-abcdefghijklmnop.apps.googleusercontent.com","channel_id":"UC_SAFE_METADATA","channel_title":"Safe Test Channel","client_secret":"CLIENT_SECRET_MUST_NOT_LEAK","access_token":"ACCESS_TOKEN_MUST_NOT_LEAK","refresh_token":"REFRESH_TOKEN_MUST_NOT_LEAK"}]}"#).unwrap();
+        let google: SafeGoogleMetadata=serde_json::from_str(r#"{"client_id":"123456789012-abcdefghijklmnop.apps.googleusercontent.com","project_id":"real-local-project-id","client_secret":"GLOBAL_SECRET_MUST_NOT_LEAK","api_key":"API_KEY_MUST_NOT_LEAK"}"#).unwrap();
+        let value=google_project_diagnostic_value(&store,&google,"p99").unwrap();
+        assert_eq!(value["clientId"],"123456789012-abcdefghijklmnop.apps.googleusercontent.com");
+        assert_eq!(value["projectId"],"real-local-project-id");
+        assert_eq!(value["youtubeApiRequests"],0);
+        assert_eq!(value["keychainSecretsRead"],false);
+        let other:SafeGoogleMetadata=serde_json::from_str(r#"{"client_id":"999999999999-other.apps.googleusercontent.com","project_id":"must-not-be-used"}"#).unwrap();
+        let mismatch=google_project_diagnostic_value(&store,&other,"p99").unwrap();
+        assert!(mismatch["projectId"].is_null());
+        let out=value.to_string();
+        for forbidden in ["client_secret","access_token","refresh_token","CLIENT_SECRET_MUST_NOT_LEAK","ACCESS_TOKEN_MUST_NOT_LEAK","REFRESH_TOKEN_MUST_NOT_LEAK","GLOBAL_SECRET_MUST_NOT_LEAK","API_KEY_MUST_NOT_LEAK"]{assert!(!out.contains(forbidden),"leaked {forbidden}")}
+    }
+
     fn profile(n: usize) -> OAuthProfile {
         OAuthProfile {
             id: format!("p{n}"),
@@ -3979,30 +4232,19 @@ pub async fn youtube_oauth_reconnect_existing(
     if profile_id.is_empty() {
         return Err("OAUTH_PROFILE_ID_MISSING: existing profile UUID is required".into());
     }
-    let original_store = load_store(&app)?;
-    let idx = reconnect_profile_index(&original_store, &profile_id)?;
-    let target = original_store.profiles[idx].clone();
+    let mut original_store=load_store_metadata(&app)?;
+    let idx=reconnect_profile_index(&original_store,&profile_id)?;
+    hydrate_profile_secret_for_operation(&app,&mut original_store.profiles[idx],"client_secret")?;
+    let target=original_store.profiles[idx].clone();
     let expected_channel_id = target
         .channel_id
         .clone()
         .filter(|x| !x.trim().is_empty())
         .ok_or_else(|| format!("OAUTH_EXPECTED_CHANNEL_MISSING: profile_id={profile_id}"))?;
-    let global = load_or_migrate_google_config(&app)?;
-    let client_id = if !target.client_id.trim().is_empty() {
-        target.client_id.clone()
-    } else {
-        global.client_id.clone()
-    };
-    if client_id.trim().is_empty() {
-        return Err("OAUTH_CLIENT_MISSING: existing profile has no OAuth client_id and global Google config is empty".into());
-    }
-    let client_secret = if !target.client_secret.trim().is_empty() {
-        target.client_secret.clone()
-    } else if global.client_id.trim() == client_id.trim() {
-        global.client_secret.clone()
-    } else {
-        String::new()
-    };
+    let global=if target.client_id.trim().is_empty()||target.client_secret.trim().is_empty(){Some(load_or_migrate_google_config(&app)?)}else{None};
+    let client_id=if !target.client_id.trim().is_empty(){target.client_id.clone()}else{global.as_ref().map(|g|g.client_id.clone()).unwrap_or_default()};
+    if client_id.trim().is_empty(){return Err("OAUTH_CLIENT_MISSING: existing profile has no OAuth client_id and global Google config is empty".into())}
+    let client_secret=if !target.client_secret.trim().is_empty(){target.client_secret.clone()}else if let Some(g)=global.as_ref(){if g.client_id.trim()==client_id.trim(){g.client_secret.clone()}else{String::new()}}else{String::new()};
     let preferred_browser = browser.filter(|x| !x.trim().is_empty()).unwrap_or_else(|| {
         if target.preferred_browser.trim().is_empty() {
             "default".into()
@@ -4157,7 +4399,7 @@ pub async fn youtube_oauth_reconnect_existing(
         reconnect_rollback_secrets_with(&secrets, &backup);
         return Err(format!("OAUTH_METADATA_SAVE_FAILED: {e}"));
     }
-    let verify = load_store(&app)?;
+    let verify = load_store_metadata(&app)?;
     let verified = verify
         .profiles
         .iter()
@@ -4165,11 +4407,10 @@ pub async fn youtube_oauth_reconnect_existing(
         .ok_or_else(|| {
             "OAUTH_SAVE_VERIFY_FAILED: existing profile UUID disappeared after save".to_string()
         })?;
-    let keychain_found = security::get_secret(&oauth_key(&profile_id, "refresh_token"))?
+    let keychain_found = security::get_secret_cached(&oauth_key(&profile_id, "refresh_token"))?
         .map(|x| !x.trim().is_empty())
         .unwrap_or(false);
     let ok = keychain_found
-        && !verified.refresh_token.trim().is_empty()
         && verified.channel_id.as_deref() == Some(expected_channel_id.as_str())
         && verified.identity_validated_channel_id.as_deref() == Some(expected_channel_id.as_str());
     if !ok {
@@ -4181,6 +4422,57 @@ pub async fn youtube_oauth_reconnect_existing(
     Ok(
         json!({"ok":true,"status":"CONNECTED","profileId":profile_id,"profileUuidPreserved":true,"expectedChannelId":expected_channel_id,"authorizedChannelId":authorized_channel_id,"channelTitle":authorized_channel_title,"refreshTokenStored":true,"keychainReadback":"FOUND","tokenRefresh":"PASS","channelIdentity":"PASS","youtubeIdentityRequests":1,"videosInsert":0}),
     )
+}
+
+
+#[cfg(test)]
+mod schedule_only_status_tests {
+    use super::*;
+    #[test]
+    fn status_payload_never_contains_snippet() {
+        let st=json!({"privacyStatus":"private","embeddable":true,"license":"youtube","publicStatsViewable":true,"selfDeclaredMadeForKids":false,"containsSyntheticMedia":false});
+        let body=youtube_schedule_status_payload("v1",&st,"2026-09-20T21:00:00Z");
+        assert!(body.get("snippet").is_none());
+        assert_eq!(body["status"]["privacyStatus"],"private");
+        assert_eq!(body["status"]["publishAt"],"2026-09-20T21:00:00Z");
+    }
+    #[test]
+    fn schedule_body_preserves_existing_writable_status_fields() {
+        let st=json!({"privacyStatus":"private","publishAt":"2026-09-18T21:00:00Z","embeddable":false,"license":"youtube","publicStatsViewable":false,"selfDeclaredMadeForKids":true,"madeForKids":true,"containsSyntheticMedia":true});
+        let body=youtube_schedule_status_payload("v1",&st,"2026-09-19T21:00:00Z");
+        for k in ["privacyStatus","embeddable","license","publicStatsViewable","selfDeclaredMadeForKids","containsSyntheticMedia"] { assert_eq!(body["status"].get(k),st.get(k),"{k}"); }
+        assert!(body["status"].get("madeForKids").is_none(),"read-only madeForKids must not be written");
+    }
+    #[test]
+    fn snippet_preservation_snapshot_covers_metadata_and_thumbnail_reference() {
+        let sn=json!({"title":"A","description":"B","tags":["C"],"categoryId":"10","defaultLanguage":"fr","defaultAudioLanguage":"en","thumbnails":{"high":{"url":"x"}},"channelId":"UC"});
+        let x=youtube_schedule_snippet_snapshot(&sn);
+        assert_eq!(x["title"],"A");assert_eq!(x["description"],"B");assert_eq!(x["tags"][0],"C");assert_eq!(x["categoryId"],"10");assert_eq!(x["thumbnails"]["high"]["url"],"x");assert!(x.get("channelId").is_none());
+    }
+    #[test]
+    fn preserved_status_snapshot_tracks_read_only_made_for_kids_without_writing_it() {
+        let st=json!({"privacyStatus":"private","madeForKids":true,"selfDeclaredMadeForKids":false});
+        let snap=youtube_schedule_preserved_status_snapshot(&st);
+        assert_eq!(snap["madeForKids"],true);
+        let body=youtube_schedule_status_payload("v",&st,"2026-10-01T00:00:00Z");
+        assert!(body["status"].get("madeForKids").is_none());
+    }
+}
+
+#[cfg(test)]
+mod keychain_prompt_architecture_tests{
+ use super::*;use std::{cell::RefCell,collections::HashMap};
+ #[derive(Default)]struct CountingStore{v:RefCell<HashMap<String,String>>,gets:RefCell<Vec<String>>,sets:RefCell<Vec<String>>,deletes:RefCell<Vec<String>>,accounts:RefCell<usize>}
+ impl OAuthSecretStore for CountingStore{
+  fn get(&self,a:&str)->Result<Option<String>,String>{self.gets.borrow_mut().push(a.to_string());Ok(self.v.borrow().get(a).cloned())}
+  fn set(&self,a:&str,v:&str)->Result<(),String>{self.sets.borrow_mut().push(a.to_string());self.v.borrow_mut().insert(a.to_string(),v.to_string());Ok(())}
+  fn delete(&self,a:&str)->Result<(),String>{self.deletes.borrow_mut().push(a.to_string());self.v.borrow_mut().remove(a);Ok(())}
+  fn accounts(&self,_:&str)->Result<Vec<String>,String>{*self.accounts.borrow_mut()+=1;Ok(self.v.borrow().keys().cloned().collect())}
+ }
+ fn p(id:&str)->OAuthProfile{OAuthProfile{id:id.into(),client_id:"123.apps.googleusercontent.com".into(),client_secret:String::new(),channel_id:Some(format!("UC{id}")),channel_title:Some(id.into()),access_token:String::new(),refresh_token:String::new(),expires_at:0,connected_at:"2026-01-01T00:00:00Z".into(),scopes:vec![],preferred_browser:"default".into(),identity_validated_at:Some("2026-01-01T00:00:00Z".into()),identity_validated_channel_id:Some(format!("UC{id}")),credential_error:None}}
+ #[test]fn passive_profile_listing_zero_secret_store_calls(){let secrets=CountingStore::default();let value=oauth_profiles_value(OAuthStore{profiles:vec![p("a"),p("b")]});assert_eq!(value.as_array().unwrap().len(),2);assert!(secrets.gets.borrow().is_empty());assert!(secrets.sets.borrow().is_empty());assert!(secrets.deletes.borrow().is_empty());assert_eq!(*secrets.accounts.borrow(),0);}
+ #[test]fn selected_profile_hydration_reads_only_selected_secret(){let secrets=CountingStore::default();secrets.v.borrow_mut().insert(oauth_key("a","refresh_token"),"ra".into());secrets.v.borrow_mut().insert(oauth_key("b","refresh_token"),"rb".into());let mut a=p("a");let b=p("b");hydrate_profile_secret_kind_with(&secrets,&mut a,"refresh_token").unwrap();assert_eq!(a.refresh_token,"ra");assert!(b.refresh_token.is_empty());assert_eq!(&*secrets.gets.borrow(),&vec![oauth_key("a","refresh_token")]);assert!(secrets.sets.borrow().is_empty());assert!(secrets.deletes.borrow().is_empty());}
+ #[test]fn google_status_metadata_never_requires_secret_value(){let c=GoogleConfig{client_id:"123.apps.googleusercontent.com".into(),project_id:"project".into(),client_secret:String::new(),api_key:String::new(),client_secret_present:true,api_key_present:true};let v=google_config_status_value(&c);assert_eq!(v["hasSecret"],true);assert_eq!(v["hasApiKey"],true);assert!(!v.to_string().contains("client_secret"));}
 }
 
 #[cfg(test)]
@@ -4405,5 +4697,19 @@ mod auth_recovery_targeted_tests {
         assert!(u.contains("access_type=offline"));
         assert!(u.contains("prompt=consent"));
         assert!(u.contains("include_granted_scopes=true"))
+    }
+}
+
+
+#[cfg(test)]
+mod v216_upload_progress_tests {
+    use super::upload_progress_percent;
+    #[test]
+    fn factual_byte_progress_is_clamped() {
+        assert_eq!(upload_progress_percent(0, 100), 0.0);
+        assert_eq!(upload_progress_percent(50, 100), 50.0);
+        assert_eq!(upload_progress_percent(100, 100), 100.0);
+        assert_eq!(upload_progress_percent(150, 100), 100.0);
+        assert_eq!(upload_progress_percent(10, 0), 0.0);
     }
 }

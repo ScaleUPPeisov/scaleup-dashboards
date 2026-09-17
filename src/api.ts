@@ -5,20 +5,23 @@ import { listen } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
 import { openPath, openUrl } from '@tauri-apps/plugin-opener';
 import { check } from '@tauri-apps/plugin-updater';
-import {UPDATER_CHECK_OPTIONS} from './updaterPolicy';
+import {classifyUpdaterError,UPDATER_CHECK_OPTIONS,UPDATER_ENDPOINTS,updaterFailureMessage,updaterVersionStatus} from './updaterPolicy';
 import { relaunch } from '@tauri-apps/plugin-process';
 import type {YoutubeExistingVideo, AppState, ChannelAnalytics, Competitor, Diagnostics, InboxScan, LicenseStatus, VideoJob, YoutubeProfile } from './types';
-import {recordYoutubeApiRequest,recordYoutubeCommand,youtubeGuardedCall,type YoutubeApiRequestEvent} from './youtubeQuota';
+import {bindYoutubeQuotaOperationProject,recordYoutubeApiRequest,recordYoutubeCommand,registerYoutubeUploadProject,youtubeGuardedCall,youtubeQuotaProjectIdentity,type YoutubeApiRequestEvent} from './youtubeQuota';
 import {mutateShortsState,recordShortUploadAttempt} from './shortsCore';
+import {endUploadRuntime,registerUploadRuntime,type UploadProgressFact} from './uploadTelemetry';
 
 export type AiMetadata={title:string;description:string;tags:string[]};
 export type YoutubeUploadResult={videoId?:string;channelId?:string;channelTitle?:string;scheduled:boolean;resumed?:boolean;verified?:boolean;verificationError?:string;actual?:{id?:string;channelId?:string;privacyStatus?:string;publishAt?:string|null}};
-export type YoutubeUploadSession={jobId:string;profileId:string;filePath:string;total:number;offset:number;createdAt:string;updatedAt:string;operationId?:string};
+export type YoutubeUploadSession={jobId:string;profileId:string;filePath:string;total:number;offset:number;createdAt:string;updatedAt:string;operationId?:string;channelId?:string;projectId?:string};
 export type YoutubeFileFingerprint={fingerprint:string;size:number;modifiedAt:number;path:string;cached?:boolean};
-export type ShortsProbe={path:string;duration:number;width:number;height:number;hasVideo:boolean;hasAudio:boolean;size:number;format:string};
+export type ShortsAudioStream={index:number;codec:string;channels:number;sampleRate:number;duration:number;startTime:number;bitRate:number;isDefault:boolean};
+export type ShortsProbe={path:string;duration:number;width:number;height:number;hasVideo:boolean;hasAudio:boolean;size:number;format:string;audioStreams:ShortsAudioStream[]};
 export type ShortsSourceFile={path:string;name:string;size:number;extension:string};
-export type ShortsRenderResult={outputPath:string;duration:number;width:number;height:number;hasAudio:boolean;encoder:string;reused:boolean};
+export type ShortsRenderResult={outputPath:string;duration:number;width:number;height:number;hasAudio:boolean;encoder:string;reused:boolean;audioStreamIndex:number;audioMaxDb:number};
 export type GoogleConfigStatus={configured:boolean;projectId?:string;clientIdMasked?:string;hasSecret:boolean;hasApiKey:boolean};
+export type GoogleProjectDiagnosticSafe={oauthProfileId:string;channelId?:string|null;channelTitle?:string|null;clientId:string;projectId?:string|null;projectIdSource:'google-config-exact-client-match'|'not-locally-known';youtubeApiRequests:0;keychainSecretsRead:false};
 export type StateSaveResult={ok:boolean;securityWarning?:string|null;securityWarnings?:number};
 export type KeychainDiagnostic={ok:boolean;status:string;service?:string};
 export type OAuthInventoryProfile={profile_uuid:string;is_current:boolean;is_orphan:boolean;refresh_token_account:'PRESENT'|'ABSENT';access_token_account:'PRESENT'|'ABSENT';client_secret_account:'PRESENT'|'ABSENT';refresh_token_read:'PASS'|'ACCESS_DENIED'|'READ_FAILED'|'NOT_RUN';refresh_read_osstatus?:number|null;refresh_read_error?:string|null};
@@ -27,9 +30,19 @@ export type OAuthRecoveryDiagnostic={appVersion:string;bundleId:string;channelId
 export type YoutubeProfileHealth={ok:boolean;status:string;channelId?:string;channelTitle?:string;thumbnail?:string;expiresAt?:number;analyticsAuthorized?:boolean;monetaryAuthorized?:boolean;error?:string};
 export type OAuthReconnectResult={ok:boolean;status:'CONNECTED';profileId:string;profileUuidPreserved:boolean;expectedChannelId:string;authorizedChannelId:string;channelTitle:string;refreshTokenStored:boolean;keychainReadback:'FOUND';tokenRefresh:'PASS';channelIdentity:'PASS';youtubeIdentityRequests:number;videosInsert:number};
 export type ExistingVideoSyncResult={channelId?:string;channelTitle?:string;youtubeFound:number;received:number;requested:number;privateCount:number;publicCount:number;scheduledCount:number;unlistedCount?:number;complete:boolean;draftCandidateCount?:number;searchSupplementCount?:number;searchUsed?:boolean;playlistFound?:number;videos:import('./types').YoutubeExistingVideo[]};
+export type YoutubeScheduleUpdateResult={id:string;verified:boolean;skipped:boolean;skipReason?:'ALREADY_PUBLISHED'|'ALREADY_CORRECT'|'UNSUPPORTED_STATE'|null;scheduleAccepted:boolean;scheduleVerified:boolean;metadataPreserved:boolean;statusPreserved:boolean;snippetWrites:0;thumbnailWrites:0;playlistWrites:0;videosInsert:0;mismatches?:string[];before?:{publishAt?:string|null;privacyStatus?:string;snippet?:Record<string,unknown>;preservedStatus?:Record<string,unknown>};actual?:{publishAt?:string|null;privacyStatus?:string;snippet?:Record<string,unknown>;preservedStatus?:Record<string,unknown>}};
 export type CompetitorCandidate={channelId:string;name:string;url:string;thumbnail?:string;subscribers?:number;views?:number;videos?:number;similarity:number};
-const METHOD_LEDGER_COMMANDS=new Set(['youtube_oauth_profile_health','youtube_upload_video','youtube_list_existing_videos','youtube_backup_existing_videos','youtube_update_existing_video','youtube_list_playlists','youtube_playlist_membership','youtube_set_thumbnail']);
-const ytInvoke=<T>(command:string,args?:Record<string,unknown>)=>youtubeGuardedCall(async()=>{const result=await invoke<T>(command,args);if(!METHOD_LEDGER_COMMANDS.has(command))recordYoutubeCommand(command,args,result);return result});
+export type UpdaterTransferProgress={status:'DOWNLOADING'|'VERIFYING';percent:number;downloadedBytes:number;totalBytes:number};
+export type CheckedUpdaterCandidate={none:false;version:string;date?:string;body:string;current:string;latest:string;status:'AVAILABLE';endpoint:string;versionComparison:string;download:(onProgress?:(p:UpdaterTransferProgress)=>void)=>Promise<void>;install:(onStatus?:(s:'VERIFYING'|'INSTALLING'|'READY_TO_RESTART')=>void)=>Promise<void>;restart:()=>Promise<void>};
+export type NoUpdaterCandidate={none:true;current:string;latest:string;status:'UP_TO_DATE';endpoint:string;versionComparison:string};
+export type CheckedUpdater=CheckedUpdaterCandidate|NoUpdaterCandidate;
+const METHOD_LEDGER_COMMANDS=new Set(['youtube_oauth_profile_health','youtube_upload_video','youtube_list_existing_videos','youtube_backup_existing_videos','youtube_update_existing_video','youtube_update_existing_schedule','youtube_list_playlists','youtube_playlist_membership','youtube_set_thumbnail']);
+const quotaProjectCache=new Map<string,string|null>();
+async function quotaProjectForProfile(profileId:string){
+ if(!profileId)return null;if(quotaProjectCache.has(profileId))return quotaProjectCache.get(profileId)??null;
+ try{const [profiles,config]=await Promise.all([invoke<YoutubeProfile[]>('youtube_oauth_profiles'),invoke<GoogleConfigStatus>('youtube_google_config_status')]),profile=profiles.find(x=>x.id===profileId),identity=youtubeQuotaProjectIdentity(profile,config),key=identity.projectKey;if(key)registerYoutubeUploadProject(key);quotaProjectCache.set(profileId,key);return key}catch{quotaProjectCache.set(profileId,null);return null}
+}
+const ytInvoke=<T>(command:string,args?:Record<string,unknown>)=>youtubeGuardedCall(async()=>{const profileId=String(args?.profileId||''),operationId=String(args?.operationId||'');if(profileId&&operationId){const projectKey=await quotaProjectForProfile(profileId);if(projectKey)bindYoutubeQuotaOperationProject(operationId,projectKey)}const result=await invoke<T>(command,args);if(!METHOD_LEDGER_COMMANDS.has(command))recordYoutubeCommand(command,args,result);return result});
 
 export const api={
   studioDraftsStartBridge:()=>invoke<{ok:boolean;port:number;ttlMs:number}>('studio_drafts_start_bridge'),
@@ -69,6 +82,7 @@ export const api={
   youtubeCompetitorSnapshot:(profileId:string,channelRef:string)=>ytInvoke<Partial<Competitor>&{channelId:string}>('youtube_competitor_snapshot',{profileId,channelRef}),
   youtubeDiscoverCompetitors:(profileId:string,maxResults=8)=>ytInvoke<CompetitorCandidate[]>('youtube_discover_competitors',{profileId,maxResults}),
   youtubeProfiles:()=>invoke<YoutubeProfile[]>('youtube_oauth_profiles'),
+  youtubeGoogleProjectDiagnostic:(profileId:string)=>invoke<GoogleProjectDiagnosticSafe>('youtube_google_project_diagnostic',{profileId}),
   youtubeOauthRecoveryDiagnostic:(profileId:string)=>invoke<OAuthRecoveryDiagnostic>('youtube_oauth_recovery_diagnostic',{profileId}),
   youtubeGoogleConfig:()=>invoke<GoogleConfigStatus>('youtube_google_config_status'),
   youtubeImportGoogleConfig:(jsonText:string,apiKey='')=>invoke<GoogleConfigStatus>('youtube_google_config_import',{jsonText,apiKey}),
@@ -79,13 +93,14 @@ export const api={
   youtubeProfileHealth:(profileId:string)=>ytInvoke<YoutubeProfileHealth>('youtube_oauth_profile_health',{profileId}),
   youtubeConnect:(clientId:string,clientSecret:string,browser='default')=>invoke<YoutubeProfile>('youtube_oauth_connect',{clientId,clientSecret,browser}),
   youtubeDisconnect:(profileId:string)=>invoke<void>('youtube_oauth_disconnect',{profileId}),
-  youtubeUpload:(profileId:string,jobId:string,filePath:string,title:string,description:string,tags:string[],publishAt:string|undefined,categoryId:string,operationId?:string)=>ytInvoke<YoutubeUploadResult>('youtube_upload_video',{profileId,jobId,filePath,title,description,tags,publishAt,categoryId,operationId}),
+  youtubeUpload:async(profileId:string,jobId:string,filePath:string,title:string,description:string,tags:string[],publishAt:string|undefined,categoryId:string,operationId?:string,telemetry?:{channelId?:string;projectId?:string;totalBytes?:number;startedAt?:string})=>{const startedAt=telemetry?.startedAt||new Date().toISOString();registerUploadRuntime({jobId,projectId:telemetry?.projectId,channelId:telemetry?.channelId||'',profileId,filePath,startedAt},telemetry?.totalBytes,0);try{return await ytInvoke<YoutubeUploadResult>('youtube_upload_video',{profileId,jobId,filePath,title,description,tags,publishAt,categoryId,operationId,channelId:telemetry?.channelId,projectId:telemetry?.projectId})}finally{endUploadRuntime(jobId)}},
   shortsScanFolder:(sourceFolder:string)=>invoke<ShortsSourceFile[]>('shorts_scan_folder',{sourceFolder}),
   shortsProbeSource:(sourcePath:string)=>invoke<ShortsProbe>('shorts_probe_source',{sourcePath}),
   shortsValidateFile:(outputPath:string,targetDuration:number)=>invoke<ShortsProbe>('shorts_validate_file',{outputPath,targetDuration}),
   shortsRenderSegment:(sourcePath:string,outputPath:string,start:number,duration:number)=>invoke<ShortsRenderResult>('shorts_render_segment',{sourcePath,outputPath,start,duration}),
   youtubeUploadSessions:()=>invoke<YoutubeUploadSession[]>('youtube_upload_sessions'),
-  youtubeResumeUpload:(jobId:string)=>invoke<YoutubeUploadResult>('youtube_resume_upload',{jobId}),
+  youtubeActiveUploads:()=>invoke<UploadProgressFact[]>('youtube_active_uploads'),
+  youtubeResumeUpload:async(jobId:string)=>{const session=(await invoke<YoutubeUploadSession[]>('youtube_upload_sessions')).find(x=>x.jobId===jobId);if(session)registerUploadRuntime({jobId,projectId:session.projectId,channelId:session.channelId||'',profileId:session.profileId,filePath:session.filePath,startedAt:new Date().toISOString()},session.total,session.offset);try{return await invoke<YoutubeUploadResult>('youtube_resume_upload',{jobId})}finally{endUploadRuntime(jobId)}},
   trashLocalFile:(path:string,allowedRoots:string[])=>invoke<{trashed:boolean;missing:boolean}>('trash_local_file',{path,allowedRoots}),
   youtubeCancelUploadSession:(jobId:string)=>invoke<void>('youtube_cancel_upload_session',{jobId}),
   youtubeSetThumbnail:(profileId:string,videoId:string,filePath:string,operationId?:string)=>ytInvoke<{ok:boolean;videoId:string;filePath:string}>('youtube_set_thumbnail',{profileId,videoId,filePath,operationId}),
@@ -94,24 +109,36 @@ export const api={
   youtubeBackupExisting:(profileId:string,videos:any[],operationId?:string)=>ytInvoke<{path:string;count:number;videos:YoutubeExistingVideo[]}>('youtube_backup_existing_videos',{profileId,videos,operationId}),
   youtubeCacheThumbnail:(videoId:string,primary?:string)=>invoke<string>('youtube_cache_thumbnail',{videoId,primary}),
   youtubeUpdateExisting:(profileId:string,videoId:string,title:string,description:string,tags:string[],publishAt?:string,privacyStatus?:string,categoryId?:string,operationId?:string)=>ytInvoke<{id:string;verified:boolean;metadataAccepted?:boolean;metadataVerified:boolean;metadataVerifyPending?:boolean;scheduleRequested:boolean;scheduleAccepted?:boolean;scheduleVerified:boolean;scheduleVerifyPending?:boolean;scheduleError?:string|null;verificationError?:string|null;mismatches?:string[];skipped?:boolean;appliedTags?:number;actual?:{title?:string;description?:string;tags?:string[];publishAt?:string|null;privacyStatus?:string;categoryId?:string}}>('youtube_update_existing_video',{profileId,videoId,title,description,tags,publishAt,privacyStatus,categoryId,operationId}),
+  youtubeUpdateExistingSchedule:(profileId:string,videoId:string,publishAt:string,operationId?:string)=>ytInvoke<YoutubeScheduleUpdateResult>('youtube_update_existing_schedule',{profileId,videoId,publishAt,operationId}),
   youtubeListPlaylists:(profileId:string,operationId?:string)=>ytInvoke<{playlists:Array<{id:string;title:string;privacyStatus?:string}>;calls:number}>('youtube_list_playlists',{profileId,operationId}),
   youtubePlaylistMembership:(profileId:string,videoId:string,playlistId:string,action:'add'|'remove',operationId?:string)=>ytInvoke<{verified:boolean;skipped:boolean;wasMember:boolean;isMember:boolean;action:'add'|'remove';playlistId:string;videoId:string;verificationError?:string|null}>('youtube_playlist_membership',{profileId,videoId,playlistId,action,operationId}),
-  onYoutubeProgress:(cb:(data:{jobId:string;progress:number})=>void)=>listen<{jobId:string;progress:number}>('youtube-upload-progress',e=>cb(e.payload)),
+  onYoutubeProgress:(cb:(data:UploadProgressFact)=>void)=>listen<UploadProgressFact>('youtube-upload-progress',e=>cb(e.payload)),
   onYoutubeApiRequest:(cb:(data:YoutubeApiRequestEvent)=>void)=>listen<YoutubeApiRequestEvent>('youtube-api-request',e=>{recordYoutubeApiRequest(e.payload);if(e.payload.method==='videos.insert'&&e.payload.operationId?.startsWith('short-upload:')){const shortId=e.payload.operationId.slice('short-upload:'.length).split(':')[0];mutateShortsState(s=>recordShortUploadAttempt(s,shortId,e.payload.operationId!,e.payload.at||new Date().toISOString()))}cb(e.payload)}),
   appVersion:()=>getVersion(),
-  checkUpdate:async()=>{
+  checkUpdate:async():Promise<CheckedUpdater>=>{
     const current=await getVersion();
-    const update=await check(UPDATER_CHECK_OPTIONS);
-    if(!update)return {none:true,current} as any;
+    let update:any;
+    try{update=await check(UPDATER_CHECK_OPTIONS)}catch(error){const x=classifyUpdaterError(error,'check');throw new Error(`${x.code}: ${updaterFailureMessage(x.code,x.detail)}`)}
+    if(!update)return {none:true,current,latest:current,status:'UP_TO_DATE',endpoint:UPDATER_ENDPOINTS[0],versionComparison:updaterVersionStatus(current,current)};
     let downloaded=0,total=0;
-    return {version:update.version,date:update.date,body:update.body||'',current:update.currentVersion,install:async(onProgress?:(p:number)=>void)=>{
-      await invoke<string>('prepare_updater_tempdir');
-      await update.downloadAndInstall((event:any)=>{
-        if(event.event==='Started'){total=Number(event.data?.contentLength||0);downloaded=0;onProgress?.(0)}
-        if(event.event==='Progress'){downloaded+=Number(event.data?.chunkLength||0);if(total>0)onProgress?.(Math.min(100,downloaded/total*100))}
-        if(event.event==='Finished')onProgress?.(100);
-      });
-      await relaunch();
-    }};
+    return {none:false,version:update.version,date:update.date,body:update.body||'',current:update.currentVersion||current,latest:update.version,status:'AVAILABLE',endpoint:UPDATER_ENDPOINTS[0],versionComparison:updaterVersionStatus(update.currentVersion||current,update.version),
+      download:async(onProgress?:(p:UpdaterTransferProgress)=>void)=>{
+        await invoke<string>('prepare_updater_tempdir');
+        try{
+          await update.download((event:any)=>{
+            if(event.event==='Started'){total=Number(event.data?.contentLength||0);downloaded=0;onProgress?.({status:'DOWNLOADING',percent:0,downloadedBytes:0,totalBytes:total})}
+            if(event.event==='Progress'){downloaded+=Number(event.data?.chunkLength||0);onProgress?.({status:'DOWNLOADING',percent:total>0?Math.min(100,downloaded/total*100):0,downloadedBytes:downloaded,totalBytes:total})}
+            if(event.event==='Finished'){onProgress?.({status:'VERIFYING',percent:100,downloadedBytes:downloaded||total,totalBytes:total})}
+          });
+        }catch(error){const x=classifyUpdaterError(error,'download');throw new Error(`${x.code}: ${updaterFailureMessage(x.code,x.detail)}`)}
+      },
+      install:async(onStatus?:(s:'VERIFYING'|'INSTALLING'|'READY_TO_RESTART')=>void)=>{
+        onStatus?.('VERIFYING');
+        onStatus?.('INSTALLING');
+        try{await update.install()}catch(error){const x=classifyUpdaterError(error,'install');throw new Error(`${x.code}: ${updaterFailureMessage(x.code,x.detail)}`)}
+        onStatus?.('READY_TO_RESTART');
+      },
+      restart:async()=>{try{await relaunch()}catch(error){const x=classifyUpdaterError(error,'relaunch');throw new Error(`${x.code}: ${updaterFailureMessage(x.code,x.detail)}`)}}
+    };
   }
 };
