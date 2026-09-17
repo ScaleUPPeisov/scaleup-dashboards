@@ -1,0 +1,495 @@
+name: VYRON 2.1.7 Final Acceptance Release
+
+on:
+  push:
+    branches: [release/vyron-2.1.7]
+    paths: ['.github/workflows/vyron-217-final-release.yml']
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: vyron-217-final-release
+  cancel-in-progress: false
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  VERSION: '2.1.7'
+  TAG: v2.1.7
+  BASE_SOURCE: cf325c11ffefeb1637063fa9213022e3e7f6a110
+  BUNDLE_ID: studio.channelflow.desktop
+  EXECUTABLE: channelflow
+  EMBEDDED_UPDATER_KEY: dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEREODQ1NDdERTI1MEYxQzAKUldUQThWRGlmVlNFM1RHdW5WQnE2eG9BYTBnQlNmbUtmVU84UHJQMUNvZWZ4Qmo0L2hYcUd4UDEK
+
+jobs:
+  acceptance-release:
+    runs-on: macos-14
+    timeout-minutes: 180
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: '-'
+    steps:
+      - name: Checkout 2.1.7 release line
+        uses: actions/checkout@v4
+        with:
+          ref: release/vyron-2.1.7
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Source-of-truth preflight
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git merge-base --is-ancestor "$BASE_SOURCE" HEAD
+          SOURCE_HEAD=$(git rev-parse HEAD)
+          SOURCE_TREE=$(git rev-parse HEAD^{tree})
+          SOURCE_VERSION=$(node -p "require('./package.json').version")
+          test "$SOURCE_VERSION" = '2.1.6'
+          test "$(gh release view v2.1.6 --repo "$REPO" --json targetCommitish --jq .targetCommitish)" = '1c2da4866c90a353f8ca4e9d97702ffddb74e853'
+          ! git ls-remote --exit-code --tags origin refs/tags/v2.1.7 >/dev/null 2>&1
+          ! gh release view v2.1.7 --repo "$REPO" >/dev/null 2>&1
+          FEED=$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode)
+          test "$(printf '%s' "$FEED" | python3 -c 'import json,sys;print(json.load(sys.stdin)["version"])')" = '2.1.6'
+          echo "SOURCE_HEAD=$SOURCE_HEAD"
+          echo "SOURCE_TREE=$SOURCE_TREE"
+          echo "SOURCE_VERSION=$SOURCE_VERSION"
+
+      - name: Controlled version bump 2.1.6 to 2.1.7
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm version 2.1.7 --no-git-tag-version
+          python3 - <<'PY'
+          import json,re
+          from pathlib import Path
+          p=Path('src-tauri/Cargo.toml'); s=p.read_text();
+          s,n=re.subn(r'(?m)^(version\s*=\s*)"2\.1\.6"\s*$',r'\1"2.1.7"',s,count=1); assert n==1; p.write_text(s)
+          p=Path('src-tauri/Cargo.lock'); s=p.read_text();
+          s,n=re.subn(r'(\[\[package\]\]\nname = "channelflow"\nversion = )"2\.1\.6"',r'\1"2.1.7"',s,count=1); assert n==1; p.write_text(s)
+          p=Path('src-tauri/tauri.conf.json'); d=json.loads(p.read_text()); assert d['version']=='2.1.6'; d['version']='2.1.7'; p.write_text(json.dumps(d,ensure_ascii=False,indent=2)+'\n')
+          PY
+          python3 - <<'PY'
+          import json,re
+          pkg=json.load(open('package.json')); lock=json.load(open('package-lock.json')); conf=json.load(open('src-tauri/tauri.conf.json'))
+          cargo=open('src-tauri/Cargo.toml').read(); clock=open('src-tauri/Cargo.lock').read()
+          assert pkg['version']=='2.1.7'
+          assert lock['version']=='2.1.7' and lock['packages']['']['version']=='2.1.7'
+          assert conf['version']=='2.1.7'
+          assert re.search(r'(?m)^version\s*=\s*"2\.1\.7"\s*$',cargo)
+          assert re.search(r'\[\[package\]\]\nname = "channelflow"\nversion = "2\.1\.7"',clock)
+          print('VERSION_2_1_7=PASS')
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package.json package-lock.json src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json
+          git commit -m 'release: bump VYRON to 2.1.7'
+          git push origin HEAD:release/vyron-2.1.7
+          echo "FINAL_SOURCE_HEAD=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          echo "FINAL_SOURCE_TREE=$(git rev-parse HEAD^{tree})" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Case collision and product contract preflight
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          seen={}; collisions=[]
+          for root in [Path('src'),Path('src-tauri')]:
+            for p in root.rglob('*'):
+              if not p.is_file(): continue
+              key=str(p).lower(); prev=seen.get(key)
+              if prev and prev!=str(p): collisions.append((prev,str(p)))
+              else: seen[key]=str(p)
+          assert not collisions, collisions
+          print('CASE_COLLISION=PASS')
+          PY
+          grep -q "{page:'dashboard'.*label:'Главная'" src/App.tsx
+          grep -q "{page:'channels'.*label:'Каналы'" src/App.tsx
+          grep -q "{page:'production'.*label:'Производство'" src/App.tsx
+          grep -q "{page:'youtube'.*label:'YouTube'" src/App.tsx
+          grep -q "{page:'analytics'.*label:'Аналитика'" src/App.tsx
+          grep -q "{page:'competitors'.*label:'Конкуренты'" src/App.tsx
+          grep -q "{page:'settings'.*label:'Настройки'" src/App.tsx
+          grep -q "page==='channels'?<ChannelsOS" src/App.tsx
+          grep -q "page==='production'.*<ProductionOS" src/App.tsx
+          grep -q "page==='youtube'?<YouTubeCenter" src/App.tsx
+          grep -q "page==='competitors'?<CompetitorsPage" src/App.tsx
+          grep -q "page==='analytics'?<AnalyticsPage" src/App.tsx
+          echo 'ROUTE_CONTRACTS=PASS'
+
+      - name: Button inventory and wiring audit
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import re,json
+          from pathlib import Path
+          files=['App.tsx','DashboardOS.tsx','ChannelsOS.tsx','ProductionOS.tsx','ProductionManager.tsx','YouTubeCenter.tsx','PublisherOS.tsx','MetadataPage.tsx','ScheduleOS.tsx','ExistingVideos.tsx','ReadyVideoInventoryPanel.tsx','UploadCenter.tsx','AnalyticsPage.tsx','CompetitorsPage.tsx','SettingsOS.tsx','AuthRecoveryCenter.tsx','OAuthInventoryPanel.tsx']
+          rows=[]; fail=[]
+          for name in files:
+            p=Path('src')/name
+            if not p.exists(): continue
+            s=p.read_text()
+            for i,m in enumerate(re.finditer(r'<button\b([\s\S]*?)>',s),1):
+              attrs=m.group(1)
+              start=m.end(); close=s.find('</button>',start); body=s[start:close if close!=-1 else start+120]
+              label=re.sub(r'<[^>]+>',' ',body); label=re.sub(r'\{[^{}]*\}',' ',label); label=' '.join(label.split())[:100] or '(icon/dynamic)'
+              wired=('onClick=' in attrs or 'type="submit"' in attrs or "type='submit'" in attrs)
+              row={'screen':name,'index':i,'label':label,'wired':wired}
+              rows.append(row)
+              if not wired: fail.append(row)
+          destructive=[r for r in rows if re.search(r'удал|очист|стер|trash|delete',r['label'],re.I)]
+          Path('/tmp/button-matrix.json').write_text(json.dumps({'total':len(rows),'wired':len(rows)-len(fail),'failed':fail,'destructive':destructive},ensure_ascii=False,indent=2))
+          print(f'BUTTONS_TOTAL={len(rows)}')
+          print(f'BUTTONS_WIRED={len(rows)-len(fail)}')
+          print(f'BUTTONS_UNWIRED={len(fail)}')
+          print(f'BUTTONS_DESTRUCTIVE={len(destructive)}')
+          if fail:
+            print(json.dumps(fail,ensure_ascii=False,indent=2))
+            raise SystemExit('unwired user-facing button detected')
+          PY
+          if grep -Eqi '>[^<]*(cancel|отменить загрузку|остановить загрузку)[^<]*</button>' src/UploadCenter.tsx; then
+            grep -Eq 'abort|cancel.*upload|youtube_cancel' src/UploadCenter.tsx src/api.ts || { echo 'fake upload cancel detected'; exit 1; }
+          fi
+          echo 'BUTTON_WIRING=PASS'
+
+      - name: Critical UI source semantics
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          app=Path('src/App.tsx').read_text(); dash=Path('src/DashboardOS.tsx').read_text(); ch=Path('src/ChannelsOS.tsx').read_text(); store=Path('src/store.ts').read_text(); yt=Path('src/YouTubeCenter.tsx').read_text(); up=Path('src/UploadCenter.tsx').read_text()
+          for label in ['Главная','Каналы','Производство','YouTube','Аналитика','Конкуренты','Настройки']: assert label in app
+          assert "const name=String(raw.name||raw.slug||raw.youtubeChannelId||'Канал без названия')" in store
+          assert 'c.name.slice(0,2)' in ch
+          for label in ['КАНАЛЫ','ГОТОВО ВИДЕО','В ОЧЕРЕДИ','ЗАГРУЖАЕТСЯ','ЗАПЛАНИРОВАНО','ОШИБКИ']: assert label in dash
+          for label in ['Открыть канал','Открыть публикацию','Открыть Production','Открыть Upload Center','Показать все']: assert label in dash
+          assert 'buildReadyVideoInventory' in dash and 'uploadQueueSnapshot' in dash and 'uploadTelemetrySnapshot' in dash
+          for tab in ['Публикация','Метаданные','Расписание','Загруженные','Календарь','Командный центр','План каналов','Данные YouTube','Аккаунты']: assert tab in yt
+          assert 'removeQueuedUpload' in up
+          print('CRITICAL_UI_SOURCE_SEMANTICS=PASS')
+          PY
+
+      - name: Full frontend test suite with actual counts
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npx vitest run --reporter=json --outputFile=/tmp/vitest.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/vitest.json'))
+          total=d.get('numTotalTests',0); passed=d.get('numPassedTests',0); failed=d.get('numFailedTests',0); pending=d.get('numPendingTests',0)
+          suites=d.get('testResults',[]); files=len(suites)
+          print(f'FRONTEND_TEST_FILES={files}')
+          print(f'FRONTEND_TESTS_TOTAL={total}')
+          print(f'FRONTEND_TESTS_PASSED={passed}')
+          print(f'FRONTEND_TESTS_FAILED={failed}')
+          print(f'FRONTEND_TESTS_SKIPPED={pending}')
+          assert failed==0 and passed+pending==total
+          PY
+
+      - name: Targeted route and critical workflow regression
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npx vitest run \
+            src/uiHotfix.test.tsx \
+            src/readyVideoInventory.test.ts \
+            src/uploadQueue.test.ts \
+            src/uploadTelemetry.test.ts \
+            src/uploadButtonUnblock.test.ts \
+            src/uploadCenterWiring.test.ts \
+            src/youtubeActiveChannelMetadata.test.ts \
+            src/scheduleChannelSelector.test.ts \
+            src/staleOperationReconciliation.test.ts \
+            src/staleOperationWiring.test.ts \
+            src/storageLifecycle.test.ts \
+            src/keychainPassiveArchitecture.test.ts \
+            src/securityRedaction.test.ts \
+            src/updaterGuard.test.ts \
+            src/updaterRuntime.test.ts \
+            src/updaterRemoteContract.test.ts
+          echo 'TARGETED_CRITICAL=PASS'
+
+      - name: TypeScript and frontend production build
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npx tsc --noEmit
+          echo 'TYPESCRIPT=PASS'
+          npm run build
+          test -s dist/index.html
+          echo 'PRODUCTION_FRONTEND_BUILD=PASS'
+
+      - name: Rust full test suite with actual counts
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cargo test --manifest-path src-tauri/Cargo.toml 2>&1 | tee /tmp/cargo-test.log
+          python3 - <<'PY'
+          import re
+          s=open('/tmp/cargo-test.log').read(); rows=re.findall(r'test result: (?:ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored',s)
+          assert rows, 'no rust test result lines'
+          p=sum(int(x[0]) for x in rows); f=sum(int(x[1]) for x in rows); i=sum(int(x[2]) for x in rows)
+          print(f'RUST_TESTS_TOTAL={p+f+i}')
+          print(f'RUST_TESTS_PASS={p}')
+          print(f'RUST_TESTS_FAIL={f}')
+          print(f'RUST_TESTS_SKIPPED={i}')
+          assert f==0
+          PY
+
+      - name: Safe browser UI interaction smoke
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm install --no-save --package-lock=false playwright@1.55.0
+          npx playwright install chromium
+          cat > /tmp/vyron-ui-smoke.mjs <<'JS'
+          import { chromium } from 'playwright';
+          const browser=await chromium.launch({headless:true});
+          const page=await browser.newPage({viewport:{width:1440,height:900}});
+          const runtimeErrors=[];
+          page.on('pageerror',e=>runtimeErrors.push(String(e)));
+          page.on('console',m=>{if(m.type()==='error')runtimeErrors.push('console:'+m.text())});
+          await page.addInitScript(()=>{
+            const channels=Array.from({length:31},(_,i)=>({id:`c${i+1}`,name:i===0?'Lost Highway FM':`Channel ${String(i+1).padStart(2,'0')}`,slug:`channel-${i+1}`,cadenceDays:4,targetBufferDays:60,publishHour:18,publishMinute:0,language:'EN',genre:'Music',country:'US',minTracks:10,targetDurationMin:120,enabled:true,youtubeProfileId:`p${i+1}`,youtubeChannelId:`yt${i+1}`,seo:{titlePatterns:['{topic}'],descriptionTemplate:'{title}',tags:['music'],banned:[]}}));
+            const state={version:8,channels,jobs:[],competitors:[],settings:{workspace:'/tmp/vyron-acceptance',endlumePath:'',youtubeApiKey:'',autoCheckUpdates:false,reduceMotion:false,fpsMonitor:false,autopilotMode:'off',autopilotEnabled:false,autoCreatePlan:true,autoAssignMusic:true,autoAssignImages:true,autoGenerateMetadata:false,autoQueueRender:true,autoOpenEndlume:false,autoUploadYoutube:false,autopilotIntervalSec:30,tracksPerVideo:10,openaiApiKey:'',openaiModel:'',youtubeOAuthClientId:'',youtubeCategoryId:'10',youtubeIntelligenceAutoRefresh:false,youtubeIntelligenceRefreshMin:30,youtubePublishSafeMode:true,youtubeUploadConcurrency:2,competitorRpmLow:1.2,competitorRpmHigh:4,competitorPoolSize:30,publishedVideoCleanupPolicy:'ask',completedProjectCleanupPolicy:'ask',endlumeTargetDurationMin:120,endlumeTargetRenderSec:35,endlumeTargetFileMinMb:700,endlumeTargetFileMaxMb:1000,endlumePreserveImageQuality:true,endlumeProjectNaming:'VIDEO_{number}'},logs:[],uploadHistory:[],fingerprintCache:{},projectLifecycle:{}};
+            let cb=1; const callbacks={};
+            window.__TAURI_INTERNALS__={
+              transformCallback(fn,once=false){const id=cb++;callbacks[id]=fn;window[`_${id}`]=(...args)=>{try{return fn(...args)}finally{if(once){delete callbacks[id];delete window[`_${id}`]}}};return id},
+              async invoke(cmd,args){
+                if(cmd==='load_state')return state;
+                if(cmd==='save_state')return {ok:true};
+                if(cmd==='license_status')return {valid:true,key:'acceptance'};
+                if(cmd==='default_workspace')return '/tmp/vyron-acceptance';
+                if(cmd==='youtube_active_uploads'||cmd==='youtube_upload_sessions'||cmd==='youtube_oauth_profiles')return [];
+                if(cmd==='youtube_google_config_status')return {configured:false,hasSecret:false,hasApiKey:false};
+                if(cmd.includes('version'))return '2.1.7';
+                if(cmd.includes('plugin:event|listen'))return Math.floor(Math.random()*10000)+1;
+                if(cmd.includes('plugin:event|unlisten'))return null;
+                if(cmd.includes('plugin:updater|check'))return null;
+                if(cmd.includes('plugin:notification|is_permission_granted'))return false;
+                if(cmd.includes('plugin:notification|request_permission'))return 'denied';
+                if(cmd==='diagnostics')return {ok:true};
+                if(cmd==='security_keychain_diagnostics')return {ok:true,status:'PASS'};
+                if(cmd==='security_oauth_inventory')return {app_version:'2.1.7',bundle_id:'studio.channelflow.desktop',service:'com.scaleup.vyron.security',enumeration_status:'PASS',total_service_accounts:0,refresh_token_accounts:0,access_token_accounts:0,client_secret_accounts:0,unique_oauth_profile_uuids:0,profiles:[],current_channel_profiles:31,current_uuid_with_refresh_token:0,current_uuid_without_refresh_token:31,keychain_uuid_not_present_in_current_database:0,orphan_profile_uuid_count:0,readable_orphan_refresh_tokens:0,denied_orphan_refresh_tokens:0,failed_orphan_refresh_tokens:0,historical_json:{exact_path:'',file:'NOT_FOUND',profiles_in_json:0,profiles_with_refresh_token:0}};
+                if(cmd==='youtube_google_project_diagnostic')return {oauthProfileId:'',clientId:'',projectIdSource:'not-locally-known',youtubeApiRequests:0,keychainSecretsRead:false};
+                if(cmd==='youtube_oauth_browsers')return [{id:'default',label:'Default',available:true}];
+                if(cmd==='studio_drafts_list')return {drafts:[],port:0,running:false};
+                if(cmd==='studio_drafts_start_bridge')return {ok:true,port:0,ttlMs:0};
+                if(cmd==='scan_channel_inbox')return {music:[],images:[],metadata:[]};
+                return null;
+              },
+              metadata:{currentWindow:{label:'main'},currentWebview:{label:'main',windowLabel:'main'}}
+            };
+            window.confirm=()=>false;
+          });
+          await page.goto('http://127.0.0.1:1421',{waitUntil:'networkidle'});
+          await page.getByText('Главная',{exact:true}).waitFor({timeout:15000});
+          const routes=['Главная','Каналы','Производство','YouTube','Аналитика','Конкуренты','Настройки'];
+          for(const r of routes){
+            await page.getByRole('button',{name:r,exact:true}).click();
+            await page.waitForTimeout(120);
+            const text=(await page.locator('.pageWrap').innerText()).trim();
+            if(!text)throw new Error(`EMPTY_ROUTE:${r}`);
+            if(!(await page.locator('.sidebar').isVisible()))throw new Error(`SIDEBAR_MISSING:${r}`);
+          }
+          for(let i=0;i<3;i++){
+            await page.getByRole('button',{name:'Главная',exact:true}).click();
+            await page.getByRole('button',{name:'Каналы',exact:true}).click();
+            await page.getByText('Каналы',{exact:true}).first().waitFor();
+          }
+          await page.getByRole('button',{name:'Главная',exact:true}).click();
+          for(const [label,target] of [['Открыть канал','Каналы'],['Открыть публикацию','YouTube'],['Открыть Production','Производство'],['Открыть Upload Center','YouTube']]){
+            await page.getByRole('button',{name:label,exact:true}).click();
+            await page.waitForTimeout(100);
+            if(!(await page.locator('.pageWrap').innerText()).includes(target) && target!=='YouTube')throw new Error(`DASHBOARD_BUTTON_TARGET:${label}`);
+            await page.getByRole('button',{name:'Главная',exact:true}).click();
+          }
+          await page.getByRole('button',{name:'Каналы',exact:true}).click();
+          if((await page.locator('.channelOSCard').count())!==31)throw new Error('CHANNEL_COUNT_FIXTURE_MISMATCH');
+          await page.getByRole('button',{name:'+ Будущий канал',exact:true}).click();
+          await page.getByText('Будущий канал',{exact:true}).last().waitFor();
+          await page.getByRole('button',{name:'Отмена',exact:true}).click();
+          await page.getByRole('button',{name:'YouTube',exact:true}).click();
+          for(const tab of ['Публикация','Метаданные','Расписание','Загруженные','Календарь','Командный центр','План каналов','Данные YouTube','Аккаунты']){
+            const b=page.getByRole('button',{name:tab,exact:true}); if(await b.count()){await b.click();await page.waitForTimeout(80);if(!(await page.locator('.youtubeChannelContext').innerText()).trim())throw new Error(`EMPTY_YOUTUBE_TAB:${tab}`)}
+          }
+          const errButton=page.locator('.topErrorButton'); await errButton.click(); await page.getByText('Ошибки VYRON',{exact:true}).waitFor(); await page.getByRole('button',{name:'Закрыть',exact:true}).click();
+          if(runtimeErrors.length)throw new Error('RUNTIME_ERRORS:'+runtimeErrors.join(' | '));
+          console.log('SAFE_UI_INTERACTION=PASS');
+          console.log('ROUTES_SMOKE=PASS');
+          console.log('CHANNELS_31_FIXTURE=PASS');
+          console.log('YOUTUBE_TABS=PASS');
+          console.log('ERROR_CENTER_MODAL=PASS');
+          await browser.close();
+          JS
+          (npm run dev -- --host 127.0.0.1 > /tmp/vite.log 2>&1 & echo $! > /tmp/vite.pid)
+          trap 'kill $(cat /tmp/vite.pid) >/dev/null 2>&1 || true' EXIT
+          for i in {1..50}; do curl -fsS http://127.0.0.1:1421 >/dev/null && break; sleep 0.2; done
+          node /tmp/vyron-ui-smoke.mjs
+          kill $(cat /tmp/vite.pid) >/dev/null 2>&1 || true
+          trap - EXIT
+
+      - name: Verify no source drift after acceptance
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git reset --hard "$FINAL_SOURCE_HEAD"
+          git clean -fdx
+          test "$(git rev-parse HEAD)" = "$FINAL_SOURCE_HEAD"
+          test "$(git rev-parse HEAD^{tree})" = "$FINAL_SOURCE_TREE"
+          echo 'SOURCE_DRIFT=NONE'
+
+      - name: Normalize updater signing key
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -n "${TAURI_SIGNING_PRIVATE_KEY:-}"
+          python3 - <<'PY'
+          import base64,os
+          raw=os.environ['TAURI_SIGNING_PRIVATE_KEY'].strip()
+          def dec(v):
+            try:return base64.b64decode(v.strip(),validate=True).decode()
+            except Exception:return None
+          if raw.startswith('untrusted comment:'):
+            box=raw; encoded=base64.b64encode(raw.encode()).decode()
+          else:
+            once=dec(raw)
+            if once and once.startswith('untrusted comment:'): box=once; encoded=raw
+            else:
+              twice=dec(once) if once else None
+              if not (twice and twice.startswith('untrusted comment:')): raise SystemExit('invalid TAURI signing key encoding')
+              box=twice; encoded=once.strip()
+          if 'secret key' not in box.splitlines()[0].lower(): raise SystemExit('TAURI signing key is not a secret key')
+          with open(os.environ['GITHUB_ENV'],'a') as f:f.write('TAURI_SIGNING_PRIVATE_KEY='+encoded+'\n')
+          print('::add-mask::'+encoded)
+          PY
+
+      - name: Production macOS ARM64 build and updater artifacts
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm ci --no-audit --no-fund
+          rustup target add aarch64-apple-darwin
+          npx tauri build --target aarch64-apple-darwin --bundles app,dmg
+          mkdir -p production
+          APP=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)
+          DMG=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -name '*.dmg' -print -quit)
+          UPDATER=$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name '*.app.tar.gz' -print -quit)
+          SIG=$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name '*.app.tar.gz.sig' -print -quit)
+          test -d "$APP"; test -s "$DMG"; test -s "$UPDATER"; test -s "$SIG"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = "$VERSION"
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = "$BUNDLE_ID"
+          test "$(plutil -extract CFBundleExecutable raw -o - "$APP/Contents/Info.plist")" = "$EXECUTABLE"
+          file "$APP/Contents/MacOS/$EXECUTABLE" | grep -q arm64
+          otool -hv "$APP/Contents/MacOS/$EXECUTABLE" | grep -q ARM64
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          hdiutil verify "$DMG"
+          cp "$DMG" production/VYRON-2.1.7-arm64.dmg
+          cp "$UPDATER" production/VYRON.app.tar.gz
+          cp "$SIG" production/VYRON.app.tar.gz.sig
+          shasum -a 256 production/VYRON-2.1.7-arm64.dmg > production/VYRON-2.1.7-arm64.dmg.sha256
+          shasum -a 256 production/VYRON.app.tar.gz > production/VYRON.app.tar.gz.sha256
+          echo 'PRODUCTION_BUILD=PASS'
+
+      - name: Finder-like launch from DMG
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          MOUNT="$RUNNER_TEMP/vyron217-mount"; rm -rf "$MOUNT"; mkdir -p "$MOUNT"
+          hdiutil attach production/VYRON-2.1.7-arm64.dmg -nobrowse -readonly -mountpoint "$MOUNT"
+          trap 'hdiutil detach "$MOUNT" >/dev/null 2>&1 || true' EXIT
+          APP="$MOUNT/VYRON.app"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = '2.1.7'
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          env -i HOME="$HOME" USER="$USER" PATH='/usr/bin:/bin:/usr/sbin:/sbin' TMPDIR="$RUNNER_TEMP/" "$APP/Contents/MacOS/$EXECUTABLE" > /tmp/vyron217-launch.log 2>&1 &
+          PID=$!; sleep 8; kill -0 "$PID" 2>/dev/null; kill "$PID" || true; wait "$PID" || true
+          hdiutil detach "$MOUNT"; trap - EXIT
+          echo 'FINDER_LIKE_LAUNCH=PASS'
+
+      - name: Create updater manifest
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          export PUB_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          python3 - <<'PY'
+          import json,os,pathlib
+          sig=pathlib.Path('production/VYRON.app.tar.gz.sig').read_text().strip()
+          d={'version':'2.1.7','notes':'VYRON 2.1.7 — Channels black-screen hotfix, legacy channel normalization and compact operational Dashboard; no new features.','pub_date':os.environ['PUB_DATE'],'platforms':{'darwin-aarch64':{'url':'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.7/VYRON.app.tar.gz','signature':sig}}}
+          pathlib.Path('production/latest.json').write_text(json.dumps(d,ensure_ascii=False,indent=2)+'\n')
+          PY
+
+      - name: Publish GitHub Release v2.1.7
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat > /tmp/release-notes.md <<'EOF'
+          ## VYRON 2.1.7
+
+          Stability release only — no new features.
+
+          - Fixes Channels black-screen crash for legacy channel records.
+          - Normalizes legacy channel names before UI render.
+          - Ships the compact operational Dashboard introduced after 2.1.6.
+          - Full frontend, Rust, TypeScript, production build and critical workflow regression gates passed before publication.
+          EOF
+          gh release create "$TAG" --repo "$REPO" --target "$FINAL_SOURCE_HEAD" --title 'VYRON 2.1.7' --notes-file /tmp/release-notes.md \
+            production/VYRON-2.1.7-arm64.dmg production/VYRON-2.1.7-arm64.dmg.sha256 \
+            production/VYRON.app.tar.gz production/VYRON.app.tar.gz.sha256 production/VYRON.app.tar.gz.sig production/latest.json
+
+      - name: Verify release and preserve v2.1.6
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh release view v2.1.7 --repo "$REPO" --json tagName,isDraft,isPrerelease,targetCommitish,assets > /tmp/release217.json
+          python3 - <<'PY'
+          import json,os
+          d=json.load(open('/tmp/release217.json'))
+          assert d['tagName']=='v2.1.7' and d['isDraft'] is False and d['isPrerelease'] is False
+          assert d['targetCommitish']==os.environ['FINAL_SOURCE_HEAD']
+          names={a['name'] for a in d['assets']}
+          req={'VYRON-2.1.7-arm64.dmg','VYRON-2.1.7-arm64.dmg.sha256','VYRON.app.tar.gz','VYRON.app.tar.gz.sha256','VYRON.app.tar.gz.sig','latest.json'}
+          assert req<=names
+          PY
+          test "$(gh release view v2.1.6 --repo "$REPO" --json targetCommitish --jq .targetCommitish)" = '1c2da4866c90a353f8ca4e9d97702ffddb74e853'
+          echo 'V2_1_6_UNCHANGED=PASS'
+
+      - name: Activate stable updater feed 2.1.7
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          CURRENT=$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode | python3 -c 'import json,sys;print(json.load(sys.stdin)["version"])')
+          test "$CURRENT" = '2.1.6'
+          FEED_SHA=$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .sha)
+          B64=$(base64 < production/latest.json | tr -d '\n')
+          gh api --method PUT "repos/$REPO/contents/vyron-updates/latest.json" -f message='release: activate VYRON 2.1.7 updater feed' -f content="$B64" -f sha="$FEED_SHA" -f branch=main >/tmp/feed-update.json
+
+      - name: Final public updater verification
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode > /tmp/latest217.json
+          python3 - <<'PY'
+          import json,pathlib
+          d=json.load(open('/tmp/latest217.json')); assert d['version']=='2.1.7'
+          p=d['platforms']['darwin-aarch64']
+          assert p['url']=='https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.7/VYRON.app.tar.gz'
+          assert p['signature']==pathlib.Path('production/VYRON.app.tar.gz.sig').read_text().strip()
+          PY
+          echo 'UPDATER_VERIFY=PASS'
+          echo 'CRITICAL_RED=0'
+          echo 'READY_FOR_RELEASE=YES'
+          echo 'VYRON_2.1.7_STABLE_RELEASED=YES'
