@@ -1,5 +1,5 @@
 import {api} from './api';
-import {appendErrorHistory} from './errorHistory';
+import {appendErrorHistory,type ErrorHistoryMeta} from './errorHistory';
 import {humanizeError} from './errorCenter';
 import {notifyWarning} from './notificationCenter';
 import {baseName} from './publishCenterCore';
@@ -8,6 +8,10 @@ import {useApp} from './store';
 import {acquireChannelUploadLock,beginPublishAttempt,completePublishAttempt,failPublishAttempt,isChannelUploadLocked,isYoutubeDailyUploadLimitError,releaseChannelUploadLock,safeDailyStatus} from './youtubePublishSafety';
 import {isYoutubeQuotaError,releaseYoutubeQuotaReservation,reserveYoutubeQuotaAtomic,type YoutubeQuotaOperation} from './youtubeQuota';
 import {MultiChannelUploadQueue,type ImmutableUploadJob,type UploadQueueSnapshot} from './uploadQueue';
+
+export function uploadFailureHistoryMeta(spec:ImmutableUploadJob,errorCode?:string):ErrorHistoryMeta{
+ return{errorCode,videoId:spec.jobId,projectId:spec.projectId,filePath:spec.filePath,stage:'upload-transfer',profileId:spec.profileId,channelId:spec.channelId};
+}
 
 async function executeUpload(spec:ImmutableUploadJob){
  const operationId=`upload-queue:${spec.jobId}:${Date.now()}`;
@@ -40,7 +44,7 @@ async function executeUpload(spec:ImmutableUploadJob){
  }catch(error){
   const pending=await api.youtubeUploadSessions().catch(()=>[]),recoverable=pending.some(x=>x.jobId===spec.jobId);
   if(recoverable){useApp.getState().patchJob(spec.jobId,{status:'ERROR',storageLifecycle:'UPLOADING',youtubeVideoId:undefined,uploadedAt:undefined,error:'Загрузка прервана — доступно продолжение',uploadInterruptedAt:new Date().toISOString()})}
-  else{if(attempt)failPublishAttempt(attempt.id,error);const h=humanizeError(error,'upload'),dailyLimit=isYoutubeDailyUploadLimitError(error),quotaError=isYoutubeQuotaError(error);useApp.getState().patchJob(spec.jobId,{status:'ERROR',storageLifecycle:'FAILED',youtubeVideoId:undefined,uploadedAt:undefined,error:dailyLimit?'YouTube остановил загрузки: достигнут лимит загрузок канала':h.message,uploadInterruptedAt:new Date().toISOString()});if(dailyLimit)useApp.getState().updateChannel(spec.channelId,{knownUploadLimitState:'limited',lastDailyLimitError:h.message,lastUploadAt:new Date().toISOString()});appendErrorHistory(h.title,`VIDEO_${String(spec.videoNumber).padStart(3,'0')}: ${h.message}`,h.detail,{errorCode:quotaError?'YOUTUBE_QUOTA':h.code,videoId:spec.jobId,filePath:spec.filePath,stage:'upload-transfer'})}
+  else{if(attempt)failPublishAttempt(attempt.id,error);const h=humanizeError(error,'upload'),dailyLimit=isYoutubeDailyUploadLimitError(error),quotaError=isYoutubeQuotaError(error);useApp.getState().patchJob(spec.jobId,{status:'ERROR',storageLifecycle:'FAILED',youtubeVideoId:undefined,uploadedAt:undefined,error:dailyLimit?'YouTube остановил загрузки: достигнут лимит загрузок канала':h.message,uploadInterruptedAt:new Date().toISOString()});if(dailyLimit)useApp.getState().updateChannel(spec.channelId,{knownUploadLimitState:'limited',lastDailyLimitError:h.message,lastUploadAt:new Date().toISOString()});appendErrorHistory(h.title,`VIDEO_${String(spec.videoNumber).padStart(3,'0')}: ${h.message}`,h.detail,uploadFailureHistoryMeta(spec,quotaError?'YOUTUBE_QUOTA':h.code))}
   throw error;
  }finally{if(quotaReserved)releaseYoutubeQuotaReservation(operationId);if(lock)releaseChannelUploadLock(spec.channelId,lock)}
 }
