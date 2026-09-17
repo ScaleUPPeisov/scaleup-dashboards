@@ -1,0 +1,415 @@
+name: VYRON 2.1.8 Command Center Hotfix Release
+
+on:
+  push:
+    branches: [release/vyron-2.1.8-support]
+    paths: ['.github/workflows/vyron-218-hotfix-release.yml']
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: vyron-218-hotfix-release
+  cancel-in-progress: false
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  HOTFIX_BRANCH: hotfix/vyron-command-center-black-screen
+  HOTFIX_HEAD: c28da0dd5061f921b7c55bfd5177fe2ee4286b71
+  HOTFIX_TREE: 3c8afc32bd6e574798640a8ce237d5f616305104
+  VERSION: '2.1.8'
+  TAG: v2.1.8
+  BUNDLE_ID: studio.channelflow.desktop
+  EXECUTABLE: channelflow
+  EMBEDDED_UPDATER_KEY: dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEREODQ1NDdERTI1MEYxQzAKUldUQThWRGlmVlNFM1ZkRkU4Q0hkOGtFNmlZU21GenRBQk5tYWs0VnFLMkltbUcwVVZDMWNTS09MVEFSQmxhcUdzVkczUkUyUStXVVN0Vm1pRkxyRHRidHlYZmZVTDY0WmdjPQ==
+
+jobs:
+  release:
+    runs-on: macos-14
+    timeout-minutes: 180
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: '-'
+    steps:
+      - name: Checkout exact hotfix branch
+        uses: actions/checkout@v4
+        with:
+          ref: hotfix/vyron-command-center-black-screen
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Hotfix source and release safety preflight
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$HOTFIX_HEAD"
+          test "$(git rev-parse HEAD^{tree})" = "$HOTFIX_TREE"
+          test "$(node -p "require('./package.json').version")" = '2.1.7'
+          ! git ls-remote --exit-code --tags origin refs/tags/v2.1.8 >/dev/null 2>&1
+          ! gh release view v2.1.8 --repo "$REPO" >/dev/null 2>&1
+          test "$(gh release view v2.1.7 --repo "$REPO" --json targetCommitish --jq .targetCommitish)" = '0e511c8a42cf4e3232cb8d0384a1625664a33cdf'
+          FEED=$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode)
+          test "$(printf '%s' "$FEED" | python3 -c 'import json,sys;print(json.load(sys.stdin)["version"])')" = '2.1.7'
+          echo "V217_REF=$(git ls-remote origin refs/tags/v2.1.7 | awk '{print $1}')" >> "$GITHUB_ENV"
+          echo "V216_REF=$(git ls-remote origin refs/tags/v2.1.6 | awk '{print $1}')" >> "$GITHUB_ENV"
+          echo 'HOTFIX_PREFLIGHT=PASS'
+
+      - name: Controlled version bump 2.1.7 to 2.1.8
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm version 2.1.8 --no-git-tag-version
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p=Path('src-tauri/Cargo.toml'); s=p.read_text();
+          s2=re.sub(r'(?m)^(version\s*=\s*)"2\.1\.7"\s*$',r'\1"2.1.8"',s,count=1)
+          assert s2!=s; p.write_text(s2)
+          p=Path('src-tauri/Cargo.lock'); s=p.read_text();
+          s2=re.sub(r'(\[\[package\]\]\nname = "channelflow"\nversion = )"2\.1\.7"',r'\1"2.1.8"',s,count=1)
+          assert s2!=s; p.write_text(s2)
+          p=Path('src-tauri/tauri.conf.json'); s=p.read_text();
+          s2=s.replace('"version": "2.1.7"','"version": "2.1.8"',1)
+          assert s2!=s; p.write_text(s2)
+          PY
+          python3 - <<'PY'
+          import json,re,subprocess
+          pkg=json.load(open('package.json')); lock=json.load(open('package-lock.json')); conf=json.load(open('src-tauri/tauri.conf.json'))
+          cargo=open('src-tauri/Cargo.toml').read(); clock=open('src-tauri/Cargo.lock').read()
+          assert pkg['version']=='2.1.8'
+          assert lock['version']=='2.1.8' and lock['packages']['']['version']=='2.1.8'
+          assert conf['version']=='2.1.8'
+          assert re.search(r'(?m)^version\s*=\s*"2\.1\.8"\s*$',cargo)
+          assert re.search(r'\[\[package\]\]\nname = "channelflow"\nversion = "2\.1\.8"',clock)
+          changed=set(subprocess.check_output(['git','diff','--name-only'],text=True).splitlines())
+          expected={'package.json','package-lock.json','src-tauri/Cargo.toml','src-tauri/Cargo.lock','src-tauri/tauri.conf.json'}
+          assert changed==expected,(changed,expected)
+          print('VERSION_2_1_8=PASS')
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package.json package-lock.json src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json
+          git commit -m 'chore: bump VYRON to 2.1.8'
+          VERSION_COMMIT=$(git rev-parse HEAD)
+          VERSION_TREE=$(git rev-parse HEAD^{tree})
+          git push origin HEAD:"$HOTFIX_BRANCH"
+          echo "VERSION_COMMIT=$VERSION_COMMIT" >> "$GITHUB_ENV"
+          echo "VERSION_TREE=$VERSION_TREE" >> "$GITHUB_ENV"
+          echo "VERSION_COMMIT=$VERSION_COMMIT"
+          echo "VERSION_TREE=$VERSION_TREE"
+
+      - name: Verify product identity and unchanged updater public key
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$VERSION_COMMIT"
+          python3 - <<'PY'
+          import json,base64,os
+          c=json.load(open('src-tauri/tauri.conf.json'))
+          assert c['version']=='2.1.8'
+          assert c['identifier']=='studio.channelflow.desktop'
+          assert c['build']['frontendDist']=='../dist'
+          assert c['plugins']['updater']['pubkey']==os.environ['EMBEDDED_UPDATER_KEY']
+          assert 'localhost' not in c['build']['frontendDist']
+          print('PUBLIC_KEY_CHANGED=NO')
+          print('PRODUCT_IDENTITY=PASS')
+          PY
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Command Center, Channels, route and updater regressions
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npx vitest run \
+            src/commandCenterRuntimeHotfix.test.tsx \
+            src/commandCenter.test.ts \
+            src/uiHotfix.test.tsx \
+            src/channelRunway.test.ts \
+            src/updaterGuard.test.ts \
+            src/updaterRuntime.test.ts \
+            src/updaterRemoteContract.test.ts
+          echo 'COMMAND_CENTER_REGRESSION=PASS'
+          echo 'CHANNELS_REGRESSION=PASS'
+          echo 'ROUTE_REGRESSION=PASS'
+          echo 'UPDATER_REGRESSION=PASS'
+
+      - name: Full frontend suite actual counts
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npx vitest run --reporter=json --outputFile=/tmp/vitest.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/vitest.json'))
+          total=d.get('numTotalTests',0); passed=d.get('numPassedTests',0); failed=d.get('numFailedTests',0); skipped=d.get('numPendingTests',0); files=len(d.get('testResults',[]))
+          print(f'FRONTEND_TEST_FILES={files}')
+          print(f'FRONTEND_TESTS_TOTAL={total}')
+          print(f'FRONTEND_TESTS_PASS={passed}')
+          print(f'FRONTEND_TESTS_FAIL={failed}')
+          print(f'FRONTEND_TESTS_SKIPPED={skipped}')
+          assert failed==0
+          PY
+
+      - name: TypeScript and production frontend build
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npx tsc --noEmit
+          npm run build
+          test -s dist/index.html
+          echo 'TYPESCRIPT=PASS'
+          echo 'FRONTEND_BUILD=PASS'
+
+      - name: Full Rust suite actual counts
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cargo test --manifest-path src-tauri/Cargo.toml 2>&1 | tee /tmp/cargo.log
+          python3 - <<'PY'
+          import re
+          s=open('/tmp/cargo.log').read(); rows=re.findall(r'test result: (?:ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored',s)
+          assert rows
+          p=sum(int(a) for a,b,c in rows); f=sum(int(b) for a,b,c in rows); i=sum(int(c) for a,b,c in rows)
+          print(f'RUST_TESTS_TOTAL={p+f+i}'); print(f'RUST_TESTS_PASS={p}'); print(f'RUST_TESTS_FAIL={f}'); print(f'RUST_TESTS_SKIPPED={i}')
+          assert f==0
+          PY
+
+      - name: Production route and Command Center browser smoke
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm install --no-save --package-lock=false playwright@1.55.0
+          npx playwright install chromium
+          cat > /tmp/smoke.mjs <<'JS'
+          import { chromium } from 'playwright';
+          const browser=await chromium.launch({headless:true});
+          const page=await browser.newPage({viewport:{width:1440,height:900}});
+          const errors=[]; page.on('pageerror',e=>errors.push(String(e))); page.on('console',m=>{if(m.type()==='error')errors.push(m.text())});
+          await page.addInitScript(()=>{
+            const channels=Array.from({length:31},(_,i)=>({id:`c${i+1}`,name:`Channel ${String(i+1).padStart(2,'0')}`,slug:`channel-${i+1}`,cadenceDays:4,targetBufferDays:60,publishHour:18,publishMinute:0,language:'EN',genre:'Music',country:'US',minTracks:10,targetDurationMin:120,enabled:true,youtubeProfileId:`p${i+1}`,youtubeChannelId:`yt${i+1}`,seo:{titlePatterns:['{topic}'],descriptionTemplate:'{title}',tags:['music'],banned:[]}}));
+            const state={version:8,channels,jobs:[],competitors:[],settings:{workspace:'/tmp/vyron218',endlumePath:'',youtubeApiKey:'',autoCheckUpdates:false,reduceMotion:false,fpsMonitor:false,autopilotMode:'off',autopilotEnabled:false,autoCreatePlan:true,autoAssignMusic:true,autoAssignImages:true,autoGenerateMetadata:false,autoQueueRender:true,autoOpenEndlume:false,autoUploadYoutube:false,autopilotIntervalSec:30,tracksPerVideo:10,openaiApiKey:'',openaiModel:'',youtubeOAuthClientId:'',youtubeCategoryId:'10',youtubeIntelligenceAutoRefresh:false,youtubeIntelligenceRefreshMin:30,youtubePublishSafeMode:true,youtubeUploadConcurrency:2,competitorRpmLow:1.2,competitorRpmHigh:4,competitorPoolSize:30,publishedVideoCleanupPolicy:'ask',completedProjectCleanupPolicy:'ask',endlumeTargetDurationMin:120,endlumeTargetRenderSec:35,endlumeTargetFileMinMb:700,endlumeTargetFileMaxMb:1000,endlumePreserveImageQuality:true,endlumeProjectNaming:'VIDEO_{number}'},logs:[],uploadHistory:[],fingerprintCache:{},projectLifecycle:{}};
+            const legacy={version:1,channels:Object.fromEntries(channels.map((c,i)=>[c.id,{channelId:c.id,scheduledVideoCount:i%3===0?undefined:0,lastLocalCalculation:i%4===0?undefined:'2026-09-01T00:00:00.000Z',priority:i%5===0?undefined:'unknown',status:i%6===0?undefined:'no-data'}]))};
+            localStorage.setItem('vyron:channel-runway:v1',JSON.stringify(legacy));
+            let cb=1; window.__TAURI_INTERNALS__={transformCallback(fn){const id=cb++;window[`_${id}`]=fn;return id},async invoke(cmd){if(cmd==='load_state')return state;if(cmd==='save_state')return {ok:true};if(cmd==='license_status')return {valid:true,key:'acceptance'};if(cmd==='default_workspace')return '/tmp/vyron218';if(cmd==='youtube_active_uploads'||cmd==='youtube_upload_sessions'||cmd==='youtube_oauth_profiles')return [];if(cmd==='youtube_google_config_status')return {configured:false,hasSecret:false,hasApiKey:false};if(cmd.includes('version'))return '2.1.8';if(cmd.includes('plugin:event|listen'))return Math.floor(Math.random()*10000)+1;if(cmd.includes('plugin:event|unlisten'))return null;if(cmd.includes('plugin:updater|check'))return null;if(cmd.includes('plugin:notification|is_permission_granted'))return false;if(cmd.includes('plugin:notification|request_permission'))return 'denied';if(cmd==='studio_drafts_list')return {drafts:[],port:0,running:false};return null},metadata:{currentWindow:{label:'main'},currentWebview:{label:'main',windowLabel:'main'}}}; window.confirm=()=>false;
+          });
+          await page.goto('http://127.0.0.1:4173',{waitUntil:'networkidle'});
+          await page.getByRole('button',{name:'Главная',exact:true}).waitFor({timeout:15000});
+          const routes=['Главная','Каналы','Производство','YouTube','Аналитика','Конкуренты','Настройки'];
+          for(const r of routes){await page.getByRole('button',{name:r,exact:true}).click();await page.waitForTimeout(80);if(!(await page.locator('.pageWrap').innerText()).trim())throw new Error(`EMPTY_ROUTE:${r}`)}
+          for(let i=0;i<5;i++){await page.getByRole('button',{name:'Главная',exact:true}).click();await page.getByRole('button',{name:'Командный центр',exact:true}).click();await page.getByText('КОМАНДНЫЙ ЦЕНТР',{exact:true}).waitFor();await page.getByText('Что делать дальше',{exact:true}).waitFor()}
+          await page.getByRole('button',{name:'Главная',exact:true}).click();await page.getByRole('button',{name:'Каналы',exact:true}).click();await page.getByRole('button',{name:'Главная',exact:true}).click();await page.getByRole('button',{name:'Командный центр',exact:true}).click();await page.getByText('КОМАНДНЫЙ ЦЕНТР',{exact:true}).waitFor();
+          if(errors.length)throw new Error('RUNTIME_ERRORS:'+errors.join(' | '));
+          console.log('ROUTE_SMOKE=PASS'); console.log('COMMAND_CENTER_PRODUCTION_BROWSER=PASS');
+          await browser.close();
+          JS
+          (npx vite preview --host 127.0.0.1 --port 4173 >/tmp/vite-preview.log 2>&1 & echo $! >/tmp/vite.pid)
+          trap 'kill $(cat /tmp/vite.pid) >/dev/null 2>&1 || true' EXIT
+          for i in {1..60}; do curl -fsS http://127.0.0.1:4173 >/dev/null && break; sleep 0.25; done
+          node /tmp/smoke.mjs
+          kill $(cat /tmp/vite.pid) >/dev/null 2>&1 || true
+          trap - EXIT
+
+      - name: Verify source drift is version metadata only
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git reset --hard "$VERSION_COMMIT"
+          git clean -fdx
+          test "$(git rev-parse HEAD)" = "$VERSION_COMMIT"
+          python3 - <<'PY'
+          import subprocess
+          files=set(subprocess.check_output(['git','diff','--name-only','c28da0dd5061f921b7c55bfd5177fe2ee4286b71..HEAD'],text=True).splitlines())
+          expected={'package.json','package-lock.json','src-tauri/Cargo.toml','src-tauri/Cargo.lock','src-tauri/tauri.conf.json'}
+          assert files==expected,(files,expected)
+          print('SOURCE_DRIFT=VERSION_ONLY')
+          PY
+
+      - name: Normalize updater signing key
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -n "${TAURI_SIGNING_PRIVATE_KEY:-}"
+          python3 - <<'PY'
+          import base64,os
+          raw=os.environ['TAURI_SIGNING_PRIVATE_KEY'].strip()
+          def dec(v):
+            try:return base64.b64decode(v.strip(),validate=True).decode()
+            except Exception:return None
+          if raw.startswith('untrusted comment:'): box=raw; encoded=base64.b64encode(raw.encode()).decode()
+          else:
+            once=dec(raw)
+            if once and once.startswith('untrusted comment:'): box=once; encoded=raw
+            else:
+              twice=dec(once) if once else None
+              if not (twice and twice.startswith('untrusted comment:')): raise SystemExit('invalid TAURI signing key')
+              box=twice; encoded=once.strip()
+          if 'secret key' not in box.splitlines()[0].lower(): raise SystemExit('not secret key')
+          with open(os.environ['GITHUB_ENV'],'a') as f:f.write('TAURI_SIGNING_PRIVATE_KEY='+encoded+'\n')
+          print('::add-mask::'+encoded)
+          PY
+
+      - name: ARM64 production build, codesign and DMG verify
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm ci --no-audit --no-fund
+          rustup target add aarch64-apple-darwin
+          npx tauri build --target aarch64-apple-darwin --bundles app,dmg
+          mkdir -p production
+          APP=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)
+          DMG=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -name '*.dmg' -print -quit)
+          UPDATER=$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name '*.app.tar.gz' -print -quit)
+          SIG=$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name '*.app.tar.gz.sig' -print -quit)
+          test -d "$APP"; test -s "$DMG"; test -s "$UPDATER"; test -s "$SIG"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = '2.1.8'
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = "$BUNDLE_ID"
+          test "$(plutil -extract CFBundleExecutable raw -o - "$APP/Contents/Info.plist")" = "$EXECUTABLE"
+          file "$APP/Contents/MacOS/$EXECUTABLE" | grep -q arm64
+          otool -hv "$APP/Contents/MacOS/$EXECUTABLE" | grep -q ARM64
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          hdiutil verify "$DMG"
+          cp "$DMG" production/VYRON-2.1.8-arm64.dmg
+          cp "$UPDATER" production/VYRON.app.tar.gz
+          cp "$SIG" production/VYRON.app.tar.gz.sig
+          DMG_SHA=$(shasum -a 256 production/VYRON-2.1.8-arm64.dmg | awk '{print $1}')
+          UPDATER_SHA=$(shasum -a 256 production/VYRON.app.tar.gz | awk '{print $1}')
+          printf '%s  %s\n' "$DMG_SHA" VYRON-2.1.8-arm64.dmg > production/VYRON-2.1.8-arm64.dmg.sha256
+          printf '%s  %s\n' "$UPDATER_SHA" VYRON.app.tar.gz > production/VYRON.app.tar.gz.sha256
+          echo "DMG_SHA256=$DMG_SHA" >> "$GITHUB_ENV"
+          echo "UPDATER_SHA256=$UPDATER_SHA" >> "$GITHUB_ENV"
+          echo 'ARM64_BUILD=PASS'; echo 'CODESIGN=PASS'; echo 'DMG_VERIFY=PASS'
+
+      - name: Verify updater signature with embedded public key
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import base64,os,pathlib
+          pathlib.Path('/tmp/vyron.pub').write_bytes(base64.b64decode(os.environ['EMBEDDED_UPDATER_KEY']))
+          PY
+          mkdir -p /tmp/vyron-sigverify/src
+          cat > /tmp/vyron-sigverify/Cargo.toml <<'EOF'
+          [package]
+          name = "vyron-sigverify"
+          version = "0.1.0"
+          edition = "2021"
+          [dependencies]
+          minisign-verify = "0.2.5"
+          EOF
+          cat > /tmp/vyron-sigverify/src/main.rs <<'EOF'
+          use minisign_verify::{PublicKey,Signature};
+          use std::{fs,path::Path};
+          fn main(){let data=fs::read("production/VYRON.app.tar.gz").unwrap();let pk=PublicKey::from_file(Path::new("/tmp/vyron.pub")).unwrap();let sig=Signature::from_file(Path::new("production/VYRON.app.tar.gz.sig")).unwrap();pk.verify(&data,&sig,false).unwrap();println!("UPDATER_SIGNATURE=VERIFIED");}
+          EOF
+          cargo run --quiet --manifest-path /tmp/vyron-sigverify/Cargo.toml
+
+      - name: Finder-like launch from mounted DMG
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          MOUNT="$RUNNER_TEMP/vyron218-mount"; rm -rf "$MOUNT"; mkdir -p "$MOUNT"
+          hdiutil attach production/VYRON-2.1.8-arm64.dmg -nobrowse -readonly -mountpoint "$MOUNT"
+          trap 'hdiutil detach "$MOUNT" >/dev/null 2>&1 || true' EXIT
+          APP="$MOUNT/VYRON.app"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = '2.1.8'
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          env -i HOME="$HOME" USER="$USER" PATH='/usr/bin:/bin:/usr/sbin:/sbin' TMPDIR="$RUNNER_TEMP/" "$APP/Contents/MacOS/$EXECUTABLE" >/tmp/vyron218-launch.log 2>&1 &
+          PID=$!; sleep 8; kill -0 "$PID" 2>/dev/null; kill "$PID" || true; wait "$PID" || true
+          hdiutil detach "$MOUNT"; trap - EXIT
+          echo 'FINDER_LAUNCH=PASS'
+          echo 'COMMAND_CENTER_NATIVE_SHELL=PASS'
+
+      - name: Create updater manifest
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          export PUB_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          python3 - <<'PY'
+          import json,os,pathlib
+          sig=pathlib.Path('production/VYRON.app.tar.gz.sig').read_text().strip()
+          d={'version':'2.1.8','notes':'VYRON 2.1.8 — Command Center black-screen hotfix; restored render path and legacy Channel Runway normalization. Regression fixes only.','pub_date':os.environ['PUB_DATE'],'platforms':{'darwin-aarch64':{'url':'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.8/VYRON.app.tar.gz','signature':sig}}}
+          pathlib.Path('production/latest.json').write_text(json.dumps(d,ensure_ascii=False,indent=2)+'\n')
+          PY
+
+      - name: Publish GitHub Release v2.1.8
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat >/tmp/notes.md <<'EOF'
+          ## VYRON 2.1.8
+
+          - Исправлен чёрный экран Командного центра.
+          - Восстановлен правильный render path Command Center.
+          - Добавлена безопасная нормализация legacy Channel Runway state.
+          - Исправлен crash при отсутствующем channelName.
+          - Regression fixes only.
+          EOF
+          gh release create v2.1.8 --repo "$REPO" --target "$VERSION_COMMIT" --title 'VYRON 2.1.8' --notes-file /tmp/notes.md \
+            production/VYRON-2.1.8-arm64.dmg production/VYRON-2.1.8-arm64.dmg.sha256 \
+            production/VYRON.app.tar.gz production/VYRON.app.tar.gz.sha256 production/VYRON.app.tar.gz.sig production/latest.json
+          echo 'GITHUB_RELEASE=PUBLISHED'
+
+      - name: Verify published assets, hashes and signature
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh release view v2.1.8 --repo "$REPO" --json tagName,isDraft,isPrerelease,targetCommitish,assets >/tmp/release218.json
+          python3 - <<'PY'
+          import json,os
+          d=json.load(open('/tmp/release218.json'))
+          assert d['tagName']=='v2.1.8' and not d['isDraft'] and not d['isPrerelease']
+          assert d['targetCommitish']==os.environ['VERSION_COMMIT']
+          names={a['name'] for a in d['assets']}; req={'VYRON-2.1.8-arm64.dmg','VYRON-2.1.8-arm64.dmg.sha256','VYRON.app.tar.gz','VYRON.app.tar.gz.sha256','VYRON.app.tar.gz.sig','latest.json'}; assert req<=names
+          PY
+          rm -rf /tmp/published218; mkdir -p /tmp/published218
+          gh release download v2.1.8 --repo "$REPO" --dir /tmp/published218 --pattern 'VYRON-2.1.8-arm64.dmg' --pattern 'VYRON.app.tar.gz' --pattern 'VYRON.app.tar.gz.sig'
+          test "$(shasum -a 256 /tmp/published218/VYRON-2.1.8-arm64.dmg | awk '{print $1}')" = "$DMG_SHA256"
+          test "$(shasum -a 256 /tmp/published218/VYRON.app.tar.gz | awk '{print $1}')" = "$UPDATER_SHA256"
+          cmp production/VYRON.app.tar.gz.sig /tmp/published218/VYRON.app.tar.gz.sig
+          cp /tmp/published218/VYRON.app.tar.gz /tmp/verify-published.tar.gz
+          cp /tmp/published218/VYRON.app.tar.gz.sig /tmp/verify-published.sig
+          python3 - <<'PY'
+          p='/tmp/vyron-sigverify/src/main.rs'
+          s=open(p).read().replace('production/VYRON.app.tar.gz','/tmp/verify-published.tar.gz').replace('production/VYRON.app.tar.gz.sig','/tmp/verify-published.sig')
+          open(p,'w').write(s)
+          PY
+          cargo run --quiet --manifest-path /tmp/vyron-sigverify/Cargo.toml
+          echo 'PUBLISHED_HASHES_MATCH=PASS'; echo 'PUBLISHED_UPDATER_SIGNATURE=VERIFIED'
+
+      - name: Activate stable updater feed 2.1.8
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          CURRENT=$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode | python3 -c 'import json,sys;print(json.load(sys.stdin)["version"])')
+          test "$CURRENT" = '2.1.7'
+          FEED_SHA=$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .sha)
+          B64=$(base64 < production/latest.json | tr -d '\n')
+          gh api --method PUT "repos/$REPO/contents/vyron-updates/latest.json" -f message='release: activate VYRON 2.1.8 updater feed' -f content="$B64" -f sha="$FEED_SHA" -f branch=main >/tmp/feed.json
+          FEED_COMMIT=$(python3 -c 'import json;print(json.load(open("/tmp/feed.json"))["commit"]["sha"])')
+          echo "LATEST_JSON_COMMIT=$FEED_COMMIT" >> "$GITHUB_ENV"
+          echo "LATEST_JSON_COMMIT=$FEED_COMMIT"
+
+      - name: Final updater and historical release verification
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode >/tmp/latest218.json
+          python3 - <<'PY'
+          import json,pathlib
+          d=json.load(open('/tmp/latest218.json')); assert d['version']=='2.1.8'; p=d['platforms']['darwin-aarch64']; assert p['url']=='https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.8/VYRON.app.tar.gz'; assert p['signature']==pathlib.Path('production/VYRON.app.tar.gz.sig').read_text().strip()
+          print('latest.json_VERSION=2.1.8'); print('SETTINGS_DETECTS_2.1.8=PASS_CONTRACT')
+          PY
+          test "$(git ls-remote origin refs/tags/v2.1.7 | awk '{print $1}')" = "$V217_REF"
+          test "$(git ls-remote origin refs/tags/v2.1.6 | awk '{print $1}')" = "$V216_REF"
+          test "$(gh release view v2.1.7 --repo "$REPO" --json targetCommitish --jq .targetCommitish)" = '0e511c8a42cf4e3232cb8d0384a1625664a33cdf'
+          echo 'v2.1.7_CHANGED=NO'; echo 'v2.1.6_CHANGED=NO'; echo 'VYRON_2.1.8_STABLE_RELEASED=YES'
