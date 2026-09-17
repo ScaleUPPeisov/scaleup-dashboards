@@ -1,11 +1,11 @@
 {
-  "version": "2.1.6",
-  "notes": "VYRON 2.1.6 — Ready Video Inventory, multi-channel upload queue, live upload progress/ETA, Upload Center and stale operation reconciliation",
-  "pub_date": "2026-09-17T11:21:54Z",
+  "version": "2.1.7",
+  "notes": "VYRON 2.1.7 stability release: Channels render fix, legacy normalization, compact Dashboard and queued upload removal.",
+  "pub_date": "2026-09-17T12:33:02Z",
   "platforms": {
     "darwin-aarch64": {
-      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.6/VYRON.app.tar.gz",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM2UrelQ2QUh0endveHlWbWVwZkJWODEwUEhZT043alhIYUk2QWdsNU91TSsvL3oxbEpLa0tEYUZJQ2pTaFhQR0Z0b01vSm5mMyttaU1sWEFEVU1seEFvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5NjQ0MDk5CWZpbGU6VllST04uYXBwLnRhci5negpzNy9JQlNVS09oVGFHRFNXdmRGdUNnaUF0c1FyTHdaVVZObU1Fb0h4RlJWMkdoUjQwSUNLZm44Y3ExOFdxWFZscGpKdkxSYjJxeGR4NXBVeUgvZDVBdz09Cg=="
+      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.7/VYRON.app.tar.gz",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM1ZkRkU4Q0hkOGtFNmlZU21GenRBQk5tYWs0VnFLMkltbUcwVVZDMWNTS09MVEFSQmxhcUdzVkczUkUyUStXVVN0Vm1pRkxyRHRidHlYZmZVTDY0WmdjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5NjQ4MzY3CWZpbGU6VllST04uYXBwLnRhci5negp3YnBFYUNWRDdCVWJ1ZHNBL25BZGdRNVA2OUduM3hVSDNibktQc3dHQndsNTdJLzNFanVGR2I0bGZLditkUEVLOXZHaVFzM2Y5TTJkN285cGtQYzhEZz09Cg=="
     }
   }
 }
