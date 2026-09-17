@@ -15,16 +15,9 @@ permissions:
 env:
   REPO: ScaleUPPeisov/scaleup-dashboards
   EXPECTED_RELEASE_HEAD: 426e2ba81af12b7e6a74f8f5ee2a6aac1a9b916d
-  BASE_RUN: '34793876334'
-  BASE_ARTIFACT: VYRON-2.1.4-final-source
-  BASE_SOURCE_SHA256: 24ccb1649d91b090dcc5437c66e18c0ae465528423110efe0c1d392397f6fef1
-  FEATURE1_PATCH_SHA256: f0dfdb2f9698e59b8a207c7c6b97a75ddabda039ac86c19cd07e89c81117c71f
-  FEATURE2_PATCH_SHA256: a76435719952b9478514bd41d62e79df550ccbcad459e23067de0cc5fb2299
-  VERSION_PATCH_SHA256: fd0f4c7cdae36b45946ce62869aa3979a986467b04d5ebe35d2d46281a823be1
-  BLOCK1_PATCH_SHA256: 581452bfa868d5b25cde2a4481e6a4a8cf16c512966f2661a71f8d98570d9038
-  BLOCK2_PATCH_SHA256: 40cfae87b5f7faa41a9fce3070074876552ec4178817acb03c86ecefdadcc959
-  BLOCK3_PATCH_SHA256: 5d7c0e258f23252b141603471392e7fb1db11166d4f81a02052197f4129dc8be
-  BLOCK4_PATCH_SHA256: f62d563240fadfec37bf634c7947b545c106020805262f0ac77f8728db2b77a4
+  BLOCK4_VERIFY_RUN: '34915210329'
+  BLOCK4_ARTIFACT: VYRON-2.1.6-block4-evidence
+  BLOCK4_SOURCE_SHA256: 408aa51de972c0f4c0ed2d4400ece0121c44e497ae8693518f80514117d3b1e4
   FINAL_FIX_PATCH_SHA256: 29c0363c504305275b50771794310b8246c8a6cd7671130deb57690d6e121977
 
 jobs:
@@ -42,8 +35,8 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          test "$(git rev-parse HEAD^)" = "$EXPECTED_RELEASE_HEAD"
-          test "$(git rev-parse HEAD^^)" = '0e3e608decb7dc40e83c4445947e2e530be13f37'
+          test "$(git rev-parse HEAD^^^)" = "$EXPECTED_RELEASE_HEAD"
+          test "$(git rev-parse HEAD^^^^)" = '0e3e608decb7dc40e83c4445947e2e530be13f37'
           echo "VERIFY_HEAD=$(git rev-parse HEAD)"
           echo "VERIFY_TREE=$(git rev-parse HEAD^{tree})"
           echo "RELEASE_HEAD=$EXPECTED_RELEASE_HEAD"
@@ -59,64 +52,22 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config libglib2.0-dev libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf
 
-      - name: Reconstruct exact VYRON 2.1.6 Block4 source and apply final fix
+      - name: Restore verified Block4 source and apply final fix
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -Eeuo pipefail
-          mkdir -p base work decoded out
-          gh run download "$BASE_RUN" --repo "$REPO" -n "$BASE_ARTIFACT" -D base
-          T=base/VYRON-2.1.4-final-source.tar.gz
-          test -f "$T"
-          test "$(sha256sum "$T" | awk '{print $1}')" = "$BASE_SOURCE_SHA256"
-          tar -xzf "$T" -C work
-          test "$(node -p "require('./work/package.json').version")" = '2.1.4'
-
-          base64 -d .github/patches/v215-youtube-productivity/01-global-channel.patch.gz.b64 | gzip -d > decoded/01.patch
-          test "$(sha256sum decoded/01.patch | awk '{print $1}')" = "$FEATURE1_PATCH_SHA256"
-          p2=(.github/patches/v215-youtube-productivity/02-draft-manager.parts/*.patchfrag)
-          test "${#p2[@]}" -eq 9
-          cat "${p2[@]}" > decoded/02.patch
-          test "$(sha256sum decoded/02.patch | awk '{print $1}')" = "$FEATURE2_PATCH_SHA256"
-          cp .github/patches/v215-youtube-productivity/03-version-bump.patch decoded/03.patch
-          test "$(sha256sum decoded/03.patch | awk '{print $1}')" = "$VERSION_PATCH_SHA256"
-          for p in decoded/01.patch decoded/02.patch decoded/03.patch; do git apply --check --directory=work "$p"; git apply --directory=work "$p"; done
-          test "$(node -p "require('./work/package.json').version")" = '2.1.5'
-
-          base64 -d .github/patches/v216-upload-center/01-ready-video-inventory.patch.gz.b64 | gzip -d > decoded/04-block1.patch
-          test "$(sha256sum decoded/04-block1.patch | awk '{print $1}')" = "$BLOCK1_PATCH_SHA256"
-          git apply --check --directory=work decoded/04-block1.patch
-          git apply --directory=work decoded/04-block1.patch
-
-          q=(.github/patches/v216-upload-center/02-multi-channel-upload-queue.parts/*.patchfrag)
-          test "${#q[@]}" -eq 6
-          cat "${q[@]}" > decoded/05-block2.patch.gz.b64
-          base64 -d decoded/05-block2.patch.gz.b64 | gzip -d > decoded/05-block2.patch
-          test "$(sha256sum decoded/05-block2.patch | awk '{print $1}')" = "$BLOCK2_PATCH_SHA256"
-          git apply --check --directory=work decoded/05-block2.patch
-          git apply --directory=work decoded/05-block2.patch
-          git apply --check --directory=work .github/patches/v216-upload-center/02b-upload-queue-typescript-fix.patch
-          git apply --directory=work .github/patches/v216-upload-center/02b-upload-queue-typescript-fix.patch
-
-          b3=(.github/patches/v216-upload-center/03-live-progress-and-eta.parts/*.patchfrag)
-          test "${#b3[@]}" -eq 5
-          cat "${b3[@]}" > decoded/06-block3.patch.gz.b64
-          base64 -d decoded/06-block3.patch.gz.b64 | gzip -d > decoded/06-block3.patch
-          test "$(sha256sum decoded/06-block3.patch | awk '{print $1}')" = "$BLOCK3_PATCH_SHA256"
-          git apply --check --directory=work decoded/06-block3.patch
-          git apply --directory=work decoded/06-block3.patch
-
-          base64 -d .github/patches/v216-stale-reconciliation/04-stale-operation-reconciliation.patch.gz.b64 | gzip -d > decoded/07-block4.patch
-          test "$(sha256sum decoded/07-block4.patch | awk '{print $1}')" = "$BLOCK4_PATCH_SHA256"
-          git apply --check --directory=work decoded/07-block4.patch
-          git apply --directory=work decoded/07-block4.patch
-
+          mkdir -p evidence work decoded out
+          gh run download "$BLOCK4_VERIFY_RUN" --repo "$REPO" -n "$BLOCK4_ARTIFACT" -D evidence
+          S=evidence/VYRON-2.1.6-after-block4-source.tar.gz
+          test -f "$S"
+          test "$(sha256sum "$S" | awk '{print $1}')" = "$BLOCK4_SOURCE_SHA256"
+          tar -xzf "$S" -C work
           base64 -d .github/patches/v216-final-fix/05-final-regression-fix.patch.gz.b64 | gzip -d > decoded/08-final-fix.patch
           test "$(sha256sum decoded/08-final-fix.patch | awk '{print $1}')" = "$FINAL_FIX_PATCH_SHA256"
           git apply --check --directory=work decoded/08-final-fix.patch
           git apply --directory=work decoded/08-final-fix.patch
-
           git -C work init -q
           git -C work diff --check
           sha256sum decoded/08-final-fix.patch | tee out/final-fix-patch.sha256
@@ -125,7 +76,7 @@ jobs:
         working-directory: work
         run: npm ci
 
-      - name: Targeted six-failure + queue regression
+      - name: Targeted former failures + queue regression
         working-directory: work
         shell: bash
         run: |
@@ -144,7 +95,9 @@ jobs:
           const total=r.numTotalTests ?? r.testResults?.reduce((n,s)=>n+(s.assertionResults?.length||0),0);
           const passed=r.numPassedTests ?? r.testResults?.reduce((n,s)=>n+(s.assertionResults||[]).filter(a=>a.status==='passed').length,0);
           const failed=r.numFailedTests ?? r.testResults?.reduce((n,s)=>n+(s.assertionResults||[]).filter(a=>a.status==='failed').length,0);
-          console.log(`FRONTEND_TOTAL=${total}`);console.log(`FRONTEND_PASSED=${passed}`);console.log(`FRONTEND_FAILED=${failed}`);
+          console.log(`FRONTEND_TOTAL=${total}`);
+          console.log(`FRONTEND_PASSED=${passed}`);
+          console.log(`FRONTEND_FAILED=${failed}`);
           if(total!==437||passed!==437||failed!==0)process.exit(1);
           NODE
 
