@@ -35,8 +35,8 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          test "$(git rev-parse HEAD^^^)" = "$EXPECTED_RELEASE_HEAD"
-          test "$(git rev-parse HEAD^^^^)" = '0e3e608decb7dc40e83c4445947e2e530be13f37'
+          test "$(git rev-parse HEAD^^^^)" = "$EXPECTED_RELEASE_HEAD"
+          test "$(git rev-parse HEAD^^^^^)" = '0e3e608decb7dc40e83c4445947e2e530be13f37'
           echo "VERIFY_HEAD=$(git rev-parse HEAD)"
           echo "VERIFY_TREE=$(git rev-parse HEAD^{tree})"
           echo "RELEASE_HEAD=$EXPECTED_RELEASE_HEAD"
@@ -83,7 +83,7 @@ jobs:
           set -Eeuo pipefail
           npx vitest run src/storageLifecycle.test.ts src/v211FeatureContracts.test.ts src/v2111PublisherWiring.test.ts src/v2100ErrorCenterSemantics.test.ts src/uploadQueue.test.ts | tee ../out/targeted-tests.txt
 
-      - name: Full frontend behavioral suite 437/437
+      - name: Full frontend behavioral suite 438/438
         working-directory: work
         shell: bash
         run: |
@@ -98,7 +98,7 @@ jobs:
           console.log(`FRONTEND_TOTAL=${total}`);
           console.log(`FRONTEND_PASSED=${passed}`);
           console.log(`FRONTEND_FAILED=${failed}`);
-          if(total!==437||passed!==437||failed!==0)process.exit(1);
+          if(total!==438||passed!==438||failed!==0)process.exit(1);
           NODE
 
       - name: TypeScript
@@ -145,7 +145,7 @@ jobs:
           sha256sum out/VYRON-2.1.6-final-fix-source.tar.gz | tee out/final-fix-source.sha256
           printf 'RELEASE_BASE_HEAD=%s\n' "$EXPECTED_RELEASE_HEAD" > out/final-summary.txt
           printf 'FINAL_FIX_PATCH_SHA=%s\n' "$FINAL_FIX_PATCH_SHA256" >> out/final-summary.txt
-          printf 'FRONTEND=437/437 PASS\nTYPESCRIPT=PASS\nPRODUCTION_BUILD=PASS\nRUST=PASS\nSECURITY=PASS\n' >> out/final-summary.txt
+          printf 'FRONTEND=438/438 PASS\nTYPESCRIPT=PASS\nPRODUCTION_BUILD=PASS\nRUST=PASS\nSECURITY=PASS\n' >> out/final-summary.txt
 
       - uses: actions/upload-artifact@v4
         with:
