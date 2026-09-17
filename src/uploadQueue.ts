@@ -47,6 +47,7 @@ export type UploadQueueSnapshot={
 type Executor=(spec:ImmutableUploadJob)=>Promise<void>;
 type Listener=(snapshot:UploadQueueSnapshot)=>void;
 
+const normalizeConcurrency=(value:number)=>Math.min(4,Math.max(1,Math.floor(value||1)));
 function cloneSpec(input:ImmutableUploadJob):ImmutableUploadJob{
   return Object.freeze({...input,tags:Object.freeze([...input.tags]),quotaOperations:Object.freeze(input.quotaOperations.map(x=>Object.freeze({...x})))}) as ImmutableUploadJob;
 }
@@ -58,9 +59,9 @@ export class MultiChannelUploadQueue{
   private listeners=new Set<Listener>();
   private sequence=0;
   private pumping=false;
-  constructor(private executor:Executor,private concurrency=2){this.concurrency=Math.max(1,Math.floor(concurrency||1))}
+  constructor(private executor:Executor,private concurrency=2){this.concurrency=normalizeConcurrency(concurrency)}
 
-  setConcurrency(value:number){this.concurrency=Math.max(1,Math.floor(value||1));this.emit();void this.pump()}
+  setConcurrency(value:number){this.concurrency=normalizeConcurrency(value);this.emit();void this.pump()}
   getConcurrency(){return this.concurrency}
   subscribe(cb:Listener){this.listeners.add(cb);cb(this.snapshot());return()=>this.listeners.delete(cb)}
   snapshot():UploadQueueSnapshot{
