@@ -10,7 +10,7 @@ const defaults=():ProductionPrefs=>({version:2,tab:'queue',byChannel:{},selected
 export const defaultChannelProductionPrefs=():ChannelProductionPrefs=>({projectCount:30,tracksPerProject:15,mode:'even',allowImageReuse:false,selectedProjectIds:[]});
 const isRecord=(x:unknown):x is Record<string,unknown>=>Boolean(x)&&typeof x==='object'&&!Array.isArray(x);
 const positiveInt=(x:unknown,fallback:number)=>Number.isFinite(Number(x))&&Number(x)>0?Math.max(1,Math.floor(Number(x))):fallback;
-const validMode=(x:unknown):DistributionMode=>x==='alphabetical'?'alphabetical':x==='shuffle'?'shuffle':'even';
+const validMode=(x:unknown):DistributionMode=>x==='random'?'random':x==='alphabetical'?'alphabetical':x==='no-repeat'?'no-repeat':'even';
 const validTab=(x:unknown):ProductionTab=>x==='materials'||x==='manager'?x:'queue';
 function normalizeChannelPrefs(value:unknown):ChannelProductionPrefs{
   const base=defaultChannelProductionPrefs();
