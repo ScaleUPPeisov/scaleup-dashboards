@@ -8,7 +8,7 @@ permissions:
 jobs:
   targeted:
     runs-on: macos-14
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -16,5 +16,5 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci --no-audit --no-fund
-      - name: Run changed behavioral acceptance tests verbosely
-        run: npx vitest run src/v216AcceptanceRegression.test.ts src/staleOperationReconciliation.test.ts src/uploadQueue.test.ts --reporter=verbose
+      - name: Run full frontend suite verbosely to expose exact failures
+        run: npx vitest run --reporter=verbose
