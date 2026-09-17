@@ -57,8 +57,8 @@ export const useApp=create<Store>((set,get)=>({
   patchSettings:p=>{set(s=>({settings:{...s.settings,...p}}));scheduleSave()},
   recordUploadHistory:r=>{set(s=>({uploadHistory:[...s.uploadHistory,r]}));scheduleSave()},
   replaceUploadHistory:rows=>{set({uploadHistory:rows});scheduleSave()},
-  cacheFingerprint:(path,e)=>{set(s=>({fingerprintCache:{...s.fingerprintCache,[path]:e}});scheduleSave()},
-  patchProjectLifecycle:(key,p)=>{set(s=>({projectLifecycle:{...s.projectLifecycle,[key]:p}});scheduleSave()},
+  cacheFingerprint:(path,e)=>{set(s=>({fingerprintCache:{...s.fingerprintCache,[path]:e}}));scheduleSave()},
+  patchProjectLifecycle:(key,p)=>{set(s=>({projectLifecycle:{...s.projectLifecycle,[key]:p}}));scheduleSave()},
   log:(message,level='info')=>{const safe=redactSensitive(message);set(s=>({logs:[{at:new Date().toISOString(),level,message:safe},...s.logs].slice(0,500)}));scheduleSave()},
   toast:notice=>{notifyLegacy(notice)}
 }));
