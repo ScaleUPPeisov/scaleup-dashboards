@@ -1,11 +1,11 @@
 {
-  "version": "2.1.5",
-  "notes": "VYRON 2.1.5 — global YouTube channel switcher, cross-tab active channel workflow and Metadata Draft Manager",
-  "pub_date": "2026-09-14T12:28:15Z",
+  "version": "2.1.6",
+  "notes": "VYRON 2.1.6 — Ready Video Inventory, multi-channel upload queue, live upload progress/ETA, Upload Center and stale operation reconciliation",
+  "pub_date": "2026-09-17T11:21:54Z",
   "platforms": {
     "darwin-aarch64": {
-      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.5/VYRON.app.tar.gz",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM1pLc3VDSnd0TnV6ejFzT2U3VVFaWnNPYnUvdUd4ZHFkQVhBY29BMVhjYVBZSFFxUGwyTk1kTEFUME5uRjhvWDRYUFJ0ZG5tTEJ0dVZsT2ZVR3VXR3dJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5Mzg4ODE2CWZpbGU6VllST04uYXBwLnRhci5negpLY1hrTi9mOHVIYU8xZ29NbGtmVlFCdWs2Mm9vUnVLK0F3eEMwZEZRNGhXRlBmVVE3cERqdEpOVFE1RHM4RDdvTjl1MndrYXVZOHdFYzBTNzMwUmJBZz09Cg=="
+      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.6/VYRON.app.tar.gz",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM2UrelQ2QUh0endveHlWbWVwZkJWODEwUEhZT043alhIYUk2QWdsNU91TSsvL3oxbEpLa0tEYUZJQ2pTaFhQR0Z0b01vSm5mMyttaU1sWEFEVU1seEFvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5NjQ0MDk5CWZpbGU6VllST04uYXBwLnRhci5negpzNy9JQlNVS09oVGFHRFNXdmRGdUNnaUF0c1FyTHdaVVZObU1Fb0h4RlJWMkdoUjQwSUNLZm44Y3ExOFdxWFZscGpKdkxSYjJxeGR4NXBVeUgvZDVBdz09Cg=="
     }
   }
 }
