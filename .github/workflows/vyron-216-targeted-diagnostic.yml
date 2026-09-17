@@ -1,0 +1,20 @@
+name: VYRON 2.1.6 Acceptance Targeted Diagnostic
+on:
+  push:
+    branches: [acceptance/vyron-2.1.6-final]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  targeted:
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Run changed behavioral acceptance tests verbosely
+        run: npx vitest run src/v216AcceptanceRegression.test.ts src/staleOperationReconciliation.test.ts src/uploadQueue.test.ts --reporter=verbose
