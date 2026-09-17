@@ -1,0 +1,242 @@
+name: VYRON 2.1.6 Final Product Acceptance
+
+on:
+  push:
+    branches: [acceptance/vyron-2.1.6-final]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: vyron-216-final-acceptance
+  cancel-in-progress: true
+
+env:
+  VERSION: '2.1.6'
+  BUNDLE_ID: studio.channelflow.desktop
+  EXECUTABLE: channelflow
+
+jobs:
+  acceptance:
+    name: full acceptance -> production ARM64 -> launch -> updater contract
+    runs-on: macos-14
+    timeout-minutes: 150
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: '-'
+    steps:
+      - name: Checkout exact acceptance head
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Record source of truth
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          echo "TESTED_HEAD=$(git rev-parse HEAD)" | tee acceptance.env
+          echo "TESTED_TREE=$(git rev-parse HEAD^{tree})" | tee -a acceptance.env
+          VERSION_ACTUAL=$(node -p "require('./package.json').version")
+          test "$VERSION_ACTUAL" = "$VERSION"
+          echo "TESTED_VERSION=$VERSION_ACTUAL" | tee -a acceptance.env
+
+      - name: Install exact dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: No fake green guard
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import pathlib,re
+          bad=[]
+          pattern=re.compile(r'\b(?:describe|it|test)\.(?:skip|only|todo|skipIf|runIf)\s*\(')
+          for root in ('src','tests'):
+              p=pathlib.Path(root)
+              if not p.exists(): continue
+              for f in list(p.rglob('*.test.ts'))+list(p.rglob('*.test.tsx')):
+                  text=f.read_text(errors='ignore')
+                  for n,line in enumerate(text.splitlines(),1):
+                      if pattern.search(line): bad.append(f'{f}:{n}: {line.strip()}')
+          if bad:
+              print('Forbidden skipped/only/todo tests detected:')
+              print('\n'.join(bad))
+              raise SystemExit(1)
+          print('NO_FAKE_GREEN_GUARD=PASS')
+          PY
+
+      - name: Full frontend test suite with factual totals
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npx vitest run --reporter=json --outputFile=acceptance-vitest.json
+          python3 - <<'PY'
+          import json,pathlib
+          d=json.load(open('acceptance-vitest.json'))
+          files=len(d.get('testResults',[]))
+          total=int(d.get('numTotalTests',0))
+          passed=int(d.get('numPassedTests',0))
+          failed=int(d.get('numFailedTests',0))
+          skipped=int(d.get('numPendingTests',0))+int(d.get('numTodoTests',0))
+          lines=[
+            f'FRONTEND_TEST_FILES={files}',f'FRONTEND_TESTS_TOTAL={total}',f'FRONTEND_TESTS_PASSED={passed}',
+            f'FRONTEND_TESTS_FAILED={failed}',f'FRONTEND_TESTS_SKIPPED={skipped}'
+          ]
+          with open('acceptance.env','a') as f:f.write('\n'.join(lines)+'\n')
+          print('\n'.join(lines))
+          assert total>0 and passed==total and failed==0 and skipped==0
+          PY
+
+      - name: TypeScript and production frontend build
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm run build
+          test -s dist/index.html
+          ! grep -R --binary-files=without-match -nE 'localhost:1421|127\.0\.0\.1:1421' dist
+          echo 'TYPESCRIPT=PASS' | tee -a acceptance.env
+          echo 'FRONTEND_BUILD=PASS' | tee -a acceptance.env
+
+      - name: Full Rust test suite
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cargo test --manifest-path src-tauri/Cargo.toml
+          echo 'RUST_TESTS=PASS' | tee -a acceptance.env
+
+      - name: Production Rust and Tauri compile check
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rustup target add aarch64-apple-darwin
+          cargo check --release --target aarch64-apple-darwin --manifest-path src-tauri/Cargo.toml
+          echo 'TAURI_CHECK=PASS' | tee -a acceptance.env
+
+      - name: Security artifact scan
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import pathlib,re
+          roots=[pathlib.Path('src'),pathlib.Path('src-tauri/src'),pathlib.Path('dist')]
+          patterns={
+            'google_client_secret':re.compile(r'GOCSPX-[A-Za-z0-9_-]{16,}'),
+            'google_access_token':re.compile(r'ya29\.[A-Za-z0-9_-]{16,}'),
+            'google_api_key':re.compile(r'AIza[0-9A-Za-z_-]{30,}'),
+            'private_key':re.compile(r'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----'),
+          }
+          findings=[]
+          for root in roots:
+              if not root.exists(): continue
+              for p in root.rglob('*'):
+                  if not p.is_file() or p.stat().st_size>8_000_000: continue
+                  try:text=p.read_text(errors='ignore')
+                  except Exception:continue
+                  for label,pat in patterns.items():
+                      if pat.search(text):findings.append(f'{label}: {p}')
+          if findings:
+              print('\n'.join(findings));raise SystemExit('SECRET_VALUE_PATTERN_DETECTED')
+          print('SECURITY_ARTIFACT_SCAN=PASS')
+          PY
+          echo 'SECURITY=PASS' | tee -a acceptance.env
+
+      - name: Normalize updater signing key
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -n "${TAURI_SIGNING_PRIVATE_KEY:-}"
+          python3 - <<'PY'
+          import base64,os
+          raw=os.environ['TAURI_SIGNING_PRIVATE_KEY'].strip()
+          def dec(v):
+              try:return base64.b64decode(v.strip(),validate=True).decode()
+              except Exception:return None
+          if raw.startswith('untrusted comment:'):
+              box=raw; encoded=base64.b64encode(raw.encode()).decode()
+          else:
+              once=dec(raw)
+              if once and once.startswith('untrusted comment:'):
+                  box=once; encoded=raw
+              else:
+                  twice=dec(once) if once else None
+                  if not (twice and twice.startswith('untrusted comment:')):
+                      raise SystemExit('invalid TAURI signing key encoding')
+                  box=twice; encoded=once.strip()
+          if 'secret key' not in box.splitlines()[0].lower():raise SystemExit('TAURI signing key is not a secret key')
+          with open(os.environ['GITHUB_ENV'],'a') as f:f.write('TAURI_SIGNING_PRIVATE_KEY='+encoded+'\n')
+          print('::add-mask::'+encoded)
+          PY
+
+      - name: Build real production ARM64 application
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npx tauri build --target aarch64-apple-darwin --bundles app,dmg
+          APP=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)
+          DMG=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -name '*.dmg' -print -quit)
+          UPDATER=$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name '*.app.tar.gz' -print -quit)
+          SIG=$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name '*.app.tar.gz.sig' -print -quit)
+          test -d "$APP"; test -s "$DMG"; test -s "$UPDATER"; test -s "$SIG"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = "$VERSION"
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = "$BUNDLE_ID"
+          test "$(plutil -extract CFBundleExecutable raw -o - "$APP/Contents/Info.plist")" = "$EXECUTABLE"
+          file "$APP/Contents/MacOS/$EXECUTABLE" | grep -q arm64
+          otool -hv "$APP/Contents/MacOS/$EXECUTABLE" | grep -q ARM64
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          hdiutil verify "$DMG"
+          echo 'PRODUCTION_APP_BUILD=PASS' | tee -a acceptance.env
+
+      - name: Normal Finder-like launch from DMG
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          DMG=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -name '*.dmg' -print -quit)
+          MOUNT="$RUNNER_TEMP/vyron-acceptance-mount"
+          rm -rf "$MOUNT"; mkdir -p "$MOUNT"
+          hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$MOUNT"
+          trap 'hdiutil detach "$MOUNT" >/dev/null 2>&1 || true' EXIT
+          APP="$MOUNT/VYRON.app"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          env -i HOME="$HOME" USER="$USER" PATH='/usr/bin:/bin:/usr/sbin:/sbin' TMPDIR="$RUNNER_TEMP/" "$APP/Contents/MacOS/$EXECUTABLE" > "$RUNNER_TEMP/vyron-acceptance-launch.log" 2>&1 &
+          PID=$!
+          sleep 10
+          kill -0 "$PID" 2>/dev/null
+          kill "$PID" || true
+          wait "$PID" || true
+          ! grep -Ei 'panic|uncaught|fatal error|segmentation fault' "$RUNNER_TEMP/vyron-acceptance-launch.log"
+          hdiutil detach "$MOUNT"; trap - EXIT
+          echo 'NORMAL_LAUNCH=PASS' | tee -a acceptance.env
+
+      - name: Verify stable updater contract remains valid
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh api repos/ScaleUPPeisov/scaleup-dashboards/contents/vyron-updates/latest.json?ref=main --jq .content | tr -d '\n' | base64 --decode > /tmp/latest.json
+          gh release view v2.1.6 --repo ScaleUPPeisov/scaleup-dashboards --json tagName,isDraft,isPrerelease,assets > /tmp/release.json
+          python3 - <<'PY'
+          import json
+          u=json.load(open('/tmp/latest.json'));r=json.load(open('/tmp/release.json'))
+          assert u['version']=='2.1.6'
+          p=u['platforms']['darwin-aarch64'];assert p['url'].endswith('/v2.1.6/VYRON.app.tar.gz') and p['signature'].strip()
+          assert r['tagName']=='v2.1.6' and r['isDraft'] is False and r['isPrerelease'] is False
+          names={x['name'] for x in r['assets']};assert {'VYRON.app.tar.gz','VYRON.app.tar.gz.sig','VYRON-2.1.6-arm64.dmg'}<=names
+          PY
+          echo 'UPDATER_SIGNATURE_LOGIC=PASS' | tee -a acceptance.env
+          echo 'UPDATER=PASS' | tee -a acceptance.env
+
+      - name: Acceptance summary
+        if: always()
+        shell: bash
+        run: |
+          echo '--- VYRON ACCEPTANCE FACTS ---'
+          cat acceptance.env 2>/dev/null || true
