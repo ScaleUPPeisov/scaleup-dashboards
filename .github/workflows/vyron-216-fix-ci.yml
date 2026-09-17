@@ -1,0 +1,62 @@
+name: VYRON 2.1.6 Fix CI
+
+on:
+  push:
+    branches: [fix/vyron-2.1.6-release-blocker]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Case collision guard
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          roots=[Path('src'),Path('src-tauri')]
+          seen={}
+          collisions=[]
+          for root in roots:
+              for p in root.rglob('*'):
+                  if not p.is_file():
+                      continue
+                  key=str(p).lower()
+                  prev=seen.get(key)
+                  if prev and prev != str(p):
+                      collisions.append((prev,str(p)))
+                  else:
+                      seen[key]=str(p)
+          if collisions:
+              print('Case-colliding paths detected:')
+              for a,b in collisions:
+                  print(f' - {a} <-> {b}')
+              raise SystemExit(1)
+          print('Case collision guard: PASS')
+          PY
+
+      - name: Frontend tests
+        run: npm test
+
+      - name: Frontend production build
+        run: npm run build
+
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
