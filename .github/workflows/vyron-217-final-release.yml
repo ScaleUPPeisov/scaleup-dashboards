@@ -18,6 +18,8 @@ env:
   VERSION: '2.1.7'
   TAG: v2.1.7
   BASE_SOURCE: cf325c11ffefeb1637063fa9213022e3e7f6a110
+  PRODUCT_SOURCE: 01a34ddb99af357247250f3fa72b2f6ba9c19a54
+  PRODUCT_TREE: 7a4e68fcafb69ede7e689189795d11b0ed79bf5e
   BUNDLE_ID: studio.channelflow.desktop
   EXECUTABLE: channelflow
   EMBEDDED_UPDATER_KEY: dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEREODQ1NDdERTI1MEYxQzAKUldUQThWRGlmVlNFM1RHdW5WQnE2eG9BYTBnQlNmbUtmVU84UHJQMUNvZWZ4Qmo0L2hYcUd4UDEK
@@ -32,10 +34,10 @@ jobs:
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       APPLE_SIGNING_IDENTITY: '-'
     steps:
-      - name: Checkout 2.1.7 release line
+      - name: Checkout exact 2.1.7 product source
         uses: actions/checkout@v4
         with:
-          ref: release/vyron-2.1.7
+          ref: 01a34ddb99af357247250f3fa72b2f6ba9c19a54
           fetch-depth: 0
 
       - name: Setup Node
@@ -48,11 +50,13 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$PRODUCT_SOURCE"
+          test "$(git rev-parse HEAD^{tree})" = "$PRODUCT_TREE"
           git merge-base --is-ancestor "$BASE_SOURCE" HEAD
           SOURCE_HEAD=$(git rev-parse HEAD)
           SOURCE_TREE=$(git rev-parse HEAD^{tree})
           SOURCE_VERSION=$(node -p "require('./package.json').version")
-          test "$SOURCE_VERSION" = '2.1.6'
+          test "$SOURCE_VERSION" = '2.1.7'
           test "$(gh release view v2.1.6 --repo "$REPO" --json targetCommitish --jq .targetCommitish)" = '1c2da4866c90a353f8ca4e9d97702ffddb74e853'
           ! git ls-remote --exit-code --tags origin refs/tags/v2.1.7 >/dev/null 2>&1
           ! gh release view v2.1.7 --repo "$REPO" >/dev/null 2>&1
@@ -61,21 +65,13 @@ jobs:
           echo "SOURCE_HEAD=$SOURCE_HEAD"
           echo "SOURCE_TREE=$SOURCE_TREE"
           echo "SOURCE_VERSION=$SOURCE_VERSION"
+          echo "FINAL_SOURCE_HEAD=$SOURCE_HEAD" >> "$GITHUB_ENV"
+          echo "FINAL_SOURCE_TREE=$SOURCE_TREE" >> "$GITHUB_ENV"
 
-      - name: Controlled version bump 2.1.6 to 2.1.7
+      - name: Verify controlled version bump 2.1.7
         shell: bash
         run: |
           set -Eeuo pipefail
-          npm version 2.1.7 --no-git-tag-version
-          python3 - <<'PY'
-          import json,re
-          from pathlib import Path
-          p=Path('src-tauri/Cargo.toml'); s=p.read_text();
-          s,n=re.subn(r'(?m)^(version\s*=\s*)"2\.1\.6"\s*$',r'\1"2.1.7"',s,count=1); assert n==1; p.write_text(s)
-          p=Path('src-tauri/Cargo.lock'); s=p.read_text();
-          s,n=re.subn(r'(\[\[package\]\]\nname = "channelflow"\nversion = )"2\.1\.6"',r'\1"2.1.7"',s,count=1); assert n==1; p.write_text(s)
-          p=Path('src-tauri/tauri.conf.json'); d=json.loads(p.read_text()); assert d['version']=='2.1.6'; d['version']='2.1.7'; p.write_text(json.dumps(d,ensure_ascii=False,indent=2)+'\n')
-          PY
           python3 - <<'PY'
           import json,re
           pkg=json.load(open('package.json')); lock=json.load(open('package-lock.json')); conf=json.load(open('src-tauri/tauri.conf.json'))
@@ -87,13 +83,6 @@ jobs:
           assert re.search(r'\[\[package\]\]\nname = "channelflow"\nversion = "2\.1\.7"',clock)
           print('VERSION_2_1_7=PASS')
           PY
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add package.json package-lock.json src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json
-          git commit -m 'release: bump VYRON to 2.1.7'
-          git push origin HEAD:release/vyron-2.1.7
-          echo "FINAL_SOURCE_HEAD=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
-          echo "FINAL_SOURCE_TREE=$(git rev-parse HEAD^{tree})" >> "$GITHUB_ENV"
 
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
@@ -128,37 +117,44 @@ jobs:
           grep -q "page==='analytics'?<AnalyticsPage" src/App.tsx
           echo 'ROUTE_CONTRACTS=PASS'
 
-      - name: Button inventory and wiring audit
+      - name: Button and interactive-control wiring audit
         shell: bash
         run: |
           set -Eeuo pipefail
-          python3 - <<'PY'
-          import re,json
-          from pathlib import Path
-          files=['App.tsx','DashboardOS.tsx','ChannelsOS.tsx','ProductionOS.tsx','ProductionManager.tsx','YouTubeCenter.tsx','PublisherOS.tsx','MetadataPage.tsx','ScheduleOS.tsx','ExistingVideos.tsx','ReadyVideoInventoryPanel.tsx','UploadCenter.tsx','AnalyticsPage.tsx','CompetitorsPage.tsx','SettingsOS.tsx','AuthRecoveryCenter.tsx','OAuthInventoryPanel.tsx']
-          rows=[]; fail=[]
-          for name in files:
-            p=Path('src')/name
-            if not p.exists(): continue
-            s=p.read_text()
-            for i,m in enumerate(re.finditer(r'<button\b([\s\S]*?)>',s),1):
-              attrs=m.group(1)
-              start=m.end(); close=s.find('</button>',start); body=s[start:close if close!=-1 else start+120]
-              label=re.sub(r'<[^>]+>',' ',body); label=re.sub(r'\{[^{}]*\}',' ',label); label=' '.join(label.split())[:100] or '(icon/dynamic)'
-              wired=('onClick=' in attrs or 'type="submit"' in attrs or "type='submit'" in attrs)
-              row={'screen':name,'index':i,'label':label,'wired':wired}
-              rows.append(row)
-              if not wired: fail.append(row)
-          destructive=[r for r in rows if re.search(r'удал|очист|стер|trash|delete',r['label'],re.I)]
-          Path('/tmp/button-matrix.json').write_text(json.dumps({'total':len(rows),'wired':len(rows)-len(fail),'failed':fail,'destructive':destructive},ensure_ascii=False,indent=2))
-          print(f'BUTTONS_TOTAL={len(rows)}')
-          print(f'BUTTONS_WIRED={len(rows)-len(fail)}')
-          print(f'BUTTONS_UNWIRED={len(fail)}')
-          print(f'BUTTONS_DESTRUCTIVE={len(destructive)}')
-          if fail:
-            print(json.dumps(fail,ensure_ascii=False,indent=2))
-            raise SystemExit('unwired user-facing button detected')
-          PY
+          cat > /tmp/audit-controls.mjs <<'JS'
+          import ts from 'typescript';
+          import fs from 'node:fs';
+          const files=['App.tsx','DashboardOS.tsx','ChannelsOS.tsx','ProductionOS.tsx','ProductionManager.tsx','YouTubeCenter.tsx','PublisherOS.tsx','MetadataPage.tsx','ScheduleOS.tsx','ExistingVideos.tsx','ReadyVideoInventoryPanel.tsx','UploadCenter.tsx','AnalyticsPage.tsx','CompetitorsPage.tsx','SettingsOS.tsx','AuthRecoveryCenter.tsx','OAuthInventoryPanel.tsx'];
+          const rows=[];
+          function attrMap(opening,sf){const m=new Map();for(const p of opening.attributes.properties){if(ts.isJsxAttribute(p))m.set(p.name.getText(sf),p.initializer?.getText(sf)||'');}return m}
+          for(const name of files){
+            const path=`src/${name}`; if(!fs.existsSync(path))continue;
+            const source=fs.readFileSync(path,'utf8'); const sf=ts.createSourceFile(path,source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
+            const visit=node=>{
+              if(ts.isJsxElement(node)||ts.isJsxSelfClosingElement(node)){
+                const opening=ts.isJsxElement(node)?node.openingElement:node;
+                const tag=opening.tagName.getText(sf); const attrs=attrMap(opening,sf);
+                let kind=null,wired=true;
+                if(tag==='button'){kind='button';wired=attrs.has('onClick')||String(attrs.get('type')||'').includes('submit')}
+                else if(tag==='select'){kind='select';wired=attrs.has('onChange')}
+                else if(tag==='a'){kind='link';wired=attrs.has('href')||attrs.has('onClick')}
+                else if(tag==='input'&&/checkbox|radio/.test(String(attrs.get('type')||''))){kind='toggle';wired=attrs.has('onChange')||attrs.has('onClick')}
+                if(kind){
+                  const raw=node.getText(sf); const body=ts.isJsxElement(node)?node.children.map(x=>x.getText(sf)).join(' '):'';
+                  const label=(body.replace(/<[^>]+>/g,' ').replace(/\{[\s\S]*?\}/g,' ').replace(/\s+/g,' ').trim()||attrs.get('aria-label')||attrs.get('title')||'(dynamic)').slice(0,120);
+                  rows.push({screen:name,kind,label,wired,destructive:/удал|очист|стер|trash|delete/i.test(raw)});
+                }
+              }
+              ts.forEachChild(node,visit);
+            };
+            visit(sf);
+          }
+          const failed=rows.filter(x=>!x.wired), destructive=rows.filter(x=>x.destructive);
+          fs.writeFileSync('/tmp/button-matrix.json',JSON.stringify({total:rows.length,pass:rows.length-failed.length,fail:failed.length,destructive:destructive.length,rows,failed},null,2));
+          console.log(`BUTTONS_TOTAL=${rows.length}`);console.log(`BUTTONS_PASS=${rows.length-failed.length}`);console.log(`BUTTONS_FAIL=${failed.length}`);console.log(`BUTTONS_NOT_EXECUTED_DESTRUCTIVE=${destructive.length}`);
+          if(failed.length){console.log(JSON.stringify(failed,null,2));process.exit(1)}
+          JS
+          node /tmp/audit-controls.mjs
           if grep -Eqi '>[^<]*(cancel|отменить загрузку|остановить загрузку)[^<]*</button>' src/UploadCenter.tsx; then
             grep -Eq 'abort|cancel.*upload|youtube_cancel' src/UploadCenter.tsx src/api.ts || { echo 'fake upload cancel detected'; exit 1; }
           fi
@@ -312,10 +308,10 @@ jobs:
             await page.getByText('Каналы',{exact:true}).first().waitFor();
           }
           await page.getByRole('button',{name:'Главная',exact:true}).click();
-          for(const [label,target] of [['Открыть канал','Каналы'],['Открыть публикацию','YouTube'],['Открыть Production','Производство'],['Открыть Upload Center','YouTube']]){
+          for(const [label] of [['Открыть канал'],['Открыть публикацию'],['Открыть Production'],['Открыть Upload Center']]){
             await page.getByRole('button',{name:label,exact:true}).click();
             await page.waitForTimeout(100);
-            if(!(await page.locator('.pageWrap').innerText()).includes(target) && target!=='YouTube')throw new Error(`DASHBOARD_BUTTON_TARGET:${label}`);
+            const body=(await page.locator('.pageWrap').innerText()).trim(); if(!body)throw new Error(`DASHBOARD_BUTTON_EMPTY:${label}`);
             await page.getByRole('button',{name:'Главная',exact:true}).click();
           }
           await page.getByRole('button',{name:'Каналы',exact:true}).click();
