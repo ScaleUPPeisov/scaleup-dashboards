@@ -1,0 +1,126 @@
+name: VYRON 2.1.7 Delivery Verify
+
+on:
+  push:
+    branches:
+      - verify/vyron-217-updater-delivery
+    paths:
+      - .github/workflows/vyron-217-delivery-verify.yml
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: macos-14
+    env:
+      REPO: ScaleUPPeisov/scaleup-dashboards
+      TAG: v2.1.7
+      VERSION: 2.1.7
+      PRODUCT_SOURCE: 0e511c8a42cf4e3232cb8d0384a1625664a33cdf
+      OLD_SOURCE: 1c2da4866c90a353f8ca4e9d97702ffddb74e853
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download published release assets
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p verify
+          gh release download "$TAG" --repo "$REPO" --dir verify
+          for f in \
+            VYRON-2.1.7-arm64.dmg \
+            VYRON-2.1.7-arm64.dmg.sha256 \
+            VYRON.app.tar.gz \
+            VYRON.app.tar.gz.sha256 \
+            VYRON.app.tar.gz.sig \
+            latest.json; do
+            test -s "verify/$f"
+          done
+          echo DOWNLOAD=PASS
+
+      - name: Verify release metadata and hashes
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(gh release view "$TAG" --repo "$REPO" --json targetCommitish --jq .targetCommitish)" = "$PRODUCT_SOURCE"
+          test "$(gh api "repos/$REPO/releases/tags/$TAG" --jq .draft)" = false
+          test "$(gh api "repos/$REPO/releases/tags/$TAG" --jq .prerelease)" = false
+
+          ARCHIVE_SHA=$(shasum -a 256 verify/VYRON.app.tar.gz | awk '{print $1}')
+          DMG_SHA=$(shasum -a 256 verify/VYRON-2.1.7-arm64.dmg | awk '{print $1}')
+          test "$ARCHIVE_SHA" = "$(awk '{print $1}' verify/VYRON.app.tar.gz.sha256)"
+          test "$DMG_SHA" = "$(awk '{print $1}' verify/VYRON-2.1.7-arm64.dmg.sha256)"
+          test "sha256:$ARCHIVE_SHA" = "$(gh api "repos/$REPO/releases/tags/$TAG" --jq '.assets[]|select(.name=="VYRON.app.tar.gz")|.digest')"
+          test "sha256:$DMG_SHA" = "$(gh api "repos/$REPO/releases/tags/$TAG" --jq '.assets[]|select(.name=="VYRON-2.1.7-arm64.dmg")|.digest')"
+          echo SHA256_MATCH=PASS
+          echo RELEASE_TARGET_MATCH=PASS
+
+      - name: Verify updater public key unchanged and signature cryptographically
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          OLD_PUB=$(gh api "repos/$REPO/contents/src-tauri/tauri.conf.json?ref=$OLD_SOURCE" --jq .content | tr -d '\n' | base64 --decode | jq -r '.plugins.updater.pubkey')
+          NEW_PUB=$(gh api "repos/$REPO/contents/src-tauri/tauri.conf.json?ref=$PRODUCT_SOURCE" --jq .content | tr -d '\n' | base64 --decode | jq -r '.plugins.updater.pubkey')
+          test -n "$OLD_PUB"
+          test "$OLD_PUB" = "$NEW_PUB"
+          printf '%s' "$NEW_PUB" | base64 --decode > verify/updater.pub
+          base64 --decode < verify/VYRON.app.tar.gz.sig > verify/VYRON.app.tar.gz.minisig
+          brew install minisign
+          minisign -Vm verify/VYRON.app.tar.gz -p verify/updater.pub -x verify/VYRON.app.tar.gz.minisig
+          echo PUBLIC_KEY_CHANGED=NO
+          echo SIGNATURE_VERIFY=PASS
+
+      - name: Verify stable feed and Settings contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode > verify/latest-main.json
+          test "$(jq -r .version verify/latest-main.json)" = "2.1.7"
+          test "$(jq -r '.platforms["darwin-aarch64"].url' verify/latest-main.json)" = "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.7/VYRON.app.tar.gz"
+          test "$(jq -r '.platforms["darwin-aarch64"].signature' verify/latest-main.json)" = "$(cat verify/VYRON.app.tar.gz.sig)"
+
+          gh api "repos/$REPO/contents/src-tauri/tauri.conf.json?ref=$OLD_SOURCE" --jq .content | tr -d '\n' | base64 --decode > verify/tauri-216.json
+          test "$(jq -r .version verify/tauri-216.json)" = "2.1.6"
+          test "$(jq -r '.plugins.updater.endpoints[0]' verify/tauri-216.json)" = "https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/vyron-updates/latest.json"
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          d=json.loads(Path('verify/latest-main.json').read_text())
+          current=(2,1,6)
+          latest=tuple(map(int,d['version'].split('.')))
+          assert latest>current, (current,latest)
+          PY
+          echo SETTINGS_CONTRACT_216_TO_217=PASS
+          echo LATEST_JSON=PASS
+
+      - name: Verify updater payload bundle version and Finder launch
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p verify/extracted
+          tar -xzf verify/VYRON.app.tar.gz -C verify/extracted
+          APP=$(find verify/extracted -maxdepth 2 -name 'VYRON.app' -type d -print -quit)
+          test -n "$APP"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = "2.1.7"
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = "studio.channelflow.desktop"
+          file "$APP/Contents/MacOS/channelflow" | grep -q arm64
+          codesign --verify --deep --strict "$APP"
+          env -i HOME="$HOME" USER="$USER" PATH='/usr/bin:/bin:/usr/sbin:/sbin' TMPDIR="$RUNNER_TEMP/" "$APP/Contents/MacOS/channelflow" >/tmp/vyron217-updater-payload-launch.log 2>&1 & P=$!
+          sleep 8
+          kill -0 "$P"
+          kill "$P" || true
+          wait "$P" || true
+          echo UPDATER_PAYLOAD_LAUNCH=PASS
+
+      - name: Summary
+        shell: bash
+        run: |
+          echo 'DOWNLOAD=PASS'
+          echo 'SHA256_MATCH=PASS'
+          echo 'SIGNATURE_VERIFY=PASS'
+          echo 'PUBLIC_KEY_CHANGED=NO'
+          echo 'LATEST_JSON_VERSION=2.1.7'
+          echo 'SETTINGS_CONTRACT_216_TO_217=PASS'
+          echo 'UPDATER_PAYLOAD_LAUNCH=PASS'
