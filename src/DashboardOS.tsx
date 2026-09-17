@@ -9,13 +9,14 @@ import {formatDuration,formatUploadSpeed,subscribeUploadTelemetry,uploadTelemetr
 import {loadActivePublishChannel,subscribeActivePublishChannel} from './publishWorkspaceState';
 import {readErrorHistory,subscribeErrorHistory,type ErrorHistoryItem} from './errorHistory';
 import {CommandCenter} from './CommandCenter';
+import {ScreenErrorBoundary} from './ScreenErrorBoundary';
 
 const fmt=(n:number)=>new Intl.NumberFormat('ru-RU').format(n);
 const sameLocalDay=(iso:string|undefined,now:Date)=>{if(!iso)return false;const d=new Date(iso);return d.getFullYear()===now.getFullYear()&&d.getMonth()===now.getMonth()&&d.getDate()===now.getDate()};
 
 export function DashboardOS(){
- const page=useApp(s=>s.page);
- return page==='autopilot'?<CommandCenter/>:<OperationsDashboard/>;
+ const page=useApp(s=>s.page),setPage=useApp(s=>s.setPage);
+ return <ScreenErrorBoundary page={page} onHome={()=>setPage('dashboard')}>{page==='autopilot'?<CommandCenter/>:<OperationsDashboard/>}</ScreenErrorBoundary>;
 }
 
 function OperationsDashboard(){
