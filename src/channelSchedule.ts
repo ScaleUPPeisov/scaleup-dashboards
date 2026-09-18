@@ -59,6 +59,9 @@ function authoritativeCacheVideos(cache:ExistingCache|undefined){
   const baseline=Object.values(cache.baseline||{});
   return baseline.length?normalizeVideoArray(baseline):normalizeVideoArray(cache.videos);
 }
+export function readAuthoritativeExistingInventory(channelId:string){
+  return authoritativeCacheVideos(readExistingCache(channelId)).map(cloneVideo);
+}
 export function readExistingCache(channelId:string):ExistingCache|undefined{
   if(!channelId)return;
   try{
@@ -69,7 +72,11 @@ export function readExistingCache(channelId:string):ExistingCache|undefined{
 }
 export function writeExistingCache(channelId:string,x:ExistingCache){if(!channelId)return;try{localStorage.setItem(existingCacheKey(channelId),JSON.stringify(x));window.dispatchEvent(new CustomEvent(EVENT,{detail:{channelId,updatedAt:x.updatedAt}}))}catch{}}
 const cloneVideo=(v:YoutubeExistingVideo)=>({...v,tags:[...(Array.isArray(v.tags)?v.tags:[])]});
-export function replaceExistingCacheFromSync(channelId:string,videos:YoutubeExistingVideo[],syncInfo:any){const rows=normalizeVideoArray(videos).map(cloneVideo),baseline=Object.fromEntries(rows.map(v=>[v.id,cloneVideo(v)]));writeExistingCache(channelId,{version:1,updatedAt:new Date().toISOString(),videos:rows,baseline,lastUndo:[],syncInfo:normalizeSyncInfo(syncInfo)})}
+export function replaceExistingCacheFromSync(channelId:string,videos:YoutubeExistingVideo[],syncInfo:any){
+ const rows=normalizeVideoArray(videos).map(cloneVideo),prev=readExistingCache(channelId),complete=syncInfo?.syncComplete===true||syncInfo?.complete===true;
+ const baseline=complete?Object.fromEntries(rows.map(v=>[v.id,cloneVideo(v)])):(prev?.baseline||{});
+ writeExistingCache(channelId,{version:1,updatedAt:new Date().toISOString(),videos:rows,baseline,lastUndo:complete?[]:(prev?.lastUndo||[]),syncInfo:normalizeSyncInfo(syncInfo)})
+}
 export function mergeExistingCacheVideos(channelId:string,updates:YoutubeExistingVideo[]){const prev=readExistingCache(channelId);const map=new Map((prev?.videos||[]).map(v=>[v.id,cloneVideo(v)]));const base={...(prev?.baseline||{})};for(const u of normalizeVideoArray(updates)){map.set(u.id,cloneVideo(u));base[u.id]=cloneVideo(u)}writeExistingCache(channelId,{version:1,updatedAt:new Date().toISOString(),videos:[...map.values()],baseline:base,lastUndo:prev?.lastUndo||[],syncInfo:prev?.syncInfo||null})}
 const pad=(n:number)=>String(n).padStart(2,'0');
 function parts(iso:string){const d=new Date(iso);if(Number.isNaN(d.getTime()))return;const p=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Krasnoyarsk',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(d);const get=(t:string)=>p.find(x=>x.type===t)?.value||'';return{date:`${get('year')}-${get('month')}-${get('day')}`,time:`${get('hour')}:${get('minute')}`}}
