@@ -68,6 +68,21 @@ jobs:
           test "$(printf '%s' "$FEED" | python3 -c 'import json,sys;print(json.load(sys.stdin)["version"])')" = "$STABLE_VERSION"
           echo 'STABLE_FEED_UNCHANGED=YES'
 
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Regression gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npx vitest run             src/keychainPassiveArchitecture.test.ts             src/v213KeychainRecovery.test.ts             src/schedulePhysicalRegression.test.ts             src/channelSchedule.test.ts             src/scheduleContinuation.test.ts             src/MetadataPage.schedule.test.ts
+          cargo test --manifest-path src-tauri/Cargo.toml security::tests -- --nocapture
+          npm test
+          cargo test --manifest-path src-tauri/Cargo.toml
+          npx tsc --noEmit
+          npm run build
+          echo 'REGRESSION_GATE=PASS'
+
       - name: Import persistent self-signed signing identity
         id: signing
         shell: bash
@@ -125,21 +140,6 @@ jobs:
           echo "CI_SIGNING_CERT_SHA1=$ID_SHA1"
           echo 'SIGNING_MODE=SELF_SIGNED_STABLE'
           echo 'AD_HOC=NO'
-
-      - name: Install dependencies
-        run: npm ci --no-audit --no-fund
-
-      - name: Regression gate
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          npx vitest run             src/keychainPassiveArchitecture.test.ts             src/v213KeychainRecovery.test.ts             src/schedulePhysicalRegression.test.ts             src/channelSchedule.test.ts             src/scheduleContinuation.test.ts             src/MetadataPage.schedule.test.ts
-          cargo test --manifest-path src-tauri/Cargo.toml security::tests -- --nocapture
-          npm test
-          cargo test --manifest-path src-tauri/Cargo.toml
-          npx tsc --noEmit
-          npm run build
-          echo 'REGRESSION_GATE=PASS'
 
       - name: Normalize updater signing key
         shell: bash
