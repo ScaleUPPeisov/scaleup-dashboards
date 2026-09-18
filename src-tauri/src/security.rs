@@ -268,6 +268,13 @@ mod legacy_acl_migration{
    return Ok(LegacyAclMigrationResult::NotFound)
   };
 
+  // Read once under the legacy ACL before changing access. This is the only
+  // point where macOS may legitimately ask for legacy authorization.
+  let before=match get_secret(account)?{
+   Some(v) if !v.is_empty()=>v,
+   _=>return Ok(LegacyAclMigrationResult::NotFound),
+  };
+
   // Snapshot the old ACL so an unexpected verification failure can restore it.
   let mut old_access:SecAccessRef=ptr::null_mut();
   let rc=unsafe{SecKeychainItemCopyAccess(item.as_concrete_TypeRef() as *mut c_void,&mut old_access)};
@@ -292,7 +299,7 @@ mod legacy_acl_migration{
 
   // Verify the item is still readable after the ACL swap. No deletion or plaintext persistence occurs.
   match get_secret(account){
-   Ok(Some(v)) if !v.is_empty()=>{
+   Ok(Some(v)) if v==before=>{
     remember_secret(account,&v);
     if let Ok(mut d)=denied_accounts().lock(){d.remove(account);}
     KEYCHAIN_ACCESS_BLOCKED.store(false,Ordering::SeqCst);
@@ -301,7 +308,7 @@ mod legacy_acl_migration{
    }
    other=>{
     let restore=unsafe{SecKeychainItemSetAccess(item.as_concrete_TypeRef() as *mut c_void,old_access.as_CFTypeRef() as *mut c_void)};
-    let detail=match other{Ok(None)=>"VERIFY_NOT_FOUND".to_string(),Ok(Some(_))=>"VERIFY_EMPTY".to_string(),Err(e)=>e};
+    let detail=match other{Ok(None)=>"VERIFY_NOT_FOUND".to_string(),Ok(Some(_))=>"VERIFY_VALUE_MISMATCH".to_string(),Err(e)=>e};
     record_runtime(account,"ACL_MIGRATE_FAIL","NATIVE",Some(restore),Some("VERIFY_FAILED_RESTORED"));
     Err(format!("KEYCHAIN_ACL_MIGRATION_VERIFY_FAILED: account={account}; restore_osstatus={restore}; detail={detail}"))
    }
