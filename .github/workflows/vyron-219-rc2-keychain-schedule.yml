@@ -1,0 +1,174 @@
+name: VYRON 2.1.9 RC2 Keychain + Schedule
+
+on:
+  push:
+    branches: [hotfix/vyron-219-rc2-keychain-schedule]
+    paths:
+      - 'src/**'
+      - 'src-tauri/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/vyron-219-rc2-keychain-schedule.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  RC_VERSION: 2.1.9-rc.2
+  RC_TAG: v2.1.9-rc.2
+  STABLE_VERSION: 2.1.8
+  BUNDLE_ID: studio.channelflow.desktop
+  EXECUTABLE: channelflow
+
+jobs:
+  verify-build-publish-rc2:
+    runs-on: macos-14
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: '-'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: hotfix/vyron-219-rc2-keychain-schedule
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Stable feed and version safety
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(node -p "require('./package.json').version")" = "$RC_VERSION"
+          test "$(python3 -c "import json;print(json.load(open('src-tauri/tauri.conf.json'))['version'])")" = "$RC_VERSION"
+          grep -q '^version = "2.1.9-rc.2"$' src-tauri/Cargo.toml
+          ! git show-ref --verify --quiet refs/tags/v2.1.9
+          ! gh release view v2.1.9 --repo "$REPO" >/dev/null 2>&1
+          FEED=$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode)
+          test "$(printf '%s' "$FEED" | python3 -c 'import json,sys;print(json.load(sys.stdin)["version"])')" = "$STABLE_VERSION"
+          echo 'STABLE_FEED_UNCHANGED=YES'
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Targeted Keychain and schedule regressions
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npx vitest run             src/schedulePhysicalRegression.test.ts             src/channelSchedule.test.ts             src/scheduleContinuation.test.ts             src/MetadataPage.schedule.test.ts             src/keychainPassiveArchitecture.test.ts             src/v213KeychainRecovery.test.ts
+          cargo test --manifest-path src-tauri/Cargo.toml security::tests -- --nocapture
+          echo 'TARGETED_KEYCHAIN_SCHEDULE=PASS'
+
+      - name: Full regression
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm test
+          cargo test --manifest-path src-tauri/Cargo.toml
+          npx tsc --noEmit
+          npm run build
+          echo 'FULL_FRONTEND=PASS'
+          echo 'RUST=PASS'
+          echo 'TYPESCRIPT=PASS'
+          echo 'FRONTEND_BUILD=PASS'
+
+      - name: Normalize updater signing key
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import base64,os
+          raw=os.environ.get('TAURI_SIGNING_PRIVATE_KEY','').strip();assert raw
+          def dec(x):
+            try:return base64.b64decode(x,validate=True).decode()
+            except:return None
+          if raw.startswith('untrusted comment:'):out=base64.b64encode(raw.encode()).decode();box=raw
+          else:
+            one=dec(raw)
+            if one and one.startswith('untrusted comment:'):out=raw;box=one
+            else:box=dec(one) if one else None;assert box and box.startswith('untrusted comment:');out=one.strip()
+          assert 'secret key' in box.splitlines()[0].lower()
+          open(os.environ['GITHUB_ENV'],'a').write('TAURI_SIGNING_PRIVATE_KEY='+out+'\n')
+          print('::add-mask::'+out)
+          PY
+
+      - name: Build and verify ARM64 RC2
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rustup target add aarch64-apple-darwin
+          npx tauri build --target aarch64-apple-darwin --bundles app,dmg
+          mkdir -p rc
+          APP=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)
+          DMG=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -name '*.dmg' -print -quit)
+          test -d "$APP"; test -s "$DMG"
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = "$BUNDLE_ID"
+          test "$(plutil -extract CFBundleExecutable raw -o - "$APP/Contents/Info.plist")" = "$EXECUTABLE"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = "$RC_VERSION"
+          file "$APP/Contents/MacOS/$EXECUTABLE" | grep -q arm64
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -dr - "$APP" 2>&1 | tee rc/codesign-designated-requirement.txt
+          hdiutil verify "$DMG"
+          cp "$DMG" "rc/VYRON-$RC_VERSION-arm64.dmg"
+          shasum -a 256 "rc/VYRON-$RC_VERSION-arm64.dmg" | tee "rc/VYRON-$RC_VERSION-arm64.dmg.sha256"
+          echo 'RC_ARM64_BUILD=PASS'
+          echo 'RC_CODESIGN=PASS'
+          echo 'RC_DMG_VERIFY=PASS'
+
+      - name: Finder-like RC2 launch
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          M="$RUNNER_TEMP/vyron-rc2"; mkdir -p "$M"
+          hdiutil attach "rc/VYRON-$RC_VERSION-arm64.dmg" -nobrowse -readonly -mountpoint "$M"
+          trap 'hdiutil detach "$M" >/dev/null 2>&1||true' EXIT
+          A="$M/VYRON.app"
+          codesign --verify --deep --strict "$A"
+          env -i HOME="$HOME" USER="$USER" PATH='/usr/bin:/bin:/usr/sbin:/sbin' TMPDIR="$RUNNER_TEMP/" "$A/Contents/MacOS/$EXECUTABLE" >/tmp/rc2-launch.log 2>&1 & P=$!
+          sleep 8
+          kill -0 "$P"
+          kill "$P"||true
+          wait "$P"||true
+          hdiutil detach "$M"
+          trap - EXIT
+          echo 'RC_FINDER_LAUNCH=PASS'
+
+      - name: Publish RC2 prerelease only
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if gh release view "$RC_TAG" --repo "$REPO" >/dev/null 2>&1; then
+            echo "RC2 tag/release already exists; refusing to overwrite it"
+            exit 1
+          fi
+          cat >/tmp/rc2-notes <<'EOF'
+          VYRON 2.1.9-rc.2 — Keychain prompt-spam + factual YouTube schedule candidate
+
+          RC only. Stable updater feed remains on 2.1.8.
+
+          - Reuses OAuth secret material from process memory after the first required secure read.
+          - Avoids rewriting unchanged refresh/client secrets during normal YouTube token validation.
+          - Uses the confirmed full YouTube baseline for future schedule continuation, not the current selection.
+          - Distinguishes incomplete schedule sync from a factual zero-future result.
+
+          Physical Mac acceptance for Keychain and Schedule is mandatory before stable 2.1.9.
+          EOF
+          gh release create "$RC_TAG" --repo "$REPO" --target "$(git rev-parse HEAD)" --title 'VYRON 2.1.9 RC2' --prerelease --notes-file /tmp/rc2-notes             "rc/VYRON-$RC_VERSION-arm64.dmg" "rc/VYRON-$RC_VERSION-arm64.dmg.sha256" "rc/codesign-designated-requirement.txt"
+          LOCAL=$(shasum -a 256 "rc/VYRON-$RC_VERSION-arm64.dmg" | awk '{print $1}')
+          REMOTE=$(gh release view "$RC_TAG" --repo "$REPO" --json assets --jq '.assets[] | select(.name=="VYRON-2.1.9-rc.2-arm64.dmg") | .digest')
+          test "$REMOTE" = "sha256:$LOCAL"
+          FEED=$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode)
+          test "$(printf '%s' "$FEED" | python3 -c 'import json,sys;print(json.load(sys.stdin)["version"])')" = "$STABLE_VERSION"
+          ! gh release view v2.1.9 --repo "$REPO" >/dev/null 2>&1
+          echo "RC_DMG_SHA256=$LOCAL"
+          echo 'RC_PRERELEASE_PUBLISHED=YES'
+          echo 'latest.json_CHANGED=NO'
+          echo 'STABLE_TAG_CREATED=NO'
