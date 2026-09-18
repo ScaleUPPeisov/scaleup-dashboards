@@ -13,28 +13,117 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 1
 fi
 
+command -v openssl >/dev/null || { echo "ERROR: openssl is required"; exit 1; }
+
 mkdir -p "$OUT_DIR"
 chmod 700 "$OUT_DIR"
 
-if security find-identity -v -p codesigning 2>/dev/null | grep -F ""$IDENTITY_NAME"" >/dev/null; then
-  SHA1="$(security find-identity -v -p codesigning 2>/dev/null | awk -v n="$IDENTITY_NAME" '$0 ~ """ n """ {print $2; exit}')"
-  echo "LOCAL_SIGNING_IDENTITY=$IDENTITY_NAME"
-  echo "LOCAL_CERT_SHA1=$SHA1"
-  echo "Identity already exists. Reuse it; do NOT generate another certificate."
-  if [[ ! -f "$P12" ]]; then
-    echo "Encrypted PKCS#12 backup not found at: $P12"
-    echo "Export this exact identity + private key from Keychain Access as PKCS#12, then rerun with VYRON_UPLOAD_EXISTING_P12=1."
+identity_sha1() {
+  security find-identity -v -p codesigning 2>/dev/null |
+    grep -F "\"$IDENTITY_NAME\"" |
+    awk '{print $2; exit}'
+}
+
+verify_designated_requirement() {
+  local sha1="$1"
+  local tmp probe dr
+  tmp="$(mktemp -d)"
+  probe="$tmp/vyron-signing-probe"
+  cp /bin/echo "$probe"
+  codesign --force --sign "$sha1" "$probe"
+  codesign --verify --strict --verbose=2 "$probe"
+  dr="$(codesign -d -r- "$probe" 2>&1 | sed -n 's/^designated => //p')"
+  rm -rf "$tmp"
+  [[ -n "$dr" && "$dr" != cdhash* ]] || {
+    echo "ERROR: designated requirement is still cdhash-only"
+    exit 1
+  }
+  printf '%s' "$dr"
+}
+
+read_p12_password() {
+  read -r -s -p "Enter the password for the encrypted VYRON .p12: " P12_PASSWORD
+  echo
+  [[ -n "$P12_PASSWORD" ]] || { echo "ERROR: empty .p12 password"; exit 1; }
+}
+
+verify_p12_matches_identity() {
+  local sha1="$1"
+  local tmp cert_sha1
+  tmp="$(mktemp -d)"
+  openssl pkcs12 -in "$P12" -nokeys -passin "pass:$P12_PASSWORD" -out "$tmp/certs.pem" >/dev/null 2>&1 || {
+    rm -rf "$tmp"
+    echo "ERROR: cannot open .p12 with the supplied password"
+    exit 1
+  }
+  cert_sha1="$(
+    openssl x509 -in "$tmp/certs.pem" -noout -fingerprint -sha1 2>/dev/null |
+      sed 's/^sha1 Fingerprint=//I;s/://g'
+  )"
+  rm -rf "$tmp"
+  [[ -n "$cert_sha1" ]] || { echo "ERROR: could not read certificate SHA-1 from .p12"; exit 1; }
+  if [[ "${cert_sha1^^}" != "${sha1^^}" ]]; then
+    echo "ERROR: the .p12 does not contain the exact existing VYRON signing identity"
+    echo "LOCAL_CERT_SHA1=$sha1"
+    echo "P12_CERT_SHA1=$cert_sha1"
+    exit 1
   fi
+}
+
+configure_github_secrets() {
+  base64 <"$P12" >"$B64"
+  chmod 600 "$B64"
+
+  if command -v gh >/dev/null && gh auth status >/dev/null 2>&1; then
+    echo "Configuring repository Actions secrets without printing secret values..."
+    gh secret set VYRON_MACOS_SIGNING_P12_BASE64 --repo "$REPO" <"$B64"
+    printf '%s' "$P12_PASSWORD" | gh secret set VYRON_MACOS_SIGNING_P12_PASSWORD --repo "$REPO"
+    printf '%s' "$IDENTITY_NAME" | gh secret set VYRON_MACOS_SIGNING_IDENTITY --repo "$REPO"
+    rm -f "$B64"
+    echo "GITHUB_P12_SECRET_CONFIGURED=YES"
+  else
+    echo "GITHUB_P12_SECRET_CONFIGURED=NO"
+    echo "GitHub CLI is not authenticated. Configure these Actions secrets manually:"
+    echo "  VYRON_MACOS_SIGNING_P12_BASE64  <- contents of $B64"
+    echo "  VYRON_MACOS_SIGNING_P12_PASSWORD <- the .p12 password"
+    echo "  VYRON_MACOS_SIGNING_IDENTITY <- $IDENTITY_NAME"
+  fi
+}
+
+EXISTING_SHA1="$(identity_sha1 || true)"
+if [[ -n "$EXISTING_SHA1" ]]; then
+  echo "LOCAL_SIGNING_IDENTITY=$IDENTITY_NAME"
+  echo "LOCAL_CERT_SHA1=$EXISTING_SHA1"
+  echo "Identity already exists. Reusing it; a second certificate will NOT be generated."
+
+  if [[ ! -f "$P12" ]]; then
+    echo "ERROR: encrypted PKCS#12 backup is missing:"
+    echo "  $P12"
+    echo "Export THIS exact identity together with its private key from Keychain Access as PKCS#12 to that path, then rerun this script."
+    exit 2
+  fi
+
+  read_p12_password
+  verify_p12_matches_identity "$EXISTING_SHA1"
+  DR="$(verify_designated_requirement "$EXISTING_SHA1")"
+
+  echo "DESIGNATED_REQUIREMENT=$DR"
+  echo "P12_BACKUP=$P12"
+  configure_github_secrets
+  unset P12_PASSWORD
+
+  echo "IMPORTANT: preserve the encrypted .p12 and its password. All future VYRON macOS builds must reuse this same identity."
   exit 0
 fi
-
-command -v openssl >/dev/null || { echo "ERROR: openssl is required"; exit 1; }
 
 read -r -s -p "Create a strong password for the encrypted VYRON .p12: " P12_PASSWORD
 echo
 read -r -s -p "Repeat the .p12 password: " P12_PASSWORD_2
 echo
-[[ -n "$P12_PASSWORD" && "$P12_PASSWORD" == "$P12_PASSWORD_2" ]] || { echo "ERROR: passwords do not match"; exit 1; }
+[[ -n "$P12_PASSWORD" && "$P12_PASSWORD" == "$P12_PASSWORD_2" ]] || {
+  echo "ERROR: passwords do not match"
+  exit 1
+}
 unset P12_PASSWORD_2
 
 TMP="$(mktemp -d)"
@@ -62,58 +151,51 @@ authorityKeyIdentifier = keyid:always,issuer
 EOF
 
 echo "Creating ONE persistent self-signed code-signing identity..."
-openssl req -new -newkey rsa:3072 -x509 -sha256 -days 3650 -nodes   -keyout "$KEY" -out "$CERT" -config "$CONF" -extensions codesign >/dev/null 2>&1
+openssl req -new -newkey rsa:3072 -x509 -sha256 -days 3650 -nodes \
+  -keyout "$KEY" -out "$CERT" -config "$CONF" -extensions codesign >/dev/null 2>&1
 
-openssl pkcs12 -export   -inkey "$KEY" -in "$CERT"   -name "$IDENTITY_NAME"   -out "$P12"   -passout "pass:$P12_PASSWORD" >/dev/null 2>&1
+openssl pkcs12 -export \
+  -inkey "$KEY" -in "$CERT" \
+  -name "$IDENTITY_NAME" \
+  -out "$P12" \
+  -passout "pass:$P12_PASSWORD" >/dev/null 2>&1
 chmod 600 "$P12"
 
 KEYCHAIN="$(security default-keychain -d user | tr -d '"')"
 [[ -n "$KEYCHAIN" ]] || { echo "ERROR: no default user keychain"; exit 1; }
 
-security import "$P12"   -k "$KEYCHAIN"   -P "$P12_PASSWORD"   -T /usr/bin/codesign   -T /usr/bin/security >/dev/null
+security import "$P12" \
+  -k "$KEYCHAIN" \
+  -P "$P12_PASSWORD" \
+  -T /usr/bin/codesign \
+  -T /usr/bin/security >/dev/null
 
 # Trust only this certificate for code signing. This may show one macOS authentication dialog.
-security add-trusted-cert   -r trustRoot   -p codeSign   -k "$KEYCHAIN"   "$CERT" >/dev/null
+security add-trusted-cert \
+  -r trustRoot \
+  -p codeSign \
+  -k "$KEYCHAIN" \
+  "$CERT" >/dev/null
 
 IDS="$(security find-identity -v -p codesigning "$KEYCHAIN" 2>/dev/null || true)"
 printf '%s\n' "$IDS"
-printf '%s\n' "$IDS" | grep -F ""$IDENTITY_NAME"" >/dev/null || {
+printf '%s\n' "$IDS" | grep -F "\"$IDENTITY_NAME\"" >/dev/null || {
   echo "ERROR: certificate exists but is not a valid codesigning identity."
   echo "Open Keychain Access and verify the certificate has its private key and is trusted for Code Signing."
   exit 1
 }
 
-SHA1="$(printf '%s\n' "$IDS" | awk -v n="$IDENTITY_NAME" '$0 ~ """ n """ {print $2; exit}')"
+SHA1="$(printf '%s\n' "$IDS" | grep -F "\"$IDENTITY_NAME\"" | awk '{print $2; exit}')"
 [[ -n "$SHA1" ]] || { echo "ERROR: could not resolve certificate SHA-1"; exit 1; }
 
-PROBE="$TMP/vyron-signing-probe"
-cp /bin/echo "$PROBE"
-codesign --force --sign "$SHA1" "$PROBE"
-codesign --verify --strict --verbose=2 "$PROBE"
-DR="$(codesign -d -r- "$PROBE" 2>&1 | sed -n 's/^designated => //p')"
-[[ -n "$DR" && "$DR" != cdhash* ]] || { echo "ERROR: designated requirement is still cdhash-only"; exit 1; }
-
-base64 <"$P12" >"$B64"
-chmod 600 "$B64"
+DR="$(verify_designated_requirement "$SHA1")"
 
 echo "LOCAL_SIGNING_IDENTITY=$IDENTITY_NAME"
 echo "LOCAL_CERT_SHA1=$SHA1"
 echo "DESIGNATED_REQUIREMENT=$DR"
 echo "P12_BACKUP=$P12"
 
-if command -v gh >/dev/null && gh auth status >/dev/null 2>&1; then
-  echo "Configuring repository Actions secrets without printing secret values..."
-  gh secret set VYRON_MACOS_SIGNING_P12_BASE64 --repo "$REPO" <"$B64"
-  printf '%s' "$P12_PASSWORD" | gh secret set VYRON_MACOS_SIGNING_P12_PASSWORD --repo "$REPO"
-  printf '%s' "$IDENTITY_NAME" | gh secret set VYRON_MACOS_SIGNING_IDENTITY --repo "$REPO"
-  rm -f "$B64"
-  echo "GITHUB_P12_SECRET_CONFIGURED=YES"
-else
-  echo "GITHUB_P12_SECRET_CONFIGURED=NO"
-  echo "GitHub CLI is not authenticated. Configure these Actions secrets manually:"
-  echo "  VYRON_MACOS_SIGNING_P12_BASE64  <- contents of $B64"
-  echo "  VYRON_MACOS_SIGNING_P12_PASSWORD <- the .p12 password"
-  echo "  VYRON_MACOS_SIGNING_IDENTITY <- $IDENTITY_NAME"
-fi
+configure_github_secrets
+unset P12_PASSWORD
 
 echo "IMPORTANT: preserve the encrypted .p12 and its password. All future VYRON macOS builds must reuse this same identity."
