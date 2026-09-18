@@ -1,0 +1,294 @@
+name: VYRON 2.1.9 RC3 Stable Local Signing
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  RC_VERSION: 2.1.9-rc.3
+  RC_TAG: v2.1.9-rc.3
+  STABLE_VERSION: 2.1.8
+  BUNDLE_ID: studio.channelflow.desktop
+  EXECUTABLE: channelflow
+
+jobs:
+  verify-build-publish-rc3:
+    runs-on: macos-14
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      VYRON_MACOS_SIGNING_P12_BASE64: ${{ secrets.VYRON_MACOS_SIGNING_P12_BASE64 }}
+      VYRON_MACOS_SIGNING_P12_PASSWORD: ${{ secrets.VYRON_MACOS_SIGNING_P12_PASSWORD }}
+      VYRON_MACOS_SIGNING_IDENTITY: ${{ secrets.VYRON_MACOS_SIGNING_IDENTITY }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/vyron-219-rc3-self-signed
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Preflight — stable feed untouched and signing secrets present
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(node -p "require('./package.json').version")" = "$RC_VERSION"
+          test "$(python3 -c "import json;print(json.load(open('src-tauri/tauri.conf.json'))['version'])")" = "$RC_VERSION"
+          grep -q '^version = "2.1.9-rc.3"$' src-tauri/Cargo.toml
+
+          test -n "${VYRON_MACOS_SIGNING_P12_BASE64:-}" || { echo 'BLOCKER=MISSING_VYRON_MACOS_SIGNING_P12_BASE64'; exit 1; }
+          test -n "${VYRON_MACOS_SIGNING_P12_PASSWORD:-}" || { echo 'BLOCKER=MISSING_VYRON_MACOS_SIGNING_P12_PASSWORD'; exit 1; }
+          test -n "${VYRON_MACOS_SIGNING_IDENTITY:-}" || { echo 'BLOCKER=MISSING_VYRON_MACOS_SIGNING_IDENTITY'; exit 1; }
+          test "$VYRON_MACOS_SIGNING_IDENTITY" = 'VYRON Local Code Signing' || { echo 'BLOCKER=UNEXPECTED_SIGNING_IDENTITY'; exit 1; }
+
+          ! git show-ref --verify --quiet refs/tags/v2.1.9
+          ! gh release view v2.1.9 --repo "$REPO" >/dev/null 2>&1
+          if gh release view "$RC_TAG" --repo "$REPO" >/dev/null 2>&1; then
+            echo 'BLOCKER=RC3_TAG_ALREADY_EXISTS'
+            exit 1
+          fi
+
+          FEED=$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode)
+          test "$(printf '%s' "$FEED" | python3 -c 'import json,sys;print(json.load(sys.stdin)["version"])')" = "$STABLE_VERSION"
+          echo 'STABLE_FEED_UNCHANGED=YES'
+
+      - name: Import persistent self-signed signing identity
+        id: signing
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          KEYCHAIN="$RUNNER_TEMP/vyron-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)$(uuidgen)"
+          P12="$RUNNER_TEMP/vyron-signing.p12"
+          CERT="$RUNNER_TEMP/vyron-signing.pem"
+
+          printf '%s' "$VYRON_MACOS_SIGNING_P12_BASE64" | base64 --decode > "$P12"
+          chmod 600 "$P12"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$P12"             -k "$KEYCHAIN"             -P "$VYRON_MACOS_SIGNING_P12_PASSWORD"             -T /usr/bin/codesign             -T /usr/bin/security >/dev/null
+
+          security set-key-partition-list             -S apple-tool:,apple:,codesign:             -s             -k "$KEYCHAIN_PASSWORD"             "$KEYCHAIN" >/dev/null
+
+          security find-certificate -c "$VYRON_MACOS_SIGNING_IDENTITY" -p "$KEYCHAIN" > "$CERT"
+          test -s "$CERT"
+          security add-trusted-cert             -r trustRoot             -p codeSign             -k "$KEYCHAIN"             "$CERT" >/dev/null
+
+          security list-keychains -d user -s "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+
+          IDS="$(security find-identity -v -p codesigning "$KEYCHAIN" 2>/dev/null || true)"
+          printf '%s\n' "$IDS"
+          printf '%s\n' "$IDS" | grep -F ""$VYRON_MACOS_SIGNING_IDENTITY"" >/dev/null || {
+            echo 'BLOCKER=SELF_SIGNED_IDENTITY_NOT_VALID_FOR_CODESIGN'
+            exit 1
+          }
+
+          ID_SHA1="$(printf '%s\n' "$IDS" | awk -v n="$VYRON_MACOS_SIGNING_IDENTITY" '$0 ~ """ n """ {print $2; exit}')"
+          test -n "$ID_SHA1"
+          echo "APPLE_SIGNING_IDENTITY=$ID_SHA1" >> "$GITHUB_ENV"
+          echo "VYRON_SIGNING_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+          echo "VYRON_SIGNING_KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> "$GITHUB_ENV"
+          echo "CI_SIGNING_IDENTITY=$VYRON_MACOS_SIGNING_IDENTITY"
+          echo "CI_SIGNING_CERT_SHA1=$ID_SHA1"
+          echo 'SIGNING_MODE=SELF_SIGNED_STABLE'
+          echo 'AD_HOC=NO'
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Regression gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npx vitest run             src/keychainPassiveArchitecture.test.ts             src/v213KeychainRecovery.test.ts             src/schedulePhysicalRegression.test.ts             src/channelSchedule.test.ts             src/scheduleContinuation.test.ts             src/MetadataPage.schedule.test.ts
+          cargo test --manifest-path src-tauri/Cargo.toml security::tests -- --nocapture
+          npm test
+          cargo test --manifest-path src-tauri/Cargo.toml
+          npx tsc --noEmit
+          npm run build
+          echo 'REGRESSION_GATE=PASS'
+
+      - name: Normalize updater signing key
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import base64,os
+          raw=os.environ.get('TAURI_SIGNING_PRIVATE_KEY','').strip();assert raw
+          def dec(x):
+            try:return base64.b64decode(x,validate=True).decode()
+            except:return None
+          if raw.startswith('untrusted comment:'):out=base64.b64encode(raw.encode()).decode();box=raw
+          else:
+            one=dec(raw)
+            if one and one.startswith('untrusted comment:'):out=raw;box=one
+            else:box=dec(one) if one else None;assert box and box.startswith('untrusted comment:');out=one.strip()
+          assert 'secret key' in box.splitlines()[0].lower()
+          open(os.environ['GITHUB_ENV'],'a').write('TAURI_SIGNING_PRIVATE_KEY='+out+'\n')
+          print('::add-mask::'+out)
+          PY
+
+      - name: Build ARM64 RC3 with persistent identity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rustup target add aarch64-apple-darwin
+          security unlock-keychain -p "$VYRON_SIGNING_KEYCHAIN_PASSWORD" "$VYRON_SIGNING_KEYCHAIN"
+          npx tauri build --target aarch64-apple-darwin --bundles app,dmg
+
+          mkdir -p rc3
+          APP=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)
+          DMG=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -name '*.dmg' -print -quit)
+          test -d "$APP"
+          test -s "$DMG"
+
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = "$BUNDLE_ID"
+          test "$(plutil -extract CFBundleExecutable raw -o - "$APP/Contents/Info.plist")" = "$EXECUTABLE"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = "$RC_VERSION"
+          file "$APP/Contents/MacOS/$EXECUTABLE" | grep -q arm64
+
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -dv --verbose=4 "$APP" 2>&1 | tee rc3/codesign-details.txt
+          codesign -d -r- "$APP" 2>&1 | tee rc3/designated-requirement.txt
+
+          if grep -F 'Signature=adhoc' rc3/codesign-details.txt >/dev/null; then
+            echo 'BLOCKER=RC3_STILL_AD_HOC'
+            exit 1
+          fi
+
+          DR="$(sed -n 's/^designated => //p' rc3/designated-requirement.txt | head -n1)"
+          test -n "$DR"
+          case "$DR" in
+            cdhash*) echo 'BLOCKER=DESIGNATED_REQUIREMENT_CDHASH_ONLY'; exit 1 ;;
+          esac
+          echo "$DR" | grep -F "$BUNDLE_ID" >/dev/null
+
+          hdiutil verify "$DMG"
+          cp "$DMG" "rc3/VYRON-$RC_VERSION-arm64.dmg"
+          shasum -a 256 "rc3/VYRON-$RC_VERSION-arm64.dmg" | tee "rc3/VYRON-$RC_VERSION-arm64.dmg.sha256"
+
+          echo 'RC3_SIGNING_MODE=SELF_SIGNED_STABLE'
+          echo 'RC3_AD_HOC=NO'
+          echo 'RC3_CODESIGN=PASS'
+          echo 'RC3_ARM64=PASS'
+          echo 'RC3_DMG_VERIFY=PASS'
+          echo 'DESIGNATED_REQUIREMENT_STABLE_CANDIDATE=YES'
+          echo 'PUBLIC_GATEKEEPER_TRUST=NO'
+          echo 'APPLE_NOTARIZATION=NO'
+
+      - name: Prove stable code identity across two different builds
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          APP=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)
+          A="$RUNNER_TEMP/VYRON-Identity-A.app"
+          B="$RUNNER_TEMP/VYRON-Identity-B.app"
+          cp -R "$APP" "$A"
+          cp -R "$APP" "$B"
+
+          /usr/libexec/PlistBuddy -c 'Set :CFBundleVersion identity-probe-A' "$A/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Set :CFBundleVersion identity-probe-B' "$B/Contents/Info.plist"
+
+          codesign --force --deep --sign "$APPLE_SIGNING_IDENTITY" "$A"
+          codesign --force --deep --sign "$APPLE_SIGNING_IDENTITY" "$B"
+          codesign --verify --deep --strict "$A"
+          codesign --verify --deep --strict "$B"
+
+          A_CDHASH="$(codesign -dv --verbose=4 "$A" 2>&1 | sed -n 's/^CDHash=//p' | head -n1)"
+          B_CDHASH="$(codesign -dv --verbose=4 "$B" 2>&1 | sed -n 's/^CDHash=//p' | head -n1)"
+          A_DR="$(codesign -d -r- "$A" 2>&1 | sed -n 's/^designated => //p' | head -n1)"
+          B_DR="$(codesign -d -r- "$B" 2>&1 | sed -n 's/^designated => //p' | head -n1)"
+
+          test -n "$A_CDHASH"
+          test -n "$B_CDHASH"
+          test "$A_CDHASH" != "$B_CDHASH"
+          test -n "$A_DR"
+          test "$A_DR" = "$B_DR"
+          case "$A_DR" in
+            cdhash*) echo 'BLOCKER=IDENTITY_PROBE_CDHASH_ONLY'; exit 1 ;;
+          esac
+
+          {
+            echo "TEST_BUILD_A_CDHASH=$A_CDHASH"
+            echo "TEST_BUILD_B_CDHASH=$B_CDHASH"
+            echo "BUILD_A_DESIGNATED_REQUIREMENT=$A_DR"
+            echo "BUILD_B_DESIGNATED_REQUIREMENT=$B_DR"
+            echo "STABLE_CODE_IDENTITY_ACROSS_BUILDS=PASS"
+          } | tee rc3/identity-proof.txt
+
+      - name: Finder-like RC3 launch
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          M="$RUNNER_TEMP/vyron-rc3-mount"
+          mkdir -p "$M"
+          hdiutil attach "rc3/VYRON-$RC_VERSION-arm64.dmg" -nobrowse -readonly -mountpoint "$M"
+          trap 'hdiutil detach "$M" >/dev/null 2>&1 || true' EXIT
+          A="$M/VYRON.app"
+          codesign --verify --deep --strict "$A"
+          env -i HOME="$HOME" USER="$USER" PATH='/usr/bin:/bin:/usr/sbin:/sbin' TMPDIR="$RUNNER_TEMP/"             "$A/Contents/MacOS/$EXECUTABLE" >/tmp/vyron-rc3-launch.log 2>&1 &
+          P=$!
+          sleep 8
+          kill -0 "$P"
+          kill "$P" || true
+          wait "$P" || true
+          hdiutil detach "$M"
+          trap - EXIT
+          echo 'RC3_FINDER_LAUNCH=PASS'
+
+      - name: Publish RC3 prerelease only
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat >/tmp/rc3-notes <<'EOF'
+          VYRON 2.1.9-rc.3 — stable local macOS code identity candidate
+
+          Internal/personal macOS RC only. Not Apple Developer ID signed and not notarized.
+          Stable updater feed remains on VYRON 2.1.8.
+
+          Purpose:
+          - replace ad-hoc signing with one persistent self-signed Code Signing identity;
+          - preserve macOS Keychain security;
+          - keep Keychain service com.scaleup.vyron.security unchanged;
+          - verify stable Designated Requirement across different builds.
+
+          Physical Keychain and Schedule acceptance on the user's existing Mac is mandatory before stable 2.1.9.
+          EOF
+
+          gh release create "$RC_TAG"             --repo "$REPO"             --target "$(git rev-parse HEAD)"             --title 'VYRON 2.1.9 RC3'             --prerelease             --notes-file /tmp/rc3-notes             "rc3/VYRON-$RC_VERSION-arm64.dmg"             "rc3/VYRON-$RC_VERSION-arm64.dmg.sha256"             "rc3/codesign-details.txt"             "rc3/designated-requirement.txt"             "rc3/identity-proof.txt"
+
+          LOCAL="$(shasum -a 256 "rc3/VYRON-$RC_VERSION-arm64.dmg" | awk '{print $1}')"
+          REMOTE="$(gh release view "$RC_TAG" --repo "$REPO" --json assets --jq '.assets[] | select(.name=="VYRON-2.1.9-rc.3-arm64.dmg") | .digest')"
+          test "$REMOTE" = "sha256:$LOCAL"
+
+          FEED=$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode)
+          test "$(printf '%s' "$FEED" | python3 -c 'import json,sys;print(json.load(sys.stdin)["version"])')" = "$STABLE_VERSION"
+          ! gh release view v2.1.9 --repo "$REPO" >/dev/null 2>&1
+
+          echo "RC3_DMG_SHA256=$LOCAL"
+          echo 'RC3_PRERELEASE=PUBLISHED'
+          echo 'STABLE_FEED_CHANGED=NO'
+          echo 'READY_FOR_STABLE_2.1.9=NO'
+
+      - name: Cleanup temporary signing material
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          rm -f "$RUNNER_TEMP/vyron-signing.p12" "$RUNNER_TEMP/vyron-signing.pem"
+          if [[ -n "${VYRON_SIGNING_KEYCHAIN:-}" ]]; then
+            security delete-keychain "$VYRON_SIGNING_KEYCHAIN" >/dev/null 2>&1 || true
+          fi
