@@ -13,6 +13,8 @@ fn denied_accounts()->&'static Mutex<HashSet<String>>{SECRET_DENIED_ACCOUNTS.get
 fn denied_error(e:&str)->bool{e.contains("KEYCHAIN_AUTH_FAILED")||e.contains("KEYCHAIN_INTERACTION_REQUIRED")||e.contains("KEYCHAIN_USER_CANCELED")||e.contains("KEYCHAIN_ACCESS_DENIED")}
 pub fn invalidate_secret_cache(account:&str){if let Ok(mut c)=secret_cache().lock(){c.remove(account);}if let Ok(mut d)=denied_accounts().lock(){d.remove(account);}}
 fn remember_secret(account:&str,value:&str){if let Ok(mut c)=secret_cache().lock(){if value.is_empty(){c.remove(account);}else{c.insert(account.to_string(),value.to_string());}}}
+fn forget_secret(account:&str){if let Ok(mut c)=secret_cache().lock(){c.remove(account);}}
+fn cached_secret_matches(account:&str,value:&str)->bool{secret_cache().lock().map(|c|c.get(account).map(String::as_str)==Some(value)).unwrap_or(false)}
 fn get_secret_cached_with<F>(account:&str,reader:F)->Result<Option<String>,String> where F:FnOnce(&str)->Result<Option<String>,String>{
  if let Ok(c)=secret_cache().lock(){if let Some(v)=c.get(account){return Ok(Some(v.clone()))}}
  if KEYCHAIN_ACCESS_BLOCKED.load(Ordering::SeqCst)||denied_accounts().lock().map(|d|d.contains(account)).unwrap_or(false){return Err(format!("KEYCHAIN_ACCESS_DENIED_CACHED: Keychain access suppressed after previous denial; account={account}"))}
@@ -37,7 +39,8 @@ fn keychain_error(kind:&str,account:&str,code:i32,detail:&str)->String{
 #[cfg(target_os="macos")]
 pub fn set_secret(account:&str,value:&str)->Result<(),String>{
  use security_framework::passwords::{delete_generic_password,set_generic_password};
- invalidate_secret_cache(account);
+ // Keep the last known-good in-memory value until a native mutation succeeds.
+ // A denied write therefore cannot turn one Keychain authorization into a retry loop.
  let result=if value.is_empty(){
   match delete_generic_password(SERVICE,account){
    Ok(())=>Ok(()),
@@ -47,11 +50,21 @@ pub fn set_secret(account:&str,value:&str)->Result<(),String>{
  }else{
   set_generic_password(SERVICE,account,value.as_bytes()).map_err(|e|keychain_error("write",account,e.code(),&e.to_string()))
  };
- if result.is_ok()&&!value.is_empty(){remember_secret(account,value)}
+ if result.is_ok(){
+  KEYCHAIN_ACCESS_BLOCKED.store(false,Ordering::SeqCst);
+  if let Ok(mut d)=denied_accounts().lock(){d.remove(account);}
+  if value.is_empty(){forget_secret(account)}else{remember_secret(account,value)}
+ }
  result
 }
 #[cfg(not(target_os="macos"))]
 pub fn set_secret(_account:&str,_value:&str)->Result<(),String>{Err("VYRON secure storage requires macOS Keychain".into())}
+
+fn set_secret_if_changed_with<F>(account:&str,value:&str,writer:F)->Result<(),String> where F:FnOnce(&str,&str)->Result<(),String>{
+ if !value.is_empty()&&cached_secret_matches(account,value){return Ok(())}
+ writer(account,value)
+}
+pub fn set_secret_if_changed(account:&str,value:&str)->Result<(),String>{set_secret_if_changed_with(account,value,set_secret)}
 
 #[cfg(target_os="macos")]
 pub fn get_secret(account:&str)->Result<Option<String>,String>{
@@ -69,8 +82,7 @@ pub fn delete_secret(account:&str)->Result<(),String>{set_secret(account,"")}
 
 pub fn set_secret_for_autosave(account:&str,value:&str)->Result<(),String>{
  if KEYCHAIN_ACCESS_BLOCKED.load(Ordering::SeqCst){return Err("KEYCHAIN_AUTOSAVE_PAUSED: защищённое хранилище временно приостановлено после отказа macOS Keychain; локальное состояние сохраняется без повторного системного запроса".into())}
- if !value.is_empty(){if let Ok(c)=secret_cache().lock(){if c.get(account).map(String::as_str)==Some(value){return Ok(())}}}
- set_secret(account,value)
+ set_secret_if_changed(account,value)
 }
 
 #[tauri::command]
@@ -136,6 +148,18 @@ mod tests{
   let first=get_secret_cached_with(account,|_|{READS.fetch_add(1,AO::SeqCst);Ok(Some("secret".into()))}).unwrap();
   let second=get_secret_cached_with(account,|_|{READS.fetch_add(1,AO::SeqCst);Ok(Some("wrong".into()))}).unwrap();
   assert_eq!(first.as_deref(),Some("secret"));assert_eq!(second.as_deref(),Some("secret"));assert_eq!(READS.load(AO::SeqCst),1);eprintln!("SESSION_CACHE_BACKEND_READS={}",READS.load(AO::SeqCst));invalidate_secret_cache(account);
+ }
+ #[test]
+ fn same_value_write_is_suppressed_for_the_process_session(){
+  let _guard=keychain_test_guard();
+  use std::sync::atomic::{AtomicUsize,Ordering as AO};
+  static WRITES:AtomicUsize=AtomicUsize::new(0);let account="test.cache.same-write";invalidate_secret_cache(account);WRITES.store(0,AO::SeqCst);
+  remember_secret(account,"same");
+  set_secret_if_changed_with(account,"same",|_,_|{WRITES.fetch_add(1,AO::SeqCst);Ok(())}).unwrap();
+  assert_eq!(WRITES.load(AO::SeqCst),0);
+  set_secret_if_changed_with(account,"changed",|_,_|{WRITES.fetch_add(1,AO::SeqCst);Ok(())}).unwrap();
+  assert_eq!(WRITES.load(AO::SeqCst),1);
+  invalidate_secret_cache(account);
  }
  #[test]
  fn post_save_verification_uses_session_cache(){
@@ -239,6 +263,7 @@ pub fn secret_modified_rank(_account:&str)->Result<Option<String>,String>{Ok(Non
 
 #[cfg(target_os="macos")]
 pub fn probe_secret(account:&str)->KeychainProbe{
+ if secret_cache().lock().map(|c|c.contains_key(account)).unwrap_or(false){return KeychainProbe{status:KeychainReadStatus::Found,osstatus:None}}
  use security_framework::passwords::get_generic_password;
  match get_generic_password(SERVICE,account){
   Ok(v)=>if String::from_utf8(v).is_ok(){KeychainProbe{status:KeychainReadStatus::Found,osstatus:None}}else{KeychainProbe{status:KeychainReadStatus::Malformed,osstatus:None}},
