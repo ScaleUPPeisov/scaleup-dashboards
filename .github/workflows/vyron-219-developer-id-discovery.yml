@@ -1,0 +1,55 @@
+name: VYRON Developer ID Discovery
+
+on:
+  push:
+    branches:
+      - diagnostic/vyron-219-developer-id-signing
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  discover-signing:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: diagnostic/vyron-219-developer-id-signing
+          fetch-depth: 1
+
+      - name: Inspect project signing configuration
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          echo "BUNDLE_ID=$(python3 - <<'PY'
+          import json
+          print(json.load(open('src-tauri/tauri.conf.json'))['identifier'])
+          PY
+          )"
+          echo "CURRENT_WORKFLOW_SIGNING_REFS:"
+          grep -RInE 'APPLE_SIGNING_IDENTITY|APPLE_CERTIFICATE|CERTIFICATE_PASSWORD|Developer ID Application|notarytool|security import|APPLE_TEAM_ID|APPLE_ID' .github/workflows || true
+
+      - name: Discover installed code-signing identities
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          echo "CODESIGN_IDENTITIES_BEGIN"
+          security find-identity -v -p codesigning || true
+          echo "CODESIGN_IDENTITIES_END"
+          IDS="$(security find-identity -v -p codesigning 2>/dev/null || true)"
+          if printf '%s\n' "$IDS" | grep -F 'Developer ID Application:' >/dev/null; then
+            IDENTITY="$(printf '%s\n' "$IDS" | sed -n 's/.*"\(Developer ID Application:.*\)"/\1/p' | head -n1)"
+            echo "DEVELOPER_ID_AVAILABLE=YES"
+            echo "DEVELOPER_ID_IDENTITY=$IDENTITY"
+          else
+            echo "DEVELOPER_ID_AVAILABLE=NO"
+            echo "BLOCKER=NO_STABLE_DEVELOPER_ID_SIGNING_IDENTITY"
+          fi
+
+      - name: Confirm no runtime source changes
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git diff --exit-code HEAD^ -- src src-tauri package.json package-lock.json || true
+          echo "RUNTIME_SOURCE_UNTOUCHED=YES"
