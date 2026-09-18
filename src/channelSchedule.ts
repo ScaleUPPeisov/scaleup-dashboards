@@ -2,7 +2,8 @@ import type {Channel,YoutubeExistingVideo} from './types';
 export type ExistingCache={version:1;updatedAt:string;videos:YoutubeExistingVideo[];baseline:Record<string,YoutubeExistingVideo>;lastUndo:YoutubeExistingVideo[];syncInfo:any};
 export type ScheduleMode='interval'|'pattern';
 export type SchedulePattern={publishDays:number;pauseDays:number;anchorDate:string};
-export type ChannelScheduleState={channelId:string;lastPublishedAt?:string;lastScheduledAt?:string;nextAvailableAt?:string;scheduledUntil?:string;scheduleMode:ScheduleMode;publishIntervalDays:number;publishDays:number;pauseDays:number;patternAnchorDate?:string;defaultPublishTime:string;scheduledCount:number;updatedAt?:string};
+export type ScheduleSyncTruth='complete'|'incomplete'|'unknown';
+export type ChannelScheduleState={channelId:string;lastPublishedAt?:string;lastScheduledAt?:string;nextAvailableAt?:string;scheduledUntil?:string;scheduleMode:ScheduleMode;publishIntervalDays:number;publishDays:number;pauseDays:number;patternAnchorDate?:string;defaultPublishTime:string;scheduledCount:number;updatedAt?:string;syncTruth:ScheduleSyncTruth};
 export type PatternCalendarDay={date:string;kind:'video'|'pause'|'occupied';publishSlot:boolean;occupied:boolean};
 const EVENT='vyron-channel-schedule-changed';
 export const existingCacheKey=(channelId:string)=>`vyron:existing-cache:v1:${channelId}`;
@@ -43,6 +44,21 @@ function normalizeBaseline(value:unknown){
   return out;
 }
 function normalizeSyncInfo(value:unknown){return value===null||isRecord(value)?value:null}
+export function scheduleSyncTruthFromInfo(value:unknown):ScheduleSyncTruth{
+  if(!isRecord(value))return'unknown';
+  if(value.scheduleComplete===true)return'complete';
+  if(value.scheduleComplete===false||value.complete===false)return'incomplete';
+  if(value.complete===true)return Number(value.draftCandidateCount||0)>0?'incomplete':'complete';
+  return'unknown';
+}
+export function futureScheduledVideos(videos:YoutubeExistingVideo[],nowMs=Date.now()){
+  return normalizeVideoArray(videos).filter(v=>v.privacyStatus==='private'&&Boolean(v.publishAt)&&Number.isFinite(Date.parse(v.publishAt!))&&Date.parse(v.publishAt!)>nowMs).sort((a,b)=>Date.parse(a.publishAt!)-Date.parse(b.publishAt!));
+}
+function authoritativeCacheVideos(cache:ExistingCache|undefined){
+  if(!cache)return[] as YoutubeExistingVideo[];
+  const baseline=Object.values(cache.baseline||{});
+  return baseline.length?normalizeVideoArray(baseline):normalizeVideoArray(cache.videos);
+}
 export function readExistingCache(channelId:string):ExistingCache|undefined{
   if(!channelId)return;
   try{
@@ -82,9 +98,13 @@ export function deriveChannelScheduleState(channel:Channel,videos:YoutubeExistin
     const anchor=channel.patternAnchorDate;
     if(anchor){let k=scheduledUntil?addCalendarDays(scheduledUntil,1):anchor;let guard=0;const pattern={publishDays,pauseDays,anchorDate:anchor};while(guard++<20000&&(!isPatternPublishDate(k,pattern)||occupied.has(k)))k=addCalendarDays(k,1);nextKey=k}
   }else if(scheduledUntil){let k=addCalendarDays(scheduledUntil,interval),guard=0;while(guard++<10000&&occupied.has(k))k=addCalendarDays(k,interval);nextKey=k}
-  return{channelId:channel.id,lastPublishedAt,lastScheduledAt,nextAvailableAt:nextKey?toKratIso(nextKey,defaultTime):undefined,scheduledUntil,scheduleMode:mode,publishIntervalDays:interval,publishDays,pauseDays,patternAnchorDate:channel.patternAnchorDate,defaultPublishTime:defaultTime,scheduledCount:scheduled.length,updatedAt};
+  return{channelId:channel.id,lastPublishedAt,lastScheduledAt,nextAvailableAt:nextKey?toKratIso(nextKey,defaultTime):undefined,scheduledUntil,scheduleMode:mode,publishIntervalDays:interval,publishDays,pauseDays,patternAnchorDate:channel.patternAnchorDate,defaultPublishTime:defaultTime,scheduledCount:scheduled.length,updatedAt,syncTruth:'unknown'};
 }
-export function getChannelScheduleState(channelId:string,channel:Channel,excludeIds:string[]=[]){const cache=readExistingCache(channelId);return deriveChannelScheduleState(channel,cache?.videos||[],cache?.updatedAt,excludeIds)}
+export function getChannelScheduleState(channelId:string,channel:Channel,excludeIds:string[]=[],nowMs=Date.now()){
+  const cache=readExistingCache(channelId),source=authoritativeCacheVideos(cache),futureIds=new Set(futureScheduledVideos(source,nowMs).map(v=>v.id));
+  const factual=source.map(v=>futureIds.has(v.id)?v:{...v,publishAt:undefined});
+  return{...deriveChannelScheduleState(channel,factual,cache?.updatedAt,excludeIds),syncTruth:scheduleSyncTruthFromInfo(cache?.syncInfo)};
+}
 export function generatePatternSchedule(channel:Channel,videos:YoutubeExistingVideo[],count:number,excludeIds:string[]=[]){
   const pattern=patternFor(channel);if(!pattern)return{dates:[] as string[],calendar:[] as PatternCalendarDay[]};const cacheVideos=readExistingCache(channel.id)?.videos||normalizeVideoArray(videos),occupied=occupiedDates(cacheVideos,excludeIds),state=deriveChannelScheduleState(channel,cacheVideos,undefined,excludeIds),time=state.defaultPublishTime;let k=state.nextAvailableAt?krasDateKey(state.nextAvailableAt):pattern.anchorDate;if(!k)return{dates:[],calendar:[]};
   const dates:string[]=[],calendar:PatternCalendarDay[]=[];let guard=0;
