@@ -24,6 +24,10 @@ identity_sha1() {
     awk '{print $2; exit}'
 }
 
+normalize_sha1() {
+  printf '%s' "$1" | tr '[:lower:]' '[:upper:]'
+}
+
 resolve_user_keychain() {
   local candidate
 
@@ -114,7 +118,7 @@ verify_p12_matches_identity() {
     echo "ERROR: cannot open .p12 with the supplied password"
     exit 1
   }
-  if [[ "${cert_sha1^^}" != "${sha1^^}" ]]; then
+  if [[ "$(normalize_sha1 "$cert_sha1")" != "$(normalize_sha1 "$sha1")" ]]; then
     echo "ERROR: the .p12 does not contain the exact existing VYRON signing identity"
     echo "LOCAL_CERT_SHA1=$sha1"
     echo "P12_CERT_SHA1=$cert_sha1"
@@ -168,7 +172,7 @@ rewrap_p12_for_macos() {
     openssl x509 -in "$tmp/compat-certs.pem" -noout -fingerprint -sha1 2>/dev/null |
       sed 's/^sha1 Fingerprint=//I;s/://g'
   )"
-  [[ -n "$after_sha" && "${after_sha^^}" == "${before_sha^^}" ]] || {
+  [[ -n "$after_sha" && "$(normalize_sha1 "$after_sha")" == "$(normalize_sha1 "$before_sha")" ]] || {
     rm -rf "$tmp"
     echo "ERROR: compatibility conversion changed certificate identity; refusing to continue"
     exit 1
@@ -314,7 +318,7 @@ if [[ -f "$P12" ]]; then
     echo "ERROR: .p12 import completed but the expected signing identity is not valid for code signing."
     exit 1
   }
-  if [[ "${CERT_SHA1^^}" != "${SHA1^^}" ]]; then
+  if [[ "$(normalize_sha1 "$CERT_SHA1")" != "$(normalize_sha1 "$SHA1")" ]]; then
     echo "ERROR: imported identity SHA-1 does not match the existing .p12 certificate"
     echo "P12_CERT_SHA1=$CERT_SHA1"
     echo "LOCAL_CERT_SHA1=$SHA1"
