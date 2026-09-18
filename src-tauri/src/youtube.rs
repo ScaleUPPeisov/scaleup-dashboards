@@ -4760,3 +4760,71 @@ mod v216_upload_progress_tests {
         assert_eq!(upload_progress_percent(10, 0), 0.0);
     }
 }
+
+
+#[cfg(test)]
+mod v219_rc4_inventory_and_acl_tests{
+ use super::*;
+ #[test]
+ fn inventory_166_pages_hydration_counts_and_quota_are_exact(){
+  let mut ids=Vec::<String>::new();let mut seen=std::collections::HashSet::<String>::new();
+  let mut offset=0usize;
+  for page_idx in 0..4{
+   let size=if page_idx<3{50}else{16};
+   let items=(0..size).map(|i|json!({"contentDetails":{"videoId":format!("v{}",offset+i)}})).collect::<Vec<_>>();
+   offset+=size;
+   let next=if page_idx<3{json!(format!("p{}",page_idx+2))}else{Value::Null};
+   let page=json!({"items":items,"nextPageToken":next,"pageInfo":{"totalResults":166}});
+   append_playlist_page_ids(&page,&mut ids,&mut seen,5000);
+  }
+  assert_eq!(ids.len(),166);
+  assert_eq!(seen.len(),166);
+  let est=full_sync_estimate(ids.len());
+  assert_eq!(est.get("playlistPages").and_then(|x|x.as_u64()),Some(4));
+  assert_eq!(est.get("hydrationBatches").and_then(|x|x.as_u64()),Some(4));
+  assert_eq!(est.get("apiRequests").and_then(|x|x.as_u64()),Some(9));
+  assert_eq!(est.get("estimatedQuotaCost").and_then(|x|x.as_u64()),Some(9));
+
+  let mut rows=Vec::<Value>::new();
+  for i in 0..166{
+   let (privacy,publish_at)=if i<14{("private",Value::Null)}
+    else if i<19{("private",json!("2099-01-01T00:00:00Z"))}
+    else if i<159{("public",Value::Null)}
+    else{("unlisted",Value::Null)};
+   rows.push(json!({"privacyStatus":privacy,"publishAt":publish_at}));
+  }
+  let (private_count,scheduled_count,public_count,unlisted_count)=inventory_bucket_counts(&rows,Utc::now());
+  assert_eq!((private_count,scheduled_count,public_count,unlisted_count),(14,5,140,7));
+ }
+ #[test]
+ fn playlist_dedup_and_malformed_schedule_are_safe(){
+  let mut ids=Vec::<String>::new();let mut seen=std::collections::HashSet::<String>::new();
+  let p1=json!({"items":[{"contentDetails":{"videoId":"a"}},{"contentDetails":{"videoId":"b"}}]});
+  let p2=json!({"items":[{"contentDetails":{"videoId":"b"}},{"contentDetails":{"videoId":"c"}}]});
+  append_playlist_page_ids(&p1,&mut ids,&mut seen,100);
+  append_playlist_page_ids(&p2,&mut ids,&mut seen,100);
+  assert_eq!(ids,vec!["a","b","c"]);
+  let rows=vec![
+   json!({"privacyStatus":"private","publishAt":"not-a-date"}),
+   json!({"privacyStatus":"private","publishAt":"2000-01-01T00:00:00Z"}),
+   json!({"privacyStatus":"public","publishAt":"2099-01-01T00:00:00Z"})
+  ];
+  assert_eq!(inventory_bucket_counts(&rows,Utc::now()),(2,0,1,0));
+ }
+ #[test]
+ fn acl_migration_marker_is_idempotent_and_failure_does_not_mark(){
+  let accounts=vec!["oauth.test.refresh_token".to_string(),"oauth.test.client_secret".to_string()];
+  let mut state=KeychainAclMigrationState{version:1,accounts:HashMap::new()};
+  let mut calls=0usize;
+  apply_acl_migration_marker_with(&mut state,&accounts,|_|{calls+=1;Ok(security::LegacyAclMigrationResult::Migrated)}).unwrap();
+  assert_eq!(calls,2);
+  assert_eq!(state.accounts.len(),2);
+  apply_acl_migration_marker_with(&mut state,&accounts,|_|{calls+=1;Ok(security::LegacyAclMigrationResult::Migrated)}).unwrap();
+  assert_eq!(calls,2);
+
+  let mut failed=KeychainAclMigrationState{version:1,accounts:HashMap::new()};
+  let err=apply_acl_migration_marker_with(&mut failed,&accounts[..1],|_|Err("DENIED".into())).unwrap_err();
+  assert_eq!(err,"DENIED");
+  assert!(failed.accounts.is_empty());
+ }
+}
