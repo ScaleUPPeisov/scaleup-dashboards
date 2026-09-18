@@ -124,6 +124,7 @@ export function ChannelRunway(){
     setBusy(channel.id);
     try{
       const result=await api.youtubeListExisting(channel.youtubeProfileId,1000);
+      if(!(result.syncComplete??result.complete)){toast(`${channel.name}: синхронизация неполная • ${result.videosHydrated??result.received}/${result.uniqueVideoIds??result.youtubeFound} • расписание не заменено`);return}
       const nextStore=upsertChannelRunwayFromYoutube(channel,result.videos||[],new Date());
       setSnapshot(nextStore);
       const r=nextStore.channels[channel.id];
