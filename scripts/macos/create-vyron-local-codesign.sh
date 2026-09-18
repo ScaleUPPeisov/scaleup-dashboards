@@ -122,11 +122,76 @@ verify_p12_matches_identity() {
   fi
 }
 
+rewrap_p12_for_macos() {
+  local tmp bundle compat before_sha after_sha backup
+  tmp="$(mktemp -d)"
+  bundle="$tmp/vyron-bundle.pem"
+  compat="$tmp/vyron-macos-compatible.p12"
+  backup="$P12.openssl-default.bak"
+
+  before_sha="$(p12_cert_sha1)" || {
+    rm -rf "$tmp"
+    echo "ERROR: cannot inspect existing .p12 before compatibility conversion"
+    exit 1
+  }
+
+  # The original PKCS#12 may be perfectly readable by OpenSSL but rejected by
+  # macOS Security.framework when OpenSSL 3 uses newer PBES2/AES defaults.
+  # Re-export the SAME cert/private key with conservative PKCS#12 algorithms.
+  openssl pkcs12 -in "$P12" -nodes -passin "pass:$P12_PASSWORD" -out "$bundle" >/dev/null 2>&1 || {
+    rm -rf "$tmp"
+    echo "ERROR: cannot extract the existing .p12 for macOS compatibility conversion"
+    exit 1
+  }
+
+  openssl pkcs12 -export \
+    -in "$bundle" \
+    -name "$IDENTITY_NAME" \
+    -out "$compat" \
+    -passout "pass:$P12_PASSWORD" \
+    -keypbe PBE-SHA1-3DES \
+    -certpbe PBE-SHA1-3DES \
+    -macalg sha1 \
+    -iter 2048 >/dev/null 2>&1 || {
+      rm -rf "$tmp"
+      echo "ERROR: failed to create macOS-compatible PKCS#12 wrapper"
+      exit 1
+    }
+  chmod 600 "$compat"
+
+  openssl pkcs12 -in "$compat" -nokeys -passin "pass:$P12_PASSWORD" -out "$tmp/compat-certs.pem" >/dev/null 2>&1 || {
+    rm -rf "$tmp"
+    echo "ERROR: failed to verify converted PKCS#12"
+    exit 1
+  }
+  after_sha="$(
+    openssl x509 -in "$tmp/compat-certs.pem" -noout -fingerprint -sha1 2>/dev/null |
+      sed 's/^sha1 Fingerprint=//I;s/://g'
+  )"
+  [[ -n "$after_sha" && "${after_sha^^}" == "${before_sha^^}" ]] || {
+    rm -rf "$tmp"
+    echo "ERROR: compatibility conversion changed certificate identity; refusing to continue"
+    exit 1
+  }
+
+  if [[ ! -f "$backup" ]]; then
+    cp -p "$P12" "$backup"
+    chmod 600 "$backup"
+  fi
+  mv "$compat" "$P12"
+  chmod 600 "$P12"
+  rm -rf "$tmp"
+
+  echo "P12_MACOS_COMPAT_REWRAP=PASS"
+  echo "P12_CERT_SHA1=$before_sha"
+}
+
 import_p12_into_user_keychain() {
   local keychain="$1"
-  local tmp cert
+  local tmp cert import_err
   tmp="$(mktemp -d)"
   cert="$tmp/vyron-signing.crt"
+  import_err="$tmp/security-import.err"
 
   openssl pkcs12 -in "$P12" -nokeys -passin "pass:$P12_PASSWORD" -out "$cert" >/dev/null 2>&1 || {
     rm -rf "$tmp"
@@ -135,11 +200,34 @@ import_p12_into_user_keychain() {
   }
 
   echo "Using macOS user keychain: $keychain"
-  security import "$P12" \
+
+  if ! security import "$P12" \
     -k "$keychain" \
     -P "$P12_PASSWORD" \
     -T /usr/bin/codesign \
-    -T /usr/bin/security >/dev/null
+    -T /usr/bin/security >/dev/null 2>"$import_err"; then
+    # OpenSSL already proved the password is valid. A common remaining cause is
+    # PKCS#12 algorithm compatibility between OpenSSL 3 defaults and macOS security.
+    echo "macOS rejected the OpenSSL PKCS#12 wrapper; converting the SAME identity to a macOS-compatible PKCS#12..."
+    rewrap_p12_for_macos
+
+    openssl pkcs12 -in "$P12" -nokeys -passin "pass:$P12_PASSWORD" -out "$cert" >/dev/null 2>&1 || {
+      rm -rf "$tmp"
+      echo "ERROR: converted .p12 cannot be reopened"
+      exit 1
+    }
+
+    if ! security import "$P12" \
+      -k "$keychain" \
+      -P "$P12_PASSWORD" \
+      -T /usr/bin/codesign \
+      -T /usr/bin/security >/dev/null; then
+      echo "ERROR: macOS still rejected the verified compatible .p12."
+      echo "The password was already validated by OpenSSL, so do NOT keep retrying passwords."
+      rm -rf "$tmp"
+      exit 1
+    fi
+  fi
 
   security add-trusted-cert \
     -r trustRoot \
@@ -278,7 +366,11 @@ openssl pkcs12 -export \
   -inkey "$KEY" -in "$CERT" \
   -name "$IDENTITY_NAME" \
   -out "$P12" \
-  -passout "pass:$P12_PASSWORD" >/dev/null 2>&1
+  -passout "pass:$P12_PASSWORD" \
+  -keypbe PBE-SHA1-3DES \
+  -certpbe PBE-SHA1-3DES \
+  -macalg sha1 \
+  -iter 2048 >/dev/null 2>&1
 chmod 600 "$P12"
 
 import_p12_into_user_keychain "$KEYCHAIN"
