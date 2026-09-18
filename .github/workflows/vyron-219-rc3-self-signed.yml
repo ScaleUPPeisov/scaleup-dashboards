@@ -94,7 +94,12 @@ jobs:
           # Do NOT change runner trust settings here. The certificate is trusted on
           # the user's Mac; CI only needs the persistent identity + private key to
           # sign reproducibly. add-trusted-cert can block on headless runners.
-          security list-keychains -d user -s "$KEYCHAIN"
+          # Keep the runner's normal login/default keychain in the search list.
+          # Replacing the search list with only the signing keychain breaks the
+          # product's native Keychain round-trip tests even though app code is fine.
+          LOGIN_KEYCHAIN="$(security default-keychain -d user | tr -d '"')"
+          test -n "$LOGIN_KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" "$LOGIN_KEYCHAIN"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
 
           ID_SHA1="$(security find-certificate -Z -c "$VYRON_MACOS_SIGNING_IDENTITY" "$KEYCHAIN" 2>/dev/null | awk '/SHA-1 hash:/{print $3; exit}')"
