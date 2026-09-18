@@ -92,7 +92,7 @@ impl OAuthSecretStore for KeychainOAuthSecretStore {
         security::get_secret_cached(account)
     }
     fn set(&self, account: &str, value: &str) -> Result<(), String> {
-        security::set_secret(account, value)
+        security::set_secret_if_changed(account, value)
     }
     fn delete(&self, account: &str) -> Result<(), String> {
         security::delete_secret(account)
@@ -1515,7 +1515,7 @@ async fn valid_access_token(app:&AppHandle,profile_id:&str)->Result<(String,OAut
         hydrate_profile_secret_for_operation(app,&mut s.profiles[idx],"access_token")?;
         if !s.profiles[idx].access_token.trim().is_empty(){
             let token=s.profiles[idx].access_token.clone();
-            if needs_identity{validate_profile_identity(app,&mut s.profiles[idx],&token).await?;save_selected_profile(app,&s,idx)?;}
+            if needs_identity{validate_profile_identity(app,&mut s.profiles[idx],&token).await?;write_oauth_metadata(&store_path(app)?,&s)?;}
             return Ok((token,s.profiles[idx].clone()))
         }
     }
@@ -1531,7 +1531,13 @@ async fn valid_access_token(app:&AppHandle,profile_id:&str)->Result<(String,OAut
     let r=reqwest::Client::new().post("https://oauth2.googleapis.com/token").form(&refresh_form).send().await.map_err(|e|format!("OAUTH_NETWORK_ERROR: token refresh: {e}"))?;
     let status=r.status();let v:Value=r.json().await.map_err(|e|format!("OAUTH_REFRESH_JSON_ERROR: {e}"))?;if !status.is_success(){return Err(oauth_refresh_error(&v))}
     let token=v.get("access_token").and_then(Value::as_str).ok_or_else(||"OAUTH_REFRESH_FAILED: Google response has no access_token".to_string())?.to_string();let expires=v.get("expires_in").and_then(Value::as_i64).unwrap_or(3600);
-    s.profiles[idx].access_token=token.clone();s.profiles[idx].expires_at=now_ts()+expires;validate_profile_identity(app,&mut s.profiles[idx],&token).await?;let profile=s.profiles[idx].clone();save_selected_profile(app,&s,idx)?;Ok((token,profile))
+    s.profiles[idx].access_token=token.clone();s.profiles[idx].expires_at=now_ts()+expires;validate_profile_identity(app,&mut s.profiles[idx],&token).await?;let profile=s.profiles[idx].clone();
+    // Normal token refresh changes only access_token + metadata. Rewriting the
+    // unchanged refresh_token/client_secret on every operation causes needless
+    // Keychain authorization checks on macOS.
+    security::set_secret_if_changed(&oauth_key(&profile.id,"access_token"),&token)?;
+    write_oauth_metadata(&store_path(app)?,&s)?;
+    Ok((token,profile))
 }
 
 pub(crate) async fn access_token_and_scopes(
@@ -2534,11 +2540,13 @@ pub async fn youtube_list_existing_videos(
             out.push(json!({"id":id,"channelId":sn.get("channelId").and_then(|x|x.as_str()).or(profile.channel_id.as_deref()),"position":position,"title":sn.get("title").and_then(|x|x.as_str()).unwrap_or("Черновик YouTube"),"description":sn.get("description").and_then(|x|x.as_str()).unwrap_or(""),"tags":[],"categoryId":"10","publishedAt":sn.get("publishedAt").and_then(|x|x.as_str()),"privacyStatus":"private","publishAt":Value::Null,"thumbnail":sn.pointer("/thumbnails/high/url").or_else(||sn.pointer("/thumbnails/medium/url")).or_else(||sn.pointer("/thumbnails/default/url")).and_then(|x|x.as_str()),"selected":false,"discoverySource":"oauth-forMine","draftCandidate":true}));
         }
     }
+    let schedule_now = Utc::now();
     let scheduled_count = out
         .iter()
         .filter(|x| {
-            x.get("privacyStatus").and_then(|v| v.as_str()) == Some("private")
-                && x.get("publishAt").and_then(|v| v.as_str()).is_some()
+            if x.get("privacyStatus").and_then(|v| v.as_str()) != Some("private"){return false}
+            let Some(raw)=x.get("publishAt").and_then(|v|v.as_str()) else{return false};
+            chrono::DateTime::parse_from_rfc3339(raw).map(|d|d.with_timezone(&Utc)>schedule_now).unwrap_or(false)
         })
         .count();
     let private_count = out
@@ -2559,8 +2567,11 @@ pub async fn youtube_list_existing_videos(
     let youtube_found = std::cmp::max(playlist_found, ids.len());
     let expected = std::cmp::min(youtube_found, limit);
     let complete = out.len() == expected;
+    // Fallback playlist/search rows have no authoritative videos.status.publishAt.
+    // A full row count can therefore still be incomplete for schedule truth.
+    let schedule_complete = complete && fallback_count == 0;
     Ok(
-        json!({"channelId":profile.channel_id,"channelTitle":profile.channel_title,"youtubeFound":youtube_found,"playlistFound":playlist_found,"received":out.len(),"requested":limit,"privateCount":private_count,"publicCount":public_count,"scheduledCount":scheduled_count,"unlistedCount":unlisted_count,"draftCandidateCount":fallback_count,"searchSupplementCount":search_supplement,"searchUsed":search_used,"playlistCalls":playlist_calls,"videoCalls":video_calls,"complete":complete,"videos":out}),
+        json!({"channelId":profile.channel_id,"channelTitle":profile.channel_title,"youtubeFound":youtube_found,"playlistFound":playlist_found,"received":out.len(),"requested":limit,"privateCount":private_count,"publicCount":public_count,"scheduledCount":scheduled_count,"unlistedCount":unlisted_count,"draftCandidateCount":fallback_count,"searchSupplementCount":search_supplement,"searchUsed":search_used,"playlistCalls":playlist_calls,"videoCalls":video_calls,"complete":complete,"scheduleComplete":schedule_complete,"videos":out}),
     )
 }
 
