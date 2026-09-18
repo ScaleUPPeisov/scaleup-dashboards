@@ -1,6 +1,11 @@
 name: VYRON 2.1.9 RC3 Stable Local Signing
 
 on:
+  push:
+    branches:
+      - release/vyron-219-rc3-self-signed
+    paths:
+      - '.github/workflows/vyron-219-rc3-self-signed.yml'
   workflow_dispatch:
 
 permissions:
@@ -14,6 +19,7 @@ env:
   STABLE_VERSION: 2.1.8
   BUNDLE_ID: studio.channelflow.desktop
   EXECUTABLE: channelflow
+  EXPECTED_SIGNING_CERT_SHA1: 2C8B0BD4EE1C000D29DD0667BF1068D4673692C9
 
 jobs:
   verify-build-publish-rc3:
@@ -84,20 +90,29 @@ jobs:
 
           security find-certificate -c "$VYRON_MACOS_SIGNING_IDENTITY" -p "$KEYCHAIN" > "$CERT"
           test -s "$CERT"
-          security add-trusted-cert             -r trustRoot             -p codeSign             -k "$KEYCHAIN"             "$CERT" >/dev/null
 
+          # Do NOT change runner trust settings here. The certificate is trusted on
+          # the user's Mac; CI only needs the persistent identity + private key to
+          # sign reproducibly. add-trusted-cert can block on headless runners.
           security list-keychains -d user -s "$KEYCHAIN"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
 
-          IDS="$(security find-identity -v -p codesigning "$KEYCHAIN" 2>/dev/null || true)"
-          printf '%s\n' "$IDS"
-          printf '%s\n' "$IDS" | grep -F ""$VYRON_MACOS_SIGNING_IDENTITY"" >/dev/null || {
-            echo 'BLOCKER=SELF_SIGNED_IDENTITY_NOT_VALID_FOR_CODESIGN'
+          ID_SHA1="$(security find-certificate -Z -c "$VYRON_MACOS_SIGNING_IDENTITY" "$KEYCHAIN" 2>/dev/null | awk '/SHA-1 hash:/{print $3; exit}')"
+          test -n "$ID_SHA1"
+          test "$(printf '%s' "$ID_SHA1" | tr '[:lower:]' '[:upper:]')" = "$EXPECTED_SIGNING_CERT_SHA1" || {
+            echo 'BLOCKER=SIGNING_CERT_SHA1_MISMATCH'
             exit 1
           }
 
-          ID_SHA1="$(printf '%s\n' "$IDS" | awk -v n="$VYRON_MACOS_SIGNING_IDENTITY" '$0 ~ """ n """ {print $2; exit}')"
-          test -n "$ID_SHA1"
+          PROBE="$RUNNER_TEMP/vyron-signing-ci-probe"
+          cp /bin/echo "$PROBE"
+          codesign --force --sign "$ID_SHA1" "$PROBE"
+          codesign --verify --strict --verbose=2 "$PROBE"
+          PROBE_DR="$(codesign -d -r- "$PROBE" 2>&1 | sed -n 's/^designated => //p' | head -n1)"
+          test -n "$PROBE_DR"
+          case "$PROBE_DR" in
+            cdhash*) echo 'BLOCKER=CI_SELF_SIGNED_REQUIREMENT_CDHASH_ONLY'; exit 1 ;;
+          esac
           echo "APPLE_SIGNING_IDENTITY=$ID_SHA1" >> "$GITHUB_ENV"
           echo "VYRON_SIGNING_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
           echo "VYRON_SIGNING_KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> "$GITHUB_ENV"
@@ -199,8 +214,8 @@ jobs:
           cp -R "$APP" "$A"
           cp -R "$APP" "$B"
 
-          /usr/libexec/PlistBuddy -c 'Set :CFBundleVersion identity-probe-A' "$A/Contents/Info.plist"
-          /usr/libexec/PlistBuddy -c 'Set :CFBundleVersion identity-probe-B' "$B/Contents/Info.plist"
+          printf 'identity-probe-A\n' > "$A/Contents/Resources/vyron-identity-probe.txt"
+          printf 'identity-probe-B\n' > "$B/Contents/Resources/vyron-identity-probe.txt"
 
           codesign --force --deep --sign "$APPLE_SIGNING_IDENTITY" "$A"
           codesign --force --deep --sign "$APPLE_SIGNING_IDENTITY" "$B"
