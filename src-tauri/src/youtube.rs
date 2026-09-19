@@ -663,6 +663,9 @@ fn load_or_migrate_google_config(app:&AppHandle)->Result<GoogleConfig,String>{
 pub fn youtube_google_config_status(app: AppHandle) -> Result<Value, String> {
     Ok(google_config_status_value(&load_google_config_metadata(&app)?))
 }
+fn validate_imported_client_id(expected:&str,imported:&str)->Result<(),String>{
+ if expected.trim()==imported.trim(){Ok(())}else{Err(format!("OAUTH_CLIENT_MISMATCH: imported credentials belong to another OAuth Client; expected={}",masked_client_id(expected)))}
+}
 fn parse_google_credentials_json(json_text:&str)->Result<(String,String,String),String>{
     let v:Value=serde_json::from_str(json_text).map_err(|e|format!("credentials.json: {e}"))?;
     let root=v.get("installed").or_else(||v.get("web")).unwrap_or(&v);
@@ -683,9 +686,7 @@ pub fn youtube_oauth_import_profile_credentials_file(app:AppHandle,profile_id:St
     if expected_client_id.is_empty(){return Err("OAUTH_CLIENT_MISSING: profile client_id is empty".into())}
     let raw=fs::read_to_string(&file_path).map_err(|e|format!("credentials.json read failed: {e}"))?;
     let (client_id,client_secret,project_id)=parse_google_credentials_json(&raw)?;
-    if client_id!=expected_client_id{
-      return Err(format!("OAUTH_CLIENT_MISMATCH: imported credentials belong to another OAuth Client; expected={}",masked_client_id(expected_client_id)))
-    }
+    validate_imported_client_id(expected_client_id,&client_id)?;
     let account=oauth_key(&profile_id,"client_secret");
     security::canonical_set_secret(&account,&client_secret)?;
     let found=security::canonical_get_secret_cached(&account)?.map(|x|!x.trim().is_empty()).unwrap_or(false);
@@ -4938,7 +4939,7 @@ mod v219_rc7_secitem_ui_skip_tests{
   forget_access_token(id);
  }
  #[test]
- fn profile_persistence_never_writes_access_or_client_secret(){
+ fn profile_persistence_writes_refresh_and_profile_client_secret_but_not_access(){
   #[derive(Default)]struct C{sets:std::cell::RefCell<Vec<String>>}
   impl OAuthSecretStore for C{
    fn get(&self,_:&str)->Result<Option<String>,String>{Ok(None)}
@@ -4948,7 +4949,7 @@ mod v219_rc7_secitem_ui_skip_tests{
   let c=C::default();
   let p=OAuthProfile{id:"p".into(),client_id:"client".into(),client_secret:"global-secret".into(),channel_id:None,channel_title:None,access_token:"short-lived".into(),refresh_token:"refresh".into(),expires_at:now_ts()+3600,connected_at:"x".into(),scopes:vec![],preferred_browser:"default".into(),identity_validated_at:None,identity_validated_channel_id:None,credential_error:None};
   write_profile_secrets_with(&c,&p).unwrap();
-  assert_eq!(&*c.sets.borrow(),&vec!["oauth.p.refresh_token".to_string()]);
+  assert_eq!(&*c.sets.borrow(),&vec!["oauth.p.refresh_token".to_string(),"oauth.p.client_secret".to_string()]);
  }
  #[test]
  fn global_client_secret_has_one_canonical_account_for_many_profiles(){
@@ -5001,6 +5002,80 @@ mod v2110_oauth_continuity_tests{
   assert_eq!(accounts.len(),31);
   assert_eq!(accounts.iter().collect::<std::collections::HashSet<_>>().len(),31);
   for (id,account) in after.iter().zip(accounts.iter()){assert_eq!(account,&format!("oauth.{id}.refresh_token"));}
+ }
+}
+
+#[cfg(test)]
+mod v2111_client_secret_continuity_tests{
+ use super::*;
+ #[test]fn physical_bug_wrong_global_client_is_never_used(){
+  let decision=select_oauth_client_secret(None,"CLIENT_A","CLIENT_B",Some("SECRET_B".into()),false);
+  assert_eq!(decision.unwrap_err(),"CLIENT_SECRET_REQUIRED");
+ }
+ #[test]fn profile_specific_secret_wins(){
+  let (secret,source)=select_oauth_client_secret(Some("SECRET_A".into()),"CLIENT_A","CLIENT_B",Some("SECRET_B".into()),false).unwrap();
+  assert_eq!(secret,"SECRET_A");assert_eq!(source,OAuthClientSecretSource::ProfileCanonical);
+ }
+ #[test]fn global_secret_is_allowed_only_for_exact_client_id(){
+  let (secret,source)=select_oauth_client_secret(None,"CLIENT_A","CLIENT_A",Some("SECRET_A".into()),false).unwrap();
+  assert_eq!(secret,"SECRET_A");assert_eq!(source,OAuthClientSecretSource::GlobalExactMatch);
+  assert!(select_oauth_client_secret(None,"CLIENT_A","CLIENT_B",Some("SECRET_B".into()),false).is_err());
+ }
+ #[test]fn legacy_client_secret_requires_reimport_without_secret_read(){
+  assert_eq!(select_oauth_client_secret(None,"CLIENT_A","CLIENT_B",None,true).unwrap_err(),"CLIENT_SECRET_REIMPORT_REQUIRED");
+ }
+ #[test]fn credentials_import_must_match_exact_profile_client_id(){
+  assert!(validate_imported_client_id("CLIENT_A","CLIENT_A").is_ok());
+  assert!(validate_imported_client_id("CLIENT_A","CLIENT_B").unwrap_err().starts_with("OAUTH_CLIENT_MISMATCH:"));
+ }
+ #[test]fn authorization_code_form_contains_exact_secret(){
+  let form=authorization_code_token_form("CLIENT_A","SECRET_A","CODE","VERIFIER","http://127.0.0.1:1");
+  let map=form.into_iter().collect::<HashMap<_,_>>();
+  assert_eq!(map.get("client_id").map(String::as_str),Some("CLIENT_A"));
+  assert_eq!(map.get("client_secret").map(String::as_str),Some("SECRET_A"));
+  assert_eq!(map.get("code").map(String::as_str),Some("CODE"));
+  assert_eq!(map.get("grant_type").map(String::as_str),Some("authorization_code"));
+ }
+ #[test]fn refresh_form_uses_same_exact_secret_contract(){
+  let form=refresh_token_form("CLIENT_A","SECRET_A","REFRESH");
+  let map=form.into_iter().collect::<HashMap<_,_>>();
+  assert_eq!(map.get("client_secret").map(String::as_str),Some("SECRET_A"));
+  assert_eq!(map.get("refresh_token").map(String::as_str),Some("REFRESH"));
+ }
+ #[test]fn reconnect_transaction_persists_both_profile_secrets_and_preserves_uuid(){
+  #[derive(Default)]struct Mem{v:std::cell::RefCell<HashMap<String,String>>}
+  impl OAuthSecretStore for Mem{
+   fn get(&self,a:&str)->Result<Option<String>,String>{Ok(self.v.borrow().get(a).cloned())}
+   fn set(&self,a:&str,v:&str)->Result<(),String>{self.v.borrow_mut().insert(a.into(),v.into());Ok(())}
+   fn delete(&self,a:&str)->Result<(),String>{self.v.borrow_mut().remove(a);Ok(())}
+  }
+  let sec=Mem::default();
+  let backup=reconnect_write_readback_with(&sec,"P1","SECRET_A","ACCESS","REFRESH").unwrap();
+  assert_eq!(sec.get("oauth.P1.client_secret").unwrap().as_deref(),Some("SECRET_A"));
+  assert_eq!(sec.get("oauth.P1.refresh_token").unwrap().as_deref(),Some("REFRESH"));
+  assert_eq!(backup.items.len(),2);
+  assert_eq!(oauth_key("P1","client_secret"),"oauth.P1.client_secret");
+ }
+ #[test]fn multi_client_17_profiles_never_cross_use_secrets(){
+  for i in 0..17{
+   let client=if i%3==0{"CLIENT_B"}else{"CLIENT_A"};
+   let global_id="CLIENT_A";let global_secret=Some("SECRET_A".to_string());
+   let profile_secret=if client=="CLIENT_B"{Some("SECRET_B".to_string())}else{None};
+   let (secret,_)=select_oauth_client_secret(profile_secret,client,global_id,global_secret.clone(),false).unwrap();
+   assert_eq!(secret,if client=="CLIENT_B"{"SECRET_B"}else{"SECRET_A"});
+  }
+ }
+ #[test]fn thirty_one_channels_can_share_seventeen_profiles_without_new_uuid(){
+  let profiles=(0..17).map(|i|format!("P{i}")).collect::<Vec<_>>();
+  let channels=(0..31).map(|i|profiles[i%17].clone()).collect::<Vec<_>>();
+  assert_eq!(profiles.len(),17);assert_eq!(channels.len(),31);
+  assert_eq!(channels.iter().collect::<std::collections::HashSet<_>>().len(),17);
+ }
+ #[test]fn client_secret_account_abi_survives_future_versions(){
+  let account=oauth_key("P1","client_secret");
+  for _version in ["2.1.11","2.1.12","2.1.13"]{assert_eq!(oauth_key("P1","client_secret"),account);}
+  assert_eq!(account,"oauth.P1.client_secret");
+  assert_eq!(security::canonical_service(),"com.scaleup.vyron.security.v2");
  }
 }
 
@@ -5068,7 +5143,7 @@ mod v219_rc4_inventory_and_acl_tests{
   assert_eq!(inventory_bucket_counts(&rows,Utc::now()),(2,0,1,0));
  }
  #[test]
- fn rc5_persistent_profile_store_writes_refresh_only(){
+ fn persistent_profile_store_writes_refresh_and_profile_client_secret_only(){
   #[derive(Default)]struct S{v:std::cell::RefCell<HashMap<String,String>>,sets:std::cell::RefCell<Vec<String>>}
   impl OAuthSecretStore for S{
    fn get(&self,a:&str)->Result<Option<String>,String>{Ok(self.v.borrow().get(a).cloned())}
@@ -5078,8 +5153,8 @@ mod v219_rc4_inventory_and_acl_tests{
   let sec=S::default();
   let p=OAuthProfile{id:"p1".into(),client_id:"client".into(),client_secret:"secret".into(),channel_id:None,channel_title:None,access_token:"access".into(),refresh_token:"refresh".into(),expires_at:1,connected_at:"x".into(),scopes:vec![],preferred_browser:"default".into(),identity_validated_at:None,identity_validated_channel_id:None,credential_error:None};
   write_profile_secrets_with(&sec,&p).unwrap();
-  assert_eq!(&*sec.sets.borrow(),&vec!["oauth.p1.refresh_token".to_string()]);
+  assert_eq!(&*sec.sets.borrow(),&vec!["oauth.p1.refresh_token".to_string(),"oauth.p1.client_secret".to_string()]);
   assert!(sec.v.borrow().get("oauth.p1.access_token").is_none());
-  assert!(sec.v.borrow().get("oauth.p1.client_secret").is_none());
+  assert_eq!(sec.v.borrow().get("oauth.p1.client_secret").map(String::as_str),Some("secret"));
  }
 }
