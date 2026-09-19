@@ -12,6 +12,8 @@ export type YoutubeChannelStatistics={
   channelId?:string; channelTitle?:string; handle?:string; thumbnail?:string;
   subscriberCount?:number; viewCount?:number; videoCount?:number; hiddenSubscriberCount?:boolean;
   statisticsUpdatedAt?:string; lastAttemptAt?:string; syncWarning?:string;
+  // Legacy aliases retained for compatibility with pre-2.1.14 views/state.
+  subscribers?:number; views?:number; videos?:number; updatedAt?:string;
 };
 
 export type Channel={
@@ -22,7 +24,7 @@ export type Channel={
   youtubeProfileId?:string; youtubeChannelId?:string;
   safeDailyUploadLimit?:number; knownUploadLimitState?:'unknown'|'ok'|'limited'; lastDailyLimitError?:string; lastUploadAt?:string;
   seo:{titlePatterns:string[]; descriptionTemplate:string; tags:string[]; banned:string[]; aiPrompt?:string};
-  stats?:YoutubeChannelStatistics&{subscribers?:number; views?:number; videos?:number; updatedAt?:string};
+  stats?:YoutubeChannelStatistics;
   analytics?:ChannelAnalytics;
 };
 
