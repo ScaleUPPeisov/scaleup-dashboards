@@ -4452,9 +4452,10 @@ struct ReconnectSecretBackup {
     items: Vec<(String, Option<String>)>,
 }
 
-fn reconnect_required_refresh_token(response_refresh: Option<&str>) -> Result<String, String> {
-    response_refresh.map(str::trim).filter(|x|!x.is_empty()).map(str::to_string)
-  .ok_or_else(||"OAUTH_REFRESH_TOKEN_REQUIRED: Google не вернул refresh token. Подключение не сохранено.".to_string())
+fn reconnect_refresh_token(response_refresh:Option<&str>,existing_refresh:Option<&str>)->Result<String,String>{
+    if let Some(v)=response_refresh.map(str::trim).filter(|x|!x.is_empty()){return Ok(v.to_string())}
+    if let Some(v)=existing_refresh.map(str::trim).filter(|x|!x.is_empty()){return Ok(v.to_string())}
+    Err("OAUTH_REFRESH_TOKEN_REQUIRED: Google не вернул новый refresh_token и у существующего профиля нет сохранённого canonical refresh_token.".into())
 }
 fn reconnect_authorized_channel_matches(expected: &str, authorized: &str) -> Result<(), String> {
     if expected == authorized {
@@ -4655,7 +4656,8 @@ pub async fn youtube_oauth_reconnect_existing(
     let _=app.emit("oauth-recovery-stage",json!({"profileId":profile_id,"state":"CONNECTING","expectedChannelId":expected_channel_id}));
     open_browser(&auth_url, &preferred_browser)?;
     let expected_state = state.clone();
-    let code=tauri::async_runtime::spawn_blocking(move||->Result<String,String>{listener.set_nonblocking(false).map_err(|e|e.to_string())?;let (mut stream,_)=listener.accept().map_err(|e|format!("OAuth callback: {e}"))?;let _=stream.set_read_timeout(Some(Duration::from_secs(300)));let mut buf=[0u8;8192];let n=stream.read(&mut buf).map_err(|e|format!("OAuth callback read: {e}"))?;let req=String::from_utf8_lossy(&buf[..n]);let first=req.lines().next().unwrap_or("");let target=first.split_whitespace().nth(1).unwrap_or("");let query=target.split_once('?').map(|x|x.1).unwrap_or("");let got_state=query_param(query,"state").unwrap_or_default();let code=query_param(query,"code");let err=query_param(query,"error");let ok=got_state==expected_state&&code.is_some();let html=if ok{"<html><body style='font-family:-apple-system;padding:40px;background:#07111d;color:white'><h2>Google передал код авторизации ✅</h2><p>VYRON завершает подключение и проверяет YouTube Channel ID. Вернитесь в приложение.</p></body></html>"}else{"<html><body><h2>VYRON OAuth error</h2><p>Вернитесь в приложение.</p></body></html>"};let resp=format!("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",html.as_bytes().len(),html);let _=stream.write_all(resp.as_bytes());if let Some(e)=err{return Err(format!("Google OAuth: {e}"))}if got_state!=expected_state{return Err("OAuth state mismatch".into())}code.ok_or_else(||"Google не вернул authorization code".into())}).await.map_err(|e|e.to_string())??;
+    let code=tauri::async_runtime::spawn_blocking(move||wait_for_oauth_code(listener,expected_state))
+        .await.map_err(|e|format!("OAUTH_CALLBACK_TASK_FAILED: {e}"))??;
     let token_form=authorization_code_token_form(&client_id,&client_secret,&code,&verifier,&redirect);
     let token = reqwest::Client::new()
         .post("https://oauth2.googleapis.com/token")
@@ -4681,8 +4683,11 @@ pub async fn youtube_oauth_reconnect_existing(
         .and_then(Value::as_str)
         .filter(|x| !x.trim().is_empty())
         .ok_or_else(|| "Google не вернул access_token".to_string())?;
-    let refresh =
-        reconnect_required_refresh_token(tv.get("refresh_token").and_then(Value::as_str))?;
+    let existing_refresh=security::canonical_get_secret_cached(&oauth_key(&profile_id,"refresh_token"))?;
+    let refresh=reconnect_refresh_token(
+        tv.get("refresh_token").and_then(Value::as_str),
+        existing_refresh.as_deref(),
+    )?;
     let _=app.emit("oauth-recovery-stage",json!({"profileId":profile_id,"state":"VALIDATING","expectedChannelId":expected_channel_id}));
     // Validate the newly issued refresh token first. The refreshed access token is then used for the single YouTube identity request.
     let (access, expires) = reconnect_refresh_smoke(&client_id, &client_secret, &refresh).await?;
@@ -5013,11 +5018,11 @@ mod auth_recovery_targeted_tests {
         )
     }
     #[test]
-    fn c_no_new_refresh_token_reconnect_fails() {
-        assert!(reconnect_required_refresh_token(None)
-            .unwrap_err()
-            .contains("Подключение не сохранено"));
-        assert!(reconnect_required_refresh_token(Some(" ")).is_err())
+    fn c_missing_new_refresh_token_preserves_existing_token() {
+        assert_eq!(reconnect_refresh_token(None,Some("existing-refresh")).unwrap(),"existing-refresh");
+        assert_eq!(reconnect_refresh_token(Some("new-refresh"),Some("existing-refresh")).unwrap(),"new-refresh");
+        assert!(reconnect_refresh_token(None,None).unwrap_err().contains("OAUTH_REFRESH_TOKEN_REQUIRED"));
+        assert!(reconnect_refresh_token(Some(" "),Some(" ")).is_err())
     }
     #[test]
     fn d_wrong_channel_token_not_bound() {
