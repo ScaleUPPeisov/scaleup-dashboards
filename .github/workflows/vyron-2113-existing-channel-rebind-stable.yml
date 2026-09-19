@@ -67,7 +67,7 @@ jobs:
             'package.json','package-lock.json','src-tauri/Cargo.toml','src-tauri/Cargo.lock','src-tauri/tauri.conf.json',
             'src-tauri/src/youtube.rs',
             'src/api.ts','src/AccountsPage.tsx','src/AuthRecoveryCenter.tsx','src/authRecoveryFinalCore.ts',
-            'src/v2111ClientSecretContinuity.test.ts','src/v2113ExistingChannelRebind.test.ts',
+            'src/v2111ClientSecretContinuity.test.ts','src/v2113ExistingChannelRebind.test.ts','src/googleProjectDiagnostics.test.ts',
             '.github/workflows/vyron-2113-existing-channel-rebind-stable.yml',
           }
           changed=set(filter(None,subprocess.check_output(['git','diff','--name-only',f'{source}..HEAD'],text=True).splitlines()))
@@ -520,3 +520,4 @@ jobs:
 # retry: allow regression-test precision updates only
 # retry: passive-status source boundary corrected
 # retry: legacy migration regression aligned with secure profile client-secret ABI
+# retry: GoogleConfigStatus fixture aligned with oauthReady contract
