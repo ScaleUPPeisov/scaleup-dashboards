@@ -45,7 +45,7 @@ describe('VYRON 2.1.9 RC7 per-query no-UI Keychain recovery contracts',()=>{
   const security=read('../src-tauri/src/security.rs');
   expect(security).toContain('KEYCHAIN_ACCESS_BLOCKED');
   expect(security).toContain('SecKeychain::disable_user_interaction()');
-  expect(security).toContain('kSecUseAuthenticationUIFail');
+  expect(security).toContain('kSecUseAuthenticationUISkip');
   expect(security).toContain('skip_authenticated_items(true)');
   expect(security).not.toContain('get_generic_password(');
   expect(security).not.toContain('set_generic_password(');
