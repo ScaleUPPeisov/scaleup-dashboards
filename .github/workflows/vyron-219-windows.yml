@@ -133,6 +133,6 @@ jobs:
       - name: Upload Windows production candidate
         uses: actions/upload-artifact@v4
         with:
-          name: VYRON-2.1.9-rc.7-windows-x64
+          name: VYRON-2.1.9-windows-x64
           path: windows-artifacts/*
           if-no-files-found: error
