@@ -637,7 +637,9 @@ fn masked_client_id(s: &str) -> String {
     }
 }
 fn google_config_status_value(c: &GoogleConfig) -> Value {
-    json!({"configured":!c.client_id.trim().is_empty(),"projectId":if c.project_id.is_empty(){Value::Null}else{json!(c.project_id)},"clientIdMasked":if c.client_id.is_empty(){Value::Null}else{json!(masked_client_id(&c.client_id))},"hasSecret":c.client_secret_present,"hasApiKey":c.api_key_present})
+    let configured=!c.client_id.trim().is_empty();
+    let oauth_ready=configured&&c.client_secret_present;
+    json!({"configured":configured,"oauthReady":oauth_ready,"projectId":if c.project_id.is_empty(){Value::Null}else{json!(c.project_id)},"clientIdMasked":if c.client_id.is_empty(){Value::Null}else{json!(masked_client_id(&c.client_id))},"hasSecret":c.client_secret_present,"hasApiKey":c.api_key_present})
 }
 #[derive(Debug, Clone, Deserialize, Default)]
 struct SafeGoogleMetadata {
@@ -753,7 +755,10 @@ pub async fn youtube_oauth_connect_global(
 ) -> Result<Value, String> {
     let c = load_or_migrate_google_config(&app)?;
     if c.client_id.trim().is_empty() {
-        return Err("Нет Google OAuth Client. Импортируй credentials.json один раз или подключи существующий OAuth профиль.".into());
+        return Err("OAUTH_CLIENT_SETUP_REQUIRED: Google OAuth Client ID отсутствует. Импортируйте credentials.json один раз для всего VYRON.".into());
+    }
+    if c.client_secret.trim().is_empty() {
+        return Err("OAUTH_CLIENT_SETUP_REQUIRED: global Google OAuth Client Secret отсутствует. Импортируйте credentials.json один раз для всего VYRON; отдельно для каналов импорт не нужен.".into());
     }
     youtube_oauth_connect(app, c.client_id, c.client_secret, browser).await
 }
@@ -999,6 +1004,9 @@ pub async fn youtube_oauth_connect(
         return Err("Google OAuth Client ID не указан".into());
     }
     let client_secret = client_secret.trim().to_string();
+    if client_secret.is_empty() {
+        return Err("OAUTH_CLIENT_SETUP_REQUIRED: OAuth Client Secret отсутствует; browser OAuth не запущен.".into());
+    }
     let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| format!("OAuth localhost: {e}"))?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     let redirect = format!("http://127.0.0.1:{port}");
@@ -1095,10 +1103,25 @@ pub async fn youtube_oauth_connect(
     let mut s = load_store_metadata(&app)?;
     let mut existing = s.profiles.iter().find(|p|p.channel_id.as_deref()==Some(channel_id.as_str())).cloned();
     let profile_id=reconnect_profile_id(existing.as_ref());
-    if response_refresh.as_deref().map(str::trim).filter(|x|!x.is_empty()).is_none(){
-      if existing.is_some(){migrate_profile_refresh_to_canonical(&app,&profile_id)?;if let Some(p)=existing.as_mut(){p.refresh_token=require_canonical_refresh(&app,&profile_id)?;}}
-    }
-    let refresh=preserved_refresh_token(existing.as_ref(),&client_id,response_refresh.as_deref())?;
+    // A successful browser OAuth may rebind an already-known YouTube channel to the
+    // current VYRON OAuth Client while preserving the existing Profile UUID.
+    // Never fall back to legacy Keychain after the user has just completed consent.
+    let refresh=if let Some(v)=response_refresh.as_deref().map(str::trim).filter(|x|!x.is_empty()){
+      v.to_string()
+    }else if let Some(old)=existing.as_mut(){
+      if old.client_id==client_id{
+        if let Some(v)=security::canonical_get_secret_cached(&oauth_key(&profile_id,"refresh_token"))?.filter(|x|!x.trim().is_empty()){
+          old.refresh_token=v.clone();
+          v
+        }else{
+          return Err("OAUTH_REFRESH_TOKEN_REQUIRED: Google не вернул новый refresh_token, а canonical refresh_token этого существующего профиля отсутствует. Повторите consent.".into())
+        }
+      }else{
+        return Err("OAUTH_REFRESH_TOKEN_REQUIRED: Google не вернул refresh_token для перехода существующего канала на текущий OAuth Client. Повторите consent.".into())
+      }
+    }else{
+      return Err("OAUTH_REFRESH_TOKEN_REQUIRED: Google не вернул refresh_token для нового канала. Повторите consent.".into())
+    };
     let effective_secret=if !client_secret.is_empty(){security::canonical_set_secret(GOOGLE_CLIENT_SECRET,&client_secret)?;client_secret.clone()}else{canonical_global_client_secret()?.unwrap_or_default()};
     let profile = OAuthProfile {
         id: profile_id.clone(),
@@ -5165,6 +5188,41 @@ mod v2112_browser_reconnect_recovery_tests{
   assert_eq!(store.profiles[0].client_id,"CLIENT_B");
   assert_eq!(sec.get("oauth.P1.client_secret").unwrap().as_deref(),Some("SECRET_B"));
   assert_eq!(sec.get("oauth.P1.refresh_token").unwrap().as_deref(),Some("REFRESH"));
+ }
+}
+#[cfg(test)]
+mod v2113_existing_channel_rebind_tests{
+ use super::*;
+ #[test]fn google_config_requires_id_and_secret_to_be_oauth_ready(){
+  let c=GoogleConfig{client_id:"CLIENT".into(),client_secret:String::new(),project_id:String::new(),api_key:String::new(),client_secret_present:false,api_key_present:false};
+  let v=google_config_status_value(&c);
+  assert_eq!(v["configured"],true);
+  assert_eq!(v["hasSecret"],false);
+  assert_eq!(v["oauthReady"],false);
+  let ready=GoogleConfig{client_secret_present:true,..c};
+  assert_eq!(google_config_status_value(&ready)["oauthReady"],true);
+ }
+ #[test]fn existing_channel_reuses_profile_uuid(){
+  let p=OAuthProfile{id:"P_EXISTING".into(),client_id:"OLD_CLIENT".into(),client_secret:String::new(),channel_id:Some("UC1".into()),channel_title:Some("Channel".into()),access_token:String::new(),refresh_token:String::new(),expires_at:0,connected_at:String::new(),scopes:vec![],preferred_browser:String::new(),identity_validated_at:None,identity_validated_channel_id:None,credential_error:None};
+  assert_eq!(reconnect_profile_id(Some(&p)),"P_EXISTING");
+  assert_ne!(reconnect_profile_id(None),"P_EXISTING");
+ }
+ #[test]fn current_client_rebind_preserves_uuid_and_channel_mapping_transactionally(){
+  #[derive(Default)]struct Mem{v:std::cell::RefCell<HashMap<String,String>>}
+  impl OAuthSecretStore for Mem{
+   fn get(&self,a:&str)->Result<Option<String>,String>{Ok(self.v.borrow().get(a).cloned())}
+   fn set(&self,a:&str,v:&str)->Result<(),String>{self.v.borrow_mut().insert(a.into(),v.into());Ok(())}
+   fn delete(&self,a:&str)->Result<(),String>{self.v.borrow_mut().remove(a);Ok(())}
+  }
+  let mut store=OAuthStore{profiles:vec![OAuthProfile{id:"P1".into(),client_id:"OLD_CLIENT".into(),client_secret:String::new(),channel_id:Some("UC1".into()),channel_title:Some("Old".into()),access_token:String::new(),refresh_token:String::new(),expires_at:0,connected_at:String::new(),scopes:vec![],preferred_browser:"brave".into(),identity_validated_at:None,identity_validated_channel_id:None,credential_error:None}]};
+  let sec=Mem::default();
+  reconnect_apply_validated_with(&sec,&mut store,"P1","CURRENT_CLIENT","CURRENT_SECRET","ACCESS","REFRESH","UC1","Channel",&[],"brave",3600).unwrap();
+  assert_eq!(store.profiles.len(),1);
+  assert_eq!(store.profiles[0].id,"P1");
+  assert_eq!(store.profiles[0].channel_id.as_deref(),Some("UC1"));
+  assert_eq!(store.profiles[0].client_id,"CURRENT_CLIENT");
+  assert_eq!(sec.get("oauth.P1.refresh_token").unwrap().as_deref(),Some("REFRESH"));
+  assert_eq!(sec.get("oauth.P1.client_secret").unwrap().as_deref(),Some("CURRENT_SECRET"));
  }
 }
 #[cfg(test)]
