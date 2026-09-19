@@ -313,12 +313,8 @@ fn resolve_client_secret_for_profile(app:&AppHandle,profile_id:&str,client_id:&s
  let legacy_present=select_present_account(&legacy_client_secret_candidates(profile_id),&legacy_accounts).is_some();
  match select_oauth_client_secret(profile_secret,client_id,&global_meta.client_id,global_secret,legacy_present){
   Ok((secret,OAuthClientSecretSource::ProfileCanonical))=>Ok(ResolvedOAuthClient{client_id:client_id.into(),client_secret:secret,source:OAuthClientSecretSource::ProfileCanonical}),
-  Ok((secret,OAuthClientSecretSource::GlobalExactMatch))=>{
-   security::canonical_set_secret(&profile_account,&secret)?;
-   let readback=security::canonical_get_secret_cached(&profile_account)?.filter(|x|!x.trim().is_empty())
-     .ok_or_else(||format!("OAUTH_KEYCHAIN_READBACK_FAILED: account={profile_account}"))?;
-   Ok(ResolvedOAuthClient{client_id:client_id.into(),client_secret:readback,source:OAuthClientSecretSource::GlobalExactMatch})
-  }
+  Ok((secret,OAuthClientSecretSource::GlobalExactMatch))=>
+   Ok(ResolvedOAuthClient{client_id:client_id.into(),client_secret:secret,source:OAuthClientSecretSource::GlobalExactMatch}),
   Ok((_,OAuthClientSecretSource::GlobalCurrentMigration))=>Err("OAUTH_CLIENT_RESOLVER_INTERNAL: migration source is reconnect-only".into()),
   Err("CLIENT_SECRET_REIMPORT_REQUIRED")=>Err(format!("OAUTH_CLIENT_SECRET_REIMPORT_REQUIRED: profile={profile_id}; legacy client_secret metadata exists but legacy secret reads are disabled")),
   Err(_)=>Err(format!("OAUTH_CLIENT_SECRET_REQUIRED: profile={profile_id}; exact client_secret for client_id is missing")),
@@ -602,10 +598,24 @@ fn read_google_config_raw(app:&AppHandle)->Result<GoogleConfig,String>{
     let b=fs::read(&p).map_err(|e|format!("Google config read: {e}"))?;
     serde_json::from_slice(&b).map_err(|e|format!("Google config parse: {e}"))
 }
+fn reconcile_google_config_presence(mut c:GoogleConfig,canonical_accounts:&[String])->GoogleConfig{
+    let inline_client_secret=!c.client_secret.trim().is_empty();
+    let inline_api_key=!c.api_key.trim().is_empty();
+    c.client_secret_present=inline_client_secret||canonical_accounts.iter().any(|a|a.as_str()==GOOGLE_CLIENT_SECRET);
+    c.api_key_present=inline_api_key||canonical_accounts.iter().any(|a|a.as_str()==GOOGLE_API_KEY);
+    c.client_secret.clear();
+    c.api_key.clear();
+    c
+}
 fn load_google_config_metadata(app:&AppHandle)->Result<GoogleConfig,String>{
-    let p=google_config_path(app)?;let mut c=read_google_config_raw(app)?;
-    c.client_secret_present|=!c.client_secret.is_empty();c.api_key_present|=!c.api_key.is_empty();
-    c.client_secret.clear();c.api_key.clear();if p.exists(){let _=security::private_permissions(&p);}Ok(c)
+    let p=google_config_path(app)?;
+    let raw=read_google_config_raw(app)?;
+    // Read only canonical Keychain ATTRIBUTES, never the secret value. This repairs stale
+    // client_secret_present metadata after app upgrades without triggering macOS auth UI.
+    let canonical_accounts=security::list_canonical_secret_accounts("")?;
+    let c=reconcile_google_config_presence(raw,&canonical_accounts);
+    if p.exists(){let _=security::private_permissions(&p);}
+    Ok(c)
 }
 fn hydrate_google_secrets(c:&mut GoogleConfig)->Result<(),String>{
     if c.client_secret.is_empty(){c.client_secret=security::canonical_get_secret_cached(GOOGLE_CLIENT_SECRET)?.unwrap_or_default()}
@@ -993,7 +1003,13 @@ pub fn youtube_oauth_disconnect(app: AppHandle, profile_id: String) -> Result<()
 }
 
 #[tauri::command]
-pub async fn youtube_oauth_connect(
+pub fn oauth_authorization_url(client_id:&str,redirect:&str,scope:&str,challenge:&str,state:&str)->String{
+    let prompt=urlencoding::encode("select_account consent");
+    format!("https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&access_type=offline&prompt={}&include_granted_scopes=true&code_challenge={}&code_challenge_method=S256&state={}",
+      urlencoding::encode(client_id),urlencoding::encode(redirect),urlencoding::encode(scope),prompt,urlencoding::encode(challenge),urlencoding::encode(state))
+}
+
+async fn youtube_oauth_connect(
     app: AppHandle,
     client_id: String,
     client_secret: String,
@@ -1023,11 +1039,11 @@ pub async fn youtube_oauth_connect(
         .split_whitespace()
         .map(str::to_string)
         .collect::<Vec<_>>();
-    let auth_url=format!("https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&access_type=offline&prompt=consent&code_challenge={}&code_challenge_method=S256&state={}",urlencoding::encode(&client_id),urlencoding::encode(&redirect),urlencoding::encode(scope),urlencoding::encode(&challenge),urlencoding::encode(&state));
+    let auth_url=oauth_authorization_url(&client_id,&redirect,scope,&challenge,&state);
     let preferred_browser = browser.unwrap_or_else(|| "default".into());
     open_browser(&auth_url, &preferred_browser)?;
     let expected_state = state.clone();
-    let code=tauri::async_runtime::spawn_blocking(move||->Result<String,String>{listener.set_nonblocking(false).map_err(|e|e.to_string())?;let (mut stream,_)=listener.accept().map_err(|e|format!("OAuth callback: {e}"))?;let _=stream.set_read_timeout(Some(Duration::from_secs(300)));let mut buf=[0u8;8192];let n=stream.read(&mut buf).map_err(|e|format!("OAuth callback read: {e}"))?;let req=String::from_utf8_lossy(&buf[..n]);let first=req.lines().next().unwrap_or("");let target=first.split_whitespace().nth(1).unwrap_or("");let query=target.split_once('?').map(|x|x.1).unwrap_or("");let got_state=query_param(query,"state").unwrap_or_default();let code=query_param(query,"code");let err=query_param(query,"error");let ok=got_state==expected_state&&code.is_some();let html=if ok{"<html><body style='font-family:-apple-system;padding:40px;background:#07111d;color:white'><h2>Google передал код авторизации ✅</h2><p>VYRON завершает подключение и проверяет YouTube Channel ID. Вернитесь в приложение.</p></body></html>"}else{"<html><body><h2>VYRON OAuth error</h2><p>Вернитесь в приложение.</p></body></html>"};let resp=format!("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",html.as_bytes().len(),html);let _=stream.write_all(resp.as_bytes());if let Some(e)=err{return Err(format!("Google OAuth: {e}"))}if got_state!=expected_state{return Err("OAuth state mismatch".into())}code.ok_or_else(||"Google не вернул authorization code".into())}).await.map_err(|e|e.to_string())??;
+    let code=tauri::async_runtime::spawn_blocking(move||->Result<String,String>{listener.set_nonblocking(false).map_err(|e|e.to_string())?;let (mut stream,_)=listener.accept().map_err(|e|format!("OAuth callback: {e}"))?;let _=stream.set_read_timeout(Some(Duration::from_secs(300)));let mut buf=[0u8;8192];let n=stream.read(&mut buf).map_err(|e|format!("OAuth callback read: {e}"))?;let req=String::from_utf8_lossy(&buf[..n]);let first=req.lines().next().unwrap_or("");let target=first.split_whitespace().nth(1).unwrap_or("");let query=target.split_once('?').map(|x|x.1).unwrap_or("");let got_state=query_param(query,"state").unwrap_or_default();let code=query_param(query,"code");let err=query_param(query,"error");let ok=got_state==expected_state&&code.is_some();let html=if ok{"<html><body style='font-family:-apple-system;padding:40px;background:#07111d;color:white'><h2>Google передал код авторизации ✅</h2><p>VYRON завершает подключение и проверяет YouTube Channel ID. Вернитесь в приложение.</p></body></html>"}else{"<html><body><h2>VYRON OAuth error</h2><p>Вернитесь в приложение.</p></body></html>"};let resp=format!("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",html.as_bytes().len(),html);let _=stream.write_all(resp.as_bytes());if let Some(e)=err{return Err(format!("Google OAuth: {e}"))}if got_state!=expected_state{return Err("OAUTH_STATE_MISMATCH: callback state does not match request".into())}code.ok_or_else(||"OAUTH_CODE_EXCHANGE_FAILED: Google не вернул authorization code".into())}).await.map_err(|e|e.to_string())??;
     let mut token_form = vec![
         ("client_id", client_id.as_str()),
         ("code", code.as_str()),
@@ -1054,8 +1070,8 @@ pub async fn youtube_oauth_connect(
             .get("error_description")
             .and_then(|x| x.as_str())
             .or_else(|| tv.get("error").and_then(|x| x.as_str()))
-            .unwrap_or("Google OAuth token error")
-            .to_string());
+            .unwrap_or("Google OAuth token error");
+        return Err(format!("OAUTH_CODE_EXCHANGE_FAILED: {detail}"));
     }
     let access = tv
         .get("access_token")
@@ -1089,7 +1105,7 @@ pub async fn youtube_oauth_connect(
         .get("items")
         .and_then(|x| x.as_array())
         .and_then(|a| a.first())
-        .ok_or_else(|| "На выбранном Google-аккаунте YouTube-канал не найден".to_string())?;
+        .ok_or_else(|| "YOUTUBE_CHANNEL_NOT_FOUND: на выбранном Google-аккаунте YouTube-канал не найден".to_string())?;
     let channel_id = item
         .get("id")
         .and_then(|x| x.as_str())
@@ -1122,11 +1138,13 @@ pub async fn youtube_oauth_connect(
     }else{
       return Err("OAUTH_REFRESH_TOKEN_REQUIRED: Google не вернул refresh_token для нового канала. Повторите consent.".into())
     };
-    let effective_secret=if !client_secret.is_empty(){security::canonical_set_secret(GOOGLE_CLIENT_SECRET,&client_secret)?;client_secret.clone()}else{canonical_global_client_secret()?.unwrap_or_default()};
+    // New channels use the one GLOBAL OAuth client secret. Existing historical
+    // profile-specific client_secret items remain supported by the resolver for compatibility.
+    if !client_secret.is_empty(){security::canonical_set_secret(GOOGLE_CLIENT_SECRET,&client_secret)?;}
     let profile = OAuthProfile {
         id: profile_id.clone(),
         client_id: client_id.clone(),
-        client_secret: effective_secret,
+        client_secret: String::new(),
         channel_id: Some(channel_id.clone()),
         channel_title: Some(channel_title.clone()),
         access_token: access,
@@ -4422,7 +4440,7 @@ fn reconnect_auth_url(
     challenge: &str,
     state: &str,
 ) -> String {
-    format!("https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&access_type=offline&prompt=consent&include_granted_scopes=true&code_challenge={}&code_challenge_method=S256&state={}",urlencoding::encode(client_id),urlencoding::encode(redirect),urlencoding::encode(scope),urlencoding::encode(challenge),urlencoding::encode(state))
+    oauth_authorization_url(client_id,redirect,scope,challenge,state)
 }
 async fn reconnect_refresh_smoke(
     client_id: &str,
@@ -5302,5 +5320,36 @@ mod v219_rc4_inventory_and_acl_tests{
   assert_eq!(&*sec.sets.borrow(),&vec!["oauth.p1.refresh_token".to_string(),"oauth.p1.client_secret".to_string()]);
   assert!(sec.v.borrow().get("oauth.p1.access_token").is_none());
   assert_eq!(sec.v.borrow().get("oauth.p1.client_secret").map(String::as_str),Some("secret"));
+ }
+}
+
+
+#[cfg(test)]
+mod v2114_oauth_onboarding_tests{
+ use super::*;
+ #[test]
+ fn canonical_keychain_presence_repairs_stale_google_metadata(){
+  let mut c=GoogleConfig::default();
+  c.client_id="client.apps.googleusercontent.com".into();
+  c.client_secret_present=false;
+  let fixed=reconcile_google_config_presence(c,&[GOOGLE_CLIENT_SECRET.to_string()]);
+  assert!(fixed.client_secret_present);
+  assert_eq!(google_config_status_value(&fixed)["oauthReady"],true);
+ }
+ #[test]
+ fn stale_true_flag_does_not_fake_missing_canonical_secret(){
+  let mut c=GoogleConfig::default();
+  c.client_id="client.apps.googleusercontent.com".into();
+  c.client_secret_present=true;
+  let fixed=reconcile_google_config_presence(c,&[]);
+  assert!(!fixed.client_secret_present);
+  assert_eq!(google_config_status_value(&fixed)["oauthReady"],false);
+ }
+ #[test]
+ fn new_channel_oauth_forces_account_selector_and_offline_consent(){
+  let url=oauth_authorization_url("client","http://127.0.0.1:1234","scope","challenge","state");
+  assert!(url.contains("access_type=offline"));
+  assert!(url.contains("prompt=select_account%20consent"));
+  assert!(url.contains("include_granted_scopes=true"));
  }
 }
