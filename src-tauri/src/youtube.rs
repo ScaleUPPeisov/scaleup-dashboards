@@ -148,41 +148,7 @@ fn legacy_refresh_candidates(id:&str)->Vec<String>{
 fn select_present_account(candidates:&[String],present:&[String])->Option<String>{
  candidates.iter().find(|a|present.iter().any(|x|x==*a)).cloned()
 }
-fn migrate_refresh_with<FRead,FWrite,FVerify>(
- state:&mut KeychainMigrationV2State,
- profile_id:&str,
- legacy_account:Option<&str>,
- mut legacy_read:FRead,
- mut canonical_write:FWrite,
- mut canonical_verify:FVerify,
-)->Result<bool,String>
-where
- FRead:FnMut(&str)->Result<Option<String>,String>,
- FWrite:FnMut(&str,&str)->Result<(),String>,
- FVerify:FnMut(&str,&str)->Result<bool,String>,
-{
- if state.profiles.get(profile_id).map(String::as_str)==Some(MIGRATION_MIGRATED){return Ok(false)}
- state.profiles.insert(profile_id.to_string(),MIGRATION_MIGRATING.into());
- let canonical_account=oauth_key(profile_id,"refresh_token");
- let Some(source)=legacy_account else{
-  state.profiles.insert(profile_id.to_string(),MIGRATION_FAILED.into());
-  return Err(format!("REFRESH_TOKEN_MISSING: legacy refresh token not found for profile {profile_id}"))
- };
- let value=match legacy_read(source){
-  Ok(Some(v)) if !v.trim().is_empty()=>v,
-  Ok(_)=>{state.profiles.insert(profile_id.to_string(),MIGRATION_FAILED.into());return Err(format!("REFRESH_TOKEN_MISSING: legacy refresh token empty for profile {profile_id}"))}
-  Err(e)=>{state.profiles.insert(profile_id.to_string(),MIGRATION_FAILED.into());return Err(e)}
- };
- if let Err(e)=canonical_write(&canonical_account,&value){
-  state.profiles.insert(profile_id.to_string(),MIGRATION_FAILED.into());return Err(e)
- }
- match canonical_verify(&canonical_account,&value){
-  Ok(true)=>{state.profiles.insert(profile_id.to_string(),MIGRATION_MIGRATED.into());Ok(true)}
-  Ok(false)=>{state.profiles.insert(profile_id.to_string(),MIGRATION_FAILED.into());Err(format!("KEYCHAIN_MIGRATION_V2_VERIFY_FAILED: profile={profile_id}"))}
-  Err(e)=>{state.profiles.insert(profile_id.to_string(),MIGRATION_FAILED.into());Err(e)}
- }
-}
-fn migrate_profile_refresh_to_canonical(app:&AppHandle,profile_id:&str)->Result<(),String>{
+fn migrate_profile_refresh_to_canonicalfn migrate_profile_refresh_to_canonical(app:&AppHandle,profile_id:&str)->Result<(),String>{
  let canonical_account=oauth_key(profile_id,"refresh_token");
  match security::canonical_get_secret_cached(&canonical_account){
   Ok(Some(v)) if !v.trim().is_empty()=>{
@@ -4514,6 +4480,49 @@ mod keychain_prompt_architecture_tests{
  }
  fn p(id:&str)->OAuthProfile{OAuthProfile{id:id.into(),client_id:"123.apps.googleusercontent.com".into(),client_secret:String::new(),channel_id:Some(format!("UC{id}")),channel_title:Some(id.into()),access_token:String::new(),refresh_token:String::new(),expires_at:0,connected_at:"2026-01-01T00:00:00Z".into(),scopes:vec![],preferred_browser:"default".into(),identity_validated_at:Some("2026-01-01T00:00:00Z".into()),identity_validated_channel_id:Some(format!("UC{id}")),credential_error:None}}
  #[test]fn passive_profile_listing_zero_secret_store_calls(){let secrets=CountingStore::default();let value=oauth_profiles_value(OAuthStore{profiles:vec![p("a"),p("b")]});assert_eq!(value.as_array().unwrap().len(),2);assert!(secrets.gets.borrow().is_empty());assert!(secrets.sets.borrow().is_empty());assert!(secrets.deletes.borrow().is_empty());assert_eq!(*secrets.accounts.borrow(),0);}
+ #[test]fn thirty_one_profiles_passive_enumeration_zero_secret_reads(){
+  let secrets=CountingStore::default();
+  let profiles=(0..31).map(|i|p(&format!("p{i}"))).collect::<Vec<_>>();
+  let value=oauth_profiles_value(OAuthStore{profiles});
+  assert_eq!(value.as_array().unwrap().len(),31);
+  assert!(secrets.gets.borrow().is_empty());assert!(secrets.sets.borrow().is_empty());assert!(secrets.deletes.borrow().is_empty());assert_eq!(*secrets.accounts.borrow(),0);
+ }
+ #[test]fn hundred_passive_navigation_models_zero_secret_reads(){
+  let secrets=CountingStore::default();
+  let profiles=(0..31).map(|i|p(&format!("p{i}"))).collect::<Vec<_>>();
+  for _ in 0..100{
+   let value=oauth_profiles_value(OAuthStore{profiles:profiles.clone()});
+   assert_eq!(value.as_array().unwrap().len(),31);
+  }
+  assert!(secrets.gets.borrow().is_empty());assert!(secrets.sets.borrow().is_empty());assert!(secrets.deletes.borrow().is_empty());assert_eq!(*secrets.accounts.borrow(),0);
+ }
+ #[test]fn canonical_refresh_restart_model_never_enumerates_legacy(){
+  let secrets=CountingStore::default();
+  let account=oauth_key("a","refresh_token");
+  secrets.v.borrow_mut().insert(account.clone(),"canonical-refresh".into());
+  let mut first=p("a");hydrate_profile_secret_kind_with(&secrets,&mut first,"refresh_token").unwrap();
+  let mut relaunched=p("a");hydrate_profile_secret_kind_with(&secrets,&mut relaunched,"refresh_token").unwrap();
+  assert_eq!(first.refresh_token,"canonical-refresh");assert_eq!(relaunched.refresh_token,"canonical-refresh");
+  assert_eq!(&*secrets.gets.borrow(),&vec![account.clone(),account]);
+  assert_eq!(*secrets.accounts.borrow(),0);
+ }
+ #[test]fn rc6_source_contract_has_zero_runtime_legacy_secret_reads(){
+  let source=include_str!("youtube.rs");
+  let migration=source.split("fn migrate_profile_refresh_to_canonical").nth(1).unwrap().split("trait OAuthSecretStore").next().unwrap();
+  assert!(!migration.contains("legacy_get_secret_once"));
+  assert!(!migration.contains("security::get_secret("));
+  let inventory=source.split("pub async fn youtube_list_existing_videos").nth(1).unwrap().split("fn full_inventory").next().unwrap_or("");
+  assert!(!inventory.contains("migrate_profile_refresh_to_canonical(&app,&profile_id)"));
+  assert!(!source.contains("security::get_secret_cached(GOOGLE_API_KEY)"));
+  assert!(!source.contains("security::set_secret(GOOGLE_API_KEY"));
+ }
+ #[test]fn rc6_security_source_contract_guards_every_native_secret_read(){
+  let source=include_str!("security.rs");
+  assert!(source.contains("SecKeychain::disable_user_interaction()"));
+  let native_reads=source.matches("get_generic_password(").count();
+  let guarded_reads=source.matches("with_keychain_no_ui(||match get_generic_password(").count();
+  assert_eq!(native_reads,guarded_reads);
+ }
  #[test]fn selected_profile_hydration_reads_only_selected_secret(){let secrets=CountingStore::default();secrets.v.borrow_mut().insert(oauth_key("a","refresh_token"),"ra".into());secrets.v.borrow_mut().insert(oauth_key("b","refresh_token"),"rb".into());let mut a=p("a");let b=p("b");hydrate_profile_secret_kind_with(&secrets,&mut a,"refresh_token").unwrap();assert_eq!(a.refresh_token,"ra");assert!(b.refresh_token.is_empty());assert_eq!(&*secrets.gets.borrow(),&vec![oauth_key("a","refresh_token")]);assert!(secrets.sets.borrow().is_empty());assert!(secrets.deletes.borrow().is_empty());}
  #[test]fn google_status_metadata_never_requires_secret_value(){let c=GoogleConfig{client_id:"123.apps.googleusercontent.com".into(),project_id:"project".into(),client_secret:String::new(),api_key:String::new(),client_secret_present:true,api_key_present:true};let v=google_config_status_value(&c);assert_eq!(v["hasSecret"],true);assert_eq!(v["hasApiKey"],true);assert!(!v.to_string().contains("client_secret"));}
 }
@@ -4751,34 +4760,6 @@ mod v219_rc5_keychain_v2_tests{
   assert_eq!(security::LEGACY_SERVICE,"com.scaleup.vyron.security");
  }
  #[test]
- fn explicit_profile_migration_reads_refresh_once_access_zero_and_writes_once(){
-  let mut state=KeychainMigrationV2State::default();
-  let mut reads=Vec::<String>::new();let mut writes=Vec::<String>::new();
-  migrate_refresh_with(
-   &mut state,"p1",Some("oauth.p1.refresh_token"),
-   |a|{reads.push(a.into());Ok(Some("refresh".into()))},
-   |a,v|{writes.push(format!("{a}:{v}"));Ok(())},
-   |a,v|Ok(a=="oauth.p1.refresh_token"&&v=="refresh")
-  ).unwrap();
-  assert_eq!(reads,vec!["oauth.p1.refresh_token"]);
-  assert_eq!(writes,vec!["oauth.p1.refresh_token:refresh"]);
-  assert!(!reads.iter().any(|x|x.contains("access_token")));
-  assert!(!reads.iter().any(|x|x.contains("client_secret")));
- }
- #[test]
- fn second_migration_and_relaunch_marker_skip_legacy_completely(){
-  let mut state=KeychainMigrationV2State::default();
-  state.profiles.insert("p1".into(),MIGRATION_MIGRATED.into());
-  let mut reads=0usize;let mut writes=0usize;
-  let changed=migrate_refresh_with(
-   &mut state,"p1",Some("oauth.p1.refresh_token"),
-   |_|{reads+=1;Ok(Some("legacy".into()))},
-   |_,_|{writes+=1;Ok(())},
-   |_,_|Ok(true)
-  ).unwrap();
-  assert!(!changed);assert_eq!(reads,0);assert_eq!(writes,0);
- }
- #[test]
  fn access_token_replacement_is_memory_only(){
   let id="rc5-access-memory-test";
   forget_access_token(id);
@@ -4870,44 +4851,6 @@ mod v219_rc4_inventory_and_acl_tests{
    json!({"privacyStatus":"public","publishAt":"2099-01-01T00:00:00Z"})
   ];
   assert_eq!(inventory_bucket_counts(&rows,Utc::now()),(2,0,1,0));
- }
- #[test]
- fn rc5_refresh_migration_reads_one_legacy_item_and_writes_one_canonical_item(){
-  let mut state=KeychainMigrationV2State::default();
-  let mut legacy_reads=0usize;let mut canonical_writes=0usize;let mut verifies=0usize;
-  let changed=migrate_refresh_with(
-   &mut state,"p1",Some("oauth.p1.refresh_token"),
-   |_|{legacy_reads+=1;Ok(Some("refresh".into()))},
-   |account,value|{canonical_writes+=1;assert_eq!(account,"oauth.p1.refresh_token");assert_eq!(value,"refresh");Ok(())},
-   |_,value|{verifies+=1;Ok(value=="refresh")}
-  ).unwrap();
-  assert!(changed);assert_eq!(legacy_reads,1);assert_eq!(canonical_writes,1);assert_eq!(verifies,1);
-  assert_eq!(state.profiles.get("p1").map(String::as_str),Some(MIGRATION_MIGRATED));
- }
- #[test]
- fn rc5_migrated_profile_never_reads_legacy_again_after_relaunch_model(){
-  let mut state=KeychainMigrationV2State::default();
-  state.profiles.insert("p1".into(),MIGRATION_MIGRATED.into());
-  let mut legacy_reads=0usize;let mut writes=0usize;
-  let changed=migrate_refresh_with(
-   &mut state,"p1",Some("oauth.p1.refresh_token"),
-   |_|{legacy_reads+=1;Ok(Some("legacy".into()))},
-   |_,_|{writes+=1;Ok(())},
-   |_,_|Ok(true)
-  ).unwrap();
-  assert!(!changed);assert_eq!(legacy_reads,0);assert_eq!(writes,0);
- }
- #[test]
- fn rc5_failed_migration_never_marks_profile_migrated(){
-  let mut state=KeychainMigrationV2State::default();
-  let err=migrate_refresh_with(
-   &mut state,"p1",Some("oauth.p1.refresh_token"),
-   |_|Err("DENIED".into()),
-   |_,_|Ok(()),
-   |_,_|Ok(true)
-  ).unwrap_err();
-  assert_eq!(err,"DENIED");
-  assert_eq!(state.profiles.get("p1").map(String::as_str),Some(MIGRATION_FAILED));
  }
  #[test]
  fn rc5_persistent_profile_store_writes_refresh_only(){
