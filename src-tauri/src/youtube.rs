@@ -4270,19 +4270,27 @@ fn reconnect_rollback_secrets_with<S: OAuthSecretStore>(
     }
 }
 fn reconnect_write_readback_with<S:OAuthSecretStore>(
-    secrets:&S,profile_id:&str,_client_secret:&str,access_token:&str,refresh_token:&str,
+    secrets:&S,profile_id:&str,client_secret:&str,access_token:&str,refresh_token:&str,
 )->Result<ReconnectSecretBackup,String>{
     if profile_id.trim().is_empty(){return Err("OAUTH_PROFILE_ID_MISSING: existing profile UUID is required".into())}
     if access_token.trim().is_empty(){return Err("OAUTH_ACCESS_TOKEN_MISSING: validated access token is empty".into())}
     if refresh_token.trim().is_empty(){return Err("OAUTH_REFRESH_TOKEN_REQUIRED: Google не вернул refresh token. Подключение не сохранено.".into())}
-    let account=oauth_key(profile_id,"refresh_token");
-    let backup=ReconnectSecretBackup{items:vec![(account.clone(),secrets.get(&account)?)]};
-    if let Err(e)=secrets.set(&account,refresh_token){return Err(format!("OAUTH_KEYCHAIN_WRITE_FAILED: account={account}; {e}"))}
-    match secrets.get(&account){
-      Ok(Some(v)) if v==refresh_token=>Ok(backup),
-      Ok(_)=>{reconnect_rollback_secrets_with(secrets,&backup);Err(format!("OAUTH_KEYCHAIN_READBACK_FAILED: account={account}; mismatch"))},
-      Err(e)=>{reconnect_rollback_secrets_with(secrets,&backup);Err(format!("OAUTH_KEYCHAIN_READBACK_FAILED: account={account}; {e}"))}
+    if client_secret.trim().is_empty(){return Err("OAUTH_CLIENT_SECRET_REQUIRED: exact client_secret is missing".into())}
+    let refresh_account=oauth_key(profile_id,"refresh_token");
+    let secret_account=oauth_key(profile_id,"client_secret");
+    let backup=ReconnectSecretBackup{items:vec![
+      (refresh_account.clone(),secrets.get(&refresh_account)?),
+      (secret_account.clone(),secrets.get(&secret_account)?),
+    ]};
+    for (account,value) in [(&refresh_account,refresh_token),(&secret_account,client_secret)]{
+      if let Err(e)=secrets.set(account,value){reconnect_rollback_secrets_with(secrets,&backup);return Err(format!("OAUTH_KEYCHAIN_WRITE_FAILED: account={account}; {e}"))}
+      match secrets.get(account){
+       Ok(Some(v)) if v==value=>{},
+       Ok(_)=>{reconnect_rollback_secrets_with(secrets,&backup);return Err(format!("OAUTH_KEYCHAIN_READBACK_FAILED: account={account}; mismatch"))},
+       Err(e)=>{reconnect_rollback_secrets_with(secrets,&backup);return Err(format!("OAUTH_KEYCHAIN_READBACK_FAILED: account={account}; {e}"))},
+      }
     }
+    Ok(backup)
 }
 fn reconnect_apply_validated_with<S: OAuthSecretStore>(
     secrets: &S,
@@ -4356,14 +4364,8 @@ async fn reconnect_refresh_smoke(
     client_secret: &str,
     refresh_token: &str,
 ) -> Result<(String, i64), String> {
-    let mut form = vec![
-        ("client_id", client_id),
-        ("refresh_token", refresh_token),
-        ("grant_type", "refresh_token"),
-    ];
-    if !client_secret.is_empty() {
-        form.push(("client_secret", client_secret));
-    }
+    if client_secret.trim().is_empty(){return Err("OAUTH_CLIENT_SECRET_REQUIRED: exact client_secret is missing".into())}
+    let form=refresh_token_form(client_id,client_secret,refresh_token);
     let r = reqwest::Client::new()
         .post("https://oauth2.googleapis.com/token")
         .form(&form)
