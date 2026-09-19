@@ -12,12 +12,16 @@ describe('VYRON 2.1.14 RC1 YouTube OAuth onboarding',()=>{
     expect(y).toContain('let oauth_ready=configured&&c.client_secret_present;');
   });
 
-  it('Add Channel stays visible but still routes through the real readiness gate',()=>{
+  it('Add Channel stays visible and readiness failure opens setup guidance, never Finder directly',()=>{
     const ui=read('src/AccountsPage.tsx');
     expect(ui).toContain('>+ Добавить канал</button>');
-    expect(ui).toContain("if(!profileId&&!config?.oauthReady)");
-    expect(ui).toContain("file.current?.click()");
-    expect(ui).not.toContain("oauthReady?'+ Добавить канал':'Настроить OAuth Client'");
+    expect(ui).toContain("if(!readiness.oauthReady)");
+    expect(ui).toContain('setOauthSetupOpen(true)');
+    const start=ui.indexOf("async function askBrowser");
+    const end=ui.indexOf("async function connect",start);
+    const addFlow=ui.slice(start,end);
+    expect(addFlow).not.toContain("file.current?.click()");
+    expect(ui).toContain('Импортировать credentials.json</button>');
   });
 
   it('new-channel OAuth explicitly requests account selection and offline consent',()=>{
@@ -76,7 +80,7 @@ describe('VYRON 2.1.14 RC1 YouTube OAuth onboarding',()=>{
     const end=y.indexOf('fn reconnect_profile_id',start);
     const connect=y.slice(start,end);
     expect(connect).toContain("find(|p|p.channel_id.as_deref()==Some(channel_id.as_str()))");
-    expect(connect).toContain('let profile_id=reconnect_profile_id(existing.as_ref());');
-    expect(connect).toContain('retain(|p| p.id != profile_id && p.channel_id.as_deref() != Some(channel_id.as_str()))');
+    expect(connect).toContain('YOUTUBE_CHANNEL_ALREADY_CONNECTED');
+    expect(connect).toContain('let profile_id=reconnect_profile_id(None);');
   });
 });
