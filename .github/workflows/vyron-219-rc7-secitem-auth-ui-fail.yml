@@ -272,3 +272,4 @@ jobs:
 # retry: RC7 zero-prompt contracts aligned after targeted legacy-test update
 # retry: RC7 compile marker repair
 # retry: RC7 production-only source contract and self-reference fix
+# retry: RC7 UISkip source-contract literal fixed
