@@ -39,7 +39,10 @@ describe('VYRON 2.1.14 RC1 YouTube OAuth onboarding',()=>{
     const connect=y.slice(start,end);
     expect(connect.indexOf('TcpListener::bind("127.0.0.1:0")')).toBeGreaterThan(-1);
     expect(connect.indexOf('open_browser(&auth_url')).toBeGreaterThan(connect.indexOf('TcpListener::bind("127.0.0.1:0")'));
-    expect(connect).toContain('OAUTH_STATE_MISMATCH');
+    expect(connect).toContain('wait_for_oauth_code(listener,expected_state)');
+    const callback=y.slice(y.indexOf('fn wait_for_oauth_code'),y.indexOf('fn oauth_profiles_value'));
+    expect(callback).toContain('OAUTH_STATE_MISMATCH');
+    expect(callback).toContain('OAUTH_CALLBACK_TIMEOUT');
   });
 
   it('new channels keep the one global OAuth client secret while preserving historical resolver compatibility',()=>{
@@ -74,7 +77,7 @@ describe('VYRON 2.1.14 RC1 YouTube OAuth onboarding',()=>{
     expect(status).not.toContain('project_id&&');
   });
 
-  it('same YouTube Channel ID reuses existing Profile UUID and duplicate profile creation is blocked by replacement',()=>{
+  it('same YouTube Channel ID is blocked in Add flow and routed to explicit reconnect',()=>{
     const y=read('src-tauri/src/youtube.rs');
     const start=y.indexOf('async fn youtube_oauth_connect(');
     const end=y.indexOf('fn reconnect_profile_id',start);
