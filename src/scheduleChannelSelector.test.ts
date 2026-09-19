@@ -1,4 +1,3 @@
-import {fileURLToPath} from 'node:url';
 import React from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {beforeEach,describe,expect,it,vi} from 'vitest';
@@ -6,13 +5,14 @@ import {ScheduleOS,scheduleChannelSwitchReset} from './ScheduleOS';
 import {buildScheduleOnlyPlan,recoveryFromPlan} from './scheduleOnly';
 import type {Channel,YoutubeExistingVideo} from './types';
 import {readFileSync} from 'node:fs';
+import {testFilePath} from './testFilePath';
 
 const storeFixture=vi.hoisted(()=>({channels:[] as Channel[],toast:(_message:string)=>{}}));
 const activeChannelFixture=vi.hoisted(()=>({id:'',saved:[] as string[]}));
 vi.mock('./store',()=>({useApp:(selector:(state:typeof storeFixture)=>unknown)=>selector(storeFixture)}));
 vi.mock('./publishWorkspaceState',()=>({loadActivePublishChannel:()=>activeChannelFixture.id,saveActivePublishChannel:(channelId:string)=>{activeChannelFixture.id=channelId;activeChannelFixture.saved.push(channelId)}}));
 
-const ui=readFileSync(fileURLToPath(new URL('./ScheduleOS.tsx',import.meta.url)),'utf8');
+const ui=readFileSync(testFilePath('./ScheduleOS.tsx',import.meta.url),'utf8');
 const channel=(id:string,name=`Channel ${id}`,profile=`profile-${id}`):Channel=>({id,name,slug:id,cadenceDays:2,targetBufferDays:60,publishHour:4,publishMinute:0,language:'EN',genre:'Music',country:'US',minTracks:10,targetDurationMin:120,enabled:true,youtubeProfileId:profile,seo:{titlePatterns:[],descriptionTemplate:'',tags:[],banned:[]}});
 const video=(id:string,publishAt:string):YoutubeExistingVideo=>({id,position:1,title:id,description:'',tags:[],categoryId:'10',privacyStatus:'private',publishAt,selected:false});
 function render(channels:Channel[]){storeFixture.channels=channels;return renderToStaticMarkup(React.createElement(ScheduleOS))}
