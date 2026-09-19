@@ -105,24 +105,25 @@ export function AccountsPage(){
   setBusy(true);
   try{
    if(!profileId){
-    const readiness=await api.youtubeGoogleConfig();
+    let readiness:GoogleConfigStatus;
+    try{readiness=await api.youtubeGoogleConfig()}catch(e){toast(`Не удалось проверить GLOBAL OAuth Client: ${String(e)}`);return}
     setConfig(readiness);
     if(!readiness.oauthReady){
      setOauthSetupOpen(true);
      return
     }
    }
-   const rows=await api.youtubeOauthBrowsers();
-   const available=rows.filter(x=>x.available);
-   const options=available.some(x=>x.id==='default')?available:[{id:'default',label:'Браузер по умолчанию',available:true},...available];
-   setBrowsers(options);
-   if(!options.some(x=>x.id===browser))setBrowser('default');
-   setPendingProfileId(profileId);
-   setBrowserOpen(true)
-  }catch(e){
-   toast(`Не удалось получить список браузеров: ${String(e)}`);
-   setBrowsers([{id:'default',label:'Браузер по умолчанию',available:true}]);
-   setBrowser('default');
+   try{
+    const rows=await api.youtubeOauthBrowsers();
+    const available=rows.filter(x=>x.available);
+    const options=available.some(x=>x.id==='default')?available:[{id:'default',label:'Браузер по умолчанию',available:true},...available];
+    setBrowsers(options);
+    if(!options.some(x=>x.id===browser))setBrowser('default');
+   }catch(e){
+    toast(`Не удалось определить установленные браузеры, будет использован системный: ${String(e)}`);
+    setBrowsers([{id:'default',label:'Браузер по умолчанию',available:true}]);
+    setBrowser('default');
+   }
    setPendingProfileId(profileId);
    setBrowserOpen(true)
   }finally{setBusy(false)}
