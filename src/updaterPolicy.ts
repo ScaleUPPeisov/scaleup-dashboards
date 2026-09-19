@@ -1,6 +1,9 @@
+export const WINDOWS_UPDATER_PLATFORM='windows-x86_64' as const;
+export const MACOS_UPDATER_PLATFORM='darwin-aarch64' as const;
+
 export const UPDATER_ENDPOINTS=[
-  'https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/vyron-updates/latest.json',
-  'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/latest/download/latest.json'
+  'https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/vyron-updates/windows-latest.json',
+  'https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/vyron-updates/latest.json'
 ] as const;
 
 export const UPDATER_CHECK_OPTIONS={
@@ -33,7 +36,7 @@ export function updaterFailureMessage(code:string,detail:string){
   if(code==='UPDATER_ARCHIVE_DOWNLOAD_FAILED')return `Не удалось скачать файл обновления с GitHub. ${detail}`;
   if(code==='UPDATER_MANIFEST_FETCH_FAILED')return `Не удалось проверить обновление. ${detail}`;
   if(code==='UPDATER_SIGNATURE_INVALID')return `Проверка подписи обновления не пройдена. ${detail}`;
-  if(code==='UPDATER_PLATFORM_NOT_FOUND')return `В manifest нет совместимой сборки darwin-aarch64. ${detail}`;
+  if(code==='UPDATER_PLATFORM_NOT_FOUND')return `Для этой платформы обновление пока не опубликовано. ${detail}`;
   if(code==='UPDATER_RESTART_FAILED')return `Обновление установлено, но VYRON не удалось перезапустить автоматически. ${detail}`;
   return `Не удалось установить обновление. ${detail}`;
 }
