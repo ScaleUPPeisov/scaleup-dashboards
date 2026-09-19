@@ -49,9 +49,9 @@ export function YouTubeChannelBar(){
    <b>{active?.name||'Канал не выбран'}</b>
    <span>{stats?.handle?`${stats.handle} • `:''}{active?.youtubeChannelId||active?.id||'—'} • {active?.youtubeProfileId?'OAuth ✓':'OAuth не подключён'}</span>
    <div className="youtubeChannelStats">
-    <span><small>👥 ПОДПИСЧИКИ</small><b title={stats?.hiddenSubscriberCount?'Подписчики скрыты владельцем канала':exactChannelStat(stats?.subscriberCount??stats?.subscribers)}>{subscriberStatLabel(stats)}</b></span>
-    <span><small>👁 ВСЕГО ПРОСМОТРОВ</small><b title={exactChannelStat(stats?.viewCount??stats?.views)}>{compactChannelStat(stats?.viewCount??stats?.views)}</b></span>
-    <span><small>🎬 ВИДЕО</small><b title={exactChannelStat(stats?.videoCount??stats?.videos)}>{compactChannelStat(stats?.videoCount??stats?.videos)}</b></span>
+    <span><small>👥 Подписчики</small><b title={stats?.hiddenSubscriberCount?'Подписчики скрыты владельцем канала':exactChannelStat(stats?.subscriberCount??stats?.subscribers)}>{subscriberStatLabel(stats)}</b></span>
+    <span><small>👁 Всего просмотров</small><b title={exactChannelStat(stats?.viewCount??stats?.views)}>{compactChannelStat(stats?.viewCount??stats?.views)}</b></span>
+    <span><small>🎬 Видео</small><b title={exactChannelStat(stats?.videoCount??stats?.videos)}>{compactChannelStat(stats?.videoCount??stats?.videos)}</b></span>
    </div>
    <div className={stats?.syncWarning?'youtubeStatsState warn':'youtubeStatsState'}>
     <span>{channelStatsStatusLabel(stats,refreshing)}</span>
