@@ -235,14 +235,19 @@ fn image_snapshot(dir: &Path) -> HashSet<String> {
         .collect()
 }
 
-fn downloads_dir() -> Result<PathBuf, String> {
-    let home =
-        std::env::var("HOME").map_err(|_| "Не удалось определить домашнюю папку".to_string())?;
-    let p = PathBuf::from(home).join("Downloads");
-    if !p.is_dir() {
-        return Err("Папка Downloads не найдена".into());
-    }
+fn downloads_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    use tauri::Manager;
+    let p = app.path().download_dir().map_err(|e| format!("Не удалось определить папку Downloads: {e}"))?;
+    if !p.is_dir() { return Err("Папка Downloads не найдена".into()); }
     Ok(p)
+}
+fn downloads_access_error(detail: &str) -> String {
+    #[cfg(target_os = "macos")]
+    { return format!("{detail}. Разрешите VYRON доступ к Downloads в настройках macOS «Конфиденциальность и безопасность → Файлы и папки»."); }
+    #[cfg(target_os = "windows")]
+    { return format!("{detail}. Проверьте доступ VYRON к папке «Загрузки» и защиту Windows Controlled Folder Access."); }
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    { format!("{detail}. Проверьте права доступа VYRON к папке Downloads.") }
 }
 fn recursive_audio(root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
@@ -826,7 +831,7 @@ fn spawn_import_watcher(
                     files
                 }
                 Err(e) => {
-                    let message=format!("{e}. Разрешите VYRON доступ к Downloads в настройках macOS «Конфиденциальность и безопасность → Файлы и папки».");
+                    let message=downloads_access_error(&e);
                     if last_error.as_deref() != Some(message.as_str()) {
                         let _=app.emit("production-import-error",json!({"channelId":channel_id,"sessionId":session.session_id,"message":message}));
                         last_error = Some(message);
@@ -938,8 +943,8 @@ pub fn start_production_import(
             return Err("Сбор изображений уже запущен".into());
         }
     }
-    let downloads = downloads_dir()?;
-    fs::read_dir(&downloads).map_err(|e|format!("VYRON не может читать папку Downloads: {e}. Разрешите VYRON доступ к Downloads в настройках macOS «Конфиденциальность и безопасность → Файлы и папки»."))?;
+    let downloads = downloads_dir(&app)?;
+    fs::read_dir(&downloads).map_err(|e|downloads_access_error(&format!("VYRON не может читать папку Downloads: {e}")))?;
     let croot = channel_root(&workspace, &channel_id)?;
     let sp = session_path(&workspace, &channel_id)?;
     let old: ImportSession = read_json(&sp);
@@ -1905,11 +1910,12 @@ fn safe_cleanup_root(root: &Path) -> Result<PathBuf, String> {
     if c == PathBuf::from("/") {
         return Err("BLOCK: корневой путь запрещён".into());
     }
-    if let Ok(home) = std::env::var("HOME") {
+    #[cfg(target_os = "windows")]
+    if c.parent().is_none() { return Err("BLOCK: корень диска нельзя использовать как cleanup root".into()); }
+    let home_var = if cfg!(target_os = "windows") { "USERPROFILE" } else { "HOME" };
+    if let Ok(home) = std::env::var(home_var) {
         if let Ok(h) = PathBuf::from(home).canonicalize() {
-            if c == h {
-                return Err("BLOCK: HOME нельзя использовать как cleanup root".into());
-            }
+            if c == h { return Err("BLOCK: домашнюю папку нельзя использовать как cleanup root".into()); }
         }
     }
     Ok(c)
@@ -2494,7 +2500,23 @@ pub fn open_production_batch_in_endlume(
             repeated_project_ids: repeated,
         });
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        let roaming = std::env::var_os("APPDATA").ok_or_else(|| "APPDATA не найден".to_string())?;
+        let inbox = PathBuf::from(roaming).join("studio.endlume.desktop").join("VYRON Inbox");
+        fs::create_dir_all(&inbox).map_err(|e| e.to_string())?;
+        let request = inbox.join(format!("{}-{}.json", safe_component(&m.batch_id), safe_component(&handoff_id)));
+        atomic_json(&request,&json!({"schemaVersion":1,"batchId":m.batch_id,"manifestPath":subset_path.to_string_lossy(),"requestedAt":now,"selectedProjectIds":ids,"sourceManifestPath":manifest_path,"handoffId":handoff_id}))?;
+        Command::new(&app).spawn().map_err(|e| format!("Не удалось открыть ENDLUME: {e}"))?;
+        return Ok(HandoffReceipt {
+            batch_id: m.batch_id,
+            manifest_path: subset_path.to_string_lossy().into_owned(),
+            request_path: request.to_string_lossy().into_owned(),
+            selected_project_ids: ids,
+            repeated_project_ids: repeated,
+        });
+    }
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
     {
         Command::new(&app).spawn().map_err(|e| e.to_string())?;
         Ok(HandoffReceipt {
