@@ -50,7 +50,7 @@ fn secure_state_for_disk(state: &Value) -> Result<(Value, bool), String> {
     ] {
         let value = state_secret(state, field);
         if !value.is_empty() {
-            security::set_secret(account, &value)?;
+            security::canonical_set_secret(account, &value)?;
             migrated = true;
         }
     }
@@ -65,7 +65,7 @@ fn secure_state_for_disk_best_effort(state: &Value) -> (Value, Vec<String>) {
     ] {
         let value = state_secret(state, field);
         if !value.is_empty() {
-            if let Err(e) = security::set_secret_for_autosave(account, &value) {
+            if let Err(e) = security::canonical_set_secret(account, &value) {
                 warnings.push(e)
             }
         }
@@ -81,10 +81,10 @@ fn legacy_state_secret_for_operation(app:&AppHandle,field:&str)->Result<Option<S
     Ok((!value.is_empty()).then_some(value))
 }
 fn secret_for_operation(app:&AppHandle,field:&str,account:&str)->Result<String,String>{
-    if let Some(v)=security::get_secret_cached(account)?{if !v.is_empty(){return Ok(v)}}
+    if let Some(v)=security::canonical_get_secret_cached(account)?{if !v.is_empty(){return Ok(v)}}
     if let Some(v)=legacy_state_secret_for_operation(app,field)?{
         // One-time legacy migration is allowed only from an explicit secret-required operation.
-        security::set_secret(account,&v)?;
+        security::canonical_set_secret(account,&v)?;
         let path=state_file(app)?;
         let raw=fs::read(&path).map_err(|e|format!("state read: {e}"))?;
         let state:Value=serde_json::from_slice(&raw).map_err(|e|format!("state parse: {e}"))?;
