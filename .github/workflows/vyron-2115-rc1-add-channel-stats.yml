@@ -400,3 +400,5 @@ jobs:
 # retry: align historical source-contract tests with explicit OAuth setup and duplicate protection
 
 # retry: authorize only the two historical regression contract updates required by the new explicit flow
+
+# retry: total-channel-views assertion aligned with visible UI label
