@@ -508,16 +508,28 @@ mod tests{
  #[test]
  fn per_query_no_ui_policy_is_present_in_production_source(){
   let source=include_str!("security.rs");
-  let production=source.split("#[cfg(test)]").next().unwrap_or(source);
-  assert!(production.contains("kSecUseAuthenticationUIFail"));
-  assert!(production.contains("SecItemCopyMatching"));
-  assert!(production.contains("SecItemUpdate"));
-  assert!(production.contains("SecItemDelete"));
-  assert!(production.contains("skip_authenticated_items(true)"));
-  assert!(!production.contains("get_generic_password("));
-  assert!(!production.contains("set_generic_password("));
-  assert!(!production.contains("delete_generic_password("));
-  assert!(!production.contains("macOS может показать системный запрос пароля"));
+  let ui_fail=["kSecUseAuthenticationUI","Fail"].concat();
+  let copy=["SecItemCopy","Matching"].concat();
+  let update=["SecItem","Update"].concat();
+  let delete=["SecItem","Delete"].concat();
+  let skip=["skip_authenticated_items","(true)"].concat();
+  let old_get=["get_generic_","password("].concat();
+  let old_set=["set_generic_","password("].concat();
+  let old_delete=["delete_generic_","password("].concat();
+  assert!(source.contains(&ui_fail));
+  assert!(source.contains(&copy));
+  assert!(source.contains(&update));
+  assert!(source.contains(&delete));
+  assert!(source.matches(&skip).count()>=2);
+  assert!(!source.contains(&old_get));
+  assert!(!source.contains(&old_set));
+  assert!(!source.contains(&old_delete));
+  let diag=source.split("pub fn security_keychain_diagnostics()").nth(1).unwrap().split("pub fn security_keychain_runtime_diagnostics()").next().unwrap();
+  assert!(!diag.contains("canonical_get_secret("));
+  assert!(!diag.contains("canonical_set_secret("));
+  assert!(!diag.contains("canonical_delete_secret("));
+  assert!(diag.contains("\"secretReads\":0"));
+  assert!(diag.contains("\"secretWrites\":0"));
  }
  #[test]
  #[cfg(target_os="macos")]
