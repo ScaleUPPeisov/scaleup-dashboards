@@ -4530,7 +4530,7 @@ mod keychain_prompt_architecture_tests{
  }
  #[test]fn rc7_security_source_contract_uses_per_query_ui_skip(){
   let source=include_str!("security.rs");
-  let ui_skip=["kSecUseAuthenticationUI","Fail"].concat();
+  let ui_skip=["kSecUseAuthenticationUI","Skip"].concat();
   let skip=["skip_authenticated_items","(true)"].concat();
   let old_get=["get_generic_","password("].concat();
   let old_set=["set_generic_","password("].concat();
