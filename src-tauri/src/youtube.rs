@@ -5488,13 +5488,13 @@ mod v2114_oauth_onboarding_tests{
   assert_eq!(google_config_status_value(&fixed)["oauthReady"],true);
  }
  #[test]
- fn stale_true_flag_does_not_fake_missing_canonical_secret(){
+ fn persisted_true_secret_presence_survives_passive_enumeration_skip(){
   let mut c=GoogleConfig::default();
   c.client_id="client.apps.googleusercontent.com".into();
   c.client_secret_present=true;
   let fixed=reconcile_google_config_presence(c,&[]);
-  assert!(!fixed.client_secret_present);
-  assert_eq!(google_config_status_value(&fixed)["oauthReady"],false);
+  assert!(fixed.client_secret_present);
+  assert_eq!(google_config_status_value(&fixed)["oauthReady"],true);
  }
  #[test]
  fn new_channel_oauth_forces_account_selector_and_offline_consent(){
