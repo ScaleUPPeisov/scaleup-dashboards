@@ -1,11 +1,11 @@
 {
-  "version": "2.1.11",
-  "notes": "VYRON 2.1.11 — исправлен OAuth reconnect после Google consent: client_secret теперь разрешается строго для exact OAuth profile/client. Поддерживаются несколько client_id без cross-use secrets; Profile UUID, channel mapping и canonical Keychain credentials сохраняются.",
-  "pub_date": "2026-09-19T13:10:51Z",
+  "version": "2.1.12",
+  "notes": "VYRON 2.1.12 — восстановлен browser-first reconnect для существующих каналов. Если старый OAuth Client больше не доступен, VYRON использует текущую настроенную пару OAuth Client целиком, затем проверяет exact YouTube Channel ID и сохраняет прежние Profile UUID/channel mapping.",
+  "pub_date": "2026-09-19T13:43:43Z",
   "platforms": {
     "darwin-aarch64": {
-      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.11/VYRON.app.tar.gz",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM2FSRmVWVzRDYk1LRmFWak1ZdmlhN1ZIenJHQnphMmp3dm1qQWZQSDVQUXNmQUltc1VUUE5yNHlvSEdWTEFVOG1wMm0rNGVTdXFVQmFma29EWDZHTUFjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5ODIzNDM0CWZpbGU6VllST04uYXBwLnRhci5negpaSjF1SldtRjVseUU5V0tiUjNOTWNPQ3hpU1M2d0lUY2Y5QjZvRG5hLzJGeVhWV3NJRTJORVJscnlnVmRSZHlLWTVPSm02ZVlGUzZkdXVsMURiTC9Bdz09Cg=="
+      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.12/VYRON.app.tar.gz",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM1hwOGF4SXlpRmpSelpjOWlRMjJOaHcrUGprWlZDbjN4cndLM1g0U1RtNVovMS9NeDAveTc3RVFuZTBNRWZkcmIyQXEwa0VPQkJGR2t3ZHRsRzJ6aVFZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5ODI1NDA2CWZpbGU6VllST04uYXBwLnRhci5negpaRmFtbE14Umppa1BlQmhkc0pscWZ1MjFOUG9Fbk5WOUppOFhWQm1tYXdMZWdLS05wUGU4bzFvY0FHM2NOVkw2dzhWMW8zVXRpRHJQOUNBMUttalJEdz09Cg=="
     }
   }
 }
