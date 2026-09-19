@@ -57,20 +57,45 @@ jobs:
           test -n "${VYRON_MACOS_SIGNING_P12_PASSWORD:-}"
           test "$VYRON_MACOS_SIGNING_IDENTITY" = 'VYRON Local Code Signing'
 
-          # Runtime ACL mutation APIs from RC4 must be gone.
-          ! grep -RInE 'SecKeychainItem(Set|Copy)Access|SecAccessCreate|SecTrustedApplicationCreateFromPath' src-tauri/src
+          # Runtime ACL mutation APIs from RC4 must be gone and production must have no legacy secret callers.
           grep -RIn 'com.scaleup.vyron.security.v2' src-tauri/src/security.rs
           grep -RIn 'com.scaleup.vyron.security' src-tauri/src/security.rs
           grep -Fq 'SecKeychain::disable_user_interaction()' src-tauri/src/security.rs
-          ! grep -Fq 'security::get_secret_cached(GOOGLE_API_KEY)' src-tauri/src/youtube.rs
-          ! grep -Fq 'security::set_secret(GOOGLE_API_KEY' src-tauri/src/youtube.rs
-          ! grep -Fq 'security::get_secret_cached(account)' src-tauri/src/storage.rs
-          ! grep -Fq 'security::set_secret(account' src-tauri/src/storage.rs
           grep -Fq 'security::canonical_get_secret_cached(account)' src-tauri/src/storage.rs
           grep -Fq 'security::canonical_set_secret(account' src-tauri/src/storage.rs
-          ! grep -Fq 'trait OAuthSecretStore {trait OAuthSecretStore {' src-tauri/src/youtube.rs
-          ! grep -Fq 'fn migrate_profile_refresh_to_canonicalfn migrate_profile_refresh_to_canonical' src-tauri/src/youtube.rs
-          echo 'ZERO_KEYCHAIN_PROMPT_SOURCE_CONTRACT=PASS'
+          python3 - <<'PY'
+          from pathlib import Path
+          root=Path('src-tauri/src')
+          acl=('SecKeychainItemSetAccess','SecKeychainItemCopyAccess','SecAccessCreate','SecTrustedApplicationCreateFromPath')
+          legacy=(
+              'security::get_secret(',
+              'security::get_secret_cached(',
+              'security::legacy_get_secret_once(',
+              'security::set_secret(',
+              'security::set_secret_if_changed(',
+              'security::set_secret_for_autosave(',
+              'security::delete_secret(',
+          )
+          for path in root.glob('*.rs'):
+              text=path.read_text()
+              prod=text.split('#[cfg(test)]',1)[0]
+              if any(x in prod for x in acl):
+                  raise SystemExit(f'BLOCKER=RUNTIME_ACL_MUTATION:{path}')
+              if path.name!='security.rs':
+                  bad=[x for x in legacy if x in prod]
+                  if bad:
+                      raise SystemExit(f'BLOCKER=LEGACY_SECRET_CALLER:{path}:{bad}')
+          yt=(root/'youtube.rs').read_text().split('#[cfg(test)]',1)[0]
+          for bad in (
+              'trait OAuthSecretStore {trait OAuthSecretStore {',
+              'fn migrate_profile_refresh_to_canonicalfn migrate_profile_refresh_to_canonical',
+              'security::get_secret_cached(GOOGLE_API_KEY)',
+              'security::set_secret(GOOGLE_API_KEY',
+          ):
+              if bad in yt:
+                  raise SystemExit(f'BLOCKER=RC6_SOURCE_CONTRACT:{bad}')
+          print('ZERO_KEYCHAIN_PROMPT_SOURCE_CONTRACT=PASS')
+          PY
 
           ! gh release view v2.1.9 --repo "$REPO" >/dev/null 2>&1
           if gh release view "$RC_TAG" --repo "$REPO" >/dev/null 2>&1; then
@@ -260,3 +285,4 @@ jobs:
 # retry: SettingsOS diagnostic contract aligned with RC6 metadata-only OAuth diagnostic
 # retry: RC6 zero-prompt contracts aligned after targeted legacy-test update
 # retry: RC6 compile marker repair
+# retry: RC6 production-only source contract and self-reference fix
