@@ -80,6 +80,7 @@ const MIGRATION_NOT_STARTED:&str="NOT_STARTED";
 const MIGRATION_MIGRATING:&str="MIGRATING";
 const MIGRATION_MIGRATED:&str="MIGRATED";
 const MIGRATION_FAILED:&str="FAILED";
+const MIGRATION_RECONNECT_REQUIRED:&str="RECONNECT_REQUIRED";
 static PROFILE_MIGRATION_ATTEMPTS:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
 static PROFILE_MIGRATION_SUCCESSES:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
 static PROFILE_MIGRATION_FAILURES:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
@@ -183,8 +184,8 @@ where
 }
 fn migrate_profile_refresh_to_canonical(app:&AppHandle,profile_id:&str)->Result<(),String>{
  let canonical_account=oauth_key(profile_id,"refresh_token");
- if let Some(v)=security::canonical_get_secret_cached(&canonical_account)?{
-  if !v.trim().is_empty(){
+ match security::canonical_get_secret_cached(&canonical_account){
+  Ok(Some(v)) if !v.trim().is_empty()=>{
    let mut state=read_keychain_migration_v2(app)?;
    if state.profiles.get(profile_id).map(String::as_str)!=Some(MIGRATION_MIGRATED){
     state.profiles.insert(profile_id.to_string(),MIGRATION_MIGRATED.into());
@@ -192,62 +193,81 @@ fn migrate_profile_refresh_to_canonical(app:&AppHandle,profile_id:&str)->Result<
    }
    return Ok(())
   }
+  Ok(_)=>{},
+  Err(e) if e.contains("KEYCHAIN_INTERACTION_REQUIRED")||e.contains("KEYCHAIN_AUTH_FAILED")=>{
+   return Err(format!("OAUTH_RECONNECT_REQUIRED: profile={profile_id}; canonical credential requires macOS interaction, which VYRON blocks"))
+  }
+  Err(e)=>return Err(e),
  }
  PROFILE_MIGRATION_ATTEMPTS.fetch_add(1,std::sync::atomic::Ordering::SeqCst);
  let present=security::list_legacy_secret_accounts("")?;
- let candidates=legacy_refresh_candidates(profile_id);
- let source=select_present_account(&candidates,&present);
+ let source=select_present_account(&legacy_refresh_candidates(profile_id),&present);
  let mut state=read_keychain_migration_v2(app)?;
- state.profiles.insert(profile_id.to_string(),MIGRATION_MIGRATING.into());
- write_keychain_migration_v2(app,&state)?;
- let outcome=migrate_refresh_with(
-  &mut state,profile_id,source.as_deref(),
-  |account|security::legacy_get_secret_once(account),
-  |account,value|security::canonical_set_secret(account,value),
-  |account,value|security::canonical_verify_secret(account,value),
- );
- // Atomic checkpoint after this single profile regardless of pass/fail.
- write_keychain_migration_v2(app,&state)?;
- match outcome{
-  Ok(_)=>{PROFILE_MIGRATION_SUCCESSES.fetch_add(1,std::sync::atomic::Ordering::SeqCst);Ok(())},
-  Err(e)=>{PROFILE_MIGRATION_FAILURES.fetch_add(1,std::sync::atomic::Ordering::SeqCst);Err(e)}
+ if let Some(account)=source{
+  state.profiles.insert(profile_id.to_string(),MIGRATION_RECONNECT_REQUIRED.into());
+  write_keychain_migration_v2(app,&state)?;
+  security::mark_legacy_reconnect_required(&account);
+  PROFILE_MIGRATION_FAILURES.fetch_add(1,std::sync::atomic::Ordering::SeqCst);
+  return Err(format!("LEGACY_RECONNECT_REQUIRED: profile={profile_id}; legacy credential is present but secret read is disabled; reconnect Google once"))
  }
+ state.profiles.insert(profile_id.to_string(),MIGRATION_FAILED.into());
+ write_keychain_migration_v2(app,&state)?;
+ PROFILE_MIGRATION_FAILURES.fetch_add(1,std::sync::atomic::Ordering::SeqCst);
+ Err(format!("OAUTH_RECONNECT_REQUIRED: profile={profile_id}; canonical refresh token is missing"))
 }
 fn require_canonical_refresh(app:&AppHandle,profile_id:&str)->Result<String,String>{
- if let Some(v)=security::canonical_get_secret_cached(&oauth_key(profile_id,"refresh_token"))?{
-  if !v.trim().is_empty(){return Ok(v)}
+ match security::canonical_get_secret_cached(&oauth_key(profile_id,"refresh_token")){
+  Ok(Some(v)) if !v.trim().is_empty()=>return Ok(v),
+  Ok(_)=>{},
+  Err(e) if e.contains("KEYCHAIN_INTERACTION_REQUIRED")||e.contains("KEYCHAIN_AUTH_FAILED")=>{
+   return Err(format!("OAUTH_RECONNECT_REQUIRED: profile={profile_id}; canonical credential requires macOS interaction, which VYRON blocks"))
+  }
+  Err(e)=>return Err(e),
  }
  let status=profile_migration_status(app,profile_id)?;
- Err(format!("LEGACY_AUTH_REQUIRED: profile={profile_id}; migrationState={status}; run explicit Sync to migrate this profile"))
+ if status==MIGRATION_RECONNECT_REQUIRED{
+  return Err(format!("LEGACY_RECONNECT_REQUIRED: profile={profile_id}; reconnect Google once"))
+ }
+ let present=security::list_legacy_secret_accounts("")?;
+ if let Some(account)=select_present_account(&legacy_refresh_candidates(profile_id),&present){
+  set_profile_migration_state(app,profile_id,MIGRATION_RECONNECT_REQUIRED)?;
+  security::mark_legacy_reconnect_required(&account);
+  return Err(format!("LEGACY_RECONNECT_REQUIRED: profile={profile_id}; legacy credential is present but VYRON will not read it; reconnect Google once"))
+ }
+ Err(format!("OAUTH_RECONNECT_REQUIRED: profile={profile_id}; canonical refresh token is missing"))
 }
 fn canonical_global_client_secret()->Result<Option<String>,String>{security::canonical_get_secret_cached(GOOGLE_CLIENT_SECRET)}
 fn migrate_global_client_secret_if_needed(app:&AppHandle,profile_id:Option<&str>)->Result<Option<String>,String>{
- if let Some(v)=canonical_global_client_secret()?{if !v.trim().is_empty(){return Ok(Some(v))}}
+ match canonical_global_client_secret(){
+  Ok(Some(v)) if !v.trim().is_empty()=>return Ok(Some(v)),
+  Ok(_)=>{},
+  Err(e) if e.contains("KEYCHAIN_INTERACTION_REQUIRED")||e.contains("KEYCHAIN_AUTH_FAILED")=>{
+   return Err("OAUTH_RECONNECT_REQUIRED: canonical Google client secret requires macOS interaction, which VYRON blocks".into())
+  }
+  Err(e)=>return Err(e),
+ }
  let mut state=read_keychain_migration_v2(app)?;
- if state.global_client_secret==MIGRATION_MIGRATED{return Ok(None)}
- state.global_client_secret=MIGRATION_MIGRATING.into();write_keychain_migration_v2(app,&state)?;
-
+ if state.global_client_secret==MIGRATION_RECONNECT_REQUIRED{
+  return Err("LEGACY_RECONNECT_REQUIRED: Google client secret requires reimport/reconnect".into())
+ }
  let present=security::list_legacy_secret_accounts("")?;
  let mut candidates=vec![GOOGLE_CLIENT_SECRET.to_string()];
  if let Some(id)=profile_id{
   candidates.push(oauth_key(id,"client_secret"));
   candidates.extend(legacy_oauth_keys(id,"client_secret"));
  }
- let source=select_present_account(&candidates,&present);
- let result=(||->Result<Option<String>,String>{
-  let Some(account)=source else{return Ok(None)};
-  let Some(value)=security::legacy_get_secret_once(&account)? else{return Ok(None)};
-  if value.trim().is_empty(){return Ok(None)}
-  security::canonical_set_secret(GOOGLE_CLIENT_SECRET,&value)?;
-  if !security::canonical_verify_secret(GOOGLE_CLIENT_SECRET,&value)?{return Err("KEYCHAIN_GLOBAL_CLIENT_SECRET_VERIFY_FAILED".into())}
-  Ok(Some(value))
- })();
- state.global_client_secret=if result.as_ref().ok().and_then(|x|x.as_ref()).is_some(){MIGRATION_MIGRATED.into()}else{MIGRATION_FAILED.into()};
+ if let Some(account)=select_present_account(&candidates,&present){
+  state.global_client_secret=MIGRATION_RECONNECT_REQUIRED.into();
+  write_keychain_migration_v2(app,&state)?;
+  security::mark_legacy_reconnect_required(&account);
+  return Err("LEGACY_RECONNECT_REQUIRED: legacy Google client secret is present but secret read is disabled; reimport credentials.json or reconnect Google".into())
+ }
+ state.global_client_secret=MIGRATION_FAILED.into();
  write_keychain_migration_v2(app,&state)?;
- result
+ Ok(None)
 }
 
-trait OAuthSecretStore {
+trait OAuthSecretStore {trait OAuthSecretStore {
     fn get(&self, account: &str) -> Result<Option<String>, String>;
     fn set(&self, account: &str, value: &str) -> Result<(), String>;
     fn delete(&self, account: &str) -> Result<(), String>;
@@ -458,12 +478,12 @@ fn load_google_config_metadata(app:&AppHandle)->Result<GoogleConfig,String>{
 }
 fn hydrate_google_secrets(c:&mut GoogleConfig)->Result<(),String>{
     if c.client_secret.is_empty(){c.client_secret=security::canonical_get_secret_cached(GOOGLE_CLIENT_SECRET)?.unwrap_or_default()}
-    if c.api_key.is_empty(){c.api_key=security::get_secret_cached(GOOGLE_API_KEY)?.unwrap_or_default()}
+    if c.api_key.is_empty(){c.api_key=security::canonical_get_secret_cached(GOOGLE_API_KEY)?.unwrap_or_default()}
     c.client_secret_present|=!c.client_secret.is_empty();c.api_key_present|=!c.api_key.is_empty();Ok(())
 }
 fn write_google_secrets(c:&GoogleConfig)->Result<(),String>{
     if !c.client_secret.is_empty(){security::canonical_set_secret(GOOGLE_CLIENT_SECRET,&c.client_secret)?}
-    if !c.api_key.is_empty(){security::set_secret(GOOGLE_API_KEY,&c.api_key)?}
+    if !c.api_key.is_empty(){security::canonical_set_secret(GOOGLE_API_KEY,&c.api_key)?}
     Ok(())
 }
 fn write_google_metadata(path:&Path,c:&GoogleConfig)->Result<(),String>{let b=serde_json::to_vec_pretty(c).map_err(|e|e.to_string())?;security::write_private_atomic(path,&b)}
@@ -1544,7 +1564,7 @@ pub async fn youtube_oauth_recovery_diagnostic(
       "canonicalRefreshPresent":canonical_present,
       "legacyRefreshPresent":legacy_source.is_some(),
       "migrationState":migration_state,
-      "credentialState":if canonical_present{"CANONICAL_READY"}else if legacy_source.is_some(){"LEGACY_AUTH_REQUIRED"}else{"MISSING"},
+      "credentialState":if canonical_present{"CANONICAL_READY"}else if legacy_source.is_some(){"LEGACY_RECONNECT_REQUIRED"}else{"MISSING"},
       "secretValuesIncluded":false,
       "youtubeApiRequests":0,
       "keychainSecretReads":0,
@@ -1557,6 +1577,7 @@ pub fn youtube_keychain_migration_diagnostics(app:AppHandle)->Result<Value,Strin
  let state=read_keychain_migration_v2(&app)?;
  let migrated=state.profiles.values().filter(|x|x.as_str()==MIGRATION_MIGRATED).count();
  let failed=state.profiles.values().filter(|x|x.as_str()==MIGRATION_FAILED).count();
+ let reconnect_required=state.profiles.values().filter(|x|x.as_str()==MIGRATION_RECONNECT_REQUIRED).count();
  Ok(json!({
   "version":state.version,
   "legacyService":security::LEGACY_SERVICE,
@@ -1565,6 +1586,7 @@ pub fn youtube_keychain_migration_diagnostics(app:AppHandle)->Result<Value,Strin
   "globalClientSecretState":state.global_client_secret,
   "migratedProfiles":migrated,
   "failedProfiles":failed,
+  "reconnectRequiredProfiles":reconnect_required,
   "profileMigrationAttempts":PROFILE_MIGRATION_ATTEMPTS.load(std::sync::atomic::Ordering::SeqCst),
   "profileMigrationSuccesses":PROFILE_MIGRATION_SUCCESSES.load(std::sync::atomic::Ordering::SeqCst),
   "profileMigrationFailures":PROFILE_MIGRATION_FAILURES.load(std::sync::atomic::Ordering::SeqCst),
@@ -2525,7 +2547,6 @@ pub async fn youtube_list_existing_videos(
     profile_id: String,
     max_results: Option<u32>,
 ) -> Result<Value, String> {
-    migrate_profile_refresh_to_canonical(&app,&profile_id)?;
     let (token, profile) = valid_access_token(&app, &profile_id).await?;
     let limit = max_results.unwrap_or(1000).clamp(1, 5000) as usize;
     let client = reqwest::Client::new();
