@@ -117,14 +117,14 @@ fn secitem_no_ui_base_query(service:&str,account:&str)->Vec<(core_foundation::st
  use core_foundation::string::CFString;
  use security_framework_sys::item::{
   kSecAttrAccount,kSecAttrService,kSecClass,kSecClassGenericPassword,
-  kSecUseAuthenticationUI,kSecUseAuthenticationUIFail,
+  kSecUseAuthenticationUI,kSecUseAuthenticationUISkip,
  };
  unsafe{
   vec![
    (CFString::wrap_under_get_rule(kSecClass),CFString::wrap_under_get_rule(kSecClassGenericPassword).into_CFType()),
    (CFString::wrap_under_get_rule(kSecAttrService),CFString::from(service).into_CFType()),
    (CFString::wrap_under_get_rule(kSecAttrAccount),CFString::from(account).into_CFType()),
-   (CFString::wrap_under_get_rule(kSecUseAuthenticationUI),CFString::wrap_under_get_rule(kSecUseAuthenticationUIFail).into_CFType()),
+   (CFString::wrap_under_get_rule(kSecUseAuthenticationUI),CFString::wrap_under_get_rule(kSecUseAuthenticationUISkip).into_CFType()),
   ]
  }
 }
@@ -147,7 +147,7 @@ fn secitem_no_ui_get(service:&str,account:&str,kind:&str)->Result<Option<Vec<u8>
  let mut ret:CFTypeRef=std::ptr::null();
  let status=unsafe{SecItemCopyMatching(query.as_concrete_TypeRef(),&mut ret)};
  if status==ITEM_NOT_FOUND{return Ok(None)}
- if status!=0{return Err(keychain_error(kind,account,status,"SecItemCopyMatching UI=FAIL"))}
+ if status!=0{return Err(keychain_error(kind,account,status,"SecItemCopyMatching UI=SKIP"))}
  if ret.is_null(){return Ok(None)}
  unsafe{
   if CFGetTypeID(ret)!=CFData::type_id(){CFRelease(ret);return Err(format!("KEYCHAIN_ERROR: {kind} returned non-data; account={account}"))}
@@ -170,14 +170,14 @@ fn secitem_no_ui_set(service:&str,account:&str,value:&[u8],kind:&str)->Result<()
  let add=CFDictionary::from_CFType_pairs(&add_pairs);
  let status=unsafe{SecItemAdd(add.as_concrete_TypeRef(),std::ptr::null_mut())};
  if status==0{return Ok(())}
- if status!=DUPLICATE_ITEM{return Err(keychain_error(kind,account,status,"SecItemAdd UI=FAIL"))}
+ if status!=DUPLICATE_ITEM{return Err(keychain_error(kind,account,status,"SecItemAdd UI=SKIP"))}
 
  let query_pairs=secitem_no_ui_base_query(service,account);
  let query=CFDictionary::from_CFType_pairs(&query_pairs);
  let update_pairs=unsafe{vec![(CFString::wrap_under_get_rule(kSecValueData),CFData::from_buffer(value).into_CFType())]};
  let update=CFDictionary::from_CFType_pairs(&update_pairs);
  let update_status=unsafe{SecItemUpdate(query.as_concrete_TypeRef(),update.as_concrete_TypeRef())};
- if update_status==0{Ok(())}else{Err(keychain_error(kind,account,update_status,"SecItemUpdate UI=FAIL"))}
+ if update_status==0{Ok(())}else{Err(keychain_error(kind,account,update_status,"SecItemUpdate UI=SKIP"))}
 }
 
 #[cfg(target_os="macos")]
@@ -188,7 +188,7 @@ fn secitem_no_ui_delete(service:&str,account:&str,kind:&str)->Result<(),String>{
  let pairs=secitem_no_ui_base_query(service,account);
  let query=CFDictionary::from_CFType_pairs(&pairs);
  let status=unsafe{SecItemDelete(query.as_concrete_TypeRef())};
- if status==0||status==ITEM_NOT_FOUND{Ok(())}else{Err(keychain_error(kind,account,status,"SecItemDelete UI=FAIL"))}
+ if status==0||status==ITEM_NOT_FOUND{Ok(())}else{Err(keychain_error(kind,account,status,"SecItemDelete UI=SKIP"))}
 }
 pub fn invalidate_secret_cache(account:&str){if let Ok(mut c)=secret_cache().lock(){c.remove(account);}if let Ok(mut d)=denied_accounts().lock(){d.remove(account);}}
 fn remember_secret(account:&str,value:&str){if let Ok(mut c)=secret_cache().lock(){if value.is_empty(){c.remove(account);}else{c.insert(account.to_string(),value.to_string());}}}
@@ -209,7 +209,7 @@ pub fn get_secret_cached(account:&str)->Result<Option<String>,String>{get_secret
 #[cfg(target_os="macos")]
 pub fn canonical_get_secret(account:&str)->Result<Option<String>,String>{
  CANONICAL_BACKEND_READS.fetch_add(1,Ordering::SeqCst);
- with_keychain_no_ui(||match secitem_no_ui_get(CANONICAL_SERVICE,account,"canonical_read_ui_fail"){
+ with_keychain_no_ui(||match secitem_no_ui_get(CANONICAL_SERVICE,account,"canonical_read_ui_skip"){
   Ok(Some(v))=>{record_runtime(&format!("canonical::{account}"),"READ","SECITEM_UI_FAIL",Some(0),None);String::from_utf8(v).map(Some).map_err(|_|format!("KEYCHAIN_ERROR: canonical Keychain value {account} is not UTF-8"))},
   Ok(None)=>{record_runtime(&format!("canonical::{account}"),"READ","SECITEM_UI_FAIL",Some(ITEM_NOT_FOUND),None);Ok(None)},
   Err(e)=>{record_runtime(&format!("canonical::{account}"),"READ","SECITEM_UI_FAIL",None,None);Err(e)},
@@ -238,13 +238,13 @@ pub fn canonical_set_secret(account:&str,value:&str)->Result<(),String>{
   if let Ok(c)=canonical_cache().lock(){if c.get(account).map(String::as_str)==Some(value){return Ok(())}}
  }
  let result=with_keychain_no_ui(||if value.is_empty(){
-  match secitem_no_ui_delete(CANONICAL_SERVICE,account,"canonical_delete_ui_fail"){
+  match secitem_no_ui_delete(CANONICAL_SERVICE,account,"canonical_delete_ui_skip"){
    Ok(())=>{CANONICAL_BACKEND_DELETES.fetch_add(1,Ordering::SeqCst);record_runtime(&format!("canonical::{account}"),"DELETE","SECITEM_UI_FAIL",Some(0),None);Ok(())},
    Err(e)=>Err(e)
   }
  }else{
   CANONICAL_BACKEND_WRITES.fetch_add(1,Ordering::SeqCst);
-  match secitem_no_ui_set(CANONICAL_SERVICE,account,value.as_bytes(),"canonical_write_ui_fail"){
+  match secitem_no_ui_set(CANONICAL_SERVICE,account,value.as_bytes(),"canonical_write_ui_skip"){
    Ok(())=>{record_runtime(&format!("canonical::{account}"),"WRITE","SECITEM_UI_FAIL",Some(0),None);Ok(())},
    Err(e)=>Err(e)
   }
@@ -279,12 +279,12 @@ fn keychain_error(kind:&str,account:&str,code:i32,detail:&str)->String{
 #[cfg(target_os="macos")]
 pub fn set_secret(account:&str,value:&str)->Result<(),String>{
  let result=with_keychain_no_ui(||if value.is_empty(){
-  match secitem_no_ui_delete(SERVICE,account,"legacy_delete_ui_fail"){
+  match secitem_no_ui_delete(SERVICE,account,"legacy_delete_ui_skip"){
    Ok(())=>{record_runtime(account,"DELETE","SECITEM_UI_FAIL",Some(0),None);Ok(())},
    Err(e)=>Err(e),
   }
  }else{
-  match secitem_no_ui_set(SERVICE,account,value.as_bytes(),"legacy_write_ui_fail"){
+  match secitem_no_ui_set(SERVICE,account,value.as_bytes(),"legacy_write_ui_skip"){
    Ok(())=>{record_runtime(account,"WRITE","SECITEM_UI_FAIL",Some(0),None);Ok(())},
    Err(e)=>Err(e)
   }
@@ -308,7 +308,7 @@ pub fn set_secret_if_changed(account:&str,value:&str)->Result<(),String>{set_sec
 #[cfg(target_os="macos")]
 pub fn get_secret(account:&str)->Result<Option<String>,String>{
  LEGACY_BACKEND_READS.fetch_add(1,Ordering::SeqCst);
- with_keychain_no_ui(||match secitem_no_ui_get(SERVICE,account,"legacy_read_ui_fail"){
+ with_keychain_no_ui(||match secitem_no_ui_get(SERVICE,account,"legacy_read_ui_skip"){
   Ok(Some(v))=>{record_runtime(account,"READ","SECITEM_UI_FAIL",Some(0),None);String::from_utf8(v).map(Some).map_err(|_|format!("KEYCHAIN_ERROR: Keychain value {account} is not UTF-8"))},
   Ok(None)=>{record_runtime(account,"READ","SECITEM_UI_FAIL",Some(ITEM_NOT_FOUND),None);Ok(None)},
   Err(e)=>{record_runtime(account,"READ","SECITEM_UI_FAIL",None,None);Err(e)},
@@ -508,7 +508,7 @@ mod tests{
  #[test]
  fn per_query_no_ui_policy_is_present_in_production_source(){
   let source=include_str!("security.rs");
-  let ui_fail=["kSecUseAuthenticationUI","Fail"].concat();
+  let ui_skip=["kSecUseAuthenticationUI","Fail"].concat();
   let copy=["SecItemCopy","Matching"].concat();
   let update=["SecItem","Update"].concat();
   let delete=["SecItem","Delete"].concat();
@@ -516,7 +516,7 @@ mod tests{
   let old_get=["get_generic_","password("].concat();
   let old_set=["set_generic_","password("].concat();
   let old_delete=["delete_generic_","password("].concat();
-  assert!(source.contains(&ui_fail));
+  assert!(source.contains(&ui_skip));
   assert!(source.contains(&copy));
   assert!(source.contains(&update));
   assert!(source.contains(&delete));
