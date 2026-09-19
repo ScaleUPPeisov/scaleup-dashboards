@@ -143,7 +143,15 @@ fn path_media_candidate(tool: &str) -> Option<PathBuf> {
 }
 pub(crate) fn resolve_media_tool(tool: &str) -> Result<PathBuf, String> {
     let mut checked = Vec::new();
-    for p in bundled_media_candidates(tool) { checked.push(p.clone()); if media_tool_executable(&p) { return Ok(p); } }
+    let bundled_paths_enabled = {
+        #[cfg(test)]
+        { env::var_os("VYRON_TEST_DISABLE_BUNDLED_MEDIA_PATHS").is_none() }
+        #[cfg(not(test))]
+        { true }
+    };
+    if bundled_paths_enabled {
+        for p in bundled_media_candidates(tool) { checked.push(p.clone()); if media_tool_executable(&p) { return Ok(p); } }
+    }
     if let Some(p) = explicit_media_candidate(tool) { checked.push(p.clone()); if media_tool_executable(&p) { return Ok(p); } }
     if let Some(p) = sibling_media_candidate(tool) { checked.push(p.clone()); if media_tool_executable(&p) { return Ok(p); } }
     let system_paths_enabled = { #[cfg(test)] { env::var_os("VYRON_TEST_DISABLE_SYSTEM_MEDIA_PATHS").is_none() } #[cfg(not(test))] { true } };
@@ -360,7 +368,7 @@ mod tests {
     #[cfg(windows)] fn make_exec(path: &Path) { fs::write(path, b"MZ").unwrap(); }
     #[test] fn bundled_candidate_has_priority() { let tool = "vyron-bundled-media-test"; let exe = env::current_exe().unwrap(); let path = exe.parent().unwrap().join(tool); let _ = fs::remove_file(&path); make_exec(&path); let resolved = resolve_media_tool(tool).unwrap(); assert_eq!(resolved, path); let _ = fs::remove_file(&path); }
     #[test] fn path_fallback_resolves_executable() { let dir = env::temp_dir().join(format!("vyron-media-path-{}", uuid::Uuid::new_v4())); fs::create_dir_all(&dir).unwrap(); let tool = "vyron-path-media-test"; let path = dir.join(tool); make_exec(&path); let old = env::var_os("PATH"); env::set_var("PATH", &dir); let resolved = resolve_media_tool(tool).unwrap(); if let Some(v) = old { env::set_var("PATH", v) } else { env::remove_var("PATH") }; assert_eq!(resolved, path); let _ = fs::remove_dir_all(dir); }
-    #[test] fn missing_ffprobe_is_structured() { let old_path = env::var_os("PATH"); let old_probe = env::var_os("VYRON_FFPROBE_PATH"); let old_ffmpeg = env::var_os("VYRON_FFMPEG_PATH"); env::set_var("PATH", ""); env::remove_var("VYRON_FFPROBE_PATH"); env::remove_var("VYRON_FFMPEG_PATH"); env::set_var("VYRON_TEST_DISABLE_SYSTEM_MEDIA_PATHS", "1"); let e = resolve_media_tool("ffprobe").unwrap_err(); env::remove_var("VYRON_TEST_DISABLE_SYSTEM_MEDIA_PATHS"); if let Some(v) = old_path { env::set_var("PATH", v) } else { env::remove_var("PATH") }; if let Some(v) = old_probe { env::set_var("VYRON_FFPROBE_PATH", v) } else { env::remove_var("VYRON_FFPROBE_PATH") }; if let Some(v) = old_ffmpeg { env::set_var("VYRON_FFMPEG_PATH", v) } else { env::remove_var("VYRON_FFMPEG_PATH") }; assert!(e.starts_with("FFPROBE_NOT_FOUND:")); }
+    #[test] fn missing_ffprobe_is_structured() { let old_path = env::var_os("PATH"); let old_probe = env::var_os("VYRON_FFPROBE_PATH"); let old_ffmpeg = env::var_os("VYRON_FFMPEG_PATH"); let old_disable_bundled = env::var_os("VYRON_TEST_DISABLE_BUNDLED_MEDIA_PATHS"); let old_disable_system = env::var_os("VYRON_TEST_DISABLE_SYSTEM_MEDIA_PATHS"); env::set_var("PATH", ""); env::remove_var("VYRON_FFPROBE_PATH"); env::remove_var("VYRON_FFMPEG_PATH"); env::set_var("VYRON_TEST_DISABLE_BUNDLED_MEDIA_PATHS", "1"); env::set_var("VYRON_TEST_DISABLE_SYSTEM_MEDIA_PATHS", "1"); let e = resolve_media_tool("ffprobe").unwrap_err(); if let Some(v) = old_disable_bundled { env::set_var("VYRON_TEST_DISABLE_BUNDLED_MEDIA_PATHS", v) } else { env::remove_var("VYRON_TEST_DISABLE_BUNDLED_MEDIA_PATHS") }; if let Some(v) = old_disable_system { env::set_var("VYRON_TEST_DISABLE_SYSTEM_MEDIA_PATHS", v) } else { env::remove_var("VYRON_TEST_DISABLE_SYSTEM_MEDIA_PATHS") }; if let Some(v) = old_path { env::set_var("PATH", v) } else { env::remove_var("PATH") }; if let Some(v) = old_probe { env::set_var("VYRON_FFPROBE_PATH", v) } else { env::remove_var("VYRON_FFPROBE_PATH") }; if let Some(v) = old_ffmpeg { env::set_var("VYRON_FFMPEG_PATH", v) } else { env::remove_var("VYRON_FFMPEG_PATH") }; assert!(e.starts_with("FFPROBE_NOT_FOUND:")); }
     #[test] fn finder_like_path_resolves_media_tools_if_enabled() { if !real_enabled() { return; } let old = env::var_os("PATH"); env::set_var("PATH", "/usr/bin:/bin:/usr/sbin:/sbin"); let probe = resolve_media_tool("ffprobe").unwrap(); let ffmpeg = resolve_media_tool("ffmpeg").unwrap(); if let Some(v) = old { env::set_var("PATH", v) } else { env::remove_var("PATH") }; assert!(media_tool_executable(&probe)); assert!(media_tool_executable(&ffmpeg)); }
     #[test] fn real_mp4_audible_if_enabled() {
         if !real_enabled() { return; }
