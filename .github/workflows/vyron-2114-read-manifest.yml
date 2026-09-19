@@ -1,0 +1,25 @@
+name: VYRON 2.1.14 Read Published Manifest
+
+on:
+  push:
+    branches:
+      - release/vyron-2.1.14
+    paths:
+      - '.github/workflows/vyron-2114-read-manifest.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  read-manifest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Read published stable manifest
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          curl -fsSL 'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.14/latest.json' -o /tmp/latest.json
+          echo '---VYRON_2_1_14_MANIFEST_BEGIN---'
+          cat /tmp/latest.json
+          echo '---VYRON_2_1_14_MANIFEST_END---'
