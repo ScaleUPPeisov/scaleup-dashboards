@@ -175,7 +175,8 @@ pub fn private_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
 pub async fn license_status(app: AppHandle) -> Value {
     #[cfg(target_os = "windows")]
     {
-        let Some(mut cache) = read_windows_cache(&app).ok().flatten() else { return json!({"valid":false}); };
+        let Some(mut cache) = read_windows_cache(&app).ok().flatten() else { security::set_active_tenant(None); return json!({"valid":false}); };
+        security::set_active_tenant(Some(&cache.user_id));
         let session = match security::canonical_get_secret_cached(WINDOWS_SESSION_ACCOUNT) {
             Ok(Some(x)) if !x.trim().is_empty() => x,
             _ => return json!({"valid":false,"reason":"session_missing","userId":cache.user_id}),
@@ -223,6 +224,7 @@ pub async fn activate_license(app: AppHandle, key: String) -> Result<Value, Stri
         let session = value.get("sessionToken").and_then(Value::as_str).ok_or_else(|| "LICENSE_SESSION_MISSING".to_string())?;
         security::canonical_set_secret(WINDOWS_SESSION_ACCOUNT, session)?;
         let cache = cache_from_response(mask(key), &value);
+        security::set_active_tenant(Some(&cache.user_id));
         write_windows_cache(&app, &cache)?;
         return Ok(cache_public(&cache, false));
     }
