@@ -305,7 +305,14 @@ pub fn canonical_get_secret(account:&str)->Result<Option<String>,String>{
   Err(e)=>{record_runtime(&format!("canonical::{account}"),"READ","SECITEM_UI_FAIL",None,None);Err(e)},
  })
 }
-#[cfg(not(target_os="macos"))]
+#[cfg(target_os="windows")]
+pub fn canonical_get_secret(account:&str)->Result<Option<String>,String>{
+ CANONICAL_BACKEND_READS.fetch_add(1,Ordering::SeqCst);
+ let r=windows_secret_get(CANONICAL_SERVICE,account);
+ if r.is_ok(){record_runtime(&format!("canonical::{account}"),"READ","WINDOWS_CREDENTIAL_MANAGER",Some(0),None);}
+ r
+}
+#[cfg(all(not(target_os="macos"),not(target_os="windows")))]
 pub fn canonical_get_secret(_account:&str)->Result<Option<String>,String>{Ok(None)}
 
 pub fn canonical_get_secret_cached(account:&str)->Result<Option<String>,String>{
@@ -345,8 +352,18 @@ pub fn canonical_set_secret(account:&str,value:&str)->Result<(),String>{
  }
  result
 }
-#[cfg(not(target_os="macos"))]
-pub fn canonical_set_secret(_account:&str,_value:&str)->Result<(),String>{Err("VYRON secure storage requires macOS Keychain".into())}
+#[cfg(target_os="windows")]
+pub fn canonical_set_secret(account:&str,value:&str)->Result<(),String>{
+ if !value.is_empty(){if let Ok(cache)=canonical_cache().lock(){if cache.get(account).map(String::as_str)==Some(value){return Ok(())}}}
+ let r=windows_secret_set(CANONICAL_SERVICE,account,value);
+ if r.is_ok(){
+  if value.is_empty(){CANONICAL_BACKEND_DELETES.fetch_add(1,Ordering::SeqCst);canonical_forget_cache(account);record_runtime(&format!("canonical::{account}"),"DELETE","WINDOWS_CREDENTIAL_MANAGER",Some(0),None);}
+  else{CANONICAL_BACKEND_WRITES.fetch_add(1,Ordering::SeqCst);if let Ok(mut cache)=canonical_cache().lock(){cache.insert(account.to_string(),value.to_string());}record_runtime(&format!("canonical::{account}"),"WRITE","WINDOWS_CREDENTIAL_MANAGER",Some(0),None);}
+ }
+ r
+}
+#[cfg(all(not(target_os="macos"),not(target_os="windows")))]
+pub fn canonical_set_secret(_account:&str,_value:&str)->Result<(),String>{Err("VYRON secure storage is unsupported on this platform".into())}
 pub fn canonical_delete_secret(account:&str)->Result<(),String>{canonical_set_secret(account,"")}
 pub fn canonical_verify_secret(account:&str,expected:&str)->Result<bool,String>{
  canonical_forget_cache(account);
@@ -386,8 +403,14 @@ pub fn set_secret(account:&str,value:&str)->Result<(),String>{
  }
  result
 }
-#[cfg(not(target_os="macos"))]
-pub fn set_secret(_account:&str,_value:&str)->Result<(),String>{Err("VYRON secure storage requires macOS Keychain".into())}
+#[cfg(target_os="windows")]
+pub fn set_secret(account:&str,value:&str)->Result<(),String>{
+ let r=windows_secret_set(SERVICE,account,value);
+ if r.is_ok(){if value.is_empty(){forget_secret(account)}else{remember_secret(account,value)}}
+ r
+}
+#[cfg(all(not(target_os="macos"),not(target_os="windows")))]
+pub fn set_secret(_account:&str,_value:&str)->Result<(),String>{Err("VYRON secure storage is unsupported on this platform".into())}
 
 fn set_secret_if_changed_with<F>(account:&str,value:&str,writer:F)->Result<(),String> where F:FnOnce(&str,&str)->Result<(),String>{
  if !value.is_empty()&&cached_secret_matches(account,value){return Ok(())}
@@ -404,7 +427,12 @@ pub fn get_secret(account:&str)->Result<Option<String>,String>{
   Err(e)=>{record_runtime(account,"READ","SECITEM_UI_FAIL",None,None);Err(e)},
  })
 }
-#[cfg(not(target_os="macos"))]
+#[cfg(target_os="windows")]
+pub fn get_secret(account:&str)->Result<Option<String>,String>{
+ LEGACY_BACKEND_READS.fetch_add(1,Ordering::SeqCst);
+ windows_secret_get(SERVICE,account)
+}
+#[cfg(all(not(target_os="macos"),not(target_os="windows")))]
 pub fn get_secret(_account:&str)->Result<Option<String>,String>{Ok(None)}
 
 pub fn delete_secret(account:&str)->Result<(),String>{set_secret(account,"")}
@@ -684,7 +712,9 @@ pub fn list_secret_accounts(prefix:&str)->Result<Vec<String>,String>{
  }
  accounts.sort();Ok(accounts)
 }
-#[cfg(not(target_os="macos"))]
+#[cfg(target_os="windows")]
+pub fn list_secret_accounts(prefix:&str)->Result<Vec<String>,String>{windows_list_accounts(SERVICE,prefix)}
+#[cfg(all(not(target_os="macos"),not(target_os="windows")))]
 pub fn list_secret_accounts(_prefix:&str)->Result<Vec<String>,String>{Ok(Vec::new())}
 
 #[cfg(target_os="macos")]
@@ -776,7 +806,7 @@ pub fn security_oauth_inventory(app:tauri::AppHandle)->Result<serde_json::Value,
  use std::collections::{BTreeMap,BTreeSet};
  use tauri::Manager;
  let service=SERVICE.to_string();
- let data_dir=app.path().app_data_dir().map_err(|e|format!("APP_DATA_DIR_FAILED: {e}"))?;
+ let data_dir=crate::license::private_data_dir(&app).map_err(|e|format!("APP_DATA_DIR_FAILED: {e}"))?;
  let json_path=data_dir.join("youtube-oauth.json");
  let mut json_status="NOT_FOUND".to_string();
  let mut json_profiles=0usize;
