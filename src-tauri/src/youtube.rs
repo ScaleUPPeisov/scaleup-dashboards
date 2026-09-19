@@ -165,14 +165,20 @@ fn resolved_credential_state(profile:&OAuthProfile,migration_state:&str,canonica
 }
 fn resolve_oauth_credential_states_local(app:&AppHandle)->Result<Vec<Value>,String>{
  let store=load_store_metadata(app)?;
- let canonical_accounts=security::list_canonical_secret_accounts("oauth.")?;
+ let canonical_accounts=security::list_canonical_secret_accounts("")?;
  let legacy_accounts=security::list_legacy_secret_accounts("")?;
+ let global_meta=load_google_config_metadata(app).unwrap_or_default();
+ let global_secret_present=canonical_accounts.iter().any(|a|a==GOOGLE_CLIENT_SECRET);
  let state=read_keychain_migration_v2(app)?;
  let mut rows=Vec::with_capacity(store.profiles.len());
  for profile in &store.profiles{
   let canonical_account=oauth_key(&profile.id,"refresh_token");
   let canonical_present=canonical_accounts.iter().any(|a|a==&canonical_account);
   let legacy_present=select_present_account(&legacy_refresh_candidates(&profile.id),&legacy_accounts).is_some();
+  let profile_client_secret_present=canonical_accounts.iter().any(|a|a==&oauth_key(&profile.id,"client_secret"));
+  let legacy_client_secret_present=select_present_account(&legacy_client_secret_candidates(&profile.id),&legacy_accounts).is_some();
+  let global_exact=!profile.client_id.trim().is_empty()&&profile.client_id.trim()==global_meta.client_id.trim()&&global_secret_present;
+  let client_secret_state=if profile_client_secret_present{"PROFILE_CANONICAL"}else if global_exact{"GLOBAL_EXACT_MATCH"}else if legacy_client_secret_present{"CLIENT_SECRET_REIMPORT_REQUIRED"}else{"MISSING"};
   let migration_state=state.profiles.get(&profile.id).cloned().unwrap_or_else(||MIGRATION_NOT_STARTED.into());
   let validation=state.validations.get(&profile.id);
   let (credential_state,last_validation_result,last_validated_at)=resolved_credential_state(profile,&migration_state,canonical_present,legacy_present,validation);
@@ -186,6 +192,8 @@ fn resolve_oauth_credential_states_local(app:&AppHandle)->Result<Vec<Value>,Stri
    "credentialSchemaVersion":CREDENTIAL_SCHEMA_VERSION,
    "lastValidatedAt":last_validated_at,
    "lastValidationResult":last_validation_result,
+   "clientSecretState":client_secret_state,
+   "clientSecretPresent":profile_client_secret_present||global_exact,
    "secretValuesIncluded":false,
    "youtubeApiRequests":0,
    "keychainSecretReads":0
@@ -214,6 +222,11 @@ fn forget_access_token(profile_id:&str){if let Ok(mut c)=access_token_session().
 fn legacy_refresh_candidates(id:&str)->Vec<String>{
  let mut out=vec![oauth_key(id,"refresh_token")];
  out.extend(legacy_oauth_keys(id,"refresh_token"));
+ out
+}
+fn legacy_client_secret_candidates(id:&str)->Vec<String>{
+ let mut out=vec![oauth_key(id,"client_secret")];
+ out.extend(legacy_oauth_keys(id,"client_secret"));
  out
 }
 fn select_present_account(candidates:&[String],present:&[String])->Option<String>{
@@ -274,6 +287,36 @@ fn require_canonical_refresh(app:&AppHandle,profile_id:&str)->Result<String,Stri
  Err(format!("OAUTH_RECONNECT_REQUIRED: profile={profile_id}; canonical refresh token is missing"))
 }
 fn canonical_global_client_secret()->Result<Option<String>,String>{security::canonical_get_secret_cached(GOOGLE_CLIENT_SECRET)}
+#[derive(Debug,Clone,PartialEq,Eq)]
+enum OAuthClientSecretSource{ProfileCanonical,GlobalExactMatch}
+#[derive(Debug,Clone)]
+struct ResolvedOAuthClient{client_id:String,client_secret:String,source:OAuthClientSecretSource}
+fn resolve_client_secret_for_profile(app:&AppHandle,profile_id:&str,client_id:&str)->Result<ResolvedOAuthClient,String>{
+ let profile_id=profile_id.trim();
+ let client_id=client_id.trim();
+ if profile_id.is_empty(){return Err("OAUTH_PROFILE_ID_MISSING: existing profile UUID is required".into())}
+ if client_id.is_empty(){return Err("OAUTH_CLIENT_MISSING: profile client_id is empty".into())}
+ let profile_account=oauth_key(profile_id,"client_secret");
+ match security::canonical_get_secret_cached(&profile_account){
+  Ok(Some(secret)) if !secret.trim().is_empty()=>return Ok(ResolvedOAuthClient{client_id:client_id.into(),client_secret:secret,source:OAuthClientSecretSource::ProfileCanonical}),
+  Ok(_)=>{},
+  Err(e)=>return Err(e),
+ }
+ let global_meta=load_google_config_metadata(app)?;
+ if global_meta.client_id.trim()==client_id{
+  if let Some(secret)=canonical_global_client_secret()?.filter(|x|!x.trim().is_empty()){
+   security::canonical_set_secret(&profile_account,&secret)?;
+   let readback=security::canonical_get_secret_cached(&profile_account)?.filter(|x|!x.trim().is_empty())
+     .ok_or_else(||format!("OAUTH_KEYCHAIN_READBACK_FAILED: account={profile_account}"))?;
+   return Ok(ResolvedOAuthClient{client_id:client_id.into(),client_secret:readback,source:OAuthClientSecretSource::GlobalExactMatch})
+  }
+ }
+ let legacy_accounts=security::list_legacy_secret_accounts("")?;
+ if select_present_account(&legacy_client_secret_candidates(profile_id),&legacy_accounts).is_some(){
+  return Err(format!("OAUTH_CLIENT_SECRET_REIMPORT_REQUIRED: profile={profile_id}; legacy client_secret metadata exists but legacy secret reads are disabled"))
+ }
+ Err(format!("OAUTH_CLIENT_SECRET_REQUIRED: profile={profile_id}; exact client_secret for client_id is missing"))
+}
 fn migrate_global_client_secret_if_needed(app:&AppHandle,profile_id:Option<&str>)->Result<Option<String>,String>{
  match canonical_global_client_secret(){
   Ok(Some(v)) if !v.trim().is_empty()=>return Ok(Some(v)),
@@ -342,9 +385,10 @@ fn read_profile_secret_with<S: OAuthSecretStore>(
     Ok(secrets.get(&current)?.filter(|v|!v.is_empty()))
 }
 fn write_profile_secrets_with<S: OAuthSecretStore>(secrets:&S,p:&OAuthProfile)->Result<(),String>{
-    // RC5 durable profile storage intentionally contains only refresh_token.
-    // access_token is process memory only; client_secret is a single global canonical item.
+    // Durable OAuth ABI: refresh_token + exact per-profile client_secret in canonical V2.
+    // access_token remains process-memory only.
     if !p.refresh_token.trim().is_empty(){secrets.set(&oauth_key(&p.id,"refresh_token"),&p.refresh_token)?}
+    if !p.client_secret.trim().is_empty(){secrets.set(&oauth_key(&p.id,"client_secret"),&p.client_secret)?}
     Ok(())
 }
 fn hydrate_profile_secrets_with<S:OAuthSecretStore>(secrets:&S,p:&mut OAuthProfile)->Result<(),String>{
@@ -356,7 +400,7 @@ fn hydrate_profile_secret_kind_with<S:OAuthSecretStore>(secrets:&S,p:&mut OAuthP
     match kind{
      "refresh_token"=>{if p.refresh_token.is_empty(){p.refresh_token=read_profile_secret_with(secrets,&p.id,"refresh_token")?.unwrap_or_default()}},
      "access_token"=>{if p.access_token.is_empty(){if let Some((token,expires_at))=session_access_token(&p.id){p.access_token=token;p.expires_at=expires_at}}},
-     "client_secret"=>{p.client_secret=canonical_global_client_secret()?.unwrap_or_default()},
+     "client_secret"=>{if p.client_secret.is_empty(){p.client_secret=read_profile_secret_with(secrets,&p.id,"client_secret")?.unwrap_or_default()}},
      _=>return Err(format!("UNKNOWN_SECRET_KIND: {kind}"))
     }
     Ok(())
@@ -368,13 +412,14 @@ fn hydrate_profile_secret_for_operation(app:&AppHandle,p:&mut OAuthProfile,kind:
     match kind{
      "refresh_token"=>{p.refresh_token=require_canonical_refresh(app,&p.id)?;Ok(())},
      "access_token"=>{if let Some((token,expires_at))=session_access_token(&p.id){p.access_token=token;p.expires_at=expires_at;Ok(())}else{Err(format!("ACCESS_TOKEN_SESSION_MISS: profile={}",p.id))}},
-     "client_secret"=>{p.client_secret=canonical_global_client_secret()?.unwrap_or_default();Ok(())},
+     "client_secret"=>{let resolved=resolve_client_secret_for_profile(app,&p.id,&p.client_id)?;p.client_secret=resolved.client_secret;Ok(())},
      _=>Err(format!("UNKNOWN_SECRET_KIND: {kind}"))
     }
 }
 fn delete_profile_secrets(id:&str)->Result<(),String>{
     forget_access_token(id);
-    security::canonical_delete_secret(&oauth_key(id,"refresh_token"))
+    security::canonical_delete_secret(&oauth_key(id,"refresh_token"))?;
+    security::canonical_delete_secret(&oauth_key(id,"client_secret"))
 }
 fn write_oauth_metadata(path: &Path, s: &OAuthStore) -> Result<(), String> {
     let bytes = serde_json::to_vec_pretty(s).map_err(|e| format!("OAuth serialize: {e}"))?;
@@ -456,9 +501,27 @@ fn oauth_refresh_error(v: &Value) -> String {
         _ => format!("OAUTH_REFRESH_FAILED: {code}: {detail}"),
     }
 }
+fn refresh_token_form(client_id:&str,client_secret:&str,refresh_token:&str)->Vec<(String,String)>{
+ vec![
+  ("client_id".into(),client_id.into()),
+  ("client_secret".into(),client_secret.into()),
+  ("refresh_token".into(),refresh_token.into()),
+  ("grant_type".into(),"refresh_token".into()),
+ ]
+}
+fn authorization_code_token_form(client_id:&str,client_secret:&str,code:&str,verifier:&str,redirect:&str)->Vec<(String,String)>{
+ vec![
+  ("client_id".into(),client_id.into()),
+  ("client_secret".into(),client_secret.into()),
+  ("code".into(),code.into()),
+  ("code_verifier".into(),verifier.into()),
+  ("grant_type".into(),"authorization_code".into()),
+  ("redirect_uri".into(),redirect.into()),
+ ]
+}
 async fn refresh_access_token_http(client_id:&str,refresh_token:&str,client_secret:Option<&str>)->Result<(String,i64),String>{
-    let mut form=vec![("client_id",client_id),("refresh_token",refresh_token),("grant_type","refresh_token")];
-    if let Some(secret)=client_secret.filter(|x|!x.trim().is_empty()){form.push(("client_secret",secret))}
+    let secret=client_secret.filter(|x|!x.trim().is_empty()).ok_or_else(||"OAUTH_CLIENT_SECRET_REQUIRED: exact client_secret is missing".to_string())?;
+    let form=refresh_token_form(client_id,secret,refresh_token);
     let r=reqwest::Client::new().post("https://oauth2.googleapis.com/token").form(&form).send().await
       .map_err(|e|format!("OAUTH_NETWORK_ERROR: token refresh: {e}"))?;
     let status=r.status();
@@ -470,15 +533,8 @@ async fn refresh_access_token_http(client_id:&str,refresh_token:&str,client_secr
     Ok((token,expires))
 }
 async fn refresh_access_token_for_profile(app:&AppHandle,profile_id:&str,client_id:&str,refresh_token:&str)->Result<(String,i64),String>{
-    match refresh_access_token_http(client_id,refresh_token,None).await{
-      Ok(v)=>Ok(v),
-      Err(e) if e.starts_with("OAUTH_CLIENT_MISMATCH:")=>{
-        let secret=migrate_global_client_secret_if_needed(app,Some(profile_id))?.unwrap_or_default();
-        if secret.trim().is_empty(){return Err(e)}
-        refresh_access_token_http(client_id,refresh_token,Some(&secret)).await
-      }
-      Err(e)=>Err(e)
-    }
+    let resolved=resolve_client_secret_for_profile(app,profile_id,client_id)?;
+    refresh_access_token_http(&resolved.client_id,refresh_token,Some(&resolved.client_secret)).await
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -602,37 +658,42 @@ fn load_or_migrate_google_config(app:&AppHandle)->Result<GoogleConfig,String>{
 pub fn youtube_google_config_status(app: AppHandle) -> Result<Value, String> {
     Ok(google_config_status_value(&load_google_config_metadata(&app)?))
 }
+fn parse_google_credentials_json(json_text:&str)->Result<(String,String,String),String>{
+    let v:Value=serde_json::from_str(json_text).map_err(|e|format!("credentials.json: {e}"))?;
+    let root=v.get("installed").or_else(||v.get("web")).unwrap_or(&v);
+    let client_id=root.get("client_id").and_then(Value::as_str).unwrap_or("").trim().to_string();
+    if client_id.is_empty(){return Err("В credentials.json не найден client_id".into())}
+    let client_secret=root.get("client_secret").and_then(Value::as_str).unwrap_or("").trim().to_string();
+    if client_secret.is_empty(){return Err("OAUTH_CLIENT_SECRET_REQUIRED: credentials.json не содержит client_secret".into())}
+    let project_id=root.get("project_id").and_then(Value::as_str).or_else(||v.get("project_id").and_then(Value::as_str)).unwrap_or("").trim().to_string();
+    Ok((client_id,client_secret,project_id))
+}
+#[tauri::command]
+pub fn youtube_oauth_import_profile_credentials_file(app:AppHandle,profile_id:String,file_path:String)->Result<Value,String>{
+    let profile_id=profile_id.trim().to_string();
+    let store=load_store_metadata(&app)?;
+    let profile=store.profiles.iter().find(|p|p.id==profile_id)
+      .ok_or_else(||format!("OAUTH_PROFILE_NOT_FOUND: profile_id={profile_id}"))?;
+    let expected_client_id=profile.client_id.trim();
+    if expected_client_id.is_empty(){return Err("OAUTH_CLIENT_MISSING: profile client_id is empty".into())}
+    let raw=fs::read_to_string(&file_path).map_err(|e|format!("credentials.json read failed: {e}"))?;
+    let (client_id,client_secret,project_id)=parse_google_credentials_json(&raw)?;
+    if client_id!=expected_client_id{
+      return Err(format!("OAUTH_CLIENT_MISMATCH: imported credentials belong to another OAuth Client; expected={}",masked_client_id(expected_client_id)))
+    }
+    let account=oauth_key(&profile_id,"client_secret");
+    security::canonical_set_secret(&account,&client_secret)?;
+    let found=security::canonical_get_secret_cached(&account)?.map(|x|!x.trim().is_empty()).unwrap_or(false);
+    if !found{return Err(format!("OAUTH_KEYCHAIN_READBACK_FAILED: account={account}"))}
+    Ok(json!({"ok":true,"profileUuid":profile_id,"clientIdMasked":masked_client_id(&client_id),"projectId":if project_id.is_empty(){Value::Null}else{json!(project_id)},"clientSecretStored":true,"account":account,"secretValuesIncluded":false}))
+}
 #[tauri::command]
 pub fn youtube_google_config_import(
     app: AppHandle,
     json_text: String,
     api_key: String,
 ) -> Result<Value, String> {
-    let v: Value =
-        serde_json::from_str(&json_text).map_err(|e| format!("credentials.json: {e}"))?;
-    let root = v.get("installed").or_else(|| v.get("web")).unwrap_or(&v);
-    let client_id = root
-        .get("client_id")
-        .and_then(|x| x.as_str())
-        .unwrap_or("")
-        .trim()
-        .to_string();
-    if client_id.is_empty() {
-        return Err("В credentials.json не найден client_id".into());
-    }
-    let client_secret = root
-        .get("client_secret")
-        .and_then(|x| x.as_str())
-        .unwrap_or("")
-        .trim()
-        .to_string();
-    let project_id = root
-        .get("project_id")
-        .and_then(|x| x.as_str())
-        .or_else(|| v.get("project_id").and_then(|x| x.as_str()))
-        .unwrap_or("")
-        .trim()
-        .to_string();
+    let (client_id,client_secret,project_id)=parse_google_credentials_json(&json_text)?;
     let old = load_google_config_for_secret_operation(&app).unwrap_or_default();
     let client_secret_present=old.client_secret_present||!client_secret.is_empty();
     let c = GoogleConfig {
