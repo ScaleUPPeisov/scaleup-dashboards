@@ -38,11 +38,10 @@ export function refreshYoutubeProfileStatistics(profile:YoutubeProfile){
     }catch(error){
       preserve(profile,error);
       return null;
-    }finally{
-      if(profileRuns.get(profile.id)===task)profileRuns.delete(profile.id);
     }
   })();
   profileRuns.set(profile.id,task);
+  void task.finally(()=>{if(profileRuns.get(profile.id)===task)profileRuns.delete(profile.id)});
   return task;
 }
 
@@ -97,8 +96,9 @@ export function refreshYoutubeChannelStatistics(
   onProgress?:((p:ChannelStatisticsRefreshProgress)=>void),
 ){
   if(allRun)return allRun;
-  const task=runAll(force,onProgress).finally(()=>{if(allRun===task)allRun=undefined});
+  const task=runAll(force,onProgress);
   allRun=task;
+  void task.finally(()=>{if(allRun===task)allRun=undefined});
   return task;
 }
 
