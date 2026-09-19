@@ -1,9 +1,10 @@
+import {tenantStorageKey} from './tenantStorage';
 export type ErrorStage='selection'|'metadata'|'schedule'|'preflight'|'upload-init'|'upload-transfer'|'youtube-insert'|'metadata-apply'|'schedule-apply'|'verification'|'updater-check'|'updater-download'|'updater-install'|'updater-relaunch';
 export type ErrorHistoryMeta={errorCode?:string;videoId?:string;filePath?:string;stage?:ErrorStage;profileId?:string;channelId?:string;currentVersion?:string;targetVersion?:string};
 export type ErrorHistoryItem={id:string;title:string;message:string;technicalDetail?:string;errorCode?:string;videoId?:string;filePath?:string;stage?:ErrorStage;profileId?:string;channelId?:string;currentVersion?:string;targetVersion?:string;createdAt:number;resolvedAt?:number;resolvedBy?:string};
 const KEY='vyron:error-history:v1',EVENT='vyron:error-history-change';
-function load():ErrorHistoryItem[]{try{const x=JSON.parse(localStorage.getItem(KEY)||'[]');return Array.isArray(x)?x.filter(x=>x?.id&&x?.title).slice(-200):[]}catch{return[]}}
-function save(rows:ErrorHistoryItem[]){try{localStorage.setItem(KEY,JSON.stringify(rows.slice(-200)));window.dispatchEvent(new Event(EVENT))}catch{}}
+function load():ErrorHistoryItem[]{try{const x=JSON.parse(localStorage.getItem(tenantStorageKey(KEY))||'[]');return Array.isArray(x)?x.filter(x=>x?.id&&x?.title).slice(-200):[]}catch{return[]}}
+function save(rows:ErrorHistoryItem[]){try{localStorage.setItem(tenantStorageKey(KEY),JSON.stringify(rows.slice(-200)));window.dispatchEvent(new Event(EVENT))}catch{}}
 export function appendErrorHistory(title:string,message='',technicalDetail='',meta:ErrorHistoryMeta={}){const row:ErrorHistoryItem={id:crypto.randomUUID(),title,message,technicalDetail:technicalDetail||undefined,errorCode:meta.errorCode,videoId:meta.videoId,filePath:meta.filePath,stage:meta.stage,profileId:meta.profileId,channelId:meta.channelId,currentVersion:meta.currentVersion,targetVersion:meta.targetVersion,createdAt:Date.now()};save([...load(),row]);return row}
 export function readErrorHistory(){return load().filter(x=>!x.resolvedAt).sort((a,b)=>b.createdAt-a.createdAt)}
 export function readResolvedErrorHistory(){return load().filter(x=>!!x.resolvedAt).sort((a,b)=>(b.resolvedAt||0)-(a.resolvedAt||0))}
