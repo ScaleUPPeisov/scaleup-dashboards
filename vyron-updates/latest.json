@@ -6,6 +6,10 @@
     "darwin-aarch64": {
       "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.13/VYRON.app.tar.gz",
       "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM2M5NFdmWU1DMnZHK1pYU3VjL09LUWhZUUZhaVhTSFlNY0RCMEk1eFRkcjJVd3NZQmhTQlhhdVRrYkpQaEFxd1I4S2V3YnhPSUQ5V0NFN3hZcTg5NEE0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5ODI3MDUzCWZpbGU6VllST04uYXBwLnRhci5negpXTm5zWHdEOWJVT0dxR0RRdGtYSFhJWjJ3NWtYYWZUNlV1ZXcxalZTeFdVeVV1NjRxQzBoTUJaTXFOSWMxajhBZGd5VWM0MjkxQnRJclpBREovbGdCZz09Cg=="
+    },
+    "windows-x86_64": {
+      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.13-windows-x64/VYRON_2.1.13_x64-setup.exe",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM2RpeUNXNGcvekhqcTA3Mm1wa2Nldk9ZVllMVDc5QitsWU4vdUV4YW1BUEJFL1VQU2NRRDc5c1NkaW9UNzZsZ3g2WS9tYUZTNmxsSElYaStXZStJbmdBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5ODI4ODM3CWZpbGU6VllST05fMi4xLjEzX3g2NC1zZXR1cC5leGUKeVVzYXZaQTJ1MVVjMXlzZHZUQ3IwYzFTZ1ZVS213emRBcVQ3L21FVitnZi8vVUVmYXByNHZ1UEQyUUdsa1dHVFFpS1YzK0xqL1VENTJJd2llclpEQlE9PQo="
     }
   }
 }
