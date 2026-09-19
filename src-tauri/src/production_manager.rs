@@ -1872,7 +1872,7 @@ pub fn validate_production_projects(
     Ok(validate_manifest_projects(&m, &endlume_path, Some(&ids)))
 }
 fn verified_uploaded_job_ids(app: &AppHandle) -> HashSet<String> {
-    let Ok(dir) = app.path().app_data_dir() else {
+    let Ok(dir) = crate::license::private_data_dir(app) else {
         return HashSet::new();
     };
     let state: Value = fs::read(dir.join("state.json"))
