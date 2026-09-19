@@ -1,3 +1,4 @@
+import {tenantStorageKey} from './tenantStorage';
 import {COMMAND_CENTER_STORAGE_KEY,type BatchPlan} from './commandCenterCore';
 
 type StorageLike=Pick<Storage,'getItem'|'setItem'|'removeItem'>;
@@ -10,7 +11,7 @@ const emit=()=>{try{window.dispatchEvent(new Event(EVENT))}catch{}};
 export function loadCommandCenterStore(storage:StorageLike|undefined=browserStorage()):CommandCenterStore{
   if(!storage)return defaultStore();
   try{
-    const x=JSON.parse(storage.getItem(COMMAND_CENTER_STORAGE_KEY)||'null') as CommandCenterStore|null;
+    const x=JSON.parse(storage.getItem(tenantStorageKey(COMMAND_CENTER_STORAGE_KEY))||'null') as CommandCenterStore|null;
     if(!x||x.version!==1||!x.batchPlans||typeof x.batchPlans!=='object')return defaultStore();
     return x;
   }catch{return defaultStore()}
@@ -18,7 +19,7 @@ export function loadCommandCenterStore(storage:StorageLike|undefined=browserStor
 
 export function saveCommandCenterStore(value:CommandCenterStore,storage:StorageLike|undefined=browserStorage()){
   const next:{version:1;selectedChannelId?:string;batchPlans:Record<string,BatchPlan>;updatedAt:string}={...value,version:1,updatedAt:new Date().toISOString()};
-  if(storage)storage.setItem(COMMAND_CENTER_STORAGE_KEY,JSON.stringify(next));
+  if(storage)storage.setItem(tenantStorageKey(COMMAND_CENTER_STORAGE_KEY),JSON.stringify(next));
   emit();
   return next;
 }
