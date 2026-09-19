@@ -4517,6 +4517,12 @@ mod keychain_prompt_architecture_tests{
   assert!(!active_prefix.contains("migrate_profile_refresh_to_canonical"));
   assert!(!source.contains("security::get_secret_cached(GOOGLE_API_KEY)"));
   assert!(!source.contains("security::set_secret(GOOGLE_API_KEY"));
+  let storage=include_str!("storage.rs");
+  assert!(!storage.contains("security::get_secret_cached("));
+  assert!(!storage.contains("security::set_secret("));
+  assert!(!storage.contains("security::set_secret_for_autosave("));
+  assert!(storage.contains("security::canonical_get_secret_cached("));
+  assert!(storage.contains("security::canonical_set_secret("));
  }
  #[test]fn rc6_security_source_contract_guards_every_native_secret_read(){
   let source=include_str!("security.rs");
@@ -4750,20 +4756,20 @@ mod auth_recovery_targeted_tests {
 
 
 #[cfg(test)]
-mod v219_rc5_keychain_v2_tests{
+mod v219_rc6_zero_prompt_tests{
  use super::*;
  #[test]
  fn startup_and_navigation_model_do_not_touch_legacy_or_acl(){
   let state=KeychainMigrationV2State::default();
   assert!(state.profiles.is_empty());
   assert_eq!(state.global_client_secret,MIGRATION_NOT_STARTED);
-  // Passive metadata/profile functions have no migration call; the migration helper is only invoked by explicit Sync.
+  // Passive metadata/profile functions never hydrate legacy secrets; unavailable credentials require Google reconnect.
   assert_eq!(security::canonical_service(),"com.scaleup.vyron.security.v2");
   assert_eq!(security::LEGACY_SERVICE,"com.scaleup.vyron.security");
  }
  #[test]
  fn access_token_replacement_is_memory_only(){
-  let id="rc5-access-memory-test";
+  let id="rc6-access-memory-test";
   forget_access_token(id);
   for i in 0..10{remember_access_token(id,&format!("access-{i}"),now_ts()+3600)}
   let (token,_)=session_access_token(id).unwrap();
