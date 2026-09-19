@@ -1,9 +1,10 @@
+import {fileURLToPath} from 'node:url';
 import {describe,expect,it} from 'vitest';
 import {readFileSync} from 'node:fs';
-const ui=readFileSync(decodeURIComponent(new URL('./ScheduleOS.tsx',import.meta.url).pathname),'utf8');
-const api=readFileSync(decodeURIComponent(new URL('./api.ts',import.meta.url).pathname),'utf8');
-const rust=readFileSync(decodeURIComponent(new URL('../src-tauri/src/youtube.rs',import.meta.url).pathname),'utf8');
-const lib=readFileSync(decodeURIComponent(new URL('../src-tauri/src/lib.rs',import.meta.url).pathname),'utf8');
+const ui=readFileSync(fileURLToPath(new URL('./ScheduleOS.tsx',import.meta.url)),'utf8');
+const api=readFileSync(fileURLToPath(new URL('./api.ts',import.meta.url)),'utf8');
+const rust=readFileSync(fileURLToPath(new URL('../src-tauri/src/youtube.rs',import.meta.url)),'utf8');
+const lib=readFileSync(fileURLToPath(new URL('../src-tauri/src/lib.rs',import.meta.url)),'utf8');
 describe('schedule-only zero-metadata write architecture',()=>{
  it('does not import or call Metadata parser, mammoth, GPT or SEO pack state',()=>{expect(ui).not.toContain("from './metadata'");expect(ui).not.toContain('mammoth');expect(ui).not.toContain('parseMetadataFile');expect(ui).not.toContain('ai_generate_metadata');expect(ui).not.toContain('seoPackLoaded')});
  it('uses a dedicated schedule command rather than metadata updater',()=>{expect(api).toContain("youtubeUpdateExistingSchedule");expect(api).toContain("'youtube_update_existing_schedule'");expect(lib).toContain('youtube::youtube_update_existing_schedule')});
