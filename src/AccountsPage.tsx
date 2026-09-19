@@ -3,14 +3,27 @@ import {api,type GoogleConfigStatus,type YoutubeProfileHealth} from './api';
 import {useApp} from './store';
 import type {YoutubeProfile,YoutubeChannelStatistics} from './types';
 import {findFutureChannelMatch} from './channelIdentity';
-import {compactChannelStat,exactChannelStat,formatStatsUpdatedAt,isChannelStatsStale,normalizeChannelStatistics,preserveChannelStatisticsOnError,subscriberStatLabel} from './youtubeChannelStats';
+import {channelStatsStatusLabel,compactChannelStat,exactChannelStat,formatStatsUpdatedAt,normalizeChannelStatistics,subscriberStatLabel} from './youtubeChannelStats';
+import {refreshYoutubeChannelStatistics,refreshYoutubeProfileStatistics,type ChannelStatisticsRefreshProgress} from './youtubeChannelStatsRuntime';
 
 type BrowserOption={id:string;label:string;available:boolean};
+type DuplicateChannel={profileId:string;channelId?:string;title?:string};
 const ago=(iso?:string)=>{if(!iso)return '—';const ms=Date.now()-new Date(iso).getTime();const m=Math.max(0,Math.round(ms/60000));return m<1?'только что':m<60?`${m} мин. назад`:m<1440?`${Math.round(m/60)} ч. назад`:`${Math.round(m/1440)} дн. назад`};
 
 export function AccountsPage(){
  const channels=useApp(s=>s.channels),toast=useApp(s=>s.toast),settings=useApp(s=>s.settings),patchSettings=useApp(s=>s.patchSettings);
- const [profiles,setProfiles]=useState<YoutubeProfile[]>([]),[health,setHealth]=useState<Record<string,YoutubeProfileHealth>>({}),[config,setConfig]=useState<GoogleConfigStatus|null>(null),[busy,setBusy]=useState(false),[checking,setChecking]=useState(false),[browserOpen,setBrowserOpen]=useState(false),[browsers,setBrowsers]=useState<BrowserOption[]>([]),[browser,setBrowser]=useState(localStorage.getItem('vyron:oauth-browser')||'default'),[pendingProfileId,setPendingProfileId]=useState(''),[refreshingStats,setRefreshingStats]=useState<Record<string,boolean>>({});const file=useRef<HTMLInputElement>(null);
+ const [profiles,setProfiles]=useState<YoutubeProfile[]>([]);
+ const [health,setHealth]=useState<Record<string,YoutubeProfileHealth>>({});
+ const [config,setConfig]=useState<GoogleConfigStatus|null>(null);
+ const [busy,setBusy]=useState(false),[checking,setChecking]=useState(false);
+ const [browserOpen,setBrowserOpen]=useState(false),[browsers,setBrowsers]=useState<BrowserOption[]>([]);
+ const [browser,setBrowser]=useState(localStorage.getItem('vyron:oauth-browser')||'default');
+ const [pendingProfileId,setPendingProfileId]=useState('');
+ const [oauthSetupOpen,setOauthSetupOpen]=useState(false);
+ const [duplicate,setDuplicate]=useState<DuplicateChannel|null>(null);
+ const [refreshingStats,setRefreshingStats]=useState<Record<string,boolean>>({});
+ const [allStats,setAllStats]=useState<ChannelStatisticsRefreshProgress&{running:boolean}>({running:false,done:0,total:0});
+ const file=useRef<HTMLInputElement>(null);
 
  function boundChannel(p:YoutubeProfile){
   return useApp.getState().channels.find(x=>x.youtubeChannelId===p.channelId||x.youtubeProfileId===p.id);
@@ -23,7 +36,8 @@ export function AccountsPage(){
   if(exact){state.updateChannel(exact.id,{youtubeProfileId:p.id,youtubeChannelId:p.channelId});return{channel:exact,mode:'existing' as const}}
   const future=findFutureChannelMatch(state.channels,p.channelTitle);
   if(future){state.updateChannel(future.id,{youtubeProfileId:p.id,youtubeChannelId:p.channelId});return{channel:future,mode:'future' as const}}
-  const created=state.addChannel({name:p.channelTitle||'YouTube канал',youtubeProfileId:p.id,youtubeChannelId:p.channelId});return{channel:created,mode:'created' as const}
+  const created=state.addChannel({name:p.channelTitle||'YouTube канал',youtubeProfileId:p.id,youtubeChannelId:p.channelId});
+  return{channel:created,mode:'created' as const}
  }
 
  function applyStatistics(p:YoutubeProfile,stats:YoutubeChannelStatistics){
@@ -33,25 +47,14 @@ export function AccountsPage(){
   useApp.getState().updateChannel(binding.id,{stats:normalizeChannelStatistics(stats,current.stats)});
  }
 
- function preserveStatisticsError(p:YoutubeProfile,error:unknown){
-  const binding=boundChannel(p);
-  if(!binding)return;
-  const current=useApp.getState().channels.find(x=>x.id===binding.id)||binding;
-  useApp.getState().updateChannel(binding.id,{stats:preserveChannelStatisticsOnError(current.stats,error)});
- }
-
  async function refreshProfileStats(p:YoutubeProfile,quiet=false){
   if(!p.id||!p.channelId)return null;
   setRefreshingStats(x=>({...x,[p.id]:true}));
   try{
-   const stats=await api.youtubeChannelStatistics(p.id);
-   applyStatistics(p,stats);
-   if(!quiet)toast(`✓ Статистика ${p.channelTitle||p.channelId} обновлена`);
+   const stats=await refreshYoutubeProfileStatistics(p);
+   if(stats&&!quiet)toast(`✓ Статистика ${p.channelTitle||p.channelId} обновлена`);
+   if(!stats&&!quiet)toast(`Не удалось обновить статистику ${p.channelTitle||p.channelId}. Показаны последние сохранённые данные.`);
    return stats
-  }catch(e){
-   preserveStatisticsError(p,e);
-   if(!quiet)toast(`Не удалось обновить статистику сейчас: ${String(e)}`);
-   return null
   }finally{setRefreshingStats(x=>({...x,[p.id]:false}))}
  }
 
@@ -62,14 +65,28 @@ export function AccountsPage(){
   return p
  }
 
+ async function refreshAllStats(force=true){
+  if(allStats.running)return;
+  setAllStats({running:true,done:0,total:0});
+  try{
+   const result=await refreshYoutubeChannelStatistics(force,p=>setAllStats({running:true,...p}));
+   setAllStats({running:false,done:result.done,total:result.total});
+   if(force)toast(result.failed?`Статистика обновлена: ${result.updated}, ошибок: ${result.failed}`:`✓ Статистика каналов обновлена: ${result.updated}`);
+  }catch(e){
+   setAllStats(x=>({...x,running:false}));
+   if(force)toast(`Не удалось обновить статистику каналов: ${String(e)}`)
+  }
+ }
+
  useEffect(()=>{
+  let cancelled=false;
   void (async()=>{
    try{
-    const rows=await refresh();
-    const stale=rows.filter(p=>{const c=boundChannel(p);return !!c&&isChannelStatsStale(c.stats)});
-    for(let i=0;i<stale.length;i+=3)await Promise.all(stale.slice(i,i+3).map(p=>refreshProfileStats(p,true)));
-   }catch(e){toast(String(e))}
-  })()
+    await refresh();
+    if(!cancelled)void refreshAllStats(false);
+   }catch(e){if(!cancelled)toast(String(e))}
+  })();
+  return()=>{cancelled=true}
  },[]);
 
  async function importCredentials(fl:FileList|null){
@@ -78,27 +95,34 @@ export function AccountsPage(){
   try{
    const c=await api.youtubeImportGoogleConfig(await selected.text(),settings.youtubeApiKey||'');
    setConfig(c);
-   toast(c.oauthReady?'✓ OAuth Client VYRON настроен. Теперь для каналов нужен только выбор браузера и Google-аккаунта.':'OAuth Client сохранён, но Client Secret всё ещё отсутствует.')
+   if(c.oauthReady)setOauthSetupOpen(false);
+   toast(c.oauthReady?'✓ OAuth Client VYRON настроен. Теперь «+ Добавить канал» откроет выбор браузера.':'OAuth Client сохранён, но Client Secret всё ещё отсутствует.')
   }catch(e){toast(String(e))}finally{setBusy(false)}
  }
 
  async function askBrowser(profileId=''){
   if(busy)return;
-  if(!profileId&&!config?.oauthReady){
-   toast('Сначала один раз настройте GLOBAL OAuth Client VYRON через credentials.json. Отдельный credentials.json для каждого канала не нужен.');
-   file.current?.click();
-   return
-  }
   setBusy(true);
   try{
+   if(!profileId){
+    const readiness=await api.youtubeGoogleConfig();
+    setConfig(readiness);
+    if(!readiness.oauthReady){
+     setOauthSetupOpen(true);
+     return
+    }
+   }
    const rows=await api.youtubeOauthBrowsers();
    const available=rows.filter(x=>x.available);
-   setBrowsers(available.length?available:[{id:'default',label:'Браузер по умолчанию',available:true}]);
-   if(!available.some(x=>x.id===browser))setBrowser('default');
+   const options=available.some(x=>x.id==='default')?available:[{id:'default',label:'Браузер по умолчанию',available:true},...available];
+   setBrowsers(options);
+   if(!options.some(x=>x.id===browser))setBrowser('default');
    setPendingProfileId(profileId);
    setBrowserOpen(true)
-  }catch{
+  }catch(e){
+   toast(`Не удалось получить список браузеров: ${String(e)}`);
    setBrowsers([{id:'default',label:'Браузер по умолчанию',available:true}]);
+   setBrowser('default');
    setPendingProfileId(profileId);
    setBrowserOpen(true)
   }finally{setBusy(false)}
@@ -122,12 +146,19 @@ export function AccountsPage(){
    const binding=bindProfile(p);
    if(p.statistics)applyStatistics(p,p.statistics);
    await refresh();
-   toast(binding?.mode==='existing'
-    ?`✓ ${p.channelTitle||p.channelId||'YouTube канал'} переавторизован и привязан к существующему каналу без нового Profile UUID.`
-    :binding?.mode==='future'
+   toast(binding?.mode==='future'
       ?`✓ ${p.channelTitle||p.channelId||'YouTube канал'} привязан к будущему каналу ${binding.channel.name}. Все готовые проекты сохранены.`
       :`✓ ${p.channelTitle||p.channelId||'YouTube канал'} подключён и привязан автоматически`)
-  }catch(e){toast(String(e))}finally{setBusy(false)}
+  }catch(e){
+   const message=String(e);
+   if(message.includes('YOUTUBE_CHANNEL_ALREADY_CONNECTED')){
+    const profileId=message.match(/profile_id=([^;]+)/)?.[1]?.trim()||'';
+    const channelId=message.match(/channel_id=([^;]+)/)?.[1]?.trim();
+    const title=message.match(/title=([^;]+)/)?.[1]?.trim();
+    if(profileId){setDuplicate({profileId,channelId,title});return}
+   }
+   toast(message)
+  }finally{setBusy(false)}
  }
 
  async function checkProfile(p:YoutubeProfile,quiet=false){
@@ -135,7 +166,7 @@ export function AccountsPage(){
    const h=await api.youtubeProfileHealth(p.id);
    setHealth(x=>({...x,[p.id]:h}));
    if(h.statistics)applyStatistics(p,h.statistics);
-   if(!quiet)toast(`✓ ${h.channelTitle||p.channelTitle||'Канал'}: OAuth READY, Sync OK`);
+   if(!quiet)toast(`✓ ${h.channelTitle||p.channelTitle||'Канал'}: OAuth READY, YouTube API OK`);
    return h
   }catch(e){
    const h:YoutubeProfileHealth={ok:false,status:'RECONNECT_REQUIRED',error:String(e)};
@@ -154,12 +185,15 @@ export function AccountsPage(){
 
  return <>
   <div className="pageHeader">
-   <div><small>ACCOUNT CENTER</small><h1>Аккаунты YouTube</h1><p>Один GLOBAL Google OAuth Client обслуживает все каналы. Статистика хранится локально и обновляется только при stale-cache, проверке или ручном refresh.</p></div>
+   <div><small>ACCOUNT CENTER</small><h1>Аккаунты YouTube</h1><p>GLOBAL OAuth Client настраивается один раз. «+ Добавить канал» открывает браузер, а Finder используется только для отдельного импорта credentials.json.</p></div>
    <div className="headerActions">
-    <button disabled={checking||!profiles.length} onClick={checkAll}>{checking?'Проверяю…':'↻ Проверить все'}</button>
+    <button disabled={checking||!profiles.length} onClick={checkAll}>{checking?'Проверяю OAuth…':'✓ Проверить OAuth'}</button>
+    <button disabled={allStats.running||!profiles.length} onClick={()=>void refreshAllStats(true)}>{allStats.running?`↻ ${allStats.done} / ${allStats.total}`:'↻ Обновить все'}</button>
     <button className="primary compactAction" disabled={busy} onClick={()=>void askBrowser('')}>+ Добавить канал</button>
    </div>
   </div>
+
+  {allStats.running&&<div className="statsRefreshProgress"><b>Обновление каналов</b><span>{allStats.done} / {allStats.total}</span><i style={{width:`${allStats.total?Math.round(allStats.done/allStats.total*100):0}%`}}/></div>}
 
   <input ref={file} hidden type="file" accept=".json,application/json" onChange={e=>{void importCredentials(e.target.files);e.currentTarget.value=''}}/>
 
@@ -172,17 +206,17 @@ export function AccountsPage(){
     <span className={oauthReady?'good':'warn'}>OAuth Ready <b>{oauthReady?'✓':'—'}</b></span>
     <span className={settings.youtubeApiKey?'good':''}>Public API Key <b>{settings.youtubeApiKey?'✓':'не нужен для OAuth'}</b></span>
    </div>
-   {!oauthReady&&<div className="publisherNotice"><b>OAuth Client настроен не полностью</b><p>Нужен один credentials.json текущего OAuth Client VYRON. Не импортируйте credentials отдельно для каждого канала.</p></div>}
+   {!oauthReady&&<div className="publisherNotice"><b>OAuth Client настроен не полностью</b><p>Нужен один credentials.json текущего OAuth Client VYRON. Finder откроется только после явного нажатия кнопки импорта ниже.</p></div>}
    <div className="googleConfigActions"><button disabled={busy} onClick={()=>file.current?.click()}>{oauthReady?'Заменить credentials.json':'Импортировать credentials.json один раз'}</button><label>Public API Key<input type="password" placeholder="опционально" value={settings.youtubeApiKey} onChange={e=>patchSettings({youtubeApiKey:e.target.value.trim()})}/></label></div>
   </section>
 
   <section className="panel accountsPanel">
    <div className="panelHead"><div><small>YOUTUBE ACCOUNTS</small><h3>{profiles.length?`${profiles.length} OAuth profiles`:'Аккаунтов пока нет'}</h3></div></div>
    {!profiles.length
-    ?<div className="empty"><b>Подключи первый YouTube-канал</b><p>Сначала один раз настройте GLOBAL OAuth Client, затем VYRON спросит браузер и после OAuth привяжет реальный канал.</p></div>
+    ?<div className="empty"><b>Подключи первый YouTube-канал</b><p>Настройте GLOBAL OAuth Client один раз, затем нажмите «+ Добавить канал», выберите браузер и нужный Google-аккаунт.</p></div>
     :<div className="accountList">{profiles.map(p=>{
       const h=health[p.id],bound=channels.find(c=>c.youtubeProfileId===p.id||c.youtubeChannelId===p.channelId),stats=bound?.stats;
-      const oauthOk=!!h?.ok||p.credentialStatus==='WORKING';
+      const oauthOk=!!h?.ok||p.credentialStatus==='WORKING'||p.credentialStatus==='CHECK_ON_USE';
       const syncOk=!!(stats?.statisticsUpdatedAt||stats?.updatedAt)&&!stats?.syncWarning;
       return <article className="accountRow accountRowStats" key={p.id}>
        {(h?.thumbnail||stats?.thumbnail)?<img src={h?.thumbnail||stats?.thumbnail} loading="lazy"/>:<div className="accountAvatar">YT</div>}
@@ -191,23 +225,23 @@ export function AccountsPage(){
         <small>{stats?.handle?`${stats.handle} • `:''}{p.channelId||'Channel ID ещё не определён'}</small>
         <div className="accountBadges">
          <span className={oauthOk?'good':'warn'}>OAuth: {oauthOk?'READY':h?'RECONNECT':'не проверен'}</span>
-         <span className={syncOk?'good':stats?.syncWarning?'warn':''}>Sync: {syncOk?'OK':stats?.syncWarning?'WARNING':'CACHE'}</span>
+         <span className={syncOk?'good':stats?.syncWarning?'warn':''}>YouTube API: {syncOk?'OK':stats?.syncWarning?'WARNING':'CACHE'}</span>
          {p.preferredBrowser&&<span>Браузер: {p.preferredBrowser}</span>}
         </div>
         <div className="accountStatsGrid">
-         <span><small>Подписчики</small><b title={stats?.hiddenSubscriberCount?'Подписчики скрыты владельцем канала':exactChannelStat(stats?.subscriberCount??stats?.subscribers)}>{subscriberStatLabel(stats)}</b></span>
-         <span><small>Просмотры</small><b title={exactChannelStat(stats?.viewCount??stats?.views)}>{compactChannelStat(stats?.viewCount??stats?.views)}</b></span>
-         <span><small>Видео</small><b title={exactChannelStat(stats?.videoCount??stats?.videos)}>{compactChannelStat(stats?.videoCount??stats?.videos)}</b></span>
+         <span><small>👥 Подписчики</small><b title={stats?.hiddenSubscriberCount?'Подписчики скрыты владельцем канала':exactChannelStat(stats?.subscriberCount??stats?.subscribers)}>{subscriberStatLabel(stats)}</b></span>
+         <span><small>👁 Всего просмотров</small><b title={exactChannelStat(stats?.viewCount??stats?.views)}>{compactChannelStat(stats?.viewCount??stats?.views)}</b></span>
+         <span><small>🎬 Видео</small><b title={exactChannelStat(stats?.videoCount??stats?.videos)}>{compactChannelStat(stats?.videoCount??stats?.videos)}</b></span>
         </div>
-        {stats?.syncWarning&&<div className="statsWarning">Последние данные сохранены. Не удалось обновить сейчас.</div>}
+        <div className={stats?.syncWarning?'statsState warn':'statsState'}>{channelStatsStatusLabel(stats,!!refreshingStats[p.id])}</div>
        </div>
        <div className="accountMeta">
-        <small>Последнее обновление</small><b>{formatStatsUpdatedAt(stats?.statisticsUpdatedAt||stats?.updatedAt)}</b>
+        <small>Последняя синхронизация</small><b>{formatStatsUpdatedAt(stats?.statisticsUpdatedAt||stats?.updatedAt)}</b>
         <small>Подключён</small><b>{ago(p.connectedAt)}</b>
        </div>
        <div className="accountActions">
         <button className="mini" disabled={busy} onClick={()=>void checkProfile(p)}>Проверить</button>
-        <button className="mini" disabled={!!refreshingStats[p.id]} onClick={()=>void refreshProfileStats(p)}>{refreshingStats[p.id]?'Обновляю…':'Обновить данные'}</button>
+        <button className="mini" disabled={!!refreshingStats[p.id]} onClick={()=>void refreshProfileStats(p)}>{refreshingStats[p.id]?'↻ Обновление…':'↻ Обновить'}</button>
         <button className="mini" disabled={busy} onClick={()=>void askBrowser(p.id)}>Переподключить</button>
         <button className="danger mini" disabled={busy} onClick={async()=>{await api.youtubeDisconnect(p.id);await refresh()}}>Удалить</button>
        </div>
@@ -216,13 +250,33 @@ export function AccountsPage(){
    }
   </section>
 
+  {oauthSetupOpen&&<div className="modalBackdrop" onMouseDown={()=>setOauthSetupOpen(false)}>
+   <section className="confirmModal oauthSetupModal" onMouseDown={e=>e.stopPropagation()}>
+    <small>GLOBAL GOOGLE OAUTH</small>
+    <h2>Google OAuth Client ещё не настроен</h2>
+    <p>Для подключения YouTube-каналов сначала один раз импортируйте credentials.json вашего VYRON OAuth Client. После этого «+ Добавить канал» будет открывать выбор браузера, а не Finder.</p>
+    <footer><button onClick={()=>setOauthSetupOpen(false)}>Отмена</button><button className="primary" onClick={()=>file.current?.click()}>Импортировать credentials.json</button></footer>
+   </section>
+  </div>}
+
   {browserOpen&&<div className="modalBackdrop" onMouseDown={()=>{setBrowserOpen(false);setPendingProfileId('')}}>
    <section className="confirmModal browserPicker" onMouseDown={e=>e.stopPropagation()}>
     <small>GOOGLE OAUTH</small>
-    <h2>{pendingProfileId?'Через какой браузер переподключить этот канал?':'Через какой браузер добавить канал?'}</h2>
-    <p>Выбери браузер. Google OAuth дополнительно покажет выбор нужного аккаунта.</p>
-    <div className="browserGrid">{browsers.map(x=><button key={x.id} className={browser===x.id?'active':''} onClick={()=>setBrowser(x.id)}><b>{x.label}</b><small>{x.id==='default'?'Использовать системный браузер':'Открыть OAuth именно здесь'}</small></button>)}</div>
+    <h2>{pendingProfileId?'Выберите браузер для переподключения':'Выберите браузер для Google авторизации'}</h2>
+    <p>Показываются только браузеры, которые VYRON нашёл на этом Mac. Google отдельно покажет выбор нужного аккаунта.</p>
+    <div className="browserGrid">{browsers.map(x=><button key={x.id} className={browser===x.id?'active':''} onClick={()=>setBrowser(x.id)}><b>{x.label}</b><small>{x.id==='default'?'Системный браузер':'Открыть Google OAuth именно здесь'}</small></button>)}</div>
     <footer><button onClick={()=>{setBrowserOpen(false);setPendingProfileId('')}}>Отмена</button><button className="primary" onClick={()=>void connect()}>Продолжить через {browsers.find(x=>x.id===browser)?.label||'браузер'}</button></footer>
+   </section>
+  </div>}
+
+  {duplicate&&<div className="modalBackdrop" onMouseDown={()=>setDuplicate(null)}>
+   <section className="confirmModal duplicateChannelModal" onMouseDown={e=>e.stopPropagation()}>
+    <small>YOUTUBE CHANNEL</small>
+    <h2>Этот YouTube-канал уже подключён</h2>
+    <p><b>{duplicate.title||duplicate.channelId||'YouTube канал'}</b></p>
+    {duplicate.channelId&&<p>{duplicate.channelId}</p>}
+    <p>Новый профиль не создан. Можно явно переподключить существующий Profile UUID или отменить действие.</p>
+    <footer><button onClick={()=>setDuplicate(null)}>Отмена</button><button className="primary" onClick={()=>{const id=duplicate.profileId;setDuplicate(null);void askBrowser(id)}}>Переподключить</button></footer>
    </section>
   </div>}
  </>
