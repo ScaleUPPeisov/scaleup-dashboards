@@ -1375,36 +1375,20 @@ where
     }
 }
 fn migrate_validated_orphan_with<S: OAuthSecretStore>(
-    secrets: &S,
-    current: &mut OAuthProfile,
-    validated: &ValidatedOrphanCredential,
-) -> Result<(), String> {
-    let old = &validated.candidate;
-    secrets.set(&oauth_key(&current.id, "refresh_token"), &old.refresh_token)?;
-    secrets.set(
-        &oauth_key(&current.id, "access_token"),
-        &validated.access_token,
-    )?;
-    if !old.client_secret.trim().is_empty() {
-        secrets.set(&oauth_key(&current.id, "client_secret"), &old.client_secret)?;
-        current.client_secret = old.client_secret.clone()
-    }
-    current.refresh_token = old.refresh_token.clone();
-    current.access_token = validated.access_token.clone();
-    current.expires_at = now_ts() + validated.expires_in;
-    current.channel_title = validated
-        .channel_title
-        .clone()
-        .or_else(|| current.channel_title.clone());
-    current.identity_validated_channel_id = Some(validated.channel_id.clone());
-    current.identity_validated_at = Some(Utc::now().to_rfc3339());
-    current.credential_error = None;
-    let reread = secrets
-        .get(&oauth_key(&current.id, "refresh_token"))?
-        .unwrap_or_default();
-    if reread.trim().is_empty() {
-        return Err("OAUTH_MIGRATION_VERIFY_FAILED: current refresh_token is still missing after validated migration".into());
-    }
+    secrets:&S,current:&mut OAuthProfile,validated:&ValidatedOrphanCredential,
+)->Result<(),String>{
+    let old=&validated.candidate;
+    secrets.set(&oauth_key(&current.id,"refresh_token"),&old.refresh_token)?;
+    current.refresh_token=old.refresh_token.clone();
+    current.access_token=validated.access_token.clone();
+    current.expires_at=now_ts()+validated.expires_in;
+    remember_access_token(&current.id,&validated.access_token,current.expires_at);
+    current.channel_title=validated.channel_title.clone().or_else(||current.channel_title.clone());
+    current.identity_validated_channel_id=Some(validated.channel_id.clone());
+    current.identity_validated_at=Some(Utc::now().to_rfc3339());
+    current.credential_error=None;
+    let reread=secrets.get(&oauth_key(&current.id,"refresh_token"))?.unwrap_or_default();
+    if reread.trim().is_empty(){return Err("OAUTH_MIGRATION_VERIFY_FAILED: canonical refresh_token missing".into())}
     Ok(())
 }
 async fn validate_orphan_candidate_live(
@@ -1538,78 +1522,55 @@ async fn recover_orphan_credential_live(
 
 #[tauri::command]
 pub async fn youtube_oauth_recovery_diagnostic(
-    app: AppHandle,
-    profile_id: String,
-) -> Result<Value, String> {
-    let path = store_path(&app)?;
-    let path_text = path.display().to_string();
-    let raw = if path.exists() {
-        let b = fs::read(&path).map_err(|e| format!("OAUTH_STORE_READ_ERROR: {e}"))?;
-        serde_json::from_slice::<OAuthStore>(&b).map_err(|_| {
-            "LEGACY_CREDENTIAL_MALFORMED: youtube-oauth.json cannot be parsed".to_string()
-        })?
-    } else {
-        OAuthStore::default()
-    };
-    let mut store = raw.clone();
-    let idx = store
-        .profiles
-        .iter()
-        .position(|p| p.id == profile_id)
-        .ok_or_else(|| {
-            "CREDENTIAL_MISSING: selected OAuth profile is not present in youtube-oauth.json"
-                .to_string()
-        })?;
-    let current = store.profiles[idx].clone();
-    let current_account = oauth_key(&profile_id, "refresh_token");
-    let current_probe = security::probe_secret(&current_account);
-    let accounts = security::list_secret_accounts("oauth.");
-    let (enum_status, orphan_ids) = match accounts {
-        Ok(a) => (
-            "PASS",
-            a.iter()
-                .filter_map(|x| orphan_profile_id(x))
-                .filter(|id| id != &profile_id)
-                .collect::<Vec<_>>(),
-        ),
-        Err(_) => ("FAIL", Vec::new()),
-    };
-    let json_matching = raw.profiles.iter().any(|p| {
-        p.id != profile_id
-            && p.channel_id == current.channel_id
-            && !p.refresh_token.trim().is_empty()
-    });
-    let mut outcome = RecoveryOutcome {
-        recovered: false,
-        status: RecoveryFinalStatus::Missing,
-        audits: Vec::new(),
-        error: None,
-        selected: None,
-    };
-    if matches!(current_probe.status, security::KeychainReadStatus::Found) {
-        outcome.status = RecoveryFinalStatus::Recovered;
-    } else if matches!(
-        current_probe.status,
-        security::KeychainReadStatus::AccessDenied | security::KeychainReadStatus::AuthFailed
-    ) {
-        outcome.status = RecoveryFinalStatus::Denied;
-    } else if enum_status == "FAIL" {
-        outcome.status = RecoveryFinalStatus::Failed;
-        outcome.error = Some("KEYCHAIN_ENUM_FAILED".into());
-    } else {
-        outcome = recover_orphan_credential_live(&app, &mut store, idx).await?;
-    }
-    let final_status = match outcome.status {
-        RecoveryFinalStatus::Recovered => "RECOVERED",
-        RecoveryFinalStatus::Missing => "MISSING",
-        RecoveryFinalStatus::Denied => "DENIED",
-        RecoveryFinalStatus::Revoked => "REVOKED",
-        RecoveryFinalStatus::Mismatch => "MISMATCH",
-        RecoveryFinalStatus::Failed => "FAILED",
-    };
-    Ok(
-        json!({"appVersion":app.package_info().version.to_string(),"bundleId":app.config().identifier.clone(),"channelId":current.channel_id,"currentProfileUuid":profile_id,"currentRefreshToken":{"status":current_probe.status,"osstatus":current_probe.osstatus},"keychainService":security::keychain_service(),"enumeration":enum_status,"orphanCandidates":{"count":orphan_ids.len(),"profileUuids":orphan_ids,"results":outcome.audits},"v208Json":{"path":path_text,"status":if path.exists(){"FOUND"}else{"NOT_FOUND"},"matchingProfile":if json_matching{"FOUND"}else{"NOT_FOUND"}},"finalRecoveryStatus":final_status,"error":outcome.error}),
-    )
+    app:AppHandle,profile_id:String,
+)->Result<Value,String>{
+    let path=store_path(&app)?;
+    let store=load_store_metadata(&app)?;
+    let current=store.profiles.iter().find(|p|p.id==profile_id)
+      .ok_or_else(||"CREDENTIAL_MISSING: selected OAuth profile is not present in youtube-oauth.json".to_string())?;
+    let canonical_account=oauth_key(&profile_id,"refresh_token");
+    let canonical_accounts=security::list_canonical_secret_accounts("oauth.")?;
+    let legacy_accounts=security::list_legacy_secret_accounts("")?;
+    let canonical_present=canonical_accounts.iter().any(|a|a==&canonical_account);
+    let legacy_source=select_present_account(&legacy_refresh_candidates(&profile_id),&legacy_accounts);
+    let migration_state=profile_migration_status(&app,&profile_id)?;
+    Ok(json!({
+      "appVersion":app.package_info().version.to_string(),
+      "bundleId":app.config().identifier.clone(),
+      "channelId":current.channel_id,
+      "currentProfileUuid":profile_id,
+      "legacyService":security::LEGACY_SERVICE,
+      "canonicalService":security::canonical_service(),
+      "canonicalRefreshPresent":canonical_present,
+      "legacyRefreshPresent":legacy_source.is_some(),
+      "migrationState":migration_state,
+      "credentialState":if canonical_present{"CANONICAL_READY"}else if legacy_source.is_some(){"LEGACY_AUTH_REQUIRED"}else{"MISSING"},
+      "secretValuesIncluded":false,
+      "youtubeApiRequests":0,
+      "keychainSecretReads":0,
+      "path":path.display().to_string()
+    }))
+}
+
+#[tauri::command]
+pub fn youtube_keychain_migration_diagnostics(app:AppHandle)->Result<Value,String>{
+ let state=read_keychain_migration_v2(&app)?;
+ let migrated=state.profiles.values().filter(|x|x.as_str()==MIGRATION_MIGRATED).count();
+ let failed=state.profiles.values().filter(|x|x.as_str()==MIGRATION_FAILED).count();
+ Ok(json!({
+  "version":state.version,
+  "legacyService":security::LEGACY_SERVICE,
+  "canonicalService":security::canonical_service(),
+  "profileStates":state.profiles,
+  "globalClientSecretState":state.global_client_secret,
+  "migratedProfiles":migrated,
+  "failedProfiles":failed,
+  "profileMigrationAttempts":PROFILE_MIGRATION_ATTEMPTS.load(std::sync::atomic::Ordering::SeqCst),
+  "profileMigrationSuccesses":PROFILE_MIGRATION_SUCCESSES.load(std::sync::atomic::Ordering::SeqCst),
+  "profileMigrationFailures":PROFILE_MIGRATION_FAILURES.load(std::sync::atomic::Ordering::SeqCst),
+  "accessTokenMemoryHits":ACCESS_TOKEN_MEMORY_HITS.load(std::sync::atomic::Ordering::SeqCst),
+  "secretValuesIncluded":false
+ }))
 }
 
 async fn validate_profile_identity(
@@ -4181,68 +4142,20 @@ fn reconnect_rollback_secrets_with<S: OAuthSecretStore>(
         };
     }
 }
-fn reconnect_write_readback_with<S: OAuthSecretStore>(
-    secrets: &S,
-    profile_id: &str,
-    client_secret: &str,
-    access_token: &str,
-    refresh_token: &str,
-) -> Result<ReconnectSecretBackup, String> {
-    if profile_id.trim().is_empty() {
-        return Err("OAUTH_PROFILE_ID_MISSING: existing profile UUID is required".into());
+fn reconnect_write_readback_with<S:OAuthSecretStore>(
+    secrets:&S,profile_id:&str,_client_secret:&str,access_token:&str,refresh_token:&str,
+)->Result<ReconnectSecretBackup,String>{
+    if profile_id.trim().is_empty(){return Err("OAUTH_PROFILE_ID_MISSING: existing profile UUID is required".into())}
+    if access_token.trim().is_empty(){return Err("OAUTH_ACCESS_TOKEN_MISSING: validated access token is empty".into())}
+    if refresh_token.trim().is_empty(){return Err("OAUTH_REFRESH_TOKEN_REQUIRED: Google не вернул refresh token. Подключение не сохранено.".into())}
+    let account=oauth_key(profile_id,"refresh_token");
+    let backup=ReconnectSecretBackup{items:vec![(account.clone(),secrets.get(&account)?)]};
+    if let Err(e)=secrets.set(&account,refresh_token){return Err(format!("OAUTH_KEYCHAIN_WRITE_FAILED: account={account}; {e}"))}
+    match secrets.get(&account){
+      Ok(Some(v)) if v==refresh_token=>Ok(backup),
+      Ok(_)=>{reconnect_rollback_secrets_with(secrets,&backup);Err(format!("OAUTH_KEYCHAIN_READBACK_FAILED: account={account}; mismatch"))},
+      Err(e)=>{reconnect_rollback_secrets_with(secrets,&backup);Err(format!("OAUTH_KEYCHAIN_READBACK_FAILED: account={account}; {e}"))}
     }
-    if access_token.trim().is_empty() {
-        return Err("OAUTH_ACCESS_TOKEN_MISSING: validated access token is empty".into());
-    }
-    if refresh_token.trim().is_empty() {
-        return Err("OAUTH_REFRESH_TOKEN_REQUIRED: Google не вернул refresh token. Подключение не сохранено.".into());
-    }
-    let mut writes = vec![
-        (
-            oauth_key(profile_id, "access_token"),
-            access_token.to_string(),
-        ),
-        (
-            oauth_key(profile_id, "refresh_token"),
-            refresh_token.to_string(),
-        ),
-    ];
-    if !client_secret.trim().is_empty() {
-        writes.push((
-            oauth_key(profile_id, "client_secret"),
-            client_secret.to_string(),
-        ));
-    }
-    let mut backup = ReconnectSecretBackup { items: Vec::new() };
-    for (account, _) in &writes {
-        backup.items.push((account.clone(), secrets.get(account)?));
-    }
-    for (account, value) in &writes {
-        if let Err(e) = secrets.set(account, value) {
-            reconnect_rollback_secrets_with(secrets, &backup);
-            return Err(format!(
-                "OAUTH_KEYCHAIN_WRITE_FAILED: account={account}; {e}"
-            ));
-        }
-    }
-    for (account, value) in &writes {
-        match secrets.get(account) {
-            Ok(Some(v)) if v == *value => {}
-            Ok(_) => {
-                reconnect_rollback_secrets_with(secrets, &backup);
-                return Err(format!(
-                    "OAUTH_KEYCHAIN_READBACK_FAILED: account={account}; value mismatch or missing"
-                ));
-            }
-            Err(e) => {
-                reconnect_rollback_secrets_with(secrets, &backup);
-                return Err(format!(
-                    "OAUTH_KEYCHAIN_READBACK_FAILED: account={account}; {e}"
-                ));
-            }
-        }
-    }
-    Ok(backup)
 }
 fn reconnect_apply_validated_with<S: OAuthSecretStore>(
     secrets: &S,
@@ -4358,19 +4271,18 @@ pub async fn youtube_oauth_reconnect_existing(
     if profile_id.is_empty() {
         return Err("OAUTH_PROFILE_ID_MISSING: existing profile UUID is required".into());
     }
-    let mut original_store=load_store_metadata(&app)?;
+    let original_store=load_store_metadata(&app)?;
     let idx=reconnect_profile_index(&original_store,&profile_id)?;
-    hydrate_profile_secret_for_operation(&app,&mut original_store.profiles[idx],"client_secret")?;
     let target=original_store.profiles[idx].clone();
     let expected_channel_id = target
         .channel_id
         .clone()
         .filter(|x| !x.trim().is_empty())
         .ok_or_else(|| format!("OAUTH_EXPECTED_CHANNEL_MISSING: profile_id={profile_id}"))?;
-    let global=if target.client_id.trim().is_empty()||target.client_secret.trim().is_empty(){Some(load_or_migrate_google_config(&app)?)}else{None};
-    let client_id=if !target.client_id.trim().is_empty(){target.client_id.clone()}else{global.as_ref().map(|g|g.client_id.clone()).unwrap_or_default()};
+    let global=load_or_migrate_google_config(&app)?;
+    let client_id=if !target.client_id.trim().is_empty(){target.client_id.clone()}else{global.client_id.clone()};
     if client_id.trim().is_empty(){return Err("OAUTH_CLIENT_MISSING: existing profile has no OAuth client_id and global Google config is empty".into())}
-    let client_secret=if !target.client_secret.trim().is_empty(){target.client_secret.clone()}else if let Some(g)=global.as_ref(){if g.client_id.trim()==client_id.trim(){g.client_secret.clone()}else{String::new()}}else{String::new()};
+    let client_secret=if global.client_id.trim()==client_id.trim(){global.client_secret.clone()}else{String::new()};
     let preferred_browser = browser.filter(|x| !x.trim().is_empty()).unwrap_or_else(|| {
         if target.preferred_browser.trim().is_empty() {
             "default".into()
@@ -4506,23 +4418,16 @@ pub async fn youtube_oauth_reconnect_existing(
     reconnect_authorized_channel_matches(&expected_channel_id, &authorized_channel_id)?;
     let _=app.emit("oauth-recovery-stage",json!({"profileId":profile_id,"state":"SAVING","expectedChannelId":expected_channel_id,"authorizedChannelId":authorized_channel_id}));
     let mut next_store = original_store.clone();
-    let secrets = KeychainOAuthSecretStore;
-    let backup = reconnect_apply_validated_with(
-        &secrets,
-        &mut next_store,
-        &profile_id,
-        &client_id,
-        &client_secret,
-        &access,
-        &refresh,
-        &authorized_channel_id,
-        &authorized_channel_title,
-        &scopes,
-        &preferred_browser,
-        expires,
+    let secrets=KeychainOAuthSecretStore;
+    let backup=reconnect_apply_validated_with(
+        &secrets,&mut next_store,&profile_id,&client_id,&client_secret,&access,&refresh,
+        &authorized_channel_id,&authorized_channel_title,&scopes,&preferred_browser,expires,
     )?;
-    if let Err(e) = write_oauth_metadata(&store_path(&app)?, &next_store) {
-        reconnect_rollback_secrets_with(&secrets, &backup);
+    if !client_secret.trim().is_empty(){security::canonical_set_secret(GOOGLE_CLIENT_SECRET,&client_secret)?}
+    remember_access_token(&profile_id,&access,now_ts()+expires.max(60));
+    set_profile_migration_state(&app,&profile_id,MIGRATION_MIGRATED)?;
+    if let Err(e)=write_oauth_metadata(&store_path(&app)?,&next_store){
+        reconnect_rollback_secrets_with(&secrets,&backup);
         return Err(format!("OAUTH_METADATA_SAVE_FAILED: {e}"));
     }
     let verify = load_store_metadata(&app)?;
@@ -4533,9 +4438,8 @@ pub async fn youtube_oauth_reconnect_existing(
         .ok_or_else(|| {
             "OAUTH_SAVE_VERIFY_FAILED: existing profile UUID disappeared after save".to_string()
         })?;
-    let keychain_found = security::get_secret_cached(&oauth_key(&profile_id, "refresh_token"))?
-        .map(|x| !x.trim().is_empty())
-        .unwrap_or(false);
+    let keychain_found=security::canonical_get_secret_cached(&oauth_key(&profile_id,"refresh_token"))?
+        .map(|x|!x.trim().is_empty()).unwrap_or(false);
     let ok = keychain_found
         && verified.channel_id.as_deref() == Some(expected_channel_id.as_str())
         && verified.identity_validated_channel_id.as_deref() == Some(expected_channel_id.as_str());
