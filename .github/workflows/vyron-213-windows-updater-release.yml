@@ -416,3 +416,5 @@ jobs:
           name: VYRON-2.1.13-windows-updater-evidence
           path: production/*
           if-no-files-found: error
+
+# retry: updaterHotfix endpoint contract aligned with Windows dedicated feed
