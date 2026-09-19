@@ -481,8 +481,11 @@ dependencies = [
 
 [[package]]
 name = "channelflow"
-version = "2.1.9-rc.6"
+version = "2.1.9-rc.7"
 dependencies = [
+ "security-framework-sys",
+ "core-foundation-sys",
+ "core-foundation",
  "base64 0.22.1",
  "chrono",
  "hex",
