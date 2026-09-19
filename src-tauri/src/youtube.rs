@@ -4528,15 +4528,15 @@ mod keychain_prompt_architecture_tests{
   assert!(storage.contains("security::canonical_get_secret_cached("));
   assert!(storage.contains("security::canonical_set_secret("));
  }
- #[test]fn rc7_security_source_contract_uses_per_query_ui_fail(){
+ #[test]fn rc7_security_source_contract_uses_per_query_ui_skip(){
   let source=include_str!("security.rs");
-  let ui_fail=["kSecUseAuthenticationUI","Fail"].concat();
+  let ui_skip=["kSecUseAuthenticationUI","Fail"].concat();
   let skip=["skip_authenticated_items","(true)"].concat();
   let old_get=["get_generic_","password("].concat();
   let old_set=["set_generic_","password("].concat();
   let old_delete=["delete_generic_","password("].concat();
   assert!(source.contains("SecKeychain::disable_user_interaction()"));
-  assert!(source.contains(&ui_fail));
+  assert!(source.contains(&ui_skip));
   assert!(source.matches(&skip).count()>=2);
   assert!(!source.contains(&old_get));
   assert!(!source.contains(&old_set));
@@ -4767,7 +4767,7 @@ mod auth_recovery_targeted_tests {
 
 
 #[cfg(test)]
-mod v219_rc7_secitem_ui_fail_tests{
+mod v219_rc7_secitem_ui_skip_tests{
  use super::*;
  #[test]
  fn startup_and_navigation_model_do_not_touch_legacy_or_acl(){
