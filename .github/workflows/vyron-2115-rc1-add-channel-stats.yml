@@ -65,7 +65,7 @@ jobs:
           source=os.environ['SOURCE_STABLE']
           allowed={
             'package.json','package-lock.json','src-tauri/Cargo.toml','src-tauri/Cargo.lock','src-tauri/tauri.conf.json',
-            'src-tauri/src/youtube.rs','src-tauri/src/lib.rs',
+            'src-tauri/src/youtube.rs','src-tauri/src/lib.rs','src-tauri/src/shorts_factory.rs',
             'src/api.ts','src/AccountsPage.tsx','src/YouTubeChannelBar.tsx','src/youtubeChannelStats.ts',
             'src/youtubeChannelStatsRuntime.ts','src/ChannelStatisticsScheduler.tsx','src/App.tsx','src/styles.css',
             'src/v2113ExistingChannelRebind.test.ts','src/v2114OauthOnboarding.test.ts','src/v2114ChannelStatistics.test.ts','src/youtubeChannelStats.test.ts','src/v2115AddChannelStats.test.ts',
@@ -404,3 +404,5 @@ jobs:
 # retry: total-channel-views assertion aligned with visible UI label
 
 # retry: TypeScript-safe statistics single-flight cleanup
+
+# retry: serialize Rust tests that mutate process PATH; no production shorts behavior changed
