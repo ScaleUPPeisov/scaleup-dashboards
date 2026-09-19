@@ -877,6 +877,45 @@ pub async fn youtube_channel_statistics(
     if actual!=expected{return Err(format!("CHANNEL_MISMATCH: expected={expected} actual={actual}"))}
     Ok(youtube_channel_statistics_value(item))
 }
+
+#[tauri::command]
+pub async fn youtube_channel_statistics_batch(
+    app:AppHandle,
+    profile_id:String,
+    channel_ids:Vec<String>,
+)->Result<Value,String>{
+    let mut ids=Vec::<String>::new();
+    for raw in channel_ids{
+        let id=raw.trim();
+        if id.is_empty()||ids.iter().any(|x|x==id){continue}
+        ids.push(id.to_string());
+        if ids.len()>=50{break}
+    }
+    if ids.is_empty(){return Ok(json!({"items":[],"requested":0,"found":0,"missingChannelIds":[]}))}
+    let (_token,p)=valid_access_token(&app,&profile_id).await?;
+    let joined=ids.join(",");
+    emit_youtube_api_request(&app,"channels.list",None);
+    let r=reqwest::Client::new()
+        .get("https://www.googleapis.com/youtube/v3/channels")
+        .bearer_auth(&p.access_token)
+        .query(&[("part","snippet,statistics"),("id",joined.as_str())])
+        .send().await
+        .map_err(|e|format!("YOUTUBE_CHANNEL_STATS_BATCH_FAILED: network: {e}"))?;
+    let status=r.status();
+    let v:Value=r.json().await.map_err(|e|format!("YOUTUBE_CHANNEL_STATS_BATCH_FAILED: json: {e}"))?;
+    if !status.is_success(){return Err(format!("YOUTUBE_CHANNEL_STATS_BATCH_FAILED: {}",youtube_error(&v,"YouTube channel statistics batch request failed")))}
+    let rows=v.get("items").and_then(Value::as_array).cloned().unwrap_or_default();
+    let mut items=Vec::<Value>::new();
+    let mut found_ids=Vec::<String>::new();
+    for item in &rows{
+        let Some(id)=item.get("id").and_then(Value::as_str) else{continue};
+        if !ids.iter().any(|x|x==id){continue}
+        found_ids.push(id.to_string());
+        items.push(youtube_channel_statistics_value(item));
+    }
+    let missing=ids.iter().filter(|id|!found_ids.iter().any(|x|x==*id)).cloned().collect::<Vec<_>>();
+    Ok(json!({"items":items,"requested":ids.len(),"found":found_ids.len(),"missingChannelIds":missing}))
+}
 #[tauri::command]
 pub async fn youtube_cache_thumbnail(
     app: AppHandle,
