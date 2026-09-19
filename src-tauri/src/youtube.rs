@@ -148,7 +148,7 @@ fn legacy_refresh_candidates(id:&str)->Vec<String>{
 fn select_present_account(candidates:&[String],present:&[String])->Option<String>{
  candidates.iter().find(|a|present.iter().any(|x|x==*a)).cloned()
 }
-fn migrate_profile_refresh_to_canonicalfn migrate_profile_refresh_to_canonical(app:&AppHandle,profile_id:&str)->Result<(),String>{
+fn migrate_profile_refresh_to_canonical(app:&AppHandle,profile_id:&str)->Result<(),String>{
  let canonical_account=oauth_key(profile_id,"refresh_token");
  match security::canonical_get_secret_cached(&canonical_account){
   Ok(Some(v)) if !v.trim().is_empty()=>{
@@ -4511,8 +4511,10 @@ mod keychain_prompt_architecture_tests{
   let migration=source.split("fn migrate_profile_refresh_to_canonical").nth(1).unwrap().split("trait OAuthSecretStore").next().unwrap();
   assert!(!migration.contains("legacy_get_secret_once"));
   assert!(!migration.contains("security::get_secret("));
-  let inventory=source.split("pub async fn youtube_list_existing_videos").nth(1).unwrap().split("fn full_inventory").next().unwrap_or("");
-  assert!(!inventory.contains("migrate_profile_refresh_to_canonical(&app,&profile_id)"));
+  let inventory=source.split("pub async fn youtube_list_existing_videos").nth(1).unwrap();
+  let active_prefix=inventory.split("let (token, profile) = valid_access_token").next().unwrap();
+  assert!(active_prefix.contains("profile_id: String"));
+  assert!(!active_prefix.contains("migrate_profile_refresh_to_canonical"));
   assert!(!source.contains("security::get_secret_cached(GOOGLE_API_KEY)"));
   assert!(!source.contains("security::set_secret(GOOGLE_API_KEY"));
  }
