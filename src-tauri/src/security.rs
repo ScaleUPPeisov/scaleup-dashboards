@@ -74,6 +74,96 @@ fn record_runtime(account:&str,operation:&str,cache:&str,osstatus:Option<i32>,mi
 const SERVICE:&str="com.scaleup.vyron.security";
 pub const LEGACY_SERVICE:&str=SERVICE;
 pub const CANONICAL_SERVICE:&str="com.scaleup.vyron.security.v2";
+
+#[cfg(target_os="windows")]
+fn windows_target(service:&str,account:&str)->String{format!("VYRON/{service}/{account}")}
+#[cfg(target_os="windows")]
+fn wide(s:&str)->Vec<u16>{s.encode_utf16().chain(std::iter::once(0)).collect()}
+#[cfg(target_os="windows")]
+unsafe fn wide_ptr_to_string(ptr:*const u16)->String{
+ if ptr.is_null(){return String::new()}
+ let mut len=0usize;
+ while *ptr.add(len)!=0{len+=1}
+ String::from_utf16_lossy(std::slice::from_raw_parts(ptr,len))
+}
+#[cfg(target_os="windows")]
+fn windows_secret_get(service:&str,account:&str)->Result<Option<String>,String>{
+ use windows_sys::Win32::Foundation::{GetLastError,ERROR_NOT_FOUND};
+ use windows_sys::Win32::Security::Credentials::{CredFree,CredReadW,CREDENTIALW,CRED_TYPE_GENERIC};
+ let target=wide(&windows_target(service,account));
+ let mut p:*mut CREDENTIALW=std::ptr::null_mut();
+ let ok=unsafe{CredReadW(target.as_ptr(),CRED_TYPE_GENERIC,0,&mut p)};
+ if ok==0{
+  let code=unsafe{GetLastError()};
+  if code==ERROR_NOT_FOUND{return Ok(None)}
+  return Err(format!("WINDOWS_CREDENTIAL_READ_FAILED: account={account}; win32={code}"))
+ }
+ if p.is_null(){return Ok(None)}
+ let bytes=unsafe{
+  let cred=&*p;
+  if cred.CredentialBlob.is_null()||cred.CredentialBlobSize==0{Vec::new()}
+  else{std::slice::from_raw_parts(cred.CredentialBlob,cred.CredentialBlobSize as usize).to_vec()}
+ };
+ unsafe{CredFree(p as *const std::ffi::c_void)};
+ String::from_utf8(bytes).map(Some).map_err(|_|format!("WINDOWS_CREDENTIAL_INVALID_UTF8: account={account}"))
+}
+#[cfg(target_os="windows")]
+fn windows_secret_set(service:&str,account:&str,value:&str)->Result<(),String>{
+ use windows_sys::Win32::Foundation::GetLastError;
+ use windows_sys::Win32::Security::Credentials::{CredDeleteW,CredWriteW,CREDENTIALW,CRED_PERSIST_LOCAL_MACHINE,CRED_TYPE_GENERIC};
+ let mut target=wide(&windows_target(service,account));
+ if value.is_empty(){
+  let ok=unsafe{CredDeleteW(target.as_ptr(),CRED_TYPE_GENERIC,0)};
+  if ok==0{
+   use windows_sys::Win32::Foundation::ERROR_NOT_FOUND;
+   let code=unsafe{GetLastError()};
+   if code!=ERROR_NOT_FOUND{return Err(format!("WINDOWS_CREDENTIAL_DELETE_FAILED: account={account}; win32={code}"))}
+  }
+  return Ok(())
+ }
+ let mut user=wide(account);
+ let blob=value.as_bytes();
+ let mut cred:CREDENTIALW=unsafe{std::mem::zeroed()};
+ cred.Type=CRED_TYPE_GENERIC;
+ cred.TargetName=target.as_mut_ptr();
+ cred.CredentialBlobSize=blob.len() as u32;
+ cred.CredentialBlob=blob.as_ptr() as *mut u8;
+ cred.Persist=CRED_PERSIST_LOCAL_MACHINE;
+ cred.UserName=user.as_mut_ptr();
+ let ok=unsafe{CredWriteW(&cred,0)};
+ if ok==0{let code=unsafe{GetLastError()};return Err(format!("WINDOWS_CREDENTIAL_WRITE_FAILED: account={account}; win32={code}"))}
+ Ok(())
+}
+#[cfg(target_os="windows")]
+fn windows_list_accounts(service:&str,prefix:&str)->Result<Vec<String>,String>{
+ use windows_sys::Win32::Foundation::{GetLastError,ERROR_NOT_FOUND};
+ use windows_sys::Win32::Security::Credentials::{CredEnumerateW,CredFree,CREDENTIALW};
+ let target_prefix=format!("VYRON/{service}/");
+ let filter=wide(&(target_prefix.clone()+"*"));
+ let mut count=0u32;
+ let mut rows:*mut *mut CREDENTIALW=std::ptr::null_mut();
+ let ok=unsafe{CredEnumerateW(filter.as_ptr(),0,&mut count,&mut rows)};
+ if ok==0{
+  let code=unsafe{GetLastError()};
+  if code==ERROR_NOT_FOUND{return Ok(Vec::new())}
+  return Err(format!("WINDOWS_CREDENTIAL_ENUM_FAILED: win32={code}"))
+ }
+ let mut out=Vec::new();
+ if !rows.is_null(){
+  let slice=unsafe{std::slice::from_raw_parts(rows,count as usize)};
+  for ptr in slice{
+   if ptr.is_null(){continue}
+   let target=unsafe{wide_ptr_to_string((**ptr).TargetName)};
+   if let Some(account)=target.strip_prefix(&target_prefix){
+    if account.starts_with(prefix)&&!out.iter().any(|x|x==account){out.push(account.to_string())}
+   }
+  }
+  unsafe{CredFree(rows as *const std::ffi::c_void)};
+ }
+ out.sort();
+ Ok(out)
+}
+
 static LEGACY_BACKEND_READS:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
 static CANONICAL_BACKEND_READS:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
 static CANONICAL_BACKEND_WRITES:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
@@ -641,6 +731,9 @@ fn native_attributes_for_service(service:&str,account:Option<&str>)->Result<Vec<
 #[cfg(not(target_os="macos"))]
 fn native_attributes_for_service(_service:&str,_account:Option<&str>)->Result<Vec<std::collections::HashMap<String,String>>,String>{Ok(Vec::new())}
 
+#[cfg(target_os="windows")]
+pub fn list_canonical_secret_accounts(prefix:&str)->Result<Vec<String>,String>{windows_list_accounts(CANONICAL_SERVICE,prefix)}
+#[cfg(not(target_os="windows"))]
 pub fn list_canonical_secret_accounts(prefix:&str)->Result<Vec<String>,String>{
  let mut accounts=Vec::new();
  for attrs in native_attributes_for_service(CANONICAL_SERVICE,None)?{
