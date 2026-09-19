@@ -1,7 +1,7 @@
-import {fileURLToPath} from 'node:url';
 import {describe,it,expect} from 'vitest';
 import {readFileSync} from 'node:fs';
-const read=(p:string)=>readFileSync(fileURLToPath(new URL(p,import.meta.url)),'utf8');
+import {testFilePath} from './testFilePath';
+const read=(p:string)=>readFileSync(testFilePath(p,import.meta.url),'utf8');
 
 describe('VYRON 2.0.12 cleanup command registration hotfix',()=>{
   it('keeps UI invoke, Rust command and Tauri registration connected',()=>{
