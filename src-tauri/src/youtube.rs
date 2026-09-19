@@ -1253,7 +1253,7 @@ pub async fn youtube_oauth_connect(
         "YOUTUBE_CHANNEL_ALREADY_CONNECTED: profile_id={}; channel_id={}; title={}",
         existing.id,
         channel_id,
-        channel_title.replace([';','\n','\r']," ")
+        channel_title.replace(';'," ").replace('\n'," ").replace('\r'," ")
       ))
     }
     let profile_id=reconnect_profile_id(None);
