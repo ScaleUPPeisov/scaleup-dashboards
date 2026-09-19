@@ -68,6 +68,8 @@ jobs:
           ! grep -Fq 'security::set_secret(account' src-tauri/src/storage.rs
           grep -Fq 'security::canonical_get_secret_cached(account)' src-tauri/src/storage.rs
           grep -Fq 'security::canonical_set_secret(account' src-tauri/src/storage.rs
+          ! grep -Fq 'trait OAuthSecretStore {trait OAuthSecretStore {' src-tauri/src/youtube.rs
+          ! grep -Fq 'fn migrate_profile_refresh_to_canonicalfn migrate_profile_refresh_to_canonical' src-tauri/src/youtube.rs
           echo 'ZERO_KEYCHAIN_PROMPT_SOURCE_CONTRACT=PASS'
 
           ! gh release view v2.1.9 --repo "$REPO" >/dev/null 2>&1
@@ -257,3 +259,4 @@ jobs:
           fi
 # retry: SettingsOS diagnostic contract aligned with RC6 metadata-only OAuth diagnostic
 # retry: RC6 zero-prompt contracts aligned after targeted legacy-test update
+# retry: RC6 compile marker repair
