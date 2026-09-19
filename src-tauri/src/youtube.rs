@@ -1248,27 +1248,17 @@ pub async fn youtube_oauth_connect(
         .map(str::to_string)
         .unwrap_or_else(|| channel_id.clone());
     let mut s = load_store_metadata(&app)?;
-    let mut existing = s.profiles.iter().find(|p|p.channel_id.as_deref()==Some(channel_id.as_str())).cloned();
-    let profile_id=reconnect_profile_id(existing.as_ref());
-    // A successful browser OAuth may rebind an already-known YouTube channel to the
-    // current VYRON OAuth Client while preserving the existing Profile UUID.
-    // Never fall back to legacy Keychain after the user has just completed consent.
-    let refresh=if let Some(v)=response_refresh.as_deref().map(str::trim).filter(|x|!x.is_empty()){
-      v.to_string()
-    }else if let Some(old)=existing.as_mut(){
-      if old.client_id==client_id{
-        if let Some(v)=security::canonical_get_secret_cached(&oauth_key(&profile_id,"refresh_token"))?.filter(|x|!x.trim().is_empty()){
-          old.refresh_token=v.clone();
-          v
-        }else{
-          return Err("OAUTH_REFRESH_TOKEN_REQUIRED: Google не вернул новый refresh_token, а canonical refresh_token этого существующего профиля отсутствует. Повторите consent.".into())
-        }
-      }else{
-        return Err("OAUTH_REFRESH_TOKEN_REQUIRED: Google не вернул refresh_token для перехода существующего канала на текущий OAuth Client. Повторите consent.".into())
-      }
-    }else{
-      return Err("OAUTH_REFRESH_TOKEN_REQUIRED: Google не вернул refresh_token для нового канала. Повторите consent.".into())
-    };
+    if let Some(existing)=s.profiles.iter().find(|p|p.channel_id.as_deref()==Some(channel_id.as_str())){
+      return Err(format!(
+        "YOUTUBE_CHANNEL_ALREADY_CONNECTED: profile_id={}; channel_id={}; title={}",
+        existing.id,
+        channel_id,
+        channel_title.replace([';','\n','\r']," ")
+      ))
+    }
+    let profile_id=reconnect_profile_id(None);
+    let refresh=response_refresh.as_deref().map(str::trim).filter(|x|!x.is_empty()).map(str::to_string)
+      .ok_or_else(||"OAUTH_REFRESH_TOKEN_REQUIRED: Google не вернул refresh_token для нового канала. Повторите consent.".to_string())?;
     // New channels use the one GLOBAL OAuth client secret. Existing historical
     // profile-specific client_secret items remain supported by the resolver for compatibility.
     if !client_secret.is_empty(){security::canonical_set_secret(GOOGLE_CLIENT_SECRET,&client_secret)?;}
