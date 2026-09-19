@@ -1,11 +1,11 @@
 {
-  "version": "2.1.9",
-  "notes": "VYRON 2.1.9 — исправлены повторяющиеся системные запросы пароля macOS Keychain. Credential access переведён на non-interactive SecItem policy; legacy OAuth credentials больше не вызывают автоматические системные окна и при необходимости восстанавливаются через Google reconnect.",
-  "pub_date": "2026-09-19T05:12:38Z",
+  "version": "2.1.10",
+  "notes": "VYRON 2.1.10 — исправлен ложный CONNECTED в OAuth recovery и закреплена совместимость canonical V2 credentials между обновлениями. Legacy-only profiles требуют Google reconnect; canonical credentials сохраняют Profile UUID, channel mapping и Keychain account.",
+  "pub_date": "2026-09-19T12:34:32Z",
   "platforms": {
     "darwin-aarch64": {
-      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.9/VYRON.app.tar.gz",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM1NrR3RpU0toaktHODhsYWRDRVBjK1RqVE9JVDFUSkNJaTZ5Nk5DdE8xV2hUaHFoelNXTFA5R3BNSGgwYmVQUDBWSVBHMm9FMm9NY1ZINkpHY2ovSmdzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5Nzk0NzM2CWZpbGU6VllST04uYXBwLnRhci5negpkRFdyRUtqTkRFNjVvckFVekZiUmlZRnQrZDFJVWVKVndWMFpRUytUblFSNTFNNmhCT3RYWE1aeUdWRHhGSTRlMFo5TXNyaHcwdzlEaHlXWFpESmtBQT09Cg=="
+      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.10/VYRON.app.tar.gz",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM1V0dzFLSHlBNHgwR09sMmZhVnB4NHJXNUVGdTNDTU5Ra09BWkVGeWNkclhZUHdKaUMvc2QyODVtWndETmF4NUtDY2VZOS9GL2lyNW40SzJWN0dXV0FZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5ODIxMjU0CWZpbGU6VllST04uYXBwLnRhci5negpWRGtaV09oS05LMXRWU3lIRW9Fb2FabHZLclR3cG15NEw3ZFFBbGhCb1krTWVUUlFGbU5MNHk2aWZ4RVJJSis4WllFY1BNWmhNSjczbWVpNG1KeUNEQT09Cg=="
     }
   }
 }
