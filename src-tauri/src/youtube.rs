@@ -291,31 +291,36 @@ fn canonical_global_client_secret()->Result<Option<String>,String>{security::can
 enum OAuthClientSecretSource{ProfileCanonical,GlobalExactMatch}
 #[derive(Debug,Clone)]
 struct ResolvedOAuthClient{client_id:String,client_secret:String,source:OAuthClientSecretSource}
+fn select_oauth_client_secret(profile_secret:Option<String>,client_id:&str,global_client_id:&str,global_secret:Option<String>,legacy_present:bool)->Result<(String,OAuthClientSecretSource),&'static str>{
+ if let Some(secret)=profile_secret.filter(|x|!x.trim().is_empty()){return Ok((secret,OAuthClientSecretSource::ProfileCanonical))}
+ if client_id.trim()==global_client_id.trim(){
+  if let Some(secret)=global_secret.filter(|x|!x.trim().is_empty()){return Ok((secret,OAuthClientSecretSource::GlobalExactMatch))}
+ }
+ if legacy_present{return Err("CLIENT_SECRET_REIMPORT_REQUIRED")}
+ Err("CLIENT_SECRET_REQUIRED")
+}
 fn resolve_client_secret_for_profile(app:&AppHandle,profile_id:&str,client_id:&str)->Result<ResolvedOAuthClient,String>{
  let profile_id=profile_id.trim();
  let client_id=client_id.trim();
  if profile_id.is_empty(){return Err("OAUTH_PROFILE_ID_MISSING: existing profile UUID is required".into())}
  if client_id.is_empty(){return Err("OAUTH_CLIENT_MISSING: profile client_id is empty".into())}
  let profile_account=oauth_key(profile_id,"client_secret");
- match security::canonical_get_secret_cached(&profile_account){
-  Ok(Some(secret)) if !secret.trim().is_empty()=>return Ok(ResolvedOAuthClient{client_id:client_id.into(),client_secret:secret,source:OAuthClientSecretSource::ProfileCanonical}),
-  Ok(_)=>{},
-  Err(e)=>return Err(e),
- }
+ let profile_secret=security::canonical_get_secret_cached(&profile_account)?;
  let global_meta=load_google_config_metadata(app)?;
- if global_meta.client_id.trim()==client_id{
-  if let Some(secret)=canonical_global_client_secret()?.filter(|x|!x.trim().is_empty()){
+ let global_secret=if global_meta.client_id.trim()==client_id{canonical_global_client_secret()?}else{None};
+ let legacy_accounts=security::list_legacy_secret_accounts("")?;
+ let legacy_present=select_present_account(&legacy_client_secret_candidates(profile_id),&legacy_accounts).is_some();
+ match select_oauth_client_secret(profile_secret,client_id,&global_meta.client_id,global_secret,legacy_present){
+  Ok((secret,OAuthClientSecretSource::ProfileCanonical))=>Ok(ResolvedOAuthClient{client_id:client_id.into(),client_secret:secret,source:OAuthClientSecretSource::ProfileCanonical}),
+  Ok((secret,OAuthClientSecretSource::GlobalExactMatch))=>{
    security::canonical_set_secret(&profile_account,&secret)?;
    let readback=security::canonical_get_secret_cached(&profile_account)?.filter(|x|!x.trim().is_empty())
      .ok_or_else(||format!("OAUTH_KEYCHAIN_READBACK_FAILED: account={profile_account}"))?;
-   return Ok(ResolvedOAuthClient{client_id:client_id.into(),client_secret:readback,source:OAuthClientSecretSource::GlobalExactMatch})
+   Ok(ResolvedOAuthClient{client_id:client_id.into(),client_secret:readback,source:OAuthClientSecretSource::GlobalExactMatch})
   }
+  Err("CLIENT_SECRET_REIMPORT_REQUIRED")=>Err(format!("OAUTH_CLIENT_SECRET_REIMPORT_REQUIRED: profile={profile_id}; legacy client_secret metadata exists but legacy secret reads are disabled")),
+  Err(_)=>Err(format!("OAUTH_CLIENT_SECRET_REQUIRED: profile={profile_id}; exact client_secret for client_id is missing")),
  }
- let legacy_accounts=security::list_legacy_secret_accounts("")?;
- if select_present_account(&legacy_client_secret_candidates(profile_id),&legacy_accounts).is_some(){
-  return Err(format!("OAUTH_CLIENT_SECRET_REIMPORT_REQUIRED: profile={profile_id}; legacy client_secret metadata exists but legacy secret reads are disabled"))
- }
- Err(format!("OAUTH_CLIENT_SECRET_REQUIRED: profile={profile_id}; exact client_secret for client_id is missing"))
 }
 fn migrate_global_client_secret_if_needed(app:&AppHandle,profile_id:Option<&str>)->Result<Option<String>,String>{
  match canonical_global_client_secret(){
