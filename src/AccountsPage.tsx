@@ -8,7 +8,7 @@ type BrowserOption={id:string;label:string;available:boolean};
 const ago=(iso?:string)=>{if(!iso)return '—';const ms=Date.now()-new Date(iso).getTime();const m=Math.max(0,Math.round(ms/60000));return m<1?'только что':m<60?`${m} мин. назад`:m<1440?`${Math.round(m/60)} ч. назад`:`${Math.round(m/1440)} дн. назад`};
 
 export function AccountsPage(){
- const channels=useApp(s=>s.channels),updateChannel=useApp(s=>s.updateChannel),toast=useApp(s=>s.toast),settings=useApp(s=>s.settings),patchSettings=useApp(s=>s.patchSettings);
+ const channels=useApp(s=>s.channels),toast=useApp(s=>s.toast),settings=useApp(s=>s.settings),patchSettings=useApp(s=>s.patchSettings);
  const [profiles,setProfiles]=useState<YoutubeProfile[]>([]),[health,setHealth]=useState<Record<string,YoutubeProfileHealth>>({}),[config,setConfig]=useState<GoogleConfigStatus|null>(null),[busy,setBusy]=useState(false),[checking,setChecking]=useState(false),[browserOpen,setBrowserOpen]=useState(false),[browsers,setBrowsers]=useState<BrowserOption[]>([]),[browser,setBrowser]=useState(localStorage.getItem('vyron:oauth-browser')||'default'),[pendingProfileId,setPendingProfileId]=useState('');const file=useRef<HTMLInputElement>(null);
 
  function bindProfile(p:YoutubeProfile){
