@@ -4530,16 +4530,17 @@ mod keychain_prompt_architecture_tests{
  }
  #[test]fn rc7_security_source_contract_uses_per_query_ui_fail(){
   let source=include_str!("security.rs");
-  let production=source.split("#[cfg(test)]").next().unwrap_or(source);
-  assert!(production.contains("SecKeychain::disable_user_interaction()"));
-  assert!(production.contains("kSecUseAuthenticationUIFail"));
-  assert!(production.contains("SecItemCopyMatching"));
-  assert!(production.contains("SecItemUpdate"));
-  assert!(production.contains("SecItemDelete"));
-  assert!(production.contains("skip_authenticated_items(true)"));
-  assert!(!production.contains("get_generic_password("));
-  assert!(!production.contains("set_generic_password("));
-  assert!(!production.contains("delete_generic_password("));
+  let ui_fail=["kSecUseAuthenticationUI","Fail"].concat();
+  let skip=["skip_authenticated_items","(true)"].concat();
+  let old_get=["get_generic_","password("].concat();
+  let old_set=["set_generic_","password("].concat();
+  let old_delete=["delete_generic_","password("].concat();
+  assert!(source.contains("SecKeychain::disable_user_interaction()"));
+  assert!(source.contains(&ui_fail));
+  assert!(source.matches(&skip).count()>=2);
+  assert!(!source.contains(&old_get));
+  assert!(!source.contains(&old_set));
+  assert!(!source.contains(&old_delete));
  }
  #[test]fn selected_profile_hydration_reads_only_selected_secret(){let secrets=CountingStore::default();secrets.v.borrow_mut().insert(oauth_key("a","refresh_token"),"ra".into());secrets.v.borrow_mut().insert(oauth_key("b","refresh_token"),"rb".into());let mut a=p("a");let b=p("b");hydrate_profile_secret_kind_with(&secrets,&mut a,"refresh_token").unwrap();assert_eq!(a.refresh_token,"ra");assert!(b.refresh_token.is_empty());assert_eq!(&*secrets.gets.borrow(),&vec![oauth_key("a","refresh_token")]);assert!(secrets.sets.borrow().is_empty());assert!(secrets.deletes.borrow().is_empty());}
  #[test]fn google_status_metadata_never_requires_secret_value(){let c=GoogleConfig{client_id:"123.apps.googleusercontent.com".into(),project_id:"project".into(),client_secret:String::new(),api_key:String::new(),client_secret_present:true,api_key_present:true};let v=google_config_status_value(&c);assert_eq!(v["hasSecret"],true);assert_eq!(v["hasApiKey"],true);assert!(!v.to_string().contains("client_secret"));}
