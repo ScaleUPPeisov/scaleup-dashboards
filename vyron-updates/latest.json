@@ -1,11 +1,11 @@
 {
-  "version": "2.1.13",
-  "notes": "VYRON 2.1.13 — исправлена привязка существующих каналов: GLOBAL OAuth Client считается готовым только при Client ID + Client Secret; существующий YouTube Channel ID переиспользует прежний Profile UUID, а после нового Google consent connect-flow больше не откатывается в legacy credential.",
-  "pub_date": "2026-09-19T14:11:09Z",
+  "version": "2.1.14",
+  "notes": "VYRON 2.1.14 — исправлен GLOBAL Google OAuth onboarding и добавление YouTube-каналов; добавлены реальные подписчики, общие просмотры и количество видео для активного канала и всех аккаунтов.",
+  "pub_date": "2026-09-19T16:07:57Z",
   "platforms": {
     "darwin-aarch64": {
-      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.13/VYRON.app.tar.gz",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM2M5NFdmWU1DMnZHK1pYU3VjL09LUWhZUUZhaVhTSFlNY0RCMEk1eFRkcjJVd3NZQmhTQlhhdVRrYkpQaEFxd1I4S2V3YnhPSUQ5V0NFN3hZcTg5NEE0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5ODI3MDUzCWZpbGU6VllST04uYXBwLnRhci5negpXTm5zWHdEOWJVT0dxR0RRdGtYSFhJWjJ3NWtYYWZUNlV1ZXcxalZTeFdVeVV1NjRxQzBoTUJaTXFOSWMxajhBZGd5VWM0MjkxQnRJclpBREovbGdCZz09Cg=="
+      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.14/VYRON.app.tar.gz",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM2IzdmhQY0x4dVJjbEQzVXlHL0UvRk1tQlpkYmJtZVBKalh0UldXZmZxdW91UTh6bHNON1pLcTROTEZseUJXR0VJcGJHNERDdTVXblFZV04venVWNGdBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5ODM0MDYxCWZpbGU6VllST04uYXBwLnRhci5negpjdjduUnp4YTBQMHlmZVZxZGJ2cWlrOFI0VWRJMzNrY2tmUGVOK1lISUFvOHdHaFk2eVdnbzY1T1dBVEFYeUR2aFR3bk92dkRtOVNraFJaUXhCUFJBdz09Cg=="
     },
     "windows-x86_64": {
       "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.13-windows-x64/VYRON_2.1.13_x64-setup.exe",
