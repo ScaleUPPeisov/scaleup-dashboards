@@ -103,7 +103,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $exe = Get-Item "src-tauri/target/x86_64-pc-windows-msvc/release/channelflow.exe"
+          $exe = Get-Item "src-tauri/target/x86_64-pc-windows-msvc/release/VYRON.exe"
           if ($exe.Length -le 0) { throw "VYRON executable is empty" }
           $installer = Get-ChildItem "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis" -Filter "*-setup.exe" | Select-Object -First 1
           if (-not $installer -or $installer.Length -le 0) { throw "NSIS installer missing or empty" }
