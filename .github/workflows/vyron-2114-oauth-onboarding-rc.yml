@@ -12,7 +12,7 @@ permissions:
 
 concurrency:
   group: vyron-2114-rc1-youtube-oauth-onboarding
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 env:
   REPO: ScaleUPPeisov/scaleup-dashboards
