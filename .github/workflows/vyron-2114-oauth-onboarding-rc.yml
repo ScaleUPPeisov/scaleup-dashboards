@@ -63,7 +63,7 @@ jobs:
           source=os.environ['SOURCE_STABLE']
           allowed={
             'package.json','package-lock.json','src-tauri/Cargo.toml','src-tauri/Cargo.lock','src-tauri/tauri.conf.json',
-            'src-tauri/src/youtube.rs','src/AccountsPage.tsx','src/v2114OauthOnboarding.test.ts',
+            'src-tauri/src/youtube.rs','src/AccountsPage.tsx','src/v2114OauthOnboarding.test.ts','src/v2113ExistingChannelRebind.test.ts',
             '.github/workflows/vyron-2114-oauth-onboarding-rc.yml',
           }
           changed=set(filter(None,subprocess.check_output(['git','diff','--name-only',f'{source}..HEAD'],text=True).splitlines()))
