@@ -1,3 +1,4 @@
+import {tenantStorageKey} from './tenantStorage';
 import type {Channel,YoutubeExistingVideo} from './types';
 import {
   CHANNEL_RUNWAY_STORAGE_KEY,
@@ -16,7 +17,7 @@ export type ChannelRunwayStore={
 
 type StorageLike=Pick<Storage,'getItem'|'setItem'>;
 const EVENT='vyron-channel-runway';
-const existingCacheKey=(channelId:string)=>`vyron:existing-cache:v1:${channelId}`;
+const existingCacheKey=(channelId:string)=>tenantStorageKey(`vyron:existing-cache:v1:${channelId}`);
 const VALID_STATUS=new Set(['large','plan','prepare','urgent','ended','no-data']);
 const VALID_PRIORITY=new Set(['low','normal','high','critical','unknown']);
 
@@ -51,7 +52,7 @@ function normalizeStoredRecord(id:string,value:unknown):ChannelRunwayRecord|unde
 export function loadChannelRunwayStore(storage:StorageLike|undefined=browserStorage()):ChannelRunwayStore{
   if(!storage)return defaultStore();
   try{
-    const raw=storage.getItem(CHANNEL_RUNWAY_STORAGE_KEY);
+    const raw=storage.getItem(tenantStorageKey(CHANNEL_RUNWAY_STORAGE_KEY));
     if(!raw)return defaultStore();
     const parsed=JSON.parse(raw) as ChannelRunwayStore;
     if(parsed?.version!==1||!parsed.channels||typeof parsed.channels!=='object')return defaultStore();
@@ -70,7 +71,7 @@ export function loadChannelRunwayStore(storage:StorageLike|undefined=browserStor
 }
 
 export function saveChannelRunwayStore(value:ChannelRunwayStore,storage:StorageLike|undefined=browserStorage()){
-  if(storage)storage.setItem(CHANNEL_RUNWAY_STORAGE_KEY,JSON.stringify(value));
+  if(storage)storage.setItem(tenantStorageKey(CHANNEL_RUNWAY_STORAGE_KEY),JSON.stringify(value));
   emit();
   return value;
 }
