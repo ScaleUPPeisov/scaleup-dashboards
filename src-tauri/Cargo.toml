@@ -1,6 +1,6 @@
 [package]
 name = "channelflow"
-version = "2.1.9-rc.6"
+version = "2.1.9-rc.7"
 description = "VYRON Content Operating System"
 authors = ["VYRON"]
 edition = "2021"
@@ -14,6 +14,9 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 security-framework = "3.7.0"
+security-framework-sys = "2.17.0"
+core-foundation = "0.10.1"
+core-foundation-sys = "0.8.7"
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
