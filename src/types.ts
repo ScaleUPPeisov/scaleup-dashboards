@@ -8,6 +8,12 @@ export type UploadHistoryRecord={id:string;jobId:string;channelId:string;profile
 export type FingerprintCacheEntry={path:string;size:number;mtimeMs:number;sha256:string;computedAt:string};
 export type ProjectLifecycleRecord={projectId:string;jobId?:string;projectPath:string;renderPath?:string;status:'RENDERED'|'SAFE_TO_CLEAN';renderExists:boolean;youtubeVideoId?:string;uploadedAt?:string;updatedAt:string};
 
+export type YoutubeChannelStatistics={
+  channelId?:string; channelTitle?:string; handle?:string; thumbnail?:string;
+  subscriberCount?:number; viewCount?:number; videoCount?:number; hiddenSubscriberCount?:boolean;
+  statisticsUpdatedAt?:string; lastAttemptAt?:string; syncWarning?:string;
+};
+
 export type Channel={
   id:string; name:string; slug:string; cadenceDays:number; targetBufferDays:number;
   scheduleMode?:'interval'|'pattern'; publishIntervalDays?:number; publishDays?:number; pauseDays?:number; patternAnchorDate?:string;
@@ -16,7 +22,7 @@ export type Channel={
   youtubeProfileId?:string; youtubeChannelId?:string;
   safeDailyUploadLimit?:number; knownUploadLimitState?:'unknown'|'ok'|'limited'; lastDailyLimitError?:string; lastUploadAt?:string;
   seo:{titlePatterns:string[]; descriptionTemplate:string; tags:string[]; banned:string[]; aiPrompt?:string};
-  stats?:{subscribers?:number; views?:number; videos?:number; updatedAt?:string};
+  stats?:YoutubeChannelStatistics&{subscribers?:number; views?:number; videos?:number; updatedAt?:string};
   analytics?:ChannelAnalytics;
 };
 
@@ -51,7 +57,7 @@ export type LicenseStatus={valid:boolean;type?:'owner-lifetime'|'monthly'|'devel
 export type AppState={version:number;channels:Channel[];jobs:VideoJob[];competitors:Competitor[];settings:Settings;logs:{at:string;level:'info'|'warn'|'error';message:string}[];uploadHistory:UploadHistoryRecord[];fingerprintCache:Record<string,FingerprintCacheEntry>;projectLifecycle:Record<string,ProjectLifecycleRecord>};
 export type Diagnostics={ok:boolean;workspaceWritable:boolean;workspaceExists:boolean;dataDir:string;platform:string;appVersion:string;notes:string[]};
 export type InboxScan={root:string;music:string[];images:string[];metadata:string[]};
-export type YoutubeProfile={id:string;channelId?:string;channelTitle?:string;connectedAt?:string;clientIdMasked?:string;scopes?:string[];analyticsAuthorized?:boolean;monetaryAuthorized?:boolean;preferredBrowser?:string;credentialStatus?:'WORKING'|'RECONNECT_REQUIRED'|'RECOVERABLE'|'KEYCHAIN_ERROR'|'CHECK_ON_USE';credentialError?:string|null;identityValidatedAt?:string|null};
+export type YoutubeProfile={id:string;channelId?:string;channelTitle?:string;connectedAt?:string;clientIdMasked?:string;scopes?:string[];analyticsAuthorized?:boolean;monetaryAuthorized?:boolean;preferredBrowser?:string;credentialStatus?:'WORKING'|'RECONNECT_REQUIRED'|'RECOVERABLE'|'KEYCHAIN_ERROR'|'CHECK_ON_USE';credentialError?:string|null;identityValidatedAt?:string|null;statistics?:YoutubeChannelStatistics};
 export type AutopilotSummary={prepared:number;tracksMoved:number;imagesMoved:number;metadataGenerated:number;renderQueued:number;uploads:number;errors:number;notes:string[]};
 
 export type YoutubeExistingVideo={
