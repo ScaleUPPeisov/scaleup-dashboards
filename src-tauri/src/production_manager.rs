@@ -271,22 +271,17 @@ fn audio_duration(path: &Path) -> f64 {
         if let Ok(o) = Command::new("/usr/bin/afinfo").arg(path).output() {
             let t = String::from_utf8_lossy(&o.stdout);
             for line in t.lines() {
-                if line
-                    .trim()
-                    .to_ascii_lowercase()
-                    .starts_with("estimated duration:")
-                {
-                    if let Some(x) = line
-                        .split(':')
-                        .nth(1)
-                        .and_then(|x| x.trim().split_whitespace().next())
-                        .and_then(|x| x.parse::<f64>().ok())
-                    {
+                if line.trim().to_ascii_lowercase().starts_with("estimated duration:") {
+                    if let Some(x) = line.split(':').nth(1).and_then(|x| x.trim().split_whitespace().next()).and_then(|x| x.parse::<f64>().ok()) {
                         return x;
                     }
                 }
             }
         }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        if let Ok(p) = crate::shorts_factory::probe_media(path) { return p.duration; }
     }
     0.0
 }
@@ -577,29 +572,33 @@ pub struct ProductionStorageStatus {
     pub error: Option<String>,
 }
 
+#[cfg(target_os = "windows")]
 fn storage_free_bytes(path: &Path) -> Option<u64> {
-    let out = std::process::Command::new("df")
-        .arg("-Pk")
-        .arg(path)
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+    let wide = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect::<Vec<_>>();
+    let mut free_to_caller = 0u64;
+    let mut total = 0u64;
+    let mut total_free = 0u64;
+    let ok = unsafe { GetDiskFreeSpaceExW(wide.as_ptr(), &mut free_to_caller, &mut total, &mut total_free) };
+    (ok != 0).then_some(free_to_caller)
+}
+#[cfg(not(target_os = "windows"))]
+fn storage_free_bytes(path: &Path) -> Option<u64> {
+    let out = std::process::Command::new("df").arg("-Pk").arg(path).output().ok()?;
+    if !out.status.success() { return None; }
     let text = String::from_utf8_lossy(&out.stdout);
     let line = text.lines().filter(|x| !x.trim().is_empty()).last()?;
     let cols = line.split_whitespace().collect::<Vec<_>>();
-    if cols.len() < 4 {
-        return None;
-    }
-    cols.get(3)?
-        .parse::<u64>()
-        .ok()
-        .map(|kb| kb.saturating_mul(1024))
+    if cols.len() < 4 { return None; }
+    cols.get(3)?.parse::<u64>().ok().map(|kb| kb.saturating_mul(1024))
 }
 fn storage_probe(path: &Path) -> ProductionStorageStatus {
     let display = path.to_string_lossy().into_owned();
+    #[cfg(target_os = "macos")]
     let external = display.starts_with("/Volumes/");
+    #[cfg(not(target_os = "macos"))]
+    let external = false;
     if !path.exists() {
         return ProductionStorageStatus {
             path: display,
