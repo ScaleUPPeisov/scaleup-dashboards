@@ -4508,18 +4508,20 @@ mod keychain_prompt_architecture_tests{
  }
  #[test]fn rc6_source_contract_has_zero_runtime_legacy_secret_reads(){
   let source=include_str!("youtube.rs");
-  assert!(!source.contains("trait OAuthSecretStore {trait OAuthSecretStore {"));
-  assert!(!source.contains("fn migrate_profile_refresh_to_canonicalfn migrate_profile_refresh_to_canonical"));
-  let migration=source.split("fn migrate_profile_refresh_to_canonical").nth(1).unwrap().split("trait OAuthSecretStore").next().unwrap();
+  let production=source.split("#[cfg(test)]").next().unwrap_or(source);
+  assert!(!production.contains("trait OAuthSecretStore {trait OAuthSecretStore {"));
+  assert!(!production.contains("fn migrate_profile_refresh_to_canonicalfn migrate_profile_refresh_to_canonical"));
+  let migration=production.split("fn migrate_profile_refresh_to_canonical").nth(1).unwrap().split("trait OAuthSecretStore").next().unwrap();
   assert!(!migration.contains("legacy_get_secret_once"));
   assert!(!migration.contains("security::get_secret("));
-  let inventory=source.split("pub async fn youtube_list_existing_videos").nth(1).unwrap();
+  let inventory=production.split("pub async fn youtube_list_existing_videos").nth(1).unwrap();
   let active_prefix=inventory.split("let (token, profile) = valid_access_token").next().unwrap();
   assert!(active_prefix.contains("profile_id: String"));
   assert!(!active_prefix.contains("migrate_profile_refresh_to_canonical"));
-  assert!(!source.contains("security::get_secret_cached(GOOGLE_API_KEY)"));
-  assert!(!source.contains("security::set_secret(GOOGLE_API_KEY"));
-  let storage=include_str!("storage.rs");
+  assert!(!production.contains("security::get_secret_cached(GOOGLE_API_KEY)"));
+  assert!(!production.contains("security::set_secret(GOOGLE_API_KEY"));
+  let storage_source=include_str!("storage.rs");
+  let storage=storage_source.split("#[cfg(test)]").next().unwrap_or(storage_source);
   assert!(!storage.contains("security::get_secret_cached("));
   assert!(!storage.contains("security::set_secret("));
   assert!(!storage.contains("security::set_secret_for_autosave("));
@@ -4528,9 +4530,10 @@ mod keychain_prompt_architecture_tests{
  }
  #[test]fn rc6_security_source_contract_guards_every_native_secret_read(){
   let source=include_str!("security.rs");
-  assert!(source.contains("SecKeychain::disable_user_interaction()"));
-  let native_reads=source.matches("get_generic_password(").count();
-  let guarded_reads=source.matches("with_keychain_no_ui(||match get_generic_password(").count();
+  let production=source.split("#[cfg(test)]").next().unwrap_or(source);
+  assert!(production.contains("SecKeychain::disable_user_interaction()"));
+  let native_reads=production.matches("get_generic_password(").count();
+  let guarded_reads=production.matches("with_keychain_no_ui(||match get_generic_password(").count();
   assert_eq!(native_reads,guarded_reads);
  }
  #[test]fn selected_profile_hydration_reads_only_selected_secret(){let secrets=CountingStore::default();secrets.v.borrow_mut().insert(oauth_key("a","refresh_token"),"ra".into());secrets.v.borrow_mut().insert(oauth_key("b","refresh_token"),"rb".into());let mut a=p("a");let b=p("b");hydrate_profile_secret_kind_with(&secrets,&mut a,"refresh_token").unwrap();assert_eq!(a.refresh_token,"ra");assert!(b.refresh_token.is_empty());assert_eq!(&*secrets.gets.borrow(),&vec![oauth_key("a","refresh_token")]);assert!(secrets.sets.borrow().is_empty());assert!(secrets.deletes.borrow().is_empty());}
