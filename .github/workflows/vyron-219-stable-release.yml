@@ -271,8 +271,34 @@ jobs:
           shasum -a 256 "production/VYRON-$VERSION-arm64.dmg" | tee "production/VYRON-$VERSION-arm64.dmg.sha256"
           shasum -a 256 production/VYRON.app.tar.gz | tee production/VYRON.app.tar.gz.sha256
 
-          SIG_VALUE="$(cat production/VYRON.app.tar.gz.sig)"
-          npx tauri signer verify --public-key "$EMBEDDED_UPDATER_KEY" production/VYRON.app.tar.gz "$SIG_VALUE"
+          python3 - <<'PY'
+          import base64,os,pathlib
+          pathlib.Path('/tmp/vyron-updater.pub').write_bytes(base64.b64decode(os.environ['EMBEDDED_UPDATER_KEY']))
+          PY
+          mkdir -p /tmp/vyron-minisign-verify/src
+          cat >/tmp/vyron-minisign-verify/Cargo.toml <<'EOF'
+          [package]
+          name = "vyron-minisign-verify"
+          version = "0.1.0"
+          edition = "2021"
+
+          [dependencies]
+          minisign-verify = "0.2.5"
+          EOF
+          cat >/tmp/vyron-minisign-verify/src/main.rs <<'EOF'
+          use minisign_verify::{PublicKey,Signature};
+          use std::{env,path::Path};
+          fn main(){
+            let a:Vec<String>=env::args().collect();
+            assert_eq!(a.len(),4,"usage: verify <pubkey> <archive> <signature>");
+            let pk=PublicKey::from_file(Path::new(&a[1])).expect("public key parse");
+            let sig=Signature::from_file(Path::new(&a[3])).expect("signature parse");
+            let data=std::fs::read(&a[2]).expect("archive read");
+            pk.verify(&data,&sig,false).expect("updater signature verify");
+            println!("MINISIGN_SIGNATURE=VERIFIED");
+          }
+          EOF
+          cargo run --quiet --manifest-path /tmp/vyron-minisign-verify/Cargo.toml --             /tmp/vyron-updater.pub production/VYRON.app.tar.gz production/VYRON.app.tar.gz.sig
 
           echo "DESIGNATED_REQUIREMENT=$DR"
           echo 'ARM64_BUILD=PASS'
@@ -402,8 +428,7 @@ jobs:
           test "$(shasum -a 256 remote/VYRON.app.tar.gz | awk '{print $1}')" = "$LOCAL_UPDATER"
           cmp -s remote/VYRON.app.tar.gz.sig production/VYRON.app.tar.gz.sig
           cmp -s remote/latest.json production/latest.json
-          REMOTE_SIG_VALUE="$(cat remote/VYRON.app.tar.gz.sig)"
-          npx tauri signer verify --public-key "$EMBEDDED_UPDATER_KEY" remote/VYRON.app.tar.gz "$REMOTE_SIG_VALUE"
+          cargo run --quiet --manifest-path /tmp/vyron-minisign-verify/Cargo.toml --             /tmp/vyron-updater.pub remote/VYRON.app.tar.gz remote/VYRON.app.tar.gz.sig
 
           test "$(gh api "repos/$REPO/releases/latest" --jq .tag_name)" = "$TAG"
 
@@ -447,8 +472,7 @@ jobs:
           print('UPDATE_FROM_2.1.8=AVAILABLE')
           PY
 
-          REMOTE_SIG_VALUE="$(cat remote/VYRON.app.tar.gz.sig)"
-          npx tauri signer verify --public-key "$EMBEDDED_UPDATER_KEY" remote/VYRON.app.tar.gz "$REMOTE_SIG_VALUE"
+          cargo run --quiet --manifest-path /tmp/vyron-minisign-verify/Cargo.toml --             /tmp/vyron-updater.pub remote/VYRON.app.tar.gz remote/VYRON.app.tar.gz.sig
 
           echo 'STABLE_TAG=v2.1.9'
           echo 'STABLE_RELEASE_PRERELEASE=false'
@@ -469,3 +493,4 @@ jobs:
           if [[ -n "${VYRON_SIGNING_KEYCHAIN:-}" ]]; then
             security delete-keychain "$VYRON_SIGNING_KEYCHAIN" >/dev/null 2>&1 || true
           fi
+# retry: verify Tauri updater signature with independent minisign-verify crate
