@@ -1002,13 +1002,13 @@ pub fn youtube_oauth_disconnect(app: AppHandle, profile_id: String) -> Result<()
     save_store(&app, &s)
 }
 
-#[tauri::command]
-pub fn oauth_authorization_url(client_id:&str,redirect:&str,scope:&str,challenge:&str,state:&str)->String{
+fn oauth_authorization_url(client_id:&str,redirect:&str,scope:&str,challenge:&str,state:&str)->String{
     let prompt=urlencoding::encode("select_account consent");
     format!("https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&access_type=offline&prompt={}&include_granted_scopes=true&code_challenge={}&code_challenge_method=S256&state={}",
       urlencoding::encode(client_id),urlencoding::encode(redirect),urlencoding::encode(scope),prompt,urlencoding::encode(challenge),urlencoding::encode(state))
 }
 
+#[tauri::command]
 async fn youtube_oauth_connect(
     app: AppHandle,
     client_id: String,
@@ -1066,7 +1066,7 @@ async fn youtube_oauth_connect(
         .await
         .map_err(|e| format!("OAuth token JSON: {e}"))?;
     if !status.is_success() {
-        return Err(tv
+        let detail = tv
             .get("error_description")
             .and_then(|x| x.as_str())
             .or_else(|| tv.get("error").and_then(|x| x.as_str()))
