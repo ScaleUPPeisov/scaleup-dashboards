@@ -87,7 +87,7 @@ jobs:
           gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode > current-latest.json
           python - <<'PY'
           import json,os
-          d=json.load(open('current-latest.json'))
+          d=json.load(open('current-latest.json',encoding='utf-8'))
           assert d['version']==os.environ['VERSION']
           mac=d['platforms'][os.environ['MACOS_PLATFORM_KEY']]
           assert mac['url'] and mac['signature']
@@ -246,7 +246,7 @@ jobs:
           set -Eeuo pipefail
           python - <<'PY'
           import json,os,pathlib,datetime
-          shared=json.load(open('current-latest.json'))
+          shared=json.load(open('current-latest.json',encoding='utf-8'))
           assert shared['version']==os.environ['VERSION']
           mac=shared['platforms'][os.environ['MACOS_PLATFORM_KEY']]
           assert mac['url'] and mac['signature']
@@ -263,12 +263,12 @@ jobs:
           }
           pathlib.Path('production/windows-latest.json').write_text(json.dumps(win,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
 
-          common=json.load(open('production/latest.json'))
+          common=json.load(open('production/latest.json',encoding='utf-8'))
           assert common['version']==os.environ['VERSION']
           for k in (os.environ['MACOS_PLATFORM_KEY'],os.environ['WINDOWS_PLATFORM_KEY']):
               assert common['platforms'][k]['url']
               assert common['platforms'][k]['signature']
-          dedicated=json.load(open('production/windows-latest.json'))
+          dedicated=json.load(open('production/windows-latest.json',encoding='utf-8'))
           assert dedicated['version']==os.environ['VERSION']
           assert dedicated['platforms'][os.environ['WINDOWS_PLATFORM_KEY']]['url']
           assert dedicated['platforms'][os.environ['WINDOWS_PLATFORM_KEY']]['signature']
@@ -320,7 +320,7 @@ jobs:
           gh api "repos/$REPO/releases/tags/$TAG" > remote-release.json
           python - <<'PY'
           import json,os,subprocess
-          d=json.load(open('remote-release.json'))
+          d=json.load(open('remote-release.json',encoding='utf-8'))
           assert d['target_commitish']==subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
           names={a['name'] for a in d['assets']}
           required={
@@ -339,7 +339,7 @@ jobs:
           test "$(sha256sum remote-installer.exe | awk '{print $1}')" = "$WINDOWS_INSTALLER_SHA256"
           cmp -s remote-installer.sig "production/$WINDOWS_SIGNATURE"
 
-          MAC_URL="$(python -c "import json,os; print(json.load(open('production/latest.json'))['platforms'][os.environ['MACOS_PLATFORM_KEY']]['url'])")"
+          MAC_URL="$(python -c "import json,os; print(json.load(open('production/latest.json',encoding='utf-8'))['platforms'][os.environ['MACOS_PLATFORM_KEY']]['url'])")"
           curl -L --fail --silent --show-error -o /dev/null "$MAC_URL"
           echo 'WINDOWS_ASSET_HTTP=200'
           echo 'MACOS_ASSET_HTTP=200'
@@ -352,7 +352,7 @@ jobs:
           gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" > latest-meta.json
           python - <<'PY'
           import json,base64,os
-          meta=json.load(open('latest-meta.json'))
+          meta=json.load(open('latest-meta.json',encoding='utf-8'))
           cur=json.loads(base64.b64decode(meta['content']).decode())
           assert cur['version']==os.environ['VERSION']
           assert cur['platforms'][os.environ['MACOS_PLATFORM_KEY']]['url']
@@ -360,12 +360,12 @@ jobs:
           out=base64.b64encode(open('production/latest.json','rb').read()).decode()
           json.dump({'sha':meta['sha'],'content':out},open('latest-put.json','w'))
           PY
-          LATEST_SHA="$(python -c "import json;print(json.load(open('latest-put.json'))['sha'])")"
-          LATEST_B64="$(python -c "import json;print(json.load(open('latest-put.json'))['content'])")"
+          LATEST_SHA="$(python -c "import json;print(json.load(open('latest-put.json',encoding='utf-8'))['sha'])")"
+          LATEST_B64="$(python -c "import json;print(json.load(open('latest-put.json',encoding='utf-8'))['content'])")"
           gh api --method PUT "repos/$REPO/contents/vyron-updates/latest.json" -f message='release: add VYRON 2.1.13 Windows updater bootstrap' -f content="$LATEST_B64" -f sha="$LATEST_SHA" -f branch=main >/dev/null
 
           if gh api "repos/$REPO/contents/vyron-updates/windows-latest.json?ref=main" > windows-meta.json 2>/dev/null; then
-            WIN_SHA="$(python -c "import json;print(json.load(open('windows-meta.json'))['sha'])")"
+            WIN_SHA="$(python -c "import json;print(json.load(open('windows-meta.json',encoding='utf-8'))['sha'])")"
             WIN_B64="$(python -c "import base64;print(base64.b64encode(open('production/windows-latest.json','rb').read()).decode())")"
             gh api --method PUT "repos/$REPO/contents/vyron-updates/windows-latest.json" -f message='release: activate VYRON 2.1.13 Windows updater feed' -f content="$WIN_B64" -f sha="$WIN_SHA" -f branch=main >/dev/null
           else
@@ -383,8 +383,8 @@ jobs:
 
           python - <<'PY'
           import json,os
-          common=json.load(open('final-latest.json'))
-          win=json.load(open('final-windows-latest.json'))
+          common=json.load(open('final-latest.json',encoding='utf-8'))
+          win=json.load(open('final-windows-latest.json',encoding='utf-8'))
           assert common['version']==os.environ['VERSION']
           assert win['version']==os.environ['VERSION']
           for k in (os.environ['MACOS_PLATFORM_KEY'],os.environ['WINDOWS_PLATFORM_KEY']):
@@ -398,7 +398,7 @@ jobs:
           print('MACOS_PLATFORM_KEY='+os.environ['MACOS_PLATFORM_KEY'])
           PY
 
-          URL="$(python -c "import json,os;print(json.load(open('final-latest.json'))['platforms'][os.environ['WINDOWS_PLATFORM_KEY']]['url'])")"
+          URL="$(python -c "import json,os;print(json.load(open('final-latest.json',encoding='utf-8'))['platforms'][os.environ['WINDOWS_PLATFORM_KEY']]['url'])")"
           curl -L --fail --silent --show-error -o final-installer.exe "$URL"
           test "$(sha256sum final-installer.exe | awk '{print $1}')" = "$WINDOWS_INSTALLER_SHA256"
           test "$(gh api "repos/$REPO/releases/latest" --jq .tag_name)" = "v2.1.13"
