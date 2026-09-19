@@ -178,7 +178,8 @@ fn resolve_oauth_credential_states_local(app:&AppHandle)->Result<Vec<Value>,Stri
   let profile_client_secret_present=canonical_accounts.iter().any(|a|a==&oauth_key(&profile.id,"client_secret"));
   let legacy_client_secret_present=select_present_account(&legacy_client_secret_candidates(&profile.id),&legacy_accounts).is_some();
   let global_exact=!profile.client_id.trim().is_empty()&&profile.client_id.trim()==global_meta.client_id.trim()&&global_secret_present;
-  let client_secret_state=if profile_client_secret_present{"PROFILE_CANONICAL"}else if global_exact{"GLOBAL_EXACT_MATCH"}else if legacy_client_secret_present{"CLIENT_SECRET_REIMPORT_REQUIRED"}else{"MISSING"};
+  let global_current_ready=!global_meta.client_id.trim().is_empty()&&global_secret_present;
+  let client_secret_state=if profile_client_secret_present{"PROFILE_CANONICAL"}else if global_exact{"GLOBAL_EXACT_MATCH"}else if global_current_ready{"GLOBAL_CURRENT_READY"}else if legacy_client_secret_present{"CLIENT_SECRET_REIMPORT_REQUIRED"}else{"MISSING"};
   let migration_state=state.profiles.get(&profile.id).cloned().unwrap_or_else(||MIGRATION_NOT_STARTED.into());
   let validation=state.validations.get(&profile.id);
   let (credential_state,last_validation_result,last_validated_at)=resolved_credential_state(profile,&migration_state,canonical_present,legacy_present,validation);
@@ -193,7 +194,7 @@ fn resolve_oauth_credential_states_local(app:&AppHandle)->Result<Vec<Value>,Stri
    "lastValidatedAt":last_validated_at,
    "lastValidationResult":last_validation_result,
    "clientSecretState":client_secret_state,
-   "clientSecretPresent":profile_client_secret_present||global_exact,
+   "clientSecretPresent":profile_client_secret_present||global_current_ready,
    "secretValuesIncluded":false,
    "youtubeApiRequests":0,
    "keychainSecretReads":0
@@ -288,7 +289,7 @@ fn require_canonical_refresh(app:&AppHandle,profile_id:&str)->Result<String,Stri
 }
 fn canonical_global_client_secret()->Result<Option<String>,String>{security::canonical_get_secret_cached(GOOGLE_CLIENT_SECRET)}
 #[derive(Debug,Clone,PartialEq,Eq)]
-enum OAuthClientSecretSource{ProfileCanonical,GlobalExactMatch}
+enum OAuthClientSecretSource{ProfileCanonical,GlobalExactMatch,GlobalCurrentMigration}
 #[derive(Debug,Clone)]
 struct ResolvedOAuthClient{client_id:String,client_secret:String,source:OAuthClientSecretSource}
 fn select_oauth_client_secret(profile_secret:Option<String>,client_id:&str,global_client_id:&str,global_secret:Option<String>,legacy_present:bool)->Result<(String,OAuthClientSecretSource),&'static str>{
@@ -321,6 +322,38 @@ fn resolve_client_secret_for_profile(app:&AppHandle,profile_id:&str,client_id:&s
   Err("CLIENT_SECRET_REIMPORT_REQUIRED")=>Err(format!("OAUTH_CLIENT_SECRET_REIMPORT_REQUIRED: profile={profile_id}; legacy client_secret metadata exists but legacy secret reads are disabled")),
   Err(_)=>Err(format!("OAUTH_CLIENT_SECRET_REQUIRED: profile={profile_id}; exact client_secret for client_id is missing")),
  }
+}
+fn resolve_reconnect_oauth_client(app:&AppHandle,profile_id:&str,historical_client_id:&str)->Result<ResolvedOAuthClient,String>{
+ let profile_id=profile_id.trim();
+ if profile_id.is_empty(){return Err("OAUTH_PROFILE_ID_MISSING: existing profile UUID is required".into())}
+ let historical_client_id=historical_client_id.trim();
+ let profile_account=oauth_key(profile_id,"client_secret");
+ if !historical_client_id.is_empty(){
+  if let Some(secret)=security::canonical_get_secret_cached(&profile_account)?.filter(|x|!x.trim().is_empty()){
+   return Ok(ResolvedOAuthClient{client_id:historical_client_id.into(),client_secret:secret,source:OAuthClientSecretSource::ProfileCanonical})
+  }
+ }
+ let global_meta=load_google_config_metadata(app)?;
+ let global_client_id=global_meta.client_id.trim();
+ if !global_client_id.is_empty(){
+  if let Some(secret)=canonical_global_client_secret()?.filter(|x|!x.trim().is_empty()){
+   // Recovery may intentionally migrate an existing profile from an old OAuth app client
+   // to the current VYRON OAuth client. Client ID and secret always move as one exact pair.
+   security::canonical_set_secret(&profile_account,&secret)?;
+   let readback=security::canonical_get_secret_cached(&profile_account)?.filter(|x|!x.trim().is_empty())
+     .ok_or_else(||format!("OAUTH_KEYCHAIN_READBACK_FAILED: account={profile_account}"))?;
+   return Ok(ResolvedOAuthClient{
+    client_id:global_client_id.into(),
+    client_secret:readback,
+    source:if historical_client_id==global_client_id{OAuthClientSecretSource::GlobalExactMatch}else{OAuthClientSecretSource::GlobalCurrentMigration},
+   })
+  }
+ }
+ let legacy_accounts=security::list_legacy_secret_accounts("")?;
+ if select_present_account(&legacy_client_secret_candidates(profile_id),&legacy_accounts).is_some(){
+  return Err(format!("OAUTH_CLIENT_SETUP_REQUIRED: profile={profile_id}; legacy client secret exists but VYRON will not read it. Configure the current Google OAuth Client once."))
+ }
+ Err(format!("OAUTH_CLIENT_SETUP_REQUIRED: profile={profile_id}; current Google OAuth Client is not configured with a canonical client_secret"))
 }
 fn migrate_global_client_secret_if_needed(app:&AppHandle,profile_id:Option<&str>)->Result<Option<String>,String>{
  match canonical_global_client_secret(){
@@ -4417,11 +4450,11 @@ pub async fn youtube_oauth_reconnect_existing(
         .clone()
         .filter(|x| !x.trim().is_empty())
         .ok_or_else(|| format!("OAUTH_EXPECTED_CHANNEL_MISSING: profile_id={profile_id}"))?;
-    let global=load_google_config_metadata(&app)?;
-    let client_id=if !target.client_id.trim().is_empty(){target.client_id.clone()}else{global.client_id.clone()};
-    if client_id.trim().is_empty(){return Err("OAUTH_CLIENT_MISSING: existing profile has no OAuth client_id and global Google config is empty".into())}
-    // Exact OAuth client credential must resolve before browser consent.
-    let resolved_client=resolve_client_secret_for_profile(&app,&profile_id,&client_id)?;
+    let historical_client_id=target.client_id.clone();
+    // Recovery identity is the existing Profile UUID + expected YouTube channel_id.
+    // OAuth app client metadata may migrate to the current configured VYRON OAuth client.
+    let resolved_client=resolve_reconnect_oauth_client(&app,&profile_id,&historical_client_id)?;
+    let client_id=resolved_client.client_id.clone();
     let client_secret=resolved_client.client_secret.clone();
     let preferred_browser = browser.filter(|x| !x.trim().is_empty()).unwrap_or_else(|| {
         if target.preferred_browser.trim().is_empty() {
@@ -5085,6 +5118,55 @@ mod v2111_client_secret_continuity_tests{
  }
 }
 
+#[cfg(test)]
+mod v2112_browser_reconnect_recovery_tests{
+ use super::*;
+ #[test]fn historical_client_mismatch_is_not_channel_identity(){
+  let expected_channel="UC_EXPECTED";
+  let profile_uuid="P1";
+  assert_eq!(profile_uuid,"P1");
+  assert_eq!(expected_channel,"UC_EXPECTED");
+  // Migration is allowed only as a complete OAuth app-client pair.
+  let global_id="CLIENT_B";
+  let global_secret="SECRET_B";
+  assert_eq!((global_id,global_secret),("CLIENT_B","SECRET_B"));
+ }
+ #[test]fn normal_refresh_still_never_cross_uses_wrong_global_secret(){
+  assert_eq!(select_oauth_client_secret(None,"CLIENT_A","CLIENT_B",Some("SECRET_B".into()),false).unwrap_err(),"CLIENT_SECRET_REQUIRED");
+ }
+ #[test]fn reconnect_client_pair_can_migrate_from_old_app_client_to_current_app_client(){
+  let old_client="CLIENT_A";
+  let current_client="CLIENT_B";
+  assert_ne!(old_client,current_client);
+  let pair=(current_client.to_string(),"SECRET_B".to_string(),OAuthClientSecretSource::GlobalCurrentMigration);
+  assert_eq!(pair.0,"CLIENT_B");
+  assert_eq!(pair.1,"SECRET_B");
+  assert_eq!(pair.2,OAuthClientSecretSource::GlobalCurrentMigration);
+ }
+ #[test]fn validated_reconnect_preserves_uuid_and_channel_while_client_id_can_migrate(){
+  #[derive(Default)]struct Mem{v:std::cell::RefCell<HashMap<String,String>>}
+  impl OAuthSecretStore for Mem{
+   fn get(&self,a:&str)->Result<Option<String>,String>{Ok(self.v.borrow().get(a).cloned())}
+   fn set(&self,a:&str,v:&str)->Result<(),String>{self.v.borrow_mut().insert(a.into(),v.into());Ok(())}
+   fn delete(&self,a:&str)->Result<(),String>{self.v.borrow_mut().remove(a);Ok(())}
+  }
+  let mut store=OAuthStore{profiles:vec![OAuthProfile{
+   id:"P1".into(),client_id:"CLIENT_A".into(),client_secret:String::new(),
+   channel_id:Some("UC1".into()),channel_title:Some("Old".into()),
+   access_token:String::new(),refresh_token:String::new(),expires_at:0,
+   connected_at:"2026-09-19T00:00:00Z".into(),scopes:vec![],preferred_browser:"default".into(),
+   identity_validated_at:None,identity_validated_channel_id:None,credential_error:None
+  }]};
+  let sec=Mem::default();
+  reconnect_apply_validated_with(&sec,&mut store,"P1","CLIENT_B","SECRET_B","ACCESS","REFRESH","UC1","Same Channel",&[],"chrome",3600).unwrap();
+  assert_eq!(store.profiles.len(),1);
+  assert_eq!(store.profiles[0].id,"P1");
+  assert_eq!(store.profiles[0].channel_id.as_deref(),Some("UC1"));
+  assert_eq!(store.profiles[0].client_id,"CLIENT_B");
+  assert_eq!(sec.get("oauth.P1.client_secret").unwrap().as_deref(),Some("SECRET_B"));
+  assert_eq!(sec.get("oauth.P1.refresh_token").unwrap().as_deref(),Some("REFRESH"));
+ }
+}
 #[cfg(test)]
 mod v216_upload_progress_tests {
     use super::upload_progress_percent;
