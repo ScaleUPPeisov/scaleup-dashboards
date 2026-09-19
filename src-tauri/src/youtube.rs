@@ -637,7 +637,9 @@ fn masked_client_id(s: &str) -> String {
     }
 }
 fn google_config_status_value(c: &GoogleConfig) -> Value {
-    json!({"configured":!c.client_id.trim().is_empty(),"projectId":if c.project_id.is_empty(){Value::Null}else{json!(c.project_id)},"clientIdMasked":if c.client_id.is_empty(){Value::Null}else{json!(masked_client_id(&c.client_id))},"hasSecret":c.client_secret_present,"hasApiKey":c.api_key_present})
+    let configured=!c.client_id.trim().is_empty();
+    let ready_for_oauth=configured&&c.client_secret_present;
+    json!({"configured":configured,"readyForOAuth":ready_for_oauth,"projectId":if c.project_id.is_empty(){Value::Null}else{json!(c.project_id)},"clientIdMasked":if c.client_id.is_empty(){Value::Null}else{json!(masked_client_id(&c.client_id))},"hasSecret":c.client_secret_present,"hasApiKey":c.api_key_present})
 }
 #[derive(Debug, Clone, Deserialize, Default)]
 struct SafeGoogleMetadata {
@@ -753,7 +755,10 @@ pub async fn youtube_oauth_connect_global(
 ) -> Result<Value, String> {
     let c = load_or_migrate_google_config(&app)?;
     if c.client_id.trim().is_empty() {
-        return Err("Нет Google OAuth Client. Импортируй credentials.json один раз или подключи существующий OAuth профиль.".into());
+        return Err("OAUTH_CLIENT_SETUP_REQUIRED: Google OAuth Client не настроен. Импортируй credentials.json один раз.".into());
+    }
+    if c.client_secret.trim().is_empty() {
+        return Err("OAUTH_CLIENT_SETUP_REQUIRED: client_id найден, но global client_secret отсутствует. Импортируй credentials.json текущего VYRON OAuth Client один раз до открытия Google.".into());
     }
     youtube_oauth_connect(app, c.client_id, c.client_secret, browser).await
 }
@@ -5118,6 +5123,32 @@ mod v2111_client_secret_continuity_tests{
  }
 }
 
+#[cfg(test)]
+mod v2113_global_oauth_preflight_tests{
+ use super::*;
+ #[test]fn metadata_client_id_without_secret_is_not_oauth_ready(){
+  let c=GoogleConfig{client_id:"CLIENT".into(),client_secret:String::new(),project_id:String::new(),api_key:String::new(),client_secret_present:false,api_key_present:false};
+  let v=google_config_status_value(&c);
+  assert_eq!(v.get("configured").and_then(Value::as_bool),Some(true));
+  assert_eq!(v.get("hasSecret").and_then(Value::as_bool),Some(false));
+  assert_eq!(v.get("readyForOAuth").and_then(Value::as_bool),Some(false));
+ }
+ #[test]fn client_id_and_secret_metadata_are_oauth_ready(){
+  let c=GoogleConfig{client_id:"CLIENT".into(),client_secret:String::new(),project_id:String::new(),api_key:String::new(),client_secret_present:true,api_key_present:false};
+  let v=google_config_status_value(&c);
+  assert_eq!(v.get("readyForOAuth").and_then(Value::as_bool),Some(true));
+ }
+ #[test]fn existing_channel_reuses_profile_uuid_after_successful_global_connect(){
+  let p=OAuthProfile{
+   id:"P_EXISTING".into(),client_id:"OLD_CLIENT".into(),client_secret:String::new(),
+   channel_id:Some("UC_EXISTING".into()),channel_title:Some("Channel".into()),
+   access_token:String::new(),refresh_token:String::new(),expires_at:0,
+   connected_at:String::new(),scopes:vec![],preferred_browser:String::new(),
+   identity_validated_at:None,identity_validated_channel_id:None,credential_error:None
+  };
+  assert_eq!(reconnect_profile_id(Some(&p)),"P_EXISTING");
+ }
+}
 #[cfg(test)]
 mod v2112_browser_reconnect_recovery_tests{
  use super::*;
