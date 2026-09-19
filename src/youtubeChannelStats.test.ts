@@ -26,9 +26,9 @@ describe('VYRON channel statistics cache',()=>{
   expect(failed.statisticsUpdatedAt).toBe('2026-09-19T14:45:00Z');
   expect(failed.syncWarning).toContain('network down');
  });
- it('uses a controlled 30-minute stale cache',()=>{
-  const now=Date.parse('2026-09-19T15:15:00Z');
-  expect(isChannelStatsStale({statisticsUpdatedAt:'2026-09-19T15:00:00Z'},now)).toBe(false);
-  expect(isChannelStatsStale({statisticsUpdatedAt:'2026-09-19T14:44:59Z'},now)).toBe(true);
+ it('uses a controlled 10-minute stale cache',()=>{
+  const now=Date.parse('2026-09-19T15:10:00Z');
+  expect(isChannelStatsStale({statisticsUpdatedAt:'2026-09-19T15:00:01Z'},now)).toBe(false);
+  expect(isChannelStatsStale({statisticsUpdatedAt:'2026-09-19T15:00:00Z'},now)).toBe(true);
  });
 });
