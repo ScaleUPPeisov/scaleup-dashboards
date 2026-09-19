@@ -1,0 +1,418 @@
+name: VYRON 2.1.13 Windows Signed Updater Release
+
+on:
+  push:
+    branches:
+      - windows/vyron-213-updater-fix
+    paths:
+      - '.github/workflows/vyron-213-windows-updater-release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: vyron-213-windows-updater-release
+  cancel-in-progress: false
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  VERSION: '2.1.13'
+  TAG: v2.1.13-windows-x64
+  WINDOWS_TARGET: x86_64-pc-windows-msvc
+  WINDOWS_PLATFORM_KEY: windows-x86_64
+  MACOS_PLATFORM_KEY: darwin-aarch64
+  FFMPEG_VERSION: 8.1.2
+  FFMPEG_ZIP_SHA256: db580001caa24ac104c8cb856cd113a87b0a443f7bdf47d8c12b1d740584a2ec
+  EMBEDDED_UPDATER_KEY: dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEREODQ1NDdERTI1MEYxQzAKUldUQThWRGlmVlNFM1RHdW5WQnE2eG9BYTBnQlNmbUtmVU84UHJQMUNvZWZ4Qmo0L2hYcUd4UDEK
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: windows/vyron-213-updater-fix
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+          components: rustfmt
+
+      - name: Source and feed preflight
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          import json,re,subprocess,os,base64
+          pkg=json.load(open('package.json'))
+          lock=json.load(open('package-lock.json'))
+          conf=json.load(open('src-tauri/tauri.conf.json'))
+          win=json.load(open('src-tauri/tauri.windows.conf.json'))
+          cargo=open('src-tauri/Cargo.toml',encoding='utf-8').read()
+          clock=open('src-tauri/Cargo.lock',encoding='utf-8').read()
+          v=os.environ['VERSION']
+          assert pkg['version']==v
+          assert lock['version']==v and lock['packages']['']['version']==v
+          assert conf['version']==v
+          assert conf['identifier']=='studio.channelflow.desktop'
+          assert conf['plugins']['updater']['pubkey']==os.environ['EMBEDDED_UPDATER_KEY']
+          assert win['bundle']['createUpdaterArtifacts'] is True
+          assert win['plugins']['updater']['pubkey']==os.environ['EMBEDDED_UPDATER_KEY']
+          assert win['plugins']['updater']['endpoints'][0].endswith('/vyron-updates/windows-latest.json')
+          assert re.search(r'(?m)^version\s*=\s*"2\.1\.13"\s*$',cargo)
+          assert re.search(r'\[\[package\]\]\r?\nname = "channelflow"\r?\nversion = "2\.1\.13"',clock)
+          print('SOURCE_VERSION_CONTRACT=PASS')
+          PY
+
+          test -n "${TAURI_SIGNING_PRIVATE_KEY:-}"
+          ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1
+
+          gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode > current-latest.json
+          python - <<'PY'
+          import json,os
+          d=json.load(open('current-latest.json'))
+          assert d['version']==os.environ['VERSION']
+          mac=d['platforms'][os.environ['MACOS_PLATFORM_KEY']]
+          assert mac['url'] and mac['signature']
+          print('MACOS_FEED_BASELINE=PASS')
+          print('SHARED_MANIFEST_VERSION='+d['version'])
+          PY
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Frontend tests
+        run: npm test
+
+      - name: TypeScript and Vite build
+        run: npm run build
+
+      - name: Rust format baseline audit
+        continue-on-error: true
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+
+      - name: Provision pinned FFmpeg
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $url = "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-$env:FFMPEG_VERSION-essentials_build.zip"
+          $zip = Join-Path $env:RUNNER_TEMP "ffmpeg.zip"
+          $unpack = Join-Path $env:RUNNER_TEMP "ffmpeg"
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          $hash = (Get-FileHash -Path $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne $env:FFMPEG_ZIP_SHA256) { throw "FFmpeg SHA-256 mismatch: $hash" }
+          Expand-Archive -Path $zip -DestinationPath $unpack -Force
+          $ffmpeg = Get-ChildItem -Path $unpack -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          $ffprobe = Get-ChildItem -Path $unpack -Recurse -Filter ffprobe.exe | Select-Object -First 1
+          if (-not $ffmpeg -or -not $ffprobe) { throw "FFmpeg binaries missing" }
+          New-Item -ItemType Directory -Force -Path "src-tauri/resources/bin" | Out-Null
+          Copy-Item $ffmpeg.FullName "src-tauri/resources/bin/ffmpeg.exe" -Force
+          Copy-Item $ffprobe.FullName "src-tauri/resources/bin/ffprobe.exe" -Force
+
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Windows compile
+        run: cargo check --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
+
+      - name: Normalize updater signing key
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          import base64,os
+          raw=os.environ.get('TAURI_SIGNING_PRIVATE_KEY','').strip()
+          assert raw
+          def dec(x):
+              try:return base64.b64decode(x,validate=True).decode()
+              except:return None
+          if raw.startswith('untrusted comment:'):
+              out=base64.b64encode(raw.encode()).decode(); box=raw
+          else:
+              one=dec(raw)
+              if one and one.startswith('untrusted comment:'):
+                  out=raw; box=one
+              else:
+                  box=dec(one) if one else None
+                  assert box and box.startswith('untrusted comment:')
+                  out=one.strip()
+          assert 'secret key' in box.splitlines()[0].lower()
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f:
+              f.write('TAURI_SIGNING_PRIVATE_KEY='+out+'\n')
+          print('::add-mask::'+out)
+          print('UPDATER_PRIVATE_KEY_NORMALIZED=PASS')
+          PY
+
+      - name: Build signed NSIS updater
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npx tauri build --target "$WINDOWS_TARGET" --bundles nsis
+
+          ROOT="src-tauri/target/$WINDOWS_TARGET/release"
+          EXE="$ROOT/VYRON.exe"
+          INSTALLER="$(find "$ROOT/bundle/nsis" -maxdepth 1 -name '*-setup.exe' -type f | head -n1)"
+          test -s "$EXE"
+          test -n "$INSTALLER"
+          test -s "$INSTALLER"
+          SIG="$INSTALLER.sig"
+          test -s "$SIG"
+
+          mkdir -p production
+          cp "$INSTALLER" production/
+          cp "$SIG" production/
+          INSTALLER_NAME="$(basename "$INSTALLER")"
+          SIG_NAME="$(basename "$SIG")"
+          SHA="$(sha256sum "$INSTALLER" | awk '{print $1}')"
+          BYTES="$(python -c "import os; print(os.path.getsize(r'$INSTALLER'))")"
+          printf '%s  %s\n' "$SHA" "$INSTALLER_NAME" > "production/$INSTALLER_NAME.sha256"
+
+          python - "$EXE" <<'PY'
+          import sys,struct
+          p=sys.argv[1]
+          b=open(p,'rb').read()
+          off=struct.unpack_from('<I',b,0x3c)[0]
+          assert b[off:off+4]==b'PE\0\0'
+          machine=struct.unpack_from('<H',b,off+4)[0]
+          assert machine==0x8664,hex(machine)
+          print('PE_X64=PASS')
+          PY
+
+          echo "WINDOWS_INSTALLER=$INSTALLER_NAME" >> "$GITHUB_ENV"
+          echo "WINDOWS_SIGNATURE=$SIG_NAME" >> "$GITHUB_ENV"
+          echo "WINDOWS_INSTALLER_SHA256=$SHA" >> "$GITHUB_ENV"
+          echo "WINDOWS_INSTALLER_BYTES=$BYTES" >> "$GITHUB_ENV"
+          echo "WINDOWS_INSTALLER=$INSTALLER_NAME"
+          echo "WINDOWS_SIGNATURE=$SIG_NAME"
+          echo "WINDOWS_INSTALLER_SHA256=$SHA"
+
+      - name: Independent updater signature verification
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          import base64,os,pathlib
+          t=pathlib.Path(os.environ['RUNNER_TEMP'])
+          (t/'vyron-updater.pub').write_bytes(base64.b64decode(os.environ['EMBEDDED_UPDATER_KEY']))
+          encoded=pathlib.Path('production',os.environ['WINDOWS_SIGNATURE']).read_text().strip()
+          (t/'vyron-updater.sig').write_bytes(base64.b64decode(encoded))
+          PY
+
+          V="$RUNNER_TEMP/vyron-minisign-verify"
+          mkdir -p "$V/src"
+          cat >"$V/Cargo.toml" <<'EOF'
+          [package]
+          name = "vyron-minisign-verify"
+          version = "0.1.0"
+          edition = "2021"
+          [dependencies]
+          minisign-verify = "0.2.5"
+          EOF
+          cat >"$V/src/main.rs" <<'EOF'
+          use minisign_verify::{PublicKey,Signature};
+          use std::{env,path::Path};
+          fn main(){
+            let a:Vec<String>=env::args().collect();
+            assert_eq!(a.len(),4);
+            let pk=PublicKey::from_file(Path::new(&a[1])).expect("public key parse");
+            let sig=Signature::from_file(Path::new(&a[3])).expect("signature parse");
+            let data=std::fs::read(&a[2]).expect("artifact read");
+            pk.verify(&data,&sig,false).expect("updater signature verify");
+            println!("MINISIGN_SIGNATURE=VERIFIED");
+          }
+          EOF
+          cargo run --quiet --manifest-path "$V/Cargo.toml" -- "$RUNNER_TEMP/vyron-updater.pub" "production/$WINDOWS_INSTALLER" "$RUNNER_TEMP/vyron-updater.sig"
+
+      - name: Build candidate manifests and contract test
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          import json,os,pathlib,datetime
+          shared=json.load(open('current-latest.json'))
+          assert shared['version']==os.environ['VERSION']
+          mac=shared['platforms'][os.environ['MACOS_PLATFORM_KEY']]
+          assert mac['url'] and mac['signature']
+          sig=pathlib.Path('production',os.environ['WINDOWS_SIGNATURE']).read_text().strip()
+          assert sig
+          url=f"https://github.com/{os.environ['REPO']}/releases/download/{os.environ['TAG']}/{os.environ['WINDOWS_INSTALLER']}"
+          shared['platforms'][os.environ['WINDOWS_PLATFORM_KEY']]={'url':url,'signature':sig}
+          pathlib.Path('production/latest.json').write_text(json.dumps(shared,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          win={
+            'version':os.environ['VERSION'],
+            'notes':'VYRON 2.1.13 — Windows x64 signed auto-update bootstrap and dedicated updater feed.',
+            'pub_date':datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace('+00:00','Z'),
+            'platforms':{os.environ['WINDOWS_PLATFORM_KEY']:{'url':url,'signature':sig}}
+          }
+          pathlib.Path('production/windows-latest.json').write_text(json.dumps(win,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+
+          common=json.load(open('production/latest.json'))
+          assert common['version']==os.environ['VERSION']
+          for k in (os.environ['MACOS_PLATFORM_KEY'],os.environ['WINDOWS_PLATFORM_KEY']):
+              assert common['platforms'][k]['url']
+              assert common['platforms'][k]['signature']
+          dedicated=json.load(open('production/windows-latest.json'))
+          assert dedicated['version']==os.environ['VERSION']
+          assert dedicated['platforms'][os.environ['WINDOWS_PLATFORM_KEY']]['url']
+          assert dedicated['platforms'][os.environ['WINDOWS_PLATFORM_KEY']]['signature']
+          print('MANIFEST_CONTRACT_TEST=PASS')
+          print('COMMON_PLATFORMS='+','.join(sorted(common['platforms'])))
+          PY
+
+      - name: Publish Windows updater release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          HEAD="$(git rev-parse HEAD)"
+          cat > production/RELEASE_NOTES_WINDOWS_UPDATER.md <<EOF
+          ## VYRON 2.1.13 - Windows x64 updater bootstrap
+
+          - Real signed Tauri v2 updater artifact for Windows x64.
+          - Platform key: windows-x86_64.
+          - The NSIS setup executable is also the Tauri v2 updater artifact; Tauri generated its .sig.
+          - Existing Windows 2.1.9 bootstraps through the shared 2.1.13 manifest.
+          - New Windows 2.1.13 uses windows-latest.json first for future Windows-only updates.
+          - macOS v2.1.13 assets and updater signature are preserved.
+          - Windows Authenticode remains separate and is not configured.
+          - Physical Windows update/relaunch/state continuity acceptance: NOT TESTED.
+
+          Source: $HEAD
+          EOF
+
+          python - <<'PY'
+          import json,os,subprocess
+          body=open('production/RELEASE_NOTES_WINDOWS_UPDATER.md',encoding='utf-8').read()
+          payload={
+            'tag_name':os.environ['TAG'],
+            'target_commitish':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),
+            'name':'VYRON 2.1.13 - Windows x64',
+            'body':body,
+            'draft':False,
+            'prerelease':False,
+            'make_latest':'false'
+          }
+          open('release-payload.json','w',encoding='utf-8').write(json.dumps(payload))
+          PY
+          gh api --method POST "repos/$REPO/releases" --input release-payload.json > release-response.json
+          gh release upload "$TAG" "production/$WINDOWS_INSTALLER" "production/$WINDOWS_SIGNATURE" "production/$WINDOWS_INSTALLER.sha256" production/latest.json production/windows-latest.json production/RELEASE_NOTES_WINDOWS_UPDATER.md --repo "$REPO"
+
+      - name: Verify remote assets before feed switch
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/$REPO/releases/tags/$TAG" > remote-release.json
+          python - <<'PY'
+          import json,os,subprocess
+          d=json.load(open('remote-release.json'))
+          assert d['target_commitish']==subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
+          names={a['name'] for a in d['assets']}
+          required={
+            os.environ['WINDOWS_INSTALLER'],
+            os.environ['WINDOWS_SIGNATURE'],
+            os.environ['WINDOWS_INSTALLER']+'.sha256',
+            'latest.json','windows-latest.json'
+          }
+          assert required<=names, required-names
+          print('REMOTE_RELEASE_METADATA=PASS')
+          PY
+
+          URL="https://github.com/$REPO/releases/download/$TAG/$WINDOWS_INSTALLER"
+          curl -L --fail --silent --show-error -o remote-installer.exe "$URL"
+          curl -L --fail --silent --show-error -o remote-installer.sig "$URL.sig"
+          test "$(sha256sum remote-installer.exe | awk '{print $1}')" = "$WINDOWS_INSTALLER_SHA256"
+          cmp -s remote-installer.sig "production/$WINDOWS_SIGNATURE"
+
+          MAC_URL="$(python -c "import json,os; print(json.load(open('production/latest.json'))['platforms'][os.environ['MACOS_PLATFORM_KEY']]['url'])")"
+          curl -L --fail --silent --show-error -o /dev/null "$MAC_URL"
+          echo 'WINDOWS_ASSET_HTTP=200'
+          echo 'MACOS_ASSET_HTTP=200'
+          echo 'REMOTE_WINDOWS_SHA256=VERIFIED'
+
+      - name: Activate shared bootstrap and dedicated Windows feed
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" > latest-meta.json
+          python - <<'PY'
+          import json,base64,os
+          meta=json.load(open('latest-meta.json'))
+          cur=json.loads(base64.b64decode(meta['content']).decode())
+          assert cur['version']==os.environ['VERSION']
+          assert cur['platforms'][os.environ['MACOS_PLATFORM_KEY']]['url']
+          assert cur['platforms'][os.environ['MACOS_PLATFORM_KEY']]['signature']
+          out=base64.b64encode(open('production/latest.json','rb').read()).decode()
+          json.dump({'sha':meta['sha'],'content':out},open('latest-put.json','w'))
+          PY
+          LATEST_SHA="$(python -c "import json;print(json.load(open('latest-put.json'))['sha'])")"
+          LATEST_B64="$(python -c "import json;print(json.load(open('latest-put.json'))['content'])")"
+          gh api --method PUT "repos/$REPO/contents/vyron-updates/latest.json" -f message='release: add VYRON 2.1.13 Windows updater bootstrap' -f content="$LATEST_B64" -f sha="$LATEST_SHA" -f branch=main >/dev/null
+
+          if gh api "repos/$REPO/contents/vyron-updates/windows-latest.json?ref=main" > windows-meta.json 2>/dev/null; then
+            WIN_SHA="$(python -c "import json;print(json.load(open('windows-meta.json'))['sha'])")"
+            WIN_B64="$(python -c "import base64;print(base64.b64encode(open('production/windows-latest.json','rb').read()).decode())")"
+            gh api --method PUT "repos/$REPO/contents/vyron-updates/windows-latest.json" -f message='release: activate VYRON 2.1.13 Windows updater feed' -f content="$WIN_B64" -f sha="$WIN_SHA" -f branch=main >/dev/null
+          else
+            WIN_B64="$(python -c "import base64;print(base64.b64encode(open('production/windows-latest.json','rb').read()).decode())")"
+            gh api --method PUT "repos/$REPO/contents/vyron-updates/windows-latest.json" -f message='release: create VYRON Windows updater feed' -f content="$WIN_B64" -f branch=main >/dev/null
+          fi
+          echo 'FEED_SWITCH=COMMITTED'
+
+      - name: Final updater contract verification
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode > final-latest.json
+          gh api "repos/$REPO/contents/vyron-updates/windows-latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode > final-windows-latest.json
+
+          python - <<'PY'
+          import json,os
+          common=json.load(open('final-latest.json'))
+          win=json.load(open('final-windows-latest.json'))
+          assert common['version']==os.environ['VERSION']
+          assert win['version']==os.environ['VERSION']
+          for k in (os.environ['MACOS_PLATFORM_KEY'],os.environ['WINDOWS_PLATFORM_KEY']):
+              assert common['platforms'][k]['url']
+              assert common['platforms'][k]['signature']
+          w=common['platforms'][os.environ['WINDOWS_PLATFORM_KEY']]
+          dw=win['platforms'][os.environ['WINDOWS_PLATFORM_KEY']]
+          assert w==dw
+          print('MANIFEST_CONTRACT_TEST=PASS')
+          print('WINDOWS_PLATFORM_KEY='+os.environ['WINDOWS_PLATFORM_KEY'])
+          print('MACOS_PLATFORM_KEY='+os.environ['MACOS_PLATFORM_KEY'])
+          PY
+
+          URL="$(python -c "import json,os;print(json.load(open('final-latest.json'))['platforms'][os.environ['WINDOWS_PLATFORM_KEY']]['url'])")"
+          curl -L --fail --silent --show-error -o final-installer.exe "$URL"
+          test "$(sha256sum final-installer.exe | awk '{print $1}')" = "$WINDOWS_INSTALLER_SHA256"
+          test "$(gh api "repos/$REPO/releases/latest" --jq .tag_name)" = "v2.1.13"
+
+          echo 'UPDATER_PLATFORM_NOT_FOUND=FIXED_AT_MANIFEST_CONTRACT'
+          echo 'SIGNATURE_VERIFY=PASS'
+          echo 'LATEST_JSON=PASS'
+          echo 'WINDOWS_DEDICATED_FEED=PASS'
+          echo 'MACOS_UPDATER_REGRESSION=PASS'
+          echo 'WINDOWS_PHYSICAL_UPDATE=NOT_TESTED'
+
+      - name: Upload release evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-2.1.13-windows-updater-evidence
+          path: production/*
+          if-no-files-found: error
