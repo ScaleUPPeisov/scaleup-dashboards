@@ -3,7 +3,7 @@ import {readFileSync} from 'node:fs';
 import {humanizeError} from './errorCenter';
 const read=(p:string)=>readFileSync(decodeURIComponent(new URL(p,import.meta.url).pathname),'utf8');
 
-describe('VYRON 2.1.9 RC6 zero-prompt Keychain recovery contracts',()=>{
+describe('VYRON 2.1.9 RC7 per-query no-UI Keychain recovery contracts',()=>{
  it('maps Keychain authentication failures to an actionable error',()=>{
   const h=humanizeError('KEYCHAIN_AUTH_FAILED: osstatus=-25293','storage');
   expect(h.code).toBe('KEYCHAIN_AUTH_FAILED');
@@ -25,6 +25,8 @@ describe('VYRON 2.1.9 RC6 zero-prompt Keychain recovery contracts',()=>{
   expect(api).toContain("invoke<KeychainDiagnostic>('security_keychain_diagnostics')");
   expect(ui).toContain('runKeychainDiagnostics');
   expect(ui).toContain('Проверить Keychain');
+  expect(ui).toContain('Пассивная проверка NO-UI policy');
+  expect(ui).not.toContain('macOS может показать системный запрос пароля');
   expect(rust).toContain('pub fn security_keychain_diagnostics');
   const start=lib.indexOf('tauri::generate_handler!['),end=lib.indexOf('])',start),handler=lib.slice(start,end);
   expect(handler).toContain('security::security_keychain_diagnostics');
@@ -43,6 +45,10 @@ describe('VYRON 2.1.9 RC6 zero-prompt Keychain recovery contracts',()=>{
   const security=read('../src-tauri/src/security.rs');
   expect(security).toContain('KEYCHAIN_ACCESS_BLOCKED');
   expect(security).toContain('SecKeychain::disable_user_interaction()');
+  expect(security).toContain('kSecUseAuthenticationUIFail');
+  expect(security).toContain('skip_authenticated_items(true)');
+  expect(security).not.toContain('get_generic_password(');
+  expect(security).not.toContain('set_generic_password(');
   expect(security).toContain('INTERACTIVE_UI_REQUESTS_BLOCKED');
  });
 });
