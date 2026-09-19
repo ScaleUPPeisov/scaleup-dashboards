@@ -61,7 +61,7 @@ fn now_ts() -> i64 {
         .as_secs() as i64
 }
 fn store_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let dir = crate::license::private_data_dir(app)?;
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     Ok(dir.join("youtube-oauth.json"))
 }
@@ -97,7 +97,7 @@ impl Default for KeychainMigrationV2State{
  fn default()->Self{Self{version:KEYCHAIN_MIGRATION_V2_VERSION,profiles:HashMap::new(),global_client_secret:MIGRATION_NOT_STARTED.into()}}
 }
 fn keychain_migration_v2_path(app:&AppHandle)->Result<PathBuf,String>{
- let dir=app.path().app_data_dir().map_err(|e|e.to_string())?;
+ let dir=crate::license::private_data_dir(app)?;
  fs::create_dir_all(&dir).map_err(|e|e.to_string())?;
  Ok(dir.join("keychain-migration-v2.json"))
 }
@@ -426,7 +426,7 @@ struct GoogleConfig {
     api_key_present: bool,
 }
 fn google_config_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let dir = crate::license::private_data_dir(app)?;
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     Ok(dir.join("google-config.json"))
 }
@@ -1708,7 +1708,7 @@ struct PersistedUploadSessions {
     sessions: Vec<PersistedUploadSession>,
 }
 fn upload_sessions_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let dir = crate::license::private_data_dir(app)?;
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     Ok(dir.join("youtube-upload-sessions.json"))
 }
@@ -2729,10 +2729,7 @@ pub async fn youtube_backup_existing_videos(
         .chars()
         .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
         .collect::<String>();
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?
+    let dir = crate::license::private_data_dir(&app)?
         .join("Backup")
         .join("Youtube")
         .join(safe);
