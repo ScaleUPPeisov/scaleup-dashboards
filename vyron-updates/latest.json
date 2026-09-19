@@ -1,11 +1,11 @@
 {
-  "version": "2.1.12",
-  "notes": "VYRON 2.1.12 — восстановлен browser-first reconnect для существующих каналов. Если старый OAuth Client больше не доступен, VYRON использует текущую настроенную пару OAuth Client целиком, затем проверяет exact YouTube Channel ID и сохраняет прежние Profile UUID/channel mapping.",
-  "pub_date": "2026-09-19T13:43:43Z",
+  "version": "2.1.13",
+  "notes": "VYRON 2.1.13 — исправлена привязка существующих каналов: GLOBAL OAuth Client считается готовым только при Client ID + Client Secret; существующий YouTube Channel ID переиспользует прежний Profile UUID, а после нового Google consent connect-flow больше не откатывается в legacy credential.",
+  "pub_date": "2026-09-19T14:11:09Z",
   "platforms": {
     "darwin-aarch64": {
-      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.12/VYRON.app.tar.gz",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM1hwOGF4SXlpRmpSelpjOWlRMjJOaHcrUGprWlZDbjN4cndLM1g0U1RtNVovMS9NeDAveTc3RVFuZTBNRWZkcmIyQXEwa0VPQkJGR2t3ZHRsRzJ6aVFZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5ODI1NDA2CWZpbGU6VllST04uYXBwLnRhci5negpaRmFtbE14Umppa1BlQmhkc0pscWZ1MjFOUG9Fbk5WOUppOFhWQm1tYXdMZWdLS05wUGU4bzFvY0FHM2NOVkw2dzhWMW8zVXRpRHJQOUNBMUttalJEdz09Cg=="
+      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.13/VYRON.app.tar.gz",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM2M5NFdmWU1DMnZHK1pYU3VjL09LUWhZUUZhaVhTSFlNY0RCMEk1eFRkcjJVd3NZQmhTQlhhdVRrYkpQaEFxd1I4S2V3YnhPSUQ5V0NFN3hZcTg5NEE0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5ODI3MDUzCWZpbGU6VllST04uYXBwLnRhci5negpXTm5zWHdEOWJVT0dxR0RRdGtYSFhJWjJ3NWtYYWZUNlV1ZXcxalZTeFdVeVV1NjRxQzBoTUJaTXFOSWMxajhBZGd5VWM0MjkxQnRJclpBREovbGdCZz09Cg=="
     }
   }
 }
