@@ -1,0 +1,233 @@
+name: VYRON 2.1.9 Windows x64 Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - windows/vyron-219-production-port
+    paths:
+      - '.github/workflows/vyron-219-windows-release.yml'
+
+permissions:
+  contents: write
+
+env:
+  WINDOWS_TARGET: x86_64-pc-windows-msvc
+  FFMPEG_VERSION: 8.1.2
+  FFMPEG_ZIP_SHA256: db580001caa24ac104c8cb856cd113a87b0a443f7bdf47d8c12b1d740584a2ec
+  WINDOWS_RELEASE_TAG: v2.1.9-windows-x64
+
+jobs:
+  build-and-publish:
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout Windows release line
+        uses: actions/checkout@v4
+
+      - name: Verify release source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $branch = git branch --show-current
+          $head = git rev-parse HEAD
+          $version = (Get-Content "src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json).version
+          if ($branch -ne "windows/vyron-219-production-port") { throw "Unexpected branch: $branch" }
+          if ($version -ne "2.1.9") { throw "Unexpected VYRON version: $version" }
+          Write-Host "WINDOWS_BRANCH=$branch"
+          Write-Host "WINDOWS_HEAD=$head"
+          Write-Host "VERSION=$version"
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+          components: rustfmt
+
+      - name: Install frontend dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Frontend tests
+        run: npm test
+
+      - name: TypeScript and Vite production build
+        run: npm run build
+
+      - name: Rust format baseline audit
+        continue-on-error: true
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+
+      - name: Provision pinned FFmpeg x64 resources
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $url = "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-$env:FFMPEG_VERSION-essentials_build.zip"
+          $zip = Join-Path $env:RUNNER_TEMP "ffmpeg.zip"
+          $unpack = Join-Path $env:RUNNER_TEMP "ffmpeg"
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          $hash = (Get-FileHash -Path $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne $env:FFMPEG_ZIP_SHA256) { throw "FFmpeg SHA-256 mismatch: $hash" }
+          Expand-Archive -Path $zip -DestinationPath $unpack -Force
+          $ffmpeg = Get-ChildItem -Path $unpack -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          $ffprobe = Get-ChildItem -Path $unpack -Recurse -Filter ffprobe.exe | Select-Object -First 1
+          if (-not $ffmpeg -or -not $ffprobe) { throw "FFmpeg binaries not found after extraction" }
+          New-Item -ItemType Directory -Force -Path "src-tauri/resources/bin" | Out-Null
+          Copy-Item $ffmpeg.FullName "src-tauri/resources/bin/ffmpeg.exe" -Force
+          Copy-Item $ffprobe.FullName "src-tauri/resources/bin/ffprobe.exe" -Force
+          & "src-tauri/resources/bin/ffmpeg.exe" -version | Select-Object -First 1
+          & "src-tauri/resources/bin/ffprobe.exe" -version | Select-Object -First 1
+
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Windows target compile
+        run: cargo check --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
+
+      - name: Build Windows x64 NSIS
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          npx tauri build --target x86_64-pc-windows-msvc --bundles nsis
+
+      - name: Verify release artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $releaseRoot = "src-tauri/target/x86_64-pc-windows-msvc/release"
+          $exe = Get-Item (Join-Path $releaseRoot "VYRON.exe")
+          if ($exe.Length -le 0) { throw "VYRON.exe is empty" }
+
+          $installer = Get-ChildItem (Join-Path $releaseRoot "bundle/nsis") -Filter "*-setup.exe" | Select-Object -First 1
+          if (-not $installer -or $installer.Length -le 0) { throw "NSIS installer missing or empty" }
+
+          $bytes = [System.IO.File]::ReadAllBytes($exe.FullName)
+          if ($bytes.Length -lt 512) { throw "VYRON.exe too small to be a valid PE image" }
+          $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
+          $signature = [BitConverter]::ToUInt32($bytes, $peOffset)
+          if ($signature -ne 0x00004550) { throw ("Invalid PE signature: 0x{0:X8}" -f $signature) }
+          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          if ($machine -ne 0x8664) { throw ("Unexpected PE machine: 0x{0:X4}" -f $machine) }
+
+          New-Item -ItemType Directory -Force -Path "windows-artifacts" | Out-Null
+          Copy-Item $installer.FullName "windows-artifacts/$($installer.Name)" -Force
+
+          $sha = (Get-FileHash -Path $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$sha  $($installer.Name)" | Set-Content "windows-artifacts/$($installer.Name).sha256" -Encoding ascii
+
+          $auth = Get-AuthenticodeSignature -FilePath $installer.FullName
+          $head = git rev-parse HEAD
+
+          @{
+            product = "VYRON"
+            version = "2.1.9"
+            sourceCommit = $head
+            sourceBranch = "windows/vyron-219-production-port"
+            target = $env:WINDOWS_TARGET
+            installer = $installer.Name
+            installerBytes = $installer.Length
+            installerSha256 = $sha
+            peMachine = "0x8664"
+            authenticodeStatus = $auth.Status.ToString()
+            windowsCodeSigning = "NOT CONFIGURED"
+            windowsUpdater = "NOT ACTIVATED"
+            physicalWindows10 = "NOT TESTED"
+            physicalWindows11 = "NOT TESTED"
+            googleOAuthWindowsRuntime = "NOT TESTED"
+            credentialManagerPhysical = "NOT TESTED"
+            youtubeWindowsRuntime = "NOT TESTED"
+            renderWindowsRuntime = "NOT TESTED"
+            uploadWindowsRuntime = "NOT TESTED"
+            multiUserRuntime = "NOT TESTED"
+            crossUserDataLeakRuntime = "NOT TESTED"
+            crossUserTokenLeakRuntime = "NOT TESTED"
+            ownerReleaseAuthorization = "YES"
+          } | ConvertTo-Json | Set-Content "windows-artifacts/windows-build-report.json" -Encoding utf8
+
+          @"
+# VYRON 2.1.9 - Windows x64
+
+Production Windows x64 build of the existing VYRON 2.1.9 application.
+
+## Included
+- Windows 10/11 x64 target (x86_64-pc-windows-msvc)
+- NSIS installer
+- Windows Credential Manager backend
+- per-license user data / OAuth / channel isolation
+- bundled pinned FFmpeg and FFprobe resources
+- WebView2 bootstrapper install mode
+
+## Release provenance
+- Source branch: windows/vyron-219-production-port
+- Source commit: $head
+- Internal app version: 2.1.9
+
+## Important release status
+- Owner release authorization: YES
+- Windows Authenticode signing: NOT CONFIGURED
+- SmartScreen warning: MAY APPEAR
+- Windows updater: NOT ACTIVATED
+- Windows 10 physical acceptance: NOT TESTED
+- Windows 11 physical acceptance: NOT TESTED
+- Google OAuth Windows runtime: NOT TESTED
+- Credential Manager physical runtime: NOT TESTED
+- YouTube/render/upload runtime acceptance: NOT TESTED
+- Multi-user cross-tenant runtime acceptance: NOT TESTED
+
+The installer is published without falsifying physical acceptance. SHA-256 and source commit are attached for exact artifact provenance.
+
+This Windows release is deliberately not marked as the repository Latest release, so the existing macOS updater endpoint that relies on /releases/latest is not redirected to the Windows-only release.
+"@ | Set-Content "windows-artifacts/RELEASE_NOTES_WINDOWS.md" -Encoding utf8
+
+          Get-Content "windows-artifacts/windows-build-report.json"
+          Get-Content "windows-artifacts/$($installer.Name).sha256"
+
+      - name: Upload verified Windows artifact to Actions
+        uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-2.1.9-windows-x64-release
+          path: windows-artifacts/*
+          if-no-files-found: error
+
+      - name: Publish Windows GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = $env:WINDOWS_RELEASE_TAG
+          $repo = $env:GITHUB_REPOSITORY
+          $head = $env:GITHUB_SHA
+          $notes = Get-Content "windows-artifacts/RELEASE_NOTES_WINDOWS.md" -Raw
+
+          gh release view $tag --repo $repo *> $null
+          if ($LASTEXITCODE -eq 0) {
+            $ref = gh api "repos/$repo/git/ref/tags/$tag" | ConvertFrom-Json
+            $tagSha = $ref.object.sha
+            if ($tagSha -ne $head) { throw "Refusing to replace existing Windows release tag because it points to another commit: $tagSha" }
+          } else {
+            $payload = @{
+              tag_name = $tag
+              target_commitish = $head
+              name = "VYRON 2.1.9 - Windows x64"
+              body = $notes
+              draft = $false
+              prerelease = $false
+              make_latest = "false"
+            } | ConvertTo-Json -Depth 5
+            $payload | Set-Content "release-payload.json" -Encoding utf8
+            gh api --method POST "repos/$repo/releases" --input "release-payload.json" | Set-Content "release-response.json" -Encoding utf8
+          }
+
+          $installer = Get-ChildItem "windows-artifacts" -Filter "*-setup.exe" | Select-Object -First 1
+          if (-not $installer) { throw "Verified NSIS installer not found for release upload" }
+
+          gh release upload $tag $installer.FullName "$($installer.FullName).sha256" "windows-artifacts/windows-build-report.json" "windows-artifacts/RELEASE_NOTES_WINDOWS.md" --repo $repo --clobber
+          gh api --method PATCH "repos/$repo/releases/tags/$tag" -f make_latest=false | Out-Null
+          gh release view $tag --repo $repo
