@@ -1,11 +1,11 @@
 {
-  "version": "2.1.8",
-  "notes": "VYRON 2.1.8 — Command Center black-screen hotfix, render-path restoration and legacy Channel Runway normalization. Regression fixes only.",
-  "pub_date": "2026-09-17T15:04:53Z",
+  "version": "2.1.9",
+  "notes": "VYRON 2.1.9 — исправлены повторяющиеся системные запросы пароля macOS Keychain. Credential access переведён на non-interactive SecItem policy; legacy OAuth credentials больше не вызывают автоматические системные окна и при необходимости восстанавливаются через Google reconnect.",
+  "pub_date": "2026-09-19T05:12:38Z",
   "platforms": {
     "darwin-aarch64": {
-      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.8/VYRON.app.tar.gz",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM2FaKzV1RzVUVnl1c1FONnU0TWRra2ZneWU0KytEdFhKTkJPZ2hLNHJ0YXVmZG1Mb1NWK1VNamJab3RuSDZ6SGlBNWljYzVPTkJJd2hEdWgrMVVPUFFFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5NjU3NDcxCWZpbGU6VllST04uYXBwLnRhci5negp3ditIVXM2U1NJWkpHaEl5OG8zUFVxaWJJQlJ3SlBSV2VpdUtqYVIxU2k4VTZpQVRsSUZGbFgzVytYQm5rd1hoY25uTjRkRGkzMTJ4VmVBa3JQVWVBQT09Cg=="
+      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.9/VYRON.app.tar.gz",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM1NrR3RpU0toaktHODhsYWRDRVBjK1RqVE9JVDFUSkNJaTZ5Nk5DdE8xV2hUaHFoelNXTFA5R3BNSGgwYmVQUDBWSVBHMm9FMm9NY1ZINkpHY2ovSmdzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5Nzk0NzM2CWZpbGU6VllST04uYXBwLnRhci5negpkRFdyRUtqTkRFNjVvckFVekZiUmlZRnQrZDFJVWVKVndWMFpRUytUblFSNTFNNmhCT3RYWE1aeUdWRHhGSTRlMFo5TXNyaHcwdzlEaHlXWFpESmtBQT09Cg=="
     }
   }
 }
