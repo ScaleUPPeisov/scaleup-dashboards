@@ -1,0 +1,175 @@
+name: Publish Verified VYRON Windows 2.1.9
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - windows/vyron-219-production-port
+    paths:
+      - .github/workflows/vyron-219-windows-publish-verified.yml
+
+permissions:
+  contents: write
+  actions: write
+
+env:
+  VERIFIED_RUN_ID: "35438457186"
+  VERIFIED_SOURCE_SHA: "276e7e5aa50ed0010a91dca2de90625dd8668bc6"
+  WINDOWS_RELEASE_TAG: v2.1.9-windows-x64
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout publication metadata
+        uses: actions/checkout@v4
+
+      - name: Cancel duplicate release rebuild if still running
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $repo = $env:GITHUB_REPOSITORY
+          gh api --method POST "repos/$repo/actions/runs/35439154271/cancel" 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "Duplicate release run is already finished or cannot be cancelled; continuing with verified production artifact."
+            $global:LASTEXITCODE = 0
+          }
+
+      - name: Download verified production artifact
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path verified | Out-Null
+          gh run download $env:VERIFIED_RUN_ID --repo $env:GITHUB_REPOSITORY --name VYRON-2.1.9-windows-x64 --dir verified
+          Get-ChildItem verified
+
+      - name: Reverify artifact provenance PE and SHA256
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $report = Get-Content verified/windows-build-report.json -Raw | ConvertFrom-Json
+          if ($report.sourceCommit -ne $env:VERIFIED_SOURCE_SHA) {
+            throw "Artifact source mismatch: $($report.sourceCommit)"
+          }
+          if ($report.target -ne "x86_64-pc-windows-msvc") {
+            throw "Unexpected target: $($report.target)"
+          }
+
+          $exe = Get-Item verified/VYRON.exe
+          $installer = Get-Item ("verified/" + $report.installer)
+          if ($exe.Length -le 0 -or $installer.Length -le 0) {
+            throw "Empty artifact"
+          }
+          if ($installer.Length -ne [int64]$report.installerBytes) {
+            throw "Installer size mismatch"
+          }
+
+          $actualSha = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualSha -ne $report.installerSha256) {
+            throw "Installer SHA256 mismatch"
+          }
+
+          $bytes = [IO.File]::ReadAllBytes($exe.FullName)
+          $offset = [BitConverter]::ToInt32($bytes, 0x3c)
+          $signature = [BitConverter]::ToUInt32($bytes, $offset)
+          $machine = [BitConverter]::ToUInt16($bytes, $offset + 4)
+          if ($signature -ne 0x00004550) {
+            throw "Invalid PE signature"
+          }
+          if ($machine -ne 0x8664) {
+            throw "Unexpected PE machine"
+          }
+
+          $checksumFile = Get-Item ("verified/" + $report.installer + ".sha256")
+          $declared = (Get-Content $checksumFile.FullName -Raw).Trim().Split()[0].ToLowerInvariant()
+          if ($declared -ne $actualSha) {
+            throw "Checksum file mismatch"
+          }
+
+          $notes = @(
+            "# VYRON 2.1.9 - Windows x64",
+            "",
+            "Production Windows x64 release of the existing VYRON 2.1.9 application.",
+            "",
+            "Verified CI run: $env:VERIFIED_RUN_ID",
+            "Verified source commit: $env:VERIFIED_SOURCE_SHA",
+            "Target: x86_64-pc-windows-msvc",
+            "Installer: $($report.installer)",
+            "Installer bytes: $($report.installerBytes)",
+            "Installer SHA-256: $actualSha",
+            "",
+            "Build gates: frontend tests PASS; TypeScript/Vite PASS; Rust tests PASS; Windows MSVC compile PASS; Tauri NSIS build PASS; PE x64 verification PASS.",
+            "",
+            "Windows Authenticode signing: NOT CONFIGURED. SmartScreen warning may appear.",
+            "Windows updater: NOT ACTIVATED.",
+            "Windows 10 physical acceptance: NOT TESTED.",
+            "Windows 11 physical acceptance: NOT TESTED.",
+            "Google OAuth / Credential Manager / YouTube / render / upload physical runtime acceptance: NOT TESTED.",
+            "Multi-user cross-user data/token leak runtime tests: NOT TESTED.",
+            "",
+            "Owner release authorization: YES.",
+            "This Windows release is intentionally NOT marked Latest, preserving the existing macOS /releases/latest updater path."
+          )
+          $notes | Set-Content verified/RELEASE_NOTES_WINDOWS.md -Encoding utf8
+
+          Write-Host "INSTALLER=$($report.installer)"
+          Write-Host "INSTALLER_BYTES=$($report.installerBytes)"
+          Write-Host "INSTALLER_SHA256=$actualSha"
+
+      - name: Publish verified Windows release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $repo = $env:GITHUB_REPOSITORY
+          $tag = $env:WINDOWS_RELEASE_TAG
+          $target = $env:VERIFIED_SOURCE_SHA
+          $report = Get-Content verified/windows-build-report.json -Raw | ConvertFrom-Json
+          $installer = Get-Item ("verified/" + $report.installer)
+          $checksum = Get-Item ("verified/" + $report.installer + ".sha256")
+
+          gh release view $tag --repo $repo *> $null
+          if ($LASTEXITCODE -eq 0) {
+            $ref = gh api "repos/$repo/git/ref/tags/$tag" | ConvertFrom-Json
+            if ($ref.object.sha -ne $target) {
+              throw "Existing Windows release tag points to a different commit: $($ref.object.sha)"
+            }
+          } else {
+            $body = Get-Content verified/RELEASE_NOTES_WINDOWS.md -Raw
+            $payload = @{
+              tag_name = $tag
+              target_commitish = $target
+              name = "VYRON 2.1.9 - Windows x64"
+              body = $body
+              draft = $false
+              prerelease = $false
+              make_latest = "false"
+            } | ConvertTo-Json
+            Set-Content release-payload.json $payload -Encoding utf8
+            gh api --method POST "repos/$repo/releases" --input release-payload.json | Out-Null
+          }
+
+          gh release upload $tag $installer.FullName $checksum.FullName verified/windows-build-report.json verified/RELEASE_NOTES_WINDOWS.md --repo $repo --clobber
+          gh api --method PATCH "repos/$repo/releases/tags/$tag" -f make_latest=false | Out-Null
+
+          $latest = gh api "repos/$repo/releases/latest" | ConvertFrom-Json
+          if ($latest.tag_name -ne "v2.1.9") {
+            throw "macOS Latest release changed unexpectedly to $($latest.tag_name)"
+          }
+
+          gh release view $tag --repo $repo
+
+      - name: Preserve publication artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-2.1.9-windows-x64-published
+          path: |
+            verified/VYRON_2.1.9_x64-setup.exe
+            verified/VYRON_2.1.9_x64-setup.exe.sha256
+            verified/windows-build-report.json
+            verified/RELEASE_NOTES_WINDOWS.md
+          if-no-files-found: error
