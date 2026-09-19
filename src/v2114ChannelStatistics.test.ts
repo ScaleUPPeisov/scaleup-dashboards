@@ -40,7 +40,7 @@ describe('VYRON 2.1.14 RC2 channel statistics contract',()=>{
   expect(ui).toContain('↻ Обновить');
   expect(ui).toContain('Последняя синхронизация');
   expect(ui).toContain('Подписчики');
-  expect(ui).toContain('Просмотров');
+  expect(ui).toContain('Всего просмотров');
   expect(ui).toContain('Видео');
  });
  it('active channel center shows real total channel stats from cache',()=>{
