@@ -7,7 +7,7 @@ use std::{
 use tauri::{AppHandle, Manager};
 
 fn state_file(app: &AppHandle) -> Result<PathBuf, String> {
-    let d = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let d = crate::license::private_data_dir(app)?;
     fs::create_dir_all(&d).map_err(|e| e.to_string())?;
     Ok(d.join("state.json"))
 }
