@@ -508,7 +508,7 @@ mod tests{
  #[test]
  fn per_query_no_ui_policy_is_present_in_production_source(){
   let source=include_str!("security.rs");
-  let ui_skip=["kSecUseAuthenticationUI","Fail"].concat();
+  let ui_skip=["kSecUseAuthenticationUI","Skip"].concat();
   let copy=["SecItemCopy","Matching"].concat();
   let update=["SecItem","Update"].concat();
   let delete=["SecItem","Delete"].concat();
