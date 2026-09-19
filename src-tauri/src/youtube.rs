@@ -75,78 +75,176 @@ fn legacy_oauth_keys(id: &str, kind: &str) -> Vec<String> {
     ]
 }
 
-const KEYCHAIN_ACL_MIGRATION_GENERATION:&str="stable-self-signed-v1";
-#[derive(Debug,Clone,Serialize,Deserialize,Default)]
-struct KeychainAclMigrationState{
- #[serde(default)] version:u32,
- #[serde(default)] accounts:HashMap<String,String>,
+const KEYCHAIN_MIGRATION_V2_VERSION:u32=2;
+const MIGRATION_NOT_STARTED:&str="NOT_STARTED";
+const MIGRATION_MIGRATING:&str="MIGRATING";
+const MIGRATION_MIGRATED:&str="MIGRATED";
+const MIGRATION_FAILED:&str="FAILED";
+static PROFILE_MIGRATION_ATTEMPTS:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
+static PROFILE_MIGRATION_SUCCESSES:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
+static PROFILE_MIGRATION_FAILURES:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
+static ACCESS_TOKEN_MEMORY_HITS:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
+
+#[derive(Debug,Clone,Serialize,Deserialize)]
+struct KeychainMigrationV2State{
+ #[serde(default="migration_v2_version")] version:u32,
+ #[serde(default)] profiles:HashMap<String,String>,
+ #[serde(default)] global_client_secret:String,
 }
-fn keychain_acl_migration_path(app:&AppHandle)->Result<PathBuf,String>{
+fn migration_v2_version()->u32{KEYCHAIN_MIGRATION_V2_VERSION}
+impl Default for KeychainMigrationV2State{
+ fn default()->Self{Self{version:KEYCHAIN_MIGRATION_V2_VERSION,profiles:HashMap::new(),global_client_secret:MIGRATION_NOT_STARTED.into()}}
+}
+fn keychain_migration_v2_path(app:&AppHandle)->Result<PathBuf,String>{
  let dir=app.path().app_data_dir().map_err(|e|e.to_string())?;
  fs::create_dir_all(&dir).map_err(|e|e.to_string())?;
- Ok(dir.join("keychain-acl-migration-v1.json"))
+ Ok(dir.join("keychain-migration-v2.json"))
 }
-fn read_keychain_acl_migration(app:&AppHandle)->Result<KeychainAclMigrationState,String>{
- let path=keychain_acl_migration_path(app)?;
- if !path.exists(){return Ok(KeychainAclMigrationState{version:1,accounts:HashMap::new()})}
- let bytes=fs::read(&path).map_err(|e|format!("KEYCHAIN_MIGRATION_STATE_READ_FAILED: {e}"))?;
- let mut state=serde_json::from_slice::<KeychainAclMigrationState>(&bytes).map_err(|e|format!("KEYCHAIN_MIGRATION_STATE_PARSE_FAILED: {e}"))?;
- if state.version!=1{state=KeychainAclMigrationState{version:1,accounts:HashMap::new()}}
+fn read_keychain_migration_v2(app:&AppHandle)->Result<KeychainMigrationV2State,String>{
+ let path=keychain_migration_v2_path(app)?;
+ if !path.exists(){return Ok(KeychainMigrationV2State::default())}
+ let bytes=fs::read(&path).map_err(|e|format!("KEYCHAIN_MIGRATION_V2_READ_FAILED: {e}"))?;
+ let state=serde_json::from_slice::<KeychainMigrationV2State>(&bytes).map_err(|e|format!("KEYCHAIN_MIGRATION_V2_PARSE_FAILED: {e}"))?;
+ if state.version!=KEYCHAIN_MIGRATION_V2_VERSION{return Ok(KeychainMigrationV2State::default())}
  Ok(state)
 }
-fn write_keychain_acl_migration(app:&AppHandle,state:&KeychainAclMigrationState)->Result<(),String>{
- let path=keychain_acl_migration_path(app)?;
- let bytes=serde_json::to_vec_pretty(state).map_err(|e|format!("KEYCHAIN_MIGRATION_STATE_SERIALIZE_FAILED: {e}"))?;
+fn write_keychain_migration_v2(app:&AppHandle,state:&KeychainMigrationV2State)->Result<(),String>{
+ let path=keychain_migration_v2_path(app)?;
+ let bytes=serde_json::to_vec_pretty(state).map_err(|e|format!("KEYCHAIN_MIGRATION_V2_SERIALIZE_FAILED: {e}"))?;
  security::write_private_atomic(&path,&bytes)
 }
-fn apply_acl_migration_marker_with<F>(state:&mut KeychainAclMigrationState,accounts:&[String],mut migrate:F)->Result<(),String>
-where F:FnMut(&str)->Result<security::LegacyAclMigrationResult,String>{
- for account in accounts{
-  if state.accounts.get(account).map(String::as_str)==Some(KEYCHAIN_ACL_MIGRATION_GENERATION){continue}
-  match migrate(account)?{
-   security::LegacyAclMigrationResult::NotFound=>{},
-   security::LegacyAclMigrationResult::Migrated=>{state.accounts.insert(account.clone(),KEYCHAIN_ACL_MIGRATION_GENERATION.to_string());}
-  }
- }
- Ok(())
+fn set_profile_migration_state(app:&AppHandle,profile_id:&str,status:&str)->Result<(),String>{
+ let mut state=read_keychain_migration_v2(app)?;
+ state.profiles.insert(profile_id.to_string(),status.to_string());
+ write_keychain_migration_v2(app,&state)
 }
-fn ensure_account_acl_migrated(app:&AppHandle,account:&str)->Result<(),String>{
- let mut state=read_keychain_acl_migration(app)?;
- if state.accounts.get(account).map(String::as_str)==Some(KEYCHAIN_ACL_MIGRATION_GENERATION){return Ok(())}
- let before=state.accounts.len();
- apply_acl_migration_marker_with(&mut state,&[account.to_string()],|a|security::migrate_legacy_acl_to_current_app(a))?;
- if state.accounts.len()!=before{write_keychain_acl_migration(app,&state)?}
- Ok(())
+fn profile_migration_status(app:&AppHandle,profile_id:&str)->Result<String,String>{
+ Ok(read_keychain_migration_v2(app)?.profiles.get(profile_id).cloned().unwrap_or_else(||MIGRATION_NOT_STARTED.into()))
 }
-fn profile_acl_candidates(id:&str)->Vec<String>{
- let mut out=Vec::new();
- for kind in ["refresh_token","access_token","client_secret"]{
-  out.push(oauth_key(id,kind));
-  out.extend(legacy_oauth_keys(id,kind));
- }
+
+#[derive(Debug,Clone)]
+struct SessionAccessToken{token:String,expires_at:i64}
+static ACCESS_TOKEN_SESSION:OnceLock<Mutex<HashMap<String,SessionAccessToken>>>=OnceLock::new();
+fn access_token_session()->&'static Mutex<HashMap<String,SessionAccessToken>>{ACCESS_TOKEN_SESSION.get_or_init(||Mutex::new(HashMap::new()))}
+fn remember_access_token(profile_id:&str,token:&str,expires_at:i64){
+ if token.trim().is_empty(){return}
+ if let Ok(mut c)=access_token_session().lock(){c.insert(profile_id.to_string(),SessionAccessToken{token:token.to_string(),expires_at});}
+}
+fn session_access_token(profile_id:&str)->Option<(String,i64)>{
+ let c=access_token_session().lock().ok()?;
+ let entry=c.get(profile_id)?;
+ if entry.expires_at<=now_ts()+60{return None}
+ ACCESS_TOKEN_MEMORY_HITS.fetch_add(1,std::sync::atomic::Ordering::SeqCst);
+ Some((entry.token.clone(),entry.expires_at))
+}
+fn forget_access_token(profile_id:&str){if let Ok(mut c)=access_token_session().lock(){c.remove(profile_id);}}
+
+fn legacy_refresh_candidates(id:&str)->Vec<String>{
+ let mut out=vec![oauth_key(id,"refresh_token")];
+ out.extend(legacy_oauth_keys(id,"refresh_token"));
  out
 }
-fn ensure_profile_acl_migrated(app:&AppHandle,id:&str)->Result<(),String>{
- // Account-name enumeration reads attributes only, never secret values. Migration remains
- // lazy: this function is called only by an actual OAuth operation for this profile.
- let present=security::list_secret_accounts("")?.into_iter().collect::<std::collections::HashSet<_>>();
- let accounts=profile_acl_candidates(id).into_iter().filter(|a|present.contains(a)).collect::<Vec<_>>();
- if accounts.is_empty(){return Ok(())}
- let mut state=read_keychain_acl_migration(app)?;
- let before=state.accounts.len();
- apply_acl_migration_marker_with(&mut state,&accounts,|a|security::migrate_legacy_acl_to_current_app(a))?;
- if state.accounts.len()!=before{write_keychain_acl_migration(app,&state)?}
- Ok(())
+fn select_present_account(candidates:&[String],present:&[String])->Option<String>{
+ candidates.iter().find(|a|present.iter().any(|x|x==*a)).cloned()
 }
-fn ensure_google_acl_migrated(app:&AppHandle)->Result<(),String>{
- let present=security::list_secret_accounts("")?.into_iter().collect::<std::collections::HashSet<_>>();
- let accounts=[GOOGLE_CLIENT_SECRET.to_string(),GOOGLE_API_KEY.to_string()].into_iter().filter(|a|present.contains(a)).collect::<Vec<_>>();
- if accounts.is_empty(){return Ok(())}
- let mut state=read_keychain_acl_migration(app)?;
- let before=state.accounts.len();
- apply_acl_migration_marker_with(&mut state,&accounts,|a|security::migrate_legacy_acl_to_current_app(a))?;
- if state.accounts.len()!=before{write_keychain_acl_migration(app,&state)?}
- Ok(())
+fn migrate_refresh_with<FRead,FWrite,FVerify>(
+ state:&mut KeychainMigrationV2State,
+ profile_id:&str,
+ legacy_account:Option<&str>,
+ mut legacy_read:FRead,
+ mut canonical_write:FWrite,
+ mut canonical_verify:FVerify,
+)->Result<bool,String>
+where
+ FRead:FnMut(&str)->Result<Option<String>,String>,
+ FWrite:FnMut(&str,&str)->Result<(),String>,
+ FVerify:FnMut(&str,&str)->Result<bool,String>,
+{
+ if state.profiles.get(profile_id).map(String::as_str)==Some(MIGRATION_MIGRATED){return Ok(false)}
+ state.profiles.insert(profile_id.to_string(),MIGRATION_MIGRATING.into());
+ let canonical_account=oauth_key(profile_id,"refresh_token");
+ let Some(source)=legacy_account else{
+  state.profiles.insert(profile_id.to_string(),MIGRATION_FAILED.into());
+  return Err(format!("REFRESH_TOKEN_MISSING: legacy refresh token not found for profile {profile_id}"))
+ };
+ let value=match legacy_read(source){
+  Ok(Some(v)) if !v.trim().is_empty()=>v,
+  Ok(_)=>{state.profiles.insert(profile_id.to_string(),MIGRATION_FAILED.into());return Err(format!("REFRESH_TOKEN_MISSING: legacy refresh token empty for profile {profile_id}"))}
+  Err(e)=>{state.profiles.insert(profile_id.to_string(),MIGRATION_FAILED.into());return Err(e)}
+ };
+ if let Err(e)=canonical_write(&canonical_account,&value){
+  state.profiles.insert(profile_id.to_string(),MIGRATION_FAILED.into());return Err(e)
+ }
+ match canonical_verify(&canonical_account,&value){
+  Ok(true)=>{state.profiles.insert(profile_id.to_string(),MIGRATION_MIGRATED.into());Ok(true)}
+  Ok(false)=>{state.profiles.insert(profile_id.to_string(),MIGRATION_FAILED.into());Err(format!("KEYCHAIN_MIGRATION_V2_VERIFY_FAILED: profile={profile_id}"))}
+  Err(e)=>{state.profiles.insert(profile_id.to_string(),MIGRATION_FAILED.into());Err(e)}
+ }
+}
+fn migrate_profile_refresh_to_canonical(app:&AppHandle,profile_id:&str)->Result<(),String>{
+ let canonical_account=oauth_key(profile_id,"refresh_token");
+ if let Some(v)=security::canonical_get_secret_cached(&canonical_account)?{
+  if !v.trim().is_empty(){
+   let mut state=read_keychain_migration_v2(app)?;
+   if state.profiles.get(profile_id).map(String::as_str)!=Some(MIGRATION_MIGRATED){
+    state.profiles.insert(profile_id.to_string(),MIGRATION_MIGRATED.into());
+    write_keychain_migration_v2(app,&state)?;
+   }
+   return Ok(())
+  }
+ }
+ PROFILE_MIGRATION_ATTEMPTS.fetch_add(1,std::sync::atomic::Ordering::SeqCst);
+ let present=security::list_legacy_secret_accounts("")?;
+ let candidates=legacy_refresh_candidates(profile_id);
+ let source=select_present_account(&candidates,&present);
+ let mut state=read_keychain_migration_v2(app)?;
+ state.profiles.insert(profile_id.to_string(),MIGRATION_MIGRATING.into());
+ write_keychain_migration_v2(app,&state)?;
+ let outcome=migrate_refresh_with(
+  &mut state,profile_id,source.as_deref(),
+  |account|security::legacy_get_secret_once(account),
+  |account,value|security::canonical_set_secret(account,value),
+  |account,value|security::canonical_verify_secret(account,value),
+ );
+ // Atomic checkpoint after this single profile regardless of pass/fail.
+ write_keychain_migration_v2(app,&state)?;
+ match outcome{
+  Ok(_)=>{PROFILE_MIGRATION_SUCCESSES.fetch_add(1,std::sync::atomic::Ordering::SeqCst);Ok(())},
+  Err(e)=>{PROFILE_MIGRATION_FAILURES.fetch_add(1,std::sync::atomic::Ordering::SeqCst);Err(e)}
+ }
+}
+fn require_canonical_refresh(app:&AppHandle,profile_id:&str)->Result<String,String>{
+ if let Some(v)=security::canonical_get_secret_cached(&oauth_key(profile_id,"refresh_token"))?{
+  if !v.trim().is_empty(){return Ok(v)}
+ }
+ let status=profile_migration_status(app,profile_id)?;
+ Err(format!("LEGACY_AUTH_REQUIRED: profile={profile_id}; migrationState={status}; run explicit Sync to migrate this profile"))
+}
+fn canonical_global_client_secret()->Result<Option<String>,String>{security::canonical_get_secret_cached(GOOGLE_CLIENT_SECRET)}
+fn migrate_global_client_secret_if_needed(app:&AppHandle,profile_id:Option<&str>)->Result<Option<String>,String>{
+ if let Some(v)=canonical_global_client_secret()?{if !v.trim().is_empty(){return Ok(Some(v))}}
+ let mut state=read_keychain_migration_v2(app)?;
+ if state.global_client_secret==MIGRATION_MIGRATED{return Ok(None)}
+ state.global_client_secret=MIGRATION_MIGRATING.into();write_keychain_migration_v2(app,&state)?;
+
+ let present=security::list_legacy_secret_accounts("")?;
+ let mut candidates=vec![GOOGLE_CLIENT_SECRET.to_string()];
+ if let Some(id)=profile_id{
+  candidates.push(oauth_key(id,"client_secret"));
+  candidates.extend(legacy_oauth_keys(id,"client_secret"));
+ }
+ let source=select_present_account(&candidates,&present);
+ let result=(||->Result<Option<String>,String>{
+  let Some(account)=source else{return Ok(None)};
+  let Some(value)=security::legacy_get_secret_once(&account)? else{return Ok(None)};
+  if value.trim().is_empty(){return Ok(None)}
+  security::canonical_set_secret(GOOGLE_CLIENT_SECRET,&value)?;
+  if !security::canonical_verify_secret(GOOGLE_CLIENT_SECRET,&value)?{return Err("KEYCHAIN_GLOBAL_CLIENT_SECRET_VERIFY_FAILED".into())}
+  Ok(Some(value))
+ })();
+ state.global_client_secret=if result.as_ref().ok().and_then(|x|x.as_ref()).is_some(){MIGRATION_MIGRATED.into()}else{MIGRATION_FAILED.into()};
+ write_keychain_migration_v2(app,&state)?;
+ result
 }
 
 trait OAuthSecretStore {
@@ -163,19 +261,19 @@ trait OAuthSecretStore {
 struct KeychainOAuthSecretStore;
 impl OAuthSecretStore for KeychainOAuthSecretStore {
     fn get(&self, account: &str) -> Result<Option<String>, String> {
-        security::get_secret_cached(account)
+        security::canonical_get_secret_cached(account)
     }
     fn set(&self, account: &str, value: &str) -> Result<(), String> {
-        security::set_secret_if_changed(account, value)
+        security::canonical_set_secret(account, value)
     }
     fn delete(&self, account: &str) -> Result<(), String> {
-        security::delete_secret(account)
+        security::canonical_delete_secret(account)
     }
     fn accounts(&self, prefix: &str) -> Result<Vec<String>, String> {
-        security::list_secret_accounts(prefix)
+        security::list_canonical_secret_accounts(prefix)
     }
-    fn modified_rank(&self, account: &str) -> Result<Option<String>, String> {
-        security::secret_modified_rank(account)
+    fn modified_rank(&self, _account: &str) -> Result<Option<String>, String> {
+        Ok(None)
     }
 }
 fn read_profile_secret_with<S: OAuthSecretStore>(
@@ -183,91 +281,43 @@ fn read_profile_secret_with<S: OAuthSecretStore>(
     id: &str,
     kind: &str,
 ) -> Result<Option<String>, String> {
-    let current = oauth_key(id, kind);
-    if let Some(v) = secrets.get(&current)? {
-        if !v.is_empty() {
-            return Ok(Some(v));
-        }
-    }
-    for legacy in legacy_oauth_keys(id, kind) {
-        if let Some(v) = secrets.get(&legacy)? {
-            if !v.is_empty() {
-                secrets.set(&current, &v)?;
-                return Ok(Some(v));
-            }
-        }
-    }
-    Ok(None)
+    let current=oauth_key(id,kind);
+    Ok(secrets.get(&current)?.filter(|v|!v.is_empty()))
 }
-fn write_profile_secrets_with<S: OAuthSecretStore>(
-    secrets: &S,
-    p: &OAuthProfile,
-) -> Result<(), String> {
-    for (kind, value) in [
-        ("client_secret", p.client_secret.as_str()),
-        ("access_token", p.access_token.as_str()),
-        ("refresh_token", p.refresh_token.as_str()),
-    ] {
-        if !value.is_empty() {
-            secrets.set(&oauth_key(&p.id, kind), value)?;
-        }
-    }
+fn write_profile_secrets_with<S: OAuthSecretStore>(secrets:&S,p:&OAuthProfile)->Result<(),String>{
+    // RC5 durable profile storage intentionally contains only refresh_token.
+    // access_token is process memory only; client_secret is a single global canonical item.
+    if !p.refresh_token.trim().is_empty(){secrets.set(&oauth_key(&p.id,"refresh_token"),&p.refresh_token)?}
     Ok(())
 }
-fn hydrate_profile_secrets_with<S: OAuthSecretStore>(
-    secrets: &S,
-    p: &mut OAuthProfile,
-) -> Result<(), String> {
-    if p.client_secret.is_empty() {
-        p.client_secret =
-            read_profile_secret_with(secrets, &p.id, "client_secret")?.unwrap_or_default()
-    }
-    if p.access_token.is_empty() {
-        p.access_token =
-            read_profile_secret_with(secrets, &p.id, "access_token")?.unwrap_or_default()
-    }
-    if p.refresh_token.is_empty() {
-        p.refresh_token =
-            read_profile_secret_with(secrets, &p.id, "refresh_token")?.unwrap_or_default()
-    }
+fn hydrate_profile_secrets_with<S:OAuthSecretStore>(secrets:&S,p:&mut OAuthProfile)->Result<(),String>{
+    if p.refresh_token.is_empty(){p.refresh_token=read_profile_secret_with(secrets,&p.id,"refresh_token")?.unwrap_or_default()}
     Ok(())
 }
-fn write_profile_secrets(p: &OAuthProfile) -> Result<(), String> {
-    write_profile_secrets_with(&KeychainOAuthSecretStore, p)
-}
-fn hydrate_profile_secrets(p: &mut OAuthProfile) -> Result<(), String> {
-    hydrate_profile_secrets_with(&KeychainOAuthSecretStore, p)
-}
+fn write_profile_secrets(p:&OAuthProfile)->Result<(),String>{write_profile_secrets_with(&KeychainOAuthSecretStore,p)}
 fn hydrate_profile_secret_kind_with<S:OAuthSecretStore>(secrets:&S,p:&mut OAuthProfile,kind:&str)->Result<(),String>{
-    let slot=match kind{"client_secret"=>&mut p.client_secret,"access_token"=>&mut p.access_token,"refresh_token"=>&mut p.refresh_token,_=>return Err(format!("UNKNOWN_SECRET_KIND: {kind}"))};
-    if slot.is_empty(){*slot=read_profile_secret_with(secrets,&p.id,kind)?.unwrap_or_default()}
+    match kind{
+     "refresh_token"=>{if p.refresh_token.is_empty(){p.refresh_token=read_profile_secret_with(secrets,&p.id,"refresh_token")?.unwrap_or_default()}},
+     "access_token"=>{if p.access_token.is_empty(){if let Some((token,expires_at))=session_access_token(&p.id){p.access_token=token;p.expires_at=expires_at}}},
+     "client_secret"=>{p.client_secret=canonical_global_client_secret()?.unwrap_or_default()},
+     _=>return Err(format!("UNKNOWN_SECRET_KIND: {kind}"))
+    }
     Ok(())
 }
 fn hydrate_profile_secret_kind(p:&mut OAuthProfile,kind:&str)->Result<(),String>{hydrate_profile_secret_kind_with(&KeychainOAuthSecretStore,p,kind)}
 fn profile_secret_value<'a>(p:&'a OAuthProfile,kind:&str)->Result<&'a str,String>{match kind{"client_secret"=>Ok(&p.client_secret),"access_token"=>Ok(&p.access_token),"refresh_token"=>Ok(&p.refresh_token),_=>Err(format!("UNKNOWN_SECRET_KIND: {kind}"))}}
 fn set_profile_secret_value(p:&mut OAuthProfile,kind:&str,value:String)->Result<(),String>{match kind{"client_secret"=>p.client_secret=value,"access_token"=>p.access_token=value,"refresh_token"=>p.refresh_token=value,_=>return Err(format!("UNKNOWN_SECRET_KIND: {kind}"))};Ok(())}
 fn hydrate_profile_secret_for_operation(app:&AppHandle,p:&mut OAuthProfile,kind:&str)->Result<(),String>{
-    let current=oauth_key(&p.id,kind);
-    let present=security::list_secret_accounts("")?;
-    if present.iter().any(|x|x==&current){ensure_account_acl_migrated(app,&current)?}
-    else{
-      for legacy in legacy_oauth_keys(&p.id,kind){if present.iter().any(|x|x==&legacy){ensure_account_acl_migrated(app,&legacy)?}}
+    match kind{
+     "refresh_token"=>{p.refresh_token=require_canonical_refresh(app,&p.id)?;Ok(())},
+     "access_token"=>{if let Some((token,expires_at))=session_access_token(&p.id){p.access_token=token;p.expires_at=expires_at;Ok(())}else{Err(format!("ACCESS_TOKEN_SESSION_MISS: profile={}",p.id))}},
+     "client_secret"=>{p.client_secret=canonical_global_client_secret()?.unwrap_or_default();Ok(())},
+     _=>Err(format!("UNKNOWN_SECRET_KIND: {kind}"))
     }
-    hydrate_profile_secret_kind(p,kind)?;if !profile_secret_value(p,kind)?.is_empty(){return Ok(())}
-    // Legacy plaintext recovery is explicit and profile-scoped. Never run it from passive metadata loading.
-    let mut raw=load_store_raw_for_explicit_migration(app)?;
-    let Some(raw_profile)=raw.profiles.iter_mut().find(|x|x.id==p.id) else{return Ok(())};
-    let legacy=profile_secret_value(raw_profile,kind)?.to_string();if legacy.is_empty(){return Ok(())}
-    security::set_secret(&oauth_key(&p.id,kind),&legacy)?;set_profile_secret_value(p,kind,legacy)?;set_profile_secret_value(raw_profile,kind,String::new())?;
-    if !raw.profiles.iter().any(has_plaintext_secret){write_oauth_metadata(&store_path(app)?,&raw)?}
-    Ok(())
 }
-fn delete_profile_secrets(id: &str) -> Result<(), String> {
-    let secrets = KeychainOAuthSecretStore;
-    for kind in ["client_secret", "access_token", "refresh_token"] {
-        secrets.delete(&oauth_key(id, kind))?;
-    }
-    Ok(())
+fn delete_profile_secrets(id:&str)->Result<(),String>{
+    forget_access_token(id);
+    security::canonical_delete_secret(&oauth_key(id,"refresh_token"))
 }
 fn write_oauth_metadata(path: &Path, s: &OAuthStore) -> Result<(), String> {
     let bytes = serde_json::to_vec_pretty(s).map_err(|e| format!("OAuth serialize: {e}"))?;
@@ -382,20 +432,20 @@ fn load_google_config_metadata(app:&AppHandle)->Result<GoogleConfig,String>{
     c.client_secret.clear();c.api_key.clear();if p.exists(){let _=security::private_permissions(&p);}Ok(c)
 }
 fn hydrate_google_secrets(c:&mut GoogleConfig)->Result<(),String>{
-    if c.client_secret.is_empty(){c.client_secret=security::get_secret_cached(GOOGLE_CLIENT_SECRET)?.unwrap_or_default()}
+    if c.client_secret.is_empty(){c.client_secret=security::canonical_get_secret_cached(GOOGLE_CLIENT_SECRET)?.unwrap_or_default()}
     if c.api_key.is_empty(){c.api_key=security::get_secret_cached(GOOGLE_API_KEY)?.unwrap_or_default()}
     c.client_secret_present|=!c.client_secret.is_empty();c.api_key_present|=!c.api_key.is_empty();Ok(())
 }
 fn write_google_secrets(c:&GoogleConfig)->Result<(),String>{
-    if !c.client_secret.is_empty(){security::set_secret(GOOGLE_CLIENT_SECRET,&c.client_secret)?}
+    if !c.client_secret.is_empty(){security::canonical_set_secret(GOOGLE_CLIENT_SECRET,&c.client_secret)?}
     if !c.api_key.is_empty(){security::set_secret(GOOGLE_API_KEY,&c.api_key)?}
     Ok(())
 }
 fn write_google_metadata(path:&Path,c:&GoogleConfig)->Result<(),String>{let b=serde_json::to_vec_pretty(c).map_err(|e|e.to_string())?;security::write_private_atomic(path,&b)}
 fn load_google_config_for_secret_operation(app:&AppHandle)->Result<GoogleConfig,String>{
     let p=google_config_path(app)?;let mut c=read_google_config_raw(app)?;let legacy=!c.client_secret.is_empty()||!c.api_key.is_empty();
-    if legacy{c.client_secret_present|=!c.client_secret.is_empty();c.api_key_present|=!c.api_key.is_empty();write_google_secrets(&c)?;write_google_metadata(&p,&c)?;}
-    else{ensure_google_acl_migrated(app)?;hydrate_google_secrets(&mut c)?;}
+    if legacy{c.client_secret_present|=!c.client_secret.is_empty();c.api_key_present|=!c.api_key.is_empty();write_google_secrets(&c)?;c.client_secret.clear();c.api_key.clear();write_google_metadata(&p,&c)?;}
+    else{hydrate_google_secrets(&mut c)?;}
     Ok(c)
 }
 fn save_google_config(app:&AppHandle,c:&GoogleConfig)->Result<(),String>{
@@ -455,14 +505,14 @@ pub fn youtube_google_project_diagnostic(app:AppHandle,profile_id:String)->Resul
     let google=load_google_metadata_only(&app)?;
     google_project_diagnostic_value(&store,&google,profile_id.trim())
 }
-fn load_or_migrate_google_config(app: &AppHandle) -> Result<GoogleConfig, String> {
-    let mut c = load_google_config_for_secret_operation(app)?;
-    if c.client_id.trim().is_empty() {
-        let store=load_store_metadata(app)?;
-        if let Some(mut p)=store.profiles.into_iter().find(|p|!p.client_id.trim().is_empty()){
-            hydrate_profile_secret_for_operation(app,&mut p,"client_secret")?;
-            c.client_id=p.client_id;c.client_secret=p.client_secret;c.client_secret_present=!c.client_secret.is_empty();save_google_config(app,&c)?;
-        }
+fn load_or_migrate_google_config(app:&AppHandle)->Result<GoogleConfig,String>{
+    let mut c=load_google_config_for_secret_operation(app)?;
+    if c.client_id.trim().is_empty(){
+      let store=load_store_metadata(app)?;
+      if let Some(p)=store.profiles.into_iter().find(|p|!p.client_id.trim().is_empty()){
+        c.client_id=p.client_id;
+        write_google_metadata(&google_config_path(app)?,&c)?;
+      }
     }
     Ok(c)
 }
