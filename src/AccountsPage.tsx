@@ -104,7 +104,7 @@ export function AccountsPage(){
    <div><small>ACCOUNT CENTER</small><h1>Аккаунты YouTube</h1><p>Один GLOBAL Google OAuth Client обслуживает все каналы. Для существующего канала нажмите «Переподключить», выберите браузер с нужным Google/YouTube аккаунтом — Profile UUID и Channel ID сохранятся.</p></div>
    <div className="headerActions">
     <button disabled={checking||!profiles.length} onClick={checkAll}>{checking?'Проверяю…':'↻ Проверить'}</button>
-    <button className="primary compactAction" disabled={busy} onClick={()=>oauthReady?void askBrowser(''):file.current?.click()}>{oauthReady?'+ Добавить канал':'Настроить OAuth Client'}</button>
+    <button className="primary compactAction" disabled={busy} onClick={()=>void askBrowser('')}>+ Добавить канал</button>
    </div>
   </div>
 
