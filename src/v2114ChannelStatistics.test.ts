@@ -1,0 +1,53 @@
+import {describe,it,expect} from 'vitest';
+import {readFileSync} from 'node:fs';
+const read=(p:string)=>readFileSync(p,'utf8');
+
+describe('VYRON 2.1.14 RC2 channel statistics contract',()=>{
+ it('OAuth discovery piggybacks snippet plus statistics on the existing channels.list',()=>{
+  const y=read('src-tauri/src/youtube.rs');
+  expect(y).toContain('channels?part=snippet,statistics&mine=true');
+  expect(y).toContain('youtube_channel_statistics_value(item)');
+ });
+ it('profile-bound refresh uses OAuth token and the real Channel ID',()=>{
+  const y=read('src-tauri/src/youtube.rs');
+  const block=y.split('pub async fn youtube_channel_statistics(',2)[1]?.split('#[tauri::command]',2)[0]||'';
+  expect(block).toContain('valid_access_token(&app,&profile_id)');
+  expect(block).toContain('("part","snippet,statistics")');
+  expect(block).toContain('("id",expected)');
+  expect(block).toContain('emit_youtube_api_request(&app,"channels.list",None)');
+  expect(block).toContain('CHANNEL_MISMATCH');
+ });
+ it('quota ledger receives method-level channels.list without compatibility double count',()=>{
+  const api=read('src/api.ts');
+  expect(api).toContain("'youtube_channel_statistics'");
+  expect(api).toContain("youtubeChannelStatistics:(profileId:string)=>ytInvoke");
+  const quota=read('src/youtubeQuota.ts');
+  expect(quota).toContain("'channels.list':{bucket:'general',cost:1");
+ });
+ it('statistics are persisted in Channel state and survive restart hydration',()=>{
+  const types=read('src/types.ts');
+  const store=read('src/store.ts');
+  expect(types).toContain('stats?:YoutubeChannelStatistics');
+  expect(types).toContain('statisticsUpdatedAt?:string');
+  expect(store).toContain('channels:s.channels');
+  expect(store).toContain('channels:(s.channels||[]).filter(Boolean).map(normalizeChannel)');
+ });
+ it('accounts page refreshes stale cache only and preserves last values on errors',()=>{
+  const ui=read('src/AccountsPage.tsx');
+  expect(ui).toContain('isChannelStatsStale(c.stats)');
+  expect(ui).toContain('preserveChannelStatisticsOnError');
+  expect(ui).toContain('Обновить данные');
+  expect(ui).toContain('Последнее обновление');
+  expect(ui).toContain('Подписчики');
+  expect(ui).toContain('Просмотры');
+  expect(ui).toContain('Видео');
+ });
+ it('active channel center shows real total channel stats from cache',()=>{
+  const ui=read('src/YouTubeChannelBar.tsx');
+  expect(ui).toContain('Всего просмотров');
+  expect(ui).toContain('subscriberStatLabel(stats)');
+  expect(ui).toContain('stats?.viewCount??stats?.views');
+  expect(ui).toContain('stats?.videoCount??stats?.videos');
+  expect(ui).toContain('isChannelStatsStale(active.stats)');
+ });
+});
