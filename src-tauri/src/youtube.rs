@@ -1009,7 +1009,7 @@ fn oauth_authorization_url(client_id:&str,redirect:&str,scope:&str,challenge:&st
 }
 
 #[tauri::command]
-async fn youtube_oauth_connect(
+pub async fn youtube_oauth_connect(
     app: AppHandle,
     client_id: String,
     client_secret: String,
