@@ -102,3 +102,24 @@ button,.youtubeTabs button,.settingsTabs button{transition:transform .13s ease,o
 
 /* VYRON 2.1.14 — channel statistics */
 .youtubeChannelStats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;margin-top:6px}.youtubeChannelStats>span{display:flex;flex-direction:column;gap:1px;min-width:0;padding:5px 6px;border:1px solid rgba(255,255,255,.06);border-radius:7px;background:rgba(255,255,255,.025)}.youtubeChannelStats small{font-size:7px!important;letter-spacing:.04em!important;color:#68879b!important;white-space:nowrap}.youtubeChannelStats b{font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.accountRowStats{grid-template-columns:auto minmax(280px,1fr) minmax(150px,.35fr) minmax(190px,.45fr)!important;align-items:start!important}.accountStatsGrid{display:grid;grid-template-columns:repeat(3,minmax(90px,1fr));gap:6px;margin-top:8px}.accountStatsGrid>span{display:flex;flex-direction:column;gap:3px;padding:7px 8px;border:1px solid rgba(255,255,255,.06);border-radius:9px;background:rgba(255,255,255,.022)}.accountStatsGrid small{font-size:8px;color:#6d8799}.accountStatsGrid b{font-size:12px;color:#e4f8ff}.statsWarning{margin-top:7px;font-size:9px;color:#ffc36d}.accountRowStats .accountActions{display:grid;grid-template-columns:1fr 1fr;gap:5px}.accountRowStats .accountMeta{display:grid;gap:3px}.accountRowStats .accountMeta small{margin-top:4px}@media(max-width:1050px){.accountRowStats{grid-template-columns:auto 1fr!important}.accountRowStats .accountMeta,.accountRowStats .accountActions{grid-column:2}}@media(max-width:700px){.accountStatsGrid{grid-template-columns:1fr}.youtubeChannelStats{grid-template-columns:1fr 1fr 1fr}.accountRowStats .accountActions{grid-template-columns:1fr}}
+
+
+/* VYRON 2.1.15-rc.1 — real Add Channel flow + visible near-live channel statistics */
+.youtubeChannelBarV215{grid-template-columns:minmax(430px,1.55fr) minmax(150px,.55fr) minmax(180px,.65fr) minmax(220px,.8fr);align-items:start;padding:13px 14px}
+.youtubeChannelBarV215 .youtubeChannelBarTitle{gap:4px}
+.youtubeChannelBarV215 .youtubeChannelBarTitle>b{font-size:16px;color:#e9fbff}
+.youtubeChannelBarV215 .youtubeChannelBarTitle>span{font-size:9px}
+.youtubeChannelBarV215 .youtubeChannelStats{gap:7px;margin-top:8px}
+.youtubeChannelBarV215 .youtubeChannelStats>span{padding:9px 10px;border-radius:10px;background:rgba(52,221,255,.035);border-color:rgba(83,242,189,.12)}
+.youtubeChannelBarV215 .youtubeChannelStats small{font-size:8px!important;letter-spacing:.06em!important;color:#7fa2b7!important}
+.youtubeChannelBarV215 .youtubeChannelStats b{font-size:16px;line-height:1.25;color:#e6fbff}
+.youtubeStatsState{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:4px;font-size:8px;color:#64d9bd}
+.youtubeStatsState.warn{color:#ffc36d}.youtubeStatsState button{padding:5px 8px;font-size:8px;border-radius:7px}
+.accountRowStats .accountStatsGrid>span{padding:9px 10px}.accountRowStats .accountStatsGrid small{font-size:8px}.accountRowStats .accountStatsGrid b{font-size:14px}
+.statsState{margin-top:7px;font-size:9px;color:#62dfbe}.statsState.warn{color:#ffc36d}
+.statsRefreshProgress{position:relative;display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;margin:-8px 0 14px;padding:10px 12px;border:1px solid rgba(52,221,255,.18);border-radius:10px;background:rgba(52,221,255,.045);overflow:hidden}
+.statsRefreshProgress b,.statsRefreshProgress span{position:relative;z-index:1;font-size:9px}.statsRefreshProgress span{color:#8fb6c8}.statsRefreshProgress i{position:absolute;left:0;bottom:0;height:2px;background:#53f2bd;transition:width .2s ease}
+.oauthSetupModal,.duplicateChannelModal{width:min(560px,calc(100vw - 32px))}.oauthSetupModal>p,.duplicateChannelModal>p{color:#85a0b2;line-height:1.6}.oauthSetupModal footer,.duplicateChannelModal footer{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
+.browserPicker .browserGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:14px 0}.browserPicker .browserGrid button{display:flex;flex-direction:column;align-items:flex-start;gap:4px;text-align:left;padding:12px}.browserPicker .browserGrid button.active{border-color:#53f2bd;box-shadow:0 0 0 1px rgba(83,242,189,.25) inset}.browserPicker .browserGrid small{color:#6f8da3}.browserPicker footer{display:flex;justify-content:flex-end;gap:8px}
+@media(max-width:1200px){.youtubeChannelBarV215{grid-template-columns:1fr 1fr}.youtubeChannelBarV215 .youtubeChannelBarTitle{grid-column:1/-1}.youtubeChannelBarV215 .youtubeChannelFeedback{grid-column:1/-1}}
+@media(max-width:760px){.youtubeChannelBarV215{grid-template-columns:1fr}.youtubeChannelBarV215 .youtubeChannelBarTitle{grid-column:auto}.browserPicker .browserGrid{grid-template-columns:1fr}}
