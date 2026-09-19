@@ -3875,9 +3875,12 @@ mod v2111_oauth_recovery_tests {
         let mut again: OAuthStore = serde_json::from_str(&disk).unwrap();
         assert!(recover_store_secrets_with(&secrets, &mut again));
         assert_eq!(again.profiles[0].refresh_token, "refresh");
-        assert_eq!(secrets.values.borrow().len(), 1);
+        assert_eq!(secrets.values.borrow().len(), 2);
         assert!(secrets.values.borrow().get("oauth.p1.access_token").is_none());
-        assert!(secrets.values.borrow().get("oauth.p1.client_secret").is_none())
+        assert_eq!(
+            secrets.values.borrow().get("oauth.p1.client_secret").map(String::as_str),
+            Some("secret")
+        )
     }
     #[test]
     fn legacy_209_keychain_to_211_reads_same_accounts() {
