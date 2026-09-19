@@ -11,8 +11,11 @@ describe('VYRON 2.1.13 existing channel rebind',()=>{
  });
  it('new channel OAuth is gated by complete GLOBAL OAuth config without hiding Add Channel',()=>{
   const ui=read('src/AccountsPage.tsx');
-  expect(ui).toContain("if(!profileId&&!config?.oauthReady)");
-  expect(ui).toContain("file.current?.click()");
+  expect(ui).toContain("if(!readiness.oauthReady)");
+  expect(ui).toContain('setOauthSetupOpen(true)');
+  const start=ui.indexOf('async function askBrowser');
+  const end=ui.indexOf('async function connect',start);
+  expect(ui.slice(start,end)).not.toContain("file.current?.click()");
   expect(ui).toContain('>+ Добавить канал</button>');
   expect(ui).not.toContain("oauthReady?'+ Добавить канал':'Настроить OAuth Client'");
  });
@@ -20,7 +23,7 @@ describe('VYRON 2.1.13 existing channel rebind',()=>{
   const ui=read('src/AccountsPage.tsx');
   expect(ui).toContain('Переподключить');
   expect(ui).toContain('youtubeReconnectExisting(reconnectId,browser)');
-  expect(ui).toContain('Через какой браузер переподключить этот канал?');
+  expect(ui).toContain('Выберите браузер для переподключения');
  });
  it('one credentials.json configures all channels, not one per profile',()=>{
   const accounts=read('src/AccountsPage.tsx');
@@ -36,11 +39,12 @@ describe('VYRON 2.1.13 existing channel rebind',()=>{
   expect(global).toContain('c.client_secret.trim().is_empty()');
   expect(global.indexOf('c.client_secret.trim().is_empty()')).toBeLessThan(global.indexOf('youtube_oauth_connect('));
  });
- it('successful add/rebind path does not fall back to legacy migration after consent',()=>{
+ it('new-channel path never falls back to legacy migration and duplicate channels require explicit reconnect',()=>{
   const y=read('src-tauri/src/youtube.rs');
   const connect=y.split('async fn youtube_oauth_connect(',2)[1]?.split('fn reconnect_profile_id',2)[0]||'';
   expect(connect).not.toContain('migrate_profile_refresh_to_canonical');
-  expect(connect).toContain('canonical_get_secret_cached(&oauth_key(&profile_id,"refresh_token"))');
+  expect(connect).toContain('YOUTUBE_CHANNEL_ALREADY_CONNECTED');
   expect(connect).toContain('OAUTH_REFRESH_TOKEN_REQUIRED');
+  expect(y).toContain('existing_refresh=security::canonical_get_secret_cached');
  });
 });
