@@ -348,7 +348,6 @@ pub fn security_keychain_diagnostics()->Result<serde_json::Value,String>{
 }
 
 #[tauri::command]
-pub fn security_keychain_runtime_diagnostics#[tauri::command]
 pub fn security_keychain_runtime_diagnostics()->serde_json::Value{
  let snapshot=keychain_runtime().lock().ok();
  let mut accounts=Vec::<serde_json::Value>::new();
@@ -491,11 +490,34 @@ mod tests{
  }
  #[test]
  #[cfg(target_os="macos")]
- fn keychain_diagnostics_roundtrip(){
+ fn keychain_diagnostics_is_passive_and_no_ui(){
   let _guard=keychain_test_guard();
+  let before_reads=CANONICAL_BACKEND_READS.load(Ordering::SeqCst);
+  let before_writes=CANONICAL_BACKEND_WRITES.load(Ordering::SeqCst);
+  let before_deletes=CANONICAL_BACKEND_DELETES.load(Ordering::SeqCst);
   let v=security_keychain_diagnostics().unwrap();
   assert_eq!(v.get("ok").and_then(|x|x.as_bool()),Some(true));
-  assert_eq!(v.get("status").and_then(|x|x.as_str()),Some("KEYCHAIN_OK"));
+  assert_eq!(v.get("status").and_then(|x|x.as_str()),Some("NO_UI_POLICY_ACTIVE"));
+  assert_eq!(v.get("secretValuesIncluded").and_then(|x|x.as_bool()),Some(false));
+  assert_eq!(v.get("secretReads").and_then(|x|x.as_u64()),Some(0));
+  assert_eq!(v.get("secretWrites").and_then(|x|x.as_u64()),Some(0));
+  assert_eq!(CANONICAL_BACKEND_READS.load(Ordering::SeqCst),before_reads);
+  assert_eq!(CANONICAL_BACKEND_WRITES.load(Ordering::SeqCst),before_writes);
+  assert_eq!(CANONICAL_BACKEND_DELETES.load(Ordering::SeqCst),before_deletes);
+ }
+ #[test]
+ fn per_query_no_ui_policy_is_present_in_production_source(){
+  let source=include_str!("security.rs");
+  let production=source.split("#[cfg(test)]").next().unwrap_or(source);
+  assert!(production.contains("kSecUseAuthenticationUIFail"));
+  assert!(production.contains("SecItemCopyMatching"));
+  assert!(production.contains("SecItemUpdate"));
+  assert!(production.contains("SecItemDelete"));
+  assert!(production.contains("skip_authenticated_items(true)"));
+  assert!(!production.contains("get_generic_password("));
+  assert!(!production.contains("set_generic_password("));
+  assert!(!production.contains("delete_generic_password("));
+  assert!(!production.contains("macOS может показать системный запрос пароля"));
  }
  #[test]
  #[cfg(target_os="macos")]
