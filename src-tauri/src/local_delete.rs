@@ -21,20 +21,21 @@ fn allowed_media(path: &Path) -> bool {
         "mp4" | "mov" | "m4v"
     )
 }
+fn home_dir_from_env() -> Option<PathBuf> {
+    let key = if cfg!(target_os = "windows") { "USERPROFILE" } else { "HOME" };
+    std::env::var_os(key).map(PathBuf::from)
+}
+fn is_filesystem_root(path: &Path) -> bool {
+    path.parent().is_none()
+}
 fn canonical_allowed_root(raw: &str) -> Option<PathBuf> {
     let p = PathBuf::from(raw.trim());
-    if raw.trim().is_empty() || !p.exists() {
-        return None;
-    }
+    if raw.trim().is_empty() || !p.exists() { return None; }
     let c = p.canonicalize().ok()?;
-    if c == PathBuf::from("/") {
-        return None;
-    }
-    if let Ok(home) = std::env::var("HOME") {
-        if let Ok(h) = PathBuf::from(home).canonicalize() {
-            if c == h {
-                return None;
-            }
+    if is_filesystem_root(&c) { return None; }
+    if let Some(home) = home_dir_from_env() {
+        if let Ok(h) = home.canonicalize() {
+            if c == h { return None; }
         }
     }
     Some(c)
@@ -52,14 +53,12 @@ fn validate_trash_path(path: &Path, allowed_roots: &[String]) -> Result<PathBuf,
     let canon = path
         .canonicalize()
         .map_err(|e| format!("Не удалось проверить путь: {e}"))?;
-    if canon == PathBuf::from("/") {
+    if is_filesystem_root(&canon) {
         return Err("BLOCK: корневой путь запрещён".into());
     }
-    if let Ok(home) = std::env::var("HOME") {
-        if let Ok(h) = PathBuf::from(home).canonicalize() {
-            if canon == h {
-                return Err("BLOCK: HOME запрещён".into());
-            }
+    if let Some(home) = home_dir_from_env() {
+        if let Ok(h) = home.canonicalize() {
+            if canon == h { return Err("BLOCK: домашняя папка запрещена".into()); }
         }
     }
     let roots = allowed_roots
@@ -163,9 +162,14 @@ mod tests {
     }
     #[test]
     fn root_and_home_are_never_allowed_roots() {
+        #[cfg(not(target_os = "windows"))]
         assert!(canonical_allowed_root("/").is_none());
-        if let Ok(home) = std::env::var("HOME") {
-            assert!(canonical_allowed_root(&home).is_none())
+        #[cfg(target_os = "windows")]
+        if let Some(root) = std::env::var_os("SystemDrive").map(|x| format!("{}\\", x.to_string_lossy())) {
+            assert!(canonical_allowed_root(&root).is_none())
+        }
+        if let Some(home) = home_dir_from_env() {
+            assert!(canonical_allowed_root(&home.to_string_lossy()).is_none())
         }
     }
     #[test]
