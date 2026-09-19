@@ -937,11 +937,12 @@ pub async fn youtube_oauth_connect(
         .unwrap_or_else(|| channel_id.clone());
     let mut s = load_store_metadata(&app)?;
     let mut existing = s.profiles.iter().find(|p|p.channel_id.as_deref()==Some(channel_id.as_str())).cloned();
-    if response_refresh.as_deref().map(str::trim).filter(|x|!x.is_empty()).is_none(){if let Some(p)=existing.as_mut(){hydrate_profile_secret_for_operation(&app,p,"refresh_token")?;}}
-    if client_secret.is_empty(){if let Some(p)=existing.as_mut(){hydrate_profile_secret_for_operation(&app,p,"client_secret")?;}}
-    let refresh=preserved_refresh_token(existing.as_ref(),&client_id,response_refresh.as_deref())?;
     let profile_id=reconnect_profile_id(existing.as_ref());
-    let effective_secret=if client_secret.is_empty(){existing.as_ref().map(|p|p.client_secret.clone()).unwrap_or_default()}else{client_secret.clone()};
+    if response_refresh.as_deref().map(str::trim).filter(|x|!x.is_empty()).is_none(){
+      if existing.is_some(){migrate_profile_refresh_to_canonical(&app,&profile_id)?;if let Some(p)=existing.as_mut(){p.refresh_token=require_canonical_refresh(&app,&profile_id)?;}}
+    }
+    let refresh=preserved_refresh_token(existing.as_ref(),&client_id,response_refresh.as_deref())?;
+    let effective_secret=if !client_secret.is_empty(){security::canonical_set_secret(GOOGLE_CLIENT_SECRET,&client_secret)?;client_secret.clone()}else{canonical_global_client_secret()?.unwrap_or_default()};
     let profile = OAuthProfile {
         id: profile_id.clone(),
         client_id: client_id.clone(),
@@ -963,8 +964,10 @@ pub async fn youtube_oauth_connect(
     s.profiles.push(profile.clone());
     let saved_idx=s.profiles.iter().position(|p|p.id==profile.id).ok_or_else(||"OAUTH_SAVE_VERIFY_FAILED".to_string())?;
     save_selected_profile(&app,&s,saved_idx)?;
-    let found=security::get_secret_cached(&oauth_key(&profile.id,"refresh_token"))?.map(|v|!v.trim().is_empty()).unwrap_or(false);
-    if !found{return Err("OAUTH_SAVE_VERIFY_FAILED: OAuth профиль/refresh_token не сохранился".into())}
+    remember_access_token(&profile.id,&profile.access_token,profile.expires_at);
+    set_profile_migration_state(&app,&profile.id,MIGRATION_MIGRATED)?;
+    let found=security::canonical_get_secret_cached(&oauth_key(&profile.id,"refresh_token"))?.map(|v|!v.trim().is_empty()).unwrap_or(false);
+    if !found{return Err("OAUTH_SAVE_VERIFY_FAILED: canonical OAuth refresh_token не сохранился".into())}
     Ok(
         json!({"id":profile.id,"channelId":channel_id,"channelTitle":channel_title,"connectedAt":profile.connected_at,"preferredBrowser":preferred_browser}),
     )
