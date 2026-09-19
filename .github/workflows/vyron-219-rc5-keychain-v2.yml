@@ -244,3 +244,4 @@ jobs:
           if [[ -n "${VYRON_SIGNING_KEYCHAIN:-}" ]]; then
             security delete-keychain "$VYRON_SIGNING_KEYCHAIN" >/dev/null 2>&1 || true
           fi
+# retry: SettingsOS diagnostic contract aligned with RC5 metadata-only OAuth diagnostic
