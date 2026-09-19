@@ -29,13 +29,11 @@ describe('VYRON 2.1.11 OAuth client secret continuity',()=>{
   expect(h.message).toContain('credentials.json');
   expect(reconnectFailure('client_secret is missing').status).toBe('CLIENT SECRET REQUIRED');
  });
- it('recovery UI exposes secure import and never reads credentials text in React',()=>{
+ it('recovery UI uses one global OAuth setup instead of per-profile credentials import',()=>{
   const ui=readFileSync('src/AuthRecoveryCenter.tsx','utf8');
-  const api=readFileSync('src/api.ts','utf8');
-  expect(ui).toContain('Импортировать credentials.json');
-  expect(ui).toContain('youtubeImportProfileCredentials');
-  expect(api).toContain('youtube_oauth_import_profile_credentials_file');
-  expect(api).not.toContain('readTextFile');
+  expect(ui).toContain('Настроить OAuth Client один раз');
+  expect(ui).toContain('youtubeImportGoogleConfig');
+  expect(ui).not.toContain('youtubeImportProfileCredentials(profileId)');
  });
  it('callback wording does not claim final connection success',()=>{
   const y=readFileSync('src-tauri/src/youtube.rs','utf8');
