@@ -45,11 +45,11 @@ describe('VYRON 2.1.10 OAuth truth and update continuity contracts',()=>{
   expect(y).toContain('security::canonical_set_secret');
   expect(y).not.toContain('security::legacy_get_secret_once');
  });
- it('2.1.10 metadata does not change the credential namespace',()=>{
-  expect(JSON.parse(read('package.json')).version).toBe('2.1.10');
-  expect(JSON.parse(read('src-tauri/tauri.conf.json')).version).toBe('2.1.10');
+ it('app version bumps do not change the credential namespace',()=>{
+  expect(JSON.parse(read('package.json')).version).toBe('2.1.11');
+  expect(JSON.parse(read('src-tauri/tauri.conf.json')).version).toBe('2.1.11');
   const cargo=read('src-tauri/Cargo.toml');
-  expect(cargo).toContain('version = "2.1.10"');
+  expect(cargo).toContain('version = "2.1.11"');
   const y=read('src-tauri/src/youtube.rs');
   expect(y).toContain('keychain-migration-v2.json');
   expect(y).toContain('validations:HashMap<String,CredentialValidationV2State>');
