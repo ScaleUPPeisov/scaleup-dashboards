@@ -20,7 +20,7 @@ describe('VYRON 2.1.14 RC2 channel statistics contract',()=>{
  it('quota ledger receives method-level channels.list without compatibility double count',()=>{
   const api=read('src/api.ts');
   expect(api).toContain("'youtube_channel_statistics'");
-  expect(api).toContain("youtubeChannelStatistics:(profileId:string)=>ytInvoke");
+  expect(api).toContain("youtubeChannelStatistics:(profileId:string)=>channelStatsSingleFlight");
   const quota=read('src/youtubeQuota.ts');
   expect(quota).toContain("'channels.list':{bucket:'general',cost:1");
  });
@@ -32,14 +32,15 @@ describe('VYRON 2.1.14 RC2 channel statistics contract',()=>{
   expect(store).toContain('channels:s.channels');
   expect(store).toContain('channels:(s.channels||[]).filter(Boolean).map(normalizeChannel)');
  });
- it('accounts page refreshes stale cache only and preserves last values on errors',()=>{
+ it('accounts page uses shared stale-cache runtime and preserves last values on errors',()=>{
   const ui=read('src/AccountsPage.tsx');
-  expect(ui).toContain('isChannelStatsStale(c.stats)');
-  expect(ui).toContain('preserveChannelStatisticsOnError');
-  expect(ui).toContain('Обновить данные');
-  expect(ui).toContain('Последнее обновление');
+  const runtime=read('src/youtubeChannelStatsRuntime.ts');
+  expect(runtime).toContain('isChannelStatsStale(channel.stats)');
+  expect(runtime).toContain('preserveChannelStatisticsOnError');
+  expect(ui).toContain('↻ Обновить');
+  expect(ui).toContain('Последняя синхронизация');
   expect(ui).toContain('Подписчики');
-  expect(ui).toContain('Просмотры');
+  expect(ui).toContain('Просмотров');
   expect(ui).toContain('Видео');
  });
  it('active channel center shows real total channel stats from cache',()=>{
@@ -48,6 +49,6 @@ describe('VYRON 2.1.14 RC2 channel statistics contract',()=>{
   expect(ui).toContain('subscriberStatLabel(stats)');
   expect(ui).toContain('stats?.viewCount??stats?.views');
   expect(ui).toContain('stats?.videoCount??stats?.videos');
-  expect(ui).toContain('isChannelStatsStale(active.stats)');
+  expect(ui).toContain('isChannelStatsStale(current.stats)');
  });
 });
