@@ -396,3 +396,5 @@ jobs:
           if [[ -n "${VYRON_SIGNING_KEYCHAIN:-}" ]]; then
             security delete-keychain "$VYRON_SIGNING_KEYCHAIN" >/dev/null 2>&1 || true
           fi
+
+# retry: align historical source-contract tests with explicit OAuth setup and duplicate protection
