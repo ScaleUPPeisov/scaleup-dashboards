@@ -772,6 +772,28 @@ pub async fn youtube_oauth_connect_global(
     }
     youtube_oauth_connect(app, c.client_id, c.client_secret, browser).await
 }
+fn youtube_channel_statistics_value(item:&Value)->Value{
+    let sn=item.get("snippet").cloned().unwrap_or_else(||json!({}));
+    let stat=item.get("statistics").cloned().unwrap_or_else(||json!({}));
+    let hidden=stat.get("hiddenSubscriberCount").and_then(Value::as_bool).unwrap_or(false);
+    let parse_count=|key:&str|stat.get(key).and_then(Value::as_str).and_then(|x|x.parse::<u64>().ok());
+    let thumbnail=sn.pointer("/thumbnails/high/url")
+        .or_else(||sn.pointer("/thumbnails/medium/url"))
+        .or_else(||sn.pointer("/thumbnails/default/url"))
+        .and_then(Value::as_str);
+    json!({
+        "channelId":item.get("id").and_then(Value::as_str),
+        "channelTitle":sn.get("title").and_then(Value::as_str),
+        "handle":sn.get("customUrl").and_then(Value::as_str),
+        "thumbnail":thumbnail,
+        "subscriberCount":if hidden{Value::Null}else{parse_count("subscriberCount").map(Value::from).unwrap_or(Value::Null)},
+        "viewCount":parse_count("viewCount"),
+        "videoCount":parse_count("videoCount"),
+        "hiddenSubscriberCount":hidden,
+        "statisticsUpdatedAt":Utc::now().to_rfc3339(),
+    })
+}
+
 #[tauri::command]
 pub async fn youtube_oauth_profile_health(
     app: AppHandle,
@@ -783,7 +805,7 @@ pub async fn youtube_oauth_profile_health(
     let r = reqwest::Client::new()
         .get("https://www.googleapis.com/youtube/v3/channels")
         .bearer_auth(&token)
-        .query(&[("part", "snippet"), ("mine", "true")])
+        .query(&[("part", "snippet,statistics"), ("mine", "true")])
         .send()
         .await
         .map_err(|e| format!("YouTube health: {e}"))?;
@@ -823,8 +845,33 @@ pub async fn youtube_oauth_profile_health(
         .iter()
         .any(|x| x == "https://www.googleapis.com/auth/yt-analytics-monetary.readonly");
     Ok(
-        json!({"ok":true,"status":"TOKEN_HEALTHY","channelId":item.get("id").and_then(|x|x.as_str()).or(p.channel_id.as_deref()),"channelTitle":sn.get("title").and_then(|x|x.as_str()).or(p.channel_title.as_deref()),"thumbnail":thumb,"expiresAt":p.expires_at,"analyticsAuthorized":analytics,"monetaryAuthorized":monetary,"preferredBrowser":p.preferred_browser}),
+        json!({"ok":true,"status":"TOKEN_HEALTHY","channelId":item.get("id").and_then(|x|x.as_str()).or(p.channel_id.as_deref()),"channelTitle":sn.get("title").and_then(|x|x.as_str()).or(p.channel_title.as_deref()),"thumbnail":thumb,"expiresAt":p.expires_at,"analyticsAuthorized":analytics,"monetaryAuthorized":monetary,"preferredBrowser":p.preferred_browser,"statistics":youtube_channel_statistics_value(&item)}),
     )
+}
+#[tauri::command]
+pub async fn youtube_channel_statistics(
+    app:AppHandle,
+    profile_id:String,
+)->Result<Value,String>{
+    let (_token,p)=valid_access_token(&app,&profile_id).await?;
+    let token=p.access_token.clone();
+    let expected=p.channel_id.as_deref().filter(|x|!x.trim().is_empty())
+        .ok_or_else(||"YOUTUBE_CHANNEL_NOT_FOUND: OAuth profile has no Channel ID".to_string())?;
+    emit_youtube_api_request(&app,"channels.list",None);
+    let r=reqwest::Client::new()
+        .get("https://www.googleapis.com/youtube/v3/channels")
+        .bearer_auth(&token)
+        .query(&[("part","snippet,statistics"),("id",expected)])
+        .send().await
+        .map_err(|e|format!("YOUTUBE_CHANNEL_STATS_FAILED: network: {e}"))?;
+    let status=r.status();
+    let v:Value=r.json().await.map_err(|e|format!("YOUTUBE_CHANNEL_STATS_FAILED: json: {e}"))?;
+    if !status.is_success(){return Err(format!("YOUTUBE_CHANNEL_STATS_FAILED: {}",youtube_error(&v,"YouTube channel statistics request failed")))}
+    let item=v.get("items").and_then(Value::as_array).and_then(|x|x.first())
+        .ok_or_else(||"YOUTUBE_CHANNEL_NOT_FOUND: statistics request returned no channel".to_string())?;
+    let actual=item.get("id").and_then(Value::as_str).unwrap_or("");
+    if actual!=expected{return Err(format!("CHANNEL_MISMATCH: expected={expected} actual={actual}"))}
+    Ok(youtube_channel_statistics_value(item))
 }
 #[tauri::command]
 pub async fn youtube_cache_thumbnail(
@@ -1088,7 +1135,7 @@ pub async fn youtube_oauth_connect(
         .unwrap_or(3600);
     emit_youtube_api_request(&app, "channels.list", None);
     let me = reqwest::Client::new()
-        .get("https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true")
+        .get("https://www.googleapis.com/youtube/v3/channels?part=snippet,statistics&mine=true")
         .bearer_auth(&access)
         .send()
         .await
@@ -1168,7 +1215,7 @@ pub async fn youtube_oauth_connect(
     if !found{return Err("OAUTH_SAVE_VERIFY_FAILED: canonical OAuth refresh_token не сохранился".into())}
     record_profile_credential_validation(&app,&profile.id,"PASS",Some(&channel_id),Some(&channel_id))?;
     Ok(
-        json!({"id":profile.id,"channelId":channel_id,"channelTitle":channel_title,"connectedAt":profile.connected_at,"preferredBrowser":preferred_browser}),
+        json!({"id":profile.id,"channelId":channel_id,"channelTitle":channel_title,"connectedAt":profile.connected_at,"preferredBrowser":preferred_browser,"statistics":youtube_channel_statistics_value(item)}),
     )
 }
 
@@ -5323,6 +5370,31 @@ mod v219_rc4_inventory_and_acl_tests{
  }
 }
 
+
+#[cfg(test)]
+mod v2114_channel_statistics_tests{
+ use super::*;
+ #[test]
+ fn exact_statistics_are_numeric_and_include_handle(){
+  let item=json!({"id":"UC1","snippet":{"title":"Neon Drive FM","customUrl":"@neondrive","thumbnails":{"high":{"url":"https://img"}}},"statistics":{"subscriberCount":"254","viewCount":"40382","videoCount":"87","hiddenSubscriberCount":false}});
+  let out=youtube_channel_statistics_value(&item);
+  assert_eq!(out["channelId"],"UC1");
+  assert_eq!(out["handle"],"@neondrive");
+  assert_eq!(out["subscriberCount"],254);
+  assert_eq!(out["viewCount"],40382);
+  assert_eq!(out["videoCount"],87);
+  assert_eq!(out["hiddenSubscriberCount"],false);
+  assert!(out["statisticsUpdatedAt"].as_str().unwrap_or("").contains('T'));
+ }
+ #[test]
+ fn hidden_subscribers_never_become_fake_zero(){
+  let item=json!({"id":"UC2","snippet":{"title":"Hidden"},"statistics":{"subscriberCount":"0","viewCount":"120","videoCount":"4","hiddenSubscriberCount":true}});
+  let out=youtube_channel_statistics_value(&item);
+  assert!(out["subscriberCount"].is_null());
+  assert_eq!(out["hiddenSubscriberCount"],true);
+  assert_eq!(out["viewCount"],120);
+ }
+}
 
 #[cfg(test)]
 mod v2114_oauth_onboarding_tests{
