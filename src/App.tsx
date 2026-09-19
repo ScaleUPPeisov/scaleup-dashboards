@@ -4,6 +4,7 @@ import { runAutopilotCycle } from './autopilotRuntime';
 import { createMissingJobs } from './autopilotCore';
 import { parseMetadataFile,type ImportedMetadata } from './metadata';
 import { EMPTY_STATE,useApp } from './store';
+import {setFrontendTenant} from './tenantStorage';
 import type { AutopilotSummary, Channel, Competitor, InboxScan, JobStatus, LicenseStatus, Page, VideoJob, YoutubeProfile } from './types';
 import { bufferDays,deficit,formatNumber,priorityFor,requiredVideos } from './core';
 import { ExistingVideos } from './ExistingVideos';
@@ -62,7 +63,7 @@ export function App(){
   const booted=useApp(s=>s.booted),hydrate=useApp(s=>s.hydrate),settings=useApp(s=>s.settings),page=useApp(s=>s.page),setPage=useApp(s=>s.setPage),log=useApp(s=>s.log);
   const [license,setLicense]=useState<LicenseStatus|null>(null);
   const updaterStatus=useUpdaterRuntime(s=>s.status),updaterLatest=useUpdaterRuntime(s=>s.latestVersion),updaterCheck=useUpdaterRuntime(s=>s.check),bootstrapUpdater=useUpdaterRuntime(s=>s.bootstrapVersion),markUpdated=useUpdaterRuntime(s=>s.markUpdated);
-  const hydrateLicensedState=async(status:LicenseStatus)=>{setLicense(status);if(!status.valid){hydrate(EMPTY_STATE);return}try{hydrate(await api.loadState())}catch(e){hydrate(EMPTY_STATE);useApp.getState().log(`Не удалось загрузить состояние: ${String(e)}`,'error')}};
+  const hydrateLicensedState=async(status:LicenseStatus)=>{setFrontendTenant(status.valid?status.userId:undefined);setLicense(status);if(!status.valid){hydrate(EMPTY_STATE);return}try{hydrate(await api.loadState())}catch(e){hydrate(EMPTY_STATE);useApp.getState().log(`Не удалось загрузить состояние: ${String(e)}`,'error')}};
   useEffect(()=>{void api.license().then(hydrateLicensedState).catch(()=>{setLicense({valid:false});hydrate(EMPTY_STATE)})},[]);
   useEffect(()=>{if(booted&&!settings.workspace){api.defaultWorkspace().then(workspace=>{useApp.getState().patchSettings({workspace});useApp.getState().log(`Workspace: ${workspace}`)}).catch(e=>log(`Workspace: ${String(e)}`,'error'))}},[booted,settings.workspace]);
   useEffect(()=>{if(!booted)return;void bootstrapUpdater();if(!settings.autoCheckUpdates)return;void updaterCheck({silent:true});const recurring=window.setInterval(()=>void updaterCheck({silent:true}),6*60*60_000);return()=>window.clearInterval(recurring)},[booted,settings.autoCheckUpdates,bootstrapUpdater,updaterCheck]);
