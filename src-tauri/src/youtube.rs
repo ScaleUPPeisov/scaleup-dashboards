@@ -339,12 +339,11 @@ fn resolve_reconnect_oauth_client(app:&AppHandle,profile_id:&str,historical_clie
   if let Some(secret)=canonical_global_client_secret()?.filter(|x|!x.trim().is_empty()){
    // Recovery may intentionally migrate an existing profile from an old OAuth app client
    // to the current VYRON OAuth client. Client ID and secret always move as one exact pair.
-   security::canonical_set_secret(&profile_account,&secret)?;
-   let readback=security::canonical_get_secret_cached(&profile_account)?.filter(|x|!x.trim().is_empty())
-     .ok_or_else(||format!("OAUTH_KEYCHAIN_READBACK_FAILED: account={profile_account}"))?;
+   // Do not materialize the per-profile secret yet: reconnect_apply_validated_with()
+   // writes refresh_token + client_secret transactionally only after channel validation.
    return Ok(ResolvedOAuthClient{
     client_id:global_client_id.into(),
-    client_secret:readback,
+    client_secret:secret,
     source:if historical_client_id==global_client_id{OAuthClientSecretSource::GlobalExactMatch}else{OAuthClientSecretSource::GlobalCurrentMigration},
    })
   }
