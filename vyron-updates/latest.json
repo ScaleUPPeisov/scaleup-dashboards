@@ -1,11 +1,11 @@
 {
-  "version": "2.1.10",
-  "notes": "VYRON 2.1.10 — исправлен ложный CONNECTED в OAuth recovery и закреплена совместимость canonical V2 credentials между обновлениями. Legacy-only profiles требуют Google reconnect; canonical credentials сохраняют Profile UUID, channel mapping и Keychain account.",
-  "pub_date": "2026-09-19T12:34:32Z",
+  "version": "2.1.11",
+  "notes": "VYRON 2.1.11 — исправлен OAuth reconnect после Google consent: client_secret теперь разрешается строго для exact OAuth profile/client. Поддерживаются несколько client_id без cross-use secrets; Profile UUID, channel mapping и canonical Keychain credentials сохраняются.",
+  "pub_date": "2026-09-19T13:10:51Z",
   "platforms": {
     "darwin-aarch64": {
-      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.10/VYRON.app.tar.gz",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM1V0dzFLSHlBNHgwR09sMmZhVnB4NHJXNUVGdTNDTU5Ra09BWkVGeWNkclhZUHdKaUMvc2QyODVtWndETmF4NUtDY2VZOS9GL2lyNW40SzJWN0dXV0FZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5ODIxMjU0CWZpbGU6VllST04uYXBwLnRhci5negpWRGtaV09oS05LMXRWU3lIRW9Fb2FabHZLclR3cG15NEw3ZFFBbGhCb1krTWVUUlFGbU5MNHk2aWZ4RVJJSis4WllFY1BNWmhNSjczbWVpNG1KeUNEQT09Cg=="
+      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.11/VYRON.app.tar.gz",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM2FSRmVWVzRDYk1LRmFWak1ZdmlhN1ZIenJHQnphMmp3dm1qQWZQSDVQUXNmQUltc1VUUE5yNHlvSEdWTEFVOG1wMm0rNGVTdXFVQmFma29EWDZHTUFjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5ODIzNDM0CWZpbGU6VllST04uYXBwLnRhci5negpaSjF1SldtRjVseUU5V0tiUjNOTWNPQ3hpU1M2d0lUY2Y5QjZvRG5hLzJGeVhWV3NJRTJORVJscnlnVmRSZHlLWTVPSm02ZVlGUzZkdXVsMURiTC9Bdz09Cg=="
     }
   }
 }
