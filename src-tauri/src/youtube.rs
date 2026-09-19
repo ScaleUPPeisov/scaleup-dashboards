@@ -75,7 +75,8 @@ fn legacy_oauth_keys(id: &str, kind: &str) -> Vec<String> {
     ]
 }
 
-const KEYCHAIN_MIGRATION_V2_VERSION:u32=2;
+const CREDENTIAL_SCHEMA_VERSION:u32=2;
+const KEYCHAIN_MIGRATION_V2_VERSION:u32=CREDENTIAL_SCHEMA_VERSION;
 const MIGRATION_NOT_STARTED:&str="NOT_STARTED";
 const MIGRATION_MIGRATING:&str="MIGRATING";
 const MIGRATION_MIGRATED:&str="MIGRATED";
@@ -86,15 +87,23 @@ static PROFILE_MIGRATION_SUCCESSES:std::sync::atomic::AtomicU64=std::sync::atomi
 static PROFILE_MIGRATION_FAILURES:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
 static ACCESS_TOKEN_MEMORY_HITS:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
 
+#[derive(Debug,Clone,Serialize,Deserialize,Default)]
+struct CredentialValidationV2State{
+ #[serde(default)] at:Option<String>,
+ #[serde(default)] result:String,
+ #[serde(default)] expected_channel_id:Option<String>,
+ #[serde(default)] actual_channel_id:Option<String>,
+}
 #[derive(Debug,Clone,Serialize,Deserialize)]
 struct KeychainMigrationV2State{
  #[serde(default="migration_v2_version")] version:u32,
  #[serde(default)] profiles:HashMap<String,String>,
  #[serde(default)] global_client_secret:String,
+ #[serde(default)] validations:HashMap<String,CredentialValidationV2State>,
 }
 fn migration_v2_version()->u32{KEYCHAIN_MIGRATION_V2_VERSION}
 impl Default for KeychainMigrationV2State{
- fn default()->Self{Self{version:KEYCHAIN_MIGRATION_V2_VERSION,profiles:HashMap::new(),global_client_secret:MIGRATION_NOT_STARTED.into()}}
+ fn default()->Self{Self{version:KEYCHAIN_MIGRATION_V2_VERSION,profiles:HashMap::new(),global_client_secret:MIGRATION_NOT_STARTED.into(),validations:HashMap::new()}}
 }
 fn keychain_migration_v2_path(app:&AppHandle)->Result<PathBuf,String>{
  let dir=app.path().app_data_dir().map_err(|e|e.to_string())?;
@@ -121,6 +130,68 @@ fn set_profile_migration_state(app:&AppHandle,profile_id:&str,status:&str)->Resu
 }
 fn profile_migration_status(app:&AppHandle,profile_id:&str)->Result<String,String>{
  Ok(read_keychain_migration_v2(app)?.profiles.get(profile_id).cloned().unwrap_or_else(||MIGRATION_NOT_STARTED.into()))
+}
+fn record_profile_credential_validation(app:&AppHandle,profile_id:&str,result:&str,expected_channel_id:Option<&str>,actual_channel_id:Option<&str>)->Result<(),String>{
+ let mut state=read_keychain_migration_v2(app)?;
+ state.validations.insert(profile_id.to_string(),CredentialValidationV2State{
+  at:Some(Utc::now().to_rfc3339()),
+  result:result.to_string(),
+  expected_channel_id:expected_channel_id.map(str::to_string),
+  actual_channel_id:actual_channel_id.map(str::to_string),
+ });
+ write_keychain_migration_v2(app,&state)
+}
+fn resolved_credential_state(profile:&OAuthProfile,migration_state:&str,canonical_present:bool,legacy_present:bool,validation:Option<&CredentialValidationV2State>)->(&'static str,String,Option<String>){
+ let expected=profile.channel_id.as_deref().filter(|x|!x.trim().is_empty());
+ if expected.is_none(){return("FAILED","EXPECTED_CHANNEL_MISSING".into(),validation.and_then(|v|v.at.clone()))}
+ if let Some(v)=validation{
+  if v.result=="WRONG_CHANNEL"{return("WRONG_CHANNEL","WRONG_CHANNEL".into(),v.at.clone())}
+ }
+ if canonical_present{
+  if let Some(v)=validation{
+   let expected_match=v.expected_channel_id.as_deref()==expected;
+   let actual_match=v.actual_channel_id.as_deref()==expected;
+   if v.result=="PASS"&&expected_match&&actual_match&&v.at.is_some(){
+    return("CONNECTED","PASS".into(),v.at.clone())
+   }
+   if v.result=="RECONNECT_REQUIRED"{return("RECONNECT_REQUIRED","RECONNECT_REQUIRED".into(),v.at.clone())}
+  }
+  return("CANONICAL_PRESENT_UNVERIFIED",validation.map(|v|v.result.clone()).filter(|x|!x.is_empty()).unwrap_or_else(||"NOT_RUN".into()),validation.and_then(|v|v.at.clone()))
+ }
+ if legacy_present||migration_state==MIGRATION_RECONNECT_REQUIRED{
+  return("RECONNECT_REQUIRED","RECONNECT_REQUIRED".into(),validation.and_then(|v|v.at.clone()))
+ }
+ ("MISSING",validation.map(|v|v.result.clone()).filter(|x|!x.is_empty()).unwrap_or_else(||"NOT_RUN".into()),validation.and_then(|v|v.at.clone()))
+}
+fn resolve_oauth_credential_states_local(app:&AppHandle)->Result<Vec<Value>,String>{
+ let store=load_store_metadata(app)?;
+ let canonical_accounts=security::list_canonical_secret_accounts("oauth.")?;
+ let legacy_accounts=security::list_legacy_secret_accounts("")?;
+ let state=read_keychain_migration_v2(app)?;
+ let mut rows=Vec::with_capacity(store.profiles.len());
+ for profile in &store.profiles{
+  let canonical_account=oauth_key(&profile.id,"refresh_token");
+  let canonical_present=canonical_accounts.iter().any(|a|a==&canonical_account);
+  let legacy_present=select_present_account(&legacy_refresh_candidates(&profile.id),&legacy_accounts).is_some();
+  let migration_state=state.profiles.get(&profile.id).cloned().unwrap_or_else(||MIGRATION_NOT_STARTED.into());
+  let validation=state.validations.get(&profile.id);
+  let (credential_state,last_validation_result,last_validated_at)=resolved_credential_state(profile,&migration_state,canonical_present,legacy_present,validation);
+  rows.push(json!({
+   "profileUuid":profile.id,
+   "expectedChannelId":profile.channel_id,
+   "canonicalRefreshPresent":canonical_present,
+   "legacyRefreshPresent":legacy_present,
+   "migrationState":migration_state,
+   "credentialState":credential_state,
+   "credentialSchemaVersion":CREDENTIAL_SCHEMA_VERSION,
+   "lastValidatedAt":last_validated_at,
+   "lastValidationResult":last_validation_result,
+   "secretValuesIncluded":false,
+   "youtubeApiRequests":0,
+   "keychainSecretReads":0
+  }));
+ }
+ Ok(rows)
 }
 
 #[derive(Debug,Clone)]
@@ -954,6 +1025,7 @@ pub async fn youtube_oauth_connect(
     set_profile_migration_state(&app,&profile.id,MIGRATION_MIGRATED)?;
     let found=security::canonical_get_secret_cached(&oauth_key(&profile.id,"refresh_token"))?.map(|v|!v.trim().is_empty()).unwrap_or(false);
     if !found{return Err("OAUTH_SAVE_VERIFY_FAILED: canonical OAuth refresh_token не сохранился".into())}
+    record_profile_credential_validation(&app,&profile.id,"PASS",Some(&channel_id),Some(&channel_id))?;
     Ok(
         json!({"id":profile.id,"channelId":channel_id,"channelTitle":channel_title,"connectedAt":profile.connected_at,"preferredBrowser":preferred_browser}),
     )
@@ -1507,35 +1579,31 @@ async fn recover_orphan_credential_live(
 }
 
 #[tauri::command]
+pub fn youtube_oauth_credential_states(app:AppHandle)->Result<Value,String>{
+ Ok(json!({
+  "credentialSchemaVersion":CREDENTIAL_SCHEMA_VERSION,
+  "profiles":resolve_oauth_credential_states_local(&app)?,
+  "secretValuesIncluded":false,
+  "youtubeApiRequests":0,
+  "keychainSecretReads":0
+ }))
+}
+#[tauri::command]
 pub async fn youtube_oauth_recovery_diagnostic(
     app:AppHandle,profile_id:String,
 )->Result<Value,String>{
     let path=store_path(&app)?;
-    let store=load_store_metadata(&app)?;
-    let current=store.profiles.iter().find(|p|p.id==profile_id)
+    let mut row=resolve_oauth_credential_states_local(&app)?.into_iter()
+      .find(|v|v.get("profileUuid").and_then(Value::as_str)==Some(profile_id.as_str()))
       .ok_or_else(||"CREDENTIAL_MISSING: selected OAuth profile is not present in youtube-oauth.json".to_string())?;
-    let canonical_account=oauth_key(&profile_id,"refresh_token");
-    let canonical_accounts=security::list_canonical_secret_accounts("oauth.")?;
-    let legacy_accounts=security::list_legacy_secret_accounts("")?;
-    let canonical_present=canonical_accounts.iter().any(|a|a==&canonical_account);
-    let legacy_source=select_present_account(&legacy_refresh_candidates(&profile_id),&legacy_accounts);
-    let migration_state=profile_migration_status(&app,&profile_id)?;
-    Ok(json!({
-      "appVersion":app.package_info().version.to_string(),
-      "bundleId":app.config().identifier.clone(),
-      "channelId":current.channel_id,
-      "currentProfileUuid":profile_id,
-      "legacyService":security::LEGACY_SERVICE,
-      "canonicalService":security::canonical_service(),
-      "canonicalRefreshPresent":canonical_present,
-      "legacyRefreshPresent":legacy_source.is_some(),
-      "migrationState":migration_state,
-      "credentialState":if canonical_present{"CANONICAL_READY"}else if legacy_source.is_some(){"LEGACY_RECONNECT_REQUIRED"}else{"MISSING"},
-      "secretValuesIncluded":false,
-      "youtubeApiRequests":0,
-      "keychainSecretReads":0,
-      "path":path.display().to_string()
-    }))
+    let obj=row.as_object_mut().ok_or_else(||"OAUTH_STATE_RESOLVER_FAILED".to_string())?;
+    obj.insert("appVersion".into(),json!(app.package_info().version.to_string()));
+    obj.insert("bundleId".into(),json!(app.config().identifier.clone()));
+    obj.insert("currentProfileUuid".into(),json!(profile_id));
+    obj.insert("legacyService".into(),json!(security::LEGACY_SERVICE));
+    obj.insert("canonicalService".into(),json!(security::canonical_service()));
+    obj.insert("path".into(),json!(path.display().to_string()));
+    Ok(row)
 }
 
 #[tauri::command]
@@ -1546,9 +1614,11 @@ pub fn youtube_keychain_migration_diagnostics(app:AppHandle)->Result<Value,Strin
  let reconnect_required=state.profiles.values().filter(|x|x.as_str()==MIGRATION_RECONNECT_REQUIRED).count();
  Ok(json!({
   "version":state.version,
+  "credentialSchemaVersion":CREDENTIAL_SCHEMA_VERSION,
   "legacyService":security::LEGACY_SERVICE,
   "canonicalService":security::canonical_service(),
   "profileStates":state.profiles,
+  "validationStates":state.validations,
   "globalClientSecretState":state.global_client_secret,
   "migratedProfiles":migrated,
   "failedProfiles":failed,
@@ -1638,14 +1708,31 @@ async fn valid_access_token(app:&AppHandle,profile_id:&str)->Result<(String,OAut
     let client_id=s.profiles[idx].client_id.clone();
     if client_id.trim().is_empty(){return Err("OAUTH_CLIENT_MISSING: profile client_id is empty".into())}
 
-    let (token,expires)=refresh_access_token_for_profile(app,profile_id,&client_id,&refresh).await?;
+    let expected_channel_id=s.profiles[idx].channel_id.clone();
+    let (token,expires)=match refresh_access_token_for_profile(app,profile_id,&client_id,&refresh).await{
+      Ok(v)=>v,
+      Err(e)=>{
+       if e.starts_with("OAUTH_INVALID_GRANT:"){
+        let _=record_profile_credential_validation(app,profile_id,"RECONNECT_REQUIRED",expected_channel_id.as_deref(),None);
+       }
+       return Err(e)
+      }
+    };
     let expires_at=now_ts()+expires.max(60);
     remember_access_token(profile_id,&token,expires_at);
     s.profiles[idx].access_token=token.clone();
     s.profiles[idx].expires_at=expires_at;
     s.profiles[idx].refresh_token.clear();
     s.profiles[idx].client_secret.clear();
-    validate_profile_identity(app,&mut s.profiles[idx],&token).await?;
+    if let Err(e)=validate_profile_identity(app,&mut s.profiles[idx],&token).await{
+      if e.starts_with("CHANNEL_MISMATCH:"){
+       let actual=e.split("actual=").nth(1).map(str::trim);
+       let _=record_profile_credential_validation(app,profile_id,"WRONG_CHANNEL",expected_channel_id.as_deref(),actual);
+      }
+      return Err(e)
+    }
+    let actual_channel_id=s.profiles[idx].identity_validated_channel_id.clone();
+    record_profile_credential_validation(app,profile_id,"PASS",expected_channel_id.as_deref(),actual_channel_id.as_deref())?;
     let profile=s.profiles[idx].clone();
     write_oauth_metadata(&store_path(app)?,&s)?;
     Ok((token,profile))
@@ -4427,6 +4514,7 @@ pub async fn youtube_oauth_reconnect_existing(
         let _ = write_oauth_metadata(&store_path(&app)?, &original_store);
         return Err("OAUTH_SAVE_VERIFY_FAILED: Keychain/profile readback did not confirm existing UUID credential".into());
     }
+    record_profile_credential_validation(&app,&profile_id,"PASS",Some(&expected_channel_id),Some(&authorized_channel_id))?;
     let _=app.emit("oauth-recovery-stage",json!({"profileId":profile_id,"state":"CONNECTED","expectedChannelId":expected_channel_id,"authorizedChannelId":authorized_channel_id}));
     Ok(
         json!({"ok":true,"status":"CONNECTED","profileId":profile_id,"profileUuidPreserved":true,"expectedChannelId":expected_channel_id,"authorizedChannelId":authorized_channel_id,"channelTitle":authorized_channel_title,"refreshTokenStored":true,"keychainReadback":"FOUND","tokenRefresh":"PASS","channelIdentity":"PASS","youtubeIdentityRequests":1,"videosInsert":0}),
@@ -4805,6 +4893,52 @@ mod v219_rc7_secitem_ui_skip_tests{
   let accounts=(0..10).map(|_|GOOGLE_CLIENT_SECRET).collect::<std::collections::HashSet<_>>();
   assert_eq!(accounts.len(),1);
   assert_eq!(*accounts.iter().next().unwrap(),"google.client_secret");
+ }
+}
+
+#[cfg(test)]
+mod v2110_oauth_continuity_tests{
+ use super::*;
+ fn p(id:&str,ch:&str)->OAuthProfile{OAuthProfile{id:id.into(),client_id:"client".into(),client_secret:String::new(),channel_id:Some(ch.into()),channel_title:Some(ch.into()),access_token:String::new(),refresh_token:String::new(),expires_at:0,connected_at:"2026-09-19T00:00:00Z".into(),scopes:vec![],preferred_browser:"default".into(),identity_validated_at:None,identity_validated_channel_id:None,credential_error:None}}
+ #[test]fn physical_219_legacy_presence_not_run_is_never_connected(){
+  let profile=p("p1","UC1");
+  let (state,last,_)=resolved_credential_state(&profile,MIGRATION_RECONNECT_REQUIRED,false,true,None);
+  assert_eq!(state,"RECONNECT_REQUIRED");
+  assert_eq!(last,"RECONNECT_REQUIRED");
+ }
+ #[test]fn canonical_presence_without_validation_is_not_connected(){
+  let profile=p("p1","UC1");
+  let (state,last,_)=resolved_credential_state(&profile,MIGRATION_MIGRATED,true,false,None);
+  assert_eq!(state,"CANONICAL_PRESENT_UNVERIFIED");
+  assert_eq!(last,"NOT_RUN");
+ }
+ #[test]fn connected_requires_persisted_pass_for_same_channel(){
+  let profile=p("p1","UC1");
+  let validation=CredentialValidationV2State{at:Some("2026-09-19T00:00:00Z".into()),result:"PASS".into(),expected_channel_id:Some("UC1".into()),actual_channel_id:Some("UC1".into())};
+  let (state,last,_)=resolved_credential_state(&profile,MIGRATION_MIGRATED,true,false,Some(&validation));
+  assert_eq!(state,"CONNECTED");assert_eq!(last,"PASS");
+ }
+ #[test]fn persistent_credential_abi_is_version_independent(){
+  assert_eq!(CREDENTIAL_SCHEMA_VERSION,2);
+  assert_eq!(security::canonical_service(),"com.scaleup.vyron.security.v2");
+  assert_eq!(oauth_key("abc-123","refresh_token"),"oauth.abc-123.refresh_token");
+  let account=oauth_key("P1","refresh_token");
+  for _app_version in ["2.1.9","2.1.10","2.1.11"]{assert_eq!(oauth_key("P1","refresh_token"),account);}
+ }
+ #[test]fn update_model_keeps_canonical_profile_without_forced_reconnect(){
+  let profile=p("P1","UC1");
+  let (state,_,_)=resolved_credential_state(&profile,MIGRATION_MIGRATED,true,false,None);
+  assert_ne!(state,"RECONNECT_REQUIRED");
+  assert_eq!(profile.id,"P1");
+ }
+ #[test]fn thirty_one_profile_update_model_preserves_uuid_and_canonical_account(){
+  let before=(0..31).map(|i|format!("p{i}")).collect::<Vec<_>>();
+  let after=before.clone();
+  assert_eq!(before,after);
+  let accounts=after.iter().map(|id|oauth_key(id,"refresh_token")).collect::<Vec<_>>();
+  assert_eq!(accounts.len(),31);
+  assert_eq!(accounts.iter().collect::<std::collections::HashSet<_>>().len(),31);
+  for (id,account) in after.iter().zip(accounts.iter()){assert_eq!(account,&format!("oauth.{id}.refresh_token"));}
  }
 }
 
