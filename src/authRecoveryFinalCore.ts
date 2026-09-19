@@ -1,7 +1,7 @@
 export type FinalAuthStatus='CONNECTED'|'CANONICAL_PRESENT_UNVERIFIED'|'CLIENT SECRET REQUIRED'|'RECONNECT REQUIRED'|'MISSING'|'CONNECTING'|'VALIDATING'|'WRONG CHANNEL'|'FAILED';
 export type RecoveryChannelLike={id:string;name:string;youtubeProfileId?:string;youtubeChannelId?:string};
 export type RecoveryProfileLike={id:string;channelId?:string;channelTitle?:string;preferredBrowser?:string};
-export type RecoveryCredentialStateLike={profileUuid:string;expectedChannelId?:string|null;canonicalRefreshPresent?:boolean;legacyRefreshPresent?:boolean;migrationState?:string;credentialState:'CONNECTED'|'CANONICAL_PRESENT_UNVERIFIED'|'RECONNECT_REQUIRED'|'MISSING'|'WRONG_CHANNEL'|'FAILED';credentialSchemaVersion?:number;lastValidatedAt?:string|null;lastValidationResult?:string;clientSecretState?:'PROFILE_CANONICAL'|'GLOBAL_EXACT_MATCH'|'CLIENT_SECRET_REIMPORT_REQUIRED'|'MISSING';clientSecretPresent?:boolean};
+export type RecoveryCredentialStateLike={profileUuid:string;expectedChannelId?:string|null;canonicalRefreshPresent?:boolean;legacyRefreshPresent?:boolean;migrationState?:string;credentialState:'CONNECTED'|'CANONICAL_PRESENT_UNVERIFIED'|'RECONNECT_REQUIRED'|'MISSING'|'WRONG_CHANNEL'|'FAILED';credentialSchemaVersion?:number;lastValidatedAt?:string|null;lastValidationResult?:string;clientSecretState?:'PROFILE_CANONICAL'|'GLOBAL_EXACT_MATCH'|'GLOBAL_CURRENT_READY'|'CLIENT_SECRET_REIMPORT_REQUIRED'|'MISSING';clientSecretPresent?:boolean};
 export type RecoveryTransient={status:FinalAuthStatus;detail?:string};
 export type FinalRecoveryRow={profileId:string;profile?:RecoveryProfileLike;channels:RecoveryChannelLike[];expectedChannelId?:string;status:FinalAuthStatus;detail:string;stale:boolean;duplicate:boolean;conflict:boolean};
 
@@ -22,7 +22,7 @@ export function buildFinalRecoveryRows(channels:RecoveryChannelLike[],profiles:R
   if(!expectedChannelId)return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'FAILED',detail:'У профиля нет ожидаемого YouTube channel_id. Сначала требуется безопасная привязка mapping.',stale,duplicate,conflict} satisfies FinalRecoveryRow;
   const state=resolved.get(profile.id);
   if(!state)return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'MISSING',detail:'Credential state отсутствует. Требуется переподключение Google без изменения Profile UUID.',stale,duplicate,conflict} satisfies FinalRecoveryRow;
-  if(state.clientSecretState==='CLIENT_SECRET_REIMPORT_REQUIRED')return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'CLIENT SECRET REQUIRED',detail:'Для этого OAuth-профиля найден старый client_secret metadata, но VYRON не читает legacy Keychain. Импортируйте credentials.json этого exact OAuth Client один раз.',stale,duplicate,conflict} satisfies FinalRecoveryRow;
+  if(state.clientSecretState==='CLIENT_SECRET_REIMPORT_REQUIRED')return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'CLIENT SECRET REQUIRED',detail:'Старый OAuth Client secret есть только в legacy Keychain. VYRON его не читает. Настройте текущий Google OAuth Client один раз либо импортируйте credentials.json.',stale,duplicate,conflict} satisfies FinalRecoveryRow;
   if(state.clientSecretState==='MISSING')return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'CLIENT SECRET REQUIRED',detail:'Для этого OAuth-профиля отсутствует exact client_secret. Импортируйте credentials.json его Google OAuth Client перед переподключением.',stale,duplicate,conflict} satisfies FinalRecoveryRow;
   if(state.credentialState==='CONNECTED'){
    const suffix=state.lastValidatedAt?` Последняя проверка: ${state.lastValidatedAt}.`:'';
@@ -32,7 +32,10 @@ export function buildFinalRecoveryRows(channels:RecoveryChannelLike[],profiles:R
    return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'CANONICAL_PRESENT_UNVERIFIED',detail:'Canonical V2 credential найден. Он не считается CONNECTED до успешной реальной OAuth/YouTube проверки.',stale,duplicate,conflict} satisfies FinalRecoveryRow
   }
   if(state.credentialState==='RECONNECT_REQUIRED'){
-   return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'RECONNECT REQUIRED',detail:'Старый OAuth credential найден, но VYRON больше не читает legacy Keychain. Один раз переподключите Google.',stale,duplicate,conflict} satisfies FinalRecoveryRow
+   const detail=state.clientSecretState==='GLOBAL_CURRENT_READY'
+    ?'Старый OAuth profile будет переподключён через текущий OAuth Client VYRON. Выберите браузер с нужным Google/YouTube аккаунтом; Profile UUID и Channel ID сохранятся.'
+    :'Старый OAuth credential найден, но VYRON больше не читает legacy Keychain. Один раз переподключите Google.';
+   return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'RECONNECT REQUIRED',detail,stale,duplicate,conflict} satisfies FinalRecoveryRow
   }
   if(state.credentialState==='WRONG_CHANNEL'){
    return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'WRONG CHANNEL',detail:'Последняя OAuth validation вернула другой YouTube channel_id.',stale,duplicate,conflict} satisfies FinalRecoveryRow
