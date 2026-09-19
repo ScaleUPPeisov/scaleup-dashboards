@@ -319,6 +319,7 @@ fn resolve_client_secret_for_profile(app:&AppHandle,profile_id:&str,client_id:&s
      .ok_or_else(||format!("OAUTH_KEYCHAIN_READBACK_FAILED: account={profile_account}"))?;
    Ok(ResolvedOAuthClient{client_id:client_id.into(),client_secret:readback,source:OAuthClientSecretSource::GlobalExactMatch})
   }
+  Ok((_,OAuthClientSecretSource::GlobalCurrentMigration))=>Err("OAUTH_CLIENT_RESOLVER_INTERNAL: migration source is reconnect-only".into()),
   Err("CLIENT_SECRET_REIMPORT_REQUIRED")=>Err(format!("OAUTH_CLIENT_SECRET_REIMPORT_REQUIRED: profile={profile_id}; legacy client_secret metadata exists but legacy secret reads are disabled")),
   Err(_)=>Err(format!("OAUTH_CLIENT_SECRET_REQUIRED: profile={profile_id}; exact client_secret for client_id is missing")),
  }
