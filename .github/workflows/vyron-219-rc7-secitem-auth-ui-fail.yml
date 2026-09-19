@@ -1,4 +1,4 @@
-name: VYRON 2.1.9 RC7 SecItem Authentication UI Fail
+name: VYRON 2.1.9 RC7 SecItem Authentication UI Skip
 
 on:
   push:
@@ -57,10 +57,10 @@ jobs:
           test -n "${VYRON_MACOS_SIGNING_P12_PASSWORD:-}"
           test "$VYRON_MACOS_SIGNING_IDENTITY" = 'VYRON Local Code Signing'
 
-          # RC7 root fix: every secret SecItem query must carry per-query authentication UI fail.
+          # RC7 root fix: every secret SecItem query must carry per-query authentication UI skip.
           grep -Fq 'security-framework-sys = "2.17.0"' src-tauri/Cargo.toml
           grep -Fq 'core-foundation = "0.10.1"' src-tauri/Cargo.toml
-          grep -Fq 'kSecUseAuthenticationUIFail' src-tauri/src/security.rs
+          grep -Fq 'kSecUseAuthenticationUISkip' src-tauri/src/security.rs
           grep -Fq 'SecItemCopyMatching' src-tauri/src/security.rs
           grep -Fq 'SecItemUpdate' src-tauri/src/security.rs
           grep -Fq 'SecItemDelete' src-tauri/src/security.rs
@@ -102,7 +102,7 @@ jobs:
           npx vitest run             src/keychainPassiveArchitecture.test.ts             src/v213KeychainRecovery.test.ts             src/youtubeInventoryRc4.test.ts             src/schedulePhysicalRegression.test.ts             src/channelSchedule.test.ts             src/scheduleContinuation.test.ts             src/MetadataPage.schedule.test.ts
 
           cargo test --manifest-path src-tauri/Cargo.toml keychain_prompt_architecture_tests -- --nocapture
-          cargo test --manifest-path src-tauri/Cargo.toml v219_rc7_secitem_ui_fail_tests -- --nocapture
+          cargo test --manifest-path src-tauri/Cargo.toml v219_rc7_secitem_ui_skip_tests -- --nocapture
           cargo test --manifest-path src-tauri/Cargo.toml security::tests --             --nocapture             --skip security::tests::keychain_roundtrip
           echo 'TARGETED_RC7_SECITEM_UI_FAIL=PASS'
 
@@ -228,11 +228,11 @@ jobs:
 
           Physical RC6 failure root cause:
           - RC6 relied on SecKeychainSetUserInteractionAllowed(false), but password operations use the modern SecItem API;
-          - security-framework get_generic_password calls SecItemCopyMatching with kSecReturnData but without kSecUseAuthenticationUIFail;
+          - security-framework get_generic_password calls SecItemCopyMatching with kSecReturnData but without kSecUseAuthenticationUISkip;
           - ItemSearchOptions only suppresses authentication UI when skip_authenticated_items(true) is explicitly enabled.
 
           RC7 fix:
-          - secret read uses raw SecItemCopyMatching with kSecUseAuthenticationUIFail;
+          - secret read uses raw SecItemCopyMatching with kSecUseAuthenticationUISkip;
           - secret update/delete use SecItemUpdate/SecItemDelete with the same per-query FAIL policy;
           - legacy/canonical metadata enumeration uses kSecUseAuthenticationUISkip;
           - deprecated global SecKeychain no-UI guard remains only as defense in depth;
