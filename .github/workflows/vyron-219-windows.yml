@@ -63,12 +63,6 @@ jobs:
         continue-on-error: true
         run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 
-      - name: Rust tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml
-
-      - name: Windows target compile
-        run: cargo check --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
-
       - name: Provision pinned FFmpeg x64 resources
         shell: pwsh
         run: |
@@ -90,6 +84,12 @@ jobs:
           Copy-Item $ffprobe.FullName "src-tauri/resources/bin/ffprobe.exe" -Force
           & "src-tauri/resources/bin/ffmpeg.exe" -version | Select-Object -First 1
           & "src-tauri/resources/bin/ffprobe.exe" -version | Select-Object -First 1
+
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Windows target compile
+        run: cargo check --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
 
       - name: Build Windows x64 NSIS
         shell: pwsh
