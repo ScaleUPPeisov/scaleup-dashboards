@@ -9,11 +9,12 @@ describe('VYRON 2.1.13 existing channel rebind',()=>{
   expect(ui).toContain('OAuth profiles');
   expect(ui).not.toContain("${profiles.length} подключено");
  });
- it('new channel OAuth is gated by complete GLOBAL OAuth config',()=>{
+ it('new channel OAuth is gated by complete GLOBAL OAuth config without hiding Add Channel',()=>{
   const ui=read('src/AccountsPage.tsx');
-  expect(ui).toContain('config?.oauthReady');
-  expect(ui).toContain('Настроить OAuth Client');
-  expect(ui).toContain("oauthReady?'+ Добавить канал':'Настроить OAuth Client'");
+  expect(ui).toContain("if(!profileId&&!config?.oauthReady)");
+  expect(ui).toContain("file.current?.click()");
+  expect(ui).toContain('>+ Добавить канал</button>');
+  expect(ui).not.toContain("oauthReady?'+ Добавить канал':'Настроить OAuth Client'");
  });
  it('existing profile has direct browser-first reconnect action',()=>{
   const ui=read('src/AccountsPage.tsx');
@@ -37,7 +38,7 @@ describe('VYRON 2.1.13 existing channel rebind',()=>{
  });
  it('successful add/rebind path does not fall back to legacy migration after consent',()=>{
   const y=read('src-tauri/src/youtube.rs');
-  const connect=y.split('pub async fn youtube_oauth_connect(',2)[1]?.split('fn reconnect_profile_id',2)[0]||'';
+  const connect=y.split('async fn youtube_oauth_connect(',2)[1]?.split('fn reconnect_profile_id',2)[0]||'';
   expect(connect).not.toContain('migrate_profile_refresh_to_canonical');
   expect(connect).toContain('canonical_get_secret_cached(&oauth_key(&profile_id,"refresh_token"))');
   expect(connect).toContain('OAUTH_REFRESH_TOKEN_REQUIRED');
