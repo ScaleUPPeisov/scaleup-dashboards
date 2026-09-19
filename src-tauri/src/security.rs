@@ -103,12 +103,93 @@ const ITEM_NOT_FOUND:i32=-25300;
 const AUTH_FAILED:i32=-25293;
 const INTERACTION_NOT_ALLOWED:i32=-25308;
 const USER_CANCELED:i32=-128;
+const DUPLICATE_ITEM:i32=-25299;
 static KEYCHAIN_ACCESS_BLOCKED:AtomicBool=AtomicBool::new(false);
 static SECRET_SESSION_CACHE:OnceLock<Mutex<HashMap<String,String>>>=OnceLock::new();
 static SECRET_DENIED_ACCOUNTS:OnceLock<Mutex<HashSet<String>>>=OnceLock::new();
 fn secret_cache()->&'static Mutex<HashMap<String,String>>{SECRET_SESSION_CACHE.get_or_init(||Mutex::new(HashMap::new()))}
 fn denied_accounts()->&'static Mutex<HashSet<String>>{SECRET_DENIED_ACCOUNTS.get_or_init(||Mutex::new(HashSet::new()))}
 fn denied_error(e:&str)->bool{e.contains("KEYCHAIN_AUTH_FAILED")||e.contains("KEYCHAIN_INTERACTION_REQUIRED")||e.contains("KEYCHAIN_USER_CANCELED")||e.contains("KEYCHAIN_ACCESS_DENIED")}
+
+#[cfg(target_os="macos")]
+fn secitem_no_ui_base_query(service:&str,account:&str)->Vec<(core_foundation::string::CFString,core_foundation::base::CFType)>{
+ use core_foundation::base::{TCFType};
+ use core_foundation::string::CFString;
+ use security_framework_sys::item::{
+  kSecAttrAccount,kSecAttrService,kSecClass,kSecClassGenericPassword,
+  kSecUseAuthenticationUI,kSecUseAuthenticationUIFail,
+ };
+ unsafe{
+  vec![
+   (CFString::wrap_under_get_rule(kSecClass),CFString::wrap_under_get_rule(kSecClassGenericPassword).into_CFType()),
+   (CFString::wrap_under_get_rule(kSecAttrService),CFString::from(service).into_CFType()),
+   (CFString::wrap_under_get_rule(kSecAttrAccount),CFString::from(account).into_CFType()),
+   (CFString::wrap_under_get_rule(kSecUseAuthenticationUI),CFString::wrap_under_get_rule(kSecUseAuthenticationUIFail).into_CFType()),
+  ]
+ }
+}
+
+#[cfg(target_os="macos")]
+fn secitem_no_ui_get(service:&str,account:&str,kind:&str)->Result<Option<Vec<u8>>,String>{
+ use core_foundation::base::{TCFType,CFType};
+ use core_foundation::boolean::CFBoolean;
+ use core_foundation::data::CFData;
+ use core_foundation::dictionary::CFDictionary;
+ use core_foundation::string::CFString;
+ use core_foundation_sys::base::{CFGetTypeID,CFRelease,CFTypeRef};
+ use core_foundation_sys::data::CFDataRef;
+ use security_framework_sys::item::kSecReturnData;
+ use security_framework_sys::keychain_item::SecItemCopyMatching;
+
+ let mut pairs=secitem_no_ui_base_query(service,account);
+ unsafe{pairs.push((CFString::wrap_under_get_rule(kSecReturnData),CFBoolean::from(true).into_CFType()));}
+ let query=CFDictionary::from_CFType_pairs(&pairs);
+ let mut ret:CFTypeRef=std::ptr::null();
+ let status=unsafe{SecItemCopyMatching(query.as_concrete_TypeRef(),&mut ret)};
+ if status==ITEM_NOT_FOUND{return Ok(None)}
+ if status!=0{return Err(keychain_error(kind,account,status,"SecItemCopyMatching UI=FAIL"))}
+ if ret.is_null(){return Ok(None)}
+ unsafe{
+  if CFGetTypeID(ret)!=CFData::type_id(){CFRelease(ret);return Err(format!("KEYCHAIN_ERROR: {kind} returned non-data; account={account}"))}
+  let data=CFData::wrap_under_create_rule(ret as CFDataRef);
+  Ok(Some(data.bytes().to_vec()))
+ }
+}
+
+#[cfg(target_os="macos")]
+fn secitem_no_ui_set(service:&str,account:&str,value:&[u8],kind:&str)->Result<(),String>{
+ use core_foundation::base::{TCFType,CFType};
+ use core_foundation::data::CFData;
+ use core_foundation::dictionary::CFDictionary;
+ use core_foundation::string::CFString;
+ use security_framework_sys::item::kSecValueData;
+ use security_framework_sys::keychain_item::{SecItemAdd,SecItemUpdate};
+
+ let mut add_pairs=secitem_no_ui_base_query(service,account);
+ unsafe{add_pairs.push((CFString::wrap_under_get_rule(kSecValueData),CFData::from_buffer(value).into_CFType()));}
+ let add=CFDictionary::from_CFType_pairs(&add_pairs);
+ let status=unsafe{SecItemAdd(add.as_concrete_TypeRef(),std::ptr::null_mut())};
+ if status==0{return Ok(())}
+ if status!=DUPLICATE_ITEM{return Err(keychain_error(kind,account,status,"SecItemAdd UI=FAIL"))}
+
+ let query_pairs=secitem_no_ui_base_query(service,account);
+ let query=CFDictionary::from_CFType_pairs(&query_pairs);
+ let update_pairs=unsafe{vec![(CFString::wrap_under_get_rule(kSecValueData),CFData::from_buffer(value).into_CFType())]};
+ let update=CFDictionary::from_CFType_pairs(&update_pairs);
+ let update_status=unsafe{SecItemUpdate(query.as_concrete_TypeRef(),update.as_concrete_TypeRef())};
+ if update_status==0{Ok(())}else{Err(keychain_error(kind,account,update_status,"SecItemUpdate UI=FAIL"))}
+}
+
+#[cfg(target_os="macos")]
+fn secitem_no_ui_delete(service:&str,account:&str,kind:&str)->Result<(),String>{
+ use core_foundation::base::TCFType;
+ use core_foundation::dictionary::CFDictionary;
+ use security_framework_sys::keychain_item::SecItemDelete;
+ let pairs=secitem_no_ui_base_query(service,account);
+ let query=CFDictionary::from_CFType_pairs(&pairs);
+ let status=unsafe{SecItemDelete(query.as_concrete_TypeRef())};
+ if status==0||status==ITEM_NOT_FOUND{Ok(())}else{Err(keychain_error(kind,account,status,"SecItemDelete UI=FAIL"))}
+}
 pub fn invalidate_secret_cache(account:&str){if let Ok(mut c)=secret_cache().lock(){c.remove(account);}if let Ok(mut d)=denied_accounts().lock(){d.remove(account);}}
 fn remember_secret(account:&str,value:&str){if let Ok(mut c)=secret_cache().lock(){if value.is_empty(){c.remove(account);}else{c.insert(account.to_string(),value.to_string());}}}
 fn forget_secret(account:&str){if let Ok(mut c)=secret_cache().lock(){c.remove(account);}}
@@ -127,12 +208,11 @@ pub fn get_secret_cached(account:&str)->Result<Option<String>,String>{get_secret
 
 #[cfg(target_os="macos")]
 pub fn canonical_get_secret(account:&str)->Result<Option<String>,String>{
- use security_framework::passwords::get_generic_password;
  CANONICAL_BACKEND_READS.fetch_add(1,Ordering::SeqCst);
- with_keychain_no_ui(||match get_generic_password(CANONICAL_SERVICE,account){
-  Ok(v)=>{record_runtime(&format!("canonical::{account}"),"READ","NATIVE_NO_UI",Some(0),None);String::from_utf8(v).map(Some).map_err(|_|format!("KEYCHAIN_ERROR: canonical Keychain value {account} is not UTF-8"))},
-  Err(e) if e.code()==ITEM_NOT_FOUND=>{record_runtime(&format!("canonical::{account}"),"READ","NATIVE_NO_UI",Some(e.code()),None);Ok(None)},
-  Err(e)=>{record_runtime(&format!("canonical::{account}"),"READ","NATIVE_NO_UI",Some(e.code()),None);Err(keychain_error("canonical_read_no_ui",account,e.code(),&e.to_string()))},
+ with_keychain_no_ui(||match secitem_no_ui_get(CANONICAL_SERVICE,account,"canonical_read_ui_fail"){
+  Ok(Some(v))=>{record_runtime(&format!("canonical::{account}"),"READ","SECITEM_UI_FAIL",Some(0),None);String::from_utf8(v).map(Some).map_err(|_|format!("KEYCHAIN_ERROR: canonical Keychain value {account} is not UTF-8"))},
+  Ok(None)=>{record_runtime(&format!("canonical::{account}"),"READ","SECITEM_UI_FAIL",Some(ITEM_NOT_FOUND),None);Ok(None)},
+  Err(e)=>{record_runtime(&format!("canonical::{account}"),"READ","SECITEM_UI_FAIL",None,None);Err(e)},
  })
 }
 #[cfg(not(target_os="macos"))]
@@ -154,21 +234,19 @@ pub fn canonical_forget_cache(account:&str){
 }
 #[cfg(target_os="macos")]
 pub fn canonical_set_secret(account:&str,value:&str)->Result<(),String>{
- use security_framework::passwords::{delete_generic_password,set_generic_password};
  if !value.is_empty(){
   if let Ok(c)=canonical_cache().lock(){if c.get(account).map(String::as_str)==Some(value){return Ok(())}}
  }
  let result=with_keychain_no_ui(||if value.is_empty(){
-  match delete_generic_password(CANONICAL_SERVICE,account){
-   Ok(())=>{CANONICAL_BACKEND_DELETES.fetch_add(1,Ordering::SeqCst);record_runtime(&format!("canonical::{account}"),"DELETE","NATIVE_NO_UI",Some(0),None);Ok(())},
-   Err(e) if e.code()==ITEM_NOT_FOUND=>Ok(()),
-   Err(e)=>Err(keychain_error("canonical_delete_no_ui",account,e.code(),&e.to_string()))
+  match secitem_no_ui_delete(CANONICAL_SERVICE,account,"canonical_delete_ui_fail"){
+   Ok(())=>{CANONICAL_BACKEND_DELETES.fetch_add(1,Ordering::SeqCst);record_runtime(&format!("canonical::{account}"),"DELETE","SECITEM_UI_FAIL",Some(0),None);Ok(())},
+   Err(e)=>Err(e)
   }
  }else{
   CANONICAL_BACKEND_WRITES.fetch_add(1,Ordering::SeqCst);
-  match set_generic_password(CANONICAL_SERVICE,account,value.as_bytes()){
-   Ok(())=>{record_runtime(&format!("canonical::{account}"),"WRITE","NATIVE_NO_UI",Some(0),None);Ok(())},
-   Err(e)=>Err(keychain_error("canonical_write_no_ui",account,e.code(),&e.to_string()))
+  match secitem_no_ui_set(CANONICAL_SERVICE,account,value.as_bytes(),"canonical_write_ui_fail"){
+   Ok(())=>{record_runtime(&format!("canonical::{account}"),"WRITE","SECITEM_UI_FAIL",Some(0),None);Ok(())},
+   Err(e)=>Err(e)
   }
  });
  if result.is_ok(){
@@ -200,18 +278,15 @@ fn keychain_error(kind:&str,account:&str,code:i32,detail:&str)->String{
 
 #[cfg(target_os="macos")]
 pub fn set_secret(account:&str,value:&str)->Result<(),String>{
- use security_framework::passwords::{delete_generic_password,set_generic_password};
  let result=with_keychain_no_ui(||if value.is_empty(){
-  let native=delete_generic_password(SERVICE,account);
-  match native{
-   Ok(())=>{record_runtime(account,"DELETE","NATIVE_NO_UI",Some(0),None);Ok(())},
-   Err(e) if e.code()==ITEM_NOT_FOUND=>{record_runtime(account,"DELETE","NATIVE_NO_UI",Some(e.code()),None);Ok(())},
-   Err(e)=>{record_runtime(account,"DELETE","NATIVE_NO_UI",Some(e.code()),None);Err(keychain_error("legacy_delete_no_ui",account,e.code(),&e.to_string()))},
+  match secitem_no_ui_delete(SERVICE,account,"legacy_delete_ui_fail"){
+   Ok(())=>{record_runtime(account,"DELETE","SECITEM_UI_FAIL",Some(0),None);Ok(())},
+   Err(e)=>Err(e),
   }
  }else{
-  match set_generic_password(SERVICE,account,value.as_bytes()){
-   Ok(())=>{record_runtime(account,"WRITE","NATIVE_NO_UI",Some(0),None);Ok(())},
-   Err(e)=>{record_runtime(account,"WRITE","NATIVE_NO_UI",Some(e.code()),None);Err(keychain_error("legacy_write_no_ui",account,e.code(),&e.to_string()))}
+  match secitem_no_ui_set(SERVICE,account,value.as_bytes(),"legacy_write_ui_fail"){
+   Ok(())=>{record_runtime(account,"WRITE","SECITEM_UI_FAIL",Some(0),None);Ok(())},
+   Err(e)=>Err(e)
   }
  });
  if result.is_ok(){
@@ -232,12 +307,11 @@ pub fn set_secret_if_changed(account:&str,value:&str)->Result<(),String>{set_sec
 
 #[cfg(target_os="macos")]
 pub fn get_secret(account:&str)->Result<Option<String>,String>{
- use security_framework::passwords::get_generic_password;
  LEGACY_BACKEND_READS.fetch_add(1,Ordering::SeqCst);
- with_keychain_no_ui(||match get_generic_password(SERVICE,account){
-  Ok(v)=>{record_runtime(account,"READ","NATIVE_NO_UI",Some(0),None);String::from_utf8(v).map(Some).map_err(|_|format!("KEYCHAIN_ERROR: Keychain value {account} is not UTF-8"))},
-  Err(e) if e.code()==ITEM_NOT_FOUND=>{record_runtime(account,"READ","NATIVE_NO_UI",Some(e.code()),None);Ok(None)},
-  Err(e)=>{record_runtime(account,"READ","NATIVE_NO_UI",Some(e.code()),None);Err(keychain_error("legacy_read_no_ui",account,e.code(),&e.to_string()))},
+ with_keychain_no_ui(||match secitem_no_ui_get(SERVICE,account,"legacy_read_ui_fail"){
+  Ok(Some(v))=>{record_runtime(account,"READ","SECITEM_UI_FAIL",Some(0),None);String::from_utf8(v).map(Some).map_err(|_|format!("KEYCHAIN_ERROR: Keychain value {account} is not UTF-8"))},
+  Ok(None)=>{record_runtime(account,"READ","SECITEM_UI_FAIL",Some(ITEM_NOT_FOUND),None);Ok(None)},
+  Err(e)=>{record_runtime(account,"READ","SECITEM_UI_FAIL",None,None);Err(e)},
  })
 }
 #[cfg(not(target_os="macos"))]
@@ -252,22 +326,29 @@ pub fn set_secret_for_autosave(account:&str,value:&str)->Result<(),String>{
 
 #[tauri::command]
 pub fn security_keychain_diagnostics()->Result<serde_json::Value,String>{
- KEYCHAIN_ACCESS_BLOCKED.store(false,Ordering::SeqCst);if let Ok(mut d)=denied_accounts().lock(){d.clear();}
  #[cfg(target_os="macos")]{
-  use std::time::{SystemTime,UNIX_EPOCH};
-  let account=format!("diagnostic.{}.{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos());
-  let secret="vyron-keychain-diagnostic";
-  canonical_set_secret(&account,secret)?;
-  let read=canonical_get_secret(&account)?;
-  let _=canonical_delete_secret(&account);
-  if read.as_deref()!=Some(secret){return Err("KEYCHAIN_ERROR: диагностическая запись прочитана некорректно".into())}
-  return Ok(serde_json::json!({"ok":true,"status":"KEYCHAIN_OK","service":CANONICAL_SERVICE,"legacyService":LEGACY_SERVICE}));
+  // RC7 diagnostic is deliberately passive: no secret write/read/delete roundtrip.
+  // It only enumerates non-authenticated attributes with kSecUseAuthenticationUISkip.
+  let canonical_visible=list_canonical_secret_accounts("")?.len();
+  let legacy_visible=list_legacy_secret_accounts("")?.len();
+  return Ok(serde_json::json!({
+   "ok":true,
+   "status":"NO_UI_POLICY_ACTIVE",
+   "service":CANONICAL_SERVICE,
+   "legacyService":LEGACY_SERVICE,
+   "canonicalVisibleAccounts":canonical_visible,
+   "legacyVisibleAccounts":legacy_visible,
+   "secretValuesIncluded":false,
+   "secretReads":0,
+   "secretWrites":0,
+   "authenticationUi":"FAIL_OR_SKIP"
+  }));
  }
  #[cfg(not(target_os="macos"))]{Ok(serde_json::json!({"ok":false,"status":"UNSUPPORTED"}))}
 }
 
-
 #[tauri::command]
+pub fn security_keychain_runtime_diagnostics#[tauri::command]
 pub fn security_keychain_runtime_diagnostics()->serde_json::Value{
  let snapshot=keychain_runtime().lock().ok();
  let mut accounts=Vec::<serde_json::Value>::new();
@@ -452,7 +533,7 @@ pub fn keychain_service()->&'static str{SERVICE}
 fn native_attributes(account:Option<&str>)->Result<Vec<std::collections::HashMap<String,String>>,String>{
  use security_framework::item::{ItemClass,ItemSearchOptions,Limit};
  let mut q=ItemSearchOptions::new();
- q.class(ItemClass::generic_password()).service(SERVICE).load_attributes(true).limit(Limit::All).cloud_sync(None::<bool>);
+ q.class(ItemClass::generic_password()).service(SERVICE).load_attributes(true).limit(Limit::All).cloud_sync(None::<bool>).skip_authenticated_items(true);
  if let Some(a)=account{q.account(a);}
  with_keychain_no_ui(||match q.search(){
   Ok(rows)=>{
@@ -508,7 +589,7 @@ pub fn probe_secret(_account:&str)->KeychainProbe{KeychainProbe{status:KeychainR
 fn native_attributes_for_service(service:&str,account:Option<&str>)->Result<Vec<std::collections::HashMap<String,String>>,String>{
  use security_framework::item::{ItemClass,ItemSearchOptions,Limit};
  let mut q=ItemSearchOptions::new();
- q.class(ItemClass::generic_password()).service(service).load_attributes(true).limit(Limit::All).cloud_sync(None::<bool>);
+ q.class(ItemClass::generic_password()).service(service).load_attributes(true).limit(Limit::All).cloud_sync(None::<bool>).skip_authenticated_items(true);
  if let Some(a)=account{q.account(a);}
  with_keychain_no_ui(||match q.search(){
   Ok(rows)=>{
