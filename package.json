@@ -1,7 +1,7 @@
 {
   "name": "vyron",
   "private": true,
-  "version": "2.1.14",
+  "version": "2.1.15-rc.1",
   "type": "module",
   "scripts": {
     "dev": "vite --port 1421",
