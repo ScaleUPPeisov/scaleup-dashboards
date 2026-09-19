@@ -1,6 +1,6 @@
 import type {YoutubeChannelStatistics} from './types';
 
-export const CHANNEL_STATS_TTL_MS=30*60*1000;
+export const CHANNEL_STATS_TTL_MS=10*60*1000;
 
 export function channelStatsTimestamp(stats?:YoutubeChannelStatistics|null){
   return stats?.statisticsUpdatedAt||stats?.updatedAt||'';
@@ -63,4 +63,23 @@ export function formatStatsUpdatedAt(iso?:string){
   const d=new Date(iso);
   if(Number.isNaN(d.getTime()))return '—';
   return new Intl.DateTimeFormat('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}).format(d);
+}
+
+
+export function formatStatsAge(stats?:YoutubeChannelStatistics|null,now=Date.now()){
+  const at=Date.parse(channelStatsTimestamp(stats));
+  if(!Number.isFinite(at))return 'данных ещё нет';
+  const minutes=Math.max(0,Math.floor((now-at)/60000));
+  if(minutes<1)return 'обновлено сейчас';
+  if(minutes<60)return `обновлено ${minutes} мин. назад`;
+  const hours=Math.floor(minutes/60);
+  if(hours<24)return `обновлено ${hours} ч. назад`;
+  return `обновлено ${Math.floor(hours/24)} дн. назад`;
+}
+
+export function channelStatsStatusLabel(stats?:YoutubeChannelStatistics|null,refreshing=false,now=Date.now()){
+  if(refreshing)return '↻ Обновление...';
+  if(stats?.syncWarning)return '⚠ Не удалось обновить • показаны последние данные';
+  if(!channelStatsTimestamp(stats))return 'Данных ещё нет';
+  return isChannelStatsStale(stats,now)?`Данные устарели • ${formatStatsAge(stats,now)}`:`✓ ${formatStatsAge(stats,now)}`;
 }
