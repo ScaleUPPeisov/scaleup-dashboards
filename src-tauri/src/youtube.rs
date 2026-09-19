@@ -7,12 +7,12 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     fs,
-    io::{Read, Seek, Write},
+    io::{ErrorKind, Read, Seek, Write},
     net::TcpListener,
     path::{Path, PathBuf},
     process::Command,
     sync::{Mutex, OnceLock},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
@@ -601,8 +601,12 @@ fn read_google_config_raw(app:&AppHandle)->Result<GoogleConfig,String>{
 fn reconcile_google_config_presence(mut c:GoogleConfig,canonical_accounts:&[String])->GoogleConfig{
     let inline_client_secret=!c.client_secret.trim().is_empty();
     let inline_api_key=!c.api_key.trim().is_empty();
-    c.client_secret_present=inline_client_secret||canonical_accounts.iter().any(|a|a.as_str()==GOOGLE_CLIENT_SECRET);
-    c.api_key_present=inline_api_key||canonical_accounts.iter().any(|a|a.as_str()==GOOGLE_API_KEY);
+    // Never downgrade a previously persisted secure-storage presence bit merely because
+    // passive Keychain enumeration uses skip_authenticated_items(true). Protected items
+    // may be intentionally omitted from that enumeration. The actual secret is still
+    // resolved non-interactively by youtube_oauth_connect_global before any browser opens.
+    c.client_secret_present=c.client_secret_present||inline_client_secret||canonical_accounts.iter().any(|a|a.as_str()==GOOGLE_CLIENT_SECRET);
+    c.api_key_present=c.api_key_present||inline_api_key||canonical_accounts.iter().any(|a|a.as_str()==GOOGLE_API_KEY);
     c.client_secret.clear();
     c.api_key.clear();
     c
