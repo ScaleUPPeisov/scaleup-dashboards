@@ -68,7 +68,7 @@ jobs:
             'src-tauri/src/youtube.rs','src-tauri/src/lib.rs',
             'src/api.ts','src/AccountsPage.tsx','src/YouTubeChannelBar.tsx','src/youtubeChannelStats.ts',
             'src/youtubeChannelStatsRuntime.ts','src/ChannelStatisticsScheduler.tsx','src/App.tsx','src/styles.css',
-            'src/v2114OauthOnboarding.test.ts','src/youtubeChannelStats.test.ts','src/v2115AddChannelStats.test.ts',
+            'src/v2113ExistingChannelRebind.test.ts','src/v2114OauthOnboarding.test.ts','src/v2114ChannelStatistics.test.ts','src/youtubeChannelStats.test.ts','src/v2115AddChannelStats.test.ts',
             '.github/workflows/vyron-2115-rc1-add-channel-stats.yml',
           }
           changed=set(filter(None,subprocess.check_output(['git','diff','--name-only',f'{source}..HEAD'],text=True).splitlines()))
@@ -398,3 +398,5 @@ jobs:
           fi
 
 # retry: align historical source-contract tests with explicit OAuth setup and duplicate protection
+
+# retry: authorize only the two historical regression contract updates required by the new explicit flow
