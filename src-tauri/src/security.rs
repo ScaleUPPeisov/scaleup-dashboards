@@ -74,9 +74,29 @@ fn record_runtime(account:&str,operation:&str,cache:&str,osstatus:Option<i32>,mi
 const SERVICE:&str="com.scaleup.vyron.security";
 pub const LEGACY_SERVICE:&str=SERVICE;
 pub const CANONICAL_SERVICE:&str="com.scaleup.vyron.security.v2";
+#[cfg(target_os="windows")]
+static WINDOWS_ACTIVE_TENANT:OnceLock<Mutex<Option<String>>>=OnceLock::new();
+#[cfg(target_os="windows")]
+fn windows_tenant()->&'static Mutex<Option<String>>{WINDOWS_ACTIVE_TENANT.get_or_init(||Mutex::new(None))}
+#[cfg(target_os="windows")]
+pub fn set_active_tenant(user_id:Option<&str>){
+ if let Ok(mut slot)=windows_tenant().lock(){*slot=user_id.map(str::trim).filter(|x|!x.is_empty()).map(str::to_string);}
+ if let Ok(mut c)=canonical_cache().lock(){c.clear();}
+ if let Ok(mut c)=secret_cache().lock(){c.clear();}
+}
+#[cfg(not(target_os="windows"))]
+pub fn set_active_tenant(_user_id:Option<&str>){}
 
 #[cfg(target_os="windows")]
-fn windows_target(service:&str,account:&str)->String{format!("VYRON/{service}/{account}")}
+fn windows_scoped_account(account:&str)->String{
+ if account.starts_with("license."){return account.to_string()}
+ let tenant=windows_tenant().lock().ok().and_then(|x|x.clone()).unwrap_or_else(||"unlicensed".into());
+ format!("tenant.{tenant}.{account}")
+}
+
+
+#[cfg(target_os="windows")]
+fn windows_target(service:&str,account:&str)->String{format!("VYRON/{service}/{}",windows_scoped_account(account))}
 #[cfg(target_os="windows")]
 fn wide(s:&str)->Vec<u16>{s.encode_utf16().chain(std::iter::once(0)).collect()}
 #[cfg(target_os="windows")]
@@ -138,7 +158,10 @@ fn windows_secret_set(service:&str,account:&str,value:&str)->Result<(),String>{
 fn windows_list_accounts(service:&str,prefix:&str)->Result<Vec<String>,String>{
  use windows_sys::Win32::Foundation::{GetLastError,ERROR_NOT_FOUND};
  use windows_sys::Win32::Security::Credentials::{CredEnumerateW,CredFree,CREDENTIALW};
- let target_prefix=format!("VYRON/{service}/");
+ let scope=windows_scoped_account("");
+ let scope_prefix=scope.strip_suffix("").unwrap_or(&scope);
+ let tenant_prefix=if let Some(i)=scope_prefix.rfind('.') { &scope_prefix[..=i] } else { scope_prefix };
+ let target_prefix=format!("VYRON/{service}/{tenant_prefix}");
  let filter=wide(&(target_prefix.clone()+"*"));
  let mut count=0u32;
  let mut rows:*mut *mut CREDENTIALW=std::ptr::null_mut();
