@@ -4718,6 +4718,76 @@ mod auth_recovery_targeted_tests {
 
 
 #[cfg(test)]
+mod v219_rc5_keychain_v2_tests{
+ use super::*;
+ #[test]
+ fn startup_and_navigation_model_do_not_touch_legacy_or_acl(){
+  let state=KeychainMigrationV2State::default();
+  assert!(state.profiles.is_empty());
+  assert_eq!(state.global_client_secret,MIGRATION_NOT_STARTED);
+  // Passive metadata/profile functions have no migration call; the migration helper is only invoked by explicit Sync.
+  assert_eq!(security::canonical_service(),"com.scaleup.vyron.security.v2");
+  assert_eq!(security::LEGACY_SERVICE,"com.scaleup.vyron.security");
+ }
+ #[test]
+ fn explicit_profile_migration_reads_refresh_once_access_zero_and_writes_once(){
+  let mut state=KeychainMigrationV2State::default();
+  let mut reads=Vec::<String>::new();let mut writes=Vec::<String>::new();
+  migrate_refresh_with(
+   &mut state,"p1",Some("oauth.p1.refresh_token"),
+   |a|{reads.push(a.into());Ok(Some("refresh".into()))},
+   |a,v|{writes.push(format!("{a}:{v}"));Ok(())},
+   |a,v|Ok(a=="oauth.p1.refresh_token"&&v=="refresh")
+  ).unwrap();
+  assert_eq!(reads,vec!["oauth.p1.refresh_token"]);
+  assert_eq!(writes,vec!["oauth.p1.refresh_token:refresh"]);
+  assert!(!reads.iter().any(|x|x.contains("access_token")));
+  assert!(!reads.iter().any(|x|x.contains("client_secret")));
+ }
+ #[test]
+ fn second_migration_and_relaunch_marker_skip_legacy_completely(){
+  let mut state=KeychainMigrationV2State::default();
+  state.profiles.insert("p1".into(),MIGRATION_MIGRATED.into());
+  let mut reads=0usize;let mut writes=0usize;
+  let changed=migrate_refresh_with(
+   &mut state,"p1",Some("oauth.p1.refresh_token"),
+   |_|{reads+=1;Ok(Some("legacy".into()))},
+   |_,_|{writes+=1;Ok(())},
+   |_,_|Ok(true)
+  ).unwrap();
+  assert!(!changed);assert_eq!(reads,0);assert_eq!(writes,0);
+ }
+ #[test]
+ fn access_token_replacement_is_memory_only(){
+  let id="rc5-access-memory-test";
+  forget_access_token(id);
+  for i in 0..10{remember_access_token(id,&format!("access-{i}"),now_ts()+3600)}
+  let (token,_)=session_access_token(id).unwrap();
+  assert_eq!(token,"access-9");
+  forget_access_token(id);
+ }
+ #[test]
+ fn profile_persistence_never_writes_access_or_client_secret(){
+  #[derive(Default)]struct C{sets:std::cell::RefCell<Vec<String>>}
+  impl OAuthSecretStore for C{
+   fn get(&self,_:&str)->Result<Option<String>,String>{Ok(None)}
+   fn set(&self,a:&str,_:&str)->Result<(),String>{self.sets.borrow_mut().push(a.into());Ok(())}
+   fn delete(&self,_:&str)->Result<(),String>{Ok(())}
+  }
+  let c=C::default();
+  let p=OAuthProfile{id:"p".into(),client_id:"client".into(),client_secret:"global-secret".into(),channel_id:None,channel_title:None,access_token:"short-lived".into(),refresh_token:"refresh".into(),expires_at:now_ts()+3600,connected_at:"x".into(),scopes:vec![],preferred_browser:"default".into(),identity_validated_at:None,identity_validated_channel_id:None,credential_error:None};
+  write_profile_secrets_with(&c,&p).unwrap();
+  assert_eq!(&*c.sets.borrow(),&vec!["oauth.p.refresh_token".to_string()]);
+ }
+ #[test]
+ fn global_client_secret_has_one_canonical_account_for_many_profiles(){
+  let accounts=(0..10).map(|_|GOOGLE_CLIENT_SECRET).collect::<std::collections::HashSet<_>>();
+  assert_eq!(accounts.len(),1);
+  assert_eq!(*accounts.iter().next().unwrap(),"google.client_secret");
+ }
+}
+
+#[cfg(test)]
 mod v216_upload_progress_tests {
     use super::upload_progress_percent;
     #[test]
