@@ -3734,7 +3734,9 @@ mod v2111_oauth_recovery_tests {
         let mut again: OAuthStore = serde_json::from_str(&disk).unwrap();
         assert!(recover_store_secrets_with(&secrets, &mut again));
         assert_eq!(again.profiles[0].refresh_token, "refresh");
-        assert_eq!(secrets.values.borrow().len(), 3)
+        assert_eq!(secrets.values.borrow().len(), 1);
+        assert!(secrets.values.borrow().get("oauth.p1.access_token").is_none());
+        assert!(secrets.values.borrow().get("oauth.p1.client_secret").is_none())
     }
     #[test]
     fn legacy_209_keychain_to_211_reads_same_accounts() {
@@ -3751,28 +3753,18 @@ mod v2111_oauth_recovery_tests {
         };
         assert!(recover_store_secrets_with(&secrets, &mut store));
         assert_eq!(store.profiles[0].refresh_token, "r");
-        assert_eq!(store.profiles[0].access_token, "a")
+        assert!(store.profiles[0].access_token.is_empty());
+        assert!(store.profiles[0].client_secret.is_empty())
     }
     #[test]
-    fn legacy_alias_is_copied_not_deleted() {
-        let secrets = MemorySecrets::default();
-        secrets
-            .set("youtube_profile_refresh_token::p3", "legacy-r")
-            .unwrap();
-        let mut p = profile(3);
-        hydrate_profile_secrets_with(&secrets, &mut p).unwrap();
-        assert_eq!(p.refresh_token, "legacy-r");
-        assert_eq!(
-            secrets.get("oauth.p3.refresh_token").unwrap().as_deref(),
-            Some("legacy-r")
-        );
-        assert_eq!(
-            secrets
-                .get("youtube_profile_refresh_token::p3")
-                .unwrap()
-                .as_deref(),
-            Some("legacy-r")
-        )
+    fn legacy_alias_is_never_implicitly_read_by_canonical_store() {
+        let secrets=MemorySecrets::default();
+        secrets.set("youtube_profile_refresh_token::p3","legacy-r").unwrap();
+        let mut p=profile(3);
+        hydrate_profile_secrets_with(&secrets,&mut p).unwrap();
+        assert!(p.refresh_token.is_empty());
+        assert!(secrets.get("oauth.p3.refresh_token").unwrap().is_none());
+        assert_eq!(secrets.get("youtube_profile_refresh_token::p3").unwrap().as_deref(),Some("legacy-r"));
     }
     #[test]
     fn oauth_response_without_refresh_preserves_existing_refresh_and_profile_id_contract() {
@@ -4606,14 +4598,8 @@ mod auth_recovery_targeted_tests {
             sec.get(&oauth_key(ID, "refresh_token")).unwrap().as_deref(),
             Some("refresh")
         );
-        assert_eq!(
-            sec.get(&oauth_key(ID, "access_token")).unwrap().as_deref(),
-            Some("access")
-        );
-        assert_eq!(
-            sec.get(&oauth_key(ID, "client_secret")).unwrap().as_deref(),
-            Some("secret-A")
-        )
+        assert!(sec.get(&oauth_key(ID,"access_token")).unwrap().is_none());
+        assert!(sec.get(&oauth_key(ID,"client_secret")).unwrap().is_none())
     }
     #[test]
     fn c_no_new_refresh_token_reconnect_fails() {
@@ -4795,19 +4781,56 @@ mod v219_rc4_inventory_and_acl_tests{
   assert_eq!(inventory_bucket_counts(&rows,Utc::now()),(2,0,1,0));
  }
  #[test]
- fn acl_migration_marker_is_idempotent_and_failure_does_not_mark(){
-  let accounts=vec!["oauth.test.refresh_token".to_string(),"oauth.test.client_secret".to_string()];
-  let mut state=KeychainAclMigrationState{version:1,accounts:HashMap::new()};
-  let mut calls=0usize;
-  apply_acl_migration_marker_with(&mut state,&accounts,|_|{calls+=1;Ok(security::LegacyAclMigrationResult::Migrated)}).unwrap();
-  assert_eq!(calls,2);
-  assert_eq!(state.accounts.len(),2);
-  apply_acl_migration_marker_with(&mut state,&accounts,|_|{calls+=1;Ok(security::LegacyAclMigrationResult::Migrated)}).unwrap();
-  assert_eq!(calls,2);
-
-  let mut failed=KeychainAclMigrationState{version:1,accounts:HashMap::new()};
-  let err=apply_acl_migration_marker_with(&mut failed,&accounts[..1],|_|Err("DENIED".into())).unwrap_err();
+ fn rc5_refresh_migration_reads_one_legacy_item_and_writes_one_canonical_item(){
+  let mut state=KeychainMigrationV2State::default();
+  let mut legacy_reads=0usize;let mut canonical_writes=0usize;let mut verifies=0usize;
+  let changed=migrate_refresh_with(
+   &mut state,"p1",Some("oauth.p1.refresh_token"),
+   |_|{legacy_reads+=1;Ok(Some("refresh".into()))},
+   |account,value|{canonical_writes+=1;assert_eq!(account,"oauth.p1.refresh_token");assert_eq!(value,"refresh");Ok(())},
+   |_,value|{verifies+=1;Ok(value=="refresh")}
+  ).unwrap();
+  assert!(changed);assert_eq!(legacy_reads,1);assert_eq!(canonical_writes,1);assert_eq!(verifies,1);
+  assert_eq!(state.profiles.get("p1").map(String::as_str),Some(MIGRATION_MIGRATED));
+ }
+ #[test]
+ fn rc5_migrated_profile_never_reads_legacy_again_after_relaunch_model(){
+  let mut state=KeychainMigrationV2State::default();
+  state.profiles.insert("p1".into(),MIGRATION_MIGRATED.into());
+  let mut legacy_reads=0usize;let mut writes=0usize;
+  let changed=migrate_refresh_with(
+   &mut state,"p1",Some("oauth.p1.refresh_token"),
+   |_|{legacy_reads+=1;Ok(Some("legacy".into()))},
+   |_,_|{writes+=1;Ok(())},
+   |_,_|Ok(true)
+  ).unwrap();
+  assert!(!changed);assert_eq!(legacy_reads,0);assert_eq!(writes,0);
+ }
+ #[test]
+ fn rc5_failed_migration_never_marks_profile_migrated(){
+  let mut state=KeychainMigrationV2State::default();
+  let err=migrate_refresh_with(
+   &mut state,"p1",Some("oauth.p1.refresh_token"),
+   |_|Err("DENIED".into()),
+   |_,_|Ok(()),
+   |_,_|Ok(true)
+  ).unwrap_err();
   assert_eq!(err,"DENIED");
-  assert!(failed.accounts.is_empty());
+  assert_eq!(state.profiles.get("p1").map(String::as_str),Some(MIGRATION_FAILED));
+ }
+ #[test]
+ fn rc5_persistent_profile_store_writes_refresh_only(){
+  #[derive(Default)]struct S{v:std::cell::RefCell<HashMap<String,String>>,sets:std::cell::RefCell<Vec<String>>}
+  impl OAuthSecretStore for S{
+   fn get(&self,a:&str)->Result<Option<String>,String>{Ok(self.v.borrow().get(a).cloned())}
+   fn set(&self,a:&str,v:&str)->Result<(),String>{self.sets.borrow_mut().push(a.into());self.v.borrow_mut().insert(a.into(),v.into());Ok(())}
+   fn delete(&self,a:&str)->Result<(),String>{self.v.borrow_mut().remove(a);Ok(())}
+  }
+  let sec=S::default();
+  let p=OAuthProfile{id:"p1".into(),client_id:"client".into(),client_secret:"secret".into(),channel_id:None,channel_title:None,access_token:"access".into(),refresh_token:"refresh".into(),expires_at:1,connected_at:"x".into(),scopes:vec![],preferred_browser:"default".into(),identity_validated_at:None,identity_validated_channel_id:None,credential_error:None};
+  write_profile_secrets_with(&sec,&p).unwrap();
+  assert_eq!(&*sec.sets.borrow(),&vec!["oauth.p1.refresh_token".to_string()]);
+  assert!(sec.v.borrow().get("oauth.p1.access_token").is_none());
+  assert!(sec.v.borrow().get("oauth.p1.client_secret").is_none());
  }
 }
