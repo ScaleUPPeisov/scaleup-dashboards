@@ -399,6 +399,31 @@ fn oauth_refresh_error(v: &Value) -> String {
         _ => format!("OAUTH_REFRESH_FAILED: {code}: {detail}"),
     }
 }
+async fn refresh_access_token_http(client_id:&str,refresh_token:&str,client_secret:Option<&str>)->Result<(String,i64),String>{
+    let mut form=vec![("client_id",client_id),("refresh_token",refresh_token),("grant_type","refresh_token")];
+    if let Some(secret)=client_secret.filter(|x|!x.trim().is_empty()){form.push(("client_secret",secret))}
+    let r=reqwest::Client::new().post("https://oauth2.googleapis.com/token").form(&form).send().await
+      .map_err(|e|format!("OAUTH_NETWORK_ERROR: token refresh: {e}"))?;
+    let status=r.status();
+    let v:Value=r.json().await.map_err(|e|format!("OAUTH_REFRESH_JSON_ERROR: {e}"))?;
+    if !status.is_success(){return Err(oauth_refresh_error(&v))}
+    let token=v.get("access_token").and_then(Value::as_str).filter(|x|!x.trim().is_empty())
+      .ok_or_else(||"OAUTH_REFRESH_FAILED: Google response has no access_token".to_string())?.to_string();
+    let expires=v.get("expires_in").and_then(Value::as_i64).unwrap_or(3600);
+    Ok((token,expires))
+}
+async fn refresh_access_token_for_profile(app:&AppHandle,profile_id:&str,client_id:&str,refresh_token:&str)->Result<(String,i64),String>{
+    match refresh_access_token_http(client_id,refresh_token,None).await{
+      Ok(v)=>Ok(v),
+      Err(e) if e.starts_with("OAUTH_CLIENT_MISMATCH:")=>{
+        let secret=migrate_global_client_secret_if_needed(app,Some(profile_id))?.unwrap_or_default();
+        if secret.trim().is_empty(){return Err(e)}
+        refresh_access_token_http(client_id,refresh_token,Some(&secret)).await
+      }
+      Err(e)=>Err(e)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct GoogleConfig {
     #[serde(default)]
@@ -1639,37 +1664,37 @@ async fn validate_profile_identity(
     Ok(())
 }
 async fn valid_access_token(app:&AppHandle,profile_id:&str)->Result<(String,OAuthProfile),String>{
-    // First secret-bearing operation for a profile performs the persistent ACL
-    // migration before any token read. Passive UI/profile loading never reaches here.
-    ensure_profile_acl_migrated(app,profile_id)?;
     let mut s=load_store_metadata(app)?;
-    let idx=s.profiles.iter().position(|p|p.id==profile_id).ok_or_else(||"CREDENTIAL_MISSING: YouTube OAuth профиль отсутствует во всех current/legacy storage locations".to_string())?;
-    let needs_identity=s.profiles[idx].identity_validated_at.is_none()||s.profiles[idx].identity_validated_channel_id.as_deref()!=s.profiles[idx].channel_id.as_deref();
-    if s.profiles[idx].expires_at>now_ts()+60{
-        hydrate_profile_secret_for_operation(app,&mut s.profiles[idx],"access_token")?;
-        if !s.profiles[idx].access_token.trim().is_empty(){
-            let token=s.profiles[idx].access_token.clone();
-            if needs_identity{validate_profile_identity(app,&mut s.profiles[idx],&token).await?;write_oauth_metadata(&store_path(app)?,&s)?;}
-            return Ok((token,s.profiles[idx].clone()))
-        }
+    let idx=s.profiles.iter().position(|p|p.id==profile_id)
+      .ok_or_else(||"CREDENTIAL_MISSING: YouTube OAuth профиль отсутствует".to_string())?;
+    let needs_identity=s.profiles[idx].identity_validated_at.is_none()
+      ||s.profiles[idx].identity_validated_channel_id.as_deref()!=s.profiles[idx].channel_id.as_deref();
+
+    if let Some((token,expires_at))=session_access_token(profile_id){
+      s.profiles[idx].access_token=token.clone();
+      s.profiles[idx].expires_at=expires_at;
+      if needs_identity{
+        validate_profile_identity(app,&mut s.profiles[idx],&token).await?;
+        write_oauth_metadata(&store_path(app)?,&s)?;
+      }
+      return Ok((token,s.profiles[idx].clone()))
     }
-    hydrate_profile_secret_for_operation(app,&mut s.profiles[idx],"refresh_token")?;
-    if s.profiles[idx].refresh_token.trim().is_empty(){
-        let recovery=recover_orphan_credential_live(app,&mut s,idx).await?;
-        if !recovery.recovered{return Err(recovery.error.unwrap_or_else(||"OAUTH_RECOVERY_FAILED".into()))}
-    }
-    hydrate_profile_secret_for_operation(app,&mut s.profiles[idx],"client_secret")?;
-    let refresh=s.profiles[idx].refresh_token.clone();let client_id=s.profiles[idx].client_id.clone();let client_secret=s.profiles[idx].client_secret.clone();
-    if refresh.trim().is_empty(){return Err("REFRESH_TOKEN_MISSING: refresh_token отсутствует во всех current/legacy credential locations".into())}
-    let mut refresh_form=vec![("client_id",client_id.as_str()),("refresh_token",refresh.as_str()),("grant_type","refresh_token")];if !client_secret.is_empty(){refresh_form.push(("client_secret",client_secret.as_str()))}
-    let r=reqwest::Client::new().post("https://oauth2.googleapis.com/token").form(&refresh_form).send().await.map_err(|e|format!("OAUTH_NETWORK_ERROR: token refresh: {e}"))?;
-    let status=r.status();let v:Value=r.json().await.map_err(|e|format!("OAUTH_REFRESH_JSON_ERROR: {e}"))?;if !status.is_success(){return Err(oauth_refresh_error(&v))}
-    let token=v.get("access_token").and_then(Value::as_str).ok_or_else(||"OAUTH_REFRESH_FAILED: Google response has no access_token".to_string())?.to_string();let expires=v.get("expires_in").and_then(Value::as_i64).unwrap_or(3600);
-    s.profiles[idx].access_token=token.clone();s.profiles[idx].expires_at=now_ts()+expires;validate_profile_identity(app,&mut s.profiles[idx],&token).await?;let profile=s.profiles[idx].clone();
-    // Normal token refresh changes only access_token + metadata. Rewriting the
-    // unchanged refresh_token/client_secret on every operation causes needless
-    // Keychain authorization checks on macOS.
-    security::set_secret_if_changed(&oauth_key(&profile.id,"access_token"),&token)?;
+
+    // Passive/background operations never read legacy Keychain. An explicit Sync
+    // must migrate the profile refresh token first.
+    let refresh=require_canonical_refresh(app,profile_id)?;
+    let client_id=s.profiles[idx].client_id.clone();
+    if client_id.trim().is_empty(){return Err("OAUTH_CLIENT_MISSING: profile client_id is empty".into())}
+
+    let (token,expires)=refresh_access_token_for_profile(app,profile_id,&client_id,&refresh).await?;
+    let expires_at=now_ts()+expires.max(60);
+    remember_access_token(profile_id,&token,expires_at);
+    s.profiles[idx].access_token=token.clone();
+    s.profiles[idx].expires_at=expires_at;
+    s.profiles[idx].refresh_token.clear();
+    s.profiles[idx].client_secret.clear();
+    validate_profile_identity(app,&mut s.profiles[idx],&token).await?;
+    let profile=s.profiles[idx].clone();
     write_oauth_metadata(&store_path(app)?,&s)?;
     Ok((token,profile))
 }
@@ -2536,6 +2561,7 @@ pub async fn youtube_list_existing_videos(
     profile_id: String,
     max_results: Option<u32>,
 ) -> Result<Value, String> {
+    migrate_profile_refresh_to_canonical(&app,&profile_id)?;
     let (token, profile) = valid_access_token(&app, &profile_id).await?;
     let limit = max_results.unwrap_or(1000).clamp(1, 5000) as usize;
     let client = reqwest::Client::new();
