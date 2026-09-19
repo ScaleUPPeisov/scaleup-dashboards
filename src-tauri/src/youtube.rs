@@ -4991,7 +4991,7 @@ mod auth_recovery_targeted_tests {
             "state",
         );
         assert!(u.contains("access_type=offline"));
-        assert!(u.contains("prompt=consent"));
+        assert!(u.contains("prompt=select_account%20consent"));
         assert!(u.contains("include_granted_scopes=true"))
     }
 }
