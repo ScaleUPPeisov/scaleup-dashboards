@@ -233,7 +233,7 @@ fn migrate_global_client_secret_if_needed(app:&AppHandle,profile_id:Option<&str>
  Ok(None)
 }
 
-trait OAuthSecretStore {trait OAuthSecretStore {
+trait OAuthSecretStore {
     fn get(&self, account: &str) -> Result<Option<String>, String>;
     fn set(&self, account: &str, value: &str) -> Result<(), String>;
     fn delete(&self, account: &str) -> Result<(), String>;
@@ -4508,6 +4508,8 @@ mod keychain_prompt_architecture_tests{
  }
  #[test]fn rc6_source_contract_has_zero_runtime_legacy_secret_reads(){
   let source=include_str!("youtube.rs");
+  assert!(!source.contains("trait OAuthSecretStore {trait OAuthSecretStore {"));
+  assert!(!source.contains("fn migrate_profile_refresh_to_canonicalfn migrate_profile_refresh_to_canonical"));
   let migration=source.split("fn migrate_profile_refresh_to_canonical").nth(1).unwrap().split("trait OAuthSecretStore").next().unwrap();
   assert!(!migration.contains("legacy_get_secret_once"));
   assert!(!migration.contains("security::get_secret("));
