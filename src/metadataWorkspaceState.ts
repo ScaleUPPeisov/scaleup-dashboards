@@ -1,3 +1,4 @@
+import {tenantStorageKey} from './tenantStorage';
 import type {ImportedMetadata} from './metadata';
 import type {YoutubeExistingVideo} from './types';
 import type {ExistingFilter} from './youtubeWorkflow';
@@ -14,8 +15,8 @@ export type MetadataOperationHistory={
   metadataOk:number;total:number;scheduleOk:number;scheduleTotal:number;failed:number;pausedByQuota?:boolean;
 };
 
-const draftKey=(channelId:string)=>`vyron:metadata-draft:v1:${channelId}`;
-const historyKey=(channelId:string)=>`vyron:metadata-history:v1:${channelId}`;
+const draftKey=(channelId:string)=>tenantStorageKey(`vyron:metadata-draft:v1:${channelId}`);
+const historyKey=(channelId:string)=>tenantStorageKey(`vyron:metadata-history:v1:${channelId}`);
 const allowedFields=new Set<MetadataChangedField>(['title','description','tags','publish date/time','privacy/status','category']);
 
 function cleanRow(x:any):ImportedMetadata{return{
