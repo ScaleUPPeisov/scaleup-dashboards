@@ -80,8 +80,25 @@ static CANONICAL_BACKEND_WRITES:std::sync::atomic::AtomicU64=std::sync::atomic::
 static CANONICAL_BACKEND_DELETES:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
 static CANONICAL_SESSION_CACHE:OnceLock<Mutex<HashMap<String,String>>>=OnceLock::new();
 static CANONICAL_DENIED_ACCOUNTS:OnceLock<Mutex<HashSet<String>>>=OnceLock::new();
+static KEYCHAIN_NO_UI_MUTEX:OnceLock<Mutex<()>>=OnceLock::new();
+static INTERACTIVE_UI_REQUESTS_BLOCKED:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
+static LEGACY_RECONNECT_REQUIRED_COUNT:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
 fn canonical_cache()->&'static Mutex<HashMap<String,String>>{CANONICAL_SESSION_CACHE.get_or_init(||Mutex::new(HashMap::new()))}
 fn canonical_denied()->&'static Mutex<HashSet<String>>{CANONICAL_DENIED_ACCOUNTS.get_or_init(||Mutex::new(HashSet::new()))}
+fn keychain_no_ui_mutex()->&'static Mutex<()>{KEYCHAIN_NO_UI_MUTEX.get_or_init(||Mutex::new(()))}
+#[cfg(target_os="macos")]
+fn with_keychain_no_ui<T,F>(f:F)->Result<T,String> where F:FnOnce()->Result<T,String>{
+ let _serial=keychain_no_ui_mutex().lock().map_err(|_|"KEYCHAIN_NO_UI_LOCK_POISONED".to_string())?;
+ use security_framework::os::macos::keychain::SecKeychain;
+ let _ui=SecKeychain::disable_user_interaction().map_err(|e|format!("KEYCHAIN_NO_UI_GUARD_FAILED: osstatus={}; detail={e}",e.code()))?;
+ f()
+}
+#[cfg(not(target_os="macos"))]
+fn with_keychain_no_ui<T,F>(f:F)->Result<T,String> where F:FnOnce()->Result<T,String>{f()}
+pub fn mark_legacy_reconnect_required(account:&str){
+ LEGACY_RECONNECT_REQUIRED_COUNT.fetch_add(1,Ordering::SeqCst);
+ record_runtime(account,"LEGACY_RECONNECT_REQUIRED","NONE",None,Some("RECONNECT_REQUIRED"));
+}
 const ITEM_NOT_FOUND:i32=-25300;
 const AUTH_FAILED:i32=-25293;
 const INTERACTION_NOT_ALLOWED:i32=-25308;
@@ -112,11 +129,11 @@ pub fn get_secret_cached(account:&str)->Result<Option<String>,String>{get_secret
 pub fn canonical_get_secret(account:&str)->Result<Option<String>,String>{
  use security_framework::passwords::get_generic_password;
  CANONICAL_BACKEND_READS.fetch_add(1,Ordering::SeqCst);
- match get_generic_password(CANONICAL_SERVICE,account){
-  Ok(v)=>{record_runtime(&format!("canonical::{account}"),"READ","NATIVE",Some(0),None);String::from_utf8(v).map(Some).map_err(|_|format!("KEYCHAIN_ERROR: canonical Keychain value {account} is not UTF-8"))},
-  Err(e) if e.code()==ITEM_NOT_FOUND=>{record_runtime(&format!("canonical::{account}"),"READ","NATIVE",Some(e.code()),None);Ok(None)},
-  Err(e)=>{record_runtime(&format!("canonical::{account}"),"READ","NATIVE",Some(e.code()),None);Err(keychain_error("canonical_read",account,e.code(),&e.to_string()))},
- }
+ with_keychain_no_ui(||match get_generic_password(CANONICAL_SERVICE,account){
+  Ok(v)=>{record_runtime(&format!("canonical::{account}"),"READ","NATIVE_NO_UI",Some(0),None);String::from_utf8(v).map(Some).map_err(|_|format!("KEYCHAIN_ERROR: canonical Keychain value {account} is not UTF-8"))},
+  Err(e) if e.code()==ITEM_NOT_FOUND=>{record_runtime(&format!("canonical::{account}"),"READ","NATIVE_NO_UI",Some(e.code()),None);Ok(None)},
+  Err(e)=>{record_runtime(&format!("canonical::{account}"),"READ","NATIVE_NO_UI",Some(e.code()),None);Err(keychain_error("canonical_read_no_ui",account,e.code(),&e.to_string()))},
+ })
 }
 #[cfg(not(target_os="macos"))]
 pub fn canonical_get_secret(_account:&str)->Result<Option<String>,String>{Ok(None)}
@@ -141,19 +158,19 @@ pub fn canonical_set_secret(account:&str,value:&str)->Result<(),String>{
  if !value.is_empty(){
   if let Ok(c)=canonical_cache().lock(){if c.get(account).map(String::as_str)==Some(value){return Ok(())}}
  }
- let result=if value.is_empty(){
+ let result=with_keychain_no_ui(||if value.is_empty(){
   match delete_generic_password(CANONICAL_SERVICE,account){
-   Ok(())=>{CANONICAL_BACKEND_DELETES.fetch_add(1,Ordering::SeqCst);record_runtime(&format!("canonical::{account}"),"DELETE","NATIVE",Some(0),None);Ok(())},
+   Ok(())=>{CANONICAL_BACKEND_DELETES.fetch_add(1,Ordering::SeqCst);record_runtime(&format!("canonical::{account}"),"DELETE","NATIVE_NO_UI",Some(0),None);Ok(())},
    Err(e) if e.code()==ITEM_NOT_FOUND=>Ok(()),
-   Err(e)=>Err(keychain_error("canonical_delete",account,e.code(),&e.to_string()))
+   Err(e)=>Err(keychain_error("canonical_delete_no_ui",account,e.code(),&e.to_string()))
   }
  }else{
   CANONICAL_BACKEND_WRITES.fetch_add(1,Ordering::SeqCst);
   match set_generic_password(CANONICAL_SERVICE,account,value.as_bytes()){
-   Ok(())=>{record_runtime(&format!("canonical::{account}"),"WRITE","NATIVE",Some(0),None);Ok(())},
-   Err(e)=>Err(keychain_error("canonical_write",account,e.code(),&e.to_string()))
+   Ok(())=>{record_runtime(&format!("canonical::{account}"),"WRITE","NATIVE_NO_UI",Some(0),None);Ok(())},
+   Err(e)=>Err(keychain_error("canonical_write_no_ui",account,e.code(),&e.to_string()))
   }
- };
+ });
  if result.is_ok(){
   if value.is_empty(){canonical_forget_cache(account)}
   else{if let Ok(mut c)=canonical_cache().lock(){c.insert(account.to_string(),value.to_string());}if let Ok(mut d)=canonical_denied().lock(){d.remove(account);}}
@@ -171,6 +188,7 @@ pub fn legacy_get_secret_once(account:&str)->Result<Option<String>,String>{get_s
 pub fn canonical_service()->&'static str{CANONICAL_SERVICE}
 
 fn keychain_error(kind:&str,account:&str,code:i32,detail:&str)->String{
+ if code==INTERACTION_NOT_ALLOWED{INTERACTIVE_UI_REQUESTS_BLOCKED.fetch_add(1,Ordering::SeqCst);}
  if matches!(code,AUTH_FAILED|INTERACTION_NOT_ALLOWED|USER_CANCELED){KEYCHAIN_ACCESS_BLOCKED.store(true,Ordering::SeqCst);}
  match code{
   AUTH_FAILED=>format!("KEYCHAIN_AUTH_FAILED: macOS Keychain отклонил пароль или доступ к записи VYRON. operation={kind}; account={account}; osstatus={code}; detail={detail}"),
@@ -183,21 +201,19 @@ fn keychain_error(kind:&str,account:&str,code:i32,detail:&str)->String{
 #[cfg(target_os="macos")]
 pub fn set_secret(account:&str,value:&str)->Result<(),String>{
  use security_framework::passwords::{delete_generic_password,set_generic_password};
- // Keep the last known-good in-memory value until a native mutation succeeds.
- // A denied write therefore cannot turn one Keychain authorization into a retry loop.
- let result=if value.is_empty(){
+ let result=with_keychain_no_ui(||if value.is_empty(){
   let native=delete_generic_password(SERVICE,account);
   match native{
-   Ok(())=>{record_runtime(account,"DELETE","NATIVE",Some(0),None);Ok(())},
-   Err(e) if e.code()==ITEM_NOT_FOUND=>{record_runtime(account,"DELETE","NATIVE",Some(e.code()),None);Ok(())},
-   Err(e)=>{record_runtime(account,"DELETE","NATIVE",Some(e.code()),None);Err(keychain_error("delete",account,e.code(),&e.to_string()))},
+   Ok(())=>{record_runtime(account,"DELETE","NATIVE_NO_UI",Some(0),None);Ok(())},
+   Err(e) if e.code()==ITEM_NOT_FOUND=>{record_runtime(account,"DELETE","NATIVE_NO_UI",Some(e.code()),None);Ok(())},
+   Err(e)=>{record_runtime(account,"DELETE","NATIVE_NO_UI",Some(e.code()),None);Err(keychain_error("legacy_delete_no_ui",account,e.code(),&e.to_string()))},
   }
  }else{
   match set_generic_password(SERVICE,account,value.as_bytes()){
-   Ok(())=>{record_runtime(account,"WRITE","NATIVE",Some(0),None);Ok(())},
-   Err(e)=>{record_runtime(account,"WRITE","NATIVE",Some(e.code()),None);Err(keychain_error("write",account,e.code(),&e.to_string()))}
+   Ok(())=>{record_runtime(account,"WRITE","NATIVE_NO_UI",Some(0),None);Ok(())},
+   Err(e)=>{record_runtime(account,"WRITE","NATIVE_NO_UI",Some(e.code()),None);Err(keychain_error("legacy_write_no_ui",account,e.code(),&e.to_string()))}
   }
- };
+ });
  if result.is_ok(){
   KEYCHAIN_ACCESS_BLOCKED.store(false,Ordering::SeqCst);
   if let Ok(mut d)=denied_accounts().lock(){d.remove(account);}
@@ -218,11 +234,11 @@ pub fn set_secret_if_changed(account:&str,value:&str)->Result<(),String>{set_sec
 pub fn get_secret(account:&str)->Result<Option<String>,String>{
  use security_framework::passwords::get_generic_password;
  LEGACY_BACKEND_READS.fetch_add(1,Ordering::SeqCst);
- match get_generic_password(SERVICE,account){
-  Ok(v)=>{record_runtime(account,"READ","NATIVE",Some(0),None);String::from_utf8(v).map(Some).map_err(|_|format!("KEYCHAIN_ERROR: Keychain value {account} is not UTF-8"))},
-  Err(e) if e.code()==ITEM_NOT_FOUND=>{record_runtime(account,"READ","NATIVE",Some(e.code()),None);Ok(None)},
-  Err(e)=>{record_runtime(account,"READ","NATIVE",Some(e.code()),None);Err(keychain_error("read",account,e.code(),&e.to_string()))},
- }
+ with_keychain_no_ui(||match get_generic_password(SERVICE,account){
+  Ok(v)=>{record_runtime(account,"READ","NATIVE_NO_UI",Some(0),None);String::from_utf8(v).map(Some).map_err(|_|format!("KEYCHAIN_ERROR: Keychain value {account} is not UTF-8"))},
+  Err(e) if e.code()==ITEM_NOT_FOUND=>{record_runtime(account,"READ","NATIVE_NO_UI",Some(e.code()),None);Ok(None)},
+  Err(e)=>{record_runtime(account,"READ","NATIVE_NO_UI",Some(e.code()),None);Err(keychain_error("legacy_read_no_ui",account,e.code(),&e.to_string()))},
+ })
 }
 #[cfg(not(target_os="macos"))]
 pub fn get_secret(_account:&str)->Result<Option<String>,String>{Ok(None)}
@@ -282,6 +298,8 @@ pub fn security_keychain_runtime_diagnostics()->serde_json::Value{
   "canonicalBackendReads":CANONICAL_BACKEND_READS.load(Ordering::SeqCst),
   "canonicalBackendWrites":CANONICAL_BACKEND_WRITES.load(Ordering::SeqCst),
   "canonicalBackendDeletes":CANONICAL_BACKEND_DELETES.load(Ordering::SeqCst),
+  "interactiveUiRequestsBlocked":INTERACTIVE_UI_REQUESTS_BLOCKED.load(Ordering::SeqCst),
+  "legacyReconnectRequired":LEGACY_RECONNECT_REQUIRED_COUNT.load(Ordering::SeqCst),
   "aclMutations":0,
   "cacheHits":cache_hits,"cacheMisses":cache_misses,
   "migrationAttempts":migration_attempts,"migrationSuccesses":migration_successes,"migrationFailures":migration_failures,
@@ -436,7 +454,7 @@ fn native_attributes(account:Option<&str>)->Result<Vec<std::collections::HashMap
  let mut q=ItemSearchOptions::new();
  q.class(ItemClass::generic_password()).service(SERVICE).load_attributes(true).limit(Limit::All).cloud_sync(None::<bool>);
  if let Some(a)=account{q.account(a);}
- match q.search(){
+ with_keychain_no_ui(||match q.search(){
   Ok(rows)=>{
    let mut out=Vec::with_capacity(rows.len());
    for row in rows{
@@ -447,7 +465,7 @@ fn native_attributes(account:Option<&str>)->Result<Vec<std::collections::HashMap
   }
   Err(e) if e.code()==ITEM_NOT_FOUND=>Ok(Vec::new()),
   Err(e)=>{let code=e.code();Err(format!("KEYCHAIN_ENUM_FAILED: status={:?}; osstatus={}; detail={}",classified_status(code,"enumerate"),code,e))}
- }
+ })
 }
 #[cfg(not(target_os="macos"))]
 fn native_attributes(_account:Option<&str>)->Result<Vec<std::collections::HashMap<String,String>>,String>{Ok(Vec::new())}
@@ -475,10 +493,10 @@ pub fn secret_modified_rank(_account:&str)->Result<Option<String>,String>{Ok(Non
 #[cfg(target_os="macos")]
 pub fn probe_secret(account:&str)->KeychainProbe{
  if secret_cache().lock().map(|c|c.contains_key(account)).unwrap_or(false){return KeychainProbe{status:KeychainReadStatus::Found,osstatus:None}}
- use security_framework::passwords::get_generic_password;
- match get_generic_password(SERVICE,account){
-  Ok(v)=>if String::from_utf8(v).is_ok(){KeychainProbe{status:KeychainReadStatus::Found,osstatus:None}}else{KeychainProbe{status:KeychainReadStatus::Malformed,osstatus:None}},
-  Err(e)=>{let code=e.code();KeychainProbe{status:classified_status(code,"read"),osstatus:Some(code)}}
+ match native_attributes(Some(account)){
+  Ok(rows) if !rows.is_empty()=>KeychainProbe{status:KeychainReadStatus::Found,osstatus:None},
+  Ok(_)=>KeychainProbe{status:KeychainReadStatus::NotFound,osstatus:None},
+  Err(e)=>KeychainProbe{status:KeychainReadStatus::ReadFailed,osstatus:inventory_osstatus(&e)},
  }
 }
 #[cfg(not(target_os="macos"))]
@@ -492,7 +510,7 @@ fn native_attributes_for_service(service:&str,account:Option<&str>)->Result<Vec<
  let mut q=ItemSearchOptions::new();
  q.class(ItemClass::generic_password()).service(service).load_attributes(true).limit(Limit::All).cloud_sync(None::<bool>);
  if let Some(a)=account{q.account(a);}
- match q.search(){
+ with_keychain_no_ui(||match q.search(){
   Ok(rows)=>{
    let mut out=Vec::with_capacity(rows.len());
    for row in rows{
@@ -503,7 +521,7 @@ fn native_attributes_for_service(service:&str,account:Option<&str>)->Result<Vec<
   }
   Err(e) if e.code()==ITEM_NOT_FOUND=>Ok(Vec::new()),
   Err(e)=>Err(format!("KEYCHAIN_ENUM_FAILED: service={service}; osstatus={}; detail={}",e.code(),e))
- }
+ })
 }
 #[cfg(not(target_os="macos"))]
 fn native_attributes_for_service(_service:&str,_account:Option<&str>)->Result<Vec<std::collections::HashMap<String,String>>,String>{Ok(Vec::new())}
