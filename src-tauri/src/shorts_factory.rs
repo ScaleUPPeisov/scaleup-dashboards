@@ -105,14 +105,24 @@ fn media_tool_executable(path: &Path) -> bool {
     #[cfg(unix)] { return meta.permissions().mode() & 0o111 != 0; }
     #[cfg(not(unix))] { true }
 }
+fn media_tool_filename(tool: &str) -> String {
+    #[cfg(target_os = "windows")]
+    {
+        if matches!(tool, "ffmpeg" | "ffprobe") { return format!("{tool}.exe"); }
+    }
+    tool.to_string()
+}
 fn bundled_media_candidates(tool: &str) -> Vec<PathBuf> {
     let mut out = Vec::new();
+    let name = media_tool_filename(tool);
     if let Ok(exe) = env::current_exe() {
-        if let Some(macos) = exe.parent() {
-            out.push(macos.join(tool));
-            if let Some(contents) = macos.parent() {
-                out.push(contents.join("Resources").join("bin").join(tool));
-                out.push(contents.join("Resources").join(tool));
+        if let Some(bin) = exe.parent() {
+            out.push(bin.join(&name));
+            out.push(bin.join("bin").join(&name));
+            out.push(bin.join("resources").join("bin").join(&name));
+            if let Some(contents) = bin.parent() {
+                out.push(contents.join("Resources").join("bin").join(&name));
+                out.push(contents.join("Resources").join(&name));
             }
         }
     }
@@ -124,10 +134,12 @@ fn explicit_media_candidate(tool: &str) -> Option<PathBuf> {
 }
 fn sibling_media_candidate(tool: &str) -> Option<PathBuf> {
     let other = match tool { "ffmpeg" => "ffprobe", "ffprobe" => "ffmpeg", _ => return None };
-    explicit_media_candidate(other).and_then(|p| p.parent().map(|d| d.join(tool)))
+    let name = media_tool_filename(tool);
+    explicit_media_candidate(other).and_then(|p| p.parent().map(|d| d.join(name)))
 }
 fn path_media_candidate(tool: &str) -> Option<PathBuf> {
-    env::var_os("PATH").and_then(|v| env::split_paths(&v).map(|d| d.join(tool)).find(|p| media_tool_executable(p)))
+    let name = media_tool_filename(tool);
+    env::var_os("PATH").and_then(|v| env::split_paths(&v).map(|d| d.join(&name)).find(|p| media_tool_executable(p)))
 }
 pub(crate) fn resolve_media_tool(tool: &str) -> Result<PathBuf, String> {
     let mut checked = Vec::new();
@@ -136,6 +148,7 @@ pub(crate) fn resolve_media_tool(tool: &str) -> Result<PathBuf, String> {
     if let Some(p) = sibling_media_candidate(tool) { checked.push(p.clone()); if media_tool_executable(&p) { return Ok(p); } }
     let system_paths_enabled = { #[cfg(test)] { env::var_os("VYRON_TEST_DISABLE_SYSTEM_MEDIA_PATHS").is_none() } #[cfg(not(test))] { true } };
     if system_paths_enabled {
+        #[cfg(target_os = "macos")]
         for p in [PathBuf::from("/opt/homebrew/bin").join(tool), PathBuf::from("/usr/local/bin").join(tool)] {
             checked.push(p.clone()); if media_tool_executable(&p) { return Ok(p); }
         }
