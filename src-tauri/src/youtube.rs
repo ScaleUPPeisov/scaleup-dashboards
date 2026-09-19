@@ -4408,10 +4408,12 @@ pub async fn youtube_oauth_reconnect_existing(
         .clone()
         .filter(|x| !x.trim().is_empty())
         .ok_or_else(|| format!("OAUTH_EXPECTED_CHANNEL_MISSING: profile_id={profile_id}"))?;
-    let global=load_or_migrate_google_config(&app)?;
+    let global=load_google_config_metadata(&app)?;
     let client_id=if !target.client_id.trim().is_empty(){target.client_id.clone()}else{global.client_id.clone()};
     if client_id.trim().is_empty(){return Err("OAUTH_CLIENT_MISSING: existing profile has no OAuth client_id and global Google config is empty".into())}
-    let client_secret=if global.client_id.trim()==client_id.trim(){global.client_secret.clone()}else{String::new()};
+    // Exact OAuth client credential must resolve before browser consent.
+    let resolved_client=resolve_client_secret_for_profile(&app,&profile_id,&client_id)?;
+    let client_secret=resolved_client.client_secret.clone();
     let preferred_browser = browser.filter(|x| !x.trim().is_empty()).unwrap_or_else(|| {
         if target.preferred_browser.trim().is_empty() {
             "default".into()
@@ -4439,17 +4441,8 @@ pub async fn youtube_oauth_reconnect_existing(
     let _=app.emit("oauth-recovery-stage",json!({"profileId":profile_id,"state":"CONNECTING","expectedChannelId":expected_channel_id}));
     open_browser(&auth_url, &preferred_browser)?;
     let expected_state = state.clone();
-    let code=tauri::async_runtime::spawn_blocking(move||->Result<String,String>{listener.set_nonblocking(false).map_err(|e|e.to_string())?;let (mut stream,_)=listener.accept().map_err(|e|format!("OAuth callback: {e}"))?;let _=stream.set_read_timeout(Some(Duration::from_secs(300)));let mut buf=[0u8;8192];let n=stream.read(&mut buf).map_err(|e|format!("OAuth callback read: {e}"))?;let req=String::from_utf8_lossy(&buf[..n]);let first=req.lines().next().unwrap_or("");let target=first.split_whitespace().nth(1).unwrap_or("");let query=target.split_once('?').map(|x|x.1).unwrap_or("");let got_state=query_param(query,"state").unwrap_or_default();let code=query_param(query,"code");let err=query_param(query,"error");let ok=got_state==expected_state&&code.is_some();let html=if ok{"<html><body style='font-family:-apple-system;padding:40px;background:#07111d;color:white'><h2>Google подтвердил доступ ✅</h2><p>VYRON проверяет refresh token и точный YouTube Channel ID. Вернитесь в приложение.</p></body></html>"}else{"<html><body><h2>VYRON OAuth error</h2><p>Вернитесь в приложение.</p></body></html>"};let resp=format!("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",html.as_bytes().len(),html);let _=stream.write_all(resp.as_bytes());if let Some(e)=err{return Err(format!("Google OAuth: {e}"))}if got_state!=expected_state{return Err("OAuth state mismatch".into())}code.ok_or_else(||"Google не вернул authorization code".into())}).await.map_err(|e|e.to_string())??;
-    let mut token_form = vec![
-        ("client_id", client_id.as_str()),
-        ("code", code.as_str()),
-        ("code_verifier", verifier.as_str()),
-        ("grant_type", "authorization_code"),
-        ("redirect_uri", redirect.as_str()),
-    ];
-    if !client_secret.is_empty() {
-        token_form.push(("client_secret", client_secret.as_str()));
-    }
+    let code=tauri::async_runtime::spawn_blocking(move||->Result<String,String>{listener.set_nonblocking(false).map_err(|e|e.to_string())?;let (mut stream,_)=listener.accept().map_err(|e|format!("OAuth callback: {e}"))?;let _=stream.set_read_timeout(Some(Duration::from_secs(300)));let mut buf=[0u8;8192];let n=stream.read(&mut buf).map_err(|e|format!("OAuth callback read: {e}"))?;let req=String::from_utf8_lossy(&buf[..n]);let first=req.lines().next().unwrap_or("");let target=first.split_whitespace().nth(1).unwrap_or("");let query=target.split_once('?').map(|x|x.1).unwrap_or("");let got_state=query_param(query,"state").unwrap_or_default();let code=query_param(query,"code");let err=query_param(query,"error");let ok=got_state==expected_state&&code.is_some();let html=if ok{"<html><body style='font-family:-apple-system;padding:40px;background:#07111d;color:white'><h2>Google передал код авторизации ✅</h2><p>VYRON завершает подключение и проверяет YouTube Channel ID. Вернитесь в приложение.</p></body></html>"}else{"<html><body><h2>VYRON OAuth error</h2><p>Вернитесь в приложение.</p></body></html>"};let resp=format!("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",html.as_bytes().len(),html);let _=stream.write_all(resp.as_bytes());if let Some(e)=err{return Err(format!("Google OAuth: {e}"))}if got_state!=expected_state{return Err("OAuth state mismatch".into())}code.ok_or_else(||"Google не вернул authorization code".into())}).await.map_err(|e|e.to_string())??;
+    let token_form=authorization_code_token_form(&client_id,&client_secret,&code,&verifier,&redirect);
     let token = reqwest::Client::new()
         .post("https://oauth2.googleapis.com/token")
         .form(&token_form)
@@ -4552,7 +4545,6 @@ pub async fn youtube_oauth_reconnect_existing(
         &secrets,&mut next_store,&profile_id,&client_id,&client_secret,&access,&refresh,
         &authorized_channel_id,&authorized_channel_title,&scopes,&preferred_browser,expires,
     )?;
-    if !client_secret.trim().is_empty(){security::canonical_set_secret(GOOGLE_CLIENT_SECRET,&client_secret)?}
     remember_access_token(&profile_id,&access,now_ts()+expires.max(60));
     set_profile_migration_state(&app,&profile_id,MIGRATION_MIGRATED)?;
     if let Err(e)=write_oauth_metadata(&store_path(&app)?,&next_store){
@@ -4567,9 +4559,11 @@ pub async fn youtube_oauth_reconnect_existing(
         .ok_or_else(|| {
             "OAUTH_SAVE_VERIFY_FAILED: existing profile UUID disappeared after save".to_string()
         })?;
-    let keychain_found=security::canonical_get_secret_cached(&oauth_key(&profile_id,"refresh_token"))?
+    let refresh_found=security::canonical_get_secret_cached(&oauth_key(&profile_id,"refresh_token"))?
         .map(|x|!x.trim().is_empty()).unwrap_or(false);
-    let ok = keychain_found
+    let client_secret_found=security::canonical_get_secret_cached(&oauth_key(&profile_id,"client_secret"))?
+        .map(|x|!x.trim().is_empty()).unwrap_or(false);
+    let ok = refresh_found&&client_secret_found
         && verified.channel_id.as_deref() == Some(expected_channel_id.as_str())
         && verified.identity_validated_channel_id.as_deref() == Some(expected_channel_id.as_str());
     if !ok {
@@ -4580,7 +4574,7 @@ pub async fn youtube_oauth_reconnect_existing(
     record_profile_credential_validation(&app,&profile_id,"PASS",Some(&expected_channel_id),Some(&authorized_channel_id))?;
     let _=app.emit("oauth-recovery-stage",json!({"profileId":profile_id,"state":"CONNECTED","expectedChannelId":expected_channel_id,"authorizedChannelId":authorized_channel_id}));
     Ok(
-        json!({"ok":true,"status":"CONNECTED","profileId":profile_id,"profileUuidPreserved":true,"expectedChannelId":expected_channel_id,"authorizedChannelId":authorized_channel_id,"channelTitle":authorized_channel_title,"refreshTokenStored":true,"keychainReadback":"FOUND","tokenRefresh":"PASS","channelIdentity":"PASS","youtubeIdentityRequests":1,"videosInsert":0}),
+        json!({"ok":true,"status":"CONNECTED","profileId":profile_id,"profileUuidPreserved":true,"expectedChannelId":expected_channel_id,"authorizedChannelId":authorized_channel_id,"channelTitle":authorized_channel_title,"refreshTokenStored":true,"clientSecretStored":true,"keychainReadback":"FOUND","tokenRefresh":"PASS","channelIdentity":"PASS","youtubeIdentityRequests":1,"videosInsert":0}),
     )
 }
 
