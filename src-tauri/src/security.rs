@@ -118,7 +118,8 @@ fn record_canonical_denial(account:&str,error:&str,operation:&str,retry:bool){
  let now=chrono::Utc::now();
  let now_iso=now.to_rfc3339();
  let now_epoch=now.timestamp();
- let osstatus=inventory_osstatus(error),code=canonical_error_code(error);
+ let osstatus=inventory_osstatus(error);
+ let code=canonical_error_code(error);
  let (profile_uuid,account_type)=safe_account_parts(account);
  if let Ok(mut denied)=canonical_denied().lock(){
   if let Some(row)=denied.get_mut(account){
