@@ -141,6 +141,7 @@ export function cleanupPreclassification(history:UploadHistoryRecord[],jobs:Vide
   if(source==='TRASHED_BY_VYRON'){result.trashed.push(row);continue}
   if(source==='MISSING_LEGACY_UNKNOWN'){result.alreadyMissing.push(row);continue}
   if(source==='SOURCE_CHANGED'){result.changed.push(row);continue}
+  if(row.remoteExists===false){result.verification.push(row);continue}
   if(row.processingState!=='READY'){result.processing.push(row);continue}
   const identity=Boolean(row.youtubeVideoId?.trim()&&row.profileId?.trim()&&row.localFilePath?.trim()&&row.sha256?.trim()&&row.identityVerifiedAt);
   const jobMatch=!job||(job.finalPath===row.localFilePath&&(!job.uploadFingerprint||job.uploadFingerprint.toLowerCase()===row.sha256.toLowerCase()));
