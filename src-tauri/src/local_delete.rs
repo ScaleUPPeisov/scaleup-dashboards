@@ -264,6 +264,21 @@ mod tests {
         let r=scan_render_folder_impl(root.to_str().unwrap()).unwrap();assert_eq!(r.files.len(),3);assert!(!r.files.iter().any(|x|x.name.ends_with(".txt")));fs::remove_dir_all(root).unwrap()
     }
     #[test]
+    fn exact_channel_root_never_includes_sibling_channel_media() {
+        let workspace=temp_root();let render=workspace.join("Render");let glass=render.join("Glass City Lovers");let neon=render.join("Neon Drive FM");
+        fs::create_dir_all(&glass).unwrap();fs::create_dir_all(&neon).unwrap();
+        fs::write(glass.join("001.mov"),b"glass").unwrap();fs::write(glass.join("030.m4v"),b"glass").unwrap();
+        fs::write(neon.join("001.mov"),b"neon").unwrap();fs::write(neon.join("200.mp4"),b"neon").unwrap();
+        let r=scan_render_folder_impl(glass.to_str().unwrap()).unwrap();let canon=glass.canonicalize().unwrap();
+        assert_eq!(r.files.len(),2);assert!(r.files.iter().all(|x|PathBuf::from(&x.path).starts_with(&canon)));assert!(!r.files.iter().any(|x|x.path.contains("Neon Drive FM")));
+        fs::remove_dir_all(workspace).unwrap()
+    }
+    #[test]
+    fn number_gaps_are_valid_in_channel_scan() {
+        let root=temp_root();for n in [1,2,4,9,30]{fs::write(root.join(format!("{n:03}.mov")),b"x").unwrap();}
+        let r=scan_render_folder_impl(root.to_str().unwrap()).unwrap();assert_eq!(r.files.len(),5);assert!(!r.truncated);fs::remove_dir_all(root).unwrap()
+    }
+    #[test]
     fn media_types_are_accepted_by_guard() {
         let root = temp_root();
         for ext in ["mp4", "mov", "m4v"] {
