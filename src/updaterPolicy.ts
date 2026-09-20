@@ -14,6 +14,30 @@ export const UPDATER_CHECK_OPTIONS={
 export type UpdaterStage='check'|'download'|'install'|'relaunch';
 export type UpdaterStatus='CHECKING'|'AVAILABLE'|'DOWNLOADING'|'VERIFYING'|'INSTALLING'|'READY_TO_RESTART'|'UP_TO_DATE'|'ERROR';
 
+
+export function compareUpdaterVersions(left:string,right:string){
+  const parse=(value:string)=>{
+    const [core,pre='']=value.replace(/^v/,'').split('-',2);
+    const nums=core.split('.').map(x=>Number(x));
+    return {nums:[nums[0]||0,nums[1]||0,nums[2]||0],pre:pre?pre.split('.'):[]};
+  };
+  const a=parse(left),b=parse(right);
+  for(let i=0;i<3;i++){if(a.nums[i]!==b.nums[i])return a.nums[i]<b.nums[i]?-1:1}
+  if(!a.pre.length&&!b.pre.length)return 0;
+  if(!a.pre.length)return 1;
+  if(!b.pre.length)return -1;
+  const length=Math.max(a.pre.length,b.pre.length);
+  for(let i=0;i<length;i++){
+    const x=a.pre[i],y=b.pre[i];
+    if(x===undefined)return -1;if(y===undefined)return 1;if(x===y)continue;
+    const xn=/^\d+$/.test(x),yn=/^\d+$/.test(y);
+    if(xn&&yn)return Number(x)<Number(y)?-1:1;
+    if(xn!==yn)return xn?-1:1;
+    return x<y?-1:1;
+  }
+  return 0;
+}
+
 export function updaterVersionStatus(current:string,latest:string){
   return current===latest?'current == latest':`current ${current} -> latest ${latest}`;
 }
