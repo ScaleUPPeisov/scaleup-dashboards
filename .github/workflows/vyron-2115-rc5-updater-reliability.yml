@@ -1,5 +1,5 @@
 name: VYRON 2.1.15 RC5 Updater Reliability
-# RC5 canonical rerun: Add Channel reconnect contract aligned
+# RC5 canonical rerun: macOS canonical Keychain accessibility compile fix
 # RC5: rapid updater + Keychain continuity; rerun after cross-platform secure-storage regression alignment
 
 on:
