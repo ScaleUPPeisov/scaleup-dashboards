@@ -88,13 +88,22 @@ export function refreshYoutubeProfileStatistics(profile:YoutubeProfile,operation
 }
 
 async function requestBatchWithDriverRotation(chunk:LinkedYoutubeChannel[],operationId:string){
- const ids=chunk.map(x=>x.youtubeChannelId);
- const drivers=[...new Map(chunk.map(x=>[x.profile.id,x.profile])).values()];
+ let pending=chunk.filter(x=>x.profile.credentialStatus!=='RECONNECT_REQUIRED'&&x.profile.credentialStatus!=='KEYCHAIN_ERROR');
+ const rejected=chunk.filter(x=>x.profile.credentialStatus==='RECONNECT_REQUIRED'||x.profile.credentialStatus==='KEYCHAIN_ERROR').map(row=>({row,error:'OAUTH_RECONNECT_REQUIRED'}));
  let lastError:unknown;
- for(const driver of drivers){
-  try{return await api.youtubeChannelStatisticsBatch(driver.id,ids,operationId)}
-  catch(error){lastError=error;if(!isOauthDriverError(error))throw error}
+ while(pending.length){
+  const driver=pending[0];
+  try{
+   const batch=await api.youtubeChannelStatisticsBatch(driver.profile.id,pending.map(x=>x.youtubeChannelId),operationId);
+   return{batch,requestedRows:pending,rejected};
+  }catch(error){
+   lastError=error;
+   if(!isOauthDriverError(error))throw Object.assign(new Error(String(error)),{statsRejected:rejected});
+   rejected.push({row:driver,error:String(error)});
+   pending=pending.filter(x=>x.profile.id!==driver.profile.id);
+  }
  }
+ if(rejected.length)return{batch:{items:[],requested:0,found:0,missingChannelIds:[],apiRequests:0},requestedRows:[] as LinkedYoutubeChannel[],rejected};
  throw lastError||new Error('NO_OPERATIONAL_STATS_DRIVER');
 }
 
@@ -114,9 +123,15 @@ async function runAll(force:boolean,onProgress?:((p:ChannelStatisticsRefreshProg
   for(let offset=0;offset<entries.length;offset+=50){
    const chunk=entries.slice(offset,offset+50);
    try{
-    const batch=await requestBatchWithDriverRotation(chunk,operationId);
-    const byId=new Map(batch.items.filter(x=>x.channelId).map(x=>[x.channelId!,x]));
+    const result=await requestBatchWithDriverRotation(chunk,operationId),byId=new Map(result.batch.items.filter(x=>x.channelId).map(x=>[x.channelId!,x]));
+    const rejectedIds=new Set(result.rejected.map(x=>x.row.channel.id));
+    for(const rejected of result.rejected){
+     preserveLinked(rejected.row,rejected.error);failed++;
+     failures.push({channelId:rejected.row.channel.id,channelName:rejected.row.channel.name,profileId:rejected.row.profile.id,youtubeChannelId:rejected.row.youtubeChannelId,error:rejected.error});
+     done++;onProgress?.({done,total});
+    }
     for(const row of chunk){
+     if(rejectedIds.has(row.channel.id))continue;
      const stats=byId.get(row.youtubeChannelId);
      if(stats){
       applyToLinked(classification.linked,row.youtubeChannelId,stats);
