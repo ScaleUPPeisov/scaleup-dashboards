@@ -3,6 +3,7 @@ import {api} from './api';
 import {nextProjectLifecycle,updateUploadProcessing} from './storageLifecycle';
 import {useApp} from './store';
 import type {UploadHistoryRecord} from './types';
+import {journalProcessingState} from './activityJournalRuntime';
 
 const CHECK_EVERY_MS=60_000;
 const MIN_ROW_AGE_MS=45_000;
@@ -29,11 +30,13 @@ export async function runUploadProcessingMonitorCycle(){
     const current=useApp.getState();
     const processingState=p.processingState;
     const error=p.processingFailureReason||p.rejectionReason||undefined;
+    const previous=row.processingState;
     const history=updateUploadProcessing(current.uploadHistory,row.jobId,{
       processingState,processingCheckedAt:p.processingCheckedAt,processingStatus:p.processingStatus,
       processingError:error,readyAt:processingState==='READY'?p.processingCheckedAt:undefined,identityVerifiedAt:p.identityVerified?p.processingCheckedAt:undefined
     });
     current.replaceUploadHistory(history);
+    const latest=history.slice().reverse().find(x=>x.jobId===row.jobId);if(latest)journalProcessingState(latest,previous,processingState,p.processingCheckedAt,error);
     current.patchJob(row.jobId,{processingState,processingCheckedAt:p.processingCheckedAt,processingError:error});
     const project=Object.entries(current.projectLifecycle).find(([,x])=>x.jobId===row.jobId);
     if(project)current.patchProjectLifecycle(project[0],nextProjectLifecycle(project[1],history));
