@@ -48,7 +48,7 @@ describe('VYRON 2.1.15 RC4 activity history wiring',()=>{
   expect(api).toContain('METHOD_LEDGER_COMMANDS');
  });
  it('local reconciliation is read-only and Trash remains the only destructive local source action',()=>{
-  const local=read('src-tauri/src/local_delete.rs'),history=read('src/ActivityHistory.tsx');
+  const local=read('src-tauri/src/local_delete.rs').split('#[cfg(test)]',1)[0],history=read('src/ActivityHistory.tsx');
   expect(local).toContain('pub fn local_source_status');
   expect(history).toContain('api.localSourceStatus');
   expect(local).toContain('trash::delete');
