@@ -2392,6 +2392,65 @@ async fn verify_uploaded_video(
         json!({"id":actual_id,"channelId":actual_channel,"privacyStatus":item.pointer("/status/privacyStatus").and_then(|x|x.as_str()),"publishAt":item.pointer("/status/publishAt").and_then(|x|x.as_str())}),
     )
 }
+fn processing_state_from_status(status:&str)->&'static str{
+ match status{
+  "succeeded"=>"READY",
+  "processing"=>"YOUTUBE_PROCESSING",
+  "failed"|"terminated"=>"PROCESSING_FAILED",
+  _=>"PROCESSING_UNKNOWN",
+ }
+}
+#[tauri::command]
+pub async fn youtube_video_processing_status(
+ app:AppHandle,
+ profile_id:String,
+ video_id:String,
+ operation_id:Option<String>,
+)->Result<Value,String>{
+ let video_id=video_id.trim().to_string();
+ if video_id.is_empty(){return Err("VIDEO_ID_MISSING: processing check requires videoId".into())}
+ // Authentication is resolved before emitting any YouTube API event, so broken local
+ // credentials cannot burn inventory/processing quota.
+ let (_token,profile)=valid_access_token(&app,&profile_id).await?;
+ let token=profile.access_token.clone();
+ emit_youtube_api_request(&app,"videos.list",operation_id.as_deref());
+ let r=reqwest::Client::new()
+   .get("https://www.googleapis.com/youtube/v3/videos")
+   .bearer_auth(&token)
+   .query(&[("part","id,snippet,status,processingDetails"),("id",video_id.as_str())])
+   .send().await.map_err(|e|format!("PROCESSING_CHECK_NETWORK: {e}"))?;
+ let st=r.status();let v:Value=r.json().await.map_err(|e|format!("PROCESSING_CHECK_PARSE: {e}"))?;
+ if !st.is_success(){return Err(youtube_error(&v,"YouTube processing status check failed"))}
+ let item=v.pointer("/items/0").ok_or_else(||format!("PROCESSING_VIDEO_NOT_FOUND: {video_id}"))?;
+ let actual=item.get("id").and_then(Value::as_str).unwrap_or("");
+ if actual!=video_id{return Err(format!("PROCESSING_VIDEO_ID_MISMATCH: expected={video_id} actual={actual}"))}
+ let actual_channel=item.pointer("/snippet/channelId").and_then(Value::as_str).unwrap_or("");
+ if let Some(expected)=profile.channel_id.as_deref().filter(|x|!x.trim().is_empty()){
+  if !actual_channel.is_empty()&&actual_channel!=expected{return Err(format!("PROCESSING_CHANNEL_MISMATCH: expected={expected} actual={actual_channel}"))}
+ }
+ let raw=item.pointer("/processingDetails/processingStatus").and_then(Value::as_str).unwrap_or("unknown");
+ let state=processing_state_from_status(raw);
+ Ok(json!({
+   "videoId":actual,
+   "channelId":actual_channel,
+   "identityVerified":true,
+   "processingStatus":raw,
+   "processingState":state,
+   "processingCheckedAt":Utc::now().to_rfc3339(),
+   "processingProgress":{
+     "partsTotal":item.pointer("/processingDetails/processingProgress/partsTotal").and_then(Value::as_str),
+     "partsProcessed":item.pointer("/processingDetails/processingProgress/partsProcessed").and_then(Value::as_str),
+     "timeLeftMs":item.pointer("/processingDetails/processingProgress/timeLeftMs").and_then(Value::as_str)
+   },
+   "processingFailureReason":item.pointer("/processingDetails/processingFailureReason").and_then(Value::as_str),
+   "processingIssuesAvailability":item.pointer("/processingDetails/processingIssuesAvailability").and_then(Value::as_str),
+   "rejectionReason":item.pointer("/status/rejectionReason").and_then(Value::as_str),
+   "uploadStatus":item.pointer("/status/uploadStatus").and_then(Value::as_str),
+   "privacyStatus":item.pointer("/status/privacyStatus").and_then(Value::as_str),
+   "publishAt":item.pointer("/status/publishAt").and_then(Value::as_str)
+ }))
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ActiveUploadTelemetry {
@@ -5108,6 +5167,52 @@ pub async fn youtube_oauth_reconnect_existing(
 
 
 #[cfg(test)]
+mod v2115_rc3_oauth_processing_tests{
+ use super::*;
+ #[test]
+ fn metadata_presence_alone_is_never_oauth_ready(){
+  let c=GoogleConfig{client_id:"CLIENT".into(),client_secret:String::new(),project_id:"vyron".into(),api_key:String::new(),client_secret_present:true,client_secret_account:"google.client_secret".into(),api_key_present:false};
+  let v=google_config_status_value(&c);
+  assert_eq!(v["oauthReady"],false);
+  assert_eq!(v["oauthState"],"CONFIGURED");
+  assert_eq!(v["hasSecret"],true);
+ }
+ #[test]
+ fn actual_secret_read_is_required_for_ready(){
+  let c=GoogleConfig{client_id:"CLIENT".into(),client_secret:String::new(),project_id:"vyron".into(),api_key:String::new(),client_secret_present:true,client_secret_account:"google.client_secret".into(),api_key_present:false};
+  let ready=google_config_operational_status_value(&c,Ok(Some("secret".into())));
+  assert_eq!(ready["oauthReady"],true);
+  assert_eq!(ready["oauthState"],"READY");
+  let denied=google_config_operational_status_value(&c,Err("KEYCHAIN_ACCESS_DENIED_CACHED: canonical account=google.client_secret".into()));
+  assert_eq!(denied["oauthReady"],false);
+  assert_eq!(denied["oauthState"],"NEEDS_SECURE_STORAGE_REPAIR");
+  assert_eq!(denied["secureStorageErrorCode"],"KEYCHAIN_ACCESS_DENIED_CACHED");
+ }
+ #[test]
+ fn repair_rotates_account_without_secret_in_account_name(){
+  let a=rotated_google_client_secret_account("471814393352-example.apps.googleusercontent.com");
+  let b=rotated_google_client_secret_account("471814393352-example.apps.googleusercontent.com");
+  assert!(a.starts_with("google.client_secret.rc3."));
+  assert_ne!(a,b);
+  assert!(!a.contains("example.apps"));
+ }
+ #[test]
+ fn processing_state_never_equates_upload_acceptance_with_ready(){
+  assert_eq!(processing_state_from_status("processing"),"YOUTUBE_PROCESSING");
+  assert_eq!(processing_state_from_status("succeeded"),"READY");
+  assert_eq!(processing_state_from_status("failed"),"PROCESSING_FAILED");
+  assert_eq!(processing_state_from_status("unknown"),"PROCESSING_UNKNOWN");
+ }
+ #[test]
+ fn inventory_auth_preflight_occurs_before_first_youtube_request(){
+  let source=include_str!("youtube.rs");
+  let body=source.split("pub async fn youtube_list_existing_videos").nth(1).unwrap();
+  let pre=body.split("emit_youtube_api_request").next().unwrap();
+  assert!(pre.contains("valid_access_token"));
+ }
+}
+
+#[cfg(test)]
 mod schedule_only_status_tests {
     use super::*;
     #[test]
@@ -5657,13 +5762,13 @@ mod v2112_browser_reconnect_recovery_tests{
 mod v2113_existing_channel_rebind_tests{
  use super::*;
  #[test]fn google_config_requires_id_and_secret_to_be_oauth_ready(){
-  let c=GoogleConfig{client_id:"CLIENT".into(),client_secret:String::new(),project_id:String::new(),api_key:String::new(),client_secret_present:false,api_key_present:false};
+  let c=GoogleConfig{client_id:"CLIENT".into(),client_secret:String::new(),project_id:String::new(),api_key:String::new(),client_secret_present:false,client_secret_account:String::new(),api_key_present:false};
   let v=google_config_status_value(&c);
   assert_eq!(v["configured"],true);
   assert_eq!(v["hasSecret"],false);
   assert_eq!(v["oauthReady"],false);
   let ready=GoogleConfig{client_secret_present:true,..c};
-  assert_eq!(google_config_status_value(&ready)["oauthReady"],true);
+  assert_eq!(google_config_status_value(&ready)["oauthReady"],false);
  }
  #[test]fn existing_channel_reuses_profile_uuid(){
   let p=OAuthProfile{id:"P_EXISTING".into(),client_id:"OLD_CLIENT".into(),client_secret:String::new(),channel_id:Some("UC1".into()),channel_title:Some("Channel".into()),access_token:String::new(),refresh_token:String::new(),expires_at:0,connected_at:String::new(),scopes:vec![],preferred_browser:String::new(),identity_validated_at:None,identity_validated_channel_id:None,credential_error:None};
@@ -5884,7 +5989,7 @@ mod v2114_oauth_onboarding_tests{
   c.client_secret_present=false;
   let fixed=reconcile_google_config_presence(c,&[GOOGLE_CLIENT_SECRET.to_string()]);
   assert!(fixed.client_secret_present);
-  assert_eq!(google_config_status_value(&fixed)["oauthReady"],true);
+  assert_eq!(google_config_status_value(&fixed)["oauthReady"],false);
  }
  #[test]
  fn persisted_true_secret_presence_survives_passive_enumeration_skip(){
@@ -5893,7 +5998,7 @@ mod v2114_oauth_onboarding_tests{
   c.client_secret_present=true;
   let fixed=reconcile_google_config_presence(c,&[]);
   assert!(fixed.client_secret_present);
-  assert_eq!(google_config_status_value(&fixed)["oauthReady"],true);
+  assert_eq!(google_config_status_value(&fixed)["oauthReady"],false);
  }
  #[test]
  fn new_channel_oauth_forces_account_selector_and_offline_consent(){
