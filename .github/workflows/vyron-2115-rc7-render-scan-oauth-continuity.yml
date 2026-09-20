@@ -98,6 +98,7 @@ jobs:
             'src-tauri/Cargo.lock','src-tauri/Cargo.toml','src-tauri/tauri.conf.json',
             'src-tauri/src/local_delete.rs','src-tauri/src/youtube.rs',
             'src/AuthRecoveryCenter.tsx','src/PublisherOS.tsx','src/api.ts','src/types.ts',
+            'src/storageLifecycle.test.ts',
             'src/renderScanClassifier.ts','src/renderScanClassifier.test.ts',
             'src/v2115Rc7OauthUpdateContinuity.test.ts','src/v2115Rc7RenderScanContract.test.ts',
           }
