@@ -5,17 +5,19 @@ import type {YoutubeChannelStatistics,YoutubeProfile} from './types';
 import {isChannelStatsStale,normalizeChannelStatistics,preserveChannelStatisticsOnError} from './youtubeChannelStats';
 import {classifyYoutubeChannels,makeStatisticsSnapshot,migrateStatisticsBaselines,type LinkedYoutubeChannel} from './youtubeStatisticsCenter';
 import {youtubeOperationActualCost,youtubeQuotaUsage} from './youtubeQuota';
+import {appendErrorHistory} from './errorHistory';
 
 export const BACKGROUND_CHANNEL_STATS_TTL_MS=45*60*1000;
 
 export type ChannelStatisticsRefreshProgress={done:number;total:number};
 export type ChannelStatisticsRefreshFailure={channelId:string;channelName:string;profileId:string;youtubeChannelId:string;error:string};
+export type ChannelCredentialFailure={profileId:string;channelName:string;youtubeChannelId:string;error:string};
 export type ChannelStatisticsRefreshSummary={
  operationId:string;startedAt:string;completedAt:string;
  workspaceChannels:number;linkedChannels:number;unlinked:number;orphans:number;mismatched:number;duplicates:number;
- done:number;total:number;requested:number;updated:number;failed:number;
+ done:number;total:number;requested:number;updated:number;failed:number;credentialBlocked:number;
  apiRequests:number;quotaUnits:number;quotaBefore:number;quotaAfter:number;
- failures:ChannelStatisticsRefreshFailure[];
+ failures:ChannelStatisticsRefreshFailure[];credentialFailures:ChannelCredentialFailure[];
 };
 
 const profileRuns=new Map<string,Promise<YoutubeChannelStatistics|null>>();
@@ -89,22 +91,26 @@ export function refreshYoutubeProfileStatistics(profile:YoutubeProfile,operation
 }
 
 async function requestBatchWithDriverRotation(chunk:LinkedYoutubeChannel[],operationId:string){
- let pending=chunk.filter(x=>x.profile.credentialStatus!=='RECONNECT_REQUIRED'&&x.profile.credentialStatus!=='KEYCHAIN_ERROR');
- const rejected=chunk.filter(x=>x.profile.credentialStatus==='RECONNECT_REQUIRED'||x.profile.credentialStatus==='KEYCHAIN_ERROR').map(row=>({row,error:'OAUTH_RECONNECT_REQUIRED'}));
+ const ids=[...new Set(chunk.map(x=>x.youtubeChannelId))];
+ const drivers=[...new Map(chunk.map(x=>[x.profile.id,x])).values()];
+ const credentialFailures:ChannelCredentialFailure[]=[];
  let lastError:unknown;
- while(pending.length){
-  const driver=pending[0];
+ for(const driver of drivers){
+  const known=driver.profile.credentialStatus;
+  if(['KEYCHAIN_BLOCKED','RECONNECT_REQUIRED','MISSING','WRONG_CHANNEL','FAILED','KEYCHAIN_ERROR'].includes(String(known||''))){
+   credentialFailures.push({profileId:driver.profile.id,channelName:driver.channel.name,youtubeChannelId:driver.youtubeChannelId,error:`OAUTH_CREDENTIAL_BLOCKED: status=${known}`});
+   continue;
+  }
   try{
-   const batch=await api.youtubeChannelStatisticsBatch(driver.profile.id,pending.map(x=>x.youtubeChannelId),operationId);
-   return{batch,requestedRows:pending,rejected};
+   const batch=await api.youtubeChannelStatisticsBatch(driver.profile.id,ids,operationId);
+   return{batch,credentialFailures,driverProfileId:driver.profile.id};
   }catch(error){
    lastError=error;
-   if(!isOauthDriverError(error))throw Object.assign(new Error(String(error)),{statsRejected:rejected});
-   rejected.push({row:driver,error:String(error)});
-   pending=pending.filter(x=>x.profile.id!==driver.profile.id);
+   if(!isOauthDriverError(error))throw Object.assign(new Error(String(error)),{credentialFailures});
+   credentialFailures.push({profileId:driver.profile.id,channelName:driver.channel.name,youtubeChannelId:driver.youtubeChannelId,error:String(error)});
   }
  }
- if(rejected.length)return{batch:{items:[],requested:0,found:0,missingChannelIds:[],apiRequests:0},requestedRows:[] as LinkedYoutubeChannel[],rejected};
+ if(credentialFailures.length)return{batch:{items:[],requested:0,found:0,missingChannelIds:[],apiRequests:0},credentialFailures,driverProfileId:undefined};
  throw lastError||new Error('NO_OPERATIONAL_STATS_DRIVER');
 }
 
@@ -117,6 +123,7 @@ async function runAll(force:boolean,onProgress?:((p:ChannelStatisticsRefreshProg
  const total=entries.length;
  let done=0,updated=0,failed=0;
  const failures:ChannelStatisticsRefreshFailure[]=[];
+ const credentialFailures:ChannelCredentialFailure[]=[];
  onProgress?.({done,total});
  const parentEventId=`stats-batch:${operationId}`;
  journal({eventId:parentEventId,eventType:'STATS_REFRESH_BATCH',status:'STARTED',source:'LIVE_OPERATION',timestamp:startedAt,operationId,batchId:operationId,details:{workspaceChannels:channels.length,eligibleChannels:classification.eligible.length,requestedChannels:total,unlinked:classification.unlinked.length,orphans:classification.orphans.length,mismatched:classification.mismatched.length,duplicates:classification.duplicates.length}});
@@ -125,14 +132,16 @@ async function runAll(force:boolean,onProgress?:((p:ChannelStatisticsRefreshProg
    const chunk=entries.slice(offset,offset+50);
    try{
     const result=await requestBatchWithDriverRotation(chunk,operationId),byId=new Map(result.batch.items.filter(x=>x.channelId).map(x=>[x.channelId!,x]));
-    const rejectedIds=new Set(result.rejected.map(x=>x.row.channel.id));
-    for(const rejected of result.rejected){
-     preserveLinked(rejected.row,rejected.error);failed++;
-     failures.push({channelId:rejected.row.channel.id,channelName:rejected.row.channel.name,profileId:rejected.row.profile.id,youtubeChannelId:rejected.row.youtubeChannelId,error:rejected.error});
-     done++;onProgress?.({done,total});
+    for(const x of result.credentialFailures){
+     if(!credentialFailures.some(y=>y.profileId===x.profileId))credentialFailures.push(x);
     }
+    const noDriver=result.batch.requested===0&&result.batch.apiRequests===0&&result.credentialFailures.length>0;
     for(const row of chunk){
-     if(rejectedIds.has(row.channel.id))continue;
+     if(noDriver){
+      const blocked=result.credentialFailures.find(x=>x.profileId===row.profile.id);
+      preserveLinked(row,blocked?.error||'OAUTH_CREDENTIAL_BLOCKED: no operational statistics driver');
+      done++;onProgress?.({done,total});continue;
+     }
      const stats=byId.get(row.youtubeChannelId);
      if(stats){
       applyToLinked(classification.linked,row.youtubeChannelId,stats);
@@ -158,9 +167,13 @@ async function runAll(force:boolean,onProgress?:((p:ChannelStatisticsRefreshProg
  const summary:ChannelStatisticsRefreshSummary={
   operationId,startedAt,completedAt,workspaceChannels:channels.length,linkedChannels:classification.eligible.length,
   unlinked:classification.unlinked.length,orphans:classification.orphans.length,mismatched:classification.mismatched.length,duplicates:classification.duplicates.length,
-  done,total,requested:total,updated,failed,apiRequests,quotaUnits,quotaBefore,quotaAfter,failures
+  done,total,requested:total,updated,failed,credentialBlocked:credentialFailures.length,apiRequests,quotaUnits,quotaBefore,quotaAfter,failures,credentialFailures
  };
- journal({eventId:parentEventId,eventType:'STATS_REFRESH_BATCH',status:failed?(updated?'PARTIAL':'FAILED'):'SUCCESS',source:'LIVE_OPERATION',timestamp:completedAt,operationId,batchId:operationId,errorCode:failed&&!updated?'STATS_REFRESH_BATCH_FAILED':undefined,details:{workspaceChannels:summary.workspaceChannels,eligibleChannels:summary.linkedChannels,requestedChannels:summary.requested,updatedChannels:updated,failedChannels:failed,unlinked:summary.unlinked,orphans:summary.orphans,mismatched:summary.mismatched,duplicates:summary.duplicates,apiRequests,quotaUnits,quotaBefore,quotaAfter,failureChannels:failures.map(x=>x.channelName).slice(0,100)}});
+ const status=failed?(updated?'PARTIAL':'FAILED'):credentialFailures.length?'PARTIAL':'SUCCESS';
+ journal({eventId:parentEventId,eventType:'STATS_REFRESH_BATCH',status,source:'LIVE_OPERATION',timestamp:completedAt,operationId,batchId:operationId,errorCode:failed&&!updated?'STATS_REFRESH_BATCH_FAILED':credentialFailures.length&&!updated?'OAUTH_KEYCHAIN_ACCESS_DENIED':undefined,details:{workspaceChannels:summary.workspaceChannels,eligibleChannels:summary.linkedChannels,requestedChannels:summary.requested,updatedChannels:updated,failedChannels:failed,credentialBlockedProfiles:credentialFailures.length,unlinked:summary.unlinked,orphans:summary.orphans,mismatched:summary.mismatched,duplicates:summary.duplicates,apiRequests,quotaUnits,quotaBefore,quotaAfter,failureChannels:failures.map(x=>x.channelName).slice(0,100)}});
+ if(credentialFailures.length){
+  appendErrorHistory('OAuth-токены части каналов недоступны',`Keychain blocked: ${credentialFailures.length}. YouTube API requests: ${apiRequests}.`,credentialFailures.map(x=>`${x.channelName}: ${x.error}`).join('\n'),{errorCode:'KEYCHAIN_ACCESS_DENIED',stage:'preflight',rootIssueKey:`oauth-keychain-batch:${credentialFailures.map(x=>x.profileId).sort().join(',')}`,youtubeRequestSent:apiRequests>0});
+ }
  return summary;
 }
 
