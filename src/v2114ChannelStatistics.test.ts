@@ -14,13 +14,13 @@ describe('VYRON 2.1.14 RC2 channel statistics contract',()=>{
   expect(block).toContain('valid_access_token(&app,&profile_id)');
   expect(block).toContain('("part","snippet,statistics")');
   expect(block).toContain('("id",expected)');
-  expect(block).toContain('emit_youtube_api_request(&app,"channels.list",None)');
+  expect(block).toContain('emit_youtube_api_request(&app,"channels.list",operation_id.as_deref())');
   expect(block).toContain('CHANNEL_MISMATCH');
  });
  it('quota ledger receives method-level channels.list without compatibility double count',()=>{
   const api=read('src/api.ts');
   expect(api).toContain("'youtube_channel_statistics'");
-  expect(api).toContain("youtubeChannelStatistics:(profileId:string)=>channelStatsSingleFlight");
+  expect(api).toContain("youtubeChannelStatistics:(profileId:string,operationId?:string)=>channelStatsSingleFlight");
   const quota=read('src/youtubeQuota.ts');
   expect(quota).toContain("'channels.list':{bucket:'general',cost:1");
  });
@@ -35,7 +35,7 @@ describe('VYRON 2.1.14 RC2 channel statistics contract',()=>{
  it('accounts page uses shared stale-cache runtime and preserves last values on errors',()=>{
   const ui=read('src/AccountsPage.tsx');
   const runtime=read('src/youtubeChannelStatsRuntime.ts');
-  expect(runtime).toContain('isChannelStatsStale(channel.stats)');
+  expect(runtime).toContain('isChannelStatsStale(x.channel.stats,Date.now(),BACKGROUND_CHANNEL_STATS_TTL_MS)');expect(runtime).toContain('classifyYoutubeChannels');
   expect(runtime).toContain('preserveChannelStatisticsOnError');
   expect(ui).toContain('↻ Обновить');
   expect(ui).toContain('Последняя синхронизация');
