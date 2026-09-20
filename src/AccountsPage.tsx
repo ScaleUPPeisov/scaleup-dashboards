@@ -182,7 +182,6 @@ export function AccountsPage(){
    setHealth(x=>({...x,[p.id]:h}));
    if(h.statistics)applyStatistics(p,h.statistics);
    journal({eventId:`oauth-validation:${p.id}:${Date.now()}`,eventType:'OAUTH_VALIDATION_PASS',status:'SUCCESS',source:'LIVE_OPERATION',profileId:p.id,channelId:boundChannel(p)?.id,channelName:p.channelTitle,details:{youtubeChannelId:p.channelId||'',youtubeApiRequests:1}});
-   if(h.statistics)applyStatistics(p,h.statistics);
    if(!quiet)toast(`✓ ${h.channelTitle||p.channelTitle||'Канал'}: OAuth READY, YouTube API OK`);
    await refresh();
    return h
@@ -205,7 +204,9 @@ export function AccountsPage(){
    journal({eventId:`oauth-keychain-recovered:${p.id}:${Date.now()}`,eventType:'OAUTH_KEYCHAIN_ACCESS_RECOVERED',status:'SUCCESS',source:'LIVE_OPERATION',profileId:p.id,channelId:boundChannel(p)?.id,channelName:p.channelTitle,details:{youtubeChannelId:p.channelId||'',youtubeApiRequests:0}});
    if(!quiet)toast(`✓ ${p.channelTitle||p.channelId||'Канал'}: OAuth-токен снова читается. YouTube API: 0.`);
   }else if(result.status==='KEYCHAIN_BLOCKED'){
-   journal({eventId:`oauth-keychain-denied:${p.id}:${Date.now()}`,eventType:'OAUTH_KEYCHAIN_ACCESS_DENIED',status:'FAILED',source:'LIVE_OPERATION',profileId:p.id,channelId:boundChannel(p)?.id,channelName:p.channelTitle,errorCode:result.errorCode||'KEYCHAIN_ACCESS_DENIED',details:{youtubeChannelId:p.channelId||'',osstatus:result.osstatus??0,youtubeApiRequests:0}});
+   const details:Record<string,string|number|boolean|null>={youtubeChannelId:p.channelId||'',youtubeApiRequests:0};
+   if(typeof result.osstatus==='number')details.osstatus=result.osstatus;
+   journal({eventId:`oauth-keychain-denied:${p.id}:${Date.now()}`,eventType:'OAUTH_KEYCHAIN_ACCESS_DENIED',status:'FAILED',source:'LIVE_OPERATION',profileId:p.id,channelId:boundChannel(p)?.id,channelName:p.channelTitle,errorCode:result.errorCode||'KEYCHAIN_ACCESS_DENIED',details});
    if(!quiet)toast(`Keychain всё ещё блокирует токен ${p.channelTitle||p.channelId||''}. Password popup не открывался.`);
   }else if(result.status==='MISSING'&&!quiet)toast(`OAuth-токен ${p.channelTitle||p.channelId||''} отсутствует. Переподключение требуется только этому профилю.`);
   await refresh();
@@ -219,7 +220,11 @@ export function AccountsPage(){
    for(const row of result.profiles){
     const p=profiles.find(x=>x.id===row.profileUuid);if(!p)continue;
     if(row.status==='ACCESSIBLE'){resolveOAuthKeychainErrors(p.id);if(row.recovered)journal({eventId:`oauth-keychain-recovered:${p.id}:${Date.now()}`,eventType:'OAUTH_KEYCHAIN_ACCESS_RECOVERED',status:'SUCCESS',source:'LIVE_OPERATION',profileId:p.id,channelId:boundChannel(p)?.id,channelName:p.channelTitle,details:{youtubeChannelId:p.channelId||'',youtubeApiRequests:0}})}
-    else if(row.status==='KEYCHAIN_BLOCKED')journal({eventId:`oauth-keychain-denied:${p.id}:${Date.now()}`,eventType:'OAUTH_KEYCHAIN_ACCESS_DENIED',status:'FAILED',source:'LIVE_OPERATION',profileId:p.id,channelId:boundChannel(p)?.id,channelName:p.channelTitle,errorCode:row.errorCode||'KEYCHAIN_ACCESS_DENIED',details:{youtubeChannelId:p.channelId||'',osstatus:row.osstatus??0,youtubeApiRequests:0}});
+    else if(row.status==='KEYCHAIN_BLOCKED'){
+     const details:Record<string,string|number|boolean|null>={youtubeChannelId:p.channelId||'',youtubeApiRequests:0};
+     if(typeof row.osstatus==='number')details.osstatus=row.osstatus;
+     journal({eventId:`oauth-keychain-denied:${p.id}:${Date.now()}`,eventType:'OAUTH_KEYCHAIN_ACCESS_DENIED',status:'FAILED',source:'LIVE_OPERATION',profileId:p.id,channelId:boundChannel(p)?.id,channelName:p.channelTitle,errorCode:row.errorCode||'KEYCHAIN_ACCESS_DENIED',details});
+    }
    }
    await refresh();
    toast(`Проверка OAuth завершена. Доступны: ${result.accessible}. Автоматически восстановлены: ${result.recoveredAutomatically}. Keychain blocked: ${result.keychainBlocked}. Missing: ${result.missing}. YouTube API requests: 0.`);
