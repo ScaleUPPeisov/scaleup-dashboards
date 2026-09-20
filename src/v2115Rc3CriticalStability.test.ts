@@ -41,14 +41,16 @@ describe('VYRON 2.1.15 RC3 critical stability contracts',()=>{
   expect(y).toContain('canonical_verify_secret(&new_account,&client_secret)');
   expect(y).toContain('canonical_forget_cache(&old_account)');
   expect(y).toContain('client_secret_account:new_account.clone()');
-  expect(sec).toContain('canonical_denied().lock().unwrap().remove(account)');
+  expect(sec).toContain('if let Ok(mut d)=canonical_denied().lock(){d.remove(account);}');
  });
 
  it('profile metadata is loaded independently from global config and orphan mappings stay visible',()=>{
   const ui=read('src/AccountsPage.tsx');
   expect(ui).toContain('p=await api.youtubeProfiles();setProfiles(p)');
   expect(ui).toContain('setConfig(await api.youtubeGoogleConfig())');
-  expect(ui).toContain('ORPHAN_MAPPING');
+  const y=read('src-tauri/src/youtube.rs');
+  expect(y).toContain('"reason":"ORPHAN_MAPPING"');
+  expect(ui).toContain('orphanMappings');
   expect(ui).toContain('Метаданные OAuth-профилей не найдены, но каналы сохранены');
   const p=ui.indexOf('p=await api.youtubeProfiles();setProfiles(p)'),c=ui.indexOf('setConfig(await api.youtubeGoogleConfig())');
   expect(p).toBeGreaterThan(0);expect(c).toBeGreaterThan(p);
@@ -125,7 +127,8 @@ describe('VYRON 2.1.15 RC3 critical stability contracts',()=>{
  });
 
  it('processing updates preserve uploaded identity and only READY gets readyAt',()=>{
-  const base=recordVerifiedUpload([],{...history('UPLOAD_ACCEPTED'),id:undefined as never,status:undefined as never});
+  const row=history('UPLOAD_ACCEPTED');const {id:_id,status:_status,...input}=row;
+  const base=recordVerifiedUpload([],input);
   const ready=updateUploadProcessing(base,'j1',{processingState:'READY',processingCheckedAt:'2026-09-20T01:00:00Z',readyAt:'2026-09-20T01:00:00Z'});
   expect(ready[0].youtubeVideoId).toBe('yt1');expect(ready[0].processingState).toBe('READY');expect(ready[0].readyAt).toBeTruthy();
  });
