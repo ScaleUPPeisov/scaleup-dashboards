@@ -29,4 +29,14 @@ export function resolveOAuthMissingRows(rows:ErrorHistoryItem[],profileId:string
  })
 }
 export function resolveOAuthMissingErrors(profileId:string,channelIds:string[]=[]){save(resolveOAuthMissingRows(load(),profileId,channelIds))}
+
+export function isOAuthKeychainErrorText(value:unknown){const s=String(value??'').toLocaleLowerCase('ru-RU');return s.includes('keychain_access_denied_cached')||s.includes('keychain_interaction_required')||s.includes('keychain_auth_failed')||s.includes('keychain_user_canceled')||s.includes('oauth credential precheck failed')}
+export function resolveOAuthKeychainErrors(profileId:string,now=Date.now()){
+ const p=String(profileId||'').toLowerCase();
+ save(load().map(row=>{
+  if(row.resolvedAt||!isOAuthKeychainErrorText([row.errorCode,row.title,row.message,row.technicalDetail].filter(Boolean).join(' ')))return row;
+  if(row.profileId&&String(row.profileId).toLowerCase()!==p)return row;
+  return {...row,resolvedAt:now,resolvedBy:`oauth-keychain-recovered:${profileId}`};
+ }))
+}
 export function subscribeErrorHistory(cb:()=>void){if(typeof window==='undefined')return()=>{};window.addEventListener(EVENT,cb);window.addEventListener('storage',cb);return()=>{window.removeEventListener(EVENT,cb);window.removeEventListener('storage',cb)}}
