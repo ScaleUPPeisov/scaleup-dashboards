@@ -120,7 +120,7 @@ describe('VYRON 2.1.15 RC4 multi-channel statistics center',()=>{
   expect(api).toContain('operationId');
   expect(runtime).toContain('youtubeOperationActualCost(operationId)');
   expect(quota).toContain("'channels.list':{bucket:'general',cost:1");
-  expect(quota).toContain("if(!METHOD_LEDGER_COMMANDS.has(command))recordYoutubeCommand");
+  expect(api).toContain("if(!METHOD_LEDGER_COMMANDS.has(command))recordYoutubeCommand");
  });
 
  it('Statistics UI never imports credentials, opens Finder, or starts OAuth reconnect',()=>{
