@@ -279,7 +279,7 @@ fn select_present_account(candidates:&[String],present:&[String])->Option<String
  candidates.iter().find(|a|present.iter().any(|x|x==*a)).cloned()
 }
 fn migrate_profile_refresh_to_canonical(app:&AppHandle,profile_id:&str)->Result<(),String>{
- let canonical_account=oauth_key(profile_id,"refresh_token");
+ let canonical_account=profile_refresh_token_account(app,profile_id)?;
  match security::canonical_get_secret_cached(&canonical_account){
   Ok(Some(v)) if !v.trim().is_empty()=>{
    let mut state=read_keychain_migration_v2(app)?;
@@ -520,10 +520,13 @@ fn hydrate_profile_secret_for_operation(app:&AppHandle,p:&mut OAuthProfile,kind:
      _=>Err(format!("UNKNOWN_SECRET_KIND: {kind}"))
     }
 }
-fn delete_profile_secrets(id:&str)->Result<(),String>{
+fn delete_profile_secrets(app:&AppHandle,id:&str)->Result<(),String>{
     forget_access_token(id);
-    security::canonical_delete_secret(&oauth_key(id,"refresh_token"))?;
-    security::canonical_delete_secret(&oauth_key(id,"client_secret"))
+    let refresh_account=profile_refresh_token_account(app,id)?;
+    let client_secret_account=profile_client_secret_account(app,id)?;
+    security::canonical_delete_secret(&refresh_account)?;
+    if client_secret_account!=refresh_account{security::canonical_delete_secret(&client_secret_account)?}
+    Ok(())
 }
 fn write_oauth_metadata(path: &Path, s: &OAuthStore) -> Result<(), String> {
     let bytes = serde_json::to_vec_pretty(s).map_err(|e| format!("OAuth serialize: {e}"))?;
@@ -571,7 +574,15 @@ fn load_store_raw_for_explicit_migration(app:&AppHandle)->Result<OAuthStore,Stri
 fn save_store(app:&AppHandle,s:&OAuthStore)->Result<(),String>{write_oauth_metadata(&store_path(app)?,s)}
 fn save_selected_profile(app:&AppHandle,s:&OAuthStore,idx:usize)->Result<(),String>{
     let p=s.profiles.get(idx).ok_or_else(||"OAUTH_PROFILE_INDEX_MISSING".to_string())?;
-    write_profile_secrets(p)?;write_oauth_metadata(&store_path(app)?,s)
+    if !p.refresh_token.trim().is_empty(){
+      let account=profile_refresh_token_account(app,&p.id)?;
+      security::canonical_set_secret(&account,&p.refresh_token)?;
+    }
+    if !p.client_secret.trim().is_empty(){
+      let account=profile_client_secret_account(app,&p.id)?;
+      security::canonical_set_secret(&account,&p.client_secret)?;
+    }
+    write_oauth_metadata(&store_path(app)?,s)
 }
 fn preserved_refresh_token(
     existing: Option<&OAuthProfile>,
@@ -1327,7 +1338,7 @@ pub fn youtube_oauth_reconciliation_diagnostics(app:AppHandle)->Result<Value,Str
 #[tauri::command]
 pub fn youtube_oauth_disconnect(app: AppHandle, profile_id: String) -> Result<(), String> {
     let mut s = load_store_metadata(&app)?;
-    delete_profile_secrets(&profile_id)?;
+    delete_profile_secrets(&app,&profile_id)?;
     s.profiles.retain(|p| p.id != profile_id);
     save_store(&app, &s)
 }
