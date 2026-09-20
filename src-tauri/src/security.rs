@@ -152,6 +152,9 @@ pub fn canonical_denial_diagnostic(account:&str)->Option<serde_json::Value>{
 pub fn canonical_blocked_accounts()->Vec<String>{
  canonical_denied().lock().map(|d|d.keys().cloned().collect()).unwrap_or_default()
 }
+pub fn canonical_secret_cached(account:&str)->bool{
+ canonical_cache().lock().map(|c|c.contains_key(account)).unwrap_or(false)
+}
 #[cfg(target_os="macos")]
 fn with_keychain_no_ui<T,F>(f:F)->Result<T,String> where F:FnOnce()->Result<T,String>{
  let _serial=keychain_no_ui_mutex().lock().map_err(|_|"KEYCHAIN_NO_UI_LOCK_POISONED".to_string())?;
