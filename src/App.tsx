@@ -26,6 +26,7 @@ import {sortChannelsAlphabetically} from './channelSort';
 import {subscribeYoutubeQuota,subscribeYoutubeQuotaClock,youtubeQuotaClockSnapshot,youtubeQuotaUsage} from './youtubeQuota';
 import {clearErrorHistory,readErrorHistory,removeErrorHistory,subscribeErrorHistory,type ErrorHistoryItem} from './errorHistory';
 import {useUpdaterRuntime} from './updaterRuntime';
+import {UPDATER_AUTO_INTERVAL_MS,shouldRunUpdaterAgeCheck} from './updaterSchedule';
 import {currentUpdaterBlockers,updaterBlockerText} from './updaterGuard';
 import {applyUploadProgressFact,seedActiveUploadFacts} from './uploadTelemetry';
 import {journalUploadProgressMilestone} from './activityJournalRuntime';
@@ -67,7 +68,31 @@ export function App(){
   const updaterStatus=useUpdaterRuntime(s=>s.status),updaterLatest=useUpdaterRuntime(s=>s.latestVersion),updaterCheck=useUpdaterRuntime(s=>s.check),bootstrapUpdater=useUpdaterRuntime(s=>s.bootstrapVersion),markUpdated=useUpdaterRuntime(s=>s.markUpdated);
   useEffect(()=>{api.loadState().then(hydrate).catch(e=>{hydrate(EMPTY_STATE);useApp.getState().log(`Не удалось загрузить состояние: ${String(e)}`,'error')});api.license().then(setLicense).catch(()=>setLicense({valid:false}))},[]);
   useEffect(()=>{if(booted&&!settings.workspace){api.defaultWorkspace().then(workspace=>{useApp.getState().patchSettings({workspace});useApp.getState().log(`Workspace: ${workspace}`)}).catch(e=>log(`Workspace: ${String(e)}`,'error'))}},[booted,settings.workspace]);
-  useEffect(()=>{if(!booted)return;void bootstrapUpdater();if(!settings.autoCheckUpdates)return;void updaterCheck({silent:true});const recurring=window.setInterval(()=>void updaterCheck({silent:true}),6*60*60_000);return()=>window.clearInterval(recurring)},[booted,settings.autoCheckUpdates,bootstrapUpdater,updaterCheck]);
+  useEffect(()=>{
+    if(!booted)return;
+    let disposed=false,timer:number|undefined;
+    const clearTimer=()=>{if(timer!==undefined){window.clearTimeout(timer);timer=undefined}};
+    const arm=()=>{
+      clearTimer();
+      if(disposed||!settings.autoCheckUpdates)return;
+      const state=useUpdaterRuntime.getState(),now=Date.now();
+      const due=state.nextAutomaticCheckAt&&state.nextAutomaticCheckAt>now+1000?state.nextAutomaticCheckAt:now+UPDATER_AUTO_INTERVAL_MS;
+      timer=window.setTimeout(()=>{void runAutomatic()},Math.max(1000,due-now));
+    };
+    const runAutomatic=async()=>{if(disposed||!settings.autoCheckUpdates)return;await updaterCheck({silent:true});arm()};
+    const maybeRunFresh=()=>{
+      if(disposed||!settings.autoCheckUpdates)return;
+      const last=useUpdaterRuntime.getState().lastCheckAttemptAt;
+      if(!shouldRunUpdaterAgeCheck(last))return;
+      clearTimer();
+      void updaterCheck({silent:true}).finally(arm);
+    };
+    const onVisibility=()=>{if(document.visibilityState==='visible')maybeRunFresh()};
+    void (async()=>{await bootstrapUpdater();if(disposed||!settings.autoCheckUpdates)return;await updaterCheck({silent:true});arm()})();
+    document.addEventListener('visibilitychange',onVisibility);
+    window.addEventListener('online',maybeRunFresh);
+    return()=>{disposed=true;clearTimer();document.removeEventListener('visibilitychange',onVisibility);window.removeEventListener('online',maybeRunFresh)};
+  },[booted,settings.autoCheckUpdates,bootstrapUpdater,updaterCheck]);
   useEffect(()=>{if(updaterStatus!=='AVAILABLE'||!updaterLatest)return;notifyInfo(`Доступно обновление VYRON YT PEISOV ${updaterLatest}`,'Слева сверху нажмите «Обновить».',{operationId:`update-available:${updaterLatest}`});void notifyUpdateAvailable(updaterLatest)},[updaterStatus,updaterLatest]);
   useEffect(()=>{if(!booted)return;void api.appVersion().then(v=>{const expected=localStorage.getItem('vyron:update-installing-version');if(expected&&expected===v){localStorage.removeItem('vyron:update-installing-version');markUpdated(v);notifySuccess('Обновление установлено',`VYRON YT PEISOV обновлён до версии ${v}.`,{operationId:`update-installed:${v}`})}})},[booted,markUpdated]);
   useEffect(()=>{document.documentElement.classList.toggle('reduceMotion',settings.reduceMotion)},[settings.reduceMotion]);
@@ -157,5 +182,5 @@ function UpdaterSidebar(){
  const blockers=status==='READY_TO_INSTALL'?currentUpdaterBlockers(jobs,channels.map(x=>x.id)):runtimeBlockers;
  const available=['AVAILABLE','DOWNLOADING','VERIFYING','READY_TO_INSTALL','INSTALLING','READY_TO_RESTART','RESTARTING'].includes(status);
  const installNow=async()=>{const now=currentUpdaterBlockers(jobs,channels.map(x=>x.id));await install(now)};
- return <section className={`updaterSidebar ${available?'available':''} ${status==='ERROR'?'error':''}`} data-updater-status={status}><div className="updaterVersion"><span>VYRON {current||'…'}</span>{status==='UP_TO_DATE'||status==='UPDATED'?<small>✓ Актуальная версия</small>:status==='CHECKING'?<small>Проверка обновлений…</small>:null}</div>{available&&<><b>🔔 Обновление {latest}</b>{status==='AVAILABLE'&&<button className="updaterPrimary" onClick={()=>void download()}>ОБНОВИТЬ</button>}{(status==='DOWNLOADING'||status==='VERIFYING')&&<><small>{status==='DOWNLOADING'?`⬇ ${progress.toFixed(0)}%`:'Проверка пакета…'} {total>0&&`• ${formatUpdaterBytes(downloaded)} / ${formatUpdaterBytes(total)}`}</small><div className="updaterMiniProgress"><i style={{width:`${progress}%`}}/></div></>}{status==='READY_TO_INSTALL'&&<><small>✓ Обновление загружено и готово к установке.</small>{blockers.length>0&&<div className="updaterBlockers">Сначала завершите задачи:<br/>{updaterBlockerText(blockers).split('\n').map(x=><span key={x}>{x}</span>)}</div>}<button className="updaterPrimary" disabled={blockers.length>0} onClick={()=>void installNow()}>УСТАНОВИТЬ И ПЕРЕЗАПУСТИТЬ</button></>}{status==='INSTALLING'&&<small>Установка…</small>}{status==='READY_TO_RESTART'&&<small>✓ Готово к перезапуску</small>}{status==='RESTARTING'&&<small>Перезапуск…</small>}</>}{status==='ERROR'&&<><b>Обновление: ошибка</b><small>{errorCode||'UPDATER_ERROR'}</small><button onClick={()=>void check({force:true})}>ПОВТОРИТЬ</button></>}</section>
+ return <section className={`updaterSidebar ${available?'available':''} ${status==='ERROR'?'error':''}`} data-updater-status={status}><div className="updaterVersion"><span>VYRON {current||'…'}</span>{status==='UP_TO_DATE'||status==='UPDATED'?<small>✓ Актуальная версия</small>:status==='CHECKING'?<small>Проверка обновлений…</small>:null}</div>{available&&<><b>🔔 Доступно обновление {latest}</b>{status==='AVAILABLE'&&<button className="updaterPrimary" onClick={()=>void download()}>ОБНОВИТЬ</button>}{(status==='DOWNLOADING'||status==='VERIFYING')&&<><small>{status==='DOWNLOADING'?`⬇ ${progress.toFixed(0)}%`:'Проверка пакета…'} {total>0&&`• ${formatUpdaterBytes(downloaded)} / ${formatUpdaterBytes(total)}`}</small><div className="updaterMiniProgress"><i style={{width:`${progress}%`}}/></div></>}{status==='READY_TO_INSTALL'&&<><small>✓ Обновление загружено и готово к установке.</small>{blockers.length>0&&<div className="updaterBlockers">Сначала завершите задачи:<br/>{updaterBlockerText(blockers).split('\n').map(x=><span key={x}>{x}</span>)}</div>}<button className="updaterPrimary" disabled={blockers.length>0} onClick={()=>void installNow()}>УСТАНОВИТЬ И ПЕРЕЗАПУСТИТЬ</button></>}{status==='INSTALLING'&&<small>Установка…</small>}{status==='READY_TO_RESTART'&&<small>✓ Готово к перезапуску</small>}{status==='RESTARTING'&&<small>Перезапуск…</small>}</>}{status==='ERROR'&&<><b>Обновление: ошибка</b><small>{errorCode||'UPDATER_ERROR'}</small><button onClick={()=>void check({force:true})}>ПОВТОРИТЬ</button></>}</section>
 }
