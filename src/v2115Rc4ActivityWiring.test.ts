@@ -10,10 +10,10 @@ describe('VYRON 2.1.15 RC4 activity history wiring',()=>{
   expect(center).toContain('<ActivityHistory/>');
   for(const label of ['Публикация','Метаданные','Расписание','Загруженные','Аккаунты'])expect(center).toContain(label);
  });
- it('state v9 persists journal and legacy state gets an empty journal rather than invented events',()=>{
+ it('state v10 persists journal and legacy state gets an empty journal rather than invented events',()=>{
   const store=read('src/store.ts'),storage=read('src-tauri/src/storage.rs');
   expect(store).toContain('activityJournal:[]');
-  expect(store).toContain('activityJournal:s.activityJournal');
+  expect(store).toContain('activityJournal:s.activityJournal');expect(store).toContain('statisticsHistory:s.statisticsHistory');
   expect(storage).toContain('"activityJournal"');
   expect(storage).toContain('state["activityJournal"] = json!([])');
  });
