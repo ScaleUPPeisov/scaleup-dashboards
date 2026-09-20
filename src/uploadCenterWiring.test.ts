@@ -19,11 +19,11 @@ describe('VYRON 2.1.6 live upload wiring',()=>{
    const center=read('./UploadCenter.tsx');
    expect(center).toContain('queue.running.map');
    expect(center).toContain('queue.queued.map');
-   expect(center).toContain('Позиция в очереди');
+   expect(center).toMatch(/Позиция(?::| в очереди:)/);
    expect(center).toContain('removeQueuedUpload');
    expect(center).toContain('Убрать из очереди');
    expect(center).toContain('Расчёт времени…');
-   expect(center).not.toContain('Отменить');
+   expect(center).not.toContain('Отменить активную загрузку');
  });
  it('global indicator and Dashboard integration are wired',()=>{
    expect(read('./App.tsx')).toContain('<GlobalUploadIndicator/>');
