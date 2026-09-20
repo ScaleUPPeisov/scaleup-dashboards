@@ -1,5 +1,5 @@
 import React,{useEffect,useRef,useState} from 'react';
-import {api,type GoogleConfigStatus,type YoutubeProfileHealth} from './api';
+import {api,type GoogleConfigStatus,type OAuthReconciliationDiagnostic,type YoutubeProfileHealth} from './api';
 import {useApp} from './store';
 import type {YoutubeProfile,YoutubeChannelStatistics} from './types';
 import {findFutureChannelMatch} from './channelIdentity';
@@ -15,6 +15,7 @@ export function AccountsPage(){
  const [profiles,setProfiles]=useState<YoutubeProfile[]>([]);
  const [health,setHealth]=useState<Record<string,YoutubeProfileHealth>>({});
  const [config,setConfig]=useState<GoogleConfigStatus|null>(null);
+ const [reconciliation,setReconciliation]=useState<OAuthReconciliationDiagnostic|null>(null);
  const [busy,setBusy]=useState(false),[checking,setChecking]=useState(false);
  const [browserOpen,setBrowserOpen]=useState(false),[browsers,setBrowsers]=useState<BrowserOption[]>([]);
  const [browser,setBrowser]=useState(localStorage.getItem('vyron:oauth-browser')||'default');
@@ -59,9 +60,14 @@ export function AccountsPage(){
  }
 
  async function refresh(){
-  const [p,c]=await Promise.all([api.youtubeProfiles(),api.youtubeGoogleConfig()]);
-  setProfiles(p);setConfig(c);
-  for(const profile of p)bindProfile(profile);
+  // Profile metadata is independent from Keychain/global-client health. Never let a
+  // global credential error collapse Account Center to an empty profile list.
+  let p:YoutubeProfile[]=[];
+  try{p=await api.youtubeProfiles();setProfiles(p);for(const profile of p)bindProfile(profile)}
+  catch(e){toast(`Не удалось прочитать метаданные OAuth-профилей: ${String(e)}`)}
+  try{setConfig(await api.youtubeGoogleConfig())}
+  catch{setConfig({configured:false,hasSecret:false,hasApiKey:false,oauthReady:false,oauthState:'ERROR',repairRequired:true,secretOperational:false,secureStorageErrorCode:'KEYCHAIN_READ_FAILED'})}
+  try{setReconciliation(await api.youtubeOauthReconciliationDiagnostics())}catch{}
   return p
  }
 
@@ -182,7 +188,9 @@ export function AccountsPage(){
   try{for(const p of profiles)await checkProfile(p,true)}finally{setChecking(false)}
  }
 
- const oauthReady=!!config?.oauthReady;
+ const oauthReady=!!config?.oauthReady&&config?.secretOperational!==false;
+ const oauthRepairRequired=Boolean(config?.repairRequired)||config?.oauthState==='NEEDS_SECURE_STORAGE_REPAIR';
+ const orphanMappings=reconciliation?.orphanChannels||[];
 
  return <>
   <div className="pageHeader">
@@ -203,16 +211,17 @@ export function AccountsPage(){
    <div className="configChecks">
     <span className={config?.configured?'good':''}>OAuth Client ID <b>{config?.configured?'✓':'—'}</b></span>
     <span className={config?.projectId?'good':''}>Project <b>{config?.projectId||'—'}</b></span>
-    <span className={config?.hasSecret?'good':''}>Client Secret <b>{config?.hasSecret?'✓':'—'}</b></span>
-    <span className={oauthReady?'good':'warn'}>OAuth Ready <b>{oauthReady?'✓':'—'}</b></span>
+    <span className={config?.secretOperational?'good':config?.hasSecret?'warn':''}>Client Secret <b>{config?.secretOperational?'✓':config?.hasSecret?'требуется восстановление':'—'}</b></span>
+    <span className={oauthReady?'good':'warn'}>OAuth <b>{oauthReady?'READY':config?.oauthState||'NOT CONFIGURED'}</b></span>
     <span className={settings.youtubeApiKey?'good':''}>Public API Key <b>{settings.youtubeApiKey?'✓':'не нужен для OAuth'}</b></span>
    </div>
-   {!oauthReady&&<div className="publisherNotice"><b>OAuth Client настроен не полностью</b><p>Нужен один credentials.json текущего OAuth Client VYRON. Finder откроется только после явного нажатия кнопки импорта ниже.</p></div>}
-   <div className="googleConfigActions"><button disabled={busy} onClick={()=>file.current?.click()}>{oauthReady?'Заменить credentials.json':'Импортировать credentials.json один раз'}</button><label>Public API Key<input type="password" placeholder="опционально" value={settings.youtubeApiKey} onChange={e=>patchSettings({youtubeApiKey:e.target.value.trim()})}/></label></div>
+   {oauthRepairRequired&&<div className="publisherNotice"><b>Google OAuth требует восстановления</b><p>Защищённый Client Secret недоступен текущей версии VYRON. Каналы, профили, расписания и сохранённая статистика не удалены. Импортируйте тот же credentials.json один раз — VYRON создаст новый защищённый secure item без запроса пароля macOS.</p>{config?.secureStorageErrorCode&&<small>Диагностика: {config.secureStorageErrorCode}</small>}</div>}
+   {!oauthReady&&!oauthRepairRequired&&<div className="publisherNotice"><b>OAuth Client настроен не полностью</b><p>Нужен один credentials.json текущего OAuth Client VYRON. Finder откроется только после явного нажатия кнопки импорта ниже.</p></div>}
+   <div className="googleConfigActions"><button disabled={busy} onClick={()=>file.current?.click()}>{oauthRepairRequired?'Восстановить OAuth Client':oauthReady?'Заменить credentials.json':'Импортировать credentials.json один раз'}</button><label>Public API Key<input type="password" placeholder="опционально" value={settings.youtubeApiKey} onChange={e=>patchSettings({youtubeApiKey:e.target.value.trim()})}/></label></div>
   </section>
 
   <section className="panel accountsPanel">
-   <div className="panelHead"><div><small>YOUTUBE ACCOUNTS</small><h3>{profiles.length?`${profiles.length} OAuth profiles`:'Аккаунтов пока нет'}</h3></div></div>
+   <div className="panelHead"><div><small>YOUTUBE ACCOUNTS</small><h3>{profiles.length?`${profiles.length} OAuth profiles`:orphanMappings.length?`Профили требуют восстановления • ${orphanMappings.length} mappings`:'Аккаунтов пока нет'}</h3>{reconciliation&&<p>Каналов: {reconciliation.channelsTotal} • profiles: {reconciliation.profilesTotal} • mappings: {reconciliation.channelsWithYoutubeProfileId}</p>}</div></div>
    {!profiles.length
     ?<div className="empty"><b>Подключи первый YouTube-канал</b><p>Настройте GLOBAL OAuth Client один раз, затем нажмите «+ Добавить канал», выберите браузер и нужный Google-аккаунт.</p></div>
     :<div className="accountList">{profiles.map(p=>{
