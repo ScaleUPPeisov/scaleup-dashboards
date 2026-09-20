@@ -1,11 +1,12 @@
 import React,{useEffect,useRef,useState} from 'react';
-import {api,type GoogleConfigStatus,type OAuthReconciliationDiagnostic,type YoutubeProfileHealth} from './api';
+import {api,type GoogleConfigStatus,type OAuthCredentialStateProfile,type OAuthReconciliationDiagnostic,type YoutubeProfileHealth} from './api';
 import {useApp} from './store';
 import type {YoutubeProfile,YoutubeChannelStatistics} from './types';
 import {findFutureChannelMatch} from './channelIdentity';
 import {channelStatsStatusLabel,compactChannelStat,exactChannelStat,formatStatsUpdatedAt,normalizeChannelStatistics,subscriberStatLabel} from './youtubeChannelStats';
 import {refreshYoutubeChannelStatistics,refreshYoutubeProfileStatistics,type ChannelStatisticsRefreshProgress} from './youtubeChannelStatsRuntime';
 import {journal} from './activityJournalRuntime';
+import {resolveOAuthKeychainErrors} from './errorHistory';
 
 type BrowserOption={id:string;label:string;available:boolean};
 type DuplicateChannel={profileId:string;channelId?:string;title?:string};
@@ -15,6 +16,7 @@ export function AccountsPage(){
  const channels=useApp(s=>s.channels),toast=useApp(s=>s.toast),settings=useApp(s=>s.settings),patchSettings=useApp(s=>s.patchSettings);
  const [profiles,setProfiles]=useState<YoutubeProfile[]>([]);
  const [health,setHealth]=useState<Record<string,YoutubeProfileHealth>>({});
+ const [credentialStates,setCredentialStates]=useState<Record<string,OAuthCredentialStateProfile>>({});
  const [config,setConfig]=useState<GoogleConfigStatus|null>(null);
  const [reconciliation,setReconciliation]=useState<OAuthReconciliationDiagnostic|null>(null);
  const [busy,setBusy]=useState(false),[checking,setChecking]=useState(false);
@@ -69,6 +71,7 @@ export function AccountsPage(){
   try{setConfig(await api.youtubeGoogleConfig())}
   catch{setConfig({configured:false,hasSecret:false,hasApiKey:false,oauthReady:false,oauthState:'ERROR',repairRequired:true,secretOperational:false,secureStorageErrorCode:'KEYCHAIN_READ_FAILED'})}
   try{setReconciliation(await api.youtubeOauthReconciliationDiagnostics())}catch{}
+  try{const states=await api.youtubeOauthCredentialStates();setCredentialStates(Object.fromEntries(states.profiles.map(x=>[x.profileUuid,x])))}catch{}
   return p
  }
 
@@ -78,7 +81,10 @@ export function AccountsPage(){
   try{
    const result=await refreshYoutubeChannelStatistics(force,p=>setAllStats({running:true,...p}));
    setAllStats({running:false,done:result.done,total:result.total});
-   if(force)toast(result.failed?`Статистика обновлена: ${result.updated}, ошибок: ${result.failed}`:`✓ Статистика каналов обновлена: ${result.updated}`);
+   if(force){
+    if(result.credentialBlocked)toast(`Статистика обновлена частично. Обновлено: ${result.updated}. Требуют восстановления доступа: ${result.credentialBlocked}. YouTube API errors: ${result.failed}.`);
+    else toast(result.failed?`Статистика обновлена: ${result.updated}, YouTube API ошибок: ${result.failed}`:`✓ Статистика каналов обновлена: ${result.updated}`);
+   }
   }catch(e){
    setAllStats(x=>({...x,running:false}));
    if(force)toast(`Не удалось обновить статистику каналов: ${String(e)}`)
@@ -175,25 +181,60 @@ export function AccountsPage(){
    const h=await api.youtubeProfileHealth(p.id);
    setHealth(x=>({...x,[p.id]:h}));
    if(h.statistics)applyStatistics(p,h.statistics);
+   journal({eventId:`oauth-validation:${p.id}:${Date.now()}`,eventType:'OAUTH_VALIDATION_PASS',status:'SUCCESS',source:'LIVE_OPERATION',profileId:p.id,channelId:boundChannel(p)?.id,channelName:p.channelTitle,details:{youtubeChannelId:p.channelId||'',youtubeApiRequests:1}});
+   if(h.statistics)applyStatistics(p,h.statistics);
    if(!quiet)toast(`✓ ${h.channelTitle||p.channelTitle||'Канал'}: OAuth READY, YouTube API OK`);
+   await refresh();
    return h
   }catch(e){
-   const raw=String(e),globalBlocked=Boolean(config?.repairRequired)||raw.includes('KEYCHAIN_ACCESS_DENIED')||raw.includes('OAUTH_CLIENT_SECRET');
-   const h:YoutubeProfileHealth={ok:false,status:globalBlocked?'GLOBAL_OAUTH_REPAIR_REQUIRED':'RECONNECT_REQUIRED',error:raw};
+   const raw=String(e),profileKeychain=/KEYCHAIN_|OAUTH_CREDENTIAL_PRECHECK_FAILED/i.test(raw),globalBlocked=Boolean(config?.repairRequired)||raw.includes('OAUTH_CLIENT_SECRET');
+   const h:YoutubeProfileHealth={ok:false,status:profileKeychain?'KEYCHAIN_BLOCKED':globalBlocked?'GLOBAL_OAUTH_REPAIR_REQUIRED':raw.includes('OAUTH_INVALID_GRANT')?'RECONNECT_REQUIRED':'CHECK_FAILED',error:raw};
    setHealth(x=>({...x,[p.id]:h}));
-   if(!quiet)toast(globalBlocked?'Google OAuth Client требует восстановления. Профиль и канал сохранены.':raw);
+   if(profileKeychain){
+    journal({eventId:`oauth-keychain-denied:${p.id}:${Date.now()}`,eventType:'OAUTH_KEYCHAIN_ACCESS_DENIED',status:'FAILED',source:'LIVE_OPERATION',profileId:p.id,channelId:boundChannel(p)?.id,channelName:p.channelTitle,errorCode:'KEYCHAIN_ACCESS_DENIED',details:{youtubeChannelId:p.channelId||'',youtubeApiRequests:0}});
+   }
+   if(!quiet)toast(profileKeychain?'VYRON не может прочитать OAuth-токен канала. Запрос к YouTube не выполнялся. Выполните безопасную проверку.':globalBlocked?'GLOBAL OAuth Client требует восстановления. Профиль и канал сохранены.':raw);
    return h
   }
  }
 
+ async function safeRetryProfile(p:YoutubeProfile,quiet=false){
+  const result=await api.youtubeOauthRetryProfileKeychain(p.id);
+  if(result.status==='ACCESSIBLE'){
+   resolveOAuthKeychainErrors(p.id);
+   journal({eventId:`oauth-keychain-recovered:${p.id}:${Date.now()}`,eventType:'OAUTH_KEYCHAIN_ACCESS_RECOVERED',status:'SUCCESS',source:'LIVE_OPERATION',profileId:p.id,channelId:boundChannel(p)?.id,channelName:p.channelTitle,details:{youtubeChannelId:p.channelId||'',youtubeApiRequests:0}});
+   if(!quiet)toast(`✓ ${p.channelTitle||p.channelId||'Канал'}: OAuth-токен снова читается. YouTube API: 0.`);
+  }else if(result.status==='KEYCHAIN_BLOCKED'){
+   journal({eventId:`oauth-keychain-denied:${p.id}:${Date.now()}`,eventType:'OAUTH_KEYCHAIN_ACCESS_DENIED',status:'FAILED',source:'LIVE_OPERATION',profileId:p.id,channelId:boundChannel(p)?.id,channelName:p.channelTitle,errorCode:result.errorCode||'KEYCHAIN_ACCESS_DENIED',details:{youtubeChannelId:p.channelId||'',osstatus:result.osstatus??0,youtubeApiRequests:0}});
+   if(!quiet)toast(`Keychain всё ещё блокирует токен ${p.channelTitle||p.channelId||''}. Password popup не открывался.`);
+  }else if(result.status==='MISSING'&&!quiet)toast(`OAuth-токен ${p.channelTitle||p.channelId||''} отсутствует. Переподключение требуется только этому профилю.`);
+  await refresh();
+  return result
+ }
+
  async function checkAll(){
   setChecking(true);
-  try{for(const p of profiles)await checkProfile(p,true)}finally{setChecking(false)}
+  try{
+   const result=await api.youtubeOauthSafeCheckAllProfiles();
+   for(const row of result.profiles){
+    const p=profiles.find(x=>x.id===row.profileUuid);if(!p)continue;
+    if(row.status==='ACCESSIBLE'){resolveOAuthKeychainErrors(p.id);if(row.recovered)journal({eventId:`oauth-keychain-recovered:${p.id}:${Date.now()}`,eventType:'OAUTH_KEYCHAIN_ACCESS_RECOVERED',status:'SUCCESS',source:'LIVE_OPERATION',profileId:p.id,channelId:boundChannel(p)?.id,channelName:p.channelTitle,details:{youtubeChannelId:p.channelId||'',youtubeApiRequests:0}})}
+    else if(row.status==='KEYCHAIN_BLOCKED')journal({eventId:`oauth-keychain-denied:${p.id}:${Date.now()}`,eventType:'OAUTH_KEYCHAIN_ACCESS_DENIED',status:'FAILED',source:'LIVE_OPERATION',profileId:p.id,channelId:boundChannel(p)?.id,channelName:p.channelTitle,errorCode:row.errorCode||'KEYCHAIN_ACCESS_DENIED',details:{youtubeChannelId:p.channelId||'',osstatus:row.osstatus??0,youtubeApiRequests:0}});
+   }
+   await refresh();
+   toast(`Проверка OAuth завершена. Доступны: ${result.accessible}. Автоматически восстановлены: ${result.recoveredAutomatically}. Keychain blocked: ${result.keychainBlocked}. Missing: ${result.missing}. YouTube API requests: 0.`);
+  }catch(e){toast(`Безопасная OAuth-проверка не завершена: ${String(e)}`)}
+  finally{setChecking(false)}
  }
 
  const oauthReady=!!config?.oauthReady&&config?.secretOperational!==false;
  const oauthRepairRequired=Boolean(config?.repairRequired)||config?.oauthState==='NEEDS_SECURE_STORAGE_REPAIR';
  const orphanMappings=reconciliation?.orphanChannels||[];
+ const credentialRows=Object.values(credentialStates);
+ const oauthOperational=credentialRows.filter(x=>x.credentialState==='READY').length;
+ const keychainBlocked=credentialRows.filter(x=>x.credentialState==='KEYCHAIN_BLOCKED').length;
+ const reconnectRequired=credentialRows.filter(x=>x.credentialState==='RECONNECT_REQUIRED'||x.credentialState==='MISSING').length;
+ const oauthNotChecked=Math.max(0,profiles.length-oauthOperational-keychainBlocked-reconnectRequired);
 
  return <>
   <div className="pageHeader">
@@ -224,12 +265,12 @@ export function AccountsPage(){
   </section>
 
   <section className="panel accountsPanel">
-   <div className="panelHead"><div><small>YOUTUBE ACCOUNTS</small><h3>{profiles.length?`${profiles.length} OAuth profiles`:orphanMappings.length?`Профили требуют восстановления • ${orphanMappings.length} mappings`:'Аккаунтов пока нет'}</h3>{reconciliation&&<p>Каналов: {reconciliation.channelsTotal} • profiles: {reconciliation.profilesTotal} • mappings: {reconciliation.channelsWithYoutubeProfileId}</p>}</div></div>
+   <div className="panelHead"><div><small>YOUTUBE ACCOUNTS</small><h3>{profiles.length?`${profiles.length} OAuth profiles`:orphanMappings.length?`Профили требуют восстановления • ${orphanMappings.length} mappings`:'Аккаунтов пока нет'}</h3>{reconciliation&&<p>Каналов: {reconciliation.channelsTotal} • profiles: {reconciliation.profilesTotal} • mappings: {reconciliation.channelsWithYoutubeProfileId}</p>}{profiles.length>0&&<p>OAuth operational: <b>{oauthOperational}</b> • Keychain blocked: <b>{keychainBlocked}</b> • Reconnect required: <b>{reconnectRequired}</b> • Not checked: <b>{oauthNotChecked}</b></p>}</div>{keychainBlocked>0&&<button disabled={checking} onClick={checkAll}>Повторить безопасную проверку</button>}</div>
    {!profiles.length
     ?<div className="empty">{orphanMappings.length?<><b>Метаданные OAuth-профилей не найдены, но каналы сохранены</b><p>Ничего не удалено автоматически. Исправьте GLOBAL OAuth и проверьте OAuth metadata; массовое переподключение не запускается.</p>{orphanMappings.slice(0,31).map(x=><p key={x.channelId}><b>{x.channelName}</b> • ORPHAN_MAPPING • {x.youtubeProfileId}</p>)}</>:<><b>Подключи первый YouTube-канал</b><p>Настройте GLOBAL OAuth Client один раз, затем нажмите «+ Добавить канал», выберите браузер и нужный Google-аккаунт.</p></>}</div>
     :<div className="accountList">{profiles.map(p=>{
-      const h=health[p.id],bound=channels.find(c=>c.youtubeProfileId===p.id||c.youtubeChannelId===p.channelId),stats=bound?.stats;
-      const oauthOk=!!h?.ok||p.credentialStatus==='WORKING',oauthNeedsGlobal=oauthRepairRequired&&!h?.ok;
+      const h=health[p.id],bound=channels.find(c=>c.youtubeProfileId===p.id||c.youtubeChannelId===p.channelId),stats=bound?.stats,credential=credentialStates[p.id],credentialState=credential?.credentialState||p.credentialStatus||'NOT_CHECKED';
+      const oauthOk=!!h?.ok||credentialState==='READY'||p.credentialStatus==='WORKING',oauthNeedsGlobal=oauthRepairRequired&&!h?.ok;
       const syncOk=!!(stats?.statisticsUpdatedAt||stats?.updatedAt)&&!stats?.syncWarning;
       return <article className="accountRow accountRowStats" key={p.id}>
        {(h?.thumbnail||stats?.thumbnail)?<img src={h?.thumbnail||stats?.thumbnail} loading="lazy"/>:<div className="accountAvatar">YT</div>}
@@ -237,7 +278,7 @@ export function AccountsPage(){
         <b>{h?.channelTitle||p.channelTitle||stats?.channelTitle||'YouTube канал'}</b>
         <small>{stats?.handle?`${stats.handle} • `:''}{p.channelId||'Channel ID ещё не определён'}</small>
         <div className="accountBadges">
-         <span className={oauthOk?'good':'warn'}>OAuth: {oauthOk?'READY':oauthNeedsGlobal?'GLOBAL REPAIR':h?'RECONNECT':p.credentialStatus==='CHECK_ON_USE'?'CHECK ON USE':'не проверен'}</span>
+         <span className={oauthOk?'good':credentialState==='KEYCHAIN_BLOCKED'?'warn':''}>OAuth: {oauthOk?'READY':oauthNeedsGlobal?'GLOBAL REPAIR':credentialState==='KEYCHAIN_BLOCKED'?'KEYCHAIN BLOCKED':credentialState==='RECONNECT_REQUIRED'||credentialState==='MISSING'?'RECONNECT REQUIRED':credentialState==='WRONG_CHANNEL'?'WRONG CHANNEL':'NOT CHECKED'}</span>
          <span className={syncOk?'good':stats?.syncWarning?'warn':''}>YouTube API: {syncOk?'OK':stats?.syncWarning?'WARNING':'CACHE'}</span>
          {p.preferredBrowser&&<span>Браузер: {p.preferredBrowser}</span>}
         </div>
@@ -254,6 +295,7 @@ export function AccountsPage(){
        </div>
        <div className="accountActions">
         <button className="mini" disabled={busy} onClick={()=>void checkProfile(p)}>Проверить</button>
+        {credentialState==='KEYCHAIN_BLOCKED'&&<button className="mini" disabled={busy} onClick={()=>void safeRetryProfile(p)}>Безопасный retry</button>}
         <button className="mini" disabled={!!refreshingStats[p.id]} onClick={()=>void refreshProfileStats(p)}>{refreshingStats[p.id]?'↻ Обновление…':'↻ Обновить'}</button>
         <button className="mini" disabled={busy} onClick={()=>void askBrowser(p.id)}>Переподключить</button>
         <button className="danger mini" disabled={busy} onClick={async()=>{await api.youtubeDisconnect(p.id);await refresh()}}>Удалить</button>
