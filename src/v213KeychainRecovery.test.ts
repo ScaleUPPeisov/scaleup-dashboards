@@ -8,7 +8,7 @@ describe('VYRON 2.1.9 RC7 per-query no-UI Keychain recovery contracts',()=>{
   const h=humanizeError('KEYCHAIN_AUTH_FAILED: osstatus=-25293','storage');
   expect(h.code).toBe('KEYCHAIN_AUTH_FAILED');
   expect(h.title).toContain('Keychain');
-  expect(h.message).toContain('переподключение Google');
+  expect(h.message).toContain('новый подтверждённый Google refresh token');
   expect(h.action).toBe('reconnect');
  });
  it('maps canceled and interaction-required Keychain states to one explicit safe no-UI retry before reconnect',()=>{
