@@ -11,14 +11,14 @@ describe('VYRON 2.1.9 RC7 per-query no-UI Keychain recovery contracts',()=>{
   expect(h.message).toContain('переподключение Google');
   expect(h.action).toBe('reconnect');
  });
- it('maps canceled and interaction-required Keychain states separately',()=>{
+ it('maps canceled and interaction-required Keychain states to one explicit safe no-UI retry before reconnect',()=>{
   const canceled=humanizeError('KEYCHAIN_USER_CANCELED: osstatus=-128','storage');
   const blocked=humanizeError('KEYCHAIN_INTERACTION_REQUIRED: osstatus=-25308','storage');
   expect(canceled.code).toBe('KEYCHAIN_CANCELED');
-  expect(canceled.action).toBe('reconnect');
-  expect(blocked.code).toBe('KEYCHAIN_INTERACTION_BLOCKED');
-  expect(blocked.action).toBe('reconnect');
-  expect(blocked.message).toContain('не показывает системный запрос пароля');
+  expect(canceled.action).toBe('safe-oauth-retry');
+  expect(blocked.code).toBe('KEYCHAIN_INTERACTION_REQUIRED');
+  expect(blocked.action).toBe('safe-oauth-retry');
+  expect(blocked.message).toContain('Запрос к YouTube не выполнялся');
  });
  it('connects Diagnostics UI to a registered Tauri Keychain probe',()=>{
   const api=read('./api.ts'),ui=read('./SettingsOS.tsx'),rust=read('../src-tauri/src/security.rs'),lib=read('../src-tauri/src/lib.rs');
