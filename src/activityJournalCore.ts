@@ -128,7 +128,7 @@ export function legacyMetadataJournal(rows:LegacyMetadataHistoryRow[],existing:A
 
 export type SourceClassification='PRESENT'|'TRASHED_BY_VYRON'|'MISSING_LEGACY_UNKNOWN'|'SOURCE_CHANGED'|'UNKNOWN';
 export function effectiveSourceLifecycle(row:UploadHistoryRecord):SourceClassification{
- if(row.sourceLifecycle==='TRASHED_BY_VYRON'||row.storageLifecycle==='TRASHED_BY_VYRON'||row.trashedAt)return'TRASHED_BY_VYRON';
+ if(row.sourceLifecycle==='TRASHED_BY_VYRON'||row.trashedAt)return'TRASHED_BY_VYRON';
  if(row.sourceLifecycle==='PRESENT')return'PRESENT';
  if(row.sourceLifecycle==='SOURCE_CHANGED')return'SOURCE_CHANGED';
  if(row.sourceLifecycle==='MISSING_EXTERNAL'||row.sourceLifecycle==='MISSING_LEGACY_UNKNOWN')return'MISSING_LEGACY_UNKNOWN';
