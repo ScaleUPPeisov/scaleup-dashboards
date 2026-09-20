@@ -185,13 +185,18 @@ fn resolve_oauth_credential_states_local(app:&AppHandle)->Result<Vec<Value>,Stri
   let (base_credential_state,last_validation_result,last_validated_at)=resolved_credential_state(profile,&migration_state,canonical_present,legacy_present,validation);
   let denial=security::canonical_denial_diagnostic(&canonical_account);
   let metadata=security::canonical_account_metadata_diagnostic(&canonical_account);
-  let credential_state=if denial.is_some(){"KEYCHAIN_BLOCKED"}else if base_credential_state=="CONNECTED"{"READY"}else{base_credential_state};
+  let currently_accessible=security::canonical_secret_cached(&canonical_account);
+  let credential_state=if denial.is_some(){"KEYCHAIN_BLOCKED"}
+    else if currently_accessible&&base_credential_state=="CONNECTED"{"READY"}
+    else if canonical_present{"CANONICAL_PRESENT_UNVERIFIED"}
+    else{base_credential_state};
   rows.push(json!({
    "profileUuid":profile.id,
    "channelTitle":profile.channel_title,
    "expectedChannelId":profile.channel_id,
    "canonicalAccount":canonical_account,
    "canonicalRefreshPresent":canonical_present,
+   "canonicalRefreshAccessibleThisProcess":currently_accessible,
    "canonicalRefreshMetadata":metadata,
    "keychainDenial":denial,
    "legacyRefreshPresent":legacy_present,
