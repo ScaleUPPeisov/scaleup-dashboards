@@ -119,7 +119,7 @@ jobs:
           changed=set(filter(None,subprocess.check_output(['git','diff','--name-only',f"{os.environ['SOURCE_RC5']}..HEAD"],text=True).splitlines()))
           extra=changed-allowed
           if extra: raise SystemExit('BLOCKER=UNAUTHORIZED_RC6_DIFF:'+','.join(sorted(extra)))
-          required={'package-lock.json','package.json','src-tauri/Cargo.lock','src-tauri/Cargo.toml','src-tauri/src/youtube.rs','src-tauri/tauri.conf.json','src/AccountsPage.tsx','src/activityJournalCore.ts','src/api.ts','src/errorCenter.ts','src/types.ts','src/v2115Rc6KeychainRotation.test.ts','src/v213KeychainRecovery.test.ts'}
+          required={'package-lock.json','package.json','src-tauri/Cargo.lock','src-tauri/Cargo.toml','src-tauri/src/youtube.rs','src-tauri/tauri.conf.json','src/AccountsPage.tsx','src/activityJournalCore.ts','src/api.ts','src/errorCenter.ts','src/types.ts','src/v2115Rc6KeychainRotation.test.ts','src/v213KeychainRecovery.test.ts','src/v2115Rc5KeychainContinuity.test.ts'}
           if not required <= changed: raise SystemExit('BLOCKER=RC6_DIFF_INCOMPLETE:'+','.join(sorted(required-changed)))
           pkg=json.load(open('package.json'));lock=json.load(open('package-lock.json'));conf=json.load(open('src-tauri/tauri.conf.json'))
           cargo=Path('src-tauri/Cargo.toml').read_text();clock=Path('src-tauri/Cargo.lock').read_text();v=os.environ['VERSION']
