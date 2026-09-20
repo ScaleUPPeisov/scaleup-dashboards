@@ -1,5 +1,5 @@
 import type {Channel,YoutubeExistingVideo} from './types';
-export type ExistingCache={version:1;updatedAt:string;videos:YoutubeExistingVideo[];baseline:Record<string,YoutubeExistingVideo>;lastUndo:YoutubeExistingVideo[];syncInfo:any};
+export type ExistingCache={version:1;updatedAt:string;videos:YoutubeExistingVideo[];baseline:Record<string,YoutubeExistingVideo>;lastUndo:YoutubeExistingVideo[];syncInfo:any;lastCompleteAt?:string;lastCompleteSyncInfo?:any};
 export type ScheduleMode='interval'|'pattern';
 export type SchedulePattern={publishDays:number;pauseDays:number;anchorDate:string};
 export type ScheduleSyncTruth='complete'|'incomplete'|'unknown';
@@ -67,17 +67,95 @@ export function readExistingCache(channelId:string):ExistingCache|undefined{
   try{
     const x=JSON.parse(localStorage.getItem(existingCacheKey(channelId))||'null');
     if(!isRecord(x)||x.version!==1)return;
-    return{version:1,updatedAt:optionalString(x.updatedAt)||'1970-01-01T00:00:00.000Z',videos:normalizeVideoArray(x.videos),baseline:normalizeBaseline(x.baseline),lastUndo:normalizeVideoArray(x.lastUndo),syncInfo:normalizeSyncInfo(x.syncInfo)};
+    return{version:1,updatedAt:optionalString(x.updatedAt)||'1970-01-01T00:00:00.000Z',videos:normalizeVideoArray(x.videos),baseline:normalizeBaseline(x.baseline),lastUndo:normalizeVideoArray(x.lastUndo),syncInfo:normalizeSyncInfo(x.syncInfo),lastCompleteAt:optionalString(x.lastCompleteAt),lastCompleteSyncInfo:normalizeSyncInfo(x.lastCompleteSyncInfo)};
   }catch{return}
 }
-export function writeExistingCache(channelId:string,x:ExistingCache){if(!channelId)return;try{localStorage.setItem(existingCacheKey(channelId),JSON.stringify(x));window.dispatchEvent(new CustomEvent(EVENT,{detail:{channelId,updatedAt:x.updatedAt}}))}catch{}}
-const cloneVideo=(v:YoutubeExistingVideo)=>({...v,tags:[...(Array.isArray(v.tags)?v.tags:[])]});
-export function replaceExistingCacheFromSync(channelId:string,videos:YoutubeExistingVideo[],syncInfo:any){
- const rows=normalizeVideoArray(videos).map(cloneVideo),prev=readExistingCache(channelId),complete=syncInfo?.syncComplete===true||syncInfo?.complete===true;
- const baseline=complete?Object.fromEntries(rows.map(v=>[v.id,cloneVideo(v)])):(prev?.baseline||{});
- writeExistingCache(channelId,{version:1,updatedAt:new Date().toISOString(),videos:rows,baseline,lastUndo:complete?[]:(prev?.lastUndo||[]),syncInfo:normalizeSyncInfo(syncInfo)})
+export function writeExistingCache(channelId:string,x:ExistingCache){
+ if(!channelId)return;
+ try{
+  const prev=readExistingCache(channelId);
+  const payload:ExistingCache={...x,lastCompleteAt:x.lastCompleteAt??prev?.lastCompleteAt,lastCompleteSyncInfo:x.lastCompleteSyncInfo??prev?.lastCompleteSyncInfo};
+  localStorage.setItem(existingCacheKey(channelId),JSON.stringify(payload));
+  window.dispatchEvent(new CustomEvent(EVENT,{detail:{channelId,updatedAt:payload.updatedAt}}))
+ }catch{}
 }
-export function mergeExistingCacheVideos(channelId:string,updates:YoutubeExistingVideo[]){const prev=readExistingCache(channelId);const map=new Map((prev?.videos||[]).map(v=>[v.id,cloneVideo(v)]));const base={...(prev?.baseline||{})};for(const u of normalizeVideoArray(updates)){map.set(u.id,cloneVideo(u));base[u.id]=cloneVideo(u)}writeExistingCache(channelId,{version:1,updatedAt:new Date().toISOString(),videos:[...map.values()],baseline:base,lastUndo:prev?.lastUndo||[],syncInfo:prev?.syncInfo||null})}
+const cloneVideo=(v:YoutubeExistingVideo)=>({...v,tags:[...(Array.isArray(v.tags)?v.tags:[])]});
+export function mergeInventoryRowsPreservingCached(previous:YoutubeExistingVideo[],incoming:YoutubeExistingVideo[]){
+ const map=new Map(normalizeVideoArray(previous).map(v=>[v.id,cloneVideo(v)]));
+ for(const row of normalizeVideoArray(incoming))map.set(row.id,cloneVideo(row));
+ return [...map.values()].sort((a,b)=>(a.position??0)-(b.position??0));
+}
+const uniqueStrings=(values:unknown[])=>[...new Set(values.filter((x):x is string=>typeof x==='string'&&Boolean(x.trim())).map(x=>x.trim()))];
+export function targetedExistingRetryIds(syncInfo:any){
+ if(!isRecord(syncInfo))return[] as string[];
+ return uniqueStrings([
+  ...(Array.isArray(syncInfo.missingHydrationIds)?syncInfo.missingHydrationIds:[]),
+  ...(Array.isArray(syncInfo.failedHydrationIds)?syncInfo.failedHydrationIds:[]),
+  ...(Array.isArray(syncInfo.scheduleIncompleteIds)?syncInfo.scheduleIncompleteIds:[])
+ ]);
+}
+const REASON_LABELS:Record<string,string>={
+ PLAYLIST_NOT_EXHAUSTED:'Uploads playlist не дочитан до конца',
+ LIMIT_TRUNCATED:'Синхронизация остановлена установленным лимитом',
+ PLAYLIST_ITEM_WITHOUT_VIDEO_ID:'В uploads playlist есть элементы без доступного videoId',
+ MISSING_VIDEO_HYDRATION:'Не все video ID подтверждены через videos.list',
+ HYDRATION_BATCH_FAILED:'Один или несколько batches videos.list завершились ошибкой',
+ SCHEDULE_DATA_INCOMPLETE:'Для части видео status / publishAt нельзя подтвердить достоверно'
+};
+export function existingSyncIncompleteSummary(syncInfo:any){
+ if(!isRecord(syncInfo))return['Нет диагностических данных синхронизации'];
+ const reasons=Array.isArray(syncInfo.incompleteReasons)?uniqueStrings(syncInfo.incompleteReasons):[];
+ if(!reasons.length&&syncInfo.scheduleComplete===false)return['YouTube inventory не подтверждён как полный для расписания'];
+ return reasons.map(code=>{
+  if(code==='MISSING_VIDEO_HYDRATION')return `${Number(syncInfo.missingHydrationCount||0)} видео не подтверждено через videos.list`;
+  if(code==='PLAYLIST_ITEM_WITHOUT_VIDEO_ID')return `${Number(syncInfo.playlistUnresolvedCount||0)} элементов uploads playlist не содержат доступного videoId`;
+  if(code==='LIMIT_TRUNCATED')return `Лимит ${Number(syncInfo.requested||0)} остановил inventory до полного обхода playlist`;
+  if(code==='HYDRATION_BATCH_FAILED'&&Array.isArray(syncInfo.hydrationErrors)&&syncInfo.hydrationErrors.length)return `videos.list: ${syncInfo.hydrationErrors.join(' • ')}`;
+  if(code==='SCHEDULE_DATA_INCOMPLETE')return `${Number(syncInfo.scheduleDataIncompleteCount||0)} видео не имеют достоверного status / publishAt`;
+  return REASON_LABELS[code]||code;
+ });
+}
+export function existingSyncDiagnosticWarnings(syncInfo:any){
+ if(!isRecord(syncInfo))return[] as string[];
+ const warnings=Array.isArray(syncInfo.diagnosticWarnings)?uniqueStrings(syncInfo.diagnosticWarnings):[];
+ return warnings.map(code=>code==='PLAYLIST_TOTAL_METADATA_MISMATCH'
+  ?`YouTube pageInfo.totalResults (${Number(syncInfo.playlistReportedTotal??syncInfo.playlistFound??0)}) не совпал с фактически дочитанным uploads playlist (${Number(syncInfo.uniqueVideoIds??0)}); используется фактический исчерпанный playlist`
+  :code);
+}
+export function reconcileExistingSyncAfterTargetedRetry(syncInfo:any,currentVideos:YoutubeExistingVideo[],retry:any){
+ const merged=mergeInventoryRowsPreservingCached(currentVideos,Array.isArray(retry?.videos)?retry.videos:[]);
+ const baseReasons=Array.isArray(syncInfo?.inventoryIncompleteReasons)?uniqueStrings(syncInfo.inventoryIncompleteReasons):Array.isArray(syncInfo?.incompleteReasons)?uniqueStrings(syncInfo.incompleteReasons).filter(x=>x!=='SCHEDULE_DATA_INCOMPLETE'):[];
+ const structural=baseReasons.filter(x=>!['MISSING_VIDEO_HYDRATION','HYDRATION_BATCH_FAILED'].includes(x));
+ const missing=uniqueStrings(Array.isArray(retry?.missingHydrationIds)?retry.missingHydrationIds:[]);
+ const retryErrors=Array.isArray(retry?.hydrationErrors)?retry.hydrationErrors.filter((x:any)=>typeof x==='string'):[] as string[];
+ const scheduleIncomplete=uniqueStrings(Array.isArray(retry?.scheduleIncompleteIds)?retry.scheduleIncompleteIds:[]);
+ const inventoryReasons=[...structural,...(missing.length?['MISSING_VIDEO_HYDRATION']:[]),...(retryErrors.length?['HYDRATION_BATCH_FAILED']:[])];
+ const scheduleReasons=[...inventoryReasons,...(scheduleIncomplete.length?['SCHEDULE_DATA_INCOMPLETE']:[])];
+ const uniqueCount=Number(syncInfo?.uniqueVideoIds||merged.length);
+ const nextInfo={...syncInfo,
+  missingHydrationIds:missing,missingHydrationCount:missing.length,
+  failedHydrationIds:missing,hydrationErrors:retryErrors,
+  scheduleIncompleteIds:scheduleIncomplete,scheduleDataIncompleteCount:scheduleIncomplete.length,
+  videosHydrated:Math.max(0,uniqueCount-missing.length),received:Math.max(0,uniqueCount-missing.length),
+  inventoryIncompleteReasons:inventoryReasons,incompleteReasons:scheduleReasons,
+  syncComplete:inventoryReasons.length===0,complete:inventoryReasons.length===0,scheduleComplete:scheduleReasons.length===0
+ };
+ return{videos:merged,syncInfo:nextInfo};
+}
+export function replaceExistingCacheFromSync(channelId:string,videos:YoutubeExistingVideo[],syncInfo:any){
+ const rows=normalizeVideoArray(videos).map(cloneVideo),prev=readExistingCache(channelId),complete=syncInfo?.syncComplete===true||syncInfo?.complete===true,now=new Date().toISOString();
+ const displayRows=complete?rows:mergeInventoryRowsPreservingCached(prev?.videos||[],rows);
+ const baseline=complete?Object.fromEntries(rows.map(v=>[v.id,cloneVideo(v)])):(prev?.baseline||{});
+ writeExistingCache(channelId,{version:1,updatedAt:now,videos:displayRows,baseline,lastUndo:complete?[]:(prev?.lastUndo||[]),syncInfo:normalizeSyncInfo(syncInfo),lastCompleteAt:complete?now:prev?.lastCompleteAt,lastCompleteSyncInfo:complete?normalizeSyncInfo(syncInfo):prev?.lastCompleteSyncInfo})
+ return{videos:displayRows,baseline,lastCompleteAt:complete?now:prev?.lastCompleteAt};
+}
+export function readAuthoritativeExistingSnapshot(channelId:string){
+ const cache=readExistingCache(channelId),videos=authoritativeCacheVideos(cache).map(cloneVideo);
+ if(!cache||!videos.length)return;
+ const currentComplete=scheduleSyncTruthFromInfo(cache.syncInfo)==='complete';
+ return{videos,updatedAt:cache.lastCompleteAt||(currentComplete?cache.updatedAt:undefined),syncInfo:cache.lastCompleteSyncInfo||(currentComplete?cache.syncInfo:null)};
+}
+export function mergeExistingCacheVideos(channelId:string,updates:YoutubeExistingVideo[]){const prev=readExistingCache(channelId);const map=new Map((prev?.videos||[]).map(v=>[v.id,cloneVideo(v)]));const base={...(prev?.baseline||{})};for(const u of normalizeVideoArray(updates)){map.set(u.id,cloneVideo(u));base[u.id]=cloneVideo(u)}writeExistingCache(channelId,{version:1,updatedAt:new Date().toISOString(),videos:[...map.values()],baseline:base,lastUndo:prev?.lastUndo||[],syncInfo:prev?.syncInfo||null,lastCompleteAt:prev?.lastCompleteAt,lastCompleteSyncInfo:prev?.lastCompleteSyncInfo})}
 const pad=(n:number)=>String(n).padStart(2,'0');
 function parts(iso:string){const d=new Date(iso);if(Number.isNaN(d.getTime()))return;const p=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Krasnoyarsk',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(d);const get=(t:string)=>p.find(x=>x.type===t)?.value||'';return{date:`${get('year')}-${get('month')}-${get('day')}`,time:`${get('hour')}:${get('minute')}`}}
 export function krasDateKey(iso?:string){return iso?parts(iso)?.date:undefined}
