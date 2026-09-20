@@ -2411,8 +2411,7 @@ pub async fn youtube_video_processing_status(
  if video_id.is_empty(){return Err("VIDEO_ID_MISSING: processing check requires videoId".into())}
  // Authentication is resolved before emitting any YouTube API event, so broken local
  // credentials cannot burn inventory/processing quota.
- let (_token,profile)=valid_access_token(&app,&profile_id).await?;
- let token=profile.access_token.clone();
+ let (token,profile)=valid_access_token(&app,&profile_id).await?;
  emit_youtube_api_request(&app,"videos.list",operation_id.as_deref());
  let r=reqwest::Client::new()
    .get("https://www.googleapis.com/youtube/v3/videos")
