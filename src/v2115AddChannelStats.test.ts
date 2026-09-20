@@ -27,7 +27,7 @@ describe('VYRON 2.1.15 RC1 Add Channel and channel statistics regression',()=>{
   it('keeps metadata presence separate from operational OAuth readiness',()=>{
     const y=read('src-tauri/src/youtube.rs');
     const security=read('src-tauri/src/security.rs');
-    expect(y).toContain('c.client_secret_present=c.client_secret_present||inline_client_secret||canonical_accounts.iter().any');
+    expect(y).toContain('c.client_secret_present=c.client_secret_present||inline_client_secret||canonical_accounts.iter().any(|a|a==&account)');
     expect(security).toContain('skip_authenticated_items(true)');
     expect(y).toContain('google_config_operational_status_value');
     expect(y).toContain('"oauthReady":configured&&operational');
