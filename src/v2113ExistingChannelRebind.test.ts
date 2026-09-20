@@ -45,9 +45,14 @@ describe('VYRON 2.1.13 existing channel rebind',()=>{
   expect(connect).not.toContain('migrate_profile_refresh_to_canonical');
   expect(connect).toContain('YOUTUBE_CHANNEL_ALREADY_CONNECTED');
   expect(connect).toContain('OAUTH_REFRESH_TOKEN_REQUIRED');
-  expect(y).toContain('let response_refresh=tv.get("refresh_token").and_then(Value::as_str);');
-  expect(y).toContain('let existing_refresh=if response_refresh.map(str::trim).filter(|x|!x.is_empty()).is_some()');
-  expect(y).toContain('match security::canonical_get_secret_cached(&oauth_key(&profile_id,"refresh_token"))');
-  expect(y).toContain('let refresh=reconnect_refresh_token(response_refresh,existing_refresh.as_deref())');
+  const reconnect=y.split('pub async fn youtube_oauth_reconnect_existing').at(1)!.split('#[cfg(test)]')[0];
+  const fallback=reconnect.split('let response_refresh=tv.get("refresh_token").and_then(Value::as_str);').at(1)!.split('let refresh=reconnect_refresh_token(response_refresh,existing_refresh.as_deref())')[0];
+  expect(reconnect).toContain('let response_refresh=tv.get("refresh_token").and_then(Value::as_str);');
+  expect(reconnect).toContain('let google_returned_new_refresh=response_refresh.map(str::trim).filter(|x|!x.is_empty()).is_some();');
+  expect(reconnect).toContain('let existing_refresh=if google_returned_new_refresh');
+  expect(fallback).toContain('let active_refresh_account=profile_refresh_token_account(&app,&profile_id)?;');
+  expect(fallback).toContain('security::canonical_get_secret_cached(&active_refresh_account)');
+  expect(fallback).not.toContain('canonical_get_secret_cached(&oauth_key(&profile_id,"refresh_token"))');
+  expect(reconnect).toContain('let refresh=reconnect_refresh_token(response_refresh,existing_refresh.as_deref())');
  });
 });
