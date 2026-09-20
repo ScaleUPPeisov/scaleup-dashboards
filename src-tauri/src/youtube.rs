@@ -202,6 +202,7 @@ fn resolve_oauth_credential_states_local(app:&AppHandle)->Result<Vec<Value>,Stri
  let global_meta=load_google_config_metadata(app).unwrap_or_default();
  let global_secret_present=canonical_accounts.iter().any(|a|a==GOOGLE_CLIENT_SECRET);
  let state=read_keychain_migration_v2(app)?;
+ let blocked_accounts=security::canonical_blocked_accounts();
  let mut rows=Vec::with_capacity(store.profiles.len());
  for profile in &store.profiles{
   let canonical_account=profile_refresh_token_account_from_state(&state,&profile.id);
@@ -232,6 +233,9 @@ fn resolve_oauth_credential_states_local(app:&AppHandle)->Result<Vec<Value>,Stri
    "canonicalRefreshAccessibleThisProcess":currently_accessible,
    "canonicalRefreshMetadata":metadata,
    "keychainDenial":denial,
+   "credentialGeneration":state.credential_generations.get(&profile.id).copied().unwrap_or(0),
+   "credentialRotatedAt":state.credential_rotated_at.get(&profile.id),
+   "legacyBlockedAccounts":blocked_accounts.iter().filter(|a|a.starts_with(&format!("oauth.{}.",profile.id))&&*a!=&canonical_account).cloned().collect::<Vec<_>>(),
    "legacyRefreshPresent":legacy_present,
    "migrationState":migration_state,
    "credentialState":credential_state,
