@@ -102,7 +102,8 @@ export function AccountsPage(){
    const c=await api.youtubeImportGoogleConfig(await selected.text(),settings.youtubeApiKey||'');
    setConfig(c);
    if(c.oauthReady)setOauthSetupOpen(false);
-   toast(c.oauthReady?'✓ OAuth Client VYRON настроен. Теперь «+ Добавить канал» откроет выбор браузера.':'OAuth Client сохранён, но Client Secret всё ещё отсутствует.')
+   await refresh();
+   toast(c.oauthReady?'✓ OAuth Client восстановлен и реально читается текущей версией VYRON.':'OAuth Client сохранён, но secure storage всё ещё требует восстановления.')
   }catch(e){toast(String(e))}finally{setBusy(false)}
  }
 
@@ -176,9 +177,10 @@ export function AccountsPage(){
    if(!quiet)toast(`✓ ${h.channelTitle||p.channelTitle||'Канал'}: OAuth READY, YouTube API OK`);
    return h
   }catch(e){
-   const h:YoutubeProfileHealth={ok:false,status:'RECONNECT_REQUIRED',error:String(e)};
+   const raw=String(e),globalBlocked=Boolean(config?.repairRequired)||raw.includes('KEYCHAIN_ACCESS_DENIED')||raw.includes('OAUTH_CLIENT_SECRET');
+   const h:YoutubeProfileHealth={ok:false,status:globalBlocked?'GLOBAL_OAUTH_REPAIR_REQUIRED':'RECONNECT_REQUIRED',error:raw};
    setHealth(x=>({...x,[p.id]:h}));
-   if(!quiet)toast(String(e));
+   if(!quiet)toast(globalBlocked?'Google OAuth Client требует восстановления. Профиль и канал сохранены.':raw);
    return h
   }
  }
@@ -223,10 +225,10 @@ export function AccountsPage(){
   <section className="panel accountsPanel">
    <div className="panelHead"><div><small>YOUTUBE ACCOUNTS</small><h3>{profiles.length?`${profiles.length} OAuth profiles`:orphanMappings.length?`Профили требуют восстановления • ${orphanMappings.length} mappings`:'Аккаунтов пока нет'}</h3>{reconciliation&&<p>Каналов: {reconciliation.channelsTotal} • profiles: {reconciliation.profilesTotal} • mappings: {reconciliation.channelsWithYoutubeProfileId}</p>}</div></div>
    {!profiles.length
-    ?<div className="empty"><b>Подключи первый YouTube-канал</b><p>Настройте GLOBAL OAuth Client один раз, затем нажмите «+ Добавить канал», выберите браузер и нужный Google-аккаунт.</p></div>
+    ?<div className="empty">{orphanMappings.length?<><b>Метаданные OAuth-профилей не найдены, но каналы сохранены</b><p>Ничего не удалено автоматически. Исправьте GLOBAL OAuth и проверьте OAuth metadata; массовое переподключение не запускается.</p>{orphanMappings.slice(0,31).map(x=><p key={x.channelId}><b>{x.channelName}</b> • ORPHAN_MAPPING • {x.youtubeProfileId}</p>)}</>:<><b>Подключи первый YouTube-канал</b><p>Настройте GLOBAL OAuth Client один раз, затем нажмите «+ Добавить канал», выберите браузер и нужный Google-аккаунт.</p></>}</div>
     :<div className="accountList">{profiles.map(p=>{
       const h=health[p.id],bound=channels.find(c=>c.youtubeProfileId===p.id||c.youtubeChannelId===p.channelId),stats=bound?.stats;
-      const oauthOk=!!h?.ok||p.credentialStatus==='WORKING'||p.credentialStatus==='CHECK_ON_USE';
+      const oauthOk=!!h?.ok||p.credentialStatus==='WORKING',oauthNeedsGlobal=oauthRepairRequired&&!h?.ok;
       const syncOk=!!(stats?.statisticsUpdatedAt||stats?.updatedAt)&&!stats?.syncWarning;
       return <article className="accountRow accountRowStats" key={p.id}>
        {(h?.thumbnail||stats?.thumbnail)?<img src={h?.thumbnail||stats?.thumbnail} loading="lazy"/>:<div className="accountAvatar">YT</div>}
@@ -234,7 +236,7 @@ export function AccountsPage(){
         <b>{h?.channelTitle||p.channelTitle||stats?.channelTitle||'YouTube канал'}</b>
         <small>{stats?.handle?`${stats.handle} • `:''}{p.channelId||'Channel ID ещё не определён'}</small>
         <div className="accountBadges">
-         <span className={oauthOk?'good':'warn'}>OAuth: {oauthOk?'READY':h?'RECONNECT':'не проверен'}</span>
+         <span className={oauthOk?'good':'warn'}>OAuth: {oauthOk?'READY':oauthNeedsGlobal?'GLOBAL REPAIR':h?'RECONNECT':p.credentialStatus==='CHECK_ON_USE'?'CHECK ON USE':'не проверен'}</span>
          <span className={syncOk?'good':stats?.syncWarning?'warn':''}>YouTube API: {syncOk?'OK':stats?.syncWarning?'WARNING':'CACHE'}</span>
          {p.preferredBrowser&&<span>Браузер: {p.preferredBrowser}</span>}
         </div>
@@ -263,9 +265,9 @@ export function AccountsPage(){
   {oauthSetupOpen&&<div className="modalBackdrop" onMouseDown={()=>setOauthSetupOpen(false)}>
    <section className="confirmModal oauthSetupModal" onMouseDown={e=>e.stopPropagation()}>
     <small>GLOBAL GOOGLE OAUTH</small>
-    <h2>Google OAuth Client ещё не настроен</h2>
-    <p>Для подключения YouTube-каналов сначала один раз импортируйте credentials.json вашего VYRON OAuth Client. После этого «+ Добавить канал» будет открывать выбор браузера, а не Finder.</p>
-    <footer><button onClick={()=>setOauthSetupOpen(false)}>Отмена</button><button className="primary" onClick={()=>file.current?.click()}>Импортировать credentials.json</button></footer>
+    <h2>{oauthRepairRequired?'Google OAuth Client требует восстановления':'Google OAuth Client ещё не настроен'}</h2>
+    <p>{oauthRepairRequired?'Выберите тот же credentials.json один раз. Профили и каналы не удаляются; VYRON перепишет только GLOBAL secure credential в новый защищённый item и проверит readback.':'Для подключения YouTube-каналов сначала один раз импортируйте credentials.json вашего VYRON OAuth Client. После этого «+ Добавить канал» будет открывать выбор браузера, а не Finder.'}</p>
+    <footer><button onClick={()=>setOauthSetupOpen(false)}>Отмена</button><button className="primary" onClick={()=>file.current?.click()}>{oauthRepairRequired?'Восстановить OAuth Client':'Импортировать credentials.json'}</button></footer>
    </section>
   </div>}
 
