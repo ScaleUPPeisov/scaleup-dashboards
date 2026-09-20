@@ -70,19 +70,19 @@ describe('VYRON 2.1.15 RC1 Add Channel and channel statistics regression',()=>{
     const runtime=read('src/youtubeChannelStatsRuntime.ts');
     expect(y).toContain('pub async fn youtube_channel_statistics_batch');
     expect(y).toContain('if ids.len()>=50');
-    expect(y).toContain('emit_youtube_api_request(&app,"channels.list",None)');
+    expect(y).toContain('emit_youtube_api_request(&app,"channels.list",operation_id.as_deref())');
     expect(api).toContain("'youtube_channel_statistics_batch'");
     expect(api).toContain('youtubeChannelStatisticsBatch');
     expect(runtime).toContain('offset+=50');
     expect(runtime).toContain('youtubeChannelStatisticsBatch');
   });
 
-  it('runs the background stale-statistics scheduler at the shared ten-minute TTL',()=>{
+  it('keeps active stats at ten minutes while background network refresh is controlled at 45 minutes',()=>{
     const stats=read('src/youtubeChannelStats.ts');
     const scheduler=read('src/ChannelStatisticsScheduler.tsx');
     const app=read('src/App.tsx');
     expect(stats).toContain('CHANNEL_STATS_TTL_MS=10*60*1000');
-    expect(scheduler).toContain('setInterval(run,CHANNEL_STATS_TTL_MS)');
+    expect(scheduler).toContain('setInterval(run,BACKGROUND_CHANNEL_STATS_TTL_MS)');expect(scheduler).toContain('BACKGROUND_CHANNEL_STATS_TTL_MS');
     expect(scheduler).toContain('refreshYoutubeChannelStatistics(false)');
     expect(app).toContain('<ChannelStatisticsScheduler/>');
   });
@@ -95,7 +95,7 @@ describe('VYRON 2.1.15 RC1 Add Channel and channel statistics regression',()=>{
     expect(ui).toContain('allStats.done');
     expect(ui).toContain('allStats.total');
     expect(bar).toContain("refreshActive(true)");
-    expect(bar).toContain("refreshYoutubeProfileStatistics(profile)");
+    expect(bar).toContain("refreshYoutubeProfileStatistics(profile,");
   });
 
   it('keeps cached values in Zustand and live-updates UI without page reload',()=>{
