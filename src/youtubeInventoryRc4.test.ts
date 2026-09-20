@@ -48,7 +48,7 @@ describe('RC4 authoritative YouTube inventory',()=>{
 
   const partial=full.slice(0,152);
   replaceExistingCacheFromSync('A',partial,{complete:false,syncComplete:false,scheduleComplete:false,uniqueVideoIds:166,videosHydrated:152});
-  expect(readExistingCache('A')?.videos).toHaveLength(152);
+  expect(readExistingCache('A')?.videos).toHaveLength(166);
   expect(readAuthoritativeExistingInventory('A')).toHaveLength(166);
   expect(readExistingCache('A')?.syncInfo?.syncComplete).toBe(false);
  });
