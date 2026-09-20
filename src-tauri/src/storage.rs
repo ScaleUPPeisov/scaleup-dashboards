@@ -13,7 +13,7 @@ fn state_file(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 fn default_state() -> Value {
-    json!({"version":8,"channels":[],"jobs":[],"competitors":[],"settings":{"workspace":"","endlumePath":"","youtubeApiKey":"","autoCheckUpdates":true,"reduceMotion":false,"fpsMonitor":true},"logs":[],"uploadHistory":[],"fingerprintCache":{},"projectLifecycle":{}})
+    json!({"version":9,"channels":[],"jobs":[],"competitors":[],"settings":{"workspace":"","endlumePath":"","youtubeApiKey":"","autoCheckUpdates":true,"reduceMotion":false,"fpsMonitor":true},"logs":[],"uploadHistory":[],"activityJournal":[],"fingerprintCache":{},"projectLifecycle":{}})
 }
 
 const STATE_YOUTUBE_API_KEY: &str = "state.youtubeApiKey";
@@ -127,9 +127,12 @@ fn migrate_state(mut state: Value) -> (Value, bool) {
         }
     }
     let version = state.get("version").and_then(Value::as_u64).unwrap_or(0);
-    if version < 8 {
+    if version < 9 {
         if state.get("uploadHistory").is_none() {
             state["uploadHistory"] = json!([]);
+        }
+        if state.get("activityJournal").is_none() {
+            state["activityJournal"] = json!([]);
         }
         if state.get("fingerprintCache").is_none() {
             state["fingerprintCache"] = json!({});
@@ -137,7 +140,7 @@ fn migrate_state(mut state: Value) -> (Value, bool) {
         if state.get("projectLifecycle").is_none() {
             state["projectLifecycle"] = json!({});
         }
-        state["version"] = json!(8);
+        state["version"] = json!(9);
         changed = true;
     }
     (state, changed)
@@ -195,14 +198,15 @@ pub fn save_state(app: AppHandle, state: Value) -> Result<Value, String> {
 mod v213_storage_tests {
     use super::*;
     #[test]
-    fn v7_to_v8_preserves_existing_data_and_is_idempotent() {
+    fn legacy_to_v9_preserves_existing_data_and_is_idempotent() {
         let state = json!({"version":7,"channels":[{"id":"c1"}],"jobs":[{"id":"j1","channelId":"c1"}],"competitors":[{"id":"x"}],"settings":{"workspace":"/tmp/vyron"},"logs":[{"message":"keep"}]});
         let (m, changed) = migrate_state(state);
         assert!(changed);
-        assert_eq!(m["version"], 8);
+        assert_eq!(m["version"], 9);
         assert_eq!(m["channels"][0]["id"], "c1");
         assert_eq!(m["jobs"][0]["id"], "j1");
         assert!(m["uploadHistory"].as_array().unwrap().is_empty());
+        assert!(m["activityJournal"].as_array().unwrap().is_empty());
         assert!(m["fingerprintCache"].as_object().unwrap().is_empty());
         assert!(m["projectLifecycle"].as_object().unwrap().is_empty());
         let (m2, changed2) = migrate_state(m.clone());
