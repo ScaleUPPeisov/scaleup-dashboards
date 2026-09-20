@@ -855,7 +855,8 @@ fn inventory_osstatus(detail:&str)->Option<i32>{
 pub fn security_oauth_inventory(app:tauri::AppHandle)->Result<serde_json::Value,String>{
  use std::collections::{BTreeMap,BTreeSet};
  use tauri::Manager;
- let service=SERVICE.to_string();
+ let service=CANONICAL_SERVICE.to_string();
+ let legacy_service=SERVICE.to_string();
  let data_dir=app.path().app_data_dir().map_err(|e|format!("APP_DATA_DIR_FAILED: {e}"))?;
  let json_path=data_dir.join("youtube-oauth.json");
  let mut json_status="NOT_FOUND".to_string();
@@ -881,10 +882,10 @@ pub fn security_oauth_inventory(app:tauri::AppHandle)->Result<serde_json::Value,
    Err(e)=>{json_status="READ_FAILED".into();json_error=Some(format!("JSON_READ_FAILED: {e}"));}
   }
  }
- let accounts=match list_secret_accounts(""){
+ let accounts=match list_canonical_secret_accounts(""){
   Ok(v)=>v,
   Err(e)=>return Ok(serde_json::json!({
-   "app_version":env!("CARGO_PKG_VERSION"),"bundle_id":"studio.channelflow.desktop","service":service,
+   "app_version":env!("CARGO_PKG_VERSION"),"bundle_id":"studio.channelflow.desktop","service":service,"legacy_service":legacy_service,
    "enumeration_status":"FAIL","osstatus":inventory_osstatus(&e),"enumeration_error":e,
    "total_service_accounts":0,"refresh_token_accounts":0,"access_token_accounts":0,"client_secret_accounts":0,"unique_oauth_profile_uuids":0,
    "profiles":[],"current_channel_profiles":current_ids.len(),"current_uuid_with_refresh_token":0,"current_uuid_without_refresh_token":current_ids.len(),
@@ -913,17 +914,23 @@ pub fn security_oauth_inventory(app:tauri::AppHandle)->Result<serde_json::Value,
   // Passive inventory is account-presence only. Never read secret values here.
   let (read_status,read_osstatus,read_error):(String,Option<i32>,Option<String>)=("NOT_RUN".to_string(),None,None);
   let _=&mut orphan_readable;let _=&mut orphan_denied;let _=&mut orphan_failed;
+  let refresh_account=format!("oauth.{id}.refresh_token");
+  let denial=canonical_denial_diagnostic(&refresh_account);
+  let metadata=canonical_account_metadata_diagnostic(&refresh_account);
   rows.push(serde_json::json!({
    "profile_uuid":id,"is_current":is_current,"is_orphan":is_orphan,
    "refresh_token_account":if refresh_present{"PRESENT"}else{"ABSENT"},
    "access_token_account":if kinds.contains("access_token"){"PRESENT"}else{"ABSENT"},
    "client_secret_account":if kinds.contains("client_secret"){"PRESENT"}else{"ABSENT"},
+   "refresh_token_cached_this_process":canonical_secret_cached(&refresh_account),
+   "refresh_token_denial":denial,
+   "refresh_token_metadata":metadata,
    "refresh_token_read":read_status,"refresh_read_osstatus":read_osstatus,"refresh_read_error":read_error
   }));
  }
  Ok(serde_json::json!({
-  "app_version":env!("CARGO_PKG_VERSION"),"bundle_id":"studio.channelflow.desktop","service":service,
-  "enumeration_status":"PASS","osstatus":0,"enumeration_error":serde_json::Value::Null,
+  "app_version":env!("CARGO_PKG_VERSION"),"bundle_id":"studio.channelflow.desktop","service":service,"legacy_service":legacy_service,
+  "enumeration_status":"PASS","osstatus":serde_json::Value::Null,"enumeration_error":serde_json::Value::Null,
   "total_service_accounts":accounts.len(),"refresh_token_accounts":refresh_count,"access_token_accounts":access_count,"client_secret_accounts":secret_count,"unique_oauth_profile_uuids":by_id.len(),
   "profiles":rows,"current_channel_profiles":current_ids.len(),"current_uuid_with_refresh_token":current_with,"current_uuid_without_refresh_token":current_ids.len().saturating_sub(current_with),
   "keychain_uuid_not_present_in_current_database":orphan_count,"orphan_profile_uuid_count":orphan_count,
