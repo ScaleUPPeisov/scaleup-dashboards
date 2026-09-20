@@ -6591,4 +6591,39 @@ mod v2115_rc6_keychain_rotation_tests {
    if i%3==0{assert!(active.ends_with(".rotated"))}else{assert_eq!(active,format!("oauth.{id}.refresh_token"))}
   }
  }
+ #[test]
+ fn rc7_update_roundtrip_prefers_rotated_pointer_over_blocked_legacy(){
+  let mut state=KeychainMigrationV2State::default();
+  let active=format!("oauth.{P}.refresh_token.v2.2.xyz");
+  state.refresh_token_accounts.insert(P.into(),active.clone());
+  state.credential_generations.insert(P.into(),2);
+  state.credential_rotated_at.insert(P.into(),"2026-09-20T00:00:00Z".into());
+  let bytes=serde_json::to_vec(&state).unwrap();
+  let after:KeychainMigrationV2State=serde_json::from_slice(&bytes).unwrap();
+  assert_eq!(profile_refresh_token_account_from_state(&after,P),active);
+  assert_ne!(profile_refresh_token_account_from_state(&after,P),OLD_REFRESH);
+ }
+ #[test]
+ fn rc7_fifty_profile_update_continuity_changes_no_uuid_or_active_pointer(){
+  let profiles=(0..50).map(|i|profile(&format!("p{i}"),&format!("UC{i}"))).collect::<Vec<_>>();
+  let before_ids=profiles.iter().map(|p|p.id.clone()).collect::<Vec<_>>();
+  let store=OAuthStore{profiles};
+  let store_bytes=serde_json::to_vec(&store).unwrap();
+  let after_store:OAuthStore=serde_json::from_slice(&store_bytes).unwrap();
+  let mut state=KeychainMigrationV2State::default();
+  for i in 0..50{
+   let id=format!("p{i}");
+   if i%2==0{
+    state.refresh_token_accounts.insert(id.clone(),format!("oauth.{id}.refresh_token.v2.{}.active",i+1));
+    state.credential_generations.insert(id.clone(),(i+1) as u32);
+   }
+  }
+  let before=(0..50).map(|i|{let id=format!("p{i}");(id.clone(),profile_refresh_token_account_from_state(&state,&id))}).collect::<Vec<_>>();
+  let state_bytes=serde_json::to_vec(&state).unwrap();
+  let after_state:KeychainMigrationV2State=serde_json::from_slice(&state_bytes).unwrap();
+  let after=(0..50).map(|i|{let id=format!("p{i}");(id.clone(),profile_refresh_token_account_from_state(&after_state,&id))}).collect::<Vec<_>>();
+  assert_eq!(before_ids,after_store.profiles.iter().map(|p|p.id.clone()).collect::<Vec<_>>());
+  assert_eq!(before,after);
+ }
+
 }
