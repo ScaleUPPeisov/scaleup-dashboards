@@ -7,7 +7,7 @@ export type StorageLifecycleState='NEW'|'RENDERED'|'QUEUED'|'UPLOADING'|'UPLOADE
 export type SourceLifecycleState='PRESENT'|'TRASH_REQUESTED'|'TRASHED_BY_VYRON'|'MISSING_EXTERNAL'|'MISSING_LEGACY_UNKNOWN'|'SOURCE_CHANGED'|'ARCHIVED';
 export type YoutubeProcessingState='UPLOAD_ACCEPTED'|'YOUTUBE_PROCESSING'|'READY'|'PROCESSING_FAILED'|'REJECTED'|'PROCESSING_UNKNOWN';
 export type UploadHistoryRecord={id:string;jobId:string;channelId:string;profileId?:string;youtubeChannelId?:string;youtubeVideoId:string;localFilePath:string;originalFilename:string;projectId?:string;sourceProjectPath?:string;batchId?:string;titleAtUpload?:string;uploadedAt:string;fileSize:number;sha256:string;publishAt?:string;status:'UPLOADED';overrideDuplicate?:boolean;trashedAt?:string;trashOperationId?:string;sourceLifecycle?:SourceLifecycleState;sourceCheckedAt?:string;remoteExists?:boolean;remoteCheckedAt?:string;processingState?:YoutubeProcessingState;processingCheckedAt?:string;processingStatus?:string;processingError?:string;readyAt?:string;identityVerifiedAt?:string};
-export type ActivityEventType='UPLOAD_QUEUED'|'UPLOAD_STARTED'|'UPLOAD_PROGRESS'|'UPLOAD_ACCEPTED'|'YOUTUBE_PROCESSING'|'YOUTUBE_READY'|'UPLOAD_FAILED'|'METADATA_UPDATE_STARTED'|'METADATA_UPDATE_SUCCEEDED'|'METADATA_UPDATE_FAILED'|'TITLE_UPDATED'|'DESCRIPTION_UPDATED'|'TAGS_UPDATED'|'SCHEDULE_UPDATED'|'PRIVACY_UPDATED'|'THUMBNAIL_UPDATED'|'INVENTORY_SYNC_STARTED'|'INVENTORY_SYNC_COMPLETED'|'INVENTORY_SYNC_PARTIAL'|'SOURCE_TRASH_REQUESTED'|'SOURCE_TRASHED'|'SOURCE_MISSING'|'SOURCE_RECOVERED'|'OAUTH_RECONNECT'|'CHANNEL_REBOUND';
+export type ActivityEventType='UPLOAD_QUEUED'|'UPLOAD_STARTED'|'UPLOAD_PROGRESS'|'UPLOAD_ACCEPTED'|'YOUTUBE_PROCESSING'|'YOUTUBE_READY'|'UPLOAD_FAILED'|'METADATA_UPDATE_STARTED'|'METADATA_UPDATE_SUCCEEDED'|'METADATA_UPDATE_FAILED'|'TITLE_UPDATED'|'DESCRIPTION_UPDATED'|'TAGS_UPDATED'|'SCHEDULE_UPDATED'|'PRIVACY_UPDATED'|'THUMBNAIL_UPDATED'|'INVENTORY_SYNC_STARTED'|'INVENTORY_SYNC_COMPLETED'|'INVENTORY_SYNC_PARTIAL'|'SOURCE_TRASH_REQUESTED'|'SOURCE_TRASHED'|'SOURCE_MISSING'|'SOURCE_RECOVERED'|'OAUTH_RECONNECT'|'CHANNEL_REBOUND'|'STATS_REFRESH_BATCH'|'CHANNEL_STATS_REFRESH';
 export type ActivityStatus='STARTED'|'SUCCESS'|'FAILED'|'PARTIAL'|'INFO';
 export type ActivitySource='LIVE_OPERATION'|'RECONSTRUCTED'|'LEGACY_IMPORT';
 export type ActivityDetailValue=string|number|boolean|null|string[]|number[];
@@ -15,6 +15,10 @@ export type ActivityEvent={eventId:string;operationId?:string;batchId?:string;ti
 
 export type FingerprintCacheEntry={path:string;size:number;mtimeMs:number;sha256:string;computedAt:string};
 export type ProjectLifecycleRecord={projectId:string;jobId?:string;projectPath:string;renderPath?:string;status:'RENDERED'|'SAFE_TO_CLEAN';renderExists:boolean;youtubeVideoId?:string;uploadedAt?:string;updatedAt:string};
+
+export type ChannelStatisticsSnapshotSource='LIVE_REFRESH'|'MIGRATED_BASELINE';
+export type ChannelStatisticsSnapshot={snapshotId:string;channelId:string;youtubeChannelId:string;profileId:string;capturedAt:string;subscriberCount?:number;hiddenSubscriberCount:boolean;viewCount:number;videoCount:number;source:ChannelStatisticsSnapshotSource};
+export type ChannelStatisticsHistory=Record<string,ChannelStatisticsSnapshot[]>;
 
 export type YoutubeChannelStatistics={
   channelId?:string; channelTitle?:string; handle?:string; thumbnail?:string;
@@ -65,7 +69,7 @@ export type Settings={
   endlumeTargetDurationMin:number; endlumeTargetRenderSec:number; endlumeTargetFileMinMb:number; endlumeTargetFileMaxMb:number; endlumePreserveImageQuality:boolean; endlumeProjectNaming:string;
 };
 export type LicenseStatus={valid:boolean;type?:'owner-lifetime'|'monthly'|'development';expiresAt?:string|null;maskedKey?:string};
-export type AppState={version:number;channels:Channel[];jobs:VideoJob[];competitors:Competitor[];settings:Settings;logs:{at:string;level:'info'|'warn'|'error';message:string}[];uploadHistory:UploadHistoryRecord[];activityJournal:ActivityEvent[];fingerprintCache:Record<string,FingerprintCacheEntry>;projectLifecycle:Record<string,ProjectLifecycleRecord>};
+export type AppState={version:number;channels:Channel[];jobs:VideoJob[];competitors:Competitor[];settings:Settings;logs:{at:string;level:'info'|'warn'|'error';message:string}[];uploadHistory:UploadHistoryRecord[];activityJournal:ActivityEvent[];statisticsHistory:ChannelStatisticsHistory;fingerprintCache:Record<string,FingerprintCacheEntry>;projectLifecycle:Record<string,ProjectLifecycleRecord>};
 export type Diagnostics={ok:boolean;workspaceWritable:boolean;workspaceExists:boolean;dataDir:string;platform:string;appVersion:string;notes:string[]};
 export type InboxScan={root:string;music:string[];images:string[];metadata:string[]};
 export type YoutubeProfile={id:string;channelId?:string;channelTitle?:string;connectedAt?:string;clientIdMasked?:string;scopes?:string[];analyticsAuthorized?:boolean;monetaryAuthorized?:boolean;preferredBrowser?:string;credentialStatus?:'WORKING'|'RECONNECT_REQUIRED'|'RECOVERABLE'|'KEYCHAIN_ERROR'|'CHECK_ON_USE';credentialError?:string|null;identityValidatedAt?:string|null;statistics?:YoutubeChannelStatistics};
