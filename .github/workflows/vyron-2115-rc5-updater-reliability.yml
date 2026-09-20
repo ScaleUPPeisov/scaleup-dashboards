@@ -1,5 +1,5 @@
 name: VYRON 2.1.15 RC5 Updater Reliability
-# RC5 canonical rerun: canonical denial Rust declarations corrected
+# RC5 canonical rerun: stale reconnect/statistics contracts aligned
 # RC5: rapid updater + Keychain continuity; rerun after cross-platform secure-storage regression alignment
 
 on:
@@ -126,6 +126,8 @@ jobs:
             'src/updaterRuntimeRc5.test.ts',
             'src/updaterSchedule.test.ts',
             'src/updaterSchedule.ts',
+            'src/v2113ExistingChannelRebind.test.ts',
+            'src/v2115Rc4StatisticsOauthContinuity.test.ts',
             'src/v2115Rc5KeychainContinuity.test.ts',
             'src/v2115Rc5UpdaterReliability.test.ts',
             'src/youtubeChannelStatsRuntime.ts',
