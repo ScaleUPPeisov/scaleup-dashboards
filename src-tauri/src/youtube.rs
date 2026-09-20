@@ -1483,6 +1483,28 @@ pub async fn youtube_oauth_connect(
         };
         security::canonical_set_secret(&global_account,&client_secret)?;
     }
+    let original_store=s.clone();
+    let pointer_before=read_keychain_migration_v2(&app)?;
+    let refresh_account=oauth_key(&profile_id,"refresh_token");
+    security::canonical_forget_cache(&refresh_account);
+    if let Err(e)=security::canonical_set_secret(&refresh_account,&refresh){
+      return Err(format!("OAUTH_KEYCHAIN_WRITE_FAILED: stage=NEW_SECRET_WRITE; account={refresh_account}; {e}"))
+    }
+    match security::canonical_verify_secret(&refresh_account,&refresh){
+      Ok(true)=>{},
+      Ok(false)=>{
+        let _=security::canonical_delete_secret(&refresh_account);
+        return Err(format!("NEW_ITEM_READBACK_FAILED: stage=NEW_SECRET_READBACK; account={refresh_account}; mismatch"))
+      }
+      Err(e)=>{
+        let _=security::canonical_delete_secret(&refresh_account);
+        if e.contains("KEYCHAIN_AUTH_FAILED"){
+          return Err(format!("NEW_ITEM_READBACK_AUTH_FAILED: stage=NEW_SECRET_READBACK; account={refresh_account}; {e}"))
+        }
+        return Err(format!("OAUTH_KEYCHAIN_READBACK_FAILED: stage=NEW_SECRET_READBACK; account={refresh_account}; {e}"))
+      }
+    }
+
     let profile = OAuthProfile {
         id: profile_id.clone(),
         client_id: client_id.clone(),
@@ -1490,7 +1512,7 @@ pub async fn youtube_oauth_connect(
         channel_id: Some(channel_id.clone()),
         channel_title: Some(channel_title.clone()),
         access_token: access,
-        refresh_token: refresh,
+        refresh_token: String::new(),
         expires_at: now_ts() + expires,
         connected_at: Utc::now().to_rfc3339(),
         scopes: scopes.clone(),
@@ -1499,19 +1521,45 @@ pub async fn youtube_oauth_connect(
         identity_validated_channel_id: Some(channel_id.clone()),
         credential_error: None,
     };
-    s.profiles
-        .retain(|p| p.id != profile_id && p.channel_id.as_deref() != Some(channel_id.as_str()));
+    s.profiles.retain(|p|p.id!=profile_id&&p.channel_id.as_deref()!=Some(channel_id.as_str()));
     s.profiles.push(profile.clone());
-    let saved_idx=s.profiles.iter().position(|p|p.id==profile.id).ok_or_else(||"OAUTH_SAVE_VERIFY_FAILED".to_string())?;
-    save_selected_profile(&app,&s,saved_idx)?;
+
+    let mut pointer_next=pointer_before.clone();
+    pointer_next.refresh_token_accounts.insert(profile_id.clone(),refresh_account.clone());
+    pointer_next.credential_generations.insert(profile_id.clone(),1);
+    pointer_next.profiles.insert(profile_id.clone(),MIGRATION_MIGRATED.into());
+    if let Err(e)=write_keychain_migration_v2(&app,&pointer_next){
+      let _=security::canonical_delete_secret(&refresh_account);
+      return Err(format!("OAUTH_METADATA_POINTER_COMMIT_FAILED: stage=METADATA_POINTER_COMMIT; {e}"))
+    }
+    if let Err(e)=write_oauth_metadata(&store_path(&app)?,&s){
+      let _=write_keychain_migration_v2(&app,&pointer_before);
+      let _=security::canonical_delete_secret(&refresh_account);
+      return Err(format!("OAUTH_METADATA_SAVE_FAILED: stage=METADATA_COMMIT; {e}"))
+    }
+    match security::canonical_verify_secret(&refresh_account,&refresh){
+      Ok(true)=>{},
+      Ok(false)=>{
+        let _=write_keychain_migration_v2(&app,&pointer_before);
+        let _=write_oauth_metadata(&store_path(&app)?,&original_store);
+        let _=security::canonical_delete_secret(&refresh_account);
+        return Err("OAUTH_SAVE_VERIFY_FAILED: stage=POST_COMMIT_READ; fresh refresh token mismatch".into())
+      }
+      Err(e)=>{
+        let _=write_keychain_migration_v2(&app,&pointer_before);
+        let _=write_oauth_metadata(&store_path(&app)?,&original_store);
+        let _=security::canonical_delete_secret(&refresh_account);
+        return Err(format!("OAUTH_POST_COMMIT_READ_FAILED: stage=POST_COMMIT_READ; account={refresh_account}; {e}"))
+      }
+    }
     remember_access_token(&profile.id,&profile.access_token,profile.expires_at);
-    set_profile_migration_state(&app,&profile.id,MIGRATION_MIGRATED)?;
-    let found=security::canonical_get_secret_cached(&oauth_key(&profile.id,"refresh_token"))?.map(|v|!v.trim().is_empty()).unwrap_or(false);
-    if !found{return Err("OAUTH_SAVE_VERIFY_FAILED: canonical OAuth refresh_token не сохранился".into())}
     record_profile_credential_validation(&app,&profile.id,"PASS",Some(&channel_id),Some(&channel_id))?;
-    Ok(
-        json!({"id":profile.id,"channelId":channel_id,"channelTitle":channel_title,"connectedAt":profile.connected_at,"preferredBrowser":preferred_browser,"statistics":youtube_channel_statistics_value(item)}),
-    )
+    Ok(json!({
+      "id":profile.id,"channelId":channel_id,"channelTitle":channel_title,
+      "connectedAt":profile.connected_at,"preferredBrowser":preferred_browser,
+      "statistics":youtube_channel_statistics_value(item),
+      "oauthTokenStored":true,"secureReadback":"PASS","profileUuidPreserved":true,"secretValuesIncluded":false
+    }))
 }
 
 fn reconnect_profile_id(existing: Option<&OAuthProfile>) -> String {
