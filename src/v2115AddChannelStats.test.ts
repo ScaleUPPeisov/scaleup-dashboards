@@ -47,13 +47,24 @@ describe('VYRON 2.1.15 RC1 Add Channel and channel statistics regression',()=>{
     expect(y.match(/wait_for_oauth_code\(listener,expected_state\)/g)?.length||0).toBeGreaterThanOrEqual(2);
   });
 
-  it('uses a newly returned refresh token first and only falls back to the old canonical token when Google returns none',()=>{
+  it('uses a newly returned refresh token first and only falls back to the active account when Google returns none',()=>{
     const y=read('src-tauri/src/youtube.rs');
+    const reconnect=y.split('pub async fn youtube_oauth_reconnect_existing').at(1)!.split('#[cfg(test)]')[0];
+    const fallback=reconnect.split('let response_refresh=tv.get("refresh_token").and_then(Value::as_str);').at(1)!.split('let refresh=reconnect_refresh_token(response_refresh,existing_refresh.as_deref())')[0];
+
     expect(y).toContain('fn reconnect_refresh_token(');
-    expect(y).toContain('let response_refresh=tv.get("refresh_token").and_then(Value::as_str);');
-    expect(y).toContain('let existing_refresh=if response_refresh.map(str::trim).filter(|x|!x.is_empty()).is_some()');
-    expect(y).toContain('match security::canonical_get_secret_cached(&oauth_key(&profile_id,"refresh_token"))');
-    expect(y).toContain('let refresh=reconnect_refresh_token(response_refresh,existing_refresh.as_deref())');
+    expect(reconnect).toContain('let response_refresh=tv.get("refresh_token").and_then(Value::as_str);');
+    expect(reconnect).toContain('let google_returned_new_refresh=response_refresh.map(str::trim).filter(|x|!x.is_empty()).is_some();');
+    expect(reconnect).toContain('let existing_refresh=if google_returned_new_refresh');
+    expect(fallback).toContain('let active_refresh_account=profile_refresh_token_account(&app,&profile_id)?;');
+    expect(fallback).toContain('security::canonical_get_secret_cached(&active_refresh_account)');
+    expect(reconnect).toContain('let refresh=reconnect_refresh_token(response_refresh,existing_refresh.as_deref())');
+
+    // RC6 semantic contract:
+    // - a fresh Google refresh token takes precedence and requires no read of the old account;
+    // - fallback resolves the currently active pointer, which may already be a rotated generation;
+    // - reconnect must not regress to the fixed RC5 canonical account ABI.
+    expect(fallback).not.toContain('canonical_get_secret_cached(&oauth_key(&profile_id,"refresh_token"))');
     expect(y).not.toContain('fn reconnect_required_refresh_token(');
   });
 
