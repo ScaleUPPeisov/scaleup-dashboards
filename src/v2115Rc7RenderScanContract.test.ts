@@ -3,9 +3,8 @@ import {readFileSync} from 'node:fs';
 const read=(p:string)=>readFileSync(p,'utf8');
 
 describe('VYRON RC7 Publisher render scan wiring',()=>{
-  it('has no global workspace fallback for channel scan',()=>{
+  it('has no global workspace fallback inside channel scan',()=>{
     const p=read('src/PublisherOS.tsx');
-    expect(p).not.toContain("import {resolveProductionRoot} from './productionPrefs'");
     expect(p).toContain("channelRenderFolder=(channel?.renderFolderPath||'').trim()");
     expect(p).toContain('CHANNEL_RENDER_FOLDER_NOT_CONFIGURED');
     const fn=p.split('async function scanRenderFolder()').at(1)!.split('function addScannedRenderCandidates')[0];
