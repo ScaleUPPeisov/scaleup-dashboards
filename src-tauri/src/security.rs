@@ -228,11 +228,14 @@ fn secitem_no_ui_set(service:&str,account:&str,value:&[u8],kind:&str)->Result<()
  use core_foundation::data::CFData;
  use core_foundation::dictionary::CFDictionary;
  use core_foundation::string::CFString;
- use security_framework_sys::item::kSecValueData;
+ use security_framework_sys::item::{kSecAttrAccessible,kSecAttrAccessibleWhenUnlocked,kSecValueData};
  use security_framework_sys::keychain_item::{SecItemAdd,SecItemUpdate};
 
  let mut add_pairs=secitem_no_ui_base_query(service,account);
- unsafe{add_pairs.push((CFString::wrap_under_get_rule(kSecValueData),CFData::from_buffer(value).into_CFType()));}
+ unsafe{
+  add_pairs.push((CFString::wrap_under_get_rule(kSecAttrAccessible),CFString::wrap_under_get_rule(kSecAttrAccessibleWhenUnlocked).into_CFType()));
+  add_pairs.push((CFString::wrap_under_get_rule(kSecValueData),CFData::from_buffer(value).into_CFType()));
+ }
  let add=CFDictionary::from_CFType_pairs(&add_pairs);
  let status=unsafe{SecItemAdd(add.as_concrete_TypeRef(),std::ptr::null_mut())};
  if status==0{return Ok(())}
@@ -240,7 +243,10 @@ fn secitem_no_ui_set(service:&str,account:&str,value:&[u8],kind:&str)->Result<()
 
  let query_pairs=secitem_no_ui_base_query(service,account);
  let query=CFDictionary::from_CFType_pairs(&query_pairs);
- let update_pairs=unsafe{vec![(CFString::wrap_under_get_rule(kSecValueData),CFData::from_buffer(value).into_CFType())]};
+ let update_pairs=unsafe{vec![
+  (CFString::wrap_under_get_rule(kSecValueData),CFData::from_buffer(value).into_CFType()),
+  (CFString::wrap_under_get_rule(kSecAttrAccessible),CFString::wrap_under_get_rule(kSecAttrAccessibleWhenUnlocked).into_CFType()),
+ ]};
  let update=CFDictionary::from_CFType_pairs(&update_pairs);
  let update_status=unsafe{SecItemUpdate(query.as_concrete_TypeRef(),update.as_concrete_TypeRef())};
  if update_status==0{Ok(())}else{Err(keychain_error(kind,account,update_status,"SecItemUpdate UI=SKIP"))}
