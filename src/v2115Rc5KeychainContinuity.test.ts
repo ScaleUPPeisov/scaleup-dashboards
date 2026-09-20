@@ -76,11 +76,12 @@ describe('VYRON 2.1.15 RC5 Keychain / profile continuity',()=>{
   const valid=yt.split('async fn valid_access_token').at(1)!.split('pub(crate) async fn access_token_and_scopes')[0];
   expect(valid.indexOf('require_canonical_refresh')).toBeGreaterThanOrEqual(0);
   expect(valid).not.toContain('emit_youtube_api_request');
-  const reconnect=yt.split('fn reconnect_apply_validated_with').at(1)!.split('fn reconnect_auth_url')[0];
+  const reconnect=yt.split('fn reconnect_apply_validated_accounts_with').at(1)!.split('fn reconnect_apply_validated_with')[0];
   expect(reconnect).toContain('reconnect_authorized_channel_matches');
-  expect(reconnect).toContain('before_ids');
-  expect(reconnect).toContain('OAUTH_PROFILE_MUTATION_GUARD');
-  expect(reconnect).toContain('reconnect_write_readback_with');
+  expect(reconnect).toContain('reconnect_write_readback_accounts_with');
+  const metadata=yt.split('fn reconnect_apply_profile_metadata').at(1)!.split('fn reconnect_apply_validated_accounts_with')[0];
+  expect(metadata).toContain('before_ids');
+  expect(metadata).toContain('OAUTH_PROFILE_MUTATION_GUARD');
  });
 
  it('canonical secure storage keeps plaintext OAuth secrets out of metadata and uses no-UI WhenUnlocked policy',()=>{
