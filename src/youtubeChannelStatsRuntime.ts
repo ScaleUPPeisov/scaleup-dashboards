@@ -67,6 +67,7 @@ export function refreshYoutubeProfileStatistics(profile:YoutubeProfile,operation
  const existing=profileRuns.get(key);
  if(existing)return existing;
  const task=(async()=>{
+  await ensureStatisticsBaselines([profile]);
   const startedAt=new Date().toISOString(),quotaBefore=youtubeQuotaUsage().used,eventId=`stats-channel:${op}`;
   journal({eventId,eventType:'CHANNEL_STATS_REFRESH',status:'STARTED',source:'LIVE_OPERATION',timestamp:startedAt,operationId:op,batchId:op,channelId:linked.channel.id,channelName:linked.channel.name,profileId:profile.id,details:{youtubeChannelId:linked.youtubeChannelId}});
   try{
