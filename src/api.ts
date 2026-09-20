@@ -44,7 +44,7 @@ export type UpdaterTransferProgress={status:'DOWNLOADING'|'VERIFYING';percent:nu
 export type CheckedUpdaterCandidate={none:false;version:string;date?:string;body:string;current:string;latest:string;status:'AVAILABLE';endpoint:string;versionComparison:string;download:(onProgress?:(p:UpdaterTransferProgress)=>void)=>Promise<void>;install:(onStatus?:(s:'VERIFYING'|'INSTALLING'|'READY_TO_RESTART')=>void)=>Promise<void>;restart:()=>Promise<void>};
 export type NoUpdaterCandidate={none:true;current:string;latest:string;status:'UP_TO_DATE';endpoint:string;versionComparison:string};
 export type CheckedUpdater=CheckedUpdaterCandidate|NoUpdaterCandidate;
-export const METHOD_LEDGER_COMMANDS=new Set(['youtube_oauth_profile_health','youtube_channel_statistics','youtube_channel_statistics_batch','youtube_upload_video','youtube_list_existing_videos','youtube_retry_existing_video_hydration','youtube_backup_existing_videos','youtube_update_existing_video','youtube_update_existing_schedule','youtube_list_playlists','youtube_playlist_membership','youtube_set_thumbnail']);
+export const METHOD_LEDGER_COMMANDS=new Set(['youtube_oauth_profile_health','youtube_channel_statistics','youtube_channel_statistics_batch','youtube_upload_video','youtube_list_existing_videos','youtube_retry_existing_video_hydration','youtube_video_processing_status','youtube_backup_existing_videos','youtube_update_existing_video','youtube_update_existing_schedule','youtube_list_playlists','youtube_playlist_membership','youtube_set_thumbnail']);
 export const youtubeCommandUsesMethodLedger=(command:string)=>METHOD_LEDGER_COMMANDS.has(command);
 const quotaProjectCache=new Map<string,string|null>();
 async function quotaProjectForProfile(profileId:string){
@@ -101,6 +101,7 @@ export const api={
   youtubeCompetitorSnapshot:(profileId:string,channelRef:string)=>ytInvoke<Partial<Competitor>&{channelId:string}>('youtube_competitor_snapshot',{profileId,channelRef}),
   youtubeDiscoverCompetitors:(profileId:string,maxResults=8)=>ytInvoke<CompetitorCandidate[]>('youtube_discover_competitors',{profileId,maxResults}),
   youtubeProfiles:()=>invoke<YoutubeProfile[]>('youtube_oauth_profiles'),
+  youtubeOauthReconciliationDiagnostics:()=>invoke<OAuthReconciliationDiagnostic>('youtube_oauth_reconciliation_diagnostics'),
   youtubeGoogleProjectDiagnostic:(profileId:string)=>invoke<GoogleProjectDiagnosticSafe>('youtube_google_project_diagnostic',{profileId}),
   youtubeOauthCredentialStates:()=>invoke<OAuthCredentialStatesResponse>('youtube_oauth_credential_states'),
   youtubeOauthRecoveryDiagnostic:(profileId:string)=>invoke<OAuthRecoveryDiagnostic>('youtube_oauth_recovery_diagnostic',{profileId}),
@@ -127,6 +128,7 @@ export const api={
   youtubeResumeUpload:async(jobId:string)=>{const session=(await invoke<YoutubeUploadSession[]>('youtube_upload_sessions')).find(x=>x.jobId===jobId);if(session)registerUploadRuntime({jobId,projectId:session.projectId,channelId:session.channelId||'',profileId:session.profileId,filePath:session.filePath,startedAt:new Date().toISOString()},session.total,session.offset);try{return await invoke<YoutubeUploadResult>('youtube_resume_upload',{jobId})}finally{endUploadRuntime(jobId)}},
   trashLocalFile:(path:string,allowedRoots:string[])=>invoke<{trashed:boolean;missing:boolean}>('trash_local_file',{path,allowedRoots}),
   youtubeCancelUploadSession:(jobId:string)=>invoke<void>('youtube_cancel_upload_session',{jobId}),
+  youtubeVideoProcessingStatus:(profileId:string,videoId:string,operationId?:string)=>ytInvoke<YoutubeProcessingStatus>('youtube_video_processing_status',{profileId,videoId,operationId}),
   youtubeSetThumbnail:(profileId:string,videoId:string,filePath:string,operationId?:string)=>ytInvoke<{ok:boolean;videoId:string;filePath:string}>('youtube_set_thumbnail',{profileId,videoId,filePath,operationId}),
   youtubeFileFingerprint:(filePath:string,cache?:{size:number;mtimeMs:number;sha256:string})=>invoke<YoutubeFileFingerprint>('youtube_file_fingerprint',{filePath,cachedSize:cache?.size,cachedModifiedAt:cache?.mtimeMs,cachedHash:cache?.sha256}),
   youtubeListExisting:(profileId:string,maxResults=30)=>ytInvoke<ExistingVideoSyncResult>('youtube_list_existing_videos',{profileId,maxResults}),
