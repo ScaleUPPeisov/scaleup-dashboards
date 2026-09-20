@@ -182,11 +182,18 @@ fn resolve_oauth_credential_states_local(app:&AppHandle)->Result<Vec<Value>,Stri
   let client_secret_state=if profile_client_secret_present{"PROFILE_CANONICAL"}else if global_exact{"GLOBAL_EXACT_MATCH"}else if global_current_ready{"GLOBAL_CURRENT_READY"}else if legacy_client_secret_present{"CLIENT_SECRET_REIMPORT_REQUIRED"}else{"MISSING"};
   let migration_state=state.profiles.get(&profile.id).cloned().unwrap_or_else(||MIGRATION_NOT_STARTED.into());
   let validation=state.validations.get(&profile.id);
-  let (credential_state,last_validation_result,last_validated_at)=resolved_credential_state(profile,&migration_state,canonical_present,legacy_present,validation);
+  let (base_credential_state,last_validation_result,last_validated_at)=resolved_credential_state(profile,&migration_state,canonical_present,legacy_present,validation);
+  let denial=security::canonical_denial_diagnostic(&canonical_account);
+  let metadata=security::canonical_account_metadata_diagnostic(&canonical_account);
+  let credential_state=if denial.is_some(){"KEYCHAIN_BLOCKED"}else if base_credential_state=="CONNECTED"{"READY"}else{base_credential_state};
   rows.push(json!({
    "profileUuid":profile.id,
+   "channelTitle":profile.channel_title,
    "expectedChannelId":profile.channel_id,
+   "canonicalAccount":canonical_account,
    "canonicalRefreshPresent":canonical_present,
+   "canonicalRefreshMetadata":metadata,
+   "keychainDenial":denial,
    "legacyRefreshPresent":legacy_present,
    "migrationState":migration_state,
    "credentialState":credential_state,
@@ -245,8 +252,8 @@ fn migrate_profile_refresh_to_canonical(app:&AppHandle,profile_id:&str)->Result<
    return Ok(())
   }
   Ok(_)=>{},
-  Err(e) if e.contains("KEYCHAIN_INTERACTION_REQUIRED")||e.contains("KEYCHAIN_AUTH_FAILED")=>{
-   return Err(format!("OAUTH_RECONNECT_REQUIRED: profile={profile_id}; canonical credential requires macOS interaction, which VYRON blocks"))
+  Err(e) if keychain_repairable_error(&e)=>{
+   return Err(format!("OAUTH_CREDENTIAL_PRECHECK_FAILED: profile={profile_id}; {e}"))
   }
   Err(e)=>return Err(e),
  }
@@ -270,8 +277,8 @@ fn require_canonical_refresh(app:&AppHandle,profile_id:&str)->Result<String,Stri
  match security::canonical_get_secret_cached(&oauth_key(profile_id,"refresh_token")){
   Ok(Some(v)) if !v.trim().is_empty()=>return Ok(v),
   Ok(_)=>{},
-  Err(e) if e.contains("KEYCHAIN_INTERACTION_REQUIRED")||e.contains("KEYCHAIN_AUTH_FAILED")=>{
-   return Err(format!("OAUTH_RECONNECT_REQUIRED: profile={profile_id}; canonical credential requires macOS interaction, which VYRON blocks"))
+  Err(e) if keychain_repairable_error(&e)=>{
+   return Err(format!("OAUTH_CREDENTIAL_PRECHECK_FAILED: profile={profile_id}; {e}"))
   }
   Err(e)=>return Err(e),
  }
@@ -1218,14 +1225,18 @@ fn wait_for_oauth_code(listener:TcpListener,expected_state:String)->Result<Strin
 }
 
 
-fn oauth_profiles_value(s:OAuthStore)->Value{json!(s.profiles.into_iter().map(|p|{
+fn oauth_profiles_value(s:OAuthStore,states:&HashMap<String,String>)->Value{json!(s.profiles.into_iter().map(|p|{
   let analytics=p.scopes.iter().any(|x|x=="https://www.googleapis.com/auth/yt-analytics.readonly"||x=="https://www.googleapis.com/auth/yt-analytics-monetary.readonly");
   let monetary=p.scopes.iter().any(|x|x=="https://www.googleapis.com/auth/yt-analytics-monetary.readonly");
-  let credential_status=if p.identity_validated_channel_id.as_deref()==p.channel_id.as_deref()&&p.identity_validated_at.is_some(){"CHECK_ON_USE"}else{"RECOVERABLE"};
+  let credential_status=states.get(&p.id).cloned().unwrap_or_else(||"NOT_CHECKED".into());
   json!({"id":p.id,"channelId":p.channel_id,"channelTitle":p.channel_title,"connectedAt":p.connected_at,"clientIdMasked":if p.client_id.len()>12{format!("{}…{}",&p.client_id[..8],&p.client_id[p.client_id.len()-6..])}else{"configured".into()},"scopes":p.scopes,"analyticsAuthorized":analytics,"monetaryAuthorized":monetary,"preferredBrowser":p.preferred_browser,"credentialStatus":credential_status,"credentialError":Value::Null,"identityValidatedAt":p.identity_validated_at})
  }).collect::<Vec<_>>())}
 #[tauri::command]
-pub fn youtube_oauth_profiles(app:AppHandle)->Result<Value,String>{Ok(oauth_profiles_value(load_store_metadata(&app)?))}
+pub fn youtube_oauth_profiles(app:AppHandle)->Result<Value,String>{
+ let rows=resolve_oauth_credential_states_local(&app)?;
+ let states=rows.into_iter().filter_map(|v|Some((v.get("profileUuid")?.as_str()?.to_string(),v.get("credentialState")?.as_str()?.to_string()))).collect::<HashMap<_,_>>();
+ Ok(oauth_profiles_value(load_store_metadata(&app)?,&states))
+}
 
 #[tauri::command]
 pub fn youtube_oauth_reconciliation_diagnostics(app:AppHandle)->Result<Value,String>{
@@ -2013,13 +2024,60 @@ pub async fn youtube_oauth_recovery_diagnostic(
       .find(|v|v.get("profileUuid").and_then(Value::as_str)==Some(profile_id.as_str()))
       .ok_or_else(||"CREDENTIAL_MISSING: selected OAuth profile is not present in youtube-oauth.json".to_string())?;
     let obj=row.as_object_mut().ok_or_else(||"OAUTH_STATE_RESOLVER_FAILED".to_string())?;
+    let account=oauth_key(&profile_id,"refresh_token");
     obj.insert("appVersion".into(),json!(app.package_info().version.to_string()));
     obj.insert("bundleId".into(),json!(app.config().identifier.clone()));
     obj.insert("currentProfileUuid".into(),json!(profile_id));
     obj.insert("legacyService".into(),json!(security::LEGACY_SERVICE));
     obj.insert("canonicalService".into(),json!(security::canonical_service()));
+    obj.insert("canonicalAccountDiagnostic".into(),security::canonical_account_metadata_diagnostic(&account));
     obj.insert("path".into(),json!(path.display().to_string()));
     Ok(row)
+}
+
+fn oauth_safe_retry_profile_value(app:&AppHandle,profile_id:&str)->Result<Value,String>{
+ let store=load_store_metadata(app)?;
+ let profile=store.profiles.iter().find(|p|p.id==profile_id).ok_or_else(||format!("CREDENTIAL_MISSING: profile={profile_id}"))?;
+ let account=oauth_key(profile_id,"refresh_token");
+ let result=security::canonical_retry_secret_access_value(&account);
+ let status=result.get("status").and_then(Value::as_str).unwrap_or("READ_FAILED");
+ if status=="ACCESSIBLE"{let _=set_profile_migration_state(app,profile_id,MIGRATION_MIGRATED);}
+ Ok(json!({
+  "profileUuid":profile_id,
+  "channelId":profile.channel_id,
+  "channelTitle":profile.channel_title,
+  "account":account,
+  "status":status,
+  "recovered":result.get("recovered").and_then(Value::as_bool).unwrap_or(false),
+  "errorCode":result.get("errorCode").cloned().unwrap_or(Value::Null),
+  "osstatus":result.get("osstatus").cloned().unwrap_or(Value::Null),
+  "denial":result.get("denial").cloned().unwrap_or(Value::Null),
+  "secretValuesIncluded":false,
+  "youtubeApiRequests":0,
+  "youtubeQuotaDelta":0
+ }))
+}
+
+#[tauri::command]
+pub fn youtube_oauth_retry_profile_keychain(app:AppHandle,profile_id:String)->Result<Value,String>{
+ oauth_safe_retry_profile_value(&app,profile_id.trim())
+}
+
+#[tauri::command]
+pub fn youtube_oauth_safe_check_all_profiles(app:AppHandle)->Result<Value,String>{
+ let store=load_store_metadata(&app)?;
+ let mut rows=Vec::<Value>::new();let mut accessible=0usize;let mut blocked=0usize;let mut missing=0usize;let mut failed=0usize;let mut recovered=0usize;
+ for profile in &store.profiles{
+  let row=oauth_safe_retry_profile_value(&app,&profile.id)?;
+  match row.get("status").and_then(Value::as_str).unwrap_or("READ_FAILED"){
+   "ACCESSIBLE"=>{accessible+=1;if row.get("recovered").and_then(Value::as_bool)==Some(true){recovered+=1}},
+   "KEYCHAIN_BLOCKED"=>blocked+=1,
+   "MISSING"=>missing+=1,
+   _=>failed+=1,
+  }
+  rows.push(row);
+ }
+ Ok(json!({"profiles":rows,"total":store.profiles.len(),"accessible":accessible,"recoveredAutomatically":recovered,"keychainBlocked":blocked,"missing":missing,"readFailed":failed,"secretValuesIncluded":false,"youtubeApiRequests":0,"youtubeQuotaDelta":0}))
 }
 
 #[tauri::command]
