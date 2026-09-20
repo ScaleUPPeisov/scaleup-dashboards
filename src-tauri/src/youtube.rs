@@ -5178,11 +5178,17 @@ pub async fn youtube_oauth_reconnect_existing(
         .and_then(Value::as_str)
         .filter(|x| !x.trim().is_empty())
         .ok_or_else(|| "Google не вернул access_token".to_string())?;
-    let existing_refresh=security::canonical_get_secret_cached(&oauth_key(&profile_id,"refresh_token"))?;
-    let refresh=reconnect_refresh_token(
-        tv.get("refresh_token").and_then(Value::as_str),
-        existing_refresh.as_deref(),
-    )?;
+    let response_refresh=tv.get("refresh_token").and_then(Value::as_str);
+    let existing_refresh=if response_refresh.map(str::trim).filter(|x|!x.is_empty()).is_some(){
+        None
+    }else{
+        match security::canonical_get_secret_cached(&oauth_key(&profile_id,"refresh_token")){
+            Ok(v)=>v,
+            Err(e) if keychain_repairable_error(&e)=>None,
+            Err(e)=>return Err(e),
+        }
+    };
+    let refresh=reconnect_refresh_token(response_refresh,existing_refresh.as_deref())?;
     let _=app.emit("oauth-recovery-stage",json!({"profileId":profile_id,"state":"VALIDATING","expectedChannelId":expected_channel_id}));
     // Validate the newly issued refresh token first. The refreshed access token is then used for the single YouTube identity request.
     let (access, expires) = reconnect_refresh_smoke(&client_id, &client_secret, &refresh).await?;
@@ -5392,11 +5398,11 @@ mod keychain_prompt_architecture_tests{
   fn accounts(&self,_:&str)->Result<Vec<String>,String>{*self.accounts.borrow_mut()+=1;Ok(self.v.borrow().keys().cloned().collect())}
  }
  fn p(id:&str)->OAuthProfile{OAuthProfile{id:id.into(),client_id:"123.apps.googleusercontent.com".into(),client_secret:String::new(),channel_id:Some(format!("UC{id}")),channel_title:Some(id.into()),access_token:String::new(),refresh_token:String::new(),expires_at:0,connected_at:"2026-01-01T00:00:00Z".into(),scopes:vec![],preferred_browser:"default".into(),identity_validated_at:Some("2026-01-01T00:00:00Z".into()),identity_validated_channel_id:Some(format!("UC{id}")),credential_error:None}}
- #[test]fn passive_profile_listing_zero_secret_store_calls(){let secrets=CountingStore::default();let value=oauth_profiles_value(OAuthStore{profiles:vec![p("a"),p("b")]});assert_eq!(value.as_array().unwrap().len(),2);assert!(secrets.gets.borrow().is_empty());assert!(secrets.sets.borrow().is_empty());assert!(secrets.deletes.borrow().is_empty());assert_eq!(*secrets.accounts.borrow(),0);}
+ #[test]fn passive_profile_listing_zero_secret_store_calls(){let secrets=CountingStore::default();let value=oauth_profiles_value(OAuthStore{profiles:vec![p("a"),p("b")]},&HashMap::new());assert_eq!(value.as_array().unwrap().len(),2);assert!(secrets.gets.borrow().is_empty());assert!(secrets.sets.borrow().is_empty());assert!(secrets.deletes.borrow().is_empty());assert_eq!(*secrets.accounts.borrow(),0);}
  #[test]fn thirty_one_profiles_passive_enumeration_zero_secret_reads(){
   let secrets=CountingStore::default();
   let profiles=(0..31).map(|i|p(&format!("p{i}"))).collect::<Vec<_>>();
-  let value=oauth_profiles_value(OAuthStore{profiles});
+  let value=oauth_profiles_value(OAuthStore{profiles},&HashMap::new());
   assert_eq!(value.as_array().unwrap().len(),31);
   assert!(secrets.gets.borrow().is_empty());assert!(secrets.sets.borrow().is_empty());assert!(secrets.deletes.borrow().is_empty());assert_eq!(*secrets.accounts.borrow(),0);
  }
@@ -5404,7 +5410,7 @@ mod keychain_prompt_architecture_tests{
   let secrets=CountingStore::default();
   let profiles=(0..31).map(|i|p(&format!("p{i}"))).collect::<Vec<_>>();
   for _ in 0..100{
-   let value=oauth_profiles_value(OAuthStore{profiles:profiles.clone()});
+   let value=oauth_profiles_value(OAuthStore{profiles:profiles.clone()},&HashMap::new());
    assert_eq!(value.as_array().unwrap().len(),31);
   }
   assert!(secrets.gets.borrow().is_empty());assert!(secrets.sets.borrow().is_empty());assert!(secrets.deletes.borrow().is_empty());assert_eq!(*secrets.accounts.borrow(),0);
@@ -5534,6 +5540,30 @@ mod auth_recovery_targeted_tests {
             ids
         );
         assert_eq!(st.profiles[0].id, ID)
+    }
+    #[test]
+    fn reconnect_rejects_wrong_channel_before_profile_mutation() {
+        let sec=Mem::default();
+        let mut st=OAuthStore{profiles:vec![p(ID,"UC_A")]};
+        let before=st.profiles[0].clone();
+        let err=reconnect_apply_validated_with(&sec,&mut st,ID,"client-A","secret-A","access","refresh","UC_WRONG","Wrong",&[],"default",3600).unwrap_err();
+        assert!(err.contains("WRONG_CHANNEL")||err.contains("CHANNEL_MISMATCH"));
+        assert_eq!(st.profiles[0].id,before.id);
+        assert_eq!(st.profiles[0].channel_id,before.channel_id);
+        assert!(sec.v.borrow().is_empty());
+    }
+    #[test]
+    fn reconnect_updates_only_target_profile_credentials() {
+        let sec=Mem::default();
+        let mut st=OAuthStore{profiles:vec![p(ID,"UC_A"),p("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","UC_B")]};
+        let other_before=st.profiles[1].clone();
+        reconnect_apply_validated_with(&sec,&mut st,ID,"client-A","secret-A","access","refresh-new","UC_A","A",&[],"default",3600).unwrap();
+        assert_eq!(st.profiles[0].id,ID);
+        assert_eq!(st.profiles[0].channel_id.as_deref(),Some("UC_A"));
+        assert_eq!(st.profiles[1].id,other_before.id);
+        assert_eq!(st.profiles[1].channel_id,other_before.channel_id);
+        assert_eq!(sec.v.borrow().get(&oauth_key(ID,"refresh_token")).map(String::as_str),Some("refresh-new"));
+        assert!(sec.v.borrow().get(&oauth_key(&other_before.id,"refresh_token")).is_none());
     }
     #[test]
     fn b_refresh_returned_keychain_save_pass() {
