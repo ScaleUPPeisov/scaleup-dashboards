@@ -11,7 +11,7 @@ type SortKey='name'|'subscribers'|'views'|'videos'|'sub24'|'sub7'|'views7'|'upda
 type Group='points'|'day'|'week'|'month';
 const DAY=86400000;
 const signed=(v?:number)=>v==null?'Недостаточно данных':`${v>0?'+':''}${new Intl.NumberFormat('ru-RU').format(v)}`;
-const num=(v?:number)=>v==null?'—':new Intl.NumberFormat('ru-RU',{maximumFractionDigits:1}).format(v);
+const num=(v?:number,max=1)=>v==null?'—':new Intl.NumberFormat('ru-RU',{maximumFractionDigits:max}).format(v);
 const duration=(sec?:number)=>sec==null?'—':`${Math.floor(sec/60)}:${String(Math.round(sec)%60).padStart(2,'0')}`;
 const localDate=(iso?:string)=>iso?new Intl.DateTimeFormat('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}).format(new Date(iso)):'—';
 
