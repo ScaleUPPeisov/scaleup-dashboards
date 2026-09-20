@@ -1,0 +1,68 @@
+import React,{useEffect,useMemo,useState} from 'react';
+import {api} from './api';
+import {activityDayKey,dailySummary,effectiveSourceLifecycle} from './activityJournalCore';
+import {ensureLegacyJournal,journal,journalProcessingState} from './activityJournalRuntime';
+import {loadActivePublishChannel} from './publishWorkspaceState';
+import {useApp} from './store';
+import type {ActivityEvent,UploadHistoryRecord,YoutubeProcessingState} from './types';
+
+type Range='today'|'yesterday'|'7d'|'30d'|'all';
+type Kind='all'|'upload'|'metadata'|'schedule'|'cleanup'|'error';
+const UPLOAD_EVENTS=new Set(['UPLOAD_QUEUED','UPLOAD_STARTED','UPLOAD_PROGRESS','UPLOAD_ACCEPTED','YOUTUBE_PROCESSING','YOUTUBE_READY','UPLOAD_FAILED']);
+const META_EVENTS=new Set(['METADATA_UPDATE_STARTED','METADATA_UPDATE_SUCCEEDED','METADATA_UPDATE_FAILED','TITLE_UPDATED','DESCRIPTION_UPDATED','TAGS_UPDATED','PRIVACY_UPDATED','THUMBNAIL_UPDATED']);
+const SCHEDULE_EVENTS=new Set(['SCHEDULE_UPDATED','INVENTORY_SYNC_STARTED','INVENTORY_SYNC_COMPLETED','INVENTORY_SYNC_PARTIAL']);
+const CLEANUP_EVENTS=new Set(['SOURCE_TRASH_REQUESTED','SOURCE_TRASHED','SOURCE_MISSING','SOURCE_RECOVERED']);
+function inRange(iso:string,range:Range){const t=Date.parse(iso);if(!Number.isFinite(t)||range==='all')return true;const now=new Date(),start=new Date(now.getFullYear(),now.getMonth(),now.getDate()).getTime();if(range==='today')return t>=start;if(range==='yesterday')return t>=start-86400000&&t<start;const days=range==='7d'?7:30;return t>=Date.now()-days*86400000}
+function kindMatches(e:ActivityEvent,kind:Kind){if(kind==='all')return true;if(kind==='upload')return UPLOAD_EVENTS.has(e.eventType);if(kind==='metadata')return META_EVENTS.has(e.eventType);if(kind==='schedule')return SCHEDULE_EVENTS.has(e.eventType);if(kind==='cleanup')return CLEANUP_EVENTS.has(e.eventType);return e.status==='FAILED'}
+function eventLabel(e:ActivityEvent){const m:Record<string,string>={UPLOAD_QUEUED:'Поставлено в очередь',UPLOAD_STARTED:'Загрузка началась',UPLOAD_PROGRESS:'Прогресс загрузки',UPLOAD_ACCEPTED:'YouTube принял видео',YOUTUBE_PROCESSING:'YouTube обрабатывает',YOUTUBE_READY:'YouTube READY',UPLOAD_FAILED:'Ошибка загрузки',METADATA_UPDATE_STARTED:'Метаданные: старт',METADATA_UPDATE_SUCCEEDED:'Метаданные обновлены',METADATA_UPDATE_FAILED:'Ошибка метаданных',TITLE_UPDATED:'Название обновлено',DESCRIPTION_UPDATED:'Описание обновлено',TAGS_UPDATED:'Теги обновлены',SCHEDULE_UPDATED:'Расписание обновлено',PRIVACY_UPDATED:'Privacy обновлён',THUMBNAIL_UPDATED:'Обложка обновлена',INVENTORY_SYNC_STARTED:'Синхронизация начата',INVENTORY_SYNC_COMPLETED:'Синхронизация завершена',INVENTORY_SYNC_PARTIAL:'Синхронизация частичная',SOURCE_TRASH_REQUESTED:'Запрошен перенос в Корзину',SOURCE_TRASHED:'Исходник перемещён в Корзину',SOURCE_MISSING:'Исходник отсутствует',SOURCE_RECOVERED:'Исходник снова найден',OAUTH_RECONNECT:'OAuth переподключён',CHANNEL_REBOUND:'Канал перепривязан'};return m[e.eventType]||e.eventType}
+function sourceLabel(row:UploadHistoryRecord){const x=effectiveSourceLifecycle(row);return x==='PRESENT'?'PRESENT':x==='TRASHED_BY_VYRON'?'TRASHED BY VYRON':x==='SOURCE_CHANGED'?'SOURCE CHANGED':x==='MISSING_LEGACY_UNKNOWN'?'MISSING • LEGACY/UNKNOWN':'UNKNOWN'}
+
+export function ActivityHistory(){
+ const channels=useApp(s=>s.channels),journalRows=useApp(s=>s.activityJournal),history=useApp(s=>s.uploadHistory),replaceHistory=useApp(s=>s.replaceUploadHistory);
+ const [channelId,setChannelId]=useState(()=>loadActivePublishChannel()||''),[range,setRange]=useState<Range>('30d'),[kind,setKind]=useState<Kind>('all'),[status,setStatus]=useState('all'),[query,setQuery]=useState(''),[localBusy,setLocalBusy]=useState(false),[remoteBusy,setRemoteBusy]=useState(false),[lastDiag,setLastDiag]=useState('');
+ useEffect(()=>{ensureLegacyJournal()},[]);
+ useEffect(()=>{if(!channelId&&channels[0])setChannelId(channels[0].id)},[channels.length,channelId]);
+ const channel=channels.find(c=>c.id===channelId),uploads=history.filter(x=>!channelId||x.channelId===channelId);
+ async function reconcileLocal(){
+  if(localBusy)return;setLocalBusy(true);let present=0,missing=0,changed=0,trashed=0;
+  try{
+   const current=useApp.getState().uploadHistory;const next=[...current];
+   for(let i=0;i<next.length;i++){const row=next[i];if(channelId&&row.channelId!==channelId)continue;
+    if(row.trashedAt||row.sourceLifecycle==='TRASHED_BY_VYRON'){next[i]={...row,sourceLifecycle:'TRASHED_BY_VYRON',sourceCheckedAt:new Date().toISOString()};trashed++;continue}
+    if(!row.localFilePath){next[i]={...row,sourceLifecycle:'MISSING_LEGACY_UNKNOWN',sourceCheckedAt:new Date().toISOString()};missing++;continue}
+    try{const st=await api.localSourceStatus(row.localFilePath),at=new Date().toISOString(),prev=effectiveSourceLifecycle(row);let source:'PRESENT'|'MISSING_LEGACY_UNKNOWN'|'SOURCE_CHANGED'='PRESENT';
+      if(!st.exists||!st.isFile)source='MISSING_LEGACY_UNKNOWN';else if(row.fileSize>0&&st.size!=null&&Number(st.size)!==Number(row.fileSize))source='SOURCE_CHANGED';
+      next[i]={...row,sourceLifecycle:source,sourceCheckedAt:at};if(source==='PRESENT')present++;else if(source==='SOURCE_CHANGED')changed++;else missing++;
+      if(prev!==source){journal({eventId:'source-state:'+row.id+':'+source,eventType:source==='PRESENT'?'SOURCE_RECOVERED':'SOURCE_MISSING',status:'INFO',source:'LIVE_OPERATION',timestamp:at,channelId:row.channelId,channelName:channels.find(c=>c.id===row.channelId)?.name,profileId:row.profileId,jobId:row.jobId,youtubeVideoId:row.youtubeVideoId,localSourcePath:row.localFilePath,details:{sourceLifecycle:source,evidence:'filesystem stat'}})}
+    }catch{next[i]={...row,sourceLifecycle:'MISSING_LEGACY_UNKNOWN',sourceCheckedAt:new Date().toISOString()};missing++}
+   }
+   replaceHistory(next);setLastDiag('LOCAL • present '+present+' • missing '+missing+' • changed '+changed+' • trashed '+trashed);
+  }finally{setLocalBusy(false)}
+ }
+ async function reconcileRemote(){
+  if(remoteBusy)return;setRemoteBusy(true);let ready=0,processing=0,failed=0,missing=0,calls=0;
+  try{
+   const current=useApp.getState().uploadHistory,next=[...current],scope=current.filter(x=>(!channelId||x.channelId===channelId)&&x.profileId&&x.youtubeVideoId);
+   const groups=new Map<string,UploadHistoryRecord[]>();for(const row of scope){const a=groups.get(row.profileId!)||[];a.push(row);groups.set(row.profileId!,a)}
+   for(const [profileId,rows] of groups){const op='activity-reconcile:'+channelId+':'+Date.now()+':'+profileId.slice(0,8),result=await api.youtubeVideoProcessingStatusBatch(profileId,rows.map(x=>x.youtubeVideoId),op);calls+=result.calls;
+    for(const p of result.rows){const idx=next.findIndex(x=>x.profileId===profileId&&x.youtubeVideoId===p.videoId);if(idx<0)continue;const old=next[idx],at=p.processingCheckedAt||new Date().toISOString();
+     if(p.remoteExists===false){next[idx]={...old,remoteExists:false,remoteCheckedAt:at,processingCheckedAt:at,processingError:'REMOTE_MISSING'};missing++;continue}
+     const state=p.processingState as YoutubeProcessingState,error=p.processingFailureReason||p.rejectionReason||undefined;next[idx]={...old,remoteExists:true,remoteCheckedAt:at,processingState:state,processingStatus:p.processingStatus,processingCheckedAt:at,processingError:error,readyAt:state==='READY'?(old.readyAt||at):old.readyAt,identityVerifiedAt:p.identityVerified?(old.identityVerifiedAt||at):old.identityVerifiedAt};
+     journalProcessingState(old,old.processingState,state,at,error);if(state==='READY')ready++;else if(state==='YOUTUBE_PROCESSING'||state==='PROCESSING_UNKNOWN')processing++;else failed++;
+    }
+   }
+   replaceHistory(next);setLastDiag('REMOTE • READY '+ready+' • processing '+processing+' • failed '+failed+' • missing '+missing+' • API '+calls);
+  }catch(e){setLastDiag('REMOTE ERROR • '+String(e))}finally{setRemoteBusy(false)}
+ }
+ useEffect(()=>{if(channelId)void reconcileLocal()},[channelId]);
+ const filtered=useMemo(()=>journalRows.filter(e=>(!channelId||e.channelId===channelId)&&inRange(e.timestamp,range)&&kindMatches(e,kind)&&(status==='all'||e.status===status)&&(!query.trim()||[e.channelName,e.youtubeVideoId,e.jobId,e.localSourcePath,String(e.details?.filename||''),String(e.details?.title||'')].join(' ').toLowerCase().includes(query.trim().toLowerCase()))).sort((a,b)=>b.timestamp.localeCompare(a.timestamp)),[journalRows,channelId,range,kind,status,query]);
+ const daily=dailySummary(journalRows,channelId),days=Object.entries(daily).sort((a,b)=>b[0].localeCompare(a[0])).slice(0,7);
+ const reconstructed=filtered.filter(x=>x.source!=='LIVE_OPERATION').length;
+ return <div><div className="pageHeader"><div><small>YOUTUBE ACTIVITY JOURNAL</small><h1>История действий</h1><p>Remote YouTube, операции VYRON и локальный исходник хранятся как разные факты. Старые данные помечаются как reconstructed/legacy и не выдаются за точный журнал.</p></div><div className="headerActions"><button disabled={localBusy} onClick={()=>void reconcileLocal()}>{localBusy?'Проверяю…':'Проверить локальные файлы'}</button><button disabled={remoteBusy} onClick={()=>void reconcileRemote()}>{remoteBusy?'YouTube…':'Проверить YouTube'}</button></div></div>
+ <div className="panel"><div className="publishToolbar"><select value={channelId} onChange={e=>setChannelId(e.target.value)}>{channels.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select><select value={range} onChange={e=>setRange(e.target.value as Range)}><option value="today">Сегодня</option><option value="yesterday">Вчера</option><option value="7d">7 дней</option><option value="30d">30 дней</option><option value="all">Всё</option></select><select value={kind} onChange={e=>setKind(e.target.value as Kind)}><option value="all">Все операции</option><option value="upload">Upload</option><option value="metadata">Metadata</option><option value="schedule">Schedule</option><option value="cleanup">Cleanup</option><option value="error">Ошибки</option></select><select value={status} onChange={e=>setStatus(e.target.value)}><option value="all">Все статусы</option><option value="SUCCESS">SUCCESS</option><option value="PARTIAL">PARTIAL</option><option value="FAILED">FAILED</option><option value="INFO">INFO</option></select><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Поиск: title / videoId / filename"/></div>{lastDiag&&<div className="syncAudit"><span>{lastDiag}</span></div>}</div>
+ <div className="metrics six"><div className="metric blue"><small>UPLOAD RECORDS</small><strong>{uploads.length}</strong><span>не зависят от MP4</span></div><div className="metric green"><small>REMOTE READY</small><strong>{uploads.filter(x=>x.remoteExists!==false&&x.processingState==='READY').length}</strong><span>YouTube подтверждён</span></div><div className="metric orange"><small>PROCESSING</small><strong>{uploads.filter(x=>x.processingState==='YOUTUBE_PROCESSING'||x.processingState==='PROCESSING_UNKNOWN').length}</strong><span>исходники сохраняются</span></div><div className="metric purple"><small>SOURCE PRESENT</small><strong>{uploads.filter(x=>effectiveSourceLifecycle(x)==='PRESENT').length}</strong><span>локально</span></div><div className="metric red"><small>SOURCE MISSING</small><strong>{uploads.filter(x=>effectiveSourceLifecycle(x)==='MISSING_LEGACY_UNKNOWN').length}</strong><span>не означает needs upload</span></div><div className="metric cyan"><small>RECONSTRUCTED</small><strong>{reconstructed}</strong><span>помечено явно</span></div></div>
+ <div className="todayGrid"><section className="panel"><div className="panelHead"><div><small>DAILY SUMMARY</small><h3>{channel?.name||'Канал'}</h3></div></div>{days.length?days.map(([day,x])=><div className="actionRow" key={day}><span>{day.slice(5)}</span><div><b>Uploaded {x.uploaded} • Ready {x.ready} • Failed {x.failed}</b><small>Metadata {x.metadata} • Schedule {x.schedule} • Descriptions {x.description} • Tags {x.tags}</small></div><em>{x.lastAt?new Date(x.lastAt).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}):'—'}</em></div>):<p>Пока нет записанных операций. Старые детали, которых VYRON не сохранял, не выдумываются.</p>}</section>
+ <section className="panel"><div className="panelHead"><div><small>PERSISTED UPLOAD HISTORY</small><h3>Remote ≠ Local</h3></div></div>{uploads.slice().sort((a,b)=>b.uploadedAt.localeCompare(a.uploadedAt)).slice(0,20).map(x=><div className="actionRow" key={x.id}><span>▶</span><div><b>{x.titleAtUpload||x.originalFilename}</b><small>{new Date(x.uploadedAt).toLocaleString('ru-RU')} • {x.youtubeVideoId}</small><small>YouTube: {x.remoteExists===false?'REMOTE MISSING':x.processingState||'UNKNOWN'} • Local: {sourceLabel(x)}</small></div><em>{x.sourceLifecycle||'UNKNOWN'}</em></div>)}{!uploads.length&&<p>Upload history отсутствует.</p>}</section></div>
+ <section className="panel"><div className="panelHead"><div><small>EVENT TIMELINE</small><h3>{filtered.length} событий</h3><p>LIVE_OPERATION — точный журнал RC4+. RECONSTRUCTED / LEGACY_IMPORT — только факты, подтверждённые старым persisted state.</p></div></div><div className="errorCenterRows">{filtered.slice(0,500).map(e=><article key={e.eventId}><small>{new Date(e.timestamp).toLocaleString('ru-RU')} • {e.source} • {e.status}</small><b>{eventLabel(e)}</b><p>{[e.channelName,e.youtubeVideoId,e.details?.filename,e.details?.title].filter(Boolean).join(' • ')}</p>{e.details&&<details><summary>Факты</summary><pre>{JSON.stringify(e.details,null,2)}</pre></details>}</article>)}{!filtered.length&&<div className="successBox">Для выбранных фильтров событий нет. Если старая версия VYRON не сохраняла действие, оно здесь не будет выдумано.</div>}</div></section>
+ </div>
+}
