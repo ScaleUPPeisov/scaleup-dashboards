@@ -4,12 +4,14 @@ import {readFileSync} from 'node:fs';
 const read=(p:string)=>readFileSync(p,'utf8');
 
 describe('VYRON 2.1.14 RC1 YouTube OAuth onboarding',()=>{
-  it('repairs OAuth readiness from canonical Keychain presence instead of stale metadata only',()=>{
+  it('uses passive Keychain presence only as metadata and requires an operational secret read for READY',()=>{
     const y=read('src-tauri/src/youtube.rs');
     expect(y).toContain('fn reconcile_google_config_presence');
     expect(y).toContain('security::list_canonical_secret_accounts("")');
-    expect(y).toContain('canonical_accounts.iter().any(|a|a.as_str()==GOOGLE_CLIENT_SECRET)');
-    expect(y).toContain('let oauth_ready=configured&&c.client_secret_present;');
+    expect(y).toContain('canonical_accounts.iter().any(|a|a==&account)');
+    expect(y).toContain('google_config_operational_status_value');
+    expect(y).toContain('"oauthReady":configured&&operational');
+    expect(y).toContain('NEEDS_SECURE_STORAGE_REPAIR');
   });
 
   it('Add Channel stays visible and readiness failure opens setup guidance, never Finder directly',()=>{
@@ -21,7 +23,7 @@ describe('VYRON 2.1.14 RC1 YouTube OAuth onboarding',()=>{
     const end=ui.indexOf("async function connect",start);
     const addFlow=ui.slice(start,end);
     expect(addFlow).not.toContain("file.current?.click()");
-    expect(ui).toContain('Импортировать credentials.json</button>');
+    expect(ui).toContain('Импортировать credentials.json');
   });
 
   it('new-channel OAuth explicitly requests account selection and offline consent',()=>{
@@ -50,7 +52,8 @@ describe('VYRON 2.1.14 RC1 YouTube OAuth onboarding',()=>{
     const start=y.indexOf('async fn youtube_oauth_connect(');
     const end=y.indexOf('fn reconnect_profile_id',start);
     const connect=y.slice(start,end);
-    expect(connect).toContain('canonical_set_secret(GOOGLE_CLIENT_SECRET');
+    expect(connect).toContain('google_client_secret_account(&global_meta)');
+    expect(connect).toContain('global_meta.client_id.trim()==client_id');
     expect(connect).toContain('client_secret: String::new()');
     expect(y).toContain('OAuthClientSecretSource::ProfileCanonical');
     expect(y).toContain('resolve_client_secret_for_profile');
@@ -72,7 +75,8 @@ describe('VYRON 2.1.14 RC1 YouTube OAuth onboarding',()=>{
     const start=y.indexOf('fn google_config_status_value');
     const end=y.indexOf('#[derive',start);
     const status=y.slice(start,end);
-    expect(status).toContain('let oauth_ready=configured&&c.client_secret_present;');
+    expect(status).toContain('"oauthReady":configured&&operational');
+    expect(status).toContain('secretOperational');
     expect(status).not.toContain('api_key_present&&');
     expect(status).not.toContain('project_id&&');
   });
