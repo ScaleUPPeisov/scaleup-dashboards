@@ -60,27 +60,44 @@ function UploadCenterModal(){
  useEffect(()=>{void scanLocalSources()},[]);
  async function trashVerified(){
   if(cleanupBusy)return;setCleanupBusy(true);
-  let moved=0,failedMoves=0;
+  const trashOperationId=`cleanup-batch:${Date.now()}`;let moved=0,alreadyMissing=0,notReady=0,changed=0,verifyFailed=0;
   try{
+   let nextHistory=[...useApp.getState().uploadHistory];
    for(const record of cleanupCandidates){
-    const job=useApp.getState().jobs.find(j=>j.id===record.jobId);
-    if(!cleanupEligibleUpload(record,job)){failedMoves++;continue}
+    const job=useApp.getState().jobs.find(j=>j.id===record.jobId),channel=channels.find(c=>c.id===record.channelId);
+    if(!cleanupEligibleUpload(record,job)){verifyFailed++;continue}
+    journal({eventId:trashOperationId+':requested:'+record.id,eventType:'SOURCE_TRASH_REQUESTED',status:'STARTED',source:'LIVE_OPERATION',operationId:trashOperationId,batchId:trashOperationId,channelId:record.channelId,channelName:channel?.name,profileId:record.profileId,jobId:record.jobId,youtubeVideoId:record.youtubeVideoId,localSourcePath:record.localFilePath,details:{filename:record.originalFilename}});
     try{
-     const processing=await api.youtubeVideoProcessingStatus(record.profileId!,record.youtubeVideoId,`cleanup-verify:${record.jobId}`);
-     if(processing.processingState!=='READY'||!processing.identityVerified)throw new Error('YouTube processing ещё не READY');
+     const processing=await api.youtubeVideoProcessingStatus(record.profileId!,record.youtubeVideoId,`${trashOperationId}:verify:${record.jobId}`);
+     const idx=nextHistory.findIndex(x=>x.id===record.id),checkedAt=processing.processingCheckedAt||new Date().toISOString();
+     if(idx>=0)nextHistory[idx]={...nextHistory[idx],remoteExists:true,remoteCheckedAt:checkedAt,processingState:processing.processingState,processingCheckedAt:checkedAt,identityVerifiedAt:processing.identityVerified?checkedAt:nextHistory[idx].identityVerifiedAt};
+     if(processing.processingState!=='READY'||!processing.identityVerified){notReady++;continue}
+     const local=await api.localSourceStatus(record.localFilePath);
+     if(!local.exists||!local.isFile){
+      alreadyMissing++;if(idx>=0)nextHistory[idx]={...nextHistory[idx],sourceLifecycle:'MISSING_LEGACY_UNKNOWN',sourceCheckedAt:new Date().toISOString()};
+      journal({eventId:trashOperationId+':missing:'+record.id,eventType:'SOURCE_MISSING',status:'INFO',source:'LIVE_OPERATION',operationId:trashOperationId,batchId:trashOperationId,channelId:record.channelId,channelName:channel?.name,profileId:record.profileId,jobId:record.jobId,youtubeVideoId:record.youtubeVideoId,localSourcePath:record.localFilePath,details:{reason:'already missing before Trash',filename:record.originalFilename}});continue
+     }
      const cached=useApp.getState().fingerprintCache[record.localFilePath];
      const fp=await api.youtubeFileFingerprint(record.localFilePath,cached?{size:cached.size,mtimeMs:cached.mtimeMs,sha256:cached.sha256}:undefined);
-     if(fp.fingerprint.toLowerCase()!==record.sha256.toLowerCase()||fp.size!==record.fileSize)throw new Error('LOCAL_SOURCE_CHANGED: файл изменился после upload');
+     if(fp.fingerprint.toLowerCase()!==record.sha256.toLowerCase()||fp.size!==record.fileSize){
+      changed++;if(idx>=0)nextHistory[idx]={...nextHistory[idx],sourceLifecycle:'SOURCE_CHANGED',sourceCheckedAt:new Date().toISOString()};continue
+     }
      const roots=[settings.workspace,record.sourceProjectPath||''].filter(Boolean);
      const result=await api.trashLocalFile(record.localFilePath,roots);
-     if(!result.trashed)throw new Error(result.missing?'LOCAL_SOURCE_MISSING: файл уже отсутствует':'TRASH_MOVE_FAILED');
-     const now=new Date().toISOString(),next=markHistoryTrashed(useApp.getState().uploadHistory,record.jobId,now);
-     useApp.getState().replaceUploadHistory(next);useApp.getState().patchJob(record.jobId,{storageLifecycle:'TRASHED'});
+     if(!result.trashed){
+      if(result.missing){alreadyMissing++;if(idx>=0)nextHistory[idx]={...nextHistory[idx],sourceLifecycle:'MISSING_LEGACY_UNKNOWN',sourceCheckedAt:new Date().toISOString()};continue}
+      verifyFailed++;continue
+     }
+     const now=new Date().toISOString();nextHistory=markHistoryTrashed(nextHistory,record.jobId,now,trashOperationId);
+     if(job)useApp.getState().patchJob(record.jobId,{storageLifecycle:'TRASHED_BY_VYRON'});
+     journal({eventId:trashOperationId+':trashed:'+record.id,eventType:'SOURCE_TRASHED',status:'SUCCESS',source:'LIVE_OPERATION',timestamp:now,operationId:trashOperationId,batchId:trashOperationId,channelId:record.channelId,channelName:channel?.name,profileId:record.profileId,jobId:record.jobId,youtubeVideoId:record.youtubeVideoId,localSourcePath:record.localFilePath,details:{filename:record.originalFilename,permanentDelete:false}});
      moved++;
-    }catch(error){failedMoves++;notifyError('Не удалось переместить файл в Корзину',String(error),{operationId:`trash:${record.jobId}`})}
+    }catch{verifyFailed++}
    }
-   if(moved)notifySuccess('Локальные исходники перемещены в Корзину',`${moved} файлов. Постоянное удаление не выполнялось.`,{operationId:`trash-batch:${Date.now()}`});
-   if(failedMoves)notifyWarning('Часть файлов оставлена',`${failedMoves} файлов не прошли повторную проверку или Trash move. Их состояние не изменено.`);
+   replaceUploadHistory(nextHistory);
+   if(moved)notifySuccess('Локальные исходники перемещены в Корзину',`${moved} файлов • permanent delete: NO.`,{operationId:trashOperationId});
+   const skipped=alreadyMissing+notReady+changed+verifyFailed;
+   if(skipped)notifyWarning('Часть файлов не тронута',`Уже отсутствуют: ${alreadyMissing} • YouTube не READY: ${notReady} • изменены: ${changed} • проверка не прошла: ${verifyFailed}. Повторных CLEANUP_NOT_READY уведомлений по каждому файлу нет.`,{operationId:trashOperationId+':summary'});
    setCleanupOpen(false)
   }finally{setCleanupBusy(false)}
  }
@@ -95,9 +112,9 @@ function UploadCenterModal(){
   {queue.recent.map(entry=>{const job=jobs.find(j=>j.id===entry.spec.jobId),ok=entry.state==='SUCCEEDED';return <article className={`uploadCenterRow ${ok?'done':'error'}`} key={entry.queueId}><div className="uploadIdentity"><small>{entry.spec.channelName}</small><b>{videoName(entry.spec)}</b><span>{entry.spec.filePath.split('/').pop()}</span></div><div className="queuedState"><b>{ok?'✓ UPLOAD COMPLETED':'❌ НЕ ЗАГРУЖЕНО'}</b><span>{job?.youtubeVideoId?`YouTube video ID: ${job.youtubeVideoId}`:entry.error||job?.error||'Ошибка загрузки'}</span><span>{job?.uploadedAt?`Завершено: ${new Date(job.uploadedAt).toLocaleString('ru-RU')}`:''}</span><span>{job?.publishAt?`Scheduled: ${new Date(job.publishAt).toLocaleString('ru-RU')}`:''}</span><span>YouTube processing: {job?.processingState||'не подтверждено'}</span></div></article>})}
   {!activeCount&&!queue.queued.length&&!queue.recent.length&&<div className="uploadCenterEmpty"><strong>✓</strong><div><b>Активных загрузок нет</b><span>История ниже сохраняется после перезапуска.</span></div></div>}
   </div>
-  {persisted.length>0&&<section className="panel"><div className="panelHead"><div><small>PERSISTED UPLOAD HISTORY</small><h3>Последние загрузки</h3></div>{cleanupCandidates.length>0&&<button onClick={()=>setCleanupOpen(true)}>Очистить успешно загруженные • {cleanupCandidates.length}</button>}</div>{persisted.map(x=><div className="actionRow" key={x.id}><div><b>{x.originalFilename}</b><small>{x.youtubeVideoId} • {new Date(x.uploadedAt).toLocaleString('ru-RU')}</small></div><em>{x.trashedAt?'TRASHED':x.processingState||'UPLOAD_ACCEPTED'}</em></div>)}</section>}
+  {persisted.length>0&&<section className="panel"><div className="panelHead"><div><small>PERSISTED UPLOAD HISTORY</small><h3>Последние загрузки</h3></div><div className="headerActions"><button disabled={sourceScanBusy} onClick={()=>void scanLocalSources()}>{sourceScanBusy?'Проверяю…':'Проверить локальные файлы'}</button>{cleanupCandidates.length>0&&<button onClick={()=>setCleanupOpen(true)}>Очистить безопасные • {cleanupCandidates.length}</button>}</div></div>{persisted.map(x=><div className="actionRow" key={x.id}><div><b>{x.titleAtUpload||x.originalFilename}</b><small>{x.youtubeVideoId} • {new Date(x.uploadedAt).toLocaleString('ru-RU')}</small><small>YouTube: {x.remoteExists===false?'REMOTE MISSING':x.processingState||'UPLOAD_ACCEPTED'} • Local: {effectiveSourceLifecycle(x)}</small></div><em>{x.trashedAt?'TRASHED_BY_VYRON':x.sourceLifecycle||'UNKNOWN'}</em></div>)}</section>}
  </section></div>
- {cleanupOpen&&<div className="modalBackdrop" onMouseDown={()=>!cleanupBusy&&setCleanupOpen(false)}><section className="confirmModal" onMouseDown={e=>e.stopPropagation()}><small>SAFE LOCAL CLEANUP</small><h2>{cleanupCandidates.length} видео подтверждены READY на YouTube</h2><p>Перед Trash VYRON повторно проверит YouTube identity/processing и fingerprint локального файла. Постоянного удаления нет.</p><p>Будут сохранены: {failedSources} файлов с ошибками • {processingKept} processing/unverified.</p><div className="errorCenterRows">{cleanupCandidates.map(x=><article key={x.id}><b>{x.originalFilename}</b><small>{x.youtubeVideoId}</small></article>)}</div><footer><button disabled={cleanupBusy} onClick={()=>setCleanupOpen(false)}>Оставить всё</button><button className="primary" disabled={cleanupBusy||!cleanupCandidates.length} onClick={()=>void trashVerified()}>{cleanupBusy?'Проверяю…':`Переместить ${cleanupCandidates.length} файлов в Корзину`}</button></footer></section></div>}
+ {cleanupOpen&&<div className="modalBackdrop" onMouseDown={()=>!cleanupBusy&&setCleanupOpen(false)}><section className="confirmModal" onMouseDown={e=>e.stopPropagation()}><small>SAFE LOCAL CLEANUP</small><h2>В Корзину попадут только безопасные исходники</h2><p>До операции VYRON уже исключил predictable non-candidates. Перед каждым Trash выполняется повторная YouTube READY + identity + fingerprint проверка.</p><div className="syncAudit"><span>Eligible <b>{cleanupCandidates.length}</b></span><span>Already missing <b>{cleanup.alreadyMissing.length}</b></span><span>Still processing <b>{cleanup.processing.length}</b></span><span>Source changed <b>{cleanup.changed.length}</b></span><span>Verification pending <b>{cleanup.verification.length}</b></span><span>Already trashed <b>{cleanup.trashed.length}</b></span></div><div className="errorCenterRows">{cleanupCandidates.map(x=><article key={x.id}><b>{x.originalFilename}</b><small>{x.youtubeVideoId} • READY • PRESENT</small></article>)}</div><footer><button disabled={cleanupBusy} onClick={()=>setCleanupOpen(false)}>Оставить всё</button><button className="primary" disabled={cleanupBusy||!cleanupCandidates.length} onClick={()=>void trashVerified()}>{cleanupBusy?'Проверяю…':`Переместить ${cleanupCandidates.length} файлов в Корзину`}</button></footer></section></div>}
  </>;
 }
 export function GlobalUploadIndicator(){
