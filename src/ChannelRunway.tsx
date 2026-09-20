@@ -2,6 +2,9 @@ import React,{useEffect,useMemo,useState} from 'react';
 import {api,type GoogleConfigStatus} from './api';
 import {useApp} from './store';
 import type {Channel,YoutubeProfile} from './types';
+import {classifyYoutubeChannels} from './youtubeStatisticsCenter';
+import {refreshYoutubeChannelStatistics,refreshYoutubeProfileStatistics,type ChannelStatisticsRefreshProgress} from './youtubeChannelStatsRuntime';
+import {compactChannelStat,subscriberStatLabel} from './youtubeChannelStats';
 import {
   compareRunwayRecords,
   krasnoyarskClock,
@@ -71,7 +74,7 @@ type RunwayRow={channel:Channel;record:ChannelRunwayRecord;content:ContentRunway
 export function ChannelRunway(){
   const channels=useApp(s=>s.channels),jobs=useApp(s=>s.jobs),uploadHistory=useApp(s=>s.uploadHistory),projectLifecycle=useApp(s=>s.projectLifecycle),fingerprintCache=useApp(s=>s.fingerprintCache),toast=useApp(s=>s.toast);
   const [snapshot,setSnapshot]=useState(()=>loadChannelRunwayStore());
-  const [busy,setBusy]=useState(''),[profiles,setProfiles]=useState<YoutubeProfile[]>([]),[googleConfig,setGoogleConfig]=useState<GoogleConfigStatus>();
+  const [busy,setBusy]=useState(''),[profiles,setProfiles]=useState<YoutubeProfile[]>([]),[googleConfig,setGoogleConfig]=useState<GoogleConfigStatus>(),[statsBusy,setStatsBusy]=useState(false),[statsProgress,setStatsProgress]=useState<ChannelStatisticsRefreshProgress>({done:0,total:0});
   const [,setQuotaTick]=useState(0);
   const signature=channels.map(c=>`${c.id}:${c.name}:${c.enabled}:${c.cadenceDays}:${c.scheduleMode||'interval'}:${c.publishIntervalDays||''}:${c.publishDays||''}:${c.pauseDays||''}:${c.patternAnchorDate||''}:${c.youtubeProfileId||''}`).join('|');
 
@@ -85,6 +88,8 @@ export function ChannelRunway(){
   useEffect(()=>{let live=true;void Promise.all([api.youtubeProfiles(),api.youtubeGoogleConfig()]).then(([p,c])=>{if(live){setProfiles(p);setGoogleConfig(c)}}).catch(()=>{});return()=>{live=false}},[]);
 
   const active=useMemo(()=>channels.filter(c=>c.enabled),[channels]);
+  const youtubeClassification=useMemo(()=>classifyYoutubeChannels(active,profiles),[active,profiles]);
+  const linkedByLocalId=useMemo(()=>new Map(youtubeClassification.linked.map(x=>[x.channel.id,x])),[youtubeClassification]);
   const profileById=useMemo(()=>new Map(profiles.map(p=>[p.id,p])),[profiles]);
   const usage=youtubeQuotaUsage();
   const rows=useMemo(()=>active.map(channel=>{
@@ -120,10 +125,11 @@ export function ChannelRunway(){
   const generalRemaining=Math.max(0,usage.limit-usage.used);
 
   async function syncChannel(channel:Channel){
-    if(!channel.youtubeProfileId){toast(`У ${channel.name} не привязан YouTube OAuth`);return}
+    const linked=linkedByLocalId.get(channel.id);
+    if(!linked){toast(`${channel.name}: YouTube не связан точно с OAuth profile • API call не выполнен`);return}
     setBusy(channel.id);
     try{
-      const result=await api.youtubeListExisting(channel.youtubeProfileId,1000);
+      const result=await api.youtubeListExisting(linked.profile.id,1000);
       if(!(result.syncComplete??result.complete)){toast(`${channel.name}: синхронизация неполная • ${result.videosHydrated??result.received}/${result.uniqueVideoIds??result.youtubeFound} • расписание не заменено`);return}
       const nextStore=upsertChannelRunwayFromYoutube(channel,result.videos||[],new Date());
       setSnapshot(nextStore);
@@ -134,14 +140,28 @@ export function ChannelRunway(){
     }finally{setBusy('')}
   }
 
+  async function refreshAllStats(){
+    if(statsBusy)return;setStatsBusy(true);setStatsProgress({done:0,total:youtubeClassification.eligible.length});
+    try{const result=await refreshYoutubeChannelStatistics(true,setStatsProgress);toast(result.failed?`YouTube данные: обновлено ${result.updated}, ошибок ${result.failed}`:`✓ YouTube данные: ${result.updated} каналов • API ${result.apiRequests} • quota ${result.quotaUnits}`)}
+    catch(e){toast(`Статистика каналов: ${String(e)}`)}finally{setStatsBusy(false)}
+  }
+  async function refreshRowStats(channel:Channel){
+    const linked=linkedByLocalId.get(channel.id);if(!linked){toast(`${channel.name}: YouTube не подключён • API call 0`);return}
+    setBusy(`stats:${channel.id}`);try{const ok=await refreshYoutubeProfileStatistics(linked.profile,`runway-stats:${channel.id}:${Date.now()}`);toast(ok?`✓ ${channel.name}: YouTube данные обновлены`:`⚠ ${channel.name}: сохранены последние данные`)}finally{setBusy('')}
+  }
+  function openStatistics(channel:Channel){sessionStorage.setItem('vyron:statistics:selected-channel',channel.id);window.dispatchEvent(new Event('vyron:youtube-statistics'))}
+  function openAccounts(channel:Channel){sessionStorage.setItem('vyron:accounts:focus-channel',channel.id);window.dispatchEvent(new Event('vyron:youtube-accounts'))}
+
   return <section className="panel channelRunway">
     <div className="runwayHead">
-      <div><small>CONTENT RUNWAY • LOCAL + QUOTA AWARE</small><h3>Запас контента</h3><p>VYRON соединяет подтверждённое YouTube-расписание с реально готовыми локальными render-файлами. Дополнительные publish slots строятся тем же cadence engine; General API и Video Upload quota отображаются раздельно.</p></div>
-      <span className="localOnlyBadge">CALCULATION • ZERO API</span>
+      <div><small>CONTENT RUNWAY • LOCAL + QUOTA AWARE</small><h3>Запас контента</h3><p>VYRON соединяет подтверждённое YouTube-расписание с реально готовыми локальными render-файлами. Local projects и реально подключённые YouTube-каналы считаются отдельно.</p></div>
+      <div className="headerActions"><span className="localOnlyBadge">CALCULATION • ZERO API</span><button disabled={statsBusy||!youtubeClassification.eligible.length} onClick={()=>void refreshAllStats()}>{statsBusy?`↻ ${statsProgress.done} / ${statsProgress.total}`:'↻ Обновить YouTube данные'}</button></div>
     </div>
 
     <div className="runwaySummary">
-      <div><small>ВСЕГО КАНАЛОВ</small><b>{active.length}</b><em>{unknown.length?`${unknown.length} без данных`:'данные локальные'}</em></div>
+      <div><small>ВСЕГО ПРОЕКТОВ</small><b>{active.length}</b><em>local VYRON</em></div>
+      <div><small>YOUTUBE ПОДКЛЮЧЕНО</small><b>{youtubeClassification.eligible.length}</b><em>exact Profile + Channel ID</em></div>
+      <div><small>НЕ ПОДКЛЮЧЕНО</small><b>{active.length-youtubeClassification.eligible.length}</b><em>stats API calls: 0</em></div>
       <div><small>ГОТОВЫХ ВИДЕО</small><b>{totalReady}</b><em>не загружены • dedupe включён</em></div>
       <div><small>ТРЕБУЮТ ВНИМАНИЯ</small><b>{attention.length}</b><em>content runway ≤ 45 дней</em></div>
       <div><small>КРИТИЧЕСКИЕ</small><b>{critical.length}</b><em>≤ 14 дней</em></div>
@@ -163,7 +183,7 @@ export function ChannelRunway(){
       {rows.length===0?<div className="empty"><b>Нет активных каналов</b><p>Content Runway не создаёт демонстрационные данные.</p></div>:rows.map(({channel,record,content,uploadRemaining,uploadLimitKnown})=>{
         const meta=statusMeta[content.status];
         return <div className="runwayRow" key={channel.id}>
-          <span className="runwayChannel"><b>{channel.name}</b><small>{syncLabel(record.lastScheduleSync)}</small></span>
+          <span className="runwayChannel"><b>{channel.name}</b><small>{syncLabel(record.lastScheduleSync)}</small><small>{linkedByLocalId.has(channel.id)?`Subs ${subscriberStatLabel(channel.stats)} • Views ${compactChannelStat(channel.stats?.viewCount??channel.stats?.views)}`:'YouTube: НЕ ПОДКЛЮЧЁН'}</small></span>
           <span><b>{dateLabel(content.scheduledThrough)}</b></span>
           <span><b>{dateLabel(content.projectedRunwayEnd)}</b><small>{content.readyVideoCount?`+${content.readyVideoCount} slots`:'без локального буфера'}</small></span>
           <span className={`runwayDays ${content.status}`}>{`${content.contentRunwayDays} дн.`}</span>
@@ -172,7 +192,7 @@ export function ChannelRunway(){
           <span>{scheduleDescription(channel)}</span>
           <span className="runwayQuota">{uploadLimitKnown?<><b>{uploadRemaining}</b><small>доступно</small></>:<><b>—</b><small>лимит проекта не подтверждён</small></>}</span>
           <span className={`runwayStatus ${content.status}`}><i>{meta.icon}</i>{meta.label}</span>
-          <span><button disabled={busy===channel.id||!channel.youtubeProfileId} onClick={()=>void syncChannel(channel)}>{busy===channel.id?'СИНХРОНИЗАЦИЯ…':'ОБНОВИТЬ РАСПИСАНИЕ'}</button></span>
+          <span>{linkedByLocalId.has(channel.id)?<><button disabled={busy===channel.id} onClick={()=>void syncChannel(channel)}>{busy===channel.id?'СИНХРОНИЗАЦИЯ…':'ОБНОВИТЬ РАСПИСАНИЕ'}</button><button disabled={busy===`stats:${channel.id}`||statsBusy} onClick={()=>void refreshRowStats(channel)}>{busy===`stats:${channel.id}`?'↻…':'↻ YT'}</button><button onClick={()=>openStatistics(channel)}>Статистика</button></>:<button onClick={()=>openAccounts(channel)}>Подключить</button>}</span>
         </div>
       })}
     </div>
