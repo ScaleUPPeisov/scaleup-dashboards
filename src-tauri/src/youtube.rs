@@ -287,7 +287,11 @@ fn require_canonical_refresh(app:&AppHandle,profile_id:&str)->Result<String,Stri
  }
  Err(format!("OAUTH_RECONNECT_REQUIRED: profile={profile_id}; canonical refresh token is missing"))
 }
-fn canonical_global_client_secret()->Result<Option<String>,String>{security::canonical_get_secret_cached(GOOGLE_CLIENT_SECRET)}
+fn canonical_global_client_secret(app:&AppHandle)->Result<Option<String>,String>{
+ let c=load_google_config_metadata(app)?;
+ let account=google_client_secret_account(&c);
+ security::canonical_get_secret_cached(&account)
+}
 #[derive(Debug,Clone,PartialEq,Eq)]
 enum OAuthClientSecretSource{ProfileCanonical,GlobalExactMatch,GlobalCurrentMigration}
 #[derive(Debug,Clone)]
@@ -306,9 +310,19 @@ fn resolve_client_secret_for_profile(app:&AppHandle,profile_id:&str,client_id:&s
  if profile_id.is_empty(){return Err("OAUTH_PROFILE_ID_MISSING: existing profile UUID is required".into())}
  if client_id.is_empty(){return Err("OAUTH_CLIENT_MISSING: profile client_id is empty".into())}
  let profile_account=oauth_key(profile_id,"client_secret");
- let profile_secret=security::canonical_get_secret_cached(&profile_account)?;
+ let profile_secret=match security::canonical_get_secret_cached(&profile_account){
+  Ok(v)=>v,
+  Err(e) if keychain_repairable_error(&e)=>None,
+  Err(e)=>return Err(e),
+ };
  let global_meta=load_google_config_metadata(app)?;
- let global_secret=if global_meta.client_id.trim()==client_id{canonical_global_client_secret()?}else{None};
+ let global_secret=if global_meta.client_id.trim()==client_id{
+ match security::canonical_get_secret_cached(&google_client_secret_account(&global_meta)){
+  Ok(v)=>v,
+  Err(e) if keychain_repairable_error(&e)=>None,
+  Err(e)=>return Err(e),
+ }
+}else{None};
  let legacy_accounts=security::list_legacy_secret_accounts("")?;
  let legacy_present=select_present_account(&legacy_client_secret_candidates(profile_id),&legacy_accounts).is_some();
  match select_oauth_client_secret(profile_secret,client_id,&global_meta.client_id,global_secret,legacy_present){
@@ -326,14 +340,18 @@ fn resolve_reconnect_oauth_client(app:&AppHandle,profile_id:&str,historical_clie
  let historical_client_id=historical_client_id.trim();
  let profile_account=oauth_key(profile_id,"client_secret");
  if !historical_client_id.is_empty(){
-  if let Some(secret)=security::canonical_get_secret_cached(&profile_account)?.filter(|x|!x.trim().is_empty()){
+  if let Some(secret)=match security::canonical_get_secret_cached(&profile_account){
+    Ok(v)=>v,
+    Err(e) if keychain_repairable_error(&e)=>None,
+    Err(e)=>return Err(e),
+   }.filter(|x|!x.trim().is_empty()){
    return Ok(ResolvedOAuthClient{client_id:historical_client_id.into(),client_secret:secret,source:OAuthClientSecretSource::ProfileCanonical})
   }
  }
  let global_meta=load_google_config_metadata(app)?;
  let global_client_id=global_meta.client_id.trim();
  if !global_client_id.is_empty(){
-  if let Some(secret)=canonical_global_client_secret()?.filter(|x|!x.trim().is_empty()){
+  if let Some(secret)=canonical_global_client_secret(app)?.filter(|x|!x.trim().is_empty()){
    // Recovery may intentionally migrate an existing profile from an old OAuth app client
    // to the current VYRON OAuth client. Client ID and secret always move as one exact pair.
    // Do not materialize the per-profile secret yet: reconnect_apply_validated_with()
@@ -352,7 +370,7 @@ fn resolve_reconnect_oauth_client(app:&AppHandle,profile_id:&str,historical_clie
  Err(format!("OAUTH_CLIENT_SETUP_REQUIRED: profile={profile_id}; current Google OAuth Client is not configured with a canonical client_secret"))
 }
 fn migrate_global_client_secret_if_needed(app:&AppHandle,profile_id:Option<&str>)->Result<Option<String>,String>{
- match canonical_global_client_secret(){
+ match canonical_global_client_secret(app){
   Ok(Some(v)) if !v.trim().is_empty()=>return Ok(Some(v)),
   Ok(_)=>{},
   Err(e) if e.contains("KEYCHAIN_INTERACTION_REQUIRED")||e.contains("KEYCHAIN_AUTH_FAILED")=>{
@@ -584,6 +602,8 @@ struct GoogleConfig {
     #[serde(default)]
     client_secret_present: bool,
     #[serde(default)]
+    client_secret_account: String,
+    #[serde(default)]
     api_key_present: bool,
 }
 fn google_config_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -593,6 +613,21 @@ fn google_config_path(app: &AppHandle) -> Result<PathBuf, String> {
 }
 const GOOGLE_CLIENT_SECRET: &str = "google.client_secret";
 const GOOGLE_API_KEY: &str = "google.api_key";
+fn keychain_repairable_error(e:&str)->bool{
+    e.contains("KEYCHAIN_ACCESS_DENIED_CACHED")||
+    e.contains("KEYCHAIN_AUTH_FAILED")||
+    e.contains("KEYCHAIN_INTERACTION_REQUIRED")||
+    e.contains("KEYCHAIN_USER_CANCELED")||
+    e.contains("KEYCHAIN_ACCESS_DENIED")
+}
+fn google_client_secret_account(c:&GoogleConfig)->String{
+    let v=c.client_secret_account.trim();
+    if v.is_empty(){GOOGLE_CLIENT_SECRET.to_string()}else{v.to_string()}
+}
+fn rotated_google_client_secret_account(client_id:&str)->String{
+    let digest=format!("{:x}",Sha256::digest(client_id.as_bytes()));
+    format!("google.client_secret.rc3.{}.{}", &digest[..12], &Uuid::new_v4().simple().to_string()[..12])
+}
 fn read_google_config_raw(app:&AppHandle)->Result<GoogleConfig,String>{
     let p=google_config_path(app)?;if !p.exists(){return Ok(GoogleConfig::default())}
     let b=fs::read(&p).map_err(|e|format!("Google config read: {e}"))?;
@@ -601,11 +636,8 @@ fn read_google_config_raw(app:&AppHandle)->Result<GoogleConfig,String>{
 fn reconcile_google_config_presence(mut c:GoogleConfig,canonical_accounts:&[String])->GoogleConfig{
     let inline_client_secret=!c.client_secret.trim().is_empty();
     let inline_api_key=!c.api_key.trim().is_empty();
-    // Never downgrade a previously persisted secure-storage presence bit merely because
-    // passive Keychain enumeration uses skip_authenticated_items(true). Protected items
-    // may be intentionally omitted from that enumeration. The actual secret is still
-    // resolved non-interactively by youtube_oauth_connect_global before any browser opens.
-    c.client_secret_present=c.client_secret_present||inline_client_secret||canonical_accounts.iter().any(|a|a.as_str()==GOOGLE_CLIENT_SECRET);
+    let account=google_client_secret_account(&c);
+    c.client_secret_present=c.client_secret_present||inline_client_secret||canonical_accounts.iter().any(|a|a==&account);
     c.api_key_present=c.api_key_present||inline_api_key||canonical_accounts.iter().any(|a|a.as_str()==GOOGLE_API_KEY);
     c.client_secret.clear();
     c.api_key.clear();
@@ -614,46 +646,89 @@ fn reconcile_google_config_presence(mut c:GoogleConfig,canonical_accounts:&[Stri
 fn load_google_config_metadata(app:&AppHandle)->Result<GoogleConfig,String>{
     let p=google_config_path(app)?;
     let raw=read_google_config_raw(app)?;
-    // Read only canonical Keychain ATTRIBUTES, never the secret value. This repairs stale
-    // client_secret_present metadata after app upgrades without triggering macOS auth UI.
+    // Attribute-only enumeration is passive. It never proves that a protected value
+    // is readable by the current signed VYRON build.
     let canonical_accounts=security::list_canonical_secret_accounts("")?;
     let c=reconcile_google_config_presence(raw,&canonical_accounts);
     if p.exists(){let _=security::private_permissions(&p);}
     Ok(c)
 }
 fn hydrate_google_secrets(c:&mut GoogleConfig)->Result<(),String>{
-    if c.client_secret.is_empty(){c.client_secret=security::canonical_get_secret_cached(GOOGLE_CLIENT_SECRET)?.unwrap_or_default()}
+    if c.client_secret.is_empty(){
+        let account=google_client_secret_account(c);
+        c.client_secret=security::canonical_get_secret_cached(&account)?.unwrap_or_default()
+    }
     if c.api_key.is_empty(){c.api_key=security::canonical_get_secret_cached(GOOGLE_API_KEY)?.unwrap_or_default()}
     c.client_secret_present|=!c.client_secret.is_empty();c.api_key_present|=!c.api_key.is_empty();Ok(())
 }
 fn write_google_secrets(c:&GoogleConfig)->Result<(),String>{
-    if !c.client_secret.is_empty(){security::canonical_set_secret(GOOGLE_CLIENT_SECRET,&c.client_secret)?}
+    if !c.client_secret.is_empty(){
+        let account=google_client_secret_account(c);
+        security::canonical_set_secret(&account,&c.client_secret)?
+    }
     if !c.api_key.is_empty(){security::canonical_set_secret(GOOGLE_API_KEY,&c.api_key)?}
     Ok(())
 }
 fn write_google_metadata(path:&Path,c:&GoogleConfig)->Result<(),String>{let b=serde_json::to_vec_pretty(c).map_err(|e|e.to_string())?;security::write_private_atomic(path,&b)}
 fn load_google_config_for_secret_operation(app:&AppHandle)->Result<GoogleConfig,String>{
     let p=google_config_path(app)?;let mut c=read_google_config_raw(app)?;let legacy=!c.client_secret.is_empty()||!c.api_key.is_empty();
-    if legacy{c.client_secret_present|=!c.client_secret.is_empty();c.api_key_present|=!c.api_key.is_empty();write_google_secrets(&c)?;c.client_secret.clear();c.api_key.clear();write_google_metadata(&p,&c)?;}
-    else{hydrate_google_secrets(&mut c)?;}
+    if legacy{
+        c.client_secret_present|=!c.client_secret.is_empty();c.api_key_present|=!c.api_key.is_empty();
+        if c.client_secret_account.trim().is_empty(){c.client_secret_account=GOOGLE_CLIENT_SECRET.into()}
+        write_google_secrets(&c)?;c.client_secret.clear();c.api_key.clear();write_google_metadata(&p,&c)?;
+    }else{hydrate_google_secrets(&mut c)?;}
     Ok(c)
 }
 fn save_google_config(app:&AppHandle,c:&GoogleConfig)->Result<(),String>{
     let p=google_config_path(app)?;let mut meta=c.clone();meta.client_secret_present|=!meta.client_secret.is_empty();meta.api_key_present|=!meta.api_key.is_empty();write_google_secrets(&meta)?;write_google_metadata(&p,&meta)
 }
 fn masked_client_id(s: &str) -> String {
-    if s.len() > 16 {
-        format!("{}…{}", &s[..8], &s[s.len() - 8..])
-    } else if s.is_empty() {
-        String::new()
-    } else {
-        "configured".into()
-    }
+    if s.len() > 16 {format!("{}…{}", &s[..8], &s[s.len() - 8..])}
+    else if s.is_empty(){String::new()}else{"configured".into()}
 }
-fn google_config_status_value(c: &GoogleConfig) -> Value {
+fn google_config_status_value(c:&GoogleConfig)->Value{
     let configured=!c.client_id.trim().is_empty();
-    let oauth_ready=configured&&c.client_secret_present;
-    json!({"configured":configured,"oauthReady":oauth_ready,"projectId":if c.project_id.is_empty(){Value::Null}else{json!(c.project_id)},"clientIdMasked":if c.client_id.is_empty(){Value::Null}else{json!(masked_client_id(&c.client_id))},"hasSecret":c.client_secret_present,"hasApiKey":c.api_key_present})
+    json!({
+      "configured":configured,
+      "oauthReady":false,
+      "oauthState":if configured{"CONFIGURED"}else{"NOT_CONFIGURED"},
+      "projectId":if c.project_id.is_empty(){Value::Null}else{json!(c.project_id)},
+      "clientIdMasked":if c.client_id.is_empty(){Value::Null}else{json!(masked_client_id(&c.client_id))},
+      "hasSecret":c.client_secret_present,
+      "secretOperational":false,
+      "repairRequired":configured&&c.client_secret_present,
+      "hasApiKey":c.api_key_present
+    })
+}
+fn google_config_operational_status_value(c:&GoogleConfig,secret:Result<Option<String>,String>)->Value{
+    let configured=!c.client_id.trim().is_empty();
+    let mut operational=false;
+    let mut state=if configured{"CONFIGURED"}else{"NOT_CONFIGURED"};
+    let mut error_code:Option<&str>=None;
+    if configured{
+      match secret{
+        Ok(Some(v)) if !v.trim().is_empty()=>{operational=true;state="READY"},
+        Ok(_)=>state="CONFIGURED",
+        Err(ref e) if keychain_repairable_error(e)=>{
+          state="NEEDS_SECURE_STORAGE_REPAIR";
+          error_code=Some(if e.contains("KEYCHAIN_ACCESS_DENIED_CACHED"){"KEYCHAIN_ACCESS_DENIED_CACHED"}else if e.contains("KEYCHAIN_INTERACTION_REQUIRED"){"KEYCHAIN_INTERACTION_REQUIRED"}else if e.contains("KEYCHAIN_AUTH_FAILED"){"KEYCHAIN_AUTH_FAILED"}else if e.contains("KEYCHAIN_USER_CANCELED"){"KEYCHAIN_USER_CANCELED"}else{"KEYCHAIN_ACCESS_DENIED"});
+        },
+        Err(_)=>{state="ERROR";error_code=Some("KEYCHAIN_READ_FAILED")}
+      }
+    }
+    json!({
+      "configured":configured,
+      "oauthReady":configured&&operational,
+      "oauthState":state,
+      "projectId":if c.project_id.is_empty(){Value::Null}else{json!(c.project_id)},
+      "clientIdMasked":if c.client_id.is_empty(){Value::Null}else{json!(masked_client_id(&c.client_id))},
+      "hasSecret":c.client_secret_present||operational,
+      "secretOperational":operational,
+      "repairRequired":configured&&!operational,
+      "secureStorageErrorCode":error_code,
+      "hasApiKey":c.api_key_present,
+      "secretValuesIncluded":false
+    })
 }
 #[derive(Debug, Clone, Deserialize, Default)]
 struct SafeGoogleMetadata {
@@ -710,7 +785,10 @@ fn load_or_migrate_google_config(app:&AppHandle)->Result<GoogleConfig,String>{
 }
 #[tauri::command]
 pub fn youtube_google_config_status(app: AppHandle) -> Result<Value, String> {
-    Ok(google_config_status_value(&load_google_config_metadata(&app)?))
+    let c=load_google_config_metadata(&app)?;
+    let account=google_client_secret_account(&c);
+    let secret=if c.client_id.trim().is_empty(){Ok(None)}else{security::canonical_get_secret_cached(&account)};
+    Ok(google_config_operational_status_value(&c,secret))
 }
 fn validate_imported_client_id(expected:&str,imported:&str)->Result<(),String>{
  if expected.trim()==imported.trim(){Ok(())}else{Err(format!("OAUTH_CLIENT_MISMATCH: imported credentials belong to another OAuth Client; expected={}",masked_client_id(expected)))}
@@ -749,18 +827,41 @@ pub fn youtube_google_config_import(
     api_key: String,
 ) -> Result<Value, String> {
     let (client_id,client_secret,project_id)=parse_google_credentials_json(&json_text)?;
-    let old = load_google_config_for_secret_operation(&app).unwrap_or_default();
-    let client_secret_present=old.client_secret_present||!client_secret.is_empty();
-    let c = GoogleConfig {
+    let old=load_google_config_metadata(&app).unwrap_or_default();
+    if !old.client_id.trim().is_empty()&&old.client_id.trim()!=client_id.trim(){
+        let profiles=load_store_metadata(&app)?;
+        if !profiles.profiles.is_empty(){
+            return Err(format!("OAUTH_CLIENT_MISMATCH: existing profiles use another configured OAuth client; expected={}",masked_client_id(&old.client_id)))
+        }
+    }
+    // Explicit import/repair never tries to mutate an ACL-poisoned legacy item. A fresh
+    // canonical account is created under the current signed identity, verified, then
+    // committed to non-secret metadata. Old Keychain entries are left untouched.
+    let old_account=google_client_secret_account(&old);
+    let new_account=rotated_google_client_secret_account(&client_id);
+    security::canonical_forget_cache(&new_account);
+    security::canonical_set_secret(&new_account,&client_secret)?;
+    if !security::canonical_verify_secret(&new_account,&client_secret)?{
+        return Err("OAUTH_KEYCHAIN_READBACK_FAILED: repaired global client secret could not be read back".into())
+    }
+    security::canonical_forget_cache(&old_account);
+    let c=GoogleConfig{
         client_id,
-        client_secret,
+        client_secret:String::new(),
         project_id,
-        api_key: if api_key.trim().is_empty() {old.api_key}else{api_key.trim().to_string()},
-        client_secret_present,
+        api_key:String::new(),
+        client_secret_present:true,
+        client_secret_account:new_account.clone(),
         api_key_present:old.api_key_present||!api_key.trim().is_empty(),
     };
-    save_google_config(&app, &c)?;
-    Ok(google_config_status_value(&c))
+    if !api_key.trim().is_empty(){security::canonical_set_secret(GOOGLE_API_KEY,api_key.trim())?}
+    write_google_metadata(&google_config_path(&app)?,&c)?;
+    let secret=security::canonical_get_secret_cached(&new_account);
+    let result=google_config_operational_status_value(&c,secret);
+    if result.get("oauthReady").and_then(Value::as_bool)!=Some(true){
+        return Err("OAUTH_REPAIR_VERIFY_FAILED: secure client secret is still not operational".into())
+    }
+    Ok(result)
 }
 #[tauri::command]
 pub async fn youtube_oauth_connect_global(
@@ -1123,6 +1224,47 @@ fn oauth_profiles_value(s:OAuthStore)->Value{json!(s.profiles.into_iter().map(|p
  }).collect::<Vec<_>>())}
 #[tauri::command]
 pub fn youtube_oauth_profiles(app:AppHandle)->Result<Value,String>{Ok(oauth_profiles_value(load_store_metadata(&app)?))}
+
+#[tauri::command]
+pub fn youtube_oauth_reconciliation_diagnostics(app:AppHandle)->Result<Value,String>{
+    let store=load_store_metadata(&app)?;
+    let profile_ids=store.profiles.iter().map(|p|p.id.clone()).collect::<std::collections::HashSet<_>>();
+    let profile_channels=store.profiles.iter().filter_map(|p|p.channel_id.clone().map(|c|(p.id.clone(),c))).collect::<Vec<_>>();
+    let state_path=app.path().app_data_dir().map_err(|e|e.to_string())?.join("state.json");
+    let state:Value=if state_path.exists(){
+      let b=fs::read(&state_path).map_err(|e|format!("STATE_DIAGNOSTIC_READ: {e}"))?;
+      serde_json::from_slice(&b).unwrap_or_else(|_|json!({}))
+    }else{json!({})};
+    let channels=state.get("channels").and_then(Value::as_array).cloned().unwrap_or_default();
+    let mut mapped_counts=HashMap::<String,usize>::new();
+    let mut orphan_channels=Vec::<Value>::new();
+    let mut channels_with_profile=0usize;
+    for ch in &channels{
+      let id=ch.get("id").and_then(Value::as_str).unwrap_or("");
+      let name=ch.get("name").and_then(Value::as_str).unwrap_or("");
+      if let Some(pid)=ch.get("youtubeProfileId").and_then(Value::as_str).filter(|x|!x.trim().is_empty()){
+        channels_with_profile+=1;
+        *mapped_counts.entry(pid.to_string()).or_insert(0)+=1;
+        if !profile_ids.contains(pid){orphan_channels.push(json!({"channelId":id,"channelName":name,"youtubeProfileId":pid,"reason":"ORPHAN_MAPPING"}))}
+      }
+    }
+    let mapped_profile_ids=mapped_counts.keys().cloned().collect::<std::collections::HashSet<_>>();
+    let orphan_profiles=store.profiles.iter().filter(|p|!mapped_profile_ids.contains(&p.id))
+      .map(|p|json!({"profileId":p.id,"youtubeChannelId":p.channel_id,"channelTitle":p.channel_title})).collect::<Vec<_>>();
+    let duplicate_mappings=mapped_counts.iter().filter(|(_,n)|**n>1).map(|(id,n)|json!({"profileId":id,"channelMappings":n})).collect::<Vec<_>>();
+    Ok(json!({
+      "channelsTotal":channels.len(),
+      "profilesTotal":store.profiles.len(),
+      "channelsWithYoutubeProfileId":channels_with_profile,
+      "profilesWithChannelId":profile_channels.len(),
+      "orphanChannels":orphan_channels,
+      "orphanProfiles":orphan_profiles,
+      "duplicateMappings":duplicate_mappings,
+      "oauthStoreExists":store_path(&app)?.exists(),
+      "secretValuesIncluded":false,
+      "keychainSecretsRead":false
+    }))
+}
 
 #[tauri::command]
 pub fn youtube_oauth_disconnect(app: AppHandle, profile_id: String) -> Result<(), String> {
@@ -5074,7 +5216,7 @@ mod keychain_prompt_architecture_tests{
   assert!(!source.contains(&old_delete));
  }
  #[test]fn selected_profile_hydration_reads_only_selected_secret(){let secrets=CountingStore::default();secrets.v.borrow_mut().insert(oauth_key("a","refresh_token"),"ra".into());secrets.v.borrow_mut().insert(oauth_key("b","refresh_token"),"rb".into());let mut a=p("a");let b=p("b");hydrate_profile_secret_kind_with(&secrets,&mut a,"refresh_token").unwrap();assert_eq!(a.refresh_token,"ra");assert!(b.refresh_token.is_empty());assert_eq!(&*secrets.gets.borrow(),&vec![oauth_key("a","refresh_token")]);assert!(secrets.sets.borrow().is_empty());assert!(secrets.deletes.borrow().is_empty());}
- #[test]fn google_status_metadata_never_requires_secret_value(){let c=GoogleConfig{client_id:"123.apps.googleusercontent.com".into(),project_id:"project".into(),client_secret:String::new(),api_key:String::new(),client_secret_present:true,api_key_present:true};let v=google_config_status_value(&c);assert_eq!(v["hasSecret"],true);assert_eq!(v["hasApiKey"],true);assert!(!v.to_string().contains("client_secret"));}
+ #[test]fn google_status_metadata_never_requires_secret_value(){let c=GoogleConfig{client_id:"123.apps.googleusercontent.com".into(),project_id:"project".into(),client_secret:String::new(),api_key:String::new(),client_secret_present:true,client_secret_account:String::new(),api_key_present:true};let v=google_config_status_value(&c);assert_eq!(v["hasSecret"],true);assert_eq!(v["hasApiKey"],true);assert!(!v.to_string().contains("client_secret"));}
 }
 
 #[cfg(test)]
