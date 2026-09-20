@@ -6441,3 +6441,154 @@ mod v2114_oauth_onboarding_tests{
   assert!(url.contains("include_granted_scopes=true"));
  }
 }
+
+
+#[cfg(test)]
+mod v2115_rc6_keychain_rotation_tests {
+ use super::*;
+ use std::{cell::{Cell,RefCell},collections::{HashMap,HashSet}};
+
+ #[derive(Default)]
+ struct RotationStore {
+  v:RefCell<HashMap<String,String>>,
+  denied_get:RefCell<HashSet<String>>,
+  deny_rotated_verify:Cell<bool>,
+  gets:RefCell<Vec<String>>,
+  sets:RefCell<Vec<String>>,
+  deletes:RefCell<Vec<String>>,
+  verifies:RefCell<Vec<String>>,
+ }
+ impl OAuthSecretStore for RotationStore {
+  fn get(&self,a:&str)->Result<Option<String>,String>{
+   self.gets.borrow_mut().push(a.into());
+   if self.denied_get.borrow().contains(a){
+    return Err(format!("KEYCHAIN_AUTH_FAILED: operation=canonical_read_no_ui; account={a}; osstatus=-25293"))
+   }
+   Ok(self.v.borrow().get(a).cloned())
+  }
+  fn set(&self,a:&str,v:&str)->Result<(),String>{
+   self.sets.borrow_mut().push(a.into());self.v.borrow_mut().insert(a.into(),v.into());Ok(())
+  }
+  fn delete(&self,a:&str)->Result<(),String>{
+   self.deletes.borrow_mut().push(a.into());self.v.borrow_mut().remove(a);Ok(())
+  }
+  fn verify(&self,a:&str,expected:&str)->Result<bool,String>{
+   self.verifies.borrow_mut().push(a.into());
+   if self.deny_rotated_verify.get()&&a.contains(".v2."){
+    return Err(format!("KEYCHAIN_AUTH_FAILED: operation=canonical_verify_no_ui; account={a}; osstatus=-25293"))
+   }
+   Ok(self.v.borrow().get(a).map(String::as_str)==Some(expected))
+  }
+  fn accounts(&self,prefix:&str)->Result<Vec<String>,String>{
+   Ok(self.v.borrow().keys().filter(|x|x.starts_with(prefix)).cloned().collect())
+  }
+ }
+ fn profile(id:&str,ch:&str)->OAuthProfile{OAuthProfile{
+  id:id.into(),client_id:"CLIENT".into(),client_secret:String::new(),channel_id:Some(ch.into()),channel_title:Some(ch.into()),
+  access_token:String::new(),refresh_token:String::new(),expires_at:0,connected_at:"2026-09-20T00:00:00Z".into(),
+  scopes:vec![],preferred_browser:"default".into(),identity_validated_at:None,identity_validated_channel_id:None,credential_error:None,
+ }}
+ const P:&str="96cb1deb-a2b5-4a92-9a33-45204c24ff8c";
+ const OLD_REFRESH:&str="oauth.96cb1deb-a2b5-4a92-9a33-45204c24ff8c.refresh_token";
+ const OLD_SECRET:&str="oauth.96cb1deb-a2b5-4a92-9a33-45204c24ff8c.client_secret";
+
+ #[test]
+ fn physical_rc5_auth_failed_old_backup_read_rotates_without_old_secret_value(){
+  let sec=RotationStore::default();
+  sec.v.borrow_mut().insert(OLD_REFRESH.into(),"OLD_PROTECTED".into());
+  sec.v.borrow_mut().insert(OLD_SECRET.into(),"CLIENT_SECRET".into());
+  sec.denied_get.borrow_mut().insert(OLD_REFRESH.into());
+  let mut store=OAuthStore{profiles:vec![profile(P,"UC_EXPECTED")]};
+  let backup=reconnect_apply_validated_accounts_with(
+   &sec,&mut store,P,OLD_REFRESH,OLD_SECRET,1,"CLIENT","CLIENT_SECRET","ACCESS_NEW","NEW_REFRESH",
+   "UC_EXPECTED","Channel",&[],"default",3600
+  ).unwrap();
+  assert!(backup.refresh_rotated);
+  assert_eq!(backup.old_refresh_osstatus,Some(-25293));
+  assert_eq!(rotation_reason(backup.old_refresh_error.as_deref()),Some("KEYCHAIN_AUTH_FAILED"));
+  assert_eq!(sec.v.borrow().get(OLD_REFRESH).map(String::as_str),Some("OLD_PROTECTED"),"old blocked evidence must stay untouched");
+  assert!(!sec.sets.borrow().iter().any(|a|a==OLD_REFRESH),"blocked old refresh account must never be overwritten");
+  assert!(backup.refresh_account.starts_with(&format!("oauth.{P}.refresh_token.v2.1.")));
+  assert_eq!(sec.v.borrow().get(&backup.refresh_account).map(String::as_str),Some("NEW_REFRESH"));
+  assert_eq!(store.profiles[0].id,P);
+  assert_eq!(store.profiles[0].channel_id.as_deref(),Some("UC_EXPECTED"));
+ }
+ #[test]
+ fn pointer_commit_model_is_backward_compatible_and_restart_idempotent(){
+  let mut state=KeychainMigrationV2State::default();
+  assert_eq!(profile_refresh_token_account_from_state(&state,P),OLD_REFRESH);
+  let backup=ReconnectSecretBackup{
+   items:vec![],created_accounts:vec!["new".into()],refresh_account:"new".into(),client_secret_account:"new-secret".into(),
+   old_refresh_account:OLD_REFRESH.into(),old_client_secret_account:OLD_SECRET.into(),refresh_rotated:true,client_secret_rotated:true,
+   old_refresh_error:Some("KEYCHAIN_AUTH_FAILED: osstatus=-25293".into()),old_client_secret_error:None,
+   old_refresh_osstatus:Some(-25293),old_client_secret_osstatus:None,generation:1,
+  };
+  apply_reconnect_pointer_metadata(&mut state,P,&backup);
+  let bytes=serde_json::to_vec(&state).unwrap();
+  let reloaded:KeychainMigrationV2State=serde_json::from_slice(&bytes).unwrap();
+  assert_eq!(profile_refresh_token_account_from_state(&reloaded,P),"new");
+  assert_eq!(profile_client_secret_account_from_state(&reloaded,P),"new-secret");
+  assert_eq!(reloaded.credential_generations.get(P),Some(&1));
+ }
+ #[test]
+ fn pointer_failure_rollback_removes_only_fresh_account_and_never_old_blocked_item(){
+  let sec=RotationStore::default();
+  sec.v.borrow_mut().insert(OLD_REFRESH.into(),"OLD_PROTECTED".into());
+  sec.v.borrow_mut().insert(OLD_SECRET.into(),"CLIENT_SECRET".into());
+  sec.denied_get.borrow_mut().insert(OLD_REFRESH.into());
+  let backup=reconnect_write_readback_accounts_with(&sec,P,OLD_REFRESH,OLD_SECRET,1,"CLIENT_SECRET","ACCESS","NEW_REFRESH").unwrap();
+  let new_refresh=backup.refresh_account.clone();
+  reconnect_rollback_secrets_with(&sec,&backup);
+  assert_eq!(sec.v.borrow().get(OLD_REFRESH).map(String::as_str),Some("OLD_PROTECTED"));
+  assert!(!sec.v.borrow().contains_key(&new_refresh));
+  assert!(!sec.deletes.borrow().iter().any(|a|a==OLD_REFRESH));
+ }
+ #[test]
+ fn fresh_rotated_item_auth_failed_stops_after_one_generation(){
+  let sec=RotationStore::default();
+  sec.v.borrow_mut().insert(OLD_REFRESH.into(),"OLD_PROTECTED".into());
+  sec.denied_get.borrow_mut().insert(OLD_REFRESH.into());
+  sec.deny_rotated_verify.set(true);
+  let err=prepare_secret_write_with(&sec,P,"refresh_token",OLD_REFRESH,"NEW_REFRESH",1).unwrap_err();
+  assert!(err.contains("NEW_ITEM_READBACK_AUTH_FAILED"));
+  let rotated_sets=sec.sets.borrow().iter().filter(|a|a.contains(".refresh_token.v2.1.")).count();
+  assert_eq!(rotated_sets,1,"fresh readback failure must never start another rotation generation");
+  assert_eq!(sec.v.borrow().get(OLD_REFRESH).map(String::as_str),Some("OLD_PROTECTED"));
+ }
+ #[test]
+ fn healthy_profile_reuses_existing_account_without_rotation(){
+  let sec=RotationStore::default();
+  sec.v.borrow_mut().insert(OLD_REFRESH.into(),"OLD".into());
+  sec.v.borrow_mut().insert(OLD_SECRET.into(),"SECRET".into());
+  let backup=reconnect_write_readback_accounts_with(&sec,P,OLD_REFRESH,OLD_SECRET,1,"SECRET","ACCESS","NEW").unwrap();
+  assert!(!backup.refresh_rotated);
+  assert_eq!(backup.refresh_account,OLD_REFRESH);
+  assert_eq!(sec.v.borrow().get(OLD_REFRESH).map(String::as_str),Some("NEW"));
+ }
+ #[test]
+ fn wrong_channel_never_writes_or_rotates_credentials(){
+  let sec=RotationStore::default();
+  sec.v.borrow_mut().insert(OLD_REFRESH.into(),"OLD".into());
+  sec.v.borrow_mut().insert(OLD_SECRET.into(),"SECRET".into());
+  let mut store=OAuthStore{profiles:vec![profile(P,"UC_EXPECTED")]};
+  let err=reconnect_apply_validated_accounts_with(
+   &sec,&mut store,P,OLD_REFRESH,OLD_SECRET,1,"CLIENT","SECRET","ACCESS","NEW",
+   "UC_WRONG","Wrong",&[],"default",3600
+  ).unwrap_err();
+  assert!(err.starts_with("WRONG_CHANNEL:"));
+  assert!(sec.sets.borrow().is_empty());
+ }
+ #[test]
+ fn thirteen_profiles_resolve_independent_active_accounts(){
+  let mut state=KeychainMigrationV2State::default();
+  for i in 0..13{
+   let id=format!("p{i}");
+   if i%3==0{state.refresh_token_accounts.insert(id.clone(),format!("oauth.{id}.refresh_token.v2.1.rotated"));}
+  }
+  for i in 0..13{
+   let id=format!("p{i}");
+   let active=profile_refresh_token_account_from_state(&state,&id);
+   if i%3==0{assert!(active.ends_with(".rotated"))}else{assert_eq!(active,format!("oauth.{id}.refresh_token"))}
+  }
+ }
+}
