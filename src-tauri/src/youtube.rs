@@ -384,7 +384,7 @@ fn resolve_reconnect_oauth_client(app:&AppHandle,profile_id:&str,historical_clie
  let profile_id=profile_id.trim();
  if profile_id.is_empty(){return Err("OAUTH_PROFILE_ID_MISSING: existing profile UUID is required".into())}
  let historical_client_id=historical_client_id.trim();
- let profile_account=oauth_key(profile_id,"client_secret");
+ let profile_account=profile_client_secret_account(app,profile_id)?;
  if !historical_client_id.is_empty(){
   if let Some(secret)=match security::canonical_get_secret_cached(&profile_account){
     Ok(v)=>v,
@@ -449,6 +449,9 @@ trait OAuthSecretStore {
     fn get(&self, account: &str) -> Result<Option<String>, String>;
     fn set(&self, account: &str, value: &str) -> Result<(), String>;
     fn delete(&self, account: &str) -> Result<(), String>;
+    fn verify(&self, account:&str, expected:&str)->Result<bool,String>{
+        Ok(self.get(account)?.as_deref()==Some(expected))
+    }
     fn accounts(&self, _prefix: &str) -> Result<Vec<String>, String> {
         Ok(Vec::new())
     }
@@ -466,6 +469,9 @@ impl OAuthSecretStore for KeychainOAuthSecretStore {
     }
     fn delete(&self, account: &str) -> Result<(), String> {
         security::canonical_delete_secret(account)
+    }
+    fn verify(&self,account:&str,expected:&str)->Result<bool,String>{
+        security::canonical_verify_secret(account,expected)
     }
     fn accounts(&self, prefix: &str) -> Result<Vec<String>, String> {
         security::list_canonical_secret_accounts(prefix)
@@ -4981,123 +4987,205 @@ mod native_keychain_recovery_state_tests {
 }
 
 // VYRON_AUTH_RECOVERY_CENTER_V1
-#[derive(Clone, Debug)]
-struct ReconnectSecretBackup {
-    items: Vec<(String, Option<String>)>,
+#[derive(Clone,Debug)]
+struct PreparedSecretWrite{
+ account:String,
+ old_account:String,
+ backup:Option<Option<String>>,
+ created:bool,
+ rotated:bool,
+ old_read_error:Option<String>,
+ old_osstatus:Option<i32>,
 }
-
+#[derive(Clone,Debug)]
+struct ReconnectSecretBackup{
+ items:Vec<(String,Option<String>)>,
+ created_accounts:Vec<String>,
+ refresh_account:String,
+ client_secret_account:String,
+ old_refresh_account:String,
+ old_client_secret_account:String,
+ refresh_rotated:bool,
+ client_secret_rotated:bool,
+ old_refresh_error:Option<String>,
+ old_client_secret_error:Option<String>,
+ old_refresh_osstatus:Option<i32>,
+ old_client_secret_osstatus:Option<i32>,
+ generation:u32,
+}
 fn reconnect_refresh_token(response_refresh:Option<&str>,existing_refresh:Option<&str>)->Result<String,String>{
     if let Some(v)=response_refresh.map(str::trim).filter(|x|!x.is_empty()){return Ok(v.to_string())}
     if let Some(v)=existing_refresh.map(str::trim).filter(|x|!x.is_empty()){return Ok(v.to_string())}
     Err("OAUTH_REFRESH_TOKEN_REQUIRED: Google не вернул новый refresh_token и у существующего профиля нет сохранённого canonical refresh_token.".into())
 }
 fn reconnect_authorized_channel_matches(expected: &str, authorized: &str) -> Result<(), String> {
-    if expected == authorized {
-        Ok(())
-    } else {
-        Err(format!(
-            "WRONG_CHANNEL: expected={expected} authorized={authorized}"
-        ))
-    }
+    if expected == authorized {Ok(())} else {Err(format!("WRONG_CHANNEL: expected={expected} authorized={authorized}"))}
 }
 fn reconnect_profile_index(store: &OAuthStore, profile_id: &str) -> Result<usize, String> {
-    store
-        .profiles
-        .iter()
-        .position(|p| p.id == profile_id)
+    store.profiles.iter().position(|p| p.id == profile_id)
         .ok_or_else(|| format!("OAUTH_PROFILE_NOT_FOUND: profile_id={profile_id}"))
 }
-fn reconnect_rollback_secrets_with<S: OAuthSecretStore>(
-    secrets: &S,
-    backup: &ReconnectSecretBackup,
-) {
-    for (account, value) in backup.items.iter().rev() {
-        let _ = match value {
-            Some(v) => secrets.set(account, v),
-            None => secrets.delete(account),
-        };
+fn reconnect_rollback_secrets_with<S:OAuthSecretStore>(secrets:&S,backup:&ReconnectSecretBackup){
+    for account in backup.created_accounts.iter().rev(){let _=secrets.delete(account);}
+    for (account,value) in backup.items.iter().rev(){
+        let _=match value{Some(v)=>secrets.set(account,v),None=>secrets.delete(account)};
     }
 }
-fn reconnect_write_readback_with<S:OAuthSecretStore>(
-    secrets:&S,profile_id:&str,client_secret:&str,access_token:&str,refresh_token:&str,
+fn prepare_secret_write_with<S:OAuthSecretStore>(
+    secrets:&S,profile_id:&str,kind:&str,current_account:&str,value:&str,generation:u32,
+)->Result<PreparedSecretWrite,String>{
+    let old_read=secrets.get(current_account);
+    match old_read{
+      Ok(old_value)=>{
+        match secrets.set(current_account,value){
+          Ok(())=>{
+            match secrets.verify(current_account,value){
+              Ok(true)=>return Ok(PreparedSecretWrite{
+                account:current_account.into(),old_account:current_account.into(),backup:Some(old_value),
+                created:old_value.is_none(),rotated:false,old_read_error:None,old_osstatus:None,
+              }),
+              Ok(false)=>{
+                let _=match &old_value{Some(v)=>secrets.set(current_account,v),None=>secrets.delete(current_account)};
+                return Err(format!("OAUTH_KEYCHAIN_READBACK_FAILED: stage=EXISTING_SECRET_READBACK; account={current_account}; mismatch"))
+              },
+              Err(e)=>{
+                let _=match &old_value{Some(v)=>secrets.set(current_account,v),None=>secrets.delete(current_account)};
+                return Err(format!("OAUTH_KEYCHAIN_READBACK_FAILED: stage=EXISTING_SECRET_READBACK; account={current_account}; {e}"))
+              }
+            }
+          }
+          Err(e) if keychain_repairable_error(&e)=>{
+            // Existing item is readable but not writable by the current signed build.
+            // Keep it as evidence and rotate forward instead of repeatedly fighting its ACL.
+          }
+          Err(e)=>return Err(format!("OAUTH_KEYCHAIN_WRITE_FAILED: stage=EXISTING_SECRET_WRITE; account={current_account}; {e}")),
+        }
+      }
+      Err(e) if keychain_repairable_error(&e)=>{
+        // This is the physical RC5 failure class: old backup read is blocked.
+        // A validated new credential must not depend on reading that old value.
+      }
+      Err(e)=>return Err(format!("OAUTH_KEYCHAIN_READ_FAILED: stage=OLD_SECRET_BACKUP_READ; account={current_account}; {e}")),
+    }
+    let old_error=old_read.err();
+    let old_osstatus=old_error.as_deref().and_then(osstatus_from_error);
+    let new_account=rotated_profile_secret_account(profile_id,kind,generation);
+    if let Ok(existing)=secrets.get(&new_account){
+        if existing.is_some(){return Err(format!("OAUTH_ROTATION_ACCOUNT_COLLISION: account={new_account}"))}
+    }
+    secrets.set(&new_account,value)
+      .map_err(|e|format!("OAUTH_KEYCHAIN_WRITE_FAILED: stage=NEW_SECRET_WRITE; account={new_account}; {e}"))?;
+    match secrets.verify(&new_account,value){
+      Ok(true)=>Ok(PreparedSecretWrite{
+        account:new_account,old_account:current_account.into(),backup:None,created:true,rotated:true,
+        old_read_error:old_error,old_osstatus,
+      }),
+      Ok(false)=>{
+        let _=secrets.delete(&new_account);
+        Err(format!("NEW_ITEM_READBACK_FAILED: stage=NEW_SECRET_READBACK; account={new_account}; mismatch"))
+      }
+      Err(e)=>{
+        let _=secrets.delete(&new_account);
+        if e.contains("KEYCHAIN_AUTH_FAILED"){
+          Err(format!("NEW_ITEM_READBACK_AUTH_FAILED: stage=NEW_SECRET_READBACK; account={new_account}; {e}"))
+        }else{
+          Err(format!("OAUTH_KEYCHAIN_READBACK_FAILED: stage=NEW_SECRET_READBACK; account={new_account}; {e}"))
+        }
+      }
+    }
+}
+fn reconnect_write_readback_accounts_with<S:OAuthSecretStore>(
+    secrets:&S,profile_id:&str,current_refresh_account:&str,current_client_secret_account:&str,
+    generation:u32,client_secret:&str,access_token:&str,refresh_token:&str,
 )->Result<ReconnectSecretBackup,String>{
     if profile_id.trim().is_empty(){return Err("OAUTH_PROFILE_ID_MISSING: existing profile UUID is required".into())}
     if access_token.trim().is_empty(){return Err("OAUTH_ACCESS_TOKEN_MISSING: validated access token is empty".into())}
     if refresh_token.trim().is_empty(){return Err("OAUTH_REFRESH_TOKEN_REQUIRED: Google не вернул refresh token. Подключение не сохранено.".into())}
     if client_secret.trim().is_empty(){return Err("OAUTH_CLIENT_SECRET_REQUIRED: exact client_secret is missing".into())}
-    let refresh_account=oauth_key(profile_id,"refresh_token");
-    let secret_account=oauth_key(profile_id,"client_secret");
-    let backup=ReconnectSecretBackup{items:vec![
-      (refresh_account.clone(),secrets.get(&refresh_account)?),
-      (secret_account.clone(),secrets.get(&secret_account)?),
-    ]};
-    for (account,value) in [(&refresh_account,refresh_token),(&secret_account,client_secret)]{
-      if let Err(e)=secrets.set(account,value){reconnect_rollback_secrets_with(secrets,&backup);return Err(format!("OAUTH_KEYCHAIN_WRITE_FAILED: account={account}; {e}"))}
-      match secrets.get(account){
-       Ok(Some(v)) if v==value=>{},
-       Ok(_)=>{reconnect_rollback_secrets_with(secrets,&backup);return Err(format!("OAUTH_KEYCHAIN_READBACK_FAILED: account={account}; mismatch"))},
-       Err(e)=>{reconnect_rollback_secrets_with(secrets,&backup);return Err(format!("OAUTH_KEYCHAIN_READBACK_FAILED: account={account}; {e}"))},
+    let refresh=prepare_secret_write_with(secrets,profile_id,"refresh_token",current_refresh_account,refresh_token,generation)?;
+    let secret=match prepare_secret_write_with(secrets,profile_id,"client_secret",current_client_secret_account,client_secret,generation){
+      Ok(x)=>x,
+      Err(e)=>{
+        let tmp=ReconnectSecretBackup{
+          items:refresh.backup.clone().map(|v|vec![(refresh.old_account.clone(),v)]).unwrap_or_default(),
+          created_accounts:if refresh.created&&refresh.rotated{vec![refresh.account.clone()]}else{vec![]},
+          refresh_account:refresh.account.clone(),client_secret_account:current_client_secret_account.into(),
+          old_refresh_account:refresh.old_account.clone(),old_client_secret_account:current_client_secret_account.into(),
+          refresh_rotated:refresh.rotated,client_secret_rotated:false,
+          old_refresh_error:refresh.old_read_error.clone(),old_client_secret_error:None,
+          old_refresh_osstatus:refresh.old_osstatus,old_client_secret_osstatus:None,generation,
+        };
+        reconnect_rollback_secrets_with(secrets,&tmp);
+        return Err(e)
       }
+    };
+    let mut items=Vec::new();
+    if let Some(v)=refresh.backup.clone(){items.push((refresh.old_account.clone(),v))}
+    if let Some(v)=secret.backup.clone(){items.push((secret.old_account.clone(),v))}
+    let mut created_accounts=Vec::new();
+    if refresh.created&&refresh.rotated{created_accounts.push(refresh.account.clone())}
+    if secret.created&&secret.rotated{created_accounts.push(secret.account.clone())}
+    Ok(ReconnectSecretBackup{
+      items,created_accounts,
+      refresh_account:refresh.account,client_secret_account:secret.account,
+      old_refresh_account:refresh.old_account,old_client_secret_account:secret.old_account,
+      refresh_rotated:refresh.rotated,client_secret_rotated:secret.rotated,
+      old_refresh_error:refresh.old_read_error,old_client_secret_error:secret.old_read_error,
+      old_refresh_osstatus:refresh.old_osstatus,old_client_secret_osstatus:secret.old_osstatus,
+      generation,
+    })
+}
+fn reconnect_write_readback_with<S:OAuthSecretStore>(
+    secrets:&S,profile_id:&str,client_secret:&str,access_token:&str,refresh_token:&str,
+)->Result<ReconnectSecretBackup,String>{
+    reconnect_write_readback_accounts_with(
+      secrets,profile_id,&oauth_key(profile_id,"refresh_token"),&oauth_key(profile_id,"client_secret"),
+      1,client_secret,access_token,refresh_token
+    )
+}
+fn reconnect_apply_profile_metadata(
+    store:&mut OAuthStore,profile_id:&str,client_id:&str,client_secret:&str,access_token:&str,refresh_token:&str,
+    authorized_channel_id:&str,authorized_channel_title:&str,scopes:&[String],preferred_browser:&str,expires_in:i64,
+)->Result<(),String>{
+    let idx=reconnect_profile_index(store,profile_id)?;
+    let expected=store.profiles[idx].channel_id.clone().filter(|x|!x.trim().is_empty())
+      .ok_or_else(||format!("OAUTH_EXPECTED_CHANNEL_MISSING: profile_id={profile_id}"))?;
+    reconnect_authorized_channel_matches(&expected,authorized_channel_id)?;
+    let before_ids=store.profiles.iter().map(|p|p.id.clone()).collect::<Vec<_>>();
+    let p=&mut store.profiles[idx];
+    p.client_id=client_id.into();p.client_secret=client_secret.into();p.access_token=access_token.into();p.refresh_token=refresh_token.into();
+    p.expires_at=now_ts()+expires_in.max(60);p.connected_at=Utc::now().to_rfc3339();p.scopes=scopes.to_vec();p.preferred_browser=preferred_browser.into();
+    p.channel_title=Some(authorized_channel_title.into());p.identity_validated_at=Some(Utc::now().to_rfc3339());
+    p.identity_validated_channel_id=Some(authorized_channel_id.into());p.credential_error=None;
+    let after_ids=store.profiles.iter().map(|p|p.id.clone()).collect::<Vec<_>>();
+    if before_ids!=after_ids{return Err("OAUTH_PROFILE_MUTATION_GUARD: reconnect changed profile list/UUIDs".into())}
+    Ok(())
+}
+fn reconnect_apply_validated_accounts_with<S:OAuthSecretStore>(
+    secrets:&S,store:&mut OAuthStore,profile_id:&str,current_refresh_account:&str,current_client_secret_account:&str,generation:u32,
+    client_id:&str,client_secret:&str,access_token:&str,refresh_token:&str,authorized_channel_id:&str,authorized_channel_title:&str,
+    scopes:&[String],preferred_browser:&str,expires_in:i64,
+)->Result<ReconnectSecretBackup,String>{
+    let idx=reconnect_profile_index(store,profile_id)?;
+    let expected=store.profiles[idx].channel_id.clone().filter(|x|!x.trim().is_empty())
+      .ok_or_else(||format!("OAUTH_EXPECTED_CHANNEL_MISSING: profile_id={profile_id}"))?;
+    reconnect_authorized_channel_matches(&expected,authorized_channel_id)?;
+    let backup=reconnect_write_readback_accounts_with(
+      secrets,profile_id,current_refresh_account,current_client_secret_account,generation,client_secret,access_token,refresh_token
+    )?;
+    if let Err(e)=reconnect_apply_profile_metadata(store,profile_id,client_id,client_secret,access_token,refresh_token,authorized_channel_id,authorized_channel_title,scopes,preferred_browser,expires_in){
+      reconnect_rollback_secrets_with(secrets,&backup);return Err(e)
     }
     Ok(backup)
 }
-fn reconnect_apply_validated_with<S: OAuthSecretStore>(
-    secrets: &S,
-    store: &mut OAuthStore,
-    profile_id: &str,
-    client_id: &str,
-    client_secret: &str,
-    access_token: &str,
-    refresh_token: &str,
-    authorized_channel_id: &str,
-    authorized_channel_title: &str,
-    scopes: &[String],
-    preferred_browser: &str,
-    expires_in: i64,
-) -> Result<ReconnectSecretBackup, String> {
-    let idx = reconnect_profile_index(store, profile_id)?;
-    let expected = store.profiles[idx]
-        .channel_id
-        .clone()
-        .filter(|x| !x.trim().is_empty())
-        .ok_or_else(|| format!("OAUTH_EXPECTED_CHANNEL_MISSING: profile_id={profile_id}"))?;
-    reconnect_authorized_channel_matches(&expected, authorized_channel_id)?;
-    let before_ids = store
-        .profiles
-        .iter()
-        .map(|p| p.id.clone())
-        .collect::<Vec<_>>();
-    let backup = reconnect_write_readback_with(
-        secrets,
-        profile_id,
-        client_secret,
-        access_token,
-        refresh_token,
-    )?;
-    let p = &mut store.profiles[idx];
-    // Preserve the existing record identity and channel mapping. Only credential metadata changes.
-    p.client_id = client_id.to_string();
-    p.client_secret = client_secret.to_string();
-    p.access_token = access_token.to_string();
-    p.refresh_token = refresh_token.to_string();
-    p.expires_at = now_ts() + expires_in.max(60);
-    p.connected_at = Utc::now().to_rfc3339();
-    p.scopes = scopes.to_vec();
-    p.preferred_browser = preferred_browser.to_string();
-    p.channel_title = Some(authorized_channel_title.to_string());
-    p.identity_validated_at = Some(Utc::now().to_rfc3339());
-    p.identity_validated_channel_id = Some(authorized_channel_id.to_string());
-    p.credential_error = None;
-    let after_ids = store
-        .profiles
-        .iter()
-        .map(|p| p.id.clone())
-        .collect::<Vec<_>>();
-    if before_ids != after_ids {
-        reconnect_rollback_secrets_with(secrets, &backup);
-        return Err("OAUTH_PROFILE_MUTATION_GUARD: reconnect changed profile list/UUIDs".into());
-    }
-    Ok(backup)
+fn reconnect_apply_validated_with<S:OAuthSecretStore>(
+    secrets:&S,store:&mut OAuthStore,profile_id:&str,client_id:&str,client_secret:&str,access_token:&str,refresh_token:&str,
+    authorized_channel_id:&str,authorized_channel_title:&str,scopes:&[String],preferred_browser:&str,expires_in:i64,
+)->Result<ReconnectSecretBackup,String>{
+    reconnect_apply_validated_accounts_with(
+      secrets,store,profile_id,&oauth_key(profile_id,"refresh_token"),&oauth_key(profile_id,"client_secret"),1,
+      client_id,client_secret,access_token,refresh_token,authorized_channel_id,authorized_channel_title,scopes,preferred_browser,expires_in
+    )
 }
 fn reconnect_auth_url(
     client_id: &str,
