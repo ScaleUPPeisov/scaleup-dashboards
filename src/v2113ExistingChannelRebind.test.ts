@@ -45,6 +45,9 @@ describe('VYRON 2.1.13 existing channel rebind',()=>{
   expect(connect).not.toContain('migrate_profile_refresh_to_canonical');
   expect(connect).toContain('YOUTUBE_CHANNEL_ALREADY_CONNECTED');
   expect(connect).toContain('OAUTH_REFRESH_TOKEN_REQUIRED');
-  expect(y).toContain('existing_refresh=security::canonical_get_secret_cached');
+  expect(y).toContain('let response_refresh=tv.get("refresh_token").and_then(Value::as_str);');
+  expect(y).toContain('let existing_refresh=if response_refresh.map(str::trim).filter(|x|!x.is_empty()).is_some()');
+  expect(y).toContain('match security::canonical_get_secret_cached(&oauth_key(&profile_id,"refresh_token"))');
+  expect(y).toContain('let refresh=reconnect_refresh_token(response_refresh,existing_refresh.as_deref())');
  });
 });
