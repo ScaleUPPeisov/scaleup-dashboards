@@ -23,6 +23,7 @@ import {classifyUploadState,clearStaleUploadLink,cleanupEligibleUpload,latestUpl
 import {configureUploadQueue,enqueueUpload,waitForUploadQueueEntries} from './uploadQueueRuntime';
 import {existingSyncIncompleteSummary,readAuthoritativeExistingSnapshot,replaceExistingCacheFromSync} from './channelSchedule';
 import {journal} from './activityJournalRuntime';
+import {resolveProductionRoot} from './productionPrefs';
 import {cleanupPreclassification} from './activityJournalCore';
 import {classifyChannelRenderFiles,crossChannelScanRecoveryJobs,planRenderScanImport,summarizeRenderScan,type RenderScanRow,type RenderScanSummary} from './renderScanClassifier';
 
