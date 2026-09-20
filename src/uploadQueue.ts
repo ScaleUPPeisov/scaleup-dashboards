@@ -3,7 +3,7 @@ export type UploadQueueQuotaOperation={method:'videos.insert'|'videos.list'|'thu
 
 export type ImmutableUploadJob=Readonly<{
   jobId:string;
-  batchId:string;
+  batchId?:string;
   projectId?:string;
   localVideoIdentity:string;
   videoNumber:number;
