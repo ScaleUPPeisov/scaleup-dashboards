@@ -2460,6 +2460,64 @@ pub async fn youtube_video_processing_status(
  }))
 }
 
+
+#[tauri::command]
+pub async fn youtube_video_processing_status_batch(
+ app:AppHandle,
+ profile_id:String,
+ video_ids:Vec<String>,
+ operation_id:Option<String>,
+)->Result<Value,String>{
+ let mut seen=std::collections::HashSet::<String>::new();
+ let ids=video_ids.into_iter().map(|x|x.trim().to_string()).filter(|x|!x.is_empty()&&seen.insert(x.clone())).take(5000).collect::<Vec<_>>();
+ if ids.is_empty(){return Ok(json!({"requested":0,"found":0,"calls":0,"rows":[]}))}
+ let (token,profile)=valid_access_token(&app,&profile_id).await?;
+ let client=reqwest::Client::new();
+ let mut rows=Vec::<Value>::new();
+ let mut found=std::collections::HashSet::<String>::new();
+ let mut calls=0usize;
+ for chunk in ids.chunks(50){
+  calls+=1;
+  emit_youtube_api_request(&app,"videos.list",operation_id.as_deref());
+  let joined=chunk.join(",");
+  let r=client.get("https://www.googleapis.com/youtube/v3/videos")
+   .bearer_auth(&token)
+   .query(&[("part","id,snippet,status,processingDetails"),("id",joined.as_str())])
+   .send().await.map_err(|e|format!("PROCESSING_BATCH_NETWORK: {e}"))?;
+  let st=r.status();let v:Value=r.json().await.map_err(|e|format!("PROCESSING_BATCH_PARSE: {e}"))?;
+  if !st.is_success(){return Err(youtube_error(&v,"YouTube processing batch status check failed"))}
+  for item in v.get("items").and_then(Value::as_array).cloned().unwrap_or_default(){
+   let actual=item.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+   if actual.is_empty(){continue}
+   let actual_channel=item.pointer("/snippet/channelId").and_then(Value::as_str).unwrap_or("");
+   if let Some(expected)=profile.channel_id.as_deref().filter(|x|!x.trim().is_empty()){
+    if !actual_channel.is_empty()&&actual_channel!=expected{continue}
+   }
+   found.insert(actual.clone());
+   let raw=item.pointer("/processingDetails/processingStatus").and_then(Value::as_str).unwrap_or("unknown");
+   rows.push(json!({
+    "videoId":actual,
+    "channelId":actual_channel,
+    "remoteExists":true,
+    "identityVerified":true,
+    "processingStatus":raw,
+    "processingState":processing_state_from_status(raw),
+    "processingCheckedAt":Utc::now().to_rfc3339(),
+    "processingFailureReason":item.pointer("/processingDetails/processingFailureReason").and_then(Value::as_str),
+    "rejectionReason":item.pointer("/status/rejectionReason").and_then(Value::as_str),
+    "uploadStatus":item.pointer("/status/uploadStatus").and_then(Value::as_str),
+    "privacyStatus":item.pointer("/status/privacyStatus").and_then(Value::as_str),
+    "publishAt":item.pointer("/status/publishAt").and_then(Value::as_str)
+   }));
+  }
+ }
+ let checked_at=Utc::now().to_rfc3339();
+ for id in ids.iter().filter(|x|!found.contains(*x)){
+  rows.push(json!({"videoId":id,"remoteExists":false,"identityVerified":false,"processingStatus":"missing","processingState":"PROCESSING_UNKNOWN","processingCheckedAt":checked_at}));
+ }
+ Ok(json!({"requested":ids.len(),"found":found.len(),"calls":calls,"rows":rows}))
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ActiveUploadTelemetry {
