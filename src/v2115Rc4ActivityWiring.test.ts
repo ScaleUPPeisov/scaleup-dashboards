@@ -62,6 +62,36 @@ describe('VYRON 2.1.15 RC4 activity history wiring',()=>{
   expect(center).toContain("notifyWarning('Часть файлов не тронута'");
   expect(center).not.toContain("notifyError('Не удалось переместить файл в Корзину'");
  });
+ it('publisher never treats a stored videoId as normal NEW and exposes reconciliation controls',()=>{
+  const publisher=read('src/PublisherOS.tsx'),lifecycle=read('src/storageLifecycle.ts');
+  expect(lifecycle).toContain("return'VERIFY_REQUIRED'");
+  expect(publisher).toContain("stateOf(j)==='NEW'");
+  expect(publisher).toContain('Проверить спорные загрузки');
+  expect(publisher).toContain('youtubeVideoProcessingStatusBatch');
+  expect(publisher).toContain('Новых videos.insert: 0');
+ });
+ it('duplicate guard is local preflight, not a fake YouTube rejection',()=>{
+  const queue=read('src/uploadQueueRuntime.ts'),errors=read('src/errorCenter.ts');
+  expect(queue).toContain("eventType:'UPLOAD_BLOCKED_DUPLICATE_GUARD'");
+  expect(queue).toContain("stage:'reconciliation'");
+  expect(queue).toContain("videosInsertSent:false");
+  expect(errors).toContain("code:'LOCAL_DUPLICATE_GUARD'");
+  expect(errors).toContain("title:'Видео уже имеет YouTube ID'");
+ });
+ it('ENDLUME historical completion cannot downgrade YouTube lifecycle and startup hydration stays silent',()=>{
+  const bridge=read('src/ProductionStatusBridge.tsx'),lifecycle=read('src/storageLifecycle.ts');
+  expect(lifecycle).toContain("job.status==='READY_RENDER'||job.status==='RENDERING'");
+  expect(bridge).toContain("eventType:genuinelyNew?'RENDER_COMPLETED':'RENDER_DISCOVERED_LEGACY'");
+  expect(bridge).toContain('if(genuinelyNew)notifySuccess');
+  expect(bridge).not.toContain("job.status!=='READY_UPLOAD'");
+ });
+ it('render folder rescan is local-only and recovers candidates without upload',()=>{
+  const publisher=read('src/PublisherOS.tsx'),local=read('src-tauri/src/local_delete.rs'),api=read('src/api.ts');
+  expect(publisher).toContain('Просканировать папку рендера');
+  expect(publisher).toContain('YouTube quota: 0');
+  expect(local).toContain('pub fn scan_render_folder');
+  expect(api).toContain("'scan_render_folder'");
+ });
  it('journal sanitization rejects token and client-secret detail keys',()=>{
   const core=read('src/activityJournalCore.ts');
   expect(core).toMatch(/access\[_-\]\?token/);
