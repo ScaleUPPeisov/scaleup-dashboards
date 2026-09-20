@@ -116,7 +116,9 @@ jobs:
           assert conf['version']==v and conf['identifier']==os.environ['BUNDLE_ID']
           assert conf['bundle']['createUpdaterArtifacts'] is True
           assert conf['plugins']['updater']['pubkey']==os.environ['EMBEDDED_UPDATER_KEY']
-          assert re.search(r'(?m)^version\s*=\s*"2\.1\.15-rc\.5"\s*          assert re.search(r'\[\[package\]\]\nname = "channelflow"\nversion = "2\.1\.15-rc\.5"',clock)
+          assert re.search(r'(?m)^version\s*=\s*"2\.1\.15-rc\.5"\s*$',cargo)
+          assert "[target.'cfg(target_os = \"macos\")'.dependencies]" in cargo
+          assert re.search(r'\[\[package\]\]\nname = "channelflow"\nversion = "2\.1\.15-rc\.5"',clock)
           print('SOURCE_FREEZE=PASS')
           print('VERSION_CONTRACT=PASS')
           PY
