@@ -5190,6 +5190,23 @@ fn reconnect_apply_validated_with<S:OAuthSecretStore>(
       client_id,client_secret,access_token,refresh_token,authorized_channel_id,authorized_channel_title,scopes,preferred_browser,expires_in
     )
 }
+fn apply_reconnect_pointer_metadata(state:&mut KeychainMigrationV2State,profile_id:&str,backup:&ReconnectSecretBackup){
+    state.refresh_token_accounts.insert(profile_id.to_string(),backup.refresh_account.clone());
+    state.client_secret_accounts.insert(profile_id.to_string(),backup.client_secret_account.clone());
+    state.profiles.insert(profile_id.to_string(),MIGRATION_MIGRATED.into());
+    if backup.refresh_rotated||backup.client_secret_rotated{
+      state.credential_generations.insert(profile_id.to_string(),backup.generation);
+      state.credential_rotated_at.insert(profile_id.to_string(),Utc::now().to_rfc3339());
+    }
+}
+fn rotation_reason(error:Option<&str>)->Option<&'static str>{
+    let e=error?;
+    if e.contains("KEYCHAIN_AUTH_FAILED"){Some("KEYCHAIN_AUTH_FAILED")}
+    else if e.contains("KEYCHAIN_INTERACTION_REQUIRED"){Some("KEYCHAIN_INTERACTION_REQUIRED")}
+    else if e.contains("KEYCHAIN_USER_CANCELED"){Some("KEYCHAIN_USER_CANCELED")}
+    else if e.contains("KEYCHAIN_ACCESS_DENIED"){Some("KEYCHAIN_ACCESS_DENIED")}
+    else{Some("KEYCHAIN_WRITE_BLOCKED")}
+}
 fn reconnect_auth_url(
     client_id: &str,
     redirect: &str,
@@ -5309,12 +5326,16 @@ pub async fn youtube_oauth_reconnect_existing(
         .filter(|x| !x.trim().is_empty())
         .ok_or_else(|| "Google не вернул access_token".to_string())?;
     let response_refresh=tv.get("refresh_token").and_then(Value::as_str);
-    let existing_refresh=if response_refresh.map(str::trim).filter(|x|!x.is_empty()).is_some(){
+    let google_returned_new_refresh=response_refresh.map(str::trim).filter(|x|!x.is_empty()).is_some();
+    let existing_refresh=if google_returned_new_refresh{
         None
     }else{
-        match security::canonical_get_secret_cached(&oauth_key(&profile_id,"refresh_token")){
+        let active_refresh_account=profile_refresh_token_account(&app,&profile_id)?;
+        match security::canonical_get_secret_cached(&active_refresh_account){
             Ok(v)=>v,
-            Err(e) if keychain_repairable_error(&e)=>None,
+            Err(e) if keychain_repairable_error(&e)=>{
+                return Err(format!("OAUTH_REFRESH_TOKEN_REQUIRED_FOR_ROTATION: stage=OLD_SECRET_READ_WITHOUT_NEW_TOKEN; account={active_refresh_account}; {e}"))
+            }
             Err(e)=>return Err(e),
         }
     };
@@ -5388,44 +5409,98 @@ pub async fn youtube_oauth_reconnect_existing(
         .unwrap_or(&authorized_channel_id)
         .to_string();
     reconnect_authorized_channel_matches(&expected_channel_id, &authorized_channel_id)?;
-    let _=app.emit("oauth-recovery-stage",json!({"profileId":profile_id,"state":"SAVING","expectedChannelId":expected_channel_id,"authorizedChannelId":authorized_channel_id}));
-    let mut next_store = original_store.clone();
+    let _=app.emit("oauth-recovery-stage",json!({
+      "profileId":profile_id,"state":"SAVING","expectedChannelId":expected_channel_id,
+      "authorizedChannelId":authorized_channel_id,"googleRefreshTokenReturned":google_returned_new_refresh,
+      "tokenRefreshSmoke":"PASS","channelIdentity":"PASS"
+    }));
+    let pointer_before=read_keychain_migration_v2(&app)?;
+    let current_refresh_account=profile_refresh_token_account_from_state(&pointer_before,&profile_id);
+    let current_client_secret_account=profile_client_secret_account_from_state(&pointer_before,&profile_id);
+    let generation=next_profile_credential_generation(&pointer_before,&profile_id);
+    let mut next_store=original_store.clone();
     let secrets=KeychainOAuthSecretStore;
-    let backup=reconnect_apply_validated_with(
-        &secrets,&mut next_store,&profile_id,&client_id,&client_secret,&access,&refresh,
-        &authorized_channel_id,&authorized_channel_title,&scopes,&preferred_browser,expires,
+    let backup=reconnect_apply_validated_accounts_with(
+        &secrets,&mut next_store,&profile_id,&current_refresh_account,&current_client_secret_account,generation,
+        &client_id,&client_secret,&access,&refresh,&authorized_channel_id,&authorized_channel_title,
+        &scopes,&preferred_browser,expires,
     )?;
-    remember_access_token(&profile_id,&access,now_ts()+expires.max(60));
-    set_profile_migration_state(&app,&profile_id,MIGRATION_MIGRATED)?;
-    if let Err(e)=write_oauth_metadata(&store_path(&app)?,&next_store){
+    let recovery_reason=rotation_reason(backup.old_refresh_error.as_deref())
+      .or_else(||rotation_reason(backup.old_client_secret_error.as_deref()));
+    let _=app.emit("oauth-recovery-stage",json!({
+      "profileId":profile_id,"state":"KEYCHAIN_PREPARED",
+      "oldRefreshAccount":backup.old_refresh_account,"newRefreshAccount":backup.refresh_account,
+      "oldClientSecretAccount":backup.old_client_secret_account,"newClientSecretAccount":backup.client_secret_account,
+      "oldRefreshReadOsstatus":backup.old_refresh_osstatus,"oldClientSecretReadOsstatus":backup.old_client_secret_osstatus,
+      "refreshRotated":backup.refresh_rotated,"clientSecretRotated":backup.client_secret_rotated,
+      "newWrite":"PASS","newReadback":"PASS","secretValuesIncluded":false
+    }));
+
+    let mut pointer_next=pointer_before.clone();
+    apply_reconnect_pointer_metadata(&mut pointer_next,&profile_id,&backup);
+    if let Err(e)=write_keychain_migration_v2(&app,&pointer_next){
         reconnect_rollback_secrets_with(&secrets,&backup);
-        return Err(format!("OAUTH_METADATA_SAVE_FAILED: {e}"));
+        return Err(format!("OAUTH_METADATA_POINTER_COMMIT_FAILED: stage=METADATA_POINTER_COMMIT; {e}"))
     }
+    if let Err(e)=write_oauth_metadata(&store_path(&app)?,&next_store){
+        let _=write_keychain_migration_v2(&app,&pointer_before);
+        reconnect_rollback_secrets_with(&secrets,&backup);
+        return Err(format!("OAUTH_METADATA_SAVE_FAILED: stage=METADATA_COMMIT; {e}"))
+    }
+
+    let persisted_pointer=read_keychain_migration_v2(&app)?;
+    let persisted_refresh_account=profile_refresh_token_account_from_state(&persisted_pointer,&profile_id);
+    let persisted_client_secret_account=profile_client_secret_account_from_state(&persisted_pointer,&profile_id);
     let verify = load_store_metadata(&app)?;
-    let verified = verify
-        .profiles
-        .iter()
-        .find(|p| p.id == profile_id)
-        .ok_or_else(|| {
-            "OAUTH_SAVE_VERIFY_FAILED: existing profile UUID disappeared after save".to_string()
-        })?;
-    let refresh_found=security::canonical_get_secret_cached(&oauth_key(&profile_id,"refresh_token"))?
-        .map(|x|!x.trim().is_empty()).unwrap_or(false);
-    let client_secret_found=security::canonical_get_secret_cached(&oauth_key(&profile_id,"client_secret"))?
-        .map(|x|!x.trim().is_empty()).unwrap_or(false);
-    let ok = refresh_found&&client_secret_found
-        && verified.channel_id.as_deref() == Some(expected_channel_id.as_str())
-        && verified.identity_validated_channel_id.as_deref() == Some(expected_channel_id.as_str());
-    if !ok {
-        reconnect_rollback_secrets_with(&secrets, &backup);
-        let _ = write_oauth_metadata(&store_path(&app)?, &original_store);
-        return Err("OAUTH_SAVE_VERIFY_FAILED: Keychain/profile readback did not confirm existing UUID credential".into());
+    let verified = verify.profiles.iter().find(|p|p.id==profile_id).ok_or_else(||{
+      "OAUTH_SAVE_VERIFY_FAILED: stage=POST_COMMIT_READ; existing profile UUID disappeared after save".to_string()
+    })?;
+    let pointer_ok=persisted_refresh_account==backup.refresh_account&&persisted_client_secret_account==backup.client_secret_account;
+    let refresh_ok=match security::canonical_verify_secret(&persisted_refresh_account,&refresh){
+      Ok(v)=>v,
+      Err(e)=>{
+        let _=write_keychain_migration_v2(&app,&pointer_before);let _=write_oauth_metadata(&store_path(&app)?,&original_store);
+        reconnect_rollback_secrets_with(&secrets,&backup);
+        return Err(format!("OAUTH_POST_COMMIT_READ_FAILED: stage=POST_COMMIT_READ; account={persisted_refresh_account}; {e}"))
+      }
+    };
+    let client_secret_ok=match security::canonical_verify_secret(&persisted_client_secret_account,&client_secret){
+      Ok(v)=>v,
+      Err(e)=>{
+        let _=write_keychain_migration_v2(&app,&pointer_before);let _=write_oauth_metadata(&store_path(&app)?,&original_store);
+        reconnect_rollback_secrets_with(&secrets,&backup);
+        return Err(format!("OAUTH_POST_COMMIT_READ_FAILED: stage=POST_COMMIT_READ; account={persisted_client_secret_account}; {e}"))
+      }
+    };
+    let identity_ok=verified.channel_id.as_deref()==Some(expected_channel_id.as_str())
+      &&verified.identity_validated_channel_id.as_deref()==Some(expected_channel_id.as_str());
+    if !(pointer_ok&&refresh_ok&&client_secret_ok&&identity_ok){
+        let _=write_keychain_migration_v2(&app,&pointer_before);
+        let _=write_oauth_metadata(&store_path(&app)?,&original_store);
+        reconnect_rollback_secrets_with(&secrets,&backup);
+        return Err("OAUTH_SAVE_VERIFY_FAILED: stage=POST_COMMIT_READ; secure account pointer/readback/identity mismatch".into())
     }
+    remember_access_token(&profile_id,&access,now_ts()+expires.max(60));
     record_profile_credential_validation(&app,&profile_id,"PASS",Some(&expected_channel_id),Some(&authorized_channel_id))?;
-    let _=app.emit("oauth-recovery-stage",json!({"profileId":profile_id,"state":"CONNECTED","expectedChannelId":expected_channel_id,"authorizedChannelId":authorized_channel_id}));
-    Ok(
-        json!({"ok":true,"status":"CONNECTED","profileId":profile_id,"profileUuidPreserved":true,"expectedChannelId":expected_channel_id,"authorizedChannelId":authorized_channel_id,"channelTitle":authorized_channel_title,"refreshTokenStored":true,"clientSecretStored":true,"keychainReadback":"FOUND","tokenRefresh":"PASS","channelIdentity":"PASS","youtubeIdentityRequests":1,"videosInsert":0}),
-    )
+    let _=app.emit("oauth-recovery-stage",json!({
+      "profileId":profile_id,"state":"CONNECTED","expectedChannelId":expected_channel_id,
+      "authorizedChannelId":authorized_channel_id,"metadataPointer":"PASS","postCommitRead":"PASS"
+    }));
+    Ok(json!({
+      "ok":true,"status":"CONNECTED","profileId":profile_id,"profileUuidPreserved":true,
+      "expectedChannelId":expected_channel_id,"authorizedChannelId":authorized_channel_id,
+      "channelTitle":authorized_channel_title,"refreshTokenStored":true,"clientSecretStored":true,
+      "keychainReadback":"FOUND","tokenRefresh":"PASS","channelIdentity":"PASS","youtubeIdentityRequests":1,"videosInsert":0,
+      "credentialRotated":backup.refresh_rotated||backup.client_secret_rotated,
+      "refreshRotated":backup.refresh_rotated,"clientSecretRotated":backup.client_secret_rotated,
+      "oldRefreshAccount":backup.old_refresh_account,"activeRefreshAccount":backup.refresh_account,
+      "oldClientSecretAccount":backup.old_client_secret_account,"activeClientSecretAccount":backup.client_secret_account,
+      "oldRefreshOsstatus":backup.old_refresh_osstatus,"oldClientSecretOsstatus":backup.old_client_secret_osstatus,
+      "rotationReason":recovery_reason,"credentialGeneration":backup.generation,
+      "googleRefreshTokenReturned":google_returned_new_refresh,
+      "keychainNewWrite":"PASS","keychainNewReadback":"PASS","metadataPointer":"PASS","postCommitRead":"PASS",
+      "secretValuesIncluded":false
+    }))
 }
 
 
