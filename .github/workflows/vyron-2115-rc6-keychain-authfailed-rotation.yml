@@ -113,6 +113,7 @@ jobs:
             'src/api.ts',
             'src/errorCenter.ts',
             'src/types.ts',
+            'src/v2115Rc5KeychainContinuity.test.ts',
             'src/v2115Rc6KeychainRotation.test.ts',
             'src/v213KeychainRecovery.test.ts',
           }
