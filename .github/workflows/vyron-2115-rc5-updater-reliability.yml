@@ -1,5 +1,5 @@
 name: VYRON 2.1.15 RC5 Updater Reliability
-# RC5 canonical rerun: stale reconnect/statistics contracts aligned
+# RC5 canonical rerun: Add Channel reconnect contract aligned
 # RC5: rapid updater + Keychain continuity; rerun after cross-platform secure-storage regression alignment
 
 on:
@@ -127,6 +127,7 @@ jobs:
             'src/updaterSchedule.test.ts',
             'src/updaterSchedule.ts',
             'src/v2113ExistingChannelRebind.test.ts',
+            'src/v2115AddChannelStats.test.ts',
             'src/v2115Rc4StatisticsOauthContinuity.test.ts',
             'src/v2115Rc5KeychainContinuity.test.ts',
             'src/v2115Rc5UpdaterReliability.test.ts',
