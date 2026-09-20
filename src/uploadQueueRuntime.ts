@@ -34,7 +34,12 @@ async function executeUpload(spec:ImmutableUploadJob){
   // Persist the returned videoId immediately. If verification is temporarily unavailable,
   // retry must never blindly create a duplicate.
   useApp.getState().patchJob(spec.jobId,{youtubeVideoId:uploaded.videoId,uploadProgress:100,uploadedAt:acceptedAt,uploadAcceptedAt:acceptedAt,storageLifecycle:'UPLOADED',processingState:'UPLOAD_ACCEPTED'});
-  if(uploaded.verified===false)throw new Error(uploaded.verificationError||`UPLOAD_VERIFY_FAILED: videoId=${uploaded.videoId}; videos.list verification failed`);
+  const acceptedState=useApp.getState(),acceptedProject=Object.entries(acceptedState.projectLifecycle).find(([,x])=>x.jobId===spec.jobId);
+  if(uploaded.verified===false){
+    const uncertainHistory=recordVerifiedUpload(acceptedState.uploadHistory,{jobId:spec.jobId,channelId:spec.channelId,profileId:spec.profileId,youtubeChannelId:spec.youtubeChannelId,youtubeVideoId:uploaded.videoId,localFilePath:spec.filePath,originalFilename:baseName(spec.filePath),projectId:spec.projectId||acceptedProject?.[1].projectId,sourceProjectPath:acceptedProject?.[1].projectPath,uploadedAt:acceptedAt,fileSize:spec.fileSize,sha256:spec.fingerprint,publishAt:spec.publishAt,overrideDuplicate:spec.allowDuplicate,processingState:'PROCESSING_UNKNOWN',processingCheckedAt:acceptedAt,processingError:uploaded.verificationError});
+    useApp.getState().replaceUploadHistory(uncertainHistory);
+    throw new Error(uploaded.verificationError||`UPLOAD_VERIFY_FAILED: videoId=${uploaded.videoId}; videos.list verification failed`)
+  }
   completePublishAttempt(attempt.id,uploaded.videoId);
   const fresh=useApp.getState(),projectEntry=Object.entries(fresh.projectLifecycle).find(([,x])=>x.jobId===spec.jobId);
   let nextHistory=recordVerifiedUpload(fresh.uploadHistory,{jobId:spec.jobId,channelId:spec.channelId,profileId:spec.profileId,youtubeChannelId:spec.youtubeChannelId,youtubeVideoId:uploaded.videoId,localFilePath:spec.filePath,originalFilename:baseName(spec.filePath),projectId:spec.projectId||projectEntry?.[1].projectId,sourceProjectPath:projectEntry?.[1].projectPath,uploadedAt:acceptedAt,fileSize:spec.fileSize,sha256:spec.fingerprint,publishAt:spec.publishAt,overrideDuplicate:spec.allowDuplicate,processingState:'UPLOAD_ACCEPTED',identityVerifiedAt:acceptedAt});
