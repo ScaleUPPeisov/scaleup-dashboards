@@ -79,13 +79,79 @@ static CANONICAL_BACKEND_READS:std::sync::atomic::AtomicU64=std::sync::atomic::A
 static CANONICAL_BACKEND_WRITES:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
 static CANONICAL_BACKEND_DELETES:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
 static CANONICAL_SESSION_CACHE:OnceLock<Mutex<HashMap<String,String>>>=OnceLock::new();
-static CANONICAL_DENIED_ACCOUNTS:OnceLock<Mutex<HashSet<String>>>=OnceLock::new();
+#[derive(Debug,Clone,serde::Serialize)]
+#[serde(rename_all="camelCase")]
+pub struct CanonicalDenialState{
+ account:String,
+ profile_uuid:Option<String>,
+ account_type:String,
+ first_denied_at:String,
+ last_denied_at:String,
+ original_osstatus:Option<i32>,
+ current_osstatus:Option<i32>,
+ original_error_code:String,
+ current_error_code:String,
+ original_operation:String,
+ denial_count:u64,
+ last_retry_at:Option<String>,
+ retry_count:u64,
+ #[serde(skip_serializing)]
+ last_denied_epoch:i64,
+ #[serde(skip_serializing)]
+ last_retry_epoch:i64,
+}
+static CANONICAL_DENIED_ACCOUNTS:OnceLock<Mutex<HashMap<String,CanonicalDenialState>>>=OnceLock::new();
 static KEYCHAIN_NO_UI_MUTEX:OnceLock<Mutex<()>>=OnceLock::new();
 static INTERACTIVE_UI_REQUESTS_BLOCKED:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
 static LEGACY_RECONNECT_REQUIRED_COUNT:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
+const CANONICAL_DENIAL_RETRY_COOLDOWN_SECS:i64=15*60;
 fn canonical_cache()->&'static Mutex<HashMap<String,String>>{CANONICAL_SESSION_CACHE.get_or_init(||Mutex::new(HashMap::new()))}
-fn canonical_denied()->&'static Mutex<HashSet<String>>{CANONICAL_DENIED_ACCOUNTS.get_or_init(||Mutex::new(HashSet::new()))}
+fn canonical_denied()->&'static Mutex<HashMap<String,CanonicalDenialState>>{CANONICAL_DENIED_ACCOUNTS.get_or_init(||Mutex::new(HashMap::new()))}
 fn keychain_no_ui_mutex()->&'static Mutex<()>{KEYCHAIN_NO_UI_MUTEX.get_or_init(||Mutex::new(()))}
+fn canonical_error_code(error:&str)->String{
+ for code in ["KEYCHAIN_INTERACTION_REQUIRED","KEYCHAIN_AUTH_FAILED","KEYCHAIN_USER_CANCELED","KEYCHAIN_ACCESS_DENIED","KEYCHAIN_NO_UI_GUARD_FAILED","KEYCHAIN_ERROR"]{
+  if error.contains(code){return code.into()}
+ }
+ "KEYCHAIN_READ_FAILED".into()
+}
+fn record_canonical_denial(account:&str,error:&str,operation:&str,retry:bool){
+ let now=chrono::Utc::now(),now_iso=now.to_rfc3339(),now_epoch=now.timestamp();
+ let osstatus=inventory_osstatus(error),code=canonical_error_code(error);
+ let (profile_uuid,account_type)=safe_account_parts(account);
+ if let Ok(mut denied)=canonical_denied().lock(){
+  if let Some(row)=denied.get_mut(account){
+   row.last_denied_at=now_iso.clone();row.last_denied_epoch=now_epoch;row.current_osstatus=osstatus;row.current_error_code=code.clone();row.denial_count+=1;
+   if retry{row.last_retry_at=Some(now_iso);row.last_retry_epoch=now_epoch;row.retry_count+=1}
+  }else{
+   denied.insert(account.to_string(),CanonicalDenialState{
+    account:account.to_string(),profile_uuid,account_type,first_denied_at:now_iso.clone(),last_denied_at:now_iso.clone(),
+    original_osstatus:osstatus,current_osstatus:osstatus,original_error_code:code.clone(),current_error_code:code,
+    original_operation:operation.to_string(),denial_count:1,last_retry_at:if retry{Some(now_iso)}else{None},retry_count:if retry{1}else{0},
+    last_denied_epoch:now_epoch,last_retry_epoch:if retry{now_epoch}else{0},
+   });
+  }
+ }
+}
+fn clear_canonical_denial(account:&str){if let Ok(mut d)=canonical_denied().lock(){d.remove(account);}}
+fn canonical_denial_state(account:&str)->Option<CanonicalDenialState>{canonical_denied().lock().ok()?.get(account).cloned()}
+fn canonical_retry_due(row:&CanonicalDenialState)->bool{
+ let anchor=if row.last_retry_epoch>0{row.last_retry_epoch}else{row.last_denied_epoch};
+ chrono::Utc::now().timestamp().saturating_sub(anchor)>=CANONICAL_DENIAL_RETRY_COOLDOWN_SECS
+}
+fn cached_canonical_denial_error(row:&CanonicalDenialState)->String{
+ format!("KEYCHAIN_ACCESS_DENIED_CACHED: canonical account={}; originalCode={}; originalOsstatus={}; deniedAt={}; retryAllowed=true; denialCount={}; retryCount={}",
+  row.account,row.original_error_code,row.original_osstatus.map(|x|x.to_string()).unwrap_or_else(||"unknown".into()),row.first_denied_at,row.denial_count,row.retry_count)
+}
+fn remember_canonical_secret(account:&str,value:&str){
+ if let Ok(mut c)=canonical_cache().lock(){if value.is_empty(){c.remove(account);}else{c.insert(account.to_string(),value.to_string());}}
+ if !value.is_empty(){clear_canonical_denial(account);}
+}
+pub fn canonical_denial_diagnostic(account:&str)->Option<serde_json::Value>{
+ canonical_denial_state(account).and_then(|x|serde_json::to_value(x).ok())
+}
+pub fn canonical_blocked_accounts()->Vec<String>{
+ canonical_denied().lock().map(|d|d.keys().cloned().collect()).unwrap_or_default()
+}
 #[cfg(target_os="macos")]
 fn with_keychain_no_ui<T,F>(f:F)->Result<T,String> where F:FnOnce()->Result<T,String>{
  let _serial=keychain_no_ui_mutex().lock().map_err(|_|"KEYCHAIN_NO_UI_LOCK_POISONED".to_string())?;
@@ -212,25 +278,53 @@ pub fn canonical_get_secret(account:&str)->Result<Option<String>,String>{
  with_keychain_no_ui(||match secitem_no_ui_get(CANONICAL_SERVICE,account,"canonical_read_ui_skip"){
   Ok(Some(v))=>{record_runtime(&format!("canonical::{account}"),"READ","SECITEM_UI_FAIL",Some(0),None);String::from_utf8(v).map(Some).map_err(|_|format!("KEYCHAIN_ERROR: canonical Keychain value {account} is not UTF-8"))},
   Ok(None)=>{record_runtime(&format!("canonical::{account}"),"READ","SECITEM_UI_FAIL",Some(ITEM_NOT_FOUND),None);Ok(None)},
-  Err(e)=>{record_runtime(&format!("canonical::{account}"),"READ","SECITEM_UI_FAIL",None,None);Err(e)},
+  Err(e)=>{record_runtime(&format!("canonical::{account}"),"READ","SECITEM_UI_FAIL",inventory_osstatus(&e),None);Err(e)},
  })
 }
 #[cfg(not(target_os="macos"))]
 pub fn canonical_get_secret(_account:&str)->Result<Option<String>,String>{Ok(None)}
 
-pub fn canonical_get_secret_cached(account:&str)->Result<Option<String>,String>{
+fn canonical_get_secret_cached_with<F>(account:&str,explicit_retry:bool,reader:F)->Result<Option<String>,String>
+where F:FnOnce(&str)->Result<Option<String>,String>{
  if let Ok(c)=canonical_cache().lock(){if let Some(v)=c.get(account){record_runtime(&format!("canonical::{account}"),"CACHE_HIT","HIT",None,None);return Ok(Some(v.clone()))}}
  record_runtime(&format!("canonical::{account}"),"CACHE_MISS","MISS",None,None);
- if canonical_denied().lock().map(|d|d.contains(account)).unwrap_or(false){return Err(format!("KEYCHAIN_ACCESS_DENIED_CACHED: canonical account={account}"))}
- match canonical_get_secret(account){
-  Ok(Some(v))=>{if let Ok(mut c)=canonical_cache().lock(){c.insert(account.to_string(),v.clone());}Ok(Some(v))},
-  Ok(None)=>Ok(None),
-  Err(e)=>{if denied_error(&e){if let Ok(mut d)=canonical_denied().lock(){d.insert(account.to_string());}}Err(e)}
+ let prior=canonical_denial_state(account);
+ if let Some(row)=prior.as_ref(){
+  if !explicit_retry&&!canonical_retry_due(row){return Err(cached_canonical_denial_error(row))}
+ }
+ let retry=prior.is_some();
+ match reader(account){
+  Ok(Some(v))=>{
+   remember_canonical_secret(account,&v);
+   record_runtime(&format!("canonical::{account}"),if retry{"ACCESS_RECOVERED"}else{"READ_OK"},"HIT",Some(0),None);
+   Ok(Some(v))
+  },
+  Ok(None)=>{
+   clear_canonical_denial(account);
+   record_runtime(&format!("canonical::{account}"),"READ_NOT_FOUND","MISS",Some(ITEM_NOT_FOUND),None);
+   Ok(None)
+  },
+  Err(e)=>{
+   if denied_error(&e){record_canonical_denial(account,&e,if retry{"canonical_retry_no_ui"}else{"canonical_read_no_ui"},retry);}
+   Err(e)
+  }
+ }
+}
+pub fn canonical_get_secret_cached(account:&str)->Result<Option<String>,String>{canonical_get_secret_cached_with(account,false,canonical_get_secret)}
+pub fn canonical_retry_secret_access_value(account:&str)->serde_json::Value{
+ let before=canonical_denial_state(account);
+ match canonical_get_secret_cached_with(account,true,canonical_get_secret){
+  Ok(Some(_))=>serde_json::json!({"account":account,"status":"ACCESSIBLE","recovered":before.is_some(),"secretValuesIncluded":false,"youtubeApiRequests":0}),
+  Ok(None)=>serde_json::json!({"account":account,"status":"MISSING","recovered":false,"secretValuesIncluded":false,"youtubeApiRequests":0}),
+  Err(e)=>{
+   let denial=canonical_denial_diagnostic(account);
+   serde_json::json!({"account":account,"status":if denied_error(&e){"KEYCHAIN_BLOCKED"}else{"READ_FAILED"},"errorCode":canonical_error_code(&e),"osstatus":inventory_osstatus(&e),"denial":denial,"secretValuesIncluded":false,"youtubeApiRequests":0})
+  }
  }
 }
 pub fn canonical_forget_cache(account:&str){
  if let Ok(mut c)=canonical_cache().lock(){c.remove(account);}
- if let Ok(mut d)=canonical_denied().lock(){d.remove(account);}
+ clear_canonical_denial(account);
 }
 #[cfg(target_os="macos")]
 pub fn canonical_set_secret(account:&str,value:&str)->Result<(),String>{
@@ -251,7 +345,7 @@ pub fn canonical_set_secret(account:&str,value:&str)->Result<(),String>{
  });
  if result.is_ok(){
   if value.is_empty(){canonical_forget_cache(account)}
-  else{if let Ok(mut c)=canonical_cache().lock(){c.insert(account.to_string(),value.to_string());}if let Ok(mut d)=canonical_denied().lock(){d.remove(account);}}
+  else{remember_canonical_secret(account,value)}
  }
  result
 }
@@ -259,15 +353,19 @@ pub fn canonical_set_secret(account:&str,value:&str)->Result<(),String>{
 pub fn canonical_set_secret(_account:&str,_value:&str)->Result<(),String>{Err("VYRON secure storage requires macOS Keychain".into())}
 pub fn canonical_delete_secret(account:&str)->Result<(),String>{canonical_set_secret(account,"")}
 pub fn canonical_verify_secret(account:&str,expected:&str)->Result<bool,String>{
- canonical_forget_cache(account);
- Ok(canonical_get_secret(account)?.as_deref()==Some(expected))
+ if let Ok(mut c)=canonical_cache().lock(){c.remove(account);}
+ match canonical_get_secret(account){
+  Ok(Some(v))=>{remember_canonical_secret(account,&v);Ok(v==expected)},
+  Ok(None)=>{clear_canonical_denial(account);Ok(false)},
+  Err(e)=>{if denied_error(&e){record_canonical_denial(account,&e,"canonical_verify_no_ui",true);}Err(e)}
+ }
 }
 pub fn legacy_get_secret_once(account:&str)->Result<Option<String>,String>{get_secret(account)}
 pub fn canonical_service()->&'static str{CANONICAL_SERVICE}
 
 fn keychain_error(kind:&str,account:&str,code:i32,detail:&str)->String{
  if code==INTERACTION_NOT_ALLOWED{INTERACTIVE_UI_REQUESTS_BLOCKED.fetch_add(1,Ordering::SeqCst);}
- if matches!(code,AUTH_FAILED|INTERACTION_NOT_ALLOWED|USER_CANCELED){KEYCHAIN_ACCESS_BLOCKED.store(true,Ordering::SeqCst);}
+ if matches!(code,AUTH_FAILED|INTERACTION_NOT_ALLOWED|USER_CANCELED)&&!kind.starts_with("canonical_"){KEYCHAIN_ACCESS_BLOCKED.store(true,Ordering::SeqCst);}
  match code{
   AUTH_FAILED=>format!("KEYCHAIN_AUTH_FAILED: macOS Keychain отклонил пароль или доступ к записи VYRON. operation={kind}; account={account}; osstatus={code}; detail={detail}"),
   INTERACTION_NOT_ALLOWED=>format!("KEYCHAIN_INTERACTION_REQUIRED: macOS Keychain требует подтверждение пользователя, но диалог сейчас недоступен. operation={kind}; account={account}; osstatus={code}; detail={detail}"),
@@ -480,6 +578,51 @@ mod tests{
   let e2=get_secret_cached_with(account,|_|{READS.fetch_add(1,AO::SeqCst);Ok(Some("must-not-read".into()))}).unwrap_err();assert!(e2.contains("DENIED_CACHED"));assert_eq!(READS.load(AO::SeqCst),1);invalidate_secret_cache(account);
  }
  #[test]
+ fn canonical_denial_keeps_root_cause_and_blocks_backend_hammer(){
+  let _guard=keychain_test_guard();
+  use std::sync::atomic::{AtomicUsize,Ordering as AO};
+  static READS:AtomicUsize=AtomicUsize::new(0);READS.store(0,AO::SeqCst);
+  let account="oauth.11111111-1111-4111-8111-111111111111.refresh_token";
+  let first=canonical_get_secret_cached_with(account,false,|_|{READS.fetch_add(1,AO::SeqCst);Err("KEYCHAIN_INTERACTION_REQUIRED: operation=canonical_read_ui_skip; account=x; osstatus=-25308; detail=test".into())}).unwrap_err();
+  assert!(first.contains("KEYCHAIN_INTERACTION_REQUIRED"));
+  let second=canonical_get_secret_cached_with(account,false,|_|{READS.fetch_add(1,AO::SeqCst);Ok(Some("must-not-run".into()))}).unwrap_err();
+  assert!(second.contains("KEYCHAIN_ACCESS_DENIED_CACHED"));
+  assert!(second.contains("originalOsstatus=-25308"));
+  assert_eq!(READS.load(AO::SeqCst),1);
+ }
+ #[test]
+ fn canonical_explicit_retry_recovers_one_account_and_isolates_profiles(){
+  let _guard=keychain_test_guard();
+  let a="oauth.aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.refresh_token";
+  let b="oauth.bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.refresh_token";
+  let _=canonical_get_secret_cached_with(a,false,|_|Err("KEYCHAIN_AUTH_FAILED: operation=canonical_read_ui_skip; account=a; osstatus=-25293; detail=test".into()));
+  let got=canonical_get_secret_cached_with(a,true,|_|Ok(Some("recovered".into()))).unwrap();
+  assert_eq!(got.as_deref(),Some("recovered"));assert!(canonical_denial_state(a).is_none());
+  let other=canonical_get_secret_cached_with(b,false,|_|Ok(Some("healthy".into()))).unwrap();
+  assert_eq!(other.as_deref(),Some("healthy"));assert!(canonical_denial_state(b).is_none());
+ }
+ #[test]
+ fn canonical_explicit_retry_still_denied_does_not_loop(){
+  let _guard=keychain_test_guard();
+  use std::sync::atomic::{AtomicUsize,Ordering as AO};
+  static READS:AtomicUsize=AtomicUsize::new(0);READS.store(0,AO::SeqCst);
+  let account="oauth.cccccccc-cccc-4ccc-8ccc-cccccccccccc.refresh_token";
+  let err="KEYCHAIN_INTERACTION_REQUIRED: operation=canonical_read_ui_skip; account=c; osstatus=-25308; detail=test";
+  let _=canonical_get_secret_cached_with(account,false,|_|{READS.fetch_add(1,AO::SeqCst);Err(err.into())});
+  let _=canonical_get_secret_cached_with(account,true,|_|{READS.fetch_add(1,AO::SeqCst);Err(err.into())});
+  assert_eq!(READS.load(AO::SeqCst),2);
+  let row=canonical_denial_state(account).unwrap();assert_eq!(row.original_osstatus,Some(-25308));assert_eq!(row.retry_count,1);
+ }
+ #[test]
+ fn canonical_success_cache_and_write_model_clear_denial(){
+  let _guard=keychain_test_guard();
+  let account="oauth.dddddddd-dddd-4ddd-8ddd-dddddddddddd.refresh_token";
+  record_canonical_denial(account,"KEYCHAIN_ACCESS_DENIED: osstatus=-25308","test",false);
+  remember_canonical_secret(account,"secret");
+  assert!(canonical_denial_state(account).is_none());
+  assert_eq!(canonical_get_secret_cached_with(account,false,|_|panic!("backend should not run")).unwrap().as_deref(),Some("secret"));
+ }
+ #[test]
  fn runtime_diagnostics_never_contains_secret_values(){
   let _guard=keychain_test_guard();
   remember_secret("oauth.11111111-1111-4111-8111-111111111111.refresh_token","SUPER_SECRET_VALUE");
@@ -650,6 +793,27 @@ pub fn list_canonical_secret_accounts(prefix:&str)->Result<Vec<String>,String>{
  accounts.sort();Ok(accounts)
 }
 pub fn list_legacy_secret_accounts(prefix:&str)->Result<Vec<String>,String>{list_secret_accounts(prefix)}
+
+pub fn canonical_account_metadata_diagnostic(account:&str)->serde_json::Value{
+ let denial=canonical_denial_diagnostic(account);
+ match native_attributes_for_service(CANONICAL_SERVICE,Some(account)){
+  Ok(rows)=>{
+   let whitelist=["acct","svce","agrp","pdmn","sync","labl","cdat","mdat","crtr"];
+   let attrs=rows.first().map(|row|{
+    let mut safe=std::collections::BTreeMap::<String,String>::new();
+    for key in whitelist{if let Some(value)=row.get(key){safe.insert(key.to_string(),value.clone());}}
+    safe
+   });
+   serde_json::json!({"account":account,"service":CANONICAL_SERVICE,"metadataEnumeration":if rows.is_empty(){"NOT_VISIBLE"}else{"VISIBLE"},"attributes":attrs,"denial":denial,"secretValuesIncluded":false,"secretReads":0})
+  },
+  Err(e)=>serde_json::json!({"account":account,"service":CANONICAL_SERVICE,"metadataEnumeration":"ERROR","errorCode":canonical_error_code(&e),"osstatus":inventory_osstatus(&e),"denial":denial,"secretValuesIncluded":false,"secretReads":0})
+ }
+}
+#[tauri::command]
+pub fn security_canonical_account_diagnostic(account:String)->serde_json::Value{canonical_account_metadata_diagnostic(account.trim())}
+#[tauri::command]
+pub fn security_canonical_retry_secret_access(account:String)->serde_json::Value{canonical_retry_secret_access_value(account.trim())}
+
 
 #[cfg(test)]
 mod native_enumeration_tests{
