@@ -161,7 +161,7 @@ export function ChannelRunway(){
     <div className="runwaySummary">
       <div><small>ВСЕГО ПРОЕКТОВ</small><b>{active.length}</b><em>local VYRON</em></div>
       <div><small>YOUTUBE ПОДКЛЮЧЕНО</small><b>{youtubeClassification.eligible.length}</b><em>exact Profile + Channel ID</em></div>
-      <div><small>НЕ ПОДКЛЮЧЕНО</small><b>{active.length-youtubeClassification.eligible.length}</b><em>stats API calls: 0</em></div>
+      <div><small>НЕ ПОДКЛЮЧЕНО</small><b>{youtubeClassification.unlinked.length+youtubeClassification.orphans.length+youtubeClassification.mismatched.length}</b><em>API 0 • duplicates {youtubeClassification.duplicates.length}</em></div>
       <div><small>ГОТОВЫХ ВИДЕО</small><b>{totalReady}</b><em>не загружены • dedupe включён</em></div>
       <div><small>ТРЕБУЮТ ВНИМАНИЯ</small><b>{attention.length}</b><em>content runway ≤ 45 дней</em></div>
       <div><small>КРИТИЧЕСКИЕ</small><b>{critical.length}</b><em>≤ 14 дней</em></div>
