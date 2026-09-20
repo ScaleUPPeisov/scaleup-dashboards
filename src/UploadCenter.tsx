@@ -2,6 +2,8 @@ import React,{useEffect,useMemo,useState} from 'react';
 import {useApp} from './store';
 import {api} from './api';
 import {cleanupEligibleUpload,markHistoryTrashed} from './storageLifecycle';
+import {cleanupPreclassification,effectiveSourceLifecycle} from './activityJournalCore';
+import {journal} from './activityJournalRuntime';
 import {notifyError,notifySuccess,notifyWarning} from './notificationCenter';
 import {removeQueuedUpload,subscribeUploadQueue,uploadQueueSnapshot} from './uploadQueueRuntime';
 import {formatDuration,formatUploadBytes,formatUploadSpeed,subscribeUploadTelemetry,uploadTelemetrySnapshot,type UploadTelemetryRecord} from './uploadTelemetry';
@@ -24,8 +26,8 @@ export function UploadCenterGlobal(){
 }
 
 function UploadCenterModal(){
- const{queue,telemetry}=useUploadRuntime(),channels=useApp(s=>s.channels),jobs=useApp(s=>s.jobs),history=useApp(s=>s.uploadHistory),settings=useApp(s=>s.settings),fingerprints=useApp(s=>s.fingerprintCache);
- const[clock,setClock]=useState(Date.now()),[cleanupOpen,setCleanupOpen]=useState(false),[cleanupBusy,setCleanupBusy]=useState(false);
+ const{queue,telemetry}=useUploadRuntime(),channels=useApp(s=>s.channels),jobs=useApp(s=>s.jobs),history=useApp(s=>s.uploadHistory),settings=useApp(s=>s.settings),fingerprints=useApp(s=>s.fingerprintCache),replaceUploadHistory=useApp(s=>s.replaceUploadHistory);
+ const[clock,setClock]=useState(Date.now()),[cleanupOpen,setCleanupOpen]=useState(false),[cleanupBusy,setCleanupBusy]=useState(false),[sourceScanBusy,setSourceScanBusy]=useState(false);
  useEffect(()=>{const id=window.setInterval(()=>setClock(Date.now()),1000);return()=>window.clearInterval(id)},[]);
  const queueIds=new Set([...queue.running,...queue.queued].map(x=>x.spec.jobId));
  const orphanActive=telemetry.active.filter(x=>!queueIds.has(x.jobId));
@@ -33,10 +35,29 @@ function UploadCenterModal(){
  const succeeded=queue.recent.filter(x=>x.state==='SUCCEEDED'),failed=queue.recent.filter(x=>x.state==='FAILED');
  const batchTotal=queue.queued.length+queue.running.length+queue.recent.length;
  const batchDone=succeeded.length+failed.length;
- const cleanupCandidates=history.filter(x=>cleanupEligibleUpload(x,jobs.find(j=>j.id===x.jobId)));
- const processingKept=history.filter(x=>x.status==='UPLOADED'&&!x.trashedAt&&x.processingState!=='READY').length;
+ const cleanup=cleanupPreclassification(history,jobs),cleanupCandidates=cleanup.eligible.filter(x=>cleanupEligibleUpload(x,jobs.find(j=>j.id===x.jobId)));
+ const processingKept=cleanup.processing.length;
  const failedSources=jobs.filter(x=>x.status==='ERROR'&&x.finalPath&&x.storageLifecycle!=='TRASHED').length;
  const persisted=history.slice().reverse().slice(0,12);
+ async function scanLocalSources(){
+  if(sourceScanBusy)return;setSourceScanBusy(true);
+  try{
+   const current=useApp.getState().uploadHistory,next=[...current];
+   for(let i=0;i<next.length;i++){
+    const row=next[i],at=new Date().toISOString(),prev=effectiveSourceLifecycle(row);
+    if(row.trashedAt||row.sourceLifecycle==='TRASHED_BY_VYRON'){next[i]={...row,sourceLifecycle:'TRASHED_BY_VYRON',sourceCheckedAt:at};continue}
+    if(!row.localFilePath){next[i]={...row,sourceLifecycle:'MISSING_LEGACY_UNKNOWN',sourceCheckedAt:at};continue}
+    try{
+     const st=await api.localSourceStatus(row.localFilePath);
+     const source=!st.exists||!st.isFile?'MISSING_LEGACY_UNKNOWN':row.fileSize>0&&st.size!=null&&Number(st.size)!==Number(row.fileSize)?'SOURCE_CHANGED':'PRESENT';
+     next[i]={...row,sourceLifecycle:source,sourceCheckedAt:at};
+     if(prev!==source)journal({eventId:'source-state:'+row.id+':'+source,eventType:source==='PRESENT'?'SOURCE_RECOVERED':'SOURCE_MISSING',status:'INFO',source:'LIVE_OPERATION',timestamp:at,channelId:row.channelId,channelName:channels.find(c=>c.id===row.channelId)?.name,profileId:row.profileId,jobId:row.jobId,youtubeVideoId:row.youtubeVideoId,localSourcePath:row.localFilePath,details:{sourceLifecycle:source,evidence:'filesystem stat'}});
+    }catch{next[i]={...row,sourceLifecycle:'MISSING_LEGACY_UNKNOWN',sourceCheckedAt:at}}
+   }
+   replaceUploadHistory(next);
+  }finally{setSourceScanBusy(false)}
+ }
+ useEffect(()=>{void scanLocalSources()},[]);
  async function trashVerified(){
   if(cleanupBusy)return;setCleanupBusy(true);
   let moved=0,failedMoves=0;
