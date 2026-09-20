@@ -2790,17 +2790,76 @@ fn youtube_error(v: &Value, fallback: &str) -> String {
     }
 }
 
-fn append_playlist_page_ids(page:&Value,ids:&mut Vec<String>,seen:&mut std::collections::HashSet<String>,limit:usize)->usize{
-    let mut added=0usize;
-    for item in page.get("items").and_then(|x|x.as_array()).cloned().unwrap_or_default(){
-        if ids.len()>=limit{break}
+#[derive(Debug,Default,Clone,PartialEq,Eq)]
+struct PlaylistPageDiagnostics{
+    raw_items:usize,
+    inspected_items:usize,
+    added_unique:usize,
+    duplicate_ids:usize,
+    unresolved_items:usize,
+    limit_truncated:bool,
+}
+fn append_playlist_page_ids_diagnostic(page:&Value,ids:&mut Vec<String>,seen:&mut std::collections::HashSet<String>,limit:usize)->PlaylistPageDiagnostics{
+    let items=page.get("items").and_then(|x|x.as_array()).cloned().unwrap_or_default();
+    let mut d=PlaylistPageDiagnostics{raw_items:items.len(),..Default::default()};
+    for item in items{
+        if ids.len()>=limit{d.limit_truncated=true;break}
+        d.inspected_items+=1;
         let id=item.pointer("/contentDetails/videoId").and_then(|x|x.as_str())
             .or_else(||item.pointer("/snippet/resourceId/videoId").and_then(|x|x.as_str()));
-        if let Some(id)=id.filter(|x|!x.trim().is_empty()){
-            if seen.insert(id.to_string()){ids.push(id.to_string());added+=1}
+        match id.filter(|x|!x.trim().is_empty()){
+            Some(id) if seen.insert(id.to_string())=>{ids.push(id.to_string());d.added_unique+=1},
+            Some(_)=>d.duplicate_ids+=1,
+            None=>d.unresolved_items+=1,
         }
     }
-    added
+    if d.inspected_items<d.raw_items{d.limit_truncated=true}
+    d
+}
+fn append_playlist_page_ids(page:&Value,ids:&mut Vec<String>,seen:&mut std::collections::HashSet<String>,limit:usize)->usize{
+    append_playlist_page_ids_diagnostic(page,ids,seen,limit).added_unique
+}
+fn schedule_data_incomplete_ids(rows:&[Value])->Vec<String>{
+    rows.iter().filter_map(|x|{
+        let id=x.get("id").and_then(|v|v.as_str()).unwrap_or("").to_string();
+        let privacy=x.get("privacyStatus").and_then(|v|v.as_str()).unwrap_or("unknown");
+        let publish_at=x.get("publishAt").and_then(|v|v.as_str()).unwrap_or("").trim();
+        let bad_privacy=privacy=="unknown"||privacy.trim().is_empty();
+        let bad_schedule=privacy=="private"&&!publish_at.is_empty()&&chrono::DateTime::parse_from_rfc3339(publish_at).is_err();
+        if bad_privacy||bad_schedule{Some(id)}else{None}
+    }).filter(|x|!x.is_empty()).collect()
+}
+fn inventory_completeness_value(
+    playlist_exhausted:bool,
+    limit_truncated:bool,
+    playlist_unresolved:usize,
+    unique_video_ids:usize,
+    videos_hydrated:usize,
+    hydration_errors:&[String],
+    schedule_data_incomplete_count:usize,
+    playlist_reported_total:usize,
+)->Value{
+    let mut incomplete=Vec::<String>::new();
+    if !playlist_exhausted{incomplete.push("PLAYLIST_NOT_EXHAUSTED".into())}
+    if limit_truncated{incomplete.push("LIMIT_TRUNCATED".into())}
+    if playlist_unresolved>0{incomplete.push("PLAYLIST_ITEM_WITHOUT_VIDEO_ID".into())}
+    if videos_hydrated<unique_video_ids{incomplete.push("MISSING_VIDEO_HYDRATION".into())}
+    if !hydration_errors.is_empty(){incomplete.push("HYDRATION_BATCH_FAILED".into())}
+    let sync_complete=incomplete.is_empty();
+    let mut schedule_reasons=incomplete.clone();
+    if schedule_data_incomplete_count>0{schedule_reasons.push("SCHEDULE_DATA_INCOMPLETE".into())}
+    let schedule_complete=schedule_reasons.is_empty();
+    let mut warnings=Vec::<String>::new();
+    let page_info_mismatch=playlist_exhausted&&!limit_truncated&&playlist_reported_total>0&&playlist_reported_total!=unique_video_ids;
+    if page_info_mismatch{warnings.push("PLAYLIST_TOTAL_METADATA_MISMATCH".into())}
+    json!({
+        "syncComplete":sync_complete,
+        "scheduleComplete":schedule_complete,
+        "incompleteReasons":schedule_reasons,
+        "inventoryIncompleteReasons":incomplete,
+        "diagnosticWarnings":warnings,
+        "pageInfoTotalMismatch":page_info_mismatch
+    })
 }
 fn inventory_bucket_counts(rows:&[Value],now:DateTime<Utc>)->(usize,usize,usize,usize){
     let mut private_count=0usize;let mut scheduled_count=0usize;let mut public_count=0usize;let mut unlisted_count=0usize;
@@ -2879,12 +2938,17 @@ pub async fn youtube_list_existing_videos(
     let mut ids=Vec::<String>::new();
     let mut seen=std::collections::HashSet::<String>::new();
     let mut page:Option<String>=None;
-    let mut playlist_found=0usize;
+    let mut playlist_reported_total=0usize;
     let mut playlist_calls=0usize;
     let mut playlist_exhausted=false;
+    let mut limit_truncated=false;
+    let mut playlist_items_fetched=0usize;
+    let mut playlist_items_inspected=0usize;
+    let mut playlist_duplicate_count=0usize;
+    let mut playlist_unresolved_count=0usize;
 
     loop{
-        if ids.len()>=limit{break}
+        if ids.len()>=limit{limit_truncated=true;break}
         let mut q=client.get("https://www.googleapis.com/youtube/v3/playlistItems")
             .bearer_auth(&token)
             .query(&[("part","contentDetails"),("playlistId",uploads),("maxResults","50")]);
@@ -2895,17 +2959,28 @@ pub async fn youtube_list_existing_videos(
         let st=rr.status();let v:Value=rr.json().await.map_err(|e|e.to_string())?;
         if !st.is_success(){return Err(youtube_error(&v,"Не удалось получить полный uploads playlist"))}
         if playlist_calls==1{
-            playlist_found=v.pointer("/pageInfo/totalResults").and_then(|x|x.as_u64()).unwrap_or(0) as usize;
+            playlist_reported_total=v.pointer("/pageInfo/totalResults").and_then(|x|x.as_u64()).unwrap_or(0) as usize;
         }
-        append_playlist_page_ids(&v,&mut ids,&mut seen,limit);
-        page=v.get("nextPageToken").and_then(|x|x.as_str()).map(str::to_string);
+        let d=append_playlist_page_ids_diagnostic(&v,&mut ids,&mut seen,limit);
+        playlist_items_fetched+=d.raw_items;
+        playlist_items_inspected+=d.inspected_items;
+        playlist_duplicate_count+=d.duplicate_ids;
+        playlist_unresolved_count+=d.unresolved_items;
+        let next=v.get("nextPageToken").and_then(|x|x.as_str()).map(str::to_string);
+        if d.limit_truncated{
+            limit_truncated=true;
+            page=next;
+            break
+        }
+        page=next;
         if page.is_none(){playlist_exhausted=true;break}
     }
-    if playlist_found==0{playlist_found=ids.len()}
+    if playlist_reported_total==0{playlist_reported_total=ids.len()}
 
     let mut by_id=std::collections::HashMap::<String,Value>::new();
     let mut video_calls=0usize;
     let mut hydration_errors=Vec::<String>::new();
+    let mut failed_hydration_ids=Vec::<String>::new();
     for chunk in ids.chunks(50){
         if chunk.is_empty(){continue}
         let joined=chunk.join(",");
@@ -2917,14 +2992,20 @@ pub async fn youtube_list_existing_videos(
             .send().await;
         let rr=match response{
             Ok(x)=>x,
-            Err(e)=>{hydration_errors.push(format!("batch {video_calls}: network {e}"));continue}
+            Err(e)=>{
+                hydration_errors.push(format!("batch {video_calls}: network {e}"));
+                failed_hydration_ids.extend(chunk.iter().cloned());
+                continue
+            }
         };
         let st=rr.status();let v:Value=rr.json().await.unwrap_or_else(|_|json!({}));
         if !st.is_success(){
             let err=youtube_error(&v,"Не удалось получить authoritative videos.list batch");
             let lower=err.to_ascii_lowercase();
             if lower.contains("quota")||lower.contains("dailylimit")||lower.contains("ratelimit"){return Err(err)}
-            hydration_errors.push(format!("batch {video_calls}: {err}"));continue
+            hydration_errors.push(format!("batch {video_calls}: {err}"));
+            failed_hydration_ids.extend(chunk.iter().cloned());
+            continue
         }
         for item in v.get("items").and_then(|x|x.as_array()).cloned().unwrap_or_default(){
             if let Some(id)=item.get("id").and_then(|x|x.as_str()){
@@ -2945,10 +3026,22 @@ pub async fn youtube_list_existing_videos(
 
     let unique_video_ids=ids.len();
     let videos_hydrated=out.len();
-    let expected=std::cmp::min(playlist_found,limit);
-    let truncated=playlist_found>limit;
-    let sync_complete=playlist_exhausted&&!truncated&&unique_video_ids==playlist_found&&videos_hydrated==unique_video_ids&&hydration_errors.is_empty();
-    let schedule_complete=sync_complete;
+    let missing_hydration_ids=ids.iter().filter(|id|!by_id.contains_key(*id)).cloned().collect::<Vec<_>>();
+    let schedule_incomplete_ids=schedule_data_incomplete_ids(&out);
+    let completeness=inventory_completeness_value(
+        playlist_exhausted,
+        limit_truncated,
+        playlist_unresolved_count,
+        unique_video_ids,
+        videos_hydrated,
+        &hydration_errors,
+        schedule_incomplete_ids.len(),
+        playlist_reported_total,
+    );
+    let sync_complete=completeness.get("syncComplete").and_then(Value::as_bool).unwrap_or(false);
+    let schedule_complete=completeness.get("scheduleComplete").and_then(Value::as_bool).unwrap_or(false);
+    let observed_total=if playlist_exhausted&&!limit_truncated{unique_video_ids}else{std::cmp::max(playlist_reported_total,unique_video_ids)};
+    let expected=if playlist_exhausted&&!limit_truncated{unique_video_ids}else{std::cmp::min(std::cmp::max(playlist_reported_total,unique_video_ids),limit)};
     let (private_count,scheduled_count,public_count,unlisted_count)=inventory_bucket_counts(&out,Utc::now());
     let full_sync_api_requests=1+playlist_calls+video_calls;
     let full_sync_estimated_quota_cost=full_sync_api_requests;
@@ -2956,22 +3049,36 @@ pub async fn youtube_list_existing_videos(
     Ok(json!({
         "channelId":profile.channel_id,
         "channelTitle":profile.channel_title,
-        "youtubeFound":playlist_found,
-        "playlistFound":playlist_found,
+        "youtubeFound":observed_total,
+        "playlistFound":playlist_reported_total,
+        "playlistReportedTotal":playlist_reported_total,
         "inventoryExpected":expected,
-        "playlistItemsFetched":ids.len(),
+        "playlistItemsFetched":playlist_items_fetched,
+        "playlistItemsInspected":playlist_items_inspected,
         "uniqueVideoIds":unique_video_ids,
         "videosHydrated":videos_hydrated,
         "received":videos_hydrated,
         "requested":limit,
+        "playlistExhausted":playlist_exhausted,
+        "truncated":limit_truncated,
+        "playlistDuplicateCount":playlist_duplicate_count,
+        "playlistUnresolvedCount":playlist_unresolved_count,
         "privateCount":private_count,
         "publicCount":public_count,
         "scheduledCount":scheduled_count,
         "unlistedCount":unlisted_count,
         "pagesFetched":playlist_calls,
         "hydrationBatches":video_calls,
-        "missingHydrationCount":unique_video_ids.saturating_sub(videos_hydrated),
+        "missingHydrationCount":missing_hydration_ids.len(),
+        "missingHydrationIds":missing_hydration_ids,
+        "failedHydrationIds":failed_hydration_ids,
+        "scheduleDataIncompleteCount":schedule_incomplete_ids.len(),
+        "scheduleIncompleteIds":schedule_incomplete_ids,
         "hydrationErrors":hydration_errors,
+        "incompleteReasons":completeness.get("incompleteReasons").cloned().unwrap_or_else(||json!([])),
+        "inventoryIncompleteReasons":completeness.get("inventoryIncompleteReasons").cloned().unwrap_or_else(||json!([])),
+        "diagnosticWarnings":completeness.get("diagnosticWarnings").cloned().unwrap_or_else(||json!([])),
+        "pageInfoTotalMismatch":completeness.get("pageInfoTotalMismatch").cloned().unwrap_or_else(||json!(false)),
         "complete":sync_complete,
         "syncComplete":sync_complete,
         "scheduleComplete":schedule_complete,
@@ -2982,7 +3089,77 @@ pub async fn youtube_list_existing_videos(
         "videoCalls":video_calls,
         "fullSyncApiRequests":full_sync_api_requests,
         "fullSyncEstimatedQuotaCost":full_sync_estimated_quota_cost,
-        "estimatedForInventory":full_sync_estimate(playlist_found),
+        "estimatedForInventory":full_sync_estimate(observed_total),
+        "videos":out
+    }))
+}
+
+#[tauri::command]
+pub async fn youtube_retry_existing_video_hydration(
+    app:AppHandle,
+    profile_id:String,
+    video_ids:Vec<String>,
+    operation_id:Option<String>,
+)->Result<Value,String>{
+    let (token,profile)=valid_access_token(&app,&profile_id).await?;
+    let mut seen=std::collections::HashSet::<String>::new();
+    let ids=video_ids.into_iter()
+        .map(|x|x.trim().to_string())
+        .filter(|x|!x.is_empty()&&seen.insert(x.clone()))
+        .take(5000)
+        .collect::<Vec<_>>();
+    if ids.is_empty(){return Err("TARGETED_RETRY_EMPTY: нет video ID для проверки".into())}
+    let client=reqwest::Client::new();
+    let mut by_id=std::collections::HashMap::<String,Value>::new();
+    let mut hydration_errors=Vec::<String>::new();
+    let mut calls=0usize;
+    for chunk in ids.chunks(50){
+        calls+=1;
+        emit_youtube_api_request(&app,"videos.list",operation_id.as_deref());
+        let joined=chunk.join(",");
+        let response=client.get("https://www.googleapis.com/youtube/v3/videos")
+            .bearer_auth(&token)
+            .query(&[("part","snippet,status,contentDetails,statistics"),("id",joined.as_str())])
+            .send().await;
+        let rr=match response{
+            Ok(x)=>x,
+            Err(e)=>{hydration_errors.push(format!("batch {calls}: network {e}"));continue}
+        };
+        let st=rr.status();let v:Value=rr.json().await.unwrap_or_else(|_|json!({}));
+        if !st.is_success(){
+            let err=youtube_error(&v,"Не удалось проверить недостающие video IDs");
+            let lower=err.to_ascii_lowercase();
+            if lower.contains("quota")||lower.contains("dailylimit")||lower.contains("ratelimit"){return Err(err)}
+            hydration_errors.push(format!("batch {calls}: {err}"));continue
+        }
+        for item in v.get("items").and_then(|x|x.as_array()).cloned().unwrap_or_default(){
+            if let Some(id)=item.get("id").and_then(|x|x.as_str()){
+                let same_channel=profile.channel_id.as_deref().map(|expected|
+                    item.pointer("/snippet/channelId").and_then(|x|x.as_str())==Some(expected)
+                ).unwrap_or(true);
+                if same_channel{by_id.insert(id.to_string(),item);}
+            }
+        }
+    }
+    let mut out=Vec::<Value>::new();
+    for (position,id) in ids.iter().enumerate(){
+        if let Some(item)=by_id.get(id){
+            if let Some(row)=authoritative_inventory_row(item,position){out.push(row)}
+        }
+    }
+    let missing=ids.iter().filter(|id|!by_id.contains_key(*id)).cloned().collect::<Vec<_>>();
+    let schedule_incomplete=schedule_data_incomplete_ids(&out);
+    Ok(json!({
+        "requestedIds":ids,
+        "videosHydrated":out.len(),
+        "missingHydrationCount":missing.len(),
+        "missingHydrationIds":missing,
+        "scheduleDataIncompleteCount":schedule_incomplete.len(),
+        "scheduleIncompleteIds":schedule_incomplete,
+        "hydrationErrors":hydration_errors,
+        "apiRequests":calls,
+        "complete":missing.is_empty()&&hydration_errors.is_empty(),
+        "scheduleComplete":missing.is_empty()&&hydration_errors.is_empty()&&schedule_incomplete.is_empty(),
         "videos":out
     }))
 }
@@ -5382,6 +5559,86 @@ mod v216_upload_progress_tests {
     }
 }
 
+
+#[cfg(test)]
+mod v2115_rc2_schedule_sync_hotfix_tests{
+ use super::*;
+ #[test]
+ fn complete_203_inventory_is_schedule_complete(){
+  let errors=Vec::<String>::new();
+  let v=inventory_completeness_value(true,false,0,203,203,&errors,0,203);
+  assert_eq!(v["syncComplete"],true);
+  assert_eq!(v["scheduleComplete"],true);
+  assert_eq!(v["incompleteReasons"],json!([]));
+ }
+ #[test]
+ fn stale_page_info_total_does_not_invalidate_exhausted_inventory(){
+  let errors=Vec::<String>::new();
+  let v=inventory_completeness_value(true,false,0,203,203,&errors,0,204);
+  assert_eq!(v["syncComplete"],true);
+  assert_eq!(v["scheduleComplete"],true);
+  assert_eq!(v["pageInfoTotalMismatch"],true);
+  assert_eq!(v["diagnosticWarnings"],json!(["PLAYLIST_TOTAL_METADATA_MISMATCH"]));
+ }
+ #[test]
+ fn missing_hydration_is_explicitly_incomplete(){
+  let errors=Vec::<String>::new();
+  let v=inventory_completeness_value(true,false,0,203,202,&errors,0,203);
+  assert_eq!(v["syncComplete"],false);
+  assert!(v["incompleteReasons"].as_array().unwrap().iter().any(|x|x=="MISSING_VIDEO_HYDRATION"));
+ }
+ #[test]
+ fn playlist_limit_and_not_exhausted_are_blocking(){
+  let errors=Vec::<String>::new();
+  let v=inventory_completeness_value(false,true,0,1000,1000,&errors,0,1200);
+  assert_eq!(v["syncComplete"],false);
+  let r=v["incompleteReasons"].as_array().unwrap();
+  assert!(r.iter().any(|x|x=="PLAYLIST_NOT_EXHAUSTED"));
+  assert!(r.iter().any(|x|x=="LIMIT_TRUNCATED"));
+ }
+ #[test]
+ fn hydration_batch_failure_is_explicit(){
+  let errors=vec!["batch 4: network timeout".to_string()];
+  let v=inventory_completeness_value(true,false,0,203,203,&errors,0,203);
+  assert_eq!(v["syncComplete"],false);
+  assert!(v["incompleteReasons"].as_array().unwrap().iter().any(|x|x=="HYDRATION_BATCH_FAILED"));
+ }
+ #[test]
+ fn schedule_truth_is_separate_from_full_inventory_truth(){
+  let errors=Vec::<String>::new();
+  let v=inventory_completeness_value(true,false,0,203,203,&errors,1,203);
+  assert_eq!(v["syncComplete"],true);
+  assert_eq!(v["scheduleComplete"],false);
+  assert!(v["incompleteReasons"].as_array().unwrap().iter().any(|x|x=="SCHEDULE_DATA_INCOMPLETE"));
+ }
+ #[test]
+ fn page_diagnostics_detect_unresolved_duplicate_and_mid_page_limit(){
+  let page=json!({"items":[
+   {"contentDetails":{"videoId":"a"}},
+   {"contentDetails":{"videoId":"a"}},
+   {"contentDetails":{}},
+   {"contentDetails":{"videoId":"b"}},
+   {"contentDetails":{"videoId":"c"}}
+  ]});
+  let mut ids=Vec::<String>::new();let mut seen=std::collections::HashSet::<String>::new();
+  let d=append_playlist_page_ids_diagnostic(&page,&mut ids,&mut seen,2);
+  assert_eq!(ids,vec!["a","b"]);
+  assert_eq!(d.duplicate_ids,1);
+  assert_eq!(d.unresolved_items,1);
+  assert!(d.limit_truncated);
+  assert_eq!(d.raw_items,5);
+  assert_eq!(d.inspected_items,4);
+ }
+ #[test]
+ fn schedule_data_incomplete_detects_unknown_or_malformed_private_publish_at(){
+  let rows=vec![
+   json!({"id":"ok","privacyStatus":"private","publishAt":"2099-01-01T00:00:00Z"}),
+   json!({"id":"bad1","privacyStatus":"unknown"}),
+   json!({"id":"bad2","privacyStatus":"private","publishAt":"not-a-date"})
+  ];
+  assert_eq!(schedule_data_incomplete_ids(&rows),vec!["bad1","bad2"]);
+ }
+}
 
 #[cfg(test)]
 mod v219_rc4_inventory_and_acl_tests{
