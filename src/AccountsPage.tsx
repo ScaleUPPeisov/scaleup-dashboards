@@ -154,6 +154,8 @@ export function AccountsPage(){
     const profile=p.find(x=>x.id===reconnectId);
     if(profile){bindProfile(profile);await refreshProfileStats(profile,true)}
     setHealth(h=>({...h,[reconnectId]:{ok:true,status:'CONNECTED',channelId:result.authorizedChannelId,channelTitle:result.channelTitle}}));
+    resolveOAuthKeychainErrors(reconnectId);
+    journal({eventId:`oauth-profile-reconnected:${reconnectId}:${Date.now()}`,eventType:'OAUTH_PROFILE_RECONNECTED',status:'SUCCESS',source:'LIVE_OPERATION',profileId:reconnectId,channelId:boundChannel(profile||{id:reconnectId,channelId:result.authorizedChannelId} as YoutubeProfile)?.id,channelName:result.channelTitle,details:{authorizedChannelId:result.authorizedChannelId,profileUuidPreserved:result.profileUuidPreserved,keychainReadback:result.keychainReadback,youtubeIdentityRequests:result.youtubeIdentityRequests,videosInsert:result.videosInsert}});
     toast(`✓ ${result.channelTitle||result.authorizedChannelId} переподключён. Profile UUID сохранён.`);
     return
    }
