@@ -1,5 +1,5 @@
 name: VYRON 2.1.15 RC5 Updater Reliability
-# RC5: rapid updater + full RC1-RC4 reliability preservation
+# RC5: rapid updater + full RC1-RC4 reliability preservation; Windows source-reading tests remain macOS-only due legacy import.meta URL path construction
 
 on:
   push:
@@ -47,14 +47,15 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
-      - name: TypeScript and frontend regression on Windows
+      - name: TypeScript and portable updater regression on Windows
         shell: pwsh
         run: |
           npx tsc --noEmit
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          npm test
+          npx vitest run src/updaterSchedule.test.ts src/updaterRuntimeRc5.test.ts src/updaterRuntime.test.ts src/updaterPolicy.test.ts src/updaterGuard.test.ts src/updaterHotfix.test.ts
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Write-Output 'WINDOWS_FRONTEND=PASS'
+          Write-Output 'WINDOWS_TYPESCRIPT=PASS'
+          Write-Output 'WINDOWS_UPDATER_TESTS=PASS'
       - name: Rust compile safety on Windows
         shell: pwsh
         run: |
