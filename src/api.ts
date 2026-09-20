@@ -24,6 +24,8 @@ export type GoogleConfigStatus={configured:boolean;oauthReady:boolean;projectId?
 export type OAuthReconciliationDiagnostic={channelsTotal:number;profilesTotal:number;channelsWithYoutubeProfileId:number;profilesWithChannelId:number;orphanChannels:Array<{channelId:string;channelName:string;youtubeProfileId:string;reason:'ORPHAN_MAPPING'}>;orphanProfiles:Array<{profileId:string;youtubeChannelId?:string;channelTitle?:string}>;duplicateMappings:Array<{profileId:string;channelMappings:number}>;oauthStoreExists:boolean;secretValuesIncluded:false;keychainSecretsRead:false};
 export type YoutubeProcessingStatus={videoId:string;channelId?:string;remoteExists?:boolean;identityVerified:boolean;processingStatus:string;processingState:'READY'|'YOUTUBE_PROCESSING'|'PROCESSING_FAILED'|'PROCESSING_UNKNOWN';processingCheckedAt:string;processingProgress?:{partsTotal?:string|null;partsProcessed?:string|null;timeLeftMs?:string|null};processingFailureReason?:string|null;processingIssuesAvailability?:string|null;rejectionReason?:string|null;uploadStatus?:string|null;privacyStatus?:string|null;publishAt?:string|null};
 export type LocalSourceStatus={path:string;exists:boolean;isFile:boolean;size?:number|null;modifiedAt?:number|null};
+export type RenderFolderVideoFile={path:string;name:string;size:number;createdAt?:number|null;modifiedAt?:number|null};
+export type RenderFolderScanResult={root:string;files:RenderFolderVideoFile[];scannedEntries:number;truncated:boolean};
 export type YoutubeProcessingBatchResult={requested:number;found:number;calls:number;rows:YoutubeProcessingStatus[]};
 export type GoogleProjectDiagnosticSafe={oauthProfileId:string;channelId?:string|null;channelTitle?:string|null;clientId:string;projectId?:string|null;projectIdSource:'google-config-exact-client-match'|'not-locally-known';youtubeApiRequests:0;keychainSecretsRead:false};
 export type StateSaveResult={ok:boolean;securityWarning?:string|null;securityWarnings?:number};
@@ -132,6 +134,7 @@ export const api={
   youtubeResumeUpload:async(jobId:string)=>{const session=(await invoke<YoutubeUploadSession[]>('youtube_upload_sessions')).find(x=>x.jobId===jobId);if(session)registerUploadRuntime({jobId,projectId:session.projectId,channelId:session.channelId||'',profileId:session.profileId,filePath:session.filePath,startedAt:new Date().toISOString()},session.total,session.offset);try{return await invoke<YoutubeUploadResult>('youtube_resume_upload',{jobId})}finally{endUploadRuntime(jobId)}},
   trashLocalFile:(path:string,allowedRoots:string[])=>invoke<{trashed:boolean;missing:boolean}>('trash_local_file',{path,allowedRoots}),
    localSourceStatus:(path:string)=>invoke<LocalSourceStatus>('local_source_status',{path}),
+  scanRenderFolder:(path:string)=>invoke<RenderFolderScanResult>('scan_render_folder',{path}),
   youtubeCancelUploadSession:(jobId:string)=>invoke<void>('youtube_cancel_upload_session',{jobId}),
   youtubeVideoProcessingStatus:(profileId:string,videoId:string,operationId?:string)=>ytInvoke<YoutubeProcessingStatus>('youtube_video_processing_status',{profileId,videoId,operationId}),
    youtubeVideoProcessingStatusBatch:(profileId:string,videoIds:string[],operationId?:string)=>ytInvoke<YoutubeProcessingBatchResult>('youtube_video_processing_status_batch',{profileId,videoIds,operationId}),
