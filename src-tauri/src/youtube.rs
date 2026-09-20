@@ -957,12 +957,13 @@ pub async fn youtube_oauth_profile_health(
 pub async fn youtube_channel_statistics(
     app:AppHandle,
     profile_id:String,
+    operation_id:Option<String>,
 )->Result<Value,String>{
     let (_token,p)=valid_access_token(&app,&profile_id).await?;
     let token=p.access_token.clone();
     let expected=p.channel_id.as_deref().filter(|x|!x.trim().is_empty())
         .ok_or_else(||"YOUTUBE_CHANNEL_NOT_FOUND: OAuth profile has no Channel ID".to_string())?;
-    emit_youtube_api_request(&app,"channels.list",None);
+    emit_youtube_api_request(&app,"channels.list",operation_id.as_deref());
     let r=reqwest::Client::new()
         .get("https://www.googleapis.com/youtube/v3/channels")
         .bearer_auth(&token)
@@ -984,6 +985,7 @@ pub async fn youtube_channel_statistics_batch(
     app:AppHandle,
     profile_id:String,
     channel_ids:Vec<String>,
+    operation_id:Option<String>,
 )->Result<Value,String>{
     let mut ids=Vec::<String>::new();
     for raw in channel_ids{
@@ -992,10 +994,10 @@ pub async fn youtube_channel_statistics_batch(
         ids.push(id.to_string());
         if ids.len()>=50{break}
     }
-    if ids.is_empty(){return Ok(json!({"items":[],"requested":0,"found":0,"missingChannelIds":[]}))}
+    if ids.is_empty(){return Ok(json!({"items":[],"requested":0,"found":0,"missingChannelIds":[],"apiRequests":0}))}
     let (_token,p)=valid_access_token(&app,&profile_id).await?;
     let joined=ids.join(",");
-    emit_youtube_api_request(&app,"channels.list",None);
+    emit_youtube_api_request(&app,"channels.list",operation_id.as_deref());
     let r=reqwest::Client::new()
         .get("https://www.googleapis.com/youtube/v3/channels")
         .bearer_auth(&p.access_token)
@@ -1015,7 +1017,7 @@ pub async fn youtube_channel_statistics_batch(
         items.push(youtube_channel_statistics_value(item));
     }
     let missing=ids.iter().filter(|id|!found_ids.iter().any(|x|x==*id)).cloned().collect::<Vec<_>>();
-    Ok(json!({"items":items,"requested":ids.len(),"found":found_ids.len(),"missingChannelIds":missing}))
+    Ok(json!({"items":items,"requested":ids.len(),"found":found_ids.len(),"missingChannelIds":missing,"apiRequests":1}))
 }
 #[tauri::command]
 pub async fn youtube_cache_thumbnail(
