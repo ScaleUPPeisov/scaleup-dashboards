@@ -6,8 +6,10 @@ const read=(p:string)=>readFileSync(new URL(p,import.meta.url).pathname,'utf8');
 describe('VYRON 2.1.6 live upload wiring',()=>{
  it('routes high-frequency upload progress only into transient telemetry',()=>{
    const app=read('./App.tsx');
-   expect(app).toContain('api.onYoutubeProgress(applyUploadProgressFact)');
+   expect(app).toContain('api.onYoutubeProgress(f=>{applyUploadProgressFact(f);journalUploadProgressMilestone(f)}');
    expect(app).not.toMatch(/onYoutubeProgress\([^\n]*patchJob/);
+   expect(app).toContain("import {applyUploadProgressFact,seedActiveUploadFacts} from './uploadTelemetry'");
+   expect(app).toContain("import {journalUploadProgressMilestone} from './activityJournalRuntime'");
  });
  it('backend progress carries factual byte totals and safe immutable identity',()=>{
    const rust=read('../src-tauri/src/youtube.rs');
