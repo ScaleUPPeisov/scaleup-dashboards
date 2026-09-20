@@ -5034,15 +5034,16 @@ fn reconnect_rollback_secrets_with<S:OAuthSecretStore>(secrets:&S,backup:&Reconn
 fn prepare_secret_write_with<S:OAuthSecretStore>(
     secrets:&S,profile_id:&str,kind:&str,current_account:&str,value:&str,generation:u32,
 )->Result<PreparedSecretWrite,String>{
-    let old_read=secrets.get(current_account);
-    match old_read{
+    let mut rotation_error:Option<String>=None;
+    match secrets.get(current_account){
       Ok(old_value)=>{
+        let was_missing=old_value.is_none();
         match secrets.set(current_account,value){
           Ok(())=>{
             match secrets.verify(current_account,value){
               Ok(true)=>return Ok(PreparedSecretWrite{
                 account:current_account.into(),old_account:current_account.into(),backup:Some(old_value),
-                created:old_value.is_none(),rotated:false,old_read_error:None,old_osstatus:None,
+                created:was_missing,rotated:false,old_read_error:None,old_osstatus:None,
               }),
               Ok(false)=>{
                 let _=match &old_value{Some(v)=>secrets.set(current_account,v),None=>secrets.delete(current_account)};
@@ -5055,23 +5056,25 @@ fn prepare_secret_write_with<S:OAuthSecretStore>(
             }
           }
           Err(e) if keychain_repairable_error(&e)=>{
-            // Existing item is readable but not writable by the current signed build.
-            // Keep it as evidence and rotate forward instead of repeatedly fighting its ACL.
+            // Existing item is readable but no longer writable by this signed build.
+            // Do not retry/update/delete it; rotate forward using the new validated credential.
+            rotation_error=Some(e);
           }
           Err(e)=>return Err(format!("OAUTH_KEYCHAIN_WRITE_FAILED: stage=EXISTING_SECRET_WRITE; account={current_account}; {e}")),
         }
       }
       Err(e) if keychain_repairable_error(&e)=>{
-        // This is the physical RC5 failure class: old backup read is blocked.
-        // A validated new credential must not depend on reading that old value.
+        // Physical RC5 failure class: OLD_SECRET_BACKUP_READ is blocked.
+        // The old value is deliberately not required for forward recovery.
+        rotation_error=Some(e);
       }
       Err(e)=>return Err(format!("OAUTH_KEYCHAIN_READ_FAILED: stage=OLD_SECRET_BACKUP_READ; account={current_account}; {e}")),
     }
-    let old_error=old_read.err();
+    let old_error=rotation_error;
     let old_osstatus=old_error.as_deref().and_then(osstatus_from_error);
     let new_account=rotated_profile_secret_account(profile_id,kind,generation);
-    if let Ok(existing)=secrets.get(&new_account){
-        if existing.is_some(){return Err(format!("OAUTH_ROTATION_ACCOUNT_COLLISION: account={new_account}"))}
+    if secrets.accounts(&format!("oauth.{profile_id}.")).unwrap_or_default().iter().any(|x|x==&new_account){
+      return Err(format!("OAUTH_ROTATION_ACCOUNT_COLLISION: account={new_account}"))
     }
     secrets.set(&new_account,value)
       .map_err(|e|format!("OAUTH_KEYCHAIN_WRITE_FAILED: stage=NEW_SECRET_WRITE; account={new_account}; {e}"))?;
