@@ -1,5 +1,5 @@
 name: VYRON 2.1.15 RC4 Activity History
-# reliability rerun: canonical upload-state contract + scoped reconciliation
+# reliability rerun: canonical upload-state contract + scoped reconciliation + telemetry test alignment
 # RC4 extended: Activity History + strict multi-channel Statistics Center (regression contracts updated)
 
 on:
@@ -72,7 +72,7 @@ jobs:
             'src/PublisherOS.tsx','src/ProductionStatusBridge.tsx','src/UploadCenter.tsx','src/UploadProcessingMonitor.tsx','src/YouTubeCenter.tsx','src/StatisticsCenter.tsx',
             'src/ChannelRunway.tsx','src/ChannelStatisticsScheduler.tsx','src/YouTubeChannelBar.tsx','src/youtubeChannelStatsRuntime.ts','src/youtubeStatisticsCenter.ts',
             'src/activityJournalCore.ts','src/activityJournalRuntime.ts','src/api.ts','src/errorCenter.ts','src/errorHistory.ts','src/storageLifecycle.ts','src/store.ts',
-            'src/types.ts','src/uploadQueue.ts','src/uploadQueueRuntime.ts','src/storageLifecycle.test.ts','src/v2115Rc3CriticalStability.test.ts',
+            'src/types.ts','src/uploadQueue.ts','src/uploadQueueRuntime.ts','src/storageLifecycle.test.ts','src/uploadCenterWiring.test.ts','src/v2115Rc3CriticalStability.test.ts',
             'src/v2115Rc4ActivityJournal.test.ts','src/v2115Rc4ActivityWiring.test.ts','src/v2115Rc4StatisticsCenter.test.ts','src/v2115Rc4StatisticsOauthContinuity.test.ts','src/v2114ChannelStatistics.test.ts','src/v2115AddChannelStats.test.ts','tests/stateMigration_v095.test.ts',
             '.github/workflows/vyron-2115-rc4-activity-history.yml',
           }
