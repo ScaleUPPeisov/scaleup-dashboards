@@ -100,10 +100,23 @@ struct KeychainMigrationV2State{
  #[serde(default)] profiles:HashMap<String,String>,
  #[serde(default)] global_client_secret:String,
  #[serde(default)] validations:HashMap<String,CredentialValidationV2State>,
+ #[serde(default)] refresh_token_accounts:HashMap<String,String>,
+ #[serde(default)] client_secret_accounts:HashMap<String,String>,
+ #[serde(default)] credential_generations:HashMap<String,u32>,
+ #[serde(default)] credential_rotated_at:HashMap<String,String>,
 }
 fn migration_v2_version()->u32{KEYCHAIN_MIGRATION_V2_VERSION}
 impl Default for KeychainMigrationV2State{
- fn default()->Self{Self{version:KEYCHAIN_MIGRATION_V2_VERSION,profiles:HashMap::new(),global_client_secret:MIGRATION_NOT_STARTED.into(),validations:HashMap::new()}}
+ fn default()->Self{Self{
+  version:KEYCHAIN_MIGRATION_V2_VERSION,
+  profiles:HashMap::new(),
+  global_client_secret:MIGRATION_NOT_STARTED.into(),
+  validations:HashMap::new(),
+  refresh_token_accounts:HashMap::new(),
+  client_secret_accounts:HashMap::new(),
+  credential_generations:HashMap::new(),
+  credential_rotated_at:HashMap::new(),
+ }}
 }
 fn keychain_migration_v2_path(app:&AppHandle)->Result<PathBuf,String>{
  let dir=app.path().app_data_dir().map_err(|e|e.to_string())?;
@@ -130,6 +143,25 @@ fn set_profile_migration_state(app:&AppHandle,profile_id:&str,status:&str)->Resu
 }
 fn profile_migration_status(app:&AppHandle,profile_id:&str)->Result<String,String>{
  Ok(read_keychain_migration_v2(app)?.profiles.get(profile_id).cloned().unwrap_or_else(||MIGRATION_NOT_STARTED.into()))
+}
+fn profile_refresh_token_account_from_state(state:&KeychainMigrationV2State,profile_id:&str)->String{
+ state.refresh_token_accounts.get(profile_id).filter(|x|!x.trim().is_empty()).cloned().unwrap_or_else(||oauth_key(profile_id,"refresh_token"))
+}
+fn profile_client_secret_account_from_state(state:&KeychainMigrationV2State,profile_id:&str)->String{
+ state.client_secret_accounts.get(profile_id).filter(|x|!x.trim().is_empty()).cloned().unwrap_or_else(||oauth_key(profile_id,"client_secret"))
+}
+fn profile_refresh_token_account(app:&AppHandle,profile_id:&str)->Result<String,String>{
+ Ok(profile_refresh_token_account_from_state(&read_keychain_migration_v2(app)?,profile_id))
+}
+fn profile_client_secret_account(app:&AppHandle,profile_id:&str)->Result<String,String>{
+ Ok(profile_client_secret_account_from_state(&read_keychain_migration_v2(app)?,profile_id))
+}
+fn next_profile_credential_generation(state:&KeychainMigrationV2State,profile_id:&str)->u32{
+ state.credential_generations.get(profile_id).copied().unwrap_or(0).saturating_add(1)
+}
+fn rotated_profile_secret_account(profile_id:&str,kind:&str,generation:u32)->String{
+ let suffix=Uuid::new_v4().simple().to_string();
+ format!("oauth.{profile_id}.{kind}.v2.{generation}.{}",&suffix[..12])
 }
 fn record_profile_credential_validation(app:&AppHandle,profile_id:&str,result:&str,expected_channel_id:Option<&str>,actual_channel_id:Option<&str>)->Result<(),String>{
  let mut state=read_keychain_migration_v2(app)?;
@@ -172,10 +204,11 @@ fn resolve_oauth_credential_states_local(app:&AppHandle)->Result<Vec<Value>,Stri
  let state=read_keychain_migration_v2(app)?;
  let mut rows=Vec::with_capacity(store.profiles.len());
  for profile in &store.profiles{
-  let canonical_account=oauth_key(&profile.id,"refresh_token");
+  let canonical_account=profile_refresh_token_account_from_state(&state,&profile.id);
   let canonical_present=canonical_accounts.iter().any(|a|a==&canonical_account);
   let legacy_present=select_present_account(&legacy_refresh_candidates(&profile.id),&legacy_accounts).is_some();
-  let profile_client_secret_present=canonical_accounts.iter().any(|a|a==&oauth_key(&profile.id,"client_secret"));
+  let profile_client_secret_account=profile_client_secret_account_from_state(&state,&profile.id);
+  let profile_client_secret_present=canonical_accounts.iter().any(|a|a==&profile_client_secret_account);
   let legacy_client_secret_present=select_present_account(&legacy_client_secret_candidates(&profile.id),&legacy_accounts).is_some();
   let global_exact=!profile.client_id.trim().is_empty()&&profile.client_id.trim()==global_meta.client_id.trim()&&global_secret_present;
   let global_current_ready=!global_meta.client_id.trim().is_empty()&&global_secret_present;
@@ -279,7 +312,8 @@ fn migrate_profile_refresh_to_canonical(app:&AppHandle,profile_id:&str)->Result<
  Err(format!("OAUTH_RECONNECT_REQUIRED: profile={profile_id}; canonical refresh token is missing"))
 }
 fn require_canonical_refresh(app:&AppHandle,profile_id:&str)->Result<String,String>{
- match security::canonical_get_secret_cached(&oauth_key(profile_id,"refresh_token")){
+ let active_account=profile_refresh_token_account(app,profile_id)?;
+ match security::canonical_get_secret_cached(&active_account){
   Ok(Some(v)) if !v.trim().is_empty()=>return Ok(v),
   Ok(_)=>{},
   Err(e) if keychain_repairable_error(&e)=>{
@@ -321,7 +355,7 @@ fn resolve_client_secret_for_profile(app:&AppHandle,profile_id:&str,client_id:&s
  let client_id=client_id.trim();
  if profile_id.is_empty(){return Err("OAUTH_PROFILE_ID_MISSING: existing profile UUID is required".into())}
  if client_id.is_empty(){return Err("OAUTH_CLIENT_MISSING: profile client_id is empty".into())}
- let profile_account=oauth_key(profile_id,"client_secret");
+ let profile_account=profile_client_secret_account(app,profile_id)?;
  let profile_secret=match security::canonical_get_secret_cached(&profile_account){
   Ok(v)=>v,
   Err(e) if keychain_repairable_error(&e)=>None,
@@ -2029,7 +2063,7 @@ pub async fn youtube_oauth_recovery_diagnostic(
       .find(|v|v.get("profileUuid").and_then(Value::as_str)==Some(profile_id.as_str()))
       .ok_or_else(||"CREDENTIAL_MISSING: selected OAuth profile is not present in youtube-oauth.json".to_string())?;
     let obj=row.as_object_mut().ok_or_else(||"OAUTH_STATE_RESOLVER_FAILED".to_string())?;
-    let account=oauth_key(&profile_id,"refresh_token");
+    let account=profile_refresh_token_account(&app,&profile_id)?;
     obj.insert("appVersion".into(),json!(app.package_info().version.to_string()));
     obj.insert("bundleId".into(),json!(app.config().identifier.clone()));
     obj.insert("currentProfileUuid".into(),json!(profile_id));
@@ -2043,7 +2077,7 @@ pub async fn youtube_oauth_recovery_diagnostic(
 fn oauth_safe_retry_profile_value(app:&AppHandle,profile_id:&str)->Result<Value,String>{
  let store=load_store_metadata(app)?;
  let profile=store.profiles.iter().find(|p|p.id==profile_id).ok_or_else(||format!("CREDENTIAL_MISSING: profile={profile_id}"))?;
- let account=oauth_key(profile_id,"refresh_token");
+ let account=profile_refresh_token_account(app,profile_id)?;
  let result=security::canonical_retry_secret_access_value(&account);
  let status=result.get("status").and_then(Value::as_str).unwrap_or("READ_FAILED");
  if status=="ACCESSIBLE"{let _=set_profile_migration_state(app,profile_id,MIGRATION_MIGRATED);}
