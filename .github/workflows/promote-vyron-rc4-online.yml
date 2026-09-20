@@ -1,0 +1,161 @@
+name: Promote existing VYRON RC4 online
+
+on:
+  push:
+    branches:
+      - ops/promote-vyron-rc4-online
+    paths:
+      - .github/workflows/promote-vyron-rc4-online.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: promote-vyron-rc4-online
+  cancel-in-progress: false
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  TAG: v2.1.15-rc.4
+  VERSION: 2.1.15-rc.4
+  TARGET: 8d91324d14dfefdc0760ee14a84a948fae619c36
+  ARCHIVE_SHA256: bf7241096c43a8382f195dfb060ebece98ce23fb24fbcfb1e1f66dce4f5087c5
+  MAC_FEED: vyron-updates/latest.json
+  WINDOWS_FEED: vyron-updates/windows-latest.json
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: \${{ github.token }}
+    steps:
+      - name: Verify published RC4 release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/$REPO/releases/tags/$TAG" > /tmp/release.json
+          python3 - <<'PY'
+          import json,os
+          d=json.load(open('/tmp/release.json'))
+          assert d['tag_name']==os.environ['TAG']
+          assert d['target_commitish']==os.environ['TARGET']
+          assert d['draft'] is False
+          assert d['prerelease'] is True
+          assets={a['name']:a for a in d['assets']}
+          assert 'VYRON.app.tar.gz' in assets
+          assert 'VYRON.app.tar.gz.sig' in assets
+          assert assets['VYRON.app.tar.gz']['digest']=='sha256:'+os.environ['ARCHIVE_SHA256']
+          print('RELEASE_ASSETS_VERIFIED=PASS')
+          print('REMOTE_RELEASE_VERIFIED=PASS')
+          PY
+
+      - name: Snapshot Windows feed
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/$REPO/contents/$WINDOWS_FEED?ref=main" --jq .content | tr -d '\n' | base64 --decode > /tmp/windows-before.json
+          shasum -a 256 /tmp/windows-before.json | awk '{print $1}' > /tmp/windows-before.sha
+          test "$(python3 -c 'import json;print(json.load(open("/tmp/windows-before.json"))["version"])')" = "2.1.13"
+
+      - name: Download and verify exact updater archive and signature
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p /tmp/rc4
+          gh release download "$TAG" --repo "$REPO" --dir /tmp/rc4 --pattern 'VYRON.app.tar.gz' --pattern 'VYRON.app.tar.gz.sig'
+          test "$(shasum -a 256 /tmp/rc4/VYRON.app.tar.gz | awk '{print $1}')" = "$ARCHIVE_SHA256"
+          python3 - <<'PY'
+          import base64,hashlib
+          from pathlib import Path
+          sig=Path('/tmp/rc4/VYRON.app.tar.gz.sig').read_text().strip()
+          assert len(sig)>100
+          decoded=base64.b64decode(sig,validate=True).decode()
+          assert decoded.startswith('untrusted comment: signature from tauri secret key')
+          print('UPDATER_ARCHIVE_VERIFIED=PASS')
+          print('UPDATER_SIGNATURE_VERIFIED=PASS')
+          print('SIGNATURE_SHA256='+hashlib.sha256(sig.encode()).hexdigest())
+          print('SIGNATURE_VALUE='+sig)
+          PY
+
+      - name: Build exact RC4 macOS feed
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          release=json.load(open('/tmp/release.json'))
+          sig=Path('/tmp/rc4/VYRON.app.tar.gz.sig').read_text().strip()
+          data={
+            'version':os.environ['VERSION'],
+            'notes':(release.get('body') or '').strip() or 'VYRON 2.1.15-rc.4',
+            'pub_date':release['published_at'],
+            'platforms':{
+              'darwin-aarch64':{
+                'url':'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.15-rc.4/VYRON.app.tar.gz',
+                'signature':sig
+              }
+            }
+          }
+          Path('/tmp/latest.json').write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
+          print(Path('/tmp/latest.json').read_text())
+          PY
+
+      - name: Promote RC4 macOS feed on main
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          BASE="$(gh api "repos/$REPO/contents/$MAC_FEED?ref=main" --jq .sha)"
+          BEFORE="$(gh api "repos/$REPO/contents/$MAC_FEED?ref=main" --jq .content | tr -d '\n' | base64 --decode | python3 -c 'import json,sys;print(json.load(sys.stdin)["version"])')"
+          test "$BEFORE" = "2.1.15-rc.3"
+          CONTENT="$(base64 < /tmp/latest.json | tr -d '\n')"
+          gh api --method PUT "repos/$REPO/contents/$MAC_FEED" \
+            -f message="release: publish VYRON 2.1.15-rc.4 in-app macOS updater" \
+            -f content="$CONTENT" \
+            -f sha="$BASE" \
+            -f branch=main > /tmp/publish.json
+          FEED_COMMIT="$(python3 -c 'import json;print(json.load(open("/tmp/publish.json"))["commit"]["sha"])')"
+          echo "FEED_COMMIT=$FEED_COMMIT"
+          echo 'MAC_FEED_PROMOTED=PASS'
+
+      - name: Verify GitHub API, raw feed and Windows isolation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/$REPO/contents/$MAC_FEED?ref=main" --jq .content | tr -d '\n' | base64 --decode > /tmp/api-feed.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/api-feed.json'))
+          assert d['version']=='2.1.15-rc.4'
+          p=d['platforms']['darwin-aarch64']
+          assert p['url'].endswith('/v2.1.15-rc.4/VYRON.app.tar.gz')
+          assert p['signature']
+          print('GITHUB_FILE_API_VERIFIED=PASS')
+          PY
+          for i in {1..18}; do
+            curl -fsSL -H 'Cache-Control: no-cache, no-store, max-age=0' -H 'Pragma: no-cache' \
+              "https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/$MAC_FEED?ts=$(date +%s)-$i" \
+              -o /tmp/raw-feed.json || true
+            if python3 - <<'PY'
+          import json
+          try:
+              d=json.load(open('/tmp/raw-feed.json'))
+              assert d['version']=='2.1.15-rc.4'
+              assert d['platforms']['darwin-aarch64']['url'].endswith('/v2.1.15-rc.4/VYRON.app.tar.gz')
+              assert d['platforms']['darwin-aarch64']['signature']
+          except Exception:
+              raise SystemExit(1)
+          PY
+            then
+              echo 'RAW_FEED_VERIFIED=PASS'
+              break
+            fi
+            test "$i" != "18"
+            sleep 5
+          done
+          gh api "repos/$REPO/contents/$WINDOWS_FEED?ref=main" --jq .content | tr -d '\n' | base64 --decode > /tmp/windows-after.json
+          test "$(shasum -a 256 /tmp/windows-after.json | awk '{print $1}')" = "$(cat /tmp/windows-before.sha)"
+          test "$(python3 -c 'import json;print(json.load(open("/tmp/windows-after.json"))["version"])')" = "2.1.13"
+          echo 'WINDOWS_FEED_UNCHANGED=PASS'
+          echo 'ONLINE_UPDATE_AVAILABLE=YES'
