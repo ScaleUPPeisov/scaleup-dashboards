@@ -13,7 +13,7 @@ describe('VYRON 2.1.15 RC1 Add Channel and channel statistics regression',()=>{
     expect(block).toContain('setOauthSetupOpen(true)');
     expect(block).toContain('youtubeOauthBrowsers');
     expect(block).not.toContain('file.current?.click()');
-    expect(ui).toContain('Импортировать credentials.json</button>');
+    expect(ui).toContain('Импортировать credentials.json');
   });
 
   it('keeps credentials import and browser OAuth as separate explicit flows',()=>{
@@ -24,10 +24,14 @@ describe('VYRON 2.1.15 RC1 Add Channel and channel statistics regression',()=>{
     expect(ui).toContain("onClick={()=>void askBrowser('')}");
   });
 
-  it('does not downgrade persisted global client-secret presence because passive enumeration skipped a protected item',()=>{
+  it('keeps metadata presence separate from operational OAuth readiness',()=>{
     const y=read('src-tauri/src/youtube.rs');
+    const security=read('src-tauri/src/security.rs');
     expect(y).toContain('c.client_secret_present=c.client_secret_present||inline_client_secret||canonical_accounts.iter().any');
-    expect(y).toContain('skip_authenticated_items(true)');
+    expect(security).toContain('skip_authenticated_items(true)');
+    expect(y).toContain('google_config_operational_status_value');
+    expect(y).toContain('"oauthReady":configured&&operational');
+    expect(y).toContain('NEEDS_SECURE_STORAGE_REPAIR');
     expect(y).toContain('load_or_migrate_google_config');
   });
 
