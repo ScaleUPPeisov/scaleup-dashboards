@@ -3,7 +3,7 @@ import {appendErrorHistory} from './errorHistory';
 import {humanizeError} from './errorCenter';
 import {notifyWarning} from './notificationCenter';
 import {baseName} from './publishCenterCore';
-import {recordVerifiedUpload,nextProjectLifecycle,successfulUploadForHash} from './storageLifecycle';
+import {recordVerifiedUpload,nextProjectLifecycle,successfulUploadForHash,updateUploadProcessing} from './storageLifecycle';
 import {useApp} from './store';
 import {acquireChannelUploadLock,beginPublishAttempt,completePublishAttempt,failPublishAttempt,isChannelUploadLocked,isYoutubeDailyUploadLimitError,releaseChannelUploadLock,safeDailyStatus} from './youtubePublishSafety';
 import {isYoutubeQuotaError,releaseYoutubeQuotaReservation,reserveYoutubeQuotaAtomic,type YoutubeQuotaOperation} from './youtubeQuota';
@@ -17,6 +17,7 @@ async function executeUpload(spec:ImmutableUploadJob){
   if(!job||!channel)throw new Error('UPLOAD_QUEUE_SOURCE_MISSING: project/channel no longer exists');
   if(job.channelId!==spec.channelId||job.finalPath!==spec.filePath)throw new Error('UPLOAD_QUEUE_IDENTITY_CHANGED: local video identity changed after submission');
   if(Date.parse(spec.publishAt)<=Date.now())throw new Error('UPLOAD_QUEUE_PUBLISH_AT_EXPIRED: publishAt is no longer in the future');
+  if(job.youtubeVideoId&&!spec.allowDuplicate)throw new Error(`UPLOAD_ALREADY_HAS_VIDEO_ID: ${job.youtubeVideoId}; verify existing YouTube state before explicit duplicate re-upload`);
   if(!spec.allowDuplicate&&successfulUploadForHash(state.uploadHistory,spec.fingerprint))throw new Error('UPLOAD_QUEUE_DUPLICATE_VERIFIED: fingerprint already uploaded');
   const daily=safeDailyStatus(spec.channelId,channel.safeDailyUploadLimit);if(daily.remaining!=null&&daily.remaining<=0)throw new Error('UPLOAD_QUEUE_CHANNEL_DAILY_LIMIT: safe rolling limit reached');
   const quota=reserveYoutubeQuotaAtomic(operationId,spec.quotaOperations as YoutubeQuotaOperation[],spec.quotaProjectKey||undefined);
@@ -29,18 +30,39 @@ async function executeUpload(spec:ImmutableUploadJob){
   if(job.folder)await api.writeJobMetadata(job.folder,spec.title,spec.description,[...spec.tags],spec.publishAt,spec.metadataSource||job.metadataSource||'template');
   const uploaded=await api.youtubeUpload(spec.profileId,spec.jobId,spec.filePath,spec.title,spec.description,[...spec.tags],spec.publishAt,spec.categoryId,operationId,{channelId:spec.channelId,projectId:spec.projectId,totalBytes:spec.fileSize,startedAt:new Date().toISOString()});
   if(!uploaded.videoId)throw new Error('UPLOAD_NEEDS_VERIFICATION: YouTube did not return video ID');
-  if(uploaded.verified===false)throw new Error(uploaded.verificationError||'UPLOAD_VERIFY_FAILED: videos.list verification failed');
+  const acceptedAt=new Date().toISOString();
+  // Persist the returned videoId immediately. If verification is temporarily unavailable,
+  // retry must never blindly create a duplicate.
+  useApp.getState().patchJob(spec.jobId,{youtubeVideoId:uploaded.videoId,uploadProgress:100,uploadedAt:acceptedAt,uploadAcceptedAt:acceptedAt,storageLifecycle:'UPLOADED',processingState:'UPLOAD_ACCEPTED'});
+  if(uploaded.verified===false)throw new Error(uploaded.verificationError||`UPLOAD_VERIFY_FAILED: videoId=${uploaded.videoId}; videos.list verification failed`);
   completePublishAttempt(attempt.id,uploaded.videoId);
-  const at=new Date().toISOString(),fresh=useApp.getState(),projectEntry=Object.entries(fresh.projectLifecycle).find(([,x])=>x.jobId===spec.jobId);
-  const nextHistory=recordVerifiedUpload(fresh.uploadHistory,{jobId:spec.jobId,channelId:spec.channelId,profileId:spec.profileId,youtubeChannelId:spec.youtubeChannelId,youtubeVideoId:uploaded.videoId,localFilePath:spec.filePath,originalFilename:baseName(spec.filePath),projectId:spec.projectId||projectEntry?.[1].projectId,sourceProjectPath:projectEntry?.[1].projectPath,uploadedAt:at,fileSize:spec.fileSize,sha256:spec.fingerprint,publishAt:spec.publishAt,overrideDuplicate:spec.allowDuplicate});
-  useApp.getState().replaceUploadHistory(nextHistory);if(projectEntry)useApp.getState().patchProjectLifecycle(projectEntry[0],nextProjectLifecycle(projectEntry[1],nextHistory));
+  const fresh=useApp.getState(),projectEntry=Object.entries(fresh.projectLifecycle).find(([,x])=>x.jobId===spec.jobId);
+  let nextHistory=recordVerifiedUpload(fresh.uploadHistory,{jobId:spec.jobId,channelId:spec.channelId,profileId:spec.profileId,youtubeChannelId:spec.youtubeChannelId,youtubeVideoId:uploaded.videoId,localFilePath:spec.filePath,originalFilename:baseName(spec.filePath),projectId:spec.projectId||projectEntry?.[1].projectId,sourceProjectPath:projectEntry?.[1].projectPath,uploadedAt:acceptedAt,fileSize:spec.fileSize,sha256:spec.fingerprint,publishAt:spec.publishAt,overrideDuplicate:spec.allowDuplicate,processingState:'UPLOAD_ACCEPTED',identityVerifiedAt:acceptedAt});
+  useApp.getState().replaceUploadHistory(nextHistory);
+  let processingState:'UPLOAD_ACCEPTED'|'YOUTUBE_PROCESSING'|'READY'|'PROCESSING_FAILED'|'PROCESSING_UNKNOWN'='UPLOAD_ACCEPTED',processingCheckedAt:string|undefined,processingError:string|undefined;
+  try{
+    const processing=await api.youtubeVideoProcessingStatus(spec.profileId,uploaded.videoId,`${operationId}:processing`);
+    processingState=processing.processingState;
+    processingCheckedAt=processing.processingCheckedAt;
+    processingError=processing.processingFailureReason||processing.rejectionReason||undefined;
+    nextHistory=updateUploadProcessing(useApp.getState().uploadHistory,spec.jobId,{processingState,processingCheckedAt,processingStatus:processing.processingStatus,processingError,readyAt:processingState==='READY'?processingCheckedAt:undefined,identityVerifiedAt:processingCheckedAt});
+    useApp.getState().replaceUploadHistory(nextHistory);
+  }catch(error){
+    processingState='PROCESSING_UNKNOWN';
+    processingCheckedAt=new Date().toISOString();
+    processingError=humanizeError(error,'youtube').message;
+    nextHistory=updateUploadProcessing(useApp.getState().uploadHistory,spec.jobId,{processingState,processingCheckedAt,processingError});
+    useApp.getState().replaceUploadHistory(nextHistory);
+  }
+  if(projectEntry)useApp.getState().patchProjectLifecycle(projectEntry[0],nextProjectLifecycle(projectEntry[1],nextHistory));
   let thumbError='';if(spec.thumbnailPath){try{await api.youtubeSetThumbnail(spec.profileId,uploaded.videoId,spec.thumbnailPath,operationId);useApp.getState().patchJob(spec.jobId,{thumbnailPath:spec.thumbnailPath})}catch(error){thumbError=humanizeError(error,'thumbnail').message}}
-  useApp.getState().patchJob(spec.jobId,{status:'SCHEDULED',storageLifecycle:'UPLOADED',youtubeVideoId:uploaded.videoId,uploadProgress:100,uploadedAt:at,uploadInterruptedAt:undefined,error:thumbError||undefined});
-  useApp.getState().updateChannel(spec.channelId,{lastUploadAt:at,knownUploadLimitState:'ok',lastDailyLimitError:undefined});
+  useApp.getState().patchJob(spec.jobId,{status:'SCHEDULED',storageLifecycle:'UPLOADED',youtubeVideoId:uploaded.videoId,uploadProgress:100,uploadedAt:acceptedAt,uploadAcceptedAt:acceptedAt,processingState,processingCheckedAt,processingError,uploadInterruptedAt:undefined,error:thumbError||undefined});
+  useApp.getState().updateChannel(spec.channelId,{lastUploadAt:acceptedAt,knownUploadLimitState:'ok',lastDailyLimitError:undefined});
  }catch(error){
   const pending=await api.youtubeUploadSessions().catch(()=>[]),recoverable=pending.some(x=>x.jobId===spec.jobId);
-  if(recoverable){useApp.getState().patchJob(spec.jobId,{status:'ERROR',storageLifecycle:'UPLOADING',youtubeVideoId:undefined,uploadedAt:undefined,error:'Загрузка прервана — доступно продолжение',uploadInterruptedAt:new Date().toISOString()})}
-  else{if(attempt)failPublishAttempt(attempt.id,error);const h=humanizeError(error,'upload'),dailyLimit=isYoutubeDailyUploadLimitError(error),quotaError=isYoutubeQuotaError(error);useApp.getState().patchJob(spec.jobId,{status:'ERROR',storageLifecycle:'FAILED',youtubeVideoId:undefined,uploadedAt:undefined,error:dailyLimit?'YouTube остановил загрузки: достигнут лимит загрузок канала':h.message,uploadInterruptedAt:new Date().toISOString()});if(dailyLimit)useApp.getState().updateChannel(spec.channelId,{knownUploadLimitState:'limited',lastDailyLimitError:h.message,lastUploadAt:new Date().toISOString()});appendErrorHistory(h.title,`VIDEO_${String(spec.videoNumber).padStart(3,'0')}: ${h.message}`,h.detail,{errorCode:quotaError?'YOUTUBE_QUOTA':h.code,videoId:spec.jobId,filePath:spec.filePath,stage:'upload-transfer'})}
+  const current=useApp.getState().jobs.find(x=>x.id===spec.jobId),acceptedVideoId=current?.youtubeVideoId;
+  if(recoverable&&!acceptedVideoId){useApp.getState().patchJob(spec.jobId,{status:'ERROR',storageLifecycle:'UPLOADING',error:'Загрузка прервана — доступно продолжение',uploadInterruptedAt:new Date().toISOString()})}
+  else{if(attempt&&!acceptedVideoId)failPublishAttempt(attempt.id,error);const h=humanizeError(error,'upload'),dailyLimit=isYoutubeDailyUploadLimitError(error),quotaError=isYoutubeQuotaError(error);useApp.getState().patchJob(spec.jobId,{status:'ERROR',storageLifecycle:acceptedVideoId?'UPLOADED':'FAILED',processingState:acceptedVideoId?'PROCESSING_UNKNOWN':current?.processingState,processingError:acceptedVideoId?h.message:current?.processingError,error:dailyLimit?'YouTube остановил загрузки: достигнут лимит загрузок канала':acceptedVideoId?`Видео уже получило YouTube ID ${acceptedVideoId}. Повторная загрузка заблокирована до проверки состояния. ${h.message}`:h.message,uploadInterruptedAt:new Date().toISOString()});if(dailyLimit)useApp.getState().updateChannel(spec.channelId,{knownUploadLimitState:'limited',lastDailyLimitError:h.message,lastUploadAt:new Date().toISOString()});appendErrorHistory(h.title,`VIDEO_${String(spec.videoNumber).padStart(3,'0')}: ${h.message}`,h.detail,{errorCode:quotaError?'YOUTUBE_QUOTA':acceptedVideoId?'UPLOAD_ACCEPTED_VERIFY_FAILED':h.code,videoId:acceptedVideoId||spec.jobId,filePath:spec.filePath,stage:'upload-transfer',channelId:spec.channelId,profileId:spec.profileId})}
   throw error;
  }finally{if(quotaReserved)releaseYoutubeQuotaReservation(operationId);if(lock)releaseChannelUploadLock(spec.channelId,lock)}
 }
