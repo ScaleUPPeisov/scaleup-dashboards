@@ -10,7 +10,7 @@ const upload=(patch:Partial<UploadHistoryRecord>={}):UploadHistoryRecord=>({
  fileSize:100,sha256:'a'.repeat(64),status:'UPLOADED',processingState:'READY',readyAt:'2026-09-20T07:20:00Z',
  identityVerifiedAt:'2026-09-20T07:20:00Z',sourceLifecycle:'PRESENT',remoteExists:true,...patch
 });
-const job={id:'j1',channelId:'c1',number:1,title:'One',description:'',tags:[],status:'SCHEDULED',finalPath:'/tmp/VIDEO_001.mp4',storageLifecycle:'UPLOADED',uploadFingerprint:'a'.repeat(64)} as VideoJob;
+const job:VideoJob={id:'j1',channelId:'c1',number:1,folder:'/tmp/VIDEO_001',status:'SCHEDULED',createdAt:'2026-09-20T07:00:00Z',tracksCount:10,minTracks:10,title:'One',description:'',tags:[],finalPath:'/tmp/VIDEO_001.mp4',storageLifecycle:'UPLOADED',uploadFingerprint:'a'.repeat(64)};
 
 describe('VYRON 2.1.15 RC4 persistent activity journal',()=>{
  it('reconstructs only provable legacy upload facts and is idempotent against live events',()=>{
