@@ -119,7 +119,7 @@ async function runAll(force:boolean,onProgress?:((p:ChannelStatisticsRefreshProg
  const failures:ChannelStatisticsRefreshFailure[]=[];
  onProgress?.({done,total});
  const parentEventId=`stats-batch:${operationId}`;
- journal({eventId:parentEventId,eventType:'STATS_REFRESH_BATCH',status:'STARTED',source:'LIVE_OPERATION',timestamp:startedAt,operationId,batchId:operationId,details:{workspaceChannels:channels.length,eligibleChannels:classification.eligible.length,requestedChannels:total,unlinked:channels.length-classification.eligible.length,orphans:classification.orphans.length,mismatched:classification.mismatched.length,duplicates:classification.duplicates.length}});
+ journal({eventId:parentEventId,eventType:'STATS_REFRESH_BATCH',status:'STARTED',source:'LIVE_OPERATION',timestamp:startedAt,operationId,batchId:operationId,details:{workspaceChannels:channels.length,eligibleChannels:classification.eligible.length,requestedChannels:total,unlinked:classification.unlinked.length,orphans:classification.orphans.length,mismatched:classification.mismatched.length,duplicates:classification.duplicates.length}});
  if(total){
   for(let offset=0;offset<entries.length;offset+=50){
    const chunk=entries.slice(offset,offset+50);
@@ -157,7 +157,7 @@ async function runAll(force:boolean,onProgress?:((p:ChannelStatisticsRefreshProg
  const apiRequests=Object.values(actual.methods).reduce((n,x)=>n+x.calls,0),quotaUnits=actual.buckets.general;
  const summary:ChannelStatisticsRefreshSummary={
   operationId,startedAt,completedAt,workspaceChannels:channels.length,linkedChannels:classification.eligible.length,
-  unlinked:channels.length-classification.eligible.length,orphans:classification.orphans.length,mismatched:classification.mismatched.length,duplicates:classification.duplicates.length,
+  unlinked:classification.unlinked.length,orphans:classification.orphans.length,mismatched:classification.mismatched.length,duplicates:classification.duplicates.length,
   done,total,requested:total,updated,failed,apiRequests,quotaUnits,quotaBefore,quotaAfter,failures
  };
  journal({eventId:parentEventId,eventType:'STATS_REFRESH_BATCH',status:failed?(updated?'PARTIAL':'FAILED'):'SUCCESS',source:'LIVE_OPERATION',timestamp:completedAt,operationId,batchId:operationId,errorCode:failed&&!updated?'STATS_REFRESH_BATCH_FAILED':undefined,details:{workspaceChannels:summary.workspaceChannels,eligibleChannels:summary.linkedChannels,requestedChannels:summary.requested,updatedChannels:updated,failedChannels:failed,unlinked:summary.unlinked,orphans:summary.orphans,mismatched:summary.mismatched,duplicates:summary.duplicates,apiRequests,quotaUnits,quotaBefore,quotaAfter,failureChannels:failures.map(x=>x.channelName).slice(0,100)}});
