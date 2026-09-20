@@ -5,7 +5,7 @@ describe('VYRON 0.9.5 state migration',()=>{
  beforeEach(()=>{useApp.setState({channels:[],jobs:[],competitors:[],settings:{...DEFAULT_SETTINGS},logs:[],page:'dashboard',booted:false})});
  it('preserves existing user settings and supplies new defaults',()=>{
   useApp.getState().hydrate({
-   version:6,channels:[],jobs:[],competitors:[],logs:[],uploadHistory:[],fingerprintCache:{},projectLifecycle:{},
+   version:6,channels:[],jobs:[],competitors:[],logs:[],uploadHistory:[],activityJournal:[],fingerprintCache:{},projectLifecycle:{},
    settings:{workspace:'/Users/test/VYRON',endlumePath:'/Applications/ENDLUME Studio.app',tracksPerVideo:12,youtubeIntelligenceRefreshMin:180} as any
   });
   const s=useApp.getState().settings;
