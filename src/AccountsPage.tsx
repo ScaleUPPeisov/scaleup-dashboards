@@ -5,6 +5,7 @@ import type {YoutubeProfile,YoutubeChannelStatistics} from './types';
 import {findFutureChannelMatch} from './channelIdentity';
 import {channelStatsStatusLabel,compactChannelStat,exactChannelStat,formatStatsUpdatedAt,normalizeChannelStatistics,subscriberStatLabel} from './youtubeChannelStats';
 import {refreshYoutubeChannelStatistics,refreshYoutubeProfileStatistics,type ChannelStatisticsRefreshProgress} from './youtubeChannelStatsRuntime';
+import {journal} from './activityJournalRuntime';
 
 type BrowserOption={id:string;label:string;available:boolean};
 type DuplicateChannel={profileId:string;channelId?:string;title?:string};
