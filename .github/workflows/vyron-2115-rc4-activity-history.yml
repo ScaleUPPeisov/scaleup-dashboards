@@ -68,9 +68,9 @@ jobs:
             'package.json','package-lock.json','src-tauri/Cargo.toml','src-tauri/Cargo.lock','src-tauri/tauri.conf.json',
             'src-tauri/src/lib.rs','src-tauri/src/local_delete.rs','src-tauri/src/storage.rs','src-tauri/src/youtube.rs',
             'src/AccountsPage.tsx','src/ActivityHistory.tsx','src/App.tsx','src/ExistingVideos.tsx','src/MetadataPage.tsx',
-            'src/PublisherOS.tsx','src/UploadCenter.tsx','src/UploadProcessingMonitor.tsx','src/YouTubeCenter.tsx','src/StatisticsCenter.tsx',
+            'src/PublisherOS.tsx','src/ProductionStatusBridge.tsx','src/UploadCenter.tsx','src/UploadProcessingMonitor.tsx','src/YouTubeCenter.tsx','src/StatisticsCenter.tsx',
             'src/ChannelRunway.tsx','src/ChannelStatisticsScheduler.tsx','src/YouTubeChannelBar.tsx','src/youtubeChannelStatsRuntime.ts','src/youtubeStatisticsCenter.ts',
-            'src/activityJournalCore.ts','src/activityJournalRuntime.ts','src/api.ts','src/storageLifecycle.ts','src/store.ts',
+            'src/activityJournalCore.ts','src/activityJournalRuntime.ts','src/api.ts','src/errorCenter.ts','src/errorHistory.ts','src/storageLifecycle.ts','src/store.ts',
             'src/types.ts','src/uploadQueue.ts','src/uploadQueueRuntime.ts','src/storageLifecycle.test.ts','src/v2115Rc3CriticalStability.test.ts',
             'src/v2115Rc4ActivityJournal.test.ts','src/v2115Rc4ActivityWiring.test.ts','src/v2115Rc4StatisticsCenter.test.ts','src/v2115Rc4StatisticsOauthContinuity.test.ts','src/v2114ChannelStatistics.test.ts','src/v2115AddChannelStats.test.ts','tests/stateMigration_v095.test.ts',
             '.github/workflows/vyron-2115-rc4-activity-history.yml',
@@ -120,6 +120,10 @@ jobs:
           history=Path('src/ActivityHistory.tsx').read_text()
           center=Path('src/UploadCenter.tsx').read_text()
           queue=Path('src/uploadQueueRuntime.ts').read_text()
+          publisher=Path('src/PublisherOS.tsx').read_text()
+          bridge=Path('src/ProductionStatusBridge.tsx').read_text()
+          errors=Path('src/errorCenter.ts').read_text()
+          local_delete=Path('src-tauri/src/local_delete.rs').read_text()
           metadata=Path('src/MetadataPage.tsx').read_text()
           existing=Path('src/ExistingVideos.tsx').read_text()
           rust=Path('src-tauri/src/youtube.rs').read_text()
@@ -133,6 +137,13 @@ jobs:
           assert 'История действий' in history and 'Historical' not in history
           assert 'cleanupPreclassification' in center
           assert "eventType:'UPLOAD_ACCEPTED'" in queue
+          assert "eventType:'UPLOAD_BLOCKED_DUPLICATE_GUARD'" in queue
+          assert "code:'LOCAL_DUPLICATE_GUARD'" in errors
+          assert 'classifyUploadState' in publisher and 'Проверить спорные загрузки' in publisher
+          assert 'youtubeVideoProcessingStatusBatch' in publisher and 'Новых videos.insert: 0' in publisher
+          assert "eventType:genuinelyNew?'RENDER_COMPLETED':'RENDER_DISCOVERED_LEGACY'" in bridge
+          assert 'if(genuinelyNew)notifySuccess' in bridge
+          assert 'pub fn scan_render_folder' in local_delete
           assert "eventType:'METADATA_UPDATE_STARTED'" in metadata
           assert "eventType:'INVENTORY_SYNC_STARTED'" in existing
           assert 'youtube_video_processing_status_batch' in rust and 'ids.chunks(50)' in rust
