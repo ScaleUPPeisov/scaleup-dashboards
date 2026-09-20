@@ -47,11 +47,13 @@ describe('VYRON 2.1.15 RC1 Add Channel and channel statistics regression',()=>{
     expect(y.match(/wait_for_oauth_code\(listener,expected_state\)/g)?.length||0).toBeGreaterThanOrEqual(2);
   });
 
-  it('preserves the old canonical refresh token when reconnect does not return a replacement',()=>{
+  it('uses a newly returned refresh token first and only falls back to the old canonical token when Google returns none',()=>{
     const y=read('src-tauri/src/youtube.rs');
     expect(y).toContain('fn reconnect_refresh_token(');
-    expect(y).toContain('existing_refresh=security::canonical_get_secret_cached');
-    expect(y).toContain('reconnect_refresh_token(');
+    expect(y).toContain('let response_refresh=tv.get("refresh_token").and_then(Value::as_str);');
+    expect(y).toContain('let existing_refresh=if response_refresh.map(str::trim).filter(|x|!x.is_empty()).is_some()');
+    expect(y).toContain('match security::canonical_get_secret_cached(&oauth_key(&profile_id,"refresh_token"))');
+    expect(y).toContain('let refresh=reconnect_refresh_token(response_refresh,existing_refresh.as_deref())');
     expect(y).not.toContain('fn reconnect_required_refresh_token(');
   });
 
