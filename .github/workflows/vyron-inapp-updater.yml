@@ -1,0 +1,186 @@
+name: VYRON In-App Updater Publisher
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: VYRON release tag to promote into the in-app macOS updater
+        required: true
+        type: string
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/vyron-inapp-updater.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vyron-inapp-updater
+  cancel-in-progress: false
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  MAC_FEED: vyron-updates/latest.json
+  WINDOWS_FEED: vyron-updates/windows-latest.json
+  BOOTSTRAP_TAG: v2.1.15-rc.2
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Resolve release tag
+        id: resolve
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            TAG="${{ github.event.release.tag_name }}"
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="$BOOTSTRAP_TAG"
+          fi
+          test -n "$TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+
+      - name: Validate this is a signed VYRON macOS release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/$REPO/releases/tags/$TAG" > /tmp/release.json
+          python3 - <<'PY'
+          import json, os, re
+          d=json.load(open('/tmp/release.json'))
+          tag=os.environ['TAG']
+          if d.get('draft'):
+              raise SystemExit('BLOCKER=RELEASE_IS_DRAFT')
+          names={a['name'] for a in d.get('assets',[])}
+          required={'VYRON.app.tar.gz','VYRON.app.tar.gz.sig'}
+          missing=required-names
+          if missing:
+              print('SKIP_NOT_VYRON_MAC_RELEASE='+','.join(sorted(missing)))
+              raise SystemExit(78)
+          if not re.fullmatch(r'v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?',tag):
+              raise SystemExit('BLOCKER=UNEXPECTED_TAG:'+tag)
+          version=tag[1:]
+          open(os.environ['GITHUB_ENV'],'a').write('VERSION='+version+'\n')
+          print('VYRON_RELEASE=PASS')
+          print('VERSION='+version)
+          PY
+
+      - name: Snapshot Windows updater feed
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/$REPO/contents/$WINDOWS_FEED?ref=main" --jq .content | tr -d '\n' | base64 --decode > /tmp/windows-before.json
+          shasum -a 256 /tmp/windows-before.json | awk '{print $1}' > /tmp/windows-before.sha
+          python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/windows-before.json'))
+          assert 'windows-x86_64' in d.get('platforms',{})
+          print('WINDOWS_FEED_BASELINE='+str(d.get('version')))
+          PY
+
+      - name: Download and validate updater artifacts
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p /tmp/vyron-updater
+          gh release download "$TAG" --repo "$REPO" --dir /tmp/vyron-updater --pattern 'VYRON.app.tar.gz' --pattern 'VYRON.app.tar.gz.sig'
+          test -s /tmp/vyron-updater/VYRON.app.tar.gz
+          test -s /tmp/vyron-updater/VYRON.app.tar.gz.sig
+          gh api "repos/$REPO/releases/tags/$TAG" > /tmp/release.json
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          d=json.load(open('/tmp/release.json'))
+          archive=Path('/tmp/vyron-updater/VYRON.app.tar.gz')
+          digest='sha256:'+hashlib.sha256(archive.read_bytes()).hexdigest()
+          remote=next(a.get('digest') for a in d['assets'] if a['name']=='VYRON.app.tar.gz')
+          assert remote==digest,(remote,digest)
+          sig=Path('/tmp/vyron-updater/VYRON.app.tar.gz.sig').read_text().strip()
+          assert sig and len(sig)>100
+          print('UPDATER_ARCHIVE_DIGEST=PASS')
+          print('UPDATER_SIGNATURE_PRESENT=PASS')
+          PY
+
+      - name: Build macOS updater manifest
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import datetime,json,os
+          from pathlib import Path
+          release=json.load(open('/tmp/release.json'))
+          sig=Path('/tmp/vyron-updater/VYRON.app.tar.gz.sig').read_text().strip()
+          body=(release.get('body') or '').strip()
+          notes=body or f"VYRON {os.environ['VERSION']} — обновление приложения."
+          data={
+            'version':os.environ['VERSION'],
+            'notes':notes,
+            'pub_date':release.get('published_at') or datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace('+00:00','Z'),
+            'platforms':{
+              'darwin-aarch64':{
+                'url':f"https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/{os.environ['TAG']}/VYRON.app.tar.gz",
+                'signature':sig
+              }
+            }
+          }
+          Path('/tmp/latest.json').write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
+          print(Path('/tmp/latest.json').read_text())
+          PY
+
+      - name: Publish in-app macOS updater feed
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          BASE="$(gh api "repos/$REPO/contents/$MAC_FEED?ref=main" --jq .sha)"
+          CONTENT="$(base64 < /tmp/latest.json | tr -d '\n')"
+          gh api --method PUT "repos/$REPO/contents/$MAC_FEED" \
+            -f message="release: publish VYRON $VERSION in-app macOS updater" \
+            -f content="$CONTENT" \
+            -f sha="$BASE" \
+            -f branch=main >/tmp/publish.json
+          echo 'MAC_UPDATER_FEED_PUBLISHED=PASS'
+
+      - name: Verify live feed and Windows isolation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for i in {1..18}; do
+            if curl -fsSL -H 'Cache-Control: no-cache' "https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/$MAC_FEED?ts=$(date +%s)" -o /tmp/live.json; then
+              if python3 - <<'PY'
+          import json,os
+          d=json.load(open('/tmp/live.json'))
+          assert d.get('version')==os.environ['VERSION']
+          p=d.get('platforms',{})
+          assert set(p)=={'darwin-aarch64'}
+          assert p['darwin-aarch64']['url'].endswith('/'+os.environ['TAG']+'/VYRON.app.tar.gz')
+          assert p['darwin-aarch64'].get('signature')
+          PY
+              then
+                break
+              fi
+            fi
+            if [[ "$i" == "18" ]]; then
+              echo 'BLOCKER=LIVE_FEED_DID_NOT_CONVERGE'
+              exit 1
+            fi
+            sleep 5
+          done
+
+          gh api "repos/$REPO/contents/$WINDOWS_FEED?ref=main" --jq .content | tr -d '\n' | base64 --decode > /tmp/windows-after.json
+          test "$(shasum -a 256 /tmp/windows-after.json | awk '{print $1}')" = "$(cat /tmp/windows-before.sha)"
+          echo 'WINDOWS_FEED_UNCHANGED=PASS'
+          echo "IN_APP_UPDATE_VERSION=$VERSION"
+          echo "IN_APP_UPDATE_TAG=$TAG"
+          echo 'READY_IN_APP=YES'
