@@ -102,7 +102,7 @@ export function planStatisticsBatchDrivers(chunk:LinkedYoutubeChannel[]){
  };
 }
 
-async function requestBatchWithDriverRotation(chunk:LinkedYoutubeChannel[],operationId:string){
+export async function requestBatchWithDriverRotation(chunk:LinkedYoutubeChannel[],operationId:string){
  const plan=planStatisticsBatchDrivers(chunk),credentialFailures=[...plan.blocked];
  let lastError:unknown;
  for(const driver of plan.candidates){
