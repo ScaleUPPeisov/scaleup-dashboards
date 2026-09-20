@@ -9,12 +9,6 @@ on:
         description: VYRON release tag to promote into the in-app macOS updater
         required: true
         type: string
-  push:
-    branches:
-      - main
-    paths:
-      - '.github/workflows/vyron-inapp-updater.yml'
-
 permissions:
   contents: write
 
@@ -30,6 +24,9 @@ env:
 
 jobs:
   publish:
+    # Prereleases are NEVER promoted automatically. They may be promoted only by
+    # an explicit workflow_dispatch after physical operator acceptance.
+    if: github.event_name != 'release' || github.event.release.prerelease == false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -46,7 +43,8 @@ jobs:
           elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             TAG="${{ inputs.tag }}"
           else
-            TAG="$BOOTSTRAP_TAG"
+            echo 'BLOCKER=UNSUPPORTED_EVENT'
+            exit 1
           fi
           test -n "$TAG"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
