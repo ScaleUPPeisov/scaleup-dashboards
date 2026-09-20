@@ -84,21 +84,21 @@ export function legacyUploadJournal(history:UploadHistoryRecord[],channels:Chann
  const have=new Set(existing.map(x=>x.eventId)),out:ActivityEvent[]=[];
  for(const row of history){
   const channelName=channels.find(c=>c.id===row.channelId)?.name||row.channelId;
-  const acceptedId=`legacy:upload-accepted:${row.id}`;
-  if(row.youtubeVideoId&&row.uploadedAt&&!have.has(acceptedId))out.push(activityEvent({
+  const acceptedId=`legacy:upload-accepted:${row.id}`,liveAccepted=existing.some(e=>e.eventType==='UPLOAD_ACCEPTED'&&e.jobId===row.jobId&&e.youtubeVideoId===row.youtubeVideoId);
+  if(row.youtubeVideoId&&row.uploadedAt&&!have.has(acceptedId)&&!liveAccepted)out.push(activityEvent({
    eventId:acceptedId,eventType:'UPLOAD_ACCEPTED',status:'SUCCESS',source:'RECONSTRUCTED',
    timestamp:row.uploadedAt,channelId:row.channelId,channelName,profileId:row.profileId,jobId:row.jobId,youtubeVideoId:row.youtubeVideoId,
    localSourcePath:row.localFilePath,batchId:row.batchId,
    details:{evidence:'uploadHistory',filename:row.originalFilename,fileSize:row.fileSize,publishAt:row.publishAt||'',processingState:row.processingState||'PROCESSING_UNKNOWN'}
   }));
-  const readyId=`legacy:youtube-ready:${row.id}`;
-  if(row.processingState==='READY'&&row.readyAt&&!have.has(readyId))out.push(activityEvent({
+  const readyId=`legacy:youtube-ready:${row.id}`,liveReady=existing.some(e=>e.eventType==='YOUTUBE_READY'&&e.jobId===row.jobId&&e.youtubeVideoId===row.youtubeVideoId);
+  if(row.processingState==='READY'&&row.readyAt&&!have.has(readyId)&&!liveReady)out.push(activityEvent({
    eventId:readyId,eventType:'YOUTUBE_READY',status:'SUCCESS',source:'RECONSTRUCTED',
    timestamp:row.readyAt,channelId:row.channelId,channelName,profileId:row.profileId,jobId:row.jobId,youtubeVideoId:row.youtubeVideoId,
    localSourcePath:row.localFilePath,batchId:row.batchId,details:{evidence:'uploadHistory.readyAt'}
   }));
-  const trashId=`legacy:source-trashed:${row.id}`;
-  if(row.trashedAt&&!have.has(trashId))out.push(activityEvent({
+  const trashId=`legacy:source-trashed:${row.id}`,liveTrash=existing.some(e=>e.eventType==='SOURCE_TRASHED'&&e.jobId===row.jobId&&e.youtubeVideoId===row.youtubeVideoId);
+  if(row.trashedAt&&!have.has(trashId)&&!liveTrash)out.push(activityEvent({
    eventId:trashId,eventType:'SOURCE_TRASHED',status:'SUCCESS',source:'LEGACY_IMPORT',
    timestamp:row.trashedAt,channelId:row.channelId,channelName,profileId:row.profileId,jobId:row.jobId,youtubeVideoId:row.youtubeVideoId,
    localSourcePath:row.localFilePath,batchId:row.batchId,operationId:row.trashOperationId,
@@ -115,7 +115,7 @@ export type LegacyMetadataHistoryRow={
 export function legacyMetadataJournal(rows:LegacyMetadataHistoryRow[],existing:ActivityEvent[]):ActivityEvent[]{
  const have=new Set(existing.map(x=>x.eventId)),out:ActivityEvent[]=[];
  for(const row of rows){
-  const id=`legacy:metadata:${row.operationId}`;if(have.has(id))continue;
+  const id=`legacy:metadata:${row.operationId}`;if(have.has(id)||existing.some(e=>e.operationId===row.operationId&&(e.eventType==='METADATA_UPDATE_SUCCEEDED'||e.eventType==='METADATA_UPDATE_FAILED')))continue;
   const status:ActivityStatus=row.status==='success'?'SUCCESS':row.status==='partial'?'PARTIAL':'FAILED';
   out.push(activityEvent({
    eventId:id,eventType:row.status==='failed'?'METADATA_UPDATE_FAILED':'METADATA_UPDATE_SUCCEEDED',status,source:'LEGACY_IMPORT',
