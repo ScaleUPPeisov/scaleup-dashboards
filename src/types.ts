@@ -34,6 +34,7 @@ export type Channel={
   publishHour:number; publishMinute:number; language:string; genre:string; country:string;
   minTracks:number; targetDurationMin:number; enabled:boolean; color?:string;
   youtubeProfileId?:string; youtubeChannelId?:string;
+  renderFolderPath?:string;
   safeDailyUploadLimit?:number; knownUploadLimitState?:'unknown'|'ok'|'limited'; lastDailyLimitError?:string; lastUploadAt?:string;
   seo:{titlePatterns:string[]; descriptionTemplate:string; tags:string[]; banned:string[]; aiPrompt?:string};
   stats?:YoutubeChannelStatistics;
@@ -49,6 +50,7 @@ export type VideoJob={
   uploadAcceptedAt?:string; processingState?:YoutubeProcessingState; processingCheckedAt?:string; processingError?:string;
   remoteExists?:boolean; remoteCheckedAt?:string; identityVerifiedAt?:string; remotePrivacyStatus?:string;
   thumbnailPath?:string; uploadFingerprint?:string; uploadInterruptedAt?:string; endlumeSentAt?:string; removedFromPublishList?:boolean;
+  sourceOrigin?:'render-scan'; scanRecoveryState?:'CROSS_CHANNEL_SCAN_RECOVERY_REQUIRED';
   renderQueuedAt?:string; lastAutomationAt?:string;
 };
 
