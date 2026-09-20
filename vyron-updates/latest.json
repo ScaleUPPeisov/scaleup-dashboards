@@ -1,15 +1,11 @@
 {
-  "version": "2.1.14",
-  "notes": "VYRON 2.1.14 — исправлен GLOBAL Google OAuth onboarding и добавление YouTube-каналов; добавлены реальные подписчики, общие просмотры и количество видео для активного канала и всех аккаунтов.",
-  "pub_date": "2026-09-19T16:07:57Z",
+  "version": "2.1.15-rc.2",
+  "notes": "## VYRON 2.1.15-rc.2 — Schedule Sync False-Incomplete Hotfix\n\nBuilt on immutable RC1 source.\n\n- Separates factual uploads-playlist traversal from advisory pageInfo.totalResults.\n- A fully exhausted 203-ID playlist with 203 authoritative videos.list rows is complete even if pageInfo.totalResults is stale.\n- Returns exact incompleteReasons, missing IDs, pagination/truncation facts and diagnostic warnings.\n- Keeps full-inventory truth separate from schedule truth.\n- Adds targeted videos.list retry for only missing/unverified IDs.\n- Partial refreshes preserve the last complete cached inventory instead of replacing it with fewer rows.\n- Publisher shows the concrete reason for incomplete schedule sync and may use only a recent last-complete authoritative snapshot.\n- Existing full sync remains available.\n- youtube_list_existing_videos and targeted retry are method-ledger commands; compatibility estimator is not double-debited.\n- OAuth, Keychain, channel statistics, upload pipeline, ELARA work, Windows and production updater are untouched.\n\nPhysical 203-video channel acceptance is NOT marked PASS until tested on the operator Mac.",
+  "pub_date": "2026-09-20T04:33:25Z",
   "platforms": {
     "darwin-aarch64": {
-      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.14/VYRON.app.tar.gz",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM2IzdmhQY0x4dVJjbEQzVXlHL0UvRk1tQlpkYmJtZVBKalh0UldXZmZxdW91UTh6bHNON1pLcTROTEZseUJXR0VJcGJHNERDdTVXblFZV04venVWNGdBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5ODM0MDYxCWZpbGU6VllST04uYXBwLnRhci5negpjdjduUnp4YTBQMHlmZVZxZGJ2cWlrOFI0VWRJMzNrY2tmUGVOK1lISUFvOHdHaFk2eVdnbzY1T1dBVEFYeUR2aFR3bk92dkRtOVNraFJaUXhCUFJBdz09Cg=="
-    },
-    "windows-x86_64": {
-      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.13-windows-x64/VYRON_2.1.13_x64-setup.exe",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM2RpeUNXNGcvekhqcTA3Mm1wa2Nldk9ZVllMVDc5QitsWU4vdUV4YW1BUEJFL1VQU2NRRDc5c1NkaW9UNzZsZ3g2WS9tYUZTNmxsSElYaStXZStJbmdBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5ODI4ODM3CWZpbGU6VllST05fMi4xLjEzX3g2NC1zZXR1cC5leGUKeVVzYXZaQTJ1MVVjMXlzZHZUQ3IwYzFTZ1ZVS213emRBcVQ3L21FVitnZi8vVUVmYXByNHZ1UEQyUUdsa1dHVFFpS1YzK0xqL1VENTJJd2llclpEQlE9PQo="
+      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.15-rc.2/VYRON.app.tar.gz",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM1pqOVUvU1Q3MlA0cmdGdWUrMnpyeG5kc0NlSjBPdmkxVWhXNnZ4UmN2V1ZWb1JwSEJ4SXp1M1NDK0VSRXdTS0NkZXlxQnRvQmdRVFRmSDdnek5MSmdZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5ODc4Nzg2CWZpbGU6VllST04uYXBwLnRhci5nego2UzVuWGw1SklYRE5wTkxEN1hxQTAyZzZ4bUdNSk83MlZTSUl2Y2JIMlR3Uzl3cDhOelRSQUFnTlY1T2lkbHpvV21Ib2NHZUthYVUyYUpSalNnc01Bdz09Cg=="
     }
   }
 }
