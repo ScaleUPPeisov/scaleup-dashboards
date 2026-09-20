@@ -7,6 +7,7 @@ import {channelStatsStatusLabel,compactChannelStat,exactChannelStat,formatStatsU
 import {refreshYoutubeChannelStatistics,refreshYoutubeProfileStatistics,type ChannelStatisticsRefreshProgress} from './youtubeChannelStatsRuntime';
 import {journal} from './activityJournalRuntime';
 import {resolveOAuthKeychainErrors} from './errorHistory';
+import {humanizeError} from './errorCenter';
 
 type BrowserOption={id:string;label:string;available:boolean};
 type DuplicateChannel={profileId:string;channelId?:string;title?:string};
@@ -156,7 +157,8 @@ export function AccountsPage(){
     setHealth(h=>({...h,[reconnectId]:{ok:true,status:'CONNECTED',channelId:result.authorizedChannelId,channelTitle:result.channelTitle}}));
     resolveOAuthKeychainErrors(reconnectId);
     journal({eventId:`oauth-profile-reconnected:${reconnectId}:${Date.now()}`,eventType:'OAUTH_PROFILE_RECONNECTED',status:'SUCCESS',source:'LIVE_OPERATION',profileId:reconnectId,channelId:boundChannel(profile||{id:reconnectId,channelId:result.authorizedChannelId} as YoutubeProfile)?.id,channelName:result.channelTitle,details:{authorizedChannelId:result.authorizedChannelId,profileUuidPreserved:result.profileUuidPreserved,keychainReadback:result.keychainReadback,youtubeIdentityRequests:result.youtubeIdentityRequests,videosInsert:result.videosInsert}});
-    toast(`✓ ${result.channelTitle||result.authorizedChannelId} переподключён. Profile UUID сохранён.`);
+    if(result.credentialRotated)journal({eventId:`oauth-credential-rotated:${reconnectId}:${Date.now()}`,eventType:'OAUTH_CREDENTIAL_ROTATED',status:'SUCCESS',source:'LIVE_OPERATION',profileId:reconnectId,channelId:boundChannel(profile||{id:reconnectId,channelId:result.authorizedChannelId} as YoutubeProfile)?.id,channelName:result.channelTitle,details:{oldAccount:result.oldRefreshAccount||'',newAccount:result.activeRefreshAccount||'',reason:result.rotationReason||'KEYCHAIN_BLOCKED',osstatus:result.oldRefreshOsstatus??null,generation:result.credentialGeneration||0,profileUuidPreserved:result.profileUuidPreserved}});
+    toast(`✓ ${result.channelTitle||result.authorizedChannelId}: Google подключён ✓ • YouTube Channel verified ✓ • OAuth token stored ✓ • Secure readback ✓ • Profile UUID preserved ✓`);
     return
    }
    const p=await api.youtubeConnectGlobal(browser);
@@ -173,6 +175,9 @@ export function AccountsPage(){
     const channelId=message.match(/channel_id=([^;]+)/)?.[1]?.trim();
     const title=message.match(/title=([^;]+)/)?.[1]?.trim();
     if(profileId){setDuplicate({profileId,channelId,title});return}
+   }
+   if(/KEYCHAIN_|NEW_ITEM_READBACK|OAUTH_POST_COMMIT_READ|OAUTH_METADATA_POINTER_COMMIT/i.test(message)){
+    const h=humanizeError(message,'oauth');toast(`${h.title}. ${h.message}`);return
    }
    toast(message)
   }finally{setBusy(false)}
@@ -273,7 +278,7 @@ export function AccountsPage(){
 
   <section className="panel accountsPanel">
    <div className="panelHead"><div><small>YOUTUBE ACCOUNTS</small><h3>{profiles.length?`${profiles.length} OAuth profiles`:orphanMappings.length?`Профили требуют восстановления • ${orphanMappings.length} mappings`:'Аккаунтов пока нет'}</h3>{reconciliation&&<p>Каналов: {reconciliation.channelsTotal} • profiles: {reconciliation.profilesTotal} • mappings: {reconciliation.channelsWithYoutubeProfileId}</p>}{profiles.length>0&&<p>OAuth operational: <b>{oauthOperational}</b> • Keychain blocked: <b>{keychainBlocked}</b> • Reconnect required: <b>{reconnectRequired}</b> • Not checked: <b>{oauthNotChecked}</b></p>}</div>{keychainBlocked>0&&<button disabled={checking} onClick={checkAll}>Повторить безопасную проверку</button>}</div>
-   {profiles.length>0&&<details className="advancedPanel"><summary>OAuth credential diagnostics • без secret values</summary><div className="logs">{profiles.map(p=>{const x=credentialStates[p.id],denial=x?.keychainDenial,meta=x?.canonicalRefreshMetadata;return <div key={p.id}><b>{p.channelTitle||p.channelId||p.id}</b><small>Profile UUID: {p.id} • Channel ID: {p.channelId||'—'}</small><small>Canonical refresh: {x?.canonicalRefreshPresent?'PRESENT':'ABSENT'} • current read: {x?.canonicalRefreshAccessibleThisProcess?'ACCESSIBLE':denial?'DENIED':'NOT CHECKED'} • state: {x?.credentialState||'NOT_CHECKED'}</small><small>Metadata: {meta?.metadataEnumeration||'NOT CHECKED'} • OSStatus: {typeof denial?.currentOsstatus==='number'?denial.currentOsstatus:'unknown'} • root: {denial?.originalErrorCode||'—'} • last validation: {x?.lastValidationResult||'NOT_RUN'} • {x?.lastValidatedAt?new Date(x.lastValidatedAt).toLocaleString('ru-RU'):'—'}</small></div>})}</div></details>}
+   {profiles.length>0&&<details className="advancedPanel"><summary>OAuth credential diagnostics • без secret values</summary><div className="logs">{profiles.map(p=>{const x=credentialStates[p.id],denial=x?.keychainDenial,meta=x?.canonicalRefreshMetadata;return <div key={p.id}><b>{p.channelTitle||p.channelId||p.id}</b><small>Profile UUID: {p.id} • Channel ID: {p.channelId||'—'}</small><small>Canonical refresh: {x?.canonicalRefreshPresent?'PRESENT':'ABSENT'} • current read: {x?.canonicalRefreshAccessibleThisProcess?'ACCESSIBLE':denial?'DENIED':'NOT CHECKED'} • state: {x?.credentialState||'NOT_CHECKED'}</small><small>Metadata: {meta?.metadataEnumeration||'NOT CHECKED'} • generation: {x?.credentialGeneration??0} • OSStatus: {typeof denial?.currentOsstatus==='number'?denial.currentOsstatus:'unknown'} • root: {denial?.originalErrorCode||'—'} • legacy blocked: {x?.legacyBlockedAccounts?.length||0} • last validation: {x?.lastValidationResult||'NOT_RUN'} • {x?.lastValidatedAt?new Date(x.lastValidatedAt).toLocaleString('ru-RU'):'—'}</small></div>})}</div></details>}
    {!profiles.length
     ?<div className="empty">{orphanMappings.length?<><b>Метаданные OAuth-профилей не найдены, но каналы сохранены</b><p>Ничего не удалено автоматически. Исправьте GLOBAL OAuth и проверьте OAuth metadata; массовое переподключение не запускается.</p>{orphanMappings.slice(0,31).map(x=><p key={x.channelId}><b>{x.channelName}</b> • ORPHAN_MAPPING • {x.youtubeProfileId}</p>)}</>:<><b>Подключи первый YouTube-канал</b><p>Настройте GLOBAL OAuth Client один раз, затем нажмите «+ Добавить канал», выберите браузер и нужный Google-аккаунт.</p></>}</div>
     :<div className="accountList">{profiles.map(p=>{
