@@ -4,7 +4,8 @@ export type JobStatus='NEED_IMAGE'|'WAITING_MUSIC'|'READY_RENDER'|'RENDERING'|'R
 export type Priority='red'|'orange'|'yellow'|'green';
 export type MetadataSource='template'|'import'|'ai';
 export type StorageLifecycleState='NEW'|'RENDERED'|'QUEUED'|'UPLOADING'|'UPLOADED'|'FAILED'|'TRASHED';
-export type UploadHistoryRecord={id:string;jobId:string;channelId:string;profileId?:string;youtubeChannelId?:string;youtubeVideoId:string;localFilePath:string;originalFilename:string;projectId?:string;sourceProjectPath?:string;uploadedAt:string;fileSize:number;sha256:string;publishAt?:string;status:'UPLOADED';overrideDuplicate?:boolean;trashedAt?:string};
+export type YoutubeProcessingState='UPLOAD_ACCEPTED'|'YOUTUBE_PROCESSING'|'READY'|'PROCESSING_FAILED'|'REJECTED'|'PROCESSING_UNKNOWN';
+export type UploadHistoryRecord={id:string;jobId:string;channelId:string;profileId?:string;youtubeChannelId?:string;youtubeVideoId:string;localFilePath:string;originalFilename:string;projectId?:string;sourceProjectPath?:string;uploadedAt:string;fileSize:number;sha256:string;publishAt?:string;status:'UPLOADED';overrideDuplicate?:boolean;trashedAt?:string;processingState?:YoutubeProcessingState;processingCheckedAt?:string;processingStatus?:string;processingError?:string;readyAt?:string;identityVerifiedAt?:string};
 export type FingerprintCacheEntry={path:string;size:number;mtimeMs:number;sha256:string;computedAt:string};
 export type ProjectLifecycleRecord={projectId:string;jobId?:string;projectPath:string;renderPath?:string;status:'RENDERED'|'SAFE_TO_CLEAN';renderExists:boolean;youtubeVideoId?:string;uploadedAt?:string;updatedAt:string};
 
@@ -34,6 +35,7 @@ export type VideoJob={
   title:string; description:string; tags:string[]; error?:string; topic?:string;
   metadataSource?:MetadataSource; metadataLocked?:boolean;
   youtubeVideoId?:string; uploadProgress?:number; uploadedAt?:string; storageLifecycle?:StorageLifecycleState;
+  uploadAcceptedAt?:string; processingState?:YoutubeProcessingState; processingCheckedAt?:string; processingError?:string;
   thumbnailPath?:string; uploadFingerprint?:string; uploadInterruptedAt?:string; endlumeSentAt?:string; removedFromPublishList?:boolean;
   renderQueuedAt?:string; lastAutomationAt?:string;
 };
