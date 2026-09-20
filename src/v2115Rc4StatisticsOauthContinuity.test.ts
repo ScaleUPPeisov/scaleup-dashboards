@@ -76,10 +76,12 @@ describe('VYRON RC4 statistics OAuth continuity contracts',()=>{
 
  it('one broken profile is isolated instead of invalidating global config',()=>{
   const runtime=read('src/youtubeChannelStatsRuntime.ts');
-  expect(runtime).toContain("credentialStatus!=='RECONNECT_REQUIRED'");
-  expect(runtime).toContain("credentialStatus!=='KEYCHAIN_ERROR'");
-  expect(runtime).toContain('rejected.push({row:driver,error:String(error)})');
-  expect(runtime).toContain('pending=pending.filter');
+  expect(runtime).toContain("BLOCKED_STATS_CREDENTIAL_STATES");
+  expect(runtime).toContain("'KEYCHAIN_BLOCKED'");
+  expect(runtime).toContain("'RECONNECT_REQUIRED'");
+  expect(runtime).toContain('planStatisticsBatchDrivers');
+  expect(runtime).toContain('credentialFailures.push');
+  expect(runtime).toContain('for(const driver of plan.candidates)');
   expect(runtime).not.toContain('youtubeDisconnect');
  });
 
