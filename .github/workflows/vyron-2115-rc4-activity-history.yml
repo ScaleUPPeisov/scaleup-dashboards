@@ -1,5 +1,5 @@
 name: VYRON 2.1.15 RC4 Activity History
-# reliability rerun: canonical upload-state contract
+# reliability rerun: canonical upload-state contract + scoped reconciliation
 # RC4 extended: Activity History + strict multi-channel Statistics Center (regression contracts updated)
 
 on:
