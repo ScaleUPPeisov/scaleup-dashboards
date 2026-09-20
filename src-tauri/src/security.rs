@@ -74,6 +74,7 @@ fn record_runtime(account:&str,operation:&str,cache:&str,osstatus:Option<i32>,mi
 const SERVICE:&str="com.scaleup.vyron.security";
 pub const LEGACY_SERVICE:&str=SERVICE;
 pub const CANONICAL_SERVICE:&str="com.scaleup.vyron.security.v2";
+pub const CANONICAL_ACCESSIBILITY_POLICY:&str="kSecAttrAccessibleWhenUnlocked(default)";
 static LEGACY_BACKEND_READS:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
 static CANONICAL_BACKEND_READS:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
 static CANONICAL_BACKEND_WRITES:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
@@ -233,15 +234,15 @@ fn secitem_no_ui_set(service:&str,account:&str,value:&[u8],kind:&str)->Result<()
  use core_foundation::base::{TCFType,CFType};
  use core_foundation::data::CFData;
  use core_foundation::dictionary::CFDictionary;
- use core_foundation::string::CFString;
- use security_framework_sys::item::{kSecAttrAccessible,kSecAttrAccessibleWhenUnlocked,kSecValueData};
+ use security_framework_sys::item::kSecValueData;
  use security_framework_sys::keychain_item::{SecItemAdd,SecItemUpdate};
 
+ // macOS generic-password items default to kSecAttrAccessibleWhenUnlocked.
+ // Keep the canonical item in the existing Keychain store: explicitly adding
+ // kSecAttrAccessible on macOS would require the Data Protection Keychain and
+ // would risk splitting update continuity across Keychain stores.
  let mut add_pairs=secitem_no_ui_base_query(service,account);
- unsafe{
-  add_pairs.push((CFString::wrap_under_get_rule(kSecAttrAccessible),CFString::wrap_under_get_rule(kSecAttrAccessibleWhenUnlocked).into_CFType()));
-  add_pairs.push((CFString::wrap_under_get_rule(kSecValueData),CFData::from_buffer(value).into_CFType()));
- }
+ add_pairs.push((unsafe{core_foundation::string::CFString::wrap_under_get_rule(kSecValueData)},CFData::from_buffer(value).into_CFType()));
  let add=CFDictionary::from_CFType_pairs(&add_pairs);
  let status=unsafe{SecItemAdd(add.as_concrete_TypeRef(),std::ptr::null_mut())};
  if status==0{return Ok(())}
@@ -249,10 +250,10 @@ fn secitem_no_ui_set(service:&str,account:&str,value:&[u8],kind:&str)->Result<()
 
  let query_pairs=secitem_no_ui_base_query(service,account);
  let query=CFDictionary::from_CFType_pairs(&query_pairs);
- let update_pairs=unsafe{vec![
-  (CFString::wrap_under_get_rule(kSecValueData),CFData::from_buffer(value).into_CFType()),
-  (CFString::wrap_under_get_rule(kSecAttrAccessible),CFString::wrap_under_get_rule(kSecAttrAccessibleWhenUnlocked).into_CFType()),
- ]};
+ let update_pairs=vec![(
+  unsafe{core_foundation::string::CFString::wrap_under_get_rule(kSecValueData)},
+  CFData::from_buffer(value).into_CFType()
+ )];
  let update=CFDictionary::from_CFType_pairs(&update_pairs);
  let update_status=unsafe{SecItemUpdate(query.as_concrete_TypeRef(),update.as_concrete_TypeRef())};
  if update_status==0{Ok(())}else{Err(keychain_error(kind,account,update_status,"SecItemUpdate UI=SKIP"))}
@@ -816,9 +817,9 @@ pub fn canonical_account_metadata_diagnostic(account:&str)->serde_json::Value{
     for key in whitelist{if let Some(value)=row.get(key){safe.insert(key.to_string(),value.clone());}}
     safe
    });
-   serde_json::json!({"account":account,"service":CANONICAL_SERVICE,"metadataEnumeration":if rows.is_empty(){"NOT_VISIBLE"}else{"VISIBLE"},"attributes":attrs,"denial":denial,"secretValuesIncluded":false,"secretReads":0})
+   serde_json::json!({"account":account,"service":CANONICAL_SERVICE,"accessibilityPolicy":CANONICAL_ACCESSIBILITY_POLICY,"metadataEnumeration":if rows.is_empty(){"NOT_VISIBLE"}else{"VISIBLE"},"attributes":attrs,"denial":denial,"secretValuesIncluded":false,"secretReads":0})
   },
-  Err(e)=>serde_json::json!({"account":account,"service":CANONICAL_SERVICE,"metadataEnumeration":"ERROR","errorCode":canonical_error_code(&e),"osstatus":inventory_osstatus(&e),"denial":denial,"secretValuesIncluded":false,"secretReads":0})
+  Err(e)=>serde_json::json!({"account":account,"service":CANONICAL_SERVICE,"accessibilityPolicy":CANONICAL_ACCESSIBILITY_POLICY,"metadataEnumeration":"ERROR","errorCode":canonical_error_code(&e),"osstatus":inventory_osstatus(&e),"denial":denial,"secretValuesIncluded":false,"secretReads":0})
  }
 }
 #[tauri::command]
