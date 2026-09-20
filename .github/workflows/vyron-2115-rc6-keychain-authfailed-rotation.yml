@@ -115,13 +115,14 @@ jobs:
             'src/types.ts',
             'src/v2115Rc5KeychainContinuity.test.ts',
             'src/v2115AddChannelStats.test.ts',
+            'src/v2113ExistingChannelRebind.test.ts',
             'src/v2115Rc6KeychainRotation.test.ts',
             'src/v213KeychainRecovery.test.ts',
           }
           changed=set(filter(None,subprocess.check_output(['git','diff','--name-only',f"{os.environ['SOURCE_RC5']}..HEAD"],text=True).splitlines()))
           extra=changed-allowed
           if extra: raise SystemExit('BLOCKER=UNAUTHORIZED_RC6_DIFF:'+','.join(sorted(extra)))
-          required={'package-lock.json','package.json','src-tauri/Cargo.lock','src-tauri/Cargo.toml','src-tauri/src/youtube.rs','src-tauri/tauri.conf.json','src/AccountsPage.tsx','src/activityJournalCore.ts','src/api.ts','src/errorCenter.ts','src/types.ts','src/v2115Rc6KeychainRotation.test.ts','src/v213KeychainRecovery.test.ts','src/v2115Rc5KeychainContinuity.test.ts','src/v2115AddChannelStats.test.ts'}
+          required={'package-lock.json','package.json','src-tauri/Cargo.lock','src-tauri/Cargo.toml','src-tauri/src/youtube.rs','src-tauri/tauri.conf.json','src/AccountsPage.tsx','src/activityJournalCore.ts','src/api.ts','src/errorCenter.ts','src/types.ts','src/v2115Rc6KeychainRotation.test.ts','src/v213KeychainRecovery.test.ts','src/v2115Rc5KeychainContinuity.test.ts','src/v2115AddChannelStats.test.ts','src/v2113ExistingChannelRebind.test.ts'}
           if not required <= changed: raise SystemExit('BLOCKER=RC6_DIFF_INCOMPLETE:'+','.join(sorted(required-changed)))
           pkg=json.load(open('package.json'));lock=json.load(open('package-lock.json'));conf=json.load(open('src-tauri/tauri.conf.json'))
           cargo=Path('src-tauri/Cargo.toml').read_text();clock=Path('src-tauri/Cargo.lock').read_text();v=os.environ['VERSION']
@@ -198,8 +199,8 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          npx vitest run src/v2115AddChannelStats.test.ts
-          echo 'V2115_ADD_CHANNEL_STATS=PASS'
+          npx vitest run src/v2115AddChannelStats.test.ts src/v2113ExistingChannelRebind.test.ts
+          echo 'RC6_REFRESH_TOKEN_SOURCE_CONTRACTS=PASS'
 
       - name: Targeted updater + full critical frontend regression
         shell: bash
