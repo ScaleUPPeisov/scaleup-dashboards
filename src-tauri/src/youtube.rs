@@ -1401,9 +1401,19 @@ pub async fn youtube_oauth_connect(
     let profile_id=reconnect_profile_id(None);
     let refresh=response_refresh.as_deref().map(str::trim).filter(|x|!x.is_empty()).map(str::to_string)
       .ok_or_else(||"OAUTH_REFRESH_TOKEN_REQUIRED: Google не вернул refresh_token для нового канала. Повторите consent.".to_string())?;
-    // New channels use the one GLOBAL OAuth client secret. Existing historical
-    // profile-specific client_secret items remain supported by the resolver for compatibility.
-    if !client_secret.is_empty(){security::canonical_set_secret(GOOGLE_CLIENT_SECRET,&client_secret)?;}
+    // New channels use the exact GLOBAL OAuth client secret account selected by
+    // google-config metadata. After an explicit RC3 repair this may be a rotated
+    // canonical account; never fall back to the old ACL-poisoned fixed account when
+    // the configured client matches.
+    if !client_secret.is_empty(){
+        let global_meta=load_google_config_metadata(&app)?;
+        let global_account=if global_meta.client_id.trim()==client_id{
+            google_client_secret_account(&global_meta)
+        }else{
+            GOOGLE_CLIENT_SECRET.to_string()
+        };
+        security::canonical_set_secret(&global_account,&client_secret)?;
+    }
     let profile = OAuthProfile {
         id: profile_id.clone(),
         client_id: client_id.clone(),
@@ -5194,6 +5204,14 @@ mod v2115_rc3_oauth_processing_tests{
   assert!(a.starts_with("google.client_secret.rc3."));
   assert_ne!(a,b);
   assert!(!a.contains("example.apps"));
+ }
+ #[test]
+ fn repaired_global_secret_account_is_reused_by_new_channel_connect(){
+  let source=include_str!("youtube.rs");
+  let body=source.split("async fn youtube_oauth_connect(").nth(1).unwrap();
+  let block=body.split("let profile = OAuthProfile").next().unwrap();
+  assert!(block.contains("google_client_secret_account(&global_meta)"));
+  assert!(block.contains("global_meta.client_id.trim()==client_id"));
  }
  #[test]
  fn processing_state_never_equates_upload_acceptance_with_ready(){
