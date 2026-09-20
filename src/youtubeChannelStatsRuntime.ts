@@ -90,19 +90,24 @@ export function refreshYoutubeProfileStatistics(profile:YoutubeProfile,operation
  return task;
 }
 
+const BLOCKED_STATS_CREDENTIAL_STATES=new Set(['KEYCHAIN_BLOCKED','RECONNECT_REQUIRED','MISSING','WRONG_CHANNEL','FAILED','KEYCHAIN_ERROR']);
+export function planStatisticsBatchDrivers(chunk:LinkedYoutubeChannel[]){
+ const unique=[...new Map(chunk.map(x=>[x.profile.id,x])).values()];
+ const blocked=unique.filter(x=>BLOCKED_STATS_CREDENTIAL_STATES.has(String(x.profile.credentialStatus||'')));
+ const candidates=unique.filter(x=>!BLOCKED_STATS_CREDENTIAL_STATES.has(String(x.profile.credentialStatus||'')));
+ return{
+  channelIds:[...new Set(chunk.map(x=>x.youtubeChannelId))],
+  candidates,
+  blocked:blocked.map(row=>({profileId:row.profile.id,channelName:row.channel.name,youtubeChannelId:row.youtubeChannelId,error:`OAUTH_CREDENTIAL_BLOCKED: status=${row.profile.credentialStatus}`} as ChannelCredentialFailure))
+ };
+}
+
 async function requestBatchWithDriverRotation(chunk:LinkedYoutubeChannel[],operationId:string){
- const ids=[...new Set(chunk.map(x=>x.youtubeChannelId))];
- const drivers=[...new Map(chunk.map(x=>[x.profile.id,x])).values()];
- const credentialFailures:ChannelCredentialFailure[]=[];
+ const plan=planStatisticsBatchDrivers(chunk),credentialFailures=[...plan.blocked];
  let lastError:unknown;
- for(const driver of drivers){
-  const known=driver.profile.credentialStatus;
-  if(['KEYCHAIN_BLOCKED','RECONNECT_REQUIRED','MISSING','WRONG_CHANNEL','FAILED','KEYCHAIN_ERROR'].includes(String(known||''))){
-   credentialFailures.push({profileId:driver.profile.id,channelName:driver.channel.name,youtubeChannelId:driver.youtubeChannelId,error:`OAUTH_CREDENTIAL_BLOCKED: status=${known}`});
-   continue;
-  }
+ for(const driver of plan.candidates){
   try{
-   const batch=await api.youtubeChannelStatisticsBatch(driver.profile.id,ids,operationId);
+   const batch=await api.youtubeChannelStatisticsBatch(driver.profile.id,plan.channelIds,operationId);
    return{batch,credentialFailures,driverProfileId:driver.profile.id};
   }catch(error){
    lastError=error;
