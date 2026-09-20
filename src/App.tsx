@@ -28,6 +28,7 @@ import {clearErrorHistory,readErrorHistory,removeErrorHistory,subscribeErrorHist
 import {useUpdaterRuntime} from './updaterRuntime';
 import {currentUpdaterBlockers,updaterBlockerText} from './updaterGuard';
 import {applyUploadProgressFact,seedActiveUploadFacts} from './uploadTelemetry';
+import {journalUploadProgressMilestone} from './activityJournalRuntime';
 import {applyStaleOperationPatches,buildStaleOperationPatches} from './staleOperationReconciliation';
 import {DashboardUploadSummary,GlobalUploadIndicator,UploadCenterGlobal} from './UploadCenter';
 import {ChannelStatisticsScheduler} from './ChannelStatisticsScheduler';
@@ -70,7 +71,7 @@ export function App(){
   useEffect(()=>{if(updaterStatus!=='AVAILABLE'||!updaterLatest)return;notifyInfo(`Доступно обновление VYRON YT PEISOV ${updaterLatest}`,'Слева сверху нажмите «Обновить».',{operationId:`update-available:${updaterLatest}`});void notifyUpdateAvailable(updaterLatest)},[updaterStatus,updaterLatest]);
   useEffect(()=>{if(!booted)return;void api.appVersion().then(v=>{const expected=localStorage.getItem('vyron:update-installing-version');if(expected&&expected===v){localStorage.removeItem('vyron:update-installing-version');markUpdated(v);notifySuccess('Обновление установлено',`VYRON YT PEISOV обновлён до версии ${v}.`,{operationId:`update-installed:${v}`})}})},[booted,markUpdated]);
   useEffect(()=>{document.documentElement.classList.toggle('reduceMotion',settings.reduceMotion)},[settings.reduceMotion]);
-  useEffect(()=>{let unlisten:(()=>void)|undefined;void api.onYoutubeProgress(applyUploadProgressFact).then(fn=>unlisten=fn);return()=>unlisten?.()},[]);
+  useEffect(()=>{let unlisten:(()=>void)|undefined;void api.onYoutubeProgress(f=>{applyUploadProgressFact(f);journalUploadProgressMilestone(f)}).then(fn=>unlisten=fn);return()=>unlisten?.()},[]);
   useEffect(()=>{if(!booted)return;void Promise.all([api.youtubeActiveUploads(),api.youtubeUploadSessions()]).then(([facts,sessions])=>{seedActiveUploadFacts(facts);const patches=buildStaleOperationPatches(useApp.getState().jobs,{uploadsKnown:true,rendersKnown:false,activeUploadIds:new Set(facts.map(x=>x.jobId)),activeRenderIds:new Set(),uploadSessionIds:new Set(sessions.map(x=>x.jobId)),now:new Date().toISOString()});applyStaleOperationPatches(patches,useApp.getState().patchJob)}).catch(()=>{})},[booted]);
   useEffect(()=>{let unlisten:(()=>void)|undefined;void api.onYoutubeApiRequest(()=>{}).then(fn=>unlisten=fn);return()=>unlisten?.()},[]);
   useEffect(()=>{if(!booted||!settings.autopilotEnabled)return;void runAutopilotCycle();const ms=Math.max(10,settings.autopilotIntervalSec||30)*1000;const id=window.setInterval(()=>void runAutopilotCycle(),ms);return()=>window.clearInterval(id)},[booted,settings.autopilotEnabled,settings.autopilotIntervalSec]);
