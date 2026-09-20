@@ -1,5 +1,5 @@
 name: VYRON 2.1.15 RC4 Activity History
-# retry: RC4 regression fixtures aligned with explicit source lifecycle
+# RC4 extended: Activity History + strict multi-channel Statistics Center
 
 on:
   push:
@@ -68,16 +68,17 @@ jobs:
             'package.json','package-lock.json','src-tauri/Cargo.toml','src-tauri/Cargo.lock','src-tauri/tauri.conf.json',
             'src-tauri/src/lib.rs','src-tauri/src/local_delete.rs','src-tauri/src/storage.rs','src-tauri/src/youtube.rs',
             'src/AccountsPage.tsx','src/ActivityHistory.tsx','src/App.tsx','src/ExistingVideos.tsx','src/MetadataPage.tsx',
-            'src/PublisherOS.tsx','src/UploadCenter.tsx','src/UploadProcessingMonitor.tsx','src/YouTubeCenter.tsx',
+            'src/PublisherOS.tsx','src/UploadCenter.tsx','src/UploadProcessingMonitor.tsx','src/YouTubeCenter.tsx','src/StatisticsCenter.tsx',
+            'src/ChannelRunway.tsx','src/ChannelStatisticsScheduler.tsx','src/YouTubeChannelBar.tsx','src/youtubeChannelStatsRuntime.ts','src/youtubeStatisticsCenter.ts',
             'src/activityJournalCore.ts','src/activityJournalRuntime.ts','src/api.ts','src/storageLifecycle.ts','src/store.ts',
             'src/types.ts','src/uploadQueue.ts','src/uploadQueueRuntime.ts','src/storageLifecycle.test.ts','src/v2115Rc3CriticalStability.test.ts',
-            'src/v2115Rc4ActivityJournal.test.ts','src/v2115Rc4ActivityWiring.test.ts',
+            'src/v2115Rc4ActivityJournal.test.ts','src/v2115Rc4ActivityWiring.test.ts','src/v2115Rc4StatisticsCenter.test.ts','src/v2115Rc4StatisticsOauthContinuity.test.ts','tests/stateMigration_v095.test.ts',
             '.github/workflows/vyron-2115-rc4-activity-history.yml',
           }
           changed=set(filter(None,subprocess.check_output(['git','diff','--name-only',f"{os.environ['SOURCE_RC3']}..HEAD"],text=True).splitlines()))
           extra=changed-allowed
           if extra: raise SystemExit('BLOCKER=UNAUTHORIZED_RC4_DIFF:'+','.join(sorted(extra)))
-          required={'src/ActivityHistory.tsx','src/activityJournalCore.ts','src/activityJournalRuntime.ts','src/store.ts','src/types.ts','src/UploadCenter.tsx','src/uploadQueueRuntime.ts','src/MetadataPage.tsx','src/ExistingVideos.tsx','src-tauri/src/storage.rs','src-tauri/src/youtube.rs','src-tauri/src/local_delete.rs'}
+          required={'src/ActivityHistory.tsx','src/activityJournalCore.ts','src/activityJournalRuntime.ts','src/store.ts','src/types.ts','src/UploadCenter.tsx','src/uploadQueueRuntime.ts','src/MetadataPage.tsx','src/ExistingVideos.tsx','src-tauri/src/storage.rs','src-tauri/src/youtube.rs','src-tauri/src/local_delete.rs','src/StatisticsCenter.tsx','src/youtubeStatisticsCenter.ts','src/youtubeChannelStatsRuntime.ts','src/ChannelRunway.tsx'}
           if not required <= changed: raise SystemExit('BLOCKER=RC4_DIFF_INCOMPLETE:'+','.join(sorted(required-changed)))
           pkg=json.load(open('package.json'));lock=json.load(open('package-lock.json'));conf=json.load(open('src-tauri/tauri.conf.json'))
           cargo=Path('src-tauri/Cargo.toml').read_text();clock=Path('src-tauri/Cargo.lock').read_text();v=os.environ['VERSION']
@@ -126,6 +127,7 @@ jobs:
           assert 'activityJournal:ActivityEvent[]' in types
           assert "SourceLifecycleState='PRESENT'" in types
           assert 'activityJournal:[]' in store and 'appendActivity' in store
+          assert 'statisticsHistory:{}' in store and 'recordStatisticsSnapshot' in store
           assert 'RECONSTRUCTED' in journal and 'LEGACY_IMPORT' in journal
           assert 'refresh_token' not in ''.join([x for x in []])
           assert 'История действий' in history and 'Historical' not in history
@@ -134,6 +136,13 @@ jobs:
           assert "eventType:'METADATA_UPDATE_STARTED'" in metadata
           assert "eventType:'INVENTORY_SYNC_STARTED'" in existing
           assert 'youtube_video_processing_status_batch' in rust and 'ids.chunks(50)' in rust
+          stats=Path('src/youtubeChannelStatsRuntime.ts').read_text();stats_ui=Path('src/StatisticsCenter.tsx').read_text();stats_core=Path('src/youtubeStatisticsCenter.ts').read_text()
+          assert 'classification.eligible.filter' in stats
+          assert 'requestBatchWithDriverRotation' in stats
+          assert "STATS_REFRESH_BATCH" in journal
+          assert 'classifyYoutubeChannels' in stats_core
+          assert 'Статистика каналов' in stats_ui
+          assert 'youtube_channel_statistics_batch' in rust and 'operation_id.as_deref()' in rust
           assert 'pub fn local_source_status' in trash
           assert 'trash::delete' in trash and 'fs::remove_file' not in trash
           print('RC4_SOURCE_CONTRACTS=PASS')
@@ -149,6 +158,9 @@ jobs:
           npx vitest run \
             src/v2115Rc4ActivityJournal.test.ts \
             src/v2115Rc4ActivityWiring.test.ts \
+            src/v2115Rc4StatisticsCenter.test.ts \
+            src/v2115Rc4StatisticsOauthContinuity.test.ts \
+            tests/stateMigration_v095.test.ts \
             src/v2115Rc3CriticalStability.test.ts \
             src/storageLifecycle.test.ts \
             src/uploadTelemetry.test.ts \
@@ -170,6 +182,8 @@ jobs:
           set -Eeuo pipefail
           cargo test --manifest-path src-tauri/Cargo.toml storage::tests -- --nocapture
           cargo test --manifest-path src-tauri/Cargo.toml v2115_rc3_oauth_processing_tests -- --nocapture
+          cargo test --manifest-path src-tauri/Cargo.toml v2114_channel_statistics_tests -- --nocapture
+          cargo test --manifest-path src-tauri/Cargo.toml keychain_prompt_architecture_tests -- --nocapture
           cargo test --manifest-path src-tauri/Cargo.toml v2115_rc2_schedule_sync_hotfix_tests -- --nocapture
           cargo test --manifest-path src-tauri/Cargo.toml v219_rc4_inventory_and_acl_tests -- --nocapture
           cargo test --manifest-path src-tauri/Cargo.toml security::tests -- --skip security::tests::keychain_roundtrip --nocapture
@@ -313,7 +327,7 @@ jobs:
           set -Eeuo pipefail
           FINAL_HEAD="$(git rev-parse HEAD)"
           cat >/tmp/release-notes.md <<'EOF'
-          ## VYRON 2.1.15-rc.4 — Persistent YouTube Activity History
+          ## VYRON 2.1.15-rc.4 — Activity History + Multi-Channel Statistics
 
           Built directly on immutable v2.1.15-rc.3.
 
@@ -328,11 +342,18 @@ jobs:
           - Repeated CLEANUP_NOT_READY noise is aggregated into one batch result.
           - System Trash remains the only destructive cleanup path; no permanent delete.
           - RC3 OAuth/Keychain/profile protections and RC2 schedule truth remain intact.
+          - Adds a separate Multi-Channel Statistics Center with exact linked-channel classification.
+          - Refresh All excludes local-only/future/orphan mappings and deduplicates duplicate YouTube Channel IDs.
+          - Basic channel statistics are fetched in batches up to 50 IDs with factual method-ledger quota accounting.
+          - Adds persistent raw-number statistics snapshots, baseline migration, 24h/7d/30d/monthly history and explicit insufficient-history states.
+          - Existing YouTube Analytics scopes expose period views/watch time/duration/subscriber/engagement metrics without forced reconnect.
+          - Plan Channels now separates local projects from linked YouTube channels and gates YouTube actions on exact mappings.
+          - credentials.json remains explicit import/repair only; Statistics paths never open Finder or trigger OAuth reconnect.
           - macOS and Windows updater feeds are NOT modified by this prerelease.
 
           Physical reconciliation of existing operator data is required before any stable release or updater promotion.
           EOF
-          gh release create "$TAG" --repo "$REPO" --target "$FINAL_HEAD" --title 'VYRON 2.1.15 RC4 — Activity History' --prerelease --notes-file /tmp/release-notes.md \
+          gh release create "$TAG" --repo "$REPO" --target "$FINAL_HEAD" --title 'VYRON 2.1.15 RC4 — Activity History + Statistics' --prerelease --notes-file /tmp/release-notes.md \
             "production/VYRON-$VERSION-arm64.dmg" "production/VYRON-$VERSION-arm64.dmg.sha256" \
             production/VYRON.app.tar.gz production/VYRON.app.tar.gz.sha256 production/VYRON.app.tar.gz.sig \
             production/codesign-details.txt production/designated-requirement.txt
