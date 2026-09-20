@@ -1,7 +1,7 @@
-export type FinalAuthStatus='CONNECTED'|'CANONICAL_PRESENT_UNVERIFIED'|'CLIENT SECRET REQUIRED'|'RECONNECT REQUIRED'|'MISSING'|'CONNECTING'|'VALIDATING'|'WRONG CHANNEL'|'FAILED';
+export type FinalAuthStatus='CONNECTED'|'KEYCHAIN BLOCKED'|'CANONICAL_PRESENT_UNVERIFIED'|'NOT CHECKED'|'CLIENT SECRET REQUIRED'|'RECONNECT REQUIRED'|'MISSING'|'CONNECTING'|'VALIDATING'|'WRONG CHANNEL'|'FAILED';
 export type RecoveryChannelLike={id:string;name:string;youtubeProfileId?:string;youtubeChannelId?:string};
 export type RecoveryProfileLike={id:string;channelId?:string;channelTitle?:string;preferredBrowser?:string};
-export type RecoveryCredentialStateLike={profileUuid:string;expectedChannelId?:string|null;canonicalRefreshPresent?:boolean;legacyRefreshPresent?:boolean;migrationState?:string;credentialState:'CONNECTED'|'CANONICAL_PRESENT_UNVERIFIED'|'RECONNECT_REQUIRED'|'MISSING'|'WRONG_CHANNEL'|'FAILED';credentialSchemaVersion?:number;lastValidatedAt?:string|null;lastValidationResult?:string;clientSecretState?:'PROFILE_CANONICAL'|'GLOBAL_EXACT_MATCH'|'GLOBAL_CURRENT_READY'|'CLIENT_SECRET_REIMPORT_REQUIRED'|'MISSING';clientSecretPresent?:boolean};
+export type RecoveryCredentialStateLike={profileUuid:string;expectedChannelId?:string|null;canonicalRefreshPresent?:boolean;legacyRefreshPresent?:boolean;migrationState?:string;credentialState:'READY'|'CONNECTED'|'KEYCHAIN_BLOCKED'|'CANONICAL_PRESENT_UNVERIFIED'|'NOT_CHECKED'|'RECONNECT_REQUIRED'|'MISSING'|'WRONG_CHANNEL'|'FAILED';credentialSchemaVersion?:number;lastValidatedAt?:string|null;lastValidationResult?:string;clientSecretState?:'PROFILE_CANONICAL'|'GLOBAL_EXACT_MATCH'|'GLOBAL_CURRENT_READY'|'CLIENT_SECRET_REIMPORT_REQUIRED'|'MISSING';clientSecretPresent?:boolean};
 export type RecoveryTransient={status:FinalAuthStatus;detail?:string};
 export type FinalRecoveryRow={profileId:string;profile?:RecoveryProfileLike;channels:RecoveryChannelLike[];expectedChannelId?:string;status:FinalAuthStatus;detail:string;stale:boolean;duplicate:boolean;conflict:boolean};
 
@@ -24,9 +24,15 @@ export function buildFinalRecoveryRows(channels:RecoveryChannelLike[],profiles:R
   if(!state)return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'MISSING',detail:'Credential state отсутствует. Требуется переподключение Google без изменения Profile UUID.',stale,duplicate,conflict} satisfies FinalRecoveryRow;
   if(state.clientSecretState==='CLIENT_SECRET_REIMPORT_REQUIRED')return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'CLIENT SECRET REQUIRED',detail:'Старый OAuth Client secret есть только в legacy Keychain. VYRON его не читает. Настройте один GLOBAL OAuth Client VYRON через credentials.json — один раз для всех каналов.',stale,duplicate,conflict} satisfies FinalRecoveryRow;
   if(state.clientSecretState==='MISSING')return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'CLIENT SECRET REQUIRED',detail:'GLOBAL OAuth Client VYRON настроен не полностью: Client Secret отсутствует. Импортируйте один credentials.json для всего приложения, затем переподключайте каналы через нужный браузер.',stale,duplicate,conflict} satisfies FinalRecoveryRow;
-  if(state.credentialState==='CONNECTED'){
+  if(state.credentialState==='READY'||state.credentialState==='CONNECTED'){
    const suffix=state.lastValidatedAt?` Последняя проверка: ${state.lastValidatedAt}.`:'';
-   return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'CONNECTED',detail:`Canonical V2 credential подтверждён: Keychain readback • token refresh • channel identity PASS.${suffix}`,stale,duplicate,conflict} satisfies FinalRecoveryRow
+   return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'CONNECTED',detail:`Canonical V2 credential подтверждён: текущий Keychain read PASS • предыдущая/текущая token/channel validation PASS.${suffix}`,stale,duplicate,conflict} satisfies FinalRecoveryRow
+  }
+  if(state.credentialState==='KEYCHAIN_BLOCKED'){
+   return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'KEYCHAIN BLOCKED',detail:'Canonical refresh token существует, но macOS Keychain сейчас блокирует no-UI read. Сначала безопасный retry; Google reconnect не запускается автоматически.',stale,duplicate,conflict} satisfies FinalRecoveryRow
+  }
+  if(state.credentialState==='NOT_CHECKED'){
+   return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'NOT CHECKED',detail:'Credential ещё не проверялся в текущем процессе. Это не reconnect-required.',stale,duplicate,conflict} satisfies FinalRecoveryRow
   }
   if(state.credentialState==='CANONICAL_PRESENT_UNVERIFIED'){
    return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'CANONICAL_PRESENT_UNVERIFIED',detail:'Canonical V2 credential найден. Он не считается CONNECTED до успешной реальной OAuth/YouTube проверки.',stale,duplicate,conflict} satisfies FinalRecoveryRow
