@@ -109,6 +109,8 @@ jobs:
             'src-tauri/src/youtube.rs',
             'src-tauri/tauri.conf.json',
             'src/AccountsPage.tsx',
+            'src/authRecoveryFinalCore.ts',
+            'src/AuthRecoveryCenter.tsx',
             'src/App.tsx',
             'src/SettingsOS.tsx',
             'src/activityJournalCore.ts',
@@ -130,7 +132,7 @@ jobs:
           changed=set(filter(None,subprocess.check_output(['git','diff','--name-only',f"{os.environ['SOURCE_RC4']}..HEAD"],text=True).splitlines()))
           extra=changed-allowed
           if extra: raise SystemExit('BLOCKER=UNAUTHORIZED_RC5_DIFF:'+','.join(sorted(extra)))
-          required={'package.json','package-lock.json','src-tauri/Cargo.toml','src-tauri/Cargo.lock','src-tauri/tauri.conf.json','src/App.tsx','src/SettingsOS.tsx','src/updaterRuntime.ts','src/updaterSchedule.ts','src/updaterPolicy.ts','src-tauri/src/security.rs','src-tauri/src/youtube.rs','src-tauri/src/lib.rs','src/api.ts','src/errorCenter.ts','src/errorHistory.ts','src/types.ts','src/activityJournalCore.ts','src/AccountsPage.tsx','src/youtubeChannelStatsRuntime.ts','src/v2115Rc5KeychainContinuity.test.ts'}
+          required={'package.json','package-lock.json','src-tauri/Cargo.toml','src-tauri/Cargo.lock','src-tauri/tauri.conf.json','src/App.tsx','src/SettingsOS.tsx','src/updaterRuntime.ts','src/updaterSchedule.ts','src/updaterPolicy.ts','src-tauri/src/security.rs','src-tauri/src/youtube.rs','src-tauri/src/lib.rs','src/api.ts','src/errorCenter.ts','src/errorHistory.ts','src/types.ts','src/activityJournalCore.ts','src/AccountsPage.tsx','src/youtubeChannelStatsRuntime.ts','src/v2115Rc5KeychainContinuity.test.ts','src/AuthRecoveryCenter.tsx','src/authRecoveryFinalCore.ts'}
           if not required <= changed: raise SystemExit('BLOCKER=RC5_DIFF_INCOMPLETE:'+','.join(sorted(required-changed)))
           pkg=json.load(open('package.json'));lock=json.load(open('package-lock.json'));conf=json.load(open('src-tauri/tauri.conf.json'))
           cargo=Path('src-tauri/Cargo.toml').read_text();clock=Path('src-tauri/Cargo.lock').read_text();v=os.environ['VERSION']
