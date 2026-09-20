@@ -1,5 +1,5 @@
 name: VYRON 2.1.15 RC3 Critical Stabilization
-# retry: whitelist updated RC3 regression test after second factual CI failure
+# retry: RC3 API type contract corrected after TypeScript factual CI failure
 
 on:
   push:
