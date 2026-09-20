@@ -89,8 +89,8 @@ describe('VYRON 2.1.15 RC5 Keychain / profile continuity',()=>{
   expect(sec).toContain('kSecUseAuthenticationUISkip');
   expect(sec).toContain('kSecAttrAccessibleWhenUnlocked');
   expect(sec).not.toContain('kSecAccessControlUserPresence');
-  expect(yt).toContain('#[serde(default, skip_serializing)]\n    refresh_token: String');
-  expect(yt).toContain('#[serde(default, skip_serializing)]\n    access_token: String');
-  expect(yt).toContain('#[serde(default, skip_serializing)]\n    client_secret: String');
+  expect(yt).toMatch(/#\[serde\(default, skip_serializing\)\]\r?\n\s+refresh_token: String/);
+  expect(yt).toMatch(/#\[serde\(default, skip_serializing\)\]\r?\n\s+access_token: String/);
+  expect(yt).toMatch(/#\[serde\(default, skip_serializing\)\]\r?\n\s+client_secret: String/);
  });
 });
