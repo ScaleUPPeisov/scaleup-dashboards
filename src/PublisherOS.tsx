@@ -23,7 +23,7 @@ import {cleanupEligibleUpload,markHistoryTrashed,nextProjectLifecycle,recordVeri
 import {resolveProductionRoot} from './productionPrefs';
 import {configureUploadQueue,enqueueUpload,waitForUploadQueueEntries} from './uploadQueueRuntime';
 import {existingSyncIncompleteSummary,readAuthoritativeExistingSnapshot,replaceExistingCacheFromSync} from './channelSchedule';
-import {journal,journalProcessingState} from './activityJournalRuntime';
+import {journal} from './activityJournalRuntime';
 import {cleanupPreclassification} from './activityJournalCore';
 
 const status=(j:VideoJob)=>j.status==='READY_UPLOAD'?'В ОЧЕРЕДИ':j.status==='UPLOADING'?'ЗАГРУЖАЕТСЯ':j.status==='SCHEDULED'?'YOUTUBE ✓':j.status==='ERROR'?'ОШИБКА':j.status;
@@ -70,33 +70,47 @@ export function PublisherOS(){
  async function syncScheduleFromYoutube(){if(!profileId){notifyWarning('Синхронизация недоступна','Подключите YouTube OAuth для этого канала.');return}setScheduleSync(x=>({...x,state:'loading'}));try{const r=await api.youtubeListExisting(profileId,1000);replaceExistingCacheFromSync(channelId,r.videos||[],r);const scheduleComplete=r.scheduleComplete??(r.complete&&!r.draftCandidateCount);let source=r.videos||[],sourceNote='';if(!scheduleComplete){const reasons=existingSyncIncompleteSummary(r),snapshot=readAuthoritativeExistingSnapshot(channelId),at=snapshot?.updatedAt?Date.parse(snapshot.updatedAt):NaN,ageMs=Number.isFinite(at)?Date.now()-at:Number.POSITIVE_INFINITY,fresh=Boolean(snapshot?.videos.length)&&ageMs>=0&&ageMs<=15*60*1000;if(fresh&&snapshot){source=snapshot.videos;sourceNote=`Текущая проверка неполная: ${reasons.join(' • ')}. Расписание рассчитано по последней полной синхронизации ${new Date(snapshot.updatedAt!).toLocaleString('ru-RU')}.`}else{const note=`Синхронизация канала неполная: ${reasons.join(' • ')}`;setScheduleSync(x=>({...x,state:'error',note}));notifyWarning('Синхронизация канала неполная',`${reasons.join(' • ')}. Откройте «Загруженные» → «Проверить недостающие»; полный inventory повторно читать не требуется, если известны missing IDs.`);return}}const plan=recommendScheduleContinuation(source,draft.scheduleMode,scheduleTime,new Date()),note=sourceNote||(plan.lastPublishAt?'Продолжаем после последней отложенной публикации YouTube':'Будущих отложенных публикаций нет — выбрана ближайшая безопасная дата');setScheduleSync({state:'ready',lastScheduled:plan.lastPublishAt,suggestedStart:plan.recommendedStart,note,futureCount:plan.futureCount,occupied:plan.occupied,timezone:plan.timezone});if(sourceNote)notifyWarning('Использован последний полный snapshot',sourceNote);else notifySuccess('Расписание синхронизировано',plan.lastPublishAt?`Последняя дата на YouTube: ${scheduleDateTimeLabel(plan.lastPublishAt)}. Рекомендуемое начало: ${plan.recommendedStart}.`:`Будущих scheduled-видео нет. Рекомендуемое начало: ${plan.recommendedStart}.`)}catch(e){const h=humanizeError(e,'youtube');setScheduleSync(x=>({...x,state:'error',note:h.message}));notifyError(h.title,h.message,{technicalDetail:h.detail})}}
  async function chooseThumbnails(){const x=await api.chooseImages();if(x.length){const mapped=mapThumbnailsToJobs(selected,x);for(const j of selected)if(mapped[j.id])patchJob(j.id,{thumbnailPath:mapped[j.id]});setDraftPatch({thumbs:x,allowMissingThumbs:false});notifySuccess('Обложки сохранены в рабочем пространстве',`${x.length} изображений сопоставлены локально и закреплены за выбранными VIDEO. YouTube API: 0.`)}}
  async function removeReady(ids:string[],deleteFromDisk:boolean){
-  const wanted=[...new Set(ids)],all=useApp.getState().jobs;
-  const targets=all.filter(j=>wanted.includes(j.id)&&j.channelId===channelId&&j.status!=='UPLOADING');
-  if(!targets.length){setRemoveRequest(null);notifyInfo('Действие недоступно','Загружающееся видео нельзя перемещать или скрывать до завершения transfer.');return}
-  const allowedRoots=[settings.workspace,resolveProductionRoot(channelId,settings.workspace)].filter((x,i,a)=>Boolean(x)&&a.indexOf(x)===i);
-  setBusy(true);const removed:string[]=[],errors:string[]=[];
-  try{
-   let nextHistory=useApp.getState().uploadHistory;
-   for(const j of targets){try{
-    if(deleteFromDisk&&j.finalPath){
-      const proof=nextHistory.slice().reverse().find(x=>x.jobId===j.id);
-      if(!proof||!cleanupEligibleUpload(proof,j))throw new Error('CLEANUP_NOT_READY: файл остаётся до подтверждённого YouTube processing READY');
-      const processing=await api.youtubeVideoProcessingStatus(proof.profileId!,proof.youtubeVideoId,`publisher-cleanup:${j.id}`);
-      if(processing.processingState!=='READY'||!processing.identityVerified)throw new Error('CLEANUP_NOT_READY: YouTube processing ещё не READY');
-      const cache=useApp.getState().fingerprintCache[j.finalPath],fp=await api.youtubeFileFingerprint(j.finalPath,cache?{size:cache.size,mtimeMs:cache.mtimeMs,sha256:cache.sha256}:undefined);
-      if(fp.fingerprint.toLowerCase()!==proof.sha256.toLowerCase()||fp.size!==proof.fileSize)throw new Error('LOCAL_SOURCE_CHANGED: cleanup aborted');
-      const trash=await api.trashLocalFile(j.finalPath,allowedRoots);
-      if(!trash.trashed)throw new Error(trash.missing?'LOCAL_SOURCE_MISSING: state preserved':'TRASH_MOVE_FAILED');
-      nextHistory=markHistoryTrashed(nextHistory,j.id);patchJob(j.id,{storageLifecycle:'TRASHED',removedFromPublishList:true})
-    }else patchJob(j.id,{removedFromPublishList:true});
-    await api.youtubeCancelUploadSession(j.id).catch(()=>undefined);removed.push(j.id)
-   }catch(e){errors.push(`VIDEO_${String(j.number).padStart(3,'0')}: ${String(e)}`)}}
-   if(nextHistory!==useApp.getState().uploadHistory)replaceUploadHistory(nextHistory);
-   if(removed.length){const repaired=removeSelectedPublishItems(draft.selectedIds,selected.map(x=>x.id),draft.rows,removed);setDraftPatch({selectedIds:repaired.selectedIds,rows:repaired.rows});setFingerprints(prev=>{const next={...prev};for(const id of removed)delete next[id];return next});notifySuccess(deleteFromDisk?'Видео перемещены в Корзину':'Видео убраны из списка',`${removed.length} видео • ${deleteFromDisk?'каждый файл повторно проверен по YouTube READY + fingerprint; permanent delete: NO':'YouTube API: 0 • физический файл не удалён'}`)}
-   if(errors.length)notifyWarning('Часть видео оставлена',errors.join(' • '));
-  }finally{setRemoveRequest(null);setBusy(false);void refreshSessions()}
- }
- async function fingerprintForJob(j:VideoJob){if(!j.finalPath)throw new Error('LOCAL_FILE_REQUIRED');const existing=fingerprints[j.id];if(existing)return existing;const cache=useApp.getState().fingerprintCache[j.finalPath];const x=await api.youtubeFileFingerprint(j.finalPath,cache?{size:cache.size,mtimeMs:cache.mtimeMs,sha256:cache.sha256}:undefined);cacheFingerprint(j.finalPath,{path:j.finalPath,size:x.size,mtimeMs:x.modifiedAt,sha256:x.fingerprint,computedAt:new Date().toISOString()});const fp={fingerprint:x.fingerprint,size:x.size,modifiedAt:x.modifiedAt};setFingerprints(prev=>({...prev,[j.id]:fp}));return fp}
+   const wanted=[...new Set(ids)],all=useApp.getState().jobs;
+   const targets=all.filter(j=>wanted.includes(j.id)&&j.channelId===channelId&&j.status!=='UPLOADING');
+   if(!targets.length){setRemoveRequest(null);notifyInfo('Действие недоступно','Загружающееся видео нельзя перемещать или скрывать до завершения transfer.');return}
+   if(!deleteFromDisk){for(const j of targets){patchJob(j.id,{removedFromPublishList:true});await api.youtubeCancelUploadSession(j.id).catch(()=>undefined)}const repaired=removeSelectedPublishItems(draft.selectedIds,selected.map(x=>x.id),draft.rows,targets.map(x=>x.id));setDraftPatch({selectedIds:repaired.selectedIds,rows:repaired.rows});setRemoveRequest(null);notifySuccess('Видео убраны из списка',`${targets.length} видео • физические файлы и upload history не изменены.`);return}
+   const allowedRoots=[settings.workspace,resolveProductionRoot(channelId,settings.workspace)].filter((x,i,a)=>Boolean(x)&&a.indexOf(x)===i),operationId=`publisher-cleanup:${channelId}:${Date.now()}`;
+   setBusy(true);let moved=0,alreadyMissing=0,processing=0,changed=0,verification=0;const removed:string[]=[];
+   try{
+    let nextHistory=[...useApp.getState().uploadHistory];
+    for(const j of targets){
+     const proof=nextHistory.slice().reverse().find(x=>x.jobId===j.id&&x.status==='UPLOADED'&&Boolean(x.youtubeVideoId));
+     if(!proof){verification++;continue}
+     const idx=nextHistory.findIndex(x=>x.id===proof.id),at=new Date().toISOString();
+     let local:{exists:boolean;isFile:boolean;path:string};
+     try{local=await api.localSourceStatus(proof.localFilePath||j.finalPath||'')}catch{local={exists:false,isFile:false,path:proof.localFilePath||j.finalPath||''}}
+     if(!local.exists||!local.isFile){
+      alreadyMissing++;if(idx>=0)nextHistory[idx]={...nextHistory[idx],sourceLifecycle:'MISSING_LEGACY_UNKNOWN',sourceCheckedAt:at};patchJob(j.id,{removedFromPublishList:true});removed.push(j.id);
+      journal({eventId:operationId+':missing:'+proof.id,eventType:'SOURCE_MISSING',status:'INFO',source:'LIVE_OPERATION',timestamp:at,operationId,batchId:operationId,channelId,channelName:channel?.name||channelId,profileId:proof.profileId,jobId:j.id,youtubeVideoId:proof.youtubeVideoId,localSourcePath:proof.localFilePath,details:{reason:'already absent; no filesystem action',filename:proof.originalFilename}});continue
+     }
+     if(idx>=0)nextHistory[idx]={...nextHistory[idx],sourceLifecycle:'PRESENT',sourceCheckedAt:at};
+     const classified=cleanupPreclassification([idx>=0?nextHistory[idx]:proof],[j]);
+     if(!classified.eligible.length){if(proof.processingState!=='READY')processing++;else verification++;continue}
+     journal({eventId:operationId+':requested:'+proof.id,eventType:'SOURCE_TRASH_REQUESTED',status:'STARTED',source:'LIVE_OPERATION',timestamp:at,operationId,batchId:operationId,channelId,channelName:channel?.name||channelId,profileId:proof.profileId,jobId:j.id,youtubeVideoId:proof.youtubeVideoId,localSourcePath:proof.localFilePath,details:{filename:proof.originalFilename}});
+     try{
+      const p=await api.youtubeVideoProcessingStatus(proof.profileId!,proof.youtubeVideoId,`${operationId}:verify:${j.id}`);
+      if(p.processingState!=='READY'||!p.identityVerified){processing++;continue}
+      const cache=useApp.getState().fingerprintCache[proof.localFilePath],fp=await api.youtubeFileFingerprint(proof.localFilePath,cache?{size:cache.size,mtimeMs:cache.mtimeMs,sha256:cache.sha256}:undefined);
+      if(fp.fingerprint.toLowerCase()!==proof.sha256.toLowerCase()||fp.size!==proof.fileSize){changed++;if(idx>=0)nextHistory[idx]={...nextHistory[idx],sourceLifecycle:'SOURCE_CHANGED',sourceCheckedAt:new Date().toISOString()};continue}
+      const trash=await api.trashLocalFile(proof.localFilePath,allowedRoots);
+      if(!trash.trashed){if(trash.missing){alreadyMissing++;if(idx>=0)nextHistory[idx]={...nextHistory[idx],sourceLifecycle:'MISSING_LEGACY_UNKNOWN',sourceCheckedAt:new Date().toISOString()};patchJob(j.id,{removedFromPublishList:true});removed.push(j.id)}else verification++;continue}
+      const trashedAt=new Date().toISOString();nextHistory=markHistoryTrashed(nextHistory,j.id,trashedAt,operationId);patchJob(j.id,{storageLifecycle:'TRASHED_BY_VYRON',removedFromPublishList:true});removed.push(j.id);moved++;
+      journal({eventId:operationId+':trashed:'+proof.id,eventType:'SOURCE_TRASHED',status:'SUCCESS',source:'LIVE_OPERATION',timestamp:trashedAt,operationId,batchId:operationId,channelId,channelName:channel?.name||channelId,profileId:proof.profileId,jobId:j.id,youtubeVideoId:proof.youtubeVideoId,localSourcePath:proof.localFilePath,details:{filename:proof.originalFilename,permanentDelete:false}})
+     }catch{verification++}
+    }
+    replaceUploadHistory(nextHistory);
+    for(const id of removed)await api.youtubeCancelUploadSession(id).catch(()=>undefined);
+    if(removed.length){const repaired=removeSelectedPublishItems(draft.selectedIds,selected.map(x=>x.id),draft.rows,removed);setDraftPatch({selectedIds:repaired.selectedIds,rows:repaired.rows});setFingerprints(prev=>{const next={...prev};for(const id of removed)delete next[id];return next})}
+    if(moved)notifySuccess('Видео перемещены в Корзину',`${moved} файлов • permanent delete: NO.`,{operationId});
+    const skipped=alreadyMissing+processing+changed+verification;if(skipped)notifyWarning('Очистка завершена с исключениями',`Уже отсутствуют: ${alreadyMissing} • YouTube не READY: ${processing} • source changed: ${changed} • verification: ${verification}. Одна сводка вместо CLEANUP_NOT_READY по каждому файлу.`,{operationId:operationId+':summary'});
+   }finally{setRemoveRequest(null);setBusy(false);void refreshSessions()}
+  }
+  async function fingerprintForJob(j:VideoJob){if(!j.finalPath)throw new Error('LOCAL_FILE_REQUIRED');const existing=fingerprints[j.id];if(existing)return existing;const cache=useApp.getState().fingerprintCache[j.finalPath];const x=await api.youtubeFileFingerprint(j.finalPath,cache?{size:cache.size,mtimeMs:cache.mtimeMs,sha256:cache.sha256}:undefined);cacheFingerprint(j.finalPath,{path:j.finalPath,size:x.size,mtimeMs:x.modifiedAt,sha256:x.fingerprint,computedAt:new Date().toISOString()});const fp={fingerprint:x.fingerprint,size:x.size,modifiedAt:x.modifiedAt};setFingerprints(prev=>({...prev,[j.id]:fp}));return fp}
  function persistVerifiedUpload(j:VideoJob,c:NonNullable<typeof channel>,videoId:string,fp:{fingerprint:string;size:number},overrideDuplicate=false){if(!j.finalPath)throw new Error('LOCAL_FILE_REQUIRED');const now=new Date().toISOString();const state=useApp.getState();const projectEntry=Object.entries(state.projectLifecycle).find(([,x])=>x.jobId===j.id);const nextHistory=recordVerifiedUpload(state.uploadHistory,{jobId:j.id,channelId:c.id,profileId:c.youtubeProfileId,youtubeChannelId:c.youtubeChannelId,youtubeVideoId:videoId,localFilePath:j.finalPath,originalFilename:baseName(j.finalPath),projectId:projectEntry?.[1].projectId,sourceProjectPath:projectEntry?.[1].projectPath,titleAtUpload:j.title,uploadedAt:now,fileSize:fp.size,sha256:fp.fingerprint,publishAt:j.publishAt,overrideDuplicate,sourceLifecycle:'PRESENT',processingState:'UPLOAD_ACCEPTED',identityVerifiedAt:now});replaceUploadHistory(nextHistory);if(projectEntry){patchProjectLifecycle(projectEntry[0],nextProjectLifecycle(projectEntry[1],nextHistory))}patchJob(j.id,{status:'SCHEDULED',storageLifecycle:'UPLOADED',youtubeVideoId:videoId,uploadProgress:100,uploadedAt:now,uploadAcceptedAt:now,processingState:'UPLOAD_ACCEPTED',uploadInterruptedAt:undefined});return now}
  async function resumeUpload(session:YoutubeUploadSession){
   const j=jobs.find(x=>x.id===session.jobId),c=j&&channels.find(x=>x.id===j.channelId);if(!j||!c?.youtubeProfileId){notifyWarning('Продолжение недоступно','Проект или OAuth канала больше не найден.');return}
