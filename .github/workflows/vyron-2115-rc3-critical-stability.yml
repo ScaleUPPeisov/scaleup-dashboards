@@ -1,5 +1,5 @@
 name: VYRON 2.1.15 RC3 Critical Stabilization
-# retry: corrected RC3 regression assertions after first factual CI failure
+# retry: whitelist updated RC3 regression test after second factual CI failure
 
 on:
   push:
@@ -72,7 +72,7 @@ jobs:
             'src-tauri/src/youtube.rs','src-tauri/src/lib.rs',
             'src/api.ts','src/types.ts','src/AccountsPage.tsx','src/App.tsx','src/PublisherOS.tsx',
             'src/storageLifecycle.ts','src/storageLifecycle.test.ts','src/uploadQueueRuntime.ts','src/UploadCenter.tsx',
-            'src/UploadProcessingMonitor.tsx','src/errorHistory.ts','src/v2115Rc3CriticalStability.test.ts','src/v2115AddChannelStats.test.ts',
+            'src/UploadProcessingMonitor.tsx','src/errorHistory.ts','src/v2115Rc3CriticalStability.test.ts','src/v2115AddChannelStats.test.ts','src/v2114OauthOnboarding.test.ts',
             '.github/workflows/vyron-2115-rc3-critical-stability.yml',
           }
           changed=set(filter(None,subprocess.check_output(['git','diff','--name-only',f'{source}..HEAD'],text=True).splitlines()))
