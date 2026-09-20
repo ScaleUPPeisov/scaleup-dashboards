@@ -11,6 +11,47 @@ pub struct TrashLocalFileResult {
     pub missing: bool,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalSourceStatus {
+    pub path: String,
+    pub exists: bool,
+    pub is_file: bool,
+    pub size: Option<u64>,
+    pub modified_at: Option<u128>,
+}
+
+#[tauri::command]
+pub fn local_source_status(path: String) -> Result<LocalSourceStatus, String> {
+    let value = path.trim();
+    if value.is_empty() {
+        return Err("SOURCE_PATH_EMPTY".into());
+    }
+    let p = PathBuf::from(value);
+    if !p.exists() {
+        return Ok(LocalSourceStatus {
+            path: value.to_string(),
+            exists: false,
+            is_file: false,
+            size: None,
+            modified_at: None,
+        });
+    }
+    let md = fs::metadata(&p).map_err(|e| format!("SOURCE_STAT_FAILED: {e}"))?;
+    let modified_at = md
+        .modified()
+        .ok()
+        .and_then(|x| x.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|x| x.as_millis());
+    Ok(LocalSourceStatus {
+        path: value.to_string(),
+        exists: true,
+        is_file: md.is_file(),
+        size: Some(md.len()),
+        modified_at,
+    })
+}
+
 fn allowed_media(path: &Path) -> bool {
     matches!(
         path.extension()
