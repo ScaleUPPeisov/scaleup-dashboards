@@ -1,7 +1,7 @@
 export type FinalAuthStatus='CONNECTED'|'KEYCHAIN BLOCKED'|'CANONICAL_PRESENT_UNVERIFIED'|'NOT CHECKED'|'CLIENT SECRET REQUIRED'|'RECONNECT REQUIRED'|'MISSING'|'CONNECTING'|'VALIDATING'|'WRONG CHANNEL'|'FAILED';
 export type RecoveryChannelLike={id:string;name:string;youtubeProfileId?:string;youtubeChannelId?:string};
 export type RecoveryProfileLike={id:string;channelId?:string;channelTitle?:string;preferredBrowser?:string};
-export type RecoveryCredentialStateLike={profileUuid:string;expectedChannelId?:string|null;canonicalRefreshPresent?:boolean;legacyRefreshPresent?:boolean;migrationState?:string;credentialState:'READY'|'CONNECTED'|'KEYCHAIN_BLOCKED'|'CANONICAL_PRESENT_UNVERIFIED'|'NOT_CHECKED'|'RECONNECT_REQUIRED'|'MISSING'|'WRONG_CHANNEL'|'FAILED';credentialSchemaVersion?:number;lastValidatedAt?:string|null;lastValidationResult?:string;clientSecretState?:'PROFILE_CANONICAL'|'GLOBAL_EXACT_MATCH'|'GLOBAL_CURRENT_READY'|'CANONICAL_PRESENT_UNVERIFIED'|'KEYCHAIN_BLOCKED'|'CLIENT_SECRET_REIMPORT_REQUIRED'|'MISSING';clientSecretPresent?:boolean;clientSecretOperational?:boolean};
+export type RecoveryCredentialStateLike={profileUuid:string;expectedChannelId?:string|null;canonicalRefreshPresent?:boolean;legacyRefreshPresent?:boolean;migrationState?:string;credentialState:'READY'|'CONNECTED'|'RECOVERABLE_KEYCHAIN_BLOCKED'|'KEYCHAIN_BLOCKED'|'CANONICAL_PRESENT_UNVERIFIED'|'NOT_CHECKED'|'RECONNECT_REQUIRED'|'MISSING'|'WRONG_CHANNEL'|'FAILED';credentialSchemaVersion?:number;lastValidatedAt?:string|null;lastValidationResult?:string;clientSecretState?:'PROFILE_CANONICAL'|'GLOBAL_EXACT_MATCH'|'GLOBAL_CURRENT_READY'|'CANONICAL_PRESENT_UNVERIFIED'|'KEYCHAIN_BLOCKED'|'CLIENT_SECRET_REIMPORT_REQUIRED'|'MISSING';clientSecretPresent?:boolean;clientSecretOperational?:boolean};
 export type RecoveryTransient={status:FinalAuthStatus;detail?:string};
 export type FinalRecoveryRow={profileId:string;profile?:RecoveryProfileLike;channels:RecoveryChannelLike[];expectedChannelId?:string;status:FinalAuthStatus;detail:string;stale:boolean;duplicate:boolean;conflict:boolean};
 
@@ -29,8 +29,11 @@ export function buildFinalRecoveryRows(channels:RecoveryChannelLike[],profiles:R
    const suffix=state.lastValidatedAt?` Последняя проверка: ${state.lastValidatedAt}.`:'';
    return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'CONNECTED',detail:`Сохранённый доступ работает. Повторный вход не нужен.${suffix}`,stale,duplicate,conflict} satisfies FinalRecoveryRow
   }
+  if(state.credentialState==='RECOVERABLE_KEYCHAIN_BLOCKED'){
+   return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'KEYCHAIN BLOCKED',detail:'Сохранённый token существует и metadata видна, но macOS запретил secret-read. Это восстановимый Keychain incident: сначала используйте «Восстановить сохранённые подключения». Google login не требуется автоматически.',stale,duplicate,conflict} satisfies FinalRecoveryRow
+  }
   if(state.credentialState==='KEYCHAIN_BLOCKED'){
-   return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'KEYCHAIN BLOCKED',detail:'Сохранённый token существует, но macOS Keychain сейчас блокирует чтение. Канал остаётся на месте; браузер автоматически не открывается.',stale,duplicate,conflict} satisfies FinalRecoveryRow
+   return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'KEYCHAIN BLOCKED',detail:'Сохранённый token существует, но macOS Keychain сейчас блокирует чтение. Канал остаётся на месте; сначала используйте явное восстановление Keychain.',stale,duplicate,conflict} satisfies FinalRecoveryRow
   }
   if(state.credentialState==='NOT_CHECKED'){
    return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'NOT CHECKED',detail:'Сохранённые данные канала на месте. Доступ ещё не проверялся в текущем процессе; повторный вход пока не требуется.',stale,duplicate,conflict} satisfies FinalRecoveryRow
