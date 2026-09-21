@@ -253,6 +253,17 @@ mod tests {
         let found=discover_channel_folders_impl(workspace.to_str().unwrap(),"Glass City Lovers").unwrap();assert!(found.render.is_empty());assert!(found.projects.is_empty());fs::remove_dir_all(root).unwrap();
     }
     #[test]
+    fn normalized_duplicate_channel_folders_are_reported_as_ambiguous_candidates(){
+        let root=temp_root();let workspace=root.join("VYRON");let render=root.join("Render");let projects=root.join("Projects");
+        fs::create_dir_all(&workspace).unwrap();
+        fs::create_dir_all(render.join("Glass  City Lovers")).unwrap();fs::create_dir_all(render.join("Glass City   Lovers")).unwrap();
+        fs::create_dir_all(projects.join("Glass  City Lovers")).unwrap();fs::create_dir_all(projects.join("Glass City   Lovers")).unwrap();
+        let found=discover_channel_folders_impl(workspace.to_str().unwrap(),"glass city lovers").unwrap();
+        assert_eq!(found.render.len(),2,"multiple safely-normalized Render matches must remain ambiguous");
+        assert_eq!(found.projects.len(),2,"multiple safely-normalized Projects matches must remain ambiguous");
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     fn missing_mp4_is_a_clean_success() {
         let root = temp_root();
         let p = root.join("missing.mp4");
