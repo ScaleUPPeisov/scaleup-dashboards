@@ -20,6 +20,9 @@ export type RenderScanRow={
 export type RenderScanSummary={TOTAL_CLASSIFIED_FILES:number;KNOWN_EXACT:number;UPLOADED_LOCAL_COPY:number;NEW_CANDIDATE:number;NEW_GENERATION:number;VERIFY_REQUIRED:number;AMBIGUOUS:number;DUPLICATE_LOCAL:number;INVALID:number};
 export type RenderScanImportSkip={path:string;name:string;reason:'ALREADY_KNOWN_PATH'|'SEQUENCE_ALREADY_USED'|'MISSING_SEQUENCE'|'NOT_NEW_CANDIDATE'};
 export type RenderScanImportPlan={accepted:RenderScanRow[];skipped:RenderScanImportSkip[]};
+export type LegacyRecoveryClass='UPLOADED_EXACT'|'NEW_GENERATION'|'DUPLICATE_CONTENT'|'VERIFY_REQUIRED_LEGACY'|'INVALID_MEDIA';
+export type LegacyRecoveryDecision={row:RenderScanRow;classification:LegacyRecoveryClass;reason:string};
+export type LegacyRecoveryPreview={total:number;uploadedExact:LegacyRecoveryDecision[];newGenerations:LegacyRecoveryDecision[];duplicates:LegacyRecoveryDecision[];verifyRequired:LegacyRecoveryDecision[];invalid:LegacyRecoveryDecision[]};
 
 export function renderSequence(name:string){const m=name.match(/^0*(\d{1,5})(?:\D|$)/);if(!m)return;const n=Number(m[1]);return Number.isFinite(n)&&n>0?n:undefined}
 export function normalizeRenderPath(value:string){let s=String(value||'').trim().replace(/\\/g,'/');while(s.length>1&&s.endsWith('/'))s=s.slice(0,-1);if(/^[A-Z]:\//.test(s))s=s[0].toLowerCase()+s.slice(1);return s}
@@ -113,6 +116,33 @@ export function summarizeRenderScan(rows:RenderScanRow[]):RenderScanSummary{
  const sum=out.KNOWN_EXACT+out.UPLOADED_LOCAL_COPY+out.NEW_CANDIDATE+out.NEW_GENERATION+out.VERIFY_REQUIRED+out.AMBIGUOUS+out.DUPLICATE_LOCAL+out.INVALID;
  if(sum!==out.TOTAL_CLASSIFIED_FILES)throw new Error(`RENDER_SCAN_COUNTER_INVARIANT_FAILED: total=${out.TOTAL_CLASSIFIED_FILES} sum=${sum}`);
  return out;
+}
+
+export function buildLegacyRecoveryPreview(rows:RenderScanRow[],history:UploadHistoryRecord[],channelId:string):LegacyRecoveryPreview{
+ const out:LegacyRecoveryPreview={total:rows.length,uploadedExact:[],newGenerations:[],duplicates:[],verifyRequired:[],invalid:[]};
+ const successful=successfulHistory(history,channelId);
+ for(const row of rows){
+  const fp=(row.currentFingerprint||currentFingerprint(row.file)||'').trim().toLowerCase(),size=row.currentFileSize??row.file.size;
+  const decision=(classification:LegacyRecoveryClass,reason:string):LegacyRecoveryDecision=>({row,classification,reason});
+  if(row.classification==='INVALID'||!Number.isFinite(size)||size<=0){out.invalid.push(decision('INVALID_MEDIA',row.reason||'INVALID_MEDIA'));continue}
+  if(row.classification==='UPLOADED_LOCAL_COPY'){
+   out.uploadedExact.push(decision('UPLOADED_EXACT',row.reason));continue
+  }
+  if(!trustedSha256(fp)){
+   out.verifyRequired.push(decision('VERIFY_REQUIRED_LEGACY','CURRENT_FINGERPRINT_NOT_PROVEN'));continue
+  }
+  const uploaded=successful.find(x=>trustedHistory(x)&&x.sha256.trim().toLowerCase()===fp&&x.fileSize===size);
+  if(uploaded){
+   out.duplicates.push(decision('DUPLICATE_CONTENT',`SAME_CHANNEL_SUCCESSFUL_FINGERPRINT:${uploaded.youtubeVideoId}`));continue
+  }
+  if(row.classification==='NEW_GENERATION'||row.classification==='VERIFY_REQUIRED'){
+   out.newGenerations.push(decision('NEW_GENERATION',row.classification==='VERIFY_REQUIRED'?'LEGACY_HISTORY_UNTRUSTED_CURRENT_FINGERPRINT_UNSEEN':row.reason));continue
+  }
+  out.verifyRequired.push(decision('VERIFY_REQUIRED_LEGACY',`UNSUPPORTED_RECOVERY_STATE:${row.classification}`));
+ }
+ const sum=out.uploadedExact.length+out.newGenerations.length+out.duplicates.length+out.verifyRequired.length+out.invalid.length;
+ if(sum!==out.total)throw new Error(`LEGACY_RECOVERY_COUNTER_INVARIANT_FAILED: total=${out.total} sum=${sum}`);
+ return out
 }
 
 export function crossChannelScanRecoveryJobs(jobs:VideoJob[],history:UploadHistoryRecord[],channelId:string,exactRoot:string){
