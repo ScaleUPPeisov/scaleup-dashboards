@@ -268,7 +268,12 @@ export function PublisherOS(){
       if(!row.matchedJobId||!row.currentFingerprint)continue;
       const matched=current.find(j=>j.id===row.matchedJobId);
       if(!matched||normalizeRenderPath(matched.finalPath||'')!==normalizeRenderPath(row.file.path))continue;
-      patchJob(matched.id,{currentSourceFingerprint:row.currentFingerprint,currentSourceFileSize:row.file.size,currentSourceModifiedAt:row.file.modifiedAt||undefined,sourceGenerationKey:`${channelId}:${row.currentFingerprint}:${row.file.size}`})
+      // A scan observes the bytes currently occupying a path. It must never mutate the
+      // identity of an already-uploaded historical generation. Otherwise VIDEO_001 + old
+      // youtubeVideoId can silently inherit today's file hash and become permanently blocked.
+      if(canRefreshCurrentGenerationEvidence(matched)){
+       patchJob(matched.id,{currentSourceFingerprint:row.currentFingerprint,currentSourceFileSize:row.file.size,currentSourceModifiedAt:row.file.modifiedAt||undefined,sourceGenerationKey:`${channelId}:${row.currentFingerprint}:${row.file.size}`})
+      }
     }
     if(result.root!==root&&channel)updateChannel(channel.id,{renderFolderPath:result.root});
     const bad=crossChannelScanRecoveryJobs(current,history,channelId,result.root);
@@ -304,6 +309,9 @@ export function PublisherOS(){
   if(created.length){
     addJobs(created);
     setFingerprints(prev=>{const next={...prev};for(const j of created){if(j.currentSourceFingerprint&&j.currentSourceFileSize&&j.currentSourceModifiedAt!=null)next[j.id]={fingerprint:j.currentSourceFingerprint,size:j.currentSourceFileSize,modifiedAt:j.currentSourceModifiedAt}}return next});
+    // New physical generations become usable immediately; no restart/stale selection cycle.
+    setVideoFilter('new');
+    setDraftPatch({selectedIds:created.map(j=>j.id)});
   }
   for(const j of created)journal({eventId:`local-video-discovered:${j.id}`,eventType:'LOCAL_VIDEO_DISCOVERED',status:'SUCCESS',source:'LIVE_OPERATION',channelId,channelName:channel.name,jobId:j.id,localSourcePath:j.finalPath,details:{videoNumber:j.number,evidence:explicitLegacyOverride?'explicit-new-generation-override':'fingerprint-generation-reconciliation',previousJobId:j.sourcePreviousJobId||'',currentFingerprint:j.currentSourceFingerprint||'',youtubeApiRequests:0}});
   const alreadyKnown=plan.skipped.filter(x=>x.reason==='ALREADY_KNOWN_PATH'||x.reason==='SEQUENCE_ALREADY_USED').length;
