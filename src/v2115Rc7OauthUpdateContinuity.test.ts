@@ -29,12 +29,12 @@ describe('VYRON 2.1.15 RC7 OAuth update continuity',()=>{
     expect(fallback).toContain('profile_refresh_token_account(&app,&profile_id)?');
     expect(fallback).not.toContain('canonical_get_secret_cached(&oauth_key(&profile_id,"refresh_token"))');
   });
-  it('startup recovery UI may refresh saved tokens but never auto-launches browser or credentials picker',()=>{
+  it('recovery UI mounts metadata-only and requires explicit recovery action',()=>{
     const ui=read('src/AuthRecoveryCenter.tsx');
     const effect=ui.match(/useEffect\(\(\)=>\{.*?\},\[\]\);/s)?.[0]||'';
-    const automatic=ui.split('async function runAutomaticRecovery').at(1)?.split('async function reconnect')[0]||'';
+    const automatic=ui.split('async function runAutomaticRecovery').at(1)?.split('useEffect')[0]||'';
     expect(effect).toContain('load()');
-    expect(effect).toContain('runAutomaticRecovery(true)');
+    expect(effect).not.toContain('runAutomaticRecovery');
     expect(automatic).toContain('youtubeOauthRecoverExistingProfiles');
     expect(automatic).not.toContain('youtubeOauthBrowsers');
     expect(automatic).not.toContain('youtubeReconnectExisting');
