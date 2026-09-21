@@ -1,7 +1,7 @@
 import {describe,expect,it} from 'vitest';
 import type {RenderFolderVideoFile} from './api';
 import type {UploadHistoryRecord,VideoJob} from './types';
-import {classifyChannelRenderFiles,crossChannelScanRecoveryJobs,planRenderScanImport,renderFileNeedsFingerprint,summarizeRenderScan} from './renderScanClassifier';
+import {buildLegacyRecoveryPreview,classifyChannelRenderFiles,crossChannelScanRecoveryJobs,planRenderScanImport,renderFileNeedsFingerprint,summarizeRenderScan} from './renderScanClassifier';
 
 const root='/workspace/Render/Glass City Lovers';
 const A='a'.repeat(64),B='b'.repeat(64),C='c'.repeat(64);
@@ -123,4 +123,60 @@ describe('VYRON generation-aware channel render scan',()=>{
     const rows=classifyChannelRenderFiles([file(1,'/workspace/Render/Neon Drive FM',A)],[],[],'glass',root);
     expect(rows[0].classification).toBe('INVALID');expect(rows[0].reason).toBe('OUTSIDE_EXACT_CHANNEL_ROOT');
   });
+
+  it('legacy YouTube ID with no historical SHA becomes safe NEW_GENERATION only after current SHA is known and unseen',()=>{
+    const old=job('glass',11,root,{youtubeVideoId:'YT_LEGACY',storageLifecycle:'UPLOADED',status:'SCHEDULED'});
+    const h=uploaded(old,'YT_LEGACY','legacy-no-sha',500_000_000);
+    const row=classifyChannelRenderFiles([file(11,root,B,505_000_000)],[old],[h],'glass',root)[0];
+    expect(row.classification).toBe('VERIFY_REQUIRED');
+    const preview=buildLegacyRecoveryPreview([row],[h],'glass');
+    expect(preview.total).toBe(1);
+    expect(preview.newGenerations).toHaveLength(1);
+    expect(preview.newGenerations[0].classification).toBe('NEW_GENERATION');
+    expect(preview.duplicates).toHaveLength(0);
+  });
+
+  it('legacy recovery never promotes a current fingerprint already uploaded successfully on the same channel',()=>{
+    const old=job('glass',12,root,{youtubeVideoId:'YT_LEGACY',storageLifecycle:'UPLOADED',status:'SCHEDULED'});
+    const legacy=uploaded(old,'YT_LEGACY','legacy-no-sha',500_000_000);
+    const already=job('glass',99,'/archive',{youtubeVideoId:'YT_DUP',storageLifecycle:'UPLOADED',status:'SCHEDULED'});
+    const proof=uploaded(already,'YT_DUP',C,505_000_000,already.finalPath!);
+    const ambiguous={...classifyChannelRenderFiles([file(12,root,C,505_000_000)],[old],[legacy],'glass',root)[0],classification:'VERIFY_REQUIRED' as const,reason:'LEGACY_UPLOAD_HAS_NO_TRUSTED_FINGERPRINT'};
+    const preview=buildLegacyRecoveryPreview([ambiguous],[legacy,proof],'glass');
+    expect(preview.newGenerations).toHaveLength(0);
+    expect(preview.duplicates).toHaveLength(1);
+    expect(preview.duplicates[0].reason).toContain('YT_DUP');
+  });
+
+  it('29 legacy ambiguous rows reconcile deterministically without uploads or clearing history',()=>{
+    const files:RenderFolderVideoFile[]=[],jobs:VideoJob[]=[],history:UploadHistoryRecord[]=[];
+    for(let n=1;n<=29;n++){
+      const old=job('glass',n,root,{youtubeVideoId:`LEGACY_${n}`,storageLifecycle:'UPLOADED',status:'SCHEDULED'});
+      const sha=n===29?A:(n.toString(16).padStart(64,'0'));
+      files.push(file(n,root,sha,500_000_000+n));
+      jobs.push(old);
+      history.push(uploaded(old,`LEGACY_${n}`,'legacy-no-sha',500_000_000+n));
+    }
+    const rows=classifyChannelRenderFiles(files,jobs,history,'glass',root);
+    expect(rows.every(x=>x.classification==='VERIFY_REQUIRED')).toBe(true);
+    const beforeHistory=JSON.stringify(history);
+    const preview=buildLegacyRecoveryPreview(rows,history,'glass');
+    expect(preview.total).toBe(29);
+    expect(preview.newGenerations).toHaveLength(29);
+    expect(preview.uploadedExact).toHaveLength(0);
+    expect(preview.duplicates).toHaveLength(0);
+    expect(preview.verifyRequired).toHaveLength(0);
+    expect(preview.invalid).toHaveLength(0);
+    expect(JSON.stringify(history)).toBe(beforeHistory);
+  });
+
+  it('missing current SHA stays VERIFY_REQUIRED_LEGACY instead of being force-enabled',()=>{
+    const old=job('glass',30,root,{youtubeVideoId:'YT_LEGACY',storageLifecycle:'UPLOADED',status:'SCHEDULED'});
+    const h=uploaded(old,'YT_LEGACY','legacy-no-sha',500_000_000);
+    const row=classifyChannelRenderFiles([{...file(30,root,undefined),fingerprint:undefined}],[old],[h],'glass',root)[0];
+    const preview=buildLegacyRecoveryPreview([row],[h],'glass');
+    expect(preview.newGenerations).toHaveLength(0);
+    expect(preview.verifyRequired).toHaveLength(1);
+  });
+
 });
