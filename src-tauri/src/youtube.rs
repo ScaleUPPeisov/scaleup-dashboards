@@ -1306,6 +1306,13 @@ fn open_browser(url: &str, browser: &str) -> Result<(), String> {
     }
     Ok(())
 }
+#[tauri::command]
+pub fn youtube_oauth_open_youtube(browser:Option<String>)->Result<Value,String>{
+ let browser=browser.filter(|x|!x.trim().is_empty()).unwrap_or_else(||"default".into());
+ open_browser("https://www.youtube.com/",&browser)?;
+ Ok(json!({"ok":true,"browser":browser,"oauthStarted":false}))
+}
+
 fn query_param(query: &str, key: &str) -> Option<String> {
     query.split('&').find_map(|p| {
         let mut it = p.splitn(2, '=');
@@ -1427,217 +1434,148 @@ fn oauth_authorization_url(client_id:&str,redirect:&str,scope:&str,challenge:&st
       urlencoding::encode(client_id),urlencoding::encode(redirect),urlencoding::encode(scope),prompt,urlencoding::encode(challenge),urlencoding::encode(state))
 }
 
+#[derive(Clone)]
+struct PendingNewOAuth{
+ created_at:i64,
+ client_id:String,
+ client_secret:String,
+ preferred_browser:String,
+ access_token:String,
+ refresh_token:String,
+ expires_in:i64,
+ scopes:Vec<String>,
+ items:Vec<Value>,
+}
+static PENDING_NEW_OAUTH:OnceLock<Mutex<HashMap<String,PendingNewOAuth>>>=OnceLock::new();
+fn pending_new_oauth()->&'static Mutex<HashMap<String,PendingNewOAuth>>{PENDING_NEW_OAUTH.get_or_init(||Mutex::new(HashMap::new()))}
+fn cleanup_pending_new_oauth(){if let Ok(mut p)=pending_new_oauth().lock(){let now=now_ts();p.retain(|_,x|now.saturating_sub(x.created_at)<600)}}
+fn channel_identity_value(item:&Value,store:&OAuthStore)->Value{
+ let channel_id=item.get("id").and_then(Value::as_str).unwrap_or("");
+ let title=item.pointer("/snippet/title").and_then(Value::as_str).unwrap_or(channel_id);
+ let handle=item.pointer("/snippet/customUrl").and_then(Value::as_str);
+ let thumbnail=item.pointer("/snippet/thumbnails/high/url")
+   .or_else(||item.pointer("/snippet/thumbnails/medium/url"))
+   .or_else(||item.pointer("/snippet/thumbnails/default/url"))
+   .and_then(Value::as_str);
+ let existing=store.profiles.iter().find(|p|p.channel_id.as_deref()==Some(channel_id));
+ json!({
+  "channelId":channel_id,"channelTitle":title,"handle":handle,"thumbnail":thumbnail,
+  "alreadyConnected":existing.is_some(),
+  "existingProfileId":existing.map(|p|p.id.clone()),
+  "existingProfileTitle":existing.and_then(|p|p.channel_title.clone())
+ })
+}
+fn commit_new_channel_oauth(
+ app:&AppHandle,client_id:&str,client_secret:&str,preferred_browser:&str,access:&str,refresh:&str,expires:i64,scopes:&[String],item:&Value
+)->Result<Value,String>{
+ let channel_id=item.get("id").and_then(Value::as_str).map(str::to_string)
+   .ok_or_else(||"YouTube не вернул Channel ID".to_string())?;
+ let channel_title=item.pointer("/snippet/title").and_then(Value::as_str).map(str::to_string).unwrap_or_else(||channel_id.clone());
+ let mut store=load_store_metadata(app)?;
+ if let Some(existing)=store.profiles.iter().find(|p|p.channel_id.as_deref()==Some(channel_id.as_str())){
+  return Err(format!("YOUTUBE_CHANNEL_ALREADY_CONNECTED: profile_id={}; channel_id={}; title={}",existing.id,channel_id,channel_title.replace(';'," ").replace('\n'," ").replace('\r'," ")))
+ }
+ let profile_id=reconnect_profile_id(None);
+ if !client_secret.trim().is_empty(){
+  let global_meta=load_google_config_metadata(app)?;
+  let global_account=if global_meta.client_id.trim()==client_id{google_client_secret_account(&global_meta)}else{GOOGLE_CLIENT_SECRET.to_string()};
+  security::canonical_set_secret(&global_account,client_secret)?;
+ }
+ let original_store=store.clone();
+ let pointer_before=read_keychain_migration_v2(app)?;
+ let refresh_account=oauth_key(&profile_id,"refresh_token");
+ security::canonical_forget_cache(&refresh_account);
+ if let Err(e)=security::canonical_set_secret(&refresh_account,refresh){return Err(format!("OAUTH_KEYCHAIN_WRITE_FAILED: stage=NEW_SECRET_WRITE; account={refresh_account}; {e}"))}
+ match security::canonical_verify_secret(&refresh_account,refresh){
+  Ok(true)=>{},
+  Ok(false)=>{let _=security::canonical_delete_secret(&refresh_account);return Err(format!("NEW_ITEM_READBACK_FAILED: stage=NEW_SECRET_READBACK; account={refresh_account}; mismatch"))}
+  Err(e)=>{let _=security::canonical_delete_secret(&refresh_account);if e.contains("KEYCHAIN_AUTH_FAILED"){return Err(format!("NEW_ITEM_READBACK_AUTH_FAILED: stage=NEW_SECRET_READBACK; account={refresh_account}; {e}"))}return Err(format!("OAUTH_KEYCHAIN_READBACK_FAILED: stage=NEW_SECRET_READBACK; account={refresh_account}; {e}"))}
+ }
+ let profile=OAuthProfile{
+  id:profile_id.clone(),client_id:client_id.to_string(),client_secret:String::new(),channel_id:Some(channel_id.clone()),channel_title:Some(channel_title.clone()),
+  access_token:access.to_string(),refresh_token:String::new(),expires_at:now_ts()+expires,connected_at:Utc::now().to_rfc3339(),
+  scopes:scopes.to_vec(),preferred_browser:preferred_browser.to_string(),identity_validated_at:Some(Utc::now().to_rfc3339()),identity_validated_channel_id:Some(channel_id.clone()),credential_error:None,
+ };
+ store.profiles.push(profile.clone());
+ let mut pointer_next=pointer_before.clone();
+ pointer_next.refresh_token_accounts.insert(profile_id.clone(),refresh_account.clone());
+ pointer_next.credential_generations.insert(profile_id.clone(),1);
+ pointer_next.profiles.insert(profile_id.clone(),MIGRATION_MIGRATED.into());
+ if let Err(e)=write_keychain_migration_v2(app,&pointer_next){let _=security::canonical_delete_secret(&refresh_account);return Err(format!("OAUTH_METADATA_POINTER_COMMIT_FAILED: stage=METADATA_POINTER_COMMIT; {e}"))}
+ if let Err(e)=write_oauth_metadata(&store_path(app)?,&store){let _=write_keychain_migration_v2(app,&pointer_before);let _=security::canonical_delete_secret(&refresh_account);return Err(format!("OAUTH_METADATA_SAVE_FAILED: stage=METADATA_COMMIT; {e}"))}
+ match security::canonical_verify_secret(&refresh_account,refresh){
+  Ok(true)=>{},
+  Ok(false)=>{let _=write_keychain_migration_v2(app,&pointer_before);let _=write_oauth_metadata(&store_path(app)?,&original_store);let _=security::canonical_delete_secret(&refresh_account);return Err("OAUTH_SAVE_VERIFY_FAILED: stage=POST_COMMIT_READ; fresh refresh token mismatch".into())}
+  Err(e)=>{let _=write_keychain_migration_v2(app,&pointer_before);let _=write_oauth_metadata(&store_path(app)?,&original_store);let _=security::canonical_delete_secret(&refresh_account);return Err(format!("OAUTH_POST_COMMIT_READ_FAILED: stage=POST_COMMIT_READ; account={refresh_account}; {e}"))}
+ }
+ remember_access_token(&profile.id,&profile.access_token,profile.expires_at);
+ record_profile_credential_validation(app,&profile.id,"PASS",Some(&channel_id),Some(&channel_id))?;
+ Ok(json!({
+  "ok":true,"status":"CONNECTED","id":profile.id,"channelId":channel_id,"channelTitle":channel_title,
+  "connectedAt":profile.connected_at,"preferredBrowser":preferred_browser,"statistics":youtube_channel_statistics_value(item),
+  "oauthTokenStored":true,"secureReadback":"PASS","profileUuidPreserved":true,"secretValuesIncluded":false
+ }))
+}
+
 #[tauri::command]
 pub async fn youtube_oauth_connect(
-    app: AppHandle,
-    client_id: String,
-    client_secret: String,
-    browser: Option<String>,
-) -> Result<Value, String> {
-    let client_id = client_id.trim().to_string();
-    if client_id.is_empty() {
-        return Err("Google OAuth Client ID не указан".into());
-    }
-    let client_secret = client_secret.trim().to_string();
-    if client_secret.is_empty() {
-        return Err("OAUTH_CLIENT_SETUP_REQUIRED: OAuth Client Secret отсутствует; browser OAuth не запущен.".into());
-    }
-    let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| format!("OAuth localhost: {e}"))?;
-    let port = listener.local_addr().map_err(|e| e.to_string())?.port();
-    let redirect = format!("http://127.0.0.1:{port}");
-    let verifier = format!(
-        "{}{}{}",
-        Uuid::new_v4().simple(),
-        Uuid::new_v4().simple(),
-        Uuid::new_v4().simple()
-    );
-    let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
-    let state = Uuid::new_v4().to_string();
-    let scope="https://www.googleapis.com/auth/youtube.force-ssl https://www.googleapis.com/auth/yt-analytics.readonly https://www.googleapis.com/auth/yt-analytics-monetary.readonly";
-    let scopes = scope
-        .split_whitespace()
-        .map(str::to_string)
-        .collect::<Vec<_>>();
-    let auth_url=oauth_authorization_url(&client_id,&redirect,scope,&challenge,&state);
-    let preferred_browser = browser.unwrap_or_else(|| "default".into());
-    open_browser(&auth_url, &preferred_browser)?;
-    let expected_state = state.clone();
-    let code=tauri::async_runtime::spawn_blocking(move||wait_for_oauth_code(listener,expected_state))
-        .await.map_err(|e|format!("OAUTH_CALLBACK_TASK_FAILED: {e}"))??;
-    let mut token_form = vec![
-        ("client_id", client_id.as_str()),
-        ("code", code.as_str()),
-        ("code_verifier", verifier.as_str()),
-        ("grant_type", "authorization_code"),
-        ("redirect_uri", redirect.as_str()),
-    ];
-    if !client_secret.is_empty() {
-        token_form.push(("client_secret", client_secret.as_str()));
-    }
-    let token = reqwest::Client::new()
-        .post("https://oauth2.googleapis.com/token")
-        .form(&token_form)
-        .send()
-        .await
-        .map_err(|e| format!("OAUTH_NETWORK_ERROR: token exchange: {e}"))?;
-    let status = token.status();
-    let tv: Value = token
-        .json()
-        .await
-        .map_err(|e| format!("OAuth token JSON: {e}"))?;
-    if !status.is_success() {
-        let detail = tv
-            .get("error_description")
-            .and_then(|x| x.as_str())
-            .or_else(|| tv.get("error").and_then(|x| x.as_str()))
-            .unwrap_or("Google OAuth token error");
-        return Err(format!("OAUTH_CODE_EXCHANGE_FAILED: {detail}"));
-    }
-    let access = tv
-        .get("access_token")
-        .and_then(|x| x.as_str())
-        .ok_or_else(|| "Google не вернул access_token".to_string())?
-        .to_string();
-    let response_refresh = tv
-        .get("refresh_token")
-        .and_then(|x| x.as_str())
-        .map(str::to_string);
-    let expires = tv
-        .get("expires_in")
-        .and_then(|x| x.as_i64())
-        .unwrap_or(3600);
-    emit_youtube_api_request(&app, "channels.list", None);
-    let me = reqwest::Client::new()
-        .get("https://www.googleapis.com/youtube/v3/channels?part=snippet,statistics&mine=true")
-        .bearer_auth(&access)
-        .send()
-        .await
-        .map_err(|e| format!("YouTube account network: {e}"))?;
-    let me_status = me.status();
-    let mv: Value = me
-        .json()
-        .await
-        .map_err(|e| format!("YouTube account JSON: {e}"))?;
-    if !me_status.is_success() {
-        return Err(youtube_error(&mv,"Не удалось получить YouTube-канал. Проверь, что YouTube Data API v3 включён именно в проекте VYRON."));
-    }
-    let item = mv
-        .get("items")
-        .and_then(|x| x.as_array())
-        .and_then(|a| a.first())
-        .ok_or_else(|| "YOUTUBE_CHANNEL_NOT_FOUND: на выбранном Google-аккаунте YouTube-канал не найден".to_string())?;
-    let channel_id = item
-        .get("id")
-        .and_then(|x| x.as_str())
-        .map(str::to_string)
-        .ok_or_else(|| "YouTube не вернул Channel ID".to_string())?;
-    let channel_title = item
-        .pointer("/snippet/title")
-        .and_then(|x| x.as_str())
-        .map(str::to_string)
-        .unwrap_or_else(|| channel_id.clone());
-    let mut s = load_store_metadata(&app)?;
-    if let Some(existing)=s.profiles.iter().find(|p|p.channel_id.as_deref()==Some(channel_id.as_str())){
-      return Err(format!(
-        "YOUTUBE_CHANNEL_ALREADY_CONNECTED: profile_id={}; channel_id={}; title={}",
-        existing.id,
-        channel_id,
-        channel_title.replace(';'," ").replace('\n'," ").replace('\r'," ")
-      ))
-    }
-    let profile_id=reconnect_profile_id(None);
-    let refresh=response_refresh.as_deref().map(str::trim).filter(|x|!x.is_empty()).map(str::to_string)
-      .ok_or_else(||"OAUTH_REFRESH_TOKEN_REQUIRED: Google не вернул refresh_token для нового канала. Повторите consent.".to_string())?;
-    // New channels use the exact GLOBAL OAuth client secret account selected by
-    // google-config metadata. After an explicit RC3 repair this may be a rotated
-    // canonical account; never fall back to the old ACL-poisoned fixed account when
-    // the configured client matches.
-    if !client_secret.is_empty(){
-        let global_meta=load_google_config_metadata(&app)?;
-        let global_account=if global_meta.client_id.trim()==client_id{
-            google_client_secret_account(&global_meta)
-        }else{
-            GOOGLE_CLIENT_SECRET.to_string()
-        };
-        security::canonical_set_secret(&global_account,&client_secret)?;
-    }
-    let original_store=s.clone();
-    let pointer_before=read_keychain_migration_v2(&app)?;
-    let refresh_account=oauth_key(&profile_id,"refresh_token");
-    security::canonical_forget_cache(&refresh_account);
-    if let Err(e)=security::canonical_set_secret(&refresh_account,&refresh){
-      return Err(format!("OAUTH_KEYCHAIN_WRITE_FAILED: stage=NEW_SECRET_WRITE; account={refresh_account}; {e}"))
-    }
-    match security::canonical_verify_secret(&refresh_account,&refresh){
-      Ok(true)=>{},
-      Ok(false)=>{
-        let _=security::canonical_delete_secret(&refresh_account);
-        return Err(format!("NEW_ITEM_READBACK_FAILED: stage=NEW_SECRET_READBACK; account={refresh_account}; mismatch"))
-      }
-      Err(e)=>{
-        let _=security::canonical_delete_secret(&refresh_account);
-        if e.contains("KEYCHAIN_AUTH_FAILED"){
-          return Err(format!("NEW_ITEM_READBACK_AUTH_FAILED: stage=NEW_SECRET_READBACK; account={refresh_account}; {e}"))
-        }
-        return Err(format!("OAUTH_KEYCHAIN_READBACK_FAILED: stage=NEW_SECRET_READBACK; account={refresh_account}; {e}"))
-      }
-    }
+ app:AppHandle,client_id:String,client_secret:String,browser:Option<String>,
+)->Result<Value,String>{
+ let client_id=client_id.trim().to_string();
+ if client_id.is_empty(){return Err("Google OAuth Client ID не указан".into())}
+ let client_secret=client_secret.trim().to_string();
+ if client_secret.is_empty(){return Err("OAUTH_CLIENT_SETUP_REQUIRED: OAuth Client Secret отсутствует; browser OAuth не запущен.".into())}
+ let listener=TcpListener::bind("127.0.0.1:0").map_err(|e|format!("OAuth localhost: {e}"))?;
+ let port=listener.local_addr().map_err(|e|e.to_string())?.port();
+ let redirect=format!("http://127.0.0.1:{port}");
+ let verifier=format!("{}{}{}",Uuid::new_v4().simple(),Uuid::new_v4().simple(),Uuid::new_v4().simple());
+ let challenge=URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
+ let state=Uuid::new_v4().to_string();
+ let scope="https://www.googleapis.com/auth/youtube.force-ssl https://www.googleapis.com/auth/yt-analytics.readonly https://www.googleapis.com/auth/yt-analytics-monetary.readonly";
+ let scopes=scope.split_whitespace().map(str::to_string).collect::<Vec<_>>();
+ let auth_url=oauth_authorization_url(&client_id,&redirect,scope,&challenge,&state);
+ let preferred_browser=browser.unwrap_or_else(||"default".into());
+ open_browser(&auth_url,&preferred_browser)?;
+ let expected_state=state.clone();
+ let code=tauri::async_runtime::spawn_blocking(move||wait_for_oauth_code(listener,expected_state)).await.map_err(|e|format!("OAUTH_CALLBACK_TASK_FAILED: {e}"))??;
+ let mut token_form=vec![("client_id",client_id.as_str()),("code",code.as_str()),("code_verifier",verifier.as_str()),("grant_type","authorization_code"),("redirect_uri",redirect.as_str())];
+ token_form.push(("client_secret",client_secret.as_str()));
+ let token=reqwest::Client::new().post("https://oauth2.googleapis.com/token").form(&token_form).send().await.map_err(|e|format!("OAUTH_NETWORK_ERROR: token exchange: {e}"))?;
+ let status=token.status();let tv:Value=token.json().await.map_err(|e|format!("OAuth token JSON: {e}"))?;
+ if !status.is_success(){let detail=tv.get("error_description").and_then(Value::as_str).or_else(||tv.get("error").and_then(Value::as_str)).unwrap_or("Google OAuth token error");return Err(format!("OAUTH_CODE_EXCHANGE_FAILED: {detail}"))}
+ let access=tv.get("access_token").and_then(Value::as_str).ok_or_else(||"Google не вернул access_token".to_string())?.to_string();
+ let refresh=tv.get("refresh_token").and_then(Value::as_str).map(str::trim).filter(|x|!x.is_empty()).map(str::to_string).ok_or_else(||"OAUTH_REFRESH_TOKEN_REQUIRED: Google не вернул refresh_token для нового канала. Повторите consent.".to_string())?;
+ let expires=tv.get("expires_in").and_then(Value::as_i64).unwrap_or(3600);
+ emit_youtube_api_request(&app,"channels.list",None);
+ let me=reqwest::Client::new().get("https://www.googleapis.com/youtube/v3/channels").bearer_auth(&access).query(&[("part","snippet,statistics"),("mine","true"),("maxResults","50")]).send().await.map_err(|e|format!("YouTube account network: {e}"))?;
+ let me_status=me.status();let mv:Value=me.json().await.map_err(|e|format!("YouTube account JSON: {e}"))?;
+ if !me_status.is_success(){return Err(youtube_error(&mv,"Не удалось получить YouTube-канал. Проверь, что YouTube Data API v3 включён именно в проекте VYRON."))}
+ let items=mv.get("items").and_then(Value::as_array).cloned().unwrap_or_default();
+ if items.is_empty(){return Err("YOUTUBE_CHANNEL_NOT_FOUND: на выбранном Google-аккаунте YouTube-канал не найден".into())}
+ if items.len()==1{return commit_new_channel_oauth(&app,&client_id,&client_secret,&preferred_browser,&access,&refresh,expires,&scopes,&items[0])}
+ cleanup_pending_new_oauth();
+ let session_id=Uuid::new_v4().to_string();
+ let pending=PendingNewOAuth{created_at:now_ts(),client_id,client_secret,preferred_browser,access_token:access,refresh_token:refresh,expires_in:expires,scopes,items:items.clone()};
+ pending_new_oauth().lock().map_err(|_|"OAUTH_PENDING_LOCK_FAILED".to_string())?.insert(session_id.clone(),pending);
+ let store=load_store_metadata(&app)?;
+ let channels=items.iter().map(|x|channel_identity_value(x,&store)).collect::<Vec<_>>();
+ Ok(json!({"ok":false,"status":"CHANNEL_SELECTION_REQUIRED","sessionId":session_id,"channels":channels,"credentialsCommitted":false,"secretValuesIncluded":false}))
+}
 
-    let profile = OAuthProfile {
-        id: profile_id.clone(),
-        client_id: client_id.clone(),
-        client_secret: String::new(),
-        channel_id: Some(channel_id.clone()),
-        channel_title: Some(channel_title.clone()),
-        access_token: access,
-        refresh_token: String::new(),
-        expires_at: now_ts() + expires,
-        connected_at: Utc::now().to_rfc3339(),
-        scopes: scopes.clone(),
-        preferred_browser: preferred_browser.clone(),
-        identity_validated_at: Some(Utc::now().to_rfc3339()),
-        identity_validated_channel_id: Some(channel_id.clone()),
-        credential_error: None,
-    };
-    s.profiles.retain(|p|p.id!=profile_id&&p.channel_id.as_deref()!=Some(channel_id.as_str()));
-    s.profiles.push(profile.clone());
+#[tauri::command]
+pub fn youtube_oauth_select_new_channel(app:AppHandle,session_id:String,channel_id:String)->Result<Value,String>{
+ cleanup_pending_new_oauth();
+ let pending=pending_new_oauth().lock().map_err(|_|"OAUTH_PENDING_LOCK_FAILED".to_string())?.get(&session_id).cloned().ok_or_else(||"OAUTH_PENDING_EXPIRED: повторите + Добавить канал".to_string())?;
+ let item=pending.items.iter().find(|x|x.get("id").and_then(Value::as_str)==Some(channel_id.as_str())).cloned().ok_or_else(||"OAUTH_CHANNEL_SELECTION_INVALID: выбранный канал отсутствует в текущей OAuth-сессии".to_string())?;
+ let result=commit_new_channel_oauth(&app,&pending.client_id,&pending.client_secret,&pending.preferred_browser,&pending.access_token,&pending.refresh_token,pending.expires_in,&pending.scopes,&item)?;
+ if let Ok(mut map)=pending_new_oauth().lock(){map.remove(&session_id);}
+ Ok(result)
+}
 
-    let mut pointer_next=pointer_before.clone();
-    pointer_next.refresh_token_accounts.insert(profile_id.clone(),refresh_account.clone());
-    pointer_next.credential_generations.insert(profile_id.clone(),1);
-    pointer_next.profiles.insert(profile_id.clone(),MIGRATION_MIGRATED.into());
-    if let Err(e)=write_keychain_migration_v2(&app,&pointer_next){
-      let _=security::canonical_delete_secret(&refresh_account);
-      return Err(format!("OAUTH_METADATA_POINTER_COMMIT_FAILED: stage=METADATA_POINTER_COMMIT; {e}"))
-    }
-    if let Err(e)=write_oauth_metadata(&store_path(&app)?,&s){
-      let _=write_keychain_migration_v2(&app,&pointer_before);
-      let _=security::canonical_delete_secret(&refresh_account);
-      return Err(format!("OAUTH_METADATA_SAVE_FAILED: stage=METADATA_COMMIT; {e}"))
-    }
-    match security::canonical_verify_secret(&refresh_account,&refresh){
-      Ok(true)=>{},
-      Ok(false)=>{
-        let _=write_keychain_migration_v2(&app,&pointer_before);
-        let _=write_oauth_metadata(&store_path(&app)?,&original_store);
-        let _=security::canonical_delete_secret(&refresh_account);
-        return Err("OAUTH_SAVE_VERIFY_FAILED: stage=POST_COMMIT_READ; fresh refresh token mismatch".into())
-      }
-      Err(e)=>{
-        let _=write_keychain_migration_v2(&app,&pointer_before);
-        let _=write_oauth_metadata(&store_path(&app)?,&original_store);
-        let _=security::canonical_delete_secret(&refresh_account);
-        return Err(format!("OAUTH_POST_COMMIT_READ_FAILED: stage=POST_COMMIT_READ; account={refresh_account}; {e}"))
-      }
-    }
-    remember_access_token(&profile.id,&profile.access_token,profile.expires_at);
-    record_profile_credential_validation(&app,&profile.id,"PASS",Some(&channel_id),Some(&channel_id))?;
-    Ok(json!({
-      "id":profile.id,"channelId":channel_id,"channelTitle":channel_title,
-      "connectedAt":profile.connected_at,"preferredBrowser":preferred_browser,
-      "statistics":youtube_channel_statistics_value(item),
-      "oauthTokenStored":true,"secureReadback":"PASS","profileUuidPreserved":true,"secretValuesIncluded":false
-    }))
+#[tauri::command]
+pub fn youtube_oauth_cancel_new_channel_selection(session_id:String)->Value{
+ if let Ok(mut map)=pending_new_oauth().lock(){map.remove(&session_id);}
+ json!({"ok":true,"discarded":true,"credentialsCommitted":false})
 }
 
 fn reconnect_profile_id(existing: Option<&OAuthProfile>) -> String {
@@ -5634,22 +5572,16 @@ pub async fn youtube_oauth_reconnect_existing(
     let item = match matched {
         Some(x) => x,
         None => {
-            let authorized = items
-                .iter()
-                .filter_map(|x| x.get("id").and_then(Value::as_str))
-                .take(10)
-                .collect::<Vec<_>>()
-                .join(",");
-            let _=app.emit("oauth-recovery-stage",json!({"profileId":profile_id,"state":"WRONG_CHANNEL","expectedChannelId":expected_channel_id,"authorizedChannelId":authorized}));
-            return Err(format!(
-                "WRONG_CHANNEL: expected={} authorized={}",
-                expected_channel_id,
-                if authorized.is_empty() {
-                    "NONE"
-                } else {
-                    &authorized
-                }
-            ));
+            let authorized_channels=items.iter().map(|x|channel_identity_value(x,&original_store)).collect::<Vec<_>>();
+            let authorized_ids=authorized_channels.iter().filter_map(|x|x.get("channelId").and_then(Value::as_str)).collect::<Vec<_>>();
+            let _=app.emit("oauth-recovery-stage",json!({"profileId":profile_id,"state":"WRONG_CHANNEL","expectedChannelId":expected_channel_id,"authorizedChannelIds":authorized_ids,"credentialsCommitted":false}));
+            return Ok(json!({
+              "ok":false,"status":"WRONG_CHANNEL","code":"WRONG_CHANNEL","profileId":profile_id,
+              "profileUuidPreserved":true,"expectedChannelId":expected_channel_id,"expectedChannelTitle":target.channel_title,
+              "authorizedChannels":authorized_channels,"browser":preferred_browser,
+              "credentialsCommitted":false,"refreshPointerChanged":false,"clientSecretPointerChanged":false,"generationChanged":false,
+              "videosInsert":0,"secretValuesIncluded":false
+            }));
         }
     };
     let authorized_channel_id = item
