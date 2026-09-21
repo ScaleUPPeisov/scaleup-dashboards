@@ -16,6 +16,7 @@
         "title": "VYRON YT PEISOV",
         "width": 1360,
         "height": 880,
+        "maximized": true,
         "minWidth": 980,
         "minHeight": 700,
         "center": true,
