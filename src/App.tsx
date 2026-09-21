@@ -20,7 +20,7 @@ import { ProductionStatusBridge } from './ProductionStatusBridge';
 import { SettingsOS } from './SettingsOS';
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
 import {NotificationCenter} from './NotificationStack';
-import {notifyInfo,notifySuccess} from './notificationCenter';
+import {notifyError,notifyInfo,notifySuccess} from './notificationCenter';
 import {RecoveryGate} from './RecoveryGate';
 import {sortChannelsAlphabetically} from './channelSort';
 import {subscribeYoutubeQuota,subscribeYoutubeQuotaClock,youtubeQuotaClockSnapshot,youtubeQuotaUsage} from './youtubeQuota';
@@ -94,7 +94,7 @@ export function App(){
     return()=>{disposed=true;clearTimer();document.removeEventListener('visibilitychange',onVisibility);window.removeEventListener('online',maybeRunFresh)};
   },[booted,settings.autoCheckUpdates,bootstrapUpdater,updaterCheck]);
   useEffect(()=>{if(updaterStatus!=='AVAILABLE'||!updaterLatest)return;const key='vyron:update-inline-notified-version';if(localStorage.getItem(key)!==updaterLatest){localStorage.setItem(key,updaterLatest);notifyInfo(`↑ Доступно обновление VYRON ${updaterLatest}`,'Исправления и улучшения готовы к установке.',{operationId:`update-available:${updaterLatest}`,durationMs:null,actions:[{label:'ОБНОВИТЬ',onClick:()=>setPage('settings')},{label:'ПОЗЖЕ',onClick:()=>{}}]})}void notifyUpdateAvailable(updaterLatest)},[updaterStatus,updaterLatest,setPage]);
-  useEffect(()=>{if(!booted)return;void api.appVersion().then(v=>{const expected=localStorage.getItem('vyron:update-installing-version');if(expected&&expected===v){localStorage.removeItem('vyron:update-installing-version');markUpdated(v);notifySuccess('Обновление установлено',`VYRON YT PEISOV обновлён до версии ${v}.`,{operationId:`update-installed:${v}`})}})},[booted,markUpdated]);
+  useEffect(()=>{if(!booted)return;void api.appVersion().then(v=>{const expected=localStorage.getItem('vyron:update-installing-version');if(!expected)return;if(expected===v){localStorage.removeItem('vyron:update-installing-version');markUpdated(v);notifySuccess('Обновление установлено',`VYRON YT PEISOV обновлён до версии ${v}.`,{operationId:`update-installed:${v}`});return}localStorage.removeItem('vyron:update-installing-version');const detail=`POST_UPDATE_VERSION_MISMATCH: expected=${expected}; runtime=${v}`;useUpdaterRuntime.setState({status:'ERROR',errorCode:'POST_UPDATE_VERSION_MISMATCH',errorMessage:detail,currentVersion:v});notifyError('Обновление не подтверждено',`После перезапуска ожидалась версия ${expected}, но запущена ${v}.`,{operationId:`update-version-mismatch:${expected}:${v}`})})},[booted,markUpdated]);
   useEffect(()=>{document.documentElement.classList.toggle('reduceMotion',settings.reduceMotion)},[settings.reduceMotion]);
   useEffect(()=>{let unlisten:(()=>void)|undefined;void api.onYoutubeProgress(f=>{applyUploadProgressFact(f);journalUploadProgressMilestone(f)}).then(fn=>unlisten=fn);return()=>unlisten?.()},[]);
   useEffect(()=>{if(!booted)return;void Promise.all([api.youtubeActiveUploads(),api.youtubeUploadSessions()]).then(([facts,sessions])=>{seedActiveUploadFacts(facts);const patches=buildStaleOperationPatches(useApp.getState().jobs,{uploadsKnown:true,rendersKnown:false,activeUploadIds:new Set(facts.map(x=>x.jobId)),activeRenderIds:new Set(),uploadSessionIds:new Set(sessions.map(x=>x.jobId)),now:new Date().toISOString()});applyStaleOperationPatches(patches,useApp.getState().patchJob)}).catch(()=>{})},[booted]);
