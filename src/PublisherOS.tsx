@@ -293,7 +293,10 @@ export function PublisherOS(){
       if(previous&&row.classification==='NEW_GENERATION')patchJob(previous.id,{removedFromPublishList:true});
     }catch(e){details.push(`${row.file.name}: ${String(e)}`)}
   }
-  if(created.length)addJobs(created);
+  if(created.length){
+    addJobs(created);
+    setFingerprints(prev=>{const next={...prev};for(const j of created){if(j.currentSourceFingerprint&&j.currentSourceFileSize&&j.currentSourceModifiedAt!=null)next[j.id]={fingerprint:j.currentSourceFingerprint,size:j.currentSourceFileSize,modifiedAt:j.currentSourceModifiedAt}}return next});
+  }
   for(const j of created)journal({eventId:`local-video-discovered:${j.id}`,eventType:'LOCAL_VIDEO_DISCOVERED',status:'SUCCESS',source:'LIVE_OPERATION',channelId,channelName:channel.name,jobId:j.id,localSourcePath:j.finalPath,details:{videoNumber:j.number,evidence:explicitLegacyOverride?'explicit-new-generation-override':'fingerprint-generation-reconciliation',previousJobId:j.sourcePreviousJobId||'',currentFingerprint:j.currentSourceFingerprint||'',youtubeApiRequests:0}});
   const alreadyKnown=plan.skipped.filter(x=>x.reason==='ALREADY_KNOWN_PATH'||x.reason==='SEQUENCE_ALREADY_USED').length;
   const report={requested:rows.length,added:created.length,skipped:plan.skipped.length+details.length,alreadyKnown,errors:details.length,details:[...plan.skipped.map(x=>`${x.name}: ${x.reason}`),...details]};
