@@ -17,19 +17,21 @@ describe('VYRON 3.0.0 Publisher/UI contracts',()=>{
  it('shows fingerprint generation evidence and never fixes selection by forcing checkboxes',()=>{
   expect(p).toContain('Показать доказательство статуса');
   expect(p).toContain('Новая версия файла');
-  expect(p).toContain('Проверить файл');
+  expect(p).toContain('Проверить текущий файл');
   expect(p).toContain('Считать текущий файл новой версией');
   expect(p).toContain("renderScan.summary.NEW_CANDIDATE+renderScan.summary.NEW_GENERATION");
   expect(p).toContain("disabled={!fresh||busy}");
  });
- it('provides zero-API bulk recovery preview instead of trapping legacy VERIFY_REQUIRED rows',()=>{
+ it('provides zero-API bulk resolution for LEGACY_IDENTITY_UNPROVEN without force-enabling duplicates',()=>{
   expect(p).toContain('bulkReconcileLegacyRenderRows');
   expect(p).toContain('buildLegacyRecoveryPreview');
-  expect(p).toContain('Проверить и восстановить {renderScan.summary.VERIFY_REQUIRED} файлов');
-  expect(p).toContain('Подтвердить новые поколения');
-  expect(p).toContain("reason:'BULK_LEGACY_RECOVERY_CONFIRMED'");
+  expect(p).toContain('LEGACY_IDENTITY_UNPROVEN');
+  expect(p).toContain('Проверить текущие файлы (');
+  expect(p).toContain('Считать текущие физические файлы новыми поколениями');
+  expect(p).toContain("reason:'BULK_LEGACY_IDENTITY_CONFIRMED'");
+  expect(p).toContain('legacyRecoveryPreview.legacyUnproven');
   expect(p).toContain('successfulUploadForHash(history,fp,channelId,size)');
-  expect(p).toContain('YouTube upload: <b>0</b>');
+  expect(p).toContain('YouTube API: <b>0</b>');
   expect(p).toContain('Проверить YouTube ID');
  });
  it('does not allow verified same-channel fingerprint duplicates to bypass preflight',()=>{
@@ -47,6 +49,8 @@ describe('VYRON 3.0.0 Publisher/UI contracts',()=>{
  it('keeps page-level horizontal overflow disabled at the 1360x880 desktop contract',()=>{
   expect(styles).toContain('.main{flex:1;min-width:0');
   expect(styles).toContain('.pageWrap{overflow-y:auto;overflow-x:hidden;min-width:0;max-width:100%');
+  expect(styles).not.toContain('.compactDensity .main{margin-left:204px}');
+  expect(styles).not.toContain('.compactDensity .main{margin-left:72px}');
  });
  it('uses one structured changelog source with factual 3.0.0 entry',()=>{
   expect(settings).toContain('VYRON_RELEASE_HISTORY.map');
