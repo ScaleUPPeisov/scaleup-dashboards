@@ -24,7 +24,7 @@ import {configureUploadQueue,enqueueUpload,waitForUploadQueueEntries} from './up
 import {existingSyncIncompleteSummary,readAuthoritativeExistingSnapshot,replaceExistingCacheFromSync} from './channelSchedule';
 import {journal} from './activityJournalRuntime';
 import {cleanupPreclassification} from './activityJournalCore';
-import {buildLegacyRecoveryPreview,classifyChannelRenderFiles,crossChannelScanRecoveryJobs,normalizeRenderPath,planRenderScanImport,renderFileNeedsFingerprint,summarizeRenderScan,type LegacyRecoveryPreview,type RenderScanRow,type RenderScanSummary} from './renderScanClassifier';
+import {buildLegacyRecoveryPreview,canRefreshCurrentGenerationEvidence,classifyChannelRenderFiles,crossChannelScanRecoveryJobs,normalizeRenderPath,planRenderScanImport,renderFileNeedsFingerprint,summarizeRenderScan,type LegacyRecoveryPreview,type RenderScanRow,type RenderScanSummary} from './renderScanClassifier';
 import {completeTask,ensureTask,failTask,startTask,updateTask} from './taskEngine';
 
 const status=(j:VideoJob)=>j.status==='READY_UPLOAD'?'В ОЧЕРЕДИ':j.status==='UPLOADING'?'ЗАГРУЖАЕТСЯ':j.status==='SCHEDULED'?'YOUTUBE ✓':j.status==='ERROR'?'ОШИБКА':j.status;
@@ -332,7 +332,10 @@ export function PublisherOS(){
    const refreshed=rows.find(r=>normalizeRenderPath(r.file.path)===normalizeRenderPath(row.file.path));
    if(refreshed?.matchedJobId&&refreshed.currentFingerprint){
     const matched=current.find(j=>j.id===refreshed.matchedJobId);
-    if(matched&&normalizeRenderPath(matched.finalPath||'')===normalizeRenderPath(refreshed.file.path))patchJob(matched.id,{currentSourceFingerprint:refreshed.currentFingerprint,currentSourceFileSize:refreshed.file.size,currentSourceModifiedAt:refreshed.file.modifiedAt||undefined,sourceGenerationKey:`${channelId}:${refreshed.currentFingerprint}:${refreshed.file.size}`})
+    // Identity verification must never rewrite an already-uploaded/historical generation
+    // with the bytes currently occupying the same path. Historical YouTube evidence stays
+    // immutable; a changed physical file is materialized as a separate NEW_GENERATION.
+    if(matched&&canRefreshCurrentGenerationEvidence(matched)&&normalizeRenderPath(matched.finalPath||'')===normalizeRenderPath(refreshed.file.path))patchJob(matched.id,{currentSourceFingerprint:refreshed.currentFingerprint,currentSourceFileSize:refreshed.file.size,currentSourceModifiedAt:refreshed.file.modifiedAt||undefined,sourceGenerationKey:`${channelId}:${refreshed.currentFingerprint}:${refreshed.file.size}`})
    }
    setRenderScan({...renderScan,result:{...renderScan.result,files},rows,summary});
    notifyInfo('Проверка файла завершена',`${row.file.name}: ${refreshed?.classification||'UNKNOWN'} • YouTube API: 0.`)
