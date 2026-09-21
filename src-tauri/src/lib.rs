@@ -1,5 +1,6 @@
 #![recursion_limit = "512"]
 mod updater_bridge;
+use tauri::Manager;
 mod license;
 mod storage;
 mod security;
