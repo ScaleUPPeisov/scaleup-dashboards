@@ -327,6 +327,32 @@ jobs:
           UPDATER="$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name '*.app.tar.gz' -print -quit)"
           SIG="$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name '*.app.tar.gz.sig' -print -quit)"
           test -d "$APP"; test -s "$DMG"; test -s "$UPDATER"; test -s "$SIG"
+
+          # Verify the exact updater archive signature against the public key configured
+          # in tauri.conf.json. Tauri stores both pubkey/signature as base64-encoded
+          # minisign envelopes, so decode only when the decoded payload is an envelope.
+          python3 - "$SIG" <<'PY'
+          import base64,json,sys
+          from pathlib import Path
+          conf=json.load(open('src-tauri/tauri.conf.json'))
+          def envelope(value:bytes)->bytes:
+              stripped=value.strip()
+              try:
+                  decoded=base64.b64decode(stripped,validate=True)
+                  if decoded.startswith(b'untrusted comment:'):
+                      return decoded
+              except Exception:
+                  pass
+              return stripped+b'\n'
+          pub=str(conf['plugins']['updater']['pubkey']).encode()
+          Path('/tmp/vyron-updater-public.pub').write_bytes(envelope(pub))
+          sig=Path(sys.argv[1]).read_bytes()
+          Path('/tmp/vyron-updater-signature.sig').write_bytes(envelope(sig))
+          PY
+          if ! command -v minisign >/dev/null 2>&1; then brew install minisign >/dev/null; fi
+          minisign -Vm "$UPDATER" -x /tmp/vyron-updater-signature.sig -p /tmp/vyron-updater-public.pub
+          echo 'UPDATER_SIGNATURE_VERIFY=PASS'
+
           test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = "$BUNDLE_ID"
           test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = "$VERSION"
           test "$(plutil -extract CFBundleExecutable raw -o - "$APP/Contents/Info.plist")" = "$EXECUTABLE"
@@ -422,6 +448,7 @@ jobs:
             echo "WINDOW_MAXIMIZED_CONTRACT=PASS"
             echo "UPDATER_PREFLIGHT_CONTRACT=PASS"
             echo "POST_UPDATE_VERSION_PROOF=PASS"
+            echo "UPDATER_SIGNATURE_VERIFY=PASS"
             echo "OAUTH_50_PROFILE_CONTINUITY=PASS"
             echo "CHANNEL_FOLDER_DISCOVERY=PASS"
             echo "CHANNEL_SCOPED_SCAN=PASS"
