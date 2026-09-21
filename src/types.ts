@@ -67,7 +67,7 @@ export type Settings={
   autopilotMode:AutopilotMode; autopilotEnabled:boolean; autoCreatePlan:boolean; autoAssignMusic:boolean; autoAssignImages:boolean; autoGenerateMetadata:boolean;
   autoQueueRender:boolean; autoOpenEndlume:boolean; autoUploadYoutube:boolean; autopilotIntervalSec:number; tracksPerVideo:number;
   openaiApiKey:string; openaiModel:string; youtubeOAuthClientId:string; youtubeCategoryId:string;
-  youtubeIntelligenceAutoRefresh:boolean; youtubeIntelligenceRefreshMin:number; youtubePublishSafeMode:boolean; youtubeUploadConcurrency:number;
+  youtubeIntelligenceAutoRefresh:boolean; youtubeIntelligenceRefreshMin:number; youtubePublishSafeMode:boolean; youtubeUploadConcurrency:number; youtubeUploadPerChannelConcurrency:number; metadataConcurrency:number; statisticsConcurrency:number;
   competitorRpmLow:number; competitorRpmHigh:number; competitorPoolSize:number;
   publishedVideoCleanupPolicy?:'ask'|'none'|'after3d'|'after7d'; completedProjectCleanupPolicy?:'ask'|'none'|'after3d'|'after7d';
   endlumeTargetDurationMin:number; endlumeTargetRenderSec:number; endlumeTargetFileMinMb:number; endlumeTargetFileMaxMb:number; endlumePreserveImageQuality:boolean; endlumeProjectNaming:string;
