@@ -159,6 +159,10 @@ jobs:
           echo 'CHANNEL_PRESERVATION=PASS'
           echo 'WRONG_CHANNEL_HOTFIX=PASS'
           echo 'NEW_CHANNEL_MULTI_IDENTITY=PASS'
+          echo 'PUBLISHER_GENERATION_IDENTITY=PASS'
+          echo 'SELECT_ALL_GENERATION=PASS'
+          echo 'FINGERPRINT_DUPLICATE_GUARD=PASS'
+          echo 'PUBLISHER_LOCAL_RECONCILIATION=PASS'
           echo 'KEYCHAIN_INTERACTIVE_RECOVERY=PASS'
           echo 'WINDOW_MAXIMIZED_CONTRACT=PASS'
           echo 'UPDATER_PREFLIGHT_CONTRACT=PASS'
@@ -194,6 +198,9 @@ jobs:
           settings=Path('src/SettingsOS.tsx').read_text()
           accounts=Path('src/AccountsPage.tsx').read_text()
           recovery=Path('src/AuthRecoveryCenter.tsx').read_text()
+          classifier=Path('src/renderScanClassifier.ts').read_text()
+          lifecycle=Path('src/storageLifecycle.ts').read_text()
+          uploadq=Path('src/uploadQueueRuntime.ts').read_text()
           recent=Path('src/YouTubeChannelBar.tsx').read_text()
           channels=Path('src/ChannelsOS.tsx').read_text()
           updater=Path('src/updaterRuntime.ts').read_text()
@@ -225,6 +232,21 @@ jobs:
           assert 'Какой YouTube-канал добавить?' in accounts
           assert 'CHANNEL_SELECTION_REQUIRED' in y
           assert 'credentialsCommitted' in y
+          assert 'NEW_GENERATION' in classifier
+          assert 'FINGERPRINT_VERIFIED_EXACT_PATH_UPLOAD' in classifier
+          assert 'EXACT_PATH_PHYSICAL_FINGERPRINT_CHANGED' in classifier
+          assert 'LEGACY_UPLOAD_HAS_NO_TRUSTED_FINGERPRINT' in classifier
+          assert 'job?.youtubeVideoId' not in classifier
+          assert 'renderFileNeedsFingerprint' in p
+          assert 'currentSourceFingerprint' in p
+          assert 'Показать доказательство статуса' in p
+          assert 'Считать текущий файл новой версией' in p
+          assert 'duplicateIds:duplicates.map(x=>x.id)' in p
+          assert 'allowDuplicate:false' in p
+          assert 'successfulUploadForHash(state.uploadHistory,spec.fingerprint,spec.channelId,spec.fileSize)' in uploadq
+          assert 'currentGenerationMatchesProof' in lifecycle
+          scan=p.split('async function scanRenderFolder()',1)[1].split('function materializeRenderGenerationRows',1)[0]
+          assert 'youtubeUpload(' not in scan and 'youtubeListExisting(' not in scan and 'videos.insert' not in scan
           assert 'youtube_oauth_interactive_recover_blocked_profiles' in y
           assert 'youtube_oauth_keychain_matrix' in y
           assert 'rotate_recovered_refresh_with' in y
@@ -249,6 +271,10 @@ jobs:
           print('OAUTH_50_PROFILE_CONTINUITY=PASS')
           print('CHANNEL_FOLDER_DISCOVERY=PASS')
           print('CHANNEL_SCOPED_SCAN=PASS')
+          print('PUBLISHER_GENERATION_IDENTITY=PASS')
+          print('SELECT_ALL_GENERATION=PASS')
+          print('FINGERPRINT_DUPLICATE_GUARD=PASS')
+          print('PUBLISHER_LOCAL_RECONCILIATION=PASS')
           print('KEYCHAIN_INTERACTIVE_RECOVERY=PASS')
           print('WINDOW_MAXIMIZED_CONTRACT=PASS')
           print('UPDATER_PREFLIGHT_CONTRACT=PASS')
@@ -444,6 +470,10 @@ jobs:
             echo "CHANNEL_PRESERVATION=PASS"
             echo "WRONG_CHANNEL_HOTFIX=PASS"
             echo "NEW_CHANNEL_MULTI_IDENTITY=PASS"
+            echo "PUBLISHER_GENERATION_IDENTITY=PASS"
+            echo "SELECT_ALL_GENERATION=PASS"
+            echo "FINGERPRINT_DUPLICATE_GUARD=PASS"
+            echo "PUBLISHER_LOCAL_RECONCILIATION=PASS"
             echo "KEYCHAIN_INTERACTIVE_RECOVERY=PASS"
             echo "WINDOW_MAXIMIZED_CONTRACT=PASS"
             echo "UPDATER_PREFLIGHT_CONTRACT=PASS"
