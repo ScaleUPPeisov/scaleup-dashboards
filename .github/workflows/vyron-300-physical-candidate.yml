@@ -145,7 +145,7 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          npx vitest run             src/v300PublisherSelection.test.ts             src/v300PublisherUiContracts.test.ts             src/v300OauthContinuity.test.ts             src/v300OauthPersistence.test.ts             src/renderScanClassifier.test.ts             src/v2115Rc7RenderScanContract.test.ts             src/v2115Rc7OauthUpdateContinuity.test.ts             src/v2115Rc6KeychainRotation.test.ts             src/storageLifecycle.test.ts             src/uploadQueue.test.ts             src/channelSchedule.test.ts             src/scheduleContinuation.test.ts             src/publisherSchedule.test.ts             src/updaterSchedule.test.ts             src/updaterRuntime.test.ts             src/updaterPolicy.test.ts             src/updaterGuard.test.ts
+          npx vitest run             src/v300PublisherSelection.test.ts             src/v300PublisherUiContracts.test.ts             src/v300OauthContinuity.test.ts             src/v300OauthPersistence.test.ts             src/v300WrongChannelHotfix.test.ts             src/renderScanClassifier.test.ts             src/v2115Rc7RenderScanContract.test.ts             src/v2115Rc7OauthUpdateContinuity.test.ts             src/v2115Rc6KeychainRotation.test.ts             src/storageLifecycle.test.ts             src/uploadQueue.test.ts             src/channelSchedule.test.ts             src/scheduleContinuation.test.ts             src/publisherSchedule.test.ts             src/updaterSchedule.test.ts             src/updaterRuntime.test.ts             src/updaterPolicy.test.ts             src/updaterGuard.test.ts
           npm test
           npm run build
           echo 'TYPESCRIPT_BUILD=PASS'
@@ -157,6 +157,8 @@ jobs:
           echo 'MIXED_PROFILE_RECOVERY=PASS'
           echo 'MANUAL_BROWSER_RECONNECT=PASS'
           echo 'CHANNEL_PRESERVATION=PASS'
+          echo 'WRONG_CHANNEL_HOTFIX=PASS'
+          echo 'NEW_CHANNEL_MULTI_IDENTITY=PASS'
           echo 'USER_UPDATE_UI=PASS'
           echo 'RECENT_BLOCK_REMOVED=PASS'
           echo 'PAGE_OVERFLOW_X=0'
@@ -211,6 +213,10 @@ jobs:
           assert 'Восстановить через credentials.json' in accounts
           assert 'api.youtubeOauthRecoverExistingProfiles()' in accounts
           assert 'Войти заново через браузер' in recovery
+          assert 'Выбран другой YouTube-канал' in accounts
+          assert 'Какой YouTube-канал добавить?' in accounts
+          assert 'CHANNEL_SELECTION_REQUIRED' in y
+          assert 'credentialsCommitted' in y
           assert 'normalized_duplicate_channel_folders_are_reported_as_ambiguous_candidates' in folders
           assert 'exact_channel_root_never_includes_sibling_channel_media' in folders
 
@@ -390,6 +396,8 @@ jobs:
             echo "MIXED_PROFILE_RECOVERY=PASS"
             echo "MANUAL_BROWSER_RECONNECT=PASS"
             echo "CHANNEL_PRESERVATION=PASS"
+            echo "WRONG_CHANNEL_HOTFIX=PASS"
+            echo "NEW_CHANNEL_MULTI_IDENTITY=PASS"
             echo "OAUTH_50_PROFILE_CONTINUITY=PASS"
             echo "CHANNEL_FOLDER_DISCOVERY=PASS"
             echo "CHANNEL_SCOPED_SCAN=PASS"
