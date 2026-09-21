@@ -14,15 +14,14 @@ export function resolveYoutubeActiveChannel(channels:Channel[],saved:string){ret
 export function YouTubeChannelBar(){
  const channels=useApp(s=>s.channels),channelKey=channels.map(c=>c.id).join('|');
  const [activeId,setActiveId]=useState(()=>resolveYoutubeActiveChannel(channels,loadActivePublishChannel()));
- const [query,setQuery]=useState(''),[recentIds,setRecentIds]=useState(()=>loadRecentPublishChannels()),[feedback,setFeedback]=useState('');
+ const [query,setQuery]=useState(''),[feedback,setFeedback]=useState('');
  const [refreshing,setRefreshing]=useState(false),[profiles,setProfiles]=useState<YoutubeProfile[]>([]);
 
- useEffect(()=>subscribeActivePublishChannel(id=>{setActiveId(resolveYoutubeActiveChannel(channels,id));setRecentIds(loadRecentPublishChannels());const c=channels.find(x=>x.id===id);if(c)setFeedback(`Активный канал: ${c.name}`)}),[channelKey]);
+ useEffect(()=>subscribeActivePublishChannel(id=>{setActiveId(resolveYoutubeActiveChannel(channels,id));const c=channels.find(x=>x.id===id);if(c)setFeedback(`Активный канал: ${c.name}`)}),[channelKey]);
  useEffect(()=>{let live=true;void api.youtubeProfiles().then(p=>{if(live)setProfiles(p)}).catch(()=>{});return()=>{live=false}},[]);
- useEffect(()=>{const resolved=resolveYoutubeActiveChannel(channels,loadActivePublishChannel());if(resolved&&resolved!==loadActivePublishChannel())saveActivePublishChannel(resolved);setActiveId(resolved);setRecentIds(loadRecentPublishChannels().filter(id=>channels.some(c=>c.id===id)))},[channelKey]);
+ useEffect(()=>{const resolved=resolveYoutubeActiveChannel(channels,loadActivePublishChannel());if(resolved&&resolved!==loadActivePublishChannel())saveActivePublishChannel(resolved);setActiveId(resolved)},[channelKey]);
 
  const visible=useMemo(()=>filterYoutubeChannels(channels,query),[channels,query]);
- const recent=recentIds.map(id=>channels.find(c=>c.id===id)).filter(Boolean) as Channel[];
  const active=channels.find(c=>c.id===activeId);
  const activeLinked=classifyYoutubeChannels(active?[active]:[],profiles).linked[0];
 
@@ -43,7 +42,7 @@ export function YouTubeChannelBar(){
 
  function choose(nextId:string){
   if(!channels.some(c=>c.id===nextId))return;
-  saveActivePublishChannel(nextId);setActiveId(nextId);setRecentIds(loadRecentPublishChannels());setQuery('');
+  saveActivePublishChannel(nextId);setActiveId(nextId);setQuery('');
   setFeedback(`Активный канал: ${channels.find(c=>c.id===nextId)?.name||nextId}`)
  }
 
@@ -65,7 +64,6 @@ export function YouTubeChannelBar(){
   </div>
   <label className="youtubeChannelSearch">🔎<input aria-label="Найти канал" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Найти канал…"/></label>
   <label className="youtubeChannelSelect"><span>Канал</span><select aria-label="Активный YouTube-канал" value={visible.some(c=>c.id===activeId)?activeId:''} onChange={e=>choose(e.target.value)}><option value="" disabled>{visible.length?'Выберите канал':'Нет совпадений'}</option>{visible.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
-  <div className="youtubeRecentChannels"><small>Недавние</small><div>{recent.length?recent.map(c=><button key={c.id} className={c.id===activeId?'active':''} onClick={()=>choose(c.id)}>{c.name}</button>):<span>пока нет</span>}</div></div>
   <div className="youtubeChannelFeedback" aria-live="polite">{feedback||`Активный канал: ${active?.name||'—'}`}</div>
  </section>
 }
