@@ -53,9 +53,10 @@ describe('VYRON 3.0.0 OAuth persistence physical-blocker regression',()=>{
   expect(effect).not.toContain('youtubeReconnectExisting');
   expect(effect).not.toContain('youtubeOauthBrowsers');
  });
- it('manual browser reconnect remains explicit fallback',()=>{
+ it('manual browser reconnect remains explicit fallback after Keychain repair',()=>{
   expect(accounts).toContain('Переподключить через браузер');
-  expect(recovery).toContain('Войти заново через браузер');
+  expect(recovery).toContain('Переподключить через браузер');
+  expect(recovery).toContain('Восстановить доступ Keychain');
   expect(recovery).toContain('api.youtubeReconnectExisting(profileId,browser)');
  });
  it('automatic recovery does not create profiles or mutate channel mappings',()=>{
