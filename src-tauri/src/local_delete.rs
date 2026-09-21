@@ -77,7 +77,7 @@ pub fn discover_channel_folders_impl(workspace:&str,channel_name:&str)->Result<C
  let workspace_canon=canonical_dir(&PathBuf::from(workspace)).ok_or_else(||"CHANNEL_FOLDER_DISCOVERY_WORKSPACE_NOT_FOUND".to_string())?;
  let mut bases=Vec::new();push_base(&mut bases,workspace_canon.clone());if let Some(parent)=workspace_canon.parent(){push_base(&mut bases,parent.to_path_buf())}
  let mut render=BTreeSet::new();let mut projects=BTreeSet::new();let mut roots_checked=BTreeSet::new();
- for base in &bases{roots_checked.insert(base.to_string_lossy().into_owned());for container in matching_container_dirs(base,"Render"){roots_checked.insert(container.to_string_lossy().into_owned());for p in exact_named_channel_dirs(&container,channel_name){render.insert(p.to_string_lossy().into_owned())}}for container in matching_container_dirs(base,"Projects"){roots_checked.insert(container.to_string_lossy().into_owned());for p in exact_named_channel_dirs(&container,channel_name){projects.insert(p.to_string_lossy().into_owned())}}}
+ for base in &bases{roots_checked.insert(base.to_string_lossy().into_owned());for container in matching_container_dirs(base,"Render"){roots_checked.insert(container.to_string_lossy().into_owned());for p in exact_named_channel_dirs(&container,channel_name){render.insert(p.to_string_lossy().into_owned());}}for container in matching_container_dirs(base,"Projects"){roots_checked.insert(container.to_string_lossy().into_owned());for p in exact_named_channel_dirs(&container,channel_name){projects.insert(p.to_string_lossy().into_owned());}}}
  Ok(ChannelFolderDiscovery{render:render.into_iter().collect(),projects:projects.into_iter().collect(),roots_checked:roots_checked.into_iter().collect()})
 }
 #[tauri::command]
