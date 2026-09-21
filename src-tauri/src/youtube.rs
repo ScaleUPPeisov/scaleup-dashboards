@@ -2183,6 +2183,15 @@ fn rotate_recovered_refresh_with<S:OAuthSecretStore>(secrets:&S,profile_id:&str,
  }
 }
 
+fn commit_recovered_refresh_pointer(state:&mut KeychainMigrationV2State,profile_id:&str,old_account:&str,new_account:&str,generation:u32){
+ state.refresh_token_accounts.insert(profile_id.to_string(),new_account.to_string());
+ state.credential_generations.insert(profile_id.to_string(),generation);
+ state.credential_rotated_at.insert(profile_id.to_string(),Utc::now().to_rfc3339());
+ state.profiles.insert(profile_id.to_string(),MIGRATION_MIGRATED.into());
+ let evidence=state.legacy_blocked_accounts.entry(profile_id.to_string()).or_default();
+ if !evidence.iter().any(|x|x==old_account){evidence.push(old_account.to_string())}
+}
+
 #[tauri::command]
 pub fn youtube_oauth_keychain_matrix(app:AppHandle)->Result<Value,String>{
  let store=load_store_metadata(&app)?;
@@ -2438,11 +2447,7 @@ pub async fn youtube_oauth_interactive_recover_blocked_profiles(app:AppHandle)->
    Ok(v)=>v,Err(e)=>{failed+=1;rows.push(json!({"profileUuid":profile_id,"expectedChannelId":expected,"oldAccount":old_account,"newAccount":Value::Null,"status":"FAILED","reasonCode":"NEW_ACCOUNT_WRITE_FAILED","classification":classification,"pointerChanged":false,"generationChanged":false,"tokenRefresh":"NOT_RUN","errorCode":security_error_code_safe(&e),"browserLaunches":0,"youtubeApiRequests":0,"secretValuesIncluded":false}));continue}
   };
   let mut next_state=read_keychain_migration_v2(&app)?;
-  next_state.refresh_token_accounts.insert(profile_id.clone(),new_account.clone());
-  next_state.credential_generations.insert(profile_id.clone(),generation);
-  next_state.credential_rotated_at.insert(profile_id.clone(),Utc::now().to_rfc3339());
-  next_state.profiles.insert(profile_id.clone(),MIGRATION_MIGRATED.into());
-  next_state.legacy_blocked_accounts.entry(profile_id.clone()).or_default().push(old_account.clone());
+  commit_recovered_refresh_pointer(&mut next_state,&profile_id,&old_account,&new_account,generation);
   if let Err(e)=write_keychain_migration_v2(&app,&next_state){let _=security::canonical_delete_secret(&new_account);failed+=1;rows.push(json!({"profileUuid":profile_id,"expectedChannelId":expected,"oldAccount":old_account,"newAccount":new_account,"status":"FAILED","reasonCode":"POINTER_COMMIT_FAILED","pointerChanged":false,"generationChanged":false,"tokenRefresh":"NOT_RUN","errorCode":security_error_code_safe(&e),"browserLaunches":0,"youtubeApiRequests":0,"secretValuesIncluded":false}));continue}
   security::canonical_forget_cache(&old_account);
   let refresh_result=match resolve_client_secret_for_profile(&app,&profile_id,&profile.client_id){
