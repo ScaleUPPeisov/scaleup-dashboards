@@ -19,7 +19,7 @@ const history=(state:UploadHistoryRecord['processingState']='UPLOAD_ACCEPTED'):U
  localFilePath:'/workspace/VIDEO_001.mp4',originalFilename:'VIDEO_001.mp4',uploadedAt:'2026-09-20T00:00:00Z',
  fileSize:100,sha256:'a'.repeat(64),publishAt:'2026-09-21T00:00:00Z',status:'UPLOADED',processingState:state,sourceLifecycle:'PRESENT',remoteExists:true
 });
-const job:VideoJob={id:'j1',channelId:'c1',number:1,folder:'/workspace/VIDEO_001',status:'SCHEDULED',createdAt:'2026-09-20T00:00:00Z',tracksCount:10,minTracks:10,title:'x',description:'',tags:[],finalPath:'/workspace/VIDEO_001.mp4',uploadFingerprint:'a'.repeat(64),youtubeVideoId:'yt1',storageLifecycle:'UPLOADED'};
+const job:VideoJob={id:'j1',channelId:'c1',number:1,folder:'/workspace/VIDEO_001',status:'SCHEDULED',createdAt:'2026-09-20T00:00:00Z',tracksCount:10,minTracks:10,title:'x',description:'',tags:[],finalPath:'/workspace/VIDEO_001.mp4',uploadFingerprint:'a'.repeat(64),currentSourceFingerprint:'a'.repeat(64),currentSourceFileSize:100,sourceGenerationKey:`c1:${'a'.repeat(64)}:100`,youtubeVideoId:'yt1',storageLifecycle:'UPLOADED'};
 const spec=(n:number):ImmutableUploadJob=>({jobId:`j${n}`,projectId:`p${n}`,localVideoIdentity:`id-${n}`,videoNumber:n,channelId:`c${n}`,channelName:`C${n}`,profileId:`profile-${n}`,filePath:`/workspace/${n}.mp4`,fingerprint:String(n).padStart(64,'a'),fileSize:100,modifiedAt:1,publishAt:'2030-01-01T00:00:00Z',title:'x',description:'',tags:[],categoryId:'10',quotaOperations:[{method:'videos.insert',count:1}],allowDuplicate:false,submittedAt:'2026-09-20T00:00:00Z'});
 
 describe('VYRON 2.1.15 RC3 critical stability contracts',()=>{
