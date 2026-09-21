@@ -37,6 +37,10 @@ struct OAuthProfile {
     client_secret: String,
     channel_id: Option<String>,
     channel_title: Option<String>,
+    #[serde(default)]
+    google_email: Option<String>,
+    #[serde(default)]
+    google_subject_id: Option<String>,
     #[serde(default, skip_serializing)]
     access_token: String,
     #[serde(default, skip_serializing)]
@@ -1372,7 +1376,7 @@ fn oauth_profiles_value(s:OAuthStore,states:&HashMap<String,String>)->Value{json
   let analytics=p.scopes.iter().any(|x|x=="https://www.googleapis.com/auth/yt-analytics.readonly"||x=="https://www.googleapis.com/auth/yt-analytics-monetary.readonly");
   let monetary=p.scopes.iter().any(|x|x=="https://www.googleapis.com/auth/yt-analytics-monetary.readonly");
   let credential_status=states.get(&p.id).cloned().unwrap_or_else(||"NOT_CHECKED".into());
-  json!({"id":p.id,"channelId":p.channel_id,"channelTitle":p.channel_title,"connectedAt":p.connected_at,"clientIdMasked":if p.client_id.len()>12{format!("{}…{}",&p.client_id[..8],&p.client_id[p.client_id.len()-6..])}else{"configured".into()},"scopes":p.scopes,"analyticsAuthorized":analytics,"monetaryAuthorized":monetary,"preferredBrowser":p.preferred_browser,"credentialStatus":credential_status,"credentialError":Value::Null,"identityValidatedAt":p.identity_validated_at})
+  json!({"id":p.id,"channelId":p.channel_id,"channelTitle":p.channel_title,"googleEmail":p.google_email,"googleSubjectId":p.google_subject_id,"connectedAt":p.connected_at,"clientIdMasked":if p.client_id.len()>12{format!("{}…{}",&p.client_id[..8],&p.client_id[p.client_id.len()-6..])}else{"configured".into()},"scopes":p.scopes,"analyticsAuthorized":analytics,"monetaryAuthorized":monetary,"preferredBrowser":p.preferred_browser,"credentialStatus":credential_status,"credentialError":Value::Null,"identityValidatedAt":p.identity_validated_at})
  }).collect::<Vec<_>>())}
 #[tauri::command]
 pub fn youtube_oauth_profiles(app:AppHandle)->Result<Value,String>{
@@ -1435,6 +1439,18 @@ fn oauth_authorization_url(client_id:&str,redirect:&str,scope:&str,challenge:&st
     format!("https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&access_type=offline&prompt={}&include_granted_scopes=true&code_challenge={}&code_challenge_method=S256&state={}",
       urlencoding::encode(client_id),urlencoding::encode(redirect),urlencoding::encode(scope),prompt,urlencoding::encode(challenge),urlencoding::encode(state))
 }
+async fn google_identity_metadata(access_token:&str)->(Option<String>,Option<String>){
+    let response=reqwest::Client::new()
+      .get("https://openidconnect.googleapis.com/v1/userinfo")
+      .bearer_auth(access_token)
+      .send().await;
+    let Ok(response)=response else{return(None,None)};
+    if !response.status().is_success(){return(None,None)}
+    let Ok(v)=response.json::<Value>().await else{return(None,None)};
+    let email=v.get("email").and_then(Value::as_str).map(str::trim).filter(|x|!x.is_empty()).map(str::to_string);
+    let subject=v.get("sub").and_then(Value::as_str).map(str::trim).filter(|x|!x.is_empty()).map(str::to_string);
+    (email,subject)
+}
 
 #[derive(Clone)]
 struct PendingNewOAuth{
@@ -1446,6 +1462,8 @@ struct PendingNewOAuth{
  refresh_token:String,
  expires_in:i64,
  scopes:Vec<String>,
+ google_email:Option<String>,
+ google_subject_id:Option<String>,
  items:Vec<Value>,
 }
 static PENDING_NEW_OAUTH:OnceLock<Mutex<HashMap<String,PendingNewOAuth>>>=OnceLock::new();
@@ -1471,7 +1489,7 @@ fn channel_identity_value(item:&Value,store:&OAuthStore)->Value{
  })
 }
 fn commit_new_channel_oauth(
- app:&AppHandle,client_id:&str,client_secret:&str,preferred_browser:&str,access:&str,refresh:&str,expires:i64,scopes:&[String],item:&Value
+ app:&AppHandle,client_id:&str,client_secret:&str,preferred_browser:&str,access:&str,refresh:&str,expires:i64,scopes:&[String],google_email:Option<&str>,google_subject_id:Option<&str>,item:&Value
 )->Result<Value,String>{
  let channel_id=item.get("id").and_then(Value::as_str).map(str::to_string)
    .ok_or_else(||"YouTube не вернул Channel ID".to_string())?;
@@ -1498,6 +1516,7 @@ fn commit_new_channel_oauth(
  }
  let profile=OAuthProfile{
   id:profile_id.clone(),client_id:client_id.to_string(),client_secret:String::new(),channel_id:Some(channel_id.clone()),channel_title:Some(channel_title.clone()),
+  google_email:google_email.map(str::to_string),google_subject_id:google_subject_id.map(str::to_string),
   access_token:access.to_string(),refresh_token:String::new(),expires_at:now_ts()+expires,connected_at:Utc::now().to_rfc3339(),
   scopes:scopes.to_vec(),preferred_browser:preferred_browser.to_string(),identity_validated_at:Some(Utc::now().to_rfc3339()),identity_validated_channel_id:Some(channel_id.clone()),credential_error:None,
  };
@@ -1517,6 +1536,7 @@ fn commit_new_channel_oauth(
  record_profile_credential_validation(app,&profile.id,"PASS",Some(&channel_id),Some(&channel_id))?;
  Ok(json!({
   "ok":true,"status":"CONNECTED","id":profile.id,"channelId":channel_id,"channelTitle":channel_title,
+  "googleEmail":profile.google_email,"googleSubjectId":profile.google_subject_id,
   "connectedAt":profile.connected_at,"preferredBrowser":preferred_browser,"statistics":youtube_channel_statistics_value(item),
   "oauthTokenStored":true,"secureReadback":"PASS","profileUuidPreserved":true,"secretValuesIncluded":false
  }))
@@ -1536,7 +1556,7 @@ pub async fn youtube_oauth_connect(
  let verifier=format!("{}{}{}",Uuid::new_v4().simple(),Uuid::new_v4().simple(),Uuid::new_v4().simple());
  let challenge=URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
  let state=Uuid::new_v4().to_string();
- let scope="https://www.googleapis.com/auth/youtube.force-ssl https://www.googleapis.com/auth/yt-analytics.readonly https://www.googleapis.com/auth/yt-analytics-monetary.readonly";
+ let scope="openid email profile https://www.googleapis.com/auth/youtube.force-ssl https://www.googleapis.com/auth/yt-analytics.readonly https://www.googleapis.com/auth/yt-analytics-monetary.readonly";
  let scopes=scope.split_whitespace().map(str::to_string).collect::<Vec<_>>();
  let auth_url=oauth_authorization_url(&client_id,&redirect,scope,&challenge,&state);
  let preferred_browser=browser.unwrap_or_else(||"default".into());
@@ -1551,16 +1571,17 @@ pub async fn youtube_oauth_connect(
  let access=tv.get("access_token").and_then(Value::as_str).ok_or_else(||"Google не вернул access_token".to_string())?.to_string();
  let refresh=tv.get("refresh_token").and_then(Value::as_str).map(str::trim).filter(|x|!x.is_empty()).map(str::to_string).ok_or_else(||"OAUTH_REFRESH_TOKEN_REQUIRED: Google не вернул refresh_token для нового канала. Повторите consent.".to_string())?;
  let expires=tv.get("expires_in").and_then(Value::as_i64).unwrap_or(3600);
+ let (google_email,google_subject_id)=google_identity_metadata(&access).await;
  emit_youtube_api_request(&app,"channels.list",None);
  let me=reqwest::Client::new().get("https://www.googleapis.com/youtube/v3/channels").bearer_auth(&access).query(&[("part","snippet,statistics"),("mine","true"),("maxResults","50")]).send().await.map_err(|e|format!("YouTube account network: {e}"))?;
  let me_status=me.status();let mv:Value=me.json().await.map_err(|e|format!("YouTube account JSON: {e}"))?;
  if !me_status.is_success(){return Err(youtube_error(&mv,"Не удалось получить YouTube-канал. Проверь, что YouTube Data API v3 включён именно в проекте VYRON."))}
  let items=mv.get("items").and_then(Value::as_array).cloned().unwrap_or_default();
  if items.is_empty(){return Err("YOUTUBE_CHANNEL_NOT_FOUND: на выбранном Google-аккаунте YouTube-канал не найден".into())}
- if items.len()==1{return commit_new_channel_oauth(&app,&client_id,&client_secret,&preferred_browser,&access,&refresh,expires,&scopes,&items[0])}
+ if items.len()==1{return commit_new_channel_oauth(&app,&client_id,&client_secret,&preferred_browser,&access,&refresh,expires,&scopes,google_email.as_deref(),google_subject_id.as_deref(),&items[0])}
  cleanup_pending_new_oauth();
  let session_id=Uuid::new_v4().to_string();
- let pending=PendingNewOAuth{created_at:now_ts(),client_id,client_secret,preferred_browser,access_token:access,refresh_token:refresh,expires_in:expires,scopes,items:items.clone()};
+ let pending=PendingNewOAuth{created_at:now_ts(),client_id,client_secret,preferred_browser,access_token:access,refresh_token:refresh,expires_in:expires,scopes,google_email,google_subject_id,items:items.clone()};
  pending_new_oauth().lock().map_err(|_|"OAUTH_PENDING_LOCK_FAILED".to_string())?.insert(session_id.clone(),pending);
  let store=load_store_metadata(&app)?;
  let channels=items.iter().map(|x|channel_identity_value(x,&store)).collect::<Vec<_>>();
@@ -1572,7 +1593,7 @@ pub fn youtube_oauth_select_new_channel(app:AppHandle,session_id:String,channel_
  cleanup_pending_new_oauth();
  let pending=pending_new_oauth().lock().map_err(|_|"OAUTH_PENDING_LOCK_FAILED".to_string())?.get(&session_id).cloned().ok_or_else(||"OAUTH_PENDING_EXPIRED: повторите + Добавить канал".to_string())?;
  let item=pending.items.iter().find(|x|x.get("id").and_then(Value::as_str)==Some(channel_id.as_str())).cloned().ok_or_else(||"OAUTH_CHANNEL_SELECTION_INVALID: выбранный канал отсутствует в текущей OAuth-сессии".to_string())?;
- let result=commit_new_channel_oauth(&app,&pending.client_id,&pending.client_secret,&pending.preferred_browser,&pending.access_token,&pending.refresh_token,pending.expires_in,&pending.scopes,&item)?;
+ let result=commit_new_channel_oauth(&app,&pending.client_id,&pending.client_secret,&pending.preferred_browser,&pending.access_token,&pending.refresh_token,pending.expires_in,&pending.scopes,pending.google_email.as_deref(),pending.google_subject_id.as_deref(),&item)?;
  if let Ok(mut map)=pending_new_oauth().lock(){map.remove(&session_id);}
  Ok(result)
 }
