@@ -38,10 +38,13 @@ describe('VYRON 2.1.12 browser reconnect recovery',()=>{
   );
   expect(rows[0].status).toBe('CLIENT SECRET REQUIRED');
  });
- it('recovery UI keeps browser chooser for reconnectable profiles',()=>{
+ it('recovery UI keeps target guidance and explicit browser chooser for reconnectable profiles',()=>{
   const ui=readFileSync('src/AuthRecoveryCenter.tsx','utf8');
+  expect(ui).toContain('ПЕРЕПОДКЛЮЧЕНИЕ СУЩЕСТВУЮЩЕГО ПРОФИЛЯ');
+  expect(ui).toContain('prepareReconnect(r.profileId)');
+  expect(ui).toContain('Выбрать браузер и продолжить');
   expect(ui).toContain('Через какой браузер открыть этот канал?');
-  expect(ui).toContain('chooseBrowser(r.profileId)');
+  expect(ui).toContain('chooseBrowser(id)');
   expect(ui).toContain('Google/YouTube аккаунтом');
  });
  it('backend reconnect uses dedicated recovery resolver, not historical exact-only resolver',()=>{
