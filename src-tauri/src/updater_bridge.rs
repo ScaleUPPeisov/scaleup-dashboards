@@ -139,20 +139,70 @@ pub async fn updater_owner_preview_check(app:tauri::AppHandle)->Result<serde_jso
     }))
 }
 
+
+#[derive(Clone)]
+struct DownloadedOwnerPreview{
+    announced_version:String,
+    build_revision:u64,
+    artifact_sha256:String,
+    bytes:Vec<u8>,
+}
+static OWNER_PREVIEW_DOWNLOAD:std::sync::OnceLock<std::sync::Mutex<Option<DownloadedOwnerPreview>>>=std::sync::OnceLock::new();
+fn owner_preview_download_state()->&'static std::sync::Mutex<Option<DownloadedOwnerPreview>>{
+    OWNER_PREVIEW_DOWNLOAD.get_or_init(||std::sync::Mutex::new(None))
+}
+fn sha256_hex(bytes:&[u8])->String{
+    use sha2::{Digest,Sha256};
+    hex::encode(Sha256::digest(bytes))
+}
+
 #[tauri::command]
-pub async fn updater_owner_preview_install(app:tauri::AppHandle)->Result<serde_json::Value,String>{
+pub async fn updater_owner_preview_download(app:tauri::AppHandle)->Result<serde_json::Value,String>{
     let Some(update)=owner_preview_update(&app).await? else{return Err("OWNER_PREVIEW_NO_UPDATE: preview build is already current".into())};
     let target_revision=preview_revision(&update.version).ok_or_else(||format!("OWNER_PREVIEW_REVISION_MISSING: {}",update.version))?;
-    let product_version=preview_product_version(&update.version).to_string();
+    let expected_sha=update.raw_json.get("artifactSha256").and_then(|x|x.as_str()).unwrap_or("").trim().to_ascii_lowercase();
+    if expected_sha.len()!=64||!expected_sha.chars().all(|c|c.is_ascii_hexdigit()){
+        return Err("OWNER_PREVIEW_ARTIFACT_SHA_MISSING: manifest must contain artifactSha256".into())
+    }
     let emit_app=app.clone();
-    update.download_and_install(
+    let bytes=update.download(
       move |chunk,total|{
         let _=emit_app.emit("owner-preview-update-progress",serde_json::json!({"chunkBytes":chunk,"totalBytes":total,"targetBuildRevision":target_revision}));
       },
       ||{}
-    ).await.map_err(|e|format!("OWNER_PREVIEW_INSTALL_FAILED: {e}"))?;
+    ).await.map_err(|e|format!("OWNER_PREVIEW_DOWNLOAD_FAILED: {e}"))?;
+    // Tauri has already verified minisign before returning bytes. Bind the verified bytes
+    // to the owner-preview manifest as a second identity check.
+    let actual_sha=sha256_hex(&bytes);
+    if actual_sha!=expected_sha{
+        return Err(format!("OWNER_PREVIEW_ARTIFACT_SHA_MISMATCH: expected={expected_sha} actual={actual_sha}"))
+    }
+    let announced_version=update.version.clone();
+    *owner_preview_download_state().lock().map_err(|_|"OWNER_PREVIEW_DOWNLOAD_STATE_POISONED".to_string())?=Some(DownloadedOwnerPreview{
+      announced_version:announced_version.clone(),build_revision:target_revision,artifact_sha256:actual_sha.clone(),bytes
+    });
+    Ok(serde_json::json!({"downloaded":true,"announcedVersion":announced_version,"targetBuildRevision":target_revision,"artifactSha256":actual_sha,"signatureVerified":true,"channel":"owner-preview"}))
+}
+
+#[tauri::command]
+pub async fn updater_owner_preview_install(app:tauri::AppHandle)->Result<serde_json::Value,String>{
+    let staged=owner_preview_download_state().lock().map_err(|_|"OWNER_PREVIEW_DOWNLOAD_STATE_POISONED".to_string())?.take()
+      .ok_or_else(||"OWNER_PREVIEW_NOT_DOWNLOADED: download and signature verification must complete first".to_string())?;
+    let Some(update)=owner_preview_update(&app).await? else{
+      return Err("OWNER_PREVIEW_MANIFEST_CHANGED: update disappeared after download".into())
+    };
+    let target_revision=preview_revision(&update.version).ok_or_else(||format!("OWNER_PREVIEW_REVISION_MISSING: {}",update.version))?;
+    let manifest_sha=update.raw_json.get("artifactSha256").and_then(|x|x.as_str()).unwrap_or("").trim().to_ascii_lowercase();
+    if update.version!=staged.announced_version||target_revision!=staged.build_revision||manifest_sha!=staged.artifact_sha256{
+      return Err("OWNER_PREVIEW_MANIFEST_CHANGED: version/revision/artifact changed after verified download".into())
+    }
+    update.install(&staged.bytes).map_err(|e|format!("OWNER_PREVIEW_INSTALL_FAILED: {e}"))?;
     Ok(serde_json::json!({
-      "installed":true,"productVersion":product_version,"targetBuildRevision":target_revision,
-      "signatureVerifiedBy":"tauri-plugin-updater","channel":"owner-preview"
+      "installed":true,
+      "productVersion":preview_product_version(&update.version),
+      "targetBuildRevision":target_revision,
+      "artifactSha256":staged.artifact_sha256,
+      "signatureVerified":true,
+      "channel":"owner-preview"
     }))
 }
