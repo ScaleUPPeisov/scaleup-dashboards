@@ -1,0 +1,50 @@
+name: VYRON 3.0.0 One-shot Keychain Test Repair
+
+on:
+  push:
+    branches:
+      - release/vyron-3.0.0
+    paths:
+      - .github/workflows/vyron-300-one-shot-test-repair.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/vyron-3.0.0
+          fetch-depth: 0
+      - name: Align stale RC3 assertion with 3.0.0 Keychain continuity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('src-tauri/src/youtube.rs')
+          s=p.read_text()
+          old='''  assert_eq!(denied["oauthReady"],false);
+  assert_eq!(denied["oauthState"],"NEEDS_SECURE_STORAGE_REPAIR");
+  assert_eq!(denied["secureStorageErrorCode"],"KEYCHAIN_ACCESS_DENIED_CACHED");'''
+          new='''  assert_eq!(denied["oauthReady"],false);
+  assert_eq!(denied["oauthState"],"KEYCHAIN_ACCESS_BLOCKED");
+  assert_eq!(denied["repairRequired"],false);
+  assert_eq!(denied["secureStorageErrorCode"],"KEYCHAIN_ACCESS_DENIED_CACHED");'''
+          if old not in s:
+              if new in s:
+                  print('ALREADY_REPAIRED=PASS')
+                  raise SystemExit(0)
+              raise SystemExit('Expected stale RC3 assertion block not found')
+          p.write_text(s.replace(old,new,1))
+          print('KEYCHAIN_TEST_REPAIR=PASS')
+          PY
+          if git diff --quiet; then exit 0; fi
+          git config user.name "ScaleUPPeisov"
+          git config user.email "peisov.business@gmail.com"
+          git add src-tauri/src/youtube.rs
+          git commit -m "test: align RC3 Keychain denial expectation with 3.0.0 continuity"
+          git push origin HEAD:release/vyron-3.0.0
