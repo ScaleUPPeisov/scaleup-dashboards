@@ -11,6 +11,8 @@ describe('VYRON 3.0.0 final physical stabilization contracts',()=>{
  const updater=fs.readFileSync('src/updaterRuntime.ts','utf8');
  const policy=fs.readFileSync('src/updaterPolicy.ts','utf8');
  const app=fs.readFileSync('src/App.tsx','utf8');
+ const rustLib=fs.readFileSync('src-tauri/src/lib.rs','utf8');
+ const updaterBridge=fs.readFileSync('src-tauri/src/updater_bridge.rs','utf8');
  const workflow=fs.readFileSync('.github/workflows/vyron-300-physical-candidate.yml','utf8');
 
  it('keeps automatic Keychain reads NO-UI and exposes interactive access only behind explicit recovery',()=>{
@@ -34,11 +36,15 @@ describe('VYRON 3.0.0 final physical stabilization contracts',()=>{
   expect(settings).toContain('Secret values');
  });
 
- it('interactive recovery rotates forward before pointer commit and never deletes historical item',()=>{
+ it('interactive recovery stages a repaired item, verifies token refresh, then commits pointer transactionally',()=>{
   const body=youtube.split('pub async fn youtube_oauth_interactive_recover_blocked_profiles').at(1)?.split('pub fn youtube_keychain_migration_diagnostics')[0]||'';
   expect(body).toContain('rotate_recovered_refresh_with');
   expect(body).toContain('commit_recovered_refresh_pointer');
   expect(body).toContain('refresh_access_token_http');
+  expect(body.indexOf('refresh_access_token_http')).toBeLessThan(body.indexOf('commit_recovered_refresh_pointer'));
+  expect(body).toContain('canonical_delete_secret(&new_account)');
+  expect(body).toContain('"pointerChanged":false');
+  expect(body).toContain('"generationChanged":false');
   expect(body).not.toContain('open_browser(');
   expect(body).not.toContain('youtube_oauth_reconnect_existing');
   expect(body).not.toContain('canonical_delete_secret(&old_account)');
@@ -55,10 +61,16 @@ describe('VYRON 3.0.0 final physical stabilization contracts',()=>{
 
  it('channel OAuth badge comes from credentialState rather than stale mapping metadata',()=>{
   expect(channels).toContain("state==='READY'?'OAuth ✓'");
+  expect(channels).toContain("state==='RECOVERABLE_KEYCHAIN_BLOCKED'?'OAuth: восстановить доступ'");
   expect(channels).toContain("state==='KEYCHAIN_BLOCKED'?'OAuth: доступ заблокирован'");
   expect(channels).toContain("'OAuth: требуется вход'");
   expect(channels).toContain("'OAuth: выбран другой канал'");
   expect(channels).not.toContain("c.youtubeProfileId?'YouTube подключён'");
+ });
+
+ it('main desktop window discards stale monitor coordinates by centering before maximize',()=>{
+  expect(rustLib).toContain('app.get_webview_window("main")');
+  expect(rustLib.indexOf('window.center()')).toBeLessThan(rustLib.indexOf('window.maximize()'));
  });
 
  it('main desktop window starts maximized while remaining resizable with minimum size',()=>{
@@ -69,13 +81,24 @@ describe('VYRON 3.0.0 final physical stabilization contracts',()=>{
   expect(win.minHeight).toBeGreaterThanOrEqual(700);
  });
 
- it('updater rejects DMG execution, checks replaceability and proves runtime target after relaunch',()=>{
+ it('updater rejects DMG execution and proves product version plus build revision after relaunch',()=>{
   expect(policy).toContain('RUNNING_FROM_DMG');
   expect(policy).toContain('APP_NOT_REPLACEABLE');
   expect(updater).toContain('ensureUpdaterInstallable');
-  expect(updater).toContain("localStorage.setItem('vyron:update-installing-version',target)");
-  expect(app).toContain('POST_UPDATE_VERSION_MISMATCH');
-  expect(app).toContain('expected===v');
+  expect(updater).toContain("localStorage.setItem('vyron:update-installing-target'");
+  expect(app).toContain('POST_UPDATE_BUILD_MISMATCH');
+  expect(app).toContain('target.buildRevision');
+  expect(app).toContain('runtime.buildRevision');
+ });
+
+ it('owner preview uses a separate signed endpoint and artifact identity without changing product version',()=>{
+  expect(updaterBridge).toContain('owner-preview.json');
+  expect(updaterBridge).toContain('version_comparator');
+  expect(updaterBridge).toContain('artifactSha256');
+  expect(updaterBridge).toContain('update.download(');
+  expect(updaterBridge).toContain('update.install(&staged.bytes)');
+  expect(updaterBridge).toContain('OWNER_PREVIEW_MANIFEST_CHANGED');
+  expect(updaterBridge).toContain('signatureVerified');
  });
 
  it('updater artifact remains signed app archive rather than DMG manifest payload',()=>{
@@ -84,6 +107,14 @@ describe('VYRON 3.0.0 final physical stabilization contracts',()=>{
   expect(workflow).toContain("name '*.app.tar.gz'");
   expect(workflow).toContain("name '*.app.tar.gz.sig'");
   expect(workflow).toContain('UPDATER_SIGNATURE_VERIFY=PASS');
+ });
+
+ it('present canonical item plus auth denial is recoverable Keychain state, not missing/reconnect',()=>{
+  expect(youtube).toContain('RECOVERABLE_KEYCHAIN_BLOCKED');
+  expect(youtube).toContain('KEYCHAIN_AUTH_FAILED');
+  expect(auth).toContain('Восстановить доступ Keychain');
+  const blockedActions=auth.split("r.status==='KEYCHAIN BLOCKED'").at(1)?.split("(r.status==='RECONNECT REQUIRED'")[0]||'';
+  expect(blockedActions).not.toContain('prepareReconnect');
  });
 
  it('wrong-channel safety remains present during final stabilization',()=>{
