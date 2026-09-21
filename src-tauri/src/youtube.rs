@@ -382,9 +382,19 @@ fn migrate_profile_refresh_to_canonical(app:&AppHandle,profile_id:&str)->Result<
  PROFILE_MIGRATION_FAILURES.fetch_add(1,std::sync::atomic::Ordering::SeqCst);
  Err(format!("OAUTH_RECONNECT_REQUIRED: profile={profile_id}; canonical refresh token is missing"))
 }
-fn require_canonical_refresh(app:&AppHandle,profile_id:&str)->Result<String,String>{
- let active_account=profile_refresh_token_account(app,profile_id)?;
- match security::canonical_get_secret_cached(&active_account){
+fn resolve_refresh_credential_with<C,A,L>(
+ profile_id:&str,
+ active_account:&str,
+ mut canonical_get:C,
+ mut legacy_accounts:A,
+ mut legacy_get:L,
+)->Result<String,String>
+where
+ C:FnMut(&str)->Result<Option<String>,String>,
+ A:FnMut()->Result<Vec<String>,String>,
+ L:FnMut(&str)->Result<Option<String>,String>,
+{
+ match canonical_get(active_account){
   Ok(Some(v)) if !v.trim().is_empty()=>return Ok(v),
   Ok(_)=>{},
   Err(e) if keychain_repairable_error(&e)=>{
@@ -392,12 +402,12 @@ fn require_canonical_refresh(app:&AppHandle,profile_id:&str)->Result<String,Stri
   }
   Err(e)=>return Err(e),
  }
- // Update-neutral compatibility: an existing VYRON 1.x/legacy Keychain item remains
- // authoritative when the canonical v2 item does not exist. Reading it does not rotate
- // pointers, generations or profile UUIDs and does not delete/migrate the old item.
- let present=security::list_legacy_secret_accounts("")?;
+ // Update-neutral compatibility is targeted: legacy inventory/read happens only after
+ // the selected profile's canonical credential is missing. This helper never mutates
+ // pointers/generations, profile identity, channel identity, or legacy Keychain items.
+ let present=legacy_accounts()?;
  if let Some(account)=select_present_account(&legacy_refresh_candidates(profile_id),&present){
-  return match security::legacy_get_secret_once(&account){
+  return match legacy_get(&account){
    Ok(Some(v)) if !v.trim().is_empty()=>Ok(v),
    Ok(_)=>Err(format!("OAUTH_RECONNECT_REQUIRED: profile={profile_id}; legacy refresh token is missing")),
    Err(e) if keychain_repairable_error(&e)=>Err(format!("OAUTH_CREDENTIAL_PRECHECK_FAILED: profile={profile_id}; {e}")),
@@ -405,6 +415,16 @@ fn require_canonical_refresh(app:&AppHandle,profile_id:&str)->Result<String,Stri
   }
  }
  Err(format!("OAUTH_RECONNECT_REQUIRED: profile={profile_id}; refresh token is missing"))
+}
+fn require_canonical_refresh(app:&AppHandle,profile_id:&str)->Result<String,String>{
+ let active_account=profile_refresh_token_account(app,profile_id)?;
+ resolve_refresh_credential_with(
+  profile_id,
+  &active_account,
+  |account|security::canonical_get_secret_cached(account),
+  ||security::list_legacy_secret_accounts(""),
+  |account|security::legacy_get_secret_once(account),
+ )
 }
 fn canonical_global_client_secret(app:&AppHandle)->Result<Option<String>,String>{
  let c=load_google_config_metadata(app)?;
@@ -6179,14 +6199,25 @@ mod keychain_prompt_architecture_tests{
   assert_eq!(&*secrets.gets.borrow(),&vec![account.clone(),account]);
   assert_eq!(*secrets.accounts.borrow(),0);
  }
- #[test]fn rc7_source_contract_has_zero_runtime_legacy_secret_reads(){
+ #[test]fn update_neutral_legacy_fallback_is_targeted_and_non_mutating(){
   let source=include_str!("youtube.rs");
   let production=source.split("#[cfg(test)]").next().unwrap_or(source);
   assert!(!production.contains("trait OAuthSecretStore {trait OAuthSecretStore {"));
   assert!(!production.contains("fn migrate_profile_refresh_to_canonicalfn migrate_profile_refresh_to_canonical"));
-  let migration=production.split("fn migrate_profile_refresh_to_canonical").nth(1).unwrap().split("trait OAuthSecretStore").next().unwrap();
+  let migration=production.split("fn migrate_profile_refresh_to_canonical").nth(1).unwrap().split("fn resolve_refresh_credential_with").next().unwrap();
   assert!(!migration.contains("legacy_get_secret_once"));
   assert!(!migration.contains("security::get_secret("));
+  let resolver=production.split("fn resolve_refresh_credential_with").nth(1).unwrap().split("fn require_canonical_refresh").next().unwrap();
+  assert!(resolver.contains("canonical_get(active_account)"));
+  assert!(resolver.contains("legacy_accounts()?"));
+  assert!(resolver.contains("legacy_get(&account)"));
+  for forbidden in ["canonical_set_secret","canonical_delete_secret","mark_legacy_reconnect_required","open_browser(","generation","write_keychain_migration_v2"]{
+   assert!(!resolver.contains(forbidden),"{forbidden} must not be part of update-neutral resolution");
+  }
+  let require=production.split("fn require_canonical_refresh").nth(1).unwrap().split("fn canonical_global_client_secret").next().unwrap();
+  assert!(require.contains("resolve_refresh_credential_with"));
+  assert!(require.contains("canonical_get_secret_cached"));
+  assert!(require.contains("legacy_get_secret_once"));
   let inventory=production.split("pub async fn youtube_list_existing_videos").nth(1).unwrap();
   let active_prefix=inventory.split("let (token, profile) = valid_access_token").next().unwrap();
   assert!(active_prefix.contains("profile_id: String"));
@@ -6200,6 +6231,66 @@ mod keychain_prompt_architecture_tests{
   assert!(!storage.contains("security::set_secret_for_autosave("));
   assert!(storage.contains("security::canonical_get_secret_cached("));
   assert!(storage.contains("security::canonical_set_secret("));
+ }
+ #[test]fn old_profile_survives_binary_update_using_existing_legacy_keychain_item(){
+  let profile_id="owner-profile";
+  let profile_before=p(profile_id);
+  let profile_uuid_before=profile_before.id.clone();
+  let channel_before=profile_before.channel_id.clone();
+  let active=oauth_key(profile_id,"refresh_token");
+  let legacy=legacy_oauth_keys(profile_id,"refresh_token")[0].clone();
+  let canonical_reads=RefCell::new(Vec::<String>::new());
+  let legacy_inventory_reads=RefCell::new(0usize);
+  let legacy_reads=RefCell::new(Vec::<String>::new());
+  let token=resolve_refresh_credential_with(
+   profile_id,
+   &active,
+   |account|{canonical_reads.borrow_mut().push(account.into());Ok(None)},
+   ||{*legacy_inventory_reads.borrow_mut()+=1;Ok(vec![legacy.clone()])},
+   |account|{legacy_reads.borrow_mut().push(account.into());Ok(Some("saved-legacy-refresh".into()))},
+  ).unwrap();
+  let profile_after=profile_before.clone();
+  assert_eq!(token,"saved-legacy-refresh");
+  assert_eq!(profile_after.id,profile_uuid_before);
+  assert_eq!(profile_after.channel_id,channel_before);
+  assert_eq!(&*canonical_reads.borrow(),&vec![active]);
+  assert_eq!(*legacy_inventory_reads.borrow(),1);
+  assert_eq!(&*legacy_reads.borrow(),&vec![legacy]);
+ }
+ #[test]fn canonical_refresh_wins_without_any_legacy_access(){
+  let profile_id="canonical-owner";
+  let active=oauth_key(profile_id,"refresh_token");
+  let legacy_inventory_reads=RefCell::new(0usize);
+  let legacy_reads=RefCell::new(Vec::<String>::new());
+  let token=resolve_refresh_credential_with(
+   profile_id,
+   &active,
+   |_account|Ok(Some("canonical-refresh".into())),
+   ||{*legacy_inventory_reads.borrow_mut()+=1;Ok(vec![legacy_oauth_keys(profile_id,"refresh_token")[0].clone()])},
+   |account|{legacy_reads.borrow_mut().push(account.into());Ok(Some("legacy-refresh".into()))},
+  ).unwrap();
+  assert_eq!(token,"canonical-refresh");
+  assert_eq!(*legacy_inventory_reads.borrow(),0);
+  assert!(legacy_reads.borrow().is_empty());
+ }
+ #[test]fn fifty_profiles_legacy_fallback_reads_only_selected_profile_secret(){
+  let selected="p31";
+  let active=oauth_key(selected,"refresh_token");
+  let all_legacy=(0..50).map(|i|legacy_oauth_keys(&format!("p{i}"),"refresh_token")[0].clone()).collect::<Vec<_>>();
+  let selected_legacy=legacy_oauth_keys(selected,"refresh_token")[0].clone();
+  let legacy_reads=RefCell::new(Vec::<String>::new());
+  let token=resolve_refresh_credential_with(
+   selected,
+   &active,
+   |_account|Ok(None),
+   ||Ok(all_legacy.clone()),
+   |account|{
+    legacy_reads.borrow_mut().push(account.into());
+    if account==selected_legacy{Ok(Some("selected-refresh".into()))}else{Ok(Some("WRONG-PROFILE".into()))}
+   },
+  ).unwrap();
+  assert_eq!(token,"selected-refresh");
+  assert_eq!(&*legacy_reads.borrow(),&vec![selected_legacy]);
  }
  #[test]fn rc7_security_source_contract_uses_per_query_ui_skip(){
   let source=include_str!("security.rs");
