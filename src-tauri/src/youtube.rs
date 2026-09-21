@@ -376,17 +376,19 @@ fn require_canonical_refresh(app:&AppHandle,profile_id:&str)->Result<String,Stri
   }
   Err(e)=>return Err(e),
  }
- let status=profile_migration_status(app,profile_id)?;
- if status==MIGRATION_RECONNECT_REQUIRED{
-  return Err(format!("LEGACY_RECONNECT_REQUIRED: profile={profile_id}; reconnect Google once"))
- }
+ // Update-neutral compatibility: an existing VYRON 1.x/legacy Keychain item remains
+ // authoritative when the canonical v2 item does not exist. Reading it does not rotate
+ // pointers, generations or profile UUIDs and does not delete/migrate the old item.
  let present=security::list_legacy_secret_accounts("")?;
  if let Some(account)=select_present_account(&legacy_refresh_candidates(profile_id),&present){
-  set_profile_migration_state(app,profile_id,MIGRATION_RECONNECT_REQUIRED)?;
-  security::mark_legacy_reconnect_required(&account);
-  return Err(format!("LEGACY_RECONNECT_REQUIRED: profile={profile_id}; legacy credential is present but VYRON will not read it; reconnect Google once"))
+  return match security::legacy_get_secret_once(&account){
+   Ok(Some(v)) if !v.trim().is_empty()=>Ok(v),
+   Ok(_)=>Err(format!("OAUTH_RECONNECT_REQUIRED: profile={profile_id}; legacy refresh token is missing")),
+   Err(e) if keychain_repairable_error(&e)=>Err(format!("OAUTH_CREDENTIAL_PRECHECK_FAILED: profile={profile_id}; {e}")),
+   Err(e)=>Err(e),
+  }
  }
- Err(format!("OAUTH_RECONNECT_REQUIRED: profile={profile_id}; canonical refresh token is missing"))
+ Err(format!("OAUTH_RECONNECT_REQUIRED: profile={profile_id}; refresh token is missing"))
 }
 fn canonical_global_client_secret(app:&AppHandle)->Result<Option<String>,String>{
  let c=load_google_config_metadata(app)?;
@@ -428,7 +430,22 @@ fn resolve_client_secret_for_profile(app:&AppHandle,profile_id:&str,client_id:&s
   }
  }else{None};
  let legacy_accounts=security::list_legacy_secret_accounts("")?;
- let legacy_present=select_present_account(&legacy_client_secret_candidates(profile_id),&legacy_accounts).is_some();
+ let legacy_account=select_present_account(&legacy_client_secret_candidates(profile_id),&legacy_accounts);
+ let legacy_present=legacy_account.is_some();
+ // Preserve existing OAuth clients across binary replacement. Legacy client_secret is a
+ // valid fallback source; do not force credentials.json reimport merely because schema v2 exists.
+ let legacy_secret=if profile_secret.as_ref().map(|x|!x.trim().is_empty()).unwrap_or(false)||global_secret.as_ref().map(|x|!x.trim().is_empty()).unwrap_or(false){
+  None
+ }else if let Some(account)=legacy_account.as_deref(){
+  match security::legacy_get_secret_once(account){
+   Ok(v)=>v.filter(|x|!x.trim().is_empty()),
+   Err(e) if keychain_repairable_error(&e)=>return Err(format!("OAUTH_CREDENTIAL_PRECHECK_FAILED: profile={profile_id}; {e}")),
+   Err(e)=>return Err(e),
+  }
+ }else{None};
+ if let Some(secret)=legacy_secret{
+  return Ok(ResolvedOAuthClient{client_id:client_id.into(),client_secret:secret,source:OAuthClientSecretSource::ProfileCanonical})
+ }
  let blocked=profile_keychain_error.as_ref().or(global_keychain_error.as_ref());
  match select_oauth_client_secret(profile_secret,client_id,&global_meta.client_id,global_secret,legacy_present){
   Ok((secret,OAuthClientSecretSource::ProfileCanonical))=>Ok(ResolvedOAuthClient{client_id:client_id.into(),client_secret:secret,source:OAuthClientSecretSource::ProfileCanonical}),
