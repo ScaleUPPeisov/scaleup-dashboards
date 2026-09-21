@@ -22,26 +22,26 @@ export function buildFinalRecoveryRows(channels:RecoveryChannelLike[],profiles:R
   if(!expectedChannelId)return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'FAILED',detail:'У профиля нет ожидаемого YouTube channel_id. Сначала требуется безопасная привязка mapping.',stale,duplicate,conflict} satisfies FinalRecoveryRow;
   const state=resolved.get(profile.id);
   if(!state)return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'MISSING',detail:'Credential state отсутствует. Требуется переподключение Google без изменения Profile UUID.',stale,duplicate,conflict} satisfies FinalRecoveryRow;
-  if(state.clientSecretState==='KEYCHAIN_BLOCKED')return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'KEYCHAIN BLOCKED',detail:'Client Secret сохранён, но macOS Keychain временно блокирует no-UI read. credentials.json не требуется: сначала безопасный retry.',stale,duplicate,conflict} satisfies FinalRecoveryRow;
-  if(state.clientSecretState==='CLIENT_SECRET_REIMPORT_REQUIRED')return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'CLIENT SECRET REQUIRED',detail:'Старый OAuth Client secret есть только в legacy Keychain. VYRON его не читает. Настройте один GLOBAL OAuth Client VYRON через credentials.json — один раз для всех каналов.',stale,duplicate,conflict} satisfies FinalRecoveryRow;
-  if(state.clientSecretState==='MISSING')return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'CLIENT SECRET REQUIRED',detail:'GLOBAL OAuth Client VYRON настроен не полностью: Client Secret отсутствует. Импортируйте один credentials.json для всего приложения, затем переподключайте каналы через нужный браузер.',stale,duplicate,conflict} satisfies FinalRecoveryRow;
+  if(state.clientSecretState==='KEYCHAIN_BLOCKED')return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'KEYCHAIN BLOCKED',detail:'Client Secret сохранён, но macOS Keychain временно блокирует доступ. Каналы и профили сохранены; сначала попробуйте безопасную проверку.',stale,duplicate,conflict} satisfies FinalRecoveryRow;
+  if(state.clientSecretState==='CLIENT_SECRET_REIMPORT_REQUIRED')return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'CLIENT SECRET REQUIRED',detail:'Нужно один раз восстановить GLOBAL OAuth Client через credentials.json. Каналы, Profile UUID и привязки останутся на месте.',stale,duplicate,conflict} satisfies FinalRecoveryRow;
+  if(state.clientSecretState==='MISSING')return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'CLIENT SECRET REQUIRED',detail:'GLOBAL OAuth Client настроен не полностью. Импортируйте один credentials.json для всего VYRON; после этого VYRON сначала попробует сохранённые refresh tokens.',stale,duplicate,conflict} satisfies FinalRecoveryRow;
   if(state.credentialState==='READY'||state.credentialState==='CONNECTED'){
    const suffix=state.lastValidatedAt?` Последняя проверка: ${state.lastValidatedAt}.`:'';
-   return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'CONNECTED',detail:`Canonical V2 credential подтверждён: текущий Keychain read PASS • предыдущая/текущая token/channel validation PASS.${suffix}`,stale,duplicate,conflict} satisfies FinalRecoveryRow
+   return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'CONNECTED',detail:`Сохранённый доступ работает. Повторный вход не нужен.${suffix}`,stale,duplicate,conflict} satisfies FinalRecoveryRow
   }
   if(state.credentialState==='KEYCHAIN_BLOCKED'){
-   return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'KEYCHAIN BLOCKED',detail:'Canonical refresh token существует, но macOS Keychain сейчас блокирует no-UI read. Сначала безопасный retry; Google reconnect не запускается автоматически.',stale,duplicate,conflict} satisfies FinalRecoveryRow
+   return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'KEYCHAIN BLOCKED',detail:'Сохранённый token существует, но macOS Keychain сейчас блокирует чтение. Канал остаётся на месте; браузер автоматически не открывается.',stale,duplicate,conflict} satisfies FinalRecoveryRow
   }
   if(state.credentialState==='NOT_CHECKED'){
-   return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'NOT CHECKED',detail:'Credential ещё не проверялся в текущем процессе. Это не reconnect-required.',stale,duplicate,conflict} satisfies FinalRecoveryRow
+   return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'NOT CHECKED',detail:'Сохранённые данные канала на месте. Доступ ещё не проверялся в текущем процессе; повторный вход пока не требуется.',stale,duplicate,conflict} satisfies FinalRecoveryRow
   }
   if(state.credentialState==='CANONICAL_PRESENT_UNVERIFIED'){
-   return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'CANONICAL_PRESENT_UNVERIFIED',detail:'Canonical V2 credential найден. Он не считается CONNECTED до успешной реальной OAuth/YouTube проверки.',stale,duplicate,conflict} satisfies FinalRecoveryRow
+   return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'CANONICAL_PRESENT_UNVERIFIED',detail:'Сохранённый OAuth token найден. VYRON может восстановить доступ через token refresh без открытия браузера.',stale,duplicate,conflict} satisfies FinalRecoveryRow
   }
   if(state.credentialState==='RECONNECT_REQUIRED'){
    const detail=state.clientSecretState==='GLOBAL_CURRENT_READY'
-    ?'Старый OAuth profile будет переподключён через текущий OAuth Client VYRON. Выберите браузер с нужным Google/YouTube аккаунтом; Profile UUID и Channel ID сохранятся.'
-    :'Старый OAuth credential найден, но VYRON больше не читает legacy Keychain. Один раз переподключите Google.';
+    ?'Сохранённый refresh token отсутствует или был отозван. Повторный вход нужен только этому каналу; Profile UUID и Channel ID сохранятся.'
+    :'Для этого канала нужен явный повторный вход. Остальные каналы не затрагиваются.';
    return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'RECONNECT REQUIRED',detail,stale,duplicate,conflict} satisfies FinalRecoveryRow
   }
   if(state.credentialState==='WRONG_CHANNEL'){
@@ -50,7 +50,7 @@ export function buildFinalRecoveryRows(channels:RecoveryChannelLike[],profiles:R
   if(state.credentialState==='FAILED'){
    return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'FAILED',detail:'Credential validation завершилась ошибкой. Данные профиля сохранены.',stale,duplicate,conflict} satisfies FinalRecoveryRow
   }
-  return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'MISSING',detail:'Canonical credential отсутствует. Требуется переподключить Google.',stale,duplicate,conflict} satisfies FinalRecoveryRow
+  return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'MISSING',detail:'Сохранённый refresh token отсутствует. Повторный вход нужен только этому каналу.',stale,duplicate,conflict} satisfies FinalRecoveryRow
  })
 }
 export function channelsWithoutProfile(channels:RecoveryChannelLike[],profiles:RecoveryProfileLike[]){const ids=new Set(profiles.map(x=>x.id));return channels.filter(c=>!c.youtubeProfileId||!ids.has(c.youtubeProfileId))}
