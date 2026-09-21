@@ -71,6 +71,9 @@ jobs:
       VYRON_MACOS_SIGNING_P12_BASE64: ${{ secrets.VYRON_MACOS_SIGNING_P12_BASE64 }}
       VYRON_MACOS_SIGNING_P12_PASSWORD: ${{ secrets.VYRON_MACOS_SIGNING_P12_PASSWORD }}
       VYRON_MACOS_SIGNING_IDENTITY: ${{ secrets.VYRON_MACOS_SIGNING_IDENTITY }}
+      VYRON_BUILD_REVISION: ${{ github.run_number }}
+      VYRON_COMMIT_SHA: ${{ github.sha }}
+      VYRON_UPDATE_CHANNEL: owner-preview
     steps:
       - name: Checkout exact 3.0.0 candidate source
         uses: actions/checkout@v4
@@ -256,10 +259,15 @@ jobs:
           assert 'youtube_oauth_keychain_matrix' in y
           assert 'rotate_recovered_refresh_with' in y
           assert 'Восстановить сохранённые подключения' in recovery
+          assert "state==='RECOVERABLE_KEYCHAIN_BLOCKED'?'OAuth: восстановить доступ'" in channels
           assert "state==='KEYCHAIN_BLOCKED'?'OAuth: доступ заблокирован'" in channels
           assert conf['app']['windows'][0]['maximized'] is True
           assert 'ensureUpdaterInstallable' in updater
-          assert 'POST_UPDATE_VERSION_MISMATCH' in app
+          assert 'POST_UPDATE_BUILD_MISMATCH' in app
+          assert 'vyron:update-installing-target' in updater
+          assert 'owner-preview' in Path('src-tauri/src/updater_bridge.rs').read_text()
+          lib=Path('src-tauri/src/lib.rs').read_text()
+          assert 'window.center()' in lib and 'window.maximize()' in lib
           assert 'normalized_duplicate_channel_folders_are_reported_as_ambiguous_candidates' in folders
           assert 'exact_channel_root_never_includes_sibling_channel_media' in folders
 
@@ -404,6 +412,9 @@ jobs:
           shasum -a 256 "physical-candidate/VYRON-3.0.0-PHYSICAL-CANDIDATE-arm64.dmg" | tee physical-candidate/VYRON-3.0.0-PHYSICAL-CANDIDATE-arm64.dmg.sha256
           shasum -a 256 "physical-candidate/VYRON-3.0.0-PHYSICAL-CANDIDATE.app.tar.gz" | tee physical-candidate/VYRON-3.0.0-PHYSICAL-CANDIDATE.app.tar.gz.sha256
           stat -f '%z' "physical-candidate/VYRON-3.0.0-PHYSICAL-CANDIDATE-arm64.dmg" | tee physical-candidate/VYRON-3.0.0-PHYSICAL-CANDIDATE-arm64.dmg.size
+          printf '%s\n' "$VYRON_BUILD_REVISION" > physical-candidate/build-revision.txt
+          printf '%s\n' "$VYRON_COMMIT_SHA" > physical-candidate/commit-sha.txt
+          printf '%s\n' "$VYRON_UPDATE_CHANNEL" > physical-candidate/update-channel.txt
           echo 'CODESIGN=PASS'
           echo 'DESIGNATED_REQUIREMENT_CONTINUITY=PASS'
           echo 'DMG_VERIFY=PASS'
@@ -462,6 +473,8 @@ jobs:
           {
             echo "VYRON_300_HEAD=$VYRON_300_HEAD"
             echo "VERSION=3.0.0"
+          echo "BUILD_REVISION=$VYRON_BUILD_REVISION"
+          echo "UPDATE_CHANNEL=$VYRON_UPDATE_CHANNEL"
             echo "TYPESCRIPT_BUILD=PASS"
             echo "FRONTEND_TESTS=PASS"
             echo "RUST_CHECK=PASS"
