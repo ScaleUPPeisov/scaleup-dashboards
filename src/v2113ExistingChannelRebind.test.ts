@@ -19,11 +19,13 @@ describe('VYRON 2.1.13 existing channel rebind',()=>{
   expect(ui).toContain('>+ Добавить канал</button>');
   expect(ui).not.toContain("oauthReady?'+ Добавить канал':'Настроить OAuth Client'");
  });
- it('existing profile has direct browser-first reconnect action',()=>{
+ it('existing profile reconnect shows target identity before explicit browser OAuth',()=>{
   const ui=read('src/AccountsPage.tsx');
-  expect(ui).toContain('Переподключить');
-  expect(ui).toContain('youtubeReconnectExisting(reconnectId,browser)');
-  expect(ui).toContain('Выберите браузер для переподключения');
+  expect(ui).toContain('Переподключить через браузер');
+  expect(ui).toContain('setPreReconnectProfileId(profileId)');
+  expect(ui).toContain('Expected YouTube Channel ID');
+  expect(ui).toContain('Выбрать браузер и продолжить');
+  expect(ui).toContain('youtubeReconnectExisting(profileId,browserChoice)');
  });
  it('one credentials.json configures all channels, not one per profile',()=>{
   const accounts=read('src/AccountsPage.tsx');
@@ -41,10 +43,13 @@ describe('VYRON 2.1.13 existing channel rebind',()=>{
  });
  it('new-channel path never falls back to legacy migration and duplicate channels require explicit reconnect',()=>{
   const y=read('src-tauri/src/youtube.rs');
-  const connect=y.split('async fn youtube_oauth_connect(',2)[1]?.split('fn reconnect_profile_id',2)[0]||'';
+  const connect=y.split('async fn youtube_oauth_connect(',2)[1]?.split('pub fn youtube_oauth_select_new_channel',2)[0]||'';
+  const commit=y.split('fn commit_new_channel_oauth(',2)[1]?.split('#[tauri::command]\npub async fn youtube_oauth_connect(',2)[0]||'';
   expect(connect).not.toContain('migrate_profile_refresh_to_canonical');
-  expect(connect).toContain('YOUTUBE_CHANNEL_ALREADY_CONNECTED');
   expect(connect).toContain('OAUTH_REFRESH_TOKEN_REQUIRED');
+  expect(connect).toContain('CHANNEL_SELECTION_REQUIRED');
+  expect(commit).toContain('YOUTUBE_CHANNEL_ALREADY_CONNECTED');
+  expect(commit).toContain('let profile_id=reconnect_profile_id(None);');
   const reconnect=y.split('pub async fn youtube_oauth_reconnect_existing').at(1)!.split('#[cfg(test)]')[0];
   const fallback=reconnect.split('let response_refresh=tv.get("refresh_token").and_then(Value::as_str);').at(1)!.split('let refresh=reconnect_refresh_token(response_refresh,existing_refresh.as_deref())')[0];
   expect(reconnect).toContain('let response_refresh=tv.get("refresh_token").and_then(Value::as_str);');
