@@ -2,7 +2,7 @@ import React,{useEffect,useMemo,useState} from 'react';
 import {useApp} from './store';
 import {api} from './api';
 import {sortChannelsAlphabetically} from './channelSort';
-import {loadActivePublishChannel,loadRecentPublishChannels,saveActivePublishChannel,subscribeActivePublishChannel} from './publishWorkspaceState';
+import {loadActivePublishChannel,saveActivePublishChannel,subscribeActivePublishChannel} from './publishWorkspaceState';
 import type {Channel,YoutubeProfile} from './types';
 import {channelStatsStatusLabel,compactChannelStat,exactChannelStat,isChannelStatsStale,subscriberStatLabel} from './youtubeChannelStats';
 import {refreshYoutubeProfileStatistics} from './youtubeChannelStatsRuntime';
