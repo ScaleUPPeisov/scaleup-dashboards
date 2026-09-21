@@ -284,7 +284,11 @@ fn resolve_oauth_credential_states_local(app:&AppHandle)->Result<Vec<Value>,Stri
   let denial=security::canonical_denial_diagnostic(&canonical_account);
   let metadata=security::canonical_account_metadata_diagnostic(&canonical_account);
   let currently_accessible=security::canonical_secret_cached(&canonical_account);
-  let credential_state=if denial.is_some(){"KEYCHAIN_BLOCKED"}
+  let recoverable_denial=denial.as_ref().and_then(|x|x.get("currentErrorCode")).and_then(Value::as_str)
+    .map(|code|matches!(code,"KEYCHAIN_AUTH_FAILED"|"KEYCHAIN_INTERACTION_REQUIRED"|"KEYCHAIN_ACCESS_DENIED"|"KEYCHAIN_ACCESS_DENIED_CACHED"))
+    .unwrap_or(false);
+  let credential_state=if denial.is_some()&&canonical_present&&recoverable_denial{"RECOVERABLE_KEYCHAIN_BLOCKED"}
+    else if denial.is_some(){"KEYCHAIN_BLOCKED"}
     else if currently_accessible&&base_credential_state=="CONNECTED"{"READY"}
     else if canonical_present{"CANONICAL_PRESENT_UNVERIFIED"}
     else{base_credential_state};
