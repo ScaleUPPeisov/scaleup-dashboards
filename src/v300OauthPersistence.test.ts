@@ -25,6 +25,22 @@ describe('VYRON 3.0.0 OAuth persistence physical-blocker regression',()=>{
   expect(automatic).toContain('"videosInsert":0');
  });
  it('startup no longer blasts statistics for all profiles',()=>expect(accounts).not.toContain('void refreshAllStats(false)'));
+ it('app version change is credential-neutral and never auto-runs profile recovery',()=>{
+  const effect=accounts.match(/useEffect\(\(\)=>\{[\s\S]*?onOauthExistingRecoveryProgress[\s\S]*?\},\[\]\);/)?.[0]||'';
+  expect(effect).not.toContain('appVersion()');
+  expect(effect).not.toContain('vyron:oauth-continuity-version');
+  expect(effect).not.toContain('recoverExistingProfiles(');
+ });
+ it('recovery center mount reads metadata only and does not refresh or rotate credentials',()=>{
+  const effect=recovery.match(/useEffect\(\(\)=>\{.*?\},\[\]\);/s)?.[0]||'';
+  expect(effect).toContain('load()');
+  expect(effect).not.toContain('runAutomaticRecovery');
+  expect(effect).not.toContain('youtubeReconnectExisting');
+ });
+ it('missing Google email is optional metadata for an otherwise healthy profile',()=>{
+  expect(rust).toContain('assert!(google_account_identity_matches(Some("owner@example.com"),None))');
+  expect(rust).toContain('assert!(google_account_identity_matches(None,Some("owner@example.com")))');
+ });
  it('manual browser reconnect remains explicit fallback',()=>{
   expect(accounts).toContain('Переподключить через браузер');
   expect(recovery).toContain('Войти заново через браузер');
