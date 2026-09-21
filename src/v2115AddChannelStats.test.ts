@@ -8,10 +8,15 @@ describe('VYRON 2.1.15 RC1 Add Channel and channel statistics regression',()=>{
     const ui=read('src/AccountsPage.tsx');
     const start=ui.indexOf('async function askBrowser');
     const end=ui.indexOf('async function connect',start);
+    const pickerStart=ui.indexOf('async function openBrowserPicker');
+    const pickerEnd=ui.indexOf('async function askBrowser',pickerStart);
     expect(start).toBeGreaterThan(-1);
+    expect(pickerStart).toBeGreaterThan(-1);
     const block=ui.slice(start,end);
+    const picker=ui.slice(pickerStart,pickerEnd);
     expect(block).toContain('setOauthSetupOpen(true)');
-    expect(block).toContain('youtubeOauthBrowsers');
+    expect(block).toContain("openBrowserPicker('')");
+    expect(picker).toContain('youtubeOauthBrowsers');
     expect(block).not.toContain('file.current?.click()');
     expect(ui).toContain('Импортировать credentials.json');
   });
