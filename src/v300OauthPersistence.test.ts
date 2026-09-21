@@ -41,6 +41,18 @@ describe('VYRON 3.0.0 OAuth persistence physical-blocker regression',()=>{
   expect(rust).toContain('assert!(google_account_identity_matches(Some("owner@example.com"),None))');
   expect(rust).toContain('assert!(google_account_identity_matches(None,Some("owner@example.com")))');
  });
+ it('post-update health is passive and never launches recovery or browser login',()=>{
+  const app=fs.readFileSync('src/App.tsx','utf8');
+  const effect=app.split("localStorage.getItem('vyron:update-installing-version')").at(1)?.split('POST_UPDATE_VERSION_MISMATCH')[0]||'';
+  expect(effect).toContain('api.youtubeProfiles()');
+  expect(effect).toContain('api.youtubeOauthCredentialStates()');
+  expect(effect).toContain('states.youtubeApiRequests!==0||states.keychainSecretReads!==0');
+  expect(effect).toContain('OAuth READY');
+  expect(effect).toContain('Требуют входа');
+  expect(effect).not.toContain('youtubeOauthRecoverExistingProfiles');
+  expect(effect).not.toContain('youtubeReconnectExisting');
+  expect(effect).not.toContain('youtubeOauthBrowsers');
+ });
  it('manual browser reconnect remains explicit fallback',()=>{
   expect(accounts).toContain('Переподключить через браузер');
   expect(recovery).toContain('Войти заново через браузер');
