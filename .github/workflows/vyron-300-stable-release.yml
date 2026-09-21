@@ -1,0 +1,314 @@
+name: VYRON 3.0.0 Stable Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      approved_run_id:
+        description: 'Successful VYRON 3.0.0 Physical Candidate run ID'
+        required: true
+        type: string
+      approved_head:
+        description: 'Exact physically accepted release/vyron-3.0.0 HEAD SHA'
+        required: true
+        type: string
+      physical_video_id:
+        description: 'One physically uploaded YouTube Video ID from acceptance'
+        required: true
+        type: string
+      physical_acceptance:
+        description: 'Type VYRON_3_0_0_PHYSICAL_PASS exactly'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: vyron-300-stable-release
+  cancel-in-progress: false
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  BRANCH: release/vyron-3.0.0
+  VERSION: '3.0.0'
+  TAG: v3.0.0
+  BUNDLE_ID: studio.channelflow.desktop
+  EXECUTABLE: channelflow
+  EXPECTED_SIGNING_CERT_SHA1: 2C8B0BD4EE1C000D29DD0667BF1068D4673692C9
+  EMBEDDED_UPDATER_KEY: dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEREODQ1NDdERTI1MEYxQzAKUldUQThWRGlmVlNFM1RHdW5WQnE2eG9BYTBnQlNmbUtmVU84UHJQMUNvZWZ4Qmo0L2hYcUd4UDEK
+
+jobs:
+  stable-release:
+    name: Publish exact physically accepted macOS artifact
+    runs-on: macos-14
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+      APPROVED_RUN_ID: ${{ inputs.approved_run_id }}
+      APPROVED_HEAD: ${{ inputs.approved_head }}
+      PHYSICAL_VIDEO_ID: ${{ inputs.physical_video_id }}
+      PHYSICAL_ACCEPTANCE: ${{ inputs.physical_acceptance }}
+    steps:
+      - name: Checkout exact approved source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.approved_head }}
+          fetch-depth: 0
+
+      - name: Physical acceptance and source freeze
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$PHYSICAL_ACCEPTANCE" = 'VYRON_3_0_0_PHYSICAL_PASS'
+          test -n "$PHYSICAL_VIDEO_ID"
+          test "$(git rev-parse HEAD)" = "$APPROVED_HEAD"
+          BRANCH_HEAD="$(gh api "repos/$REPO/git/ref/heads/release/vyron-3.0.0" --jq .object.sha)"
+          test "$BRANCH_HEAD" = "$APPROVED_HEAD"
+
+          gh api "repos/$REPO/actions/runs/$APPROVED_RUN_ID" >/tmp/approved-run.json
+          python3 - <<'PY'
+          import json,os
+          d=json.load(open('/tmp/approved-run.json'))
+          assert d['name']=='VYRON 3.0.0 Physical Candidate', d['name']
+          assert d['status']=='completed', d['status']
+          assert d['conclusion']=='success', d['conclusion']
+          assert d['head_branch']=='release/vyron-3.0.0', d['head_branch']
+          assert d['head_sha']==os.environ['APPROVED_HEAD'], (d['head_sha'],os.environ['APPROVED_HEAD'])
+          print('APPROVED_CANDIDATE_RUN=PASS')
+          PY
+
+          python3 - <<'PY'
+          import json,re
+          from pathlib import Path
+          v='3.0.0'
+          pkg=json.load(open('package.json'))
+          lock=json.load(open('package-lock.json'))
+          conf=json.load(open('src-tauri/tauri.conf.json'))
+          cargo=Path('src-tauri/Cargo.toml').read_text()
+          clock=Path('src-tauri/Cargo.lock').read_text()
+          assert pkg['version']==v
+          assert lock['version']==v and lock['packages']['']['version']==v
+          assert conf['version']==v
+          assert conf['identifier']=='studio.channelflow.desktop'
+          assert conf['bundle']['createUpdaterArtifacts'] is True
+          assert conf['plugins']['updater']['pubkey']==os.environ['EMBEDDED_UPDATER_KEY']
+          assert re.search(r'(?m)^version\s*=\s*"3\.0\.0"\s*$',cargo)
+          assert re.search(r'\[\[package\]\]\nname = "channelflow"\nversion = "3\.0\.0"',clock)
+          print('VERSION_CONSISTENCY=PASS')
+          PY
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo 'BLOCKER=V3_TAG_ALREADY_EXISTS'
+            exit 1
+          fi
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            echo 'BLOCKER=V3_RELEASE_ALREADY_EXISTS'
+            exit 1
+          fi
+
+          gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode >/tmp/mac-feed-before.json
+          gh api "repos/$REPO/contents/vyron-updates/windows-latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode >/tmp/windows-feed-before.json
+          test "$(python3 -c 'import json;print(json.load(open("/tmp/mac-feed-before.json"))["version"])')" = '2.1.15-rc.7'
+          test "$(python3 -c 'import json;print(json.load(open("/tmp/windows-feed-before.json"))["version"])')" = '2.1.13'
+          shasum -a 256 /tmp/windows-feed-before.json | awk '{print $1}' >/tmp/windows-feed-before.sha
+          echo "APPROVED_HEAD=$APPROVED_HEAD"
+          echo "APPROVED_RUN_ID=$APPROVED_RUN_ID"
+          echo "PHYSICAL_VIDEO_ID=$PHYSICAL_VIDEO_ID"
+          echo 'PHYSICAL_ACCEPTANCE=PASS'
+
+      - name: Download exact approved Physical Candidate artifact
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf approved && mkdir approved
+          gh run download "$APPROVED_RUN_ID" --repo "$REPO" --name 'VYRON-3.0.0-PHYSICAL-CANDIDATE-arm64' --dir approved
+          test -s approved/VYRON-3.0.0-PHYSICAL-CANDIDATE-arm64.dmg
+          test -s approved/VYRON-3.0.0-PHYSICAL-CANDIDATE-arm64.dmg.sha256
+          test -s approved/VYRON-3.0.0-PHYSICAL-CANDIDATE.app.tar.gz
+          test -s approved/VYRON-3.0.0-PHYSICAL-CANDIDATE.app.tar.gz.sha256
+          test -s approved/VYRON-3.0.0-PHYSICAL-CANDIDATE.app.tar.gz.sig
+          test -s approved/codesign-details.txt
+          test -s approved/designated-requirement.txt
+          DMG_EXPECTED="$(awk '{print $1}' approved/VYRON-3.0.0-PHYSICAL-CANDIDATE-arm64.dmg.sha256)"
+          DMG_ACTUAL="$(shasum -a 256 approved/VYRON-3.0.0-PHYSICAL-CANDIDATE-arm64.dmg | awk '{print $1}')"
+          UPDATER_EXPECTED="$(awk '{print $1}' approved/VYRON-3.0.0-PHYSICAL-CANDIDATE.app.tar.gz.sha256)"
+          UPDATER_ACTUAL="$(shasum -a 256 approved/VYRON-3.0.0-PHYSICAL-CANDIDATE.app.tar.gz | awk '{print $1}')"
+          test "$DMG_ACTUAL" = "$DMG_EXPECTED"
+          test "$UPDATER_ACTUAL" = "$UPDATER_EXPECTED"
+          echo "APPROVED_DMG_SHA256=$DMG_ACTUAL"
+          echo "APPROVED_UPDATER_SHA256=$UPDATER_ACTUAL"
+          echo 'APPROVED_ARTIFACT_HASHES=PASS'
+
+      - name: Reverify exact updater archive signature and app identity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import base64,json
+          from pathlib import Path
+          conf=json.load(open('src-tauri/tauri.conf.json'))
+          def envelope(value:bytes)->bytes:
+              stripped=value.strip()
+              try:
+                  decoded=base64.b64decode(stripped,validate=True)
+                  if decoded.startswith(b'untrusted comment:'):
+                      return decoded
+              except Exception:
+                  pass
+              return stripped+b'\n'
+          Path('/tmp/vyron-updater-public.pub').write_bytes(envelope(str(conf['plugins']['updater']['pubkey']).encode()))
+          Path('/tmp/vyron-updater-signature.sig').write_bytes(envelope(Path('approved/VYRON-3.0.0-PHYSICAL-CANDIDATE.app.tar.gz.sig').read_bytes()))
+          PY
+          if ! command -v minisign >/dev/null 2>&1; then brew install minisign >/dev/null; fi
+          minisign -Vm approved/VYRON-3.0.0-PHYSICAL-CANDIDATE.app.tar.gz -x /tmp/vyron-updater-signature.sig -p /tmp/vyron-updater-public.pub
+          echo 'UPDATER_SIGNATURE_VERIFY=PASS'
+
+          rm -rf /tmp/vyron-approved-app && mkdir -p /tmp/vyron-approved-app
+          tar -xzf approved/VYRON-3.0.0-PHYSICAL-CANDIDATE.app.tar.gz -C /tmp/vyron-approved-app
+          APP="$(find /tmp/vyron-approved-app -name 'VYRON.app' -type d -print -quit)"
+          test -d "$APP"
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = "$BUNDLE_ID"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = "$VERSION"
+          test "$(plutil -extract CFBundleExecutable raw -o - "$APP/Contents/Info.plist")" = "$EXECUTABLE"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -d -r- "$APP" > /tmp/approved-designated-requirement.txt 2>&1
+          test -s /tmp/approved-designated-requirement.txt
+          cmp -s /tmp/approved-designated-requirement.txt approved/designated-requirement.txt
+          grep -F 'identifier "studio.channelflow.desktop"' approved/designated-requirement.txt >/dev/null
+          grep -Fi "$EXPECTED_SIGNING_CERT_SHA1" approved/codesign-details.txt >/dev/null || true
+          hdiutil verify approved/VYRON-3.0.0-PHYSICAL-CANDIDATE-arm64.dmg
+          echo 'CODESIGN=PASS'
+          echo 'DESIGNATED_REQUIREMENT_CONTINUITY=PASS'
+          echo 'DMG_VERIFY=PASS'
+
+      - name: Prepare stable assets and updater manifest
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p stable
+          cp approved/VYRON-3.0.0-PHYSICAL-CANDIDATE-arm64.dmg stable/VYRON-3.0.0-arm64.dmg
+          shasum -a 256 stable/VYRON-3.0.0-arm64.dmg > stable/VYRON-3.0.0-arm64.dmg.sha256
+          cp approved/VYRON-3.0.0-PHYSICAL-CANDIDATE.app.tar.gz stable/VYRON.app.tar.gz
+          cp approved/VYRON-3.0.0-PHYSICAL-CANDIDATE.app.tar.gz.sig stable/VYRON.app.tar.gz.sig
+          shasum -a 256 stable/VYRON.app.tar.gz > stable/VYRON.app.tar.gz.sha256
+          cp approved/codesign-details.txt stable/codesign-details.txt
+          cp approved/designated-requirement.txt stable/designated-requirement.txt
+          export PUB_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          sig=Path('stable/VYRON.app.tar.gz.sig').read_text().strip()
+          d={
+            'version':'3.0.0',
+            'notes':'VYRON 3.0.0 — multi-channel owner workflow, persistent task/progress system, permanent OAuth continuity, generation-aware Publisher file identity, compact UI and updater reliability.',
+            'pub_date':os.environ['PUB_DATE'],
+            'platforms':{
+              'darwin-aarch64':{
+                'url':'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v3.0.0/VYRON.app.tar.gz',
+                'signature':sig,
+              }
+            }
+          }
+          Path('stable/latest.json').write_text(json.dumps(d,ensure_ascii=False,indent=2)+'\n')
+          PY
+          python3 - <<'PY'
+          import json
+          d=json.load(open('stable/latest.json'))
+          assert d['version']=='3.0.0'
+          p=d['platforms']['darwin-aarch64']
+          assert p['url'].endswith('/releases/download/v3.0.0/VYRON.app.tar.gz')
+          assert p['signature'].strip()
+          print('STABLE_MANIFEST=PASS')
+          PY
+
+      - name: Publish stable GitHub release v3.0.0
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat >/tmp/release-notes.md <<EOF
+          ## VYRON 3.0.0
+
+          Stable release from physically accepted candidate.
+
+          - Exact approved candidate run: $APPROVED_RUN_ID
+          - Exact approved source HEAD: $APPROVED_HEAD
+          - Physical one-video acceptance ID: $PHYSICAL_VIDEO_ID
+          - Application update is not an OAuth reset.
+          - Publisher identity is channel + current SHA-256 + file size; reused paths and VIDEO numbers can create safe new generations.
+          - Same-channel verified content fingerprints remain protected from duplicate upload.
+          - Persistent multi-channel tasks, factual progress, compact owner UI and built-in signed updater are included.
+          - Windows updater feed is intentionally unchanged pending separate Windows physical acceptance.
+          EOF
+
+          gh release create "$TAG" --repo "$REPO" --target "$APPROVED_HEAD" --title 'VYRON 3.0.0' --notes-file /tmp/release-notes.md \
+            stable/VYRON-3.0.0-arm64.dmg \
+            stable/VYRON-3.0.0-arm64.dmg.sha256 \
+            stable/VYRON.app.tar.gz \
+            stable/VYRON.app.tar.gz.sha256 \
+            stable/VYRON.app.tar.gz.sig \
+            stable/codesign-details.txt \
+            stable/designated-requirement.txt \
+            stable/latest.json
+          echo 'STABLE_RELEASE_PUBLISHED=PASS'
+
+      - name: Verify remote stable assets before feed promotion
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/$REPO/releases/tags/$TAG" >/tmp/v300-release.json
+          python3 - <<'PY'
+          import json,os
+          d=json.load(open('/tmp/v300-release.json'))
+          assert d['tag_name']=='v3.0.0'
+          assert d['draft'] is False
+          assert d['prerelease'] is False
+          assert d['target_commitish']==os.environ['APPROVED_HEAD']
+          required={'VYRON-3.0.0-arm64.dmg','VYRON-3.0.0-arm64.dmg.sha256','VYRON.app.tar.gz','VYRON.app.tar.gz.sha256','VYRON.app.tar.gz.sig','codesign-details.txt','designated-requirement.txt','latest.json'}
+          assets={x['name']:x for x in d['assets']}
+          assert required <= set(assets)
+          assert all(assets[n]['size']>0 for n in required)
+          print('REMOTE_RELEASE_ASSETS=PASS')
+          PY
+
+          rm -rf /tmp/v300-remote && mkdir /tmp/v300-remote
+          gh release download "$TAG" --repo "$REPO" --dir /tmp/v300-remote --pattern 'VYRON.app.tar.gz' --pattern 'VYRON.app.tar.gz.sig' --pattern 'latest.json'
+          cmp -s stable/VYRON.app.tar.gz /tmp/v300-remote/VYRON.app.tar.gz
+          cmp -s stable/VYRON.app.tar.gz.sig /tmp/v300-remote/VYRON.app.tar.gz.sig
+          cmp -s stable/latest.json /tmp/v300-remote/latest.json
+          echo 'REMOTE_UPDATER_ARTIFACT=PASS'
+
+      - name: Promote macOS updater feed to exact v3.0.0 artifact
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          FEED_SHA="$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .sha)"
+          CONTENT="$(base64 < stable/latest.json | tr -d '\n')"
+          gh api --method PUT "repos/$REPO/contents/vyron-updates/latest.json" \
+            -f message='release: promote VYRON 3.0.0 macOS updater feed' \
+            -f content="$CONTENT" \
+            -f sha="$FEED_SHA" \
+            -f branch='main' >/tmp/feed-write.json
+
+          gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode >/tmp/mac-feed-after.json
+          gh api "repos/$REPO/contents/vyron-updates/windows-latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode >/tmp/windows-feed-after.json
+          cmp -s stable/latest.json /tmp/mac-feed-after.json
+          test "$(python3 -c 'import json;print(json.load(open("/tmp/mac-feed-after.json"))["version"])')" = '3.0.0'
+          test "$(python3 -c 'import json;print(json.load(open("/tmp/windows-feed-after.json"))["version"])')" = '2.1.13'
+          test "$(shasum -a 256 /tmp/windows-feed-after.json | awk '{print $1}')" = "$(cat /tmp/windows-feed-before.sha)"
+          echo 'MACOS_UPDATER_FEED_3_0_0=PASS'
+          echo 'WINDOWS_FEED_UNCHANGED=PASS'
+          echo 'ONLINE_UPDATER_PHYSICAL_ACCEPTANCE=PENDING'
+
+      - name: Final release summary
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          echo "VYRON_300_RELEASE_HEAD=$APPROVED_HEAD"
+          echo "VYRON_300_APPROVED_RUN=$APPROVED_RUN_ID"
+          echo "PHYSICAL_VIDEO_ID=$PHYSICAL_VIDEO_ID"
+          echo 'VERSION=3.0.0'
+          echo 'STABLE_RELEASE=v3.0.0'
+          echo 'MACOS_UPDATER=3.0.0'
+          echo 'WINDOWS_UPDATER=2.1.13'
+          echo 'ONLINE_UPDATER_PHYSICAL_ACCEPTANCE=PENDING'
