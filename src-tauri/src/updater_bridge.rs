@@ -1,3 +1,4 @@
+use tauri::Manager;
 use std::{fs,path::{Path,PathBuf}};
 #[cfg(target_os="macos")]
 use std::os::unix::fs::MetadataExt;
