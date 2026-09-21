@@ -1439,6 +1439,12 @@ fn oauth_authorization_url(client_id:&str,redirect:&str,scope:&str,challenge:&st
     format!("https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&access_type=offline&prompt={}&include_granted_scopes=true&code_challenge={}&code_challenge_method=S256&state={}",
       urlencoding::encode(client_id),urlencoding::encode(redirect),urlencoding::encode(scope),prompt,urlencoding::encode(challenge),urlencoding::encode(state))
 }
+fn google_account_identity_matches(expected:Option<&str>,received:Option<&str>)->bool{
+    match (expected.map(str::trim).filter(|x|!x.is_empty()),received.map(str::trim).filter(|x|!x.is_empty())){
+      (Some(a),Some(b))=>a.eq_ignore_ascii_case(b),
+      _=>true,
+    }
+}
 async fn google_identity_metadata(access_token:&str)->(Option<String>,Option<String>){
     let response=reqwest::Client::new()
       .get("https://openidconnect.googleapis.com/v1/userinfo")
@@ -5744,7 +5750,7 @@ pub async fn youtube_oauth_reconnect_existing(
         );
     }
     if let (Some(expected_email),Some(received_email))=(target.google_email.as_deref(),authorized_google_email.as_deref()){
-        if !expected_email.eq_ignore_ascii_case(received_email){
+        if !google_account_identity_matches(Some(expected_email),Some(received_email)){
             let authorized_channels=items.iter().map(|x|channel_identity_value(x,&original_store)).collect::<Vec<_>>();
             let _=app.emit("oauth-recovery-stage",json!({"profileId":profile_id,"state":"WRONG_CHANNEL","reason":"WRONG_GOOGLE_ACCOUNT","expectedGoogleEmail":expected_email,"authorizedGoogleEmail":received_email,"expectedChannelId":expected_channel_id,"credentialsCommitted":false}));
             return Ok(json!({
