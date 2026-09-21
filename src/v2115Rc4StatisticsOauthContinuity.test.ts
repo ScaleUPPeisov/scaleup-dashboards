@@ -47,8 +47,10 @@ describe('VYRON RC4 statistics OAuth continuity contracts',()=>{
   const a=y.indexOf('fn google_config_operational_status_value'),b=y.indexOf('#[derive(Debug, Clone, Deserialize, Default)]',a),block=y.slice(a,b);
   expect(block).toContain('oauthReady":configured&&operational');
   expect(block).toContain('secretOperational":operational');
-  expect(block).toContain('repairRequired":configured&&!operational');
+  expect(block).toContain('repairRequired":repair_required');
   expect(block).toContain('NEEDS_SECURE_STORAGE_REPAIR');
+  expect(block).toContain('KEYCHAIN_ACCESS_BLOCKED');
+  expect(block).toContain('if c.client_secret_present{state="NEEDS_SECURE_STORAGE_REPAIR";repair_required=true');
  });
 
  it('passive profile metadata remains visible without bulk secret reads',()=>{
