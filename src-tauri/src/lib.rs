@@ -21,7 +21,7 @@ pub fn run(){
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
-        .invoke_handler(tauri::generate_handler![studio_drafts::studio_drafts_start_bridge,studio_drafts::studio_drafts_list,studio_drafts::studio_drafts_clear,updater_bridge::prepare_updater_tempdir,
+        .invoke_handler(tauri::generate_handler![studio_drafts::studio_drafts_start_bridge,studio_drafts::studio_drafts_list,studio_drafts::studio_drafts_clear,updater_bridge::updater_install_preflight,updater_bridge::prepare_updater_tempdir,
             license::license_status,license::activate_license,
             storage::load_state,storage::save_state,security::security_keychain_diagnostics,security::security_keychain_runtime_diagnostics,security::security_canonical_account_diagnostic,security::security_canonical_retry_secret_access,security::security_oauth_inventory,
             files::import_images,files::add_tracks,files::refresh_job,files::prepare_job_folder,files::ensure_channel_inbox,files::scan_channel_inbox,files::ingest_tracks,files::ingest_cover,files::write_job_metadata,files::enqueue_render,files::reveal_path,files::open_endlume,local_delete::trash_local_file,local_delete::local_source_status,local_delete::scan_render_folder,local_delete::discover_channel_folders,
