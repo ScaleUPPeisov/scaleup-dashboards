@@ -5,7 +5,11 @@ const read=(p:string)=>readFileSync(p,'utf8');
 describe('VYRON 2.1.14 RC2 channel statistics contract',()=>{
  it('OAuth discovery piggybacks snippet plus statistics on the existing channels.list',()=>{
   const y=read('src-tauri/src/youtube.rs');
-  expect(y).toContain('channels?part=snippet,statistics&mine=true');
+  const connect=y.split('pub async fn youtube_oauth_connect(',2)[1]?.split('pub fn youtube_oauth_select_new_channel',2)[0]||'';
+  expect(connect).toContain('https://www.googleapis.com/youtube/v3/channels');
+  expect(connect).toContain('("part","snippet,statistics")');
+  expect(connect).toContain('("mine","true")');
+  expect(connect).toContain('("maxResults","50")');
   expect(y).toContain('youtube_channel_statistics_value(item)');
  });
  it('profile-bound refresh uses OAuth token and the real Channel ID',()=>{
