@@ -65,7 +65,8 @@ describe('VYRON 2.1.15 RC4 activity history wiring',()=>{
  it('publisher never treats a stored videoId as normal NEW and exposes reconciliation controls',()=>{
   const publisher=read('src/PublisherOS.tsx'),lifecycle=read('src/storageLifecycle.ts');
   expect(lifecycle).toContain("return'VERIFY_REQUIRED'");
-  expect(publisher).toContain("stateOf(j)==='NEW'");
+  expect(publisher).toContain("uploadStateById.get(j.id)==='NEW'&&!recoveryJobIds.has(j.id)");
+  expect(publisher).toContain('selectableJobIds.has(j.id)');
   expect(publisher).toContain('Проверить спорные загрузки');
   expect(publisher).toContain('youtubeVideoProcessingStatusBatch');
   expect(publisher).toContain('Новых videos.insert: 0');
