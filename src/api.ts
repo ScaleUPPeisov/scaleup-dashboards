@@ -66,10 +66,15 @@ export type ExistingVideoSyncResult={channelId?:string;channelTitle?:string;yout
 export type ExistingVideoTargetedRetryResult={requestedIds:string[];videosHydrated:number;missingHydrationCount:number;missingHydrationIds:string[];scheduleDataIncompleteCount:number;scheduleIncompleteIds:string[];hydrationErrors:string[];apiRequests:number;complete:boolean;scheduleComplete:boolean;videos:import('./types').YoutubeExistingVideo[]};
 export type YoutubeScheduleUpdateResult={id:string;verified:boolean;skipped:boolean;skipReason?:'ALREADY_PUBLISHED'|'ALREADY_CORRECT'|'UNSUPPORTED_STATE'|null;scheduleAccepted:boolean;scheduleVerified:boolean;metadataPreserved:boolean;statusPreserved:boolean;snippetWrites:0;thumbnailWrites:0;playlistWrites:0;videosInsert:0;mismatches?:string[];before?:{publishAt?:string|null;privacyStatus?:string;snippet?:Record<string,unknown>;preservedStatus?:Record<string,unknown>};actual?:{publishAt?:string|null;privacyStatus?:string;snippet?:Record<string,unknown>;preservedStatus?:Record<string,unknown>}};
 export type CompetitorCandidate={channelId:string;name:string;url:string;thumbnail?:string;subscribers?:number;views?:number;videos?:number;similarity:number};
+export type UpdaterRuntimeIdentity={productVersion:string;buildRevision:number;commit:string;channel:'stable'|'owner-preview'|string;bundleId:string};
+export type OwnerPreviewCheck={available:boolean;productVersion:string;announcedVersion?:string;currentBuildRevision:number;latestBuildRevision:number;notes?:string;date?:string;artifactUrl?:string;endpoint:string;channel:'owner-preview'};
+export type OwnerPreviewDownload={downloaded:true;announcedVersion:string;targetBuildRevision:number;artifactSha256:string;signatureVerified:true;channel:'owner-preview'};
+export type OwnerPreviewInstall={installed:true;productVersion:string;targetBuildRevision:number;artifactSha256:string;signatureVerified:true;channel:'owner-preview'};
+export type OwnerPreviewProgress={chunkBytes:number;totalBytes?:number|null;targetBuildRevision:number};
 export type UpdaterTransferProgress={status:'DOWNLOADING'|'VERIFYING';percent:number;downloadedBytes:number;totalBytes:number};
 export type UpdaterInstallPreflight={currentExecutablePath:string;currentAppBundlePath?:string|null;underApplications:boolean;runningFromDmg:boolean;bundleReplaceable:boolean;currentVersion:string;bundleId:string;targetPlatform:string;signatureConfigured:boolean;secretValuesIncluded:false};
-export type CheckedUpdaterCandidate={none:false;version:string;date?:string;body:string;current:string;latest:string;status:'AVAILABLE';endpoint:string;versionComparison:string;download:(onProgress?:(p:UpdaterTransferProgress)=>void)=>Promise<void>;install:(onStatus?:(s:'VERIFYING'|'INSTALLING'|'READY_TO_RESTART')=>void)=>Promise<void>;restart:()=>Promise<void>};
-export type NoUpdaterCandidate={none:true;current:string;latest:string;status:'UP_TO_DATE';endpoint:string;versionComparison:string};
+export type CheckedUpdaterCandidate={none:false;version:string;date?:string;body:string;current:string;latest:string;status:'AVAILABLE';endpoint:string;versionComparison:string;buildRevision?:number;currentBuildRevision?:number;artifactSha256?:string;channel?:string;download:(onProgress?:(p:UpdaterTransferProgress)=>void)=>Promise<void>;install:(onStatus?:(s:'VERIFYING'|'INSTALLING'|'READY_TO_RESTART')=>void)=>Promise<void>;restart:()=>Promise<void>};
+export type NoUpdaterCandidate={none:true;current:string;latest:string;status:'UP_TO_DATE';endpoint:string;versionComparison:string;buildRevision?:number;currentBuildRevision?:number;channel?:string};
 export type CheckedUpdater=CheckedUpdaterCandidate|NoUpdaterCandidate;
 export const METHOD_LEDGER_COMMANDS=new Set(['youtube_oauth_profile_health','youtube_channel_statistics','youtube_channel_statistics_batch','youtube_upload_video','youtube_list_existing_videos','youtube_retry_existing_video_hydration','youtube_video_processing_status','youtube_video_processing_status_batch','youtube_backup_existing_videos','youtube_update_existing_video','youtube_update_existing_schedule','youtube_list_playlists','youtube_playlist_membership','youtube_set_thumbnail']);
 export const youtubeCommandUsesMethodLedger=(command:string)=>METHOD_LEDGER_COMMANDS.has(command);
@@ -186,14 +191,40 @@ export const api={
   onYoutubeProgress:(cb:(data:UploadProgressFact)=>void)=>listen<UploadProgressFact>('youtube-upload-progress',e=>cb(e.payload)),
   onYoutubeApiRequest:(cb:(data:YoutubeApiRequestEvent)=>void)=>listen<YoutubeApiRequestEvent>('youtube-api-request',e=>{recordYoutubeApiRequest(e.payload);if(e.payload.method==='videos.insert'&&e.payload.operationId?.startsWith('short-upload:')){const shortId=e.payload.operationId.slice('short-upload:'.length).split(':')[0];mutateShortsState(s=>recordShortUploadAttempt(s,shortId,e.payload.operationId!,e.payload.at||new Date().toISOString()))}cb(e.payload)}),
   appVersion:()=>getVersion(),
+  updaterRuntimeIdentity:()=>invoke<UpdaterRuntimeIdentity>('updater_runtime_identity'),
   updaterInstallPreflight:()=>invoke<UpdaterInstallPreflight>('updater_install_preflight'),
   checkUpdate:async():Promise<CheckedUpdater>=>{
-    const current=await getVersion();
+    const identity=await invoke<UpdaterRuntimeIdentity>('updater_runtime_identity');
+    const current=identity.productVersion||await getVersion();
+    if(identity.channel==='owner-preview'){
+      let preview:OwnerPreviewCheck;
+      try{preview=await invoke<OwnerPreviewCheck>('updater_owner_preview_check')}catch(error){const x=classifyUpdaterError(error,'check');throw new Error(`${x.code}: ${updaterFailureMessage(x.code,x.detail)}`)}
+      if(!preview.available)return {none:true,current,latest:current,status:'UP_TO_DATE',endpoint:preview.endpoint,versionComparison:`build ${preview.currentBuildRevision} == build ${preview.latestBuildRevision}`,buildRevision:preview.latestBuildRevision,currentBuildRevision:preview.currentBuildRevision,channel:'owner-preview'};
+      let downloaded=0,total=0;
+      return {none:false,version:preview.productVersion,date:preview.date,body:preview.notes||'',current,latest:preview.productVersion,status:'AVAILABLE',endpoint:preview.endpoint,versionComparison:`3.0.0 build ${preview.currentBuildRevision} -> build ${preview.latestBuildRevision}`,buildRevision:preview.latestBuildRevision,currentBuildRevision:preview.currentBuildRevision,channel:'owner-preview',
+        download:async(onProgress?:(p:UpdaterTransferProgress)=>void)=>{
+          await invoke<string>('prepare_updater_tempdir');
+          const stop=await listen<OwnerPreviewProgress>('owner-preview-update-progress',e=>{
+            const chunk=Math.max(0,Number(e.payload.chunkBytes||0));total=Math.max(total,Number(e.payload.totalBytes||0));downloaded+=chunk;
+            onProgress?.({status:'DOWNLOADING',percent:total>0?Math.min(100,downloaded/total*100):0,downloadedBytes:downloaded,totalBytes:total});
+          });
+          try{const result=await invoke<OwnerPreviewDownload>('updater_owner_preview_download');onProgress?.({status:'VERIFYING',percent:100,downloadedBytes:downloaded||total,totalBytes:total});if(!result.signatureVerified)throw new Error('UPDATER_SIGNATURE_INVALID: owner preview signature not verified')}
+          catch(error){const x=classifyUpdaterError(error,'download');throw new Error(`${x.code}: ${updaterFailureMessage(x.code,x.detail)}`)}
+          finally{stop()}
+        },
+        install:async(onStatus?:(s:'VERIFYING'|'INSTALLING'|'READY_TO_RESTART')=>void)=>{
+          onStatus?.('VERIFYING');onStatus?.('INSTALLING');
+          try{await invoke<OwnerPreviewInstall>('updater_owner_preview_install')}catch(error){const x=classifyUpdaterError(error,'install');throw new Error(`${x.code}: ${updaterFailureMessage(x.code,x.detail)}`)}
+          onStatus?.('READY_TO_RESTART');
+        },
+        restart:async()=>{try{await relaunch()}catch(error){const x=classifyUpdaterError(error,'relaunch');throw new Error(`${x.code}: ${updaterFailureMessage(x.code,x.detail)}`)}}
+      };
+    }
     let update:any;
     try{update=await check(UPDATER_CHECK_OPTIONS)}catch(error){const x=classifyUpdaterError(error,'check');throw new Error(`${x.code}: ${updaterFailureMessage(x.code,x.detail)}`)}
-    if(!update)return {none:true,current,latest:current,status:'UP_TO_DATE',endpoint:UPDATER_ENDPOINTS[0],versionComparison:updaterVersionStatus(current,current)};
+    if(!update)return {none:true,current,latest:current,status:'UP_TO_DATE',endpoint:UPDATER_ENDPOINTS[0],versionComparison:updaterVersionStatus(current,current),currentBuildRevision:identity.buildRevision,channel:identity.channel};
     let downloaded=0,total=0;
-    return {none:false,version:update.version,date:update.date,body:update.body||'',current:update.currentVersion||current,latest:update.version,status:'AVAILABLE',endpoint:UPDATER_ENDPOINTS[0],versionComparison:updaterVersionStatus(update.currentVersion||current,update.version),
+    return {none:false,version:update.version,date:update.date,body:update.body||'',current:update.currentVersion||current,latest:update.version,status:'AVAILABLE',endpoint:UPDATER_ENDPOINTS[0],versionComparison:updaterVersionStatus(update.currentVersion||current,update.version),currentBuildRevision:identity.buildRevision,channel:identity.channel,
       download:async(onProgress?:(p:UpdaterTransferProgress)=>void)=>{
         await invoke<string>('prepare_updater_tempdir');
         try{
@@ -205,8 +236,7 @@ export const api={
         }catch(error){const x=classifyUpdaterError(error,'download');throw new Error(`${x.code}: ${updaterFailureMessage(x.code,x.detail)}`)}
       },
       install:async(onStatus?:(s:'VERIFYING'|'INSTALLING'|'READY_TO_RESTART')=>void)=>{
-        onStatus?.('VERIFYING');
-        onStatus?.('INSTALLING');
+        onStatus?.('VERIFYING');onStatus?.('INSTALLING');
         try{await update.install()}catch(error){const x=classifyUpdaterError(error,'install');throw new Error(`${x.code}: ${updaterFailureMessage(x.code,x.detail)}`)}
         onStatus?.('READY_TO_RESTART');
       },
