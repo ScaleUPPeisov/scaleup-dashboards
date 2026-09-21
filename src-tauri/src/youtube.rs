@@ -199,7 +199,13 @@ fn resolved_credential_state(profile:&OAuthProfile,migration_state:&str,canonica
   }
   return("CANONICAL_PRESENT_UNVERIFIED",validation.map(|v|v.result.clone()).filter(|x|!x.is_empty()).unwrap_or_else(||"NOT_RUN".into()),validation.and_then(|v|v.at.clone()))
  }
- if legacy_present||migration_state==MIGRATION_RECONNECT_REQUIRED{
+ if legacy_present{
+  // Presence of a legacy VYRON credential after an app update is not evidence of revocation.
+  // Passive diagnostics do not read secret values, so keep it saved/unverified rather than
+  // forcing Google reconnect. Operational paths perform a no-UI read and token refresh.
+  return("CANONICAL_PRESENT_UNVERIFIED","LEGACY_PRESENT_UNVERIFIED".into(),validation.and_then(|v|v.at.clone()))
+ }
+ if migration_state==MIGRATION_RECONNECT_REQUIRED{
   return("RECONNECT_REQUIRED","RECONNECT_REQUIRED".into(),validation.and_then(|v|v.at.clone()))
  }
  ("MISSING",validation.map(|v|v.result.clone()).filter(|x|!x.is_empty()).unwrap_or_else(||"NOT_RUN".into()),validation.and_then(|v|v.at.clone()))
@@ -222,7 +228,7 @@ fn resolved_client_secret_state(
  else if global_exact&&global_known{"CANONICAL_PRESENT_UNVERIFIED"}
  else if global_current_configured&&global_cached{"GLOBAL_CURRENT_READY"}
  else if global_current_configured&&global_known{"CANONICAL_PRESENT_UNVERIFIED"}
- else if legacy_present{"CLIENT_SECRET_REIMPORT_REQUIRED"}
+ else if legacy_present{"CANONICAL_PRESENT_UNVERIFIED"}
  else{"MISSING"}
 }
 fn resolve_oauth_credential_states_local(app:&AppHandle)->Result<Vec<Value>,String>{
@@ -291,7 +297,7 @@ fn resolve_oauth_credential_states_local(app:&AppHandle)->Result<Vec<Value>,Stri
    "lastValidatedAt":last_validated_at,
    "lastValidationResult":last_validation_result,
    "clientSecretState":client_secret_state,
-   "clientSecretPresent":profile_client_secret_known||global_secret_known,
+   "clientSecretPresent":profile_client_secret_known||global_secret_known||legacy_client_secret_present,
    "clientSecretOperational":profile_client_secret_cached||(global_exact_client&&global_secret_cached),
    "clientSecretAccount":profile_client_secret_account,
    "globalClientSecretAccount":global_secret_account,
