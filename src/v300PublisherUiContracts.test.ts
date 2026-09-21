@@ -22,6 +22,16 @@ describe('VYRON 3.0.0 Publisher/UI contracts',()=>{
   expect(p).toContain("renderScan.summary.NEW_CANDIDATE+renderScan.summary.NEW_GENERATION");
   expect(p).toContain("disabled={!fresh||busy}");
  });
+ it('provides zero-API bulk recovery preview instead of trapping legacy VERIFY_REQUIRED rows',()=>{
+  expect(p).toContain('bulkReconcileLegacyRenderRows');
+  expect(p).toContain('buildLegacyRecoveryPreview');
+  expect(p).toContain('Проверить и восстановить {renderScan.summary.VERIFY_REQUIRED} файлов');
+  expect(p).toContain('Подтвердить новые поколения');
+  expect(p).toContain("reason:'BULK_LEGACY_RECOVERY_CONFIRMED'");
+  expect(p).toContain('successfulUploadForHash(history,fp,channelId,size)');
+  expect(p).toContain('YouTube upload: <b>0</b>');
+  expect(p).toContain('Проверить YouTube ID');
+ });
  it('does not allow verified same-channel fingerprint duplicates to bypass preflight',()=>{
   expect(p).toContain('duplicateIds:duplicates.map(x=>x.id)');
   expect(p).toContain('allowDuplicate:false');
