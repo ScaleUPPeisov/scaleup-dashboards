@@ -91,6 +91,16 @@ describe('VYRON generation-aware channel render scan',()=>{
     expect(plan.accepted).toHaveLength(20);
   });
 
+  it('same exact path can replace an unuploaded active generation without path or sequence collision',()=>{
+    const active=job('glass',4,root,{id:'active-old',currentSourceFingerprint:A,currentSourceFileSize:500_000_000,sourceGenerationKey:`glass:${A}:500000000`});
+    const row=classifyChannelRenderFiles([file(4,root,B,505_000_000)],[active],[],'glass',root)[0];
+    expect(row.classification).toBe('NEW_GENERATION');
+    expect(row.matchedJobId).toBe('active-old');
+    const plan=planRenderScanImport([row],[active]);
+    expect(plan.accepted).toHaveLength(1);
+    expect(plan.skipped).toHaveLength(0);
+  });
+
   it('rescan is idempotent after a NEW_GENERATION current job is materialized',()=>{
     const old=job('glass',1,root,{youtubeVideoId:'YT_OLD',storageLifecycle:'UPLOADED',status:'SCHEDULED'});
     const h=uploaded(old,'YT_OLD',A,500_000_000);
