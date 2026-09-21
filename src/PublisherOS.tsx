@@ -230,6 +230,21 @@ export function PublisherOS(){
   setRenderScan(null);
   notifySuccess('Папка рендера привязана',`${channel.name} → ${best[0]}`);
  }
+ async function fingerprintRenderEvidenceFiles(result:RenderFolderScanResult,current:VideoJob[],history:ReturnType<typeof useApp.getState>['uploadHistory']){
+  const files=[] as RenderFolderScanResult['files'];
+  for(const file of result.files){
+   if(!renderFileNeedsFingerprint(file,current,history,channelId,result.root)){files.push(file);continue}
+   try{
+    const cache=useApp.getState().fingerprintCache[file.path];
+    const fp=await api.youtubeFileFingerprint(file.path,cache?{size:cache.size,mtimeMs:cache.mtimeMs,sha256:cache.sha256}:undefined);
+    cacheFingerprint(file.path,{path:file.path,size:fp.size,mtimeMs:fp.modifiedAt,sha256:fp.fingerprint,computedAt:new Date().toISOString()});
+    files.push({...file,size:fp.size,modifiedAt:fp.modifiedAt,fingerprint:fp.fingerprint});
+   }catch{
+    files.push(file)
+   }
+  }
+  return{...result,files};
+ }
  async function scanRenderFolder(){
   const root=channelRenderFolder;
   if(!root){
@@ -239,8 +254,15 @@ export function PublisherOS(){
   }
   setRenderScanBusy(true);
   try{
-    const result=await api.scanRenderFolder(root),current=useApp.getState().jobs,history=useApp.getState().uploadHistory;
+    const cheap=await api.scanRenderFolder(root),current=useApp.getState().jobs,history=useApp.getState().uploadHistory;
+    const result=await fingerprintRenderEvidenceFiles(cheap,current,history);
     const rows=classifyChannelRenderFiles(result.files,current,history,channelId,result.root),summary=summarizeRenderScan(rows);
+    for(const row of rows){
+      if(!row.matchedJobId||!row.currentFingerprint)continue;
+      const matched=current.find(j=>j.id===row.matchedJobId);
+      if(!matched)continue;
+      patchJob(matched.id,{currentSourceFingerprint:row.currentFingerprint,currentSourceFileSize:row.file.size,currentSourceModifiedAt:row.file.modifiedAt||undefined,sourceGenerationKey:`${channelId}:${row.currentFingerprint}:${row.file.size}`})
+    }
     if(result.root!==root&&channel)updateChannel(channel.id,{renderFolderPath:result.root});
     const bad=crossChannelScanRecoveryJobs(current,history,channelId,result.root);
     for(const j of current.filter(x=>x.channelId===channelId)){
@@ -250,33 +272,59 @@ export function PublisherOS(){
     }
     const scannedAt=new Date().toISOString();
     setRenderScan({result,rows,summary,scannedAt});
-    journal({eventId:`render-scan:${channelId}:${scannedAt}`,eventType:'RENDER_FOLDER_SCANNED',status:'SUCCESS',source:'LIVE_OPERATION',timestamp:scannedAt,channelId,channelName:channel?.name,details:{folder:result.root,rootType:'CHANNEL_SPECIFIC',found:summary.TOTAL_CLASSIFIED_FILES,knownExact:summary.KNOWN_EXACT,uploadedLocalCopies:summary.UPLOADED_LOCAL_COPY,newCandidates:summary.NEW_CANDIDATE,verifyRequired:summary.VERIFY_REQUIRED,ambiguous:summary.AMBIGUOUS,invalid:summary.INVALID,crossChannelRecovery:bad.length,truncated:result.truncated,youtubeApiRequests:0}});
-    const msg=`Найдено: ${summary.TOTAL_CLASSIFIED_FILES} • известно: ${summary.KNOWN_EXACT} • на YouTube: ${summary.UPLOADED_LOCAL_COPY} • новых: ${summary.NEW_CANDIDATE} • проверить: ${summary.VERIFY_REQUIRED} • неоднозначно: ${summary.AMBIGUOUS}. YouTube API: 0.`;
+    journal({eventId:`render-scan:${channelId}:${scannedAt}`,eventType:'RENDER_FOLDER_SCANNED',status:'SUCCESS',source:'LIVE_OPERATION',timestamp:scannedAt,channelId,channelName:channel?.name,details:{folder:result.root,rootType:'CHANNEL_SPECIFIC',found:summary.TOTAL_CLASSIFIED_FILES,knownExact:summary.KNOWN_EXACT,uploadedLocalCopies:summary.UPLOADED_LOCAL_COPY,newCandidates:summary.NEW_CANDIDATE,newGenerations:summary.NEW_GENERATION,verifyRequired:summary.VERIFY_REQUIRED,ambiguous:summary.AMBIGUOUS,invalid:summary.INVALID,crossChannelRecovery:bad.length,truncated:result.truncated,youtubeApiRequests:0}});
+    const newTotal=summary.NEW_CANDIDATE+summary.NEW_GENERATION;
+    const msg=`Найдено: ${summary.TOTAL_CLASSIFIED_FILES} • совпало с YouTube fingerprint: ${summary.UPLOADED_LOCAL_COPY} • новых: ${newTotal} (новых генераций: ${summary.NEW_GENERATION}) • проверить: ${summary.VERIFY_REQUIRED} • неоднозначно: ${summary.AMBIGUOUS}. YouTube API: 0.`;
     result.truncated?notifyWarning('SCAN_TRUNCATED',msg):notifyInfo('Папка канала просканирована',msg)
   }catch(e){const h=humanizeError(e,'storage');notifyWarning('Не удалось просканировать папку рендера',h.message)}
   finally{setRenderScanBusy(false)}
  }
- function addScannedRenderCandidates(){
-  if(!renderScan||!channel)return;
-  const rows=renderScan.rows.filter(r=>r.classification==='NEW_CANDIDATE');
-  if(!rows.length)return;
-  const ok=window.confirm(`Добавить ${rows.length} новых локальных видео в VYRON? Загрузка на YouTube НЕ начнётся.`);
-  if(!ok)return;
+ function materializeRenderGenerationRows(rows:RenderScanRow[],explicitLegacyOverride=false){
+  if(!renderScan||!channel||!rows.length)return;
   const current=useApp.getState().jobs.filter(j=>j.channelId===channelId),plan=planRenderScanImport(rows,current,new Set(recoveryJobs.map(j=>j.id))),created:VideoJob[]=[],details:string[]=[];
   const minTracks=Math.max(1,settings.tracksPerVideo||15);
   for(const row of plan.accepted){
     try{
-      const file=row.file,n=row.sequence!,createdMs=file.createdAt||file.modifiedAt||Date.now(),folder=file.path.replace(/[\\/][^\\/]+$/,'');
-      created.push({id:crypto.randomUUID(),channelId,number:n,folder,status:'READY_UPLOAD',createdAt:new Date(createdMs).toISOString(),tracksCount:minTracks,minTracks,finalPath:file.path,title:`VIDEO_${String(n).padStart(3,'0')}`,description:'',tags:[...(channel.seo.tags||[])],metadataSource:'template',storageLifecycle:'NEW',uploadProgress:0,sourceOrigin:'render-scan'})
+      const file=row.file,n=row.sequence!,createdMs=file.createdAt||file.modifiedAt||Date.now(),folder=file.path.replace(/[\\/][^\\/]+$/,''),fp=row.currentFingerprint||file.fingerprint;
+      const sourceGenerationKey=fp?`${channelId}:${fp}:${file.size}`:`${channelId}:${normalizeRenderPath(file.path)}:${file.size}:${file.modifiedAt||0}`;
+      const previous=row.matchedJobId&&current.find(j=>j.id===row.matchedJobId);
+      const next:VideoJob={id:crypto.randomUUID(),channelId,number:n,folder,status:'READY_UPLOAD',createdAt:new Date(createdMs).toISOString(),tracksCount:minTracks,minTracks,finalPath:file.path,title:`VIDEO_${String(n).padStart(3,'0')}`,description:'',tags:[...(channel.seo.tags||[])],metadataSource:'template',storageLifecycle:'NEW',uploadProgress:0,sourceOrigin:'render-scan',currentSourceFingerprint:fp,currentSourceFileSize:file.size,currentSourceModifiedAt:file.modifiedAt||undefined,sourceGenerationKey,sourcePreviousJobId:previous?.id};
+      created.push(next);
+      if(previous&&row.classification==='NEW_GENERATION')patchJob(previous.id,{removedFromPublishList:true});
     }catch(e){details.push(`${row.file.name}: ${String(e)}`)}
   }
   if(created.length)addJobs(created);
-  for(const j of created)journal({eventId:`local-video-discovered:${j.id}`,eventType:'LOCAL_VIDEO_DISCOVERED',status:'SUCCESS',source:'LIVE_OPERATION',channelId,channelName:channel.name,jobId:j.id,localSourcePath:j.finalPath,details:{videoNumber:j.number,evidence:'channel-scoped-render-folder-scan',youtubeApiRequests:0}});
+  for(const j of created)journal({eventId:`local-video-discovered:${j.id}`,eventType:'LOCAL_VIDEO_DISCOVERED',status:'SUCCESS',source:'LIVE_OPERATION',channelId,channelName:channel.name,jobId:j.id,localSourcePath:j.finalPath,details:{videoNumber:j.number,evidence:explicitLegacyOverride?'explicit-new-generation-override':'fingerprint-generation-reconciliation',previousJobId:j.sourcePreviousJobId||'',currentFingerprint:j.currentSourceFingerprint||'',youtubeApiRequests:0}});
   const alreadyKnown=plan.skipped.filter(x=>x.reason==='ALREADY_KNOWN_PATH'||x.reason==='SEQUENCE_ALREADY_USED').length;
   const report={requested:rows.length,added:created.length,skipped:plan.skipped.length+details.length,alreadyKnown,errors:details.length,details:[...plan.skipped.map(x=>`${x.name}: ${x.reason}`),...details]};
   const nowJobs=[...current,...created],nextRows=classifyChannelRenderFiles(renderScan.result.files,nowJobs,useApp.getState().uploadHistory,channelId,renderScan.result.root);
   setRenderScan({...renderScan,rows:nextRows,summary:summarizeRenderScan(nextRows),importReport:report});
-  notifySuccess('Локальные видео добавлены',`Запрошено: ${report.requested} • добавлено: ${report.added} • пропущено: ${report.skipped} • уже известно: ${report.alreadyKnown} • ошибок: ${report.errors}. YouTube upload: 0.`)
+  notifySuccess('Локальные поколения добавлены',`Запрошено: ${report.requested} • добавлено: ${report.added} • пропущено: ${report.skipped} • уже известно: ${report.alreadyKnown} • ошибок: ${report.errors}. YouTube upload: 0.`)
+ }
+ function addScannedRenderCandidates(){
+  if(!renderScan||!channel)return;
+  const rows=renderScan.rows.filter(r=>r.classification==='NEW_CANDIDATE'||r.classification==='NEW_GENERATION');
+  if(!rows.length)return;
+  const replacements=rows.filter(r=>r.classification==='NEW_GENERATION').length;
+  const ok=window.confirm(`Добавить ${rows.length} текущих физических видео в VYRON? Новых генераций по старым путям/номерам: ${replacements}. Исторические YouTube записи сохранятся. Загрузка на YouTube НЕ начнётся.`);
+  if(!ok)return;
+  materializeRenderGenerationRows(rows,false)
+ }
+ async function treatVerifyRowAsNewGeneration(row:RenderScanRow){
+  if(!channel||!renderScan||row.classification!=='VERIFY_REQUIRED')return;
+  let fp=row.currentFingerprint||row.file.fingerprint;
+  if(!fp){
+   try{
+    const cache=useApp.getState().fingerprintCache[row.file.path],x=await api.youtubeFileFingerprint(row.file.path,cache?{size:cache.size,mtimeMs:cache.mtimeMs,sha256:cache.sha256}:undefined);
+    fp=x.fingerprint;cacheFingerprint(row.file.path,{path:row.file.path,size:x.size,mtimeMs:x.modifiedAt,sha256:x.fingerprint,computedAt:new Date().toISOString()});
+    row={...row,file:{...row.file,size:x.size,modifiedAt:x.modifiedAt,fingerprint:x.fingerprint},currentFingerprint:x.fingerprint,currentFileSize:x.size}
+   }catch(e){notifyWarning('Не удалось проверить файл',humanizeError(e,'storage').message);return}
+  }
+  const duplicate=successfulUploadForHash(useApp.getState().uploadHistory,fp,channelId);
+  if(duplicate){notifyWarning('Текущий файл уже загружался на этот канал',`Fingerprint совпадает с YouTube ID ${duplicate.youtubeVideoId}. Новая генерация не создана.`);return}
+  const ok=window.confirm('Старая YouTube-запись останется в истории. Текущий физический файл будет создан как НОВАЯ генерация и станет кандидатом на загрузку. Продолжить?');
+  if(!ok)return;
+  materializeRenderGenerationRows([{...row,classification:'NEW_GENERATION',reason:'EXPLICIT_LEGACY_IDENTITY_OVERRIDE'}],true)
  }
  function removeWrongScanJob(j:VideoJob){
   if(!window.confirm(`Убрать ошибочную запись VIDEO_${String(j.number).padStart(3,'0')} из публикации? Физический файл не будет изменён.`))return;
