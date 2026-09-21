@@ -6489,11 +6489,12 @@ mod v219_rc7_secitem_ui_skip_tests{
 mod v2110_oauth_continuity_tests{
  use super::*;
  fn p(id:&str,ch:&str)->OAuthProfile{OAuthProfile{id:id.into(),client_id:"client".into(),client_secret:String::new(),channel_id:Some(ch.into()),channel_title:Some(ch.into()),google_email:None,google_subject_id:None,access_token:String::new(),refresh_token:String::new(),expires_at:0,connected_at:"2026-09-19T00:00:00Z".into(),scopes:vec![],preferred_browser:"default".into(),identity_validated_at:None,identity_validated_channel_id:None,credential_error:None}}
- #[test]fn physical_219_legacy_presence_not_run_is_never_connected(){
+ #[test]fn legacy_presence_after_update_is_saved_unverified_not_forced_reconnect(){
   let profile=p("p1","UC1");
   let (state,last,_)=resolved_credential_state(&profile,MIGRATION_RECONNECT_REQUIRED,false,true,None);
-  assert_eq!(state,"RECONNECT_REQUIRED");
-  assert_eq!(last,"RECONNECT_REQUIRED");
+  assert_eq!(state,"CANONICAL_PRESENT_UNVERIFIED");
+  assert_eq!(last,"LEGACY_PRESENT_UNVERIFIED");
+  assert_ne!(state,"RECONNECT_REQUIRED");
  }
  #[test]fn canonical_presence_without_validation_is_not_connected(){
   let profile=p("p1","UC1");
@@ -6519,6 +6520,16 @@ mod v2110_oauth_continuity_tests{
   let (state,_,_)=resolved_credential_state(&profile,MIGRATION_MIGRATED,true,false,None);
   assert_ne!(state,"RECONNECT_REQUIRED");
   assert_eq!(profile.id,"P1");
+ }
+ #[test]fn missing_optional_google_email_does_not_require_reconnect(){
+  let mut profile=p("P1","UC1");
+  profile.google_email=None;
+  profile.google_subject_id=None;
+  profile.scopes=vec!["https://www.googleapis.com/auth/youtube.force-ssl".into()];
+  let validation=CredentialValidationV2State{at:Some("2026-09-21T00:00:00Z".into()),result:"TOKEN_REFRESH_PASS".into(),expected_channel_id:Some("UC1".into()),actual_channel_id:None};
+  let (state,last,_)=resolved_credential_state(&profile,MIGRATION_MIGRATED,true,false,Some(&validation));
+  assert_eq!(state,"CONNECTED");
+  assert_eq!(last,"TOKEN_REFRESH_PASS");
  }
  #[test]fn thirty_one_profile_update_model_preserves_uuid_and_canonical_account(){
   let before=(0..31).map(|i|format!("p{i}")).collect::<Vec<_>>();
