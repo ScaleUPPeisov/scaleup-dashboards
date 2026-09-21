@@ -5632,7 +5632,8 @@ mod v2115_rc3_oauth_processing_tests{
   assert_eq!(ready["oauthState"],"READY");
   let denied=google_config_operational_status_value(&c,Err("KEYCHAIN_ACCESS_DENIED_CACHED: canonical account=google.client_secret".into()));
   assert_eq!(denied["oauthReady"],false);
-  assert_eq!(denied["oauthState"],"NEEDS_SECURE_STORAGE_REPAIR");
+  assert_eq!(denied["oauthState"],"KEYCHAIN_ACCESS_BLOCKED");
+  assert_eq!(denied["repairRequired"],false);
   assert_eq!(denied["secureStorageErrorCode"],"KEYCHAIN_ACCESS_DENIED_CACHED");
  }
  #[test]
