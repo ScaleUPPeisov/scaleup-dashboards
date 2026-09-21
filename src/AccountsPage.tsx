@@ -1,5 +1,5 @@
 import React,{useEffect,useRef,useState} from 'react';
-import {api,type GoogleConfigStatus,type OAuthCredentialStateProfile,type OAuthExistingProfilesRecoveryResult,type OAuthReconciliationDiagnostic,type YoutubeProfileHealth} from './api';
+import {api,type GoogleConfigStatus,type OAuthAuthorizedChannel,type OAuthCredentialStateProfile,type OAuthExistingProfilesRecoveryResult,type OAuthNewChannelSelectionRequired,type OAuthReconnectWrongChannel,type OAuthReconciliationDiagnostic,type YoutubeProfileHealth} from './api';
 import {useApp} from './store';
 import type {YoutubeProfile,YoutubeChannelStatistics} from './types';
 import {findFutureChannelMatch} from './channelIdentity';
@@ -24,6 +24,9 @@ export function AccountsPage(){
  const [browserOpen,setBrowserOpen]=useState(false),[browsers,setBrowsers]=useState<BrowserOption[]>([]);
  const [browser,setBrowser]=useState(localStorage.getItem('vyron:oauth-browser')||'default');
  const [pendingProfileId,setPendingProfileId]=useState('');
+ const [preReconnectProfileId,setPreReconnectProfileId]=useState('');
+ const [wrongChannel,setWrongChannel]=useState<(OAuthReconnectWrongChannel&{browser:string})|null>(null);
+ const [newChannelSelection,setNewChannelSelection]=useState<OAuthNewChannelSelectionRequired|null>(null);
  const [oauthSetupOpen,setOauthSetupOpen]=useState(false);
  const [pendingAddAfterGlobalRepair,setPendingAddAfterGlobalRepair]=useState(false);
  const [recovery,setRecovery]=useState<(OAuthExistingProfilesRecoveryResult&{running:boolean;done:number})|null>(null);
@@ -187,46 +190,84 @@ export function AccountsPage(){
 
  async function askBrowser(profileId=''){
   if(busy)return;
-  if(profileId){await openBrowserPicker(profileId);return}
+  if(profileId){setPreReconnectProfileId(profileId);return}
   setBusy(true);
   let ready=false;
   try{
    let readiness:GoogleConfigStatus;
    try{readiness=await api.youtubeGoogleConfig()}catch(e){toast('Не удалось проверить GLOBAL OAuth Client: '+String(e));return}
    setConfig(readiness);
-   if(!readiness.oauthReady){
-    setPendingAddAfterGlobalRepair(true);
-    setOauthSetupOpen(true);
-    return
-   }
+   if(!readiness.oauthReady){setPendingAddAfterGlobalRepair(true);setOauthSetupOpen(true);return}
    ready=true;
   }finally{setBusy(false)}
   if(ready)await openBrowserPicker('')
  }
- async function connect(){
-  const reconnectId=pendingProfileId;
-  setBrowserOpen(false);setPendingProfileId('');setBusy(true);
+
+ async function openYoutubeForProfile(profileId:string,browserChoice?:string){
+  const p=profiles.find(x=>x.id===profileId);
+  const chosen=browserChoice||p?.preferredBrowser||localStorage.getItem('vyron:oauth-browser')||'default';
+  try{await api.youtubeOpenYoutube(chosen)}catch(e){toast('Не удалось открыть YouTube: '+String(e))}
+ }
+
+ async function reconnectExisting(profileId:string,browserChoice:string){
+  setBusy(true);
   try{
-   localStorage.setItem('vyron:oauth-browser',browser);
-   if(reconnectId){
-    const result=await api.youtubeReconnectExisting(reconnectId,browser);
-    const p=await refresh();
-    const profile=p.find(x=>x.id===reconnectId);
-    if(profile){bindProfile(profile);await refreshProfileStats(profile,true)}
-    setHealth(h=>({...h,[reconnectId]:{ok:true,status:'CONNECTED',channelId:result.authorizedChannelId,channelTitle:result.channelTitle}}));
-    resolveOAuthKeychainErrors(reconnectId);
-    journal({eventId:`oauth-profile-reconnected:${reconnectId}:${Date.now()}`,eventType:'OAUTH_PROFILE_RECONNECTED',status:'SUCCESS',source:'LIVE_OPERATION',profileId:reconnectId,channelId:boundChannel(profile||{id:reconnectId,channelId:result.authorizedChannelId} as YoutubeProfile)?.id,channelName:result.channelTitle,details:{authorizedChannelId:result.authorizedChannelId,profileUuidPreserved:result.profileUuidPreserved,keychainReadback:result.keychainReadback,youtubeIdentityRequests:result.youtubeIdentityRequests,videosInsert:result.videosInsert}});
-    if(result.credentialRotated)journal({eventId:`oauth-credential-rotated:${reconnectId}:${Date.now()}`,eventType:'OAUTH_CREDENTIAL_ROTATED',status:'SUCCESS',source:'LIVE_OPERATION',profileId:reconnectId,channelId:boundChannel(profile||{id:reconnectId,channelId:result.authorizedChannelId} as YoutubeProfile)?.id,channelName:result.channelTitle,details:{oldAccount:result.oldRefreshAccount||'',newAccount:result.activeRefreshAccount||'',reason:result.rotationReason||'KEYCHAIN_BLOCKED',osstatus:result.oldRefreshOsstatus??null,generation:result.credentialGeneration||0,profileUuidPreserved:result.profileUuidPreserved}});
-    toast(`✓ ${result.channelTitle||result.authorizedChannelId}: Google подключён ✓ • YouTube Channel verified ✓ • OAuth token stored ✓ • Secure readback ✓ • Profile UUID preserved ✓`);
+   localStorage.setItem('vyron:oauth-browser',browserChoice);
+   const result=await api.youtubeReconnectExisting(profileId,browserChoice);
+   if(result.status==='WRONG_CHANNEL'){
+    setWrongChannel({...result,browser:browserChoice});
     return
    }
+   const p=await refresh();
+   const profile=p.find(x=>x.id===profileId);
+   if(profile){bindProfile(profile);await refreshProfileStats(profile,true)}
+   setHealth(h=>({...h,[profileId]:{ok:true,status:'CONNECTED',channelId:result.authorizedChannelId,channelTitle:result.channelTitle}}));
+   resolveOAuthKeychainErrors(profileId);
+   journal({eventId:`oauth-profile-reconnected:${profileId}:${Date.now()}`,eventType:'OAUTH_PROFILE_RECONNECTED',status:'SUCCESS',source:'LIVE_OPERATION',profileId,channelId:boundChannel(profile||{id:profileId,channelId:result.authorizedChannelId} as YoutubeProfile)?.id,channelName:result.channelTitle,details:{authorizedChannelId:result.authorizedChannelId,profileUuidPreserved:result.profileUuidPreserved,keychainReadback:result.keychainReadback,youtubeIdentityRequests:result.youtubeIdentityRequests,videosInsert:result.videosInsert}});
+   if(result.credentialRotated)journal({eventId:`oauth-credential-rotated:${profileId}:${Date.now()}`,eventType:'OAUTH_CREDENTIAL_ROTATED',status:'SUCCESS',source:'LIVE_OPERATION',profileId,channelId:boundChannel(profile||{id:profileId,channelId:result.authorizedChannelId} as YoutubeProfile)?.id,channelName:result.channelTitle,details:{oldAccount:result.oldRefreshAccount||'',newAccount:result.activeRefreshAccount||'',reason:result.rotationReason||'KEYCHAIN_BLOCKED',osstatus:result.oldRefreshOsstatus??null,generation:result.credentialGeneration||0,profileUuidPreserved:result.profileUuidPreserved}});
+   toast(`✓ ${result.channelTitle||result.authorizedChannelId}: Google подключён • Channel ID verified • Profile UUID preserved`);
+  }catch(e){
+   const message=String(e);
+   if(/KEYCHAIN_|NEW_ITEM_READBACK|OAUTH_POST_COMMIT_READ|OAUTH_METADATA_POINTER_COMMIT/i.test(message)){const h=humanizeError(message,'oauth');toast(`${h.title}. ${h.message}`);return}
+   toast(message)
+  }finally{setBusy(false)}
+ }
+
+ async function finishNewChannel(p:YoutubeProfile&{statistics?:YoutubeChannelStatistics}){
+  const binding=bindProfile(p);
+  if(p.statistics)applyStatistics(p,p.statistics);
+  await refresh();
+  toast(binding?.mode==='future'
+   ?`✓ ${p.channelTitle||p.channelId||'YouTube канал'} привязан к будущему каналу ${binding.channel.name}. Все готовые проекты сохранены.`
+   :`✓ ${p.channelTitle||p.channelId||'YouTube канал'} подключён и привязан автоматически`)
+ }
+
+ async function chooseNewAuthorizedChannel(channel:OAuthAuthorizedChannel){
+  const pending=newChannelSelection;if(!pending)return;
+  if(channel.alreadyConnected&&channel.existingProfileId){
+   setDuplicate({profileId:channel.existingProfileId,channelId:channel.channelId,title:channel.channelTitle});return
+  }
+  setBusy(true);
+  try{const p=await api.youtubeSelectNewChannel(pending.sessionId,channel.channelId);setNewChannelSelection(null);await finishNewChannel(p)}
+  catch(e){const message=String(e);if(message.includes('YOUTUBE_CHANNEL_ALREADY_CONNECTED')){const profileId=message.match(/profile_id=([^;]+)/)?.[1]?.trim()||'';if(profileId){setDuplicate({profileId,channelId:channel.channelId,title:channel.channelTitle});return}}toast(message)}
+  finally{setBusy(false)}
+ }
+
+ async function cancelNewChannelSelection(){
+  const pending=newChannelSelection;setNewChannelSelection(null);
+  if(pending)try{await api.youtubeCancelNewChannelSelection(pending.sessionId)}catch{}
+ }
+
+ async function connect(){
+  const reconnectId=pendingProfileId;
+  setBrowserOpen(false);setPendingProfileId('');
+  if(reconnectId){await reconnectExisting(reconnectId,browser);return}
+  setBusy(true);
+  try{
+   localStorage.setItem('vyron:oauth-browser',browser);
    const p=await api.youtubeConnectGlobal(browser);
-   const binding=bindProfile(p);
-   if(p.statistics)applyStatistics(p,p.statistics);
-   await refresh();
-   toast(binding?.mode==='future'
-      ?`✓ ${p.channelTitle||p.channelId||'YouTube канал'} привязан к будущему каналу ${binding.channel.name}. Все готовые проекты сохранены.`
-      :`✓ ${p.channelTitle||p.channelId||'YouTube канал'} подключён и привязан автоматически`)
+   if(p.status==='CHANNEL_SELECTION_REQUIRED'){setNewChannelSelection(p);return}
+   await finishNewChannel(p)
   }catch(e){
    const message=String(e);
    if(message.includes('YOUTUBE_CHANNEL_ALREADY_CONNECTED')){
@@ -235,13 +276,10 @@ export function AccountsPage(){
     const title=message.match(/title=([^;]+)/)?.[1]?.trim();
     if(profileId){setDuplicate({profileId,channelId,title});return}
    }
-   if(/KEYCHAIN_|NEW_ITEM_READBACK|OAUTH_POST_COMMIT_READ|OAUTH_METADATA_POINTER_COMMIT/i.test(message)){
-    const h=humanizeError(message,'oauth');toast(`${h.title}. ${h.message}`);return
-   }
+   if(/KEYCHAIN_|NEW_ITEM_READBACK|OAUTH_POST_COMMIT_READ|OAUTH_METADATA_POINTER_COMMIT/i.test(message)){const h=humanizeError(message,'oauth');toast(`${h.title}. ${h.message}`);return}
    toast(message)
   }finally{setBusy(false)}
  }
-
  async function checkProfile(p:YoutubeProfile,quiet=false){
   try{
    const h=await api.youtubeProfileHealth(p.id);
@@ -348,7 +386,7 @@ export function AccountsPage(){
       const h=health[p.id],bound=channels.find(c=>c.youtubeProfileId===p.id||c.youtubeChannelId===p.channelId),stats=bound?.stats,credential=credentialStates[p.id],credentialState=credential?.credentialState||p.credentialStatus||'NOT_CHECKED';
       const oauthOk=!!h?.ok||credentialState==='READY'||p.credentialStatus==='WORKING',oauthNeedsGlobal=oauthRepairRequired&&!h?.ok;
       const syncOk=!!(stats?.statisticsUpdatedAt||stats?.updatedAt)&&!stats?.syncWarning;
-      return <article className="accountRow accountRowStats" key={p.id}>
+      return <article id={`oauth-profile-${p.id}`} className="accountRow accountRowStats" key={p.id}>
        {(h?.thumbnail||stats?.thumbnail)?<img src={h?.thumbnail||stats?.thumbnail} loading="lazy"/>:<div className="accountAvatar">YT</div>}
        <div className="accountMain">
         <b>{h?.channelTitle||p.channelTitle||stats?.channelTitle||'YouTube канал'}</b>
@@ -391,6 +429,37 @@ export function AccountsPage(){
    </section>
   </div>}
 
+  {preReconnectProfileId&&(()=>{const p=profiles.find(x=>x.id===preReconnectProfileId),bound=p?channels.find(c=>c.youtubeProfileId===p.id||c.youtubeChannelId===p.channelId):undefined,stats=bound?.stats;return <div className="modalBackdrop" onMouseDown={()=>setPreReconnectProfileId('')}>
+   <section className="confirmModal browserPicker" onMouseDown={e=>e.stopPropagation()}>
+    <small>ПЕРЕПОДКЛЮЧЕНИЕ СУЩЕСТВУЮЩЕГО ПРОФИЛЯ</small>
+    <h2>Переподключение {p?.channelTitle||bound?.name||'YouTube-канала'}</h2>
+    <p>Нужно войти именно в этот YouTube-канал. На одном Google-аккаунте может быть несколько YouTube-каналов — перед авторизацией переключитесь в YouTube на нужный канал.</p>
+    <div className="publisherNotice"><b>{p?.channelTitle||bound?.name||'YouTube канал'}</b>{stats?.handle&&<p>{stats.handle}</p>}<p>Expected YouTube Channel ID: <code>{p?.channelId||'—'}</code></p></div>
+    <footer><button onClick={()=>setPreReconnectProfileId('')}>Отмена</button><button onClick={()=>void openYoutubeForProfile(preReconnectProfileId)}>Открыть YouTube</button><button className="primary" onClick={()=>{const id=preReconnectProfileId;setPreReconnectProfileId('');void openBrowserPicker(id)}}>Выбрать браузер и продолжить</button></footer>
+   </section>
+  </div>})()}
+
+  {wrongChannel&&<div className="modalBackdrop" onMouseDown={()=>setWrongChannel(null)}>
+   <section className="confirmModal browserPicker" onMouseDown={e=>e.stopPropagation()}>
+    <small>YOUTUBE IDENTITY</small>
+    <h2>Выбран другой YouTube-канал</h2>
+    <p>Вы пытаетесь восстановить <b>{wrongChannel.expectedChannelTitle||profiles.find(x=>x.id===wrongChannel.profileId)?.channelTitle||'сохранённый канал'}</b>, но Google авторизовал другую YouTube identity. VYRON не изменил привязку и не сохранил новые credentials.</p>
+    <div className="publisherNotice"><b>Нужно авторизовать</b><p>{wrongChannel.expectedChannelTitle||'Сохранённый канал'} • <code>{wrongChannel.expectedChannelId}</code></p></div>
+    <div className="browserGrid">{wrongChannel.authorizedChannels.map(ch=><div key={ch.channelId} className="settingsCard">{ch.thumbnail&&<img src={ch.thumbnail} loading="lazy"/>}<b>{ch.channelTitle}</b>{ch.handle&&<small>{ch.handle}</small>}<small>{ch.channelId}</small>{ch.alreadyConnected&&<small>Уже подключён в VYRON</small>}{ch.alreadyConnected&&ch.existingProfileId&&<button onClick={()=>{const id=ch.existingProfileId!;setWrongChannel(null);window.setTimeout(()=>document.getElementById(`oauth-profile-${id}`)?.scrollIntoView({behavior:'smooth',block:'center'}),50)}}>Открыть этот канал в VYRON</button>}</div>)}</div>
+    <details><summary>Технические сведения</summary><p>Profile UUID: <code>{wrongChannel.profileId}</code></p><p>Expected Channel ID: <code>{wrongChannel.expectedChannelId}</code></p><p>Authorized Channel ID(s): {wrongChannel.authorizedChannels.map(x=>x.channelId).join(', ')||'NONE'}</p><p>Browser: {wrongChannel.browser}</p><p>credentialsCommitted=false</p></details>
+    <footer><button onClick={()=>setWrongChannel(null)}>Отмена</button><button onClick={()=>void api.youtubeOpenYoutube(wrongChannel.browser)}>Открыть YouTube</button><button onClick={()=>{const w=wrongChannel;setWrongChannel(null);void openBrowserPicker(w.profileId)}}>Выбрать другой браузер</button><button className="primary" onClick={()=>{const w=wrongChannel;setWrongChannel(null);void reconnectExisting(w.profileId,w.browser)}}>Попробовать ещё раз</button></footer>
+   </section>
+  </div>}
+
+  {newChannelSelection&&<div className="modalBackdrop" onMouseDown={()=>void cancelNewChannelSelection()}>
+   <section className="confirmModal browserPicker" onMouseDown={e=>e.stopPropagation()}>
+    <small>НОВЫЙ YOUTUBE-КАНАЛ</small>
+    <h2>Какой YouTube-канал добавить?</h2>
+    <p>Google-аккаунт открыл несколько YouTube/Brand Account identities. VYRON ничего не сохранил до вашего выбора.</p>
+    <div className="browserGrid">{newChannelSelection.channels.map(ch=><button key={ch.channelId} disabled={busy||ch.alreadyConnected} onClick={()=>void chooseNewAuthorizedChannel(ch)}>{ch.thumbnail&&<img src={ch.thumbnail} loading="lazy"/>}<b>{ch.channelTitle}</b>{ch.handle&&<small>{ch.handle}</small>}<small>{ch.channelId}</small><small>{ch.alreadyConnected?'Уже подключён в VYRON':'Добавить этот канал'}</small></button>)}</div>
+    <footer><button onClick={()=>void cancelNewChannelSelection()}>Отмена</button></footer>
+   </section>
+  </div>}
   {browserOpen&&<div className="modalBackdrop" onMouseDown={()=>{setBrowserOpen(false);setPendingProfileId('')}}>
    <section className="confirmModal browserPicker" onMouseDown={e=>e.stopPropagation()}>
     <small>GOOGLE OAUTH</small>
