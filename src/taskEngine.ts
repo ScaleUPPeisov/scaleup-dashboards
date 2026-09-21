@@ -116,3 +116,4 @@ export function reconcileUploadTasks(activeUploadIds:Set<string>,queuedUploadIds
  if(changed){memory={version:1,tasks};emit()}
 }
 export function resetTaskEngineForTests(){memory={version:1,tasks:[]};try{localStorage.removeItem(STORAGE_KEY)}catch{}}
+export function reloadTaskEngineFromStorageForTests(){memory=undefined;return snapshotTasks()}
