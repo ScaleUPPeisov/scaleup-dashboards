@@ -125,7 +125,8 @@ export function crossChannelScanRecoveryJobs(jobs:VideoJob[],history:UploadHisto
 }
 
 export function planRenderScanImport(rows:RenderScanRow[],existingJobs:VideoJob[],ignoredJobIds:ReadonlySet<string>=new Set()):RenderScanImportPlan{
- const active=existingJobs.filter(j=>!ignoredJobIds.has(j.id)&&!isHistoricalGeneration(j));
+ const replacementJobIds=new Set(rows.filter(r=>r.classification==='NEW_GENERATION'&&r.matchedJobId).map(r=>r.matchedJobId!));
+ const active=existingJobs.filter(j=>!ignoredJobIds.has(j.id)&&!replacementJobIds.has(j.id)&&!isHistoricalGeneration(j));
  const usedPaths=new Set(active.map(j=>normalizeRenderPath(j.finalPath||'')).filter(Boolean)),usedNumbers=new Set(active.map(j=>j.number)),accepted:RenderScanRow[]=[],skipped:RenderScanImportSkip[]=[];
  for(const row of rows){
   if(row.classification!=='NEW_CANDIDATE'&&row.classification!=='NEW_GENERATION'){skipped.push({path:row.file.path,name:row.file.name,reason:'NOT_NEW_CANDIDATE'});continue}
