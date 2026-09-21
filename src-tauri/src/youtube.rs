@@ -6506,6 +6506,13 @@ mod v2110_oauth_continuity_tests{
   assert_eq!(state,"CANONICAL_PRESENT_UNVERIFIED");
   assert_eq!(last,"NOT_RUN");
  }
+ #[test]fn previously_validated_legacy_profile_remains_connected_after_binary_update(){
+  let profile=p("p1","UC1");
+  let validation=CredentialValidationV2State{at:Some("2026-09-21T00:00:00Z".into()),result:"TOKEN_REFRESH_PASS".into(),expected_channel_id:Some("UC1".into()),actual_channel_id:None};
+  let (state,last,_)=resolved_credential_state(&profile,MIGRATION_RECONNECT_REQUIRED,false,true,Some(&validation));
+  assert_eq!(state,"CONNECTED");
+  assert_eq!(last,"TOKEN_REFRESH_PASS");
+ }
  #[test]fn connected_requires_persisted_pass_for_same_channel(){
   let profile=p("p1","UC1");
   let validation=CredentialValidationV2State{at:Some("2026-09-19T00:00:00Z".into()),result:"PASS".into(),expected_channel_id:Some("UC1".into()),actual_channel_id:Some("UC1".into())};
