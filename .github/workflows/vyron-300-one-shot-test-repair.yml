@@ -23,26 +23,11 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          p=Path('src-tauri/src/youtube.rs')
-          s=p.read_text()
-          old='''  assert_eq!(denied["oauthReady"],false);
-  assert_eq!(denied["oauthState"],"NEEDS_SECURE_STORAGE_REPAIR");
-  assert_eq!(denied["secureStorageErrorCode"],"KEYCHAIN_ACCESS_DENIED_CACHED");'''
-          new='''  assert_eq!(denied["oauthReady"],false);
-  assert_eq!(denied["oauthState"],"KEYCHAIN_ACCESS_BLOCKED");
-  assert_eq!(denied["repairRequired"],false);
-  assert_eq!(denied["secureStorageErrorCode"],"KEYCHAIN_ACCESS_DENIED_CACHED");'''
-          if old not in s:
-              if new in s:
-                  print('ALREADY_REPAIRED=PASS')
-                  raise SystemExit(0)
-              raise SystemExit('Expected stale RC3 assertion block not found')
-          p.write_text(s.replace(old,new,1))
-          print('KEYCHAIN_TEST_REPAIR=PASS')
-          PY
-          if git diff --quiet; then exit 0; fi
+          python3 -c "from pathlib import Path; p=Path('src-tauri/src/youtube.rs'); s=p.read_text(); old='  assert_eq!(denied[\\\"oauthReady\\\"],false);\\n  assert_eq!(denied[\\\"oauthState\\\"],\\\"NEEDS_SECURE_STORAGE_REPAIR\\\");\\n  assert_eq!(denied[\\\"secureStorageErrorCode\\\"],\\\"KEYCHAIN_ACCESS_DENIED_CACHED\\\");'; new='  assert_eq!(denied[\\\"oauthReady\\\"],false);\\n  assert_eq!(denied[\\\"oauthState\\\"],\\\"KEYCHAIN_ACCESS_BLOCKED\\\");\\n  assert_eq!(denied[\\\"repairRequired\\\"],false);\\n  assert_eq!(denied[\\\"secureStorageErrorCode\\\"],\\\"KEYCHAIN_ACCESS_DENIED_CACHED\\\");'; assert old in s or new in s, 'stale RC3 assertion block missing'; p.write_text(s if new in s else s.replace(old,new,1)); print('KEYCHAIN_TEST_REPAIR=PASS')"
+          if git diff --quiet; then
+            echo "ALREADY_REPAIRED=PASS"
+            exit 0
+          fi
           git config user.name "ScaleUPPeisov"
           git config user.email "peisov.business@gmail.com"
           git add src-tauri/src/youtube.rs
