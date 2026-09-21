@@ -2293,10 +2293,31 @@ pub fn youtube_oauth_keychain_matrix(app:AppHandle)->Result<Value,String>{
 fn oauth_safe_retry_profile_value(app:&AppHandle,profile_id:&str)->Result<Value,String>{
  let store=load_store_metadata(app)?;
  let profile=store.profiles.iter().find(|p|p.id==profile_id).ok_or_else(||format!("CREDENTIAL_MISSING: profile={profile_id}"))?;
- let account=profile_refresh_token_account(app,profile_id)?;
- let result=security::canonical_retry_secret_access_value(&account);
- let status=result.get("status").and_then(Value::as_str).unwrap_or("READ_FAILED");
- if status=="ACCESSIBLE"{let _=set_profile_migration_state(app,profile_id,MIGRATION_MIGRATED);}
+ let canonical_account=profile_refresh_token_account(app,profile_id)?;
+ let mut account=canonical_account.clone();
+ let mut result=security::canonical_retry_secret_access_value(&canonical_account);
+ let mut status=result.get("status").and_then(Value::as_str).unwrap_or("READ_FAILED").to_string();
+ if status=="MISSING"{
+  let legacy_accounts=security::list_legacy_secret_accounts("")?;
+  if let Some(legacy_account)=select_present_account(&legacy_refresh_candidates(profile_id),&legacy_accounts){
+   account=legacy_account.clone();
+   match security::legacy_get_secret_once(&legacy_account){
+    Ok(Some(v)) if !v.trim().is_empty()=>{
+     status="ACCESSIBLE".into();
+     result=json!({"status":"ACCESSIBLE","recovered":false,"errorCode":Value::Null,"osstatus":Value::Null,"denial":Value::Null});
+    },
+    Ok(_)=>{},
+    Err(e) if keychain_repairable_error(&e)=>{
+     status="KEYCHAIN_BLOCKED".into();
+     result=json!({"status":"KEYCHAIN_BLOCKED","recovered":false,"errorCode":security_error_code_safe(&e),"osstatus":Value::Null,"denial":Value::Null});
+    },
+    Err(e)=>{
+     status="READ_FAILED".into();
+     result=json!({"status":"READ_FAILED","recovered":false,"errorCode":security_error_code_safe(&e),"osstatus":Value::Null,"denial":Value::Null});
+    }
+   }
+  }
+ }
  Ok(json!({
   "profileUuid":profile_id,
   "channelId":profile.channel_id,
