@@ -30,9 +30,10 @@ describe('VYRON 2.1.15 RC5 updater reliability wiring',()=>{
     expect(runtime).not.toContain('videos.insert');
   });
   it('shows last/next checks and immediate sidebar availability',()=>{
-    expect(settings).toContain('Следующая автоматическая проверка');
-    expect(settings).toContain('Automatic interval');
-    expect(settings).toContain('15 минут');
+    expect(settings).toContain('Следующая проверка');
+    expect(settings).toContain('<small>Интервал</small>');
+    expect(settings).toContain('UPDATER_AUTO_INTERVAL_MS/60_000');
+    expect(settings).toContain('Startup + каждые 15 минут');
     expect(app).toContain('🔔 Доступно обновление');
   });
   it('keeps explicit install/restart semantics and active-work blockers',()=>{
