@@ -260,7 +260,7 @@ export function PublisherOS(){
     for(const row of rows){
       if(!row.matchedJobId||!row.currentFingerprint)continue;
       const matched=current.find(j=>j.id===row.matchedJobId);
-      if(!matched)continue;
+      if(!matched||normalizeRenderPath(matched.finalPath||'')!==normalizeRenderPath(row.file.path))continue;
       patchJob(matched.id,{currentSourceFingerprint:row.currentFingerprint,currentSourceFileSize:row.file.size,currentSourceModifiedAt:row.file.modifiedAt||undefined,sourceGenerationKey:`${channelId}:${row.currentFingerprint}:${row.file.size}`})
     }
     if(result.root!==root&&channel)updateChannel(channel.id,{renderFolderPath:result.root});
