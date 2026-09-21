@@ -41,7 +41,7 @@ export function AuthRecoveryCenter(){
   }catch(e){if(!quiet)notifyError('Автоматическое восстановление не завершено',String(e),{persistError:false});return null}
   finally{setBusy('')}
  }
- useEffect(()=>{void (async()=>{try{const first=await load();if(first.global.oauthReady&&first.profiles.length)await runAutomaticRecovery(true)}catch(e){notifyError('Не удалось открыть восстановление каналов',String(e),{persistError:false})}})()},[]);
+ useEffect(()=>{void load().catch(e=>notifyError('Не удалось открыть восстановление каналов',String(e),{persistError:false}))},[]);
 
  const rows=useMemo(()=>buildFinalRecoveryRows(channels,profiles,credentialStates.profiles,transient),[channels,profiles,credentialStates,transient]);
  const queue=useMemo(()=>reconnectQueue(rows),[rows]),unmapped=useMemo(()=>channelsWithoutProfile(channels,profiles),[channels,profiles]);
