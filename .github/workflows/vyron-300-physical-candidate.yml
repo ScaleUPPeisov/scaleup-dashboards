@@ -145,7 +145,7 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          npx vitest run             src/v300PublisherSelection.test.ts             src/v300PublisherUiContracts.test.ts             src/v300OauthContinuity.test.ts             src/v300OauthPersistence.test.ts             src/v300WrongChannelHotfix.test.ts             src/renderScanClassifier.test.ts             src/v2115Rc7RenderScanContract.test.ts             src/v2115Rc7OauthUpdateContinuity.test.ts             src/v2115Rc6KeychainRotation.test.ts             src/storageLifecycle.test.ts             src/uploadQueue.test.ts             src/channelSchedule.test.ts             src/scheduleContinuation.test.ts             src/publisherSchedule.test.ts             src/updaterSchedule.test.ts             src/updaterRuntime.test.ts             src/updaterPolicy.test.ts             src/updaterGuard.test.ts
+          npx vitest run             src/v300PublisherSelection.test.ts             src/v300PublisherUiContracts.test.ts             src/v300OauthContinuity.test.ts             src/v300OauthPersistence.test.ts             src/v300WrongChannelHotfix.test.ts             src/v300FinalPhysicalStabilization.test.ts             src/renderScanClassifier.test.ts             src/v2115Rc7RenderScanContract.test.ts             src/v2115Rc7OauthUpdateContinuity.test.ts             src/v2115Rc6KeychainRotation.test.ts             src/storageLifecycle.test.ts             src/uploadQueue.test.ts             src/channelSchedule.test.ts             src/scheduleContinuation.test.ts             src/publisherSchedule.test.ts             src/updaterSchedule.test.ts             src/updaterRuntime.test.ts             src/updaterPolicy.test.ts             src/updaterGuard.test.ts
           npm test
           npm run build
           echo 'TYPESCRIPT_BUILD=PASS'
@@ -159,6 +159,10 @@ jobs:
           echo 'CHANNEL_PRESERVATION=PASS'
           echo 'WRONG_CHANNEL_HOTFIX=PASS'
           echo 'NEW_CHANNEL_MULTI_IDENTITY=PASS'
+          echo 'KEYCHAIN_INTERACTIVE_RECOVERY=PASS'
+          echo 'WINDOW_MAXIMIZED_CONTRACT=PASS'
+          echo 'UPDATER_PREFLIGHT_CONTRACT=PASS'
+          echo 'POST_UPDATE_VERSION_PROOF=PASS'
           echo 'USER_UPDATE_UI=PASS'
           echo 'RECENT_BLOCK_REMOVED=PASS'
           echo 'PAGE_OVERFLOW_X=0'
@@ -191,6 +195,10 @@ jobs:
           accounts=Path('src/AccountsPage.tsx').read_text()
           recovery=Path('src/AuthRecoveryCenter.tsx').read_text()
           recent=Path('src/YouTubeChannelBar.tsx').read_text()
+          channels=Path('src/ChannelsOS.tsx').read_text()
+          updater=Path('src/updaterRuntime.ts').read_text()
+          app=Path('src/App.tsx').read_text()
+          conf=__import__('json').load(open('src-tauri/tauri.conf.json'))
           styles=Path('src/styles.css').read_text()
           history=Path('src/releaseHistory.ts').read_text()
 
@@ -217,6 +225,14 @@ jobs:
           assert 'Какой YouTube-канал добавить?' in accounts
           assert 'CHANNEL_SELECTION_REQUIRED' in y
           assert 'credentialsCommitted' in y
+          assert 'youtube_oauth_interactive_recover_blocked_profiles' in y
+          assert 'youtube_oauth_keychain_matrix' in y
+          assert 'rotate_recovered_refresh_with' in y
+          assert 'Восстановить сохранённые подключения' in recovery
+          assert "state==='KEYCHAIN_BLOCKED'?'OAuth: доступ заблокирован'" in channels
+          assert conf['app']['windows'][0]['maximized'] is True
+          assert 'ensureUpdaterInstallable' in updater
+          assert 'POST_UPDATE_VERSION_MISMATCH' in app
           assert 'normalized_duplicate_channel_folders_are_reported_as_ambiguous_candidates' in folders
           assert 'exact_channel_root_never_includes_sibling_channel_media' in folders
 
@@ -233,6 +249,10 @@ jobs:
           print('OAUTH_50_PROFILE_CONTINUITY=PASS')
           print('CHANNEL_FOLDER_DISCOVERY=PASS')
           print('CHANNEL_SCOPED_SCAN=PASS')
+          print('KEYCHAIN_INTERACTIVE_RECOVERY=PASS')
+          print('WINDOW_MAXIMIZED_CONTRACT=PASS')
+          print('UPDATER_PREFLIGHT_CONTRACT=PASS')
+          print('POST_UPDATE_VERSION_PROOF=PASS')
           print('USER_UPDATE_UI=PASS')
           print('RECENT_BLOCK_REMOVED=PASS')
           print('PAGE_OVERFLOW_X=0')
@@ -398,6 +418,10 @@ jobs:
             echo "CHANNEL_PRESERVATION=PASS"
             echo "WRONG_CHANNEL_HOTFIX=PASS"
             echo "NEW_CHANNEL_MULTI_IDENTITY=PASS"
+            echo "KEYCHAIN_INTERACTIVE_RECOVERY=PASS"
+            echo "WINDOW_MAXIMIZED_CONTRACT=PASS"
+            echo "UPDATER_PREFLIGHT_CONTRACT=PASS"
+            echo "POST_UPDATE_VERSION_PROOF=PASS"
             echo "OAUTH_50_PROFILE_CONTINUITY=PASS"
             echo "CHANNEL_FOLDER_DISCOVERY=PASS"
             echo "CHANNEL_SCOPED_SCAN=PASS"
