@@ -287,7 +287,7 @@ export function PublisherOS(){
     try{
       const file=row.file,n=row.sequence!,createdMs=file.createdAt||file.modifiedAt||Date.now(),folder=file.path.replace(/[\\/][^\\/]+$/,''),fp=row.currentFingerprint||file.fingerprint;
       const sourceGenerationKey=fp?`${channelId}:${fp}:${file.size}`:`${channelId}:${normalizeRenderPath(file.path)}:${file.size}:${file.modifiedAt||0}`;
-      const previous=row.matchedJobId&&current.find(j=>j.id===row.matchedJobId);
+      const previous=row.matchedJobId?current.find(j=>j.id===row.matchedJobId):undefined;
       const next:VideoJob={id:crypto.randomUUID(),channelId,number:n,folder,status:'READY_UPLOAD',createdAt:new Date(createdMs).toISOString(),tracksCount:minTracks,minTracks,finalPath:file.path,title:`VIDEO_${String(n).padStart(3,'0')}`,description:'',tags:[...(channel.seo.tags||[])],metadataSource:'template',storageLifecycle:'NEW',uploadProgress:0,sourceOrigin:'render-scan',currentSourceFingerprint:fp,currentSourceFileSize:file.size,currentSourceModifiedAt:file.modifiedAt||undefined,sourceGenerationKey,sourcePreviousJobId:previous?.id};
       created.push(next);
       if(previous&&row.classification==='NEW_GENERATION')patchJob(previous.id,{removedFromPublishList:true});
