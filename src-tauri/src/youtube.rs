@@ -2541,25 +2541,35 @@ pub async fn youtube_oauth_interactive_recover_blocked_profiles(app:AppHandle)->
   let new_account=match rotate_recovered_refresh_with(&secret_store,&profile_id,generation,&refresh_token){
    Ok(v)=>v,Err(e)=>{failed+=1;rows.push(json!({"profileUuid":profile_id,"expectedChannelId":expected,"oldAccount":old_account,"newAccount":Value::Null,"status":"FAILED","reasonCode":"NEW_ACCOUNT_WRITE_FAILED","classification":classification,"pointerChanged":false,"generationChanged":false,"tokenRefresh":"NOT_RUN","errorCode":security_error_code_safe(&e),"browserLaunches":0,"youtubeApiRequests":0,"secretValuesIncluded":false}));continue}
   };
-  let mut next_state=read_keychain_migration_v2(&app)?;
-  commit_recovered_refresh_pointer(&mut next_state,&profile_id,&old_account,&new_account,generation);
-  if let Err(e)=write_keychain_migration_v2(&app,&next_state){let _=security::canonical_delete_secret(&new_account);failed+=1;rows.push(json!({"profileUuid":profile_id,"expectedChannelId":expected,"oldAccount":old_account,"newAccount":new_account,"status":"FAILED","reasonCode":"POINTER_COMMIT_FAILED","pointerChanged":false,"generationChanged":false,"tokenRefresh":"NOT_RUN","errorCode":security_error_code_safe(&e),"browserLaunches":0,"youtubeApiRequests":0,"secretValuesIncluded":false}));continue}
-  security::canonical_forget_cache(&old_account);
+  // Two-phase recovery: the old pointer remains authoritative until the freshly written
+  // Keychain item has been read back AND the recovered refresh token has passed a real
+  // Google token refresh. Never strand a profile on an unverified rotated credential.
   let refresh_result=match resolve_client_secret_for_profile(&app,&profile_id,&profile.client_id){
    Ok(resolved)=>refresh_access_token_http(&resolved.client_id,&refresh_token,Some(&resolved.client_secret)).await,
    Err(e)=>Err(e),
   };
   match refresh_result{
    Ok((access,expires))=>{
+    let mut next_state=read_keychain_migration_v2(&app)?;
+    commit_recovered_refresh_pointer(&mut next_state,&profile_id,&old_account,&new_account,generation);
+    if let Err(e)=write_keychain_migration_v2(&app,&next_state){
+     let _=security::canonical_delete_secret(&new_account);
+     failed+=1;
+     rows.push(json!({"profileUuid":profile_id,"expectedChannelId":expected,"oldAccount":old_account,"newAccount":new_account,"status":"FAILED","reasonCode":"POINTER_COMMIT_FAILED","pointerChanged":false,"generationChanged":false,"tokenRefresh":"PASS","errorCode":security_error_code_safe(&e),"browserLaunches":0,"youtubeApiRequests":0,"secretValuesIncluded":false}));
+     continue
+    }
     remember_access_token(&profile_id,&access,now_ts()+expires.max(60));
     record_profile_credential_validation(&app,&profile_id,"TOKEN_REFRESH_PASS",expected.as_deref(),None)?;
+    security::canonical_forget_cache(&old_account);
     recovered+=1;
     rows.push(json!({"profileUuid":profile_id,"expectedChannelId":expected,"oldAccount":old_account,"newAccount":new_account,"status":"READY","reasonCode":"INTERACTIVE_ROTATION_TOKEN_REFRESH_PASS","classification":classification,"pointerChanged":true,"generationChanged":true,"credentialGeneration":generation,"tokenRefresh":"PASS","browserLaunches":0,"youtubeApiRequests":0,"secretValuesIncluded":false}));
    },
    Err(e)=>{
+    // New item is only a staging credential until validation succeeds.
+    let _=security::canonical_delete_secret(&new_account);
     let status=existing_profile_recovery_bucket("ACCESSIBLE",Some(&e));
     if status=="RECONNECT_REQUIRED"{reconnect+=1;record_profile_credential_validation(&app,&profile_id,"RECONNECT_REQUIRED",expected.as_deref(),None)?;}else if status=="KEYCHAIN_BLOCKED"{blocked+=1}else{failed+=1}
-    rows.push(json!({"profileUuid":profile_id,"expectedChannelId":expected,"oldAccount":old_account,"newAccount":new_account,"status":status,"reasonCode":existing_profile_recovery_reason(&e),"classification":classification,"pointerChanged":true,"generationChanged":true,"credentialGeneration":generation,"tokenRefresh":"FAIL","errorCode":security_error_code_safe(&e),"browserLaunches":0,"youtubeApiRequests":0,"secretValuesIncluded":false}));
+    rows.push(json!({"profileUuid":profile_id,"expectedChannelId":expected,"oldAccount":old_account,"newAccount":Value::Null,"status":status,"reasonCode":existing_profile_recovery_reason(&e),"classification":classification,"pointerChanged":false,"generationChanged":false,"credentialGeneration":before_state.credential_generations.get(&profile_id).copied().unwrap_or(0),"tokenRefresh":"FAIL","errorCode":security_error_code_safe(&e),"browserLaunches":0,"youtubeApiRequests":0,"secretValuesIncluded":false}));
    }
   }
   let status=rows.last().and_then(|x|x.get("status")).and_then(Value::as_str).unwrap_or("FAILED");
