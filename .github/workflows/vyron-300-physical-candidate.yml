@@ -177,6 +177,11 @@ jobs:
         run: |
           set -Eeuo pipefail
           cargo check --manifest-path src-tauri/Cargo.toml
+          cargo test --manifest-path src-tauri/Cargo.toml update_neutral_legacy_fallback_is_targeted_and_non_mutating -- --nocapture
+          echo 'OAUTH_TARGETED_UPDATE_NEUTRAL_TEST=PASS'
+          cargo test --manifest-path src-tauri/Cargo.toml keychain_prompt_architecture_tests -- --nocapture
+          cargo test --manifest-path src-tauri/Cargo.toml auth_recovery_targeted_tests -- --nocapture
+          echo 'OAUTH_KEYCHAIN_TARGETED_SUITE=PASS'
           cargo test --manifest-path src-tauri/Cargo.toml local_delete::tests -- --nocapture
           cargo test --manifest-path src-tauri/Cargo.toml v2115_rc6_keychain_rotation_tests -- --nocapture
           cargo test --manifest-path src-tauri/Cargo.toml -- --nocapture
