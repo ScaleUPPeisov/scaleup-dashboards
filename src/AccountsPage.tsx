@@ -104,28 +104,18 @@ export function AccountsPage(){
    setRecovery(x=>x?{...x,running:true,done:p.done,total:p.total,automaticallyRestored:p.automaticallyRestored,keychainBlocked:p.keychainBlocked,reconnectRequired:p.reconnectRequired,failed:p.failed}:x);
   }).then(stop=>{if(cancelled)stop();else stopProgress=stop});
   void (async()=>{
-   try{
-    const p=await refresh();
-    const version=await api.appVersion();
-    const cfg=await api.youtubeGoogleConfig();
-    if(cancelled)return;
-    setConfig(cfg);
-    if(cfg.oauthReady&&p.length&&localStorage.getItem('vyron:oauth-continuity-version')!==version){
-     await recoverExistingProfiles(p.length,true,version);
-    }
-   }catch(e){if(!cancelled)toast(String(e))}
+   try{await refresh()}
+   catch(e){if(!cancelled)toast(String(e))}
   })();
   return()=>{cancelled=true;stopProgress?.()}
  },[]);
 
- async function recoverExistingProfiles(totalHint=profiles.length,quiet=false,versionToMark?:string){
+ async function recoverExistingProfiles(totalHint=profiles.length,quiet=false){
   setRecovery({running:true,done:0,total:totalHint,automaticallyRestored:0,ready:0,keychainBlocked:0,reconnectRequired:0,failed:0,manualQueue:0,browserLaunches:0,googleAccountSelectors:0,credentialsDialogs:0,keychainPasswordDialogs:0,youtubeApiRequests:0,videosInsert:0,profiles:[],secretValuesIncluded:false});
   try{
    const result=await api.youtubeOauthRecoverExistingProfiles();
    setRecovery({...result,running:false,done:result.total});
    await refresh();
-   const version=versionToMark||await api.appVersion();
-   localStorage.setItem('vyron:oauth-continuity-version',version);
    if(!quiet)toast('Каналы сохранены. Автоматически восстановлено: '+result.automaticallyRestored+'. Требуют ручного входа: '+result.manualQueue+'. Браузер автоматически не открывался.');
    return result
   }catch(e){
