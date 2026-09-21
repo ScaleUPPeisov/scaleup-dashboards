@@ -40,7 +40,7 @@ export function buildFinalRecoveryRows(channels:RecoveryChannelLike[],profiles:R
   }
   if(state.credentialState==='RECONNECT_REQUIRED'){
    const detail=state.clientSecretState==='GLOBAL_CURRENT_READY'
-    ?'Сохранённый refresh token отсутствует или был отозван. Повторный вход нужен только этому каналу; Profile UUID и Channel ID сохранятся.'
+    ?'Сохранённый refresh token отсутствует или был отозван. Повторный вход нужен только этому каналу; Profile UUID и Channel ID сохранятся. Выберите браузер только для этого канала.'
     :'Для этого канала нужен явный повторный вход. Остальные каналы не затрагиваются.';
    return{profileId:profile.id,profile,channels:mapped,expectedChannelId,status:'RECONNECT REQUIRED',detail,stale,duplicate,conflict} satisfies FinalRecoveryRow
   }
