@@ -40,6 +40,7 @@ export type UploadQueueEntry=Readonly<{
 
 export type UploadQueueSnapshot={
   concurrency:number;
+  perChannelConcurrency:number;
   queued:UploadQueueEntry[];
   running:UploadQueueEntry[];
   recent:UploadQueueEntry[];
@@ -59,16 +60,18 @@ export class MultiChannelUploadQueue{
   private listeners=new Set<Listener>();
   private sequence=0;
   private pumping=false;
-  constructor(private executor:Executor,private concurrency=2){this.concurrency=Math.max(1,Math.floor(concurrency||1))}
+  constructor(private executor:Executor,private concurrency=2,private perChannelConcurrency=1){this.concurrency=Math.max(1,Math.floor(concurrency||1));this.perChannelConcurrency=Math.max(1,Math.floor(perChannelConcurrency||1))}
 
   setConcurrency(value:number){this.concurrency=Math.max(1,Math.floor(value||1));this.emit();void this.pump()}
+  setPerChannelConcurrency(value:number){this.perChannelConcurrency=Math.max(1,Math.floor(value||1));this.emit();void this.pump()}
   getConcurrency(){return this.concurrency}
+  getPerChannelConcurrency(){return this.perChannelConcurrency}
   subscribe(cb:Listener){this.listeners.add(cb);cb(this.snapshot());return()=>this.listeners.delete(cb)}
   snapshot():UploadQueueSnapshot{
     const queued=this.entries.filter(x=>x.state==='QUEUED').sort((a,b)=>a.submittedSequence-b.submittedSequence);
     const running=this.entries.filter(x=>x.state==='RUNNING').sort((a,b)=>a.submittedSequence-b.submittedSequence);
     const recent=this.entries.filter(x=>x.state==='SUCCEEDED'||x.state==='FAILED').slice(-20).reverse();
-    return{concurrency:this.concurrency,queued,running,recent};
+    return{concurrency:this.concurrency,perChannelConcurrency:this.perChannelConcurrency,queued,running,recent};
   }
   getRuntimeFacts(){return this.entries.filter(x=>x.state==='QUEUED'||x.state==='RUNNING').map(x=>({jobId:x.spec.jobId,channelId:x.spec.channelId,status:x.state==='RUNNING'?'UPLOADING' as const:'QUEUED' as const}))}
   hasDuplicate(spec:ImmutableUploadJob){
@@ -98,8 +101,9 @@ export class MultiChannelUploadQueue{
   private emit(){const snap=this.snapshot();for(const cb of this.listeners)cb(snap)}
   private replace(queueId:string,patch:Partial<UploadQueueEntry>){this.entries=this.entries.map(x=>x.queueId===queueId?Object.freeze({...x,...patch}):x);this.emit()}
   private nextStartable(){
-    const activeChannels=new Set(this.entries.filter(x=>x.state==='RUNNING').map(x=>x.spec.channelId));
-    return this.entries.filter(x=>x.state==='QUEUED').sort((a,b)=>a.submittedSequence-b.submittedSequence).find(x=>!activeChannels.has(x.spec.channelId));
+    const running=this.entries.filter(x=>x.state==='RUNNING'),counts=new Map<string,number>();
+    for(const row of running)counts.set(row.spec.channelId,(counts.get(row.spec.channelId)||0)+1);
+    return this.entries.filter(x=>x.state==='QUEUED').sort((a,b)=>a.submittedSequence-b.submittedSequence).find(x=>(counts.get(x.spec.channelId)||0)<this.perChannelConcurrency);
   }
   private async pump(){
     if(this.pumping)return;this.pumping=true;
