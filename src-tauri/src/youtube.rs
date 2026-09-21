@@ -7184,11 +7184,11 @@ mod v300_google_identity_metadata_tests{
  #[test]fn wrong_google_account_exits_before_keychain_pointer_commit(){
   let source=include_str!("youtube.rs");
   let reconnect=source.split("pub async fn youtube_oauth_reconnect_existing").nth(1).unwrap();
-  let wrong=reconnect.find("\\\"code\\\":\\\"WRONG_ACCOUNT\\\"").unwrap();
+  let wrong=reconnect.find("\"code\":\"WRONG_ACCOUNT\"").unwrap();
   let pointer=reconnect.find("let pointer_before=read_keychain_migration_v2").unwrap();
   assert!(wrong<pointer);
   let prefix=&reconnect[..pointer];
-  assert!(prefix.contains("\\\"credentialsCommitted\\\":false"));
+  assert!(prefix.contains("\"credentialsCommitted\":false"));
   assert!(prefix.contains("expectedGoogleEmail"));
   assert!(prefix.contains("authorizedGoogleEmail"));
  }
