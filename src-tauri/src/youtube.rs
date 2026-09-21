@@ -402,7 +402,7 @@ fn canonical_global_client_secret(app:&AppHandle)->Result<Option<String>,String>
  security::canonical_get_secret_cached(&account)
 }
 #[derive(Debug,Clone,PartialEq,Eq)]
-enum OAuthClientSecretSource{ProfileCanonical,GlobalExactMatch,GlobalCurrentMigration}
+enum OAuthClientSecretSource{ProfileCanonical,GlobalExactMatch,GlobalCurrentMigration,LegacyStable}
 #[derive(Debug,Clone)]
 struct ResolvedOAuthClient{client_id:String,client_secret:String,source:OAuthClientSecretSource}
 fn select_oauth_client_secret(profile_secret:Option<String>,client_id:&str,global_client_id:&str,global_secret:Option<String>,legacy_present:bool)->Result<(String,OAuthClientSecretSource),&'static str>{
@@ -450,7 +450,7 @@ fn resolve_client_secret_for_profile(app:&AppHandle,profile_id:&str,client_id:&s
   }
  }else{None};
  if let Some(secret)=legacy_secret{
-  return Ok(ResolvedOAuthClient{client_id:client_id.into(),client_secret:secret,source:OAuthClientSecretSource::ProfileCanonical})
+  return Ok(ResolvedOAuthClient{client_id:client_id.into(),client_secret:secret,source:OAuthClientSecretSource::LegacyStable})
  }
  let blocked=profile_keychain_error.as_ref().or(global_keychain_error.as_ref());
  match select_oauth_client_secret(profile_secret,client_id,&global_meta.client_id,global_secret,legacy_present){
@@ -458,6 +458,7 @@ fn resolve_client_secret_for_profile(app:&AppHandle,profile_id:&str,client_id:&s
   Ok((secret,OAuthClientSecretSource::GlobalExactMatch))=>
    Ok(ResolvedOAuthClient{client_id:client_id.into(),client_secret:secret,source:OAuthClientSecretSource::GlobalExactMatch}),
   Ok((_,OAuthClientSecretSource::GlobalCurrentMigration))=>Err("OAUTH_CLIENT_RESOLVER_INTERNAL: migration source is reconnect-only".into()),
+  Ok((_,OAuthClientSecretSource::LegacyStable))=>Err("OAUTH_CLIENT_RESOLVER_INTERNAL: legacy source is resolved before selector".into()),
   Err("CLIENT_SECRET_REIMPORT_REQUIRED")=>{
    if let Some(e)=blocked{return Err(format!("OAUTH_CLIENT_SECRET_KEYCHAIN_BLOCKED: profile={profile_id}; active client_secret exists but no-UI Keychain access is temporarily blocked; {e}"))}
    Err(format!("OAUTH_CLIENT_SECRET_REIMPORT_REQUIRED: profile={profile_id}; legacy client_secret metadata exists but no canonical credential is available"))
@@ -2354,9 +2355,6 @@ fn existing_profile_recovery_reason(error:&str)->&'static str{
 #[tauri::command]
 pub async fn youtube_oauth_recover_existing_profiles(app:AppHandle)->Result<Value,String>{
  let store=load_store_metadata(&app)?;
- let global=load_google_config_for_secret_operation(&app)?;
- if global.client_id.trim().is_empty(){return Err("OAUTH_CLIENT_SETUP_REQUIRED: GLOBAL OAuth Client ID is missing".into())}
- if global.client_secret.trim().is_empty(){return Err("OAUTH_CLIENT_SECRET_REQUIRED: GLOBAL OAuth Client Secret is not operational".into())}
  let total=store.profiles.len();
  let mut rows=Vec::<Value>::with_capacity(total);
  let mut ready=0usize;let mut blocked=0usize;let mut reconnect=0usize;let mut failed=0usize;
@@ -2364,56 +2362,52 @@ pub async fn youtube_oauth_recover_existing_profiles(app:AppHandle)->Result<Valu
   let profile_id=profile.id.clone();
   let expected_channel_id=profile.channel_id.clone();
   let refresh_account=profile_refresh_token_account(&app,&profile_id)?;
-  let retry=security::canonical_retry_secret_access_value(&refresh_account);
-  let keychain_status=retry.get("status").and_then(Value::as_str).unwrap_or("READ_FAILED");
-  let mut status=existing_profile_recovery_bucket(keychain_status,None).to_string();
-  let mut reason=match keychain_status{
-   "ACCESSIBLE"=>"TOKEN_REFRESH_PENDING",
-   "KEYCHAIN_BLOCKED"=>"KEYCHAIN_BLOCKED",
-   "MISSING"=>"REFRESH_TOKEN_MISSING",
-   _=>"KEYCHAIN_READ_FAILED",
-  }.to_string();
+  let mut status="FAILED".to_string();
+  let mut reason="TOKEN_REFRESH_NOT_RUN".to_string();
   let mut token_refresh="NOT_RUN";
   let mut client_secret_source:Option<&'static str>=None;
 
-  if keychain_status=="ACCESSIBLE"{
-   match security::canonical_get_secret_cached(&refresh_account){
-    Ok(Some(refresh_token)) if !refresh_token.trim().is_empty()=>{
-     match resolve_client_secret_for_profile(&app,&profile_id,&profile.client_id){
-      Ok(resolved)=>{
-       client_secret_source=Some(match resolved.source{
-        OAuthClientSecretSource::ProfileCanonical=>"PROFILE_CANONICAL",
-        OAuthClientSecretSource::GlobalExactMatch=>"GLOBAL_EXACT_MATCH",
-        OAuthClientSecretSource::GlobalCurrentMigration=>"GLOBAL_CURRENT_MIGRATION",
-       });
-       match refresh_access_token_http(&resolved.client_id,&refresh_token,Some(&resolved.client_secret)).await{
-        Ok((access,expires))=>{
-         remember_access_token(&profile_id,&access,now_ts()+expires.max(60));
-         set_profile_migration_state(&app,&profile_id,MIGRATION_MIGRATED)?;
-         record_profile_credential_validation(&app,&profile_id,"TOKEN_REFRESH_PASS",expected_channel_id.as_deref(),None)?;
-         status="READY".into();reason="TOKEN_REFRESH_PASS".into();token_refresh="PASS";
-        },
-        Err(e)=>{
-         status=existing_profile_recovery_bucket("ACCESSIBLE",Some(&e)).into();
-         reason=existing_profile_recovery_reason(&e).into();
-         if status=="RECONNECT_REQUIRED"{record_profile_credential_validation(&app,&profile_id,"RECONNECT_REQUIRED",expected_channel_id.as_deref(),None)?;}
-        }
+  match require_canonical_refresh(&app,&profile_id){
+   Ok(refresh_token)=>{
+    match resolve_client_secret_for_profile(&app,&profile_id,&profile.client_id){
+     Ok(resolved)=>{
+      client_secret_source=Some(match resolved.source{
+       OAuthClientSecretSource::ProfileCanonical=>"PROFILE_CANONICAL",
+       OAuthClientSecretSource::GlobalExactMatch=>"GLOBAL_EXACT_MATCH",
+       OAuthClientSecretSource::GlobalCurrentMigration=>"GLOBAL_CURRENT_MIGRATION",
+       OAuthClientSecretSource::LegacyStable=>"LEGACY_STABLE",
+      });
+      match refresh_access_token_http(&resolved.client_id,&refresh_token,Some(&resolved.client_secret)).await{
+       Ok((access,expires))=>{
+        remember_access_token(&profile_id,&access,now_ts()+expires.max(60));
+        // A successful refresh proves the saved credential still works. Do not rotate or
+        // rewrite refresh/client-secret pointers merely because the binary version changed.
+        record_profile_credential_validation(&app,&profile_id,"TOKEN_REFRESH_PASS",expected_channel_id.as_deref(),None)?;
+        status="READY".into();reason="TOKEN_REFRESH_PASS".into();token_refresh="PASS";
+       },
+       Err(e)=>{
+        status=existing_profile_recovery_bucket("ACCESSIBLE",Some(&e)).into();
+        reason=existing_profile_recovery_reason(&e).into();
+        if status=="RECONNECT_REQUIRED"{record_profile_credential_validation(&app,&profile_id,"RECONNECT_REQUIRED",expected_channel_id.as_deref(),None)?;}
        }
-      },
-      Err(e)=>{
-       status=existing_profile_recovery_bucket("ACCESSIBLE",Some(&e)).into();
-       reason=existing_profile_recovery_reason(&e).into();
       }
+     },
+     Err(e)=>{
+      status=existing_profile_recovery_bucket("ACCESSIBLE",Some(&e)).into();
+      reason=existing_profile_recovery_reason(&e).into();
      }
-    },
-    Ok(_)=>{
-     status="RECONNECT_REQUIRED".into();reason="REFRESH_TOKEN_MISSING".into();
+    }
+   },
+   Err(e)=>{
+    if keychain_repairable_error(&e)||e.contains("OAUTH_CREDENTIAL_PRECHECK_FAILED"){
+     status="KEYCHAIN_BLOCKED".into();reason=existing_profile_recovery_reason(&e).into();
+    }else if e.contains("OAUTH_RECONNECT_REQUIRED")||e.contains("REFRESH_TOKEN_MISSING")||e.contains("invalid_grant"){
+     status="RECONNECT_REQUIRED".into();reason=existing_profile_recovery_reason(&e).into();
      record_profile_credential_validation(&app,&profile_id,"RECONNECT_REQUIRED",expected_channel_id.as_deref(),None)?;
-    },
-    Err(e)=>{status=existing_profile_recovery_bucket("ACCESSIBLE",Some(&e)).into();reason=existing_profile_recovery_reason(&e).into();}
+    }else{
+     status="FAILED".into();reason=existing_profile_recovery_reason(&e).into();
+    }
    }
-  }else if status=="RECONNECT_REQUIRED"{
-   record_profile_credential_validation(&app,&profile_id,"RECONNECT_REQUIRED",expected_channel_id.as_deref(),None)?;
   }
 
   match status.as_str(){
