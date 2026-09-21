@@ -1,5 +1,5 @@
 import {create} from 'zustand';
-import {api,type CheckedUpdaterCandidate,type UpdaterTransferProgress} from './api';
+import {api,type CheckedUpdaterCandidate,type UpdaterInstallPreflight,type UpdaterTransferProgress} from './api';
 import {appendErrorHistory,type ErrorStage} from './errorHistory';
 import type {UpdaterBlocker} from './updaterGuard';
 import type {UpdaterStatus} from './updaterPolicy';
@@ -10,7 +10,7 @@ export type UpdaterRuntimeState={
   currentVersion:string;latestVersion:string;status:RuntimeUpdaterStatus;progress:number;downloadedBytes:number;totalBytes:number;
   notes:string;releaseDate?:string;endpoint:string;versionComparison:string;lastCheckedAt?:number;lastCheckAttemptAt?:number;nextAutomaticCheckAt?:number;
   consecutiveCheckFailures:number;errorCode?:string;errorMessage?:string;
-  blockers:UpdaterBlocker[];hasChecked:boolean;
+  blockers:UpdaterBlocker[];hasChecked:boolean;preflight?:UpdaterInstallPreflight;
   bootstrapVersion:()=>Promise<void>;check:(options?:{silent?:boolean;force?:boolean})=>Promise<void>;download:()=>Promise<void>;
   installAndRestart:(blockers?:UpdaterBlocker[])=>Promise<boolean>;markUpdated:(version:string)=>void;clearBlockers:()=>void;
 };
@@ -33,8 +33,17 @@ function recordFailure(stage:'check'|'download'|'install'|'relaunch',error:unkno
   return code;
 }
 
+async function ensureUpdaterInstallable(set:(x:Partial<UpdaterRuntimeState>)=>void){
+  const fn=(api as typeof api&{updaterInstallPreflight?:()=>Promise<UpdaterInstallPreflight>}).updaterInstallPreflight;
+  if(!fn)return undefined;
+  const preflight=await fn();set({preflight});
+  if(preflight.runningFromDmg)throw new Error('RUNNING_FROM_DMG: VYRON запущен из установочного образа');
+  if(!preflight.bundleReplaceable)throw new Error('APP_NOT_REPLACEABLE: установленный VYRON.app недоступен для безопасной замены');
+  return preflight;
+}
+
 export const useUpdaterRuntime=create<UpdaterRuntimeState>((set,get)=>({
-  currentVersion:'',latestVersion:'',status:'UP_TO_DATE',progress:0,downloadedBytes:0,totalBytes:0,notes:'',endpoint:'',versionComparison:'',blockers:[],hasChecked:false,consecutiveCheckFailures:0,
+  currentVersion:'',latestVersion:'',status:'UP_TO_DATE',progress:0,downloadedBytes:0,totalBytes:0,notes:'',endpoint:'',versionComparison:'',blockers:[],hasChecked:false,consecutiveCheckFailures:0,preflight:undefined,
   bootstrapVersion:async()=>{if(get().currentVersion)return;try{const v=await api.appVersion();set({currentVersion:v,latestVersion:get().latestVersion||v})}catch(error){const code=recordFailure('check',error,'','');set({status:'ERROR',errorCode:code,errorMessage:String(error),hasChecked:true,lastCheckedAt:Date.now()})}},
   check:async(options={})=>{
     void options.silent;void options.force;
@@ -69,6 +78,7 @@ export const useUpdaterRuntime=create<UpdaterRuntimeState>((set,get)=>({
     if(!candidate)return;
     set({status:'DOWNLOADING',progress:0,downloadedBytes:0,totalBytes:0,errorCode:undefined,errorMessage:undefined,blockers:[]});
     try{
+      await ensureUpdaterInstallable(set);
       await candidate.download((p:UpdaterTransferProgress)=>set({status:p.status==='VERIFYING'?'VERIFYING':'DOWNLOADING',progress:p.percent,downloadedBytes:p.downloadedBytes,totalBytes:p.totalBytes}));
       set({status:'READY_TO_INSTALL',progress:100});
     }catch(error){const s=get();const code=recordFailure('download',error,s.currentVersion,s.latestVersion);set({status:'ERROR',errorCode:code,errorMessage:String(error)})}
@@ -78,6 +88,7 @@ export const useUpdaterRuntime=create<UpdaterRuntimeState>((set,get)=>({
     if(blockers.length){set({blockers});return false}
     const target=get().latestVersion||candidate.version;localStorage.setItem('vyron:update-installing-version',target);
     try{
+      await ensureUpdaterInstallable(set);
       set({status:'VERIFYING',blockers:[]});
       await candidate.install(status=>set({status}));
       set({status:'READY_TO_RESTART'});
@@ -88,4 +99,4 @@ export const useUpdaterRuntime=create<UpdaterRuntimeState>((set,get)=>({
   clearBlockers:()=>set({blockers:[]})
 }));
 
-export function resetUpdaterRuntimeForTests(){candidate=undefined;checkPromise=undefined;lastRecordedError='';try{globalThis.localStorage?.removeItem(ERROR_FINGERPRINT_KEY)}catch{}useUpdaterRuntime.setState({currentVersion:'',latestVersion:'',status:'UP_TO_DATE',progress:0,downloadedBytes:0,totalBytes:0,notes:'',releaseDate:undefined,endpoint:'',versionComparison:'',lastCheckedAt:undefined,lastCheckAttemptAt:undefined,nextAutomaticCheckAt:undefined,consecutiveCheckFailures:0,errorCode:undefined,errorMessage:undefined,blockers:[],hasChecked:false})}
+export function resetUpdaterRuntimeForTests(){candidate=undefined;checkPromise=undefined;lastRecordedError='';try{globalThis.localStorage?.removeItem(ERROR_FINGERPRINT_KEY)}catch{}useUpdaterRuntime.setState({currentVersion:'',latestVersion:'',status:'UP_TO_DATE',progress:0,downloadedBytes:0,totalBytes:0,notes:'',releaseDate:undefined,endpoint:'',versionComparison:'',lastCheckedAt:undefined,lastCheckAttemptAt:undefined,nextAutomaticCheckAt:undefined,consecutiveCheckFailures:0,errorCode:undefined,errorMessage:undefined,blockers:[],hasChecked:false,preflight:undefined})}
