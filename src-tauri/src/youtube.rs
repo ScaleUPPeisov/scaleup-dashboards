@@ -201,8 +201,18 @@ fn resolved_credential_state(profile:&OAuthProfile,migration_state:&str,canonica
  }
  if legacy_present{
   // Presence of a legacy VYRON credential after an app update is not evidence of revocation.
-  // Passive diagnostics do not read secret values, so keep it saved/unverified rather than
-  // forcing Google reconnect. Operational paths perform a no-UI read and token refresh.
+  // Preserve a previously proven healthy state without any new secret read. If there is no
+  // persisted proof yet, report saved/unverified rather than forcing Google reconnect.
+  if let Some(v)=validation{
+   let expected_match=v.expected_channel_id.as_deref()==expected;
+   let actual_match=v.actual_channel_id.as_deref()==expected;
+   if v.result=="PASS"&&expected_match&&actual_match&&v.at.is_some(){
+    return("CONNECTED","PASS".into(),v.at.clone())
+   }
+   if v.result=="TOKEN_REFRESH_PASS"&&expected_match&&v.at.is_some(){
+    return("CONNECTED","TOKEN_REFRESH_PASS".into(),v.at.clone())
+   }
+  }
   return("CANONICAL_PRESENT_UNVERIFIED","LEGACY_PRESENT_UNVERIFIED".into(),validation.and_then(|v|v.at.clone()))
  }
  if migration_state==MIGRATION_RECONNECT_REQUIRED{
