@@ -1,6 +1,6 @@
 import {describe,it,expect} from 'vitest';
 import fs from 'node:fs';
-import {classifyUploadState,recordVerifiedUpload,successfulUploadForHash,markHistoryTrashed} from './storageLifecycle';
+import {classifyUploadState,cleanupEligibleUpload,recordVerifiedUpload,successfulUploadForHash,markHistoryTrashed} from './storageLifecycle';
 
 const pub=fs.readFileSync('src/PublisherOS.tsx','utf8');
 const queueRuntime=fs.readFileSync('src/uploadQueueRuntime.ts','utf8');
@@ -39,6 +39,14 @@ describe('Storage Lifecycle + Duplicate Upload Guard',()=>{
  it('29 NEW + 1 duplicate isolates only duplicate',()=>{const h=recordVerifiedUpload([],verified('/old/a.mov','dup'));const hashes=[...Array.from({length:29},(_,i)=>`new-${i}`),'dup'];const uploadable=hashes.filter(x=>!successfulUploadForHash(h,x));expect(uploadable).toHaveLength(29)});
  it('verification-failed accepted upload persists identity only as uncertain, never cleanup-ready',()=>{const branch=queueRuntime.indexOf('if(uploaded.verified===false)');const persist=queueRuntime.indexOf('const uncertainHistory=recordVerifiedUpload',branch);const end=queueRuntime.indexOf('completePublishAttempt',branch);expect(branch).toBeGreaterThanOrEqual(0);expect(persist).toBeGreaterThan(branch);expect(end).toBeGreaterThan(persist);const block=queueRuntime.slice(branch,end);expect(block).toContain("processingState:'PROCESSING_UNKNOWN'");expect(block).toContain('youtubeVideoId:uploaded.videoId');expect(block).not.toContain("processingState:'READY'")});
  it('resumable verification failure preserves returned videoId and blocks blind duplicate retry',()=>{const start=pub.indexOf('async function resumeUpload');const branch=pub.indexOf('if(uploaded.verified===false)',start);const accepted=pub.indexOf('youtubeVideoId:uploaded.videoId',start);const warning=pub.indexOf('Повторная загрузка заблокирована',branch);expect(start).toBeGreaterThanOrEqual(0);expect(accepted).toBeGreaterThan(start);expect(accepted).toBeLessThan(branch);expect(warning).toBeGreaterThan(branch);expect(pub.slice(branch,warning+120)).not.toContain('youtubeVideoId:undefined')});
+ it('cleanup never treats replaced bytes at the same path as the uploaded source generation',()=>{
+  const sha='d'.repeat(64),base=recordVerifiedUpload([],{...verified('/ready/VIDEO_001.mov',sha),fileSize:123456,processingState:'READY',sourceLifecycle:'PRESENT'})[0];
+  const job:any={id:'job-1',channelId:'channel-1',number:1,folder:'/ready',status:'SCHEDULED',createdAt:'2026-09-12T00:00:00Z',tracksCount:15,minTracks:15,finalPath:'/ready/VIDEO_001.mov',title:'VIDEO_001',description:'',tags:[],storageLifecycle:'UPLOADED',youtubeVideoId:'yt-video-1'};
+  expect(cleanupEligibleUpload(base,job)).toBe(false);
+  expect(cleanupEligibleUpload(base,{...job,currentSourceFingerprint:sha,currentSourceFileSize:123456})).toBe(true);
+  expect(cleanupEligibleUpload(base,{...job,currentSourceFingerprint:'e'.repeat(64),currentSourceFileSize:123456})).toBe(false);
+ });
+
  it('moving uploaded local file to Trash keeps publication history',()=>{const h=recordVerifiedUpload([],verified());const next=markHistoryTrashed(h,'job-1');expect(next).toHaveLength(1);expect(next[0].youtubeVideoId).toBe('yt-video-1');expect(next[0].sha256).toBe('sha-001');expect(successfulUploadForHash(next,'sha-001')).toBeTruthy()});
  it('state v10 migration fields are persistent and old datasets remain in store schema',()=>{expect(store).toContain('version:10');expect(store).toContain('uploadHistory');expect(store).toContain('activityJournal');expect(store).toContain('statisticsHistory');expect(store).toContain('fingerprintCache');expect(store).toContain('projectLifecycle');expect(store).toContain('channels');expect(store).toContain('jobs')});
  it('full-file SHA-256 and cache metadata are wired',()=>{expect(yt).toContain('full_file_sha256');expect(yt).toContain('Sha256');expect(api).toContain('youtube_file_fingerprint');expect(pub).toContain('fingerprintCache');expect(pub).toContain('for(const j of targets)')});
