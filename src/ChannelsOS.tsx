@@ -1,5 +1,6 @@
-import React,{useState} from 'react';
+import React,{useEffect,useState} from 'react';
 import {useApp} from './store';
+import {api,type OAuthCredentialStateProfile} from './api';
 import {bufferDays,formatNumber} from './core';
 import type {Channel,VideoJob} from './types';
 import {hasChannelNameConflict,isFutureChannel} from './channelIdentity';
@@ -10,7 +11,8 @@ function health(c:Channel,jobs:VideoJob[]){let n=100;if(!isFutureChannel(c)){if(
 
 export function ChannelsOS(){
  const channels=useApp(s=>s.channels),jobs=useApp(s=>s.jobs),addChannel=useApp(s=>s.addChannel),updateChannel=useApp(s=>s.updateChannel),removeChannel=useApp(s=>s.removeChannel),setPage=useApp(s=>s.setPage),toast=useApp(s=>s.toast);
- const [editing,setEditing]=useState<string|null>(null),[creating,setCreating]=useState(false),[futureName,setFutureName]=useState('');
+ const [editing,setEditing]=useState<string|null>(null),[creating,setCreating]=useState(false),[futureName,setFutureName]=useState(''),[oauthStates,setOauthStates]=useState<Record<string,OAuthCredentialStateProfile>>({});
+ useEffect(()=>{let live=true;void api.youtubeOauthCredentialStates().then(x=>{if(live)setOauthStates(Object.fromEntries(x.profiles.map(p=>[p.profileUuid,p]))) }).catch(()=>{});return()=>{live=false}},[channels.map(c=>c.youtubeProfileId||'').join('|')]);
  const add=()=>{setFutureName('');setCreating(true)};
  const createFuture=()=>{const name=futureName.trim().replace(/\s+/g,' ');if(!name)return;if(hasChannelNameConflict(channels,name)){toast('Канал с таким названием уже есть в VYRON');return}const c=addChannel({name});setCreating(false);setFutureName('');setEditing(c.id);toast(`Будущий канал ${name} создан — YouTube пока не нужен`)};
  return <>
@@ -19,7 +21,7 @@ export function ChannelsOS(){
   {channels.length===0?<div className="empty"><b>Каналов пока нет</b><p>Создай будущий канал по его планируемому названию. Музыку, изображения и проекты можно готовить до подключения YouTube.</p></div>:<div className="channelOSList">{channels.map(c=>{
    const a=c.analytics,rev=a?.periodDays===28?a.estimatedRevenue:undefined;
    return <article className={`channelOSCard ${editing===c.id?'editing':''}`} key={c.id}>
-    <header><div className="channelAvatarOS">{a?.channelThumbnail?<img src={a.channelThumbnail} loading="lazy"/>:c.name.slice(0,2).toUpperCase()}</div><span className="channelIdentity"><b>{c.name}</b><small>{c.youtubeChannelId||'YouTube Channel ID —'}</small><em className={c.youtubeProfileId?'good':'warn'}>{c.youtubeProfileId?'YouTube подключён':'БУДУЩИЙ • YouTube не подключён'}</em></span><span className="channelHealth"><small>HEALTH</small><b>{health(c,jobs)}</b><em>Reserve {bufferDays(c,jobs)} days</em></span><button onClick={()=>setEditing(editing===c.id?null:c.id)}>✎</button></header>
+    <header><div className="channelAvatarOS">{a?.channelThumbnail?<img src={a.channelThumbnail} loading="lazy"/>:c.name.slice(0,2).toUpperCase()}</div><span className="channelIdentity"><b>{c.name}</b><small>{c.youtubeChannelId||'YouTube Channel ID —'}</small>{(()=>{if(!c.youtubeProfileId)return <em className="warn">БУДУЩИЙ • YouTube не подключён</em>;const o=oauthStates[c.youtubeProfileId],state=o?.credentialState||'NOT_CHECKED';const label=state==='READY'?'OAuth ✓':state==='KEYCHAIN_BLOCKED'?'OAuth: доступ заблокирован':state==='RECONNECT_REQUIRED'||state==='MISSING'?'OAuth: требуется вход':state==='WRONG_CHANNEL'?'OAuth: выбран другой канал':'OAuth: не проверено';return <em className={state==='READY'?'good':'warn'}>{label}</em>})()}</span><span className="channelHealth"><small>HEALTH</small><b>{health(c,jobs)}</b><em>Reserve {bufferDays(c,jobs)} days</em></span><button onClick={()=>setEditing(editing===c.id?null:c.id)}>✎</button></header>
     <div className="channelMetaLine"><span>Страна <b>{a?.channelCountry||c.country||'—'}</b></span><span>Язык <b>{a?.channelLanguage||c.language||'—'}</b></span><span>Public Videos <b>{c.stats?.videos!=null?formatNumber(c.stats.videos):'—'}</b></span><span>Last Sync <b>{a?.updatedAt?new Date(a.updatedAt).toLocaleString('ru-RU'):'—'}</b></span></div>
     <div className="channelMetricsGrid"><span><small>Subscribers</small><b>{c.stats?.subscribers!=null?formatNumber(c.stats.subscribers):'—'}</b></span><span><small>Total Views</small><b>{c.stats?.views!=null?formatNumber(c.stats.views):'—'}</b></span><span><small>Views 28d</small><b>{a?.periodDays===28?formatNumber(a.views):'—'}</b></span><span><small>Revenue 28d</small><b>{money(rev)}</b></span><span><small>RPM 28d</small><b>{a?.periodDays===28?rpm(rev,a.views):'—'}</b></span><span><small>Scheduled local</small><b>{jobs.filter(j=>j.channelId===c.id&&j.status==='SCHEDULED').length}</b></span></div>
     <div className="channelActions"><button onClick={()=>setPage('youtube')}>{isFutureChannel(c)?'Подключить YouTube позже':'Открыть YouTube'}</button><button onClick={()=>setEditing(editing===c.id?null:c.id)}>{editing===c.id?'Закрыть настройки':'Настроить канал'}</button></div>
