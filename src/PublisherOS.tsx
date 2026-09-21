@@ -25,6 +25,7 @@ import {existingSyncIncompleteSummary,readAuthoritativeExistingSnapshot,replaceE
 import {journal} from './activityJournalRuntime';
 import {cleanupPreclassification} from './activityJournalCore';
 import {classifyChannelRenderFiles,crossChannelScanRecoveryJobs,normalizeRenderPath,planRenderScanImport,renderFileNeedsFingerprint,summarizeRenderScan,type RenderScanRow,type RenderScanSummary} from './renderScanClassifier';
+import {completeTask,ensureTask,failTask,startTask,updateTask} from './taskEngine';
 
 const status=(j:VideoJob)=>j.status==='READY_UPLOAD'?'В ОЧЕРЕДИ':j.status==='UPLOADING'?'ЗАГРУЖАЕТСЯ':j.status==='SCHEDULED'?'YOUTUBE ✓':j.status==='ERROR'?'ОШИБКА':j.status;
 const pct=(a:number,b:number)=>b?Math.min(100,Math.max(0,a/b*100)):0;
@@ -32,6 +33,7 @@ const scheduleDateTimeLabel=(iso?:string)=>iso?new Intl.DateTimeFormat('ru-RU',{
 type RemoveRequest={ids:string[];label:string};
 type VideoFilter='new'|'youtube'|'processing'|'verify'|'errors'|'all';
 type RenderScanPreview={result:RenderFolderScanResult;rows:RenderScanRow[];summary:RenderScanSummary;scannedAt:string;importReport?:{requested:number;added:number;skipped:number;alreadyKnown:number;errors:number;details:string[]}};
+type DryRunReport={at:string;ready:number;blocked:number;videosInsert:0;youtubeApiRequests:0;rows:Array<{jobId:string;number:number;ok:boolean;issues:string[]}>};
 const errorUploadStates=new Set<CanonicalUploadState>(['UPLOAD_FAILED','PROCESSING_FAILED','REJECTED','REMOTE_MISSING','SOURCE_MISSING']);
 
 export function PublisherOS(){
@@ -42,7 +44,7 @@ export function PublisherOS(){
  const [scheduleStartMode,setScheduleStartMode]=useState<'continue'|'manual'>('continue');
  const [scheduleSync,setScheduleSync]=useState<{state:'idle'|'loading'|'ready'|'error';lastScheduled?:string;suggestedStart?:string;note?:string;futureCount:number;occupied:string[];timezone:string}>({state:'idle',futureCount:0,occupied:[],timezone:PUBLISHER_TIMEZONE});
  const docInput=useRef<HTMLInputElement>(null);const channel=channels.find(c=>c.id===channelId),profileId=channel?.youtubeProfileId||'',channelRenderFolder=(channel?.renderFolderPath||'').trim(),channelProjectsFolder=(channel?.projectsFolderPath||'').trim();
- const [folderDiscoveryBusy,setFolderDiscoveryBusy]=useState(false);
+ const [folderDiscoveryBusy,setFolderDiscoveryBusy]=useState(false),[dryRunBusy,setDryRunBusy]=useState(false),[dryRunReport,setDryRunReport]=useState<DryRunReport|null>(null);
  const recoveryJobs=useMemo(()=>channelRenderFolder?crossChannelScanRecoveryJobs(jobs,uploadHistory,channelId,channelRenderFolder):[],[jobs,uploadHistory,channelId,channelRenderFolder]);
  const recoveryJobIds=useMemo(()=>new Set(recoveryJobs.map(j=>j.id)),[recoveryJobs]);
  const setDraftPatch=(p:Partial<PublishWorkspaceDraft>)=>setDraft(d=>savePublishWorkspace(channelId,{...d,...p}));
@@ -230,10 +232,10 @@ export function PublisherOS(){
   setRenderScan(null);
   notifySuccess('Папка рендера привязана',`${channel.name} → ${best[0]}`);
  }
- async function fingerprintRenderEvidenceFiles(result:RenderFolderScanResult,current:VideoJob[],history:UploadHistoryRecord[]){
-  const files=[] as RenderFolderScanResult['files'];
+ async function fingerprintRenderEvidenceFiles(result:RenderFolderScanResult,current:VideoJob[],history:UploadHistoryRecord[],progress?:(done:number,total:number,name:string)=>void){
+  const files=[] as RenderFolderScanResult['files'];let done=0;const total=result.files.length;
   for(const file of result.files){
-   if(!renderFileNeedsFingerprint(file,current,history,channelId,result.root)){files.push(file);continue}
+   if(!renderFileNeedsFingerprint(file,current,history,channelId,result.root)){files.push(file);done++;progress?.(done,total,file.name);continue}
    try{
     const cache=useApp.getState().fingerprintCache[file.path];
     const fp=await api.youtubeFileFingerprint(file.path,cache?{size:cache.size,mtimeMs:cache.mtimeMs,sha256:cache.sha256}:undefined);
@@ -242,6 +244,7 @@ export function PublisherOS(){
    }catch{
     files.push(file)
    }
+   done++;progress?.(done,total,file.name);
   }
   return{...result,files};
  }
