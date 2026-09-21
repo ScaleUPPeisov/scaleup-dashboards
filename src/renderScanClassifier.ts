@@ -44,8 +44,12 @@ export function renderFileNeedsFingerprint(file:RenderFolderVideoFile,jobs:Video
  if(!renderPathInsideRoot(path,exactRoot))return false;
  const scoped=jobs.filter(j=>j.channelId===channelId);
  if(scoped.some(j=>normalizeRenderPath(j.finalPath||'')===path))return true;
- if(successfulHistory(history,channelId).some(x=>normalizeRenderPath(x.localFilePath)===path))return true;
+ const successful=successfulHistory(history,channelId);
+ if(successful.some(x=>normalizeRenderPath(x.localFilePath)===path))return true;
  if(sequence&&scoped.some(j=>j.number===sequence))return true;
+ // A byte-identical file must also have the same byte size. Hash renamed/moved
+ // candidates only when same-channel uploaded history contains that size.
+ if(successful.some(x=>trustedHistory(x)&&x.fileSize===file.size))return true;
  return false;
 }
 
