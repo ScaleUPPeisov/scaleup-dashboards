@@ -390,11 +390,11 @@ export function AccountsPage(){
        {(h?.thumbnail||stats?.thumbnail)?<img src={h?.thumbnail||stats?.thumbnail} loading="lazy"/>:<div className="accountAvatar">YT</div>}
        <div className="accountMain">
         <b>{h?.channelTitle||p.channelTitle||stats?.channelTitle||'YouTube канал'}</b>
-        <small>{stats?.handle?`${stats.handle} • `:''}{p.channelId||'Channel ID ещё не определён'}</small>
+        <small>{stats?.handle?`${stats.handle} • `:''}{p.channelId||'Channel ID ещё не определён'}</small>{p.googleEmail&&<small>Google: {p.googleEmail}</small>}
         <div className="accountBadges">
          <span className={oauthOk?'good':credentialState==='KEYCHAIN_BLOCKED'?'warn':''}>OAuth: {oauthOk?'READY':oauthNeedsGlobal?'GLOBAL REPAIR':credentialState==='KEYCHAIN_BLOCKED'?'KEYCHAIN BLOCKED':credentialState==='RECONNECT_REQUIRED'||credentialState==='MISSING'?'RECONNECT REQUIRED':credentialState==='WRONG_CHANNEL'?'WRONG CHANNEL':'NOT CHECKED'}</span>
          <span className={syncOk?'good':stats?.syncWarning?'warn':''}>YouTube API: {syncOk?'OK':stats?.syncWarning?'WARNING':'CACHE'}</span>
-         {p.preferredBrowser&&<span>Браузер: {p.preferredBrowser}</span>}
+         {p.googleEmail&&<span>Google: {p.googleEmail}</span>}{p.preferredBrowser&&<span>Браузер: {p.preferredBrowser}</span>}
         </div>
         <div className="accountStatsGrid">
          <span><small>👥 Подписчики</small><b title={stats?.hiddenSubscriberCount?'Подписчики скрыты владельцем канала':exactChannelStat(stats?.subscriberCount??stats?.subscribers)}>{subscriberStatLabel(stats)}</b></span>
@@ -433,8 +433,8 @@ export function AccountsPage(){
    <section className="confirmModal browserPicker" onMouseDown={e=>e.stopPropagation()}>
     <small>ПЕРЕПОДКЛЮЧЕНИЕ СУЩЕСТВУЮЩЕГО ПРОФИЛЯ</small>
     <h2>Переподключение {p?.channelTitle||bound?.name||'YouTube-канала'}</h2>
-    <p>Нужно войти именно в этот YouTube-канал. На одном Google-аккаунте может быть несколько YouTube-каналов — перед авторизацией переключитесь в YouTube на нужный канал.</p>
-    <div className="publisherNotice"><b>{p?.channelTitle||bound?.name||'YouTube канал'}</b>{stats?.handle&&<p>{stats.handle}</p>}<p>Expected YouTube Channel ID: <code>{p?.channelId||'—'}</code></p></div>
+    <p>Нужно войти в сохранённый Google-аккаунт и авторизовать именно ожидаемый YouTube-канал. Email помогает выбрать аккаунт, но authoritative identity остаётся Profile UUID + YouTube Channel ID.</p>
+    <div className="publisherNotice"><b>{p?.channelTitle||bound?.name||'YouTube канал'}</b>{p?.googleEmail&&<p>Нужно войти в Google-аккаунт: <b>{p.googleEmail}</b></p>}{stats?.handle&&<p>{stats.handle}</p>}<p>Expected YouTube Channel ID: <code>{p?.channelId||'—'}</code></p></div>
     <footer><button onClick={()=>setPreReconnectProfileId('')}>Отмена</button><button onClick={()=>void openYoutubeForProfile(preReconnectProfileId)}>Открыть YouTube</button><button className="primary" onClick={()=>{const id=preReconnectProfileId;setPreReconnectProfileId('');void openBrowserPicker(id)}}>Выбрать браузер и продолжить</button></footer>
    </section>
   </div>})()}
@@ -442,11 +442,11 @@ export function AccountsPage(){
   {wrongChannel&&<div className="modalBackdrop" onMouseDown={()=>setWrongChannel(null)}>
    <section className="confirmModal browserPicker" onMouseDown={e=>e.stopPropagation()}>
     <small>YOUTUBE IDENTITY</small>
-    <h2>Выбран другой YouTube-канал</h2>
-    <p>Вы пытаетесь восстановить <b>{wrongChannel.expectedChannelTitle||profiles.find(x=>x.id===wrongChannel.profileId)?.channelTitle||'сохранённый канал'}</b>, но Google авторизовал другую YouTube identity. VYRON не изменил привязку и не сохранил новые credentials.</p>
+    <h2>{wrongChannel.code==='WRONG_ACCOUNT'?'Вы вошли не в тот Google-аккаунт':'Выбран другой YouTube-канал'}</h2>
+    <p>Вы пытаетесь восстановить <b>{wrongChannel.expectedChannelTitle||profiles.find(x=>x.id===wrongChannel.profileId)?.channelTitle||'сохранённый канал'}</b>, но Google вернул другую сохранённую identity. VYRON не изменил привязку и не сохранил новые credentials.</p>
     <div className="publisherNotice"><b>Нужно авторизовать</b><p>{wrongChannel.expectedChannelTitle||'Сохранённый канал'} • <code>{wrongChannel.expectedChannelId}</code></p></div>
     <div className="browserGrid">{wrongChannel.authorizedChannels.map(ch=><div key={ch.channelId} className="settingsCard">{ch.thumbnail&&<img src={ch.thumbnail} loading="lazy"/>}<b>{ch.channelTitle}</b>{ch.handle&&<small>{ch.handle}</small>}<small>{ch.channelId}</small>{ch.alreadyConnected&&<small>Уже подключён в VYRON</small>}{ch.alreadyConnected&&ch.existingProfileId&&<button onClick={()=>{const id=ch.existingProfileId!;setWrongChannel(null);window.setTimeout(()=>document.getElementById(`oauth-profile-${id}`)?.scrollIntoView({behavior:'smooth',block:'center'}),50)}}>Открыть этот канал в VYRON</button>}</div>)}</div>
-    <details><summary>Технические сведения</summary><p>Profile UUID: <code>{wrongChannel.profileId}</code></p><p>Expected Channel ID: <code>{wrongChannel.expectedChannelId}</code></p><p>Authorized Channel ID(s): {wrongChannel.authorizedChannels.map(x=>x.channelId).join(', ')||'NONE'}</p><p>Browser: {wrongChannel.browser}</p><p>credentialsCommitted=false</p></details>
+    <details><summary>Технические сведения</summary><p>Profile UUID: <code>{wrongChannel.profileId}</code></p>{wrongChannel.expectedGoogleEmail&&<p>Expected Google: <code>{wrongChannel.expectedGoogleEmail}</code></p>}{wrongChannel.authorizedGoogleEmail&&<p>Received Google: <code>{wrongChannel.authorizedGoogleEmail}</code></p>}<p>Expected Channel ID: <code>{wrongChannel.expectedChannelId}</code></p><p>Authorized Channel ID(s): {wrongChannel.authorizedChannels.map(x=>x.channelId).join(', ')||'NONE'}</p><p>Browser: {wrongChannel.browser}</p><p>credentialsCommitted=false</p></details>
     <footer><button onClick={()=>setWrongChannel(null)}>Отмена</button><button onClick={()=>void api.youtubeOpenYoutube(wrongChannel.browser)}>Открыть YouTube</button><button onClick={()=>{const w=wrongChannel;setWrongChannel(null);void openBrowserPicker(w.profileId)}}>Выбрать другой браузер</button><button className="primary" onClick={()=>{const w=wrongChannel;setWrongChannel(null);void reconnectExisting(w.profileId,w.browser)}}>Попробовать ещё раз</button></footer>
    </section>
   </div>}
