@@ -51,7 +51,7 @@ type Listener=(snapshot:UploadQueueSnapshot)=>void;
 function cloneSpec(input:ImmutableUploadJob):ImmutableUploadJob{
   return Object.freeze({...input,tags:Object.freeze([...input.tags]),quotaOperations:Object.freeze(input.quotaOperations.map(x=>Object.freeze({...x})))}) as ImmutableUploadJob;
 }
-function identityKeys(spec:ImmutableUploadJob){return [spec.projectId?`project:${spec.projectId}`:'',spec.fingerprint?`fingerprint:${spec.fingerprint.toLowerCase()}`:''].filter(Boolean)}
+function identityKeys(spec:ImmutableUploadJob){return [spec.projectId?`project:${spec.projectId}`:'',spec.fingerprint?`fingerprint:${spec.channelId}:${spec.fingerprint.toLowerCase()}`:''].filter(Boolean)}
 function nowIso(){return new Date().toISOString()}
 
 export class MultiChannelUploadQueue{
