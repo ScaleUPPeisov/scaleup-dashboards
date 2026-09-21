@@ -1,5 +1,5 @@
 import React,{useEffect,useRef,useState} from 'react';
-import {api,type GoogleConfigStatus,type OAuthCredentialStateProfile,type OAuthReconciliationDiagnostic,type YoutubeProfileHealth} from './api';
+import {api,type GoogleConfigStatus,type OAuthCredentialStateProfile,type OAuthExistingProfilesRecoveryResult,type OAuthReconciliationDiagnostic,type YoutubeProfileHealth} from './api';
 import {useApp} from './store';
 import type {YoutubeProfile,YoutubeChannelStatistics} from './types';
 import {findFutureChannelMatch} from './channelIdentity';
@@ -25,6 +25,8 @@ export function AccountsPage(){
  const [browser,setBrowser]=useState(localStorage.getItem('vyron:oauth-browser')||'default');
  const [pendingProfileId,setPendingProfileId]=useState('');
  const [oauthSetupOpen,setOauthSetupOpen]=useState(false);
+ const [pendingAddAfterGlobalRepair,setPendingAddAfterGlobalRepair]=useState(false);
+ const [recovery,setRecovery]=useState<(OAuthExistingProfilesRecoveryResult&{running:boolean;done:number})|null>(null);
  const [duplicate,setDuplicate]=useState<DuplicateChannel|null>(null);
  const [refreshingStats,setRefreshingStats]=useState<Record<string,boolean>>({});
  const [allStats,setAllStats]=useState<ChannelStatisticsRefreshProgress&{running:boolean}>({running:false,done:0,total:0});
@@ -93,58 +95,114 @@ export function AccountsPage(){
  }
 
  useEffect(()=>{
-  let cancelled=false;
+  let cancelled=false,stopProgress:(()=>void)|undefined;
+  void api.onOauthExistingRecoveryProgress(p=>{
+   if(cancelled)return;
+   setRecovery(x=>x?{...x,running:true,done:p.done,total:p.total,automaticallyRestored:p.automaticallyRestored,keychainBlocked:p.keychainBlocked,reconnectRequired:p.reconnectRequired,failed:p.failed}:x);
+  }).then(stop=>{if(cancelled)stop();else stopProgress=stop});
   void (async()=>{
    try{
-    await refresh();
-    if(!cancelled)void refreshAllStats(false);
+    const p=await refresh();
+    const version=await api.appVersion();
+    const cfg=await api.youtubeGoogleConfig();
+    if(cancelled)return;
+    setConfig(cfg);
+    if(cfg.oauthReady&&p.length&&localStorage.getItem('vyron:oauth-continuity-version')!==version){
+     await recoverExistingProfiles(p.length,true,version);
+    }
    }catch(e){if(!cancelled)toast(String(e))}
   })();
-  return()=>{cancelled=true}
+  return()=>{cancelled=true;stopProgress?.()}
  },[]);
+
+ async function recoverExistingProfiles(totalHint=profiles.length,quiet=false,versionToMark?:string){
+  setRecovery({running:true,done:0,total:totalHint,automaticallyRestored:0,ready:0,keychainBlocked:0,reconnectRequired:0,failed:0,manualQueue:0,browserLaunches:0,googleAccountSelectors:0,credentialsDialogs:0,keychainPasswordDialogs:0,youtubeApiRequests:0,videosInsert:0,profiles:[],secretValuesIncluded:false});
+  try{
+   const result=await api.youtubeOauthRecoverExistingProfiles();
+   setRecovery({...result,running:false,done:result.total});
+   await refresh();
+   const version=versionToMark||await api.appVersion();
+   localStorage.setItem('vyron:oauth-continuity-version',version);
+   if(!quiet)toast('Каналы сохранены. Автоматически восстановлено: '+result.automaticallyRestored+'. Требуют ручного входа: '+result.manualQueue+'. Браузер автоматически не открывался.');
+   return result
+  }catch(e){
+   setRecovery(null);
+   if(!quiet)toast('Автоматическое восстановление OAuth не завершено: '+String(e));
+   throw e
+  }
+ }
 
  async function importCredentials(fl:FileList|null){
   const selected=fl?.[0];if(!selected)return;
   setBusy(true);
+  let continueAdd=false;
   try{
    const c=await api.youtubeImportGoogleConfig(await selected.text(),settings.youtubeApiKey||'');
    setConfig(c);
-   if(c.oauthReady)setOauthSetupOpen(false);
-   await refresh();
-   toast(c.oauthReady?'✓ OAuth Client восстановлен и реально читается текущей версией VYRON.':'OAuth Client сохранён, но secure storage всё ещё требует восстановления.')
+   if(!c.oauthReady)throw new Error('GLOBAL OAuth Client сохранён, но secure storage всё ещё недоступен.');
+   setOauthSetupOpen(false);
+   const current=await refresh();
+   const result=await recoverExistingProfiles(current.length,false);
+   continueAdd=pendingAddAfterGlobalRepair;
+   setPendingAddAfterGlobalRepair(false);
+   toast('✓ GLOBAL OAuth Client восстановлен. Существующие профили проверены без браузера: '+result.automaticallyRestored+' READY, ручная проверка: '+result.manualQueue+'.');
   }catch(e){toast(String(e))}finally{setBusy(false)}
+  if(continueAdd)await openBrowserPicker('');
+ }
+
+ async function retryGlobalOauth(){
+  if(busy)return;
+  setBusy(true);
+  let continueAdd=false;
+  try{
+   const next=await api.youtubeRetryGoogleConfig();setConfig(next);
+   if(next.oauthReady){
+    setOauthSetupOpen(false);
+    const current=await refresh();
+    await recoverExistingProfiles(current.length,false);
+    continueAdd=pendingAddAfterGlobalRepair;
+    setPendingAddAfterGlobalRepair(false);
+   }else{
+    toast('Keychain пока блокирует Client Secret. Можно выбрать тот же credentials.json OAuth Client VYRON; каналы и Profile UUID не будут удалены.');
+   }
+  }catch(e){toast(String(e))}finally{setBusy(false)}
+  if(continueAdd)await openBrowserPicker('');
+ }
+
+ async function openBrowserPicker(profileId:string){
+  try{
+   const rows=await api.youtubeOauthBrowsers();
+   const available=rows.filter(x=>x.available);
+   const options=available.some(x=>x.id==='default')?available:[{id:'default',label:'Браузер по умолчанию',available:true},...available];
+   setBrowsers(options);
+   if(!options.some(x=>x.id===browser))setBrowser('default');
+  }catch(e){
+   toast('Не удалось определить установленные браузеры, будет использован системный: '+String(e));
+   setBrowsers([{id:'default',label:'Браузер по умолчанию',available:true}]);
+   setBrowser('default');
+  }
+  setPendingProfileId(profileId);
+  setBrowserOpen(true)
  }
 
  async function askBrowser(profileId=''){
   if(busy)return;
+  if(profileId){await openBrowserPicker(profileId);return}
   setBusy(true);
+  let ready=false;
   try{
-   if(!profileId){
-    let readiness:GoogleConfigStatus;
-    try{readiness=await api.youtubeGoogleConfig()}catch(e){toast(`Не удалось проверить GLOBAL OAuth Client: ${String(e)}`);return}
-    setConfig(readiness);
-    if(!readiness.oauthReady){
-     if(readiness.oauthState==='KEYCHAIN_ACCESS_BLOCKED'){toast('Client Secret сохранён, но macOS Keychain временно блокирует доступ. Используйте безопасную проверку в GLOBAL GOOGLE CONFIG — credentials.json заново не нужен.');return}
-     setOauthSetupOpen(true);
-     return
-    }
+   let readiness:GoogleConfigStatus;
+   try{readiness=await api.youtubeGoogleConfig()}catch(e){toast('Не удалось проверить GLOBAL OAuth Client: '+String(e));return}
+   setConfig(readiness);
+   if(!readiness.oauthReady){
+    setPendingAddAfterGlobalRepair(true);
+    setOauthSetupOpen(true);
+    return
    }
-   try{
-    const rows=await api.youtubeOauthBrowsers();
-    const available=rows.filter(x=>x.available);
-    const options=available.some(x=>x.id==='default')?available:[{id:'default',label:'Браузер по умолчанию',available:true},...available];
-    setBrowsers(options);
-    if(!options.some(x=>x.id===browser))setBrowser('default');
-   }catch(e){
-    toast(`Не удалось определить установленные браузеры, будет использован системный: ${String(e)}`);
-    setBrowsers([{id:'default',label:'Браузер по умолчанию',available:true}]);
-    setBrowser('default');
-   }
-   setPendingProfileId(profileId);
-   setBrowserOpen(true)
+   ready=true;
   }finally{setBusy(false)}
+  if(ready)await openBrowserPicker('')
  }
-
  async function connect(){
   const reconnectId=pendingProfileId;
   setBrowserOpen(false);setPendingProfileId('');setBusy(true);
@@ -261,6 +319,8 @@ export function AccountsPage(){
   </div>
 
   {allStats.running&&<div className="statsRefreshProgress"><b>Обновление каналов</b><span>{allStats.done} / {allStats.total}</span><i style={{width:`${allStats.total?Math.round(allStats.done/allStats.total*100):0}%`}}/></div>}
+  {recovery?.running&&<div className="statsRefreshProgress"><b>Восстановление подключений без повторного входа</b><span>{recovery.done} / {recovery.total}</span><i style={{width:`${recovery.total?Math.round(recovery.done/recovery.total*100):0}%`}}/></div>}
+  {recovery&&!recovery.running&&<div className="publisherNotice"><b>Каналы сохранены</b><p>Автоматически восстановлено: <b>{recovery.automaticallyRestored}</b> • Keychain blocked: <b>{recovery.keychainBlocked}</b> • Требуют ручного входа: <b>{recovery.reconnectRequired+recovery.failed}</b> • браузер автоматически открыт: <b>{recovery.browserLaunches}</b>.</p></div>}
 
   <input ref={file} hidden type="file" accept=".json,application/json" onChange={e=>{void importCredentials(e.target.files);e.currentTarget.value=''}}/>
 
@@ -273,10 +333,10 @@ export function AccountsPage(){
     <span className={oauthReady?'good':'warn'}>OAuth <b>{oauthReady?'READY':config?.oauthState||'NOT CONFIGURED'}</b></span>
     <span className={settings.youtubeApiKey?'good':''}>Public API Key <b>{settings.youtubeApiKey?'✓':'не нужен для OAuth'}</b></span>
    </div>
-   {oauthKeychainBlocked&&<div className="publisherNotice"><b>Client Secret сохранён — macOS Keychain временно не дал доступ</b><p>Не импортируйте credentials.json заново. VYRON сохранит текущий secure account и выполнит один безопасный NO-UI retry только по вашему действию.</p>{config?.secureStorageErrorCode&&<small>Диагностика: {config.secureStorageErrorCode}</small>}<button disabled={busy} onClick={async()=>{setBusy(true);try{const next=await api.youtubeRetryGoogleConfig();setConfig(next);toast(next.oauthReady?'✓ Client Secret снова доступен. Повторный импорт не потребовался.':'Keychain пока блокирует Client Secret. Данные OAuth не изменены.')}catch(e){toast(String(e))}finally{setBusy(false)}}}>Повторить безопасную проверку</button></div>}
+   {oauthKeychainBlocked&&<div className="publisherNotice"><b>Client Secret сохранён, но macOS Keychain сейчас не даёт VYRON его прочитать</b><p>Сначала попробуйте безопасную проверку. Если Keychain продолжает блокировать доступ, можно повторно выбрать тот же credentials.json OAuth Client VYRON. Каналы, Profile UUID и сохранённые подключения не будут удалены.</p>{config?.secureStorageErrorCode&&<small>Диагностика: {config.secureStorageErrorCode}</small>}<button disabled={busy} onClick={()=>void retryGlobalOauth()}>Повторить безопасную проверку</button></div>}
    {oauthRepairRequired&&<div className="publisherNotice"><b>Google OAuth Client Secret действительно отсутствует</b><p>Canonical secure item не найден. Только в этом случае требуется один повторный импорт credentials.json; профили и каналы не удаляются.</p>{config?.secureStorageErrorCode&&<small>Диагностика: {config.secureStorageErrorCode}</small>}</div>}
    {!oauthReady&&!oauthRepairRequired&&!oauthKeychainBlocked&&<div className="publisherNotice"><b>OAuth Client настроен не полностью</b><p>Нужен один credentials.json текущего OAuth Client VYRON. Finder откроется только после явного нажатия кнопки импорта ниже.</p></div>}
-   <div className="googleConfigActions">{!oauthKeychainBlocked&&<button disabled={busy} onClick={()=>file.current?.click()}>{oauthRepairRequired?'Восстановить OAuth Client':oauthReady?'Заменить credentials.json':'Импортировать credentials.json один раз'}</button>}<label>Public API Key<input type="password" placeholder="опционально" value={settings.youtubeApiKey} onChange={e=>patchSettings({youtubeApiKey:e.target.value.trim()})}/></label></div>
+   <div className="googleConfigActions"><button disabled={busy} onClick={()=>file.current?.click()}>{oauthKeychainBlocked?'Восстановить через credentials.json':oauthRepairRequired?'Восстановить OAuth Client':oauthReady?'Заменить credentials.json':'Импортировать credentials.json один раз'}</button><label>Public API Key<input type="password" placeholder="опционально" value={settings.youtubeApiKey} onChange={e=>patchSettings({youtubeApiKey:e.target.value.trim()})}/></label></div>
   </section>
 
   <section className="panel accountsPanel">
@@ -313,7 +373,7 @@ export function AccountsPage(){
         <button className="mini" disabled={busy} onClick={()=>void checkProfile(p)}>Проверить</button>
         {credentialState==='KEYCHAIN_BLOCKED'&&<button className="mini" disabled={busy} onClick={()=>void safeRetryProfile(p)}>Безопасный retry</button>}
         <button className="mini" disabled={!!refreshingStats[p.id]} onClick={()=>void refreshProfileStats(p)}>{refreshingStats[p.id]?'↻ Обновление…':'↻ Обновить'}</button>
-        <button className="mini" disabled={busy} onClick={()=>void askBrowser(p.id)}>Переподключить</button>
+        <button className="mini" disabled={busy} onClick={()=>void askBrowser(p.id)}>{credentialState==='KEYCHAIN_BLOCKED'?'Войти заново через браузер':'Переподключить через браузер'}</button>
         <button className="danger mini" disabled={busy} onClick={async()=>{await api.youtubeDisconnect(p.id);await refresh()}}>Удалить</button>
        </div>
       </article>
@@ -321,12 +381,13 @@ export function AccountsPage(){
    }
   </section>
 
-  {oauthSetupOpen&&<div className="modalBackdrop" onMouseDown={()=>setOauthSetupOpen(false)}>
+  {oauthSetupOpen&&<div className="modalBackdrop" onMouseDown={()=>{setOauthSetupOpen(false);setPendingAddAfterGlobalRepair(false)}}>
    <section className="confirmModal oauthSetupModal" onMouseDown={e=>e.stopPropagation()}>
     <small>GLOBAL GOOGLE OAUTH</small>
-    <h2>{oauthRepairRequired?'Google OAuth Client требует восстановления':'Google OAuth Client ещё не настроен'}</h2>
-    <p>{oauthRepairRequired?'Выберите тот же credentials.json один раз. Профили и каналы не удаляются; VYRON перепишет только GLOBAL secure credential в новый защищённый item и проверит readback.':'Для подключения YouTube-каналов сначала один раз импортируйте credentials.json вашего VYRON OAuth Client. После этого «+ Добавить канал» будет открывать выбор браузера, а не Finder.'}</p>
-    <footer><button onClick={()=>setOauthSetupOpen(false)}>Отмена</button><button className="primary" onClick={()=>file.current?.click()}>{oauthRepairRequired?'Восстановить OAuth Client':'Импортировать credentials.json'}</button></footer>
+    <h2>{oauthKeychainBlocked?'VYRON не может прочитать OAuth Client Secret':oauthRepairRequired?'Google OAuth Client требует восстановления':'Google OAuth Client ещё не настроен'}</h2>
+    <p>{oauthKeychainBlocked?'Сначала попробуйте безопасную проверку. Если Keychain продолжает блокировать доступ, выберите тот же credentials.json OAuth Client VYRON. Каналы, Profile UUID и сохранённые подключения останутся на месте.':oauthRepairRequired?'Выберите тот же credentials.json один раз. Профили и каналы не удаляются; меняется только GLOBAL secure credential после успешного readback.':'Для подключения YouTube-каналов один раз импортируйте credentials.json вашего VYRON OAuth Client.'}</p>
+    {pendingAddAfterGlobalRepair&&<p className="note">После восстановления VYRON автоматически продолжит «+ Добавить канал» и откроет выбор браузера — повторно нажимать кнопку не нужно.</p>}
+    <footer><button onClick={()=>{setOauthSetupOpen(false);setPendingAddAfterGlobalRepair(false)}}>Отмена</button>{oauthKeychainBlocked&&<button disabled={busy} onClick={()=>void retryGlobalOauth()}>Повторить безопасную проверку</button>}<button className="primary" onClick={()=>file.current?.click()}>{oauthKeychainBlocked?'Выбрать credentials.json':oauthRepairRequired?'Восстановить OAuth Client':'Импортировать credentials.json'}</button></footer>
    </section>
   </div>}
 
