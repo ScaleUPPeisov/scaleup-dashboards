@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
   actions: read
 
 concurrency:
@@ -22,9 +22,6 @@ env:
   BUNDLE_ID: studio.channelflow.desktop
   EXECUTABLE: channelflow
   EXPECTED_SIGNING_CERT_SHA1: 2C8B0BD4EE1C000D29DD0667BF1068D4673692C9
-  APPROVED_PRODUCT_HEAD: 222480156f42f6d547399872e8bbcc26c51fab27
-  STABLE_TAG: v3.0.0
-  RELEASE_AUTHORIZED_BY_OWNER: 'YES'
   EMBEDDED_UPDATER_KEY: dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEREODQ1NDdERTI1MEYxQzAKUldUQThWRGlmVlNFM1RHdW5WQnE2eG9BYTBnQlNmbUtmVU84UHJQMUNvZWZ4Qmo0L2hYcUd4UDEK
 
 jobs:
@@ -499,189 +496,26 @@ jobs:
           } | tee physical-candidate/automated-summary.txt
           cat physical-candidate/automated-summary.txt >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Stable release owner-override preflight
+      - name: Stable release freeze — physical acceptance required
         shell: bash
         run: |
           set -Eeuo pipefail
-          test "$RELEASE_AUTHORIZED_BY_OWNER" = 'YES'
-          CURRENT_HEAD="$(git rev-parse HEAD)"
-          git merge-base --is-ancestor "$APPROVED_PRODUCT_HEAD" "$CURRENT_HEAD"
-          CHANGED="$(git diff --name-only "$APPROVED_PRODUCT_HEAD..$CURRENT_HEAD" || true)"
-          test "$CHANGED" = '.github/workflows/vyron-300-physical-candidate.yml'
-          test -s physical-candidate/VYRON-3.0.0-PHYSICAL-CANDIDATE-arm64.dmg
-          test -s physical-candidate/VYRON-3.0.0-PHYSICAL-CANDIDATE.app.tar.gz
-          test -s physical-candidate/VYRON-3.0.0-PHYSICAL-CANDIDATE.app.tar.gz.sig
-          MAC_VERSION="$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode | python3 -c 'import json,sys;print(json.load(sys.stdin)["version"])')"
-          WIN_VERSION="$(gh api "repos/$REPO/contents/vyron-updates/windows-latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode | python3 -c 'import json,sys;print(json.load(sys.stdin)["version"])')"
-          test "$MAC_VERSION" = '2.1.15-rc.7' -o "$MAC_VERSION" = '3.0.0'
-          test "$WIN_VERSION" = '2.1.13'
-          echo "RELEASE_AUTHORIZATION=OWNER_OVERRIDE"
-          echo "APPROVED_PRODUCT_HEAD=$APPROVED_PRODUCT_HEAD"
-          echo "WORKFLOW_ONLY_HEAD=$CURRENT_HEAD"
-          echo "PHYSICAL_EXTERNAL_ACCEPTANCE=NOT_CLAIMED"
-
-      - name: Prepare stable 3.0.0 assets and updater manifest
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          rm -rf stable
-          mkdir -p stable
-          cp physical-candidate/VYRON-3.0.0-PHYSICAL-CANDIDATE-arm64.dmg stable/VYRON-3.0.0-arm64.dmg
-          cp physical-candidate/VYRON-3.0.0-PHYSICAL-CANDIDATE.app.tar.gz stable/VYRON.app.tar.gz
-          cp physical-candidate/VYRON-3.0.0-PHYSICAL-CANDIDATE.app.tar.gz.sig stable/VYRON.app.tar.gz.sig
-          cp physical-candidate/codesign-details.txt stable/codesign-details.txt
-          cp physical-candidate/designated-requirement.txt stable/designated-requirement.txt
-          shasum -a 256 stable/VYRON-3.0.0-arm64.dmg | tee stable/VYRON-3.0.0-arm64.dmg.sha256
-          shasum -a 256 stable/VYRON.app.tar.gz | tee stable/VYRON.app.tar.gz.sha256
-          export PUB_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          python3 - <<'PY'
-          import json,os,pathlib
-          sig=pathlib.Path('stable/VYRON.app.tar.gz.sig').read_text().strip()
-          manifest={
-            'version':'3.0.0',
-            'notes':'VYRON 3.0.0 — multi-channel production update: permanent OAuth/Keychain continuity, Google account identity metadata, generation-aware Publisher file identity, channel-scoped duplicate protection, compact workflow improvements and updater hardening.',
-            'pub_date':os.environ['PUB_DATE'],
-            'platforms':{
-              'darwin-aarch64':{
-                'url':'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v3.0.0/VYRON.app.tar.gz',
-                'signature':sig,
-              }
-            }
-          }
-          pathlib.Path('stable/latest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n')
-          d=json.load(open('stable/latest.json'))
-          assert d['version']=='3.0.0'
-          assert d['platforms']['darwin-aarch64']['url'].endswith('/v3.0.0/VYRON.app.tar.gz')
-          assert d['platforms']['darwin-aarch64']['signature']==sig
-          print('STABLE_MANIFEST=PASS')
-          PY
-
-      - name: Publish stable GitHub release v3.0.0
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          cat >/tmp/vyron-300-release-notes.md <<'EOF'
-          ## VYRON 3.0.0
-
-          Stable macOS ARM64 release from the fully green VYRON 3.0.0 production source.
-
-          - OAuth/Keychain continuity preserved across application updates.
-          - Google account email/subject metadata added as a reconnect safety guard; YouTube Channel ID remains authoritative.
-          - Publisher now identifies current physical media by channel + SHA-256 + file size, so a newly rendered file at an old path is treated as a new generation instead of inheriting an old YouTube ID.
-          - Same-channel duplicate content remains blocked by verified upload history.
-          - Historical upload evidence is preserved.
-          - Multi-channel state, folders, jobs, schedules, statistics and upload history remain persistent.
-          - Signed Tauri updater archive and macOS ARM64 DMG are included.
-
-          Automated acceptance: Windows compile, full frontend regression, full Rust regression, source contracts, code signing, updater signature verification and Finder-like launch smoke passed.
-
-          Release authorization: explicit owner override.
-          External physical TOSHIBA/Glass acceptance is not represented as an automated PASS.
-          EOF
-
-          if gh release view "$STABLE_TAG" --repo "$REPO" >/dev/null 2>&1; then
-            TARGET="$(gh release view "$STABLE_TAG" --repo "$REPO" --json targetCommitish --jq .targetCommitish)"
-            test "$TARGET" = "$APPROVED_PRODUCT_HEAD"
-          else
-            gh release create "$STABLE_TAG" \
-              --repo "$REPO" \
-              --target "$APPROVED_PRODUCT_HEAD" \
-              --title 'VYRON 3.0.0' \
-              --notes-file /tmp/vyron-300-release-notes.md \
-              --latest \
-              stable/VYRON-3.0.0-arm64.dmg \
-              stable/VYRON-3.0.0-arm64.dmg.sha256 \
-              stable/VYRON.app.tar.gz \
-              stable/VYRON.app.tar.gz.sha256 \
-              stable/VYRON.app.tar.gz.sig \
-              stable/codesign-details.txt \
-              stable/designated-requirement.txt \
-              stable/latest.json
-          fi
-          echo 'STABLE_RELEASE_CREATED=PASS'
-
-      - name: Verify remote stable updater assets
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          gh api "repos/$REPO/releases/tags/$STABLE_TAG" >/tmp/vyron-300-release.json
-          python3 - <<'PY'
-          import json,os
-          d=json.load(open('/tmp/vyron-300-release.json'))
-          assert d['tag_name']=='v3.0.0'
-          assert d['draft'] is False
-          assert d['prerelease'] is False
-          assert d['target_commitish']==os.environ['APPROVED_PRODUCT_HEAD']
-          assets={a['name']:a for a in d['assets']}
-          required={'VYRON-3.0.0-arm64.dmg','VYRON-3.0.0-arm64.dmg.sha256','VYRON.app.tar.gz','VYRON.app.tar.gz.sha256','VYRON.app.tar.gz.sig','codesign-details.txt','designated-requirement.txt','latest.json'}
-          assert required <= set(assets)
-          assert all(assets[x]['size']>0 for x in required)
-          print('REMOTE_STABLE_RELEASE=PASS')
-          PY
-          rm -rf /tmp/vyron-300-remote && mkdir -p /tmp/vyron-300-remote
-          gh release download "$STABLE_TAG" --repo "$REPO" --dir /tmp/vyron-300-remote \
-            --pattern 'VYRON.app.tar.gz' --pattern 'VYRON.app.tar.gz.sig' --pattern 'latest.json'
-          cmp -s stable/VYRON.app.tar.gz /tmp/vyron-300-remote/VYRON.app.tar.gz
-          cmp -s stable/VYRON.app.tar.gz.sig /tmp/vyron-300-remote/VYRON.app.tar.gz.sig
-          cmp -s stable/latest.json /tmp/vyron-300-remote/latest.json
-          echo 'REMOTE_UPDATER_ARCHIVE_BYTE_IDENTICAL=PASS'
-          echo 'REMOTE_UPDATER_SIGNATURE_BYTE_IDENTICAL=PASS'
-
-      - name: Promote macOS updater feed to stable 3.0.0
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          FEED_SHA="$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .sha)"
-          CURRENT_VERSION="$(gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode | python3 -c 'import json,sys;print(json.load(sys.stdin)["version"])')"
-          if [[ "$CURRENT_VERSION" != '3.0.0' ]]; then
-            test "$CURRENT_VERSION" = '2.1.15-rc.7'
-            CONTENT="$(base64 < stable/latest.json | tr -d '\n')"
-            gh api --method PUT "repos/$REPO/contents/vyron-updates/latest.json" \
-              -f message='release: promote VYRON 3.0.0 macOS updater feed' \
-              -f content="$CONTENT" \
-              -f sha="$FEED_SHA" \
-              -f branch='main' >/tmp/vyron-feed-update.json
-          fi
-          gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode >/tmp/mac-feed-stable.json
-          python3 - <<'PY'
-          import json
-          d=json.load(open('/tmp/mac-feed-stable.json'))
-          assert d['version']=='3.0.0'
-          p=d['platforms']['darwin-aarch64']
-          assert p['url']=='https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v3.0.0/VYRON.app.tar.gz'
-          assert p['signature']
-          print('MAC_FEED_VERSION_3_0_0=PASS')
-          PY
-          gh api "repos/$REPO/contents/vyron-updates/windows-latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode >/tmp/windows-feed-stable.json
-          test "$(python3 -c 'import json;print(json.load(open("/tmp/windows-feed-stable.json"))["version"])')" = '2.1.13'
-          cmp -s /tmp/windows-feed-before.json /tmp/windows-feed-stable.json
-          echo 'WINDOWS_FEED_2_1_13_UNCHANGED=PASS'
-
-      - name: Verify public updater endpoint
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          CACHE_BUST="$(date +%s)"
-          curl -fsSL "https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/vyron-updates/latest.json?release=$CACHE_BUST" >/tmp/public-vyron-latest.json
-          python3 - <<'PY'
-          import json
-          d=json.load(open('/tmp/public-vyron-latest.json'))
-          assert d['version']=='3.0.0'
-          p=d['platforms']['darwin-aarch64']
-          assert p['url'].endswith('/releases/download/v3.0.0/VYRON.app.tar.gz')
-          assert p['signature']
-          print('PUBLIC_UPDATER_ENDPOINT=PASS')
-          print('BUILT_IN_UPDATE_BUTTON_READY=PASS')
-          PY
+          echo 'STABLE_RELEASE_ALLOWED=NO'
+          echo 'PRODUCT_PHYSICAL_PUBLISHER_PASS=PENDING'
+          echo 'PRODUCT_PHYSICAL_OAUTH_UPDATE_CONTINUITY_PASS=PENDING'
+          echo 'PRODUCT_ONE_UPLOAD_PASS=PENDING'
+          echo 'PRODUCT_DUPLICATE_RESCAN_PASS=PENDING'
+          echo 'GITHUB_RELEASE_MUTATION=DISABLED_IN_CANDIDATE_WORKFLOW'
+          echo 'MACOS_FEED_PROMOTION=DISABLED_IN_CANDIDATE_WORKFLOW'
           {
-            echo 'STABLE_RELEASE=v3.0.0'
-            echo 'RELEASE_AUTHORIZATION=OWNER_OVERRIDE'
-            echo 'APPROVED_PRODUCT_HEAD=222480156f42f6d547399872e8bbcc26c51fab27'
-            echo 'MAC_FEED=3.0.0'
-            echo 'WINDOWS_FEED=2.1.13'
-            echo 'BUILT_IN_UPDATE_BUTTON_READY=PASS'
-            echo 'PHYSICAL_EXTERNAL_ACCEPTANCE=NOT_CLAIMED'
-          } | tee -a "$GITHUB_STEP_SUMMARY"
+            echo '## Release freeze'
+            echo ''
+            echo '- Stable publication: **BLOCKED**'
+            echo '- Publisher physical acceptance: **PENDING**'
+            echo '- OAuth update continuity physical acceptance: **PENDING**'
+            echo '- One real upload + duplicate rescan: **PENDING**'
+            echo '- Candidate workflow is build/test/artifact-only and cannot publish v3.0.0 or mutate production feeds.'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Cleanup signing material
         if: always()
