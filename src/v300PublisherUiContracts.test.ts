@@ -17,6 +17,7 @@ describe('VYRON 3.0.0 Publisher/UI contracts',()=>{
  it('shows fingerprint generation evidence and never fixes selection by forcing checkboxes',()=>{
   expect(p).toContain('Показать доказательство статуса');
   expect(p).toContain('Новая версия файла');
+  expect(p).toContain('Проверить файл');
   expect(p).toContain('Считать текущий файл новой версией');
   expect(p).toContain("renderScan.summary.NEW_CANDIDATE+renderScan.summary.NEW_GENERATION");
   expect(p).toContain("disabled={!fresh||busy}");
