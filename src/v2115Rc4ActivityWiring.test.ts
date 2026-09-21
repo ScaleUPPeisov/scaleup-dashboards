@@ -67,7 +67,8 @@ describe('VYRON 2.1.15 RC4 activity history wiring',()=>{
   expect(lifecycle).toContain("return'VERIFY_REQUIRED'");
   expect(publisher).toContain("uploadStateById.get(j.id)==='NEW'&&!recoveryJobIds.has(j.id)");
   expect(publisher).toContain('selectableJobIds.has(j.id)');
-  expect(publisher).toContain('Проверить спорные загрузки');
+  expect(publisher).toContain('Проверить YouTube ID');
+  expect(publisher).toContain('Проверить и восстановить {renderScan.summary.VERIFY_REQUIRED} файлов');
   expect(publisher).toContain('youtubeVideoProcessingStatusBatch');
   expect(publisher).toContain('Новых videos.insert: 0');
  });
