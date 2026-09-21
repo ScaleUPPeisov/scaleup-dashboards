@@ -124,6 +124,7 @@ export function AccountsPage(){
     try{readiness=await api.youtubeGoogleConfig()}catch(e){toast(`Не удалось проверить GLOBAL OAuth Client: ${String(e)}`);return}
     setConfig(readiness);
     if(!readiness.oauthReady){
+     if(readiness.oauthState==='KEYCHAIN_ACCESS_BLOCKED'){toast('Client Secret сохранён, но macOS Keychain временно блокирует доступ. Используйте безопасную проверку в GLOBAL GOOGLE CONFIG — credentials.json заново не нужен.');return}
      setOauthSetupOpen(true);
      return
     }
@@ -240,7 +241,8 @@ export function AccountsPage(){
  }
 
  const oauthReady=!!config?.oauthReady&&config?.secretOperational!==false;
- const oauthRepairRequired=Boolean(config?.repairRequired)||config?.oauthState==='NEEDS_SECURE_STORAGE_REPAIR';
+ const oauthKeychainBlocked=config?.oauthState==='KEYCHAIN_ACCESS_BLOCKED';
+ const oauthRepairRequired=!oauthKeychainBlocked&&(Boolean(config?.repairRequired)||config?.oauthState==='NEEDS_SECURE_STORAGE_REPAIR');
  const orphanMappings=reconciliation?.orphanChannels||[];
  const credentialRows=Object.values(credentialStates);
  const oauthOperational=credentialRows.filter(x=>x.credentialState==='READY').length;
@@ -267,13 +269,14 @@ export function AccountsPage(){
    <div className="configChecks">
     <span className={config?.configured?'good':''}>OAuth Client ID <b>{config?.configured?'✓':'—'}</b></span>
     <span className={config?.projectId?'good':''}>Project <b>{config?.projectId||'—'}</b></span>
-    <span className={config?.secretOperational?'good':config?.hasSecret?'warn':''}>Client Secret <b>{config?.secretOperational?'✓':config?.hasSecret?'требуется восстановление':'—'}</b></span>
+    <span className={config?.secretOperational?'good':config?.hasSecret?'warn':''}>Client Secret <b>{config?.secretOperational?'✓':oauthKeychainBlocked?'сохранён • Keychain blocked':config?.hasSecret?'сохранён • не проверен':'—'}</b></span>
     <span className={oauthReady?'good':'warn'}>OAuth <b>{oauthReady?'READY':config?.oauthState||'NOT CONFIGURED'}</b></span>
     <span className={settings.youtubeApiKey?'good':''}>Public API Key <b>{settings.youtubeApiKey?'✓':'не нужен для OAuth'}</b></span>
    </div>
-   {oauthRepairRequired&&<div className="publisherNotice"><b>Google OAuth требует восстановления</b><p>Защищённый Client Secret недоступен текущей версии VYRON. Каналы, профили, расписания и сохранённая статистика не удалены. Импортируйте тот же credentials.json один раз — VYRON создаст новый защищённый secure item без запроса пароля macOS.</p>{config?.secureStorageErrorCode&&<small>Диагностика: {config.secureStorageErrorCode}</small>}</div>}
-   {!oauthReady&&!oauthRepairRequired&&<div className="publisherNotice"><b>OAuth Client настроен не полностью</b><p>Нужен один credentials.json текущего OAuth Client VYRON. Finder откроется только после явного нажатия кнопки импорта ниже.</p></div>}
-   <div className="googleConfigActions"><button disabled={busy} onClick={()=>file.current?.click()}>{oauthRepairRequired?'Восстановить OAuth Client':oauthReady?'Заменить credentials.json':'Импортировать credentials.json один раз'}</button><label>Public API Key<input type="password" placeholder="опционально" value={settings.youtubeApiKey} onChange={e=>patchSettings({youtubeApiKey:e.target.value.trim()})}/></label></div>
+   {oauthKeychainBlocked&&<div className="publisherNotice"><b>Client Secret сохранён — macOS Keychain временно не дал доступ</b><p>Не импортируйте credentials.json заново. VYRON сохранит текущий secure account и выполнит один безопасный NO-UI retry только по вашему действию.</p>{config?.secureStorageErrorCode&&<small>Диагностика: {config.secureStorageErrorCode}</small>}<button disabled={busy} onClick={async()=>{setBusy(true);try{const next=await api.youtubeRetryGoogleConfig();setConfig(next);toast(next.oauthReady?'✓ Client Secret снова доступен. Повторный импорт не потребовался.':'Keychain пока блокирует Client Secret. Данные OAuth не изменены.')}catch(e){toast(String(e))}finally{setBusy(false)}}}>Повторить безопасную проверку</button></div>}
+   {oauthRepairRequired&&<div className="publisherNotice"><b>Google OAuth Client Secret действительно отсутствует</b><p>Canonical secure item не найден. Только в этом случае требуется один повторный импорт credentials.json; профили и каналы не удаляются.</p>{config?.secureStorageErrorCode&&<small>Диагностика: {config.secureStorageErrorCode}</small>}</div>}
+   {!oauthReady&&!oauthRepairRequired&&!oauthKeychainBlocked&&<div className="publisherNotice"><b>OAuth Client настроен не полностью</b><p>Нужен один credentials.json текущего OAuth Client VYRON. Finder откроется только после явного нажатия кнопки импорта ниже.</p></div>}
+   <div className="googleConfigActions">{!oauthKeychainBlocked&&<button disabled={busy} onClick={()=>file.current?.click()}>{oauthRepairRequired?'Восстановить OAuth Client':oauthReady?'Заменить credentials.json':'Импортировать credentials.json один раз'}</button>}<label>Public API Key<input type="password" placeholder="опционально" value={settings.youtubeApiKey} onChange={e=>patchSettings({youtubeApiKey:e.target.value.trim()})}/></label></div>
   </section>
 
   <section className="panel accountsPanel">
