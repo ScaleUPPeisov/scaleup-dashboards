@@ -465,39 +465,39 @@ fn resolve_client_secret_for_profile(app:&AppHandle,profile_id:&str,client_id:&s
    Err(e)=>return Err(e),
   }
  }else{None};
+ // Canonical-first: do not even enumerate historical accounts while a matching
+ // current credential is healthy. Legacy compatibility is consulted only when both
+ // canonical sources are unavailable.
+ if let Some(secret)=profile_secret.as_ref().filter(|x|!x.trim().is_empty()).cloned(){
+  return Ok(ResolvedOAuthClient{client_id:client_id.into(),client_secret:secret,source:OAuthClientSecretSource::ProfileCanonical})
+ }
+ if let Some(secret)=global_secret.as_ref().filter(|x|!x.trim().is_empty()).cloned(){
+  return Ok(ResolvedOAuthClient{client_id:client_id.into(),client_secret:secret,source:OAuthClientSecretSource::GlobalExactMatch})
+ }
  let legacy_accounts=security::list_legacy_secret_accounts("")?;
  let legacy_account=select_present_account(&legacy_client_secret_candidates(profile_id),&legacy_accounts);
  let legacy_present=legacy_account.is_some();
- // Preserve existing OAuth clients across binary replacement. Legacy client_secret is a
- // valid fallback source; do not force credentials.json reimport merely because schema v2 exists.
- let legacy_secret=if profile_secret.as_ref().map(|x|!x.trim().is_empty()).unwrap_or(false)||global_secret.as_ref().map(|x|!x.trim().is_empty()).unwrap_or(false){
-  None
- }else if let Some(account)=legacy_account.as_deref(){
+ // Preserve existing OAuth clients across binary replacement. Historical client_secret
+ // is a read-only compatibility source; no credentials.json reimport is required solely
+ // because the application binary or credential schema changed.
+ if let Some(account)=legacy_account.as_deref(){
   match security::legacy_get_secret_once(account){
-   Ok(v)=>v.filter(|x|!x.trim().is_empty()),
+   Ok(Some(secret)) if !secret.trim().is_empty()=>{
+    return Ok(ResolvedOAuthClient{client_id:client_id.into(),client_secret:secret,source:OAuthClientSecretSource::LegacyStable})
+   },
+   Ok(_)=>{},
    Err(e) if keychain_repairable_error(&e)=>return Err(format!("OAUTH_CREDENTIAL_PRECHECK_FAILED: profile={profile_id}; {e}")),
    Err(e)=>return Err(e),
   }
- }else{None};
- if let Some(secret)=legacy_secret{
-  return Ok(ResolvedOAuthClient{client_id:client_id.into(),client_secret:secret,source:OAuthClientSecretSource::LegacyStable})
  }
  let blocked=profile_keychain_error.as_ref().or(global_keychain_error.as_ref());
- match select_oauth_client_secret(profile_secret,client_id,&global_meta.client_id,global_secret,legacy_present){
-  Ok((secret,OAuthClientSecretSource::ProfileCanonical))=>Ok(ResolvedOAuthClient{client_id:client_id.into(),client_secret:secret,source:OAuthClientSecretSource::ProfileCanonical}),
-  Ok((secret,OAuthClientSecretSource::GlobalExactMatch))=>
-   Ok(ResolvedOAuthClient{client_id:client_id.into(),client_secret:secret,source:OAuthClientSecretSource::GlobalExactMatch}),
-  Ok((_,OAuthClientSecretSource::GlobalCurrentMigration))=>Err("OAUTH_CLIENT_RESOLVER_INTERNAL: migration source is reconnect-only".into()),
-  Ok((_,OAuthClientSecretSource::LegacyStable))=>Err("OAUTH_CLIENT_RESOLVER_INTERNAL: legacy source is resolved before selector".into()),
-  Err("CLIENT_SECRET_REIMPORT_REQUIRED")=>{
-   if let Some(e)=blocked{return Err(format!("OAUTH_CLIENT_SECRET_KEYCHAIN_BLOCKED: profile={profile_id}; active client_secret exists but no-UI Keychain access is temporarily blocked; {e}"))}
-   Err(format!("OAUTH_CLIENT_SECRET_REIMPORT_REQUIRED: profile={profile_id}; legacy client_secret metadata exists but no canonical credential is available"))
-  },
-  Err(_)=>{
-   if let Some(e)=blocked{return Err(format!("OAUTH_CLIENT_SECRET_KEYCHAIN_BLOCKED: profile={profile_id}; active client_secret exists but no-UI Keychain access is temporarily blocked; {e}"))}
-   Err(format!("OAUTH_CLIENT_SECRET_REQUIRED: profile={profile_id}; exact client_secret for client_id is missing"))
-  },
+ if let Some(e)=blocked{
+  return Err(format!("OAUTH_CLIENT_SECRET_KEYCHAIN_BLOCKED: profile={profile_id}; active client_secret exists but no-UI Keychain access is temporarily blocked; {e}"))
  }
+ if legacy_present{
+  return Err(format!("OAUTH_CLIENT_SECRET_REIMPORT_REQUIRED: profile={profile_id}; legacy client_secret metadata exists but no readable credential is available"))
+ }
+ Err(format!("OAUTH_CLIENT_SECRET_REQUIRED: profile={profile_id}; exact client_secret for client_id is missing"))
 }
 fn resolve_reconnect_oauth_client(app:&AppHandle,profile_id:&str,historical_client_id:&str)->Result<ResolvedOAuthClient,String>{
  let profile_id=profile_id.trim();
@@ -6291,6 +6291,17 @@ mod keychain_prompt_architecture_tests{
   ).unwrap();
   assert_eq!(token,"selected-refresh");
   assert_eq!(&*legacy_reads.borrow(),&vec![selected_legacy]);
+ }
+ #[test]fn client_secret_resolution_is_canonical_first_before_legacy_inventory(){
+  let source=include_str!("youtube.rs");
+  let body=source.split("fn resolve_client_secret_for_profile").nth(1).unwrap().split("fn resolve_reconnect_oauth_client").next().unwrap();
+  let profile_return=body.find("OAuthClientSecretSource::ProfileCanonical").unwrap();
+  let global_return=body.find("OAuthClientSecretSource::GlobalExactMatch").unwrap();
+  let legacy_inventory=body.find("security::list_legacy_secret_accounts").unwrap();
+  let legacy_read=body.find("security::legacy_get_secret_once").unwrap();
+  assert!(profile_return<legacy_inventory);
+  assert!(global_return<legacy_inventory);
+  assert!(legacy_inventory<legacy_read);
  }
  #[test]fn rc7_security_source_contract_uses_per_query_ui_skip(){
   let source=include_str!("security.rs");
