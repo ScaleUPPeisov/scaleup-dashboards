@@ -5657,7 +5657,7 @@ pub async fn youtube_oauth_reconnect_existing(
     );
     let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
     let state = Uuid::new_v4().to_string();
-    let scope="https://www.googleapis.com/auth/youtube.force-ssl https://www.googleapis.com/auth/yt-analytics.readonly https://www.googleapis.com/auth/yt-analytics-monetary.readonly";
+    let scope="openid email profile https://www.googleapis.com/auth/youtube.force-ssl https://www.googleapis.com/auth/yt-analytics.readonly https://www.googleapis.com/auth/yt-analytics-monetary.readonly";
     let scopes = scope
         .split_whitespace()
         .map(str::to_string)
@@ -5711,6 +5711,7 @@ pub async fn youtube_oauth_reconnect_existing(
     let _=app.emit("oauth-recovery-stage",json!({"profileId":profile_id,"state":"VALIDATING","expectedChannelId":expected_channel_id}));
     // Validate the newly issued refresh token first. The refreshed access token is then used for the single YouTube identity request.
     let (access, expires) = reconnect_refresh_smoke(&client_id, &client_secret, &refresh).await?;
+    let (authorized_google_email,authorized_google_subject_id)=google_identity_metadata(&access).await;
     emit_youtube_api_request(
         &app,
         "channels.list",
@@ -5741,6 +5742,20 @@ pub async fn youtube_oauth_reconnect_existing(
         return Err(
             "OAUTH_CHANNEL_MISSING: authorized Google account returned no YouTube channel".into(),
         );
+    }
+    if let (Some(expected_email),Some(received_email))=(target.google_email.as_deref(),authorized_google_email.as_deref()){
+        if !expected_email.eq_ignore_ascii_case(received_email){
+            let authorized_channels=items.iter().map(|x|channel_identity_value(x,&original_store)).collect::<Vec<_>>();
+            let _=app.emit("oauth-recovery-stage",json!({"profileId":profile_id,"state":"WRONG_CHANNEL","reason":"WRONG_GOOGLE_ACCOUNT","expectedGoogleEmail":expected_email,"authorizedGoogleEmail":received_email,"expectedChannelId":expected_channel_id,"credentialsCommitted":false}));
+            return Ok(json!({
+              "ok":false,"status":"WRONG_CHANNEL","code":"WRONG_ACCOUNT","profileId":profile_id,
+              "profileUuidPreserved":true,"expectedChannelId":expected_channel_id,"expectedChannelTitle":target.channel_title,
+              "expectedGoogleEmail":expected_email,"authorizedGoogleEmail":received_email,
+              "authorizedChannels":authorized_channels,"browser":preferred_browser,
+              "credentialsCommitted":false,"refreshPointerChanged":false,"clientSecretPointerChanged":false,"generationChanged":false,
+              "videosInsert":0,"secretValuesIncluded":false
+            }));
+        }
     }
     let matched=find_expected_channel_item(items,&expected_channel_id);
     let item = match matched {
@@ -5785,6 +5800,10 @@ pub async fn youtube_oauth_reconnect_existing(
         &client_id,&client_secret,&access,&refresh,&authorized_channel_id,&authorized_channel_title,
         &scopes,&preferred_browser,expires,
     )?;
+    if let Some(p)=next_store.profiles.iter_mut().find(|p|p.id==profile_id){
+        if authorized_google_email.is_some(){p.google_email=authorized_google_email.clone();}
+        if authorized_google_subject_id.is_some(){p.google_subject_id=authorized_google_subject_id.clone();}
+    }
     let recovery_reason=rotation_reason(backup.old_refresh_error.as_deref())
       .or_else(||rotation_reason(backup.old_client_secret_error.as_deref()));
     let _=app.emit("oauth-recovery-stage",json!({
@@ -6419,7 +6438,7 @@ mod v219_rc7_secitem_ui_skip_tests{
    fn delete(&self,_:&str)->Result<(),String>{Ok(())}
   }
   let c=C::default();
-  let p=OAuthProfile{id:"p".into(),client_id:"client".into(),client_secret:"global-secret".into(),channel_id:None,channel_title:None,access_token:"short-lived".into(),refresh_token:"refresh".into(),expires_at:now_ts()+3600,connected_at:"x".into(),scopes:vec![],preferred_browser:"default".into(),identity_validated_at:None,identity_validated_channel_id:None,credential_error:None};
+  let p=OAuthProfile{id:"p".into(),client_id:"client".into(),client_secret:"global-secret".into(),channel_id:None,channel_title:None,google_email:None,google_subject_id:None,access_token:"short-lived".into(),refresh_token:"refresh".into(),expires_at:now_ts()+3600,connected_at:"x".into(),scopes:vec![],preferred_browser:"default".into(),identity_validated_at:None,identity_validated_channel_id:None,credential_error:None};
   write_profile_secrets_with(&c,&p).unwrap();
   assert_eq!(&*c.sets.borrow(),&vec!["oauth.p.refresh_token".to_string(),"oauth.p.client_secret".to_string()]);
  }
@@ -6434,7 +6453,7 @@ mod v219_rc7_secitem_ui_skip_tests{
 #[cfg(test)]
 mod v2110_oauth_continuity_tests{
  use super::*;
- fn p(id:&str,ch:&str)->OAuthProfile{OAuthProfile{id:id.into(),client_id:"client".into(),client_secret:String::new(),channel_id:Some(ch.into()),channel_title:Some(ch.into()),access_token:String::new(),refresh_token:String::new(),expires_at:0,connected_at:"2026-09-19T00:00:00Z".into(),scopes:vec![],preferred_browser:"default".into(),identity_validated_at:None,identity_validated_channel_id:None,credential_error:None}}
+ fn p(id:&str,ch:&str)->OAuthProfile{OAuthProfile{id:id.into(),client_id:"client".into(),client_secret:String::new(),channel_id:Some(ch.into()),channel_title:Some(ch.into()),google_email:None,google_subject_id:None,access_token:String::new(),refresh_token:String::new(),expires_at:0,connected_at:"2026-09-19T00:00:00Z".into(),scopes:vec![],preferred_browser:"default".into(),identity_validated_at:None,identity_validated_channel_id:None,credential_error:None}}
  #[test]fn physical_219_legacy_presence_not_run_is_never_connected(){
   let profile=p("p1","UC1");
   let (state,last,_)=resolved_credential_state(&profile,MIGRATION_RECONNECT_REQUIRED,false,true,None);
@@ -6613,7 +6632,7 @@ mod v2113_existing_channel_rebind_tests{
   assert_eq!(google_config_status_value(&ready)["oauthReady"],false);
  }
  #[test]fn existing_channel_reuses_profile_uuid(){
-  let p=OAuthProfile{id:"P_EXISTING".into(),client_id:"OLD_CLIENT".into(),client_secret:String::new(),channel_id:Some("UC1".into()),channel_title:Some("Channel".into()),access_token:String::new(),refresh_token:String::new(),expires_at:0,connected_at:String::new(),scopes:vec![],preferred_browser:String::new(),identity_validated_at:None,identity_validated_channel_id:None,credential_error:None};
+  let p=OAuthProfile{id:"P_EXISTING".into(),client_id:"OLD_CLIENT".into(),client_secret:String::new(),channel_id:Some("UC1".into()),channel_title:Some("Channel".into()),google_email:None,google_subject_id:None,access_token:String::new(),refresh_token:String::new(),expires_at:0,connected_at:String::new(),scopes:vec![],preferred_browser:String::new(),identity_validated_at:None,identity_validated_channel_id:None,credential_error:None};
   assert_eq!(reconnect_profile_id(Some(&p)),"P_EXISTING");
   assert_ne!(reconnect_profile_id(None),"P_EXISTING");
  }
@@ -6624,7 +6643,7 @@ mod v2113_existing_channel_rebind_tests{
    fn set(&self,a:&str,v:&str)->Result<(),String>{self.v.borrow_mut().insert(a.into(),v.into());Ok(())}
    fn delete(&self,a:&str)->Result<(),String>{self.v.borrow_mut().remove(a);Ok(())}
   }
-  let mut store=OAuthStore{profiles:vec![OAuthProfile{id:"P1".into(),client_id:"OLD_CLIENT".into(),client_secret:String::new(),channel_id:Some("UC1".into()),channel_title:Some("Old".into()),access_token:String::new(),refresh_token:String::new(),expires_at:0,connected_at:String::new(),scopes:vec![],preferred_browser:"brave".into(),identity_validated_at:None,identity_validated_channel_id:None,credential_error:None}]};
+  let mut store=OAuthStore{profiles:vec![OAuthProfile{id:"P1".into(),client_id:"OLD_CLIENT".into(),client_secret:String::new(),channel_id:Some("UC1".into()),channel_title:Some("Old".into()),google_email:None,google_subject_id:None,access_token:String::new(),refresh_token:String::new(),expires_at:0,connected_at:String::new(),scopes:vec![],preferred_browser:"brave".into(),identity_validated_at:None,identity_validated_channel_id:None,credential_error:None}]};
   let sec=Mem::default();
   reconnect_apply_validated_with(&sec,&mut store,"P1","CURRENT_CLIENT","CURRENT_SECRET","ACCESS","REFRESH","UC1","Channel",&[],"brave",3600).unwrap();
   assert_eq!(store.profiles.len(),1);
@@ -6787,7 +6806,7 @@ mod v219_rc4_inventory_and_acl_tests{
    fn delete(&self,a:&str)->Result<(),String>{self.v.borrow_mut().remove(a);Ok(())}
   }
   let sec=S::default();
-  let p=OAuthProfile{id:"p1".into(),client_id:"client".into(),client_secret:"secret".into(),channel_id:None,channel_title:None,access_token:"access".into(),refresh_token:"refresh".into(),expires_at:1,connected_at:"x".into(),scopes:vec![],preferred_browser:"default".into(),identity_validated_at:None,identity_validated_channel_id:None,credential_error:None};
+  let p=OAuthProfile{id:"p1".into(),client_id:"client".into(),client_secret:"secret".into(),channel_id:None,channel_title:None,google_email:None,google_subject_id:None,access_token:"access".into(),refresh_token:"refresh".into(),expires_at:1,connected_at:"x".into(),scopes:vec![],preferred_browser:"default".into(),identity_validated_at:None,identity_validated_channel_id:None,credential_error:None};
   write_profile_secrets_with(&sec,&p).unwrap();
   assert_eq!(&*sec.sets.borrow(),&vec!["oauth.p1.refresh_token".to_string(),"oauth.p1.client_secret".to_string()]);
   assert!(sec.v.borrow().get("oauth.p1.access_token").is_none());
