@@ -67,6 +67,7 @@ export type ExistingVideoTargetedRetryResult={requestedIds:string[];videosHydrat
 export type YoutubeScheduleUpdateResult={id:string;verified:boolean;skipped:boolean;skipReason?:'ALREADY_PUBLISHED'|'ALREADY_CORRECT'|'UNSUPPORTED_STATE'|null;scheduleAccepted:boolean;scheduleVerified:boolean;metadataPreserved:boolean;statusPreserved:boolean;snippetWrites:0;thumbnailWrites:0;playlistWrites:0;videosInsert:0;mismatches?:string[];before?:{publishAt?:string|null;privacyStatus?:string;snippet?:Record<string,unknown>;preservedStatus?:Record<string,unknown>};actual?:{publishAt?:string|null;privacyStatus?:string;snippet?:Record<string,unknown>;preservedStatus?:Record<string,unknown>}};
 export type CompetitorCandidate={channelId:string;name:string;url:string;thumbnail?:string;subscribers?:number;views?:number;videos?:number;similarity:number};
 export type UpdaterTransferProgress={status:'DOWNLOADING'|'VERIFYING';percent:number;downloadedBytes:number;totalBytes:number};
+export type UpdaterInstallPreflight={currentExecutablePath:string;currentAppBundlePath?:string|null;underApplications:boolean;runningFromDmg:boolean;bundleReplaceable:boolean;currentVersion:string;bundleId:string;targetPlatform:string;signatureConfigured:boolean;secretValuesIncluded:false};
 export type CheckedUpdaterCandidate={none:false;version:string;date?:string;body:string;current:string;latest:string;status:'AVAILABLE';endpoint:string;versionComparison:string;download:(onProgress?:(p:UpdaterTransferProgress)=>void)=>Promise<void>;install:(onStatus?:(s:'VERIFYING'|'INSTALLING'|'READY_TO_RESTART')=>void)=>Promise<void>;restart:()=>Promise<void>};
 export type NoUpdaterCandidate={none:true;current:string;latest:string;status:'UP_TO_DATE';endpoint:string;versionComparison:string};
 export type CheckedUpdater=CheckedUpdaterCandidate|NoUpdaterCandidate;
@@ -185,6 +186,7 @@ export const api={
   onYoutubeProgress:(cb:(data:UploadProgressFact)=>void)=>listen<UploadProgressFact>('youtube-upload-progress',e=>cb(e.payload)),
   onYoutubeApiRequest:(cb:(data:YoutubeApiRequestEvent)=>void)=>listen<YoutubeApiRequestEvent>('youtube-api-request',e=>{recordYoutubeApiRequest(e.payload);if(e.payload.method==='videos.insert'&&e.payload.operationId?.startsWith('short-upload:')){const shortId=e.payload.operationId.slice('short-upload:'.length).split(':')[0];mutateShortsState(s=>recordShortUploadAttempt(s,shortId,e.payload.operationId!,e.payload.at||new Date().toISOString()))}cb(e.payload)}),
   appVersion:()=>getVersion(),
+  updaterInstallPreflight:()=>invoke<UpdaterInstallPreflight>('updater_install_preflight'),
   checkUpdate:async():Promise<CheckedUpdater>=>{
     const current=await getVersion();
     let update:any;
