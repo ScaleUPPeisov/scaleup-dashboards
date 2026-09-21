@@ -29,13 +29,16 @@ describe('VYRON 2.1.15 RC7 OAuth update continuity',()=>{
     expect(fallback).toContain('profile_refresh_token_account(&app,&profile_id)?');
     expect(fallback).not.toContain('canonical_get_secret_cached(&oauth_key(&profile_id,"refresh_token"))');
   });
-  it('startup recovery UI never auto-launches browser or credentials picker',()=>{
+  it('startup recovery UI may refresh saved tokens but never auto-launches browser or credentials picker',()=>{
     const ui=read('src/AuthRecoveryCenter.tsx');
-    const effect=ui.match(/useEffect\(\(\)=>\{void load\(\).*?\},\[\]\);/s)?.[0]||'';
+    const effect=ui.match(/useEffect\(\(\)=>\{.*?\},\[\]\);/s)?.[0]||'';
+    const automatic=ui.split('async function runAutomaticRecovery').at(1)?.split('async function reconnect')[0]||'';
     expect(effect).toContain('load()');
-    expect(effect).not.toContain('reconnect(');
-    expect(effect).not.toContain('.click()');
-    expect(effect).not.toContain('youtubeOauthBrowsers');
+    expect(effect).toContain('runAutomaticRecovery(true)');
+    expect(automatic).toContain('youtubeOauthRecoverExistingProfiles');
+    expect(automatic).not.toContain('youtubeOauthBrowsers');
+    expect(automatic).not.toContain('youtubeReconnectExisting');
+    expect(automatic).not.toContain('.click()');
   });
   it('contains explicit 13-profile and 50-profile pointer continuity fixtures',()=>{
     const y=read('src-tauri/src/youtube.rs');
