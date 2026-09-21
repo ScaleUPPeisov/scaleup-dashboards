@@ -1,7 +1,7 @@
 import {describe,expect,it} from 'vitest';
 import type {RenderFolderVideoFile} from './api';
 import type {UploadHistoryRecord,VideoJob} from './types';
-import {buildLegacyRecoveryPreview,classifyChannelRenderFiles,crossChannelScanRecoveryJobs,planRenderScanImport,renderFileNeedsFingerprint,summarizeRenderScan} from './renderScanClassifier';
+import {buildLegacyRecoveryPreview,canRefreshCurrentGenerationEvidence,classifyChannelRenderFiles,crossChannelScanRecoveryJobs,planRenderScanImport,renderFileNeedsFingerprint,summarizeRenderScan} from './renderScanClassifier';
 
 const root='/workspace/Render/Glass City Lovers';
 const A='a'.repeat(64),B='b'.repeat(64),C='c'.repeat(64);
@@ -177,6 +177,13 @@ describe('VYRON generation-aware channel render scan',()=>{
     const preview=buildLegacyRecoveryPreview([row],[h],'glass');
     expect(preview.newGenerations).toHaveLength(0);
     expect(preview.verifyRequired).toHaveLength(1);
+  });
+
+  it('never rewrites fingerprint evidence on an uploaded historical generation',()=>{
+    const historical=job('glass',1,root,{youtubeVideoId:'YT_OLD',uploadedAt:'2026-09-01T00:00:00Z',storageLifecycle:'UPLOADED',status:'SCHEDULED',currentSourceFingerprint:A,currentSourceFileSize:500_000_000});
+    const active=job('glass',2,root,{status:'READY_UPLOAD',storageLifecycle:'NEW',currentSourceFingerprint:B,currentSourceFileSize:505_000_000});
+    expect(canRefreshCurrentGenerationEvidence(historical)).toBe(false);
+    expect(canRefreshCurrentGenerationEvidence(active)).toBe(true);
   });
 
 });
