@@ -50,6 +50,7 @@ export type VideoJob={
   uploadAcceptedAt?:string; processingState?:YoutubeProcessingState; processingCheckedAt?:string; processingError?:string;
   remoteExists?:boolean; remoteCheckedAt?:string; identityVerifiedAt?:string; remotePrivacyStatus?:string;
   thumbnailPath?:string; uploadFingerprint?:string; uploadInterruptedAt?:string; endlumeSentAt?:string; removedFromPublishList?:boolean;
+  currentSourceFingerprint?:string; currentSourceFileSize?:number; currentSourceModifiedAt?:number; sourceGenerationKey?:string; sourcePreviousJobId?:string;
   sourceOrigin?:'render-scan'; scanRecoveryState?:'CROSS_CHANNEL_SCAN_RECOVERY_REQUIRED';
   renderQueuedAt?:string; lastAutomationAt?:string;
 };
