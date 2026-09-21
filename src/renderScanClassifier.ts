@@ -37,6 +37,7 @@ function latestHistoryAtPath(history:UploadHistoryRecord[],channelId:string,path
 function verifiedHistoryForFile(history:UploadHistoryRecord[],channelId:string,file:RenderFolderVideoFile){return successfulHistory(history,channelId).slice().reverse().find(x=>historyMatchesFile(x,file))}
 function rowEvidence(base:RenderScanRow,h?:UploadHistoryRecord):RenderScanRow{return h?{...base,matchedHistoryId:h.id,historyJobId:h.jobId,youtubeVideoId:h.youtubeVideoId,historyFingerprint:h.sha256||undefined,historyFileSize:h.fileSize,historyUploadedAt:h.uploadedAt}:base}
 function isHistoricalGeneration(job:VideoJob){return Boolean(job.youtubeVideoId||job.storageLifecycle==='UPLOADED'||job.status==='SCHEDULED'||job.uploadedAt)}
+export function canRefreshCurrentGenerationEvidence(job:VideoJob){return !isHistoricalGeneration(job)}
 function currentGenerationFingerprint(job:VideoJob){const fp=String(job.currentSourceFingerprint||'').trim().toLowerCase();return trustedSha256(fp)?fp:undefined}
 function sourceMatchesCurrentJob(job:VideoJob,file:RenderFolderVideoFile){const fp=currentFingerprint(file),jobFp=currentGenerationFingerprint(job);return Boolean(fp&&jobFp&&fp===jobFp&&job.currentSourceFileSize===file.size)}
 function historicalEvidenceForJob(job:VideoJob,history:UploadHistoryRecord[],channelId:string){return historyForJob(history,channelId,job.id)||successfulHistory(history,channelId).slice().reverse().find(x=>normalizeRenderPath(x.localFilePath)===normalizeRenderPath(job.finalPath||''))}
