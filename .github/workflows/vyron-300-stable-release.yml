@@ -19,6 +19,26 @@ on:
         description: 'Type VYRON_3_0_0_PHYSICAL_PASS exactly'
         required: true
         type: string
+      product_physical_publisher_pass:
+        description: 'Publisher physical recovery/selectability acceptance passed'
+        required: true
+        default: false
+        type: boolean
+      product_physical_oauth_update_continuity_pass:
+        description: 'Existing-channel OAuth continuity survived physical in-place update'
+        required: true
+        default: false
+        type: boolean
+      product_one_upload_pass:
+        description: 'Exactly one real NEW_GENERATION videos.insert succeeded'
+        required: true
+        default: false
+        type: boolean
+      product_duplicate_rescan_pass:
+        description: 'Uploaded fingerprint stayed non-NEW after rescan and restart'
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -49,6 +69,10 @@ jobs:
       APPROVED_HEAD: ${{ inputs.approved_head }}
       PHYSICAL_VIDEO_ID: ${{ inputs.physical_video_id }}
       PHYSICAL_ACCEPTANCE: ${{ inputs.physical_acceptance }}
+      PRODUCT_PHYSICAL_PUBLISHER_PASS: ${{ inputs.product_physical_publisher_pass }}
+      PRODUCT_PHYSICAL_OAUTH_UPDATE_CONTINUITY_PASS: ${{ inputs.product_physical_oauth_update_continuity_pass }}
+      PRODUCT_ONE_UPLOAD_PASS: ${{ inputs.product_one_upload_pass }}
+      PRODUCT_DUPLICATE_RESCAN_PASS: ${{ inputs.product_duplicate_rescan_pass }}
     steps:
       - name: Checkout exact approved source
         uses: actions/checkout@v4
@@ -61,6 +85,10 @@ jobs:
         run: |
           set -Eeuo pipefail
           test "$PHYSICAL_ACCEPTANCE" = 'VYRON_3_0_0_PHYSICAL_PASS'
+          test "$PRODUCT_PHYSICAL_PUBLISHER_PASS" = 'true'
+          test "$PRODUCT_PHYSICAL_OAUTH_UPDATE_CONTINUITY_PASS" = 'true'
+          test "$PRODUCT_ONE_UPLOAD_PASS" = 'true'
+          test "$PRODUCT_DUPLICATE_RESCAN_PASS" = 'true'
           test -n "$PHYSICAL_VIDEO_ID"
           test "$(git rev-parse HEAD)" = "$APPROVED_HEAD"
           BRANCH_HEAD="$(gh api "repos/$REPO/git/ref/heads/release/vyron-3.0.0" --jq .object.sha)"
