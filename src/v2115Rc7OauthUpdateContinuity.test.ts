@@ -9,12 +9,18 @@ describe('VYRON 2.1.15 RC7 OAuth update continuity',()=>{
     expect(conf.identifier).toBe('studio.channelflow.desktop');
     expect(sec).toContain('com.scaleup.vyron.security.v2');
   });
-  it('normal refresh reads resolve the active pointer before touching Keychain',()=>{
+  it('normal refresh resolves the active pointer then uses canonical-first targeted fallback',()=>{
     const y=read('src-tauri/src/youtube.rs');
     const req=y.split('fn require_canonical_refresh').at(1)!.split('fn canonical_global_client_secret')[0];
+    const helper=y.split('fn resolve_refresh_credential_with').at(1)!.split('fn require_canonical_refresh')[0];
     expect(req).toContain('profile_refresh_token_account(app,profile_id)?');
-    expect(req).toContain('canonical_get_secret_cached(&active_account)');
+    expect(req).toContain('resolve_refresh_credential_with');
+    expect(req).toContain('|account|security::canonical_get_secret_cached(account)');
+    expect(req).toContain('|account|security::legacy_get_secret_once(account)');
     expect(req).not.toContain('canonical_get_secret_cached(&oauth_key(');
+    expect(helper.indexOf('canonical_get(active_account)')).toBeGreaterThanOrEqual(0);
+    expect(helper.indexOf('canonical_get(active_account)')).toBeLessThan(helper.indexOf('legacy_accounts()?'));
+    expect(helper.indexOf('legacy_accounts()?')).toBeLessThan(helper.indexOf('legacy_get(&account)'));
   });
   it('local credential health resolves active accounts and consumes zero YouTube quota',()=>{
     const y=read('src-tauri/src/youtube.rs');
