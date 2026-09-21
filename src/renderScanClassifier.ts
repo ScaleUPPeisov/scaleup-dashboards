@@ -1,7 +1,7 @@
 import type {RenderFolderVideoFile} from './api';
 import type {UploadHistoryRecord,VideoJob} from './types';
 
-export type RenderScanPrimaryClass='KNOWN_EXACT'|'UPLOADED_LOCAL_COPY'|'NEW_CANDIDATE'|'NEW_GENERATION'|'VERIFY_REQUIRED'|'AMBIGUOUS'|'DUPLICATE_LOCAL'|'INVALID';
+export type RenderScanPrimaryClass='KNOWN_EXACT'|'UPLOADED_LOCAL_COPY'|'NEW_CANDIDATE'|'NEW_GENERATION'|'LEGACY_IDENTITY_UNPROVEN'|'VERIFY_REQUIRED'|'AMBIGUOUS'|'DUPLICATE_LOCAL'|'INVALID';
 export type RenderScanRow={
  file:RenderFolderVideoFile;
  sequence?:number;
@@ -17,12 +17,12 @@ export type RenderScanRow={
  historyUploadedAt?:string;
  historyJobId?:string;
 };
-export type RenderScanSummary={TOTAL_CLASSIFIED_FILES:number;KNOWN_EXACT:number;UPLOADED_LOCAL_COPY:number;NEW_CANDIDATE:number;NEW_GENERATION:number;VERIFY_REQUIRED:number;AMBIGUOUS:number;DUPLICATE_LOCAL:number;INVALID:number};
+export type RenderScanSummary={TOTAL_CLASSIFIED_FILES:number;KNOWN_EXACT:number;UPLOADED_LOCAL_COPY:number;NEW_CANDIDATE:number;NEW_GENERATION:number;LEGACY_IDENTITY_UNPROVEN:number;VERIFY_REQUIRED:number;AMBIGUOUS:number;DUPLICATE_LOCAL:number;INVALID:number};
 export type RenderScanImportSkip={path:string;name:string;reason:'ALREADY_KNOWN_PATH'|'SEQUENCE_ALREADY_USED'|'MISSING_SEQUENCE'|'NOT_NEW_CANDIDATE'};
 export type RenderScanImportPlan={accepted:RenderScanRow[];skipped:RenderScanImportSkip[]};
-export type LegacyRecoveryClass='UPLOADED_EXACT'|'NEW_GENERATION'|'DUPLICATE_CONTENT'|'VERIFY_REQUIRED_LEGACY'|'INVALID_MEDIA';
+export type LegacyRecoveryClass='UPLOADED_EXACT'|'NEW_GENERATION'|'DUPLICATE_CONTENT'|'LEGACY_IDENTITY_UNPROVEN'|'VERIFY_REQUIRED_LEGACY'|'INVALID_MEDIA';
 export type LegacyRecoveryDecision={row:RenderScanRow;classification:LegacyRecoveryClass;reason:string};
-export type LegacyRecoveryPreview={total:number;uploadedExact:LegacyRecoveryDecision[];newGenerations:LegacyRecoveryDecision[];duplicates:LegacyRecoveryDecision[];verifyRequired:LegacyRecoveryDecision[];invalid:LegacyRecoveryDecision[]};
+export type LegacyRecoveryPreview={total:number;uploadedExact:LegacyRecoveryDecision[];newGenerations:LegacyRecoveryDecision[];duplicates:LegacyRecoveryDecision[];legacyUnproven:LegacyRecoveryDecision[];verifyRequired:LegacyRecoveryDecision[];invalid:LegacyRecoveryDecision[]};
 
 export function renderSequence(name:string){const m=name.match(/^0*(\d{1,5})(?:\D|$)/);if(!m)return;const n=Number(m[1]);return Number.isFinite(n)&&n>0?n:undefined}
 export function normalizeRenderPath(value:string){let s=String(value||'').trim().replace(/\\/g,'/');while(s.length>1&&s.endsWith('/'))s=s.slice(0,-1);if(/^[A-Z]:\//.test(s))s=s[0].toLowerCase()+s.slice(1);return s}
@@ -82,7 +82,7 @@ export function classifyChannelRenderFiles(files:RenderFolderVideoFile[],jobs:Vi
    const proof=historicalExact?historicalEvidenceForJob(historicalExact,historyRows,channelId):pathHistory;
    if(!fp)return rowEvidence(base('VERIFY_REQUIRED','CURRENT_FINGERPRINT_REQUIRED_FOR_HISTORICAL_PATH',historicalExact?.id||proof?.jobId),proof);
    if(proof&&trustedHistory(proof))return rowEvidence(base('NEW_GENERATION','EXACT_PATH_PHYSICAL_FINGERPRINT_CHANGED',historicalExact?.id||proof.jobId),proof);
-   return rowEvidence(base('VERIFY_REQUIRED','LEGACY_UPLOAD_HAS_NO_TRUSTED_FINGERPRINT',historicalExact?.id||proof?.jobId),proof);
+   return rowEvidence(base('LEGACY_IDENTITY_UNPROVEN','LEGACY_UPLOAD_HAS_NO_TRUSTED_FINGERPRINT',historicalExact?.id||proof?.jobId),proof);
   }
 
   if(fp){
@@ -104,7 +104,7 @@ export function classifyChannelRenderFiles(files:RenderFolderVideoFile[],jobs:Vi
    const proof=historicalEvidenceForJob(historicalSame,historyRows,channelId);
    if(!fp)return rowEvidence(base('VERIFY_REQUIRED','CURRENT_FINGERPRINT_REQUIRED_FOR_REUSED_SEQUENCE',historicalSame.id),proof);
    if(proof&&trustedHistory(proof))return rowEvidence(base('NEW_GENERATION','HISTORICAL_SEQUENCE_REUSED_WITH_NEW_FINGERPRINT',historicalSame.id),proof);
-   return rowEvidence(base('VERIFY_REQUIRED','HISTORICAL_SEQUENCE_HAS_NO_TRUSTED_FINGERPRINT',historicalSame.id),proof);
+   return rowEvidence(base('LEGACY_IDENTITY_UNPROVEN','HISTORICAL_SEQUENCE_HAS_NO_TRUSTED_FINGERPRINT',historicalSame.id),proof);
   }
 
   return base('NEW_CANDIDATE','NO_EXISTING_CHANNEL_GENERATION_EVIDENCE');
@@ -112,15 +112,15 @@ export function classifyChannelRenderFiles(files:RenderFolderVideoFile[],jobs:Vi
 }
 
 export function summarizeRenderScan(rows:RenderScanRow[]):RenderScanSummary{
- const out:RenderScanSummary={TOTAL_CLASSIFIED_FILES:rows.length,KNOWN_EXACT:0,UPLOADED_LOCAL_COPY:0,NEW_CANDIDATE:0,NEW_GENERATION:0,VERIFY_REQUIRED:0,AMBIGUOUS:0,DUPLICATE_LOCAL:0,INVALID:0};
+ const out:RenderScanSummary={TOTAL_CLASSIFIED_FILES:rows.length,KNOWN_EXACT:0,UPLOADED_LOCAL_COPY:0,NEW_CANDIDATE:0,NEW_GENERATION:0,LEGACY_IDENTITY_UNPROVEN:0,VERIFY_REQUIRED:0,AMBIGUOUS:0,DUPLICATE_LOCAL:0,INVALID:0};
  for(const row of rows)out[row.classification]++;
- const sum=out.KNOWN_EXACT+out.UPLOADED_LOCAL_COPY+out.NEW_CANDIDATE+out.NEW_GENERATION+out.VERIFY_REQUIRED+out.AMBIGUOUS+out.DUPLICATE_LOCAL+out.INVALID;
+ const sum=out.KNOWN_EXACT+out.UPLOADED_LOCAL_COPY+out.NEW_CANDIDATE+out.NEW_GENERATION+out.LEGACY_IDENTITY_UNPROVEN+out.VERIFY_REQUIRED+out.AMBIGUOUS+out.DUPLICATE_LOCAL+out.INVALID;
  if(sum!==out.TOTAL_CLASSIFIED_FILES)throw new Error(`RENDER_SCAN_COUNTER_INVARIANT_FAILED: total=${out.TOTAL_CLASSIFIED_FILES} sum=${sum}`);
  return out;
 }
 
 export function buildLegacyRecoveryPreview(rows:RenderScanRow[],history:UploadHistoryRecord[],channelId:string):LegacyRecoveryPreview{
- const out:LegacyRecoveryPreview={total:rows.length,uploadedExact:[],newGenerations:[],duplicates:[],verifyRequired:[],invalid:[]};
+ const out:LegacyRecoveryPreview={total:rows.length,uploadedExact:[],newGenerations:[],duplicates:[],legacyUnproven:[],verifyRequired:[],invalid:[]};
  const successful=successfulHistory(history,channelId);
  for(const row of rows){
   const fp=(row.currentFingerprint||currentFingerprint(row.file)||'').trim().toLowerCase(),size=row.currentFileSize??row.file.size;
@@ -136,14 +136,20 @@ export function buildLegacyRecoveryPreview(rows:RenderScanRow[],history:UploadHi
   }
   const uploaded=successful.find(x=>trustedHistory(x)&&x.sha256.trim().toLowerCase()===fp&&x.fileSize===size);
   if(uploaded){
-   out.duplicates.push(decision('DUPLICATE_CONTENT',`SAME_CHANNEL_SUCCESSFUL_FINGERPRINT:${uploaded.youtubeVideoId}`));continue
+   const samePath=normalizeRenderPath(uploaded.localFilePath)===normalizeRenderPath(row.file.path);
+   if(samePath)out.uploadedExact.push(decision('UPLOADED_EXACT',`SAME_CHANNEL_SUCCESSFUL_FINGERPRINT:${uploaded.youtubeVideoId}`));
+   else out.duplicates.push(decision('DUPLICATE_CONTENT',`SAME_CHANNEL_SUCCESSFUL_FINGERPRINT:${uploaded.youtubeVideoId}`));
+   continue
   }
-  if(row.classification==='NEW_GENERATION'||row.classification==='VERIFY_REQUIRED'){
-   out.newGenerations.push(decision('NEW_GENERATION',row.classification==='VERIFY_REQUIRED'?'LEGACY_HISTORY_UNTRUSTED_CURRENT_FINGERPRINT_UNSEEN':row.reason));continue
+  if(row.classification==='NEW_GENERATION'){
+   out.newGenerations.push(decision('NEW_GENERATION',row.reason));continue
+  }
+  if(row.classification==='LEGACY_IDENTITY_UNPROVEN'){
+   out.legacyUnproven.push(decision('LEGACY_IDENTITY_UNPROVEN',row.reason));continue
   }
   out.verifyRequired.push(decision('VERIFY_REQUIRED_LEGACY',`UNSUPPORTED_RECOVERY_STATE:${row.classification}`));
  }
- const sum=out.uploadedExact.length+out.newGenerations.length+out.duplicates.length+out.verifyRequired.length+out.invalid.length;
+ const sum=out.uploadedExact.length+out.newGenerations.length+out.duplicates.length+out.legacyUnproven.length+out.verifyRequired.length+out.invalid.length;
  if(sum!==out.total)throw new Error(`LEGACY_RECOVERY_COUNTER_INVARIANT_FAILED: total=${out.total} sum=${sum}`);
  return out
 }
