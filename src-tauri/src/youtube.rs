@@ -7164,3 +7164,32 @@ mod v2115_rc6_keychain_rotation_tests {
  }
 
 }
+
+
+#[cfg(test)]
+mod v300_google_identity_metadata_tests{
+ use super::*;
+ #[test]fn google_email_is_metadata_guard_not_primary_channel_identity(){
+  assert!(google_account_identity_matches(Some("Owner@Example.com"),Some("owner@example.com")));
+  assert!(!google_account_identity_matches(Some("owner@example.com"),Some("wrong@example.com")));
+  assert!(google_account_identity_matches(Some("owner@example.com"),None));
+  assert!(google_account_identity_matches(None,Some("owner@example.com")));
+ }
+ #[test]fn wrong_google_account_exits_before_keychain_pointer_commit(){
+  let source=include_str!("youtube.rs");
+  let reconnect=source.split("pub async fn youtube_oauth_reconnect_existing").nth(1).unwrap();
+  let wrong=reconnect.find(""code":"WRONG_ACCOUNT"").unwrap();
+  let pointer=reconnect.find("let pointer_before=read_keychain_migration_v2").unwrap();
+  assert!(wrong<pointer);
+  let prefix=&reconnect[..pointer];
+  assert!(prefix.contains(""credentialsCommitted":false"));
+  assert!(prefix.contains("expectedGoogleEmail"));
+  assert!(prefix.contains("authorizedGoogleEmail"));
+ }
+ #[test]fn identity_scopes_are_requested_without_replacing_youtube_identity(){
+  let source=include_str!("youtube.rs");
+  assert!(source.contains("openid email profile https://www.googleapis.com/auth/youtube.force-ssl"));
+  assert!(source.contains("expected_channel_id"));
+  assert!(source.contains("reconnect_authorized_channel_matches"));
+ }
+}
