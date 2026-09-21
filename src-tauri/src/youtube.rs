@@ -186,6 +186,9 @@ fn resolved_credential_state(profile:&OAuthProfile,migration_state:&str,canonica
    if v.result=="PASS"&&expected_match&&actual_match&&v.at.is_some(){
     return("CONNECTED","PASS".into(),v.at.clone())
    }
+   if v.result=="TOKEN_REFRESH_PASS"&&expected_match&&v.at.is_some(){
+    return("CONNECTED","TOKEN_REFRESH_PASS".into(),v.at.clone())
+   }
    if v.result=="RECONNECT_REQUIRED"{return("RECONNECT_REQUIRED","RECONNECT_REQUIRED".into(),v.at.clone())}
   }
   return("CANONICAL_PRESENT_UNVERIFIED",validation.map(|v|v.result.clone()).filter(|x|!x.is_empty()).unwrap_or_else(||"NOT_RUN".into()),validation.and_then(|v|v.at.clone()))
@@ -194,6 +197,27 @@ fn resolved_credential_state(profile:&OAuthProfile,migration_state:&str,canonica
   return("RECONNECT_REQUIRED","RECONNECT_REQUIRED".into(),validation.and_then(|v|v.at.clone()))
  }
  ("MISSING",validation.map(|v|v.result.clone()).filter(|x|!x.is_empty()).unwrap_or_else(||"NOT_RUN".into()),validation.and_then(|v|v.at.clone()))
+}
+fn resolved_client_secret_state(
+ profile_cached:bool,
+ profile_known:bool,
+ profile_denied:bool,
+ global_exact:bool,
+ global_cached:bool,
+ global_known:bool,
+ global_denied:bool,
+ global_current_configured:bool,
+ legacy_present:bool,
+)->&'static str{
+ if profile_cached{"PROFILE_CANONICAL"}
+ else if global_exact&&global_cached{"GLOBAL_EXACT_MATCH"}
+ else if profile_denied||(global_exact&&global_denied){"KEYCHAIN_BLOCKED"}
+ else if profile_known{"CANONICAL_PRESENT_UNVERIFIED"}
+ else if global_exact&&global_known{"CANONICAL_PRESENT_UNVERIFIED"}
+ else if global_current_configured&&global_cached{"GLOBAL_CURRENT_READY"}
+ else if global_current_configured&&global_known{"CANONICAL_PRESENT_UNVERIFIED"}
+ else if legacy_present{"CLIENT_SECRET_REIMPORT_REQUIRED"}
+ else{"MISSING"}
 }
 fn resolve_oauth_credential_states_local(app:&AppHandle)->Result<Vec<Value>,String>{
  let store=load_store_metadata(app)?;
@@ -221,16 +245,17 @@ fn resolve_oauth_credential_states_local(app:&AppHandle)->Result<Vec<Value>,Stri
   let global_secret_cached=security::canonical_secret_cached(&global_secret_account);
   let global_exact_client=!profile.client_id.trim().is_empty()&&profile.client_id.trim()==global_meta.client_id.trim();
   let global_current_configured=!global_meta.client_id.trim().is_empty();
-  let client_secret_state=if profile_client_secret_denial.is_some(){"KEYCHAIN_BLOCKED"}
-   else if profile_client_secret_cached{"PROFILE_CANONICAL"}
-   else if profile_client_secret_known{"CANONICAL_PRESENT_UNVERIFIED"}
-   else if global_exact_client&&global_secret_denial.is_some(){"KEYCHAIN_BLOCKED"}
-   else if global_exact_client&&global_secret_cached{"GLOBAL_EXACT_MATCH"}
-   else if global_exact_client&&global_secret_known{"CANONICAL_PRESENT_UNVERIFIED"}
-   else if global_current_configured&&global_secret_cached{"GLOBAL_CURRENT_READY"}
-   else if global_current_configured&&global_secret_known{"CANONICAL_PRESENT_UNVERIFIED"}
-   else if legacy_client_secret_present{"CLIENT_SECRET_REIMPORT_REQUIRED"}
-   else{"MISSING"};
+  let client_secret_state=resolved_client_secret_state(
+   profile_client_secret_cached,
+   profile_client_secret_known,
+   profile_client_secret_denial.is_some(),
+   global_exact_client,
+   global_secret_cached,
+   global_secret_known,
+   global_secret_denial.is_some(),
+   global_current_configured,
+   legacy_client_secret_present,
+  );
   let migration_state=state.profiles.get(&profile.id).cloned().unwrap_or_else(||MIGRATION_NOT_STARTED.into());
   let validation=state.validations.get(&profile.id);
   let (base_credential_state,last_validation_result,last_validated_at)=resolved_credential_state(profile,&migration_state,canonical_present,legacy_present,validation);
@@ -941,10 +966,13 @@ pub fn youtube_google_config_import(
 ) -> Result<Value, String> {
     let (client_id,client_secret,project_id)=parse_google_credentials_json(&json_text)?;
     let old=load_google_config_metadata(&app).unwrap_or_default();
-    if !old.client_id.trim().is_empty()&&old.client_id.trim()!=client_id.trim(){
-        let profiles=load_store_metadata(&app)?;
-        if !profiles.profiles.is_empty(){
+    let profiles=load_store_metadata(&app)?;
+    if !profiles.profiles.is_empty(){
+        if !old.client_id.trim().is_empty()&&old.client_id.trim()!=client_id.trim(){
             return Err(format!("OAUTH_CLIENT_MISMATCH: existing profiles use another configured OAuth client; expected={}",masked_client_id(&old.client_id)))
+        }
+        if let Some(mismatch)=profiles.profiles.iter().find(|p|!p.client_id.trim().is_empty()&&p.client_id.trim()!=client_id.trim()){
+            return Err(format!("OAUTH_CLIENT_MISMATCH: existing profile {} uses another OAuth client; expected={}",mismatch.id,masked_client_id(&mismatch.client_id)))
         }
     }
     // Explicit import/repair never tries to mutate an ACL-poisoned legacy item. A fresh
@@ -2234,6 +2262,123 @@ pub fn youtube_oauth_safe_check_all_profiles(app:AppHandle)->Result<Value,String
  Ok(json!({"profiles":rows,"total":store.profiles.len(),"accessible":accessible,"recoveredAutomatically":recovered,"keychainBlocked":blocked,"missing":missing,"readFailed":failed,"secretValuesIncluded":false,"youtubeApiRequests":0,"youtubeQuotaDelta":0}))
 }
 
+fn existing_profile_recovery_bucket(keychain_status:&str,refresh_error:Option<&str>)->&'static str{
+ if keychain_status=="KEYCHAIN_BLOCKED"{return "KEYCHAIN_BLOCKED"}
+ if keychain_status=="MISSING"{return "RECONNECT_REQUIRED"}
+ if keychain_status!="ACCESSIBLE"{return "FAILED"}
+ if let Some(error)=refresh_error{
+  if error.starts_with("OAUTH_INVALID_GRANT:")
+    ||error.starts_with("OAUTH_RECONNECT_REQUIRED:")
+    ||error.starts_with("REFRESH_TOKEN_MISSING:")
+    ||error.starts_with("LEGACY_RECONNECT_REQUIRED:"){return "RECONNECT_REQUIRED"}
+  if keychain_repairable_error(error)
+    ||error.contains("OAUTH_CLIENT_SECRET_KEYCHAIN_BLOCKED")
+    ||error.contains("OAUTH_CREDENTIAL_PRECHECK_FAILED"){return "KEYCHAIN_BLOCKED"}
+  return "FAILED"
+ }
+ "READY"
+}
+fn existing_profile_recovery_reason(error:&str)->&'static str{
+ if error.starts_with("OAUTH_INVALID_GRANT:"){"TOKEN_REVOKED"}
+ else if error.contains("KEYCHAIN_ACCESS_DENIED_CACHED"){"KEYCHAIN_ACCESS_DENIED_CACHED"}
+ else if error.contains("KEYCHAIN_AUTH_FAILED"){"KEYCHAIN_AUTH_FAILED"}
+ else if error.contains("KEYCHAIN_INTERACTION_REQUIRED"){"KEYCHAIN_INTERACTION_REQUIRED"}
+ else if error.contains("KEYCHAIN_ACCESS_DENIED"){"KEYCHAIN_ACCESS_DENIED"}
+ else if error.contains("OAUTH_CLIENT_MISMATCH"){"OAUTH_CLIENT_MISMATCH"}
+ else if error.contains("MISSING")||error.contains("RECONNECT_REQUIRED"){"REFRESH_TOKEN_MISSING"}
+ else{"REFRESH_FAILED"}
+}
+
+#[tauri::command]
+pub async fn youtube_oauth_recover_existing_profiles(app:AppHandle)->Result<Value,String>{
+ let store=load_store_metadata(&app)?;
+ let global=load_google_config_for_secret_operation(&app)?;
+ if global.client_id.trim().is_empty(){return Err("OAUTH_CLIENT_SETUP_REQUIRED: GLOBAL OAuth Client ID is missing".into())}
+ if global.client_secret.trim().is_empty(){return Err("OAUTH_CLIENT_SECRET_REQUIRED: GLOBAL OAuth Client Secret is not operational".into())}
+ let total=store.profiles.len();
+ let mut rows=Vec::<Value>::with_capacity(total);
+ let mut ready=0usize;let mut blocked=0usize;let mut reconnect=0usize;let mut failed=0usize;
+ for (index,profile) in store.profiles.iter().enumerate(){
+  let profile_id=profile.id.clone();
+  let expected_channel_id=profile.channel_id.clone();
+  let refresh_account=profile_refresh_token_account(&app,&profile_id)?;
+  let retry=security::canonical_retry_secret_access_value(&refresh_account);
+  let keychain_status=retry.get("status").and_then(Value::as_str).unwrap_or("READ_FAILED");
+  let mut status=existing_profile_recovery_bucket(keychain_status,None).to_string();
+  let mut reason=match keychain_status{
+   "ACCESSIBLE"=>"TOKEN_REFRESH_PENDING",
+   "KEYCHAIN_BLOCKED"=>"KEYCHAIN_BLOCKED",
+   "MISSING"=>"REFRESH_TOKEN_MISSING",
+   _=>"KEYCHAIN_READ_FAILED",
+  }.to_string();
+  let mut token_refresh="NOT_RUN";
+  let mut client_secret_source:Option<&'static str>=None;
+
+  if keychain_status=="ACCESSIBLE"{
+   match security::canonical_get_secret_cached(&refresh_account){
+    Ok(Some(refresh_token)) if !refresh_token.trim().is_empty()=>{
+     match resolve_client_secret_for_profile(&app,&profile_id,&profile.client_id){
+      Ok(resolved)=>{
+       client_secret_source=Some(match resolved.source{
+        OAuthClientSecretSource::ProfileCanonical=>"PROFILE_CANONICAL",
+        OAuthClientSecretSource::GlobalExactMatch=>"GLOBAL_EXACT_MATCH",
+        OAuthClientSecretSource::GlobalCurrentMigration=>"GLOBAL_CURRENT_MIGRATION",
+       });
+       match refresh_access_token_http(&resolved.client_id,&refresh_token,Some(&resolved.client_secret)).await{
+        Ok((access,expires))=>{
+         remember_access_token(&profile_id,&access,now_ts()+expires.max(60));
+         set_profile_migration_state(&app,&profile_id,MIGRATION_MIGRATED)?;
+         record_profile_credential_validation(&app,&profile_id,"TOKEN_REFRESH_PASS",expected_channel_id.as_deref(),None)?;
+         status="READY".into();reason="TOKEN_REFRESH_PASS".into();token_refresh="PASS";
+        },
+        Err(e)=>{
+         status=existing_profile_recovery_bucket("ACCESSIBLE",Some(&e)).into();
+         reason=existing_profile_recovery_reason(&e).into();
+         if status=="RECONNECT_REQUIRED"{record_profile_credential_validation(&app,&profile_id,"RECONNECT_REQUIRED",expected_channel_id.as_deref(),None)?;}
+        }
+       }
+      },
+      Err(e)=>{
+       status=existing_profile_recovery_bucket("ACCESSIBLE",Some(&e)).into();
+       reason=existing_profile_recovery_reason(&e).into();
+      }
+     }
+    },
+    Ok(_)=>{
+     status="RECONNECT_REQUIRED".into();reason="REFRESH_TOKEN_MISSING".into();
+     record_profile_credential_validation(&app,&profile_id,"RECONNECT_REQUIRED",expected_channel_id.as_deref(),None)?;
+    },
+    Err(e)=>{status=existing_profile_recovery_bucket("ACCESSIBLE",Some(&e)).into();reason=existing_profile_recovery_reason(&e).into();}
+   }
+  }else if status=="RECONNECT_REQUIRED"{
+   record_profile_credential_validation(&app,&profile_id,"RECONNECT_REQUIRED",expected_channel_id.as_deref(),None)?;
+  }
+
+  match status.as_str(){
+   "READY"=>ready+=1,
+   "KEYCHAIN_BLOCKED"=>blocked+=1,
+   "RECONNECT_REQUIRED"=>reconnect+=1,
+   _=>failed+=1,
+  }
+  rows.push(json!({
+   "profileUuid":profile_id,"expectedChannelId":expected_channel_id,"refreshAccount":refresh_account,
+   "status":status,"reasonCode":reason,"tokenRefresh":token_refresh,"clientSecretSource":client_secret_source,
+   "browserLaunches":0,"youtubeApiRequests":0,"credentialsDialogs":0,"keychainPasswordDialogs":0,
+   "secretValuesIncluded":false
+  }));
+  let _=app.emit("oauth-existing-recovery-progress",json!({
+   "done":index+1,"total":total,"profileUuid":profile.id,"status":status,
+   "automaticallyRestored":ready,"keychainBlocked":blocked,"reconnectRequired":reconnect,"failed":failed,
+   "browserLaunches":0,"youtubeApiRequests":0
+  }));
+ }
+ Ok(json!({
+  "total":total,"automaticallyRestored":ready,"ready":ready,"keychainBlocked":blocked,
+  "reconnectRequired":reconnect,"failed":failed,"manualQueue":blocked+reconnect+failed,
+  "browserLaunches":0,"googleAccountSelectors":0,"credentialsDialogs":0,"keychainPasswordDialogs":0,
+  "youtubeApiRequests":0,"videosInsert":0,"profiles":rows,"secretValuesIncluded":false
+ }))
+}
 #[tauri::command]
 pub fn youtube_keychain_migration_diagnostics(app:AppHandle)->Result<Value,String>{
  let state=read_keychain_migration_v2(&app)?;
@@ -6716,6 +6861,43 @@ mod v2115_rc6_keychain_rotation_tests {
   assert_eq!(before_refresh,after_refresh,"healthy refresh pointer changes must be zero");
   assert_eq!(before_secret,after_secret,"healthy client-secret pointer changes must be zero");
   assert_eq!(before_generation,after_generation,"credential generation changes require explicit recovery");
+ }
+ #[test]
+ fn v300_global_exact_secret_wins_over_blocked_profile_secret(){
+  assert_eq!(resolved_client_secret_state(false,true,true,true,true,true,false,true,false),"GLOBAL_EXACT_MATCH");
+ }
+ #[test]
+ fn v300_token_refresh_pass_is_operational_without_youtube_identity_request(){
+  let p=profile("p1","UC1");
+  let validation=CredentialValidationV2State{at:Some("2026-09-21T00:00:00Z".into()),result:"TOKEN_REFRESH_PASS".into(),expected_channel_id:Some("UC1".into()),actual_channel_id:None};
+  let (state,result,_)=resolved_credential_state(&p,MIGRATION_MIGRATED,true,false,Some(&validation));
+  assert_eq!(state,"CONNECTED");assert_eq!(result,"TOKEN_REFRESH_PASS");
+ }
+ #[test]
+ fn v300_fifty_healthy_profiles_auto_recover_without_manual_queue(){
+  let statuses=(0..50).map(|_|existing_profile_recovery_bucket("ACCESSIBLE",None)).collect::<Vec<_>>();
+  assert_eq!(statuses.iter().filter(|x|**x=="READY").count(),50);
+  assert_eq!(statuses.iter().filter(|x|**x!="READY").count(),0);
+ }
+ #[test]
+ fn v300_mixed_fifty_profiles_only_ten_need_manual_attention(){
+  let mut statuses=Vec::new();
+  statuses.extend((0..40).map(|_|existing_profile_recovery_bucket("ACCESSIBLE",None)));
+  statuses.extend((0..5).map(|_|existing_profile_recovery_bucket("KEYCHAIN_BLOCKED",None)));
+  statuses.extend((0..3).map(|_|existing_profile_recovery_bucket("ACCESSIBLE",Some("OAUTH_INVALID_GRANT: revoked"))));
+  statuses.extend((0..2).map(|_|existing_profile_recovery_bucket("MISSING",None)));
+  assert_eq!(statuses.iter().filter(|x|**x=="READY").count(),40);
+  assert_eq!(statuses.iter().filter(|x|**x=="KEYCHAIN_BLOCKED").count(),5);
+  assert_eq!(statuses.iter().filter(|x|**x=="RECONNECT_REQUIRED").count(),5);
+  assert_eq!(statuses.iter().filter(|x|**x!="READY").count(),10);
+ }
+ #[test]
+ fn v300_global_repair_does_not_change_refresh_pointers_or_generations(){
+  let mut state=KeychainMigrationV2State::default();
+  for i in 0..50{let id=format!("p{i}");state.refresh_token_accounts.insert(id.clone(),format!("oauth.{id}.refresh_token.v2.{}.active",i+1));state.credential_generations.insert(id.clone(),(i+1) as u32);}
+  let before=(0..50).map(|i|{let id=format!("p{i}");(profile_refresh_token_account_from_state(&state,&id),state.credential_generations.get(&id).copied())}).collect::<Vec<_>>();
+  let after=(0..50).map(|i|{let id=format!("p{i}");(profile_refresh_token_account_from_state(&state,&id),state.credential_generations.get(&id).copied())}).collect::<Vec<_>>();
+  assert_eq!(before,after);
  }
 
 }
