@@ -249,16 +249,19 @@ export function PublisherOS(){
   return{...result,files};
  }
  async function scanRenderFolder(){
-  const root=channelRenderFolder;
+  const root=channelRenderFolder,taskId=`render-scan:${channelId}:${Date.now()}`;
   if(!root){
     setRenderScan(null);
     notifyWarning('CHANNEL_RENDER_FOLDER_NOT_CONFIGURED',`Папка рендера для ${channel?.name||'текущего канала'} не настроена. Выберите точную папку или запустите безопасный автопоиск. YouTube API: 0.`);
     return
   }
+  ensureTask({taskId,type:'RENDER_SCAN',state:'QUEUED',channelId,channelName:channel?.name,label:'Скан Render',detail:root,progress:0,completed:0,total:0,resourceKey:`render-scan:${channelId}`});
+  startTask(taskId,'Чтение папки рендера');
   setRenderScanBusy(true);
   try{
     const cheap=await api.scanRenderFolder(root),current=useApp.getState().jobs,history=useApp.getState().uploadHistory;
-    const result=await fingerprintRenderEvidenceFiles(cheap,current,history);
+    updateTask(taskId,{total:cheap.files.length,completed:0,progress:cheap.files.length?0:100,detail:`Найдено физических файлов: ${cheap.files.length}`});
+    const result=await fingerprintRenderEvidenceFiles(cheap,current,history,(done,total,name)=>updateTask(taskId,{completed:done,total,progress:total?done/total*100:100,detail:`Проверка identity: ${name}`}));
     const rows=classifyChannelRenderFiles(result.files,current,history,channelId,result.root),summary=summarizeRenderScan(rows);
     for(const row of rows){
       if(!row.matchedJobId||!row.currentFingerprint)continue;
@@ -278,8 +281,9 @@ export function PublisherOS(){
     journal({eventId:`render-scan:${channelId}:${scannedAt}`,eventType:'RENDER_FOLDER_SCANNED',status:'SUCCESS',source:'LIVE_OPERATION',timestamp:scannedAt,channelId,channelName:channel?.name,details:{folder:result.root,rootType:'CHANNEL_SPECIFIC',found:summary.TOTAL_CLASSIFIED_FILES,knownExact:summary.KNOWN_EXACT,uploadedLocalCopies:summary.UPLOADED_LOCAL_COPY,newCandidates:summary.NEW_CANDIDATE,newGenerations:summary.NEW_GENERATION,verifyRequired:summary.VERIFY_REQUIRED,ambiguous:summary.AMBIGUOUS,invalid:summary.INVALID,crossChannelRecovery:bad.length,truncated:result.truncated,youtubeApiRequests:0}});
     const newTotal=summary.NEW_CANDIDATE+summary.NEW_GENERATION;
     const msg=`Найдено: ${summary.TOTAL_CLASSIFIED_FILES} • совпало с YouTube fingerprint: ${summary.UPLOADED_LOCAL_COPY} • новых: ${newTotal} (новых генераций: ${summary.NEW_GENERATION}) • проверить: ${summary.VERIFY_REQUIRED} • неоднозначно: ${summary.AMBIGUOUS}. YouTube API: 0.`;
+    completeTask(taskId,`${summary.TOTAL_CLASSIFIED_FILES} файлов • NEW ${newTotal} • uploaded ${summary.UPLOADED_LOCAL_COPY} • verify ${summary.VERIFY_REQUIRED}`);
     result.truncated?notifyWarning('SCAN_TRUNCATED',msg):notifyInfo('Папка канала просканирована',msg)
-  }catch(e){const h=humanizeError(e,'storage');notifyWarning('Не удалось просканировать папку рендера',h.message)}
+  }catch(e){const h=humanizeError(e,'storage');failTask(taskId,h.message);notifyWarning('Не удалось просканировать папку рендера',h.message)}
   finally{setRenderScanBusy(false)}
  }
  function materializeRenderGenerationRows(rows:RenderScanRow[],explicitLegacyOverride=false){
@@ -362,6 +366,39 @@ export function PublisherOS(){
   if(!target){notifyWarning('Канал не найден','Имя должно точно совпадать с существующим локальным каналом VYRON.');return}
   patchJob(j.id,{channelId:target.id,scanRecoveryState:undefined});
   notifySuccess('Локальная запись перепривязана',`${j.finalPath||''} → ${target.name}. Физический файл не изменён.`)
+ }
+ async function runDryRun(){
+  if(dryRunBusy)return;
+  if(!channel||!profileId){notifyWarning('Dry run','Для канала не найден OAuth профиль. YouTube API requests: 0.');return}
+  if(!selected.length){notifyWarning('Dry run','Выберите хотя бы одно NEW видео. YouTube API requests: 0.');return}
+  setDryRunBusy(true);setDryRunReport(null);
+  try{
+   const states=await api.youtubeOauthCredentialStates().catch(()=>null),credential=states?.profiles?.find(x=>x.profileUuid===profileId),rows:DryRunReport['rows']=[];
+   for(let i=0;i<selected.length;i++){
+    const j=selected[i],issues:string[]=[];
+    try{
+     if(!j.finalPath)issues.push('LOCAL_FILE_REQUIRED');
+     else{
+      const source=await api.localSourceStatus(j.finalPath);
+      if(!source.exists||!source.isFile)issues.push('SOURCE_MISSING');
+      const fp=await fingerprintForJob(j);
+      if(source.size!=null&&Number(source.size)!==fp.size)issues.push('SOURCE_CHANGED_DURING_PREFLIGHT');
+      if(successfulUploadForHash(useApp.getState().uploadHistory,fp.fingerprint,channelId,fp.size))issues.push('DUPLICATE_FINGERPRINT');
+     }
+    }catch(e){issues.push(humanizeError(e,'storage').code||'FINGERPRINT_FAILED')}
+    const pre=preflight.items.find(x=>x.id===j.id);if(pre)issues.push(...pre.issues.map(x=>x.code));
+    if(credential?.credentialState!=='READY')issues.push('OAUTH_NOT_READY');
+    const publishAt=effectivePublishAt(j);if(!publishAt)issues.push('PUBLISH_AT_REQUIRED');else if(Date.parse(publishAt)<=Date.now())issues.push('PUBLISH_AT_NOT_FUTURE');
+    if(thumbnailsEnabled&&!draft.allowMissingThumbs&&!selectedThumbnail(j))issues.push('THUMBNAIL_REQUIRED');
+    rows.push({jobId:j.id,number:j.number,ok:issues.length===0,issues:[...new Set(issues)]})
+   }
+   if(!quotaPlan.affordable)for(const row of rows)if(!row.issues.includes('QUOTA_INSUFFICIENT')){row.issues.push('QUOTA_INSUFFICIENT');row.ok=false}
+   if(daily.remaining!=null&&rows.filter(x=>x.ok).length>daily.remaining){let allowance=daily.remaining;for(const row of rows){if(!row.ok)continue;if(allowance>0){allowance--;continue}row.ok=false;row.issues.push('CHANNEL_24H_LIMIT')}}
+   const report:DryRunReport={at:new Date().toISOString(),ready:rows.filter(x=>x.ok).length,blocked:rows.filter(x=>!x.ok).length,videosInsert:0,youtubeApiRequests:0,rows};
+   setDryRunReport(report);
+   if(report.blocked)notifyWarning('Dry run завершён',`Готово: ${report.ready} • заблокировано: ${report.blocked} • videos.insert: 0 • YouTube Data API requests: 0`);
+   else notifySuccess('Dry run: PASS',`${report.ready} видео готовы локально • videos.insert: 0 • YouTube Data API requests: 0`);
+  }finally{setDryRunBusy(false)}
  }
  async function runBatch(requested?:number){
   log(`[UPLOAD_QUEUE] submit clicked channel=${channelId} selected=${selected.length} ready=${uploadableSelected.length}`);
