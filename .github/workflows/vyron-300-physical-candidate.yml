@@ -145,13 +145,18 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          npx vitest run             src/v300PublisherSelection.test.ts             src/v300PublisherUiContracts.test.ts             src/v300OauthContinuity.test.ts             src/renderScanClassifier.test.ts             src/v2115Rc7RenderScanContract.test.ts             src/v2115Rc7OauthUpdateContinuity.test.ts             src/v2115Rc6KeychainRotation.test.ts             src/storageLifecycle.test.ts             src/uploadQueue.test.ts             src/channelSchedule.test.ts             src/scheduleContinuation.test.ts             src/publisherSchedule.test.ts             src/updaterSchedule.test.ts             src/updaterRuntime.test.ts             src/updaterPolicy.test.ts             src/updaterGuard.test.ts
+          npx vitest run             src/v300PublisherSelection.test.ts             src/v300PublisherUiContracts.test.ts             src/v300OauthContinuity.test.ts             src/v300OauthPersistence.test.ts             src/renderScanClassifier.test.ts             src/v2115Rc7RenderScanContract.test.ts             src/v2115Rc7OauthUpdateContinuity.test.ts             src/v2115Rc6KeychainRotation.test.ts             src/storageLifecycle.test.ts             src/uploadQueue.test.ts             src/channelSchedule.test.ts             src/scheduleContinuation.test.ts             src/publisherSchedule.test.ts             src/updaterSchedule.test.ts             src/updaterRuntime.test.ts             src/updaterPolicy.test.ts             src/updaterGuard.test.ts
           npm test
           npm run build
           echo 'TYPESCRIPT_BUILD=PASS'
           echo 'FRONTEND_TESTS=PASS'
           echo 'PUBLISHER_SELECTION_CONTRACT=PASS'
           echo 'CLIENT_SECRET_CONTINUITY_CONTRACT=PASS'
+          echo 'GLOBAL_SECRET_REPAIR_TESTS=PASS'
+          echo 'EXISTING_PROFILE_RECOVERY=PASS'
+          echo 'MIXED_PROFILE_RECOVERY=PASS'
+          echo 'MANUAL_BROWSER_RECONNECT=PASS'
+          echo 'CHANNEL_PRESERVATION=PASS'
           echo 'USER_UPDATE_UI=PASS'
           echo 'RECENT_BLOCK_REMOVED=PASS'
           echo 'PAGE_OVERFLOW_X=0'
@@ -181,6 +186,8 @@ jobs:
           y=Path('src-tauri/src/youtube.rs').read_text()
           folders=Path('src-tauri/src/local_delete.rs').read_text()
           settings=Path('src/SettingsOS.tsx').read_text()
+          accounts=Path('src/AccountsPage.tsx').read_text()
+          recovery=Path('src/AuthRecoveryCenter.tsx').read_text()
           recent=Path('src/YouTubeChannelBar.tsx').read_text()
           styles=Path('src/styles.css').read_text()
           history=Path('src/releaseHistory.ts').read_text()
@@ -198,7 +205,12 @@ jobs:
           for state in ['PROFILE_CANONICAL','GLOBAL_EXACT_MATCH','CANONICAL_PRESENT_UNVERIFIED','KEYCHAIN_BLOCKED','CLIENT_SECRET_REIMPORT_REQUIRED']:
               assert state in y
           assert 'OAUTH_CLIENT_SECRET_KEYCHAIN_BLOCKED' in y
+          assert 'youtube_oauth_recover_existing_profiles' in y
           assert 'v300_fifty_profile_update_in_place_preserves_identity_pointers_and_generations' in y
+          assert 'v300_mixed_fifty_profiles_only_ten_need_manual_attention' in y
+          assert 'Восстановить через credentials.json' in accounts
+          assert 'api.youtubeOauthRecoverExistingProfiles()' in accounts
+          assert 'Войти заново через браузер' in recovery
           assert 'normalized_duplicate_channel_folders_are_reported_as_ambiguous_candidates' in folders
           assert 'exact_channel_root_never_includes_sibling_channel_media' in folders
 
@@ -373,6 +385,11 @@ jobs:
             echo "RUST_TESTS=PASS"
             echo "PUBLISHER_SELECTION_CONTRACT=PASS"
             echo "CLIENT_SECRET_CONTINUITY_CONTRACT=PASS"
+            echo "GLOBAL_SECRET_REPAIR_TESTS=PASS"
+            echo "EXISTING_PROFILE_RECOVERY=PASS"
+            echo "MIXED_PROFILE_RECOVERY=PASS"
+            echo "MANUAL_BROWSER_RECONNECT=PASS"
+            echo "CHANNEL_PRESERVATION=PASS"
             echo "OAUTH_50_PROFILE_CONTINUITY=PASS"
             echo "CHANNEL_FOLDER_DISCOVERY=PASS"
             echo "CHANNEL_SCOPED_SCAN=PASS"
