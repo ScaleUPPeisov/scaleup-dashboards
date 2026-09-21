@@ -2362,7 +2362,7 @@ pub async fn youtube_oauth_recover_existing_profiles(app:AppHandle)->Result<Valu
   }
   rows.push(json!({
    "profileUuid":profile_id,"expectedChannelId":expected_channel_id,"refreshAccount":refresh_account,
-   "status":status,"reasonCode":reason,"tokenRefresh":token_refresh,"clientSecretSource":client_secret_source,
+   "status":status.clone(),"reasonCode":reason,"tokenRefresh":token_refresh,"clientSecretSource":client_secret_source,
    "browserLaunches":0,"youtubeApiRequests":0,"credentialsDialogs":0,"keychainPasswordDialogs":0,
    "secretValuesIncluded":false
   }));
