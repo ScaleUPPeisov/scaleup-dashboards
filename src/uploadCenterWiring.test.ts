@@ -4,12 +4,18 @@ import {readFileSync} from 'node:fs';
 const read=(p:string)=>readFileSync(new URL(p,import.meta.url).pathname,'utf8');
 
 describe('VYRON 2.1.6 live upload wiring',()=>{
- it('routes high-frequency upload progress only into transient telemetry',()=>{
+ it('routes high-frequency upload progress into transient telemetry and factual persistent task progress without patchJob rerender storms',()=>{
    const app=read('./App.tsx');
-   expect(app).toContain('api.onYoutubeProgress(f=>{applyUploadProgressFact(f);journalUploadProgressMilestone(f)}');
+   expect(app).toContain('api.onYoutubeProgress(f=>{applyUploadProgressFact(f);journalUploadProgressMilestone(f);');
+   expect(app).toContain('updateTask(\`upload:\${f.jobId}\`');
+   expect(app).toContain('bytesCompleted:row?.bytesUploaded');
+   expect(app).toContain('bytesTotal:row?.totalBytes');
+   expect(app).toContain('speedBps:row?.speedBps');
+   expect(app).toContain('etaSeconds:row?.etaSeconds');
    expect(app).not.toMatch(/onYoutubeProgress\([^\n]*patchJob/);
-   expect(app).toContain("import {applyUploadProgressFact,seedActiveUploadFacts} from './uploadTelemetry'");
+   expect(app).toContain("import {applyUploadProgressFact,seedActiveUploadFacts,uploadTelemetrySnapshot} from './uploadTelemetry'");
    expect(app).toContain("import {journalUploadProgressMilestone} from './activityJournalRuntime'");
+   expect(app).toContain("import {ensureTask,reconcileUploadTasks,updateTask} from './taskEngine'");
  });
  it('backend progress carries factual byte totals and safe immutable identity',()=>{
    const rust=read('../src-tauri/src/youtube.rs');
