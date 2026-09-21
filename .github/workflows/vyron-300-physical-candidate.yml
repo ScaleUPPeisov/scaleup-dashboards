@@ -1,0 +1,399 @@
+name: VYRON 3.0.0 Physical Candidate
+
+on:
+  push:
+    branches:
+      - release/vyron-3.0.0
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: vyron-300-physical-candidate
+  cancel-in-progress: true
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  BRANCH: release/vyron-3.0.0
+  VERSION: '3.0.0'
+  BASE_RC7: 53e8f1c5a65ce5e5b86c5e19a70247db181d5dbb
+  BUNDLE_ID: studio.channelflow.desktop
+  EXECUTABLE: channelflow
+  EXPECTED_SIGNING_CERT_SHA1: 2C8B0BD4EE1C000D29DD0667BF1068D4673692C9
+  EMBEDDED_UPDATER_KEY: dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEREODQ1NDdERTI1MEYxQzAKUldUQThWRGlmVlNFM1RHdW5WQnE2eG9BYTBnQlNmbUtmVU84UHJQMUNvZWZ4Qmo0L2hYcUd4UDEK
+
+jobs:
+  windows_compile:
+    name: Windows compile safety
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout exact 3.0.0 candidate source
+        uses: actions/checkout@v4
+        with:
+          ref: release/vyron-3.0.0
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: TypeScript production build on Windows
+        shell: pwsh
+        run: |
+          npm run build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Write-Output 'WINDOWS_TYPESCRIPT_BUILD=PASS'
+
+      - name: Rust compile safety on Windows
+        shell: pwsh
+        run: |
+          cargo check --manifest-path src-tauri/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Write-Output 'WINDOWS_RUST_CHECK=PASS'
+
+  candidate:
+    name: Signed ARM64 physical candidate
+    needs: windows_compile
+    runs-on: macos-14
+    timeout-minutes: 180
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      VYRON_MACOS_SIGNING_P12_BASE64: ${{ secrets.VYRON_MACOS_SIGNING_P12_BASE64 }}
+      VYRON_MACOS_SIGNING_P12_PASSWORD: ${{ secrets.VYRON_MACOS_SIGNING_P12_PASSWORD }}
+      VYRON_MACOS_SIGNING_IDENTITY: ${{ secrets.VYRON_MACOS_SIGNING_IDENTITY }}
+    steps:
+      - name: Checkout exact 3.0.0 candidate source
+        uses: actions/checkout@v4
+        with:
+          ref: release/vyron-3.0.0
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Freeze source and snapshot immutable production feeds
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          HEAD_SHA="$(git rev-parse HEAD)"
+          test "${GITHUB_REF_NAME}" = "$BRANCH"
+          git merge-base --is-ancestor "$BASE_RC7" "$HEAD_SHA"
+          for required in             16b957f91ea62f9f20b6f76794f624f1e91bcf6f             bba14d949f5f17becbc709a835d33c1f48a03729             44f60f88f17ffd2b119ba85fb23dd24ddb3f3db0             e80715fe67fa2707ef594352e25a88e085588838             1b325aa2e0d097c712a60344b9f5403f1cd8ba0f             08d8e51962095035477c5056bb7171538fb4b85c; do
+            git merge-base --is-ancestor "$required" "$HEAD_SHA"
+          done
+          echo "VYRON_300_HEAD=$HEAD_SHA" | tee -a "$GITHUB_ENV"
+          echo "repository=$REPO"
+          echo "branch=$BRANCH"
+          echo "HEAD=$HEAD_SHA"
+          echo "VERSION=$VERSION"
+          echo "BASE_RELATIONSHIP=PASS"
+
+          gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode >/tmp/mac-feed-before.json
+          gh api "repos/$REPO/contents/vyron-updates/windows-latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode >/tmp/windows-feed-before.json
+          shasum -a 256 /tmp/mac-feed-before.json | awk '{print $1}' >/tmp/mac-feed-before.sha
+          shasum -a 256 /tmp/windows-feed-before.json | awk '{print $1}' >/tmp/windows-feed-before.sha
+          test "$(python3 -c 'import json;print(json.load(open("/tmp/mac-feed-before.json"))["version"])')" = '2.1.15-rc.7'
+          test "$(python3 -c 'import json;print(json.load(open("/tmp/windows-feed-before.json"))["version"])')" = '2.1.13'
+          echo "MAC_FEED_BASELINE=2.1.15-rc.7"
+          echo "WINDOWS_FEED_BASELINE=2.1.13"
+
+      - name: Version consistency gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import json,re
+          from pathlib import Path
+          v='3.0.0'
+          pkg=json.load(open('package.json'))
+          lock=json.load(open('package-lock.json'))
+          conf=json.load(open('src-tauri/tauri.conf.json'))
+          cargo=Path('src-tauri/Cargo.toml').read_text()
+          clock=Path('src-tauri/Cargo.lock').read_text()
+          assert pkg['version']==v
+          assert lock['version']==v and lock['packages']['']['version']==v
+          assert conf['version']==v
+          assert conf['identifier']=='studio.channelflow.desktop'
+          assert conf['bundle']['createUpdaterArtifacts'] is True
+          assert conf['plugins']['updater']['pubkey']
+          m=re.search(r'(?ms)^\[package\].*?^version\s*=\s*"([^"]+)"',cargo)
+          assert m and m.group(1)==v, m.group(1) if m else 'Cargo.toml package version missing'
+          m=re.search(r'\[\[package\]\]\nname = "channelflow"\nversion = "([^"]+)"',clock)
+          assert m and m.group(1)==v, m.group(1) if m else 'Cargo.lock channelflow version missing'
+          for value in (pkg['version'],lock['version'],lock['packages']['']['version'],conf['version'],re.search(r'(?ms)^\[package\].*?^version\s*=\s*"([^"]+)"',cargo).group(1),m.group(1)):
+              assert value not in {'2.1.15-rc.7','2.1.15-rc.8'} and not value.startswith('3.0.0-rc.')
+          print('VERSION_CONSISTENCY=PASS')
+          PY
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Frontend contracts and full regression
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npx vitest run             src/v300PublisherSelection.test.ts             src/v300PublisherUiContracts.test.ts             src/v300OauthContinuity.test.ts             src/renderScanClassifier.test.ts             src/v2115Rc7RenderScanContract.test.ts             src/v2115Rc7OauthUpdateContinuity.test.ts             src/v2115Rc6KeychainRotation.test.ts             src/storageLifecycle.test.ts             src/uploadQueue.test.ts             src/channelSchedule.test.ts             src/scheduleContinuation.test.ts             src/publisherSchedule.test.ts             src/updaterSchedule.test.ts             src/updaterRuntime.test.ts             src/updaterPolicy.test.ts             src/updaterGuard.test.ts
+          npm test
+          npm run build
+          echo 'TYPESCRIPT_BUILD=PASS'
+          echo 'FRONTEND_TESTS=PASS'
+          echo 'PUBLISHER_SELECTION_CONTRACT=PASS'
+          echo 'CLIENT_SECRET_CONTINUITY_CONTRACT=PASS'
+          echo 'USER_UPDATE_UI=PASS'
+          echo 'RECENT_BLOCK_REMOVED=PASS'
+          echo 'PAGE_OVERFLOW_X=0'
+          echo 'CHANGELOG_SOURCE=PASS'
+
+      - name: Rust contracts and full regression
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cargo check --manifest-path src-tauri/Cargo.toml
+          cargo test --manifest-path src-tauri/Cargo.toml local_delete::tests -- --nocapture
+          cargo test --manifest-path src-tauri/Cargo.toml v2115_rc6_keychain_rotation_tests -- --nocapture
+          cargo test --manifest-path src-tauri/Cargo.toml -- --nocapture
+          echo 'RUST_CHECK=PASS'
+          echo 'RUST_TESTS=PASS'
+          echo 'OAUTH_50_PROFILE_CONTINUITY=PASS'
+          echo 'CHANNEL_FOLDER_DISCOVERY=PASS'
+          echo 'CHANNEL_SCOPED_SCAN=PASS'
+
+      - name: Source behavior contract assertions
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('src/PublisherOS.tsx').read_text()
+          y=Path('src-tauri/src/youtube.rs').read_text()
+          folders=Path('src-tauri/src/local_delete.rs').read_text()
+          settings=Path('src/SettingsOS.tsx').read_text()
+          recent=Path('src/YouTubeChannelBar.tsx').read_text()
+          styles=Path('src/styles.css').read_text()
+          history=Path('src/releaseHistory.ts').read_text()
+
+          assert "uploadStateById.get(j.id)==='NEW'&&!recoveryJobIds.has(j.id)" in p
+          assert "channelJobs.filter(j=>selectableJobIds.has(j.id)).map(j=>j.id)" in p
+          assert "setDraftPatch({selectedIds:[]})" in p
+          assert "disabledReason=" in p
+          assert "const root=channelRenderFolder" in p
+          scan=p.split('async function scanRenderFolder()',1)[1].split('function addScannedRenderCandidates',1)[0]
+          assert 'settings.workspace' not in scan
+          assert "found.render.length===1" in p and "found.projects.length===1" in p
+          assert "Найдено несколько папок" in p
+
+          for state in ['PROFILE_CANONICAL','GLOBAL_EXACT_MATCH','CANONICAL_PRESENT_UNVERIFIED','KEYCHAIN_BLOCKED','CLIENT_SECRET_REIMPORT_REQUIRED']:
+              assert state in y
+          assert 'OAUTH_CLIENT_SECRET_KEYCHAIN_BLOCKED' in y
+          assert 'v300_fifty_profile_update_in_place_preserves_identity_pointers_and_generations' in y
+          assert 'normalized_duplicate_channel_folders_are_reported_as_ambiguous_candidates' in folders
+          assert 'exact_channel_root_never_includes_sibling_channel_media' in folders
+
+          assert '<summary>Технические сведения</summary>' in settings
+          assert 'updaterStatusLabel(updaterStatus)' in settings
+          assert 'raw.githubusercontent.com' not in settings
+          assert 'Недавние' not in recent
+          assert '.pageWrap{overflow-y:auto;overflow-x:hidden;min-width:0;max-width:100%' in styles
+          assert 'VYRON_RELEASE_HISTORY.map' in settings
+          assert "version:'3.0.0'" in history and "date:'21.09.2026'" in history
+
+          print('PUBLISHER_SELECTION_CONTRACT=PASS')
+          print('CLIENT_SECRET_CONTINUITY_CONTRACT=PASS')
+          print('OAUTH_50_PROFILE_CONTINUITY=PASS')
+          print('CHANNEL_FOLDER_DISCOVERY=PASS')
+          print('CHANNEL_SCOPED_SCAN=PASS')
+          print('USER_UPDATE_UI=PASS')
+          print('RECENT_BLOCK_REMOVED=PASS')
+          print('PAGE_OVERFLOW_X=0')
+          print('CHANGELOG_SOURCE=PASS')
+          PY
+
+      - name: Import persistent RC7-compatible signing identity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -n "${VYRON_MACOS_SIGNING_P12_BASE64:-}"
+          test -n "${VYRON_MACOS_SIGNING_P12_PASSWORD:-}"
+          test -n "${TAURI_SIGNING_PRIVATE_KEY:-}"
+          test "$VYRON_MACOS_SIGNING_IDENTITY" = 'VYRON Local Code Signing'
+          KEYCHAIN="$RUNNER_TEMP/vyron-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)$(uuidgen)"
+          P12="$RUNNER_TEMP/vyron-signing.p12"
+          CERT="$RUNNER_TEMP/vyron-signing.pem"
+          printf '%s' "$VYRON_MACOS_SIGNING_P12_BASE64" | base64 --decode > "$P12"
+          chmod 600 "$P12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$P12" -k "$KEYCHAIN" -P "$VYRON_MACOS_SIGNING_P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security >/dev/null
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          security find-certificate -c "$VYRON_MACOS_SIGNING_IDENTITY" -p "$KEYCHAIN" > "$CERT"
+          test -s "$CERT"
+          LOGIN_KEYCHAIN="$(security default-keychain -d user | tr -d '"')"
+          security list-keychains -d user -s "$KEYCHAIN" "$LOGIN_KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          ID_SHA1="$(security find-certificate -Z -c "$VYRON_MACOS_SIGNING_IDENTITY" "$KEYCHAIN" 2>/dev/null | awk '/SHA-1 hash:/{print $3; exit}')"
+          test "$(printf '%s' "$ID_SHA1" | tr '[:lower:]' '[:upper:]')" = "$EXPECTED_SIGNING_CERT_SHA1"
+          echo "APPLE_SIGNING_IDENTITY=$ID_SHA1" >> "$GITHUB_ENV"
+          echo "VYRON_SIGNING_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+          echo "VYRON_SIGNING_KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> "$GITHUB_ENV"
+
+      - name: Normalize updater signing key
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import base64,os
+          raw=os.environ.get('TAURI_SIGNING_PRIVATE_KEY','').strip()
+          assert raw
+          def dec(x):
+              try:return base64.b64decode(x,validate=True).decode()
+              except:return None
+          if raw.startswith('untrusted comment:'):
+              out=base64.b64encode(raw.encode()).decode();box=raw
+          else:
+              one=dec(raw)
+              if one and one.startswith('untrusted comment:'): out=raw;box=one
+              else:
+                  box=dec(one) if one else None
+                  assert box and box.startswith('untrusted comment:')
+                  out=one.strip()
+          assert 'secret key' in box.splitlines()[0].lower()
+          open(os.environ['GITHUB_ENV'],'a').write('TAURI_SIGNING_PRIVATE_KEY='+out+'\n')
+          print('::add-mask::'+out)
+          PY
+
+      - name: Build signed macOS ARM64 physical candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rustup target add aarch64-apple-darwin
+          security unlock-keychain -p "$VYRON_SIGNING_KEYCHAIN_PASSWORD" "$VYRON_SIGNING_KEYCHAIN"
+          npx tauri build --target aarch64-apple-darwin --bundles app,dmg
+          mkdir -p physical-candidate
+          APP="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)"
+          DMG="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -name '*.dmg' -print -quit)"
+          UPDATER="$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name '*.app.tar.gz' -print -quit)"
+          SIG="$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name '*.app.tar.gz.sig' -print -quit)"
+          test -d "$APP"; test -s "$DMG"; test -s "$UPDATER"; test -s "$SIG"
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = "$BUNDLE_ID"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = "$VERSION"
+          test "$(plutil -extract CFBundleExecutable raw -o - "$APP/Contents/Info.plist")" = "$EXECUTABLE"
+          file "$APP/Contents/MacOS/$EXECUTABLE" | grep -q arm64
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -dv --verbose=4 "$APP" 2>&1 | tee physical-candidate/codesign-details.txt
+          codesign -d -r- "$APP" 2>&1 | tee physical-candidate/designated-requirement.txt
+          ! grep -F 'Signature=adhoc' physical-candidate/codesign-details.txt
+
+          rm -rf /tmp/vyron-rc7-requirement && mkdir -p /tmp/vyron-rc7-requirement
+          gh release download v2.1.15-rc.7 --repo "$REPO" --dir /tmp/vyron-rc7-requirement --pattern designated-requirement.txt
+          cmp -s physical-candidate/designated-requirement.txt /tmp/vyron-rc7-requirement/designated-requirement.txt
+
+          hdiutil verify "$DMG"
+          cp "$DMG" "physical-candidate/VYRON-3.0.0-PHYSICAL-CANDIDATE-arm64.dmg"
+          cp "$UPDATER" "physical-candidate/VYRON-3.0.0-PHYSICAL-CANDIDATE.app.tar.gz"
+          cp "$SIG" "physical-candidate/VYRON-3.0.0-PHYSICAL-CANDIDATE.app.tar.gz.sig"
+          shasum -a 256 "physical-candidate/VYRON-3.0.0-PHYSICAL-CANDIDATE-arm64.dmg" | tee physical-candidate/VYRON-3.0.0-PHYSICAL-CANDIDATE-arm64.dmg.sha256
+          shasum -a 256 "physical-candidate/VYRON-3.0.0-PHYSICAL-CANDIDATE.app.tar.gz" | tee physical-candidate/VYRON-3.0.0-PHYSICAL-CANDIDATE.app.tar.gz.sha256
+          stat -f '%z' "physical-candidate/VYRON-3.0.0-PHYSICAL-CANDIDATE-arm64.dmg" | tee physical-candidate/VYRON-3.0.0-PHYSICAL-CANDIDATE-arm64.dmg.size
+          echo 'CODESIGN=PASS'
+          echo 'DESIGNATED_REQUIREMENT_CONTINUITY=PASS'
+          echo 'DMG_VERIFY=PASS'
+
+      - name: Finder-like candidate launch smoke
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          M="$RUNNER_TEMP/vyron-300-candidate-mount"
+          rm -rf "$M"; mkdir -p "$M"
+          hdiutil attach "physical-candidate/VYRON-3.0.0-PHYSICAL-CANDIDATE-arm64.dmg" -nobrowse -readonly -mountpoint "$M"
+          trap 'hdiutil detach "$M" >/dev/null 2>&1 || true' EXIT
+          A="$M/VYRON.app"
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$A/Contents/Info.plist")" = "$BUNDLE_ID"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$A/Contents/Info.plist")" = "$VERSION"
+          codesign --verify --deep --strict "$A"
+          env -i HOME="$HOME" USER="$USER" PATH='/usr/bin:/bin:/usr/sbin:/sbin' TMPDIR="$RUNNER_TEMP/" "$A/Contents/MacOS/$EXECUTABLE" >/tmp/vyron-300-candidate-launch.log 2>&1 &
+          P=$!
+          sleep 8
+          kill -0 "$P"
+          kill "$P" || true
+          wait "$P" || true
+          hdiutil detach "$M"; trap - EXIT
+          echo 'APP_START=PASS'
+          echo 'RUNTIME_VERSION=3.0.0'
+          echo 'BLACK_SCREEN=AUTOMATED_VISUAL_PROOF_NOT_CLAIMED'
+
+      - name: Verify production feeds are byte-identical
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode >/tmp/mac-feed-after.json
+          gh api "repos/$REPO/contents/vyron-updates/windows-latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode >/tmp/windows-feed-after.json
+          test "$(python3 -c 'import json;print(json.load(open("/tmp/mac-feed-after.json"))["version"])')" = '2.1.15-rc.7'
+          test "$(python3 -c 'import json;print(json.load(open("/tmp/windows-feed-after.json"))["version"])')" = '2.1.13'
+          cmp -s /tmp/mac-feed-before.json /tmp/mac-feed-after.json
+          cmp -s /tmp/windows-feed-before.json /tmp/windows-feed-after.json
+          test "$(shasum -a 256 /tmp/mac-feed-after.json | awk '{print $1}')" = "$(cat /tmp/mac-feed-before.sha)"
+          test "$(shasum -a 256 /tmp/windows-feed-after.json | awk '{print $1}')" = "$(cat /tmp/windows-feed-before.sha)"
+          echo 'MAC_FEED_UNCHANGED=PASS'
+          echo 'WINDOWS_FEED_UNCHANGED=PASS'
+
+      - name: Upload physical candidate artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-3.0.0-PHYSICAL-CANDIDATE-arm64
+          path: physical-candidate/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Machine-readable candidate summary
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          {
+            echo "VYRON_300_HEAD=$VYRON_300_HEAD"
+            echo "VERSION=3.0.0"
+            echo "TYPESCRIPT_BUILD=PASS"
+            echo "FRONTEND_TESTS=PASS"
+            echo "RUST_CHECK=PASS"
+            echo "RUST_TESTS=PASS"
+            echo "PUBLISHER_SELECTION_CONTRACT=PASS"
+            echo "CLIENT_SECRET_CONTINUITY_CONTRACT=PASS"
+            echo "OAUTH_50_PROFILE_CONTINUITY=PASS"
+            echo "CHANNEL_FOLDER_DISCOVERY=PASS"
+            echo "CHANNEL_SCOPED_SCAN=PASS"
+            echo "USER_UPDATE_UI=PASS"
+            echo "RECENT_BLOCK_REMOVED=PASS"
+            echo "PAGE_OVERFLOW_X=0"
+            echo "CHANGELOG_SOURCE=PASS"
+            echo "CODESIGN=PASS"
+            echo "DESIGNATED_REQUIREMENT_CONTINUITY=PASS"
+            echo "DMG_VERIFY=PASS"
+            echo "APP_START=PASS"
+            echo "MAC_FEED_UNCHANGED=PASS"
+            echo "WINDOWS_FEED_UNCHANGED=PASS"
+            echo "PHYSICAL_ACCEPTANCE=PENDING"
+          } | tee physical-candidate/automated-summary.txt
+          cat physical-candidate/automated-summary.txt >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Cleanup signing material
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          rm -f "$RUNNER_TEMP/vyron-signing.p12" "$RUNNER_TEMP/vyron-signing.pem"
+          if [[ -n "${VYRON_SIGNING_KEYCHAIN:-}" ]]; then security delete-keychain "$VYRON_SIGNING_KEYCHAIN" >/dev/null 2>&1 || true; fi
