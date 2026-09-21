@@ -1,5 +1,5 @@
 import React,{useEffect,useMemo,useRef,useState} from 'react';
-import {api,type GoogleConfigStatus,type OAuthCredentialStatesResponse,type OAuthExistingProfilesRecoveryResult,type OAuthReconnectWrongChannel} from './api';
+import {api,type GoogleConfigStatus,type OAuthCredentialStatesResponse,type OAuthExistingProfilesRecoveryResult,type OAuthInteractiveRecoveryResult,type OAuthReconnectWrongChannel} from './api';
 import {useApp} from './store';
 import type {YoutubeProfile} from './types';
 import {isOAuthMissingErrorText,resolveOAuthMissingErrors} from './errorHistory';
@@ -15,6 +15,7 @@ export function AuthRecoveryCenter(){
  const [credentialStates,setCredentialStates]=useState<OAuthCredentialStatesResponse>({credentialSchemaVersion:2,profiles:[],secretValuesIncluded:false,youtubeApiRequests:0,keychainSecretReads:0});
  const [globalStatus,setGlobalStatus]=useState<GoogleConfigStatus|null>(null);
  const [automatic,setAutomatic]=useState<OAuthExistingProfilesRecoveryResult|null>(null);
+ const [interactive,setInteractive]=useState<(OAuthInteractiveRecoveryResult&{running?:boolean;done?:number})|null>(null);
  const [busy,setBusy]=useState('');
  const [transient,setTransient]=useState<Record<string,RecoveryTransient>>({});
  const [loaded,setLoaded]=useState(false);
@@ -74,6 +75,22 @@ export function AuthRecoveryCenter(){
   }catch(e){window.clearTimeout(timer);const f=reconnectFailure(e);setTransient(x=>({...x,[profileId]:{status:f.status,detail:f.message}}));if(f.status==='WRONG CHANNEL')notifyWarning('Выбран другой YouTube-канал','VYRON не изменил профиль. Используйте повторный вход через нужный канал.');else notifyError('Переподключение не завершено',f.message,{persistError:false})}
   finally{setBusy('')}
  }
+ async function runInteractiveRecovery(){
+  if(busy||!globalStatus?.oauthReady)return;
+  if(!window.confirm('VYRON попробует восстановить старые сохранённые refresh tokens через macOS Keychain. macOS может запросить разрешение доступа. Google-браузеры автоматически не откроются. Продолжить?'))return;
+  setBusy('interactive');
+  setInteractive({total:profiles.length,recoveredWithoutGoogle:0,keychainBlocked:0,reconnectRequired:0,failed:0,skippedReady:0,manualQueue:profiles.length,browserLaunches:0,googleAccountSelectors:0,credentialsDialogs:0,youtubeApiRequests:0,videosInsert:0,profiles:[],secretValuesIncluded:false,running:true,done:0});
+  let stop:(()=>void)|undefined;
+  try{
+   stop=await api.onOauthInteractiveRecoveryProgress(p=>setInteractive(x=>x?{...x,running:true,done:p.done,total:p.total,recoveredWithoutGoogle:p.recoveredWithoutGoogle,keychainBlocked:p.keychainBlocked,reconnectRequired:p.reconnectRequired,failed:p.failed}:x));
+   const result=await api.youtubeOauthInteractiveRecoverBlockedProfiles();
+   setInteractive({...result,running:false,done:result.total});
+   await load();
+   if(result.recoveredWithoutGoogle)notifySuccess('Сохранённые подключения восстановлены',`Без Google-входа восстановлено: ${result.recoveredWithoutGoogle}. Требуют ручного входа: ${result.manualQueue}.`);
+   else notifyWarning('Автоматически восстановить токены не удалось',`Доступ заблокирован macOS: ${result.keychainBlocked}. Требуют входа: ${result.reconnectRequired}. Ошибки: ${result.failed}. Google-браузеры не открывались.`);
+  }catch(e){notifyError('Восстановление Keychain не завершено',String(e),{persistError:false})}
+  finally{stop?.();setBusy('')}
+ }
  async function importGlobalCredentials(files:FileList|null){
   const file=files?.[0];if(!file||busy)return;setBusy('global-credentials');
   try{
@@ -124,9 +141,11 @@ export function AuthRecoveryCenter(){
 
   <div className="settingsCard" style={{marginTop:12}}><small>ШАГ 1 • GLOBAL OAUTH</small><h3>{globalStatus?.oauthReady?'READY':globalStatus?.oauthState||'NOT READY'}</h3><p>{globalStatus?.oauthState==='KEYCHAIN_ACCESS_BLOCKED'?'Client Secret сохранён, но macOS Keychain временно не даёт его прочитать. Сначала безопасная проверка; при необходимости можно выбрать тот же credentials.json.':'Один credentials.json используется для всех существующих и новых каналов VYRON.'}</p><div className="headerActions">{globalStatus?.oauthState==='KEYCHAIN_ACCESS_BLOCKED'&&<button disabled={!!busy} onClick={()=>void retryGlobal()}>Повторить безопасную проверку</button>}<button disabled={!!busy} onClick={()=>credentialsFile.current?.click()}>{globalStatus?.oauthState==='KEYCHAIN_ACCESS_BLOCKED'?'Восстановить через credentials.json':globalStatus?.oauthReady?'Заменить credentials.json':'Настроить OAuth Client один раз'}</button></div></div>
 
-  <div className="settingsCard" style={{marginTop:12}}><small>ШАГ 2 • АВТОМАТИЧЕСКОЕ ВОССТАНОВЛЕНИЕ</small><h3>Существующие профили — без браузера</h3><p>VYRON читает текущий refresh-token pointer и делает только Google OAuth token refresh. YouTube Data API на этом шаге не используется.</p><button className="primary" disabled={!!busy||!globalStatus?.oauthReady||!profiles.length} onClick={()=>void runAutomaticRecovery(false)}>{busy==='automatic'?'Восстановление…':'Восстановить сохранённые подключения'}</button>{automatic&&<div className="settingsInfoGrid"><span><small>Профили</small><b>{automatic.total}</b></span><span><small>Автоматически восстановлено</small><b>{automatic.automaticallyRestored}</b></span><span><small>Keychain blocked</small><b>{automatic.keychainBlocked}</b></span><span><small>Требуют входа</small><b>{automatic.reconnectRequired+automatic.failed}</b></span><span><small>Браузеры открыты автоматически</small><b>{automatic.browserLaunches}</b></span><span><small>YouTube API requests</small><b>{automatic.youtubeApiRequests}</b></span></div>}</div>
+  <div className="settingsCard" style={{marginTop:12}}><small>ШАГ 2 • NO-UI ПРОВЕРКА</small><h3>Существующие профили — без системных диалогов</h3><p>Обычная проверка читает доступные refresh tokens без macOS password prompts и делает только Google OAuth token refresh. YouTube Data API не используется.</p><button className="primary" disabled={!!busy||!globalStatus?.oauthReady||!profiles.length} onClick={()=>void runAutomaticRecovery(false)}>{busy==='automatic'?'Проверка…':'Проверить сохранённые подключения без запросов macOS'}</button>{automatic&&<div className="settingsInfoGrid"><span><small>Профили</small><b>{automatic.total}</b></span><span><small>Автоматически восстановлено</small><b>{automatic.automaticallyRestored}</b></span><span><small>Keychain blocked</small><b>{automatic.keychainBlocked}</b></span><span><small>Требуют входа</small><b>{automatic.reconnectRequired+automatic.failed}</b></span><span><small>Браузеры открыты автоматически</small><b>{automatic.browserLaunches}</b></span><span><small>YouTube API requests</small><b>{automatic.youtubeApiRequests}</b></span></div>}</div>
 
-  <div className="settingsCard" style={{marginTop:12}}><small>ШАГ 3 • ТОЛЬКО НЕРЕШЁННЫЕ</small><h3>Ручная очередь: {manualQueue}</h3><p>Не нужно проходить все каналы. Ручной вход предлагается только там, где сохранённый token заблокирован, отсутствует или отозван.</p></div>
+  <div className="settingsCard" style={{marginTop:12}}><small>ШАГ 3 • ЯВНОЕ ВОССТАНОВЛЕНИЕ KEYCHAIN</small><h3>Восстановить старые сохранённые подключения</h3><p>Запускается только вручную. macOS может запросить разрешение на чтение старых защищённых записей. После успешного доступа VYRON переносит token в новый canonical item, проверяет readback и OAuth token refresh. Google браузеры не открываются.</p><button className="primary" disabled={!!busy||!globalStatus?.oauthReady||!profiles.length} onClick={()=>void runInteractiveRecovery()}>{busy==='interactive'?'Восстановление…':'Восстановить сохранённые подключения'}</button>{interactive?.running&&<div className="statsRefreshProgress"><b>Keychain recovery</b><span>{interactive.done||0} / {interactive.total}</span><i style={{width:`${interactive.total?Math.round((interactive.done||0)/interactive.total*100):0}%`}}/></div>}{interactive&&!interactive.running&&<div className="settingsInfoGrid"><span><small>Без Google-входа</small><b>{interactive.recoveredWithoutGoogle}</b></span><span><small>Keychain blocked</small><b>{interactive.keychainBlocked}</b></span><span><small>Требуют browser login</small><b>{interactive.reconnectRequired}</b></span><span><small>Ошибки</small><b>{interactive.failed}</b></span><span><small>Browser auto-open</small><b>{interactive.browserLaunches}</b></span><span><small>YouTube API requests</small><b>{interactive.youtubeApiRequests}</b></span></div>}</div>
+
+  <div className="settingsCard" style={{marginTop:12}}><small>ШАГ 4 • ТОЛЬКО НЕРЕШЁННЫЕ</small><h3>Ручная очередь: {manualQueue}</h3><p>Google-вход нужен только профилям, которые macOS действительно не разрешил восстановить или чей refresh token был отозван.</p></div>
   <div className="settingsInfoGrid"><span><small>Всего каналов</small><b>{channels.length}</b></span><span><small>OAuth profiles</small><b>{profiles.length}</b></span><span><small>READY</small><b>{connected}</b></span><span><small>Keychain blocked</small><b>{keychainBlocked}</b></span><span><small>Reconnect required</small><b>{reconnectRequired}</b></span><span><small>Browser auto-open</small><b>{automatic?.browserLaunches??0}</b></span></div>
 
   {loaded&&manualQueue===0&&unmapped.length===0&&<div className="successBox"><b>Каналы сохранены</b><br/>Все доступные сохранённые подключения восстановлены без массового Google login.</div>}
