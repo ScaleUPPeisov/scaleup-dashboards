@@ -1,5 +1,6 @@
 use serde::Serialize;
 use std::{
+    collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
 };
@@ -51,6 +52,36 @@ pub fn local_source_status(path: String) -> Result<LocalSourceStatus, String> {
         modified_at,
     })
 }
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChannelFolderDiscovery { pub render: Vec<String>, pub projects: Vec<String>, pub roots_checked: Vec<String> }
+
+fn normalized_folder_name(value: &str) -> String { value.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase() }
+fn canonical_dir(path: &Path) -> Option<PathBuf> { if !path.is_dir(){return None} path.canonicalize().ok() }
+fn push_base(bases:&mut Vec<PathBuf>,candidate:PathBuf){let Some(canon)=canonical_dir(&candidate) else{return};if !bases.iter().any(|x|x==&canon){bases.push(canon)}}
+fn matching_container_dirs(base:&Path,expected:&str)->Vec<PathBuf>{
+ let target=normalized_folder_name(expected);let mut out=Vec::new();
+ if base.file_name().and_then(|x|x.to_str()).map(normalized_folder_name).as_deref()==Some(target.as_str()){out.push(base.to_path_buf())}
+ if let Ok(entries)=fs::read_dir(base){for entry in entries.flatten(){let p=entry.path();if !p.is_dir(){continue}let yes=p.file_name().and_then(|x|x.to_str()).map(normalized_folder_name).as_deref()==Some(target.as_str());if yes{if let Some(c)=canonical_dir(&p){if !out.iter().any(|x|x==&c){out.push(c)}}}}}
+ out
+}
+fn exact_named_channel_dirs(container:&Path,channel_name:&str)->Vec<PathBuf>{
+ let target=normalized_folder_name(channel_name);if target.is_empty(){return Vec::new()}let mut out=Vec::new();
+ if let Ok(entries)=fs::read_dir(container){for entry in entries.flatten(){let p=entry.path();if !p.is_dir(){continue}let yes=p.file_name().and_then(|x|x.to_str()).map(normalized_folder_name).as_deref()==Some(target.as_str());if yes{if let Some(c)=canonical_dir(&p){out.push(c)}}}}
+ out
+}
+pub fn discover_channel_folders_impl(workspace:&str,channel_name:&str)->Result<ChannelFolderDiscovery,String>{
+ let workspace=workspace.trim();let channel_name=channel_name.trim();
+ if workspace.is_empty(){return Err("CHANNEL_FOLDER_DISCOVERY_WORKSPACE_EMPTY".into())}if channel_name.is_empty(){return Err("CHANNEL_FOLDER_DISCOVERY_CHANNEL_EMPTY".into())}
+ let workspace_canon=canonical_dir(&PathBuf::from(workspace)).ok_or_else(||"CHANNEL_FOLDER_DISCOVERY_WORKSPACE_NOT_FOUND".to_string())?;
+ let mut bases=Vec::new();push_base(&mut bases,workspace_canon.clone());if let Some(parent)=workspace_canon.parent(){push_base(&mut bases,parent.to_path_buf())}
+ let mut render=BTreeSet::new();let mut projects=BTreeSet::new();let mut roots_checked=BTreeSet::new();
+ for base in &bases{roots_checked.insert(base.to_string_lossy().into_owned());for container in matching_container_dirs(base,"Render"){roots_checked.insert(container.to_string_lossy().into_owned());for p in exact_named_channel_dirs(&container,channel_name){render.insert(p.to_string_lossy().into_owned())}}for container in matching_container_dirs(base,"Projects"){roots_checked.insert(container.to_string_lossy().into_owned());for p in exact_named_channel_dirs(&container,channel_name){projects.insert(p.to_string_lossy().into_owned())}}}
+ Ok(ChannelFolderDiscovery{render:render.into_iter().collect(),projects:projects.into_iter().collect(),roots_checked:roots_checked.into_iter().collect()})
+}
+#[tauri::command]
+pub fn discover_channel_folders(workspace:String,channel_name:String)->Result<ChannelFolderDiscovery,String>{discover_channel_folders_impl(&workspace,&channel_name)}
 
 fn allowed_media(path: &Path) -> bool {
     matches!(
@@ -206,6 +237,20 @@ mod tests {
         let p = std::env::temp_dir().join(format!("vyron-ready-delete-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&p).unwrap();
         p
+    }
+    #[test]
+    fn discovers_sibling_render_and_projects_by_exact_normalized_channel_name(){
+        let root=temp_root();let workspace=root.join("ВАЙРОН");let render=root.join("Render").join("Glass City Lovers");let projects=root.join("Projects").join("Glass City Lovers");
+        fs::create_dir_all(&workspace).unwrap();fs::create_dir_all(&render).unwrap();fs::create_dir_all(&projects).unwrap();
+        let found=discover_channel_folders_impl(workspace.to_str().unwrap(),"  Glass   City Lovers ").unwrap();
+        assert_eq!(found.render,vec![render.canonicalize().unwrap().to_string_lossy().into_owned()]);assert_eq!(found.projects,vec![projects.canonicalize().unwrap().to_string_lossy().into_owned()]);
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn folder_discovery_never_fuzzy_matches_other_channel_names(){
+        let root=temp_root();let workspace=root.join("VYRON");fs::create_dir_all(&workspace).unwrap();
+        fs::create_dir_all(root.join("Render").join("Glass City Loverz")).unwrap();fs::create_dir_all(root.join("Projects").join("Glass City Lovers Radio")).unwrap();
+        let found=discover_channel_folders_impl(workspace.to_str().unwrap(),"Glass City Lovers").unwrap();assert!(found.render.is_empty());assert!(found.projects.is_empty());fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn missing_mp4_is_a_clean_success() {

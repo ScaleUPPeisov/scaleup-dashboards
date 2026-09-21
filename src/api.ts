@@ -26,6 +26,7 @@ export type YoutubeProcessingStatus={videoId:string;channelId?:string;remoteExis
 export type LocalSourceStatus={path:string;exists:boolean;isFile:boolean;size?:number|null;modifiedAt?:number|null};
 export type RenderFolderVideoFile={path:string;name:string;size:number;createdAt?:number|null;modifiedAt?:number|null};
 export type RenderFolderScanResult={root:string;files:RenderFolderVideoFile[];scannedEntries:number;truncated:boolean};
+export type ChannelFolderDiscovery={render:string[];projects:string[];rootsChecked:string[]};
 export type YoutubeProcessingBatchResult={requested:number;found:number;calls:number;rows:YoutubeProcessingStatus[]};
 export type GoogleProjectDiagnosticSafe={oauthProfileId:string;channelId?:string|null;channelTitle?:string|null;clientId:string;projectId?:string|null;projectIdSource:'google-config-exact-client-match'|'not-locally-known';youtubeApiRequests:0;keychainSecretsRead:false};
 export type StateSaveResult={ok:boolean;securityWarning?:string|null;securityWarnings?:number};
@@ -87,6 +88,8 @@ export const api={
   defaultWorkspace:()=>invoke<string>('default_workspace'),
   chooseWorkspace:async()=>{const r=await open({directory:true,multiple:false,title:'Папка VYRON YT PEISOV'});return typeof r==='string'?r:null},
   chooseRenderFolder:async(defaultPath?:string)=>{const r=await open({directory:true,multiple:false,title:'Папка рендера текущего канала',defaultPath:defaultPath||undefined});return typeof r==='string'?r:null},
+  chooseProjectsFolder:async(defaultPath?:string)=>{const r=await open({directory:true,multiple:false,title:'Папка проектов текущего канала',defaultPath:defaultPath||undefined});return typeof r==='string'?r:null},
+  discoverChannelFolders:(workspace:string,channelName:string)=>invoke<ChannelFolderDiscovery>('discover_channel_folders',{workspace,channelName}),
   chooseShortsSourceFolder:async()=>{const r=await open({directory:true,multiple:false,title:'Выберите папку с видео для Shorts'});return typeof r==='string'?r:null},
   chooseShortsOutputFolder:async(defaultPath?:string)=>{const r=await open({directory:true,multiple:false,title:'Папка для готовых Shorts',defaultPath:defaultPath||undefined});return typeof r==='string'?r:null},
   chooseEndlume:async()=>{const r=await open({directory:false,multiple:false,title:'Выберите ENDLUME Studio.app'});return typeof r==='string'?r:null},
