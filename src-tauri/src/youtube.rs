@@ -6686,5 +6686,35 @@ mod v2115_rc6_keychain_rotation_tests {
   let after=(0..50).map(|i|{let id=format!("p{i}");(id.clone(),profile_refresh_token_account_from_state(&after_state,&id),profile_client_secret_account_from_state(&after_state,&id))}).collect::<Vec<_>>();
   assert_eq!(before,after);
  }
+ #[test]
+ fn v300_fifty_profile_update_in_place_preserves_identity_pointers_and_generations(){
+  let profiles=(0..50).map(|i|profile(&format!("p{i}"),&format!("UC{i}"))).collect::<Vec<_>>();
+  let store=OAuthStore{profiles};
+  let before_profile_ids=store.profiles.iter().map(|p|p.id.clone()).collect::<Vec<_>>();
+  let before_channel_ids=store.profiles.iter().map(|p|p.channel_id.clone()).collect::<Vec<_>>();
+  let mut state=KeychainMigrationV2State::default();
+  for i in 0..50{
+   let id=format!("p{i}");
+   match i%4{
+    0=>{},
+    1=>{state.refresh_token_accounts.insert(id.clone(),format!("oauth.{id}.refresh_token.v2.2.rotated"));state.credential_generations.insert(id.clone(),2);},
+    2=>{state.client_secret_accounts.insert(id.clone(),format!("oauth.{id}.client_secret.v2.3.rotated"));state.credential_generations.insert(id.clone(),3);},
+    _=>{state.refresh_token_accounts.insert(id.clone(),format!("oauth.{id}.refresh_token.v2.4.rotated"));state.client_secret_accounts.insert(id.clone(),format!("oauth.{id}.client_secret.v2.4.rotated"));state.credential_generations.insert(id.clone(),4);}
+   }
+  }
+  let before_refresh=(0..50).map(|i|{let id=format!("p{i}");profile_refresh_token_account_from_state(&state,&id)}).collect::<Vec<_>>();
+  let before_secret=(0..50).map(|i|{let id=format!("p{i}");profile_client_secret_account_from_state(&state,&id)}).collect::<Vec<_>>();
+  let before_generation=(0..50).map(|i|state.credential_generations.get(&format!("p{i}")).copied().unwrap_or_default()).collect::<Vec<_>>();
+  let store_after:OAuthStore=serde_json::from_slice(&serde_json::to_vec(&store).unwrap()).unwrap();
+  let state_after:KeychainMigrationV2State=serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+  let after_refresh=(0..50).map(|i|{let id=format!("p{i}");profile_refresh_token_account_from_state(&state_after,&id)}).collect::<Vec<_>>();
+  let after_secret=(0..50).map(|i|{let id=format!("p{i}");profile_client_secret_account_from_state(&state_after,&id)}).collect::<Vec<_>>();
+  let after_generation=(0..50).map(|i|state_after.credential_generations.get(&format!("p{i}")).copied().unwrap_or_default()).collect::<Vec<_>>();
+  assert_eq!(before_profile_ids,store_after.profiles.iter().map(|p|p.id.clone()).collect::<Vec<_>>(),"Profile UUID changes must be zero");
+  assert_eq!(before_channel_ids,store_after.profiles.iter().map(|p|p.channel_id.clone()).collect::<Vec<_>>(),"YouTube Channel ID changes must be zero");
+  assert_eq!(before_refresh,after_refresh,"healthy refresh pointer changes must be zero");
+  assert_eq!(before_secret,after_secret,"healthy client-secret pointer changes must be zero");
+  assert_eq!(before_generation,after_generation,"credential generation changes require explicit recovery");
+ }
 
 }
