@@ -24,10 +24,17 @@ describe('VYRON 2.1.15 RC6 Keychain AuthFailed rotation',()=>{
  });
  it('new channel requires genuine backend readback before metadata save',()=>{
   const y=read('src-tauri/src/youtube.rs');
-  const body=y.split('pub async fn youtube_oauth_connect(').at(1)!.split('fn reconnect_profile_id')[0];
-  expect(body).toContain('canonical_verify_secret(&refresh_account,&refresh)');
-  expect(body.indexOf('canonical_verify_secret(&refresh_account,&refresh)')).toBeLessThan(body.indexOf('write_oauth_metadata(&store_path(&app)?,&s)'));
-  expect(body).toContain('NEW_ITEM_READBACK_AUTH_FAILED');
+  const commit=y.split('fn commit_new_channel_oauth(').at(1)!.split('#[tauri::command]\npub async fn youtube_oauth_connect(')[0];
+  const connect=y.split('pub async fn youtube_oauth_connect(').at(1)!.split('#[tauri::command]\npub fn youtube_oauth_select_new_channel')[0];
+  expect(commit).toContain('canonical_set_secret(&refresh_account,refresh)');
+  expect(commit).toContain('canonical_verify_secret(&refresh_account,refresh)');
+  expect(commit.indexOf('canonical_verify_secret(&refresh_account,refresh)')).toBeLessThan(commit.indexOf('write_oauth_metadata(&store_path(app)?,&store)'));
+  expect(commit).toContain('NEW_ITEM_READBACK_AUTH_FAILED');
+  expect(commit).toContain('OAUTH_POST_COMMIT_READ_FAILED');
+  expect(connect).toContain('CHANNEL_SELECTION_REQUIRED');
+  expect(connect).toContain('PendingNewOAuth');
+  expect(connect).not.toContain('write_oauth_metadata');
+  expect(connect).not.toContain('canonical_set_secret(&refresh_account');
  });
  it('fresh-item AuthFailed is a hard stop rather than a YouTube rejection',()=>{
   const h=humanizeError('NEW_ITEM_READBACK_AUTH_FAILED: stage=NEW_SECRET_READBACK; osstatus=-25293','oauth');
