@@ -1449,6 +1449,9 @@ struct PendingNewOAuth{
 static PENDING_NEW_OAUTH:OnceLock<Mutex<HashMap<String,PendingNewOAuth>>>=OnceLock::new();
 fn pending_new_oauth()->&'static Mutex<HashMap<String,PendingNewOAuth>>{PENDING_NEW_OAUTH.get_or_init(||Mutex::new(HashMap::new()))}
 fn cleanup_pending_new_oauth(){if let Ok(mut p)=pending_new_oauth().lock(){let now=now_ts();p.retain(|_,x|now.saturating_sub(x.created_at)<600)}}
+fn find_expected_channel_item<'a>(items:&'a [Value],expected_channel_id:&str)->Option<&'a Value>{
+ items.iter().find(|x|x.get("id").and_then(Value::as_str)==Some(expected_channel_id))
+}
 fn channel_identity_value(item:&Value,store:&OAuthStore)->Value{
  let channel_id=item.get("id").and_then(Value::as_str).unwrap_or("");
  let title=item.pointer("/snippet/title").and_then(Value::as_str).unwrap_or(channel_id);
@@ -5566,9 +5569,7 @@ pub async fn youtube_oauth_reconnect_existing(
             "OAUTH_CHANNEL_MISSING: authorized Google account returned no YouTube channel".into(),
         );
     }
-    let matched = items
-        .iter()
-        .find(|x| x.get("id").and_then(Value::as_str) == Some(expected_channel_id.as_str()));
+    let matched=find_expected_channel_item(items,&expected_channel_id);
     let item = match matched {
         Some(x) => x,
         None => {
@@ -5722,12 +5723,14 @@ mod v2115_rc3_oauth_processing_tests{
   assert!(!a.contains("example.apps"));
  }
  #[test]
- fn repaired_global_secret_account_is_reused_by_new_channel_connect(){
+ fn repaired_global_secret_account_is_reused_only_when_new_channel_commit_occurs(){
   let source=include_str!("youtube.rs");
-  let body=source.split("async fn youtube_oauth_connect(").nth(1).unwrap();
-  let block=body.split("let profile = OAuthProfile").next().unwrap();
-  assert!(block.contains("google_client_secret_account(&global_meta)"));
-  assert!(block.contains("global_meta.client_id.trim()==client_id"));
+  let commit=source.split("fn commit_new_channel_oauth(").nth(1).unwrap().split("#[tauri::command]\npub async fn youtube_oauth_connect(").next().unwrap();
+  assert!(commit.contains("google_client_secret_account(&global_meta)"));
+  assert!(commit.contains("global_meta.client_id.trim()==client_id"));
+  let connect=source.split("pub async fn youtube_oauth_connect(").nth(1).unwrap().split("pub fn youtube_oauth_select_new_channel").next().unwrap();
+  assert!(connect.contains("CHANNEL_SELECTION_REQUIRED"));
+  assert!(connect.contains("PendingNewOAuth"));
  }
  #[test]
  fn processing_state_never_equates_upload_acceptance_with_ready(){
@@ -6830,6 +6833,27 @@ mod v2115_rc6_keychain_rotation_tests {
   let before=(0..50).map(|i|{let id=format!("p{i}");(profile_refresh_token_account_from_state(&state,&id),state.credential_generations.get(&id).copied())}).collect::<Vec<_>>();
   let after=(0..50).map(|i|{let id=format!("p{i}");(profile_refresh_token_account_from_state(&state,&id),state.credential_generations.get(&id).copied())}).collect::<Vec<_>>();
   assert_eq!(before,after);
+ }
+ #[test]
+ fn v300_wrong_channel_expected_identity_found_among_multiple_rows(){
+  let items=vec![json!({"id":"UC_B"}),json!({"id":"UC_A"}),json!({"id":"UC_C"})];
+  assert_eq!(find_expected_channel_item(&items,"UC_A").and_then(|x|x.get("id")).and_then(Value::as_str),Some("UC_A"));
+ }
+ #[test]
+ fn v300_wrong_channel_expected_identity_absent_returns_none(){
+  let items=vec![json!({"id":"UC_B"}),json!({"id":"UC_C"})];
+  assert!(find_expected_channel_item(&items,"UC_A").is_none());
+ }
+ #[test]
+ fn v300_wrong_then_correct_reconnect_preserves_uuid_and_expected_channel(){
+  let sec=RotationStore::default();
+  let mut store=OAuthStore{profiles:vec![profile(P,"UC_A")]};
+  let before=store.profiles[0].clone();
+  let err=reconnect_apply_validated_accounts_with(&sec,&mut store,P,OLD_REFRESH,OLD_SECRET,1,"CLIENT","SECRET","ACCESS","WRONG","UC_B","B",&[],"brave",3600).unwrap_err();
+  assert!(err.starts_with("WRONG_CHANNEL:"));
+  assert_eq!(store.profiles[0].id,before.id);assert_eq!(store.profiles[0].channel_id,before.channel_id);assert!(sec.sets.borrow().is_empty());
+  reconnect_apply_validated_accounts_with(&sec,&mut store,P,OLD_REFRESH,OLD_SECRET,1,"CLIENT","SECRET","ACCESS","RIGHT","UC_A","A",&[],"chrome",3600).unwrap();
+  assert_eq!(store.profiles[0].id,before.id);assert_eq!(store.profiles[0].channel_id.as_deref(),Some("UC_A"));assert_eq!(store.profiles[0].preferred_browser,"chrome");
  }
 
 }
