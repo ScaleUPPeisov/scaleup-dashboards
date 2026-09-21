@@ -6211,7 +6211,7 @@ mod keychain_prompt_architecture_tests{
   assert!(resolver.contains("canonical_get(active_account)"));
   assert!(resolver.contains("legacy_accounts()?"));
   assert!(resolver.contains("legacy_get(&account)"));
-  for forbidden in ["canonical_set_secret","canonical_delete_secret","mark_legacy_reconnect_required","open_browser(","generation","write_keychain_migration_v2"]{
+  for forbidden in ["canonical_set_secret","canonical_delete_secret","mark_legacy_reconnect_required","open_browser(","credential_generations","rotated_profile_secret_account","apply_reconnect_pointer_metadata","commit_recovered_refresh_pointer","write_keychain_migration_v2"]{
    assert!(!resolver.contains(forbidden),"{forbidden} must not be part of update-neutral resolution");
   }
   let require=production.split("fn require_canonical_refresh").nth(1).unwrap().split("fn canonical_global_client_secret").next().unwrap();
