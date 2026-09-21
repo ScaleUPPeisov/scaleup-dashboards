@@ -126,7 +126,9 @@ export function buildLegacyRecoveryPreview(rows:RenderScanRow[],history:UploadHi
   const decision=(classification:LegacyRecoveryClass,reason:string):LegacyRecoveryDecision=>({row,classification,reason});
   if(row.classification==='INVALID'||!Number.isFinite(size)||size<=0){out.invalid.push(decision('INVALID_MEDIA',row.reason||'INVALID_MEDIA'));continue}
   if(row.classification==='UPLOADED_LOCAL_COPY'){
-   out.uploadedExact.push(decision('UPLOADED_EXACT',row.reason));continue
+   if(row.reason==='FINGERPRINT_VERIFIED_EXACT_PATH_UPLOAD')out.uploadedExact.push(decision('UPLOADED_EXACT',row.reason));
+   else out.duplicates.push(decision('DUPLICATE_CONTENT',row.reason));
+   continue
   }
   if(!trustedSha256(fp)){
    out.verifyRequired.push(decision('VERIFY_REQUIRED_LEGACY','CURRENT_FINGERPRINT_NOT_PROVEN'));continue
