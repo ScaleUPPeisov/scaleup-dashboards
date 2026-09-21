@@ -49,12 +49,13 @@ describe('VYRON 2.1.14 RC1 YouTube OAuth onboarding',()=>{
 
   it('new channels keep the one global OAuth client secret while preserving historical resolver compatibility',()=>{
     const y=read('src-tauri/src/youtube.rs');
-    const start=y.indexOf('async fn youtube_oauth_connect(');
-    const end=y.indexOf('fn reconnect_profile_id',start);
-    const connect=y.slice(start,end);
-    expect(connect).toContain('google_client_secret_account(&global_meta)');
-    expect(connect).toContain('global_meta.client_id.trim()==client_id');
-    expect(connect).toContain('client_secret: String::new()');
+    const commit=y.split('fn commit_new_channel_oauth(',2)[1]?.split('#[tauri::command]\npub async fn youtube_oauth_connect(',2)[0]||'';
+    const connect=y.split('pub async fn youtube_oauth_connect(',2)[1]?.split('pub fn youtube_oauth_select_new_channel',2)[0]||'';
+    expect(commit).toContain('google_client_secret_account(&global_meta)');
+    expect(commit).toContain('global_meta.client_id.trim()==client_id');
+    expect(commit).toContain('client_secret:String::new()');
+    expect(connect).toContain('CHANNEL_SELECTION_REQUIRED');
+    expect(connect).not.toContain('write_oauth_metadata');
     expect(y).toContain('OAuthClientSecretSource::ProfileCanonical');
     expect(y).toContain('resolve_client_secret_for_profile');
   });
@@ -81,13 +82,14 @@ describe('VYRON 2.1.14 RC1 YouTube OAuth onboarding',()=>{
     expect(status).not.toContain('project_id&&');
   });
 
-  it('same YouTube Channel ID is blocked in Add flow and routed to explicit reconnect',()=>{
+  it('same YouTube Channel ID is blocked before new-profile commit and routed to explicit reconnect',()=>{
     const y=read('src-tauri/src/youtube.rs');
-    const start=y.indexOf('async fn youtube_oauth_connect(');
-    const end=y.indexOf('fn reconnect_profile_id',start);
-    const connect=y.slice(start,end);
-    expect(connect).toContain("find(|p|p.channel_id.as_deref()==Some(channel_id.as_str()))");
-    expect(connect).toContain('YOUTUBE_CHANNEL_ALREADY_CONNECTED');
-    expect(connect).toContain('let profile_id=reconnect_profile_id(None);');
+    const commit=y.split('fn commit_new_channel_oauth(',2)[1]?.split('#[tauri::command]\npub async fn youtube_oauth_connect(',2)[0]||'';
+    const connect=y.split('pub async fn youtube_oauth_connect(',2)[1]?.split('pub fn youtube_oauth_select_new_channel',2)[0]||'';
+    expect(commit).toContain("find(|p|p.channel_id.as_deref()==Some(channel_id.as_str()))");
+    expect(commit).toContain('YOUTUBE_CHANNEL_ALREADY_CONNECTED');
+    expect(commit).toContain('let profile_id=reconnect_profile_id(None);');
+    expect(connect).toContain('CHANNEL_SELECTION_REQUIRED');
+    expect(connect).not.toContain('store.profiles.push');
   });
 });
