@@ -6093,7 +6093,7 @@ mod keychain_prompt_architecture_tests{
   fn delete(&self,a:&str)->Result<(),String>{self.deletes.borrow_mut().push(a.to_string());self.v.borrow_mut().remove(a);Ok(())}
   fn accounts(&self,_:&str)->Result<Vec<String>,String>{*self.accounts.borrow_mut()+=1;Ok(self.v.borrow().keys().cloned().collect())}
  }
- fn p(id:&str)->OAuthProfile{OAuthProfile{id:id.into(),client_id:"123.apps.googleusercontent.com".into(),client_secret:String::new(),channel_id:Some(format!("UC{id}")),channel_title:Some(id.into()),access_token:String::new(),refresh_token:String::new(),expires_at:0,connected_at:"2026-01-01T00:00:00Z".into(),scopes:vec![],preferred_browser:"default".into(),identity_validated_at:Some("2026-01-01T00:00:00Z".into()),identity_validated_channel_id:Some(format!("UC{id}")),credential_error:None}}
+ fn p(id:&str)->OAuthProfile{OAuthProfile{id:id.into(),client_id:"123.apps.googleusercontent.com".into(),client_secret:String::new(),channel_id:Some(format!("UC{id}")),channel_title:Some(id.into()),google_email:None,google_subject_id:None,access_token:String::new(),refresh_token:String::new(),expires_at:0,connected_at:"2026-01-01T00:00:00Z".into(),scopes:vec![],preferred_browser:"default".into(),identity_validated_at:Some("2026-01-01T00:00:00Z".into()),identity_validated_channel_id:Some(format!("UC{id}")),credential_error:None}}
  #[test]fn passive_profile_listing_zero_secret_store_calls(){let secrets=CountingStore::default();let value=oauth_profiles_value(OAuthStore{profiles:vec![p("a"),p("b")]},&HashMap::new());assert_eq!(value.as_array().unwrap().len(),2);assert!(secrets.gets.borrow().is_empty());assert!(secrets.sets.borrow().is_empty());assert!(secrets.deletes.borrow().is_empty());assert_eq!(*secrets.accounts.borrow(),0);}
  #[test]fn thirty_one_profiles_passive_enumeration_zero_secret_reads(){
   let secrets=CountingStore::default();
@@ -6604,7 +6604,7 @@ mod v2112_browser_reconnect_recovery_tests{
   }
   let mut store=OAuthStore{profiles:vec![OAuthProfile{
    id:"P1".into(),client_id:"CLIENT_A".into(),client_secret:String::new(),
-   channel_id:Some("UC1".into()),channel_title:Some("Old".into()),
+   channel_id:Some("UC1".into()),channel_title:Some("Old".into()),google_email:None,google_subject_id:None,
    access_token:String::new(),refresh_token:String::new(),expires_at:0,
    connected_at:"2026-09-19T00:00:00Z".into(),scopes:vec![],preferred_browser:"default".into(),
    identity_validated_at:None,identity_validated_channel_id:None,credential_error:None
@@ -6912,7 +6912,7 @@ mod v2115_rc6_keychain_rotation_tests {
   }
  }
  fn profile(id:&str,ch:&str)->OAuthProfile{OAuthProfile{
-  id:id.into(),client_id:"CLIENT".into(),client_secret:String::new(),channel_id:Some(ch.into()),channel_title:Some(ch.into()),
+  id:id.into(),client_id:"CLIENT".into(),client_secret:String::new(),channel_id:Some(ch.into()),channel_title:Some(ch.into()),google_email:None,google_subject_id:None,
   access_token:String::new(),refresh_token:String::new(),expires_at:0,connected_at:"2026-09-20T00:00:00Z".into(),
   scopes:vec![],preferred_browser:"default".into(),identity_validated_at:None,identity_validated_channel_id:None,credential_error:None,
  }}
