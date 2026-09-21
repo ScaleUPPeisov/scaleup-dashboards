@@ -230,6 +230,36 @@ fn secitem_no_ui_get(service:&str,account:&str,kind:&str)->Result<Option<Vec<u8>
 }
 
 #[cfg(target_os="macos")]
+fn secitem_interactive_get(service:&str,account:&str,kind:&str)->Result<Option<Vec<u8>>,String>{
+ use core_foundation::base::{TCFType,CFType};
+ use core_foundation::boolean::CFBoolean;
+ use core_foundation::data::CFData;
+ use core_foundation::dictionary::CFDictionary;
+ use core_foundation::string::CFString;
+ use core_foundation_sys::base::{CFGetTypeID,CFRelease,CFTypeRef};
+ use core_foundation_sys::data::CFDataRef;
+ use security_framework_sys::item::{kSecAttrAccount,kSecAttrService,kSecClass,kSecClassGenericPassword,kSecReturnData};
+ use security_framework_sys::keychain_item::SecItemCopyMatching;
+ let _serial=keychain_no_ui_mutex().lock().map_err(|_|"KEYCHAIN_INTERACTIVE_LOCK_POISONED".to_string())?;
+ let pairs=unsafe{vec![
+  (CFString::wrap_under_get_rule(kSecClass),CFString::wrap_under_get_rule(kSecClassGenericPassword).into_CFType()),
+  (CFString::wrap_under_get_rule(kSecAttrService),CFString::from(service).into_CFType()),
+  (CFString::wrap_under_get_rule(kSecAttrAccount),CFString::from(account).into_CFType()),
+  (CFString::wrap_under_get_rule(kSecReturnData),CFBoolean::from(true).into_CFType()),
+ ]};
+ let query=CFDictionary::from_CFType_pairs(&pairs);
+ let mut ret:CFTypeRef=std::ptr::null();
+ let status=unsafe{SecItemCopyMatching(query.as_concrete_TypeRef(),&mut ret)};
+ if status==ITEM_NOT_FOUND{return Ok(None)}
+ if status!=0{return Err(keychain_error(kind,account,status,"SecItemCopyMatching interactive UI allowed"))}
+ if ret.is_null(){return Ok(None)}
+ unsafe{
+  if CFGetTypeID(ret)!=CFData::type_id(){CFRelease(ret);return Err(format!("KEYCHAIN_ERROR: {kind} returned non-data; account={account}"))}
+  let data=CFData::wrap_under_create_rule(ret as CFDataRef);
+  Ok(Some(data.bytes().to_vec()))
+ }
+}
+#[cfg(target_os="macos")]
 fn secitem_no_ui_set(service:&str,account:&str,value:&[u8],kind:&str)->Result<(),String>{
  use core_foundation::base::{TCFType,CFType};
  use core_foundation::data::CFData;
@@ -339,6 +369,38 @@ pub fn canonical_forget_cache(account:&str){
  if let Ok(mut c)=canonical_cache().lock(){c.remove(account);}
  clear_canonical_denial(account);
 }
+#[cfg(target_os="macos")]
+pub fn canonical_interactive_recover_secret(account:&str)->Result<Option<String>,String>{
+ CANONICAL_BACKEND_READS.fetch_add(1,Ordering::SeqCst);
+ match secitem_interactive_get(CANONICAL_SERVICE,account,"canonical_interactive_read"){
+  Ok(Some(v))=>{
+   let value=String::from_utf8(v).map_err(|_|format!("KEYCHAIN_ERROR: canonical Keychain value {account} is not UTF-8"))?;
+   remember_canonical_secret(account,&value);
+   record_runtime(&format!("canonical::{account}"),"INTERACTIVE_READ","HIT",Some(0),Some("RECOVERED"));
+   Ok(Some(value))
+  },
+  Ok(None)=>{clear_canonical_denial(account);record_runtime(&format!("canonical::{account}"),"INTERACTIVE_READ","MISS",Some(ITEM_NOT_FOUND),Some("MISSING"));Ok(None)},
+  Err(e)=>{if denied_error(&e){record_canonical_denial(account,&e,"canonical_interactive_read",true);}record_runtime(&format!("canonical::{account}"),"INTERACTIVE_READ","ERROR",inventory_osstatus(&e),Some("BLOCKED"));Err(e)}
+ }
+}
+#[cfg(not(target_os="macos"))]
+pub fn canonical_interactive_recover_secret(_account:&str)->Result<Option<String>,String>{Err("VYRON interactive Keychain recovery requires macOS".into())}
+
+#[cfg(target_os="macos")]
+pub fn legacy_interactive_recover_secret(account:&str)->Result<Option<String>,String>{
+ LEGACY_BACKEND_READS.fetch_add(1,Ordering::SeqCst);
+ match secitem_interactive_get(LEGACY_SERVICE,account,"legacy_interactive_read"){
+  Ok(Some(v))=>{
+   let value=String::from_utf8(v).map_err(|_|format!("KEYCHAIN_ERROR: legacy Keychain value {account} is not UTF-8"))?;
+   record_runtime(account,"INTERACTIVE_READ","HIT",Some(0),Some("RECOVERED"));
+   Ok(Some(value))
+  },
+  Ok(None)=>{record_runtime(account,"INTERACTIVE_READ","MISS",Some(ITEM_NOT_FOUND),Some("MISSING"));Ok(None)},
+  Err(e)=>{record_runtime(account,"INTERACTIVE_READ","ERROR",inventory_osstatus(&e),Some("BLOCKED"));Err(e)}
+ }
+}
+#[cfg(not(target_os="macos"))]
+pub fn legacy_interactive_recover_secret(_account:&str)->Result<Option<String>,String>{Err("VYRON interactive Keychain recovery requires macOS".into())}
 #[cfg(target_os="macos")]
 pub fn canonical_set_secret(account:&str,value:&str)->Result<(),String>{
  if !value.is_empty(){
