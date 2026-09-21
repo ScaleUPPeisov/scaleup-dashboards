@@ -81,8 +81,9 @@ describe('VYRON 3.0.0 final physical stabilization contracts',()=>{
  it('updater artifact remains signed app archive rather than DMG manifest payload',()=>{
   expect(tauri.bundle.createUpdaterArtifacts).toBe(true);
   expect(tauri.plugins.updater.pubkey).toBeTruthy();
-  expect(workflow).toContain('VYRON.app.tar.gz');
-  expect(workflow).toContain('VYRON.app.tar.gz.sig');
+  expect(workflow).toContain("name '*.app.tar.gz'");
+  expect(workflow).toContain("name '*.app.tar.gz.sig'");
+  expect(workflow).toContain('UPDATER_SIGNATURE_VERIFY=PASS');
  });
 
  it('wrong-channel safety remains present during final stabilization',()=>{
