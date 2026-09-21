@@ -1,4 +1,5 @@
-use tauri::Manager;
+use tauri::{Manager,Emitter};
+use tauri_plugin_updater::UpdaterExt;
 use std::{fs,path::{Path,PathBuf}};
 #[cfg(target_os="macos")]
 use std::os::unix::fs::MetadataExt;
@@ -77,4 +78,81 @@ pub fn prepare_updater_tempdir()->Result<String,String>{
     }
     #[cfg(not(target_os="macos"))]
     {Ok(std::env::temp_dir().to_string_lossy().into_owned())}
+}
+
+
+const OWNER_PREVIEW_ENDPOINT:&str="https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/vyron-updates/owner-preview.json";
+fn build_revision()->u64{env!("VYRON_BUILD_REVISION").parse().unwrap_or(0)}
+fn build_commit()->&'static str{env!("VYRON_COMMIT_SHA")}
+fn update_channel()->&'static str{env!("VYRON_UPDATE_CHANNEL")}
+fn preview_revision(version:&str)->Option<u64>{
+    let (_,tail)=version.split_once("-preview.")?;
+    tail.split('.').next()?.parse().ok()
+}
+fn preview_product_version(version:&str)->&str{version.split("-preview.").next().unwrap_or(version)}
+
+#[tauri::command]
+pub fn updater_runtime_identity(app:tauri::AppHandle)->serde_json::Value{
+    serde_json::json!({
+      "productVersion":app.package_info().version.to_string(),
+      "buildRevision":build_revision(),
+      "commit":build_commit(),
+      "channel":update_channel(),
+      "bundleId":app.config().identifier.clone()
+    })
+}
+
+async fn owner_preview_update(app:&tauri::AppHandle)->Result<Option<tauri_plugin_updater::Update>,String>{
+    let current_revision=build_revision();
+    let endpoint=OWNER_PREVIEW_ENDPOINT.parse().map_err(|e|format!("OWNER_PREVIEW_ENDPOINT_INVALID: {e}"))?;
+    let updater=app.updater_builder()
+      .endpoints(vec![endpoint]).map_err(|e|format!("OWNER_PREVIEW_UPDATER_CONFIG_FAILED: {e}"))?
+      .version_comparator(move |_current,remote|{
+          preview_revision(&remote.version.to_string()).map(|r|r>current_revision).unwrap_or(false)
+      })
+      .build().map_err(|e|format!("OWNER_PREVIEW_UPDATER_BUILD_FAILED: {e}"))?;
+    updater.check().await.map_err(|e|format!("OWNER_PREVIEW_CHECK_FAILED: {e}"))
+}
+
+#[tauri::command]
+pub async fn updater_owner_preview_check(app:tauri::AppHandle)->Result<serde_json::Value,String>{
+    let current_revision=build_revision();
+    let Some(update)=owner_preview_update(&app).await? else{
+      return Ok(serde_json::json!({
+        "available":false,"productVersion":app.package_info().version.to_string(),
+        "currentBuildRevision":current_revision,"latestBuildRevision":current_revision,
+        "endpoint":OWNER_PREVIEW_ENDPOINT,"channel":"owner-preview"
+      }))
+    };
+    let target_revision=preview_revision(&update.version).ok_or_else(||format!("OWNER_PREVIEW_REVISION_MISSING: {}",update.version))?;
+    Ok(serde_json::json!({
+      "available":true,
+      "productVersion":preview_product_version(&update.version),
+      "announcedVersion":update.version,
+      "currentBuildRevision":current_revision,
+      "latestBuildRevision":target_revision,
+      "notes":update.body,
+      "date":update.date.map(|x|x.to_string()),
+      "artifactUrl":update.download_url.to_string(),
+      "endpoint":OWNER_PREVIEW_ENDPOINT,
+      "channel":"owner-preview"
+    }))
+}
+
+#[tauri::command]
+pub async fn updater_owner_preview_install(app:tauri::AppHandle)->Result<serde_json::Value,String>{
+    let Some(update)=owner_preview_update(&app).await? else{return Err("OWNER_PREVIEW_NO_UPDATE: preview build is already current".into())};
+    let target_revision=preview_revision(&update.version).ok_or_else(||format!("OWNER_PREVIEW_REVISION_MISSING: {}",update.version))?;
+    let product_version=preview_product_version(&update.version).to_string();
+    let emit_app=app.clone();
+    update.download_and_install(
+      move |chunk,total|{
+        let _=emit_app.emit("owner-preview-update-progress",serde_json::json!({"chunkBytes":chunk,"totalBytes":total,"targetBuildRevision":target_revision}));
+      },
+      ||{}
+    ).await.map_err(|e|format!("OWNER_PREVIEW_INSTALL_FAILED: {e}"))?;
+    Ok(serde_json::json!({
+      "installed":true,"productVersion":product_version,"targetBuildRevision":target_revision,
+      "signatureVerifiedBy":"tauri-plugin-updater","channel":"owner-preview"
+    }))
 }
