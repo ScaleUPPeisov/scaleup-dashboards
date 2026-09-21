@@ -63,7 +63,7 @@ export type CompetitorSnapshot={at:string;subscribers:number;views:number;videos
 export type CompetitorVideo={id:string;title:string;thumbnail?:string;publishedAt?:string;views:number;likes:number;comments:number};
 export type Competitor={id:string;channelId:string;name:string;url:string;youtubeChannelId?:string;thumbnail?:string;subscribers?:number;views?:number;videos?:number;recentAverageViews?:number;lastVideoAt?:string;latestVideos?:CompetitorVideo[];history?:CompetitorSnapshot[];updatedAt?:string;note?:string;similarity?:number;source?:'auto'|'manual'};
 export type Settings={
-  workspace:string; endlumePath:string; youtubeApiKey:string; autoCheckUpdates:boolean; reduceMotion:boolean; fpsMonitor:boolean;
+  workspace:string; endlumePath:string; youtubeApiKey:string; autoCheckUpdates:boolean; reduceMotion:boolean; fpsMonitor:boolean; interfaceDensity:'compact'|'comfortable';
   autopilotMode:AutopilotMode; autopilotEnabled:boolean; autoCreatePlan:boolean; autoAssignMusic:boolean; autoAssignImages:boolean; autoGenerateMetadata:boolean;
   autoQueueRender:boolean; autoOpenEndlume:boolean; autoUploadYoutube:boolean; autopilotIntervalSec:number; tracksPerVideo:number;
   openaiApiKey:string; openaiModel:string; youtubeOAuthClientId:string; youtubeCategoryId:string;
