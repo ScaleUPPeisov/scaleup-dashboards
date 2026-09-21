@@ -130,8 +130,14 @@ jobs:
           test -s approved/VYRON-3.0.0-PHYSICAL-CANDIDATE.app.tar.gz.sig
           test -s approved/codesign-details.txt
           test -s approved/designated-requirement.txt
-          (cd approved && shasum -a 256 -c VYRON-3.0.0-PHYSICAL-CANDIDATE-arm64.dmg.sha256)
-          (cd approved && shasum -a 256 -c VYRON-3.0.0-PHYSICAL-CANDIDATE.app.tar.gz.sha256)
+          DMG_EXPECTED="$(awk '{print $1}' approved/VYRON-3.0.0-PHYSICAL-CANDIDATE-arm64.dmg.sha256)"
+          DMG_ACTUAL="$(shasum -a 256 approved/VYRON-3.0.0-PHYSICAL-CANDIDATE-arm64.dmg | awk '{print $1}')"
+          UPDATER_EXPECTED="$(awk '{print $1}' approved/VYRON-3.0.0-PHYSICAL-CANDIDATE.app.tar.gz.sha256)"
+          UPDATER_ACTUAL="$(shasum -a 256 approved/VYRON-3.0.0-PHYSICAL-CANDIDATE.app.tar.gz | awk '{print $1}')"
+          test "$DMG_ACTUAL" = "$DMG_EXPECTED"
+          test "$UPDATER_ACTUAL" = "$UPDATER_EXPECTED"
+          echo "APPROVED_DMG_SHA256=$DMG_ACTUAL"
+          echo "APPROVED_UPDATER_SHA256=$UPDATER_ACTUAL"
           echo 'APPROVED_ARTIFACT_HASHES=PASS'
 
       - name: Reverify exact updater archive signature and app identity
@@ -166,7 +172,8 @@ jobs:
           test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = "$VERSION"
           test "$(plutil -extract CFBundleExecutable raw -o - "$APP/Contents/Info.plist")" = "$EXECUTABLE"
           codesign --verify --deep --strict --verbose=2 "$APP"
-          codesign -d -r- "$APP" 2>&1 >/tmp/approved-designated-requirement.txt
+          codesign -d -r- "$APP" > /tmp/approved-designated-requirement.txt 2>&1
+          test -s /tmp/approved-designated-requirement.txt
           cmp -s /tmp/approved-designated-requirement.txt approved/designated-requirement.txt
           grep -F 'identifier "studio.channelflow.desktop"' approved/designated-requirement.txt >/dev/null
           grep -Fi "$EXPECTED_SIGNING_CERT_SHA1" approved/codesign-details.txt >/dev/null || true
