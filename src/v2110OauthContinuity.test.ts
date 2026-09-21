@@ -33,17 +33,21 @@ describe('VYRON 2.1.10 OAuth truth and update continuity contracts',()=>{
   expect(y).toContain('"keychainSecretReads":0');
   expect(api).toContain("invoke<OAuthCredentialStatesResponse>('youtube_oauth_credential_states')");
  });
- it('legacy-only profile cannot be CONNECTED',()=>{
+ it('legacy-only profile survives updates without being forced to reconnect',()=>{
   const y=read('src-tauri/src/youtube.rs');
-  expect(y).toContain('if legacy_present||migration_state==MIGRATION_RECONNECT_REQUIRED');
-  expect(y).toContain('return("RECONNECT_REQUIRED"');
+  expect(y).toContain('LEGACY_PRESENT_UNVERIFIED');
+  expect(y).toContain('security::legacy_get_secret_once');
+  expect(y).toContain('previously_validated_legacy_profile_remains_connected_after_binary_update');
   expect(y).toContain('CANONICAL_PRESENT_UNVERIFIED');
  });
- it('refresh tokens remain non-plaintext and canonical-only',()=>{
+ it('refresh tokens remain non-plaintext while legacy storage is read-only compatibility',()=>{
   const y=read('src-tauri/src/youtube.rs');
+  const sec=read('src-tauri/src/security.rs');
   expect(y).toContain('#[serde(default, skip_serializing)]\n    refresh_token: String');
   expect(y).toContain('security::canonical_set_secret');
-  expect(y).not.toContain('security::legacy_get_secret_once');
+  expect(y).toContain('security::legacy_get_secret_once');
+  expect(sec).toContain('pub fn legacy_get_secret_once');
+  expect(y).not.toContain('legacy_set_secret');
  });
  it('app version bumps do not change the credential namespace',()=>{
   const packageVersion=JSON.parse(read('package.json')).version;
