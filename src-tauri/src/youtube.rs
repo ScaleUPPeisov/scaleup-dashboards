@@ -5843,6 +5843,115 @@ pub async fn youtube_oauth_reconnect_existing(
 }
 
 
+
+#[cfg(test)]
+mod v300_final_stabilization_tests{
+ use super::*;
+ use std::cell::{Cell,RefCell};
+
+ #[derive(Default)]
+ struct RecoveryStore{
+  values:RefCell<HashMap<String,String>>,
+  fail_set:Cell<bool>,
+  fail_verify:Cell<bool>,
+ }
+ impl OAuthSecretStore for RecoveryStore{
+  fn get(&self,account:&str)->Result<Option<String>,String>{Ok(self.values.borrow().get(account).cloned())}
+  fn set(&self,account:&str,value:&str)->Result<(),String>{
+   if self.fail_set.get(){return Err("KEYCHAIN_WRITE_FAILED: simulated".into())}
+   self.values.borrow_mut().insert(account.to_string(),value.to_string());Ok(())
+  }
+  fn delete(&self,account:&str)->Result<(),String>{self.values.borrow_mut().remove(account);Ok(())}
+  fn verify(&self,account:&str,expected:&str)->Result<bool,String>{
+   if self.fail_verify.get(){return Ok(false)}
+   Ok(self.values.borrow().get(account).map(String::as_str)==Some(expected))
+  }
+  fn accounts(&self,prefix:&str)->Result<Vec<String>,String>{Ok(self.values.borrow().keys().filter(|x|x.starts_with(prefix)).cloned().collect())}
+ }
+
+ #[test]
+ fn blocked_item_interactive_value_rotates_fresh_account_and_preserves_old_evidence(){
+  let secrets=RecoveryStore::default();
+  let profile="11111111-1111-4111-8111-111111111111";
+  let old=oauth_key(profile,"refresh_token");
+  secrets.values.borrow_mut().insert(old.clone(),"refresh-old".into());
+  let mut state=KeychainMigrationV2State::default();
+  state.refresh_token_accounts.insert(profile.into(),old.clone());
+  state.credential_generations.insert(profile.into(),3);
+  let generation=next_profile_credential_generation(&state,profile);
+  let fresh=rotate_recovered_refresh_with(&secrets,profile,generation,"refresh-old").unwrap();
+  assert_ne!(fresh,old);
+  assert_eq!(secrets.values.borrow().get(&old).map(String::as_str),Some("refresh-old"));
+  assert_eq!(secrets.values.borrow().get(&fresh).map(String::as_str),Some("refresh-old"));
+  commit_recovered_refresh_pointer(&mut state,profile,&old,&fresh,generation);
+  assert_eq!(profile_refresh_token_account_from_state(&state,profile),fresh);
+  assert_eq!(state.credential_generations.get(profile).copied(),Some(4));
+  assert!(state.legacy_blocked_accounts.get(profile).unwrap().contains(&old));
+ }
+
+ #[test]
+ fn denied_interactive_recovery_preserves_old_pointer(){
+  let profile="22222222-2222-4222-8222-222222222222";
+  let old=oauth_key(profile,"refresh_token");
+  let mut state=KeychainMigrationV2State::default();
+  state.refresh_token_accounts.insert(profile.into(),old.clone());
+  state.credential_generations.insert(profile.into(),7);
+  assert_eq!(classify_keychain_incident(true,false,false,Some("KEYCHAIN_INTERACTION_REQUIRED")),"ITEM_EXISTS_INTERACTION_REQUIRED");
+  assert_eq!(profile_refresh_token_account_from_state(&state,profile),old);
+  assert_eq!(state.credential_generations.get(profile).copied(),Some(7));
+ }
+
+ #[test]
+ fn fresh_account_write_failure_never_changes_pointer(){
+  let secrets=RecoveryStore::default();secrets.fail_set.set(true);
+  let profile="33333333-3333-4333-8333-333333333333";let old=oauth_key(profile,"refresh_token");
+  let mut state=KeychainMigrationV2State::default();state.refresh_token_accounts.insert(profile.into(),old.clone());state.credential_generations.insert(profile.into(),2);
+  assert!(rotate_recovered_refresh_with(&secrets,profile,3,"refresh").unwrap_err().contains("NEW_WRITE"));
+  assert_eq!(profile_refresh_token_account_from_state(&state,profile),old);
+  assert_eq!(state.credential_generations.get(profile).copied(),Some(2));
+ }
+
+ #[test]
+ fn fresh_account_readback_failure_never_changes_pointer(){
+  let secrets=RecoveryStore::default();secrets.fail_verify.set(true);
+  let profile="44444444-4444-4444-8444-444444444444";let old=oauth_key(profile,"refresh_token");
+  let mut state=KeychainMigrationV2State::default();state.refresh_token_accounts.insert(profile.into(),old.clone());state.credential_generations.insert(profile.into(),5);
+  assert!(rotate_recovered_refresh_with(&secrets,profile,6,"refresh").unwrap_err().contains("READBACK"));
+  assert_eq!(profile_refresh_token_account_from_state(&state,profile),old);
+  assert_eq!(state.credential_generations.get(profile).copied(),Some(5));
+ }
+
+ #[test]
+ fn invalid_grant_after_recovery_requires_only_that_profile_reconnect(){
+  assert_eq!(existing_profile_recovery_bucket("ACCESSIBLE",Some("OAUTH_INVALID_GRANT: revoked")),"RECONNECT_REQUIRED");
+  assert_eq!(existing_profile_recovery_reason("OAUTH_INVALID_GRANT: revoked"),"TOKEN_REVOKED");
+ }
+
+ #[test]
+ fn keychain_incident_classification_distinguishes_missing_denied_legacy_and_stale(){
+  assert_eq!(classify_keychain_incident(false,false,false,None),"ITEM_MISSING");
+  assert_eq!(classify_keychain_incident(true,true,false,Some("KEYCHAIN_ACCESS_DENIED")),"ITEM_EXISTS_ACCESS_DENIED");
+  assert_eq!(classify_keychain_incident(true,true,false,Some("KEYCHAIN_AUTH_FAILED")),"AUTH_FAILED");
+  assert_eq!(classify_keychain_incident(false,false,true,None),"LEGACY_POINTER_ONLY");
+  assert_eq!(classify_keychain_incident(true,false,false,None),"STALE_POINTER");
+ }
+
+ #[test]
+ fn application_version_transition_does_not_rotate_active_pointer(){
+  let profile="55555555-5555-4555-8555-555555555555";
+  let active="oauth.55555555-5555-4555-8555-555555555555.refresh_token.v2.9.active".to_string();
+  let mut state=KeychainMigrationV2State::default();
+  state.refresh_token_accounts.insert(profile.into(),active.clone());
+  state.credential_generations.insert(profile.into(),9);
+  let bytes=serde_json::to_vec(&state).unwrap();
+  let after:KeychainMigrationV2State=serde_json::from_slice(&bytes).unwrap();
+  assert_eq!(profile_refresh_token_account_from_state(&after,profile),active);
+  assert_eq!(after.credential_generations.get(profile).copied(),Some(9));
+  let next_name=rotated_profile_secret_account(profile,"refresh_token",10);
+  assert!(!next_name.contains("3.0.0"));
+ }
+}
+
 #[cfg(test)]
 mod v2115_rc3_oauth_processing_tests{
  use super::*;
