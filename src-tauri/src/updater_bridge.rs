@@ -90,6 +90,7 @@ fn preview_revision(version:&str)->Option<u64>{
     tail.split('.').next()?.parse().ok()
 }
 fn preview_product_version(version:&str)->&str{version.split("-preview.").next().unwrap_or(version)}
+fn owner_preview_available(current_revision:u64,remote_version:&str)->bool{preview_revision(remote_version).map(|r|r>current_revision).unwrap_or(false)}
 
 #[tauri::command]
 pub fn updater_runtime_identity(app:tauri::AppHandle)->serde_json::Value{
@@ -108,7 +109,7 @@ async fn owner_preview_update(app:&tauri::AppHandle)->Result<Option<tauri_plugin
     let updater=app.updater_builder()
       .endpoints(vec![endpoint]).map_err(|e|format!("OWNER_PREVIEW_UPDATER_CONFIG_FAILED: {e}"))?
       .version_comparator(move |_current,remote|{
-          preview_revision(&remote.version.to_string()).map(|r|r>current_revision).unwrap_or(false)
+          owner_preview_available(current_revision,&remote.version.to_string())
       })
       .build().map_err(|e|format!("OWNER_PREVIEW_UPDATER_BUILD_FAILED: {e}"))?;
     updater.check().await.map_err(|e|format!("OWNER_PREVIEW_CHECK_FAILED: {e}"))
@@ -205,4 +206,24 @@ pub async fn updater_owner_preview_install(app:tauri::AppHandle)->Result<serde_j
       "signatureVerified":true,
       "channel":"owner-preview"
     }))
+}
+
+
+#[cfg(test)]
+mod owner_preview_revision_tests{
+ use super::*;
+ #[test]fn same_product_higher_revision_is_available(){
+  assert!(owner_preview_available(164,"3.0.0-preview.165"));
+ }
+ #[test]fn same_product_same_revision_is_up_to_date(){
+  assert!(!owner_preview_available(165,"3.0.0-preview.165"));
+ }
+ #[test]fn lower_or_malformed_revision_is_never_selected(){
+  assert!(!owner_preview_available(165,"3.0.0-preview.164"));
+  assert!(!owner_preview_available(165,"3.0.0"));
+ }
+ #[test]fn preview_version_keeps_product_version_three_zero_zero(){
+  assert_eq!(preview_product_version("3.0.0-preview.165"),"3.0.0");
+  assert_eq!(preview_revision("3.0.0-preview.165"),Some(165));
+ }
 }
