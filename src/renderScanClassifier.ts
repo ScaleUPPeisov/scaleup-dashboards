@@ -82,7 +82,10 @@ export function classifyChannelRenderFiles(files:RenderFolderVideoFile[],jobs:Vi
    const proof=historicalExact?historicalEvidenceForJob(historicalExact,historyRows,channelId):pathHistory;
    if(!fp)return rowEvidence(base('VERIFY_REQUIRED','CURRENT_FINGERPRINT_REQUIRED_FOR_HISTORICAL_PATH',historicalExact?.id||proof?.jobId),proof);
    if(proof&&trustedHistory(proof))return rowEvidence(base('NEW_GENERATION','EXACT_PATH_PHYSICAL_FINGERPRINT_CHANGED',historicalExact?.id||proof.jobId),proof);
-   return rowEvidence(base('LEGACY_IDENTITY_UNPROVEN','LEGACY_UPLOAD_HAS_NO_TRUSTED_FINGERPRINT',historicalExact?.id||proof?.jobId),proof);
+   // Legacy upload records without trusted fingerprint must not deadlock current bytes.
+   // At this point verifiedHistoryForFile already proved there is NO exact successful
+   // same-channel SHA+size match, so the current physical content is a safe upload candidate.
+   return rowEvidence(base('NEW_GENERATION','LEGACY_HISTORY_WITHOUT_FINGERPRINT_CURRENT_BYTES_UNSEEN',historicalExact?.id||proof?.jobId),proof);
   }
 
   if(fp){
@@ -104,7 +107,7 @@ export function classifyChannelRenderFiles(files:RenderFolderVideoFile[],jobs:Vi
    const proof=historicalEvidenceForJob(historicalSame,historyRows,channelId);
    if(!fp)return rowEvidence(base('VERIFY_REQUIRED','CURRENT_FINGERPRINT_REQUIRED_FOR_REUSED_SEQUENCE',historicalSame.id),proof);
    if(proof&&trustedHistory(proof))return rowEvidence(base('NEW_GENERATION','HISTORICAL_SEQUENCE_REUSED_WITH_NEW_FINGERPRINT',historicalSame.id),proof);
-   return rowEvidence(base('LEGACY_IDENTITY_UNPROVEN','HISTORICAL_SEQUENCE_HAS_NO_TRUSTED_FINGERPRINT',historicalSame.id),proof);
+   return rowEvidence(base('NEW_GENERATION','LEGACY_SEQUENCE_WITHOUT_FINGERPRINT_CURRENT_BYTES_UNSEEN',historicalSame.id),proof);
   }
 
   return base('NEW_CANDIDATE','NO_EXISTING_CHANNEL_GENERATION_EVIDENCE');
