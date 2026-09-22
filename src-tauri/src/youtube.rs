@@ -2242,6 +2242,11 @@ async fn recover_orphan_credential_live(
 }
 
 #[tauri::command]
+pub fn youtube_oauth_vault_recover(app:AppHandle)->Result<Value,String>{
+ oauth_vault::recover_master_key_interactive(&app)?;
+ Ok(json!({"status":"READY","recovered":true,"googleBrowserLaunches":0,"youtubeApiRequests":0,"secretValuesIncluded":false}))
+}
+#[tauri::command]
 pub fn youtube_oauth_credential_states(app:AppHandle)->Result<Value,String>{
  Ok(json!({
   "credentialSchemaVersion":CREDENTIAL_SCHEMA_VERSION,
