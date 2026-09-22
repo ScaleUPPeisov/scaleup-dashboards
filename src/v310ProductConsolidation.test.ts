@@ -1,6 +1,7 @@
 import {describe,expect,it} from 'vitest';
 import {readFileSync} from 'node:fs';
-const read=(x:string)=>readFileSync(decodeURIComponent(new URL(x,import.meta.url).pathname.replace(/^\\/([A-Za-z]:\\/)/,'$1')),'utf8');
+import {fileURLToPath} from 'node:url';
+const read=(x:string)=>readFileSync(fileURLToPath(new URL(x,import.meta.url)),'utf8');
 describe('VYRON 3.1 product consolidation contracts',()=>{
  it('removes Data YouTube and duplicate Calendar top tabs',()=>{const s=read('./YouTubeCenter.tsx');expect(s).not.toContain("['data','Данные YouTube']");expect(s).not.toContain("['calendar','Календарь']");expect(s).toContain("if(tab==='calendar')return'schedule'");expect(s).toContain('<ScheduleWorkspace/>')});
  it('analytics refresh is self-contained',()=>{const s=read('./AnalyticsPage.tsx');expect(s).toContain('refreshChannelAnalytics');expect(s).not.toContain("Обновить в YouTube")});
