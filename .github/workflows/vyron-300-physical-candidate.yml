@@ -233,7 +233,10 @@ jobs:
           assert 'youtube_oauth_recover_existing_profiles' in y
           assert 'v300_fifty_profile_update_in_place_preserves_identity_pointers_and_generations' in y
           assert 'v300_mixed_fifty_profiles_only_ten_need_manual_attention' in y
-          assert 'Восстановить через credentials.json' in accounts
+          assert 'youtubeRecoverSavedGoogleConfig' in accounts
+          assert 'youtubeRecoverSavedGoogleConfig' in recovery
+          assert 'youtube_google_config_interactive_recover' in y
+          assert 'youtubeImportGoogleConfig' in Path('src/api.ts').read_text()
           assert 'api.youtubeOauthRecoverExistingProfiles()' in recovery
           assert 'Переподключить через браузер' in recovery
           assert 'Восстановить доступ Keychain' in recovery

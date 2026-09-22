@@ -7,9 +7,11 @@ describe('VYRON 3.0.0 OAuth persistence physical-blocker regression',()=>{
  const start=rust.indexOf('pub async fn youtube_oauth_recover_existing_profiles');
  const end=rust.indexOf('#[tauri::command]\npub fn youtube_keychain_migration_diagnostics',start);
  const automatic=rust.slice(start,end);
- it('keeps global credentials import available in KEYCHAIN_ACCESS_BLOCKED',()=>{
-  expect(accounts).toContain("oauthKeychainBlocked?'Восстановить через credentials.json'");
-  expect(recovery).toContain("globalStatus?.oauthState==='KEYCHAIN_ACCESS_BLOCKED'?'Восстановить через credentials.json'");
+ it('uses saved local OAuth recovery before the manual credentials fallback',()=>{
+  expect(api).toContain('youtubeRecoverSavedGoogleConfig');
+  expect(accounts).toContain('api.youtubeRecoverSavedGoogleConfig()');
+  expect(recovery).toContain('api.youtubeRecoverSavedGoogleConfig()');
+  expect(api).toContain('youtubeImportGoogleConfig');
  });
  it('uses one global repair then automatic existing-profile recovery',()=>{
   expect(api).toContain('youtubeOauthRecoverExistingProfiles');
