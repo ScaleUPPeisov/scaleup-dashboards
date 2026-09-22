@@ -71,9 +71,9 @@ export function classifyChannelRenderFiles(files:RenderFolderVideoFile[],jobs:Vi
   const exactJobs=scoped.filter(j=>normalizeRenderPath(j.finalPath||'')===path);
   const activeExact=exactJobs.find(j=>!isHistoricalGeneration(j));
   if(activeExact){
-   const jobFp=currentGenerationFingerprint(activeExact);
-   if(fp&&jobFp&&fp!==jobFp)return base('NEW_GENERATION','ACTIVE_EXACT_PATH_SOURCE_CHANGED',activeExact.id);
-   if(!fp||!jobFp||sourceMatchesCurrentJob(activeExact,file))return base('KNOWN_EXACT',jobFp?'CURRENT_GENERATION_FINGERPRINT_MATCH':'EXACT_CURRENT_GENERATION_PATH',activeExact.id);
+   if(fp&&sourceMatchesCurrentJob(activeExact,file))return base('KNOWN_EXACT','CURRENT_GENERATION_FINGERPRINT_MATCH',activeExact.id);
+   if(fp)return base('NEW_GENERATION','ACTIVE_EXACT_PATH_SOURCE_CHANGED',activeExact.id);
+   return base('VERIFY_REQUIRED','CURRENT_FINGERPRINT_REQUIRED_FOR_ACTIVE_PATH',activeExact.id);
   }
 
   const historicalExact=exactJobs.find(j=>isHistoricalGeneration(j));
@@ -99,7 +99,8 @@ export function classifyChannelRenderFiles(files:RenderFolderVideoFile[],jobs:Vi
   const activeSame=sameNumber.find(j=>!isHistoricalGeneration(j));
   if(activeSame){
    if(fp&&sourceMatchesCurrentJob(activeSame,file))return base('KNOWN_EXACT','SAME_ACTIVE_GENERATION_FINGERPRINT_MATCH',activeSame.id);
-   return base('AMBIGUOUS','ACTIVE_CURRENT_GENERATION_USES_SEQUENCE',activeSame.id);
+   if(fp)return base('NEW_GENERATION','ACTIVE_SEQUENCE_REUSED_WITH_NEW_FINGERPRINT',activeSame.id);
+   return base('VERIFY_REQUIRED','CURRENT_FINGERPRINT_REQUIRED_FOR_REUSED_SEQUENCE',activeSame.id);
   }
 
   const historicalSame=sameNumber.find(j=>isHistoricalGeneration(j));
