@@ -1078,8 +1078,14 @@ pub fn youtube_google_config_retry(app:AppHandle)->Result<Value,String>{
 pub fn youtube_google_config_interactive_recover(app:AppHandle)->Result<Value,String>{
     let c=load_google_config_metadata(&app)?;
     if c.client_id.trim().is_empty(){return Err("OAUTH_CLIENT_SETUP_REQUIRED: client_id metadata is missing".into())}
-    if let Some(secret)=vault_first_global_client_secret(&app,&c)?{
-      return Ok(google_config_operational_status_value(&c,Ok(Some(secret))))
+    if let Ok(Some(secret))=oauth_vault::global_client_secret(&app,&c.client_id){
+      if !secret.trim().is_empty(){return Ok(google_config_operational_status_value(&c,Ok(Some(secret))))}
+    }
+    if let Ok(Some(secret))=vault_profile_client_secret_for_global(&app,&c.client_id){
+      if !secret.trim().is_empty(){
+        oauth_vault::set_global_client(&app,&c.client_id,&secret)?;
+        return Ok(google_config_operational_status_value(&c,Ok(Some(secret))))
+      }
     }
     let mut accounts=vec![google_client_secret_account(&c)];
     if !accounts.iter().any(|x|x==GOOGLE_CLIENT_SECRET){accounts.push(GOOGLE_CLIENT_SECRET.to_string())}
