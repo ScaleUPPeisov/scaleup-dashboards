@@ -6,6 +6,7 @@ import {notifyError,notifyLegacy,notifyWarning} from './notificationCenter';
 import {humanizeError} from './errorCenter';
 import {redactSensitive} from './securityRedaction';
 import {appendJournalEvent,normalizeActivityJournal} from './activityJournalCore';
+import {migrateUploadHistoryFingerprintProvenance} from './storageLifecycle';
 import {appendStatisticsSnapshot,normalizeStatisticsHistory} from './youtubeStatisticsCenter';
 
 export const DEFAULT_SETTINGS:Settings={
@@ -40,7 +41,7 @@ export function normalizeChannel(c:Channel):Channel{
 
 export const useApp=create<Store>((set,get)=>({
   ...EMPTY_STATE,page:'dashboard',booted:false,
-  hydrate:s=>set({...EMPTY_STATE,...s,version:10,channels:(s.channels||[]).filter(Boolean).map(normalizeChannel),jobs:(s.jobs||[]).filter(Boolean).map(normalizeJob),competitors:s.competitors||[],settings:{...DEFAULT_SETTINGS,...s.settings,youtubeIntelligenceAutoRefresh:false},logs:s.logs||[],uploadHistory:Array.isArray((s as any).uploadHistory)?(s as any).uploadHistory:[],activityJournal:normalizeActivityJournal((s as any).activityJournal),statisticsHistory:normalizeStatisticsHistory((s as any).statisticsHistory),fingerprintCache:(s as any).fingerprintCache||{},projectLifecycle:(s as any).projectLifecycle||{},booted:true}),
+  hydrate:s=>{const jobs=(s.jobs||[]).filter(Boolean).map(normalizeJob),activityJournal=normalizeActivityJournal((s as any).activityJournal),rawHistory:Array<UploadHistoryRecord>=Array.isArray((s as any).uploadHistory)?(s as any).uploadHistory:[],uploadHistory=migrateUploadHistoryFingerprintProvenance(rawHistory,activityJournal,jobs),provenanceChanged=uploadHistory.some((x,i)=>x.fingerprintProofSource!==rawHistory[i]?.fingerprintProofSource||x.proofSchemaVersion!==rawHistory[i]?.proofSchemaVersion);set({...EMPTY_STATE,...s,version:10,channels:(s.channels||[]).filter(Boolean).map(normalizeChannel),jobs,competitors:s.competitors||[],settings:{...DEFAULT_SETTINGS,...s.settings,youtubeIntelligenceAutoRefresh:false},logs:s.logs||[],uploadHistory,activityJournal,statisticsHistory:normalizeStatisticsHistory((s as any).statisticsHistory),fingerprintCache:(s as any).fingerprintCache||{},projectLifecycle:(s as any).projectLifecycle||{},booted:true});if(provenanceChanged)scheduleSave()},
   setPage:page=>set({page}),
   persist:async()=>{const s=get();const state:AppState={version:10,channels:s.channels,jobs:s.jobs,competitors:s.competitors,settings:s.settings,logs:s.logs,uploadHistory:s.uploadHistory,activityJournal:s.activityJournal,statisticsHistory:s.statisticsHistory,fingerprintCache:s.fingerprintCache,projectLifecycle:s.projectLifecycle};const result=await api.saveState(state);if(result?.securityWarning){const h=humanizeError(result.securityWarning,'storage');notifyWarning(h.title,h.message,{operationId:'keychain-autosave-warning'})}},
   addChannel:p=>{
