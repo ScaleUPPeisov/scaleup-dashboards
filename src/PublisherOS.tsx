@@ -48,7 +48,8 @@ export function PublisherOS(){
  const recoveryJobs=useMemo(()=>channelRenderFolder?crossChannelScanRecoveryJobs(jobs,uploadHistory,channelId,channelRenderFolder):[],[jobs,uploadHistory,channelId,channelRenderFolder]);
  const recoveryJobIds=useMemo(()=>new Set(recoveryJobs.map(j=>j.id)),[recoveryJobs]);
  const setDraftPatch=(p:Partial<PublishWorkspaceDraft>)=>setDraft(d=>savePublishWorkspace(channelId,{...d,...p}));
- const allChannelJobs=useMemo(()=>jobs.filter(j=>j.channelId===channelId&&Boolean(j.finalPath)&&!j.removedFromPublishList&&['READY_UPLOAD','UPLOADING','ERROR','SCHEDULED'].includes(j.status)).sort((a,b)=>a.number-b.number),[jobs,channelId]);
+ const supersededJobIds=useMemo(()=>new Set(jobs.filter(j=>j.channelId===channelId&&j.sourcePreviousJobId).map(j=>j.sourcePreviousJobId!)),[jobs,channelId]);
+ const allChannelJobs=useMemo(()=>jobs.filter(j=>j.channelId===channelId&&Boolean(j.finalPath)&&!j.removedFromPublishList&&!recoveryJobIds.has(j.id)&&!supersededJobIds.has(j.id)&&['READY_UPLOAD','UPLOADING','ERROR','SCHEDULED'].includes(j.status)).sort((a,b)=>a.number-b.number),[jobs,channelId,recoveryJobIds,supersededJobIds]);
  const uploadStateById=useMemo(()=>new Map(allChannelJobs.map(j=>[j.id,classifyUploadState(j,uploadHistory)] as const)),[allChannelJobs,uploadHistory]);
  const stateOf=(j:VideoJob)=>uploadStateById.get(j.id)||classifyUploadState(j,uploadHistory);
  const selectableJobs=useMemo(()=>allChannelJobs.filter(j=>uploadStateById.get(j.id)==='NEW'&&!recoveryJobIds.has(j.id)),[allChannelJobs,uploadStateById,recoveryJobIds]);
@@ -235,7 +236,8 @@ export function PublisherOS(){
  async function fingerprintRenderEvidenceFiles(result:RenderFolderScanResult,current:VideoJob[],history:UploadHistoryRecord[],progress?:(done:number,total:number,name:string)=>void){
   const files=[] as RenderFolderScanResult['files'];let done=0;const total=result.files.length;
   for(const file of result.files){
-   if(!renderFileNeedsFingerprint(file,current,history,channelId,result.root)){files.push(file);done++;progress?.(done,total,file.name);continue}
+   // Every current render gets SHA+size before upload eligibility is decided.
+   // Current-file identity is local and consumes zero YouTube API quota.
    try{
     const cache=useApp.getState().fingerprintCache[file.path];
     const fp=await api.youtubeFileFingerprint(file.path,cache?{size:cache.size,mtimeMs:cache.mtimeMs,sha256:cache.sha256}:undefined);
