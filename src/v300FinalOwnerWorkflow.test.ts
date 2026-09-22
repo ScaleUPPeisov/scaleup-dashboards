@@ -38,9 +38,14 @@ describe('VYRON 3.0.0 final owner workflow contracts',()=>{
   expect(publisher).toContain('Технические сведения legacy identity');
   expect(publisher).toContain('Технические сведения расписания');
   expect(publisher).toContain('Технические сведения квоты');
+  expect(publisher).toContain('Технические сведения запроса');
   expect(publisher).toContain('Счётчики обновятся после фактической загрузки.');
   expect(publisher).toContain('Существующие обложки останутся без изменений');
   expect(publisher).toContain('Дата и время берутся из метаданных каждого видео.');
+  expect(publisher).not.toContain('<span>Timezone:');
+  expect(publisher).not.toContain('<b>Upload quota:');
+  expect(publisher).not.toContain('<b>DRY RUN:');
+  expect(publisher).not.toContain("notifyWarning('CHANNEL_RENDER_FOLDER_NOT_CONFIGURED'");
  });
  it('deduplicates logical notifications by operationId',()=>{
   expect(notifications).toContain('findIndex(x=>x.operationId===n.operationId)');
