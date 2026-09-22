@@ -6,7 +6,7 @@ import {CommandCenter} from './CommandCenter';
 import {ChannelRunway} from './ChannelRunway';
 import {AccountsPage} from './AccountsPage';
 import {QuotaMeter} from './QuotaMeter';
-import {ScheduleOS} from './ScheduleOS';
+import {ScheduleWorkspace} from './ScheduleWorkspace';
 import {YouTubeChannelBar} from './YouTubeChannelBar';
 import {ActivityHistory} from './ActivityHistory';
 import {StatisticsCenter} from './StatisticsCenter';
@@ -21,6 +21,6 @@ export function YouTubeCenter({initialTab='publish'}:{initialTab?:Tab}){
  useEffect(()=>subscribeActivePublishChannel(setActiveChannel),[]);
  useEffect(()=>{const openHistory=()=>setTab('history'),openStatistics=()=>setTab('statistics'),openAccounts=()=>setTab('accounts');window.addEventListener('vyron:youtube-history',openHistory);window.addEventListener('vyron:youtube-statistics',openStatistics);window.addEventListener('vyron:youtube-accounts',openAccounts);return()=>{window.removeEventListener('vyron:youtube-history',openHistory);window.removeEventListener('vyron:youtube-statistics',openStatistics);window.removeEventListener('vyron:youtube-accounts',openAccounts)}},[]);
  const tabs:[typeof tab,string][]=[['publish','Публикация'],['metadata','Метаданные'],['schedule','Расписание'],['uploaded','Загруженные'],['command','Командный центр'],['runway','План каналов'],['statistics','Статистика'],['history','История'],['accounts','Аккаунты']];
- const content=tab==='publish'?<PublisherOS/>:tab==='uploaded'?<ExistingVideos/>:tab==='metadata'?<MetadataTabs/>:tab==='schedule'?<ScheduleOS/>:tab==='command'?<CommandCenter/>:tab==='runway'?<ChannelRunway/>:tab==='statistics'?<StatisticsCenter/>:tab==='history'?<ActivityHistory/>:<AccountsPage/>;
+ const content=tab==='publish'?<PublisherOS/>:tab==='uploaded'?<ExistingVideos/>:tab==='metadata'?<MetadataTabs/>:tab==='schedule'?<ScheduleWorkspace/>:tab==='command'?<CommandCenter/>:tab==='runway'?<ChannelRunway/>:tab==='statistics'?<StatisticsCenter/>:tab==='history'?<ActivityHistory/>:<AccountsPage/>;
  return <><div className="youtubeCenterHead"><div><small>VYRON • YOUTUBE</small><h1>YouTube</h1><p>Публикация, метаданные, расписание и управление каналом в одном рабочем пространстве.</p></div><QuotaMeter compact/></div><YouTubeChannelBar/><div className="youtubeTabs youtubeMasterTabs">{tabs.map(([id,label])=><button key={id} className={tab===id?'active':''} onClick={()=>setTab(id)}>{label}</button>)}</div><div key={tab+':'+activeChannel} className="youtubeChannelContext">{content}</div></>;
 }
