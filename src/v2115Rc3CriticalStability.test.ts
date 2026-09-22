@@ -34,13 +34,15 @@ describe('VYRON 2.1.15 RC3 critical stability contracts',()=>{
   expect(y).toContain('secretOperational');
  });
 
- it('explicit credentials repair rotates secure account, verifies readback, and clears stale denied cache',()=>{
+ it('explicit credentials import persists and verifies the encrypted vault while Keychain remains fallback',()=>{
   const y=read('src-tauri/src/youtube.rs');
   const sec=read('src-tauri/src/security.rs');
-  expect(y).toContain('rotated_google_client_secret_account');
-  expect(y).toContain('canonical_verify_secret(&new_account,&client_secret)');
-  expect(y).toContain('canonical_forget_cache(&old_account)');
-  expect(y).toContain('client_secret_account:new_account.clone()');
+  const block=y.split('pub fn youtube_google_config_import(',2)[1]?.split('#[tauri::command]',2)[0]||'';
+  expect(block).toContain('oauth_vault::set_global_client(&app,&client_id,&client_secret)');
+  expect(block).toContain('oauth_vault::global_client_secret(&app,&client_id)');
+  expect(block).toContain('OAUTH_VAULT_READBACK_FAILED');
+  expect(block).toContain('canonical_set_secret(&new_account,&client_secret)');
+  expect(block).toContain('google_config_operational_status_value');
   expect(sec).toContain('if let Ok(mut d)=canonical_denied().lock(){d.remove(account);}');
  });
 
