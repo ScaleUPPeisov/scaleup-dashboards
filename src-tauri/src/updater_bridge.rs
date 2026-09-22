@@ -123,7 +123,7 @@ async fn owner_preview_update(app:&tauri::AppHandle)->Result<Option<tauri_plugin
     let updater=app.updater_builder()
       .endpoints(vec![endpoint]).map_err(|e|format!("OWNER_PREVIEW_UPDATER_CONFIG_FAILED: {e}"))?
       .version_comparator(move |_current,remote|{
-          owner_preview_available(current_revision,&remote.version.to_string())
+          owner_preview_available(&current_product,current_revision,&remote.version.to_string())
       })
       .build().map_err(|e|format!("OWNER_PREVIEW_UPDATER_BUILD_FAILED: {e}"))?;
     updater.check().await.map_err(|e|format!("OWNER_PREVIEW_CHECK_FAILED: {e}"))
