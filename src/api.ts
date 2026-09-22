@@ -9,17 +9,12 @@ import {classifyUpdaterError,UPDATER_CHECK_OPTIONS,UPDATER_ENDPOINTS,updaterFail
 import { relaunch } from '@tauri-apps/plugin-process';
 import type {YoutubeExistingVideo, AppState, ChannelAnalytics, Competitor, Diagnostics, InboxScan, LicenseStatus, VideoJob, YoutubeProfile, YoutubeChannelStatistics } from './types';
 import {bindYoutubeQuotaOperationProject,recordYoutubeApiRequest,recordYoutubeCommand,registerYoutubeUploadProject,youtubeGuardedCall,youtubeQuotaProjectIdentity,type YoutubeApiRequestEvent} from './youtubeQuota';
-import {mutateShortsState,recordShortUploadAttempt} from './shortsCore';
 import {endUploadRuntime,registerUploadRuntime,type UploadProgressFact} from './uploadTelemetry';
 
 export type AiMetadata={title:string;description:string;tags:string[]};
 export type YoutubeUploadResult={videoId?:string;channelId?:string;channelTitle?:string;scheduled:boolean;resumed?:boolean;verified?:boolean;verificationError?:string;actual?:{id?:string;channelId?:string;privacyStatus?:string;publishAt?:string|null}};
 export type YoutubeUploadSession={jobId:string;profileId:string;filePath:string;total:number;offset:number;createdAt:string;updatedAt:string;operationId?:string;channelId?:string;projectId?:string};
 export type YoutubeFileFingerprint={fingerprint:string;size:number;modifiedAt:number;path:string;cached?:boolean};
-export type ShortsAudioStream={index:number;codec:string;channels:number;sampleRate:number;duration:number;startTime:number;bitRate:number;isDefault:boolean};
-export type ShortsProbe={path:string;duration:number;width:number;height:number;hasVideo:boolean;hasAudio:boolean;size:number;format:string;audioStreams:ShortsAudioStream[]};
-export type ShortsSourceFile={path:string;name:string;size:number;extension:string};
-export type ShortsRenderResult={outputPath:string;duration:number;width:number;height:number;hasAudio:boolean;encoder:string;reused:boolean;audioStreamIndex:number;audioMaxDb:number};
 export type GoogleConfigStatus={configured:boolean;oauthReady:boolean;projectId?:string;clientIdMasked?:string;hasSecret:boolean;hasApiKey:boolean;oauthState?:'NOT_CONFIGURED'|'CONFIGURED'|'READY'|'NEEDS_SECURE_STORAGE_REPAIR'|'KEYCHAIN_ACCESS_BLOCKED'|'ERROR';secretOperational?:boolean;repairRequired?:boolean;secureStorageErrorCode?:string|null;secretValuesIncluded?:false};
 export type OAuthReconciliationDiagnostic={channelsTotal:number;profilesTotal:number;channelsWithYoutubeProfileId:number;profilesWithChannelId:number;orphanChannels:Array<{channelId:string;channelName:string;youtubeProfileId:string;reason:'ORPHAN_MAPPING'}>;orphanProfiles:Array<{profileId:string;youtubeChannelId?:string;channelTitle?:string}>;duplicateMappings:Array<{profileId:string;channelMappings:number}>;oauthStoreExists:boolean;secretValuesIncluded:false;keychainSecretsRead:false};
 export type YoutubeProcessingStatus={videoId:string;channelId?:string;remoteExists?:boolean;identityVerified:boolean;processingStatus:string;processingState:'READY'|'YOUTUBE_PROCESSING'|'PROCESSING_FAILED'|'PROCESSING_UNKNOWN';processingCheckedAt:string;processingProgress?:{partsTotal?:string|null;partsProcessed?:string|null;timeLeftMs?:string|null};processingFailureReason?:string|null;processingIssuesAvailability?:string|null;rejectionReason?:string|null;uploadStatus?:string|null;privacyStatus?:string|null;publishAt?:string|null};
@@ -111,8 +106,6 @@ export const api={
   chooseRenderFolder:async(defaultPath?:string)=>{const r=await open({directory:true,multiple:false,title:'Папка рендера текущего канала',defaultPath:defaultPath||undefined});return typeof r==='string'?r:null},
   chooseProjectsFolder:async(defaultPath?:string)=>{const r=await open({directory:true,multiple:false,title:'Папка проектов текущего канала',defaultPath:defaultPath||undefined});return typeof r==='string'?r:null},
   discoverChannelFolders:(workspace:string,channelName:string)=>invoke<ChannelFolderDiscovery>('discover_channel_folders',{workspace,channelName}),
-  chooseShortsSourceFolder:async()=>{const r=await open({directory:true,multiple:false,title:'Выберите папку с видео для Shorts'});return typeof r==='string'?r:null},
-  chooseShortsOutputFolder:async(defaultPath?:string)=>{const r=await open({directory:true,multiple:false,title:'Папка для готовых Shorts',defaultPath:defaultPath||undefined});return typeof r==='string'?r:null},
   chooseEndlume:async()=>{const r=await open({directory:false,multiple:false,title:'Выберите ENDLUME Studio.app'});return typeof r==='string'?r:null},
   chooseImages:async()=>{const r=await open({directory:false,multiple:true,title:'Выберите изображения',filters:[{name:'Images',extensions:['png','jpg','jpeg','webp']}]});return !r?[]:Array.isArray(r)?r:[r]},
   chooseTracks:async()=>{const r=await open({directory:false,multiple:true,title:'Выберите музыку',filters:[{name:'Audio',extensions:['mp3','wav','m4a','aac','flac','ogg','opus']}]});return !r?[]:Array.isArray(r)?r:[r]},
@@ -168,10 +161,6 @@ export const api={
   youtubeConnect:(clientId:string,clientSecret:string,browser='default')=>invoke<OAuthNewChannelConnectResult>('youtube_oauth_connect',{clientId,clientSecret,browser}),
   youtubeDisconnect:(profileId:string)=>invoke<void>('youtube_oauth_disconnect',{profileId}),
   youtubeUpload:async(profileId:string,jobId:string,filePath:string,title:string,description:string,tags:string[],publishAt:string|undefined,categoryId:string,operationId?:string,telemetry?:{channelId?:string;projectId?:string;totalBytes?:number;startedAt?:string})=>{const startedAt=telemetry?.startedAt||new Date().toISOString();registerUploadRuntime({jobId,projectId:telemetry?.projectId,channelId:telemetry?.channelId||'',profileId,filePath,startedAt},telemetry?.totalBytes,0);try{return await ytInvoke<YoutubeUploadResult>('youtube_upload_video',{profileId,jobId,filePath,title,description,tags,publishAt,categoryId,operationId,channelId:telemetry?.channelId,projectId:telemetry?.projectId})}finally{endUploadRuntime(jobId)}},
-  shortsScanFolder:(sourceFolder:string)=>invoke<ShortsSourceFile[]>('shorts_scan_folder',{sourceFolder}),
-  shortsProbeSource:(sourcePath:string)=>invoke<ShortsProbe>('shorts_probe_source',{sourcePath}),
-  shortsValidateFile:(outputPath:string,targetDuration:number)=>invoke<ShortsProbe>('shorts_validate_file',{outputPath,targetDuration}),
-  shortsRenderSegment:(sourcePath:string,outputPath:string,start:number,duration:number)=>invoke<ShortsRenderResult>('shorts_render_segment',{sourcePath,outputPath,start,duration}),
   youtubeUploadSessions:()=>invoke<YoutubeUploadSession[]>('youtube_upload_sessions'),
   youtubeActiveUploads:()=>invoke<UploadProgressFact[]>('youtube_active_uploads'),
   youtubeResumeUpload:async(jobId:string)=>{const session=(await invoke<YoutubeUploadSession[]>('youtube_upload_sessions')).find(x=>x.jobId===jobId);if(session)registerUploadRuntime({jobId,projectId:session.projectId,channelId:session.channelId||'',profileId:session.profileId,filePath:session.filePath,startedAt:new Date().toISOString()},session.total,session.offset);try{return await invoke<YoutubeUploadResult>('youtube_resume_upload',{jobId})}finally{endUploadRuntime(jobId)}},
@@ -192,7 +181,7 @@ export const api={
   youtubeListPlaylists:(profileId:string,operationId?:string)=>ytInvoke<{playlists:Array<{id:string;title:string;privacyStatus?:string}>;calls:number}>('youtube_list_playlists',{profileId,operationId}),
   youtubePlaylistMembership:(profileId:string,videoId:string,playlistId:string,action:'add'|'remove',operationId?:string)=>ytInvoke<{verified:boolean;skipped:boolean;wasMember:boolean;isMember:boolean;action:'add'|'remove';playlistId:string;videoId:string;verificationError?:string|null}>('youtube_playlist_membership',{profileId,videoId,playlistId,action,operationId}),
   onYoutubeProgress:(cb:(data:UploadProgressFact)=>void)=>listen<UploadProgressFact>('youtube-upload-progress',e=>cb(e.payload)),
-  onYoutubeApiRequest:(cb:(data:YoutubeApiRequestEvent)=>void)=>listen<YoutubeApiRequestEvent>('youtube-api-request',e=>{recordYoutubeApiRequest(e.payload);if(e.payload.method==='videos.insert'&&e.payload.operationId?.startsWith('short-upload:')){const shortId=e.payload.operationId.slice('short-upload:'.length).split(':')[0];mutateShortsState(s=>recordShortUploadAttempt(s,shortId,e.payload.operationId!,e.payload.at||new Date().toISOString()))}cb(e.payload)}),
+  onYoutubeApiRequest:(cb:(data:YoutubeApiRequestEvent)=>void)=>listen<YoutubeApiRequestEvent>('youtube-api-request',e=>{recordYoutubeApiRequest(e.payload);cb(e.payload)}),
   appVersion:()=>getVersion(),
   updaterRuntimeIdentity:()=>invoke<UpdaterRuntimeIdentity>('updater_runtime_identity'),
   updaterInstallPreflight:()=>invoke<UpdaterInstallPreflight>('updater_install_preflight'),
