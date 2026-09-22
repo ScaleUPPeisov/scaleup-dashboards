@@ -71,7 +71,8 @@ describe('VYRON 2.1.15 RC4 activity history wiring',()=>{
   expect(publisher).toContain("const currentCandidates=rows.filter(r=>r.classification==='NEW_CANDIDATE'||r.classification==='NEW_GENERATION')");
   expect(publisher).toContain('materializeRenderGenerationRows(currentCandidates,false,scanPreview)');
   expect(publisher).toContain('youtubeVideoProcessingStatusBatch');
-  expect(publisher).toContain('Новых videos.insert: 0');
+  expect(publisher).toContain("notifySuccess('Проверка YouTube завершена'");
+  expect(publisher).not.toContain('Новых videos.insert: 0');
  });
  it('duplicate guard is local preflight, not a fake YouTube rejection',()=>{
   const queue=read('src/uploadQueueRuntime.ts'),errors=read('src/errorCenter.ts');
