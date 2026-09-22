@@ -52,7 +52,7 @@ export function PublisherOS(){
  const setDraftPatch=(p:Partial<PublishWorkspaceDraft>)=>setDraft(d=>savePublishWorkspace(channelId,{...d,...p}));
  const supersededJobIds=useMemo(()=>new Set(jobs.filter(j=>j.channelId===channelId&&j.sourcePreviousJobId).map(j=>j.sourcePreviousJobId!)),[jobs,channelId]);
  const currentPhysicalPaths=useMemo(()=>new Set(sourceAvailability==='ONLINE'&&renderScan?renderScan.result.files.map(f=>normalizeRenderPath(f.path)):[]),[sourceAvailability,renderScan]);
- const allChannelJobs=useMemo(()=>sourceAvailability==='ONLINE'?jobs.filter(j=>j.channelId===channelId&&Boolean(j.finalPath)&&currentPhysicalPaths.has(normalizeRenderPath(j.finalPath||''))&&!j.removedFromPublishList&&!recoveryJobIds.has(j.id)&&!supersededJobIds.has(j.id)&&['READY_UPLOAD','UPLOADING','ERROR','SCHEDULED'].includes(j.status)).sort((a,b)=>a.number-b.number):[],[jobs,channelId,recoveryJobIds,supersededJobIds,sourceAvailability,currentPhysicalPaths]);
+ const allChannelJobs=useMemo(()=>sourceAvailability==='ONLINE'?jobs.filter(j=>j.channelId===channelId&&j.sourceOrigin==='render-scan'&&Boolean(j.finalPath)&&currentPhysicalPaths.has(normalizeRenderPath(j.finalPath||''))&&!j.removedFromPublishList&&!recoveryJobIds.has(j.id)&&!supersededJobIds.has(j.id)&&!j.youtubeVideoId&&!j.uploadedAt&&j.storageLifecycle!=='UPLOADED'&&j.status!=='SCHEDULED'&&['READY_UPLOAD','UPLOADING','ERROR'].includes(j.status)).sort((a,b)=>a.number-b.number):[],[jobs,channelId,recoveryJobs,supersededJobIds,sourceAvailability,currentPhysicalPaths]);
  const uploadStateById=useMemo(()=>new Map(allChannelJobs.map(j=>[j.id,classifyUploadState(j,uploadHistory)] as const)),[allChannelJobs,uploadHistory]);
  const stateOf=(j:VideoJob)=>uploadStateById.get(j.id)||classifyUploadState(j,uploadHistory);
  const selectableJobs=useMemo(()=>allChannelJobs.filter(j=>uploadStateById.get(j.id)==='NEW'&&!recoveryJobIds.has(j.id)),[allChannelJobs,uploadStateById,recoveryJobIds]);
@@ -255,7 +255,7 @@ export function PublisherOS(){
   return{...result,files};
  }
  async function scanRenderFolder(){
-  const root=channelRenderFolder,taskId=`render-scan:${channelId}:${Date.now()}`;
+  const root=channelRenderFolder,taskId=`render-scan:${channelId}`;
   if(!root){
     setRenderScan(null);
     notifyWarning('Папка рендера не настроена',`Выберите папку Render для ${channel?.name||'текущего канала'} или запустите автопоиск.`);
@@ -306,7 +306,7 @@ export function PublisherOS(){
     const msg=`Найдено: ${summary.TOTAL_CLASSIFIED_FILES} • exact uploaded: ${summary.UPLOADED_LOCAL_COPY} • текущих кандидатов: ${newTotal} • invalid: ${summary.INVALID} • YouTube API: 0.`;
     completeTask(taskId,`${summary.TOTAL_CLASSIFIED_FILES} файлов • selectable candidates ${newTotal} • exact uploaded ${summary.UPLOADED_LOCAL_COPY}`);
     result.truncated?notifyWarning('Сканирование ограничено',`Найдено ${summary.TOTAL_CLASSIFIED_FILES} видео. Часть папки не прочитана.`,{operationId:taskId}):notifyInfo('Папка просканирована',`Найдено ${summary.TOTAL_CLASSIFIED_FILES} видео • можно загрузить ${newTotal}.`,{operationId:taskId})
-  }catch(e){const h=humanizeError(e,'storage');failTask(taskId,h.message);notifyWarning('Не удалось просканировать папку рендера',h.message)}
+  }catch(e){const h=humanizeError(e,'storage');failTask(taskId,h.message);notifyWarning('Не удалось просканировать папку рендера',h.message,{operationId:taskId})}
   finally{setRenderScanBusy(false)}
  }
  function materializeRenderGenerationRows(rows:RenderScanRow[],explicitLegacyOverride=false,scanOverride?:RenderScanPreview){
