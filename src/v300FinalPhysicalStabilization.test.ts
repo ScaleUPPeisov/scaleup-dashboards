@@ -22,7 +22,7 @@ describe('VYRON 3.0.0 final physical stabilization contracts',()=>{
   const interactive=security.split('fn secitem_interactive_get').at(1)?.split('fn secitem_no_ui_set')[0]||'';
   expect(interactive).not.toContain('kSecUseAuthenticationUISkip');
   expect(youtube).toContain('youtube_oauth_interactive_recover_blocked_profiles');
-  expect(auth).toContain('Восстановить старые сохранённые подключения');
+  expect(auth).toContain('Восстановить все сохранённые подключения');
   expect(auth).toContain('macOS может запросить разрешение');
  });
 
@@ -36,15 +36,15 @@ describe('VYRON 3.0.0 final physical stabilization contracts',()=>{
   expect(settings).toContain('Secret values');
  });
 
- it('interactive recovery stages a repaired item, verifies token refresh, then commits pointer transactionally',()=>{
+ it('interactive recovery migrates legacy refresh tokens into local vault, verifies readback and token refresh without Google browser',()=>{
   const body=youtube.split('pub async fn youtube_oauth_interactive_recover_blocked_profiles').at(1)?.split('pub fn youtube_keychain_migration_diagnostics')[0]||'';
-  expect(body).toContain('rotate_recovered_refresh_with');
-  expect(body).toContain('commit_recovered_refresh_pointer');
+  expect(body).toContain('oauth_vault::upsert_profile');
+  expect(body).toContain('oauth_vault::profile_refresh');
+  expect(body).toContain('LOCAL_VAULT_READBACK_FAILED');
   expect(body).toContain('refresh_access_token_http');
-  expect(body.indexOf('refresh_access_token_http')).toBeLessThan(body.indexOf('commit_recovered_refresh_pointer'));
-  expect(body).toContain('canonical_delete_secret(&new_account)');
-  expect(body).toContain('"pointerChanged":false');
-  expect(body).toContain('"generationChanged":false');
+  expect(body).toContain('set_profile_migration_state(&app,&profile_id,MIGRATION_MIGRATED)');
+  expect(body.indexOf('oauth_vault::upsert_profile')).toBeLessThan(body.indexOf('refresh_access_token_http'));
+  expect(body.indexOf('refresh_access_token_http')).toBeLessThan(body.indexOf('set_profile_migration_state(&app,&profile_id,MIGRATION_MIGRATED)'));
   expect(body).not.toContain('open_browser(');
   expect(body).not.toContain('youtube_oauth_reconnect_existing');
   expect(body).not.toContain('canonical_delete_secret(&old_account)');
