@@ -1,4 +1,4 @@
-use crate::security;
+use crate::{security,oauth_vault};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
@@ -421,19 +421,25 @@ where
  Err(format!("OAUTH_RECONNECT_REQUIRED: profile={profile_id}; refresh token is missing"))
 }
 fn require_canonical_refresh(app:&AppHandle,profile_id:&str)->Result<String,String>{
+ if let Some(token)=oauth_vault::profile_refresh(app,profile_id)?{return Ok(token)}
  let active_account=profile_refresh_token_account(app,profile_id)?;
- resolve_refresh_credential_with(
+ let token=resolve_refresh_credential_with(
   profile_id,
   &active_account,
   |account|security::canonical_get_secret_cached(account),
   ||security::list_legacy_secret_accounts(""),
   |account|security::legacy_get_secret_once(account),
- )
+ )?;
+ oauth_vault::upsert_profile(app,profile_id,"",Some(&token),None,None,None)?;
+ Ok(token)
 }
 fn canonical_global_client_secret(app:&AppHandle)->Result<Option<String>,String>{
  let c=load_google_config_metadata(app)?;
+ if let Some(secret)=oauth_vault::global_client_secret(app,&c.client_id)?{return Ok(Some(secret))}
  let account=google_client_secret_account(&c);
- security::canonical_get_secret_cached(&account)
+ let secret=security::canonical_get_secret_cached(&account)?;
+ if let Some(value)=secret.as_deref().filter(|x|!x.trim().is_empty()){oauth_vault::set_global_client(app,&c.client_id,value)?}
+ Ok(secret)
 }
 #[derive(Debug,Clone,PartialEq,Eq)]
 enum OAuthClientSecretSource{ProfileCanonical,GlobalExactMatch,GlobalCurrentMigration,LegacyStable}
@@ -452,6 +458,12 @@ fn resolve_client_secret_for_profile(app:&AppHandle,profile_id:&str,client_id:&s
  let client_id=client_id.trim();
  if profile_id.is_empty(){return Err("OAUTH_PROFILE_ID_MISSING: existing profile UUID is required".into())}
  if client_id.is_empty(){return Err("OAUTH_CLIENT_MISSING: profile client_id is empty".into())}
+ if let Some(secret)=oauth_vault::profile_client_secret(app,profile_id)?{
+  return Ok(ResolvedOAuthClient{client_id:client_id.into(),client_secret:secret,source:OAuthClientSecretSource::ProfileCanonical})
+ }
+ if let Some(secret)=oauth_vault::global_client_secret(app,client_id)?{
+  return Ok(ResolvedOAuthClient{client_id:client_id.into(),client_secret:secret,source:OAuthClientSecretSource::GlobalExactMatch})
+ }
  let profile_account=profile_client_secret_account(app,profile_id)?;
  let mut profile_keychain_error:Option<String>=None;
  let profile_secret=match security::canonical_get_secret_cached(&profile_account){
@@ -637,9 +649,9 @@ fn profile_secret_value<'a>(p:&'a OAuthProfile,kind:&str)->Result<&'a str,String
 fn set_profile_secret_value(p:&mut OAuthProfile,kind:&str,value:String)->Result<(),String>{match kind{"client_secret"=>p.client_secret=value,"access_token"=>p.access_token=value,"refresh_token"=>p.refresh_token=value,_=>return Err(format!("UNKNOWN_SECRET_KIND: {kind}"))};Ok(())}
 fn hydrate_profile_secret_for_operation(app:&AppHandle,p:&mut OAuthProfile,kind:&str)->Result<(),String>{
     match kind{
-     "refresh_token"=>{p.refresh_token=require_canonical_refresh(app,&p.id)?;Ok(())},
+     "refresh_token"=>{p.refresh_token=require_canonical_refresh(app,&p.id)?;oauth_vault::upsert_profile(app,&p.id,p.channel_id.as_deref().unwrap_or(""),Some(&p.refresh_token),None,p.google_email.as_deref(),Some(&p.preferred_browser))?;Ok(())},
      "access_token"=>{if let Some((token,expires_at))=session_access_token(&p.id){p.access_token=token;p.expires_at=expires_at;Ok(())}else{Err(format!("ACCESS_TOKEN_SESSION_MISS: profile={}",p.id))}},
-     "client_secret"=>{let resolved=resolve_client_secret_for_profile(app,&p.id,&p.client_id)?;p.client_secret=resolved.client_secret;Ok(())},
+     "client_secret"=>{let resolved=resolve_client_secret_for_profile(app,&p.id,&p.client_id)?;p.client_secret=resolved.client_secret;oauth_vault::upsert_profile(app,&p.id,p.channel_id.as_deref().unwrap_or(""),None,Some(&p.client_secret),p.google_email.as_deref(),Some(&p.preferred_browser))?;Ok(())},
      _=>Err(format!("UNKNOWN_SECRET_KIND: {kind}"))
     }
 }
@@ -649,6 +661,7 @@ fn delete_profile_secrets(app:&AppHandle,id:&str)->Result<(),String>{
     let client_secret_account=profile_client_secret_account(app,id)?;
     security::canonical_delete_secret(&refresh_account)?;
     if client_secret_account!=refresh_account{security::canonical_delete_secret(&client_secret_account)?}
+    let _=oauth_vault::remove_profile(app,id);
     Ok(())
 }
 fn write_oauth_metadata(path: &Path, s: &OAuthStore) -> Result<(), String> {
