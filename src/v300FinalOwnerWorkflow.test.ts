@@ -34,6 +34,14 @@ describe('VYRON 3.0.0 final owner workflow contracts',()=>{
   expect(publisher).not.toContain('Проверить YouTube ID');
   expect(publisher).toContain('channelJobs.filter(j=>selectableJobIds.has(j.id)).map(j=>j.id)');
  });
+ it('keeps normal Publisher human-readable while retaining engineering evidence under details',()=>{
+  expect(publisher).toContain('Технические сведения legacy identity');
+  expect(publisher).toContain('Технические сведения расписания');
+  expect(publisher).toContain('Технические сведения квоты');
+  expect(publisher).toContain('Счётчики обновятся после фактической загрузки.');
+  expect(publisher).toContain('Существующие обложки останутся без изменений');
+  expect(publisher).toContain('Дата и время берутся из метаданных каждого видео.');
+ });
  it('deduplicates logical notifications by operationId',()=>{
   expect(notifications).toContain('findIndex(x=>x.operationId===n.operationId)');
   expect(notifications).toContain('queue.current[queued]=n');
