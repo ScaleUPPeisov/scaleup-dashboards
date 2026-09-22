@@ -2485,7 +2485,7 @@ pub async fn youtube_oauth_recover_existing_profiles(app:AppHandle)->Result<Valu
  }
  Ok(json!({
   "total":total,"automaticallyRestored":ready,"ready":ready,"keychainBlocked":blocked,
-  "reconnectRequired":reconnect,"failed":failed,"manualQueue":blocked+reconnect+failed,
+  "reconnectRequired":reconnect,"failed":failed,"manualQueue":reconnect,"attentionRequired":blocked+failed,
   "browserLaunches":0,"googleAccountSelectors":0,"credentialsDialogs":0,"keychainPasswordDialogs":0,
   "youtubeApiRequests":0,"videosInsert":0,"profiles":rows,"secretValuesIncluded":false
  }))
@@ -2579,7 +2579,7 @@ pub async fn youtube_oauth_interactive_recover_blocked_profiles(app:AppHandle)->
   let status=rows.last().and_then(|x|x.get("status")).and_then(Value::as_str).unwrap_or("FAILED");
   let _=app.emit("oauth-interactive-recovery-progress",json!({"done":index+1,"total":total,"profileUuid":profile.id,"status":status,"recoveredWithoutGoogle":recovered,"keychainBlocked":blocked,"reconnectRequired":reconnect,"failed":failed}));
  }
- Ok(json!({"total":total,"recoveredWithoutGoogle":recovered,"keychainBlocked":blocked,"reconnectRequired":reconnect,"failed":failed,"skippedReady":skipped,"manualQueue":blocked+reconnect+failed,"browserLaunches":0,"googleAccountSelectors":0,"credentialsDialogs":0,"youtubeApiRequests":0,"videosInsert":0,"profiles":rows,"secretValuesIncluded":false}))
+ Ok(json!({"total":total,"recoveredWithoutGoogle":recovered,"keychainBlocked":blocked,"reconnectRequired":reconnect,"failed":failed,"skippedReady":skipped,"manualQueue":reconnect,"attentionRequired":blocked+failed,"browserLaunches":0,"googleAccountSelectors":0,"credentialsDialogs":0,"youtubeApiRequests":0,"videosInsert":0,"profiles":rows,"secretValuesIncluded":false}))
 }
 #[tauri::command]
 pub fn youtube_keychain_migration_diagnostics(app:AppHandle)->Result<Value,String>{
