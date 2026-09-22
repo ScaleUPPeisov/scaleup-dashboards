@@ -138,6 +138,7 @@ export const api={
   youtubeProfiles:()=>invoke<YoutubeProfile[]>('youtube_oauth_profiles'),
   youtubeOauthReconciliationDiagnostics:()=>invoke<OAuthReconciliationDiagnostic>('youtube_oauth_reconciliation_diagnostics'),
   youtubeGoogleProjectDiagnostic:(profileId:string)=>invoke<GoogleProjectDiagnosticSafe>('youtube_google_project_diagnostic',{profileId}),
+  youtubeOauthVaultRecover:()=>invoke<{status:string;recovered:boolean;googleBrowserLaunches:number;youtubeApiRequests:number}>('youtube_oauth_vault_recover'),
   youtubeOauthCredentialStates:()=>invoke<OAuthCredentialStatesResponse>('youtube_oauth_credential_states'),
   youtubeOauthRecoveryDiagnostic:(profileId:string)=>invoke<OAuthRecoveryDiagnostic>('youtube_oauth_recovery_diagnostic',{profileId}),
   youtubeOauthRetryProfileKeychain:(profileId:string)=>invoke<OAuthSafeRetryProfileResult>('youtube_oauth_retry_profile_keychain',{profileId}),
