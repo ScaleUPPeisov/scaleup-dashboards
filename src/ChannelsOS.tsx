@@ -1,4 +1,5 @@
 import React,{useEffect,useState} from 'react';
+import {ModalPortal} from './ModalPortal';
 import {useApp} from './store';
 import {api,type OAuthCredentialStateProfile} from './api';
 import {bufferDays,formatNumber} from './core';
@@ -35,6 +36,6 @@ export function ChannelsOS(){
     </div>}
    </article>
   })}</div>}
-  {creating&&<div className="modalBackdrop" onMouseDown={()=>setCreating(false)}><section className="confirmModal" onMouseDown={e=>e.stopPropagation()}><small>FUTURE CHANNEL</small><h2>Будущий канал</h2><p>Укажи название, под которым позже создашь канал на YouTube. Уже сейчас VYRON сможет собирать для него музыку, изображения, VIDEO-проекты и рендеры.</p><label>Название будущего канала<input autoFocus value={futureName} placeholder="Например: Veloura Rain" onChange={e=>setFutureName(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')createFuture()}}/></label><div className="cacheNotice"><b>БЕЗ YOUTUBE</b><span>OAuth и channelId для производства не нужны. При будущем подключении название будет сопоставлено автоматически.</span></div><footer><button onClick={()=>setCreating(false)}>Отмена</button><button className="primary" disabled={!futureName.trim()} onClick={createFuture}>Создать будущий канал</button></footer></section></div>}
+  {creating&&<ModalPortal onClose={()=>setCreating(false)}><section className="confirmModal" onMouseDown={e=>e.stopPropagation()}><small>FUTURE CHANNEL</small><h2>Будущий канал</h2><p>Укажи название, под которым позже создашь канал на YouTube. Уже сейчас VYRON сможет собирать для него музыку, изображения, VIDEO-проекты и рендеры.</p><label>Название будущего канала<input autoFocus value={futureName} placeholder="Например: Veloura Rain" onChange={e=>setFutureName(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')createFuture()}}/></label><div className="cacheNotice"><b>БЕЗ YOUTUBE</b><span>OAuth и channelId для производства не нужны. При будущем подключении название будет сопоставлено автоматически.</span></div><footer><button onClick={()=>setCreating(false)}>Отмена</button><button className="primary" disabled={!futureName.trim()} onClick={createFuture}>Создать будущий канал</button></footer></section></ModalPortal>}
  </>
 }
