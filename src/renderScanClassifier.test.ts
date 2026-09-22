@@ -56,12 +56,12 @@ describe('VYRON generation-aware channel render scan',()=>{
     expect(row.reason).toBe('FINGERPRINT_VERIFIED_SAME_CHANNEL_UPLOAD');
   });
 
-  it('same path legacy YouTube record without trusted SHA is LEGACY_IDENTITY_UNPROVEN, not uploaded or new',()=>{
+  it('same path legacy YouTube record without trusted SHA becomes NEW_GENERATION when current fingerprint is unseen',()=>{
     const old=job('glass',2,root,{youtubeVideoId:'YT_LEGACY',storageLifecycle:'UPLOADED',status:'SCHEDULED'});
     const h=uploaded(old,'YT_LEGACY','legacy-no-sha',500_000_000);
     const row=classifyChannelRenderFiles([file(2,root,B)],[old],[h],'glass',root)[0];
-    expect(row.classification).toBe('LEGACY_IDENTITY_UNPROVEN');
-    expect(row.reason).toBe('LEGACY_UPLOAD_HAS_NO_TRUSTED_FINGERPRINT');
+    expect(row.classification).toBe('NEW_GENERATION');
+    expect(row.reason).toBe('LEGACY_HISTORY_WITHOUT_FINGERPRINT_CURRENT_BYTES_UNSEEN');
   });
 
   it('same fingerprint in another channel does not prove Glass uploaded',()=>{
@@ -75,7 +75,7 @@ describe('VYRON generation-aware channel render scan',()=>{
   it('old job.youtubeVideoId alone is never proof of current physical bytes',()=>{
     const old=job('glass',3,root,{youtubeVideoId:'YT_ONLY',storageLifecycle:'UPLOADED',status:'SCHEDULED'});
     const row=classifyChannelRenderFiles([file(3,root,C)],[old],[],'glass',root)[0];
-    expect(row.classification).toBe('LEGACY_IDENTITY_UNPROVEN');
+    expect(row.classification).toBe('NEW_GENERATION');
     expect(row.classification).not.toBe('UPLOADED_LOCAL_COPY');
   });
 
@@ -85,10 +85,10 @@ describe('VYRON generation-aware channel render scan',()=>{
     for(let n=21;n<=28;n++){const j=job('glass',n,root,{youtubeVideoId:`YT${n}`,storageLifecycle:'UPLOADED',status:'SCHEDULED'}),sha=(n%2?A:B);files.push(file(n,root,sha,500_000_000));jobs.push(j);history.push(uploaded(j,`YT${n}`,sha,500_000_000))}
     for(let n=29;n<=30;n++){const j=job('glass',n,root,{youtubeVideoId:`LEGACY${n}`,storageLifecycle:'UPLOADED',status:'SCHEDULED'});files.push(file(n,root,C,510_000_000));jobs.push(j);history.push(uploaded(j,`LEGACY${n}`,'missing',510_000_000))}
     const rows=classifyChannelRenderFiles(files,jobs,history,'glass',root),summary=summarizeRenderScan(rows),plan=planRenderScanImport(rows,jobs);
-    expect(summary.NEW_CANDIDATE+summary.NEW_GENERATION).toBe(20);
+    expect(summary.NEW_CANDIDATE+summary.NEW_GENERATION).toBe(22);
     expect(summary.UPLOADED_LOCAL_COPY).toBe(8);
-    expect(summary.LEGACY_IDENTITY_UNPROVEN).toBe(2);
-    expect(plan.accepted).toHaveLength(20);
+    expect(summary.LEGACY_IDENTITY_UNPROVEN).toBe(0);
+    expect(plan.accepted).toHaveLength(22);
   });
 
   it('same exact path can replace an unuploaded active generation without path or sequence collision',()=>{
@@ -124,19 +124,13 @@ describe('VYRON generation-aware channel render scan',()=>{
     expect(rows[0].classification).toBe('INVALID');expect(rows[0].reason).toBe('OUTSIDE_EXACT_CHANNEL_ROOT');
   });
 
-  it('legacy YouTube ID with no historical SHA stays unproven until explicit owner confirmation',()=>{
+  it('legacy YouTube ID without historical SHA is automatically current NEW when exact fingerprint is unseen',()=>{
     const old=job('glass',11,root,{youtubeVideoId:'YT_LEGACY',storageLifecycle:'UPLOADED',status:'SCHEDULED'});
     const h=uploaded(old,'YT_LEGACY','legacy-no-sha',500_000_000);
     const row=classifyChannelRenderFiles([file(11,root,B,505_000_000)],[old],[h],'glass',root)[0];
-    expect(row.classification).toBe('LEGACY_IDENTITY_UNPROVEN');
-    const preview=buildLegacyRecoveryPreview([row],[h],'glass');
-    expect(preview.total).toBe(1);
-    expect(preview.newGenerations).toHaveLength(0);
-    expect(preview.legacyUnproven).toHaveLength(1);
-    expect(preview.legacyUnproven[0].classification).toBe('LEGACY_IDENTITY_UNPROVEN');
-    expect(preview.duplicates).toHaveLength(0);
-    const confirmed={...row,classification:'NEW_GENERATION' as const,reason:'EXPLICIT_LEGACY_IDENTITY_CONFIRMED'};
-    expect(planRenderScanImport([confirmed],[old]).accepted).toHaveLength(1);
+    expect(row.classification).toBe('NEW_GENERATION');
+    expect(row.reason).toBe('LEGACY_HISTORY_WITHOUT_FINGERPRINT_CURRENT_BYTES_UNSEEN');
+    expect(planRenderScanImport([row],[old]).accepted).toHaveLength(1);
   });
 
   it('legacy recovery never promotes a current fingerprint already uploaded successfully on the same channel',()=>{
@@ -152,26 +146,23 @@ describe('VYRON generation-aware channel render scan',()=>{
     expect(preview.duplicates[0].reason).toContain('YT_DUP');
   });
 
-  it('29 legacy ambiguous rows reconcile deterministically without uploads or clearing history',()=>{
+  it('29 legacy current fingerprints become selectable generations without YouTube ID checks',()=>{
     const files:RenderFolderVideoFile[]=[],jobs:VideoJob[]=[],history:UploadHistoryRecord[]=[];
     for(let n=1;n<=29;n++){
       const old=job('glass',n,root,{youtubeVideoId:`LEGACY_${n}`,storageLifecycle:'UPLOADED',status:'SCHEDULED'});
-      const sha=n===29?A:(n.toString(16).padStart(64,'0'));
+      const sha=n.toString(16).padStart(64,'0');
       files.push(file(n,root,sha,500_000_000+n));
       jobs.push(old);
       history.push(uploaded(old,`LEGACY_${n}`,'legacy-no-sha',500_000_000+n));
     }
-    const rows=classifyChannelRenderFiles(files,jobs,history,'glass',root);
-    expect(rows.every(x=>x.classification==='LEGACY_IDENTITY_UNPROVEN')).toBe(true);
     const beforeHistory=JSON.stringify(history);
+    const rows=classifyChannelRenderFiles(files,jobs,history,'glass',root);
+    expect(rows.every(x=>x.classification==='NEW_GENERATION')).toBe(true);
+    expect(planRenderScanImport(rows,jobs).accepted).toHaveLength(29);
     const preview=buildLegacyRecoveryPreview(rows,history,'glass');
-    expect(preview.total).toBe(29);
-    expect(preview.newGenerations).toHaveLength(0);
-    expect(preview.legacyUnproven).toHaveLength(29);
-    expect(preview.uploadedExact).toHaveLength(0);
+    expect(preview.newGenerations).toHaveLength(29);
+    expect(preview.legacyUnproven).toHaveLength(0);
     expect(preview.duplicates).toHaveLength(0);
-    expect(preview.verifyRequired).toHaveLength(0);
-    expect(preview.invalid).toHaveLength(0);
     expect(JSON.stringify(history)).toBe(beforeHistory);
   });
 
