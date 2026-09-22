@@ -1,4 +1,5 @@
 import React,{useEffect,useRef,useState} from 'react';
+import {ModalPortal} from './ModalPortal';
 import {api,type GoogleConfigStatus,type OAuthAuthorizedChannel,type OAuthCredentialStateProfile,type OAuthExistingProfilesRecoveryResult,type OAuthNewChannelSelectionRequired,type OAuthReconnectWrongChannel,type OAuthReconciliationDiagnostic,type YoutubeProfileHealth} from './api';
 import {useApp} from './store';
 import type {YoutubeProfile,YoutubeChannelStatistics} from './types';
@@ -409,7 +410,7 @@ export function AccountsPage(){
    }
   </section>
 
-  {oauthSetupOpen&&<div className="modalBackdrop" onMouseDown={()=>{setOauthSetupOpen(false);setPendingAddAfterGlobalRepair(false)}}>
+  {oauthSetupOpen&&<ModalPortal onClose={()=>{setOauthSetupOpen(false);setPendingAddAfterGlobalRepair(false)}}>
    <section className="confirmModal oauthSetupModal" onMouseDown={e=>e.stopPropagation()}>
     <small>GLOBAL GOOGLE OAUTH</small>
     <h2>{oauthKeychainBlocked?'VYRON не может прочитать OAuth Client Secret':oauthRepairRequired?'Google OAuth Client требует восстановления':'Google OAuth Client ещё не настроен'}</h2>
@@ -417,9 +418,9 @@ export function AccountsPage(){
     {pendingAddAfterGlobalRepair&&<p className="note">После восстановления VYRON автоматически продолжит «+ Добавить канал» и откроет выбор браузера — повторно нажимать кнопку не нужно.</p>}
     <footer><button onClick={()=>{setOauthSetupOpen(false);setPendingAddAfterGlobalRepair(false)}}>Отмена</button>{oauthKeychainBlocked&&<button disabled={busy} onClick={()=>void retryGlobalOauth()}>Повторить безопасную проверку</button>}<button className="primary" onClick={()=>file.current?.click()}>{oauthKeychainBlocked?'Выбрать credentials.json':oauthRepairRequired?'Восстановить OAuth Client':'Импортировать credentials.json'}</button></footer>
    </section>
-  </div>}
+  </ModalPortal>}
 
-  {preReconnectProfileId&&(()=>{const p=profiles.find(x=>x.id===preReconnectProfileId),bound=p?channels.find(c=>c.youtubeProfileId===p.id||c.youtubeChannelId===p.channelId):undefined,stats=bound?.stats;return <div className="modalBackdrop" onMouseDown={()=>setPreReconnectProfileId('')}>
+  {preReconnectProfileId&&(()=>{const p=profiles.find(x=>x.id===preReconnectProfileId),bound=p?channels.find(c=>c.youtubeProfileId===p.id||c.youtubeChannelId===p.channelId):undefined,stats=bound?.stats;return <ModalPortal onClose={()=>setPreReconnectProfileId('')}>
    <section className="confirmModal browserPicker" onMouseDown={e=>e.stopPropagation()}>
     <small>ПЕРЕПОДКЛЮЧЕНИЕ СУЩЕСТВУЮЩЕГО ПРОФИЛЯ</small>
     <h2>Переподключение {p?.channelTitle||bound?.name||'YouTube-канала'}</h2>
@@ -427,9 +428,9 @@ export function AccountsPage(){
     <div className="publisherNotice"><b>{p?.channelTitle||bound?.name||'YouTube канал'}</b>{p?.googleEmail&&<p>Нужно войти в Google-аккаунт: <b>{p.googleEmail}</b></p>}{stats?.handle&&<p>{stats.handle}</p>}<p>Expected YouTube Channel ID: <code>{p?.channelId||'—'}</code></p></div>
     <footer><button onClick={()=>setPreReconnectProfileId('')}>Отмена</button><button onClick={()=>void openYoutubeForProfile(preReconnectProfileId)}>Открыть YouTube</button><button className="primary" onClick={()=>{const id=preReconnectProfileId;setPreReconnectProfileId('');void openBrowserPicker(id)}}>Выбрать браузер и продолжить</button></footer>
    </section>
-  </div>})()}
+  </ModalPortal>})()}
 
-  {wrongChannel&&<div className="modalBackdrop" onMouseDown={()=>setWrongChannel(null)}>
+  {wrongChannel&&<ModalPortal onClose={()=>setWrongChannel(null)}>
    <section className="confirmModal browserPicker" onMouseDown={e=>e.stopPropagation()}>
     <small>YOUTUBE IDENTITY</small>
     <h2>{wrongChannel.code==='WRONG_ACCOUNT'?'Вы вошли не в тот Google-аккаунт':'Выбран другой YouTube-канал'}</h2>
@@ -439,9 +440,9 @@ export function AccountsPage(){
     <details><summary>Технические сведения</summary><p>Profile UUID: <code>{wrongChannel.profileId}</code></p>{wrongChannel.expectedGoogleEmail&&<p>Expected Google: <code>{wrongChannel.expectedGoogleEmail}</code></p>}{wrongChannel.authorizedGoogleEmail&&<p>Received Google: <code>{wrongChannel.authorizedGoogleEmail}</code></p>}<p>Expected Channel ID: <code>{wrongChannel.expectedChannelId}</code></p><p>Authorized Channel ID(s): {wrongChannel.authorizedChannels.map(x=>x.channelId).join(', ')||'NONE'}</p><p>Browser: {wrongChannel.browser}</p><p>credentialsCommitted=false</p></details>
     <footer><button onClick={()=>setWrongChannel(null)}>Отмена</button><button onClick={()=>void api.youtubeOpenYoutube(wrongChannel.browser)}>Открыть YouTube</button><button onClick={()=>{const w=wrongChannel;setWrongChannel(null);void openBrowserPicker(w.profileId)}}>Выбрать другой браузер</button><button className="primary" onClick={()=>{const w=wrongChannel;setWrongChannel(null);void reconnectExisting(w.profileId,w.browser)}}>Попробовать ещё раз</button></footer>
    </section>
-  </div>}
+  </ModalPortal>}
 
-  {newChannelSelection&&<div className="modalBackdrop" onMouseDown={()=>void cancelNewChannelSelection()}>
+  {newChannelSelection&&<ModalPortal onClose={()=>void cancelNewChannelSelection()}>
    <section className="confirmModal browserPicker" onMouseDown={e=>e.stopPropagation()}>
     <small>НОВЫЙ YOUTUBE-КАНАЛ</small>
     <h2>Какой YouTube-канал добавить?</h2>
@@ -449,8 +450,8 @@ export function AccountsPage(){
     <div className="browserGrid">{newChannelSelection.channels.map(ch=><button key={ch.channelId} disabled={busy||ch.alreadyConnected} onClick={()=>void chooseNewAuthorizedChannel(ch)}>{ch.thumbnail&&<img src={ch.thumbnail} loading="lazy"/>}<b>{ch.channelTitle}</b>{ch.handle&&<small>{ch.handle}</small>}<small>{ch.channelId}</small><small>{ch.alreadyConnected?'Уже подключён в VYRON':'Добавить этот канал'}</small></button>)}</div>
     <footer><button onClick={()=>void cancelNewChannelSelection()}>Отмена</button></footer>
    </section>
-  </div>}
-  {browserOpen&&<div className="modalBackdrop" onMouseDown={()=>{setBrowserOpen(false);setPendingProfileId('')}}>
+  </ModalPortal>}
+  {browserOpen&&<ModalPortal onClose={()=>{setBrowserOpen(false);setPendingProfileId('')}}>
    <section className="confirmModal browserPicker" onMouseDown={e=>e.stopPropagation()}>
     <small>GOOGLE OAUTH</small>
     <h2>{pendingProfileId?'Выберите браузер для переподключения':'Выберите браузер для Google авторизации'}</h2>
@@ -458,9 +459,9 @@ export function AccountsPage(){
     <div className="browserGrid">{browsers.map(x=><button key={x.id} className={browser===x.id?'active':''} onClick={()=>setBrowser(x.id)}><b>{x.label}</b><small>{x.id==='default'?'Системный браузер':'Открыть Google OAuth именно здесь'}</small></button>)}</div>
     <footer><button onClick={()=>{setBrowserOpen(false);setPendingProfileId('')}}>Отмена</button><button className="primary" onClick={()=>void connect()}>Продолжить через {browsers.find(x=>x.id===browser)?.label||'браузер'}</button></footer>
    </section>
-  </div>}
+  </ModalPortal>}
 
-  {duplicate&&<div className="modalBackdrop" onMouseDown={()=>setDuplicate(null)}>
+  {duplicate&&<ModalPortal onClose={()=>setDuplicate(null)}>
    <section className="confirmModal duplicateChannelModal" onMouseDown={e=>e.stopPropagation()}>
     <small>YOUTUBE CHANNEL</small>
     <h2>Этот YouTube-канал уже подключён</h2>
@@ -469,6 +470,6 @@ export function AccountsPage(){
     <p>Новый профиль не создан. Можно явно переподключить существующий Profile UUID или отменить действие.</p>
     <footer><button onClick={()=>setDuplicate(null)}>Отмена</button><button className="primary" onClick={()=>{const id=duplicate.profileId;setDuplicate(null);void askBrowser(id)}}>Переподключить</button></footer>
    </section>
-  </div>}
+  </ModalPortal>}
  </>
 }
