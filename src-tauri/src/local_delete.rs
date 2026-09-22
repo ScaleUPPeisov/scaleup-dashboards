@@ -197,13 +197,22 @@ fn system_time_ms(value: Result<std::time::SystemTime, std::io::Error>) -> Optio
     value.ok()?.duration_since(std::time::UNIX_EPOCH).ok().map(|x| x.as_millis())
 }
 
+fn ignored_render_entry(path:&Path,md:&fs::Metadata)->bool{
+    let name=path.file_name().and_then(|x|x.to_str()).unwrap_or("");
+    let lower=name.to_ascii_lowercase();
+    if name.starts_with("._")||name.starts_with('.')||matches!(name,".DS_Store"|".Spotlight-V100"|".Trashes"|".fseventsd"){return true}
+    if md.is_file()&&md.len()==0{return true}
+    lower.ends_with(".tmp")||lower.ends_with(".temp")||lower.ends_with(".part")||lower.ends_with(".partial")||lower.ends_with(".download")
+}
+
 fn scan_media_recursive(root: &Path, current: &Path, depth: usize, scanned: &mut usize, truncated: &mut bool, out: &mut Vec<RenderFolderVideoFile>) {
     if depth > 6 || *scanned >= 10000 || out.len() >= 3000 { *truncated = true; return; }
     let Ok(entries) = fs::read_dir(current) else { return };
     for entry in entries.flatten() {
         if *scanned >= 10000 || out.len() >= 3000 { *truncated = true; break; }
-        *scanned += 1;
         let p = entry.path(); let Ok(md) = entry.metadata() else { continue };
+        if ignored_render_entry(&p,&md){continue}
+        *scanned += 1;
         if md.is_dir() { scan_media_recursive(root, &p, depth + 1, scanned, truncated, out); continue; }
         if !md.is_file() || !allowed_media(&p) { continue; }
         let Ok(canon) = p.canonicalize() else { continue }; if !canon.starts_with(root) || canon == root { continue; }
@@ -318,6 +327,20 @@ mod tests {
     fn render_scan_is_local_and_ignores_non_media() {
         let root=temp_root();fs::write(root.join("001 - Ready Videos.mov"),b"video").unwrap();fs::write(root.join("002.mp4"),b"video").unwrap();fs::write(root.join("tracklist.txt"),b"text").unwrap();let nested=root.join("nested");fs::create_dir_all(&nested).unwrap();fs::write(nested.join("003.m4v"),b"video").unwrap();
         let r=scan_render_folder_impl(root.to_str().unwrap()).unwrap();assert_eq!(r.files.len(),3);assert!(!r.files.iter().any(|x|x.name.ends_with(".txt")));fs::remove_dir_all(root).unwrap()
+    }
+    #[test]
+    fn render_scan_ignores_appledouble_hidden_and_zero_byte_sidecars(){
+        let root=temp_root();
+        fs::write(root.join("001 — Ready Videos.mov"),b"real-video").unwrap();
+        fs::write(root.join("._001 — Ready Videos.mov"),b"").unwrap();
+        fs::write(root.join(".DS_Store"),b"meta").unwrap();
+        fs::write(root.join(".hidden.mov"),b"resource-fork").unwrap();
+        fs::write(root.join("002.mov"),b"").unwrap();
+        let r=scan_render_folder_impl(root.to_str().unwrap()).unwrap();
+        assert_eq!(r.files.len(),1);
+        assert_eq!(r.files[0].name,"001 — Ready Videos.mov");
+        assert_eq!(r.scanned_entries,1);
+        fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn exact_channel_root_never_includes_sibling_channel_media() {
