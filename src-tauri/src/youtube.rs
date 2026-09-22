@@ -276,17 +276,19 @@ fn resolve_oauth_credential_states_local(app:&AppHandle)->Result<Vec<Value>,Stri
   let global_secret_cached=security::canonical_secret_cached(&global_secret_account);
   let global_exact_client=!profile.client_id.trim().is_empty()&&profile.client_id.trim()==global_meta.client_id.trim();
   let global_current_configured=!global_meta.client_id.trim().is_empty();
-  let client_secret_state=resolved_client_secret_state(
-   profile_client_secret_cached,
-   profile_client_secret_known,
-   profile_client_secret_denial.is_some(),
-   global_exact_client,
-   global_secret_cached,
-   global_secret_known,
-   global_secret_denial.is_some(),
-   global_current_configured,
-   legacy_client_secret_present,
-  );
+  let client_secret_state=if vault_profile_secret_present{"VAULT_PROFILE"}
+    else if global_exact_client&&vault_global_present{"VAULT_GLOBAL"}
+    else{resolved_client_secret_state(
+     profile_client_secret_cached,
+     profile_client_secret_known,
+     profile_client_secret_denial.is_some(),
+     global_exact_client,
+     global_secret_cached,
+     global_secret_known,
+     global_secret_denial.is_some(),
+     global_current_configured,
+     legacy_client_secret_present,
+    )};
   let migration_state=state.profiles.get(&profile.id).cloned().unwrap_or_else(||MIGRATION_NOT_STARTED.into());
   let validation=state.validations.get(&profile.id);
   let (base_credential_state,last_validation_result,last_validated_at)=resolved_credential_state(profile,&migration_state,canonical_present,legacy_present,validation);
@@ -297,7 +299,9 @@ fn resolve_oauth_credential_states_local(app:&AppHandle)->Result<Vec<Value>,Stri
     .map(|code|matches!(code,"KEYCHAIN_AUTH_FAILED"|"KEYCHAIN_INTERACTION_REQUIRED"|"KEYCHAIN_ACCESS_DENIED"|"KEYCHAIN_ACCESS_DENIED_CACHED"))
     .unwrap_or(false);
   let credential_state=if vault_refresh_blocked||vault_profile_secret_blocked||vault_global_blocked{"RECOVERABLE_KEYCHAIN_BLOCKED"}
-    else if vault_refresh_present&&base_credential_state=="CONNECTED"{"READY"}
+    else if vault_refresh_present{
+      if base_credential_state=="CONNECTED"{"READY"}else{"NOT_CHECKED"}
+    }
     else if denial.is_some()&&canonical_present&&recoverable_denial{"RECOVERABLE_KEYCHAIN_BLOCKED"}
     else if denial.is_some(){"KEYCHAIN_BLOCKED"}
     else if currently_accessible&&base_credential_state=="CONNECTED"{"READY"}
@@ -723,13 +727,17 @@ fn load_store_raw_for_explicit_migration(app:&AppHandle)->Result<OAuthStore,Stri
 fn save_store(app:&AppHandle,s:&OAuthStore)->Result<(),String>{write_oauth_metadata(&store_path(app)?,s)}
 fn save_selected_profile(app:&AppHandle,s:&OAuthStore,idx:usize)->Result<(),String>{
     let p=s.profiles.get(idx).ok_or_else(||"OAUTH_PROFILE_INDEX_MISSING".to_string())?;
+    oauth_vault::upsert_profile(app,&p.id,p.channel_id.as_deref().unwrap_or(""),
+      (!p.refresh_token.trim().is_empty()).then_some(p.refresh_token.as_str()),
+      (!p.client_secret.trim().is_empty()).then_some(p.client_secret.as_str()),
+      p.google_email.as_deref(),Some(&p.preferred_browser))?;
     if !p.refresh_token.trim().is_empty(){
       let account=profile_refresh_token_account(app,&p.id)?;
-      security::canonical_set_secret(&account,&p.refresh_token)?;
+      let _=security::canonical_set_secret(&account,&p.refresh_token);
     }
     if !p.client_secret.trim().is_empty(){
       let account=profile_client_secret_account(app,&p.id)?;
-      security::canonical_set_secret(&account,&p.client_secret)?;
+      let _=security::canonical_set_secret(&account,&p.client_secret);
     }
     write_oauth_metadata(&store_path(app)?,s)
 }
@@ -882,13 +890,41 @@ fn write_google_secrets(c:&GoogleConfig)->Result<(),String>{
     Ok(())
 }
 fn write_google_metadata(path:&Path,c:&GoogleConfig)->Result<(),String>{let b=serde_json::to_vec_pretty(c).map_err(|e|e.to_string())?;security::write_private_atomic(path,&b)}
+fn vault_first_global_client_secret(app:&AppHandle,c:&GoogleConfig)->Result<Option<String>,String>{
+    if c.client_id.trim().is_empty(){return Ok(None)}
+    match oauth_vault::global_client_secret(app,&c.client_id){
+      Ok(Some(secret)) if !secret.trim().is_empty()=>return Ok(Some(secret)),
+      Ok(_)=>{},
+      Err(vault_error)=>{
+        let account=google_client_secret_account(c);
+        match security::canonical_get_secret_cached(&account){
+          Ok(Some(secret)) if !secret.trim().is_empty()=>{
+            oauth_vault::set_global_client(app,&c.client_id,&secret)?;
+            return Ok(Some(secret))
+          },
+          _=>return Err(vault_error),
+        }
+      }
+    }
+    let account=google_client_secret_account(c);
+    let fallback=security::canonical_get_secret_cached(&account)?;
+    if let Some(secret)=fallback.as_deref().filter(|x|!x.trim().is_empty()){
+      oauth_vault::set_global_client(app,&c.client_id,secret)?;
+    }
+    Ok(fallback)
+}
 fn load_google_config_for_secret_operation(app:&AppHandle)->Result<GoogleConfig,String>{
     let p=google_config_path(app)?;let mut c=read_google_config_raw(app)?;let legacy=!c.client_secret.is_empty()||!c.api_key.is_empty();
     if legacy{
         c.client_secret_present|=!c.client_secret.is_empty();c.api_key_present|=!c.api_key.is_empty();
         if c.client_secret_account.trim().is_empty(){c.client_secret_account=GOOGLE_CLIENT_SECRET.into()}
+        if !c.client_secret.trim().is_empty(){oauth_vault::set_global_client(app,&c.client_id,&c.client_secret)?;}
         write_google_secrets(&c)?;c.client_secret.clear();c.api_key.clear();write_google_metadata(&p,&c)?;
-    }else{hydrate_google_secrets(&mut c)?;}
+    }else{
+        c.client_secret=vault_first_global_client_secret(app,&c)?.unwrap_or_default();
+        if c.api_key.is_empty(){c.api_key=security::canonical_get_secret_cached(GOOGLE_API_KEY)?.unwrap_or_default()}
+        c.client_secret_present|=!c.client_secret.is_empty();c.api_key_present|=!c.api_key.is_empty();
+    }
     Ok(c)
 }
 fn save_google_config(app:&AppHandle,c:&GoogleConfig)->Result<(),String>{
@@ -1005,17 +1041,20 @@ fn load_or_migrate_google_config(app:&AppHandle)->Result<GoogleConfig,String>{
 #[tauri::command]
 pub fn youtube_google_config_status(app: AppHandle) -> Result<Value, String> {
     let c=load_google_config_metadata(&app)?;
-    let account=google_client_secret_account(&c);
-    let secret=if c.client_id.trim().is_empty(){Ok(None)}else{security::canonical_get_secret_cached(&account)};
+    let secret=vault_first_global_client_secret(&app,&c);
     Ok(google_config_operational_status_value(&c,secret))
 }
 #[tauri::command]
 pub fn youtube_google_config_retry(app:AppHandle)->Result<Value,String>{
     let c=load_google_config_metadata(&app)?;
     if c.client_id.trim().is_empty(){return Ok(google_config_operational_status_value(&c,Ok(None)))}
+    if let Ok(Some(secret))=oauth_vault::global_client_secret(&app,&c.client_id){
+      return Ok(google_config_operational_status_value(&c,Ok(Some(secret))))
+    }
     let account=google_client_secret_account(&c);
     let _=security::canonical_retry_secret_access_value(&account);
     let secret=security::canonical_get_secret_cached(&account);
+    if let Ok(Some(ref value))=secret{if !value.trim().is_empty(){oauth_vault::set_global_client(&app,&c.client_id,value)?;}}
     Ok(google_config_operational_status_value(&c,secret))
 }
 fn validate_imported_client_id(expected:&str,imported:&str)->Result<(),String>{
@@ -1042,11 +1081,12 @@ pub fn youtube_oauth_import_profile_credentials_file(app:AppHandle,profile_id:St
     let raw=fs::read_to_string(&file_path).map_err(|e|format!("credentials.json read failed: {e}"))?;
     let (client_id,client_secret,project_id)=parse_google_credentials_json(&raw)?;
     validate_imported_client_id(expected_client_id,&client_id)?;
+    oauth_vault::upsert_profile(&app,&profile_id,profile.channel_id.as_deref().unwrap_or(""),None,Some(&client_secret),profile.google_email.as_deref(),Some(&profile.preferred_browser))?;
+    let found=oauth_vault::profile_client_secret(&app,&profile_id)?.map(|x|!x.trim().is_empty()).unwrap_or(false);
+    if !found{return Err("OAUTH_VAULT_READBACK_FAILED: profile client secret was not persisted".into())}
     let account=oauth_key(&profile_id,"client_secret");
-    security::canonical_set_secret(&account,&client_secret)?;
-    let found=security::canonical_get_secret_cached(&account)?.map(|x|!x.trim().is_empty()).unwrap_or(false);
-    if !found{return Err(format!("OAUTH_KEYCHAIN_READBACK_FAILED: account={account}"))}
-    Ok(json!({"ok":true,"profileUuid":profile_id,"clientIdMasked":masked_client_id(&client_id),"projectId":if project_id.is_empty(){Value::Null}else{json!(project_id)},"clientSecretStored":true,"account":account,"secretValuesIncluded":false}))
+    let _=security::canonical_set_secret(&account,&client_secret);
+    Ok(json!({"ok":true,"profileUuid":profile_id,"clientIdMasked":masked_client_id(&client_id),"projectId":if project_id.is_empty(){Value::Null}else{json!(project_id)},"clientSecretStored":true,"account":"oauth-vault","secretValuesIncluded":false}))
 }
 #[tauri::command]
 pub fn youtube_google_config_import(
@@ -1065,16 +1105,19 @@ pub fn youtube_google_config_import(
             return Err(format!("OAUTH_CLIENT_MISMATCH: existing profile {} uses another OAuth client; expected={}",mismatch.id,masked_client_id(&mismatch.client_id)))
         }
     }
-    // Explicit import/repair never tries to mutate an ACL-poisoned legacy item. A fresh
-    // canonical account is created under the current signed identity, verified, then
-    // committed to non-secret metadata. Old Keychain entries are left untouched.
+    // The encrypted OAuth vault is authoritative. Per-item Keychain storage remains
+    // only as rollback/migration fallback for older builds.
+    oauth_vault::set_global_client(&app,&client_id,&client_secret)?;
+    let vault_readback=oauth_vault::global_client_secret(&app,&client_id)?;
+    if vault_readback.as_deref()!=Some(client_secret.as_str()){
+        return Err("OAUTH_VAULT_READBACK_FAILED: imported global client secret was not persisted".into())
+    }
     let old_account=google_client_secret_account(&old);
     let new_account=rotated_google_client_secret_account(&client_id);
     security::canonical_forget_cache(&new_account);
-    security::canonical_set_secret(&new_account,&client_secret)?;
-    if !security::canonical_verify_secret(&new_account,&client_secret)?{
-        return Err("OAUTH_KEYCHAIN_READBACK_FAILED: repaired global client secret could not be read back".into())
-    }
+    let keychain_fallback_ok=security::canonical_set_secret(&new_account,&client_secret)
+      .and_then(|_|security::canonical_verify_secret(&new_account,&client_secret))
+      .unwrap_or(false);
     security::canonical_forget_cache(&old_account);
     let c=GoogleConfig{
         client_id,
@@ -1082,12 +1125,12 @@ pub fn youtube_google_config_import(
         project_id,
         api_key:String::new(),
         client_secret_present:true,
-        client_secret_account:new_account.clone(),
+        client_secret_account:if keychain_fallback_ok{new_account.clone()}else{old_account.clone()},
         api_key_present:old.api_key_present||!api_key.trim().is_empty(),
     };
     if !api_key.trim().is_empty(){security::canonical_set_secret(GOOGLE_API_KEY,api_key.trim())?}
     write_google_metadata(&google_config_path(&app)?,&c)?;
-    let secret=security::canonical_get_secret_cached(&new_account);
+    let secret=oauth_vault::global_client_secret(&app,&c.client_id);
     let result=google_config_operational_status_value(&c,secret);
     if result.get("oauthReady").and_then(Value::as_bool)!=Some(true){
         return Err("OAUTH_REPAIR_VERIFY_FAILED: secure client secret is still not operational".into())
