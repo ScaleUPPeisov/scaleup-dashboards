@@ -43,8 +43,9 @@ describe('VYRON 3.0.0 final physical stabilization contracts',()=>{
   expect(body).toContain('LOCAL_VAULT_READBACK_FAILED');
   expect(body).toContain('refresh_access_token_http');
   expect(body).toContain('set_profile_migration_state(&app,&profile_id,MIGRATION_MIGRATED)');
-  expect(body.indexOf('oauth_vault::upsert_profile')).toBeLessThan(body.indexOf('refresh_access_token_http'));
-  expect(body.indexOf('refresh_access_token_http')).toBeLessThan(body.indexOf('set_profile_migration_state(&app,&profile_id,MIGRATION_MIGRATED)'));
+  const legacyMigration=body.split('// One-time migration target is the persistent encrypted local OAuth vault.').at(1)||'';
+  expect(legacyMigration.indexOf('oauth_vault::upsert_profile')).toBeLessThan(legacyMigration.indexOf('refresh_access_token_http'));
+  expect(legacyMigration.indexOf('refresh_access_token_http')).toBeLessThan(legacyMigration.indexOf('set_profile_migration_state(&app,&profile_id,MIGRATION_MIGRATED)'));
   expect(body).not.toContain('open_browser(');
   expect(body).not.toContain('youtube_oauth_reconnect_existing');
   expect(body).not.toContain('canonical_delete_secret(&old_account)');
