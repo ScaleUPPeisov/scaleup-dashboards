@@ -1,4 +1,4 @@
-name: VYRON 3.0.0 Physical Candidate
+name: VYRON 3.1.0 Owner Preview Candidate
 
 on:
   push:
@@ -17,7 +17,7 @@ concurrency:
 env:
   REPO: ScaleUPPeisov/scaleup-dashboards
   BRANCH: release/vyron-3.0.0
-  VERSION: '3.0.0'
+  VERSION: '3.1.0'
   BASE_RC7: 53e8f1c5a65ce5e5b86c5e19a70247db181d5dbb
   BUNDLE_ID: studio.channelflow.desktop
   EXECUTABLE: channelflow
@@ -30,7 +30,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
-      - name: Checkout exact 3.0.0 candidate source
+      - name: Checkout exact 3.1.0 candidate source
         uses: actions/checkout@v4
         with:
           ref: release/vyron-3.0.0
@@ -75,7 +75,7 @@ jobs:
       VYRON_COMMIT_SHA: ${{ github.sha }}
       VYRON_UPDATE_CHANNEL: owner-preview
     steps:
-      - name: Checkout exact 3.0.0 candidate source
+      - name: Checkout exact 3.1.0 candidate source
         uses: actions/checkout@v4
         with:
           ref: release/vyron-3.0.0
@@ -120,7 +120,7 @@ jobs:
           python3 - <<'PY'
           import json,re
           from pathlib import Path
-          v='3.0.0'
+          v='3.1.0'
           pkg=json.load(open('package.json'))
           lock=json.load(open('package-lock.json'))
           conf=json.load(open('src-tauri/tauri.conf.json'))
@@ -137,7 +137,7 @@ jobs:
           m=re.search(r'\[\[package\]\]\nname = "channelflow"\nversion = "([^"]+)"',clock)
           assert m and m.group(1)==v, m.group(1) if m else 'Cargo.lock channelflow version missing'
           for value in (pkg['version'],lock['version'],lock['packages']['']['version'],conf['version'],re.search(r'(?ms)^\[package\].*?^version\s*=\s*"([^"]+)"',cargo).group(1),m.group(1)):
-              assert value not in {'2.1.15-rc.7','2.1.15-rc.8'} and not value.startswith('3.0.0-rc.')
+              assert value not in {'2.1.15-rc.7','2.1.15-rc.8'} and not value.startswith('3.0.0-rc.') and not value.startswith('3.1.0-rc.')
           print('VERSION_CONSISTENCY=PASS')
           PY
 
@@ -148,7 +148,7 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          npx vitest run             src/v300PublisherSelection.test.ts             src/v300PublisherUiContracts.test.ts             src/v300OauthContinuity.test.ts             src/v300OauthPersistence.test.ts             src/v300WrongChannelHotfix.test.ts             src/v300FinalPhysicalStabilization.test.ts             src/renderScanClassifier.test.ts             src/v2115Rc7RenderScanContract.test.ts             src/v2115Rc7OauthUpdateContinuity.test.ts             src/v2115Rc6KeychainRotation.test.ts             src/storageLifecycle.test.ts             src/uploadQueue.test.ts             src/channelSchedule.test.ts             src/scheduleContinuation.test.ts             src/publisherSchedule.test.ts             src/updaterSchedule.test.ts             src/updaterRuntime.test.ts             src/updaterPolicy.test.ts             src/updaterGuard.test.ts
+          npx vitest run             src/taskProgress.test.ts             src/activeErrors.test.ts             src/v310ProductConsolidation.test.ts             src/v300PublisherSelection.test.ts             src/v300PublisherUiContracts.test.ts             src/v300OauthContinuity.test.ts             src/v300OauthPersistence.test.ts             src/v300WrongChannelHotfix.test.ts             src/v300FinalPhysicalStabilization.test.ts             src/renderScanClassifier.test.ts             src/v2115Rc7RenderScanContract.test.ts             src/v2115Rc7OauthUpdateContinuity.test.ts             src/v2115Rc6KeychainRotation.test.ts             src/storageLifecycle.test.ts             src/uploadQueue.test.ts             src/channelSchedule.test.ts             src/scheduleContinuation.test.ts             src/publisherSchedule.test.ts             src/updaterSchedule.test.ts             src/updaterRuntime.test.ts             src/updaterPolicy.test.ts             src/updaterGuard.test.ts
           npm test
           npm run build
           echo 'TYPESCRIPT_BUILD=PASS'
@@ -283,7 +283,7 @@ jobs:
           assert 'Недавние' not in recent
           assert '.pageWrap{overflow-y:auto;overflow-x:hidden;min-width:0;max-width:100%' in styles
           assert 'VYRON_RELEASE_HISTORY.map' in settings
-          assert "version:'3.0.0'" in history and "date:'21.09.2026'" in history
+          assert "version:'3.1.0'" in history and "date:'22.09.2026'" in history and "version:'3.0.0'" in history
 
           print('PUBLISHER_SELECTION_CONTRACT=PASS')
           print('CLIENT_SECRET_CONTINUITY_CONTRACT=PASS')
@@ -412,12 +412,12 @@ jobs:
           cmp -s physical-candidate/designated-requirement.txt /tmp/vyron-rc7-requirement/designated-requirement.txt
 
           hdiutil verify "$DMG"
-          cp "$DMG" "physical-candidate/VYRON-3.0.0-PHYSICAL-CANDIDATE-arm64.dmg"
-          cp "$UPDATER" "physical-candidate/VYRON-3.0.0-PHYSICAL-CANDIDATE.app.tar.gz"
-          cp "$SIG" "physical-candidate/VYRON-3.0.0-PHYSICAL-CANDIDATE.app.tar.gz.sig"
-          shasum -a 256 "physical-candidate/VYRON-3.0.0-PHYSICAL-CANDIDATE-arm64.dmg" | tee physical-candidate/VYRON-3.0.0-PHYSICAL-CANDIDATE-arm64.dmg.sha256
-          shasum -a 256 "physical-candidate/VYRON-3.0.0-PHYSICAL-CANDIDATE.app.tar.gz" | tee physical-candidate/VYRON-3.0.0-PHYSICAL-CANDIDATE.app.tar.gz.sha256
-          stat -f '%z' "physical-candidate/VYRON-3.0.0-PHYSICAL-CANDIDATE-arm64.dmg" | tee physical-candidate/VYRON-3.0.0-PHYSICAL-CANDIDATE-arm64.dmg.size
+          cp "$DMG" "physical-candidate/VYRON-3.1.0-PHYSICAL-CANDIDATE-arm64.dmg"
+          cp "$UPDATER" "physical-candidate/VYRON-3.1.0-PHYSICAL-CANDIDATE.app.tar.gz"
+          cp "$SIG" "physical-candidate/VYRON-3.1.0-PHYSICAL-CANDIDATE.app.tar.gz.sig"
+          shasum -a 256 "physical-candidate/VYRON-3.1.0-PHYSICAL-CANDIDATE-arm64.dmg" | tee physical-candidate/VYRON-3.1.0-PHYSICAL-CANDIDATE-arm64.dmg.sha256
+          shasum -a 256 "physical-candidate/VYRON-3.1.0-PHYSICAL-CANDIDATE.app.tar.gz" | tee physical-candidate/VYRON-3.1.0-PHYSICAL-CANDIDATE.app.tar.gz.sha256
+          stat -f '%z' "physical-candidate/VYRON-3.1.0-PHYSICAL-CANDIDATE-arm64.dmg" | tee physical-candidate/VYRON-3.1.0-PHYSICAL-CANDIDATE-arm64.dmg.size
           printf '%s\n' "$VYRON_BUILD_REVISION" > physical-candidate/build-revision.txt
           printf '%s\n' "$VYRON_COMMIT_SHA" > physical-candidate/commit-sha.txt
           printf '%s\n' "$VYRON_UPDATE_CHANNEL" > physical-candidate/update-channel.txt
@@ -431,7 +431,7 @@ jobs:
           set -Eeuo pipefail
           M="$RUNNER_TEMP/vyron-300-candidate-mount"
           rm -rf "$M"; mkdir -p "$M"
-          hdiutil attach "physical-candidate/VYRON-3.0.0-PHYSICAL-CANDIDATE-arm64.dmg" -nobrowse -readonly -mountpoint "$M"
+          hdiutil attach "physical-candidate/VYRON-3.1.0-PHYSICAL-CANDIDATE-arm64.dmg" -nobrowse -readonly -mountpoint "$M"
           trap 'hdiutil detach "$M" >/dev/null 2>&1 || true' EXIT
           A="$M/VYRON.app"
           test "$(plutil -extract CFBundleIdentifier raw -o - "$A/Contents/Info.plist")" = "$BUNDLE_ID"
@@ -445,7 +445,7 @@ jobs:
           wait "$P" || true
           hdiutil detach "$M"; trap - EXIT
           echo 'APP_START=PASS'
-          echo 'RUNTIME_VERSION=3.0.0'
+          echo 'RUNTIME_VERSION=3.1.0'
           echo 'BLACK_SCREEN=AUTOMATED_VISUAL_PROOF_NOT_CLAIMED'
 
       - name: Verify production feeds are byte-identical
@@ -467,7 +467,7 @@ jobs:
       - name: Upload physical candidate artifact
         uses: actions/upload-artifact@v4
         with:
-          name: VYRON-3.0.0-PHYSICAL-CANDIDATE-arm64
+          name: VYRON-3.1.0-PHYSICAL-CANDIDATE-arm64
           path: physical-candidate/
           if-no-files-found: error
           retention-days: 14
@@ -477,23 +477,23 @@ jobs:
         run: |
           set -Eeuo pipefail
           test "$VYRON_UPDATE_CHANNEL" = 'owner-preview'
-          test "$VYRON_BUILD_REVISION" -gt 186
+          test "$VYRON_BUILD_REVISION" -gt 320
 
-          ARCHIVE="physical-candidate/VYRON-3.0.0-PHYSICAL-CANDIDATE.app.tar.gz"
-          SIG="physical-candidate/VYRON-3.0.0-PHYSICAL-CANDIDATE.app.tar.gz.sig"
+          ARCHIVE="physical-candidate/VYRON-3.1.0-PHYSICAL-CANDIDATE.app.tar.gz"
+          SIG="physical-candidate/VYRON-3.1.0-PHYSICAL-CANDIDATE.app.tar.gz.sig"
           test -s "$ARCHIVE"; test -s "$SIG"
 
           REV="$VYRON_BUILD_REVISION"
           TAG="vyron-owner-preview-$REV"
-          PUB_ARCHIVE="VYRON-3.0.0-build-$REV.app.tar.gz"
+          PUB_ARCHIVE="VYRON-3.1.0-build-$REV.app.tar.gz"
           PUB_SIG="$PUB_ARCHIVE.sig"
           cp "$ARCHIVE" "/tmp/$PUB_ARCHIVE"
           cp "$SIG" "/tmp/$PUB_SIG"
           LOCAL_SHA="$(shasum -a 256 "$ARCHIVE" | awk '{print $1}')"
           test "${#LOCAL_SHA}" -eq 64
 
-          # Owner Preview is an isolated GitHub prerelease, never v3.0.0 stable.
-          gh release create "$TAG"             --repo "$REPO"             --target "$VYRON_300_HEAD"             --prerelease             --title "VYRON 3.0.0 Owner Preview build $REV"             --notes "Owner-only signed updater build. Product version 3.0.0, build revision $REV. Not stable."
+          # Owner Preview is an isolated GitHub prerelease, never a stable feed mutation.
+          gh release create "$TAG"             --repo "$REPO"             --target "$VYRON_300_HEAD"             --prerelease             --title "VYRON 3.1.0 Owner Preview build $REV"             --notes "Owner-only signed updater build. Product version 3.1.0, build revision $REV. Not stable."
           gh release upload "$TAG" "/tmp/$PUB_ARCHIVE" "/tmp/$PUB_SIG" --repo "$REPO" --clobber
 
           PUBLIC_URL="https://github.com/$REPO/releases/download/$TAG/$PUB_ARCHIVE"
@@ -533,13 +533,13 @@ jobs:
           assert len(sha)==64 and all(ch in '0123456789abcdef' for ch in sha)
           assert sig
           payload={
-            "version":f"3.0.0-preview.{rev}",
-            "notes":f"VYRON 3.0.0 Owner Preview build {rev}. Commit {commit[:12]}.",
+            "version":f"3.1.0-preview.{rev}",
+            "notes":"• Аналитика обновляется внутри своей страницы\\n• Удалена лишняя вкладка «Данные YouTube»\\n• Конкуренты стали самостоятельным публичным радаром\\n• Календарь объединён с расписанием\\n• Обновлён раздел каналов и Production\\n• Исправлены процент задач, старые ошибки, кнопки и уведомления",
             "pub_date":pub_date,
             "artifactSha256":sha,
             "buildRevision":int(rev),
             "commit":commit,
-            "productVersion":"3.0.0",
+            "productVersion":"3.1.0",
             "platforms":{
               "darwin-aarch64":{
                 "url":url,
@@ -569,8 +569,8 @@ jobs:
           import json,sys
           rev,sha,url,manifest_commit=sys.argv[1:]
           x=json.load(open('/tmp/owner-preview-authoritative.json'))
-          assert x['version']==f'3.0.0-preview.{rev}'
-          assert x['buildRevision']==int(rev)>210
+          assert x['version']==f'3.1.0-preview.{rev}'
+          assert x['buildRevision']==int(rev)>320
           assert x['artifactSha256']==sha
           assert x['commit']
           p=x['platforms']['darwin-aarch64']
@@ -608,14 +608,14 @@ jobs:
           cmp -s /tmp/windows-feed-before.json /tmp/windows-feed-after-preview.json
 
           echo "OWNER_PREVIEW_TAG=$TAG"
-          echo "OWNER_PREVIEW_VERSION=3.0.0-preview.$REV"
+          echo "OWNER_PREVIEW_VERSION=3.1.0-preview.$REV"
           echo "OWNER_PREVIEW_PUBLIC_URL=$PUBLIC_URL"
           echo "OWNER_PREVIEW_ARCHIVE_SHA256=$LOCAL_SHA"
           echo "OWNER_PREVIEW_PUBLIC_FETCH=PASS"
           echo "OWNER_PREVIEW_REMOTE_SHA_MATCH=PASS"
           echo "OWNER_PREVIEW_REMOTE_SIGNATURE_VERIFY=PASS"
           echo "OWNER_PREVIEW_MANIFEST_HTTP=200"
-          echo "OWNER_PREVIEW_COMPARATOR_186_TO_$REV=UPDATE_AVAILABLE"
+          echo "OWNER_PREVIEW_COMPARATOR_320_TO_$REV=UPDATE_AVAILABLE"
           echo "MAC_FEED_UNCHANGED_AFTER_PREVIEW=PASS"
           echo "WINDOWS_FEED_UNCHANGED_AFTER_PREVIEW=PASS"
 
@@ -625,7 +625,7 @@ jobs:
           set -Eeuo pipefail
           {
             echo "VYRON_300_HEAD=$VYRON_300_HEAD"
-            echo "VERSION=3.0.0"
+            echo "VERSION=3.1.0"
           echo "BUILD_REVISION=$VYRON_BUILD_REVISION"
           echo "UPDATE_CHANNEL=$VYRON_UPDATE_CHANNEL"
             echo "TYPESCRIPT_BUILD=PASS"
@@ -686,7 +686,7 @@ jobs:
             echo '- Publisher physical acceptance: **PENDING**'
             echo '- OAuth update continuity physical acceptance: **PENDING**'
             echo '- One real upload + duplicate rescan: **PENDING**'
-            echo '- Candidate workflow may publish only the isolated owner-preview prerelease/feed; it cannot publish v3.0.0 stable or mutate stable production feeds.'
+            echo '- Candidate workflow may publish only the isolated owner-preview prerelease/feed; it cannot publish stable 3.x or mutate stable production feeds.'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Cleanup signing material

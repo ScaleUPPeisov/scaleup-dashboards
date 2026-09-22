@@ -90,7 +90,20 @@ fn preview_revision(version:&str)->Option<u64>{
     tail.split('.').next()?.parse().ok()
 }
 fn preview_product_version(version:&str)->&str{version.split("-preview.").next().unwrap_or(version)}
-fn owner_preview_available(current_revision:u64,remote_version:&str)->bool{preview_revision(remote_version).map(|r|r>current_revision).unwrap_or(false)}
+fn semver_triplet(version:&str)->Option<(u64,u64,u64)>{
+    let core=preview_product_version(version).split('-').next()?;
+    let mut parts=core.split('.');
+    Some((parts.next()?.parse().ok()?,parts.next()?.parse().ok()?,parts.next()?.parse().ok()?))
+}
+fn owner_preview_available(current_product:&str,current_revision:u64,remote_version:&str)->bool{
+    let Some(remote_revision)=preview_revision(remote_version) else{return false};
+    match (semver_triplet(current_product),semver_triplet(remote_version)){
+      (Some(current),Some(remote)) if remote>current=>true,
+      (Some(current),Some(remote)) if remote<current=>false,
+      (Some(_),Some(_))=>remote_revision>current_revision,
+      _=>false
+    }
+}
 
 #[tauri::command]
 pub fn updater_runtime_identity(app:tauri::AppHandle)->serde_json::Value{
@@ -105,6 +118,7 @@ pub fn updater_runtime_identity(app:tauri::AppHandle)->serde_json::Value{
 
 async fn owner_preview_update(app:&tauri::AppHandle)->Result<Option<tauri_plugin_updater::Update>,String>{
     let current_revision=build_revision();
+    let current_product=app.package_info().version.to_string();
     let endpoint=OWNER_PREVIEW_ENDPOINT.parse().map_err(|e|format!("OWNER_PREVIEW_ENDPOINT_INVALID: {e}"))?;
     let updater=app.updater_builder()
       .endpoints(vec![endpoint]).map_err(|e|format!("OWNER_PREVIEW_UPDATER_CONFIG_FAILED: {e}"))?
@@ -213,17 +227,20 @@ pub async fn updater_owner_preview_install(app:tauri::AppHandle)->Result<serde_j
 mod owner_preview_revision_tests{
  use super::*;
  #[test]fn same_product_higher_revision_is_available(){
-  assert!(owner_preview_available(164,"3.0.0-preview.165"));
+  assert!(owner_preview_available("3.0.0",164,"3.0.0-preview.165"));
  }
  #[test]fn same_product_same_revision_is_up_to_date(){
-  assert!(!owner_preview_available(165,"3.0.0-preview.165"));
+  assert!(!owner_preview_available("3.0.0",165,"3.0.0-preview.165"));
  }
  #[test]fn lower_or_malformed_revision_is_never_selected(){
-  assert!(!owner_preview_available(165,"3.0.0-preview.164"));
-  assert!(!owner_preview_available(165,"3.0.0"));
+  assert!(!owner_preview_available("3.0.0",165,"3.0.0-preview.164"));
+  assert!(!owner_preview_available("3.0.0",165,"3.0.0"));
  }
  #[test]fn preview_version_keeps_product_version_three_zero_zero(){
   assert_eq!(preview_product_version("3.0.0-preview.165"),"3.0.0");
   assert_eq!(preview_revision("3.0.0-preview.165"),Some(165));
+   assert!(owner_preview_available("3.0.0",320,"3.1.0-preview.321"));
+   assert!(owner_preview_available("3.1.0",321,"3.1.0-preview.322"));
+   assert!(!owner_preview_available("3.1.0",321,"3.0.1-preview.999"));
  }
 }

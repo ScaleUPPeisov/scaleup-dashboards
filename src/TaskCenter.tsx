@@ -1,5 +1,6 @@
-import React,{useEffect,useMemo,useState} from 'react';
+import React,{useEffect,useMemo,useRef,useState} from 'react';
 import {clearCompletedTasks,clearFailedTasks,clearTaskHistory,snapshotTasks,subscribeTasks,type PersistentTask,type TaskSnapshot} from './taskEngine';
+import {aggregateActiveTaskProgress} from './taskProgress';
 
 const UI_EVENT='vyron:task-center-ui';
 let openState=false;
@@ -18,10 +19,10 @@ function progressText(t:PersistentTask){
  return t.progress!=null?Math.round(t.progress)+'%':'';
 }
 export function GlobalTaskIndicator(){
- const tasks=useTasks(),active=tasks.filter(t=>t.state==='RUNNING'||t.state==='QUEUED'),attention=tasks.filter(t=>t.state==='FAILED'||t.state==='ATTENTION_REQUIRED').length;
- const known=active.filter(t=>typeof t.progress==='number'),percent=known.length?Math.round(known.reduce((n,t)=>n+(t.progress||0),0)/known.length):undefined;
+ const tasks=useTasks(),active=tasks.filter(t=>t.state==='RUNNING'||t.state==='QUEUED'),attention=tasks.filter(t=>t.state==='FAILED'||t.state==='ATTENTION_REQUIRED').length,aggregate=aggregateActiveTaskProgress(tasks),signature=active.map(t=>t.taskId).sort().join('|'),last=useRef<{signature:string;percent?:number}>({signature:''});
+ let percent=aggregate.percent;if(signature!==last.current.signature){last.current={signature,percent}}else if(percent!=null){percent=Math.max(last.current.percent??0,percent);last.current.percent=percent}
  if(!active.length&&!attention)return null;
- const label=active.length?active.length+' задач'+(percent!=null?' • '+percent+'%':''):'⚠ '+attention;
+ const waiting=aggregate.indeterminate;const label=active.length?active.length+' задач'+(percent!=null?' • '+percent+'%':'')+(waiting?' + '+waiting+' ожидают':''):'⚠ '+attention;
  return <button className={'globalTaskIndicator '+(attention?'warn':'')} onClick={openTaskCenter} title="Открыть центр задач"><span>{label}</span>{percent!=null&&<i><em style={{width:percent+'%'}}/></i>}</button>
 }
 export function GlobalTaskCenter(){

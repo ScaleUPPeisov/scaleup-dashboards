@@ -13,11 +13,11 @@ function persistNotificationHistory(item:AppNotification){try{const clean:Notifi
 export function clearNotificationHistory(){try{localStorage.removeItem(HISTORY_KEY);window.dispatchEvent(new CustomEvent(HISTORY_EVENT,{detail:[]}))}catch{}}
 export function subscribeNotificationHistory(cb:(items:NotificationHistoryItem[])=>void){const fn=(e:Event)=>cb((e as CustomEvent<NotificationHistoryItem[]>).detail);window.addEventListener(HISTORY_EVENT,fn);return()=>window.removeEventListener(HISTORY_EVENT,fn)}
 const seen=new Map<string,number>();
-const defaults:Record<NotificationType,number|null>={success:5000,info:7000,warning:9000,error:null};
+const defaults:Record<NotificationType,number|null>={success:8000,info:8000,warning:10000,error:null};
 function cleanSeen(now:number){for(const[k,t]of seen)if(now-t>60*60_000)seen.delete(k);if(seen.size>500){for(const k of [...seen.keys()].slice(0,seen.size-400))seen.delete(k)}}
 export function notify(type:NotificationType,title:string,message='',options:NotificationOptions={}){
   const now=Date.now();cleanSeen(now);
-  if(options.operationId){if(seen.has(options.operationId))return;seen.set(options.operationId,now)}
+  if(options.operationId)seen.set(options.operationId,now)
   const detail:AppNotification={id:crypto.randomUUID(),operationId:options.operationId,type,title:redactSensitive(title),message:redactSensitive(message),technicalDetail:options.technicalDetail?redactSensitive(options.technicalDetail):undefined,durationMs:options.durationMs===undefined?defaults[type]:options.durationMs,actions:options.actions||[],createdAt:now};
   if(type==='error'&&options.persistError!==false)appendErrorHistory(detail.title,detail.message||'',detail.technicalDetail||'');
   persistNotificationHistory(detail);

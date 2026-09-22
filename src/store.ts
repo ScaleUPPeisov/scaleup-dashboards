@@ -32,7 +32,7 @@ type Store=AppState&{
 
 let saveTimer:number|undefined;
 function scheduleSave(){window.clearTimeout(saveTimer);saveTimer=window.setTimeout(()=>{void useApp.getState().persist().catch(e=>{const h=humanizeError(e,'storage');notifyError(h.title,h.message,{operationId:'state-save-failed'})})},180)}
-function normalizeJob(j:VideoJob):VideoJob{const lifecycle=j.storageLifecycle||(j.youtubeVideoId?'UPLOADED':j.status==='UPLOADING'?'UPLOADING':j.status==='ERROR'?'FAILED':j.finalPath?'NEW':undefined);return {...j,tags:Array.isArray(j.tags)?j.tags:[],metadataSource:j.metadataSource||'template',uploadProgress:j.uploadProgress||0,storageLifecycle:lifecycle}}
+function normalizeJob(j:VideoJob):VideoJob{const status=j.status==='ERROR'&&!String(j.error||'').trim()?resolvedJobStatus(j):j.status;const lifecycle=j.storageLifecycle||(j.youtubeVideoId?'UPLOADED':status==='UPLOADING'?'UPLOADING':status==='ERROR'?'FAILED':j.finalPath?'NEW':undefined);return {...j,status,tags:Array.isArray(j.tags)?j.tags:[],metadataSource:j.metadataSource||'template',uploadProgress:j.uploadProgress||0,storageLifecycle:lifecycle}}
 export function normalizeChannel(c:Channel):Channel{
   const raw=c as Partial<Channel>;
   const name=String(raw.name||raw.slug||raw.youtubeChannelId||'Канал без названия').trim()||'Канал без названия';
