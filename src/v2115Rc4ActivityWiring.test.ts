@@ -91,7 +91,10 @@ describe('VYRON 2.1.15 RC4 activity history wiring',()=>{
  it('render folder rescan is local-only and recovers candidates without upload',()=>{
   const publisher=read('src/PublisherOS.tsx'),local=read('src-tauri/src/local_delete.rs'),api=read('src/api.ts');
   expect(publisher).toContain('Просканировать папку рендера');
-  expect(publisher).toContain('YouTube quota: 0');
+  const scan=publisher.split('async function scanRenderFolder()',1)[1]?.split('function addScannedRenderCandidates',1)[0]||'';
+  expect(scan).not.toContain('youtubeUpload(');
+  expect(scan).not.toContain('youtubeListExisting(');
+  expect(scan).not.toContain('videos.insert');
   expect(local).toContain('pub fn scan_render_folder');
   expect(api).toContain("'scan_render_folder'");
  });
