@@ -166,6 +166,7 @@ export function AccountsPage(){
   if(busy)return;
   setBusy(true);
   try{
+   try{await api.youtubeOauthVaultRecover()}catch{}
    const next=await api.youtubeRecoverSavedGoogleConfig();setConfig(next);
    if(!next.oauthReady)throw new Error('Сохранённый OAuth Client пока не восстановлен.');
    setOauthSetupOpen(false);
@@ -379,7 +380,7 @@ export function AccountsPage(){
    {oauthKeychainBlocked&&<div className="publisherNotice"><b>Сохранённый OAuth Client требует локального восстановления</b><p>Сначала VYRON попробует прочитать старую защищённую запись macOS и перенести её в OAuth Vault. Google-вход и credentials.json для этого не нужны.</p>{config?.secureStorageErrorCode&&<details><summary>Технические сведения</summary><small>{config.secureStorageErrorCode}</small></details>}<button className="primary" disabled={busy} onClick={()=>void recoverSavedGlobalOauth()}>Восстановить сохранённый доступ</button><button disabled={busy} onClick={()=>void retryGlobalOauth()}>Повторить безопасную проверку</button></div>}
    {oauthRepairRequired&&<div className="publisherNotice"><b>Нужно восстановить сохранённый OAuth Client</b><p>Сначала попробуйте локальное восстановление старой защищённой записи. Повторный credentials.json остаётся аварийным fallback только если сохранённого secret действительно больше нет.</p>{config?.secureStorageErrorCode&&<details><summary>Технические сведения</summary><small>{config.secureStorageErrorCode}</small></details>}<button className="primary" disabled={busy} onClick={()=>void recoverSavedGlobalOauth()}>Восстановить сохранённый доступ</button></div>}
    {!oauthReady&&!oauthRepairRequired&&!oauthKeychainBlocked&&<div className="publisherNotice"><b>OAuth Client настроен не полностью</b><p>Нужен один credentials.json текущего OAuth Client VYRON. Finder откроется только после явного нажатия кнопки импорта ниже.</p></div>}
-   <div className="googleConfigActions"><button disabled={busy} onClick={()=>file.current?.click()}>{oauthReady?'Заменить credentials.json':(oauthKeychainBlocked||oauthRepairRequired)?'Fallback: выбрать credentials.json':'Импортировать credentials.json один раз'}</button><label>Public API Key<input type="password" placeholder="опционально" value={settings.youtubeApiKey} onChange={e=>patchSettings({youtubeApiKey:e.target.value.trim()})}/></label></div>
+   <div className="googleConfigActions"><button className="primary" disabled={busy} onClick={()=>void recoverSavedGlobalOauth()}>Восстановить сохранённый доступ</button><button disabled={busy} onClick={()=>file.current?.click()}>{oauthReady?'Заменить credentials.json':'Загрузить credentials.json'}</button><label>Public API Key<input type="password" placeholder="опционально" value={settings.youtubeApiKey} onChange={e=>patchSettings({youtubeApiKey:e.target.value.trim()})}/></label></div>
   </section>
 
   <section className="panel accountsPanel">
