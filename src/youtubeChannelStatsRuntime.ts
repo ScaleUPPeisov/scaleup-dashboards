@@ -78,6 +78,7 @@ export function refreshYoutubeProfileStatistics(profile:YoutubeProfile,operation
    const actual=youtubeOperationActualCost(op),quotaAfter=youtubeQuotaUsage().used,completedAt=new Date().toISOString();
    journal({eventId,eventType:'CHANNEL_STATS_REFRESH',status:'SUCCESS',source:'LIVE_OPERATION',timestamp:completedAt,operationId:op,batchId:op,channelId:linked.channel.id,channelName:linked.channel.name,profileId:profile.id,details:{youtubeChannelId:linked.youtubeChannelId,apiRequests:Object.values(actual.methods).reduce((n,x)=>n+x.calls,0),quotaUnits:actual.buckets.general,quotaBefore,quotaAfter}});
    resolveStatisticsCredentialErrors([profile.id]);
+   window.dispatchEvent(new Event('vyron:oauth-state-changed'));
    return stats;
   }catch(error){
    preserveLinked(linked,error);
@@ -91,7 +92,7 @@ export function refreshYoutubeProfileStatistics(profile:YoutubeProfile,operation
  return task;
 }
 
-const BLOCKED_STATS_CREDENTIAL_STATES=new Set(['NOT_CHECKED','CANONICAL_PRESENT_UNVERIFIED','CHECK_ON_USE','RECOVERABLE','RECOVERABLE_KEYCHAIN_BLOCKED','KEYCHAIN_BLOCKED','RECONNECT_REQUIRED','MISSING','WRONG_CHANNEL','FAILED','KEYCHAIN_ERROR']);
+const BLOCKED_STATS_CREDENTIAL_STATES=new Set(['NOT_CHECKED','NEEDS_ONE_TIME_LOCAL_MIGRATION','CANONICAL_PRESENT_UNVERIFIED','CHECK_ON_USE','RECOVERABLE','RECOVERABLE_KEYCHAIN_BLOCKED','KEYCHAIN_BLOCKED','RECONNECT_REQUIRED','MISSING','WRONG_CHANNEL','FAILED','KEYCHAIN_ERROR']);
 export function planStatisticsBatchDrivers(chunk:LinkedYoutubeChannel[]){
  const unique=[...new Map(chunk.map(x=>[x.profile.id,x])).values()];
  const blocked=unique.filter(x=>BLOCKED_STATS_CREDENTIAL_STATES.has(String(x.profile.credentialStatus||'')));
