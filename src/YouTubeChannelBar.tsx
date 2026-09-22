@@ -18,7 +18,7 @@ export function YouTubeChannelBar(){
  const [refreshing,setRefreshing]=useState(false),[profiles,setProfiles]=useState<YoutubeProfile[]>([]);
 
  useEffect(()=>subscribeActivePublishChannel(id=>{setActiveId(resolveYoutubeActiveChannel(channels,id));const c=channels.find(x=>x.id===id);if(c)setFeedback(`Активный канал: ${c.name}`)}),[channelKey]);
- useEffect(()=>{let live=true;void api.youtubeProfiles().then(p=>{if(live)setProfiles(p)}).catch(()=>{});return()=>{live=false}},[]);
+ useEffect(()=>{let live=true;const refresh=()=>void api.youtubeProfiles().then(p=>{if(live)setProfiles(p)}).catch(()=>{});refresh();window.addEventListener('vyron:oauth-state-changed',refresh);return()=>{live=false;window.removeEventListener('vyron:oauth-state-changed',refresh)}},[]);
  useEffect(()=>{const resolved=resolveYoutubeActiveChannel(channels,loadActivePublishChannel());if(resolved&&resolved!==loadActivePublishChannel())saveActivePublishChannel(resolved);setActiveId(resolved)},[channelKey]);
 
  const visible=useMemo(()=>filterYoutubeChannels(channels,query),[channels,query]);
