@@ -7,6 +7,14 @@ const history=(j:VideoJob):UploadHistoryRecord=>({id:'h-'+j.id,jobId:j.id,channe
 describe('VYRON 3.0.0 Publisher selection recovery',()=>{
  it('genuine NEW video remains selectable by canonical state',()=>{const j=job('n',1);expect(classifyUploadState(j,[])).toBe('NEW')});
  it('uploaded YouTube proof never becomes NEW',()=>{const j=job('u',2,{youtubeVideoId:'YT-u',storageLifecycle:'UPLOADED',status:'SCHEDULED'});expect(classifyUploadState(j,[history(j)])).not.toBe('NEW')});
+ it('legacy upload without historical fingerprint is a current selectable generation when SHA+size is unseen',()=>{
+  const old=job('old',1,{youtubeVideoId:'YT-old',storageLifecycle:'UPLOADED',status:'SCHEDULED'});
+  const legacy:UploadHistoryRecord={id:'legacy',jobId:old.id,channelId:'glass',youtubeVideoId:'YT-old',localFilePath:old.finalPath!,originalFilename:'001.mov',uploadedAt:'2026-09-20T00:00:00Z',fileSize:500,sha256:'legacy-no-sha',status:'UPLOADED'};
+  const fp='b'.repeat(64),file={path:old.finalPath!,name:'001 — Ready Videos.mov',size:500,createdAt:1,modifiedAt:2,fingerprint:fp};
+  const rows=classifyChannelRenderFiles([file],[old],[legacy],'glass','/Render/Glass City Lovers');
+  expect(rows[0].classification).toBe('NEW_GENERATION');
+  expect(planRenderScanImport(rows,[old]).accepted).toHaveLength(1);
+ });
  it('stale wrong-root scan job no longer poisons a real current-folder sequence',()=>{const stale=job('stale',1,{finalPath:'/Render/Neon Drive FM/001 — Ready Videos.mov',sourceOrigin:'render-scan',scanRecoveryState:'CROSS_CHANNEL_SCAN_RECOVERY_REQUIRED'});const file={path:'/Render/Glass City Lovers/001 — Ready Videos.mov',name:'001 — Ready Videos.mov',size:500,createdAt:1,modifiedAt:2};const rows=classifyChannelRenderFiles([file],[stale],[],'glass','/Render/Glass City Lovers');expect(rows[0].classification).toBe('NEW_CANDIDATE');const plan=planRenderScanImport(rows,[stale],new Set([stale.id]));expect(plan.accepted).toHaveLength(1)});
  it('primary render counters remain exclusive',()=>{const fs=Array.from({length:5},(_,i)=>({path:'/Render/Glass City Lovers/00'+(i+1)+' — Ready Videos.mov',name:'00'+(i+1)+' — Ready Videos.mov',size:1}));const s=summarizeRenderScan(classifyChannelRenderFiles(fs,[],[],'glass','/Render/Glass City Lovers'));expect(s.TOTAL_CLASSIFIED_FILES).toBe(5);expect(s.KNOWN_EXACT+s.UPLOADED_LOCAL_COPY+s.NEW_CANDIDATE+s.NEW_GENERATION+s.VERIFY_REQUIRED+s.AMBIGUOUS+s.DUPLICATE_LOCAL+s.INVALID).toBe(5)});
 });
