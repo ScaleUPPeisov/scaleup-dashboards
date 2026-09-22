@@ -398,6 +398,11 @@ pub fn set_global_client(app:&AppHandle,client_id:&str,client_secret:&str)->Resu
 pub fn remove_profile(app:&AppHandle,profile_id:&str)->Result<(),String>{
  let mut v=read_for_update(app)?;v.profiles.remove(profile_id);write(app,&v)
 }
+pub fn clear_profile_refresh(app:&AppHandle,profile_id:&str)->Result<(),String>{
+ let mut v=read_for_update(app)?;
+ if let Some(row)=v.profiles.get_mut(profile_id){row.refresh_token.clear();row.updated_at=chrono::Utc::now().to_rfc3339();}
+ write(app,&v)
+}
 
 pub fn recover_master_key_interactive(app:&AppHandle)->Result<(),String>{
  let p=local_paths(app)?;
