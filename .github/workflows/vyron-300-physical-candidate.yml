@@ -261,7 +261,7 @@ jobs:
           assert 'youtube_oauth_interactive_recover_blocked_profiles' in y
           assert 'youtube_oauth_keychain_matrix' in y
           assert 'rotate_recovered_refresh_with' in y
-          assert 'Восстановить сохранённые подключения' in recovery
+          assert 'Восстановить старые сохранённые подключения' in recovery
           assert "state==='RECOVERABLE_KEYCHAIN_BLOCKED'?'OAuth: восстановить доступ'" in channels
           assert "state==='KEYCHAIN_BLOCKED'?'OAuth: доступ заблокирован'" in channels
           assert conf['app']['windows'][0]['maximized'] is True
