@@ -128,6 +128,18 @@ export function AuthRecoveryCenter(){
   }catch(e){notifyError('Безопасная проверка не завершена',String(e),{persistError:false})}
   finally{setBusy('')}
  }
+ async function recoverSavedGlobal(){
+  if(busy)return;setBusy('global-saved-recovery');
+  try{
+   const status=await api.youtubeRecoverSavedGoogleConfig();setGlobalStatus(status);
+   if(!status.oauthReady)throw new Error('Сохранённый OAuth Client пока не восстановлен');
+   setBusy('');
+   await runAutomaticRecovery(true);
+   window.dispatchEvent(new Event('vyron:oauth-state-changed'));
+   notifySuccess('Сохранённый OAuth Client восстановлен','credentials.json и Google-вход не потребовались.');
+  }catch(e){notifyError('Локальное восстановление OAuth Client не завершено',String(e),{persistError:false})}
+  finally{setBusy('')}
+ }
  async function retryProfile(profileId:string){
   if(busy)return;setBusy(profileId);
   try{
@@ -156,7 +168,7 @@ export function AuthRecoveryCenter(){
   <input ref={credentialsFile} hidden type="file" accept=".json,application/json" onChange={e=>{void importGlobalCredentials(e.target.files);e.currentTarget.value=''}}/>
   <div className="panelHead"><div><small>OAUTH RECOVERY CENTER</small><h3>Восстановление подключений</h3><p>Сначала восстанавливается один GLOBAL OAuth Client, затем VYRON использует уже сохранённые refresh tokens. Браузер открывается только по вашему нажатию для действительно проблемного канала.</p></div><button className="settingsAction" onClick={()=>void load()} disabled={!!busy}>Обновить статусы</button></div>
 
-  <div className="settingsCard" style={{marginTop:12}}><small>ШАГ 1 • GLOBAL OAUTH</small><h3>{globalStatus?.oauthReady?'READY':globalStatus?.oauthState||'NOT READY'}</h3><p>{globalStatus?.oauthState==='KEYCHAIN_ACCESS_BLOCKED'?'Client Secret сохранён, но macOS Keychain временно не даёт его прочитать. Сначала безопасная проверка; при необходимости можно выбрать тот же credentials.json.':'Один credentials.json используется для всех существующих и новых каналов VYRON.'}</p><div className="headerActions">{globalStatus?.oauthState==='KEYCHAIN_ACCESS_BLOCKED'&&<button disabled={!!busy} onClick={()=>void retryGlobal()}>Повторить безопасную проверку</button>}<button disabled={!!busy} onClick={()=>credentialsFile.current?.click()}>{globalStatus?.oauthState==='KEYCHAIN_ACCESS_BLOCKED'?'Восстановить через credentials.json':globalStatus?.oauthReady?'Заменить credentials.json':'Настроить OAuth Client один раз'}</button></div></div>
+  <div className="settingsCard" style={{marginTop:12}}><small>ШАГ 1 • GLOBAL OAUTH</small><h3>{globalStatus?.oauthReady?'READY':globalStatus?.oauthState||'NOT READY'}</h3><p>{globalStatus?.oauthState==='KEYCHAIN_ACCESS_BLOCKED'||globalStatus?.repairRequired?'Сначала восстановите уже сохранённый доступ локально. VYRON перенесёт старый Client Secret в OAuth Vault; Google-вход и credentials.json не требуются.':'Один credentials.json используется для всех существующих и новых каналов VYRON.'}</p><div className="headerActions">{(globalStatus?.oauthState==='KEYCHAIN_ACCESS_BLOCKED'||globalStatus?.repairRequired)&&<button className="primary" disabled={!!busy} onClick={()=>void recoverSavedGlobal()}>Восстановить сохранённый доступ</button>}{globalStatus?.oauthState==='KEYCHAIN_ACCESS_BLOCKED'&&<button disabled={!!busy} onClick={()=>void retryGlobal()}>Повторить безопасную проверку</button>}<button disabled={!!busy} onClick={()=>credentialsFile.current?.click()}>{globalStatus?.oauthReady?'Заменить credentials.json':'Fallback: credentials.json'}</button></div></div>
 
   <div className="settingsCard" style={{marginTop:12}}><small>ШАГ 2 • NO-UI ПРОВЕРКА</small><h3>Существующие профили — без системных диалогов</h3><p>Обычная проверка читает доступные refresh tokens без macOS password prompts и делает только Google OAuth token refresh. YouTube Data API не используется.</p><button className="primary" disabled={!!busy||!globalStatus?.oauthReady||!profiles.length} onClick={()=>void runAutomaticRecovery(false)}>{busy==='automatic'?'Проверка…':'Проверить сохранённые подключения без запросов macOS'}</button>{automatic&&<div className="settingsInfoGrid"><span><small>Профили</small><b>{automatic.total}</b></span><span><small>Автоматически восстановлено</small><b>{automatic.automaticallyRestored}</b></span><span><small>Keychain blocked</small><b>{automatic.keychainBlocked}</b></span><span><small>Требуют входа</small><b>{automatic.reconnectRequired+automatic.failed}</b></span><span><small>Браузеры открыты автоматически</small><b>{automatic.browserLaunches}</b></span><span><small>YouTube API requests</small><b>{automatic.youtubeApiRequests}</b></span></div>}</div>
 
