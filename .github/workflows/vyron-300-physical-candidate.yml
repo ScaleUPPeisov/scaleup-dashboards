@@ -247,7 +247,8 @@ jobs:
           assert 'LEGACY_HISTORY_WITHOUT_FINGERPRINT_CURRENT_BYTES_UNSEEN' in classifier
           assert 'LEGACY_SEQUENCE_WITHOUT_FINGERPRINT_CURRENT_BYTES_UNSEEN' in classifier
           assert 'job?.youtubeVideoId' not in classifier
-          assert 'renderFileNeedsFingerprint' in p
+          assert 'fingerprintRenderEvidenceFiles' in p
+          assert 'Every current render gets SHA+size before upload eligibility is decided.' in p
           assert 'currentSourceFingerprint' in p
           assert 'Показать доказательство статуса' in p
           assert 'Считать текущий файл новой версией' in p
