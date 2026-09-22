@@ -244,7 +244,8 @@ jobs:
           assert 'NEW_GENERATION' in classifier
           assert 'FINGERPRINT_VERIFIED_EXACT_PATH_UPLOAD' in classifier
           assert 'EXACT_PATH_PHYSICAL_FINGERPRINT_CHANGED' in classifier
-          assert 'LEGACY_UPLOAD_HAS_NO_TRUSTED_FINGERPRINT' in classifier
+          assert 'LEGACY_HISTORY_WITHOUT_FINGERPRINT_CURRENT_BYTES_UNSEEN' in classifier
+          assert 'LEGACY_SEQUENCE_WITHOUT_FINGERPRINT_CURRENT_BYTES_UNSEEN' in classifier
           assert 'job?.youtubeVideoId' not in classifier
           assert 'renderFileNeedsFingerprint' in p
           assert 'currentSourceFingerprint' in p
