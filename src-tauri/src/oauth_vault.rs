@@ -167,8 +167,8 @@ fn local_key(app:&AppHandle,create:bool)->Result<[u8;32],String>{
  let encoded=B64.encode(key);
  write_private_atomic(&p.doc_key,encoded.as_bytes())?;
  write_private_atomic(&p.app_key,encoded.as_bytes())?;
- // Defense in depth only. A Keychain write failure must never block the local vault.
- let _=security::oauth_vault_master_key_set(&encoded);
+ // Normal local-key creation performs ZERO Keychain operations. The old Keychain
+ // master key is consulted only by the explicit legacy migration/recovery path.
  cache_key(key);
  Ok(key)
 }
