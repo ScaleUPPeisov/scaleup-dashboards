@@ -17,22 +17,17 @@ describe('VYRON 3.0.0 Publisher/UI contracts',()=>{
  it('shows fingerprint generation evidence and never fixes selection by forcing checkboxes',()=>{
   expect(p).toContain('Показать доказательство статуса');
   expect(p).toContain('Новая версия файла');
-  expect(p).toContain('Проверить текущий файл');
-  expect(p).toContain('Считать текущий файл новой версией');
+  expect(p).toContain("disabled={!fresh||busy}");
   expect(p).toContain("renderScan.summary.NEW_CANDIDATE+renderScan.summary.NEW_GENERATION");
   expect(p).toContain("disabled={!fresh||busy}");
  });
- it('provides zero-API bulk resolution for LEGACY_IDENTITY_UNPROVEN without force-enabling duplicates',()=>{
-  expect(p).toContain('bulkReconcileLegacyRenderRows');
-  expect(p).toContain('buildLegacyRecoveryPreview');
-  expect(p).toContain('LEGACY_IDENTITY_UNPROVEN');
-  expect(p).toContain('Проверить текущие файлы (');
-  expect(p).toContain('Считать текущие физические файлы новыми поколениями');
-  expect(p).toContain("reason:'BULK_LEGACY_IDENTITY_CONFIRMED'");
-  expect(p).toContain('legacyRecoveryPreview.legacyUnproven');
-  expect(p).toContain('successfulUploadForHash(history,fp,channelId,size)');
-  expect(p).toContain('YouTube API: <b>0</b>');
-  expect(p).toContain('Проверить YouTube ID');
+ it('normal Publisher auto-materializes unmatched current fingerprints without YouTube-ID gate',()=>{
+  expect(p).toContain("const currentCandidates=rows.filter(r=>r.classification==='NEW_CANDIDATE'||r.classification==='NEW_GENERATION')");
+  expect(p).toContain('materializeRenderGenerationRows(currentCandidates,false,scanPreview)');
+  expect(p).toContain('Every current render gets SHA+size before upload eligibility is decided.');
+  expect(p).toContain('successfulUploadForHash');
+  expect(p).not.toContain('Проверить YouTube ID');
+  expect(p).not.toContain('>Нужна проверка {verifyCount}</button>');
  });
  it('does not allow verified same-channel fingerprint duplicates to bypass preflight',()=>{
   expect(p).toContain('duplicateIds:duplicates.map(x=>x.id)');
