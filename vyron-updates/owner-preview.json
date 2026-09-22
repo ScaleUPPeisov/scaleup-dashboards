@@ -1,15 +1,15 @@
 {
-  "version": "3.0.0-preview.281",
-  "notes": "VYRON 3.0.0 Owner Preview build 281. Commit f2857464bafc.",
-  "pub_date": "2026-09-22T12:46:24Z",
-  "artifactSha256": "2ede65094cf1d51972446e205079e9ed6794648326b31fed82dfe6ec36ccd642",
-  "buildRevision": 281,
-  "commit": "f2857464bafc19d42e351c00060b96d2789d12af",
+  "version": "3.0.0-preview.320",
+  "notes": "VYRON 3.0.0 Owner Preview build 320. Commit dd1a1fb786c3.",
+  "pub_date": "2026-09-22T14:59:05Z",
+  "artifactSha256": "2102c99f9e31dd886018fa7f47487668bcf60aa2f90376e9102cc41477cb213b",
+  "buildRevision": 320,
+  "commit": "dd1a1fb786c37112e09ec51bea28c47561577617",
   "productVersion": "3.0.0",
   "platforms": {
     "darwin-aarch64": {
-      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/vyron-owner-preview-281/VYRON-3.0.0-build-281.app.tar.gz",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM2R5Wk96M1hxdmNheW05NElmcjJPbWFXdG5ubDYzVHdNQVBoclB4ZDBSYWQ5U1lLa1pTbzlDVExqY1ZRN0NWVFNTT0VxeFM5OWlGc0ZsdEQ4RUIxQkFNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMDgxMTYxCWZpbGU6VllST04uYXBwLnRhci5negpqbFhkR2YzV0RkaFRtenVOSUxkSStaZ001eEoxSUlXZTg0bElJNmtERVFibGF6LzRJUXRkRVZyczdKU09hRkhoVHBiY2Q2TjZpcEMyNEp6UVNEcEZEdz09Cg=="
+      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/vyron-owner-preview-320/VYRON-3.0.0-build-320.app.tar.gz",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM2FjWWt0bi9NaWtITTVnODZBWGVJOGY5RlNpdVNMQTV1a2dLTitSdGhGcEgxRDFxOGxWVkhPSlduMndkUmg1N05QREpHSlZON1J2ZUliM3NDWXE1M2dJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMDg5MTE5CWZpbGU6VllST04uYXBwLnRhci5negoxdFlkZ0VFTWR1YUd2ZXZiN0hidjlLWncydTB3dlNobXdTVGJqUVBoUmNLR0tOeEJIZm8zdlNDc3IxKzV2cGhFY0R5d1FwZnhhTzkvVktSR2FmTG5Ddz09Cg=="
     }
   }
 }
