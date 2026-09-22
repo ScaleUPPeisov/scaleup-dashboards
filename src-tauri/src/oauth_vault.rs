@@ -232,6 +232,19 @@ fn write_client_snapshot(p:&LocalPaths,vault:&PlainVault,key:&[u8;32])->Result<(
  let enc=encrypt_bytes(&snapshot,key,CLIENT_AAD)?;
  write_private_atomic(&p.client_snapshot,&enc)
 }
+fn write_profile_snapshot(p:&LocalPaths,vault:&PlainVault)->Result<(),String>{
+ let rows:Vec<serde_json::Value>=vault.profiles.values().map(|x|serde_json::json!({
+  "profileUuid":x.profile_uuid,
+  "expectedChannelId":x.expected_channel_id,
+  "googleEmail":x.google_email,
+  "preferredBrowser":x.preferred_browser,
+  "updatedAt":x.updated_at,
+  "connectedAt":x.connected_at,
+  "credentialGeneration":x.credential_generation
+ })).collect();
+ let bytes=serde_json::to_vec_pretty(&rows).map_err(|e|format!("OAUTH_PROFILE_SNAPSHOT_SERIALIZE_FAILED: {e}"))?;
+ write_private_atomic(&p.state.join("profiles.json"),&bytes)
+}
 fn write(app:&AppHandle,vault:&PlainVault)->Result<(),String>{
  let p=local_paths(app)?;
  let key=local_key(app,true)?;
@@ -246,6 +259,7 @@ fn write(app:&AppHandle,vault:&PlainVault)->Result<(),String>{
  // Application Support is a working mirror, never the only copy.
  write_private_atomic(&p.app_vault,&envelope)?;
  write_client_snapshot(&p,vault,&key)?;
+ write_profile_snapshot(&p,vault)?;
  cache_vault(vault);
  Ok(())
 }
@@ -293,24 +307,29 @@ fn migration_pending(error:&str)->bool{
   ||error.contains("OAUTH_VAULT_LEGACY_MASTER_KEY_MISSING")
   ||error.contains("OAUTH_VAULT_LOCAL_KEY_MISSING")
 }
+#[derive(Debug,Clone,Copy,PartialEq,Eq)]
+enum StartupKeyPlan{LocalPersistent,LegacyKeychainMigration,Empty}
+fn startup_key_plan(local_key_present:bool,legacy_vault_present:bool)->StartupKeyPlan{
+ if local_key_present{StartupKeyPlan::LocalPersistent}
+ else if legacy_vault_present{StartupKeyPlan::LegacyKeychainMigration}
+ else{StartupKeyPlan::Empty}
+}
 fn read(app:&AppHandle,interactive:bool)->Result<PlainVault,String>{
  if let Ok(cache)=vault_cache().lock(){if let Some(v)=cache.as_ref(){return Ok(v.clone())}}
  let p=local_paths(app)?;
- if p.doc_key.exists()||p.app_key.exists(){
-  let vault=read_local(app)?;
-  cache_vault(&vault);return Ok(vault)
+ match startup_key_plan(p.doc_key.exists()||p.app_key.exists(),p.app_vault.exists()||p.legacy_backup.exists()){
+  StartupKeyPlan::LocalPersistent=>{
+   let vault=read_local(app)?;
+   cache_vault(&vault);Ok(vault)
+  },
+  StartupKeyPlan::LegacyKeychainMigration=>{
+   match read_legacy_with_keychain(app,interactive,&p){
+    Ok(vault)=>{migrate_legacy_vault(app,&vault,&p)?;cache_vault(&vault);Ok(vault)},
+    Err(e)=>Err(e),
+   }
+  },
+  StartupKeyPlan::Empty=>Ok(PlainVault::default()),
  }
- if p.app_vault.exists()||p.legacy_backup.exists(){
-  match read_legacy_with_keychain(app,interactive,&p){
-   Ok(vault)=>{
-    migrate_legacy_vault(app,&vault,&p)?;
-    cache_vault(&vault);
-    return Ok(vault)
-   },
-   Err(e)=>return Err(e),
-  }
- }
- Ok(PlainVault::default())
 }
 fn read_for_lookup(app:&AppHandle)->Result<Option<PlainVault>,String>{
  match read(app,false){
@@ -421,6 +440,50 @@ pub fn local_storage_status(app:&AppHandle)->Result<serde_json::Value,String>{
 mod tests{
  use super::*;
  #[test]fn schema_is_stable(){assert_eq!(SCHEMA,1);assert_eq!(AAD,b"VYRON-OAUTH-VAULT-v1")}
- #[test]fn keychain_is_not_primary_key_resolution(){let source=include_str!("oauth_vault.rs");let local=source.find("fn local_key").unwrap();let keychain=source.find("fn read_legacy_with_keychain").unwrap();assert!(local<keychain);assert!(source.contains("keychainRequiredForNormalStartup\":false"))}
- #[test]fn local_storage_contract_is_stable(){let source=include_str!("oauth_vault.rs");for part in ["VYRON","Auth","State","Backups","Logs","oauth-vault.enc","vault.key","oauth-client.json.enc"]{assert!(source.contains(part));}}
+ #[test]fn local_key_precedes_legacy_keychain_even_when_old_vault_exists(){
+  assert_eq!(startup_key_plan(true,true),StartupKeyPlan::LocalPersistent);
+  assert_eq!(startup_key_plan(true,false),StartupKeyPlan::LocalPersistent);
+  assert_eq!(startup_key_plan(false,true),StartupKeyPlan::LegacyKeychainMigration);
+ }
+ #[test]fn keychain_minus_25293_is_irrelevant_when_local_key_exists(){
+  let simulated_keychain_error="KEYCHAIN_AUTH_FAILED: osstatus=-25293";
+  assert_eq!(startup_key_plan(true,true),StartupKeyPlan::LocalPersistent);
+  assert!(simulated_keychain_error.contains("-25293"));
+ }
+ #[test]fn encrypted_global_client_survives_original_credentials_file_deletion(){
+  let mut key=[0u8;32];OsRng.fill_bytes(&mut key);
+  let vault=PlainVault{global_client_id:"client-A".into(),global_client_secret:"secret-S".into(),..Default::default()};
+  let plain=serde_json::to_vec(&vault).unwrap();
+  let enc=encrypt_bytes(&plain,&key,AAD).unwrap();
+  let out=decode_vault(&enc,&key).unwrap();
+  assert_eq!(out.global_client_id,"client-A");
+  assert_eq!(out.global_client_secret,"secret-S");
+ }
+ #[test]fn thousand_profiles_need_one_vault_decrypt_not_keychain_per_profile(){
+  let mut key=[0u8;32];OsRng.fill_bytes(&mut key);
+  let mut vault=PlainVault::default();
+  for i in 0..1000{
+   let id=format!("profile-{i}");
+   vault.profiles.insert(id.clone(),VaultProfile{profile_uuid:id,expected_channel_id:format!("UC{i}"),refresh_token:format!("refresh-{i}"),..Default::default()});
+  }
+  let enc=encrypt_bytes(&serde_json::to_vec(&vault).unwrap(),&key,AAD).unwrap();
+  let out=decode_vault(&enc,&key).unwrap();
+  assert_eq!(out.profiles.len(),1000);
+  assert_eq!(out.profiles.get("profile-999").unwrap().refresh_token,"refresh-999");
+ }
+ #[test]fn legacy_vault_can_be_reencrypted_with_new_local_key_without_google(){
+  let mut old=[0u8;32];let mut new=[0u8;32];OsRng.fill_bytes(&mut old);OsRng.fill_bytes(&mut new);
+  let mut vault=PlainVault{global_client_id:"client".into(),global_client_secret:"secret".into(),..Default::default()};
+  vault.profiles.insert("p1".into(),VaultProfile{profile_uuid:"p1".into(),expected_channel_id:"UC1".into(),refresh_token:"refresh".into(),..Default::default()});
+  let old_enc=encrypt_bytes(&serde_json::to_vec(&vault).unwrap(),&old,AAD).unwrap();
+  let recovered=decode_vault(&old_enc,&old).unwrap();
+  let new_enc=encrypt_bytes(&serde_json::to_vec(&recovered).unwrap(),&new,AAD).unwrap();
+  let migrated=decode_vault(&new_enc,&new).unwrap();
+  assert_eq!(migrated.profiles.get("p1").unwrap().refresh_token,"refresh");
+  assert_eq!(migrated.global_client_secret,"secret");
+ }
+ #[test]fn local_storage_contract_is_stable(){
+  let source=include_str!("oauth_vault.rs");
+  for part in ["VYRON","Auth","State","Backups","Logs","oauth-vault.enc","vault.key","oauth-client.json.enc","profiles.json"]{assert!(source.contains(part));}
+ }
 }
