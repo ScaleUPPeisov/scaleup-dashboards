@@ -62,15 +62,14 @@ describe('VYRON 2.1.15 RC4 activity history wiring',()=>{
   expect(center).toContain("notifyWarning('Часть файлов не тронута'");
   expect(center).not.toContain("notifyError('Не удалось переместить файл в Корзину'");
  });
- it('publisher never treats a stored videoId as normal NEW and exposes reconciliation controls',()=>{
+ it('publisher keeps historical remote state separate while current unmatched fingerprints become normal NEW jobs',()=>{
   const publisher=read('src/PublisherOS.tsx'),lifecycle=read('src/storageLifecycle.ts');
   expect(lifecycle).toContain("return'VERIFY_REQUIRED'");
   expect(publisher).toContain("uploadStateById.get(j.id)==='NEW'&&!recoveryJobIds.has(j.id)");
   expect(publisher).toContain('selectableJobIds.has(j.id)');
-  expect(publisher).toContain('Проверить YouTube ID');
-  expect(publisher).toContain('Проверить текущие файлы (');
-  expect(publisher).toContain('LEGACY_IDENTITY_UNPROVEN');
-  expect(publisher).toContain('Считать текущие физические файлы новыми поколениями');
+  expect(publisher).not.toContain('Проверить YouTube ID');
+  expect(publisher).toContain("const currentCandidates=rows.filter(r=>r.classification==='NEW_CANDIDATE'||r.classification==='NEW_GENERATION')");
+  expect(publisher).toContain('materializeRenderGenerationRows(currentCandidates,false,scanPreview)');
   expect(publisher).toContain('youtubeVideoProcessingStatusBatch');
   expect(publisher).toContain('Новых videos.insert: 0');
  });
