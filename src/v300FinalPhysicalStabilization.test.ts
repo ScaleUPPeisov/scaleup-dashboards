@@ -22,7 +22,7 @@ describe('VYRON 3.0.0 final physical stabilization contracts',()=>{
   const interactive=security.split('fn secitem_interactive_get').at(1)?.split('fn secitem_no_ui_set')[0]||'';
   expect(interactive).not.toContain('kSecUseAuthenticationUISkip');
   expect(youtube).toContain('youtube_oauth_interactive_recover_blocked_profiles');
-  expect(auth).toContain('Восстановить сохранённые подключения');
+  expect(auth).toContain('Восстановить старые сохранённые подключения');
   expect(auth).toContain('macOS может запросить разрешение');
  });
 
