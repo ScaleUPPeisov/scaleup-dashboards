@@ -30,6 +30,8 @@ urlencoding = "2"
 trash = "5"
 
 base64 = "0.22"
+chacha20poly1305 = "0.10"
+rand_core = { version = "0.6", features = ["getrandom"] }
 tokio = { version = "1", features = ["fs", "io-util", "time"] }
 
 
