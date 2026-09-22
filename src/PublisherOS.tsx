@@ -177,7 +177,7 @@ export function PublisherOS(){
    }
    replaceUploadHistory(nextHistory);
    journal({eventId:`${operationId}:summary`,eventType:'RECONCILIATION_COMPLETED',status:unknown?'PARTIAL':'SUCCESS',source:'LIVE_OPERATION',operationId,batchId:operationId,channelId,channelName:channel.name,profileId,details:{checked:targets.length,remoteExists,ready,processing,missing,unknown,historyRepairs:repairs,videosInsertSent:0}});
-   notifySuccess('Проверка YouTube завершена',`Проверено: ${targets.length} • существуют: ${remoteExists} • READY: ${ready} • обрабатываются: ${processing} • не найдены: ${missing} • неизвестно: ${unknown}. Новых videos.insert: 0.`,{operationId});
+   notifySuccess('Проверка YouTube завершена',`Проверено: ${targets.length} • доступны: ${remoteExists} • готовы: ${ready} • обрабатываются: ${processing} • не найдены: ${missing} • неизвестно: ${unknown}.`,{operationId});
   }catch(e){
    const h=humanizeError(e,'youtube'),at=new Date().toISOString();for(const j of targets)patchJob(j.id,{remoteExists:undefined,remoteCheckedAt:at,processingError:`REMOTE_STATUS_UNKNOWN: ${h.message}`});
    journal({eventId:`${operationId}:failed`,eventType:'RECONCILIATION_COMPLETED',status:'FAILED',source:'LIVE_OPERATION',operationId,batchId:operationId,channelId,channelName:channel.name,profileId,errorCode:h.code,details:{checked:targets.length,remoteStatus:'UNKNOWN',videosInsertSent:0}});
@@ -445,8 +445,8 @@ export function PublisherOS(){
  }
  async function runDryRun(){
   if(dryRunBusy)return;
-  if(!channel||!profileId){notifyWarning('Dry run','Для канала не найден OAuth профиль. YouTube API requests: 0.');return}
-  if(!selected.length){notifyWarning('Dry run','Выберите хотя бы одно NEW видео. YouTube API requests: 0.');return}
+  if(!channel||!profileId){notifyWarning('Проверка готовности','Для канала не найдено активное подключение YouTube.');return}
+  if(!selected.length){notifyWarning('Проверка готовности','Выберите хотя бы одно новое видео.');return}
   setDryRunBusy(true);setDryRunReport(null);
   try{
    const states=await api.youtubeOauthCredentialStates().catch(()=>null),credential=states?.profiles?.find(x=>x.profileUuid===profileId),rows:DryRunReport['rows']=[];
