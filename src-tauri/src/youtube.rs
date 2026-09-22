@@ -890,12 +890,25 @@ fn write_google_secrets(c:&GoogleConfig)->Result<(),String>{
     Ok(())
 }
 fn write_google_metadata(path:&Path,c:&GoogleConfig)->Result<(),String>{let b=serde_json::to_vec_pretty(c).map_err(|e|e.to_string())?;security::write_private_atomic(path,&b)}
+fn vault_profile_client_secret_for_global(app:&AppHandle,client_id:&str)->Result<Option<String>,String>{
+    let store=load_store_metadata(app)?;
+    for profile in store.profiles.iter().filter(|p|p.client_id.trim()==client_id.trim()){
+      if let Some(secret)=oauth_vault::profile_client_secret(app,&profile.id)?{
+        if !secret.trim().is_empty(){return Ok(Some(secret))}
+      }
+    }
+    Ok(None)
+}
 fn vault_first_global_client_secret(app:&AppHandle,c:&GoogleConfig)->Result<Option<String>,String>{
     if c.client_id.trim().is_empty(){return Ok(None)}
     match oauth_vault::global_client_secret(app,&c.client_id){
       Ok(Some(secret)) if !secret.trim().is_empty()=>return Ok(Some(secret)),
       Ok(_)=>{},
       Err(vault_error)=>{
+        if let Ok(Some(secret))=vault_profile_client_secret_for_global(app,&c.client_id){
+          oauth_vault::set_global_client(app,&c.client_id,&secret)?;
+          return Ok(Some(secret))
+        }
         let account=google_client_secret_account(c);
         match security::canonical_get_secret_cached(&account){
           Ok(Some(secret)) if !secret.trim().is_empty()=>{
@@ -905,6 +918,10 @@ fn vault_first_global_client_secret(app:&AppHandle,c:&GoogleConfig)->Result<Opti
           _=>return Err(vault_error),
         }
       }
+    }
+    if let Some(secret)=vault_profile_client_secret_for_global(app,&c.client_id)?{
+      oauth_vault::set_global_client(app,&c.client_id,&secret)?;
+      return Ok(Some(secret))
     }
     let account=google_client_secret_account(c);
     let fallback=security::canonical_get_secret_cached(&account)?;
@@ -1056,6 +1073,35 @@ pub fn youtube_google_config_retry(app:AppHandle)->Result<Value,String>{
     let secret=security::canonical_get_secret_cached(&account);
     if let Ok(Some(ref value))=secret{if !value.trim().is_empty(){oauth_vault::set_global_client(&app,&c.client_id,value)?;}}
     Ok(google_config_operational_status_value(&c,secret))
+}
+#[tauri::command]
+pub fn youtube_google_config_interactive_recover(app:AppHandle)->Result<Value,String>{
+    let c=load_google_config_metadata(&app)?;
+    if c.client_id.trim().is_empty(){return Err("OAUTH_CLIENT_SETUP_REQUIRED: client_id metadata is missing".into())}
+    if let Some(secret)=vault_first_global_client_secret(&app,&c)?{
+      return Ok(google_config_operational_status_value(&c,Ok(Some(secret))))
+    }
+    let mut accounts=vec![google_client_secret_account(&c)];
+    if !accounts.iter().any(|x|x==GOOGLE_CLIENT_SECRET){accounts.push(GOOGLE_CLIENT_SECRET.to_string())}
+    for account in accounts{
+      if let Some(secret)=security::canonical_interactive_recover_secret(&account)?{
+        if !secret.trim().is_empty(){
+          oauth_vault::set_global_client(&app,&c.client_id,&secret)?;
+          let readback=oauth_vault::global_client_secret(&app,&c.client_id)?;
+          if readback.as_deref()!=Some(secret.as_str()){return Err("OAUTH_VAULT_READBACK_FAILED: recovered global secret was not persisted".into())}
+          return Ok(google_config_operational_status_value(&c,Ok(readback)))
+        }
+      }
+    }
+    if let Some(secret)=security::legacy_interactive_recover_secret(GOOGLE_CLIENT_SECRET)?{
+      if !secret.trim().is_empty(){
+        oauth_vault::set_global_client(&app,&c.client_id,&secret)?;
+        let readback=oauth_vault::global_client_secret(&app,&c.client_id)?;
+        if readback.as_deref()!=Some(secret.as_str()){return Err("OAUTH_VAULT_READBACK_FAILED: recovered legacy global secret was not persisted".into())}
+        return Ok(google_config_operational_status_value(&c,Ok(readback)))
+      }
+    }
+    Err("OAUTH_CLIENT_SECRET_REIMPORT_REQUIRED: no saved global client secret could be recovered locally".into())
 }
 fn validate_imported_client_id(expected:&str,imported:&str)->Result<(),String>{
  if expected.trim()==imported.trim(){Ok(())}else{Err(format!("OAUTH_CLIENT_MISMATCH: imported credentials belong to another OAuth Client; expected={}",masked_client_id(expected)))}
