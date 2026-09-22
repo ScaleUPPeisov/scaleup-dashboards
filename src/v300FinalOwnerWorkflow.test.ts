@@ -51,14 +51,17 @@ describe('VYRON 3.0.0 final owner workflow contracts',()=>{
   expect(notifications).toContain('findIndex(x=>x.operationId===n.operationId)');
   expect(notifications).toContain('queue.current[queued]=n');
  });
- it('stores OAuth secrets in authenticated encrypted vault behind one stable Keychain master key',()=>{
+ it('stores OAuth secrets in authenticated encrypted local vault without a normal-startup Keychain gate',()=>{
   expect(rust).toContain('XChaCha20Poly1305');
   expect(rust).toContain('oauth-vault.enc');
+  expect(rust).toContain('vault.key');
   expect(rust).toContain('MASTER_CACHE');
   expect(rust).toContain('VAULT_CACHE');
-  expect(rust).toContain('enc.tmp');
-  expect(rust).toContain('sync_all()');
-  expect(rust).toContain('fs::rename(&tmp,&p)');
+  expect(rust).toContain('write_private_atomic');
+  expect(rust).toContain('verify_encrypted_vault');
+  expect(rust).toContain('StartupKeyPlan::LocalPersistent');
+  expect(rust).toContain('"keychainRequiredForNormalStartup":false');
+  expect(rust).toContain('read_legacy_with_keychain');
   expect(security).toContain('com.scaleup.vyron.oauth-vault');
   expect(security).toContain('master-key');
  });
