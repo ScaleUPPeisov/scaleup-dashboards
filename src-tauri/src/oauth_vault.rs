@@ -1,4 +1,4 @@
-use std::{collections::HashMap,fs::{self,File},io::Write,path::PathBuf};
+use std::{collections::HashMap,fs::{self,File},io::Write,path::PathBuf,sync::{Mutex,OnceLock}};
 use base64::{engine::general_purpose::STANDARD as B64,Engine as _};
 use chacha20poly1305::{aead::{Aead,KeyInit,Payload},Key,XChaCha20Poly1305,XNonce};
 use rand_core::{OsRng,RngCore};
@@ -30,6 +30,11 @@ struct PlainVault{
  #[serde(default)] profiles:HashMap<String,VaultProfile>,
 }
 impl Default for PlainVault{fn default()->Self{Self{schema_version:SCHEMA,global_client_id:String::new(),global_client_secret:String::new(),profiles:HashMap::new()}}}
+static MASTER_CACHE:OnceLock<Mutex<Option<[u8;32]>>>=OnceLock::new();
+static VAULT_CACHE:OnceLock<Mutex<Option<PlainVault>>>=OnceLock::new();
+fn master_cache()->&'static Mutex<Option<[u8;32]>>{MASTER_CACHE.get_or_init(||Mutex::new(None))}
+fn vault_cache()->&'static Mutex<Option<PlainVault>>{VAULT_CACHE.get_or_init(||Mutex::new(None))}
+
 #[derive(Debug,Serialize,Deserialize)]
 #[serde(rename_all="camelCase")]
 struct Envelope{schema_version:u32,nonce:String,ciphertext:String}
@@ -40,6 +45,7 @@ fn path(app:&AppHandle)->Result<PathBuf,String>{
  Ok(dir.join("oauth-vault.enc"))
 }
 fn master_key(interactive:bool,create:bool)->Result<[u8;32],String>{
+ if let Ok(cache)=master_cache().lock(){if let Some(key)=*cache{return Ok(key)}}
  let existing=security::oauth_vault_master_key_get(interactive).map_err(|e|format!("OAUTH_VAULT_MASTER_KEY_BLOCKED: {e}"))?;
  let encoded=if let Some(v)=existing.filter(|x|!x.trim().is_empty()){v}else{
   if !create{return Err("OAUTH_VAULT_MASTER_KEY_MISSING".into())}
@@ -49,9 +55,10 @@ fn master_key(interactive:bool,create:bool)->Result<[u8;32],String>{
  };
  let bytes=B64.decode(encoded.trim()).map_err(|_|"OAUTH_VAULT_MASTER_KEY_INVALID".to_string())?;
  if bytes.len()!=32{return Err("OAUTH_VAULT_MASTER_KEY_INVALID_LENGTH".into())}
- let mut out=[0u8;32];out.copy_from_slice(&bytes);Ok(out)
+ let mut out=[0u8;32];out.copy_from_slice(&bytes);if let Ok(mut cache)=master_cache().lock(){*cache=Some(out)}Ok(out)
 }
 fn read(app:&AppHandle,interactive:bool)->Result<PlainVault,String>{
+ if let Ok(cache)=vault_cache().lock(){if let Some(v)=cache.as_ref(){return Ok(v.clone())}}
  let p=path(app)?;
  if !p.exists(){return Ok(PlainVault::default())}
  let envelope:Envelope=serde_json::from_slice(&fs::read(&p).map_err(|e|format!("OAUTH_VAULT_READ_FAILED: {e}"))?).map_err(|e|format!("OAUTH_VAULT_ENVELOPE_INVALID: {e}"))?;
@@ -64,7 +71,7 @@ fn read(app:&AppHandle,interactive:bool)->Result<PlainVault,String>{
  let plain=cipher.decrypt(XNonce::from_slice(&nonce),Payload{msg:&ciphertext,aad:AAD}).map_err(|_|"OAUTH_VAULT_AUTHENTICATION_FAILED".to_string())?;
  let vault:PlainVault=serde_json::from_slice(&plain).map_err(|e|format!("OAUTH_VAULT_CONTENT_INVALID: {e}"))?;
  if vault.schema_version!=SCHEMA{return Err("OAUTH_VAULT_CONTENT_SCHEMA_INVALID".into())}
- Ok(vault)
+ if let Ok(mut cache)=vault_cache().lock(){*cache=Some(vault.clone())}Ok(vault)
 }
 fn write(app:&AppHandle,vault:&PlainVault)->Result<(),String>{
  let p=path(app)?;let key=master_key(false,true)?;
@@ -82,7 +89,7 @@ fn write(app:&AppHandle,vault:&PlainVault)->Result<(),String>{
  if p.exists(){let _=fs::copy(&p,&backup);}
  fs::rename(&tmp,&p).map_err(|e|format!("OAUTH_VAULT_ATOMIC_RENAME_FAILED: {e}"))?;
  #[cfg(unix)]{use std::os::unix::fs::PermissionsExt;let _=fs::set_permissions(&p,fs::Permissions::from_mode(0o600));let _=fs::set_permissions(&backup,fs::Permissions::from_mode(0o600));}
- Ok(())
+ if let Ok(mut cache)=vault_cache().lock(){*cache=Some(vault.clone())}Ok(())
 }
 pub fn profile_refresh(app:&AppHandle,profile_id:&str)->Result<Option<String>,String>{
  Ok(read(app,false)?.profiles.get(profile_id).map(|x|x.refresh_token.clone()).filter(|x|!x.trim().is_empty()))
