@@ -1,5 +1,5 @@
 import {beforeEach,describe,expect,it} from 'vitest';
-import {attentionTask,completeTask,ensureTask,reconcileUploadTasks,reloadTaskEngineFromStorageForTests,resetTaskEngineForTests,snapshotTasks,startTask,updateTask} from './taskEngine';
+import {attentionTask,clearFailedTasks,clearTaskHistory,completeTask,ensureTask,failTask,reconcileUploadTasks,reloadTaskEngineFromStorageForTests,resetTaskEngineForTests,snapshotTasks,startTask,updateTask} from './taskEngine';
 
 const mem=new Map<string,string>();
 Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{
@@ -36,6 +36,41 @@ describe('VYRON persistent task engine',()=>{
   reconcileUploadTasks(new Set());
   expect(snapshotTasks().tasks[0].state).toBe('ATTENTION_REQUIRED');
  });
+ it('deduplicates repeated failed Render scans by logical resource and resolves on successful retry',()=>{
+  const resourceKey='render-scan:glass';
+  for(let n=1;n<=4;n++){
+   const id=`render-scan-attempt-${n}`;
+   ensureTask({taskId:id,type:'RENDER_SCAN',state:'QUEUED',channelId:'glass',label:'Скан Render',resourceKey});
+   startTask(id);failTask(id,'disk unavailable');
+  }
+  let tasks=snapshotTasks().tasks;
+  expect(tasks.filter(x=>x.state==='FAILED')).toHaveLength(1);
+  expect(tasks.filter(x=>x.state==='CANCELLED')).toHaveLength(3);
+  ensureTask({taskId:'render-scan-attempt-5',type:'RENDER_SCAN',state:'QUEUED',channelId:'glass',label:'Скан Render',resourceKey});
+  startTask('render-scan-attempt-5');completeTask('render-scan-attempt-5','30 файлов');
+  tasks=snapshotTasks().tasks;
+  expect(tasks.filter(x=>x.state==='FAILED'||x.state==='ATTENTION_REQUIRED')).toHaveLength(0);
+  expect(tasks.find(x=>x.taskId==='render-scan-attempt-5')?.state).toBe('SUCCEEDED');
+ });
+ it('clears failed task records persistently and does not resurrect them after reload',()=>{
+  ensureTask({taskId:'render-scan:glass',type:'RENDER_SCAN',state:'QUEUED',channelId:'glass',label:'Скан Render',resourceKey:'render-scan:glass'});
+  startTask('render-scan:glass');failTask('render-scan:glass','scan failed');
+  expect(snapshotTasks().tasks.filter(x=>x.state==='FAILED')).toHaveLength(1);
+  clearFailedTasks();
+  expect(snapshotTasks().tasks.filter(x=>x.state==='FAILED'||x.state==='ATTENTION_REQUIRED')).toHaveLength(0);
+  expect(reloadTaskEngineFromStorageForTests().tasks.filter(x=>x.state==='FAILED'||x.state==='ATTENTION_REQUIRED')).toHaveLength(0);
+ });
+ it('clear history preserves real running work but removes terminal task records across reload',()=>{
+  ensureTask({taskId:'upload:live',type:'UPLOAD',state:'QUEUED',channelId:'glass',jobId:'live',label:'VIDEO_001'});
+  startTask('upload:live');
+  ensureTask({taskId:'old:success',type:'RENDER_SCAN',state:'SUCCEEDED',channelId:'glass',label:'Скан Render'});
+  ensureTask({taskId:'old:failed',type:'RENDER_SCAN',state:'FAILED',channelId:'glass',label:'Скан Render'});
+  clearTaskHistory();
+  const rows=reloadTaskEngineFromStorageForTests().tasks;
+  expect(rows.map(x=>x.taskId)).toEqual(['upload:live']);
+  expect(rows[0].state).toBe('ATTENTION_REQUIRED');
+ });
+
  it('non-upload tasks can report mathematically meaningful item progress',()=>{
   ensureTask({taskId:'render:glass',type:'RENDER_SCAN',state:'QUEUED',channelId:'glass',label:'Скан Render',completed:0,total:30,progress:0});
   startTask('render:glass');updateTask('render:glass',{completed:18,total:30,progress:60});
