@@ -12,6 +12,36 @@ fn state_file(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(d.join("state.json"))
 }
 
+
+fn state_mirror_dir(app:&AppHandle)->Result<PathBuf,String>{
+    let root=app.path().document_dir().map_err(|e|format!("VYRON documents path: {e}"))?.join("VYRON").join("State");
+    fs::create_dir_all(&root).map_err(|e|format!("VYRON state mirror mkdir: {e}"))?;
+    #[cfg(unix)]{
+        use std::os::unix::fs::PermissionsExt;
+        let _=fs::set_permissions(&root,fs::Permissions::from_mode(0o700));
+    }
+    Ok(root)
+}
+fn state_mirror_file(app:&AppHandle)->Result<PathBuf,String>{Ok(state_mirror_dir(app)?.join("app-state.json"))}
+fn mapping_snapshot(state:&Value)->Value{
+    let rows=state.get("channels").and_then(Value::as_array).cloned().unwrap_or_default();
+    Value::Array(rows.into_iter().map(|c|json!({
+        "id":c.get("id").cloned().unwrap_or(Value::Null),
+        "name":c.get("name").cloned().unwrap_or(Value::Null),
+        "youtubeProfileId":c.get("youtubeProfileId").cloned().unwrap_or(Value::Null),
+        "youtubeChannelId":c.get("youtubeChannelId").cloned().unwrap_or(Value::Null),
+        "renderFolderPath":c.get("renderFolderPath").cloned().unwrap_or(Value::Null),
+        "projectsFolderPath":c.get("projectsFolderPath").cloned().unwrap_or(Value::Null)
+    })).collect())
+}
+fn write_state_mirror(app:&AppHandle,state:&Value)->Result<(),String>{
+    let dir=state_mirror_dir(app)?;
+    atomic_write(&dir.join("app-state.json"),state)?;
+    atomic_write(&dir.join("channels.json"),&state.get("channels").cloned().unwrap_or_else(||json!([])))?;
+    atomic_write(&dir.join("mappings.json"),&mapping_snapshot(state))?;
+    Ok(())
+}
+
 fn default_state() -> Value {
     json!({"version":10,"channels":[],"jobs":[],"competitors":[],"settings":{"workspace":"","endlumePath":"","youtubeApiKey":"","autoCheckUpdates":true,"reduceMotion":false,"fpsMonitor":true},"logs":[],"uploadHistory":[],"activityJournal":[],"statisticsHistory":{},"fingerprintCache":{},"projectLifecycle":{}})
 }
@@ -173,9 +203,12 @@ pub fn load_state(app: AppHandle) -> Value {
         Ok(p) => p,
         Err(_) => return default_state(),
     };
-    let raw = fs::read(&path)
+    let primary = fs::read(&path)
         .ok()
-        .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+        .and_then(|b| serde_json::from_slice::<Value>(&b).ok());
+    let recovered_from_mirror=primary.is_none();
+    let raw = primary
+        .or_else(||state_mirror_file(&app).ok().and_then(|p|fs::read(p).ok()).and_then(|b|serde_json::from_slice::<Value>(&b).ok()))
         .unwrap_or_else(default_state);
     let (state, changed) = migrate_state(raw);
     let legacy_plaintext=!state_secret(&state,"youtubeApiKey").is_empty()||!state_secret(&state,"openaiApiKey").is_empty();
@@ -183,7 +216,8 @@ pub fn load_state(app: AppHandle) -> Value {
     // Passive startup must never read/write Keychain or trigger legacy secret migration.
     // If legacy plaintext exists, keep the original file untouched until an explicit
     // secret-required operation performs the one-time migration.
-    if changed&&!legacy_plaintext{let _=atomic_write(&path,&disk);}else if path.exists(){let _=security::private_permissions(&path);}
+    if (changed||recovered_from_mirror)&&!legacy_plaintext{let _=atomic_write(&path,&disk);}else if path.exists(){let _=security::private_permissions(&path);}
+    let _=write_state_mirror(&app,&disk);
     disk
 }
 
@@ -192,8 +226,9 @@ pub fn save_state(app: AppHandle, state: Value) -> Result<Value, String> {
     let p = state_file(&app)?;
     let (disk, warnings) = secure_state_for_disk_best_effort(&state);
     atomic_write(&p, &disk)?;
+    let mirror_warning=write_state_mirror(&app,&disk).err();
     Ok(
-        json!({"ok":true,"securityWarning":warnings.first().cloned(),"securityWarnings":warnings.len()}),
+        json!({"ok":true,"securityWarning":warnings.first().cloned().or(mirror_warning),"securityWarnings":warnings.len()}),
     )
 }
 
