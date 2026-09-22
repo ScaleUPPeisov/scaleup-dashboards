@@ -27,11 +27,12 @@ describe('VYRON 2.1.13 existing channel rebind',()=>{
   expect(ui).toContain('Выбрать браузер и продолжить');
   expect(ui).toContain('youtubeReconnectExisting(profileId,browserChoice)');
  });
- it('one credentials.json configures all channels, not one per profile',()=>{
+ it('one global OAuth client config is reused while saved profiles recover automatically',()=>{
   const accounts=read('src/AccountsPage.tsx');
   const recovery=read('src/AuthRecoveryCenter.tsx');
   expect(accounts).toContain('credentials.json нужен один раз на весь VYRON');
-  expect(recovery).toContain('Настроить OAuth Client один раз');
+  expect(recovery).toContain('api.youtubeGoogleConfig()');
+  expect(recovery).toContain('api.youtubeOauthRecoverExistingProfiles()');
   expect(recovery).not.toContain('youtubeImportProfileCredentials(profileId)');
  });
  it('backend blocks browser OAuth when global secret is absent',()=>{
