@@ -294,8 +294,9 @@ export function PublisherOS(){
   }catch(e){const h=humanizeError(e,'storage');failTask(taskId,h.message);notifyWarning('Не удалось просканировать папку рендера',h.message)}
   finally{setRenderScanBusy(false)}
  }
- function materializeRenderGenerationRows(rows:RenderScanRow[],explicitLegacyOverride=false){
-  if(!renderScan||!channel||!rows.length)return;
+ function materializeRenderGenerationRows(rows:RenderScanRow[],explicitLegacyOverride=false,scanOverride?:RenderScanPreview){
+  const activeScan=scanOverride||renderScan;
+  if(!activeScan||!channel||!rows.length)return;
   const current=useApp.getState().jobs.filter(j=>j.channelId===channelId),plan=planRenderScanImport(rows,current,new Set(recoveryJobs.map(j=>j.id))),created:VideoJob[]=[],details:string[]=[];
   const minTracks=Math.max(1,settings.tracksPerVideo||15);
   for(const row of plan.accepted){
@@ -311,15 +312,14 @@ export function PublisherOS(){
   if(created.length){
     addJobs(created);
     setFingerprints(prev=>{const next={...prev};for(const j of created){if(j.currentSourceFingerprint&&j.currentSourceFileSize&&j.currentSourceModifiedAt!=null)next[j.id]={fingerprint:j.currentSourceFingerprint,size:j.currentSourceFileSize,modifiedAt:j.currentSourceModifiedAt}}return next});
-    // New physical generations become usable immediately; no restart/stale selection cycle.
+    // New physical generations become usable immediately; owner selection stays explicit.
     setVideoFilter('new');
-    setDraftPatch({selectedIds:created.map(j=>j.id)});
   }
   for(const j of created)journal({eventId:`local-video-discovered:${j.id}`,eventType:'LOCAL_VIDEO_DISCOVERED',status:'SUCCESS',source:'LIVE_OPERATION',channelId,channelName:channel.name,jobId:j.id,localSourcePath:j.finalPath,details:{videoNumber:j.number,evidence:explicitLegacyOverride?'explicit-new-generation-override':'fingerprint-generation-reconciliation',previousJobId:j.sourcePreviousJobId||'',currentFingerprint:j.currentSourceFingerprint||'',youtubeApiRequests:0}});
   const alreadyKnown=plan.skipped.filter(x=>x.reason==='ALREADY_KNOWN_PATH'||x.reason==='SEQUENCE_ALREADY_USED').length;
   const report={requested:rows.length,added:created.length,skipped:plan.skipped.length+details.length,alreadyKnown,errors:details.length,details:[...plan.skipped.map(x=>`${x.name}: ${x.reason}`),...details]};
-  const nowJobs=[...current,...created],nextRows=classifyChannelRenderFiles(renderScan.result.files,nowJobs,useApp.getState().uploadHistory,channelId,renderScan.result.root);
-  setRenderScan({...renderScan,rows:nextRows,summary:summarizeRenderScan(nextRows),importReport:report});
+  const nowJobs=[...current,...created],nextRows=classifyChannelRenderFiles(activeScan.result.files,nowJobs,useApp.getState().uploadHistory,channelId,activeScan.result.root);
+  setRenderScan({...activeScan,rows:nextRows,summary:summarizeRenderScan(nextRows),importReport:report});
   notifySuccess('Локальные поколения добавлены',`Запрошено: ${report.requested} • добавлено: ${report.added} • пропущено: ${report.skipped} • уже известно: ${report.alreadyKnown} • ошибок: ${report.errors}. YouTube upload: 0.`)
  }
  function addScannedRenderCandidates(){
