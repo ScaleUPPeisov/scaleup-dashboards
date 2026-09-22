@@ -151,6 +151,7 @@ export const api={
   youtubeKeychainMigrationDiagnostics:()=>invoke<YoutubeKeychainMigrationDiagnostic>('youtube_keychain_migration_diagnostics'),
   youtubeGoogleConfig:()=>invoke<GoogleConfigStatus>('youtube_google_config_status'),
   youtubeRetryGoogleConfig:()=>invoke<GoogleConfigStatus>('youtube_google_config_retry'),
+  youtubeRecoverSavedGoogleConfig:()=>invoke<GoogleConfigStatus>('youtube_google_config_interactive_recover'),
   youtubeImportGoogleConfig:(jsonText:string,apiKey='')=>invoke<GoogleConfigStatus>('youtube_google_config_import',{jsonText,apiKey}),
   youtubeImportProfileCredentials:async(profileId:string)=>{const filePath=await open({directory:false,multiple:false,title:'Выберите credentials.json этого OAuth Client',filters:[{name:'Google OAuth credentials',extensions:['json']}]});if(typeof filePath!=='string')return null;return invoke<OAuthProfileCredentialsImportResult>('youtube_oauth_import_profile_credentials_file',{profileId,filePath})},
   youtubeOauthBrowsers:()=>invoke<{id:string;label:string;available:boolean}[]>('youtube_oauth_browsers'),
