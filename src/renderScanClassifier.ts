@@ -170,7 +170,10 @@ export function crossChannelScanRecoveryJobs(jobs:VideoJob[],history:UploadHisto
 export function planRenderScanImport(rows:RenderScanRow[],existingJobs:VideoJob[],ignoredJobIds:ReadonlySet<string>=new Set()):RenderScanImportPlan{
  const replacementJobIds=new Set(rows.filter(r=>r.classification==='NEW_GENERATION'&&r.matchedJobId).map(r=>r.matchedJobId!));
  const active=existingJobs.filter(j=>!ignoredJobIds.has(j.id)&&!replacementJobIds.has(j.id)&&!isHistoricalGeneration(j));
- const usedPaths=new Set(active.map(j=>normalizeRenderPath(j.finalPath||'')).filter(Boolean)),usedNumbers=new Set(active.map(j=>j.number)),accepted:RenderScanRow[]=[],skipped:RenderScanImportSkip[]=[];
+ const usedPaths=new Set(active.map(j=>normalizeRenderPath(j.finalPath||'')).filter(Boolean)),usedNumbers=new Set<number>(),accepted:RenderScanRow[]=[],skipped:RenderScanImportSkip[]=[];
+ // Sequence identity belongs to the current physical snapshot, not historical/local jobs.
+ // Existing jobs may keep the same VIDEO number as older generations without blocking
+ // a different current file. We only reject duplicate sequence numbers inside this scan.
  for(const row of rows){
   if(row.classification!=='NEW_CANDIDATE'&&row.classification!=='NEW_GENERATION'){skipped.push({path:row.file.path,name:row.file.name,reason:'NOT_NEW_CANDIDATE'});continue}
   const path=normalizeRenderPath(row.file.path);
