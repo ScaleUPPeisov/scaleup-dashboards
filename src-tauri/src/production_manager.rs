@@ -2007,7 +2007,7 @@ fn validate_cleanup_candidate(
     };
     let _ = output_meta;
     let output_can = output.canonicalize().map_err(|_| CLEANUP_OUTPUT_INVALID)?;
-    if crate::shorts_factory::validate_render_media(&output_can, true).is_err() {
+    if crate::media_tools::validate_render_media(&output_can, true).is_err() {
         return Err(CLEANUP_OUTPUT_INVALID)
     }
     let folder = PathBuf::from(&project.folder_path);
@@ -2618,7 +2618,7 @@ mod v214_cleanup_render_gate_tests {
     fn enabled() -> bool { std::env::var("VYRON_CLEANUP_REAL_TEST").ok().as_deref() == Some("1") }
     fn make_valid_render(path: &Path) {
         if let Some(parent) = path.parent() { fs::create_dir_all(parent).unwrap(); }
-        let ffmpeg = crate::shorts_factory::resolve_media_tool("ffmpeg").unwrap();
+        let ffmpeg = crate::media_tools::resolve_media_tool("ffmpeg").unwrap();
         let st = Command::new(ffmpeg).args([
             "-hide_banner","-loglevel","error","-y",
             "-f","lavfi","-i","testsrc2=size=640x360:rate=25",
