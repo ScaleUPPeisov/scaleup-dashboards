@@ -247,10 +247,19 @@ fn resolve_oauth_credential_states_local(app:&AppHandle)->Result<Vec<Value>,Stri
  let legacy_accounts=security::list_legacy_secret_accounts("")?;
  let global_meta=load_google_config_metadata(app).unwrap_or_default();
  let global_secret_present=canonical_accounts.iter().any(|a|a==GOOGLE_CLIENT_SECRET);
+ let vault_global=oauth_vault::global_client_secret(app,&global_meta.client_id);
+ let vault_global_present=matches!(vault_global,Ok(Some(ref x)) if !x.trim().is_empty());
+ let vault_global_blocked=vault_global.is_err();
  let state=read_keychain_migration_v2(app)?;
  let blocked_accounts=security::canonical_blocked_accounts();
  let mut rows=Vec::with_capacity(store.profiles.len());
  for profile in &store.profiles{
+  let vault_refresh=oauth_vault::profile_refresh(app,&profile.id);
+  let vault_refresh_present=matches!(vault_refresh,Ok(Some(ref x)) if !x.trim().is_empty());
+  let vault_refresh_blocked=vault_refresh.is_err();
+  let vault_profile_secret=oauth_vault::profile_client_secret(app,&profile.id);
+  let vault_profile_secret_present=matches!(vault_profile_secret,Ok(Some(ref x)) if !x.trim().is_empty());
+  let vault_profile_secret_blocked=vault_profile_secret.is_err();
   let canonical_account=profile_refresh_token_account_from_state(&state,&profile.id);
   let canonical_present=canonical_accounts.iter().any(|a|a==&canonical_account);
   let legacy_present=select_present_account(&legacy_refresh_candidates(&profile.id),&legacy_accounts).is_some();
@@ -287,7 +296,9 @@ fn resolve_oauth_credential_states_local(app:&AppHandle)->Result<Vec<Value>,Stri
   let recoverable_denial=denial.as_ref().and_then(|x|x.get("currentErrorCode")).and_then(Value::as_str)
     .map(|code|matches!(code,"KEYCHAIN_AUTH_FAILED"|"KEYCHAIN_INTERACTION_REQUIRED"|"KEYCHAIN_ACCESS_DENIED"|"KEYCHAIN_ACCESS_DENIED_CACHED"))
     .unwrap_or(false);
-  let credential_state=if denial.is_some()&&canonical_present&&recoverable_denial{"RECOVERABLE_KEYCHAIN_BLOCKED"}
+  let credential_state=if vault_refresh_blocked||vault_profile_secret_blocked||vault_global_blocked{"RECOVERABLE_KEYCHAIN_BLOCKED"}
+    else if vault_refresh_present&&base_credential_state=="CONNECTED"{"READY"}
+    else if denial.is_some()&&canonical_present&&recoverable_denial{"RECOVERABLE_KEYCHAIN_BLOCKED"}
     else if denial.is_some(){"KEYCHAIN_BLOCKED"}
     else if currently_accessible&&base_credential_state=="CONNECTED"{"READY"}
     else if canonical_present{"CANONICAL_PRESENT_UNVERIFIED"}
@@ -311,8 +322,10 @@ fn resolve_oauth_credential_states_local(app:&AppHandle)->Result<Vec<Value>,Stri
    "lastValidatedAt":last_validated_at,
    "lastValidationResult":last_validation_result,
    "clientSecretState":client_secret_state,
-   "clientSecretPresent":profile_client_secret_known||global_secret_known||legacy_client_secret_present,
-   "clientSecretOperational":profile_client_secret_cached||(global_exact_client&&global_secret_cached),
+   "clientSecretPresent":vault_profile_secret_present||vault_global_present||profile_client_secret_known||global_secret_known||legacy_client_secret_present,
+   "clientSecretOperational":vault_profile_secret_present||(global_exact_client&&vault_global_present)||profile_client_secret_cached||(global_exact_client&&global_secret_cached),
+   "oauthVaultRefreshPresent":vault_refresh_present,
+   "oauthVaultPrimary":vault_refresh_present,
    "clientSecretAccount":profile_client_secret_account,
    "globalClientSecretAccount":global_secret_account,
    "secretValuesIncluded":false,
