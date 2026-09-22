@@ -284,12 +284,16 @@ export function PublisherOS(){
       if(flagged&&j.scanRecoveryState!=='CROSS_CHANNEL_SCAN_RECOVERY_REQUIRED')patchJob(j.id,{scanRecoveryState:'CROSS_CHANNEL_SCAN_RECOVERY_REQUIRED'});
       else if(!flagged&&j.scanRecoveryState)patchJob(j.id,{scanRecoveryState:undefined})
     }
-    const scannedAt=new Date().toISOString();
-    setRenderScan({result,rows,summary,scannedAt});
+    const scannedAt=new Date().toISOString(),scanPreview:RenderScanPreview={result,rows,summary,scannedAt};
+    setRenderScan(scanPreview);
+    // Current valid bytes become canonical NEW jobs immediately. Exact successful
+    // same-channel SHA+size matches were classified as uploaded before this point.
+    const currentCandidates=rows.filter(r=>r.classification==='NEW_CANDIDATE'||r.classification==='NEW_GENERATION');
+    if(currentCandidates.length)materializeRenderGenerationRows(currentCandidates,false,scanPreview);
     journal({eventId:`render-scan:${channelId}:${scannedAt}`,eventType:'RENDER_FOLDER_SCANNED',status:'SUCCESS',source:'LIVE_OPERATION',timestamp:scannedAt,channelId,channelName:channel?.name,details:{folder:result.root,rootType:'CHANNEL_SPECIFIC',found:summary.TOTAL_CLASSIFIED_FILES,knownExact:summary.KNOWN_EXACT,uploadedLocalCopies:summary.UPLOADED_LOCAL_COPY,newCandidates:summary.NEW_CANDIDATE,newGenerations:summary.NEW_GENERATION,legacyIdentityUnproven:summary.LEGACY_IDENTITY_UNPROVEN,verifyRequired:summary.VERIFY_REQUIRED,ambiguous:summary.AMBIGUOUS,invalid:summary.INVALID,crossChannelRecovery:bad.length,truncated:result.truncated,youtubeApiRequests:0}});
-    const newTotal=summary.NEW_CANDIDATE+summary.NEW_GENERATION;
-    const msg=`Найдено: ${summary.TOTAL_CLASSIFIED_FILES} • совпало с trusted fingerprint: ${summary.UPLOADED_LOCAL_COPY} • новых: ${newTotal} (trusted new generations: ${summary.NEW_GENERATION}) • legacy identity unproven: ${summary.LEGACY_IDENTITY_UNPROVEN} • fingerprint ещё не доказан: ${summary.VERIFY_REQUIRED} • неоднозначно: ${summary.AMBIGUOUS}. YouTube API: 0.`;
-    completeTask(taskId,`${summary.TOTAL_CLASSIFIED_FILES} файлов • NEW ${newTotal} • uploaded ${summary.UPLOADED_LOCAL_COPY} • legacy ${summary.LEGACY_IDENTITY_UNPROVEN} • verify ${summary.VERIFY_REQUIRED}`);
+    const newTotal=currentCandidates.length;
+    const msg=`Найдено: ${summary.TOTAL_CLASSIFIED_FILES} • exact uploaded: ${summary.UPLOADED_LOCAL_COPY} • текущих кандидатов: ${newTotal} • invalid: ${summary.INVALID} • YouTube API: 0.`;
+    completeTask(taskId,`${summary.TOTAL_CLASSIFIED_FILES} файлов • selectable candidates ${newTotal} • exact uploaded ${summary.UPLOADED_LOCAL_COPY}`);
     result.truncated?notifyWarning('SCAN_TRUNCATED',msg):notifyInfo('Папка канала просканирована',msg)
   }catch(e){const h=humanizeError(e,'storage');failTask(taskId,h.message);notifyWarning('Не удалось просканировать папку рендера',h.message)}
   finally{setRenderScanBusy(false)}
