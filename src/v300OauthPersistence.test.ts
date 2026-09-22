@@ -25,31 +25,34 @@ describe('VYRON 3.0.0 OAuth persistence physical-blocker regression',()=>{
   expect(automatic).toContain('"videosInsert":0');
  });
  it('startup no longer blasts statistics for all profiles',()=>expect(accounts).not.toContain('void refreshAllStats(false)'));
- it('app version change is credential-neutral and never auto-runs profile recovery',()=>{
-  const effect=accounts.match(/useEffect\(\(\)=>\{[\s\S]*?onOauthExistingRecoveryProgress[\s\S]*?\},\[\]\);/)?.[0]||'';
-  expect(effect).not.toContain('appVersion()');
-  expect(effect).not.toContain('vyron:oauth-continuity-version');
-  expect(effect).not.toContain('recoverExistingProfiles(');
+ it('app version change is credential-neutral while launch recovery uses saved profiles without browser reconnect',()=>{
+  const app=fs.readFileSync('src/App.tsx','utf8');
+  expect(app).toContain('oauthBootRecoveryStarted');
+  expect(app).toContain('api.youtubeGoogleConfig()');
+  expect(app).toContain('api.youtubeOauthRecoverExistingProfiles()');
+  expect(app).not.toContain('vyron:oauth-continuity-version');
  });
- it('recovery center mount reads metadata only and does not refresh or rotate credentials',()=>{
-  const effect=recovery.match(/useEffect\(\(\)=>\{.*?\},\[\]\);/s)?.[0]||'';
-  expect(effect).toContain('load()');
-  expect(effect).not.toContain('runAutomaticRecovery');
-  expect(effect).not.toContain('youtubeReconnectExisting');
+ it('recovery center automatically checks NOT_CHECKED saved profiles when GLOBAL OAuth is READY',()=>{
+  expect(recovery).toContain("credentialState==='NOT_CHECKED'");
+  expect(recovery).toContain("credentialState==='CANONICAL_PRESENT_UNVERIFIED'");
+  expect(recovery).toContain('initial.global.oauthReady');
+  expect(recovery).toContain('api.youtubeOauthRecoverExistingProfiles()');
+  expect(recovery).not.toContain('manualQueue=keychainBlocked+reconnectRequired');
+  expect(recovery).toContain('const manualQueue=reconnectRequired');
  });
  it('missing Google email is optional metadata for an otherwise healthy profile',()=>{
   expect(rust).toContain('assert!(google_account_identity_matches(Some("owner@example.com"),None))');
   expect(rust).toContain('assert!(google_account_identity_matches(None,Some("owner@example.com")))');
  });
- it('post-update health is passive and never launches recovery or browser login',()=>{
+ it('post-update health restores saved profiles before reporting OAuth state and never opens browser',()=>{
   const app=fs.readFileSync('src/App.tsx','utf8');
-  const effect=app.split("localStorage.getItem('vyron:update-installing-version')").at(1)?.split('POST_UPDATE_VERSION_MISMATCH')[0]||'';
+  const effect=app.split("localStorage.getItem('vyron:update-installing-version')").at(1)?.split('POST_UPDATE_BUILD_MISMATCH')[0]||'';
+  expect(effect).toContain('api.youtubeGoogleConfig()');
+  expect(effect).toContain('api.youtubeOauthRecoverExistingProfiles()');
   expect(effect).toContain('api.youtubeProfiles()');
   expect(effect).toContain('api.youtubeOauthCredentialStates()');
-  expect(effect).toContain('states.youtubeApiRequests!==0||states.keychainSecretReads!==0');
   expect(effect).toContain('OAuth READY');
   expect(effect).toContain('Требуют входа');
-  expect(effect).not.toContain('youtubeOauthRecoverExistingProfiles');
   expect(effect).not.toContain('youtubeReconnectExisting');
   expect(effect).not.toContain('youtubeOauthBrowsers');
  });
