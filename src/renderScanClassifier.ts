@@ -1,5 +1,6 @@
 import type {RenderFolderVideoFile} from './api';
 import type {UploadHistoryRecord,VideoJob} from './types';
+import {trustedUploadFingerprintProof} from './storageLifecycle';
 
 export type RenderScanPrimaryClass='KNOWN_EXACT'|'UPLOADED_LOCAL_COPY'|'NEW_CANDIDATE'|'NEW_GENERATION'|'LEGACY_IDENTITY_UNPROVEN'|'VERIFY_REQUIRED'|'AMBIGUOUS'|'DUPLICATE_LOCAL'|'INVALID';
 export type RenderScanRow={
@@ -16,6 +17,7 @@ export type RenderScanRow={
  historyFileSize?:number;
  historyUploadedAt?:string;
  historyJobId?:string;
+ historyProofSource?:UploadHistoryRecord['fingerprintProofSource'];
 };
 export type RenderScanSummary={TOTAL_CLASSIFIED_FILES:number;KNOWN_EXACT:number;UPLOADED_LOCAL_COPY:number;NEW_CANDIDATE:number;NEW_GENERATION:number;LEGACY_IDENTITY_UNPROVEN:number;VERIFY_REQUIRED:number;AMBIGUOUS:number;DUPLICATE_LOCAL:number;INVALID:number};
 export type RenderScanImportSkip={path:string;name:string;reason:'ALREADY_KNOWN_PATH'|'SEQUENCE_ALREADY_USED'|'MISSING_SEQUENCE'|'NOT_NEW_CANDIDATE'};
@@ -30,12 +32,12 @@ export function renderPathInsideRoot(path:string,root:string){const p=normalizeR
 export function trustedSha256(value?:string){return /^[a-f0-9]{64}$/i.test(String(value||'').trim())}
 function currentFingerprint(file:RenderFolderVideoFile){const fp=String(file.fingerprint||'').trim().toLowerCase();return trustedSha256(fp)?fp:undefined}
 function successfulHistory(history:UploadHistoryRecord[],channelId:string){return history.filter(x=>x.channelId===channelId&&x.status==='UPLOADED'&&Boolean(x.youtubeVideoId)&&!x.staleLinkClearedAt)}
-function trustedHistory(x:UploadHistoryRecord){return trustedSha256(x.sha256)&&Number.isFinite(x.fileSize)&&x.fileSize>0}
+function trustedHistory(x:UploadHistoryRecord){return trustedUploadFingerprintProof(x)}
 function historyMatchesFile(x:UploadHistoryRecord,file:RenderFolderVideoFile){const fp=currentFingerprint(file);return Boolean(fp&&trustedHistory(x)&&x.sha256.trim().toLowerCase()===fp&&x.fileSize===file.size)}
 function historyForJob(history:UploadHistoryRecord[],channelId:string,jobId?:string){if(!jobId)return;return successfulHistory(history,channelId).slice().reverse().find(x=>x.jobId===jobId)}
 function latestHistoryAtPath(history:UploadHistoryRecord[],channelId:string,path:string){const p=normalizeRenderPath(path);return successfulHistory(history,channelId).slice().reverse().find(x=>normalizeRenderPath(x.localFilePath)===p)}
 function verifiedHistoryForFile(history:UploadHistoryRecord[],channelId:string,file:RenderFolderVideoFile){return successfulHistory(history,channelId).slice().reverse().find(x=>historyMatchesFile(x,file))}
-function rowEvidence(base:RenderScanRow,h?:UploadHistoryRecord):RenderScanRow{return h?{...base,matchedHistoryId:h.id,historyJobId:h.jobId,youtubeVideoId:h.youtubeVideoId,historyFingerprint:h.sha256||undefined,historyFileSize:h.fileSize,historyUploadedAt:h.uploadedAt}:base}
+function rowEvidence(base:RenderScanRow,h?:UploadHistoryRecord):RenderScanRow{return h?{...base,matchedHistoryId:h.id,historyJobId:h.jobId,youtubeVideoId:h.youtubeVideoId,historyFingerprint:h.sha256||undefined,historyFileSize:h.fileSize,historyUploadedAt:h.uploadedAt,historyProofSource:h.fingerprintProofSource}:base}
 function isHistoricalGeneration(job:VideoJob){return Boolean(job.youtubeVideoId||job.storageLifecycle==='UPLOADED'||job.status==='SCHEDULED'||job.uploadedAt)}
 export function canRefreshCurrentGenerationEvidence(job:VideoJob){return !isHistoricalGeneration(job)}
 function currentGenerationFingerprint(job:VideoJob){const fp=String(job.currentSourceFingerprint||'').trim().toLowerCase();return trustedSha256(fp)?fp:undefined}
