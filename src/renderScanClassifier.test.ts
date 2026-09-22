@@ -7,7 +7,7 @@ const root='/workspace/Render/Glass City Lovers';
 const A='a'.repeat(64),B='b'.repeat(64),C='c'.repeat(64);
 const file=(n:number,pathRoot=root,fingerprint?:string,size=500_000_000):RenderFolderVideoFile=>({path:`${pathRoot}/${String(n).padStart(3,'0')} — Ready Videos.mov`,name:`${String(n).padStart(3,'0')} — Ready Videos.mov`,size,createdAt:1000+n,modifiedAt:2000+n,fingerprint});
 const job=(channelId:string,n:number,pathRoot=root,extra:Partial<VideoJob>={}):VideoJob=>({id:`${channelId}-${n}-${Math.random()}`,channelId,number:n,folder:pathRoot,status:'READY_UPLOAD',createdAt:'2026-09-20T00:00:00Z',tracksCount:15,minTracks:15,finalPath:file(n,pathRoot).path,title:`VIDEO_${n}`,description:'',tags:[],storageLifecycle:'NEW',...extra});
-const uploaded=(j:VideoJob,id='YT1',sha=A,size=500_000_000,path=j.finalPath!):UploadHistoryRecord=>({id:'u-'+j.id+'-'+id,jobId:j.id,channelId:j.channelId,youtubeVideoId:id,localFilePath:path,originalFilename:path.split('/').at(-1)!,uploadedAt:'2026-09-20T00:00:00Z',fileSize:size,sha256:sha,status:'UPLOADED'});
+const uploaded=(j:VideoJob,id='YT1',sha=A,size=500_000_000,path=j.finalPath!,proof:UploadHistoryRecord['fingerprintProofSource']='UPLOAD_TIME'):UploadHistoryRecord=>({id:'u-'+j.id+'-'+id,jobId:j.id,channelId:j.channelId,youtubeVideoId:id,localFilePath:path,originalFilename:path.split('/').at(-1)!,uploadedAt:'2026-09-20T00:00:00Z',fileSize:size,sha256:sha,status:'UPLOADED',fingerprintProofSource:proof,fingerprintCapturedAt:'2026-09-20T00:00:00Z',sourceGenerationKeyAtUpload:`${j.channelId}:${sha}:${size}`,uploadOperationId:'upload-op',proofSchemaVersion:1});
 
 describe('VYRON generation-aware channel render scan',()=>{
   it('classifies 29 untouched physical files into exactly 29 primary categories',()=>{
@@ -220,6 +220,34 @@ describe('VYRON generation-aware channel render scan',()=>{
     const active=job('glass',2,root,{status:'READY_UPLOAD',storageLifecycle:'NEW',currentSourceFingerprint:B,currentSourceFileSize:505_000_000});
     expect(canRefreshCurrentGenerationEvidence(historical)).toBe(false);
     expect(canRefreshCurrentGenerationEvidence(active)).toBe(true);
+  });
+
+  it('remote reconciliation cannot poison reused current path with an old YouTube ID',()=>{
+    const old=job('glass',1,root,{id:'historical-1',youtubeVideoId:'ABC123',uploadedAt:'2026-08-01T00:00:00Z',storageLifecycle:'UPLOADED',status:'SCHEDULED'});
+    const poisoned=uploaded(old,'ABC123',B,500_000_000,old.finalPath!,'LEGACY_RECONSTRUCTED');
+    const current=file(1,root,B,500_000_000);
+    const row=classifyChannelRenderFiles([current],[old],[poisoned],'glass',root)[0];
+    expect(row.classification).toBe('NEW_GENERATION');
+    expect(row.classification).not.toBe('UPLOADED_LOCAL_COPY');
+    expect(row.historyProofSource).toBe('LEGACY_RECONSTRUCTED');
+    expect(planRenderScanImport([row],[old]).accepted).toHaveLength(1);
+  });
+
+  it('real upload-time proof blocks same bytes, but reused path with new bytes is selectable',()=>{
+    const old=job('glass',1,root,{youtubeVideoId:'XYZ',storageLifecycle:'UPLOADED',status:'SCHEDULED'});
+    const proof=uploaded(old,'XYZ',B,500_000_000,old.finalPath!,'UPLOAD_TIME');
+    expect(classifyChannelRenderFiles([file(1,root,B,500_000_000)],[old],[proof],'glass',root)[0].classification).toBe('UPLOADED_LOCAL_COPY');
+    const changed=classifyChannelRenderFiles([file(1,root,C,500_000_001)],[old],[proof],'glass',root)[0];
+    expect(changed.classification).toBe('NEW_GENERATION');
+    expect(planRenderScanImport([changed],[old]).accepted).toHaveLength(1);
+  });
+
+  it('29 Glass current renders poisoned only by reconstructed history remain selectable',()=>{
+    const files:RenderFolderVideoFile[]=[],jobs:VideoJob[]=[],history:UploadHistoryRecord[]=[];
+    const nums=[...Array.from({length:14},(_,i)=>i+1),...Array.from({length:15},(_,i)=>i+16)];
+    for(const n of nums){const old=job('glass',n,root,{id:`old-${n}`,youtubeVideoId:`YT_${n}`,storageLifecycle:'UPLOADED',status:'SCHEDULED'}),sha=n.toString(16).padStart(64,'0'),size=500_000_000+n;files.push(file(n,root,sha,size));jobs.push(old);history.push(uploaded(old,`YT_${n}`,sha,size,old.finalPath!,'LEGACY_RECONSTRUCTED'));}
+    const rows=classifyChannelRenderFiles(files,jobs,history,'glass',root),summary=summarizeRenderScan(rows),plan=planRenderScanImport(rows,jobs);
+    expect(rows).toHaveLength(29);expect(summary.UPLOADED_LOCAL_COPY).toBe(0);expect(summary.NEW_GENERATION).toBe(29);expect(plan.accepted).toHaveLength(29);
   });
 
 });
