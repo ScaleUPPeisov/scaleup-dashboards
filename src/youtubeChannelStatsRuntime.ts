@@ -5,7 +5,7 @@ import type {YoutubeChannelStatistics,YoutubeProfile} from './types';
 import {isChannelStatsStale,normalizeChannelStatistics,preserveChannelStatisticsOnError} from './youtubeChannelStats';
 import {classifyYoutubeChannels,makeStatisticsSnapshot,migrateStatisticsBaselines,type LinkedYoutubeChannel} from './youtubeStatisticsCenter';
 import {youtubeOperationActualCost,youtubeQuotaUsage} from './youtubeQuota';
-import {appendErrorHistory} from './errorHistory';
+import {appendErrorHistory,resolveStatisticsCredentialErrors} from './errorHistory';
 
 export const BACKGROUND_CHANNEL_STATS_TTL_MS=45*60*1000;
 
@@ -77,6 +77,7 @@ export function refreshYoutubeProfileStatistics(profile:YoutubeProfile,operation
    applyToLinked([linked],linked.youtubeChannelId,stats);
    const actual=youtubeOperationActualCost(op),quotaAfter=youtubeQuotaUsage().used,completedAt=new Date().toISOString();
    journal({eventId,eventType:'CHANNEL_STATS_REFRESH',status:'SUCCESS',source:'LIVE_OPERATION',timestamp:completedAt,operationId:op,batchId:op,channelId:linked.channel.id,channelName:linked.channel.name,profileId:profile.id,details:{youtubeChannelId:linked.youtubeChannelId,apiRequests:Object.values(actual.methods).reduce((n,x)=>n+x.calls,0),quotaUnits:actual.buckets.general,quotaBefore,quotaAfter}});
+   resolveStatisticsCredentialErrors([profile.id]);
    return stats;
   }catch(error){
    preserveLinked(linked,error);
@@ -90,7 +91,7 @@ export function refreshYoutubeProfileStatistics(profile:YoutubeProfile,operation
  return task;
 }
 
-const BLOCKED_STATS_CREDENTIAL_STATES=new Set(['KEYCHAIN_BLOCKED','RECONNECT_REQUIRED','MISSING','WRONG_CHANNEL','FAILED','KEYCHAIN_ERROR']);
+const BLOCKED_STATS_CREDENTIAL_STATES=new Set(['NOT_CHECKED','CANONICAL_PRESENT_UNVERIFIED','CHECK_ON_USE','RECOVERABLE','RECOVERABLE_KEYCHAIN_BLOCKED','KEYCHAIN_BLOCKED','RECONNECT_REQUIRED','MISSING','WRONG_CHANNEL','FAILED','KEYCHAIN_ERROR']);
 export function planStatisticsBatchDrivers(chunk:LinkedYoutubeChannel[]){
  const unique=[...new Map(chunk.map(x=>[x.profile.id,x])).values()];
  const blocked=unique.filter(x=>BLOCKED_STATS_CREDENTIAL_STATES.has(String(x.profile.credentialStatus||'')));
@@ -177,7 +178,9 @@ async function runAll(force:boolean,onProgress?:((p:ChannelStatisticsRefreshProg
  const status=failed?(updated?'PARTIAL':'FAILED'):credentialFailures.length?'PARTIAL':'SUCCESS';
  journal({eventId:parentEventId,eventType:'STATS_REFRESH_BATCH',status,source:'LIVE_OPERATION',timestamp:completedAt,operationId,batchId:operationId,errorCode:failed&&!updated?'STATS_REFRESH_BATCH_FAILED':credentialFailures.length&&!updated?'OAUTH_KEYCHAIN_ACCESS_DENIED':undefined,details:{workspaceChannels:summary.workspaceChannels,eligibleChannels:summary.linkedChannels,requestedChannels:summary.requested,updatedChannels:updated,failedChannels:failed,credentialBlockedProfiles:credentialFailures.length,unlinked:summary.unlinked,orphans:summary.orphans,mismatched:summary.mismatched,duplicates:summary.duplicates,apiRequests,quotaUnits,quotaBefore,quotaAfter,failureChannels:failures.map(x=>x.channelName).slice(0,100)}});
  if(credentialFailures.length){
-  appendErrorHistory('OAuth-токены части каналов недоступны',`Keychain blocked: ${credentialFailures.length}. YouTube API requests: ${apiRequests}.`,credentialFailures.map(x=>`${x.channelName}: ${x.error}`).join('\n'),{errorCode:'KEYCHAIN_ACCESS_DENIED',stage:'preflight',rootIssueKey:`oauth-keychain-batch:${credentialFailures.map(x=>x.profileId).sort().join(',')}`,youtubeRequestSent:apiRequests>0});
+  appendErrorHistory('Подключение YouTube части каналов ещё не готово',`Ожидают восстановления: ${credentialFailures.length}. Запросы YouTube для них не выполнялись.`,credentialFailures.map(x=>`${x.channelName}: ${x.error}`).join('\n'),{errorCode:'KEYCHAIN_ACCESS_DENIED',stage:'preflight',rootIssueKey:`oauth-keychain-batch:${credentialFailures.map(x=>x.profileId).sort().join(',')}`,youtubeRequestSent:apiRequests>0});
+ }else if(updated>0){
+  resolveStatisticsCredentialErrors(entries.map(x=>x.profile.id));
  }
  return summary;
 }
