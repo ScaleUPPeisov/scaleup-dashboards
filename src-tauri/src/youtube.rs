@@ -220,6 +220,16 @@ fn resolved_credential_state(profile:&OAuthProfile,migration_state:&str,canonica
  }
  ("MISSING",validation.map(|v|v.result.clone()).filter(|x|!x.is_empty()).unwrap_or_else(||"NOT_RUN".into()),validation.and_then(|v|v.at.clone()))
 }
+fn validation_proves_profile_ready(profile:&OAuthProfile,validation:Option<&CredentialValidationV2State>)->bool{
+ let Some(expected)=profile.channel_id.as_deref().filter(|x|!x.trim().is_empty()) else{return false};
+ let Some(v)=validation else{return false};
+ if v.at.is_none()||v.expected_channel_id.as_deref()!=Some(expected){return false}
+ match v.result.as_str(){
+  "TOKEN_REFRESH_PASS"=>true,
+  "PASS"=>v.actual_channel_id.as_deref()==Some(expected),
+  _=>false,
+ }
+}
 fn resolved_client_secret_state(
  profile_cached:bool,
  profile_known:bool,
@@ -298,9 +308,10 @@ fn resolve_oauth_credential_states_local(app:&AppHandle)->Result<Vec<Value>,Stri
   let recoverable_denial=denial.as_ref().and_then(|x|x.get("currentErrorCode")).and_then(Value::as_str)
     .map(|code|matches!(code,"KEYCHAIN_AUTH_FAILED"|"KEYCHAIN_INTERACTION_REQUIRED"|"KEYCHAIN_ACCESS_DENIED"|"KEYCHAIN_ACCESS_DENIED_CACHED"))
     .unwrap_or(false);
+  let validated_ready=validation_proves_profile_ready(profile,validation);
   let credential_state=if vault_refresh_blocked||vault_profile_secret_blocked||vault_global_blocked{"RECOVERABLE_KEYCHAIN_BLOCKED"}
     else if vault_refresh_present{
-      if base_credential_state=="CONNECTED"{"READY"}else{"NOT_CHECKED"}
+      if validated_ready||base_credential_state=="CONNECTED"{"READY"}else{"NOT_CHECKED"}
     }
     else if canonical_present||legacy_present{"NEEDS_ONE_TIME_LOCAL_MIGRATION"}
     else if denial.is_some()&&recoverable_denial{"KEYCHAIN_BLOCKED"}
@@ -6778,6 +6789,11 @@ mod v2110_oauth_continuity_tests{
   assert_eq!(state,"CANONICAL_PRESENT_UNVERIFIED");
   assert_eq!(last,"LEGACY_PRESENT_UNVERIFIED");
   assert_ne!(state,"RECONNECT_REQUIRED");
+ }
+ #[test]fn local_vault_refresh_success_is_ready_without_keychain_presence(){
+  let profile=p("p1","UC1");
+  let validation=CredentialValidationV2State{at:Some("2026-09-22T00:00:00Z".into()),result:"TOKEN_REFRESH_PASS".into(),expected_channel_id:Some("UC1".into()),actual_channel_id:None};
+  assert!(validation_proves_profile_ready(&profile,Some(&validation)));
  }
  #[test]fn canonical_presence_without_validation_is_not_connected(){
   let profile=p("p1","UC1");
