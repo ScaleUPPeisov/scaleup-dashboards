@@ -39,4 +39,14 @@ export function resolveOAuthKeychainErrors(profileId:string,now=Date.now()){
   return {...row,resolvedAt:now,resolvedBy:`oauth-keychain-recovered:${profileId}`};
  }))
 }
+export function resolveStatisticsCredentialErrors(profileIds:string[]=[],now=Date.now()){
+ const ids=new Set(profileIds.filter(Boolean).map(x=>String(x).toLowerCase()));
+ save(load().map(row=>{
+  if(row.resolvedAt)return row;
+  const statsCredential=row.rootIssueKey?.startsWith('oauth-keychain-batch:')||row.errorCode==='KEYCHAIN_ACCESS_DENIED'&&row.stage==='preflight';
+  if(!statsCredential)return row;
+  if(row.profileId&&ids.size&&!ids.has(String(row.profileId).toLowerCase()))return row;
+  return {...row,resolvedAt:now,resolvedBy:'statistics-oauth-recovered'};
+ }))
+}
 export function subscribeErrorHistory(cb:()=>void){if(typeof window==='undefined')return()=>{};window.addEventListener(EVENT,cb);window.addEventListener('storage',cb);return()=>{window.removeEventListener(EVENT,cb);window.removeEventListener('storage',cb)}}
