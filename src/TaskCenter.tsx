@@ -1,5 +1,5 @@
 import React,{useEffect,useMemo,useState} from 'react';
-import {clearCompletedTasks,snapshotTasks,subscribeTasks,type PersistentTask,type TaskSnapshot} from './taskEngine';
+import {clearCompletedTasks,clearFailedTasks,clearTaskHistory,snapshotTasks,subscribeTasks,type PersistentTask,type TaskSnapshot} from './taskEngine';
 
 const UI_EVENT='vyron:task-center-ui';
 let openState=false;
@@ -46,6 +46,6 @@ function TaskCenterModal(){
    <div className="taskProgress">{t.progress!=null?<><div className="taskProgressBar"><i style={{width:t.progress+'%'}}/></div><div><b>{Math.round(t.progress)}%</b><span>{progressText(t)}</span></div></>:<div className="taskIndeterminate"><i/><span>{stateLabel[t.state]}</span></div>}{t.type==='UPLOAD'&&<small>{fmtSpeed(t.speedBps)}{t.etaSeconds!=null?' • ETA '+fmtEta(t.etaSeconds):''}</small>}</div>
    <div className="taskState"><b>{stateLabel[t.state]}</b><small>{new Date(t.updatedAt).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}</small>{t.error&&<details><summary>Ошибка</summary><p>{t.error}</p></details>}</div>
   </article>):<div className="empty compactEmpty"><i>✓</i><h3>Здесь задач нет</h3><p>Текущий фильтр пуст.</p></div>}</div>
-  <footer><button disabled={!counts.completed} onClick={clearCompletedTasks}>Очистить завершённые</button><button className="primary" onClick={closeTaskCenter}>Закрыть</button></footer>
+  <footer><button disabled={!counts.completed} onClick={clearCompletedTasks}>Очистить завершённые</button><button disabled={!counts.failed&&!counts.attention} onClick={clearFailedTasks}>Очистить ошибки</button><button disabled={!tasks.length} onClick={clearTaskHistory}>Очистить историю</button><button className="primary" onClick={closeTaskCenter}>Закрыть</button></footer>
  </section></div>
 }
