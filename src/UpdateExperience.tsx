@@ -1,5 +1,5 @@
 import React,{useMemo,useState} from 'react';
-import vyronIcon from '../src-tauri/icons/icon.png';
+const vyronIcon=new URL('../src-tauri/icons/icon.png',import.meta.url).href;
 import {useUpdaterRuntime} from './updaterRuntime';
 import {useApp} from './store';
 import {currentUpdaterBlockers,updaterBlockerText} from './updaterGuard';

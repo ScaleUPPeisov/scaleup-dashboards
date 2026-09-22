@@ -8,6 +8,7 @@ import {redactSensitive} from './securityRedaction';
 import {appendJournalEvent,normalizeActivityJournal} from './activityJournalCore';
 import {migrateUploadHistoryFingerprintProvenance} from './storageLifecycle';
 import {appendStatisticsSnapshot,normalizeStatisticsHistory} from './youtubeStatisticsCenter';
+import {resolvedJobStatus} from './activeErrors';
 
 export const DEFAULT_SETTINGS:Settings={
   workspace:'',endlumePath:'',youtubeApiKey:'',autoCheckUpdates:true,reduceMotion:false,fpsMonitor:true,interfaceDensity:'compact',
