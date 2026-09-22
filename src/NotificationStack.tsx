@@ -15,7 +15,7 @@ function ToastCard({item,onClose}:{item:AppNotification;onClose:()=>void}){
 export function NotificationCenter(){
   const [visible,setVisible]=useState<AppNotification[]>([]);const queue=useRef<AppNotification[]>([]);
   const fill=(rows:AppNotification[])=>{const next=[...rows];while(next.length<MAX_VISIBLE&&queue.current.length)next.push(queue.current.shift()!);return next};
-  useEffect(()=>subscribeNotifications(n=>setVisible(rows=>{if(rows.some(x=>x.operationId&&x.operationId===n.operationId))return rows;if(rows.length<MAX_VISIBLE)return[...rows,n];queue.current.push(n);return rows})),[]);
+  useEffect(()=>subscribeNotifications(n=>setVisible(rows=>{if(n.operationId){const index=rows.findIndex(x=>x.operationId===n.operationId);if(index>=0){const next=[...rows];next[index]=n;return next}const queued=queue.current.findIndex(x=>x.operationId===n.operationId);if(queued>=0){queue.current[queued]=n;return rows}}if(rows.length<MAX_VISIBLE)return[...rows,n];queue.current.push(n);return rows})),[]);
   const close=(id:string)=>setVisible(rows=>fill(rows.filter(x=>x.id!==id)));
   return <aside className="vyronNotificationCenter" aria-live="polite">{visible.map(x=><ToastCard key={x.id} item={x} onClose={()=>close(x.id)}/>)}</aside>
 }
