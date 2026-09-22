@@ -186,6 +186,34 @@ describe('VYRON generation-aware channel render scan',()=>{
     expect(preview.legacyUnproven).toHaveLength(0);
   });
 
+  it('29 physical renders with 29 historical YouTube jobs keep only exact same-channel fingerprint duplicates blocked',()=>{
+    const files:RenderFolderVideoFile[]=[],jobs:VideoJob[]=[],history:UploadHistoryRecord[]=[];
+    for(let n=1;n<=29;n++){
+      const old=job('glass',n,root,{id:`historical-${n}`,youtubeVideoId:`OLD_YT_${n}`,storageLifecycle:'UPLOADED',status:'SCHEDULED'});
+      const currentSha=n.toString(16).padStart(64,'0');
+      const size=500_000_000+n;
+      files.push(file(n,root,currentSha,size));
+      jobs.push(old);
+      if(n<=3)history.push(uploaded(old,`OLD_YT_${n}`,currentSha,size));
+      else history.push(uploaded(old,`OLD_YT_${n}`,'legacy-no-sha',size));
+    }
+    const rows=classifyChannelRenderFiles(files,jobs,history,'glass',root),summary=summarizeRenderScan(rows),plan=planRenderScanImport(rows,jobs);
+    expect(rows).toHaveLength(29);
+    expect(summary.UPLOADED_LOCAL_COPY).toBe(3);
+    expect(summary.NEW_GENERATION).toBe(26);
+    expect(plan.accepted).toHaveLength(26);
+    expect(plan.accepted.every(x=>x.classification==='NEW_GENERATION')).toBe(true);
+  });
+
+  it('active old local job with reused sequence cannot block different fingerprint at another current path',()=>{
+    const old=job('glass',15,'/legacy/local',{id:'active-local-old',sourceOrigin:'render-scan',currentSourceFingerprint:A,currentSourceFileSize:500_000_000});
+    const current=file(15,root,B,505_000_000);
+    const row=classifyChannelRenderFiles([current],[old],[],'glass',root)[0];
+    expect(row.classification).toBe('NEW_GENERATION');
+    expect(row.reason).toBe('ACTIVE_SEQUENCE_REUSED_WITH_NEW_FINGERPRINT');
+    expect(planRenderScanImport([row],[old]).accepted).toHaveLength(1);
+  });
+
   it('never rewrites fingerprint evidence on an uploaded historical generation',()=>{
     const historical=job('glass',1,root,{youtubeVideoId:'YT_OLD',uploadedAt:'2026-09-01T00:00:00Z',storageLifecycle:'UPLOADED',status:'SCHEDULED',currentSourceFingerprint:A,currentSourceFileSize:500_000_000});
     const active=job('glass',2,root,{status:'READY_UPLOAD',storageLifecycle:'NEW',currentSourceFingerprint:B,currentSourceFileSize:505_000_000});
