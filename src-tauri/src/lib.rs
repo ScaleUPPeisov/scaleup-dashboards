@@ -12,6 +12,7 @@ mod studio_drafts;
 mod youtube_intelligence;
 mod ai;
 mod production_manager;
+mod media_tools;
 mod local_delete;
 
 #[cfg_attr(mobile,tauri::mobile_entry_point)]
