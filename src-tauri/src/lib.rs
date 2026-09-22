@@ -4,6 +4,7 @@ use tauri::Manager;
 mod license;
 mod storage;
 mod security;
+mod oauth_vault;
 mod files;
 mod system;
 mod youtube;
