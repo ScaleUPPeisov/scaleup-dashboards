@@ -302,10 +302,10 @@ fn resolve_oauth_credential_states_local(app:&AppHandle)->Result<Vec<Value>,Stri
     else if vault_refresh_present{
       if base_credential_state=="CONNECTED"{"READY"}else{"NOT_CHECKED"}
     }
-    else if denial.is_some()&&canonical_present&&recoverable_denial{"RECOVERABLE_KEYCHAIN_BLOCKED"}
+    else if canonical_present||legacy_present{"NEEDS_ONE_TIME_LOCAL_MIGRATION"}
+    else if denial.is_some()&&recoverable_denial{"KEYCHAIN_BLOCKED"}
     else if denial.is_some(){"KEYCHAIN_BLOCKED"}
     else if currently_accessible&&base_credential_state=="CONNECTED"{"READY"}
-    else if canonical_present{"CANONICAL_PRESENT_UNVERIFIED"}
     else{base_credential_state};
   rows.push(json!({
    "profileUuid":profile.id,
@@ -2640,71 +2640,77 @@ pub async fn youtube_oauth_interactive_recover_blocked_profiles(app:AppHandle)->
  let mut recovered=0usize;let mut blocked=0usize;let mut reconnect=0usize;let mut failed=0usize;let mut skipped=0usize;
  for (index,profile) in store.profiles.iter().enumerate(){
   let profile_id=profile.id.clone();let expected=profile.channel_id.clone();
+  // Already-migrated local vault profiles never touch Keychain again.
+  if let Some(local_refresh)=oauth_vault::profile_refresh(&app,&profile_id)?{
+   let refresh_result=match resolve_client_secret_for_profile(&app,&profile_id,&profile.client_id){
+    Ok(resolved)=>refresh_access_token_http(&resolved.client_id,&local_refresh,Some(&resolved.client_secret)).await,
+    Err(e)=>Err(e),
+   };
+   match refresh_result{
+    Ok((access,expires))=>{
+     remember_access_token(&profile_id,&access,now_ts()+expires.max(60));
+     record_profile_credential_validation(&app,&profile_id,"TOKEN_REFRESH_PASS",expected.as_deref(),None)?;
+     skipped+=1;
+     rows.push(json!({"profileUuid":profile_id,"expectedChannelId":expected,"status":"READY","reasonCode":"LOCAL_VAULT_TOKEN_REFRESH_PASS","localVaultPrimary":true,"tokenRefresh":"PASS","browserLaunches":0,"youtubeApiRequests":0,"secretValuesIncluded":false}));
+    },
+    Err(e)=>{
+     let status=existing_profile_recovery_bucket("ACCESSIBLE",Some(&e));
+     if status=="RECONNECT_REQUIRED"{reconnect+=1;record_profile_credential_validation(&app,&profile_id,"RECONNECT_REQUIRED",expected.as_deref(),None)?;}else{failed+=1}
+     rows.push(json!({"profileUuid":profile_id,"expectedChannelId":expected,"status":status,"reasonCode":existing_profile_recovery_reason(&e),"localVaultPrimary":true,"tokenRefresh":"FAIL","errorCode":security_error_code_safe(&e),"browserLaunches":0,"youtubeApiRequests":0,"secretValuesIncluded":false}));
+    }
+   }
+   let status=rows.last().and_then(|x|x.get("status")).and_then(Value::as_str).unwrap_or("FAILED");
+   let _=app.emit("oauth-interactive-recovery-progress",json!({"done":index+1,"total":total,"profileUuid":profile.id,"status":status,"recoveredWithoutGoogle":recovered,"keychainBlocked":blocked,"reconnectRequired":reconnect,"failed":failed}));
+   continue
+  }
+
   let before_state=read_keychain_migration_v2(&app)?;
   let old_account=profile_refresh_token_account_from_state(&before_state,&profile_id);
-  let pointer_exists=before_state.refresh_token_accounts.get(&profile_id).map(|x|!x.trim().is_empty()).unwrap_or(false);
   let meta=security::canonical_account_metadata_diagnostic(&old_account);
   let canonical_visible=meta.get("metadataEnumeration").and_then(Value::as_str)==Some("VISIBLE");
   let denial=security::canonical_denial_diagnostic(&old_account);
-  let current_error=denial.as_ref().and_then(|x|x.get("currentErrorCode")).and_then(Value::as_str);
   let legacy_account=select_present_account(&legacy_refresh_candidates(&profile_id),&legacy_accounts);
-  let classification=classify_keychain_incident(pointer_exists,canonical_visible,legacy_account.is_some(),current_error).to_string();
-  let currently_ready=security::canonical_secret_cached(&old_account)&&denial.is_none();
-  if currently_ready{
-   skipped+=1;rows.push(json!({"profileUuid":profile_id,"expectedChannelId":expected,"oldAccount":old_account,"newAccount":old_account,"status":"READY","reasonCode":"ALREADY_ACCESSIBLE","classification":classification,"pointerChanged":false,"generationChanged":false,"tokenRefresh":"NOT_RUN","browserLaunches":0,"youtubeApiRequests":0,"secretValuesIncluded":false}));
-   let _=app.emit("oauth-interactive-recovery-progress",json!({"done":index+1,"total":total,"profileUuid":profile.id,"status":"READY","recoveredWithoutGoogle":recovered,"keychainBlocked":blocked,"reconnectRequired":reconnect,"failed":failed}));continue
-  }
   let interactive=if canonical_visible||denial.is_some(){security::canonical_interactive_recover_secret(&old_account)}
     else if let Some(ref legacy)=legacy_account{security::legacy_interactive_recover_secret(legacy)}
     else{Ok(None)};
   let refresh_token=match interactive{
    Ok(Some(v)) if !v.trim().is_empty()=>v,
    Ok(_)=>{
-    let reason=if pointer_exists{"STALE_POINTER"}else{"ITEM_MISSING"};reconnect+=1;
-    record_profile_credential_validation(&app,&profile_id,"RECONNECT_REQUIRED",expected.as_deref(),None)?;
-    rows.push(json!({"profileUuid":profile_id,"expectedChannelId":expected,"oldAccount":old_account,"newAccount":Value::Null,"status":"RECONNECT_REQUIRED","reasonCode":reason,"classification":classification,"pointerChanged":false,"generationChanged":false,"tokenRefresh":"NOT_RUN","browserLaunches":0,"youtubeApiRequests":0,"secretValuesIncluded":false}));
+    reconnect+=1;record_profile_credential_validation(&app,&profile_id,"RECONNECT_REQUIRED",expected.as_deref(),None)?;
+    rows.push(json!({"profileUuid":profile_id,"expectedChannelId":expected,"status":"RECONNECT_REQUIRED","reasonCode":"LEGACY_REFRESH_MISSING","localVaultPrimary":false,"tokenRefresh":"NOT_RUN","browserLaunches":0,"youtubeApiRequests":0,"secretValuesIncluded":false}));
     let _=app.emit("oauth-interactive-recovery-progress",json!({"done":index+1,"total":total,"profileUuid":profile.id,"status":"RECONNECT_REQUIRED","recoveredWithoutGoogle":recovered,"keychainBlocked":blocked,"reconnectRequired":reconnect,"failed":failed}));continue
    },
    Err(e)=>{
-    let is_blocked=keychain_repairable_error(&e);if is_blocked{blocked+=1}else{failed+=1};
-    rows.push(json!({"profileUuid":profile_id,"expectedChannelId":expected,"oldAccount":old_account,"newAccount":Value::Null,"status":if is_blocked{"KEYCHAIN_BLOCKED"}else{"FAILED"},"reasonCode":existing_profile_recovery_reason(&e),"classification":classification,"pointerChanged":false,"generationChanged":false,"tokenRefresh":"NOT_RUN","errorCode":security_error_code_safe(&e),"osstatus":osstatus_from_error(&e),"browserLaunches":0,"youtubeApiRequests":0,"secretValuesIncluded":false}));
-    let status=if is_blocked{"KEYCHAIN_BLOCKED"}else{"FAILED"};let _=app.emit("oauth-interactive-recovery-progress",json!({"done":index+1,"total":total,"profileUuid":profile.id,"status":status,"recoveredWithoutGoogle":recovered,"keychainBlocked":blocked,"reconnectRequired":reconnect,"failed":failed}));continue
+    let is_blocked=keychain_repairable_error(&e);if is_blocked{blocked+=1}else{failed+=1};let status=if is_blocked{"KEYCHAIN_BLOCKED"}else{"FAILED"};
+    rows.push(json!({"profileUuid":profile_id,"expectedChannelId":expected,"status":status,"reasonCode":existing_profile_recovery_reason(&e),"localVaultPrimary":false,"tokenRefresh":"NOT_RUN","errorCode":security_error_code_safe(&e),"osstatus":osstatus_from_error(&e),"browserLaunches":0,"youtubeApiRequests":0,"secretValuesIncluded":false}));
+    let _=app.emit("oauth-interactive-recovery-progress",json!({"done":index+1,"total":total,"profileUuid":profile.id,"status":status,"recoveredWithoutGoogle":recovered,"keychainBlocked":blocked,"reconnectRequired":reconnect,"failed":failed}));continue
    }
   };
-  let generation=next_profile_credential_generation(&before_state,&profile_id);
-  let secret_store=KeychainOAuthSecretStore;
-  let new_account=match rotate_recovered_refresh_with(&secret_store,&profile_id,generation,&refresh_token){
-   Ok(v)=>v,Err(e)=>{failed+=1;rows.push(json!({"profileUuid":profile_id,"expectedChannelId":expected,"oldAccount":old_account,"newAccount":Value::Null,"status":"FAILED","reasonCode":"NEW_ACCOUNT_WRITE_FAILED","classification":classification,"pointerChanged":false,"generationChanged":false,"tokenRefresh":"NOT_RUN","errorCode":security_error_code_safe(&e),"browserLaunches":0,"youtubeApiRequests":0,"secretValuesIncluded":false}));continue}
-  };
-  // Two-phase recovery: the old pointer remains authoritative until the freshly written
-  // Keychain item has been read back AND the recovered refresh token has passed a real
-  // Google token refresh. Never strand a profile on an unverified rotated credential.
+
+  // One-time migration target is the persistent encrypted local OAuth vault. Keychain is read-only legacy recovery here.
+  oauth_vault::upsert_profile(&app,&profile_id,expected.as_deref().unwrap_or(""),Some(&refresh_token),None,profile.google_email.as_deref(),Some(&profile.preferred_browser))?;
+  let readback=oauth_vault::profile_refresh(&app,&profile_id)?;
+  if readback.as_deref()!=Some(refresh_token.as_str()){
+   failed+=1;rows.push(json!({"profileUuid":profile_id,"expectedChannelId":expected,"status":"FAILED","reasonCode":"LOCAL_VAULT_READBACK_FAILED","localVaultPrimary":false,"tokenRefresh":"NOT_RUN","browserLaunches":0,"youtubeApiRequests":0,"secretValuesIncluded":false}));continue
+  }
   let refresh_result=match resolve_client_secret_for_profile(&app,&profile_id,&profile.client_id){
    Ok(resolved)=>refresh_access_token_http(&resolved.client_id,&refresh_token,Some(&resolved.client_secret)).await,
    Err(e)=>Err(e),
   };
   match refresh_result{
    Ok((access,expires))=>{
-    let mut next_state=read_keychain_migration_v2(&app)?;
-    commit_recovered_refresh_pointer(&mut next_state,&profile_id,&old_account,&new_account,generation);
-    if let Err(e)=write_keychain_migration_v2(&app,&next_state){
-     let _=security::canonical_delete_secret(&new_account);
-     failed+=1;
-     rows.push(json!({"profileUuid":profile_id,"expectedChannelId":expected,"oldAccount":old_account,"newAccount":new_account,"status":"FAILED","reasonCode":"POINTER_COMMIT_FAILED","pointerChanged":false,"generationChanged":false,"tokenRefresh":"PASS","errorCode":security_error_code_safe(&e),"browserLaunches":0,"youtubeApiRequests":0,"secretValuesIncluded":false}));
-     continue
-    }
     remember_access_token(&profile_id,&access,now_ts()+expires.max(60));
     record_profile_credential_validation(&app,&profile_id,"TOKEN_REFRESH_PASS",expected.as_deref(),None)?;
-    security::canonical_forget_cache(&old_account);
+    set_profile_migration_state(&app,&profile_id,MIGRATION_MIGRATED)?;
     recovered+=1;
-    rows.push(json!({"profileUuid":profile_id,"expectedChannelId":expected,"oldAccount":old_account,"newAccount":new_account,"status":"READY","reasonCode":"INTERACTIVE_ROTATION_TOKEN_REFRESH_PASS","classification":classification,"pointerChanged":true,"generationChanged":true,"credentialGeneration":generation,"tokenRefresh":"PASS","browserLaunches":0,"youtubeApiRequests":0,"secretValuesIncluded":false}));
+    rows.push(json!({"profileUuid":profile_id,"expectedChannelId":expected,"status":"READY","reasonCode":"LEGACY_IMPORTED_TO_LOCAL_VAULT","localVaultPrimary":true,"tokenRefresh":"PASS","browserLaunches":0,"youtubeApiRequests":0,"secretValuesIncluded":false}));
    },
    Err(e)=>{
-    // New item is only a staging credential until validation succeeds.
-    let _=security::canonical_delete_secret(&new_account);
+    // Do not leave a proven-revoked legacy token as the new normal local credential.
+    if e.starts_with("OAUTH_INVALID_GRANT:"){let _=oauth_vault::clear_profile_refresh(&app,&profile_id);}
     let status=existing_profile_recovery_bucket("ACCESSIBLE",Some(&e));
-    if status=="RECONNECT_REQUIRED"{reconnect+=1;record_profile_credential_validation(&app,&profile_id,"RECONNECT_REQUIRED",expected.as_deref(),None)?;}else if status=="KEYCHAIN_BLOCKED"{blocked+=1}else{failed+=1}
-    rows.push(json!({"profileUuid":profile_id,"expectedChannelId":expected,"oldAccount":old_account,"newAccount":Value::Null,"status":status,"reasonCode":existing_profile_recovery_reason(&e),"classification":classification,"pointerChanged":false,"generationChanged":false,"credentialGeneration":before_state.credential_generations.get(&profile_id).copied().unwrap_or(0),"tokenRefresh":"FAIL","errorCode":security_error_code_safe(&e),"browserLaunches":0,"youtubeApiRequests":0,"secretValuesIncluded":false}));
+    if status=="RECONNECT_REQUIRED"{reconnect+=1;record_profile_credential_validation(&app,&profile_id,"RECONNECT_REQUIRED",expected.as_deref(),None)?;}else{failed+=1}
+    rows.push(json!({"profileUuid":profile_id,"expectedChannelId":expected,"status":status,"reasonCode":existing_profile_recovery_reason(&e),"localVaultPrimary":status!="RECONNECT_REQUIRED","tokenRefresh":"FAIL","errorCode":security_error_code_safe(&e),"browserLaunches":0,"youtubeApiRequests":0,"secretValuesIncluded":false}));
    }
   }
   let status=rows.last().and_then(|x|x.get("status")).and_then(Value::as_str).unwrap_or("FAILED");
@@ -2801,9 +2807,14 @@ async fn valid_access_token(app:&AppHandle,profile_id:&str)->Result<(String,OAut
     if let Some((token,expires_at))=session_access_token(profile_id){
       s.profiles[idx].access_token=token.clone();
       s.profiles[idx].expires_at=expires_at;
+      let expected_channel_id=s.profiles[idx].channel_id.clone();
       if needs_identity{
         validate_profile_identity(app,&mut s.profiles[idx],&token).await?;
+        let actual=s.profiles[idx].identity_validated_channel_id.clone();
+        record_profile_credential_validation(app,profile_id,"PASS",expected_channel_id.as_deref(),actual.as_deref())?;
         write_oauth_metadata(&store_path(app)?,&s)?;
+      }else{
+        record_profile_credential_validation(app,profile_id,"TOKEN_REFRESH_PASS",expected_channel_id.as_deref(),None)?;
       }
       return Ok((token,s.profiles[idx].clone()))
     }
