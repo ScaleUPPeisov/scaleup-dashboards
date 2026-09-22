@@ -1,11 +1,31 @@
-import type {FingerprintCacheEntry,ProjectLifecycleRecord,UploadHistoryRecord,VideoJob} from './types';
+import type {ActivityEvent,FingerprintCacheEntry,ProjectLifecycleRecord,UploadHistoryRecord,VideoJob} from './types';
 
 export const STORAGE_STATE_VERSION=10;
-export function successfulUploadForHash(history:UploadHistoryRecord[],sha256:string,channelId?:string,fileSize?:number){const h=sha256.trim().toLowerCase();return history.slice().reverse().find(x=>x.status==='UPLOADED'&&Boolean(x.youtubeVideoId)&&!x.staleLinkClearedAt&&(!channelId||x.channelId===channelId)&&(fileSize==null||x.fileSize===fileSize)&&x.sha256.toLowerCase()===h)}
+export const UPLOAD_FINGERPRINT_PROOF_SCHEMA_VERSION=1;
+export function trustedUploadFingerprintProof(record:UploadHistoryRecord){
+ const source=record.fingerprintProofSource;
+ return (source==='UPLOAD_TIME'||source==='UPLOAD_RESUME_TIME')&&/^[a-f0-9]{64}$/i.test(String(record.sha256||'').trim())&&Number.isFinite(record.fileSize)&&record.fileSize>0;
+}
+export function successfulUploadForHash(history:UploadHistoryRecord[],sha256:string,channelId?:string,fileSize?:number){const h=sha256.trim().toLowerCase();return history.slice().reverse().find(x=>x.status==='UPLOADED'&&Boolean(x.youtubeVideoId)&&!x.staleLinkClearedAt&&trustedUploadFingerprintProof(x)&&(!channelId||x.channelId===channelId)&&(fileSize==null||x.fileSize===fileSize)&&x.sha256.toLowerCase()===h)}
 export function duplicateUploadIds(jobs:VideoJob[],fingerprints:Record<string,{sha256:string}>,history:UploadHistoryRecord[],allowOverrideIds:Set<string>=new Set()){return jobs.filter(j=>{if(allowOverrideIds.has(j.id))return false;const fp=fingerprints[j.id];return Boolean(fp&&successfulUploadForHash(history,fp.sha256,j.channelId,(fp as {sha256:string;size?:number}).size))}).map(j=>j.id)}
-export function recordVerifiedUpload(history:UploadHistoryRecord[],record:Omit<UploadHistoryRecord,'id'|'status'>){if(!record.youtubeVideoId?.trim())throw new Error('VERIFIED_VIDEO_ID_REQUIRED');if(!record.sha256?.trim())throw new Error('SHA256_REQUIRED');return[...history,{...record,processingState:record.processingState||'UPLOAD_ACCEPTED',id:crypto.randomUUID(),status:'UPLOADED' as const}]}
+export function recordVerifiedUpload(history:UploadHistoryRecord[],record:Omit<UploadHistoryRecord,'id'|'status'>){if(!record.youtubeVideoId?.trim())throw new Error('VERIFIED_VIDEO_ID_REQUIRED');if(!record.sha256?.trim())throw new Error('SHA256_REQUIRED');const proofSource=record.fingerprintProofSource||'UNKNOWN';return[...history,{...record,fingerprintProofSource:proofSource,proofSchemaVersion:record.proofSchemaVersion||UPLOAD_FINGERPRINT_PROOF_SCHEMA_VERSION,processingState:record.processingState||'UPLOAD_ACCEPTED',id:crypto.randomUUID(),status:'UPLOADED' as const}]}
+function eventFileSize(event:ActivityEvent){const n=Number(event.details?.fileSize);return Number.isFinite(n)&&n>0?n:undefined}
+function sameUploadOperation(a:ActivityEvent,b:ActivityEvent){return Boolean(a.operationId&&b.operationId&&a.operationId===b.operationId)}
+export function migrateUploadHistoryFingerprintProvenance(history:UploadHistoryRecord[],activity:ActivityEvent[],jobs:VideoJob[]){
+ const byJob=new Map(jobs.map(j=>[j.id,j]));
+ return history.map(row=>{
+  if(row.fingerprintProofSource)return row;
+  const accepted=activity.find(e=>e.source==='LIVE_OPERATION'&&e.eventType==='UPLOAD_ACCEPTED'&&e.status==='SUCCESS'&&e.jobId===row.jobId&&e.channelId===row.channelId&&e.youtubeVideoId===row.youtubeVideoId);
+  const started=accepted&&activity.find(e=>e.source==='LIVE_OPERATION'&&e.eventType==='UPLOAD_STARTED'&&e.status==='STARTED'&&e.jobId===row.jobId&&e.channelId===row.channelId&&sameUploadOperation(e,accepted));
+  const job=byJob.get(row.jobId),historicalUploadHash=String(job?.uploadFingerprint||'').trim().toLowerCase();
+  const strong=Boolean(accepted&&started&&eventFileSize(started)===row.fileSize&&/^[a-f0-9]{64}$/i.test(historicalUploadHash)&&historicalUploadHash===String(row.sha256||'').trim().toLowerCase());
+  if(strong)return{...row,fingerprintProofSource:'UPLOAD_TIME' as const,fingerprintCapturedAt:started!.timestamp,sourceGenerationKeyAtUpload:`${row.channelId}:${row.sha256.toLowerCase()}:${row.fileSize}`,uploadOperationId:accepted!.operationId,proofSchemaVersion:UPLOAD_FINGERPRINT_PROOF_SCHEMA_VERSION};
+  const reconstructed=activity.some(e=>e.jobId===row.jobId&&e.youtubeVideoId===row.youtubeVideoId&&(e.eventType==='REMOTE_VIDEO_VERIFIED'||e.eventType==='RECONCILIATION_COMPLETED')&&(e.source==='LIVE_OPERATION'||e.source==='RECONSTRUCTED'));
+  return{...row,fingerprintProofSource:(reconstructed?'LEGACY_RECONSTRUCTED':'UNKNOWN') as 'LEGACY_RECONSTRUCTED'|'UNKNOWN',proofSchemaVersion:UPLOAD_FINGERPRINT_PROOF_SCHEMA_VERSION};
+ });
+}
 export function updateUploadProcessing(history:UploadHistoryRecord[],jobId:string,patch:Partial<Pick<UploadHistoryRecord,'processingState'|'processingCheckedAt'|'processingStatus'|'processingError'|'readyAt'|'identityVerifiedAt'>>){return history.map(x=>x.jobId===jobId&&x.status==='UPLOADED'?{...x,...patch}:x)}
-export function cleanupEligibleUpload(x:UploadHistoryRecord,job?:VideoJob){if(x.status!=='UPLOADED'||x.processingState!=='READY'||x.remoteExists===false||!x.youtubeVideoId?.trim()||!x.profileId?.trim()||!x.localFilePath?.trim()||!trustedGenerationHash(x.sha256)||Boolean(x.trashedAt)||x.sourceLifecycle!=='PRESENT')return false;if(job){if(job.id!==x.jobId||job.finalPath!==x.localFilePath)return false;if(!currentGenerationMatchesProof(job,x))return false}return true}
+export function cleanupEligibleUpload(x:UploadHistoryRecord,job?:VideoJob){if(x.status!=='UPLOADED'||x.processingState!=='READY'||x.remoteExists===false||!x.youtubeVideoId?.trim()||!x.profileId?.trim()||!x.localFilePath?.trim()||!trustedUploadFingerprintProof(x)||Boolean(x.trashedAt)||x.sourceLifecycle!=='PRESENT')return false;if(job){if(job.id!==x.jobId||job.finalPath!==x.localFilePath)return false;if(!currentGenerationMatchesProof(job,x))return false}return true}
 export function cacheHit(entry:FingerprintCacheEntry|undefined,size:number,mtimeMs:number){return Boolean(entry&&entry.size===size&&entry.mtimeMs===mtimeMs&&/^[a-f0-9]{64}$/i.test(entry.sha256))}
 export function nextProjectLifecycle(base:ProjectLifecycleRecord,history:UploadHistoryRecord[]){const proof=base.jobId?history.slice().reverse().find(x=>x.jobId===base.jobId&&x.status==='UPLOADED'&&x.processingState==='READY'&&Boolean(x.youtubeVideoId)):undefined;return{...base,status:(base.renderExists&&base.renderPath&&proof?'SAFE_TO_CLEAN':'RENDERED') as ProjectLifecycleRecord['status'],youtubeVideoId:proof?.youtubeVideoId,uploadedAt:proof?.uploadedAt,updatedAt:new Date().toISOString()}}
 export function canSafelyCleanProject(x:ProjectLifecycleRecord){return x.status==='SAFE_TO_CLEAN'&&Boolean(x.renderExists&&x.renderPath&&x.youtubeVideoId&&x.jobId)}
@@ -19,7 +39,7 @@ export function latestUploadRecord(history:UploadHistoryRecord[],jobId:string){r
 function trustedGenerationHash(value?:string){return /^[a-f0-9]{64}$/i.test(String(value||'').trim())}
 function currentGenerationMatchesProof(job:VideoJob,proof?:UploadHistoryRecord){
  const current=String(job.currentSourceFingerprint||'').trim().toLowerCase();
- if(!proof||!trustedGenerationHash(current)||!trustedGenerationHash(proof.sha256))return false;
+ if(!proof||!trustedGenerationHash(current)||!trustedUploadFingerprintProof(proof))return false;
  return current===proof.sha256.trim().toLowerCase()&&Number(job.currentSourceFileSize)===Number(proof.fileSize);
 }
 export function classifyUploadState(job:VideoJob,history:UploadHistoryRecord[]):CanonicalUploadState{
