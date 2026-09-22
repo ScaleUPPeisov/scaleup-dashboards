@@ -23,6 +23,7 @@ export function AuthRecoveryCenter(){
  const [preReconnectProfileId,setPreReconnectProfileId]=useState('');
  const [wrongChannel,setWrongChannel]=useState<(OAuthReconnectWrongChannel&{browser:string})|null>(null);
  const credentialsFile=useRef<HTMLInputElement>(null);
+ const initialRecoveryStarted=useRef(false);
 
  async function load(){
   const [p,resolved,global]=await Promise.all([api.youtubeProfiles(),api.youtubeOauthCredentialStates(),api.youtubeGoogleConfig()]);
@@ -36,19 +37,34 @@ export function AuthRecoveryCenter(){
    const result=await api.youtubeOauthRecoverExistingProfiles();
    setAutomatic(result);
    await load();
-   if(!quiet)notifySuccess('Сохранённые подключения проверены','Автоматически восстановлено: '+result.automaticallyRestored+'. Ручной вход нужен только для '+result.manualQueue+' профилей. Браузер автоматически не открывался.');
+   if(!quiet)notifySuccess('Сохранённые подключения проверены','Автоматически восстановлено: '+result.automaticallyRestored+'. Ручной вход нужен только для '+result.reconnectRequired+' профилей. Браузер автоматически не открывался.');
    return result
   }catch(e){if(!quiet)notifyError('Автоматическое восстановление не завершено',String(e),{persistError:false});return null}
   finally{setBusy('')}
  }
- useEffect(()=>{void load().catch(e=>notifyError('Не удалось открыть восстановление каналов',String(e),{persistError:false}))},[]);
+ useEffect(()=>{
+  if(initialRecoveryStarted.current)return;
+  initialRecoveryStarted.current=true;
+  void (async()=>{
+   try{
+    const initial=await load();
+    const needsRecovery=initial.credentialStates.profiles.some(x=>x.credentialState==='NOT_CHECKED'||x.credentialState==='CANONICAL_PRESENT_UNVERIFIED');
+    if(initial.global.oauthReady&&initial.profiles.length&&needsRecovery){
+     const result=await api.youtubeOauthRecoverExistingProfiles();
+     setAutomatic(result);
+     await load();
+    }
+   }catch(e){notifyError('Не удалось открыть восстановление каналов',String(e),{persistError:false})}
+  })()
+ },[]);
 
  const rows=useMemo(()=>buildFinalRecoveryRows(channels,profiles,credentialStates.profiles,transient),[channels,profiles,credentialStates,transient]);
  const queue=useMemo(()=>reconnectQueue(rows),[rows]),unmapped=useMemo(()=>channelsWithoutProfile(channels,profiles),[channels,profiles]);
  const connected=rows.filter(x=>x.status==='CONNECTED').length,keychainBlocked=rows.filter(x=>x.status==='KEYCHAIN BLOCKED').length;
  const unresolved=rows.filter(x=>x.status!=='CONNECTED'&&x.status!=='CANONICAL_PRESENT_UNVERIFIED'&&x.status!=='NOT CHECKED');
  const reconnectRequired=queue.length;
- const manualQueue=keychainBlocked+reconnectRequired+rows.filter(x=>x.status==='FAILED'||x.status==='WRONG CHANNEL').length;
+ // Manual Google login is factual reconnect state only. NOT_CHECKED/Keychain/FAILED are not login evidence.
+ const manualQueue=reconnectRequired;
 
  async function reconnect(profileId:string,browserChoice?:string){
   if(busy)return;const row=rows.find(x=>x.profileId===profileId);if(!row)return;
@@ -86,7 +102,7 @@ export function AuthRecoveryCenter(){
    const result=await api.youtubeOauthInteractiveRecoverBlockedProfiles();
    setInteractive({...result,running:false,done:result.total});
    await load();
-   if(result.recoveredWithoutGoogle)notifySuccess('Сохранённые подключения восстановлены',`Без Google-входа восстановлено: ${result.recoveredWithoutGoogle}. Требуют ручного входа: ${result.manualQueue}.`);
+   if(result.recoveredWithoutGoogle)notifySuccess('Сохранённые подключения восстановлены',`Без Google-входа восстановлено: ${result.recoveredWithoutGoogle}. Требуют ручного входа: ${result.reconnectRequired}.`);
    else notifyWarning('Автоматически восстановить токены не удалось',`Доступ заблокирован macOS: ${result.keychainBlocked}. Требуют входа: ${result.reconnectRequired}. Ошибки: ${result.failed}. Google-браузеры не открывались.`);
   }catch(e){notifyError('Восстановление Keychain не завершено',String(e),{persistError:false})}
   finally{stop?.();setBusy('')}
@@ -98,7 +114,7 @@ export function AuthRecoveryCenter(){
    if(!status.oauthReady)throw new Error('OAUTH_CLIENT_SETUP_REQUIRED: GLOBAL Client Secret не читается');
    setBusy('');
    const result=await runAutomaticRecovery(true);
-   if(result)notifySuccess('GLOBAL OAuth Client восстановлен','Один credentials.json применён ко всему VYRON. Автоматически восстановлено: '+result.automaticallyRestored+'; ручной вход: '+result.manualQueue+'.');
+   if(result)notifySuccess('GLOBAL OAuth Client восстановлен','Один credentials.json применён ко всему VYRON. Автоматически восстановлено: '+result.automaticallyRestored+'; ручной вход: '+result.reconnectRequired+'.');
   }catch(e){notifyError('Не удалось восстановить GLOBAL OAuth Client',String(e),{persistError:false})}
   finally{setBusy('')}
  }
