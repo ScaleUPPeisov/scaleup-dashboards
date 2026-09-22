@@ -438,6 +438,27 @@ pub fn canonical_verify_secret(account:&str,expected:&str)->Result<bool,String>{
 pub fn legacy_get_secret_once(account:&str)->Result<Option<String>,String>{get_secret(account)}
 pub fn canonical_service()->&'static str{CANONICAL_SERVICE}
 
+pub const OAUTH_VAULT_SERVICE:&str="com.scaleup.vyron.oauth-vault";
+pub const OAUTH_VAULT_MASTER_ACCOUNT:&str="master-key";
+#[cfg(target_os="macos")]
+pub fn oauth_vault_master_key_get(interactive:bool)->Result<Option<String>,String>{
+ let raw=if interactive{
+  secitem_interactive_get(OAUTH_VAULT_SERVICE,OAUTH_VAULT_MASTER_ACCOUNT,"oauth_vault_master_interactive")?
+ }else{
+  with_keychain_no_ui(||secitem_no_ui_get(OAUTH_VAULT_SERVICE,OAUTH_VAULT_MASTER_ACCOUNT,"oauth_vault_master_no_ui"))?
+ };
+ raw.map(|v|String::from_utf8(v).map_err(|_|"OAUTH_VAULT_MASTER_KEY_INVALID_UTF8".to_string())).transpose()
+}
+#[cfg(not(target_os="macos"))]
+pub fn oauth_vault_master_key_get(_interactive:bool)->Result<Option<String>,String>{Ok(None)}
+#[cfg(target_os="macos")]
+pub fn oauth_vault_master_key_set(value:&str)->Result<(),String>{
+ with_keychain_no_ui(||secitem_no_ui_set(OAUTH_VAULT_SERVICE,OAUTH_VAULT_MASTER_ACCOUNT,value.as_bytes(),"oauth_vault_master_write"))
+}
+#[cfg(not(target_os="macos"))]
+pub fn oauth_vault_master_key_set(_value:&str)->Result<(),String>{Err("OAUTH_VAULT_MASTER_KEY_UNSUPPORTED".into())}
+
+
 fn keychain_error(kind:&str,account:&str,code:i32,detail:&str)->String{
  if code==INTERACTION_NOT_ALLOWED{INTERACTIVE_UI_REQUESTS_BLOCKED.fetch_add(1,Ordering::SeqCst);}
  if matches!(code,AUTH_FAILED|INTERACTION_NOT_ALLOWED|USER_CANCELED)&&!kind.starts_with("canonical_"){KEYCHAIN_ACCESS_BLOCKED.store(true,Ordering::SeqCst);}
