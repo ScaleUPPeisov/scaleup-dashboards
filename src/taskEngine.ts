@@ -67,8 +67,17 @@ export function subscribeTasks(cb:(snapshot:TaskSnapshot)=>void){
  window.addEventListener(EVENT,fn);cb(snapshotTasks());return()=>window.removeEventListener(EVENT,fn);
 }
 export function ensureTask(input:Omit<PersistentTask,'createdAt'|'updatedAt'|'retryState'|'state'> & {state?:TaskState;retryState?:TaskRetryState;createdAt?:string}){
+ const state=readRaw(),stamp=now();
+ if(input.resourceKey){
+  let changed=false;
+  const tasks=state.tasks.map(x=>{
+   if(x.taskId===input.taskId||x.resourceKey!==input.resourceKey||!['FAILED','ATTENTION_REQUIRED'].includes(x.state))return x;
+   changed=true;
+   return{...x,state:'CANCELLED' as const,error:undefined,retryState:'NONE' as const,detail:'Предыдущая ошибка закрыта новой попыткой.',completedAt:stamp,updatedAt:stamp}
+  });
+  if(changed){memory={version:1,tasks};emit()}
+ }
  const existing=readRaw().tasks.find(x=>x.taskId===input.taskId);
- const stamp=now();
  return replace({...existing,...input,state:input.state||existing?.state||'QUEUED',retryState:input.retryState||existing?.retryState||'NONE',progress:clamp(input.progress??existing?.progress),createdAt:existing?.createdAt||input.createdAt||stamp,updatedAt:stamp} as PersistentTask);
 }
 export function startTask(taskId:string,detail?:string){
@@ -100,6 +109,12 @@ export function removeTask(taskId:string){
 }
 export function clearCompletedTasks(){
  const state=readRaw();memory={version:1,tasks:state.tasks.filter(x=>!['SUCCEEDED','CANCELLED'].includes(x.state))};emit();
+}
+export function clearFailedTasks(){
+ const state=readRaw();memory={version:1,tasks:state.tasks.filter(x=>!['FAILED','ATTENTION_REQUIRED'].includes(x.state))};emit();
+}
+export function clearTaskHistory(){
+ const state=readRaw();memory={version:1,tasks:state.tasks.filter(x=>['QUEUED','RUNNING'].includes(x.state))};emit();
 }
 export function activeTaskForResource(resourceKey:string){
  return readRaw().tasks.find(x=>x.resourceKey===resourceKey&&['QUEUED','RUNNING'].includes(x.state));
