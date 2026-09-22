@@ -51,7 +51,9 @@ describe('VYRON 3.0.0 final owner workflow contracts',()=>{
   expect(rust).toContain('oauth-vault.enc');
   expect(rust).toContain('MASTER_CACHE');
   expect(rust).toContain('VAULT_CACHE');
-  expect(rust).toContain('atomic');
+  expect(rust).toContain('enc.tmp');
+  expect(rust).toContain('sync_all()');
+  expect(rust).toContain('fs::rename(&tmp,&p)');
   expect(security).toContain('com.scaleup.vyron.oauth-vault');
   expect(security).toContain('master-key');
  });
