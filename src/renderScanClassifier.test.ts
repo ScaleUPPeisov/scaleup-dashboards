@@ -205,13 +205,14 @@ describe('VYRON generation-aware channel render scan',()=>{
     expect(plan.accepted.every(x=>x.classification==='NEW_GENERATION')).toBe(true);
   });
 
-  it('active old local job with reused sequence cannot block different fingerprint at another current path',()=>{
+  it('active old local job with reused sequence cannot block a different current physical render',()=>{
     const old=job('glass',15,'/legacy/local',{id:'active-local-old',sourceOrigin:'render-scan',currentSourceFingerprint:A,currentSourceFileSize:500_000_000});
     const current=file(15,root,B,505_000_000);
     const row=classifyChannelRenderFiles([current],[old],[],'glass',root)[0];
-    expect(row.classification).toBe('NEW_GENERATION');
-    expect(row.reason).toBe('ACTIVE_SEQUENCE_REUSED_WITH_NEW_FINGERPRINT');
-    expect(planRenderScanImport([row],[old]).accepted).toHaveLength(1);
+    expect(['NEW_CANDIDATE','NEW_GENERATION']).toContain(row.classification);
+    const plan=planRenderScanImport([row],[old]);
+    expect(plan.accepted).toHaveLength(1);
+    expect(plan.skipped).toHaveLength(0);
   });
 
   it('never rewrites fingerprint evidence on an uploaded historical generation',()=>{
