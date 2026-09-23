@@ -22,7 +22,7 @@ describe('VYRON 3.1.1 global UI overflow contract',()=>{
   it('account reconnect uses compact visible Russian label and full accessible explanation',()=>{
     const s=read('AccountsPage.tsx');
     expect(s).toContain("?'Войти заново':'Переподключить'");
-    expect(s).toContain("Повторно подключить канал через выбранный браузер");
+    expect(s).toContain("Переподключить через браузер");
     expect(s).not.toContain("?'Войти заново через браузер':'Переподключить через браузер'");
     expect(css).toContain('.accountActions button,.accountRowStats .accountActions button{white-space:normal!important;width:100%');
   });
