@@ -1,0 +1,232 @@
+/* VYRON 3.1.1 — FINAL GLOBAL UI LAYOUT CONTRACT
+   IMPORTANT: this file is imported LAST. It intentionally wins over legacy v*.css. */
+
+html,body,#root,.appShell,.main,.pageWrap{max-width:100%;overflow-x:hidden}
+.main,.pageWrap,.pageWrap>*,.panel,.settingsCard,.channelCard,.channelFleetCard,.competitorCard,.accountRow,.job,.publishStep,.productionChannelRow{min-width:0;max-width:100%}
+input,select,textarea,label{min-width:0;max-width:100%;box-sizing:border-box}
+
+/* Shared control safety. Keep component-specific flex/grid display, but never let text escape its control. */
+button,[role="button"]{
+  min-width:0!important;
+  max-width:100%;
+  height:auto;
+  box-sizing:border-box;
+  line-height:1.2;
+  white-space:normal!important;
+  overflow-wrap:anywhere;
+  word-break:normal;
+  text-align:center;
+}
+button>*{min-width:0;max-width:100%}
+.iconBtn,.topErrorButton,.globalTaskIndicator,.globalUploadIndicator{overflow-wrap:normal}
+
+/* Every action cluster may shrink and wrap. Russian strings are the primary layout target. */
+.headerActions,.accountActions,.googleConfigActions,.channelActions,.fleetActions,.pmActions,.cardActions,.jobActions,
+.publishToolbar,.publishActions,.metadataPasteActions,.batchScopeActions,.vyronNoticeActions,.scheduleActions,
+.scheduleStartChoice,.scheduleApplyBar,.pathLine,.addLine,.browserPicker footer,.confirmModal footer,
+.oauthSetupModal footer,.duplicateChannelModal footer,.taskCenterModal>footer,.updateActions,.resultActions{
+  min-width:0;
+  max-width:100%;
+  display:flex;
+  align-items:center;
+  gap:8px;
+  flex-wrap:wrap;
+}
+.headerActions>*,.accountActions>*,.googleConfigActions>*,.channelActions>*,.fleetActions>*,.pmActions>*,
+.cardActions>*,.jobActions>*,.publishToolbar>*,.publishActions>*,.browserPicker footer>*,
+.confirmModal footer>*,.taskCenterModal>footer>*{min-width:0;max-width:100%}
+
+/* Account cards: old v080 nowrap is explicitly neutralized here. */
+.accountRow,.accountRowStats{min-width:0!important}
+.accountMain,.accountMeta,.accountStatsGrid,.accountActions{min-width:0}
+.accountActions button,.accountRowStats .accountActions button{white-space:normal!important;width:100%;overflow-wrap:anywhere}
+.accountRowStats .accountActions{
+  display:grid!important;
+  grid-template-columns:repeat(2,minmax(0,1fr))!important;
+  gap:6px!important;
+  align-self:start;
+}
+.accountBadges{min-width:0;max-width:100%;flex-wrap:wrap}
+.accountBadges>*{max-width:100%;overflow-wrap:anywhere}
+
+/* Publisher warnings/actions. */
+.publishCheck{min-width:0;max-width:100%;align-items:center;flex-wrap:wrap}
+.publishCheck>b,.publishCheck>span,.publishCheck>div{min-width:0;overflow-wrap:anywhere}
+.publishCheck>span{flex:1 1 260px}
+.publishCheck>button{flex:0 1 auto}
+.renderSourceOffline{
+  display:grid!important;
+  grid-template-columns:minmax(0,1fr) auto!important;
+  align-items:center!important;
+  gap:10px 14px!important;
+}
+.renderSourceOfflineMessage{display:grid;gap:3px;min-width:0}
+.renderSourceOfflineMessage span{min-width:0;overflow-wrap:anywhere}
+.renderSourceOfflineActions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;min-width:0}
+.renderSourceOfflineActions button{flex:0 1 auto}
+
+/* Topbar: no fixed-height collision when groups wrap. */
+.topbar.vyronMasterTopbar{
+  height:auto!important;
+  min-height:56px;
+  flex:0 0 auto!important;
+  padding:8px 24px!important;
+  display:grid!important;
+  grid-template-columns:minmax(190px,1fr) auto auto;
+  align-items:center!important;
+  gap:8px 12px!important;
+  overflow:visible;
+}
+.topbarIdentity,.topbarQuota,.topStatus{min-width:0!important;max-width:100%}
+.topbarIdentity{display:grid!important;gap:2px}
+.topbarIdentity .crumb,.topbarIdentity>b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.topbarQuota,.vyronMasterTopbar .topStatus{
+  display:flex!important;
+  align-items:center;
+  justify-content:flex-end;
+  gap:7px!important;
+  flex-wrap:wrap!important;
+  margin-left:0!important;
+}
+.topbarQuota>span,.topStatus>span,.topStatus>button{
+  min-width:0!important;
+  max-width:100%;
+  flex:0 1 auto!important;
+}
+.topbarQuota>span{padding:6px 9px!important}
+.topStatus>span,.topStatus>button{white-space:normal!important}
+
+/* Global floating centers live below content, never over topbar controls. */
+.globalUploadIndicator,.globalTaskIndicator{
+  position:fixed!important;
+  left:auto!important;
+  top:auto!important;
+  right:20px!important;
+  max-width:min(360px,calc(100vw - 40px))!important;
+  min-width:0!important;
+}
+.globalUploadIndicator{bottom:20px!important}
+.globalTaskIndicator{bottom:76px!important}
+
+/* Tabs/segmented controls wrap instead of forcing page width. */
+.youtubeTabs,.youtubeMasterTabs,.settingsTabs,.settingsTabs.osTabs,.masterSettingsTabs,.analyticsDetailTabs,
+.taskCenterTabs,.periodTabs,.filterChips,.scheduleModeTabs,.scheduleModeButtons,.publisherScheduleButtons,
+.productionTabs,.pmTabs,.modeSwitch{
+  width:100%!important;
+  max-width:100%;
+  min-width:0;
+  display:flex;
+  align-items:center;
+  gap:6px;
+  flex-wrap:wrap!important;
+  overflow:visible!important;
+}
+.youtubeTabs button,.youtubeMasterTabs button,.settingsTabs button,.analyticsDetailTabs button,.taskCenterTabs button,
+.periodTabs button,.filterChips button,.scheduleModeTabs button,.scheduleModeButtons button,.productionTabs button{
+  min-width:0!important;
+  flex:0 1 auto;
+}
+
+/* Card actions get their own space instead of squeezing primary text. */
+.channelActions,.fleetActions{
+  width:100%;
+  display:grid!important;
+  grid-template-columns:repeat(auto-fit,minmax(92px,1fr));
+  align-items:stretch;
+}
+.channelActions button,.fleetActions button{width:100%}
+.channelTop,.channelFleetCard>header,.panelHead,.workspaceHead,.competitorOSCard footer{min-width:0;max-width:100%}
+.channelTop>div,.channelFleetCard>header>*,.panelHead>*,.workspaceHead>*,.competitorOSCard footer>*{min-width:0}
+
+/* Forms/toolbars: flexible input first, actions wrap after it. */
+.pathLine input{flex:1 1 260px!important;width:auto!important}
+.pathLine button{flex:0 1 auto}
+.addLine{grid-template-columns:minmax(180px,1fr) repeat(2,minmax(0,1fr)) auto!important}
+.fleetToolbar,.analyticsToolbar,.quotaPreflight,.existingToolbar,.metadataInline,.materialToolbar{min-width:0;max-width:100%}
+.fleetToolbar>input{min-width:180px;flex:1 1 280px}
+
+/* Modals always remain inside the viewport, including reduced-height windows. */
+.modalBackdrop{
+  padding:clamp(10px,2vw,20px)!important;
+  overflow:auto!important;
+  align-items:center!important;
+}
+.modalBackdrop>.confirmModal,.confirmModal{
+  width:min(720px,calc(100vw - 24px))!important;
+  max-width:calc(100vw - 24px)!important;
+  max-height:calc(100vh - 24px)!important;
+  overflow:auto!important;
+  min-width:0;
+}
+.confirmModal footer,.browserPicker footer,.taskCenterModal>footer{
+  justify-content:flex-end;
+  position:relative;
+  inset:auto;
+}
+.confirmModal footer button,.browserPicker footer button,.taskCenterModal>footer button{flex:0 1 auto}
+
+/* Upload/Task/Error centers: content may shrink; only deliberate data containers may scroll horizontally. */
+.uploadCenterModal,.taskCenterModal,.errorCenterModal{min-width:0;max-width:calc(100vw - 24px)!important}
+.uploadCenterHead,.uploadCenterHeadStats,.uploadCenterRows,.uploadCenterRow,.uploadHistoryRow,.taskCenterRow,.errorCenterRows{min-width:0;max-width:100%}
+.uploadCenterHead{flex-wrap:wrap}
+.uploadCenterHeadStats{flex-wrap:wrap!important}
+.uploadIdentity,.uploadProgressArea,.uploadTiming,.uploadHistoryIdentity,.uploadHistoryState,.taskIdentity,.taskProgress,.taskState{min-width:0}
+.uploadIdentity b,.uploadIdentity span,.uploadHistoryIdentity b,.uploadHistoryIdentity small,.taskIdentity span{max-width:100%}
+.errorCenterRows article{min-width:0}
+.errorCenterRows article b,.errorCenterRows article p,.errorCenterRows pre{overflow-wrap:anywhere;word-break:break-word;max-width:100%}
+
+.table,.topVideoTable,.competitorComparison,.analyticsTopVideos{max-width:100%;overflow-x:auto}
+
+/* 1440: keep desktop density but allow card action grids to breathe. */
+@media(max-width:1440px){
+  .pageWrap{padding-left:26px;padding-right:26px}
+  .channelContextBar{grid-template-columns:minmax(180px,1fr) minmax(0,2.4fr)}
+  .channelContextControls{grid-column:1/-1}
+  .fleetMetrics,.competitorMetrics{grid-template-columns:repeat(4,minmax(0,1fr))}
+}
+
+/* 1280: main content is narrow after the sidebar; topbar and account actions become multi-row. */
+@media(max-width:1280px){
+  .topbar.vyronMasterTopbar{grid-template-columns:minmax(180px,1fr) auto}
+  .vyronMasterTopbar .topStatus{grid-column:1/-1;justify-content:flex-start}
+  .accountRowStats{grid-template-columns:44px minmax(0,1fr)!important}
+  .accountRowStats .accountMeta,.accountRowStats .accountActions{grid-column:2!important}
+  .renderSourceOffline{grid-template-columns:1fr!important}
+  .renderSourceOfflineActions{justify-content:flex-start}
+  .addLine{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+  .addLine>*:first-child{grid-column:1/-1}
+}
+
+/* 1024: closest supported Mac width. No global horizontal scroll, actions become full-width where useful. */
+@media(max-width:1024px){
+  .pageWrap{padding:18px 16px 52px!important}
+  .topbar.vyronMasterTopbar{grid-template-columns:1fr;padding:8px 14px!important}
+  .topbarQuota,.vyronMasterTopbar .topStatus{width:100%;justify-content:flex-start!important}
+  .topbarIdentity>b{white-space:normal}
+  .accountRowStats .accountActions{grid-template-columns:1fr!important}
+  .channelActions,.fleetActions{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .headerActions{justify-content:flex-start}
+  .headerActions>*{flex:0 1 auto}
+  .pathLine{align-items:stretch}
+  .pathLine input{flex:1 1 100%!important}
+  .pathLine button{flex:1 1 140px}
+  .addLine{display:flex!important;flex-wrap:wrap}
+  .addLine>*{flex:1 1 180px;min-width:0}
+  .channelContextBar{grid-template-columns:1fr!important}
+  .channelContextMetrics{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+  .uploadCenterRow,.taskCenterRow,.uploadHistoryRow{grid-template-columns:1fr!important}
+  .taskState{text-align:left!important}
+}
+
+/* Small/narrow modal fallback. */
+@media(max-width:700px){
+  .channelActions,.fleetActions{grid-template-columns:1fr}
+  .confirmModal footer button,.browserPicker footer button,.taskCenterModal>footer button{flex:1 1 180px}
+  .topbarQuota>span,.topStatus>span,.topStatus>button{flex:1 1 140px!important}
+}
+
+/* Reduced-height Mac windows: footer/actions remain reachable. */
+@media(max-height:760px){
+  .modalBackdrop{align-items:start!important;padding-top:8px!important;padding-bottom:8px!important}
+  .modalBackdrop>.confirmModal,.confirmModal{max-height:calc(100vh - 16px)!important}
+}

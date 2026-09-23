@@ -417,7 +417,7 @@ export function AccountsPage(){
         <button className="mini" disabled={busy} onClick={()=>void checkProfile(p)}>Проверить</button>
         {credentialState==='KEYCHAIN_BLOCKED'&&<button className="mini" disabled={busy} onClick={()=>void safeRetryProfile(p)}>Безопасный retry</button>}
         <button className="mini" disabled={!!refreshingStats[p.id]} onClick={()=>void refreshProfileStats(p)}>{refreshingStats[p.id]?'↻ Обновление…':'↻ Обновить'}</button>
-        <button className="mini" disabled={busy} onClick={()=>void askBrowser(p.id)}>{credentialState==='KEYCHAIN_BLOCKED'?'Войти заново через браузер':'Переподключить через браузер'}</button>
+        <button className="mini" disabled={busy} title={credentialState==='KEYCHAIN_BLOCKED'?'Повторно войти через выбранный браузер':'Повторно подключить канал через выбранный браузер'} aria-label={credentialState==='KEYCHAIN_BLOCKED'?'Повторно войти через выбранный браузер':'Повторно подключить канал через выбранный браузер'} onClick={()=>void askBrowser(p.id)}>{credentialState==='KEYCHAIN_BLOCKED'?'Войти заново':'Переподключить'}</button>
         <button className="danger mini" disabled={busy} onClick={async()=>{await api.youtubeDisconnect(p.id);await refresh()}}>Удалить</button>
        </div>
       </article>
