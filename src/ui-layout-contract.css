@@ -303,3 +303,47 @@ button>*{min-width:0;max-width:100%}
 .recoveryDialogV320 footer{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-top:14px}.recoveryDialogV320 footer button{flex:0 1 auto}
 @media(max-width:700px){.recoveryFactsV320{grid-template-columns:repeat(2,minmax(0,1fr))!important}.recoveryDialogV320 footer button{flex:1 1 160px}}
 @media(max-height:760px){.recoveryOverlay{place-items:start center!important;padding:8px!important}.recoveryDialogV320{max-height:calc(100vh - 16px)!important}}
+
+
+/* ================================================================
+   VYRON 3.2.1 — PHYSICAL SIDEBAR REGRESSION / SAFE DESKTOP WIDTH
+   Legacy ".sidebar nav span{width:17px}" must never size the text label.
+   ================================================================ */
+.sidebar{
+  width:228px!important;
+  min-width:228px!important;
+  max-width:228px!important;
+  flex:0 0 228px!important;
+  flex-shrink:0!important;
+}
+.sidebarNav{width:100%!important;box-sizing:border-box!important}
+.sidebar nav .sidebarNavItem{
+  grid-template-columns:24px minmax(0,1fr)!important;
+  width:100%!important;
+  min-width:0!important;
+  box-sizing:border-box!important;
+}
+.sidebar nav .sidebarIconSlot{
+  width:24px!important;
+  min-width:24px!important;
+  max-width:24px!important;
+  text-align:center!important;
+  overflow:visible!important;
+}
+.sidebar nav .sidebarLabel{
+  width:auto!important;
+  min-width:0!important;
+  max-width:none!important;
+  display:block!important;
+  text-align:left!important;
+  white-space:nowrap!important;
+  overflow:visible!important;
+  text-overflow:clip!important;
+  overflow-wrap:normal!important;
+  word-break:normal!important;
+}
+.sidebar>.brand,.sidebar>.sideFoot{width:100%!important;min-width:0!important;box-sizing:border-box!important}
+.sideFoot{overflow:hidden!important}
+@media(max-width:1024px){
+  .sidebar{width:228px!important;min-width:228px!important;max-width:228px!important;flex-basis:228px!important}
+}
