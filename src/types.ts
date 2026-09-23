@@ -23,6 +23,7 @@ export type ChannelStatisticsHistory=Record<string,ChannelStatisticsSnapshot[]>;
 
 export type YoutubeChannelStatistics={
   channelId?:string; channelTitle?:string; handle?:string; thumbnail?:string;
+  publishedAt?:string; country?:string; defaultLanguage?:string;
   subscriberCount?:number; viewCount?:number; videoCount?:number; hiddenSubscriberCount?:boolean;
   statisticsUpdatedAt?:string; lastAttemptAt?:string; syncWarning?:string;
   // Legacy aliases retained for compatibility with pre-2.1.14 views/state.
