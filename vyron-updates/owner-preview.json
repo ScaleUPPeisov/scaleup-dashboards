@@ -1,15 +1,15 @@
 {
-  "version": "3.0.0-preview.320",
-  "notes": "VYRON 3.0.0 Owner Preview build 320. Commit dd1a1fb786c3.",
-  "pub_date": "2026-09-22T14:59:05Z",
-  "artifactSha256": "2102c99f9e31dd886018fa7f47487668bcf60aa2f90376e9102cc41477cb213b",
-  "buildRevision": 320,
-  "commit": "dd1a1fb786c37112e09ec51bea28c47561577617",
-  "productVersion": "3.0.0",
+  "version": "3.1.0-preview.328",
+  "notes": "• Аналитика обновляется внутри своей страницы\\n• Удалена лишняя вкладка «Данные YouTube»\\n• Конкуренты стали самостоятельным публичным радаром\\n• Календарь объединён с расписанием\\n• Обновлён раздел каналов и Production\\n• Исправлены процент задач, старые ошибки, кнопки и уведомления",
+  "pub_date": "2026-09-23T01:03:10Z",
+  "artifactSha256": "7ce38787c1cbb014e1053cfb97381eb1102413acd61737c4fed1263de3b7f507",
+  "buildRevision": 328,
+  "commit": "9a08658bfe5711fb3ce844f371e218186cab84dc",
+  "productVersion": "3.1.0",
   "platforms": {
     "darwin-aarch64": {
-      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/vyron-owner-preview-320/VYRON-3.0.0-build-320.app.tar.gz",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM2FjWWt0bi9NaWtITTVnODZBWGVJOGY5RlNpdVNMQTV1a2dLTitSdGhGcEgxRDFxOGxWVkhPSlduMndkUmg1N05QREpHSlZON1J2ZUliM3NDWXE1M2dJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMDg5MTE5CWZpbGU6VllST04uYXBwLnRhci5negoxdFlkZ0VFTWR1YUd2ZXZiN0hidjlLWncydTB3dlNobXdTVGJqUVBoUmNLR0tOeEJIZm8zdlNDc3IxKzV2cGhFY0R5d1FwZnhhTzkvVktSR2FmTG5Ddz09Cg=="
+      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/vyron-owner-preview-328/VYRON-3.1.0-build-328.app.tar.gz",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM1pwVEFhL0NxOWlyR2dzR3d5cDdySUk5NWRVUjBwajhMLzBqdHI1blBGV1pRejlablJEL3l5ekhNeTROekt0d2t0S2ZSajNtWlRlb0NyZWJFaWtXREFNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMTI1MzYyCWZpbGU6VllST04uYXBwLnRhci5negp2U1RNOGVQdG1vdGMrNU5WN25wei9YK1VseUl2MC9CQzRUM0tqamdNcTZqcGJuZHJSUmxUMXNDdXJTNGk0MzBwdHRxcEg5WUI4Q1dPVG9IRzZIcGpBQT09Cg=="
     }
   }
 }
