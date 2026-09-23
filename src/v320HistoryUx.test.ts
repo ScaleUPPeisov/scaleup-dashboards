@@ -7,8 +7,8 @@ describe('VYRON 3.2 history and navigation UX',()=>{
  it('backfills the complete public VYRON journey from 0.5.0',()=>{
    expect(VYRON_FIRST_RELEASE.version).toBe('0.5.0');
    expect(VYRON_FIRST_RELEASE.date).toBe('2026-08-31');
-   expect(VYRON_CURRENT_RELEASE.version).toBe('3.2.0');
-   for(const v of ['0.9.0','0.9.1','0.9.2','0.9.9','1.0.0','1.0.15','1.1.0','1.2.0','2.0.0','2.0.13','2.1.0','2.1.15-rc.7','3.0.0','3.1.0','3.1.1','3.2.0'])expect(VYRON_RELEASE_HISTORY.some(x=>x.version===v),v).toBe(true);
+   expect(VYRON_CURRENT_RELEASE.version).toBe('3.2.1');
+   for(const v of ['0.9.0','0.9.1','0.9.2','0.9.9','1.0.0','1.0.15','1.1.0','1.2.0','2.0.0','2.0.13','2.1.0','2.1.15-rc.7','3.0.0','3.1.0','3.1.1','3.2.0','3.2.1'])expect(VYRON_RELEASE_HISTORY.some(x=>x.version===v),v).toBe(true);
    expect(VYRON_RELEASE_HISTORY.some(x=>x.version==='0.4.0')).toBe(false);
    expect(VYRON_RELEASE_HISTORY.length).toBeGreaterThanOrEqual(50);
  });
