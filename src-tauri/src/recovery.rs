@@ -241,7 +241,9 @@ fn resolve_external_path(original:&str,expected:&RecoveryVolumeIdentity,relative
 fn small_image_sha256(path:&Path,size:u64)->Option<String>{
     let ext=path.extension()?.to_string_lossy().to_ascii_lowercase();
     if !matches!(ext.as_str(),"jpg"|"jpeg"|"png"|"webp"|"avif"|"heic")||size>64*1024*1024{return None}
-    let mut f=File::open(path).ok()?,h=Sha256::new(),buf=[0u8;1024*1024];
+    let mut f=File::open(path).ok()?;
+    let mut h=Sha256::new();
+    let mut buf=[0u8;1024*1024];
     loop{let n=f.read(&mut buf).ok()?;if n==0{break}h.update(&buf[..n]);}
     Some(hex::encode(h.finalize()))
 }

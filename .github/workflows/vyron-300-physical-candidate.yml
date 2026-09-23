@@ -586,7 +586,7 @@ jobs:
           rev,sha,url,manifest_commit=sys.argv[1:]
           x=json.load(open('/tmp/owner-preview-authoritative.json'))
           assert x['version']==f'3.2.0-preview.{rev}'
-          assert x['buildRevision']==int(rev)>320
+          assert x['buildRevision']==int(rev)>331
           assert x['artifactSha256']==sha
           assert x['commit']
           p=x['platforms']['darwin-aarch64']
