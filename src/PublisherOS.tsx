@@ -26,7 +26,7 @@ import {journal} from './activityJournalRuntime';
 import {buildLegacyRecoveryPreview,canRefreshCurrentGenerationEvidence,classifyChannelRenderFiles,crossChannelScanRecoveryJobs,normalizeRenderPath,planRenderScanImport,summarizeRenderScan,type LegacyRecoveryPreview,type RenderScanRow,type RenderScanSummary} from './renderScanClassifier';
 import {completeTask,ensureTask,failTask,startTask,updateTask} from './taskEngine';
 import {ModalPortal} from './ModalPortal';
-import {cleanupCandidateBytes,cleanupCandidateIds,confirmedCleanupCandidates,latestChannelUploadBatchId} from './postUploadCleanup';
+import {cleanupCandidateBytes,cleanupCandidateIds,confirmedCleanupCandidates,latestChannelUploadBatchId,postUploadCleanupEligible} from './postUploadCleanup';
 
 const status=(j:VideoJob)=>j.status==='READY_UPLOAD'?'В ОЧЕРЕДИ':j.status==='UPLOADING'?'ЗАГРУЖАЕТСЯ':j.status==='SCHEDULED'?'YOUTUBE ✓':j.status==='ERROR'?'ОШИБКА':j.status;
 const pct=(a:number,b:number)=>b?Math.min(100,Math.max(0,a/b*100)):0;
@@ -109,11 +109,11 @@ export function PublisherOS(){
      }
      if(idx>=0)nextHistory[idx]={...nextHistory[idx],sourceLifecycle:'PRESENT',sourceCheckedAt:at};
      const currentProof=idx>=0?nextHistory[idx]:proof;
-     if(!cleanupEligibleUpload(currentProof,j)){if(currentProof.processingState!=='READY')processing++;else verification++;continue}
+     if(!postUploadCleanupEligible(currentProof,j)){if(currentProof.processingState==='PROCESSING_UNKNOWN'||currentProof.processingState==='PROCESSING_FAILED'||currentProof.processingState==='REJECTED')processing++;else verification++;continue}
      journal({eventId:operationId+':requested:'+proof.id,eventType:'SOURCE_TRASH_REQUESTED',status:'STARTED',source:'LIVE_OPERATION',timestamp:at,operationId,batchId:operationId,channelId,channelName:channel?.name||channelId,profileId:proof.profileId,jobId:j.id,youtubeVideoId:proof.youtubeVideoId,localSourcePath:proof.localFilePath,details:{filename:proof.originalFilename}});
      try{
       const p=await api.youtubeVideoProcessingStatus(proof.profileId!,proof.youtubeVideoId,`${operationId}:verify:${j.id}`);
-      if(p.processingState!=='READY'||!p.identityVerified){processing++;continue}
+      if((p.processingState!=='READY'&&p.processingState!=='YOUTUBE_PROCESSING')||!p.identityVerified){processing++;continue}
       const cache=useApp.getState().fingerprintCache[proof.localFilePath],fp=await api.youtubeFileFingerprint(proof.localFilePath,cache?{size:cache.size,mtimeMs:cache.mtimeMs,sha256:cache.sha256}:undefined);
       if(fp.fingerprint.toLowerCase()!==proof.sha256.toLowerCase()||fp.size!==proof.fileSize){changed++;if(idx>=0)nextHistory[idx]={...nextHistory[idx],sourceLifecycle:'SOURCE_CHANGED',sourceCheckedAt:new Date().toISOString()};continue}
       const trash=await api.trashLocalFile(proof.localFilePath,allowedRoots);
