@@ -4,6 +4,51 @@ export type ReleaseHistoryEntry={date:string;version:string;title:string;type:Re
 export const VYRON_RELEASE_HISTORY:ReleaseHistoryEntry[]=[
   {
     "date": "2026-09-23",
+    "version": "3.2.1",
+    "title": "Physical UI & Safe Cleanup",
+    "type": "PATCH",
+    "highlights": [
+      "🧭 Sidebar снова показывает полные русские названия без обрезки до одной буквы.",
+      "🗑️ Добавлена безопасная очистка подтверждённо загруженных локальных видео через системную Корзину.",
+      "🌎 Страна канала и язык YouTube берутся из авторитетных YouTube metadata, а не из устаревшего локального RU.",
+      "🔒 OAuth continuity и Publisher upload/fingerprint identity сохранены без архитектурной переработки."
+    ],
+    "sections": {
+      "features": [
+        "Очистка поддерживает последнюю upload batch и все подтверждённые загрузки текущего канала.",
+        "Частичная партия удаляет только успешно подтверждённые файлы; failed/unknown/mismatched остаются на диске."
+      ],
+      "fixes": [
+        "Исправлен legacy CSS width на sidebar label, из-за которого Главная/Каналы/Производство отображались как Г../К../П...",
+        "Страна канала теперь следует приоритету live YouTube → сохранённый YouTube cache → ручной fallback.",
+        "Язык YouTube больше не подменяется локальным языком приложения/канала."
+      ],
+      "interface": [
+        "Sidebar закреплён на безопасной desktop-ширине 228 px с одинаковой геометрией строк.",
+        "Cleanup confirmation показывает количество видео и объём перед перемещением в Корзину."
+      ],
+      "reliability": [
+        "Перед Trash повторно сверяются trusted upload-time SHA-256 + fileSize с текущим физическим файлом.",
+        "После cleanup Render folder пересканируется, uploadHistory и YouTube ID сохраняются.",
+        "AppleDouble и cross-channel файлы исключены из cleanup candidates."
+      ],
+      "security": [
+        "Permanent delete не используется; применяется системная Корзина macOS.",
+        "Новые OAuth scopes не добавлялись."
+      ],
+      "technical": [
+        "Patch поверх verified 3.2.0 build 335 baseline.",
+        "Stable feed остаётся заморожен до owner physical acceptance."
+      ]
+    },
+    "technicalItems": [
+      "Baseline: 0800e8d72b7cff7d9233e6f9a7f8b003bb7aa6f3.",
+      "Stable feed remains frozen pending physical acceptance."
+    ],
+    "technicalBuilds": []
+  },
+  {
+    "date": "2026-09-23",
     "version": "3.2.0",
     "title": "Crash Recovery & Development Journey",
     "type": "MINOR",
