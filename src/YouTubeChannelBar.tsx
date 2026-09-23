@@ -14,7 +14,7 @@ const fmtDate=(iso?:string)=>iso?new Date(iso).toLocaleDateString('ru-RU'):'—'
 const fmtDateTime=(iso?:string)=>iso?new Date(iso).toLocaleString('ru-RU'):'—';
 
 export function YouTubeChannelBar(){
- const channels=useApp(s=>s.channels),jobs=useApp(s=>s.jobs),channelKey=channels.map(c=>c.id).join('|');
+ const channels=useApp(s=>s.channels)||[],jobs=useApp(s=>s.jobs)||[],channelKey=channels.map(c=>c.id).join('|');
  const [activeId,setActiveId]=useState(()=>resolveYoutubeActiveChannel(channels,loadActivePublishChannel())),[query,setQuery]=useState(''),[feedback,setFeedback]=useState(''),[refreshing,setRefreshing]=useState(false),[profiles,setProfiles]=useState<YoutubeProfile[]>([]);
  useEffect(()=>subscribeActivePublishChannel(id=>{setActiveId(resolveYoutubeActiveChannel(channels,id));const c=channels.find(x=>x.id===id);if(c)setFeedback('Активный канал: '+c.name)}),[channelKey]);
  useEffect(()=>{let live=true;const refresh=()=>void api.youtubeProfiles().then(p=>{if(live)setProfiles(p)}).catch(()=>{});refresh();window.addEventListener('vyron:oauth-state-changed',refresh);return()=>{live=false;window.removeEventListener('vyron:oauth-state-changed',refresh)}},[]);

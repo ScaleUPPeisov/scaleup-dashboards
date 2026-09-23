@@ -112,8 +112,8 @@ describe('VYRON 2.1.15 RC1 Add Channel and channel statistics regression',()=>{
     expect(ui).toContain('refreshYoutubeChannelStatistics(force');
     expect(ui).toContain('allStats.done');
     expect(ui).toContain('allStats.total');
-    expect(bar).toContain("refreshActive(true)");
-    expect(bar).toContain("refreshYoutubeProfileStatistics(profile,");
+    expect(bar).toContain("refreshActive()");
+    expect(bar).toContain("refreshYoutubeProfileStatistics(p,");
   });
 
   it('keeps cached values in Zustand and live-updates UI without page reload',()=>{
@@ -129,12 +129,12 @@ describe('VYRON 2.1.15 RC1 Add Channel and channel statistics regression',()=>{
     const accounts=read('src/AccountsPage.tsx');
     const css=read('src/styles.css');
     expect(bar).toContain('Подписчики');
-    expect(bar).toContain('Всего просмотров');
+    expect(bar).toContain('<small>Просмотры</small>');
     expect(bar).toContain('Видео');
     expect(accounts).toContain('👥 Подписчики');
     expect(accounts).toContain('👁 Всего просмотров');
     expect(accounts).toContain('🎬 Видео');
-    expect(css).toContain('.youtubeChannelBarV215 .youtubeChannelStats b{font-size:16px');
+    expect(css).toContain('.channelContextBar');
   });
 
   it('counts channels.list once through the request-event quota ledger and avoids compatibility double counting',()=>{

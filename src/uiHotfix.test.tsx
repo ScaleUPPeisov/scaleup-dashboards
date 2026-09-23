@@ -24,8 +24,8 @@ describe('VYRON 2.1.6 UI hotfix',()=>{
   hydrate([]);
   const html=renderToStaticMarkup(<DashboardOS/>);
   for(const label of ['КАНАЛЫ','ГОТОВО ВИДЕО','В ОЧЕРЕДИ','ЗАГРУЖАЕТСЯ','ЗАПЛАНИРОВАНО','ОШИБКИ'])expect(html).toContain(label);
-  expect(html).toContain('PRODUCTION');
-  expect(html).toContain('UPLOAD QUEUE');
+  expect(html).toContain('ПРОИЗВОДСТВО');
+  expect(html).toContain('YOUTUBE');
   expect(html).toContain('ТРЕБУЕТ ВНИМАНИЯ');
   expect(html).not.toContain('Views 28d');
   expect(html).not.toContain('Revenue 28d');

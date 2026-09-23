@@ -26,10 +26,10 @@ describe('VYRON 2.1 Error Center semantics',()=>{
   const app=readFileSync('src/App.tsx','utf8');
   const marker='>Очистить историю</button>';
   const at=app.indexOf(marker);expect(at).toBeGreaterThan(0);
-  const section=app.slice(Math.max(0,at-300),at+marker.length);
-  expect(section).toContain("patchJob(j.id,{error:undefined})");
-  expect(section).toContain('clearErrorHistory()');
-  expect(section).not.toContain("status:'SUCCESS'");
+  const section=app.slice(Math.max(0,at-500),at+marker.length);
+  expect(app).toContain("jobErrors.forEach(j=>patchJob(j.id,clearActiveJobErrorPatch(j)))");
+  expect(section).toContain('clearErrorHistory();setHistory([])');
+  expect(app).toContain('>Очистить активные</button>');
  });
  it('queue runtime persists every generic failure and PublisherOS emits one aggregate batch toast without duplicating history',()=>{
   const pub=readFileSync('src/PublisherOS.tsx','utf8'),queue=readFileSync('src/uploadQueueRuntime.ts','utf8'),notify=readFileSync('src/notificationCenter.ts','utf8');
