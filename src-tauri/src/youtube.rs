@@ -1228,6 +1228,9 @@ fn youtube_channel_statistics_value(item:&Value)->Value{
         "channelTitle":sn.get("title").and_then(Value::as_str),
         "handle":sn.get("customUrl").and_then(Value::as_str),
         "thumbnail":thumbnail,
+        "publishedAt":sn.get("publishedAt").and_then(Value::as_str),
+        "country":sn.get("country").and_then(Value::as_str),
+        "defaultLanguage":sn.get("defaultLanguage").and_then(Value::as_str),
         "subscriberCount":if hidden{Value::Null}else{parse_count("subscriberCount").map(Value::from).unwrap_or(Value::Null)},
         "viewCount":parse_count("viewCount"),
         "videoCount":parse_count("videoCount"),
@@ -7172,10 +7175,13 @@ mod v2114_channel_statistics_tests{
  use super::*;
  #[test]
  fn exact_statistics_are_numeric_and_include_handle(){
-  let item=json!({"id":"UC1","snippet":{"title":"Neon Drive FM","customUrl":"@neondrive","thumbnails":{"high":{"url":"https://img"}}},"statistics":{"subscriberCount":"254","viewCount":"40382","videoCount":"87","hiddenSubscriberCount":false}});
+  let item=json!({"id":"UC1","snippet":{"title":"Neon Drive FM","customUrl":"@neondrive","publishedAt":"2025-08-01T12:00:00Z","country":"US","defaultLanguage":"en","thumbnails":{"high":{"url":"https://img"}}},"statistics":{"subscriberCount":"254","viewCount":"40382","videoCount":"87","hiddenSubscriberCount":false}});
   let out=youtube_channel_statistics_value(&item);
   assert_eq!(out["channelId"],"UC1");
   assert_eq!(out["handle"],"@neondrive");
+  assert_eq!(out["publishedAt"],"2025-08-01T12:00:00Z");
+  assert_eq!(out["country"],"US");
+  assert_eq!(out["defaultLanguage"],"en");
   assert_eq!(out["subscriberCount"],254);
   assert_eq!(out["viewCount"],40382);
   assert_eq!(out["videoCount"],87);
