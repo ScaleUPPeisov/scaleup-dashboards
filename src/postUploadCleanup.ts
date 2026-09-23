@@ -36,4 +36,4 @@ export function confirmedCleanupCandidates(
 }
 
 export function cleanupCandidateIds(rows:UploadHistoryRecord[]){return rows.map(row=>row.jobId)}
-export function cleanupCandidateBytes(rows:UploadHistoryRecord[]){return rows.reduce((sum,row)=>sum+(Number.isFinite(row.fileSize)?row.fileSize:0),0)}
+export function cleanupCandidateBytes(rows:UploadHistoryRecord[]){const seen=new Set<string>();let total=0;for(const row of rows.slice().reverse()){if(seen.has(row.jobId))continue;seen.add(row.jobId);if(Number.isFinite(row.fileSize))total+=row.fileSize}return total}
