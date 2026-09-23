@@ -7,7 +7,8 @@ export type ImportSession={schemaVersion:number;sessionId:string;channelId:strin
 export type MusicSummary={libraryPath:string;tracks:number;indexedAt:string};
 export type BatchSummary={batchId:string;channelId:string;channelName:string;createdAt:string;projectCount:number;tracksAssigned:number;status:string;manifestPath:string;rootPath:string;completedProjects:number;errorProjects:number};
 export type ChannelProductionState={settings:{musicLibrary?:string};importSession:ImportSession;music?:MusicSummary|null;batches:BatchSummary[]};
-export type BuildRequest={requestId:string;workspace:string;outputWorkspace?:string;channelId:string;channelName:string;projectCount:number;tracksPerProject:number;mode:DistributionMode;allowImageReuse:boolean;jobLinks:{jobId:string;number:number}[]};
+export type RecoveryUiContext={page?:string;channelId?:string;productionTab?:string;selectedBatchId?:string;selectedProjectIds?:string[];filter?:string};
+export type BuildRequest={requestId:string;workspace:string;outputWorkspace?:string;channelId:string;channelName:string;projectCount:number;tracksPerProject:number;mode:DistributionMode;allowImageReuse:boolean;jobLinks:{jobId:string;number:number}[];recoveryUiContext?:RecoveryUiContext};
 export type ProductionStorageStatus={path:string;exists:boolean;writable:boolean;external:boolean;freeBytes?:number|null;error?:string|null};
 export type BuildResult={status:'ready'|'insufficient_images';availableImages:number;requestedProjects:number;batch?:BatchSummary|null;message?:string|null};
 export type Validation={batchId:string;ready:number;errors:number;endlumeExists:boolean;items:{projectId:string;ok:boolean;error?:string|null}[]};
@@ -19,6 +20,7 @@ export type GlobalProjectCleanupResult={scannedChannels:number;foundProjects:num
 export type ArchiveRenderedResult={archivePath:string;copiedFiles:number;copiedBytes:number;skippedFiles:number};
 export type HandoffReceipt={batchId:string;manifestPath:string;requestPath:string;selectedProjectIds:string[];repeatedProjectIds:string[]};
 export type RecoveryState={batchId:string;channelId:string;channelName:string;rootPath:string;completedProjects:number;totalProjects:number;currentProject:string;status:string;updatedAt:string;recoverable:boolean};
+export type RecoveryCandidate={recoverySchemaVersion:number;recoverySessionId:string;operationType:string;state:string;batchId:string;channelId:string;channelName:string;rootPath:string;resolvedRootPath?:string|null;completedProjects:number;totalProjects:number;progress:number;lastCheckpoint:string;updatedAt:string;safeToResume:boolean;waitReason?:string|null;requiredVolumeName?:string|null;dismissed:boolean;previousSessionEndedCleanly:boolean;schemaCompatible:boolean;uiContext?:RecoveryUiContext|null};
 
 export const productionManagerApi={
   chooseMusicFolder:async(defaultPath?:string)=>{const p=await open({directory:true,multiple:false,title:'Папка музыкальной библиотеки канала',defaultPath:defaultPath||undefined});return typeof p==='string'?p:'';},
@@ -34,6 +36,11 @@ export const productionManagerApi={
   state:(workspace:string,channelId:string)=>invoke<ChannelProductionState>('production_channel_state',{workspace,channelId}),
   build:(request:BuildRequest)=>invoke<BuildResult>('build_production_batch',{request}),
   resume:(manifestOrRoot:string)=>invoke<BatchSummary>('resume_production_batch',{manifestOrRoot}),
+  resumeRecovery:(recoverySessionId:string)=>invoke<BatchSummary>('resume_production_recovery',{recoverySessionId}),
+  recoveryCandidates:(includeDismissed=false)=>invoke<RecoveryCandidate[]>('recovery_candidates',{includeDismissed}),
+  refreshRecoveryCandidate:(recoverySessionId:string)=>invoke<RecoveryCandidate>('recovery_refresh_candidate',{recoverySessionId}),
+  dismissRecovery:(recoverySessionId:string)=>invoke<void>('recovery_dismiss_session',{recoverySessionId}),
+  markCleanShutdown:()=>invoke<void>('recovery_mark_clean_shutdown'),
   findRecovery:(workspaces:string[])=>invoke<RecoveryState[]>('find_production_recovery',{workspaces}),
   restartRecovery:(manifestOrRoot:string)=>invoke<BatchSummary>('restart_production_batch',{manifestOrRoot}),
   batches:(workspace:string,channelId:string)=>invoke<BatchSummary[]>('list_production_batches',{workspace,channelId}),

@@ -1,4 +1,5 @@
 use chrono::Utc;
+use crate::recovery;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -132,20 +133,28 @@ fn batch_root_parent(workspace: &str, channel_id: &str) -> Result<PathBuf, Strin
     Ok(p)
 }
 fn atomic_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
+    use std::io::Write;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let tmp = path.with_extension("tmp");
-    fs::write(
-        &tmp,
-        serde_json::to_vec_pretty(value).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())?;
-    if path.exists() {
-        let _ = fs::remove_file(path);
-    }
-    fs::rename(tmp, path).map_err(|e| e.to_string())
+    let tmp = path.with_extension(format!("{}.tmp", Uuid::new_v4()));
+    let bytes=serde_json::to_vec_pretty(value).map_err(|e| e.to_string())?;
+    let mut f=fs::OpenOptions::new().create_new(true).write(true).open(&tmp).map_err(|e|e.to_string())?;
+    f.write_all(&bytes).map_err(|e|e.to_string())?;
+    f.sync_all().map_err(|e|e.to_string())?;
+    drop(f);
+    #[cfg(target_os="windows")]
+    if path.exists(){fs::remove_file(path).map_err(|e|e.to_string())?;}
+    fs::rename(&tmp, path).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    if let Some(parent)=path.parent(){if let Ok(dir)=fs::File::open(parent){let _=dir.sync_all();}}
+    Ok(())
 }
+fn copy_and_sync(src:&Path,dst:&Path)->Result<(),String>{
+    fs::copy(src,dst).map_err(|e|e.to_string())?;
+    fs::File::open(dst).and_then(|f|f.sync_all()).map_err(|e|e.to_string())
+}
+fn sync_dir(path:&Path){#[cfg(unix)] if let Ok(dir)=fs::File::open(path){let _=dir.sync_all();}}
 fn read_json<T: for<'de> Deserialize<'de> + Default>(path: &Path) -> T {
     fs::read(path)
         .ok()
@@ -383,6 +392,8 @@ pub struct BuildRequest {
     pub mode: String,
     pub allow_image_reuse: bool,
     pub job_links: Vec<JobLink>,
+    #[serde(default)]
+    pub recovery_ui_context: Option<recovery::RecoveryUiContext>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -678,16 +689,21 @@ struct BuildPlan {
     batch_id: String,
     batch_root: String,
     created_at: String,
+    #[serde(default)]
+    recovery_session_id: String,
     projects: Vec<PlanProject>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(default,rename_all = "camelCase")]
 struct Checkpoint {
     completed_projects: usize,
     total_projects: usize,
     status: String,
     history_applied: bool,
     updated_at: String,
+    current_project: String,
+    current_phase: String,
+    completed_steps: Vec<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -1302,6 +1318,7 @@ fn plan_build(req: &BuildRequest) -> Result<BuildPlan, String> {
         batch_id: bid,
         batch_root: broot.to_string_lossy().into_owned(),
         created_at: Utc::now().to_rfc3339(),
+        recovery_session_id: String::new(),
         projects,
     };
     atomic_json(&broot.join("plan.json"), &plan)?;
@@ -1313,6 +1330,9 @@ fn plan_build(req: &BuildRequest) -> Result<BuildPlan, String> {
             status: "Подготовка".into(),
             history_applied: false,
             updated_at: Utc::now().to_rfc3339(),
+            current_project: "001".into(),
+            current_phase: "PLAN_PERSISTED".into(),
+            completed_steps: vec!["PLAN_PERSISTED".into()],
         },
     )?;
     Ok(plan)
@@ -1333,31 +1353,45 @@ fn project_ready(plan: &PlanProject, folder: &Path) -> bool {
 fn execute_plan(app: Option<&AppHandle>, plan: &BuildPlan) -> Result<BatchSummary, String> {
     let broot = PathBuf::from(&plan.batch_root);
     let cp_path = broot.join("checkpoint.json");
+    let commit_dir=broot.join(".vyron-committed");
+    fs::create_dir_all(&commit_dir).map_err(|e|e.to_string())?;
     let mut cp: Checkpoint = read_json(&cp_path);
     for (i, p) in plan.projects.iter().enumerate() {
         let final_dir = broot.join(&p.project_id);
+        cp.current_project=p.project_id.clone();
+        cp.current_phase="PROJECT_STAGING".into();
+        cp.status="Подготовка".into();
+        cp.updated_at=Utc::now().to_rfc3339();
+        atomic_json(&cp_path,&cp)?;
+        if let Some(a)=app{
+            if !plan.recovery_session_id.is_empty(){let _=recovery::checkpoint(a,&plan.recovery_session_id,"PROJECT_STAGING",i,plan.projects.len(),&format!("Подготовка проекта {}",p.project_id));}
+        }
         if !project_ready(p, &final_dir) {
-            let tmp = broot.join(format!(".{}.tmp", &p.project_id));
-            if tmp.exists() {
-                let _ = fs::remove_dir_all(&tmp);
-            }
+            let legacy_tmp=broot.join(format!(".{}.tmp",&p.project_id));
+            if legacy_tmp.exists(){let _=fs::remove_dir_all(&legacy_tmp);}
+            let tmp = broot.join(format!(".{}.vyron-partial", &p.project_id));
+            if tmp.exists() { let _ = fs::remove_dir_all(&tmp); }
             fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
-            fs::copy(&p.image_source, tmp.join(&p.image_name))
+            copy_and_sync(Path::new(&p.image_source),&tmp.join(&p.image_name))
                 .map_err(|e| format!("Изображение {}: {e}", p.project_id))?;
             for t in &p.tracks {
-                fs::copy(&t.source, tmp.join(&t.dest_name))
+                copy_and_sync(Path::new(&t.source),&tmp.join(&t.dest_name))
                     .map_err(|e| format!("Трек {}: {e}", t.source))?;
             }
-            if final_dir.exists() {
-                let _ = fs::remove_dir_all(&final_dir);
-            }
+            sync_dir(&tmp);
+            if final_dir.exists() { let _ = fs::remove_dir_all(&final_dir); }
             fs::rename(&tmp, &final_dir).map_err(|e| e.to_string())?;
+            sync_dir(&broot);
         }
+        atomic_json(&commit_dir.join(format!("{}.json",p.project_id)),&json!({"schemaVersion":1,"projectId":p.project_id,"batchId":plan.batch_id,"verified":project_ready(p,&final_dir),"committedAt":Utc::now().to_rfc3339()}))?;
         cp.completed_projects = i + 1;
         cp.status = "Подготовка".into();
+        cp.current_phase="PROJECT_COMMITTED".into();
+        if !cp.completed_steps.iter().any(|x|x=="PROJECT_COMMITTED"){cp.completed_steps.push("PROJECT_COMMITTED".into());}
         cp.updated_at = Utc::now().to_rfc3339();
         atomic_json(&cp_path, &cp)?;
         if let Some(a) = app {
+            if !plan.recovery_session_id.is_empty(){let _=recovery::checkpoint(a,&plan.recovery_session_id,"PROJECT_COMMITTED",i+1,plan.projects.len(),&format!("Проект {} подтверждён",p.project_id));}
             let _=a.emit("production-batch-progress",json!({"batchId":plan.batch_id,"completed":i+1,"total":plan.projects.len(),"stage":"files"}));
         }
     }
@@ -1403,25 +1437,29 @@ fn execute_plan(app: Option<&AppHandle>, plan: &BuildPlan) -> Result<BatchSummar
         });
     }
     atomic_json(&broot.join("batch.json"), &manifest)?;
+    cp.current_phase="MANIFEST_WRITTEN".into();cp.updated_at=Utc::now().to_rfc3339();atomic_json(&cp_path,&cp)?;
+    if let Some(a)=app{if !plan.recovery_session_id.is_empty(){let _=recovery::checkpoint(a,&plan.recovery_session_id,"MANIFEST_WRITTEN",plan.projects.len(),plan.projects.len(),"Manifest подтверждён");}}
     if !cp.history_applied {
         let hp = history_path(&plan.request.workspace, &plan.request.channel_id)?;
         let mut h: MusicHistory = read_json(&hp);
         h.schema_version = SCHEMA_VERSION;
+        let mut batch_uses=HashMap::<String,(String,u64)>::new();
         for p in &plan.projects {
-            h.sequence_fingerprints.push(p.sequence_fingerprint.clone());
-            for t in &p.tracks {
-                let x = h.tracks.entry(t.track_id.clone()).or_insert(TrackUsage {
-                    track_id: t.track_id.clone(),
-                    original_path: t.source.clone(),
-                    times_used: 0,
-                    last_used_at: None,
-                    batch_ids: Vec::new(),
-                });
-                x.times_used += 1;
-                x.last_used_at = Some(Utc::now().to_rfc3339());
-                if !x.batch_ids.contains(&plan.batch_id) {
-                    x.batch_ids.push(plan.batch_id.clone());
-                }
+            if !h.sequence_fingerprints.contains(&p.sequence_fingerprint){h.sequence_fingerprints.push(p.sequence_fingerprint.clone());}
+            for t in &p.tracks{
+                let row=batch_uses.entry(t.track_id.clone()).or_insert((t.source.clone(),0));
+                row.1+=1;
+            }
+        }
+        for (track_id,(source,count)) in batch_uses{
+            let x=h.tracks.entry(track_id.clone()).or_insert(TrackUsage{track_id,original_path:source,times_used:0,last_used_at:None,batch_ids:Vec::new()});
+            // history.json itself is an atomic transaction. If power is lost after it is
+            // committed but before checkpoint.json flips history_applied, batch_id proves
+            // this whole batch was already accounted and makes the retry idempotent.
+            if !x.batch_ids.contains(&plan.batch_id){
+                x.times_used=x.times_used.saturating_add(count);
+                x.last_used_at=Some(Utc::now().to_rfc3339());
+                x.batch_ids.push(plan.batch_id.clone());
             }
         }
         if h.sequence_fingerprints.len() > 10000 {
@@ -1430,8 +1468,11 @@ fn execute_plan(app: Option<&AppHandle>, plan: &BuildPlan) -> Result<BatchSummar
         }
         atomic_json(&hp, &h)?;
         cp.history_applied = true;
+        cp.current_phase="HISTORY_APPLIED".into();
+        if !cp.completed_steps.iter().any(|x|x=="HISTORY_APPLIED"){cp.completed_steps.push("HISTORY_APPLIED".into());}
     }
     cp.status = "Готово".into();
+    cp.current_phase="READY".into();
     cp.updated_at = Utc::now().to_rfc3339();
     atomic_json(&cp_path, &cp)?;
     let status = BatchStatus {
@@ -1459,6 +1500,7 @@ fn execute_plan(app: Option<&AppHandle>, plan: &BuildPlan) -> Result<BatchSummar
             .collect(),
     };
     atomic_json(Path::new(&manifest.status_path), &status)?;
+    if let Some(a)=app{if !plan.recovery_session_id.is_empty(){let _=recovery::checkpoint(a,&plan.recovery_session_id,"STATUS_WRITTEN",plan.projects.len(),plan.projects.len(),"Статус batch подтверждён");let _=recovery::complete(a,&plan.recovery_session_id);}}
     Ok(summary_from(&manifest, &status))
 }
 
@@ -1524,7 +1566,7 @@ fn recovery_in_workspace(workspace: &str) -> Vec<RecoveryState> {
                 completed_projects: actual,
                 total_projects: plan.projects.len(),
                 current_project: current,
-                status: cp.status.clone(),
+                status: if cp.current_phase.is_empty(){cp.status.clone()}else{cp.current_phase.clone()},
                 updated_at: cp.updated_at.clone(),
                 recoverable: true,
             });
@@ -1625,6 +1667,52 @@ fn load_manifest(path_or_root: &str) -> Result<(BatchManifest, PathBuf), String>
             .map_err(|e| format!("batch.json: {e}"))?;
     Ok((m, mp))
 }
+fn register_plan_recovery(app:&AppHandle,plan:&mut BuildPlan)->Result<(),String>{
+    let mut source_paths=Vec::new();
+    let mut project_ids=Vec::new();
+    let mut job_ids=Vec::new();
+    let mut destination_paths=Vec::new();
+    for p in &plan.projects{
+        project_ids.push(p.project_id.clone());
+        if let Some(j)=p.job_id.as_ref(){job_ids.push(j.clone())}
+        source_paths.push((p.project_id.clone(),p.image_source.clone()));
+        for t in &p.tracks{source_paths.push((p.project_id.clone(),t.source.clone()));}
+        destination_paths.push(PathBuf::from(&plan.batch_root).join(&p.project_id).to_string_lossy().into_owned());
+    }
+    destination_paths.push(PathBuf::from(&plan.batch_root).join("Rendered").to_string_lossy().into_owned());
+    let id=recovery::begin_production_session(app,recovery::ProductionRecoverySeed{
+        recovery_session_id:String::new(),batch_id:plan.batch_id.clone(),channel_id:plan.request.channel_id.clone(),channel_name:plan.request.channel_name.clone(),
+        root_path:plan.batch_root.clone(),project_ids,job_ids,source_paths,destination_paths,total_projects:plan.projects.len(),ui_context:plan.request.recovery_ui_context.clone()
+    })?;
+    plan.recovery_session_id=id;
+    atomic_json(&PathBuf::from(&plan.batch_root).join("plan.json"),plan)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn resume_production_recovery(app:AppHandle,recovery_session_id:String)->Result<BatchSummary,String>{
+    tauri::async_runtime::spawn_blocking(move||{
+        let _g=build_lock().lock().map_err(|_|"Build lock".to_string())?;
+        let (session,resolved_root)=recovery::resolve_session_root(&app,&recovery_session_id)?;
+        recovery::set_recovering(&app,&recovery_session_id)?;
+        let mut plan:BuildPlan=read_json(&resolved_root.join("plan.json"));
+        if plan.batch_id.is_empty(){return Err("RECOVERY_PLAN_MISSING".into())}
+        plan.batch_root=resolved_root.to_string_lossy().into_owned();
+        plan.recovery_session_id=recovery_session_id.clone();
+        plan.request.workspace=recovery::remap_recovery_directory_path(&session,&plan.request.workspace)?;
+        if let Some(out)=plan.request.output_workspace.clone(){plan.request.output_workspace=Some(recovery::remap_recovery_directory_path(&session,&out)?);}
+        for p in &mut plan.projects{
+            p.image_source=recovery::remap_recovery_source_path(&session,&p.image_source)?;
+            for t in &mut p.tracks{t.source=recovery::remap_recovery_source_path(&session,&t.source)?;}
+        }
+        atomic_json(&resolved_root.join("plan.json"),&plan)?;
+        match execute_plan(Some(&app),&plan){
+            Ok(done)=>Ok(done),
+            Err(e)=>{let _=recovery::mark_waiting(&app,&recovery_session_id,&e);Err(e)}
+        }
+    }).await.map_err(|e|e.to_string())?
+}
+
 #[tauri::command]
 pub async fn build_production_batch(
     app: AppHandle,
@@ -1662,8 +1750,12 @@ pub async fn build_production_batch(
                 });
             }
         }
-        let plan = plan_build(&request)?;
-        let summary = execute_plan(Some(&app2), &plan)?;
+        let mut plan = plan_build(&request)?;
+        register_plan_recovery(&app2,&mut plan)?;
+        let summary = match execute_plan(Some(&app2), &plan){
+            Ok(x)=>x,
+            Err(e)=>{if !plan.recovery_session_id.is_empty(){let _=recovery::mark_waiting(&app2,&plan.recovery_session_id,&e);}return Err(e)}
+        };
         map.insert(request.request_id.clone(), summary.manifest_path.clone());
         save_request_map(&request.workspace, &request.channel_id, &map)?;
         Ok(BuildResult {
@@ -1683,6 +1775,7 @@ pub async fn resume_production_batch(
     manifest_or_root: String,
 ) -> Result<BatchSummary, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        let _g = build_lock().lock().map_err(|_| "Build lock".to_string())?;
         let root = if Path::new(&manifest_or_root).is_dir() {
             PathBuf::from(&manifest_or_root)
         } else {

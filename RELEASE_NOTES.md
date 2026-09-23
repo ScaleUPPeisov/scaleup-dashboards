@@ -1,24 +1,27 @@
-# VYRON 0.9.9 — Quota Planner & Update Center Fix
+# VYRON 3.2.0 — Crash Recovery & Development Journey
 
-## YouTube API Quota
-- Добавлен постоянно видимый YOUTUBE API QUOTA meter в YouTube Center.
-- LIVE ESTIMATE считает расход запросов, которые делает VYRON, и обновляется сразу после каждого вызова.
-- Показывает: использовано, осталось, сколько каналов по текущему плану можно обработать сегодня и время дневного сброса 00:00 PT.
-- При quotaExceeded счётчик фиксируется на дневном лимите и Quota Guard продолжает блокировать лишние запросы.
-- Дневной лимит настраиваемый — после официального увеличения quota в Google Cloud достаточно изменить число.
+## Новое
+- Durable write-ahead recovery journal для Production хранится вне VYRON.app в Application Support.
+- При незавершённой локальной сборке VYRON показывает Recovery Flow с 30-секундным countdown и безопасно продолжает с последнего подтверждённого checkpoint.
+- Project output создаётся через .vyron-partial, flush/sync и atomic rename; повторный recovery не дублирует уже завершённые проекты.
+- Для внешних томов сохраняется Volume UUID. Если TOSHIBA EXT отсутствует или подключён другой физический диск, автоматическая запись блокируется до повторной проверки.
+- Добавлен ручной вход «Восстановить незавершённую работу» после отказа от автоматического восстановления.
+- Task Center и Activity History получили состояния и события recovery.
 
-## Вариант 2 — Quota Planner
-- Планировщик по умолчанию рассчитан на 30 видео на канал.
-- Пользователь задаёт число каналов и видео/канал.
-- VYRON показывает примерную стоимость одного канала, сколько каналов можно сделать сегодня, сколько в полный следующий день и оценку количества дней.
-- План сохраняется локально и не пропадает после перехода между разделами/перезапуска.
-- Оценка консервативная: ~52 units на изменяемое видео (videos.update=50 + обычный read/verify overhead). Уже совпадающие видео пропускаются и могут стоить дешевле.
+## История VYRON
+- Каноническая история восстановлена по GitHub Releases, существующей structured history и release metadata от VYRON 0.5.0 (31.08.2026).
+- Версии сгруппированы по дням в компактной timeline.
+- Добавлены поиск, фильтры, раскрываемые категории и свернутые технические сведения.
+- Owner Preview build numbers не отображаются как отдельные продуктовые релизы.
 
-## Update Center
-- Удалён hardcoded fallback `0.9.5`.
-- Установленная версия теперь читается из Tauri runtime через getVersion().
-- Сообщение «Установлена актуальная версия» всегда показывает фактически запущенную сборку.
+## UX
+- Sidebar использует единый row/icon-slot contract и ровно один active item для внутренних маршрутов.
+- Удалён пустой Settings-блок «Последние уведомления», notification runtime сохранён.
+- Удалена информационная карточка ENDLUME «Целевой рендер»; путь ENDLUME, выбор и открытие сохранены.
+- Сохраняется глобальный anti-overflow contract для русских labels.
 
-## Важно
-- Это локальный мгновенный счётчик VYRON. Google Cloud quota metrics могут запаздывать и требуют отдельного Cloud Monitoring доступа; поэтому они не выдаются за real-time.
-- OAuth profiles, refresh tokens, channels, metadata drafts, ENDLUME settings и существующий state не сбрасываются.
+## Safety
+- Recovery journal не содержит OAuth secrets, refresh/access tokens, credentials.json или vault keys.
+- Crash recovery не выполняет YouTube videos.insert и не меняет OAuth architecture.
+- Remote upload после restart продолжает использовать существующую resumable-session / uploadHistory / YouTube reconciliation защиту от дублей.
+- Stable updater feeds не меняются до physical acceptance владельца.

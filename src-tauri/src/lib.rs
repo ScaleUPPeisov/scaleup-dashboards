@@ -12,6 +12,7 @@ mod studio_drafts;
 mod youtube_intelligence;
 mod ai;
 mod production_manager;
+mod recovery;
 mod media_tools;
 mod local_delete;
 
@@ -26,6 +27,9 @@ pub fn run(){
         .setup(|app|{
             // Persistent owner data lives outside the .app bundle and is initialized before UI recovery.
             let _=oauth_vault::ensure_local_storage(app.handle());
+            // Mark this runtime dirty before any recoverable local work starts.
+            // A graceful exit flips it clean only when no unfinished recovery transaction remains.
+            recovery::initialize_runtime(app.handle()).map_err(|e|Box::<dyn std::error::Error>::from(std::io::Error::new(std::io::ErrorKind::Other,e)))?;
             // Physical default: always make the main window visible on the CURRENT monitor.
             // Center first to discard stale coordinates from a removed/external display,
             // then maximize to the current macOS work area.
@@ -41,9 +45,14 @@ pub fn run(){
             files::import_images,files::add_tracks,files::refresh_job,files::prepare_job_folder,files::ensure_channel_inbox,files::scan_channel_inbox,files::ingest_tracks,files::ingest_cover,files::write_job_metadata,files::enqueue_render,files::reveal_path,files::open_endlume,local_delete::trash_local_file,local_delete::local_source_status,local_delete::scan_render_folder,local_delete::discover_channel_folders,
             system::diagnostics,system::default_workspace,
             youtube::youtube_channel_stats,youtube::youtube_oauth_vault_recover,youtube::youtube_oauth_local_storage_status,youtube::youtube_oauth_credential_states,youtube::youtube_oauth_recovery_diagnostic,youtube::youtube_oauth_retry_profile_keychain,youtube::youtube_oauth_safe_check_all_profiles,youtube::youtube_oauth_recover_existing_profiles,youtube::youtube_oauth_keychain_matrix,youtube::youtube_oauth_interactive_recover_blocked_profiles,youtube::youtube_keychain_migration_diagnostics,youtube::youtube_oauth_browsers,youtube_intelligence::youtube_channel_analytics,youtube_intelligence::youtube_competitor_snapshot,youtube_intelligence::youtube_discover_competitors,youtube::youtube_oauth_profiles,youtube::youtube_oauth_reconciliation_diagnostics,youtube::youtube_google_project_diagnostic,youtube::youtube_google_config_status,youtube::youtube_google_config_retry,youtube::youtube_google_config_interactive_recover,youtube::youtube_google_config_import,youtube::youtube_oauth_import_profile_credentials_file,youtube::youtube_oauth_connect_global,youtube::youtube_oauth_reconnect_existing,youtube::youtube_oauth_open_youtube,youtube::youtube_oauth_select_new_channel,youtube::youtube_oauth_cancel_new_channel_selection,youtube::youtube_oauth_profile_health,youtube::youtube_channel_statistics,youtube::youtube_channel_statistics_batch,youtube::youtube_cache_thumbnail,youtube::youtube_oauth_connect,youtube::youtube_oauth_disconnect,youtube::youtube_upload_video,youtube::youtube_resume_upload,youtube::youtube_upload_sessions,youtube::youtube_active_uploads,youtube::youtube_cancel_upload_session,youtube::youtube_video_processing_status,youtube::youtube_video_processing_status_batch,youtube::youtube_set_thumbnail,youtube::youtube_file_fingerprint,youtube::youtube_list_existing_videos,youtube::youtube_retry_existing_video_hydration,youtube::youtube_backup_existing_videos,youtube::youtube_update_existing_video,youtube::youtube_update_existing_schedule,youtube::youtube_list_playlists,youtube::youtube_playlist_membership,
-            production_manager::production_storage_status,production_manager::start_production_import,production_manager::stop_production_import,production_manager::production_import_status,production_manager::set_production_music_library,production_manager::index_production_music_library,production_manager::build_production_batch,production_manager::resume_production_batch,production_manager::find_production_recovery,production_manager::restart_production_batch,production_manager::read_production_batch_status,production_manager::list_production_batches,production_manager::production_channel_state,production_manager::validate_production_batch,production_manager::validate_production_projects,production_manager::delete_production_batch_projects,production_manager::cleanup_completed_production_assets,production_manager::preview_global_production_project_cleanup,production_manager::execute_global_production_project_cleanup,production_manager::archive_production_rendered_videos,production_manager::delete_production_job_folder,production_manager::open_production_batch_in_endlume,production_manager::production_endlume_handoff_consumed,
+            production_manager::production_storage_status,production_manager::start_production_import,production_manager::stop_production_import,production_manager::production_import_status,production_manager::set_production_music_library,production_manager::index_production_music_library,production_manager::build_production_batch,production_manager::resume_production_batch,production_manager::resume_production_recovery,production_manager::find_production_recovery,production_manager::restart_production_batch,recovery::recovery_candidates,recovery::recovery_refresh_candidate,recovery::recovery_dismiss_session,recovery::recovery_mark_clean_shutdown,production_manager::read_production_batch_status,production_manager::list_production_batches,production_manager::production_channel_state,production_manager::validate_production_batch,production_manager::validate_production_projects,production_manager::delete_production_batch_projects,production_manager::cleanup_completed_production_assets,production_manager::preview_global_production_project_cleanup,production_manager::execute_global_production_project_cleanup,production_manager::archive_production_rendered_videos,production_manager::delete_production_job_folder,production_manager::open_production_batch_in_endlume,production_manager::production_endlume_handoff_consumed,
             ai::ai_generate_metadata
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running VYRON")
+        .build(tauri::generate_context!())
+        .expect("error while building VYRON")
+        .run(|app_handle,event|{
+            if matches!(event,tauri::RunEvent::ExitRequested{..}|tauri::RunEvent::Exit){
+                let _=recovery::mark_clean_shutdown(app_handle);
+            }
+        });
 }

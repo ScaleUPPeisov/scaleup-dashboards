@@ -99,6 +99,7 @@ fn request(
                 number: (i + 1) as u32,
             })
             .collect(),
+        recovery_ui_context: None,
     }
 }
 fn cleanup(workspace: &Path) {
@@ -463,4 +464,79 @@ fn acceptance_recovery_scan_never_creates_missing_external_mount() {
     let rows = find_production_recovery(vec![missing.to_string_lossy().into_owned()]).unwrap();
     assert!(rows.is_empty());
     assert!(!missing.exists());
+}
+
+
+#[test]
+fn acceptance_double_power_loss_recovery_finishes_exactly_ten_without_duplicates() {
+    let (ws,cid,name)=fixture(10,80);
+    let plan=plan_build(&request(&ws,&cid,&name,10,6,"even",false)).unwrap();
+    let root=PathBuf::from(&plan.batch_root);
+    let mut original_hashes=Vec::new();
+    for p in plan.projects.iter().take(4){
+        let d=root.join(&p.project_id);fs::create_dir_all(&d).unwrap();
+        fs::copy(&p.image_source,d.join(&p.image_name)).unwrap();
+        for t in &p.tracks{fs::copy(&t.source,d.join(&t.dest_name)).unwrap();}
+        assert!(project_ready(p,&d));
+        original_hashes.push(hash_file(&d.join(&p.image_name)).unwrap());
+    }
+    let fifth=&plan.projects[4];
+    let partial=root.join(format!(".{}.vyron-partial",fifth.project_id));
+    fs::create_dir_all(&partial).unwrap();
+    fs::copy(&fifth.image_source,partial.join(&fifth.image_name)).unwrap();
+    let cp_path=root.join("checkpoint.json");let mut cp:Checkpoint=read_json(&cp_path);
+    cp.completed_projects=4;cp.current_project=fifth.project_id.clone();cp.current_phase="PROJECT_STAGING".into();cp.updated_at=Utc::now().to_rfc3339();atomic_json(&cp_path,&cp).unwrap();
+
+    let first_recovery=execute_plan(None,&plan).unwrap();
+    assert_eq!(first_recovery.project_count,10);
+    // Re-run the exact same persisted plan: this models a second crash/restart after recovery began.
+    let second_recovery=execute_plan(None,&plan).unwrap();
+    assert_eq!(second_recovery.batch_id,first_recovery.batch_id);
+    let numeric=fs::read_dir(&root).unwrap().filter_map(Result::ok).filter(|e|e.file_type().map(|t|t.is_dir()).unwrap_or(false)&&e.file_name().to_string_lossy().chars().all(|ch|ch.is_ascii_digit())).count();
+    assert_eq!(numeric,10);
+    assert!(!partial.exists());
+    for (i,p) in plan.projects.iter().take(4).enumerate(){
+        assert_eq!(hash_file(&root.join(&p.project_id).join(&p.image_name)).unwrap(),original_hashes[i]);
+    }
+    for p in &plan.projects{assert!(project_ready(p,&root.join(&p.project_id)))}
+    let history:MusicHistory=read_json(&history_path(&ws.to_string_lossy(),&cid).unwrap());
+    assert_eq!(history.tracks.values().map(|x|x.times_used).sum::<u64>(),60);
+    cleanup(&ws);
+}
+
+#[test]
+fn acceptance_transactional_commit_leaves_no_partial_and_writes_verified_marker() {
+    let (ws,cid,name)=fixture(2,20);
+    let plan=plan_build(&request(&ws,&cid,&name,2,5,"even",false)).unwrap();
+    execute_plan(None,&plan).unwrap();
+    let root=PathBuf::from(&plan.batch_root);
+    assert!(!root.join(".001.vyron-partial").exists());
+    assert!(!root.join(".002.vyron-partial").exists());
+    assert!(root.join(".vyron-committed/001.json").is_file());
+    assert!(root.join(".vyron-committed/002.json").is_file());
+    cleanup(&ws);
+}
+
+
+#[test]
+fn acceptance_power_loss_after_history_commit_does_not_double_usage() {
+    let (ws,cid,name)=fixture(4,30);
+    let plan=plan_build(&request(&ws,&cid,&name,4,5,"even",false)).unwrap();
+    execute_plan(None,&plan).unwrap();
+    let hp=history_path(&ws.to_string_lossy(),&cid).unwrap();
+    let before:MusicHistory=read_json(&hp);
+    let uses_before=before.tracks.values().map(|x|x.times_used).sum::<u64>();
+    assert_eq!(uses_before,20);
+
+    // Simulate power loss after history.json atomic commit but before checkpoint persisted it.
+    let cp_path=PathBuf::from(&plan.batch_root).join("checkpoint.json");
+    let mut cp:Checkpoint=read_json(&cp_path);
+    cp.history_applied=false;cp.status="Подготовка".into();cp.current_phase="MANIFEST_WRITTEN".into();
+    atomic_json(&cp_path,&cp).unwrap();
+
+    execute_plan(None,&plan).unwrap();
+    let after:MusicHistory=read_json(&hp);
+    let uses_after=after.tracks.values().map(|x|x.times_used).sum::<u64>();
+    assert_eq!(uses_after,uses_before);
+    cleanup(&ws);
 }

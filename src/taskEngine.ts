@@ -1,4 +1,4 @@
-export type TaskType='UPLOAD'|'METADATA_UPDATE'|'TITLE_UPDATE'|'DESCRIPTION_UPDATE'|'TAGS_UPDATE'|'SCHEDULE_UPDATE'|'THUMBNAIL_UPDATE'|'STATISTICS_REFRESH'|'RENDER_SCAN'|'FINGERPRINT'|'OAUTH_RECOVERY'|'CLEANUP'|'UPDATER';
+export type TaskType='UPLOAD'|'METADATA_UPDATE'|'TITLE_UPDATE'|'DESCRIPTION_UPDATE'|'TAGS_UPDATE'|'SCHEDULE_UPDATE'|'THUMBNAIL_UPDATE'|'STATISTICS_REFRESH'|'RENDER_SCAN'|'FINGERPRINT'|'OAUTH_RECOVERY'|'CLEANUP'|'UPDATER'|'PRODUCTION_RECOVERY';
 export type TaskState='QUEUED'|'RUNNING'|'SUCCEEDED'|'FAILED'|'ATTENTION_REQUIRED'|'CANCELLED';
 export type TaskRetryState='NONE'|'RETRY_AVAILABLE'|'RECONCILE_REQUIRED';
 export type PersistentTask={
@@ -24,6 +24,7 @@ export type PersistentTask={
  completedAt?:string;
  error?:string;
  retryState:TaskRetryState;
+ recoveryStatus?:'Восстанавливается'|'Продолжено'|'Ожидает диск'|'Требует внимания'|'Готово';
  updatedAt:string;
 };
 export type TaskSnapshot={version:1;tasks:PersistentTask[]};
@@ -84,7 +85,7 @@ export function startTask(taskId:string,detail?:string){
  const existing=readRaw().tasks.find(x=>x.taskId===taskId);if(!existing)return;
  return replace({...existing,state:'RUNNING',startedAt:existing.startedAt||now(),detail:detail??existing.detail,error:undefined,retryState:'NONE',updatedAt:now()});
 }
-export function updateTask(taskId:string,patch:Partial<Pick<PersistentTask,'progress'|'completed'|'total'|'bytesCompleted'|'bytesTotal'|'speedBps'|'etaSeconds'|'detail'|'label'|'channelName'>>){
+export function updateTask(taskId:string,patch:Partial<Pick<PersistentTask,'progress'|'completed'|'total'|'bytesCompleted'|'bytesTotal'|'speedBps'|'etaSeconds'|'detail'|'label'|'channelName'|'recoveryStatus'>>){
  const existing=readRaw().tasks.find(x=>x.taskId===taskId);if(!existing)return;
  return replace({...existing,...patch,progress:clamp(patch.progress??existing.progress),updatedAt:now()});
 }
