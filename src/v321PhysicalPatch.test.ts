@@ -1,7 +1,7 @@
 import {describe,expect,it} from 'vitest';
 import {readFileSync} from 'node:fs';
 import {channelCountrySource,channelLanguageSource,normalizeChannelStatistics} from './youtubeChannelStats';
-import {confirmedCleanupCandidates,latestChannelUploadBatchId} from './postUploadCleanup';
+import {confirmedCleanupCandidates,latestChannelUploadBatchId,postUploadCleanupEligible} from './postUploadCleanup';
 
 const read=(path:string)=>readFileSync(path,'utf8');
 const sha=(ch:string)=>ch.repeat(64);
@@ -52,6 +52,13 @@ describe('VYRON 3.2.1 physical regression patch',()=>{
   const rows=confirmedCleanupCandidates([good,badHash,other,apple],[job(),job({id:'job-2',number:2,finalPath:'/Render/VIDEO_002.mov',currentSourceFingerprint:sha('c')}),job({id:'job-3',channelId:'channel-2'}),job({id:'job-4',number:4,finalPath:'/Render/._VIDEO_004.mov'})],'channel-1');
   expect(rows.map(x=>x.jobId)).toEqual(['job-1']);
  });
+ it('allows a verified accepted upload to become cleanup-ready but blocks processing unknown',()=>{
+  const accepted=history({processingState:'UPLOAD_ACCEPTED',identityVerifiedAt:'2026-09-23T10:00:01Z'});
+  expect(postUploadCleanupEligible(accepted,job())).toBe(true);
+  expect(postUploadCleanupEligible({...accepted,processingState:'YOUTUBE_PROCESSING'},job())).toBe(true);
+  expect(postUploadCleanupEligible({...accepted,processingState:'PROCESSING_UNKNOWN'},job())).toBe(false);
+  expect(postUploadCleanupEligible({...accepted,identityVerifiedAt:undefined},job())).toBe(false);
+ });
  it('supports partial batch cleanup without including failed or verify-required sources',()=>{
   const ok1=history({id:'a',jobId:'job-1',batchId:'batch-partial'});
   const ok2=history({id:'b',jobId:'job-2',batchId:'batch-partial',localFilePath:'/Render/VIDEO_002.mov',originalFilename:'VIDEO_002.mov',sha256:sha('b'),sourceGenerationKeyAtUpload:`channel-1:${sha('b')}:2222`,fileSize:2222});
@@ -62,7 +69,7 @@ describe('VYRON 3.2.1 physical regression patch',()=>{
  });
  it('keeps Trash, history preservation and post-cleanup rescan explicit in Publisher',()=>{
   const p=read('src/PublisherOS.tsx'),del=read('src-tauri/src/local_delete.rs');
-  expect(p).toContain('cleanupEligibleUpload(currentProof,j)');
+  expect(p).toContain('postUploadCleanupEligible(currentProof,j)');
   expect(p).toContain('api.youtubeFileFingerprint');
   expect(p).toContain('fp.fingerprint.toLowerCase()!==proof.sha256.toLowerCase()||fp.size!==proof.fileSize');
   expect(p).toContain('Переместить в Корзину');
