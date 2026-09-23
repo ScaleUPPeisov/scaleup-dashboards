@@ -1,15 +1,15 @@
 {
-  "version": "3.1.1-preview.331",
-  "notes": "• Исправлено переполнение кнопок и длинных русских подписей во всём интерфейсе\\n• OAuth-кнопка «Переподключить» больше не выходит за границы карточки\\n• Карточка внешнего диска получила отдельную адаптивную группу действий\\n• Topbar, вкладки, карточки и modal footer корректно переносятся на 1440/1280/1024 px\\n• Upload/Task Center и панели не создают глобальный горизонтальный overflow\\n• OAuth и Publisher core не изменялись",
-  "pub_date": "2026-09-23T10:58:12Z",
-  "artifactSha256": "e2f7a0006e8fbf18035dacd7ab5a51e11f3893417931fbfaa47e0ea87ba22b01",
-  "buildRevision": 331,
-  "commit": "c0ff718143b722455a2100c509f980d03cbdcffd",
-  "productVersion": "3.1.1",
+  "version": "3.2.0-preview.335",
+  "notes": "• Реальное восстановление Production после crash / power loss с durable journal и checkpoint resume\\n• 30-секундный Recovery Flow с безопасным автопродолжением и ожиданием внешнего диска\\n• Полная компактная история VYRON от 0.5.0 с поиском и фильтрами\\n• Sidebar получил единый active-state и точное выравнивание\\n• Убраны пустые уведомления Settings и информационный ENDLUME target card\\n• OAuth и Publisher upload/fingerprint core не изменялись",
+  "pub_date": "2026-09-23T13:58:06Z",
+  "artifactSha256": "f7f79e56356890bb5ca35b6976b8cae82a48656992869eebf40fd1c80b07418f",
+  "buildRevision": 335,
+  "commit": "0800e8d72b7cff7d9233e6f9a7f8b003bb7aa6f3",
+  "productVersion": "3.2.0",
   "platforms": {
     "darwin-aarch64": {
-      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/vyron-owner-preview-331/VYRON-3.1.1-build-331.app.tar.gz",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM2FWK1RGNDBiY2NzMWt1djZSUGY4Z0xybVY5aEFyN2VoVGVDV04yMENtTEZFVzlxK0MxdlcxWWdmR0hPOFpNVzFnemsvTjZ3aTMvVmdOSityRHgxOVFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMTYxMDY0CWZpbGU6VllST04uYXBwLnRhci5negpENkVnKzJyMlB1OTB1VGJDM09CcnRSNDlHRWVmcDRQTFN2eXZnTjFYdkxGZDhRNURhaktkZ1h5WktSaWpYdmpnV3FaS21RZ3NPZDJaODdTU1BoVDFDUT09Cg=="
+      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/vyron-owner-preview-335/VYRON-3.2.0-build-335.app.tar.gz",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM1JhM1YxOWVyblVMaHk5Y29CRXFhMWdRSzNPZFJxdVF2QlhqL1NXOHo4dzBuVzNTa2diSS96cStBM2Y1RE1WbzVBVnZiQUZwcFJOT1VoakczMXFWUXc4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMTcxODU1CWZpbGU6VllST04uYXBwLnRhci5negpwZG5TcncwVGZ0Z3lxYmtibVlJUzQ4NDZQQWlMRlRUYkpQVDFVelB1ZWR1SWl6K3R6cjFhR3ZRMUhYQjB4T3lVZDRJSXdMc3VkeDFFWXpRZDBQWXlDZz09Cg=="
     }
   }
 }
