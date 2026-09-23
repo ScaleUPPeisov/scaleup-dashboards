@@ -60,7 +60,7 @@ describe('VYRON 3.0.0 OAuth persistence physical-blocker regression',()=>{
  });
  it('manual browser reconnect remains explicit fallback after Keychain repair',()=>{
   expect(accounts).toContain("?'Войти заново':'Переподключить'");
-  expect(accounts).toContain('Повторно подключить канал через выбранный браузер');
+  expect(accounts).toContain('Переподключить через браузер');
   expect(recovery).toContain('Переподключить через браузер');
   expect(recovery).toContain('Восстановить доступ Keychain');
   expect(recovery).toContain('api.youtubeReconnectExisting(profileId,browser)');
