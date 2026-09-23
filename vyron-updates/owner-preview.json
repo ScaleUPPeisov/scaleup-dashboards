@@ -1,15 +1,15 @@
 {
-  "version": "3.1.0-preview.328",
-  "notes": "• Аналитика обновляется внутри своей страницы\\n• Удалена лишняя вкладка «Данные YouTube»\\n• Конкуренты стали самостоятельным публичным радаром\\n• Календарь объединён с расписанием\\n• Обновлён раздел каналов и Production\\n• Исправлены процент задач, старые ошибки, кнопки и уведомления",
-  "pub_date": "2026-09-23T01:03:10Z",
-  "artifactSha256": "7ce38787c1cbb014e1053cfb97381eb1102413acd61737c4fed1263de3b7f507",
-  "buildRevision": 328,
-  "commit": "9a08658bfe5711fb3ce844f371e218186cab84dc",
-  "productVersion": "3.1.0",
+  "version": "3.1.1-preview.331",
+  "notes": "• Исправлено переполнение кнопок и длинных русских подписей во всём интерфейсе\\n• OAuth-кнопка «Переподключить» больше не выходит за границы карточки\\n• Карточка внешнего диска получила отдельную адаптивную группу действий\\n• Topbar, вкладки, карточки и modal footer корректно переносятся на 1440/1280/1024 px\\n• Upload/Task Center и панели не создают глобальный горизонтальный overflow\\n• OAuth и Publisher core не изменялись",
+  "pub_date": "2026-09-23T10:58:12Z",
+  "artifactSha256": "e2f7a0006e8fbf18035dacd7ab5a51e11f3893417931fbfaa47e0ea87ba22b01",
+  "buildRevision": 331,
+  "commit": "c0ff718143b722455a2100c509f980d03cbdcffd",
+  "productVersion": "3.1.1",
   "platforms": {
     "darwin-aarch64": {
-      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/vyron-owner-preview-328/VYRON-3.1.0-build-328.app.tar.gz",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM1pwVEFhL0NxOWlyR2dzR3d5cDdySUk5NWRVUjBwajhMLzBqdHI1blBGV1pRejlablJEL3l5ekhNeTROekt0d2t0S2ZSajNtWlRlb0NyZWJFaWtXREFNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMTI1MzYyCWZpbGU6VllST04uYXBwLnRhci5negp2U1RNOGVQdG1vdGMrNU5WN25wei9YK1VseUl2MC9CQzRUM0tqamdNcTZqcGJuZHJSUmxUMXNDdXJTNGk0MzBwdHRxcEg5WUI4Q1dPVG9IRzZIcGpBQT09Cg=="
+      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/vyron-owner-preview-331/VYRON-3.1.1-build-331.app.tar.gz",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM2FWK1RGNDBiY2NzMWt1djZSUGY4Z0xybVY5aEFyN2VoVGVDV04yMENtTEZFVzlxK0MxdlcxWWdmR0hPOFpNVzFnemsvTjZ3aTMvVmdOSityRHgxOVFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMTYxMDY0CWZpbGU6VllST04uYXBwLnRhci5negpENkVnKzJyMlB1OTB1VGJDM09CcnRSNDlHRWVmcDRQTFN2eXZnTjFYdkxGZDhRNURhaktkZ1h5WktSaWpYdmpnV3FaS21RZ3NPZDJaODdTU1BoVDFDUT09Cg=="
     }
   }
 }
