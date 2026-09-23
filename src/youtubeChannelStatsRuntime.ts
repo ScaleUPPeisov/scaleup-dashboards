@@ -35,7 +35,7 @@ function applyToLinked(rows:LinkedYoutubeChannel[],youtubeChannelId:string,stats
   const current=useApp.getState().channels.find(c=>c.id===row.channel.id);
   if(!current)continue;
   const normalized=normalizeChannelStatistics(stats,current.stats);
-  state.updateChannel(current.id,{stats:normalized});
+  state.updateChannel(current.id,{stats:normalized,...(normalized.country?{country:normalized.country}:{})});
   state.recordStatisticsSnapshot(makeStatisticsSnapshot(current,row.profile,normalized,'LIVE_REFRESH',normalized.statisticsUpdatedAt));
  }
  return targets.length;
