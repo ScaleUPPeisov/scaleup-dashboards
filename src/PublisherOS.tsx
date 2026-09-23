@@ -19,7 +19,7 @@ import {removeSelectedPublishItems} from './publishRemoval';
 import {appendErrorHistory} from './errorHistory';
 import {batchFailureToast,type BatchFailure} from './errorPresentationPolicy';
 import {canonicalSelectedJobs,publisherGlobalBlockReasons,publisherPreflightItems,publisherUploadButtonLabel} from './publisherRuntime';
-import {classifyUploadState,clearStaleUploadLink,cleanupEligibleUpload,latestUploadRecord,markHistoryTrashed,nextProjectLifecycle,recordVerifiedUpload,successfulUploadForHash,updateUploadProcessing,updateUploadRemoteEvidence,uploadStateCounters,type CanonicalUploadState} from './storageLifecycle';
+import {classifyUploadState,clearStaleUploadLink,latestUploadRecord,markHistoryTrashed,nextProjectLifecycle,recordVerifiedUpload,successfulUploadForHash,updateUploadProcessing,updateUploadRemoteEvidence,uploadStateCounters,type CanonicalUploadState} from './storageLifecycle';
 import {configureUploadQueue,enqueueUpload,waitForUploadQueueEntries} from './uploadQueueRuntime';
 import {existingSyncIncompleteSummary,readAuthoritativeExistingSnapshot,replaceExistingCacheFromSync} from './channelSchedule';
 import {journal} from './activityJournalRuntime';
