@@ -3384,6 +3384,7 @@ export const VYRON_RELEASE_HISTORY:ReleaseHistoryEntry[]=[
     "prerelease": false
   }
 ];
-export const VYRON_FIRST_RELEASE=VYRON_RELEASE_HISTORY.slice().sort((a,b)=>a.date.localeCompare(b.date))[0];
+const releaseMoment=(x:ReleaseHistoryEntry)=>Date.parse(x.publishedAt||`${x.date}T23:59:59Z`);
+export const VYRON_FIRST_RELEASE=VYRON_RELEASE_HISTORY.reduce((first,row)=>releaseMoment(row)<releaseMoment(first)?row:first);
 export const VYRON_CURRENT_RELEASE=VYRON_RELEASE_HISTORY[0];
 export function groupReleaseHistoryByDay(rows:ReleaseHistoryEntry[]=VYRON_RELEASE_HISTORY){const m=new Map<string,ReleaseHistoryEntry[]>();for(const row of rows){const a=m.get(row.date)||[];a.push(row);m.set(row.date,a)}return[...m.entries()].sort((a,b)=>b[0].localeCompare(a[0]))}

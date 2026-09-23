@@ -47,9 +47,9 @@ describe('VYRON 3.0.0 Publisher/UI contracts',()=>{
   expect(styles).not.toContain('.compactDensity .main{margin-left:204px}');
   expect(styles).not.toContain('.compactDensity .main{margin-left:72px}');
  });
- it('uses one structured changelog source with factual 3.0.0 entry',()=>{
-  expect(settings).toContain('VYRON_RELEASE_HISTORY.map');
-  expect(history).toContain("version:'3.0.0'");
-  expect(history).toContain("date:'21.09.2026'");
+ it('uses one canonical structured changelog source with factual 3.0.0 entry',()=>{
+  expect(settings).toContain('<ReleaseHistoryTimeline/>');
+  expect(history).toContain('"version": "3.0.0"');
+  expect(history).toContain('"date": "2026-09-21"');
  });
 });
