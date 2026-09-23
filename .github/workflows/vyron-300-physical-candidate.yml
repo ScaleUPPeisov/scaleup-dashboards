@@ -306,8 +306,8 @@ jobs:
           assert 'width:228px!important' in layout and 'width:auto!important' in layout and 'text-overflow:clip!important' in layout
           for label in ['Главная','Каналы','Производство','YouTube','Аналитика','Конкуренты','Настройки']:
               assert label in app
-          assert 'cleanupEligibleUpload(currentProof,j)' in p
-          assert 'confirmedCleanupCandidates' in cleanup and 'latestChannelUploadBatchId' in cleanup
+          assert 'postUploadCleanupEligible(currentProof,j)' in p
+          assert 'confirmedCleanupCandidates' in cleanup and 'latestChannelUploadBatchId' in cleanup and 'postUploadCleanupEligible' in cleanup
           assert 'Удалить загруженные из партии' in p and 'Очистить подтверждённо загруженные' in p
           assert 'Будет перемещено в Корзину:' in p and 'Переместить в Корзину' in p
           assert 'if(deleteFromDisk&&channelRenderFolder)void scanRenderFolder()' in p
