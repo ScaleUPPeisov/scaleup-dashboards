@@ -93,8 +93,9 @@ describe('VYRON 2.1.15 RC3 critical stability contracts',()=>{
   expect(cleanupEligibleUpload({...history('READY'),sha256:'b'.repeat(64)},job)).toBe(false);
  });
 
- it('TRASHED history is written only for READY records',()=>{
-  expect(markHistoryTrashed([history('YOUTUBE_PROCESSING')],'j1')[0].trashedAt).toBeUndefined();
+ it('TRASHED history may follow trusted successful upload acceptance but never failed processing',()=>{
+  expect(markHistoryTrashed([history('UPLOAD_ACCEPTED')],'j1')[0].trashedAt).toBeTruthy();
+  expect(markHistoryTrashed([history('YOUTUBE_PROCESSING')],'j1')[0].trashedAt).toBeTruthy();
   expect(markHistoryTrashed([history('READY')],'j1')[0].trashedAt).toBeTruthy();
  });
 

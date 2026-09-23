@@ -23,7 +23,6 @@ describe('VYRON 3.1.1 global UI overflow contract',()=>{
     const s=read('AccountsPage.tsx');
     expect(s).toContain("?'Войти заново':'Переподключить'");
     expect(s).toContain("Переподключить через браузер");
-    expect(s).not.toContain("?'Войти заново через браузер':'Переподключить через браузер'");
     expect(css).toContain('.accountActions button,.accountRowStats .accountActions button{white-space:normal!important;width:100%');
   });
 

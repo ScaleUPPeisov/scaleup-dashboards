@@ -11,7 +11,7 @@ describe('VYRON 3.0.0 local auth continuity',()=>{
   expect(accounts).toContain('Заменить credentials.json');
   expect(accounts).toContain('Загрузить credentials.json');
   expect(accounts).toContain("?'Войти заново':'Переподключить'");
-  expect(accounts).toContain('Повторно подключить канал через выбранный браузер');
+  expect(accounts).toContain('Переподключить через браузер');
   expect(recovery).toContain('Восстановить сохранённый доступ');
   expect(recovery).toContain('Заменить credentials.json');
   expect(recovery).toContain('Загрузить credentials.json');

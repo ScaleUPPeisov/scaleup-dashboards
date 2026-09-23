@@ -22,7 +22,7 @@ describe('VYRON 2.1.13 existing channel rebind',()=>{
  it('existing profile reconnect shows target identity before explicit browser OAuth',()=>{
   const ui=read('src/AccountsPage.tsx');
   expect(ui).toContain("?'Войти заново':'Переподключить'");
-  expect(ui).toContain('Повторно подключить канал через выбранный браузер');
+  expect(ui).toContain('Переподключить через браузер');
   expect(ui).toContain('setPreReconnectProfileId(profileId)');
   expect(ui).toContain('Expected YouTube Channel ID');
   expect(ui).toContain('Выбрать браузер и продолжить');
