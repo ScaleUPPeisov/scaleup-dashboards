@@ -44,12 +44,12 @@ describe('VYRON 2.1.14 RC2 channel statistics contract',()=>{
   expect(ui).toContain('↻ Обновить');
   expect(ui).toContain('Последняя синхронизация');
   expect(ui).toContain('Подписчики');
-  expect(ui).toContain('<small>Просмотры</small>');
+  expect(ui).toContain('Всего просмотров');
   expect(ui).toContain('Видео');
  });
  it('active channel center shows real total channel stats from cache',()=>{
   const ui=read('src/YouTubeChannelBar.tsx');
-  expect(ui).toContain('Всего просмотров');
+  expect(ui).toContain('<small>Просмотры</small>');
   expect(ui).toContain('subscriberStatLabel(stats)');
   expect(ui).toContain('stats?.viewCount??stats?.views');
   expect(ui).toContain('stats?.videoCount??stats?.videos');
