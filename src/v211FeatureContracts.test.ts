@@ -24,10 +24,11 @@ describe('VYRON 2.0.11 requested feature contracts',()=>{
   const cleanupRust=rust.slice(rust.indexOf('fn cleanup_completed_assets'),rust.indexOf('pub fn delete_production_batch_projects'));
   expect(cleanupRust).not.toContain('remove_dir_all');
  });
- it('Topbar errors are clickable and updates contain dated history',()=>{
+ it('Topbar errors are clickable and updates contain dated canonical history',()=>{
   expect(read('./App.tsx')).toContain('setErrorsOpen(true)');
-  expect(read('./SettingsOS.tsx')).toContain('Что менялось по дням');
-  expect(read('./releaseHistory.ts')).toContain("version:'2.0.11'");
+  expect(read('./SettingsOS.tsx')).toContain('<ReleaseHistoryTimeline/>');
+  expect(read('./ReleaseHistoryTimeline.tsx')).toContain('groupReleaseHistoryByDay');
+  expect(read('./releaseHistory.ts')).toContain('"version": "2.0.11"');
  });
  it('Existing Videos has category, playlist, authoritative backup, quota fact report and no sync in Undo',()=>{
   const ui=read('./ExistingVideos.tsx'),rust=read('../src-tauri/src/youtube.rs');
