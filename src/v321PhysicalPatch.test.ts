@@ -2,6 +2,8 @@ import {describe,expect,it} from 'vitest';
 import {readFileSync} from 'node:fs';
 import {channelCountrySource,channelLanguageSource,normalizeChannelStatistics} from './youtubeChannelStats';
 import {confirmedCleanupCandidates,latestChannelUploadBatchId,postUploadCleanupEligible} from './postUploadCleanup';
+import {effectiveSourceLifecycle} from './activityJournalCore';
+import {markHistoryTrashed} from './storageLifecycle';
 
 const read=(path:string)=>readFileSync(path,'utf8');
 const sha=(ch:string)=>ch.repeat(64);
@@ -66,6 +68,13 @@ describe('VYRON 3.2.1 physical regression patch',()=>{
   const jobs=[job(),job({id:'job-2',number:2,finalPath:'/Render/VIDEO_002.mov',currentSourceFingerprint:sha('b'),currentSourceFileSize:2222}),job({id:'job-3',number:3,finalPath:'/Render/VIDEO_003.mov'})];
   expect(latestChannelUploadBatchId([ok1,ok2,verify],'channel-1')).toBe('batch-partial');
   expect(confirmedCleanupCandidates([ok1,ok2,verify],jobs,'channel-1','batch-partial').map(x=>x.jobId)).toEqual(['job-1','job-2']);
+ });
+ it('records intentional cleanup as TRASHED_BY_VYRON instead of an unexpected missing source',()=>{
+  const moved=markHistoryTrashed([history({processingState:'YOUTUBE_PROCESSING'})],'job-1','2026-09-23T10:02:00Z','cleanup-op');
+  expect(moved[0].sourceLifecycle).toBe('TRASHED_BY_VYRON');
+  expect(effectiveSourceLifecycle(moved[0])).toBe('TRASHED_BY_VYRON');
+  expect(moved[0].youtubeVideoId).toBe('yt1');
+  expect(moved[0].sha256).toBe(sha('a'));
  });
  it('keeps Trash, history preservation and post-cleanup rescan explicit in Publisher',()=>{
   const p=read('src/PublisherOS.tsx'),del=read('src-tauri/src/local_delete.rs');
