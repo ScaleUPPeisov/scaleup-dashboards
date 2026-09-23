@@ -39,7 +39,7 @@ describe('VYRON 3.2.1 physical regression patch',()=>{
  it('keeps account and external-disk actions wrap-safe with the short reconnect label',()=>{
   const accounts=read('src/AccountsPage.tsx'),publisher=read('src/PublisherOS.tsx'),css=read('src/ui-layout-contract.css');
   expect(accounts).toContain("'Переподключить'");
-  expect(accounts).toContain('Повторно подключить канал через выбранный браузер');
+  expect(accounts).toContain('Переподключить через браузер');
   expect(publisher).toContain('>Повторить</button>');
   expect(publisher).toContain('>Изменить папку</button>');
   expect(css).toContain('.renderSourceOfflineActions');
