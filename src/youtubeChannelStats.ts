@@ -33,11 +33,16 @@ export function subscriberStatLabel(stats?:YoutubeChannelStatistics|null){
   return stats?.hiddenSubscriberCount?'скрыто':compactChannelStat(stats?.subscriberCount??stats?.subscribers);
 }
 
+function nonEmpty(value?:string|null){const v=typeof value==='string'?value.trim():'';return v||undefined}
+
 export function normalizeChannelStatistics(next:YoutubeChannelStatistics,previous?:YoutubeChannelStatistics|null):YoutubeChannelStatistics{
   const updated=next.statisticsUpdatedAt||new Date().toISOString();
   return {
     ...previous,
     ...next,
+    publishedAt:nonEmpty(next.publishedAt)||nonEmpty(previous?.publishedAt),
+    country:nonEmpty(next.country)||nonEmpty(previous?.country),
+    defaultLanguage:nonEmpty(next.defaultLanguage)||nonEmpty(previous?.defaultLanguage),
     subscriberCount:next.hiddenSubscriberCount?undefined:next.subscriberCount,
     statisticsUpdatedAt:updated,
     lastAttemptAt:updated,
@@ -82,4 +87,20 @@ export function channelStatsStatusLabel(stats?:YoutubeChannelStatistics|null,ref
   if(stats?.syncWarning)return '⚠ Не удалось обновить • показаны последние данные';
   if(!channelStatsTimestamp(stats))return 'Данных ещё нет';
   return isChannelStatsStale(stats,now)?`Данные устарели • ${formatStatsAge(stats,now)}`:`✓ ${formatStatsAge(stats,now)}`;
+}
+
+
+export function channelCountrySource(stats?:YoutubeChannelStatistics|null,savedYoutubeCountry?:string|null,manualFallback?:string|null){
+  return nonEmpty(stats?.country)||nonEmpty(savedYoutubeCountry)||nonEmpty(manualFallback)||'—';
+}
+
+export function channelLanguageSource(stats?:YoutubeChannelStatistics|null,savedYoutubeLanguage?:string|null){
+  return nonEmpty(stats?.defaultLanguage)||nonEmpty(savedYoutubeLanguage)||'—';
+}
+
+export function youtubeCountryLabel(value?:string|null){
+  const raw=nonEmpty(value);
+  if(!raw)return '—';
+  if(!/^[A-Za-z]{2}$/.test(raw))return raw;
+  try{return new Intl.DisplayNames(['ru-RU'],{type:'region'}).of(raw.toUpperCase())||raw.toUpperCase()}catch{return raw.toUpperCase()}
 }
