@@ -1,0 +1,132 @@
+name: ChannelArt Factory M1 installer build
+
+on:
+  push:
+    branches: [channelart-build-v010]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-macos-arm64:
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Build diagnostics and DMG
+        shell: bash
+        run: |
+          set +e
+          ROOT="$PWD"
+          mkdir -p channelart-artifact
+          LOG="$ROOT/channelart-artifact/BUILD_LOG.txt"
+          : > "$LOG"
+          exec > >(tee -a "$LOG") 2>&1
+
+          STATUS="verified"
+          FAILED_STEP=""
+          ERROR_CODE=0
+
+          fail() {
+            STATUS="failed"
+            FAILED_STEP="$1"
+            ERROR_CODE="$2"
+            echo "CHANNELART_FAIL step=$FAILED_STEP code=$ERROR_CODE"
+          }
+
+          step() {
+            local name="$1"; shift
+            if [ "$STATUS" != "verified" ]; then return 0; fi
+            echo "===== $name ====="
+            "$@"
+            local rc=$?
+            if [ $rc -ne 0 ]; then fail "$name" "$rc"; fi
+          }
+
+          step runner_arch bash -lc 'uname -a; test "$(uname -s)" = Darwin; test "$(uname -m)" = arm64'
+
+          if [ "$STATUS" = "verified" ]; then
+            cat channelart-e8-*.b64 | tr -d '\n\r' | base64 --decode > /tmp/channelart-source.zip
+            GOT="$(shasum -a 256 /tmp/channelart-source.zip | awk '{print $1}')"
+            EXPECTED="f9088ed4b7ba7844384315faeba93180c7adbdfab64cb43138e02cacc0184f81"
+            if [ "$GOT" != "$EXPECTED" ]; then fail source_checksum 41; fi
+          fi
+
+          if [ "$STATUS" = "verified" ]; then
+            rm -rf ChannelArtFactory-v0.1.0
+            unzip -q /tmp/channelart-source.zip || fail source_unzip $?
+          fi
+
+          if [ "$STATUS" = "verified" ]; then
+            cd ChannelArtFactory-v0.1.0 || fail source_directory $?
+          fi
+
+          step disable_updater_artifacts python3 -c 'import json; p="src-tauri/tauri.conf.json"; d=json.load(open(p)); d["bundle"]["createUpdaterArtifacts"]=False; open(p,"w").write(json.dumps(d,ensure_ascii=False,indent=2)+"\n")'
+          step npm_install npm install --no-audit --no-fund
+          step ui_contract npm run check
+          step frontend_build npm run build
+          step generate_icons npx tauri icon src-tauri/icons/icon.svg
+          step rust_check cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
+          step tauri_build npx tauri build --target aarch64-apple-darwin --bundles app,dmg
+
+          if [ "$STATUS" = "verified" ]; then
+            APP_DIR="src-tauri/target/aarch64-apple-darwin/release/bundle/macos"
+            APP="$(find "$APP_DIR" -maxdepth 1 -type d -name '*.app' -print -quit)"
+            DMG="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -maxdepth 1 -type f -name '*.dmg' -print -quit)"
+            if [ ! -d "$APP" ] || [ ! -f "$DMG" ]; then
+              fail bundle_missing 51
+            else
+              BUNDLE_ID="$(/usr/bin/plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist" 2>/dev/null)"
+              APP_VERSION="$(/usr/bin/plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist" 2>/dev/null)"
+              if [ "$BUNDLE_ID" != "ai.channelart.factory" ]; then fail bundle_id 52; fi
+              if [ "$APP_VERSION" != "0.1.0" ]; then fail bundle_version 53; fi
+            fi
+          fi
+
+          cd "$ROOT"
+          if [ "$STATUS" = "verified" ]; then
+            cp "$ROOT/ChannelArtFactory-v0.1.0/$DMG" channelart-artifact/ChannelArt-Factory-0.1.0-M1.dmg
+          fi
+
+          python3 - "$STATUS" "$FAILED_STEP" "$ERROR_CODE" "$GITHUB_RUN_ID" "$GITHUB_SHA" <<'PY'
+          import json,sys,datetime
+          status,step,code,run_id,sha=sys.argv[1:]
+          d={
+            "app":"ChannelArt Factory",
+            "version":"0.1.0",
+            "status":status,
+            "failed_step":step or None,
+            "error_code":int(code),
+            "platform":"macos-arm64",
+            "bundle_id":"ai.channelart.factory",
+            "run_id":run_id,
+            "source_sha":sha,
+            "checked_at":datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00','Z')
+          }
+          open('channelart-artifact/BUILD_RECEIPT.json','w').write(json.dumps(d,indent=2)+'\n')
+          PY
+          shasum -a 256 channelart-artifact/* > channelart-artifact/SHA256SUMS.txt 2>/dev/null || true
+          echo "Internal result: $STATUS / $FAILED_STEP"
+          exit 0
+
+      - name: Upload installer and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChannelArt-Factory-0.1.0-M1
+          path: channelart-artifact/*
+          if-no-files-found: error
+          retention-days: 30
+        continue-on-error: true
