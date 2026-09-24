@@ -1,0 +1,208 @@
+name: ReelsFactory macOS M1 release
+on:
+  push:
+    branches: [reelsfactory-desktop]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    if: startsWith(github.event.head_commit.message, 'release: ReelsFactory')
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify Apple Silicon toolchain
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "arm64"
+          node --version
+          swift --version
+          rustc --version
+
+      - name: Setup Rust ARM64
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Install frontend deps
+        run: npm install --no-audit --no-fund
+
+      - name: Build native AVFoundation + Vision helper and run export regression
+        run: |
+          set -euo pipefail
+          mkdir -p src-tauri/binaries
+          swiftc native/VideoProcessor.swift -O -target arm64-apple-macos13.0 \
+            -o src-tauri/binaries/reelsfactory-video-aarch64-apple-darwin \
+            -framework AVFoundation -framework AppKit -framework QuartzCore -framework CoreMedia -framework CoreVideo -framework Vision
+          chmod +x src-tauri/binaries/reelsfactory-video-aarch64-apple-darwin
+          file src-tauri/binaries/reelsfactory-video-aarch64-apple-darwin | grep -q arm64
+          src-tauri/binaries/reelsfactory-video-aarch64-apple-darwin self-test | tee /tmp/reelsfactory-self-test.log
+          grep -q "RF_SELF_TEST_OK" /tmp/reelsfactory-self-test.log
+
+      - name: Build local Whisper engine
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/whisper.cpp
+          git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git /tmp/whisper.cpp
+          cmake -S /tmp/whisper.cpp -B /tmp/whisper.cpp/build \
+            -DBUILD_SHARED_LIBS=OFF -DGGML_METAL=ON \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_BUILD_TYPE=Release
+          cmake --build /tmp/whisper.cpp/build --config Release -j 4 --target whisper-cli
+          cp /tmp/whisper.cpp/build/bin/whisper-cli src-tauri/binaries/whisper-cli-aarch64-apple-darwin
+          chmod +x src-tauri/binaries/whisper-cli-aarch64-apple-darwin
+          file src-tauri/binaries/whisper-cli-aarch64-apple-darwin | grep -q arm64
+
+      - name: Frontend build and Smart Cuts tests
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./package.json').version")
+          npm run build
+          grep -q "$VERSION" dist/app.js
+          grep -q "$VERSION" dist/index.html
+          cargo test --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
+
+      - name: Rust check
+        run: cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
+
+      - name: Build ReelsFactory app bundle
+        run: npx tauri build --target aarch64-apple-darwin --bundles app
+
+      - name: Ad-hoc sign complete app after bundling
+        run: |
+          set -euo pipefail
+          APP="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/ReelsFactory.app"
+          test -d "$APP"
+          while IFS= read -r -d '' FILE; do
+            if /usr/bin/file "$FILE" | /usr/bin/grep -q 'Mach-O'; then
+              /usr/bin/codesign --force --sign - --timestamp=none "$FILE"
+            fi
+          done < <(/usr/bin/find "$APP/Contents" -type f -perm -111 -print0)
+          /usr/bin/codesign --force --deep --sign - --timestamp=none "$APP"
+          /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP"
+          /usr/bin/file "$APP/Contents/MacOS/ReelsFactory" | /usr/bin/grep -q arm64
+
+      - name: Create signed-app DMG
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./package.json').version")
+          APP="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/ReelsFactory.app"
+          STAGE="/tmp/reelsfactory-dmg"
+          DMG="ReelsFactory_${VERSION}_M1.dmg"
+          rm -rf "$STAGE" "$DMG"
+          mkdir -p "$STAGE"
+          /usr/bin/ditto "$APP" "$STAGE/ReelsFactory.app"
+          ln -s /Applications "$STAGE/Applications"
+          /usr/bin/hdiutil create -volname "ReelsFactory ${VERSION}" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
+          test -f "$DMG"
+          ATTACH=$(/usr/bin/hdiutil attach -nobrowse -readonly "$DMG")
+          MOUNT=$(printf '%s\n' "$ATTACH" | /usr/bin/sed -n 's#^.*\(/Volumes/.*\)$#\1#p' | /usr/bin/tail -1)
+          test -d "$MOUNT/ReelsFactory.app"
+          /usr/bin/codesign --verify --deep --strict --verbose=2 "$MOUNT/ReelsFactory.app"
+          test -x "$MOUNT/ReelsFactory.app/Contents/MacOS/ReelsFactory"
+          /usr/bin/file "$MOUNT/ReelsFactory.app/Contents/MacOS/ReelsFactory" | /usr/bin/grep -q arm64
+          /usr/bin/plutil -lint "$MOUNT/ReelsFactory.app/Contents/Info.plist"
+          /usr/bin/hdiutil detach "$MOUNT" -quiet
+          SHA=$(/usr/bin/shasum -a 256 "$DMG" | /usr/bin/awk '{print $1}')
+          printf '{"version":"%s","sha256":"%s","file":"ReelsFactory_%s_M1.dmg"}\n' "$VERSION" "$SHA" "$VERSION" > reelsfactory-manifest.json
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Create one-click GUI bootstrap installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.meta.outputs.version }}"
+          APP="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/ReelsFactory.app"
+          INSTALLER="/tmp/ReelsFactory Installer.app"
+          rm -rf "$INSTALLER" "ReelsFactory_${VERSION}_M1_Installer.zip" /tmp/installer-check
+          mkdir -p "$INSTALLER/Contents/MacOS" "$INSTALLER/Contents/Resources"
+          /usr/bin/ditto "$APP" "$INSTALLER/Contents/Resources/ReelsFactory.app"
+          cat > "$INSTALLER/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+          <key>CFBundleDisplayName</key><string>ReelsFactory Installer</string>
+          <key>CFBundleExecutable</key><string>installer</string>
+          <key>CFBundleIdentifier</key><string>com.scaleup.reelsfactory.installer</string>
+          <key>CFBundleName</key><string>ReelsFactory Installer</string>
+          <key>CFBundlePackageType</key><string>APPL</string>
+          <key>CFBundleShortVersionString</key><string>${VERSION}</string>
+          <key>CFBundleVersion</key><string>${VERSION}</string>
+          <key>LSMinimumSystemVersion</key><string>13.0</string>
+          <key>LSUIElement</key><true/>
+          </dict></plist>
+          PLIST
+          printf 'APPL????' > "$INSTALLER/Contents/PkgInfo"
+          cat > "$INSTALLER/Contents/Resources/install_payload.zsh" <<'PAYLOAD'
+          #!/bin/zsh
+          set -euo pipefail
+          SOURCE="$1"; TARGET="$2"; BACKUP="${TARGET%.app}.previous.app"
+          /bin/rm -rf "$BACKUP"
+          if [[ -d "$TARGET" ]]; then /bin/mv "$TARGET" "$BACKUP"; fi
+          rollback(){ /bin/rm -rf "$TARGET"; [[ -d "$BACKUP" ]] && /bin/mv "$BACKUP" "$TARGET" || true; }
+          trap rollback ERR
+          /usr/bin/ditto "$SOURCE" "$TARGET"
+          /usr/bin/xattr -dr com.apple.quarantine "$TARGET" >/dev/null 2>&1 || true
+          /usr/bin/codesign --verify --deep --strict "$TARGET"
+          trap - ERR
+          PAYLOAD
+          chmod +x "$INSTALLER/Contents/Resources/install_payload.zsh"
+          cat > "$INSTALLER/Contents/MacOS/installer" <<'INSTALLER_SCRIPT'
+          #!/bin/zsh
+          set -u
+          ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+          SOURCE="$ROOT/Resources/ReelsFactory.app"; HELPER="$ROOT/Resources/install_payload.zsh"; TARGET="/Applications/ReelsFactory.app"
+          fail(){ /usr/bin/osascript -e 'display dialog "Установка ReelsFactory не завершена. Старая версия не удалена или восстановлена." with title "ReelsFactory Installer" buttons {"OK"} default button 1 with icon stop' >/dev/null 2>&1 || true; exit 1; }
+          /usr/bin/codesign --verify --deep --strict "$SOURCE" || fail
+          /usr/bin/osascript - "$HELPER" "$SOURCE" "$TARGET" <<'APPLESCRIPT' || fail
+          on run argv
+            set helperPath to item 1 of argv
+            set sourcePath to item 2 of argv
+            set targetPath to item 3 of argv
+            set cmd to "/bin/zsh " & quoted form of helperPath & " " & quoted form of sourcePath & " " & quoted form of targetPath
+            do shell script cmd with administrator privileges
+          end run
+          APPLESCRIPT
+          /usr/bin/open "$TARGET" || fail
+          /usr/bin/osascript -e 'display notification "ReelsFactory установлен и запущен" with title "ReelsFactory"' >/dev/null 2>&1 || true
+          /usr/bin/osascript -e 'display dialog "Готово ✅\n\nReelsFactory установлен в папку Программы и запущен. Следующие обновления будут приходить внутри приложения." with title "ReelsFactory Installer" buttons {"OK"} default button 1 with icon note' >/dev/null 2>&1 || true
+          exit 0
+          INSTALLER_SCRIPT
+          chmod +x "$INSTALLER/Contents/MacOS/installer"
+          /usr/bin/codesign --force --deep --sign - --timestamp=none "$INSTALLER"
+          /usr/bin/codesign --verify --deep --strict --verbose=2 "$INSTALLER"
+          cd /tmp
+          /usr/bin/ditto -c -k --sequesterRsrc --keepParent "ReelsFactory Installer.app" "$GITHUB_WORKSPACE/ReelsFactory_${VERSION}_M1_Installer.zip"
+          cd "$GITHUB_WORKSPACE"
+          /usr/bin/ditto -x -k "ReelsFactory_${VERSION}_M1_Installer.zip" /tmp/installer-check
+          test -x "/tmp/installer-check/ReelsFactory Installer.app/Contents/MacOS/installer"
+          /usr/bin/codesign --verify --deep --strict "/tmp/installer-check/ReelsFactory Installer.app"
+          /usr/bin/codesign --verify --deep --strict "/tmp/installer-check/ReelsFactory Installer.app/Contents/Resources/ReelsFactory.app"
+
+      - name: Upload CI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ReelsFactory-${{ steps.meta.outputs.version }}-M1
+          path: |
+            ReelsFactory_${{ steps.meta.outputs.version }}_M1.dmg
+            ReelsFactory_${{ steps.meta.outputs.version }}_M1_Installer.zip
+            reelsfactory-manifest.json
+          if-no-files-found: error
+
+      - name: Publish updater release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="reelsfactory-v${{ steps.meta.outputs.version }}"
+          gh release delete "$TAG" --yes 2>/dev/null || true
+          gh release create "$TAG" \
+            "ReelsFactory_${{ steps.meta.outputs.version }}_M1.dmg" \
+            "ReelsFactory_${{ steps.meta.outputs.version }}_M1_Installer.zip" \
+            reelsfactory-manifest.json \
+            --title "ReelsFactory v${{ steps.meta.outputs.version }}" \
+            --notes "ReelsFactory v${{ steps.meta.outputs.version }} — fixed 9:16 render geometry that could expose black canvas; face tracking now uses bounded smooth motion and recenters safely; Auto Zoom is softer; Smart Cuts only removes clearly long internal dead air, preserves head/tail and falls back to the full clip if transcript timing would over-cut. Release is blocked unless synthetic landscape + rotated-metadata exports pass a real AVFoundation no-black-bars pixel test and Smart Cuts regression tests."
