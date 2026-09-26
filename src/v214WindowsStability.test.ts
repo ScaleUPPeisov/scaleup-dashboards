@@ -69,6 +69,14 @@ describe('VYRON 2.1.14 Windows stability regressions',()=>{
     expect(production).not.toContain('>ОТКРЫТЬ В FINDER</button>');
   });
 
+  it('keeps shared OAuth recovery errors platform-neutral on Windows',()=>{
+    const rust=read('../src-tauri/src/youtube.rs');
+    expect(rust).toContain('canonical credential requires secure-storage interaction');
+    expect(rust).toContain('historical OAuth credential exists but secure storage denied access');
+    expect(rust).toContain('current, secure storage и historical JSON locations');
+    expect(rust).not.toContain('historical OAuth credential exists but macOS denied access');
+  });
+
   it('does not invalidate last-known-good license cache for transient failures',()=>{
     const rust=read('../src-tauri/src/license.rs');
     expect(rust).toContain('LICENSE_TRANSIENT: HTTP');
