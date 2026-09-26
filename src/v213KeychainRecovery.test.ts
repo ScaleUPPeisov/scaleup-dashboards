@@ -25,8 +25,9 @@ describe('VYRON 2.1.9 RC7 per-query no-UI Keychain recovery contracts',()=>{
   const api=read('./api.ts'),ui=read('./SettingsOS.tsx'),rust=read('../src-tauri/src/security.rs'),lib=read('../src-tauri/src/lib.rs');
   expect(api).toContain("invoke<KeychainDiagnostic>('security_keychain_diagnostics')");
   expect(ui).toContain('runKeychainDiagnostics');
-  expect(ui).toContain('Проверить Keychain');
-  expect(ui).toContain('Пассивная проверка NO-UI policy');
+  expect(ui).toContain('Проверить хранилище');
+  expect(ui).toContain('Пассивная проверка защищённого хранилища');
+  expect(ui).toContain("'Windows Credential Manager'");
   expect(ui).not.toContain('macOS может показать системный запрос пароля');
   expect(rust).toContain('pub fn security_keychain_diagnostics');
   const start=lib.indexOf('tauri::generate_handler!['),end=lib.indexOf('])',start),handler=lib.slice(start,end);
