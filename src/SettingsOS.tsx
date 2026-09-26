@@ -40,7 +40,38 @@ export function SettingsOS({license}:{license:LicenseStatus}){
  const resetUploadQuota=()=>{if(!quotaIdentity.projectKey)return;resetYoutubeUploadQuotaLimit(quotaIdentity.projectKey);setQuotaRev(x=>x+1);notifyInfo('Upload quota возвращена к baseline','100 используется как значение по умолчанию, а не как подтверждённый Google лимит.')};
  const mode:AutopilotMode=s.autopilotMode||'off';
  const setMode=(m:AutopilotMode)=>patch({autopilotMode:m,autopilotEnabled:m!=='off',autoUploadYoutube:false});
- async function runDiagnostics(){setChecking(true);try{let ws=s.workspace;if(!ws){ws=await api.defaultWorkspace();patch({workspace:ws})}const [core,endlume]=await Promise.all([api.diagnostics(ws),api.endlumeDiagnostics(s.endlumePath)]);await checkUpdate({force:true});const updater=useUpdaterRuntime.getState(),updaterOk=updater.status!=='ERROR'&&Boolean(updater.endpoint);setDiag([{label:'Local Core',status:core.ok?'Готово':'Требует внимания',ok:core.ok},{label:'Workspace',status:core.workspaceWritable?'Доступен для записи':'Проблема записи',ok:core.workspaceWritable},{label:'ENDLUME',status:endlume.status,ok:endlume.ok,detail:endlume.detail||[endlume.path,endlume.inbox,endlume.versionStatus].filter(Boolean).join(' • ')},{label:'Лицензия',status:license.valid?licenseName(license):'Не активирована',ok:license.valid},{label:'Updater',status:updaterOk?`${updater.status} • manifest OK`:(updater.errorCode||updater.status),ok:updaterOk,detail:updaterOk?`${updater.endpoint} • ${updater.versionComparison||'version checked'}`:updater.errorMessage},{label:'YouTube',status:'API-проверка не запускалась',ok:true,detail:'Диагностика не расходует YouTube Data API quota.'}])}catch(e){setDiag([{label:'Диагностика',status:'Ошибка',ok:false,detail:String(e)}])}finally{setChecking(false)}}
+ async function runDiagnostics(){
+  setChecking(true);
+  try{
+   let ws=s.workspace;
+   if(!ws){ws=await api.defaultWorkspace();patch({workspace:ws})}
+   const [core,endlume,updater]=await Promise.all([
+    api.diagnostics(ws),
+    api.endlumeDiagnostics(s.endlumePath),
+    api.updaterManifestDiagnostics(UPDATER_ENDPOINTS[0])
+   ]);
+   const updaterDetail=updater.ok?[
+    updater.endpoint,
+    'HTTP '+(updater.httpStatus??'—'),
+    'JSON '+(updater.jsonParsed?'OK':'FAIL'),
+    (updater.platformKey||'windows-x86_64')+' '+(updater.platformPresent?'OK':'MISSING'),
+    'semver '+(updater.semverValid?'OK':'FAIL'),
+    'URL '+(updater.downloadUrl?'OK':'FAIL'),
+    'signature '+(updater.signaturePresent?'PRESENT':'MISSING'),
+    updater.comparison,
+    'installer download: '+(updater.installerDownloaded?'YES':'NO')
+   ].filter(Boolean).join(' • '):(updater.detail||updater.errors?.join(', ')||updater.status);
+   setDiag([
+    {label:'Local Core',status:core.ok?'Готово':'Требует внимания',ok:core.ok},
+    {label:'Workspace',status:core.workspaceWritable?'Доступен для записи':'Проблема записи',ok:core.workspaceWritable},
+    {label:'ENDLUME',status:endlume.status,ok:endlume.ok,detail:endlume.detail||[endlume.path,endlume.inbox,endlume.versionStatus].filter(Boolean).join(' • ')},
+    {label:'Лицензия',status:license.valid?licenseName(license):'Не активирована',ok:license.valid},
+    {label:'Updater',status:updater.status,ok:updater.ok,detail:updaterDetail},
+    {label:'YouTube',status:'API-проверка не запускалась',ok:true,detail:'Диагностика не расходует YouTube Data API quota.'}
+   ])
+  }catch(e){setDiag([{label:'Диагностика',status:'Ошибка',ok:false,detail:String(e)}])}
+  finally{setChecking(false)}
+ }
  async function runKeychainDiagnostics(){setKeychainChecking(true);const label=secureStorageLabel();try{const result=await api.securityKeychainDiagnostics();const backend=result.backend||label;setKeychainDiag({label:backend,status:result.status||'READY',ok:result.ok,detail:result.ok?'Пассивная диагностика: secret values не читаются и не записываются.':result.status});if(result.ok)notifySuccess(`${backend}: READY`,'Защищённое хранилище доступно; диагностика не читает secret values.',{operationId:'secure-storage-diagnostic-ok'})}catch(e){const h=humanizeError(e,'storage');setKeychainDiag({label,status:h.title,ok:false,detail:h.detail});notifyError(h.title,h.message,{operationId:'secure-storage-diagnostic-error'})}finally{setKeychainChecking(false)}}
  async function runOauthRecoveryDiagnostic(){if(!oauthDiagProfileId){notifyWarning('Выберите YouTube профиль','Для диагностики нужен конкретный канал.');return}setOauthDiagChecking(true);try{const result=await api.youtubeOauthRecoveryDiagnostic(oauthDiagProfileId);setOauthDiag(result);if(result.credentialState==='CANONICAL_READY')notifySuccess('OAuth credential: CANONICAL READY','Профиль использует canonical secure storage; secret values не читаются этой диагностикой.');else if(result.credentialState==='LEGACY_RECONNECT_REQUIRED')notifyWarning('OAuth credential: RECONNECT REQUIRED','Для этого YouTube-профиля требуется однократное повторное подключение Google. Диагностика не читает legacy secret.');else notifyWarning('OAuth credential: MISSING','Canonical и legacy refresh token по безопасной attribute-проверке не найдены.')}catch(e){const h=humanizeError(e,'youtube');setOauthDiag({credentialState:'ERROR',migrationState:'FAILED',error:h.detail});notifyError(h.title,h.message)}finally{setOauthDiagChecking(false)}}
  async function checkForUpdate(){await checkUpdate({force:true});const next=useUpdaterRuntime.getState();if(next.status==='UP_TO_DATE'||next.status==='UPDATED')notifySuccess('VYRON YT PEISOV обновлён',`Установлена актуальная версия ${next.currentVersion||'—'}.`,{operationId:`update-latest:${next.currentVersion}`});else if(next.status==='AVAILABLE')notifyInfo(`Доступно обновление VYRON YT PEISOV ${next.latestVersion}`,'Нажмите «Обновить», чтобы скачать подписанный пакет.',{operationId:`settings-update:${next.latestVersion}`});else if(next.status==='ERROR'){const h=humanizeError(next.errorMessage||next.errorCode||'Updater error','update');notifyError(h.title,h.message)}}
