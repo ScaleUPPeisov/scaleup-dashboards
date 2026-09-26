@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     fs,
-    io::{Read, Seek, Write},
+    io::{Read, Write},
     net::TcpListener,
     path::{Path, PathBuf},
     process::Command,
@@ -1166,7 +1166,7 @@ fn orphan_keychain_scan_with<S: OAuthSecretStore>(
         let client_secret = match secrets.get(&oauth_key(&id, "client_secret")) {
             Ok(Some(v)) if !v.trim().is_empty() => v,
             Ok(_) => current.client_secret.clone(),
-            Err(e) if !current.client_secret.trim().is_empty() => current.client_secret.clone(),
+            Err(_e) if !current.client_secret.trim().is_empty() => current.client_secret.clone(),
             Err(e) => {
                 audit.keychain_read_status = classify_read_error(&e);
                 audit.osstatus = osstatus_from_error(&e);
