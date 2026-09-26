@@ -161,7 +161,7 @@ fn migrate_profile_refresh_to_canonical(app:&AppHandle,profile_id:&str)->Result<
   }
   Ok(_)=>{},
   Err(e) if e.contains("KEYCHAIN_INTERACTION_REQUIRED")||e.contains("KEYCHAIN_AUTH_FAILED")=>{
-   return Err(format!("OAUTH_RECONNECT_REQUIRED: profile={profile_id}; canonical credential requires macOS interaction, which VYRON blocks"))
+   return Err(format!("OAUTH_RECONNECT_REQUIRED: profile={profile_id}; canonical credential requires secure-storage interaction, which VYRON blocks"))
   }
   Err(e)=>return Err(e),
  }
@@ -186,7 +186,7 @@ fn require_canonical_refresh(app:&AppHandle,profile_id:&str)->Result<String,Stri
   Ok(Some(v)) if !v.trim().is_empty()=>return Ok(v),
   Ok(_)=>{},
   Err(e) if e.contains("KEYCHAIN_INTERACTION_REQUIRED")||e.contains("KEYCHAIN_AUTH_FAILED")=>{
-   return Err(format!("OAUTH_RECONNECT_REQUIRED: profile={profile_id}; canonical credential requires macOS interaction, which VYRON blocks"))
+   return Err(format!("OAUTH_RECONNECT_REQUIRED: profile={profile_id}; canonical credential requires secure-storage interaction, which VYRON blocks"))
   }
   Err(e)=>return Err(e),
  }
@@ -208,7 +208,7 @@ fn migrate_global_client_secret_if_needed(app:&AppHandle,profile_id:Option<&str>
   Ok(Some(v)) if !v.trim().is_empty()=>return Ok(Some(v)),
   Ok(_)=>{},
   Err(e) if e.contains("KEYCHAIN_INTERACTION_REQUIRED")||e.contains("KEYCHAIN_AUTH_FAILED")=>{
-   return Err("OAUTH_RECONNECT_REQUIRED: canonical Google client secret requires macOS interaction, which VYRON blocks".into())
+   return Err("OAUTH_RECONNECT_REQUIRED: canonical Google client secret requires secure-storage interaction, which VYRON blocks".into())
   }
   Err(e)=>return Err(e),
  }
@@ -1251,7 +1251,7 @@ fn honest_failure(audits: &[CandidateAudit]) -> (RecoveryFinalStatus, Option<Str
             CandidateReadStatus::AccessDenied | CandidateReadStatus::AuthFailed
         )
     }) {
-        return(RecoveryFinalStatus::Denied,Some("KEYCHAIN_ACCESS_DENIED: historical OAuth credential exists but macOS denied access".into()));
+        return(RecoveryFinalStatus::Denied,Some("KEYCHAIN_ACCESS_DENIED: historical OAuth credential exists but secure storage denied access".into()));
     }
     if audits
         .iter()
@@ -1290,7 +1290,7 @@ fn honest_failure(audits: &[CandidateAudit]) -> (RecoveryFinalStatus, Option<Str
     }) {
         return(RecoveryFinalStatus::Failed,Some("OAUTH_RECOVERY_FAILED: historical credential exists but recovery could not be completed".into()));
     }
-    (RecoveryFinalStatus::Missing,Some("REFRESH_TOKEN_MISSING: refresh_token отсутствует во всех current, orphan Keychain и historical JSON locations".into()))
+    (RecoveryFinalStatus::Missing,Some("REFRESH_TOKEN_MISSING: refresh_token отсутствует во всех current, secure storage и historical JSON locations".into()))
 }
 async fn evaluate_scanned_candidates_with<V, Fut>(
     scans: Vec<ScannedCandidate>,
