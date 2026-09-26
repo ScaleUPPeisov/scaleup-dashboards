@@ -235,15 +235,13 @@ fn atomic_write(path: &Path, state: &Value) -> Result<(), String> {
         .map_err(|e| format!("state temp validation failed: {e}"))?;
 
     if path.exists() && read_valid_json(path).is_ok() {
-        fs::copy(path, &bak_tmp).map_err(|e| format!("state backup copy: {e}"))?;
-        let backup_bytes = fs::read(&bak_tmp).map_err(|e| format!("state backup read: {e}"))?;
+        let backup_bytes = fs::read(path).map_err(|e| format!("state backup read: {e}"))?;
         serde_json::from_slice::<Value>(&backup_bytes)
             .map_err(|e| format!("state backup validation failed: {e}"))?;
-        OpenOptions::new()
-            .read(true)
-            .open(&bak_tmp)
-            .and_then(|f| f.sync_all())
-            .map_err(|e| format!("state backup sync: {e}"))?;
+        // Write the backup through a writable handle and fsync it before replacing state.bak.
+        // Opening a copied file read-only and calling sync_all() fails with ERROR_ACCESS_DENIED
+        // on Windows runners.
+        durable_write(&bak_tmp, &backup_bytes)?;
         replace_file_atomic(&bak_tmp, &bak)?;
         let _ = security::private_permissions(&bak);
     }
