@@ -358,6 +358,23 @@ mod v213_storage_tests {
     }
 
     #[test]
+    fn crash_after_temp_write_before_replace_leaves_primary_intact() {
+        let root = std::env::temp_dir().join(format!("vyron-state-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("state.json");
+        atomic_write(&path, &json!({"version":8,"channels":[{"id":"stable"}],"jobs":[{"id":"j1"}]})).unwrap();
+        let tmp = path.with_extension("tmp");
+        let pending = serde_json::to_vec_pretty(&json!({"version":8,"channels":[{"id":"pending"}]})).unwrap();
+        durable_write(&tmp, &pending).unwrap();
+        // Simulated power loss here: replace_file_atomic is intentionally not called.
+        let loaded = read_valid_json(&path).unwrap();
+        assert_eq!(loaded["channels"][0]["id"], "stable");
+        assert_eq!(loaded["jobs"][0]["id"], "j1");
+        assert!(tmp.exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn missing_primary_recovers_from_valid_backup() {
         let root = std::env::temp_dir().join(format!("vyron-state-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
