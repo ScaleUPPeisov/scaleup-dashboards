@@ -4,8 +4,8 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet},
-    fs,
-    io::Read,
+    fs::{self, OpenOptions},
+    io::{Read, Write},
     path::{Path, PathBuf},
     process::Command,
     sync::{
@@ -131,20 +131,47 @@ fn batch_root_parent(workspace: &str, channel_id: &str) -> Result<PathBuf, Strin
     fs::create_dir_all(&p).map_err(|e| e.to_string())?;
     Ok(p)
 }
+#[cfg(target_os = "windows")]
+fn replace_json_atomic(src: &Path, dst: &Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+    let src_w = src.as_os_str().encode_wide().chain(std::iter::once(0)).collect::<Vec<_>>();
+    let dst_w = dst.as_os_str().encode_wide().chain(std::iter::once(0)).collect::<Vec<_>>();
+    let ok = unsafe {
+        MoveFileExW(
+            src_w.as_ptr(),
+            dst_w.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if ok == 0 {
+        return Err(format!("atomic json replace: {}", std::io::Error::last_os_error()));
+    }
+    Ok(())
+}
+#[cfg(not(target_os = "windows"))]
+fn replace_json_atomic(src: &Path, dst: &Path) -> Result<(), String> {
+    fs::rename(src, dst).map_err(|e| format!("atomic json replace: {e}"))
+}
 fn atomic_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let tmp = path.with_extension("tmp");
-    fs::write(
-        &tmp,
-        serde_json::to_vec_pretty(value).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())?;
-    if path.exists() {
-        let _ = fs::remove_file(path);
-    }
-    fs::rename(tmp, path).map_err(|e| e.to_string())
+    let bytes = serde_json::to_vec_pretty(value).map_err(|e| e.to_string())?;
+    let mut file = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&tmp)
+        .map_err(|e| e.to_string())?;
+    file.write_all(&bytes).map_err(|e| e.to_string())?;
+    file.sync_all().map_err(|e| e.to_string())?;
+    serde_json::from_slice::<Value>(&fs::read(&tmp).map_err(|e| e.to_string())?)
+        .map_err(|e| format!("atomic json temp invalid: {e}"))?;
+    replace_json_atomic(&tmp, path)
 }
 fn read_json<T: for<'de> Deserialize<'de> + Default>(path: &Path) -> T {
     fs::read(path)
