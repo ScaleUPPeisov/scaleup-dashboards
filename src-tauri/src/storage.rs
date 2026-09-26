@@ -211,6 +211,22 @@ fn archive_corrupt(path: &Path, label: &str) -> Option<PathBuf> {
     None
 }
 
+fn recovered_state(mut state: Value, reason: &str) -> Value {
+    let at = chrono::Utc::now().to_rfc3339();
+    state["stateRecovery"] = json!({"status":"RECOVERED","reason":reason,"at":at});
+    if state.get("logs").and_then(Value::as_array).is_none() {
+        state["logs"] = json!([]);
+    }
+    if let Some(logs) = state.get_mut("logs").and_then(Value::as_array_mut) {
+        logs.push(json!({
+            "at": at,
+            "level": "info",
+            "message": format!("Локальное состояние автоматически восстановлено из state.bak: {reason}")
+        }));
+    }
+    state
+}
+
 fn recovery_default(message: String) -> Value {
     let mut state = default_state();
     state["stateRecovery"] = json!({"status":"FAILED","message":message});
@@ -262,6 +278,7 @@ fn load_state_from_path(path: &Path) -> Value {
         }
         match read_valid_json(&bak) {
             Ok(recovered) => {
+                let recovered = recovered_state(recovered, "state.json отсутствовал");
                 if atomic_write(path, &recovered).is_ok() {
                     return recovered;
                 }
@@ -279,6 +296,7 @@ fn load_state_from_path(path: &Path) -> Value {
         Err(primary_error) => match read_valid_json(&bak) {
             Ok(recovered) => {
                 archive_corrupt(path, "state");
+                let recovered = recovered_state(recovered, "state.json был повреждён");
                 if atomic_write(path, &recovered).is_ok() {
                     recovered
                 } else {
@@ -380,6 +398,8 @@ mod v213_storage_tests {
         fs::write(path.with_extension("bak"), br#"{"version":8,"channels":[{"id":"c1"}],"jobs":[]}"#).unwrap();
         let recovered = load_state_from_path(&path);
         assert_eq!(recovered["channels"][0]["id"], "c1");
+        assert_eq!(recovered["stateRecovery"]["status"], "RECOVERED");
+        assert!(recovered["logs"].as_array().unwrap().iter().any(|x| x["level"] == "info"));
         assert_eq!(read_valid_json(&path).unwrap()["channels"][0]["id"], "c1");
         let _ = fs::remove_dir_all(root);
     }
@@ -395,6 +415,7 @@ mod v213_storage_tests {
         assert_eq!(recovered["channels"][0]["id"], "c1");
         assert_eq!(recovered["jobs"][0]["id"], "j1");
         assert_eq!(recovered["uploadHistory"][0]["id"], "u1");
+        assert_eq!(recovered["stateRecovery"]["status"], "RECOVERED");
         assert_eq!(recovered["fingerprintCache"]["x"], "y");
         let _ = fs::remove_dir_all(root);
     }
