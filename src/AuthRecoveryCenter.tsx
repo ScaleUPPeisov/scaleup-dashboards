@@ -31,7 +31,7 @@ export function AuthRecoveryCenter(){
    const localIds=row.channels.map(c=>c.id),youtubeIds=row.channels.map(c=>c.youtubeChannelId||'').filter(Boolean);
    for(const j of jobs)if(localIds.includes(j.channelId)&&isOAuthMissingErrorText(j.error))patchJob(j.id,{error:undefined});
    resolveOAuthMissingErrors(profileId,[...localIds,...youtubeIds,row.expectedChannelId||''].filter(Boolean));
-   completed.current+=1;setTransient(x=>({...x,[profileId]:{status:'CONNECTED',detail:'refresh_token stored • Keychain readback PASS • token refresh PASS • channel_id PASS'}}));
+   completed.current+=1;setTransient(x=>({...x,[profileId]:{status:'CONNECTED',detail:'refresh_token stored • secure storage readback PASS • token refresh PASS • channel_id PASS'}}));
    notifySuccess('YouTube снова подключён',`${row.channels.map(c=>c.name).join(', ')} • существующий Profile UUID сохранён.`);
    const p=await api.youtubeProfiles();setProfiles(p);const base=buildFinalRecoveryRows(channels,p,fresh.profiles,{});const next=nextReconnectProfileId(base,profileId);setFocus(next||'');window.setTimeout(()=>setTransient(x=>{const n={...x};delete n[profileId];return n}),500);
   }catch(e){window.clearTimeout(timer);const f=reconnectFailure(e);setTransient(x=>({...x,[profileId]:{status:f.status,detail:f.message}}));if(f.status==='WRONG CHANNEL')notifyWarning('Авторизован другой YouTube канал',f.message);else notifyError('Переподключение не завершено',f.message,{persistError:false})}finally{setBusy('')}}
