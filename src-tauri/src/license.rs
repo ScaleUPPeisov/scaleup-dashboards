@@ -75,10 +75,49 @@ fn device_id(app: &AppHandle) -> Result<String, String> {
 fn parse_time(v: &str) -> Option<chrono::DateTime<chrono::Utc>> {
     chrono::DateTime::parse_from_rfc3339(v).ok().map(|x| x.with_timezone(&chrono::Utc))
 }
+fn offline_grace_eligible_at(cache: &WindowsLicenseCache, now: chrono::DateTime<chrono::Utc>) -> bool {
+    if !cache.valid
+        || !cache.license_status.eq_ignore_ascii_case("active")
+        || !cache.device_status.eq_ignore_ascii_case("active")
+    {
+        return false;
+    }
+    let Some(last) = parse_time(&cache.last_validated_at) else { return false; };
+    let age = now.signed_duration_since(last).num_seconds();
+    if !(0..=OFFLINE_GRACE_SECONDS).contains(&age) {
+        return false;
+    }
+    if let Some(expires) = cache.expires_at.as_deref().and_then(parse_time) {
+        if expires <= now {
+            return false;
+        }
+    }
+    // sessionExpiresAt is deliberately not a grace blocker: the 72h last-known-good
+    // window exists to bridge temporary inability to refresh/validate the session.
+    true
+}
 fn within_grace(cache: &WindowsLicenseCache) -> bool {
-    parse_time(&cache.last_validated_at)
-        .map(|t| chrono::Utc::now().signed_duration_since(t).num_seconds() <= OFFLINE_GRACE_SECONDS)
-        .unwrap_or(false)
+    offline_grace_eligible_at(cache, chrono::Utc::now())
+}
+
+fn authoritative_denial_code(code: &str) -> bool {
+    matches!(
+        code,
+        "license_paused"
+            | "license_revoked"
+            | "license_expired"
+            | "device_blocked"
+            | "device_limit"
+            | "session_invalid"
+            | "session_expired"
+            | "session_missing"
+    )
+}
+fn authoritative_denial_error(error: &str) -> bool {
+    error.split(':').next().map(authoritative_denial_code).unwrap_or(false)
+}
+fn transient_license_error(error: &str) -> bool {
+    error.starts_with("LICENSE_TRANSIENT:")
 }
 fn cache_public(cache: &WindowsLicenseCache, offline_grace: bool) -> Value {
     json!({
@@ -114,17 +153,35 @@ async fn post_license(action: &str, session: Option<&str>, body: Value) -> Resul
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(12))
         .build()
-        .map_err(|e| format!("LICENSE_HTTP_CLIENT_FAILED: {e}"))?;
+        .map_err(|e| format!("LICENSE_TRANSIENT: http client: {e}"))?;
     let mut payload = body;
     if let Some(o) = payload.as_object_mut() { o.insert("action".into(), json!(action)); }
     let mut req = client.post(WINDOWS_LICENSE_API).json(&payload);
     if let Some(token) = session { req = req.header("x-vyron-session", token); }
-    let response = req.send().await.map_err(|e| format!("LICENSE_SERVER_UNREACHABLE: {e}"))?;
+    let response = req
+        .send()
+        .await
+        .map_err(|e| format!("LICENSE_TRANSIENT: network/tls/timeout: {e}"))?;
     let status = response.status();
-    let value: Value = response.json().await.map_err(|e| format!("LICENSE_RESPONSE_INVALID: {e}"))?;
+    let body = response
+        .bytes()
+        .await
+        .map_err(|e| format!("LICENSE_TRANSIENT: response body: {e}"))?;
+
+    if status.is_server_error() {
+        return Err(format!("LICENSE_TRANSIENT: HTTP {}", status.as_u16()));
+    }
+
+    let value: Value = serde_json::from_slice(&body)
+        .map_err(|e| format!("LICENSE_TRANSIENT: invalid JSON response: {e}"))?;
+
     if !status.is_success() || value.get("ok").and_then(Value::as_bool) == Some(false) {
         let code = value.get("code").and_then(Value::as_str).unwrap_or("license_error");
-        return Err(format!("{code}: {}", license_message(code)));
+        if authoritative_denial_code(code) {
+            return Err(format!("{code}: {}", license_message(code)));
+        }
+        // Unknown proxy/CDN/backend responses are not allowed to destroy last-known-good.
+        return Err(format!("LICENSE_REMOTE_ERROR:{code}: {}", license_message(code)));
     }
     Ok(value)
 }
@@ -189,14 +246,24 @@ pub async fn license_status(app: AppHandle) -> Value {
                 let _ = write_windows_cache(&app, &cache);
                 cache_public(&cache, false)
             }
-            Err(e) if e.starts_with("LICENSE_SERVER_UNREACHABLE:") && cache.valid && within_grace(&cache) => cache_public(&cache, true),
-            Err(e) => {
+            Err(e) if transient_license_error(&e) && within_grace(&cache) => {
+                let mut public = cache_public(&cache, true);
+                public["warning"] = json!(e);
+                public
+            }
+            Err(e) if authoritative_denial_error(&e) => {
                 cache.valid = false;
                 if e.starts_with("license_paused:") { cache.license_status = "paused".into(); }
                 if e.starts_with("license_revoked:") { cache.license_status = "revoked".into(); }
                 if e.starts_with("license_expired:") { cache.license_status = "expired".into(); }
+                if e.starts_with("device_blocked:") { cache.device_status = "blocked".into(); }
                 let _ = write_windows_cache(&app, &cache);
                 json!({"valid":false,"reason":e,"userId":cache.user_id,"licenseId":cache.license_id,"licenseStatus":cache.license_status})
+            }
+            Err(e) => {
+                // Transient/unknown infrastructure errors outside grace may block this launch,
+                // but they must never poison the last-known-good cache.
+                json!({"valid":false,"reason":e,"userId":cache.user_id,"licenseId":cache.license_id,"licenseStatus":cache.license_status,"cachePreserved":true})
             }
         }
     }
@@ -239,5 +306,61 @@ pub async fn activate_license(app: AppHandle, key: String) -> Result<Value, Stri
         if p.exists() { let _ = fs::remove_file(&p); }
         fs::rename(tmp, p).map_err(|e| e.to_string())?;
         Ok(v)
+    }
+}
+
+
+#[cfg(test)]
+mod v214_license_tests {
+    use super::*;
+
+    fn active_cache(now: chrono::DateTime<chrono::Utc>) -> WindowsLicenseCache {
+        WindowsLicenseCache {
+            valid: true,
+            license_status: "active".into(),
+            device_status: "active".into(),
+            last_validated_at: now.to_rfc3339(),
+            expires_at: Some((now + chrono::Duration::days(30)).to_rfc3339()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn offline_grace_boundary_71h59m_and_72h_are_allowed() {
+        let now = chrono::Utc::now();
+        let mut c = active_cache(now - chrono::Duration::hours(71) - chrono::Duration::minutes(59));
+        assert!(offline_grace_eligible_at(&c, now));
+        c.last_validated_at = (now - chrono::Duration::hours(72)).to_rfc3339();
+        assert!(offline_grace_eligible_at(&c, now));
+    }
+
+    #[test]
+    fn offline_grace_72h01m_is_rejected() {
+        let now = chrono::Utc::now();
+        let c = active_cache(now - chrono::Duration::hours(72) - chrono::Duration::minutes(1));
+        assert!(!offline_grace_eligible_at(&c, now));
+    }
+
+    #[test]
+    fn offline_grace_rejects_expired_revoked_or_blocked_cache() {
+        let now = chrono::Utc::now();
+        let mut c = active_cache(now);
+        c.expires_at = Some((now - chrono::Duration::seconds(1)).to_rfc3339());
+        assert!(!offline_grace_eligible_at(&c, now));
+        let mut c = active_cache(now);
+        c.license_status = "revoked".into();
+        assert!(!offline_grace_eligible_at(&c, now));
+        let mut c = active_cache(now);
+        c.device_status = "blocked".into();
+        assert!(!offline_grace_eligible_at(&c, now));
+    }
+
+    #[test]
+    fn only_documented_denials_are_authoritative() {
+        assert!(authoritative_denial_error("license_revoked: revoked"));
+        assert!(authoritative_denial_error("device_limit: limit"));
+        assert!(!authoritative_denial_error("LICENSE_TRANSIENT: HTTP 503"));
+        assert!(!authoritative_denial_error("LICENSE_REMOTE_ERROR:proxy_error"));
+        assert!(transient_license_error("LICENSE_TRANSIENT: invalid JSON response"));
     }
 }
