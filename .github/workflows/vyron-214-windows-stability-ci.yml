@@ -78,6 +78,23 @@ jobs:
           print('SOURCE_VERSION_CONTRACT=PASS')
           PY
 
+      - name: Windows OAuth URL regression contract
+        shell: python
+        run: |
+          from pathlib import Path
+          source=Path('src-tauri/src/youtube.rs').read_text(encoding='utf-8')
+          assert 'response_type=code' in source
+          open_browser=source.split('fn open_browser',1)[1]
+          windows=open_browser.split('#[cfg(target_os = "windows")]',1)[1].split('#[cfg(target_os = "linux")]',1)[0]
+          assert 'Command::new("explorer.exe")' in windows
+          assert '.arg(url)' in windows
+          assert 'Command::new("cmd")' not in windows
+          assert '"/C"' not in windows
+          builder=source.split('fn google_oauth_auth_url',1)[1].split('fn query_param',1)[0]
+          for required in ['response_type=code','access_type=offline','prompt=consent','code_challenge_method=S256','state={}']:
+              assert required in builder, required
+          print('WINDOWS_OAUTH_URL_CONTRACT=PASS')
+
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
