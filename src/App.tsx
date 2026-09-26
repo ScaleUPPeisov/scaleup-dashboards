@@ -21,7 +21,7 @@ import { ProductionStatusBridge } from './ProductionStatusBridge';
 import { SettingsOS } from './SettingsOS';
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
 import {NotificationCenter} from './NotificationStack';
-import {notifyError,notifyInfo,notifySuccess} from './notificationCenter';
+import {notifyError,notifyInfo,notifySuccess,notifyWarning} from './notificationCenter';
 import {RecoveryGate} from './RecoveryGate';
 import {sortChannelsAlphabetically} from './channelSort';
 import {subscribeYoutubeQuota,subscribeYoutubeQuotaClock,youtubeQuotaClockSnapshot,youtubeQuotaUsage} from './youtubeQuota';
