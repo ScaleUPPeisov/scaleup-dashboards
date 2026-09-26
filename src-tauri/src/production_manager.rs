@@ -1712,6 +1712,16 @@ fn handoff_ledger_path(m: &BatchManifest) -> PathBuf {
 fn read_handoff_ledger(m: &BatchManifest) -> HandoffLedger {
     read_json(&handoff_ledger_path(m))
 }
+fn mark_handoff_sent(m: &BatchManifest, ids: &[String], sent_at: &str) -> Result<(), String> {
+    let mut ledger = read_handoff_ledger(m);
+    for id in ids {
+        let row = ledger.projects.entry(id.clone()).or_default();
+        row.sent_at = sent_at.to_string();
+        row.count = row.count.saturating_add(1);
+    }
+    ledger.schema_version = 1;
+    atomic_json(&handoff_ledger_path(m), &ledger)
+}
 fn enrich_handoff(mut status: BatchStatus, m: &BatchManifest) -> BatchStatus {
     let ledger = read_handoff_ledger(m);
     for row in &mut status.projects {
@@ -2420,6 +2430,12 @@ pub fn open_production_batch_in_endlume(
     if !app.exists() {
         return Err("ENDLUME Studio не найден".into());
     }
+    #[cfg(target_os = "windows")]
+    {
+        if !app.is_file() || ext(&app) != "exe" {
+            return Err("ENDLUME_PATH_INVALID: на Windows выберите ENDLUME Studio.exe".into());
+        }
+    }
     let requested = selected_project_ids
         .unwrap_or_else(|| m.projects.iter().map(|p| p.project_id.clone()).collect());
     let mut seen = HashSet::new();
@@ -2440,7 +2456,7 @@ pub fn open_production_batch_in_endlume(
     if selected.len() != ids.len() {
         return Err("Один или несколько выбранных проектов отсутствуют в batch".into());
     }
-    let mut ledger = read_handoff_ledger(&m);
+    let ledger = read_handoff_ledger(&m);
     let repeated = ids
         .iter()
         .filter(|id| ledger.projects.contains_key(*id))
@@ -2463,13 +2479,6 @@ pub fn open_production_batch_in_endlume(
     ));
     atomic_json(&subset_path, &subset)?;
     let now = Utc::now().to_rfc3339();
-    for id in &ids {
-        let row = ledger.projects.entry(id.clone()).or_default();
-        row.sent_at = now.clone();
-        row.count = row.count.saturating_add(1);
-    }
-    ledger.schema_version = 1;
-    atomic_json(&handoff_ledger_path(&m), &ledger)?;
     #[cfg(target_os = "macos")]
     {
         let home = std::env::var("HOME").map_err(|_| "HOME не найден".to_string())?;
@@ -2488,10 +2497,11 @@ pub fn open_production_batch_in_endlume(
         if !request.is_file() {
             return Err("Не удалось создать inbox-запрос ENDLUME".into());
         }
-        Command::new("open")
-            .arg(&app)
-            .spawn()
-            .map_err(|e| format!("Не удалось открыть ENDLUME: {e}"))?;
+        if let Err(e) = Command::new("open").arg(&app).spawn() {
+            let _ = fs::remove_file(&request);
+            return Err(format!("Не удалось открыть ENDLUME: {e}"));
+        }
+        mark_handoff_sent(&m, &ids, &now)?;
         return Ok(HandoffReceipt {
             batch_id: m.batch_id,
             manifest_path: subset_path.to_string_lossy().into_owned(),
@@ -2505,9 +2515,19 @@ pub fn open_production_batch_in_endlume(
         let roaming = std::env::var_os("APPDATA").ok_or_else(|| "APPDATA не найден".to_string())?;
         let inbox = PathBuf::from(roaming).join("studio.endlume.desktop").join("VYRON Inbox");
         fs::create_dir_all(&inbox).map_err(|e| e.to_string())?;
+        let probe = inbox.join(format!(".vyron-write-probe-{}", safe_component(&handoff_id)));
+        fs::write(&probe, b"ok").map_err(|e| format!("ENDLUME_INBOX_NOT_WRITABLE: {e}"))?;
+        let _ = fs::remove_file(&probe);
         let request = inbox.join(format!("{}-{}.json", safe_component(&m.batch_id), safe_component(&handoff_id)));
         atomic_json(&request,&json!({"schemaVersion":1,"batchId":m.batch_id,"manifestPath":subset_path.to_string_lossy(),"requestedAt":now,"selectedProjectIds":ids,"sourceManifestPath":manifest_path,"handoffId":handoff_id}))?;
-        Command::new(&app).spawn().map_err(|e| format!("Не удалось открыть ENDLUME: {e}"))?;
+        if !request.is_file() {
+            return Err("Не удалось создать inbox-запрос ENDLUME".into());
+        }
+        if let Err(e) = Command::new(&app).spawn() {
+            let _ = fs::remove_file(&request);
+            return Err(format!("Не удалось открыть ENDLUME: {e}"));
+        }
+        mark_handoff_sent(&m, &ids, &now)?;
         return Ok(HandoffReceipt {
             batch_id: m.batch_id,
             manifest_path: subset_path.to_string_lossy().into_owned(),
@@ -2519,6 +2539,7 @@ pub fn open_production_batch_in_endlume(
     #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
     {
         Command::new(&app).spawn().map_err(|e| e.to_string())?;
+        mark_handoff_sent(&m, &ids, &now)?;
         Ok(HandoffReceipt {
             batch_id: m.batch_id,
             manifest_path: subset_path.to_string_lossy().into_owned(),
