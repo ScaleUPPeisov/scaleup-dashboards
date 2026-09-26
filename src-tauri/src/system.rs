@@ -76,13 +76,8 @@ pub fn default_workspace(app: AppHandle) -> Result<String, String> {
 
 
 fn semver_like(value: &str) -> bool {
-    let core = value
-        .split_once('+')
-        .map(|x| x.0)
-        .unwrap_or(value)
-        .split_once('-')
-        .map(|x| x.0)
-        .unwrap_or(value);
+    let no_build = value.split('+').next().unwrap_or(value);
+    let core = no_build.split('-').next().unwrap_or(no_build);
     let parts = core.split('.').collect::<Vec<_>>();
     parts.len() == 3
         && parts
