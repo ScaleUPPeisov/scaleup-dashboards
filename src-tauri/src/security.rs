@@ -606,6 +606,18 @@ mod tests{
   KeychainTestGuard{_lock:lock}
  }
  #[test]
+ fn private_atomic_writer_replaces_existing_file(){
+  let root=std::env::temp_dir().join(format!("vyron-secure-{}",uuid::Uuid::new_v4()));
+  fs::create_dir_all(&root).unwrap();
+  let path=root.join("license-windows.json");
+  write_private_atomic(&path,br#"{"valid":true,"generation":1}"#).unwrap();
+  write_private_atomic(&path,br#"{"valid":true,"generation":2}"#).unwrap();
+  let v:serde_json::Value=serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+  assert_eq!(v["generation"],2);
+  let _=fs::remove_dir_all(root);
+ }
+
+ #[test]
  fn keychain_errors_are_actionable(){
   let _guard=keychain_test_guard();
   assert!(keychain_error("read","x",AUTH_FAILED,"bad").starts_with("KEYCHAIN_AUTH_FAILED:"));
