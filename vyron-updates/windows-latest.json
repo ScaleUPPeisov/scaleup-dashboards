@@ -1,11 +1,11 @@
 {
-  "version": "2.1.13",
-  "notes": "VYRON 2.1.13 — Windows x64 signed auto-update bootstrap and dedicated updater feed.",
-  "pub_date": "2026-09-19T14:40:41Z",
+  "version": "2.1.14",
+  "notes": "VYRON 2.1.14 — Windows stability release: crash-safe state recovery, transactional ENDLUME handoff, resilient offline license grace, Windows-native diagnostics and updater reliability fixes.",
+  "pub_date": "2026-09-26T12:04:30Z",
   "platforms": {
     "windows-x86_64": {
-      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.13-windows-x64/VYRON_2.1.13_x64-setup.exe",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM2RpeUNXNGcvekhqcTA3Mm1wa2Nldk9ZVllMVDc5QitsWU4vdUV4YW1BUEJFL1VQU2NRRDc5c1NkaW9UNzZsZ3g2WS9tYUZTNmxsSElYaStXZStJbmdBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5ODI4ODM3CWZpbGU6VllST05fMi4xLjEzX3g2NC1zZXR1cC5leGUKeVVzYXZaQTJ1MVVjMXlzZHZUQ3IwYzFTZ1ZVS213emRBcVQ3L21FVitnZi8vVUVmYXByNHZ1UEQyUUdsa1dHVFFpS1YzK0xqL1VENTJJd2llclpEQlE9PQo="
+      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.14-windows-x64/VYRON_2.1.14_x64-setup.exe",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM2RzRCtjcG5hVytEc3VPdjErN0x3M0tDZ2JwZngvcUt0U3gwRlhKY0ZpNkxzUnQ0RGJKVG10VDVIRGxHd3hCNlFWVHJrY2prQ01ST1NJaWp6dEZidEFrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNDI0MjY1CWZpbGU6VllST05fMi4xLjE0X3g2NC1zZXR1cC5leGUKZHg2RDFXUjROR24wRmlpcWZlVlBhcXNuRGtvNW9JMnRwVWhQb2FoTFVwRC9rVDN0V2hJRHo5YjZ1dCt1UHcyYndpRUF2VGFiQm9tZEJ6Z0tGSTZiQ2c9PQo="
     }
   }
 }
