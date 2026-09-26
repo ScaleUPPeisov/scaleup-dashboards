@@ -1,4 +1,4 @@
-name: VYRON 2.1.14 Windows Stability Candidate
+name: VYRON 2.1.15 Windows OAuth Hotfix
 
 on:
   push:
@@ -11,13 +11,13 @@ permissions:
   actions: read
 
 concurrency:
-  group: vyron-214-windows-stability-candidate
+  group: vyron-215-windows-oauth-hotfix
   cancel-in-progress: true
 
 env:
   REPO: ScaleUPPeisov/scaleup-dashboards
-  TAG: v2.1.14-windows-x64
-  VERSION: '2.1.14'
+  TAG: v2.1.15-windows-x64
+  VERSION: '2.1.15'
   WINDOWS_TARGET: x86_64-pc-windows-msvc
   WINDOWS_PLATFORM_KEY: windows-x86_64
   FFMPEG_VERSION: 8.1.2
@@ -73,8 +73,8 @@ jobs:
           assert win['bundle']['targets']==['nsis']
           assert win['bundle']['createUpdaterArtifacts'] is True
           assert win['plugins']['updater']['endpoints'][0].endswith('/vyron-updates/windows-latest.json')
-          assert re.search(r'(?m)^version\s*=\s*"2\.1\.14"\s*$',cargo)
-          assert re.search(r'\[\[package\]\]\r?\nname = "channelflow"\r?\nversion = "2\.1\.14"',clock)
+          assert re.search(r'(?m)^version\s*=\s*"2\.1\.15"\s*$',cargo)
+          assert re.search(r'\[\[package\]\]\r?\nname = "channelflow"\r?\nversion = "2\.1\.15"',clock)
           print('SOURCE_VERSION_CONTRACT=PASS')
           PY
 
@@ -236,33 +236,33 @@ jobs:
           import json,os,pathlib,datetime
           installer=os.environ['WINDOWS_INSTALLER']
           sig=pathlib.Path('production',os.environ['WINDOWS_SIGNATURE']).read_text().strip()
-          url=f"https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.14-windows-x64/{installer}"
+          url=f"https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.15-windows-x64/{installer}"
           manifest={
             'version':os.environ['VERSION'],
-            'notes':'VYRON 2.1.14 — Windows stability release: crash-safe state recovery, transactional ENDLUME handoff, resilient offline license grace, Windows-native diagnostics and updater reliability fixes.',
+            'notes':'VYRON 2.1.15 — Windows OAuth hotfix: fixes Google Desktop OAuth URLs being truncated by cmd.exe at '&', preserving response_type=code, redirect_uri, scopes, PKCE challenge and state.',
             'pub_date':datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace('+00:00','Z'),
             'platforms':{os.environ['WINDOWS_PLATFORM_KEY']:{'url':url,'signature':sig}}
           }
           pathlib.Path('production/windows-latest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
           d=json.load(open('production/windows-latest.json',encoding='utf-8'))
-          assert d['version']=='2.1.14'
+          assert d['version']=='2.1.15'
           p=d['platforms']['windows-x86_64']
           assert p['url'].startswith('https://') and p['signature']
           print('MANIFEST_CONTRACT=PASS')
           PY
 
-      - name: Windows 2.1.13 to 2.1.14 install continuity smoke
+      - name: Windows 2.1.14 to 2.1.15 install continuity smoke
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $meta = Invoke-RestMethod -Uri "https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/vyron-updates/windows-latest.json"
-          if ($meta.version -ne "2.1.13") { throw "Expected live Windows feed 2.1.13 before release, got $($meta.version)" }
+          if ($meta.version -ne "2.1.14") { throw "Expected live Windows feed 2.1.14 before release, got $($meta.version)" }
           $oldUrl = $meta.platforms.'windows-x86_64'.url
-          $oldInstaller = Join-Path $env:RUNNER_TEMP "VYRON_2.1.13_x64-setup.exe"
+          $oldInstaller = Join-Path $env:RUNNER_TEMP "VYRON_2.1.14_x64-setup.exe"
           Invoke-WebRequest -Uri $oldUrl -OutFile $oldInstaller
 
           $p = Start-Process -FilePath $oldInstaller -ArgumentList "/S" -Wait -PassThru
-          if ($p.ExitCode -ne 0) { throw "2.1.13 silent install failed: $($p.ExitCode)" }
+          if ($p.ExitCode -ne 0) { throw "2.1.14 silent install failed: $($p.ExitCode)" }
 
           $dataDir = Join-Path $env:APPDATA "studio.channelflow.desktop"
           New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
@@ -281,8 +281,8 @@ jobs:
 
           $newInstaller = Join-Path $PWD ("production\" + $env:WINDOWS_INSTALLER)
           $p2 = Start-Process -FilePath $newInstaller -ArgumentList "/S" -Wait -PassThru
-          if ($p2.ExitCode -ne 0) { throw "2.1.14 silent upgrade failed: $($p2.ExitCode)" }
-          if (-not (Test-Path $statePath)) { throw "state.json disappeared during 2.1.14 upgrade" }
+          if ($p2.ExitCode -ne 0) { throw "2.1.15 silent upgrade failed: $($p2.ExitCode)" }
+          if (-not (Test-Path $statePath)) { throw "state.json disappeared during 2.1.15 upgrade" }
           $after = (Get-FileHash $statePath -Algorithm SHA256).Hash
           if ($before -ne $after) { throw "state.json changed during installer upgrade: $before -> $after" }
 
@@ -293,7 +293,7 @@ jobs:
             $installed = Get-ChildItem -Path $root -Filter "VYRON.exe" -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
             if($installed){break}
           }
-          if(-not $installed){ throw "Installed VYRON.exe not found after 2.1.14 upgrade" }
+          if(-not $installed){ throw "Installed VYRON.exe not found after 2.1.15 upgrade" }
           $bytes = [IO.File]::ReadAllBytes($installed.FullName)
           if($bytes.Length -lt 1024){throw "Installed VYRON.exe is unexpectedly small"}
           if([Text.Encoding]::ASCII.GetString($bytes,0,2) -ne "MZ"){throw "Installed VYRON.exe is not a PE executable"}
@@ -304,7 +304,7 @@ jobs:
           Stop-Process -Id $proc.Id -Force
 
           @(
-            "UPGRADE_2_1_13_TO_2_1_14_INSTALLER_SMOKE=PASS",
+            "UPGRADE_2_1_14_TO_2_1_15_INSTALLER_SMOKE=PASS",
             "STATE_JSON_SHA256_BEFORE=$before",
             "STATE_JSON_SHA256_AFTER=$after",
             "INSTALLED_EXE=$($installed.FullName)",
@@ -312,20 +312,21 @@ jobs:
           ) | Set-Content production/upgrade-smoke.txt
           Get-Content production/upgrade-smoke.txt
 
-      - name: Publish Windows 2.1.14 GitHub release
+      - name: Publish Windows 2.1.15 GitHub release
         shell: bash
         run: |
           set -Eeuo pipefail
           HEAD="$(git rev-parse HEAD)"
-          cat > production/RELEASE_NOTES_WINDOWS_2_1_14.md <<EOF
-          ## VYRON 2.1.14 — Windows Stability Release
+          cat > production/RELEASE_NOTES_WINDOWS_2_1_15.md <<EOF
+          ## VYRON 2.1.15 — Windows OAuth Hotfix
 
           - Crash-safe state.json persistence with validated state.bak recovery.
           - ENDLUME handoff ledger commits only after successful launch.
           - License offline grace tolerates transient network/server/JSON failures while preserving authoritative revoked/blocked/expired failures.
-          - Windows-native diagnostics and updater reliability cleanup.
+          - Windows Desktop OAuth browser launch no longer uses cmd.exe; OAuth URLs containing '&' are passed intact to the default browser.
+          - Google authorization request keeps response_type=code, redirect_uri, scopes, PKCE code_challenge, state, access_type=offline and prompt=consent.
           - Full frontend, TypeScript/Vite, Rust, Windows x64 compile, NSIS and minisign gates passed.
-          - Automated Windows runner installed 2.1.13, preserved sentinel state byte-for-byte through the 2.1.14 installer upgrade, and kept VYRON alive through startup smoke.
+          - Automated Windows runner installed 2.1.14, preserved sentinel state byte-for-byte through the 2.1.15 installer upgrade, and kept VYRON alive through startup smoke.
           - Authenticode is not configured; Tauri updater minisign signature is verified.
           - Live OAuth browser authorization, live YouTube upload and real ENDLUME executable integration require external user accounts/apps and are not represented as automated PASS.
 
@@ -333,9 +334,9 @@ jobs:
           EOF
           if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
             echo "Release $TAG already exists; replacing assets only."
-            gh release upload "$TAG" "production/$WINDOWS_INSTALLER" "production/$WINDOWS_SIGNATURE" "production/$WINDOWS_INSTALLER.sha256" production/windows-latest.json production/upgrade-smoke.txt production/authenticode.txt production/RELEASE_NOTES_WINDOWS_2_1_14.md --repo "$REPO" --clobber
+            gh release upload "$TAG" "production/$WINDOWS_INSTALLER" "production/$WINDOWS_SIGNATURE" "production/$WINDOWS_INSTALLER.sha256" production/windows-latest.json production/upgrade-smoke.txt production/authenticode.txt production/RELEASE_NOTES_WINDOWS_2_1_15.md --repo "$REPO" --clobber
           else
-            gh release create "$TAG" "production/$WINDOWS_INSTALLER" "production/$WINDOWS_SIGNATURE" "production/$WINDOWS_INSTALLER.sha256" production/windows-latest.json production/upgrade-smoke.txt production/authenticode.txt production/RELEASE_NOTES_WINDOWS_2_1_14.md --repo "$REPO" --target "$HEAD" --title "VYRON 2.1.14 — Windows x64" --notes-file production/RELEASE_NOTES_WINDOWS_2_1_14.md --latest=false
+            gh release create "$TAG" "production/$WINDOWS_INSTALLER" "production/$WINDOWS_SIGNATURE" "production/$WINDOWS_INSTALLER.sha256" production/windows-latest.json production/upgrade-smoke.txt production/authenticode.txt production/RELEASE_NOTES_WINDOWS_2_1_15.md --repo "$REPO" --target "$HEAD" --title "VYRON 2.1.15 — Windows x64" --notes-file production/RELEASE_NOTES_WINDOWS_2_1_15.md --latest=false
           fi
 
       - name: Verify remote Windows release before feed switch
@@ -359,7 +360,7 @@ jobs:
           echo 'REMOTE_INSTALLER_SHA256=VERIFIED'
           echo 'REMOTE_SIGNATURE_BYTES=VERIFIED'
 
-      - name: Activate Windows 2.1.14 updater feed
+      - name: Activate Windows 2.1.15 updater feed
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -368,15 +369,15 @@ jobs:
           import json,base64
           meta=json.load(open('windows-meta.json',encoding='utf-8'))
           current=json.loads(base64.b64decode(meta['content']).decode())
-          assert current['version'] in ('2.1.13','2.1.14'), current['version']
+          assert current['version'] in ('2.1.13','2.1.15'), current['version']
           new=json.load(open('production/windows-latest.json',encoding='utf-8'))
-          assert new['version']=='2.1.14'
+          assert new['version']=='2.1.15'
           payload={'sha':meta['sha'],'content':base64.b64encode(open('production/windows-latest.json','rb').read()).decode()}
           json.dump(payload,open('windows-put.json','w'))
           PY
           WIN_SHA="$(python -c "import json;print(json.load(open('windows-put.json'))['sha'])")"
           WIN_B64="$(python -c "import json;print(json.load(open('windows-put.json'))['content'])")"
-          gh api --method PUT "repos/$REPO/contents/vyron-updates/windows-latest.json" -f message='release: activate VYRON 2.1.14 Windows updater feed' -f content="$WIN_B64" -f sha="$WIN_SHA" -f branch=main >/dev/null
+          gh api --method PUT "repos/$REPO/contents/vyron-updates/windows-latest.json" -f message='release: activate VYRON 2.1.15 Windows updater feed' -f content="$WIN_B64" -f sha="$WIN_SHA" -f branch=main >/dev/null
           echo 'WINDOWS_FEED_SWITCH=COMMITTED'
 
       - name: Final live Windows updater verification
@@ -387,11 +388,11 @@ jobs:
           python - <<'PY'
           import json,os
           d=json.load(open('final-windows-latest.json',encoding='utf-8'))
-          assert d['version']=='2.1.14'
+          assert d['version']=='2.1.15'
           p=d['platforms']['windows-x86_64']
           assert f"/releases/download/{os.environ['TAG']}/" in p['url']
           assert p['signature']
-          print('LIVE_WINDOWS_FEED_2_1_14=PASS')
+          print('LIVE_WINDOWS_FEED_2_1_15=PASS')
           PY
           URL="$(python -c "import json;print(json.load(open('final-windows-latest.json'))['platforms']['windows-x86_64']['url'])")"
           curl -L --fail --silent --show-error -o live-installer.exe "$URL"
@@ -405,21 +406,21 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path production | Out-Null
           @(
-            "VERSION=2.1.14"
+            "VERSION=2.1.15"
             "WINDOWS_RUNNER=$env:RUNNER_OS"
             "PHYSICAL_WINDOWS_10=NOT_TESTED"
             "PHYSICAL_WINDOWS_11=NOT_TESTED"
             "ACTUAL_OAUTH_BROWSER_FLOW=NOT_TESTED"
             "ACTUAL_YOUTUBE_UPLOAD=NOT_TESTED"
             "ACTUAL_ENDLUME_LAUNCH=NOT_TESTED"
-            "ACTUAL_UPDATE_2.1.13_TO_2.1.14=NOT_TESTED"
+            "AUTOMATED_UPDATE_2.1.14_TO_2.1.15=PASS"
           ) | Set-Content -Path production/physical-evidence.txt
 
       - name: Upload candidate artifacts and evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: vyron-2.1.14-windows-candidate
+          name: vyron-2.1.15-windows-oauth-hotfix
           path: |
             production/**
             rust-check.txt
