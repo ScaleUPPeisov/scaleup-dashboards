@@ -560,11 +560,29 @@ pub fn private_permissions(path:&Path)->Result<(),String>{
  Ok(())
 }
 
+#[cfg(target_os="windows")]
+fn replace_private_atomic(src:&Path,dst:&Path)->Result<(),String>{
+ use std::os::windows::ffi::OsStrExt;
+ use windows_sys::Win32::Storage::FileSystem::{MoveFileExW,MOVEFILE_REPLACE_EXISTING,MOVEFILE_WRITE_THROUGH};
+ let src_w=src.as_os_str().encode_wide().chain(std::iter::once(0)).collect::<Vec<_>>();
+ let dst_w=dst.as_os_str().encode_wide().chain(std::iter::once(0)).collect::<Vec<_>>();
+ let ok=unsafe{MoveFileExW(src_w.as_ptr(),dst_w.as_ptr(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)};
+ if ok==0{return Err(format!("secure replace {}: {}",dst.display(),std::io::Error::last_os_error()))}
+ Ok(())
+}
+#[cfg(not(target_os="windows"))]
+fn replace_private_atomic(src:&Path,dst:&Path)->Result<(),String>{
+ fs::rename(src,dst).map_err(|e|format!("secure replace {}: {e}",dst.display()))
+}
 pub fn write_private_atomic(path:&Path,bytes:&[u8])->Result<(),String>{
+ use std::io::Write;
+ if let Some(parent)=path.parent(){fs::create_dir_all(parent).map_err(|e|format!("secure parent {}: {e}",parent.display()))?;}
  let tmp=path.with_extension("secure-tmp");
- fs::write(&tmp,bytes).map_err(|e|format!("secure write {}: {e}",tmp.display()))?;
+ let mut file=fs::OpenOptions::new().create(true).truncate(true).write(true).open(&tmp).map_err(|e|format!("secure write {}: {e}",tmp.display()))?;
+ file.write_all(bytes).map_err(|e|format!("secure write {}: {e}",tmp.display()))?;
+ file.sync_all().map_err(|e|format!("secure sync {}: {e}",tmp.display()))?;
  private_permissions(&tmp)?;
- fs::rename(&tmp,path).map_err(|e|format!("secure replace {}: {e}",path.display()))?;
+ replace_private_atomic(&tmp,path)?;
  private_permissions(path)
 }
 
