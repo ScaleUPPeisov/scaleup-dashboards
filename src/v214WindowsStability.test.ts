@@ -51,6 +51,14 @@ describe('VYRON 2.1.14 Windows stability regressions',()=>{
     expect(lib).toContain('system::updater_manifest_diagnostics');
   });
 
+  it('surfaces successful state backup recovery instead of silently hydrating it',()=>{
+    const app=read('./App.tsx'),types=read('./types.ts');
+    expect(types).toContain("status:'RECOVERED'|'FAILED'");
+    expect(app).toContain("state.stateRecovery?.status==='RECOVERED'");
+    expect(app).toContain("'Локальное состояние восстановлено'");
+    expect(app).toContain("operationId:'state-recovery-restored'");
+  });
+
   it('renders Windows-native labels and keeps the legacy Settings implementation removed',()=>{
     const settings=read('./SettingsOS.tsx'),app=read('./App.tsx'),api=read('./api.ts');
     expect(settings).toContain("'Windows 10/11 • x64'");
