@@ -20,7 +20,7 @@ env:
   WINDOWS_PLATFORM_KEY: windows-x86_64
   FFMPEG_VERSION: 8.1.2
   FFMPEG_ZIP_SHA256: db580001caa24ac104c8cb856cd113a87b0a443f7bdf47d8c12b1d740584a2ec
-  EMBEDDED_UPDATER_KEY: dW50cnVzdGVkIGNvbWludDogbWluaXNpZ24gcHVibGljIGtleTogREQ4NDU0N0RFMjUwRjFDMQpSV1RBOFZEaWZWU0UzVEd1blZCcTZ4b0FhMGdCU2ZtS2ZVTzhQclAxQ29lZnhCajQvaFhxR3hQMQo=
+  EMBEDDED_UPDATER_KEY: dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEREODQ1NDdERTI1MEYxQzAKUldUQThWRGlmVlNFM1RHdW5WQnE2eG9BYTBnQlNmbUtmVU84UHJQMUNvZWZ4Qmo0L2hYcUd4UDEK
 
 jobs:
   candidate:
@@ -65,6 +65,8 @@ jobs:
           assert pkg['version']==v
           assert lock['version']==v and lock['packages']['']['version']==v
           assert conf['version']==v
+          assert conf['plugins']['updater']['pubkey']==os.environ['EMBEDDED_UPDATER_KEY']
+          assert win['plugins']['updater']['pubkey']==os.environ['EMBEDDED_UPDATER_KEY']
           assert win['bundle']['targets']==['nsis']
           assert win['bundle']['createUpdaterArtifacts'] is True
           assert win['plugins']['updater']['endpoints'][0].endswith('/vyron-updates/windows-latest.json')
