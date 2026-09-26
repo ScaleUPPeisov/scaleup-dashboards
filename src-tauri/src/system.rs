@@ -187,15 +187,13 @@ mod v214_windows_system_tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn windows_unicode_and_space_paths_roundtrip() {
-        let root = std::env::temp_dir()
-            .join(format!("vyron-path-{}", uuid::Uuid::new_v4()))
-            .join("Кирилл")
-            .join("VYRON Projects");
+        let base = std::env::temp_dir().join(format!("vyron-path-{}", uuid::Uuid::new_v4()));
+        let root = base.join("Кирилл").join("VYRON Projects");
         fs::create_dir_all(&root).unwrap();
         let file = root.join("проект с пробелами.json");
         fs::write(&file, br#"{"ok":true}"#).unwrap();
         let value: Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
         assert_eq!(value["ok"], true);
-        let _ = fs::remove_dir_all(root.ancestors().nth(3).unwrap());
+        let _ = fs::remove_dir_all(base);
     }
 }
