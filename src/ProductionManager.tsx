@@ -192,7 +192,7 @@ export function ProductionManager({view='all'}:{view?:'all'|'materials'|'builder
   async function cleanupAllRenderedProjectAssets(){
     if(!batches.length)return;
     if(!window.confirm(`Очистить source PROJECT-папки завершённых проектов канала ${channel?.name||''}? Удаление разрешено только после проверки валидного render вне PROJECT-папки. YouTube upload не требуется.`))return;
-    if(!window.confirm('ВТОРОЕ ПОДТВЕРЖДЕНИЕ. PROJECT-папки будут перемещены в Корзину macOS. Render, batch/status metadata, upload history и schedule state останутся.'))return;
+    if(!window.confirm('ВТОРОЕ ПОДТВЕРЖДЕНИЕ. PROJECT-папки будут перемещены в системную Корзину. Render, batch/status metadata, upload history и schedule state останутся.'))return;
     setBusy('cleanup-all');let projects=0,files=0,bytes=0,skipped=0;const reasons:Record<string,number>={};
     try{for(const batch of batches){const x=await productionManagerApi.cleanupCompletedAssets(batch.manifestPath);projects+=x.cleanedProjects;files+=x.removedFiles;bytes+=x.freedBytes;skipped+=x.skippedProjects;for(const [k,v] of Object.entries(x.skipReasons||{}))reasons[k]=(reasons[k]||0)+v}await refreshState();const reasonText=Object.entries(reasons).filter(([,v])=>v>0).map(([k,v])=>`${k}: ${v}`).join(' • ');notifySuccess('PROJECT-папки очищены',`${projects} PROJECT-папок → Корзина • файлов: ${files} • освобождено ${bytesLabel(bytes)} • пропущено ${skipped}${reasonText?` • ${reasonText}`:''}. Готовые render защищены. YouTube upload не требуется.`,{operationId:`cleanup-project-assets:${channelId}:${Date.now()}`})}catch(e){toast(`Не удалось очистить project assets: ${String(e)}`)}finally{setBusy('')}
   }
