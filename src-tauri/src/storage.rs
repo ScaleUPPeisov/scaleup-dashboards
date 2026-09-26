@@ -1,7 +1,8 @@
 use crate::security;
 use serde_json::{json, Value};
 use std::{
-    fs,
+    fs::{self, OpenOptions},
+    io::Write,
     path::{Path, PathBuf},
 };
 use tauri::{AppHandle, Manager};
@@ -143,22 +144,160 @@ fn migrate_state(mut state: Value) -> (Value, bool) {
     (state, changed)
 }
 
-fn atomic_write(path: &Path, state: &Value) -> Result<(), String> {
-    let tmp = path.with_extension("tmp");
-    let bytes = serde_json::to_vec_pretty(state).map_err(|e| e.to_string())?;
-    fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
-    if path.exists() {
-        let bak = path.with_extension("bak");
-        let _ = fs::copy(path, bak);
-        let _ = fs::remove_file(path);
+fn durable_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("state parent create: {e}"))?;
     }
-    fs::rename(tmp, path).map_err(|e| e.to_string())?;
-    security::private_permissions(path)?;
-    let bak = path.with_extension("bak");
-    if bak.exists() {
-        let _ = security::private_permissions(&bak);
+    let mut file = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(path)
+        .map_err(|e| format!("state temp open: {e}"))?;
+    file.write_all(bytes).map_err(|e| format!("state temp write: {e}"))?;
+    file.sync_all().map_err(|e| format!("state temp sync: {e}"))?;
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn replace_file_atomic(src: &Path, dst: &Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+    let src_w = src.as_os_str().encode_wide().chain(std::iter::once(0)).collect::<Vec<_>>();
+    let dst_w = dst.as_os_str().encode_wide().chain(std::iter::once(0)).collect::<Vec<_>>();
+    let ok = unsafe {
+        MoveFileExW(
+            src_w.as_ptr(),
+            dst_w.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if ok == 0 {
+        return Err(format!("state atomic replace: {}", std::io::Error::last_os_error()));
     }
     Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn replace_file_atomic(src: &Path, dst: &Path) -> Result<(), String> {
+    fs::rename(src, dst).map_err(|e| format!("state atomic replace: {e}"))
+}
+
+fn read_valid_json(path: &Path) -> Result<Value, String> {
+    let bytes = fs::read(path).map_err(|e| format!("state read {}: {e}", path.display()))?;
+    serde_json::from_slice::<Value>(&bytes)
+        .map_err(|e| format!("state parse {}: {e}", path.display()))
+}
+
+fn archive_corrupt(path: &Path, label: &str) -> Option<PathBuf> {
+    if !path.exists() {
+        return None;
+    }
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let archived = parent.join(format!(
+        "{label}.corrupt-{}.json",
+        chrono::Utc::now().timestamp_millis()
+    ));
+    if fs::rename(path, &archived).is_ok() {
+        let _ = security::private_permissions(&archived);
+        return Some(archived);
+    }
+    if fs::copy(path, &archived).is_ok() {
+        let _ = security::private_permissions(&archived);
+        return Some(archived);
+    }
+    None
+}
+
+fn recovery_default(message: String) -> Value {
+    let mut state = default_state();
+    state["stateRecovery"] = json!({"status":"FAILED","message":message});
+    if let Some(logs) = state.get_mut("logs").and_then(Value::as_array_mut) {
+        logs.push(json!({
+            "at": chrono::Utc::now().to_rfc3339(),
+            "level": "error",
+            "message": "VYRON не смог восстановить локальное состояние. Повреждённые state-файлы сохранены для диагностики."
+        }));
+    }
+    state
+}
+
+fn atomic_write(path: &Path, state: &Value) -> Result<(), String> {
+    let tmp = path.with_extension("tmp");
+    let bak = path.with_extension("bak");
+    let bak_tmp = path.with_extension("bak.tmp");
+    let bytes = serde_json::to_vec_pretty(state).map_err(|e| e.to_string())?;
+
+    durable_write(&tmp, &bytes)?;
+    serde_json::from_slice::<Value>(&fs::read(&tmp).map_err(|e| e.to_string())?)
+        .map_err(|e| format!("state temp validation failed: {e}"))?;
+
+    if path.exists() && read_valid_json(path).is_ok() {
+        fs::copy(path, &bak_tmp).map_err(|e| format!("state backup copy: {e}"))?;
+        let backup_bytes = fs::read(&bak_tmp).map_err(|e| format!("state backup read: {e}"))?;
+        serde_json::from_slice::<Value>(&backup_bytes)
+            .map_err(|e| format!("state backup validation failed: {e}"))?;
+        OpenOptions::new()
+            .read(true)
+            .open(&bak_tmp)
+            .and_then(|f| f.sync_all())
+            .map_err(|e| format!("state backup sync: {e}"))?;
+        replace_file_atomic(&bak_tmp, &bak)?;
+        let _ = security::private_permissions(&bak);
+    }
+
+    // Crucially, state.json is never deleted first. On Windows MoveFileExW performs
+    // a replace-in-place, so a crash before this point leaves the previous state valid.
+    replace_file_atomic(&tmp, path)?;
+    security::private_permissions(path)?;
+    Ok(())
+}
+
+fn load_state_from_path(path: &Path) -> Value {
+    let bak = path.with_extension("bak");
+
+    if !path.exists() {
+        if !bak.exists() {
+            return default_state();
+        }
+        match read_valid_json(&bak) {
+            Ok(recovered) => {
+                if atomic_write(path, &recovered).is_ok() {
+                    return recovered;
+                }
+                return recovery_default("STATE_RECOVERY_WRITE_FAILED".into());
+            }
+            Err(backup_error) => {
+                archive_corrupt(&bak, "state.bak");
+                return recovery_default(format!("STATE_BACKUP_CORRUPT: {backup_error}"));
+            }
+        }
+    }
+
+    match read_valid_json(path) {
+        Ok(state) => state,
+        Err(primary_error) => match read_valid_json(&bak) {
+            Ok(recovered) => {
+                archive_corrupt(path, "state");
+                if atomic_write(path, &recovered).is_ok() {
+                    recovered
+                } else {
+                    recovery_default(format!(
+                        "STATE_RECOVERY_WRITE_FAILED: primary={primary_error}"
+                    ))
+                }
+            }
+            Err(backup_error) => {
+                archive_corrupt(path, "state");
+                archive_corrupt(&bak, "state.bak");
+                recovery_default(format!(
+                    "STATE_RECOVERY_FAILED: primary={primary_error}; backup={backup_error}"
+                ))
+            }
+        },
+    }
 }
 
 #[tauri::command]
@@ -167,14 +306,11 @@ pub fn load_state(app: AppHandle) -> Value {
         Ok(p) => p,
         Err(_) => return default_state(),
     };
-    let raw = fs::read(&path)
-        .ok()
-        .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
-        .unwrap_or_else(default_state);
+    let raw = load_state_from_path(&path);
     let (state, changed) = migrate_state(raw);
     let legacy_plaintext=!state_secret(&state,"youtubeApiKey").is_empty()||!state_secret(&state,"openaiApiKey").is_empty();
     let disk=sanitized_state_for_disk(&state);
-    // Passive startup must never read/write Keychain or trigger legacy secret migration.
+    // Passive startup must never read/write secure storage or trigger legacy secret migration.
     // If legacy plaintext exists, keep the original file untouched until an explicit
     // secret-required operation performs the one-time migration.
     if changed&&!legacy_plaintext{let _=atomic_write(&path,&disk);}else if path.exists(){let _=security::private_permissions(&path);}
@@ -209,6 +345,58 @@ mod v213_storage_tests {
         assert!(!changed2);
         assert_eq!(m2, m);
     }
+    #[test]
+    fn atomic_write_keeps_previous_valid_state_as_backup() {
+        let root = std::env::temp_dir().join(format!("vyron-state-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("state.json");
+        atomic_write(&path, &json!({"version":8,"channels":[{"id":"old"}]})).unwrap();
+        atomic_write(&path, &json!({"version":8,"channels":[{"id":"new"}]})).unwrap();
+        assert_eq!(read_valid_json(&path).unwrap()["channels"][0]["id"], "new");
+        assert_eq!(read_valid_json(&path.with_extension("bak")).unwrap()["channels"][0]["id"], "old");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn missing_primary_recovers_from_valid_backup() {
+        let root = std::env::temp_dir().join(format!("vyron-state-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("state.json");
+        fs::write(path.with_extension("bak"), br#"{"version":8,"channels":[{"id":"c1"}],"jobs":[]}"#).unwrap();
+        let recovered = load_state_from_path(&path);
+        assert_eq!(recovered["channels"][0]["id"], "c1");
+        assert_eq!(read_valid_json(&path).unwrap()["channels"][0]["id"], "c1");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn corrupt_primary_recovers_from_valid_backup_without_losing_channels() {
+        let root = std::env::temp_dir().join(format!("vyron-state-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("state.json");
+        fs::write(&path, b"{broken").unwrap();
+        fs::write(path.with_extension("bak"), br#"{"version":8,"channels":[{"id":"c1"}],"jobs":[{"id":"j1"}],"uploadHistory":[{"id":"u1"}],"fingerprintCache":{"x":"y"},"projectLifecycle":{"p":"ready"},"settings":{"workspace":"D:\\VYRON","endlumePath":"C:\\ENDLUME Studio.exe"}}"#).unwrap();
+        let recovered = load_state_from_path(&path);
+        assert_eq!(recovered["channels"][0]["id"], "c1");
+        assert_eq!(recovered["jobs"][0]["id"], "j1");
+        assert_eq!(recovered["uploadHistory"][0]["id"], "u1");
+        assert_eq!(recovered["fingerprintCache"]["x"], "y");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn corrupt_primary_and_backup_surface_explicit_recovery_error() {
+        let root = std::env::temp_dir().join(format!("vyron-state-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("state.json");
+        fs::write(&path, b"{broken").unwrap();
+        fs::write(path.with_extension("bak"), b"{also-broken").unwrap();
+        let recovered = load_state_from_path(&path);
+        assert_eq!(recovered["stateRecovery"]["status"], "FAILED");
+        assert!(recovered["logs"].as_array().unwrap().iter().any(|x| x["level"] == "error"));
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[test]
     fn sanitized_state_never_writes_api_secrets_to_disk() {
         let state = json!({"settings":{"youtubeApiKey":"AIza-secret","openaiApiKey":"sk-secret","workspace":"/tmp/vyron"},"channels":[{"id":"c1"}]});
