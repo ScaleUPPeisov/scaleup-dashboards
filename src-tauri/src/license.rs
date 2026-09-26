@@ -1,10 +1,12 @@
 use crate::security;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+#[cfg(not(target_os = "windows"))]
 use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 use tauri::{AppHandle, Manager};
 
+#[cfg(not(target_os = "windows"))]
 const OWNER_HASH: &str = "4b5631d4a5b7018be7c5237994ad4ba463a4fc1df33165beab0fedc901733ef9";
 const WINDOWS_LICENSE_API: &str = "https://odlseljmogaguyqdlkyv.supabase.co/functions/v1/vyron-client-api";
 const WINDOWS_SESSION_ACCOUNT: &str = "license.session_token";
@@ -33,6 +35,7 @@ fn root_dir(app: &AppHandle) -> Result<PathBuf, String> {
     fs::create_dir_all(&d).map_err(|e| e.to_string())?;
     Ok(d)
 }
+#[cfg(not(target_os = "windows"))]
 fn legacy_file(app: &AppHandle) -> Result<PathBuf, String> { Ok(root_dir(app)?.join("license.json")) }
 fn windows_cache_file(app: &AppHandle) -> Result<PathBuf, String> { Ok(root_dir(app)?.join("license-windows.json")) }
 fn device_file(app: &AppHandle) -> Result<PathBuf, String> { Ok(root_dir(app)?.join("device-id")) }
