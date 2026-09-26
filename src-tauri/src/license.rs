@@ -87,7 +87,8 @@ fn offline_grace_eligible_at(cache: &WindowsLicenseCache, now: chrono::DateTime<
     if !(0..=OFFLINE_GRACE_SECONDS).contains(&age) {
         return false;
     }
-    if let Some(expires) = cache.expires_at.as_deref().and_then(parse_time) {
+    if let Some(raw_expires) = cache.expires_at.as_deref() {
+        let Some(expires) = parse_time(raw_expires) else { return false; };
         if expires <= now {
             return false;
         }
@@ -367,6 +368,14 @@ mod v214_license_tests {
         assert!(!offline_grace_eligible_at(&c, now));
         let mut c = active_cache(now);
         c.device_status = "blocked".into();
+        assert!(!offline_grace_eligible_at(&c, now));
+    }
+
+    #[test]
+    fn offline_grace_rejects_malformed_expiry() {
+        let now = chrono::Utc::now();
+        let mut c = active_cache(now);
+        c.expires_at = Some("not-a-date".into());
         assert!(!offline_grace_eligible_at(&c, now));
     }
 
