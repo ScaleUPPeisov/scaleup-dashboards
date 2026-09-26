@@ -151,3 +151,51 @@ pub fn endlume_diagnostics(endlume_path: String) -> Value {
         json!({"ok":false,"status":"HANDSHAKE_FAILED","detail":"ENDLUME diagnostics unsupported on this platform"})
     }
 }
+
+
+#[cfg(test)]
+mod v214_windows_system_tests {
+    use super::*;
+
+    #[test]
+    fn endlume_empty_path_is_not_ready() {
+        let d = endlume_diagnostics(String::new());
+        assert_eq!(d["ok"], false);
+        assert_eq!(d["status"], "PATH_MISSING");
+    }
+
+    #[test]
+    fn endlume_missing_file_is_not_ready() {
+        let missing = std::env::temp_dir().join(format!("vyron-missing-{}.exe", uuid::Uuid::new_v4()));
+        let d = endlume_diagnostics(missing.to_string_lossy().into_owned());
+        assert_eq!(d["ok"], false);
+        assert_eq!(d["status"], "FILE_NOT_FOUND");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_non_exe_path_is_rejected() {
+        let root = std::env::temp_dir().join(format!("vyron-endlume-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let file = root.join("ENDLUME Studio.app");
+        fs::write(&file, b"not-an-exe").unwrap();
+        let d = endlume_diagnostics(file.to_string_lossy().into_owned());
+        assert_eq!(d["status"], "NOT_EXECUTABLE");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_unicode_and_space_paths_roundtrip() {
+        let root = std::env::temp_dir()
+            .join(format!("vyron-path-{}", uuid::Uuid::new_v4()))
+            .join("Кирилл")
+            .join("VYRON Projects");
+        fs::create_dir_all(&root).unwrap();
+        let file = root.join("проект с пробелами.json");
+        fs::write(&file, br#"{"ok":true}"#).unwrap();
+        let value: Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+        assert_eq!(value["ok"], true);
+        let _ = fs::remove_dir_all(root.ancestors().nth(3).unwrap());
+    }
+}
