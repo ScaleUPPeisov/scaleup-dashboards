@@ -461,7 +461,12 @@ pub fn get_secret(_account:&str)->Result<Option<String>,String>{Ok(None)}
 pub fn delete_secret(account:&str)->Result<(),String>{set_secret(account,"")}
 
 pub fn set_secret_for_autosave(account:&str,value:&str)->Result<(),String>{
- if KEYCHAIN_ACCESS_BLOCKED.load(Ordering::SeqCst){return Err("KEYCHAIN_AUTOSAVE_PAUSED: защищённое хранилище временно приостановлено после отказа macOS Keychain; локальное состояние сохраняется без повторного системного запроса".into())}
+ if KEYCHAIN_ACCESS_BLOCKED.load(Ordering::SeqCst){
+  #[cfg(target_os="macos")]
+  return Err("KEYCHAIN_AUTOSAVE_PAUSED: защищённое хранилище временно приостановлено после отказа macOS Keychain; локальное состояние сохраняется без повторного системного запроса".into());
+  #[cfg(not(target_os="macos"))]
+  return Err("SECURE_STORAGE_AUTOSAVE_PAUSED: защищённое хранилище временно недоступно; локальное состояние сохраняется отдельно".into());
+ }
  set_secret_if_changed(account,value)
 }
 
@@ -485,7 +490,25 @@ pub fn security_keychain_diagnostics()->Result<serde_json::Value,String>{
    "authenticationUi":"FAIL_OR_SKIP"
   }));
  }
- #[cfg(not(target_os="macos"))]{Ok(serde_json::json!({"ok":false,"status":"UNSUPPORTED"}))}
+ #[cfg(target_os="windows")]{
+  // Windows diagnostic is also passive: enumerate account names only. Secret values
+  // are never read or written by the diagnostics screen.
+  let canonical_visible=list_canonical_secret_accounts("")?.len();
+  let legacy_visible=list_secret_accounts("")?.len();
+  return Ok(serde_json::json!({
+   "ok":true,
+   "status":"WINDOWS_CREDENTIAL_MANAGER_READY",
+   "backend":"Windows Credential Manager",
+   "service":CANONICAL_SERVICE,
+   "legacyService":LEGACY_SERVICE,
+   "canonicalVisibleAccounts":canonical_visible,
+   "legacyVisibleAccounts":legacy_visible,
+   "secretValuesIncluded":false,
+   "secretReads":0,
+   "secretWrites":0
+  }));
+ }
+ #[cfg(all(not(target_os="macos"),not(target_os="windows")))]{Ok(serde_json::json!({"ok":false,"status":"UNSUPPORTED","backend":"Unsupported"}))}
 }
 
 #[tauri::command]
