@@ -771,10 +771,14 @@ fn open_browser(url: &str, browser: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         let _ = browser;
-        Command::new("cmd")
-            .args(["/C", "start", "", url])
+        // Never route OAuth URLs through cmd.exe: '&' is a command separator there and
+        // truncates Google query parameters such as response_type=code, scopes and PKCE.
+        // explorer.exe receives the URL as one process argument and delegates it to the
+        // user's default browser without shell metacharacter parsing.
+        Command::new("explorer.exe")
+            .arg(url)
             .spawn()
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| format!("Не удалось открыть браузер Windows: {e}"))?;
     }
     #[cfg(target_os = "linux")]
     {
@@ -786,6 +790,31 @@ fn open_browser(url: &str, browser: &str) -> Result<(), String> {
     }
     Ok(())
 }
+fn google_oauth_auth_url(
+    client_id: &str,
+    redirect: &str,
+    scope: &str,
+    challenge: &str,
+    state: &str,
+    include_granted_scopes: bool,
+) -> String {
+    let mut url = format!(
+        "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&access_type=offline&prompt=consent",
+        urlencoding::encode(client_id),
+        urlencoding::encode(redirect),
+        urlencoding::encode(scope),
+    );
+    if include_granted_scopes {
+        url.push_str("&include_granted_scopes=true");
+    }
+    url.push_str(&format!(
+        "&code_challenge={}&code_challenge_method=S256&state={}",
+        urlencoding::encode(challenge),
+        urlencoding::encode(state),
+    ));
+    url
+}
+
 fn query_param(query: &str, key: &str) -> Option<String> {
     query.split('&').find_map(|p| {
         let mut it = p.splitn(2, '=');
@@ -844,7 +873,7 @@ pub async fn youtube_oauth_connect(
         .split_whitespace()
         .map(str::to_string)
         .collect::<Vec<_>>();
-    let auth_url=format!("https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&access_type=offline&prompt=consent&code_challenge={}&code_challenge_method=S256&state={}",urlencoding::encode(&client_id),urlencoding::encode(&redirect),urlencoding::encode(scope),urlencoding::encode(&challenge),urlencoding::encode(&state));
+    let auth_url = google_oauth_auth_url(&client_id, &redirect, scope, &challenge, &state, false);
     let preferred_browser = browser.unwrap_or_else(|| "default".into());
     open_browser(&auth_url, &preferred_browser)?;
     let expected_state = state.clone();
@@ -4198,7 +4227,7 @@ fn reconnect_auth_url(
     challenge: &str,
     state: &str,
 ) -> String {
-    format!("https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&access_type=offline&prompt=consent&include_granted_scopes=true&code_challenge={}&code_challenge_method=S256&state={}",urlencoding::encode(client_id),urlencoding::encode(redirect),urlencoding::encode(scope),urlencoding::encode(challenge),urlencoding::encode(state))
+    google_oauth_auth_url(client_id, redirect, scope, challenge, state, true)
 }
 async fn reconnect_refresh_smoke(
     client_id: &str,
@@ -4541,6 +4570,56 @@ mod keychain_prompt_architecture_tests{
  }
  #[test]fn selected_profile_hydration_reads_only_selected_secret(){let secrets=CountingStore::default();secrets.v.borrow_mut().insert(oauth_key("a","refresh_token"),"ra".into());secrets.v.borrow_mut().insert(oauth_key("b","refresh_token"),"rb".into());let mut a=p("a");let b=p("b");hydrate_profile_secret_kind_with(&secrets,&mut a,"refresh_token").unwrap();assert_eq!(a.refresh_token,"ra");assert!(b.refresh_token.is_empty());assert_eq!(&*secrets.gets.borrow(),&vec![oauth_key("a","refresh_token")]);assert!(secrets.sets.borrow().is_empty());assert!(secrets.deletes.borrow().is_empty());}
  #[test]fn google_status_metadata_never_requires_secret_value(){let c=GoogleConfig{client_id:"123.apps.googleusercontent.com".into(),project_id:"project".into(),client_secret:String::new(),api_key:String::new(),client_secret_present:true,api_key_present:true};let v=google_config_status_value(&c);assert_eq!(v["hasSecret"],true);assert_eq!(v["hasApiKey"],true);assert!(!v.to_string().contains("client_secret"));}
+}
+
+#[cfg(test)]
+mod windows_oauth_browser_launch_tests {
+    use super::*;
+
+    #[test]
+    fn google_authorization_urls_keep_required_code_flow_parameters() {
+        for include_granted in [false, true] {
+            let url = google_oauth_auth_url(
+                "123.apps.googleusercontent.com",
+                "http://127.0.0.1:43123",
+                "scope-a scope-b",
+                "pkce-challenge",
+                "csrf-state",
+                include_granted,
+            );
+            assert!(url.starts_with("https://accounts.google.com/o/oauth2/v2/auth?"));
+            assert!(url.contains("client_id=123.apps.googleusercontent.com"));
+            assert!(url.contains("redirect_uri=http%3A%2F%2F127.0.0.1%3A43123"));
+            assert!(url.contains("response_type=code"));
+            assert!(url.contains("scope=scope-a%20scope-b"));
+            assert!(url.contains("access_type=offline"));
+            assert!(url.contains("prompt=consent"));
+            assert!(url.contains("code_challenge=pkce-challenge"));
+            assert!(url.contains("code_challenge_method=S256"));
+            assert!(url.contains("state=csrf-state"));
+            assert_eq!(url.contains("include_granted_scopes=true"), include_granted);
+        }
+    }
+
+    #[test]
+    fn windows_oauth_launcher_never_routes_url_through_cmd_shell() {
+        let source = include_str!("youtube.rs");
+        let open_browser = source
+            .split("fn open_browser")
+            .nth(1)
+            .expect("open_browser source");
+        let windows = open_browser
+            .split("#[cfg(target_os = \"windows\")]")
+            .nth(1)
+            .expect("windows open_browser block")
+            .split("#[cfg(target_os = \"linux\")]")
+            .next()
+            .expect("windows open_browser body");
+        assert!(windows.contains("Command::new(\"explorer.exe\")"));
+        assert!(windows.contains(".arg(url)"));
+        assert!(!windows.contains("Command::new(\"cmd\")"));
+        assert!(!windows.contains("/C"));
+    }
 }
 
 #[cfg(test)]
