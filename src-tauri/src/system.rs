@@ -74,6 +74,109 @@ pub fn default_workspace(app: AppHandle) -> Result<String, String> {
 }
 
 
+
+fn semver_like(value: &str) -> bool {
+    let core = value
+        .split_once('+')
+        .map(|x| x.0)
+        .unwrap_or(value)
+        .split_once('-')
+        .map(|x| x.0)
+        .unwrap_or(value);
+    let parts = core.split('.').collect::<Vec<_>>();
+    parts.len() == 3
+        && parts
+            .iter()
+            .all(|p| !p.is_empty() && p.chars().all(|x| x.is_ascii_digit()))
+}
+
+#[tauri::command]
+pub async fn updater_manifest_diagnostics(app: AppHandle, endpoint: String) -> Value {
+    let endpoint = endpoint.trim().to_string();
+    let current = app.package_info().version.to_string();
+    if !endpoint.starts_with("https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/") {
+        return json!({
+            "ok":false,
+            "status":"INVALID_ENDPOINT",
+            "endpoint":endpoint,
+            "currentVersion":current,
+            "detail":"Updater diagnostics accepts only the configured ScaleUPPeisov GitHub feed."
+        });
+    }
+
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(12))
+        .build()
+    {
+        Ok(x) => x,
+        Err(e) => return json!({"ok":false,"status":"HTTP_CLIENT_FAILED","endpoint":endpoint,"currentVersion":current,"detail":e.to_string()}),
+    };
+    let response = match client
+        .get(&endpoint)
+        .header("Cache-Control", "no-cache, no-store, max-age=0")
+        .header("Pragma", "no-cache")
+        .send()
+        .await
+    {
+        Ok(x) => x,
+        Err(e) => return json!({"ok":false,"status":"ENDPOINT_UNREACHABLE","endpoint":endpoint,"currentVersion":current,"detail":e.to_string()}),
+    };
+    let http_status = response.status().as_u16();
+    if !response.status().is_success() {
+        return json!({"ok":false,"status":"HTTP_ERROR","endpoint":endpoint,"currentVersion":current,"httpStatus":http_status});
+    }
+    let bytes = match response.bytes().await {
+        Ok(x) => x,
+        Err(e) => return json!({"ok":false,"status":"BODY_READ_FAILED","endpoint":endpoint,"currentVersion":current,"httpStatus":http_status,"detail":e.to_string()}),
+    };
+    let manifest: Value = match serde_json::from_slice(&bytes) {
+        Ok(x) => x,
+        Err(e) => return json!({"ok":false,"status":"JSON_PARSE_FAILED","endpoint":endpoint,"currentVersion":current,"httpStatus":http_status,"detail":e.to_string()}),
+    };
+
+    let version = manifest.get("version").and_then(Value::as_str).unwrap_or("").trim();
+    let platform = manifest.pointer("/platforms/windows-x86_64");
+    let url = platform.and_then(|x| x.get("url")).and_then(Value::as_str).unwrap_or("").trim();
+    let signature = platform
+        .and_then(|x| x.get("signature"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    let version_valid = semver_like(version);
+    let url_valid = url.starts_with("https://");
+    let signature_present = !signature.is_empty();
+    let platform_present = platform.is_some();
+    let schema_valid =
+        !version.is_empty() && version_valid && platform_present && url_valid && signature_present;
+    let mut errors = Vec::<&str>::new();
+    if version.is_empty() { errors.push("VERSION_MISSING"); }
+    else if !version_valid { errors.push("VERSION_NOT_SEMVER"); }
+    if !platform_present { errors.push("WINDOWS_PLATFORM_MISSING"); }
+    if !url_valid { errors.push("DOWNLOAD_URL_INVALID"); }
+    if !signature_present { errors.push("SIGNATURE_MISSING"); }
+
+    json!({
+        "ok":schema_valid,
+        "status":if schema_valid{"READY"}else{"MANIFEST_INVALID"},
+        "endpoint":endpoint,
+        "httpStatus":http_status,
+        "endpointReachable":true,
+        "jsonParsed":true,
+        "schemaValid":schema_valid,
+        "platformKey":"windows-x86_64",
+        "platformPresent":platform_present,
+        "version":version,
+        "semverValid":version_valid,
+        "downloadUrl":url,
+        "signaturePresent":signature_present,
+        "currentVersion":current,
+        "comparison":if version.is_empty(){"latest unknown".to_string()}else if current==version{"current == latest".to_string()}else{format!("current {current} -> latest {version}")},
+        "errors":errors,
+        "installerDownloaded":false,
+        "youtubeApiRequests":0
+    })
+}
+
 #[tauri::command]
 pub fn endlume_diagnostics(endlume_path: String) -> Value {
     let raw = endlume_path.trim();
@@ -156,6 +259,15 @@ pub fn endlume_diagnostics(endlume_path: String) -> Value {
 #[cfg(test)]
 mod v214_windows_system_tests {
     use super::*;
+
+    #[test]
+    fn updater_semver_validation_accepts_release_and_prerelease() {
+        assert!(semver_like("2.1.14"));
+        assert!(semver_like("2.1.14-rc.1"));
+        assert!(semver_like("2.1.14+build.7"));
+        assert!(!semver_like("2.1"));
+        assert!(!semver_like("2.1.x"));
+    }
 
     #[test]
     fn endlume_empty_path_is_not_ready() {
