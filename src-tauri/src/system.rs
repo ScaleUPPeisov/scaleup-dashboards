@@ -72,3 +72,82 @@ pub fn default_workspace(app: AppHandle) -> Result<String, String> {
     let _ = fs::remove_file(probe);
     Ok(p.display().to_string())
 }
+
+
+#[tauri::command]
+pub fn endlume_diagnostics(endlume_path: String) -> Value {
+    let raw = endlume_path.trim();
+    if raw.is_empty() {
+        return json!({"ok":false,"status":"PATH_MISSING","detail":"Путь к ENDLUME не выбран"});
+    }
+    let path = PathBuf::from(raw);
+    if !path.exists() {
+        return json!({"ok":false,"status":"FILE_NOT_FOUND","detail":"Файл ENDLUME не найден"});
+    }
+    if !path.is_file() {
+        return json!({"ok":false,"status":"NOT_EXECUTABLE","detail":"Выбранный путь не является файлом приложения"});
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let is_exe = path
+            .extension()
+            .and_then(|x| x.to_str())
+            .map(|x| x.eq_ignore_ascii_case("exe"))
+            .unwrap_or(false);
+        if !is_exe {
+            return json!({"ok":false,"status":"NOT_EXECUTABLE","detail":"На Windows требуется ENDLUME Studio.exe"});
+        }
+        if fs::File::open(&path).is_err() {
+            return json!({"ok":false,"status":"NOT_EXECUTABLE","detail":"Нет доступа к ENDLUME Studio.exe"});
+        }
+        let Some(roaming) = std::env::var_os("APPDATA") else {
+            return json!({"ok":false,"status":"INBOX_NOT_WRITABLE","detail":"APPDATA не определён"});
+        };
+        let inbox = PathBuf::from(roaming)
+            .join("studio.endlume.desktop")
+            .join("VYRON Inbox");
+        if let Err(e) = fs::create_dir_all(&inbox) {
+            return json!({"ok":false,"status":"INBOX_NOT_WRITABLE","detail":format!("Не удалось создать ENDLUME Inbox: {e}")});
+        }
+        let probe = inbox.join(format!(".vyron-diag-{}", uuid::Uuid::new_v4()));
+        match fs::write(&probe, b"ok") {
+            Ok(_) => {
+                let _ = fs::remove_file(&probe);
+                json!({
+                    "ok":true,
+                    "status":"READY",
+                    "path":path.display().to_string(),
+                    "inbox":inbox.display().to_string(),
+                    "versionStatus":"VERSION_UNKNOWN",
+                    "handshakeStatus":"NOT_RUN",
+                    "destructiveActions":false
+                })
+            }
+            Err(e) => json!({"ok":false,"status":"INBOX_NOT_WRITABLE","detail":format!("ENDLUME Inbox недоступен для записи: {e}")}),
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let home = match std::env::var("HOME") {
+            Ok(v) => v,
+            Err(_) => return json!({"ok":false,"status":"INBOX_NOT_WRITABLE","detail":"HOME не определён"}),
+        };
+        let inbox = PathBuf::from(home)
+            .join("Library/Application Support/studio.endlume.desktop/VYRON Inbox");
+        if let Err(e) = fs::create_dir_all(&inbox) {
+            return json!({"ok":false,"status":"INBOX_NOT_WRITABLE","detail":format!("Не удалось создать ENDLUME Inbox: {e}")});
+        }
+        let probe = inbox.join(format!(".vyron-diag-{}", uuid::Uuid::new_v4()));
+        match fs::write(&probe, b"ok") {
+            Ok(_) => {
+                let _ = fs::remove_file(&probe);
+                json!({"ok":true,"status":"READY","path":path.display().to_string(),"inbox":inbox.display().to_string(),"versionStatus":"VERSION_UNKNOWN","handshakeStatus":"NOT_RUN","destructiveActions":false})
+            }
+            Err(e) => json!({"ok":false,"status":"INBOX_NOT_WRITABLE","detail":format!("ENDLUME Inbox недоступен для записи: {e}")}),
+        }
+    }
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    {
+        json!({"ok":false,"status":"HANDSHAKE_FAILED","detail":"ENDLUME diagnostics unsupported on this platform"})
+    }
+}
