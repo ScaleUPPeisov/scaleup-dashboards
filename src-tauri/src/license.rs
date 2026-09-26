@@ -117,7 +117,7 @@ fn authoritative_denial_error(error: &str) -> bool {
     error.split(':').next().map(authoritative_denial_code).unwrap_or(false)
 }
 fn transient_license_error(error: &str) -> bool {
-    error.starts_with("LICENSE_TRANSIENT:")
+    error.starts_with("LICENSE_TRANSIENT:") || error.starts_with("LICENSE_REMOTE_ERROR:")
 }
 fn cache_public(cache: &WindowsLicenseCache, offline_grace: bool) -> Value {
     json!({
@@ -236,7 +236,22 @@ pub async fn license_status(app: AppHandle) -> Value {
         security::set_active_tenant(Some(&cache.user_id));
         let session = match security::canonical_get_secret_cached(WINDOWS_SESSION_ACCOUNT) {
             Ok(Some(x)) if !x.trim().is_empty() => x,
-            _ => return json!({"valid":false,"reason":"session_missing","userId":cache.user_id}),
+            Ok(_) if within_grace(&cache) => {
+                let mut public = cache_public(&cache, true);
+                public["warning"] = json!("LICENSE_SESSION_LOCAL_MISSING: cached active license kept inside offline grace");
+                return public;
+            }
+            Err(e) if within_grace(&cache) => {
+                let mut public = cache_public(&cache, true);
+                public["warning"] = json!(format!("LICENSE_SECURE_STORAGE_TRANSIENT: {e}"));
+                return public;
+            }
+            Ok(_) => {
+                return json!({"valid":false,"reason":"session_missing_local","userId":cache.user_id,"licenseId":cache.license_id,"licenseStatus":cache.license_status,"cachePreserved":true});
+            }
+            Err(e) => {
+                return json!({"valid":false,"reason":format!("secure_storage_unavailable: {e}"),"userId":cache.user_id,"licenseId":cache.license_id,"licenseStatus":cache.license_status,"cachePreserved":true});
+            }
         };
         match post_license("status", Some(&session), json!({"app_version": app.package_info().version.to_string()})).await {
             Ok(value) => {
@@ -362,5 +377,6 @@ mod v214_license_tests {
         assert!(!authoritative_denial_error("LICENSE_TRANSIENT: HTTP 503"));
         assert!(!authoritative_denial_error("LICENSE_REMOTE_ERROR:proxy_error"));
         assert!(transient_license_error("LICENSE_TRANSIENT: invalid JSON response"));
+        assert!(transient_license_error("LICENSE_REMOTE_ERROR:proxy_error"));
     }
 }
