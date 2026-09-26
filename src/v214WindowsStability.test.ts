@@ -58,13 +58,15 @@ describe('VYRON 2.1.14 Windows stability regressions',()=>{
   });
 
   it('keeps Windows OAuth and secure-storage UI free of macOS-only labels',()=>{
-    const inventory=read('./OAuthInventoryPanel.tsx'),recovery=read('./AuthRecoveryCenter.tsx'),errors=read('./errorCenter.ts');
+    const inventory=read('./OAuthInventoryPanel.tsx'),recovery=read('./AuthRecoveryCenter.tsx'),errors=read('./errorCenter.ts'),production=read('./ProductionOS.tsx');
     expect(inventory).toContain("'WINDOWS CREDENTIAL MANAGER'");
     expect(inventory).not.toContain('KEYCHAIN SERVICE:');
     expect(inventory).not.toContain('LOCAL MAC • NO YOUTUBE API');
     expect(recovery).toContain('SECURE_STORAGE_READBACK_FAILED_AFTER_RECONNECT');
     expect(errors).toContain("secureStorageName=()=>windowsUi()?'Windows Credential Manager':'macOS Keychain'");
     expect(errors).toContain('Windows Credential Manager не отдал OAuth credential');
+    expect(production).toContain("'ОТКРЫТЬ В ПРОВОДНИКЕ'");
+    expect(production).not.toContain('>ОТКРЫТЬ В FINDER</button>');
   });
 
   it('does not invalidate last-known-good license cache for transient failures',()=>{
