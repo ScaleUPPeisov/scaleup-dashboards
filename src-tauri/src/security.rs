@@ -553,6 +553,8 @@ pub fn security_keychain_runtime_diagnostics()->serde_json::Value{
 }
 
 pub fn private_permissions(path:&Path)->Result<(),String>{
+ #[cfg(not(unix))]
+ let _ = path;
  #[cfg(unix)]{
   use std::os::unix::fs::PermissionsExt;
   fs::set_permissions(path,fs::Permissions::from_mode(0o600)).map_err(|e|format!("private permissions {}: {e}",path.display()))?;
@@ -850,7 +852,7 @@ pub fn list_canonical_secret_accounts(prefix:&str)->Result<Vec<String>,String>{
 }
 pub fn list_legacy_secret_accounts(prefix:&str)->Result<Vec<String>,String>{list_secret_accounts(prefix)}
 
-#[cfg(test)]
+#[cfg(all(test,target_os="macos"))]
 mod native_enumeration_tests{
  use super::*;
  #[test]
@@ -880,7 +882,6 @@ fn inventory_osstatus(detail:&str)->Option<i32>{
 #[tauri::command]
 pub fn security_oauth_inventory(app:tauri::AppHandle)->Result<serde_json::Value,String>{
  use std::collections::{BTreeMap,BTreeSet};
- use tauri::Manager;
  let service=SERVICE.to_string();
  let data_dir=crate::license::private_data_dir(&app).map_err(|e|format!("APP_DATA_DIR_FAILED: {e}"))?;
  let json_path=data_dir.join("youtube-oauth.json");
