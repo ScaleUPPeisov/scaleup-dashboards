@@ -2483,6 +2483,19 @@ pub fn open_production_batch_in_endlume(
     if selected.len() != ids.len() {
         return Err("Один или несколько выбранных проектов отсутствуют в batch".into());
     }
+    // Revalidate the exact immutable subset immediately before creating the handoff.
+    // A project may have been edited, moved or partially deleted after the UI preview.
+    let validation = validate_manifest_projects(&m, &endlume_path, Some(&idset));
+    if validation.errors > 0 {
+        let detail = validation
+            .items
+            .iter()
+            .filter(|x| !x.ok)
+            .map(|x| format!("{}: {}", x.project_id, x.error.clone().unwrap_or_else(|| "invalid".into())))
+            .collect::<Vec<_>>()
+            .join(" | ");
+        return Err(format!("ENDLUME_VALIDATION_FAILED:{}:{detail}", validation.errors));
+    }
     let ledger = read_handoff_ledger(&m);
     let repeated = ids
         .iter()
