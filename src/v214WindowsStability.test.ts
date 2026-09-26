@@ -14,6 +14,7 @@ describe('VYRON 2.1.14 Windows stability regressions',()=>{
     expect(block).not.toContain('remove_file(path)');
     expect(rust).toContain('MoveFileExW');
     expect(rust).toContain('STATE_RECOVERY_FAILED');
+    expect(rust).toContain('"status":"RECOVERED"');
     expect(rust).toContain('archive_corrupt(&bak, "state.bak")');
   });
 
@@ -28,6 +29,8 @@ describe('VYRON 2.1.14 Windows stability regressions',()=>{
     expect(firstMark).toBeGreaterThan(firstSpawn);
     expect(block).toContain('ENDLUME_INBOX_NOT_WRITABLE');
     expect(block).toContain('ENDLUME_PATH_INVALID');
+    expect(block).toContain('validate_manifest_projects(&m, &endlume_path, Some(&idset))');
+    expect(block).toContain('ENDLUME_VALIDATION_FAILED');
     expect(block).toContain('let _ = fs::remove_file(&request)');
   });
 
@@ -60,6 +63,8 @@ describe('VYRON 2.1.14 Windows stability regressions',()=>{
     expect(rust).toContain('invalid JSON response');
     expect(rust).toContain('offline_grace_eligible_at');
     expect(rust).toContain('"cachePreserved":true');
+    expect(rust).toContain('LICENSE_SESSION_LOCAL_MISSING');
+    expect(rust).toContain('LICENSE_REMOTE_ERROR:');
     expect(rust).toContain('"device_blocked"');
     expect(rust).toContain('"session_expired"');
     const security=read('../src-tauri/src/security.rs');
