@@ -5,7 +5,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
 };
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 fn state_file(app: &AppHandle) -> Result<PathBuf, String> {
     let d = crate::license::private_data_dir(app)?;
