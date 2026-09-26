@@ -62,5 +62,8 @@ describe('VYRON 2.1.14 Windows stability regressions',()=>{
     expect(rust).toContain('"cachePreserved":true');
     expect(rust).toContain('"device_blocked"');
     expect(rust).toContain('"session_expired"');
+    const security=read('../src-tauri/src/security.rs');
+    expect(security).toContain('MOVEFILE_REPLACE_EXISTING');
+    expect(security).toContain('replace_private_atomic(&tmp,path)');
   });
 });
