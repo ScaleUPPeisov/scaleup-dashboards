@@ -256,7 +256,7 @@ jobs:
           url=f"https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.15-windows-x64/{installer}"
           manifest={
             'version':os.environ['VERSION'],
-            'notes':'VYRON 2.1.15 — Windows OAuth hotfix: fixes Google Desktop OAuth URLs being truncated by cmd.exe at '&', preserving response_type=code, redirect_uri, scopes, PKCE challenge and state.',
+            'notes':"VYRON 2.1.15 — Windows OAuth hotfix: fixes Google Desktop OAuth URLs being truncated by cmd.exe at ampersand (&), preserving response_type=code, redirect_uri, scopes, PKCE challenge and state.",
             'pub_date':datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace('+00:00','Z'),
             'platforms':{os.environ['WINDOWS_PLATFORM_KEY']:{'url':url,'signature':sig}}
           }
@@ -422,6 +422,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path production | Out-Null
+          $upgradeStatus = if (Test-Path "production/upgrade-smoke.txt") { "PASS" } else { "NOT_TESTED" }
           @(
             "VERSION=2.1.15"
             "WINDOWS_RUNNER=$env:RUNNER_OS"
@@ -430,7 +431,7 @@ jobs:
             "ACTUAL_OAUTH_BROWSER_FLOW=NOT_TESTED"
             "ACTUAL_YOUTUBE_UPLOAD=NOT_TESTED"
             "ACTUAL_ENDLUME_LAUNCH=NOT_TESTED"
-            "AUTOMATED_UPDATE_2.1.14_TO_2.1.15=PASS"
+            "AUTOMATED_UPDATE_2.1.14_TO_2.1.15=$upgradeStatus"
           ) | Set-Content -Path production/physical-evidence.txt
 
       - name: Upload candidate artifacts and evidence
