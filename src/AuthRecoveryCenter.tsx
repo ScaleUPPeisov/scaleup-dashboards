@@ -27,7 +27,7 @@ export function AuthRecoveryCenter(){
    window.clearTimeout(timer);
    const fresh=await invoke<Inventory>('security_oauth_inventory');setInventory(fresh);
    const kp=fresh.profiles.find(x=>x.profile_uuid===profileId);
-   if(reconnectResult.keychainReadback!=='FOUND'||kp?.refresh_token_account!=='PRESENT')throw new Error('KEYCHAIN_READBACK_FAILED_AFTER_RECONNECT');
+   if(reconnectResult.keychainReadback!=='FOUND'||kp?.refresh_token_account!=='PRESENT')throw new Error('SECURE_STORAGE_READBACK_FAILED_AFTER_RECONNECT');
    const localIds=row.channels.map(c=>c.id),youtubeIds=row.channels.map(c=>c.youtubeChannelId||'').filter(Boolean);
    for(const j of jobs)if(localIds.includes(j.channelId)&&isOAuthMissingErrorText(j.error))patchJob(j.id,{error:undefined});
    resolveOAuthMissingErrors(profileId,[...localIds,...youtubeIds,row.expectedChannelId||''].filter(Boolean));
