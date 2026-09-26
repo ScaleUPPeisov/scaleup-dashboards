@@ -1,7 +1,7 @@
-use std::{fs,path::{Path,PathBuf}};
 #[cfg(target_os="macos")]
-use std::os::unix::fs::MetadataExt;
+use std::{fs,os::unix::fs::MetadataExt,path::{Path,PathBuf}};
 
+#[cfg(target_os="macos")]
 fn app_bundle_from_exe(exe:&Path)->Option<PathBuf>{
     exe.ancestors().find(|p|p.extension().and_then(|x|x.to_str())==Some("app")).map(Path::to_path_buf)
 }
