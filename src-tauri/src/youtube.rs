@@ -1846,16 +1846,80 @@ fn load_upload_sessions_store(app: &AppHandle) -> Result<PersistedUploadSessions
         }
     }
 }
+fn durable_upload_recovery_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("Upload recovery parent create: {e}"))?;
+    }
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(path)
+        .map_err(|e| format!("Upload recovery temp open: {e}"))?;
+    file.write_all(bytes)
+        .map_err(|e| format!("Upload recovery temp write: {e}"))?;
+    file.sync_all()
+        .map_err(|e| format!("Upload recovery temp sync: {e}"))?;
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn replace_upload_recovery_atomic(src: &Path, dst: &Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+    let src_w = src
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let dst_w = dst
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let ok = unsafe {
+        MoveFileExW(
+            src_w.as_ptr(),
+            dst_w.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if ok == 0 {
+        return Err(format!(
+            "Upload recovery replace: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn replace_upload_recovery_atomic(src: &Path, dst: &Path) -> Result<(), String> {
+    fs::rename(src, dst).map_err(|e| format!("Upload recovery replace: {e}"))
+}
+
+fn save_upload_sessions_store_at(
+    p: &Path,
+    store: &PersistedUploadSessions,
+) -> Result<(), String> {
+    let tmp = p.with_extension("tmp");
+    let b = serde_json::to_vec_pretty(store).map_err(|e| e.to_string())?;
+    durable_upload_recovery_write(&tmp, &b)?;
+    serde_json::from_slice::<PersistedUploadSessions>(
+        &fs::read(&tmp).map_err(|e| format!("Upload recovery temp read: {e}"))?,
+    )
+    .map_err(|e| format!("Upload recovery temp validation: {e}"))?;
+    replace_upload_recovery_atomic(&tmp, p)
+}
+
 fn save_upload_sessions_store(
     app: &AppHandle,
     store: &PersistedUploadSessions,
 ) -> Result<(), String> {
     let p = upload_sessions_path(app)?;
-    let tmp = p.with_extension("tmp");
-    let b = serde_json::to_vec_pretty(store).map_err(|e| e.to_string())?;
-    fs::write(&tmp, b).map_err(|e| format!("Upload recovery write: {e}"))?;
-    fs::rename(&tmp, &p).map_err(|e| format!("Upload recovery replace: {e}"))?;
-    Ok(())
+    save_upload_sessions_store_at(&p, store)
 }
 fn put_upload_session(app: &AppHandle, row: PersistedUploadSession) -> Result<(), String> {
     let mut s = load_upload_sessions_store(app)?;
@@ -3690,6 +3754,63 @@ mod v120_youtube_local_tests {
         fs::write(&moved, b"video-two-different-complete-content").unwrap();
         let h5 = full_file_sha256(&moved).unwrap().0;
         assert_ne!(h1, h5);
+        let _ = fs::remove_dir_all(root);
+    }
+}
+
+#[cfg(test)]
+mod upload_recovery_persistence_tests {
+    use super::*;
+
+    fn row(offset: u64) -> PersistedUploadSession {
+        PersistedUploadSession {
+            job_id: "job-1".into(),
+            profile_id: "profile-1".into(),
+            file_path: "C:\\Видео & Музыка\\video.mp4".into(),
+            session_url: "https://upload.example/session".into(),
+            total: 10_000,
+            offset,
+            created_at: "2026-09-27T00:00:00Z".into(),
+            updated_at: "2026-09-27T00:00:00Z".into(),
+            operation_id: Some("op-1".into()),
+            channel_id: Some("UC_TEST".into()),
+            project_id: Some("project-1".into()),
+        }
+    }
+
+    #[test]
+    fn upload_recovery_store_replaces_existing_file_without_losing_latest_offset() {
+        let root = std::env::temp_dir().join(format!(
+            "vyron-upload-recovery-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).expect("create recovery test dir");
+        let path = root.join("youtube-upload-sessions.json");
+
+        save_upload_sessions_store_at(
+            &path,
+            &PersistedUploadSessions {
+                sessions: vec![row(1024)],
+            },
+        )
+        .expect("first upload recovery write");
+
+        save_upload_sessions_store_at(
+            &path,
+            &PersistedUploadSessions {
+                sessions: vec![row(8192)],
+            },
+        )
+        .expect("replace existing upload recovery store");
+
+        let loaded: PersistedUploadSessions = serde_json::from_slice(
+            &fs::read(&path).expect("read upload recovery store"),
+        )
+        .expect("parse upload recovery store");
+        assert_eq!(loaded.sessions.len(), 1);
+        assert_eq!(loaded.sessions[0].offset, 8192);
+        assert!(!path.with_extension("tmp").exists());
+
         let _ = fs::remove_dir_all(root);
     }
 }
