@@ -1,6 +1,6 @@
 [package]
 name = "channelflow"
-version = "3.2.1"
+version = "3.3.0"
 description = "VYRON Content Operating System"
 authors = ["VYRON"]
 edition = "2021"
@@ -31,6 +31,7 @@ trash = "5"
 
 base64 = "0.22"
 chacha20poly1305 = "0.10"
+argon2 = "0.5"
 rand_core = { version = "0.6", features = ["getrandom"] }
 tokio = { version = "1", features = ["fs", "io-util", "time"] }
 
@@ -41,3 +42,6 @@ security-framework = "3.7.0"
 security-framework-sys = "2.17.0"
 core-foundation = "0.10.1"
 core-foundation-sys = "0.8.7"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.59.0", features = ["Win32_Foundation", "Win32_Security_Credentials", "Win32_Storage_FileSystem", "Win32_System_WindowsProgramming"] }
