@@ -344,17 +344,22 @@ fn merge_settings(local: &Value, imported: &Value) -> Value {
             out.insert(k.clone(), v.clone());
         }
     }
-    for path_field in ["workspace", "endlumePath"] {
+    // Machine-local paths and existing authorization-related settings must survive
+    // a merge. Portable state may fill gaps, but it must never erase local secrets.
+    for local_authoritative in ["workspace", "endlumePath", "youtubeOAuthClientId"] {
         let local_value = local
-            .get(path_field)
+            .get(local_authoritative)
             .and_then(Value::as_str)
             .unwrap_or("");
         if !local_value.is_empty() {
-            out.insert(path_field.into(), Value::String(local_value.to_string()));
+            out.insert(local_authoritative.into(), Value::String(local_value.to_string()));
         }
     }
+    // API keys are never imported from the portable JSON state. Preserve a local
+    // value if one exists; otherwise leave the field empty.
     for secret in ["youtubeApiKey", "openaiApiKey"] {
-        out.insert(secret.into(), Value::String(String::new()));
+        let local_value=local.get(secret).and_then(Value::as_str).unwrap_or("");
+        out.insert(secret.into(),Value::String(local_value.to_string()));
     }
     Value::Object(out)
 }
@@ -982,6 +987,42 @@ mod tests {
     }
 
 
+
+
+    #[test]
+    fn settings_merge_preserves_local_paths_oauth_client_and_api_keys(){
+        let local=json!({
+            "workspace":"C:\\\\local\\\\workspace",
+            "endlumePath":"C:\\\\local\\\\ENDLUME.exe",
+            "youtubeOAuthClientId":"local-oauth-client",
+            "youtubeApiKey":"local-youtube-key",
+            "openaiApiKey":"local-openai-key",
+            "youtubeCategoryId":"10",
+            "autoCheckUpdates":true
+        });
+        let imported=json!({
+            "workspace":"/Volumes/foreign/workspace",
+            "endlumePath":"/Applications/ENDLUME.app",
+            "youtubeOAuthClientId":"imported-oauth-client",
+            "youtubeApiKey":"imported-youtube-key",
+            "openaiApiKey":"imported-openai-key",
+            "youtubeCategoryId":"24",
+            "autoCheckUpdates":false
+        });
+        let merged=merge_settings(&local,&imported);
+        assert_eq!(merged["workspace"],"C:\\\\local\\\\workspace");
+        assert_eq!(merged["endlumePath"],"C:\\\\local\\\\ENDLUME.exe");
+        assert_eq!(merged["youtubeOAuthClientId"],"local-oauth-client");
+        assert_eq!(merged["youtubeApiKey"],"local-youtube-key");
+        assert_eq!(merged["openaiApiKey"],"local-openai-key");
+        assert_eq!(merged["youtubeCategoryId"],"24");
+        assert_eq!(merged["autoCheckUpdates"],false);
+
+        let fresh=merge_settings(&json!({"youtubeApiKey":"","openaiApiKey":"","youtubeOAuthClientId":""}),&imported);
+        assert_eq!(fresh["youtubeApiKey"],"");
+        assert_eq!(fresh["openaiApiKey"],"");
+        assert_eq!(fresh["youtubeOAuthClientId"],"imported-oauth-client");
+    }
 
     #[test]
     fn migration_transaction_backup_id_rejects_path_traversal(){
