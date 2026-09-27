@@ -46,7 +46,20 @@ type LedgerV4={version:4;ptDate:string;buckets:{general:BucketRow;search:BucketR
 type Reservation={id:string;createdAt:string;projectKey?:string;buckets:Record<YoutubeQuotaBucket,number>};
 type OperationLedgerRow={operationId:string;ptDate:string;updatedAt:string;projectKey?:string;buckets:Record<YoutubeQuotaBucket,number>;methods:Record<string,{calls:number;cost:number}>};
 
-function lsGet(key:string){try{return typeof localStorage==='undefined'?null:localStorage.getItem(tenantStorageKey(key))}catch{return null}}
+function lsGet(key:string){
+ try{
+  if(typeof localStorage==='undefined')return null;
+  const scoped=tenantStorageKey(key);
+  const current=localStorage.getItem(scoped);
+  if(current!==null||scoped===key)return current;
+  const legacy=localStorage.getItem(key);
+  if(legacy!==null){
+   try{localStorage.setItem(scoped,legacy);localStorage.removeItem(key)}catch{}
+   return legacy;
+  }
+  return null;
+ }catch{return null}
+}
 function lsSet(key:string,value:string){try{if(typeof localStorage!=='undefined')localStorage.setItem(tenantStorageKey(key),value)}catch{}}
 function emit(){try{if(typeof window!=='undefined')window.dispatchEvent(new Event(EVT))}catch{}}
 function parts(date:Date,timeZone:string){return new Intl.DateTimeFormat('en-CA',{timeZone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(date).reduce<Record<string,string>>((a,x)=>(a[x.type]=x.value,a),{})}
