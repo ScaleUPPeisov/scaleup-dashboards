@@ -25,6 +25,9 @@ jobs:
             name: macos
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
     steps:
       - name: Checkout exact migration source
         uses: actions/checkout@v4
@@ -117,19 +120,53 @@ jobs:
           Copy-Item $ffmpeg.FullName src-tauri/resources/bin/ffmpeg.exe -Force
           Copy-Item $ffprobe.FullName src-tauri/resources/bin/ffprobe.exe -Force
 
-      - name: Build unsigned Windows NSIS gate
+      - name: Normalize Windows updater signing key
+        if: ${{ matrix.name == 'windows' }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          import base64,os
+          raw=os.environ.get('TAURI_SIGNING_PRIVATE_KEY','').strip()
+          assert raw, 'TAURI_SIGNING_PRIVATE_KEY missing'
+          def dec(x):
+              try:return base64.b64decode(x,validate=True).decode()
+              except:return None
+          if raw.startswith('untrusted comment:'):
+              out=base64.b64encode(raw.encode()).decode();box=raw
+          else:
+              one=dec(raw)
+              if one and one.startswith('untrusted comment:'):
+                  out=raw;box=one
+              else:
+                  box=dec(one) if one else None
+                  assert box and box.startswith('untrusted comment:')
+                  out=one.strip()
+          assert 'secret key' in box.splitlines()[0].lower()
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f:
+              f.write('TAURI_SIGNING_PRIVATE_KEY='+out+'\n')
+          print('::add-mask::'+out)
+          print('WINDOWS_UPDATER_PRIVATE_KEY_NORMALIZED=PASS')
+          PY
+
+      - name: Build signed Windows NSIS updater candidate
         if: ${{ matrix.name == 'windows' }}
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          $cfg=@{bundle=@{createUpdaterArtifacts=$false}} | ConvertTo-Json -Depth 4
-          [IO.File]::WriteAllText((Join-Path $PWD 'tauri.migration.gate.json'),$cfg,[Text.UTF8Encoding]::new($false))
-          npx tauri build --target x86_64-pc-windows-msvc --bundles nsis --config tauri.migration.gate.json
+          npx tauri build --target x86_64-pc-windows-msvc --bundles nsis
           $installer=Get-ChildItem src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis -Filter '*-setup.exe' | Select-Object -First 1
           if(-not $installer){throw 'NSIS installer missing'}
+          $sig=Get-Item ($installer.FullName + '.sig') -ErrorAction Stop
+          if($sig.Length -le 0){throw 'NSIS updater signature missing'}
           New-Item -ItemType Directory -Force -Path migration-artifacts | Out-Null
           Copy-Item $installer.FullName migration-artifacts/VYRON-3.3.0-windows-x64-gate.exe
-          (Get-FileHash migration-artifacts/VYRON-3.3.0-windows-x64-gate.exe -Algorithm SHA256).Hash.ToLowerInvariant() | Set-Content migration-artifacts/windows.sha256
+          Copy-Item $sig.FullName migration-artifacts/VYRON-3.3.0-windows-x64-gate.exe.sig
+          $sha=(Get-FileHash migration-artifacts/VYRON-3.3.0-windows-x64-gate.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $sha | Set-Content migration-artifacts/windows.sha256
+          "WINDOWS_UPDATER_SIGNATURE_BYTES=$($sig.Length)" | Add-Content migration-artifacts/gate-windows.txt
+          "WINDOWS_CANDIDATE_SHA256=$sha" | Add-Content migration-artifacts/gate-windows.txt
+          "WINDOWS_UPDATER_ARTIFACT_SIGNED=PASS" | Add-Content migration-artifacts/gate-windows.txt
 
       - name: Install production baseline, preserve migrated state, update and relaunch Windows
         if: ${{ matrix.name == 'windows' }}
