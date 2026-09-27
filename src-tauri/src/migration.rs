@@ -355,11 +355,14 @@ fn merge_settings(local: &Value, imported: &Value) -> Value {
             out.insert(local_authoritative.into(), Value::String(local_value.to_string()));
         }
     }
-    // API keys are never imported from the portable JSON state. Preserve a local
-    // value if one exists; otherwise leave the field empty.
+    // The whole migration payload is already authenticated + encrypted. Local
+    // secrets win when present; a fresh machine may receive the encrypted portable
+    // value so a full backup does not silently drop API integrations.
     for secret in ["youtubeApiKey", "openaiApiKey"] {
-        let local_value=local.get(secret).and_then(Value::as_str).unwrap_or("");
-        out.insert(secret.into(),Value::String(local_value.to_string()));
+        let local_value=local.get(secret).and_then(Value::as_str).unwrap_or("").trim();
+        let imported_value=imported.get(secret).and_then(Value::as_str).unwrap_or("").trim();
+        let chosen=if !local_value.is_empty(){local_value}else{imported_value};
+        out.insert(secret.into(),Value::String(chosen.to_string()));
     }
     Value::Object(out)
 }
@@ -1019,8 +1022,8 @@ mod tests {
         assert_eq!(merged["autoCheckUpdates"],false);
 
         let fresh=merge_settings(&json!({"youtubeApiKey":"","openaiApiKey":"","youtubeOAuthClientId":""}),&imported);
-        assert_eq!(fresh["youtubeApiKey"],"");
-        assert_eq!(fresh["openaiApiKey"],"");
+        assert_eq!(fresh["youtubeApiKey"],"imported-youtube-key");
+        assert_eq!(fresh["openaiApiKey"],"imported-openai-key");
         assert_eq!(fresh["youtubeOAuthClientId"],"imported-oauth-client");
     }
 
