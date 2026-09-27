@@ -1,0 +1,73 @@
+name: VYRON Current Public Tip Privacy Audit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/vyron-current-public-tip-privacy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/vyron-3.0.0
+          fetch-depth: 1
+
+      - name: Full current public VYRON source scan
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import pathlib,re,subprocess,sys
+          files=subprocess.check_output(['git','ls-files'],text=True).splitlines()
+          owned=[f for f in files if (
+            f.startswith('src/') or f.startswith('src-tauri/') or
+            f.startswith('vyron-updates/') or f.startswith('.github/workflows/vyron-') or
+            f in {'package.json','package-lock.json','tsconfig.json','.gitignore'} or f.startswith('vite.config.')
+          )]
+          old_private_names=[
+            b'Lost Highway FM',b'Midnight in Paris',b'ELARA',b'Silent Black Room',
+            b'Electric Maestro',b'i lost her',b'Dolce Vita Nights',b'Neon Drive FM',
+            b'Riviera Sax Club',b'Shadow Note Lounge',b'Rainy Cat Jazz',
+            b'Glass City Lovers',b'Mafia 1947 Lounge'
+          ]
+          patterns={
+            'GOOGLE_ACCESS_TOKEN':re.compile(rb'ya29\.[A-Za-z0-9._~-]{20,}'),
+            'GOOGLE_REFRESH_TOKEN':re.compile(rb'1//[A-Za-z0-9._~-]{20,}'),
+            'GOOGLE_CLIENT_SECRET':re.compile(rb'GOCSPX-[A-Za-z0-9_-]{20,}'),
+            'GOOGLE_API_KEY':re.compile(rb'AIza[0-9A-Za-z_-]{20,}'),
+            'GMAIL_ADDRESS':re.compile(rb'[A-Za-z0-9._%+-]+@(?:gmail|googlemail)\.com',re.I),
+            'YOUTUBE_CHANNEL_ID':re.compile(rb'(?<![A-Za-z0-9_-])UC[A-Za-z0-9_-]{22}(?![A-Za-z0-9_-])'),
+            'YOUTUBE_WATCH_ID':re.compile(rb'(?:youtu\.be/|youtube\.com/watch\?v=)[A-Za-z0-9_-]{11}',re.I),
+          }
+          findings=[]
+          scanned=0
+          for name in owned:
+              p=pathlib.Path(name)
+              if not p.is_file(): continue
+              data=p.read_bytes(); scanned+=1
+              if any(x.lower() in data.lower() for x in old_private_names):
+                  findings.append(('PRIVATE_CHANNEL_TITLE',name))
+              for label,rx in patterns.items():
+                  if rx.search(data): findings.append((label,name))
+          for label,name in findings:
+              print(f'CURRENT_PUBLIC_TIP_FINDING:{label}:file={name}')
+          if findings:
+              print(f'CURRENT_PUBLIC_TIP_ZERO_LEAK=FAIL findings={len(findings)} scanned={scanned}')
+              sys.exit(1)
+          print(f'CURRENT_PUBLIC_TIP_ZERO_LEAK=PASS scanned={scanned}')
+          print('REAL_REFRESH_TOKENS=0')
+          print('REAL_ACCESS_TOKENS=0')
+          print('REAL_CLIENT_SECRETS=0')
+          print('REAL_GOOGLE_EMAILS=0')
+          print('REAL_PRIVATE_CHANNEL_TITLES=0')
+          print('REAL_CHANNEL_IDS=0')
+          print('REAL_VIDEO_IDS=0')
+          PY
