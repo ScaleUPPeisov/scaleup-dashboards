@@ -607,6 +607,24 @@ mod tests{
   reset_keychain_test_state();
   KeychainTestGuard{_lock:lock}
  }
+ #[cfg(target_os="windows")]
+ #[test]
+ fn windows_credential_manager_roundtrip_is_tenant_scoped(){
+  let _guard=keychain_test_guard();
+  let tenant=format!("audit-{}",uuid::Uuid::new_v4());
+  let account=format!("oauth.{}.refresh_token",uuid::Uuid::new_v4());
+  let secret="VYRON_AUDIT_SECRET_VALUE";
+  set_active_tenant(Some(&tenant));
+  canonical_set_secret(&account,secret).expect("Windows Credential Manager write");
+  canonical_forget_cache(&account);
+  let got=canonical_get_secret(&account).expect("Windows Credential Manager read");
+  assert_eq!(got.as_deref(),Some(secret));
+  canonical_delete_secret(&account).expect("Windows Credential Manager delete");
+  canonical_forget_cache(&account);
+  assert!(canonical_get_secret(&account).expect("Windows Credential Manager post-delete read").is_none());
+  set_active_tenant(None);
+ }
+
  #[test]
  fn private_atomic_writer_replaces_existing_file(){
   let root=std::env::temp_dir().join(format!("vyron-secure-{}",uuid::Uuid::new_v4()));
