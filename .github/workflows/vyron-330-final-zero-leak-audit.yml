@@ -66,6 +66,7 @@ jobs:
             'KNOWN_PRIVATE_CHANNEL_TITLE':re.compile(rb'Glass City Lovers',re.I),
           }
           scanned=0
+          findings=[]
           for name in owned:
               p=pathlib.Path(name)
               if not p.is_file(): continue
@@ -74,8 +75,12 @@ jobs:
               scanned+=1
               for label,rx in patterns.items():
                   if rx.search(data):
-                      print(f'ZERO_LEAK=FAIL:{label}:file={name}')
-                      sys.exit(1)
+                      findings.append((label,name))
+          for label,name in findings:
+              print(f'ZERO_LEAK_FINDING:{label}:file={name}')
+          if findings:
+              print(f'ZERO_LEAK=FAIL findings={len(findings)} scanned={scanned}')
+              sys.exit(1)
           print(f'EXACT_RELEASE_HEAD_ZERO_LEAK=PASS scanned={scanned}')
           print('REAL_REFRESH_TOKENS=0')
           print('REAL_ACCESS_TOKENS=0')
