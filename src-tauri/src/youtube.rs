@@ -808,6 +808,18 @@ fn open_browser(url: &str, browser: &str) -> Result<(), String> {
     }
     Ok(())
 }
+fn new_oauth_transaction_material() -> (String, String, String) {
+    let verifier = format!(
+        "{}{}{}",
+        Uuid::new_v4().simple(),
+        Uuid::new_v4().simple(),
+        Uuid::new_v4().simple()
+    );
+    let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
+    let state = Uuid::new_v4().to_string();
+    (verifier, challenge, state)
+}
+
 fn google_oauth_auth_url(
     client_id: &str,
     redirect: &str,
@@ -938,14 +950,7 @@ pub async fn youtube_oauth_connect(
     let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| format!("OAuth localhost: {e}"))?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     let redirect = format!("http://127.0.0.1:{port}");
-    let verifier = format!(
-        "{}{}{}",
-        Uuid::new_v4().simple(),
-        Uuid::new_v4().simple(),
-        Uuid::new_v4().simple()
-    );
-    let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
-    let state = Uuid::new_v4().to_string();
+    let (verifier, challenge, state) = new_oauth_transaction_material();
     let scope="https://www.googleapis.com/auth/youtube.force-ssl https://www.googleapis.com/auth/yt-analytics.readonly https://www.googleapis.com/auth/yt-analytics-monetary.readonly";
     let scopes = scope
         .split_whitespace()
@@ -4507,14 +4512,7 @@ pub async fn youtube_oauth_reconnect_existing(
     let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| format!("OAuth localhost: {e}"))?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     let redirect = format!("http://127.0.0.1:{port}");
-    let verifier = format!(
-        "{}{}{}",
-        Uuid::new_v4().simple(),
-        Uuid::new_v4().simple(),
-        Uuid::new_v4().simple()
-    );
-    let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
-    let state = Uuid::new_v4().to_string();
+    let (verifier, challenge, state) = new_oauth_transaction_material();
     let scope="https://www.googleapis.com/auth/youtube.force-ssl https://www.googleapis.com/auth/yt-analytics.readonly https://www.googleapis.com/auth/yt-analytics-monetary.readonly";
     let scopes = scope
         .split_whitespace()
@@ -4793,6 +4791,28 @@ mod keychain_prompt_architecture_tests{
 #[cfg(test)]
 mod windows_oauth_browser_launch_tests {
     use super::*;
+
+    #[test]
+    fn oauth_transaction_material_is_unique_and_pkce_s256_matches_verifier() {
+        let (verifier_a, challenge_a, state_a) = new_oauth_transaction_material();
+        let (verifier_b, challenge_b, state_b) = new_oauth_transaction_material();
+
+        assert_ne!(verifier_a, verifier_b);
+        assert_ne!(challenge_a, challenge_b);
+        assert_ne!(state_a, state_b);
+        assert!(verifier_a.len() >= 43);
+        assert!(verifier_b.len() >= 43);
+        assert_eq!(
+            challenge_a,
+            URL_SAFE_NO_PAD.encode(Sha256::digest(verifier_a.as_bytes()))
+        );
+        assert_eq!(
+            challenge_b,
+            URL_SAFE_NO_PAD.encode(Sha256::digest(verifier_b.as_bytes()))
+        );
+        assert!(Uuid::parse_str(&state_a).is_ok());
+        assert!(Uuid::parse_str(&state_b).is_ok());
+    }
 
     #[test]
     fn google_authorization_urls_keep_required_code_flow_parameters() {
