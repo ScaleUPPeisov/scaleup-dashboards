@@ -1,0 +1,157 @@
+name: VYRON 3.3.0 Cross Platform Migration E2E
+
+on:
+  push:
+    branches:
+      - release/vyron-3.0.0
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-330-xplat-migration-e2e
+  cancel-in-progress: true
+
+jobs:
+  mac_export:
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/vyron-3.0.0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Export synthetic encrypted package on macOS
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$RUNNER_TEMP/xplat"
+          VYRON_FIXTURE_KIND=macos VYRON_FIXTURE_OUT="$RUNNER_TEMP/xplat/xplat-fixture.bin" cargo test --manifest-path src-tauri/Cargo.toml migration::tests::cross_platform_fixture_export -- --ignored --exact --nocapture
+      - name: Upload synthetic macOS-origin fixture
+        uses: actions/upload-artifact@v4
+        with:
+          name: xplat-macos-origin
+          path: ${{ runner.temp }}/xplat/xplat-fixture.bin
+          if-no-files-found: error
+
+  windows_import_mac:
+    needs: mac_export
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/vyron-3.0.0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/download-artifact@v4
+        with:
+          name: xplat-macos-origin
+          path: xplat-in
+      - name: Import macOS package on Windows three times and re-export
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force -Path xplat-out | Out-Null
+          $env:VYRON_FIXTURE_KIND='windows'
+          $env:VYRON_FIXTURE_IN=(Resolve-Path 'xplat-in/xplat-fixture.bin').Path
+          $env:VYRON_FIXTURE_OUT=(Join-Path $PWD 'xplat-out/roundtrip.bin')
+          cargo test --manifest-path src-tauri/Cargo.toml migration::tests::cross_platform_fixture_import_merge_and_reexport -- --ignored --exact --nocapture
+          cargo test --manifest-path src-tauri/Cargo.toml windows_credential_manager_tests -- --nocapture
+      - name: Upload synthetic Windows roundtrip fixture
+        uses: actions/upload-artifact@v4
+        with:
+          name: xplat-macos-windows-roundtrip
+          path: xplat-out/roundtrip.bin
+          if-no-files-found: error
+
+  mac_roundtrip:
+    needs: windows_import_mac
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/vyron-3.0.0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/download-artifact@v4
+        with:
+          name: xplat-macos-windows-roundtrip
+          path: xplat-in
+      - name: Import Windows roundtrip package back on macOS
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          VYRON_FIXTURE_KIND=macos VYRON_FIXTURE_IN="$PWD/xplat-in/roundtrip.bin" cargo test --manifest-path src-tauri/Cargo.toml migration::tests::cross_platform_fixture_import_merge_and_reexport -- --ignored --exact --nocapture
+          echo 'MACOS_WINDOWS_MACOS_ROUNDTRIP=PASS'
+
+  windows_export:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/vyron-3.0.0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Export synthetic encrypted package on Windows
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force -Path xplat-out | Out-Null
+          $env:VYRON_FIXTURE_KIND='windows'
+          $env:VYRON_FIXTURE_OUT=(Join-Path $PWD 'xplat-out/xplat-fixture.bin')
+          cargo test --manifest-path src-tauri/Cargo.toml migration::tests::cross_platform_fixture_export -- --ignored --exact --nocapture
+      - name: Upload synthetic Windows-origin fixture
+        uses: actions/upload-artifact@v4
+        with:
+          name: xplat-windows-origin
+          path: xplat-out/xplat-fixture.bin
+          if-no-files-found: error
+
+  mac_import_windows:
+    needs: windows_export
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/vyron-3.0.0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/download-artifact@v4
+        with:
+          name: xplat-windows-origin
+          path: xplat-in
+      - name: Import Windows package on macOS three times and re-export
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p xplat-out
+          VYRON_FIXTURE_KIND=macos VYRON_FIXTURE_IN="$PWD/xplat-in/xplat-fixture.bin" VYRON_FIXTURE_OUT="$PWD/xplat-out/roundtrip.bin" cargo test --manifest-path src-tauri/Cargo.toml migration::tests::cross_platform_fixture_import_merge_and_reexport -- --ignored --exact --nocapture
+      - name: Upload synthetic macOS roundtrip fixture
+        uses: actions/upload-artifact@v4
+        with:
+          name: xplat-windows-macos-roundtrip
+          path: xplat-out/roundtrip.bin
+          if-no-files-found: error
+
+  windows_roundtrip:
+    needs: mac_import_windows
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/vyron-3.0.0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/download-artifact@v4
+        with:
+          name: xplat-windows-macos-roundtrip
+          path: xplat-in
+      - name: Import macOS roundtrip package back on Windows
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:VYRON_FIXTURE_KIND='windows'
+          $env:VYRON_FIXTURE_IN=(Resolve-Path 'xplat-in/roundtrip.bin').Path
+          cargo test --manifest-path src-tauri/Cargo.toml migration::tests::cross_platform_fixture_import_merge_and_reexport -- --ignored --exact --nocapture
+          Write-Output 'WINDOWS_MACOS_WINDOWS_ROUNDTRIP=PASS'
