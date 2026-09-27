@@ -1821,16 +1821,17 @@ fn load_upload_sessions_store(app: &AppHandle) -> Result<PersistedUploadSessions
         }
     }
 }
+fn write_upload_sessions_file(path: &Path, store: &PersistedUploadSessions) -> Result<(), String> {
+    let bytes = serde_json::to_vec_pretty(store)
+        .map_err(|e| format!("Upload recovery serialize: {e}"))?;
+    security::write_private_atomic(path, &bytes)
+        .map_err(|e| format!("Upload recovery atomic write: {e}"))
+}
 fn save_upload_sessions_store(
     app: &AppHandle,
     store: &PersistedUploadSessions,
 ) -> Result<(), String> {
-    let p = upload_sessions_path(app)?;
-    let tmp = p.with_extension("tmp");
-    let b = serde_json::to_vec_pretty(store).map_err(|e| e.to_string())?;
-    fs::write(&tmp, b).map_err(|e| format!("Upload recovery write: {e}"))?;
-    fs::rename(&tmp, &p).map_err(|e| format!("Upload recovery replace: {e}"))?;
-    Ok(())
+    write_upload_sessions_file(&upload_sessions_path(app)?, store)
 }
 fn put_upload_session(app: &AppHandle, row: PersistedUploadSession) -> Result<(), String> {
     let mut s = load_upload_sessions_store(app)?;
@@ -3544,6 +3545,66 @@ pub async fn youtube_playlist_membership(
     Ok(
         json!({"verified":verified,"skipped":false,"wasMember":was_member,"isMember":is_member,"action":action,"playlistId":playlist_id,"videoId":video_id,"verificationError":if verified{Value::Null}else{json!("YouTube вернул другое состояние playlist membership")}}),
     )
+}
+
+#[cfg(test)]
+mod upload_session_persistence_tests {
+    use super::*;
+
+    fn row(job_id: &str, offset: u64) -> PersistedUploadSession {
+        PersistedUploadSession {
+            job_id: job_id.into(),
+            profile_id: "profile-1".into(),
+            file_path: "C:\\Видео & Музыка\\video.mp4".into(),
+            session_url: "https://upload.youtube.test/session".into(),
+            total: 1000,
+            offset,
+            created_at: "2026-09-27T00:00:00Z".into(),
+            updated_at: "2026-09-27T00:00:00Z".into(),
+            operation_id: Some("op-1".into()),
+            channel_id: Some("channel-1".into()),
+            project_id: Some("project-1".into()),
+        }
+    }
+
+    #[test]
+    fn upload_session_store_atomically_replaces_existing_file() {
+        let root = std::env::temp_dir().join(format!("vyron-upload-session-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("youtube-upload-sessions.json");
+
+        write_upload_sessions_file(
+            &path,
+            &PersistedUploadSessions { sessions: vec![row("job-1", 100)] },
+        )
+        .unwrap();
+        write_upload_sessions_file(
+            &path,
+            &PersistedUploadSessions { sessions: vec![row("job-1", 750)] },
+        )
+        .unwrap();
+
+        let saved: PersistedUploadSessions =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved.sessions.len(), 1);
+        assert_eq!(saved.sessions[0].offset, 750);
+        assert!(path.is_file());
+        assert!(!path.with_extension("secure-tmp").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn upload_session_store_preserves_unicode_and_shell_metacharacters_in_paths() {
+        let root = std::env::temp_dir().join(format!("vyron-upload-session-path-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("youtube-upload-sessions.json");
+        let store = PersistedUploadSessions { sessions: vec![row("job-2", 0)] };
+        write_upload_sessions_file(&path, &store).unwrap();
+        let saved: PersistedUploadSessions =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved.sessions[0].file_path, "C:\\Видео & Музыка\\video.mp4");
+        let _ = fs::remove_dir_all(root);
+    }
 }
 
 #[cfg(test)]
