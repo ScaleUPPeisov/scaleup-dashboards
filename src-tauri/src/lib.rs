@@ -28,6 +28,8 @@ pub fn run(){
         .setup(|app|{
             // Persistent owner data lives outside the .app bundle and is initialized before UI recovery.
             let _=oauth_vault::ensure_local_storage(app.handle());
+            // A power loss during migration must never leave a half-merged local state.
+            migration::recover_interrupted_import(app.handle()).map_err(|e|Box::<dyn std::error::Error>::from(std::io::Error::new(std::io::ErrorKind::Other,e)))?;
             // Mark this runtime dirty before any recoverable local work starts.
             // A graceful exit flips it clean only when no unfinished recovery transaction remains.
             recovery::initialize_runtime(app.handle()).map_err(|e|Box::<dyn std::error::Error>::from(std::io::Error::new(std::io::ErrorKind::Other,e)))?;
