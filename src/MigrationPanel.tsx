@@ -2,6 +2,8 @@ import React,{useMemo,useState} from 'react';
 import {invoke} from '@tauri-apps/api/core';
 import {open,save} from '@tauri-apps/plugin-dialog';
 import {notifyError,notifyInfo,notifySuccess,notifyWarning} from './notificationCenter';
+import {api} from './api';
+import type {AppState,YoutubeChannelStatistics} from './types';
 
 type Summary={
  localChannels:number;importedChannels:number;duplicateChannels:number;newChannels:number;
@@ -81,6 +83,49 @@ function applyBrowserState(x:any){
  try{if(!localStorage.getItem(PLAN)&&x.quotaPlan)localStorage.setItem(PLAN,JSON.stringify(x.quotaPlan))}catch{}
 }
 
+
+async function refreshYoutubeAfterImport(){
+ const state:AppState=await api.loadState();
+ const groups=new Map<string,Array<{localId:string;youtubeChannelId:string}>>();
+ for(const channel of state.channels){
+  if(!channel.youtubeProfileId||!channel.youtubeChannelId)continue;
+  const rows=groups.get(channel.youtubeProfileId)||[];
+  rows.push({localId:channel.id,youtubeChannelId:channel.youtubeChannelId});
+  groups.set(channel.youtubeProfileId,rows);
+ }
+ let refreshed=0,pending=0,requests=0;
+ const statsByLocal=new Map<string,YoutubeChannelStatistics>();
+ const warningByLocal=new Map<string,string>();
+ for(const [profileId,rows] of groups){
+  for(let offset=0;offset<rows.length;offset+=50){
+   const chunk=rows.slice(offset,offset+50);
+   try{
+    const operationId='migration-refresh-'+crypto.randomUUID();
+    const result=await api.youtubeChannelStatisticsBatch(profileId,chunk.map(x=>x.youtubeChannelId),operationId);
+    requests+=result.apiRequests||1;
+    const byYoutube=new Map(result.items.map(x=>[String(x.channelId||''),x]));
+    for(const row of chunk){
+     const stat=byYoutube.get(row.youtubeChannelId);
+     if(stat){statsByLocal.set(row.localId,{...stat,lastAttemptAt:new Date().toISOString(),syncWarning:undefined});refreshed++}
+     else{warningByLocal.set(row.localId,'MIGRATION_REFRESH_PENDING: channel not returned by YouTube');pending++}
+    }
+   }catch(e){
+    const message=String(e);
+    for(const row of chunk){warningByLocal.set(row.localId,'MIGRATION_REFRESH_PENDING: '+message);pending++}
+   }
+  }
+ }
+ state.channels=state.channels.map(channel=>{
+  const stat=statsByLocal.get(channel.id);
+  if(stat)return {...channel,name:stat.channelTitle||channel.name,stats:{...(channel.stats||{}),...stat}};
+  const warning=warningByLocal.get(channel.id);
+  if(warning)return {...channel,stats:{...(channel.stats||{}),lastAttemptAt:new Date().toISOString(),syncWarning:warning}};
+  return channel;
+ });
+ await api.saveState(state);
+ return{refreshed,pending,requests,total:[...groups.values()].reduce((n,x)=>n+x.length,0)};
+}
+
 export function MigrationPanel(){
  const [passphrase,setPassphrase]=useState('');
  const [file,setFile]=useState('');
@@ -127,6 +172,9 @@ export function MigrationPanel(){
    applyBrowserState(r.browserState);
    notifySuccess('Миграция завершена',String(r.summary.afterChannels)+' уникальных каналов • удалено 0 • OAuth merge выполнен');
    if(r.summary.remapRequired)notifyWarning('Нужен remap папок',String(r.summary.remapRequired)+' путей относятся к другой ОС и не блокируют каналы/OAuth.');
+   const refresh=await refreshYoutubeAfterImport();
+   if(refresh.pending)notifyWarning('YouTube refresh частично отложен',String(refresh.refreshed)+' обновлено • '+String(refresh.pending)+' pending. Каналы не удалены.');
+   else if(refresh.total)notifySuccess('YouTube post-import refresh: PASS',String(refresh.refreshed)+' каналов • API requests: '+String(refresh.requests));
    window.setTimeout(()=>location.reload(),900);
   }catch(e){notifyError('Импорт VYRON',String(e))}
   finally{setBusy(false)}
