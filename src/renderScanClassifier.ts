@@ -1,0 +1,31 @@
+import type {RenderFolderVideoFile} from './api';
+import type {UploadHistoryRecord,VideoJob} from './types';
+
+export type RenderScanPrimaryClass='KNOWN_EXACT'|'UPLOADED_LOCAL_COPY'|'NEW_CANDIDATE'|'VERIFY_REQUIRED'|'AMBIGUOUS'|'DUPLICATE_LOCAL'|'INVALID';
+export type RenderScanRow={file:RenderFolderVideoFile;sequence?:number;matchedJobId?:string;youtubeVideoId?:string;classification:RenderScanPrimaryClass;reason:string};
+export type RenderScanSummary={TOTAL_CLASSIFIED_FILES:number;KNOWN_EXACT:number;UPLOADED_LOCAL_COPY:number;NEW_CANDIDATE:number;VERIFY_REQUIRED:number;AMBIGUOUS:number;DUPLICATE_LOCAL:number;INVALID:number};
+export type RenderScanImportSkip={path:string;name:string;reason:'ALREADY_KNOWN_PATH'|'SEQUENCE_ALREADY_USED'|'MISSING_SEQUENCE'|'NOT_NEW_CANDIDATE'};
+export type RenderScanImportPlan={accepted:RenderScanRow[];skipped:RenderScanImportSkip[]};
+
+export function renderSequence(name:string){const m=name.match(/^0*(\d{1,5})(?:\D|$)/);if(!m)return;const n=Number(m[1]);return Number.isFinite(n)&&n>0?n:undefined}
+export function normalizeRenderPath(value:string){let s=String(value||'').trim().replace(/\\/g,'/');while(s.length>1&&s.endsWith('/'))s=s.slice(0,-1);if(/^[A-Z]:\//.test(s))s=s[0].toLowerCase()+s.slice(1);return s}
+export function renderPathInsideRoot(path:string,root:string){const p=normalizeRenderPath(path),r=normalizeRenderPath(root);return Boolean(p&&r&&(p===r||p.startsWith(r+'/')))}
+function uploadProof(job:VideoJob|undefined,history:UploadHistoryRecord[],path:string,channelId:string){if(job?.youtubeVideoId)return job.youtubeVideoId;const p=normalizeRenderPath(path);return history.find(x=>x.channelId===channelId&&(x.jobId===job?.id||normalizeRenderPath(x.localFilePath)===p))?.youtubeVideoId}
+export function classifyChannelRenderFiles(files:RenderFolderVideoFile[],jobs:VideoJob[],history:UploadHistoryRecord[],channelId:string,exactRoot:string):RenderScanRow[]{
+ const scoped=jobs.filter(j=>j.channelId===channelId),seen=new Set<string>();
+ return files.map(file=>{const path=normalizeRenderPath(file.path),sequence=renderSequence(file.name);
+  if(!renderPathInsideRoot(path,exactRoot))return{file,sequence,classification:'INVALID',reason:'OUTSIDE_EXACT_CHANNEL_ROOT'};
+  if(seen.has(path))return{file,sequence,classification:'DUPLICATE_LOCAL',reason:'DUPLICATE_CANONICAL_PATH'};seen.add(path);
+  const exact=scoped.find(j=>normalizeRenderPath(j.finalPath||'')===path),historyVideo=uploadProof(exact,history,path,channelId);
+  if(exact)return historyVideo?{file,sequence,matchedJobId:exact.id,youtubeVideoId:historyVideo,classification:'UPLOADED_LOCAL_COPY',reason:'EXACT_PATH_WITH_YOUTUBE_PROOF'}:{file,sequence,matchedJobId:exact.id,classification:'KNOWN_EXACT',reason:'EXACT_CANONICAL_PATH'};
+  const fingerprint=(file as RenderFolderVideoFile&{fingerprint?:string}).fingerprint;
+  if(fingerprint){const byFingerprint=scoped.find(j=>j.uploadFingerprint===fingerprint);if(byFingerprint){const vid=uploadProof(byFingerprint,history,byFingerprint.finalPath||path,channelId);return{file,sequence,matchedJobId:byFingerprint.id,youtubeVideoId:vid,classification:vid?'UPLOADED_LOCAL_COPY':'KNOWN_EXACT',reason:'UPLOAD_FINGERPRINT_MATCH'}}}
+  const historyExact=history.find(x=>x.channelId===channelId&&normalizeRenderPath(x.localFilePath)===path);if(historyExact)return{file,sequence,matchedJobId:historyExact.jobId,youtubeVideoId:historyExact.youtubeVideoId,classification:'UPLOADED_LOCAL_COPY',reason:'UPLOAD_HISTORY_EXACT_PATH'};
+  if(!sequence)return{file,classification:'INVALID',reason:'SEQUENCE_NOT_FOUND'};
+  const sameNo=scoped.find(j=>j.number===sequence);if(sameNo){const vid=uploadProof(sameNo,history,sameNo.finalPath||'',channelId);return vid?{file,sequence,matchedJobId:sameNo.id,youtubeVideoId:vid,classification:'VERIFY_REQUIRED',reason:'SAME_CHANNEL_SEQUENCE_WITH_YOUTUBE_PROOF_DIFFERENT_PATH'}:{file,sequence,matchedJobId:sameNo.id,classification:'AMBIGUOUS',reason:'SAME_CHANNEL_SEQUENCE_DIFFERENT_PATH'}}
+  return{file,sequence,classification:'NEW_CANDIDATE',reason:'NO_EXISTING_CHANNEL_EVIDENCE'};
+ });
+}
+export function summarizeRenderScan(rows:RenderScanRow[]):RenderScanSummary{const out:RenderScanSummary={TOTAL_CLASSIFIED_FILES:rows.length,KNOWN_EXACT:0,UPLOADED_LOCAL_COPY:0,NEW_CANDIDATE:0,VERIFY_REQUIRED:0,AMBIGUOUS:0,DUPLICATE_LOCAL:0,INVALID:0};for(const row of rows)out[row.classification]++;const sum=out.KNOWN_EXACT+out.UPLOADED_LOCAL_COPY+out.NEW_CANDIDATE+out.VERIFY_REQUIRED+out.AMBIGUOUS+out.DUPLICATE_LOCAL+out.INVALID;if(sum!==out.TOTAL_CLASSIFIED_FILES)throw new Error(`RENDER_SCAN_COUNTER_INVARIANT_FAILED: total=${out.TOTAL_CLASSIFIED_FILES} sum=${sum}`);return out}
+export function crossChannelScanRecoveryJobs(jobs:VideoJob[],history:UploadHistoryRecord[],channelId:string,exactRoot:string){if(!exactRoot.trim())return[];return jobs.filter(j=>{if(j.channelId!==channelId||!j.finalPath||renderPathInsideRoot(j.finalPath,exactRoot))return false;if(uploadProof(j,history,j.finalPath,channelId))return false;return j.sourceOrigin==='render-scan'||j.storageLifecycle==='NEW'||j.status==='READY_UPLOAD'||j.scanRecoveryState==='CROSS_CHANNEL_SCAN_RECOVERY_REQUIRED'})}
+export function planRenderScanImport(rows:RenderScanRow[],existingJobs:VideoJob[]):RenderScanImportPlan{const usedPaths=new Set(existingJobs.map(j=>normalizeRenderPath(j.finalPath||'')).filter(Boolean)),usedNumbers=new Set(existingJobs.map(j=>j.number)),accepted:RenderScanRow[]=[],skipped:RenderScanImportSkip[]=[];for(const row of rows){if(row.classification!=='NEW_CANDIDATE'){skipped.push({path:row.file.path,name:row.file.name,reason:'NOT_NEW_CANDIDATE'});continue}const path=normalizeRenderPath(row.file.path);if(usedPaths.has(path)){skipped.push({path:row.file.path,name:row.file.name,reason:'ALREADY_KNOWN_PATH'});continue}if(!row.sequence){skipped.push({path:row.file.path,name:row.file.name,reason:'MISSING_SEQUENCE'});continue}if(usedNumbers.has(row.sequence)){skipped.push({path:row.file.path,name:row.file.name,reason:'SEQUENCE_ALREADY_USED'});continue}usedPaths.add(path);usedNumbers.add(row.sequence);accepted.push(row)}return{accepted,skipped}}
