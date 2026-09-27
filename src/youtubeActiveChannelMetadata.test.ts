@@ -2,7 +2,7 @@ import React from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {beforeEach,describe,expect,it,vi} from 'vitest';
 import {readFileSync} from 'node:fs';
-import {fileURLToPath} from 'node:url';
+const urlPath=(u:URL)=>{let p=decodeURIComponent(u.pathname);if(/^\/[A-Za-z]:\//.test(p))p=p.slice(1);return p};
 import type {Channel} from './types';
 
 const __storage=new Map<string,string>();
@@ -24,8 +24,8 @@ import {MetadataPage} from './MetadataPage';
 import {ScheduleOS} from './ScheduleOS';
 import {ExistingVideos} from './ExistingVideos';
 
-const metadataSource=readFileSync(fileURLToPath(new URL('./MetadataPage.tsx',import.meta.url)),'utf8');
-const existingSource=readFileSync(fileURLToPath(new URL('./ExistingVideos.tsx',import.meta.url)),'utf8');
+const metadataSource=readFileSync(urlPath(new URL('./MetadataPage.tsx',import.meta.url)),'utf8');
+const existingSource=readFileSync(urlPath(new URL('./ExistingVideos.tsx',import.meta.url)),'utf8');
 const channel=(id:string,name:string,profile=`profile-${id}`):Channel=>({id,name,slug:id,cadenceDays:2,targetBufferDays:60,publishHour:4,publishMinute:0,language:'EN',genre:'Music',country:'US',minTracks:10,targetDurationMin:120,enabled:true,youtubeProfileId:profile,seo:{titlePatterns:[],descriptionTemplate:'',tags:[],banned:[]}});
 const render=(node:React.ReactElement)=>renderToStaticMarkup(node);
 
