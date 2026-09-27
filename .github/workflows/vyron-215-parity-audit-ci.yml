@@ -82,6 +82,27 @@ jobs:
       - name: Frontend production build
         run: npm run build
 
+      - name: Provision Windows FFmpeg resource for Rust/Tauri tests
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = "8.1.2"
+          $expected = "db580001caa24ac104c8cb856cd113a87b0a443f7bdf47d8c12b1d740584a2ec"
+          $zip = Join-Path $env:RUNNER_TEMP "ffmpeg-$version.zip"
+          $unpack = Join-Path $env:RUNNER_TEMP "ffmpeg-$version"
+          Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-$version-essentials_build.zip" -OutFile $zip
+          $actual = (Get-FileHash -Path $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw "FFmpeg SHA-256 mismatch: $actual" }
+          Expand-Archive -Path $zip -DestinationPath $unpack -Force
+          $ffmpeg = Get-ChildItem -Path $unpack -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          $ffprobe = Get-ChildItem -Path $unpack -Recurse -Filter ffprobe.exe | Select-Object -First 1
+          if (-not $ffmpeg -or -not $ffprobe) { throw "FFmpeg binaries missing" }
+          New-Item -ItemType Directory -Force -Path "src-tauri/resources/bin" | Out-Null
+          Copy-Item $ffmpeg.FullName "src-tauri/resources/bin/ffmpeg.exe" -Force
+          Copy-Item $ffprobe.FullName "src-tauri/resources/bin/ffprobe.exe" -Force
+          Write-Host "WINDOWS_FFMPEG_RESOURCE=PASS"
+
       - name: Targeted Rust OAuth callback tests
         run: cargo test --manifest-path src-tauri/Cargo.toml oauth_callback -- --nocapture
 
