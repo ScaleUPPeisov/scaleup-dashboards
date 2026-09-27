@@ -20,7 +20,7 @@ describe('channel dropdown A-Z sorting',()=>{
     ];
     const original=source.map(x=>x.id);
     expect(sortChannelsAlphabetically(source).map(x=>x.name)).toEqual([
-      'Cedar Nights','Beta Room','Echo Project','Fixture Channel','delta room','Quartz Harbor','Metro Lab','Aurora Fixture','Nova Test','Rain Fixture','Lumen Club','Sigma Lounge','Zulu Studio'
+      'Aurora Fixture','Beta Room','Cedar Nights','delta room','Echo Project','Fixture Channel','Lumen Club','Metro Lab','Nova Test','Quartz Harbor','Rain Fixture','Sigma Lounge','Zulu Studio'
     ]);
     expect(source.map(x=>x.id)).toEqual(original);
   });
