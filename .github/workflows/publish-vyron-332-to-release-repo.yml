@@ -1,0 +1,224 @@
+name: Publish VYRON 3.3.2 to Release Repo
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-3.3.2-windows-oauth-launcher
+    paths:
+      - .github/workflows/publish-vyron-332-to-release-repo.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: publish-vyron-332-to-release-repo
+  cancel-in-progress: false
+
+env:
+  SOURCE_RUN: '36328628834'
+  SOURCE_SHA: 4c1d38eed09fa1b649aa483b044f38489e26b369
+  SOURCE_REPO: ScaleUPPeisov/scaleup-dashboards
+  TARGET_REPO: ScaleUPPeisov/vyron-releases
+  TAG: v3.3.2
+  VERSION: '3.3.2'
+  EXPECTED_SHA256: 1f0c2096ce6eabc44119488f18b0d8f436bdbd155c73e7aa58dec78b17dfdd25
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      RELEASE_TOKEN: ${{ secrets.VYRON_RELEASES_TOKEN }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Verify release authorization and freeze current feeds
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -n "$RELEASE_TOKEN" || { echo 'VYRON_RELEASES_TOKEN=USER_ACTION_REQUIRED'; exit 1; }
+          GH_TOKEN="$RELEASE_TOKEN" gh api "repos/$TARGET_REPO" --jq .full_name | grep -Fx "$TARGET_REPO"
+          if GH_TOKEN="$RELEASE_TOKEN" gh release view "$TAG" --repo "$TARGET_REPO" >/dev/null 2>&1; then
+            echo "TARGET_RELEASE_ALREADY_EXISTS=$TAG"
+            exit 1
+          fi
+          curl -fsSL "https://raw.githubusercontent.com/$TARGET_REPO/main/updates/latest.json" -o /tmp/latest-before.json
+          curl -fsSL "https://raw.githubusercontent.com/$TARGET_REPO/main/updates/owner-preview.json" -o /tmp/owner-before.json
+          sha256sum /tmp/latest-before.json | awk '{print $1}' >/tmp/latest-before.sha
+          sha256sum /tmp/owner-before.json | awk '{print $1}' >/tmp/owner-before.sha
+          test "$(python3 -c 'import json;print(json.load(open("/tmp/latest-before.json"))["version"])')" = '3.3.1'
+          echo 'RELEASE_AUTH=PASS'
+          echo "MAC_FEED_BEFORE_SHA=$(cat /tmp/latest-before.sha)"
+          echo "OWNER_FEED_BEFORE_SHA=$(cat /tmp/owner-before.sha)"
+
+      - name: Verify exact approved GREEN run
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/$SOURCE_REPO/actions/runs/$SOURCE_RUN" >/tmp/run.json
+          python3 - <<'PY'
+          import json,os
+          d=json.load(open('/tmp/run.json'))
+          assert d['status']=='completed', d['status']
+          assert d['conclusion']=='success', d['conclusion']
+          assert d['head_sha']==os.environ['SOURCE_SHA'], (d['head_sha'],os.environ['SOURCE_SHA'])
+          assert d['name']=='VYRON 3.3.2 Windows OAuth Launcher Hotfix', d['name']
+          print('APPROVED_GREEN_RUN=PASS')
+          PY
+
+      - name: Download already-built signed Windows candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf assets && mkdir assets
+          gh run download "$SOURCE_RUN" --repo "$SOURCE_REPO" --name 'VYRON-3.3.2-WINDOWS-SIGNED-CANDIDATE' --dir assets
+          required=(
+            VYRON_3.3.2_x64-setup.exe
+            VYRON_3.3.2_x64-setup.exe.sig
+            VYRON_3.3.2_x64-setup.exe.sha256
+            gate-result.txt
+            signature-verification.txt
+            windows-launch-smoke.txt
+          )
+          for f in "${required[@]}"; do test -s "assets/$f"; done
+          actual="$(sha256sum assets/VYRON_3.3.2_x64-setup.exe | awk '{print $1}')"
+          test "$actual" = "$EXPECTED_SHA256"
+          file_sha="$(awk '{print $1}' assets/VYRON_3.3.2_x64-setup.exe.sha256)"
+          test "$file_sha" = "$EXPECTED_SHA256"
+          grep -q '^UPDATER_SIGNATURE=VERIFIED' assets/signature-verification.txt
+          grep -q '^VERIFIER_MATCHES_TAURI_PLUGIN_UPDATER=YES' assets/signature-verification.txt
+          grep -q '^WINDOWS_PHYSICAL_LAUNCH=PASS' assets/windows-launch-smoke.txt
+          grep -q '^CMD_EXE_IN_OAUTH_PATH=0' assets/gate-result.txt
+          grep -q '^DESTRUCTIVE_OAUTH_ADDITIONS=0' assets/gate-result.txt
+          grep -q '^MACOS_JOBS=0' assets/gate-result.txt
+          echo "WINDOWS_SHA256=$actual"
+          echo 'SIGNED_WINDOWS_ARTIFACT=PASS'
+
+      - name: Publish VYRON 3.3.2 Windows release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.VYRON_RELEASES_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          cat >/tmp/release-notes.md <<EOF
+          ## VYRON 3.3.2 — Windows OAuth launcher hotfix
+
+          Windows-only hotfix from the approved GREEN candidate.
+
+          - Replaced Windows OAuth browser launch through `cmd.exe /C start` with `tauri_plugin_opener::open_url()`.
+          - OAuth URL generation, PKCE, state, localhost callback, token exchange and YouTube channel selection logic are unchanged.
+          - Existing channels, OAuth profiles, refresh tokens, Google Project mappings and local state are preserved.
+          - Targeted frontend/Rust regression, Windows compile, signed NSIS build, Tauri-compatible updater signature verification, silent install and physical launch passed.
+          - macOS was not built, repackaged or changed.
+          - Approved source SHA: `$SOURCE_SHA`
+          - Approved Actions run: `$SOURCE_RUN`
+          - Installer SHA-256: `$EXPECTED_SHA256`
+
+          Note: existing Windows 3.3.1 clients still have the shared feed first, so 3.3.1 → 3.3.2 is a one-time manual installer update. From 3.3.2 onward Windows uses `windows-latest.json` first.
+          EOF
+
+          gh release create "$TAG" assets/*             --repo "$TARGET_REPO"             --title 'VYRON 3.3.2 Windows OAuth Launcher Hotfix'             --notes-file /tmp/release-notes.md
+          echo 'TARGET_RELEASE_CREATED=PASS'
+
+      - name: Checkout release repository
+        uses: actions/checkout@v4
+        with:
+          repository: ScaleUPPeisov/vyron-releases
+          token: ${{ secrets.VYRON_RELEASES_TOKEN }}
+          ref: main
+          path: release-repo
+
+      - name: Update Windows-only updater feed
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          WIN_SIG="$(tr -d '\r\n' < assets/VYRON_3.3.2_x64-setup.exe.sig)"
+          PUB_DATE="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          python3 - "$WIN_SIG" "$PUB_DATE" <<'PY'
+          import json,sys
+          from pathlib import Path
+          sig,pub=sys.argv[1:3]
+          repo='ScaleUPPeisov/vyron-releases'
+          feed={
+            'version':'3.3.2',
+            'notes':'VYRON 3.3.2 — Windows OAuth launcher hotfix; cmd.exe removed from OAuth browser launch; existing channels, OAuth profiles and local data preserved.',
+            'pub_date':pub,
+            'platforms':{
+              'windows-x86_64':{
+                'url':f'https://github.com/{repo}/releases/download/v3.3.2/VYRON_3.3.2_x64-setup.exe',
+                'signature':sig
+              }
+            }
+          }
+          path=Path('release-repo/updates/windows-latest.json')
+          path.write_text(json.dumps(feed,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          PY
+
+          test "$(sha256sum release-repo/updates/latest.json | awk '{print $1}')" = "$(cat /tmp/latest-before.sha)"
+          test "$(sha256sum release-repo/updates/owner-preview.json | awk '{print $1}')" = "$(cat /tmp/owner-before.sha)"
+          test "$(python3 -c 'import json;print(json.load(open("release-repo/updates/windows-latest.json"))["version"])')" = '3.3.2'
+          python3 - <<'PY'
+          import json
+          d=json.load(open('release-repo/updates/windows-latest.json'))
+          assert set(d['platforms'])=={'windows-x86_64'}
+          p=d['platforms']['windows-x86_64']
+          assert p['url']=='https://github.com/ScaleUPPeisov/vyron-releases/releases/download/v3.3.2/VYRON_3.3.2_x64-setup.exe'
+          assert p['signature'].strip()
+          print('WINDOWS_FEED_CONTRACT=PASS')
+          PY
+
+          cd release-repo
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add updates/windows-latest.json
+          test "$(git diff --cached --name-only)" = 'updates/windows-latest.json'
+          git commit -m 'release: promote VYRON 3.3.2 Windows updater'
+          git push origin main
+          echo 'WINDOWS_FEED_PUSH=PASS'
+
+      - name: Verify remote release and updater feed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.VYRON_RELEASES_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/$TARGET_REPO/releases/tags/$TAG" >/tmp/target-release.json
+          python3 - <<'PY'
+          import json,os
+          d=json.load(open('/tmp/target-release.json'))
+          assert d['tag_name']==os.environ['TAG']
+          assert d['draft'] is False
+          assert d['prerelease'] is False
+          required={
+            'VYRON_3.3.2_x64-setup.exe',
+            'VYRON_3.3.2_x64-setup.exe.sig',
+            'VYRON_3.3.2_x64-setup.exe.sha256',
+            'gate-result.txt',
+            'signature-verification.txt',
+            'windows-launch-smoke.txt'
+          }
+          assets={x['name']:x for x in d['assets']}
+          assert required <= set(assets)
+          assert all(assets[n]['size']>0 for n in required)
+          print('REMOTE_RELEASE_ASSETS=PASS')
+          PY
+
+          rm -rf /tmp/remote && mkdir /tmp/remote
+          gh release download "$TAG" --repo "$TARGET_REPO" --dir /tmp/remote --pattern 'VYRON_3.3.2_x64-setup.exe'
+          actual="$(sha256sum /tmp/remote/VYRON_3.3.2_x64-setup.exe | awk '{print $1}')"
+          test "$actual" = "$EXPECTED_SHA256"
+
+          curl -fsSL "https://raw.githubusercontent.com/$TARGET_REPO/main/updates/windows-latest.json?x=$(date +%s)" -o /tmp/windows-after.json
+          curl -fsSL "https://raw.githubusercontent.com/$TARGET_REPO/main/updates/latest.json?x=$(date +%s)" -o /tmp/latest-after.json
+          curl -fsSL "https://raw.githubusercontent.com/$TARGET_REPO/main/updates/owner-preview.json?x=$(date +%s)" -o /tmp/owner-after.json
+
+          test "$(python3 -c 'import json;print(json.load(open("/tmp/windows-after.json"))["version"])')" = '3.3.2'
+          test "$(sha256sum /tmp/latest-after.json | awk '{print $1}')" = "$(cat /tmp/latest-before.sha)"
+          test "$(sha256sum /tmp/owner-after.json | awk '{print $1}')" = "$(cat /tmp/owner-before.sha)"
+
+          echo "REMOTE_INSTALLER_SHA256=$actual"
+          echo 'WINDOWS_LATEST_3_3_2=PASS'
+          echo 'MACOS_LATEST_UNCHANGED=PASS'
+          echo 'OWNER_PREVIEW_UNCHANGED=PASS'
+          echo 'VYRON_3_3_2_WINDOWS_RELEASE=PASS'
