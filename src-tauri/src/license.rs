@@ -219,6 +219,18 @@ pub fn active_user_id(app: &AppHandle) -> Result<Option<String>, String> {
     { let _ = app; Ok(None) }
 }
 
+pub fn initialize_security_tenant(app:&AppHandle){
+    #[cfg(target_os="windows")]
+    {
+        match read_windows_cache(app).ok().flatten(){
+            Some(cache) if !cache.user_id.trim().is_empty()=>security::set_active_tenant(Some(&cache.user_id)),
+            _=>security::set_active_tenant(None),
+        }
+    }
+    #[cfg(not(target_os="windows"))]
+    { let _=app; }
+}
+
 pub fn private_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let root = root_dir(app)?;
     #[cfg(target_os = "windows")]
