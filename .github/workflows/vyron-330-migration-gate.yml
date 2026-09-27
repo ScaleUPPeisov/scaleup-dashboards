@@ -252,7 +252,7 @@ jobs:
             $proc=Start-Process -FilePath $exe.FullName -PassThru
             Start-Sleep -Seconds 7
             $proc.Refresh()
-            if($proc.HasExited){throw "VYRON exited during physical Windows launch $attempt: $($proc.ExitCode)"}
+            if($proc.HasExited){throw "VYRON exited during physical Windows launch ${attempt}: $($proc.ExitCode)"}
             Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
             Start-Sleep -Seconds 1
             $check=Get-Content $statePath -Raw | ConvertFrom-Json
