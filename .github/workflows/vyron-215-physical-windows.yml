@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - windows/vyron-214-stability-fix
-    paths:
-      - '.github/workflows/vyron-215-physical-windows.yml'
   workflow_dispatch:
 
 permissions:
