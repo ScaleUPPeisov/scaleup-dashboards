@@ -1178,3 +1178,45 @@ pub fn security_oauth_inventory(app:tauri::AppHandle)->Result<serde_json::Value,
   "historical_json":{"exact_path":json_path.display().to_string(),"file":json_status,"profiles_in_json":json_profiles,"profiles_with_refresh_token":json_refresh_tokens,"error":json_error}
  }))
 }
+
+
+#[cfg(all(test,target_os="windows"))]
+mod windows_credential_manager_tests{
+ use super::*;
+
+ #[test]
+ fn roundtrip_is_tenant_scoped(){
+  let tenant=format!("audit-{}",uuid::Uuid::new_v4());
+  let account=format!("oauth.{}.refresh_token",uuid::Uuid::new_v4());
+  let secret="VYRON_AUDIT_SECRET_VALUE";
+  set_active_tenant(Some(&tenant));
+  canonical_set_secret(&account,secret).expect("Windows Credential Manager write");
+  canonical_forget_cache(&account);
+  assert_eq!(canonical_get_secret(&account).expect("Windows Credential Manager read").as_deref(),Some(secret));
+  canonical_delete_secret(&account).expect("Windows Credential Manager delete");
+  canonical_forget_cache(&account);
+  assert!(canonical_get_secret(&account).expect("Windows Credential Manager post-delete read").is_none());
+  set_active_tenant(None);
+ }
+
+ #[test]
+ fn same_account_is_isolated_between_tenants(){
+  let suffix=uuid::Uuid::new_v4();
+  let tenant_a=format!("audit-a-{suffix}");
+  let tenant_b=format!("audit-b-{suffix}");
+  let account=format!("oauth.{suffix}.refresh_token");
+  set_active_tenant(Some(&tenant_a));
+  canonical_set_secret(&account,"TENANT_A_SECRET").expect("tenant A write");
+  set_active_tenant(Some(&tenant_b));
+  assert!(canonical_get_secret(&account).expect("tenant B initial read").is_none());
+  canonical_set_secret(&account,"TENANT_B_SECRET").expect("tenant B write");
+  set_active_tenant(Some(&tenant_a));
+  canonical_forget_cache(&account);
+  assert_eq!(canonical_get_secret(&account).expect("tenant A read").as_deref(),Some("TENANT_A_SECRET"));
+  set_active_tenant(Some(&tenant_b));
+  canonical_delete_secret(&account).expect("tenant B cleanup");
+  set_active_tenant(Some(&tenant_a));
+  canonical_delete_secret(&account).expect("tenant A cleanup");
+  set_active_tenant(None);
+ }
+}
