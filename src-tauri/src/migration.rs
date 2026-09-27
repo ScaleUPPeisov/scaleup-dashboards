@@ -231,6 +231,12 @@ fn merge_channel(local: &Value, imported: &Value, remaps: &mut Vec<RemapRow>) ->
             out.insert(k.clone(), v.clone());
         }
     }
+    // Existing local channel identity is authoritative. Replacing it would orphan
+    // local jobs/history after a cross-machine merge of the same YouTube channel.
+    for stable in ["id","slug","youtubeProfileId"] {
+        let local_value=local.get(stable).and_then(Value::as_str).unwrap_or("").trim();
+        if !local_value.is_empty(){out.insert(stable.into(),Value::String(local_value.to_string()));}
+    }
     let channel_id = out
         .get("youtubeChannelId")
         .and_then(Value::as_str)
@@ -345,6 +351,56 @@ fn merge_settings(local: &Value, imported: &Value) -> Value {
     Value::Object(out)
 }
 
+
+fn build_channel_id_remap(local_channels:&[Value],imported_channels:&[Value])->HashMap<String,String>{
+    let mut by_youtube=HashMap::<String,String>::new();
+    for row in local_channels{
+        let yt=row.get("youtubeChannelId").and_then(Value::as_str).unwrap_or("").trim();
+        let id=row.get("id").and_then(Value::as_str).unwrap_or("").trim();
+        if !yt.is_empty()&&!id.is_empty(){by_youtube.insert(yt.to_string(),id.to_string());}
+    }
+    let mut out=HashMap::new();
+    for row in imported_channels{
+        let imported_id=row.get("id").and_then(Value::as_str).unwrap_or("").trim();
+        if imported_id.is_empty(){continue}
+        let yt=row.get("youtubeChannelId").and_then(Value::as_str).unwrap_or("").trim();
+        let final_id=if !yt.is_empty(){by_youtube.get(yt).cloned().unwrap_or_else(||imported_id.to_string())}else{imported_id.to_string()};
+        out.insert(imported_id.to_string(),final_id);
+    }
+    out
+}
+fn remap_channel_id_field(row:&mut Value,map:&HashMap<String,String>){
+    let Some(obj)=row.as_object_mut() else{return};
+    let Some(old)=obj.get("channelId").and_then(Value::as_str).map(str::to_string) else{return};
+    if let Some(new_id)=map.get(&old){obj.insert("channelId".into(),Value::String(new_id.clone()));}
+}
+fn remap_imported_channel_refs(imported:&Value,map:&HashMap<String,String>)->Value{
+    let mut out=imported.clone();
+    let Some(root)=out.as_object_mut() else{return out};
+    for field in ["jobs","uploadHistory","activityJournal"]{
+        if let Some(rows)=root.get_mut(field).and_then(Value::as_array_mut){
+            for row in rows{remap_channel_id_field(row,map);}
+        }
+    }
+    if let Some(history)=root.get_mut("statisticsHistory").and_then(Value::as_object_mut){
+        let old=std::mem::take(history);
+        let mut rebuilt=serde_json::Map::new();
+        for (key,mut rows) in old{
+            if let Some(items)=rows.as_array_mut(){for row in items{remap_channel_id_field(row,map);}}
+            let final_key=map.get(&key).cloned().unwrap_or(key);
+            match rebuilt.get_mut(&final_key){
+                Some(existing)=>{
+                    let merged=merge_array_by_key(existing,&rows,"snapshotId");
+                    *existing=merged;
+                }
+                None=>{rebuilt.insert(final_key,rows);}
+            }
+        }
+        *history=rebuilt;
+    }
+    out
+}
+
 fn merge_states(local: &Value, imported: &Value) -> (Value, MergeSummary, Vec<RemapRow>) {
     let mut out = local.as_object().cloned().unwrap_or_default();
     let local_channels = local
@@ -357,6 +413,8 @@ fn merge_states(local: &Value, imported: &Value) -> (Value, MergeSummary, Vec<Re
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
+    let channel_id_remap=build_channel_id_remap(&local_channels,&imported_channels);
+    let imported_refs=remap_imported_channel_refs(imported,&channel_id_remap);
 
     let mut channels = local_channels.clone();
     let mut index = HashMap::<String, usize>::new();
@@ -399,7 +457,7 @@ fn merge_states(local: &Value, imported: &Value) -> (Value, MergeSummary, Vec<Re
             field.into(),
             merge_array_by_key(
                 local.get(field).unwrap_or(&Value::Null),
-                imported.get(field).unwrap_or(&Value::Null),
+                imported_refs.get(field).unwrap_or(&Value::Null),
                 key,
             ),
         );
@@ -408,7 +466,7 @@ fn merge_states(local: &Value, imported: &Value) -> (Value, MergeSummary, Vec<Re
         "statisticsHistory".into(),
         merge_statistics(
             local.get("statisticsHistory").unwrap_or(&Value::Null),
-            imported.get("statisticsHistory").unwrap_or(&Value::Null),
+            imported_refs.get("statisticsHistory").unwrap_or(&Value::Null),
         ),
     );
     out.insert(
@@ -914,9 +972,13 @@ mod tests {
         let imported = json!({
             "version":10,
             "channels":[
-                {"id":"foreign","youtubeChannelId":"UC1","name":"New"},
+                {"id":"foreign","youtubeChannelId":"UC1","name":"New","slug":"foreign-slug","youtubeProfileId":"foreign-profile"},
                 {"id":"c","youtubeChannelId":"UC3","name":"C"}
             ],
+            "jobs":[{"id":"job-import","channelId":"foreign"}],
+            "uploadHistory":[{"id":"up-import","jobId":"job-import","channelId":"foreign"}],
+            "activityJournal":[{"eventId":"event-import","channelId":"foreign"}],
+            "statisticsHistory":{"foreign":[{"snapshotId":"snap-import","channelId":"foreign"}]},
             "settings":{}
         });
         let (a, s, _) = merge_states(&local, &imported);
@@ -925,6 +987,13 @@ mod tests {
         assert_eq!(s.duplicate_channels, 1);
         assert_eq!(s.after_channels, 3);
         assert_eq!(s.deleted_channels, 0);
+        let uc1=a["channels"].as_array().unwrap().iter().find(|x|x["youtubeChannelId"]=="UC1").unwrap();
+        assert_eq!(uc1["id"],"a");
+        assert_eq!(a["jobs"][0]["channelId"],"a");
+        assert_eq!(a["uploadHistory"][0]["channelId"],"a");
+        assert_eq!(a["activityJournal"][0]["channelId"],"a");
+        assert_eq!(a["statisticsHistory"]["a"][0]["channelId"],"a");
+        assert!(a["statisticsHistory"].get("foreign").is_none());
         let (b, s2, _) = merge_states(&a, &imported);
         assert_eq!(s2.after_channels, 3);
         assert_eq!(s2.new_channels, 0);
