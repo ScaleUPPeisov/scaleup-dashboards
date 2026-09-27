@@ -26,6 +26,9 @@ pub fn run(){
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         .setup(|app|{
+            // Bind Windows secure storage to the cached licensed tenant before any
+            // vault or interrupted-migration recovery touches Credential Manager.
+            license::initialize_security_tenant(app.handle());
             // Persistent owner data lives outside the .app bundle and is initialized before UI recovery.
             let _=oauth_vault::ensure_local_storage(app.handle());
             // A power loss during migration must never leave a half-merged local state.
