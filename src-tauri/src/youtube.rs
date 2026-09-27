@@ -20,6 +20,7 @@ use uuid::Uuid;
 
 static OAUTH_TRANSACTION_ACTIVE: AtomicBool = AtomicBool::new(false);
 
+#[derive(Debug)]
 struct OAuthTransactionGuard;
 
 impl Drop for OAuthTransactionGuard {
