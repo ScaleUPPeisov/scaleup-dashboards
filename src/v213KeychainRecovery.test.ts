@@ -1,8 +1,8 @@
 import {describe,it,expect} from 'vitest';
 import {readFileSync} from 'node:fs';
-import {fileURLToPath} from 'node:url';
+const urlPath=(u:URL)=>{let p=decodeURIComponent(u.pathname);if(/^\/[A-Za-z]:\//.test(p))p=p.slice(1);return p};
 import {humanizeError} from './errorCenter';
-const read=(p:string)=>readFileSync(fileURLToPath(new URL(p,import.meta.url)),'utf8');
+const read=(p:string)=>readFileSync(urlPath(new URL(p,import.meta.url)),'utf8');
 
 describe('VYRON 2.1.9 RC7 per-query no-UI Keychain recovery contracts',()=>{
  it('maps Keychain authentication failures to an actionable error',()=>{
