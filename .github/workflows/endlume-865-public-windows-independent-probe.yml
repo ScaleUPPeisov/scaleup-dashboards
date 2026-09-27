@@ -58,17 +58,17 @@ jobs:
           if(-not $u){throw 'UNINSTALL_REGISTRATION_MISSING'}
           $u | Select DisplayName,DisplayVersion,InstallLocation,UninstallString | ConvertTo-Json | Tee-Object -FilePath "$env:RUNNER_TEMP\endlume-win-probe\install.json"
           if([string]$u.DisplayVersion -notmatch '8\.65'){throw "VERSION_MISMATCH=$($u.DisplayVersion)"}
-          $roots=@("$env:LOCALAPPDATA\Programs","$env:ProgramFiles",[Environment]::GetFolderPath('ProgramFilesX86'))
-          $app=$null
-          foreach($root in $roots){
-            if($root -and (Test-Path $root)){
-              $app=Get-ChildItem $root -Recurse -Filter '*.exe' -ErrorAction SilentlyContinue |
-                Where-Object {($_.Name -match 'ENDLUME|endlume' -or $_.DirectoryName -match 'ENDLUME|endlume') -and $_.Name -notmatch 'unins|uninstall'} |
-                Select-Object -First 1 -ExpandProperty FullName
-              if($app){break}
-            }
+          $installDir=([string]$u.InstallLocation).Trim('"')
+          if(-not $installDir -or -not (Test-Path $installDir)){throw "INSTALL_LOCATION_INVALID=$installDir"}
+          $app=Get-ChildItem $installDir -Recurse -Filter '*.exe' -ErrorAction SilentlyContinue |
+            Where-Object {$_.Name -notmatch 'unins|uninstall' -and ($_.Name -match 'ENDLUME|endlume' -or $_.DirectoryName -match 'ENDLUME|endlume')} |
+            Select-Object -First 1 -ExpandProperty FullName
+          if(-not $app){
+            Write-Host "INSTALL_TREE_START"
+            Get-ChildItem $installDir -Recurse -File -ErrorAction SilentlyContinue | Select FullName,Length | Format-Table -AutoSize
+            Write-Host "INSTALL_TREE_END"
+            throw 'INSTALLED_EXE_NOT_FOUND'
           }
-          if(-not $app){throw 'INSTALLED_EXE_NOT_FOUND'}
           Write-Host "INSTALLED_APP=$app"
           "PUBLIC_APP=$app" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
           Write-Host ENDLUME_865_WINDOWS_CLEAN_INSTALL_GREEN
