@@ -441,6 +441,113 @@ pub fn local_storage_status(app:&AppHandle)->Result<serde_json::Value,String>{
  }))
 }
 
+
+pub fn export_portable_snapshot(app:&AppHandle)->Result<serde_json::Value,String>{
+ let vault=read(app,false)?;
+ let profiles=vault.profiles.iter().map(|(id,row)|(id.clone(),serde_json::to_value(row).unwrap_or(serde_json::Value::Null))).collect::<serde_json::Map<String,serde_json::Value>>();
+ Ok(serde_json::json!({
+  "schemaVersion":SCHEMA,
+  "globalClientId":vault.global_client_id,
+  "globalClientSecret":vault.global_client_secret,
+  "profiles":profiles
+ }))
+}
+
+fn portable_profile_map(value:&serde_json::Value)->Result<HashMap<String,VaultProfile>,String>{
+ let mut out=HashMap::new();
+ let rows=value.get("profiles").and_then(serde_json::Value::as_object).ok_or_else(||"MIGRATION_OAUTH_PROFILES_INVALID".to_string())?;
+ for (id,row) in rows{
+  let mut profile:VaultProfile=serde_json::from_value(row.clone()).map_err(|e|format!("MIGRATION_OAUTH_PROFILE_INVALID: {id}: {e}"))?;
+  if profile.profile_uuid.trim().is_empty(){profile.profile_uuid=id.clone();}
+  if profile.profile_uuid!=*id{return Err(format!("MIGRATION_OAUTH_PROFILE_ID_MISMATCH: key={id} profile={}",profile.profile_uuid))}
+  out.insert(id.clone(),profile);
+ }
+ Ok(out)
+}
+
+pub fn portable_merge_plan(value:&serde_json::Value)->Result<serde_json::Value,String>{
+ let imported=portable_profile_map(value)?;
+ let local=vault_cache().lock().ok().and_then(|x|x.clone()).unwrap_or_default();
+ let existing=imported.keys().filter(|id|local.profiles.contains_key(*id)).count();
+ Ok(serde_json::json!({
+  "importedProfiles":imported.len(),
+  "existingProfiles":existing,
+  "newProfiles":imported.len().saturating_sub(existing),
+  "willDelete":0
+ }))
+}
+
+fn choose_newer<'a>(local:&'a VaultProfile,imported:&'a VaultProfile)->&'a VaultProfile{
+ let l=&local.updated_at;let i=&imported.updated_at;
+ if !i.trim().is_empty()&&(l.trim().is_empty()||i>l){imported}else{local}
+}
+
+pub fn merge_portable_snapshot(app:&AppHandle,value:&serde_json::Value)->Result<serde_json::Value,String>{
+ let imported=portable_profile_map(value)?;
+ let mut local=read_for_update(app)?;
+ let existing_before=local.profiles.len();
+ let mut added=0usize;let mut updated=0usize;
+ if local.global_client_id.trim().is_empty(){
+  if let Some(x)=value.get("globalClientId").and_then(serde_json::Value::as_str).filter(|x|!x.trim().is_empty()){local.global_client_id=x.to_string();}
+ }
+ if local.global_client_secret.trim().is_empty(){
+  if let Some(x)=value.get("globalClientSecret").and_then(serde_json::Value::as_str).filter(|x|!x.trim().is_empty()){local.global_client_secret=x.to_string();}
+ }
+ for (id,incoming) in imported{
+  if let Some(current)=local.profiles.get_mut(&id){
+   let newer=choose_newer(current,&incoming).clone();
+   // Preserve any usable local secure credential; imported credentials only fill gaps.
+   if current.refresh_token.trim().is_empty()&&!incoming.refresh_token.trim().is_empty(){current.refresh_token=incoming.refresh_token.clone();}
+   if current.client_secret.trim().is_empty()&&!incoming.client_secret.trim().is_empty(){current.client_secret=incoming.client_secret.clone();}
+   if !newer.expected_channel_id.trim().is_empty(){current.expected_channel_id=newer.expected_channel_id;}
+   if !newer.google_email.trim().is_empty(){current.google_email=newer.google_email;}
+   if !newer.preferred_browser.trim().is_empty(){current.preferred_browser=newer.preferred_browser;}
+   current.credential_generation=current.credential_generation.max(incoming.credential_generation);
+   if !newer.updated_at.trim().is_empty(){current.updated_at=newer.updated_at;}
+   if current.connected_at.trim().is_empty(){current.connected_at=incoming.connected_at;}
+   updated+=1;
+  }else{
+   local.profiles.insert(id,incoming);added+=1;
+  }
+ }
+ write(app,&local)?;
+ clear_caches();
+ let verify=read(app,false)?;
+ if verify.profiles.len()!=local.profiles.len(){return Err("MIGRATION_OAUTH_VERIFY_FAILED: profile count mismatch".into())}
+ Ok(serde_json::json!({
+  "ok":true,
+  "existingBefore":existing_before,
+  "added":added,
+  "updated":updated,
+  "after":verify.profiles.len(),
+  "deleted":0,
+  "secretValuesIncluded":false
+ }))
+}
+
+pub fn copy_encrypted_snapshot(app:&AppHandle,destination:&Path)->Result<(),String>{
+ let p=local_paths(app)?;
+ if !p.doc_vault.exists(){
+  let empty=PlainVault::default();
+  write(app,&empty)?;
+ }
+ fs::copy(&p.doc_vault,destination).map_err(|e|format!("MIGRATION_OAUTH_BACKUP_FAILED: {e}"))?;
+ private_file(destination);
+ Ok(())
+}
+
+pub fn restore_encrypted_snapshot(app:&AppHandle,source:&Path)->Result<(),String>{
+ let p=local_paths(app)?;
+ let key=local_key(app,false)?;
+ let bytes=fs::read(source).map_err(|e|format!("MIGRATION_OAUTH_RESTORE_READ_FAILED: {e}"))?;
+ let _=decode_vault(&bytes,&key)?;
+ write_private_atomic(&p.doc_vault,&bytes)?;
+ write_private_atomic(&p.app_vault,&bytes)?;
+ clear_caches();
+ let _=read(app,false)?;
+ Ok(())
+}
+
 #[cfg(test)]
 mod tests{
  use super::*;
