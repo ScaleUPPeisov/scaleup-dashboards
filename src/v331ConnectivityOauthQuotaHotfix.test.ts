@@ -57,7 +57,9 @@ describe('VYRON 3.3.1 connectivity / OAuth / quota hotfix',()=>{
   expect(backend).toContain('record_profile_credential_validation(app,&profile.id,"PASS",Some(&channel_id),Some(&channel_id))?;');
   expect(backend).toContain('else if canonical_present{');
   expect(backend).toContain('else if validated_ready||base_credential_state=="CONNECTED"{"READY"}');
-  const reconnect=backend.slice(backend.indexOf('pub async fn youtube_oauth_reconnect_existing'),backend.indexOf('pub async fn youtube_oauth_profile_health'));
+  const reconnectStart=backend.indexOf('pub async fn youtube_oauth_reconnect_existing');
+  expect(reconnectStart).toBeGreaterThan(0);
+  const reconnect=backend.slice(reconnectStart,reconnectStart+24000);
   expect(reconnect).toContain('profileUuidPreserved');
   expect(reconnect).not.toContain('remove_profile');
   expect(reconnect).not.toContain('youtube_oauth_disconnect');
