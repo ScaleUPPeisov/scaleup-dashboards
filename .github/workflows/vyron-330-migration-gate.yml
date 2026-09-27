@@ -88,6 +88,7 @@ jobs:
           from pathlib import Path
           m=Path('src-tauri/src/migration.rs').read_text(encoding='utf-8')
           o=Path('src-tauri/src/oauth_vault.rs').read_text(encoding='utf-8')
+          lib=Path('src-tauri/src/lib.rs').read_text(encoding='utf-8')
           assert 'Argon2id' in m
           assert 'XChaCha20Poly1305' in m
           assert 'MIGRATION_AUTHENTICATION_FAILED' in m
@@ -95,6 +96,10 @@ jobs:
           assert 'deleted_channels = 0' in m
           assert 'merge_portable_snapshot' in o
           assert 'secretValuesIncluded' in o
+          assert 'recover_interrupted_import' in m
+          assert 'migration::recover_interrupted_import(app.handle())' in lib
+          assert 'migration-transaction.json' in m
+          assert 'PREPARED' in m and 'COMMITTED' in m
           assert 'println!' not in m
           assert 'eprintln!' not in m
           print('MIGRATION_ENCRYPTION_CONTRACT=PASS')
