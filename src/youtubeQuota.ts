@@ -1,3 +1,4 @@
+import {tenantStorageKey} from './tenantStorage';
 export type YoutubeQuotaBucket='general'|'videoUploads'|'search';
 export type YoutubeApiMethod='channels.list'|'videos.list'|'playlists.list'|'playlistItems.list'|'videos.update'|'videos.insert'|'thumbnails.set'|'playlistItems.insert'|'playlistItems.delete'|'search.list';
 export type YoutubeApiRequestEvent={method:string;operationId?:string|null;at?:string};
@@ -45,8 +46,8 @@ type LedgerV4={version:4;ptDate:string;buckets:{general:BucketRow;search:BucketR
 type Reservation={id:string;createdAt:string;projectKey?:string;buckets:Record<YoutubeQuotaBucket,number>};
 type OperationLedgerRow={operationId:string;ptDate:string;updatedAt:string;projectKey?:string;buckets:Record<YoutubeQuotaBucket,number>;methods:Record<string,{calls:number;cost:number}>};
 
-function lsGet(key:string){try{return typeof localStorage==='undefined'?null:localStorage.getItem(key)}catch{return null}}
-function lsSet(key:string,value:string){try{if(typeof localStorage!=='undefined')localStorage.setItem(key,value)}catch{}}
+function lsGet(key:string){try{return typeof localStorage==='undefined'?null:localStorage.getItem(tenantStorageKey(key))}catch{return null}}
+function lsSet(key:string,value:string){try{if(typeof localStorage!=='undefined')localStorage.setItem(tenantStorageKey(key),value)}catch{}}
 function emit(){try{if(typeof window!=='undefined')window.dispatchEvent(new Event(EVT))}catch{}}
 function parts(date:Date,timeZone:string){return new Intl.DateTimeFormat('en-CA',{timeZone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(date).reduce<Record<string,string>>((a,x)=>(a[x.type]=x.value,a),{})}
 export function youtubePtDate(now=new Date()){const p=parts(now,'America/Los_Angeles');return `${p.year}-${p.month}-${p.day}`}
@@ -125,7 +126,7 @@ export function consumeYoutubeQuotaReservation(id:string,method:YoutubeApiMethod
 export function shouldClearYoutubeQuotaGuard(g:YoutubeQuotaGuard,now=new Date()){if(!g?.blocked)return false;const day=youtubePtDate(now);if(g.ptDate&&g.ptDate!==day)return true;if(g.resetAt){const reset=Date.parse(g.resetAt);if(Number.isFinite(reset)&&now.getTime()>=reset)return true}return false}
 export function youtubeQuotaState(now=new Date()):YoutubeQuotaGuard{try{const x=JSON.parse(lsGet(GUARD_KEY)||'null') as YoutubeQuotaGuard|null;if(x?.blocked){if(shouldClearYoutubeQuotaGuard(x,now)){clearYoutubeQuotaGuard();return{blocked:false}}return x}}catch{}return{blocked:false}}
 export function markYoutubeQuotaExceeded(reason:unknown){const now=new Date(),g:YoutubeQuotaGuard={blocked:true,reason:String(reason||'YouTube API quota exceeded'),at:now.toISOString(),resetAt:nextYoutubeQuotaResetAt(now).toISOString(),ptDate:youtubePtDate(now),source:'provider'};lsSet(GUARD_KEY,JSON.stringify(g));emit();return g}
-export function clearYoutubeQuotaGuard(){try{if(typeof localStorage!=='undefined')localStorage.removeItem(GUARD_KEY)}catch{}emit()}
+export function clearYoutubeQuotaGuard(){try{if(typeof localStorage!=='undefined')localStorage.removeItem(tenantStorageKey(GUARD_KEY))}catch{}emit()}
 export function youtubeQuotaMessage(){const g=youtubeQuotaState();return g.blocked?`YouTube API вернул quotaExceeded. Ручная синхронизация может выполнить один контрольный запрос. Сброс: ${youtubeQuotaResetLocalInfo().time}.`:'YouTube API quota доступна.'}
 export function isYoutubeQuotaError(error:unknown){const s=String(error||'').toLowerCase();return s.includes('youtube_quota_paused')||s.includes('quotaexceeded')||s.includes('dailylimitexceeded')||s.includes('ratelimitexceeded')||s.includes('rate limit exceeded')||s.includes('daily limit exceeded')||s.includes('quota exceeded')}
 export function beginManualYoutubeQuotaProbe(){const g=youtubeQuotaState();if(!g.blocked)return true;const u=youtubeQuotaUsage();if(u.used>=u.limit)return false;clearYoutubeQuotaGuard();return true}
