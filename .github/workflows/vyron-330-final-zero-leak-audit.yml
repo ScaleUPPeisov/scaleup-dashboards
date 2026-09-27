@@ -1,0 +1,155 @@
+name: VYRON 3.3.0 Final Zero Leak Audit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/vyron-330-final-zero-leak-audit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  APPROVED_HEAD: a11a73b27d2c7642c21fbb49c0c1b782be1e7c1a
+  RELEASE_REPO: ScaleUPPeisov/vyron-releases
+  TAG: v3.3.0
+
+jobs:
+  exact-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.APPROVED_HEAD }}
+          fetch-depth: 1
+
+      - name: Full exact-head privacy scan
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import pathlib,re,subprocess,sys
+          files=subprocess.check_output(['git','ls-files'],text=True).splitlines()
+          owned=[f for f in files if (
+            f.startswith('src/') or f.startswith('src-tauri/') or
+            f.startswith('vyron-updates/') or f.startswith('.github/workflows/vyron-') or
+            f in {'package.json','package-lock.json','tsconfig.json','.gitignore'} or
+            f.startswith('vite.config.')
+          )]
+          banned_names=[
+            re.compile(r'(^|/)credentials\.json$',re.I),
+            re.compile(r'(^|/)credentials-[^/]*\.json$',re.I),
+            re.compile(r'(^|/)client_secret[^/]*\.json$',re.I),
+            re.compile(r'(^|/)google-credentials[^/]*\.json$',re.I),
+            re.compile(r'(^|/)oauth-tokens?[^/]*\.json$',re.I),
+            re.compile(r'(^|/)tokens\.json$',re.I),
+            re.compile(r'(^|/)(keychain|credential|migration|account|channel)-export',re.I),
+            re.compile(r'\.(sqlite3?|db|db-wal|db-shm|vyron|vyron-migration)$',re.I),
+          ]
+          bad=[f for f in owned if any(rx.search(f) for rx in banned_names)]
+          if bad:
+              print('ZERO_LEAK=FAIL:SENSITIVE_TRACKED_FILES')
+              print('\n'.join(bad))
+              sys.exit(1)
+
+          patterns={
+            'GOOGLE_ACCESS_TOKEN':re.compile(rb'ya29\.[A-Za-z0-9._~-]{20,}'),
+            'GOOGLE_REFRESH_TOKEN':re.compile(rb'1//[A-Za-z0-9._~-]{20,}'),
+            'GOOGLE_CLIENT_SECRET':re.compile(rb'GOCSPX-[A-Za-z0-9_-]{20,}'),
+            'GOOGLE_API_KEY':re.compile(rb'AIza[0-9A-Za-z_-]{20,}'),
+            'PRIVATE_KEY':re.compile(rb'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----'),
+            'GMAIL_ADDRESS':re.compile(rb'[A-Za-z0-9._%+-]+@(?:gmail|googlemail)\.com',re.I),
+            'YOUTUBE_CHANNEL_ID':re.compile(rb'UC[A-Za-z0-9_-]{22}'),
+            'YOUTUBE_WATCH_ID':re.compile(rb'(?:youtu\.be/|youtube\.com/watch\?v=)[A-Za-z0-9_-]{11}',re.I),
+            'KNOWN_PRIVATE_CHANNEL_TITLE':re.compile(rb'Glass City Lovers',re.I),
+          }
+          scanned=0
+          for name in owned:
+              p=pathlib.Path(name)
+              if not p.is_file(): continue
+              try:data=p.read_bytes()
+              except Exception: continue
+              scanned+=1
+              for label,rx in patterns.items():
+                  if rx.search(data):
+                      print(f'ZERO_LEAK=FAIL:{label}:file={name}')
+                      sys.exit(1)
+          print(f'EXACT_RELEASE_HEAD_ZERO_LEAK=PASS scanned={scanned}')
+          print('REAL_REFRESH_TOKENS=0')
+          print('REAL_ACCESS_TOKENS=0')
+          print('REAL_CLIENT_SECRETS=0')
+          print('REAL_GOOGLE_EMAILS=0')
+          print('REAL_CHANNEL_IDS=0')
+          print('REAL_VIDEO_IDS=0')
+          print('LOCAL_DATABASES=0')
+          print('MIGRATION_BUNDLES=0')
+          PY
+
+  public-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Audit public release metadata and downloadable binaries
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          curl -fsSL "https://api.github.com/repos/$RELEASE_REPO/releases/tags/$TAG" -o /tmp/release.json
+          curl -fsSL "https://raw.githubusercontent.com/$RELEASE_REPO/main/updates/latest.json" -o /tmp/mac.json
+          curl -fsSL "https://raw.githubusercontent.com/$RELEASE_REPO/main/updates/windows-latest.json" -o /tmp/win.json
+          python3 - <<'PY'
+          import json,re,sys
+          chunks=[
+            open('/tmp/release.json','rb').read(),
+            open('/tmp/mac.json','rb').read(),
+            open('/tmp/win.json','rb').read(),
+          ]
+          data=b'\n'.join(chunks)
+          patterns={
+            'GOOGLE_ACCESS_TOKEN':re.compile(rb'ya29\.[A-Za-z0-9._~-]{20,}'),
+            'GOOGLE_REFRESH_TOKEN':re.compile(rb'1//[A-Za-z0-9._~-]{20,}'),
+            'GOOGLE_CLIENT_SECRET':re.compile(rb'GOCSPX-[A-Za-z0-9_-]{20,}'),
+            'GOOGLE_API_KEY':re.compile(rb'AIza[0-9A-Za-z_-]{20,}'),
+            'GMAIL_ADDRESS':re.compile(rb'[A-Za-z0-9._%+-]+@(?:gmail|googlemail)\.com',re.I),
+            'YOUTUBE_CHANNEL_ID':re.compile(rb'UC[A-Za-z0-9_-]{22}'),
+            'YOUTUBE_WATCH_ID':re.compile(rb'(?:youtu\.be/|youtube\.com/watch\?v=)[A-Za-z0-9_-]{11}',re.I),
+            'KNOWN_PRIVATE_CHANNEL_TITLE':re.compile(rb'Glass City Lovers',re.I),
+          }
+          for label,rx in patterns.items():
+              if rx.search(data):
+                  print('PUBLIC_RELEASE_ZERO_LEAK=FAIL:'+label)
+                  sys.exit(1)
+          r=json.load(open('/tmp/release.json'))
+          names={x['name'] for x in r['assets']}
+          allowed={
+            'VYRON-3.3.0-arm64.dmg','VYRON-3.3.0-arm64.dmg.sha256',
+            'VYRON.app.tar.gz','VYRON.app.tar.gz.sha256','VYRON.app.tar.gz.sig',
+            'VYRON_3.3.0_x64-setup.exe','VYRON_3.3.0_x64-setup.exe.sha256','VYRON_3.3.0_x64-setup.exe.sig',
+          }
+          assert names==allowed,(names-allowed,allowed-names)
+          print('PUBLIC_RELEASE_METADATA_ZERO_LEAK=PASS')
+          PY
+
+          curl -fL --retry 5 "https://github.com/$RELEASE_REPO/releases/download/$TAG/VYRON.app.tar.gz" -o /tmp/mac.tar.gz
+          curl -fL --retry 5 "https://github.com/$RELEASE_REPO/releases/download/$TAG/VYRON_3.3.0_x64-setup.exe" -o /tmp/win.exe
+          mkdir -p /tmp/macapp
+          tar -xzf /tmp/mac.tar.gz -C /tmp/macapp
+          python3 - <<'PY'
+          from pathlib import Path
+          import re,sys
+          patterns=[
+            re.compile(rb'ya29\.[A-Za-z0-9._~-]{20,}'),
+            re.compile(rb'1//[A-Za-z0-9._~-]{20,}'),
+            re.compile(rb'GOCSPX-[A-Za-z0-9_-]{20,}'),
+            re.compile(rb'AIza[0-9A-Za-z_-]{20,}'),
+            re.compile(rb'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----'),
+          ]
+          files=[Path('/tmp/win.exe')]+[p for p in Path('/tmp/macapp').rglob('*') if p.is_file()]
+          for p in files:
+              data=p.read_bytes()
+              if any(rx.search(data) for rx in patterns):
+                  print('PUBLIC_BINARY_ZERO_LEAK=FAIL:file='+str(p))
+                  sys.exit(1)
+          print('PUBLIC_BINARY_HIGH_CONFIDENCE_SECRET_SCAN=PASS')
+          PY
