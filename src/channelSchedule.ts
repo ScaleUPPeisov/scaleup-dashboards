@@ -1,4 +1,5 @@
 import type {Channel,YoutubeExistingVideo} from './types';
+import {tenantStorageKey} from './tenantStorage';
 export type ExistingCache={version:1;updatedAt:string;videos:YoutubeExistingVideo[];baseline:Record<string,YoutubeExistingVideo>;lastUndo:YoutubeExistingVideo[];syncInfo:any};
 export type ScheduleMode='interval'|'pattern';
 export type SchedulePattern={publishDays:number;pauseDays:number;anchorDate:string};
@@ -6,7 +7,8 @@ export type ScheduleSyncTruth='complete'|'incomplete'|'unknown';
 export type ChannelScheduleState={channelId:string;lastPublishedAt?:string;lastScheduledAt?:string;nextAvailableAt?:string;scheduledUntil?:string;scheduleMode:ScheduleMode;publishIntervalDays:number;publishDays:number;pauseDays:number;patternAnchorDate?:string;defaultPublishTime:string;scheduledCount:number;updatedAt?:string;syncTruth:ScheduleSyncTruth};
 export type PatternCalendarDay={date:string;kind:'video'|'pause'|'occupied';publishSlot:boolean;occupied:boolean};
 const EVENT='vyron-channel-schedule-changed';
-export const existingCacheKey=(channelId:string)=>`vyron:existing-cache:v1:${channelId}`;
+const legacyExistingCacheKey=(channelId:string)=>`vyron:existing-cache:v1:${channelId}`;
+export const existingCacheKey=(channelId:string)=>tenantStorageKey(legacyExistingCacheKey(channelId));
 const isRecord=(x:unknown):x is Record<string,unknown>=>Boolean(x)&&typeof x==='object'&&!Array.isArray(x);
 const optionalString=(x:unknown)=>typeof x==='string'&&x.trim()?x:undefined;
 function normalizeExistingVideo(value:unknown,index=0):YoutubeExistingVideo|undefined{
@@ -65,7 +67,19 @@ export function readAuthoritativeExistingInventory(channelId:string){
 export function readExistingCache(channelId:string):ExistingCache|undefined{
   if(!channelId)return;
   try{
-    const x=JSON.parse(localStorage.getItem(existingCacheKey(channelId))||'null');
+    const scopedKey=existingCacheKey(channelId),legacyKey=legacyExistingCacheKey(channelId);
+    let raw=localStorage.getItem(scopedKey);
+    if(!raw&&scopedKey!==legacyKey){
+      const legacy=localStorage.getItem(legacyKey);
+      if(legacy){
+        const parsed=JSON.parse(legacy);
+        if(isRecord(parsed)&&parsed.version===1){
+          try{localStorage.setItem(scopedKey,legacy);localStorage.removeItem(legacyKey)}catch{}
+          raw=legacy;
+        }
+      }
+    }
+    const x=JSON.parse(raw||'null');
     if(!isRecord(x)||x.version!==1)return;
     return{version:1,updatedAt:optionalString(x.updatedAt)||'1970-01-01T00:00:00.000Z',videos:normalizeVideoArray(x.videos),baseline:normalizeBaseline(x.baseline),lastUndo:normalizeVideoArray(x.lastUndo),syncInfo:normalizeSyncInfo(x.syncInfo)};
   }catch{return}
