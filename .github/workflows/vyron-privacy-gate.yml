@@ -143,16 +143,25 @@ jobs:
           set -Eeuo pipefail
           python3 - <<'PY'
           import pathlib, sys
+          import os,subprocess
           here=pathlib.Path('.github/workflows/vyron-privacy-gate.yml')
           forbidden=('PHYSICAL_'+'VIDEO_ID','physical_'+'video_id','Physical one-video acceptance '+'ID')
-          for wf in pathlib.Path('.github/workflows').glob('vyron-*.y*ml'):
-              if wf==here:
+          if os.environ.get('GITHUB_EVENT_NAME')=='push':
+              names=subprocess.check_output(
+                  ['git','diff-tree','--no-commit-id','--name-only','-r','HEAD'],
+                  text=True
+              ).splitlines()
+              workflows=[pathlib.Path(n) for n in names if n.startswith('.github/workflows/vyron-') and n.endswith(('.yml','.yaml'))]
+          else:
+              workflows=list(pathlib.Path('.github/workflows').glob('vyron-*.y*ml'))
+          for wf in workflows:
+              if wf==here or not wf.exists():
                   continue
               text=wf.read_text(errors='ignore')
               if any(token in text for token in forbidden):
                   print(f'PRIVACY_GATE=FAIL:YOUTUBE_ACCEPTANCE_IDENTIFIER:file={wf}')
                   sys.exit(1)
-          print('YOUTUBE_ACCEPTANCE_ID_LOGGING=BLOCKED')
+          print(f'YOUTUBE_ACCEPTANCE_ID_LOGGING=BLOCKED scanned={len(workflows)}')
           PY
 
       - name: Block user-state artifact uploads
@@ -161,10 +170,19 @@ jobs:
           set -Eeuo pipefail
           python3 - <<'PY'
           import pathlib, re, sys
+          import os,subprocess
           bad = re.compile(r'(user-data|app-data|Application Support|AppData|keychain|credential-export|migration-export|account-export|channel-export|\.sqlite|\.db\b|\.vyron)', re.I)
           here=pathlib.Path('.github/workflows/vyron-privacy-gate.yml')
-          for wf in pathlib.Path('.github/workflows').glob('vyron-*.y*ml'):
-              if wf==here:
+          if os.environ.get('GITHUB_EVENT_NAME')=='push':
+              names=subprocess.check_output(
+                  ['git','diff-tree','--no-commit-id','--name-only','-r','HEAD'],
+                  text=True
+              ).splitlines()
+              workflows=[pathlib.Path(n) for n in names if n.startswith('.github/workflows/vyron-') and n.endswith(('.yml','.yaml'))]
+          else:
+              workflows=list(pathlib.Path('.github/workflows').glob('vyron-*.y*ml'))
+          for wf in workflows:
+              if wf==here or not wf.exists():
                   continue
               text = wf.read_text(errors='ignore')
               chunks = re.split(r'(?=\n\s*- name:)', text)
@@ -172,7 +190,7 @@ jobs:
                   if 'actions/upload-artifact@' in chunk and bad.search(chunk):
                       print(f'PRIVACY_GATE=FAIL:SENSITIVE_ARTIFACT_UPLOAD:file={wf}')
                       sys.exit(1)
-          print('SENSITIVE_ARTIFACT_UPLOAD=BLOCKED')
+          print(f'SENSITIVE_ARTIFACT_UPLOAD=BLOCKED scanned={len(workflows)}')
           PY
 
       - name: Privacy summary
