@@ -1,5 +1,6 @@
 import {useEffect,useState} from 'react';
 import type {DistributionMode} from './productionManagerApi';
+import {tenantStorageKey} from './tenantStorage';
 
 export type ProductionTab='queue'|'materials'|'manager';
 export type ChannelProductionPrefs={projectCount:number;tracksPerProject:number;mode:DistributionMode;allowImageReuse:boolean;lastBatchId?:string;selectedProjectIds:string[];productionRoot?:string};
@@ -40,13 +41,32 @@ function normalizePrefs(value:unknown):ProductionPrefs|undefined{
 }
 
 export function readProductionPrefs():ProductionPrefs{
-  try{const parsed=normalizePrefs(JSON.parse(localStorage.getItem(KEY)||'null'));if(parsed)return parsed}catch{}
+  const scopedKey=tenantStorageKey(KEY);
+  try{
+    const parsed=normalizePrefs(JSON.parse(localStorage.getItem(scopedKey)||'null'));
+    if(parsed)return parsed;
+  }catch{}
+  // One-time compatibility migration from the pre-tenant global key.
+  if(scopedKey!==KEY){
+    try{
+      const legacy=normalizePrefs(JSON.parse(localStorage.getItem(KEY)||'null'));
+      if(legacy){
+        try{localStorage.setItem(scopedKey,JSON.stringify(legacy))}catch{}
+        return legacy;
+      }
+    }catch{}
+  }
   const next=defaults();
-  try{const old=JSON.parse(localStorage.getItem('vyron:production-workspace:v1')||'null');if(old?.selectedChannelId)next.selectedChannelId=String(old.selectedChannelId)}catch{}
-  try{localStorage.setItem(KEY,JSON.stringify(next))}catch{}
+  try{
+    const legacyWorkspaceKey=tenantStorageKey('vyron:production-workspace:v1');
+    const raw=localStorage.getItem(legacyWorkspaceKey)||(legacyWorkspaceKey!=='vyron:production-workspace:v1'?localStorage.getItem('vyron:production-workspace:v1'):null);
+    const old=JSON.parse(raw||'null');
+    if(old?.selectedChannelId)next.selectedChannelId=String(old.selectedChannelId);
+  }catch{}
+  try{localStorage.setItem(scopedKey,JSON.stringify(next))}catch{}
   return next;
 }
-function emit(next:ProductionPrefs){try{localStorage.setItem(KEY,JSON.stringify(next))}catch{}window.dispatchEvent(new CustomEvent(EVENT,{detail:next}))}
+function emit(next:ProductionPrefs){try{localStorage.setItem(tenantStorageKey(KEY),JSON.stringify(next))}catch{}window.dispatchEvent(new CustomEvent(EVENT,{detail:next}))}
 export function resolveProductionRootFromPrefs(prefs:ProductionPrefs,channelId:string|undefined,fallback:string):string{
   const channelRoot=channelId?prefs.byChannel[channelId]?.productionRoot:undefined;
   return (channelRoot||prefs.productionRoot||fallback||'').trim();
