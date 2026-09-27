@@ -12,7 +12,7 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
     sync::{Mutex, OnceLock},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
@@ -845,6 +845,64 @@ pub fn youtube_oauth_disconnect(app: AppHandle, profile_id: String) -> Result<()
     save_store(&app, &s)
 }
 
+fn wait_for_oauth_callback(
+    listener: TcpListener,
+    expected_state: &str,
+    success_html: &str,
+    timeout: Duration,
+) -> Result<String, String> {
+    listener
+        .set_nonblocking(true)
+        .map_err(|e| format!("OAuth callback listener: {e}"))?;
+    let deadline = Instant::now() + timeout;
+    loop {
+        match listener.accept() {
+            Ok((mut stream, _)) => {
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .map_err(|e| format!("OAuth callback timeout setup: {e}"))?;
+                let mut buf = [0u8; 8192];
+                let n = stream
+                    .read(&mut buf)
+                    .map_err(|e| format!("OAuth callback read: {e}"))?;
+                let req = String::from_utf8_lossy(&buf[..n]);
+                let first = req.lines().next().unwrap_or("");
+                let target = first.split_whitespace().nth(1).unwrap_or("");
+                let query = target.split_once('?').map(|x| x.1).unwrap_or("");
+                let got_state = query_param(query, "state").unwrap_or_default();
+                let code = query_param(query, "code");
+                let err = query_param(query, "error");
+                let ok = got_state == expected_state && code.is_some();
+                let html = if ok {
+                    success_html
+                } else {
+                    "<html><body><h2>VYRON OAuth error</h2><p>Вернитесь в приложение.</p></body></html>"
+                };
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    html.as_bytes().len(),
+                    html
+                );
+                let _ = stream.write_all(resp.as_bytes());
+                if let Some(e) = err {
+                    return Err(format!("Google OAuth: {e}"));
+                }
+                if got_state != expected_state {
+                    return Err("OAuth state mismatch".into());
+                }
+                return code.ok_or_else(|| "Google не вернул authorization code".into());
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                if Instant::now() >= deadline {
+                    return Err("OAUTH_CALLBACK_TIMEOUT: Google OAuth не завершён за 300 секунд. Повторите подключение.".into());
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Err(e) => return Err(format!("OAuth callback: {e}")),
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn youtube_oauth_connect(
     app: AppHandle,
@@ -877,7 +935,11 @@ pub async fn youtube_oauth_connect(
     let preferred_browser = browser.unwrap_or_else(|| "default".into());
     open_browser(&auth_url, &preferred_browser)?;
     let expected_state = state.clone();
-    let code=tauri::async_runtime::spawn_blocking(move||->Result<String,String>{listener.set_nonblocking(false).map_err(|e|e.to_string())?;let (mut stream,_)=listener.accept().map_err(|e|format!("OAuth callback: {e}"))?;let _=stream.set_read_timeout(Some(Duration::from_secs(300)));let mut buf=[0u8;8192];let n=stream.read(&mut buf).map_err(|e|format!("OAuth callback read: {e}"))?;let req=String::from_utf8_lossy(&buf[..n]);let first=req.lines().next().unwrap_or("");let target=first.split_whitespace().nth(1).unwrap_or("");let query=target.split_once('?').map(|x|x.1).unwrap_or("");let got_state=query_param(query,"state").unwrap_or_default();let code=query_param(query,"code");let err=query_param(query,"error");let ok=got_state==expected_state&&code.is_some();let html=if ok{"<html><body style='font-family:-apple-system;padding:40px;background:#07111d;color:white'><h2>Google подтвердил доступ ✅</h2><p>VYRON завершает проверку токена и YouTube-канала. Вернитесь в приложение — окончательный статус будет показан там.</p></body></html>"}else{"<html><body><h2>VYRON OAuth error</h2><p>Вернитесь в приложение.</p></body></html>"};let resp=format!("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",html.as_bytes().len(),html);let _=stream.write_all(resp.as_bytes());if let Some(e)=err{return Err(format!("Google OAuth: {e}"))}if got_state!=expected_state{return Err("OAuth state mismatch".into())}code.ok_or_else(||"Google не вернул authorization code".into())}).await.map_err(|e|e.to_string())??;
+    let code = tauri::async_runtime::spawn_blocking(move || {
+        wait_for_oauth_callback(listener, &expected_state, "<html><body style='font-family:-apple-system;padding:40px;background:#07111d;color:white'><h2>Google подтвердил доступ ✅</h2><p>VYRON завершает проверку токена и YouTube-канала. Вернитесь в приложение — окончательный статус будет показан там.</p></body></html>", Duration::from_secs(300))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
     let mut token_form = vec![
         ("client_id", client_id.as_str()),
         ("code", code.as_str()),
@@ -4315,7 +4377,11 @@ pub async fn youtube_oauth_reconnect_existing(
     let _=app.emit("oauth-recovery-stage",json!({"profileId":profile_id,"state":"CONNECTING","expectedChannelId":expected_channel_id}));
     open_browser(&auth_url, &preferred_browser)?;
     let expected_state = state.clone();
-    let code=tauri::async_runtime::spawn_blocking(move||->Result<String,String>{listener.set_nonblocking(false).map_err(|e|e.to_string())?;let (mut stream,_)=listener.accept().map_err(|e|format!("OAuth callback: {e}"))?;let _=stream.set_read_timeout(Some(Duration::from_secs(300)));let mut buf=[0u8;8192];let n=stream.read(&mut buf).map_err(|e|format!("OAuth callback read: {e}"))?;let req=String::from_utf8_lossy(&buf[..n]);let first=req.lines().next().unwrap_or("");let target=first.split_whitespace().nth(1).unwrap_or("");let query=target.split_once('?').map(|x|x.1).unwrap_or("");let got_state=query_param(query,"state").unwrap_or_default();let code=query_param(query,"code");let err=query_param(query,"error");let ok=got_state==expected_state&&code.is_some();let html=if ok{"<html><body style='font-family:-apple-system;padding:40px;background:#07111d;color:white'><h2>Google подтвердил доступ ✅</h2><p>VYRON проверяет refresh token и точный YouTube Channel ID. Вернитесь в приложение.</p></body></html>"}else{"<html><body><h2>VYRON OAuth error</h2><p>Вернитесь в приложение.</p></body></html>"};let resp=format!("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",html.as_bytes().len(),html);let _=stream.write_all(resp.as_bytes());if let Some(e)=err{return Err(format!("Google OAuth: {e}"))}if got_state!=expected_state{return Err("OAuth state mismatch".into())}code.ok_or_else(||"Google не вернул authorization code".into())}).await.map_err(|e|e.to_string())??;
+    let code = tauri::async_runtime::spawn_blocking(move || {
+        wait_for_oauth_callback(listener, &expected_state, "<html><body style='font-family:-apple-system;padding:40px;background:#07111d;color:white'><h2>Google подтвердил доступ ✅</h2><p>VYRON проверяет refresh token и точный YouTube Channel ID. Вернитесь в приложение.</p></body></html>", Duration::from_secs(300))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
     let mut token_form = vec![
         ("client_id", client_id.as_str()),
         ("code", code.as_str()),
@@ -4570,6 +4636,70 @@ mod keychain_prompt_architecture_tests{
  }
  #[test]fn selected_profile_hydration_reads_only_selected_secret(){let secrets=CountingStore::default();secrets.v.borrow_mut().insert(oauth_key("a","refresh_token"),"ra".into());secrets.v.borrow_mut().insert(oauth_key("b","refresh_token"),"rb".into());let mut a=p("a");let b=p("b");hydrate_profile_secret_kind_with(&secrets,&mut a,"refresh_token").unwrap();assert_eq!(a.refresh_token,"ra");assert!(b.refresh_token.is_empty());assert_eq!(&*secrets.gets.borrow(),&vec![oauth_key("a","refresh_token")]);assert!(secrets.sets.borrow().is_empty());assert!(secrets.deletes.borrow().is_empty());}
  #[test]fn google_status_metadata_never_requires_secret_value(){let c=GoogleConfig{client_id:"123.apps.googleusercontent.com".into(),project_id:"project".into(),client_secret:String::new(),api_key:String::new(),client_secret_present:true,api_key_present:true};let v=google_config_status_value(&c);assert_eq!(v["hasSecret"],true);assert_eq!(v["hasApiKey"],true);assert!(!v.to_string().contains("client_secret"));}
+}
+
+#[cfg(test)]
+mod oauth_callback_contract_tests {
+    use super::*;
+    use std::io::Write as _;
+    use std::net::TcpStream;
+
+    fn send_callback(port: u16, query: &str) -> std::thread::JoinHandle<()> {
+        let query = query.to_string();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(20));
+            let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect callback");
+            let request = format!("GET /?{query} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
+            stream.write_all(request.as_bytes()).expect("write callback");
+        })
+    }
+
+    #[test]
+    fn callback_accept_has_real_deadline_when_browser_never_returns() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let started = Instant::now();
+        let err = wait_for_oauth_callback(
+            listener,
+            "ABC",
+            "<html>ok</html>",
+            Duration::from_millis(60),
+        )
+        .unwrap_err();
+        assert!(err.starts_with("OAUTH_CALLBACK_TIMEOUT:"));
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn callback_rejects_state_mismatch() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let sender = send_callback(port, "code=AUTH_CODE&state=XYZ");
+        let err = wait_for_oauth_callback(
+            listener,
+            "ABC",
+            "<html>ok</html>",
+            Duration::from_secs(2),
+        )
+        .unwrap_err();
+        sender.join().unwrap();
+        assert_eq!(err, "OAuth state mismatch");
+    }
+
+    #[test]
+    fn callback_returns_code_only_for_matching_state() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let sender = send_callback(port, "code=AUTH_CODE_123&state=ABC");
+        let code = wait_for_oauth_callback(
+            listener,
+            "ABC",
+            "<html>ok</html>",
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        sender.join().unwrap();
+        assert_eq!(code, "AUTH_CODE_123");
+    }
 }
 
 #[cfg(test)]
