@@ -688,19 +688,26 @@ fn create_rollback_snapshot(app: &AppHandle, id: &str) -> Result<PathBuf, String
     Ok(dir)
 }
 
-fn restore_snapshot_dir(app: &AppHandle, dir: &Path) -> Result<(), String> {
-    let state = dir.join("state.json");
-    if state.exists() {
-        let bytes = fs::read(&state).map_err(|e| e.to_string())?;
-        write_atomic(&state_path(app)?, &bytes)?;
+fn restore_optional_file(live:&Path,backup:&Path)->Result<(),String>{
+    if backup.exists(){
+        let bytes=fs::read(backup).map_err(|e|format!("MIGRATION_ROLLBACK_READ_FAILED: {}: {e}",backup.display()))?;
+        write_atomic(live,&bytes)?;
+    }else if live.exists(){
+        fs::remove_file(live).map_err(|e|format!("MIGRATION_ROLLBACK_REMOVE_FAILED: {}: {e}",live.display()))?;
     }
+    Ok(())
+}
+
+fn restore_snapshot_dir(app: &AppHandle, dir: &Path) -> Result<(), String> {
+    let live_state=state_path(app)?;
+    restore_optional_file(&live_state,&dir.join("state.json"))?;
     let oauth = dir.join("oauth-vault.enc");
     if oauth.exists() {
         oauth_vault::restore_encrypted_snapshot(app, &oauth)?;
     }
     let (yp,gp)=metadata_paths(app)?;
-    let yb=dir.join("youtube-oauth.json");if yb.exists(){write_atomic(&yp,&fs::read(yb).map_err(|e|e.to_string())?)?;}
-    let gb=dir.join("google-config.json");if gb.exists(){write_atomic(&gp,&fs::read(gb).map_err(|e|e.to_string())?)?;}
+    restore_optional_file(&yp,&dir.join("youtube-oauth.json"))?;
+    restore_optional_file(&gp,&dir.join("google-config.json"))?;
     Ok(())
 }
 
@@ -956,6 +963,24 @@ mod tests {
         assert_eq!(merged_g["client_id"],"local-client");
         assert_eq!(merged_g["client_secret"],"local-secret");
         assert!(merged_g.get("apiKey").is_none());
+    }
+
+
+    #[test]
+    fn rollback_removes_files_that_did_not_exist_before_import(){
+        let root=std::env::temp_dir().join(format!("vyron-migration-optional-{}",Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let live=root.join("live.json");
+        let absent_backup=root.join("backup.json");
+        fs::write(&live,b"created-by-failed-import").unwrap();
+        restore_optional_file(&live,&absent_backup).unwrap();
+        assert!(!live.exists());
+
+        fs::write(&absent_backup,b"original").unwrap();
+        fs::write(&live,b"mutated").unwrap();
+        restore_optional_file(&live,&absent_backup).unwrap();
+        assert_eq!(fs::read(&live).unwrap(),b"original");
+        let _=fs::remove_dir_all(root);
     }
 
     #[test]
