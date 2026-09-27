@@ -4,8 +4,9 @@ import {useApp} from './store';
 import type {YoutubeChannelStatistics,YoutubeProfile} from './types';
 import {isChannelStatsStale,normalizeChannelStatistics,preserveChannelStatisticsOnError} from './youtubeChannelStats';
 import {classifyYoutubeChannels,makeStatisticsSnapshot,migrateStatisticsBaselines,type LinkedYoutubeChannel} from './youtubeStatisticsCenter';
-import {youtubeOperationActualCost,youtubeQuotaUsage} from './youtubeQuota';
+import {youtubeOperationActualCost,youtubeQuotaProjectIdentity,youtubeQuotaUsage} from './youtubeQuota';
 import {appendErrorHistory,resolveStatisticsCredentialErrors} from './errorHistory';
+import {notifyYoutubeOauthStateChanged} from './youtubeOauthState';
 
 export const BACKGROUND_CHANNEL_STATS_TTL_MS=45*60*1000;
 
@@ -78,7 +79,7 @@ export function refreshYoutubeProfileStatistics(profile:YoutubeProfile,operation
    const actual=youtubeOperationActualCost(op),quotaAfter=youtubeQuotaUsage().used,completedAt=new Date().toISOString();
    journal({eventId,eventType:'CHANNEL_STATS_REFRESH',status:'SUCCESS',source:'LIVE_OPERATION',timestamp:completedAt,operationId:op,batchId:op,channelId:linked.channel.id,channelName:linked.channel.name,profileId:profile.id,details:{youtubeChannelId:linked.youtubeChannelId,apiRequests:Object.values(actual.methods).reduce((n,x)=>n+x.calls,0),quotaUnits:actual.buckets.general,quotaBefore,quotaAfter}});
    resolveStatisticsCredentialErrors([profile.id]);
-   window.dispatchEvent(new Event('vyron:oauth-state-changed'));
+   notifyYoutubeOauthStateChanged();
    return stats;
   }catch(error){
    preserveLinked(linked,error);
@@ -92,11 +93,41 @@ export function refreshYoutubeProfileStatistics(profile:YoutubeProfile,operation
  return task;
 }
 
-const BLOCKED_STATS_CREDENTIAL_STATES=new Set(['NOT_CHECKED','NEEDS_ONE_TIME_LOCAL_MIGRATION','CANONICAL_PRESENT_UNVERIFIED','CHECK_ON_USE','RECOVERABLE','RECOVERABLE_KEYCHAIN_BLOCKED','KEYCHAIN_BLOCKED','RECONNECT_REQUIRED','MISSING','WRONG_CHANNEL','FAILED','KEYCHAIN_ERROR']);
+export type StatisticsProjectGroup={groupKey:string;projectKey:string|null;entries:LinkedYoutubeChannel[]};
+export type StatisticsProjectBatch=StatisticsProjectGroup&{channelIds:string[]};
+
+export function planStatisticsProjectGroups(entries:LinkedYoutubeChannel[],config?:{projectId?:string|null;clientIdMasked?:string|null}|null):StatisticsProjectGroup[]{
+ const groups=new Map<string,StatisticsProjectGroup>();
+ for(const row of entries){
+  const identity=youtubeQuotaProjectIdentity(row.profile,config);
+  const projectKey=identity.projectKey;
+  const groupKey=projectKey?`project:${projectKey}`:`profile:${row.profile.id}`;
+  const group=groups.get(groupKey)||{groupKey,projectKey,entries:[]};
+  group.entries.push(row);groups.set(groupKey,group);
+ }
+ return [...groups.values()];
+}
+
+export function planStatisticsProjectBatches(entries:LinkedYoutubeChannel[],config?:{projectId?:string|null;clientIdMasked?:string|null}|null,maxBatchSize=50):StatisticsProjectBatch[]{
+ const size=Math.max(1,Math.min(50,Math.floor(maxBatchSize)||50)),out:StatisticsProjectBatch[]=[];
+ for(const group of planStatisticsProjectGroups(entries,config)){
+  for(let offset=0;offset<group.entries.length;offset+=size){
+   const rows=group.entries.slice(offset,offset+size);
+   out.push({...group,entries:rows,channelIds:[...new Set(rows.map(x=>x.youtubeChannelId))]});
+  }
+ }
+ return out;
+}
+
+const BLOCKED_STATS_CREDENTIAL_STATES=new Set(['NEEDS_ONE_TIME_LOCAL_MIGRATION','CANONICAL_PRESENT_UNVERIFIED','CHECK_ON_USE','RECOVERABLE','RECOVERABLE_KEYCHAIN_BLOCKED','KEYCHAIN_BLOCKED','RECONNECT_REQUIRED','MISSING','WRONG_CHANNEL','FAILED','KEYCHAIN_ERROR']);
+function statsDriverPriority(row:LinkedYoutubeChannel){
+ const state=String(row.profile.credentialStatus||'NOT_CHECKED');
+ return state==='READY'||state==='WORKING'||state==='CONNECTED'?0:state==='NOT_CHECKED'?1:2;
+}
 export function planStatisticsBatchDrivers(chunk:LinkedYoutubeChannel[]){
  const unique=[...new Map(chunk.map(x=>[x.profile.id,x])).values()];
  const blocked=unique.filter(x=>BLOCKED_STATS_CREDENTIAL_STATES.has(String(x.profile.credentialStatus||'')));
- const candidates=unique.filter(x=>!BLOCKED_STATS_CREDENTIAL_STATES.has(String(x.profile.credentialStatus||'')));
+ const candidates=unique.filter(x=>!BLOCKED_STATS_CREDENTIAL_STATES.has(String(x.profile.credentialStatus||''))).sort((a,b)=>statsDriverPriority(a)-statsDriverPriority(b));
  return{
   channelIds:[...new Set(chunk.map(x=>x.youtubeChannelId))],
   candidates,
@@ -104,26 +135,29 @@ export function planStatisticsBatchDrivers(chunk:LinkedYoutubeChannel[]){
  };
 }
 
-export async function requestBatchWithDriverRotation(chunk:LinkedYoutubeChannel[],operationId:string){
- const plan=planStatisticsBatchDrivers(chunk),credentialFailures=[...plan.blocked];
+export async function requestBatchWithDriverRotation(chunk:LinkedYoutubeChannel[],operationId:string,config?:{projectId?:string|null;clientIdMasked?:string|null}|null){
+ const groups=planStatisticsProjectGroups(chunk,config);
+ if(groups.length!==1)throw new Error(`CROSS_PROJECT_STATS_BATCH_BLOCKED: groups=${groups.map(x=>x.groupKey).join(',')}`);
+ const group=groups[0],plan=planStatisticsBatchDrivers(group.entries),credentialFailures=[...plan.blocked];
  let lastError:unknown;
  for(const driver of plan.candidates){
   try{
    const batch=await api.youtubeChannelStatisticsBatch(driver.profile.id,plan.channelIds,operationId);
-   return{batch,credentialFailures,driverProfileId:driver.profile.id};
+   notifyYoutubeOauthStateChanged();
+   return{batch,credentialFailures,driverProfileId:driver.profile.id,projectKey:group.projectKey};
   }catch(error){
    lastError=error;
    if(!isOauthDriverError(error))throw Object.assign(new Error(String(error)),{credentialFailures});
    credentialFailures.push({profileId:driver.profile.id,channelName:driver.channel.name,youtubeChannelId:driver.youtubeChannelId,error:String(error)});
   }
  }
- if(credentialFailures.length)return{batch:{items:[],requested:0,found:0,missingChannelIds:[],apiRequests:0},credentialFailures,driverProfileId:undefined};
+ if(credentialFailures.length)return{batch:{items:[],requested:0,found:0,missingChannelIds:[],apiRequests:0},credentialFailures,driverProfileId:undefined,projectKey:group.projectKey};
  throw lastError||new Error('NO_OPERATIONAL_STATS_DRIVER');
 }
 
 async function runAll(force:boolean,onProgress?:((p:ChannelStatisticsRefreshProgress)=>void)):Promise<ChannelStatisticsRefreshSummary>{
  const startedAt=new Date().toISOString(),operationId=`stats-refresh-all:${Date.now()}`,quotaBefore=youtubeQuotaUsage().used;
- const profiles=await api.youtubeProfiles();
+ const [profiles,config]=await Promise.all([api.youtubeProfiles(),api.youtubeGoogleConfig().catch(()=>null)]);
  await ensureStatisticsBaselines(profiles);
  const channels=useApp.getState().channels,classification=classifyYoutubeChannels(channels,profiles);
  const entries=classification.eligible.filter(x=>force||isChannelStatsStale(x.channel.stats,Date.now(),BACKGROUND_CHANNEL_STATS_TTL_MS));
@@ -134,11 +168,13 @@ async function runAll(force:boolean,onProgress?:((p:ChannelStatisticsRefreshProg
  onProgress?.({done,total});
  const parentEventId=`stats-batch:${operationId}`;
  journal({eventId:parentEventId,eventType:'STATS_REFRESH_BATCH',status:'STARTED',source:'LIVE_OPERATION',timestamp:startedAt,operationId,batchId:operationId,details:{workspaceChannels:channels.length,eligibleChannels:classification.eligible.length,requestedChannels:total,unlinked:classification.unlinked.length,orphans:classification.orphans.length,mismatched:classification.mismatched.length,duplicates:classification.duplicates.length}});
+ const batchPlans=planStatisticsProjectBatches(entries,config),childOperationIds:string[]=[];
  if(total){
-  for(let offset=0;offset<entries.length;offset+=50){
-   const chunk=entries.slice(offset,offset+50);
+  for(let batchIndex=0;batchIndex<batchPlans.length;batchIndex++){
+   const chunk=batchPlans[batchIndex].entries,childOperationId=`${operationId}:group:${batchIndex+1}`;
+   childOperationIds.push(childOperationId);
    try{
-    const result=await requestBatchWithDriverRotation(chunk,operationId),byId=new Map(result.batch.items.filter(x=>x.channelId).map(x=>[x.channelId!,x]));
+    const result=await requestBatchWithDriverRotation(chunk,childOperationId,config),byId=new Map(result.batch.items.filter(x=>x.channelId).map(x=>[x.channelId!,x]));
     for(const x of result.credentialFailures){
      if(!credentialFailures.some(y=>y.profileId===x.profileId))credentialFailures.push(x);
     }
@@ -169,8 +205,8 @@ async function runAll(force:boolean,onProgress?:((p:ChannelStatisticsRefreshProg
    }
   }
  }
- const actual=youtubeOperationActualCost(operationId),quotaAfter=youtubeQuotaUsage().used,completedAt=new Date().toISOString();
- const apiRequests=Object.values(actual.methods).reduce((n,x)=>n+x.calls,0),quotaUnits=actual.buckets.general;
+ const actualRows=childOperationIds.map(youtubeOperationActualCost),quotaAfter=youtubeQuotaUsage().used,completedAt=new Date().toISOString();
+ const apiRequests=actualRows.reduce((sum,actual)=>sum+Object.values(actual.methods).reduce((n,x)=>n+x.calls,0),0),quotaUnits=actualRows.reduce((sum,actual)=>sum+actual.buckets.general,0);
  const summary:ChannelStatisticsRefreshSummary={
   operationId,startedAt,completedAt,workspaceChannels:channels.length,linkedChannels:classification.eligible.length,
   unlinked:classification.unlinked.length,orphans:classification.orphans.length,mismatched:classification.mismatched.length,duplicates:classification.duplicates.length,
