@@ -5,7 +5,7 @@ const read=(p:string)=>fs.readFileSync(p,'utf8');
 
 describe('VYRON 2.1.15 RC6 Keychain AuthFailed rotation',()=>{
  it('stores backward-compatible active account pointers without secret values',()=>{
-  const y=read('src-tauri/src/youtube.rs');
+  const y=read('src-tauri/src/youtube.rs').replace(/\r\n/g,'\n');
   expect(y).toContain('refresh_token_accounts:HashMap<String,String>');
   expect(y).toContain('profile_refresh_token_account_from_state');
   expect(y).toContain('oauth.{profile_id}.{kind}.v2.{generation}');
