@@ -75,6 +75,116 @@ const SERVICE:&str="com.scaleup.vyron.security";
 pub const LEGACY_SERVICE:&str=SERVICE;
 pub const CANONICAL_SERVICE:&str="com.scaleup.vyron.security.v2";
 pub const CANONICAL_ACCESSIBILITY_POLICY:&str="kSecAttrAccessibleWhenUnlocked(default)";
+
+#[cfg(target_os="windows")]
+static WINDOWS_ACTIVE_TENANT:OnceLock<Mutex<Option<String>>>=OnceLock::new();
+#[cfg(target_os="windows")]
+fn windows_tenant()->&'static Mutex<Option<String>>{WINDOWS_ACTIVE_TENANT.get_or_init(||Mutex::new(None))}
+#[cfg(target_os="windows")]
+pub fn set_active_tenant(user_id:Option<&str>){
+ if let Ok(mut slot)=windows_tenant().lock(){*slot=user_id.map(str::trim).filter(|x|!x.is_empty()).map(str::to_string);}
+ if let Ok(mut c)=canonical_cache().lock(){c.clear();}
+ if let Ok(mut c)=secret_cache().lock(){c.clear();}
+}
+#[cfg(not(target_os="windows"))]
+pub fn set_active_tenant(_user_id:Option<&str>){}
+
+#[cfg(target_os="windows")]
+fn windows_scoped_account(account:&str)->String{
+ if account.starts_with("license."){return account.to_string()}
+ let tenant=windows_tenant().lock().ok().and_then(|x|x.clone()).unwrap_or_else(||"unlicensed".into());
+ format!("tenant.{tenant}.{account}")
+}
+#[cfg(target_os="windows")]
+fn windows_target(service:&str,account:&str)->String{format!("VYRON/{service}/{}",windows_scoped_account(account))}
+#[cfg(target_os="windows")]
+fn wide(s:&str)->Vec<u16>{s.encode_utf16().chain(std::iter::once(0)).collect()}
+#[cfg(target_os="windows")]
+unsafe fn wide_ptr_to_string(ptr:*const u16)->String{
+ if ptr.is_null(){return String::new()}
+ let mut len=0usize;
+ while *ptr.add(len)!=0{len+=1}
+ String::from_utf16_lossy(std::slice::from_raw_parts(ptr,len))
+}
+#[cfg(target_os="windows")]
+fn windows_secret_get(service:&str,account:&str)->Result<Option<String>,String>{
+ use windows_sys::Win32::Foundation::{GetLastError,ERROR_NOT_FOUND};
+ use windows_sys::Win32::Security::Credentials::{CredFree,CredReadW,CREDENTIALW,CRED_TYPE_GENERIC};
+ let target=wide(&windows_target(service,account));
+ let mut p:*mut CREDENTIALW=std::ptr::null_mut();
+ let ok=unsafe{CredReadW(target.as_ptr(),CRED_TYPE_GENERIC,0,&mut p)};
+ if ok==0{
+  let code=unsafe{GetLastError()};
+  if code==ERROR_NOT_FOUND{return Ok(None)}
+  return Err(format!("WINDOWS_CREDENTIAL_READ_FAILED: account={account}; win32={code}"))
+ }
+ if p.is_null(){return Ok(None)}
+ let bytes=unsafe{
+  let cred=&*p;
+  if cred.CredentialBlob.is_null()||cred.CredentialBlobSize==0{Vec::new()}
+  else{std::slice::from_raw_parts(cred.CredentialBlob,cred.CredentialBlobSize as usize).to_vec()}
+ };
+ unsafe{CredFree(p as *const std::ffi::c_void)};
+ String::from_utf8(bytes).map(Some).map_err(|_|format!("WINDOWS_CREDENTIAL_INVALID_UTF8: account={account}"))
+}
+#[cfg(target_os="windows")]
+fn windows_secret_set(service:&str,account:&str,value:&str)->Result<(),String>{
+ use windows_sys::Win32::Foundation::GetLastError;
+ use windows_sys::Win32::Security::Credentials::{CredDeleteW,CredWriteW,CREDENTIALW,CRED_PERSIST_LOCAL_MACHINE,CRED_TYPE_GENERIC};
+ let mut target=wide(&windows_target(service,account));
+ if value.is_empty(){
+  let ok=unsafe{CredDeleteW(target.as_ptr(),CRED_TYPE_GENERIC,0)};
+  if ok==0{
+   use windows_sys::Win32::Foundation::ERROR_NOT_FOUND;
+   let code=unsafe{GetLastError()};
+   if code!=ERROR_NOT_FOUND{return Err(format!("WINDOWS_CREDENTIAL_DELETE_FAILED: account={account}; win32={code}"))}
+  }
+  return Ok(())
+ }
+ let mut user=wide(account);
+ let blob=value.as_bytes();
+ let mut cred:CREDENTIALW=unsafe{std::mem::zeroed()};
+ cred.Type=CRED_TYPE_GENERIC;
+ cred.TargetName=target.as_mut_ptr();
+ cred.CredentialBlobSize=blob.len() as u32;
+ cred.CredentialBlob=blob.as_ptr() as *mut u8;
+ cred.Persist=CRED_PERSIST_LOCAL_MACHINE;
+ cred.UserName=user.as_mut_ptr();
+ let ok=unsafe{CredWriteW(&cred,0)};
+ if ok==0{let code=unsafe{GetLastError()};return Err(format!("WINDOWS_CREDENTIAL_WRITE_FAILED: account={account}; win32={code}"))}
+ Ok(())
+}
+#[cfg(target_os="windows")]
+fn windows_list_accounts(service:&str,prefix:&str)->Result<Vec<String>,String>{
+ use windows_sys::Win32::Foundation::{GetLastError,ERROR_NOT_FOUND};
+ use windows_sys::Win32::Security::Credentials::{CredEnumerateW,CredFree,CREDENTIALW};
+ let scope=windows_scoped_account("");
+ let tenant_prefix=if let Some(i)=scope.rfind('.') { &scope[..=i] } else { scope.as_str() };
+ let target_prefix=format!("VYRON/{service}/{tenant_prefix}");
+ let filter=wide(&(target_prefix.clone()+"*"));
+ let mut count=0u32;
+ let mut rows:*mut *mut CREDENTIALW=std::ptr::null_mut();
+ let ok=unsafe{CredEnumerateW(filter.as_ptr(),0,&mut count,&mut rows)};
+ if ok==0{
+  let code=unsafe{GetLastError()};
+  if code==ERROR_NOT_FOUND{return Ok(Vec::new())}
+  return Err(format!("WINDOWS_CREDENTIAL_ENUM_FAILED: win32={code}"))
+ }
+ let mut out=Vec::new();
+ if !rows.is_null(){
+  let slice=unsafe{std::slice::from_raw_parts(rows,count as usize)};
+  for ptr in slice{
+   if ptr.is_null(){continue}
+   let target=unsafe{wide_ptr_to_string((**ptr).TargetName)};
+   if let Some(account)=target.strip_prefix(&target_prefix){
+    if account.starts_with(prefix)&&!out.iter().any(|x|x==account){out.push(account.to_string())}
+   }
+  }
+  unsafe{CredFree(rows as *const std::ffi::c_void)};
+ }
+ out.sort();Ok(out)
+}
+
 static LEGACY_BACKEND_READS:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
 static CANONICAL_BACKEND_READS:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
 static CANONICAL_BACKEND_WRITES:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
@@ -324,7 +434,14 @@ pub fn canonical_get_secret(account:&str)->Result<Option<String>,String>{
   Err(e)=>{record_runtime(&format!("canonical::{account}"),"READ","SECITEM_UI_FAIL",inventory_osstatus(&e),None);Err(e)},
  })
 }
-#[cfg(not(target_os="macos"))]
+#[cfg(target_os="windows")]
+pub fn canonical_get_secret(account:&str)->Result<Option<String>,String>{
+ CANONICAL_BACKEND_READS.fetch_add(1,Ordering::SeqCst);
+ let r=windows_secret_get(CANONICAL_SERVICE,account);
+ if r.is_ok(){record_runtime(&format!("canonical::{account}"),"READ","WINDOWS_CREDENTIAL_MANAGER",Some(0),None);}
+ r
+}
+#[cfg(all(not(target_os="macos"),not(target_os="windows")))]
 pub fn canonical_get_secret(_account:&str)->Result<Option<String>,String>{Ok(None)}
 
 fn canonical_get_secret_cached_with<F>(account:&str,explicit_retry:bool,reader:F)->Result<Option<String>,String>
@@ -424,8 +541,18 @@ pub fn canonical_set_secret(account:&str,value:&str)->Result<(),String>{
  }
  result
 }
-#[cfg(not(target_os="macos"))]
-pub fn canonical_set_secret(_account:&str,_value:&str)->Result<(),String>{Err("VYRON secure storage requires macOS Keychain".into())}
+#[cfg(target_os="windows")]
+pub fn canonical_set_secret(account:&str,value:&str)->Result<(),String>{
+ if !value.is_empty(){if let Ok(cache)=canonical_cache().lock(){if cache.get(account).map(String::as_str)==Some(value){return Ok(())}}}
+ let r=windows_secret_set(CANONICAL_SERVICE,account,value);
+ if r.is_ok(){
+  if value.is_empty(){CANONICAL_BACKEND_DELETES.fetch_add(1,Ordering::SeqCst);canonical_forget_cache(account);record_runtime(&format!("canonical::{account}"),"DELETE","WINDOWS_CREDENTIAL_MANAGER",Some(0),None);}
+  else{CANONICAL_BACKEND_WRITES.fetch_add(1,Ordering::SeqCst);remember_canonical_secret(account,value);record_runtime(&format!("canonical::{account}"),"WRITE","WINDOWS_CREDENTIAL_MANAGER",Some(0),None);}
+ }
+ r
+}
+#[cfg(all(not(target_os="macos"),not(target_os="windows")))]
+pub fn canonical_set_secret(_account:&str,_value:&str)->Result<(),String>{Err("VYRON secure storage is unsupported on this platform".into())}
 pub fn canonical_delete_secret(account:&str)->Result<(),String>{canonical_set_secret(account,"")}
 pub fn canonical_verify_secret(account:&str,expected:&str)->Result<bool,String>{
  if let Ok(mut c)=canonical_cache().lock(){c.remove(account);}
@@ -490,8 +617,14 @@ pub fn set_secret(account:&str,value:&str)->Result<(),String>{
  }
  result
 }
-#[cfg(not(target_os="macos"))]
-pub fn set_secret(_account:&str,_value:&str)->Result<(),String>{Err("VYRON secure storage requires macOS Keychain".into())}
+#[cfg(target_os="windows")]
+pub fn set_secret(account:&str,value:&str)->Result<(),String>{
+ let r=windows_secret_set(SERVICE,account,value);
+ if r.is_ok(){if value.is_empty(){forget_secret(account)}else{remember_secret(account,value)}}
+ r
+}
+#[cfg(all(not(target_os="macos"),not(target_os="windows")))]
+pub fn set_secret(_account:&str,_value:&str)->Result<(),String>{Err("VYRON secure storage is unsupported on this platform".into())}
 
 fn set_secret_if_changed_with<F>(account:&str,value:&str,writer:F)->Result<(),String> where F:FnOnce(&str,&str)->Result<(),String>{
  if !value.is_empty()&&cached_secret_matches(account,value){return Ok(())}
@@ -508,7 +641,12 @@ pub fn get_secret(account:&str)->Result<Option<String>,String>{
   Err(e)=>{record_runtime(account,"READ","SECITEM_UI_FAIL",None,None);Err(e)},
  })
 }
-#[cfg(not(target_os="macos"))]
+#[cfg(target_os="windows")]
+pub fn get_secret(account:&str)->Result<Option<String>,String>{
+ LEGACY_BACKEND_READS.fetch_add(1,Ordering::SeqCst);
+ windows_secret_get(SERVICE,account)
+}
+#[cfg(all(not(target_os="macos"),not(target_os="windows")))]
 pub fn get_secret(_account:&str)->Result<Option<String>,String>{Ok(None)}
 
 pub fn delete_secret(account:&str)->Result<(),String>{set_secret(account,"")}
@@ -538,7 +676,17 @@ pub fn security_keychain_diagnostics()->Result<serde_json::Value,String>{
    "authenticationUi":"FAIL_OR_SKIP"
   }));
  }
- #[cfg(not(target_os="macos"))]{Ok(serde_json::json!({"ok":false,"status":"UNSUPPORTED"}))}
+ #[cfg(target_os="windows")]{
+  let canonical_visible=list_canonical_secret_accounts("")?.len();
+  let legacy_visible=list_secret_accounts("")?.len();
+  return Ok(serde_json::json!({
+   "ok":true,"status":"WINDOWS_CREDENTIAL_MANAGER_READY","backend":"Windows Credential Manager",
+   "service":CANONICAL_SERVICE,"legacyService":LEGACY_SERVICE,
+   "canonicalVisibleAccounts":canonical_visible,"legacyVisibleAccounts":legacy_visible,
+   "secretValuesIncluded":false,"secretReads":0,"secretWrites":0
+  }));
+ }
+ #[cfg(all(not(target_os="macos"),not(target_os="windows")))]{Ok(serde_json::json!({"ok":false,"status":"UNSUPPORTED"}))}
 }
 
 #[tauri::command]
@@ -833,7 +981,9 @@ pub fn list_secret_accounts(prefix:&str)->Result<Vec<String>,String>{
  }
  accounts.sort();Ok(accounts)
 }
-#[cfg(not(target_os="macos"))]
+#[cfg(target_os="windows")]
+pub fn list_secret_accounts(prefix:&str)->Result<Vec<String>,String>{windows_list_accounts(SERVICE,prefix)}
+#[cfg(all(not(target_os="macos"),not(target_os="windows")))]
 pub fn list_secret_accounts(_prefix:&str)->Result<Vec<String>,String>{Ok(Vec::new())}
 
 #[cfg(target_os="macos")]
@@ -880,6 +1030,9 @@ fn native_attributes_for_service(service:&str,account:Option<&str>)->Result<Vec<
 #[cfg(not(target_os="macos"))]
 fn native_attributes_for_service(_service:&str,_account:Option<&str>)->Result<Vec<std::collections::HashMap<String,String>>,String>{Ok(Vec::new())}
 
+#[cfg(target_os="windows")]
+pub fn list_canonical_secret_accounts(prefix:&str)->Result<Vec<String>,String>{windows_list_accounts(CANONICAL_SERVICE,prefix)}
+#[cfg(not(target_os="windows"))]
 pub fn list_canonical_secret_accounts(prefix:&str)->Result<Vec<String>,String>{
  let mut accounts=Vec::new();
  for attrs in native_attributes_for_service(CANONICAL_SERVICE,None)?{
