@@ -1,11 +1,11 @@
 {
-  "version": "2.1.14",
-  "notes": "VYRON 2.1.14 — Windows stability release: crash-safe state recovery, transactional ENDLUME handoff, resilient offline license grace, Windows-native diagnostics and updater reliability fixes.",
-  "pub_date": "2026-09-26T12:04:30Z",
+  "version": "2.1.15",
+  "notes": "VYRON 2.1.15 — Windows OAuth hotfix: fixes Google Desktop OAuth URLs being truncated by cmd.exe at ampersand (&), preserving response_type=code, redirect_uri, scopes, PKCE challenge and state.",
+  "pub_date": "2026-09-26T17:54:01Z",
   "platforms": {
     "windows-x86_64": {
-      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.14-windows-x64/VYRON_2.1.14_x64-setup.exe",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM2RzRCtjcG5hVytEc3VPdjErN0x3M0tDZ2JwZngvcUt0U3gwRlhKY0ZpNkxzUnQ0RGJKVG10VDVIRGxHd3hCNlFWVHJrY2prQ01ST1NJaWp6dEZidEFrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNDI0MjY1CWZpbGU6VllST05fMi4xLjE0X3g2NC1zZXR1cC5leGUKZHg2RDFXUjROR24wRmlpcWZlVlBhcXNuRGtvNW9JMnRwVWhQb2FoTFVwRC9rVDN0V2hJRHo5YjZ1dCt1UHcyYndpRUF2VGFiQm9tZEJ6Z0tGSTZiQ2c9PQo="
+      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.15-windows-x64/VYRON_2.1.15_x64-setup.exe",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM2RNSXh5N0IxQS9xcWNnTUpWNFJqUmxzQWJpTWdHZjlvanhzWEd1TGNMRXhpVFJUcW9QQm5lYW9CY2hsQ0dscVNGWEhUWjFkZ2szcFhpcHVNUHpxc0FnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNDQ1MjI4CWZpbGU6VllST05fMi4xLjE1X3g2NC1zZXR1cC5leGUKWnFtemF2Q0J3am9zTWRsS0hxUTQxaHllcXZBYlloQjFqYjRxUFo1Z3FjVmpJVmxsV3JqeDh5RjAybklDOHFqMk00NUcrWWdqUVlBRUJmb3FJT0JZQXc9PQo="
     }
   }
 }
