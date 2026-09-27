@@ -109,9 +109,9 @@ jobs:
           shasum -a 256 /tmp/mac-feed-before.json | awk '{print $1}' >/tmp/mac-feed-before.sha
           shasum -a 256 /tmp/windows-feed-before.json | awk '{print $1}' >/tmp/windows-feed-before.sha
           test "$(python3 -c 'import json;print(json.load(open("/tmp/mac-feed-before.json"))["version"])')" = '2.1.15-rc.7'
-          test "$(python3 -c 'import json;print(json.load(open("/tmp/windows-feed-before.json"))["version"])')" = '2.1.13'
+          test "$(python3 -c 'import json;print(json.load(open("/tmp/windows-feed-before.json"))["version"])')" = '2.1.16'
           echo "MAC_FEED_BASELINE=2.1.15-rc.7"
-          echo "WINDOWS_FEED_BASELINE=2.1.13"
+          echo "WINDOWS_FEED_BASELINE=2.1.16"
 
       - name: Version consistency gate
         shell: bash
@@ -496,7 +496,7 @@ jobs:
           gh api "repos/$REPO/contents/vyron-updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode >/tmp/mac-feed-after.json
           gh api "repos/$REPO/contents/vyron-updates/windows-latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode >/tmp/windows-feed-after.json
           test "$(python3 -c 'import json;print(json.load(open("/tmp/mac-feed-after.json"))["version"])')" = '2.1.15-rc.7'
-          test "$(python3 -c 'import json;print(json.load(open("/tmp/windows-feed-after.json"))["version"])')" = '2.1.13'
+          test "$(python3 -c 'import json;print(json.load(open("/tmp/windows-feed-after.json"))["version"])')" = '2.1.16'
           cmp -s /tmp/mac-feed-before.json /tmp/mac-feed-after.json
           cmp -s /tmp/windows-feed-before.json /tmp/windows-feed-after.json
           test "$(shasum -a 256 /tmp/mac-feed-after.json | awk '{print $1}')" = "$(cat /tmp/mac-feed-before.sha)"
