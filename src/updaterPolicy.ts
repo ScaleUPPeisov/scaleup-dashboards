@@ -1,10 +1,17 @@
 export const WINDOWS_UPDATER_PLATFORM='windows-x86_64' as const;
 export const MACOS_UPDATER_PLATFORM='darwin-aarch64' as const;
 
-export const UPDATER_ENDPOINTS=[
-  'https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/vyron-updates/windows-latest.json',
-  'https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/vyron-updates/latest.json'
-] as const;
+const WINDOWS_FEED='https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/vyron-updates/windows-latest.json';
+const SHARED_MAC_FEED='https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/vyron-updates/latest.json';
+const MAC_FALLBACK_FEED='https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/latest/download/latest.json';
+
+export function updaterEndpointsForUserAgent(userAgent:string){
+  return /Windows/i.test(userAgent)
+    ? [WINDOWS_FEED,SHARED_MAC_FEED] as const
+    : [SHARED_MAC_FEED,MAC_FALLBACK_FEED] as const;
+}
+const runtimeUserAgent=typeof navigator!=='undefined'?navigator.userAgent:'Windows';
+export const UPDATER_ENDPOINTS=updaterEndpointsForUserAgent(runtimeUserAgent);
 
 export const UPDATER_CHECK_OPTIONS={
   timeout:30_000,
