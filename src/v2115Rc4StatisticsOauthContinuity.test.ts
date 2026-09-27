@@ -73,8 +73,8 @@ describe('VYRON statistics/OAuth continuity behavior',()=>{
   const conf=JSON.parse(read('src-tauri/tauri.conf.json'));
   expect(conf.identifier).toBe('studio.channelflow.desktop');
   expect(conf.plugins.updater.endpoints).toEqual([
-   'https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/vyron-updates/latest.json',
-   'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/latest/download/latest.json'
+   'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json',
+   'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json'
   ]);
  });
 });
