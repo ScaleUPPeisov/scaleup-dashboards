@@ -707,7 +707,7 @@ pub async fn youtube_cache_thumbnail(
                     if b.len() > 900 {
                         let tmp = path.with_extension("tmp");
                         fs::write(&tmp, &b).map_err(|e| e.to_string())?;
-                        fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
+                        replace_youtube_file_atomic(&tmp, &path)?;
                         return Ok(path.to_string_lossy().to_string());
                     }
                 }
@@ -1864,7 +1864,7 @@ fn durable_upload_recovery_write(path: &Path, bytes: &[u8]) -> Result<(), String
 }
 
 #[cfg(target_os = "windows")]
-fn replace_upload_recovery_atomic(src: &Path, dst: &Path) -> Result<(), String> {
+fn replace_youtube_file_atomic(src: &Path, dst: &Path) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::{
         MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
@@ -1896,7 +1896,7 @@ fn replace_upload_recovery_atomic(src: &Path, dst: &Path) -> Result<(), String> 
 }
 
 #[cfg(not(target_os = "windows"))]
-fn replace_upload_recovery_atomic(src: &Path, dst: &Path) -> Result<(), String> {
+fn replace_youtube_file_atomic(src: &Path, dst: &Path) -> Result<(), String> {
     fs::rename(src, dst).map_err(|e| format!("Upload recovery replace: {e}"))
 }
 
@@ -1911,7 +1911,7 @@ fn save_upload_sessions_store_at(
         &fs::read(&tmp).map_err(|e| format!("Upload recovery temp read: {e}"))?,
     )
     .map_err(|e| format!("Upload recovery temp validation: {e}"))?;
-    replace_upload_recovery_atomic(&tmp, p)
+    replace_youtube_file_atomic(&tmp, p)
 }
 
 fn save_upload_sessions_store(
