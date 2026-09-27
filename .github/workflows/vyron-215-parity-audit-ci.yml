@@ -182,12 +182,11 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          python - <<'PY'
-          import json
-          d=json.load(open('src-tauri/tauri.windows.conf.json',encoding='utf-8'))
-          assert d['bundle']['windows']['allowDowngrades'] is False
-          print('WINDOWS_ALLOW_DOWNGRADES_FALSE=PASS')
-          PY
+          $tauriWindows = Get-Content "src-tauri/tauri.windows.conf.json" -Raw | ConvertFrom-Json
+          if ($tauriWindows.bundle.windows.allowDowngrades -ne $false) {
+            throw "WINDOWS_ALLOW_DOWNGRADES_FALSE=FAIL"
+          }
+          Write-Host "WINDOWS_ALLOW_DOWNGRADES_FALSE=PASS"
           npx tauri build --target x86_64-pc-windows-msvc --bundles nsis --config '{"bundle":{"createUpdaterArtifacts":false}}'
           $installer = Get-ChildItem "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis" -Filter "*-setup.exe" | Select-Object -First 1
           if (-not $installer) { throw "Current-source NSIS installer not found" }
