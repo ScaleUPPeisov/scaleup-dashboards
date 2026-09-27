@@ -2792,6 +2792,24 @@ mod windows_storage_parity_tests {
     }
 
     #[test]
+    fn missing_workspace_surfaces_offline_state_without_creating_or_mutating_path() {
+        let root = std::env::temp_dir()
+            .join(format!("vyron-offline-workspace-{}", Uuid::new_v4()))
+            .join("Кирилл Пейсов")
+            .join("Видео & Музыка")
+            .join("Проект (01)");
+        assert!(!root.exists());
+        let before = root.clone();
+        let status = storage_probe(&root);
+        assert_eq!(status.path, before.to_string_lossy());
+        assert!(!status.exists);
+        assert!(!status.writable);
+        assert!(status.free_bytes.is_none());
+        assert_eq!(status.error.as_deref(), Some("Production-диск или папка недоступны"));
+        assert!(!root.exists(), "storage_probe must not create a missing/offline workspace");
+    }
+
+    #[test]
     fn normal_temp_drive_classification_is_callable_for_unicode_paths() {
         let p = std::env::temp_dir().join("Кирилл Пейсов").join("Видео & Музыка").join("Проект (01)");
         let _ = windows_storage_external(&p);
