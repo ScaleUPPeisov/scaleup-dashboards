@@ -680,7 +680,7 @@ pub fn migration_preview(
     passphrase: String,
 ) -> Result<Value, String> {
     let payload = read_bundle(&path, &passphrase)?;
-    let local = storage::load_state(app);
+    let local = storage::load_state(app.clone());
     let (_, mut summary, remaps) = merge_states(&local, &payload.state);
     let oauth_plan = oauth_vault::portable_merge_plan(&app,&payload.oauth_vault)?;
     summary.imported_profiles = oauth_plan
@@ -695,12 +695,10 @@ pub fn migration_preview(
         .get("newProfiles")
         .and_then(Value::as_u64)
         .unwrap_or(0) as usize;
-    summary.google_projects = payload
-        .browser_state
-        .get("googleProjects")
-        .and_then(Value::as_array)
-        .map(|x| x.len())
-        .unwrap_or(0);
+    summary.google_projects = usize::from(
+        payload.google_config.get("project_id").or_else(||payload.google_config.get("projectId"))
+            .and_then(Value::as_str).map(str::trim).filter(|x|!x.is_empty()).is_some()
+    );
     Ok(json!({
         "sourceOs": payload.source_os,
         "appVersion": payload.app_version,
