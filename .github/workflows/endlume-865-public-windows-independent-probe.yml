@@ -78,7 +78,22 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           $p=Start-Process -FilePath $env:PUBLIC_APP -PassThru
-          Start-Sleep 1
+          Start-Sleep -Milliseconds 650
+          Add-Type -AssemblyName System.Drawing
+          Add-Type -AssemblyName System.Windows.Forms
+          $bounds=[System.Windows.Forms.SystemInformation]::VirtualScreen
+          if($bounds.Width -gt 0 -and $bounds.Height -gt 0){
+            $bmp=New-Object System.Drawing.Bitmap $bounds.Width,$bounds.Height
+            $g=[System.Drawing.Graphics]::FromImage($bmp)
+            $g.CopyFromScreen($bounds.Location,[System.Drawing.Point]::Empty,$bounds.Size)
+            $early="$env:RUNNER_TEMP\endlume-win-probe\early-0650ms.png"
+            $bmp.Save($early,[System.Drawing.Imaging.ImageFormat]::Png)
+            $g.Dispose();$bmp.Dispose()
+            Write-Host "EARLY0650_B64_START"
+            Write-Host ([Convert]::ToBase64String([IO.File]::ReadAllBytes($early)))
+            Write-Host "EARLY0650_B64_END"
+          }
+          Start-Sleep -Milliseconds 350
           $p.Refresh()
           Write-Host "T1 pid=$($p.Id) exited=$($p.HasExited) mainWindowHandle=$($p.MainWindowHandle) title=$($p.MainWindowTitle)"
           if($p.HasExited){throw "EARLY_EXIT=$($p.ExitCode)"}
