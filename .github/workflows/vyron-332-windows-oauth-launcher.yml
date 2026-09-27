@@ -202,33 +202,80 @@ jobs:
           Write-Host "WINDOWS_CANDIDATE_SHA256=$sha"
           Write-Host "UPDATER_SIGNATURE_BYTES=$($sig.Length)"
 
-      - name: Cryptographically verify updater signature
+      - name: Upload signed build checkpoint
+        uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-3.3.2-WINDOWS-BUILD-CHECKPOINT
+          path: hotfix-artifacts/**
+          if-no-files-found: error
+
+      - name: Cryptographically verify updater signature with Tauri verifier
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          choco install minisign -y --no-progress
-          if($LASTEXITCODE -ne 0){throw 'MINISIGN_INSTALL_FAILED'}
+          $verifyRoot=Join-Path $env:RUNNER_TEMP 'vyron-tauri-signature-verify'
+          New-Item -ItemType Directory -Force -Path (Join-Path $verifyRoot 'src') | Out-Null
 
-          $mini='C:\ProgramData\chocolatey\lib\minisign\tools\minisign.exe'
-          if(-not (Test-Path $mini)){ $mini=(Get-Command minisign.exe -ErrorAction Stop).Source }
+          @'
+          [package]
+          name = "vyron-tauri-signature-verify"
+          version = "0.0.0"
+          edition = "2021"
 
-          $conf=Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
-          $pubPath=Join-Path $env:RUNNER_TEMP 'vyron-updater.pub'
-          $miniSigPath=Join-Path $env:RUNNER_TEMP 'VYRON_3.3.2_x64-setup.minisig'
-          [IO.File]::WriteAllBytes(
-            $pubPath,
-            [Convert]::FromBase64String([string]$conf.plugins.updater.pubkey)
-          )
-          $sigBase64=(Get-Content hotfix-artifacts/VYRON_3.3.2_x64-setup.exe.sig -Raw).Trim()
-          [IO.File]::WriteAllBytes(
-            $miniSigPath,
-            [Convert]::FromBase64String($sigBase64)
-          )
+          [dependencies]
+          base64 = "0.22"
+          minisign-verify = "=0.2.5"
+          '@ | Set-Content -Encoding utf8 (Join-Path $verifyRoot 'Cargo.toml')
 
-          & $mini -Vm hotfix-artifacts/VYRON_3.3.2_x64-setup.exe -x $miniSigPath -p $pubPath
+          @'
+          use base64::{engine::general_purpose::STANDARD, Engine as _};
+          use minisign_verify::{PublicKey, Signature};
+          use std::{env, fs};
+
+          fn decode_box(label: &str, encoded: &str) -> String {
+              let bytes = STANDARD.decode(encoded.trim())
+                  .unwrap_or_else(|e| panic!("{label}_BASE64_DECODE_FAILED: {e}"));
+              String::from_utf8(bytes)
+                  .unwrap_or_else(|e| panic!("{label}_UTF8_DECODE_FAILED: {e}"))
+          }
+
+          fn main() {
+              let args: Vec<String> = env::args().collect();
+              assert_eq!(args.len(), 4, "usage: verify <artifact> <sig> <tauri.conf.json>");
+
+              let artifact = fs::read(&args[1]).expect("ARTIFACT_READ_FAILED");
+              let sig_encoded = fs::read_to_string(&args[2]).expect("SIGNATURE_READ_FAILED");
+              let conf_text = fs::read_to_string(&args[3]).expect("CONFIG_READ_FAILED");
+
+              let marker = "\"pubkey\": \"";
+              let start = conf_text.find(marker).expect("PUBKEY_FIELD_MISSING") + marker.len();
+              let tail = &conf_text[start..];
+              let end = tail.find('"').expect("PUBKEY_FIELD_UNTERMINATED");
+              let pub_encoded = &tail[..end];
+
+              let pub_decoded = decode_box("PUBLIC_KEY", pub_encoded);
+              let sig_decoded = decode_box("SIGNATURE", &sig_encoded);
+
+              assert!(pub_decoded.starts_with("untrusted comment:"), "PUBLIC_KEY_BOX_FORMAT_INVALID");
+              assert!(sig_decoded.starts_with("untrusted comment:"), "SIGNATURE_BOX_FORMAT_INVALID");
+
+              let public_key = PublicKey::decode(&pub_decoded).expect("PUBLIC_KEY_PARSE_FAILED");
+              let signature = Signature::decode(&sig_decoded).expect("SIGNATURE_PARSE_FAILED");
+              public_key.verify(&artifact, &signature, true).expect("UPDATER_SIGNATURE_VERIFY_FAILED");
+
+              println!("UPDATER_SIGNATURE=VERIFIED");
+              println!("VERIFIER=minisign-verify-0.2.5");
+          }
+          '@ | Set-Content -Encoding utf8 (Join-Path $verifyRoot 'src/main.rs')
+
+          cargo run --quiet --release --manifest-path (Join-Path $verifyRoot 'Cargo.toml') -- hotfix-artifacts/VYRON_3.3.2_x64-setup.exe hotfix-artifacts/VYRON_3.3.2_x64-setup.exe.sig src-tauri/tauri.conf.json
           if($LASTEXITCODE -ne 0){throw 'UPDATER_SIGNATURE_VERIFY_FAILED'}
-          'UPDATER_SIGNATURE=VERIFIED' | Set-Content hotfix-artifacts/signature-verification.txt
 
+          @(
+            'UPDATER_SIGNATURE=VERIFIED',
+            'VERIFIER=minisign-verify-0.2.5',
+            'VERIFIER_MATCHES_TAURI_PLUGIN_UPDATER=YES'
+          ) | Set-Content hotfix-artifacts/signature-verification.txt
       - name: Silent install and physical launch smoke
         shell: pwsh
         run: |
