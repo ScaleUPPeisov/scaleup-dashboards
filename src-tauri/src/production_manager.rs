@@ -2242,6 +2242,13 @@ pub fn execute_global_production_project_cleanup(workspaces: Vec<String>, confir
     })
 }
 
+fn finalize_archive_copy(tmp:&Path,dst:&Path)->Result<(),String>{
+    if dst.exists(){
+        fs::remove_file(dst).map_err(|e|format!("Не удалось заменить старую архивную копию: {e}"))?;
+    }
+    fs::rename(tmp,dst).map_err(|e|format!("Не удалось завершить архивирование: {e}"))
+}
+
 #[tauri::command]
 pub fn archive_production_rendered_videos(
     manifest_path: String,
@@ -2298,7 +2305,7 @@ pub fn archive_production_rendered_videos(
         }
         fs::copy(&canon, &tmp)
             .map_err(|e| format!("Не удалось скопировать {}: {e}", canon.display()))?;
-        fs::rename(&tmp, &dst).map_err(|e| format!("Не удалось завершить архивирование: {e}"))?;
+        finalize_archive_copy(&tmp, &dst)?;
         // Safety invariant: source rendered MP4 is COPY-ONLY and is never removed here.
         out.copied_files += 1;
         out.copied_bytes = out.copied_bytes.saturating_add(bytes);
@@ -2600,6 +2607,25 @@ pub fn production_endlume_handoff_consumed(request_path: String) -> Result<bool,
 #[cfg(test)]
 #[path = "production_manager_tests.rs"]
 mod production_manager_tests;
+
+#[cfg(test)]
+mod windows_archive_finalize_tests {
+    use super::*;
+
+    #[test]
+    fn archive_finalize_replaces_existing_different_size_copy() {
+        let root=std::env::temp_dir().join(format!("vyron-archive-finalize-{}",Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let dst=root.join("Видео & Музыка (01).mp4");
+        let tmp=root.join(".Видео & Музыка (01).mp4.part");
+        fs::write(&dst,b"old").unwrap();
+        fs::write(&tmp,b"new-rendered-video-bytes").unwrap();
+        finalize_archive_copy(&tmp,&dst).unwrap();
+        assert_eq!(fs::read(&dst).unwrap(),b"new-rendered-video-bytes");
+        assert!(!tmp.exists());
+        let _=fs::remove_dir_all(root);
+    }
+}
 
 #[cfg(test)]
 mod v1015_image_validation_tests {
