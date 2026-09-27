@@ -15,6 +15,8 @@ export type UpdaterRuntimeState={
 
 let candidate:CheckedUpdaterCandidate|undefined;
 let checkPromise:Promise<void>|undefined;
+let downloadPromise:Promise<void>|undefined;
+let installPromise:Promise<boolean>|undefined;
 let lastRecordedError='';
 const errorCode=(e:unknown)=>String(e??'').match(/([A-Z][A-Z0-9_]+):/)?.[1]||'UPDATER_INSTALL_FAILED';
 const historyStage=(stage:'check'|'download'|'install'|'relaunch'):ErrorStage=>`updater-${stage}` as ErrorStage;
@@ -49,26 +51,36 @@ export const useUpdaterRuntime=create<UpdaterRuntimeState>((set,get)=>({
     return checkPromise;
   },
   download:async()=>{
-    if(!candidate)return;
-    set({status:'DOWNLOADING',progress:0,downloadedBytes:0,totalBytes:0,errorCode:undefined,errorMessage:undefined,blockers:[]});
-    try{
-      await candidate.download((p:UpdaterTransferProgress)=>set({status:p.status==='VERIFYING'?'VERIFYING':'DOWNLOADING',progress:p.percent,downloadedBytes:p.downloadedBytes,totalBytes:p.totalBytes}));
-      set({status:'READY_TO_INSTALL',progress:100});
-    }catch(error){const s=get();const code=recordFailure('download',error,s.currentVersion,s.latestVersion);set({status:'ERROR',errorCode:code,errorMessage:String(error)})}
+    if(downloadPromise)return downloadPromise;
+    if(!candidate||get().status!=='AVAILABLE')return;
+    downloadPromise=(async()=>{
+      set({status:'DOWNLOADING',progress:0,downloadedBytes:0,totalBytes:0,errorCode:undefined,errorMessage:undefined,blockers:[]});
+      try{
+        await candidate!.download((p:UpdaterTransferProgress)=>set({status:p.status==='VERIFYING'?'VERIFYING':'DOWNLOADING',progress:p.percent,downloadedBytes:p.downloadedBytes,totalBytes:p.totalBytes}));
+        set({status:'READY_TO_INSTALL',progress:100});
+      }catch(error){const s=get();const code=recordFailure('download',error,s.currentVersion,s.latestVersion);set({status:'ERROR',errorCode:code,errorMessage:String(error)})}
+      finally{downloadPromise=undefined}
+    })();
+    return downloadPromise;
   },
   installAndRestart:async(blockers=[])=>{
-    if(!candidate)return false;
+    if(installPromise)return installPromise;
+    if(!candidate||get().status!=='READY_TO_INSTALL')return false;
     if(blockers.length){set({blockers});return false}
-    const target=get().latestVersion||candidate.version;localStorage.setItem('vyron:update-installing-version',target);
-    try{
-      set({status:'VERIFYING',blockers:[]});
-      await candidate.install(status=>set({status}));
-      set({status:'READY_TO_RESTART'});
-    }catch(error){localStorage.removeItem('vyron:update-installing-version');const s=get();const code=recordFailure('install',error,s.currentVersion,target);set({status:'ERROR',errorCode:code,errorMessage:String(error)});return false}
-    try{set({status:'RESTARTING'});await candidate.restart();return true}catch(error){const s=get();const code=recordFailure('relaunch',error,s.currentVersion,target);set({status:'ERROR',errorCode:code,errorMessage:String(error)});return false}
+    installPromise=(async()=>{
+      const target=get().latestVersion||candidate!.version;localStorage.setItem('vyron:update-installing-version',target);
+      try{
+        set({status:'VERIFYING',blockers:[]});
+        await candidate!.install(status=>set({status}));
+        set({status:'READY_TO_RESTART'});
+      }catch(error){localStorage.removeItem('vyron:update-installing-version');const s=get();const code=recordFailure('install',error,s.currentVersion,target);set({status:'ERROR',errorCode:code,errorMessage:String(error)});return false}
+      try{set({status:'RESTARTING'});await candidate!.restart();return true}catch(error){const s=get();const code=recordFailure('relaunch',error,s.currentVersion,target);set({status:'ERROR',errorCode:code,errorMessage:String(error)});return false}
+      finally{installPromise=undefined}
+    })();
+    return installPromise;
   },
   markUpdated:(version:string)=>{candidate=undefined;set({currentVersion:version,latestVersion:version,status:'UPDATED',progress:100,downloadedBytes:0,totalBytes:0,errorCode:undefined,errorMessage:undefined,blockers:[],hasChecked:true,lastCheckedAt:Date.now()})},
   clearBlockers:()=>set({blockers:[]})
 }));
 
-export function resetUpdaterRuntimeForTests(){candidate=undefined;checkPromise=undefined;lastRecordedError='';useUpdaterRuntime.setState({currentVersion:'',latestVersion:'',status:'UP_TO_DATE',progress:0,downloadedBytes:0,totalBytes:0,notes:'',releaseDate:undefined,endpoint:'',versionComparison:'',lastCheckedAt:undefined,errorCode:undefined,errorMessage:undefined,blockers:[],hasChecked:false})}
+export function resetUpdaterRuntimeForTests(){candidate=undefined;checkPromise=undefined;downloadPromise=undefined;installPromise=undefined;lastRecordedError='';useUpdaterRuntime.setState({currentVersion:'',latestVersion:'',status:'UP_TO_DATE',progress:0,downloadedBytes:0,totalBytes:0,notes:'',releaseDate:undefined,endpoint:'',versionComparison:'',lastCheckedAt:undefined,errorCode:undefined,errorMessage:undefined,blockers:[],hasChecked:false})}
