@@ -62,6 +62,16 @@ describe('Production Manager v2 persistence',()=>{
     patchProductionPrefs({selectedChannelId:'other-channel'});
     expect(readProductionPrefs().selectedChannelId).toBe('other-channel');
   });
+
+  it('migrates legacy v1 Production workspace only to the first active tenant',()=>{
+    localStorage.setItem('vyron:production-workspace:v1',JSON.stringify({selectedChannelId:'legacy-v1-channel'}));
+    setFrontendTenant('tenant-first-v1');
+    expect(readProductionPrefs().selectedChannelId).toBe('legacy-v1-channel');
+    expect(localStorage.getItem('vyron:production-workspace:v1')).toBeNull();
+
+    setFrontendTenant('tenant-second-v1');
+    expect(readProductionPrefs().selectedChannelId).toBeUndefined();
+  });
   it('persists channel-specific builder settings and selected projects',()=>{
     expect(defaultChannelProductionPrefs().tracksPerProject).toBe(15);
     patchChannelProductionPrefs('neon',{projectCount:40,tracksPerProject:30,mode:'alphabetical',allowImageReuse:true,lastBatchId:'BATCH-14',selectedProjectIds:['001','003']});
