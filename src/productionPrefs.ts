@@ -51,7 +51,10 @@ export function readProductionPrefs():ProductionPrefs{
     try{
       const legacy=normalizePrefs(JSON.parse(localStorage.getItem(KEY)||'null'));
       if(legacy){
-        try{localStorage.setItem(scopedKey,JSON.stringify(legacy))}catch{}
+        try{
+          localStorage.setItem(scopedKey,JSON.stringify(legacy));
+          localStorage.removeItem(KEY);
+        }catch{}
         return legacy;
       }
     }catch{}
