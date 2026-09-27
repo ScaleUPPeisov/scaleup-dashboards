@@ -1,0 +1,42 @@
+# VYRON / ENDLUME privacy: never commit user state or credentials
+.env
+.env.*
+!.env.example
+
+# Google / OAuth credentials
+**/credentials.json
+**/credentials-*.json
+**/client_secret*.json
+**/google-credentials*.json
+**/oauth-token*.json
+**/oauth-tokens*.json
+**/tokens.json
+**/token-store*
+**/keychain-export*
+**/credential-export*
+
+# Local application state / databases
+**/*.sqlite
+**/*.sqlite3
+**/*.db
+**/*.db-wal
+**/*.db-shm
+**/user-data/
+**/app-data/
+**/local-state/
+**/profile-state/
+**/recovery/
+**/backups/
+
+# VYRON migration/export packages
+**/*.vyron
+**/*.vyron-migration
+**/vyron-migration-*
+**/migration-backup*
+**/migration-export*
+**/account-export*
+**/channel-export*
+
+# OS/user-local files
+.DS_Store
+Thumbs.db
