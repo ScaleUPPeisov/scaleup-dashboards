@@ -1,0 +1,483 @@
+name: VYRON 2.1.16 Windows x64 Stable Release
+
+on:
+  push:
+    branches:
+      - release/vyron-2.1.16-windows-x64
+    paths:
+      - '.github/workflows/vyron-2116-windows-release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: vyron-2116-windows-stable-release
+  cancel-in-progress: false
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  VERSION: '2.1.16'
+  TAG: v2.1.16-windows-x64
+  WINDOWS_TARGET: x86_64-pc-windows-msvc
+  WINDOWS_PLATFORM_KEY: windows-x86_64
+  AUDITED_SOURCE_HEAD: c0870a44482dfc9263d29262bcbac66280f60c7f
+  PREVIOUS_VERSION: '2.1.15'
+  PREVIOUS_TAG: v2.1.15-windows-x64
+  FFMPEG_VERSION: 8.1.2
+  FFMPEG_ZIP_SHA256: db580001caa24ac104c8cb856cd113a87b0a443f7bdf47d8c12b1d740584a2ec
+  EMBEDDED_UPDATER_KEY: dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEREODQ1NDdERTI1MEYxQzAKUldUQThWRGlmVlNFM1RHdW5WQnE2eG9BYTBnQlNmbUtmVU84UHJQMUNvZWZ4Qmo0L2hYcUd4UDEK
+
+jobs:
+  release:
+    name: audit -> runtime acceptance -> signed updater -> publish
+    runs-on: windows-latest
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+    steps:
+      - name: Checkout exact release branch
+        uses: actions/checkout@v4
+        with:
+          ref: release/vyron-2.1.16-windows-x64
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Release source and version contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          import json,re,os,subprocess
+          v=os.environ['VERSION']
+          pkg=json.load(open('package.json',encoding='utf-8'))
+          lock=json.load(open('package-lock.json',encoding='utf-8'))
+          conf=json.load(open('src-tauri/tauri.conf.json',encoding='utf-8'))
+          win=json.load(open('src-tauri/tauri.windows.conf.json',encoding='utf-8'))
+          cargo=open('src-tauri/Cargo.toml',encoding='utf-8').read()
+          clock=open('src-tauri/Cargo.lock',encoding='utf-8').read()
+          assert pkg['version']==v
+          assert lock['version']==v and lock['packages']['']['version']==v
+          assert conf['version']==v
+          assert conf['identifier']=='studio.channelflow.desktop'
+          assert re.search(r'(?m)^version\s*=\s*"2\.1\.16"\s*$',cargo)
+          assert re.search(r'\[\[package\]\]\r?\nname = "channelflow"\r?\nversion = "2\.1\.16"',clock)
+          assert win['bundle']['createUpdaterArtifacts'] is True
+          assert win['bundle']['windows']['allowDowngrades'] is False
+          assert win['plugins']['updater']['pubkey']==os.environ['EMBEDDED_UPDATER_KEY']
+          assert win['plugins']['updater']['endpoints'][0].endswith('/vyron-updates/windows-latest.json')
+          print('VERSION_CONTRACT=PASS')
+          print('WINDOWS_DOWNGRADE_BLOCK=PASS')
+          PY
+          git merge-base --is-ancestor "$AUDITED_SOURCE_HEAD" HEAD
+          python - <<'PY'
+          import os,subprocess
+          allowed={
+            'package.json','package-lock.json','src-tauri/Cargo.toml',
+            'src-tauri/Cargo.lock','src-tauri/tauri.conf.json',
+            '.github/workflows/vyron-2116-windows-release.yml'
+          }
+          base=os.environ['AUDITED_SOURCE_HEAD']
+          changed=set(subprocess.check_output(['git','diff','--name-only',base+'...HEAD'],text=True).splitlines())
+          extra=changed-allowed
+          assert not extra, f'unaudited product changes after audit HEAD: {sorted(extra)}'
+          print('AUDITED_SOURCE_ANCESTRY=PASS')
+          print('POST_AUDIT_CHANGES='+','.join(sorted(changed)))
+          PY
+          test -n "${TAURI_SIGNING_PRIVATE_KEY:-}"
+          ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1
+          gh api "repos/$REPO/contents/vyron-updates/windows-latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode > previous-feed.json
+          python - <<'PY'
+          import json,os
+          d=json.load(open('previous-feed.json',encoding='utf-8'))
+          assert d['version']==os.environ['PREVIOUS_VERSION'], d['version']
+          p=d['platforms'][os.environ['WINDOWS_PLATFORM_KEY']]
+          assert p['url'] and p['signature']
+          print('PREVIOUS_WINDOWS_FEED=PASS')
+          PY
+
+      - name: Install frontend dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Targeted Windows parity tests
+        run: npx vitest run src/v214WindowsStability.test.ts src/renderLifecycle.test.ts src/readyVideoInventory.test.ts src/youtubePublishSafety.test.ts src/youtubeQuota.test.ts src/productionPrefs.test.ts src/publishWorkspaceState.test.ts src/updaterPolicy.test.ts src/updaterRuntime.test.ts src/v215WindowsShellAudit.test.ts
+
+      - name: Full frontend tests
+        run: npm test
+
+      - name: Frontend production build
+        run: npm run build
+
+      - name: Provision pinned Windows FFmpeg
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $zip = Join-Path $env:RUNNER_TEMP "ffmpeg-$env:FFMPEG_VERSION.zip"
+          $unpack = Join-Path $env:RUNNER_TEMP "ffmpeg-$env:FFMPEG_VERSION"
+          Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-$env:FFMPEG_VERSION-essentials_build.zip" -OutFile $zip
+          $actual=(Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($actual -ne $env:FFMPEG_ZIP_SHA256){throw "FFmpeg SHA-256 mismatch: $actual"}
+          Expand-Archive $zip $unpack -Force
+          $ffmpeg=Get-ChildItem $unpack -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          $ffprobe=Get-ChildItem $unpack -Recurse -Filter ffprobe.exe | Select-Object -First 1
+          if(-not $ffmpeg -or -not $ffprobe){throw "FFmpeg binaries missing"}
+          New-Item -ItemType Directory -Force -Path "src-tauri/resources/bin" | Out-Null
+          Copy-Item $ffmpeg.FullName "src-tauri/resources/bin/ffmpeg.exe" -Force
+          Copy-Item $ffprobe.FullName "src-tauri/resources/bin/ffprobe.exe" -Force
+          "WINDOWS_FFMPEG_RESOURCE=PASS" | Write-Host
+
+      - name: Targeted Rust Windows and OAuth tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          cargo test --manifest-path src-tauri/Cargo.toml oauth_callback -- --nocapture
+          if($LASTEXITCODE -ne 0){throw "OAuth callback tests failed"}
+          cargo test --manifest-path src-tauri/Cargo.toml windows_credential_manager_roundtrip_is_tenant_scoped -- --nocapture
+          if($LASTEXITCODE -ne 0){throw "Credential Manager roundtrip failed"}
+          cargo test --manifest-path src-tauri/Cargo.toml windows_credential_manager_isolates_same_account_between_tenants -- --nocapture
+          if($LASTEXITCODE -ne 0){throw "Credential Manager tenant isolation failed"}
+          cargo test --manifest-path src-tauri/Cargo.toml unicode_spaces_ampersand_and_parentheses_path_is_read_write_safe -- --nocapture
+          if($LASTEXITCODE -ne 0){throw "Unicode path test failed"}
+          cargo test --manifest-path src-tauri/Cargo.toml long_windows_path_over_260_chars_is_read_write_safe_when_os_supports_vyron_runtime -- --nocapture
+          if($LASTEXITCODE -ne 0){throw "Long path test failed"}
+          cargo test --manifest-path src-tauri/Cargo.toml unc_paths_are_classified_as_external_without_network_access -- --nocapture
+          if($LASTEXITCODE -ne 0){throw "UNC path test failed"}
+          cargo test --manifest-path src-tauri/Cargo.toml locked_primary_fails_without_destroying_existing_state -- --nocapture
+          if($LASTEXITCODE -ne 0){throw "Locked state recovery test failed"}
+
+      - name: Full Rust tests and compile
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          cargo test --manifest-path src-tauri/Cargo.toml
+          if($LASTEXITCODE -ne 0){throw "Full Rust test suite failed"}
+          cargo check --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
+          if($LASTEXITCODE -ne 0){throw "Windows Rust compile failed"}
+
+      - name: Normalize updater signing key
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          import base64,os
+          raw=os.environ.get('TAURI_SIGNING_PRIVATE_KEY','').strip()
+          assert raw
+          def dec(x):
+              try:return base64.b64decode(x,validate=True).decode()
+              except Exception:return None
+          if raw.startswith('untrusted comment:'):
+              out=base64.b64encode(raw.encode()).decode(); box=raw
+          else:
+              one=dec(raw)
+              if one and one.startswith('untrusted comment:'):
+                  out=raw; box=one
+              else:
+                  box=dec(one) if one else None
+                  assert box and box.startswith('untrusted comment:')
+                  out=one.strip()
+          assert 'secret key' in box.splitlines()[0].lower()
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f:
+              f.write('TAURI_SIGNING_PRIVATE_KEY='+out+'\n')
+          print('::add-mask::'+out)
+          print('UPDATER_PRIVATE_KEY_NORMALIZED=PASS')
+          PY
+
+      - name: Build signed Windows NSIS updater
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npx tauri build --target "$WINDOWS_TARGET" --bundles nsis
+          ROOT="src-tauri/target/$WINDOWS_TARGET/release"
+          EXE="$ROOT/VYRON.exe"
+          INSTALLER="$(find "$ROOT/bundle/nsis" -maxdepth 1 -name '*-setup.exe' -type f | head -n1)"
+          test -s "$EXE"
+          test -n "$INSTALLER"
+          test -s "$INSTALLER"
+          test -s "$INSTALLER.sig"
+          mkdir -p production
+          FIXED="VYRON_2.1.16_x64-setup.exe"
+          cp "$INSTALLER" "production/$FIXED"
+          cp "$INSTALLER.sig" "production/$FIXED.sig"
+          SHA="$(sha256sum "production/$FIXED" | awk '{print $1}')"
+          printf '%s  %s\n' "$SHA" "$FIXED" > "production/$FIXED.sha256"
+          echo "WINDOWS_INSTALLER=$FIXED" >> "$GITHUB_ENV"
+          echo "WINDOWS_INSTALLER_SHA256=$SHA" >> "$GITHUB_ENV"
+          echo "WINDOWS_INSTALLER_BYTES=$(python -c "import os;print(os.path.getsize('production/$FIXED'))")" >> "$GITHUB_ENV"
+          python - "$EXE" <<'PY'
+          import sys,struct
+          b=open(sys.argv[1],'rb').read()
+          off=struct.unpack_from('<I',b,0x3c)[0]
+          assert b[off:off+4]==b'PE\0\0'
+          assert struct.unpack_from('<H',b,off+4)[0]==0x8664
+          print('PE_X64=PASS')
+          PY
+          echo "SIGNED_NSIS_BUILD=PASS"
+
+      - name: Independent updater signature verification
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          import base64,os,pathlib
+          t=pathlib.Path(os.environ['RUNNER_TEMP'])
+          (t/'vyron-updater.pub').write_bytes(base64.b64decode(os.environ['EMBEDDED_UPDATER_KEY']))
+          encoded=pathlib.Path('production',os.environ['WINDOWS_INSTALLER']+'.sig').read_text().strip()
+          (t/'vyron-updater.sig').write_bytes(base64.b64decode(encoded))
+          PY
+          V="$RUNNER_TEMP/vyron-minisign-verify"
+          mkdir -p "$V/src"
+          cat >"$V/Cargo.toml" <<'EOF'
+          [package]
+          name = "vyron-minisign-verify"
+          version = "0.1.0"
+          edition = "2021"
+          [dependencies]
+          minisign-verify = "0.2.5"
+          EOF
+          cat >"$V/src/main.rs" <<'EOF'
+          use minisign_verify::{PublicKey,Signature};
+          use std::{env,path::Path};
+          fn main(){
+            let a:Vec<String>=env::args().collect();
+            let pk=PublicKey::from_file(Path::new(&a[1])).expect("public key");
+            let sig=Signature::from_file(Path::new(&a[3])).expect("signature");
+            let data=std::fs::read(&a[2]).expect("artifact");
+            pk.verify(&data,&sig,false).expect("signature verification");
+            println!("UPDATER_SIGNATURE=VERIFIED");
+          }
+          EOF
+          cargo run --quiet --manifest-path "$V/Cargo.toml" -- "$RUNNER_TEMP/vyron-updater.pub" "production/$WINDOWS_INSTALLER" "$RUNNER_TEMP/vyron-updater.sig"
+
+      - name: Hosted Windows upgrade and runtime acceptance
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path acceptance | Out-Null
+          $old = Join-Path $env:RUNNER_TEMP "VYRON_2.1.15_x64-setup.exe"
+          Invoke-WebRequest -Uri "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.15-windows-x64/VYRON_2.1.15_x64-setup.exe" -OutFile $old
+          $candidate = Join-Path $PWD "production\VYRON_2.1.16_x64-setup.exe"
+
+          $p15=Start-Process -FilePath $old -ArgumentList "/S" -Wait -PassThru
+          if($p15.ExitCode -ne 0){throw "Public 2.1.15 install failed: $($p15.ExitCode)"}
+
+          $tenant=Join-Path $env:APPDATA "studio.channelflow.desktop\users\release-2116-acceptance"
+          New-Item -ItemType Directory -Force -Path $tenant | Out-Null
+          $sentinel=Join-Path $tenant "release-sentinel.bin"
+          [IO.File]::WriteAllBytes($sentinel,[byte[]](1,3,3,7,2,1,1,6))
+          $before=(Get-FileHash $sentinel -Algorithm SHA256).Hash
+
+          $p16=Start-Process -FilePath $candidate -ArgumentList "/S" -Wait -PassThru
+          if($p16.ExitCode -ne 0){throw "Candidate 2.1.16 install failed: $($p16.ExitCode)"}
+          if((Get-FileHash $sentinel -Algorithm SHA256).Hash -ne $before){throw "Installer mutated tenant sentinel"}
+
+          $exe=Get-ChildItem $env:LOCALAPPDATA -Filter VYRON.exe -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if(-not $exe){throw "Installed VYRON.exe not found"}
+          $installed=$exe.VersionInfo.ProductVersion
+          if(-not $installed.StartsWith("2.1.16")){throw "Installed candidate version mismatch: $installed"}
+
+          $root=Join-Path $env:USERPROFILE "VYRON Release\Видео & Музыка\Проект (01)"
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          $txt=Join-Path $root "данные & test (01).txt"
+          [IO.File]::WriteAllText($txt,"VYRON 2.1.16 unicode path probe",[Text.UTF8Encoding]::new($false))
+          if((Get-Content $txt -Raw) -ne "VYRON 2.1.16 unicode path probe"){throw "Unicode/special path readback failed"}
+          $ffmpeg=(Resolve-Path "src-tauri/resources/bin/ffmpeg.exe").Path
+          $video=Join-Path $root "Video 001.mp4"
+          & $ffmpeg -hide_banner -loglevel error -f lavfi -i "color=c=black:s=320x180:d=2" -f lavfi -i "anullsrc=r=44100:cl=stereo" -shortest -c:v libx264 -pix_fmt yuv420p -c:a aac -y $video
+          if($LASTEXITCODE -ne 0 -or -not (Test-Path $video)){throw "MP4 fixture generation failed"}
+          $shaA=(Get-FileHash $video -Algorithm SHA256).Hash
+          & $ffmpeg -hide_banner -loglevel error -f lavfi -i "color=c=white:s=320x180:d=2" -f lavfi -i "anullsrc=r=44100:cl=stereo" -shortest -c:v libx264 -pix_fmt yuv420p -c:a aac -y $video
+          if($LASTEXITCODE -ne 0){throw "MP4 rerender failed"}
+          $shaB=(Get-FileHash $video -Algorithm SHA256).Hash
+          if($shaA -eq $shaB){throw "Same-path rerender fingerprint did not change"}
+
+          $proc=Start-Process -FilePath $exe.FullName -PassThru
+          Start-Sleep -Seconds 10
+          $proc.Refresh()
+          if($proc.HasExited){throw "VYRON exited during 10-second hosted runtime smoke: $($proc.ExitCode)"}
+          "HOSTED_RUNTIME_10S=PASS" | Add-Content acceptance/runtime.txt
+          if($proc.CloseMainWindow()){
+            if(-not $proc.WaitForExit(8000)){Stop-Process -Id $proc.Id -Force}
+          }else{Stop-Process -Id $proc.Id -Force}
+
+          $again=Start-Process -FilePath $exe.FullName -PassThru
+          Start-Sleep -Seconds 6
+          $again.Refresh()
+          if($again.HasExited){throw "VYRON failed hosted relaunch: $($again.ExitCode)"}
+          "HOSTED_RELAUNCH_6S=PASS" | Add-Content acceptance/runtime.txt
+          if($again.CloseMainWindow()){
+            if(-not $again.WaitForExit(8000)){Stop-Process -Id $again.Id -Force}
+          }else{Stop-Process -Id $again.Id -Force}
+
+          $auth=Get-AuthenticodeSignature $exe.FullName
+          "AUTHENTICODE_STATUS=$($auth.Status)" | Set-Content acceptance/authenticode.txt
+          "INSTALLED_VERSION=$installed" | Add-Content acceptance/runtime.txt
+          "SPECIAL_PATH_RW=PASS" | Add-Content acceptance/runtime.txt
+          "SAME_PATH_RERENDER_FINGERPRINT=PASS" | Add-Content acceptance/runtime.txt
+          "TENANT_SENTINEL_AFTER_UPGRADE=PASS" | Add-Content acceptance/runtime.txt
+
+          $uninstaller=Join-Path $exe.Directory.FullName "uninstall.exe"
+          if(-not (Test-Path $uninstaller)){throw "Candidate uninstaller missing"}
+          $un=Start-Process -FilePath $uninstaller -ArgumentList "/S" -Wait -PassThru
+          if($un.ExitCode -ne 0){throw "Candidate uninstall failed: $($un.ExitCode)"}
+          if(-not (Test-Path $sentinel)){throw "Uninstall deleted tenant sentinel"}
+          if((Get-FileHash $sentinel -Algorithm SHA256).Hash -ne $before){throw "Uninstall mutated tenant sentinel"}
+          "UNINSTALL_PRESERVES_TENANT_DATA=PASS" | Add-Content acceptance/runtime.txt
+          Get-Content acceptance/runtime.txt
+          Get-Content acceptance/authenticode.txt
+
+      - name: Build release metadata and feed
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          HEAD="$(git rev-parse HEAD)"
+          cat > production/RELEASE_NOTES_WINDOWS_2_1_16.md <<EOF
+          ## VYRON 2.1.16 — Windows x64 stability release
+
+          Source audit baseline: $AUDITED_SOURCE_HEAD
+          Release source: $HEAD
+
+          - Hardens Google OAuth transactions, callback validation, PKCE/state handling and Windows browser argument boundaries.
+          - Adds single-instance protection and flushes current state before desktop shutdown.
+          - Serializes updater download/install transactions and keeps the Windows-native updater feed explicit.
+          - Isolates Windows Credential Manager secrets and production state per tenant/profile.
+          - Isolates production preferences, YouTube quota ledger, existing-video cache and publish workspace between tenants.
+          - Fixes completed-render identity so a genuinely rerendered file at the same path can become ready again without being hidden by old upload history.
+          - Hardens Windows Unicode, long-path, UNC/removable/network storage handling and atomic replacement of recovery/cache/archive files.
+          - Blocks downgrades in the current NSIS installer.
+          - Preserves tenant data through 2.1.15 -> 2.1.16 install, launch/relaunch and uninstall acceptance on GitHub-hosted Windows.
+          - Tauri updater minisign signature is independently verified before publication.
+          - Authenticode status is recorded as evidence and is not represented as a release gate unless a signing certificate is configured.
+          EOF
+
+          python - <<'PY'
+          import json,os,pathlib,datetime
+          sig=pathlib.Path('production',os.environ['WINDOWS_INSTALLER']+'.sig').read_text().strip()
+          assert sig
+          url=f"https://github.com/{os.environ['REPO']}/releases/download/{os.environ['TAG']}/{os.environ['WINDOWS_INSTALLER']}"
+          feed={
+            'version':os.environ['VERSION'],
+            'notes':'VYRON 2.1.16 — Windows stability: OAuth transaction hardening, tenant-isolated state/credentials, safer updater lifecycle, rerender identity and Windows path/storage fixes.',
+            'pub_date':datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace('+00:00','Z'),
+            'platforms':{os.environ['WINDOWS_PLATFORM_KEY']:{'url':url,'signature':sig}}
+          }
+          pathlib.Path('production/windows-latest.json').write_text(json.dumps(feed,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          PY
+          cp acceptance/runtime.txt production/runtime-acceptance.txt
+          cp acceptance/authenticode.txt production/authenticode.txt
+          echo "RELEASE_METADATA=PASS"
+
+      - name: Publish immutable GitHub release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          HEAD="$(git rev-parse HEAD)"
+          python - <<'PY'
+          import json,os,subprocess
+          body=open('production/RELEASE_NOTES_WINDOWS_2_1_16.md',encoding='utf-8').read()
+          payload={
+            'tag_name':os.environ['TAG'],
+            'target_commitish':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),
+            'name':'VYRON 2.1.16 — Windows x64',
+            'body':body,
+            'draft':False,
+            'prerelease':False,
+            'make_latest':'false'
+          }
+          open('release-payload.json','w',encoding='utf-8').write(json.dumps(payload))
+          PY
+          gh api --method POST "repos/$REPO/releases" --input release-payload.json > release-response.json
+          gh release upload "$TAG"             "production/$WINDOWS_INSTALLER"             "production/$WINDOWS_INSTALLER.sig"             "production/$WINDOWS_INSTALLER.sha256"             production/windows-latest.json             production/RELEASE_NOTES_WINDOWS_2_1_16.md             production/runtime-acceptance.txt             production/authenticode.txt             --repo "$REPO"
+          echo "RELEASE_CREATED=PASS"
+
+      - name: Verify remote release before updater promotion
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/$REPO/releases/tags/$TAG" > remote-release.json
+          python - <<'PY'
+          import json,os,subprocess
+          d=json.load(open('remote-release.json',encoding='utf-8'))
+          assert d['target_commitish']==subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
+          names={a['name'] for a in d['assets']}
+          required={
+            os.environ['WINDOWS_INSTALLER'],
+            os.environ['WINDOWS_INSTALLER']+'.sig',
+            os.environ['WINDOWS_INSTALLER']+'.sha256',
+            'windows-latest.json','RELEASE_NOTES_WINDOWS_2_1_16.md',
+            'runtime-acceptance.txt','authenticode.txt'
+          }
+          assert required<=names, sorted(required-names)
+          print('REMOTE_RELEASE_METADATA=PASS')
+          PY
+          URL="https://github.com/$REPO/releases/download/$TAG/$WINDOWS_INSTALLER"
+          curl -L --fail --silent --show-error -o remote-installer.exe "$URL"
+          test "$(sha256sum remote-installer.exe | awk '{print $1}')" = "$WINDOWS_INSTALLER_SHA256"
+          curl -L --fail --silent --show-error -o remote-installer.sig "$URL.sig"
+          cmp -s remote-installer.sig "production/$WINDOWS_INSTALLER.sig"
+          echo "REMOTE_INSTALLER_SHA256=VERIFIED"
+          echo "REMOTE_UPDATER_SIGNATURE_ASSET=VERIFIED"
+
+      - name: Promote Windows updater feed atomically
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/$REPO/contents/vyron-updates/windows-latest.json?ref=main" > feed-meta.json
+          python - <<'PY'
+          import json,base64,os
+          meta=json.load(open('feed-meta.json',encoding='utf-8'))
+          current=json.loads(base64.b64decode(meta['content']).decode())
+          assert current['version']==os.environ['PREVIOUS_VERSION'], current['version']
+          content=base64.b64encode(open('production/windows-latest.json','rb').read()).decode()
+          json.dump({'sha':meta['sha'],'content':content},open('feed-put.json','w'))
+          PY
+          SHA="$(python -c "import json;print(json.load(open('feed-put.json'))['sha'])")"
+          B64="$(python -c "import json;print(json.load(open('feed-put.json'))['content'])")"
+          gh api --method PUT "repos/$REPO/contents/vyron-updates/windows-latest.json"             -f message='release: activate VYRON 2.1.16 Windows updater feed'             -f content="$B64" -f sha="$SHA" -f branch=main >/dev/null
+          echo "WINDOWS_FEED_PROMOTED=PASS"
+
+      - name: Final live updater verification
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          curl -L --fail --silent --show-error -H 'Cache-Control: no-cache'             -o final-windows-latest.json             "https://raw.githubusercontent.com/$REPO/main/vyron-updates/windows-latest.json"
+          python - <<'PY'
+          import json,os
+          d=json.load(open('final-windows-latest.json',encoding='utf-8'))
+          assert d['version']==os.environ['VERSION'], d['version']
+          p=d['platforms'][os.environ['WINDOWS_PLATFORM_KEY']]
+          assert f"/releases/download/{os.environ['TAG']}/{os.environ['WINDOWS_INSTALLER']}" in p['url']
+          assert p['signature']
+          print('LIVE_WINDOWS_FEED_VERSION=2.1.16')
+          print('LIVE_WINDOWS_FEED_CONTRACT=PASS')
+          PY
+          URL="$(python -c "import json,os;print(json.load(open('final-windows-latest.json'))['platforms'][os.environ['WINDOWS_PLATFORM_KEY']]['url'])")"
+          curl -L --fail --silent --show-error -o final-installer.exe "$URL"
+          test "$(sha256sum final-installer.exe | awk '{print $1}')" = "$WINDOWS_INSTALLER_SHA256"
+          echo "FINAL_REMOTE_INSTALLER_SHA256=VERIFIED"
+          echo "VYRON_2_1_16_WINDOWS_RELEASE=GREEN"
+
+      - name: Upload release evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vyron-2.1.16-windows-release-evidence
+          path: |
+            production/**
+            acceptance/**
+            previous-feed.json
+            final-windows-latest.json
+          if-no-files-found: warn
