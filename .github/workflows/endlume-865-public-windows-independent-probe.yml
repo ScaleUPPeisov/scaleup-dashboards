@@ -81,7 +81,7 @@ jobs:
           Add-Type -AssemblyName System.Drawing
           Add-Type -AssemblyName System.Windows.Forms
           $sw=[Diagnostics.Stopwatch]::StartNew()
-          foreach($ms in @(1200,1800,2600)){
+          foreach($ms in @(3400,4200,5000)){
             $remain=$ms-[int]$sw.ElapsedMilliseconds
             if($remain -gt 0){Start-Sleep -Milliseconds $remain}
             $bounds=[System.Windows.Forms.SystemInformation]::VirtualScreen
@@ -97,7 +97,7 @@ jobs:
               Write-Host "VISUAL_${ms}_B64_END"
             }
           }
-          if($sw.ElapsedMilliseconds -lt 3000){Start-Sleep -Milliseconds (3000-[int]$sw.ElapsedMilliseconds)}
+          if($sw.ElapsedMilliseconds -lt 5400){Start-Sleep -Milliseconds (5400-[int]$sw.ElapsedMilliseconds)}
           $p.Refresh()
           Write-Host "T1 pid=$($p.Id) exited=$($p.HasExited) mainWindowHandle=$($p.MainWindowHandle) title=$($p.MainWindowTitle)"
           if($p.HasExited){throw "EARLY_EXIT=$($p.ExitCode)"}
