@@ -175,6 +175,24 @@ jobs:
           EOF
           cargo run --quiet --manifest-path "$V/Cargo.toml" -- audit-evidence/updater.pub audit-evidence/VYRON_2.1.15_x64-setup.exe audit-evidence/updater.sig | tee -a audit-evidence/windows-live.txt
 
+      - name: Build current-source Windows NSIS audit installer
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python - <<'PY'
+          import json
+          d=json.load(open('src-tauri/tauri.windows.conf.json',encoding='utf-8'))
+          assert d['bundle']['windows']['allowDowngrades'] is False
+          print('WINDOWS_ALLOW_DOWNGRADES_FALSE=PASS')
+          PY
+          npx tauri build --target x86_64-pc-windows-msvc --bundles nsis --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          $installer = Get-ChildItem "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis" -Filter "*-setup.exe" | Select-Object -First 1
+          if (-not $installer) { throw "Current-source NSIS installer not found" }
+          New-Item -ItemType Directory -Force -Path audit-evidence | Out-Null
+          Copy-Item $installer.FullName "audit-evidence/VYRON_2.1.15_current-source_x64-setup.exe" -Force
+          Write-Host "CURRENT_SOURCE_NSIS=PASS"
+
       - name: Windows installer update downgrade and uninstall safety
         if: matrix.name == 'windows'
         shell: pwsh
@@ -183,8 +201,8 @@ jobs:
           New-Item -ItemType Directory -Force -Path audit-evidence | Out-Null
           $old = Join-Path $env:RUNNER_TEMP "VYRON_2.1.14_x64-setup.exe"
           Invoke-WebRequest -Uri "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.14-windows-x64/VYRON_2.1.14_x64-setup.exe" -OutFile $old
-          $new = Join-Path $PWD "audit-evidence/VYRON_2.1.15_x64-setup.exe"
-          if (-not (Test-Path $new)) { throw "Live 2.1.15 installer missing" }
+          $new = Join-Path $PWD "audit-evidence/VYRON_2.1.15_current-source_x64-setup.exe"
+          if (-not (Test-Path $new)) { throw "Current-source 2.1.15 installer missing" }
 
           $p14 = Start-Process -FilePath $old -ArgumentList "/S" -Wait -PassThru
           if ($p14.ExitCode -ne 0) { throw "2.1.14 silent install failed: $($p14.ExitCode)" }
