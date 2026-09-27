@@ -499,10 +499,8 @@ fn choose_newer<'a>(local:&'a VaultProfile,imported:&'a VaultProfile)->&'a Vault
  if !i.trim().is_empty()&&(l.trim().is_empty()||i>l){imported}else{local}
 }
 
-pub fn merge_portable_snapshot(app:&AppHandle,value:&serde_json::Value)->Result<serde_json::Value,String>{
+fn merge_portable_into_local(local:&mut PlainVault,value:&serde_json::Value)->Result<(usize,usize),String>{
  let imported=portable_profile_map(value)?;
- let mut local=read_for_update(app)?;
- let existing_before=local.profiles.len();
  let mut added=0usize;let mut updated=0usize;
  if local.global_client_id.trim().is_empty(){
   if let Some(x)=value.get("globalClientId").and_then(serde_json::Value::as_str).filter(|x|!x.trim().is_empty()){local.global_client_id=x.to_string();}
@@ -527,6 +525,13 @@ pub fn merge_portable_snapshot(app:&AppHandle,value:&serde_json::Value)->Result<
    local.profiles.insert(id,incoming);added+=1;
   }
  }
+ Ok((added,updated))
+}
+
+pub fn merge_portable_snapshot(app:&AppHandle,value:&serde_json::Value)->Result<serde_json::Value,String>{
+ let mut local=read_for_update(app)?;
+ let existing_before=local.profiles.len();
+ let (added,updated)=merge_portable_into_local(&mut local,value)?;
  write(app,&local)?;
  clear_caches();
  let verify=read(app,false)?;
@@ -610,6 +615,37 @@ mod tests{
   let migrated=decode_vault(&new_enc,&new).unwrap();
   assert_eq!(migrated.profiles.get("p1").unwrap().refresh_token,"refresh");
   assert_eq!(migrated.global_client_secret,"secret");
+ }
+
+ #[test]fn portable_merge_is_idempotent_preserves_local_secret_and_never_deletes(){
+  let mut local=PlainVault{global_client_id:"local-client".into(),global_client_secret:"local-secret".into(),..Default::default()};
+  local.profiles.insert("p1".into(),VaultProfile{
+   profile_uuid:"p1".into(),expected_channel_id:"TEST_CH_LOCAL".into(),refresh_token:"local-refresh".into(),client_secret:"local-client-secret".into(),
+   google_email:"old@example.test".into(),preferred_browser:"old".into(),updated_at:"2026-09-26T00:00:00Z".into(),credential_generation:2,connected_at:"2026-09-20T00:00:00Z".into()
+  });
+  local.profiles.insert("p-local-only".into(),VaultProfile{profile_uuid:"p-local-only".into(),refresh_token:"keep-me".into(),..Default::default()});
+  let incoming=serde_json::json!({
+   "globalClientId":"import-client","globalClientSecret":"import-secret",
+   "profiles":{
+    "p1":{"profileUuid":"p1","expectedChannelId":"TEST_CH_IMPORTED","refreshToken":"import-refresh","clientSecret":"import-client-secret","googleEmail":"new@example.test","preferredBrowser":"new","updatedAt":"2026-09-27T00:00:00Z","credentialGeneration":3,"connectedAt":"2026-09-27T00:00:00Z"},
+    "p2":{"profileUuid":"p2","expectedChannelId":"TEST_CH_TWO","refreshToken":"p2-refresh","clientSecret":"p2-secret","updatedAt":"2026-09-27T00:00:00Z","credentialGeneration":1}
+   }
+  });
+  let (added,updated)=merge_portable_into_local(&mut local,&incoming).unwrap();
+  assert_eq!((added,updated),(1,1));
+  assert_eq!(local.profiles.len(),3);
+  let p1=local.profiles.get("p1").unwrap();
+  assert_eq!(p1.refresh_token,"local-refresh");
+  assert_eq!(p1.client_secret,"local-client-secret");
+  assert_eq!(p1.expected_channel_id,"TEST_CH_IMPORTED");
+  assert_eq!(p1.credential_generation,3);
+  assert!(local.profiles.contains_key("p-local-only"));
+  assert_eq!(local.global_client_id,"local-client");
+  assert_eq!(local.global_client_secret,"local-secret");
+  let (added2,updated2)=merge_portable_into_local(&mut local,&incoming).unwrap();
+  assert_eq!((added2,updated2),(0,2));
+  assert_eq!(local.profiles.len(),3);
+  assert_eq!(local.profiles.get("p1").unwrap().refresh_token,"local-refresh");
  }
  #[test]fn local_storage_contract_is_stable(){
   let source=include_str!("oauth_vault.rs");
