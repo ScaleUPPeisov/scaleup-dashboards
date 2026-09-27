@@ -1,5 +1,5 @@
 name: VYRON Current Public Tip Privacy Audit
-# rerun after source sanitation 9d7af0a
+# rerun after source sanitation 8561758
 
 on:
   push:
@@ -39,6 +39,15 @@ jobs:
             b'Riviera Sax Club',b'Shadow Note Lounge',b'Rainy Cat Jazz',
             b'Glass City Lovers',b'Mafia 1947 Lounge'
           ]
+          private_title_patterns=[
+            re.compile(
+              rb'(?<![A-Za-z0-9])' +
+              rb'\\s+'.join(re.escape(part) for part in name.split()) +
+              rb'(?![A-Za-z0-9])',
+              re.I
+            )
+            for name in old_private_names
+          ]
           patterns={
             'GOOGLE_ACCESS_TOKEN':re.compile(rb'ya29\.[A-Za-z0-9._~-]{20,}'),
             'GOOGLE_REFRESH_TOKEN':re.compile(rb'1//[A-Za-z0-9._~-]{20,}'),
@@ -54,7 +63,7 @@ jobs:
               p=pathlib.Path(name)
               if not p.is_file(): continue
               data=p.read_bytes(); scanned+=1
-              if any(x.lower() in data.lower() for x in old_private_names):
+              if any(rx.search(data) for rx in private_title_patterns):
                   findings.append(('PRIVATE_CHANNEL_TITLE',name))
               for label,rx in patterns.items():
                   if rx.search(data): findings.append((label,name))
