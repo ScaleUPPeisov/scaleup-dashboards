@@ -313,7 +313,12 @@ fn resolve_oauth_credential_states_local(app:&AppHandle)->Result<Vec<Value>,Stri
     else if vault_refresh_present{
       if validated_ready||base_credential_state=="CONNECTED"{"READY"}else{"NOT_CHECKED"}
     }
-    else if canonical_present||legacy_present{"NEEDS_ONE_TIME_LOCAL_MIGRATION"}
+    else if canonical_present{
+      if denial.is_some(){"KEYCHAIN_BLOCKED"}
+      else if validated_ready||base_credential_state=="CONNECTED"{"READY"}
+      else{"NEEDS_ONE_TIME_LOCAL_MIGRATION"}
+    }
+    else if legacy_present{"NEEDS_ONE_TIME_LOCAL_MIGRATION"}
     else if denial.is_some()&&recoverable_denial{"KEYCHAIN_BLOCKED"}
     else if denial.is_some(){"KEYCHAIN_BLOCKED"}
     else if currently_accessible&&base_credential_state=="CONNECTED"{"READY"}
