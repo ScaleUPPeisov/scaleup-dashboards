@@ -230,6 +230,27 @@ fn validation_proves_profile_ready(profile:&OAuthProfile,validation:Option<&Cred
   _=>false,
  }
 }
+fn resolved_runtime_credential_state<'a>(
+ vault_refresh_blocked:bool,vault_profile_secret_blocked:bool,vault_global_blocked:bool,
+ vault_refresh_present:bool,canonical_present:bool,legacy_present:bool,denial_present:bool,
+ recoverable_denial:bool,currently_accessible:bool,validated_ready:bool,base_credential_state:&'a str,
+)->&'a str{
+ if vault_refresh_blocked||vault_profile_secret_blocked||vault_global_blocked{"RECOVERABLE_KEYCHAIN_BLOCKED"}
+ else if vault_refresh_present{
+  if validated_ready||base_credential_state=="CONNECTED"{"READY"}else{"NOT_CHECKED"}
+ }
+ else if canonical_present{
+  if denial_present{"KEYCHAIN_BLOCKED"}
+  else if validated_ready||base_credential_state=="CONNECTED"{"READY"}
+  else{"NEEDS_ONE_TIME_LOCAL_MIGRATION"}
+ }
+ else if legacy_present{"NEEDS_ONE_TIME_LOCAL_MIGRATION"}
+ else if denial_present&&recoverable_denial{"KEYCHAIN_BLOCKED"}
+ else if denial_present{"KEYCHAIN_BLOCKED"}
+ else if currently_accessible&&base_credential_state=="CONNECTED"{"READY"}
+ else{base_credential_state}
+}
+
 fn resolved_client_secret_state(
  profile_cached:bool,
  profile_known:bool,
@@ -309,20 +330,11 @@ fn resolve_oauth_credential_states_local(app:&AppHandle)->Result<Vec<Value>,Stri
     .map(|code|matches!(code,"KEYCHAIN_AUTH_FAILED"|"KEYCHAIN_INTERACTION_REQUIRED"|"KEYCHAIN_ACCESS_DENIED"|"KEYCHAIN_ACCESS_DENIED_CACHED"))
     .unwrap_or(false);
   let validated_ready=validation_proves_profile_ready(profile,validation);
-  let credential_state=if vault_refresh_blocked||vault_profile_secret_blocked||vault_global_blocked{"RECOVERABLE_KEYCHAIN_BLOCKED"}
-    else if vault_refresh_present{
-      if validated_ready||base_credential_state=="CONNECTED"{"READY"}else{"NOT_CHECKED"}
-    }
-    else if canonical_present{
-      if denial.is_some(){"KEYCHAIN_BLOCKED"}
-      else if validated_ready||base_credential_state=="CONNECTED"{"READY"}
-      else{"NEEDS_ONE_TIME_LOCAL_MIGRATION"}
-    }
-    else if legacy_present{"NEEDS_ONE_TIME_LOCAL_MIGRATION"}
-    else if denial.is_some()&&recoverable_denial{"KEYCHAIN_BLOCKED"}
-    else if denial.is_some(){"KEYCHAIN_BLOCKED"}
-    else if currently_accessible&&base_credential_state=="CONNECTED"{"READY"}
-    else{base_credential_state};
+  let credential_state=resolved_runtime_credential_state(
+    vault_refresh_blocked,vault_profile_secret_blocked,vault_global_blocked,
+    vault_refresh_present,canonical_present,legacy_present,denial.is_some(),
+    recoverable_denial,currently_accessible,validated_ready,&base_credential_state,
+  );
   rows.push(json!({
    "profileUuid":profile.id,
    "channelTitle":profile.channel_title,
@@ -6252,6 +6264,17 @@ mod v300_final_stabilization_tests{
 #[cfg(test)]
 mod v2115_rc3_oauth_processing_tests{
  use super::*;
+ #[test]
+ fn v331_validated_fresh_canonical_profile_is_ready_without_login(){
+  assert_eq!(resolved_runtime_credential_state(false,false,false,false,true,false,false,false,false,true,"CONNECTED"),"READY");
+  assert_eq!(resolved_runtime_credential_state(false,false,false,false,true,false,false,false,false,true,"CANONICAL_PRESENT_UNVERIFIED"),"READY");
+ }
+ #[test]
+ fn v331_real_blocked_or_unverified_canonical_profile_is_not_promoted_to_ready(){
+  assert_eq!(resolved_runtime_credential_state(false,false,false,false,true,false,true,true,false,true,"CONNECTED"),"KEYCHAIN_BLOCKED");
+  assert_eq!(resolved_runtime_credential_state(false,false,false,false,true,false,false,false,false,false,"CANONICAL_PRESENT_UNVERIFIED"),"NEEDS_ONE_TIME_LOCAL_MIGRATION");
+ }
+
  #[test]
  fn metadata_presence_alone_is_never_oauth_ready(){
   let c=GoogleConfig{client_id:"CLIENT".into(),client_secret:String::new(),project_id:"vyron".into(),api_key:String::new(),client_secret_present:true,client_secret_account:"google.client_secret".into(),api_key_present:false};
