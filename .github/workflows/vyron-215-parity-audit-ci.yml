@@ -208,24 +208,36 @@ jobs:
           $down = Start-Process -FilePath $old -ArgumentList "/S" -Wait -PassThru
           $exeAfterDown = Get-Item $exe.FullName
           $vAfterDown = $exeAfterDown.VersionInfo.ProductVersion
-          if ($vAfterDown.StartsWith("2.1.14")) { throw "DOWNGRADE_ALLOWED: 2.1.14 installer replaced 2.1.15" }
+          $downgradeAllowed = $vAfterDown.StartsWith("2.1.14")
+          $afterDowngrade = (Get-FileHash $state -Algorithm SHA256).Hash
+          $downgradeStatePreserved = $afterDowngrade -eq $before
 
           $uninstaller = Join-Path $exe.Directory.FullName "uninstall.exe"
           if (-not (Test-Path $uninstaller)) { throw "VYRON uninstaller not found beside executable" }
           $un = Start-Process -FilePath $uninstaller -ArgumentList "/S" -Wait -PassThru
           if ($un.ExitCode -ne 0) { throw "Uninstall failed: $($un.ExitCode)" }
-          if (-not (Test-Path $state)) { throw "UNINSTALL_DATA_LOSS: tenant state.json was removed" }
-          $afterUninstall = (Get-FileHash $state -Algorithm SHA256).Hash
-          if ($afterUninstall -ne $before) { throw "UNINSTALL_DATA_MUTATION: tenant state changed" }
+          $stateExistsAfterUninstall = Test-Path $state
+          $afterUninstall = if ($stateExistsAfterUninstall) { (Get-FileHash $state -Algorithm SHA256).Hash } else { "" }
+          $uninstallPreserved = $stateExistsAfterUninstall -and ($afterUninstall -eq $before)
 
           @(
             "INSTALL_2_1_14_TO_2_1_15=PASS",
             "STATE_SHA_BEFORE=$before",
-            "STATE_SHA_AFTER=$after",
+            "STATE_SHA_AFTER_UPDATE=$after",
             "INSTALLED_VERSION=$v15",
-            "DOWNGRADE_2_1_15_TO_2_1_14=BLOCKED",
-            "UNINSTALL_PRESERVES_TENANT_STATE=PASS"
+            "VERSION_AFTER_OLD_INSTALLER=$vAfterDown",
+            "DOWNGRADE_2_1_15_TO_2_1_14=$(if($downgradeAllowed){'FAIL_ALLOWED'}else{'PASS_BLOCKED'})",
+            "STATE_SHA_AFTER_DOWNGRADE=$afterDowngrade",
+            "DOWNGRADE_STATE_PRESERVED=$(if($downgradeStatePreserved){'PASS'}else{'FAIL'})",
+            "UNINSTALL_STATE_EXISTS=$(if($stateExistsAfterUninstall){'YES'}else{'NO'})",
+            "STATE_SHA_AFTER_UNINSTALL=$afterUninstall",
+            "UNINSTALL_PRESERVES_TENANT_STATE=$(if($uninstallPreserved){'PASS'}else{'FAIL'})"
           ) | Set-Content audit-evidence/windows-installer-safety.txt
+          Get-Content audit-evidence/windows-installer-safety.txt
+
+          if (-not $downgradeStatePreserved) { throw "DOWNGRADE_DATA_MUTATION: tenant state changed after old installer" }
+          if (-not $uninstallPreserved) { throw "UNINSTALL_DATA_LOSS_OR_MUTATION: tenant state was removed or changed" }
+          if ($downgradeAllowed) { throw "DOWNGRADE_ALLOWED: 2.1.14 installer replaced 2.1.15" }
 
       - name: Evidence
         if: always()
