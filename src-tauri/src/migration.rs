@@ -18,8 +18,8 @@ use uuid::Uuid;
 
 use crate::{oauth_vault, security, storage};
 
-const BUNDLE_SCHEMA: u32 = 1;
-const AAD: &[u8] = b"VYRON-MIGRATION-BUNDLE-v1";
+const BUNDLE_SCHEMA: u32 = 2;
+const AAD: &[u8] = b"VYRON-MIGRATION-BUNDLE-v2";
 const MIN_PASSPHRASE: usize = 10;
 const MAX_BACKUPS: usize = 5;
 
@@ -1040,7 +1040,7 @@ mod tests {
         let integration = json!({});
         let browser = json!({});
         PortablePayload {
-            schema_version: 1,
+            schema_version: BUNDLE_SCHEMA,
             app_version: "3.3.0".into(),
             source_os: "macos".into(),
             created_at: "now".into(),
