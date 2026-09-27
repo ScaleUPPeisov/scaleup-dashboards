@@ -948,7 +948,7 @@ mod tests {
     fn cross_platform_fixture_export(){
         let kind=std::env::var("VYRON_FIXTURE_KIND").expect("VYRON_FIXTURE_KIND");
         let out=std::env::var("VYRON_FIXTURE_OUT").expect("VYRON_FIXTURE_OUT");
-        let pass=std::env::var("VYRON_FIXTURE_PASS").expect("VYRON_FIXTURE_PASS");
+        let pass=std::env::var("VYRON_FIXTURE_PASS").unwrap_or_else(|_|"fixture-passphrase-330".into());
         let payload=fixture_payload(&kind,fixture_state(&kind));
         let bytes=encrypt_payload(&payload,&pass).unwrap();
         let text=String::from_utf8_lossy(&bytes);
@@ -966,7 +966,7 @@ mod tests {
         let local_kind=std::env::var("VYRON_FIXTURE_KIND").expect("VYRON_FIXTURE_KIND");
         let input=std::env::var("VYRON_FIXTURE_IN").expect("VYRON_FIXTURE_IN");
         let output=std::env::var("VYRON_FIXTURE_OUT").ok();
-        let pass=std::env::var("VYRON_FIXTURE_PASS").expect("VYRON_FIXTURE_PASS");
+        let pass=std::env::var("VYRON_FIXTURE_PASS").unwrap_or_else(|_|"fixture-passphrase-330".into());
         let bytes=fs::read(&input).unwrap();
         assert!(decrypt_payload(&bytes,"definitely-wrong-passphrase").is_err());
         let mut corrupt=bytes.clone();let n=corrupt.len();corrupt[n-5]^=1;
