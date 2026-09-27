@@ -858,7 +858,17 @@ fn wait_for_oauth_callback_with_timeout(
     loop {
         match listener.accept() {
             Ok((mut stream, _)) => {
-                let _ = stream.set_read_timeout(Some(Duration::from_secs(15)));
+                // The listener is intentionally nonblocking so we can enforce the OAuth
+                // callback deadline. On some platforms the accepted socket can inherit
+                // nonblocking behavior; make the connected stream explicitly blocking
+                // before reading the HTTP request so a just-accepted callback cannot
+                // fail with WouldBlock before the browser finishes sending headers.
+                stream
+                    .set_nonblocking(false)
+                    .map_err(|e| format!("OAuth callback stream blocking mode: {e}"))?;
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(15)))
+                    .map_err(|e| format!("OAuth callback read timeout: {e}"))?;
                 let mut buf = [0u8; 8192];
                 let n = stream
                     .read(&mut buf)
