@@ -625,6 +625,36 @@ mod tests{
   set_active_tenant(None);
  }
 
+ #[cfg(target_os="windows")]
+ #[test]
+ fn windows_credential_manager_isolates_same_account_between_tenants(){
+  let _guard=keychain_test_guard();
+  let suffix=uuid::Uuid::new_v4();
+  let tenant_a=format!("audit-a-{suffix}");
+  let tenant_b=format!("audit-b-{suffix}");
+  let account=format!("oauth.{suffix}.refresh_token");
+
+  set_active_tenant(Some(&tenant_a));
+  canonical_set_secret(&account,"TENANT_A_SECRET").expect("tenant A write");
+
+  set_active_tenant(Some(&tenant_b));
+  assert!(canonical_get_secret(&account).expect("tenant B initial read").is_none());
+  canonical_set_secret(&account,"TENANT_B_SECRET").expect("tenant B write");
+
+  set_active_tenant(Some(&tenant_a));
+  canonical_forget_cache(&account);
+  assert_eq!(canonical_get_secret(&account).expect("tenant A read").as_deref(),Some("TENANT_A_SECRET"));
+
+  set_active_tenant(Some(&tenant_b));
+  canonical_forget_cache(&account);
+  assert_eq!(canonical_get_secret(&account).expect("tenant B read").as_deref(),Some("TENANT_B_SECRET"));
+
+  canonical_delete_secret(&account).expect("tenant B cleanup");
+  set_active_tenant(Some(&tenant_a));
+  canonical_delete_secret(&account).expect("tenant A cleanup");
+  set_active_tenant(None);
+ }
+
  #[test]
  fn private_atomic_writer_replaces_existing_file(){
   let root=std::env::temp_dir().join(format!("vyron-secure-{}",uuid::Uuid::new_v4()));
