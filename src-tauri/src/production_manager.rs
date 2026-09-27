@@ -152,7 +152,7 @@ fn atomic_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
 }
 fn copy_and_sync(src:&Path,dst:&Path)->Result<(),String>{
     fs::copy(src,dst).map_err(|e|e.to_string())?;
-    fs::File::open(dst).and_then(|f|f.sync_all()).map_err(|e|e.to_string())
+    fs::OpenOptions::new().write(true).open(dst).and_then(|f|f.sync_all()).map_err(|e|e.to_string())
 }
 fn sync_dir(path:&Path){#[cfg(unix)] if let Ok(dir)=fs::File::open(path){let _=dir.sync_all();}}
 fn read_json<T: for<'de> Deserialize<'de> + Default>(path: &Path) -> T {
