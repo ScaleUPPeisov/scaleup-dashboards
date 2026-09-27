@@ -16,7 +16,7 @@ use std::{
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
-use crate::{oauth_vault, storage};
+use crate::{oauth_vault, security, storage};
 
 const BUNDLE_SCHEMA: u32 = 1;
 const AAD: &[u8] = b"VYRON-MIGRATION-BUNDLE-v1";
@@ -49,6 +49,7 @@ struct PortablePayload {
     oauth_vault: Value,
     youtube_metadata: Value,
     google_config: Value,
+    integration_secrets: Value,
     browser_state: Value,
     payload_sha256: String,
 }
@@ -86,6 +87,8 @@ struct MigrationTxnMarker{
     backup_id:String,
     created_at:String,
     phase:String,
+    #[serde(default)]
+    remove_secret_accounts_on_rollback:Vec<String>,
 }
 
 fn app_version() -> String {
@@ -111,20 +114,21 @@ fn derive_key(passphrase: &str, salt: &[u8]) -> Result<[u8; 32], String> {
     Ok(key)
 }
 
-fn portable_core_bytes(state: &Value, oauth: &Value, youtube: &Value, google: &Value, browser: &Value) -> Result<Vec<u8>, String> {
+fn portable_core_bytes(state: &Value, oauth: &Value, youtube: &Value, google: &Value, integration: &Value, browser: &Value) -> Result<Vec<u8>, String> {
     serde_json::to_vec(&json!({
         "state": state,
         "oauthVault": oauth,
         "youtubeMetadata": youtube,
         "googleConfig": google,
+        "integrationSecrets": integration,
         "browserState": browser
     }))
     .map_err(|e| format!("MIGRATION_PAYLOAD_SERIALIZE_FAILED: {e}"))
 }
 
-fn payload_hash(state: &Value, oauth: &Value, youtube: &Value, google: &Value, browser: &Value) -> Result<String, String> {
+fn payload_hash(state: &Value, oauth: &Value, youtube: &Value, google: &Value, integration: &Value, browser: &Value) -> Result<String, String> {
     Ok(hex::encode(Sha256::digest(portable_core_bytes(
-        state, oauth, youtube, google, browser,
+        state, oauth, youtube, google, integration, browser,
     )?)))
 }
 
@@ -197,7 +201,7 @@ fn decrypt_payload(bytes: &[u8], passphrase: &str) -> Result<PortablePayload, St
     if payload.schema_version != BUNDLE_SCHEMA {
         return Err("MIGRATION_PAYLOAD_SCHEMA_INVALID".into());
     }
-    let expected = payload_hash(&payload.state, &payload.oauth_vault, &payload.youtube_metadata, &payload.google_config, &payload.browser_state)?;
+    let expected = payload_hash(&payload.state, &payload.oauth_vault, &payload.youtube_metadata, &payload.google_config, &payload.integration_secrets, &payload.browser_state)?;
     if expected != payload.payload_sha256 {
         return Err("MIGRATION_INTEGRITY_FAILED: payload hash mismatch".into());
     }
@@ -355,14 +359,11 @@ fn merge_settings(local: &Value, imported: &Value) -> Value {
             out.insert(local_authoritative.into(), Value::String(local_value.to_string()));
         }
     }
-    // The whole migration payload is already authenticated + encrypted. Local
-    // secrets win when present; a fresh machine may receive the encrypted portable
-    // value so a full backup does not silently drop API integrations.
+    // API secrets live in secure storage and are migrated separately inside the
+    // encrypted bundle. Never source them from portable state JSON.
     for secret in ["youtubeApiKey", "openaiApiKey"] {
-        let local_value=local.get(secret).and_then(Value::as_str).unwrap_or("").trim();
-        let imported_value=imported.get(secret).and_then(Value::as_str).unwrap_or("").trim();
-        let chosen=if !local_value.is_empty(){local_value}else{imported_value};
-        out.insert(secret.into(),Value::String(chosen.to_string()));
+        let local_value=local.get(secret).and_then(Value::as_str).unwrap_or("");
+        out.insert(secret.into(),Value::String(local_value.to_string()));
     }
     Value::Object(out)
 }
@@ -645,6 +646,53 @@ fn merge_and_write_metadata(app:&AppHandle,youtube:&Value,google:&Value)->Result
  Ok(json!({"profiles":profiles,"projectId":merged_google.get("project_id").cloned().unwrap_or(Value::Null),"deleted":0}))
 }
 
+
+const INTEGRATION_SECRET_FIELDS:[(&str,&str);2]=[
+    ("youtubeApiKey","state.youtubeApiKey"),
+    ("openaiApiKey","state.openaiApiKey"),
+];
+
+fn portable_integration_secrets(app:&AppHandle)->Value{
+    let mut out=serde_json::Map::new();
+    if let Ok(value)=storage::youtube_api_key_for_operation(app,""){
+        if !value.trim().is_empty(){out.insert("youtubeApiKey".into(),Value::String(value));}
+    }
+    if let Ok(value)=storage::openai_api_key_for_operation(app,""){
+        if !value.trim().is_empty(){out.insert("openaiApiKey".into(),Value::String(value));}
+    }
+    Value::Object(out)
+}
+fn integration_cleanup_accounts(value:&Value)->Result<Vec<String>,String>{
+    let mut out=Vec::new();
+    for (field,account) in INTEGRATION_SECRET_FIELDS{
+        let incoming=value.get(field).and_then(Value::as_str).unwrap_or("").trim();
+        if incoming.is_empty(){continue}
+        let local=security::canonical_get_secret_cached(account)?;
+        if local.as_deref().unwrap_or("").trim().is_empty(){out.push(account.to_string());}
+    }
+    Ok(out)
+}
+fn merge_integration_secrets(value:&Value)->Result<Value,String>{
+    let mut added=0usize;let mut preserved=0usize;
+    for (field,account) in INTEGRATION_SECRET_FIELDS{
+        let incoming=value.get(field).and_then(Value::as_str).unwrap_or("").trim();
+        if incoming.is_empty(){continue}
+        let local=security::canonical_get_secret_cached(account)?;
+        if local.as_deref().unwrap_or("").trim().is_empty(){
+            security::canonical_set_secret(account,incoming)?;
+            added+=1;
+        }else{preserved+=1;}
+    }
+    Ok(json!({"added":added,"preservedLocal":preserved,"deleted":0,"secretValuesIncluded":false}))
+}
+fn cleanup_integration_accounts(accounts:&[String])->Result<(),String>{
+    let mut failures=Vec::new();
+    for account in accounts{
+        if let Err(e)=security::canonical_set_secret(account,""){failures.push(format!("{account}:{e}"));}
+    }
+    if failures.is_empty(){Ok(())}else{Err(format!("MIGRATION_INTEGRATION_SECRET_ROLLBACK_FAILED: {}",failures.join(";")))}
+}
+
 fn backup_root(app: &AppHandle) -> Result<PathBuf, String> {
     let root = app
         .path()
@@ -747,9 +795,14 @@ fn transaction_marker_path(app:&AppHandle)->Result<PathBuf,String>{
 fn valid_backup_id(id:&str)->bool{
     !id.is_empty() && !id.contains('/') && !id.contains('\\') && id!="." && id!=".."
 }
-fn write_transaction_marker(app:&AppHandle,backup_id:&str,phase:&str)->Result<(),String>{
+fn write_transaction_marker(app:&AppHandle,backup_id:&str,phase:&str,remove_secret_accounts_on_rollback:&[String])->Result<(),String>{
     if !valid_backup_id(backup_id){return Err("MIGRATION_TXN_BACKUP_ID_INVALID".into())}
-    let marker=MigrationTxnMarker{backup_id:backup_id.to_string(),created_at:chrono::Utc::now().to_rfc3339(),phase:phase.to_string()};
+    let marker=MigrationTxnMarker{
+        backup_id:backup_id.to_string(),
+        created_at:chrono::Utc::now().to_rfc3339(),
+        phase:phase.to_string(),
+        remove_secret_accounts_on_rollback:remove_secret_accounts_on_rollback.to_vec(),
+    };
     let bytes=serde_json::to_vec_pretty(&marker).map_err(|e|format!("MIGRATION_TXN_SERIALIZE_FAILED: {e}"))?;
     write_atomic(&transaction_marker_path(app)?,&bytes)
 }
@@ -771,6 +824,7 @@ pub fn recover_interrupted_import(app:&AppHandle)->Result<(),String>{
     let backup=backup_root(app)?.join(&marker.backup_id);
     if !backup.is_dir(){return Err(format!("MIGRATION_TXN_BACKUP_MISSING: {}",marker.backup_id))}
     restore_snapshot_dir(app,&backup)?;
+    cleanup_integration_accounts(&marker.remove_secret_accounts_on_rollback)?;
     clear_transaction_marker(app)?;
     Ok(())
 }
@@ -791,9 +845,10 @@ pub fn migration_export(
     let oauth = oauth_vault::export_portable_snapshot(&app)?;
     let youtube_metadata=portable_youtube_metadata(&app)?;
     let google_config=portable_google_config(&app)?;
+    let integration_secrets=portable_integration_secrets(&app);
     let created = chrono::Utc::now().to_rfc3339();
     let id = Uuid::new_v4().to_string();
-    let checksum = payload_hash(&state, &oauth, &youtube_metadata, &google_config, &browser_state)?;
+    let checksum = payload_hash(&state, &oauth, &youtube_metadata, &google_config, &integration_secrets, &browser_state)?;
     let payload = PortablePayload {
         schema_version: BUNDLE_SCHEMA,
         app_version: app_version(),
@@ -804,6 +859,7 @@ pub fn migration_export(
         oauth_vault: oauth.clone(),
         youtube_metadata,
         google_config,
+        integration_secrets,
         browser_state,
         payload_sha256: checksum,
     };
@@ -893,7 +949,8 @@ pub fn migration_import(
         Uuid::new_v4()
     );
     let backup = create_rollback_snapshot(&app, &backup_id)?;
-    write_transaction_marker(&app,&backup_id,"PREPARED")?;
+    let cleanup_accounts=integration_cleanup_accounts(&payload.integration_secrets)?;
+    write_transaction_marker(&app,&backup_id,"PREPARED",&cleanup_accounts)?;
 
     let transaction=run_with_rollback(
         ||{
@@ -902,26 +959,32 @@ pub fn migration_import(
                 .map_err(|e|format!("MIGRATION_VAULT_COMMIT_FAILED: {e}"))?;
             let metadata_result=merge_and_write_metadata(&app,&payload.youtube_metadata,&payload.google_config)
                 .map_err(|e|format!("MIGRATION_METADATA_COMMIT_FAILED: {e}"))?;
+            let integration_result=merge_integration_secrets(&payload.integration_secrets)
+                .map_err(|e|format!("MIGRATION_INTEGRATION_SECRET_COMMIT_FAILED: {e}"))?;
             let verify=storage::load_state(app.clone());
             let after=verify.get("channels").and_then(Value::as_array).map(|x|x.len()).unwrap_or(0);
             if after!=summary.after_channels{return Err("MIGRATION_VERIFY_FAILED: channel count mismatch".into())}
-            Ok((oauth_result,metadata_result))
+            Ok((oauth_result,metadata_result,integration_result))
         },
         ||restore_snapshot_dir(&app,&backup)
     );
-    let (oauth_result,metadata_result)=match transaction{
+    let (oauth_result,metadata_result,integration_result)=match transaction{
         Ok(v)=>v,
         Err(e)=>{
-            if !e.contains("MIGRATION_ROLLBACK_FAILED"){let _=clear_transaction_marker(&app);}
+            if !e.contains("MIGRATION_ROLLBACK_FAILED"){
+                let _=cleanup_integration_accounts(&cleanup_accounts);
+                let _=clear_transaction_marker(&app);
+            }
             return Err(e)
         }
     };
-    if let Err(mark_error)=write_transaction_marker(&app,&backup_id,"COMMITTED"){
+    if let Err(mark_error)=write_transaction_marker(&app,&backup_id,"COMMITTED",&cleanup_accounts){
         let rollback=restore_snapshot_dir(&app,&backup);
-        if rollback.is_ok(){let _=clear_transaction_marker(&app);}
-        return Err(match rollback{
-            Ok(())=>format!("MIGRATION_COMMIT_MARKER_FAILED: {mark_error}"),
-            Err(rb)=>format!("MIGRATION_COMMIT_MARKER_FAILED: {mark_error}; MIGRATION_ROLLBACK_FAILED: {rb}")
+        let secret_rollback=cleanup_integration_accounts(&cleanup_accounts);
+        if rollback.is_ok()&&secret_rollback.is_ok(){let _=clear_transaction_marker(&app);}
+        return Err(match (rollback,secret_rollback){
+            (Ok(()),Ok(()))=>format!("MIGRATION_COMMIT_MARKER_FAILED: {mark_error}"),
+            (rb,sr)=>format!("MIGRATION_COMMIT_MARKER_FAILED: {mark_error}; MIGRATION_ROLLBACK_FAILED: files={rb:?}; secrets={sr:?}")
         })
     }
     // If deletion itself fails, the COMMITTED marker is intentionally left behind;
@@ -935,6 +998,7 @@ pub fn migration_import(
         "summary": summary,
         "oauth": oauth_result,
         "metadata": metadata_result,
+        "integrationSecrets": integration_result,
         "remap": remaps,
         "browserState": payload.browser_state,
         "rollbackSnapshot": backup_id,
@@ -973,6 +1037,7 @@ mod tests {
         let oauth = json!({"profiles":{}});
         let youtube = json!({"profiles":[]});
         let google = json!({});
+        let integration = json!({});
         let browser = json!({});
         PortablePayload {
             schema_version: 1,
@@ -980,11 +1045,12 @@ mod tests {
             source_os: "macos".into(),
             created_at: "now".into(),
             bundle_uuid: "u".into(),
-            payload_sha256: payload_hash(&state, &oauth, &youtube, &google, &browser).unwrap(),
+            payload_sha256: payload_hash(&state, &oauth, &youtube, &google, &integration, &browser).unwrap(),
             state,
             oauth_vault: oauth,
             youtube_metadata: youtube,
             google_config: google,
+            integration_secrets: integration,
             browser_state: browser,
         }
     }
@@ -1022,8 +1088,8 @@ mod tests {
         assert_eq!(merged["autoCheckUpdates"],false);
 
         let fresh=merge_settings(&json!({"youtubeApiKey":"","openaiApiKey":"","youtubeOAuthClientId":""}),&imported);
-        assert_eq!(fresh["youtubeApiKey"],"imported-youtube-key");
-        assert_eq!(fresh["openaiApiKey"],"imported-openai-key");
+        assert_eq!(fresh["youtubeApiKey"],"");
+        assert_eq!(fresh["openaiApiKey"],"");
         assert_eq!(fresh["youtubeOAuthClientId"],"imported-oauth-client");
     }
 
@@ -1214,8 +1280,9 @@ mod tests {
         });
         let youtube=json!({"profiles":[{"id":format!("fixture-profile-{kind}"),"channelId":if kind=="macos"{"TEST_CH_A"}else{"TEST_CH_D"},"channelTitle":format!("Fixture {kind}")}]});
         let google=json!({"project_id":format!("fixture-project-{kind}"),"client_id":format!("fixture-client-{kind}")});
+        let integration=json!({"youtubeApiKey":format!("fixture-youtube-api-{kind}")});
         let browser=json!({"quotaLedger":{"fixture":kind},"operationLedger":[]});
-        let checksum=payload_hash(&state,&oauth,&youtube,&google,&browser).unwrap();
+        let checksum=payload_hash(&state,&oauth,&youtube,&google,&integration,&browser).unwrap();
         PortablePayload{
             schema_version:BUNDLE_SCHEMA,
             app_version:"3.3.0".into(),
@@ -1226,6 +1293,7 @@ mod tests {
             oauth_vault:oauth,
             youtube_metadata:youtube,
             google_config:google,
+            integration_secrets:integration,
             browser_state:browser,
             payload_sha256:checksum,
         }
@@ -1248,6 +1316,7 @@ mod tests {
         let text=String::from_utf8_lossy(&bytes);
         assert!(!text.contains(&format!("fixture-secret-{kind}")));
         assert!(!text.contains(&format!("fixture-client-secret-{kind}")));
+        assert!(!text.contains(&format!("fixture-youtube-api-{kind}")));
         write_atomic(Path::new(&out),&bytes).unwrap();
         let round=decrypt_payload(&fs::read(&out).unwrap(),&pass).unwrap();
         assert_eq!(round.source_os,kind);
