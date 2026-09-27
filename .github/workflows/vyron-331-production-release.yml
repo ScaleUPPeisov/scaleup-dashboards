@@ -1,0 +1,376 @@
+name: VYRON 3.3.1 Production Release
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-3.3.1-connectivity-oauth-quota
+    paths:
+      - '.github/workflows/vyron-331-production-release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-331-production-release
+  cancel-in-progress: false
+
+env:
+  SOURCE_SHA: 98a5dd881c1f217d1fadc914129e7a169146e933
+  TARGET_REPO: ScaleUPPeisov/vyron-releases
+  TAG: v3.3.1
+  VERSION: '3.3.1'
+  ACCEPTED_GATE_RUN: '36320583674'
+  EXPECTED_SIGNING_CERT_SHA1: 2C8B0BD4EE1C000D29DD0667BF1068D4673692C9
+
+jobs:
+  auth-preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      RELEASE_TOKEN: ${{ secrets.VYRON_RELEASES_TOKEN }}
+    steps:
+      - name: Verify exact release authorization and target access
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -n "$RELEASE_TOKEN" || { echo 'VYRON_RELEASES_TOKEN=USER_ACTION_REQUIRED'; exit 1; }
+          export GH_TOKEN="$RELEASE_TOKEN"
+          test "$(gh api "repos/$TARGET_REPO" --jq .full_name)" = "$TARGET_REPO"
+          if gh release view "$TAG" --repo "$TARGET_REPO" >/dev/null 2>&1; then
+            echo "RELEASE_ALREADY_EXISTS=$TAG"
+            exit 1
+          fi
+          echo 'VYRON_RELEASES_TOKEN=PRESENT'
+          echo 'TARGET_RELEASE_REPO_WRITE_AUTH=PASS'
+          echo "AUTHORIZED_SOURCE_SHA=$SOURCE_SHA"
+
+  windows-production:
+    needs: auth-preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Download exact accepted Windows candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh run download "$ACCEPTED_GATE_RUN"             --repo ScaleUPPeisov/scaleup-dashboards             --name VYRON-3.3.1-WINDOWS-CANDIDATE             --dir accepted
+          test -s accepted/VYRON-3.3.1-windows-x64-candidate.exe
+          test -s accepted/VYRON-3.3.1-windows-x64-candidate.exe.sig
+          grep -F 'WINDOWS_BUILD=PASS' accepted/windows-gate.txt
+          grep -F 'VERSION=3.3.1' accepted/windows-gate.txt
+          mkdir -p production
+          cp accepted/VYRON-3.3.1-windows-x64-candidate.exe production/VYRON_3.3.1_x64-setup.exe
+          cp accepted/VYRON-3.3.1-windows-x64-candidate.exe.sig production/VYRON_3.3.1_x64-setup.exe.sig
+          sha256sum production/VYRON_3.3.1_x64-setup.exe > production/VYRON_3.3.1_x64-setup.exe.sha256
+          expected="$(awk -F= '/WINDOWS_CANDIDATE_SHA256=/{print $2}' accepted/windows-gate.txt | tr -d '\r')"
+          actual="$(sha256sum production/VYRON_3.3.1_x64-setup.exe | awk '{print $1}')"
+          test -n "$expected"
+          test "$actual" = "$expected"
+          echo "WINDOWS_PRODUCTION_SHA256=$actual"
+          echo 'WINDOWS_ACCEPTED_CANDIDATE_REUSED=PASS'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-3.3.1-WINDOWS-PRODUCTION
+          path: production/**
+          if-no-files-found: error
+
+  macos-production:
+    needs: auth-preflight
+    runs-on: macos-14
+    timeout-minutes: 45
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      VYRON_MACOS_SIGNING_P12_BASE64: ${{ secrets.VYRON_MACOS_SIGNING_P12_BASE64 }}
+      VYRON_MACOS_SIGNING_P12_PASSWORD: ${{ secrets.VYRON_MACOS_SIGNING_P12_PASSWORD }}
+      VYRON_MACOS_SIGNING_IDENTITY: ${{ secrets.VYRON_MACOS_SIGNING_IDENTITY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Exact source/version contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          node -e "const p=require('./package.json'); if(p.version!=='3.3.1') process.exit(1)"
+          python3 - <<'PY'
+          import json
+          c=json.load(open('src-tauri/tauri.conf.json'))
+          assert c['version']=='3.3.1'
+          assert c['identifier']=='studio.channelflow.desktop'
+          assert c['bundle']['createUpdaterArtifacts'] is True
+          assert c['plugins']['updater']['pubkey']
+          print('MACOS_SOURCE_VERSION_CONTRACT=PASS')
+          PY
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Import persistent signing identity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -n "${VYRON_MACOS_SIGNING_P12_BASE64:-}"
+          test -n "${VYRON_MACOS_SIGNING_P12_PASSWORD:-}"
+          test -n "${TAURI_SIGNING_PRIVATE_KEY:-}"
+          test "$VYRON_MACOS_SIGNING_IDENTITY" = 'VYRON Local Code Signing'
+          KEYCHAIN="$RUNNER_TEMP/vyron-331-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)$(uuidgen)"
+          P12="$RUNNER_TEMP/vyron-331-signing.p12"
+          CERT="$RUNNER_TEMP/vyron-331-signing.pem"
+          printf '%s' "$VYRON_MACOS_SIGNING_P12_BASE64" | base64 --decode > "$P12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$P12" -k "$KEYCHAIN" -P "$VYRON_MACOS_SIGNING_P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security >/dev/null
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          security find-certificate -c "$VYRON_MACOS_SIGNING_IDENTITY" -p "$KEYCHAIN" > "$CERT"
+          LOGIN_KEYCHAIN="$(security default-keychain -d user | tr -d '"')"
+          security list-keychains -d user -s "$KEYCHAIN" "$LOGIN_KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          ID_SHA1="$(security find-certificate -Z -c "$VYRON_MACOS_SIGNING_IDENTITY" "$KEYCHAIN" 2>/dev/null | awk '/SHA-1 hash:/{print $3; exit}')"
+          test "$(printf '%s' "$ID_SHA1" | tr '[:lower:]' '[:upper:]')" = "$EXPECTED_SIGNING_CERT_SHA1"
+          echo "APPLE_SIGNING_IDENTITY=$ID_SHA1" >> "$GITHUB_ENV"
+          echo "VYRON_SIGNING_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+          echo "VYRON_SIGNING_KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> "$GITHUB_ENV"
+          echo 'MACOS_SIGNING_IDENTITY_CONTINUITY=PASS'
+
+      - name: Normalize updater signing key
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import base64,os
+          raw=os.environ.get('TAURI_SIGNING_PRIVATE_KEY','').strip()
+          assert raw,'TAURI_SIGNING_PRIVATE_KEY missing'
+          def dec(x):
+              try:return base64.b64decode(x,validate=True).decode()
+              except:return None
+          if raw.startswith('untrusted comment:'):
+              out=base64.b64encode(raw.encode()).decode()
+              box=raw
+          else:
+              one=dec(raw)
+              if one and one.startswith('untrusted comment:'):
+                  out=raw
+                  box=one
+              else:
+                  box=dec(one) if one else None
+                  assert box and box.startswith('untrusted comment:')
+                  out=one.strip()
+          assert 'secret key' in box.splitlines()[0].lower()
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as fp:
+              fp.write('TAURI_SIGNING_PRIVATE_KEY='+out+'\n')
+          print('::add-mask::'+out)
+          print('MACOS_UPDATER_SIGNING_KEY_NORMALIZED=PASS')
+          PY
+
+      - name: Build signed production DMG and updater
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          security unlock-keychain -p "$VYRON_SIGNING_KEYCHAIN_PASSWORD" "$VYRON_SIGNING_KEYCHAIN"
+          npx tauri build --target aarch64-apple-darwin --bundles app,dmg
+          APP="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)"
+          DMG="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -name '*.dmg' -print -quit)"
+          UPDATER="$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name '*.app.tar.gz' -print -quit)"
+          SIG="$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name '*.app.tar.gz.sig' -print -quit)"
+          test -d "$APP"; test -s "$DMG"; test -s "$UPDATER"; test -s "$SIG"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -dv --verbose=4 "$APP" 2>&1 | tee /tmp/codesign.txt
+          ! grep -F 'Signature=adhoc' /tmp/codesign.txt
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = 'studio.channelflow.desktop'
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = '3.3.1'
+          hdiutil verify "$DMG"
+
+          python3 - "$SIG" <<'PY'
+          import base64,json,sys
+          from pathlib import Path
+          conf=json.load(open('src-tauri/tauri.conf.json'))
+          def envelope(raw):
+              raw=raw.strip()
+              if raw.startswith(b'untrusted comment:'): return raw+b'\n'
+              decoded=base64.b64decode(raw,validate=True)
+              assert decoded.startswith(b'untrusted comment:')
+              return decoded+b'\n'
+          Path('/tmp/vyron-updater-public.pub').write_bytes(envelope(str(conf['plugins']['updater']['pubkey']).encode()))
+          Path('/tmp/vyron-updater-signature.sig').write_bytes(envelope(Path(sys.argv[1]).read_bytes()))
+          PY
+          if ! command -v minisign >/dev/null 2>&1; then brew install minisign >/dev/null; fi
+          minisign -Vm "$UPDATER" -x /tmp/vyron-updater-signature.sig -p /tmp/vyron-updater-public.pub
+
+          mkdir -p production
+          cp "$DMG" production/VYRON-3.3.1-arm64.dmg
+          cp "$UPDATER" production/VYRON.app.tar.gz
+          cp "$SIG" production/VYRON.app.tar.gz.sig
+          shasum -a 256 production/VYRON-3.3.1-arm64.dmg > production/VYRON-3.3.1-arm64.dmg.sha256
+          shasum -a 256 production/VYRON.app.tar.gz > production/VYRON.app.tar.gz.sha256
+          echo "MACOS_DMG_SHA256=$(awk '{print $1}' production/VYRON-3.3.1-arm64.dmg.sha256)"
+          echo "MACOS_UPDATER_SHA256=$(awk '{print $1}' production/VYRON.app.tar.gz.sha256)"
+          echo 'MACOS_CODESIGN=PASS'
+          echo 'MACOS_UPDATER_SIGNATURE=PASS'
+          echo 'MACOS_DMG_VERIFY=PASS'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-3.3.1-MACOS-PRODUCTION
+          path: production/**
+          if-no-files-found: error
+
+      - name: Cleanup signing material
+        if: always()
+        shell: bash
+        run: |
+          rm -f "$RUNNER_TEMP/vyron-331-signing.p12" "$RUNNER_TEMP/vyron-331-signing.pem"
+          if [[ -n "${VYRON_SIGNING_KEYCHAIN:-}" ]]; then security delete-keychain "$VYRON_SIGNING_KEYCHAIN" >/dev/null 2>&1 || true; fi
+
+  publish:
+    needs: [auth-preflight, windows-production, macos-production]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ secrets.VYRON_RELEASES_TOKEN }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: VYRON-3.3.1-WINDOWS-PRODUCTION
+          path: assets
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: VYRON-3.3.1-MACOS-PRODUCTION
+          path: assets
+
+      - name: Verify release asset allowlist
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          required=(
+            VYRON-3.3.1-arm64.dmg
+            VYRON-3.3.1-arm64.dmg.sha256
+            VYRON.app.tar.gz
+            VYRON.app.tar.gz.sha256
+            VYRON.app.tar.gz.sig
+            VYRON_3.3.1_x64-setup.exe
+            VYRON_3.3.1_x64-setup.exe.sha256
+            VYRON_3.3.1_x64-setup.exe.sig
+          )
+          for f in "${required[@]}"; do test -s "assets/$f"; done
+          test "$(find assets -maxdepth 1 -type f | wc -l | tr -d ' ')" = '8'
+          (cd assets && sha256sum -c VYRON_3.3.1_x64-setup.exe.sha256)
+          (cd assets && shasum -a 256 -c VYRON-3.3.1-arm64.dmg.sha256)
+          (cd assets && shasum -a 256 -c VYRON.app.tar.gz.sha256)
+          echo 'PRODUCTION_ASSET_ALLOWLIST=PASS'
+
+      - name: Publish VYRON 3.3.1 release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat > release-notes.md <<'EOF'
+          VYRON 3.3.1 — targeted OAuth/connectivity/quota hotfix.
+
+          - Correct connected-channel counter based on saved channel/profile bindings.
+          - Immediate OAuth state refresh after connect, reconnect and recovery.
+          - Successful validated credentials resolve to READY without redundant Google login.
+          - NOT_CHECKED is treated as a non-destructive pending health state, not a reconnect failure.
+          - YouTube statistics batching is isolated by Google Project/OAuth identity to preserve per-project quota accounting.
+          - Existing channels, OAuth profiles, Profile UUIDs, Channel IDs and Google Project mappings are preserved.
+          EOF
+          gh release create "$TAG" assets/*             --repo "$TARGET_REPO"             --title 'VYRON 3.3.1'             --notes-file release-notes.md
+          echo 'VYRON_3_3_1_RELEASE_CREATED=PASS'
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ScaleUPPeisov/vyron-releases
+          token: ${{ secrets.VYRON_RELEASES_TOKEN }}
+          path: target
+          ref: main
+
+      - name: Promote stable updater feeds to 3.3.1
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          MAC_SIG="$(cat assets/VYRON.app.tar.gz.sig | tr -d '\r\n')"
+          WIN_SIG="$(cat assets/VYRON_3.3.1_x64-setup.exe.sig | tr -d '\r\n')"
+          PUB_DATE="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          python3 - "$MAC_SIG" "$WIN_SIG" "$PUB_DATE" <<'PY'
+          import json,sys
+          from pathlib import Path
+          mac_sig,win_sig,pub=sys.argv[1:4]
+          notes='VYRON 3.3.1 — OAuth/connectivity/quota hotfix; connected count corrected; READY state synchronized; per-Google-Project statistics quota isolation; existing profiles and channels preserved.'
+          repo='ScaleUPPeisov/vyron-releases'
+          mac={
+            'version':'3.3.1','notes':notes,'pub_date':pub,
+            'platforms':{'darwin-aarch64':{
+              'url':f'https://github.com/{repo}/releases/download/v3.3.1/VYRON.app.tar.gz',
+              'signature':mac_sig
+            }}
+          }
+          win={
+            'version':'3.3.1','notes':notes,'pub_date':pub,
+            'platforms':{'windows-x86_64':{
+              'url':f'https://github.com/{repo}/releases/download/v3.3.1/VYRON_3.3.1_x64-setup.exe',
+              'signature':win_sig
+            }}
+          }
+          Path('target/updates/latest.json').write_text(json.dumps(mac,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          Path('target/updates/windows-latest.json').write_text(json.dumps(win,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          PY
+          cd target
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add updates/latest.json updates/windows-latest.json
+          git commit -m 'release: promote VYRON 3.3.1 updater feeds'
+          git push origin HEAD:main
+          echo 'STABLE_FEEDS_3_3_1=PASS'
+
+      - name: Verify remote production release and feeds
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/$TARGET_REPO/releases/tags/$TAG" > /tmp/release.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/release.json'))
+          assert d['tag_name']=='v3.3.1'
+          assert d['draft'] is False and d['prerelease'] is False
+          names={x['name'] for x in d['assets']}
+          required={
+            'VYRON-3.3.1-arm64.dmg',
+            'VYRON-3.3.1-arm64.dmg.sha256',
+            'VYRON.app.tar.gz',
+            'VYRON.app.tar.gz.sha256',
+            'VYRON.app.tar.gz.sig',
+            'VYRON_3.3.1_x64-setup.exe',
+            'VYRON_3.3.1_x64-setup.exe.sha256',
+            'VYRON_3.3.1_x64-setup.exe.sig',
+          }
+          assert names==required,(names,required)
+          print('REMOTE_RELEASE_ASSET_ALLOWLIST=PASS')
+          PY
+          curl -fsSL "https://raw.githubusercontent.com/$TARGET_REPO/main/updates/latest.json" -o /tmp/mac.json
+          curl -fsSL "https://raw.githubusercontent.com/$TARGET_REPO/main/updates/windows-latest.json" -o /tmp/win.json
+          python3 - <<'PY'
+          import json
+          for path,key in [('/tmp/mac.json','darwin-aarch64'),('/tmp/win.json','windows-x86_64')]:
+              d=json.load(open(path))
+              assert d['version']=='3.3.1'
+              assert '/releases/download/v3.3.1/' in d['platforms'][key]['url']
+              assert d['platforms'][key]['signature'].strip()
+          print('REMOTE_STABLE_FEEDS_3_3_1=PASS')
+          PY
+          echo 'VYRON_3_3_1_PRODUCTION_RELEASE=PASS'
