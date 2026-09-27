@@ -2328,7 +2328,8 @@ pub fn archive_production_rendered_videos(
         }
         fs::copy(&canon, &tmp)
             .map_err(|e| format!("Не удалось скопировать {}: {e}", canon.display()))?;
-        fs::rename(&tmp, &dst).map_err(|e| format!("Не удалось завершить архивирование: {e}"))?;
+        replace_json_atomic(&tmp, &dst)
+            .map_err(|e| format!("Не удалось завершить архивирование: {e}"))?;
         // Safety invariant: source rendered MP4 is COPY-ONLY and is never removed here.
         out.copied_files += 1;
         out.copied_bytes = out.copied_bytes.saturating_add(bytes);
@@ -2731,6 +2732,26 @@ mod windows_storage_parity_tests {
     #[test]
     fn unc_paths_are_classified_as_external_without_network_access() {
         assert!(windows_storage_external(Path::new(r"\\server\share\Видео & Музыка\Проект (01)")));
+    }
+
+    #[test]
+    fn windows_atomic_replace_overwrites_existing_binary_destination() {
+        let root = std::env::temp_dir().join(format!(
+            "vyron-atomic-binary-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).expect("create atomic replace test root");
+        let dst = root.join("Видео & Музыка (01).mp4");
+        let tmp = root.join(".Видео & Музыка (01).part");
+        fs::write(&dst, b"old").expect("write existing destination");
+        fs::write(&tmp, b"new-render-content").expect("write replacement");
+        replace_json_atomic(&tmp, &dst).expect("replace existing binary destination");
+        assert_eq!(
+            fs::read(&dst).expect("read replaced destination"),
+            b"new-render-content"
+        );
+        assert!(!tmp.exists());
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
