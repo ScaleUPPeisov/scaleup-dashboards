@@ -80,6 +80,14 @@ struct RemapRow {
     old_path: String,
 }
 
+#[derive(Debug,Clone,Serialize,Deserialize)]
+#[serde(rename_all="camelCase")]
+struct MigrationTxnMarker{
+    backup_id:String,
+    created_at:String,
+    phase:String,
+}
+
 fn app_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
@@ -724,6 +732,41 @@ where F:FnOnce()->Result<T,String>,R:FnOnce()->Result<(),String>{
     }
 }
 
+
+fn transaction_marker_path(app:&AppHandle)->Result<PathBuf,String>{
+    Ok(app.path().app_data_dir().map_err(|e|format!("MIGRATION_TXN_PATH_FAILED: {e}"))?.join("migration-transaction.json"))
+}
+fn valid_backup_id(id:&str)->bool{
+    !id.is_empty() && !id.contains('/') && !id.contains('\\') && id!="." && id!=".."
+}
+fn write_transaction_marker(app:&AppHandle,backup_id:&str,phase:&str)->Result<(),String>{
+    if !valid_backup_id(backup_id){return Err("MIGRATION_TXN_BACKUP_ID_INVALID".into())}
+    let marker=MigrationTxnMarker{backup_id:backup_id.to_string(),created_at:chrono::Utc::now().to_rfc3339(),phase:phase.to_string()};
+    let bytes=serde_json::to_vec_pretty(&marker).map_err(|e|format!("MIGRATION_TXN_SERIALIZE_FAILED: {e}"))?;
+    write_atomic(&transaction_marker_path(app)?,&bytes)
+}
+fn clear_transaction_marker(app:&AppHandle)->Result<(),String>{
+    let path=transaction_marker_path(app)?;
+    if path.exists(){fs::remove_file(&path).map_err(|e|format!("MIGRATION_TXN_CLEAR_FAILED: {e}"))?;}
+    Ok(())
+}
+pub fn recover_interrupted_import(app:&AppHandle)->Result<(),String>{
+    let marker_path=transaction_marker_path(app)?;
+    if !marker_path.exists(){return Ok(())}
+    let bytes=fs::read(&marker_path).map_err(|e|format!("MIGRATION_TXN_READ_FAILED: {e}"))?;
+    let marker:MigrationTxnMarker=serde_json::from_slice(&bytes).map_err(|e|format!("MIGRATION_TXN_INVALID: {e}"))?;
+    if !valid_backup_id(&marker.backup_id){return Err("MIGRATION_TXN_BACKUP_ID_INVALID".into())}
+    if marker.phase=="COMMITTED"{
+        clear_transaction_marker(app)?;
+        return Ok(())
+    }
+    let backup=backup_root(app)?.join(&marker.backup_id);
+    if !backup.is_dir(){return Err(format!("MIGRATION_TXN_BACKUP_MISSING: {}",marker.backup_id))}
+    restore_snapshot_dir(app,&backup)?;
+    clear_transaction_marker(app)?;
+    Ok(())
+}
+
 fn read_bundle(path: &str, passphrase: &str) -> Result<PortablePayload, String> {
     let bytes = fs::read(path).map_err(|e| format!("MIGRATION_READ_FAILED: {e}"))?;
     decrypt_payload(&bytes, passphrase)
@@ -842,8 +885,9 @@ pub fn migration_import(
         Uuid::new_v4()
     );
     let backup = create_rollback_snapshot(&app, &backup_id)?;
+    write_transaction_marker(&app,&backup_id,"PREPARED")?;
 
-    let (oauth_result,metadata_result)=run_with_rollback(
+    let transaction=run_with_rollback(
         ||{
             storage::save_state(app.clone(), merged).map_err(|e|format!("MIGRATION_STATE_COMMIT_FAILED: {e}"))?;
             let oauth_result=oauth_vault::merge_portable_snapshot(&app,&payload.oauth_vault)
@@ -856,7 +900,25 @@ pub fn migration_import(
             Ok((oauth_result,metadata_result))
         },
         ||restore_snapshot_dir(&app,&backup)
-    )?;
+    );
+    let (oauth_result,metadata_result)=match transaction{
+        Ok(v)=>v,
+        Err(e)=>{
+            if !e.contains("MIGRATION_ROLLBACK_FAILED"){let _=clear_transaction_marker(&app);}
+            return Err(e)
+        }
+    };
+    if let Err(mark_error)=write_transaction_marker(&app,&backup_id,"COMMITTED"){
+        let rollback=restore_snapshot_dir(&app,&backup);
+        if rollback.is_ok(){let _=clear_transaction_marker(&app);}
+        return Err(match rollback{
+            Ok(())=>format!("MIGRATION_COMMIT_MARKER_FAILED: {mark_error}"),
+            Err(rb)=>format!("MIGRATION_COMMIT_MARKER_FAILED: {mark_error}; MIGRATION_ROLLBACK_FAILED: {rb}")
+        })
+    }
+    // If deletion itself fails, the COMMITTED marker is intentionally left behind;
+    // startup will clear it without rolling the successful import back.
+    let _=clear_transaction_marker(&app);
 
     Ok(json!({
         "ok": true,
@@ -886,6 +948,7 @@ pub fn migration_restore_latest(app: AppHandle) -> Result<Value, String> {
         return Err("MIGRATION_BACKUP_NOT_FOUND".into());
     };
     restore_snapshot_dir(&app, &last.path())?;
+    let _=clear_transaction_marker(&app);
     Ok(json!({
         "ok": true,
         "snapshot": last.file_name().to_string_lossy(),
@@ -918,6 +981,13 @@ mod tests {
         }
     }
 
+
+
+    #[test]
+    fn migration_transaction_backup_id_rejects_path_traversal(){
+        assert!(valid_backup_id("20260927-120000-abc"));
+        for bad in ["","..",".","../x","..\\x","x/y","x\\y"]{assert!(!valid_backup_id(bad),"{bad}");}
+    }
 
     #[test]
     fn future_schema_is_rejected_before_merge(){
