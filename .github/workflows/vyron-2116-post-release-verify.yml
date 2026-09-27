@@ -1,0 +1,140 @@
+name: VYRON 2.1.16 Post-release Verification
+
+on:
+  push:
+    branches:
+      - release/vyron-2.1.16-windows-x64
+    paths:
+      - '.github/workflows/vyron-2116-post-release-verify.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  VERSION: '2.1.16'
+  TAG: v2.1.16-windows-x64
+  WINDOWS_PLATFORM_KEY: windows-x86_64
+  INSTALLER: VYRON_2.1.16_x64-setup.exe
+  RELEASE_TARGET: cec8fa2bd94e798fef968219a56e94677344ccfc
+  EMBEDDED_UPDATER_KEY: dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEREODQ1NDdERTI1MEYxQzAKUldUQThWRGlmVlNFM1RHdW5WQnE2eG9BYTBnQlNmbUtmVU84UHJQMUNvZWZ4Qmo0L2hYcUd4UDEK
+
+jobs:
+  verify-live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Setup Rust verifier
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Verify live feed through GitHub contents API
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/$REPO/contents/vyron-updates/windows-latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode > live-feed.json
+          python - <<'PY'
+          import json,os
+          d=json.load(open('live-feed.json',encoding='utf-8'))
+          assert d['version']==os.environ['VERSION'], d['version']
+          p=d['platforms'][os.environ['WINDOWS_PLATFORM_KEY']]
+          expected=f"/releases/download/{os.environ['TAG']}/{os.environ['INSTALLER']}"
+          assert expected in p['url'], p['url']
+          assert p['signature']
+          print('LIVE_FEED_VERSION=2.1.16')
+          print('LIVE_FEED_API_CONTRACT=PASS')
+          PY
+
+      - name: Verify immutable release metadata and assets
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/$REPO/releases/tags/$TAG" > release.json
+          python - <<'PY'
+          import json,os
+          d=json.load(open('release.json',encoding='utf-8'))
+          assert d['draft'] is False
+          assert d['prerelease'] is False
+          assert d['target_commitish']==os.environ['RELEASE_TARGET'], d['target_commitish']
+          names={a['name'] for a in d['assets']}
+          required={
+            os.environ['INSTALLER'],
+            os.environ['INSTALLER']+'.sha256',
+            os.environ['INSTALLER']+'.sig',
+            'windows-latest.json',
+            'runtime-acceptance.txt',
+            'authenticode.txt',
+            'RELEASE_NOTES_WINDOWS_2_1_16.md'
+          }
+          assert required<=names, sorted(required-names)
+          print('RELEASE_TARGET=VERIFIED')
+          print('RELEASE_ASSETS=PASS')
+          PY
+
+      - name: Download and verify live Windows installer
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          BASE="https://github.com/$REPO/releases/download/$TAG"
+          curl -L --fail --silent --show-error -o "$INSTALLER" "$BASE/$INSTALLER"
+          curl -L --fail --silent --show-error -o "$INSTALLER.sha256" "$BASE/$INSTALLER.sha256"
+          curl -L --fail --silent --show-error -o "$INSTALLER.sig" "$BASE/$INSTALLER.sig"
+          EXPECTED="$(awk '{print tolower($1)}' "$INSTALLER.sha256")"
+          ACTUAL="$(sha256sum "$INSTALLER" | awk '{print tolower($1)}')"
+          test "$ACTUAL" = "$EXPECTED"
+          echo "LIVE_INSTALLER_SHA256=$ACTUAL"
+          echo "LIVE_INSTALLER_SHA256=VERIFIED"
+
+      - name: Verify feed signature equals release signature
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          import json,os,pathlib
+          d=json.load(open('live-feed.json',encoding='utf-8'))
+          feed=d['platforms'][os.environ['WINDOWS_PLATFORM_KEY']]['signature'].strip()
+          asset=pathlib.Path(os.environ['INSTALLER']+'.sig').read_text().strip()
+          assert feed==asset
+          print('FEED_SIGNATURE_MATCHES_RELEASE=PASS')
+          PY
+
+      - name: Independently verify updater minisign signature
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          import base64,os,pathlib
+          pathlib.Path('updater.pub').write_bytes(base64.b64decode(os.environ['EMBEDDED_UPDATER_KEY']))
+          encoded=pathlib.Path(os.environ['INSTALLER']+'.sig').read_text().strip()
+          pathlib.Path('updater.sig').write_bytes(base64.b64decode(encoded))
+          PY
+          mkdir -p verifier/src
+          cat > verifier/Cargo.toml <<'EOF'
+          [package]
+          name = "vyron-live-minisign-verify"
+          version = "0.1.0"
+          edition = "2021"
+          [dependencies]
+          minisign-verify = "0.2.5"
+          EOF
+          cat > verifier/src/main.rs <<'EOF'
+          use minisign_verify::{PublicKey,Signature};
+          use std::{env,path::Path};
+          fn main(){
+            let a:Vec<String>=env::args().collect();
+            let pk=PublicKey::from_file(Path::new(&a[1])).expect("public key");
+            let sig=Signature::from_file(Path::new(&a[3])).expect("signature");
+            let data=std::fs::read(&a[2]).expect("artifact");
+            pk.verify(&data,&sig,false).expect("signature verification");
+            println!("LIVE_UPDATER_SIGNATURE=VERIFIED");
+          }
+          EOF
+          cargo run --quiet --manifest-path verifier/Cargo.toml -- updater.pub "$INSTALLER" updater.sig
+
+      - name: Final release verdict
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          echo "VYRON_2_1_16_WINDOWS_POST_RELEASE=GREEN"
