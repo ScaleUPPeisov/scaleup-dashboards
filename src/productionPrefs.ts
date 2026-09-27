@@ -61,8 +61,18 @@ export function readProductionPrefs():ProductionPrefs{
   }
   const next=defaults();
   try{
-    const legacyWorkspaceKey=tenantStorageKey('vyron:production-workspace:v1');
-    const raw=localStorage.getItem(legacyWorkspaceKey)||(legacyWorkspaceKey!=='vyron:production-workspace:v1'?localStorage.getItem('vyron:production-workspace:v1'):null);
+    const legacyBase='vyron:production-workspace:v1';
+    const legacyWorkspaceKey=tenantStorageKey(legacyBase);
+    let raw=localStorage.getItem(legacyWorkspaceKey);
+    if(!raw&&legacyWorkspaceKey!==legacyBase){
+      raw=localStorage.getItem(legacyBase);
+      if(raw){
+        try{
+          localStorage.setItem(legacyWorkspaceKey,raw);
+          localStorage.removeItem(legacyBase);
+        }catch{}
+      }
+    }
     const old=JSON.parse(raw||'null');
     if(old?.selectedChannelId)next.selectedChannelId=String(old.selectedChannelId);
   }catch{}
