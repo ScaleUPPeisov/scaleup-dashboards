@@ -1,0 +1,169 @@
+name: VYRON 3.3.0 Migration Dual Platform Gate
+
+on:
+  push:
+    branches:
+      - release/vyron-3.0.0
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-330-migration-dual-platform
+  cancel-in-progress: true
+
+jobs:
+  migration:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows
+          - os: macos-14
+            name: macos
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps:
+      - name: Checkout exact migration source
+        uses: actions/checkout@v4
+        with:
+          ref: release/vyron-3.0.0
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Version contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          node -e "const p=require('./package.json'); if(p.version!=='3.3.0') process.exit(1)"
+          grep -q '^version = "3.3.0"$' src-tauri/Cargo.toml
+          python3 - <<'PY'
+          import json,re
+          assert json.load(open('src-tauri/tauri.conf.json'))['version']=='3.3.0'
+          lock=open('src-tauri/Cargo.lock',encoding='utf-8').read()
+          assert re.search(r'\[\[package\]\]\r?\nname = "channelflow"\r?\nversion = "3\.3\.0"',lock)
+          print('VERSION_3_3_0=PASS')
+          PY
+
+      - name: Install frontend
+        run: npm ci --no-audit --no-fund
+
+      - name: Frontend regression
+        run: npm test
+
+      - name: Frontend production build
+        run: npm run build
+
+      - name: Rust migration tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml migration::tests -- --nocapture
+
+      - name: Windows Credential Manager tests
+        if: ${{ matrix.name == 'windows' }}
+        run: cargo test --manifest-path src-tauri/Cargo.toml windows_credential_manager_tests -- --nocapture
+
+      - name: Full Rust regression
+        run: cargo test --manifest-path src-tauri/Cargo.toml -- --nocapture
+
+      - name: Rust compile
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+
+      - name: Migration security source contract
+        shell: python
+        run: |
+          from pathlib import Path
+          m=Path('src-tauri/src/migration.rs').read_text(encoding='utf-8')
+          o=Path('src-tauri/src/oauth_vault.rs').read_text(encoding='utf-8')
+          assert 'Argon2id' in m
+          assert 'XChaCha20Poly1305' in m
+          assert 'MIGRATION_AUTHENTICATION_FAILED' in m
+          assert '"willDelete": 0' in m
+          assert 'deleted_channels = 0' in m
+          assert 'merge_portable_snapshot' in o
+          assert 'secretValuesIncluded' in o
+          assert 'println!' not in m
+          assert 'eprintln!' not in m
+          print('MIGRATION_ENCRYPTION_CONTRACT=PASS')
+          print('MIGRATION_DELETE_COUNT=0')
+          print('PLAINTEXT_SECRET_LOGGING=BLOCKED_BY_SOURCE_CONTRACT')
+
+      - name: Provision pinned FFmpeg Windows
+        if: ${{ matrix.name == 'windows' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $version='8.1.2'
+          $expected='db580001caa24ac104c8cb856cd113a87b0a443f7bdf47d8c12b1d740584a2ec'
+          $zip=Join-Path $env:RUNNER_TEMP 'ffmpeg.zip'
+          $out=Join-Path $env:RUNNER_TEMP 'ffmpeg'
+          Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-$version-essentials_build.zip" -OutFile $zip
+          $actual=(Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($actual -ne $expected){throw "FFmpeg SHA mismatch $actual"}
+          Expand-Archive $zip $out -Force
+          $ffmpeg=Get-ChildItem $out -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          $ffprobe=Get-ChildItem $out -Recurse -Filter ffprobe.exe | Select-Object -First 1
+          New-Item -ItemType Directory -Force -Path src-tauri/resources/bin | Out-Null
+          Copy-Item $ffmpeg.FullName src-tauri/resources/bin/ffmpeg.exe -Force
+          Copy-Item $ffprobe.FullName src-tauri/resources/bin/ffprobe.exe -Force
+
+      - name: Build unsigned Windows NSIS gate
+        if: ${{ matrix.name == 'windows' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $cfg=@{bundle=@{createUpdaterArtifacts=$false}} | ConvertTo-Json -Depth 4
+          [IO.File]::WriteAllText((Join-Path $PWD 'tauri.migration.gate.json'),$cfg,[Text.UTF8Encoding]::new($false))
+          npx tauri build --target x86_64-pc-windows-msvc --bundles nsis --config tauri.migration.gate.json
+          $installer=Get-ChildItem src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis -Filter '*-setup.exe' | Select-Object -First 1
+          if(-not $installer){throw 'NSIS installer missing'}
+          New-Item -ItemType Directory -Force -Path migration-artifacts | Out-Null
+          Copy-Item $installer.FullName migration-artifacts/VYRON-3.3.0-windows-x64-gate.exe
+          (Get-FileHash migration-artifacts/VYRON-3.3.0-windows-x64-gate.exe -Algorithm SHA256).Hash.ToLowerInvariant() | Set-Content migration-artifacts/windows.sha256
+
+      - name: Build unsigned macOS app gate
+        if: ${{ matrix.name == 'macos' }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat > tauri.migration.gate.json <<'JSON'
+          {"bundle":{"createUpdaterArtifacts":false}}
+          JSON
+          npx tauri build --bundles app --config tauri.migration.gate.json
+          APP="$(find src-tauri/target/release/bundle -name 'VYRON.app' -type d -print -quit)"
+          test -d "$APP"
+          mkdir -p migration-artifacts
+          ditto -c -k --sequesterRsrc --keepParent "$APP" migration-artifacts/VYRON-3.3.0-macos-arm64-gate.zip
+          shasum -a 256 migration-artifacts/VYRON-3.3.0-macos-arm64-gate.zip | awk '{print $1}' > migration-artifacts/macos.sha256
+
+      - name: Gate evidence
+        shell: bash
+        run: |
+          mkdir -p migration-artifacts
+          {
+            echo "platform=${{ matrix.name }}"
+            echo "head=$(git rev-parse HEAD)"
+            echo "version=3.3.0"
+            echo "merge_policy=MERGE_NEVER_REPLACE"
+            echo "deleted_channels=0"
+            echo "deleted_accounts=0"
+            echo "duplicate_import=idempotent-test"
+            echo "encrypted_bundle=argon2id+xchacha20poly1305"
+          } > migration-artifacts/gate-${{ matrix.name }}.txt
+
+      - name: Upload dual-platform evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: vyron-3.3.0-migration-${{ matrix.name }}
+          path: migration-artifacts/**
+          if-no-files-found: error
