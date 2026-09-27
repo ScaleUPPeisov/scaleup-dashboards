@@ -86,11 +86,19 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          if grep -RIlE 'PHYSICAL_VIDEO_ID|physical_video_id|Physical one-video acceptance ID' .github/workflows >/dev/null 2>&1; then
-            echo 'PRIVACY_GATE=FAIL:YOUTUBE_ACCEPTANCE_IDENTIFIER'
-            exit 1
-          fi
-          echo 'YOUTUBE_ACCEPTANCE_ID_LOGGING=BLOCKED'
+          python3 - <<'PY'
+          import pathlib, sys
+          here=pathlib.Path('.github/workflows/vyron-privacy-gate.yml')
+          forbidden=('PHYSICAL_'+'VIDEO_ID','physical_'+'video_id','Physical one-video acceptance '+'ID')
+          for wf in pathlib.Path('.github/workflows').glob('*.y*ml'):
+              if wf==here:
+                  continue
+              text=wf.read_text(errors='ignore')
+              if any(token in text for token in forbidden):
+                  print(f'PRIVACY_GATE=FAIL:YOUTUBE_ACCEPTANCE_IDENTIFIER:file={wf}')
+                  sys.exit(1)
+          print('YOUTUBE_ACCEPTANCE_ID_LOGGING=BLOCKED')
+          PY
 
       - name: Block user-state artifact uploads
         shell: bash
