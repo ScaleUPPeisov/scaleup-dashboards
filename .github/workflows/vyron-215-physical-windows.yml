@@ -1,0 +1,203 @@
+name: VYRON 2.1.15 Physical Windows Audit
+
+on:
+  push:
+    branches:
+      - windows/vyron-214-stability-fix
+    paths:
+      - '.github/workflows/vyron-215-physical-windows.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-215-physical-windows
+  cancel-in-progress: false
+
+jobs:
+  physical-windows:
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout audited source
+        uses: actions/checkout@v4
+        with:
+          ref: windows/vyron-214-stability-fix
+          fetch-depth: 0
+
+      - name: Prepare evidence directory
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path physical-evidence | Out-Null
+          @(
+            "HEAD=$(git rev-parse HEAD)"
+            "EXPECTED_VERSION=2.1.15"
+            "COMPUTERNAME=$env:COMPUTERNAME"
+            "USERNAME=$env:USERNAME"
+            "OS=$([System.Environment]::OSVersion.VersionString)"
+            "INTERACTIVE=$([Environment]::UserInteractive)"
+            "SESSIONNAME=$env:SESSIONNAME"
+          ) | Set-Content physical-evidence/environment.txt
+          Get-Content physical-evidence/environment.txt
+
+      - name: Fetch public live feed and installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $feedUrl = "https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/vyron-updates/windows-latest.json"
+          Invoke-WebRequest -Uri $feedUrl -Headers @{"Cache-Control"="no-cache"} -OutFile physical-evidence/windows-latest.json
+          $feed = Get-Content physical-evidence/windows-latest.json -Raw | ConvertFrom-Json
+          if ($feed.version -ne "2.1.15") { throw "Live feed version mismatch: $($feed.version)" }
+          $url = $feed.platforms.'windows-x86_64'.url
+          if (-not $url) { throw "Windows asset URL missing" }
+          Invoke-WebRequest -Uri $url -OutFile physical-evidence/VYRON_2.1.15_x64-setup.exe
+          $sha = (Get-FileHash physical-evidence/VYRON_2.1.15_x64-setup.exe -Algorithm SHA256).Hash
+          "LIVE_FEED_VERSION=$($feed.version)" | Add-Content physical-evidence/environment.txt
+          "INSTALLER_SHA256=$sha" | Add-Content physical-evidence/environment.txt
+          "INSTALLER_BYTES=$((Get-Item physical-evidence/VYRON_2.1.15_x64-setup.exe).Length)" | Add-Content physical-evidence/environment.txt
+
+      - name: Snapshot existing VYRON user data
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $roots = @(
+            (Join-Path $env:APPDATA "studio.channelflow.desktop"),
+            (Join-Path $env:LOCALAPPDATA "studio.channelflow.desktop")
+          )
+          $rows = @()
+          foreach($root in $roots){
+            if(Test-Path $root){
+              Get-ChildItem $root -File -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+                $rows += [PSCustomObject]@{
+                  Path=$_.FullName
+                  Length=$_.Length
+                  SHA256=(Get-FileHash $_.FullName -Algorithm SHA256).Hash
+                }
+              }
+            }
+          }
+          $rows | ConvertTo-Json -Depth 4 | Set-Content physical-evidence/user-data-before.json
+          "USER_DATA_FILES_BEFORE=$($rows.Count)" | Add-Content physical-evidence/environment.txt
+
+      - name: Install public VYRON 2.1.15
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $p=Start-Process -FilePath "$PWD\physical-evidence\VYRON_2.1.15_x64-setup.exe" -ArgumentList "/S" -Wait -PassThru
+          if($p.ExitCode -ne 0){throw "Installer exit code $($p.ExitCode)"}
+          $roots=@(
+            (Join-Path $env:LOCALAPPDATA "Programs"),
+            $env:LOCALAPPDATA,
+            $env:ProgramFiles,
+            [Environment]::GetEnvironmentVariable("ProgramFiles(x86)")
+          ) | Where-Object {$_ -and (Test-Path $_)}
+          $exe=$null
+          foreach($r in $roots){
+            $exe=Get-ChildItem $r -Filter VYRON.exe -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+            if($exe){break}
+          }
+          if(-not $exe){throw "Installed VYRON.exe not found"}
+          $v=$exe.VersionInfo.ProductVersion
+          if(-not $v.StartsWith("2.1.15")){throw "Installed version mismatch: $v"}
+          $exe.FullName | Set-Content physical-evidence/installed-exe.txt
+          "INSTALLED_EXE=$($exe.FullName)" | Add-Content physical-evidence/environment.txt
+          "INSTALLED_VERSION=$v" | Add-Content physical-evidence/environment.txt
+          "INSTALLER_PHYSICAL=PASS" | Add-Content physical-evidence/environment.txt
+
+      - name: Launch and capture 1 3 6 10 second progression
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $exe=(Get-Content physical-evidence/installed-exe.txt -Raw).Trim()
+          $proc=Start-Process -FilePath $exe -PassThru
+          Add-Type -AssemblyName System.Windows.Forms
+          Add-Type -AssemblyName System.Drawing
+          function Capture([string]$name){
+            try{
+              $bounds=[System.Windows.Forms.SystemInformation]::VirtualScreen
+              $bmp=New-Object System.Drawing.Bitmap $bounds.Width,$bounds.Height
+              $g=[System.Drawing.Graphics]::FromImage($bmp)
+              $g.CopyFromScreen($bounds.Location,[System.Drawing.Point]::Empty,$bounds.Size)
+              $path=Join-Path $PWD "physical-evidence\$name.png"
+              $bmp.Save($path,[System.Drawing.Imaging.ImageFormat]::Png)
+              $g.Dispose();$bmp.Dispose()
+              return $true
+            }catch{
+              "SCREENSHOT_ERROR $name $($_.Exception.Message)" | Add-Content physical-evidence/environment.txt
+              return $false
+            }
+          }
+          $elapsed=0
+          foreach($checkpoint in @(1,3,6,10)){
+            Start-Sleep -Seconds ($checkpoint-$elapsed)
+            $elapsed=$checkpoint
+            $proc.Refresh()
+            if($proc.HasExited){throw "VYRON exited before checkpoint with code $($proc.ExitCode)"}
+            "APP_ALIVE_$($checkpoint)S=PASS" | Add-Content physical-evidence/environment.txt
+            if(Capture "startup-$($checkpoint)s"){"SCREENSHOT_$($checkpoint)S=PASS" | Add-Content physical-evidence/environment.txt}
+          }
+          "PHYSICAL_STARTUP_10S=PASS" | Add-Content physical-evidence/environment.txt
+          if($proc.CloseMainWindow()){
+            if(-not $proc.WaitForExit(8000)){Stop-Process -Id $proc.Id -Force}
+          }else{
+            Stop-Process -Id $proc.Id -Force
+          }
+
+      - name: Relaunch physical application
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $exe=(Get-Content physical-evidence/installed-exe.txt -Raw).Trim()
+          $p=Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 6
+          $p.Refresh()
+          if($p.HasExited){throw "VYRON failed relaunch; exit=$($p.ExitCode)"}
+          "PHYSICAL_RELAUNCH_6S=PASS" | Add-Content physical-evidence/environment.txt
+          if($p.CloseMainWindow()){
+            if(-not $p.WaitForExit(8000)){Stop-Process -Id $p.Id -Force}
+          }else{
+            Stop-Process -Id $p.Id -Force
+          }
+
+      - name: Verify existing user data was not unexpectedly deleted
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $before=@()
+          if(Test-Path physical-evidence/user-data-before.json){
+            $raw=Get-Content physical-evidence/user-data-before.json -Raw
+            if($raw.Trim()){$before=@($raw | ConvertFrom-Json)}
+          }
+          $changed=@()
+          foreach($row in $before){
+            if(Test-Path $row.Path){
+              $now=(Get-FileHash $row.Path -Algorithm SHA256).Hash
+              if($now -ne $row.SHA256){$changed += $row.Path}
+            }else{
+              $changed += "MISSING: $($row.Path)"
+            }
+          }
+          $changed | Set-Content physical-evidence/user-data-changed.txt
+          $missing=@($changed | Where-Object {$_ -like "MISSING:*"})
+          if($missing.Count -gt 0){throw "Pre-existing user data disappeared: $($missing -join '; ')"}
+          "USER_DATA_DELETION=NONE" | Add-Content physical-evidence/environment.txt
+          "USER_DATA_CHANGED_COUNT=$($changed.Count)" | Add-Content physical-evidence/environment.txt
+
+      - name: Final physical evidence summary
+        if: always()
+        shell: pwsh
+        run: |
+          if(-not (Test-Path physical-evidence/environment.txt)){New-Item -ItemType File physical-evidence/environment.txt | Out-Null}
+          "PHYSICAL_WINDOWS_AUDIT_COMPLETED=$(Get-Date -Format o)" | Add-Content physical-evidence/environment.txt
+          Get-Content physical-evidence/environment.txt
+
+      - name: Upload physical Windows evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vyron-2.1.15-physical-windows
+          path: physical-evidence/**
+          if-no-files-found: warn
