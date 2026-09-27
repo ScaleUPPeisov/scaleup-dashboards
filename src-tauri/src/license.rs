@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 #[cfg(not(target_os = "windows"))]
 use sha2::{Digest, Sha256};
-use std::{fs, path::PathBuf};
+use std::{fs, path::{Path, PathBuf}};
 use tauri::{AppHandle, Manager};
 
 #[cfg(not(target_os = "windows"))]
@@ -37,6 +37,11 @@ fn root_dir(app: &AppHandle) -> Result<PathBuf, String> {
 }
 #[cfg(not(target_os = "windows"))]
 fn legacy_file(app: &AppHandle) -> Result<PathBuf, String> { Ok(root_dir(app)?.join("license.json")) }
+#[cfg(not(target_os = "windows"))]
+fn write_legacy_license_file(path:&Path,value:&Value)->Result<(),String>{
+    let bytes=serde_json::to_vec_pretty(value).map_err(|e|e.to_string())?;
+    security::write_private_atomic(path,&bytes)
+}
 fn windows_cache_file(app: &AppHandle) -> Result<PathBuf, String> { Ok(root_dir(app)?.join("license-windows.json")) }
 fn device_file(app: &AppHandle) -> Result<PathBuf, String> { Ok(root_dir(app)?.join("device-id")) }
 
@@ -320,10 +325,7 @@ pub async fn activate_license(app: AppHandle, key: String) -> Result<Value, Stri
         if digest != OWNER_HASH { return Err("Ключ не найден. Используй тот же ключ владельца, что и в ENDLUME Studio.".into()); }
         let v = json!({"valid":true,"type":"owner-lifetime","expiresAt":null,"maskedKey":mask(key),"activatedAt":chrono::Utc::now()});
         let p = legacy_file(&app)?;
-        let tmp = p.with_extension("tmp");
-        fs::write(&tmp, serde_json::to_vec_pretty(&v).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
-        if p.exists() { let _ = fs::remove_file(&p); }
-        fs::rename(tmp, p).map_err(|e| e.to_string())?;
+        write_legacy_license_file(&p,&v)?;
         Ok(v)
     }
 }
@@ -342,6 +344,20 @@ mod v214_license_tests {
             expires_at: Some((now + chrono::Duration::days(30)).to_rfc3339()),
             ..Default::default()
         }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn legacy_license_file_replaces_existing_value_atomically() {
+        let root=std::env::temp_dir().join(format!("vyron-license-{}",uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let path=root.join("license.json");
+        write_legacy_license_file(&path,&json!({"valid":true,"generation":1})).unwrap();
+        write_legacy_license_file(&path,&json!({"valid":true,"generation":2})).unwrap();
+        let saved:Value=serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved["generation"],2);
+        assert!(!path.with_extension("secure-tmp").exists());
+        let _=fs::remove_dir_all(root);
     }
 
     #[test]
