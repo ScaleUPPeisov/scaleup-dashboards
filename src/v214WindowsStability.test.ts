@@ -52,6 +52,17 @@ describe('VYRON 2.1.14 Windows stability regressions',()=>{
     expect(lib).toContain('system::updater_manifest_diagnostics');
   });
 
+  it('flushes current state before a licensed desktop window is destroyed',()=>{
+    const app=read('./App.tsx');
+    expect(app).toContain("import {getCurrentWindow} from '@tauri-apps/api/window'");
+    expect(app).toContain('windowRef.onCloseRequested');
+    expect(app).toContain('event.preventDefault()');
+    expect(app).toContain('useApp.getState().persist()');
+    expect(app).toContain("new Error('STATE_FLUSH_TIMEOUT')");
+    expect(app).toContain('await windowRef.destroy()');
+    expect(app).toContain("if(!booted||!license?.valid)return");
+  });
+
   it('surfaces successful state backup recovery instead of silently hydrating it',()=>{
     const app=read('./App.tsx'),types=read('./types.ts');
     expect(types).toContain("status:'RECOVERED'|'FAILED'");
