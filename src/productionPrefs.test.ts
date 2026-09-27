@@ -1,5 +1,6 @@
 import {beforeEach,describe,expect,it} from 'vitest';
 import {defaultChannelProductionPrefs,patchChannelProductionPrefs,patchProductionPrefs,readProductionPrefs} from './productionPrefs';
+import {setFrontendTenant,tenantStorageKey} from './tenantStorage';
 
 class MemoryStorage {
   private data=new Map<string,string>();
@@ -15,6 +16,7 @@ beforeEach(()=>{
   Object.defineProperty(globalThis,'localStorage',{value:new MemoryStorage(),configurable:true});
   Object.defineProperty(globalThis,'window',{value:{dispatchEvent:()=>true,addEventListener:()=>{},removeEventListener:()=>{}},configurable:true});
   Object.defineProperty(globalThis,'CustomEvent',{value:class {detail:any;constructor(_t:string,init?:any){this.detail=init?.detail}},configurable:true});
+  setFrontendTenant('');
 });
 
 describe('Production Manager v2 persistence',()=>{
@@ -26,6 +28,39 @@ describe('Production Manager v2 persistence',()=>{
     expect(reloaded.selectedChannelId).toBe('lost-highway');
     expect(reloaded.tab).toBe('manager');
     expect(reloaded.version).toBe(2);
+  });
+  it('isolates Production Manager preferences between frontend tenants',()=>{
+    setFrontendTenant('tenant-a');
+    patchProductionPrefs({selectedChannelId:'channel-a',productionRoot:'C:\\Tenant A'});
+    expect(readProductionPrefs().selectedChannelId).toBe('channel-a');
+
+    setFrontendTenant('tenant-b');
+    expect(readProductionPrefs().selectedChannelId).toBeUndefined();
+    patchProductionPrefs({selectedChannelId:'channel-b',productionRoot:'D:\\Tenant B'});
+    expect(readProductionPrefs().selectedChannelId).toBe('channel-b');
+
+    setFrontendTenant('tenant-a');
+    const a=readProductionPrefs();
+    expect(a.selectedChannelId).toBe('channel-a');
+    expect(a.productionRoot).toBe('C:\\Tenant A');
+    expect(localStorage.getItem(tenantStorageKey('vyron:production-manager:v2'))).toContain('channel-a');
+  });
+
+  it('migrates the legacy global Production Manager key into the active tenant namespace',()=>{
+    localStorage.setItem('vyron:production-manager:v2',JSON.stringify({
+      version:2,selectedChannelId:'legacy-channel',tab:'manager',byChannel:{},selectedJobIds:['j1'],productionRoot:'E:\\Legacy'
+    }));
+    setFrontendTenant('tenant-migrated');
+    const migrated=readProductionPrefs();
+    expect(migrated.selectedChannelId).toBe('legacy-channel');
+    expect(migrated.selectedJobIds).toEqual(['j1']);
+    expect(localStorage.getItem(tenantStorageKey('vyron:production-manager:v2'))).toContain('legacy-channel');
+
+    setFrontendTenant('tenant-other');
+    // Legacy global data is compatibility input only; after first migration it must not
+    // become the active tenant's mutable store.
+    patchProductionPrefs({selectedChannelId:'other-channel'});
+    expect(readProductionPrefs().selectedChannelId).toBe('other-channel');
   });
   it('persists channel-specific builder settings and selected projects',()=>{
     expect(defaultChannelProductionPrefs().tracksPerProject).toBe(15);
