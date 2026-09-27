@@ -70,12 +70,13 @@ export const useUpdaterRuntime=create<UpdaterRuntimeState>((set,get)=>({
     installPromise=(async()=>{
       const target=get().latestVersion||candidate!.version;localStorage.setItem('vyron:update-installing-version',target);
       try{
-        set({status:'VERIFYING',blockers:[]});
-        await candidate!.install(status=>set({status}));
-        set({status:'READY_TO_RESTART'});
-      }catch(error){localStorage.removeItem('vyron:update-installing-version');const s=get();const code=recordFailure('install',error,s.currentVersion,target);set({status:'ERROR',errorCode:code,errorMessage:String(error)});return false}
-      try{set({status:'RESTARTING'});await candidate!.restart();return true}catch(error){const s=get();const code=recordFailure('relaunch',error,s.currentVersion,target);set({status:'ERROR',errorCode:code,errorMessage:String(error)});return false}
-      finally{installPromise=undefined}
+        try{
+          set({status:'VERIFYING',blockers:[]});
+          await candidate!.install(status=>set({status}));
+          set({status:'READY_TO_RESTART'});
+        }catch(error){localStorage.removeItem('vyron:update-installing-version');const s=get();const code=recordFailure('install',error,s.currentVersion,target);set({status:'ERROR',errorCode:code,errorMessage:String(error)});return false}
+        try{set({status:'RESTARTING'});await candidate!.restart();return true}catch(error){const s=get();const code=recordFailure('relaunch',error,s.currentVersion,target);set({status:'ERROR',errorCode:code,errorMessage:String(error)});return false}
+      }finally{installPromise=undefined}
     })();
     return installPromise;
   },
