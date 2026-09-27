@@ -1,7 +1,8 @@
 import {describe,expect,it} from 'vitest';
 import {readFileSync} from 'node:fs';
+const urlPath=(u:URL)=>{let p=decodeURIComponent(u.pathname);if(/^\/[A-Za-z]:\//.test(p))p=p.slice(1);return p};
 
-const read=(p:string)=>readFileSync(new URL(p,import.meta.url).pathname,'utf8');
+const read=(p:string)=>readFileSync(urlPath(new URL(p,import.meta.url)),'utf8');
 
 describe('VYRON 2.1.6 live upload wiring',()=>{
  it('routes high-frequency upload progress into transient telemetry and factual persistent task progress without patchJob rerender storms',()=>{
