@@ -112,6 +112,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           cargo test --manifest-path src-tauri/Cargo.toml windows_credential_manager_roundtrip_is_tenant_scoped -- --nocapture
+          cargo test --manifest-path src-tauri/Cargo.toml windows_credential_manager_isolates_same_account_between_tenants -- --nocapture
           cargo test --manifest-path src-tauri/Cargo.toml unicode_spaces_ampersand_and_parentheses_path_is_read_write_safe -- --nocapture
           cargo test --manifest-path src-tauri/Cargo.toml long_windows_path_over_260_chars_is_read_write_safe_when_os_supports_vyron_runtime -- --nocapture
           cargo test --manifest-path src-tauri/Cargo.toml unc_paths_are_classified_as_external_without_network_access -- --nocapture
