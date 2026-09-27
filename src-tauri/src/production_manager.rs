@@ -2734,6 +2734,36 @@ mod windows_storage_parity_tests {
     }
 
     #[test]
+    fn unicode_spaces_ampersand_and_parentheses_path_is_read_write_safe() {
+        let root = std::env::temp_dir()
+            .join(format!("vyron-path-audit-{}", Uuid::new_v4()))
+            .join("Кирилл Пейсов")
+            .join("Видео & Музыка")
+            .join("Проект (01)");
+        fs::create_dir_all(&root).expect("create special Windows path");
+        let file = root.join("тест & файл (01).txt");
+        fs::write(&file, b"vyron").expect("write special Windows path");
+        assert_eq!(fs::read(&file).expect("read special Windows path"), b"vyron");
+        let status = storage_probe(&root);
+        assert!(status.exists && status.writable, "{status:?}");
+        let _ = fs::remove_dir_all(root.ancestors().nth(4).unwrap_or(&root));
+    }
+
+    #[test]
+    fn long_windows_path_over_260_chars_is_read_write_safe_when_os_supports_vyron_runtime() {
+        let mut root = std::env::temp_dir().join(format!("vyron-long-path-{}", Uuid::new_v4()));
+        while root.as_os_str().to_string_lossy().len() <= 285 {
+            root = root.join("очень-длинная-папка-0123456789");
+        }
+        fs::create_dir_all(&root).expect("create >260-char path");
+        let file = root.join("video test.txt");
+        fs::write(&file, b"vyron-long").expect("write >260-char path");
+        assert_eq!(fs::read(&file).expect("read >260-char path"), b"vyron-long");
+        assert!(root.as_os_str().to_string_lossy().len() > 260);
+        let _ = fs::remove_dir_all(root.ancestors().last().unwrap_or(&root));
+    }
+
+    #[test]
     fn normal_temp_drive_classification_is_callable_for_unicode_paths() {
         let p = std::env::temp_dir().join("Кирилл Пейсов").join("Видео & Музыка").join("Проект (01)");
         let _ = windows_storage_external(&p);
