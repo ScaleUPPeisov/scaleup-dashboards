@@ -2735,8 +2735,8 @@ mod windows_storage_parity_tests {
 
     #[test]
     fn unicode_spaces_ampersand_and_parentheses_path_is_read_write_safe() {
-        let root = std::env::temp_dir()
-            .join(format!("vyron-path-audit-{}", Uuid::new_v4()))
+        let audit_root = std::env::temp_dir().join(format!("vyron-path-audit-{}", Uuid::new_v4()));
+        let root = audit_root
             .join("Кирилл Пейсов")
             .join("Видео & Музыка")
             .join("Проект (01)");
@@ -2746,12 +2746,13 @@ mod windows_storage_parity_tests {
         assert_eq!(fs::read(&file).expect("read special Windows path"), b"vyron");
         let status = storage_probe(&root);
         assert!(status.exists && status.writable, "{status:?}");
-        let _ = fs::remove_dir_all(root.ancestors().nth(4).unwrap_or(&root));
+        let _ = fs::remove_dir_all(&audit_root);
     }
 
     #[test]
     fn long_windows_path_over_260_chars_is_read_write_safe_when_os_supports_vyron_runtime() {
-        let mut root = std::env::temp_dir().join(format!("vyron-long-path-{}", Uuid::new_v4()));
+        let audit_root = std::env::temp_dir().join(format!("vyron-long-path-{}", Uuid::new_v4()));
+        let mut root = audit_root.clone();
         while root.as_os_str().to_string_lossy().len() <= 285 {
             root = root.join("очень-длинная-папка-0123456789");
         }
@@ -2760,7 +2761,7 @@ mod windows_storage_parity_tests {
         fs::write(&file, b"vyron-long").expect("write >260-char path");
         assert_eq!(fs::read(&file).expect("read >260-char path"), b"vyron-long");
         assert!(root.as_os_str().to_string_lossy().len() > 260);
-        let _ = fs::remove_dir_all(root.ancestors().last().unwrap_or(&root));
+        let _ = fs::remove_dir_all(&audit_root);
     }
 
     #[test]
