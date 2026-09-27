@@ -61,7 +61,7 @@ jobs:
             'GOOGLE_API_KEY':re.compile(rb'AIza[0-9A-Za-z_-]{20,}'),
             'PRIVATE_KEY':re.compile(rb'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----'),
             'GMAIL_ADDRESS':re.compile(rb'[A-Za-z0-9._%+-]+@(?:gmail|googlemail)\.com',re.I),
-            'YOUTUBE_CHANNEL_ID':re.compile(rb'UC[A-Za-z0-9_-]{22}'),
+            'YOUTUBE_CHANNEL_ID':re.compile(rb'(?<![A-Za-z0-9_-])UC[A-Za-z0-9_-]{22}(?![A-Za-z0-9_-])'),
             'YOUTUBE_WATCH_ID':re.compile(rb'(?:youtu\.be/|youtube\.com/watch\?v=)[A-Za-z0-9_-]{11}',re.I),
             'KNOWN_PRIVATE_CHANNEL_TITLE':re.compile(rb'Glass City Lovers',re.I),
           }
