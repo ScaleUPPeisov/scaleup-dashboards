@@ -1,6 +1,7 @@
 import type {FingerprintCacheEntry,ProjectLifecycleRecord,UploadHistoryRecord,VideoJob} from './types';
 
 export const STORAGE_STATE_VERSION=8;
+export function currentRenderSupersedesUploadHistory(job:VideoJob){return job.status==='READY_UPLOAD'&&job.storageLifecycle==='RENDERED'&&!job.youtubeVideoId&&!job.uploadedAt}
 export function successfulUploadForHash(history:UploadHistoryRecord[],sha256:string){const h=sha256.trim().toLowerCase();return history.slice().reverse().find(x=>x.status==='UPLOADED'&&Boolean(x.youtubeVideoId)&&x.sha256.toLowerCase()===h)}
 export function duplicateUploadIds(jobs:VideoJob[],fingerprints:Record<string,{sha256:string}>,history:UploadHistoryRecord[],allowOverrideIds:Set<string>=new Set()){return jobs.filter(j=>{if(allowOverrideIds.has(j.id))return false;const fp=fingerprints[j.id];return Boolean(fp&&successfulUploadForHash(history,fp.sha256))}).map(j=>j.id)}
 export function recordVerifiedUpload(history:UploadHistoryRecord[],record:Omit<UploadHistoryRecord,'id'|'status'>){if(!record.youtubeVideoId?.trim())throw new Error('VERIFIED_VIDEO_ID_REQUIRED');if(!record.sha256?.trim())throw new Error('SHA256_REQUIRED');return[...history,{...record,id:crypto.randomUUID(),status:'UPLOADED' as const}]}
