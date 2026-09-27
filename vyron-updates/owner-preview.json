@@ -1,15 +1,15 @@
 {
-  "version": "3.2.1-preview.338",
-  "notes": "• Sidebar снова показывает полные русские labels без clipping/ellipsis\\n• Safe post-upload cleanup перемещает только trusted successful local video generations в Корзину\\n• Country/language header использует authoritative YouTube metadata и сохранённый sync cache\\n• OAuth persistence и Publisher upload/fingerprint core не изменялись\\n• Stable feed остаётся заморожен до owner physical acceptance",
-  "pub_date": "2026-09-23T15:05:31Z",
-  "artifactSha256": "187f325a2b7e4fa76bf1b36d5039f362171a7509e45b3943e5c16cd08ed669a2",
-  "buildRevision": 338,
-  "commit": "90e7d0d8fa4a4e1727edded16a429fd3bae71dee",
-  "productVersion": "3.2.1",
+  "version": "3.3.1-preview.339",
+  "notes": "VYRON 3.3.1 production hotfix is approved for Owner Preview clients. Existing Google/YouTube profiles and channels are preserved.",
+  "pub_date": "2026-09-27T13:45:51Z",
+  "artifactSha256": "d891795b36c517c3c3cfc0efbdc562aa01c3ed39079722d85efbe62f6a3afb5e",
+  "buildRevision": 339,
+  "commit": "98a5dd881c1f217d1fadc914129e7a169146e933",
+  "productVersion": "3.3.1",
   "platforms": {
     "darwin-aarch64": {
-      "url": "https://github.com/ScaleUPPeisov/vyron-releases/releases/download/vyron-owner-preview-338/VYRON-3.2.1-build-338.app.tar.gz",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM2NoZUNYTDhEanJkaFk1aWc3RGFXWGN1VC9uU2QzM28zdmIwQlBOWjk0YmF4QldmcjRYa24zZ1kvTW1ZWlJhYmowOHRaOXM5bEtWbmhnOTVCa1VqL0E4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMTc1OTA2CWZpbGU6VllST04uYXBwLnRhci5negpGRm8xbDQ0bkxWRXFCUkJmczlPS3UrSkNURmpYV3p2OVZVVHE5dWRmTXV0T0c1cWF4VE93KzNTOWs0bTZEVXAvZHNHWmVWTGM3YTQ2L2M1RHd6ekZEQT09Cg=="
+      "url": "https://github.com/ScaleUPPeisov/vyron-releases/releases/download/v3.3.1/VYRON.app.tar.gz",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM2VsZkFVQlJHZmY1VVJtSkcyZDlZcVY4WVJ5ZVhSUVVHWStLbk5IRmZnUk9jUFdreCtpVXdkQ3lRUitlM0xZS3BPbXBXand3Z2tSU3ZNdkJNdTM4NHc4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNTE2NDE0CWZpbGU6VllST04uYXBwLnRhci5negpNRWRNcGZWdjlRR0ZvVk9FSnZEbmFsM1RpRDBpZ1FnbUJzV2xFVjFETXY3c3R0VFhGUXJ2VEJyRU5ucjhuWEpBODdObkhxWFdYTGx6WDBNbmYwRUJBdz09Cg=="
     }
   }
 }

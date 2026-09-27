@@ -1,11 +1,11 @@
 {
-  "version": "3.3.0",
-  "notes": "VYRON 3.3.0 — secure Windows ↔ macOS migration; Google/YouTube profiles preserved; merge-safe duplicate-resistant imports; OAuth and Google Cloud Project continuity; cross-platform folder remapping; Windows update continuity; rollback/recovery protection; stability and regression fixes.",
-  "pub_date": "2026-09-27T11:37:48Z",
+  "version": "3.3.1",
+  "notes": "VYRON 3.3.1 — OAuth/connectivity/quota hotfix; connected count corrected; READY state synchronized; per-Google-Project statistics quota isolation; existing profiles and channels preserved.",
+  "pub_date": "2026-09-27T13:45:51Z",
   "platforms": {
     "windows-x86_64": {
-      "url": "https://github.com/ScaleUPPeisov/vyron-releases/releases/download/v3.3.0/VYRON_3.3.0_x64-setup.exe",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM1RMWGgxbk9iMEwvUVUvTjJGaUFYU3dXY2RFcFZjbUx0U3J4N3pZc25peFBBTDU5TVJjZ1M2M2g3a1R3ZHJXaVFRNkE5VjJwZHYzR3hmVkZpS0FJOVFVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNTA3NzUwCWZpbGU6VllST05fMy4zLjBfeDY0LXNldHVwLmV4ZQovSDFhTjE1OVNTZG5MQklXblZUSUxDSzZ5VTF6R1ZaSy9zN0dacDVzRVNwVWRCaVZzd0ZBZGppOHJmcml2Z0JrU3kzR3ZoUW03N05ETi9KRUVTVHpEdz09Cg=="
+      "url": "https://github.com/ScaleUPPeisov/vyron-releases/releases/download/v3.3.1/VYRON_3.3.1_x64-setup.exe",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM1huRlhzTXVNWiswcXJ0VnBEbm9FWUVWc09vek1NYkxRcWFhaGRnWkxFazlFQWxHZGdQZmtqOWJEK2dLSE9pSmZuSnFmdUxncVVYbkRwOU5Kdi9aN0FZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNTE0NjQ1CWZpbGU6VllST05fMy4zLjFfeDY0LXNldHVwLmV4ZQp5YmJmaUZ4MTF0KzhBeVY5VEJadTIvaVExcmFJalkwZXozU2x5VHJUcFlMWFRkY3JMMWhadElLUDh6b3EraUtURVlmMmhqRmxLVDlzQmhubFNHdFVCUT09Cg=="
     }
   }
 }
