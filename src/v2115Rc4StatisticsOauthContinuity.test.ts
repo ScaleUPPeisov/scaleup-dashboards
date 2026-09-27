@@ -38,23 +38,23 @@ describe('VYRON statistics/OAuth continuity behavior',()=>{
   }
  });
 
- it('statistics does not use NOT_CHECKED or recoverable credentials as API drivers',()=>{
+ it('NOT_CHECKED remains eligible for safe use-time validation while real recovery states stay blocked',()=>{
   const plan=planStatisticsBatchDrivers([
    linked('ready','READY'),
    linked('unchecked','NOT_CHECKED'),
    linked('recoverable','RECOVERABLE_KEYCHAIN_BLOCKED'),
    linked('login','RECONNECT_REQUIRED')
   ]);
-  expect(plan.candidates.map(x=>x.profile.id)).toEqual(['profile-ready']);
+  expect(plan.candidates.map(x=>x.profile.id)).toEqual(['profile-ready','profile-unchecked']);
   expect(plan.blocked.map(x=>x.profileId).sort()).toEqual([
-   'profile-login','profile-recoverable','profile-unchecked'
+   'profile-login','profile-recoverable'
   ]);
  });
 
- it('all non-operational credentials result in zero statistics API drivers',()=>{
+ it('all genuinely blocked credentials result in zero statistics API drivers',()=>{
   const plan=planStatisticsBatchDrivers([
-   linked('a','NOT_CHECKED'),
-   linked('b','KEYCHAIN_BLOCKED'),
+   linked('a','KEYCHAIN_BLOCKED'),
+   linked('b','RECONNECT_REQUIRED'),
    linked('c','MISSING')
   ]);
   expect(plan.candidates).toHaveLength(0);
