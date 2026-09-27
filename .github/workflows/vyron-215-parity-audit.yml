@@ -1,0 +1,81 @@
+name: VYRON 2.1.15 Windows macOS Parity Audit
+
+on:
+  push:
+    branches:
+      - audit/vyron-2.1.15-windows-macos-parity
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-215-parity-audit
+  cancel-in-progress: true
+
+jobs:
+  parity:
+    name: parity-${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - name: Checkout audit source
+        uses: actions/checkout@v4
+        with:
+          ref: audit/vyron-2.1.15-windows-macos-parity
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Version contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          node -e "const p=require('./package.json'); if(p.version!=='2.1.15') process.exit(1)"
+          grep -Eq '^version = "2\.1\.15"$' src-tauri/Cargo.toml
+          python - <<'PY'
+          import json
+          assert json.load(open('src-tauri/tauri.conf.json'))['version']=='2.1.15'
+          print('VERSION_CONTRACT=PASS')
+          PY
+
+      - name: Install frontend dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Frontend full suite
+        run: npm test
+
+      - name: Frontend production build
+        run: npm run build
+
+      - name: OAuth callback targeted regression
+        run: cargo test --manifest-path src-tauri/Cargo.toml oauth_callback_contract_tests -- --nocapture
+
+      - name: OAuth browser URL regression
+        run: cargo test --manifest-path src-tauri/Cargo.toml windows_oauth_browser_launch_tests -- --nocapture
+
+      - name: Rust full suite
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Native host compile
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+
+      - name: Platform evidence
+        shell: bash
+        run: |
+          echo "RUNNER_OS=${RUNNER_OS}"
+          rustc -Vv
+          node -v
+          cargo -V
+          echo "PARITY_HOST_COMPILE_AND_TEST=PASS"
