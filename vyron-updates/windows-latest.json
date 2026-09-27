@@ -1,11 +1,11 @@
 {
-  "version": "2.1.16",
-  "notes": "VYRON 2.1.16 — Windows stability: OAuth transaction hardening, tenant-isolated state/credentials, safer updater lifecycle, rerender identity and Windows path/storage fixes.",
-  "pub_date": "2026-09-27T07:28:11Z",
+  "version": "3.3.0",
+  "notes": "VYRON 3.3.0 — secure Windows ↔ macOS migration; Google/YouTube profiles preserved; merge-safe duplicate-resistant imports; OAuth and Google Cloud Project continuity; cross-platform folder remapping; Windows update continuity; rollback/recovery protection; stability and regression fixes.",
+  "pub_date": "2026-09-27T11:37:48Z",
   "platforms": {
     "windows-x86_64": {
-      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.16-windows-x64/VYRON_2.1.16_x64-setup.exe",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM2NmYnVGRFQ0Z1hXYWV0cGhyVDRmZlhqWHhNdnE4SE1ZWC9MTnByS2VGM3BONWdVMGEweVZ1V0N1T3A2UTFObWxOd3l1ZklRbitWOHFTdmxDak02S3dVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNDk0MDQwCWZpbGU6VllST05fMi4xLjE2X3g2NC1zZXR1cC5leGUKUHpIdmdsVDF3WUVmQmsxTlRYMjJhV2NXclJiV1JzTjhtdzZib0ZXMjJ6ZFdXQURodGU0WFEwVWs3VWtET0VJMFZBSEVQOGMvQWsvUlA4b1JrZW9EQUE9PQo="
+      "url": "https://github.com/ScaleUPPeisov/vyron-releases/releases/download/v3.3.0/VYRON_3.3.0_x64-setup.exe",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM1RMWGgxbk9iMEwvUVUvTjJGaUFYU3dXY2RFcFZjbUx0U3J4N3pZc25peFBBTDU5TVJjZ1M2M2g3a1R3ZHJXaVFRNkE5VjJwZHYzR3hmVkZpS0FJOVFVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNTA3NzUwCWZpbGU6VllST05fMy4zLjBfeDY0LXNldHVwLmV4ZQovSDFhTjE1OVNTZG5MQklXblZUSUxDSzZ5VTF6R1ZaSy9zN0dacDVzRVNwVWRCaVZzd0ZBZGppOHJmcml2Z0JrU3kzR3ZoUW03N05ETi9KRUVTVHpEdz09Cg=="
     }
   }
 }
