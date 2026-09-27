@@ -19,7 +19,7 @@ import {removeSelectedPublishItems} from './publishRemoval';
 import {appendErrorHistory} from './errorHistory';
 import {batchFailureToast,type BatchFailure} from './errorPresentationPolicy';
 import {canonicalSelectedJobs,publisherGlobalBlockReasons,publisherPreflightItems,publisherUploadButtonLabel} from './publisherRuntime';
-import {markHistoryTrashed,nextProjectLifecycle,recordVerifiedUpload,successfulUploadForHash} from './storageLifecycle';
+import {currentRenderSupersedesUploadHistory,markHistoryTrashed,nextProjectLifecycle,recordVerifiedUpload,successfulUploadForHash} from './storageLifecycle';
 import {resolveProductionRoot} from './productionPrefs';
 import {configureUploadQueue,enqueueUpload,waitForUploadQueueEntries} from './uploadQueueRuntime';
 
@@ -37,7 +37,7 @@ export function PublisherOS(){
  const [scheduleSync,setScheduleSync]=useState<{state:'idle'|'loading'|'ready'|'error';lastScheduled?:string;suggestedStart?:string;note?:string;futureCount:number;occupied:string[];timezone:string}>({state:'idle',futureCount:0,occupied:[],timezone:PUBLISHER_TIMEZONE});
  const docInput=useRef<HTMLInputElement>(null);const channel=channels.find(c=>c.id===channelId),profileId=channel?.youtubeProfileId||'';
  const setDraftPatch=(p:Partial<PublishWorkspaceDraft>)=>setDraft(d=>savePublishWorkspace(channelId,{...d,...p}));
- const uploadedJobIds=useMemo(()=>new Set(uploadHistory.filter(x=>x.channelId===channelId&&x.status==='UPLOADED'&&Boolean(x.youtubeVideoId)).map(x=>x.jobId)),[uploadHistory,channelId]);
+ const uploadedJobIds=useMemo(()=>{const fresh=new Set(jobs.filter(j=>j.channelId===channelId&&currentRenderSupersedesUploadHistory(j)).map(j=>j.id));return new Set(uploadHistory.filter(x=>x.channelId===channelId&&x.status==='UPLOADED'&&Boolean(x.youtubeVideoId)&&!fresh.has(x.jobId)).map(x=>x.jobId))},[uploadHistory,jobs,channelId]);
  const allChannelJobs=useMemo(()=>jobs.filter(j=>j.channelId===channelId&&Boolean(j.finalPath)&&!j.removedFromPublishList&&['READY_UPLOAD','UPLOADING','ERROR','SCHEDULED'].includes(j.status)).sort((a,b)=>a.number-b.number),[jobs,channelId]);
  const selectableJobs=useMemo(()=>allChannelJobs.filter(j=>!uploadedJobIds.has(j.id)&&j.storageLifecycle!=='TRASHED'),[allChannelJobs,uploadedJobIds]);
  const channelJobs=useMemo(()=>allChannelJobs.filter(j=>videoFilter==='all'?true:videoFilter==='uploaded'?uploadedJobIds.has(j.id):!uploadedJobIds.has(j.id)),[allChannelJobs,uploadedJobIds,videoFilter]);
