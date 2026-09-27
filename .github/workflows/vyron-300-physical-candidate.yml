@@ -1,4 +1,4 @@
-name: VYRON 3.2.1 Owner Preview Candidate
+name: VYRON 3.3.0 Migration Owner Preview Candidate
 
 on:
   push:
@@ -17,7 +17,7 @@ concurrency:
 env:
   REPO: ScaleUPPeisov/scaleup-dashboards
   BRANCH: release/vyron-3.0.0
-  VERSION: '3.2.1'
+  VERSION: '3.3.0'
   BASE_RC7: 53e8f1c5a65ce5e5b86c5e19a70247db181d5dbb
   BUNDLE_ID: studio.channelflow.desktop
   EXECUTABLE: channelflow
@@ -30,7 +30,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
-      - name: Checkout exact 3.2.1 candidate source
+      - name: Checkout exact 3.3.0 candidate source
         uses: actions/checkout@v4
         with:
           ref: release/vyron-3.0.0
@@ -75,7 +75,7 @@ jobs:
       VYRON_COMMIT_SHA: ${{ github.sha }}
       VYRON_UPDATE_CHANNEL: owner-preview
     steps:
-      - name: Checkout exact 3.2.1 candidate source
+      - name: Checkout exact 3.3.0 candidate source
         uses: actions/checkout@v4
         with:
           ref: release/vyron-3.0.0
@@ -120,7 +120,7 @@ jobs:
           python3 - <<'PY'
           import json,re
           from pathlib import Path
-          v='3.2.1'
+          v='3.3.0'
           pkg=json.load(open('package.json'))
           lock=json.load(open('package-lock.json'))
           conf=json.load(open('src-tauri/tauri.conf.json'))
