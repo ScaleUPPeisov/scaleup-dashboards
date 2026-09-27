@@ -81,7 +81,7 @@ pub fn prepare_updater_tempdir()->Result<String,String>{
 }
 
 
-const OWNER_PREVIEW_ENDPOINT:&str="https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/vyron-updates/owner-preview.json";
+const OWNER_PREVIEW_ENDPOINT:&str="https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/owner-preview.json";
 fn build_revision()->u64{env!("VYRON_BUILD_REVISION").parse().unwrap_or(0)}
 fn build_commit()->&'static str{env!("VYRON_COMMIT_SHA")}
 fn update_channel()->&'static str{env!("VYRON_UPDATE_CHANNEL")}
