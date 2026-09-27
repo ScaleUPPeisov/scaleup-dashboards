@@ -37,12 +37,13 @@ describe('VYRON 2.1.14 Windows stability regressions',()=>{
   it('uses real ENDLUME and updater diagnostics instead of optimistic labels',()=>{
     const settings=read('./SettingsOS.tsx'),api=read('./api.ts'),system=read('../src-tauri/src/system.rs'),lib=read('../src-tauri/src/lib.rs');
     expect(settings).toContain('api.endlumeDiagnostics(s.endlumePath)');
-    expect(settings).toContain('api.updaterManifestDiagnostics(UPDATER_ENDPOINTS[0])');
+    expect(settings).toContain('api.updaterManifestDiagnostics(primaryUpdaterEndpoint())');
     expect(settings).not.toContain("status:'Signed updater подключён'");
     expect(system).toContain('pub fn endlume_diagnostics');
     expect(system).toContain('"INBOX_NOT_WRITABLE"');
     expect(system).toContain('pub async fn updater_manifest_diagnostics');
-    expect(system).toContain('"platformKey":"windows-x86_64"');
+    expect(system).toContain('"platformKey":platform_key');
+    expect(system).toContain('fn updater_platform_key()');
     expect(system).toContain('"signaturePresent":signature_present');
     expect(system).toContain('"installerDownloaded":false');
     expect(api).toContain("invoke<EndlumeDiagnostic>('endlume_diagnostics'");
