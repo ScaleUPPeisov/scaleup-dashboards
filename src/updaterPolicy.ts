@@ -1,10 +1,22 @@
 export const WINDOWS_UPDATER_PLATFORM='windows-x86_64' as const;
 export const MACOS_UPDATER_PLATFORM='darwin-aarch64' as const;
 
-export const UPDATER_ENDPOINTS=[
+export const WINDOWS_UPDATER_ENDPOINTS=[
   'https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/vyron-updates/windows-latest.json',
   'https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/vyron-updates/latest.json'
 ] as const;
+export const MACOS_UPDATER_ENDPOINTS=[
+  'https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/vyron-updates/latest.json',
+  'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/latest/download/latest.json'
+] as const;
+export function updaterEndpointsForPlatform(userAgent=typeof navigator!=='undefined'?navigator.userAgent:''){
+  return /Windows/i.test(userAgent)?WINDOWS_UPDATER_ENDPOINTS:MACOS_UPDATER_ENDPOINTS;
+}
+export function primaryUpdaterEndpoint(userAgent=typeof navigator!=='undefined'?navigator.userAgent:''){
+  return updaterEndpointsForPlatform(userAgent)[0];
+}
+// Compatibility export; callers that need an OS-correct endpoint must use primaryUpdaterEndpoint().
+export const UPDATER_ENDPOINTS=WINDOWS_UPDATER_ENDPOINTS;
 
 export const UPDATER_CHECK_OPTIONS={
   timeout:30_000,
