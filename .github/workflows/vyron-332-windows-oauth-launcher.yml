@@ -1,0 +1,295 @@
+name: VYRON 3.3.2 Windows OAuth Launcher Hotfix
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-3.3.2-windows-oauth-launcher
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-332-windows-oauth-launcher
+  cancel-in-progress: true
+
+env:
+  BASE_SHA: 98a5dd881c1f217d1fadc914129e7a169146e933
+  VERSION: '3.3.2'
+
+jobs:
+  windows-hotfix:
+    runs-on: windows-latest
+    timeout-minutes: 80
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+    steps:
+      - name: Checkout exact hotfix branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Scope, version, no-mac and data-preservation contracts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $changed=@(git diff --name-only "$env:BASE_SHA...HEAD")
+          $changed | ForEach-Object { Write-Host "CHANGED=$_" }
+
+          $allowed=@(
+            'src-tauri/src/youtube.rs',
+            'src/v332WindowsOauthLauncher.test.ts',
+            'src-tauri/tauri.windows.conf.json',
+            'package.json',
+            'package-lock.json',
+            'src-tauri/Cargo.toml',
+            'src-tauri/Cargo.lock',
+            'src-tauri/tauri.conf.json',
+            '.github/workflows/vyron-332-windows-oauth-launcher.yml'
+          )
+          foreach($file in $changed){
+            if($allowed -notcontains $file){ throw "UNEXPECTED_HOTFIX_FILE=$file" }
+          }
+
+          $wf=Get-Content '.github/workflows/vyron-332-windows-oauth-launcher.yml' -Raw
+          $runners=@([regex]::Matches($wf,'(?m)^\s*runs-on:\s*([^\s#]+)') | ForEach-Object {$_.Groups[1].Value})
+          if($runners.Count -ne 1 -or $runners[0] -ne 'windows-latest'){ throw "NON_WINDOWS_RUNNER_PRESENT=$($runners -join ',')" }
+
+          node -e "const p=require('./package.json'),l=require('./package-lock.json'),c=require('./src-tauri/tauri.conf.json');if(p.version!=='3.3.2'||l.version!=='3.3.2'||l.packages[''].version!=='3.3.2'||c.version!=='3.3.2'||c.identifier!=='studio.channelflow.desktop')process.exit(1)"
+          if($LASTEXITCODE -ne 0){ throw 'VERSION_OR_BUNDLE_CONTRACT_FAILED' }
+          $conf=Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
+
+          $backend=Get-Content src-tauri/src/youtube.rs -Raw
+          $open=[regex]::Match($backend,'(?s)fn open_browser\(.*?fn wait_for_oauth_code').Value
+          $win=[regex]::Match($open,'(?s)#\[cfg\(target_os = "windows"\)\].*?#\[cfg\(target_os = "linux"\)\]').Value
+          if($win -notmatch 'tauri_plugin_opener::open_url\(url, None::<&str>\)'){ throw 'SYSTEM_URL_OPENER_MISSING' }
+          if($win -match 'Command::new\("cmd"\)|cmd\.exe|"/C"|"start"|PowerShell'){ throw 'SHELL_OAUTH_LAUNCH_REMAINS' }
+
+          $addedLines=git diff "$env:BASE_SHA...HEAD" -- src-tauri/src/youtube.rs | Select-String '^\+' | ForEach-Object {$_.Line}
+          $added=($addedLines -join [Environment]::NewLine)
+          if($added -match 'youtubeDisconnect|removeChannel|delete_profile_secrets|canonical_delete_secret|clear.*vault|reset.*database|reset.*local'){ throw 'DESTRUCTIVE_OAUTH_CHANGE_ADDED' }
+
+          $winCfg=Get-Content src-tauri/tauri.windows.conf.json -Raw | ConvertFrom-Json
+          if($winCfg.plugins.updater.endpoints[0] -ne 'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json'){ throw 'WINDOWS_PRIMARY_FEED_NOT_FIXED' }
+          if($conf.plugins.updater.endpoints[0] -ne 'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json'){ throw 'SHARED_MAC_FEED_ORDER_CHANGED' }
+
+          Write-Host 'MACOS_JOBS=0'
+          Write-Host 'DESTRUCTIVE_OAUTH_ADDITIONS=0'
+          Write-Host 'WINDOWS_PRIMARY_FEED=windows-latest.json'
+          Write-Host 'SHARED_MAC_FEED_UNCHANGED=PASS'
+
+      - name: Install frontend
+        run: npm ci --no-audit --no-fund
+
+      - name: Targeted frontend regression
+        run: >
+          npx vitest run
+          src/v332WindowsOauthLauncher.test.ts
+          src/v331ConnectivityOauthQuotaHotfix.test.ts
+          src/v2115Rc7OauthUpdateContinuity.test.ts
+          src/v300OauthPersistence.test.ts
+          src/youtubeQuota.test.ts
+          src/youtubeQuotaAtomic.test.ts
+          src/youtubeQuotaPlanner.test.ts
+
+      - name: Frontend production build
+        run: npm run build
+
+      - name: Targeted Rust OAuth regression
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $tests=@(
+            'oauth_response_without_refresh_preserves_existing_refresh_and_profile_id_contract',
+            'a_existing_profile_reconnect_keeps_uuid',
+            'reconnect_rejects_wrong_channel_before_profile_mutation',
+            'reconnect_updates_only_target_profile_credentials',
+            'g_second_reconnect_no_duplicate_profile',
+            'healthy_profile_reuses_existing_account_without_rotation',
+            'wrong_channel_never_writes_or_rotates_credentials',
+            'v300_token_refresh_pass_is_operational_without_youtube_identity_request',
+            'v300_wrong_then_correct_reconnect_preserves_uuid_and_expected_channel',
+            'passive_profile_listing_zero_secret_store_calls',
+            'thirty_one_profiles_passive_enumeration_zero_secret_reads'
+          )
+          foreach($name in $tests){
+            cargo test --manifest-path src-tauri/Cargo.toml $name -- --nocapture
+            if($LASTEXITCODE -ne 0){ throw "RUST_TEST_FAILED=$name" }
+          }
+
+      - name: Rust compile
+        run: cargo check --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
+
+      - name: Provision pinned FFmpeg Windows
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $version='8.1.2'
+          $expected='db580001caa24ac104c8cb856cd113a87b0a443f7bdf47d8c12b1d740584a2ec'
+          $zip=Join-Path $env:RUNNER_TEMP 'ffmpeg.zip'
+          $out=Join-Path $env:RUNNER_TEMP 'ffmpeg'
+          Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-$version-essentials_build.zip" -OutFile $zip
+          $actual=(Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($actual -ne $expected){throw "FFmpeg SHA mismatch $actual"}
+          Expand-Archive $zip $out -Force
+          $ffmpeg=Get-ChildItem $out -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          $ffprobe=Get-ChildItem $out -Recurse -Filter ffprobe.exe | Select-Object -First 1
+          New-Item -ItemType Directory -Force -Path src-tauri/resources/bin | Out-Null
+          Copy-Item $ffmpeg.FullName src-tauri/resources/bin/ffmpeg.exe -Force
+          Copy-Item $ffprobe.FullName src-tauri/resources/bin/ffprobe.exe -Force
+
+      - name: Normalize updater signing key
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          import base64,os
+          raw=os.environ.get('TAURI_SIGNING_PRIVATE_KEY','').strip()
+          assert raw,'TAURI_SIGNING_PRIVATE_KEY missing'
+          def dec(x):
+              try:return base64.b64decode(x,validate=True).decode()
+              except:return None
+          if raw.startswith('untrusted comment:'):
+              out=base64.b64encode(raw.encode()).decode();box=raw
+          else:
+              one=dec(raw)
+              if one and one.startswith('untrusted comment:'):
+                  out=raw;box=one
+              else:
+                  box=dec(one) if one else None
+                  assert box and box.startswith('untrusted comment:')
+                  out=one.strip()
+          assert 'secret key' in box.splitlines()[0].lower()
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as fp:
+              fp.write('TAURI_SIGNING_PRIVATE_KEY='+out+'\n')
+          print('::add-mask::'+out)
+          print('WINDOWS_SIGNING_KEY_NORMALIZED=PASS')
+          PY
+
+      - name: Build signed Windows 3.3.2 NSIS candidate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          npx tauri build --target x86_64-pc-windows-msvc --bundles nsis
+          if($LASTEXITCODE -ne 0){throw 'TAURI_WINDOWS_BUILD_FAILED'}
+
+          $installer=Get-ChildItem src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis -Filter '*-setup.exe' | Select-Object -First 1
+          if(-not $installer){throw 'NSIS installer missing'}
+          $sig=Get-Item ($installer.FullName + '.sig') -ErrorAction Stop
+          if($sig.Length -le 0){throw 'NSIS updater signature missing'}
+
+          New-Item -ItemType Directory -Force -Path hotfix-artifacts | Out-Null
+          $candidate=Join-Path (Resolve-Path hotfix-artifacts) 'VYRON_3.3.2_x64-setup.exe'
+          $candidateSig="$candidate.sig"
+          Copy-Item $installer.FullName $candidate -Force
+          Copy-Item $sig.FullName $candidateSig -Force
+
+          $sha=(Get-FileHash $candidate -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$sha  VYRON_3.3.2_x64-setup.exe" | Set-Content hotfix-artifacts/VYRON_3.3.2_x64-setup.exe.sha256
+
+          Write-Host "WINDOWS_CANDIDATE_SHA256=$sha"
+          Write-Host "UPDATER_SIGNATURE_BYTES=$($sig.Length)"
+
+      - name: Cryptographically verify updater signature
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          choco install minisign -y --no-progress
+          if($LASTEXITCODE -ne 0){throw 'MINISIGN_INSTALL_FAILED'}
+
+          $mini='C:\ProgramData\chocolatey\lib\minisign\tools\minisign.exe'
+          if(-not (Test-Path $mini)){ $mini=(Get-Command minisign.exe -ErrorAction Stop).Source }
+
+          $conf=Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
+          $pubPath=Join-Path $env:RUNNER_TEMP 'vyron-updater.pub'
+          $miniSigPath=Join-Path $env:RUNNER_TEMP 'VYRON_3.3.2_x64-setup.minisig'
+          [IO.File]::WriteAllBytes(
+            $pubPath,
+            [Convert]::FromBase64String([string]$conf.plugins.updater.pubkey)
+          )
+          $sigBase64=(Get-Content hotfix-artifacts/VYRON_3.3.2_x64-setup.exe.sig -Raw).Trim()
+          [IO.File]::WriteAllBytes(
+            $miniSigPath,
+            [Convert]::FromBase64String($sigBase64)
+          )
+
+          & $mini -Vm hotfix-artifacts/VYRON_3.3.2_x64-setup.exe -x $miniSigPath -p $pubPath
+          if($LASTEXITCODE -ne 0){throw 'UPDATER_SIGNATURE_VERIFY_FAILED'}
+          'UPDATER_SIGNATURE=VERIFIED' | Set-Content hotfix-artifacts/signature-verification.txt
+
+      - name: Silent install and physical launch smoke
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $candidate=(Resolve-Path 'hotfix-artifacts/VYRON_3.3.2_x64-setup.exe').Path
+          $p=Start-Process -FilePath $candidate -ArgumentList '/S' -Wait -PassThru
+          if($p.ExitCode -ne 0){throw "NSIS_INSTALL_EXIT=$($p.ExitCode)"}
+
+          $roots=@(
+            (Join-Path $env:LOCALAPPDATA 'Programs'),
+            $env:LOCALAPPDATA,
+            $env:ProgramFiles,
+            [Environment]::GetEnvironmentVariable('ProgramFiles(x86)')
+          ) | Where-Object {$_ -and (Test-Path $_)}
+
+          $exe=$null
+          foreach($root in $roots){
+            $exe=Get-ChildItem $root -File -Recurse -ErrorAction SilentlyContinue |
+              Where-Object {
+                $_.Name -in @('channelflow.exe','VYRON.exe') -and
+                ($_.VersionInfo.ProductVersion -as [string]).StartsWith('3.3.2')
+              } | Select-Object -First 1
+            if($exe){break}
+          }
+          if(-not $exe){throw 'INSTALLED_VYRON_3_3_2_EXE_NOT_FOUND'}
+
+          $proc=Start-Process -FilePath $exe.FullName -PassThru
+          Start-Sleep -Seconds 8
+          $proc.Refresh()
+          if($proc.HasExited){throw "VYRON_PHYSICAL_LAUNCH_EXITED=$($proc.ExitCode)"}
+          Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          "WINDOWS_PHYSICAL_LAUNCH=PASS" | Set-Content hotfix-artifacts/windows-launch-smoke.txt
+
+      - name: Final gate evidence
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $sha=(Get-FileHash hotfix-artifacts/VYRON_3.3.2_x64-setup.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          @(
+            "SOURCE_SHA=$env:BASE_SHA",
+            "HOTFIX_HEAD=$(git rev-parse HEAD)",
+            "VERSION=3.3.2",
+            "WINDOWS_OAUTH_LAUNCHER=tauri_plugin_opener::open_url",
+            "CMD_EXE_IN_OAUTH_PATH=0",
+            "TARGETED_TESTS=PASS",
+            "WINDOWS_BUILD=PASS",
+            "WINDOWS_PHYSICAL_LAUNCH=PASS",
+            "INSTALLER=VYRON_3.3.2_x64-setup.exe",
+            "SHA256=$sha",
+            "UPDATER_SIGNATURE=VERIFIED",
+            "DESTRUCTIVE_OAUTH_ADDITIONS=0",
+            "MACOS_JOBS=0",
+            "MACOS_ARTIFACTS=0",
+            "SHARED_MAC_FEED_UNCHANGED=PASS",
+            "WINDOWS_3_3_1_TO_3_3_2_AUTO_UPDATE=BLOCKED_BY_3_3_1_SHARED_FIRST_ENDPOINT",
+            "WINDOWS_3_3_2_FUTURE_PRIMARY_FEED=windows-latest.json",
+            "RELEASE_PUBLISHED=NO"
+          ) | Set-Content hotfix-artifacts/gate-result.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-3.3.2-WINDOWS-SIGNED-CANDIDATE
+          path: hotfix-artifacts/**
+          if-no-files-found: error
