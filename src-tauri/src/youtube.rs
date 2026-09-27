@@ -11,12 +11,29 @@ use std::{
     net::TcpListener,
     path::{Path, PathBuf},
     process::Command,
-    sync::{Mutex, OnceLock},
+    sync::{atomic::{AtomicBool, Ordering as AtomicOrdering}, Mutex, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use uuid::Uuid;
+
+static OAUTH_TRANSACTION_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+struct OAuthTransactionGuard;
+
+impl Drop for OAuthTransactionGuard {
+    fn drop(&mut self) {
+        OAUTH_TRANSACTION_ACTIVE.store(false, AtomicOrdering::SeqCst);
+    }
+}
+
+fn begin_oauth_transaction() -> Result<OAuthTransactionGuard, String> {
+    OAUTH_TRANSACTION_ACTIVE
+        .compare_exchange(false, true, AtomicOrdering::SeqCst, AtomicOrdering::SeqCst)
+        .map_err(|_| "OAUTH_ALREADY_IN_PROGRESS: дождитесь завершения текущего подключения Google или отмените его.".to_string())?;
+    Ok(OAuthTransactionGuard)
+}
 
 pub(crate) fn emit_youtube_api_request(app: &AppHandle, method: &str, operation_id: Option<&str>) {
     let _ = app.emit(
@@ -911,6 +928,7 @@ pub async fn youtube_oauth_connect(
     client_secret: String,
     browser: Option<String>,
 ) -> Result<Value, String> {
+    let _oauth_transaction = begin_oauth_transaction()?;
     let client_id = client_id.trim().to_string();
     if client_id.is_empty() {
         return Err("Google OAuth Client ID не указан".into());
@@ -4340,6 +4358,7 @@ pub async fn youtube_oauth_reconnect_existing(
     profile_id: String,
     browser: Option<String>,
 ) -> Result<Value, String> {
+    let _oauth_transaction = begin_oauth_transaction()?;
     let profile_id = profile_id.trim().to_string();
     if profile_id.is_empty() {
         return Err("OAUTH_PROFILE_ID_MISSING: existing profile UUID is required".into());
@@ -4676,6 +4695,18 @@ mod windows_oauth_browser_launch_tests {
             assert!(url.contains("state=csrf-state"));
             assert_eq!(url.contains("include_granted_scopes=true"), include_granted);
         }
+    }
+
+    #[test]
+    fn concurrent_oauth_transaction_is_rejected_and_released_after_drop() {
+        OAUTH_TRANSACTION_ACTIVE.store(false, AtomicOrdering::SeqCst);
+        let first = begin_oauth_transaction().expect("first OAuth transaction");
+        let second = begin_oauth_transaction().expect_err("second OAuth transaction must be rejected");
+        assert!(second.starts_with("OAUTH_ALREADY_IN_PROGRESS:"));
+        drop(first);
+        let third = begin_oauth_transaction().expect("gate must reopen after transaction finishes");
+        drop(third);
+        OAUTH_TRANSACTION_ACTIVE.store(false, AtomicOrdering::SeqCst);
     }
 
     #[test]
