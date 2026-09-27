@@ -8,7 +8,9 @@ describe('VYRON 3.0.0 stable release is physical-gated and exact-artifact only',
     expect(workflow).toContain('workflow_dispatch:');
     expect(workflow).not.toMatch(/on:\s*\n\s*push:/);
     expect(workflow).toContain("test \"$PHYSICAL_ACCEPTANCE\" = 'VYRON_3_0_0_PHYSICAL_PASS'");
-    expect(workflow).toContain('test -n "$PHYSICAL_VIDEO_ID"');
+    expect(workflow).not.toContain('PHYSICAL_VIDEO_ID');
+    expect(workflow).not.toContain('physical_video_id');
+    expect(workflow).toContain('PRODUCT_ONE_UPLOAD_PASS');
   });
 
   it('requires exact successful Physical Candidate run and exact approved HEAD',()=>{
