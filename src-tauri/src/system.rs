@@ -75,6 +75,15 @@ pub fn default_workspace(app: AppHandle) -> Result<String, String> {
 
 
 
+fn updater_platform_key() -> &'static str {
+    #[cfg(target_os = "windows")]
+    { return "windows-x86_64"; }
+    #[cfg(target_os = "macos")]
+    { return "darwin-aarch64"; }
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    { "unsupported" }
+}
+
 fn semver_like(value: &str) -> bool {
     let no_build = value.split('+').next().unwrap_or(value);
     let core = no_build.split('-').next().unwrap_or(no_build);
@@ -130,7 +139,8 @@ pub async fn updater_manifest_diagnostics(app: AppHandle, endpoint: String) -> V
     };
 
     let version = manifest.get("version").and_then(Value::as_str).unwrap_or("").trim();
-    let platform = manifest.pointer("/platforms/windows-x86_64");
+    let platform_key = updater_platform_key();
+    let platform = manifest.get("platforms").and_then(Value::as_object).and_then(|x| x.get(platform_key));
     let url = platform.and_then(|x| x.get("url")).and_then(Value::as_str).unwrap_or("").trim();
     let signature = platform
         .and_then(|x| x.get("signature"))
@@ -146,7 +156,7 @@ pub async fn updater_manifest_diagnostics(app: AppHandle, endpoint: String) -> V
     let mut errors = Vec::<&str>::new();
     if version.is_empty() { errors.push("VERSION_MISSING"); }
     else if !version_valid { errors.push("VERSION_NOT_SEMVER"); }
-    if !platform_present { errors.push("WINDOWS_PLATFORM_MISSING"); }
+    if !platform_present { errors.push("PLATFORM_MISSING"); }
     if !url_valid { errors.push("DOWNLOAD_URL_INVALID"); }
     if !signature_present { errors.push("SIGNATURE_MISSING"); }
 
@@ -158,7 +168,7 @@ pub async fn updater_manifest_diagnostics(app: AppHandle, endpoint: String) -> V
         "endpointReachable":true,
         "jsonParsed":true,
         "schemaValid":schema_valid,
-        "platformKey":"windows-x86_64",
+        "platformKey":platform_key,
         "platformPresent":platform_present,
         "version":version,
         "semverValid":version_valid,
@@ -254,6 +264,14 @@ pub fn endlume_diagnostics(endlume_path: String) -> Value {
 #[cfg(test)]
 mod v214_windows_system_tests {
     use super::*;
+
+    #[test]
+    fn updater_diagnostics_uses_native_platform_key() {
+        #[cfg(target_os = "windows")]
+        assert_eq!(updater_platform_key(), "windows-x86_64");
+        #[cfg(target_os = "macos")]
+        assert_eq!(updater_platform_key(), "darwin-aarch64");
+    }
 
     #[test]
     fn updater_semver_validation_accepts_release_and_prerelease() {
