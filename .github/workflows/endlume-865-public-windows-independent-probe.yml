@@ -1,0 +1,146 @@
+name: ENDLUME 8.65 Public Windows Independent Physical Probe
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/endlume-865-public-windows-independent-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  VERSION: 1.0.0-alpha.8.65
+  ASSET: ENDLUME-YT-Studio-PEISOV-Setup-1.0.0-alpha.8.65-x64.exe
+  EXPECTED_SIZE: '98330820'
+  EXPECTED_SHA: 4a4be729cb34d93f6e55d03b9e727f4c80006043f404b84b6cb2a3cb659d695a
+  RELEASE_URL: https://github.com/ScaleUPPeisov/scaleup-site/releases/download/endlume-stable
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Physical Windows host evidence
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\endlume-win-probe" | Out-Null
+          Get-ComputerInfo | Select-Object WindowsProductName,WindowsVersion,OsBuildNumber,OsArchitecture | ConvertTo-Json | Tee-Object -FilePath "$env:RUNNER_TEMP\endlume-win-probe\os.json"
+          Get-CimInstance Win32_Processor | Select-Object Name,NumberOfCores,NumberOfLogicalProcessors | ConvertTo-Json | Tee-Object -FilePath "$env:RUNNER_TEMP\endlume-win-probe\cpu.json"
+          Get-CimInstance Win32_ComputerSystem | Select-Object TotalPhysicalMemory | ConvertTo-Json | Tee-Object -FilePath "$env:RUNNER_TEMP\endlume-win-probe\ram.json"
+          Get-CimInstance Win32_VideoController | Select-Object Name,DriverVersion,CurrentHorizontalResolution,CurrentVerticalResolution | ConvertTo-Json | Tee-Object -FilePath "$env:RUNNER_TEMP\endlume-win-probe\gpu.json"
+          Write-Host "RUNNER_NAME=$env:RUNNER_NAME RUNNER_OS=$env:RUNNER_OS RUNNER_ARCH=$env:RUNNER_ARCH USER=$env:USERNAME SESSION=$env:SESSIONNAME"
+
+      - name: Download exact public 8.65 Setup and verify bytes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $dst="$env:RUNNER_TEMP\endlume-win-probe\$env:ASSET"
+          Invoke-WebRequest -Uri "$env:RELEASE_URL/$env:ASSET" -OutFile $dst
+          $size=(Get-Item $dst).Length
+          $sha=(Get-FileHash -Algorithm SHA256 -LiteralPath $dst).Hash.ToLowerInvariant()
+          if($size -ne [int64]$env:EXPECTED_SIZE){throw "SIZE_MISMATCH=$size"}
+          if($sha -ne $env:EXPECTED_SHA){throw "SHA_MISMATCH=$sha"}
+          Write-Host "PUBLIC_865_WINDOWS_ARTIFACT_GREEN size=$size sha256=$sha"
+          "SETUP=$dst" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Clean install public 8.65
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $p=Start-Process -FilePath $env:SETUP -ArgumentList '/S' -PassThru -Wait
+          if($p.ExitCode -ne 0){throw "INSTALL_EXIT=$($p.ExitCode)"}
+          Start-Sleep 3
+          $u=Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue |
+             Where-Object {$_.DisplayName -match 'ENDLUME'} | Select-Object -First 1
+          if(-not $u){throw 'UNINSTALL_REGISTRATION_MISSING'}
+          $u | Select DisplayName,DisplayVersion,InstallLocation,UninstallString | ConvertTo-Json | Tee-Object -FilePath "$env:RUNNER_TEMP\endlume-win-probe\install.json"
+          if([string]$u.DisplayVersion -notmatch '8\.65'){throw "VERSION_MISMATCH=$($u.DisplayVersion)"}
+          $roots=@("$env:LOCALAPPDATA\Programs","$env:ProgramFiles",[Environment]::GetFolderPath('ProgramFilesX86'))
+          $app=$null
+          foreach($root in $roots){
+            if($root -and (Test-Path $root)){
+              $app=Get-ChildItem $root -Recurse -Filter '*.exe' -ErrorAction SilentlyContinue |
+                Where-Object {($_.Name -match 'ENDLUME|endlume' -or $_.DirectoryName -match 'ENDLUME|endlume') -and $_.Name -notmatch 'unins|uninstall'} |
+                Select-Object -First 1 -ExpandProperty FullName
+              if($app){break}
+            }
+          }
+          if(-not $app){throw 'INSTALLED_EXE_NOT_FOUND'}
+          Write-Host "INSTALLED_APP=$app"
+          "PUBLIC_APP=$app" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host ENDLUME_865_WINDOWS_CLEAN_INSTALL_GREEN
+
+      - name: Launch public app and inspect real process/window
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $p=Start-Process -FilePath $env:PUBLIC_APP -PassThru
+          Start-Sleep 1
+          $p.Refresh()
+          Write-Host "T1 pid=$($p.Id) exited=$($p.HasExited) mainWindowHandle=$($p.MainWindowHandle) title=$($p.MainWindowTitle)"
+          if($p.HasExited){throw "EARLY_EXIT=$($p.ExitCode)"}
+          Start-Sleep 5
+          $p.Refresh()
+          Write-Host "T6 pid=$($p.Id) exited=$($p.HasExited) mainWindowHandle=$($p.MainWindowHandle) title=$($p.MainWindowTitle)"
+          if($p.HasExited){throw "APP_EXITED=$($p.ExitCode)"}
+          Get-Process -Id $p.Id | Select Id,ProcessName,Path,MainWindowHandle,MainWindowTitle,CPU,WorkingSet64 | Format-List
+          "FIRST_PID=$($p.Id)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host ENDLUME_865_WINDOWS_PUBLIC_LAUNCH_GREEN
+
+      - name: Attempt physical desktop screenshots at 1/6 second state
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          Add-Type -AssemblyName System.Drawing
+          Add-Type -AssemblyName System.Windows.Forms
+          function Shot([string]$path){
+            $bounds=[System.Windows.Forms.SystemInformation]::VirtualScreen
+            Write-Host "DESKTOP_BOUNDS=$($bounds.X),$($bounds.Y),$($bounds.Width),$($bounds.Height)"
+            if($bounds.Width -le 0 -or $bounds.Height -le 0){throw 'NO_INTERACTIVE_DESKTOP_BOUNDS'}
+            $bmp=New-Object System.Drawing.Bitmap $bounds.Width,$bounds.Height
+            $g=[System.Drawing.Graphics]::FromImage($bmp)
+            $g.CopyFromScreen($bounds.Location,[System.Drawing.Point]::Empty,$bounds.Size)
+            $bmp.Save($path,[System.Drawing.Imaging.ImageFormat]::Png)
+            $g.Dispose();$bmp.Dispose()
+            Write-Host "SCREENSHOT_BYTES=$((Get-Item $path).Length)"
+          }
+          Shot "$env:RUNNER_TEMP\endlume-win-probe\desktop.png"
+          Write-Host WINDOWS_DESKTOP_SCREEN_CAPTURE_AVAILABLE
+
+      - name: Relaunch public app
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          Stop-Process -Id ([int]$env:FIRST_PID) -Force -ErrorAction SilentlyContinue
+          Start-Sleep 2
+          $p=Start-Process -FilePath $env:PUBLIC_APP -PassThru
+          Start-Sleep 5
+          $p.Refresh()
+          if($p.HasExited){throw "RELAUNCH_EXIT=$($p.ExitCode)"}
+          Write-Host "RELAUNCH pid=$($p.Id) mainWindowHandle=$($p.MainWindowHandle) title=$($p.MainWindowTitle)"
+          Stop-Process -Id $p.Id -Force
+          Write-Host ENDLUME_865_WINDOWS_PUBLIC_RELAUNCH_GREEN
+
+      - name: Installed bundle sidecar/process sanity
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $dir=Split-Path -Parent $env:PUBLIC_APP
+          $ffmpeg=Get-ChildItem $dir -Recurse -Filter 'ffmpeg*.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+          $ffprobe=Get-ChildItem $dir -Recurse -Filter 'ffprobe*.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+          Write-Host "FFMPEG_SIDECAR=$($ffmpeg.FullName)"
+          Write-Host "FFPROBE_SIDECAR=$($ffprobe.FullName)"
+          if(Get-Process ffmpeg,ffprobe -ErrorAction SilentlyContinue){throw 'ORPHAN_MEDIA_PROCESS'}
+          Write-Host WINDOWS_PROCESS_CLEANUP_GREEN
+          Write-Host WINDOWS_PUBLIC_INSTALL_LAUNCH_RELAUNCH_PHYSICAL_PROBE_GREEN
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        continue-on-error: true
+        with:
+          name: ENDLUME-865-public-windows-independent-probe
+          path: ${{ runner.temp }}/endlume-win-probe/**
+          retention-days: 1
