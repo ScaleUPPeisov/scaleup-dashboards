@@ -228,11 +228,20 @@ jobs:
           ) | Where-Object {$_ -and (Test-Path $_)}
           $exe=$null
           foreach($root in $roots){
-            $exe=Get-ChildItem $root -Filter 'VYRON.exe' -File -Recurse -ErrorAction SilentlyContinue |
-              Where-Object {$_.VersionInfo.ProductVersion.StartsWith('3.3.0')} | Select-Object -First 1
+            $exe=Get-ChildItem $root -File -Recurse -ErrorAction SilentlyContinue |
+              Where-Object {
+                $_.Name -in @('channelflow.exe','VYRON.exe') -and
+                ($_.VersionInfo.ProductVersion -as [string]).StartsWith('3.3.0')
+              } | Select-Object -First 1
             if($exe){break}
           }
-          if(-not $exe){throw 'Installed VYRON 3.3.0.exe not found'}
+          if(-not $exe){
+            $seen=Get-ChildItem $roots -File -Recurse -ErrorAction SilentlyContinue |
+              Where-Object {$_.Name -in @('channelflow.exe','VYRON.exe')} |
+              Select-Object FullName,@{N='ProductVersion';E={$_.VersionInfo.ProductVersion}}
+            $seen | Format-Table -AutoSize | Out-String | Write-Host
+            throw 'Installed VYRON 3.3.0 executable not found'
+          }
 
           $statePath=Join-Path $appData 'state.json'
           if(-not (Test-Path $statePath)){throw 'Post-migration state disappeared during 2.1.16 -> 3.3.0 update'}
