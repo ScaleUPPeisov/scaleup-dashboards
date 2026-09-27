@@ -625,11 +625,41 @@ fn storage_free_bytes(path: &Path) -> Option<u64> {
     if cols.len() < 4 { return None; }
     cols.get(3)?.parse::<u64>().ok().map(|kb| kb.saturating_mul(1024))
 }
+#[cfg(target_os = "windows")]
+fn windows_storage_external(path: &Path) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetDriveTypeW, DRIVE_CDROM, DRIVE_REMOTE, DRIVE_REMOVABLE,
+    };
+
+    // UNC paths are network storage even when the target is currently offline.
+    let display = path.as_os_str().to_string_lossy();
+    if display.starts_with(r"\\") {
+        return true;
+    }
+
+    // GetDriveTypeW expects a root path such as C:\. Derive it without
+    // canonicalizing so an unavailable/removable drive can still be classified.
+    let bytes = display.as_bytes();
+    if bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic() {
+        let root = format!("{}:\\", bytes[0] as char);
+        let wide = std::ffi::OsStr::new(&root)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>();
+        let kind = unsafe { GetDriveTypeW(wide.as_ptr()) };
+        return matches!(kind, DRIVE_REMOVABLE | DRIVE_REMOTE | DRIVE_CDROM);
+    }
+    false
+}
+
 fn storage_probe(path: &Path) -> ProductionStorageStatus {
     let display = path.to_string_lossy().into_owned();
     #[cfg(target_os = "macos")]
     let external = display.starts_with("/Volumes/");
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    let external = windows_storage_external(path);
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
     let external = false;
     if !path.exists() {
         return ProductionStorageStatus {
@@ -2691,6 +2721,22 @@ mod v1015_image_validation_tests {
         fs::write(d.join(".phantom.png"), b"hidden").unwrap();
         assert!(!project_has_renderable_image(&d, &d.join("missing.png")));
         let _ = fs::remove_dir_all(d);
+    }
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod windows_storage_parity_tests {
+    use super::*;
+
+    #[test]
+    fn unc_paths_are_classified_as_external_without_network_access() {
+        assert!(windows_storage_external(Path::new(r"\\server\share\Видео & Музыка\Проект (01)")));
+    }
+
+    #[test]
+    fn normal_temp_drive_classification_is_callable_for_unicode_paths() {
+        let p = std::env::temp_dir().join("Кирилл Пейсов").join("Видео & Музыка").join("Проект (01)");
+        let _ = windows_storage_external(&p);
     }
 }
 
