@@ -1,0 +1,43 @@
+name: Sanitize VYRON public release metadata
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/vyron-sanitize-public-history.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sanitize:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Remove private channel identity from historical release note
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat > /tmp/v2115rc7.md <<'EOF'
+          ## VYRON 2.1.15-rc.7 — Channel Render Scan + OAuth Update Continuity
+
+          Built directly on immutable v2.1.15-rc.6.
+
+          - Publisher render scan requires an exact folder bound to the stable local channel ID and never silently falls back to the global workspace.
+          - Every supported physical media file receives exactly one primary classification; summary counters cannot exceed the scanned file total.
+          - Existing YouTube proof keeps local copies out of NEW upload candidates and same sequence numbers on different channels do not collide.
+          - RC6 wrong-root scan records are blocked from upload and exposed for metadata-only recovery; physical files are never moved or deleted by repair.
+          - Normal application updates preserve active refresh-token account pointers, profile UUIDs, Bundle ID and canonical Keychain service.
+          - 13-profile and 50-profile continuity fixtures protect rotated/legacy mixed states without browser launch, credentials.json reimport or mass rotation.
+          - RC6 KEYCHAIN_AUTH_FAILED / OSStatus -25293 generation rotation remains intact.
+          - Physical OAuth continuity and render-scan acceptance are required before promotion.
+          EOF
+          gh release edit v2.1.15-rc.7 --repo ScaleUPPeisov/scaleup-dashboards --notes-file /tmp/v2115rc7.md
+          body="$(gh release view v2.1.15-rc.7 --repo ScaleUPPeisov/scaleup-dashboards --json body --jq .body)"
+          if printf '%s' "$body" | grep -F 'Glass City Lovers' >/dev/null; then
+            echo 'SANITIZE=FAIL'
+            exit 1
+          fi
+          echo 'PRIVATE_CHANNEL_NAME_REMOVED=PASS'
