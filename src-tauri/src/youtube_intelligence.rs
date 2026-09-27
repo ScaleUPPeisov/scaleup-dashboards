@@ -1,6 +1,7 @@
 use chrono::{Duration as ChronoDuration,Utc};
 use serde_json::{json,Value};
 use tauri::{AppHandle,Manager};
+use std::path::Path;
 use crate::youtube;
 
 fn value_f64(v:&Value)->f64{if let Some(n)=v.as_f64(){return n}if let Some(s)=v.as_str(){return s.parse::<f64>().unwrap_or(0.0)}0.0}
@@ -14,6 +15,11 @@ async fn analytics_report(token:&str,start:&str,end:&str,metrics:&str,dimensions
  if let Some(d)=dimensions{params.push(("dimensions",d.into()))}if let Some(x)=sort{params.push(("sort",x.into()))}if let Some(m)=max_results{params.push(("maxResults",m.to_string()))}
  let r=reqwest::Client::new().get("https://youtubeanalytics.googleapis.com/v2/reports").bearer_auth(token).query(&params).send().await.map_err(|e|format!("YouTube Analytics network: {e}"))?;
  let st=r.status();let v:Value=r.json().await.map_err(|e|format!("YouTube Analytics JSON: {e}"))?;if !st.is_success(){return Err(api_error(&v,"YouTube Analytics API вернул ошибку"))}Ok(v)
+}
+
+fn write_analytics_snapshot(path:&Path,payload:&Value)->Result<(),String>{
+ let bytes=serde_json::to_vec_pretty(payload).map_err(|e|format!("Analytics snapshot serialize: {e}"))?;
+ crate::security::write_private_atomic(path,&bytes).map_err(|e|format!("Analytics snapshot write: {e}"))
 }
 
 #[tauri::command]
@@ -32,7 +38,7 @@ pub async fn youtube_channel_analytics(app:AppHandle,profile_id:String,days:Opti
  let countries=analytics_report(&token,&start_s,&end_s,"views,estimatedMinutesWatched",Some("country"),Some("-views"),Some(12)).await.unwrap_or_else(|_|json!({"rows":[]}));let country_money=if monetary{analytics_report(&token,&start_s,&end_s,"views,estimatedRevenue",Some("country"),Some("-views"),Some(50)).await.unwrap_or_else(|_|json!({"rows":[]}))}else{json!({"rows":[]})};let mut crev=std::collections::HashMap::<String,f64>::new();for r in report_rows(&country_money){if let Some(k)=r.first().and_then(|x|x.as_str()){crev.insert(k.to_string(),r.get(2).map(value_f64).unwrap_or(0.0));}}let countries_rows=report_rows(&countries).into_iter().map(|r|{let key=r.first().and_then(|x|x.as_str()).unwrap_or("—").to_string();let views=r.get(1).map(value_u64).unwrap_or(0);let rev=crev.get(&key).copied();json!({"key":key,"views":views,"watchMinutes":r.get(2).map(value_f64).unwrap_or(0.0),"estimatedRevenue":rev,"rpm":if views>0{rev.map(|x|x/views as f64*1000.0)}else{None}})}).collect::<Vec<_>>();
  let total_videos=if let Some(uploads)=ci.pointer("/contentDetails/relatedPlaylists/uploads").and_then(|x|x.as_str()){youtube::emit_youtube_api_request(&app,"playlistItems.list",None);let r=client.get("https://www.googleapis.com/youtube/v3/playlistItems").bearer_auth(&token).query(&[("part","id"),("playlistId",uploads),("maxResults","1")]).send().await.ok();if let Some(r)=r{let v:Value=r.json().await.unwrap_or_else(|_|json!({}));v.pointer("/pageInfo/totalResults").and_then(|x|x.as_u64())}else{None}}else{None};
  let payload=json!({"source":"youtube-analytics-v2","snapshotDate":end_s,"periodDays":actual_days,"offsetDays":offset,"allTime":all_time.unwrap_or(false),"updatedAt":Utc::now().to_rfc3339(),"views":get(0) as u64,"engagedViews":engaged,"watchMinutes":get(1),"averageViewDuration":get(2),"averageViewPercentage":get(3),"subscribersGained":get(4) as u64,"subscribersLost":get(5) as u64,"likes":get(6) as u64,"comments":get(7) as u64,"shares":get(8) as u64,"monetaryAuthorized":monetary,"estimatedRevenue":mget(0),"estimatedAdRevenue":mget(1),"estimatedRedPartnerRevenue":mget(2),"monetizedPlaybacks":mget(3),"adImpressions":mget(4),"cpm":mget(5),"playbackBasedCpm":mget(6),"monetaryError":monetary_error,"impressions":Value::Null,"impressionCtr":Value::Null,"daily":daily_rows,"topVideos":top_videos,"trafficSources":traffic_sources,"countries":countries_rows,"audience":[],"channelPublishedAt":sn.get("publishedAt").and_then(|x|x.as_str()),"channelCountry":sn.get("country").and_then(|x|x.as_str()),"channelLanguage":sn.get("defaultLanguage").and_then(|x|x.as_str()).or_else(||sn.get("defaultAudioLanguage").and_then(|x|x.as_str())),"channelThumbnail":thumb_url(&sn),"totalVideos":total_videos,"publicStats":{"channelId":ci.get("id").and_then(|x|x.as_str()),"title":sn.get("title").and_then(|x|x.as_str()),"thumbnail":thumb_url(&sn),"subscribers":stat.get("subscriberCount").and_then(|x|x.as_str()).and_then(|x|x.parse::<u64>().ok()),"views":stat.get("viewCount").and_then(|x|x.as_str()).and_then(|x|x.parse::<u64>().ok()),"videos":stat.get("videoCount").and_then(|x|x.as_str()).and_then(|x|x.parse::<u64>().ok())}});
- if let Some(cid)=ci.get("id").and_then(|x|x.as_str()){if let Ok(base)=app.path().app_data_dir(){let dir=base.join("ChannelAnalytics").join(cid);if std::fs::create_dir_all(&dir).is_ok(){let path=dir.join(format!("{}.json",end_s));let tmp=path.with_extension("tmp");if let Ok(bytes)=serde_json::to_vec_pretty(&payload){if std::fs::write(&tmp,bytes).is_ok(){let _=std::fs::rename(tmp,path);}}}}}
+ if let Some(cid)=ci.get("id").and_then(|x|x.as_str()){if let Ok(base)=app.path().app_data_dir(){let dir=base.join("ChannelAnalytics").join(cid);if std::fs::create_dir_all(&dir).is_ok(){let path=dir.join(format!("{}.json",end_s));let _=write_analytics_snapshot(&path,&payload);}}}
  Ok(payload)
 }
 
@@ -50,4 +56,23 @@ pub async fn youtube_competitor_snapshot(app:AppHandle,profile_id:String,channel
  let mut latest=Vec::<Value>::new();if !ids.is_empty(){let joined=ids.join(",");youtube::emit_youtube_api_request(&app,"videos.list",None);let vr=client.get("https://www.googleapis.com/youtube/v3/videos").bearer_auth(&token).query(&[("part","snippet,statistics"),("id",joined.as_str())]).send().await.map_err(|e|format!("Competitor videos: {e}"))?;let vv:Value=vr.json().await.unwrap_or_else(|_|json!({}));let mut map=std::collections::HashMap::<String,Value>::new();for it in vv.get("items").and_then(|x|x.as_array()).cloned().unwrap_or_default(){if let Some(id)=it.get("id").and_then(|x|x.as_str()){map.insert(id.to_string(),it);}}for id in ids.iter(){if let Some(it)=map.get(id){let s=it.get("snippet").cloned().unwrap_or_else(||json!({}));let st=it.get("statistics").cloned().unwrap_or_else(||json!({}));latest.push(json!({"id":id,"title":s.get("title").and_then(|x|x.as_str()).unwrap_or(""),"thumbnail":thumb_url(&s),"publishedAt":s.get("publishedAt").and_then(|x|x.as_str()),"views":st.get("viewCount").and_then(|x|x.as_str()).and_then(|x|x.parse::<u64>().ok()).unwrap_or(0),"likes":st.get("likeCount").and_then(|x|x.as_str()).and_then(|x|x.parse::<u64>().ok()).unwrap_or(0),"comments":st.get("commentCount").and_then(|x|x.as_str()).and_then(|x|x.parse::<u64>().ok()).unwrap_or(0)}));}}}
  let recent_avg=if latest.is_empty(){0}else{latest.iter().map(|x|x.get("views").and_then(|x|x.as_u64()).unwrap_or(0)).sum::<u64>()/latest.len() as u64};let subscribers=stat.get("subscriberCount").and_then(|x|x.as_str()).and_then(|x|x.parse::<u64>().ok()).unwrap_or(0);let views=stat.get("viewCount").and_then(|x|x.as_str()).and_then(|x|x.parse::<u64>().ok()).unwrap_or(0);let videos=stat.get("videoCount").and_then(|x|x.as_str()).and_then(|x|x.parse::<u64>().ok()).unwrap_or(0);
  Ok(json!({"channelId":channel_id,"name":sn.get("title").and_then(|x|x.as_str()).unwrap_or("YouTube"),"thumbnail":thumb_url(&sn),"subscribers":subscribers,"views":views,"videos":videos,"recentAverageViews":recent_avg,"lastVideoAt":latest.first().and_then(|x|x.get("publishedAt")).and_then(|x|x.as_str()),"latestVideos":latest,"updatedAt":Utc::now().to_rfc3339()}))
+}
+
+
+#[cfg(test)]
+mod analytics_snapshot_tests {
+ use super::*;
+ #[test]
+ fn repeated_snapshot_replaces_same_day_file_atomically(){
+  let root=std::env::temp_dir().join(format!("vyron-analytics-{}",uuid::Uuid::new_v4()));
+  std::fs::create_dir_all(&root).unwrap();
+  let path=root.join("2026-09-27.json");
+  write_analytics_snapshot(&path,&json!({"generation":1,"title":"Первый"})).unwrap();
+  write_analytics_snapshot(&path,&json!({"generation":2,"title":"Видео & Музыка"})).unwrap();
+  let saved:Value=serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+  assert_eq!(saved["generation"],2);
+  assert_eq!(saved["title"],"Видео & Музыка");
+  assert!(!path.with_extension("secure-tmp").exists());
+  let _=std::fs::remove_dir_all(root);
+ }
 }
