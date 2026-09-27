@@ -107,7 +107,10 @@ jobs:
           python3 - <<'PY'
           import pathlib, re, sys
           bad = re.compile(r'(user-data|app-data|Application Support|AppData|keychain|credential-export|migration-export|account-export|channel-export|\.sqlite|\.db\b|\.vyron)', re.I)
+          here=pathlib.Path('.github/workflows/vyron-privacy-gate.yml')
           for wf in pathlib.Path('.github/workflows').glob('*.y*ml'):
+              if wf==here:
+                  continue
               text = wf.read_text(errors='ignore')
               chunks = re.split(r'(?=\n\s*- name:)', text)
               for chunk in chunks:
