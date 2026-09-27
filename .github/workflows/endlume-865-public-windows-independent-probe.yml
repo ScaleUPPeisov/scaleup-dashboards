@@ -78,22 +78,26 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           $p=Start-Process -FilePath $env:PUBLIC_APP -PassThru
-          Start-Sleep -Milliseconds 650
           Add-Type -AssemblyName System.Drawing
           Add-Type -AssemblyName System.Windows.Forms
-          $bounds=[System.Windows.Forms.SystemInformation]::VirtualScreen
-          if($bounds.Width -gt 0 -and $bounds.Height -gt 0){
-            $bmp=New-Object System.Drawing.Bitmap $bounds.Width,$bounds.Height
-            $g=[System.Drawing.Graphics]::FromImage($bmp)
-            $g.CopyFromScreen($bounds.Location,[System.Drawing.Point]::Empty,$bounds.Size)
-            $early="$env:RUNNER_TEMP\endlume-win-probe\early-0650ms.png"
-            $bmp.Save($early,[System.Drawing.Imaging.ImageFormat]::Png)
-            $g.Dispose();$bmp.Dispose()
-            Write-Host "EARLY0650_B64_START"
-            Write-Host ([Convert]::ToBase64String([IO.File]::ReadAllBytes($early)))
-            Write-Host "EARLY0650_B64_END"
+          $sw=[Diagnostics.Stopwatch]::StartNew()
+          foreach($ms in @(1200,1800,2600)){
+            $remain=$ms-[int]$sw.ElapsedMilliseconds
+            if($remain -gt 0){Start-Sleep -Milliseconds $remain}
+            $bounds=[System.Windows.Forms.SystemInformation]::VirtualScreen
+            if($bounds.Width -gt 0 -and $bounds.Height -gt 0){
+              $bmp=New-Object System.Drawing.Bitmap $bounds.Width,$bounds.Height
+              $g=[System.Drawing.Graphics]::FromImage($bmp)
+              $g.CopyFromScreen($bounds.Location,[System.Drawing.Point]::Empty,$bounds.Size)
+              $shot="$env:RUNNER_TEMP\endlume-win-probe\visual-$ms.png"
+              $bmp.Save($shot,[System.Drawing.Imaging.ImageFormat]::Png)
+              $g.Dispose();$bmp.Dispose()
+              Write-Host "VISUAL_${ms}_B64_START"
+              Write-Host ([Convert]::ToBase64String([IO.File]::ReadAllBytes($shot)))
+              Write-Host "VISUAL_${ms}_B64_END"
+            }
           }
-          Start-Sleep -Milliseconds 350
+          if($sw.ElapsedMilliseconds -lt 3000){Start-Sleep -Milliseconds (3000-[int]$sw.ElapsedMilliseconds)}
           $p.Refresh()
           Write-Host "T1 pid=$($p.Id) exited=$($p.HasExited) mainWindowHandle=$($p.MainWindowHandle) title=$($p.MainWindowTitle)"
           if($p.HasExited){throw "EARLY_EXIT=$($p.ExitCode)"}
