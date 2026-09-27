@@ -4861,26 +4861,34 @@ mod windows_oauth_browser_launch_tests {
 
     #[test]
     fn google_authorization_urls_keep_required_code_flow_parameters() {
+        let redirect = "http://127.0.0.1:43123/callback?a=1&b=2";
+        let scope = "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly";
+        let challenge = "pkce-%-challenge";
+        let state = "csrf-state-?-&-=-:";
         for include_granted in [false, true] {
             let url = google_oauth_auth_url(
                 "123.apps.googleusercontent.com",
-                "http://127.0.0.1:43123",
-                "scope-a scope-b",
-                "pkce-challenge",
-                "csrf-state",
+                redirect,
+                scope,
+                challenge,
+                state,
                 include_granted,
             );
             assert!(url.starts_with("https://accounts.google.com/o/oauth2/v2/auth?"));
-            assert!(url.contains("client_id=123.apps.googleusercontent.com"));
-            assert!(url.contains("redirect_uri=http%3A%2F%2F127.0.0.1%3A43123"));
-            assert!(url.contains("response_type=code"));
-            assert!(url.contains("scope=scope-a%20scope-b"));
-            assert!(url.contains("access_type=offline"));
-            assert!(url.contains("prompt=consent"));
-            assert!(url.contains("code_challenge=pkce-challenge"));
-            assert!(url.contains("code_challenge_method=S256"));
-            assert!(url.contains("state=csrf-state"));
-            assert_eq!(url.contains("include_granted_scopes=true"), include_granted);
+            let query = url.split_once('?').expect("OAuth URL query").1;
+            assert_eq!(query_param(query, "client_id").as_deref(), Some("123.apps.googleusercontent.com"));
+            assert_eq!(query_param(query, "redirect_uri").as_deref(), Some(redirect));
+            assert_eq!(query_param(query, "response_type").as_deref(), Some("code"));
+            assert_eq!(query_param(query, "scope").as_deref(), Some(scope));
+            assert_eq!(query_param(query, "access_type").as_deref(), Some("offline"));
+            assert_eq!(query_param(query, "prompt").as_deref(), Some("consent"));
+            assert_eq!(query_param(query, "code_challenge").as_deref(), Some(challenge));
+            assert_eq!(query_param(query, "code_challenge_method").as_deref(), Some("S256"));
+            assert_eq!(query_param(query, "state").as_deref(), Some(state));
+            assert_eq!(
+                query_param(query, "include_granted_scopes").as_deref(),
+                if include_granted { Some("true") } else { None },
+            );
         }
     }
 
