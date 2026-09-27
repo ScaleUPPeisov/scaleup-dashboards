@@ -106,7 +106,34 @@ describe('VYRON 3.3.1 connectivity / OAuth / quota hotfix',()=>{
   expect(plan.blocked).toHaveLength(0);
  });
 
- it('TEST 7 — real blocked credential states remain blocked and never become drivers',()=>{
+
+ it('STATE PRESERVATION — hotfix planners do not mutate channel/profile/project identity',()=>{
+  const channels=[channel(1,true),channel(2,true),channel(3,true)];
+  const profiles=[
+   {...profile(1,'READY','clientA…aaaaaa'),projectKey:'gcp:A'},
+   {...profile(2,'NOT_CHECKED','clientB…bbbbbb'),projectKey:'gcp:B'},
+   {...profile(3,'READY','clientC…cccccc'),projectKey:'gcp:C'}
+  ] as any[];
+  const before={
+   channelCount:channels.length,
+   profileCount:profiles.length,
+   profileUuids:profiles.map(x=>x.id),
+   channelMappings:channels.map(x=>[x.id,x.youtubeProfileId,x.youtubeChannelId]),
+   projectMappings:profiles.map(x=>[x.id,x.projectKey])
+  };
+  countConnectedYoutubeBindings(channels,profiles);
+  planStatisticsProjectBatches(channels.map((ch,i)=>({channel:ch,profile:profiles[i],youtubeChannelId:ch.youtubeChannelId} as any)),null);
+  const after={
+   channelCount:channels.length,
+   profileCount:profiles.length,
+   profileUuids:profiles.map(x=>x.id),
+   channelMappings:channels.map(x=>[x.id,x.youtubeProfileId,x.youtubeChannelId]),
+   projectMappings:profiles.map(x=>[x.id,x.projectKey])
+  };
+  expect(after).toEqual(before);
+ });
+
+it('TEST 7 — real blocked credential states remain blocked and never become drivers',()=>{
   const plan=planStatisticsBatchDrivers([
    linked(1,'KEYCHAIN_BLOCKED'),linked(2,'RECONNECT_REQUIRED'),linked(3,'MISSING'),linked(4,'WRONG_CHANNEL')
   ]);
