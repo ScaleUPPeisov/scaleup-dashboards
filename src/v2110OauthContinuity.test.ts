@@ -14,7 +14,7 @@ describe('VYRON 2.1.10 OAuth truth and update continuity contracts',()=>{
   expect(ui).not.toContain('refresh_token_account');
  });
  it('credential ABI is version-independent and stable',()=>{
-  const y=read('src-tauri/src/youtube.rs');
+  const y=read('src-tauri/src/youtube.rs').replace(/\r\n/g,'\n');
   const sec=read('src-tauri/src/security.rs');
   const tauri=JSON.parse(read('src-tauri/tauri.conf.json'));
   expect(tauri.identifier).toBe('studio.channelflow.desktop');
