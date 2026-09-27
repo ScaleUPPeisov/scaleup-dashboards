@@ -187,7 +187,10 @@ jobs:
             throw "WINDOWS_ALLOW_DOWNGRADES_FALSE=FAIL"
           }
           Write-Host "WINDOWS_ALLOW_DOWNGRADES_FALSE=PASS"
-          npx tauri build --target x86_64-pc-windows-msvc --bundles nsis --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          $auditConfig = @{ bundle = @{ createUpdaterArtifacts = $false } } | ConvertTo-Json -Depth 4
+          [IO.File]::WriteAllText((Join-Path $PWD "tauri.audit.windows.json"), $auditConfig, [Text.UTF8Encoding]::new($false))
+          npx tauri build --target x86_64-pc-windows-msvc --bundles nsis --config "tauri.audit.windows.json"
+          if ($LASTEXITCODE -ne 0) { throw "Current-source Tauri NSIS build failed: $LASTEXITCODE" }
           $installer = Get-ChildItem "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis" -Filter "*-setup.exe" | Select-Object -First 1
           if (-not $installer) { throw "Current-source NSIS installer not found" }
           New-Item -ItemType Directory -Force -Path audit-evidence | Out-Null
