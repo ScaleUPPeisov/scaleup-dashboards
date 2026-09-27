@@ -1,0 +1,128 @@
+name: Publish VYRON 3.3.2 Windows Release
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-3.3.2-windows-oauth-launcher
+    paths:
+      - .github/workflows/publish-vyron-332-windows-release.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: publish-vyron-332-windows-release
+  cancel-in-progress: false
+
+env:
+  REPO: ScaleUPPeisov/scaleup-dashboards
+  TAG: v3.3.2
+  VERSION: '3.3.2'
+  APPROVED_HEAD: 4c1d38eed09fa1b649aa483b044f38489e26b369
+  APPROVED_RUN_ID: '36328628834'
+  EXPECTED_SHA256: 1f0c2096ce6eabc44119488f18b0d8f436bdbd155c73e7aa58dec78b17dfdd25
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify approved Windows candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/$REPO/actions/runs/$APPROVED_RUN_ID" >/tmp/run.json
+          python3 - <<'PY'
+          import json,os
+          d=json.load(open('/tmp/run.json'))
+          assert d['status']=='completed', d['status']
+          assert d['conclusion']=='success', d['conclusion']
+          assert d['head_sha']==os.environ['APPROVED_HEAD'], (d['head_sha'],os.environ['APPROVED_HEAD'])
+          assert d['name']=='VYRON 3.3.2 Windows OAuth Launcher Hotfix', d['name']
+          print('APPROVED_WINDOWS_RUN=PASS')
+          PY
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            echo "RELEASE_ALREADY_EXISTS=$TAG"
+            exit 0
+          fi
+
+      - name: Download exact GREEN candidate artifact
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf candidate && mkdir candidate
+          gh run download "$APPROVED_RUN_ID" --repo "$REPO" --name 'VYRON-3.3.2-WINDOWS-SIGNED-CANDIDATE' --dir candidate
+          test -s candidate/VYRON_3.3.2_x64-setup.exe
+          test -s candidate/VYRON_3.3.2_x64-setup.exe.sig
+          test -s candidate/VYRON_3.3.2_x64-setup.exe.sha256
+          test -s candidate/gate-result.txt
+          test -s candidate/signature-verification.txt
+          test -s candidate/windows-launch-smoke.txt
+          actual="$(sha256sum candidate/VYRON_3.3.2_x64-setup.exe | awk '{print $1}')"
+          test "$actual" = "$EXPECTED_SHA256"
+          grep -q '^UPDATER_SIGNATURE=VERIFIED' candidate/signature-verification.txt
+          grep -q '^WINDOWS_PHYSICAL_LAUNCH=PASS' candidate/windows-launch-smoke.txt
+          echo "CANDIDATE_SHA256=$actual"
+          echo 'SIGNED_CANDIDATE_EVIDENCE=PASS'
+
+      - name: Publish source release v3.3.2
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat >/tmp/release-notes.md <<EOF
+          ## VYRON 3.3.2 — Windows OAuth launcher hotfix
+
+          Windows-only hotfix built from the exact approved candidate.
+
+          - Approved source HEAD: `$APPROVED_HEAD`
+          - Approved GREEN Actions run: `$APPROVED_RUN_ID`
+          - Replaced Windows OAuth launch through `cmd.exe /C start` with `tauri_plugin_opener::open_url()`.
+          - OAuth URL remains intact, including PKCE/state/redirect_uri parameters.
+          - Existing channels, OAuth profiles, refresh tokens, Google Project mappings and local databases are preserved.
+          - Targeted frontend/Rust tests, Windows build, updater signature verification, silent install and physical launch all passed.
+          - macOS was not built or changed in this hotfix.
+          - Installer SHA-256: `$EXPECTED_SHA256`
+
+          This source release is mirrored to `ScaleUPPeisov/vyron-releases` for Windows updater delivery.
+          EOF
+
+          gh release create "$TAG"             --repo "$REPO"             --target "$APPROVED_HEAD"             --title 'VYRON 3.3.2 Windows OAuth Launcher Hotfix'             --notes-file /tmp/release-notes.md             candidate/VYRON_3.3.2_x64-setup.exe             candidate/VYRON_3.3.2_x64-setup.exe.sig             candidate/VYRON_3.3.2_x64-setup.exe.sha256             candidate/gate-result.txt             candidate/signature-verification.txt             candidate/windows-launch-smoke.txt
+
+      - name: Verify published source release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/$REPO/releases/tags/$TAG" >/tmp/release.json
+          python3 - <<'PY'
+          import json,os
+          d=json.load(open('/tmp/release.json'))
+          assert d['tag_name']==os.environ['TAG']
+          assert d['draft'] is False
+          assert d['prerelease'] is False
+          required={
+            'VYRON_3.3.2_x64-setup.exe',
+            'VYRON_3.3.2_x64-setup.exe.sig',
+            'VYRON_3.3.2_x64-setup.exe.sha256',
+            'gate-result.txt',
+            'signature-verification.txt',
+            'windows-launch-smoke.txt'
+          }
+          assets={x['name']:x for x in d['assets']}
+          assert required <= set(assets)
+          assert all(assets[x]['size']>0 for x in required)
+          print('SOURCE_RELEASE_ASSETS=PASS')
+          PY
+          rm -rf /tmp/remote && mkdir /tmp/remote
+          gh release download "$TAG" --repo "$REPO" --dir /tmp/remote --pattern 'VYRON_3.3.2_x64-setup.exe'
+          actual="$(sha256sum /tmp/remote/VYRON_3.3.2_x64-setup.exe | awk '{print $1}')"
+          test "$actual" = "$EXPECTED_SHA256"
+          echo "SOURCE_RELEASE_SHA256=$actual"
+          echo 'SOURCE_RELEASE=PASS'
