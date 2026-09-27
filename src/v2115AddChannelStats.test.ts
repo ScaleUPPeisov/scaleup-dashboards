@@ -91,7 +91,9 @@ describe('VYRON 2.1.15 RC1 Add Channel and channel statistics regression',()=>{
     expect(y).toContain('emit_youtube_api_request(&app,"channels.list",operation_id.as_deref())');
     expect(api).toContain("'youtube_channel_statistics_batch'");
     expect(api).toContain('youtubeChannelStatisticsBatch');
-    expect(runtime).toContain('offset+=50');
+    expect(runtime).toContain('planStatisticsProjectBatches');
+    expect(runtime).toContain('Math.min(50');
+    expect(runtime).toContain('offset+=size');
     expect(runtime).toContain('youtubeChannelStatisticsBatch');
   });
 
