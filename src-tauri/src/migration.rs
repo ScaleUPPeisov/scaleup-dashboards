@@ -752,6 +752,27 @@ fn create_rollback_snapshot(app: &AppHandle, id: &str) -> Result<PathBuf, String
     Ok(dir)
 }
 
+fn record_backup_secret_cleanup(dir:&Path,accounts:&[String])->Result<(),String>{
+    let meta_path=dir.join("meta.json");
+    let mut meta=if meta_path.exists(){
+        serde_json::from_slice::<Value>(&fs::read(&meta_path).map_err(|e|format!("MIGRATION_BACKUP_META_READ_FAILED: {e}"))?)
+            .map_err(|e|format!("MIGRATION_BACKUP_META_PARSE_FAILED: {e}"))?
+    }else{json!({})};
+    if let Some(obj)=meta.as_object_mut(){
+        obj.insert("removeSecretAccountsOnRestore".into(),serde_json::to_value(accounts).map_err(|e|e.to_string())?);
+    }
+    let bytes=serde_json::to_vec_pretty(&meta).map_err(|e|format!("MIGRATION_BACKUP_META_SERIALIZE_FAILED: {e}"))?;
+    write_atomic(&meta_path,&bytes)
+}
+fn backup_secret_cleanup_accounts(dir:&Path)->Result<Vec<String>,String>{
+    let meta_path=dir.join("meta.json");
+    if !meta_path.exists(){return Ok(Vec::new())}
+    let meta:Value=serde_json::from_slice(&fs::read(&meta_path).map_err(|e|format!("MIGRATION_BACKUP_META_READ_FAILED: {e}"))?)
+        .map_err(|e|format!("MIGRATION_BACKUP_META_PARSE_FAILED: {e}"))?;
+    Ok(meta.get("removeSecretAccountsOnRestore").and_then(Value::as_array).into_iter().flatten()
+        .filter_map(|x|x.as_str().map(str::to_string)).collect())
+}
+
 fn restore_optional_file(live:&Path,backup:&Path)->Result<(),String>{
     if backup.exists(){
         let bytes=fs::read(backup).map_err(|e|format!("MIGRATION_ROLLBACK_READ_FAILED: {}: {e}",backup.display()))?;
@@ -772,6 +793,7 @@ fn restore_snapshot_dir(app: &AppHandle, dir: &Path) -> Result<(), String> {
     let (yp,gp)=metadata_paths(app)?;
     restore_optional_file(&yp,&dir.join("youtube-oauth.json"))?;
     restore_optional_file(&gp,&dir.join("google-config.json"))?;
+    cleanup_integration_accounts(&backup_secret_cleanup_accounts(dir)?)?;
     Ok(())
 }
 
@@ -824,7 +846,6 @@ pub fn recover_interrupted_import(app:&AppHandle)->Result<(),String>{
     let backup=backup_root(app)?.join(&marker.backup_id);
     if !backup.is_dir(){return Err(format!("MIGRATION_TXN_BACKUP_MISSING: {}",marker.backup_id))}
     restore_snapshot_dir(app,&backup)?;
-    cleanup_integration_accounts(&marker.remove_secret_accounts_on_rollback)?;
     clear_transaction_marker(app)?;
     Ok(())
 }
@@ -950,6 +971,7 @@ pub fn migration_import(
     );
     let backup = create_rollback_snapshot(&app, &backup_id)?;
     let cleanup_accounts=integration_cleanup_accounts(&payload.integration_secrets)?;
+    record_backup_secret_cleanup(&backup,&cleanup_accounts)?;
     write_transaction_marker(&app,&backup_id,"PREPARED",&cleanup_accounts)?;
 
     let transaction=run_with_rollback(
@@ -972,7 +994,6 @@ pub fn migration_import(
         Ok(v)=>v,
         Err(e)=>{
             if !e.contains("MIGRATION_ROLLBACK_FAILED"){
-                let _=cleanup_integration_accounts(&cleanup_accounts);
                 let _=clear_transaction_marker(&app);
             }
             return Err(e)
@@ -980,11 +1001,10 @@ pub fn migration_import(
     };
     if let Err(mark_error)=write_transaction_marker(&app,&backup_id,"COMMITTED",&cleanup_accounts){
         let rollback=restore_snapshot_dir(&app,&backup);
-        let secret_rollback=cleanup_integration_accounts(&cleanup_accounts);
-        if rollback.is_ok()&&secret_rollback.is_ok(){let _=clear_transaction_marker(&app);}
-        return Err(match (rollback,secret_rollback){
-            (Ok(()),Ok(()))=>format!("MIGRATION_COMMIT_MARKER_FAILED: {mark_error}"),
-            (rb,sr)=>format!("MIGRATION_COMMIT_MARKER_FAILED: {mark_error}; MIGRATION_ROLLBACK_FAILED: files={rb:?}; secrets={sr:?}")
+        if rollback.is_ok(){let _=clear_transaction_marker(&app);}
+        return Err(match rollback{
+            Ok(())=>format!("MIGRATION_COMMIT_MARKER_FAILED: {mark_error}"),
+            Err(rb)=>format!("MIGRATION_COMMIT_MARKER_FAILED: {mark_error}; MIGRATION_ROLLBACK_FAILED: {rb}")
         })
     }
     // If deletion itself fails, the COMMITTED marker is intentionally left behind;
@@ -1145,6 +1165,21 @@ mod tests {
         assert!(merged_g.get("apiKey").is_none());
     }
 
+
+
+    #[test]
+    fn backup_metadata_records_secret_cleanup_without_secret_values(){
+        let root=std::env::temp_dir().join(format!("vyron-migration-meta-{}",Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("meta.json"),br#"{"id":"fixture"}"#).unwrap();
+        let accounts=vec!["state.youtubeApiKey".to_string()];
+        record_backup_secret_cleanup(&root,&accounts).unwrap();
+        assert_eq!(backup_secret_cleanup_accounts(&root).unwrap(),accounts);
+        let raw=fs::read_to_string(root.join("meta.json")).unwrap();
+        assert!(raw.contains("state.youtubeApiKey"));
+        assert!(!raw.contains("fixture-youtube-api"));
+        let _=fs::remove_dir_all(root);
+    }
 
     #[test]
     fn rollback_removes_files_that_did_not_exist_before_import(){
