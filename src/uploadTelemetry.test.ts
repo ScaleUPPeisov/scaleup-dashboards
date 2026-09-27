@@ -23,7 +23,7 @@ describe('VYRON 2.1.6 upload speed and ETA',()=>{
 });
 
 describe('VYRON 2.1.6 multi-channel telemetry isolation',()=>{
- it('keeps ELARA identity while UI context changes and tracks Lost Highway independently',async()=>{
+ it('keeps Beta Room identity while UI context changes and tracks Lost Highway independently',async()=>{
   const mod=await import('./uploadTelemetry');mod.resetUploadTelemetryForTests();
   mod.registerUploadRuntime({jobId:'a',projectId:'pa',channelId:'elara',profileId:'profile-elara',filePath:'/elara.mp4',startedAt:'2026-09-15T10:00:00.000Z'},100,0);
   mod.applyUploadProgressFact({jobId:'a',bytesUploaded:20,totalBytes:100,progress:20,timestamp:'2026-09-15T10:00:06.000Z',active:true});

@@ -3,7 +3,7 @@ import {activityEvent,appendJournalEvent,cleanupPreclassification,dailySummary,e
 import {cleanupEligibleUpload,markHistorySourceState,markHistoryTrashed} from './storageLifecycle';
 import type {ActivityEvent,Channel,UploadHistoryRecord,VideoJob} from './types';
 
-const channel={id:'c1',name:'Neon Drive FM'} as Channel;
+const channel={id:'c1',name:'Nova Test'} as Channel;
 const upload=(patch:Partial<UploadHistoryRecord>={}):UploadHistoryRecord=>({
  id:'h1',jobId:'j1',channelId:'c1',profileId:'p1',youtubeChannelId:'UC1',youtubeVideoId:'yt1',
  localFilePath:'/tmp/VIDEO_001.mp4',originalFilename:'VIDEO_001.mp4',uploadedAt:'2026-09-20T07:00:00Z',
@@ -23,7 +23,7 @@ describe('VYRON 2.1.15 RC4 persistent activity journal',()=>{
 
  it('never fabricates legacy metadata when no persisted metadata evidence exists',()=>{
   expect(legacyMetadataJournal([],[])).toEqual([]);
-  const rows=[{operationId:'m1',at:'2026-09-20T08:00:00Z',channelId:'c1',channelName:'Neon Drive FM',selectedVideoCount:20,changedVideoCount:20,changedFields:['description','tags'],status:'success' as const,metadataOk:20,total:20,scheduleOk:0,scheduleTotal:0,failed:0}];
+  const rows=[{operationId:'m1',at:'2026-09-20T08:00:00Z',channelId:'c1',channelName:'Nova Test',selectedVideoCount:20,changedVideoCount:20,changedFields:['description','tags'],status:'success' as const,metadataOk:20,total:20,scheduleOk:0,scheduleTotal:0,failed:0}];
   const out=legacyMetadataJournal(rows,[]);
   expect(out).toHaveLength(1);
   expect(out[0].source).toBe('LEGACY_IMPORT');

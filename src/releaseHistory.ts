@@ -457,7 +457,7 @@ export const VYRON_RELEASE_HISTORY:ReleaseHistoryEntry[]=[
         "Publisher shows the concrete reason for incomplete schedule sync and may use only a recent last-complete authoritative snapshot.",
         "Existing full sync remains available.",
         "youtube_list_existing_videos and targeted retry are method-ledger commands; compatibility estimator is not double-debited.",
-        "OAuth, Keychain, channel statistics, upload pipeline, ELARA work, Windows and production updater are untouched."
+        "OAuth, Keychain, channel statistics, upload pipeline, Beta Room work, Windows and production updater are untouched."
       ],
       "interface": [],
       "reliability": [],
@@ -3268,14 +3268,14 @@ export const VYRON_RELEASE_HISTORY:ReleaseHistoryEntry[]=[
     "title": "Google OAuth Recovery",
     "type": "PATCH",
     "highlights": [
-      "После установки 0.9.2 кнопка «+ Добавить YouTube аккаунт» должна быть доступна при наличии уже подключённого Lost Highway FM. Новый канал подключается обычным Google OAuth и автоматически добавляется в VYRON.",
+      "После установки 0.9.2 кнопка «+ Добавить YouTube аккаунт» должна быть доступна при наличии уже подключённого Quartz Harbor. Новый канал подключается обычным Google OAuth и автоматически добавляется в VYRON.",
       "Исправлена блокировка кнопки «+ Добавить YouTube аккаунт» после обновления, когда существующий OAuth-профиль сохранён, но отдельный google-config.json отсутствует.",
       "VYRON теперь автоматически восстанавливает Global Google Config из уже сохранённого OAuth-профиля (client_id + client_secret) и сохраняет его локально в app data.",
       "Существующие OAuth-профили, refresh tokens, каналы и локальное состояние не сбрасываются."
     ],
     "sections": {
       "features": [
-        "После установки 0.9.2 кнопка «+ Добавить YouTube аккаунт» должна быть доступна при наличии уже подключённого Lost Highway FM. Новый канал подключается обычным Google OAuth и автоматически добавляется в VYRON."
+        "После установки 0.9.2 кнопка «+ Добавить YouTube аккаунт» должна быть доступна при наличии уже подключённого Quartz Harbor. Новый канал подключается обычным Google OAuth и автоматически добавляется в VYRON."
       ],
       "fixes": [
         "Исправлена блокировка кнопки «+ Добавить YouTube аккаунт» после обновления, когда существующий OAuth-профиль сохранён, но отдельный google-config.json отсутствует.",

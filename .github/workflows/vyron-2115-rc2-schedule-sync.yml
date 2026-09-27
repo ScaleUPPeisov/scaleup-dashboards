@@ -333,7 +333,7 @@ jobs:
           - Publisher shows the concrete reason for incomplete schedule sync and may use only a recent last-complete authoritative snapshot.
           - Existing full sync remains available.
           - youtube_list_existing_videos and targeted retry are method-ledger commands; compatibility estimator is not double-debited.
-          - OAuth, Keychain, channel statistics, upload pipeline, ELARA work, Windows and production updater are untouched.
+          - OAuth, Keychain, channel statistics, upload pipeline, Beta Room work, Windows and production updater are untouched.
 
           Physical 203-video channel acceptance is NOT marked PASS until tested on the operator Mac.
           EOF

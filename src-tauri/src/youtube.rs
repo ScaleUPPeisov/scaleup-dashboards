@@ -7175,7 +7175,7 @@ mod v2114_channel_statistics_tests{
  use super::*;
  #[test]
  fn exact_statistics_are_numeric_and_include_handle(){
-  let item=json!({"id":"UC1","snippet":{"title":"Neon Drive FM","customUrl":"@neondrive","publishedAt":"2025-08-01T12:00:00Z","country":"US","defaultLanguage":"en","thumbnails":{"high":{"url":"https://img"}}},"statistics":{"subscriberCount":"254","viewCount":"40382","videoCount":"87","hiddenSubscriberCount":false}});
+  let item=json!({"id":"UC1","snippet":{"title":"Nova Test","customUrl":"@neondrive","publishedAt":"2025-08-01T12:00:00Z","country":"US","defaultLanguage":"en","thumbnails":{"high":{"url":"https://img"}}},"statistics":{"subscriberCount":"254","viewCount":"40382","videoCount":"87","hiddenSubscriberCount":false}});
   let out=youtube_channel_statistics_value(&item);
   assert_eq!(out["channelId"],"UC1");
   assert_eq!(out["handle"],"@neondrive");
