@@ -270,7 +270,7 @@ mod tests {
         fs::create_dir_all(&workspace).unwrap();
         fs::create_dir_all(render.join("Fixture  Channel")).unwrap();fs::create_dir_all(render.join("Fixture   Channel")).unwrap();
         fs::create_dir_all(projects.join("Fixture  Channel")).unwrap();fs::create_dir_all(projects.join("Fixture   Channel")).unwrap();
-        let found=discover_channel_folders_impl(workspace.to_str().unwrap(),"glass city lovers").unwrap();
+        let found=discover_channel_folders_impl(workspace.to_str().unwrap(),"Fixture Channel").unwrap();
         assert_eq!(found.render.len(),2,"multiple safely-normalized Render matches must remain ambiguous");
         assert_eq!(found.projects.len(),2,"multiple safely-normalized Projects matches must remain ambiguous");
         fs::remove_dir_all(root).unwrap();
