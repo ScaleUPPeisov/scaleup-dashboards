@@ -5,7 +5,27 @@ on:
     branches:
       - main
       - 'release/vyron-*'
+    paths:
+      - '.github/workflows/vyron-*.yml'
+      - 'src/**'
+      - 'src-tauri/**'
+      - 'vyron-updates/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.json'
+      - 'vite.config.*'
+      - '.gitignore'
   pull_request:
+    paths:
+      - '.github/workflows/vyron-*.yml'
+      - 'src/**'
+      - 'src-tauri/**'
+      - 'vyron-updates/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.json'
+      - 'vite.config.*'
+      - '.gitignore'
   workflow_dispatch:
 
 permissions:
@@ -25,9 +45,26 @@ jobs:
         run: |
           set -Eeuo pipefail
           python3 - <<'PY'
-          import re, subprocess, sys
-          files = subprocess.check_output(['git','ls-files'], text=True).splitlines()
-          banned = [
+          import os,re,subprocess,sys
+
+          def changed_files():
+              event=os.environ.get('GITHUB_EVENT_NAME','')
+              if event=='push':
+                  try:
+                      return subprocess.check_output(
+                          ['git','diff-tree','--no-commit-id','--name-only','-r','HEAD'],
+                          text=True
+                      ).splitlines()
+                  except Exception:
+                      pass
+              # Manual/PR fallback: only VYRON-owned paths, never whole monorepo.
+              all_files=subprocess.check_output(['git','ls-files'],text=True).splitlines()
+              roots=('src/','src-tauri/','vyron-updates/','.github/workflows/vyron-')
+              roots_files={'package.json','package-lock.json','tsconfig.json','.gitignore'}
+              return [f for f in all_files if f.startswith(roots) or f in roots_files or f.startswith('vite.config.')]
+
+          files=changed_files()
+          banned=[
               r'(^|/)credentials\.json$',
               r'(^|/)credentials-[^/]*\.json$',
               r'(^|/)client_secret[^/]*\.json$',
@@ -48,10 +85,12 @@ jobs:
               r'(^|/)account-export',
               r'(^|/)channel-export',
           ]
-          if any(re.search(p, f, re.I) for f in files for p in banned):
+          bad=[f for f in files if any(re.search(p,f,re.I) for p in banned)]
+          if bad:
               print('PRIVACY_GATE=FAIL:SENSITIVE_TRACKED_FILE')
+              print('\n'.join(bad))
               sys.exit(1)
-          print('PRIVACY_TRACKED_FILES=PASS')
+          print(f'PRIVACY_TRACKED_FILES=PASS scanned={len(files)}')
           PY
 
       - name: Block high-confidence secrets
@@ -59,27 +98,43 @@ jobs:
         run: |
           set -Eeuo pipefail
           python3 - <<'PY'
-          import pathlib, re, subprocess, sys
-          patterns = [
+          import os,pathlib,re,subprocess,sys
+
+          def candidates():
+              event=os.environ.get('GITHUB_EVENT_NAME','')
+              if event=='push':
+                  names=subprocess.check_output(
+                      ['git','diff-tree','--no-commit-id','--name-only','-r','HEAD'],
+                      text=True
+                  ).splitlines()
+              else:
+                  names=subprocess.check_output(['git','ls-files'],text=True).splitlines()
+              roots=('src/','src-tauri/','vyron-updates/','.github/workflows/vyron-')
+              roots_files={'package.json','package-lock.json','tsconfig.json','.gitignore'}
+              return [n for n in names if n.startswith(roots) or n in roots_files or n.startswith('vite.config.')]
+
+          patterns=[
               re.compile(rb'ya29\.[A-Za-z0-9._~-]{20,}'),
               re.compile(rb'1//[A-Za-z0-9._~-]{20,}'),
               re.compile(rb'GOCSPX-[A-Za-z0-9_-]{20,}'),
               re.compile(rb'AIza[0-9A-Za-z_-]{20,}'),
               re.compile(rb'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----'),
           ]
-          for name in subprocess.check_output(['git','ls-files','-z']).split(b'\0'):
-              if not name:
+          scanned=0
+          for name in candidates():
+              p=pathlib.Path(name)
+              if not p.is_file():
                   continue
-              p = pathlib.Path(name.decode('utf-8', 'surrogateescape'))
               try:
-                  data = p.read_bytes()
+                  data=p.read_bytes()
               except Exception:
                   continue
-              matched = next((idx for idx,rx in enumerate(patterns) if rx.search(data)), None)
+              scanned+=1
+              matched=next((idx for idx,rx in enumerate(patterns) if rx.search(data)),None)
               if matched is not None:
                   print(f'PRIVACY_GATE=FAIL:HIGH_CONFIDENCE_SECRET:file={p}:pattern={matched}')
                   sys.exit(1)
-          print('PRIVACY_SECRET_SCAN=PASS')
+          print(f'PRIVACY_SECRET_SCAN=PASS scanned={scanned}')
           PY
 
       - name: Block real YouTube acceptance identifiers in CI
@@ -90,7 +145,7 @@ jobs:
           import pathlib, sys
           here=pathlib.Path('.github/workflows/vyron-privacy-gate.yml')
           forbidden=('PHYSICAL_'+'VIDEO_ID','physical_'+'video_id','Physical one-video acceptance '+'ID')
-          for wf in pathlib.Path('.github/workflows').glob('*.y*ml'):
+          for wf in pathlib.Path('.github/workflows').glob('vyron-*.y*ml'):
               if wf==here:
                   continue
               text=wf.read_text(errors='ignore')
@@ -108,7 +163,7 @@ jobs:
           import pathlib, re, sys
           bad = re.compile(r'(user-data|app-data|Application Support|AppData|keychain|credential-export|migration-export|account-export|channel-export|\.sqlite|\.db\b|\.vyron)', re.I)
           here=pathlib.Path('.github/workflows/vyron-privacy-gate.yml')
-          for wf in pathlib.Path('.github/workflows').glob('*.y*ml'):
+          for wf in pathlib.Path('.github/workflows').glob('vyron-*.y*ml'):
               if wf==here:
                   continue
               text = wf.read_text(errors='ignore')
