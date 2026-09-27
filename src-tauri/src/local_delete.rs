@@ -99,13 +99,16 @@ fn canonical_allowed_root(raw: &str) -> Option<PathBuf> {
         return None;
     }
     let c = p.canonicalize().ok()?;
-    if c == PathBuf::from("/") {
+    // Reject every filesystem root cross-platform: "/" on Unix and drive/UNC roots on Windows.
+    if c.parent().is_none() {
         return None;
     }
-    if let Ok(home) = std::env::var("HOME") {
-        if let Ok(h) = PathBuf::from(home).canonicalize() {
-            if c == h {
-                return None;
+    for key in ["HOME","USERPROFILE"] {
+        if let Ok(home) = std::env::var(key) {
+            if let Ok(h) = PathBuf::from(home).canonicalize() {
+                if c == h {
+                    return None;
+                }
             }
         }
     }
@@ -318,9 +321,13 @@ mod tests {
     }
     #[test]
     fn root_and_home_are_never_allowed_roots() {
-        assert!(canonical_allowed_root("/").is_none());
-        if let Ok(home) = std::env::var("HOME") {
-            assert!(canonical_allowed_root(&home).is_none())
+        let current=std::env::current_dir().unwrap().canonicalize().unwrap();
+        let filesystem_root=current.ancestors().last().unwrap().to_string_lossy().into_owned();
+        assert!(canonical_allowed_root(&filesystem_root).is_none());
+        for key in ["HOME","USERPROFILE"] {
+            if let Ok(home) = std::env::var(key) {
+                assert!(canonical_allowed_root(&home).is_none())
+            }
         }
     }
     #[test]
