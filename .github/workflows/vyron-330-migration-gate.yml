@@ -194,7 +194,7 @@ jobs:
             echo "deleted_accounts=0"
             echo "duplicate_import=idempotent-test"
             echo "encrypted_bundle=argon2id+xchacha20poly1305"
-          } > migration-artifacts/gate-${{ matrix.name }}.txt
+          } >> migration-artifacts/gate-${{ matrix.name }}.txt
 
       - name: Upload dual-platform evidence
         uses: actions/upload-artifact@v4
