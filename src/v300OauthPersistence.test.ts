@@ -5,8 +5,9 @@ describe('VYRON 3.0.0 OAuth persistence physical-blocker regression',()=>{
  const api=fs.readFileSync('src/api.ts','utf8');
  const rust=fs.readFileSync('src-tauri/src/youtube.rs','utf8');
  const start=rust.indexOf('pub async fn youtube_oauth_recover_existing_profiles');
- const end=rust.indexOf('#[tauri::command]\npub fn youtube_keychain_migration_diagnostics',start);
- const automatic=rust.slice(start,end);
+ const tail=rust.slice(start);
+ const nextCommand=tail.indexOf('\n#[tauri::command]',1);
+ const automatic=nextCommand>0?tail.slice(0,nextCommand):tail;
  it('uses saved local OAuth recovery before the manual credentials fallback',()=>{
   expect(api).toContain('youtubeRecoverSavedGoogleConfig');
   expect(accounts).toContain('api.youtubeRecoverSavedGoogleConfig()');
