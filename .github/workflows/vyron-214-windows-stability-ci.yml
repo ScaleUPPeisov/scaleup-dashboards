@@ -1,9 +1,7 @@
 name: VYRON 2.1.15 Windows OAuth Hotfix
 
 on:
-  push:
-    branches:
-      - windows/vyron-214-stability-fix
+  workflow_dispatch:
   workflow_dispatch:
 
 permissions:
