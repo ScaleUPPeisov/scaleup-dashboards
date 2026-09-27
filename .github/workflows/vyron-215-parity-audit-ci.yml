@@ -85,11 +85,126 @@ jobs:
       - name: Targeted Rust OAuth callback tests
         run: cargo test --manifest-path src-tauri/Cargo.toml oauth_callback -- --nocapture
 
+      - name: Windows targeted secure-storage and path parity
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          cargo test --manifest-path src-tauri/Cargo.toml windows_credential_manager_roundtrip_is_tenant_scoped -- --nocapture
+          cargo test --manifest-path src-tauri/Cargo.toml unicode_spaces_ampersand_and_parentheses_path_is_read_write_safe -- --nocapture
+          cargo test --manifest-path src-tauri/Cargo.toml long_windows_path_over_260_chars_is_read_write_safe_when_os_supports_vyron_runtime -- --nocapture
+          cargo test --manifest-path src-tauri/Cargo.toml unc_paths_are_classified_as_external_without_network_access -- --nocapture
+
       - name: Full Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
       - name: Rust compile
         run: cargo check --manifest-path src-tauri/Cargo.toml
+
+      - name: Windows live updater feed remote asset and cryptographic signature
+        if: matrix.name == 'windows'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p audit-evidence
+          FEED="https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/vyron-updates/windows-latest.json"
+          curl -L --fail --silent --show-error -H 'Cache-Control: no-cache' -o audit-evidence/windows-live-feed.json "$FEED"
+          python - <<'PY'
+          import json,base64,pathlib
+          d=json.load(open('audit-evidence/windows-live-feed.json',encoding='utf-8'))
+          assert d['version']=='2.1.15', d['version']
+          p=d['platforms']['windows-x86_64']
+          assert '/releases/download/v2.1.15-windows-x64/VYRON_2.1.15_x64-setup.exe' in p['url']
+          assert p['signature']
+          conf=json.load(open('src-tauri/tauri.windows.conf.json',encoding='utf-8'))
+          pub=conf['plugins']['updater']['pubkey']
+          pathlib.Path('audit-evidence/updater.pub').write_bytes(base64.b64decode(pub))
+          pathlib.Path('audit-evidence/updater.sig').write_bytes(base64.b64decode(p['signature']))
+          pathlib.Path('audit-evidence/live-url.txt').write_text(p['url'],encoding='utf-8')
+          print('LIVE_FEED_CONTRACT=PASS')
+          PY
+          URL="$(cat audit-evidence/live-url.txt)"
+          curl -L --fail --silent --show-error -o audit-evidence/VYRON_2.1.15_x64-setup.exe "$URL"
+          curl -L --fail --silent --show-error -o audit-evidence/VYRON_2.1.15_x64-setup.exe.sha256 "$URL.sha256"
+          EXPECTED="$(awk '{print tolower($1)}' audit-evidence/VYRON_2.1.15_x64-setup.exe.sha256)"
+          ACTUAL="$(sha256sum audit-evidence/VYRON_2.1.15_x64-setup.exe | awk '{print tolower($1)}')"
+          test "$ACTUAL" = "$EXPECTED"
+          echo "LIVE_REMOTE_INSTALLER_SHA256=$ACTUAL" | tee -a audit-evidence/windows-live.txt
+          V="$RUNNER_TEMP/vyron-audit-minisign"
+          mkdir -p "$V/src"
+          cat >"$V/Cargo.toml" <<'EOF'
+          [package]
+          name = "vyron-audit-minisign"
+          version = "0.1.0"
+          edition = "2021"
+          [dependencies]
+          minisign-verify = "0.2.5"
+          EOF
+          cat >"$V/src/main.rs" <<'EOF'
+          use minisign_verify::{PublicKey,Signature};
+          use std::{env,path::Path};
+          fn main(){
+            let a:Vec<String>=env::args().collect();
+            let pk=PublicKey::from_file(Path::new(&a[1])).expect("public key");
+            let sig=Signature::from_file(Path::new(&a[3])).expect("signature");
+            let data=std::fs::read(&a[2]).expect("artifact");
+            pk.verify(&data,&sig,false).expect("signature verification");
+            println!("UPDATER_SIGNATURE=VERIFIED");
+          }
+          EOF
+          cargo run --quiet --manifest-path "$V/Cargo.toml" -- audit-evidence/updater.pub audit-evidence/VYRON_2.1.15_x64-setup.exe audit-evidence/updater.sig | tee -a audit-evidence/windows-live.txt
+
+      - name: Windows installer update downgrade and uninstall safety
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path audit-evidence | Out-Null
+          $old = Join-Path $env:RUNNER_TEMP "VYRON_2.1.14_x64-setup.exe"
+          Invoke-WebRequest -Uri "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.14-windows-x64/VYRON_2.1.14_x64-setup.exe" -OutFile $old
+          $new = Join-Path $PWD "audit-evidence/VYRON_2.1.15_x64-setup.exe"
+          if (-not (Test-Path $new)) { throw "Live 2.1.15 installer missing" }
+
+          $p14 = Start-Process -FilePath $old -ArgumentList "/S" -Wait -PassThru
+          if ($p14.ExitCode -ne 0) { throw "2.1.14 silent install failed: $($p14.ExitCode)" }
+
+          $tenantDir = Join-Path $env:APPDATA "studio.channelflow.desktop/users/audit-user"
+          New-Item -ItemType Directory -Force -Path $tenantDir | Out-Null
+          $state = Join-Path $tenantDir "state.json"
+          [IO.File]::WriteAllText($state,'{"version":8,"channels":[{"id":"audit-channel"}],"jobs":[{"id":"audit-job"}],"uploadHistory":[{"id":"audit-upload"}],"fingerprintCache":{"x":"y"},"projectLifecycle":{"p":"ready"}}',[Text.UTF8Encoding]::new($false))
+          $before = (Get-FileHash $state -Algorithm SHA256).Hash
+
+          $p15 = Start-Process -FilePath $new -ArgumentList "/S" -Wait -PassThru
+          if ($p15.ExitCode -ne 0) { throw "2.1.15 silent update failed: $($p15.ExitCode)" }
+          $after = (Get-FileHash $state -Algorithm SHA256).Hash
+          if ($before -ne $after) { throw "User state changed across 2.1.14 -> 2.1.15" }
+
+          $exe = Get-ChildItem -Path $env:LOCALAPPDATA -Filter "VYRON.exe" -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $exe) { throw "Installed VYRON.exe not found" }
+          $v15 = $exe.VersionInfo.ProductVersion
+          if (-not $v15.StartsWith("2.1.15")) { throw "Installed version is not 2.1.15: $v15" }
+
+          $down = Start-Process -FilePath $old -ArgumentList "/S" -Wait -PassThru
+          $exeAfterDown = Get-Item $exe.FullName
+          $vAfterDown = $exeAfterDown.VersionInfo.ProductVersion
+          if ($vAfterDown.StartsWith("2.1.14")) { throw "DOWNGRADE_ALLOWED: 2.1.14 installer replaced 2.1.15" }
+
+          $uninstaller = Join-Path $exe.Directory.FullName "uninstall.exe"
+          if (-not (Test-Path $uninstaller)) { throw "VYRON uninstaller not found beside executable" }
+          $un = Start-Process -FilePath $uninstaller -ArgumentList "/S" -Wait -PassThru
+          if ($un.ExitCode -ne 0) { throw "Uninstall failed: $($un.ExitCode)" }
+          if (-not (Test-Path $state)) { throw "UNINSTALL_DATA_LOSS: tenant state.json was removed" }
+          $afterUninstall = (Get-FileHash $state -Algorithm SHA256).Hash
+          if ($afterUninstall -ne $before) { throw "UNINSTALL_DATA_MUTATION: tenant state changed" }
+
+          @(
+            "INSTALL_2_1_14_TO_2_1_15=PASS",
+            "STATE_SHA_BEFORE=$before",
+            "STATE_SHA_AFTER=$after",
+            "INSTALLED_VERSION=$v15",
+            "DOWNGRADE_2_1_15_TO_2_1_14=BLOCKED",
+            "UNINSTALL_PRESERVES_TENANT_STATE=PASS"
+          ) | Set-Content audit-evidence/windows-installer-safety.txt
 
       - name: Evidence
         if: always()
