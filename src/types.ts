@@ -27,7 +27,7 @@ export type VideoJob={
   metadataSource?:MetadataSource; metadataLocked?:boolean;
   youtubeVideoId?:string; uploadProgress?:number; uploadedAt?:string; storageLifecycle?:StorageLifecycleState;
   thumbnailPath?:string; uploadFingerprint?:string; uploadInterruptedAt?:string; endlumeSentAt?:string; removedFromPublishList?:boolean;
-  renderQueuedAt?:string; lastAutomationAt?:string;
+  renderQueuedAt?:string; renderEvidenceId?:string; renderStartedAt?:string; lastAutomationAt?:string;
 };
 
 export type AnalyticsPoint={date:string;views:number;engagedViews?:number;watchMinutes:number;subscribersGained:number;subscribersLost:number;estimatedRevenue?:number};
