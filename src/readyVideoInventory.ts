@@ -1,5 +1,6 @@
 import type {Channel,FingerprintCacheEntry,ProjectLifecycleRecord,UploadHistoryRecord,VideoJob} from './types';
 import {scheduleAverageIntervalDays} from './channelSchedule';
+import {currentRenderSupersedesUploadHistory} from './storageLifecycle';
 
 export type ReadyVideoInventoryStatus='READY'|'QUEUED'|'UPLOADING'|'SCHEDULED'|'PUBLISHED'|'ERROR';
 export type InventoryUploadFact={
@@ -72,7 +73,7 @@ export function isReadyAvailable(
   if(job.status!=='READY_UPLOAD'||!productionVideoExists(job,lifecycle))return false;
   if(job.error||job.removedFromPublishList||job.youtubeVideoId||job.uploadedAt)return false;
   if(['UPLOADED','TRASHED','FAILED','UPLOADING','QUEUED'].includes(String(job.storageLifecycle||'')))return false;
-  if(latestUpload(job.id,uploadHistory))return false;
+  if(!currentRenderSupersedesUploadHistory(job)&&latestUpload(job.id,uploadHistory))return false;
   if(runtimeUploads.some(x=>x.jobId===job.id&&(x.status==='UPLOADING'||x.status==='QUEUED')))return false;
   return true;
 }
@@ -90,7 +91,7 @@ export function buildReadyVideoInventory(
   const items:ReadyVideoInventoryItem[]=[];
   for(const job of jobs){
     const channel=channelById.get(job.channelId);if(!channel)continue;
-    const lifecycleEntry=lifecycleForJob(job.id,projectLifecycle),lifecycle=lifecycleEntry?.[1],upload=latestUpload(job.id,uploadHistory),runtime=runtimeByJob.get(job.id);
+    const lifecycleEntry=lifecycleForJob(job.id,projectLifecycle),lifecycle=lifecycleEntry?.[1],upload=currentRenderSupersedesUploadHistory(job)?undefined:latestUpload(job.id,uploadHistory),runtime=runtimeByJob.get(job.id);
     const hasFinal=productionVideoExists(job,lifecycle);
     if(!hasFinal&&!upload&&!runtime&&job.status!=='ERROR'&&job.status!=='SCHEDULED')continue;
     let status:ReadyVideoInventoryStatus|undefined;
