@@ -20,6 +20,7 @@ import { ChannelRunwayScheduler } from './ChannelRunwayScheduler';
 import { ProductionStatusBridge } from './ProductionStatusBridge';
 import { SettingsOS } from './SettingsOS';
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
+import {getCurrentWindow} from '@tauri-apps/api/window';
 import {NotificationCenter} from './NotificationStack';
 import {notifyError,notifyInfo,notifySuccess,notifyWarning} from './notificationCenter';
 import {RecoveryGate} from './RecoveryGate';
@@ -70,6 +71,28 @@ export function App(){
   useEffect(()=>{if(updaterStatus!=='AVAILABLE'||!updaterLatest)return;notifyInfo(`Доступно обновление VYRON YT PEISOV ${updaterLatest}`,'Слева сверху нажмите «Обновить».',{operationId:`update-available:${updaterLatest}`});void notifyUpdateAvailable(updaterLatest)},[updaterStatus,updaterLatest]);
   useEffect(()=>{if(!booted)return;void api.appVersion().then(v=>{const expected=localStorage.getItem('vyron:update-installing-version');if(expected&&expected===v){localStorage.removeItem('vyron:update-installing-version');markUpdated(v);notifySuccess('Обновление установлено',`VYRON YT PEISOV обновлён до версии ${v}.`,{operationId:`update-installed:${v}`})}})},[booted,markUpdated]);
   useEffect(()=>{document.documentElement.classList.toggle('reduceMotion',settings.reduceMotion)},[settings.reduceMotion]);
+  useEffect(()=>{
+    if(!booted||!license?.valid)return;
+    let unlisten:(()=>void)|undefined;
+    let closing=false;
+    const windowRef=getCurrentWindow();
+    void windowRef.onCloseRequested(async event=>{
+      if(closing)return;
+      event.preventDefault();
+      closing=true;
+      try{
+        await Promise.race([
+          useApp.getState().persist(),
+          new Promise<never>((_,reject)=>window.setTimeout(()=>reject(new Error('STATE_FLUSH_TIMEOUT')),5000))
+        ]);
+      }catch(error){
+        useApp.getState().log(`Не удалось завершить сохранение перед закрытием: ${String(error)}`,'error');
+      }finally{
+        await windowRef.destroy();
+      }
+    }).then(fn=>unlisten=fn);
+    return()=>unlisten?.();
+  },[booted,license?.valid]);
   useEffect(()=>{let unlisten:(()=>void)|undefined;void api.onYoutubeProgress(applyUploadProgressFact).then(fn=>unlisten=fn);return()=>unlisten?.()},[]);
   useEffect(()=>{if(!booted)return;void Promise.all([api.youtubeActiveUploads(),api.youtubeUploadSessions()]).then(([facts,sessions])=>{seedActiveUploadFacts(facts);const patches=buildStaleOperationPatches(useApp.getState().jobs,{uploadsKnown:true,rendersKnown:false,activeUploadIds:new Set(facts.map(x=>x.jobId)),activeRenderIds:new Set(),uploadSessionIds:new Set(sessions.map(x=>x.jobId)),now:new Date().toISOString()});applyStaleOperationPatches(patches,useApp.getState().patchJob)}).catch(()=>{})},[booted]);
   useEffect(()=>{let unlisten:(()=>void)|undefined;void api.onYoutubeApiRequest(()=>{}).then(fn=>unlisten=fn);return()=>unlisten?.()},[]);
