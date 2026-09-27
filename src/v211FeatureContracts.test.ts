@@ -1,8 +1,8 @@
 import {describe,it,expect} from 'vitest';
 import {readFileSync} from 'node:fs';
-import {fileURLToPath} from 'node:url';
+const urlPath=(u:URL)=>{let p=decodeURIComponent(u.pathname);if(/^\/[A-Za-z]:\//.test(p))p=p.slice(1);return p};
 
-const read=(p:string)=>readFileSync(fileURLToPath(new URL(p,import.meta.url)),'utf8');
+const read=(p:string)=>readFileSync(urlPath(new URL(p,import.meta.url)),'utf8');
 
 describe('VYRON 2.0.11 requested feature contracts',()=>{
  it('Publisher exposes file/daily/2-2/3-1 schedule buttons and time preview',()=>{
