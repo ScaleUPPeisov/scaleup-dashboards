@@ -561,6 +561,192 @@ fn load_or_migrate_google_config(app:&AppHandle)->Result<GoogleConfig,String>{
 pub fn youtube_google_config_status(app: AppHandle) -> Result<Value, String> {
     Ok(google_config_status_value(&load_google_config_metadata(&app)?))
 }
+const CREDENTIAL_SCHEMA_VERSION:u32=2;
+
+fn parse_google_credentials_json(json_text:&str)->Result<(String,String,String),String>{
+    let v:Value=serde_json::from_str(json_text).map_err(|e|format!("credentials.json: {e}"))?;
+    let root=v.get("installed").or_else(||v.get("web")).unwrap_or(&v);
+    let client_id=root.get("client_id").and_then(Value::as_str).unwrap_or("").trim().to_string();
+    if client_id.is_empty(){return Err("В credentials.json не найден client_id".into())}
+    let client_secret=root.get("client_secret").and_then(Value::as_str).unwrap_or("").trim().to_string();
+    if client_secret.is_empty(){return Err("OAUTH_CLIENT_SECRET_REQUIRED: credentials.json не содержит client_secret".into())}
+    let project_id=root.get("project_id").and_then(Value::as_str)
+        .or_else(||v.get("project_id").and_then(Value::as_str))
+        .unwrap_or("").trim().to_string();
+    Ok((client_id,client_secret,project_id))
+}
+fn validate_imported_client_id(expected:&str,imported:&str)->Result<(),String>{
+    if expected.trim()==imported.trim(){Ok(())}
+    else{Err(format!("OAUTH_CLIENT_MISMATCH: imported credentials belong to another OAuth Client; expected={}",masked_client_id(expected)))}
+}
+
+#[tauri::command]
+pub fn youtube_oauth_import_profile_credentials_file(app:AppHandle,profile_id:String,file_path:String)->Result<Value,String>{
+    let profile_id=profile_id.trim().to_string();
+    let store=load_store_metadata(&app)?;
+    let profile=store.profiles.iter().find(|p|p.id==profile_id)
+        .ok_or_else(||format!("OAUTH_PROFILE_NOT_FOUND: profile_id={profile_id}"))?;
+    let expected_client_id=profile.client_id.trim();
+    if expected_client_id.is_empty(){return Err("OAUTH_CLIENT_MISSING: profile client_id is empty".into())}
+    let raw=fs::read_to_string(&file_path).map_err(|e|format!("credentials.json read failed: {e}"))?;
+    let (client_id,client_secret,project_id)=parse_google_credentials_json(&raw)?;
+    validate_imported_client_id(expected_client_id,&client_id)?;
+    let account=profile_client_secret_account(&profile_id);
+    security::canonical_set_secret(&account,&client_secret)?;
+    if !security::canonical_verify_secret(&account,&client_secret)?{
+        return Err(format!("OAUTH_SECURE_STORAGE_READBACK_FAILED: account={account}"))
+    }
+    Ok(json!({
+        "ok":true,"profileUuid":profile_id,"clientIdMasked":masked_client_id(&client_id),
+        "projectId":if project_id.is_empty(){Value::Null}else{json!(project_id)},
+        "clientSecretStored":true,"account":account,"secretValuesIncluded":false
+    }))
+}
+
+fn resolve_oauth_credential_states_local(app:&AppHandle)->Result<Vec<Value>,String>{
+    let store=load_store_metadata(app)?;
+    let canonical=security::list_canonical_secret_accounts("")?;
+    let legacy=security::list_legacy_secret_accounts("")?;
+    let global=load_google_config_metadata(app).unwrap_or_default();
+    let global_secret_present=canonical.iter().any(|a|a==GOOGLE_CLIENT_SECRET);
+    let migration=read_keychain_migration_v2(app)?;
+    let mut rows=Vec::with_capacity(store.profiles.len());
+    for profile in &store.profiles{
+        let refresh_account=oauth_key(&profile.id,"refresh_token");
+        let client_secret_account=profile_client_secret_account(&profile.id);
+        let refresh_present=canonical.iter().any(|a|a==&refresh_account);
+        let profile_secret_present=canonical.iter().any(|a|a==&client_secret_account);
+        let global_exact=!profile.client_id.trim().is_empty()
+            && profile.client_id.trim()==global.client_id.trim()
+            && global_secret_present;
+        let legacy_refresh_present=select_present_account(&legacy_refresh_candidates(&profile.id),&legacy).is_some();
+        let client_secret_state=if profile_secret_present{"PROFILE_CANONICAL"}
+            else if global_exact{"GLOBAL_EXACT_MATCH"}else{"MISSING"};
+        let credential_state=if refresh_present&&(profile_secret_present||global_exact){"CANONICAL_PRESENT_UNVERIFIED"}
+            else if legacy_refresh_present{"RECONNECT_REQUIRED"}
+            else{"MISSING"};
+        rows.push(json!({
+            "profileUuid":profile.id,
+            "channelTitle":profile.channel_title,
+            "expectedChannelId":profile.channel_id,
+            "canonicalAccount":refresh_account,
+            "canonicalRefreshPresent":refresh_present,
+            "legacyRefreshPresent":legacy_refresh_present,
+            "migrationState":migration.profiles.get(&profile.id).cloned().unwrap_or_else(||MIGRATION_NOT_STARTED.into()),
+            "credentialState":credential_state,
+            "credentialSchemaVersion":CREDENTIAL_SCHEMA_VERSION,
+            "lastValidationResult":"NOT_CHECKED",
+            "clientSecretState":client_secret_state,
+            "clientSecretPresent":profile_secret_present||global_exact,
+            "secretValuesIncluded":false,
+            "youtubeApiRequests":0,
+            "keychainSecretReads":0
+        }));
+    }
+    Ok(rows)
+}
+
+#[tauri::command]
+pub fn youtube_oauth_credential_states(app:AppHandle)->Result<Value,String>{
+    Ok(json!({
+        "credentialSchemaVersion":CREDENTIAL_SCHEMA_VERSION,
+        "profiles":resolve_oauth_credential_states_local(&app)?,
+        "secretValuesIncluded":false,
+        "youtubeApiRequests":0,
+        "keychainSecretReads":0
+    }))
+}
+
+#[tauri::command]
+pub fn youtube_oauth_reconciliation_diagnostics(app:AppHandle)->Result<Value,String>{
+    let store=load_store_metadata(&app)?;
+    let profile_ids=store.profiles.iter().map(|p|p.id.clone()).collect::<std::collections::HashSet<_>>();
+    let data_dir=crate::license::private_data_dir(&app)?;
+    let state_path=data_dir.join("state.json");
+    let state:Value=if state_path.exists(){
+        let b=fs::read(&state_path).map_err(|e|format!("STATE_DIAGNOSTIC_READ: {e}"))?;
+        serde_json::from_slice(&b).unwrap_or_else(|_|json!({}))
+    }else{json!({})};
+    let channels=state.get("channels").and_then(Value::as_array).cloned().unwrap_or_default();
+    let mut mapped_counts=HashMap::<String,usize>::new();
+    let mut orphan_channels=Vec::<Value>::new();
+    let mut channels_with_profile=0usize;
+    for ch in &channels{
+        let id=ch.get("id").and_then(Value::as_str).unwrap_or("");
+        let name=ch.get("name").and_then(Value::as_str).unwrap_or("");
+        if let Some(pid)=ch.get("youtubeProfileId").and_then(Value::as_str).filter(|x|!x.trim().is_empty()){
+            channels_with_profile+=1;
+            *mapped_counts.entry(pid.to_string()).or_insert(0)+=1;
+            if !profile_ids.contains(pid){
+                orphan_channels.push(json!({"channelId":id,"channelName":name,"youtubeProfileId":pid,"reason":"ORPHAN_MAPPING"}))
+            }
+        }
+    }
+    let mapped=mapped_counts.keys().cloned().collect::<std::collections::HashSet<_>>();
+    let orphan_profiles=store.profiles.iter().filter(|p|!mapped.contains(&p.id))
+        .map(|p|json!({"profileId":p.id,"youtubeChannelId":p.channel_id,"channelTitle":p.channel_title}))
+        .collect::<Vec<_>>();
+    let duplicates=mapped_counts.iter().filter(|(_,n)|**n>1)
+        .map(|(id,n)|json!({"profileId":id,"channelMappings":n})).collect::<Vec<_>>();
+    Ok(json!({
+        "channelsTotal":channels.len(),"profilesTotal":store.profiles.len(),
+        "channelsWithYoutubeProfileId":channels_with_profile,
+        "profilesWithChannelId":store.profiles.iter().filter(|p|p.channel_id.as_ref().map(|x|!x.trim().is_empty()).unwrap_or(false)).count(),
+        "orphanChannels":orphan_channels,"orphanProfiles":orphan_profiles,
+        "duplicateMappings":duplicates,"oauthStoreExists":store_path(&app)?.exists(),
+        "secretValuesIncluded":false,"keychainSecretsRead":false
+    }))
+}
+
+fn oauth_safe_retry_profile_value(app:&AppHandle,profile_id:&str)->Result<Value,String>{
+    let store=load_store_metadata(app)?;
+    let profile=store.profiles.iter().find(|p|p.id==profile_id)
+        .ok_or_else(||format!("CREDENTIAL_MISSING: profile={profile_id}"))?;
+    let account=oauth_key(profile_id,"refresh_token");
+    security::canonical_forget_cache(&account);
+    let (status,recovered,error)=match security::canonical_get_secret_cached(&account){
+        Ok(Some(v)) if !v.trim().is_empty()=>("ACCESSIBLE",true,Value::Null),
+        Ok(_)=>("MISSING",false,Value::Null),
+        Err(e)=>{
+            let blocked=e.contains("ACCESS_DENIED")||e.contains("AUTH_FAILED")||e.contains("INTERACTION_REQUIRED")||e.contains("USER_CANCELED");
+            (if blocked{"KEYCHAIN_BLOCKED"}else{"READ_FAILED"},false,json!(e))
+        }
+    };
+    if status=="ACCESSIBLE"{let _=set_profile_migration_state(app,profile_id,MIGRATION_MIGRATED);}
+    Ok(json!({
+        "profileUuid":profile_id,"channelId":profile.channel_id,"channelTitle":profile.channel_title,
+        "account":account,"status":status,"recovered":recovered,"errorCode":error,
+        "secretValuesIncluded":false,"youtubeApiRequests":0,"youtubeQuotaDelta":0
+    }))
+}
+
+#[tauri::command]
+pub fn youtube_oauth_retry_profile_keychain(app:AppHandle,profile_id:String)->Result<Value,String>{
+    oauth_safe_retry_profile_value(&app,profile_id.trim())
+}
+
+#[tauri::command]
+pub fn youtube_oauth_safe_check_all_profiles(app:AppHandle)->Result<Value,String>{
+    let store=load_store_metadata(&app)?;
+    let mut rows=Vec::<Value>::new();
+    let(mut accessible,mut blocked,mut missing,mut failed,mut recovered)=(0usize,0usize,0usize,0usize,0usize);
+    for profile in &store.profiles{
+        let row=oauth_safe_retry_profile_value(&app,&profile.id)?;
+        match row.get("status").and_then(Value::as_str).unwrap_or("READ_FAILED"){
+            "ACCESSIBLE"=>{accessible+=1;if row.get("recovered").and_then(Value::as_bool)==Some(true){recovered+=1}},
+            "KEYCHAIN_BLOCKED"=>blocked+=1,
+            "MISSING"=>missing+=1,
+            _=>failed+=1,
+        }
+        rows.push(row);
+    }
+    Ok(json!({
+        "profiles":rows,"total":store.profiles.len(),"accessible":accessible,
+        "recoveredAutomatically":recovered,"keychainBlocked":blocked,"missing":missing,
+        "readFailed":failed,"secretValuesIncluded":false,"youtubeApiRequests":0,"youtubeQuotaDelta":0
+    }))
+}
+
 #[tauri::command]
 pub fn youtube_google_config_import(
     app: AppHandle,
@@ -5422,6 +5608,26 @@ mod v219_rc7_secitem_ui_skip_tests{
   assert!(accounts.contains("oauth.p0.client_secret"));
   assert!(accounts.contains("oauth.p9.client_secret"));
  }
+}
+
+#[cfg(test)]
+mod parity_credential_contract_tests {
+    use super::*;
+
+    #[test]
+    fn credentials_json_requires_exact_client_id_and_secret() {
+        let raw=r#"{"installed":{"client_id":"client-A","client_secret":"secret-A","project_id":"project-A"}}"#;
+        let (id,secret,project)=parse_google_credentials_json(raw).unwrap();
+        assert_eq!(id,"client-A");assert_eq!(secret,"secret-A");assert_eq!(project,"project-A");
+        assert!(validate_imported_client_id("client-A",&id).is_ok());
+        assert!(validate_imported_client_id("client-B",&id).unwrap_err().starts_with("OAUTH_CLIENT_MISMATCH:"));
+    }
+
+    #[test]
+    fn profile_secret_account_is_profile_scoped() {
+        assert_ne!(profile_client_secret_account("A"),profile_client_secret_account("B"));
+        assert_eq!(profile_client_secret_account("A"),"oauth.A.client_secret");
+    }
 }
 
 #[cfg(test)]
