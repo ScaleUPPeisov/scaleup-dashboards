@@ -652,15 +652,23 @@ const INTEGRATION_SECRET_FIELDS:[(&str,&str);2]=[
     ("openaiApiKey","state.openaiApiKey"),
 ];
 
-fn portable_integration_secrets(app:&AppHandle)->Value{
+fn optional_integration_secret(result:Result<String,String>,field:&str)->Result<Option<String>,String>{
+    match result{
+        Ok(value) if !value.trim().is_empty()=>Ok(Some(value)),
+        Ok(_)=>Ok(None),
+        Err(e) if e.starts_with("CREDENTIAL_MISSING:")=>Ok(None),
+        Err(e)=>Err(format!("MIGRATION_INTEGRATION_SECRET_READ_FAILED: {field}: {e}")),
+    }
+}
+fn portable_integration_secrets(app:&AppHandle)->Result<Value,String>{
     let mut out=serde_json::Map::new();
-    if let Ok(value)=storage::youtube_api_key_for_operation(app,""){
-        if !value.trim().is_empty(){out.insert("youtubeApiKey".into(),Value::String(value));}
+    if let Some(value)=optional_integration_secret(storage::youtube_api_key_for_operation(app,""),"youtubeApiKey")?{
+        out.insert("youtubeApiKey".into(),Value::String(value));
     }
-    if let Ok(value)=storage::openai_api_key_for_operation(app,""){
-        if !value.trim().is_empty(){out.insert("openaiApiKey".into(),Value::String(value));}
+    if let Some(value)=optional_integration_secret(storage::openai_api_key_for_operation(app,""),"openaiApiKey")?{
+        out.insert("openaiApiKey".into(),Value::String(value));
     }
-    Value::Object(out)
+    Ok(Value::Object(out))
 }
 fn integration_cleanup_accounts(value:&Value)->Result<Vec<String>,String>{
     let mut out=Vec::new();
@@ -840,7 +848,9 @@ pub fn recover_interrupted_import(app:&AppHandle)->Result<(),String>{
     let marker:MigrationTxnMarker=serde_json::from_slice(&bytes).map_err(|e|format!("MIGRATION_TXN_INVALID: {e}"))?;
     if !valid_backup_id(&marker.backup_id){return Err("MIGRATION_TXN_BACKUP_ID_INVALID".into())}
     if marker.phase=="COMMITTED"{
-        clear_transaction_marker(app)?;
+        // A committed import is already safe. Failure to delete the marker must
+        // not brick startup; a later launch can retry the cleanup.
+        let _=clear_transaction_marker(app);
         return Ok(())
     }
     let backup=backup_root(app)?.join(&marker.backup_id);
@@ -866,7 +876,7 @@ pub fn migration_export(
     let oauth = oauth_vault::export_portable_snapshot(&app)?;
     let youtube_metadata=portable_youtube_metadata(&app)?;
     let google_config=portable_google_config(&app)?;
-    let integration_secrets=portable_integration_secrets(&app);
+    let integration_secrets=portable_integration_secrets(&app)?;
     let created = chrono::Utc::now().to_rfc3339();
     let id = Uuid::new_v4().to_string();
     let checksum = payload_hash(&state, &oauth, &youtube_metadata, &google_config, &integration_secrets, &browser_state)?;
@@ -1077,6 +1087,15 @@ mod tests {
 
 
 
+
+
+    #[test]
+    fn integration_secret_export_distinguishes_missing_from_backend_failure(){
+        assert_eq!(optional_integration_secret(Err("CREDENTIAL_MISSING: youtubeApiKey is not configured".into()),"youtubeApiKey").unwrap(),None);
+        assert_eq!(optional_integration_secret(Ok("abc".into()),"youtubeApiKey").unwrap(),Some("abc".into()));
+        let err=optional_integration_secret(Err("WINDOWS_CREDENTIAL_READ_FAILED: win32=5".into()),"youtubeApiKey").unwrap_err();
+        assert!(err.contains("MIGRATION_INTEGRATION_SECRET_READ_FAILED"));
+    }
 
     #[test]
     fn settings_merge_preserves_local_paths_oauth_client_and_api_keys(){
