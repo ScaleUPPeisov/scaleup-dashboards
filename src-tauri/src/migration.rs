@@ -584,7 +584,7 @@ pub fn migration_preview(
     let payload = read_bundle(&path, &passphrase)?;
     let local = storage::load_state(app);
     let (_, mut summary, remaps) = merge_states(&local, &payload.state);
-    let oauth_plan = oauth_vault::portable_merge_plan(&payload.oauth_vault)?;
+    let oauth_plan = oauth_vault::portable_merge_plan(&app,&payload.oauth_vault)?;
     summary.imported_profiles = oauth_plan
         .get("importedProfiles")
         .and_then(Value::as_u64)
@@ -623,7 +623,7 @@ pub fn migration_import(
     let payload = read_bundle(&path, &passphrase)?;
     let local = storage::load_state(app.clone());
     let (merged, mut summary, remaps) = merge_states(&local, &payload.state);
-    let oauth_plan = oauth_vault::portable_merge_plan(&payload.oauth_vault)?;
+    let oauth_plan = oauth_vault::portable_merge_plan(&app,&payload.oauth_vault)?;
     summary.imported_profiles = oauth_plan
         .get("importedProfiles")
         .and_then(Value::as_u64)
