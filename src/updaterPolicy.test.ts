@@ -1,5 +1,5 @@
 import {describe,expect,it} from 'vitest';
-import {MACOS_UPDATER_PLATFORM,UPDATER_CHECK_OPTIONS,UPDATER_ENDPOINTS,updaterFailureMessage,WINDOWS_UPDATER_PLATFORM} from './updaterPolicy';
+import {MACOS_UPDATER_PLATFORM,primaryUpdaterEndpoint,updaterEndpointsForPlatform,UPDATER_CHECK_OPTIONS,UPDATER_ENDPOINTS,updaterFailureMessage,WINDOWS_UPDATER_PLATFORM} from './updaterPolicy';
 
 describe('VYRON updater discovery policy',()=>{
   it('forces every updater check to bypass stale HTTP caches',()=>{
@@ -17,6 +17,13 @@ describe('VYRON updater discovery policy',()=>{
   it('prefers the dedicated Windows feed and keeps the shared feed as fallback',()=>{
     expect(UPDATER_ENDPOINTS[0]).toContain('/vyron-updates/windows-latest.json');
     expect(UPDATER_ENDPOINTS[1]).toContain('/vyron-updates/latest.json');
+  });
+
+  it('selects the Windows feed for Windows and the shared macOS feed for macOS',()=>{
+    expect(primaryUpdaterEndpoint('Mozilla/5.0 (Windows NT 10.0; Win64; x64)')).toContain('/vyron-updates/windows-latest.json');
+    expect(updaterEndpointsForPlatform('Windows')[0]).toContain('/vyron-updates/windows-latest.json');
+    expect(primaryUpdaterEndpoint('Mozilla/5.0 (Macintosh; Apple Silicon Mac OS X)')).toContain('/vyron-updates/latest.json');
+    expect(primaryUpdaterEndpoint('Macintosh')).not.toContain('windows-latest.json');
   });
 
   it('keeps platform-missing diagnostics without hardcoding macOS in user-facing text',()=>{
