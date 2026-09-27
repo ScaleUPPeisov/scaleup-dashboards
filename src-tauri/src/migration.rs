@@ -352,11 +352,27 @@ fn merge_settings(local: &Value, imported: &Value) -> Value {
 }
 
 
+fn collision_safe_channel_id(imported_id:&str,youtube_id:&str,used:&mut std::collections::HashSet<String>)->String{
+    if !used.contains(imported_id){
+        used.insert(imported_id.to_string());
+        return imported_id.to_string()
+    }
+    let seed=format!("{imported_id}|{youtube_id}");
+    let digest=hex::encode(Sha256::digest(seed.as_bytes()));
+    for n in 12..=digest.len(){
+        let candidate=format!("migrated-{}",&digest[..n]);
+        if !used.contains(&candidate){used.insert(candidate.clone());return candidate}
+    }
+    let candidate=format!("migrated-{}",Uuid::new_v4());
+    used.insert(candidate.clone());candidate
+}
 fn build_channel_id_remap(local_channels:&[Value],imported_channels:&[Value])->HashMap<String,String>{
     let mut by_youtube=HashMap::<String,String>::new();
+    let mut used=std::collections::HashSet::<String>::new();
     for row in local_channels{
         let yt=row.get("youtubeChannelId").and_then(Value::as_str).unwrap_or("").trim();
         let id=row.get("id").and_then(Value::as_str).unwrap_or("").trim();
+        if !id.is_empty(){used.insert(id.to_string());}
         if !yt.is_empty()&&!id.is_empty(){by_youtube.insert(yt.to_string(),id.to_string());}
     }
     let mut out=HashMap::new();
@@ -364,7 +380,11 @@ fn build_channel_id_remap(local_channels:&[Value],imported_channels:&[Value])->H
         let imported_id=row.get("id").and_then(Value::as_str).unwrap_or("").trim();
         if imported_id.is_empty(){continue}
         let yt=row.get("youtubeChannelId").and_then(Value::as_str).unwrap_or("").trim();
-        let final_id=if !yt.is_empty(){by_youtube.get(yt).cloned().unwrap_or_else(||imported_id.to_string())}else{imported_id.to_string()};
+        let final_id=if !yt.is_empty(){
+            by_youtube.get(yt).cloned().unwrap_or_else(||collision_safe_channel_id(imported_id,yt,&mut used))
+        }else{
+            imported_id.to_string()
+        };
         out.insert(imported_id.to_string(),final_id);
     }
     out
@@ -435,7 +455,12 @@ fn merge_states(local: &Value, imported: &Value) -> (Value, MergeSummary, Vec<Re
             summary.updated_channels += 1;
             channels[i] = merge_channel(&channels[i], c, &mut remaps);
         } else {
-            let merged = merge_channel(&json!({}), c, &mut remaps);
+            let mut merged = merge_channel(&json!({}), c, &mut remaps);
+            if let Some(imported_id)=c.get("id").and_then(Value::as_str){
+                if let Some(final_id)=channel_id_remap.get(imported_id){
+                    if let Some(obj)=merged.as_object_mut(){obj.insert("id".into(),Value::String(final_id.clone()));}
+                }
+            }
             index.insert(key, channels.len());
             channels.push(merged);
             summary.new_channels += 1;
@@ -1128,6 +1153,38 @@ mod tests {
             let encoded=encrypt_payload(&next,&pass).unwrap();
             write_atomic(Path::new(&out),&encoded).unwrap();
         }
+    }
+
+
+    #[test]
+    fn imported_new_channel_id_collision_is_remapped_and_references_follow(){
+        let local=json!({
+            "channels":[{"id":"same-id","youtubeChannelId":"TEST_LOCAL","name":"Local"}],
+            "jobs":[],"uploadHistory":[],"activityJournal":[],"statisticsHistory":{},"settings":{}
+        });
+        let imported=json!({
+            "channels":[{"id":"same-id","youtubeChannelId":"TEST_NEW","name":"Imported"}],
+            "jobs":[{"id":"j1","channelId":"same-id"}],
+            "uploadHistory":[{"id":"u1","channelId":"same-id"}],
+            "activityJournal":[{"eventId":"e1","channelId":"same-id"}],
+            "statisticsHistory":{"same-id":[{"snapshotId":"s1","channelId":"same-id"}]},
+            "settings":{}
+        });
+        let (first,s1,_)=merge_states(&local,&imported);
+        assert_eq!(s1.after_channels,2);
+        let imported_channel=first["channels"].as_array().unwrap().iter().find(|x|x["youtubeChannelId"]=="TEST_NEW").unwrap();
+        let new_id=imported_channel["id"].as_str().unwrap();
+        assert_ne!(new_id,"same-id");
+        assert!(new_id.starts_with("migrated-"));
+        assert_eq!(first["jobs"][0]["channelId"],new_id);
+        assert_eq!(first["uploadHistory"][0]["channelId"],new_id);
+        assert_eq!(first["activityJournal"][0]["channelId"],new_id);
+        assert_eq!(first["statisticsHistory"][new_id][0]["channelId"],new_id);
+        let (second,s2,_)=merge_states(&first,&imported);
+        assert_eq!(s2.after_channels,2);
+        assert_eq!(s2.new_channels,0);
+        let again=second["channels"].as_array().unwrap().iter().find(|x|x["youtubeChannelId"]=="TEST_NEW").unwrap()["id"].as_str().unwrap();
+        assert_eq!(again,new_id);
     }
 
     #[test]
