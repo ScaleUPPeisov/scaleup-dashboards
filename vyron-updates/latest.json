@@ -6,6 +6,10 @@
     "darwin-aarch64": {
       "url": "https://github.com/ScaleUPPeisov/vyron-releases/releases/download/v3.3.1/VYRON.app.tar.gz",
       "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM2VsZkFVQlJHZmY1VVJtSkcyZDlZcVY4WVJ5ZVhSUVVHWStLbk5IRmZnUk9jUFdreCtpVXdkQ3lRUitlM0xZS3BPbXBXand3Z2tSU3ZNdkJNdTM4NHc4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNTE2NDE0CWZpbGU6VllST04uYXBwLnRhci5negpNRWRNcGZWdjlRR0ZvVk9FSnZEbmFsM1RpRDBpZ1FnbUJzV2xFVjFETXY3c3R0VFhGUXJ2VEJyRU5ucjhuWEpBODdObkhxWFdYTGx6WDBNbmYwRUJBdz09Cg=="
+    },
+    "windows-x86_64": {
+      "url": "https://github.com/ScaleUPPeisov/vyron-releases/releases/download/v3.3.1/VYRON_3.3.1_x64-setup.exe",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM1huRlhzTXVNWiswcXJ0VnBEbm9FWUVWc09vek1NYkxRcWFhaGRnWkxFazlFQWxHZGdQZmtqOWJEK2dLSE9pSmZuSnFmdUxncVVYbkRwOU5Kdi9aN0FZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNTE0NjQ1CWZpbGU6VllST05fMy4zLjFfeDY0LXNldHVwLmV4ZQp5YmJmaUZ4MTF0KzhBeVY5VEJadTIvaVExcmFJalkwZXozU2x5VHJUcFlMWFRkY3JMMWhadElLUDh6b3EraUtURVlmMmhqRmxLVDlzQmhubFNHdFVCUT09Cg=="
     }
   }
 }
