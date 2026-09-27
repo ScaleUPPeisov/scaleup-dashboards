@@ -37,4 +37,13 @@ describe('publish workspace tenant isolation',()=>{
     expect(localStorage.getItem('vyron:youtube-publish-workspaces:v2')).toBeNull();
     expect(localStorage.getItem(tenantStorageKey('vyron:youtube-publish-workspaces:v2'))).toContain('b1');
   });
+
+  it('purges stale global workspace left by the old Windows clear bug without importing it',()=>{
+    localStorage.setItem('vyron:youtube-publish-workspaces:v2',JSON.stringify({
+      'leaked-channel':{channelId:'leaked-channel',selectedIds:['legacy'],rows:[],docx:false,thumbs:[],allowMissingThumbs:false,allowDuplicate:false,scheduleMode:'file',scheduleStartDate:'',scheduleTime:'',updatedAt:'2026-09-27T00:00:00.000Z'}
+    }));
+    setFrontendTenant('tenant-safe');
+    expect(loadPublishWorkspace('leaked-channel').selectedIds).toEqual([]);
+    expect(localStorage.getItem('vyron:youtube-publish-workspaces:v2')).toBeNull();
+  });
 });
