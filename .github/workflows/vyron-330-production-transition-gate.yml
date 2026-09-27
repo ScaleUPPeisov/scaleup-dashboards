@@ -1,0 +1,278 @@
+name: VYRON 3.3.0 Production Transition Gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/vyron-330-production-transition-gate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  APPROVED_HEAD: a11a73b27d2c7642c21fbb49c0c1b782be1e7c1a
+  RELEASE_REPO: ScaleUPPeisov/vyron-releases
+  LEGACY_REPO: ScaleUPPeisov/scaleup-dashboards
+  VERSION: '3.3.0'
+  BUNDLE_ID: studio.channelflow.desktop
+  EXECUTABLE: channelflow
+  MAC_UPDATER_SHA256: 760c40e3b19931baecd553e7e13289492770d141a33879890a598d890f108381
+  WIN_SHA256: 02769159baebb15f9fb06c271b1e1c70df0f1d1f517259ea40d0ff68d8961c5f
+  OLD_MAC_DMG_SHA256: 1e6d782e40b66208e3e21cdfa130dea72dd19da4604877b861876d6500127fa2
+  OLD_WIN_SHA256: 10c169e31be98345ef6bd0af1f751743021eada3496c64b39843e2e7f624c63d
+  UPDATER_PUBLIC_KEY: dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEREODQ1NDdERTI1MEYxQzAKUldUQThWRGlmVlNFM1RHdW5WQnE2eG9BYTBnQlNmbUtmVU84UHJQMUNvZWZ4Qmo0L2hYcUd4UDEK
+
+jobs:
+  windows-transition:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.APPROVED_HEAD }}
+
+      - name: Verify 3.3.0 updater source contract
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $conf=Get-Content 'src-tauri/tauri.conf.json' -Raw | ConvertFrom-Json
+          if($conf.version -ne '3.3.0'){throw 'Source version mismatch'}
+          if($conf.identifier -ne 'studio.channelflow.desktop'){throw 'Bundle ID mismatch'}
+          $eps=@($conf.plugins.updater.endpoints)
+          if($eps -notcontains 'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json'){throw 'macOS release-only endpoint missing'}
+          if($eps -notcontains 'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json'){throw 'Windows release-only endpoint missing'}
+          if(($eps -join ' ') -match 'scaleup-dashboards'){throw 'Private-source updater dependency remains'}
+          $bridge=Get-Content 'src-tauri/src/updater_bridge.rs' -Raw
+          if($bridge -notmatch 'ScaleUPPeisov/vyron-releases/main/updates/owner-preview.json'){throw 'Owner preview release-only endpoint missing'}
+          Write-Host 'NEW_CLIENT_RELEASE_REPO_CONTRACT=PASS'
+
+      - name: Physical Windows legacy feed to 3.3.0 transition
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $baseline=Join-Path $env:RUNNER_TEMP 'VYRON_2.1.16_x64-setup.exe'
+          Invoke-WebRequest -Uri 'https://github.com/ScaleUPPeisov/vyron-releases/releases/download/v2.1.16-windows-x64/VYRON_2.1.16_x64-setup.exe' -OutFile $baseline
+          $baselineSha=(Get-FileHash $baseline -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($baselineSha -ne $env:OLD_WIN_SHA256){throw "2.1.16 baseline SHA mismatch: $baselineSha"}
+          $old=Start-Process -FilePath $baseline -ArgumentList '/S' -Wait -PassThru
+          if($old.ExitCode -ne 0){throw "2.1.16 installer exit code $($old.ExitCode)"}
+
+          $appData=Join-Path $env:APPDATA 'studio.channelflow.desktop'
+          $docState=Join-Path $env:USERPROFILE 'Documents\VYRON\State'
+          New-Item -ItemType Directory -Force -Path $appData,$docState | Out-Null
+          $state=[ordered]@{
+            version=10
+            channels=@(
+              @{id='fixture-a';youtubeChannelId='TEST_CH_A';name='Fixture A'},
+              @{id='fixture-b';youtubeChannelId='TEST_CH_B';name='Fixture B'},
+              @{id='fixture-c';youtubeChannelId='TEST_CH_C';name='Fixture C'},
+              @{id='fixture-d';youtubeChannelId='TEST_CH_D';name='Fixture D'},
+              @{id='fixture-e';youtubeChannelId='TEST_CH_E';name='Fixture E'}
+            )
+            jobs=@(@{id='fixture-job';channelId='fixture-a';status='Pending'})
+            competitors=@()
+            settings=@{workspace='';endlumePath='';youtubeApiKey='';openaiApiKey='';autoCheckUpdates=$false;reduceMotion=$false;fpsMonitor=$false}
+            logs=@()
+            uploadHistory=@()
+            activityJournal=@()
+            statisticsHistory=@{}
+            fingerprintCache=@{'fixture-fp'=@{size=123}}
+            projectLifecycle=@{'fixture-project'=@{status='READY'}}
+          }
+          $json=$state | ConvertTo-Json -Depth 12
+          [IO.File]::WriteAllText((Join-Path $appData 'state.json'),$json,[Text.UTF8Encoding]::new($false))
+          [IO.File]::WriteAllText((Join-Path $docState 'app-state.json'),$json,[Text.UTF8Encoding]::new($false))
+
+          $legacy=Join-Path $env:RUNNER_TEMP 'legacy-windows.json'
+          $stable=Join-Path $env:RUNNER_TEMP 'stable-windows.json'
+          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/vyron-updates/windows-latest.json?run=$env:GITHUB_RUN_ID" -OutFile $legacy
+          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json?run=$env:GITHUB_RUN_ID" -OutFile $stable
+          $feed=Get-Content $legacy -Raw | ConvertFrom-Json
+          $releaseFeed=Get-Content $stable -Raw | ConvertFrom-Json
+          if($feed.version -ne '3.3.0'){throw "Legacy Windows feed version is $($feed.version)"}
+          if($releaseFeed.version -ne '3.3.0'){throw "Release Windows feed version is $($releaseFeed.version)"}
+          $url=$feed.platforms.'windows-x86_64'.url
+          if($url -ne 'https://github.com/ScaleUPPeisov/vyron-releases/releases/download/v3.3.0/VYRON_3.3.0_x64-setup.exe'){throw "Unexpected legacy Windows URL: $url"}
+          if($url -ne $releaseFeed.platforms.'windows-x86_64'.url){throw 'Legacy and release Windows URLs differ'}
+          Write-Host 'OLD_WINDOWS_CLIENT_SEES_3_3_0=PASS'
+
+          $installer=Join-Path $env:RUNNER_TEMP 'VYRON_3.3.0_x64-setup.exe'
+          Invoke-WebRequest -Uri $url -OutFile $installer
+          $newSha=(Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($newSha -ne $env:WIN_SHA256){throw "3.3.0 Windows SHA mismatch: $newSha"}
+          $p=Start-Process -FilePath $installer -ArgumentList '/S' -Wait -PassThru
+          if($p.ExitCode -ne 0){throw "3.3.0 installer exit code $($p.ExitCode)"}
+
+          $roots=@(
+            (Join-Path $env:LOCALAPPDATA 'Programs'),
+            $env:LOCALAPPDATA,
+            $env:ProgramFiles,
+            [Environment]::GetEnvironmentVariable('ProgramFiles(x86)')
+          ) | Where-Object {$_ -and (Test-Path $_)}
+          $exe=$null
+          foreach($root in $roots){
+            $exe=Get-ChildItem $root -File -Recurse -ErrorAction SilentlyContinue |
+              Where-Object {
+                $_.Name -in @('channelflow.exe','VYRON.exe') -and
+                ($_.VersionInfo.ProductVersion -as [string]).StartsWith('3.3.0')
+              } | Select-Object -First 1
+            if($exe){break}
+          }
+          if(-not $exe){throw 'Installed VYRON 3.3.0 executable not found'}
+
+          $statePath=Join-Path $appData 'state.json'
+          $after=Get-Content $statePath -Raw | ConvertFrom-Json
+          if(@($after.channels).Count -ne 5){throw 'Channel union lost during production transition'}
+          if(-not $after.fingerprintCache.'fixture-fp'){throw 'Fingerprint state lost during production transition'}
+          if(-not $after.projectLifecycle.'fixture-project'){throw 'Project lifecycle state lost during production transition'}
+
+          foreach($attempt in 1..2){
+            $proc=Start-Process -FilePath $exe.FullName -PassThru
+            Start-Sleep -Seconds 7
+            $proc.Refresh()
+            if($proc.HasExited){throw "VYRON exited during physical Windows launch $attempt with code $($proc.ExitCode)"}
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 1
+            $check=Get-Content $statePath -Raw | ConvertFrom-Json
+            if(@($check.channels).Count -ne 5){throw "State lost after launch $attempt"}
+          }
+
+          Write-Host 'WINDOWS_PRODUCTION_2_1_16_TO_3_3_0=PASS'
+          Write-Host 'WINDOWS_PRODUCTION_STATE_SURVIVES=PASS'
+          Write-Host 'WINDOWS_PRODUCTION_RESTART=PASS'
+          Write-Host 'WINDOWS_3_3_0_NEXT_FEED_RELEASE_REPO=PASS'
+
+  macos-transition:
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.APPROVED_HEAD }}
+
+      - name: Verify 3.3.0 updater source contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          d=json.load(open('src-tauri/tauri.conf.json'))
+          assert d['version']=='3.3.0'
+          assert d['identifier']=='studio.channelflow.desktop'
+          eps=d['plugins']['updater']['endpoints']
+          assert 'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json' in eps
+          assert 'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json' in eps
+          assert not any('scaleup-dashboards' in x for x in eps)
+          bridge=Path('src-tauri/src/updater_bridge.rs').read_text()
+          assert 'ScaleUPPeisov/vyron-releases/main/updates/owner-preview.json' in bridge
+          print('NEW_CLIENT_RELEASE_REPO_CONTRACT=PASS')
+          PY
+
+      - name: Physical macOS legacy feed to 3.3.0 transition
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          OLD_DMG="$RUNNER_TEMP/VYRON-2.1.15-rc.7-arm64.dmg"
+          curl -fL --retry 5 'https://github.com/ScaleUPPeisov/vyron-releases/releases/download/v2.1.15-rc.7/VYRON-2.1.15-rc.7-arm64.dmg' -o "$OLD_DMG"
+          test "$(shasum -a 256 "$OLD_DMG" | awk '{print $1}')" = "$OLD_MAC_DMG_SHA256"
+          OLD_M="$RUNNER_TEMP/vyron-rc7-baseline-mount"
+          rm -rf "$OLD_M"; mkdir -p "$OLD_M"
+          hdiutil attach "$OLD_DMG" -nobrowse -readonly -mountpoint "$OLD_M"
+          OLD_A="$OLD_M/VYRON.app"
+          codesign --verify --deep --strict "$OLD_A"
+          env -i HOME="$HOME" USER="$USER" PATH='/usr/bin:/bin:/usr/sbin:/sbin' TMPDIR="$RUNNER_TEMP/" "$OLD_A/Contents/MacOS/$EXECUTABLE" >/tmp/vyron-rc7-baseline-launch.log 2>&1 &
+          OLD_P=$!
+          sleep 5
+          kill -0 "$OLD_P"
+          kill "$OLD_P" || true
+          wait "$OLD_P" || true
+          hdiutil detach "$OLD_M"
+
+          APP_DATA="$HOME/Library/Application Support/studio.channelflow.desktop"
+          DOC_STATE="$HOME/Documents/VYRON/State"
+          mkdir -p "$APP_DATA" "$DOC_STATE"
+          python3 - "$APP_DATA/state.json" "$DOC_STATE/app-state.json" <<'PY'
+          import json,sys
+          state={
+            "version":10,
+            "channels":[
+              {"id":"fixture-a","youtubeChannelId":"TEST_CH_A","name":"Fixture A"},
+              {"id":"fixture-b","youtubeChannelId":"TEST_CH_B","name":"Fixture B"},
+              {"id":"fixture-c","youtubeChannelId":"TEST_CH_C","name":"Fixture C"},
+              {"id":"fixture-d","youtubeChannelId":"TEST_CH_D","name":"Fixture D"},
+              {"id":"fixture-e","youtubeChannelId":"TEST_CH_E","name":"Fixture E"}
+            ],
+            "jobs":[{"id":"fixture-job","channelId":"fixture-a","status":"Pending"}],
+            "competitors":[],
+            "settings":{"workspace":"","endlumePath":"","youtubeApiKey":"","openaiApiKey":"","autoCheckUpdates":False,"reduceMotion":False,"fpsMonitor":False},
+            "logs":[],"uploadHistory":[],"activityJournal":[],"statisticsHistory":{},
+            "fingerprintCache":{"fixture-fp":{"size":123}},
+            "projectLifecycle":{"fixture-project":{"status":"READY"}}
+          }
+          raw=json.dumps(state,ensure_ascii=False,indent=2).encode()
+          for p in sys.argv[1:]: open(p,'wb').write(raw)
+          PY
+
+          curl -fL --retry 5 "https://raw.githubusercontent.com/$LEGACY_REPO/main/vyron-updates/latest.json?run=$GITHUB_RUN_ID" -o /tmp/legacy-mac.json
+          curl -fL --retry 5 "https://raw.githubusercontent.com/$RELEASE_REPO/main/updates/latest.json?run=$GITHUB_RUN_ID" -o /tmp/release-mac.json
+          python3 - <<'PY'
+          import json
+          a=json.load(open('/tmp/legacy-mac.json')); b=json.load(open('/tmp/release-mac.json'))
+          assert a['version']=='3.3.0' and b['version']=='3.3.0'
+          u=a['platforms']['darwin-aarch64']['url']
+          assert u=='https://github.com/ScaleUPPeisov/vyron-releases/releases/download/v3.3.0/VYRON.app.tar.gz',u
+          assert u==b['platforms']['darwin-aarch64']['url']
+          assert a['platforms']['darwin-aarch64']['signature']==b['platforms']['darwin-aarch64']['signature']
+          print('OLD_MAC_CLIENT_SEES_3_3_0=PASS')
+          PY
+
+          NEW_URL="$(python3 -c 'import json;print(json.load(open("/tmp/legacy-mac.json"))["platforms"]["darwin-aarch64"]["url"])')"
+          curl -fL --retry 5 "$NEW_URL" -o /tmp/VYRON.app.tar.gz
+          test "$(shasum -a 256 /tmp/VYRON.app.tar.gz | awk '{print $1}')" = "$MAC_UPDATER_SHA256"
+
+          if ! command -v minisign >/dev/null 2>&1; then brew install minisign >/dev/null; fi
+          python3 - <<'PY'
+          import base64,json,os
+          from pathlib import Path
+          def envelope(raw:bytes)->bytes:
+              x=raw.strip()
+              try:
+                  y=base64.b64decode(x,validate=True)
+                  if y.startswith(b'untrusted comment:'): return y
+              except Exception: pass
+              return x+b'\n'
+          feed=json.load(open('/tmp/legacy-mac.json'))
+          Path('/tmp/vyron.pub').write_bytes(envelope(os.environ['UPDATER_PUBLIC_KEY'].encode()))
+          Path('/tmp/vyron.sig').write_bytes(envelope(feed['platforms']['darwin-aarch64']['signature'].encode()))
+          PY
+          minisign -Vm /tmp/VYRON.app.tar.gz -x /tmp/vyron.sig -p /tmp/vyron.pub
+
+          rm -rf "$RUNNER_TEMP/vyron-new" && mkdir -p "$RUNNER_TEMP/vyron-new"
+          tar -xzf /tmp/VYRON.app.tar.gz -C "$RUNNER_TEMP/vyron-new"
+          A="$RUNNER_TEMP/vyron-new/VYRON.app"
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$A/Contents/Info.plist")" = "$BUNDLE_ID"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$A/Contents/Info.plist")" = "$VERSION"
+          codesign --verify --deep --strict "$A"
+
+          for ATTEMPT in 1 2; do
+            env -i HOME="$HOME" USER="$USER" PATH='/usr/bin:/bin:/usr/sbin:/sbin' TMPDIR="$RUNNER_TEMP/" "$A/Contents/MacOS/$EXECUTABLE" >"/tmp/vyron-330-production-$ATTEMPT.log" 2>&1 &
+            P=$!
+            sleep 7
+            kill -0 "$P"
+            kill "$P" || true
+            wait "$P" || true
+            python3 - "$APP_DATA/state.json" <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1]))
+          assert len(d.get('channels',[]))==5
+          assert d.get('fingerprintCache',{}).get('fixture-fp',{}).get('size')==123
+          assert d.get('projectLifecycle',{}).get('fixture-project',{}).get('status')=='READY'
+          PY
+          done
+
+          echo 'MACOS_PRODUCTION_RC7_TO_3_3_0=PASS'
+          echo 'MACOS_PRODUCTION_STATE_SURVIVES=PASS'
+          echo 'MACOS_PRODUCTION_RESTART=PASS'
+          echo 'MACOS_3_3_0_NEXT_FEED_RELEASE_REPO=PASS'
