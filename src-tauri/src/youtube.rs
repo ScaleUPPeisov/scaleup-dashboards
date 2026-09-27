@@ -3930,8 +3930,13 @@ mod v2111_oauth_recovery_tests {
             preferred_browser:"default".into(),identity_validated_at:None,identity_validated_channel_id:None,credential_error:None
         }]};
         let oauth_disk=serde_json::to_string(&oauth).expect("serialize OAuth metadata");
-        for secret in ["CLIENT_SECRET_VALUE","ACCESS_TOKEN_VALUE","REFRESH_TOKEN_VALUE","client_secret","access_token","refresh_token"] {
-            assert!(!oauth_disk.contains(secret),"OAuth metadata leaked {secret}");
+        for secret in ["CLIENT_SECRET_VALUE","ACCESS_TOKEN_VALUE","REFRESH_TOKEN_VALUE"] {
+            assert!(!oauth_disk.contains(secret),"OAuth metadata leaked secret value {secret}");
+        }
+        let oauth_value:Value=serde_json::from_str(&oauth_disk).expect("parse OAuth metadata");
+        let profile=&oauth_value["profiles"][0];
+        for forbidden_key in ["client_secret","access_token","refresh_token"] {
+            assert!(profile.get(forbidden_key).is_none(),"OAuth metadata leaked secret field {forbidden_key}");
         }
 
         let google=GoogleConfig{
@@ -3940,11 +3945,14 @@ mod v2111_oauth_recovery_tests {
             client_secret_present:true,api_key_present:true
         };
         let google_disk=serde_json::to_string(&google).expect("serialize Google metadata");
-        for secret in ["GLOBAL_CLIENT_SECRET","GOOGLE_API_KEY_VALUE","client_secret","api_key"] {
-            assert!(!google_disk.contains(secret),"Google metadata leaked {secret}");
+        for secret in ["GLOBAL_CLIENT_SECRET","GOOGLE_API_KEY_VALUE"] {
+            assert!(!google_disk.contains(secret),"Google metadata leaked secret value {secret}");
         }
-        assert!(google_disk.contains("client_secret_present"));
-        assert!(google_disk.contains("api_key_present"));
+        let google_value:Value=serde_json::from_str(&google_disk).expect("parse Google metadata");
+        assert!(google_value.get("client_secret").is_none(),"Google metadata leaked client_secret field");
+        assert!(google_value.get("api_key").is_none(),"Google metadata leaked api_key field");
+        assert_eq!(google_value["client_secret_present"],true);
+        assert_eq!(google_value["api_key_present"],true);
     }
 
     fn profile(n: usize) -> OAuthProfile {
