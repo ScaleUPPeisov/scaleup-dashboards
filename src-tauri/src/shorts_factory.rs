@@ -303,6 +303,13 @@ pub fn shorts_validate_file(output_path: String, target_duration: f64) -> Result
     validate_output(Path::new(&output_path), target_duration).map(|x| x.0)
 }
 
+fn finalize_render_output(temp:&Path,output:&Path)->Result<(),String>{
+    if output.exists(){
+        fs::remove_file(output).map_err(|e|format!("Не удалось заменить старый Short: {e}"))?;
+    }
+    fs::rename(temp,output).map_err(|e|format!("Не удалось финализировать Short: {e}"))
+}
+
 fn render_segment_sync(source_path: String, output_path: String, start: f64, duration: f64) -> Result<ShortsRenderResult, String> {
     if start < 0.0 || duration < 1.0 { return Err("Некорректный временной диапазон Short".into()); }
     let source = PathBuf::from(&source_path);
@@ -338,9 +345,9 @@ fn render_segment_sync(source_path: String, output_path: String, start: f64, dur
         let _ = fs::remove_file(&temp);
         return Err(format!("Short render failed: {}", errors.last().cloned().unwrap_or_else(|| "unknown error".into())));
     }
-    if let Err(e) = fs::rename(&temp, &output) {
+    if let Err(e) = finalize_render_output(&temp, &output) {
         let _ = fs::remove_file(&temp);
-        return Err(format!("Не удалось финализировать Short: {e}"));
+        return Err(e);
     }
     let (v, level) = validate_output(&output, duration)?;
     Ok(ShortsRenderResult { output_path: output.to_string_lossy().into_owned(), duration: v.duration, width: v.width, height: v.height, has_audio: v.has_audio, encoder: used, reused: false, audio_stream_index: audio.index, audio_max_db: level.max(output_level) })
@@ -360,6 +367,18 @@ mod tests {
         let ffmpeg = resolve_media_tool("ffmpeg").unwrap();
         let st = Command::new(ffmpeg).args(["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30", "-f", "lavfi", "-i", "sine=frequency=660:sample_rate=48000", "-t", &duration.to_string(), "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", audio_codec, "-shortest"]).arg(path).status().unwrap();
         assert!(st.success());
+    }
+    #[test] fn finalization_replaces_existing_invalid_output_on_windows_safe_path() {
+        let root=env::temp_dir().join(format!("vyron-shorts-finalize-{}",uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let output=root.join("Видео & Музыка (01).mp4");
+        let temp=root.join("Видео & Музыка (01).mp4.part");
+        fs::write(&output,b"old-invalid").unwrap();
+        fs::write(&temp,b"new-valid-placeholder").unwrap();
+        finalize_render_output(&temp,&output).unwrap();
+        assert_eq!(fs::read(&output).unwrap(),b"new-valid-placeholder");
+        assert!(!temp.exists());
+        let _=fs::remove_dir_all(root);
     }
     #[test] fn filter_contract() { let f = ffmpeg_filter(1.0, 30.0, 1); assert!(f.contains("scale=1080:1920")); assert!(f.contains("gblur")); assert!(f.contains("overlay")); assert!(f.contains("asetpts=PTS-STARTPTS")); }
     #[test] fn invalid_range_rejected_before_ffmpeg() { let e = render_segment_sync("/missing.mp4".into(), "/tmp/x.mp4".into(), -1.0, 30.0).unwrap_err(); assert!(e.contains("временной диапазон")); }
