@@ -8,7 +8,7 @@ const draft=(channel:string):MetadataDraft=>({version:1,updatedAt:'2026-09-14T07
 describe('VYRON 2.1.5 Metadata Draft Manager',()=>{
  beforeEach(()=>localStorage.clear());
  it('TEST 9/14 — status text is truthful: unsaved never says saved',()=>{expect(metadataDraftStatusLabel('unsaved',true)).toBe('Сохранение…');expect(metadataDraftStatusLabel('saved',true)).toBe('Черновик сохранён');expect(metadataDraftStatusLabel('restored',true)).toBe('Черновик восстановлен');expect(metadataDraftStatusLabel('completed',false)).toContain('Операция завершена')});
- it('TEST 10 — saved draft survives navigation/remount storage round-trip',()=>{saveMetadataDraft('elara',draft('Beta Room'));expect(loadMetadataDraft('elara')?.rows[0].title).toBe('Beta Room title');expect(loadMetadataDraft('elara')?.selectedVideos[0].id).toBe('Beta Room-v1')});
- it('TEST 11/12 — Beta Room and Lost Highway are isolated and clear affects current only',()=>{saveMetadataDraft('elara',draft('Beta Room'));saveMetadataDraft('lost',draft('LOST'));clearMetadataDraft('elara');expect(loadMetadataDraft('elara')).toBeUndefined();expect(loadMetadataDraft('lost')?.paste).toContain('LOST')});
- it('TEST 13 — corrupted draft stays safe',()=>{localStorage.setItem('vyron:metadata-draft:v1:elara','{bad');expect(loadMetadataDraft('elara')).toBeUndefined()});
+ it('TEST 10 — saved draft survives navigation/remount storage round-trip',()=>{saveMetadataDraft('fixture-alpha',draft('Beta Room'));expect(loadMetadataDraft('fixture-alpha')?.rows[0].title).toBe('Beta Room title');expect(loadMetadataDraft('fixture-alpha')?.selectedVideos[0].id).toBe('Beta Room-v1')});
+ it('TEST 11/12 — Beta Room and Lost Highway are isolated and clear affects current only',()=>{saveMetadataDraft('fixture-alpha',draft('Beta Room'));saveMetadataDraft('lost',draft('LOST'));clearMetadataDraft('fixture-alpha');expect(loadMetadataDraft('fixture-alpha')).toBeUndefined();expect(loadMetadataDraft('lost')?.paste).toContain('LOST')});
+ it('TEST 13 — corrupted draft stays safe',()=>{localStorage.setItem('vyron:metadata-draft:v1:fixture-alpha','{bad');expect(loadMetadataDraft('fixture-alpha')).toBeUndefined()});
 });
