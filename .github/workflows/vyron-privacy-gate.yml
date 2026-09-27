@@ -1,0 +1,118 @@
+name: VYRON Privacy Gate
+
+on:
+  push:
+    branches:
+      - main
+      - 'release/vyron-*'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  privacy:
+    name: No user/channel/OAuth data in GitHub
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Block sensitive tracked files
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import re, subprocess, sys
+          files = subprocess.check_output(['git','ls-files'], text=True).splitlines()
+          banned = [
+              r'(^|/)credentials\.json$',
+              r'(^|/)credentials-[^/]*\.json$',
+              r'(^|/)client_secret[^/]*\.json$',
+              r'(^|/)google-credentials[^/]*\.json$',
+              r'(^|/)oauth-tokens?[^/]*\.json$',
+              r'(^|/)tokens\.json$',
+              r'(^|/)keychain-export',
+              r'(^|/)credential-export',
+              r'\.sqlite3?$',
+              r'\.db$',
+              r'\.db-wal$',
+              r'\.db-shm$',
+              r'\.vyron$',
+              r'\.vyron-migration$',
+              r'(^|/)vyron-migration-',
+              r'(^|/)migration-backup',
+              r'(^|/)migration-export',
+              r'(^|/)account-export',
+              r'(^|/)channel-export',
+          ]
+          if any(re.search(p, f, re.I) for f in files for p in banned):
+              print('PRIVACY_GATE=FAIL:SENSITIVE_TRACKED_FILE')
+              sys.exit(1)
+          print('PRIVACY_TRACKED_FILES=PASS')
+          PY
+
+      - name: Block high-confidence secrets
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import pathlib, re, subprocess, sys
+          patterns = [
+              re.compile(rb'ya29\.[A-Za-z0-9._~-]{20,}'),
+              re.compile(rb'1//[A-Za-z0-9._~-]{20,}'),
+              re.compile(rb'GOCSPX-[A-Za-z0-9_-]{20,}'),
+              re.compile(rb'AIza[0-9A-Za-z_-]{20,}'),
+              re.compile(rb'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----'),
+          ]
+          for name in subprocess.check_output(['git','ls-files','-z']).split(b'\0'):
+              if not name:
+                  continue
+              p = pathlib.Path(name.decode('utf-8', 'surrogateescape'))
+              try:
+                  data = p.read_bytes()
+              except Exception:
+                  continue
+              if any(rx.search(data) for rx in patterns):
+                  print('PRIVACY_GATE=FAIL:HIGH_CONFIDENCE_SECRET')
+                  sys.exit(1)
+          print('PRIVACY_SECRET_SCAN=PASS')
+          PY
+
+      - name: Block real YouTube acceptance identifiers in CI
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if grep -RIlE 'PHYSICAL_VIDEO_ID|physical_video_id|Physical one-video acceptance ID' .github/workflows >/dev/null 2>&1; then
+            echo 'PRIVACY_GATE=FAIL:YOUTUBE_ACCEPTANCE_IDENTIFIER'
+            exit 1
+          fi
+          echo 'YOUTUBE_ACCEPTANCE_ID_LOGGING=BLOCKED'
+
+      - name: Block user-state artifact uploads
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import pathlib, re, sys
+          bad = re.compile(r'(user-data|app-data|Application Support|AppData|keychain|credential-export|migration-export|account-export|channel-export|\.sqlite|\.db\b|\.vyron)', re.I)
+          for wf in pathlib.Path('.github/workflows').glob('*.y*ml'):
+              text = wf.read_text(errors='ignore')
+              chunks = re.split(r'(?=\n\s*- name:)', text)
+              for chunk in chunks:
+                  if 'actions/upload-artifact@' in chunk and bad.search(chunk):
+                      print('PRIVACY_GATE=FAIL:SENSITIVE_ARTIFACT_UPLOAD')
+                      sys.exit(1)
+          print('SENSITIVE_ARTIFACT_UPLOAD=BLOCKED')
+          PY
+
+      - name: Privacy summary
+        run: |
+          echo 'REAL_CHANNEL_DATA_ALLOWED_IN_GITHUB=NO'
+          echo 'REAL_OAUTH_TOKENS_ALLOWED_IN_GITHUB=NO'
+          echo 'LOCAL_DATABASE_ALLOWED_IN_GITHUB=NO'
+          echo 'MIGRATION_BUNDLES_ALLOWED_IN_GITHUB=NO'
+          echo 'REAL_YOUTUBE_VIDEO_ID_IN_CI=NO'
+          echo 'PRIVACY_GATE=PASS'
