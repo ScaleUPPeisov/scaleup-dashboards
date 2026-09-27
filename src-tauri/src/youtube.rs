@@ -4888,6 +4888,48 @@ mod windows_oauth_browser_launch_tests {
     }
 
     #[test]
+    fn oauth_callback_rejects_google_error_without_accepting_code() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind callback listener");
+        let addr = listener.local_addr().expect("callback addr");
+        let client = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(30));
+            let mut stream = std::net::TcpStream::connect(addr).expect("connect callback");
+            let req = "GET /?error=access_denied&state=expected-state HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
+            stream.write_all(req.as_bytes()).expect("write callback");
+        });
+        let err = wait_for_oauth_callback_with_timeout(
+            listener,
+            "expected-state",
+            "<html>ok</html>",
+            Duration::from_secs(2),
+        )
+        .expect_err("Google OAuth error must be rejected");
+        client.join().expect("callback client");
+        assert_eq!(err, "Google OAuth: access_denied");
+    }
+
+    #[test]
+    fn oauth_callback_rejects_missing_authorization_code() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind callback listener");
+        let addr = listener.local_addr().expect("callback addr");
+        let client = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(30));
+            let mut stream = std::net::TcpStream::connect(addr).expect("connect callback");
+            let req = "GET /?state=expected-state HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
+            stream.write_all(req.as_bytes()).expect("write callback");
+        });
+        let err = wait_for_oauth_callback_with_timeout(
+            listener,
+            "expected-state",
+            "<html>ok</html>",
+            Duration::from_secs(2),
+        )
+        .expect_err("callback without authorization code must be rejected");
+        client.join().expect("callback client");
+        assert_eq!(err, "Google не вернул authorization code");
+    }
+
+    #[test]
     fn windows_oauth_launcher_never_routes_url_through_cmd_shell() {
         let source = include_str!("youtube.rs");
         let open_browser = source
