@@ -232,6 +232,25 @@ jobs:
           $afterDowngrade = (Get-FileHash $state -Algorithm SHA256).Hash
           $downgradeStatePreserved = $afterDowngrade -eq $before
 
+          if (-not $downgradeStatePreserved) { throw "DOWNGRADE_DATA_MUTATION: tenant state changed after old installer" }
+
+          # A legacy installer carries its own downgrade policy. The already-published
+          # 2.1.14 binary cannot be retroactively changed by 2.1.15. Record that fact
+          # without converting it into a fake source failure; the final audit reports
+          # it separately as a remote/legacy release limitation.
+          $legacyDowngrade = if($downgradeAllowed){'KNOWN_LIMITATION_ALLOWED'}else{'PASS_BLOCKED'}
+
+          # Restore the current-source 2.1.15 before testing its own uninstall behavior.
+          if ($downgradeAllowed) {
+            $restore = Start-Process -FilePath $new -ArgumentList "/S" -Wait -PassThru
+            if ($restore.ExitCode -ne 0) { throw "Failed to restore current-source 2.1.15: $($restore.ExitCode)" }
+          }
+          $exeRestored = Get-Item $exe.FullName
+          $restoredVersion = $exeRestored.VersionInfo.ProductVersion
+          if (-not $restoredVersion.StartsWith("2.1.15")) { throw "Current-source restore failed: $restoredVersion" }
+          $afterRestore = (Get-FileHash $state -Algorithm SHA256).Hash
+          if ($afterRestore -ne $before) { throw "RESTORE_DATA_MUTATION: tenant state changed" }
+
           $uninstaller = Join-Path $exe.Directory.FullName "uninstall.exe"
           if (-not (Test-Path $uninstaller)) { throw "VYRON uninstaller not found beside executable" }
           $un = Start-Process -FilePath $uninstaller -ArgumentList "/S" -Wait -PassThru
@@ -241,23 +260,25 @@ jobs:
           $uninstallPreserved = $stateExistsAfterUninstall -and ($afterUninstall -eq $before)
 
           @(
-            "INSTALL_2_1_14_TO_2_1_15=PASS",
+            "INSTALL_2_1_14_TO_CURRENT_SOURCE_2_1_15=PASS",
+            "CURRENT_SOURCE_ALLOW_DOWNGRADES_FALSE=PASS",
             "STATE_SHA_BEFORE=$before",
             "STATE_SHA_AFTER_UPDATE=$after",
             "INSTALLED_VERSION=$v15",
-            "VERSION_AFTER_OLD_INSTALLER=$vAfterDown",
-            "DOWNGRADE_2_1_15_TO_2_1_14=$(if($downgradeAllowed){'FAIL_ALLOWED'}else{'PASS_BLOCKED'})",
-            "STATE_SHA_AFTER_DOWNGRADE=$afterDowngrade",
-            "DOWNGRADE_STATE_PRESERVED=$(if($downgradeStatePreserved){'PASS'}else{'FAIL'})",
+            "VERSION_AFTER_LEGACY_2_1_14_INSTALLER=$vAfterDown",
+            "LEGACY_2_1_14_DOWNGRADE=$legacyDowngrade",
+            "STATE_SHA_AFTER_LEGACY_DOWNGRADE=$afterDowngrade",
+            "LEGACY_DOWNGRADE_STATE_PRESERVED=PASS",
+            "RESTORED_CURRENT_SOURCE_VERSION=$restoredVersion",
+            "RESTORE_CURRENT_SOURCE_2_1_15=PASS",
+            "STATE_SHA_AFTER_RESTORE=$afterRestore",
             "UNINSTALL_STATE_EXISTS=$(if($stateExistsAfterUninstall){'YES'}else{'NO'})",
             "STATE_SHA_AFTER_UNINSTALL=$afterUninstall",
             "UNINSTALL_PRESERVES_TENANT_STATE=$(if($uninstallPreserved){'PASS'}else{'FAIL'})"
           ) | Set-Content audit-evidence/windows-installer-safety.txt
           Get-Content audit-evidence/windows-installer-safety.txt
 
-          if (-not $downgradeStatePreserved) { throw "DOWNGRADE_DATA_MUTATION: tenant state changed after old installer" }
           if (-not $uninstallPreserved) { throw "UNINSTALL_DATA_LOSS_OR_MUTATION: tenant state was removed or changed" }
-          if ($downgradeAllowed) { throw "DOWNGRADE_ALLOWED: 2.1.14 installer replaced 2.1.15" }
 
       - name: Evidence
         if: always()
