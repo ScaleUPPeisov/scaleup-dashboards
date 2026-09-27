@@ -7,6 +7,7 @@ import {isOAuthMissingErrorText,resolveOAuthMissingErrors} from './errorHistory'
 import {notifyError,notifySuccess,notifyWarning} from './notificationCenter';
 import {buildFinalRecoveryRows,channelsWithoutProfile,reconnectFailure,reconnectQueue,type FinalAuthStatus,type RecoveryTransient} from './authRecoveryFinalCore';
 import {availableReconnectBrowsers,resolveReconnectBrowser,type BrowserOption} from './reconnectBrowserChoiceCore';
+import {notifyYoutubeOauthStateChanged} from './youtubeOauthState';
 
 const badge=(s:FinalAuthStatus)=>s==='CONNECTED'?'✓ ГОТОВО':s==='KEYCHAIN BLOCKED'?'⚠ ДОСТУП KEYCHAIN ЗАБЛОКИРОВАН':s==='NOT CHECKED'?'○ НЕ ПРОВЕРЕНО':s==='CANONICAL_PRESENT_UNVERIFIED'?'○ СОХРАНЁННЫЙ ДОСТУП НАЙДЕН':s==='CLIENT SECRET REQUIRED'?'⚿ НУЖЕН GLOBAL OAUTH CLIENT':s==='RECONNECT REQUIRED'?'↻ НУЖЕН ПОВТОРНЫЙ ВХОД':s==='MISSING'?'↻ НУЖЕН ПОВТОРНЫЙ ВХОД':s==='CONNECTING'?'… ПОДКЛЮЧЕНИЕ':s==='VALIDATING'?'… ПРОВЕРКА':s==='WRONG CHANNEL'?'⚠ ДРУГОЙ КАНАЛ':'✕ ОШИБКА';
 
