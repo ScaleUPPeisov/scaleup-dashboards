@@ -47,6 +47,8 @@ struct PortablePayload {
     bundle_uuid: String,
     state: Value,
     oauth_vault: Value,
+    youtube_metadata: Value,
+    google_config: Value,
     browser_state: Value,
     payload_sha256: String,
 }
@@ -101,18 +103,20 @@ fn derive_key(passphrase: &str, salt: &[u8]) -> Result<[u8; 32], String> {
     Ok(key)
 }
 
-fn portable_core_bytes(state: &Value, oauth: &Value, browser: &Value) -> Result<Vec<u8>, String> {
+fn portable_core_bytes(state: &Value, oauth: &Value, youtube: &Value, google: &Value, browser: &Value) -> Result<Vec<u8>, String> {
     serde_json::to_vec(&json!({
         "state": state,
         "oauthVault": oauth,
+        "youtubeMetadata": youtube,
+        "googleConfig": google,
         "browserState": browser
     }))
     .map_err(|e| format!("MIGRATION_PAYLOAD_SERIALIZE_FAILED: {e}"))
 }
 
-fn payload_hash(state: &Value, oauth: &Value, browser: &Value) -> Result<String, String> {
+fn payload_hash(state: &Value, oauth: &Value, youtube: &Value, google: &Value, browser: &Value) -> Result<String, String> {
     Ok(hex::encode(Sha256::digest(portable_core_bytes(
-        state, oauth, browser,
+        state, oauth, youtube, google, browser,
     )?)))
 }
 
@@ -185,7 +189,7 @@ fn decrypt_payload(bytes: &[u8], passphrase: &str) -> Result<PortablePayload, St
     if payload.schema_version != BUNDLE_SCHEMA {
         return Err("MIGRATION_PAYLOAD_SCHEMA_INVALID".into());
     }
-    let expected = payload_hash(&payload.state, &payload.oauth_vault, &payload.browser_state)?;
+    let expected = payload_hash(&payload.state, &payload.oauth_vault, &payload.youtube_metadata, &payload.google_config, &payload.browser_state)?;
     if expected != payload.payload_sha256 {
         return Err("MIGRATION_INTEGRITY_FAILED: payload hash mismatch".into());
     }
@@ -458,6 +462,90 @@ fn merge_states(local: &Value, imported: &Value) -> (Value, MergeSummary, Vec<Re
     (Value::Object(out), summary, remaps)
 }
 
+
+fn app_data_json(app:&AppHandle,name:&str)->Result<Value,String>{
+ let path=app.path().app_data_dir().map_err(|e|format!("MIGRATION_APP_DATA_PATH_FAILED: {e}"))?.join(name);
+ if !path.exists(){return Ok(json!({}))}
+ let bytes=fs::read(&path).map_err(|e|format!("MIGRATION_METADATA_READ_FAILED: {name}: {e}"))?;
+ serde_json::from_slice(&bytes).map_err(|e|format!("MIGRATION_METADATA_PARSE_FAILED: {name}: {e}"))
+}
+fn scrub_secret_fields(value:&mut Value){
+ match value{
+  Value::Object(map)=>{
+   for key in ["refresh_token","refreshToken","access_token","accessToken","client_secret","clientSecret","api_key","apiKey"]{if map.contains_key(key){map.insert(key.to_string(),Value::String(String::new()));}}
+   for child in map.values_mut(){scrub_secret_fields(child);}
+  }
+  Value::Array(rows)=>for child in rows{scrub_secret_fields(child);},
+  _=>{}
+ }
+}
+fn portable_youtube_metadata(app:&AppHandle)->Result<Value,String>{
+ let mut v=app_data_json(app,"youtube-oauth.json")?;scrub_secret_fields(&mut v);Ok(v)
+}
+fn portable_google_config(app:&AppHandle)->Result<Value,String>{
+ let mut v=app_data_json(app,"google-config.json")?;scrub_secret_fields(&mut v);Ok(v)
+}
+fn merge_profile_metadata(local:&Value,imported:&Value)->Value{
+ let mut out=local.as_object().cloned().unwrap_or_default();
+ if let Some(src)=imported.as_object(){
+  for (k,v) in src{
+   if matches!(k.as_str(),"refresh_token"|"refreshToken"|"access_token"|"accessToken"|"client_secret"|"clientSecret"){continue}
+   if !v.is_null(){out.insert(k.clone(),v.clone());}
+  }
+ }
+ Value::Object(out)
+}
+fn merge_youtube_metadata(local:&Value,imported:&Value)->Value{
+ let mut root=local.as_object().cloned().unwrap_or_default();
+ let local_profiles=local.get("profiles").and_then(Value::as_array).cloned().unwrap_or_default();
+ let imported_profiles=imported.get("profiles").and_then(Value::as_array).cloned().unwrap_or_default();
+ let mut rows=local_profiles;
+ let mut index=HashMap::<String,usize>::new();
+ for (i,row) in rows.iter().enumerate(){if let Some(id)=row.get("id").and_then(Value::as_str).filter(|x|!x.is_empty()){index.insert(id.to_string(),i);}}
+ for row in imported_profiles{
+  let Some(id)=row.get("id").and_then(Value::as_str).filter(|x|!x.is_empty()) else{continue};
+  if let Some(i)=index.get(id).copied(){rows[i]=merge_profile_metadata(&rows[i],&row);}
+  else{let mut clean=row.clone();scrub_secret_fields(&mut clean);index.insert(id.to_string(),rows.len());rows.push(clean);}
+ }
+ root.insert("profiles".into(),Value::Array(rows));
+ Value::Object(root)
+}
+fn merge_google_config(local:&Value,imported:&Value)->Value{
+ let mut out=local.as_object().cloned().unwrap_or_default();
+ let local_client=local.get("client_id").or_else(||local.get("clientId")).and_then(Value::as_str).unwrap_or("").trim().to_string();
+ let imported_client=imported.get("client_id").or_else(||imported.get("clientId")).and_then(Value::as_str).unwrap_or("").trim().to_string();
+ if local_client.is_empty()&&!imported_client.is_empty(){out.insert("client_id".into(),Value::String(imported_client.clone()));}
+ let effective_client=if !local_client.is_empty(){local_client}else{imported_client};
+ let imported_project=imported.get("project_id").or_else(||imported.get("projectId")).and_then(Value::as_str).unwrap_or("").trim();
+ let local_project=local.get("project_id").or_else(||local.get("projectId")).and_then(Value::as_str).unwrap_or("").trim();
+ if local_project.is_empty()&&!imported_project.is_empty()&&!effective_client.is_empty(){out.insert("project_id".into(),Value::String(imported_project.to_string()));}
+ for (k,v) in imported.as_object().into_iter().flatten(){
+  if matches!(k.as_str(),"client_secret"|"clientSecret"|"api_key"|"apiKey"){continue}
+  if !out.contains_key(k){out.insert(k.clone(),v.clone());}
+ }
+ Value::Object(out)
+}
+fn metadata_paths(app:&AppHandle)->Result<(PathBuf,PathBuf),String>{
+ let root=app.path().app_data_dir().map_err(|e|format!("MIGRATION_APP_DATA_PATH_FAILED: {e}"))?;
+ Ok((root.join("youtube-oauth.json"),root.join("google-config.json")))
+}
+fn write_json_private(path:&Path,value:&Value)->Result<(),String>{
+ let bytes=serde_json::to_vec_pretty(value).map_err(|e|format!("MIGRATION_METADATA_SERIALIZE_FAILED: {e}"))?;
+ write_atomic(path,&bytes)?;
+ crate::security::private_permissions(path)
+}
+fn merge_and_write_metadata(app:&AppHandle,youtube:&Value,google:&Value)->Result<Value,String>{
+ let current_youtube=app_data_json(app,"youtube-oauth.json")?;
+ let current_google=app_data_json(app,"google-config.json")?;
+ let merged_youtube=merge_youtube_metadata(&current_youtube,youtube);
+ let merged_google=merge_google_config(&current_google,google);
+ let (yp,gp)=metadata_paths(app)?;
+ write_json_private(&yp,&merged_youtube)?;
+ write_json_private(&gp,&merged_google)?;
+ let profiles=merged_youtube.get("profiles").and_then(Value::as_array).map(|x|x.len()).unwrap_or(0);
+ Ok(json!({"profiles":profiles,"projectId":merged_google.get("project_id").cloned().unwrap_or(Value::Null),"deleted":0}))
+}
+
 fn backup_root(app: &AppHandle) -> Result<PathBuf, String> {
     let root = app
         .path()
@@ -500,6 +588,9 @@ fn create_rollback_snapshot(app: &AppHandle, id: &str) -> Result<PathBuf, String
             .map_err(|e| format!("MIGRATION_STATE_BACKUP_FAILED: {e}"))?;
     }
     oauth_vault::copy_encrypted_snapshot(app, &dir.join("oauth-vault.enc"))?;
+    let (yp,gp)=metadata_paths(app)?;
+    if yp.exists(){fs::copy(&yp,dir.join("youtube-oauth.json")).map_err(|e|format!("MIGRATION_YOUTUBE_METADATA_BACKUP_FAILED: {e}"))?;}
+    if gp.exists(){fs::copy(&gp,dir.join("google-config.json")).map_err(|e|format!("MIGRATION_GOOGLE_CONFIG_BACKUP_FAILED: {e}"))?;}
     fs::write(
         dir.join("meta.json"),
         serde_json::to_vec_pretty(&json!({
@@ -524,6 +615,9 @@ fn restore_snapshot_dir(app: &AppHandle, dir: &Path) -> Result<(), String> {
     if oauth.exists() {
         oauth_vault::restore_encrypted_snapshot(app, &oauth)?;
     }
+    let (yp,gp)=metadata_paths(app)?;
+    let yb=dir.join("youtube-oauth.json");if yb.exists(){write_atomic(&yp,&fs::read(yb).map_err(|e|e.to_string())?)?;}
+    let gb=dir.join("google-config.json");if gb.exists(){write_atomic(&gp,&fs::read(gb).map_err(|e|e.to_string())?)?;}
     Ok(())
 }
 
@@ -541,9 +635,11 @@ pub fn migration_export(
 ) -> Result<Value, String> {
     let state = storage::load_state(app.clone());
     let oauth = oauth_vault::export_portable_snapshot(&app)?;
+    let youtube_metadata=portable_youtube_metadata(&app)?;
+    let google_config=portable_google_config(&app)?;
     let created = chrono::Utc::now().to_rfc3339();
     let id = Uuid::new_v4().to_string();
-    let checksum = payload_hash(&state, &oauth, &browser_state)?;
+    let checksum = payload_hash(&state, &oauth, &youtube_metadata, &google_config, &browser_state)?;
     let payload = PortablePayload {
         schema_version: BUNDLE_SCHEMA,
         app_version: app_version(),
@@ -552,6 +648,8 @@ pub fn migration_export(
         bundle_uuid: id.clone(),
         state: state.clone(),
         oauth_vault: oauth.clone(),
+        youtube_metadata,
+        google_config,
         browser_state,
         payload_sha256: checksum,
     };
@@ -657,6 +755,11 @@ pub fn migration_import(
         }
     };
 
+    let metadata_result=match merge_and_write_metadata(&app,&payload.youtube_metadata,&payload.google_config){
+        Ok(v)=>v,
+        Err(e)=>{let _=restore_snapshot_dir(&app,&backup);return Err(format!("MIGRATION_METADATA_COMMIT_FAILED: {e}"))}
+    };
+
     let verify = storage::load_state(app.clone());
     let after = verify
         .get("channels")
@@ -674,6 +777,7 @@ pub fn migration_import(
         "sourceOs": payload.source_os,
         "summary": summary,
         "oauth": oauth_result,
+        "metadata": metadata_result,
         "remap": remaps,
         "browserState": payload.browser_state,
         "rollbackSnapshot": backup_id,
@@ -709,6 +813,8 @@ mod tests {
     fn sample_payload() -> PortablePayload {
         let state = json!({"channels":[]});
         let oauth = json!({"profiles":{}});
+        let youtube = json!({"profiles":[]});
+        let google = json!({});
         let browser = json!({});
         PortablePayload {
             schema_version: 1,
@@ -716,9 +822,11 @@ mod tests {
             source_os: "macos".into(),
             created_at: "now".into(),
             bundle_uuid: "u".into(),
-            payload_sha256: payload_hash(&state, &oauth, &browser).unwrap(),
+            payload_sha256: payload_hash(&state, &oauth, &youtube, &google, &browser).unwrap(),
             state,
             oauth_vault: oauth,
+            youtube_metadata: youtube,
+            google_config: google,
             browser_state: browser,
         }
     }
