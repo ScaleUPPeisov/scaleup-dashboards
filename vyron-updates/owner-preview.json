@@ -8,7 +8,7 @@
   "productVersion": "3.2.1",
   "platforms": {
     "darwin-aarch64": {
-      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/vyron-owner-preview-338/VYRON-3.2.1-build-338.app.tar.gz",
+      "url": "https://github.com/ScaleUPPeisov/vyron-releases/releases/download/vyron-owner-preview-338/VYRON-3.2.1-build-338.app.tar.gz",
       "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM2NoZUNYTDhEanJkaFk1aWc3RGFXWGN1VC9uU2QzM28zdmIwQlBOWjk0YmF4QldmcjRYa24zZ1kvTW1ZWlJhYmowOHRaOXM5bEtWbmhnOTVCa1VqL0E4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMTc1OTA2CWZpbGU6VllST04uYXBwLnRhci5negpGRm8xbDQ0bkxWRXFCUkJmczlPS3UrSkNURmpYV3p2OVZVVHE5dWRmTXV0T0c1cWF4VE93KzNTOWs0bTZEVXAvZHNHWmVWTGM3YTQ2L2M1RHd6ekZEQT09Cg=="
     }
   }
