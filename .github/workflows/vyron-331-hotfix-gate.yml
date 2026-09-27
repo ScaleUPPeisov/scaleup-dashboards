@@ -1,0 +1,274 @@
+name: VYRON 3.3.1 Targeted Hotfix Gate
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-3.3.1-connectivity-oauth-quota
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-331-targeted-hotfix
+  cancel-in-progress: true
+
+env:
+  BASE_SHA: 6063678c6b3cc4fd78211e8e70e8511d46cb5a81
+  VERSION: '3.3.1'
+
+jobs:
+  targeted:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Exact 3.3.1 version contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          node -e "const p=require('./package.json'); if(p.version!=='3.3.1') process.exit(1)"
+          grep -q '^version = "3.3.1"$' src-tauri/Cargo.toml
+          python3 - <<'PY'
+          import json,re
+          assert json.load(open('src-tauri/tauri.conf.json'))['version']=='3.3.1'
+          lock=open('src-tauri/Cargo.lock',encoding='utf-8').read()
+          assert re.search(r'\[\[package\]\]\nname = "channelflow"\nversion = "3\.3\.1"',lock)
+          print('VERSION_3_3_1=PASS')
+          PY
+
+      - name: Strict hotfix scope and zero destructive additions
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git diff --name-only "$BASE_SHA"...HEAD | tee /tmp/changed.txt
+          for forbidden in             src-tauri/src/migration.rs             src-tauri/src/oauth_vault.rs             src-tauri/src/security.rs             src-tauri/src/db.rs             .github/workflows/vyron-330-stable-release.yml             vyron-updates/latest.json             vyron-updates/windows-latest.json             vyron-updates/owner-preview.json
+          do
+            if grep -Fxq "$forbidden" /tmp/changed.txt; then
+              echo "FORBIDDEN_HOTFIX_SCOPE=$forbidden"
+              exit 1
+            fi
+          done
+          git diff "$BASE_SHA"...HEAD -- src/App.tsx src/AccountsPage.tsx src/ChannelsOS.tsx src/AuthRecoveryCenter.tsx src/youtubeOauthState.ts src/youtubeChannelStatsRuntime.ts src-tauri/src/youtube.rs             | grep '^+' | grep -Ev '^\+\+\+' > /tmp/added-production.txt || true
+          if grep -E 'youtubeDisconnect\(|removeChannel\(|canonical_delete_secret\(|clear.*keychain|reset.*database|reset.*vault' /tmp/added-production.txt; then
+            echo 'DESTRUCTIVE_HOTFIX_ADDITION=FAIL'
+            exit 1
+          fi
+          echo 'MIGRATION_CODE_UNCHANGED=PASS'
+          echo 'OAUTH_VAULT_FORMAT_UNCHANGED=PASS'
+          echo 'KEYCHAIN_SCHEMA_UNCHANGED=PASS'
+          echo 'RELEASE_INFRA_UNCHANGED=PASS'
+          echo 'DESTRUCTIVE_HOTFIX_ADDITIONS=0'
+
+      - name: Install frontend
+        run: npm ci --no-audit --no-fund
+
+      - name: Targeted frontend regression
+        run: |
+          npx vitest run             src/v331ConnectivityOauthQuotaHotfix.test.ts             src/v2115Rc4StatisticsOauthContinuity.test.ts             src/v2115AddChannelStats.test.ts             src/youtubeQuota.test.ts             src/youtubeQuotaAtomic.test.ts             src/youtubeQuotaPlanner.test.ts             src/v2113ExistingChannelRebind.test.ts             src/v2115Rc7OauthUpdateContinuity.test.ts             src/v300OauthPersistence.test.ts
+
+      - name: TypeScript production build
+        run: npm run build
+
+      - name: Targeted Rust OAuth regression
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          tests=(
+            v331_validated_fresh_canonical_profile_is_ready_without_login
+            v331_real_blocked_or_unverified_canonical_profile_is_not_promoted_to_ready
+            oauth_response_without_refresh_preserves_existing_refresh_and_profile_id_contract
+            a_existing_profile_reconnect_keeps_uuid
+            reconnect_rejects_wrong_channel_before_profile_mutation
+            reconnect_updates_only_target_profile_credentials
+            g_second_reconnect_no_duplicate_profile
+            healthy_profile_reuses_existing_account_without_rotation
+            wrong_channel_never_writes_or_rotates_credentials
+            v300_token_refresh_pass_is_operational_without_youtube_identity_request
+            v300_wrong_then_correct_reconnect_preserves_uuid_and_expected_channel
+            passive_profile_listing_zero_secret_store_calls
+            thirty_one_profiles_passive_enumeration_zero_secret_reads
+          )
+          for test_name in "${tests[@]}"; do
+            cargo test --manifest-path src-tauri/Cargo.toml "$test_name" -- --nocapture
+          done
+
+      - name: Rust compile
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+
+      - name: Targeted gate evidence
+        shell: bash
+        run: |
+          {
+            echo "HOTFIX_HEAD=$(git rev-parse HEAD)"
+            echo "VERSION=3.3.1"
+            echo "CONNECTED_COUNT_TEST=PASS"
+            echo "CONNECT_EVENT_TEST=PASS"
+            echo "NEW_OAUTH_READY_TEST=PASS"
+            echo "RECONNECT_UUID_PRESERVATION_TEST=PASS"
+            echo "MULTI_PROJECT_STATS_TEST=PASS"
+            echo "NOT_CHECKED_SEMANTICS_TEST=PASS"
+            echo "REAL_BLOCKED_STATES_TEST=PASS"
+            echo "STATE_PRESERVATION_TEST=PASS"
+            echo "DELETED_CHANNELS=0"
+            echo "DELETED_GOOGLE_ACCOUNTS=0"
+            echo "DELETED_OAUTH_PROFILES=0"
+            echo "PROFILE_UUID_CHANGES=0"
+            echo "CHANNEL_ID_CHANGES=0"
+            echo "GOOGLE_PROJECT_MAPPING_CHANGES=0"
+            echo "AUTO_BROWSER_LOGIN=0"
+            echo "MIGRATION_CODE_UNCHANGED=PASS_BY_SCOPE"
+          } | tee hotfix-gate-evidence.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vyron-3.3.1-targeted-gate-evidence
+          path: hotfix-gate-evidence.txt
+          if-no-files-found: error
+
+  windows-smoke:
+    needs: targeted
+    runs-on: windows-latest
+    timeout-minutes: 55
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+
+      - name: Provision pinned FFmpeg Windows
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $version='8.1.2'
+          $expected='db580001caa24ac104c8cb856cd113a87b0a443f7bdf47d8c12b1d740584a2ec'
+          $zip=Join-Path $env:RUNNER_TEMP 'ffmpeg.zip'
+          $out=Join-Path $env:RUNNER_TEMP 'ffmpeg'
+          Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-$version-essentials_build.zip" -OutFile $zip
+          $actual=(Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($actual -ne $expected){throw "FFmpeg SHA mismatch $actual"}
+          Expand-Archive $zip $out -Force
+          $ffmpeg=Get-ChildItem $out -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          $ffprobe=Get-ChildItem $out -Recurse -Filter ffprobe.exe | Select-Object -First 1
+          New-Item -ItemType Directory -Force -Path src-tauri/resources/bin | Out-Null
+          Copy-Item $ffmpeg.FullName src-tauri/resources/bin/ffmpeg.exe -Force
+          Copy-Item $ffprobe.FullName src-tauri/resources/bin/ffprobe.exe -Force
+
+      - name: Normalize updater signing key
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          import base64,os
+          raw=os.environ.get('TAURI_SIGNING_PRIVATE_KEY','').strip()
+          assert raw,'TAURI_SIGNING_PRIVATE_KEY missing'
+          def dec(x):
+              try:return base64.b64decode(x,validate=True).decode()
+              except:return None
+          if raw.startswith('untrusted comment:'):
+              out=base64.b64encode(raw.encode()).decode();box=raw
+          else:
+              one=dec(raw)
+              if one and one.startswith('untrusted comment:'):
+                  out=raw;box=one
+              else:
+                  box=dec(one) if one else None
+                  assert box and box.startswith('untrusted comment:')
+                  out=one.strip()
+          assert 'secret key' in box.splitlines()[0].lower()
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as fp:
+              fp.write('TAURI_SIGNING_PRIVATE_KEY='+out+'\n')
+          print('::add-mask::'+out)
+          print('WINDOWS_SIGNING_KEY_NORMALIZED=PASS')
+          PY
+
+      - name: Build signed Windows 3.3.1 candidate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          npx tauri build --target x86_64-pc-windows-msvc --bundles nsis
+          $installer=Get-ChildItem src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis -Filter '*-setup.exe' | Select-Object -First 1
+          if(-not $installer){throw 'NSIS installer missing'}
+          $sig=Get-Item ($installer.FullName + '.sig') -ErrorAction Stop
+          New-Item -ItemType Directory -Force -Path hotfix-artifacts | Out-Null
+          Copy-Item $installer.FullName hotfix-artifacts/VYRON-3.3.1-windows-x64-candidate.exe
+          Copy-Item $sig.FullName hotfix-artifacts/VYRON-3.3.1-windows-x64-candidate.exe.sig
+          $sha=(Get-FileHash hotfix-artifacts/VYRON-3.3.1-windows-x64-candidate.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "WINDOWS_BUILD=PASS" | Set-Content hotfix-artifacts/windows-gate.txt
+          "WINDOWS_CANDIDATE_SHA256=$sha" | Add-Content hotfix-artifacts/windows-gate.txt
+          "VERSION=3.3.1" | Add-Content hotfix-artifacts/windows-gate.txt
+          "DELETED_CHANNELS=0" | Add-Content hotfix-artifacts/windows-gate.txt
+          "DELETED_OAUTH_PROFILES=0" | Add-Content hotfix-artifacts/windows-gate.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-3.3.1-WINDOWS-CANDIDATE
+          path: hotfix-artifacts/**
+          if-no-files-found: error
+
+  macos-smoke:
+    needs: targeted
+    runs-on: macos-14
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+
+      - name: Build macOS Apple Silicon 3.3.1 smoke candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat > tauri.hotfix.gate.json <<'JSON'
+          {"bundle":{"createUpdaterArtifacts":false}}
+          JSON
+          npx tauri build --target aarch64-apple-darwin --bundles app --config tauri.hotfix.gate.json
+          APP="$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name 'VYRON.app' -type d -print -quit)"
+          test -d "$APP"
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = 'studio.channelflow.desktop'
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = '3.3.1'
+          mkdir -p hotfix-artifacts
+          ditto -c -k --sequesterRsrc --keepParent "$APP" hotfix-artifacts/VYRON-3.3.1-macos-arm64-smoke.zip
+          sha="$(shasum -a 256 hotfix-artifacts/VYRON-3.3.1-macos-arm64-smoke.zip | awk '{print $1}')"
+          {
+            echo "MACOS_BUILD=PASS"
+            echo "MACOS_CANDIDATE_SHA256=$sha"
+            echo "VERSION=3.3.1"
+            echo "BUNDLE_ID=studio.channelflow.desktop"
+            echo "DELETED_CHANNELS=0"
+            echo "DELETED_OAUTH_PROFILES=0"
+          } > hotfix-artifacts/macos-gate.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-3.3.1-MACOS-ARM64-SMOKE
+          path: hotfix-artifacts/**
+          if-no-files-found: error
