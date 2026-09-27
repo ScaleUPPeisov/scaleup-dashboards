@@ -1578,9 +1578,13 @@ fn oauth_profiles_value(s:OAuthStore,states:&HashMap<String,String>)->Value{json
  }).collect::<Vec<_>>())}
 #[tauri::command]
 pub fn youtube_oauth_profiles(app:AppHandle)->Result<Value,String>{
- let rows=resolve_oauth_credential_states_local(&app)?;
- let states=rows.into_iter().filter_map(|v|Some((v.get("profileUuid")?.as_str()?.to_string(),v.get("credentialState")?.as_str()?.to_string()))).collect::<HashMap<_,_>>();
- Ok(oauth_profiles_value(load_store_metadata(&app)?,&states))
+ let store=load_store_metadata(&app)?;
+ // Saved profile/channel metadata is authoritative for connection identity and must stay
+ // readable even when a separate health probe is temporarily blocked by secure storage.
+ let states=resolve_oauth_credential_states_local(&app).unwrap_or_default().into_iter()
+   .filter_map(|v|Some((v.get("profileUuid")?.as_str()?.to_string(),v.get("credentialState")?.as_str()?.to_string())))
+   .collect::<HashMap<_,_>>();
+ Ok(oauth_profiles_value(store,&states))
 }
 
 #[tauri::command]
