@@ -232,12 +232,12 @@ export const VYRON_RELEASE_HISTORY:ReleaseHistoryEntry[]=[
       ],
       "technical": [
         "Built directly on immutable v2.1.15-rc.6.",
-        "This prerelease is intentionally NOT promoted to the macOS updater feed until physical RC6→RC7 OAuth continuity and Glass City Lovers render-scan acceptance pass."
+        "This prerelease is intentionally NOT promoted to the macOS updater feed until physical RC6→RC7 OAuth continuity and Fixture Channel render-scan acceptance pass."
       ]
     },
     "technicalItems": [
       "Built directly on immutable v2.1.15-rc.6.",
-      "This prerelease is intentionally NOT promoted to the macOS updater feed until physical RC6→RC7 OAuth continuity and Glass City Lovers render-scan acceptance pass."
+      "This prerelease is intentionally NOT promoted to the macOS updater feed until physical RC6→RC7 OAuth continuity and Fixture Channel render-scan acceptance pass."
     ],
     "tag": "v2.1.15-rc.7",
     "publishedAt": "2026-09-20T18:03:23Z",

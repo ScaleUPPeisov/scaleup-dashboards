@@ -252,24 +252,24 @@ mod tests {
     }
     #[test]
     fn discovers_sibling_render_and_projects_by_exact_normalized_channel_name(){
-        let root=temp_root();let workspace=root.join("ВАЙРОН");let render=root.join("Render").join("Glass City Lovers");let projects=root.join("Projects").join("Glass City Lovers");
+        let root=temp_root();let workspace=root.join("ВАЙРОН");let render=root.join("Render").join("Fixture Channel");let projects=root.join("Projects").join("Fixture Channel");
         fs::create_dir_all(&workspace).unwrap();fs::create_dir_all(&render).unwrap();fs::create_dir_all(&projects).unwrap();
-        let found=discover_channel_folders_impl(workspace.to_str().unwrap(),"  Glass   City Lovers ").unwrap();
+        let found=discover_channel_folders_impl(workspace.to_str().unwrap(),"  Fixture   Channel ").unwrap();
         assert_eq!(found.render,vec![render.canonicalize().unwrap().to_string_lossy().into_owned()]);assert_eq!(found.projects,vec![projects.canonicalize().unwrap().to_string_lossy().into_owned()]);
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn folder_discovery_never_fuzzy_matches_other_channel_names(){
         let root=temp_root();let workspace=root.join("VYRON");fs::create_dir_all(&workspace).unwrap();
-        fs::create_dir_all(root.join("Render").join("Glass City Loverz")).unwrap();fs::create_dir_all(root.join("Projects").join("Glass City Lovers Radio")).unwrap();
-        let found=discover_channel_folders_impl(workspace.to_str().unwrap(),"Glass City Lovers").unwrap();assert!(found.render.is_empty());assert!(found.projects.is_empty());fs::remove_dir_all(root).unwrap();
+        fs::create_dir_all(root.join("Render").join("Fixture Channe1")).unwrap();fs::create_dir_all(root.join("Projects").join("Fixture Channel Radio")).unwrap();
+        let found=discover_channel_folders_impl(workspace.to_str().unwrap(),"Fixture Channel").unwrap();assert!(found.render.is_empty());assert!(found.projects.is_empty());fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn normalized_duplicate_channel_folders_are_reported_as_ambiguous_candidates(){
         let root=temp_root();let workspace=root.join("VYRON");let render=root.join("Render");let projects=root.join("Projects");
         fs::create_dir_all(&workspace).unwrap();
-        fs::create_dir_all(render.join("Glass  City Lovers")).unwrap();fs::create_dir_all(render.join("Glass City   Lovers")).unwrap();
-        fs::create_dir_all(projects.join("Glass  City Lovers")).unwrap();fs::create_dir_all(projects.join("Glass City   Lovers")).unwrap();
+        fs::create_dir_all(render.join("Fixture  Channel")).unwrap();fs::create_dir_all(render.join("Fixture   Channel")).unwrap();
+        fs::create_dir_all(projects.join("Fixture  Channel")).unwrap();fs::create_dir_all(projects.join("Fixture   Channel")).unwrap();
         let found=discover_channel_folders_impl(workspace.to_str().unwrap(),"glass city lovers").unwrap();
         assert_eq!(found.render.len(),2,"multiple safely-normalized Render matches must remain ambiguous");
         assert_eq!(found.projects.len(),2,"multiple safely-normalized Projects matches must remain ambiguous");
@@ -351,12 +351,12 @@ mod tests {
     }
     #[test]
     fn exact_channel_root_never_includes_sibling_channel_media() {
-        let workspace=temp_root();let render=workspace.join("Render");let glass=render.join("Glass City Lovers");let neon=render.join("Neon Drive FM");
+        let workspace=temp_root();let render=workspace.join("Render");let glass=render.join("Fixture Channel");let neon=render.join("Fixture Other");
         fs::create_dir_all(&glass).unwrap();fs::create_dir_all(&neon).unwrap();
         fs::write(glass.join("001.mov"),b"glass").unwrap();fs::write(glass.join("030.m4v"),b"glass").unwrap();
         fs::write(neon.join("001.mov"),b"neon").unwrap();fs::write(neon.join("200.mp4"),b"neon").unwrap();
         let r=scan_render_folder_impl(glass.to_str().unwrap()).unwrap();let canon=glass.canonicalize().unwrap();
-        assert_eq!(r.files.len(),2);assert!(r.files.iter().all(|x|PathBuf::from(&x.path).starts_with(&canon)));assert!(!r.files.iter().any(|x|x.path.contains("Neon Drive FM")));
+        assert_eq!(r.files.len(),2);assert!(r.files.iter().all(|x|PathBuf::from(&x.path).starts_with(&canon)));assert!(!r.files.iter().any(|x|x.path.contains("Fixture Other")));
         fs::remove_dir_all(workspace).unwrap()
     }
     #[test]

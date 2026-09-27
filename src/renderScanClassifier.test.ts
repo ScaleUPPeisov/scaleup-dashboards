@@ -3,7 +3,7 @@ import type {RenderFolderVideoFile} from './api';
 import type {UploadHistoryRecord,VideoJob} from './types';
 import {buildLegacyRecoveryPreview,canRefreshCurrentGenerationEvidence,classifyChannelRenderFiles,crossChannelScanRecoveryJobs,planRenderScanImport,renderFileNeedsFingerprint,summarizeRenderScan} from './renderScanClassifier';
 
-const root='/workspace/Render/Glass City Lovers';
+const root='/workspace/Render/Fixture Channel';
 const A='a'.repeat(64),B='b'.repeat(64),C='c'.repeat(64);
 const file=(n:number,pathRoot=root,fingerprint?:string,size=500_000_000):RenderFolderVideoFile=>({path:`${pathRoot}/${String(n).padStart(3,'0')} — Ready Videos.mov`,name:`${String(n).padStart(3,'0')} — Ready Videos.mov`,size,createdAt:1000+n,modifiedAt:2000+n,fingerprint});
 const job=(channelId:string,n:number,pathRoot=root,extra:Partial<VideoJob>={}):VideoJob=>({id:`${channelId}-${n}-${Math.random()}`,channelId,number:n,folder:pathRoot,status:'READY_UPLOAD',createdAt:'2026-09-20T00:00:00Z',tracksCount:15,minTracks:15,finalPath:file(n,pathRoot).path,title:`VIDEO_${n}`,description:'',tags:[],storageLifecycle:'NEW',...extra});
@@ -65,7 +65,7 @@ describe('VYRON generation-aware channel render scan',()=>{
   });
 
   it('same fingerprint in another channel does not prove Glass uploaded',()=>{
-    const neon=job('neon',9,'/workspace/Render/Neon Drive FM',{youtubeVideoId:'YT_NEON',storageLifecycle:'UPLOADED',status:'SCHEDULED'});
+    const neon=job('neon',9,'/workspace/Render/Fixture Other',{youtubeVideoId:'YT_NEON',storageLifecycle:'UPLOADED',status:'SCHEDULED'});
     const h=uploaded(neon,'YT_NEON',A,500_000_000);
     const row=classifyChannelRenderFiles([file(9,root,A)],[],[h],'glass',root)[0];
     expect(row.classification).toBe('NEW_CANDIDATE');
@@ -115,12 +115,12 @@ describe('VYRON generation-aware channel render scan',()=>{
   });
 
   it('still marks wrong-root current scan jobs for metadata-only recovery',()=>{
-    const bad=job('glass',1,'/workspace/Render/Neon Drive FM',{sourceOrigin:'render-scan'});
+    const bad=job('glass',1,'/workspace/Render/Fixture Other',{sourceOrigin:'render-scan'});
     expect(crossChannelScanRecoveryJobs([bad],[],'glass',root).map(x=>x.id)).toEqual([bad.id]);
   });
 
   it('rejects backend rows outside exact root as invalid',()=>{
-    const rows=classifyChannelRenderFiles([file(1,'/workspace/Render/Neon Drive FM',A)],[],[],'glass',root);
+    const rows=classifyChannelRenderFiles([file(1,'/workspace/Render/Fixture Other',A)],[],[],'glass',root);
     expect(rows[0].classification).toBe('INVALID');expect(rows[0].reason).toBe('OUTSIDE_EXACT_CHANNEL_ROOT');
   });
 

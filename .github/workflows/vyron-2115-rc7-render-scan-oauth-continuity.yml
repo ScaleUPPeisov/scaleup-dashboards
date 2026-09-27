@@ -332,7 +332,7 @@ jobs:
           - Normal application updates preserve active refresh-token account pointers, profile UUIDs, Bundle ID and canonical Keychain service.
           - 13-profile and 50-profile continuity fixtures protect rotated/legacy mixed states without browser launch, credentials.json reimport or mass rotation.
           - RC6 KEYCHAIN_AUTH_FAILED / OSStatus -25293 generation rotation remains intact.
-          - This prerelease is intentionally NOT promoted to the macOS updater feed until physical RC6→RC7 OAuth continuity and Glass City Lovers render-scan acceptance pass.
+          - This prerelease is intentionally NOT promoted to the macOS updater feed until physical RC6→RC7 OAuth continuity and Fixture Channel render-scan acceptance pass.
           EOF
           gh release create "$TAG" --repo "$REPO" --target "$FINAL_HEAD" --title 'VYRON 2.1.15 RC7 — Channel Render Scan + OAuth Update Continuity' --prerelease --notes-file /tmp/release-notes.md             "production/VYRON-$VERSION-arm64.dmg" "production/VYRON-$VERSION-arm64.dmg.sha256"             production/VYRON.app.tar.gz production/VYRON.app.tar.gz.sha256 production/VYRON.app.tar.gz.sig             production/codesign-details.txt production/designated-requirement.txt
 

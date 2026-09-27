@@ -4,23 +4,23 @@ import {sortChannelsAlphabetically} from './channelSort';
 describe('channel dropdown A-Z sorting',()=>{
   it('sorts English names case-insensitively without mutating source order',()=>{
     const source=[
-      {id:'1',name:'Lost Highway FM'},
-      {id:'2',name:'Midnight in Paris'},
-      {id:'3',name:'ELARA'},
-      {id:'4',name:'Silent Black Room'},
-      {id:'5',name:'Electric Maestro'},
-      {id:'6',name:'i lost her'},
-      {id:'7',name:'Dolce Vita Nights'},
-      {id:'8',name:'Neon Drive FM'},
-      {id:'9',name:'Riviera Sax Club'},
-      {id:'10',name:'Shadow Note Lounge'},
-      {id:'11',name:'Rainy Cat Jazz'},
-      {id:'12',name:'Glass City Lovers'},
-      {id:'13',name:'Mafia 1947 Lounge'},
+      {id:'1',name:'Quartz Harbor'},
+      {id:'2',name:'Aurora Fixture'},
+      {id:'3',name:'Beta Room'},
+      {id:'4',name:'Zulu Studio'},
+      {id:'5',name:'Echo Project'},
+      {id:'6',name:'delta room'},
+      {id:'7',name:'Cedar Nights'},
+      {id:'8',name:'Nova Test'},
+      {id:'9',name:'Lumen Club'},
+      {id:'10',name:'Sigma Lounge'},
+      {id:'11',name:'Rain Fixture'},
+      {id:'12',name:'Fixture Channel'},
+      {id:'13',name:'Metro Lab'},
     ];
     const original=source.map(x=>x.id);
     expect(sortChannelsAlphabetically(source).map(x=>x.name)).toEqual([
-      'Dolce Vita Nights','ELARA','Electric Maestro','Glass City Lovers','i lost her','Lost Highway FM','Mafia 1947 Lounge','Midnight in Paris','Neon Drive FM','Rainy Cat Jazz','Riviera Sax Club','Shadow Note Lounge','Silent Black Room'
+      'Cedar Nights','Beta Room','Echo Project','Fixture Channel','delta room','Quartz Harbor','Metro Lab','Aurora Fixture','Nova Test','Rain Fixture','Lumen Club','Sigma Lounge','Zulu Studio'
     ]);
     expect(source.map(x=>x.id)).toEqual(original);
   });
