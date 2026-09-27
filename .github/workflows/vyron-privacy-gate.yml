@@ -75,8 +75,9 @@ jobs:
                   data = p.read_bytes()
               except Exception:
                   continue
-              if any(rx.search(data) for rx in patterns):
-                  print('PRIVACY_GATE=FAIL:HIGH_CONFIDENCE_SECRET')
+              matched = next((idx for idx,rx in enumerate(patterns) if rx.search(data)), None)
+              if matched is not None:
+                  print(f'PRIVACY_GATE=FAIL:HIGH_CONFIDENCE_SECRET:file={p}:pattern={matched}')
                   sys.exit(1)
           print('PRIVACY_SECRET_SCAN=PASS')
           PY
@@ -85,11 +86,19 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          if grep -RIlE 'PHYSICAL_VIDEO_ID|physical_video_id|Physical one-video acceptance ID' .github/workflows >/dev/null 2>&1; then
-            echo 'PRIVACY_GATE=FAIL:YOUTUBE_ACCEPTANCE_IDENTIFIER'
-            exit 1
-          fi
-          echo 'YOUTUBE_ACCEPTANCE_ID_LOGGING=BLOCKED'
+          python3 - <<'PY'
+          import pathlib, sys
+          here=pathlib.Path('.github/workflows/vyron-privacy-gate.yml')
+          forbidden=('PHYSICAL_'+'VIDEO_ID','physical_'+'video_id','Physical one-video acceptance '+'ID')
+          for wf in pathlib.Path('.github/workflows').glob('*.y*ml'):
+              if wf==here:
+                  continue
+              text=wf.read_text(errors='ignore')
+              if any(token in text for token in forbidden):
+                  print(f'PRIVACY_GATE=FAIL:YOUTUBE_ACCEPTANCE_IDENTIFIER:file={wf}')
+                  sys.exit(1)
+          print('YOUTUBE_ACCEPTANCE_ID_LOGGING=BLOCKED')
+          PY
 
       - name: Block user-state artifact uploads
         shell: bash
@@ -98,12 +107,15 @@ jobs:
           python3 - <<'PY'
           import pathlib, re, sys
           bad = re.compile(r'(user-data|app-data|Application Support|AppData|keychain|credential-export|migration-export|account-export|channel-export|\.sqlite|\.db\b|\.vyron)', re.I)
+          here=pathlib.Path('.github/workflows/vyron-privacy-gate.yml')
           for wf in pathlib.Path('.github/workflows').glob('*.y*ml'):
+              if wf==here:
+                  continue
               text = wf.read_text(errors='ignore')
               chunks = re.split(r'(?=\n\s*- name:)', text)
               for chunk in chunks:
                   if 'actions/upload-artifact@' in chunk and bad.search(chunk):
-                      print('PRIVACY_GATE=FAIL:SENSITIVE_ARTIFACT_UPLOAD')
+                      print(f'PRIVACY_GATE=FAIL:SENSITIVE_ARTIFACT_UPLOAD:file={wf}')
                       sys.exit(1)
           print('SENSITIVE_ARTIFACT_UPLOAD=BLOCKED')
           PY
