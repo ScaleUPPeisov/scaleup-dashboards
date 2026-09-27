@@ -52,7 +52,18 @@ describe('VYRON 3.3.1 connectivity / OAuth / quota hotfix',()=>{
   Object.defineProperty(globalThis,'window',{configurable:true,value:oldWindow});
  });
 
- it('TEST 3/4 — successful new OAuth/reconnect validation resolves to READY without changing identity',()=>{
+
+ it('TEST 2B — connect/reconnect/recovery flows use centralized mutation notification',()=>{
+  const accounts=fs.readFileSync('src/AccountsPage.tsx','utf8');
+  const recovery=fs.readFileSync('src/AuthRecoveryCenter.tsx','utf8');
+  const app=fs.readFileSync('src/App.tsx','utf8');
+  expect(accounts).toContain('refreshAfterOauthMutation');
+  expect((accounts.match(/notifyYoutubeOauthStateChanged/g)||[]).length).toBeGreaterThanOrEqual(2);
+  expect((recovery.match(/notifyYoutubeOauthStateChanged/g)||[]).length).toBeGreaterThanOrEqual(4);
+  expect(app).not.toContain("window.dispatchEvent(new Event('vyron:oauth-state-changed'))");
+ });
+
+it('TEST 3/4 — successful new OAuth/reconnect validation resolves to READY without changing identity',()=>{
   const backend=fs.readFileSync('src-tauri/src/youtube.rs','utf8');
   expect(backend).toContain('record_profile_credential_validation(app,&profile.id,"PASS",Some(&channel_id),Some(&channel_id))?;');
   expect(backend).toContain('else if canonical_present{');
