@@ -640,6 +640,11 @@ pub async fn youtube_oauth_profile_health(
         json!({"ok":true,"status":"TOKEN_HEALTHY","channelId":item.get("id").and_then(|x|x.as_str()).or(p.channel_id.as_deref()),"channelTitle":sn.get("title").and_then(|x|x.as_str()).or(p.channel_title.as_deref()),"thumbnail":thumb,"expiresAt":p.expires_at,"analyticsAuthorized":analytics,"monetaryAuthorized":monetary,"preferredBrowser":p.preferred_browser}),
     )
 }
+fn write_thumbnail_cache_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    security::write_private_atomic(path, bytes)
+        .map_err(|e| format!("Thumbnail cache atomic write: {e}"))
+}
+
 #[tauri::command]
 pub async fn youtube_cache_thumbnail(
     app: AppHandle,
@@ -687,9 +692,7 @@ pub async fn youtube_cache_thumbnail(
                 Ok(r) if r.status().is_success() => {
                     let b = r.bytes().await.map_err(|e| e.to_string())?;
                     if b.len() > 900 {
-                        let tmp = path.with_extension("tmp");
-                        fs::write(&tmp, &b).map_err(|e| e.to_string())?;
-                        fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
+                        write_thumbnail_cache_file(&path, &b)?;
                         return Ok(path.to_string_lossy().to_string());
                     }
                 }
@@ -3603,6 +3606,24 @@ mod upload_session_persistence_tests {
         let saved: PersistedUploadSessions =
             serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         assert_eq!(saved.sessions[0].file_path, "C:\\Видео & Музыка\\video.mp4");
+        let _ = fs::remove_dir_all(root);
+    }
+}
+
+#[cfg(test)]
+mod thumbnail_cache_atomic_tests {
+    use super::*;
+
+    #[test]
+    fn thumbnail_cache_replaces_existing_invalid_file() {
+        let root = std::env::temp_dir().join(format!("vyron-thumb-cache-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("Видео & Music.jpg");
+        fs::write(&path, b"old").unwrap();
+        let fresh = vec![7u8; 2048];
+        write_thumbnail_cache_file(&path, &fresh).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), fresh);
+        assert!(!path.with_extension("secure-tmp").exists());
         let _ = fs::remove_dir_all(root);
     }
 }
