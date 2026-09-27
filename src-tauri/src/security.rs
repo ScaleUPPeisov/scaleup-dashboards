@@ -1183,9 +1183,11 @@ pub fn security_oauth_inventory(app:tauri::AppHandle)->Result<serde_json::Value,
 #[cfg(all(test,target_os="windows"))]
 mod windows_credential_manager_tests{
  use super::*;
+ static WINDOWS_CREDENTIAL_TEST_LOCK:std::sync::Mutex<()>=std::sync::Mutex::new(());
 
  #[test]
  fn roundtrip_is_tenant_scoped(){
+  let _guard=WINDOWS_CREDENTIAL_TEST_LOCK.lock().expect("credential test lock");
   let tenant=format!("audit-{}",uuid::Uuid::new_v4());
   let account=format!("oauth.{}.refresh_token",uuid::Uuid::new_v4());
   let secret="VYRON_AUDIT_SECRET_VALUE";
@@ -1201,6 +1203,7 @@ mod windows_credential_manager_tests{
 
  #[test]
  fn same_account_is_isolated_between_tenants(){
+  let _guard=WINDOWS_CREDENTIAL_TEST_LOCK.lock().expect("credential test lock");
   let suffix=uuid::Uuid::new_v4();
   let tenant_a=format!("audit-a-{suffix}");
   let tenant_b=format!("audit-b-{suffix}");
