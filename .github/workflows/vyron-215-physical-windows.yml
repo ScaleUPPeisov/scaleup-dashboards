@@ -13,7 +13,7 @@ permissions:
 
 concurrency:
   group: vyron-215-physical-windows
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   physical-windows:
@@ -26,6 +26,55 @@ jobs:
         with:
           ref: windows/vyron-214-stability-fix
           fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install frontend dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Provision pinned Windows FFmpeg
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = "8.1.2"
+          $expected = "db580001caa24ac104c8cb856cd113a87b0a443f7bdf47d8c12b1d740584a2ec"
+          $zip = Join-Path $env:RUNNER_TEMP "ffmpeg-$version.zip"
+          $unpack = Join-Path $env:RUNNER_TEMP "ffmpeg-$version"
+          Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-$version-essentials_build.zip" -OutFile $zip
+          $actual = (Get-FileHash -Path $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw "FFmpeg SHA-256 mismatch: $actual" }
+          Expand-Archive -Path $zip -DestinationPath $unpack -Force
+          $ffmpeg = Get-ChildItem -Path $unpack -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          $ffprobe = Get-ChildItem -Path $unpack -Recurse -Filter ffprobe.exe | Select-Object -First 1
+          if (-not $ffmpeg -or -not $ffprobe) { throw "FFmpeg binaries missing" }
+          New-Item -ItemType Directory -Force -Path "src-tauri/resources/bin" | Out-Null
+          Copy-Item $ffmpeg.FullName "src-tauri/resources/bin/ffmpeg.exe" -Force
+          Copy-Item $ffprobe.FullName "src-tauri/resources/bin/ffprobe.exe" -Force
+
+      - name: Build current audited source NSIS
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $auditConfig = @{ bundle = @{ createUpdaterArtifacts = $false } } | ConvertTo-Json -Depth 4
+          [IO.File]::WriteAllText((Join-Path $PWD "tauri.audit.windows.json"), $auditConfig, [Text.UTF8Encoding]::new($false))
+          npx tauri build --target x86_64-pc-windows-msvc --bundles nsis --config "tauri.audit.windows.json"
+          if ($LASTEXITCODE -ne 0) { throw "Current-source NSIS build failed: $LASTEXITCODE" }
+          $installer = Get-ChildItem "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis" -Filter "*-setup.exe" | Select-Object -First 1
+          if (-not $installer) { throw "Current-source NSIS installer not found" }
+          New-Item -ItemType Directory -Force -Path physical-evidence | Out-Null
+          Copy-Item $installer.FullName "physical-evidence/VYRON_2.1.15_current-source_x64-setup.exe" -Force
+          $sha=(Get-FileHash "physical-evidence/VYRON_2.1.15_current-source_x64-setup.exe" -Algorithm SHA256).Hash
+          "CURRENT_SOURCE_INSTALLER_SHA256=$sha" | Set-Content physical-evidence/current-source-build.txt
+          "CURRENT_SOURCE_HEAD=$(git rev-parse HEAD)" | Add-Content physical-evidence/current-source-build.txt
 
       - name: Prepare evidence directory
         shell: pwsh
@@ -53,11 +102,11 @@ jobs:
           if ($feed.version -ne "2.1.15") { throw "Live feed version mismatch: $($feed.version)" }
           $url = $feed.platforms.'windows-x86_64'.url
           if (-not $url) { throw "Windows asset URL missing" }
-          Invoke-WebRequest -Uri $url -OutFile physical-evidence/VYRON_2.1.15_x64-setup.exe
-          $sha = (Get-FileHash physical-evidence/VYRON_2.1.15_x64-setup.exe -Algorithm SHA256).Hash
+          Invoke-WebRequest -Uri $url -OutFile physical-evidence/PUBLIC_VYRON_2.1.15_x64-setup.exe
+          $sha = (Get-FileHash physical-evidence/PUBLIC_VYRON_2.1.15_x64-setup.exe -Algorithm SHA256).Hash
           "LIVE_FEED_VERSION=$($feed.version)" | Add-Content physical-evidence/environment.txt
           "INSTALLER_SHA256=$sha" | Add-Content physical-evidence/environment.txt
-          "INSTALLER_BYTES=$((Get-Item physical-evidence/VYRON_2.1.15_x64-setup.exe).Length)" | Add-Content physical-evidence/environment.txt
+          "INSTALLER_BYTES=$((Get-Item physical-evidence/PUBLIC_VYRON_2.1.15_x64-setup.exe).Length)" | Add-Content physical-evidence/environment.txt
 
       - name: Snapshot existing VYRON user data
         shell: pwsh
@@ -82,11 +131,11 @@ jobs:
           $rows | ConvertTo-Json -Depth 4 | Set-Content physical-evidence/user-data-before.json
           "USER_DATA_FILES_BEFORE=$($rows.Count)" | Add-Content physical-evidence/environment.txt
 
-      - name: Install public VYRON 2.1.15
+      - name: Install current audited source VYRON 2.1.15
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $p=Start-Process -FilePath "$PWD\physical-evidence\VYRON_2.1.15_x64-setup.exe" -ArgumentList "/S" -Wait -PassThru
+          $p=Start-Process -FilePath "$PWD\physical-evidence\VYRON_2.1.15_current-source_x64-setup.exe" -ArgumentList "/S" -Wait -PassThru
           if($p.ExitCode -ne 0){throw "Installer exit code $($p.ExitCode)"}
           $roots=@(
             (Join-Path $env:LOCALAPPDATA "Programs"),
@@ -105,7 +154,7 @@ jobs:
           $exe.FullName | Set-Content physical-evidence/installed-exe.txt
           "INSTALLED_EXE=$($exe.FullName)" | Add-Content physical-evidence/environment.txt
           "INSTALLED_VERSION=$v" | Add-Content physical-evidence/environment.txt
-          "INSTALLER_PHYSICAL=PASS" | Add-Content physical-evidence/environment.txt
+          "CURRENT_SOURCE_INSTALLER_PHYSICAL=PASS" | Add-Content physical-evidence/environment.txt
 
       - name: Launch and capture 1 3 6 10 second progression
         shell: pwsh
