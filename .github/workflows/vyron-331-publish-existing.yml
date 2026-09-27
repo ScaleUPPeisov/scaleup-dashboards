@@ -1,0 +1,254 @@
+name: Publish Existing VYRON 3.3.1 Production Artifacts
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-3.3.1-connectivity-oauth-quota
+    paths:
+      - '.github/workflows/vyron-331-publish-existing.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vyron-331-publish-existing
+  cancel-in-progress: false
+
+env:
+  SOURCE_RUN: '36322450676'
+  SOURCE_SHA: 98a5dd881c1f217d1fadc914129e7a169146e933
+  TARGET_REPO: ScaleUPPeisov/vyron-releases
+  SOURCE_REPO: ScaleUPPeisov/scaleup-dashboards
+  TAG: v3.3.1
+  OWNER_PREVIEW_VERSION: 3.3.1-preview.339
+  OWNER_PREVIEW_REVISION: '339'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      RELEASE_TOKEN: ${{ secrets.VYRON_RELEASES_TOKEN }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Verify release authorization
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -n "$RELEASE_TOKEN" || { echo 'VYRON_RELEASES_TOKEN=USER_ACTION_REQUIRED'; exit 1; }
+          GH_TOKEN="$RELEASE_TOKEN" gh api "repos/$TARGET_REPO" --jq .full_name | grep -Fx "$TARGET_REPO"
+          if GH_TOKEN="$RELEASE_TOKEN" gh release view "$TAG" --repo "$TARGET_REPO" >/dev/null 2>&1; then
+            echo "RELEASE_ALREADY_EXISTS=$TAG"
+            exit 1
+          fi
+          echo 'RELEASE_AUTH=PASS'
+
+      - name: Download already-built production artifacts
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p assets
+          gh run download "$SOURCE_RUN" --repo "$SOURCE_REPO" --name VYRON-3.3.1-WINDOWS-PRODUCTION --dir assets
+          gh run download "$SOURCE_RUN" --repo "$SOURCE_REPO" --name VYRON-3.3.1-MACOS-PRODUCTION --dir assets
+          find assets -maxdepth 1 -type f -printf '%f\n' | sort
+
+      - name: Verify exact production artifacts
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          required=(
+            VYRON-3.3.1-arm64.dmg
+            VYRON-3.3.1-arm64.dmg.sha256
+            VYRON.app.tar.gz
+            VYRON.app.tar.gz.sha256
+            VYRON.app.tar.gz.sig
+            VYRON_3.3.1_x64-setup.exe
+            VYRON_3.3.1_x64-setup.exe.sha256
+            VYRON_3.3.1_x64-setup.exe.sig
+          )
+          for f in "${required[@]}"; do test -s "assets/$f"; done
+          test "$(find assets -maxdepth 1 -type f | wc -l | tr -d ' ')" = '8'
+
+          WIN_EXPECTED="$(awk '{print $1}' assets/VYRON_3.3.1_x64-setup.exe.sha256)"
+          WIN_ACTUAL="$(sha256sum assets/VYRON_3.3.1_x64-setup.exe | awk '{print $1}')"
+          MAC_DMG_EXPECTED="$(awk '{print $1}' assets/VYRON-3.3.1-arm64.dmg.sha256)"
+          MAC_DMG_ACTUAL="$(sha256sum assets/VYRON-3.3.1-arm64.dmg | awk '{print $1}')"
+          MAC_UPDATER_EXPECTED="$(awk '{print $1}' assets/VYRON.app.tar.gz.sha256)"
+          MAC_UPDATER_ACTUAL="$(sha256sum assets/VYRON.app.tar.gz | awk '{print $1}')"
+
+          test "$WIN_ACTUAL" = "$WIN_EXPECTED"
+          test "$MAC_DMG_ACTUAL" = "$MAC_DMG_EXPECTED"
+          test "$MAC_UPDATER_ACTUAL" = "$MAC_UPDATER_EXPECTED"
+
+          echo "WINDOWS_SHA256=$WIN_ACTUAL"
+          echo "MACOS_DMG_SHA256=$MAC_DMG_ACTUAL"
+          echo "MACOS_UPDATER_SHA256=$MAC_UPDATER_ACTUAL"
+          echo 'EXISTING_PRODUCTION_ARTIFACTS_VERIFIED=PASS'
+
+      - name: Publish VYRON 3.3.1 release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.VYRON_RELEASES_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          cat > /tmp/release-notes.md <<'EOF'
+          VYRON 3.3.1 — targeted OAuth/connectivity/quota hotfix.
+
+          - Correct connected-channel counter based on saved channel/profile bindings.
+          - Immediate OAuth state refresh after connect, reconnect and recovery.
+          - Successfully validated credentials become READY without redundant Google login.
+          - NOT_CHECKED remains a non-destructive pending health state, not a reconnect failure.
+          - Statistics batching is isolated by Google Project/OAuth identity for correct per-project quota accounting.
+          - Existing channels, OAuth profiles, Profile UUIDs, Channel IDs and Google Project mappings are preserved.
+          EOF
+          gh release create "$TAG" assets/*             --repo "$TARGET_REPO"             --title 'VYRON 3.3.1'             --notes-file /tmp/release-notes.md
+          echo 'VYRON_3_3_1_RELEASE_CREATED=PASS'
+
+      - name: Checkout release repository
+        uses: actions/checkout@v4
+        with:
+          repository: ScaleUPPeisov/vyron-releases
+          token: ${{ secrets.VYRON_RELEASES_TOKEN }}
+          ref: main
+          path: release-repo
+
+      - name: Write stable and owner-preview release feeds
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          MAC_SIG="$(tr -d '\r\n' < assets/VYRON.app.tar.gz.sig)"
+          WIN_SIG="$(tr -d '\r\n' < assets/VYRON_3.3.1_x64-setup.exe.sig)"
+          MAC_SHA="$(sha256sum assets/VYRON.app.tar.gz | awk '{print $1}')"
+          PUB_DATE="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          python3 - "$MAC_SIG" "$WIN_SIG" "$MAC_SHA" "$PUB_DATE" <<'PY'
+          import json,sys
+          from pathlib import Path
+          mac_sig,win_sig,mac_sha,pub=sys.argv[1:5]
+          repo='ScaleUPPeisov/vyron-releases'
+          notes='VYRON 3.3.1 — OAuth/connectivity/quota hotfix; connected count corrected; READY state synchronized; per-Google-Project statistics quota isolation; existing profiles and channels preserved.'
+          mac={
+            'version':'3.3.1',
+            'notes':notes,
+            'pub_date':pub,
+            'platforms':{'darwin-aarch64':{
+              'url':f'https://github.com/{repo}/releases/download/v3.3.1/VYRON.app.tar.gz',
+              'signature':mac_sig
+            }}
+          }
+          win={
+            'version':'3.3.1',
+            'notes':notes,
+            'pub_date':pub,
+            'platforms':{'windows-x86_64':{
+              'url':f'https://github.com/{repo}/releases/download/v3.3.1/VYRON_3.3.1_x64-setup.exe',
+              'signature':win_sig
+            }}
+          }
+          owner={
+            'version':'3.3.1-preview.339',
+            'notes':'VYRON 3.3.1 production hotfix is approved for Owner Preview clients. Existing Google/YouTube profiles and channels are preserved.',
+            'pub_date':pub,
+            'artifactSha256':mac_sha,
+            'buildRevision':339,
+            'commit':'98a5dd881c1f217d1fadc914129e7a169146e933',
+            'productVersion':'3.3.1',
+            'platforms':{'darwin-aarch64':{
+              'url':f'https://github.com/{repo}/releases/download/v3.3.1/VYRON.app.tar.gz',
+              'signature':mac_sig
+            }}
+          }
+          out=Path('release-repo/updates')
+          out.mkdir(parents=True,exist_ok=True)
+          (out/'latest.json').write_text(json.dumps(mac,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          (out/'windows-latest.json').write_text(json.dumps(win,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          (out/'owner-preview.json').write_text(json.dumps(owner,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          PY
+          cd release-repo
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add updates/latest.json updates/windows-latest.json updates/owner-preview.json
+          git commit -m 'release: promote VYRON 3.3.1 all updater feeds'
+          git push origin HEAD:main
+          echo 'RELEASE_REPO_FEEDS_3_3_1=PASS'
+
+      - name: Checkout source legacy bridge
+        uses: actions/checkout@v4
+        with:
+          repository: ScaleUPPeisov/scaleup-dashboards
+          token: ${{ github.token }}
+          ref: main
+          path: source-main
+
+      - name: Promote legacy updater bridges for old clients
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cp release-repo/updates/latest.json source-main/vyron-updates/latest.json
+          cp release-repo/updates/windows-latest.json source-main/vyron-updates/windows-latest.json
+          cp release-repo/updates/owner-preview.json source-main/vyron-updates/owner-preview.json
+          cd source-main
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add vyron-updates/latest.json vyron-updates/windows-latest.json vyron-updates/owner-preview.json
+          if git diff --cached --quiet; then
+            echo 'LEGACY_BRIDGES_ALREADY_CURRENT=PASS'
+          else
+            git commit -m 'release: bridge legacy VYRON clients to 3.3.1'
+            git push origin HEAD:main
+          fi
+          echo 'LEGACY_STABLE_AND_OWNER_PREVIEW_BRIDGES_3_3_1=PASS'
+
+      - name: Verify public release and every updater route
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.VYRON_RELEASES_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/$TARGET_REPO/releases/tags/$TAG" >/tmp/release.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/release.json'))
+          assert d['tag_name']=='v3.3.1'
+          assert d['draft'] is False and d['prerelease'] is False
+          names={x['name'] for x in d['assets']}
+          required={
+            'VYRON-3.3.1-arm64.dmg',
+            'VYRON-3.3.1-arm64.dmg.sha256',
+            'VYRON.app.tar.gz',
+            'VYRON.app.tar.gz.sha256',
+            'VYRON.app.tar.gz.sig',
+            'VYRON_3.3.1_x64-setup.exe',
+            'VYRON_3.3.1_x64-setup.exe.sha256',
+            'VYRON_3.3.1_x64-setup.exe.sig',
+          }
+          assert names==required,(names,required)
+          print('REMOTE_RELEASE_3_3_1=PASS')
+          PY
+
+          for base in             "https://raw.githubusercontent.com/$TARGET_REPO/main/updates"             "https://raw.githubusercontent.com/$SOURCE_REPO/main/vyron-updates"
+          do
+            curl -fsSL "$base/latest.json" -o /tmp/latest.json
+            curl -fsSL "$base/windows-latest.json" -o /tmp/windows.json
+            curl -fsSL "$base/owner-preview.json" -o /tmp/owner.json
+            python3 - <<'PY'
+          import json
+          mac=json.load(open('/tmp/latest.json'))
+          win=json.load(open('/tmp/windows.json'))
+          owner=json.load(open('/tmp/owner.json'))
+          assert mac['version']=='3.3.1'
+          assert win['version']=='3.3.1'
+          assert owner['version']=='3.3.1-preview.339'
+          assert owner['productVersion']=='3.3.1'
+          assert owner['buildRevision']==339
+          assert len(owner['artifactSha256'])==64
+          assert '/releases/download/v3.3.1/' in mac['platforms']['darwin-aarch64']['url']
+          assert '/releases/download/v3.3.1/' in win['platforms']['windows-x86_64']['url']
+          assert '/releases/download/v3.3.1/' in owner['platforms']['darwin-aarch64']['url']
+          print('UPDATER_ROUTE=PASS')
+          PY
+          done
+          echo 'WINDOWS_OLD_CLIENT_ROUTE_3_3_1=PASS'
+          echo 'MACOS_STABLE_ROUTE_3_3_1=PASS'
+          echo 'MACOS_OWNER_PREVIEW_338_ROUTE_3_3_1=PASS'
+          echo 'VYRON_3_3_1_PRODUCTION_PUBLISHED=PASS'
