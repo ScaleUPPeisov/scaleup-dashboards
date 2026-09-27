@@ -1,0 +1,113 @@
+name: VYRON 2.1.15 Parity Audit CI
+
+on:
+  push:
+    branches:
+      - windows/vyron-214-stability-fix
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: vyron-215-parity-audit
+  cancel-in-progress: true
+
+jobs:
+  parity:
+    name: parity-${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows
+          - os: macos-14
+            name: macos
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout audit HEAD
+        uses: actions/checkout@v4
+        with:
+          ref: windows/vyron-214-stability-fix
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Version contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          node -e "const p=require('./package.json'); if(p.version!=='2.1.15') process.exit(1)"
+          grep -q '^version = "2.1.15"$' src-tauri/Cargo.toml
+          python - <<'PY'
+          import json
+          assert json.load(open('src-tauri/tauri.conf.json'))['version']=='2.1.15'
+          print('VERSION_CONTRACT=PASS')
+          PY
+
+      - name: Static OAuth and shell boundary contract
+        shell: python
+        run: |
+          from pathlib import Path
+          s=Path('src-tauri/src/youtube.rs').read_text(encoding='utf-8')
+          assert 'response_type=code' in s
+          assert 'code_challenge_method=S256' in s
+          assert 'wait_for_oauth_callback_with_timeout' in s
+          open_browser=s.split('fn open_browser',1)[1].split('fn google_oauth_auth_url',1)[0]
+          assert 'Command::new("cmd")' not in open_browser
+          assert 'Command::new("explorer.exe")' in open_browser
+          assert '.arg(url)' in open_browser
+          print('OAUTH_STATIC_CONTRACT=PASS')
+
+      - name: Install frontend dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Targeted frontend Windows stability suite
+        run: npx vitest run src/v214WindowsStability.test.ts
+
+      - name: Full frontend tests
+        run: npm test
+
+      - name: Frontend production build
+        run: npm run build
+
+      - name: Targeted Rust OAuth callback tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml oauth_callback -- --nocapture
+
+      - name: Full Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Rust compile
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+
+      - name: Evidence
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p audit-evidence
+          {
+            echo "OS=${{ matrix.name }}"
+            echo "RUNNER_OS=$RUNNER_OS"
+            echo "HEAD=$(git rev-parse HEAD)"
+            echo "VERSION=2.1.15"
+            echo "PHYSICAL_ACCEPTANCE=NOT_PERFORMED"
+          } > audit-evidence/${{ matrix.name }}.txt
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parity-audit-${{ matrix.name }}
+          path: audit-evidence/**
+          if-no-files-found: warn
