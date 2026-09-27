@@ -465,9 +465,9 @@ fn portable_profile_map(value:&serde_json::Value)->Result<HashMap<String,VaultPr
  Ok(out)
 }
 
-pub fn portable_merge_plan(value:&serde_json::Value)->Result<serde_json::Value,String>{
+pub fn portable_merge_plan(app:&AppHandle,value:&serde_json::Value)->Result<serde_json::Value,String>{
  let imported=portable_profile_map(value)?;
- let local=vault_cache().lock().ok().and_then(|x|x.clone()).unwrap_or_default();
+ let local=read_for_lookup(app)?.unwrap_or_default();
  let existing=imported.keys().filter(|id|local.profiles.contains_key(*id)).count();
  Ok(serde_json::json!({
   "importedProfiles":imported.len(),
