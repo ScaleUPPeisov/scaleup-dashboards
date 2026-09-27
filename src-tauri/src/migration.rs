@@ -871,6 +871,135 @@ mod tests {
         assert_eq!(b["channels"].as_array().unwrap().len(), 3);
     }
 
+
+    fn fixture_state(kind:&str)->Value{
+        let (channels,workspace)=if kind=="macos"{
+            (vec![
+                json!({"id":"mac-a","youtubeChannelId":"TEST_CH_A","name":"A","renderFolderPath":"/Volumes/VYRON-Test/A","projectsFolderPath":"/Volumes/VYRON-Test/Projects/A"}),
+                json!({"id":"mac-b","youtubeChannelId":"TEST_CH_B","name":"B","renderFolderPath":"/Volumes/VYRON-Test/B","projectsFolderPath":"/Volumes/VYRON-Test/Projects/B"}),
+                json!({"id":"mac-c","youtubeChannelId":"TEST_CH_C","name":"C","renderFolderPath":"/Volumes/VYRON-Test/C","projectsFolderPath":"/Volumes/VYRON-Test/Projects/C","settingVersion":1}),
+            ],"/Users/fixture/VYRON")
+        }else{
+            (vec![
+                json!({"id":"win-c","youtubeChannelId":"TEST_CH_C","name":"C","renderFolderPath":"Z:\\\\VYRON-Test\\\\C","projectsFolderPath":"Z:\\\\VYRON-Test\\\\Projects\\\\C","settingVersion":2}),
+                json!({"id":"win-d","youtubeChannelId":"TEST_CH_D","name":"D","renderFolderPath":"Z:\\\\VYRON-Test\\\\D","projectsFolderPath":"Z:\\\\VYRON-Test\\\\Projects\\\\D"}),
+                json!({"id":"win-e","youtubeChannelId":"TEST_CH_E","name":"E","renderFolderPath":"Z:\\\\VYRON-Test\\\\E","projectsFolderPath":"Z:\\\\VYRON-Test\\\\Projects\\\\E"}),
+            ],"C:\\\\Users\\\\fixture\\\\VYRON")
+        };
+        json!({
+            "version":33,
+            "channels":channels,
+            "jobs":[{"id":format!("{kind}-job"),"status":"Pending"}],
+            "competitors":[],
+            "uploadHistory":[],
+            "activityJournal":[],
+            "statisticsHistory":{},
+            "fingerprintCache":{format!("{kind}-fp"):{"size":123}},
+            "projectLifecycle":{format!("{kind}-project"):{"status":"READY"}},
+            "settings":{"workspace":workspace,"endlumePath":"","youtubeApiKey":"","openaiApiKey":""},
+            "logs":[format!("{kind}-fixture")]
+        })
+    }
+    fn fixture_payload(kind:&str,state:Value)->PortablePayload{
+        let oauth=json!({
+            "schemaVersion":2,
+            "profiles":{
+                format!("fixture-profile-{kind}"):{
+                    "profileUuid":format!("fixture-profile-{kind}"),
+                    "expectedChannelId":if kind=="macos"{"TEST_CH_A"}else{"TEST_CH_D"},
+                    "refreshToken":format!("fixture-secret-{kind}"),
+                    "clientId":format!("fixture-client-{kind}"),
+                    "clientSecret":format!("fixture-client-secret-{kind}"),
+                    "googleEmail":"",
+                    "preferredBrowser":"",
+                    "credentialGeneration":1,
+                    "connectedAt":"2026-09-27T00:00:00Z",
+                    "updatedAt":"2026-09-27T00:00:00Z"
+                }
+            }
+        });
+        let youtube=json!({"profiles":[{"id":format!("fixture-profile-{kind}"),"channelId":if kind=="macos"{"TEST_CH_A"}else{"TEST_CH_D"},"channelTitle":format!("Fixture {kind}")}]});
+        let google=json!({"project_id":format!("fixture-project-{kind}"),"client_id":format!("fixture-client-{kind}")});
+        let browser=json!({"quotaLedger":{"fixture":kind},"operationLedger":[]});
+        let checksum=payload_hash(&state,&oauth,&youtube,&google,&browser).unwrap();
+        PortablePayload{
+            schema_version:BUNDLE_SCHEMA,
+            app_version:"3.3.0".into(),
+            source_os:kind.into(),
+            created_at:"2026-09-27T00:00:00Z".into(),
+            bundle_uuid:format!("fixture-bundle-{kind}"),
+            state,
+            oauth_vault:oauth,
+            youtube_metadata:youtube,
+            google_config:google,
+            browser_state:browser,
+            payload_sha256:checksum,
+        }
+    }
+    fn fixture_channel_ids(state:&Value)->Vec<String>{
+        let mut ids=state.get("channels").and_then(Value::as_array).into_iter().flatten()
+            .filter_map(|x|x.get("youtubeChannelId").and_then(Value::as_str).map(str::to_string))
+            .collect::<Vec<_>>();
+        ids.sort();ids
+    }
+
+    #[test]
+    #[ignore]
+    fn cross_platform_fixture_export(){
+        let kind=std::env::var("VYRON_FIXTURE_KIND").expect("VYRON_FIXTURE_KIND");
+        let out=std::env::var("VYRON_FIXTURE_OUT").expect("VYRON_FIXTURE_OUT");
+        let pass=std::env::var("VYRON_FIXTURE_PASS").expect("VYRON_FIXTURE_PASS");
+        let payload=fixture_payload(&kind,fixture_state(&kind));
+        let bytes=encrypt_payload(&payload,&pass).unwrap();
+        let text=String::from_utf8_lossy(&bytes);
+        assert!(!text.contains(&format!("fixture-secret-{kind}")));
+        assert!(!text.contains(&format!("fixture-client-secret-{kind}")));
+        write_atomic(Path::new(&out),&bytes).unwrap();
+        let round=decrypt_payload(&fs::read(&out).unwrap(),&pass).unwrap();
+        assert_eq!(round.source_os,kind);
+        assert_eq!(fixture_channel_ids(&round.state).len(),3);
+    }
+
+    #[test]
+    #[ignore]
+    fn cross_platform_fixture_import_merge_and_reexport(){
+        let local_kind=std::env::var("VYRON_FIXTURE_KIND").expect("VYRON_FIXTURE_KIND");
+        let input=std::env::var("VYRON_FIXTURE_IN").expect("VYRON_FIXTURE_IN");
+        let output=std::env::var("VYRON_FIXTURE_OUT").ok();
+        let pass=std::env::var("VYRON_FIXTURE_PASS").expect("VYRON_FIXTURE_PASS");
+        let bytes=fs::read(&input).unwrap();
+        assert!(decrypt_payload(&bytes,"definitely-wrong-passphrase").is_err());
+        let mut corrupt=bytes.clone();let n=corrupt.len();corrupt[n-5]^=1;
+        assert!(decrypt_payload(&corrupt,&pass).is_err());
+        let payload=decrypt_payload(&bytes,&pass).unwrap();
+        assert_ne!(payload.source_os,local_kind,"fixture must cross an OS boundary");
+
+        let local=fixture_state(&local_kind);
+        let (once,s1,remaps1)=merge_states(&local,&payload.state);
+        assert_eq!(s1.after_channels,5);
+        assert_eq!(s1.deleted_channels,0);
+        assert_eq!(fixture_channel_ids(&once),vec!["TEST_CH_A","TEST_CH_B","TEST_CH_C","TEST_CH_D","TEST_CH_E"]);
+        assert!(remaps1.len()>=2,"foreign filesystem paths must require remap");
+
+        let mut repeated=once.clone();
+        for _ in 0..2{
+            let (next,s,_) = merge_states(&repeated,&payload.state);
+            assert_eq!(s.after_channels,5);
+            assert_eq!(s.new_channels,0);
+            assert_eq!(s.deleted_channels,0);
+            repeated=next;
+        }
+        assert_eq!(fixture_channel_ids(&repeated),fixture_channel_ids(&once));
+        assert!(repeated.get("fingerprintCache").and_then(Value::as_object).map(|x|x.len()).unwrap_or(0)>=2);
+        assert!(repeated.get("projectLifecycle").and_then(Value::as_object).map(|x|x.len()).unwrap_or(0)>=2);
+
+        if let Some(out)=output{
+            let next=fixture_payload(&local_kind,repeated);
+            let encoded=encrypt_payload(&next,&pass).unwrap();
+            write_atomic(Path::new(&out),&encoded).unwrap();
+        }
+    }
+
     #[test]
     fn thirty_plus_ten_with_seven_duplicates_is_thirty_three() {
         let local = (0..30)
