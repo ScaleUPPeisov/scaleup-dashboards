@@ -5,6 +5,7 @@ import {useApp} from './store';
 import {scanFactualRenderRuntime} from './renderRuntimeEvidence';
 import {replaceFactualActiveRenders} from './activeOperationFacts';
 import {applyStaleOperationPatches,buildStaleOperationPatches} from './staleOperationReconciliation';
+import {completedRenderPatch} from './renderLifecycle';
 
 export function ProductionStatusBridge(){
   const booted=useApp(s=>s.booted),workspace=useApp(s=>s.settings.workspace),channels=useApp(s=>s.channels);
@@ -21,10 +22,15 @@ export function ProductionStatusBridge(){
           const {batchId,row}=item;if(!row.jobId)continue;
           const job=useApp.getState().jobs.find(j=>j.id===row.jobId);if(!job)continue;
           if(row.renderStatus==='Rendering'&&job.status!=='RENDERING')useApp.getState().patchJob(job.id,{status:'RENDERING',error:undefined});
-          else if(row.renderStatus==='Completed'&&row.outputFile&&(job.finalPath!==row.outputFile||job.status!=='READY_UPLOAD')){
-            useApp.getState().patchJob(job.id,{status:'READY_UPLOAD',finalPath:row.outputFile,error:undefined});
-            const key=`${batchId}:${row.projectId}:${row.outputFile}`;
-            if(!announced.current.has(key)){announced.current.add(key);notifySuccess('Видео готово',`VIDEO_${String(row.videoNumber||job.number).padStart(3,'0')} • ENDLUME завершил рендер.`,{operationId:`endlume-complete:${key}`,actions:[{label:'Открыть файл',onClick:()=>{void api.openLocal(row.outputFile!)}}]})}
+          else if(row.renderStatus==='Completed'&&row.outputFile){
+            const patch=completedRenderPatch(job,batchId,row);
+            if(patch){
+              useApp.getState().patchJob(job.id,patch);
+              if(patch.status==='READY_UPLOAD'){
+                const key=String(patch.renderEvidenceId||`${batchId}:${row.projectId}:${row.outputFile}`);
+                if(!announced.current.has(key)){announced.current.add(key);notifySuccess('Видео готово',`VIDEO_${String(row.videoNumber||job.number).padStart(3,'0')} • ENDLUME завершил новый рендер.`,{operationId:`endlume-complete:${key}`,actions:[{label:'Открыть файл',onClick:()=>{void api.openLocal(row.outputFile!)}}]})}
+              }
+            }
           }else if(row.renderStatus==='Error'&&job.status!=='ERROR')useApp.getState().patchJob(job.id,{status:'ERROR',error:row.error||'ENDLUME: ошибка рендера'});
         }
         if(evidence.reliable){
