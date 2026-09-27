@@ -5,7 +5,7 @@ import { listen } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
 import { openPath, openUrl } from '@tauri-apps/plugin-opener';
 import { check } from '@tauri-apps/plugin-updater';
-import {classifyUpdaterError,UPDATER_CHECK_OPTIONS,UPDATER_ENDPOINTS,updaterFailureMessage,updaterVersionStatus} from './updaterPolicy';
+import {classifyUpdaterError,primaryUpdaterEndpoint,UPDATER_CHECK_OPTIONS,updaterFailureMessage,updaterVersionStatus} from './updaterPolicy';
 import { relaunch } from '@tauri-apps/plugin-process';
 import type {YoutubeExistingVideo, AppState, ChannelAnalytics, Competitor, Diagnostics, InboxScan, LicenseStatus, VideoJob, YoutubeProfile } from './types';
 import {bindYoutubeQuotaOperationProject,recordYoutubeApiRequest,recordYoutubeCommand,registerYoutubeUploadProject,youtubeGuardedCall,youtubeQuotaProjectIdentity,type YoutubeApiRequestEvent} from './youtubeQuota';
@@ -127,9 +127,9 @@ export const api={
     const current=await getVersion();
     let update:any;
     try{update=await check(UPDATER_CHECK_OPTIONS)}catch(error){const x=classifyUpdaterError(error,'check');throw new Error(`${x.code}: ${updaterFailureMessage(x.code,x.detail)}`)}
-    if(!update)return {none:true,current,latest:current,status:'UP_TO_DATE',endpoint:UPDATER_ENDPOINTS[0],versionComparison:updaterVersionStatus(current,current)};
+    if(!update)return {none:true,current,latest:current,status:'UP_TO_DATE',endpoint:primaryUpdaterEndpoint(),versionComparison:updaterVersionStatus(current,current)};
     let downloaded=0,total=0;
-    return {none:false,version:update.version,date:update.date,body:update.body||'',current:update.currentVersion||current,latest:update.version,status:'AVAILABLE',endpoint:UPDATER_ENDPOINTS[0],versionComparison:updaterVersionStatus(update.currentVersion||current,update.version),
+    return {none:false,version:update.version,date:update.date,body:update.body||'',current:update.currentVersion||current,latest:update.version,status:'AVAILABLE',endpoint:primaryUpdaterEndpoint(),versionComparison:updaterVersionStatus(update.currentVersion||current,update.version),
       download:async(onProgress?:(p:UpdaterTransferProgress)=>void)=>{
         await invoke<string>('prepare_updater_tempdir');
         try{
