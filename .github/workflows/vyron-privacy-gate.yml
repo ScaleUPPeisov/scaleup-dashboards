@@ -112,7 +112,7 @@ jobs:
               chunks = re.split(r'(?=\n\s*- name:)', text)
               for chunk in chunks:
                   if 'actions/upload-artifact@' in chunk and bad.search(chunk):
-                      print('PRIVACY_GATE=FAIL:SENSITIVE_ARTIFACT_UPLOAD')
+                      print(f'PRIVACY_GATE=FAIL:SENSITIVE_ARTIFACT_UPLOAD:file={wf}')
                       sys.exit(1)
           print('SENSITIVE_ARTIFACT_UPLOAD=BLOCKED')
           PY
