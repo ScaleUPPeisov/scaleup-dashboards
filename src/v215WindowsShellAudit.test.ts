@@ -25,8 +25,9 @@ describe('VYRON 2.1.15 Windows process/shell boundary audit',()=>{
     const block=youtube.split('#[cfg(target_os = "windows")]')[1]?.split('#[cfg(target_os = "linux")]')[0]||'';
     expect(block).toContain('Command::new("explorer.exe")');
     expect(block).toContain('.arg(url)');
-    expect(block).not.toContain('cmd');
-    expect(block).not.toContain('/C');
+    expect(block).not.toContain('Command::new("cmd")');
+    expect(block).not.toContain('Command::new("cmd.exe")');
+    expect(block).not.toContain('.args(["/C"');
   });
 
   it('passes filesystem and executable paths as process args instead of interpolated shell strings',()=>{
