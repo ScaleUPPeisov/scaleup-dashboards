@@ -154,6 +154,23 @@ fn clear_caches(){
 fn local_key(app:&AppHandle,create:bool)->Result<[u8;32],String>{
  if let Ok(cache)=master_cache().lock(){if let Some(key)=*cache{return Ok(key)}}
  let p=local_paths(app)?;
+ #[cfg(target_os="windows")]
+ {
+  const WINDOWS_VAULT_KEY_ACCOUNT:&str="oauth.vault.master_key";
+  if let Some(encoded)=security::canonical_get_secret_cached(WINDOWS_VAULT_KEY_ACCOUNT)?{
+   let key=decode_key(&encoded)?;cache_key(key);return Ok(key)
+  }
+  if let Some(key)=read_key_file(&p.doc_key)?.or(read_key_file(&p.app_key)?){
+   let encoded=B64.encode(key);
+   security::canonical_set_secret(WINDOWS_VAULT_KEY_ACCOUNT,&encoded)?;
+   cache_key(key);return Ok(key)
+  }
+  if !create{return Err("OAUTH_VAULT_LOCAL_KEY_MISSING".into())}
+  let mut key=[0u8;32];OsRng.fill_bytes(&mut key);
+  let encoded=B64.encode(key);
+  security::canonical_set_secret(WINDOWS_VAULT_KEY_ACCOUNT,&encoded)?;
+  cache_key(key);return Ok(key)
+ }
  if let Some(key)=read_key_file(&p.doc_key)?{
   if !p.app_key.exists(){let _=write_private_atomic(&p.app_key,B64.encode(key).as_bytes());}
   cache_key(key);return Ok(key)
