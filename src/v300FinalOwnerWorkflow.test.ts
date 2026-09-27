@@ -65,10 +65,11 @@ describe('VYRON 3.0.0 final owner workflow contracts',()=>{
   expect(security).toContain('com.scaleup.vyron.oauth-vault');
   expect(security).toContain('master-key');
  });
- it('verifies preview publication at immutable commit and treats branch CDN as propagation only',()=>{
-  expect(workflow).toContain('MAIN_COMMIT_SHA');
-  expect(workflow).toContain('owner-preview-authoritative.json');
-  expect(workflow).toContain('OWNER_PREVIEW_FEED_PROPAGATION_PENDING');
-  expect(workflow).not.toContain('test "$OK" = 1');
+ it('keeps candidate build/test only and requires explicit owner release confirmation',()=>{
+  expect(workflow).toContain('OWNER_PREVIEW_RELEASE_MUTATION=DISABLED');
+  expect(workflow).toContain('OWNER_PREVIEW_FEED_MUTATION=DISABLED');
+  expect(workflow).toContain('RELEASE_REQUIRES_EXPLICIT_OWNER_CONFIRMATION=YES');
+  expect(workflow).not.toContain('gh release create');
+  expect(workflow).not.toContain('OWNER_PREVIEW_PUBLISHED=PASS');
  });
 });
