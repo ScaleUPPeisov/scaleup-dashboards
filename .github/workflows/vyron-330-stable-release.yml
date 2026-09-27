@@ -1,6 +1,10 @@
 name: VYRON Public Release Authorization Preflight
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/vyron-330-stable-release.yml'
   workflow_dispatch:
 
 permissions:
