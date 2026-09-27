@@ -9,6 +9,7 @@ import {refreshYoutubeChannelStatistics,refreshYoutubeProfileStatistics,type Cha
 import {journal} from './activityJournalRuntime';
 import {resolveOAuthKeychainErrors} from './errorHistory';
 import {humanizeError} from './errorCenter';
+import {notifyYoutubeOauthStateChanged} from './youtubeOauthState';
 
 type BrowserOption={id:string;label:string;available:boolean};
 type DuplicateChannel={profileId:string;channelId?:string;title?:string};
@@ -79,6 +80,12 @@ export function AccountsPage(){
   catch{setConfig({configured:false,hasSecret:false,hasApiKey:false,oauthReady:false,oauthState:'ERROR',repairRequired:true,secretOperational:false,secureStorageErrorCode:'KEYCHAIN_READ_FAILED'})}
   try{setReconciliation(await api.youtubeOauthReconciliationDiagnostics())}catch{}
   try{const states=await api.youtubeOauthCredentialStates();setCredentialStates(Object.fromEntries(states.profiles.map(x=>[x.profileUuid,x])))}catch{}
+  return p
+ }
+
+ async function refreshAfterOauthMutation(){
+  const p=await refresh();
+  notifyYoutubeOauthStateChanged();
   return p
  }
 
@@ -173,7 +180,7 @@ export function AccountsPage(){
    const current=await refresh();
    await recoverExistingProfiles(current.length,false);
    toast('✓ Сохранённый OAuth Client восстановлен локально. credentials.json и Google-вход не потребовались.');
-   window.dispatchEvent(new Event('vyron:oauth-state-changed'));
+   notifyYoutubeOauthStateChanged();
   }catch(e){toast('Не удалось восстановить сохранённый OAuth Client: '+String(e))}
   finally{setBusy(false)}
  }
