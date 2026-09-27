@@ -3675,6 +3675,294 @@ mod youtube_write_tests {
     }
 }
 
+
+// ---- macOS RC7 parity: statistics / processing / targeted hydration ----
+fn youtube_channel_statistics_value(item:&Value)->Value{
+    let sn=item.get("snippet").cloned().unwrap_or_else(||json!({}));
+    let stat=item.get("statistics").cloned().unwrap_or_else(||json!({}));
+    let hidden=stat.get("hiddenSubscriberCount").and_then(Value::as_bool).unwrap_or(false);
+    let parse_count=|key:&str|stat.get(key).and_then(Value::as_str).and_then(|x|x.parse::<u64>().ok());
+    let thumbnail=sn.pointer("/thumbnails/high/url")
+        .or_else(||sn.pointer("/thumbnails/medium/url"))
+        .or_else(||sn.pointer("/thumbnails/default/url"))
+        .and_then(Value::as_str);
+    json!({
+        "channelId":item.get("id").and_then(Value::as_str),
+        "channelTitle":sn.get("title").and_then(Value::as_str),
+        "handle":sn.get("customUrl").and_then(Value::as_str),
+        "thumbnail":thumbnail,
+        "subscriberCount":if hidden{Value::Null}else{parse_count("subscriberCount").map(Value::from).unwrap_or(Value::Null)},
+        "viewCount":parse_count("viewCount"),
+        "videoCount":parse_count("videoCount"),
+        "hiddenSubscriberCount":hidden,
+        "statisticsUpdatedAt":Utc::now().to_rfc3339(),
+    })
+}
+
+#[tauri::command]
+pub async fn youtube_channel_statistics(
+    app:AppHandle,
+    profile_id:String,
+    operation_id:Option<String>,
+)->Result<Value,String>{
+    let (_token,p)=valid_access_token(&app,&profile_id).await?;
+    let token=p.access_token.clone();
+    let expected=p.channel_id.as_deref().filter(|x|!x.trim().is_empty())
+        .ok_or_else(||"YOUTUBE_CHANNEL_NOT_FOUND: OAuth profile has no Channel ID".to_string())?;
+    emit_youtube_api_request(&app,"channels.list",operation_id.as_deref());
+    let r=reqwest::Client::new()
+        .get("https://www.googleapis.com/youtube/v3/channels")
+        .bearer_auth(&token)
+        .query(&[("part","snippet,statistics"),("id",expected)])
+        .send().await
+        .map_err(|e|format!("YOUTUBE_CHANNEL_STATS_FAILED: network: {e}"))?;
+    let status=r.status();
+    let v:Value=r.json().await.map_err(|e|format!("YOUTUBE_CHANNEL_STATS_FAILED: json: {e}"))?;
+    if !status.is_success(){return Err(format!("YOUTUBE_CHANNEL_STATS_FAILED: {}",youtube_error(&v,"YouTube channel statistics request failed")))}
+    let item=v.get("items").and_then(Value::as_array).and_then(|x|x.first())
+        .ok_or_else(||"YOUTUBE_CHANNEL_NOT_FOUND: statistics request returned no channel".to_string())?;
+    let actual=item.get("id").and_then(Value::as_str).unwrap_or("");
+    if actual!=expected{return Err(format!("CHANNEL_MISMATCH: expected={expected} actual={actual}"))}
+    Ok(youtube_channel_statistics_value(item))
+}
+
+#[tauri::command]
+pub async fn youtube_channel_statistics_batch(
+    app:AppHandle,
+    profile_id:String,
+    channel_ids:Vec<String>,
+    operation_id:Option<String>,
+)->Result<Value,String>{
+    let mut ids=Vec::<String>::new();
+    for raw in channel_ids{
+        let id=raw.trim();
+        if id.is_empty()||ids.iter().any(|x|x==id){continue}
+        ids.push(id.to_string());
+        if ids.len()>=50{break}
+    }
+    if ids.is_empty(){return Ok(json!({"items":[],"requested":0,"found":0,"missingChannelIds":[],"apiRequests":0}))}
+    let (_token,p)=valid_access_token(&app,&profile_id).await?;
+    let joined=ids.join(",");
+    emit_youtube_api_request(&app,"channels.list",operation_id.as_deref());
+    let r=reqwest::Client::new()
+        .get("https://www.googleapis.com/youtube/v3/channels")
+        .bearer_auth(&p.access_token)
+        .query(&[("part","snippet,statistics"),("id",joined.as_str())])
+        .send().await
+        .map_err(|e|format!("YOUTUBE_CHANNEL_STATS_BATCH_FAILED: network: {e}"))?;
+    let status=r.status();
+    let v:Value=r.json().await.map_err(|e|format!("YOUTUBE_CHANNEL_STATS_BATCH_FAILED: json: {e}"))?;
+    if !status.is_success(){return Err(format!("YOUTUBE_CHANNEL_STATS_BATCH_FAILED: {}",youtube_error(&v,"YouTube channel statistics batch request failed")))}
+    let rows=v.get("items").and_then(Value::as_array).cloned().unwrap_or_default();
+    let mut items=Vec::<Value>::new();
+    let mut found_ids=Vec::<String>::new();
+    for item in &rows{
+        let Some(id)=item.get("id").and_then(Value::as_str) else{continue};
+        if !ids.iter().any(|x|x==id){continue}
+        found_ids.push(id.to_string());
+        items.push(youtube_channel_statistics_value(item));
+    }
+    let missing=ids.iter().filter(|id|!found_ids.iter().any(|x|x==*id)).cloned().collect::<Vec<_>>();
+    Ok(json!({"items":items,"requested":ids.len(),"found":found_ids.len(),"missingChannelIds":missing,"apiRequests":1}))
+}
+
+fn processing_state_from_status(status:&str)->&'static str{
+ match status{
+  "succeeded"=>"READY",
+  "processing"=>"YOUTUBE_PROCESSING",
+  "failed"|"terminated"=>"PROCESSING_FAILED",
+  _=>"PROCESSING_UNKNOWN",
+ }
+}
+
+#[tauri::command]
+pub async fn youtube_video_processing_status(
+ app:AppHandle,
+ profile_id:String,
+ video_id:String,
+ operation_id:Option<String>,
+)->Result<Value,String>{
+ let video_id=video_id.trim().to_string();
+ if video_id.is_empty(){return Err("VIDEO_ID_MISSING: processing check requires videoId".into())}
+ // Authentication is resolved before emitting any YouTube API event, so broken local
+ // credentials cannot burn inventory/processing quota.
+ let (token,profile)=valid_access_token(&app,&profile_id).await?;
+ emit_youtube_api_request(&app,"videos.list",operation_id.as_deref());
+ let r=reqwest::Client::new()
+   .get("https://www.googleapis.com/youtube/v3/videos")
+   .bearer_auth(&token)
+   .query(&[("part","id,snippet,status,processingDetails"),("id",video_id.as_str())])
+   .send().await.map_err(|e|format!("PROCESSING_CHECK_NETWORK: {e}"))?;
+ let st=r.status();let v:Value=r.json().await.map_err(|e|format!("PROCESSING_CHECK_PARSE: {e}"))?;
+ if !st.is_success(){return Err(youtube_error(&v,"YouTube processing status check failed"))}
+ let item=v.pointer("/items/0").ok_or_else(||format!("PROCESSING_VIDEO_NOT_FOUND: {video_id}"))?;
+ let actual=item.get("id").and_then(Value::as_str).unwrap_or("");
+ if actual!=video_id{return Err(format!("PROCESSING_VIDEO_ID_MISMATCH: expected={video_id} actual={actual}"))}
+ let actual_channel=item.pointer("/snippet/channelId").and_then(Value::as_str).unwrap_or("");
+ if let Some(expected)=profile.channel_id.as_deref().filter(|x|!x.trim().is_empty()){
+  if !actual_channel.is_empty()&&actual_channel!=expected{return Err(format!("PROCESSING_CHANNEL_MISMATCH: expected={expected} actual={actual_channel}"))}
+ }
+ let raw=item.pointer("/processingDetails/processingStatus").and_then(Value::as_str).unwrap_or("unknown");
+ let state=processing_state_from_status(raw);
+ Ok(json!({
+   "videoId":actual,
+   "channelId":actual_channel,
+   "identityVerified":true,
+   "processingStatus":raw,
+   "processingState":state,
+   "processingCheckedAt":Utc::now().to_rfc3339(),
+   "processingProgress":{
+     "partsTotal":item.pointer("/processingDetails/processingProgress/partsTotal").and_then(Value::as_str),
+     "partsProcessed":item.pointer("/processingDetails/processingProgress/partsProcessed").and_then(Value::as_str),
+     "timeLeftMs":item.pointer("/processingDetails/processingProgress/timeLeftMs").and_then(Value::as_str)
+   },
+   "processingFailureReason":item.pointer("/processingDetails/processingFailureReason").and_then(Value::as_str),
+   "processingIssuesAvailability":item.pointer("/processingDetails/processingIssuesAvailability").and_then(Value::as_str),
+   "rejectionReason":item.pointer("/status/rejectionReason").and_then(Value::as_str),
+   "uploadStatus":item.pointer("/status/uploadStatus").and_then(Value::as_str),
+   "privacyStatus":item.pointer("/status/privacyStatus").and_then(Value::as_str),
+   "publishAt":item.pointer("/status/publishAt").and_then(Value::as_str)
+ }))
+}
+
+#[tauri::command]
+pub async fn youtube_video_processing_status_batch(
+ app:AppHandle,
+ profile_id:String,
+ video_ids:Vec<String>,
+ operation_id:Option<String>,
+)->Result<Value,String>{
+ let mut seen=std::collections::HashSet::<String>::new();
+ let ids=video_ids.into_iter().map(|x|x.trim().to_string()).filter(|x|!x.is_empty()&&seen.insert(x.clone())).take(5000).collect::<Vec<_>>();
+ if ids.is_empty(){return Ok(json!({"requested":0,"found":0,"calls":0,"rows":[]}))}
+ let (token,profile)=valid_access_token(&app,&profile_id).await?;
+ let client=reqwest::Client::new();
+ let mut rows=Vec::<Value>::new();
+ let mut found=std::collections::HashSet::<String>::new();
+ let mut calls=0usize;
+ for chunk in ids.chunks(50){
+  calls+=1;
+  emit_youtube_api_request(&app,"videos.list",operation_id.as_deref());
+  let joined=chunk.join(",");
+  let r=client.get("https://www.googleapis.com/youtube/v3/videos")
+   .bearer_auth(&token)
+   .query(&[("part","id,snippet,status,processingDetails"),("id",joined.as_str())])
+   .send().await.map_err(|e|format!("PROCESSING_BATCH_NETWORK: {e}"))?;
+  let st=r.status();let v:Value=r.json().await.map_err(|e|format!("PROCESSING_BATCH_PARSE: {e}"))?;
+  if !st.is_success(){return Err(youtube_error(&v,"YouTube processing batch status check failed"))}
+  for item in v.get("items").and_then(Value::as_array).cloned().unwrap_or_default(){
+   let actual=item.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+   if actual.is_empty(){continue}
+   let actual_channel=item.pointer("/snippet/channelId").and_then(Value::as_str).unwrap_or("");
+   if let Some(expected)=profile.channel_id.as_deref().filter(|x|!x.trim().is_empty()){
+    if !actual_channel.is_empty()&&actual_channel!=expected{continue}
+   }
+   found.insert(actual.clone());
+   let raw=item.pointer("/processingDetails/processingStatus").and_then(Value::as_str).unwrap_or("unknown");
+   rows.push(json!({
+    "videoId":actual,
+    "channelId":actual_channel,
+    "remoteExists":true,
+    "identityVerified":true,
+    "processingStatus":raw,
+    "processingState":processing_state_from_status(raw),
+    "processingCheckedAt":Utc::now().to_rfc3339(),
+    "processingFailureReason":item.pointer("/processingDetails/processingFailureReason").and_then(Value::as_str),
+    "rejectionReason":item.pointer("/status/rejectionReason").and_then(Value::as_str),
+    "uploadStatus":item.pointer("/status/uploadStatus").and_then(Value::as_str),
+    "privacyStatus":item.pointer("/status/privacyStatus").and_then(Value::as_str),
+    "publishAt":item.pointer("/status/publishAt").and_then(Value::as_str)
+   }));
+  }
+ }
+ let checked_at=Utc::now().to_rfc3339();
+ for id in ids.iter().filter(|x|!found.contains(*x)){
+  rows.push(json!({"videoId":id,"remoteExists":false,"identityVerified":false,"processingStatus":"missing","processingState":"PROCESSING_UNKNOWN","processingCheckedAt":checked_at}));
+ }
+ Ok(json!({"requested":ids.len(),"found":found.len(),"calls":calls,"rows":rows}))
+}
+
+fn schedule_data_incomplete_ids(rows:&[Value])->Vec<String>{
+    rows.iter().filter_map(|x|{
+        let id=x.get("id").and_then(|v|v.as_str()).unwrap_or("").to_string();
+        let privacy=x.get("privacyStatus").and_then(|v|v.as_str()).unwrap_or("unknown");
+        let publish_at=x.get("publishAt").and_then(|v|v.as_str()).unwrap_or("").trim();
+        let bad_privacy=privacy=="unknown"||privacy.trim().is_empty();
+        let bad_schedule=privacy=="private"&&!publish_at.is_empty()&&chrono::DateTime::parse_from_rfc3339(publish_at).is_err();
+        if bad_privacy||bad_schedule{Some(id)}else{None}
+    }).filter(|x|!x.is_empty()).collect()
+}
+
+#[tauri::command]
+pub async fn youtube_retry_existing_video_hydration(
+    app:AppHandle,
+    profile_id:String,
+    video_ids:Vec<String>,
+    operation_id:Option<String>,
+)->Result<Value,String>{
+    let (token,profile)=valid_access_token(&app,&profile_id).await?;
+    let mut seen=std::collections::HashSet::<String>::new();
+    let ids=video_ids.into_iter()
+        .map(|x|x.trim().to_string())
+        .filter(|x|!x.is_empty()&&seen.insert(x.clone()))
+        .take(5000)
+        .collect::<Vec<_>>();
+    if ids.is_empty(){return Err("TARGETED_RETRY_EMPTY: нет video ID для проверки".into())}
+    let client=reqwest::Client::new();
+    let mut by_id=std::collections::HashMap::<String,Value>::new();
+    let mut hydration_errors=Vec::<String>::new();
+    let mut calls=0usize;
+    for chunk in ids.chunks(50){
+        calls+=1;
+        emit_youtube_api_request(&app,"videos.list",operation_id.as_deref());
+        let joined=chunk.join(",");
+        let response=client.get("https://www.googleapis.com/youtube/v3/videos")
+            .bearer_auth(&token)
+            .query(&[("part","snippet,status,contentDetails,statistics"),("id",joined.as_str())])
+            .send().await;
+        let rr=match response{
+            Ok(x)=>x,
+            Err(e)=>{hydration_errors.push(format!("batch {calls}: network {e}"));continue}
+        };
+        let st=rr.status();let v:Value=rr.json().await.unwrap_or_else(|_|json!({}));
+        if !st.is_success(){
+            let err=youtube_error(&v,"Не удалось проверить недостающие video IDs");
+            let lower=err.to_ascii_lowercase();
+            if lower.contains("quota")||lower.contains("dailylimit")||lower.contains("ratelimit"){return Err(err)}
+            hydration_errors.push(format!("batch {calls}: {err}"));continue
+        }
+        for item in v.get("items").and_then(|x|x.as_array()).cloned().unwrap_or_default(){
+            if let Some(id)=item.get("id").and_then(|x|x.as_str()){
+                let same_channel=profile.channel_id.as_deref().map(|expected|
+                    item.pointer("/snippet/channelId").and_then(|x|x.as_str())==Some(expected)
+                ).unwrap_or(true);
+                if same_channel{by_id.insert(id.to_string(),item);}
+            }
+        }
+    }
+    let mut out=Vec::<Value>::new();
+    for (position,id) in ids.iter().enumerate(){
+        if let Some(item)=by_id.get(id){
+            if let Some(row)=authoritative_inventory_row(item,position){out.push(row)}
+        }
+    }
+    let missing=ids.iter().filter(|id|!by_id.contains_key(*id)).cloned().collect::<Vec<_>>();
+    let schedule_incomplete=schedule_data_incomplete_ids(&out);
+    Ok(json!({
+        "requestedIds":ids,
+        "videosHydrated":out.len(),
+        "missingHydrationCount":missing.len(),
+        "missingHydrationIds":missing,
+        "scheduleDataIncompleteCount":schedule_incomplete.len(),
+        "scheduleIncompleteIds":schedule_incomplete,
+        "hydrationErrors":hydration_errors,
+        "apiRequests":calls,
+        "complete":missing.is_empty()&&hydration_errors.is_empty(),
+        "scheduleComplete":missing.is_empty()&&hydration_errors.is_empty()&&schedule_incomplete.is_empty(),
+        "videos":out
+    }))
+}
+
 #[tauri::command]
 pub async fn youtube_channel_stats(
     app: AppHandle,
