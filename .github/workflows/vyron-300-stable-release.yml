@@ -11,10 +11,6 @@ on:
         description: 'Exact physically accepted release/vyron-3.0.0 HEAD SHA'
         required: true
         type: string
-      physical_video_id:
-        description: 'One physically uploaded YouTube Video ID from acceptance'
-        required: true
-        type: string
       physical_acceptance:
         description: 'Type VYRON_3_0_0_PHYSICAL_PASS exactly'
         required: true
@@ -47,7 +43,6 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       APPROVED_RUN_ID: ${{ inputs.approved_run_id }}
       APPROVED_HEAD: ${{ inputs.approved_head }}
-      PHYSICAL_VIDEO_ID: ${{ inputs.physical_video_id }}
       PHYSICAL_ACCEPTANCE: ${{ inputs.physical_acceptance }}
     steps:
       - name: Checkout exact approved source
@@ -61,7 +56,6 @@ jobs:
         run: |
           set -Eeuo pipefail
           test "$PHYSICAL_ACCEPTANCE" = 'VYRON_3_0_0_PHYSICAL_PASS'
-          test -n "$PHYSICAL_VIDEO_ID"
           test "$(git rev-parse HEAD)" = "$APPROVED_HEAD"
           BRANCH_HEAD="$(gh api "repos/$REPO/git/ref/heads/release/vyron-3.0.0" --jq .object.sha)"
           test "$BRANCH_HEAD" = "$APPROVED_HEAD"
@@ -114,7 +108,6 @@ jobs:
           shasum -a 256 /tmp/windows-feed-before.json | awk '{print $1}' >/tmp/windows-feed-before.sha
           echo "APPROVED_HEAD=$APPROVED_HEAD"
           echo "APPROVED_RUN_ID=$APPROVED_RUN_ID"
-          echo "PHYSICAL_VIDEO_ID=$PHYSICAL_VIDEO_ID"
           echo 'PHYSICAL_ACCEPTANCE=PASS'
 
       - name: Download exact approved Physical Candidate artifact
@@ -233,7 +226,6 @@ jobs:
 
           - Exact approved candidate run: $APPROVED_RUN_ID
           - Exact approved source HEAD: $APPROVED_HEAD
-          - Physical one-video acceptance ID: $PHYSICAL_VIDEO_ID
           - Application update is not an OAuth reset.
           - Publisher identity is channel + current SHA-256 + file size; reused paths and VIDEO numbers can create safe new generations.
           - Same-channel verified content fingerprints remain protected from duplicate upload.
@@ -306,7 +298,6 @@ jobs:
           set -Eeuo pipefail
           echo "VYRON_300_RELEASE_HEAD=$APPROVED_HEAD"
           echo "VYRON_300_APPROVED_RUN=$APPROVED_RUN_ID"
-          echo "PHYSICAL_VIDEO_ID=$PHYSICAL_VIDEO_ID"
           echo 'VERSION=3.0.0'
           echo 'STABLE_RELEASE=v3.0.0'
           echo 'MACOS_UPDATER=3.0.0'
