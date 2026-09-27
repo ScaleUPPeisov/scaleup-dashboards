@@ -420,6 +420,35 @@ mod v213_storage_tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn locked_primary_fails_without_destroying_existing_state() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let root = std::env::temp_dir().join(format!("vyron-state-locked-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).expect("create locked-state root");
+        let path = root.join("state.json");
+        atomic_write(&path, &json!({"version":8,"channels":[{"id":"stable"}],"jobs":[{"id":"keep"}]}))
+            .expect("seed stable state");
+
+        let lock = OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&path)
+            .expect("lock primary without sharing");
+
+        let err = atomic_write(&path, &json!({"version":8,"channels":[{"id":"replacement"}]}))
+            .expect_err("locked Windows state must not be replaced");
+        assert!(err.contains("state atomic replace"), "{err}");
+
+        drop(lock);
+        let state = read_valid_json(&path).expect("primary survives failed replace");
+        assert_eq!(state["channels"][0]["id"], "stable");
+        assert_eq!(state["jobs"][0]["id"], "keep");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[test]
     fn corrupt_primary_and_backup_surface_explicit_recovery_error() {
         let root = std::env::temp_dir().join(format!("vyron-state-{}", uuid::Uuid::new_v4()));
