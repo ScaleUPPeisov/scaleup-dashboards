@@ -3920,6 +3920,33 @@ mod v2111_oauth_recovery_tests {
         for forbidden in ["client_secret","access_token","refresh_token","CLIENT_SECRET_MUST_NOT_LEAK","ACCESS_TOKEN_MUST_NOT_LEAK","REFRESH_TOKEN_MUST_NOT_LEAK","GLOBAL_SECRET_MUST_NOT_LEAK","API_KEY_MUST_NOT_LEAK"]{assert!(!out.contains(forbidden),"leaked {forbidden}")}
     }
 
+    #[test]
+    fn persisted_oauth_and_google_metadata_never_serialize_secret_values() {
+        let oauth=OAuthStore{profiles:vec![OAuthProfile{
+            id:"p-secret".into(),client_id:"client-id".into(),client_secret:"CLIENT_SECRET_VALUE".into(),
+            channel_id:Some("UC_SAFE".into()),channel_title:Some("Safe".into()),
+            access_token:"ACCESS_TOKEN_VALUE".into(),refresh_token:"REFRESH_TOKEN_VALUE".into(),
+            expires_at:123,connected_at:"2026-09-27T00:00:00Z".into(),scopes:vec![],
+            preferred_browser:"default".into(),identity_validated_at:None,identity_validated_channel_id:None,credential_error:None
+        }]};
+        let oauth_disk=serde_json::to_string(&oauth).expect("serialize OAuth metadata");
+        for secret in ["CLIENT_SECRET_VALUE","ACCESS_TOKEN_VALUE","REFRESH_TOKEN_VALUE","client_secret","access_token","refresh_token"] {
+            assert!(!oauth_disk.contains(secret),"OAuth metadata leaked {secret}");
+        }
+
+        let google=GoogleConfig{
+            client_id:"client-id".into(),client_secret:"GLOBAL_CLIENT_SECRET".into(),
+            project_id:"project-id".into(),api_key:"GOOGLE_API_KEY_VALUE".into(),
+            client_secret_present:true,api_key_present:true
+        };
+        let google_disk=serde_json::to_string(&google).expect("serialize Google metadata");
+        for secret in ["GLOBAL_CLIENT_SECRET","GOOGLE_API_KEY_VALUE","client_secret","api_key"] {
+            assert!(!google_disk.contains(secret),"Google metadata leaked {secret}");
+        }
+        assert!(google_disk.contains("client_secret_present"));
+        assert!(google_disk.contains("api_key_present"));
+    }
+
     fn profile(n: usize) -> OAuthProfile {
         OAuthProfile {
             id: format!("p{n}"),
