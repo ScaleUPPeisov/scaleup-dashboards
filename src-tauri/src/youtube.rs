@@ -203,6 +203,40 @@ fn require_canonical_refresh(app:&AppHandle,profile_id:&str)->Result<String,Stri
  Err(format!("OAUTH_RECONNECT_REQUIRED: profile={profile_id}; canonical refresh token is missing"))
 }
 fn canonical_global_client_secret()->Result<Option<String>,String>{security::canonical_get_secret_cached(GOOGLE_CLIENT_SECRET)}
+fn profile_client_secret_account(profile_id:&str)->String{oauth_key(profile_id,"client_secret")}
+#[derive(Debug,Clone,PartialEq,Eq)]
+enum OAuthClientSecretSource{ProfileCanonical,GlobalExactMatch}
+#[derive(Debug,Clone)]
+struct ResolvedOAuthClient{client_id:String,client_secret:String,source:OAuthClientSecretSource}
+fn select_oauth_client_secret(
+    profile_secret:Option<String>,
+    client_id:&str,
+    global_client_id:&str,
+    global_secret:Option<String>,
+)->Result<(String,OAuthClientSecretSource),&'static str>{
+    if let Some(secret)=profile_secret.filter(|x|!x.trim().is_empty()){
+        return Ok((secret,OAuthClientSecretSource::ProfileCanonical))
+    }
+    if client_id.trim()==global_client_id.trim(){
+        if let Some(secret)=global_secret.filter(|x|!x.trim().is_empty()){
+            return Ok((secret,OAuthClientSecretSource::GlobalExactMatch))
+        }
+    }
+    Err("CLIENT_SECRET_REQUIRED")
+}
+fn resolve_client_secret_for_profile(app:&AppHandle,profile_id:&str,client_id:&str)->Result<ResolvedOAuthClient,String>{
+    let profile_id=profile_id.trim();
+    let client_id=client_id.trim();
+    if profile_id.is_empty(){return Err("OAUTH_PROFILE_ID_MISSING: existing profile UUID is required".into())}
+    if client_id.is_empty(){return Err("OAUTH_CLIENT_MISSING: profile client_id is empty".into())}
+    let profile_secret=security::canonical_get_secret_cached(&profile_client_secret_account(profile_id))?;
+    let global_meta=load_google_config_metadata(app)?;
+    let global_secret=if global_meta.client_id.trim()==client_id{canonical_global_client_secret()?}else{None};
+    match select_oauth_client_secret(profile_secret,client_id,&global_meta.client_id,global_secret){
+        Ok((client_secret,source))=>Ok(ResolvedOAuthClient{client_id:client_id.into(),client_secret,source}),
+        Err(_)=>Err(format!("OAUTH_CLIENT_SECRET_REQUIRED: profile={profile_id}; exact client_secret for client_id is missing")),
+    }
+}
 fn migrate_global_client_secret_if_needed(app:&AppHandle,profile_id:Option<&str>)->Result<Option<String>,String>{
  match canonical_global_client_secret(){
   Ok(Some(v)) if !v.trim().is_empty()=>return Ok(Some(v)),
@@ -271,9 +305,10 @@ fn read_profile_secret_with<S: OAuthSecretStore>(
     Ok(secrets.get(&current)?.filter(|v|!v.is_empty()))
 }
 fn write_profile_secrets_with<S: OAuthSecretStore>(secrets:&S,p:&OAuthProfile)->Result<(),String>{
-    // RC5 durable profile storage intentionally contains only refresh_token.
-    // access_token is process memory only; client_secret is a single global canonical item.
+    // Durable profile ABI: refresh_token + the exact client_secret for this OAuth client.
+    // access_token remains process-memory only.
     if !p.refresh_token.trim().is_empty(){secrets.set(&oauth_key(&p.id,"refresh_token"),&p.refresh_token)?}
+    if !p.client_secret.trim().is_empty(){secrets.set(&oauth_key(&p.id,"client_secret"),&p.client_secret)?}
     Ok(())
 }
 fn hydrate_profile_secrets_with<S:OAuthSecretStore>(secrets:&S,p:&mut OAuthProfile)->Result<(),String>{
@@ -285,7 +320,7 @@ fn hydrate_profile_secret_kind_with<S:OAuthSecretStore>(secrets:&S,p:&mut OAuthP
     match kind{
      "refresh_token"=>{if p.refresh_token.is_empty(){p.refresh_token=read_profile_secret_with(secrets,&p.id,"refresh_token")?.unwrap_or_default()}},
      "access_token"=>{if p.access_token.is_empty(){if let Some((token,expires_at))=session_access_token(&p.id){p.access_token=token;p.expires_at=expires_at}}},
-     "client_secret"=>{p.client_secret=canonical_global_client_secret()?.unwrap_or_default()},
+     "client_secret"=>{if p.client_secret.is_empty(){p.client_secret=read_profile_secret_with(secrets,&p.id,"client_secret")?.unwrap_or_default()}},
      _=>return Err(format!("UNKNOWN_SECRET_KIND: {kind}"))
     }
     Ok(())
@@ -297,13 +332,15 @@ fn hydrate_profile_secret_for_operation(app:&AppHandle,p:&mut OAuthProfile,kind:
     match kind{
      "refresh_token"=>{p.refresh_token=require_canonical_refresh(app,&p.id)?;Ok(())},
      "access_token"=>{if let Some((token,expires_at))=session_access_token(&p.id){p.access_token=token;p.expires_at=expires_at;Ok(())}else{Err(format!("ACCESS_TOKEN_SESSION_MISS: profile={}",p.id))}},
-     "client_secret"=>{p.client_secret=canonical_global_client_secret()?.unwrap_or_default();Ok(())},
+     "client_secret"=>{let resolved=resolve_client_secret_for_profile(app,&p.id,&p.client_id)?;p.client_secret=resolved.client_secret;Ok(())},
      _=>Err(format!("UNKNOWN_SECRET_KIND: {kind}"))
     }
 }
 fn delete_profile_secrets(id:&str)->Result<(),String>{
     forget_access_token(id);
-    security::canonical_delete_secret(&oauth_key(id,"refresh_token"))
+    security::canonical_delete_secret(&oauth_key(id,"refresh_token"))?;
+    security::canonical_delete_secret(&oauth_key(id,"client_secret"))?;
+    Ok(())
 }
 fn write_oauth_metadata(path: &Path, s: &OAuthStore) -> Result<(), String> {
     let bytes = serde_json::to_vec_pretty(s).map_err(|e| format!("OAuth serialize: {e}"))?;
@@ -399,15 +436,8 @@ async fn refresh_access_token_http(client_id:&str,refresh_token:&str,client_secr
     Ok((token,expires))
 }
 async fn refresh_access_token_for_profile(app:&AppHandle,profile_id:&str,client_id:&str,refresh_token:&str)->Result<(String,i64),String>{
-    match refresh_access_token_http(client_id,refresh_token,None).await{
-      Ok(v)=>Ok(v),
-      Err(e) if e.starts_with("OAUTH_CLIENT_MISMATCH:")=>{
-        let secret=migrate_global_client_secret_if_needed(app,Some(profile_id))?.unwrap_or_default();
-        if secret.trim().is_empty(){return Err(e)}
-        refresh_access_token_http(client_id,refresh_token,Some(&secret)).await
-      }
-      Err(e)=>Err(e)
-    }
+    let resolved=resolve_client_secret_for_profile(app,profile_id,client_id)?;
+    refresh_access_token_http(&resolved.client_id,refresh_token,Some(&resolved.client_secret)).await
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -5355,6 +5385,15 @@ mod v219_rc7_secitem_ui_skip_tests{
   assert_eq!(security::LEGACY_SERVICE,"com.scaleup.vyron.security");
  }
  #[test]
+ fn client_secret_resolution_never_crosses_oauth_client_ids(){
+  let exact=select_oauth_client_secret(Some("profile-a".into()),"client-A","client-B",Some("global-b".into())).unwrap();
+  assert_eq!(exact.0,"profile-a");assert_eq!(exact.1,OAuthClientSecretSource::ProfileCanonical);
+  let wrong=select_oauth_client_secret(None,"client-A","client-B",Some("global-b".into()));
+  assert_eq!(wrong,Err("CLIENT_SECRET_REQUIRED"));
+  let fallback=select_oauth_client_secret(None,"client-B","client-B",Some("global-b".into())).unwrap();
+  assert_eq!(fallback.0,"global-b");assert_eq!(fallback.1,OAuthClientSecretSource::GlobalExactMatch);
+ }
+ #[test]
  fn access_token_replacement_is_memory_only(){
   let id="rc7-access-memory-test";
   forget_access_token(id);
@@ -5364,7 +5403,7 @@ mod v219_rc7_secitem_ui_skip_tests{
   forget_access_token(id);
  }
  #[test]
- fn profile_persistence_never_writes_access_or_client_secret(){
+ fn profile_persistence_writes_refresh_and_profile_client_secret_but_not_access(){
   #[derive(Default)]struct C{sets:std::cell::RefCell<Vec<String>>}
   impl OAuthSecretStore for C{
    fn get(&self,_:&str)->Result<Option<String>,String>{Ok(None)}
@@ -5374,13 +5413,14 @@ mod v219_rc7_secitem_ui_skip_tests{
   let c=C::default();
   let p=OAuthProfile{id:"p".into(),client_id:"client".into(),client_secret:"global-secret".into(),channel_id:None,channel_title:None,access_token:"short-lived".into(),refresh_token:"refresh".into(),expires_at:now_ts()+3600,connected_at:"x".into(),scopes:vec![],preferred_browser:"default".into(),identity_validated_at:None,identity_validated_channel_id:None,credential_error:None};
   write_profile_secrets_with(&c,&p).unwrap();
-  assert_eq!(&*c.sets.borrow(),&vec!["oauth.p.refresh_token".to_string()]);
+  assert_eq!(&*c.sets.borrow(),&vec!["oauth.p.refresh_token".to_string(),"oauth.p.client_secret".to_string()]);
  }
  #[test]
- fn global_client_secret_has_one_canonical_account_for_many_profiles(){
-  let accounts=(0..10).map(|_|GOOGLE_CLIENT_SECRET).collect::<std::collections::HashSet<_>>();
-  assert_eq!(accounts.len(),1);
-  assert_eq!(*accounts.iter().next().unwrap(),"google.client_secret");
+ fn profile_client_secret_accounts_are_isolated_for_many_profiles(){
+  let accounts=(0..10).map(|i|profile_client_secret_account(&format!("p{i}"))).collect::<std::collections::HashSet<_>>();
+  assert_eq!(accounts.len(),10);
+  assert!(accounts.contains("oauth.p0.client_secret"));
+  assert!(accounts.contains("oauth.p9.client_secret"));
  }
 }
 
@@ -5448,7 +5488,7 @@ mod v219_rc4_inventory_and_acl_tests{
   assert_eq!(inventory_bucket_counts(&rows,Utc::now()),(2,0,1,0));
  }
  #[test]
- fn rc5_persistent_profile_store_writes_refresh_only(){
+ fn persistent_profile_store_writes_refresh_and_exact_client_secret(){
   #[derive(Default)]struct S{v:std::cell::RefCell<HashMap<String,String>>,sets:std::cell::RefCell<Vec<String>>}
   impl OAuthSecretStore for S{
    fn get(&self,a:&str)->Result<Option<String>,String>{Ok(self.v.borrow().get(a).cloned())}
@@ -5458,8 +5498,8 @@ mod v219_rc4_inventory_and_acl_tests{
   let sec=S::default();
   let p=OAuthProfile{id:"p1".into(),client_id:"client".into(),client_secret:"secret".into(),channel_id:None,channel_title:None,access_token:"access".into(),refresh_token:"refresh".into(),expires_at:1,connected_at:"x".into(),scopes:vec![],preferred_browser:"default".into(),identity_validated_at:None,identity_validated_channel_id:None,credential_error:None};
   write_profile_secrets_with(&sec,&p).unwrap();
-  assert_eq!(&*sec.sets.borrow(),&vec!["oauth.p1.refresh_token".to_string()]);
+  assert_eq!(&*sec.sets.borrow(),&vec!["oauth.p1.refresh_token".to_string(),"oauth.p1.client_secret".to_string()]);
   assert!(sec.v.borrow().get("oauth.p1.access_token").is_none());
-  assert!(sec.v.borrow().get("oauth.p1.client_secret").is_none());
+  assert_eq!(sec.v.borrow().get("oauth.p1.client_secret").map(String::as_str),Some("secret"));
  }
 }
