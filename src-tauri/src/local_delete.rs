@@ -11,6 +11,47 @@ pub struct TrashLocalFileResult {
     pub missing: bool,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalSourceStatus {
+    pub path: String,
+    pub exists: bool,
+    pub is_file: bool,
+    pub size: Option<u64>,
+    pub modified_at: Option<u128>,
+}
+
+#[tauri::command]
+pub fn local_source_status(path: String) -> Result<LocalSourceStatus, String> {
+    let value = path.trim();
+    if value.is_empty() {
+        return Err("SOURCE_PATH_EMPTY".into());
+    }
+    let p = PathBuf::from(value);
+    if !p.exists() {
+        return Ok(LocalSourceStatus {
+            path: value.to_string(),
+            exists: false,
+            is_file: false,
+            size: None,
+            modified_at: None,
+        });
+    }
+    let md = fs::metadata(&p).map_err(|e| format!("SOURCE_STAT_FAILED: {e}"))?;
+    let modified_at = md
+        .modified()
+        .ok()
+        .and_then(|x| x.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|x| x.as_millis());
+    Ok(LocalSourceStatus {
+        path: value.to_string(),
+        exists: true,
+        is_file: md.is_file(),
+        size: Some(md.len()),
+        modified_at,
+    })
+}
+
 fn allowed_media(path: &Path) -> bool {
     matches!(
         path.extension()
@@ -100,6 +141,95 @@ pub fn trash_local_file_impl(
     })
 }
 
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenderFolderVideoFile {
+    pub path: String,
+    pub name: String,
+    pub size: u64,
+    pub created_at: Option<u128>,
+    pub modified_at: Option<u128>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenderFolderScanResult {
+    pub root: String,
+    pub files: Vec<RenderFolderVideoFile>,
+    pub scanned_entries: usize,
+    pub truncated: bool,
+}
+
+fn system_time_ms(value: Result<std::time::SystemTime, std::io::Error>) -> Option<u128> {
+    value.ok()?.duration_since(std::time::UNIX_EPOCH).ok().map(|x| x.as_millis())
+}
+
+fn scan_media_recursive(
+    root: &Path,
+    current: &Path,
+    depth: usize,
+    scanned: &mut usize,
+    truncated: &mut bool,
+    out: &mut Vec<RenderFolderVideoFile>,
+) {
+    if depth > 6 || *scanned >= 10000 || out.len() >= 3000 {
+        *truncated = true;
+        return;
+    }
+    let Ok(entries) = fs::read_dir(current) else { return };
+    for entry in entries.flatten() {
+        if *scanned >= 10000 || out.len() >= 3000 {
+            *truncated = true;
+            break;
+        }
+        *scanned += 1;
+        let p = entry.path();
+        let Ok(md) = entry.metadata() else { continue };
+        if md.is_dir() {
+            scan_media_recursive(root, &p, depth + 1, scanned, truncated, out);
+            continue;
+        }
+        if !md.is_file() || !allowed_media(&p) {
+            continue;
+        }
+        let Ok(canon) = p.canonicalize() else { continue };
+        if !canon.starts_with(root) || canon == root {
+            continue;
+        }
+        out.push(RenderFolderVideoFile {
+            path: canon.to_string_lossy().into_owned(),
+            name: canon.file_name().and_then(|x| x.to_str()).unwrap_or("").to_string(),
+            size: md.len(),
+            created_at: system_time_ms(md.created()),
+            modified_at: system_time_ms(md.modified()),
+        });
+    }
+}
+
+pub fn scan_render_folder_impl(path: &str) -> Result<RenderFolderScanResult, String> {
+    let root = canonical_allowed_root(path).ok_or_else(|| "RENDER_SCAN_ROOT_INVALID".to_string())?;
+    if !root.is_dir() {
+        return Err("RENDER_SCAN_ROOT_NOT_DIRECTORY".into());
+    }
+    let mut files = Vec::new();
+    let mut scanned_entries = 0usize;
+    let mut truncated = false;
+    scan_media_recursive(&root, &root, 0, &mut scanned_entries, &mut truncated, &mut files);
+    files.sort_by(|a,b| a.path.cmp(&b.path));
+    Ok(RenderFolderScanResult {
+        root: root.to_string_lossy().into_owned(),
+        files,
+        scanned_entries,
+        truncated,
+    })
+}
+
+#[tauri::command]
+pub fn scan_render_folder(path: String) -> Result<RenderFolderScanResult, String> {
+    scan_render_folder_impl(&path)
+}
+
 #[tauri::command]
 pub fn trash_local_file(
     path: String,
@@ -172,6 +302,66 @@ mod tests {
             assert!(canonical_allowed_root(&home.to_string_lossy()).is_none())
         }
     }
+    #[test]
+    fn local_source_status_handles_unicode_spaces_and_ampersand() {
+        let root = temp_root().join("Видео & Музыка");
+        fs::create_dir_all(&root).unwrap();
+        let p = root.join("Проект (01).mp4");
+        fs::write(&p, b"video").unwrap();
+        let status = local_source_status(p.to_string_lossy().into_owned()).unwrap();
+        assert!(status.exists);
+        assert!(status.is_file);
+        assert_eq!(status.size, Some(5));
+        let _ = fs::remove_dir_all(root.parent().unwrap());
+    }
+
+    #[test]
+    fn render_scan_is_local_and_ignores_non_media() {
+        let root=temp_root();
+        fs::write(root.join("001 - Ready Videos.mov"),b"video").unwrap();
+        fs::write(root.join("002.mp4"),b"video").unwrap();
+        fs::write(root.join("tracklist.txt"),b"text").unwrap();
+        let nested=root.join("Видео & Музыка");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("003 (готово).m4v"),b"video").unwrap();
+        let r=scan_render_folder_impl(root.to_str().unwrap()).unwrap();
+        assert_eq!(r.files.len(),3);
+        assert!(!r.files.iter().any(|x|x.name.ends_with(".txt")));
+        fs::remove_dir_all(root).unwrap()
+    }
+
+    #[test]
+    fn exact_channel_root_never_includes_sibling_channel_media() {
+        let workspace=temp_root();
+        let render=workspace.join("Render");
+        let glass=render.join("Glass City Lovers");
+        let neon=render.join("Neon Drive FM");
+        fs::create_dir_all(&glass).unwrap();
+        fs::create_dir_all(&neon).unwrap();
+        fs::write(glass.join("001.mov"),b"glass").unwrap();
+        fs::write(glass.join("030.m4v"),b"glass").unwrap();
+        fs::write(neon.join("001.mov"),b"neon").unwrap();
+        fs::write(neon.join("200.mp4"),b"neon").unwrap();
+        let r=scan_render_folder_impl(glass.to_str().unwrap()).unwrap();
+        let canon=glass.canonicalize().unwrap();
+        assert_eq!(r.files.len(),2);
+        assert!(r.files.iter().all(|x|PathBuf::from(&x.path).starts_with(&canon)));
+        assert!(!r.files.iter().any(|x|x.path.contains("Neon Drive FM")));
+        fs::remove_dir_all(workspace).unwrap()
+    }
+
+    #[test]
+    fn number_gaps_are_valid_in_channel_scan() {
+        let root=temp_root();
+        for n in [1,2,4,9,30] {
+            fs::write(root.join(format!("{n:03}.mov")),b"x").unwrap();
+        }
+        let r=scan_render_folder_impl(root.to_str().unwrap()).unwrap();
+        assert_eq!(r.files.len(),5);
+        assert!(!r.truncated);
+        fs::remove_dir_all(root).unwrap()
+    }
+
     #[test]
     fn media_types_are_accepted_by_guard() {
         let root = temp_root();
