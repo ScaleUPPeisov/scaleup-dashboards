@@ -1,11 +1,11 @@
 {
-  "version": "2.1.15-rc.7",
-  "notes": "## VYRON 2.1.15-rc.7 — Channel Render Scan + OAuth Update Continuity\n\nBuilt directly on immutable v2.1.15-rc.6.\n\n- Publisher render scan now requires an exact folder bound to the stable local channel ID and never silently falls back to the global workspace.\n- Every supported physical media file receives exactly one primary classification; summary counters cannot exceed the scanned file total.\n- Existing YouTube proof keeps local copies out of NEW upload candidates and same sequence numbers on different channels do not collide.\n- RC6 wrong-root scan records are blocked from upload and exposed for metadata-only recovery; physical files are never moved or deleted by repair.\n- Normal application updates preserve active refresh-token account pointers, profile UUIDs, Bundle ID and canonical Keychain service.\n- 13-profile and 50-profile continuity fixtures protect rotated/legacy mixed states without browser launch, credentials.json reimport or mass rotation.\n- RC6 KEYCHAIN_AUTH_FAILED / OSStatus -25293 generation rotation remains intact.\n- This prerelease is intentionally NOT promoted to the macOS updater feed until physical RC6→RC7 OAuth continuity and render-scan acceptance pass.",
-  "pub_date": "2026-09-20T18:03:23Z",
+  "version": "3.3.0",
+  "notes": "VYRON 3.3.0 — secure Windows ↔ macOS migration; Google/YouTube profiles preserved; merge-safe duplicate-resistant imports; OAuth and Google Cloud Project continuity; cross-platform folder remapping; Windows update continuity; rollback/recovery protection; stability and regression fixes.",
+  "pub_date": "2026-09-27T11:37:48Z",
   "platforms": {
     "darwin-aarch64": {
-      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/download/v2.1.15-rc.7/VYRON.app.tar.gz",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM1FKSThLQTRtbXZFdFNhZ2dLNTN5Mm5UdWFvSkNjbjdDaXhFRzJNSDd4Y0RQRENzU2wrNG1VUVBPRkMrNDFlVXFKOVRtSlpOZG9YUVFJQTlWWW0yNmdzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5OTI3MzgzCWZpbGU6VllST04uYXBwLnRhci5negpBbXRBWlpZcklGQ2ZmNURFSWY5TUhoMmp4YXFDNE8xMVV2c1lUa1dEUHN3TEZrbzU2dXR3K0dQcGVsUUhYeDVrTzVkVUNQOU80MHlNeTZLNHVUdi9CUT09Cg=="
+      "url": "https://github.com/ScaleUPPeisov/vyron-releases/releases/download/v3.3.0/VYRON.app.tar.gz",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQThWRGlmVlNFM1V6ekNqWGNUaW5MeUI1YW1WSmF6eUtMc3Q5UnBzTUNUcjNDRjY0cjBaem1RaGxZZVBBb04zKzdORTZyWXZjemlvYWtmMkNNS0dEdmtXaE5YM1RVVFE4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNTA3NDU2CWZpbGU6VllST04uYXBwLnRhci5negowMFZaQzZUYmlCNmlHTzNLdkRmWTdTalFRVVhKNWw0c0ZKRkU0bjJZOFNxaXhUbjlwanVWWDd3L3VGU1kwWU81dlFwRkRPaGxHdVdMREtsTXNoUnpBQT09Cg=="
     }
   }
 }
