@@ -25,13 +25,13 @@ describe('VYRON 2.1.6 upload speed and ETA',()=>{
 describe('VYRON 2.1.6 multi-channel telemetry isolation',()=>{
  it('keeps Beta Room identity while UI context changes and tracks Lost Highway independently',async()=>{
   const mod=await import('./uploadTelemetry');mod.resetUploadTelemetryForTests();
-  mod.registerUploadRuntime({jobId:'a',projectId:'pa',channelId:'elara',profileId:'profile-elara',filePath:'/elara.mp4',startedAt:'2026-09-15T10:00:00.000Z'},100,0);
+  mod.registerUploadRuntime({jobId:'a',projectId:'pa',channelId:'fixture-alpha',profileId:'profile-fixture-alpha',filePath:'/fixture-alpha.mp4',startedAt:'2026-09-15T10:00:00.000Z'},100,0);
   mod.applyUploadProgressFact({jobId:'a',bytesUploaded:20,totalBytes:100,progress:20,timestamp:'2026-09-15T10:00:06.000Z',active:true});
   // A UI channel switch is deliberately absent from telemetry APIs; no mutable active-channel input exists here.
   mod.registerUploadRuntime({jobId:'b',projectId:'pb',channelId:'lost-highway',profileId:'profile-lost',filePath:'/lost.mp4',startedAt:'2026-09-15T10:00:07.000Z'},200,0);
   mod.applyUploadProgressFact({jobId:'b',bytesUploaded:60,totalBytes:200,progress:30,timestamp:'2026-09-15T10:00:13.000Z',active:true});
   const rows=mod.uploadTelemetrySnapshot().active;const a=rows.find(x=>x.jobId==='a')!,b=rows.find(x=>x.jobId==='b')!;
-  expect(a.channelId).toBe('elara');expect(a.profileId).toBe('profile-elara');expect(a.percent).toBe(20);
+  expect(a.channelId).toBe('fixture-alpha');expect(a.profileId).toBe('profile-fixture-alpha');expect(a.percent).toBe(20);
   expect(b.channelId).toBe('lost-highway');expect(b.profileId).toBe('profile-lost');expect(b.percent).toBe(30);
  });
 });
