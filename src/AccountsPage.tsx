@@ -123,7 +123,7 @@ export function AccountsPage(){
   try{
    const result=await api.youtubeOauthRecoverExistingProfiles();
    setRecovery({...result,running:false,done:result.total});
-   await refresh();
+   await refreshAfterOauthMutation();
    if(!quiet)toast('Каналы сохранены. Автоматически восстановлено: '+result.automaticallyRestored+'. Требуют ручного входа: '+result.manualQueue+'. Браузер автоматически не открывался.');
    return result
   }catch(e){
@@ -231,7 +231,7 @@ export function AccountsPage(){
     setWrongChannel({...result,browser:browserChoice});
     return
    }
-   const p=await refresh();
+   const p=await refreshAfterOauthMutation();
    const profile=p.find(x=>x.id===profileId);
    if(profile){bindProfile(profile);await refreshProfileStats(profile,true)}
    setHealth(h=>({...h,[profileId]:{ok:true,status:'CONNECTED',channelId:result.authorizedChannelId,channelTitle:result.channelTitle}}));
@@ -249,7 +249,7 @@ export function AccountsPage(){
  async function finishNewChannel(p:YoutubeProfile&{statistics?:YoutubeChannelStatistics}){
   const binding=bindProfile(p);
   if(p.statistics)applyStatistics(p,p.statistics);
-  await refresh();
+  await refreshAfterOauthMutation();
   toast(binding?.mode==='future'
    ?`✓ ${p.channelTitle||p.channelId||'YouTube канал'} привязан к будущему каналу ${binding.channel.name}. Все готовые проекты сохранены.`
    :`✓ ${p.channelTitle||p.channelId||'YouTube канал'} подключён и привязан автоматически`)
@@ -300,7 +300,7 @@ export function AccountsPage(){
    if(h.statistics)applyStatistics(p,h.statistics);
    journal({eventId:`oauth-validation:${p.id}:${Date.now()}`,eventType:'OAUTH_VALIDATION_PASS',status:'SUCCESS',source:'LIVE_OPERATION',profileId:p.id,channelId:boundChannel(p)?.id,channelName:p.channelTitle,details:{youtubeChannelId:p.channelId||'',youtubeApiRequests:1}});
    if(!quiet)toast(`✓ ${h.channelTitle||p.channelTitle||'Канал'}: OAuth READY, YouTube API OK`);
-   await refresh();
+   await refreshAfterOauthMutation();
    return h
   }catch(e){
    const raw=String(e),profileKeychain=/KEYCHAIN_|OAUTH_CREDENTIAL_PRECHECK_FAILED/i.test(raw),globalBlocked=Boolean(config?.repairRequired)||raw.includes('OAUTH_CLIENT_SECRET');
@@ -326,7 +326,7 @@ export function AccountsPage(){
    journal({eventId:`oauth-keychain-denied:${p.id}:${Date.now()}`,eventType:'OAUTH_KEYCHAIN_ACCESS_DENIED',status:'FAILED',source:'LIVE_OPERATION',profileId:p.id,channelId:boundChannel(p)?.id,channelName:p.channelTitle,errorCode:result.errorCode||'KEYCHAIN_ACCESS_DENIED',details});
    if(!quiet)toast(`Keychain всё ещё блокирует токен ${p.channelTitle||p.channelId||''}. Password popup не открывался.`);
   }else if(result.status==='MISSING'&&!quiet)toast(`OAuth-токен ${p.channelTitle||p.channelId||''} отсутствует. Переподключение требуется только этому профилю.`);
-  await refresh();
+  await refreshAfterOauthMutation();
   return result
  }
 
@@ -343,7 +343,7 @@ export function AccountsPage(){
      journal({eventId:`oauth-keychain-denied:${p.id}:${Date.now()}`,eventType:'OAUTH_KEYCHAIN_ACCESS_DENIED',status:'FAILED',source:'LIVE_OPERATION',profileId:p.id,channelId:boundChannel(p)?.id,channelName:p.channelTitle,errorCode:row.errorCode||'KEYCHAIN_ACCESS_DENIED',details});
     }
    }
-   await refresh();
+   await refreshAfterOauthMutation();
    toast(`Проверка OAuth завершена. Доступны: ${result.accessible}. Автоматически восстановлены: ${result.recoveredAutomatically}. Keychain blocked: ${result.keychainBlocked}. Missing: ${result.missing}. YouTube API requests: 0.`);
   }catch(e){toast(`Безопасная OAuth-проверка не завершена: ${String(e)}`)}
   finally{setChecking(false)}
