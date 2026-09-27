@@ -628,9 +628,12 @@ fn storage_free_bytes(path: &Path) -> Option<u64> {
 #[cfg(target_os = "windows")]
 fn windows_storage_external(path: &Path) -> bool {
     use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Storage::FileSystem::{
-        GetDriveTypeW, DRIVE_CDROM, DRIVE_REMOTE, DRIVE_REMOVABLE,
-    };
+    use windows_sys::Win32::Storage::FileSystem::GetDriveTypeW;
+    // GetDriveTypeW documented return values. Keep these local so this logic does not
+    // depend on where a particular windows-sys release exposes the DRIVE_* constants.
+    const DRIVE_REMOVABLE_KIND: u32 = 2;
+    const DRIVE_REMOTE_KIND: u32 = 4;
+    const DRIVE_CDROM_KIND: u32 = 5;
 
     // UNC paths are network storage even when the target is currently offline.
     let display = path.as_os_str().to_string_lossy();
@@ -648,7 +651,10 @@ fn windows_storage_external(path: &Path) -> bool {
             .chain(std::iter::once(0))
             .collect::<Vec<_>>();
         let kind = unsafe { GetDriveTypeW(wide.as_ptr()) };
-        return matches!(kind, DRIVE_REMOVABLE | DRIVE_REMOTE | DRIVE_CDROM);
+        return matches!(
+            kind,
+            DRIVE_REMOVABLE_KIND | DRIVE_REMOTE_KIND | DRIVE_CDROM_KIND
+        );
     }
     false
 }
