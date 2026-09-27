@@ -621,6 +621,19 @@ fn restore_snapshot_dir(app: &AppHandle, dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn run_with_rollback<T,F,R>(operation:F,rollback:R)->Result<T,String>
+where F:FnOnce()->Result<T,String>,R:FnOnce()->Result<(),String>{
+    match operation(){
+        Ok(value)=>Ok(value),
+        Err(primary)=>{
+            match rollback(){
+                Ok(())=>Err(primary),
+                Err(rb)=>Err(format!("{primary}; MIGRATION_ROLLBACK_FAILED: {rb}")),
+            }
+        }
+    }
+}
+
 fn read_bundle(path: &str, passphrase: &str) -> Result<PortablePayload, String> {
     let bytes = fs::read(path).map_err(|e| format!("MIGRATION_READ_FAILED: {e}"))?;
     decrypt_payload(&bytes, passphrase)
@@ -740,34 +753,20 @@ pub fn migration_import(
     );
     let backup = create_rollback_snapshot(&app, &backup_id)?;
 
-    if let Err(e) = storage::save_state(app.clone(), merged) {
-        let _ = restore_snapshot_dir(&app, &backup);
-        return Err(format!("MIGRATION_STATE_COMMIT_FAILED: {e}"));
-    }
-
-    let oauth_result = match oauth_vault::merge_portable_snapshot(&app, &payload.oauth_vault) {
-        Ok(v) => v,
-        Err(e) => {
-            let _ = restore_snapshot_dir(&app, &backup);
-            return Err(format!("MIGRATION_VAULT_COMMIT_FAILED: {e}"));
-        }
-    };
-
-    let metadata_result=match merge_and_write_metadata(&app,&payload.youtube_metadata,&payload.google_config){
-        Ok(v)=>v,
-        Err(e)=>{let _=restore_snapshot_dir(&app,&backup);return Err(format!("MIGRATION_METADATA_COMMIT_FAILED: {e}"))}
-    };
-
-    let verify = storage::load_state(app.clone());
-    let after = verify
-        .get("channels")
-        .and_then(Value::as_array)
-        .map(|x| x.len())
-        .unwrap_or(0);
-    if after != summary.after_channels {
-        let _ = restore_snapshot_dir(&app, &backup);
-        return Err("MIGRATION_VERIFY_FAILED: channel count mismatch".into());
-    }
+    let (oauth_result,metadata_result)=run_with_rollback(
+        ||{
+            storage::save_state(app.clone(), merged).map_err(|e|format!("MIGRATION_STATE_COMMIT_FAILED: {e}"))?;
+            let oauth_result=oauth_vault::merge_portable_snapshot(&app,&payload.oauth_vault)
+                .map_err(|e|format!("MIGRATION_VAULT_COMMIT_FAILED: {e}"))?;
+            let metadata_result=merge_and_write_metadata(&app,&payload.youtube_metadata,&payload.google_config)
+                .map_err(|e|format!("MIGRATION_METADATA_COMMIT_FAILED: {e}"))?;
+            let verify=storage::load_state(app.clone());
+            let after=verify.get("channels").and_then(Value::as_array).map(|x|x.len()).unwrap_or(0);
+            if after!=summary.after_channels{return Err("MIGRATION_VERIFY_FAILED: channel count mismatch".into())}
+            Ok((oauth_result,metadata_result))
+        },
+        ||restore_snapshot_dir(&app,&backup)
+    )?;
 
     Ok(json!({
         "ok": true,
@@ -827,6 +826,68 @@ mod tests {
             google_config: google,
             browser_state: browser,
         }
+    }
+
+
+    #[test]
+    fn future_schema_is_rejected_before_merge(){
+        let payload=sample_payload();
+        let enc=encrypt_payload(&payload,"correct horse battery staple").unwrap();
+        let mut envelope:BundleEnvelope=serde_json::from_slice(&enc).unwrap();
+        envelope.schema_version=BUNDLE_SCHEMA+1;
+        let future=serde_json::to_vec(&envelope).unwrap();
+        let local=json!({"channels":[{"id":"keep","youtubeChannelId":"TEST_KEEP"}],"settings":{}});
+        let before=local.clone();
+        assert!(decrypt_payload(&future,"correct horse battery staple").unwrap_err().contains("MIGRATION_SCHEMA_UNSUPPORTED"));
+        assert_eq!(local,before);
+    }
+
+    #[test]
+    fn foreign_missing_paths_require_remap_but_channel_survives(){
+        let local=json!({"channels":[{"id":"local","youtubeChannelId":"TEST_LOCAL","name":"Local"}],"settings":{}});
+        let imported=json!({"channels":[{"id":"foreign","youtubeChannelId":"TEST_FOREIGN","name":"Foreign","renderFolderPath":"Z:\\\\definitely-missing\\\\Render","projectsFolderPath":"/definitely/missing/Projects"}],"settings":{}});
+        let (merged,summary,remaps)=merge_states(&local,&imported);
+        assert_eq!(summary.after_channels,2);
+        assert_eq!(summary.deleted_channels,0);
+        assert_eq!(remaps.len(),2);
+        let foreign=merged["channels"].as_array().unwrap().iter().find(|x|x["youtubeChannelId"]=="TEST_FOREIGN").unwrap();
+        assert_eq!(foreign["renderFolderPath"],"");
+        assert_eq!(foreign["projectsFolderPath"],"");
+    }
+
+    #[test]
+    fn google_and_youtube_metadata_merge_without_importing_plaintext_secret_fields(){
+        let local_y=json!({"profiles":[{"id":"p1","channelTitle":"Local","refreshToken":"local-secret"}]});
+        let imported_y=json!({"profiles":[{"id":"p1","channelTitle":"Imported","refreshToken":"must-not-win"},{"id":"p2","channelTitle":"Two","clientSecret":"must-strip"}]});
+        let merged_y=merge_youtube_metadata(&local_y,&imported_y);
+        let p1=merged_y["profiles"].as_array().unwrap().iter().find(|x|x["id"]=="p1").unwrap();
+        let p2=merged_y["profiles"].as_array().unwrap().iter().find(|x|x["id"]=="p2").unwrap();
+        assert_eq!(p1["channelTitle"],"Imported");
+        assert_eq!(p1["refreshToken"],"local-secret");
+        assert_eq!(p2["clientSecret"],"");
+
+        let local_g=json!({"project_id":"local-project","client_id":"local-client","client_secret":"local-secret"});
+        let imported_g=json!({"project_id":"import-project","client_id":"import-client","client_secret":"must-not-import","apiKey":"must-not-import"});
+        let merged_g=merge_google_config(&local_g,&imported_g);
+        assert_eq!(merged_g["project_id"],"local-project");
+        assert_eq!(merged_g["client_id"],"local-client");
+        assert_eq!(merged_g["client_secret"],"local-secret");
+        assert!(merged_g.get("apiKey").is_none());
+    }
+
+    #[test]
+    fn rollback_wrapper_restores_partial_mutation(){
+        let root=std::env::temp_dir().join(format!("vyron-migration-rollback-{}",Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let live=root.join("state.json");let backup=root.join("state.backup.json");
+        fs::write(&live,b"before").unwrap();fs::copy(&live,&backup).unwrap();
+        let result:Result<(),String>=run_with_rollback(
+            ||{fs::write(&live,b"partial-after").map_err(|e|e.to_string())?;Err("INJECTED_MIGRATION_FAILURE".into())},
+            ||{let bytes=fs::read(&backup).map_err(|e|e.to_string())?;write_atomic(&live,&bytes)}
+        );
+        assert!(result.unwrap_err().contains("INJECTED_MIGRATION_FAILURE"));
+        assert_eq!(fs::read(&live).unwrap(),b"before");
+        let _=fs::remove_dir_all(root);
     }
 
     #[test]
