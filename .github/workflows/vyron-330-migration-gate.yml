@@ -131,6 +131,41 @@ jobs:
           Copy-Item $installer.FullName migration-artifacts/VYRON-3.3.0-windows-x64-gate.exe
           (Get-FileHash migration-artifacts/VYRON-3.3.0-windows-x64-gate.exe -Algorithm SHA256).Hash.ToLowerInvariant() | Set-Content migration-artifacts/windows.sha256
 
+      - name: Install and launch Windows NSIS gate
+        if: ${{ matrix.name == 'windows' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $installer=Resolve-Path 'migration-artifacts/VYRON-3.3.0-windows-x64-gate.exe'
+          $p=Start-Process -FilePath $installer -ArgumentList '/S' -Wait -PassThru
+          if($p.ExitCode -ne 0){throw "Installer exit code $($p.ExitCode)"}
+          $roots=@(
+            (Join-Path $env:LOCALAPPDATA 'Programs'),
+            $env:LOCALAPPDATA,
+            $env:ProgramFiles,
+            [Environment]::GetEnvironmentVariable('ProgramFiles(x86)')
+          ) | Where-Object {$_ -and (Test-Path $_)}
+          $exe=$null
+          foreach($root in $roots){
+            $exe=Get-ChildItem $root -Filter 'VYRON.exe' -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+            if($exe){break}
+          }
+          if(-not $exe){throw 'Installed VYRON.exe not found'}
+          if(-not $exe.VersionInfo.ProductVersion.StartsWith('3.3.0')){throw "Installed version mismatch: $($exe.VersionInfo.ProductVersion)"}
+          $special=Join-Path $env:USERPROFILE 'VYRON Gate\Видео & Музыка\Проект (01)'
+          New-Item -ItemType Directory -Force -Path $special | Out-Null
+          $probe=Join-Path $special 'данные & test (01).txt'
+          [IO.File]::WriteAllText($probe,'VYRON path probe',[Text.UTF8Encoding]::new($false))
+          if((Get-Content $probe -Raw) -ne 'VYRON path probe'){throw 'Windows special path readback failed'}
+          $proc=Start-Process -FilePath $exe.FullName -PassThru
+          Start-Sleep -Seconds 8
+          $proc.Refresh()
+          if($proc.HasExited){throw "VYRON exited during physical Windows launch: $($proc.ExitCode)"}
+          "WINDOWS_INSTALLED_EXE=$($exe.FullName)" | Add-Content migration-artifacts/gate-windows.txt
+          "WINDOWS_PHYSICAL_LAUNCH=PASS" | Add-Content migration-artifacts/gate-windows.txt
+          "WINDOWS_SPECIAL_PATH=PASS" | Add-Content migration-artifacts/gate-windows.txt
+          Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+
       - name: Build unsigned macOS app gate
         if: ${{ matrix.name == 'macos' }}
         shell: bash
