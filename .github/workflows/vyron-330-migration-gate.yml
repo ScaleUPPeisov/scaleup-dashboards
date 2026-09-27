@@ -131,14 +131,53 @@ jobs:
           Copy-Item $installer.FullName migration-artifacts/VYRON-3.3.0-windows-x64-gate.exe
           (Get-FileHash migration-artifacts/VYRON-3.3.0-windows-x64-gate.exe -Algorithm SHA256).Hash.ToLowerInvariant() | Set-Content migration-artifacts/windows.sha256
 
-      - name: Install and launch Windows NSIS gate
+      - name: Install production baseline, preserve migrated state, update and relaunch Windows
         if: ${{ matrix.name == 'windows' }}
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
+
+          # 1) Install the immutable public Windows production baseline first.
+          $baseline=Join-Path $env:RUNNER_TEMP 'VYRON_2.1.16_x64-setup.exe'
+          Invoke-WebRequest -Uri 'https://github.com/ScaleUPPeisov/vyron-releases/releases/download/v2.1.16-windows-x64/VYRON_2.1.16_x64-setup.exe' -OutFile $baseline
+          $baselineSha=(Get-FileHash $baseline -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($baselineSha -ne '10c169e31be98345ef6bd0af1f751743021eada3496c64b39843e2e7f624c63d'){throw "2.1.16 baseline SHA mismatch: $baselineSha"}
+          $old=Start-Process -FilePath $baseline -ArgumentList '/S' -Wait -PassThru
+          if($old.ExitCode -ne 0){throw "2.1.16 installer exit code $($old.ExitCode)"}
+
+          # 2) Seed synthetic post-migration state in the real Tauri app-data location.
+          # No real channel/account/secret values are used.
+          $appData=Join-Path $env:APPDATA 'studio.channelflow.desktop'
+          $docState=Join-Path $env:USERPROFILE 'Documents\VYRON\State'
+          New-Item -ItemType Directory -Force -Path $appData,$docState | Out-Null
+          $state=[ordered]@{
+            version=10
+            channels=@(
+              @{id='fixture-a';youtubeChannelId='TEST_CH_A';name='Fixture A'},
+              @{id='fixture-b';youtubeChannelId='TEST_CH_B';name='Fixture B'},
+              @{id='fixture-c';youtubeChannelId='TEST_CH_C';name='Fixture C'},
+              @{id='fixture-d';youtubeChannelId='TEST_CH_D';name='Fixture D'},
+              @{id='fixture-e';youtubeChannelId='TEST_CH_E';name='Fixture E'}
+            )
+            jobs=@(@{id='fixture-job';channelId='fixture-a';status='Pending'})
+            competitors=@()
+            settings=@{workspace='';endlumePath='';youtubeApiKey='';openaiApiKey='';autoCheckUpdates=$false;reduceMotion=$false;fpsMonitor=$false}
+            logs=@()
+            uploadHistory=@()
+            activityJournal=@()
+            statisticsHistory=@{}
+            fingerprintCache=@{'fixture-fp'=@{size=123}}
+            projectLifecycle=@{'fixture-project'=@{status='READY'}}
+          }
+          $json=$state | ConvertTo-Json -Depth 12
+          [IO.File]::WriteAllText((Join-Path $appData 'state.json'),$json,[Text.UTF8Encoding]::new($false))
+          [IO.File]::WriteAllText((Join-Path $docState 'app-state.json'),$json,[Text.UTF8Encoding]::new($false))
+
+          # 3) Install the just-built 3.3.0 candidate over 2.1.16.
           $installer=Resolve-Path 'migration-artifacts/VYRON-3.3.0-windows-x64-gate.exe'
           $p=Start-Process -FilePath $installer -ArgumentList '/S' -Wait -PassThru
-          if($p.ExitCode -ne 0){throw "Installer exit code $($p.ExitCode)"}
+          if($p.ExitCode -ne 0){throw "3.3.0 installer exit code $($p.ExitCode)"}
+
           $roots=@(
             (Join-Path $env:LOCALAPPDATA 'Programs'),
             $env:LOCALAPPDATA,
@@ -147,24 +186,44 @@ jobs:
           ) | Where-Object {$_ -and (Test-Path $_)}
           $exe=$null
           foreach($root in $roots){
-            $exe=Get-ChildItem $root -Filter 'VYRON.exe' -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+            $exe=Get-ChildItem $root -Filter 'VYRON.exe' -File -Recurse -ErrorAction SilentlyContinue |
+              Where-Object {$_.VersionInfo.ProductVersion.StartsWith('3.3.0')} | Select-Object -First 1
             if($exe){break}
           }
-          if(-not $exe){throw 'Installed VYRON.exe not found'}
-          if(-not $exe.VersionInfo.ProductVersion.StartsWith('3.3.0')){throw "Installed version mismatch: $($exe.VersionInfo.ProductVersion)"}
+          if(-not $exe){throw 'Installed VYRON 3.3.0.exe not found'}
+
+          $statePath=Join-Path $appData 'state.json'
+          if(-not (Test-Path $statePath)){throw 'Post-migration state disappeared during 2.1.16 -> 3.3.0 update'}
+          $after=Get-Content $statePath -Raw | ConvertFrom-Json
+          if(@($after.channels).Count -ne 5){throw "Channel union lost during update: $(@($after.channels).Count)"}
+          if(-not $after.fingerprintCache.'fixture-fp'){throw 'Fingerprint state lost during update'}
+          if(-not $after.projectLifecycle.'fixture-project'){throw 'Project lifecycle state lost during update'}
+
+          # 4) Real special path and two physical launches prove restart continuity.
           $special=Join-Path $env:USERPROFILE 'VYRON Gate\Видео & Музыка\Проект (01)'
           New-Item -ItemType Directory -Force -Path $special | Out-Null
           $probe=Join-Path $special 'данные & test (01).txt'
           [IO.File]::WriteAllText($probe,'VYRON path probe',[Text.UTF8Encoding]::new($false))
           if((Get-Content $probe -Raw) -ne 'VYRON path probe'){throw 'Windows special path readback failed'}
-          $proc=Start-Process -FilePath $exe.FullName -PassThru
-          Start-Sleep -Seconds 8
-          $proc.Refresh()
-          if($proc.HasExited){throw "VYRON exited during physical Windows launch: $($proc.ExitCode)"}
+
+          foreach($attempt in 1..2){
+            $proc=Start-Process -FilePath $exe.FullName -PassThru
+            Start-Sleep -Seconds 7
+            $proc.Refresh()
+            if($proc.HasExited){throw "VYRON exited during physical Windows launch $attempt: $($proc.ExitCode)"}
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 1
+            $check=Get-Content $statePath -Raw | ConvertFrom-Json
+            if(@($check.channels).Count -ne 5){throw "State lost after launch $attempt"}
+          }
+
+          "WINDOWS_BASELINE_2_1_16_SHA256=$baselineSha" | Add-Content migration-artifacts/gate-windows.txt
+          "WINDOWS_UPDATE_2_1_16_TO_3_3_0=PASS" | Add-Content migration-artifacts/gate-windows.txt
+          "WINDOWS_UPDATE_AFTER_MIGRATION_STATE=PASS" | Add-Content migration-artifacts/gate-windows.txt
+          "WINDOWS_RESTART_AFTER_MIGRATION=PASS" | Add-Content migration-artifacts/gate-windows.txt
           "WINDOWS_INSTALLED_EXE=$($exe.FullName)" | Add-Content migration-artifacts/gate-windows.txt
           "WINDOWS_PHYSICAL_LAUNCH=PASS" | Add-Content migration-artifacts/gate-windows.txt
           "WINDOWS_SPECIAL_PATH=PASS" | Add-Content migration-artifacts/gate-windows.txt
-          Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
 
       - name: Build unsigned macOS app gate
         if: ${{ matrix.name == 'macos' }}
