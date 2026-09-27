@@ -75,8 +75,9 @@ jobs:
                   data = p.read_bytes()
               except Exception:
                   continue
-              if any(rx.search(data) for rx in patterns):
-                  print('PRIVACY_GATE=FAIL:HIGH_CONFIDENCE_SECRET')
+              matched = next((idx for idx,rx in enumerate(patterns) if rx.search(data)), None)
+              if matched is not None:
+                  print(f'PRIVACY_GATE=FAIL:HIGH_CONFIDENCE_SECRET:file={p}:pattern={matched}')
                   sys.exit(1)
           print('PRIVACY_SECRET_SCAN=PASS')
           PY
