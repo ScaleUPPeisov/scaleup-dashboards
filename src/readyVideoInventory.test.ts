@@ -13,6 +13,16 @@ describe('VYRON 2.1.6 Ready Video Inventory',()=>{
   it('TEST 3 — scheduled is not READY_AVAILABLE',()=>{const j=job('1','a','SCHEDULED');j.publishAt='2026-09-20T18:00:00Z';expect(isReadyAvailable(j,[],lifecycle(j),[])).toBe(false);expect(buildReadyVideoInventory([channel('a')],[j],[],lifecycle(j),{},[],new Date('2026-09-14T00:00:00Z')).byChannel.a.scheduled).toBe(1)});
   it('TEST 4 — factual active upload is not READY_AVAILABLE',()=>{const j=job('1','a');const active=[{jobId:j.id,channelId:'a',status:'UPLOADING' as const,progressPercent:13}];expect(isReadyAvailable(j,[],lifecycle(j),active)).toBe(false);const s=buildReadyVideoInventory([channel('a')],[j],[],lifecycle(j),{},active);expect(s.byChannel.a.uploading).toBe(1);expect(s.items[0].progressPercent).toBe(13)});
   it('TEST 5 — uploaded proof is not READY_AVAILABLE and is published when publishAt passed',()=>{const j=job('1','a');const h=uploaded(j);expect(isReadyAvailable(j,[h],lifecycle(j),[])).toBe(false);expect(buildReadyVideoInventory([channel('a')],[j],[h],lifecycle(j),{},[],new Date('2026-09-14T00:00:00Z')).byChannel.a.published).toBe(1)});
+  it('fresh rerender with the same job id is READY even when old upload history exists',()=>{
+    const j=job('1','a');
+    const h=uploaded(j);
+    j.status='READY_UPLOAD';j.storageLifecycle='RENDERED';j.youtubeVideoId=undefined;j.uploadedAt=undefined;j.uploadFingerprint=undefined;
+    expect(isReadyAvailable(j,[h],lifecycle(j),[])).toBe(true);
+    const snap=buildReadyVideoInventory([channel('a')],[j],[h],lifecycle(j),{},[]);
+    expect(snap.items[0]?.status).toBe('READY');
+    expect(snap.byChannel.a.free).toBe(1);
+    expect(snap.byChannel.a.published).toBe(0);
+  });
   it('TEST 6 — selected channel counter is independent from global count',()=>{const a1=job('1','a'),a2=job('2','a'),b1=job('3','b');const s=buildReadyVideoInventory([channel('a'),channel('b')],[a1,a2,b1],[],{...lifecycle(a1),...lifecycle(a2),...lifecycle(b1)},{},[]);expect(s.globalFreeCount).toBe(3);expect(s.byChannel.a.free).toBe(2);expect(s.byChannel.b.free).toBe(1);expect(s.globalFinalVideoCount).toBe(3)});
   it('exposes concrete project/video fields and filters by channel status and VIDEO_xxx',()=>{const a=job('7','a'),b=job('8','b');const s=buildReadyVideoInventory([channel('a','ELARA'),channel('b','Lost Highway FM')],[a,b],[],{...lifecycle(a),...lifecycle(b)},{},[]);expect(s.items[0]).toEqual(expect.objectContaining({projectName:'7',filename:'7.mp4'}));expect(filterReadyVideoInventory(s.items,{channelId:'a',status:'READY',query:'VIDEO_007'}).map(x=>x.jobId)).toEqual(['7']);expect(filterReadyVideoInventory(s.items,{channelId:'a',status:'READY',query:'lost'})).toHaveLength(0)});
   it('requires authoritative render existence when lifecycle record exists',()=>{const j=job('1','a'),life=lifecycle(j);life['project-1'].renderExists=false;expect(isReadyAvailable(j,[],life,[])).toBe(false)});
