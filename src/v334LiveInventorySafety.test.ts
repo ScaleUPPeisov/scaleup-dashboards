@@ -24,7 +24,9 @@ describe('VYRON 3.3.4 live inventory safety contracts',()=>{
  });
  it('uses one shared inventory runtime from watcher, Publisher, Dashboard and Production',()=>{
   expect(bridge).toContain("scanInventoryChannel(channelId,'watcher')");
-  expect(fs.readFileSync('src/PublisherOS.tsx','utf8')).toContain("scanInventoryChannel(channelId,'publisher')");
+  const publisher=fs.readFileSync('src/PublisherOS.tsx','utf8');
+  expect(publisher).toContain("from './renderInventoryRuntime'");
+  expect(publisher).toContain('scanInventoryChannel(');
   expect(fs.readFileSync('src/DashboardOS.tsx','utf8')).toContain("useLiveInventory");
   expect(fs.readFileSync('src/ProductionOS.tsx','utf8')).toContain("useLiveInventory")
  });
@@ -56,8 +58,12 @@ describe('VYRON 3.3.4 live inventory safety contracts',()=>{
   expect(packageJson.version).toBe('3.3.4');
   expect(baseConfig.version).toBe('3.3.4');
   expect(baseConfig.identifier).toBe('studio.channelflow.desktop');
-  expect(fs.readFileSync('vyron-updates/latest.json','utf8')).toContain('"version": "3.3.1"');
-  expect(fs.readFileSync('vyron-updates/windows-latest.json','utf8')).toContain('"version": "3.3.1"')
+  expect(baseConfig.plugins.updater.endpoints[0]).toContain('/updates/latest.json');
+  expect(windowsConfig.plugins.updater.endpoints[0]).toContain('/updates/windows-latest.json');
+  const devGate=fs.readFileSync('.github/workflows/vyron-334-live-inventory-dev-gate.yml','utf8');
+  expect(devGate).not.toContain('vyron-releases/releases');
+  expect(devGate).not.toContain('updates/latest.json');
+  expect(devGate).not.toContain('updates/windows-latest.json')
  });
  it('same logical fixture classifies the same on macOS and Windows path syntax',()=>{
   const hist=(path:string):UploadHistoryRecord=>({id:'h1',jobId:'old',channelId:'c1',youtubeVideoId:'yt1',localFilePath:path,originalFilename:'001.mov',uploadedAt:'2026-09-20T00:00:00Z',fileSize:100,sha256:'a'.repeat(64),status:'UPLOADED',fingerprintProofSource:'UPLOAD_TIME'});
