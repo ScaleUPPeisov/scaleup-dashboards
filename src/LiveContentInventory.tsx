@@ -26,7 +26,7 @@ export function LiveContentInventory(){
   const [now,setNow]=useState(Date.now());
   const [folderPicking,setFolderPicking]=useState<string>();
   const [rootPicking,setRootPicking]=useState(false);
-  useEffect(()=>{const id=window.setInterval(()=>setNow(Date.now()),1000);return()=>window.clearInterval(id)},[]);
+  useEffect(()=>{const id=window.setInterval(()=>setNow(Date.now()),30000);return()=>window.clearInterval(id)},[]);
   const enabled=useMemo(()=>sortChannelsAlphabetically(channels.filter(c=>c.enabled!==false)),[channels]);
   const totals=useMemo(()=>inventoryTotals(snapshots,enabled),[snapshots,enabled]);
   const rows=enabled.map(c=>snapshots[c.id]||fallback(c.id,c.name,String(c.renderFolderPath||'')));
