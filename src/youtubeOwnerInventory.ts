@@ -6,6 +6,7 @@ import {youtubeQuotaState,youtubeQuotaUsage} from './youtubeQuota';
 
 export const OWNER_INVENTORY_TTL_MS=6*60*60*1000;
 export const OWNER_INVENTORY_EVENT='vyron:owner-inventory-refresh';
+let ownerInventoryRun:Promise<OwnerInventoryRefreshSummary>|undefined;
 
 export type OwnerYoutubeInventorySnapshot={
   channelId:string;
@@ -115,7 +116,9 @@ export function ownerInventoryCacheStale(channelId:string,nowMs=Date.now(),ttlMs
 
 export type OwnerInventoryRefreshSummary={requested:number;updated:number;failed:number;skippedFresh:number;skippedUnlinked:number;stoppedForQuota:boolean};
 
-export async function refreshStaleOwnerInventories(channels:Channel[],force=false):Promise<OwnerInventoryRefreshSummary>{
+export function refreshStaleOwnerInventories(channels:Channel[],force=false):Promise<OwnerInventoryRefreshSummary>{
+  if(ownerInventoryRun)return ownerInventoryRun;
+  const task=(async():Promise<OwnerInventoryRefreshSummary>=>{
   const summary:OwnerInventoryRefreshSummary={requested:0,updated:0,failed:0,skippedFresh:0,skippedUnlinked:0,stoppedForQuota:false};
   const profiles=await api.youtubeProfiles();
   const byId=new Map(profiles.map(x=>[x.id,x]));
@@ -137,4 +140,8 @@ export async function refreshStaleOwnerInventories(channels:Channel[],force=fals
   }
   window.dispatchEvent(new CustomEvent(OWNER_INVENTORY_EVENT,{detail:summary}));
   return summary
+})();
+  ownerInventoryRun=task;
+  void task.finally(()=>{if(ownerInventoryRun===task)ownerInventoryRun=undefined});
+  return task;
 }
