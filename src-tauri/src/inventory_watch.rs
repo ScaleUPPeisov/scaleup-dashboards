@@ -167,23 +167,34 @@ mod tests {
         ).expect("watcher");
         watcher.watch(&root, RecursiveMode::Recursive).expect("watch root");
 
+        // macOS FSEvents registration becomes active asynchronously. Writing once
+        // immediately after watch() creates a CI-only race. Re-touch the same
+        // fixture for a short bounded window and finish as soon as the real
+        // RecommendedWatcher observes it. Runtime behavior is unchanged.
         let target = root.join("001 — Ready Videos.mov");
-        fs::write(&target, b"fixture-video-bytes").expect("write fixture");
-
-        let deadline = Instant::now() + Duration::from_secs(8);
+        let deadline = Instant::now() + Duration::from_secs(3);
         let mut found = false;
-        while Instant::now() < deadline {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            match rx.recv_timeout(remaining.min(Duration::from_millis(500))) {
-                Ok(Ok(event)) if event.paths.iter().any(|p| p == &target) => { found = true; break; }
-                Ok(_) => {}
-                Err(mpsc::RecvTimeoutError::Timeout) => {}
-                Err(e) => panic!("watch channel failed: {e}"),
+        let mut attempt = 0u32;
+        while Instant::now() < deadline && !found {
+            attempt += 1;
+            fs::write(&target, format!("fixture-video-bytes-{attempt}")).expect("write fixture");
+            let slice_deadline = Instant::now() + Duration::from_millis(150);
+            while Instant::now() < slice_deadline {
+                let remaining = slice_deadline.saturating_duration_since(Instant::now());
+                match rx.recv_timeout(remaining) {
+                    Ok(Ok(event)) if event.paths.iter().any(|p| p == &target) => {
+                        found = true;
+                        break;
+                    }
+                    Ok(_) => {}
+                    Err(mpsc::RecvTimeoutError::Timeout) => break,
+                    Err(e) => panic!("watch channel failed: {e}"),
+                }
             }
         }
         drop(watcher);
         let _ = fs::remove_dir_all(&root);
-        assert!(found, "filesystem watcher did not observe created render file");
+        assert!(found, "filesystem watcher did not observe created/updated render file");
     }
 
     #[cfg(windows)]
