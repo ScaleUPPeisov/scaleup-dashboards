@@ -1,31 +1,65 @@
-import React,{useEffect,useState} from 'react';
+import React,{useEffect,useMemo,useState} from 'react';
 import {api} from './api';
 import {useApp} from './store';
-import {VYRON_4_ARTWORK,VYRON_LAST_CELEBRATED_KEY,VYRON_MAJOR_UPGRADE_TARGET_KEY,VYRON_MAJOR_VERSION} from './vyronBrand';
+import {
+  VYRON_4_ARTWORK,
+  VYRON_LAST_CELEBRATED_KEY,
+  VYRON_MAJOR_UPGRADE_TARGET_KEY,
+  VYRON_MAJOR_VERSION,
+  VYRON_UPDATE_CELEBRATION_NOTES_KEY,
+  VYRON_UPDATE_CELEBRATION_TARGET_KEY
+} from './vyronBrand';
 import {SafeArtwork} from './SafeArtwork';
 import {LocalProfileMenu} from './LocalProfileMenu';
 
 type CelebrationMode='upgrade'|'fresh';
 
+const fallbackHighlights=[
+  'Исправлена производительность и снижена нагрузка на интерфейс.',
+  'Добавлены профили VYRON и выбор аватара через системный файловый диалог.',
+  'Восстановлены иконки YouTube-каналов и безопасные fallback-аватары.',
+  'Добавлена отдельная История с общей сводкой по каналам.',
+  'Исправлены branding artwork, sidebar и стабильность экранов.'
+];
+
+function releaseHighlights(raw:string){
+  const cleaned=String(raw||'')
+    .split(/\r?\n/)
+    .map(x=>x.trim())
+    .filter(Boolean)
+    .map(x=>x.replace(/^[-*+•]+\s*/,'').replace(/^#+\s*/,'').replace(/\*\*/g,'').trim())
+    .filter(x=>x.length>2&&!/^https?:\/\//i.test(x));
+  return (cleaned.length?cleaned:fallbackHighlights).slice(0,6)
+}
+
 export function MajorUpdateCelebration(){
   const channelCount=useApp(s=>s.channels.length),jobCount=useApp(s=>s.jobs.length),uploadHistoryCount=useApp(s=>s.uploadHistory.length);
-  const [visible,setVisible]=useState(false),[mode,setMode]=useState<CelebrationMode>('upgrade'),[details,setDetails]=useState(false);
+  const [visible,setVisible]=useState(false),[mode,setMode]=useState<CelebrationMode>('upgrade'),[details,setDetails]=useState(false),[runtimeVersion,setRuntimeVersion]=useState(VYRON_MAJOR_VERSION),[notes,setNotes]=useState('');
   const existingState=channelCount>0||jobCount>0||uploadHistoryCount>0;
+  const highlights=useMemo(()=>releaseHighlights(notes),[notes]);
 
   useEffect(()=>{
     let live=true;
     void api.appVersion().then(version=>{
-      if(!live||version!==VYRON_MAJOR_VERSION)return;
+      if(!live)return;
+      setRuntimeVersion(version);
       if(localStorage.getItem(VYRON_LAST_CELEBRATED_KEY)===version)return;
-      const explicitUpgrade=localStorage.getItem(VYRON_MAJOR_UPGRADE_TARGET_KEY)===version;
-      setMode(explicitUpgrade||existingState?'upgrade':'fresh');
+      const genericTarget=localStorage.getItem(VYRON_UPDATE_CELEBRATION_TARGET_KEY);
+      const legacyTarget=localStorage.getItem(VYRON_MAJOR_UPGRADE_TARGET_KEY);
+      const explicitUpgrade=genericTarget===version||legacyTarget===version;
+      const upgrade=explicitUpgrade||existingState;
+      setMode(upgrade?'upgrade':'fresh');
+      setNotes(upgrade?(localStorage.getItem(VYRON_UPDATE_CELEBRATION_NOTES_KEY)||''):'');
+      setDetails(upgrade);
       setVisible(true)
     }).catch(()=>{});
     return()=>{live=false}
   },[existingState]);
 
   const finish=()=>{
-    localStorage.setItem(VYRON_LAST_CELEBRATED_KEY,VYRON_MAJOR_VERSION);
+    localStorage.setItem(VYRON_LAST_CELEBRATED_KEY,runtimeVersion);
+    localStorage.removeItem(VYRON_UPDATE_CELEBRATION_TARGET_KEY);
+    localStorage.removeItem(VYRON_UPDATE_CELEBRATION_NOTES_KEY);
     localStorage.removeItem(VYRON_MAJOR_UPGRADE_TARGET_KEY);
     setVisible(false)
   };
@@ -37,23 +71,20 @@ export function MajorUpdateCelebration(){
     <section className="majorCelebrationCard">
       <div className="majorCelebrationHalo" aria-hidden="true"/>
       <SafeArtwork className="majorCelebrationArtwork" src={VYRON_4_ARTWORK} alt="VYRON YT PEISOV" fallback="V"/>
-      <small>STABILITY &amp; PERFORMANCE HOTFIX • VYRON {VYRON_MAJOR_VERSION}</small>
-      <h1 id="majorCelebrationTitle">{mode==='upgrade'?'ПОЗДРАВЛЯЕМ!':`Добро пожаловать в VYRON ${VYRON_MAJOR_VERSION}`}</h1>
-      <h2>{mode==='upgrade'?`Обновление VYRON ${VYRON_MAJOR_VERSION} установлено`:'Autonomous Content Operating System'}</h2>
-      <p>{mode==='upgrade'?'Каналы, OAuth, локальные папки, история и настройки сохранены.':'Новая архитектура разделяет локальный запас, очередь, YouTube uploads и реальное расписание.'}</p>
+      <small>{mode==='upgrade'?'UPDATE INSTALLED':'WELCOME'} • VYRON {runtimeVersion}</small>
+      <h1 id="majorCelebrationTitle">{mode==='upgrade'?'ПОЗДРАВЛЯЕМ!':`Добро пожаловать в VYRON ${runtimeVersion}`}</h1>
+      <h2>{mode==='upgrade'?`Обновление VYRON ${runtimeVersion} установлено`:'Autonomous Content Operating System'}</h2>
+      <p>{mode==='upgrade'?'Каналы, OAuth, локальные папки, история и настройки сохранены.':'VYRON готов к работе.'}</p>
 
       {details&&<div className="majorWhatsNew">
-        <b>Что нового</b>
+        <b>{mode==='upgrade'?'Что сделано в этом обновлении':'Что нового'}</b>
         <div>
-          <span><strong>Owner YouTube inventory</strong><em>Public / Private / Scheduled считаются отдельно по authenticated данным.</em></span>
-          <span><strong>Реальный schedule</strong><em>Локальные Render-файлы больше не превращаются в YouTube Scheduled.</em></span>
-          <span><strong>Command Overview</strong><em>Главная показывает каналы, подписчиков, просмотры, owner-видео, локальный запас и внимание.</em></span>
-          <span><strong>Upload safety</strong><em>YouTube API quota и локальный дневной upload-limit VYRON разделены.</em></span>
+          {highlights.map((item,i)=><span key={i}><strong>{String(i+1).padStart(2,'0')}</strong><em>{item}</em></span>)}
         </div>
       </div>}
 
       <footer>
-        <button className="secondary" onClick={()=>setDetails(x=>!x)}>{details?'Скрыть':'Что нового'}</button>
+        {mode==='upgrade'&&<button className="secondary" onClick={()=>setDetails(x=>!x)}>{details?'Скрыть изменения':'Что нового'}</button>}
         <button className="primary" onClick={finish}>Начать работу</button>
       </footer>
     </section>
