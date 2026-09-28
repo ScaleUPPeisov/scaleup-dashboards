@@ -10,7 +10,7 @@ export type OwnerInventoryStatus='UNAVAILABLE'|'CACHED'|'SYNCING'|'FRESH'|'ERROR
 export type OwnerInventorySnapshot={
  channelId:string;channelName:string;status:OwnerInventoryStatus;
  total:number;publicCount:number;privateCount:number;scheduledCount:number;unlistedCount:number;
- publishedToday:number;nextScheduledAt?:string;lastScheduledAt?:string;updatedAt?:string;
+ publishedToday:number;nextScheduledAt?:string;lastScheduledAt?:string;scheduleFrequency?:string;updatedAt?:string;
  complete:boolean;error?:string
 };
 type OwnerInventoryState={snapshots:Record<string,OwnerInventorySnapshot>;syncing:boolean;revision:number;setSnapshot:(x:OwnerInventorySnapshot)=>void;setSyncing:(x:boolean)=>void};
@@ -19,6 +19,17 @@ const MIN_GENERAL_QUOTA_RESERVE=100;
 
 const localDayKey=(value:string|Date)=>{const d=value instanceof Date?value:new Date(value);return Number.isNaN(d.getTime())?'':`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`};
 const futurePublishAt=(v:YoutubeExistingVideo,nowMs:number)=>v.privacyStatus==='private'&&Boolean(v.publishAt)&&Number.isFinite(Date.parse(v.publishAt!))&&Date.parse(v.publishAt!)>nowMs;
+export function inferYoutubeScheduleFrequency(times:string[]){
+ const sorted=times.filter(x=>Number.isFinite(Date.parse(x))).sort((a,b)=>Date.parse(a)-Date.parse(b));
+ if(sorted.length<2)return undefined;
+ const days=[] as number[];
+ for(let i=1;i<sorted.length;i++)days.push(Math.round((Date.parse(sorted[i])-Date.parse(sorted[i-1]))/86400000));
+ const first=days[0];
+ if(!first||days.some(x=>x!==first))return'Нерегулярно';
+ if(first===1)return'Каждый день';
+ if(first===2)return'Через день';
+ return'Каждые '+first+' дн.'
+}
 
 export function summarizeOwnerInventory(channel:Pick<Channel,'id'|'name'>,videos:YoutubeExistingVideo[],updatedAt?:string,complete=true,now=new Date()):OwnerInventorySnapshot{
  const nowMs=now.getTime(),scheduled=videos.filter(v=>futurePublishAt(v,nowMs)),scheduledIds=new Set(scheduled.map(v=>v.id));
@@ -31,7 +42,7 @@ export function summarizeOwnerInventory(channel:Pick<Channel,'id'|'name'>,videos
   channelId:channel.id,channelName:channel.name,status:updatedAt?'CACHED':'UNAVAILABLE',
   total:videos.length,publicCount:publicRows.length,privateCount:privateRows.length,scheduledCount:scheduled.length,unlistedCount:unlisted.length,
   publishedToday:publicRows.filter(v=>v.publishedAt&&localDayKey(v.publishedAt)===today).length,
-  nextScheduledAt:times[0],lastScheduledAt:times.at(-1),updatedAt,complete
+  nextScheduledAt:times[0],lastScheduledAt:times.at(-1),scheduleFrequency:inferYoutubeScheduleFrequency(times),updatedAt,complete
  }
 }
 function unavailable(channel:Pick<Channel,'id'|'name'>):OwnerInventorySnapshot{return{channelId:channel.id,channelName:channel.name,status:'UNAVAILABLE',total:0,publicCount:0,privateCount:0,scheduledCount:0,unlistedCount:0,publishedToday:0,complete:false}}
