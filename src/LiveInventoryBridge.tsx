@@ -6,6 +6,9 @@ import {subscribeUploadTelemetry} from './uploadTelemetry';
 
 const WATCH_DEBOUNCE_MS=1500;
 const SAFETY_RECONCILE_MS=60_000;
+const FOCUS_RESCAN_MIN_MS=30_000;
+const INITIAL_SCAN_DELAY_MS=900;
+const FOCUS_SCAN_DELAY_MS=350;
 
 export function LiveInventoryBridge(){
   const booted=useApp(s=>s.booted),channels=useApp(s=>s.channels);
@@ -14,7 +17,7 @@ export function LiveInventoryBridge(){
 
   useEffect(()=>{
     if(!booted)return;
-    let disposed=false,unlisten:(()=>void)|undefined,periodic:number|undefined;
+    let disposed=false,unlisten:(()=>void)|undefined,periodic:number|undefined,focusTimer:number|undefined,lastFullScanAt=0;
     const offUploads=subscribeUploadTelemetry(()=>refreshInventoryUploadCounts());
 
     const configuredRoots=()=>useApp.getState().channels
@@ -26,7 +29,8 @@ export function LiveInventoryBridge(){
     };
     const scanStartup=async()=>{
       await armWatch();
-      if(!disposed)await scanAllInventories('startup');
+      await new Promise<void>(resolve=>window.setTimeout(resolve,INITIAL_SCAN_DELAY_MS));
+      if(!disposed){lastFullScanAt=Date.now();await scanAllInventories('startup')}
       if(!disposed)await armWatch();
     };
     const debounce=(channelId:string)=>{
@@ -42,11 +46,19 @@ export function LiveInventoryBridge(){
 
     const reconcile=async(reason:'focus'|'periodic')=>{
       if(disposed)return;
+      const now=Date.now();
+      if(reason==='focus'&&now-lastFullScanAt<FOCUS_RESCAN_MIN_MS)return;
+      lastFullScanAt=now;
       await scanAllInventories(reason);
       if(!disposed)await armWatch()
     };
-    const onVisibility=()=>{if(document.visibilityState==='visible')void reconcile('focus')};
-    const onFocus=()=>void reconcile('focus');
+    const scheduleFocusReconcile=()=>{
+      if(disposed)return;
+      if(focusTimer!==undefined)window.clearTimeout(focusTimer);
+      focusTimer=window.setTimeout(()=>{focusTimer=undefined;void reconcile('focus')},FOCUS_SCAN_DELAY_MS)
+    };
+    const onVisibility=()=>{if(document.visibilityState==='visible')scheduleFocusReconcile()};
+    const onFocus=()=>scheduleFocusReconcile();
     document.addEventListener('visibilitychange',onVisibility);
     window.addEventListener('focus',onFocus);
     periodic=window.setInterval(()=>void reconcile('periodic'),SAFETY_RECONCILE_MS);
@@ -56,6 +68,7 @@ export function LiveInventoryBridge(){
       if(unlisten)unlisten();
       offUploads();
       if(periodic!==undefined)window.clearInterval(periodic);
+      if(focusTimer!==undefined)window.clearTimeout(focusTimer);
       document.removeEventListener('visibilitychange',onVisibility);
       window.removeEventListener('focus',onFocus);
       for(const timer of timers.current.values())window.clearTimeout(timer);
