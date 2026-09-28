@@ -1,0 +1,76 @@
+name: VYRON 4.0.0 Cross Platform Dev Gate
+
+on:
+  push:
+    branches:
+      - feature/vyron-4.0.0
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-400-cross-platform-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  parity:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: VYRON 4 critical regression
+        run: >
+          npx vitest run
+          src/v400OwnerInventory.test.ts
+          src/v400DashboardTruth.test.ts
+          src/v400QuotaUploadLimitSeparation.test.ts
+          src/v400PerformanceAndGlobalLimit.test.ts
+          src/v400BrandingCelebration.test.ts
+          src/v400RevenueEstimate.test.ts
+          src/v400ScheduleFrequencyTruth.test.ts
+          src/v335RenderFolderPicker.test.ts
+          src/v334LiveContentInventory.test.ts
+          src/v334LiveInventorySafety.test.ts
+          src/v332WindowsOauthLauncher.test.ts
+          src/v2115Rc7OauthUpdateContinuity.test.ts
+          src/updaterHotfix.test.ts
+          src/updaterPolicy.test.ts
+
+      - name: Frontend production build
+        run: npm run build
+
+      - name: Native compile
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+
+      - name: Version identity
+        shell: bash
+        run: |
+          node - <<'NODE'
+          const p=require('./package.json');
+          const l=require('./package-lock.json');
+          const t=require('./src-tauri/tauri.conf.json');
+          if(p.version!=='4.0.0'||l.version!=='4.0.0'||l.packages[''].version!=='4.0.0'||t.version!=='4.0.0') process.exit(1);
+          if(t.identifier!=='studio.channelflow.desktop') process.exit(1);
+          console.log('VYRON_4_CROSS_PLATFORM_IDENTITY=PASS');
+          NODE
