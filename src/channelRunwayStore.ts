@@ -70,7 +70,7 @@ export function loadChannelRunwayStore(storage:StorageLike|undefined=browserStor
 }
 
 export function saveChannelRunwayStore(value:ChannelRunwayStore,storage:StorageLike|undefined=browserStorage()){
-  if(storage)storage.setItem(CHANNEL_RUNWAY_STORAGE_KEY,JSON.stringify(value));
+  try{if(storage)storage.setItem(CHANNEL_RUNWAY_STORAGE_KEY,JSON.stringify(value))}catch{}
   emit();
   return value;
 }
