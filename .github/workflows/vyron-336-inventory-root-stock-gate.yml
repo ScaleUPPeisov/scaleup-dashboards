@@ -1,0 +1,43 @@
+name: VYRON 3.3.6 Inventory Root Stock Gate
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-3.3.6-inventory-root-stock
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-336-inventory-root-stock-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Inventory root + stock regression
+        run: |
+          npx vitest run src/v335RenderFolderPicker.test.ts src/v334LiveContentInventory.test.ts src/v334LiveInventorySafety.test.ts src/renderScanClassifier.test.ts
+      - name: Production build
+        run: npm run build
+      - name: Production freeze
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json -o /tmp/mac.json
+          curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json -o /tmp/win.json
+          python3 - <<'PY'
+          import json
+          assert json.load(open('/tmp/mac.json'))['version']=='3.3.5'
+          assert json.load(open('/tmp/win.json'))['version']=='3.3.5'
+          print('PRODUCTION_FEEDS_UNCHANGED=3.3.5')
+          PY
