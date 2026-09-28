@@ -56,6 +56,37 @@ function cacheFreshEnough(channelId:string,now=Date.now()){
  return Number.isFinite(at)&&now-at<AUTO_OWNER_TTL_MS
 }
 const sleep=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms));
+async function syncOwnerChannel(channel:Channel,force=false){
+ if(!channel.youtubeProfileId)return ownerInventoryFromCache(channel);
+ if(!force&&cacheFreshEnough(channel.id))return ownerInventoryFromCache(channel);
+ if(youtubeQuotaState().blocked)return ownerInventoryFromCache(channel);
+ const usage=youtubeQuotaUsage(),remaining=Math.max(0,usage.limit-usage.used);
+ if(remaining<MIN_GENERAL_QUOTA_RESERVE)return ownerInventoryFromCache(channel);
+ const previous=useOwnerInventory.getState().snapshots[channel.id]||ownerInventoryFromCache(channel);
+ useOwnerInventory.getState().setSnapshot({...previous,status:'SYNCING',error:undefined});
+ try{
+  const result:ExistingVideoSyncResult=await api.youtubeListExisting(channel.youtubeProfileId,5000);
+  replaceExistingCacheFromSync(channel.id,result.videos||[],result);
+  markYoutubeCache('existing',channel.id,AUTO_OWNER_TTL_MS);
+  const authoritative=readAuthoritativeExistingSnapshot(channel.id);
+  const next=summarizeOwnerInventory(channel,authoritative?.videos||result.videos||[],authoritative?.updatedAt||new Date().toISOString(),Boolean(result.syncComplete??result.complete));
+  useOwnerInventory.getState().setSnapshot({...next,status:'FRESH'});
+  return next
+ }catch(error){
+  const text=String(error);
+  useOwnerInventory.getState().setSnapshot({...previous,status:'ERROR',error:text});
+  if(isYoutubeQuotaError(error))markYoutubeQuotaExceeded(error);
+  return useOwnerInventory.getState().snapshots[channel.id]
+ }
+}
+export async function refreshOwnerInventoryChannel(channelId:string,force=true){
+ hydrateOwnerInventoryFromCache();
+ const channel=useApp.getState().channels.find(c=>c.id===channelId);
+ if(!channel)return;
+ useOwnerInventory.getState().setSyncing(true);
+ try{return await syncOwnerChannel(channel,force)}
+ finally{useOwnerInventory.getState().setSyncing(false)}
+}
 let smartSyncInFlight:Promise<void>|null=null;
 export function refreshOwnerInventorySmart(force=false){
  if(smartSyncInFlight)return smartSyncInFlight;
@@ -66,23 +97,10 @@ export function refreshOwnerInventorySmart(force=false){
   try{
    const channels=useApp.getState().channels.filter(c=>c.enabled!==false&&Boolean(c.youtubeProfileId));
    for(const channel of channels){
-    if(!force&&cacheFreshEnough(channel.id))continue;
-    const usage=youtubeQuotaUsage(),remaining=Math.max(0,usage.limit-usage.used);
-    if(remaining<MIN_GENERAL_QUOTA_RESERVE)break;
-    const previous=useOwnerInventory.getState().snapshots[channel.id]||unavailable(channel);
-    useOwnerInventory.getState().setSnapshot({...previous,status:'SYNCING',error:undefined});
-    try{
-     const result:ExistingVideoSyncResult=await api.youtubeListExisting(channel.youtubeProfileId!,5000);
-     replaceExistingCacheFromSync(channel.id,result.videos||[],result);
-     markYoutubeCache('existing',channel.id,AUTO_OWNER_TTL_MS);
-     const authoritative=readAuthoritativeExistingSnapshot(channel.id);
-     const next=summarizeOwnerInventory(channel,authoritative?.videos||result.videos||[],authoritative?.updatedAt||new Date().toISOString(),Boolean(result.syncComplete??result.complete));
-     useOwnerInventory.getState().setSnapshot({...next,status:'FRESH'});
-    }catch(error){
-     const text=String(error);
-     useOwnerInventory.getState().setSnapshot({...previous,status:'ERROR',error:text});
-     if(isYoutubeQuotaError(error)){markYoutubeQuotaExceeded(error);break}
-    }
+    const before=youtubeQuotaUsage();
+    if(Math.max(0,before.limit-before.used)<MIN_GENERAL_QUOTA_RESERVE)break;
+    await syncOwnerChannel(channel,force);
+    if(youtubeQuotaState().blocked)break;
     await sleep(250)
    }
   }finally{useOwnerInventory.getState().setSyncing(false)}
