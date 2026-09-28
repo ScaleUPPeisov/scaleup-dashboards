@@ -107,6 +107,7 @@ export const api={
   defaultWorkspace:()=>invoke<string>('default_workspace'),
   chooseWorkspace:async()=>{const r=await open({directory:true,multiple:false,title:'Папка VYRON YT PEISOV'});return typeof r==='string'?r:null},
   chooseRenderFolder:async(defaultPath?:string)=>{const r=await open({directory:true,multiple:false,title:'Папка рендера текущего канала',defaultPath:defaultPath||undefined});return typeof r==='string'?r:null},
+  chooseRenderRoot:async(defaultPath?:string)=>{const r=await open({directory:true,multiple:false,title:'Общая папка Render со всеми каналами',defaultPath:defaultPath||undefined});return typeof r==='string'?r:null},
   chooseProjectsFolder:async(defaultPath?:string)=>{const r=await open({directory:true,multiple:false,title:'Папка проектов текущего канала',defaultPath:defaultPath||undefined});return typeof r==='string'?r:null},
   discoverChannelFolders:(workspace:string,channelName:string)=>invoke<ChannelFolderDiscovery>('discover_channel_folders',{workspace,channelName}),
   inventoryWatchRoots:(roots:InventoryWatchRoot[])=>invoke<InventoryWatchRegistration>('inventory_watch_roots',{roots}),
