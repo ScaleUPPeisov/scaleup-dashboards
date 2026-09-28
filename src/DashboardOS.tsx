@@ -82,9 +82,9 @@ function OperationsDashboard(){
    if(inv&&inv.folderState==='ONLINE'&&inv.readyVideos===0)rows.push({key:'stock:'+c.id,label:c.name,text:'Локальный запас Render закончился',page:'inventory'});
    if(!isFutureChannel(c)&&!c.youtubeProfileId)rows.push({key:'oauth:'+c.id,label:c.name,text:'Требуется подключение YouTube OAuth',page:'youtube'});
    if(owner?.available&&!owner.complete)rows.push({key:'owner-partial:'+c.id,label:c.name,text:'YouTube inventory подтверждён не полностью',page:'youtube'});
-   if(c.safeDailyUploadLimit){
+   if(c.safeDailyUploadLimit!=null){
     const daily=safeDailyStatus(c.id,c.safeDailyUploadLimit);
-    if(daily.remaining===0)rows.push({key:'daily-limit:'+c.id,label:c.name,text:'Локальный дневной upload limit: '+daily.used+'/'+daily.limit,page:'youtube'})
+    if(!daily.unlimited&&daily.remaining===0)rows.push({key:'daily-limit:'+c.id,label:c.name,text:'Локальный дневной upload limit: '+daily.used+'/'+daily.limit,page:'youtube'})
    }else if(!isFutureChannel(c)&&settings.autoUploadYoutube){
     rows.push({key:'upload-limit:'+c.id,label:c.name,text:'Для авто-YouTube не задан локальный дневной лимит',page:'youtube'})
    }
