@@ -2,6 +2,7 @@ import React,{useEffect,useMemo,useState} from 'react';
 import {api} from './api';
 import {useApp} from './store';
 import {VYRON_4_ARTWORK,VYRON_LAST_CELEBRATED_KEY,VYRON_MAJOR_UPGRADE_TARGET_KEY,VYRON_MAJOR_VERSION} from './vyronBrand';
+import {SafeArtwork} from './SafeArtwork';
 
 type CelebrationMode='upgrade'|'fresh';
 
@@ -35,10 +36,10 @@ export function MajorUpdateCelebration(){
     </div>
     <section className="majorCelebrationCard">
       <div className="majorCelebrationHalo" aria-hidden="true"/>
-      <img className="majorCelebrationArtwork" src={VYRON_4_ARTWORK} alt="VYRON YT PEISOV"/>
-      <small>MAJOR RELEASE • VYRON 4.0.0</small>
-      <h1 id="majorCelebrationTitle">{mode==='upgrade'?'ПОЗДРАВЛЯЕМ!':'Добро пожаловать в VYRON 4.0.0'}</h1>
-      <h2>{mode==='upgrade'?'Большое обновление установлено':'Autonomous Content Operating System'}</h2>
+      <SafeArtwork className="majorCelebrationArtwork" src={VYRON_4_ARTWORK} alt="VYRON YT PEISOV" fallback="V"/>
+      <small>UPDATE • VYRON {VYRON_MAJOR_VERSION}</small>
+      <h1 id="majorCelebrationTitle">{mode==='upgrade'?'ПОЗДРАВЛЯЕМ!':'Добро пожаловать в VYRON {VYRON_MAJOR_VERSION}'}</h1>
+      <h2>{mode==='upgrade'?'Обновление VYRON 4.0.1 установлено':'Autonomous Content Operating System'}</h2>
       <p>{mode==='upgrade'?'Каналы, OAuth, локальные папки, история и настройки сохранены.':'Новая архитектура разделяет локальный запас, очередь, YouTube uploads и реальное расписание.'}</p>
 
       {details&&<div className="majorWhatsNew">
