@@ -21,6 +21,8 @@ export type YoutubeOwnerInventorySnapshot={
   scheduledCount?:number;
   unlistedCount?:number;
   publishedCount?:number;
+  publishedTodayCount?:number;
+  scheduledTodayCount?:number;
   nextScheduledAt?:string;
   scheduledUntil?:string;
   lastPublishedAt?:string;
@@ -47,28 +49,32 @@ function validDate(value?:string){
   const ms=value?Date.parse(value):NaN;
   return Number.isFinite(ms)?ms:undefined
 }
+function ownerDayKey(value:number|Date){
+  const date=value instanceof Date?value:new Date(value);
+  return new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Krasnoyarsk',year:'numeric',month:'2-digit',day:'2-digit'}).format(date)
+}
 function chronological(values:(string|undefined)[]){
   return values.filter((x):x is string=>Boolean(x&&validDate(x)!=null)).sort((a,b)=>Date.parse(a)-Date.parse(b))
 }
 
 export function ownerInventoryFromVideos(channel:Pick<Channel,'id'|'name'|'youtubeProfileId'|'youtubeChannelId'>,videos:YoutubeExistingVideo[],updatedAt?:string,complete=true,nowMs=Date.now()):YoutubeOwnerInventorySnapshot{
-  let publicCount=0,privateCount=0,scheduledCount=0,unlistedCount=0,publishedCount=0;
-  const scheduled:string[]=[],published:string[]=[];
+  let publicCount=0,privateCount=0,scheduledCount=0,unlistedCount=0,publishedCount=0,publishedTodayCount=0,scheduledTodayCount=0;
+  const scheduled:string[]=[],published:string[]=[],todayKey=ownerDayKey(nowMs);
   for(const video of videos){
     const privacy=String(video.privacyStatus||'unknown').toLowerCase();
     const publishAt=validDate(video.publishAt),publishedAt=validDate(video.publishedAt);
     const futureSchedule=privacy==='private'&&publishAt!=null&&publishAt>nowMs;
-    if(futureSchedule){scheduledCount++;scheduled.push(video.publishAt!);continue}
+    if(futureSchedule){scheduledCount++;scheduled.push(video.publishAt!);if(ownerDayKey(publishAt!)===todayKey)scheduledTodayCount++;continue}
     if(privacy==='private')privateCount++;
     else if(privacy==='public'){publicCount++;publishedCount++}
     else if(privacy==='unlisted'){unlistedCount++;publishedCount++}
-    if((privacy==='public'||privacy==='unlisted')&&publishedAt!=null)published.push(video.publishedAt!)
+    if((privacy==='public'||privacy==='unlisted')&&publishedAt!=null){published.push(video.publishedAt!);if(ownerDayKey(publishedAt)===todayKey)publishedTodayCount++}
   }
   const scheduledSorted=chronological(scheduled),publishedSorted=chronological(published);
   return{
     channelId:channel.id,channelName:channel.name,profileId:channel.youtubeProfileId,youtubeChannelId:channel.youtubeChannelId,
     status:updatedAt?(nowMs-Date.parse(updatedAt)<=OWNER_INVENTORY_TTL_MS?'FRESH':'CACHED'):'NO_DATA',
-    complete,updatedAt,totalOwnerVisible:videos.length,publicCount,privateCount,scheduledCount,unlistedCount,publishedCount,
+    complete,updatedAt,totalOwnerVisible:videos.length,publicCount,privateCount,scheduledCount,unlistedCount,publishedCount,publishedTodayCount,scheduledTodayCount,
     nextScheduledAt:scheduledSorted[0],scheduledUntil:scheduledSorted.at(-1),lastPublishedAt:publishedSorted.at(-1)
   }
 }
