@@ -1,6 +1,6 @@
 import type {VideoJob} from './types';
 
-export type PublisherPreflightIssueCode='MISSING_SCHEDULE'|'PAST_SCHEDULE'|'SKIPPED_PAST_DATE'|'MISSING_TITLE'|'DUPLICATE'|'RECOVERY'|'MISSING_THUMBNAIL';
+export type PublisherPreflightIssueCode='MISSING_SCHEDULE'|'PUBLISH_TIME_REQUIRED'|'PAST_SCHEDULE'|'SKIPPED_PAST_DATE'|'MISSING_TITLE'|'DUPLICATE'|'RECOVERY'|'MISSING_THUMBNAIL';
 export type PublisherPreflightIssue={code:PublisherPreflightIssueCode;message:string};
 export type PublisherPreflightItem={id:string;number:number;valid:boolean;issues:PublisherPreflightIssue[]};
 export type PublisherPreflightOptions={
@@ -9,6 +9,7 @@ export type PublisherPreflightOptions={
  safeMode:boolean;
  duplicateIds?:Iterable<string>;
  recoveryIds?:Iterable<string>;
+ missingPublishTimeIds?:Iterable<string>;
  requireThumbnail?:boolean;
  hasThumbnail?:(job:VideoJob)=>boolean;
  nowMs?:number;
@@ -23,10 +24,11 @@ export function publisherUploadButtonLabel(selectedCount:number,readyCount=selec
  return `ЗАГРУЗИТЬ ${readyCount} ВИДЕО НА YOUTUBE`
 }
 export function publisherPreflightItems(jobs:VideoJob[],opts:PublisherPreflightOptions){
- const duplicates=new Set(opts.duplicateIds||[]),recovery=new Set(opts.recoveryIds||[]),now=opts.nowMs??Date.now();
+ const duplicates=new Set(opts.duplicateIds||[]),recovery=new Set(opts.recoveryIds||[]),missingPublishTime=new Set(opts.missingPublishTimeIds||[]),now=opts.nowMs??Date.now();
  const items:PublisherPreflightItem[]=jobs.map(job=>{
   const issues:PublisherPreflightIssue[]=[],publishAt=opts.getPublishAt(job),ms=publishAt?Date.parse(publishAt):NaN;
-  if(!publishAt||!Number.isFinite(ms))issues.push({code:'MISSING_SCHEDULE',message:'Не удалось получить корректный publishAt'});
+  if(missingPublishTime.has(job.id))issues.push({code:'PUBLISH_TIME_REQUIRED',message:`VIDEO_${String(job.number).padStart(3,'0')} — в метаданных не указано время публикации`});
+  else if(!publishAt||!Number.isFinite(ms))issues.push({code:'MISSING_SCHEDULE',message:'Не удалось получить корректный publishAt'});
   else if(ms<=now){const repair=opts.getPastRepairStatus?.(job);if(repair==='SKIPPED_PAST_DATE')issues.push({code:'SKIPPED_PAST_DATE',message:`Прошедшая дата пропущена без ERROR: ${publishAt}`});else issues.push({code:'PAST_SCHEDULE',message:`Дата публикации уже прошла: ${publishAt}`});}
   if(opts.safeMode&&!job.title.trim())issues.push({code:'MISSING_TITLE',message:'Название видео пустое'});
   if(duplicates.has(job.id))issues.push({code:'DUPLICATE',message:'Файл уже успешно загружался на этот канал'});
