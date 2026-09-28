@@ -3,6 +3,58 @@ export type ReleaseSectionKey='features'|'fixes'|'interface'|'reliability'|'secu
 export type ReleaseHistoryEntry={date:string;version:string;title:string;type:ReleaseType;highlights:string[];sections:Partial<Record<ReleaseSectionKey,string[]>>;technicalItems?:string[];technicalBuilds?:number[];tag?:string;publishedAt?:string;prerelease?:boolean};
 export const VYRON_RELEASE_HISTORY:ReleaseHistoryEntry[]=[
   {
+    "date": "2026-09-28",
+    "version": "3.3.4",
+    "title": "Live Content Inventory",
+    "type": "MINOR",
+    "highlights": [
+      "📦 Новый экран «Запас видео» показывает фактический локальный запас Render по всем активным каналам.",
+      "⚡ Native filesystem watcher + debounce обновляют только изменившийся канал, а 60-секундный local reconciliation служит safety fallback.",
+      "💾 При отключении внешнего диска VYRON сохраняет последний подтверждённый snapshot вместо ложного обнуления.",
+      "🔐 Inventory работает локально: сканирование папок и fingerprint cache не расходуют YouTube API quota."
+    ],
+    "sections": {
+      "features": [
+        "В sidebar между «Производство» и YouTube добавлен «Запас видео» с глобальным ready badge.",
+        "По каждому каналу видны ready, active uploading, runway days, ONLINE/OFFLINE, freshness и ручной rescan.",
+        "Клик по строке канала открывает существующий Publisher именно для этого канала.",
+        "Dashboard, Production, Publisher и Autopilot читают единый live inventory runtime."
+      ],
+      "fixes": [
+        "UPLOADING больше не считается одновременно READY: при фактическом старте upload ready уменьшается, uploading увеличивается.",
+        "UPLOADED_LOCAL_COPY остаётся физически видимым доказательством, но не входит в ready stock.",
+        "Новый fingerprint на старом пути классифицируется как NEW_GENERATION, исторический upload evidence не переписывается.",
+        "macOS canonical /private/var paths и Windows drive/UNC extended paths нормализованы для watcher routing."
+      ],
+      "interface": [
+        "Статусы запаса: NORMAL, SOON, LOW, EMPTY и OFFLINE с компактной operational event history.",
+        "OFFLINE показывает last-known ready/runway и время последнего подтверждённого scan."
+      ],
+      "reliability": [
+        "Watcher events debounce’ятся 1500 ms; overlapping scans coalesce и получают один follow-up scan при изменении во время чтения.",
+        "Последний подтверждённый inventory хранится отдельным компактным operational cache и не заменяет AppState/uploadHistory.",
+        "Background scan не хеширует каждый новый файл каждые 60 секунд; SHA-256 считается только когда identity evidence требуется, а Publisher использует cache.",
+        "Read-only scan не удаляет файлы, jobs, uploadHistory, fingerprints, OAuth profiles или channel mappings."
+      ],
+      "security": [
+        "Live Inventory не запускает OAuth, reconnect, logout или secret migration.",
+        "macOS Keychain, Windows Credential Manager и OAuth vault не очищаются и не ротируются этой функцией.",
+        "YouTube API requests для inventory scan: 0."
+      ],
+      "technical": [
+        "Unified branch preserves macOS 3.3.3 DOCX/schedule behavior and Windows 3.3.2 native OAuth launcher/updater routing.",
+        "Bundle identifier remains studio.channelflow.desktop.",
+        "Production updater feeds remain frozen until explicit owner command «ВЫПУСКАЕМ»."
+      ]
+    },
+    "technicalItems": [
+      "macOS production app source: 97f045d7b3ca4fac4eaf981abc2f56f4ada54917.",
+      "Windows production app source: 4c1d38eed09fa1b649aa483b044f38489e26b369.",
+      "Release publication disabled during candidate development."
+    ],
+    "technicalBuilds": []
+  },
+  {
     "date": "2026-09-23",
     "version": "3.2.1",
     "title": "Physical UI & Safe Cleanup",
