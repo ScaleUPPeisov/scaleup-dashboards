@@ -82,7 +82,7 @@ describe('VYRON 3.2.1 physical regression patch',()=>{
   expect(p).toContain('api.youtubeFileFingerprint');
   expect(p).toContain('fp.fingerprint.toLowerCase()!==proof.sha256.toLowerCase()||fp.size!==proof.fileSize');
   expect(p).toContain('Переместить в Корзину');
-  expect(p).toContain('if(deleteFromDisk&&channelRenderFolder)void scanRenderFolder()');
+  expect(p).toContain("if(deleteFromDisk&&channelRenderFolder)void scanRenderFolder('cleanup')");
   expect(p).toContain('replaceUploadHistory(nextHistory)');
   expect(del).toContain('trash::delete(&safe)');
   expect(del).not.toContain('fs::remove_file(&safe)');
