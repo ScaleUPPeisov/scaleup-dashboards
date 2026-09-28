@@ -12,3 +12,5 @@
 @media(max-width:950px){.inventoryHeroGrid{grid-template-columns:repeat(2,1fr)}.inventoryBottomGrid{grid-template-columns:1fr}.liveInventoryTable{overflow-x:auto}.liveInventoryRow{min-width:900px}}
 
 .liveInventoryActions{gap:6px!important}.liveInventoryActions .mini{width:100%;white-space:nowrap}
+
+.inventoryHeaderActions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}.inventoryHeaderActions button{white-space:nowrap}
