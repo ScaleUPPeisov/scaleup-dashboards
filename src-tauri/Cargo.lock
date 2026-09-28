@@ -481,7 +481,7 @@ dependencies = [
 
 [[package]]
 name = "channelflow"
-version = "3.3.3"
+version = "3.3.4"
 dependencies = [
  "base64 0.22.1",
  "chrono",
