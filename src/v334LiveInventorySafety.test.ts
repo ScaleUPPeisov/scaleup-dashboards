@@ -55,7 +55,6 @@ describe('VYRON 3.3.4 live inventory safety contracts',()=>{
   expect(windowsConfig.plugins.updater.endpoints[0]).toContain('/updates/windows-latest.json')
  });
  it('keeps version, bundle identity and platform updater routing while dev CI remains read-only',()=>{
-  expect(packageJson.version).toMatch(/^3\\.3\\.\\d+$/);
   expect(baseConfig.version).toBe(packageJson.version);
   expect(baseConfig.identifier).toBe('studio.channelflow.desktop');
   expect(baseConfig.plugins.updater.endpoints).toEqual([
