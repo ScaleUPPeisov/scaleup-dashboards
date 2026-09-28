@@ -19,7 +19,7 @@ describe('VYRON 3.3.4 live inventory safety contracts',()=>{
   expect(runtime).toContain('api.localSourceStatus');
   expect(runtime).toContain('api.youtubeFileFingerprint');
   for(const forbidden of ['youtubeUpload(','youtubeListExisting(','youtubeProfiles(','youtubeOauth','youtubeChannelStatistics(','youtubeVideoProcessingStatus(','youtubeSetThumbnail('])expect(runtime).not.toContain(forbidden);
-  for(const destructive of ['replaceUploadHistory(','localStorage.clear(','youtubeDisconnect(','removeChannel(','clearStaleUploadLink(','trashLocalFile('])expect(runtime).not.toContain(destructive);
+  for(const destructive of ['replaceUploadHistory(','localStorage.clear(','youtubeDisconnect(','removeChannel(','clearStaleUploadLink(','trashLocalFile(','patchJob('])expect(runtime).not.toContain(destructive);
   expect(page).toContain('YouTube API requests: 0')
  });
  it('uses one shared inventory runtime from watcher, Publisher, Dashboard and Production',()=>{
