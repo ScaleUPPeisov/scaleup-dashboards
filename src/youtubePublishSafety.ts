@@ -9,6 +9,11 @@ function get<T>(key:string,fallback:T):T{try{const v=JSON.parse(localStorage.get
 function set(key:string,v:unknown){try{localStorage.setItem(key,JSON.stringify(v))}catch{}}
 export function publishRecords():PublishUploadRecord[]{const x=get<any[]>(RECORDS,[]);return Array.isArray(x)?x:[]}
 function saveRecords(rows:PublishUploadRecord[]){set(RECORDS,rows.slice(-2000))}
+const PUBLISHER_DAY_TZ='Asia/Krasnoyarsk';
+function dayParts(now:Date){return new Intl.DateTimeFormat('en-CA',{timeZone:PUBLISHER_DAY_TZ,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(now).reduce<Record<string,string>>((a,x)=>(a[x.type]=x.value,a),{})}
+export function publisherDayKey(now=new Date()){const p=dayParts(now);return `${p.year}-${p.month}-${p.day}`}
+export function publisherDayResetAt(now=new Date()){const p=dayParts(now);return new Date(`${new Intl.DateTimeFormat('en-CA',{timeZone:PUBLISHER_DAY_TZ,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(Date.UTC(+p.year,+p.month-1,+p.day+1,5,0,0)))}T00:00:00+07:00`)}
+export function uploadsByVyronToday(channelId:string,now=new Date()){const key=publisherDayKey(now);return publishRecords().filter(x=>x.channelId===channelId&&x.status==='completed'&&Boolean(x.videoId)&&publisherDayKey(new Date(x.completedAt||x.startedAt))===key)}
 export function uploadsByVyronLast24h(channelId:string,now=Date.now()){const min=now-24*60*60*1000;return publishRecords().filter(x=>x.channelId===channelId&&x.status==='completed'&&Boolean(x.videoId)&&Date.parse(x.completedAt||x.startedAt)>=min)}
 export function findSuccessfulUpload(channelId:string,fingerprint:string){return publishRecords().slice().reverse().find(x=>x.channelId===channelId&&x.fingerprint===fingerprint&&x.status==='completed'&&Boolean(x.videoId))}
 export function beginPublishAttempt(x:Omit<PublishUploadRecord,'id'|'startedAt'|'status'>){const row:PublishUploadRecord={...x,id:crypto.randomUUID(),startedAt:new Date().toISOString(),status:'started'};saveRecords([...publishRecords(),row]);return row}
@@ -25,4 +30,4 @@ export function acquireChannelUploadLock(channelId:string){if(runtimeLocks.some(
 export function releaseChannelUploadLock(channelId:string,token:string){runtimeLocks=runtimeLocks.filter(x=>!(x.channelId===channelId&&x.token===token))}
 export function isChannelUploadLocked(channelId:string){return runtimeLocks.some(x=>x.channelId===channelId)}
 export function clearRuntimeChannelUploadLocks(){runtimeLocks=[]}
-export function safeDailyStatus(channelId:string,limit?:number){const used=uploadsByVyronLast24h(channelId).length;const configured=Number.isFinite(limit)&&Number(limit)>0;const safeLimit=configured?Math.max(1,Math.floor(Number(limit))):undefined;return{used,limit:safeLimit,remaining:safeLimit==null?undefined:Math.max(0,safeLimit-used),configured}}
+export function safeDailyStatus(channelId:string,limit?:number,now=new Date()){const used=uploadsByVyronToday(channelId,now).length;const configured=Number.isFinite(limit)&&Number(limit)>0;const safeLimit=configured?Math.max(1,Math.floor(Number(limit))):undefined;return{used,limit:safeLimit,remaining:safeLimit==null?undefined:Math.max(0,safeLimit-used),configured,day:publisherDayKey(now),resetAt:publisherDayResetAt(now).toISOString(),source:'VYRON_LOCAL_CHANNEL_LIMIT' as const}}
