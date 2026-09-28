@@ -16,7 +16,7 @@ import {uploadTelemetrySnapshot} from './uploadTelemetry';
 
 export type InventoryFolderState='ONLINE'|'OFFLINE'|'SCANNING'|'ERROR';
 export type InventoryLevel='NORMAL'|'SOON'|'LOW'|'EMPTY'|'OFFLINE';
-export type InventoryScanReason='startup'|'watcher'|'manual-all'|'manual-channel'|'focus'|'periodic'|'cleanup'|'reconnect'|'publisher';
+export type InventoryScanReason='startup'|'watcher'|'manual-all'|'manual-channel'|'focus'|'periodic'|'cleanup'|'upload'|'reconnect'|'publisher';
 export type InventoryAuditEvent={id:string;at:string;channelId:string;kind:'SCAN'|'ADD'|'REMOVE'|'OFFLINE'|'RECONNECT'|'ERROR';message:string;readyBefore?:number;readyAfter?:number};
 export type ChannelInventorySnapshot={
   channelId:string;
