@@ -41,3 +41,26 @@ export function validateRenderFolderSelection(selected:string,channelName:string
 
   return{ok:true,path}
 }
+
+
+export type RenderRootSelectionValidation=
+  |{ok:true;path:string}
+  |{ok:false;reason:'EMPTY'|'PROJECTS_PATH'|'NOT_RENDER_ROOT';message:string};
+
+export function validateRenderRootSelection(selected:string):RenderRootSelectionValidation{
+  const path=normalizeFolderSelectionPath(selected);
+  if(!path)return{ok:false,reason:'EMPTY',message:'Папка не выбрана.'};
+  const parts=segments(path),leaf=parts.at(-1)||'';
+  if(parts.some(x=>normalizedName(x)==='projects')){
+    return{ok:false,reason:'PROJECTS_PATH',message:'Выбрана папка Projects. Нужна общая папка Render.'}
+  }
+  if(normalizedName(leaf)!=='render'){
+    return{ok:false,reason:'NOT_RENDER_ROOT',message:'Выберите именно общую папку Render, внутри которой лежат папки каналов.'}
+  }
+  return{ok:true,path}
+}
+
+export function renderChannelFolderPath(renderRoot:string,channelName:string){
+  const root=normalizeFolderSelectionPath(renderRoot);
+  return root+'/'+String(channelName||'').trim()
+}
