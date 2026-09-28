@@ -542,7 +542,7 @@ dependencies = [
 
 [[package]]
 name = "channelflow"
-version = "3.3.5"
+version = "4.0.0"
 dependencies = [
  "argon2",
  "base64 0.22.1",
