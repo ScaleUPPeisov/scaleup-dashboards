@@ -36,6 +36,44 @@ const normalized=(value?:string)=>String(value||'').trim();
 const fingerprintKey=(value?:string)=>normalized(value).toLowerCase();
 const pathKey=(value?:string)=>normalized(value).replace(/\\/g,'/').replace(/\/+$/,'');
 
+type PreparedReadyContext={
+  uploadedJobs:Set<string>;
+  uploadedHashes:Set<string>;
+  lifecycleByJob:Map<string,ProjectLifecycleRecord>;
+  jobsByChannel:Map<string,VideoJob[]>;
+};
+let preparedReadyCache:{
+  jobs:VideoJob[];
+  uploadHistory:UploadHistoryRecord[];
+  projectLifecycle:Record<string,ProjectLifecycleRecord>;
+  value:PreparedReadyContext;
+}|undefined;
+
+function preparedReadyContext(
+  jobs:VideoJob[],
+  uploadHistory:UploadHistoryRecord[],
+  projectLifecycle:Record<string,ProjectLifecycleRecord>
+):PreparedReadyContext{
+  const hit=preparedReadyCache;
+  if(hit&&hit.jobs===jobs&&hit.uploadHistory===uploadHistory&&hit.projectLifecycle===projectLifecycle)return hit.value;
+  const uploadedJobs=new Set<string>(),uploadedHashes=new Set<string>();
+  for(const row of uploadHistory){
+    if(row.status!=='UPLOADED')continue;
+    if(row.youtubeVideoId)uploadedJobs.add(row.jobId);
+    const hash=fingerprintKey(row.sha256);if(hash)uploadedHashes.add(hash)
+  }
+  const lifecycleByJob=new Map<string,ProjectLifecycleRecord>();
+  for(const row of Object.values(projectLifecycle||{}))if(row.jobId)lifecycleByJob.set(row.jobId,row);
+  const jobsByChannel=new Map<string,VideoJob[]>();
+  for(const job of jobs){
+    const rows=jobsByChannel.get(job.channelId);
+    if(rows)rows.push(job);else jobsByChannel.set(job.channelId,[job])
+  }
+  const value={uploadedJobs,uploadedHashes,lifecycleByJob,jobsByChannel};
+  preparedReadyCache={jobs,uploadHistory,projectLifecycle,value};
+  return value
+}
+
 export function readyContentForChannel(
   channelId:string,
   jobs:VideoJob[],
@@ -43,13 +81,10 @@ export function readyContentForChannel(
   projectLifecycle:Record<string,ProjectLifecycleRecord>,
   fingerprintCache:Record<string,FingerprintCacheEntry>
 ):ReadyContentSnapshot{
-  const uploadedJobs=new Set(uploadHistory.filter(x=>x.status==='UPLOADED'&&Boolean(x.youtubeVideoId)).map(x=>x.jobId));
-  const uploadedHashes=new Set(uploadHistory.filter(x=>x.status==='UPLOADED').map(x=>fingerprintKey(x.sha256)).filter(Boolean));
-  const lifecycleByJob=new Map<string,ProjectLifecycleRecord>();
-  for(const row of Object.values(projectLifecycle||{}))if(row.jobId)lifecycleByJob.set(row.jobId,row);
+  const prepared=preparedReadyContext(jobs,uploadHistory,projectLifecycle);
   const seen=new Set<string>(),jobIds:string[]=[];
   let duplicateCount=0,invalidCount=0;
-  for(const job of jobs.filter(x=>x.channelId===channelId)){
+  for(const job of prepared.jobsByChannel.get(channelId)||[]){
     const finalPath=pathKey(job.finalPath);
     const invalid=
       job.status!=='READY_UPLOAD'||
@@ -58,21 +93,21 @@ export function readyContentForChannel(
       Boolean(job.removedFromPublishList)||
       Boolean(job.youtubeVideoId)||
       Boolean(job.uploadedAt)||
-      uploadedJobs.has(job.id)||
+      prepared.uploadedJobs.has(job.id)||
       job.storageLifecycle==='UPLOADED'||
       job.storageLifecycle==='TRASHED'||
       job.storageLifecycle==='FAILED'||
       job.storageLifecycle==='UPLOADING';
     if(invalid){invalidCount++;continue}
-    const lifecycle=lifecycleByJob.get(job.id);
+    const lifecycle=prepared.lifecycleByJob.get(job.id);
     if(lifecycle&&(!lifecycle.renderExists||!lifecycle.renderPath||pathKey(lifecycle.renderPath)!==finalPath)){invalidCount++;continue}
     const sha=fingerprintKey(job.uploadFingerprint||fingerprintCache[job.finalPath||'']?.sha256);
-    if(sha&&uploadedHashes.has(sha)){duplicateCount++;continue}
+    if(sha&&prepared.uploadedHashes.has(sha)){duplicateCount++;continue}
     const identity=sha?`sha:${sha}`:`path:${finalPath}`;
     if(seen.has(identity)){duplicateCount++;continue}
-    seen.add(identity);jobIds.push(job.id);
+    seen.add(identity);jobIds.push(job.id)
   }
-  return{channelId,readyCount:jobIds.length,jobIds,duplicateCount,invalidCount};
+  return{channelId,readyCount:jobIds.length,jobIds,duplicateCount,invalidCount}
 }
 
 function publishTime(channel:Channel){return `${String(channel.publishHour||0).padStart(2,'0')}:${String(channel.publishMinute||0).padStart(2,'0')}`}
