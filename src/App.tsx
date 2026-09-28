@@ -34,6 +34,7 @@ import {journalUploadProgressMilestone} from './activityJournalRuntime';
 import {applyStaleOperationPatches,buildStaleOperationPatches} from './staleOperationReconciliation';
 import {DashboardUploadSummary,GlobalUploadIndicator,UploadCenterGlobal} from './UploadCenter';
 import {ChannelStatisticsScheduler} from './ChannelStatisticsScheduler';
+import {OwnerInventoryScheduler} from './OwnerInventoryScheduler';
 import {ModalPortal} from './ModalPortal';
 import {UploadProcessingMonitor} from './UploadProcessingMonitor';
 import {GlobalTaskCenter,GlobalTaskIndicator} from './TaskCenter';
@@ -125,7 +126,7 @@ export function App(){
   if(!booted||!license)return <Boot/>;
   if(!license.valid)return <Activation onActivated={setLicense}/>;
   const screen=page==='dashboard'||page==='autopilot'?<DashboardOS/>:page==='accounts'?<SettingsOS license={license}/>:page==='channels'?<ChannelsOS/>:page==='production'||page==='content'?<ProductionOS/>:page==='inventory'?<LiveContentInventory/>:page==='youtube'?<YouTubeCenter/>:page==='competitors'?<CompetitorsPage/>:page==='analytics'?<AnalyticsPage/>:page==='metadata'?<YouTubeCenter initialTab='metadata'/>:page==='existing'?<YouTubeCenter initialTab='uploaded'/>:page==='publisher'?<YouTubeCenter initialTab='publish'/>:<SettingsOS license={license}/>;
-  return <div className="appShell"><LiveInventoryBridge/><ChannelRunwayScheduler/><ProductionStatusBridge/><ChannelStatisticsScheduler/><UploadProcessingMonitor/><RecoveryGate/><Sidebar page={page} setPage={setPage}/><main className="main"><Topbar/><div className="pageWrap" key={page}>{(page==='dashboard'||page==='autopilot')&&<DashboardUploadSummary/>}{screen}</div></main><GlobalTaskIndicator/><GlobalUploadIndicator/><UploadCenterGlobal/><GlobalTaskCenter/><CommandPalette/>{settings.fpsMonitor&&<FpsMonitor/>}<UpdateExperience/><NotificationCenter/><div className="bgGlow a"/><div className="bgGlow b"/></div>
+  return <div className="appShell"><LiveInventoryBridge/><ChannelRunwayScheduler/><ProductionStatusBridge/><ChannelStatisticsScheduler/><OwnerInventoryScheduler/><UploadProcessingMonitor/><RecoveryGate/><Sidebar page={page} setPage={setPage}/><main className="main"><Topbar/><div className="pageWrap" key={page}>{(page==='dashboard'||page==='autopilot')&&<DashboardUploadSummary/>}{screen}</div></main><GlobalTaskIndicator/><GlobalUploadIndicator/><UploadCenterGlobal/><GlobalTaskCenter/><CommandPalette/>{settings.fpsMonitor&&<FpsMonitor/>}<UpdateExperience/><NotificationCenter/><div className="bgGlow a"/><div className="bgGlow b"/></div>
 }
 function useRuntimeVersion(){const [version,setVersion]=useState('');useEffect(()=>{void api.appVersion().then(setVersion).catch(()=>{})},[]);return version}
 function Boot(){return <div className="boot"><div className="logoMark"><span>▶</span></div><b>VYRON YT PEISOV</b><small>AUTONOMOUS CONTENT OS</small><i/></div>}
