@@ -28,6 +28,7 @@ export type InventoryWatchEvent={channelId:string;path:string;kind:string};
 export type YoutubeProcessingBatchResult={requested:number;found:number;calls:number;rows:YoutubeProcessingStatus[]};
 export type GoogleProjectDiagnosticSafe={oauthProfileId:string;channelId?:string|null;channelTitle?:string|null;clientId:string;projectId?:string|null;projectIdSource:'google-config-exact-client-match'|'not-locally-known';youtubeApiRequests:0;keychainSecretsRead:false};
 export type StateSaveResult={ok:boolean;securityWarning?:string|null;securityWarnings?:number};
+export type ProfileAvatarPayload={path:string;dataUrl:string};
 export type KeychainDiagnostic={ok:boolean;status:string;service?:string};
 export type KeychainRuntimeDiagnostic={legacyService:string;canonicalService:string;backendReads:number;backendWrites:number;backendDeletes:number;legacyBackendReads:number;canonicalBackendReads:number;canonicalBackendWrites:number;canonicalBackendDeletes:number;interactiveUiRequestsBlocked:number;legacyReconnectRequired:number;aclMutations:0;cacheHits:number;cacheMisses:number;migrationAttempts:number;migrationSuccesses:number;migrationFailures:number;secretValuesIncluded:false;accounts:Array<{profileUuid?:string|null;accountType:string;cacheHits:number;cacheMisses:number;backendReads:number;backendWrites:number;backendDeletes:number;migrationAttempts:number;migrationSuccesses:number;migrationFailures:number;lastOsstatus?:number|null}>;events:Array<{at:string;operation:string;profile_uuid?:string|null;account_type:string;cache:string;osstatus?:number|null;migration_state?:string|null}>};
 export type OAuthInventoryProfile={profile_uuid:string;is_current:boolean;is_orphan:boolean;refresh_token_account:'PRESENT'|'ABSENT';access_token_account:'PRESENT'|'ABSENT';client_secret_account:'PRESENT'|'ABSENT';refresh_token_read:'PASS'|'ACCESS_DENIED'|'READ_FAILED'|'NOT_RUN';refresh_read_osstatus?:number|null;refresh_read_error?:string|null};
@@ -106,6 +107,9 @@ export const api={
   diagnostics:(workspace:string)=>invoke<Diagnostics>('diagnostics',{workspace}),
   defaultWorkspace:()=>invoke<string>('default_workspace'),
   chooseWorkspace:async()=>{const r=await open({directory:true,multiple:false,title:'Папка VYRON YT PEISOV'});return typeof r==='string'?r:null},
+  chooseProfileAvatar:async()=>{const r=await open({directory:false,multiple:false,title:'Фото профиля VYRON',filters:[{name:'Images',extensions:['png','jpg','jpeg','webp']}]});return typeof r==='string'?r:null},
+  profileImportAvatar:(path:string)=>invoke<ProfileAvatarPayload>('profile_import_avatar',{path}),
+  profileAvatarData:(path:string)=>invoke<ProfileAvatarPayload>('profile_avatar_data',{path}),
   chooseRenderFolder:async(defaultPath?:string)=>{const r=await open({directory:true,multiple:false,title:'Папка рендера текущего канала',defaultPath:defaultPath||undefined});return typeof r==='string'?r:null},
   chooseRenderRoot:async(defaultPath?:string)=>{const r=await open({directory:true,multiple:false,title:'Общая папка Render со всеми каналами',defaultPath:defaultPath||undefined});return typeof r==='string'?r:null},
   chooseProjectsFolder:async(defaultPath?:string)=>{const r=await open({directory:true,multiple:false,title:'Папка проектов текущего канала',defaultPath:defaultPath||undefined});return typeof r==='string'?r:null},
