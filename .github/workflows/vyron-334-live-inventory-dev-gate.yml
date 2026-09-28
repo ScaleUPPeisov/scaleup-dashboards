@@ -10,8 +10,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: vyron-334-live-inventory-dev-gate-${{ github.ref }}
-  cancel-in-progress: true
+  group: vyron-334-live-inventory-dev-gate-${{ github.sha }}
+  cancel-in-progress: false
 
 jobs:
   frontend:
