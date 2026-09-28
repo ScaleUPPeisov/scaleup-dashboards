@@ -80,5 +80,9 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev librsvg2-dev libayatana-appindicator3-dev
+      - name: Rust owner-inventory regression
+        run: |
+          cargo test --manifest-path src-tauri/Cargo.toml inventory_166_pages_hydration_counts_and_quota_are_exact -- --nocapture
+          cargo test --manifest-path src-tauri/Cargo.toml schedule_data_incomplete_detects_unknown_or_malformed_private_publish_at -- --nocapture
       - name: Rust compile gate
         run: cargo check --manifest-path src-tauri/Cargo.toml
