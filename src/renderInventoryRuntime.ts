@@ -71,7 +71,7 @@ function activeReadyJob(job:VideoJob|undefined){
   if(job.storageLifecycle==='UPLOADED'||job.storageLifecycle==='TRASHED'||job.storageLifecycle==='TRASHED_BY_VYRON'||job.storageLifecycle==='FAILED')return false;
   return job.status==='READY_UPLOAD'||job.status==='UPLOADING';
 }
-function readyRows(rows:RenderScanRow[],jobs:VideoJob[]){
+export function readyRows(rows:RenderScanRow[],jobs:VideoJob[]){
   const byId=new Map(jobs.map(j=>[j.id,j]));
   return rows.filter(row=>{
     if(row.classification==='NEW_CANDIDATE'||row.classification==='NEW_GENERATION')return true;
@@ -115,9 +115,12 @@ function baseSnapshot(channel:Channel,previous?:ChannelInventorySnapshot):Channe
     newCandidates:0,newGenerations:0,knownReady:0,verifyRequired:0,invalid:0,runwayDays:0,level:'OFFLINE'
   }
 }
-function offlineSnapshot(channel:Channel,previous?:ChannelInventorySnapshot,error?:string):ChannelInventorySnapshot{
-  const prior=baseSnapshot(channel,previous),uploading=uploadingForChannel(channel.id,useApp.getState().jobs);
+export function preserveOfflineInventory(channel:Channel,previous?:ChannelInventorySnapshot,uploading=0,error?:string):ChannelInventorySnapshot{
+  const prior=baseSnapshot(channel,previous);
   return{...prior,channelId:channel.id,channelName:channel.name,renderFolderPath:String(channel.renderFolderPath||''),folderState:'OFFLINE',stale:true,uploadingVideos:uploading,level:'OFFLINE',error}
+}
+function offlineSnapshot(channel:Channel,previous?:ChannelInventorySnapshot,error?:string):ChannelInventorySnapshot{
+  return preserveOfflineInventory(channel,previous,uploadingForChannel(channel.id,useApp.getState().jobs),error)
 }
 function errorSnapshot(channel:Channel,previous:ChannelInventorySnapshot|undefined,error:string):ChannelInventorySnapshot{
   const prior=baseSnapshot(channel,previous);
@@ -148,6 +151,17 @@ async function fingerprintNeededFiles(result:RenderFolderScanResult,jobs:VideoJo
   return{...result,files}
 }
 
+export function buildInventorySnapshotFromScan(channel:Channel,result:RenderFolderScanResult,rows:RenderScanRow[],jobs:VideoJob[],uploading=0,lastScanAt=nowIso()):ChannelInventorySnapshot{
+  const summary=summarizeRenderScan(rows),ready=readyRows(rows,jobs),knownReady=ready.filter(x=>x.classification==='KNOWN_EXACT').length,readyCount=ready.length,runwayDays=inventoryRunwayDays(channel,readyCount);
+  return{
+    channelId:channel.id,channelName:channel.name,renderFolderPath:result.root,folderState:'ONLINE',stale:false,
+    physicalFiles:result.files.length,readyVideos:readyCount,uploadingVideos:uploading,uploadedLocalCopies:summary.UPLOADED_LOCAL_COPY,
+    newCandidates:summary.NEW_CANDIDATE,newGenerations:summary.NEW_GENERATION,knownReady,
+    verifyRequired:summary.VERIFY_REQUIRED+summary.LEGACY_IDENTITY_UNPROVEN,invalid:summary.INVALID+summary.AMBIGUOUS+summary.DUPLICATE_LOCAL,
+    runwayDays,level:inventoryLevel(readyCount,runwayDays),lastScanAt,lastConfirmedAt:lastScanAt,result,rows,summary
+  }
+}
+
 function auditFor(previous:ChannelInventorySnapshot|undefined,next:ChannelInventorySnapshot,reason:InventoryScanReason){
   const store=useLiveInventory.getState(),before=previous?.readyVideos??0,after=next.readyVideos,delta=after-before;
   if(next.folderState==='OFFLINE'){
@@ -174,7 +188,7 @@ export async function scanInventoryChannel(channelId:string,reason:InventoryScan
   }
   try{
     const current=useApp.getState(),cheap=await api.scanRenderFolder(root),result=await fingerprintNeededFiles(cheap,current.jobs,current.uploadHistory,channelId);
-    const rows=classifyChannelRenderFiles(result.files,current.jobs,current.uploadHistory,channelId,result.root),summary=summarizeRenderScan(rows),ready=readyRows(rows,current.jobs),knownReady=ready.filter(x=>x.classification==='KNOWN_EXACT').length,readyCount=ready.length;
+    const rows=classifyChannelRenderFiles(result.files,current.jobs,current.uploadHistory,channelId,result.root);
     // The runtime may refresh evidence only for the current non-historical generation.
     for(const row of rows){
       if(!row.matchedJobId||!row.currentFingerprint)continue;
@@ -182,14 +196,7 @@ export async function scanInventoryChannel(channelId:string,reason:InventoryScan
       if(!matched||!canRefreshCurrentGenerationEvidence(matched)||normalizeRenderPath(matched.finalPath||'')!==normalizeRenderPath(row.file.path))continue;
       current.patchJob(matched.id,{currentSourceFingerprint:row.currentFingerprint,currentSourceFileSize:row.file.size,currentSourceModifiedAt:row.file.modifiedAt||undefined,sourceGenerationKey:`${channelId}:${row.currentFingerprint}:${row.file.size}`})
     }
-    const lastScanAt=nowIso(),runwayDays=inventoryRunwayDays(channel,readyCount);
-    const next:ChannelInventorySnapshot={
-      channelId,channelName:channel.name,renderFolderPath:result.root,folderState:'ONLINE',stale:false,
-      physicalFiles:result.files.length,readyVideos:readyCount,uploadingVideos:uploadingForChannel(channelId,current.jobs),
-      uploadedLocalCopies:summary.UPLOADED_LOCAL_COPY,newCandidates:summary.NEW_CANDIDATE,newGenerations:summary.NEW_GENERATION,
-      knownReady,verifyRequired:summary.VERIFY_REQUIRED+summary.LEGACY_IDENTITY_UNPROVEN,invalid:summary.INVALID+summary.AMBIGUOUS+summary.DUPLICATE_LOCAL,
-      runwayDays,level:inventoryLevel(readyCount,runwayDays),lastScanAt,lastConfirmedAt:lastScanAt,result,rows,summary
-    };
+    const next=buildInventorySnapshotFromScan(channel,result,rows,current.jobs,uploadingForChannel(channelId,current.jobs));
     store.setSnapshot(next);auditFor(previous,next,reason);return next
   }catch(error){
     const next=errorSnapshot(channel,previous,String(error));store.setSnapshot(next);
