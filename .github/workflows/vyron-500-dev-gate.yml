@@ -28,21 +28,18 @@ jobs:
       - name: VYRON 5 + preservation tests
         run: >
           npx vitest run
+          src/v500Contract.test.ts
           src/dailyOperations.test.ts
           src/systemHealth.test.ts
           src/updaterRuntime.test.ts
-          src/v401HotfixContract.test.ts
           src/v400OwnerInventory.test.ts
-          src/v400DashboardTruth.test.ts
           src/v400QuotaUploadLimitSeparation.test.ts
           src/v400PerformanceAndGlobalLimit.test.ts
           src/v400BlackScreenGuard.test.ts
-          src/v400BrandingCelebration.test.ts
           src/v400RevenueEstimate.test.ts
           src/v400ScheduleFrequencyTruth.test.ts
           src/v335RenderFolderPicker.test.ts
           src/v334LiveContentInventory.test.ts
-          src/v334LiveInventorySafety.test.ts
           src/v332WindowsOauthLauncher.test.ts
           src/v2115Rc7OauthUpdateContinuity.test.ts
           src/updaterHotfix.test.ts
@@ -103,12 +100,11 @@ jobs:
       - name: Cross-platform regression
         run: >
           npx vitest run
+          src/v500Contract.test.ts
           src/dailyOperations.test.ts
           src/systemHealth.test.ts
           src/v400PerformanceAndGlobalLimit.test.ts
           src/v400BlackScreenGuard.test.ts
-          src/v400BrandingCelebration.test.ts
-          src/v334LiveInventorySafety.test.ts
           src/v332WindowsOauthLauncher.test.ts
           src/v2115Rc7OauthUpdateContinuity.test.ts
           src/updaterRuntime.test.ts
