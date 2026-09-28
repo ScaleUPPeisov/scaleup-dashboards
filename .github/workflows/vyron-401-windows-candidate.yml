@@ -1,6 +1,7 @@
 name: VYRON 4.0.1 Windows Signed Candidate
 
 on:
+  workflow_call:
   workflow_run:
     workflows:
       - VYRON 4.0.1 macOS Signed Candidate
@@ -21,7 +22,7 @@ env:
 
 jobs:
   windows-candidate:
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'feature/vyron-4.0.1') }}
+    if: ${{ github.event_name == 'workflow_call' || github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'feature/vyron-4.0.1') }}
     name: VYRON 4.0.1 signed Windows x64 candidate
     runs-on: windows-latest
     timeout-minutes: 120
