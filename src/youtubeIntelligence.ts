@@ -6,15 +6,61 @@ import {markYoutubeCache,youtubeCacheFresh} from './youtubeCache';
 import {humanizeError} from './errorCenter';
 
 let running=false;
+export const ANALYTICS_DISABLED_TTL_MS=6*60*60*1000;
+const ANALYTICS_DISABLED_KEY='vyron:analytics-api-disabled:v1';
+type AnalyticsDisabledRow={profileId:string;at:string;until:string;reason:string};
+
+function readAnalyticsDisabled():Record<string,AnalyticsDisabledRow>{
+ try{return JSON.parse(localStorage.getItem(ANALYTICS_DISABLED_KEY)||'{}')}catch{return{}}
+}
+function writeAnalyticsDisabled(rows:Record<string,AnalyticsDisabledRow>){
+ try{localStorage.setItem(ANALYTICS_DISABLED_KEY,JSON.stringify(rows))}catch{}
+}
+export function isAnalyticsApiDisabledError(error:unknown){
+ const s=String(error||'').toLowerCase();
+ return s.includes('accessnotconfigured')||
+   s.includes('service_disabled')||
+   (s.includes('youtube analytics api')&&(s.includes('not been used')||s.includes('disabled')||s.includes('enable')))||
+   (s.includes('youtubeanalytics.googleapis.com')&&(s.includes('disabled')||s.includes('not enabled')||s.includes('permission')));
+}
+export function analyticsApiDisabledState(profileId:string,now=Date.now()){
+ const row=readAnalyticsDisabled()[profileId];if(!row)return undefined;
+ const until=Date.parse(row.until);if(!Number.isFinite(until)||until<=now){
+  const rows=readAnalyticsDisabled();delete rows[profileId];writeAnalyticsDisabled(rows);return undefined
+ }
+ return row
+}
+function markAnalyticsApiDisabled(profileId:string,error:unknown){
+ const now=Date.now(),rows=readAnalyticsDisabled();
+ rows[profileId]={profileId,at:new Date(now).toISOString(),until:new Date(now+ANALYTICS_DISABLED_TTL_MS).toISOString(),reason:String(error)};
+ writeAnalyticsDisabled(rows);return rows[profileId]
+}
+function clearAnalyticsApiDisabled(profileId:string){
+ const rows=readAnalyticsDisabled();if(!rows[profileId])return;delete rows[profileId];writeAnalyticsDisabled(rows)
+}
 const stale=(iso:string|undefined,min:number)=>!iso||Date.now()-new Date(iso).getTime()>=Math.max(5,min)*60_000;
 export function competitorChannelRef(c:Competitor){return c.youtubeChannelId||c.url||''}
 
 export async function refreshChannelAnalytics(channelId:string,days=28,force=true,offsetDays=0,allTime=false){
  const s=useApp.getState(),channel=s.channels.find(c=>c.id===channelId);if(!channel?.youtubeProfileId)throw new Error('У канала не привязан YouTube OAuth');
  if(!force&&channel.analytics?.periodDays===days&&Number(channel.analytics?.offsetDays||0)===offsetDays&&(youtubeCacheFresh('analytics',`${channelId}:${days}:${offsetDays}`)||!stale(channel.analytics?.updatedAt,s.settings.youtubeIntelligenceRefreshMin)))return channel.analytics;
- const r=await api.youtubeAnalytics(channel.youtubeProfileId,days,offsetDays,allTime),ps=(r as any).publicStats||{};
- s.updateChannel(channel.id,{youtubeChannelId:ps.channelId||channel.youtubeChannelId,stats:{subscribers:ps.subscribers??channel.stats?.subscribers,views:ps.views??channel.stats?.views,videos:ps.videos??channel.stats?.videos,updatedAt:r.updatedAt},analytics:r});markYoutubeCache('analytics',`${channelId}:${days}:${offsetDays}`,Math.max(5,s.settings.youtubeIntelligenceRefreshMin)*60_000);
- return r;
+ const disabled=analyticsApiDisabledState(channel.youtubeProfileId);
+ if(!force&&disabled){
+  if(channel.analytics)return channel.analytics;
+  throw new Error('ANALYTICS_API_DISABLED_CACHED: YouTube Analytics API не включён; автоматический retry отложен до '+disabled.until)
+ }
+ try{
+  const r=await api.youtubeAnalytics(channel.youtubeProfileId,days,offsetDays,allTime),ps=(r as any).publicStats||{};
+  clearAnalyticsApiDisabled(channel.youtubeProfileId);
+  s.updateChannel(channel.id,{youtubeChannelId:ps.channelId||channel.youtubeChannelId,stats:{subscribers:ps.subscribers??channel.stats?.subscribers,views:ps.views??channel.stats?.views,videos:ps.videos??channel.stats?.videos,updatedAt:r.updatedAt},analytics:r});markYoutubeCache('analytics',`${channelId}:${days}:${offsetDays}`,Math.max(5,s.settings.youtubeIntelligenceRefreshMin)*60_000);
+  return r;
+ }catch(error){
+  if(isAnalyticsApiDisabledError(error)){
+   markAnalyticsApiDisabled(channel.youtubeProfileId,error);
+   throw new Error('ANALYTICS_API_DISABLED: YouTube Analytics API не включён. Включите youtubeanalytics.googleapis.com в используемом Google Cloud Project.')
+  }
+  throw error
+ }
 }
 
 export async function refreshCompetitor(competitorId:string,force=true){
