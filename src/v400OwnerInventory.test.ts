@@ -1,6 +1,6 @@
 import {describe,expect,it} from 'vitest';
 import type {Channel,YoutubeExistingVideo} from './types';
-import {summarizeOwnerInventory} from './ownerInventoryRuntime';
+import {inferYoutubeScheduleFrequency,summarizeOwnerInventory} from './ownerInventoryRuntime';
 
 const channel={id:'c1',name:'Clover Gramophone'} as Channel;
 const video=(id:string,privacyStatus:string,publishAt?:string,publishedAt?:string):YoutubeExistingVideo=>({id,position:0,title:id,description:'',tags:[],categoryId:'10',privacyStatus,publishAt,publishedAt,selected:false});
@@ -19,6 +19,11 @@ describe('VYRON 4.0.0 owner inventory truth',()=>{
   ];
   const x=summarizeOwnerInventory(channel,rows,'2026-09-28T00:00:00Z',true,new Date('2026-09-28T00:00:00Z'));
   expect(x.scheduledCount).toBe(1);expect(x.privateCount).toBe(1);expect(x.lastScheduledAt).toBe('2026-10-08T00:00:00Z');expect(x.total).toBe(3)
+ });
+ it('detects confirmed daily schedule only from real YouTube publishAt slots',()=>{
+  expect(inferYoutubeScheduleFrequency(['2026-10-01T00:00:00Z','2026-10-02T00:00:00Z','2026-10-03T00:00:00Z'])).toBe('Каждый день');
+  expect(inferYoutubeScheduleFrequency(['2026-10-01T00:00:00Z'])).toBeUndefined();
+  expect(inferYoutubeScheduleFrequency(['2026-10-01T00:00:00Z','2026-10-03T00:00:00Z'])).toBe('Через день')
  });
  it('local Render files are not part of owner YouTube inventory input',()=>{
   const x=summarizeOwnerInventory(channel,[],undefined,false,new Date('2026-09-28T00:00:00Z'));
