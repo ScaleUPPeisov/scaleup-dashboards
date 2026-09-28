@@ -70,7 +70,7 @@ export type Settings={
   autoQueueRender:boolean; autoOpenEndlume:boolean; autoUploadYoutube:boolean; autopilotIntervalSec:number; tracksPerVideo:number;
   openaiApiKey:string; openaiModel:string; youtubeOAuthClientId:string; youtubeCategoryId:string;
   youtubeIntelligenceAutoRefresh:boolean; youtubeIntelligenceRefreshMin:number; youtubePublishSafeMode:boolean; youtubeUploadConcurrency:number; youtubeUploadPerChannelConcurrency:number; metadataConcurrency:number; statisticsConcurrency:number;
-  competitorRpmLow:number; competitorRpmHigh:number; competitorPoolSize:number;
+  competitorRpmLow:number; competitorRpmHigh:number; competitorPoolSize:number; estimatedRpmUsd?:number;
   publishedVideoCleanupPolicy?:'ask'|'none'|'after3d'|'after7d'; completedProjectCleanupPolicy?:'ask'|'none'|'after3d'|'after7d';
   endlumeTargetDurationMin:number; endlumeTargetRenderSec:number; endlumeTargetFileMinMb:number; endlumeTargetFileMaxMb:number; endlumePreserveImageQuality:boolean; endlumeProjectNaming:string;
 };
