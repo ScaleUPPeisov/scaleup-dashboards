@@ -54,16 +54,23 @@ describe('VYRON 3.3.4 live inventory safety contracts',()=>{
   expect(win).not.toContain('Command::new("cmd")');
   expect(windowsConfig.plugins.updater.endpoints[0]).toContain('/updates/windows-latest.json')
  });
- it('keeps version and bundle identity while production feed source files remain unmodified by feature code',()=>{
+ it('keeps version, bundle identity and platform updater routing while dev CI remains read-only',()=>{
   expect(packageJson.version).toBe('3.3.4');
   expect(baseConfig.version).toBe('3.3.4');
   expect(baseConfig.identifier).toBe('studio.channelflow.desktop');
-  expect(baseConfig.plugins.updater.endpoints[0]).toContain('/updates/latest.json');
-  expect(windowsConfig.plugins.updater.endpoints[0]).toContain('/updates/windows-latest.json');
+  expect(baseConfig.plugins.updater.endpoints).toEqual([
+    'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json',
+    'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json'
+  ]);
+  expect(windowsConfig.plugins.updater.endpoints).toEqual([
+    'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json',
+    'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json'
+  ]);
   const devGate=fs.readFileSync('.github/workflows/vyron-334-live-inventory-dev-gate.yml','utf8');
-  expect(devGate).not.toContain('vyron-releases/releases');
-  expect(devGate).not.toContain('updates/latest.json');
-  expect(devGate).not.toContain('updates/windows-latest.json')
+  expect(devGate).toContain('MAC_PRODUCTION_FEED=3.3.3');
+  expect(devGate).toContain('WINDOWS_PRODUCTION_FEED=3.3.2');
+  expect(devGate).toContain('RELEASE_MUTATION=NO');
+  for(const mutation of ['gh release create','gh release upload','git tag ','git push --tags','contents: write'])expect(devGate).not.toContain(mutation)
  });
  it('same logical fixture classifies the same on macOS and Windows path syntax',()=>{
   const hist=(path:string):UploadHistoryRecord=>({id:'h1',jobId:'old',channelId:'c1',youtubeVideoId:'yt1',localFilePath:path,originalFilename:'001.mov',uploadedAt:'2026-09-20T00:00:00Z',fileSize:100,sha256:'a'.repeat(64),status:'UPLOADED',fingerprintProofSource:'UPLOAD_TIME'});
