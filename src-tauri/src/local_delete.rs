@@ -232,7 +232,11 @@ pub fn scan_render_folder_impl(path: &str) -> Result<RenderFolderScanResult, Str
 }
 
 #[tauri::command]
-pub fn scan_render_folder(path: String) -> Result<RenderFolderScanResult, String> { scan_render_folder_impl(&path) }
+pub async fn scan_render_folder(path: String) -> Result<RenderFolderScanResult, String> {
+    tauri::async_runtime::spawn_blocking(move || scan_render_folder_impl(&path))
+        .await
+        .map_err(|e| format!("RENDER_SCAN_TASK_FAILED: {e}"))?
+}
 
 #[tauri::command]
 pub fn trash_local_file(
