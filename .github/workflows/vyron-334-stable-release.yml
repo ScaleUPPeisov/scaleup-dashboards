@@ -137,11 +137,12 @@ jobs:
           grep -Fx 'MACOS_UPDATER_SIGNATURE=VERIFIED' approved/macos/gate-summary.txt
           grep -Fx 'MACOS_3_3_3_TO_3_3_4_STATE_CONTINUITY=PASS' approved/macos/gate-summary.txt
           grep -Fx 'PRODUCTION_FEED_MUTATED=NO' approved/macos/gate-summary.txt
-          grep -Fx "HEAD=$APPROVED_HEAD" approved/windows/gate-summary.txt
-          grep -Fx 'WINDOWS_BUILD=PASS' approved/windows/gate-summary.txt
-          grep -Fx 'WINDOWS_UPDATER_SIGNATURE=VERIFIED' approved/windows/gate-summary.txt
-          grep -Fx 'WINDOWS_3_3_2_TO_3_3_4_STATE_CONTINUITY=PASS' approved/windows/gate-summary.txt
-          grep -Fx 'PRODUCTION_FEED_MUTATED=NO' approved/windows/gate-summary.txt
+          tr -d '\r' < approved/windows/gate-summary.txt > /tmp/windows-gate-summary.txt
+          grep -Fx "HEAD=$APPROVED_HEAD" /tmp/windows-gate-summary.txt
+          grep -Fx 'WINDOWS_BUILD=PASS' /tmp/windows-gate-summary.txt
+          grep -Fx 'WINDOWS_UPDATER_SIGNATURE=VERIFIED' /tmp/windows-gate-summary.txt
+          grep -Fx 'WINDOWS_3_3_2_TO_3_3_4_STATE_CONTINUITY=PASS' /tmp/windows-gate-summary.txt
+          grep -Fx 'PRODUCTION_FEED_MUTATED=NO' /tmp/windows-gate-summary.txt
           echo 'APPROVED_ARTIFACTS=PASS'
 
       - name: Reverify hashes and updater signatures
