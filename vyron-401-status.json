@@ -1,0 +1,123 @@
+{
+  "capturedAt": "2026-09-28T14:39:43.109774+00:00",
+  "runs": [
+    {
+      "conclusion": "failure",
+      "createdAt": "2026-09-28T14:37:04Z",
+      "databaseId": 36437331389,
+      "displayTitle": "release(vyron): fast-promote signed 4.0.1 macOS candidate",
+      "event": "push",
+      "headSha": "28eb87c883b645aed1c61b4f2c26bf85a75a2838",
+      "status": "completed",
+      "updatedAt": "2026-09-28T14:37:23Z",
+      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/actions/runs/36437331389",
+      "workflowName": "VYRON 4.0.1 macOS Fast Promote",
+      "jobs": [
+        {
+          "id": 108978526041,
+          "name": "Promote signed macOS candidate to production",
+          "status": "completed",
+          "conclusion": "failure",
+          "started_at": "2026-09-28T14:37:09Z",
+          "completed_at": "2026-09-28T14:37:22Z"
+        }
+      ]
+    },
+    {
+      "conclusion": "failure",
+      "createdAt": "2026-09-28T14:26:45Z",
+      "databaseId": 36436021949,
+      "displayTitle": "release(vyron): publish 4.0.1 to macOS only",
+      "event": "push",
+      "headSha": "acd44ece8cefe228d2e97f97eaa736e5f4897ef8",
+      "status": "completed",
+      "updatedAt": "2026-09-28T14:27:18Z",
+      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/actions/runs/36436021949",
+      "workflowName": "VYRON 4.0.1 macOS Production Release",
+      "jobs": [
+        {
+          "id": 108974036463,
+          "name": "Build, verify and publish VYRON 4.0.1 macOS",
+          "status": "completed",
+          "conclusion": "failure",
+          "started_at": "2026-09-28T14:26:53Z",
+          "completed_at": "2026-09-28T14:27:17Z"
+        }
+      ]
+    },
+    {
+      "conclusion": "failure",
+      "createdAt": "2026-09-28T14:21:30Z",
+      "databaseId": 36435359008,
+      "displayTitle": "ci(vyron): chain Windows candidate strictly after macOS pass",
+      "event": "push",
+      "headSha": "fd7e484b9e3e097db142c6511a5d89bb3e9c43e4",
+      "status": "completed",
+      "updatedAt": "2026-09-28T14:22:06Z",
+      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/actions/runs/36435359008",
+      "workflowName": "VYRON 4.0.1 macOS Signed Candidate",
+      "jobs": [
+        {
+          "id": 108971759498,
+          "name": "VYRON 4.0.1 signed macOS ARM64 candidate",
+          "status": "completed",
+          "conclusion": "failure",
+          "started_at": "2026-09-28T14:21:38Z",
+          "completed_at": "2026-09-28T14:22:05Z"
+        },
+        {
+          "id": 108972005736,
+          "name": "Run Windows gate after macOS PASS",
+          "status": "completed",
+          "conclusion": "skipped",
+          "started_at": "2026-09-28T14:22:05Z",
+          "completed_at": "2026-09-28T14:22:05Z"
+        }
+      ]
+    },
+    {
+      "conclusion": "failure",
+      "createdAt": "2026-09-28T14:18:55Z",
+      "databaseId": 36435040543,
+      "displayTitle": "ci(vyron): rerun 4.0.1 macOS candidate on latest hotfix head",
+      "event": "push",
+      "headSha": "903cdb48d18075ab9d9f12910f07ced2638867a2",
+      "status": "completed",
+      "updatedAt": "2026-09-28T14:19:36Z",
+      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/actions/runs/36435040543",
+      "workflowName": "VYRON 4.0.1 macOS Signed Candidate",
+      "jobs": [
+        {
+          "id": 108970645161,
+          "name": "VYRON 4.0.1 signed macOS ARM64 candidate",
+          "status": "completed",
+          "conclusion": "failure",
+          "started_at": "2026-09-28T14:19:04Z",
+          "completed_at": "2026-09-28T14:19:35Z"
+        }
+      ]
+    },
+    {
+      "conclusion": "failure",
+      "createdAt": "2026-09-28T14:17:03Z",
+      "databaseId": 36434810257,
+      "displayTitle": "ci(vyron): start 4.0.1 macOS signed candidate gate",
+      "event": "push",
+      "headSha": "5019c7e479f9713561ca119297cc56b30c401744",
+      "status": "completed",
+      "updatedAt": "2026-09-28T14:17:46Z",
+      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/actions/runs/36434810257",
+      "workflowName": "VYRON 4.0.1 macOS Signed Candidate",
+      "jobs": [
+        {
+          "id": 108969845040,
+          "name": "VYRON 4.0.1 signed macOS ARM64 candidate",
+          "status": "completed",
+          "conclusion": "failure",
+          "started_at": "2026-09-28T14:17:13Z",
+          "completed_at": "2026-09-28T14:17:44Z"
+        }
+      ]
+    }
+  ]
+}
