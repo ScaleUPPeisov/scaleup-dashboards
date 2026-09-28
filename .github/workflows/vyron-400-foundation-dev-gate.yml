@@ -1,0 +1,76 @@
+name: VYRON 4.0.0 Foundation Dev Gate
+
+on:
+  push:
+    branches:
+      - feature/vyron-4.0.0
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-400-foundation-\${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: VYRON 4 owner truth + preservation regression
+        run: |
+          npx vitest run \
+            src/v400OwnerInventory.test.ts \
+            src/v400DashboardTruth.test.ts \
+            src/v335RenderFolderPicker.test.ts \
+            src/v334LiveContentInventory.test.ts \
+            src/v334LiveInventorySafety.test.ts \
+            src/v332WindowsOauthLauncher.test.ts \
+            src/v2115Rc7OauthUpdateContinuity.test.ts \
+            src/updaterHotfix.test.ts \
+            src/updaterPolicy.test.ts
+      - name: Production frontend build
+        run: npm run build
+      - name: Version identity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          node - <<'NODE'
+          const p=require('./package.json'),l=require('./package-lock.json'),t=require('./src-tauri/tauri.conf.json');
+          if(p.version!=='4.0.0'||l.version!=='4.0.0'||l.packages[''].version!=='4.0.0'||t.version!=='4.0.0')process.exit(1);
+          if(t.identifier!=='studio.channelflow.desktop')process.exit(1);
+          console.log('VYRON_4_VERSION_IDENTITY=PASS');
+          NODE
+          grep -F 'version = "4.0.0"' src-tauri/Cargo.toml
+          grep -A1 -F 'name = "channelflow"' src-tauri/Cargo.lock | grep -F 'version = "4.0.0"'
+      - name: Production feeds remain frozen
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json -o /tmp/mac.json
+          curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json -o /tmp/win.json
+          python3 - <<'PY'
+          import json
+          assert json.load(open('/tmp/mac.json'))['version']=='3.3.5'
+          assert json.load(open('/tmp/win.json'))['version']=='3.3.5'
+          print('PRODUCTION_RELEASE_MUTATION=NO')
+          PY
+
+  rust:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Rust compile gate
+        run: cargo check --manifest-path src-tauri/Cargo.toml
