@@ -1,4 +1,4 @@
-import React,{useEffect,useMemo,useState} from 'react';
+import React,{useEffect,useState} from 'react';
 import {api} from './api';
 import {useApp} from './store';
 import {VYRON_4_ARTWORK,VYRON_LAST_CELEBRATED_KEY,VYRON_MAJOR_UPGRADE_TARGET_KEY,VYRON_MAJOR_VERSION} from './vyronBrand';
@@ -8,9 +8,9 @@ import {LocalProfileMenu} from './LocalProfileMenu';
 type CelebrationMode='upgrade'|'fresh';
 
 export function MajorUpdateCelebration(){
-  const channels=useApp(s=>s.channels),jobs=useApp(s=>s.jobs),uploadHistory=useApp(s=>s.uploadHistory);
+  const channelCount=useApp(s=>s.channels.length),jobCount=useApp(s=>s.jobs.length),uploadHistoryCount=useApp(s=>s.uploadHistory.length);
   const [visible,setVisible]=useState(false),[mode,setMode]=useState<CelebrationMode>('upgrade'),[details,setDetails]=useState(false);
-  const existingState=useMemo(()=>channels.length>0||jobs.length>0||uploadHistory.length>0,[channels.length,jobs.length,uploadHistory.length]);
+  const existingState=channelCount>0||jobCount>0||uploadHistoryCount>0;
 
   useEffect(()=>{
     let live=true;
