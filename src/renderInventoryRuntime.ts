@@ -3,7 +3,6 @@ import {api,type RenderFolderScanResult,type RenderFolderVideoFile} from './api'
 import {useApp} from './store';
 import type {Channel,UploadHistoryRecord,VideoJob} from './types';
 import {
-  canRefreshCurrentGenerationEvidence,
   classifyChannelRenderFiles,
   normalizeRenderPath,
   renderFileNeedsFingerprint,
@@ -192,13 +191,6 @@ export async function scanInventoryChannel(channelId:string,reason:InventoryScan
   try{
     const current=useApp.getState(),cheap=await api.scanRenderFolder(root),result=await fingerprintNeededFiles(cheap,current.jobs,current.uploadHistory,channelId);
     const rows=classifyChannelRenderFiles(result.files,current.jobs,current.uploadHistory,channelId,result.root);
-    // The runtime may refresh evidence only for the current non-historical generation.
-    for(const row of rows){
-      if(!row.matchedJobId||!row.currentFingerprint)continue;
-      const matched=current.jobs.find(j=>j.id===row.matchedJobId);
-      if(!matched||!canRefreshCurrentGenerationEvidence(matched)||normalizeRenderPath(matched.finalPath||'')!==normalizeRenderPath(row.file.path))continue;
-      current.patchJob(matched.id,{currentSourceFingerprint:row.currentFingerprint,currentSourceFileSize:row.file.size,currentSourceModifiedAt:row.file.modifiedAt||undefined,sourceGenerationKey:`${channelId}:${row.currentFingerprint}:${row.file.size}`})
-    }
     const next=buildInventorySnapshotFromScan(channel,result,rows,current.jobs,uploadingForChannel(channelId,current.jobs));
     store.setSnapshot(next);auditFor(previous,next,reason);return next
   }catch(error){
@@ -219,5 +211,14 @@ export async function scanAllInventories(reason:InventoryScanReason='manual-all'
 }
 
 export function markInventoryAfterCleanup(channelId:string){return scanInventoryChannel(channelId,'cleanup')}
+export function refreshInventoryUploadCounts(){
+  const store=useLiveInventory.getState(),state=useApp.getState(),next={...store.snapshots};let changed=false;
+  for(const channel of state.channels){
+    const current=next[channel.id];if(!current)continue;
+    const uploading=uploadingForChannel(channel.id,state.jobs);
+    if(uploading!==current.uploadingVideos){next[channel.id]={...current,uploadingVideos:uploading};changed=true}
+  }
+  if(changed)useLiveInventory.setState({snapshots:next})
+}
 export function inventorySnapshot(channelId:string){return useLiveInventory.getState().snapshots[channelId]}
 export function resetLiveInventoryForTests(){useLiveInventory.setState({snapshots:{},audit:[],globalScanning:false})}
