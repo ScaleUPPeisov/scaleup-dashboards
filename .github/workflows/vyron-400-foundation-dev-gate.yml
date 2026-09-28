@@ -33,6 +33,7 @@ jobs:
             src/v400BrandingCelebration.test.ts \
             src/v400RevenueEstimate.test.ts \
             src/v400PerformanceAndGlobalLimit.test.ts \
+            src/v400BlackScreenGuard.test.ts \
             src/v400ScheduleFrequencyTruth.test.ts \
             src/v335RenderFolderPicker.test.ts \
             src/v334LiveContentInventory.test.ts \
