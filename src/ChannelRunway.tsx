@@ -84,7 +84,14 @@ export function ChannelRunway(){
     return off;
   },[signature]);
 
-  useEffect(()=>subscribeYoutubeQuota(()=>setQuotaTick(x=>x+1)),[]);
+  useEffect(()=>{
+    let timer:number|undefined;
+    const off=subscribeYoutubeQuota(()=>{
+      if(timer!==undefined)window.clearTimeout(timer);
+      timer=window.setTimeout(()=>{timer=undefined;setQuotaTick(x=>x+1)},450)
+    });
+    return()=>{if(timer!==undefined)window.clearTimeout(timer);off()}
+  },[]);
   useEffect(()=>{let live=true;void Promise.all([api.youtubeProfiles(),api.youtubeGoogleConfig()]).then(([p,c])=>{if(live){setProfiles(p);setGoogleConfig(c)}}).catch(()=>{});return()=>{live=false}},[]);
 
   const active=useMemo(()=>channels.filter(c=>c.enabled),[channels]);
