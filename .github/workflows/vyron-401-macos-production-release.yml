@@ -1,4 +1,4 @@
-# release-rerun-current-head
+# build-rerun-owner-avatar-fix
 name: VYRON 4.0.1 macOS Production Release
 
 on:
