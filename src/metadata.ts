@@ -30,6 +30,11 @@ function dateFrom(value:unknown){
   const s=String(value).trim();
   if(/^\d{1,2}:\d{2}(?:\s|$)/.test(s))return undefined;
   if(/^\d{4}-\d{2}-\d{2}$/.test(s))return s;
+  const dotted=s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})(?:\s|$|[•·])/);
+  if(dotted){
+    const day=Number(dotted[1]),month=Number(dotted[2]),year=Number(dotted[3]),check=new Date(Date.UTC(year,month-1,day));
+    if(check.getUTCFullYear()===year&&check.getUTCMonth()===month-1&&check.getUTCDate()===day)return `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`
+  }
   const d=new Date(s);
   return Number.isNaN(d.getTime())?undefined:d.toISOString()
 }
@@ -95,6 +100,7 @@ function labelledLine(line:string):{mode:Mode;value?:string}|null{
   m=t.match(/^(TAGS|ТЕГИ)(?:\s*[—–-]\s*\d+\s*(?:characters?|символ(?:ов|а)?))?\s*(?::)?\s*(.*)$/i);if(m)return {mode:'tags',value:m[2]?.trim()||undefined};
   m=t.match(/^(PUBLISH(?:[_\s-]*AT|\s+DATE)|DATE|ДАТА)\s*(?::|-)?\s*(.*)$/i);if(m)return {mode:'date',value:m[2]?.trim()||undefined};
   m=t.match(/^(PUBLISH(?:[_\s-]*TIME)|ВРЕМЯ\s+ПУБЛИКАЦИИ)\s*(?::|-)?\s*(.*)$/i);if(m)return {mode:'publishTime',value:m[2]?.trim()||undefined};
+  m=t.match(/^PUBLISH(?:\s*:\s*|\s+)?(.*)$/i);if(m)return {mode:'date',value:m[1]?.trim()||undefined};
   m=t.match(/^(CHANNEL|КАНАЛ)\s*(?::|-)?\s*(.*)$/i);if(m)return {mode:'channel',value:m[2]?.trim()||undefined};
   if(/^SEO\s*FOCUS\s*:/i.test(t))return {mode:'ignore'};
   return null
@@ -113,7 +119,7 @@ function parseBlock(block:string,source:string,forcedNumber?:number):ImportedMet
     if(m==='title'){title=value;mode=null}
     else if(m==='description')descriptionParts.push(value)
     else if(m==='tags')tagParts.push(value)
-    else if(m==='date'){publishAt=dateFrom(value);mode=null}
+    else if(m==='date'){publishAt=dateFrom(value);const t=timeFrom(value);if(t.publishTime){publishTime=t.publishTime;publishTimezone=t.publishTimezone;publishUtcOffsetMinutes=t.publishUtcOffsetMinutes}mode=null}
     else if(m==='publishTime'){const t=timeFrom(value);publishTime=t.publishTime;publishTimezone=t.publishTimezone;publishUtcOffsetMinutes=t.publishUtcOffsetMinutes;mode=null}
     else if(m==='channel'){channel=value;mode=null}
   };
@@ -144,7 +150,7 @@ function parseTxt(text:string,source:string){
     }
     if(out.length)return out
   }
-  const labelled=/(?:^|\n)\s*(?:TITLE|НАЗВАНИЕ|DESCRIPTION|ОПИСАНИЕ|TAGS|ТЕГИ|DATE|ДАТА|PUBLISH(?:[_\s-]*AT|[_\s-]*TIME)|CHANNEL|КАНАЛ)\b/i.test(clean);
+  const labelled=/(?:^|\n)\s*(?:TITLE|НАЗВАНИЕ|DESCRIPTION|ОПИСАНИЕ|TAGS|ТЕГИ|DATE|ДАТА|PUBLISH(?:[_\s-]*AT|[_\s-]*TIME)|PUBLISH|CHANNEL|КАНАЛ)\b/i.test(clean);
   if(labelled){const row=parseBlock(clean,source);return row?[row]:[]}
   const lines=clean.split('\n').map(x=>x.trim()).filter(Boolean);
   return lines.length?[{number:numberFrom(undefined,source),title:lines[0],description:lines.slice(1).join('\n')||undefined,source}]:[]
