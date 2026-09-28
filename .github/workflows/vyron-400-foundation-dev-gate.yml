@@ -29,6 +29,8 @@ jobs:
           npx vitest run \
             src/v400OwnerInventory.test.ts \
             src/v400DashboardTruth.test.ts \
+            src/v400QuotaUploadLimitSeparation.test.ts \
+            src/v400BrandingCelebration.test.ts \
             src/v335RenderFolderPicker.test.ts \
             src/v334LiveContentInventory.test.ts \
             src/v334LiveInventorySafety.test.ts \
