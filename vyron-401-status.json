@@ -1,25 +1,47 @@
 {
-  "capturedAt": "2026-09-28T14:50:03.885508+00:00",
+  "capturedAt": "2026-09-28T14:59:38.031123+00:00",
   "runs": [
     {
       "conclusion": "",
+      "createdAt": "2026-09-28T14:59:05Z",
+      "databaseId": 36440100316,
+      "displayTitle": "fix(vyron): pass Developer ID identity into macOS Tauri build",
+      "event": "push",
+      "headSha": "de8f6a0af0ed445c7998c2a80b765fa77979d563",
+      "status": "in_progress",
+      "updatedAt": "2026-09-28T14:59:16Z",
+      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/actions/runs/36440100316",
+      "workflowName": "VYRON 4.0.1 macOS Production Release",
+      "jobs": [
+        {
+          "id": 108988057801,
+          "name": "Build, verify and publish VYRON 4.0.1 macOS",
+          "status": "in_progress",
+          "conclusion": null,
+          "started_at": "2026-09-28T14:59:15Z",
+          "completed_at": null
+        }
+      ]
+    },
+    {
+      "conclusion": "failure",
       "createdAt": "2026-09-28T14:49:34Z",
       "databaseId": 36438891201,
       "displayTitle": "ci(vyron): rerun macOS production after migration save fix",
       "event": "push",
       "headSha": "086adf6962dc91c471e18d8b97e610899657af65",
-      "status": "in_progress",
-      "updatedAt": "2026-09-28T14:49:43Z",
+      "status": "completed",
+      "updatedAt": "2026-09-28T14:57:49Z",
       "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/actions/runs/36438891201",
       "workflowName": "VYRON 4.0.1 macOS Production Release",
       "jobs": [
         {
           "id": 108983892493,
           "name": "Build, verify and publish VYRON 4.0.1 macOS",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "failure",
           "started_at": "2026-09-28T14:49:43Z",
-          "completed_at": null
+          "completed_at": "2026-09-28T14:57:48Z"
         }
       ]
     },
