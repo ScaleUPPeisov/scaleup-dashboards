@@ -1,0 +1,43 @@
+name: VYRON 3.3.4 One-Time Cargo Lock Sync
+
+on:
+  push:
+    branches:
+      - feature/vyron-3.3.4-live-content-inventory
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vyron-334-lock-sync
+  cancel-in-progress: true
+
+jobs:
+  sync-lock:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: macos-14
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Generate exact Cargo.lock from Cargo.toml
+        run: cargo generate-lockfile --manifest-path src-tauri/Cargo.toml
+      - name: Commit only Cargo.lock when resolver changed it
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git status --short
+          git diff --exit-code -- . ':!src-tauri/Cargo.lock'
+          if git diff --quiet -- src-tauri/Cargo.lock; then
+            echo 'CARGO_LOCK_ALREADY_CURRENT=YES'
+            exit 0
+          fi
+          grep -q '^name = "notify"$' src-tauri/Cargo.lock
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src-tauri/Cargo.lock
+          test "$(git diff --cached --name-only)" = 'src-tauri/Cargo.lock'
+          git commit -m 'chore(vyron): lock notify watcher dependency for 3.3.4'
+          git push origin HEAD:feature/vyron-3.3.4-live-content-inventory
