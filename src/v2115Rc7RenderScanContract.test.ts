@@ -7,7 +7,7 @@ describe('VYRON RC7 Publisher render scan wiring',()=>{
     const p=read('src/PublisherOS.tsx');
     expect(p).toContain("channelRenderFolder=(channel?.renderFolderPath||'').trim()");
     expect(p).toContain("notifyWarning('Папка рендера не настроена'");
-    const fn=p.split('async function scanRenderFolder()').at(1)!.split('function addScannedRenderCandidates')[0];
+    const fn=p.split('async function scanRenderFolder(').at(1)!.split('function addScannedRenderCandidates')[0];
     expect(fn).toContain('const root=channelRenderFolder');
     expect(fn).not.toContain('settings.workspace');
   });
