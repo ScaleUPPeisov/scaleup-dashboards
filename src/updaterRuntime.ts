@@ -86,7 +86,7 @@ export const useUpdaterRuntime=create<UpdaterRuntimeState>((set,get)=>({
   installAndRestart:async(blockers=[])=>{
     if(!candidate)return false;
     if(blockers.length){set({blockers});return false}
-    const target=get().latestVersion||candidate.version;const targetRevision=candidate.buildRevision??get().latestBuildRevision;localStorage.setItem('vyron:update-installing-version',target);localStorage.setItem('vyron:update-installing-target',JSON.stringify({productVersion:target,buildRevision:targetRevision,artifactSha256:candidate.artifactSha256||'',channel:candidate.channel||get().updateChannel}));
+    const target=get().latestVersion||candidate.version;const targetRevision=candidate.buildRevision??get().latestBuildRevision;localStorage.setItem('vyron:update-installing-version',target);localStorage.setItem('vyron:update-installing-target',JSON.stringify({productVersion:target,buildRevision:targetRevision,artifactSha256:candidate.artifactSha256||'',channel:candidate.channel||get().updateChannel,notes:get().notes||'',releaseDate:get().releaseDate||''}));
     try{
       await ensureUpdaterInstallable(set);
       set({status:'VERIFYING',blockers:[]});
