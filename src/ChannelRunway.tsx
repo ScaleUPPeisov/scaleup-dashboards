@@ -72,7 +72,7 @@ function average(values:number[]){
 
 type RunwayRow={channel:Channel;record:ChannelRunwayRecord;content:ContentRunwaySnapshot;localReady:number|null;localStockDays:number|null;localFolderState?:string;operationalDays:number;operationalStatus:ChannelRunwayRecord['status'];localDaily:ReturnType<typeof safeDailyStatus>};
 
-function cadenceTruth(channel:Channel,record:ChannelRunwayRecord){
+export function cadenceTruth(channel:Channel,record:ChannelRunwayRecord){
   const avg=record.averagePublishIntervalDays;
   if(record.scheduledVideoCount>=2&&Number.isFinite(avg)&&Number(avg)>0){
     if(Math.abs(Number(avg)-1)<=0.15)return{label:'Каждый день',source:'реальные YouTube scheduled slots'};
