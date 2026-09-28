@@ -20,6 +20,7 @@ export type ProjectLifecycleRecord={projectId:string;jobId?:string;projectPath:s
 export type ChannelStatisticsSnapshotSource='LIVE_REFRESH'|'MIGRATED_BASELINE';
 export type ChannelStatisticsSnapshot={snapshotId:string;channelId:string;youtubeChannelId:string;profileId:string;capturedAt:string;subscriberCount?:number;hiddenSubscriberCount:boolean;viewCount:number;videoCount:number;source:ChannelStatisticsSnapshotSource};
 export type ChannelStatisticsHistory=Record<string,ChannelStatisticsSnapshot[]>;
+export type YoutubeOwnerScheduledItem={id:string;title:string;publishAt:string;privacyStatus:'private'};
 export type YoutubeOwnerInventorySnapshot={
   channelId:string;
   youtubeChannelId:string;
@@ -31,6 +32,7 @@ export type YoutubeOwnerInventorySnapshot={
   scheduledCount:number;
   unlistedCount:number;
   latestScheduledAt?:string;
+  scheduledItems:YoutubeOwnerScheduledItem[];
   complete:boolean;
   scheduleComplete:boolean;
   apiRequests:number;
