@@ -1,0 +1,584 @@
+name: VYRON 3.3.4 Signed Cross-Platform Candidate
+
+on:
+  push:
+    branches:
+      - feature/vyron-3.3.4-live-content-inventory
+    paths:
+      - .github/workflows/vyron-334-signed-candidate.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-334-signed-candidate
+  cancel-in-progress: true
+
+env:
+  VERSION: '3.3.4'
+  BUNDLE_ID: studio.channelflow.desktop
+  EXECUTABLE: channelflow
+  MAC_BASELINE: '3.3.3'
+  WINDOWS_BASELINE: '3.3.2'
+  EXPECTED_SIGNING_CERT_SHA1: 2C8B0BD4EE1C000D29DD0667BF1068D4673692C9
+
+jobs:
+  full-regression:
+    name: Full regression / freeze gate
+    runs-on: macos-14
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Source + version + production-feed freeze
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(node -p "require('./package.json').version")" = "$VERSION"
+          python3 - <<'PY'
+          import json,re
+          from pathlib import Path
+          v='3.3.4'
+          pkg=json.load(open('package.json'))
+          lock=json.load(open('package-lock.json'))
+          conf=json.load(open('src-tauri/tauri.conf.json'))
+          cargo=Path('src-tauri/Cargo.toml').read_text()
+          clock=Path('src-tauri/Cargo.lock').read_text()
+          assert pkg['version']==v
+          assert lock['version']==v and lock['packages']['']['version']==v
+          assert conf['version']==v
+          assert conf['identifier']=='studio.channelflow.desktop'
+          assert conf['bundle']['createUpdaterArtifacts'] is True
+          assert re.search(r'(?ms)^\[package\].*?^version\s*=\s*"3\.3\.4"',cargo)
+          assert re.search(r'\[\[package\]\]\nname = "channelflow"\nversion = "3\.3\.4"',clock)
+          print('VERSION_CONSISTENCY=PASS')
+          print('BUNDLE_IDENTITY=PASS')
+          PY
+          curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json -o /tmp/mac-feed-before.json
+          curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json -o /tmp/windows-feed-before.json
+          python3 - <<'PY'
+          import json
+          assert json.load(open('/tmp/mac-feed-before.json'))['version']=='3.3.3'
+          assert json.load(open('/tmp/windows-feed-before.json'))['version']=='3.3.2'
+          print('MAC_PRODUCTION_FEED=3.3.3')
+          print('WINDOWS_PRODUCTION_FEED=3.3.2')
+          print('RELEASE_MUTATION=NO')
+          PY
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Full frontend test suite + production build
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm test
+          npm run build
+          echo 'FULL_FRONTEND_REGRESSION=PASS'
+          echo 'TYPESCRIPT_PRODUCTION_BUILD=PASS'
+
+      - name: Full Rust regression
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cargo test --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin -- --nocapture
+          cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
+          echo 'FULL_RUST_REGRESSION=PASS'
+          echo 'MACOS_RUST_CHECK=PASS'
+
+      - name: Zero-data-loss source contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          runtime=Path('src/renderInventoryRuntime.ts').read_text()
+          bridge=Path('src/LiveInventoryBridge.tsx').read_text()
+          publisher=Path('src/PublisherOS.tsx').read_text()
+          youtube=Path('src-tauri/src/youtube.rs').read_text()
+          watcher=Path('src-tauri/src/inventory_watch.rs').read_text()
+          forbidden=[
+            'replaceUploadHistory(','localStorage.clear(','youtubeDisconnect(',
+            'removeChannel(','clearStaleUploadLink(','trashLocalFile(','patchJob('
+          ]
+          assert all(x not in runtime for x in forbidden)
+          assert 'api.scanRenderFolder' in runtime
+          assert 'api.youtubeFileFingerprint' in runtime
+          assert 'YouTube API requests: 0' in Path('src/LiveContentInventory.tsx').read_text()
+          assert "scanInventoryChannel(channelId,'watcher')" in bridge
+          assert "from './renderInventoryRuntime'" in publisher
+          assert 'tauri_plugin_opener::open_url(url, None::<&str>)' in youtube
+          assert 'RecommendedWatcher' in watcher
+          print('LIVE_INVENTORY_ZERO_YOUTUBE_API=PASS')
+          print('UPLOAD_HISTORY_PRESERVED=PASS')
+          print('OAUTH_CORE_CONTINUITY=PASS')
+          print('WATCHER_CONTRACT=PASS')
+          PY
+
+      - name: Verify feeds still unchanged
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json -o /tmp/mac-feed-after.json
+          curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json -o /tmp/windows-feed-after.json
+          cmp -s /tmp/mac-feed-before.json /tmp/mac-feed-after.json
+          cmp -s /tmp/windows-feed-before.json /tmp/windows-feed-after.json
+          echo 'MAC_FEED_UNCHANGED=PASS'
+          echo 'WINDOWS_FEED_UNCHANGED=PASS'
+
+  macos-candidate:
+    name: Signed macOS ARM64 candidate
+    needs: full-regression
+    runs-on: macos-14
+    timeout-minutes: 150
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      VYRON_MACOS_SIGNING_P12_BASE64: ${{ secrets.VYRON_MACOS_SIGNING_P12_BASE64 }}
+      VYRON_MACOS_SIGNING_P12_PASSWORD: ${{ secrets.VYRON_MACOS_SIGNING_P12_PASSWORD }}
+      VYRON_MACOS_SIGNING_IDENTITY: ${{ secrets.VYRON_MACOS_SIGNING_IDENTITY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Import persistent VYRON signing identity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -n "${VYRON_MACOS_SIGNING_P12_BASE64:-}"
+          test -n "${VYRON_MACOS_SIGNING_P12_PASSWORD:-}"
+          test -n "${TAURI_SIGNING_PRIVATE_KEY:-}"
+          test "$VYRON_MACOS_SIGNING_IDENTITY" = 'VYRON Local Code Signing'
+          KEYCHAIN="$RUNNER_TEMP/vyron-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)$(uuidgen)"
+          P12="$RUNNER_TEMP/vyron-signing.p12"
+          printf '%s' "$VYRON_MACOS_SIGNING_P12_BASE64" | base64 --decode > "$P12"
+          chmod 600 "$P12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$P12" -k "$KEYCHAIN" -P "$VYRON_MACOS_SIGNING_P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security >/dev/null
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          LOGIN_KEYCHAIN="$(security default-keychain -d user | tr -d '"')"
+          security list-keychains -d user -s "$KEYCHAIN" "$LOGIN_KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          ID_SHA1="$(security find-certificate -Z -c "$VYRON_MACOS_SIGNING_IDENTITY" "$KEYCHAIN" 2>/dev/null | awk '/SHA-1 hash:/{print $3; exit}')"
+          test "$(printf '%s' "$ID_SHA1" | tr '[:lower:]' '[:upper:]')" = "$EXPECTED_SIGNING_CERT_SHA1"
+          echo "APPLE_SIGNING_IDENTITY=$ID_SHA1" >> "$GITHUB_ENV"
+          echo "VYRON_SIGNING_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+          echo "VYRON_SIGNING_KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> "$GITHUB_ENV"
+
+      - name: Normalize updater signing key
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import base64,os
+          raw=os.environ.get('TAURI_SIGNING_PRIVATE_KEY','').strip(); assert raw
+          def dec(x):
+              try:return base64.b64decode(x,validate=True).decode()
+              except:return None
+          if raw.startswith('untrusted comment:'):
+              out=base64.b64encode(raw.encode()).decode();box=raw
+          else:
+              one=dec(raw)
+              if one and one.startswith('untrusted comment:'): out=raw;box=one
+              else:
+                  box=dec(one) if one else None; assert box and box.startswith('untrusted comment:'); out=one.strip()
+          assert 'secret key' in box.splitlines()[0].lower()
+          open(os.environ['GITHUB_ENV'],'a').write('TAURI_SIGNING_PRIVATE_KEY='+out+'\n')
+          print('::add-mask::'+out)
+          PY
+
+      - name: Build and verify signed 3.3.4 macOS candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          security unlock-keychain -p "$VYRON_SIGNING_KEYCHAIN_PASSWORD" "$VYRON_SIGNING_KEYCHAIN"
+          npx tauri build --target aarch64-apple-darwin --bundles app,dmg
+          mkdir -p candidate-macos
+          APP="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)"
+          DMG="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -name '*.dmg' -print -quit)"
+          UPDATER="$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name '*.app.tar.gz' -print -quit)"
+          SIG="$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name '*.app.tar.gz.sig' -print -quit)"
+          test -d "$APP"; test -s "$DMG"; test -s "$UPDATER"; test -s "$SIG"
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = "$BUNDLE_ID"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = "$VERSION"
+          test "$(plutil -extract CFBundleExecutable raw -o - "$APP/Contents/Info.plist")" = "$EXECUTABLE"
+          file "$APP/Contents/MacOS/$EXECUTABLE" | grep -q arm64
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -dv --verbose=4 "$APP" 2>&1 | tee candidate-macos/codesign-details.txt
+          ! grep -F 'Signature=adhoc' candidate-macos/codesign-details.txt
+          hdiutil verify "$DMG"
+          cp "$DMG" candidate-macos/VYRON-3.3.4-macOS-arm64-CANDIDATE.dmg
+          cp "$UPDATER" candidate-macos/VYRON-3.3.4.app.tar.gz
+          cp "$SIG" candidate-macos/VYRON-3.3.4.app.tar.gz.sig
+          shasum -a 256 candidate-macos/VYRON-3.3.4-macOS-arm64-CANDIDATE.dmg | tee candidate-macos/VYRON-3.3.4-macOS-arm64-CANDIDATE.dmg.sha256
+          shasum -a 256 candidate-macos/VYRON-3.3.4.app.tar.gz | tee candidate-macos/VYRON-3.3.4.app.tar.gz.sha256
+          echo "APP_PATH=$APP" >> "$GITHUB_ENV"
+
+      - name: Verify updater signature
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import base64,json
+          from pathlib import Path
+          conf=json.load(open('src-tauri/tauri.conf.json'))
+          def envelope(value:bytes)->bytes:
+              stripped=value.strip()
+              try:
+                  decoded=base64.b64decode(stripped,validate=True)
+                  if decoded.startswith(b'untrusted comment:'): return decoded
+              except Exception: pass
+              return stripped+b'\n'
+          Path('/tmp/vyron-updater-public.pub').write_bytes(envelope(str(conf['plugins']['updater']['pubkey']).encode()))
+          Path('/tmp/vyron-updater-signature.sig').write_bytes(envelope(Path('candidate-macos/VYRON-3.3.4.app.tar.gz.sig').read_bytes()))
+          PY
+          if ! command -v minisign >/dev/null 2>&1; then brew install minisign >/dev/null; fi
+          minisign -Vm candidate-macos/VYRON-3.3.4.app.tar.gz -x /tmp/vyron-updater-signature.sig -p /tmp/vyron-updater-public.pub
+          echo 'MACOS_UPDATER_SIGNATURE=VERIFIED'
+
+      - name: Physical 3.3.3 -> 3.3.4 launch and state continuity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          HOME_FIXTURE="$RUNNER_TEMP/vyron-334-home"
+          APP_DATA="$HOME_FIXTURE/Library/Application Support/studio.channelflow.desktop"
+          DOC_STATE="$HOME_FIXTURE/Documents/VYRON/State"
+          mkdir -p "$APP_DATA" "$DOC_STATE"
+          python3 - "$APP_DATA/state.json" "$DOC_STATE/app-state.json" <<'PY'
+          import json,sys
+          state={
+            'version':10,
+            'channels':[
+              {'id':'fixture-a','youtubeProfileId':'PROFILE_A','youtubeChannelId':'TEST_CH_A','name':'Fixture A','renderFolderPath':'/Volumes/FIXTURE/Render/A'},
+              {'id':'fixture-b','youtubeProfileId':'PROFILE_B','youtubeChannelId':'TEST_CH_B','name':'Fixture B','renderFolderPath':'/Volumes/FIXTURE/Render/B'}
+            ],
+            'jobs':[{'id':'fixture-job','channelId':'fixture-a','status':'READY_UPLOAD'}],
+            'competitors':[],
+            'settings':{'workspace':'/fixture/workspace','endlumePath':'','youtubeApiKey':'','openaiApiKey':'','autoCheckUpdates':False,'reduceMotion':False,'fpsMonitor':False},
+            'logs':[],
+            'uploadHistory':[{'id':'fixture-history','jobId':'fixture-job','channelId':'fixture-a','youtubeVideoId':'fixture-video','status':'UPLOADED'}],
+            'activityJournal':[],'statisticsHistory':{},
+            'fingerprintCache':{'fixture-fp':{'size':123,'sha256':'a'*64}},
+            'projectLifecycle':{'fixture-project':{'status':'READY'}}
+          }
+          raw=json.dumps(state,ensure_ascii=False,indent=2).encode()
+          for p in sys.argv[1:]: open(p,'wb').write(raw)
+          PY
+
+          OLD_DMG="$RUNNER_TEMP/VYRON-3.3.3-arm64.dmg"
+          curl -fL --retry 3 'https://github.com/ScaleUPPeisov/vyron-releases/releases/download/v3.3.3/VYRON-3.3.3-arm64.dmg' -o "$OLD_DMG"
+          OLD_M="$RUNNER_TEMP/vyron-333-mount"; mkdir -p "$OLD_M"
+          hdiutil attach "$OLD_DMG" -nobrowse -readonly -mountpoint "$OLD_M"
+          OLD_APP="$OLD_M/VYRON.app"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$OLD_APP/Contents/Info.plist")" = "$MAC_BASELINE"
+          env -i HOME="$HOME_FIXTURE" USER="$USER" PATH='/usr/bin:/bin:/usr/sbin:/sbin' TMPDIR="$RUNNER_TEMP/" "$OLD_APP/Contents/MacOS/$EXECUTABLE" >/tmp/vyron-333-launch.log 2>&1 &
+          P=$!; sleep 7; kill -0 "$P"; kill "$P" || true; wait "$P" || true
+          hdiutil detach "$OLD_M"
+
+          for ATTEMPT in 1 2; do
+            env -i HOME="$HOME_FIXTURE" USER="$USER" PATH='/usr/bin:/bin:/usr/sbin:/sbin' TMPDIR="$RUNNER_TEMP/" "$APP_PATH/Contents/MacOS/$EXECUTABLE" >"/tmp/vyron-334-launch-$ATTEMPT.log" 2>&1 &
+            P=$!; sleep 7; kill -0 "$P"; kill "$P" || true; wait "$P" || true
+            python3 - "$APP_DATA/state.json" <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1]))
+          assert len(d.get('channels',[]))==2
+          assert {x.get('youtubeChannelId') for x in d['channels']}=={'TEST_CH_A','TEST_CH_B'}
+          assert {x.get('youtubeProfileId') for x in d['channels']}=={'PROFILE_A','PROFILE_B'}
+          assert d.get('uploadHistory',[{}])[0].get('youtubeVideoId')=='fixture-video'
+          assert d.get('fingerprintCache',{}).get('fixture-fp',{}).get('size')==123
+          assert d.get('projectLifecycle',{}).get('fixture-project',{}).get('status')=='READY'
+          assert d.get('settings',{}).get('workspace')=='/fixture/workspace'
+          PY
+          done
+          echo 'MACOS_BASELINE_3_3_3_LAUNCH=PASS'
+          echo 'MACOS_3_3_4_PHYSICAL_LAUNCH=PASS'
+          echo 'MACOS_STATE_CONTINUITY=PASS'
+
+      - name: macOS candidate summary
+        shell: bash
+        run: |
+          {
+            echo "HEAD=$(git rev-parse HEAD)"
+            echo 'VERSION=3.3.4'
+            echo 'MACOS_BUILD=PASS'
+            echo 'MACOS_CODESIGN=PASS'
+            echo 'MACOS_DMG_VERIFY=PASS'
+            echo 'MACOS_UPDATER_SIGNATURE=VERIFIED'
+            echo 'MACOS_3_3_3_TO_3_3_4_STATE_CONTINUITY=PASS'
+            echo 'RELEASE_PUBLISHED=NO'
+            echo 'PRODUCTION_FEED_MUTATED=NO'
+          } | tee candidate-macos/gate-summary.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-3.3.4-MACOS-SIGNED-CANDIDATE
+          path: candidate-macos/**
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Cleanup signing material
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          rm -f "$RUNNER_TEMP/vyron-signing.p12"
+          if [[ -n "${VYRON_SIGNING_KEYCHAIN:-}" ]]; then security delete-keychain "$VYRON_SIGNING_KEYCHAIN" >/dev/null 2>&1 || true; fi
+
+  windows-candidate:
+    name: Signed Windows x64 candidate
+    needs: full-regression
+    runs-on: windows-latest
+    timeout-minutes: 150
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Windows platform regression
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          npx vitest run src/v332WindowsOauthLauncher.test.ts src/v334LiveContentInventory.test.ts src/v334LiveInventorySafety.test.ts src/renderScanClassifier.test.ts src/v300OauthContinuity.test.ts src/v300OauthPersistence.test.ts
+          if($LASTEXITCODE -ne 0){throw 'WINDOWS_FRONTEND_REGRESSION_FAILED'}
+          cargo test --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc inventory_watch
+          if($LASTEXITCODE -ne 0){throw 'WINDOWS_WATCHER_TEST_FAILED'}
+          cargo test --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc local_delete
+          if($LASTEXITCODE -ne 0){throw 'WINDOWS_LOCAL_SCAN_TEST_FAILED'}
+          cargo check --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
+          if($LASTEXITCODE -ne 0){throw 'WINDOWS_RUST_CHECK_FAILED'}
+          Write-Host 'WINDOWS_PLATFORM_REGRESSION=PASS'
+
+      - name: Normalize updater signing key
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          import base64,os
+          raw=os.environ.get('TAURI_SIGNING_PRIVATE_KEY','').strip(); assert raw
+          def dec(x):
+              try:return base64.b64decode(x,validate=True).decode()
+              except:return None
+          if raw.startswith('untrusted comment:'):
+              out=base64.b64encode(raw.encode()).decode();box=raw
+          else:
+              one=dec(raw)
+              if one and one.startswith('untrusted comment:'): out=raw;box=one
+              else:
+                  box=dec(one) if one else None; assert box and box.startswith('untrusted comment:'); out=one.strip()
+          assert 'secret key' in box.splitlines()[0].lower()
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as fp: fp.write('TAURI_SIGNING_PRIVATE_KEY='+out+'\n')
+          print('::add-mask::'+out)
+          PY
+
+      - name: Build signed Windows 3.3.4 NSIS candidate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          npx tauri build --target x86_64-pc-windows-msvc --bundles nsis --config src-tauri/tauri.windows.conf.json
+          if($LASTEXITCODE -ne 0){throw 'TAURI_WINDOWS_BUILD_FAILED'}
+          $installer=Get-ChildItem src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis -Filter '*-setup.exe' | Select-Object -First 1
+          if(-not $installer){throw 'NSIS_INSTALLER_MISSING'}
+          $sig=Get-Item ($installer.FullName + '.sig') -ErrorAction Stop
+          New-Item -ItemType Directory -Force -Path candidate-windows | Out-Null
+          Copy-Item $installer.FullName candidate-windows/VYRON_3.3.4_x64-setup.exe -Force
+          Copy-Item $sig.FullName candidate-windows/VYRON_3.3.4_x64-setup.exe.sig -Force
+          $sha=(Get-FileHash candidate-windows/VYRON_3.3.4_x64-setup.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$sha  VYRON_3.3.4_x64-setup.exe" | Set-Content candidate-windows/VYRON_3.3.4_x64-setup.exe.sha256
+          Write-Host "WINDOWS_CANDIDATE_SHA256=$sha"
+
+      - name: Cryptographically verify Windows updater signature
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $verifyRoot=Join-Path $env:RUNNER_TEMP 'vyron-tauri-signature-verify'
+          New-Item -ItemType Directory -Force -Path (Join-Path $verifyRoot 'src') | Out-Null
+          @'
+          [package]
+          name = "vyron-tauri-signature-verify"
+          version = "0.0.0"
+          edition = "2021"
+          [dependencies]
+          base64 = "0.22"
+          minisign-verify = "=0.2.5"
+          '@ | Set-Content -Encoding utf8 (Join-Path $verifyRoot 'Cargo.toml')
+          @'
+          use base64::{engine::general_purpose::STANDARD, Engine as _};
+          use minisign_verify::{PublicKey, Signature};
+          use std::{env, fs};
+          fn decode_box(label:&str,encoded:&str)->String{
+            let bytes=STANDARD.decode(encoded.trim()).unwrap_or_else(|e|panic!("{label}_BASE64_DECODE_FAILED: {e}"));
+            String::from_utf8(bytes).unwrap_or_else(|e|panic!("{label}_UTF8_DECODE_FAILED: {e}"))
+          }
+          fn main(){
+            let args:Vec<String>=env::args().collect();
+            assert_eq!(args.len(),4);
+            let artifact=fs::read(&args[1]).expect("ARTIFACT_READ_FAILED");
+            let sig_encoded=fs::read_to_string(&args[2]).expect("SIGNATURE_READ_FAILED");
+            let conf_text=fs::read_to_string(&args[3]).expect("CONFIG_READ_FAILED");
+            let marker="\"pubkey\": \"";
+            let start=conf_text.find(marker).expect("PUBKEY_FIELD_MISSING")+marker.len();
+            let tail=&conf_text[start..];let end=tail.find('"').expect("PUBKEY_FIELD_UNTERMINATED");
+            let pub_decoded=decode_box("PUBLIC_KEY",&tail[..end]);
+            let sig_decoded=decode_box("SIGNATURE",&sig_encoded);
+            let public_key=PublicKey::decode(&pub_decoded).expect("PUBLIC_KEY_PARSE_FAILED");
+            let signature=Signature::decode(&sig_decoded).expect("SIGNATURE_PARSE_FAILED");
+            public_key.verify(&artifact,&signature,true).expect("UPDATER_SIGNATURE_VERIFY_FAILED");
+            println!("WINDOWS_UPDATER_SIGNATURE=VERIFIED");
+          }
+          '@ | Set-Content -Encoding utf8 (Join-Path $verifyRoot 'src/main.rs')
+          cargo run --quiet --release --manifest-path (Join-Path $verifyRoot 'Cargo.toml') -- candidate-windows/VYRON_3.3.4_x64-setup.exe candidate-windows/VYRON_3.3.4_x64-setup.exe.sig src-tauri/tauri.conf.json
+          if($LASTEXITCODE -ne 0){throw 'WINDOWS_UPDATER_SIGNATURE_VERIFY_FAILED'}
+
+      - name: Physical 3.3.2 -> 3.3.4 install and launch
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $old=Join-Path $env:RUNNER_TEMP 'VYRON_3.3.2_x64-setup.exe'
+          Invoke-WebRequest -Uri 'https://github.com/ScaleUPPeisov/vyron-releases/releases/download/v3.3.2/VYRON_3.3.2_x64-setup.exe' -OutFile $old
+          $p=Start-Process -FilePath $old -ArgumentList '/S' -Wait -PassThru
+          if($p.ExitCode -ne 0){throw "OLD_INSTALL_EXIT=$($p.ExitCode)"}
+
+          $appData=Join-Path $env:APPDATA 'studio.channelflow.desktop'
+          $docState=Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'VYRON\State'
+          New-Item -ItemType Directory -Force -Path $appData,$docState | Out-Null
+          $state=@{
+            version=10
+            channels=@(
+              @{id='fixture-a';youtubeProfileId='PROFILE_A';youtubeChannelId='TEST_CH_A';name='Fixture A';renderFolderPath='D:\Render\A'},
+              @{id='fixture-b';youtubeProfileId='PROFILE_B';youtubeChannelId='TEST_CH_B';name='Fixture B';renderFolderPath='D:\Render\B'}
+            )
+            jobs=@(@{id='fixture-job';channelId='fixture-a';status='READY_UPLOAD'})
+            competitors=@()
+            settings=@{workspace='D:\VYRON';endlumePath='';youtubeApiKey='';openaiApiKey='';autoCheckUpdates=$false;reduceMotion=$false;fpsMonitor=$false}
+            logs=@()
+            uploadHistory=@(@{id='fixture-history';jobId='fixture-job';channelId='fixture-a';youtubeVideoId='fixture-video';status='UPLOADED'})
+            activityJournal=@()
+            statisticsHistory=@{}
+            fingerprintCache=@{'fixture-fp'=@{size=123;sha256=('a'*64)}}
+            projectLifecycle=@{'fixture-project'=@{status='READY'}}
+          } | ConvertTo-Json -Depth 12
+          Set-Content -Path (Join-Path $appData 'state.json') -Value $state -Encoding UTF8
+          Set-Content -Path (Join-Path $docState 'app-state.json') -Value $state -Encoding UTF8
+
+          function Find-VyronExe([string]$version){
+            $roots=@((Join-Path $env:LOCALAPPDATA 'Programs'),$env:LOCALAPPDATA,$env:ProgramFiles,[Environment]::GetEnvironmentVariable('ProgramFiles(x86)')) | Where-Object {$_ -and (Test-Path $_)}
+            foreach($root in $roots){
+              $exe=Get-ChildItem $root -File -Recurse -ErrorAction SilentlyContinue | Where-Object {$_.Name -in @('channelflow.exe','VYRON.exe') -and ($_.VersionInfo.ProductVersion -as [string]).StartsWith($version)} | Select-Object -First 1
+              if($exe){return $exe}
+            }
+            return $null
+          }
+
+          $oldExe=Find-VyronExe '3.3.2'
+          if(-not $oldExe){throw 'INSTALLED_VYRON_3_3_2_EXE_NOT_FOUND'}
+          $oldProc=Start-Process -FilePath $oldExe.FullName -PassThru
+          Start-Sleep -Seconds 8
+          $oldProc.Refresh()
+          if($oldProc.HasExited){throw "VYRON_3_3_2_LAUNCH_EXITED=$($oldProc.ExitCode)"}
+          Stop-Process -Id $oldProc.Id -Force -ErrorAction SilentlyContinue
+
+          $candidate=(Resolve-Path 'candidate-windows/VYRON_3.3.4_x64-setup.exe').Path
+          $p=Start-Process -FilePath $candidate -ArgumentList '/S' -Wait -PassThru
+          if($p.ExitCode -ne 0){throw "CANDIDATE_INSTALL_EXIT=$($p.ExitCode)"}
+          $exe=Find-VyronExe '3.3.4'
+          if(-not $exe){throw 'INSTALLED_VYRON_3_3_4_EXE_NOT_FOUND'}
+          $proc=Start-Process -FilePath $exe.FullName -PassThru
+          Start-Sleep -Seconds 8
+          $proc.Refresh()
+          if($proc.HasExited){throw "VYRON_3_3_4_PHYSICAL_LAUNCH_EXITED=$($proc.ExitCode)"}
+          Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+
+          $saved=Get-Content (Join-Path $appData 'state.json') -Raw | ConvertFrom-Json
+          if($saved.channels.Count -ne 2){throw 'WINDOWS_CHANNEL_COUNT_CHANGED'}
+          if(($saved.channels.youtubeChannelId | Sort-Object) -join ',' -ne 'TEST_CH_A,TEST_CH_B'){throw 'WINDOWS_CHANNEL_IDS_CHANGED'}
+          if(($saved.channels.youtubeProfileId | Sort-Object) -join ',' -ne 'PROFILE_A,PROFILE_B'){throw 'WINDOWS_PROFILE_UUIDS_CHANGED'}
+          if($saved.uploadHistory[0].youtubeVideoId -ne 'fixture-video'){throw 'WINDOWS_UPLOAD_HISTORY_CHANGED'}
+          if($saved.fingerprintCache.'fixture-fp'.size -ne 123){throw 'WINDOWS_FINGERPRINT_CACHE_CHANGED'}
+          if($saved.projectLifecycle.'fixture-project'.status -ne 'READY'){throw 'WINDOWS_PROJECT_LIFECYCLE_CHANGED'}
+          Write-Host 'WINDOWS_BASELINE_3_3_2_LAUNCH=PASS'
+          Write-Host 'WINDOWS_3_3_4_PHYSICAL_LAUNCH=PASS'
+          Write-Host 'WINDOWS_STATE_CONTINUITY=PASS'
+
+      - name: Windows candidate summary
+        shell: pwsh
+        run: |
+          @(
+            "HEAD=$(git rev-parse HEAD)",
+            'VERSION=3.3.4',
+            'WINDOWS_BUILD=PASS',
+            'WINDOWS_UPDATER_SIGNATURE=VERIFIED',
+            'WINDOWS_3_3_2_TO_3_3_4_STATE_CONTINUITY=PASS',
+            'WINDOWS_OAUTH_LAUNCHER=tauri_plugin_opener::open_url',
+            'RELEASE_PUBLISHED=NO',
+            'PRODUCTION_FEED_MUTATED=NO'
+          ) | Set-Content candidate-windows/gate-summary.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-3.3.4-WINDOWS-SIGNED-CANDIDATE
+          path: candidate-windows/**
+          if-no-files-found: error
+          retention-days: 14
+
+  freeze-proof:
+    name: Final production freeze proof
+    needs: [macos-candidate, windows-candidate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Verify public feeds are still old production
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json -o /tmp/mac.json
+          curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json -o /tmp/windows.json
+          python3 - <<'PY'
+          import json
+          m=json.load(open('/tmp/mac.json')); w=json.load(open('/tmp/windows.json'))
+          assert m['version']=='3.3.3',m['version']
+          assert w['version']=='3.3.2',w['version']
+          print('MAC_PRODUCTION_FEED_UNCHANGED=3.3.3')
+          print('WINDOWS_PRODUCTION_FEED_UNCHANGED=3.3.2')
+          print('VYRON_3_3_4_RELEASE_PUBLISHED=NO')
+          print('SIGNED_CANDIDATES_READY=YES')
+          print('RELEASE_REQUIRES_EXPLICIT_OWNER_CONFIRMATION=YES')
+          PY
