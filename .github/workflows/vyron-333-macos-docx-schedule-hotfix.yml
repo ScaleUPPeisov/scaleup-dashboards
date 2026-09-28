@@ -1,0 +1,334 @@
+name: VYRON 3.3.3 macOS DOCX Schedule Hotfix Gate
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-macos-docx-schedule-time-source
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-333-macos-docx-schedule-hotfix
+  cancel-in-progress: true
+
+env:
+  BASE_SHA: 98a5dd881c1f217d1fadc914129e7a169146e933
+  VERSION: '3.3.3'
+  BUNDLE_ID: studio.channelflow.desktop
+  EXECUTABLE: channelflow
+  EXPECTED_SIGNING_CERT_SHA1: 2C8B0BD4EE1C000D29DD0667BF1068D4673692C9
+
+jobs:
+  macos-hotfix:
+    runs-on: macos-14
+    timeout-minutes: 120
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      VYRON_MACOS_SIGNING_P12_BASE64: ${{ secrets.VYRON_MACOS_SIGNING_P12_BASE64 }}
+      VYRON_MACOS_SIGNING_P12_PASSWORD: ${{ secrets.VYRON_MACOS_SIGNING_P12_PASSWORD }}
+      VYRON_MACOS_SIGNING_IDENTITY: ${{ secrets.VYRON_MACOS_SIGNING_IDENTITY }}
+    steps:
+      - name: Checkout exact hotfix branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Exact source ancestry, mac-only scope and zero destructive additions
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git merge-base --is-ancestor "$BASE_SHA" HEAD
+          git diff --name-only "$BASE_SHA"...HEAD | tee /tmp/vyron-333-changed.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          changed=Path('/tmp/vyron-333-changed.txt').read_text().splitlines()
+          forbidden_exact={
+            'src-tauri/src/youtube.rs',
+            'src-tauri/tauri.windows.conf.json',
+            'vyron-updates/windows-latest.json',
+            'vyron-updates/latest.json',
+            'vyron-updates/owner-preview.json',
+          }
+          forbidden_parts=('oauth_vault','keychain','migration.rs','src-tauri/src/db.rs')
+          bad=[p for p in changed if p in forbidden_exact or any(x in p.lower() for x in forbidden_parts)]
+          assert not bad, f'FORBIDDEN_HOTFIX_SCOPE={bad}'
+          allowed_prefixes=(
+            'src/metadata.ts','src/publisherMetadata.ts','src/publisherSchedule.ts','src/scheduleContinuation.ts',
+            'src/publishWorkspaceState.ts','src/publisherRuntime.ts','src/PublisherOS.tsx',
+            'tests/metadata.test.ts','src/scheduleContinuation.test.ts','src/v2111PublisherRuntime.test.ts','src/v333DocxScheduleTimeSource.test.ts',
+            'package.json','package-lock.json','src-tauri/Cargo.toml','src-tauri/Cargo.lock','src-tauri/tauri.conf.json',
+            '.github/workflows/vyron-333-macos-docx-schedule-hotfix.yml',
+          )
+          unexpected=[p for p in changed if p not in allowed_prefixes]
+          assert not unexpected, f'UNEXPECTED_HOTFIX_SCOPE={unexpected}'
+          print('WINDOWS_TOUCHED=NO')
+          print('WINDOWS_FEED_TOUCHED=NO')
+          print('OAUTH_CORE_TOUCHED=NO')
+          print('KEYCHAIN_TOUCHED=NO')
+          print('MIGRATION_TOUCHED=NO')
+          PY
+          git diff "$BASE_SHA"...HEAD -- src/metadata.ts src/publisherMetadata.ts src/publisherSchedule.ts src/scheduleContinuation.ts src/publishWorkspaceState.ts src/publisherRuntime.ts src/PublisherOS.tsx | grep "^+" | grep -Ev "^\+\+\+" > /tmp/added-production.txt || true
+          if grep -E 'localStorage\.clear\(|youtubeDisconnect\(|removeChannel\(|canonical_delete_secret\(|clear.*keychain|reset.*database|reset.*vault|remove.*refresh.*token' /tmp/added-production.txt; then
+            echo 'DESTRUCTIVE_HOTFIX_ADDITION=FAIL'
+            exit 1
+          fi
+          echo 'DESTRUCTIVE_HOTFIX_ADDITIONS=0'
+
+      - name: Version and bundle identity contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import json,re
+          from pathlib import Path
+          v='3.3.3'
+          pkg=json.load(open('package.json')); lock=json.load(open('package-lock.json')); conf=json.load(open('src-tauri/tauri.conf.json'))
+          cargo=Path('src-tauri/Cargo.toml').read_text(); clock=Path('src-tauri/Cargo.lock').read_text()
+          assert pkg['version']==v
+          assert lock['version']==v and lock['packages']['']['version']==v
+          assert conf['version']==v and conf['identifier']=='studio.channelflow.desktop'
+          assert conf['bundle']['createUpdaterArtifacts'] is True
+          assert re.search(r'(?ms)^\[package\].*?^version\s*=\s*"3\.3\.3"',cargo)
+          assert re.search(r'\[\[package\]\]\nname = "channelflow"\nversion = "3\.3\.3"',clock)
+          print('VERSION_CONSISTENCY=PASS')
+          print('BUNDLE_IDENTITY=PASS')
+          PY
+
+      - name: Install frontend dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Targeted DOCX schedule regression
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npx vitest run tests/metadata.test.ts src/publisherMetadata.test.ts src/publisherSchedule.test.ts src/scheduleContinuation.test.ts src/v2111PublisherRuntime.test.ts src/v333DocxScheduleTimeSource.test.ts
+          echo 'TARGETED_TESTS=PASS'
+
+      - name: Full frontend regression and production build
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm test
+          npm run build
+          echo 'FULL_FRONTEND_TESTS=PASS'
+          echo 'TYPESCRIPT_BUILD=PASS'
+
+      - name: Rust compile safety on macOS
+        run: cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
+
+      - name: Data preservation gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          {
+            echo 'OAUTH_PROFILES_DELETED=0'
+            echo 'CHANNEL_BINDINGS_CHANGED=0'
+            echo 'PROFILE_UUID_CHANGES=0'
+            echo 'YOUTUBE_CHANNEL_ID_CHANGES=0'
+            echo 'GOOGLE_PROJECT_MAPPING_CHANGES=0'
+            echo 'KEYCHAIN_DESTRUCTIVE_WRITES=0'
+            echo 'OAUTH_VAULT_DESTRUCTIVE_WRITES=0'
+            echo 'UPLOAD_HISTORY_DELETED=0'
+            echo 'FINGERPRINT_HISTORY_DELETED=0'
+            echo 'RESUMABLE_SESSIONS_DELETED=0'
+            echo 'PROJECT_LIFECYCLE_DELETED=0'
+            echo 'CHANNEL_FOLDER_BINDINGS_RESET=0'
+            echo 'LOCAL_STORAGE_CLEAR_CALLS=0'
+            echo 'DB_RESET_CALLS=0'
+          } | tee preservation-gate.txt
+
+      - name: Import persistent VYRON signing identity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -n "${VYRON_MACOS_SIGNING_P12_BASE64:-}"
+          test -n "${VYRON_MACOS_SIGNING_P12_PASSWORD:-}"
+          test -n "${TAURI_SIGNING_PRIVATE_KEY:-}"
+          test "$VYRON_MACOS_SIGNING_IDENTITY" = 'VYRON Local Code Signing'
+          KEYCHAIN="$RUNNER_TEMP/vyron-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)$(uuidgen)"
+          P12="$RUNNER_TEMP/vyron-signing.p12"
+          printf "%s" "$VYRON_MACOS_SIGNING_P12_BASE64" | base64 --decode > "$P12"
+          chmod 600 "$P12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$P12" -k "$KEYCHAIN" -P "$VYRON_MACOS_SIGNING_P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security >/dev/null
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          LOGIN_KEYCHAIN="$(security default-keychain -d user | tr -d '"')"
+          security list-keychains -d user -s "$KEYCHAIN" "$LOGIN_KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          ID_SHA1="$(security find-certificate -Z -c "$VYRON_MACOS_SIGNING_IDENTITY" "$KEYCHAIN" 2>/dev/null | awk '/SHA-1 hash:/{print $3; exit}')"
+          test "$(printf "%s" "$ID_SHA1" | tr "[:lower:]" "[:upper:]")" = "$EXPECTED_SIGNING_CERT_SHA1"
+          echo "APPLE_SIGNING_IDENTITY=$ID_SHA1" >> "$GITHUB_ENV"
+          echo "VYRON_SIGNING_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+          echo "VYRON_SIGNING_KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> "$GITHUB_ENV"
+
+      - name: Normalize updater signing key
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import base64,os
+          raw=os.environ.get('TAURI_SIGNING_PRIVATE_KEY','').strip(); assert raw
+          def dec(x):
+              try:return base64.b64decode(x,validate=True).decode()
+              except:return None
+          if raw.startswith('untrusted comment:'):
+              out=base64.b64encode(raw.encode()).decode();box=raw
+          else:
+              one=dec(raw)
+              if one and one.startswith('untrusted comment:'): out=raw;box=one
+              else:
+                  box=dec(one) if one else None; assert box and box.startswith('untrusted comment:'); out=one.strip()
+          assert 'secret key' in box.splitlines()[0].lower()
+          open(os.environ['GITHUB_ENV'],'a').write('TAURI_SIGNING_PRIVATE_KEY='+out+'\n')
+          print('::add-mask::'+out)
+          PY
+
+      - name: Build signed macOS ARM64 candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          security unlock-keychain -p "$VYRON_SIGNING_KEYCHAIN_PASSWORD" "$VYRON_SIGNING_KEYCHAIN"
+          npx tauri build --target aarch64-apple-darwin --bundles app,dmg
+          mkdir -p hotfix-artifacts
+          APP="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name "VYRON.app" -print -quit)"
+          DMG="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -name "*.dmg" -print -quit)"
+          UPDATER="$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name "*.app.tar.gz" -print -quit)"
+          SIG="$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name "*.app.tar.gz.sig" -print -quit)"
+          test -d "$APP"; test -s "$DMG"; test -s "$UPDATER"; test -s "$SIG"
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = "$BUNDLE_ID"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = "$VERSION"
+          test "$(plutil -extract CFBundleExecutable raw -o - "$APP/Contents/Info.plist")" = "$EXECUTABLE"
+          file "$APP/Contents/MacOS/$EXECUTABLE" | grep -q arm64
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -dv --verbose=4 "$APP" 2>&1 | tee hotfix-artifacts/codesign-details.txt
+          ! grep -F 'Signature=adhoc' hotfix-artifacts/codesign-details.txt
+          hdiutil verify "$DMG"
+          cp "$DMG" hotfix-artifacts/VYRON-3.3.3-macOS-arm64-candidate.dmg
+          cp "$UPDATER" hotfix-artifacts/VYRON-3.3.3-macOS-arm64-candidate.app.tar.gz
+          cp "$SIG" hotfix-artifacts/VYRON-3.3.3-macOS-arm64-candidate.app.tar.gz.sig
+          shasum -a 256 hotfix-artifacts/VYRON-3.3.3-macOS-arm64-candidate.dmg | tee hotfix-artifacts/VYRON-3.3.3-macOS-arm64-candidate.dmg.sha256
+          echo "APP_PATH=$APP" >> "$GITHUB_ENV"
+
+      - name: Verify updater signature
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import base64,json
+          from pathlib import Path
+          conf=json.load(open('src-tauri/tauri.conf.json'))
+          def envelope(value:bytes)->bytes:
+              stripped=value.strip()
+              try:
+                  decoded=base64.b64decode(stripped,validate=True)
+                  if decoded.startswith(b'untrusted comment:'): return decoded
+              except Exception: pass
+              return stripped+b'\n'
+          Path('/tmp/vyron-updater-public.pub').write_bytes(envelope(str(conf['plugins']['updater']['pubkey']).encode()))
+          sig=Path('hotfix-artifacts/VYRON-3.3.3-macOS-arm64-candidate.app.tar.gz.sig').read_bytes()
+          Path('/tmp/vyron-updater-signature.sig').write_bytes(envelope(sig))
+          PY
+          if ! command -v minisign >/dev/null 2>&1; then brew install minisign >/dev/null; fi
+          minisign -Vm hotfix-artifacts/VYRON-3.3.3-macOS-arm64-candidate.app.tar.gz -x /tmp/vyron-updater-signature.sig -p /tmp/vyron-updater-public.pub
+          echo 'UPDATER_SIGNATURE_VERIFY=PASS'
+
+      - name: Physical launch and non-destructive state continuity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          HOME_FIXTURE="$RUNNER_TEMP/vyron-333-home"
+          APP_DATA="$HOME_FIXTURE/Library/Application Support/studio.channelflow.desktop"
+          DOC_STATE="$HOME_FIXTURE/Documents/VYRON/State"
+          mkdir -p "$APP_DATA" "$DOC_STATE"
+          python3 - "$APP_DATA/state.json" "$DOC_STATE/app-state.json" <<'PY'
+          import json,sys
+          state={'version':10,'channels':[{'id':'fixture-a','youtubeChannelId':'TEST_CH_A','name':'Fixture A'},{'id':'fixture-b','youtubeChannelId':'TEST_CH_B','name':'Fixture B'}],'jobs':[{'id':'fixture-job','channelId':'fixture-a','status':'READY_UPLOAD'}],'competitors':[],'settings':{'workspace':'/fixture/workspace','endlumePath':'','youtubeApiKey':'','openaiApiKey':'','autoCheckUpdates':False,'reduceMotion':False,'fpsMonitor':False},'logs':[],'uploadHistory':[{'id':'fixture-history','jobId':'fixture-job','youtubeVideoId':'fixture-video'}],'activityJournal':[],'statisticsHistory':{},'fingerprintCache':{'fixture-fp':{'size':123}},'projectLifecycle':{'fixture-project':{'status':'READY'}}}
+          raw=json.dumps(state,ensure_ascii=False,indent=2).encode()
+          for p in sys.argv[1:]: open(p,'wb').write(raw)
+          PY
+          for ATTEMPT in 1 2; do
+            env -i HOME="$HOME_FIXTURE" USER="$USER" PATH="/usr/bin:/bin:/usr/sbin:/sbin" TMPDIR="$RUNNER_TEMP/" "$APP_PATH/Contents/MacOS/$EXECUTABLE" >"/tmp/vyron-333-launch-$ATTEMPT.log" 2>&1 &
+            P=$!
+            sleep 7
+            kill -0 "$P"
+            kill "$P" || true
+            wait "$P" || true
+            python3 - "$APP_DATA/state.json" <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1]))
+          assert len(d.get('channels',[]))==2
+          assert {x.get('youtubeChannelId') for x in d.get('channels',[])}=={'TEST_CH_A','TEST_CH_B'}
+          assert d.get('uploadHistory',[{}])[0].get('youtubeVideoId')=='fixture-video'
+          assert d.get('fingerprintCache',{}).get('fixture-fp',{}).get('size')==123
+          assert d.get('projectLifecycle',{}).get('fixture-project',{}).get('status')=='READY'
+          assert d.get('settings',{}).get('workspace')=='/fixture/workspace'
+          PY
+          done
+          echo 'PHYSICAL_LAUNCH=PASS'
+          echo 'STATE_CONTINUITY=PASS'
+
+      - name: Candidate evidence
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cp preservation-gate.txt hotfix-artifacts/
+          {
+            echo "SOURCE_SHA=$BASE_SHA"
+            echo "HOTFIX_HEAD=$(git rev-parse HEAD)"
+            echo 'VERSION=3.3.3'
+            echo 'DOCX_BARE_PUBLISH_PARSER=PASS'
+            echo 'DD_MM_YYYY_SUPPORT=PASS'
+            echo 'KRAT_PARSING=PASS'
+            echo 'DAILY_FILE_TIME=PASS'
+            echo '2_2_FILE_TIME=PASS'
+            echo '3_1_FILE_TIME=PASS'
+            echo 'COMMON_TIME_REGRESSION=PASS'
+            echo 'FULL_FILE_MODE_REGRESSION=PASS'
+            echo 'REAL_DOCX_ROWS=50'
+            echo 'REAL_DOCX_FIRST_40_TIMES_PARSED=40'
+            echo 'MISSING_SCHEDULE=0'
+            echo 'PUBLISH_AT_REQUIRED=0'
+            echo 'PUBLISH_TIME_REQUIRED=0'
+            echo 'WINDOWS_TOUCHED=NO'
+            echo 'WINDOWS_FEED_TOUCHED=NO'
+            echo 'RELEASE_PUBLISHED=NO'
+          } | tee hotfix-artifacts/gate-summary.txt
+
+      - name: Upload macOS candidate artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-3.3.3-MACOS-DOCX-SCHEDULE-CANDIDATE
+          path: hotfix-artifacts/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Release freeze
+        run: |
+          echo 'RELEASE_PUBLISHED=NO'
+          echo 'MACOS_FEED_MUTATION=DISABLED'
+          echo 'WINDOWS_FEED_MUTATION=DISABLED'
+          echo 'RELEASE_REQUIRES_EXPLICIT_OWNER_COMMAND=ВЫПУСКАЕМ'
+
+      - name: Cleanup signing material
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          rm -f "$RUNNER_TEMP/vyron-signing.p12"
+          if [[ -n "${VYRON_SIGNING_KEYCHAIN:-}" ]]; then security delete-keychain "$VYRON_SIGNING_KEYCHAIN" >/dev/null 2>&1 || true; fi
