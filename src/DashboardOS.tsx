@@ -37,12 +37,12 @@ function OperationsDashboard(){
  const totalSubscribers=subscriberRows.reduce((n,x)=>n+x.value,0),totalViews=viewRows.reduce((n,x)=>n+x.value,0);
  const now=new Date(),uploadedToday=uploadHistory.filter(x=>x.status==='UPLOADED'&&sameLocalDay(x.uploadedAt,now)).length;
  const jobErrors=activeJobErrors(jobs),actionableErrors=jobErrors.length;
- const nextScheduled=Object.values(ownerSnapshots).map(x=>x.nextScheduledAt).filter((x):x is string=>Boolean(x)&&Date.parse(x)>Date.now()).sort((a,b)=>Date.parse(a)-Date.parse(b))[0];
+ const nextScheduled=Object.values(ownerSnapshots).map(x=>x.nextScheduledAt).filter((x):x is string=>typeof x==='string'&&Number.isFinite(Date.parse(x))&&Date.parse(x)>Date.now()).sort((a,b)=>Date.parse(a)-Date.parse(b))[0];
 
  const progressRows=subscriberRows.slice().sort((a,b)=>Math.max(0,1000-a.value)-Math.max(0,1000-b.value)).slice(0,6);
- const revenueRows=enabled.filter(c=>Number.isFinite(Number(c.analytics?.estimatedRevenue))).map(c=>({revenue:Number(c.analytics!.estimatedRevenue),views:Number(c.analytics?.views||0),rpm:Number(c.analytics?.rpm)}));
+ const revenueRows=enabled.filter(c=>Number.isFinite(Number(c.analytics?.estimatedRevenue))).map(c=>({revenue:Number(c.analytics!.estimatedRevenue),views:Number(c.analytics?.views||0)}));
  const revenue28=revenueRows.reduce((n,x)=>n+x.revenue,0),revenueViews=revenueRows.reduce((n,x)=>n+(Number.isFinite(x.views)?x.views:0),0);
- const rpmRows=revenueRows.filter(x=>Number.isFinite(x.rpm)),weightedRpm=revenueViews>0&&revenue28>0?revenue28/revenueViews*1000:(rpmRows.length?rpmRows.reduce((n,x)=>n+x.rpm,0)/rpmRows.length:undefined);
+ const weightedRpm=revenueViews>0?revenue28/revenueViews*1000:undefined;
 
  const attention=useMemo(()=>{
   const rows:{key:string;label:string;text:string;page:Page}[]=[];
