@@ -35,6 +35,23 @@ describe('VYRON 3.3.4 Live Content Inventory acceptance',()=>{
   expect(buildInventorySnapshotFromScan(channel(),scan(before),before,[]).readyVideos).toBe(47);
   expect(buildInventorySnapshotFromScan(channel(),scan(after),after,[]).readyVideos).toBe(46)
  });
+ it('upload lifecycle is READY -1 / UPLOADING +1, then cleanup does not double-decrement ready',()=>{
+  const readyJob=job(1),baseRows=[row(1,'KNOWN_EXACT',readyJob.id),...Array.from({length:46},(_,i)=>row(i+2))];
+  const before=buildInventorySnapshotFromScan(channel(),scan(baseRows),baseRows,[readyJob],0);
+  expect(before.readyVideos).toBe(47);expect(before.uploadingVideos).toBe(0);
+
+  const uploadingJob={...readyJob,status:'UPLOADING' as const,storageLifecycle:'UPLOADING' as const};
+  const during=buildInventorySnapshotFromScan(channel(),scan(baseRows),baseRows,[uploadingJob],1);
+  expect(during.readyVideos).toBe(46);expect(during.uploadingVideos).toBe(1);
+
+  const uploadedRows=[row(1,'UPLOADED_LOCAL_COPY',readyJob.id),...baseRows.slice(1)];
+  const afterUpload=buildInventorySnapshotFromScan(channel(),scan(uploadedRows),uploadedRows,[{...readyJob,status:'SCHEDULED',storageLifecycle:'UPLOADED',youtubeVideoId:'YT1'}],0);
+  expect(afterUpload.readyVideos).toBe(46);expect(afterUpload.uploadedLocalCopies).toBe(1);expect(afterUpload.physicalFiles).toBe(47);
+
+  const afterCleanupRows=uploadedRows.slice(1);
+  const afterCleanup=buildInventorySnapshotFromScan(channel(),scan(afterCleanupRows),afterCleanupRows,[],0);
+  expect(afterCleanup.readyVideos).toBe(46);expect(afterCleanup.physicalFiles).toBe(46)
+ });
  it('E uploaded local copy stays physical but is excluded from ready',()=>{
   const rows=[row(1,'NEW_CANDIDATE'),row(2,'UPLOADED_LOCAL_COPY')],x=buildInventorySnapshotFromScan(channel(),scan(rows),rows,[]);
   expect(x.physicalFiles).toBe(2);expect(x.readyVideos).toBe(1);expect(x.uploadedLocalCopies).toBe(1)
