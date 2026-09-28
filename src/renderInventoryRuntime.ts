@@ -206,7 +206,7 @@ function auditFor(previous:ChannelInventorySnapshot|undefined,next:ChannelInvent
   else if(reason!=='periodic'&&reason!=='watcher')store.pushAudit({id:eventId(next.channelId,'scan'),at:nowIso(),channelId:next.channelId,kind:'SCAN',message:`scan: ${after} ready • ${next.physicalFiles} физических файлов`,readyBefore:before,readyAfter:after})
 }
 
-export async function scanInventoryChannel(channelId:string,reason:InventoryScanReason='manual-channel'):Promise<ChannelInventorySnapshot|undefined>{
+async function scanInventoryChannelOnce(channelId:string,reason:InventoryScanReason):Promise<ChannelInventorySnapshot|undefined>{
   const state=useApp.getState(),channel=state.channels.find(c=>c.id===channelId);
   if(!channel)return;
   const store=useLiveInventory.getState(),previous=store.snapshots[channelId],root=String(channel.renderFolderPath||'').trim();
@@ -228,6 +228,30 @@ export async function scanInventoryChannel(channelId:string,reason:InventoryScan
     store.pushAudit({id:eventId(channelId,'error'),at:nowIso(),channelId,kind:'ERROR',message:`scan error: ${String(error)}`,readyBefore:previous?.readyVideos,readyAfter:previous?.readyVideos});
     return next
   }
+}
+
+const channelScanInFlight=new Map<string,Promise<ChannelInventorySnapshot|undefined>>();
+const channelScanPending=new Map<string,InventoryScanReason>();
+export function scanInventoryChannel(channelId:string,reason:InventoryScanReason='manual-channel'):Promise<ChannelInventorySnapshot|undefined>{
+  const active=channelScanInFlight.get(channelId);
+  if(active){
+    channelScanPending.set(channelId,reason);
+    return active.then(async result=>{
+      const pending=channelScanPending.get(channelId);
+      if(!pending)return result;
+      channelScanPending.delete(channelId);
+      return scanInventoryChannel(channelId,pending)
+    })
+  }
+  const run=scanInventoryChannelOnce(channelId,reason);
+  channelScanInFlight.set(channelId,run);
+  void run.finally(()=>{if(channelScanInFlight.get(channelId)===run)channelScanInFlight.delete(channelId)}).catch(()=>undefined);
+  return run.then(async result=>{
+    const pending=channelScanPending.get(channelId);
+    if(!pending)return result;
+    channelScanPending.delete(channelId);
+    return scanInventoryChannel(channelId,pending)
+  })
 }
 
 let allInventoryScanInFlight:Promise<void>|null=null;
