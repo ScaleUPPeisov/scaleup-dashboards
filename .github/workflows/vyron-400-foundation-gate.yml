@@ -1,0 +1,57 @@
+name: VYRON 4.0.0 Foundation Gate
+
+on:
+  push:
+    branches:
+      - feature/vyron-4.0.0-major
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-400-foundation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  foundation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: 4.0.0 owner inventory + data separation tests
+        run: |
+          npx vitest run src/v400OwnerYoutubeInventory.test.ts src/v400DataModelSafety.test.ts src/v335RenderFolderPicker.test.ts src/v334LiveContentInventory.test.ts src/v334LiveInventorySafety.test.ts
+      - name: Production build
+        run: npm run build
+      - name: Version identity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          node -e "const p=require('./package.json'),l=require('./package-lock.json');if(p.version!=='4.0.0'||l.version!=='4.0.0'||l.packages[''].version!=='4.0.0')process.exit(1)"
+          grep -F 'version = "4.0.0"' src-tauri/Cargo.toml
+          grep -A1 -F 'name = "channelflow"' src-tauri/Cargo.lock | grep -F 'version = "4.0.0"'
+          python3 - <<'PY'
+          import json
+          c=json.load(open('src-tauri/tauri.conf.json'))
+          assert c['version']=='4.0.0'
+          assert c['identifier']=='studio.channelflow.desktop'
+          print('VYRON_4_0_0_IDENTITY=PASS')
+          PY
+      - name: Production feed freeze
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json -o /tmp/mac.json
+          curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json -o /tmp/win.json
+          python3 - <<'PY'
+          import json
+          assert json.load(open('/tmp/mac.json'))['version']=='3.3.5'
+          assert json.load(open('/tmp/win.json'))['version']=='3.3.5'
+          print('PRODUCTION_UNCHANGED=3.3.5')
+          PY
