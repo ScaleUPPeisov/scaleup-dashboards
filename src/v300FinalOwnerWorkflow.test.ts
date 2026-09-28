@@ -18,15 +18,17 @@ describe('VYRON 3.0.0 final owner workflow contracts',()=>{
   expect(publisher).toContain('<ModalPortal onClose=');
  });
  it('treats current physical scan as the Publisher source of truth',()=>{
-  expect(publisher).toContain("sourceAvailability==='ONLINE'&&renderScan");
   expect(publisher).toContain("currentPhysicalPaths.has(normalizeRenderPath(j.finalPath||''))");
-  expect(publisher).toContain("setSourceAvailability('OFFLINE');setRenderScan(null)");
+  expect(publisher).toContain("const selectableJobs=useMemo(()=>sourceAvailability==='ONLINE'?");
+  expect(publisher).toContain("if(!snapshot||snapshot.folderState!=='ONLINE'");
+  expect(publisher).toContain("setSourceAvailability(snapshot?.folderState==='OFFLINE'?'OFFLINE':'UNKNOWN')");
   expect(publisher).toContain('Внешний диск недоступен');
-  expect(publisher).toContain("if(sourceAvailability!=='ONLINE')");
+  expect(publisher).toContain("sourceAvailability!=='ONLINE'");
  });
  it('shows operational connections instead of local channel count',()=>{
   expect(app).toContain('Подключено {connectedCount} / {channels.length}');
-  expect(app).toContain("x.credentialState==='READY'||x.credentialState==='CONNECTED'");
+  expect(app).toContain('countConnectedYoutubeBindings');
+  expect(app).toContain('setConnectedCount(countConnectedYoutubeBindings(channels,profiles))');
   expect(app).not.toContain('{channels.length} каналов</span>');
  });
  it('keeps current unmatched physical generations selectable without YouTube-ID gate',()=>{
