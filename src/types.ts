@@ -37,7 +37,7 @@ export type Channel={
   minTracks:number; targetDurationMin:number; enabled:boolean; color?:string;
   youtubeProfileId?:string; youtubeChannelId?:string;
   renderFolderPath?:string; projectsFolderPath?:string;
-  safeDailyUploadLimit?:number; knownUploadLimitState?:'unknown'|'ok'|'limited'; lastDailyLimitError?:string; lastUploadAt?:string;
+  safeDailyUploadLimit?:number; dailyUploadTarget?:number; knownUploadLimitState?:'unknown'|'ok'|'limited'; lastDailyLimitError?:string; lastUploadAt?:string;
   seo:{titlePatterns:string[]; descriptionTemplate:string; tags:string[]; banned:string[]; aiPrompt?:string};
   stats?:YoutubeChannelStatistics;
   analytics?:ChannelAnalytics;
