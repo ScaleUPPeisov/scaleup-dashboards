@@ -19,7 +19,7 @@ import {
   upsertChannelRunwayFromYoutube
 } from './channelRunwayStore';
 import {buildContentRunway,contentRunwayQuotaView,type ContentRunwaySnapshot} from './contentRunway';
-import {scheduleAverageIntervalDays,scheduleDescription} from './channelSchedule';
+import {configuredScheduleAverageIntervalDays,scheduleFrequencyTruthLabel} from './channelSchedule';
 import {
   buildYoutubeQuotaPlan,
   isYoutubeQuotaError,
@@ -110,7 +110,7 @@ export function ChannelRunway(){
   const critical=rows.filter(x=>x.content.contentRunwayDays<=14);
   const unknown=rows.filter(x=>x.record.status==='no-data'&&x.content.readyVideoCount===0);
   const attentionPlan=attention.length?buildYoutubeQuotaPlan(attention.length,batchSize,usage):null;
-  const effectiveIntervals=rows.map(({channel,record})=>record.averagePublishIntervalDays||scheduleAverageIntervalDays(channel)).filter(x=>Number.isFinite(x)&&x>0);
+  const effectiveIntervals=rows.map(({channel,record})=>record.averagePublishIntervalDays||configuredScheduleAverageIntervalDays(channel)).filter((x):x is number=>Number.isFinite(x)&&Number(x)>0);
   const avgCadence=average(effectiveIntervals);
   const batchCoverageDays=avgCadence?Math.round(avgCadence*batchSize*10)/10:undefined;
   const tempo=recommendedProductionIntervalDays(active.length,batchCoverageDays||0);
@@ -189,7 +189,7 @@ export function ChannelRunway(){
           <span className={`runwayDays ${content.status}`}>{`${content.contentRunwayDays} дн.`}</span>
           <span>{content.scheduledVideoCount}</span>
           <span><b>{content.readyVideoCount}</b></span>
-          <span>{scheduleDescription(channel)}</span>
+          <span>{scheduleFrequencyTruthLabel(channel,record)}</span>
           <span className="runwayQuota">{uploadLimitKnown?<><b>{uploadRemaining}</b><small>доступно</small></>:<><b>—</b><small>лимит проекта не подтверждён</small></>}</span>
           <span className={`runwayStatus ${content.status}`}><i>{meta.icon}</i>{meta.label}</span>
           <span>{linkedByLocalId.has(channel.id)?<><button disabled={busy===channel.id} onClick={()=>void syncChannel(channel)}>{busy===channel.id?'СИНХРОНИЗАЦИЯ…':'ОБНОВИТЬ РАСПИСАНИЕ'}</button><button disabled={busy===`stats:${channel.id}`||statsBusy} onClick={()=>void refreshRowStats(channel)}>{busy===`stats:${channel.id}`?'↻…':'↻ YT'}</button><button onClick={()=>openStatistics(channel)}>Статистика</button></>:<button onClick={()=>openAccounts(channel)}>Подключить</button>}</span>
