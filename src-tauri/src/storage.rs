@@ -3,8 +3,12 @@ use serde_json::{json, Value};
 use std::{
     fs,
     path::{Path, PathBuf},
+    sync::{Mutex, OnceLock},
 };
 use tauri::{AppHandle, Manager};
+
+static STATE_WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+fn state_write_lock() -> &'static Mutex<()> { STATE_WRITE_LOCK.get_or_init(|| Mutex::new(())) }
 
 fn state_file(app: &AppHandle) -> Result<PathBuf, String> {
     let d = app.path().app_data_dir().map_err(|e| e.to_string())?;
@@ -221,15 +225,20 @@ pub fn load_state(app: AppHandle) -> Value {
     disk
 }
 
-#[tauri::command]
-pub fn save_state(app: AppHandle, state: Value) -> Result<Value, String> {
-    let p = state_file(&app)?;
+fn save_state_impl(app: &AppHandle, state: Value) -> Result<Value, String> {
+    let _write_guard=state_write_lock().lock().map_err(|_|"STATE_WRITE_LOCK_POISONED".to_string())?;
+    let p = state_file(app)?;
     let (disk, warnings) = secure_state_for_disk_best_effort(&state);
     atomic_write(&p, &disk)?;
-    let mirror_warning=write_state_mirror(&app,&disk).err();
-    Ok(
-        json!({"ok":true,"securityWarning":warnings.first().cloned().or(mirror_warning),"securityWarnings":warnings.len()}),
-    )
+    let mirror_warning=write_state_mirror(app,&disk).err();
+    Ok(json!({"ok":true,"securityWarning":warnings.first().cloned().or(mirror_warning),"securityWarnings":warnings.len()}))
+}
+
+#[tauri::command]
+pub async fn save_state(app: AppHandle, state: Value) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || save_state_impl(&app,state))
+        .await
+        .map_err(|e|format!("STATE_SAVE_TASK_FAILED: {e}"))?
 }
 
 #[cfg(test)]
