@@ -14,6 +14,7 @@ import {activeJobErrors} from './activeErrors';
 import {inventoryTotals,useLiveInventory} from './renderInventoryRuntime';
 import {OWNER_INVENTORY_EVENT,aggregateOwnerInventories,ownerInventoryForChannel} from './youtubeOwnerInventory';
 import {safeDailyStatus} from './youtubePublishSafety';
+import {ChannelAvatar} from './ChannelAvatar';
 
 const fmt=(n:number)=>new Intl.NumberFormat('ru-RU').format(n);
 const sameLocalDay=(iso:string|undefined,now:Date)=>{if(!iso)return false;const d=new Date(iso);return !Number.isNaN(d.getTime())&&d.getFullYear()===now.getFullYear()&&d.getMonth()===now.getMonth()&&d.getDate()===now.getDate()};
@@ -143,7 +144,7 @@ function OperationsDashboard(){
    </section>
 
    <section className="opsCard">
-    <div className="opsCardHead"><div><small>ТЕКУЩИЙ КАНАЛ</small><h2>{active?.name||'Канал не выбран'}</h2></div></div>
+    <div className="opsCardHead"><div><small>ТЕКУЩИЙ КАНАЛ</small><h2 className="dashboardChannelTitle">{active&&<ChannelAvatar channel={active} size="sm"/>}<span>{active?.name||'Канал не выбран'}</span></h2></div></div>
     {active?<div className="opsStats">
      <span><small>Локально готово</small><b>{activeLive?.readyVideos??activeInv?.free??0}</b></span>
      <span><small>YouTube Scheduled</small><b>{activeOwner?.available?activeOwner.scheduled:'—'}</b></span>
@@ -162,7 +163,7 @@ function OperationsDashboard(){
 
    <section className="opsCard progressCard">
     <div className="opsCardHead"><div><small>ПРОГРЕСС К МОНЕТИЗАЦИИ</small><h2>Подписчики к ориентиру 1 000</h2></div></div>
-    {progressRows.length?<div className="channelProgressRows">{progressRows.map(x=><div key={x.channel.id}><div><b>{x.channel.name}</b><span>{fmt(x.subscribers)} / 1 000 • осталось {fmt(x.remaining)}</span></div><i><em style={{width:x.pct+'%'}}/></i><small>{x.views==null?'Просмотры: нет данных':'Просмотры: '+fmt(x.views)}</small><small>Public watch hours: нет данных • Shorts views: нет данных</small></div>)}</div>:<p className="opsEmpty">Нет доступных данных по подписчикам.</p>}
+    {progressRows.length?<div className="channelProgressRows">{progressRows.map(x=><div key={x.channel.id}><div className="dashboardProgressIdentity"><ChannelAvatar channel={x.channel} size="sm"/><span><b>{x.channel.name}</b><span>{fmt(x.subscribers)} / 1 000 • осталось {fmt(x.remaining)}</span></span></div><i><em style={{width:x.pct+'%'}}/></i><small>{x.views==null?'Просмотры: нет данных':'Просмотры: '+fmt(x.views)}</small><small>Public watch hours: нет данных • Shorts views: нет данных</small></div>)}</div>:<p className="opsEmpty">Нет доступных данных по подписчикам.</p>}
     <p className="opsSourceNote">Ориентировочный прогресс. Достижение 1 000 подписчиков само по себе не означает одобрение монетизации.</p>
     <footer><button onClick={()=>setPage('analytics')}>Аналитика</button></footer>
    </section>
