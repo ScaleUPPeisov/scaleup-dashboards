@@ -30,6 +30,14 @@ describe('VYRON 4.0.1 hotfix contract',()=>{
     expect(bridge).toContain('SAFETY_RECONCILE_MS=15*60_000');
   });
 
+  it('deduplicates stable channel identities without resetting state',()=>{
+    const store=read('src/store.ts');
+    expect(store).toContain('dedupeHydratedChannels');
+    expect(store).toContain('youtubeKey?byYoutube.get(youtubeKey)');
+    expect(store).toContain('remapStatisticsHistory');
+    expect(store).toContain('provenanceChanged||dedup.changed');
+  });
+
   it('keeps global History as a real journal, not a second fake store',()=>{
     const app=read('src/App.tsx');
     const center=read('src/YouTubeCenter.tsx');
