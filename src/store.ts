@@ -28,11 +28,35 @@ type Store=AppState&{
   addChannel:(p:Partial<Channel>)=>Channel; updateChannel:(id:string,p:Partial<Channel>)=>void; removeChannel:(id:string)=>void;
   setJobs:(jobs:VideoJob[])=>void; patchJob:(id:string,p:Partial<VideoJob>)=>void; addJobs:(jobs:VideoJob[])=>void;
   addCompetitor:(c:Competitor)=>void; patchCompetitor:(id:string,p:Partial<Competitor>)=>void; removeCompetitor:(id:string)=>void;
-  patchSettings:(p:Partial<Settings>)=>void; recordUploadHistory:(r:UploadHistoryRecord)=>void; replaceUploadHistory:(rows:UploadHistoryRecord[])=>void; appendActivity:(e:ActivityEvent)=>void; appendActivities:(e:ActivityEvent[])=>void; replaceActivityJournal:(rows:ActivityEvent[])=>void; recordStatisticsSnapshot:(row:ChannelStatisticsSnapshot)=>void; replaceStatisticsHistory:(rows:ChannelStatisticsHistory)=>void; cacheFingerprint:(path:string,e:FingerprintCacheEntry)=>void; patchProjectLifecycle:(key:string,p:ProjectLifecycleRecord)=>void; log:(message:string,level?:'info'|'warn'|'error')=>void; toast:(message:string)=>void;
+  patchSettings:(p:Partial<Settings>)=>void; recordUploadHistory:(r:UploadHistoryRecord)=>void; replaceUploadHistory:(rows:UploadHistoryRecord[])=>void; appendActivity:(e:ActivityEvent)=>void; appendActivities:(e:ActivityEvent[])=>void; replaceActivityJournal:(rows:ActivityEvent[])=>void; recordStatisticsSnapshot:(row:ChannelStatisticsSnapshot)=>void; replaceStatisticsHistory:(rows:ChannelStatisticsHistory)=>void; cacheFingerprint:(path:string,e:FingerprintCacheEntry)=>void; cacheFingerprints:(entries:Record<string,FingerprintCacheEntry>)=>void; patchProjectLifecycle:(key:string,p:ProjectLifecycleRecord)=>void; log:(message:string,level?:'info'|'warn'|'error')=>void; toast:(message:string)=>void;
 };
 
 let saveTimer:number|undefined;
-function scheduleSave(){window.clearTimeout(saveTimer);saveTimer=window.setTimeout(()=>{void useApp.getState().persist().catch(e=>{const h=humanizeError(e,'storage');notifyError(h.title,h.message,{operationId:'state-save-failed'})})},180)}
+let persistInFlight:Promise<void>|null=null;
+let persistAgain=false;
+const SAVE_DEBOUNCE_MS=550;
+function persistedSnapshot(s:Store):AppState{
+  return{version:10,channels:s.channels,jobs:s.jobs,competitors:s.competitors,settings:s.settings,logs:s.logs,uploadHistory:s.uploadHistory,activityJournal:s.activityJournal,statisticsHistory:s.statisticsHistory,fingerprintCache:s.fingerprintCache,projectLifecycle:s.projectLifecycle}
+}
+async function persistStoreState(){
+  if(persistInFlight){persistAgain=true;return persistInFlight}
+  const run=(async()=>{
+    do{
+      persistAgain=false;
+      const result=await api.saveState(persistedSnapshot(useApp.getState()));
+      if(result?.securityWarning){const h=humanizeError(result.securityWarning,'storage');notifyWarning(h.title,h.message,{operationId:'keychain-autosave-warning'})}
+    }while(persistAgain)
+  })();
+  persistInFlight=run;
+  try{await run}finally{if(persistInFlight===run)persistInFlight=null}
+}
+function scheduleSave(){
+  window.clearTimeout(saveTimer);
+  saveTimer=window.setTimeout(()=>{
+    saveTimer=undefined;
+    void persistStoreState().catch(e=>{const h=humanizeError(e,'storage');notifyError(h.title,h.message,{operationId:'state-save-failed'})})
+  },SAVE_DEBOUNCE_MS)
+}
 function normalizeJob(j:VideoJob):VideoJob{const status=j.status==='ERROR'&&!String(j.error||'').trim()?resolvedJobStatus(j):j.status;const lifecycle=j.storageLifecycle||(j.youtubeVideoId?'UPLOADED':status==='UPLOADING'?'UPLOADING':status==='ERROR'?'FAILED':j.finalPath?'NEW':undefined);return {...j,status,tags:Array.isArray(j.tags)?j.tags:[],metadataSource:j.metadataSource||'template',uploadProgress:j.uploadProgress||0,storageLifecycle:lifecycle}}
 export function normalizeChannel(c:Channel):Channel{
   const raw=c as Partial<Channel>;
@@ -44,7 +68,7 @@ export const useApp=create<Store>((set,get)=>({
   ...EMPTY_STATE,page:'dashboard',booted:false,
   hydrate:s=>{const jobs=(s.jobs||[]).filter(Boolean).map(normalizeJob),activityJournal=normalizeActivityJournal((s as any).activityJournal),rawHistory:Array<UploadHistoryRecord>=Array.isArray((s as any).uploadHistory)?(s as any).uploadHistory:[],uploadHistory=migrateUploadHistoryFingerprintProvenance(rawHistory,activityJournal,jobs),provenanceChanged=uploadHistory.some((x,i)=>x.fingerprintProofSource!==rawHistory[i]?.fingerprintProofSource||x.proofSchemaVersion!==rawHistory[i]?.proofSchemaVersion);set({...EMPTY_STATE,...s,version:10,channels:(s.channels||[]).filter(Boolean).map(normalizeChannel),jobs,competitors:s.competitors||[],settings:{...DEFAULT_SETTINGS,...s.settings,youtubeIntelligenceAutoRefresh:false},logs:s.logs||[],uploadHistory,activityJournal,statisticsHistory:normalizeStatisticsHistory((s as any).statisticsHistory),fingerprintCache:(s as any).fingerprintCache||{},projectLifecycle:(s as any).projectLifecycle||{},booted:true});if(provenanceChanged)scheduleSave()},
   setPage:page=>set({page}),
-  persist:async()=>{const s=get();const state:AppState={version:10,channels:s.channels,jobs:s.jobs,competitors:s.competitors,settings:s.settings,logs:s.logs,uploadHistory:s.uploadHistory,activityJournal:s.activityJournal,statisticsHistory:s.statisticsHistory,fingerprintCache:s.fingerprintCache,projectLifecycle:s.projectLifecycle};const result=await api.saveState(state);if(result?.securityWarning){const h=humanizeError(result.securityWarning,'storage');notifyWarning(h.title,h.message,{operationId:'keychain-autosave-warning'})}},
+  persist:persistStoreState,
   addChannel:p=>{
     const id=crypto.randomUUID();const name=(p.name||'Новый канал').trim();const defaultTracks=get().settings.tracksPerVideo||10;
     const channel:Channel={id,name,slug:slugify(name),cadenceDays:p.cadenceDays||2,targetBufferDays:p.targetBufferDays||60,publishHour:p.publishHour??18,publishMinute:p.publishMinute??0,language:p.language||'RU',genre:p.genre||'Music',country:p.country||'Россия',minTracks:p.minTracks||defaultTracks,targetDurationMin:p.targetDurationMin||get().settings.endlumeTargetDurationMin||120,enabled:p.enabled??true,youtubeProfileId:p.youtubeProfileId,youtubeChannelId:p.youtubeChannelId,seo:p.seo||{titlePatterns:['{topic} • Session {number}','{genre} — {topic} | Mix {number}'],descriptionTemplate:'{title}\n\nНовая подборка в стиле {genre}.',tags:[p.genre||'music','mix','playlist'],banned:[],aiPrompt:''}};
@@ -67,6 +91,7 @@ export const useApp=create<Store>((set,get)=>({
   recordStatisticsSnapshot:row=>{set(s=>({statisticsHistory:appendStatisticsSnapshot(s.statisticsHistory,row)}));scheduleSave()},
   replaceStatisticsHistory:rows=>{set({statisticsHistory:normalizeStatisticsHistory(rows)});scheduleSave()},
   cacheFingerprint:(path,e)=>{set(s=>({fingerprintCache:{...s.fingerprintCache,[path]:e}}));scheduleSave()},
+  cacheFingerprints:entries=>{if(!Object.keys(entries).length)return;set(s=>({fingerprintCache:{...s.fingerprintCache,...entries}}));scheduleSave()},
   patchProjectLifecycle:(key,p)=>{set(s=>({projectLifecycle:{...s.projectLifecycle,[key]:p}}));scheduleSave()},
   log:(message,level='info')=>{const safe=redactSensitive(message);set(s=>({logs:[{at:new Date().toISOString(),level,message:safe},...s.logs].slice(0,500)}));scheduleSave()},
   toast:notice=>{notifyLegacy(notice)}
