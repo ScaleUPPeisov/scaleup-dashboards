@@ -1507,10 +1507,8 @@ fn open_browser(url: &str, browser: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         let _ = browser;
-        Command::new("cmd")
-            .args(["/C", "start", "", url])
-            .spawn()
-            .map_err(|e| e.to_string())?;
+        tauri_plugin_opener::open_url(url, None::<&str>)
+            .map_err(|e| format!("OAUTH_BROWSER_OPEN_FAILED: {e}"))?;
     }
     #[cfg(target_os = "linux")]
     {
