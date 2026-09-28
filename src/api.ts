@@ -22,6 +22,9 @@ export type LocalSourceStatus={path:string;exists:boolean;isFile:boolean;size?:n
 export type RenderFolderVideoFile={path:string;name:string;size:number;createdAt?:number|null;modifiedAt?:number|null;fingerprint?:string};
 export type RenderFolderScanResult={root:string;files:RenderFolderVideoFile[];scannedEntries:number;truncated:boolean};
 export type ChannelFolderDiscovery={render:string[];projects:string[];rootsChecked:string[]};
+export type InventoryWatchRoot={channelId:string;path:string};
+export type InventoryWatchRegistration={watchedChannelIds:string[];offlineChannelIds:string[]};
+export type InventoryWatchEvent={channelId:string;path:string;kind:string};
 export type YoutubeProcessingBatchResult={requested:number;found:number;calls:number;rows:YoutubeProcessingStatus[]};
 export type GoogleProjectDiagnosticSafe={oauthProfileId:string;channelId?:string|null;channelTitle?:string|null;clientId:string;projectId?:string|null;projectIdSource:'google-config-exact-client-match'|'not-locally-known';youtubeApiRequests:0;keychainSecretsRead:false};
 export type StateSaveResult={ok:boolean;securityWarning?:string|null;securityWarnings?:number};
@@ -106,6 +109,8 @@ export const api={
   chooseRenderFolder:async(defaultPath?:string)=>{const r=await open({directory:true,multiple:false,title:'Папка рендера текущего канала',defaultPath:defaultPath||undefined});return typeof r==='string'?r:null},
   chooseProjectsFolder:async(defaultPath?:string)=>{const r=await open({directory:true,multiple:false,title:'Папка проектов текущего канала',defaultPath:defaultPath||undefined});return typeof r==='string'?r:null},
   discoverChannelFolders:(workspace:string,channelName:string)=>invoke<ChannelFolderDiscovery>('discover_channel_folders',{workspace,channelName}),
+  inventoryWatchRoots:(roots:InventoryWatchRoot[])=>invoke<InventoryWatchRegistration>('inventory_watch_roots',{roots}),
+  onRenderInventoryChanged:(cb:(data:InventoryWatchEvent)=>void)=>listen<InventoryWatchEvent>('render-inventory-changed',e=>cb(e.payload)),
   chooseEndlume:async()=>{const r=await open({directory:false,multiple:false,title:'Выберите ENDLUME Studio.app'});return typeof r==='string'?r:null},
   chooseImages:async()=>{const r=await open({directory:false,multiple:true,title:'Выберите изображения',filters:[{name:'Images',extensions:['png','jpg','jpeg','webp']}]});return !r?[]:Array.isArray(r)?r:[r]},
   chooseTracks:async()=>{const r=await open({directory:false,multiple:true,title:'Выберите музыку',filters:[{name:'Audio',extensions:['mp3','wav','m4a','aac','flac','ogg','opus']}]});return !r?[]:Array.isArray(r)?r:[r]},
