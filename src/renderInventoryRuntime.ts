@@ -6,7 +6,6 @@ import {
   classifyChannelRenderFiles,
   normalizeRenderPath,
   renderFileNeedsFingerprint,
-  renderSequence,
   summarizeRenderScan,
   type RenderScanRow,
   type RenderScanSummary
@@ -137,7 +136,7 @@ async function fingerprintNeededFiles(result:RenderFolderScanResult,jobs:VideoJo
     while(true){
       const i=cursor++;if(i>=result.files.length)return;
       const file=result.files[i];
-      if(!renderFileNeedsFingerprint(file,jobs,history,channelId,result.root)&&!renderSequence(file.name)){files[i]=file;continue}
+      if(!renderFileNeedsFingerprint(file,jobs,history,channelId,result.root)){files[i]=file;continue}
       const cached=cache[file.path];
       if(cached&&cached.size===file.size&&Number(cached.mtimeMs)===Number(file.modifiedAt||0)&&/^[a-f0-9]{64}$/i.test(cached.sha256)){
         files[i]={...file,fingerprint:cached.sha256};continue
