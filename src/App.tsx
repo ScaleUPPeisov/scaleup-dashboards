@@ -49,7 +49,6 @@ import {inventoryTotals,useLiveInventory} from './renderInventoryRuntime';
 import {ensureTask,reconcileUploadTasks,updateTask} from './taskEngine';
 import {globalDailyUploadStatus} from './youtubePublishSafety';
 import {UiErrorBoundary} from './UiErrorBoundary';
-import {ActivityHistory} from './ActivityHistory';
 import {SafeArtwork} from './SafeArtwork';
 
 async function notifyUpdateAvailable(version:string){
@@ -68,16 +67,16 @@ async function notifyUpdateAvailable(version:string){
   }catch{}
 }
 
-const nav:{page:Page;icon:string;label:string}[]=[
-  {page:'dashboard',icon:'⌂',label:'Главная'},
-  {page:'channels',icon:'▣',label:'Каналы'},
-  {page:'production',icon:'◆',label:'Производство'},
-  {page:'inventory',icon:'▤',label:'Запас видео'},
-  {page:'history',icon:'◴',label:'История'},
-  {page:'youtube',icon:'▶',label:'YouTube'},
-  {page:'analytics',icon:'⌁',label:'Аналитика'},
-  {page:'competitors',icon:'◎',label:'Конкуренты'},
-  {page:'settings',icon:'⚙',label:'Настройки'}
+const nav:{id:string;page:Page;icon:string;label:string;youtubeTab?:'history'}[]=[
+  {id:'dashboard',page:'dashboard',icon:'⌂',label:'Главная'},
+  {id:'channels',page:'channels',icon:'▣',label:'Каналы'},
+  {id:'production',page:'production',icon:'◆',label:'Производство'},
+  {id:'inventory',page:'inventory',icon:'▤',label:'Запас видео'},
+  {id:'history',page:'youtube',icon:'◴',label:'История',youtubeTab:'history'},
+  {id:'youtube',page:'youtube',icon:'▶',label:'YouTube'},
+  {id:'analytics',page:'analytics',icon:'⌁',label:'Аналитика'},
+  {id:'competitors',page:'competitors',icon:'◎',label:'Конкуренты'},
+  {id:'settings',page:'settings',icon:'⚙',label:'Настройки'}
 ];
 const statusLabel:Record<JobStatus,string>={NEED_IMAGE:'Нужна картинка',WAITING_MUSIC:'Ждёт музыку',READY_RENDER:'Готов к рендеру',RENDERING:'Рендерится',READY_UPLOAD:'Готов к YouTube',UPLOADING:'Загружается',SCHEDULED:'Запланирован',ERROR:'Ошибка'};
 
@@ -132,13 +131,13 @@ export function App(){
   useEffect(()=>{if(!booted||!settings.autopilotEnabled)return;void runAutopilotCycle();const ms=Math.max(10,settings.autopilotIntervalSec||30)*1000;const id=window.setInterval(()=>void runAutopilotCycle(),ms);return()=>window.clearInterval(id)},[booted,settings.autopilotEnabled,settings.autopilotIntervalSec]);
   if(!booted||!license)return <Boot/>;
   if(!license.valid)return <Activation onActivated={setLicense}/>;
-  const screen=page==='dashboard'||page==='autopilot'?<DashboardOS/>:page==='accounts'?<SettingsOS license={license}/>:page==='channels'?<ChannelsOS/>:page==='production'||page==='content'?<ProductionOS/>:page==='inventory'?<LiveContentInventory/>:page==='history'?<ActivityHistory globalView/>:page==='youtube'?<YouTubeCenter/>:page==='competitors'?<CompetitorsPage/>:page==='analytics'?<AnalyticsPage/>:page==='metadata'?<YouTubeCenter initialTab='metadata'/>:page==='existing'?<YouTubeCenter initialTab='uploaded'/>:page==='publisher'?<YouTubeCenter initialTab='publish'/>:<SettingsOS license={license}/>;
+  const screen=page==='dashboard'||page==='autopilot'?<DashboardOS/>:page==='accounts'?<SettingsOS license={license}/>:page==='channels'?<ChannelsOS/>:page==='production'||page==='content'?<ProductionOS/>:page==='inventory'?<LiveContentInventory/>:page==='youtube'?<YouTubeCenter/>:page==='competitors'?<CompetitorsPage/>:page==='analytics'?<AnalyticsPage/>:page==='metadata'?<YouTubeCenter initialTab='metadata'/>:page==='existing'?<YouTubeCenter initialTab='uploaded'/>:page==='publisher'?<YouTubeCenter initialTab='publish'/>:<SettingsOS license={license}/>;
   return <div className="appShell"><LiveInventoryBridge/><ChannelRunwayScheduler/><ProductionStatusBridge/><ChannelStatisticsScheduler/><OwnerInventoryScheduler/><UploadProcessingMonitor/><RecoveryGate/><Sidebar page={page} setPage={setPage}/><main className="main"><Topbar/><div className="pageWrap" key={page}><UiErrorBoundary scope={String(page)} onHome={()=>setPage('dashboard')}>{(page==='dashboard'||page==='autopilot')&&<DashboardUploadSummary/>}{screen}</UiErrorBoundary></div></main><GlobalTaskIndicator/><GlobalUploadIndicator/><UploadCenterGlobal/><GlobalTaskCenter/><CommandPalette/>{settings.fpsMonitor&&<FpsMonitor/>}<UpdateExperience/><MajorUpdateCelebration/><NotificationCenter/><div className="bgGlow a"/><div className="bgGlow b"/></div>
 }
 function useRuntimeVersion(){const [version,setVersion]=useState('');useEffect(()=>{void api.appVersion().then(setVersion).catch(()=>{})},[]);return version}
 function Boot(){return <div className="boot"><div className="logoMark"><span>▶</span></div><b>VYRON YT PEISOV</b><small>AUTONOMOUS CONTENT OS</small><i/></div>}
 function Activation({onActivated}:{onActivated:(x:LicenseStatus)=>void}){const version=useRuntimeVersion();const [key,setKey]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState('');return <div className="activation"><div className="activationCard"><div className="brand big"><div className="brandMark">▶</div><div><b>VYRON YT PEISOV</b><small>CONTENT OS</small></div></div><h1>Активация VYRON YT PEISOV</h1><p>Используется совместимая лицензия владельца ENDLUME Studio.</p><input autoFocus value={key} placeholder="Ключ ENDLUME / VYRON YT PEISOV" onChange={e=>setKey(e.target.value)} onKeyDown={e=>e.key==='Enter'&&document.getElementById('activate')?.click()}/>{error&&<div className="errorBox">{error}</div>}<button id="activate" className="primary full" disabled={busy||!key.trim()} onClick={async()=>{setBusy(true);setError('');try{onActivated(await api.activate(key))}catch(e){setError(String(e))}finally{setBusy(false)}}}>{busy?'ПРОВЕРЯЮ…':'АКТИВИРОВАТЬ →'}</button><small>VYRON YT PEISOV {version||'…'} • macOS Apple Silicon</small></div></div>}
-function Sidebar({page,setPage}:{page:Page;setPage:(p:Page)=>void}){const auto=useApp(s=>s.settings.autopilotEnabled),channels=useApp(s=>s.channels),snapshots=useLiveInventory(s=>s.snapshots);const inventoryReady=inventoryTotals(snapshots,channels).ready;const activePage:Page=page==='autopilot'?'dashboard':page==='accounts'?'settings':page==='metadata'||page==='existing'||page==='publisher'?'youtube':page==='content'?'production':page;return <aside className="sidebar"><div className="brand"><SafeArtwork className="sidebarBrandArtwork" src={VYRON_4_ARTWORK} alt="" fallback="V"/><div><b>VYRON YT PEISOV</b><small>AUTONOMOUS OS</small></div></div><nav className="sidebarNav">{nav.map(n=>{const active=activePage===n.page;return <button key={n.page} className={'sidebarNavItem'+(active?' active':'')} aria-current={active?'page':undefined} onClick={()=>setPage(n.page)}><span className="sidebarIconSlot" aria-hidden="true">{n.icon}</span><span className="sidebarLabel">{n.label}</span>{n.page==='inventory'&&<span className="sidebarCount">{inventoryReady}</span>}</button>})}</nav><div className="sideFoot"><i className={auto?'autoOn':''}/><div><b>{auto?'AUTOPILOT ON':'LOCAL CORE'}</b><small>{auto?'очередь работает':'состояние сохраняется'}</small></div></div></aside>}
+function Sidebar({page,setPage}:{page:Page;setPage:(p:Page)=>void}){const auto=useApp(s=>s.settings.autopilotEnabled),channels=useApp(s=>s.channels),snapshots=useLiveInventory(s=>s.snapshots);const inventoryReady=inventoryTotals(snapshots,channels).ready;const activePage:Page=page==='autopilot'?'dashboard':page==='accounts'?'settings':page==='metadata'||page==='existing'||page==='publisher'?'youtube':page==='content'?'production':page;return <aside className="sidebar"><div className="brand"><SafeArtwork className="sidebarBrandArtwork" src={VYRON_4_ARTWORK} alt="" fallback="V"/><div><b>VYRON YT PEISOV</b><small>AUTONOMOUS OS</small></div></div><nav className="sidebarNav">{nav.map(n=>{const active=activePage===n.page&&!n.youtubeTab;const open=()=>{if(n.youtubeTab){try{localStorage.setItem('vyron:youtube-open-tab:v1',n.youtubeTab)}catch{}setPage('youtube');window.setTimeout(()=>window.dispatchEvent(new Event('vyron:youtube-history')),0);return}setPage(n.page)};return <button key={n.id} className={'sidebarNavItem'+(active?' active':'')} aria-current={active?'page':undefined} onClick={open}><span className="sidebarIconSlot" aria-hidden="true">{n.icon}</span><span className="sidebarLabel">{n.label}</span>{n.page==='inventory'&&<span className="sidebarCount">{inventoryReady}</span>}</button>})}</nav><div className="sideFoot"><i className={auto?'autoOn':''}/><div><b>{auto?'AUTOPILOT ON':'LOCAL CORE'}</b><small>{auto?'очередь работает':'состояние сохраняется'}</small></div></div></aside>}
 function Topbar(){
  const version=useRuntimeVersion();const channels=useApp(s=>s.channels),jobs=useApp(s=>s.jobs),patchJob=useApp(s=>s.patchJob),auto=useApp(s=>s.settings.autopilotEnabled);
  const [quota,setQuota]=useState(()=>youtubeQuotaUsage()),[clock,setClock]=useState(()=>youtubeQuotaClockSnapshot()),[history,setHistory]=useState<ErrorHistoryItem[]>(()=>readErrorHistory()),[errorsOpen,setErrorsOpen]=useState(false),[connectedCount,setConnectedCount]=useState(0);
