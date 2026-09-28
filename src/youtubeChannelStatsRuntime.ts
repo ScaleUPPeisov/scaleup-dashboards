@@ -155,12 +155,12 @@ export async function requestBatchWithDriverRotation(chunk:LinkedYoutubeChannel[
  throw lastError||new Error('NO_OPERATIONAL_STATS_DRIVER');
 }
 
-async function runAll(force:boolean,onProgress?:((p:ChannelStatisticsRefreshProgress)=>void)):Promise<ChannelStatisticsRefreshSummary>{
- const startedAt=new Date().toISOString(),operationId=`stats-refresh-all:${Date.now()}`,quotaBefore=youtubeQuotaUsage().used;
+async function runAll(force:boolean,onProgress?:((p:ChannelStatisticsRefreshProgress)=>void),selectedChannelIds?:Set<string>):Promise<ChannelStatisticsRefreshSummary>{
+ const startedAt=new Date().toISOString(),scope=selectedChannelIds?.size?`selection-${selectedChannelIds.size}`:'all',operationId=`stats-refresh-${scope}:${Date.now()}`,quotaBefore=youtubeQuotaUsage().used;
  const [profiles,config]=await Promise.all([api.youtubeProfiles(),api.youtubeGoogleConfig().catch(()=>null)]);
  await ensureStatisticsBaselines(profiles);
  const channels=useApp.getState().channels,classification=classifyYoutubeChannels(channels,profiles);
- const entries=classification.eligible.filter(x=>force||isChannelStatsStale(x.channel.stats,Date.now(),BACKGROUND_CHANNEL_STATS_TTL_MS));
+ const entries=classification.eligible.filter(x=>(!selectedChannelIds||selectedChannelIds.has(x.channel.id))&&(force||isChannelStatsStale(x.channel.stats,Date.now(),BACKGROUND_CHANNEL_STATS_TTL_MS)));
  const total=entries.length;
  let done=0,updated=0,failed=0;
  const failures:ChannelStatisticsRefreshFailure[]=[];
@@ -230,4 +230,28 @@ export function refreshYoutubeChannelStatistics(force=false,onProgress?:((p:Chan
  return task;
 }
 
-export function channelStatisticsRefreshRunning(){return !!allRun}
+const selectionRuns=new Map<string,Promise<ChannelStatisticsRefreshSummary>>();
+export function refreshYoutubeChannelStatisticsSelection(channelIds:string[],force=true,onProgress?:((p:ChannelStatisticsRefreshProgress)=>void)){
+ const ids=[...new Set(channelIds.filter(Boolean))].sort();
+ if(!ids.length)return Promise.resolve({
+  operationId:'stats-refresh-selection:empty',startedAt:new Date().toISOString(),completedAt:new Date().toISOString(),
+  workspaceChannels:useApp.getState().channels.length,linkedChannels:0,unlinked:0,orphans:0,mismatched:0,duplicates:0,
+  done:0,total:0,requested:0,updated:0,failed:0,credentialBlocked:0,apiRequests:0,quotaUnits:0,
+  quotaBefore:youtubeQuotaUsage().used,quotaAfter:youtubeQuotaUsage().used,failures:[],credentialFailures:[]
+ } as ChannelStatisticsRefreshSummary);
+ const key=ids.join(',');
+ const existing=selectionRuns.get(key);
+ if(existing)return existing;
+ const selected=new Set(ids);
+ const task=(async()=>{
+  // Never overlap a manual selection with an already-running fleet refresh. Once the shared
+  // run ends, execute exactly the requested channel set as one project-aware batched operation.
+  if(allRun)await allRun.catch(()=>undefined);
+  return runAll(force,onProgress,selected);
+ })();
+ selectionRuns.set(key,task);
+ void task.finally(()=>{if(selectionRuns.get(key)===task)selectionRuns.delete(key)});
+ return task;
+}
+
+export function channelStatisticsRefreshRunning(){return !!allRun||selectionRuns.size>0}
