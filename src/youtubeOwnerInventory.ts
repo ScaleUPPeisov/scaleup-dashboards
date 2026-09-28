@@ -67,7 +67,7 @@ export function ownerInventoryFromVideos(channel:Pick<Channel,'id'|'name'|'youtu
   const scheduledSorted=chronological(scheduled),publishedSorted=chronological(published);
   return{
     channelId:channel.id,channelName:channel.name,profileId:channel.youtubeProfileId,youtubeChannelId:channel.youtubeChannelId,
-    status:updatedAt?(Date.now()-Date.parse(updatedAt)<=OWNER_INVENTORY_TTL_MS?'FRESH':'CACHED'):'NO_DATA',
+    status:updatedAt?(nowMs-Date.parse(updatedAt)<=OWNER_INVENTORY_TTL_MS?'FRESH':'CACHED'):'NO_DATA',
     complete,updatedAt,totalOwnerVisible:videos.length,publicCount,privateCount,scheduledCount,unlistedCount,publishedCount,
     nextScheduledAt:scheduledSorted[0],scheduledUntil:scheduledSorted.at(-1),lastPublishedAt:publishedSorted.at(-1)
   }
