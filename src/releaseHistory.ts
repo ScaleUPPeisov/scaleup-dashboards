@@ -1,7 +1,60 @@
 export type ReleaseType='PATCH'|'MINOR'|'MAJOR'|'RC';
 export type ReleaseSectionKey='features'|'fixes'|'interface'|'reliability'|'security'|'technical';
-export type ReleaseHistoryEntry={date:string;version:string;title:string;type:ReleaseType;highlights:string[];sections:Partial<Record<ReleaseSectionKey,string[]>>;technicalItems?:string[];technicalBuilds?:number[];tag?:string;publishedAt?:string;prerelease?:boolean};
+export type ReleaseHistoryEntry={date:string;version:string;title:string;type:ReleaseType;platforms?:Array<'macOS'|'Windows'>;highlights:string[];sections:Partial<Record<ReleaseSectionKey,string[]>>;technicalItems?:string[];technicalBuilds?:number[];tag?:string;publishedAt?:string;prerelease?:boolean};
 export const VYRON_RELEASE_HISTORY:ReleaseHistoryEntry[]=[
+  {
+    "date":"2026-09-28","version":"5.0.0","title":"Owner Operations Center / Content OS","type":"MAJOR","platforms":["macOS","Windows"],"prerelease":true,
+    "highlights":[
+      "🚀 Новый Owner Operations Center показывает состояние всей сети каналов и следующее действие.",
+      "📦 «Запас видео» превращён в Daily Operations Center: сегодня, обработано, осталось, runway и YouTube schedule.",
+      "🛡️ Cold-start quota firewall и shared in-flight dedupe останавливают фоновые API-штормы.",
+      "🔄 Updater восстанавливает потерянный candidate и больше не оставляет мёртвую кнопку установки."
+    ],
+    "sections":{
+      "features":["Owner Command Center, Daily Operations, deterministic Next Action, Command Palette и Notification Center.","Finder-free ежедневное управление каналами на основе локальных фактов uploadHistory и Render inventory."],
+      "fixes":["Исправлен recovery updater candidate перед install/restart.","Убрана top-level «История» из sidebar без удаления history data.","Version identity унифицирована на 5.0.0."],
+      "interface":["5.0.0 оформляется как БОЛЬШОЕ ОБНОВЛЕНИЕ с утверждённым VYRON artwork.","Основной operational UI переведён на русский."],
+      "reliability":["OAuth, Google secrets, channel bindings, folders, history, fingerprints и migration state должны сохраняться без destructive migration.","Production feeds остаются неизменными до отдельной команды владельца на релиз."],
+      "security":["Никаких logout/revoke/reset OAuth как реакции на Analytics, inventory, updater или filesystem errors."],
+      "technical":["BASE_SOURCE_SHA: dd1bc3d110588b43a4056e3ec77ffb600ecfd872.","Candidate branch: feature/vyron-5.0.0. Public release tag ещё не опубликован."]
+    },
+    "technicalItems":["Release candidate: publish date будет зафиксирована при реальном production release."],"tag":"candidate-v5.0.0"
+  },
+  {
+    "date":"2026-09-28","version":"4.0.1","title":"macOS Stability & Performance Hotfix","type":"PATCH","platforms":["macOS"],"publishedAt":"2026-09-28T15:08:32Z","tag":"v4.0.1",
+    "highlights":["Снижены write-storms inventory и coalesced persistence.","Добавлены History, channel avatars и local owner profile.","Сохранены OAuth bindings, Render/Projects, history, fingerprints и settings."],
+    "sections":{"features":["Global History и per-channel activity summary.","Local owner profile с Finder image import."],"fixes":["Batched fingerprint cache writes и меньше лишних inventory rescans.","Stable channel-ID deduplication/remapping при hydration."],"interface":["YouTube channel avatars на основных экранах."],"reliability":["macOS-only hotfix; Windows остался на 4.0.0."],"security":["OAuth/Google bindings не сбрасываются."],"technical":["Production release v4.0.1."]}
+  },
+  {
+    "date":"2026-09-28","version":"4.0.0","title":"Major Update","type":"MAJOR","platforms":["macOS","Windows"],"publishedAt":"2026-09-28T12:03:04Z","tag":"v4.0.0",
+    "highlights":["Новый owner dashboard и разделение LOCAL / VYRON / YOUTUBE / ANALYTICS truth.","Shared VYRON upload allowance: 100 successful uploads across all channels.","Owner inventory для private/scheduled/published YouTube state.","VYRON 4 artwork и one-time major celebration."],
+    "sections":{"features":["Authenticated owner inventory.","Global 100-upload safety limit отдельно от YouTube API units."],"fixes":["Render scanning вынесен с UI path; Plan Channels black-screen guard."],"interface":["Новый owner dashboard."],"reliability":["In-place 3.3.5 → 4.0.0 continuity gates."],"security":["Existing Google/OAuth credentials не reset."],"technical":["Production release v4.0.0."]}
+  },
+  {
+    "date":"2026-09-28","version":"3.3.5","title":"Render Folder Picker Hotfix","type":"PATCH","platforms":["macOS","Windows"],"publishedAt":"2026-09-28T06:56:59Z","tag":"v3.3.5",
+    "highlights":["Выбор/смена Render прямо из Live Content Inventory.","Сохраняется только channel.renderFolderPath.","Projects paths и чужие channel folders блокируются."],
+    "sections":{"features":["Render folder picker в inventory."],"fixes":["Immediate persist + rescan selected channel."],"reliability":["OAuth, history и Projects bindings не меняются."],"security":[],"interface":[],"technical":[]}
+  },
+  {
+    "date":"2026-09-28","version":"3.3.3","title":"macOS Publisher DOCX Schedule Hotfix","type":"PATCH","platforms":["macOS"],"publishedAt":"2026-09-28T03:03:04Z","tag":"v3.3.3",
+    "highlights":["DOCX PUBLISH blocks поддерживают DD.MM.YYYY, per-video HH:MM, KRAT и UTC/GMT offsets.","Missing time блокирует только конкретное VIDEO."],
+    "sections":{"features":["DOCX schedule parser extensions."],"fixes":["Daily / 2/2 / 3/1 publication-date selection."],"reliability":["Windows 3.3.2 оставался неизменным."],"security":["OAuth и bindings сохранены."],"interface":[],"technical":[]}
+  },
+  {
+    "date":"2026-09-27","version":"3.3.2","title":"Windows OAuth Launcher Hotfix","type":"PATCH","platforms":["Windows"],"publishedAt":"2026-09-27T15:37:50Z","tag":"v3.3.2",
+    "highlights":["Windows-only OAuth browser launcher hotfix.","PKCE/state/callback/token exchange/channel selection не менялись."],
+    "sections":{"fixes":["Исправлен native Windows browser launch для OAuth."],"reliability":["Signed NSIS build и physical launch проверены."],"security":["Existing channels, OAuth profiles, refresh tokens и Google Project mappings сохранены."],"features":[],"interface":[],"technical":[]}
+  },
+  {
+    "date":"2026-09-27","version":"3.3.1","title":"OAuth / Connectivity / Quota Hotfix","type":"PATCH","platforms":["macOS","Windows"],"publishedAt":"2026-09-27T13:45:50Z","tag":"v3.3.1",
+    "highlights":["Connected-channel counter основан на saved bindings.","OAuth state обновляется после connect/reconnect/recovery.","Statistics batching изолирован по Google Project/OAuth identity."],
+    "sections":{"fixes":["READY не требует повторного Google login после успешной validation."],"reliability":["NOT_CHECKED остаётся non-destructive pending state."],"security":["Profile UUID, Channel ID и Google Project mappings сохранены."],"features":[],"interface":[],"technical":[]}
+  },
+  {
+    "date":"2026-09-27","version":"3.3.0","title":"Cross-Platform Migration","type":"MINOR","platforms":["macOS","Windows"],"publishedAt":"2026-09-27T11:37:51Z","tag":"v3.3.0",
+    "highlights":["Secure Windows ↔ macOS migration.","Duplicate-safe repeated imports и safe merge.","OAuth/credential continuity и Google Cloud Project mapping preservation.","Cross-platform folder remapping и rollback/recovery protection."],
+    "sections":{"features":["Двусторонняя миграция Windows ↔ macOS."],"reliability":["Idempotent merge без удаления существующих каналов."],"security":["Защищённая credential continuity."],"fixes":[],"interface":[],"technical":[]}
+  },
   {
     "date": "2026-09-28",
     "version": "3.3.4",
