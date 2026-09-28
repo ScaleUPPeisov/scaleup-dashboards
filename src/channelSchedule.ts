@@ -171,6 +171,32 @@ export function patternFor(channel:Channel):SchedulePattern|undefined{if(schedul
 export function scheduleLabel(channel:Channel){return scheduleModeFor(channel)==='pattern'?`${Math.max(1,Math.floor(channel.publishDays||3))} / ${Math.max(1,Math.floor(channel.pauseDays||1))}`:intervalDaysFor(channel)===1?'каждый день':intervalDaysFor(channel)===2?'через день':`каждые ${intervalDaysFor(channel)} дн.`}
 export function scheduleDescription(channel:Channel){return scheduleModeFor(channel)==='pattern'?`${Math.max(1,Math.floor(channel.publishDays||3))} дня публикаций / ${Math.max(1,Math.floor(channel.pauseDays||1))} день пауза`:scheduleLabel(channel)}
 export function scheduleAverageIntervalDays(channel:Channel){if(scheduleModeFor(channel)==='pattern'){const p=Math.max(1,Math.floor(channel.publishDays||3)),q=Math.max(1,Math.floor(channel.pauseDays||1));return(p+q)/p}return intervalDaysFor(channel)}
+export function configuredScheduleAverageIntervalDays(channel:Channel){
+  if(channel.scheduleMode==='pattern'){
+    const p=Number(channel.publishDays),q=Number(channel.pauseDays);
+    return Number.isFinite(p)&&p>0&&Number.isFinite(q)&&q>0?(p+q)/p:undefined
+  }
+  const days=Number(channel.publishIntervalDays);
+  return Number.isFinite(days)&&days>0?days:undefined
+}
+export type ScheduleFrequencyEvidence={averagePublishIntervalDays?:number;scheduledVideoCount?:number;lastScheduleSync?:string};
+export function scheduleFrequencyTruthLabel(channel:Channel,evidence?:ScheduleFrequencyEvidence){
+  const observed=Number(evidence?.averagePublishIntervalDays);
+  if(evidence?.lastScheduleSync&&Number(evidence.scheduledVideoCount||0)>=2&&Number.isFinite(observed)&&observed>0){
+    if(Math.abs(observed-1)<=0.15)return'Каждый день • YouTube';
+    const value=Number.isInteger(observed)?String(observed):observed.toFixed(1).replace('.',',');
+    return `≈ каждые ${value} дн. • YouTube`
+  }
+  if(channel.scheduleMode==='pattern'&&Number(channel.publishDays)>0&&Number(channel.pauseDays)>0){
+    return `${Math.floor(Number(channel.publishDays))}/${Math.floor(Number(channel.pauseDays))} • VYRON`
+  }
+  const configured=Number(channel.publishIntervalDays);
+  if(Number.isFinite(configured)&&configured>0){
+    const days=Math.max(1,Math.floor(configured));
+    return days===1?'Каждый день • VYRON':days===2?'Через день • VYRON':`Каждые ${days} дн. • VYRON`
+  }
+  return'Нет данных'
+}
 export function isPatternPublishDate(key:string,pattern:SchedulePattern){const cycle=Math.max(2,pattern.publishDays+pattern.pauseDays);const delta=diffDays(pattern.anchorDate,key);if(delta<0)return false;const pos=((delta%cycle)+cycle)%cycle;return pos<pattern.publishDays}
 function toKratIso(date:string,time:string){return new Date(`${date}T${time}:00+07:00`).toISOString()}
 function occupiedDates(videos:YoutubeExistingVideo[],excludeIds:string[]=[]){const excluded=new Set(excludeIds);return new Set(normalizeVideoArray(videos).filter(v=>!excluded.has(v.id)).map(v=>krasDateKey(v.publishAt)).filter(Boolean) as string[])}
