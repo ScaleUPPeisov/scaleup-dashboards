@@ -5,6 +5,7 @@ export type LocalUserProfile={
   displayName:string;
   role:LocalProfileRole;
   avatarDataUrl?:string;
+  avatarPath?:string;
   createdAt:string;
   updatedAt:string;
 };
@@ -27,6 +28,7 @@ function normalize(value:unknown):LocalUserProfile[]{
     displayName:String(row.displayName||'Пользователь').trim()||'Пользователь',
     role:row.role==='OWNER'?'OWNER':'USER',
     avatarDataUrl:typeof row.avatarDataUrl==='string'&&row.avatarDataUrl.startsWith('data:image/')?row.avatarDataUrl:undefined,
+    avatarPath:typeof row.avatarPath==='string'?row.avatarPath:undefined,
     createdAt:String(row.createdAt||now()),
     updatedAt:String(row.updatedAt||now())
   }))
