@@ -1,5 +1,5 @@
 import React,{useMemo,useState} from 'react';
-const vyronIcon=new URL('../src-tauri/icons/icon.png',import.meta.url).href;
+import {VYRON_5_ARTWORK} from './vyronBrand';
 import {useUpdaterRuntime} from './updaterRuntime';
 import {useApp} from './store';
 import {currentUpdaterBlockers,updaterBlockerText} from './updaterGuard';
@@ -10,10 +10,11 @@ export function UpdateExperience(){
  const status=useUpdaterRuntime(s=>s.status),current=useUpdaterRuntime(s=>s.currentVersion),latest=useUpdaterRuntime(s=>s.latestVersion),currentBuild=useUpdaterRuntime(s=>s.currentBuildRevision),latestBuild=useUpdaterRuntime(s=>s.latestBuildRevision),progress=useUpdaterRuntime(s=>s.progress),downloaded=useUpdaterRuntime(s=>s.downloadedBytes),total=useUpdaterRuntime(s=>s.totalBytes),notes=useUpdaterRuntime(s=>s.notes),download=useUpdaterRuntime(s=>s.download),install=useUpdaterRuntime(s=>s.installAndRestart);
  const jobs=useApp(s=>s.jobs),channels=useApp(s=>s.channels),identity=latest+':'+latestBuild,[later,setLater]=useState('');
  const blockers=useMemo(()=>currentUpdaterBlockers(jobs,channels.map(x=>x.id)),[jobs,channels]);
+ const isMajor=/^\d+\.0\.0(?:$|-)/.test(latest);
  if(!activeStatuses.has(status)||later===identity)return null;
  const downloading=status==='DOWNLOADING'||status==='VERIFYING',ready=status==='READY_TO_INSTALL';
  return <div className="updateExperienceBackdrop" role="dialog" aria-modal="true"><section className="updateExperience">
-   <div className="updateBrand"><img src={vyronIcon} alt="VYRON"/><div><small>VYRON UPDATE</small><h2>Доступно обновление</h2><p>Подписанная Owner Preview сборка. Каналы, OAuth-профили и локальные привязки остаются на месте.</p></div></div>
+   <div className={"updateBrand "+(isMajor?"major":"")}><img src={VYRON_5_ARTWORK} alt="VYRON YT PEISOV"/><div><small>VYRON UPDATE</small>{isMajor&&<strong>БОЛЬШОЕ ОБНОВЛЕНИЕ</strong>}<h2>{isMajor?`Доступен VYRON ${latest}`:"Доступно обновление"}</h2><p>Подписанное обновление VYRON. Каналы, OAuth-профили, Google credentials и локальные привязки остаются на месте.</p></div></div>
    <div className="updateVersions"><span><small>Сейчас</small><b>{current||'—'} <em>build {currentBuild||'—'}</em></b></span><i>→</i><span><small>Новая версия</small><b>{latest||'—'} <em>build {latestBuild||'—'}</em></b></span></div>
    {notes&&<div className="updateNotes"><b>Что изменилось</b><p>{notes}</p></div>}
    {downloading&&<div className="updateDownload"><div><b>{status==='VERIFYING'?'Проверка подписи…':'Скачивание обновления'}</b><span>{total>0?mb(downloaded)+' / '+mb(total):''}</span></div><div className="updateProgress"><i style={{width:Math.max(0,Math.min(100,progress))+'%'}}/></div><strong>{Math.round(progress)}%</strong></div>}
