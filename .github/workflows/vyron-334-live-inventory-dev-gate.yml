@@ -10,8 +10,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: vyron-334-live-inventory-dev-gate-${{ github.sha }}
-  cancel-in-progress: false
+  # Only the newest commit on this feature branch matters during development.
+  # Cancel superseded Mac/Windows matrices instead of burning minutes on stale SHAs.
+  group: vyron-334-live-inventory-dev-gate-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   frontend:
