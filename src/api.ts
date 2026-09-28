@@ -114,6 +114,12 @@ export const api={
   onRenderInventoryChanged:(cb:(data:InventoryWatchEvent)=>void)=>listen<InventoryWatchEvent>('render-inventory-changed',e=>cb(e.payload)),
   chooseEndlume:async()=>{const r=await open({directory:false,multiple:false,title:'Выберите ENDLUME Studio.app'});return typeof r==='string'?r:null},
   chooseImages:async()=>{const r=await open({directory:false,multiple:true,title:'Выберите изображения',filters:[{name:'Images',extensions:['png','jpg','jpeg','webp']}]});return !r?[]:Array.isArray(r)?r:[r]},
+  chooseProfileAvatar:async(profileId:string)=>{
+    const r=await open({directory:false,multiple:false,title:'Выберите фото профиля',filters:[{name:'Images',extensions:['png','jpg','jpeg','webp']}]});
+    if(typeof r!=='string')return null;
+    return invoke<{path:string;dataUrl:string}>('store_profile_avatar',{profileId,sourcePath:r})
+  },
+
   chooseTracks:async()=>{const r=await open({directory:false,multiple:true,title:'Выберите музыку',filters:[{name:'Audio',extensions:['mp3','wav','m4a','aac','flac','ogg','opus']}]});return !r?[]:Array.isArray(r)?r:[r]},
   importImages:(workspace:string,channelId:string,channelName:string,files:string[],minTracks:number,targetNumbers:number[]=[])=>invoke<VideoJob[]>('import_images',{workspace,channelId,channelName,files,minTracks,targetNumbers}),
   addTracks:(jobFolder:string,files:string[],minTracks:number)=>invoke<{tracksCount:number;status:string}>('add_tracks',{jobFolder,files,minTracks}),
