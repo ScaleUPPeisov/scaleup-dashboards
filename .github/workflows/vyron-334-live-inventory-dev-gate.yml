@@ -35,7 +35,7 @@ jobs:
           node -e "const fs=require('fs');const m=JSON.parse(fs.readFileSync('/tmp/vyron-mac-feed.json'));const w=JSON.parse(fs.readFileSync('/tmp/vyron-win-feed.json'));if(m.version!=='3.3.3'||w.version!=='3.3.2')process.exit(1);console.log('MAC_PRODUCTION_FEED=3.3.3');console.log('WINDOWS_PRODUCTION_FEED=3.3.2');console.log('RELEASE_MUTATION=NO')"
       - name: Live inventory + preserved production regressions
         run: |
-          npx vitest run             src/v334LiveContentInventory.test.ts             src/v334LiveInventorySafety.test.ts             src/renderScanClassifier.test.ts             src/readyVideoInventory.test.ts             src/v333DocxScheduleTimeSource.test.ts             src/v332WindowsOauthLauncher.test.ts             src/publisherSchedule.test.ts             src/scheduleContinuation.test.ts             src/v2111PublisherRuntime.test.ts             src/v300PublisherUiContracts.test.ts             src/v300OauthContinuity.test.ts             src/v300OauthPersistence.test.ts
+          npx vitest run             src/v334LiveContentInventory.test.ts             src/v334LiveInventorySafety.test.ts             src/v334StableReleaseContract.test.ts             src/renderScanClassifier.test.ts             src/readyVideoInventory.test.ts             src/v333DocxScheduleTimeSource.test.ts             src/v332WindowsOauthLauncher.test.ts             src/publisherSchedule.test.ts             src/scheduleContinuation.test.ts             src/v2111PublisherRuntime.test.ts             src/v300PublisherUiContracts.test.ts             src/v300OauthContinuity.test.ts             src/v300OauthPersistence.test.ts
       - run: npm run build
 
   native:
