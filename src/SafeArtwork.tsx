@@ -1,4 +1,5 @@
 import React,{useState} from 'react';
+import './v401.css';
 
 export function SafeArtwork({src,alt='',className='',fallback='V'}:{src:string;alt?:string;className?:string;fallback?:string}){
   const [failed,setFailed]=useState(false);
