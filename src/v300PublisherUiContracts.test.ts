@@ -1,12 +1,13 @@
 import {describe,expect,it} from 'vitest';import fs from 'node:fs';
 describe('VYRON 3.0.0 Publisher/UI contracts',()=>{
  const p=fs.readFileSync('src/PublisherOS.tsx','utf8');
+ const inventory=fs.readFileSync('src/renderInventoryRuntime.ts','utf8');
  const bar=fs.readFileSync('src/YouTubeChannelBar.tsx','utf8');
  const settings=fs.readFileSync('src/SettingsOS.tsx','utf8');
  const styles=fs.readFileSync('src/styles.css','utf8');
  const history=fs.readFileSync('src/releaseHistory.ts','utf8');
  it('Select All includes only canonical eligible NEW rows and Select None clears selection',()=>{
-  expect(p).toContain("const selectableJobs=useMemo(()=>allChannelJobs.filter(j=>uploadStateById.get(j.id)==='NEW'&&!recoveryJobIds.has(j.id))");
+  expect(p).toContain("const selectableJobs=useMemo(()=>sourceAvailability==='ONLINE'?allChannelJobs.filter(j=>uploadStateById.get(j.id)==='NEW'&&!recoveryJobIds.has(j.id))");
   expect(p).toContain("channelJobs.filter(j=>selectableJobIds.has(j.id)).map(j=>j.id)");
   expect(p).toContain('>Выбрать все</button>');
   expect(p).toContain("setDraftPatch({selectedIds:[]})");
@@ -24,7 +25,9 @@ describe('VYRON 3.0.0 Publisher/UI contracts',()=>{
  it('normal Publisher auto-materializes unmatched current fingerprints without YouTube-ID gate',()=>{
   expect(p).toContain("const currentCandidates=rows.filter(r=>r.classification==='NEW_CANDIDATE'||r.classification==='NEW_GENERATION')");
   expect(p).toContain('materializeRenderGenerationRows(currentCandidates,false,scanPreview)');
-  expect(p).toContain('Every current render gets SHA+size before upload eligibility is decided.');
+  expect(inventory).toContain('renderFileNeedsFingerprint');
+  expect(inventory).toContain('youtubeFileFingerprint');
+  expect(p).toContain("scanInventoryChannel(channelId,'publisher')");
   expect(p).toContain('successfulUploadForHash');
   expect(p).not.toContain('Проверить YouTube ID');
   expect(p).not.toContain('>Нужна проверка {verifyCount}</button>');
