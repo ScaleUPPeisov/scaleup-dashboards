@@ -5,3 +5,9 @@ export function publisherVideoCapacity(videoUploadAvailable:number|null|undefine
  return{byQuota:videoUploadAvailable==null?null:quota,safeRemaining:safeRemaining==null?null:safe,selectedCount:Number.isFinite(selected)?selected:null,canUploadToday:Math.min(quota,safe,selected)}
 }
 export function quotaDelta(planned:number,actual:number){return{planned,actual,difference:actual-planned}}
+
+export function publisherLocalUploadCapacity(localRemaining:number|null|undefined,selectedCount=Number.POSITIVE_INFINITY){
+ const local=localRemaining==null?Number.POSITIVE_INFINITY:Math.max(0,Math.floor(localRemaining));
+ const selected=Number.isFinite(selectedCount)?Math.max(0,Math.floor(selectedCount)):Number.POSITIVE_INFINITY;
+ return{localRemaining:localRemaining==null?null:local,selectedCount:Number.isFinite(selected)?selected:null,canUploadToday:Math.min(local,selected)}
+}
