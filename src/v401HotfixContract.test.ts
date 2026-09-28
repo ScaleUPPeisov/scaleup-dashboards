@@ -38,7 +38,7 @@ describe('VYRON 4.0.1 hotfix contract',()=>{
   it('keeps inventory work coalesced and throttled away from hot UI paths',()=>{
     expect(inventory).toContain('scheduleInventoryCachePersist');
     expect(inventory).toContain('RENDER_IO_CONCURRENCY=1');
-    expect(bridge).toContain('FOCUS_RESCAN_MIN_MS=30_000');
+    expect(bridge).toContain('FOCUS_RESCAN_MIN_MS=5*60_000');
     expect(bridge).toContain('INITIAL_SCAN_DELAY_MS=900');
     expect(store).toContain('saveTimer');
   });
