@@ -1,6 +1,28 @@
 {
-  "capturedAt": "2026-09-28T14:39:43.109774+00:00",
+  "capturedAt": "2026-09-28T14:41:56.158891+00:00",
   "runs": [
+    {
+      "conclusion": "",
+      "createdAt": "2026-09-28T14:41:05Z",
+      "databaseId": 36437825543,
+      "displayTitle": "release(vyron): rerun macOS 4.0.1 production on fixed tests",
+      "event": "push",
+      "headSha": "ea22f2038aab3c3786fcea7e7a2955fdbba9d4f6",
+      "status": "in_progress",
+      "updatedAt": "2026-09-28T14:41:17Z",
+      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/actions/runs/36437825543",
+      "workflowName": "VYRON 4.0.1 macOS Production Release",
+      "jobs": [
+        {
+          "id": 108980216095,
+          "name": "Build, verify and publish VYRON 4.0.1 macOS",
+          "status": "in_progress",
+          "conclusion": null,
+          "started_at": "2026-09-28T14:41:16Z",
+          "completed_at": null
+        }
+      ]
+    },
     {
       "conclusion": "failure",
       "createdAt": "2026-09-28T14:37:04Z",
