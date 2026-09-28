@@ -49,3 +49,11 @@ jobs:
         run: cargo test --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }} local_delete
       - run: cargo test --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }} inventory_watch
       - run: cargo check --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }}
+      - name: Capture generated Cargo.lock
+        if: matrix.os == 'macos-14'
+        uses: actions/upload-artifact@v4
+        with:
+          name: vyron-334-generated-cargo-lock
+          path: src-tauri/Cargo.lock
+          if-no-files-found: error
+          retention-days: 2
