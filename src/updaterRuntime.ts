@@ -75,25 +75,54 @@ export const useUpdaterRuntime=create<UpdaterRuntimeState>((set,get)=>({
     return checkPromise;
   },
   download:async()=>{
-    if(!candidate)return;
-    set({status:'DOWNLOADING',progress:0,downloadedBytes:0,totalBytes:0,errorCode:undefined,errorMessage:undefined,blockers:[]});
     try{
+      // A WebView reload can lose the in-memory candidate while the UI still knows an update exists.
+      // Re-check instead of leaving a dead button.
+      if(!candidate){
+        set({status:'CHECKING',errorCode:undefined,errorMessage:undefined,blockers:[]});
+        const recovered=await api.checkUpdate();
+        if(recovered.none)throw new Error('UPDATE_CANDIDATE_NOT_AVAILABLE: update feed no longer contains an installable candidate');
+        candidate=recovered;
+        set({currentVersion:recovered.current||get().currentVersion,latestVersion:recovered.latest||recovered.version||get().latestVersion,latestBuildRevision:recovered.buildRevision??get().latestBuildRevision,updateChannel:recovered.channel||get().updateChannel,artifactSha256:recovered.artifactSha256,notes:recovered.body||get().notes,releaseDate:recovered.date||get().releaseDate,endpoint:recovered.endpoint||get().endpoint,versionComparison:recovered.versionComparison||get().versionComparison});
+      }
+      set({status:'DOWNLOADING',progress:0,downloadedBytes:0,totalBytes:0,errorCode:undefined,errorMessage:undefined,blockers:[]});
       await ensureUpdaterInstallable(set);
       await candidate.download((p:UpdaterTransferProgress)=>set({status:p.status==='VERIFYING'?'VERIFYING':'DOWNLOADING',progress:p.percent,downloadedBytes:p.downloadedBytes,totalBytes:p.totalBytes}));
       set({status:'READY_TO_INSTALL',progress:100});
     }catch(error){const s=get();const code=recordFailure('download',error,s.currentVersion,s.latestVersion);set({status:'ERROR',errorCode:code,errorMessage:String(error)})}
   },
   installAndRestart:async(blockers=[])=>{
-    if(!candidate)return false;
     if(blockers.length){set({blockers});return false}
-    const target=get().latestVersion||candidate.version;const targetRevision=candidate.buildRevision??get().latestBuildRevision;localStorage.setItem('vyron:update-installing-version',target);localStorage.setItem('vyron:update-installing-target',JSON.stringify({productVersion:target,buildRevision:targetRevision,artifactSha256:candidate.artifactSha256||'',channel:candidate.channel||get().updateChannel,notes:get().notes||'',releaseDate:get().releaseDate||''}));
+    try{
+      // Candidate objects are intentionally memory-only. If the WebView/app shell was reloaded after
+      // download, recover the exact target from the signed feed and re-download/verify it.
+      if(!candidate){
+        const expectedVersion=get().latestVersion;
+        const expectedRevision=get().latestBuildRevision;
+        set({status:'CHECKING',errorCode:undefined,errorMessage:undefined,blockers:[]});
+        const recovered=await api.checkUpdate();
+        if(recovered.none)throw new Error('UPDATE_CANDIDATE_LOST: signed update candidate is no longer available');
+        const recoveredVersion=recovered.latest||recovered.version||'';
+        if(expectedVersion&&recoveredVersion&&expectedVersion!==recoveredVersion)throw new Error(`UPDATE_VERSION_MISMATCH: expected ${expectedVersion}, got ${recoveredVersion}`);
+        if(expectedRevision&&recovered.buildRevision&&expectedRevision!==recovered.buildRevision)throw new Error(`UPDATE_BUILD_MISMATCH: expected ${expectedRevision}, got ${recovered.buildRevision}`);
+        candidate=recovered;
+        set({latestVersion:recoveredVersion||expectedVersion,latestBuildRevision:recovered.buildRevision??expectedRevision,updateChannel:recovered.channel||get().updateChannel,artifactSha256:recovered.artifactSha256,notes:recovered.body||get().notes,releaseDate:recovered.date||get().releaseDate,endpoint:recovered.endpoint||get().endpoint,versionComparison:recovered.versionComparison||get().versionComparison,status:'DOWNLOADING',progress:0,downloadedBytes:0,totalBytes:0});
+        await ensureUpdaterInstallable(set);
+        await candidate.download((p:UpdaterTransferProgress)=>set({status:p.status==='VERIFYING'?'VERIFYING':'DOWNLOADING',progress:p.percent,downloadedBytes:p.downloadedBytes,totalBytes:p.totalBytes}));
+        set({status:'READY_TO_INSTALL',progress:100});
+      }
+    }catch(error){
+      const s=get();const code=recordFailure('install',error,s.currentVersion,s.latestVersion);
+      set({status:'ERROR',errorCode:code,errorMessage:String(error)});return false
+    }
+    const target=get().latestVersion||candidate!.version;const targetRevision=candidate!.buildRevision??get().latestBuildRevision;localStorage.setItem('vyron:update-installing-version',target);localStorage.setItem('vyron:update-installing-target',JSON.stringify({productVersion:target,buildRevision:targetRevision,artifactSha256:candidate!.artifactSha256||'',channel:candidate!.channel||get().updateChannel,notes:get().notes||'',releaseDate:get().releaseDate||''}));
     try{
       await ensureUpdaterInstallable(set);
       set({status:'VERIFYING',blockers:[]});
-      await candidate.install(status=>set({status}));
+      await candidate!.install(status=>set({status}));
       set({status:'READY_TO_RESTART'});
     }catch(error){localStorage.removeItem('vyron:update-installing-version');localStorage.removeItem('vyron:update-installing-target');const s=get();const code=recordFailure('install',error,s.currentVersion,target);set({status:'ERROR',errorCode:code,errorMessage:String(error)});return false}
-    try{set({status:'RESTARTING'});await candidate.restart();return true}catch(error){const s=get();const code=recordFailure('relaunch',error,s.currentVersion,target);set({status:'ERROR',errorCode:code,errorMessage:String(error)});return false}
+    try{set({status:'RESTARTING'});await candidate!.restart();return true}catch(error){const s=get();const code=recordFailure('relaunch',error,s.currentVersion,target);set({status:'ERROR',errorCode:code,errorMessage:String(error)});return false}
   },
   markUpdated:(version:string,buildRevision?:number)=>{candidate=undefined;clearRecordedFailure();const now=Date.now();set({currentVersion:version,latestVersion:version,currentBuildRevision:buildRevision??get().currentBuildRevision,latestBuildRevision:buildRevision??get().latestBuildRevision,status:'UPDATED',progress:100,downloadedBytes:0,totalBytes:0,errorCode:undefined,errorMessage:undefined,blockers:[],hasChecked:true,lastCheckedAt:now,lastCheckAttemptAt:now,nextAutomaticCheckAt:now+UPDATER_AUTO_INTERVAL_MS,consecutiveCheckFailures:0})},
   clearBlockers:()=>set({blockers:[]})
