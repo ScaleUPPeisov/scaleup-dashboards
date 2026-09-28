@@ -3,6 +3,7 @@ import {api} from './api';
 import {useApp} from './store';
 import {VYRON_4_ARTWORK,VYRON_LAST_CELEBRATED_KEY,VYRON_MAJOR_UPGRADE_TARGET_KEY,VYRON_MAJOR_VERSION} from './vyronBrand';
 import {SafeArtwork} from './SafeArtwork';
+import {LocalProfileMenu} from './LocalProfileMenu';
 
 type CelebrationMode='upgrade'|'fresh';
 
@@ -23,14 +24,13 @@ export function MajorUpdateCelebration(){
     return()=>{live=false}
   },[existingState]);
 
-  if(!visible)return null;
   const finish=()=>{
     localStorage.setItem(VYRON_LAST_CELEBRATED_KEY,VYRON_MAJOR_VERSION);
     localStorage.removeItem(VYRON_MAJOR_UPGRADE_TARGET_KEY);
     setVisible(false)
   };
 
-  return <div className="majorCelebrationBackdrop" role="dialog" aria-modal="true" aria-labelledby="majorCelebrationTitle">
+  return <><LocalProfileMenu/>{visible&&<div className="majorCelebrationBackdrop" role="dialog" aria-modal="true" aria-labelledby="majorCelebrationTitle">
     <div className="majorCelebrationFx" aria-hidden="true">
       {Array.from({length:14},(_,i)=><i key={i} style={{'--i':i} as React.CSSProperties}/>)}
     </div>
@@ -57,5 +57,5 @@ export function MajorUpdateCelebration(){
         <button className="primary" onClick={finish}>Начать работу</button>
       </footer>
     </section>
-  </div>
+  </div>}</>
 }
