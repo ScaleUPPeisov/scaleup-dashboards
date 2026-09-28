@@ -110,8 +110,10 @@ export function inventoryTotals(snapshots:Record<string,ChannelInventorySnapshot
   }
 }
 function baseSnapshot(channel:Channel,previous?:ChannelInventorySnapshot):ChannelInventorySnapshot{
-  return previous||{
-    channelId:channel.id,channelName:channel.name,renderFolderPath:String(channel.renderFolderPath||''),
+  const configuredPath=String(channel.renderFolderPath||'');
+  if(previous&&normalizeRenderPath(previous.renderFolderPath)===normalizeRenderPath(configuredPath))return previous;
+  return{
+    channelId:channel.id,channelName:channel.name,renderFolderPath:configuredPath,
     folderState:'OFFLINE',stale:true,physicalFiles:0,readyVideos:0,uploadingVideos:0,uploadedLocalCopies:0,
     newCandidates:0,newGenerations:0,knownReady:0,verifyRequired:0,invalid:0,runwayDays:0,level:'OFFLINE'
   }
@@ -171,7 +173,7 @@ function auditFor(previous:ChannelInventorySnapshot|undefined,next:ChannelInvent
   }
   if(previous?.folderState==='OFFLINE'&&next.folderState==='ONLINE')store.pushAudit({id:eventId(next.channelId,'reconnect'),at:nowIso(),channelId:next.channelId,kind:'RECONNECT',message:`Папка снова ONLINE • fresh inventory: ${after}`,readyBefore:before,readyAfter:after});
   if(delta>0)store.pushAudit({id:eventId(next.channelId,'add'),at:nowIso(),channelId:next.channelId,kind:'ADD',message:`+${delta} новых видео • готово: ${after}`,readyBefore:before,readyAfter:after});
-  else if(delta<0)store.pushAudit({id:eventId(next.channelId,'remove'),at:nowIso(),channelId:next.channelId,kind:'REMOVE',message:`−${Math.abs(delta)} из current inventory • готово: ${after}`,readyBefore:before,readyAfter:after});
+  else if(delta<0)store.pushAudit({id:eventId(next.channelId,'remove'),at:nowIso(),channelId:next.channelId,kind:'REMOVE',message:reason==='cleanup'?`−${Math.abs(delta)} после подтверждённой cleanup • готово: ${after}`:`−${Math.abs(delta)} локальный файл исчез • готово: ${after}`,readyBefore:before,readyAfter:after});
   else if(reason!=='periodic'&&reason!=='watcher')store.pushAudit({id:eventId(next.channelId,'scan'),at:nowIso(),channelId:next.channelId,kind:'SCAN',message:`scan: ${after} ready • ${next.physicalFiles} физических файлов`,readyBefore:before,readyAfter:after})
 }
 
