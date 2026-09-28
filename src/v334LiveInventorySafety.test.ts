@@ -44,7 +44,7 @@ describe('VYRON 3.3.4 live inventory safety contracts',()=>{
  });
  it('watcher is per-channel, debounced and periodic reconciliation is lightweight',()=>{
   expect(bridge).toContain('WATCH_DEBOUNCE_MS=1500');
-  expect(bridge).toContain('SAFETY_RECONCILE_MS=60_000');
+  expect(bridge).toContain('SAFETY_RECONCILE_MS=15*60_000');
   expect(bridge).toContain("scanInventoryChannel(channelId,'watcher')");
   expect(runtime).toContain('const RENDER_IO_CONCURRENCY=1');
   expect(runtime).toContain('length:Math.min(RENDER_IO_CONCURRENCY');
