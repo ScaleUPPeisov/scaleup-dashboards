@@ -37,10 +37,10 @@ export function LiveContentInventory(){
 
     <div className="inventoryHeroGrid">
       <div className="inventoryHero primaryMetric"><small>ВСЕГО ГОТОВО</small><b>{totals.ready}</b><span>{totals.uploading} сейчас загружается</span></div>
-      <div className="inventoryHero"><small>КАНАЛОВ</small><b>{totals.channels}</b><span>система VYRON</span></div>
+      <div className="inventoryHero"><small>КАНАЛОВ</small><b>{totals.channels}</b><span>скоро нужно: {totals.soon}</span></div>
       <div className="inventoryHero normal"><small>НОРМА</small><b>{totals.normal}</b><span>&gt; 14 дней</span></div>
-      <div className="inventoryHero soon"><small>СКОРО НУЖНО</small><b>{totals.soon}</b><span>7–14 дней</span></div>
-      <div className="inventoryHero low"><small>МАЛО / ПУСТО</small><b>{totals.low+totals.empty}</b><span>{totals.low} мало • {totals.empty} пусто</span></div>
+      <div className="inventoryHero low"><small>МАЛО</small><b>{totals.low}</b><span>1–6 дней</span></div>
+      <div className="inventoryHero low"><small>ПУСТО</small><b>{totals.empty}</b><span>0 ready</span></div>
       <div className="inventoryHero offline"><small>OFFLINE</small><b>{totals.offline}</b><span>snapshot не обнуляется</span></div>
     </div>
     <div className="inventoryLiveLine"><b>🟢 LIVE</b><span>{lastFresh?'проверено '+age(lastFresh,now):'первичное сканирование…'}</span><em>YouTube API requests: 0</em></div>
