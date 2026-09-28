@@ -30,11 +30,15 @@ describe('VYRON 3.3.4 live inventory safety contracts',()=>{
   expect(fs.readFileSync('src/DashboardOS.tsx','utf8')).toContain("useLiveInventory");
   expect(fs.readFileSync('src/ProductionOS.tsx','utf8')).toContain("useLiveInventory")
  });
- it('sidebar places Запас видео between Производство and YouTube and shows global badge',()=>{
-  const production=app.indexOf("{page:'production',icon:'◆',label:'Производство'}");
-  const inventory=app.indexOf("{page:'inventory',icon:'▤',label:'Запас видео'}");
-  const youtube=app.indexOf("{page:'youtube',icon:'▶',label:'YouTube'}");
-  expect(production).toBeGreaterThanOrEqual(0);expect(inventory).toBeGreaterThan(production);expect(youtube).toBeGreaterThan(inventory);
+ it('sidebar keeps Запас видео before YouTube, exposes History, and shows the inventory badge',()=>{
+  const production=app.indexOf("id:'production',page:'production'");
+  const inventory=app.indexOf("id:'inventory',page:'inventory'");
+  const history=app.indexOf("id:'history',page:'youtube'");
+  const youtube=app.indexOf("id:'youtube',page:'youtube'");
+  expect(production).toBeGreaterThanOrEqual(0);
+  expect(inventory).toBeGreaterThan(production);
+  expect(history).toBeGreaterThan(inventory);
+  expect(youtube).toBeGreaterThan(history);
   expect(app).toContain("n.page==='inventory'");
   expect(app).toContain('<LiveInventoryBridge/>')
  });
