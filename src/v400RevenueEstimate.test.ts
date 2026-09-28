@@ -18,9 +18,10 @@ describe('VYRON 4.0.0 estimated RPM / revenue truth',()=>{
     expect(dashboard).toContain('analyticsViews/1000*configuredRpm')
   });
 
-  it('does not use YouTube estimatedRevenue as the configured-RPM estimate',()=>{
+  it('does not use YouTube monetary analytics as the configured-RPM estimate',()=>{
     const revenueBlock=dashboard.slice(dashboard.indexOf('const analyticsRows'),dashboard.indexOf('const attention'));
-    expect(revenueBlock).not.toContain('estimatedRevenue');
+    expect(revenueBlock).not.toMatch(/\.(estimatedRevenue|estimatedAdRevenue|estimatedRedPartnerRevenue)\b/);
+    expect(dashboard).toContain('const estimatedRevenue28=configuredRpm!=null&&analyticsViews>0?analyticsViews/1000*configuredRpm:undefined');
     expect(app).toContain('Расчётный RPM');
     expect(app).toContain('Это не подтверждённый YouTube revenue')
   });
