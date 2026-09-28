@@ -54,6 +54,8 @@ type LiveInventoryState={
 const emptySummary=():RenderScanSummary=>({TOTAL_CLASSIFIED_FILES:0,KNOWN_EXACT:0,UPLOADED_LOCAL_COPY:0,NEW_CANDIDATE:0,NEW_GENERATION:0,LEGACY_IDENTITY_UNPROVEN:0,VERIFY_REQUIRED:0,AMBIGUOUS:0,DUPLICATE_LOCAL:0,INVALID:0});
 const INVENTORY_CACHE_KEY='vyron:live-render-inventory:v1';
 const nowIso=()=>new Date().toISOString();
+const RENDER_IO_CONCURRENCY=1;
+const yieldToUi=()=>new Promise<void>(resolve=>setTimeout(resolve,0));
 function compactInventorySnapshot(row:ChannelInventorySnapshot):ChannelInventorySnapshot{
   const {result:_result,rows:_rows,summary:_summary,...compact}=row;
   return compact
@@ -180,11 +182,12 @@ async function fingerprintNeededFiles(result:RenderFolderScanResult,jobs:VideoJo
       try{
         const fp=await api.youtubeFileFingerprint(file.path,cached?{size:cached.size,mtimeMs:cached.mtimeMs,sha256:cached.sha256}:undefined);
         useApp.getState().cacheFingerprint(file.path,{path:file.path,size:fp.size,mtimeMs:fp.modifiedAt,sha256:fp.fingerprint,computedAt:nowIso()});
-        files[i]={...file,size:fp.size,modifiedAt:fp.modifiedAt,fingerprint:fp.fingerprint}
+        files[i]={...file,size:fp.size,modifiedAt:fp.modifiedAt,fingerprint:fp.fingerprint};
+        await yieldToUi()
       }catch{files[i]=file}
     }
   };
-  await Promise.all(Array.from({length:Math.min(3,Math.max(1,result.files.length))},()=>worker()));
+  await Promise.all(Array.from({length:Math.min(RENDER_IO_CONCURRENCY,Math.max(1,result.files.length))},()=>worker()));
   return{...result,files}
 }
 
@@ -268,7 +271,7 @@ export function scanAllInventories(reason:InventoryScanReason='manual-all'):Prom
       const ids=useApp.getState().channels.filter(c=>c.enabled!==false).map(c=>c.id);
       let cursor=0;
       const worker=async()=>{while(true){const i=cursor++;if(i>=ids.length)return;await scanInventoryChannel(ids[i],reason)}};
-      await Promise.all(Array.from({length:Math.min(3,Math.max(1,ids.length))},()=>worker()))
+      await Promise.all(Array.from({length:Math.min(RENDER_IO_CONCURRENCY,Math.max(1,ids.length))},()=>worker()))
     }finally{store.setGlobalScanning(false)}
   })();
   allInventoryScanInFlight=run;
