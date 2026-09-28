@@ -31,6 +31,16 @@ export async function discoverCompetitorsForChannel(channelId:string,force=false
 }
 
 export async function refreshYoutubeIntelligence(force=false){
- if(running||youtubeQuotaState().blocked)return;running=true;const errors:string[]=[];try{const state=useApp.getState();for(const channel of state.channels.filter(c=>c.enabled&&c.youtubeProfileId)){try{await refreshChannelAnalytics(channel.id,28,force)}catch(e){errors.push(`${channel.name}: ${humanizeError(e,'analytics').message}`)}try{await discoverCompetitorsForChannel(channel.id,force)}catch(e){errors.push(`${channel.name} discovery: ${humanizeError(e,'competitors').message}`)}const candidates=useApp.getState().competitors.filter(c=>c.channelId===channel.id).sort((a,b)=>(Date.parse(a.updatedAt||'')||0)-(Date.parse(b.updatedAt||'')||0)).filter(c=>force||stale(c.updatedAt,Math.max(60,useApp.getState().settings.youtubeIntelligenceRefreshMin))).slice(0,force?10:3);for(const c of candidates){try{await refreshCompetitor(c.id,true)}catch(e){errors.push(`${c.name}: ${humanizeError(e,'competitors').message}`)}}}
- if(errors.length&&!errors.some(isYoutubeQuotaError))useApp.getState().log(`YouTube Intelligence: ${errors.slice(0,8).join(' • ')}`,'warn');else if(force&&!youtubeQuotaState().blocked)useApp.getState().log('YouTube Intelligence обновлён')}finally{running=false}
+ if(running||youtubeQuotaState().blocked)return;running=true;const errors:string[]=[];try{
+  const state=useApp.getState();
+  for(const channel of state.channels.filter(c=>c.enabled&&c.youtubeProfileId)){
+   try{await refreshChannelAnalytics(channel.id,28,force)}catch(e){errors.push(`${channel.name}: ${humanizeError(e,'analytics').message}`)}
+   // VYRON 5.0.0: search.list / competitor discovery is NEVER part of background or aggregate refresh.
+   // New competitors are discovered only by the explicit "Найти похожие каналы" action.
+   const candidates=useApp.getState().competitors.filter(c=>c.channelId===channel.id).sort((a,b)=>(Date.parse(a.updatedAt||'')||0)-(Date.parse(b.updatedAt||'')||0)).filter(c=>force||stale(c.updatedAt,Math.max(60,useApp.getState().settings.youtubeIntelligenceRefreshMin))).slice(0,force?10:3);
+   for(const competitor of candidates){try{await refreshCompetitor(competitor.id,true)}catch(e){errors.push(`${competitor.name}: ${humanizeError(e,'competitors').message}`)}}
+  }
+  if(errors.length&&!errors.some(isYoutubeQuotaError))useApp.getState().log(`YouTube Intelligence: ${errors.slice(0,8).join(' • ')}`,'warn');
+  else if(force&&!youtubeQuotaState().blocked)useApp.getState().log('YouTube Intelligence обновлён');
+ }finally{running=false}
 }
