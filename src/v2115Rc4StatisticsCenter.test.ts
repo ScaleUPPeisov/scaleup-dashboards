@@ -100,7 +100,8 @@ describe('VYRON 2.1.15 RC4 multi-channel statistics center',()=>{
  it('runtime refresh targets exact classification, batches up to 50 and never iterates all local channels into API calls',()=>{
   const runtime=fs.readFileSync('src/youtubeChannelStatsRuntime.ts','utf8'),backend=fs.readFileSync('src-tauri/src/youtube.rs','utf8');
   expect(runtime).toContain('classification.eligible.filter');
-  expect(runtime).toContain('offset+=50');
+  expect(runtime).toContain('planStatisticsProjectBatches');
+  expect(runtime).toContain('offset+=size');
   expect(runtime).toContain('requestBatchWithDriverRotation');
   expect(runtime).not.toContain('channels.map(async');
   expect(backend).toContain('if ids.len()>=50');
@@ -118,7 +119,7 @@ describe('VYRON 2.1.15 RC4 multi-channel statistics center',()=>{
   const api=fs.readFileSync('src/api.ts','utf8'),runtime=fs.readFileSync('src/youtubeChannelStatsRuntime.ts','utf8'),quota=fs.readFileSync('src/youtubeQuota.ts','utf8');
   expect(api).toContain("'youtube_channel_statistics_batch'");
   expect(api).toContain('operationId');
-  expect(runtime).toContain('youtubeOperationActualCost(operationId)');
+  expect(runtime).toContain('childOperationIds.map(youtubeOperationActualCost)');
   expect(quota).toContain("'channels.list':{bucket:'general',cost:1");
   expect(api).toContain("if(!METHOD_LEDGER_COMMANDS.has(command))recordYoutubeCommand");
  });
