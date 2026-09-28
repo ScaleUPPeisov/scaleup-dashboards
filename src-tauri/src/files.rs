@@ -1,3 +1,5 @@
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+use tauri::Manager;
 use chrono::Utc;
 use serde_json::{json, Value};
 use std::{
@@ -142,6 +144,55 @@ fn job_status(
         "WAITING_MUSIC"
     };
     (status, count, cover, final_opt)
+}
+
+#[tauri::command]
+pub fn store_profile_avatar(
+    app: tauri::AppHandle,
+    profile_id: String,
+    source_path: String,
+) -> Result<Value, String> {
+    let source = PathBuf::from(source_path);
+    if !source.is_file() {
+        return Err("AVATAR_SOURCE_MISSING".into());
+    }
+    let extension = ext(&source);
+    if !matches!(extension.as_str(), "jpg" | "jpeg" | "png" | "webp") {
+        return Err("AVATAR_UNSUPPORTED_FORMAT".into());
+    }
+    let safe_profile = safe_name(&profile_id);
+    let root = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("AVATAR_APP_DATA_DIR: {e}"))?
+        .join("UserProfiles")
+        .join(safe_profile);
+    fs::create_dir_all(&root).map_err(|e| format!("AVATAR_CREATE_DIR: {e}"))?;
+
+    if let Ok(entries) = fs::read_dir(&root) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_file()
+                && p.file_stem().and_then(|x| x.to_str()) == Some("avatar")
+            {
+                let _ = fs::remove_file(p);
+            }
+        }
+    }
+
+    let target = root.join(format!("avatar.{extension}"));
+    fs::copy(&source, &target).map_err(|e| format!("AVATAR_COPY_FAILED: {e}"))?;
+    let bytes = fs::read(&target).map_err(|e| format!("AVATAR_READ_FAILED: {e}"))?;
+    let mime = match extension.as_str() {
+        "png" => "image/png",
+        "webp" => "image/webp",
+        _ => "image/jpeg",
+    };
+    let data_url = format!("data:{mime};base64,{}", STANDARD.encode(bytes));
+    Ok(json!({
+        "path": target.display().to_string(),
+        "dataUrl": data_url
+    }))
 }
 
 #[tauri::command]
