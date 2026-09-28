@@ -5,8 +5,8 @@ import {refreshInventoryUploadCounts,scanAllInventories,scanInventoryChannel} fr
 import {subscribeUploadTelemetry} from './uploadTelemetry';
 
 const WATCH_DEBOUNCE_MS=1500;
-const SAFETY_RECONCILE_MS=60_000;
-const FOCUS_RESCAN_MIN_MS=30_000;
+const SAFETY_RECONCILE_MS=15*60_000;
+const FOCUS_RESCAN_MIN_MS=5*60_000;
 const INITIAL_SCAN_DELAY_MS=900;
 const FOCUS_SCAN_DELAY_MS=350;
 
