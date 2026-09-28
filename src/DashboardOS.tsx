@@ -13,7 +13,10 @@ import {ScreenErrorBoundary} from './ScreenErrorBoundary';
 import {activeJobErrors} from './activeErrors';
 import {inventoryTotals,useLiveInventory} from './renderInventoryRuntime';
 import {OWNER_INVENTORY_EVENT,aggregateOwnerInventories,ownerInventoryForChannel} from './youtubeOwnerInventory';
-import {safeDailyStatus} from './youtubePublishSafety';
+import {globalDailyUploadStatus,safeDailyStatus} from './youtubePublishSafety';
+import {youtubeQuotaUsage} from './youtubeQuota';
+import {buildDailyOperations} from './dailyOperations';
+import {SystemHealthPanel} from './SystemHealthPanel';
 import {ChannelAvatar} from './ChannelAvatar';
 
 const fmt=(n:number)=>new Intl.NumberFormat('ru-RU').format(n);
@@ -64,7 +67,8 @@ function OperationsDashboard(){
 
  const active=enabled.find(c=>c.id===activeId)||enabled[0],activeInv=active?inventory.byChannel[active.id]:undefined,activeLive=active?liveSnapshots[active.id]:undefined,activeOwner=active?ownerByChannel.get(active.id):undefined,activeQueued=active?queue.queued.filter(x=>x.spec.channelId===active.id).length:0;
  const jobErrors=activeJobErrors(jobs),actionableErrors=jobErrors.length,readyEndlume=jobs.filter(j=>j.status==='READY_RENDER').length,rendering=jobs.filter(j=>j.status==='RENDERING').length;
- const now=new Date(),uploadedTodayRows=uploadHistory.filter(x=>sameLocalDay(x.uploadedAt,now)),uploadedToday=uploadedTodayRows.length,failedToday=queue.recent.filter(x=>x.state==='FAILED'&&sameLocalDay(x.finishedAt,now)).length;
+ const now=new Date(),dailyOps=buildDailyOperations(enabled,uploadHistory,liveSnapshots,now),uploadedTodayRows=uploadHistory.filter(x=>sameLocalDay(x.uploadedAt,now)&&Boolean(x.youtubeVideoId)),uploadedToday=dailyOps.uploadedToday,failedToday=queue.recent.filter(x=>x.state==='FAILED'&&sameLocalDay(x.finishedAt,now)).length;
+ const apiQuota=youtubeQuotaUsage(),globalUploads=globalDailyUploadStatus(undefined,now);
  const activeTodayChannels=new Set<string>([
   ...uploadedTodayRows.map(x=>x.channelId),
   ...telemetry.active.map(x=>x.channelId).filter(Boolean),
@@ -85,6 +89,9 @@ function OperationsDashboard(){
 
  const attention=useMemo(()=>{
   const rows:{key:string;label:string;text:string;page:'channels'|'production'|'inventory'|'youtube'|'settings'}[]=[];
+  if(dailyOps.unprocessedChannels>0)rows.push({key:'daily-unprocessed',label:dailyOps.unprocessedChannels+' каналов',text:'Ещё не обработано сегодня',page:'inventory'});
+  const noRender=enabled.filter(c=>!String(c.renderFolderPath||'').trim()).length;
+  if(noRender)rows.push({key:'render-unconfigured',label:noRender+' каналов',text:'Папка Render не выбрана',page:'inventory'});
   for(const c of enabled){
    const inv=liveSnapshots[c.id],owner=ownerByChannel.get(c.id);
    if(inv&&inv.folderState==='ONLINE'&&inv.readyVideos===0)rows.push({key:'stock:'+c.id,label:c.name,text:'Локальный запас Render закончился',page:'inventory'});
@@ -99,22 +106,24 @@ function OperationsDashboard(){
   }
   for(const j of jobErrors)rows.push({key:'job:'+j.id,label:'VIDEO_'+String(j.number).padStart(3,'0'),text:humanizeError(j.error,'generic').message,page:j.uploadInterruptedAt?'youtube':'production'});
   return rows.slice(0,7)
- },[enabled,liveSnapshots,ownerByChannel,jobErrors,settings.autoUploadYoutube,uploadHistory]);
+ },[enabled,liveSnapshots,ownerByChannel,jobErrors,settings.autoUploadYoutube,uploadHistory,dailyOps.unprocessedChannels]);
 
  const primaryUpload=telemetry.active[0],primaryJob=primaryUpload?jobs.find(j=>j.id===primaryUpload.jobId):undefined,primaryChannel=primaryUpload?channels.find(c=>c.id===primaryUpload.channelId):undefined;
  const ownerCoverage=connectedCount?ownerTotals.availableChannels+'/'+connectedCount+' каналов в owner-cache':'нет подключённых каналов';
 
  return <>
   <div className="opsKpiGrid v400" data-testid="dashboard-kpis">
-   <Kpi label="КАНАЛЫ" value={enabled.length} hint={'подключено YouTube: '+connectedCount}/>
-   <Kpi label="ПОДПИСЧИКИ" value={subscriberValues.length?fmt(subscriberTotal):'—'} hint={subscriberValues.length?subscriberValues.length+'/'+enabled.length+' каналов с данными':'нет данных'}/>
-   <Kpi label="ПРОСМОТРЫ • LIFETIME" value={viewValues.length?fmt(viewTotal):'—'} hint={viewValues.length?viewValues.length+'/'+enabled.length+' каналов с данными':'нет данных'}/>
-   <Kpi label="OWNER-ВИДЕО" value={ownerVideoValue} hint={ownerCoverage}/>
+   <Kpi label="КАНАЛЫ" value={enabled.length} hint={'YouTube подключено: '+connectedCount}/>
+   <Kpi label="ОБРАБОТАНО СЕГОДНЯ" value={dailyOps.processedChannels+' / '+enabled.length} hint={'загружено: '+dailyOps.uploadedToday}/>
+   <Kpi label="НЕ ОБРАБОТАНО" value={dailyOps.unprocessedChannels} hint="по uploadHistory сегодня"/>
+   <Kpi label="ЛОКАЛЬНО ГОТОВО" value={fmt(liveTotals.ready)} hint="Render • 0 YouTube API"/>
    <Kpi label="YOUTUBE SCHEDULED" value={ownerScheduledValue} hint="только реальный future publishAt"/>
-   <Kpi label="ЛОКАЛЬНО ГОТОВО" value={fmt(liveTotals.ready)} hint="Render • не YouTube schedule"/>
-   <Kpi label="В ОЧЕРЕДИ" value={queue.queued.length} hint="ещё не загружены"/>
    <Kpi label="ОШИБКИ" value={actionableErrors} hint={actionableErrors?'требуют внимания':'активных ошибок нет'} warn={actionableErrors>0}/>
+   <Kpi label="YOUTUBE API" value={apiQuota.limit?apiQuota.used+' / '+apiQuota.limit:'Нет данных'} hint="general units"/>
+   <Kpi label="VYRON UPLOADS" value={globalUploads.used+' / '+globalUploads.limit} hint={'осталось: '+globalUploads.remaining}/>
   </div>
+
+  <SystemHealthPanel profiles={profiles}/>
 
   <div className="opsDashboardGrid v400">
    <section className="opsCard todayCard">
