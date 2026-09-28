@@ -20,7 +20,7 @@ import {batchFailureToast,type BatchFailure} from './errorPresentationPolicy';
 import {canonicalSelectedJobs,publisherGlobalBlockReasons,publisherPreflightItems,publisherUploadButtonLabel} from './publisherRuntime';
 import {classifyUploadState,clearStaleUploadLink,latestUploadRecord,markHistoryTrashed,nextProjectLifecycle,recordVerifiedUpload,successfulUploadForHash,updateUploadProcessing,updateUploadRemoteEvidence,uploadStateCounters,type CanonicalUploadState} from './storageLifecycle';
 import {configureUploadQueue,enqueueUpload,waitForUploadQueueEntries} from './uploadQueueRuntime';
-import {existingSyncIncompleteSummary,readAuthoritativeExistingSnapshot,replaceExistingCacheFromSync} from './channelSchedule';
+import {existingSyncIncompleteSummary,krasDateKey,readAuthoritativeExistingSnapshot,replaceExistingCacheFromSync} from './channelSchedule';
 import {journal} from './activityJournalRuntime';
 import {buildLegacyRecoveryPreview,canRefreshCurrentGenerationEvidence,classifyChannelRenderFiles,crossChannelScanRecoveryJobs,normalizeRenderPath,planRenderScanImport,summarizeRenderScan,type LegacyRecoveryPreview,type RenderScanRow,type RenderScanSummary} from './renderScanClassifier';
 import {completeTask,ensureTask,failTask,startTask,updateTask} from './taskEngine';
@@ -450,6 +450,16 @@ export function PublisherOS(){
    else notifySuccess('Локальная проверка пройдена',`${report.ready} видео готовы к следующему шагу.`);
   }finally{setDryRunBusy(false)}
  }
+ function persistQueuedScheduleMode(){
+  if(!channel||draft.scheduleMode==='file')return;
+  if(draft.scheduleMode==='daily'){
+   updateChannel(channel.id,{scheduleMode:'interval',publishIntervalDays:1,cadenceDays:1});
+   return
+  }
+  const anchor=krasDateKey(scheduleResolution.dates[0])||channel.patternAnchorDate;
+  if(draft.scheduleMode==='2/2')updateChannel(channel.id,{scheduleMode:'pattern',publishDays:2,pauseDays:2,patternAnchorDate:anchor});
+  else if(draft.scheduleMode==='3/1')updateChannel(channel.id,{scheduleMode:'pattern',publishDays:3,pauseDays:1,patternAnchorDate:anchor})
+ }
  async function runBatch(requested?:number){
   log(`[UPLOAD_QUEUE] submit clicked channel=${channelId} selected=${selected.length} ready=${uploadableSelected.length}`);
   if(!channel||!profileId){notifyWarning('Загрузка недоступна','Для канала не найден активный YouTube OAuth профиль.');return}
@@ -465,7 +475,7 @@ export function PublisherOS(){
     patchJob(j.id,{title:payload.title,description:payload.description,tags:payload.tags,publishAt:payload.publishAt,metadataSource:row?'import':j.metadataSource,metadataLocked:row?true:j.metadataLocked,error:undefined});
     const queueEntry=enqueueUpload({jobId:j.id,batchId,projectId:projectEntry?.projectId,localVideoIdentity:`${channelId}:${j.id}:${fp.fingerprint}`,videoNumber:j.number,channelId:channel.id,channelName:channel.name,profileId,youtubeChannelId:channel.youtubeChannelId,filePath:j.finalPath,fingerprint:fp.fingerprint,fileSize:fp.size,modifiedAt:fp.modifiedAt,publishAt:payload.publishAt!,title:payload.title,description:payload.description,tags:[...payload.tags],categoryId:payload.categoryId,thumbnailPath,metadataSource:row?'import':(j.metadataSource||'template'),quotaProjectKey:quotaProjectKey||undefined,quotaOperations:[{method:'videos.insert',count:1,label:'Загрузка видео'},{method:'videos.list',count:1,label:'Проверка videoId'},{method:'videos.list',count:1,label:'Проверка processing'},...(thumbnailPath?[{method:'thumbnails.set' as const,count:1,label:'Обложка'}]:[])],allowDuplicate:false,submittedAt:new Date().toISOString()} as const);queued.push(j.id);queueIds.push(queueEntry.queueId);log(`[UPLOAD_QUEUE] QUEUED job=${j.id} channel=${channel.id} profile=${profileId}`)
    }catch(error){const h=humanizeError(error,'upload');failed.push(`VIDEO_${String(j.number).padStart(3,'0')}: ${h.message}`);log(`[UPLOAD_QUEUE] submit failed job=${j.id}: ${h.message}`,'warn')}}
-   if(queued.length){setDraftPatch({selectedIds:draft.selectedIds.filter(id=>!queued.includes(id))});notifySuccess('Добавлено в очередь',`${queued.length} видео • канал ${channel.name} • concurrency ${settings.youtubeUploadConcurrency||2}. Переключение вкладок и каналов загрузку не остановит.`)}
+   if(queued.length){persistQueuedScheduleMode();setDraftPatch({selectedIds:draft.selectedIds.filter(id=>!queued.includes(id))});notifySuccess('Добавлено в очередь',`${queued.length} видео • канал ${channel.name} • concurrency ${settings.youtubeUploadConcurrency||2}. Переключение вкладок и каналов загрузку не остановит.`)}
    if(queueIds.length){void waitForUploadQueueEntries(queueIds).then(entries=>{const batchFailures:BatchFailure[]=entries.filter(x=>x.state==='FAILED').map(x=>{const h=humanizeError(x.error||'UPLOAD_FAILED','upload');return{id:x.spec.jobId,message:`VIDEO_${String(x.spec.videoNumber).padStart(3,'0')}: ${h.message}`,technicalDetail:h.detail}});const failureToast=batchFailureToast(batchFailures);if(failureToast)notifyError(failureToast.title,failureToast.message,{persistError:false})})}
    if(failed.length)notifyWarning('Часть видео не добавлена',failed.join(' • '));
   }finally{setBusy(false)}
