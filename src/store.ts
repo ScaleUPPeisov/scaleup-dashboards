@@ -64,9 +64,39 @@ export function normalizeChannel(c:Channel):Channel{
   return {...c,name,slug:String(raw.slug||slugify(name)),genre:String(raw.genre||'Music'),language:String(raw.language||'RU'),country:String(raw.country||'—'),enabled:raw.enabled!==false,minTracks:raw.minTracks||10,targetBufferDays:raw.targetBufferDays||60,cadenceDays:raw.cadenceDays||4,publishHour:Number.isFinite(raw.publishHour)?Number(raw.publishHour):18,publishMinute:Number.isFinite(raw.publishMinute)?Number(raw.publishMinute):0,targetDurationMin:raw.targetDurationMin||120,seo:{titlePatterns:raw.seo?.titlePatterns?.length?raw.seo.titlePatterns:['{topic} • Session {number}'],descriptionTemplate:raw.seo?.descriptionTemplate||'{title}\n\n{genre}',tags:raw.seo?.tags||[],banned:raw.seo?.banned||[],aiPrompt:raw.seo?.aiPrompt}};
 }
 
+function dedupeHydratedChannels(rows:Channel[]){
+  const channels:Channel[]=[];const aliases=new Map<string,string>(),byId=new Map<string,Channel>(),byYoutube=new Map<string,Channel>();let changed=false;
+  const merge=(base:Channel,incoming:Channel)=>normalizeChannel({...incoming,...base,
+    youtubeProfileId:base.youtubeProfileId||incoming.youtubeProfileId,
+    youtubeChannelId:base.youtubeChannelId||incoming.youtubeChannelId,
+    renderFolderPath:base.renderFolderPath||incoming.renderFolderPath,
+    projectsFolderPath:base.projectsFolderPath||incoming.projectsFolderPath,
+    stats:base.stats||incoming.stats,analytics:base.analytics||incoming.analytics,
+    seo:{...incoming.seo,...base.seo}
+  });
+  for(const raw of rows.filter(Boolean).map(normalizeChannel)){
+    const youtubeKey=String(raw.youtubeChannelId||'').trim();
+    const existing=byId.get(raw.id)||(youtubeKey?byYoutube.get(youtubeKey):undefined);
+    if(!existing){channels.push(raw);byId.set(raw.id,raw);if(youtubeKey)byYoutube.set(youtubeKey,raw);continue}
+    changed=true;aliases.set(raw.id,existing.id);
+    const merged=merge(existing,raw),index=channels.findIndex(x=>x.id===existing.id);
+    if(index>=0)channels[index]=merged;byId.set(existing.id,merged);if(merged.youtubeChannelId)byYoutube.set(merged.youtubeChannelId,merged)
+  }
+  return{channels,aliases,changed}
+}
+function remapStatisticsHistory(history:ChannelStatisticsHistory,aliases:Map<string,string>):ChannelStatisticsHistory{
+  const out:ChannelStatisticsHistory={};
+  for(const [channelId,rows] of Object.entries(history||{})){
+    const target=aliases.get(channelId)||channelId;
+    const bucket=out[target]||(out[target]=[]);
+    for(const row of rows||[]){const mapped={...row,channelId:target};if(!bucket.some(x=>x.snapshotId===mapped.snapshotId))bucket.push(mapped)}
+  }
+  return out
+}
+
 export const useApp=create<Store>((set,get)=>({
   ...EMPTY_STATE,page:'dashboard',booted:false,
-  hydrate:s=>{const jobs=(s.jobs||[]).filter(Boolean).map(normalizeJob),activityJournal=normalizeActivityJournal((s as any).activityJournal),rawHistory:Array<UploadHistoryRecord>=Array.isArray((s as any).uploadHistory)?(s as any).uploadHistory:[],uploadHistory=migrateUploadHistoryFingerprintProvenance(rawHistory,activityJournal,jobs),provenanceChanged=uploadHistory.some((x,i)=>x.fingerprintProofSource!==rawHistory[i]?.fingerprintProofSource||x.proofSchemaVersion!==rawHistory[i]?.proofSchemaVersion);set({...EMPTY_STATE,...s,version:10,channels:(s.channels||[]).filter(Boolean).map(normalizeChannel),jobs,competitors:s.competitors||[],settings:{...DEFAULT_SETTINGS,...s.settings,youtubeIntelligenceAutoRefresh:false},logs:s.logs||[],uploadHistory,activityJournal,statisticsHistory:normalizeStatisticsHistory((s as any).statisticsHistory),fingerprintCache:(s as any).fingerprintCache||{},projectLifecycle:(s as any).projectLifecycle||{},booted:true});if(provenanceChanged)scheduleSave()},
+  hydrate:s=>{const dedup=dedupeHydratedChannels((s.channels||[]).filter(Boolean)),remap=(id:string)=>dedup.aliases.get(id)||id,jobs=(s.jobs||[]).filter(Boolean).map(j=>normalizeJob({...j,channelId:remap(j.channelId)})),activityJournal=normalizeActivityJournal((s as any).activityJournal).map(e=>e.channelId&&dedup.aliases.has(e.channelId)?{...e,channelId:remap(e.channelId)}:e),rawHistory:Array<UploadHistoryRecord>=Array.isArray((s as any).uploadHistory)?(s as any).uploadHistory.map((x:UploadHistoryRecord)=>dedup.aliases.has(x.channelId)?{...x,channelId:remap(x.channelId)}:x):[],uploadHistory=migrateUploadHistoryFingerprintProvenance(rawHistory,activityJournal,jobs),provenanceChanged=uploadHistory.some((x,i)=>x.fingerprintProofSource!==rawHistory[i]?.fingerprintProofSource||x.proofSchemaVersion!==rawHistory[i]?.proofSchemaVersion),statisticsHistory=remapStatisticsHistory(normalizeStatisticsHistory((s as any).statisticsHistory),dedup.aliases),competitors=(s.competitors||[]).map(x=>dedup.aliases.has(x.channelId)?{...x,channelId:remap(x.channelId)}:x);set({...EMPTY_STATE,...s,version:10,channels:dedup.channels,jobs,competitors,settings:{...DEFAULT_SETTINGS,...s.settings,youtubeIntelligenceAutoRefresh:false},logs:s.logs||[],uploadHistory,activityJournal,statisticsHistory,fingerprintCache:(s as any).fingerprintCache||{},projectLifecycle:(s as any).projectLifecycle||{},booted:true});if(provenanceChanged||dedup.changed)scheduleSave()},
   setPage:page=>set({page}),
   persist:persistStoreState,
   addChannel:p=>{
