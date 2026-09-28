@@ -1,25 +1,47 @@
 {
-  "capturedAt": "2026-09-28T14:45:16.141925+00:00",
+  "capturedAt": "2026-09-28T14:50:03.885508+00:00",
   "runs": [
     {
       "conclusion": "",
+      "createdAt": "2026-09-28T14:49:34Z",
+      "databaseId": 36438891201,
+      "displayTitle": "ci(vyron): rerun macOS production after migration save fix",
+      "event": "push",
+      "headSha": "086adf6962dc91c471e18d8b97e610899657af65",
+      "status": "in_progress",
+      "updatedAt": "2026-09-28T14:49:43Z",
+      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/actions/runs/36438891201",
+      "workflowName": "VYRON 4.0.1 macOS Production Release",
+      "jobs": [
+        {
+          "id": 108983892493,
+          "name": "Build, verify and publish VYRON 4.0.1 macOS",
+          "status": "in_progress",
+          "conclusion": null,
+          "started_at": "2026-09-28T14:49:43Z",
+          "completed_at": null
+        }
+      ]
+    },
+    {
+      "conclusion": "failure",
       "createdAt": "2026-09-28T14:44:32Z",
       "databaseId": 36438253047,
       "displayTitle": "ci(vyron): rerun macOS build after avatar API fix",
       "event": "push",
       "headSha": "a628744fb0df2cc5a37fb3b24bda606e3e133942",
-      "status": "in_progress",
-      "updatedAt": "2026-09-28T14:44:41Z",
+      "status": "completed",
+      "updatedAt": "2026-09-28T14:47:14Z",
       "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/actions/runs/36438253047",
       "workflowName": "VYRON 4.0.1 macOS Production Release",
       "jobs": [
         {
           "id": 108981691788,
           "name": "Build, verify and publish VYRON 4.0.1 macOS",
-          "status": "in_progress",
-          "conclusion": null,
+          "status": "completed",
+          "conclusion": "failure",
           "started_at": "2026-09-28T14:44:41Z",
-          "completed_at": null
+          "completed_at": "2026-09-28T14:47:13Z"
         }
       ]
     },
@@ -86,58 +108,6 @@
           "conclusion": "failure",
           "started_at": "2026-09-28T14:26:53Z",
           "completed_at": "2026-09-28T14:27:17Z"
-        }
-      ]
-    },
-    {
-      "conclusion": "failure",
-      "createdAt": "2026-09-28T14:21:30Z",
-      "databaseId": 36435359008,
-      "displayTitle": "ci(vyron): chain Windows candidate strictly after macOS pass",
-      "event": "push",
-      "headSha": "fd7e484b9e3e097db142c6511a5d89bb3e9c43e4",
-      "status": "completed",
-      "updatedAt": "2026-09-28T14:22:06Z",
-      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/actions/runs/36435359008",
-      "workflowName": "VYRON 4.0.1 macOS Signed Candidate",
-      "jobs": [
-        {
-          "id": 108971759498,
-          "name": "VYRON 4.0.1 signed macOS ARM64 candidate",
-          "status": "completed",
-          "conclusion": "failure",
-          "started_at": "2026-09-28T14:21:38Z",
-          "completed_at": "2026-09-28T14:22:05Z"
-        },
-        {
-          "id": 108972005736,
-          "name": "Run Windows gate after macOS PASS",
-          "status": "completed",
-          "conclusion": "skipped",
-          "started_at": "2026-09-28T14:22:05Z",
-          "completed_at": "2026-09-28T14:22:05Z"
-        }
-      ]
-    },
-    {
-      "conclusion": "failure",
-      "createdAt": "2026-09-28T14:18:55Z",
-      "databaseId": 36435040543,
-      "displayTitle": "ci(vyron): rerun 4.0.1 macOS candidate on latest hotfix head",
-      "event": "push",
-      "headSha": "903cdb48d18075ab9d9f12910f07ced2638867a2",
-      "status": "completed",
-      "updatedAt": "2026-09-28T14:19:36Z",
-      "url": "https://github.com/ScaleUPPeisov/scaleup-dashboards/actions/runs/36435040543",
-      "workflowName": "VYRON 4.0.1 macOS Signed Candidate",
-      "jobs": [
-        {
-          "id": 108970645161,
-          "name": "VYRON 4.0.1 signed macOS ARM64 candidate",
-          "status": "completed",
-          "conclusion": "failure",
-          "started_at": "2026-09-28T14:19:04Z",
-          "completed_at": "2026-09-28T14:19:35Z"
         }
       ]
     }
