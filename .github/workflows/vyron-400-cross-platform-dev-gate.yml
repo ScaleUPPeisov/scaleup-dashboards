@@ -46,6 +46,7 @@ jobs:
           src/v400DashboardTruth.test.ts
           src/v400QuotaUploadLimitSeparation.test.ts
           src/v400PerformanceAndGlobalLimit.test.ts
+          src/v400BlackScreenGuard.test.ts
           src/v400BrandingCelebration.test.ts
           src/v400RevenueEstimate.test.ts
           src/v400ScheduleFrequencyTruth.test.ts
