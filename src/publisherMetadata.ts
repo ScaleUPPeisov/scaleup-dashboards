@@ -35,4 +35,8 @@ export function metadataPublishAt(row:ImportedMetadata|undefined,fallback?:strin
  if(row.publishTime&&fallback){const tz=row.publishTimezone?.includes('/')?row.publishTimezone:'Asia/Krasnoyarsk',day=new Intl.DateTimeFormat('en-CA',{timeZone:tz,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(fallback));return row.publishTimezone?.includes('/')?ianaLocalIso(day,row.publishTime,row.publishTimezone):fixedOffsetIso(day,row.publishTime,Number.isFinite(row.publishUtcOffsetMinutes)?Number(row.publishUtcOffsetMinutes):defaultOffsetMinutes)}
  return undefined
 }
+export function metadataPublishAtForDate(row:ImportedMetadata|undefined,day:string,defaultOffsetMinutes=420){
+ if(!row?.publishTime||!DATE_ONLY.test(day))return undefined;
+ return normalizedRowInstant({...row,publishAt:day},defaultOffsetMinutes)
+}
 export function resolvedUploadMetadata(job:VideoJob,row:ImportedMetadata|undefined,publishAt?:string,defaultCategory='10'){return{title:(row?.title||job.title).trim(),description:row?.description??job.description,tags:row?.tags?.length?row.tags:job.tags,publishAt:publishAt||metadataPublishAt(row,job.publishAt),categoryId:defaultCategory||'10'}}
