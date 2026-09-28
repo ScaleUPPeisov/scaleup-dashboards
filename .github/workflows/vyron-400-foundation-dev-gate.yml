@@ -72,5 +72,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+      - name: Install Linux Tauri system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev librsvg2-dev libayatana-appindicator3-dev
       - name: Rust compile gate
         run: cargo check --manifest-path src-tauri/Cargo.toml
