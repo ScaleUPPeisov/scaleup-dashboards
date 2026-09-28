@@ -80,6 +80,18 @@ function persistInventoryCache(snapshots:Record<string,ChannelInventorySnapshot>
     localStorage.setItem(INVENTORY_CACHE_KEY,JSON.stringify(compact))
   }catch{}
 }
+let inventoryCacheTimer:ReturnType<typeof setTimeout>|undefined;
+let pendingInventoryCache:Record<string,ChannelInventorySnapshot>|undefined;
+function scheduleInventoryCachePersist(snapshots:Record<string,ChannelInventorySnapshot>){
+  pendingInventoryCache=snapshots;
+  if(inventoryCacheTimer!==undefined)clearTimeout(inventoryCacheTimer);
+  inventoryCacheTimer=setTimeout(()=>{
+    inventoryCacheTimer=undefined;
+    const next=pendingInventoryCache;
+    pendingInventoryCache=undefined;
+    if(next)persistInventoryCache(next)
+  },320)
+}
 const eventId=(channelId:string,kind:string)=>`inventory:${channelId}:${kind}:${Date.now()}:${Math.random().toString(36).slice(2,8)}`;
 
 export const useLiveInventory=create<LiveInventoryState>((set)=>({
@@ -88,7 +100,7 @@ export const useLiveInventory=create<LiveInventoryState>((set)=>({
   globalScanning:false,
   setSnapshot:row=>set(s=>{
     const snapshots={...s.snapshots,[row.channelId]:row};
-    if(row.folderState!=='SCANNING')persistInventoryCache(snapshots);
+    if(row.folderState!=='SCANNING')scheduleInventoryCachePersist(snapshots);
     return{snapshots}
   }),
   pushAudit:row=>set(s=>({audit:[row,...s.audit].slice(0,60)})),
