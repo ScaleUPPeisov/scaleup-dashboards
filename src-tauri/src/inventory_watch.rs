@@ -152,6 +152,68 @@ mod tests {
         assert_eq!(ids[0].0, "b");
     }
 
+
+    #[test]
+    fn real_filesystem_create_event_is_observed() {
+        use std::{fs, sync::mpsc, time::{Duration, Instant}};
+        let root = std::env::temp_dir().join(format!("vyron-inventory-watch-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("temp render dir");
+
+        let (tx, rx) = mpsc::channel();
+        let mut watcher = RecommendedWatcher::new(
+            move |result: notify::Result<Event>| { let _ = tx.send(result); },
+            Config::default(),
+        ).expect("watcher");
+        watcher.watch(&root, RecursiveMode::Recursive).expect("watch root");
+
+        let target = root.join("001 — Ready Videos.mov");
+        fs::write(&target, b"fixture-video-bytes").expect("write fixture");
+
+        let deadline = Instant::now() + Duration::from_secs(8);
+        let mut found = false;
+        while Instant::now() < deadline {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            match rx.recv_timeout(remaining.min(Duration::from_millis(500))) {
+                Ok(Ok(event)) if event.paths.iter().any(|p| p == &target) => { found = true; break; }
+                Ok(_) => {}
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(e) => panic!("watch channel failed: {e}"),
+            }
+        }
+        drop(watcher);
+        let _ = fs::remove_dir_all(&root);
+        assert!(found, "filesystem watcher did not observe created render file");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_drive_letter_long_path_event_maps_to_channel() {
+        let mut roots = HashMap::new();
+        let root = PathBuf::from(r"D:\Render\Очень длинная папка & Видео (2026)\Канал");
+        roots.insert("win".to_string(), root.clone());
+        let event = Event {
+            kind: EventKind::Create(CreateKind::File),
+            paths: vec![root.join("001 — Ready Videos.mov")],
+            attrs: Default::default(),
+        };
+        assert_eq!(event_channel_ids(&event, &roots)[0].0, "win");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_unc_event_maps_to_channel() {
+        let mut roots = HashMap::new();
+        let root = PathBuf::from(r"\\server\share\Render\Aether Riff");
+        roots.insert("unc".to_string(), root.clone());
+        let event = Event {
+            kind: EventKind::Create(CreateKind::File),
+            paths: vec![root.join("002.mov")],
+            attrs: Default::default(),
+        };
+        assert_eq!(event_channel_ids(&event, &roots)[0].0, "unc");
+    }
+
     #[test]
     fn spaces_cyrillic_ampersand_parentheses_are_lexically_safe() {
         let mut roots = HashMap::new();
