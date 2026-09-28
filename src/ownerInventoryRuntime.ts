@@ -75,7 +75,8 @@ export function refreshOwnerInventorySmart(force=false){
      const result:ExistingVideoSyncResult=await api.youtubeListExisting(channel.youtubeProfileId!,5000);
      replaceExistingCacheFromSync(channel.id,result.videos||[],result);
      markYoutubeCache('existing',channel.id,AUTO_OWNER_TTL_MS);
-     const next=summarizeOwnerInventory(channel,result.videos||[],new Date().toISOString(),Boolean(result.syncComplete??result.complete));
+     const authoritative=readAuthoritativeExistingSnapshot(channel.id);
+     const next=summarizeOwnerInventory(channel,authoritative?.videos||result.videos||[],authoritative?.updatedAt||new Date().toISOString(),Boolean(result.syncComplete??result.complete));
      useOwnerInventory.getState().setSnapshot({...next,status:'FRESH'});
     }catch(error){
      const text=String(error);
