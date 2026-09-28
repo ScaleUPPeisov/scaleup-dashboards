@@ -1,0 +1,191 @@
+name: VYRON 4.0.1 Windows Signed Candidate
+
+on:
+  workflow_run:
+    workflows:
+      - VYRON 4.0.1 macOS Signed Candidate
+    types:
+      - completed
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-401-windows-candidate
+  cancel-in-progress: true
+
+env:
+  VERSION: '4.0.1'
+  BASELINE: '4.0.0'
+
+jobs:
+  windows-candidate:
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'feature/vyron-4.0.1') }}
+    name: VYRON 4.0.1 signed Windows x64 candidate
+    runs-on: windows-latest
+    timeout-minutes: 120
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Freeze production feeds
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          Invoke-WebRequest 'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json' -OutFile "$env:RUNNER_TEMP\mac-before.json"
+          Invoke-WebRequest 'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json' -OutFile "$env:RUNNER_TEMP\win-before.json"
+          $mac=Get-Content "$env:RUNNER_TEMP\mac-before.json" -Raw | ConvertFrom-Json
+          $win=Get-Content "$env:RUNNER_TEMP\win-before.json" -Raw | ConvertFrom-Json
+          if($mac.version -ne '4.0.0' -or $win.version -ne '4.0.0'){throw 'PRODUCTION_FEED_NOT_FROZEN_AT_4_0_0'}
+          Write-Host 'PRODUCTION_FEEDS_FROZEN=4.0.0'
+
+      - name: Windows regression
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          npx vitest run src/v401Hotfix.test.ts src/v400PerformanceAndGlobalLimit.test.ts src/v400BrandingCelebration.test.ts src/v400OwnerInventory.test.ts src/v400DashboardTruth.test.ts src/v400ScheduleFrequencyTruth.test.ts src/v332WindowsOauthLauncher.test.ts src/v2115Rc7OauthUpdateContinuity.test.ts
+          if($LASTEXITCODE -ne 0){throw 'V401_VITEST_FAILED'}
+          npm run build
+          if($LASTEXITCODE -ne 0){throw 'V401_FRONTEND_BUILD_FAILED'}
+          cargo check --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
+          if($LASTEXITCODE -ne 0){throw 'V401_WINDOWS_RUST_CHECK_FAILED'}
+
+      - name: Normalize updater signing key
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          import base64,os
+          raw=os.environ['TAURI_SIGNING_PRIVATE_KEY'].strip()
+          def dec(x):
+            try:return base64.b64decode(x,validate=True).decode()
+            except:return None
+          if raw.startswith('untrusted comment:'): out=base64.b64encode(raw.encode()).decode()
+          else:
+            one=dec(raw)
+            if one and one.startswith('untrusted comment:'): out=raw
+            else:
+              box=dec(one) if one else None
+              assert box and box.startswith('untrusted comment:')
+              out=one.strip()
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as fp: fp.write('TAURI_SIGNING_PRIVATE_KEY='+out+'\n')
+          print('::add-mask::'+out)
+          PY
+
+      - name: Build Windows 4.0.1 candidate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          npx tauri build --target x86_64-pc-windows-msvc --bundles nsis --config src-tauri/tauri.windows.conf.json
+          if($LASTEXITCODE -ne 0){throw 'WINDOWS_BUILD_FAILED'}
+          $installer=Get-ChildItem src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis -Filter '*-setup.exe' | Select-Object -First 1
+          if(-not $installer){throw 'NSIS_MISSING'}
+          $sig=Get-Item ($installer.FullName + '.sig') -ErrorAction Stop
+          New-Item -ItemType Directory -Force -Path candidate-windows | Out-Null
+          Copy-Item $installer.FullName candidate-windows/VYRON_4.0.1_x64-setup.exe
+          Copy-Item $sig.FullName candidate-windows/VYRON_4.0.1_x64-setup.exe.sig
+          (Get-FileHash candidate-windows/VYRON_4.0.1_x64-setup.exe -Algorithm SHA256).Hash.ToLower() | Set-Content candidate-windows/VYRON_4.0.1_x64-setup.exe.sha256
+
+      - name: Physical 4.0.0 to 4.0.1 continuity
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $os=Get-CimInstance Win32_OperatingSystem
+          Write-Host "WINDOWS_CAPTION=$($os.Caption)"
+          Write-Host "WINDOWS_VERSION=$($os.Version)"
+
+          $appData=Join-Path $env:APPDATA 'studio.channelflow.desktop'
+          $docState=Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'VYRON\State'
+          New-Item -ItemType Directory -Force -Path $appData,$docState | Out-Null
+          $state=@{
+            version=10
+            channels=@(
+              @{id='fixture-a';name='Fixture A';slug='fixture-a';enabled=$true;youtubeProfileId='PROFILE_A';youtubeChannelId='TEST_CH_A';renderFolderPath='D:\Render\Fixture A';projectsFolderPath='D:\Projects\Fixture A';safeDailyUploadLimit=10;cadenceDays=1;scheduleMode='interval';publishIntervalDays=1;publishHour=18;publishMinute=0;targetBufferDays=30;language='EN';genre='Music';country='US';minTracks=10;targetDurationMin=120;seo=@{titlePatterns=@();descriptionTemplate='';tags=@();banned=@()}},
+              @{id='fixture-a-copy';name='Fixture A copy';slug='fixture-a-copy';enabled=$true;youtubeProfileId='PROFILE_A';youtubeChannelId='TEST_CH_A';renderFolderPath='D:\Render\Fixture A';projectsFolderPath='D:\Projects\Fixture A';cadenceDays=1;publishHour=18;publishMinute=0;targetBufferDays=30;language='EN';genre='Music';country='US';minTracks=10;targetDurationMin=120;seo=@{titlePatterns=@();descriptionTemplate='';tags=@();banned=@()}}
+            )
+            jobs=@(@{id='fixture-job';channelId='fixture-a-copy';number=1;folder='D:\fixture';status='READY_UPLOAD';createdAt='2026-09-28T00:00:00Z';tracksCount=10;minTracks=10;finalPath='D:\Render\Fixture A\001.mov';title='Fixture';description='';tags=@();storageLifecycle='NEW'})
+            competitors=@()
+            settings=@{workspace='D:\VYRON';renderRootPath='D:\Render';endlumePath='';youtubeApiKey='';openaiApiKey='';autoCheckUpdates=$false;reduceMotion=$false;fpsMonitor=$false;localProfileName='Кирилл';localProfileRole='Owner / YouTube Manager';localProfileCompany='VYRON / ScaleUP'}
+            logs=@()
+            uploadHistory=@(@{id='fixture-history';jobId='fixture-job';channelId='fixture-a-copy';youtubeVideoId='fixture-video';localFilePath='D:\old.mov';originalFilename='old.mov';uploadedAt='2026-09-27T00:00:00Z';fileSize=123;sha256=('a'*64);status='UPLOADED'})
+            activityJournal=@(@{eventId='fixture-event';timestamp='2026-09-27T00:00:00Z';eventType='UPLOAD_ACCEPTED';status='SUCCESS';source='LIVE_OPERATION';channelId='fixture-a-copy'})
+            statisticsHistory=@{}
+            fingerprintCache=@{'fixture-fp'=@{path='D:\old.mov';size=123;mtimeMs=1;sha256=('a'*64);computedAt='2026-09-27T00:00:00Z'}}
+            projectLifecycle=@{'fixture-project'=@{projectId='fixture-project';projectPath='D:\project';status='RENDERED';renderExists=$true;updatedAt='2026-09-27T00:00:00Z'}}
+          } | ConvertTo-Json -Depth 20
+          Set-Content -Path (Join-Path $appData 'state.json') -Value $state -Encoding UTF8
+          Set-Content -Path (Join-Path $docState 'app-state.json') -Value $state -Encoding UTF8
+
+          $old="$env:RUNNER_TEMP\VYRON_4.0.0_x64-setup.exe"
+          Invoke-WebRequest 'https://github.com/ScaleUPPeisov/vyron-releases/releases/download/v4.0.0/VYRON_4.0.0_x64-setup.exe' -OutFile $old
+          $p=Start-Process -FilePath $old -ArgumentList '/S' -Wait -PassThru
+          if($p.ExitCode -ne 0){throw "BASELINE_INSTALL_EXIT=$($p.ExitCode)"}
+          Start-Sleep -Seconds 2
+
+          $candidate=(Resolve-Path 'candidate-windows/VYRON_4.0.1_x64-setup.exe').Path
+          $p=Start-Process -FilePath $candidate -ArgumentList '/S' -Wait -PassThru
+          if($p.ExitCode -ne 0){throw "CANDIDATE_INSTALL_EXIT=$($p.ExitCode)"}
+
+          $exe=Get-ChildItem @((Join-Path $env:LOCALAPPDATA 'Programs'),$env:LOCALAPPDATA) -File -Recurse -ErrorAction SilentlyContinue | Where-Object {$_.Name -in @('channelflow.exe','VYRON.exe') -and ($_.VersionInfo.ProductVersion -as [string]).StartsWith('4.0.1')} | Select-Object -First 1
+          if(-not $exe){throw 'VYRON_4_0_1_EXE_NOT_FOUND'}
+          $proc=Start-Process -FilePath $exe.FullName -PassThru
+          Start-Sleep -Seconds 8
+          $proc.Refresh()
+          if($proc.HasExited){throw "VYRON_4_0_1_LAUNCH_EXITED=$($proc.ExitCode)"}
+          Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 1
+
+          $saved=Get-Content (Join-Path $appData 'state.json') -Raw | ConvertFrom-Json
+          if($saved.channels.Count -ne 1){throw 'CHANNEL_DEDUPE_FAILED'}
+          $c=$saved.channels[0]
+          if($c.youtubeProfileId -ne 'PROFILE_A' -or $c.youtubeChannelId -ne 'TEST_CH_A'){throw 'OAUTH_BINDING_CHANGED'}
+          if($saved.jobs[0].channelId -ne $c.id){throw 'JOB_CHANNEL_REMAP_FAILED'}
+          if($saved.uploadHistory[0].channelId -ne $c.id){throw 'HISTORY_CHANNEL_REMAP_FAILED'}
+          if($saved.activityJournal[0].channelId -ne $c.id){throw 'ACTIVITY_CHANNEL_REMAP_FAILED'}
+          if($saved.settings.localProfileName -ne 'Кирилл'){throw 'OWNER_PROFILE_CHANGED'}
+          Write-Host 'WINDOWS_4_0_0_TO_4_0_1_CONTINUITY=PASS'
+
+      - name: Verify feeds still 4.0.0
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          Invoke-WebRequest 'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json' -OutFile "$env:RUNNER_TEMP\mac-after.json"
+          Invoke-WebRequest 'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json' -OutFile "$env:RUNNER_TEMP\win-after.json"
+          if((Get-FileHash "$env:RUNNER_TEMP\mac-before.json").Hash -ne (Get-FileHash "$env:RUNNER_TEMP\mac-after.json").Hash){throw 'MAC_FEED_MUTATED'}
+          if((Get-FileHash "$env:RUNNER_TEMP\win-before.json").Hash -ne (Get-FileHash "$env:RUNNER_TEMP\win-after.json").Hash){throw 'WINDOWS_FEED_MUTATED'}
+          @(
+            "HEAD=$(git rev-parse HEAD)",
+            'VERSION=4.0.1',
+            'WINDOWS_X64_BUILD=PASS',
+            'WINDOWS_4_0_0_TO_4_0_1_CONTINUITY=PASS',
+            'PRODUCTION_FEED_MUTATED=NO',
+            'RELEASE_PUBLISHED=NO'
+          ) | Set-Content candidate-windows/gate-summary.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-4.0.1-WINDOWS-SIGNED-CANDIDATE
+          path: candidate-windows/**
+          if-no-files-found: error
+          retention-days: 14
