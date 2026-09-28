@@ -1,3 +1,4 @@
+import {nextYoutubeQuotaResetAt,youtubePtDate} from './youtubeQuota';
 export type PublishUploadRecord={id:string;channelId:string;jobId:string;filePath:string;fingerprint:string;fileSize:number;startedAt:string;completedAt?:string;videoId?:string;status:'started'|'completed'|'failed';error?:string};
 export type ChannelUploadLock={channelId:string;token:string;acquiredAt:string};
 const RECORDS='vyron:youtube-publish-records:v1';
@@ -26,4 +27,17 @@ export function releaseChannelUploadLock(channelId:string,token:string){runtimeL
 export function isChannelUploadLocked(channelId:string){return runtimeLocks.some(x=>x.channelId===channelId)}
 export function clearRuntimeChannelUploadLocks(){runtimeLocks=[]}
 export function uploadsByVyronToday(channelId:string,now=new Date()){return publishRecords().filter(x=>{if(x.channelId!==channelId||x.status!=='completed'||!x.videoId)return false;const d=new Date(x.completedAt||x.startedAt);return !Number.isNaN(d.getTime())&&d.getFullYear()===now.getFullYear()&&d.getMonth()===now.getMonth()&&d.getDate()===now.getDate()})}
+export const VYRON_GLOBAL_DAILY_UPLOAD_LIMIT=100;
+export function uploadsByVyronQuotaDay(now=new Date()){
+ const day=youtubePtDate(now);
+ return publishRecords().filter(x=>{
+  if(x.status!=='completed'||!x.videoId)return false;
+  const d=new Date(x.completedAt||x.startedAt);
+  return !Number.isNaN(d.getTime())&&youtubePtDate(d)===day
+ })
+}
+export function globalDailyUploadStatus(limit=VYRON_GLOBAL_DAILY_UPLOAD_LIMIT,now=new Date()){
+ const safeLimit=Math.max(1,Math.floor(Number(limit)||VYRON_GLOBAL_DAILY_UPLOAD_LIMIT)),used=uploadsByVyronQuotaDay(now).length;
+ return{used,limit:safeLimit,remaining:Math.max(0,safeLimit-used),resetAt:nextYoutubeQuotaResetAt(now).toISOString(),quotaDay:youtubePtDate(now)}
+}
 export function safeDailyStatus(channelId:string,limit?:number,now=new Date()){const used=uploadsByVyronToday(channelId,now).length,explicit=Number.isFinite(limit),unlimited=explicit&&Number(limit)===0,configured=explicit&&Number(limit)>=0,safeLimit=configured&&!unlimited?Math.max(1,Math.floor(Number(limit))):undefined;return{used,limit:safeLimit,remaining:safeLimit==null?undefined:Math.max(0,safeLimit-used),configured,unlimited}}
