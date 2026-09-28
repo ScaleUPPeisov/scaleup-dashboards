@@ -65,6 +65,12 @@ describe('VYRON 3.3.4 Live Content Inventory acceptance',()=>{
   expect(readyRows(rows,[j])).toHaveLength(1);
   expect(buildInventorySnapshotFromScan(channel(),scan(rows),rows,[j]).knownReady).toBe(1)
  });
+ it('physical KNOWN_EXACT render remains stock even if an old local job status drifted',()=>{
+  const j={...job(1),status:'READY_RENDER' as const,storageLifecycle:'RENDERED' as const},rows=[row(1,'KNOWN_EXACT',j.id)];
+  expect(readyRows(rows,[j])).toHaveLength(1);
+  const x=buildInventorySnapshotFromScan(channel(),scan(rows),rows,[j]);
+  expect(x.readyVideos).toBe(1);expect(x.knownReady).toBe(1);expect(x.runwayDays).toBe(1)
+ });
  it('UPLOADING is shown separately and never counted as ready',()=>{
   const j={...job(1),status:'UPLOADING' as const,storageLifecycle:'UPLOADING' as const},rows=[row(1,'KNOWN_EXACT',j.id)];
   expect(readyRows(rows,[j])).toHaveLength(0);
@@ -85,10 +91,10 @@ describe('VYRON 3.3.4 Live Content Inventory acceptance',()=>{
   const rows=Array.from({length:42},(_,i)=>row(i+1)),online=buildInventorySnapshotFromScan(channel(),scan(rows),rows,[]);
   expect(online.folderState).toBe('ONLINE');expect(online.stale).toBe(false);expect(online.readyVideos).toBe(42)
  });
- it('runway honors interval and 2/2 + 3/1 pattern cadence without changing schedule',()=>{
+ it('inventory runway is literal daily stock: 30 ready videos = 30 days',()=>{
   expect(inventoryRunwayDays(channel({publishIntervalDays:1}),40)).toBe(40);
-  expect(inventoryRunwayDays(channel({scheduleMode:'pattern',publishDays:2,pauseDays:2,patternAnchorDate:'2026-09-28'}),40)).toBe(80);
-  expect(inventoryRunwayDays(channel({scheduleMode:'pattern',publishDays:3,pauseDays:1,patternAnchorDate:'2026-09-28'}),30)).toBe(40)
+  expect(inventoryRunwayDays(channel({scheduleMode:'pattern',publishDays:2,pauseDays:2,patternAnchorDate:'2026-09-28'}),40)).toBe(40);
+  expect(inventoryRunwayDays(channel({scheduleMode:'pattern',publishDays:3,pauseDays:1,patternAnchorDate:'2026-09-28'}),30)).toBe(30)
  });
  it('status thresholds match default policy',()=>{
   expect(inventoryLevel(20,20)).toBe('NORMAL');expect(inventoryLevel(10,10)).toBe('SOON');expect(inventoryLevel(3,3)).toBe('LOW');expect(inventoryLevel(0,0)).toBe('EMPTY');expect(inventoryLevel(40,40,true)).toBe('OFFLINE')
