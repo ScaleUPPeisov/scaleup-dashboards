@@ -202,7 +202,7 @@ export async function scanInventoryChannel(channelId:string,reason:InventoryScan
 export async function scanAllInventories(reason:InventoryScanReason='manual-all'){
   const store=useLiveInventory.getState();store.setGlobalScanning(true);
   try{
-    const ids=useApp.getState().channels.filter(c=>c.enabled!==false&&Boolean(String(c.renderFolderPath||'').trim())).map(c=>c.id);
+    const ids=useApp.getState().channels.filter(c=>c.enabled!==false).map(c=>c.id);
     let cursor=0;
     const worker=async()=>{while(true){const i=cursor++;if(i>=ids.length)return;await scanInventoryChannel(ids[i],reason)}};
     await Promise.all(Array.from({length:Math.min(3,Math.max(1,ids.length))},()=>worker()))
