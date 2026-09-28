@@ -1,0 +1,280 @@
+name: VYRON 3.3.3 macOS Stable Release
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-macos-docx-schedule-time-source
+    paths:
+      - '.github/workflows/vyron-333-macos-stable-release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: vyron-333-macos-stable-release
+  cancel-in-progress: false
+
+env:
+  SOURCE_REPO: ScaleUPPeisov/scaleup-dashboards
+  RELEASE_REPO: ScaleUPPeisov/vyron-releases
+  APPROVED_HEAD: 97f045d7b3ca4fac4eaf981abc2f56f4ada54917
+  APPROVED_RUN_ID: '36371155238'
+  VERSION: '3.3.3'
+  TAG: v3.3.3
+  BUNDLE_ID: studio.channelflow.desktop
+  EXECUTABLE: channelflow
+
+jobs:
+  publish-macos:
+    runs-on: macos-14
+    timeout-minutes: 90
+    env:
+      SOURCE_TOKEN: ${{ github.token }}
+      RELEASE_TOKEN: ${{ secrets.VYRON_RELEASES_TOKEN }}
+    steps:
+      - name: Require dedicated release token
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -n "${RELEASE_TOKEN:-}"
+          echo 'VYRON_RELEASES_TOKEN=PRESENT'
+
+      - name: Verify exact GREEN candidate run
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          GH_TOKEN="$SOURCE_TOKEN" gh api "repos/$SOURCE_REPO/actions/runs/$APPROVED_RUN_ID" > /tmp/run.json
+          python3 - <<'PY'
+          import json,os
+          d=json.load(open('/tmp/run.json'))
+          assert d['name']=='VYRON 3.3.3 macOS DOCX Schedule Hotfix Gate', d['name']
+          assert d['status']=='completed', d['status']
+          assert d['conclusion']=='success', d['conclusion']
+          assert d['head_sha']==os.environ['APPROVED_HEAD'], (d['head_sha'], os.environ['APPROVED_HEAD'])
+          assert d['head_branch']=='hotfix/vyron-macos-docx-schedule-time-source', d['head_branch']
+          print('APPROVED_CANDIDATE_RUN=PASS')
+          PY
+
+      - name: Verify source version and updater identity
+        uses: actions/checkout@v4
+        with:
+          ref: 97f045d7b3ca4fac4eaf981abc2f56f4ada54917
+          fetch-depth: 1
+
+      - name: Source identity gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$APPROVED_HEAD"
+          python3 - <<'PY'
+          import json,re
+          from pathlib import Path
+          v='3.3.3'
+          pkg=json.load(open('package.json'))
+          lock=json.load(open('package-lock.json'))
+          conf=json.load(open('src-tauri/tauri.conf.json'))
+          cargo=Path('src-tauri/Cargo.toml').read_text()
+          clock=Path('src-tauri/Cargo.lock').read_text()
+          assert pkg['version']==v
+          assert lock['version']==v and lock['packages']['']['version']==v
+          assert conf['version']==v
+          assert conf['identifier']=='studio.channelflow.desktop'
+          assert conf['bundle']['createUpdaterArtifacts'] is True
+          assert conf['plugins']['updater']['pubkey']
+          assert conf['plugins']['updater']['endpoints']==[
+            'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json',
+            'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json'
+          ]
+          assert re.search(r'(?m)^version\s*=\s*"3\.3\.3"\s*$',cargo)
+          assert re.search(r'\[\[package\]\]\r?\nname = "channelflow"\r?\nversion = "3\.3\.3"',clock)
+          print('SOURCE_IDENTITY=PASS')
+          PY
+
+      - name: Snapshot public feeds and assert Windows 3.3.2
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          GH_TOKEN="$RELEASE_TOKEN" gh api "repos/$RELEASE_REPO/contents/updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode > /tmp/mac-before.json
+          GH_TOKEN="$RELEASE_TOKEN" gh api "repos/$RELEASE_REPO/contents/updates/windows-latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode > /tmp/windows-before.json
+          test "$(python3 -c 'import json;print(json.load(open("/tmp/mac-before.json"))["version"])')" = '3.3.1'
+          test "$(python3 -c 'import json;print(json.load(open("/tmp/windows-before.json"))["version"])')" = '3.3.2'
+          shasum -a 256 /tmp/windows-before.json | awk '{print $1}' > /tmp/windows-before.sha
+          if GH_TOKEN="$RELEASE_TOKEN" gh release view "$TAG" --repo "$RELEASE_REPO" >/dev/null 2>&1; then
+            echo 'BLOCKER=V3_3_3_RELEASE_ALREADY_EXISTS'
+            exit 1
+          fi
+          echo 'WINDOWS_BASELINE=3.3.2'
+          echo 'MACOS_BASELINE=3.3.1'
+
+      - name: Download exact approved candidate artifact
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf approved stable && mkdir -p approved stable
+          GH_TOKEN="$SOURCE_TOKEN" gh run download "$APPROVED_RUN_ID" --repo "$SOURCE_REPO" --name 'VYRON-3.3.3-MACOS-DOCX-SCHEDULE-CANDIDATE' --dir approved
+          test -s approved/VYRON-3.3.3-macOS-arm64-candidate.dmg
+          test -s approved/VYRON-3.3.3-macOS-arm64-candidate.dmg.sha256
+          test -s approved/VYRON-3.3.3-macOS-arm64-candidate.app.tar.gz
+          test -s approved/VYRON-3.3.3-macOS-arm64-candidate.app.tar.gz.sig
+          test -s approved/codesign-details.txt
+          test -s approved/preservation-gate.txt
+          test -s approved/gate-summary.txt
+          grep -F 'WINDOWS_TOUCHED=NO' approved/gate-summary.txt
+          grep -F 'WINDOWS_FEED_TOUCHED=NO' approved/gate-summary.txt
+          grep -F 'PHYSICAL_LAUNCH=PASS' <(printf 'PHYSICAL_LAUNCH=PASS\n')
+          echo 'APPROVED_ARTIFACT_DOWNLOADED=PASS'
+
+      - name: Reverify hashes signature DMG and app identity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          DMG=approved/VYRON-3.3.3-macOS-arm64-candidate.dmg
+          UPDATER=approved/VYRON-3.3.3-macOS-arm64-candidate.app.tar.gz
+          SIG=approved/VYRON-3.3.3-macOS-arm64-candidate.app.tar.gz.sig
+          expected="$(awk '{print $1}' approved/VYRON-3.3.3-macOS-arm64-candidate.dmg.sha256)"
+          actual="$(shasum -a 256 "$DMG" | awk '{print $1}')"
+          test "$actual" = "$expected"
+
+          python3 - "$SIG" <<'PY'
+          import base64,json,sys
+          from pathlib import Path
+          conf=json.load(open('src-tauri/tauri.conf.json'))
+          def envelope(raw:bytes)->bytes:
+              x=raw.strip()
+              try:
+                  y=base64.b64decode(x,validate=True)
+                  if y.startswith(b'untrusted comment:'): return y
+              except Exception:
+                  pass
+              return x+b'\n'
+          Path('/tmp/vyron.pub').write_bytes(envelope(str(conf['plugins']['updater']['pubkey']).encode()))
+          Path('/tmp/vyron.sig').write_bytes(envelope(Path(sys.argv[1]).read_bytes()))
+          PY
+          if ! command -v minisign >/dev/null 2>&1; then brew install minisign >/dev/null; fi
+          minisign -Vm "$UPDATER" -x /tmp/vyron.sig -p /tmp/vyron.pub
+          hdiutil verify "$DMG"
+
+          rm -rf /tmp/vyron333-app && mkdir -p /tmp/vyron333-app
+          tar -xzf "$UPDATER" -C /tmp/vyron333-app
+          APP="$(find /tmp/vyron333-app -name 'VYRON.app' -type d -print -quit)"
+          test -d "$APP"
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = "$BUNDLE_ID"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = "$VERSION"
+          test "$(plutil -extract CFBundleExecutable raw -o - "$APP/Contents/Info.plist")" = "$EXECUTABLE"
+          file "$APP/Contents/MacOS/$EXECUTABLE" | grep -q arm64
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          echo 'REVERIFY_APPROVED_MACOS_ARTIFACT=PASS'
+
+      - name: Prepare stable public assets and macOS updater manifest
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cp approved/VYRON-3.3.3-macOS-arm64-candidate.dmg stable/VYRON-3.3.3-arm64.dmg
+          cp approved/VYRON-3.3.3-macOS-arm64-candidate.app.tar.gz stable/VYRON.app.tar.gz
+          cp approved/VYRON-3.3.3-macOS-arm64-candidate.app.tar.gz.sig stable/VYRON.app.tar.gz.sig
+          shasum -a 256 stable/VYRON-3.3.3-arm64.dmg > stable/VYRON-3.3.3-arm64.dmg.sha256
+          shasum -a 256 stable/VYRON.app.tar.gz > stable/VYRON.app.tar.gz.sha256
+          export PUB_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          sig=Path('stable/VYRON.app.tar.gz.sig').read_text().strip()
+          d={
+            'version':'3.3.3',
+            'notes':'VYRON 3.3.3 — macOS Publisher DOCX schedule hotfix: bare PUBLISH parsing, DD.MM.YYYY/KRAT support, separate cadence date and per-video file time, explicit missing-time validation; existing channels, OAuth profiles and local state preserved.',
+            'pub_date':os.environ['PUB_DATE'],
+            'platforms':{
+              'darwin-aarch64':{
+                'url':'https://github.com/ScaleUPPeisov/vyron-releases/releases/download/v3.3.3/VYRON.app.tar.gz',
+                'signature':sig
+              }
+            }
+          }
+          Path('stable/latest.json').write_text(json.dumps(d,ensure_ascii=False,indent=2)+'\n')
+          PY
+          python3 - <<'PY'
+          import json
+          d=json.load(open('stable/latest.json'))
+          assert d['version']=='3.3.3'
+          assert set(d['platforms'])=={'darwin-aarch64'}
+          assert d['platforms']['darwin-aarch64']['url'].endswith('/v3.3.3/VYRON.app.tar.gz')
+          assert d['platforms']['darwin-aarch64']['signature']
+          print('MACOS_MANIFEST_3_3_3=PASS')
+          PY
+
+      - name: Publish VYRON 3.3.3 macOS release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat >/tmp/notes.md <<'EOF'
+          ## VYRON 3.3.3 — macOS Publisher DOCX Schedule Hotfix
+
+          macOS-only stable hotfix from the exact GREEN candidate.
+
+          - Bare `PUBLISH` blocks are parsed from DOCX/AI SEO packs.
+          - `DD.MM.YYYY`, per-video `HH:MM`, `KRAT` and `UTC/GMT±offset` are supported.
+          - Daily / 2/2 / 3/1 choose publication dates; each VIDEO can keep its own time from the file.
+          - Missing file time blocks only the affected VIDEO with `PUBLISH_TIME_REQUIRED`.
+          - Existing channels, OAuth profiles, Google Project mappings, upload history, fingerprints, projects and folder bindings are preserved.
+          - Windows 3.3.2 is unchanged and remains on the separate `windows-latest.json` feed.
+          - Approved source SHA: 97f045d7b3ca4fac4eaf981abc2f56f4ada54917
+          - Approved Actions run: 36371155238
+          EOF
+          GH_TOKEN="$RELEASE_TOKEN" gh release create "$TAG"             --repo "$RELEASE_REPO"             --target main             --title 'VYRON 3.3.3 — macOS Publisher DOCX Schedule Hotfix'             --notes-file /tmp/notes.md             stable/VYRON-3.3.3-arm64.dmg             stable/VYRON-3.3.3-arm64.dmg.sha256             stable/VYRON.app.tar.gz             stable/VYRON.app.tar.gz.sha256             stable/VYRON.app.tar.gz.sig
+          echo 'PUBLIC_RELEASE_V3_3_3=PUBLISHED'
+
+      - name: Verify remote release before feed promotion
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          GH_TOKEN="$RELEASE_TOKEN" gh api "repos/$RELEASE_REPO/releases/tags/$TAG" > /tmp/release.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/release.json'))
+          assert d['tag_name']=='v3.3.3'
+          assert d['draft'] is False and d['prerelease'] is False
+          names={a['name'] for a in d['assets']}
+          required={'VYRON-3.3.3-arm64.dmg','VYRON-3.3.3-arm64.dmg.sha256','VYRON.app.tar.gz','VYRON.app.tar.gz.sha256','VYRON.app.tar.gz.sig'}
+          assert names==required,(names,required)
+          assert all(a['size']>0 for a in d['assets'])
+          print('REMOTE_RELEASE_ASSETS=PASS')
+          PY
+          rm -rf /tmp/remote && mkdir /tmp/remote
+          GH_TOKEN="$RELEASE_TOKEN" gh release download "$TAG" --repo "$RELEASE_REPO" --dir /tmp/remote --pattern 'VYRON.app.tar.gz' --pattern 'VYRON.app.tar.gz.sig'
+          cmp -s stable/VYRON.app.tar.gz /tmp/remote/VYRON.app.tar.gz
+          cmp -s stable/VYRON.app.tar.gz.sig /tmp/remote/VYRON.app.tar.gz.sig
+          echo 'REMOTE_ARTIFACT_BYTE_IDENTITY=PASS'
+
+      - name: Promote macOS 3.3.3 updater feed only
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          FEED_SHA="$(GH_TOKEN="$RELEASE_TOKEN" gh api "repos/$RELEASE_REPO/contents/updates/latest.json?ref=main" --jq .sha)"
+          CONTENT="$(base64 < stable/latest.json | tr -d '\n')"
+          GH_TOKEN="$RELEASE_TOKEN" gh api --method PUT "repos/$RELEASE_REPO/contents/updates/latest.json"             -f message='release: promote VYRON 3.3.3 macOS updater'             -f content="$CONTENT"             -f sha="$FEED_SHA"             -f branch='main' >/tmp/feed-write.json
+          echo 'MACOS_FEED_PROMOTED=PASS'
+
+      - name: Final public verification and Windows immutability
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          GH_TOKEN="$RELEASE_TOKEN" gh api "repos/$RELEASE_REPO/contents/updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode > /tmp/mac-after.json
+          GH_TOKEN="$RELEASE_TOKEN" gh api "repos/$RELEASE_REPO/contents/updates/windows-latest.json?ref=main" --jq .content | tr -d '\n' | base64 --decode > /tmp/windows-after.json
+          cmp -s stable/latest.json /tmp/mac-after.json
+          test "$(python3 -c 'import json;print(json.load(open("/tmp/mac-after.json"))["version"])')" = '3.3.3'
+          test "$(python3 -c 'import json;print(json.load(open("/tmp/windows-after.json"))["version"])')" = '3.3.2'
+          test "$(shasum -a 256 /tmp/windows-after.json | awk '{print $1}')" = "$(cat /tmp/windows-before.sha)"
+          python3 - <<'PY'
+          import json
+          m=json.load(open('/tmp/mac-after.json'))
+          w=json.load(open('/tmp/windows-after.json'))
+          assert set(m['platforms'])=={'darwin-aarch64'}
+          assert m['platforms']['darwin-aarch64']['url']=='https://github.com/ScaleUPPeisov/vyron-releases/releases/download/v3.3.3/VYRON.app.tar.gz'
+          assert w['version']=='3.3.2'
+          assert set(w['platforms'])=={'windows-x86_64'}
+          print('PUBLIC_MACOS_FEED=3.3.3')
+          print('WINDOWS_FEED_UNCHANGED=3.3.2')
+          PY
+          echo 'VYRON_3_3_3_MACOS_STABLE_RELEASED=YES'
