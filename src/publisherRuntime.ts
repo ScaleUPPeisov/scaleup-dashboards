@@ -48,6 +48,6 @@ export function publisherGlobalBlockReasons(x:{selectedCount:number;hasProfile:b
  if(!x.quotaAffordable)reasons.push('Недостаточно YouTube API quota для этой партии');
  if(x.scheduleSyncBlocked)reasons.push('Сначала синхронизируйте расписание с YouTube');
  if(x.locked)reasons.push('Канал занят текущей загрузкой');
- if(x.dailyRemaining!=null&&x.dailyRemaining<=0)reasons.push('Достигнут безопасный лимит загрузок канала за 24 часа');
+ if(x.dailyRemaining!=null&&x.dailyRemaining<=0)reasons.push('Достигнут локальный дневной лимит загрузок VYRON для этого канала');
  return reasons
 }
