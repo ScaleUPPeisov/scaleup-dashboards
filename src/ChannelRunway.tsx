@@ -92,15 +92,22 @@ export function ChannelRunway(){
   const linkedByLocalId=useMemo(()=>new Map(youtubeClassification.linked.map(x=>[x.channel.id,x])),[youtubeClassification]);
   const profileById=useMemo(()=>new Map(profiles.map(p=>[p.id,p])),[profiles]);
   const usage=youtubeQuotaUsage();
-  const rows=useMemo(()=>active.map(channel=>{
-    const record=snapshot.channels[channel.id];if(!record)return null;
-    const content=buildContentRunway(channel,record,jobs,uploadHistory,projectLifecycle,fingerprintCache,new Date());
-    const profile=channel.youtubeProfileId?profileById.get(channel.youtubeProfileId):undefined;
-    const projectKey=youtubeQuotaProjectIdentity(profile,googleConfig).projectKey;
-    const upload=projectKey?youtubeUploadQuotaState(projectKey):null;
-    const quota=contentRunwayQuotaView(usage,upload);
-    return{channel,record,content,uploadRemaining:quota.uploads.remaining,uploadLimitKnown:quota.uploads.limitKnown} satisfies RunwayRow;
-  }).filter((x):x is RunwayRow=>Boolean(x)).sort((a,b)=>a.content.contentRunwayDays-b.content.contentRunwayDays||compareRunwayRecords(a.record,b.record)),[active,snapshot,jobs,uploadHistory,projectLifecycle,fingerprintCache,profileById,googleConfig,usage.ptDate,usage.used,usage.limit]);
+  const rowState=useMemo(()=>{
+    let failures=0;
+    const rows=active.map(channel=>{
+      try{
+        const record=snapshot.channels[channel.id];if(!record){failures++;return null}
+        const content=buildContentRunway(channel,record,jobs,uploadHistory,projectLifecycle,fingerprintCache,new Date());
+        const profile=channel.youtubeProfileId?profileById.get(channel.youtubeProfileId):undefined;
+        const projectKey=youtubeQuotaProjectIdentity(profile,googleConfig).projectKey;
+        const upload=projectKey?youtubeUploadQuotaState(projectKey):null;
+        const quota=contentRunwayQuotaView(usage,upload);
+        return{channel,record,content,uploadRemaining:quota.uploads.remaining,uploadLimitKnown:quota.uploads.limitKnown} satisfies RunwayRow;
+      }catch{failures++;return null}
+    }).filter((x):x is RunwayRow=>Boolean(x)).sort((a,b)=>a.content.contentRunwayDays-b.content.contentRunwayDays||compareRunwayRecords(a.record,b.record));
+    return{rows,failures}
+  },[active,snapshot,jobs,uploadHistory,projectLifecycle,fingerprintCache,profileById,googleConfig,usage.ptDate,usage.used,usage.limit]);
+  const rows=rowState.rows,rowFailures=rowState.failures;
 
   const quotaSettings=loadYoutubeQuotaPlan();
   const batchSize=Math.max(1,quotaSettings.videosPerChannel);
@@ -157,6 +164,7 @@ export function ChannelRunway(){
       <div><small>CONTENT RUNWAY • LOCAL + QUOTA AWARE</small><h3>Запас контента</h3><p>VYRON соединяет подтверждённое YouTube-расписание с реально готовыми локальными render-файлами. Local projects и реально подключённые YouTube-каналы считаются отдельно.</p></div>
       <div className="headerActions"><span className="localOnlyBadge">CALCULATION • ZERO API</span><button disabled={statsBusy||!youtubeClassification.eligible.length} onClick={()=>void refreshAllStats()}>{statsBusy?`↻ ${statsProgress.done} / ${statsProgress.total}`:'↻ Обновить YouTube данные'}</button></div>
     </div>
+    {rowFailures>0&&<div className="errorBox"><b>Часть данных «Плана каналов» повреждена или несовместима</b><p>VYRON пропустил {rowFailures} проблемных каналов вместо падения всего интерфейса. Каналы, OAuth и настройки не изменены.</p></div>}
 
     <div className="runwaySummary">
       <div><small>ВСЕГО ПРОЕКТОВ</small><b>{active.length}</b><em>local VYRON</em></div>
