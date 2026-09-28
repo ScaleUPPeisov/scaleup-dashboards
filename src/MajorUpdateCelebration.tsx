@@ -38,8 +38,8 @@ export function MajorUpdateCelebration(){
       <div className="majorCelebrationHalo" aria-hidden="true"/>
       <SafeArtwork className="majorCelebrationArtwork" src={VYRON_4_ARTWORK} alt="VYRON YT PEISOV" fallback="V"/>
       <small>UPDATE • VYRON {VYRON_MAJOR_VERSION}</small>
-      <h1 id="majorCelebrationTitle">{mode==='upgrade'?'ПОЗДРАВЛЯЕМ!':'Добро пожаловать в VYRON {VYRON_MAJOR_VERSION}'}</h1>
-      <h2>{mode==='upgrade'?'Обновление VYRON 4.0.1 установлено':'Autonomous Content Operating System'}</h2>
+      <h1 id="majorCelebrationTitle">{mode==='upgrade'?'ПОЗДРАВЛЯЕМ!':`Добро пожаловать в VYRON ${VYRON_MAJOR_VERSION}`}</h1>
+      <h2>{mode==='upgrade'?`Обновление VYRON ${VYRON_MAJOR_VERSION} установлено`:'Autonomous Content Operating System'}</h2>
       <p>{mode==='upgrade'?'Каналы, OAuth, локальные папки, история и настройки сохранены.':'Новая архитектура разделяет локальный запас, очередь, YouTube uploads и реальное расписание.'}</p>
 
       {details&&<div className="majorWhatsNew">
