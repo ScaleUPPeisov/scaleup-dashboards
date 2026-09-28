@@ -117,3 +117,5 @@ export function ownerInventoryTotals(channels:Channel[],rows:Record<string,Youtu
     allComplete:snapshots.length===enabled.length&&snapshots.every(x=>x.complete)
   }
 }
+
+export function ownerScheduledItems(row:YoutubeOwnerInventorySnapshot|undefined){return Array.isArray(row?.scheduledItems)?row!.scheduledItems:[]}
