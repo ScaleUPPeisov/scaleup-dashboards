@@ -53,6 +53,11 @@ describe('VYRON 3.3.4 Live Content Inventory acceptance',()=>{
   const offline=preserveOfflineInventory(channel(),online,0,'RENDER_FOLDER_OFFLINE');
   expect(offline.folderState).toBe('OFFLINE');expect(offline.stale).toBe(true);expect(offline.readyVideos).toBe(40);expect(offline.lastConfirmedAt).toBe(online.lastConfirmedAt)
  });
+ it('changing configured render path never carries the old folder count into a different folder',()=>{
+  const rows=Array.from({length:40},(_,i)=>row(i+1)),online=buildInventorySnapshotFromScan(channel(),scan(rows),rows,[]);
+  const changed=preserveOfflineInventory(channel({renderFolderPath:'/Volumes/OTHER/Render/Aether Riff'}),online,0,'RENDER_FOLDER_OFFLINE');
+  expect(changed.readyVideos).toBe(0);expect(changed.renderFolderPath).toBe('/Volumes/OTHER/Render/Aether Riff')
+ });
  it('H reconnect fresh scan replaces stale snapshot truthfully',()=>{
   const rows=Array.from({length:42},(_,i)=>row(i+1)),online=buildInventorySnapshotFromScan(channel(),scan(rows),rows,[]);
   expect(online.folderState).toBe('ONLINE');expect(online.stale).toBe(false);expect(online.readyVideos).toBe(42)
