@@ -42,7 +42,8 @@ describe('VYRON 3.3.4 live inventory safety contracts',()=>{
   expect(bridge).toContain('WATCH_DEBOUNCE_MS=1500');
   expect(bridge).toContain('SAFETY_RECONCILE_MS=60_000');
   expect(bridge).toContain("scanInventoryChannel(channelId,'watcher')");
-  expect(runtime).toContain("length:Math.min(3");
+  expect(runtime).toContain('const RENDER_IO_CONCURRENCY=1');
+  expect(runtime).toContain('length:Math.min(RENDER_IO_CONCURRENCY');
  });
  it('preserves macOS 3.3.3 DOCX schedule surface and Windows 3.3.2 OAuth launcher/routing',()=>{
   const metadata=fs.readFileSync('src/metadata.ts','utf8'),schedule=fs.readFileSync('src/scheduleContinuation.ts','utf8');
