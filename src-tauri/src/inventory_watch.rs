@@ -42,18 +42,40 @@ impl Default for InventoryWatchState {
     }
 }
 
+fn watcher_path_key(path: &std::path::Path) -> String {
+    let mut value = path.to_string_lossy().replace('\\', "/");
+    #[cfg(windows)]
+    {
+        if let Some(rest) = value.strip_prefix("//?/UNC/") {
+            value = format!("//{rest}");
+        } else if let Some(rest) = value.strip_prefix("//?/") {
+            value = rest.to_string();
+        }
+        value = value.to_ascii_lowercase();
+    }
+    while value.len() > 1 && value.ends_with('/') {
+        value.pop();
+    }
+    value
+}
+
 fn event_channel_ids(event: &Event, roots: &HashMap<String, PathBuf>) -> Vec<(String, String)> {
     let mut seen = HashSet::new();
     let mut out = Vec::new();
     for event_path in &event.paths {
+        let event_key = watcher_path_key(event_path);
         for (channel_id, root) in roots {
-            if event_path.starts_with(root) || event_path == root {
-                if seen.insert(channel_id.clone()) {
-                    out.push((
-                        channel_id.clone(),
-                        event_path.to_string_lossy().into_owned(),
-                    ));
-                }
+            let root_key = watcher_path_key(root);
+            let inside = event_key == root_key
+                || event_key
+                    .strip_prefix(&root_key)
+                    .map(|rest| rest.starts_with('/'))
+                    .unwrap_or(false);
+            if inside && seen.insert(channel_id.clone()) {
+                out.push((
+                    channel_id.clone(),
+                    event_path.to_string_lossy().into_owned(),
+                ));
             }
         }
     }
@@ -208,7 +230,7 @@ mod tests {
         roots.insert("win".to_string(), root.clone());
         let event = Event {
             kind: EventKind::Create(CreateKind::File),
-            paths: vec![root.join("001 — Ready Videos.mov")],
+            paths: vec![PathBuf::from(r"\\?\D:\Render\Очень длинная папка & Видео (2026)\Канал\001 — Ready Videos.mov")],
             attrs: Default::default(),
         };
         assert_eq!(event_channel_ids(&event, &roots)[0].0, "win");
@@ -222,7 +244,7 @@ mod tests {
         roots.insert("unc".to_string(), root.clone());
         let event = Event {
             kind: EventKind::Create(CreateKind::File),
-            paths: vec![root.join("002.mov")],
+            paths: vec![PathBuf::from(r"\\?\UNC\server\share\Render\Aether Riff\002.mov")],
             attrs: Default::default(),
         };
         assert_eq!(event_channel_ids(&event, &roots)[0].0, "unc");
