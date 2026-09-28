@@ -11,7 +11,7 @@ import {appendStatisticsSnapshot,normalizeStatisticsHistory} from './youtubeStat
 import {resolvedJobStatus} from './activeErrors';
 
 export const DEFAULT_SETTINGS:Settings={
-  workspace:'',endlumePath:'',youtubeApiKey:'',autoCheckUpdates:true,reduceMotion:false,fpsMonitor:true,interfaceDensity:'compact',
+  workspace:'',renderRootPath:'',endlumePath:'',youtubeApiKey:'',autoCheckUpdates:true,reduceMotion:false,fpsMonitor:true,interfaceDensity:'compact',
   autopilotMode:'off',autopilotEnabled:false,autoCreatePlan:true,autoAssignMusic:true,autoAssignImages:true,autoGenerateMetadata:false,
   autoQueueRender:true,autoOpenEndlume:false,autoUploadYoutube:false,autopilotIntervalSec:30,tracksPerVideo:10,
   openaiApiKey:'',openaiModel:'',youtubeOAuthClientId:'',youtubeCategoryId:'10',
