@@ -151,7 +151,8 @@ export function replaceExistingCacheFromSync(channelId:string,videos:YoutubeExis
 }
 export function readAuthoritativeExistingSnapshot(channelId:string){
  const cache=readExistingCache(channelId),videos=authoritativeCacheVideos(cache).map(cloneVideo);
- if(!cache||!videos.length)return;
+ // Complete authenticated zero-video inventory is valid; absence of cache is the only unknown state.
+ if(!cache)return;
  const currentComplete=scheduleSyncTruthFromInfo(cache.syncInfo)==='complete';
  return{videos,updatedAt:cache.lastCompleteAt||(currentComplete?cache.updatedAt:undefined),syncInfo:cache.lastCompleteSyncInfo||(currentComplete?cache.syncInfo:null)};
 }
