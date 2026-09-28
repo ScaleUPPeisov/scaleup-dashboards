@@ -1,7 +1,7 @@
 import {create} from 'zustand';
 import {api,type RenderFolderScanResult,type RenderFolderVideoFile} from './api';
 import {useApp} from './store';
-import type {Channel,UploadHistoryRecord,VideoJob} from './types';
+import type {Channel,FingerprintCacheEntry,UploadHistoryRecord,VideoJob} from './types';
 import {
   classifyChannelRenderFiles,
   normalizeRenderPath,
@@ -178,7 +178,8 @@ function errorSnapshot(channel:Channel,previous:ChannelInventorySnapshot|undefin
 }
 
 async function fingerprintNeededFiles(result:RenderFolderScanResult,jobs:VideoJob[],history:UploadHistoryRecord[],channelId:string,forceNumbered=false){
-  const cache=useApp.getState().fingerprintCache;
+  const cache={...useApp.getState().fingerprintCache};
+  const pendingCache:Record<string,FingerprintCacheEntry>={};
   const files:RenderFolderVideoFile[]=new Array(result.files.length);
   let cursor=0;
   const worker=async()=>{
@@ -193,13 +194,15 @@ async function fingerprintNeededFiles(result:RenderFolderScanResult,jobs:VideoJo
       }
       try{
         const fp=await api.youtubeFileFingerprint(file.path,cached?{size:cached.size,mtimeMs:cached.mtimeMs,sha256:cached.sha256}:undefined);
-        useApp.getState().cacheFingerprint(file.path,{path:file.path,size:fp.size,mtimeMs:fp.modifiedAt,sha256:fp.fingerprint,computedAt:nowIso()});
+        const entry:FingerprintCacheEntry={path:file.path,size:fp.size,mtimeMs:fp.modifiedAt,sha256:fp.fingerprint,computedAt:nowIso()};
+        cache[file.path]=entry;pendingCache[file.path]=entry;
         files[i]={...file,size:fp.size,modifiedAt:fp.modifiedAt,fingerprint:fp.fingerprint};
         await yieldToUi()
       }catch{files[i]=file}
     }
   };
   await Promise.all(Array.from({length:Math.min(RENDER_IO_CONCURRENCY,Math.max(1,result.files.length))},()=>worker()));
+  if(Object.keys(pendingCache).length)useApp.getState().cacheFingerprints(pendingCache);
   return{...result,files}
 }
 
