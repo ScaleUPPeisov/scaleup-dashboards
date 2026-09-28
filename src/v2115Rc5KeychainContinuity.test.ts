@@ -10,7 +10,7 @@ const channel=(n:number):Channel=>({
  id:'c'+n,name:'Channel '+n,slug:'channel-'+n,cadenceDays:2,targetBufferDays:60,publishHour:18,publishMinute:0,language:'EN',genre:'Music',country:'US',minTracks:10,targetDurationMin:120,enabled:true,
  youtubeProfileId:'p'+n,youtubeChannelId:'UC'+String(n).padStart(4,'0'),seo:{titlePatterns:[],descriptionTemplate:'',tags:[],banned:[]}
 });
-const profile=(n:number,status:YoutubeProfile['credentialStatus']):YoutubeProfile=>({id:'p'+n,channelId:'UC'+String(n).padStart(4,'0'),channelTitle:'Channel '+n,credentialStatus:status});
+const profile=(n:number,status:YoutubeProfile['credentialStatus'],clientIdMasked='fixture-client…apps.googleusercontent.com'):YoutubeProfile=>({id:'p'+n,channelId:'UC'+String(n).padStart(4,'0'),channelTitle:'Channel '+n,credentialStatus:status,clientIdMasked});
 
 describe('VYRON 2.1.15 RC5 Keychain / profile continuity',()=>{
  afterEach(()=>vi.restoreAllMocks());
@@ -47,6 +47,15 @@ describe('VYRON 2.1.15 RC5 Keychain / profile continuity',()=>{
   expect(spy).toHaveBeenCalledWith('p1',expect.arrayContaining(channels.map(x=>x.youtubeChannelId!)),'stats-one-driver');
   expect(result.credentialFailures).toHaveLength(12);
   expect(result.driverProfileId).toBe('p1');
+ });
+
+ it('cross-project statistics chunks are blocked before a YouTube request is attempted',async()=>{
+  const channels=[channel(1),channel(2)];
+  const profiles=[profile(1,'READY','client-a…apps.googleusercontent.com'),profile(2,'READY','client-b…apps.googleusercontent.com')];
+  const rows=classifyYoutubeChannels(channels,profiles).eligible;
+  const spy=vi.spyOn(api,'youtubeChannelStatisticsBatch');
+  await expect(requestBatchWithDriverRotation(rows,'stats-cross-project')).rejects.toThrow('CROSS_PROJECT_STATS_BATCH_BLOCKED');
+  expect(spy).not.toHaveBeenCalled();
  });
 
  it('Keychain cached denial is never presented as a YouTube rejection',()=>{
