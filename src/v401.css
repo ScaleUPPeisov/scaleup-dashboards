@@ -76,3 +76,64 @@
   max-width:100%;
   pointer-events:none;
 }
+
+
+/* Local owner/user profiles — visually anchored to the sidebar without touching OAuth state. */
+.sidebar .sideFoot{margin-bottom:70px}
+.localProfileButton{
+  position:fixed;
+  left:16px;
+  bottom:16px;
+  width:196px;
+  min-height:52px;
+  z-index:8;
+  display:flex;
+  align-items:center;
+  gap:10px;
+  padding:8px 10px;
+  border:1px solid rgba(111,226,255,.14);
+  border-radius:13px;
+  background:rgba(7,20,32,.96);
+  color:#dff7ff;
+  box-shadow:0 12px 30px rgba(0,0,0,.22);
+  text-align:left;
+}
+.localProfileButton:hover{border-color:rgba(111,226,255,.34);background:rgba(10,28,43,.98)}
+.localProfileButton>span:nth-of-type(2){min-width:0;flex:1}
+.localProfileButton b{display:block;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px}
+.localProfileButton small{display:block;margin-top:2px;font-size:7px;letter-spacing:.12em;color:#68899f}
+.localProfileButton em{font-style:normal;color:#6fcce9;font-size:16px}
+.localProfileAvatar{
+  flex:0 0 auto;
+  object-fit:cover;
+  border-radius:50%;
+  border:1px solid rgba(111,226,255,.28);
+  background:#081b29;
+}
+.localProfileAvatar-sm{width:34px;height:34px}
+.localProfileAvatar-md{width:46px;height:46px}
+.localProfileAvatar-lg{width:86px;height:86px}
+.localProfileAvatarFallback{display:grid;place-items:center;color:#8fe8ff;font-weight:900;background:linear-gradient(145deg,#0b2a3d,#071723)}
+.localProfileAvatar-sm.localProfileAvatarFallback{font-size:13px}
+.localProfileAvatar-lg.localProfileAvatarFallback{font-size:28px}
+.localProfileModal{width:min(720px,calc(100vw - 44px))}
+.localProfileEditor{display:grid;grid-template-columns:100px 1fr;gap:18px;align-items:start;padding:16px 0 20px}
+.localProfileFields{display:flex;flex-direction:column;gap:10px}
+.localProfileFields label small{display:block;margin-bottom:5px;color:#7193a9}
+.localProfileFields input{width:100%;box-sizing:border-box;border:1px solid rgba(111,226,255,.16);background:#071724;color:#e6f8ff;border-radius:10px;padding:10px 12px;outline:none}
+.localProfileFields input:focus{border-color:rgba(111,226,255,.52);box-shadow:0 0 0 2px rgba(111,226,255,.08)}
+.localProfileRole{align-self:flex-start;border:1px solid rgba(111,226,255,.14);border-radius:999px;padding:4px 8px;font-size:7px;letter-spacing:.12em;color:#77d9f4}
+.localProfileHint{color:#638196;line-height:1.5}
+.localProfilesList{margin-top:8px;border-top:1px solid rgba(255,255,255,.055);padding-top:16px}
+.localProfilesList article{display:flex;align-items:center;gap:8px;padding:7px;border:1px solid transparent;border-radius:12px}
+.localProfilesList article.active{border-color:rgba(111,226,255,.13);background:rgba(111,226,255,.035)}
+.localProfileSwitch{flex:1;min-width:0;display:flex;align-items:center;gap:10px;border:0;background:transparent;color:#dcecf5;text-align:left;padding:4px}
+.localProfileSwitch span{min-width:0;flex:1}
+.localProfileSwitch b,.localProfileSwitch small{display:block}
+.localProfileSwitch b{font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.localProfileSwitch small{font-size:7px;color:#648399;margin-top:2px}
+.localProfileSwitch em{font-style:normal;font-size:7px;color:#72dfbd}
+@media(max-width:900px){
+  .localProfileButton{width:152px}
+  .localProfileButton b{max-width:82px}
+}
