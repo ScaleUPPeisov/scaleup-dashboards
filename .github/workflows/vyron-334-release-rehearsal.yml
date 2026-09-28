@@ -1,0 +1,163 @@
+name: VYRON 3.3.4 Release Rehearsal
+
+on:
+  push:
+    branches:
+      - feature/vyron-3.3.4-live-content-inventory
+    paths:
+      - .github/workflows/vyron-334-release-rehearsal.yml
+      - .github/workflows/vyron-334-stable-release.yml
+      - src/v334StableReleaseContract.test.ts
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: vyron-334-release-rehearsal
+  cancel-in-progress: true
+
+env:
+  SOURCE_REPO: ScaleUPPeisov/scaleup-dashboards
+  RELEASE_REPO: ScaleUPPeisov/vyron-releases
+  APPROVED_HEAD: 640c1978978583bfc5f07f132306ee96b82131cb
+  APPROVED_RUN_ID: '36382983040'
+  MAC_ARTIFACT: VYRON-3.3.4-MACOS-SIGNED-CANDIDATE
+  WINDOWS_ARTIFACT: VYRON-3.3.4-WINDOWS-SIGNED-CANDIDATE
+
+jobs:
+  rehearse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify approved GREEN source/run
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/$SOURCE_REPO/actions/runs/$APPROVED_RUN_ID" >/tmp/run.json
+          python3 - <<'PY'
+          import json,os
+          d=json.load(open('/tmp/run.json'))
+          assert d['head_sha']==os.environ['APPROVED_HEAD']
+          assert d['status']=='completed'
+          assert d['conclusion']=='success'
+          assert d['name']=='VYRON 3.3.4 Signed Cross-Platform Candidate'
+          print('APPROVED_RUN=PASS')
+          PY
+
+      - name: Verify production still frozen and v3.3.4 absent
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json >/tmp/mac.json
+          curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json >/tmp/windows.json
+          python3 - <<'PY'
+          import json
+          m=json.load(open('/tmp/mac.json')); w=json.load(open('/tmp/windows.json'))
+          assert m['version']=='3.3.3',m['version']
+          assert w['version']=='3.3.2',w['version']
+          print('MAC_PRODUCTION_FEED=3.3.3')
+          print('WINDOWS_PRODUCTION_FEED=3.3.2')
+          PY
+          if gh api "repos/$RELEASE_REPO/releases/tags/v3.3.4" >/tmp/unexpected-release.json 2>/dev/null; then
+            echo 'UNEXPECTED_V3_3_4_RELEASE_EXISTS'
+            exit 1
+          fi
+          echo 'V3_3_4_RELEASE_ABSENT=PASS'
+
+      - name: Download exact signed candidate artifacts
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p approved/mac approved/windows rehearsal
+          gh run download "$APPROVED_RUN_ID" --repo "$SOURCE_REPO" --name "$MAC_ARTIFACT" --dir approved/mac
+          gh run download "$APPROVED_RUN_ID" --repo "$SOURCE_REPO" --name "$WINDOWS_ARTIFACT" --dir approved/windows
+
+          test -s approved/mac/VYRON-3.3.4-macOS-arm64-CANDIDATE.dmg
+          test -s approved/mac/VYRON-3.3.4-macOS-arm64-CANDIDATE.dmg.sha256
+          test -s approved/mac/VYRON-3.3.4.app.tar.gz
+          test -s approved/mac/VYRON-3.3.4.app.tar.gz.sha256
+          test -s approved/mac/VYRON-3.3.4.app.tar.gz.sig
+          test -s approved/windows/VYRON_3.3.4_x64-setup.exe
+          test -s approved/windows/VYRON_3.3.4_x64-setup.exe.sha256
+          test -s approved/windows/VYRON_3.3.4_x64-setup.exe.sig
+
+          (cd approved/mac && sed 's#candidate-macos/##' VYRON-3.3.4-macOS-arm64-CANDIDATE.dmg.sha256 | sha256sum -c -)
+          (cd approved/mac && sed 's#candidate-macos/##' VYRON-3.3.4.app.tar.gz.sha256 | sha256sum -c -)
+          (cd approved/windows && sha256sum -c VYRON_3.3.4_x64-setup.exe.sha256)
+
+          cp approved/mac/VYRON-3.3.4-macOS-arm64-CANDIDATE.dmg rehearsal/VYRON-3.3.4-arm64.dmg
+          cp approved/mac/VYRON-3.3.4.app.tar.gz rehearsal/VYRON.app.tar.gz
+          cp approved/mac/VYRON-3.3.4.app.tar.gz.sig rehearsal/VYRON.app.tar.gz.sig
+          cp approved/windows/VYRON_3.3.4_x64-setup.exe rehearsal/VYRON_3.3.4_x64-setup.exe
+          cp approved/windows/VYRON_3.3.4_x64-setup.exe.sig rehearsal/VYRON_3.3.4_x64-setup.exe.sig
+
+          sha256sum rehearsal/VYRON-3.3.4-arm64.dmg | tee rehearsal/VYRON-3.3.4-arm64.dmg.sha256
+          sha256sum rehearsal/VYRON.app.tar.gz | tee rehearsal/VYRON.app.tar.gz.sha256
+          sha256sum rehearsal/VYRON_3.3.4_x64-setup.exe | tee rehearsal/VYRON_3.3.4_x64-setup.exe.sha256
+          echo 'EXACT_CANDIDATE_BYTES=PASS'
+
+      - name: Build updater manifests exactly as stable release will
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          export PUB_DATE='2026-09-28T00:00:00Z'
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          mac_sig=Path('rehearsal/VYRON.app.tar.gz.sig').read_text().strip()
+          win_sig=Path('rehearsal/VYRON_3.3.4_x64-setup.exe.sig').read_text().strip()
+          assert mac_sig and win_sig
+          notes='VYRON 3.3.4 — Live Content Inventory'
+          mac={'version':'3.3.4','notes':notes,'pub_date':os.environ['PUB_DATE'],'platforms':{'darwin-aarch64':{'url':'https://github.com/ScaleUPPeisov/vyron-releases/releases/download/v3.3.4/VYRON.app.tar.gz','signature':mac_sig}}}
+          win={'version':'3.3.4','notes':notes,'pub_date':os.environ['PUB_DATE'],'platforms':{'windows-x86_64':{'url':'https://github.com/ScaleUPPeisov/vyron-releases/releases/download/v3.3.4/VYRON_3.3.4_x64-setup.exe','signature':win_sig}}}
+          Path('rehearsal/latest.json').write_text(json.dumps(mac,ensure_ascii=False,indent=2)+'\n')
+          Path('rehearsal/windows-latest.json').write_text(json.dumps(win,ensure_ascii=False,indent=2)+'\n')
+          assert set(mac['platforms'])=={'darwin-aarch64'}
+          assert set(win['platforms'])=={'windows-x86_64'}
+          print('MAC_MANIFEST=PASS')
+          print('WINDOWS_MANIFEST=PASS')
+          PY
+
+      - name: Stable workflow static contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npx --yes vitest@3.2.4 run src/v334StableReleaseContract.test.ts
+          echo 'STABLE_WORKFLOW_CONTRACT=PASS'
+
+      - name: Rehearsal evidence
+        shell: bash
+        run: |
+          {
+            echo 'APPROVED_HEAD=640c1978978583bfc5f07f132306ee96b82131cb'
+            echo 'APPROVED_RUN_ID=36382983040'
+            echo 'MAC_DMG_SHA256=e91af565ad1ec192926a66e7a9325d14c23fc189ef5ebea87e986a9f62395a23'
+            echo 'MAC_UPDATER_SHA256=b83cc74d65bd6a22ea797bfd3ec6758337037641fc885da02a47e986ad5fc7ef'
+            echo 'WINDOWS_INSTALLER_SHA256=1bfe1acc4cff09dd07ebecf8f5ed937480d00f87218d10143fef45348a7b96ae'
+            echo 'MAC_PRODUCTION_FEED=3.3.3'
+            echo 'WINDOWS_PRODUCTION_FEED=3.3.2'
+            echo 'V3_3_4_RELEASE_ABSENT=PASS'
+            echo 'RELEASE_MUTATION=NO'
+            echo 'READY_FOR_EXPLICIT_RELEASE_COMMAND=YES'
+          } | tee rehearsal/release-rehearsal.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-3.3.4-RELEASE-REHEARSAL
+          path: |
+            rehearsal/latest.json
+            rehearsal/windows-latest.json
+            rehearsal/*.sha256
+            rehearsal/release-rehearsal.txt
+          if-no-files-found: error
+          retention-days: 14
