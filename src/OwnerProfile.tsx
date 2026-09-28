@@ -32,7 +32,7 @@ export function OwnerProfile(){
   const avatarNode=useMemo(()=>avatar?<img src={avatar} alt=""/>:<span>{initials(name)}</span>,[avatar,name]);
   async function chooseAvatar(){
     if(busy)return;
-    const path=await api.chooseProfileAvatar();if(!path)return;
+    const path=await api.chooseOwnerProfileAvatar();if(!path)return;
     setBusy(true);
     try{
       const x=await api.profileImportAvatar(path);
