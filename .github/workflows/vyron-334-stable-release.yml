@@ -159,7 +159,7 @@ jobs:
           grep -F 'WINDOWS_UPDATER_SIGNATURE=VERIFIED' approved/windows/gate-summary.txt
           grep -F 'PRODUCTION_FEED_MUTATED=NO' approved/windows/gate-summary.txt
 
-          (cd approved/mac && sha256sum -c VYRON-3.3.4-macOS-arm64-CANDIDATE.dmg.sha256)
+          (cd approved/mac && sed 's#candidate-macos/##' VYRON-3.3.4-macOS-arm64-CANDIDATE.dmg.sha256 | sha256sum -c -)
           (cd approved/mac && sed 's#candidate-macos/##' VYRON-3.3.4.app.tar.gz.sha256 | sha256sum -c -)
           (cd approved/windows && sha256sum -c VYRON_3.3.4_x64-setup.exe.sha256)
           echo 'APPROVED_ARTIFACTS=PASS'
@@ -239,9 +239,22 @@ jobs:
           if GH_TOKEN="$RELEASE_TOKEN" gh release view "$TAG" --repo "$RELEASE_REPO" >/dev/null 2>&1; then
             echo 'RELEASE_ALREADY_EXISTS=YES'
           else
-            GH_TOKEN="$RELEASE_TOKEN" gh release create "$TAG"               --repo "$RELEASE_REPO"               --target main               --title 'VYRON 3.3.4 — Live Content Inventory'               --notes-file /tmp/notes.md               stable/VYRON-3.3.4-arm64.dmg               stable/VYRON-3.3.4-arm64.dmg.sha256               stable/VYRON.app.tar.gz               stable/VYRON.app.tar.gz.sha256               stable/VYRON.app.tar.gz.sig               stable/VYRON_3.3.4_x64-setup.exe               stable/VYRON_3.3.4_x64-setup.exe.sha256               stable/VYRON_3.3.4_x64-setup.exe.sig
+            GH_TOKEN="$RELEASE_TOKEN" gh release create "$TAG" --repo "$RELEASE_REPO" --target main --title 'VYRON 3.3.4 — Live Content Inventory' --notes-file /tmp/notes.md
             echo 'RELEASE_CREATED=YES'
           fi
+
+          # Idempotent recovery: always replace assets with the exact approved
+          # candidate bytes before updater feed promotion.
+          GH_TOKEN="$RELEASE_TOKEN" gh release upload "$TAG" --repo "$RELEASE_REPO" --clobber \
+            stable/VYRON-3.3.4-arm64.dmg \
+            stable/VYRON-3.3.4-arm64.dmg.sha256 \
+            stable/VYRON.app.tar.gz \
+            stable/VYRON.app.tar.gz.sha256 \
+            stable/VYRON.app.tar.gz.sig \
+            stable/VYRON_3.3.4_x64-setup.exe \
+            stable/VYRON_3.3.4_x64-setup.exe.sha256 \
+            stable/VYRON_3.3.4_x64-setup.exe.sig
+          echo 'RELEASE_ASSETS_UPLOADED_OR_REPLACED=YES'
 
       - name: Verify exact public release assets before feed promotion
         shell: bash
