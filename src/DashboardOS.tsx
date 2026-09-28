@@ -156,7 +156,7 @@ function OperationsDashboard(){
 
    <section className="opsCard progressCard">
     <div className="opsCardHead"><div><small>ПРОГРЕСС К МОНЕТИЗАЦИИ</small><h2>Подписчики к ориентиру 1 000</h2></div></div>
-    {progressRows.length?<div className="channelProgressRows">{progressRows.map(x=><div key={x.channel.id}><div><b>{x.channel.name}</b><span>{fmt(x.subscribers)} / 1 000 • осталось {fmt(x.remaining)}</span></div><i><em style={{width:x.pct+'%'}}/></i><small>{x.views==null?'Просмотры: нет данных':'Просмотры: '+fmt(x.views)}</small></div>)}</div>:<p className="opsEmpty">Нет доступных данных по подписчикам.</p>}
+    {progressRows.length?<div className="channelProgressRows">{progressRows.map(x=><div key={x.channel.id}><div><b>{x.channel.name}</b><span>{fmt(x.subscribers)} / 1 000 • осталось {fmt(x.remaining)}</span></div><i><em style={{width:x.pct+'%'}}/></i><small>{x.views==null?'Просмотры: нет данных':'Просмотры: '+fmt(x.views)}</small><small>Public watch hours: нет данных • Shorts views: нет данных</small></div>)}</div>:<p className="opsEmpty">Нет доступных данных по подписчикам.</p>}
     <p className="opsSourceNote">Ориентировочный прогресс. Достижение 1 000 подписчиков само по себе не означает одобрение монетизации.</p>
     <footer><button onClick={()=>setPage('analytics')}>Аналитика</button></footer>
    </section>
