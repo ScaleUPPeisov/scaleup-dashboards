@@ -63,7 +63,12 @@ function OperationsDashboard(){
 
  const active=enabled.find(c=>c.id===activeId)||enabled[0],activeInv=active?inventory.byChannel[active.id]:undefined,activeLive=active?liveSnapshots[active.id]:undefined,activeOwner=active?ownerByChannel.get(active.id):undefined,activeQueued=active?queue.queued.filter(x=>x.spec.channelId===active.id).length:0;
  const jobErrors=activeJobErrors(jobs),actionableErrors=jobErrors.length,readyEndlume=jobs.filter(j=>j.status==='READY_RENDER').length,rendering=jobs.filter(j=>j.status==='RENDERING').length;
- const now=new Date(),uploadedToday=uploadHistory.filter(x=>sameLocalDay(x.uploadedAt,now)).length,failedToday=queue.recent.filter(x=>x.state==='FAILED'&&sameLocalDay(x.finishedAt,now)).length;
+ const now=new Date(),uploadedTodayRows=uploadHistory.filter(x=>sameLocalDay(x.uploadedAt,now)),uploadedToday=uploadedTodayRows.length,failedToday=queue.recent.filter(x=>x.state==='FAILED'&&sameLocalDay(x.finishedAt,now)).length;
+ const activeTodayChannels=new Set<string>([
+  ...uploadedTodayRows.map(x=>x.channelId),
+  ...telemetry.active.map(x=>x.channelId).filter(Boolean),
+  ...enabled.filter(c=>(ownerByChannel.get(c.id)?.publishedToday||0)>0).map(c=>c.id)
+ ]).size;
 
  const progressRows=useMemo(()=>enabled.map(c=>{
   const subscribers=c.stats?.hiddenSubscriberCount?undefined:(c.stats?.subscriberCount??c.stats?.subscribers);
@@ -117,7 +122,8 @@ function OperationsDashboard(){
      <span><small>Опубликовано</small><b>{ownerTotals.availableChannels?ownerTotals.publishedToday:'—'}</b></span>
      <span><small>Загружено через VYRON</small><b>{uploadedToday}</b></span>
      <span><small>YouTube Scheduled</small><b>{ownerTotals.availableChannels?ownerTotals.scheduled:'—'}</b></span>
-     <span><small>Загружается</small><b>{telemetry.active.length}</b></span>
+     <span><small>Активных каналов</small><b>{activeTodayChannels}</b></span>
+     <span><small>Активные ошибки</small><b>{actionableErrors}</b></span>
      <span><small>Следующая публикация</small><b>{shortDateTime(ownerTotals.nextScheduledAt)}</b></span>
     </div>
     <footer><button onClick={()=>setPage('youtube')}>Открыть YouTube</button></footer>
