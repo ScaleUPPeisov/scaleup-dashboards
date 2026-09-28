@@ -986,7 +986,7 @@ pub fn migration_import(
 
     let transaction=run_with_rollback(
         ||{
-            storage::save_state(app.clone(), merged).map_err(|e|format!("MIGRATION_STATE_COMMIT_FAILED: {e}"))?;
+            storage::save_state_sync(app.clone(), merged).map_err(|e|format!("MIGRATION_STATE_COMMIT_FAILED: {e}"))?;
             let oauth_result=oauth_vault::merge_portable_snapshot(&app,&payload.oauth_vault)
                 .map_err(|e|format!("MIGRATION_VAULT_COMMIT_FAILED: {e}"))?;
             let metadata_result=merge_and_write_metadata(&app,&payload.youtube_metadata,&payload.google_config)
