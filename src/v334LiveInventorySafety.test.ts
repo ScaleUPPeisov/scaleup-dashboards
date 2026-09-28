@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import {describe,expect,it} from 'vitest';
-import {classifyChannelRenderFiles,summarizeRenderScan,type RenderScanFile} from './renderScanClassifier';
+import {classifyChannelRenderFiles,summarizeRenderScan} from './renderScanClassifier';
+import type {RenderFolderVideoFile} from './api';
 import type {UploadHistoryRecord} from './types';
 
 const runtime=fs.readFileSync('src/renderInventoryRuntime.ts','utf8');
@@ -60,8 +61,8 @@ describe('VYRON 3.3.4 live inventory safety contracts',()=>{
  });
  it('same logical fixture classifies the same on macOS and Windows path syntax',()=>{
   const hist=(path:string):UploadHistoryRecord=>({id:'h1',jobId:'old',channelId:'c1',youtubeVideoId:'yt1',localFilePath:path,originalFilename:'001.mov',uploadedAt:'2026-09-20T00:00:00Z',fileSize:100,sha256:'a'.repeat(64),status:'UPLOADED',fingerprintProofSource:'UPLOAD_TIME'});
-  const mac:RenderScanFile={path:'/Volumes/TOSHIBA EXT/Render/Aether/001.mov',name:'001.mov',size:100,modifiedAt:10,fingerprint:'b'.repeat(64)};
-  const win:RenderScanFile={path:'D:\\Render\\Aether\\001.mov',name:'001.mov',size:100,modifiedAt:10,fingerprint:'b'.repeat(64)};
+  const mac:RenderFolderVideoFile={path:'/Volumes/TOSHIBA EXT/Render/Aether/001.mov',name:'001.mov',size:100,modifiedAt:10,fingerprint:'b'.repeat(64)};
+  const win:RenderFolderVideoFile={path:'D:\\Render\\Aether\\001.mov',name:'001.mov',size:100,modifiedAt:10,fingerprint:'b'.repeat(64)};
   const m=classifyChannelRenderFiles([mac],[],[hist(mac.path)],'c1','/Volumes/TOSHIBA EXT/Render/Aether');
   const w=classifyChannelRenderFiles([win],[],[hist(win.path)],'c1','D:\\Render\\Aether');
   expect(m[0].classification).toBe('NEW_GENERATION');expect(w[0].classification).toBe('NEW_GENERATION');
