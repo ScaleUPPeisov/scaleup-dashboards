@@ -124,7 +124,7 @@ export function refreshYoutubeOwnerInventoryChannel(channelId:string,force=false
     if(cached)useYoutubeOwnerInventory.getState().setSnapshot(cached);
     if(!force&&isFresh(cached))return cached;
     if(BLOCKED.has(String(profile.credentialStatus||''))){
-      const row={...(cached||{channelId:channel.id,channelName:channel.name,complete:false}),profileId:profile.id,youtubeChannelId:channel.youtubeChannelId,status:'ERROR' as const,error:`OAUTH_CREDENTIAL_BLOCKED: ${profile.credentialStatus}`};
+      const row:YoutubeOwnerInventorySnapshot={...(cached||{channelId:channel.id,channelName:channel.name,complete:false,status:'NO_DATA'}),profileId:profile.id,youtubeChannelId:channel.youtubeChannelId,status:'ERROR',error:`OAUTH_CREDENTIAL_BLOCKED: ${profile.credentialStatus}`};
       useYoutubeOwnerInventory.getState().setSnapshot(row);return row
     }
     useYoutubeOwnerInventory.getState().setSnapshot({...(cached||{channelId:channel.id,channelName:channel.name,complete:false}),profileId:profile.id,youtubeChannelId:channel.youtubeChannelId,status:'SYNCING'});
@@ -136,10 +136,10 @@ export function refreshYoutubeOwnerInventoryChannel(channelId:string,force=false
       const videos=authoritative?.videos||(result.videos||[]);
       const updatedAt=authoritative?.updatedAt||new Date().toISOString();
       const complete=Boolean(result.syncComplete??result.complete);
-      const row={...ownerInventoryFromVideos(channel,videos,updatedAt,complete),status:complete?'FRESH' as const:'CACHED' as const,error:complete?undefined:'OWNER_INVENTORY_SYNC_INCOMPLETE'};
+      const row:YoutubeOwnerInventorySnapshot={...ownerInventoryFromVideos(channel,videos,updatedAt,complete),status:complete?'FRESH':'CACHED',error:complete?undefined:'OWNER_INVENTORY_SYNC_INCOMPLETE'};
       useYoutubeOwnerInventory.getState().setSnapshot(row);return row
     }catch(error){
-      const row={...(cached||{channelId:channel.id,channelName:channel.name,profileId:profile.id,youtubeChannelId:channel.youtubeChannelId,complete:false}),status:'ERROR' as const,error:String(error)};
+      const row:YoutubeOwnerInventorySnapshot={...(cached||{channelId:channel.id,channelName:channel.name,profileId:profile.id,youtubeChannelId:channel.youtubeChannelId,complete:false,status:'NO_DATA'}),status:'ERROR',error:String(error)};
       useYoutubeOwnerInventory.getState().setSnapshot(row);return row
     }
   })();
