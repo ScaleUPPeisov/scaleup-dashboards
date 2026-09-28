@@ -1,4 +1,4 @@
-# candidate-rerun-latest-3456486
+# candidate-rerun-latest-final-chain
 name: VYRON 4.0.1 macOS Signed Candidate
 
 on:
@@ -259,3 +259,10 @@ jobs:
           path: candidate-macos/**
           if-no-files-found: error
           retention-days: 14
+
+
+  windows-after-macos:
+    name: Run Windows gate after macOS PASS
+    needs: macos-candidate
+    uses: ./.github/workflows/vyron-401-windows-candidate.yml
+    secrets: inherit
