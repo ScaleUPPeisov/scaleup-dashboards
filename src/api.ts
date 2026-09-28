@@ -107,7 +107,7 @@ export const api={
   diagnostics:(workspace:string)=>invoke<Diagnostics>('diagnostics',{workspace}),
   defaultWorkspace:()=>invoke<string>('default_workspace'),
   chooseWorkspace:async()=>{const r=await open({directory:true,multiple:false,title:'Папка VYRON YT PEISOV'});return typeof r==='string'?r:null},
-  chooseProfileAvatar:async()=>{const r=await open({directory:false,multiple:false,title:'Фото профиля VYRON',filters:[{name:'Images',extensions:['png','jpg','jpeg','webp']}]});return typeof r==='string'?r:null},
+  chooseOwnerProfileAvatar:async()=>{const r=await open({directory:false,multiple:false,title:'Фото профиля VYRON',filters:[{name:'Images',extensions:['png','jpg','jpeg','webp']}]});return typeof r==='string'?r:null},
   profileImportAvatar:(path:string)=>invoke<ProfileAvatarPayload>('profile_import_avatar',{path}),
   profileAvatarData:(path:string)=>invoke<ProfileAvatarPayload>('profile_avatar_data',{path}),
   chooseRenderFolder:async(defaultPath?:string)=>{const r=await open({directory:true,multiple:false,title:'Папка рендера текущего канала',defaultPath:defaultPath||undefined});return typeof r==='string'?r:null},
