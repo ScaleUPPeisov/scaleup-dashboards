@@ -14,7 +14,19 @@ Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{
 
 describe('Publish safety',()=>{
  beforeEach(()=>localStorage.clear());
- it('counts only completed uploads in rolling 24h and protects duplicate fingerprint',()=>{const a=beginPublishAttempt({channelId:'c',jobId:'j',filePath:'/x.mp4',fingerprint:'abc',fileSize:10});expect(safeDailyStatus('c',15).used).toBe(0);completePublishAttempt(a.id,'YT1');expect(safeDailyStatus('c',15)).toEqual(expect.objectContaining({used:1,remaining:14}));expect(findSuccessfulUpload('c','abc')?.videoId).toBe('YT1')});
+ it('counts completed uploads in the current YouTube day and protects duplicate fingerprint',()=>{const a=beginPublishAttempt({channelId:'c',jobId:'j',filePath:'/x.mp4',fingerprint:'abc',fileSize:10});expect(safeDailyStatus('c',15).used).toBe(0);completePublishAttempt(a.id,'YT1');expect(safeDailyStatus('c',15)).toEqual(expect.objectContaining({used:1,remaining:14}));expect(findSuccessfulUpload('c','abc')?.videoId).toBe('YT1')});
+ it('resets the local VYRON channel limit at the next Pacific YouTube day',()=>{
+  localStorage.setItem('vyron:youtube-publish-records:v1',JSON.stringify([
+   {id:'old',channelId:'c',jobId:'old',filePath:'/old.mp4',fingerprint:'old',fileSize:1,startedAt:'2026-09-28T06:55:00Z',completedAt:'2026-09-28T06:56:00Z',videoId:'YT_OLD',status:'completed'},
+   {id:'new',channelId:'c',jobId:'new',filePath:'/new.mp4',fingerprint:'new',fileSize:1,startedAt:'2026-09-28T07:05:00Z',completedAt:'2026-09-28T07:06:00Z',videoId:'YT_NEW',status:'completed'}
+  ]));
+  const before=safeDailyStatus('c',10,Date.parse('2026-09-28T06:59:00Z'));
+  const after=safeDailyStatus('c',10,Date.parse('2026-09-28T08:00:00Z'));
+  expect(before.used).toBe(1);
+  expect(after.used).toBe(1);
+  expect(after.remaining).toBe(9);
+  expect(before.day).not.toBe(after.day)
+ });
  it('locks one channel but not another',()=>{const a=acquireChannelUploadLock('c');expect(a).toBeTruthy();expect(acquireChannelUploadLock('c')).toBeNull();const b=acquireChannelUploadLock('d');expect(b).toBeTruthy();releaseChannelUploadLock('c',a!);expect(acquireChannelUploadLock('c')).toBeTruthy()});
  it('recognizes real daily upload limit wording',()=>expect(isYoutubeDailyUploadLimitError('daily upload limit exceeded')).toBe(true));
 });
