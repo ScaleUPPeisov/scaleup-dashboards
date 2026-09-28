@@ -159,6 +159,9 @@ mod tests {
         let root = std::env::temp_dir().join(format!("vyron-inventory-watch-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).expect("temp render dir");
+        // FSEvents can report /private/var/... while temp_dir() is /var/...
+        // Canonicalize before watching and before comparing event paths.
+        let root = root.canonicalize().expect("canonical temp render dir");
 
         let (tx, rx) = mpsc::channel();
         let mut watcher = RecommendedWatcher::new(
@@ -172,7 +175,7 @@ mod tests {
         // fixture for a short bounded window and finish as soon as the real
         // RecommendedWatcher observes it. Runtime behavior is unchanged.
         let target = root.join("001 — Ready Videos.mov");
-        let deadline = Instant::now() + Duration::from_secs(3);
+        let deadline = Instant::now() + Duration::from_secs(8);
         let mut found = false;
         let mut attempt = 0u32;
         while Instant::now() < deadline && !found {
