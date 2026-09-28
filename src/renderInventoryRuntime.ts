@@ -68,20 +68,20 @@ function activeReadyJob(job:VideoJob|undefined){
   if(!job)return false;
   if(job.removedFromPublishList||job.youtubeVideoId||job.uploadedAt)return false;
   if(job.storageLifecycle==='UPLOADED'||job.storageLifecycle==='TRASHED'||job.storageLifecycle==='TRASHED_BY_VYRON'||job.storageLifecycle==='FAILED')return false;
-  return job.status==='READY_UPLOAD'||job.status==='UPLOADING';
+  return job.status==='READY_UPLOAD';
 }
 export function readyRows(rows:RenderScanRow[],jobs:VideoJob[]){
   const byId=new Map(jobs.map(j=>[j.id,j]));
   return rows.filter(row=>{
+    const matched=row.matchedJobId?byId.get(row.matchedJobId):undefined;
+    if(matched?.status==='UPLOADING')return false;
     if(row.classification==='NEW_CANDIDATE'||row.classification==='NEW_GENERATION')return true;
     if(row.classification!=='KNOWN_EXACT')return false;
-    return activeReadyJob(row.matchedJobId?byId.get(row.matchedJobId):undefined)
+    return activeReadyJob(matched)
   });
 }
-function uploadingForChannel(channelId:string,jobs:VideoJob[]){
-  const active=new Set(uploadTelemetrySnapshot().active.filter(x=>x.channelId===channelId).map(x=>x.jobId));
-  for(const j of jobs)if(j.channelId===channelId&&j.status==='UPLOADING')active.add(j.id);
-  return active.size;
+function uploadingForChannel(channelId:string,_jobs:VideoJob[]){
+  return uploadTelemetrySnapshot().active.filter(x=>x.channelId===channelId).length
 }
 export function inventoryLevel(ready:number,runwayDays:number,offline=false):InventoryLevel{
   if(offline)return'OFFLINE';
