@@ -23,6 +23,8 @@ describe('VYRON 4.0.1 branding + one-time celebration',()=>{
   it('distinguishes real upgrade from fresh install',()=>{
     expect(app).toContain("VYRON_MAJOR_UPGRADE_TARGET_KEY");
     expect(celebration).toContain("explicitUpgrade||existingState?'upgrade':'fresh'");
-    expect(celebration).toContain("mode==='upgrade'?'ПОЗДРАВЛЯЕМ!':'Добро пожаловать в VYRON 4.0.1'")
+    expect(celebration).toContain("mode==='upgrade'?'ПОЗДРАВЛЯЕМ!'")
+    expect(celebration).toContain('Добро пожаловать в VYRON')
+    expect(celebration).toContain('VYRON_MAJOR_VERSION')
   });
 });
