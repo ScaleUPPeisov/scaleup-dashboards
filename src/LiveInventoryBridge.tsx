@@ -1,7 +1,8 @@
 import {useEffect,useRef} from 'react';
 import {api} from './api';
 import {useApp} from './store';
-import {scanAllInventories,scanInventoryChannel} from './renderInventoryRuntime';
+import {refreshInventoryUploadCounts,scanAllInventories,scanInventoryChannel} from './renderInventoryRuntime';
+import {subscribeUploadTelemetry} from './uploadTelemetry';
 
 const WATCH_DEBOUNCE_MS=1500;
 const SAFETY_RECONCILE_MS=60_000;
@@ -14,6 +15,7 @@ export function LiveInventoryBridge(){
   useEffect(()=>{
     if(!booted)return;
     let disposed=false,unlisten:(()=>void)|undefined,periodic:number|undefined;
+    const offUploads=subscribeUploadTelemetry(()=>refreshInventoryUploadCounts());
 
     const configuredRoots=()=>useApp.getState().channels
       .filter(c=>c.enabled!==false&&Boolean(String(c.renderFolderPath||'').trim()))
@@ -52,6 +54,7 @@ export function LiveInventoryBridge(){
     return()=>{
       disposed=true;
       if(unlisten)unlisten();
+      offUploads();
       if(periodic!==undefined)window.clearInterval(periodic);
       document.removeEventListener('visibilitychange',onVisibility);
       window.removeEventListener('focus',onFocus);
