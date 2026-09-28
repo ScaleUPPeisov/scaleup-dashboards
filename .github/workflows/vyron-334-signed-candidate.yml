@@ -1,5 +1,6 @@
 name: VYRON 3.3.4 Signed Cross-Platform Candidate
 # candidate retry after full-suite contract alignment
+# candidate retry after Tauri stack pinning
 
 on:
   push:
