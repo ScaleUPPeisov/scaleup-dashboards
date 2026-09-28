@@ -1,0 +1,78 @@
+/* VYRON 4.0.1 targeted visual hotfixes.
+   Kept isolated so 4.0.0 layout rules remain intact. */
+
+.sidebar .brand{
+  min-width:0;
+  overflow:hidden;
+}
+.sidebar .brand .sidebarBrandArtwork{
+  width:44px!important;
+  height:44px!important;
+  min-width:44px!important;
+  flex:0 0 44px!important;
+  border-radius:12px;
+  object-fit:cover;
+  overflow:hidden;
+}
+.safeArtworkFallback{
+  display:grid!important;
+  place-items:center!important;
+  background:linear-gradient(145deg,#0b2638,#07131f)!important;
+  border:1px solid rgba(87,211,255,.45)!important;
+  color:#8fe8ff!important;
+  font-weight:900!important;
+  font-size:18px!important;
+  line-height:1!important;
+  box-shadow:0 0 22px rgba(67,216,255,.12);
+}
+
+.sidebar .sidebarNav{
+  overflow:hidden;
+  isolation:isolate;
+}
+.sidebar .sidebarNavItem{
+  position:relative;
+  overflow:hidden;
+  min-width:0;
+  width:100%;
+}
+.sidebar .sidebarNavItem > .sidebarIconSlot{
+  width:20px!important;
+  min-width:20px!important;
+  max-width:20px!important;
+  flex:0 0 20px!important;
+  display:grid!important;
+  place-items:center!important;
+  line-height:1!important;
+  overflow:hidden!important;
+}
+.sidebar .sidebarNavItem > .sidebarLabel{
+  width:auto!important;
+  min-width:0!important;
+  flex:1 1 auto!important;
+  text-align:left!important;
+  font-size:12px!important;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.sidebar .sidebarNavItem > .sidebarCount{
+  width:auto!important;
+  min-width:22px!important;
+  max-width:none!important;
+  flex:0 0 auto!important;
+  margin-left:auto;
+  padding:2px 6px;
+  border-radius:999px;
+  font-size:8px!important;
+  line-height:1.25!important;
+  background:rgba(67,216,255,.08);
+  border:1px solid rgba(67,216,255,.16);
+}
+.sidebar .sidebarNavItem::before,
+.sidebar .sidebarNavItem::after,
+.sidebar .sidebarIconSlot::before,
+.sidebar .sidebarIconSlot::after{
+  max-width:100%;
+  pointer-events:none;
+}
