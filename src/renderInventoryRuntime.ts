@@ -158,7 +158,7 @@ function errorSnapshot(channel:Channel,previous:ChannelInventorySnapshot|undefin
   return{...prior,channelId:channel.id,channelName:channel.name,renderFolderPath:String(channel.renderFolderPath||''),folderState:'ERROR',stale:true,level:'OFFLINE',error}
 }
 
-async function fingerprintNeededFiles(result:RenderFolderScanResult,jobs:VideoJob[],history:UploadHistoryRecord[],channelId:string){
+async function fingerprintNeededFiles(result:RenderFolderScanResult,jobs:VideoJob[],history:UploadHistoryRecord[],channelId:string,forceNumbered=false){
   const cache=useApp.getState().fingerprintCache;
   const files:RenderFolderVideoFile[]=new Array(result.files.length);
   let cursor=0;
@@ -166,7 +166,8 @@ async function fingerprintNeededFiles(result:RenderFolderScanResult,jobs:VideoJo
     while(true){
       const i=cursor++;if(i>=result.files.length)return;
       const file=result.files[i];
-      if(!renderFileNeedsFingerprint(file,jobs,history,channelId,result.root)&&!renderSequence(file.name)){files[i]=file;continue}
+      const identityRequired=renderFileNeedsFingerprint(file,jobs,history,channelId,result.root)||(forceNumbered&&Boolean(renderSequence(file.name)));
+      if(!identityRequired){files[i]=file;continue}
       const cached=cache[file.path];
       if(cached&&cached.size===file.size&&Number(cached.mtimeMs)===Number(file.modifiedAt||0)&&/^[a-f0-9]{64}$/i.test(cached.sha256)){
         files[i]={...file,fingerprint:cached.sha256};continue
@@ -218,7 +219,7 @@ export async function scanInventoryChannel(channelId:string,reason:InventoryScan
     const next=offlineSnapshot(channel,previous,'RENDER_FOLDER_OFFLINE');store.setSnapshot(next);auditFor(previous,next,reason);return next
   }
   try{
-    const current=useApp.getState(),cheap=await api.scanRenderFolder(root),result=await fingerprintNeededFiles(cheap,current.jobs,current.uploadHistory,channelId);
+    const current=useApp.getState(),cheap=await api.scanRenderFolder(root),result=await fingerprintNeededFiles(cheap,current.jobs,current.uploadHistory,channelId,reason==='publisher');
     const rows=classifyChannelRenderFiles(result.files,current.jobs,current.uploadHistory,channelId,result.root);
     const next=buildInventorySnapshotFromScan(channel,result,rows,current.jobs,uploadingForChannel(channelId,current.jobs));
     store.setSnapshot(next);auditFor(previous,next,reason);return next
@@ -248,11 +249,25 @@ export function scanAllInventories(reason:InventoryScanReason='manual-all'):Prom
 
 export function markInventoryAfterCleanup(channelId:string){return scanInventoryChannel(channelId,'cleanup')}
 export function refreshInventoryUploadCounts(){
-  const store=useLiveInventory.getState(),state=useApp.getState(),next={...store.snapshots};let changed=false;
+  const store=useLiveInventory.getState(),state=useApp.getState(),telemetry=uploadTelemetrySnapshot().active,next={...store.snapshots};let changed=false;
   for(const channel of state.channels){
     const current=next[channel.id];if(!current)continue;
-    const uploading=uploadingForChannel(channel.id,state.jobs);
-    if(uploading!==current.uploadingVideos){next[channel.id]={...current,uploadingVideos:uploading};changed=true}
+    const active=telemetry.filter(x=>x.channelId===channel.id),uploading=active.length;
+    let readyVideos=current.readyVideos,runwayDays=current.runwayDays,level=current.level;
+    if(current.folderState==='ONLINE'&&current.rows){
+      const unavailablePaths=new Set<string>();
+      for(const x of active)if(x.filePath)unavailablePaths.add(normalizeRenderPath(x.filePath));
+      for(const job of state.jobs.filter(j=>j.channelId===channel.id)){
+        const unavailable=job.status==='UPLOADING'||Boolean(job.youtubeVideoId)||Boolean(job.uploadedAt)||Boolean(job.removedFromPublishList)||['UPLOADED','TRASHED','TRASHED_BY_VYRON','FAILED'].includes(String(job.storageLifecycle||''));
+        if(unavailable&&job.finalPath)unavailablePaths.add(normalizeRenderPath(job.finalPath))
+      }
+      readyVideos=readyRows(current.rows,state.jobs).filter(row=>!unavailablePaths.has(normalizeRenderPath(row.file.path))).length;
+      runwayDays=inventoryRunwayDays(channel,readyVideos);
+      level=inventoryLevel(readyVideos,runwayDays)
+    }
+    if(uploading!==current.uploadingVideos||readyVideos!==current.readyVideos||runwayDays!==current.runwayDays||level!==current.level){
+      next[channel.id]={...current,uploadingVideos:uploading,readyVideos,runwayDays,level};changed=true
+    }
   }
   if(changed)useLiveInventory.setState({snapshots:next})
 }
