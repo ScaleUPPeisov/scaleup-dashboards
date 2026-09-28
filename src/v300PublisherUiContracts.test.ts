@@ -27,7 +27,7 @@ describe('VYRON 3.0.0 Publisher/UI contracts',()=>{
   expect(p).toContain('materializeRenderGenerationRows(currentCandidates,false,scanPreview)');
   expect(inventory).toContain('renderFileNeedsFingerprint');
   expect(inventory).toContain('youtubeFileFingerprint');
-  expect(p).toContain("scanInventoryChannel(channelId,'publisher')");
+  expect(p).toContain("scanInventoryChannel(channelId,reason)");
   expect(p).toContain('successfulUploadForHash');
   expect(p).not.toContain('Проверить YouTube ID');
   expect(p).not.toContain('>Нужна проверка {verifyCount}</button>');
