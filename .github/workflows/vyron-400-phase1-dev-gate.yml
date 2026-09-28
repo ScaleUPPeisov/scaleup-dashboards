@@ -1,0 +1,51 @@
+name: VYRON 4.0.0 Phase 1 Dev Gate
+
+on:
+  push:
+    branches:
+      - feature/vyron-4.0.0-command-overview
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-400-phase1-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: 4.0 owner inventory + schedule + local limit regression
+        run: |
+          npx vitest run src/v400OwnerInventory.test.ts src/v400DailyUploadLimit.test.ts src/v400CommandOverview.test.ts src/v334LiveContentInventory.test.ts src/v335RenderFolderPicker.test.ts src/renderScanClassifier.test.ts
+      - name: Production build
+        run: npm run build
+      - name: Zero data loss source contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ! grep -R -E "youtubeDisconnect\(|localStorage\.clear\(|removeChannel\(" src/youtubeOwnerInventory.ts src/YoutubeOwnerInventoryScheduler.tsx
+          grep -F "api.youtubeListExisting" src/youtubeOwnerInventory.ts
+          grep -F "OWNER_INVENTORY_TTL_MS=15*60_000" src/youtubeOwnerInventory.ts
+          echo "OWNER_INVENTORY_NO_RECONNECT=PASS"
+      - name: Production freeze
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json -o /tmp/mac.json
+          curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json -o /tmp/win.json
+          python3 - <<'PY'
+          import json
+          assert json.load(open('/tmp/mac.json'))['version']=='3.3.5'
+          assert json.load(open('/tmp/win.json'))['version']=='3.3.5'
+          print('PRODUCTION_FEEDS_UNCHANGED=3.3.5')
+          PY
