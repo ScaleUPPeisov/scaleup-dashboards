@@ -130,7 +130,7 @@ export function PublisherOS(){
     if(removed.length){const repaired=removeSelectedPublishItems(draft.selectedIds,selected.map(x=>x.id),draft.rows,removed);setDraftPatch({selectedIds:repaired.selectedIds,rows:repaired.rows});setFingerprints(prev=>{const next={...prev};for(const id of removed)delete next[id];return next})}
     if(moved)notifySuccess('Видео перемещены в Корзину',`${moved} файлов • permanent delete: NO.`,{operationId});
     const skipped=alreadyMissing+processing+changed+verification;if(skipped)notifyWarning('Очистка завершена с исключениями',`Уже отсутствуют: ${alreadyMissing} • YouTube не READY: ${processing} • source changed: ${changed} • verification: ${verification}. Одна сводка вместо CLEANUP_NOT_READY по каждому файлу.`,{operationId:operationId+':summary'});
-   }finally{setRemoveRequest(null);setBusy(false);void refreshSessions();if(deleteFromDisk&&channelRenderFolder)void scanRenderFolder()}
+   }finally{setRemoveRequest(null);setBusy(false);void refreshSessions();if(deleteFromDisk&&channelRenderFolder)void scanRenderFolder('cleanup')}
   }
   async function fingerprintForJob(j:VideoJob){if(!j.finalPath)throw new Error('LOCAL_FILE_REQUIRED');const existing=fingerprints[j.id];if(existing)return existing;const cache=useApp.getState().fingerprintCache[j.finalPath];const x=await api.youtubeFileFingerprint(j.finalPath,cache?{size:cache.size,mtimeMs:cache.mtimeMs,sha256:cache.sha256}:undefined);cacheFingerprint(j.finalPath,{path:j.finalPath,size:x.size,mtimeMs:x.modifiedAt,sha256:x.fingerprint,computedAt:new Date().toISOString()});const fp={fingerprint:x.fingerprint,size:x.size,modifiedAt:x.modifiedAt};patchJob(j.id,{currentSourceFingerprint:x.fingerprint,currentSourceFileSize:x.size,currentSourceModifiedAt:x.modifiedAt,sourceGenerationKey:`${j.channelId}:${x.fingerprint}:${x.size}`});setFingerprints(prev=>({...prev,[j.id]:fp}));return fp}
  function persistVerifiedUpload(j:VideoJob,c:NonNullable<typeof channel>,videoId:string,fp:{fingerprint:string;size:number},overrideDuplicate=false,proofSource:'UPLOAD_TIME'|'UPLOAD_RESUME_TIME'='UPLOAD_TIME',uploadOperationId?:string,fingerprintCapturedAt=new Date().toISOString()){if(!j.finalPath)throw new Error('LOCAL_FILE_REQUIRED');const now=new Date().toISOString();const state=useApp.getState();const projectEntry=Object.entries(state.projectLifecycle).find(([,x])=>x.jobId===j.id);const nextHistory=recordVerifiedUpload(state.uploadHistory,{jobId:j.id,channelId:c.id,profileId:c.youtubeProfileId,youtubeChannelId:c.youtubeChannelId,youtubeVideoId:videoId,localFilePath:j.finalPath,originalFilename:baseName(j.finalPath),projectId:projectEntry?.[1].projectId,sourceProjectPath:projectEntry?.[1].projectPath,titleAtUpload:j.title,uploadedAt:now,fileSize:fp.size,sha256:fp.fingerprint,fingerprintProofSource:proofSource,fingerprintCapturedAt,sourceGenerationKeyAtUpload:`${j.channelId}:${fp.fingerprint}:${fp.size}`,uploadOperationId,proofSchemaVersion:1,publishAt:j.publishAt,overrideDuplicate,sourceLifecycle:'PRESENT',processingState:'UPLOAD_ACCEPTED',identityVerifiedAt:now});replaceUploadHistory(nextHistory);if(projectEntry){patchProjectLifecycle(projectEntry[0],nextProjectLifecycle(projectEntry[1],nextHistory))}patchJob(j.id,{status:'SCHEDULED',storageLifecycle:'UPLOADED',youtubeVideoId:videoId,uploadProgress:100,uploadedAt:now,uploadAcceptedAt:now,processingState:'UPLOAD_ACCEPTED',uploadInterruptedAt:undefined,currentSourceFingerprint:fp.fingerprint,currentSourceFileSize:fp.size,sourceGenerationKey:`${j.channelId}:${fp.fingerprint}:${fp.size}`});return now}
@@ -247,7 +247,7 @@ export function PublisherOS(){
   setRenderScan(null);
   notifySuccess('Папка рендера привязана',`${channel.name} → ${best[0]}`);
  }
- async function scanRenderFolder(){
+ async function scanRenderFolder(reason:'publisher'|'cleanup'='publisher'){
   const root=channelRenderFolder,taskId=`render-scan:${channelId}`;
   if(!root){
     notifyWarning('Папка рендера не настроена',`Выберите папку Render для ${channel?.name||'текущего канала'} или запустите автопоиск.`);
@@ -258,7 +258,7 @@ export function PublisherOS(){
   startTask(taskId,'Единый Live Inventory scan');
   setRenderScanBusy(true);
   try{
-    const snapshot=await scanInventoryChannel(channelId,'publisher');
+    const snapshot=await scanInventoryChannel(channelId,reason);
     if(!snapshot||snapshot.folderState!=='ONLINE'||!snapshot.result||!snapshot.rows||!snapshot.summary){
       setSourceAvailability(snapshot?.folderState==='OFFLINE'?'OFFLINE':'UNKNOWN');
       failTask(taskId,snapshot?.error||'Render folder offline');
