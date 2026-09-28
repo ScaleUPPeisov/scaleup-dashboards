@@ -53,7 +53,7 @@ export function LiveContentInventory(){
           <span className="liveInventoryChannel"><b>{row.channelName}</b><small title={row.renderFolderPath}>{row.renderFolderPath||'Render folder не настроена'}</small></span>
           <span><b>{row.readyVideos}</b><small>{row.newCandidates} new • {row.newGenerations} gen • {row.knownReady} known</small></span>
           <span><b>{row.uploadingVideos}</b><small>active</small></span>
-          <span><b>{row.folderState==='OFFLINE'?'—':row.runwayDays}</b><small>{row.folderState==='OFFLINE'?'last known':String(row.runwayDays)+' дней'}</small></span>
+          <span><b>{row.runwayDays}</b><small>{row.folderState==='OFFLINE'?'last known • '+row.runwayDays+' дней':String(row.runwayDays)+' дней'}</small></span>
           <span><b>{levelIcon[row.level]} {levelLabel[row.level]}</b><small>{row.folderState}{row.stale?' • STALE':''}{row.uploadedLocalCopies?' • uploaded copies '+row.uploadedLocalCopies:''}{row.verifyRequired?' • verify '+row.verifyRequired:''}</small></span>
           <span><b>{age(row.lastScanAt||row.lastConfirmedAt,now)}</b><small>{row.folderState==='OFFLINE'&&row.lastConfirmedAt?'последний подтверждённый snapshot':'local scan'}</small></span>
           <span><button className="mini" disabled={row.folderState==='SCANNING'} onClick={e=>{e.stopPropagation();void scanInventoryChannel(row.channelId,'manual-channel')}}>↻ Пересканировать</button></span>
