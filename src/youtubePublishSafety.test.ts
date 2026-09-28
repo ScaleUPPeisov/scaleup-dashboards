@@ -14,7 +14,8 @@ Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{
 
 describe('Publish safety',()=>{
  beforeEach(()=>localStorage.clear());
- it('counts only completed uploads in rolling 24h and protects duplicate fingerprint',()=>{const a=beginPublishAttempt({channelId:'c',jobId:'j',filePath:'/x.mp4',fingerprint:'abc',fileSize:10});expect(safeDailyStatus('c',15).used).toBe(0);completePublishAttempt(a.id,'YT1');expect(safeDailyStatus('c',15)).toEqual(expect.objectContaining({used:1,remaining:14}));expect(findSuccessfulUpload('c','abc')?.videoId).toBe('YT1')});
+ it('counts only completed uploads in the local calendar day and protects duplicate fingerprint',()=>{const a=beginPublishAttempt({channelId:'c',jobId:'j',filePath:'/x.mp4',fingerprint:'abc',fileSize:10});expect(safeDailyStatus('c',15).used).toBe(0);completePublishAttempt(a.id,'YT1');expect(safeDailyStatus('c',15)).toEqual(expect.objectContaining({used:1,remaining:14}));expect(findSuccessfulUpload('c','abc')?.videoId).toBe('YT1')});
+ it('supports explicit unlimited VYRON mode without pretending a YouTube allowance',()=>{const s=safeDailyStatus('c',0);expect(s.configured).toBe(true);expect(s.unlimited).toBe(true);expect(s.limit).toBeUndefined();expect(s.remaining).toBeUndefined()});
  it('locks one channel but not another',()=>{const a=acquireChannelUploadLock('c');expect(a).toBeTruthy();expect(acquireChannelUploadLock('c')).toBeNull();const b=acquireChannelUploadLock('d');expect(b).toBeTruthy();releaseChannelUploadLock('c',a!);expect(acquireChannelUploadLock('c')).toBeTruthy()});
  it('recognizes real daily upload limit wording',()=>expect(isYoutubeDailyUploadLimitError('daily upload limit exceeded')).toBe(true));
 });
