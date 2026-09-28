@@ -1,0 +1,51 @@
+name: VYRON 3.3.4 Live Inventory Dev Gate
+
+on:
+  push:
+    branches:
+      - feature/vyron-3.3.4-live-content-inventory
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-334-live-inventory-dev-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Live inventory + preserved production regressions
+        run: |
+          npx vitest run             src/v334LiveContentInventory.test.ts             src/renderScanClassifier.test.ts             src/readyVideoInventory.test.ts             src/v333DocxScheduleTimeSource.test.ts             src/v332WindowsOauthLauncher.test.ts             src/publisherSchedule.test.ts             src/scheduleContinuation.test.ts             src/v2111PublisherRuntime.test.ts             src/v300PublisherUiContracts.test.ts             src/v300OauthContinuity.test.ts             src/v300OauthPersistence.test.ts
+      - run: npm run build
+
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Rust check + local scanner/watcher tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }} local_delete
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }} inventory_watch
+      - run: cargo check --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }}
