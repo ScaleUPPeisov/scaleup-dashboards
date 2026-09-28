@@ -4,6 +4,7 @@ import {describe,expect,it} from 'vitest';
 const backend=fs.readFileSync('src-tauri/src/youtube.rs','utf8');
 const baseConfig=JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json','utf8'));
 const windowsConfig=JSON.parse(fs.readFileSync('src-tauri/tauri.windows.conf.json','utf8'));
+const packageJson=JSON.parse(fs.readFileSync('package.json','utf8'));
 
 function section(start:string,end:string){
   const a=backend.indexOf(start);
@@ -45,7 +46,7 @@ describe('VYRON 3.3.2 Windows OAuth launcher hotfix',()=>{
     expect(backend).toContain('fn commit_new_channel_oauth(');
     expect(backend).toContain('.query(&[("part", "snippet,statistics"), ("mine", "true")])');
 
-    expect(baseConfig.version).toBe('3.3.4');
+    expect(baseConfig.version).toBe(packageJson.version);
     expect(baseConfig.identifier).toBe('studio.channelflow.desktop');
     expect(baseConfig.plugins.updater.endpoints).toEqual([
       'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json',
