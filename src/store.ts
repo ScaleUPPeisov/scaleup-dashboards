@@ -22,7 +22,8 @@ export const DEFAULT_SETTINGS:Settings={
 
 export const EMPTY_STATE:AppState={version:11,channels:[],jobs:[],competitors:[],settings:DEFAULT_SETTINGS,logs:[],uploadHistory:[],activityJournal:[],statisticsHistory:{},ownerYoutubeInventory:{},fingerprintCache:{},projectLifecycle:{}};
 
-type Store=AppState&{
+type Store=Omit<AppState,'ownerYoutubeInventory'>&{
+  ownerYoutubeInventory:YoutubeOwnerInventoryHistory;
   page:Page; booted:boolean; notice?:string;
   hydrate:(s:AppState)=>void; setPage:(p:Page)=>void; persist:()=>Promise<void>;
   addChannel:(p:Partial<Channel>)=>Channel; updateChannel:(id:string,p:Partial<Channel>)=>void; removeChannel:(id:string)=>void;
