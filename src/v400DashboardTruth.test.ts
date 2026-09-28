@@ -34,6 +34,12 @@ describe('VYRON 4.0.0 dashboard truth separation',()=>{
    expect(scheduler).toContain('setInterval(run,OWNER_INVENTORY_TTL_MS)');
    expect(app).toContain('<OwnerInventoryScheduler/>');
  });
+ it('Today block exposes daily operational state without using local stock as YouTube schedule',()=>{
+   expect(dashboard).toContain('Активных каналов');
+   expect(dashboard).toContain('Активные ошибки');
+   expect(dashboard).toContain('activeTodayChannels');
+   expect(dashboard).toContain('ownerTotals.nextScheduledAt');
+ });
  it('dashboard treats missing subscriber data as unavailable, not zero',()=>{
    expect(dashboard).toContain("hiddenSubscriberCount?undefined");
    expect(dashboard).toContain("subscriberValues.length?fmt(subscriberTotal):'—'");
