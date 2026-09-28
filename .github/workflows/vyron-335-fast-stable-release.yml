@@ -1,0 +1,334 @@
+name: VYRON 3.3.5 Fast Stable Release
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-3.3.5-render-folder-picker
+    paths:
+      - '.github/workflows/vyron-335-fast-stable-release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: vyron-335-fast-stable-release
+  cancel-in-progress: false
+
+env:
+  VERSION: '3.3.5'
+  RELEASE_REPO: ScaleUPPeisov/vyron-releases
+  BUNDLE_ID: studio.channelflow.desktop
+  EXECUTABLE: channelflow
+  EXPECTED_SIGNING_CERT_SHA1: 2C8B0BD4EE1C000D29DD0667BF1068D4673692C9
+
+jobs:
+  gate:
+    name: Targeted hotfix gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Version + picker safety + inventory regression
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          node -e "const p=require('./package.json'),l=require('./package-lock.json'); if(p.version!=='3.3.5'||l.version!=='3.3.5'||l.packages[''].version!=='3.3.5') process.exit(1)"
+          grep -F 'version = "3.3.5"' src-tauri/Cargo.toml
+          grep -A1 -F 'name = "channelflow"' src-tauri/Cargo.lock | grep -F 'version = "3.3.5"'
+          python3 - <<'PY'
+          import json
+          c=json.load(open('src-tauri/tauri.conf.json'))
+          assert c['version']=='3.3.5'
+          assert c['identifier']=='studio.channelflow.desktop'
+          PY
+          npx vitest run src/v335RenderFolderPicker.test.ts src/v334LiveContentInventory.test.ts src/v334LiveInventorySafety.test.ts src/renderScanClassifier.test.ts
+          npm run build
+          echo 'TARGETED_HOTFIX_GATE=PASS'
+      - name: Production baseline
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json -o /tmp/mac.json
+          curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json -o /tmp/win.json
+          python3 - <<'PY'
+          import json
+          assert json.load(open('/tmp/mac.json'))['version']=='3.3.4'
+          assert json.load(open('/tmp/win.json'))['version']=='3.3.4'
+          print('PRODUCTION_BASELINE=3.3.4')
+          PY
+
+  mac:
+    name: Signed macOS ARM64
+    needs: gate
+    runs-on: macos-14
+    timeout-minutes: 90
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      VYRON_MACOS_SIGNING_P12_BASE64: ${{ secrets.VYRON_MACOS_SIGNING_P12_BASE64 }}
+      VYRON_MACOS_SIGNING_P12_PASSWORD: ${{ secrets.VYRON_MACOS_SIGNING_P12_PASSWORD }}
+      VYRON_MACOS_SIGNING_IDENTITY: ${{ secrets.VYRON_MACOS_SIGNING_IDENTITY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - run: npm ci --no-audit --no-fund
+      - name: Import signing identity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          KEYCHAIN="$RUNNER_TEMP/vyron-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)$(uuidgen)"
+          P12="$RUNNER_TEMP/vyron-signing.p12"
+          printf '%s' "$VYRON_MACOS_SIGNING_P12_BASE64" | base64 --decode > "$P12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$P12" -k "$KEYCHAIN" -P "$VYRON_MACOS_SIGNING_P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security >/dev/null
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          LOGIN_KEYCHAIN="$(security default-keychain -d user | tr -d '"')"
+          security list-keychains -d user -s "$KEYCHAIN" "$LOGIN_KEYCHAIN"
+          ID_SHA1="$(security find-certificate -Z -c "$VYRON_MACOS_SIGNING_IDENTITY" "$KEYCHAIN" 2>/dev/null | awk '/SHA-1 hash:/{print $3; exit}')"
+          test "$(printf '%s' "$ID_SHA1" | tr '[:lower:]' '[:upper:]')" = "$EXPECTED_SIGNING_CERT_SHA1"
+          echo "VYRON_SIGNING_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+          echo "VYRON_SIGNING_KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> "$GITHUB_ENV"
+      - name: Normalize updater key
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import base64,os
+          raw=os.environ['TAURI_SIGNING_PRIVATE_KEY'].strip()
+          def dec(x):
+            try:return base64.b64decode(x,validate=True).decode()
+            except:return None
+          if raw.startswith('untrusted comment:'): out=base64.b64encode(raw.encode()).decode()
+          else:
+            one=dec(raw)
+            if one and one.startswith('untrusted comment:'): out=raw
+            else:
+              box=dec(one) if one else None
+              assert box and box.startswith('untrusted comment:')
+              out=one.strip()
+          open(os.environ['GITHUB_ENV'],'a').write('TAURI_SIGNING_PRIVATE_KEY='+out+'\n')
+          print('::add-mask::'+out)
+          PY
+      - name: Build signed macOS 3.3.5
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          security unlock-keychain -p "$VYRON_SIGNING_KEYCHAIN_PASSWORD" "$VYRON_SIGNING_KEYCHAIN"
+          npx tauri build --target aarch64-apple-darwin --bundles app,dmg
+          mkdir -p out-mac
+          APP="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)"
+          DMG="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -name '*.dmg' -print -quit)"
+          UPDATER="$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name '*.app.tar.gz' -print -quit)"
+          SIG="$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name '*.app.tar.gz.sig' -print -quit)"
+          test -d "$APP"; test -s "$DMG"; test -s "$UPDATER"; test -s "$SIG"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = '3.3.5'
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = "$BUNDLE_ID"
+          codesign --verify --deep --strict "$APP"
+          hdiutil verify "$DMG"
+          cp "$DMG" out-mac/VYRON-3.3.5-arm64.dmg
+          cp "$UPDATER" out-mac/VYRON.app.tar.gz
+          cp "$SIG" out-mac/VYRON.app.tar.gz.sig
+          shasum -a 256 out-mac/VYRON-3.3.5-arm64.dmg > out-mac/VYRON-3.3.5-arm64.dmg.sha256
+          shasum -a 256 out-mac/VYRON.app.tar.gz > out-mac/VYRON.app.tar.gz.sha256
+          echo "MAC_SHA=$(awk '{print $1}' out-mac/VYRON-3.3.5-arm64.dmg.sha256)" >> "$GITHUB_ENV"
+          echo "MAC_UPDATER_SHA=$(awk '{print $1}' out-mac/VYRON.app.tar.gz.sha256)" >> "$GITHUB_ENV"
+      - name: Quick physical launch
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          APP="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)"
+          HOME_FIXTURE="$RUNNER_TEMP/vyron-335-home"; mkdir -p "$HOME_FIXTURE"
+          env -i HOME="$HOME_FIXTURE" USER="$USER" PATH='/usr/bin:/bin:/usr/sbin:/sbin' TMPDIR="$RUNNER_TEMP/" "$APP/Contents/MacOS/$EXECUTABLE" >/tmp/vyron-335.log 2>&1 &
+          P=$!; sleep 5; kill -0 "$P"; kill "$P" || true; wait "$P" || true
+          echo 'MACOS_3_3_5_LAUNCH=PASS'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-3.3.5-MAC
+          path: out-mac/**
+          if-no-files-found: error
+
+  windows:
+    name: Signed Windows x64
+    needs: gate
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - run: npm ci --no-audit --no-fund
+      - name: Normalize updater key
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          import base64,os
+          raw=os.environ['TAURI_SIGNING_PRIVATE_KEY'].strip()
+          def dec(x):
+            try:return base64.b64decode(x,validate=True).decode()
+            except:return None
+          if raw.startswith('untrusted comment:'): out=base64.b64encode(raw.encode()).decode()
+          else:
+            one=dec(raw)
+            if one and one.startswith('untrusted comment:'): out=raw
+            else:
+              box=dec(one) if one else None
+              assert box and box.startswith('untrusted comment:')
+              out=one.strip()
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as fp: fp.write('TAURI_SIGNING_PRIVATE_KEY='+out+'\n')
+          print('::add-mask::'+out)
+          PY
+      - name: Windows picker regression
+        shell: pwsh
+        run: |
+          npx vitest run src/v335RenderFolderPicker.test.ts src/v334LiveContentInventory.test.ts
+          if($LASTEXITCODE -ne 0){throw 'WINDOWS_PICKER_REGRESSION_FAILED'}
+      - name: Build signed Windows 3.3.5
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          npx tauri build --target x86_64-pc-windows-msvc --bundles nsis --config src-tauri/tauri.windows.conf.json
+          if($LASTEXITCODE -ne 0){throw 'WINDOWS_BUILD_FAILED'}
+          $installer=Get-ChildItem src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis -Filter '*-setup.exe' | Select-Object -First 1
+          if(-not $installer){throw 'NSIS_MISSING'}
+          $sig=Get-Item ($installer.FullName + '.sig') -ErrorAction Stop
+          New-Item -ItemType Directory -Force -Path out-windows | Out-Null
+          Copy-Item $installer.FullName out-windows/VYRON_3.3.5_x64-setup.exe
+          Copy-Item $sig.FullName out-windows/VYRON_3.3.5_x64-setup.exe.sig
+          $sha=(Get-FileHash out-windows/VYRON_3.3.5_x64-setup.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$sha  VYRON_3.3.5_x64-setup.exe" | Set-Content out-windows/VYRON_3.3.5_x64-setup.exe.sha256
+          Write-Host "WINDOWS_SHA=$sha"
+      - name: Quick physical install and launch
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $p=Start-Process -FilePath (Resolve-Path 'out-windows/VYRON_3.3.5_x64-setup.exe') -ArgumentList '/S' -Wait -PassThru
+          if($p.ExitCode -ne 0){throw "INSTALL_EXIT=$($p.ExitCode)"}
+          $roots=@((Join-Path $env:LOCALAPPDATA 'Programs'),$env:LOCALAPPDATA) | Where-Object {$_ -and (Test-Path $_)}
+          $exe=$null
+          foreach($root in $roots){
+            $exe=Get-ChildItem $root -File -Recurse -ErrorAction SilentlyContinue | Where-Object {$_.Name -in @('channelflow.exe','VYRON.exe') -and ($_.VersionInfo.ProductVersion -as [string]).StartsWith('3.3.5')} | Select-Object -First 1
+            if($exe){break}
+          }
+          if(-not $exe){throw 'VYRON_3_3_5_EXE_NOT_FOUND'}
+          $proc=Start-Process -FilePath $exe.FullName -PassThru
+          Start-Sleep -Seconds 5
+          $proc.Refresh()
+          if($proc.HasExited){throw "VYRON_3_3_5_LAUNCH_EXITED=$($proc.ExitCode)"}
+          Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          Write-Host 'WINDOWS_3_3_5_LAUNCH=PASS'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-3.3.5-WINDOWS
+          path: out-windows/**
+          if-no-files-found: error
+
+  publish:
+    name: Publish 3.3.5
+    needs: [mac, windows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      RELEASE_TOKEN: ${{ secrets.VYRON_RELEASES_TOKEN }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: VYRON-3.3.5-MAC
+          path: release/mac
+      - uses: actions/download-artifact@v4
+        with:
+          name: VYRON-3.3.5-WINDOWS
+          path: release/windows
+      - name: Publish release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -n "$RELEASE_TOKEN"
+          MAC_DMG=release/mac/VYRON-3.3.5-arm64.dmg
+          MAC_UPDATER=release/mac/VYRON.app.tar.gz
+          MAC_SIG=release/mac/VYRON.app.tar.gz.sig
+          WIN=release/windows/VYRON_3.3.5_x64-setup.exe
+          WIN_SIG=release/windows/VYRON_3.3.5_x64-setup.exe.sig
+          for f in "$MAC_DMG" "$MAC_UPDATER" "$MAC_SIG" "$WIN" "$WIN_SIG"; do test -s "$f"; done
+          cat >/tmp/notes.md <<EOF
+          ## VYRON 3.3.5 — Render Folder Picker Hotfix
+
+          - Adds “Выбрать Render / Сменить Render” directly in Live Content Inventory.
+          - The selected path is persisted only to channel.renderFolderPath.
+          - Projects folders are blocked from being assigned as Render.
+          - The generic Render root is blocked; the exact channel folder must be selected.
+          - A folder belonging to another channel is blocked.
+          - After saving, the channel is immediately rescanned.
+          - OAuth, YouTube profiles, channels, upload history and Projects bindings are preserved.
+          EOF
+          GH_TOKEN="$RELEASE_TOKEN" gh release create v3.3.5 --repo "$RELEASE_REPO" --target main --title 'VYRON 3.3.5 — Render Folder Picker Hotfix' --notes-file /tmp/notes.md             "$MAC_DMG" release/mac/VYRON-3.3.5-arm64.dmg.sha256 "$MAC_UPDATER" release/mac/VYRON.app.tar.gz.sha256 "$MAC_SIG"             "$WIN" release/windows/VYRON_3.3.5_x64-setup.exe.sha256 "$WIN_SIG"
+          echo 'RELEASE_3_3_5=PUBLISHED'
+      - name: Promote both updater feeds
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git clone "https://x-access-token:$RELEASE_TOKEN@github.com/$RELEASE_REPO.git" release-repo
+          MAC_SIG="$(tr -d '\r\n' < release/mac/VYRON.app.tar.gz.sig)"
+          WIN_SIG="$(tr -d '\r\n' < release/windows/VYRON_3.3.5_x64-setup.exe.sig)"
+          PUB_DATE="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          python3 - "$MAC_SIG" "$WIN_SIG" "$PUB_DATE" <<'PY'
+          import json,sys
+          from pathlib import Path
+          mac_sig,win_sig,pub=sys.argv[1:4]
+          repo='ScaleUPPeisov/vyron-releases'
+          notes='VYRON 3.3.5 — Render folder picker hotfix; exact per-channel Render selection, Projects protection, immediate persistence and rescan.'
+          Path('release-repo/updates/latest.json').write_text(json.dumps({
+            'version':'3.3.5','notes':notes,'pub_date':pub,
+            'platforms':{'darwin-aarch64':{'url':f'https://github.com/{repo}/releases/download/v3.3.5/VYRON.app.tar.gz','signature':mac_sig}}
+          },ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          Path('release-repo/updates/windows-latest.json').write_text(json.dumps({
+            'version':'3.3.5','notes':notes,'pub_date':pub,
+            'platforms':{'windows-x86_64':{'url':f'https://github.com/{repo}/releases/download/v3.3.5/VYRON_3.3.5_x64-setup.exe','signature':win_sig}}
+          },ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          PY
+          cd release-repo
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add updates/latest.json updates/windows-latest.json
+          git commit -m 'release: promote VYRON 3.3.5 cross-platform updater'
+          git push origin main
+          echo 'FEEDS_3_3_5=PROMOTED'
+      - name: Final API verification
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          GH_TOKEN="$RELEASE_TOKEN" gh api "repos/$RELEASE_REPO/releases/tags/v3.3.5" --jq '.tag_name + " assets=" + (.assets|length|tostring)'
+          GH_TOKEN="$RELEASE_TOKEN" gh api "repos/$RELEASE_REPO/contents/updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 -d > /tmp/mac.json
+          GH_TOKEN="$RELEASE_TOKEN" gh api "repos/$RELEASE_REPO/contents/updates/windows-latest.json?ref=main" --jq .content | tr -d '\n' | base64 -d > /tmp/win.json
+          GH_TOKEN="$RELEASE_TOKEN" gh api "repos/$RELEASE_REPO/contents/updates/owner-preview.json?ref=main" --jq .content | tr -d '\n' | base64 -d > /tmp/owner.json
+          python3 - <<'PY'
+          import json
+          assert json.load(open('/tmp/mac.json'))['version']=='3.3.5'
+          assert json.load(open('/tmp/win.json'))['version']=='3.3.5'
+          assert json.load(open('/tmp/owner.json'))['version']=='3.3.1-preview.339'
+          print('VYRON_3_3_5_PRODUCTION=PASS')
+          PY
