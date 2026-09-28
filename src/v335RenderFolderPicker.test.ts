@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import {describe,expect,it} from 'vitest';
 import {normalizeFolderSelectionPath,validateRenderFolderSelection} from './renderFolderSelection';
 
@@ -35,4 +36,12 @@ describe('VYRON 3.3.5 render folder picker safety',()=>{
   it('normalizes Windows drive letter and trailing separators',()=>{
     expect(normalizeFolderSelectionPath('D:\\Render\\Aether Riff\\')).toBe('d:/Render/Aether Riff')
   })
+
+  it('inventory picker persists only renderFolderPath and immediately rescans',()=>{
+    const source=fs.readFileSync('src/LiveContentInventory.tsx','utf8');
+    expect(source).toContain("updateChannel(channel.id,{renderFolderPath:validation.path})");
+    expect(source).not.toContain("projectsFolderPath:validation.path");
+    expect(source).toContain('await useApp.getState().persist()');
+    expect(source).toContain("await scanInventoryChannel(channel.id,'manual-channel')");
+  });
 });
