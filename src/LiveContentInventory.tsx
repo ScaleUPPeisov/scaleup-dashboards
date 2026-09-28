@@ -2,7 +2,7 @@ import React,{useEffect,useMemo,useState} from 'react';
 import {useApp} from './store';
 import {api} from './api';
 import {notifySuccess,notifyWarning} from './notificationCenter';
-import {validateRenderFolderSelection} from './renderFolderSelection';
+import {renderChannelFolderPath,validateRenderFolderSelection,validateRenderRootSelection} from './renderFolderSelection';
 import {inventoryTotals,scanAllInventories,scanInventoryChannel,useLiveInventory,type ChannelInventorySnapshot,type InventoryLevel} from './renderInventoryRuntime';
 import {saveActivePublishChannel} from './publishWorkspaceState';
 import {sortChannelsAlphabetically} from './channelSort';
@@ -21,10 +21,11 @@ function fallback(channelId:string,name:string,path:string):ChannelInventorySnap
 }
 
 export function LiveContentInventory(){
-  const channels=useApp(s=>s.channels),setPage=useApp(s=>s.setPage),updateChannel=useApp(s=>s.updateChannel);
+  const channels=useApp(s=>s.channels),settings=useApp(s=>s.settings),setPage=useApp(s=>s.setPage),updateChannel=useApp(s=>s.updateChannel),patchSettings=useApp(s=>s.patchSettings);
   const snapshots=useLiveInventory(s=>s.snapshots),audit=useLiveInventory(s=>s.audit),globalScanning=useLiveInventory(s=>s.globalScanning);
   const [now,setNow]=useState(Date.now());
   const [folderPicking,setFolderPicking]=useState<string>();
+  const [rootPicking,setRootPicking]=useState(false);
   useEffect(()=>{const id=window.setInterval(()=>setNow(Date.now()),1000);return()=>window.clearInterval(id)},[]);
   const enabled=useMemo(()=>sortChannelsAlphabetically(channels.filter(c=>c.enabled!==false)),[channels]);
   const totals=useMemo(()=>inventoryTotals(snapshots,enabled),[snapshots,enabled]);
@@ -32,6 +33,45 @@ export function LiveContentInventory(){
   const lastFresh=rows.map(x=>x.lastScanAt).filter((x):x is string=>Boolean(x)).sort().at(-1);
   const channelName=new Map(enabled.map(c=>[c.id,c.name]));
   const openPublisher=(channelId:string)=>{saveActivePublishChannel(channelId);setPage('publisher')};
+  const chooseAllRenderFolders=async()=>{
+    if(rootPicking||globalScanning)return;
+    setRootPicking(true);
+    try{
+      const selected=await api.chooseRenderRoot(settings.renderRootPath||undefined);
+      if(!selected)return;
+      const rootValidation=validateRenderRootSelection(selected);
+      if(!rootValidation.ok){
+        notifyWarning('Не сохранено как общая Render-папка',rootValidation.message);
+        return
+      }
+      const rootStatus=await api.localSourceStatus(rootValidation.path).catch(()=>null);
+      if(!rootStatus?.exists||rootStatus.isFile){
+        notifyWarning('Render-папка недоступна','Подключите диск и выберите существующую общую папку Render.');
+        return
+      }
+      const current=useApp.getState().channels.filter(x=>x.enabled!==false);
+      const checks=await Promise.all(current.map(async channel=>{
+        const candidate=renderChannelFolderPath(rootValidation.path,channel.name);
+        const status=await api.localSourceStatus(candidate).catch(()=>null);
+        return{channel,candidate,ok:Boolean(status?.exists&&!status.isFile)}
+      }));
+      const matched=checks.filter(x=>x.ok);
+      patchSettings({renderRootPath:rootValidation.path});
+      for(const row of matched)updateChannel(row.channel.id,{renderFolderPath:row.candidate});
+      try{
+        await useApp.getState().persist();
+      }catch(error){
+        notifyWarning('Не удалось сохранить общую Render-папку',String(error));
+        return
+      }
+      const missing=checks.filter(x=>!x.ok).map(x=>x.channel.name);
+      notifySuccess('Render-папки привязаны',`Найдено и сохранено: ${matched.length}/${current.length} каналов.${missing.length?' Не найдены: '+missing.slice(0,5).join(', ')+(missing.length>5?'…':''):''}`);
+      await scanAllInventories('manual-all');
+    }finally{
+      setRootPicking(false)
+    }
+  };
+
   const chooseRenderFolder=async(channelId:string)=>{
     const channel=useApp.getState().channels.find(x=>x.id===channelId);
     if(!channel||folderPicking)return;
@@ -68,7 +108,10 @@ export function LiveContentInventory(){
   return <div className="liveInventoryPage">
     <div className="pageHeader liveInventoryHeader">
       <div><small>LOCAL CONTENT MONITOR • ZERO YOUTUBE API</small><h1>Запас видео</h1><p>Живой физический запас Render-папок. Upload history и trusted fingerprints остаются историческим source of truth.</p></div>
-      <button className="primary" disabled={globalScanning} onClick={()=>void scanAllInventories('manual-all')}>{globalScanning?'СИНХРОНИЗИРУЮ…':'↻ СИНХРОНИЗИРОВАТЬ ВСЕ ПАПКИ'}</button>
+      <div className="inventoryHeaderActions">
+        <button className="secondary" disabled={rootPicking||globalScanning} onClick={()=>void chooseAllRenderFolders()}>{rootPicking?'ВЫБИРАЮ…':'📁 ВЫБРАТЬ ОБЩУЮ ПАПКУ RENDER'}</button>
+        <button className="primary" disabled={globalScanning||rootPicking} onClick={()=>void scanAllInventories('manual-all')}>{globalScanning?'СИНХРОНИЗИРУЮ…':'↻ СИНХРОНИЗИРОВАТЬ ВСЕ ПАПКИ'}</button>
+      </div>
     </div>
 
     <div className="inventoryHeroGrid">
@@ -84,12 +127,12 @@ export function LiveContentInventory(){
     <section className="panel liveInventoryTablePanel">
       <div className="panelHead"><div><small>CHANNEL INVENTORY</small><h3>Фактический запас по каналам</h3></div><span>{rows.length} каналов</span></div>
       <div className="liveInventoryTable">
-        <div className="liveInventoryRow head"><span>Канал</span><span>Готово</span><span>Загружается</span><span>Запас дней</span><span>Состояние папки</span><span>Последний scan</span><span/></div>
+        <div className="liveInventoryRow head"><span>Канал</span><span>Готово</span><span>Загружается</span><span>Запас дней (1 видео/день)</span><span>Состояние папки</span><span>Последний scan</span><span/></div>
         {rows.map(row=><div role="button" tabIndex={0} className={'liveInventoryRow level-'+row.level.toLowerCase()} key={row.channelId} onClick={()=>openPublisher(row.channelId)} onKeyDown={e=>{if(e.key==='Enter')openPublisher(row.channelId)}}>
           <span className="liveInventoryChannel"><b>{row.channelName}</b><small title={row.renderFolderPath}>{row.renderFolderPath||'Render folder не настроена'}</small></span>
           <span><b>{row.readyVideos}</b><small>{row.newCandidates} new • {row.newGenerations} gen • {row.knownReady} known</small></span>
           <span><b>{row.uploadingVideos}</b><small>active</small></span>
-          <span><b>{row.runwayDays}</b><small>{row.folderState==='OFFLINE'?'last known • '+row.runwayDays+' дней':String(row.runwayDays)+' дней'}</small></span>
+          <span><b>{row.runwayDays}</b><small>{row.folderState==='OFFLINE'?'last known • '+row.runwayDays+' дней':String(row.runwayDays)+' дней • 1/день'}</small></span>
           <span><b>{levelIcon[row.level]} {levelLabel[row.level]}</b><small>{row.folderState}{row.stale?' • STALE':''}{row.uploadedLocalCopies?' • uploaded copies '+row.uploadedLocalCopies:''}{row.verifyRequired?' • verify '+row.verifyRequired:''}</small></span>
           <span><b>{age(row.lastScanAt||row.lastConfirmedAt,now)}</b><small>{row.folderState==='OFFLINE'&&row.lastConfirmedAt?'последний подтверждённый snapshot':'local scan'}</small></span>
           <span className="liveInventoryActions">
