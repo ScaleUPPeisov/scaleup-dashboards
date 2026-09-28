@@ -22,12 +22,12 @@ export function ownerInventorySnapshotFromSync(channel:Channel,result:ExistingVi
   const scheduledCount=Math.max(0,Number(result.scheduledCount)||0);
   const unlistedCount=Math.max(0,Number(result.unlistedCount)||0);
   const total=publicCount+privateCount+scheduledCount+unlistedCount;
-  const latestScheduledAt=(result.videos||[])
+  const scheduledItems=(result.videos||[])
     .filter(v=>v.privacyStatus==='private'&&Boolean(v.publishAt))
-    .map(v=>isoOrUndefined(v.publishAt))
-    .filter((x):x is string=>Boolean(x))
-    .sort()
-    .at(-1);
+    .map(v=>({id:v.id,title:v.title||v.id,publishAt:isoOrUndefined(v.publishAt)! as string,privacyStatus:'private' as const}))
+    .filter(v=>Boolean(v.publishAt))
+    .sort((a,b)=>Date.parse(a.publishAt)-Date.parse(b.publishAt));
+  const latestScheduledAt=scheduledItems.at(-1)?.publishAt;
 
   return{
     channelId:channel.id,
@@ -40,6 +40,7 @@ export function ownerInventorySnapshotFromSync(channel:Channel,result:ExistingVi
     scheduledCount,
     unlistedCount,
     latestScheduledAt,
+    scheduledItems,
     complete:Boolean(result.syncComplete??result.complete),
     scheduleComplete:Boolean(result.scheduleComplete??result.complete),
     apiRequests:Math.max(0,Number(result.fullSyncApiRequests)||0),
