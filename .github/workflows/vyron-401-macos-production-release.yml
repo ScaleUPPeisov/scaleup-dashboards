@@ -1,4 +1,4 @@
-# build-rerun-migration-save-fix
+# build-rerun-apple-signing-identity
 name: VYRON 4.0.1 macOS Production Release
 
 on:
@@ -114,6 +114,7 @@ jobs:
           security list-keychains -d user -s "$KEYCHAIN" "$LOGIN_KEYCHAIN"
           ID_SHA1="$(security find-certificate -Z -c "$VYRON_MACOS_SIGNING_IDENTITY" "$KEYCHAIN" 2>/dev/null | awk '/SHA-1 hash:/{print $3; exit}')"
           test "$(printf '%s' "$ID_SHA1" | tr '[:lower:]' '[:upper:]')" = "$EXPECTED_SIGNING_CERT_SHA1"
+          echo "APPLE_SIGNING_IDENTITY=$ID_SHA1" >> "$GITHUB_ENV"
           echo "VYRON_SIGNING_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
           echo "VYRON_SIGNING_KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> "$GITHUB_ENV"
           echo 'MACOS_DEVELOPER_ID=PASS'
