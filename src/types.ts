@@ -1,4 +1,4 @@
-export type Page='dashboard'|'autopilot'|'accounts'|'channels'|'production'|'content'|'youtube'|'competitors'|'analytics'|'metadata'|'existing'|'publisher'|'settings';
+export type Page='dashboard'|'autopilot'|'accounts'|'channels'|'production'|'content'|'inventory'|'youtube'|'competitors'|'analytics'|'metadata'|'existing'|'publisher'|'settings';
 export type AutopilotMode='off'|'assisted'|'full';
 export type JobStatus='NEED_IMAGE'|'WAITING_MUSIC'|'READY_RENDER'|'RENDERING'|'READY_UPLOAD'|'UPLOADING'|'SCHEDULED'|'ERROR';
 export type Priority='red'|'orange'|'yellow'|'green';
