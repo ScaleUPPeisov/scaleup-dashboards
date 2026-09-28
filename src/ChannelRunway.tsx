@@ -20,6 +20,7 @@ import {
 } from './channelRunwayStore';
 import {buildContentRunway,contentRunwayQuotaView,type ContentRunwaySnapshot} from './contentRunway';
 import {configuredScheduleAverageIntervalDays,scheduleFrequencyTruthLabel} from './channelSchedule';
+import {ChannelAvatar} from './ChannelAvatar';
 import {
   buildYoutubeQuotaPlan,
   isYoutubeQuotaError,
@@ -198,7 +199,7 @@ export function ChannelRunway(){
       {rows.length===0?<div className="empty"><b>Нет активных каналов</b><p>Content Runway не создаёт демонстрационные данные.</p></div>:rows.map(({channel,record,content,uploadRemaining,uploadLimitKnown})=>{
         const meta=statusMeta[content.status];
         return <div className="runwayRow" key={channel.id}>
-          <span className="runwayChannel"><b>{channel.name}</b><small>{syncLabel(record.lastScheduleSync)}</small><small>{linkedByLocalId.has(channel.id)?`Subs ${subscriberStatLabel(channel.stats)} • Views ${compactChannelStat(channel.stats?.viewCount??channel.stats?.views)}`:'YouTube: НЕ ПОДКЛЮЧЁН'}</small></span>
+          <span className="runwayChannel runwayChannelWithAvatar"><ChannelAvatar channel={channel} size="sm"/><span><b>{channel.name}</b><small>{syncLabel(record.lastScheduleSync)}</small><small>{linkedByLocalId.has(channel.id)?`Subs ${subscriberStatLabel(channel.stats)} • Views ${compactChannelStat(channel.stats?.viewCount??channel.stats?.views)}`:'YouTube: НЕ ПОДКЛЮЧЁН'}</small></span></span>
           <span><b>{dateLabel(content.scheduledThrough)}</b></span>
           <span><b>{dateLabel(content.projectedRunwayEnd)}</b><small>{content.readyVideoCount?`+${content.readyVideoCount} slots`:'без локального буфера'}</small></span>
           <span className={`runwayDays ${content.status}`}>{`${content.contentRunwayDays} дн.`}</span>
