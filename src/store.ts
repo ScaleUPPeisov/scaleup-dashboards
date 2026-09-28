@@ -20,7 +20,7 @@ export const DEFAULT_SETTINGS:Settings={
   endlumeTargetDurationMin:120,endlumeTargetRenderSec:35,endlumeTargetFileMinMb:700,endlumeTargetFileMaxMb:1000,endlumePreserveImageQuality:true,endlumeProjectNaming:'VIDEO_{number}'
 };
 
-export const EMPTY_STATE:AppState={version:11,channels:[],jobs:[],competitors:[],settings:DEFAULT_SETTINGS,logs:[],uploadHistory:[],activityJournal:[],statisticsHistory:{},ownerYoutubeInventory:{},fingerprintCache:{},projectLifecycle:{}};
+export const EMPTY_STATE={version:11,channels:[],jobs:[],competitors:[],settings:DEFAULT_SETTINGS,logs:[],uploadHistory:[],activityJournal:[],statisticsHistory:{},ownerYoutubeInventory:{},fingerprintCache:{},projectLifecycle:{}} satisfies AppState;
 
 type Store=Omit<AppState,'ownerYoutubeInventory'>&{
   ownerYoutubeInventory:YoutubeOwnerInventoryHistory;
