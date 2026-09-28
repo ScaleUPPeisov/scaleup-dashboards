@@ -10,10 +10,10 @@ import {replaceFactualActiveRenders} from './activeOperationFacts';
 import {applyStaleOperationPatches,buildStaleOperationPatches} from './staleOperationReconciliation';
 
 export function ProductionStatusBridge(){
-  const booted=useApp(s=>s.booted),workspace=useApp(s=>s.settings.workspace),channels=useApp(s=>s.channels);
+  const booted=useApp(s=>s.booted),workspace=useApp(s=>s.settings.workspace),channelIdsKey=useApp(s=>s.channels.map(c=>c.id).join('|'));
   const observed=useRef(new Map<string,string>()),hydrated=useRef(false);
   useEffect(()=>{
-    if(!booted||!workspace||!channels.length)return;
+    if(!booted||!workspace||!channelIdsKey)return;
     let live=true,running=false;
     const run=async()=>{
       if(running||!live)return;
@@ -45,6 +45,6 @@ export function ProductionStatusBridge(){
     void run();
     const id=window.setInterval(()=>void run(),7000);
     return()=>{live=false;window.clearInterval(id)};
-  },[booted,workspace,channels.map(c=>c.id).join('|')]);
+  },[booted,workspace,channelIdsKey]);
   return null;
 }
