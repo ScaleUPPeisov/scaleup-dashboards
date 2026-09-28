@@ -2,7 +2,7 @@ import React,{useEffect,useMemo,useState} from 'react';
 import {api} from './api';
 import {useApp} from './store';
 import {
-  VYRON_4_ARTWORK,
+  VYRON_5_ARTWORK,
   VYRON_LAST_CELEBRATED_KEY,
   VYRON_MAJOR_UPGRADE_TARGET_KEY,
   VYRON_MAJOR_VERSION,
@@ -15,11 +15,11 @@ import {LocalProfileMenu} from './LocalProfileMenu';
 type CelebrationMode='upgrade'|'fresh';
 
 const fallbackHighlights=[
-  'Исправлена производительность и снижена нагрузка на интерфейс.',
-  'Добавлены профили VYRON и выбор аватара через системный файловый диалог.',
-  'Восстановлены иконки YouTube-каналов и безопасные fallback-аватары.',
-  'Добавлена отдельная История с общей сводкой по каналам.',
-  'Исправлены branding artwork, sidebar и стабильность экранов.'
+  'Новый Owner Operations Center и deterministic Next Action.',
+  '«Запас видео» показывает ежедневную работу без Finder и без YouTube API для today counters.',
+  'Исправлено фоновое расходование YouTube API quota.',
+  'Updater восстанавливает потерянный candidate перед установкой.',
+  'OAuth, Google credentials, каналы, папки и история сохраняются при обновлении.'
 ];
 
 function releaseHighlights(raw:string){
@@ -70,8 +70,8 @@ export function MajorUpdateCelebration(){
     </div>
     <section className="majorCelebrationCard">
       <div className="majorCelebrationHalo" aria-hidden="true"/>
-      <SafeArtwork className="majorCelebrationArtwork" src={VYRON_4_ARTWORK} alt="VYRON YT PEISOV" fallback="V"/>
-      <small>{mode==='upgrade'?'UPDATE INSTALLED':'WELCOME'} • VYRON {runtimeVersion}</small>
+      <SafeArtwork className="majorCelebrationArtwork" src={VYRON_5_ARTWORK} alt="VYRON YT PEISOV" fallback="V"/>
+      <small>{mode==='upgrade'?'UPDATE INSTALLED':'WELCOME'} • VYRON {runtimeVersion}</small>{/^\d+\.0\.0(?:$|-)/.test(runtimeVersion)&&<strong className="majorReleaseLabel">БОЛЬШОЕ ОБНОВЛЕНИЕ</strong>}
       <h1 id="majorCelebrationTitle">{mode==='upgrade'?'ПОЗДРАВЛЯЕМ!':`Добро пожаловать в VYRON ${runtimeVersion}`}</h1>
       <h2>{mode==='upgrade'?`Обновление VYRON ${runtimeVersion} установлено`:'Autonomous Content Operating System'}</h2>
       <p>{mode==='upgrade'?'Каналы, OAuth, локальные папки, история и настройки сохранены.':'VYRON готов к работе.'}</p>
