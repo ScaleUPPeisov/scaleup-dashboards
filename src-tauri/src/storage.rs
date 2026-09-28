@@ -234,6 +234,10 @@ fn save_state_impl(app: &AppHandle, state: Value) -> Result<Value, String> {
     Ok(json!({"ok":true,"securityWarning":warnings.first().cloned().or(mirror_warning),"securityWarnings":warnings.len()}))
 }
 
+pub(crate) fn save_state_sync(app: AppHandle, state: Value) -> Result<Value, String> {
+    save_state_impl(&app,state)
+}
+
 #[tauri::command]
 pub async fn save_state(app: AppHandle, state: Value) -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(move || save_state_impl(&app,state))
