@@ -125,7 +125,7 @@ function offlineSnapshot(channel:Channel,previous?:ChannelInventorySnapshot,erro
 }
 function errorSnapshot(channel:Channel,previous:ChannelInventorySnapshot|undefined,error:string):ChannelInventorySnapshot{
   const prior=baseSnapshot(channel,previous);
-  return{...prior,channelId:channel.id,channelName:channel.name,renderFolderPath:String(channel.renderFolderPath||''),folderState:'ERROR',stale:true,error}
+  return{...prior,channelId:channel.id,channelName:channel.name,renderFolderPath:String(channel.renderFolderPath||''),folderState:'ERROR',stale:true,level:'OFFLINE',error}
 }
 
 async function fingerprintNeededFiles(result:RenderFolderScanResult,jobs:VideoJob[],history:UploadHistoryRecord[],channelId:string){
@@ -171,7 +171,7 @@ function auditFor(previous:ChannelInventorySnapshot|undefined,next:ChannelInvent
   }
   if(previous?.folderState==='OFFLINE'&&next.folderState==='ONLINE')store.pushAudit({id:eventId(next.channelId,'reconnect'),at:nowIso(),channelId:next.channelId,kind:'RECONNECT',message:`Папка снова ONLINE • fresh inventory: ${after}`,readyBefore:before,readyAfter:after});
   if(delta>0)store.pushAudit({id:eventId(next.channelId,'add'),at:nowIso(),channelId:next.channelId,kind:'ADD',message:`+${delta} новых видео • готово: ${after}`,readyBefore:before,readyAfter:after});
-  else if(delta<0)store.pushAudit({id:eventId(next.channelId,'remove'),at:nowIso(),channelId:next.channelId,kind:'REMOVE',message:reason==='cleanup'?`−${Math.abs(delta)} после подтверждённой cleanup • готово: ${after}`:`−${Math.abs(delta)} локальный файл исчез • готово: ${after}`,readyBefore:before,readyAfter:after});
+  else if(delta<0)store.pushAudit({id:eventId(next.channelId,'remove'),at:nowIso(),channelId:next.channelId,kind:'REMOVE',message:reason==='cleanup'?`−${Math.abs(delta)} после подтверждённой cleanup • готово: ${after}`:reason==='upload'?`−${Math.abs(delta)} ушло из ready после загрузки • готово: ${after}`:`−${Math.abs(delta)} локальный файл исчез • готово: ${after}`,readyBefore:before,readyAfter:after});
   else if(reason!=='periodic'&&reason!=='watcher')store.pushAudit({id:eventId(next.channelId,'scan'),at:nowIso(),channelId:next.channelId,kind:'SCAN',message:`scan: ${after} ready • ${next.physicalFiles} физических файлов`,readyBefore:before,readyAfter:after})
 }
 
