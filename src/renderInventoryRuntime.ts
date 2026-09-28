@@ -6,6 +6,7 @@ import {
   classifyChannelRenderFiles,
   normalizeRenderPath,
   renderFileNeedsFingerprint,
+  renderSequence,
   summarizeRenderScan,
   type RenderScanRow,
   type RenderScanSummary
@@ -52,14 +53,43 @@ type LiveInventoryState={
 };
 
 const emptySummary=():RenderScanSummary=>({TOTAL_CLASSIFIED_FILES:0,KNOWN_EXACT:0,UPLOADED_LOCAL_COPY:0,NEW_CANDIDATE:0,NEW_GENERATION:0,LEGACY_IDENTITY_UNPROVEN:0,VERIFY_REQUIRED:0,AMBIGUOUS:0,DUPLICATE_LOCAL:0,INVALID:0});
+const INVENTORY_CACHE_KEY='vyron:live-render-inventory:v1';
 const nowIso=()=>new Date().toISOString();
+function compactInventorySnapshot(row:ChannelInventorySnapshot):ChannelInventorySnapshot{
+  const {result:_result,rows:_rows,summary:_summary,...compact}=row;
+  return compact
+}
+function loadInventoryCache():Record<string,ChannelInventorySnapshot>{
+  if(typeof localStorage==='undefined')return{};
+  try{
+    const raw=JSON.parse(localStorage.getItem(INVENTORY_CACHE_KEY)||'{}') as Record<string,ChannelInventorySnapshot>;
+    const out:Record<string,ChannelInventorySnapshot>={};
+    for(const [id,row] of Object.entries(raw||{})){
+      if(!row||row.channelId!==id)continue;
+      out[id]={...compactInventorySnapshot(row),folderState:'OFFLINE',stale:true,level:'OFFLINE',error:'CACHED_LAST_CONFIRMED'}
+    }
+    return out
+  }catch{return{}}
+}
+function persistInventoryCache(snapshots:Record<string,ChannelInventorySnapshot>){
+  if(typeof localStorage==='undefined')return;
+  try{
+    const compact:Record<string,ChannelInventorySnapshot>={};
+    for(const [id,row] of Object.entries(snapshots))compact[id]=compactInventorySnapshot(row);
+    localStorage.setItem(INVENTORY_CACHE_KEY,JSON.stringify(compact))
+  }catch{}
+}
 const eventId=(channelId:string,kind:string)=>`inventory:${channelId}:${kind}:${Date.now()}:${Math.random().toString(36).slice(2,8)}`;
 
 export const useLiveInventory=create<LiveInventoryState>((set)=>({
-  snapshots:{},
+  snapshots:loadInventoryCache(),
   audit:[],
   globalScanning:false,
-  setSnapshot:row=>set(s=>({snapshots:{...s.snapshots,[row.channelId]:row}})),
+  setSnapshot:row=>set(s=>{
+    const snapshots={...s.snapshots,[row.channelId]:row};
+    if(row.folderState!=='SCANNING')persistInventoryCache(snapshots);
+    return{snapshots}
+  }),
   pushAudit:row=>set(s=>({audit:[row,...s.audit].slice(0,60)})),
   setGlobalScanning:value=>set({globalScanning:value})
 }));
@@ -136,7 +166,7 @@ async function fingerprintNeededFiles(result:RenderFolderScanResult,jobs:VideoJo
     while(true){
       const i=cursor++;if(i>=result.files.length)return;
       const file=result.files[i];
-      if(!renderFileNeedsFingerprint(file,jobs,history,channelId,result.root)){files[i]=file;continue}
+      if(!renderFileNeedsFingerprint(file,jobs,history,channelId,result.root)&&!renderSequence(file.name)){files[i]=file;continue}
       const cached=cache[file.path];
       if(cached&&cached.size===file.size&&Number(cached.mtimeMs)===Number(file.modifiedAt||0)&&/^[a-f0-9]{64}$/i.test(cached.sha256)){
         files[i]={...file,fingerprint:cached.sha256};continue
