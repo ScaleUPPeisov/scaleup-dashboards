@@ -72,8 +72,10 @@ function OperationsDashboard(){
   return{channel:c,subscribers,views:numeric(views)?views:undefined,remaining:Math.max(0,1000-subscribers),pct:Math.max(0,Math.min(100,subscribers/1000*100))}
  }).filter((x):x is NonNullable<typeof x>=>Boolean(x)).sort((a,b)=>a.remaining-b.remaining||b.subscribers-a.subscribers).slice(0,5),[enabled]);
 
- const analyticsRows=enabled.map(c=>c.analytics).filter((x):x is NonNullable<typeof x>=>Boolean(x&&numeric(x.estimatedRevenue)));
- const revenue28=analyticsRows.reduce((n,x)=>n+(x.estimatedRevenue||0),0),analyticsViews=analyticsRows.reduce((n,x)=>n+(numeric(x.views)?x.views:0),0),rpm=analyticsViews>0?revenue28/analyticsViews*1000:undefined;
+ const analyticsRows=enabled.map(c=>c.analytics).filter((x):x is NonNullable<typeof x>=>Boolean(x&&!x.allTime&&x.periodDays===28&&numeric(x.views)));
+ const analyticsViews=analyticsRows.reduce((n,x)=>n+(numeric(x.views)?x.views:0),0);
+ const configuredRpm=numeric(settings.estimatedRpmUsd)&&settings.estimatedRpmUsd>0?settings.estimatedRpmUsd:undefined;
+ const estimatedRevenue28=configuredRpm!=null&&analyticsViews>0?analyticsViews/1000*configuredRpm:undefined;
 
  const attention=useMemo(()=>{
   const rows:{key:string;label:string;text:string;page:'channels'|'production'|'inventory'|'youtube'|'settings'}[]=[];
@@ -160,9 +162,10 @@ function OperationsDashboard(){
    </section>
 
    <section className="opsCard revenueCard">
-    <div className="opsCardHead"><div><small>ДОХОД • YOUTUBE ANALYTICS</small><h2>Последний доступный период</h2></div></div>
-    {analyticsRows.length?<div className="opsStats"><span><small>Estimated revenue</small><b>≈ {money(revenue28)}</b></span><span><small>Расчётный RPM</small><b>{rpm==null?'—':'≈ '+money(rpm)}</b></span><span><small>Каналов с revenue</small><b>{analyticsRows.length}</b></span><span><small>Просмотры периода</small><b>{fmt(analyticsViews)}</b></span></div>:<p className="opsEmpty">Нет доступных monetary данных YouTube Analytics.</p>}
-    <footer><button onClick={()=>setPage('analytics')}>Открыть доход</button></footer>
+    <div className="opsCardHead"><div><small>РАСЧЁТНЫЙ ДОХОД • 28 ДНЕЙ</small><h2>Оценка по заданному RPM</h2></div></div>
+    {configuredRpm==null?<p className="opsEmpty">RPM не настроен. VYRON не будет придумывать расчётный доход.</p>:analyticsRows.length&&analyticsViews>0?<div className="opsStats"><span><small>Расчётный доход</small><b>≈ {money(estimatedRevenue28||0)}</b></span><span><small>Настроенный RPM</small><b>{money(configuredRpm)}</b></span><span><small>Каналов с 28-day views</small><b>{analyticsRows.length}</b></span><span><small>Просмотры • 28 дней</small><b>{fmt(analyticsViews)}</b></span></div>:<p className="opsEmpty">RPM настроен, но нет актуальных просмотров за 28 дней.</p>}
+    <p className="opsSourceNote">Ориентировочная оценка: views ÷ 1000 × настроенный RPM. Не является подтверждённым доходом YouTube.</p>
+    <footer>{configuredRpm==null?<button onClick={()=>setPage('settings')}>Настроить RPM</button>:<button onClick={()=>setPage('analytics')}>Открыть аналитику</button>}</footer>
    </section>
 
    <section className="opsCard">
