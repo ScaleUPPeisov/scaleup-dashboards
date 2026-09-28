@@ -48,6 +48,12 @@ describe('VYRON 3.3.4 Live Content Inventory acceptance',()=>{
   expect(readyRows(rows,[j])).toHaveLength(1);
   expect(buildInventorySnapshotFromScan(channel(),scan(rows),rows,[j]).knownReady).toBe(1)
  });
+ it('UPLOADING is shown separately and never counted as ready',()=>{
+  const j={...job(1),status:'UPLOADING' as const,storageLifecycle:'UPLOADING' as const},rows=[row(1,'KNOWN_EXACT',j.id)];
+  expect(readyRows(rows,[j])).toHaveLength(0);
+  const x=buildInventorySnapshotFromScan(channel(),scan(rows),rows,[j],1);
+  expect(x.readyVideos).toBe(0);expect(x.uploadingVideos).toBe(1)
+ });
  it('G external disk OFFLINE retains last confirmed 40 instead of becoming zero',()=>{
   const rows=Array.from({length:40},(_,i)=>row(i+1)),online=buildInventorySnapshotFromScan(channel(),scan(rows),rows,[]);
   const offline=preserveOfflineInventory(channel(),online,0,'RENDER_FOLDER_OFFLINE');
