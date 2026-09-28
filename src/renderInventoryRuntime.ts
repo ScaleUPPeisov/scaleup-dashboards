@@ -11,7 +11,6 @@ import {
   type RenderScanRow,
   type RenderScanSummary
 } from './renderScanClassifier';
-import {scheduleAverageIntervalDays} from './channelSchedule';
 import {uploadTelemetrySnapshot} from './uploadTelemetry';
 
 export type InventoryFolderState='ONLINE'|'OFFLINE'|'SCANNING'|'ERROR';
@@ -98,7 +97,11 @@ function activeReadyJob(job:VideoJob|undefined){
   if(!job)return false;
   if(job.removedFromPublishList||job.youtubeVideoId||job.uploadedAt)return false;
   if(job.storageLifecycle==='UPLOADED'||job.storageLifecycle==='TRASHED'||job.storageLifecycle==='TRASHED_BY_VYRON'||job.storageLifecycle==='FAILED')return false;
-  return job.status==='READY_UPLOAD';
+  if(job.status==='UPLOADING'||job.status==='SCHEDULED')return false;
+  // Live Inventory is a physical stock monitor. If a KNOWN_EXACT render file
+  // still exists and has no successful-upload evidence, count it as available
+  // even when an old local job status drifted away from READY_UPLOAD.
+  return true;
 }
 export function readyRows(rows:RenderScanRow[],jobs:VideoJob[]){
   const byId=new Map(jobs.map(j=>[j.id,j]));
@@ -120,8 +123,10 @@ export function inventoryLevel(ready:number,runwayDays:number,offline=false):Inv
   if(runwayDays<=14)return'SOON';
   return'NORMAL'
 }
-export function inventoryRunwayDays(channel:Channel,ready:number){
-  return Math.max(0,Math.round(ready*scheduleAverageIntervalDays(channel)))
+export function inventoryRunwayDays(_channel:Channel,ready:number){
+  // Owner operating mode: one upload per channel per day.
+  // Keep stock days literal: 30 physical ready videos = 30 days.
+  return Math.max(0,Math.round(ready))
 }
 export function inventoryTotals(snapshots:Record<string,ChannelInventorySnapshot>,channels:Channel[]):InventoryTotals{
   const ids=new Set(channels.filter(c=>c.enabled!==false).map(c=>c.id));
