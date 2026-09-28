@@ -1,0 +1,41 @@
+name: VYRON 3.3.5 Render Folder Picker Hotfix Gate
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-3.3.5-render-folder-picker
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-335-render-folder-picker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Render folder picker + inventory regression
+        run: |
+          npx vitest run src/v335RenderFolderPicker.test.ts src/v334LiveContentInventory.test.ts src/v334LiveInventorySafety.test.ts src/renderScanClassifier.test.ts
+      - name: Production build
+        run: npm run build
+      - name: Production feed freeze
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json -o /tmp/mac.json
+          curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json -o /tmp/windows.json
+          python3 - <<'PY'
+          import json
+          assert json.load(open('/tmp/mac.json'))['version']=='3.3.4'
+          assert json.load(open('/tmp/windows.json'))['version']=='3.3.4'
+          print('PRODUCTION_FEEDS_UNCHANGED=3.3.4')
+          PY
