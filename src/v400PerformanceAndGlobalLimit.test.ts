@@ -20,7 +20,8 @@ describe('VYRON 4.0.0 smooth scan + shared upload cap',()=>{
     expect(safety).toContain('VYRON_GLOBAL_DAILY_UPLOAD_LIMIT=100');
     expect(safety).toContain('youtubePtDate(d)===day');
     expect(safety).toContain('nextYoutubeQuotaResetAt(now)');
-    expect(app).toContain('Лимит видео');
+    expect(app).toContain('Загрузки');
+    expect(app).toContain('Осталось');
     expect(app).toContain('globalUploads.remaining');
   });
 
