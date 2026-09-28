@@ -16,7 +16,7 @@ function ReleaseCard({row,expanded,onToggle}:{row:ReleaseHistoryEntry;expanded:b
  const tech=[...(row.sections.technical||[]),...(row.technicalItems||[])].filter((x,i,a)=>a.indexOf(x)===i);
  return <article className={'releaseTimelineCard '+(expanded?'expanded':'')}>
   <div className="releaseTimelineDot"/>
-  <div className="releaseTimelineHead"><div><span className="releaseVersion">VYRON {row.version}</span><span className={'releaseType '+row.type.toLowerCase()}>{row.type}</span></div>{row.prerelease&&row.type==='RC'&&<small>release candidate</small>}</div>
+  <div className="releaseTimelineHead"><div><span className="releaseVersion">VYRON {row.version}</span><span className={'releaseType '+row.type.toLowerCase()}>{row.type}</span>{row.version==='5.0.0'&&<b className="majorReleaseLabel">БОЛЬШОЕ ОБНОВЛЕНИЕ</b>}</div>{row.prerelease&&<small>release candidate</small>}</div>{row.platforms?.length?<div className="releasePlatforms">{row.platforms.map(p=><span key={p}>{p}</span>)}</div>:null}
   <h4>{row.title}</h4>
   <ul className="releaseHighlights">{row.highlights.slice(0,4).map((x,i)=><li key={i}>{x}</li>)}</ul>
   <button className="releaseExpand" onClick={onToggle}>{expanded?'Скрыть':'Все изменения'}</button>
