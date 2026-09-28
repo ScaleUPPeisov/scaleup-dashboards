@@ -1,5 +1,8 @@
 import React,{useEffect,useMemo,useState} from 'react';
 import {useApp} from './store';
+import {api} from './api';
+import {notifySuccess,notifyWarning} from './notificationCenter';
+import {validateRenderFolderSelection} from './renderFolderSelection';
 import {inventoryTotals,scanAllInventories,scanInventoryChannel,useLiveInventory,type ChannelInventorySnapshot,type InventoryLevel} from './renderInventoryRuntime';
 import {saveActivePublishChannel} from './publishWorkspaceState';
 import {sortChannelsAlphabetically} from './channelSort';
@@ -18,9 +21,10 @@ function fallback(channelId:string,name:string,path:string):ChannelInventorySnap
 }
 
 export function LiveContentInventory(){
-  const channels=useApp(s=>s.channels),setPage=useApp(s=>s.setPage);
+  const channels=useApp(s=>s.channels),setPage=useApp(s=>s.setPage),updateChannel=useApp(s=>s.updateChannel);
   const snapshots=useLiveInventory(s=>s.snapshots),audit=useLiveInventory(s=>s.audit),globalScanning=useLiveInventory(s=>s.globalScanning);
   const [now,setNow]=useState(Date.now());
+  const [folderPicking,setFolderPicking]=useState<string>();
   useEffect(()=>{const id=window.setInterval(()=>setNow(Date.now()),1000);return()=>window.clearInterval(id)},[]);
   const enabled=useMemo(()=>sortChannelsAlphabetically(channels.filter(c=>c.enabled!==false)),[channels]);
   const totals=useMemo(()=>inventoryTotals(snapshots,enabled),[snapshots,enabled]);
@@ -28,6 +32,38 @@ export function LiveContentInventory(){
   const lastFresh=rows.map(x=>x.lastScanAt).filter((x):x is string=>Boolean(x)).sort().at(-1);
   const channelName=new Map(enabled.map(c=>[c.id,c.name]));
   const openPublisher=(channelId:string)=>{saveActivePublishChannel(channelId);setPage('publisher')};
+  const chooseRenderFolder=async(channelId:string)=>{
+    const channel=useApp.getState().channels.find(x=>x.id===channelId);
+    if(!channel||folderPicking)return;
+    setFolderPicking(channelId);
+    try{
+      const selected=await api.chooseRenderFolder(channel.renderFolderPath||undefined);
+      if(!selected)return;
+      const validation=validateRenderFolderSelection(selected,channel.name,channel.projectsFolderPath);
+      if(!validation.ok){
+        notifyWarning('Не сохранено как Render',validation.message);
+        return
+      }
+      const status=await api.localSourceStatus(validation.path).catch(()=>null);
+      if(!status?.exists||status.isFile){
+        notifyWarning('Render-папка недоступна','Выберите существующую папку канала на подключённом диске.');
+        return
+      }
+      const previous=channel.renderFolderPath;
+      updateChannel(channel.id,{renderFolderPath:validation.path});
+      try{
+        await useApp.getState().persist();
+      }catch(error){
+        updateChannel(channel.id,{renderFolderPath:previous});
+        notifyWarning('Не удалось сохранить Render-папку',String(error));
+        return
+      }
+      notifySuccess('Render-папка сохранена',`${channel.name} → ${validation.path}`);
+      await scanInventoryChannel(channel.id,'manual-channel');
+    }finally{
+      setFolderPicking(undefined)
+    }
+  };
 
   return <div className="liveInventoryPage">
     <div className="pageHeader liveInventoryHeader">
@@ -56,7 +92,10 @@ export function LiveContentInventory(){
           <span><b>{row.runwayDays}</b><small>{row.folderState==='OFFLINE'?'last known • '+row.runwayDays+' дней':String(row.runwayDays)+' дней'}</small></span>
           <span><b>{levelIcon[row.level]} {levelLabel[row.level]}</b><small>{row.folderState}{row.stale?' • STALE':''}{row.uploadedLocalCopies?' • uploaded copies '+row.uploadedLocalCopies:''}{row.verifyRequired?' • verify '+row.verifyRequired:''}</small></span>
           <span><b>{age(row.lastScanAt||row.lastConfirmedAt,now)}</b><small>{row.folderState==='OFFLINE'&&row.lastConfirmedAt?'последний подтверждённый snapshot':'local scan'}</small></span>
-          <span><button className="mini" disabled={row.folderState==='SCANNING'} onClick={e=>{e.stopPropagation();void scanInventoryChannel(row.channelId,'manual-channel')}}>↻ Пересканировать</button></span>
+          <span className="liveInventoryActions">
+            <button className="mini" disabled={folderPicking===row.channelId} onClick={e=>{e.stopPropagation();void chooseRenderFolder(row.channelId)}}>{folderPicking===row.channelId?'ВЫБИРАЮ…':row.renderFolderPath?'📁 Сменить Render':'📁 Выбрать Render'}</button>
+            <button className="mini" disabled={row.folderState==='SCANNING'||folderPicking===row.channelId||!row.renderFolderPath} onClick={e=>{e.stopPropagation();void scanInventoryChannel(row.channelId,'manual-channel')}}>↻ Пересканировать</button>
+          </span>
         </div>)}
       </div>
     </section>
