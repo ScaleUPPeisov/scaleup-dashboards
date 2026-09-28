@@ -1,6 +1,6 @@
 [package]
 name = "channelflow"
-version = "4.0.1"
+version = "5.0.0"
 description = "VYRON Content Operating System"
 authors = ["VYRON"]
 edition = "2021"
