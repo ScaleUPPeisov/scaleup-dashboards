@@ -1,0 +1,75 @@
+name: VYRON 4.0.1 Status Probe
+
+on:
+  push:
+    branches:
+      - feature/vyron-4.0.1
+    paths:
+      - '.github/workflows/vyron-401-status-probe.yml'
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/vyron-4.0.1
+          fetch-depth: 0
+
+      - name: Collect VYRON 4.0.1 workflow status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ScaleUPPeisov/scaleup-dashboards
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh run list --repo "$REPO" --branch feature/vyron-4.0.1 --limit 30             --json databaseId,workflowName,displayTitle,headSha,status,conclusion,event,createdAt,updatedAt,url > /tmp/runs.json
+          python3 - <<'PY'
+          import json,os,subprocess
+          wanted={
+            'VYRON 4.0.1 macOS Signed Candidate',
+            'VYRON 4.0.1 macOS Production Release',
+            'VYRON 4.0.1 macOS Fast Promote',
+          }
+          runs=json.load(open('/tmp/runs.json'))
+          out=[]
+          for r in runs:
+            if r.get('workflowName') not in wanted:
+              continue
+            rid=r['databaseId']
+            try:
+              raw=subprocess.check_output(
+                ['gh','api',f"repos/{os.environ['REPO']}/actions/runs/{rid}/jobs?per_page=100"],
+                env=os.environ
+              )
+              jobs=json.loads(raw).get('jobs',[])
+            except Exception as e:
+              jobs=[{'name':'PROBE_ERROR','status':'error','conclusion':str(e)}]
+            out.append({
+              **r,
+              'jobs':[{
+                'id':j.get('id'),
+                'name':j.get('name'),
+                'status':j.get('status'),
+                'conclusion':j.get('conclusion'),
+                'started_at':j.get('started_at'),
+                'completed_at':j.get('completed_at'),
+              } for j in jobs]
+            })
+          json.dump({'capturedAt':__import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat(),'runs':out},open('vyron-401-status.json','w'),ensure_ascii=False,indent=2)
+          PY
+
+      - name: Persist status snapshot on feature branch
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add vyron-401-status.json
+          git diff --cached --quiet && exit 0
+          git commit -m 'ci(vyron): snapshot 4.0.1 workflow status'
+          git push origin HEAD:feature/vyron-4.0.1
