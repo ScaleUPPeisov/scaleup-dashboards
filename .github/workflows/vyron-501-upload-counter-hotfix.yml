@@ -1,17 +1,14 @@
-name: VYRON 5.0.1 Upload Counter Hotfix Gate
+name: VYRON 5.0.1 Mac Hotfix Dev Gate
 
 on:
   push:
     branches:
       - hotfix/vyron-5.0.1-live-upload-counter
     paths:
-      - 'src/youtubePublishSafety.ts'
-      - 'src/youtubePublishSafety.test.ts'
-      - 'src/App.tsx'
-      - 'src/DashboardOS.tsx'
-      - 'src/QuotaMeter.tsx'
-      - 'src/PublisherOS.tsx'
-      - 'src/v501LocalCleanupZeroQuota.test.ts'
+      - 'src/**'
+      - 'src-tauri/**'
+      - 'package.json'
+      - 'package-lock.json'
       - '.github/workflows/vyron-501-upload-counter-hotfix.yml'
   workflow_dispatch:
 
@@ -19,28 +16,75 @@ permissions:
   contents: read
 
 concurrency:
-  group: vyron-501-upload-counter-hotfix
+  group: vyron-501-mac-hotfix-dev-gate
   cancel-in-progress: true
 
 jobs:
   gate:
-    name: Live upload counter regression
+    name: VYRON 5.0.1 zero-background regression
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
       - run: npm ci --no-audit --no-fund
-      - name: Upload counter + quota separation tests
+      - name: Install Tauri Linux test dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libglib2.0-dev libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+      - name: 5.0.1 owner hotfix regression
         run: >
           npx vitest run
+          src/v501OwnerHotfix.test.ts
+          src/v501LocalCleanupZeroQuota.test.ts
           src/youtubePublishSafety.test.ts
           src/v400QuotaUploadLimitSeparation.test.ts
           src/youtubeQuota.test.ts
           src/youtubeQuotaAtomic.test.ts
-          src/v501LocalCleanupZeroQuota.test.ts
+          src/startupQuotaProbe.test.ts
+          src/dailyOperations.test.ts
+          src/productionPipeline.test.ts
+          src/updaterRuntime.test.ts
+          src/v500Contract.test.ts
       - name: Production frontend build
         run: npm run build
+      - name: Canonical filesystem native tests
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cargo test --manifest-path src-tauri/Cargo.toml local_delete::tests::vyron_filesystem_preview_is_non_destructive_and_maps_projects_render -- --exact --nocapture
+          cargo test --manifest-path src-tauri/Cargo.toml local_delete::tests::vyron_filesystem_apply_moves_only_confirmed_legacy_and_preserves_file_count -- --exact --nocapture
+          cargo test --manifest-path src-tauri/Cargo.toml local_delete::tests::vyron_filesystem_apply_blocks_conflict_without_overwrite -- --exact --nocapture
+      - name: 5.0.1 version identity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          node - <<'NODE'
+          const p=require('./package.json'),l=require('./package-lock.json'),t=require('./src-tauri/tauri.conf.json');
+          for(const v of [p.version,l.version,l.packages[''].version,t.version]) if(v!=='5.0.1') process.exit(1);
+          if(t.identifier!=='studio.channelflow.desktop'||t.bundle.createUpdaterArtifacts!==true) process.exit(1);
+          console.log('VYRON_5_0_1_IDENTITY=PASS');
+          NODE
+          grep -F 'version = "5.0.1"' src-tauri/Cargo.toml
+          grep -A1 -F 'name = "channelflow"' src-tauri/Cargo.lock | grep -F 'version = "5.0.1"'
+      - name: Production feeds remain frozen
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json -o /tmp/mac.json
+          curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json -o /tmp/win.json
+          python3 - <<'PY'
+          import json
+          assert json.load(open('/tmp/mac.json'))['version']=='5.0.0'
+          assert json.load(open('/tmp/win.json'))['version']=='4.0.0'
+          print('PRODUCTION_FREEZE=PASS mac:5.0.0 windows:4.0.0')
+          PY
