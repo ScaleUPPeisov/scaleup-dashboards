@@ -33,6 +33,7 @@ jobs:
           src/dailyOperations.test.ts
           src/systemHealth.test.ts
           src/productionPipeline.test.ts
+          src/batchControlContract.test.ts
           src/diagnosticReport.test.ts
           src/youtubeQuotaTrace.test.ts
           src/startupQuotaProbe.test.ts
@@ -110,6 +111,7 @@ jobs:
           src/dailyOperations.test.ts
           src/systemHealth.test.ts
           src/productionPipeline.test.ts
+          src/batchControlContract.test.ts
           src/diagnosticReport.test.ts
           src/youtubeQuotaTrace.test.ts
           src/v400PerformanceAndGlobalLimit.test.ts
