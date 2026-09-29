@@ -4,7 +4,8 @@ import {useApp} from './store';
 import {ModalPortal} from './ModalPortal';
 
 const DEFAULT_NAME='Кирилл';
-const DEFAULT_ROLE='Owner / YouTube Manager';
+const DEFAULT_ROLE='Owner';
+const LEGACY_OWNER_ROLE='Owner / YouTube Manager';
 const DEFAULT_COMPANY='VYRON / ScaleUP';
 
 function initials(value:string){
@@ -15,7 +16,8 @@ function initials(value:string){
 export function OwnerProfile(){
   const settings=useApp(s=>s.settings),patchSettings=useApp(s=>s.patchSettings);
   const name=settings.localProfileName?.trim()||DEFAULT_NAME;
-  const role=settings.localProfileRole?.trim()||DEFAULT_ROLE;
+  const storedRole=settings.localProfileRole?.trim();
+  const role=!storedRole||storedRole===LEGACY_OWNER_ROLE?DEFAULT_ROLE:storedRole;
   const company=settings.localProfileCompany?.trim()||DEFAULT_COMPANY;
   const [open,setOpen]=useState(false),[avatar,setAvatar]=useState(''),[busy,setBusy]=useState(false);
   const [draft,setDraft]=useState(()=>({name,role,company}));
