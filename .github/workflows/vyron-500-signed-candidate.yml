@@ -195,6 +195,8 @@ jobs:
         run: |
           set -Eeuo pipefail
           security unlock-keychain -p "$VYRON_SIGNING_KEYCHAIN_PASSWORD" "$VYRON_SIGNING_KEYCHAIN"
+          export APPLE_SIGNING_IDENTITY="$VYRON_MACOS_SIGNING_IDENTITY"
+          echo "Using macOS signing identity: $APPLE_SIGNING_IDENTITY"
           npx tauri build --target aarch64-apple-darwin --bundles app,dmg
           mkdir -p candidate-macos
           APP="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)"
