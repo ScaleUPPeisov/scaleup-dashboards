@@ -1,8 +1,8 @@
 import {youtubeQuotaUsage} from './youtubeQuota';
 
-export const STARTUP_QUOTA_PROBE_MS=120_000;
-export const STARTUP_QUOTA_TARGET_MAX=5;
-export const STARTUP_QUOTA_HARD_MAX=50;
+export const STARTUP_QUOTA_PROBE_MS=600_000;
+export const STARTUP_QUOTA_TARGET_MAX=0;
+export const STARTUP_QUOTA_HARD_MAX=0;
 const KEY='vyron:startup-quota-probe:v1';
 
 export type StartupQuotaProbeResult={
@@ -16,7 +16,7 @@ let activeStart:StartupQuotaProbeResult|undefined;
 
 export function classifyStartupQuotaDelta(delta:number):StartupQuotaProbeResult['status']{
  const value=Math.max(0,Math.floor(Number(delta)||0));
- return value<=STARTUP_QUOTA_TARGET_MAX?'TARGET':value<=STARTUP_QUOTA_HARD_MAX?'ACCEPTABLE':'FAIL'
+ return value===0?'TARGET':'FAIL'
 }
 export function readStartupQuotaProbe():StartupQuotaProbeResult|undefined{
  try{const x=JSON.parse(localStorage.getItem(KEY)||'null');return x&&typeof x.deltaGeneralUnits==='number'?x:undefined}catch{return undefined}
