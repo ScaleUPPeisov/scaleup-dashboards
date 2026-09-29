@@ -43,7 +43,8 @@ type UploadProjectRow={quotaDay:string;used:number;calls:number;configuredLimit:
 type LegacyUploadRow={quotaDay:string;used:number;calls:number;claimedBy?:string};
 type LedgerV4={version:4;ptDate:string;buckets:{general:BucketRow;search:BucketRow};uploadProjects:Record<string,UploadProjectRow>;legacyUpload?:LegacyUploadRow;lastAction?:string;unpricedAttempts?:Array<{method:string;at:string}>};
 type Reservation={id:string;createdAt:string;projectKey?:string;buckets:Record<YoutubeQuotaBucket,number>};
-type OperationLedgerRow={operationId:string;ptDate:string;updatedAt:string;projectKey?:string;buckets:Record<YoutubeQuotaBucket,number>;methods:Record<string,{calls:number;cost:number}>};
+export type YoutubeQuotaTraceRow={operationId:string;ptDate:string;updatedAt:string;projectKey?:string;buckets:Record<YoutubeQuotaBucket,number>;methods:Record<string,{calls:number;cost:number}>};
+type OperationLedgerRow=YoutubeQuotaTraceRow;
 
 function lsGet(key:string){try{return typeof localStorage==='undefined'?null:localStorage.getItem(key)}catch{return null}}
 function lsSet(key:string,value:string){try{if(typeof localStorage!=='undefined')localStorage.setItem(key,value)}catch{}}
@@ -101,6 +102,10 @@ function readOperationRows():OperationLedgerRow[]{try{const x=JSON.parse(lsGet(O
 function saveOperationRows(rows:OperationLedgerRow[]){lsSet(OPERATION_LEDGER_KEY,JSON.stringify(rows.slice(-200)))}
 function recordOperationRequest(operationId:string,method:string,bucket:YoutubeQuotaBucket,cost:number,at:string,projectKey?:string){const day=youtubePtDate(new Date(at)),rows=readOperationRows().filter(x=>x.ptDate===day);let row=rows.find(x=>x.operationId===operationId);if(!row){row={operationId,ptDate:day,updatedAt:at,projectKey,buckets:{general:0,videoUploads:0,search:0},methods:{}};rows.push(row)}row.updatedAt=at;if(projectKey)row.projectKey=projectKey;row.buckets[bucket]=(row.buckets[bucket]||0)+cost;const m=row.methods[method]||{calls:0,cost:0};m.calls++;m.cost+=cost;row.methods[method]=m;saveOperationRows(rows)}
 export function youtubeOperationActualCost(operationId:string){const row=readOperationRows().find(x=>x.operationId===operationId&&x.ptDate===youtubePtDate());return row||{operationId,ptDate:youtubePtDate(),updatedAt:'',buckets:{general:0,videoUploads:0,search:0},methods:{}}}
+export function youtubeQuotaTrace(limit=50,now=new Date()):YoutubeQuotaTraceRow[]{
+ const day=youtubePtDate(now),max=Math.max(1,Math.min(200,Math.floor(limit)||50));
+ return readOperationRows().filter(x=>x.ptDate===day).sort((a,b)=>String(b.updatedAt).localeCompare(String(a.updatedAt))).slice(0,max).map(x=>({...x,buckets:{...x.buckets},methods:Object.fromEntries(Object.entries(x.methods||{}).map(([k,v])=>[k,{...v}]))}))
+}
 export function bindYoutubeQuotaOperationProject(operationId:string,projectKey:string){if(!operationId||!projectKey)return;registerYoutubeUploadProject(projectKey);const now=new Date(),day=youtubePtDate(now),rows=readOperationRows().filter(x=>x.ptDate===day);let row=rows.find(x=>x.operationId===operationId);if(!row){row={operationId,ptDate:day,updatedAt:now.toISOString(),projectKey,buckets:{general:0,videoUploads:0,search:0},methods:{}};rows.push(row)}else{row.projectKey=projectKey;row.updatedAt=now.toISOString()}saveOperationRows(rows)}
 export function recordYoutubeApiRequest(event:YoutubeApiRequestEvent){
  const def=youtubeQuotaCosts[event.method as YoutubeApiMethod],at=event.at||new Date().toISOString(),now=new Date(at),x=readLedger(now);
