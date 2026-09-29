@@ -15,15 +15,16 @@ function initials(value:string){
 
 export function OwnerProfile(){
   const settings=useApp(s=>s.settings),patchSettings=useApp(s=>s.patchSettings);
+  const mode=settings.localProfileMode||'OWNER';
   const name=settings.localProfileName?.trim()||DEFAULT_NAME;
   const storedRole=settings.localProfileRole?.trim();
-  const role=!storedRole||storedRole===LEGACY_OWNER_ROLE?DEFAULT_ROLE:storedRole;
+  const role=!storedRole||storedRole===LEGACY_OWNER_ROLE?(mode==='MANAGER'?'Manager':DEFAULT_ROLE):storedRole;
   const company=settings.localProfileCompany?.trim()||DEFAULT_COMPANY;
   const [open,setOpen]=useState(false),[avatar,setAvatar]=useState(''),[busy,setBusy]=useState(false);
-  const [draft,setDraft]=useState(()=>({name,role,company}));
+  const [draft,setDraft]=useState(()=>({mode,name,role,company}));
   const avatarPath=settings.localProfileAvatarPath||'';
 
-  useEffect(()=>{setDraft({name,role,company})},[name,role,company]);
+  useEffect(()=>{setDraft({mode,name,role,company})},[mode,name,role,company]);
   useEffect(()=>{
     let live=true;
     if(!avatarPath){setAvatar('');return}
@@ -43,7 +44,8 @@ export function OwnerProfile(){
     }finally{setBusy(false)}
   }
   function save(){
-    patchSettings({localProfileName:draft.name.trim()||DEFAULT_NAME,localProfileRole:draft.role.trim()||DEFAULT_ROLE,localProfileCompany:draft.company.trim()||DEFAULT_COMPANY});
+    const fallbackRole=draft.mode==='MANAGER'?'Manager':DEFAULT_ROLE;
+    patchSettings({localProfileMode:draft.mode,localProfileName:draft.name.trim()||DEFAULT_NAME,localProfileRole:draft.role.trim()||fallbackRole,localProfileCompany:draft.company.trim()||DEFAULT_COMPANY});
     setOpen(false)
   }
 
@@ -56,6 +58,7 @@ export function OwnerProfile(){
       <div className="panelHead"><div><small>ЛОКАЛЬНЫЙ ПРОФИЛЬ</small><h2>Профиль владельца</h2><p>Хранится локально в VYRON. Паролей и секретов здесь нет.</p></div><button onClick={()=>setOpen(false)}>×</button></div>
       <div className="ownerProfileEditor">
         <button className="ownerProfilePhotoPicker" onClick={()=>void chooseAvatar()} disabled={busy}><span className="ownerProfileAvatar ownerProfileAvatarLarge">{avatarNode}</span><b>{busy?'Импорт…':'Выбрать фото'}</b><small>Finder / Проводник • PNG/JPG/WebP</small></button>
+        <label><span>Режим локального профиля</span><select value={draft.mode} onChange={e=>{const next=e.target.value as 'OWNER'|'MANAGER';setDraft(x=>({...x,mode:next,role:x.role===DEFAULT_ROLE||x.role==='Manager'?next==='OWNER'?DEFAULT_ROLE:'Manager':x.role}))}}><option value="OWNER">OWNER</option><option value="MANAGER">MANAGER</option></select><small>Только локальный режим интерфейса. Google/OAuth и привязки каналов не меняются.</small></label>
         <label><span>Имя</span><input value={draft.name} onChange={e=>setDraft(x=>({...x,name:e.target.value}))}/></label>
         <label><span>Роль</span><input value={draft.role} onChange={e=>setDraft(x=>({...x,role:e.target.value}))}/></label>
         <label><span>Компания / проект</span><input value={draft.company} onChange={e=>setDraft(x=>({...x,company:e.target.value}))}/></label>
