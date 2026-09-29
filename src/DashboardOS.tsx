@@ -20,7 +20,8 @@ import {SystemHealthPanel} from './SystemHealthPanel';
 import {ChannelAvatar} from './ChannelAvatar';
 import {ModalPortal} from './ModalPortal';
 import {notifySuccess,notifyWarning} from './notificationCenter';
-import {planStatisticsProjectBatches,refreshYoutubeChannelStatisticsSelection} from './youtubeChannelStatsRuntime';
+import {planStatisticsProjectBatches} from './youtubeChannelStatsRuntime';
+import {refreshAllChannelData} from './fullChannelRefresh';
 import {classifyYoutubeChannels} from './youtubeStatisticsCenter';
 
 const fmt=(n:number)=>new Intl.NumberFormat('ru-RU').format(n);
@@ -127,12 +128,17 @@ function OperationsDashboard(){
  async function refreshAllChannelStatistics(){
   const plan=statsPreview;if(!plan||statsBusy)return;setStatsPreview(null);setStatsBusy(true);setStatsResult('');
   try{
-   const r=await refreshYoutubeChannelStatisticsSelection(plan.channelIds,true);
-   const text=`Обновлено ${r.updated} / ${plan.eligible} • API requests: ${r.apiRequests} • quota: ${r.quotaUnits} units`;
+   const r=await refreshAllChannelData(plan.channelIds);
+   const stats=r.stats;
+   const statsText=stats?`Статистика: ${stats.updated} / ${plan.eligible}`:'Статистика: ошибка';
+   const ownerText=r.owner?`Scheduled sync: ${r.owner.updated} / ${r.owner.requested}`:'Scheduled sync: ошибка';
+   const localText=`Render: ${r.local.online} / ${r.local.requested} • READY ${r.local.ready}`;
+   const text=`${statsText} • ${ownerText} • ${localText} • API quota +${r.quotaDelta}`;
    setStatsResult(text);
-   if(r.failed||r.credentialBlocked)notifyWarning('Статистика обновлена частично',text+' • Старые cached values сохранены для каналов с ошибкой.');
+   const partial=Boolean(r.errors.length||!stats||stats.failed||stats.credentialBlocked||!r.owner||r.owner.failed||r.owner.stoppedForQuota||r.local.issues);
+   if(partial)notifyWarning('Каналы обновлены частично',text+(r.errors.length?' • '+r.errors.slice(0,2).join(' • '):''));
    else notifySuccess('Все каналы обновлены',text);
-  }catch(e){notifyWarning('Статистика не обновлена',String(e))}
+  }catch(e){notifyWarning('Каналы не обновлены',String(e))}
   finally{setStatsBusy(false)}
  }
  function openRpmSettings(){try{localStorage.setItem('vyron:settings-target-tab','general');localStorage.setItem('vyron:settings-target-section','rpm')}catch{}setPage('settings');window.setTimeout(()=>window.dispatchEvent(new CustomEvent('vyron:settings-target-section',{detail:'rpm'})),0)}
