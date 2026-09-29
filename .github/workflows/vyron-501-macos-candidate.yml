@@ -101,7 +101,7 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 120
     env:
-      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      VYRON_TAURI_SIGNING_PRIVATE_KEY_RAW: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       VYRON_MACOS_SIGNING_P12_BASE64: ${{ secrets.VYRON_MACOS_SIGNING_P12_BASE64 }}
       VYRON_MACOS_SIGNING_P12_PASSWORD: ${{ secrets.VYRON_MACOS_SIGNING_P12_PASSWORD }}
@@ -158,26 +158,32 @@ jobs:
           test "$(printf '%s' "$ID_SHA1" | tr '[:lower:]' '[:upper:]')" = "$EXPECTED_SIGNING_CERT_SHA1"
           echo "VYRON_SIGNING_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
           echo "VYRON_SIGNING_KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> "$GITHUB_ENV"
-      - name: Normalize updater signing key
+      - name: Normalize updater signing key to private key file
         shell: bash
         run: |
           set -Eeuo pipefail
           python3 - <<'PY'
-          import base64,os
-          raw=os.environ['TAURI_SIGNING_PRIVATE_KEY'].strip()
-          def dec(x):
-            try:return base64.b64decode(x,validate=True).decode()
-            except:return None
-          if raw.startswith('untrusted comment:'): out=base64.b64encode(raw.encode()).decode()
-          else:
-            one=dec(raw)
-            if one and one.startswith('untrusted comment:'): out=raw
-            else:
-              box=dec(one) if one else None
-              assert box and box.startswith('untrusted comment:')
-              out=one.strip()
-          open(os.environ['GITHUB_ENV'],'a').write('TAURI_SIGNING_PRIVATE_KEY='+out+'\\n')
-          print('::add-mask::'+out)
+          import base64,os,pathlib
+          raw=os.environ['VYRON_TAURI_SIGNING_PRIVATE_KEY_RAW'].strip().replace('\\r\\n','\n').replace('\\n','\n')
+          candidates=[raw]
+          for _ in range(4):
+              current=candidates[-1].strip()
+              try:
+                  decoded=base64.b64decode(current,validate=True).decode('utf-8').strip()
+              except Exception:
+                  break
+              if decoded in candidates:
+                  break
+              candidates.append(decoded)
+          key=next((x for x in candidates if x.startswith('untrusted comment:')),None)
+          assert key, 'TAURI_SIGNING_PRIVATE_KEY_FORMAT_UNRECOGNIZED'
+          path=pathlib.Path(os.environ['RUNNER_TEMP'])/'vyron-updater-private.key'
+          path.write_text(key.rstrip()+'\n',encoding='utf-8')
+          path.chmod(0o600)
+          assert path.read_text(encoding='utf-8').startswith('untrusted comment:')
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as fp:
+              fp.write('TAURI_SIGNING_PRIVATE_KEY_PATH='+str(path)+'\n')
+          print('TAURI_UPDATER_KEY_FILE=READY')
           PY
       - name: Build and verify signed macOS 5.0.1
         shell: bash
