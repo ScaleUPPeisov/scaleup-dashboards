@@ -17,6 +17,7 @@ export type UpdaterRuntimeState={
 
 let candidate:CheckedUpdaterCandidate|undefined;
 let checkPromise:Promise<void>|undefined;
+let installPromise:Promise<boolean>|undefined;
 let lastRecordedError='';
 const ERROR_FINGERPRINT_KEY='vyron:updater-last-error-fingerprint';
 const errorCode=(e:unknown)=>String(e??'').match(/([A-Z][A-Z0-9_]+):/)?.[1]||'UPDATER_INSTALL_FAILED';
@@ -92,6 +93,8 @@ export const useUpdaterRuntime=create<UpdaterRuntimeState>((set,get)=>({
     }catch(error){const s=get();const code=recordFailure('download',error,s.currentVersion,s.latestVersion);set({status:'ERROR',errorCode:code,errorMessage:String(error)})}
   },
   installAndRestart:async(blockers=[])=>{
+    if(installPromise)return installPromise;
+    const task=(async():Promise<boolean>=>{
     if(blockers.length){set({blockers});return false}
     try{
       // Candidate objects are intentionally memory-only. If the WebView/app shell was reloaded after
@@ -123,9 +126,12 @@ export const useUpdaterRuntime=create<UpdaterRuntimeState>((set,get)=>({
       set({status:'READY_TO_RESTART'});
     }catch(error){localStorage.removeItem('vyron:update-installing-version');localStorage.removeItem('vyron:update-installing-target');const s=get();const code=recordFailure('install',error,s.currentVersion,target);set({status:'ERROR',errorCode:code,errorMessage:String(error)});return false}
     try{set({status:'RESTARTING'});await candidate!.restart();return true}catch(error){const s=get();const code=recordFailure('relaunch',error,s.currentVersion,target);set({status:'ERROR',errorCode:code,errorMessage:String(error)});return false}
+  })();
+    installPromise=task;
+    try{return await task}finally{if(installPromise===task)installPromise=undefined}
   },
   markUpdated:(version:string,buildRevision?:number)=>{candidate=undefined;clearRecordedFailure();const now=Date.now();set({currentVersion:version,latestVersion:version,currentBuildRevision:buildRevision??get().currentBuildRevision,latestBuildRevision:buildRevision??get().latestBuildRevision,status:'UPDATED',progress:100,downloadedBytes:0,totalBytes:0,errorCode:undefined,errorMessage:undefined,blockers:[],hasChecked:true,lastCheckedAt:now,lastCheckAttemptAt:now,nextAutomaticCheckAt:now+UPDATER_AUTO_INTERVAL_MS,consecutiveCheckFailures:0})},
   clearBlockers:()=>set({blockers:[]})
 }));
 
-export function resetUpdaterRuntimeForTests(){candidate=undefined;checkPromise=undefined;lastRecordedError='';try{globalThis.localStorage?.removeItem(ERROR_FINGERPRINT_KEY)}catch{}useUpdaterRuntime.setState({currentVersion:'',latestVersion:'',currentBuildRevision:0,latestBuildRevision:0,updateChannel:'stable',commit:'',artifactSha256:undefined,status:'UP_TO_DATE',progress:0,downloadedBytes:0,totalBytes:0,notes:'',releaseDate:undefined,endpoint:'',versionComparison:'',lastCheckedAt:undefined,lastCheckAttemptAt:undefined,nextAutomaticCheckAt:undefined,consecutiveCheckFailures:0,errorCode:undefined,errorMessage:undefined,blockers:[],hasChecked:false,preflight:undefined})}
+export function resetUpdaterRuntimeForTests(){candidate=undefined;checkPromise=undefined;installPromise=undefined;lastRecordedError='';try{globalThis.localStorage?.removeItem(ERROR_FINGERPRINT_KEY)}catch{}useUpdaterRuntime.setState({currentVersion:'',latestVersion:'',currentBuildRevision:0,latestBuildRevision:0,updateChannel:'stable',commit:'',artifactSha256:undefined,status:'UP_TO_DATE',progress:0,downloadedBytes:0,totalBytes:0,notes:'',releaseDate:undefined,endpoint:'',versionComparison:'',lastCheckedAt:undefined,lastCheckAttemptAt:undefined,nextAutomaticCheckAt:undefined,consecutiveCheckFailures:0,errorCode:undefined,errorMessage:undefined,blockers:[],hasChecked:false,preflight:undefined})}
