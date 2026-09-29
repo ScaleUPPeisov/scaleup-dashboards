@@ -31,7 +31,7 @@ function folderState(channel:Channel,snapshot?:ChannelInventorySnapshot):DailyCh
   return'UNAVAILABLE'
 }
 function nextAction(channel:Channel,snapshot:ChannelInventorySnapshot|undefined,uploadedToday:number,target:number|undefined,state:DailyChannelOperation['folderState']){
-  if(state==='NOT_CONFIGURED')return'Выбрать папку Render';
+  if(state==='NOT_CONFIGURED')return'Выбрать Render-папку';
   if(state==='UNAVAILABLE')return'Подключить диск / проверить Render';
   if(state==='ERROR')return'Проверить ошибку папки';
   if(state==='UNKNOWN')return'Проверить Render';
@@ -42,7 +42,7 @@ function nextAction(channel:Channel,snapshot:ChannelInventorySnapshot|undefined,
     if(left===0)return'Не требуется';
     return left===1?'Загрузить ещё 1 видео':`Загрузить ещё ${left} видео`
   }
-  return uploadedToday>0?'Не требуется':'Загрузить сегодняшние видео'
+  return uploadedToday>0?'Не требуется':'Загрузить видео'
 }
 
 export function buildDailyOperations(channels:Channel[],history:UploadHistoryRecord[],snapshots:Record<string,ChannelInventorySnapshot>,now=new Date()):DailyOperationsSummary{
