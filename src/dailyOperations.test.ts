@@ -25,4 +25,14 @@ describe('VYRON 5 daily operations truth',()=>{
    const now=new Date(2026,8,28,0,1,0),yesterday=new Date(2026,8,27,23,59,0).toISOString();
    expect(buildDailyOperations([channel()],[upload('old',yesterday)],{a:snapshot()},now).uploadedToday).toBe(0);
  });
+
+ it('returns deterministic owner next actions from local facts',()=>{
+   const now=new Date(2026,8,28,22,0,0);
+   const noFolder=channel();delete (noFolder as any).renderFolderPath;
+   expect(buildDailyOperations([noFolder],[],{},now).rows[0].nextAction).toBe('Выбрать Render-папку');
+   expect(buildDailyOperations([channel()],[],{a:snapshot('a',0)},now).rows[0].nextAction).toBe('Добавить видео в Render');
+   expect(buildDailyOperations([channel()],[],{a:snapshot('a',30)},now).rows[0].nextAction).toBe('Загрузить видео');
+   const done=buildDailyOperations([channel()],[upload('ok',new Date(2026,8,28,20,0,0).toISOString())],{a:snapshot('a',30)},now);
+   expect(done.rows[0].nextAction).toBe('Не требуется');
+ });
 });
