@@ -188,7 +188,7 @@ export const api={
    youtubeVideoProcessingStatusBatch:(profileId:string,videoIds:string[],operationId?:string)=>ytInvoke<YoutubeProcessingBatchResult>('youtube_video_processing_status_batch',{profileId,videoIds,operationId}),
   youtubeSetThumbnail:(profileId:string,videoId:string,filePath:string,operationId?:string)=>ytInvoke<{ok:boolean;videoId:string;filePath:string}>('youtube_set_thumbnail',{profileId,videoId,filePath,operationId}),
   youtubeFileFingerprint:(filePath:string,cache?:{size:number;mtimeMs:number;sha256:string})=>invoke<YoutubeFileFingerprint>('youtube_file_fingerprint',{filePath,cachedSize:cache?.size,cachedModifiedAt:cache?.mtimeMs,cachedHash:cache?.sha256}),
-  youtubeListExisting:(profileId:string,maxResults=30)=>ytInvoke<ExistingVideoSyncResult>('youtube_list_existing_videos',{profileId,maxResults}),
+  youtubeListExisting:(profileId:string,maxResults=30,operationId?:string)=>ytInvoke<ExistingVideoSyncResult>('youtube_list_existing_videos',{profileId,maxResults,operationId}),
   youtubeRetryExistingHydration:(profileId:string,videoIds:string[],operationId?:string)=>ytInvoke<ExistingVideoTargetedRetryResult>('youtube_retry_existing_video_hydration',{profileId,videoIds,operationId}),
   youtubeBackupExisting:(profileId:string,videos:any[],operationId?:string)=>ytInvoke<{path:string;count:number;videos:YoutubeExistingVideo[]}>('youtube_backup_existing_videos',{profileId,videos,operationId}),
   youtubeCacheThumbnail:(videoId:string,primary?:string)=>invoke<string>('youtube_cache_thumbnail',{videoId,primary}),
