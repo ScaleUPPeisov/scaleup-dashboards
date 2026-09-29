@@ -12,6 +12,7 @@ import {notifyError,notifyInfo,notifySuccess,notifyWarning} from './notification
 import type {Channel,YoutubeProfile} from './types';
 
 type Action='scan'|'oauth'|'youtube'|'stats'|'queue'|'metadata';
+let batchExecutionPromise:Promise<void>|null=null;
 
 function ownerSyncEstimate(channelId:string){
  const x=ownerInventoryForChannel(channelId),n=x.available?x.total:50,pages=Math.max(1,Math.ceil(n/50)),hydrate=n?Math.ceil(n/50):0;
@@ -38,9 +39,11 @@ export function BatchControl(){
  const globalRemaining=globalDailyUploadStatus().remaining;
  const toggle=(id:string)=>setSelected(x=>x.includes(id)?x.filter(v=>v!==id):[...x,id]);
  const selectAll=()=>setSelected(x=>x.length===channels.length?[]:channels.map(c=>c.id));
- async function run(action:Action,lockedIds:string[]=selected){
-  const locked=new Set(lockedIds),batchChannels=channels.filter(c=>locked.has(c.id));
-  if(busy||!batchChannels.length)return;setBusy(action);
+ function run(action:Action,lockedIds:string[]=selected):Promise<void>{
+  if(batchExecutionPromise)return batchExecutionPromise;
+  const task=(async()=>{  const locked=new Set(lockedIds),batchChannels=channels.filter(c=>locked.has(c.id));
+  const batchReadyJobs=readyJobs.filter(j=>locked.has(j.channelId)),batchSyncUnits=batchChannels.reduce((n,c)=>n+ownerSyncEstimate(c.id),0);
+  if(!batchChannels.length)return;setBusy(action);
   try{
    if(action==='scan'){
     for(const c of batchChannels)await scanInventoryChannel(c.id,'manual-channel');
@@ -53,7 +56,7 @@ export function BatchControl(){
    }else if(action==='youtube'){
     const r=await refreshStaleOwnerInventories(batchChannels,true);
     if(r.failed)notifyWarning('Batch: YouTube sync частично завершён',`Обновлено: ${r.updated} • ошибок: ${r.failed} • запросов каналов: ${r.requested}.`);
-    else notifySuccess('Batch: YouTube sync завершён',`Обновлено каналов: ${r.updated} • estimated preview: ≈${syncUnits} general units.`);
+    else notifySuccess('Batch: YouTube sync завершён',`Обновлено каналов: ${r.updated} • estimated preview: ≈${batchSyncUnits} general units.`);
    }else if(action==='stats'){
     const r=await refreshYoutubeChannelStatisticsSelection(batchChannels.map(c=>c.id),true);
     if(r.failed||r.credentialBlocked)notifyWarning('Batch: Statistics частично обновлена',`Обновлено: ${r.updated} • ошибок: ${r.failed} • OAuth blocked: ${r.credentialBlocked} • actual: ${r.quotaUnits} units.`);
@@ -67,10 +70,9 @@ export function BatchControl(){
     if(failed)notifyWarning('Batch: Metadata обновлена частично',`Проектов обновлено: ${updated} • ошибок: ${failed} • YouTube API: 0.`);
     else notifySuccess('Batch: Metadata обновлена',`Проектов: ${updated} • YouTube API: 0.`);
    }else if(action==='queue'){
-    if(!readyJobs.length){notifyWarning('Batch: нечего ставить в очередь','Нужны READY_UPLOAD + final.mp4 + title/description/tags + будущий publishAt + READY OAuth.');return}
+    if(!batchReadyJobs.length){notifyWarning('Batch: нечего ставить в очередь','Нужны READY_UPLOAD + final.mp4 + title/description/tags + будущий publishAt + READY OAuth.');return}
     configureUploadQueue(settings.youtubeUploadConcurrency||2,settings.youtubeUploadPerChannelConcurrency||1);
     const batchId='batch-control:'+Date.now(),perChannelUsed=new Map<string,number>();let queued=0,blocked=0;
-    const batchReadyJobs=readyJobs.filter(j=>locked.has(j.channelId));
     for(const j of batchReadyJobs.slice(0,Math.max(0,globalRemaining))){
       const c=channels.find(x=>x.id===j.channelId),p=c?.youtubeProfileId?profileById.get(c.youtubeProfileId):undefined;
       if(!c||!p||!j.finalPath||!j.publishAt){blocked++;continue}
@@ -98,6 +100,10 @@ export function BatchControl(){
    }
   }catch(error){notifyError('Batch operation failed',String(error))}
   finally{setBusy(null)}
+  })();
+  batchExecutionPromise=task;
+  void task.finally(()=>{if(batchExecutionPromise===task)batchExecutionPromise=null});
+  return task
  }
  const actionLabel:Record<Action,string>={scan:'Сканировать Render',oauth:'Проверить OAuth',youtube:'Синхронизировать YouTube',stats:'Обновить Statistics',queue:'Добавить в очередь',metadata:'Обновить Metadata'};
  const pendingChannels=pending?channels.filter(c=>pending.channelIds.includes(c.id)):[];
