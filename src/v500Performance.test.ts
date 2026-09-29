@@ -25,9 +25,9 @@ describe('VYRON 5 owner-scale performance contracts',()=>{
  it('handles 32 channels / 397 local / 5000 history without per-channel history scans',()=>{
   const channels=Array.from({length:32},(_,i)=>channel(i)),snapshots:Record<string,ChannelInventorySnapshot>={};
   for(let i=0;i<32;i++)snapshots['c'+i]=snapshot(i,i<13?13:12);
-  const at='2026-09-29T06:00:00+07:00';
-  const history=Array.from({length:5000},(_,i)=>upload(i,'c'+(i%32),i<18?at:'2026-09-28T06:00:00+07:00'));
-  const t=performance.now(),result=buildDailyOperations(channels,history,snapshots,new Date('2026-09-29T07:00:00+07:00')),elapsed=performance.now()-t;
+  const now=new Date(2026,8,29,7,0,0),at=new Date(2026,8,29,6,0,0).toISOString(),yesterday=new Date(2026,8,28,6,0,0).toISOString();
+  const history=Array.from({length:5000},(_,i)=>upload(i,'c'+(i%32),i<18?at:yesterday));
+  const t=performance.now(),result=buildDailyOperations(channels,history,snapshots,now),elapsed=performance.now()-t;
   expect(result.localReady).toBe(397);
   expect(result.uploadedToday).toBe(18);
   expect(result.processedChannels).toBe(18);
@@ -37,8 +37,8 @@ describe('VYRON 5 owner-scale performance contracts',()=>{
  it('handles 100 channels / 1000 local / 20000 events within a bounded pure-data pass',()=>{
   const channels=Array.from({length:100},(_,i)=>channel(i)),snapshots:Record<string,ChannelInventorySnapshot>={};
   for(let i=0;i<100;i++)snapshots['c'+i]=snapshot(i,10);
-  const history=Array.from({length:20000},(_,i)=>upload(i,'c'+(i%100),'2026-09-28T06:00:00+07:00'));
-  const t=performance.now(),result=buildDailyOperations(channels,history,snapshots,new Date('2026-09-29T07:00:00+07:00')),elapsed=performance.now()-t;
+  const history=Array.from({length:20000},(_,i)=>upload(i,'c'+(i%100),new Date(2026,8,28,6,0,0).toISOString()));
+  const t=performance.now(),result=buildDailyOperations(channels,history,snapshots,new Date(2026,8,29,7,0,0)),elapsed=performance.now()-t;
   expect(result.rows).toHaveLength(100);expect(result.localReady).toBe(1000);expect(elapsed).toBeLessThan(1500);
  });
  it('classifies 1000 pipeline jobs in one mutually-exclusive pass',()=>{
