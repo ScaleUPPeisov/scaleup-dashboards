@@ -43,7 +43,7 @@ function exactConnectedCount(channels:Channel[],profiles:YoutubeProfile[]){
 
 function OperationsDashboard(){
  const channels=useApp(s=>s.channels),jobs=useApp(s=>s.jobs),settings=useApp(s=>s.settings),uploadHistory=useApp(s=>s.uploadHistory),projectLifecycle=useApp(s=>s.projectLifecycle),fingerprintCache=useApp(s=>s.fingerprintCache),setPage=useApp(s=>s.setPage),liveSnapshots=useLiveInventory(s=>s.snapshots);
- const [queue,setQueue]=useState(()=>uploadQueueSnapshot()),[telemetry,setTelemetry]=useState(()=>uploadTelemetrySnapshot()),[activeId,setActiveId]=useState(()=>loadActivePublishChannel()),[profiles,setProfiles]=useState<YoutubeProfile[]>([]),[ownerRevision,setOwnerRevision]=useState(0),[globalUploads,setGlobalUploads]=useState(()=>globalDailyUploadStatus()),[statsBusy,setStatsBusy]=useState(false),[statsPreview,setStatsPreview]=useState<{channelIds:string[];eligible:number;workspace:number;projectGroups:number;requests:number;units:number}|null>(null),[statsResult,setStatsResult]=useState('');
+ const [queue,setQueue]=useState(()=>uploadQueueSnapshot()),[telemetry,setTelemetry]=useState(()=>uploadTelemetrySnapshot()),[activeId,setActiveId]=useState(()=>loadActivePublishChannel()),[profiles,setProfiles]=useState<YoutubeProfile[]>([]),[ownerRevision,setOwnerRevision]=useState(0),[globalUploads,setGlobalUploads]=useState(()=>globalDailyUploadStatus()),[statsBusy,setStatsBusy]=useState(false),[statsPreview,setStatsPreview]=useState<{channelIds:string[];eligible:number;workspace:number;projectGroups:number;requests:number;statsUnits:number;ownerUnits:number;units:number}|null>(null),[statsResult,setStatsResult]=useState('');
  useEffect(()=>{const offQueue=subscribeUploadQueue(setQueue),offTelemetry=subscribeUploadTelemetry(setTelemetry),offActive=subscribeActivePublishChannel(setActiveId),offUploads=subscribeGlobalDailyUploadStatus(()=>setGlobalUploads(globalDailyUploadStatus()));return()=>{offQueue();offTelemetry();offActive();offUploads()}},[]);
  useEffect(()=>{const bump=()=>setOwnerRevision(x=>x+1);window.addEventListener(OWNER_INVENTORY_EVENT,bump);window.addEventListener('vyron-channel-schedule-changed',bump);return()=>{window.removeEventListener(OWNER_INVENTORY_EVENT,bump);window.removeEventListener('vyron-channel-schedule-changed',bump)}},[]);
  const bindingKey=channels.map(c=>c.id+':'+(c.youtubeProfileId||'')+':'+(c.youtubeChannelId||'')).join('|');
@@ -123,7 +123,9 @@ function OperationsDashboard(){
  async function previewAllChannelStatistics(){
   if(statsBusy)return;
   const classification=classifyYoutubeChannels(enabled,profiles),config=await api.youtubeGoogleConfig().catch(()=>null),batches=planStatisticsProjectBatches(classification.eligible,config,50);
-  setStatsPreview({channelIds:classification.eligible.map(x=>x.channel.id),eligible:classification.eligible.length,workspace:enabled.length,projectGroups:new Set(batches.map(x=>x.groupKey)).size,requests:batches.length,units:batches.length});
+  const statsUnits=batches.length;
+  const ownerUnits=classification.eligible.reduce((sum,row)=>{const cached=ownerInventoryForChannel(row.channel.id),videoCount=cached.available?cached.total:50,pages=Math.max(1,Math.ceil(videoCount/50));return sum+1+pages+(videoCount?pages:0)},0);
+  setStatsPreview({channelIds:classification.eligible.map(x=>x.channel.id),eligible:classification.eligible.length,workspace:enabled.length,projectGroups:new Set(batches.map(x=>x.groupKey)).size,requests:batches.length,statsUnits,ownerUnits,units:statsUnits+ownerUnits});
  }
  async function refreshAllChannelStatistics(){
   const plan=statsPreview;if(!plan||statsBusy)return;setStatsPreview(null);setStatsBusy(true);setStatsResult('');
@@ -165,9 +167,12 @@ function OperationsDashboard(){
     <span><small>Будет обновлено</small><b>{statsPreview.eligible}</b></span>
     <span><small>API project groups</small><b>{statsPreview.projectGroups}</b></span>
     <span><small>channels.list requests</small><b>{statsPreview.requests}</b></span>
-    <span><small>Расчётная стоимость</small><b>{statsPreview.units} units</b></span>
+    <span><small>Stats API</small><b>≈ {statsPreview.statsUnits} units</b></span>
+    <span><small>Schedule sync API</small><b>≈ {statsPreview.ownerUnits} units</b></span>
+    <span><small>Оценка всего</small><b>≈ {statsPreview.units} units</b></span>
+    <span><small>Local Render scan</small><b>0 units</b></span>
    </div>
-   <p>Будут обновлены подписчики, просмотры, количество видео и statisticsUpdatedAt. Каналы с ошибкой сохранят последние cached values.</p>
+   <p>Одним запуском будут обновлены статистика каналов, подтверждённое YouTube-расписание и локальный READY. Local Render scan не расходует YouTube API. Оценка schedule sync зависит от фактического числа видео; итоговый расход показывается после операции.</p>
    <footer><button onClick={()=>setStatsPreview(null)}>ОТМЕНА</button><button className="primary" onClick={()=>void refreshAllChannelStatistics()}>ОБНОВИТЬ</button></footer>
   </section></ModalPortal>}
   <div className="opsKpiGrid v400" data-testid="dashboard-kpis">
