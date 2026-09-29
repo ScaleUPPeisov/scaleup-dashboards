@@ -39,3 +39,15 @@ jobs:
             src/youtubeChannelStats.test.ts
       - name: TypeScript and production frontend build
         run: npm run build
+
+      - name: Full frontend regression suite
+        run: npx vitest run
+
+      - name: Rust compile gate
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+
+      - name: Critical migration and storage regressions
+        run: |
+          cargo test --manifest-path src-tauri/Cargo.toml migration::tests::channel_merge_is_idempotent_and_never_deletes -- --exact --nocapture
+          cargo test --manifest-path src-tauri/Cargo.toml migration::tests::encryption_rejects_tamper_and_wrong_password -- --exact --nocapture
+          cargo test --manifest-path src-tauri/Cargo.toml --lib storage::v213_storage_tests
