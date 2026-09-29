@@ -215,3 +215,20 @@ button.secondary{background:rgba(255,255,255,.035);border-color:#294156;color:#9
 .notificationHistoryRows{display:grid;gap:7px;overflow:auto;max-height:54vh}.notificationHistoryRow{display:grid;grid-template-columns:74px minmax(0,1fr);gap:10px;padding:10px;border:1px solid #17364a;border-radius:10px;background:rgba(6,18,29,.74)}.notificationHistoryRow.error{border-color:rgba(255,101,124,.38)}.notificationHistoryRow.warning{border-color:rgba(255,194,101,.35)}.notificationHistoryRow.success{border-color:rgba(84,226,185,.3)}
 .notificationHistoryLevel{font-size:7px;letter-spacing:.6px;font-weight:900;color:#7a9caf}.notificationHistoryRow.error .notificationHistoryLevel{color:#ff7187}.notificationHistoryRow.warning .notificationHistoryLevel{color:#ffc265}.notificationHistoryRow.success .notificationHistoryLevel{color:#54e2b9}.notificationHistoryRow div{min-width:0}.notificationHistoryRow b{font-size:10px}.notificationHistoryRow p{margin:3px 0;color:#7897a8;font-size:8px;overflow-wrap:anywhere}.notificationHistoryRow small{font-size:7px;color:#4f7083}
 @media(max-width:900px){.notificationBellButton{top:auto;bottom:18px;right:18px}}
+
+/* VYRON 5.0.1 sidebar footer contract */
+.sidebar{height:100vh;min-height:0;overflow:hidden}
+.sidebar .sidebarNav{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;padding-bottom:10px}
+.sidebarFooter{flex:0 0 auto;margin-top:auto;display:grid;gap:8px;padding-top:10px;background:linear-gradient(180deg,rgba(5,15,26,0),rgba(5,15,26,.98) 18%)}
+.sidebar .sidebarNavItem,.sidebar .sidebarNavItem:hover,.sidebar .sidebarNavItem.active{transform:none!important}
+.sidebar .sidebarIconSlot{width:18px!important;min-width:18px!important;flex:0 0 18px;text-align:center}
+.sidebar .sidebarLabel{width:auto!important;min-width:0;text-align:left}
+.ownerProfileCompact{justify-content:flex-start!important;text-align:left!important;padding-left:12px!important}
+.ownerProfileCompact>span:last-child{min-width:0;text-align:left}
+.networkStatsCard{margin-bottom:12px}
+.networkStatsGrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:10px}
+.networkStatsGrid>span{display:flex;flex-direction:column;gap:3px;padding:11px 12px;border:1px solid rgba(255,255,255,.07);border-radius:12px;background:rgba(7,18,31,.52)}
+.networkStatsGrid small{font-size:8px;color:#6f8da0}.networkStatsGrid b{font-size:15px;color:#e7f6ff}
+.statsRefreshPreview{width:min(650px,calc(100vw - 36px))}
+.rpmSettingsCard:target,.rpmSettingsCard{scroll-margin-top:24px}
+@media(max-width:1100px){.networkStatsGrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
