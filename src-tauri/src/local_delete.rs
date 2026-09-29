@@ -155,7 +155,7 @@ pub fn vyron_filesystem_preview_impl(root:&str,channel_names:&[String])->Result<
         let Some(name)=safe_channel_folder_name(raw) else{continue};
         let key=normalized_folder_name(&name);if !seen.insert(key){continue}
         let legacy=root.join(&name); let projects=projects_root.join(&name); let render=render_root.join(&name);
-        let legacy_exists=legacy.is_dir(),projects_exists=projects.is_dir();
+        let legacy_exists=legacy.is_dir(); let projects_exists=projects.is_dir();
         let action=if legacy_exists&&projects_exists{conflicts+=1;"CONFLICT"}
             else if legacy_exists{legacy_folders+=1;"MOVE_LEGACY_TO_PROJECTS"}
             else if projects_exists{"ALREADY_CANONICAL"}else{"CREATE_CANONICAL"};
@@ -187,7 +187,7 @@ pub fn vyron_filesystem_apply_impl(root:&str,channel_names:&[String])->Result<Vy
     fs::create_dir_all(&render_root).map_err(|e|format!("CREATE_RENDER_ROOT_FAILED: {e}"))?;
     let mut moved_legacy=0usize;let mut created_projects=0usize;let mut created_render=0usize;let mut files_before=0u64;let mut files_after=0u64;
     for row in preview.mappings {
-        let projects=PathBuf::from(&row.projects_path),render=PathBuf::from(&row.render_path);
+        let projects=PathBuf::from(&row.projects_path); let render=PathBuf::from(&row.render_path);
         if row.action=="MOVE_LEGACY_TO_PROJECTS"{
             let source=PathBuf::from(row.legacy_path.as_ref().ok_or_else(||"LEGACY_SOURCE_MISSING".to_string())?);
             let before=recursive_file_count(&source);files_before+=before;
