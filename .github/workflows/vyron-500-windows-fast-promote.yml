@@ -1,0 +1,228 @@
+name: VYRON 5.0.0 Windows Fast Promote
+
+on:
+  push:
+    branches:
+      - feature/vyron-5.0.0
+    paths:
+      - '.github/workflows/vyron-500-windows-fast-promote.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: vyron-500-windows-fast-promote
+  cancel-in-progress: false
+
+env:
+  VERSION: '5.0.0'
+  TAG: v5.0.0
+  RELEASE_REPO: ScaleUPPeisov/vyron-releases
+  CANDIDATE_RUN_ID: '36515516436'
+  CANDIDATE_HEAD: '1711364f962c15a0e4483fb88c4450946d32dff1'
+
+jobs:
+  promote:
+    name: Promote verified Windows 5.0.0 candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      RELEASE_TOKEN: ${{ secrets.VYRON_RELEASES_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify exact source and production baseline
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$RELEASE_TOKEN"
+          curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json -o /tmp/mac-before.json
+          curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json -o /tmp/win-before.json
+          python3 - <<'PY'
+          import json
+          mac=json.load(open('/tmp/mac-before.json'))
+          win=json.load(open('/tmp/win-before.json'))
+          assert mac['version']=='5.0.0',mac['version']
+          assert win['version']=='4.0.0',win['version']
+          assert 'darwin-aarch64' in mac['platforms']
+          print('MAC_PRODUCTION=5.0.0')
+          print('WINDOWS_BASELINE=4.0.0')
+          PY
+          sha256sum /tmp/mac-before.json | awk '{print $1}' >/tmp/mac-before.sha
+          RUN_JSON="$(gh api "repos/ScaleUPPeisov/scaleup-dashboards/actions/runs/$CANDIDATE_RUN_ID")"
+          test "$(printf '%s' "$RUN_JSON" | jq -r .conclusion)" = "success"
+          test "$(printf '%s' "$RUN_JSON" | jq -r .head_sha)" = "$CANDIDATE_HEAD"
+          GH_TOKEN="$RELEASE_TOKEN" gh release view "$TAG" --repo "$RELEASE_REPO" >/tmp/v500-release.txt
+          echo 'EXACT_SIGNED_CANDIDATE=PASS'
+
+      - name: Download exact verified Windows candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: VYRON-5.0.0-WINDOWS-SIGNED-CANDIDATE
+          path: candidate-windows
+          repository: ScaleUPPeisov/scaleup-dashboards
+          run-id: 36515516436
+          github-token: ${{ github.token }}
+
+      - name: Verify candidate bytes and gate summary
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          find candidate-windows -maxdepth 3 -type f -print
+          EXE="$(find candidate-windows -type f -name 'VYRON_5.0.0_x64-setup.exe' -print -quit)"
+          EXE_SHA="$(find candidate-windows -type f -name 'VYRON_5.0.0_x64-setup.exe.sha256' -print -quit)"
+          SIG="$(find candidate-windows -type f -name 'VYRON_5.0.0_x64-setup.exe.sig' -print -quit)"
+          GATE="$(find candidate-windows -type f -name 'gate-summary.txt' -print -quit)"
+          test -s "$EXE"; test -s "$EXE_SHA"; test -s "$SIG"; test -s "$GATE"
+          ACTUAL="$(sha256sum "$EXE" | awk '{print $1}')"
+          EXPECTED="$(awk '{print tolower($1)}' "$EXE_SHA")"
+          test "$ACTUAL" = "$EXPECTED"
+          grep -F 'VERSION=5.0.0' "$GATE"
+          grep -F 'WINDOWS_X64_BUILD=PASS' "$GATE"
+          grep -F 'WINDOWS_UPDATER_SIGNATURE=PASS' "$GATE"
+          grep -F 'WINDOWS_4_0_0_TO_5_0_0_CONTINUITY=PASS' "$GATE"
+          mkdir -p release/windows
+          cp "$EXE" release/windows/VYRON_5.0.0_x64-setup.exe
+          cp "$EXE_SHA" release/windows/VYRON_5.0.0_x64-setup.exe.sha256
+          cp "$SIG" release/windows/VYRON_5.0.0_x64-setup.exe.sig
+          cp "$GATE" release/windows/gate-summary.txt
+          echo 'WINDOWS_CANDIDATE_BYTE_IDENTITY=PASS'
+
+      - name: Reverify Tauri updater signature
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq minisign
+          python3 - <<'PY'
+          import base64,json
+          from pathlib import Path
+          conf=json.load(open('src-tauri/tauri.conf.json'))
+          def envelope(raw:bytes):
+              x=raw.strip()
+              try:
+                  y=base64.b64decode(x,validate=True)
+                  if y.startswith(b'untrusted comment:'): return y
+              except Exception:
+                  pass
+              return x+b'\n'
+          Path('/tmp/vyron.pub').write_bytes(envelope(str(conf['plugins']['updater']['pubkey']).encode()))
+          Path('/tmp/vyron-win.sig').write_bytes(envelope(Path('release/windows/VYRON_5.0.0_x64-setup.exe.sig').read_bytes()))
+          PY
+          minisign -Vm release/windows/VYRON_5.0.0_x64-setup.exe -x /tmp/vyron-win.sig -p /tmp/vyron.pub
+          echo 'WINDOWS_UPDATER_SIGNATURE_REVERIFY=PASS'
+
+      - name: Add Windows assets to existing 5.0.0 release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          GH_TOKEN="$RELEASE_TOKEN" gh release upload "$TAG" --repo "$RELEASE_REPO" --clobber             release/windows/VYRON_5.0.0_x64-setup.exe             release/windows/VYRON_5.0.0_x64-setup.exe.sha256             release/windows/VYRON_5.0.0_x64-setup.exe.sig
+          cat >/tmp/release-notes.md <<'EOF'
+          ## VYRON 5.0.0 — Owner Operations Center
+
+          Major Content OS update for macOS and Windows.
+
+          - Owner Command Center with factual daily operations and next-action guidance.
+          - Daily Operations / video stock without Finder or Explorer dependency.
+          - Channel Passport, Production Pipeline and bottleneck visibility.
+          - Quota-aware Batch Control and safer YouTube API usage.
+          - Analytics recovery UX without OAuth resets.
+          - Command Palette, Notification Center, System Health and secret-safe diagnostics.
+          - Performance hardening for larger channel fleets.
+          - Non-destructive migration preserving channels, OAuth bindings, Google credentials, Render/Projects paths, schedules, upload history, fingerprints, profile and settings.
+          - macOS upgrade path: 4.0.1 → 5.0.0.
+          - Windows upgrade path: 4.0.0 → 5.0.0.
+          - Both production platforms use artifacts from the same verified source candidate:
+            1711364f962c15a0e4483fb88c4450946d32dff1
+          EOF
+          GH_TOKEN="$RELEASE_TOKEN" gh release edit "$TAG" --repo "$RELEASE_REPO" --notes-file /tmp/release-notes.md
+          echo 'WINDOWS_RELEASE_ASSETS=PUBLISHED'
+
+      - name: Promote shared and Windows updater feeds
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git clone "https://x-access-token:$RELEASE_TOKEN@github.com/$RELEASE_REPO.git" release-repo
+          MAC_BEFORE_SHA="$(cat /tmp/mac-before.sha)"
+          CURRENT_MAC_SIG="$(python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/mac-before.json'))
+          print(d['platforms']['darwin-aarch64']['signature'])
+          PY
+          )"
+          WIN_SIG="$(tr -d '\r\n' < release/windows/VYRON_5.0.0_x64-setup.exe.sig)"
+          PUB_DATE="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          python3 - "$CURRENT_MAC_SIG" "$WIN_SIG" "$PUB_DATE" <<'PY'
+          import json,sys
+          from pathlib import Path
+          mac_sig,win_sig,pub=sys.argv[1:4]
+          repo='ScaleUPPeisov/vyron-releases'
+          notes='VYRON 5.0.0 — Owner Operations Center: Daily Operations, Channel Passport, Production Pipeline, quota-aware Batch Control, Command Palette, Notification Center, System Health, diagnostics and performance hardening.'
+          shared={
+            'version':'5.0.0','notes':notes,'pub_date':pub,
+            'platforms':{
+              'darwin-aarch64':{
+                'url':f'https://github.com/{repo}/releases/download/v5.0.0/VYRON.app.tar.gz',
+                'signature':mac_sig
+              },
+              'windows-x86_64':{
+                'url':f'https://github.com/{repo}/releases/download/v5.0.0/VYRON_5.0.0_x64-setup.exe',
+                'signature':win_sig
+              }
+            }
+          }
+          windows={
+            'version':'5.0.0','notes':notes,'pub_date':pub,
+            'platforms':{
+              'windows-x86_64':shared['platforms']['windows-x86_64']
+            }
+          }
+          Path('release-repo/updates/latest.json').write_text(json.dumps(shared,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          Path('release-repo/updates/windows-latest.json').write_text(json.dumps(windows,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          PY
+          cd release-repo
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add updates/latest.json updates/windows-latest.json
+          git commit -m 'release: promote VYRON 5.0.0 Windows updater'
+          git push origin main
+          echo 'WINDOWS_FEED_PROMOTED=5.0.0'
+
+      - name: Final remote production verification
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          GH_TOKEN="$RELEASE_TOKEN" gh api "repos/$RELEASE_REPO/releases/tags/$TAG" >/tmp/release.json
+          GH_TOKEN="$RELEASE_TOKEN" gh api "repos/$RELEASE_REPO/contents/updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 -d >/tmp/latest-after.json
+          GH_TOKEN="$RELEASE_TOKEN" gh api "repos/$RELEASE_REPO/contents/updates/windows-latest.json?ref=main" --jq .content | tr -d '\n' | base64 -d >/tmp/win-after.json
+          python3 - <<'PY'
+          import json
+          rel=json.load(open('/tmp/release.json'))
+          latest=json.load(open('/tmp/latest-after.json'))
+          win=json.load(open('/tmp/win-after.json'))
+          assets={x['name']:x for x in rel['assets']}
+          required={
+            'VYRON-5.0.0-arm64.dmg','VYRON.app.tar.gz','VYRON.app.tar.gz.sig',
+            'VYRON_5.0.0_x64-setup.exe','VYRON_5.0.0_x64-setup.exe.sha256','VYRON_5.0.0_x64-setup.exe.sig'
+          }
+          assert required <= set(assets),required-set(assets)
+          assert latest['version']=='5.0.0'
+          assert set(latest['platforms'])=={'darwin-aarch64','windows-x86_64'}
+          assert win['version']=='5.0.0'
+          assert set(win['platforms'])=={'windows-x86_64'}
+          print('MACOS_PRODUCTION=5.0.0')
+          print('WINDOWS_PRODUCTION=5.0.0')
+          print('SHARED_FEED_BOTH_PLATFORMS=PASS')
+          PY
+          rm -rf /tmp/v500-win-remote && mkdir /tmp/v500-win-remote
+          GH_TOKEN="$RELEASE_TOKEN" gh release download "$TAG" --repo "$RELEASE_REPO" --dir /tmp/v500-win-remote             --pattern 'VYRON_5.0.0_x64-setup.exe'             --pattern 'VYRON_5.0.0_x64-setup.exe.sig'
+          cmp -s release/windows/VYRON_5.0.0_x64-setup.exe /tmp/v500-win-remote/VYRON_5.0.0_x64-setup.exe
+          cmp -s release/windows/VYRON_5.0.0_x64-setup.exe.sig /tmp/v500-win-remote/VYRON_5.0.0_x64-setup.exe.sig
+          curl -fL --range 0-0 "https://github.com/$RELEASE_REPO/releases/download/$TAG/VYRON_5.0.0_x64-setup.exe" -o /tmp/win-byte >/dev/null 2>&1
+          echo 'REMOTE_WINDOWS_ARTIFACT_BYTE_IDENTITY=PASS'
+          echo 'VYRON_5_0_0_WINDOWS_PRODUCTION=PASS'
