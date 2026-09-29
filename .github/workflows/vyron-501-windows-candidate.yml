@@ -44,7 +44,14 @@ jobs:
           $ErrorActionPreference='Stop'
           $head=(git rev-parse HEAD).Trim()
           if($head -ne $env:CANDIDATE_HEAD){throw "SOURCE_SHA_MISMATCH=$head"}
+          git config core.autocrlf false
+          git reset --hard $env:CANDIDATE_HEAD
+          $head=(git rev-parse HEAD).Trim()
+          if($head -ne $env:CANDIDATE_HEAD){throw "SOURCE_SHA_CHANGED=$head"}
+          $raw=[System.IO.File]::ReadAllText((Resolve-Path 'src/UploadProcessingMonitor.tsx'))
+          if($raw.Contains([Environment]::NewLine)){throw 'CHECKOUT_CRLF_NORMALIZATION_FAILED'}
           Write-Host "EXACT_PRODUCT_SOURCE=$head"
+          Write-Host 'SOURCE_LINE_ENDINGS=REPOSITORY_LF'
 
       - uses: actions/setup-node@v4
         with:
