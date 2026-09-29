@@ -125,13 +125,10 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          $p=Get-Content package.json -Raw | ConvertFrom-Json
-          $l=Get-Content package-lock.json -Raw | ConvertFrom-Json
-          $t=Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
-          if($p.version -ne '5.0.1' -or $l.version -ne '5.0.1' -or $t.version -ne '5.0.1'){throw 'VERSION_IDENTITY_FAILED'}
-          if($t.identifier -ne 'studio.channelflow.desktop'){throw 'BUNDLE_ID_CHANGED'}
-          if(-not $t.bundle.createUpdaterArtifacts){throw 'UPDATER_ARTIFACTS_DISABLED'}
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));const l=JSON.parse(fs.readFileSync('package-lock.json','utf8'));const t=JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json','utf8'));if(p.version!=='5.0.1'||l.version!=='5.0.1'||t.version!=='5.0.1')throw new Error('VERSION_IDENTITY_FAILED');if(t.identifier!=='studio.channelflow.desktop')throw new Error('BUNDLE_ID_CHANGED');if(!t.bundle.createUpdaterArtifacts)throw new Error('UPDATER_ARTIFACTS_DISABLED');console.log('JSON_VERSION_IDENTITY=PASS')"
+          if($LASTEXITCODE -ne 0){throw 'JSON_VERSION_IDENTITY_FAILED'}
           Select-String -Path src-tauri/Cargo.toml -Pattern 'version = "5.0.1"' -SimpleMatch | Out-Null
+          if(-not $?){throw 'CARGO_VERSION_IDENTITY_FAILED'}
           Write-Host 'VYRON_5_0_1_IDENTITY=PASS'
 
       - name: Canonicalize updater signing key
