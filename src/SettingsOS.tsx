@@ -21,6 +21,7 @@ import {globalDailyUploadStatus} from './youtubePublishSafety';
 import {buildSafeDiagnosticReport} from './diagnosticReport';
 import {readStartupQuotaProbe,type StartupQuotaProbeResult} from './startupQuotaProbe';
 import {SafeArtwork} from './SafeArtwork';
+import {ModalPortal} from './ModalPortal';
 import {VYRON_5_ARTWORK} from './vyronBrand';
 
 type Tab='general'|'youtube'|'migration'|'endlume'|'updates'|'license'|'about'|'oauthdiag'|'diagnostics';
