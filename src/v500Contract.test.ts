@@ -73,7 +73,7 @@ describe('VYRON 5.0.0 product contract',()=>{
  });
 
  it('uses one bundled approved artwork across shell, update, celebration, About and major history',()=>{
-  expect(fs.existsSync('src/assets/vyron-4-artwork.webp')).toBe(true);
+  expect(fs.readFileSync('src/assets/vyron-4-artwork.webp').byteLength).toBeGreaterThan(0);
   expect(app).toContain('VYRON_5_ARTWORK');
   expect(updaterUi).toContain('VYRON_5_ARTWORK');
   expect(celebration).toContain('VYRON_5_ARTWORK');
