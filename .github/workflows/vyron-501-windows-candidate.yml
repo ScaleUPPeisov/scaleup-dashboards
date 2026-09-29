@@ -90,12 +90,35 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'WINDOWS_FRONTEND_BUILD_FAILED'}
           cargo check --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
           if($LASTEXITCODE -ne 0){throw 'WINDOWS_RUST_CHECK_FAILED'}
+
+          # Candidate test-only assertion used POSIX '/' suffixes. Patch only #[cfg(test)]
+          # for this Windows gate, then restore exact candidate source before production build.
+          $testFile='src-tauri/src/local_delete.rs'
+          $raw=[System.IO.File]::ReadAllText((Resolve-Path $testFile))
+          $old='x.projects_path.ends_with("Projects/Fixture Channel")&&x.render_path.ends_with("Render/Fixture Channel")'
+          $new='PathBuf::from(&x.projects_path).ends_with(PathBuf::from("Projects").join("Fixture Channel"))&&PathBuf::from(&x.render_path).ends_with(PathBuf::from("Render").join("Fixture Channel"))'
+          if(-not $raw.Contains($old)){throw 'WINDOWS_FS_TEST_ASSERTION_NOT_FOUND'}
+          [System.IO.File]::WriteAllText((Resolve-Path $testFile),$raw.Replace($old,$new),(New-Object System.Text.UTF8Encoding($false)))
+
           cargo test --manifest-path src-tauri/Cargo.toml local_delete::tests::vyron_filesystem_preview_is_non_destructive_and_maps_projects_render -- --exact --nocapture
           if($LASTEXITCODE -ne 0){throw 'WINDOWS_FS_PREVIEW_TEST_FAILED'}
           cargo test --manifest-path src-tauri/Cargo.toml local_delete::tests::vyron_filesystem_apply_moves_only_confirmed_legacy_and_preserves_file_count -- --exact --nocapture
           if($LASTEXITCODE -ne 0){throw 'WINDOWS_FS_APPLY_TEST_FAILED'}
           cargo test --manifest-path src-tauri/Cargo.toml local_delete::tests::vyron_filesystem_apply_blocks_conflict_without_overwrite -- --exact --nocapture
           if($LASTEXITCODE -ne 0){throw 'WINDOWS_FS_CONFLICT_TEST_FAILED'}
+          cargo test --manifest-path src-tauri/Cargo.toml local_delete::tests::missing_mp4_is_a_clean_success -- --exact --nocapture
+          if($LASTEXITCODE -ne 0){throw 'WINDOWS_LOCAL_DELETE_MISSING_TEST_FAILED'}
+          cargo test --manifest-path src-tauri/Cargo.toml local_delete::tests::directory_is_never_recursively_deleted -- --exact --nocapture
+          if($LASTEXITCODE -ne 0){throw 'WINDOWS_LOCAL_DELETE_DIRECTORY_SAFETY_FAILED'}
+
+          git checkout -- $testFile
+          $restored=(git hash-object $testFile).Trim()
+          $expected=(git rev-parse "$($env:CANDIDATE_HEAD):src-tauri/src/local_delete.rs").Trim()
+          if($restored -ne $expected){throw "PRODUCT_SOURCE_RESTORE_FAILED=$restored expected=$expected"}
+          $dirty=(git status --porcelain -- src src-tauri package.json package-lock.json)
+          if($dirty){throw "PRODUCT_TREE_DIRTY_BEFORE_BUILD: $dirty"}
+          Write-Host 'WINDOWS_FILESYSTEM_NATIVE_GATE=PASS'
+          Write-Host 'PRODUCT_SOURCE_RESTORED_EXACT=PASS'
 
       - name: Verify version identity
         shell: pwsh
