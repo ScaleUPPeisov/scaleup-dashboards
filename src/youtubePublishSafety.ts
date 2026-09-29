@@ -6,10 +6,13 @@ const RECORDS='vyron:youtube-publish-records:v1';
 // Resumable sessions are persisted by the Rust backend; a dead frontend process must not
 // leave a localStorage lock that disables publishing for up to two hours after restart.
 let runtimeLocks:ChannelUploadLock[]=[];
+const globalUploadListeners=new Set<()=>void>();
 function get<T>(key:string,fallback:T):T{try{const v=JSON.parse(localStorage.getItem(key)||'null');return v??fallback}catch{return fallback}}
 function set(key:string,v:unknown){try{localStorage.setItem(key,JSON.stringify(v))}catch{}}
+function emitGlobalUploadStatusChanged(){for(const cb of [...globalUploadListeners]){try{cb()}catch{}}}
+export function subscribeGlobalDailyUploadStatus(cb:()=>void){globalUploadListeners.add(cb);return()=>{globalUploadListeners.delete(cb)}}
 export function publishRecords():PublishUploadRecord[]{const x=get<any[]>(RECORDS,[]);return Array.isArray(x)?x:[]}
-function saveRecords(rows:PublishUploadRecord[]){set(RECORDS,rows.slice(-2000))}
+function saveRecords(rows:PublishUploadRecord[]){set(RECORDS,rows.slice(-2000));emitGlobalUploadStatusChanged()}
 export function uploadsByVyronLast24h(channelId:string,now=Date.now()){const min=now-24*60*60*1000;return publishRecords().filter(x=>x.channelId===channelId&&x.status==='completed'&&Boolean(x.videoId)&&Date.parse(x.completedAt||x.startedAt)>=min)}
 export function findSuccessfulUpload(channelId:string,fingerprint:string){return publishRecords().slice().reverse().find(x=>x.channelId===channelId&&x.fingerprint===fingerprint&&x.status==='completed'&&Boolean(x.videoId))}
 export function beginPublishAttempt(x:Omit<PublishUploadRecord,'id'|'startedAt'|'status'>){const row:PublishUploadRecord={...x,id:crypto.randomUUID(),startedAt:new Date().toISOString(),status:'started'};saveRecords([...publishRecords(),row]);return row}
