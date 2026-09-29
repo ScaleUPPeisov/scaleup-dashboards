@@ -1,0 +1,243 @@
+name: VYRON 5.0.2 Windows Fast Candidate
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-5.0.2-full-refresh
+    paths:
+      - '.github/workflows/vyron-502-windows-fast-candidate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: vyron-502-windows-fast-candidate
+  cancel-in-progress: true
+
+env:
+  VERSION: '5.0.2'
+  CANDIDATE_HEAD: 'a7970e435753404f4ffdba5a4e8f1c1bfafff1c6'
+  REGRESSION_RUN_ID: '36595524208'
+  BUNDLE_ID: studio.channelflow.desktop
+
+jobs:
+  windows-fast-candidate:
+    name: VYRON 5.0.2 Windows fast signed candidate
+    runs-on: windows-latest
+    timeout-minutes: 100
+    env:
+      VYRON_TAURI_SIGNING_PRIVATE_KEY_RAW: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: a7970e435753404f4ffdba5a4e8f1c1bfafff1c6
+          fetch-depth: 0
+
+      - name: Verify exact source and green regression
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $head=(git rev-parse HEAD).Trim()
+          if($head -ne $env:CANDIDATE_HEAD){throw "SOURCE_SHA_MISMATCH=$head"}
+          $run=gh api "repos/ScaleUPPeisov/scaleup-dashboards/actions/runs/$env:REGRESSION_RUN_ID" | ConvertFrom-Json
+          if($run.conclusion -ne 'success'){throw "REGRESSION_RUN_NOT_GREEN=$($run.conclusion)"}
+          if($run.head_sha -ne $env:CANDIDATE_HEAD){throw "REGRESSION_SOURCE_MISMATCH=$($run.head_sha)"}
+          Write-Host 'VYRON_5_0_2_REGRESSION_PROVENANCE=PASS'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci --no-audit --no-fund
+
+      - name: Verify production baseline and version identity
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          Invoke-WebRequest 'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json' -OutFile "$env:RUNNER_TEMP\mac.json"
+          Invoke-WebRequest 'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json' -OutFile "$env:RUNNER_TEMP\win.json"
+          $mac=Get-Content "$env:RUNNER_TEMP\mac.json" -Raw | ConvertFrom-Json
+          $win=Get-Content "$env:RUNNER_TEMP\win.json" -Raw | ConvertFrom-Json
+          if($mac.version -ne '5.0.2'){throw "MAC_FEED_UNEXPECTED=$($mac.version)"}
+          if($win.version -ne '5.0.1'){throw "WINDOWS_FEED_UNEXPECTED=$($win.version)"}
+          node -e "const p=require('./package.json'),l=require('./package-lock.json'),t=require('./src-tauri/tauri.conf.json'); for(const v of [p.version,l.version,l.packages[''].version,t.version]) if(v!=='5.0.2') process.exit(2); if(t.identifier!=='studio.channelflow.desktop'||t.bundle.createUpdaterArtifacts!==true) process.exit(3); console.log('VYRON_5_0_2_IDENTITY=PASS')"
+          if($LASTEXITCODE -ne 0){throw "VERSION_IDENTITY_FAILED=$LASTEXITCODE"}
+          Write-Host 'PRODUCTION_BASELINE=mac:5.0.2 windows:5.0.1'
+
+      - name: Windows refresh regression and native compile
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          npx vitest run src/v502FullRefresh.test.ts src/contentRunway.test.ts src/v334LiveContentInventory.test.ts src/v501LocalCleanupZeroQuota.test.ts src/v2115Rc7OauthUpdateContinuity.test.ts src/youtubeApplyVerification.test.ts src/publisherSchedule.test.ts src/v2115ScheduleSyncHotfix.test.ts src/youtubeChannelStats.test.ts
+          if($LASTEXITCODE -ne 0){throw 'WINDOWS_V502_REGRESSION_FAILED'}
+          npm run build
+          if($LASTEXITCODE -ne 0){throw 'WINDOWS_FRONTEND_BUILD_FAILED'}
+          cargo check --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
+          if($LASTEXITCODE -ne 0){throw 'WINDOWS_RUST_CHECK_FAILED'}
+
+      - name: Canonicalize updater signing key
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          import base64,os
+          raw=os.environ['VYRON_TAURI_SIGNING_PRIVATE_KEY_RAW'].strip().replace('\\r\\n','\n').replace('\\n','\n')
+          candidates=[raw]
+          for _ in range(5):
+              current=candidates[-1].strip()
+              try: decoded=base64.b64decode(current,validate=True).decode('utf-8').strip()
+              except Exception: break
+              if decoded in candidates: break
+              candidates.append(decoded)
+          plain=next((x for x in candidates if x.startswith('untrusted comment:')),None)
+          assert plain,'TAURI_SIGNING_PRIVATE_KEY_FORMAT_UNRECOGNIZED'
+          canonical=base64.b64encode((plain.rstrip()+'\n').encode('utf-8')).decode('ascii')
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as fp:
+              fp.write('TAURI_SIGNING_PRIVATE_KEY='+canonical+'\n')
+          print('::add-mask::'+canonical)
+          print('TAURI_UPDATER_KEY_CANONICAL=READY')
+          PY
+
+      - name: Build Windows 5.0.2 signed candidate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          npx tauri build --target x86_64-pc-windows-msvc --bundles nsis --config src-tauri/tauri.windows.conf.json
+          if($LASTEXITCODE -ne 0){throw 'WINDOWS_BUILD_FAILED'}
+          $installer=Get-ChildItem src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis -Filter '*-setup.exe' | Select-Object -First 1
+          if(-not $installer){throw 'NSIS_MISSING'}
+          $sig=Get-Item ($installer.FullName + '.sig') -ErrorAction Stop
+          New-Item -ItemType Directory -Force -Path candidate-windows | Out-Null
+          Copy-Item $installer.FullName candidate-windows/VYRON_5.0.2_x64-setup.exe
+          Copy-Item $sig.FullName candidate-windows/VYRON_5.0.2_x64-setup.exe.sig
+          (Get-FileHash candidate-windows/VYRON_5.0.2_x64-setup.exe -Algorithm SHA256).Hash.ToLowerInvariant() | Set-Content candidate-windows/VYRON_5.0.2_x64-setup.exe.sha256
+          Write-Host 'WINDOWS_X64_BUILD=PASS'
+
+      - name: Verify Windows updater signature
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $verifyRoot=Join-Path $env:RUNNER_TEMP 'vyron-signature-verify'
+          New-Item -ItemType Directory -Force -Path (Join-Path $verifyRoot 'src') | Out-Null
+          @'
+          [package]
+          name = "vyron-signature-verify"
+          version = "0.0.0"
+          edition = "2021"
+          [dependencies]
+          base64 = "0.22"
+          minisign-verify = "=0.2.5"
+          '@ | Set-Content -Encoding utf8 (Join-Path $verifyRoot 'Cargo.toml')
+          @'
+          use base64::{engine::general_purpose::STANDARD, Engine as _};
+          use minisign_verify::{PublicKey, Signature};
+          use std::{env,fs};
+          fn decode(encoded:&str)->String{String::from_utf8(STANDARD.decode(encoded.trim()).unwrap()).unwrap()}
+          fn main(){
+            let a:Vec<String>=env::args().collect(); assert_eq!(a.len(),4);
+            let artifact=fs::read(&a[1]).unwrap();
+            let sig=decode(&fs::read_to_string(&a[2]).unwrap());
+            let conf=fs::read_to_string(&a[3]).unwrap();
+            let marker="\"pubkey\": \""; let start=conf.find(marker).unwrap()+marker.len();
+            let tail=&conf[start..]; let end=tail.find('\"').unwrap();
+            let pk=PublicKey::decode(&decode(&tail[..end])).unwrap();
+            let sg=Signature::decode(&sig).unwrap();
+            pk.verify(&artifact,&sg,true).unwrap();
+            println!("WINDOWS_UPDATER_SIGNATURE=PASS");
+          }
+          '@ | Set-Content -Encoding utf8 (Join-Path $verifyRoot 'src/main.rs')
+          cargo run --quiet --release --manifest-path (Join-Path $verifyRoot 'Cargo.toml') -- candidate-windows/VYRON_5.0.2_x64-setup.exe candidate-windows/VYRON_5.0.2_x64-setup.exe.sig src-tauri/tauri.conf.json
+          if($LASTEXITCODE -ne 0){throw 'WINDOWS_SIGNATURE_VERIFY_FAILED'}
+
+      - name: Physical Windows 5.0.1 to 5.0.2 continuity
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $appData=Join-Path $env:APPDATA 'studio.channelflow.desktop'
+          $docState=Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'VYRON\State'
+          New-Item -ItemType Directory -Force -Path $appData,$docState | Out-Null
+          $state=@{
+            version=10
+            channels=@(
+              @{id='fixture-a';name='Fixture A';slug='fixture-a';enabled=$true;youtubeProfileId='PROFILE_A';youtubeChannelId='TEST_CH_A';renderFolderPath='D:\Render\Fixture A';projectsFolderPath='D:\Projects\Fixture A';safeDailyUploadLimit=10;cadenceDays=1;scheduleMode='interval';publishIntervalDays=1;publishHour=18;publishMinute=0;targetBufferDays=30;language='EN';genre='Music';country='US';minTracks=10;targetDurationMin=120;stats=@{subscriberCount=1001;viewCount=100100;videoCount=31;statisticsUpdatedAt='2026-09-29T00:00:00Z';source='LIVE_REFRESH'};seo=@{titlePatterns=@();descriptionTemplate='';tags=@();banned=@()}},
+              @{id='fixture-a-copy';name='Fixture A copy';slug='fixture-a-copy';enabled=$true;youtubeProfileId='PROFILE_A';youtubeChannelId='TEST_CH_A';renderFolderPath='D:\Render\Fixture A';projectsFolderPath='D:\Projects\Fixture A';cadenceDays=1;publishHour=18;publishMinute=0;targetBufferDays=30;language='EN';genre='Music';country='US';minTracks=10;targetDurationMin=120;seo=@{titlePatterns=@();descriptionTemplate='';tags=@();banned=@()}}
+            )
+            jobs=@(@{id='fixture-job';channelId='fixture-a-copy';number=1;folder='D:\fixture';status='READY_UPLOAD';createdAt='2026-09-29T00:00:00Z';tracksCount=10;minTracks=10;finalPath='D:\Render\Fixture A\001.mov';title='Fixture';description='';tags=@();storageLifecycle='NEW'})
+            competitors=@()
+            settings=@{workspace='D:\VYRON';renderRootPath='D:\Render';endlumePath='';youtubeApiKey='';openaiApiKey='';autoCheckUpdates=$false;reduceMotion=$false;fpsMonitor=$false;localProfileName='Кирилл';localProfileRole='Owner / YouTube Manager';localProfileCompany='VYRON / ScaleUP';localProfileAvatarPath='D:\VYRON\avatar.webp';estimatedRpmUsd=2.5}
+            logs=@()
+            uploadHistory=@(@{id='fixture-history';jobId='fixture-job';channelId='fixture-a-copy';youtubeVideoId='fixture-video';localFilePath='D:\old.mov';originalFilename='old.mov';uploadedAt='2026-09-29T00:00:00Z';fileSize=123;sha256=('a'*64);status='UPLOADED'})
+            activityJournal=@(@{eventId='fixture-event';timestamp='2026-09-29T00:00:00Z';eventType='UPLOAD_ACCEPTED';status='SUCCESS';source='LIVE_OPERATION';channelId='fixture-a-copy'})
+            statisticsHistory=@{'fixture-a'=@(@{channelId='fixture-a';capturedAt='2026-09-29T00:00:00Z';source='LIVE_REFRESH';subscriberCount=1001;viewCount=100100;videoCount=31})}
+            fingerprintCache=@{'fixture-fp'=@{path='D:\old.mov';size=123;mtimeMs=1;sha256=('a'*64);computedAt='2026-09-29T00:00:00Z'}}
+            projectLifecycle=@{'fixture-project'=@{projectId='fixture-project';projectPath='D:\project';status='RENDERED';renderExists=$true;updatedAt='2026-09-29T00:00:00Z'}}
+          } | ConvertTo-Json -Depth 20
+          Set-Content -Path (Join-Path $appData 'state.json') -Value $state -Encoding UTF8
+          Set-Content -Path (Join-Path $docState 'app-state.json') -Value $state -Encoding UTF8
+          $old="$env:RUNNER_TEMP\VYRON_5.0.1_x64-setup.exe"
+          Invoke-WebRequest 'https://github.com/ScaleUPPeisov/vyron-releases/releases/download/v5.0.1/VYRON_5.0.1_x64-setup.exe' -OutFile $old
+          $p=Start-Process -FilePath $old -ArgumentList '/S' -Wait -PassThru
+          if($p.ExitCode -ne 0){throw "BASELINE_INSTALL_EXIT=$($p.ExitCode)"}
+          $candidate=(Resolve-Path 'candidate-windows/VYRON_5.0.2_x64-setup.exe').Path
+          $p=Start-Process -FilePath $candidate -ArgumentList '/S' -Wait -PassThru
+          if($p.ExitCode -ne 0){throw "CANDIDATE_INSTALL_EXIT=$($p.ExitCode)"}
+          $roots=@((Join-Path $env:LOCALAPPDATA 'Programs'),$env:LOCALAPPDATA,$env:ProgramFiles,[Environment]::GetEnvironmentVariable('ProgramFiles(x86)')) | Where-Object {$_ -and (Test-Path $_)}
+          $exe=$null
+          foreach($root in $roots){
+            $exe=Get-ChildItem $root -File -Recurse -ErrorAction SilentlyContinue | Where-Object {$_.Name -in @('channelflow.exe','VYRON.exe') -and ($_.VersionInfo.ProductVersion -as [string]).StartsWith('5.0.2')} | Select-Object -First 1
+            if($exe){break}
+          }
+          if(-not $exe){throw 'VYRON_5_0_2_EXE_NOT_FOUND'}
+          $proc=Start-Process -FilePath $exe.FullName -PassThru
+          Start-Sleep -Seconds 8
+          $proc.Refresh()
+          if($proc.HasExited){throw "VYRON_5_0_2_LAUNCH_EXITED=$($proc.ExitCode)"}
+          Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 1
+          $saved=Get-Content (Join-Path $appData 'state.json') -Raw | ConvertFrom-Json
+          if($saved.channels.Count -ne 1){throw 'CHANNEL_DEDUPE_FAILED'}
+          $c=$saved.channels[0]
+          if($c.youtubeProfileId -ne 'PROFILE_A' -or $c.youtubeChannelId -ne 'TEST_CH_A'){throw 'OAUTH_BINDING_CHANGED'}
+          if($c.renderFolderPath -ne 'D:\Render\Fixture A'){throw 'RENDER_PATH_CHANGED'}
+          if($c.projectsFolderPath -ne 'D:\Projects\Fixture A'){throw 'PROJECTS_PATH_CHANGED'}
+          if($c.stats.subscriberCount -ne 1001 -or $c.stats.viewCount -ne 100100 -or $c.stats.videoCount -ne 31){throw 'CACHED_STATS_CHANGED'}
+          if($saved.jobs[0].channelId -ne $c.id){throw 'JOB_CHANNEL_REMAP_FAILED'}
+          if($saved.uploadHistory[0].channelId -ne $c.id){throw 'HISTORY_CHANNEL_REMAP_FAILED'}
+          if($saved.activityJournal[0].channelId -ne $c.id){throw 'ACTIVITY_CHANNEL_REMAP_FAILED'}
+          if($saved.settings.localProfileName -ne 'Кирилл'){throw 'OWNER_PROFILE_CHANGED'}
+          if($saved.settings.localProfileAvatarPath -ne 'D:\VYRON\avatar.webp'){throw 'OWNER_AVATAR_CHANGED'}
+          if($saved.fingerprintCache.'fixture-fp'.size -ne 123){throw 'FINGERPRINT_CHANGED'}
+          if($saved.projectLifecycle.'fixture-project'.status -ne 'RENDERED'){throw 'PROJECT_LIFECYCLE_CHANGED'}
+          Write-Host 'WINDOWS_5_0_1_TO_5_0_2_CONTINUITY=PASS'
+
+      - name: Write candidate gate
+        shell: pwsh
+        run: |
+          @(
+            "HEAD=$env:CANDIDATE_HEAD",
+            'VERSION=5.0.2',
+            "REGRESSION_RUN_ID=$env:REGRESSION_RUN_ID",
+            'WINDOWS_REGRESSION=PASS',
+            'WINDOWS_X64_BUILD=PASS',
+            'WINDOWS_UPDATER_SIGNATURE=PASS',
+            'WINDOWS_5_0_1_TO_5_0_2_CONTINUITY=PASS',
+            'VYRON_5_0_2_WINDOWS_CANDIDATE_READY=YES'
+          ) | Set-Content candidate-windows/gate-summary.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-5.0.2-WINDOWS-SIGNED-CANDIDATE
+          path: candidate-windows/**
+          if-no-files-found: error
+          retention-days: 14
