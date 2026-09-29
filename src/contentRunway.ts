@@ -173,6 +173,30 @@ export function buildContentRunway(
   };
 }
 
+
+export function confirmedScheduledRunwaySnapshot(
+  channel:Channel,
+  base:ContentRunwaySnapshot,
+  record:ChannelRunwayRecord|undefined,
+  readyVideoCount:number
+):ContentRunwaySnapshot{
+  const known=Boolean(record&&record.status!=='no-data');
+  const confirmedDays=known?Math.max(0,Number(record?.runwayDays)||0):0;
+  const ready=Math.max(0,Math.floor(Number(readyVideoCount)||0));
+  return{
+    ...base,
+    scheduledThrough:record?.scheduledUntil,
+    scheduledVideoCount:record?.scheduledVideoCount||0,
+    readyVideoCount:ready,
+    projectedRunwayEnd:record?.scheduledUntil,
+    contentRunwayDays:confirmedDays,
+    scheduledRunwayDays:confirmedDays,
+    projectedReadySlots:[],
+    status:known?runwayStatus(confirmedDays,true):'no-data',
+    deficitDays:Math.max(0,Math.max(0,channel.targetBufferDays||0)-confirmedDays)
+  };
+}
+
 export function contentRunwayQuotaView(general:YoutubeQuotaUsage,upload?:UploadQuotaState|null):ContentRunwayQuotaView{
   return{
     general:{used:general.used,limit:general.limit,remaining:Math.max(0,general.limit-general.used)},
