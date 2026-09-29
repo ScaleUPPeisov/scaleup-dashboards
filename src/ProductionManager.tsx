@@ -3,7 +3,7 @@ import {createJobsCount} from './autopilotCore';
 import {productionManagerApi,type BatchStatus,type BatchSummary,type BuildResult,type ChannelProductionState,type DistributionMode,type ImportSession,type MusicSummary,type ProductionStorageStatus,type Validation} from './productionManagerApi';
 import {defaultChannelProductionPrefs,patchChannelProductionPrefs,useProductionPrefs} from './productionPrefs';
 import {useApp} from './store';
-import {nextProjectLifecycle} from './storageLifecycle';
+import {isRenderReadyTransitionAllowed,nextProjectLifecycle} from './storageLifecycle';
 import {notifyInfo,notifySuccess} from './notificationCenter';
 import {openRecoveryFlow} from './RecoveryGate';
 
@@ -72,8 +72,23 @@ export function ProductionManager({view='all'}:{view?:'all'|'materials'|'builder
 
   useEffect(()=>{void refreshState();setResult(null);setValidation(null);setBatchStatus(null)},[workspace,productionRoot,channelId]);
   useEffect(()=>{let live=true;if(!productionRoot){setStorageStatus(null);return}productionManagerApi.storageStatus(productionRoot).then(s=>{if(live)setStorageStatus(s)}).catch(e=>{if(live)setStorageStatus({path:productionRoot,exists:false,writable:false,external:productionRoot.startsWith('/Volumes/'),freeBytes:null,error:String(e)})});return()=>{live=false}},[productionRoot]);
-  useEffect(()=>{if(result?.batch){productionManagerApi.status(result.batch.manifestPath).then(setBatchStatus).catch(()=>setBatchStatus(null));return}const last=channelPrefs.lastBatchId&&batches.find(b=>b.batchId===channelPrefs.lastBatchId);if(last)setResult({status:'ready',availableImages:collected,requestedProjects:last.projectCount,batch:last})},[batches,result?.batch?.batchId,channelPrefs.lastBatchId]);
-  useEffect(()=>{const batch=result?.batch;if(!batch||!batchStatus?.projects?.length)return;for(const row of batchStatus.projects){if(row.renderStatus!=='Completed'||!row.outputFile)continue;const key=`${batch.batchId}:${row.projectId}`,base={projectId:row.projectId,jobId:row.jobId||undefined,projectPath:`${batch.rootPath}/${row.projectId}`,renderPath:row.outputFile,status:'RENDERED' as const,renderExists:true,updatedAt:new Date().toISOString()};patchProjectLifecycle(key,nextProjectLifecycle(base,uploadHistory));if(row.jobId){const j=useApp.getState().jobs.find(x=>x.id===row.jobId);if(j&&!j.finalPath)useApp.getState().patchJob(j.id,{finalPath:row.outputFile,storageLifecycle:'NEW'})}}},[result?.batch?.batchId,batchStatus?.updatedAt,uploadHistory.length]);
+  useEffect(()=>{if(result?.batch)return;const last=channelPrefs.lastBatchId&&batches.find(b=>b.batchId===channelPrefs.lastBatchId);if(last)setResult({status:'ready',availableImages:collected,requestedProjects:last.projectCount,batch:last})},[batches,result?.batch?.batchId,channelPrefs.lastBatchId]);
+  useEffect(()=>{
+    const batch=result?.batch;if(!batch)return;
+    let live=true,timer:number|undefined;
+    const poll=async()=>{
+      try{
+        const next=await productionManagerApi.status(batch.manifestPath);if(!live)return;setBatchStatus(next);
+        const active=next.projects.some(p=>p.renderStatus==='Rendering'||(p.renderStatus==='Waiting'&&p.handoffStatus==='SENT'));
+        if(active)timer=window.setTimeout(()=>void poll(),2000);else void refreshState();
+      }catch{
+        if(live)timer=window.setTimeout(()=>void poll(),4000)
+      }
+    };
+    void poll();
+    return()=>{live=false;if(timer!==undefined)window.clearTimeout(timer)}
+  },[result?.batch?.manifestPath]);
+  useEffect(()=>{const batch=result?.batch;if(!batch||!batchStatus?.projects?.length)return;for(const row of batchStatus.projects){if(row.jobId&&row.renderStatus==='Rendering'){const j=useApp.getState().jobs.find(x=>x.id===row.jobId);if(j&&isRenderReadyTransitionAllowed(j)&&j.status!=='RENDERING')useApp.getState().patchJob(j.id,{status:'RENDERING',error:undefined})}if(row.renderStatus!=='Completed'||!row.outputFile)continue;const key=`${batch.batchId}:${row.projectId}`,base={projectId:row.projectId,jobId:row.jobId||undefined,projectPath:`${batch.rootPath}/${row.projectId}`,renderPath:row.outputFile,status:'RENDERED' as const,renderExists:true,updatedAt:new Date().toISOString()};patchProjectLifecycle(key,nextProjectLifecycle(base,uploadHistory));if(row.jobId){const j=useApp.getState().jobs.find(x=>x.id===row.jobId);if(j){const patch:Partial<typeof j>={};if(j.finalPath!==row.outputFile)patch.finalPath=row.outputFile;if(isRenderReadyTransitionAllowed(j)){patch.status='READY_UPLOAD';patch.storageLifecycle='NEW';patch.error=undefined}if(Object.keys(patch).length)useApp.getState().patchJob(j.id,patch)}}}},[result?.batch?.batchId,batchStatus?.updatedAt,uploadHistory.length]);
 
   useEffect(()=>{
     let live=true;
