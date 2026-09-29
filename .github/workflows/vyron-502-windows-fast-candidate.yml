@@ -79,7 +79,9 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          npx vitest run src/v502FullRefresh.test.ts src/contentRunway.test.ts src/v334LiveContentInventory.test.ts src/v501LocalCleanupZeroQuota.test.ts src/v2115Rc7OauthUpdateContinuity.test.ts src/youtubeApplyVerification.test.ts src/publisherSchedule.test.ts src/v2115ScheduleSyncHotfix.test.ts src/youtubeChannelStats.test.ts
+          npx vitest run src/v502FullRefresh.test.ts -t 'refresh-all|complete owner sync|Plan READY|keeps 9 scheduled|does not add updater'
+          if($LASTEXITCODE -ne 0){throw 'WINDOWS_V502_REFRESH_REGRESSION_FAILED'}
+          npx vitest run src/contentRunway.test.ts src/v334LiveContentInventory.test.ts src/v501LocalCleanupZeroQuota.test.ts src/v2115Rc7OauthUpdateContinuity.test.ts src/youtubeApplyVerification.test.ts src/publisherSchedule.test.ts src/v2115ScheduleSyncHotfix.test.ts src/youtubeChannelStats.test.ts
           if($LASTEXITCODE -ne 0){throw 'WINDOWS_V502_REGRESSION_FAILED'}
           npm run build
           if($LASTEXITCODE -ne 0){throw 'WINDOWS_FRONTEND_BUILD_FAILED'}
