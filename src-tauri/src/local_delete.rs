@@ -154,7 +154,7 @@ pub fn vyron_filesystem_preview_impl(root:&str,channel_names:&[String])->Result<
     for raw in channel_names {
         let Some(name)=safe_channel_folder_name(raw) else{continue};
         let key=normalized_folder_name(&name);if !seen.insert(key){continue}
-        let legacy=root.join(&name),projects=projects_root.join(&name),render=render_root.join(&name);
+        let legacy=root.join(&name); let projects=projects_root.join(&name); let render=render_root.join(&name);
         let legacy_exists=legacy.is_dir(),projects_exists=projects.is_dir();
         let action=if legacy_exists&&projects_exists{conflicts+=1;"CONFLICT"}
             else if legacy_exists{legacy_folders+=1;"MOVE_LEGACY_TO_PROJECTS"}
@@ -182,7 +182,7 @@ pub fn vyron_filesystem_preview(root:String,channel_names:Vec<String>)->Result<V
 pub fn vyron_filesystem_apply_impl(root:&str,channel_names:&[String])->Result<VyronFilesystemApplyResult,String>{
     let preview=vyron_filesystem_preview_impl(root,channel_names)?;
     if preview.conflicts>0{return Err(format!("VYRON_FILESYSTEM_CONFLICTS: {}",preview.conflicts))}
-    let root=PathBuf::from(&preview.root),projects_root=root.join("Projects"),render_root=root.join("Render");
+    let root=PathBuf::from(&preview.root); let projects_root=root.join("Projects"); let render_root=root.join("Render");
     fs::create_dir_all(&projects_root).map_err(|e|format!("CREATE_PROJECTS_ROOT_FAILED: {e}"))?;
     fs::create_dir_all(&render_root).map_err(|e|format!("CREATE_RENDER_ROOT_FAILED: {e}"))?;
     let mut moved_legacy=0usize;let mut created_projects=0usize;let mut created_render=0usize;let mut files_before=0u64;let mut files_after=0u64;
