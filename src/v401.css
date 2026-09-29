@@ -182,3 +182,12 @@
   .ownerProfileCompact{padding:6px 8px;margin-top:4px;margin-bottom:4px}
   .ownerProfileAvatar{width:30px;height:30px;min-width:30px}
 }
+
+/* VYRON 5: hard-stop legacy sidebar pseudo-element tails/arcs. */
+.sidebar .sidebarNavItem::before,
+.sidebar .sidebarNavItem::after,
+.sidebar .sidebarIconSlot::before,
+.sidebar .sidebarIconSlot::after{
+  content:none!important;
+  display:none!important;
+}
