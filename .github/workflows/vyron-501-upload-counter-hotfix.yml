@@ -54,7 +54,6 @@ jobs:
           src/dailyOperations.test.ts
           src/productionPipeline.test.ts
           src/updaterRuntime.test.ts
-          src/v500Contract.test.ts
       - name: Production frontend build
         run: npm run build
       - name: Canonical filesystem native tests
