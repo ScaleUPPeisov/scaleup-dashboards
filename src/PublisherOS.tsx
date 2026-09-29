@@ -115,10 +115,11 @@ export function PublisherOS(){
      if(idx>=0)nextHistory[idx]={...nextHistory[idx],sourceLifecycle:'PRESENT',sourceCheckedAt:at};
      const currentProof=idx>=0?nextHistory[idx]:proof;
      if(!postUploadCleanupEligible(currentProof,j)){if(currentProof.processingState==='PROCESSING_UNKNOWN'||currentProof.processingState==='PROCESSING_FAILED'||currentProof.processingState==='REJECTED')processing++;else verification++;continue}
-     journal({eventId:operationId+':requested:'+proof.id,eventType:'SOURCE_TRASH_REQUESTED',status:'STARTED',source:'LIVE_OPERATION',timestamp:at,operationId,batchId:operationId,channelId,channelName:channel?.name||channelId,profileId:proof.profileId,jobId:j.id,youtubeVideoId:proof.youtubeVideoId,localSourcePath:proof.localFilePath,details:{filename:proof.originalFilename}});
+     journal({eventId:operationId+':requested:'+proof.id,eventType:'SOURCE_TRASH_REQUESTED',status:'STARTED',source:'LIVE_OPERATION',timestamp:at,operationId,batchId:operationId,channelId,channelName:channel?.name||channelId,profileId:proof.profileId,jobId:j.id,youtubeVideoId:proof.youtubeVideoId,localSourcePath:proof.localFilePath,details:{filename:proof.originalFilename,youtubeApiRequests:0,verificationSource:'CACHED_UPLOAD_PROOF'}});
      try{
-      const p=await api.youtubeVideoProcessingStatus(proof.profileId!,proof.youtubeVideoId,`${operationId}:verify:${j.id}`);
-      if((p.processingState!=='READY'&&p.processingState!=='YOUTUBE_PROCESSING')||!p.identityVerified){processing++;continue}
+      // LOCAL-ONLY cleanup invariant: deleting an already verified local source must never
+      // trigger YouTube API traffic. postUploadCleanupEligible() already requires persisted
+      // video identity + trusted upload-time fingerprint proof; only local checks remain here.
       const cache=useApp.getState().fingerprintCache[proof.localFilePath],fp=await api.youtubeFileFingerprint(proof.localFilePath,cache?{size:cache.size,mtimeMs:cache.mtimeMs,sha256:cache.sha256}:undefined);
       if(fp.fingerprint.toLowerCase()!==proof.sha256.toLowerCase()||fp.size!==proof.fileSize){changed++;if(idx>=0)nextHistory[idx]={...nextHistory[idx],sourceLifecycle:'SOURCE_CHANGED',sourceCheckedAt:new Date().toISOString()};continue}
       const trash=await api.trashLocalFile(proof.localFilePath,allowedRoots);
@@ -130,7 +131,7 @@ export function PublisherOS(){
     replaceUploadHistory(nextHistory);
     for(const id of removed)await api.youtubeCancelUploadSession(id).catch(()=>undefined);
     if(removed.length){const repaired=removeSelectedPublishItems(draft.selectedIds,selected.map(x=>x.id),draft.rows,removed);setDraftPatch({selectedIds:repaired.selectedIds,rows:repaired.rows});setFingerprints(prev=>{const next={...prev};for(const id of removed)delete next[id];return next})}
-    if(moved)notifySuccess('Видео перемещены в Корзину',`${moved} файлов • permanent delete: NO.`,{operationId});
+    if(moved)notifySuccess('Видео перемещены в Корзину',`${moved} файлов • permanent delete: NO • YouTube API requests: 0.`,{operationId});
     const skipped=alreadyMissing+processing+changed+verification;if(skipped)notifyWarning('Очистка завершена с исключениями',`Уже отсутствуют: ${alreadyMissing} • YouTube не READY: ${processing} • source changed: ${changed} • verification: ${verification}. Одна сводка вместо CLEANUP_NOT_READY по каждому файлу.`,{operationId:operationId+':summary'});
    }finally{setRemoveRequest(null);setBusy(false);void refreshSessions();if(deleteFromDisk&&channelRenderFolder)void scanRenderFolder('cleanup')}
   }
