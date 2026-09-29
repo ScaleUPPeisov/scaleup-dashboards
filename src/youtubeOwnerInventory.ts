@@ -3,6 +3,7 @@ import {readAuthoritativeExistingSnapshot,readExistingCache,replaceExistingCache
 import type {Channel,YoutubeExistingVideo} from './types';
 import {markYoutubeCache} from './youtubeCache';
 import {bindYoutubeQuotaTraceContext,youtubeQuotaState,youtubeQuotaUsage} from './youtubeQuota';
+import {upsertChannelRunwayFromYoutube} from './channelRunwayStore';
 
 export const OWNER_INVENTORY_TTL_MS=6*60*60*1000;
 export const OWNER_INVENTORY_EVENT='vyron:owner-inventory-refresh';
@@ -139,6 +140,7 @@ export function refreshStaleOwnerInventories(channels:Channel[],force=false):Pro
       bindYoutubeQuotaTraceContext(operationId,{reason:'OWNER_INVENTORY_REFRESH',channelIds:[channel.id],mode:force?'MANUAL':'BACKGROUND',estimatedUnits});
       const result=await api.youtubeListExisting(profile.id,5000,operationId);
       replaceExistingCacheFromSync(channel.id,result.videos||[],result);
+      if(result.syncComplete??result.complete)upsertChannelRunwayFromYoutube(channel,result.videos||[],new Date());
       markYoutubeCache('existing',channel.id);
       summary.updated++;
     }catch{
