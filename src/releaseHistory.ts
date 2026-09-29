@@ -3,7 +3,25 @@ export type ReleaseSectionKey='features'|'fixes'|'interface'|'reliability'|'secu
 export type ReleaseHistoryEntry={date:string;version:string;title:string;type:ReleaseType;platforms?:Array<'macOS'|'Windows'>;highlights:string[];sections:Partial<Record<ReleaseSectionKey,string[]>>;technicalItems?:string[];technicalBuilds?:number[];tag?:string;publishedAt?:string;prerelease?:boolean};
 export const VYRON_RELEASE_HISTORY:ReleaseHistoryEntry[]=[
   {
-    "date":"2026-09-28","version":"5.0.0","title":"Owner Operations Center / Content OS","type":"MAJOR","platforms":["macOS","Windows"],"prerelease":true,
+    "date":"2026-09-29","version":"5.0.1","title":"Zero Background Quota / Owner Hotfix","type":"PATCH","platforms":["macOS"],"prerelease":true,
+    "highlights":[
+      "🔒 Idle YouTube Data API quota теперь абсолютный 0: без auto statistics, owner inventory, processing polling и OAuth recovery.",
+      "↻ Главная снова показывает сохранённую статистику всей сети и обновляет её только по явной owner-команде с quota preview.",
+      "🗂️ Одна корневая папка ВАЙРОН автоматически сопоставляет Projects/<Channel> и Render/<Channel> с non-destructive migration preview.",
+      "📈 Исправлены live upload counter, RPM settings и закреплённый sidebar footer."
+    ],
+    "sections":{
+      "features":["Manual project-aware batch statistics refresh до 50 Channel ID на request.","Canonical ВАЙРОН/Projects + ВАЙРОН/Render root mapping и legacy migration preview."],
+      "fixes":["Удалены фоновые ChannelStatisticsScheduler, OwnerInventoryScheduler и UploadProcessingMonitor API-вызовы.","YouTube Autopilot принудительно OFF в zero-background режиме.","RPM доступен в Settings → Общие и открывается напрямую с Главной."],
+      "interface":["Owner Profile и LOCAL CORE закреплены снизу sidebar.","Quota и VYRON upload counter визуально разделены."],
+      "reliability":["Cached statistics сохраняются между restart и не заменяются нулями при отсутствии данных.","Legacy folders не удаляются и не перезаписываются при конфликте."],
+      "security":["Нет автоматического OAuth recovery/reconnect на boot/update.","Local scan/delete/migration не вызывает YouTube Data API."],
+      "technical":["macOS-only candidate. Windows stable feed должен оставаться 4.0.0.","Production macOS feed остаётся 5.0.0 до отдельной команды владельца."]
+    },
+    "technicalItems":["Candidate branch: hotfix/vyron-5.0.1-live-upload-counter."],"tag":"candidate-v5.0.1"
+  },
+  {
+    "date":"2026-09-29","version":"5.0.0","title":"Owner Operations Center / Content OS","type":"MAJOR","platforms":["macOS","Windows"],"publishedAt":"2026-09-29T03:37:34Z","tag":"v5.0.0",
     "highlights":[
       "🚀 Новый Owner Operations Center показывает состояние всей сети каналов и следующее действие.",
       "📦 «Запас видео» превращён в Daily Operations Center: сегодня, обработано, осталось, runway и YouTube schedule.",
