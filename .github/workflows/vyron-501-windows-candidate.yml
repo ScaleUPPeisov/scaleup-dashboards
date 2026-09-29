@@ -115,10 +115,11 @@ jobs:
           $restored=(git hash-object $testFile).Trim()
           $expected=(git rev-parse "$($env:CANDIDATE_HEAD):src-tauri/src/local_delete.rs").Trim()
           if($restored -ne $expected){throw "PRODUCT_SOURCE_RESTORE_FAILED=$restored expected=$expected"}
-          $dirty=(git status --porcelain -- src src-tauri package.json package-lock.json)
-          if($dirty){throw "PRODUCT_TREE_DIRTY_BEFORE_BUILD: $dirty"}
+          $dirty=(git status --porcelain --untracked-files=no -- src src-tauri package.json package-lock.json)
+          if($dirty){throw "TRACKED_PRODUCT_TREE_DIRTY_BEFORE_BUILD: $dirty"}
           Write-Host 'WINDOWS_FILESYSTEM_NATIVE_GATE=PASS'
-          Write-Host 'PRODUCT_SOURCE_RESTORED_EXACT=PASS'
+          Write-Host 'TRACKED_PRODUCT_SOURCE_RESTORED_EXACT=PASS'
+          Write-Host 'UNTRACKED_BUILD_OUTPUT_IGNORED=src-tauri/gen,src-tauri/target'
 
       - name: Verify version identity
         shell: pwsh
