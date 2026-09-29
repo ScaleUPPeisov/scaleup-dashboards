@@ -23,6 +23,7 @@ import {notifySuccess,notifyWarning} from './notificationCenter';
 import {planStatisticsProjectBatches} from './youtubeChannelStatsRuntime';
 import {refreshAllChannelData} from './fullChannelRefresh';
 import {classifyYoutubeChannels} from './youtubeStatisticsCenter';
+import {successfulVyronUploadTotal} from './uploadHistoryStats';
 
 const fmt=(n:number)=>new Intl.NumberFormat('ru-RU').format(n);
 const sameLocalDay=(iso:string|undefined,now:Date)=>{if(!iso)return false;const d=new Date(iso);return !Number.isNaN(d.getTime())&&d.getFullYear()===now.getFullYear()&&d.getMonth()===now.getMonth()&&d.getDate()===now.getDate()};
@@ -76,7 +77,7 @@ function OperationsDashboard(){
 
  const active=enabled.find(c=>c.id===activeId)||enabled[0],activeInv=active?inventory.byChannel[active.id]:undefined,activeLive=active?liveSnapshots[active.id]:undefined,activeOwner=active?ownerByChannel.get(active.id):undefined,activeQueued=active?queue.queued.filter(x=>x.spec.channelId===active.id).length:0;
  const jobErrors=activeJobErrors(jobs),actionableErrors=jobErrors.length,readyEndlume=jobs.filter(j=>j.status==='READY_RENDER').length,rendering=jobs.filter(j=>j.status==='RENDERING').length;
- const now=new Date(),dailyOps=buildDailyOperations(enabled,uploadHistory,liveSnapshots,now),uploadedTodayRows=uploadHistory.filter(x=>sameLocalDay(x.uploadedAt,now)&&Boolean(x.youtubeVideoId)),uploadedToday=dailyOps.uploadedToday,failedToday=queue.recent.filter(x=>x.state==='FAILED'&&sameLocalDay(x.finishedAt,now)).length;
+ const now=new Date(),dailyOps=buildDailyOperations(enabled,uploadHistory,liveSnapshots,now),uploadedTodayRows=uploadHistory.filter(x=>sameLocalDay(x.uploadedAt,now)&&Boolean(x.youtubeVideoId)),uploadedToday=dailyOps.uploadedToday,uploadedAllTime=successfulVyronUploadTotal(uploadHistory),failedToday=queue.recent.filter(x=>x.state==='FAILED'&&sameLocalDay(x.finishedAt,now)).length;
  const apiQuota=youtubeQuotaUsage();
  const activeTodayChannels=new Set<string>([
   ...uploadedTodayRows.map(x=>x.channelId),
@@ -183,7 +184,7 @@ function OperationsDashboard(){
    <Kpi label="YOUTUBE SCHEDULED" value={ownerScheduledValue} hint="только реальный future publishAt"/>
    <Kpi label="ОШИБКИ" value={actionableErrors} hint={actionableErrors?'требуют внимания':'активных ошибок нет'} warn={actionableErrors>0}/>
    <Kpi label="YOUTUBE API" value={apiQuota.limit?apiQuota.used+' / '+apiQuota.limit:'Нет данных'} hint="general units"/>
-   <Kpi label="VYRON UPLOADS" value={globalUploads.used+' / '+globalUploads.limit} hint={'осталось: '+globalUploads.remaining}/>
+   <Kpi label="ВСЕГО ЗАГРУЖЕНО VYRON" value={fmt(uploadedAllTime)} hint={'сегодня: '+globalUploads.used+' / '+globalUploads.limit+' • осталось сегодня: '+globalUploads.remaining}/>
   </div>
 
   <SystemHealthPanel profiles={profiles}/>
