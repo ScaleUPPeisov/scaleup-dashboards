@@ -29,8 +29,12 @@ jobs:
         run: >
           npx vitest run
           src/v500Contract.test.ts
+          src/v500Performance.test.ts
           src/dailyOperations.test.ts
           src/systemHealth.test.ts
+          src/productionPipeline.test.ts
+          src/diagnosticReport.test.ts
+          src/youtubeQuotaTrace.test.ts
           src/updaterRuntime.test.ts
           src/v400OwnerInventory.test.ts
           src/v400QuotaUploadLimitSeparation.test.ts
@@ -101,8 +105,12 @@ jobs:
         run: >
           npx vitest run
           src/v500Contract.test.ts
+          src/v500Performance.test.ts
           src/dailyOperations.test.ts
           src/systemHealth.test.ts
+          src/productionPipeline.test.ts
+          src/diagnosticReport.test.ts
+          src/youtubeQuotaTrace.test.ts
           src/v400PerformanceAndGlobalLimit.test.ts
           src/v400BlackScreenGuard.test.ts
           src/v332WindowsOauthLauncher.test.ts
