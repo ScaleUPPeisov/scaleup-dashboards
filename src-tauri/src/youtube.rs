@@ -29,8 +29,8 @@ pub(crate) fn emit_youtube_api_request(app: &AppHandle, method: &str, operation_
     if let Ok(raw_path)=std::env::var("VYRON_API_AUDIT_PATH"){
         let raw_path=raw_path.trim();
         if !raw_path.is_empty(){
-            let safe_method=method.replace(['\n','\r','\t']," ");
-            let safe_operation=operation_id.unwrap_or("").replace(['\n','\r','\t']," ");
+            let safe_method=method.replace('\n'," ").replace('\r'," ").replace('\t'," ");
+            let safe_operation=operation_id.unwrap_or("").replace('\n'," ").replace('\r'," ").replace('\t'," ");
             if let Ok(mut file)=fs::OpenOptions::new().create(true).append(true).open(raw_path){
                 let _=writeln!(file,"{}\t{}\t{}",at,safe_method,safe_operation);
             }
