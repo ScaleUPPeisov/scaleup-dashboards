@@ -80,7 +80,14 @@ jobs:
           GATE="$(find candidate-windows -type f -name 'gate-summary.txt' -print -quit)"
           test -s "$EXE"; test -s "$EXE_SHA"; test -s "$SIG"; test -s "$GATE"
           ACTUAL="$(sha256sum "$EXE" | awk '{print $1}')"
-          EXPECTED="$(awk '{print tolower($1)}' "$EXE_SHA")"
+          EXPECTED="$(python3 - "$EXE_SHA" <<'PY'
+          import re,sys
+          raw=open(sys.argv[1],'rb').read().decode('utf-8-sig','replace')
+          m=re.search(r'(?i)\b[0-9a-f]{64}\b',raw)
+          if not m: raise SystemExit('SHA256_FILE_INVALID')
+          print(m.group(0).lower())
+          PY
+          )"
           test "$ACTUAL" = "$EXPECTED"
           grep -F 'VERSION=5.0.0' "$GATE"
           grep -F 'WINDOWS_X64_BUILD=PASS' "$GATE"
