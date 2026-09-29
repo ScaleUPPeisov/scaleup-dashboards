@@ -1,0 +1,36 @@
+name: VYRON 5.0.2 Hotfix Gate
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-5.0.2-full-refresh
+    paths:
+      - 'src/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/vyron-502-hotfix-gate.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-502-hotfix-gate
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test VYRON 5.0.2 refresh hotfix
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Targeted refresh and inventory regression
+        run: |
+          npx vitest run             src/v502FullRefresh.test.ts             src/contentRunway.test.ts             src/v334LiveContentInventory.test.ts             src/v501LocalCleanupZeroQuota.test.ts
+      - name: TypeScript and production frontend build
+        run: npm run build
