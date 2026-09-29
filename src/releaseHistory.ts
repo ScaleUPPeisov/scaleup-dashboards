@@ -36,7 +36,7 @@ export const VYRON_RELEASE_HISTORY:ReleaseHistoryEntry[]=[
       "security":["Никаких logout/revoke/reset OAuth как реакции на Analytics, inventory, updater или filesystem errors."],
       "technical":["BASE_SOURCE_SHA: dd1bc3d110588b43a4056e3ec77ffb600ecfd872.","Candidate branch: feature/vyron-5.0.0. Public release tag ещё не опубликован."]
     },
-    "technicalItems":["Release candidate: publish date будет зафиксирована при реальном production release."],"tag":"candidate-v5.0.0"
+    "technicalItems":["Production release v5.0.0 опубликован 29.09.2026."]
   },
   {
     "date":"2026-09-28","version":"4.0.1","title":"macOS Stability & Performance Hotfix","type":"PATCH","platforms":["macOS"],"publishedAt":"2026-09-28T15:08:32Z","tag":"v4.0.1",
