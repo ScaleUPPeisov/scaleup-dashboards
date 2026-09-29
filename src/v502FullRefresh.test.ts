@@ -15,9 +15,10 @@ const channel:Channel={
   minTracks:10,targetDurationMin:120,enabled:true,
   seo:{titlePatterns:[],descriptionTemplate:'',tags:[],banned:[]}
 };
+const futureDates=['2026-09-30','2026-10-01','2026-10-02','2026-10-03','2026-10-04','2026-10-05','2026-10-06','2026-10-07','2026-10-08'];
 const video=(n:number):YoutubeExistingVideo=>({
   id:'yt-'+n,position:n,title:'v'+n,description:'',tags:[],categoryId:'10',privacyStatus:'private',
-  publishAt:`2026-${n<=2?'09':'10'}-${String(n<=2?29+n:n-2).padStart(2,'0')}T18:00:00+07:00`,selected:false
+  publishAt:`${futureDates[n-1]}T18:00:00+07:00`,selected:false
 });
 
 describe('VYRON 5.0.2 full refresh hotfix',()=>{
