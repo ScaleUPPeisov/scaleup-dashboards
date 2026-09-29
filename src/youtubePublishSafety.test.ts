@@ -1,5 +1,5 @@
 import {describe,it,expect,beforeEach} from 'vitest';
-import {acquireChannelUploadLock,beginPublishAttempt,completePublishAttempt,findSuccessfulUpload,isYoutubeDailyUploadLimitError,releaseChannelUploadLock,safeDailyStatus} from './youtubePublishSafety';
+import {acquireChannelUploadLock,beginPublishAttempt,completePublishAttempt,findSuccessfulUpload,globalDailyUploadStatus,isYoutubeDailyUploadLimitError,releaseChannelUploadLock,safeDailyStatus,subscribeGlobalDailyUploadStatus} from './youtubePublishSafety';
 import {mapThumbnailsToJobs,metadataCoverage} from './publishCenterCore';
 
 const storage=new Map<string,string>();
@@ -15,6 +15,7 @@ Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{
 describe('Publish safety',()=>{
  beforeEach(()=>localStorage.clear());
  it('counts only completed uploads in the local calendar day and protects duplicate fingerprint',()=>{const a=beginPublishAttempt({channelId:'c',jobId:'j',filePath:'/x.mp4',fingerprint:'abc',fileSize:10});expect(safeDailyStatus('c',15).used).toBe(0);completePublishAttempt(a.id,'YT1');expect(safeDailyStatus('c',15)).toEqual(expect.objectContaining({used:1,remaining:14}));expect(findSuccessfulUpload('c','abc')?.videoId).toBe('YT1')});
+ it('emits the global 100-upload counter immediately after a completed upload',()=>{const snapshots:Array<{used:number;remaining:number}>=[];const off=subscribeGlobalDailyUploadStatus(()=>{const x=globalDailyUploadStatus();snapshots.push({used:x.used,remaining:x.remaining})});const a=beginPublishAttempt({channelId:'c',jobId:'live-counter',filePath:'/live.mp4',fingerprint:'live',fileSize:10});expect(globalDailyUploadStatus()).toEqual(expect.objectContaining({used:0,remaining:100}));completePublishAttempt(a.id,'YT-LIVE');expect(globalDailyUploadStatus()).toEqual(expect.objectContaining({used:1,remaining:99}));expect(snapshots.some(x=>x.used===1&&x.remaining===99)).toBe(true);off()});
  it('supports explicit unlimited VYRON mode without pretending a YouTube allowance',()=>{const s=safeDailyStatus('c',0);expect(s.configured).toBe(true);expect(s.unlimited).toBe(true);expect(s.limit).toBeUndefined();expect(s.remaining).toBeUndefined()});
  it('locks one channel but not another',()=>{const a=acquireChannelUploadLock('c');expect(a).toBeTruthy();expect(acquireChannelUploadLock('c')).toBeNull();const b=acquireChannelUploadLock('d');expect(b).toBeTruthy();releaseChannelUploadLock('c',a!);expect(acquireChannelUploadLock('c')).toBeTruthy()});
  it('recognizes real daily upload limit wording',()=>expect(isYoutubeDailyUploadLimitError('daily upload limit exceeded')).toBe(true));
