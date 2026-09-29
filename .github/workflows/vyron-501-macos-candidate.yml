@@ -97,7 +97,6 @@ jobs:
 
   macos-candidate:
     name: VYRON 5.0.1 signed macOS ARM64 + 10m idle audit
-    needs: preflight
     runs-on: macos-14
     timeout-minutes: 120
     env:
@@ -191,6 +190,7 @@ jobs:
           set -Eeuo pipefail
           security unlock-keychain -p "$VYRON_SIGNING_KEYCHAIN_PASSWORD" "$VYRON_SIGNING_KEYCHAIN"
           export APPLE_SIGNING_IDENTITY="$VYRON_MACOS_SIGNING_IDENTITY"
+          export TAURI_SIGNING_PRIVATE_KEY="$TAURI_SIGNING_PRIVATE_KEY_PATH"
           npx tauri build --target aarch64-apple-darwin --bundles app,dmg
           mkdir -p candidate-macos
           APP="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)"
