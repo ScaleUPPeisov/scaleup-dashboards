@@ -10,7 +10,6 @@ import {
   VYRON_UPDATE_CELEBRATION_TARGET_KEY
 } from './vyronBrand';
 import {SafeArtwork} from './SafeArtwork';
-import {LocalProfileMenu} from './LocalProfileMenu';
 
 type CelebrationMode='upgrade'|'fresh';
 
@@ -64,7 +63,7 @@ export function MajorUpdateCelebration(){
     setVisible(false)
   };
 
-  return <><LocalProfileMenu/>{visible&&<div className="majorCelebrationBackdrop" role="dialog" aria-modal="true" aria-labelledby="majorCelebrationTitle">
+  return <>{visible&&<div className="majorCelebrationBackdrop" role="dialog" aria-modal="true" aria-labelledby="majorCelebrationTitle">
     <div className="majorCelebrationFx" aria-hidden="true">
       {Array.from({length:14},(_,i)=><i key={i} style={{'--i':i} as React.CSSProperties}/>)}
     </div>
