@@ -18,6 +18,10 @@ import {youtubeQuotaUsage} from './youtubeQuota';
 import {buildDailyOperations} from './dailyOperations';
 import {SystemHealthPanel} from './SystemHealthPanel';
 import {ChannelAvatar} from './ChannelAvatar';
+import {ModalPortal} from './ModalPortal';
+import {notifySuccess,notifyWarning} from './notificationCenter';
+import {planStatisticsProjectBatches,refreshYoutubeChannelStatisticsSelection} from './youtubeChannelStatsRuntime';
+import {classifyYoutubeChannels} from './youtubeStatisticsCenter';
 
 const fmt=(n:number)=>new Intl.NumberFormat('ru-RU').format(n);
 const sameLocalDay=(iso:string|undefined,now:Date)=>{if(!iso)return false;const d=new Date(iso);return !Number.isNaN(d.getTime())&&d.getFullYear()===now.getFullYear()&&d.getMonth()===now.getMonth()&&d.getDate()===now.getDate()};
@@ -38,7 +42,7 @@ function exactConnectedCount(channels:Channel[],profiles:YoutubeProfile[]){
 
 function OperationsDashboard(){
  const channels=useApp(s=>s.channels),jobs=useApp(s=>s.jobs),settings=useApp(s=>s.settings),uploadHistory=useApp(s=>s.uploadHistory),projectLifecycle=useApp(s=>s.projectLifecycle),fingerprintCache=useApp(s=>s.fingerprintCache),setPage=useApp(s=>s.setPage),liveSnapshots=useLiveInventory(s=>s.snapshots);
- const [queue,setQueue]=useState(()=>uploadQueueSnapshot()),[telemetry,setTelemetry]=useState(()=>uploadTelemetrySnapshot()),[activeId,setActiveId]=useState(()=>loadActivePublishChannel()),[profiles,setProfiles]=useState<YoutubeProfile[]>([]),[ownerRevision,setOwnerRevision]=useState(0),[globalUploads,setGlobalUploads]=useState(()=>globalDailyUploadStatus());
+ const [queue,setQueue]=useState(()=>uploadQueueSnapshot()),[telemetry,setTelemetry]=useState(()=>uploadTelemetrySnapshot()),[activeId,setActiveId]=useState(()=>loadActivePublishChannel()),[profiles,setProfiles]=useState<YoutubeProfile[]>([]),[ownerRevision,setOwnerRevision]=useState(0),[globalUploads,setGlobalUploads]=useState(()=>globalDailyUploadStatus()),[statsBusy,setStatsBusy]=useState(false),[statsPreview,setStatsPreview]=useState<{channelIds:string[];eligible:number;workspace:number;projectGroups:number;requests:number;units:number}|null>(null),[statsResult,setStatsResult]=useState('');
  useEffect(()=>{const offQueue=subscribeUploadQueue(setQueue),offTelemetry=subscribeUploadTelemetry(setTelemetry),offActive=subscribeActivePublishChannel(setActiveId),offUploads=subscribeGlobalDailyUploadStatus(()=>setGlobalUploads(globalDailyUploadStatus()));return()=>{offQueue();offTelemetry();offActive();offUploads()}},[]);
  useEffect(()=>{const bump=()=>setOwnerRevision(x=>x+1);window.addEventListener(OWNER_INVENTORY_EVENT,bump);window.addEventListener('vyron-channel-schedule-changed',bump);return()=>{window.removeEventListener(OWNER_INVENTORY_EVENT,bump);window.removeEventListener('vyron-channel-schedule-changed',bump)}},[]);
  const bindingKey=channels.map(c=>c.id+':'+(c.youtubeProfileId||'')+':'+(c.youtubeChannelId||'')).join('|');
@@ -59,7 +63,11 @@ function OperationsDashboard(){
 
  const subscriberValues=enabled.map(c=>c.stats?.hiddenSubscriberCount?undefined:(c.stats?.subscriberCount??c.stats?.subscribers)).filter(numeric);
  const viewValues=enabled.map(c=>c.stats?.viewCount??c.stats?.views).filter(numeric);
- const subscriberTotal=subscriberValues.reduce((a,b)=>a+b,0),viewTotal=viewValues.reduce((a,b)=>a+b,0);
+ const videoValues=enabled.map(c=>c.stats?.videoCount??c.stats?.videos).filter(numeric);
+ const statsDataChannels=enabled.filter(c=>numeric(c.stats?.subscriberCount??c.stats?.subscribers)||numeric(c.stats?.viewCount??c.stats?.views)||numeric(c.stats?.videoCount??c.stats?.videos)||Boolean(c.stats?.statisticsUpdatedAt||c.stats?.updatedAt)).length;
+ const statsUpdatedAt=enabled.map(c=>c.stats?.statisticsUpdatedAt||c.stats?.updatedAt).filter((x):x is string=>Boolean(x)&&Number.isFinite(Date.parse(x!))).sort().at(-1);
+ const subscriberTotal=subscriberValues.reduce((a,b)=>a+b,0),viewTotal=viewValues.reduce((a,b)=>a+b,0),videoTotal=videoValues.reduce((a,b)=>a+b,0);
+ const aggregate=(values:number[],total:number)=>values.length?(values.length<enabled.length?'≥ ':'')+fmt(total):'—';
  const ownerExact=connectedCount>0&&ownerTotals.availableChannels===connectedCount&&ownerTotals.partialChannels===0;
  const ownerPrefix=ownerExact?'':'≥';
  const ownerVideoValue=ownerTotals.availableChannels?ownerPrefix+fmt(ownerTotals.total):'—';
@@ -111,7 +119,51 @@ function OperationsDashboard(){
  const primaryUpload=telemetry.active[0],primaryJob=primaryUpload?jobs.find(j=>j.id===primaryUpload.jobId):undefined,primaryChannel=primaryUpload?channels.find(c=>c.id===primaryUpload.channelId):undefined;
  const ownerCoverage=connectedCount?ownerTotals.availableChannels+'/'+connectedCount+' каналов в owner-cache':'нет подключённых каналов';
 
+ async function previewAllChannelStatistics(){
+  if(statsBusy)return;
+  const classification=classifyYoutubeChannels(enabled,profiles),config=await api.youtubeGoogleConfig().catch(()=>null),batches=planStatisticsProjectBatches(classification.eligible,config,50);
+  setStatsPreview({channelIds:classification.eligible.map(x=>x.channel.id),eligible:classification.eligible.length,workspace:enabled.length,projectGroups:new Set(batches.map(x=>x.groupKey)).size,requests:batches.length,units:batches.length});
+ }
+ async function refreshAllChannelStatistics(){
+  const plan=statsPreview;if(!plan||statsBusy)return;setStatsPreview(null);setStatsBusy(true);setStatsResult('');
+  try{
+   const r=await refreshYoutubeChannelStatisticsSelection(plan.channelIds,true);
+   const text=`Обновлено ${r.updated} / ${plan.eligible} • API requests: ${r.apiRequests} • quota: ${r.quotaUnits} units`;
+   setStatsResult(text);
+   if(r.failed||r.credentialBlocked)notifyWarning('Статистика обновлена частично',text+' • Старые cached values сохранены для каналов с ошибкой.');
+   else notifySuccess('Все каналы обновлены',text);
+  }catch(e){notifyWarning('Статистика не обновлена',String(e))}
+  finally{setStatsBusy(false)}
+ }
+ function openRpmSettings(){try{localStorage.setItem('vyron:settings-target-tab','general');localStorage.setItem('vyron:settings-target-section','rpm')}catch{}setPage('settings');window.setTimeout(()=>window.dispatchEvent(new CustomEvent('vyron:settings-target-section',{detail:'rpm'})),0)}
+
  return <>
+  <section className="opsCard networkStatsCard" data-testid="all-channels-network-stats">
+   <div className="opsCardHead"><div><small>ВСЕ КАНАЛЫ</small><h2>Сохранённая статистика сети</h2><p>Автообновление YouTube: <b>ВЫКЛ</b> • данные читаются из локального state.</p></div><button className="primary" disabled={statsBusy||!connectedCount} onClick={()=>void previewAllChannelStatistics()}>{statsBusy?'ОБНОВЛЯЮ…':'↻ ОБНОВИТЬ ВСЕ КАНАЛЫ'}</button></div>
+   <div className="networkStatsGrid">
+    <span><small>Каналов</small><b>{enabled.length}</b></span>
+    <span><small>Подключено YouTube</small><b>{connectedCount} / {enabled.length}</b></span>
+    <span><small>Подписчики всего</small><b>{aggregate(subscriberValues,subscriberTotal)}</b></span>
+    <span><small>Просмотры всего</small><b>{aggregate(viewValues,viewTotal)}</b></span>
+    <span><small>Видео на YouTube</small><b>{aggregate(videoValues,videoTotal)}</b></span>
+    <span><small>Данные есть</small><b>{statsDataChannels} / {enabled.length}</b></span>
+    <span><small>Последнее обновление</small><b>{statsUpdatedAt?new Date(statsUpdatedAt).toLocaleString('ru-RU'):'—'}</b></span>
+    <span><small>Источник</small><b>СОХРАНЁННЫЕ ДАННЫЕ</b></span>
+   </div>
+   {statsResult&&<p className="opsSourceNote">{statsResult}</p>}
+  </section>
+  {statsPreview&&<ModalPortal onClose={()=>setStatsPreview(null)}><section className="confirmModal statsRefreshPreview" onMouseDown={e=>e.stopPropagation()}>
+   <small>ОБНОВИТЬ СТАТИСТИКУ</small><h2>Обновить все доступные каналы?</h2>
+   <div className="settingsInfoGrid">
+    <span><small>Рабочих каналов</small><b>{statsPreview.workspace}</b></span>
+    <span><small>Будет обновлено</small><b>{statsPreview.eligible}</b></span>
+    <span><small>API project groups</small><b>{statsPreview.projectGroups}</b></span>
+    <span><small>channels.list requests</small><b>{statsPreview.requests}</b></span>
+    <span><small>Расчётная стоимость</small><b>{statsPreview.units} units</b></span>
+   </div>
+   <p>Будут обновлены подписчики, просмотры, количество видео и statisticsUpdatedAt. Каналы с ошибкой сохранят последние cached values.</p>
+   <footer><button onClick={()=>setStatsPreview(null)}>ОТМЕНА</button><button className="primary" onClick={()=>void refreshAllChannelStatistics()}>ОБНОВИТЬ</button></footer>
+  </section></ModalPortal>}
   <div className="opsKpiGrid v400" data-testid="dashboard-kpis">
    <Kpi label="КАНАЛЫ" value={enabled.length} hint={'YouTube подключено: '+connectedCount}/>
    <Kpi label="ОБРАБОТАНО СЕГОДНЯ" value={dailyOps.processedChannels+' / '+enabled.length} hint={'загружено: '+dailyOps.uploadedToday}/>
@@ -181,7 +233,7 @@ function OperationsDashboard(){
     <div className="opsCardHead"><div><small>РАСЧЁТНЫЙ ДОХОД • 28 ДНЕЙ</small><h2>Оценка по заданному RPM</h2></div></div>
     {configuredRpm==null?<p className="opsEmpty">RPM не настроен. VYRON не будет придумывать расчётный доход.</p>:analyticsRows.length&&analyticsViews>0?<div className="opsStats"><span><small>Расчётный доход</small><b>≈ {money(estimatedRevenue28||0)}</b></span><span><small>Настроенный RPM</small><b>{money(configuredRpm)}</b></span><span><small>Каналов с 28-day views</small><b>{analyticsRows.length}</b></span><span><small>Просмотры • 28 дней</small><b>{fmt(analyticsViews)}</b></span></div>:<p className="opsEmpty">RPM настроен, но нет актуальных просмотров за 28 дней.</p>}
     <p className="opsSourceNote">Ориентировочная оценка: views ÷ 1000 × настроенный RPM. Не является подтверждённым доходом YouTube.</p>
-    <footer>{configuredRpm==null?<button onClick={()=>setPage('settings')}>Настроить RPM</button>:<button onClick={()=>setPage('analytics')}>Открыть аналитику</button>}</footer>
+    <footer>{configuredRpm==null?<button onClick={openRpmSettings}>Настроить RPM</button>:<><button onClick={openRpmSettings}>Изменить RPM</button><button onClick={()=>setPage('analytics')}>Открыть аналитику</button></>}</footer>
    </section>
 
    <section className="opsCard">
