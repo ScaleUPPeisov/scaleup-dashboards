@@ -10,6 +10,8 @@ on:
       - 'src/App.tsx'
       - 'src/DashboardOS.tsx'
       - 'src/QuotaMeter.tsx'
+      - 'src/PublisherOS.tsx'
+      - 'src/v501LocalCleanupZeroQuota.test.ts'
       - '.github/workflows/vyron-501-upload-counter-hotfix.yml'
   workflow_dispatch:
 
@@ -39,5 +41,6 @@ jobs:
           src/v400QuotaUploadLimitSeparation.test.ts
           src/youtubeQuota.test.ts
           src/youtubeQuotaAtomic.test.ts
+          src/v501LocalCleanupZeroQuota.test.ts
       - name: Production frontend build
         run: npm run build
