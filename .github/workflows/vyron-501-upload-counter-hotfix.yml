@@ -1,0 +1,43 @@
+name: VYRON 5.0.1 Upload Counter Hotfix Gate
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-5.0.1-live-upload-counter
+    paths:
+      - 'src/youtubePublishSafety.ts'
+      - 'src/youtubePublishSafety.test.ts'
+      - 'src/App.tsx'
+      - 'src/DashboardOS.tsx'
+      - 'src/QuotaMeter.tsx'
+      - '.github/workflows/vyron-501-upload-counter-hotfix.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-501-upload-counter-hotfix
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: Live upload counter regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Upload counter + quota separation tests
+        run: >
+          npx vitest run
+          src/youtubePublishSafety.test.ts
+          src/v400QuotaUploadLimitSeparation.test.ts
+          src/youtubeQuota.test.ts
+          src/youtubeQuotaAtomic.test.ts
+      - name: Production frontend build
+        run: npm run build
