@@ -24,14 +24,19 @@ export function CommandPalette(){
   window.addEventListener('keydown',key);return()=>window.removeEventListener('keydown',key)
  },[]);
  useEffect(()=>{if(!open)return;setQuery('');setIndex(0);window.setTimeout(()=>input.current?.focus(),0);void api.youtubeProfiles().then(setProfiles).catch(()=>setProfiles([]))},[open]);
+ const openSettingsTab=(tab:'youtube'|'migration'|'updates'|'diagnostics')=>{try{localStorage.setItem('vyron:settings-target-tab',tab)}catch{}setOpen(false);setPage('settings');window.setTimeout(()=>window.dispatchEvent(new CustomEvent('vyron:settings-target-tab',{detail:tab})),0)};
  const items=useMemo<PaletteItem[]>(()=>{
   const profileByChannel=new Map(profiles.map(p=>[p.channelId||'',p]));
   const base=pages.map(x=>({id:'page:'+x.page,title:x.title,subtitle:x.subtitle,keywords:x.keywords,run:()=>{setPage(x.page);setOpen(false)}}));
   const channelItems=channels.map(c=>{const p=profiles.find(p=>p.id===c.youtubeProfileId)||profileByChannel.get(c.youtubeChannelId||'');return{id:'channel:'+c.id,title:c.name,subtitle:[p?.googleEmail,c.stats?.handle,c.youtubeChannelId].filter(Boolean).join(' • ')||'Канал VYRON',keywords:[c.name,p?.googleEmail,c.stats?.handle,c.youtubeChannelId,p?.id].filter(Boolean).join(' '),run:()=>{try{localStorage.setItem('vyron:command-palette-channel',c.id)}catch{}setPage('channels');setOpen(false)}}});
   const commands:PaletteItem[]=[
    {id:'cmd:tasks',title:'Открыть центр задач',subtitle:'Active / Queued / Attention / Failed',keywords:'tasks задачи очередь progress загрузки',run:()=>{openTaskCenter();setOpen(false)}},
-   {id:'cmd:update',title:'Проверить обновление',subtitle:'Signed updater • YouTube API: 0',keywords:'update updater обновить обновление',run:()=>{setOpen(false);void checkUpdate({force:true})}},
-   {id:'cmd:recovery',title:'Открыть Recovery / OAuth',subtitle:'Настройки → YouTube',keywords:'oauth recovery keychain google reconnect',run:()=>{try{localStorage.setItem('vyron:settings-target-tab','youtube')}catch{}setPage('settings');setOpen(false)}},
+   {id:'cmd:update',title:'Проверить обновления',subtitle:'Signed updater • YouTube API: 0',keywords:'update updater обновить обновление',run:()=>{setOpen(false);void checkUpdate({force:true})}},
+   {id:'cmd:errors',title:'Открыть Error Center',subtitle:'Активные ошибки и история • API: 0',keywords:'errors error ошибки ошибка центр',run:()=>{setOpen(false);window.setTimeout(()=>window.dispatchEvent(new CustomEvent('vyron:open-error-center')),0)}},
+   {id:'cmd:backup',title:'Открыть Backup & Migration',subtitle:'Encrypted backup / merge / rollback • API: 0',keywords:'backup migration резерв копия перенос',run:()=>openSettingsTab('migration')},
+   {id:'cmd:quota',title:'Открыть API usage / Quota trace',subtitle:'Diagnostics • factual method-level accounting',keywords:'quota api usage trace квота расход',run:()=>openSettingsTab('diagnostics')},
+   {id:'cmd:health',title:'Открыть System Health',subtitle:'Cached/local health • API: 0',keywords:'health system здоровье статус система',run:()=>{setOpen(false);setPage('dashboard');window.setTimeout(()=>window.dispatchEvent(new CustomEvent('vyron:open-system-health')),0)}},
+   {id:'cmd:recovery',title:'Открыть Recovery / OAuth',subtitle:'Настройки → YouTube',keywords:'oauth recovery keychain google reconnect',run:()=>openSettingsTab('youtube')},
    {id:'cmd:publisher',title:'Открыть Publisher',subtitle:'YouTube → Публикация',keywords:'publisher upload публикация загрузка',run:()=>{setPage('publisher');setOpen(false)}}
   ];
   const all=[...commands,...base,...channelItems],q=query.trim().toLocaleLowerCase('ru-RU');
