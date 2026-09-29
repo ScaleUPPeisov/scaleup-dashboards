@@ -47,7 +47,7 @@ import {LiveInventoryBridge} from './LiveInventoryBridge';
 import {LiveContentInventory} from './LiveContentInventory';
 import {inventoryTotals,useLiveInventory} from './renderInventoryRuntime';
 import {ensureTask,reconcileUploadTasks,updateTask} from './taskEngine';
-import {globalDailyUploadStatus} from './youtubePublishSafety';
+import {globalDailyUploadStatus,subscribeGlobalDailyUploadStatus} from './youtubePublishSafety';
 import {UiErrorBoundary} from './UiErrorBoundary';
 import {SafeArtwork} from './SafeArtwork';
 import {OwnerProfile} from './OwnerProfile';
