@@ -18,6 +18,10 @@ const statsScheduler=fs.readFileSync('src/ChannelStatisticsScheduler.tsx','utf8'
 const competitorsPage=fs.readFileSync('src/CompetitorsPage.tsx','utf8');
 const migrationPanel=fs.readFileSync('src/MigrationPanel.tsx','utf8');
 const migrationRust=fs.readFileSync('src-tauri/src/migration.rs','utf8');
+const commandPalette=fs.readFileSync('src/CommandPalette.tsx','utf8');
+const notifications=fs.readFileSync('src/NotificationStack.tsx','utf8');
+const channelsOs=fs.readFileSync('src/ChannelsOS.tsx','utf8');
+const healthPanel=fs.readFileSync('src/SystemHealthPanel.tsx','utf8');
 const packageJson=JSON.parse(fs.readFileSync('package.json','utf8'));
 const packageLock=JSON.parse(fs.readFileSync('package-lock.json','utf8'));
 const tauri=JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json','utf8'));
@@ -98,5 +102,36 @@ describe('VYRON 5.0.0 product contract',()=>{
   expect(migrationRust).toContain('channel_merge_is_idempotent_and_never_deletes');
   expect(migrationRust).toContain('encryption_rejects_tamper_and_wrong_password');
   expect(migrationRust).toContain('thirty_plus_ten_with_seven_duplicates_is_thirty_three');
+ });
+
+ it('completes the local-only owner command palette and opens Channel Passport',()=>{
+  for(const id of ['cmd:update','cmd:errors','cmd:backup','cmd:quota','cmd:health'])expect(commandPalette).toContain(id);
+  expect(commandPalette).toContain("(e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'");
+  expect(commandPalette).toContain("localStorage.setItem('vyron:command-palette-channel',c.id)");
+  expect(channelsOs).toContain("setPassportId(id)");
+  expect(commandPalette).not.toContain('search.list');
+  expect(commandPalette).not.toContain('refreshYoutubeIntelligence');
+ });
+ it('provides a persistent notification bell with unread badge and required levels',()=>{
+  expect(notifications).toContain('🔔');
+  expect(notifications).toContain('readNotificationHistory');
+  expect(notifications).toContain('subscribeNotificationHistory');
+  expect(notifications).toContain("error:'CRITICAL'");
+  expect(notifications).toContain("warning:'WARNING'");
+  expect(notifications).toContain("success:'SUCCESS'");
+  expect(notifications).toContain("info:'INFO'");
+  expect(notifications).toContain('unread>0');
+ });
+ it('supports OWNER and MANAGER as local profile modes without touching OAuth',()=>{
+  expect(ownerProfile).toContain("settings.localProfileMode||'OWNER'");
+  expect(ownerProfile).toContain('<option value="OWNER">OWNER</option>');
+  expect(ownerProfile).toContain('<option value="MANAGER">MANAGER</option>');
+  expect(ownerProfile).not.toContain('youtubeOauth');
+  expect(ownerProfile).not.toContain('youtubeProfileId');
+ });
+ it('makes Error Center and System Health addressable from global commands',()=>{
+  expect(app).toContain('vyron:open-error-center');
+  expect(healthPanel).toContain('vyron:open-system-health');
+  expect(settingsOs).toContain('vyron:settings-target-tab');
  });
 });
