@@ -2,7 +2,7 @@ import {api} from './api';
 import {readAuthoritativeExistingSnapshot,readExistingCache,replaceExistingCacheFromSync,scheduleSyncTruthFromInfo} from './channelSchedule';
 import type {Channel,YoutubeExistingVideo} from './types';
 import {markYoutubeCache} from './youtubeCache';
-import {youtubeQuotaState,youtubeQuotaUsage} from './youtubeQuota';
+import {bindYoutubeQuotaTraceContext,youtubeQuotaState,youtubeQuotaUsage} from './youtubeQuota';
 
 export const OWNER_INVENTORY_TTL_MS=6*60*60*1000;
 export const OWNER_INVENTORY_EVENT='vyron:owner-inventory-refresh';
@@ -133,7 +133,11 @@ export function refreshStaleOwnerInventories(channels:Channel[],force=false):Pro
     if(youtubeQuotaState().blocked||Math.max(0,usage.limit-usage.used)<250){summary.stoppedForQuota=true;break}
     summary.requested++;
     try{
-      const result=await api.youtubeListExisting(profile.id,5000);
+      const cached=ownerInventoryForChannel(channel.id),videoCount=cached.available?cached.total:50;
+      const estimatedUnits=1+Math.max(1,Math.ceil(videoCount/50))+(videoCount?Math.ceil(videoCount/50):0);
+      const operationId='owner-inventory:'+(force?'manual':'background')+':'+channel.id+':'+Date.now();
+      bindYoutubeQuotaTraceContext(operationId,{reason:'OWNER_INVENTORY_REFRESH',channelIds:[channel.id],mode:force?'MANUAL':'BACKGROUND',estimatedUnits});
+      const result=await api.youtubeListExisting(profile.id,5000,operationId);
       replaceExistingCacheFromSync(channel.id,result.videos||[],result);
       markYoutubeCache('existing',channel.id);
       summary.updated++;
