@@ -1,4 +1,4 @@
-import React,{useMemo,useState} from 'react';
+import React,{useEffect,useMemo,useState} from 'react';
 import {useApp} from './store';
 import {useLiveInventory} from './renderInventoryRuntime';
 import {useUpdaterRuntime} from './updaterRuntime';
@@ -11,9 +11,10 @@ const icon=(s:string)=>s==='GREEN'?'🟢':s==='YELLOW'?'🟡':s==='RED'?'🔴':'
 export function SystemHealthPanel({profiles}:{profiles:YoutubeProfile[]}){
  const channels=useApp(s=>s.channels),jobs=useApp(s=>s.jobs),settings=useApp(s=>s.settings),booted=useApp(s=>s.booted),snapshots=useLiveInventory(s=>s.snapshots),updaterStatus=useUpdaterRuntime(s=>s.status);
  const [open,setOpen]=useState(false);
+ useEffect(()=>{const fn=()=>{setOpen(true);window.requestAnimationFrame(()=>document.getElementById('vyron-system-health')?.scrollIntoView({behavior:'smooth',block:'center'}))};window.addEventListener('vyron:open-system-health',fn);return()=>window.removeEventListener('vyron:open-system-health',fn)},[]);
  const quota=youtubeQuotaUsage();
  const health=useMemo(()=>buildSystemHealth({channels,profiles,snapshots,jobs,updaterStatus,quotaUsed:quota.used,quotaLimit:quota.limit,workspace:settings.workspace,endlumePath:settings.endlumePath,booted}),[channels,profiles,snapshots,jobs,updaterStatus,quota.used,quota.limit,settings.workspace,settings.endlumePath,booted]);
- return <section className="opsCard systemHealthCard">
+ return <section id="vyron-system-health" className="opsCard systemHealthCard">
    <div className="opsCardHead"><div><small>SYSTEM HEALTH</small><h2>{health.score}%</h2></div><button onClick={()=>setOpen(x=>!x)}>{open?'Скрыть':'Подробнее'}</button></div>
    <div className="systemHealthSummary">{health.items.map(x=><span key={x.id} title={x.detail}><b>{icon(x.state)}</b><small>{x.label}</small></span>)}</div>
    {open&&<div className="systemHealthDetails">{health.items.map(x=><article key={x.id}><b>{icon(x.state)} {x.label}</b><span>{x.detail}</span><small>Вес {x.weight}%</small></article>)}</div>}
