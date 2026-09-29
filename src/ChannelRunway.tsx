@@ -18,7 +18,8 @@ import {
   subscribeChannelRunway,
   upsertChannelRunwayFromYoutube
 } from './channelRunwayStore';
-import {buildContentRunway,contentRunwayQuotaView,type ContentRunwaySnapshot} from './contentRunway';
+import {buildContentRunway,confirmedScheduledRunwaySnapshot,contentRunwayQuotaView,type ContentRunwaySnapshot} from './contentRunway';
+import {useLiveInventory} from './renderInventoryRuntime';
 import {configuredScheduleAverageIntervalDays,scheduleFrequencyTruthLabel} from './channelSchedule';
 import {ChannelAvatar} from './ChannelAvatar';
 import {
@@ -74,6 +75,7 @@ type RunwayRow={channel:Channel;record:ChannelRunwayRecord;content:ContentRunway
 
 export function ChannelRunway(){
   const channels=useApp(s=>s.channels),jobs=useApp(s=>s.jobs),uploadHistory=useApp(s=>s.uploadHistory),projectLifecycle=useApp(s=>s.projectLifecycle),fingerprintCache=useApp(s=>s.fingerprintCache),toast=useApp(s=>s.toast);
+  const liveSnapshots=useLiveInventory(s=>s.snapshots);
   const [snapshot,setSnapshot]=useState(()=>loadChannelRunwayStore());
   const [busy,setBusy]=useState(''),[profiles,setProfiles]=useState<YoutubeProfile[]>([]),[googleConfig,setGoogleConfig]=useState<GoogleConfigStatus>(),[statsBusy,setStatsBusy]=useState(false),[statsProgress,setStatsProgress]=useState<ChannelStatisticsRefreshProgress>({done:0,total:0});
   const [,setQuotaTick]=useState(0);
@@ -105,7 +107,9 @@ export function ChannelRunway(){
     const rows=active.map(channel=>{
       try{
         const record=snapshot.channels[channel.id];if(!record){failures++;return null}
-        const content=buildContentRunway(channel,record,jobs,uploadHistory,projectLifecycle,fingerprintCache,new Date());
+        const baseContent=buildContentRunway(channel,record,jobs,uploadHistory,projectLifecycle,fingerprintCache,new Date());
+        const liveReady=liveSnapshots[channel.id]?.readyVideos;
+        const content=confirmedScheduledRunwaySnapshot(channel,baseContent,record,Number.isFinite(liveReady)?Number(liveReady):baseContent.readyVideoCount);
         const profile=channel.youtubeProfileId?profileById.get(channel.youtubeProfileId):undefined;
         const projectKey=youtubeQuotaProjectIdentity(profile,googleConfig).projectKey;
         const upload=projectKey?youtubeUploadQuotaState(projectKey):null;
@@ -114,7 +118,7 @@ export function ChannelRunway(){
       }catch{failures++;return null}
     }).filter((x):x is RunwayRow=>Boolean(x)).sort((a,b)=>a.content.contentRunwayDays-b.content.contentRunwayDays||compareRunwayRecords(a.record,b.record));
     return{rows,failures}
-  },[active,snapshot,jobs,uploadHistory,projectLifecycle,fingerprintCache,profileById,googleConfig,usage.ptDate,usage.used,usage.limit]);
+  },[active,snapshot,jobs,uploadHistory,projectLifecycle,fingerprintCache,liveSnapshots,profileById,googleConfig,usage.ptDate,usage.used,usage.limit]);
   const rows=rowState.rows,rowFailures=rowState.failures;
 
   const quotaSettings=loadYoutubeQuotaPlan();
