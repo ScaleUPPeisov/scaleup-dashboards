@@ -83,6 +83,141 @@ pub fn discover_channel_folders_impl(workspace:&str,channel_name:&str)->Result<C
 #[tauri::command]
 pub fn discover_channel_folders(workspace:String,channel_name:String)->Result<ChannelFolderDiscovery,String>{discover_channel_folders_impl(&workspace,&channel_name)}
 
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct VyronFilesystemMapping {
+    pub channel_name: String,
+    pub legacy_path: Option<String>,
+    pub projects_path: String,
+    pub render_path: String,
+    pub action: String,
+    pub source_files: u64,
+}
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct VyronFilesystemPreview {
+    pub root: String,
+    pub projects_root: String,
+    pub render_root: String,
+    pub mappings: Vec<VyronFilesystemMapping>,
+    pub legacy_folders: usize,
+    pub conflicts: usize,
+    pub will_delete: u32,
+    pub render_changed: bool,
+}
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct VyronFilesystemApplyResult {
+    pub root: String,
+    pub moved_legacy: usize,
+    pub created_projects: usize,
+    pub created_render: usize,
+    pub conflicts: usize,
+    pub files_before: u64,
+    pub files_after: u64,
+    pub will_delete: u32,
+}
+
+fn safe_vyron_root(raw:&str)->Result<PathBuf,String>{
+    let value=raw.trim();
+    if value.is_empty(){return Err("VYRON_ROOT_EMPTY".into())}
+    let p=PathBuf::from(value);
+    if !p.is_dir(){return Err("VYRON_ROOT_NOT_DIRECTORY".into())}
+    let c=p.canonicalize().map_err(|e|format!("VYRON_ROOT_CANONICALIZE_FAILED: {e}"))?;
+    if c.parent().is_none(){return Err("VYRON_ROOT_FILESYSTEM_ROOT_BLOCKED".into())}
+    for key in ["HOME","USERPROFILE"] {
+        if let Ok(home)=std::env::var(key){
+            if let Ok(h)=PathBuf::from(home).canonicalize(){if c==h{return Err("VYRON_ROOT_HOME_BLOCKED".into())}}
+        }
+    }
+    Ok(c)
+}
+fn safe_channel_folder_name(raw:&str)->Option<String>{
+    let name=raw.trim();
+    if name.is_empty()||name=="."||name==".." {return None}
+    if Path::new(name).components().count()!=1{return None}
+    if matches!(normalized_folder_name(name).as_str(),"projects"|"render"){return None}
+    Some(name.to_string())
+}
+fn recursive_file_count(path:&Path)->u64{
+    if path.is_file(){return 1}
+    let Ok(entries)=fs::read_dir(path) else{return 0};
+    entries.flatten().map(|e|recursive_file_count(&e.path())).sum()
+}
+pub fn vyron_filesystem_preview_impl(root:&str,channel_names:&[String])->Result<VyronFilesystemPreview,String>{
+    let root=safe_vyron_root(root)?;
+    let projects_root=root.join("Projects");
+    let render_root=root.join("Render");
+    let mut mappings=Vec::new();let mut legacy_folders=0usize;let mut conflicts=0usize;
+    let mut seen=BTreeSet::new();
+    for raw in channel_names {
+        let Some(name)=safe_channel_folder_name(raw) else{continue};
+        let key=normalized_folder_name(&name);if !seen.insert(key){continue}
+        let legacy=root.join(&name),projects=projects_root.join(&name),render=render_root.join(&name);
+        let legacy_exists=legacy.is_dir(),projects_exists=projects.is_dir();
+        let action=if legacy_exists&&projects_exists{conflicts+=1;"CONFLICT"}
+            else if legacy_exists{legacy_folders+=1;"MOVE_LEGACY_TO_PROJECTS"}
+            else if projects_exists{"ALREADY_CANONICAL"}else{"CREATE_CANONICAL"};
+        mappings.push(VyronFilesystemMapping{
+            channel_name:name,
+            legacy_path:if legacy_exists{Some(legacy.to_string_lossy().into_owned())}else{None},
+            projects_path:projects.to_string_lossy().into_owned(),
+            render_path:render.to_string_lossy().into_owned(),
+            action:action.into(),
+            source_files:if legacy_exists{recursive_file_count(&legacy)}else if projects_exists{recursive_file_count(&projects)}else{0},
+        });
+    }
+    Ok(VyronFilesystemPreview{
+        root:root.to_string_lossy().into_owned(),
+        projects_root:projects_root.to_string_lossy().into_owned(),
+        render_root:render_root.to_string_lossy().into_owned(),
+        mappings,legacy_folders,conflicts,will_delete:0,render_changed:false
+    })
+}
+#[tauri::command]
+pub fn vyron_filesystem_preview(root:String,channel_names:Vec<String>)->Result<VyronFilesystemPreview,String>{
+    vyron_filesystem_preview_impl(&root,&channel_names)
+}
+pub fn vyron_filesystem_apply_impl(root:&str,channel_names:&[String])->Result<VyronFilesystemApplyResult,String>{
+    let preview=vyron_filesystem_preview_impl(root,channel_names)?;
+    if preview.conflicts>0{return Err(format!("VYRON_FILESYSTEM_CONFLICTS: {}",preview.conflicts))}
+    let root=PathBuf::from(&preview.root),projects_root=root.join("Projects"),render_root=root.join("Render");
+    fs::create_dir_all(&projects_root).map_err(|e|format!("CREATE_PROJECTS_ROOT_FAILED: {e}"))?;
+    fs::create_dir_all(&render_root).map_err(|e|format!("CREATE_RENDER_ROOT_FAILED: {e}"))?;
+    let mut moved_legacy=0usize;let mut created_projects=0usize;let mut created_render=0usize;let mut files_before=0u64;let mut files_after=0u64;
+    for row in preview.mappings {
+        let projects=PathBuf::from(&row.projects_path),render=PathBuf::from(&row.render_path);
+        if row.action=="MOVE_LEGACY_TO_PROJECTS"{
+            let source=PathBuf::from(row.legacy_path.as_ref().ok_or_else(||"LEGACY_SOURCE_MISSING".to_string())?);
+            let before=recursive_file_count(&source);files_before+=before;
+            if projects.exists(){return Err(format!("PROJECTS_TARGET_APPEARED: {}",projects.display()))}
+            fs::rename(&source,&projects).map_err(|e|format!("LEGACY_MOVE_FAILED {} -> {}: {e}",source.display(),projects.display()))?;
+            let after=recursive_file_count(&projects);
+            if after!=before{
+                let _=fs::rename(&projects,&source);
+                return Err(format!("LEGACY_MOVE_FILE_COUNT_MISMATCH: before={before} after={after}"))
+            }
+            files_after+=after;moved_legacy+=1;
+        }else if !projects.exists(){
+            fs::create_dir_all(&projects).map_err(|e|format!("CREATE_CHANNEL_PROJECTS_FAILED {}: {e}",projects.display()))?;
+            created_projects+=1;
+        }
+        if !render.exists(){
+            fs::create_dir_all(&render).map_err(|e|format!("CREATE_CHANNEL_RENDER_FAILED {}: {e}",render.display()))?;
+            created_render+=1;
+        }
+    }
+    Ok(VyronFilesystemApplyResult{
+        root:root.to_string_lossy().into_owned(),moved_legacy,created_projects,created_render,
+        conflicts:0,files_before,files_after,will_delete:0
+    })
+}
+#[tauri::command]
+pub fn vyron_filesystem_apply(root:String,channel_names:Vec<String>)->Result<VyronFilesystemApplyResult,String>{
+    vyron_filesystem_apply_impl(&root,&channel_names)
+}
+
 fn allowed_media(path: &Path) -> bool {
     matches!(
         path.extension()
@@ -277,6 +412,34 @@ mod tests {
         let found=discover_channel_folders_impl(workspace.to_str().unwrap(),"Fixture Channel").unwrap();
         assert_eq!(found.render.len(),2,"multiple safely-normalized Render matches must remain ambiguous");
         assert_eq!(found.projects.len(),2,"multiple safely-normalized Projects matches must remain ambiguous");
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn vyron_filesystem_preview_is_non_destructive_and_maps_projects_render(){
+        let root=temp_root();let legacy=root.join("Fixture Channel");fs::create_dir_all(&legacy).unwrap();fs::write(legacy.join("song.mp3"),b"x").unwrap();
+        let names=vec!["Fixture Channel".to_string(),"Other Channel".to_string()];
+        let p=vyron_filesystem_preview_impl(root.to_str().unwrap(),&names).unwrap();
+        assert_eq!(p.will_delete,0);assert!(!p.render_changed);assert_eq!(p.legacy_folders,1);assert_eq!(p.conflicts,0);
+        assert!(legacy.exists(),"preview must not move legacy data");
+        assert!(p.mappings.iter().any(|x|x.channel_name=="Fixture Channel"&&x.action=="MOVE_LEGACY_TO_PROJECTS"&&x.projects_path.ends_with("Projects/Fixture Channel")&&x.render_path.ends_with("Render/Fixture Channel")));
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn vyron_filesystem_apply_moves_only_confirmed_legacy_and_preserves_file_count(){
+        let root=temp_root();let legacy=root.join("Fixture Channel");fs::create_dir_all(legacy.join("nested")).unwrap();fs::write(legacy.join("a.mp3"),b"a").unwrap();fs::write(legacy.join("nested").join("b.jpg"),b"b").unwrap();
+        let names=vec!["Fixture Channel".to_string()];
+        let r=vyron_filesystem_apply_impl(root.to_str().unwrap(),&names).unwrap();
+        assert_eq!(r.will_delete,0);assert_eq!(r.moved_legacy,1);assert_eq!(r.files_before,2);assert_eq!(r.files_after,2);
+        assert!(!legacy.exists());assert!(root.join("Projects").join("Fixture Channel").join("a.mp3").exists());assert!(root.join("Render").join("Fixture Channel").is_dir());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn vyron_filesystem_apply_blocks_conflict_without_overwrite(){
+        let root=temp_root();let legacy=root.join("Fixture Channel");let target=root.join("Projects").join("Fixture Channel");
+        fs::create_dir_all(&legacy).unwrap();fs::create_dir_all(&target).unwrap();fs::write(legacy.join("legacy.txt"),b"l").unwrap();fs::write(target.join("existing.txt"),b"e").unwrap();
+        let names=vec!["Fixture Channel".to_string()];
+        let e=vyron_filesystem_apply_impl(root.to_str().unwrap(),&names).unwrap_err();
+        assert!(e.contains("VYRON_FILESYSTEM_CONFLICTS"));assert!(legacy.join("legacy.txt").exists());assert!(target.join("existing.txt").exists());
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
