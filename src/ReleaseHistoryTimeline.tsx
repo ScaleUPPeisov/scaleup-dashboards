@@ -1,4 +1,6 @@
 import React,{useMemo,useState} from 'react';
+import {SafeArtwork} from './SafeArtwork';
+import {VYRON_5_ARTWORK} from './vyronBrand';
 import {groupReleaseHistoryByDay,VYRON_CURRENT_RELEASE,VYRON_FIRST_RELEASE,VYRON_RELEASE_HISTORY,type ReleaseHistoryEntry,type ReleaseSectionKey} from './releaseHistory';
 
 type Filter='all'|'features'|'fixes'|'interface'|'reliability';
@@ -14,8 +16,9 @@ function categoryHas(x:ReleaseHistoryEntry,f:Filter){return f==='all'||Boolean(x
 function ReleaseCard({row,expanded,onToggle}:{row:ReleaseHistoryEntry;expanded:boolean;onToggle:()=>void}){
  const visibleSections=(Object.keys(sectionMeta) as ReleaseSectionKey[]).filter(k=>k!=='technical'&&row.sections[k]?.length);
  const tech=[...(row.sections.technical||[]),...(row.technicalItems||[])].filter((x,i,a)=>a.indexOf(x)===i);
- return <article className={'releaseTimelineCard '+(expanded?'expanded':'')}>
+ return <article className={'releaseTimelineCard '+(row.version==='5.0.0'?'majorReleaseCard ':'')+(expanded?'expanded':'')}>
   <div className="releaseTimelineDot"/>
+  {row.version==='5.0.0'&&<SafeArtwork className="releaseMajorArtwork" src={VYRON_5_ARTWORK} alt="VYRON 5.0.0" fallback="V"/>}
   <div className="releaseTimelineHead"><div><span className="releaseVersion">VYRON {row.version}</span><span className={'releaseType '+row.type.toLowerCase()}>{row.type}</span>{row.version==='5.0.0'&&<b className="majorReleaseLabel">БОЛЬШОЕ ОБНОВЛЕНИЕ</b>}</div>{row.prerelease&&<small>release candidate</small>}</div>{row.platforms?.length?<div className="releasePlatforms">{row.platforms.map(p=><span key={p}>{p}</span>)}</div>:null}
   <h4>{row.title}</h4>
   <ul className="releaseHighlights">{row.highlights.slice(0,4).map((x,i)=><li key={i}>{x}</li>)}</ul>
