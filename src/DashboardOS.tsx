@@ -13,7 +13,7 @@ import {ScreenErrorBoundary} from './ScreenErrorBoundary';
 import {activeJobErrors} from './activeErrors';
 import {inventoryTotals,useLiveInventory} from './renderInventoryRuntime';
 import {OWNER_INVENTORY_EVENT,aggregateOwnerInventories,ownerInventoryForChannel} from './youtubeOwnerInventory';
-import {globalDailyUploadStatus,safeDailyStatus} from './youtubePublishSafety';
+import {globalDailyUploadStatus,safeDailyStatus,subscribeGlobalDailyUploadStatus} from './youtubePublishSafety';
 import {youtubeQuotaUsage} from './youtubeQuota';
 import {buildDailyOperations} from './dailyOperations';
 import {SystemHealthPanel} from './SystemHealthPanel';
@@ -38,8 +38,8 @@ function exactConnectedCount(channels:Channel[],profiles:YoutubeProfile[]){
 
 function OperationsDashboard(){
  const channels=useApp(s=>s.channels),jobs=useApp(s=>s.jobs),settings=useApp(s=>s.settings),uploadHistory=useApp(s=>s.uploadHistory),projectLifecycle=useApp(s=>s.projectLifecycle),fingerprintCache=useApp(s=>s.fingerprintCache),setPage=useApp(s=>s.setPage),liveSnapshots=useLiveInventory(s=>s.snapshots);
- const [queue,setQueue]=useState(()=>uploadQueueSnapshot()),[telemetry,setTelemetry]=useState(()=>uploadTelemetrySnapshot()),[activeId,setActiveId]=useState(()=>loadActivePublishChannel()),[profiles,setProfiles]=useState<YoutubeProfile[]>([]),[ownerRevision,setOwnerRevision]=useState(0);
- useEffect(()=>{const offQueue=subscribeUploadQueue(setQueue),offTelemetry=subscribeUploadTelemetry(setTelemetry),offActive=subscribeActivePublishChannel(setActiveId);return()=>{offQueue();offTelemetry();offActive()}},[]);
+ const [queue,setQueue]=useState(()=>uploadQueueSnapshot()),[telemetry,setTelemetry]=useState(()=>uploadTelemetrySnapshot()),[activeId,setActiveId]=useState(()=>loadActivePublishChannel()),[profiles,setProfiles]=useState<YoutubeProfile[]>([]),[ownerRevision,setOwnerRevision]=useState(0),[globalUploads,setGlobalUploads]=useState(()=>globalDailyUploadStatus());
+ useEffect(()=>{const offQueue=subscribeUploadQueue(setQueue),offTelemetry=subscribeUploadTelemetry(setTelemetry),offActive=subscribeActivePublishChannel(setActiveId),offUploads=subscribeGlobalDailyUploadStatus(()=>setGlobalUploads(globalDailyUploadStatus()));return()=>{offQueue();offTelemetry();offActive();offUploads()}},[]);
  useEffect(()=>{const bump=()=>setOwnerRevision(x=>x+1);window.addEventListener(OWNER_INVENTORY_EVENT,bump);window.addEventListener('vyron-channel-schedule-changed',bump);return()=>{window.removeEventListener(OWNER_INVENTORY_EVENT,bump);window.removeEventListener('vyron-channel-schedule-changed',bump)}},[]);
  const bindingKey=channels.map(c=>c.id+':'+(c.youtubeProfileId||'')+':'+(c.youtubeChannelId||'')).join('|');
  useEffect(()=>{
