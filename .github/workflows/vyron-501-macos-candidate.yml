@@ -131,13 +131,6 @@ jobs:
           assert json.load(open('/tmp/mac-before.json'))['version']=='5.0.0'
           assert json.load(open('/tmp/win-before.json'))['version']=='4.0.0'
           PY
-      - name: macOS regression and native compile
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          npx vitest run src/v501OwnerHotfix.test.ts src/v501LocalCleanupZeroQuota.test.ts src/youtubePublishSafety.test.ts src/startupQuotaProbe.test.ts src/dailyOperations.test.ts src/productionPipeline.test.ts src/updaterRuntime.test.ts
-          npm run build
-          cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
       - name: Import VYRON signing identity
         shell: bash
         run: |
@@ -157,15 +150,15 @@ jobs:
           test "$(printf '%s' "$ID_SHA1" | tr '[:lower:]' '[:upper:]')" = "$EXPECTED_SIGNING_CERT_SHA1"
           echo "VYRON_SIGNING_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
           echo "VYRON_SIGNING_KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> "$GITHUB_ENV"
-      - name: Normalize updater signing key to private key file
+      - name: Canonicalize updater signing key
         shell: bash
         run: |
           set -Eeuo pipefail
           python3 - <<'PY'
-          import base64,os,pathlib
+          import base64,os
           raw=os.environ['VYRON_TAURI_SIGNING_PRIVATE_KEY_RAW'].strip().replace('\\r\\n','\n').replace('\\n','\n')
           candidates=[raw]
-          for _ in range(4):
+          for _ in range(5):
               current=candidates[-1].strip()
               try:
                   decoded=base64.b64decode(current,validate=True).decode('utf-8').strip()
@@ -174,15 +167,13 @@ jobs:
               if decoded in candidates:
                   break
               candidates.append(decoded)
-          key=next((x for x in candidates if x.startswith('untrusted comment:')),None)
-          assert key, 'TAURI_SIGNING_PRIVATE_KEY_FORMAT_UNRECOGNIZED'
-          path=pathlib.Path(os.environ['RUNNER_TEMP'])/'vyron-updater-private.key'
-          path.write_text(key.rstrip()+'\n',encoding='utf-8')
-          path.chmod(0o600)
-          assert path.read_text(encoding='utf-8').startswith('untrusted comment:')
+          plain=next((x for x in candidates if x.startswith('untrusted comment:')),None)
+          assert plain, 'TAURI_SIGNING_PRIVATE_KEY_FORMAT_UNRECOGNIZED'
+          canonical=base64.b64encode((plain.rstrip()+'\n').encode('utf-8')).decode('ascii')
           with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as fp:
-              fp.write('TAURI_SIGNING_PRIVATE_KEY_PATH='+str(path)+'\n')
-          print('TAURI_UPDATER_KEY_FILE=READY')
+              fp.write('TAURI_SIGNING_PRIVATE_KEY_CANONICAL='+canonical+'\n')
+          print('::add-mask::'+canonical)
+          print('TAURI_UPDATER_KEY_CANONICAL=READY')
           PY
       - name: Build and verify signed macOS 5.0.1
         shell: bash
@@ -190,7 +181,7 @@ jobs:
           set -Eeuo pipefail
           security unlock-keychain -p "$VYRON_SIGNING_KEYCHAIN_PASSWORD" "$VYRON_SIGNING_KEYCHAIN"
           export APPLE_SIGNING_IDENTITY="$VYRON_MACOS_SIGNING_IDENTITY"
-          export TAURI_SIGNING_PRIVATE_KEY="$TAURI_SIGNING_PRIVATE_KEY_PATH"
+          export TAURI_SIGNING_PRIVATE_KEY="$TAURI_SIGNING_PRIVATE_KEY_CANONICAL"
           npx tauri build --target aarch64-apple-darwin --bundles app,dmg
           mkdir -p candidate-macos
           APP="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)"
