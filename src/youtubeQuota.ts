@@ -43,7 +43,8 @@ type UploadProjectRow={quotaDay:string;used:number;calls:number;configuredLimit:
 type LegacyUploadRow={quotaDay:string;used:number;calls:number;claimedBy?:string};
 type LedgerV4={version:4;ptDate:string;buckets:{general:BucketRow;search:BucketRow};uploadProjects:Record<string,UploadProjectRow>;legacyUpload?:LegacyUploadRow;lastAction?:string;unpricedAttempts?:Array<{method:string;at:string}>};
 type Reservation={id:string;createdAt:string;projectKey?:string;buckets:Record<YoutubeQuotaBucket,number>};
-export type YoutubeQuotaTraceRow={operationId:string;ptDate:string;updatedAt:string;projectKey?:string;buckets:Record<YoutubeQuotaBucket,number>;methods:Record<string,{calls:number;cost:number}>};
+export type YoutubeQuotaTraceMode='MANUAL'|'BACKGROUND';
+export type YoutubeQuotaTraceRow={operationId:string;ptDate:string;updatedAt:string;projectKey?:string;reason?:string;channelIds?:string[];mode?:YoutubeQuotaTraceMode;estimatedUnits?:number;buckets:Record<YoutubeQuotaBucket,number>;methods:Record<string,{calls:number;cost:number}>};
 type OperationLedgerRow=YoutubeQuotaTraceRow;
 
 function lsGet(key:string){try{return typeof localStorage==='undefined'?null:localStorage.getItem(key)}catch{return null}}
@@ -105,6 +106,17 @@ export function youtubeOperationActualCost(operationId:string){const row=readOpe
 export function youtubeQuotaTrace(limit=50,now=new Date()):YoutubeQuotaTraceRow[]{
  const day=youtubePtDate(now),max=Math.max(1,Math.min(200,Math.floor(limit)||50));
  return readOperationRows().filter(x=>x.ptDate===day).sort((a,b)=>String(b.updatedAt).localeCompare(String(a.updatedAt))).slice(0,max).map(x=>({...x,buckets:{...x.buckets},methods:Object.fromEntries(Object.entries(x.methods||{}).map(([k,v])=>[k,{...v}]))}))
+}
+export function bindYoutubeQuotaTraceContext(operationId:string,context:{reason:string;channelIds?:string[];mode:YoutubeQuotaTraceMode;estimatedUnits?:number;projectKey?:string}){
+ if(!operationId)return;
+ const now=new Date(),day=youtubePtDate(now),rows=readOperationRows().filter(x=>x.ptDate===day);
+ let row=rows.find(x=>x.operationId===operationId);
+ if(!row){row={operationId,ptDate:day,updatedAt:now.toISOString(),buckets:{general:0,videoUploads:0,search:0},methods:{}};rows.push(row)}
+ row.updatedAt=now.toISOString();row.reason=context.reason;row.mode=context.mode;
+ row.channelIds=[...new Set((context.channelIds||[]).filter(Boolean))].slice(0,100);
+ if(Number.isFinite(context.estimatedUnits))row.estimatedUnits=Math.max(0,Number(context.estimatedUnits));
+ if(context.projectKey)row.projectKey=context.projectKey;
+ saveOperationRows(rows)
 }
 export function bindYoutubeQuotaOperationProject(operationId:string,projectKey:string){if(!operationId||!projectKey)return;registerYoutubeUploadProject(projectKey);const now=new Date(),day=youtubePtDate(now),rows=readOperationRows().filter(x=>x.ptDate===day);let row=rows.find(x=>x.operationId===operationId);if(!row){row={operationId,ptDate:day,updatedAt:now.toISOString(),projectKey,buckets:{general:0,videoUploads:0,search:0},methods:{}};rows.push(row)}else{row.projectKey=projectKey;row.updatedAt=now.toISOString()}saveOperationRows(rows)}
 export function recordYoutubeApiRequest(event:YoutubeApiRequestEvent){
