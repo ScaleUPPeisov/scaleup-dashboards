@@ -35,6 +35,7 @@ jobs:
           src/productionPipeline.test.ts
           src/diagnosticReport.test.ts
           src/youtubeQuotaTrace.test.ts
+          src/startupQuotaProbe.test.ts
           src/updaterRuntime.test.ts
           src/v400OwnerInventory.test.ts
           src/v400QuotaUploadLimitSeparation.test.ts
