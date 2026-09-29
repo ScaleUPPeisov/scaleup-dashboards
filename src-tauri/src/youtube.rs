@@ -3924,12 +3924,13 @@ pub async fn youtube_list_existing_videos(
     app: AppHandle,
     profile_id: String,
     max_results: Option<u32>,
+    operation_id: Option<String>,
 ) -> Result<Value, String> {
     let (token, profile) = valid_access_token(&app, &profile_id).await?;
     let limit = max_results.unwrap_or(1000).clamp(1, 5000) as usize;
     let client = reqwest::Client::new();
 
-    emit_youtube_api_request(&app,"channels.list",None);
+    emit_youtube_api_request(&app,"channels.list",operation_id.as_deref());
     let r=client.get("https://www.googleapis.com/youtube/v3/channels")
         .bearer_auth(&token)
         .query(&[("part","contentDetails"),("mine","true")])
@@ -3957,7 +3958,7 @@ pub async fn youtube_list_existing_videos(
             .bearer_auth(&token)
             .query(&[("part","contentDetails"),("playlistId",uploads),("maxResults","50")]);
         if let Some(ref t)=page{q=q.query(&[("pageToken",t.as_str())])}
-        emit_youtube_api_request(&app,"playlistItems.list",None);
+        emit_youtube_api_request(&app,"playlistItems.list",operation_id.as_deref());
         playlist_calls+=1;
         let rr=q.send().await.map_err(|e|format!("YouTube uploads page {playlist_calls}: {e}"))?;
         let st=rr.status();let v:Value=rr.json().await.map_err(|e|e.to_string())?;
@@ -3989,7 +3990,7 @@ pub async fn youtube_list_existing_videos(
         if chunk.is_empty(){continue}
         let joined=chunk.join(",");
         video_calls+=1;
-        emit_youtube_api_request(&app,"videos.list",None);
+        emit_youtube_api_request(&app,"videos.list",operation_id.as_deref());
         let response=client.get("https://www.googleapis.com/youtube/v3/videos")
             .bearer_auth(&token)
             .query(&[("part","snippet,status,contentDetails,statistics"),("id",joined.as_str())])
