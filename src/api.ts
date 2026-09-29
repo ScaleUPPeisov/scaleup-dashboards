@@ -22,6 +22,9 @@ export type LocalSourceStatus={path:string;exists:boolean;isFile:boolean;size?:n
 export type RenderFolderVideoFile={path:string;name:string;size:number;createdAt?:number|null;modifiedAt?:number|null;fingerprint?:string};
 export type RenderFolderScanResult={root:string;files:RenderFolderVideoFile[];scannedEntries:number;truncated:boolean};
 export type ChannelFolderDiscovery={render:string[];projects:string[];rootsChecked:string[]};
+export type VyronFilesystemMapping={channelName:string;legacyPath?:string|null;projectsPath:string;renderPath:string;action:'MOVE_LEGACY_TO_PROJECTS'|'CREATE_CANONICAL'|'ALREADY_CANONICAL'|'CONFLICT';sourceFiles:number};
+export type VyronFilesystemPreview={root:string;projectsRoot:string;renderRoot:string;mappings:VyronFilesystemMapping[];legacyFolders:number;conflicts:number;willDelete:0;renderChanged:false};
+export type VyronFilesystemApplyResult={root:string;movedLegacy:number;createdProjects:number;createdRender:number;conflicts:number;filesBefore:number;filesAfter:number;willDelete:0};
 export type InventoryWatchRoot={channelId:string;path:string};
 export type InventoryWatchRegistration={watchedChannelIds:string[];offlineChannelIds:string[]};
 export type InventoryWatchEvent={channelId:string;path:string;kind:string};
@@ -114,6 +117,8 @@ export const api={
   chooseRenderRoot:async(defaultPath?:string)=>{const r=await open({directory:true,multiple:false,title:'Общая папка Render со всеми каналами',defaultPath:defaultPath||undefined});return typeof r==='string'?r:null},
   chooseProjectsFolder:async(defaultPath?:string)=>{const r=await open({directory:true,multiple:false,title:'Папка проектов текущего канала',defaultPath:defaultPath||undefined});return typeof r==='string'?r:null},
   discoverChannelFolders:(workspace:string,channelName:string)=>invoke<ChannelFolderDiscovery>('discover_channel_folders',{workspace,channelName}),
+  vyronFilesystemPreview:(root:string,channelNames:string[])=>invoke<VyronFilesystemPreview>('vyron_filesystem_preview',{root,channelNames}),
+  vyronFilesystemApply:(root:string,channelNames:string[])=>invoke<VyronFilesystemApplyResult>('vyron_filesystem_apply',{root,channelNames}),
   inventoryWatchRoots:(roots:InventoryWatchRoot[])=>invoke<InventoryWatchRegistration>('inventory_watch_roots',{roots}),
   onRenderInventoryChanged:(cb:(data:InventoryWatchEvent)=>void)=>listen<InventoryWatchEvent>('render-inventory-changed',e=>cb(e.payload)),
   chooseEndlume:async()=>{const r=await open({directory:false,multiple:false,title:'Выберите ENDLUME Studio.app'});return typeof r==='string'?r:null},
