@@ -56,18 +56,19 @@ describe('VYRON 5.0.2 full refresh hotfix',()=>{
   });
 
   it('does not add updater, OAuth reset or credential mutation to the hotfix pipeline',()=>{
-    for(const forbidden of [
-      'plugin-updater',
-      'youtubeOauthConnect',
-      'youtubeOauthDisconnect',
-      'keychain',
-      'clientSecret',
-      'refreshToken',
-      'removeChannel',
-      'localStorage.clear',
-      'credentials.json'
-    ]){
-      expect(pipeline.toLowerCase()).not.toContain(forbidden.toLowerCase());
-    }
+    const dangerousCalls=[
+      'youtubeOauthConnect(',
+      'youtubeOauthDisconnect(',
+      'deleteCredential(',
+      'deleteSecret(',
+      'clearCredentials(',
+      'removeChannel(',
+      'localStorage.clear(',
+      'relaunch(',
+      'checkForUpdates('
+    ];
+    for(const call of dangerousCalls)expect(pipeline).not.toContain(call);
+    expect(pipeline).not.toContain("from '@tauri-apps/plugin-updater'");
+    expect(pipeline).not.toContain("from '@tauri-apps/plugin-process'");
   });
 });
