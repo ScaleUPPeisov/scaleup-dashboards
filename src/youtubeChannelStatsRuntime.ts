@@ -4,7 +4,7 @@ import {useApp} from './store';
 import type {YoutubeChannelStatistics,YoutubeProfile} from './types';
 import {isChannelStatsStale,normalizeChannelStatistics,preserveChannelStatisticsOnError} from './youtubeChannelStats';
 import {classifyYoutubeChannels,makeStatisticsSnapshot,migrateStatisticsBaselines,type LinkedYoutubeChannel} from './youtubeStatisticsCenter';
-import {youtubeOperationActualCost,youtubeQuotaProjectIdentity,youtubeQuotaUsage} from './youtubeQuota';
+import {bindYoutubeQuotaTraceContext,youtubeOperationActualCost,youtubeQuotaProjectIdentity,youtubeQuotaUsage} from './youtubeQuota';
 import {appendErrorHistory,resolveStatisticsCredentialErrors} from './errorHistory';
 import {notifyYoutubeOauthStateChanged} from './youtubeOauthState';
 
@@ -173,6 +173,7 @@ async function runAll(force:boolean,onProgress?:((p:ChannelStatisticsRefreshProg
   for(let batchIndex=0;batchIndex<batchPlans.length;batchIndex++){
    const chunk=batchPlans[batchIndex].entries,childOperationId=`${operationId}:group:${batchIndex+1}`;
    childOperationIds.push(childOperationId);
+   bindYoutubeQuotaTraceContext(childOperationId,{reason:selectedChannelIds?'BATCH_STATS_REFRESH':'BACKGROUND_STATS_REFRESH',channelIds:chunk.map(x=>x.channel.id),mode:selectedChannelIds?'MANUAL':'BACKGROUND',estimatedUnits:1,projectKey:batchPlans[batchIndex].projectKey||undefined});
    try{
     const result=await requestBatchWithDriverRotation(chunk,childOperationId,config),byId=new Map(result.batch.items.filter(x=>x.channelId).map(x=>[x.channelId!,x]));
     for(const x of result.credentialFailures){
