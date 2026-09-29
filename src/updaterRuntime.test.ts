@@ -32,4 +32,20 @@ describe('shared remote updater lifecycle',()=>{
  it('keeps app usable on network check failure and records ERROR state',async()=>{mockApi.checkUpdate.mockRejectedValue(new Error('UPDATER_MANIFEST_FETCH_FAILED: offline'));await useUpdaterRuntime.getState().check();expect(useUpdaterRuntime.getState().status).toBe('ERROR');expect(useUpdaterRuntime.getState().errorCode).toBe('UPDATER_MANIFEST_FETCH_FAILED')});
  it('blocks a bad-signature package before install',async()=>{const c=candidate({download:vi.fn(async()=>{throw new Error('UPDATER_SIGNATURE_INVALID: bad signature')})});mockApi.checkUpdate.mockResolvedValue(c);await useUpdaterRuntime.getState().check();await useUpdaterRuntime.getState().download();expect(useUpdaterRuntime.getState().status).toBe('ERROR');expect(useUpdaterRuntime.getState().errorCode).toBe('UPDATER_SIGNATURE_INVALID');expect(c.install).not.toHaveBeenCalled()});
  it('shows same-version state without update warning',async()=>{mockApi.checkUpdate.mockResolvedValue({none:true,current:'2.1.4',latest:'2.1.4',status:'UP_TO_DATE',endpoint:'feed',versionComparison:'current == latest'});await useUpdaterRuntime.getState().check();expect(useUpdaterRuntime.getState().status).toBe('UP_TO_DATE');expect(useUpdaterRuntime.getState().latestVersion).toBe('2.1.4')});
+ it('coalesces 20 install clicks into exactly one install/restart',async()=>{
+  let releaseInstall!:()=>void;
+  const gate=new Promise<void>(resolve=>{releaseInstall=resolve});
+  const c=candidate({install:vi.fn(async(cb:any)=>{cb?.('VERIFYING');await gate;cb?.('READY_TO_RESTART')})});
+  mockApi.checkUpdate.mockResolvedValue(c);
+  await useUpdaterRuntime.getState().check();
+  await useUpdaterRuntime.getState().download();
+  const calls=Array.from({length:20},()=>useUpdaterRuntime.getState().installAndRestart([]));
+  await Promise.resolve();
+  expect(c.install).toHaveBeenCalledTimes(1);
+  releaseInstall();
+  const results=await Promise.all(calls);
+  expect(results.every(Boolean)).toBe(true);
+  expect(c.install).toHaveBeenCalledTimes(1);
+  expect(c.restart).toHaveBeenCalledTimes(1);
+ });
 });
