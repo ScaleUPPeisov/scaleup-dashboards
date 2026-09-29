@@ -19,10 +19,23 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use uuid::Uuid;
 
 pub(crate) fn emit_youtube_api_request(app: &AppHandle, method: &str, operation_id: Option<&str>) {
+    let at=Utc::now().to_rfc3339();
     let _ = app.emit(
         "youtube-api-request",
-        json!({"method":method,"operationId":operation_id,"at":Utc::now().to_rfc3339()}),
+        json!({"method":method,"operationId":operation_id,"at":at}),
     );
+    // Candidate-only factual audit. Production writes nothing unless the process was
+    // explicitly launched with VYRON_API_AUDIT_PATH by the release gate.
+    if let Ok(raw_path)=std::env::var("VYRON_API_AUDIT_PATH"){
+        let raw_path=raw_path.trim();
+        if !raw_path.is_empty(){
+            let safe_method=method.replace(['\n','\r','\t']," ");
+            let safe_operation=operation_id.unwrap_or("").replace(['\n','\r','\t']," ");
+            if let Ok(mut file)=fs::OpenOptions::new().create(true).append(true).open(raw_path){
+                let _=writeln!(file,"{}\t{}\t{}",at,safe_method,safe_operation);
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
