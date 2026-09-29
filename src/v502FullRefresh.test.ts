@@ -22,6 +22,21 @@ const video=(n:number):YoutubeExistingVideo=>({
 });
 
 describe('VYRON 5.0.2 full refresh hotfix',()=>{
+  it('uses 5.0.2 build identity without changing release feeds',()=>{
+    const packageJson=JSON.parse(fs.readFileSync('package.json','utf8'));
+    const packageLock=JSON.parse(fs.readFileSync('package-lock.json','utf8'));
+    const tauri=JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json','utf8'));
+    const cargo=fs.readFileSync('src-tauri/Cargo.toml','utf8');
+    const cargoLock=fs.readFileSync('src-tauri/Cargo.lock','utf8');
+    expect(packageJson.version).toBe('5.0.2');
+    expect(packageLock.version).toBe('5.0.2');
+    expect(packageLock.packages[''].version).toBe('5.0.2');
+    expect(tauri.version).toBe('5.0.2');
+    expect(tauri.identifier).toBe('studio.channelflow.desktop');
+    expect(cargo).toMatch(/\[package\][\s\S]*version\s*=\s*"5\.0\.2"/);
+    expect(cargoLock).toMatch(/name = "channelflow"\nversion = "5\.0\.2"/);
+  });
+
   it('refresh-all uses one pipeline for stats, owner schedule and zero-quota local render scan',()=>{
     expect(dashboard).toContain('refreshAllChannelData(plan.channelIds)');
     expect(pipeline).toContain("scanAllInventories('manual-all')");
