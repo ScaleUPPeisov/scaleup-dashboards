@@ -4,7 +4,6 @@ import {resolveProductionRoot} from './productionPrefs';
 import { createMissingJobs, imageAllocation, musicAllocation } from './autopilotCore';
 import { useApp } from './store';
 import type { AutopilotSummary, Channel, VideoJob } from './types';
-import {runYoutubeAutopilotForChannel} from './youtubeAutopilot';
 import {humanizeError} from './errorCenter';
 import {inventorySnapshot} from './renderInventoryRuntime';
 
@@ -104,7 +103,7 @@ export async function runAutopilotCycle(manual=false):Promise<AutopilotSummary>{
     if(!s.workspace){try{const workspace=await api.defaultWorkspace();useApp.getState().patchSettings({workspace});s=useApp.getState().settings}catch(e){logError(summary,'Workspace',e);return summary}}
     if(!manual&&!s.autopilotEnabled)return {...summary,notes:['Автопилот выключен']};
     const aiBudget={left:3};
-    for(const channel of useApp.getState().channels.filter(c=>c.enabled)){try{const inv=inventorySnapshot(channel.id);if(inv?.folderState==='OFFLINE')summary.notes.push(`${channel.name}: Render OFFLINE • last known ready ${inv.readyVideos}`);await processChannel(channel,summary,aiBudget);if(useApp.getState().settings.autoUploadYoutube)await runYoutubeAutopilotForChannel(channel,summary)}catch(e){logError(summary,`${channel.name}: цикл`,e)}}
+    for(const channel of useApp.getState().channels.filter(c=>c.enabled)){try{const inv=inventorySnapshot(channel.id);if(inv?.folderState==='OFFLINE')summary.notes.push(`${channel.name}: Render OFFLINE • last known ready ${inv.readyVideos}`);await processChannel(channel,summary,aiBudget)}catch(e){logError(summary,`${channel.name}: цикл`,e)}}
     const moved=summary.tracksMoved+summary.imagesMoved+summary.renderQueued+summary.metadataGenerated+summary.prepared+summary.uploads;
     if(moved||summary.errors)useApp.getState().log(`Autopilot: папки ${summary.prepared}, треки ${summary.tracksMoved}, изображения ${summary.imagesMoved}, AI ${summary.metadataGenerated}, рендер ${summary.renderQueued}, YouTube ${summary.uploads}, ошибок ${summary.errors}`,summary.errors?'warn':'info');
     await useApp.getState().persist();
