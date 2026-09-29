@@ -11,6 +11,13 @@ const celebration=fs.readFileSync('src/MajorUpdateCelebration.tsx','utf8');
 const ownerProfile=fs.readFileSync('src/OwnerProfile.tsx','utf8');
 const sidebarCss=fs.readFileSync('src/v401.css','utf8');
 const appStyles=fs.readFileSync('src/styles.css','utf8');
+const settingsOs=fs.readFileSync('src/SettingsOS.tsx','utf8');
+const releaseTimeline=fs.readFileSync('src/ReleaseHistoryTimeline.tsx','utf8');
+const ownerScheduler=fs.readFileSync('src/OwnerInventoryScheduler.tsx','utf8');
+const statsScheduler=fs.readFileSync('src/ChannelStatisticsScheduler.tsx','utf8');
+const competitorsPage=fs.readFileSync('src/CompetitorsPage.tsx','utf8');
+const migrationPanel=fs.readFileSync('src/MigrationPanel.tsx','utf8');
+const migrationRust=fs.readFileSync('src-tauri/src/migration.rs','utf8');
 const packageJson=JSON.parse(fs.readFileSync('package.json','utf8'));
 const packageLock=JSON.parse(fs.readFileSync('package-lock.json','utf8'));
 const tauri=JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json','utf8'));
@@ -63,5 +70,33 @@ describe('VYRON 5.0.0 product contract',()=>{
   expect(app).toContain('requestAnimationFrame(loop)');
   expect(app).not.toContain('Target UI <b>60 FPS</b>');
   expect(appStyles).toBeTruthy();
+ });
+
+ it('uses one bundled approved artwork across shell, update, celebration, About and major history',()=>{
+  expect(fs.existsSync('src/assets/vyron-4-artwork.webp')).toBe(true);
+  expect(app).toContain('VYRON_5_ARTWORK');
+  expect(updaterUi).toContain('VYRON_5_ARTWORK');
+  expect(celebration).toContain('VYRON_5_ARTWORK');
+  expect(settingsOs).toContain('VYRON_5_ARTWORK');
+  expect(releaseTimeline).toContain('VYRON_5_ARTWORK');
+ });
+ it('does not auto-run competitor discovery or intelligence from startup schedulers',()=>{
+  expect(app).not.toContain('refreshYoutubeIntelligence');
+  expect(ownerScheduler).not.toContain('refreshYoutubeIntelligence');
+  expect(statsScheduler).not.toContain('refreshYoutubeIntelligence');
+  expect(ownerScheduler).not.toContain('search.list');
+  expect(statsScheduler).not.toContain('search.list');
+  expect(competitorsPage).toContain('Найти похожие каналы');
+  expect(competitorsPage).toContain('discoverCompetitorsForChannel');
+ });
+ it('keeps migration encrypted merge-only, idempotent and deletion-free',()=>{
+  expect(migrationPanel).toContain('WINDOWS ↔ macOS • ENCRYPTED');
+  expect(migrationPanel).toContain('Merge, не replace');
+  expect(migrationPanel).toContain('WILL DELETE');
+  expect(migrationPanel).toContain('preview.willDelete!==0');
+  expect(migrationPanel).toContain('migration_restore_latest');
+  expect(migrationRust).toContain('channel_merge_is_idempotent_and_never_deletes');
+  expect(migrationRust).toContain('encryption_rejects_tamper_and_wrong_password');
+  expect(migrationRust).toContain('thirty_plus_ten_with_seven_duplicates_is_thirty_three');
  });
 });
