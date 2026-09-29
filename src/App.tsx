@@ -1,4 +1,4 @@
-import React,{useEffect,useRef,useState} from 'react';
+import React,{useEffect,useLayoutEffect,useRef,useState} from 'react';
 import { api } from './api';
 import { runAutopilotCycle } from './autopilotRuntime';
 import { createMissingJobs } from './autopilotCore';
@@ -51,6 +51,7 @@ import {globalDailyUploadStatus} from './youtubePublishSafety';
 import {UiErrorBoundary} from './UiErrorBoundary';
 import {SafeArtwork} from './SafeArtwork';
 import {OwnerProfile} from './OwnerProfile';
+import {beginStartupQuotaProbe} from './startupQuotaProbe';
 
 async function notifyUpdateAvailable(version:string){
   const notifiedKey='vyron:update-notified-version';
@@ -83,6 +84,7 @@ const statusLabel:Record<JobStatus,string>={NEED_IMAGE:'Нужна картин�
 export function App(){
   const booted=useApp(s=>s.booted),hydrate=useApp(s=>s.hydrate),settings=useApp(s=>s.settings),page=useApp(s=>s.page),setPage=useApp(s=>s.setPage),log=useApp(s=>s.log);
   const [license,setLicense]=useState<LicenseStatus|null>(null);
+  useLayoutEffect(()=>{if(booted)beginStartupQuotaProbe()},[booted]);
   const oauthBootRecoveryStarted=useRef(false);
   const updaterStatus=useUpdaterRuntime(s=>s.status),updaterLatest=useUpdaterRuntime(s=>s.latestVersion),updaterLatestRevision=useUpdaterRuntime(s=>s.latestBuildRevision),updaterCheck=useUpdaterRuntime(s=>s.check),bootstrapUpdater=useUpdaterRuntime(s=>s.bootstrapVersion),markUpdated=useUpdaterRuntime(s=>s.markUpdated);
   useEffect(()=>{api.loadState().then(hydrate).catch(e=>{hydrate(EMPTY_STATE);useApp.getState().log(`Не удалось загрузить состояние: ${String(e)}`,'error')});api.license().then(setLicense).catch(()=>setLicense({valid:false}))},[]);
