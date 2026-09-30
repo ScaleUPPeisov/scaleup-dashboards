@@ -2,6 +2,21 @@ import React,{useCallback,useEffect,useLayoutEffect,useMemo,useRef,useState} fro
 
 type Range={start:number;end:number};
 
+export function virtualIndexAt(offsets:number[],itemCount:number,offset:number){
+  let lo=0,hi=Math.max(0,itemCount-1),ans=0;
+  while(lo<=hi){
+    const mid=(lo+hi)>>1;
+    if((offsets[mid]||0)<=offset){ans=mid;lo=mid+1}else hi=mid-1;
+  }
+  return Math.min(Math.max(0,ans),Math.max(0,itemCount-1));
+}
+export function computeVirtualRange(offsets:number[],itemCount:number,scrollTop:number,clientHeight:number,overscan:number):Range{
+  if(!itemCount)return {start:0,end:0};
+  const first=virtualIndexAt(offsets,itemCount,scrollTop);
+  const last=virtualIndexAt(offsets,itemCount,scrollTop+clientHeight);
+  return {start:Math.max(0,first-overscan),end:Math.min(itemCount,last+overscan+1)};
+}
+
 type Props<T>={
   items:T[];
   getKey:(item:T)=>string;
@@ -28,27 +43,15 @@ export function MeasuredVirtualList<T>({items,getKey,estimateSize=112,overscan=7
     return {offsets,total:offsets[items.length]||0};
   },[items,getKey,estimateSize,measureRevision]);
 
-  const indexAt=useCallback((offset:number)=>{
-    const a=layout.offsets;
-    let lo=0,hi=Math.max(0,items.length-1),ans=0;
-    while(lo<=hi){
-      const mid=(lo+hi)>>1;
-      if(a[mid]<=offset){ans=mid;lo=mid+1}else hi=mid-1;
-    }
-    return Math.min(Math.max(0,ans),Math.max(0,items.length-1));
-  },[layout.offsets,items.length]);
-
   const updateRange=useCallback(()=>{
     const el=viewportRef.current;
     if(!el||!items.length){
       setRange(r=>r.start===0&&r.end===0?r:{start:0,end:0});
       return;
     }
-    const first=indexAt(el.scrollTop);
-    const last=indexAt(el.scrollTop+el.clientHeight);
-    const next={start:Math.max(0,first-overscan),end:Math.min(items.length,last+overscan+1)};
+    const next=computeVirtualRange(layout.offsets,items.length,el.scrollTop,el.clientHeight,overscan);
     setRange(prev=>prev.start===next.start&&prev.end===next.end?prev:next);
-  },[indexAt,items.length,overscan]);
+  },[layout.offsets,items.length,overscan]);
 
   useLayoutEffect(()=>{updateRange()},[updateRange,layout.total]);
 
