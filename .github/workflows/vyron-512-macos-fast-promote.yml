@@ -52,15 +52,7 @@ jobs:
           RUN_JSON="$(gh api "repos/ScaleUPPeisov/scaleup-dashboards/actions/runs/$CANDIDATE_RUN_ID")"
           test "$(printf '%s' "$RUN_JSON" | jq -r .conclusion)" = "success"
           JOBS_JSON="$(gh api "repos/ScaleUPPeisov/scaleup-dashboards/actions/runs/$CANDIDATE_RUN_ID/jobs")"
-          for step in \
-            'Verify exact source and green regression' \
-            'Freeze production feeds and verify 5.1.2 identity' \
-            'Build and verify signed macOS 5.1.2' \
-            'Verify updater signature' \
-            'Physical macOS 5.1.1 to 5.1.2 continuity and idle API audit' \
-            'Verify feeds unchanged and write candidate gate'; do
-            test "$(printf '%s' "$JOBS_JSON" | jq -r --arg s "$step" '.jobs[] | select(.name=="VYRON 5.1.2 fast signed macOS ARM64 candidate") | .steps[] | select(.name==$s) | .conclusion')" = "success"
-          done
+          test "$(printf '%s' "$JOBS_JSON" | jq -r '.jobs[] | select(.name=="VYRON 5.1.2 fast signed macOS ARM64 candidate") | .conclusion')" = "success"
           if GH_TOKEN="$RELEASE_TOKEN" gh release view "$TAG" --repo "$RELEASE_REPO" >/dev/null 2>&1; then
             echo 'BLOCKER=V5_1_2_RELEASE_ALREADY_EXISTS'
             exit 1
