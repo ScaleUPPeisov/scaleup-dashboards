@@ -1444,7 +1444,7 @@ fn execute_plan(app: Option<&AppHandle>, plan: &BuildPlan) -> Result<BatchSummar
             })
             .collect::<Vec<_>>();
         manifest.projects.push(ManifestProject {
-            project_id: p.project_id.clone(),
+            project_id: p.video_number.map(|n| format!("VIDEO_{:03}", n)).unwrap_or_else(|| format!("{}:{}", plan.batch_id, p.project_id)),
             job_id: p.job_id.clone(),
             video_number: p.video_number,
             folder_path: folder.to_string_lossy().into_owned(),
@@ -1855,7 +1855,7 @@ pub fn read_production_batch_status(manifest_path: String) -> Result<BatchStatus
             if row.render_status != "Completed" { return None; }
             Some(materials_manager::RenderedImageUse {
                 asset_id: asset_id.clone(),
-                project_id: p.project_id.clone(),
+                project_id: p.video_number.map(|n| format!("VIDEO_{:03}", n)).unwrap_or_else(|| format!("{}:{}", m.batch_id, p.project_id)),
                 job_id: p.job_id.clone(),
                 completed_at: completed_at.clone(),
             })
