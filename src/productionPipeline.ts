@@ -31,10 +31,13 @@ export function productionPipelineStage(job:VideoJob,now=new Date()):ProductionP
  return'SOURCE'
 }
 
-export function buildProductionPipeline(jobs:VideoJob[],history:UploadHistoryRecord[]=[],now=new Date()):ProductionPipelineSnapshot{
+export function emptyProductionPipelineCounts():Record<ProductionPipelineStage,number>{
  const counts={} as Record<ProductionPipelineStage,number>;
  for(const stage of [...PRODUCTION_PIPELINE_ORDER,'ERROR' as const])counts[stage]=0;
- for(const job of jobs)counts[productionPipelineStage(job,now)]++;
+ return counts;
+}
+
+export function buildProductionPipelineFromCounts(counts:Record<ProductionPipelineStage,number>,total:number,history:UploadHistoryRecord[]=[],now=new Date()):ProductionPipelineSnapshot{
  const todaySeen=new Set<string>();
  for(const row of history){
   if(row.status!=='UPLOADED'||!row.youtubeVideoId||!sameLocalDay(row.uploadedAt,now))continue;
@@ -49,5 +52,11 @@ export function buildProductionPipeline(jobs:VideoJob[],history:UploadHistoryRec
  else if((counts.RENDERED+counts.METADATA+counts.READY_UPLOAD)>=20&&counts.SCHEDULED<10&&counts.UPLOADING===0)bottleneck={tone:'warn',title:'Требуется загрузка',detail:'Локальный готовый контент заметно опережает YouTube schedule.',stage:'READY_UPLOAD'};
  else if(counts.RENDERING>0)bottleneck={tone:'ok',title:'Pipeline работает',detail:'Сейчас рендерится '+counts.RENDERING+' задач.',stage:'RENDERING'};
  else bottleneck={tone:'ok',title:'Критического bottleneck нет',detail:'Следите за READY TO UPLOAD и запасом YouTube schedule.'};
- return{total:jobs.length,counts,publishedToday:todaySeen.size,bottleneck}
+ return{total,counts,publishedToday:todaySeen.size,bottleneck}
+}
+
+export function buildProductionPipeline(jobs:VideoJob[],history:UploadHistoryRecord[]=[],now=new Date()):ProductionPipelineSnapshot{
+ const counts=emptyProductionPipelineCounts();
+ for(const job of jobs)counts[productionPipelineStage(job,now)]++;
+ return buildProductionPipelineFromCounts(counts,jobs.length,history,now)
 }
