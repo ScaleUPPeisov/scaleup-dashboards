@@ -140,7 +140,7 @@ jobs:
           - macOS physical 5.1.0 → 5.1.1 continuity passed with zero idle YouTube API requests.
           - Product source: b42d97fea80b9516b783ffa073d1e020f68c1283.
           EOF
-          GH_TOKEN="$RELEASE_TOKEN" gh release create "$TAG" --repo "$RELEASE_REPO" --title "VYRON 5.1.1 — Materials Manager" --notes-file /tmp/release-notes.md             release/mac/VYRON-5.1.1-arm64.dmg             release/mac/VYRON-5.1.1-arm64.dmg.sha256             release/mac/VYRON.app.tar.gz             release/mac/VYRON.app.tar.gz.sha256             release/mac/VYRON.app.tar.gz.sig
+          GH_TOKEN="$RELEASE_TOKEN" gh release create "$TAG" --repo "$RELEASE_REPO" --title "VYRON 5.1.1 — ENDLUME Windows Handoff Hotfix" --notes-file /tmp/release-notes.md             release/mac/VYRON-5.1.1-arm64.dmg             release/mac/VYRON-5.1.1-arm64.dmg.sha256             release/mac/VYRON.app.tar.gz             release/mac/VYRON.app.tar.gz.sha256             release/mac/VYRON.app.tar.gz.sig
           echo 'MACOS_5_1_1_RELEASE_ASSETS=PUBLISHED'
 
       - name: Promote macOS updater feed only
