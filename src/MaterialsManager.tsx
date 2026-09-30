@@ -154,7 +154,7 @@ export function MaterialsManager(){
         <span><b>{n(cleanup?.protectedRenders)}</b><small>Render защищены</small></span>
       </div>
       <label className="materialsPolicy">После успешного Render
-        <select value={prefs.cleanupPolicy} onChange={e=>patchPrefs({cleanupPolicy:e.target.value as typeof prefs.cleanupPolicy})}>
+        <select value={prefs.cleanupPolicy||'prompt'} onChange={e=>patchPrefs({cleanupPolicy:e.target.value as 'prompt'|'never'|'auto3d'|'afterUpload'})}>
           <option value="prompt">Предлагать очистку</option>
           <option value="never">Никогда</option>
           <option value="auto3d">Автоматически через 3 дня</option>
