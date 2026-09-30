@@ -1,6 +1,6 @@
 import React,{useEffect,useMemo,useState} from 'react';
 import {createJobsCount} from './autopilotCore';
-import {productionManagerApi,type BatchStatus,type BatchSummary,type BuildResult,type ChannelProductionState,type DistributionMode,type ImportSession,type MusicSummary,type ProductionStorageStatus,type Validation} from './productionManagerApi';
+import {productionManagerApi,type BatchStatus,type BatchSummary,type BuildResult,type ChannelProductionState,type DistributionMode,type ImageSummary,type ImportSession,type MusicSummary,type ProductionStorageStatus,type Validation} from './productionManagerApi';
 import {defaultChannelProductionPrefs,patchChannelProductionPrefs,useProductionPrefs} from './productionPrefs';
 import {useApp} from './store';
 import {nextProjectLifecycle} from './storageLifecycle';
@@ -38,6 +38,7 @@ export function ProductionManager({view='all'}:{view?:'all'|'materials'|'builder
   const selectedProjectIds=channelPrefs.selectedProjectIds||[];
   const [session,setSession]=useState<ImportSession|null>(null);
   const [music,setMusic]=useState<MusicSummary|null>(null);
+  const [images,setImages]=useState<ImageSummary|null>(null);
   const [batches,setBatches]=useState<BatchSummary[]>([]);
   const [busy,setBusy]=useState('');
   const [progress,setProgress]=useState<{completed:number;total:number;stage:string}|null>(null);
@@ -52,17 +53,17 @@ export function ProductionManager({view='all'}:{view?:'all'|'materials'|'builder
   const productionRoot=(channelPrefs.productionRoot||prefs.productionRoot||workspace).trim();
   const customProductionRoot=Boolean(channelPrefs.productionRoot||prefs.productionRoot);
   const endlumePath=settings.endlumePath||'';
-  const collected=session?.collected.length||0;
+  const collected=images&&images.total>0?images.available:(session?.collected.length||0);
   const requiredTracks=projectCount*tracksPerProject;
 
   useEffect(()=>{if(!prefs.selectedChannelId&&channels[0])patchPrefs({selectedChannelId:channels[0].id})},[prefs.selectedChannelId,channels.length]);
 
   async function refreshState(){
-    if(!workspace||!channelId){setSession(null);setMusic(null);setBatches([]);return}
+    if(!workspace||!channelId){setSession(null);setMusic(null);setImages(null);setBatches([]);return}
     let base:BatchSummary[]=[];
     try{
       const state:ChannelProductionState=await productionManagerApi.state(workspace,channelId);
-      setSession(state.importSession||null);setMusic(state.music||null);base=state.batches||[];
+      setSession(state.importSession||null);setMusic(state.music||null);setImages(state.images||null);base=state.batches||[];
     }catch{
       try{base=await productionManagerApi.batches(workspace,channelId)}catch{}
     }
@@ -226,7 +227,7 @@ export function ProductionManager({view='all'}:{view?:'all'|'materials'|'builder
     </div>}
 
     {view!=='materials'&&<><section className="panel pmBuilder"><div className="pmBuilderHead"><div><small>03</small><h3>Собрать проекты для ENDLUME</h3><p>Укажите количество проектов и песен. В каждой папке будет одно изображение и выбранная музыка.</p></div><div className="pmFormula"><b>{projectCount}</b><span>×</span><b>{tracksPerProject}</b><span>=</span><strong>{requiredTracks}</strong><small>назначений</small></div></div>
-      <div className="pmControls"><label>Количество проектов<div className="pmStepper"><button onClick={()=>setProjectCount(v=>clamp(v-1,1,10000))}>−</button><input type="number" min="1" max="10000" value={projectCount} onChange={e=>setProjectCount(clamp(+e.target.value,1,10000))}/><button onClick={()=>setProjectCount(v=>clamp(v+1,1,10000))}>+</button></div></label><label>Песен на проект<div className="pmPresetLine">{[10,15,20,30].map(n=><button key={n} className={tracksPerProject===n?'active':''} onClick={()=>setTracksPerProject(n)}>{n}</button>)}</div><div className="pmRangeLine"><input aria-label="Песен на проект" type="range" min="1" max="100" value={tracksPerProject} onChange={e=>setTracksPerProject(clamp(+e.target.value,1,100))}/><input type="number" min="1" max="100" value={tracksPerProject} onChange={e=>setTracksPerProject(clamp(+e.target.value,1,100))}/></div></label><label className="pmReuse"><input type="checkbox" checked={allowImageReuse} onChange={e=>setAllowImageReuse(e.target.checked)}/><span><b>Разрешить повтор изображений</b><small>По умолчанию выключено. Используется только если изображений меньше проектов.</small></span></label></div>
+      <div className="pmControls"><label>Количество проектов<div className="pmStepper"><button onClick={()=>setProjectCount(v=>clamp(v-1,1,10000))}>−</button><input type="number" min="1" max="10000" value={projectCount} onChange={e=>setProjectCount(clamp(+e.target.value,1,10000))}/><button onClick={()=>setProjectCount(v=>clamp(v+1,1,10000))}>+</button></div></label><label>Песен на проект<div className="pmPresetLine">{[10,15,20,30].map(n=><button key={n} className={tracksPerProject===n?'active':''} onClick={()=>setTracksPerProject(n)}>{n}</button>)}</div><div className="pmRangeLine"><input aria-label="Песен на проект" type="range" min="1" max="100" value={tracksPerProject} onChange={e=>setTracksPerProject(clamp(+e.target.value,1,100))}/><input type="number" min="1" max="100" value={tracksPerProject} onChange={e=>setTracksPerProject(clamp(+e.target.value,1,100))}/></div></label><label className="pmReuse"><input type="checkbox" disabled={Boolean(images?.total)} checked={images?.total?false:allowImageReuse} onChange={e=>setAllowImageReuse(e.target.checked)}/><span><b>Разрешить повтор изображений</b><small>{images?.total?'Materials Manager: master-изображения автоматически не переиспользуются.':'Legacy Import Session: по умолчанию выключено.'}</small></span></label></div>
       <div className="pmModes">{MODES.map(m=><button key={m.id} className={mode===m.id?'active':''} onClick={()=>setMode(m.id)}><i>{mode===m.id?'●':'○'}</i><span><b>{m.title}</b><small>{m.hint}</small></span></button>)}</div>
       <div className="pmReadiness"><span className={collected>=projectCount?'ok':'warn'}>Изображения<b>{collected} / {projectCount}</b></span><span className={music?.tracks?'ok':'warn'}>Музыка<b>{music?.tracks||0} треков</b></span><span className={productionRoot?'ok':'warn'}>Папка проектов<b>{productionRoot?'готова':'не выбрана'}</b></span><span className={endlumePath?'ok':'warn'}>ENDLUME<b>{endlumePath?'настроен':'путь не задан'}</b></span></div>
       {result?.status==='insufficient_images'&&<div className="pmShortage"><div><b>Недостаточно изображений</b><span>Доступно {result.availableImages}, запрошено {result.requestedProjects}.</span></div><button onClick={()=>setProjectCount(result.availableImages||1)}>СОБРАТЬ ТОЛЬКО {result.availableImages}</button><button className="primary" onClick={()=>{setAllowImageReuse(true);void buildBatch(true)}}>РАЗРЕШИТЬ ПОВТОР</button></div>}
