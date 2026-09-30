@@ -1,5 +1,5 @@
 use chrono::Utc;
-use crate::recovery;
+use crate::{materials_manager, recovery};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -410,6 +410,8 @@ pub struct ManifestProject {
     pub job_id: Option<String>,
     pub video_number: Option<u32>,
     pub folder_path: String,
+    #[serde(default)]
+    pub image_asset_id: Option<String>,
     pub image_path: String,
     pub tracks: Vec<ManifestTrack>,
     pub total_duration_sec: f64,
@@ -556,6 +558,8 @@ pub struct ChannelState {
     pub settings: ChannelSettings,
     pub import_session: ImportSession,
     pub music: Option<MusicSummary>,
+    #[serde(default)]
+    pub images: Option<materials_manager::ImageSummary>,
     pub batches: Vec<BatchSummary>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -572,6 +576,8 @@ struct PlanProject {
     project_id: String,
     job_id: Option<String>,
     video_number: Option<u32>,
+    #[serde(default)]
+    image_asset_id: Option<String>,
     image_source: String,
     image_name: String,
     tracks: Vec<PlanTrack>,
@@ -1230,13 +1236,19 @@ fn plan_build(req: &BuildRequest) -> Result<BuildPlan, String> {
         return Err("Неизвестный режим распределения".into());
     }
     let session: ImportSession = read_json(&session_path(&req.workspace, &req.channel_id)?);
-    if session.collected.is_empty() {
-        return Err("Сначала собери изображения".into());
+    let material_summary = materials_manager::image_summary(&req.workspace, &req.channel_id)?;
+    let material_images = materials_manager::available_images(&req.workspace, &req.channel_id)?;
+    let use_material_library = material_summary.total > 0;
+    let available_images = if use_material_library { material_images.len() } else { session.collected.len() };
+    if available_images == 0 {
+        return Err("Сначала импортируй изображения в Production → Materials".into());
     }
-    if req.project_count > session.collected.len() && !req.allow_image_reuse {
+    // Materials Manager never reuses an ASSIGNED/USED master automatically.
+    // Legacy Import Session keeps its old allowImageReuse behavior for backwards compatibility.
+    if req.project_count > available_images && (use_material_library || !req.allow_image_reuse) {
         return Err(format!(
             "INSUFFICIENT_IMAGES:{}:{}",
-            session.collected.len(),
+            available_images,
             req.project_count
         ));
     }
@@ -1268,7 +1280,13 @@ fn plan_build(req: &BuildRequest) -> Result<BuildPlan, String> {
     let mut cursor = 0usize;
     let mut projects = Vec::new();
     for i in 0..req.project_count {
-        let image = &session.collected[i % session.collected.len()];
+        let (image_path, image_asset_id) = if use_material_library {
+            let image = &material_images[i];
+            (image.path.clone(), Some(image.asset_id.clone()))
+        } else {
+            let image = &session.collected[i % session.collected.len()];
+            (image.path.clone(), None)
+        };
         let picks = choose_sequence(
             &req.mode,
             &idx.tracks,
@@ -1306,8 +1324,9 @@ fn plan_build(req: &BuildRequest) -> Result<BuildPlan, String> {
             project_id: format!("{:03}", i + 1),
             job_id: link.map(|x| x.job_id.clone()),
             video_number: link.map(|x| x.number),
-            image_source: image.path.clone(),
-            image_name: format!("image.{}", ext(Path::new(&image.path))),
+            image_asset_id,
+            image_source: image_path.clone(),
+            image_name: format!("image.{}", ext(Path::new(&image_path))),
             tracks: pt,
             sequence_fingerprint: fp,
         });
@@ -1429,6 +1448,7 @@ fn execute_plan(app: Option<&AppHandle>, plan: &BuildPlan) -> Result<BatchSummar
             job_id: p.job_id.clone(),
             video_number: p.video_number,
             folder_path: folder.to_string_lossy().into_owned(),
+            image_asset_id: p.image_asset_id.clone(),
             image_path: folder.join(&p.image_name).to_string_lossy().into_owned(),
             total_duration_sec: tracks.iter().map(|x| x.duration_sec).sum(),
             tracks,
@@ -1718,11 +1738,15 @@ pub async fn build_production_batch(
     app: AppHandle,
     request: BuildRequest,
 ) -> Result<BuildResult, String> {
-    let available =
+    let material_summary = materials_manager::image_summary(&request.workspace, &request.channel_id)?;
+    let available = if material_summary.total > 0 {
+        materials_manager::available_images(&request.workspace, &request.channel_id)?.len()
+    } else {
         read_json::<ImportSession>(&session_path(&request.workspace, &request.channel_id)?)
             .collected
-            .len();
-    if request.project_count > available && !request.allow_image_reuse {
+            .len()
+    };
+    if request.project_count > available && (material_summary.total > 0 || !request.allow_image_reuse) {
         return Ok(BuildResult {
             status: "insufficient_images".into(),
             available_images: available,
@@ -1752,6 +1776,12 @@ pub async fn build_production_batch(
         }
         let mut plan = plan_build(&request)?;
         register_plan_recovery(&app2,&mut plan)?;
+        let image_assignments = plan.projects.iter().filter_map(|p| p.image_asset_id.as_ref().map(|asset_id| materials_manager::ImageAssignment {
+            asset_id: asset_id.clone(),
+            project_id: p.project_id.clone(),
+            job_id: p.job_id.clone(),
+        })).collect::<Vec<_>>();
+        materials_manager::mark_assigned(&plan.request.workspace, &plan.request.channel_id, &image_assignments)?;
         let summary = match execute_plan(Some(&app2), &plan){
             Ok(x)=>x,
             Err(e)=>{if !plan.recovery_session_id.is_empty(){let _=recovery::mark_waiting(&app2,&plan.recovery_session_id,&e);}return Err(e)}
@@ -1815,7 +1845,24 @@ fn enrich_handoff(mut status: BatchStatus, m: &BatchManifest) -> BatchStatus {
 #[tauri::command]
 pub fn read_production_batch_status(manifest_path: String) -> Result<BatchStatus, String> {
     let (m, _) = load_manifest(&manifest_path)?;
-    Ok(enrich_handoff(read_json(Path::new(&m.status_path)), &m))
+    let status = enrich_handoff(read_json(Path::new(&m.status_path)), &m);
+    let plan: BuildPlan = read_json(&PathBuf::from(&m.root_path).join("plan.json"));
+    if !plan.request.workspace.is_empty() {
+        let completed_at = status.updated_at.clone();
+        let used = m.projects.iter().filter_map(|p| {
+            let asset_id = p.image_asset_id.as_ref()?;
+            let row = status.projects.iter().find(|x| x.project_id == p.project_id)?;
+            if row.render_status != "Completed" { return None; }
+            Some(materials_manager::RenderedImageUse {
+                asset_id: asset_id.clone(),
+                project_id: p.project_id.clone(),
+                job_id: p.job_id.clone(),
+                completed_at: completed_at.clone(),
+            })
+        }).collect::<Vec<_>>();
+        materials_manager::mark_rendered_used(&plan.request.workspace, &m.channel_id, &used)?;
+    }
+    Ok(status)
 }
 #[tauri::command]
 pub fn list_production_batches(
@@ -1860,10 +1907,12 @@ pub fn production_channel_state(
             indexed_at: idx.indexed_at,
         })
     };
+    let images = materials_manager::image_summary(&workspace, &channel_id).ok();
     Ok(ChannelState {
         settings,
         import_session,
         music,
+        images,
         batches: list_production_batches(workspace, channel_id)?,
     })
 }
@@ -2136,7 +2185,7 @@ fn cleanup_completed_assets(m: &BatchManifest, st: &BatchStatus) -> Result<Clean
 #[tauri::command]
 pub fn cleanup_completed_production_assets(manifest_path: String) -> Result<CleanupResult, String> {
     let (m, _) = load_manifest(&manifest_path)?;
-    let st: BatchStatus = read_json(Path::new(&m.status_path));
+    let st = read_production_batch_status(manifest_path)?;
     cleanup_completed_assets(&m, &st)
 }
 
