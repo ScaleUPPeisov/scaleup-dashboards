@@ -540,3 +540,60 @@ fn acceptance_power_loss_after_history_commit_does_not_double_usage() {
     assert_eq!(uses_after,uses_before);
     cleanup(&ws);
 }
+
+
+#[test]
+fn acceptance_endlume_handoff_request_is_durable_and_has_full_bridge_contract() {
+    let root = std::env::temp_dir().join(format!("vyron-handoff-{}", Uuid::new_v4()));
+    let inbox = root.join("VYRON Inbox");
+    let batch = root.join("batch");
+    fs::create_dir_all(&batch).unwrap();
+    let subset = batch.join(".vyron-handoff-test.json");
+    fs::write(&subset, b"{}").unwrap();
+    let ids = vec!["001".to_string(), "003".to_string()];
+    let request = write_endlume_handoff_request(
+        &inbox,
+        "BATCH-01",
+        "handoff-test",
+        &subset,
+        batch.join("batch.json").to_string_lossy().as_ref(),
+        &ids,
+        "2026-09-30T12:00:00Z",
+    )
+    .unwrap();
+
+    assert!(request.is_file());
+    assert!(!production_endlume_handoff_consumed(request.to_string_lossy().into_owned()).unwrap());
+
+    let value: Value = serde_json::from_slice(&fs::read(&request).unwrap()).unwrap();
+    assert_eq!(value["schemaVersion"], 1);
+    assert_eq!(value["batchId"], "BATCH-01");
+    assert_eq!(value["handoffId"], "handoff-test");
+    assert_eq!(value["manifestPath"], subset.to_string_lossy().as_ref());
+    assert_eq!(value["selectedProjectIds"][0], "001");
+    assert_eq!(value["selectedProjectIds"][1], "003");
+    assert!(value["sourceManifestPath"].as_str().unwrap().ends_with("batch.json"));
+
+    fs::remove_file(&request).unwrap();
+    assert!(production_endlume_handoff_consumed(request.to_string_lossy().into_owned()).unwrap());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn acceptance_windows_endlume_inbox_matches_tauri_app_data_contract() {
+    let expected = PathBuf::from(std::env::var_os("APPDATA").expect("APPDATA"))
+        .join("studio.endlume.desktop")
+        .join("VYRON Inbox");
+    assert_eq!(endlume_inbox_dir().unwrap(), expected);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn acceptance_macos_endlume_inbox_matches_tauri_app_data_contract() {
+    let expected = PathBuf::from(std::env::var_os("HOME").expect("HOME"))
+        .join("Library/Application Support")
+        .join("studio.endlume.desktop")
+        .join("VYRON Inbox");
+    assert_eq!(endlume_inbox_dir().unwrap(), expected);
+}
