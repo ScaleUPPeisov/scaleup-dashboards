@@ -597,3 +597,123 @@ fn acceptance_macos_endlume_inbox_matches_tauri_app_data_contract() {
         .join("VYRON Inbox");
     assert_eq!(endlume_inbox_dir().unwrap(), expected);
 }
+
+
+fn manual_fixture() -> (PathBuf, ManualBuildRequest, Vec<PathBuf>, Vec<PathBuf>) {
+    let root = std::env::temp_dir().join(format!("vyron-manual-{}", Uuid::new_v4()));
+    let workspace = root.join("workspace");
+    let input = root.join("input");
+    fs::create_dir_all(&workspace).unwrap();
+    fs::create_dir_all(&input).unwrap();
+
+    let images = (0..3)
+        .map(|i| {
+            let p = input.join(format!("cover-{i}.jpg"));
+            fs::write(&p, format!("image-{i}").as_bytes()).unwrap();
+            p
+        })
+        .collect::<Vec<_>>();
+    let tracks = (0..6)
+        .map(|i| {
+            let p = input.join(format!("track-{i}.mp3"));
+            fs::write(&p, format!("audio-{i}").as_bytes()).unwrap();
+            p
+        })
+        .collect::<Vec<_>>();
+
+    let req = ManualBuildRequest {
+        request_id: Uuid::new_v4().to_string(),
+        workspace: workspace.to_string_lossy().into_owned(),
+        output_workspace: None,
+        channel_id: "channel-aegean".into(),
+        channel_name: "Aegean Afterglow".into(),
+        images: images
+            .iter()
+            .map(|x| x.to_string_lossy().into_owned())
+            .collect(),
+        audio_files: tracks
+            .iter()
+            .map(|x| x.to_string_lossy().into_owned())
+            .collect(),
+        tracks_per_project: 2,
+        job_links: vec![
+            ManualJobLink { job_id: "job-071".into(), number: 71, channel_id: "channel-aegean".into() },
+            ManualJobLink { job_id: "job-072".into(), number: 72, channel_id: "channel-aegean".into() },
+            ManualJobLink { job_id: "job-073".into(), number: 73, channel_id: "channel-aegean".into() },
+        ],
+        recovery_ui_context: None,
+    };
+    (workspace, req, images, tracks)
+}
+
+#[test]
+fn acceptance_manual_assembly_creates_video_folders_cover_tracks_and_manifest() {
+    let (workspace, req, images, tracks) = manual_fixture();
+    let plan = plan_manual_build(&req).unwrap();
+    assert_eq!(plan.request.mode, "manual");
+    assert_eq!(plan.request.channel_id, "channel-aegean");
+    assert_eq!(plan.projects[0].project_id, "VIDEO_071");
+    assert_eq!(plan.projects[2].project_id, "VIDEO_073");
+    assert_eq!(plan.projects[0].tracks[0].dest_name, "tracks/01.mp3");
+    assert_eq!(plan.projects[0].tracks[1].dest_name, "tracks/02.mp3");
+
+    let summary = execute_plan(None, &plan).unwrap();
+    assert_eq!(summary.project_count, 3);
+    assert_eq!(summary.tracks_assigned, 6);
+
+    let (manifest, _) = load_manifest(&summary.manifest_path).unwrap();
+    assert_eq!(manifest.channel_id, "channel-aegean");
+    assert_eq!(manifest.channel_name, "Aegean Afterglow");
+    assert!(manifest.projects.iter().all(|p| p.job_id.is_some()));
+
+    for (index, project) in manifest.projects.iter().enumerate() {
+        let folder = PathBuf::from(&project.folder_path);
+        assert!(folder.is_dir());
+        assert!(folder.join("manifest.json").is_file());
+        assert!(PathBuf::from(&project.image_path).is_file());
+        assert_eq!(project.tracks.len(), 2);
+        assert!(project.tracks.iter().all(|t| PathBuf::from(&t.path).is_file()));
+        assert!(folder.join("tracks").is_dir());
+        assert!(folder.file_name().unwrap().to_string_lossy().starts_with("VIDEO_"));
+        assert_eq!(project.video_number, Some(71 + index as u32));
+    }
+
+    // Manual assembly copies selected source files; it never moves or deletes originals.
+    assert!(images.iter().all(|x| x.is_file()));
+    assert!(tracks.iter().all(|x| x.is_file()));
+    cleanup(&workspace);
+}
+
+#[test]
+fn acceptance_manual_assembly_blocks_cross_channel_job_mapping() {
+    let (workspace, mut req, _, _) = manual_fixture();
+    req.job_links[1].channel_id = "channel-neon-drive".into();
+    let err = plan_manual_build(&req).unwrap_err();
+    assert!(err.contains("project.channelId != selectedChannelId"));
+    cleanup(&workspace);
+}
+
+#[test]
+fn acceptance_manual_music_folder_scan_is_recursive_and_audio_only() {
+    let root = std::env::temp_dir().join(format!("vyron-manual-music-{}", Uuid::new_v4()));
+    let nested = root.join("album");
+    fs::create_dir_all(&nested).unwrap();
+    fs::write(root.join("a.mp3"), b"a").unwrap();
+    fs::write(nested.join("b.flac"), b"b").unwrap();
+    fs::write(nested.join("ignore.txt"), b"x").unwrap();
+    let rows = recursive_audio(&root);
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().all(|x| is_audio(x)));
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn acceptance_manual_plan_does_not_touch_materials_library_assignment() {
+    let (workspace, req, _, _) = manual_fixture();
+    let plan = plan_manual_build(&req).unwrap();
+    assert!(plan.projects.iter().all(|p| p.image_asset_id.is_none()));
+    assert_eq!(materials_manager::image_summary(&req.workspace, &req.channel_id).unwrap().total, 0);
+    execute_plan(None, &plan).unwrap();
+    assert_eq!(materials_manager::image_summary(&req.workspace, &req.channel_id).unwrap().total, 0);
+    cleanup(&workspace);
+}
