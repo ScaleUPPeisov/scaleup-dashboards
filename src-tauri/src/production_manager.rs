@@ -395,6 +395,47 @@ pub struct BuildRequest {
     #[serde(default)]
     pub recovery_ui_context: Option<recovery::RecoveryUiContext>,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ManualJobLink {
+    pub job_id: String,
+    pub number: u32,
+    pub channel_id: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ManualBuildRequest {
+    pub request_id: String,
+    pub workspace: String,
+    pub output_workspace: Option<String>,
+    pub channel_id: String,
+    pub channel_name: String,
+    pub images: Vec<String>,
+    pub audio_files: Vec<String>,
+    pub tracks_per_project: usize,
+    pub job_links: Vec<ManualJobLink>,
+    #[serde(default)]
+    pub recovery_ui_context: Option<recovery::RecoveryUiContext>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ManualProjectResult {
+    pub project_id: String,
+    pub job_id: String,
+    pub video_number: u32,
+    pub folder_path: String,
+    pub cover_path: String,
+    pub tracks_count: usize,
+    pub status: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ManualBuildResult {
+    pub status: String,
+    pub batch: BatchSummary,
+    pub projects: Vec<ManualProjectResult>,
+}
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ManifestTrack {
@@ -1222,6 +1263,199 @@ fn choose_sequence(
     }
     Err("Не удалось создать уникальную последовательность музыки".into())
 }
+
+fn checked_manual_image(path: &str) -> Result<PathBuf, String> {
+    let p = PathBuf::from(path);
+    if !p.is_file() || !is_image(&p) {
+        return Err(format!("MANUAL_IMAGE_INVALID:{}", p.display()));
+    }
+    if fs::metadata(&p).map(|m| m.len() == 0).unwrap_or(true) {
+        return Err(format!("MANUAL_IMAGE_EMPTY:{}", p.display()));
+    }
+    Ok(p)
+}
+fn checked_manual_track(path: &str) -> Result<TrackIndex, String> {
+    let p = PathBuf::from(path);
+    if !p.is_file() || !is_audio(&p) {
+        return Err(format!("MANUAL_AUDIO_INVALID:{}", p.display()));
+    }
+    let meta = fs::metadata(&p).map_err(|e| format!("MANUAL_AUDIO_METADATA:{}:{e}", p.display()))?;
+    if meta.len() == 0 {
+        return Err(format!("MANUAL_AUDIO_EMPTY:{}", p.display()));
+    }
+    let modified = modified_ms(&meta);
+    let identity = format!("{}:{}:{}", p.to_string_lossy(), meta.len(), modified);
+    Ok(TrackIndex {
+        track_id: hex::encode(Sha256::digest(identity.as_bytes())),
+        path: p.to_string_lossy().into_owned(),
+        size: meta.len(),
+        modified_ms: modified,
+        duration_sec: audio_duration(&p),
+    })
+}
+fn manual_build_request(req: &ManualBuildRequest) -> BuildRequest {
+    BuildRequest {
+        request_id: req.request_id.clone(),
+        workspace: req.workspace.clone(),
+        output_workspace: req.output_workspace.clone(),
+        channel_id: req.channel_id.clone(),
+        channel_name: req.channel_name.clone(),
+        project_count: req.images.len(),
+        tracks_per_project: req.tracks_per_project,
+        mode: "manual".into(),
+        allow_image_reuse: false,
+        job_links: req
+            .job_links
+            .iter()
+            .map(|x| JobLink {
+                job_id: x.job_id.clone(),
+                number: x.number,
+            })
+            .collect(),
+        recovery_ui_context: req.recovery_ui_context.clone(),
+    }
+}
+fn plan_manual_build(req: &ManualBuildRequest) -> Result<BuildPlan, String> {
+    if req.channel_id.trim().is_empty() || req.channel_name.trim().is_empty() {
+        return Err("MANUAL_CHANNEL_REQUIRED".into());
+    }
+    if req.images.is_empty() || req.images.len() > 10000 {
+        return Err("Количество изображений должно быть 1–10000".into());
+    }
+    if req.tracks_per_project == 0 || req.tracks_per_project > 100 {
+        return Err("Песен на проект должно быть 1–100".into());
+    }
+    if req.job_links.len() != req.images.len() {
+        return Err("MANUAL_JOB_LINK_COUNT_MISMATCH".into());
+    }
+    if req
+        .job_links
+        .iter()
+        .any(|x| x.channel_id != req.channel_id || x.job_id.trim().is_empty())
+    {
+        return Err("BLOCK: project.channelId != selectedChannelId".into());
+    }
+    let mut image_seen = HashSet::new();
+    let images = req
+        .images
+        .iter()
+        .map(|x| checked_manual_image(x))
+        .collect::<Result<Vec<_>, _>>()?;
+    for p in &images {
+        if !image_seen.insert(p.to_string_lossy().into_owned()) {
+            return Err(format!("MANUAL_DUPLICATE_IMAGE:{}", p.display()));
+        }
+    }
+    let mut audio_seen = HashSet::new();
+    let mut tracks = Vec::new();
+    for raw in &req.audio_files {
+        let t = checked_manual_track(raw)?;
+        if audio_seen.insert(t.path.clone()) {
+            tracks.push(t);
+        }
+    }
+    if tracks.len() < req.tracks_per_project {
+        return Err(format!(
+            "MANUAL_INSUFFICIENT_AUDIO:{}:{}",
+            tracks.len(),
+            req.tracks_per_project
+        ));
+    }
+    let mut numbers = HashSet::new();
+    if req.job_links.iter().any(|x| !numbers.insert(x.number)) {
+        return Err("MANUAL_DUPLICATE_VIDEO_NUMBER".into());
+    }
+
+    let base_req = manual_build_request(req);
+    let output_workspace = resolve_output_workspace(&base_req)?;
+    let parent = batch_root_parent(&output_workspace, &req.channel_id)?;
+    let bid = next_batch_id(&parent, &req.channel_name);
+    let broot = parent.join(&bid);
+    fs::create_dir_all(&broot).map_err(|e| e.to_string())?;
+
+    let mut projects = Vec::new();
+    for (i, image) in images.iter().enumerate() {
+        let link = &req.job_links[i];
+        let mut selected = Vec::with_capacity(req.tracks_per_project);
+        for offset in 0..req.tracks_per_project {
+            selected.push(&tracks[(i * req.tracks_per_project + offset) % tracks.len()]);
+        }
+        let ids = selected.iter().map(|x| x.track_id.clone()).collect::<Vec<_>>();
+        let sequence_fingerprint = seq_hash(&ids);
+        let mut planned_tracks = Vec::with_capacity(selected.len());
+        for (pos, track) in selected.iter().enumerate() {
+            let extension = ext(Path::new(&track.path));
+            planned_tracks.push(PlanTrack {
+                track_id: track.track_id.clone(),
+                source: track.path.clone(),
+                duration_sec: track.duration_sec,
+                dest_name: format!("tracks/{:02}.{}", pos + 1, extension),
+            });
+        }
+        projects.push(PlanProject {
+            project_id: format!("VIDEO_{:03}", link.number),
+            job_id: Some(link.job_id.clone()),
+            video_number: Some(link.number),
+            image_asset_id: None,
+            image_source: image.to_string_lossy().into_owned(),
+            image_name: format!("cover.{}", ext(image)),
+            tracks: planned_tracks,
+            sequence_fingerprint,
+        });
+    }
+
+    let first_project = projects
+        .first()
+        .map(|x| x.project_id.clone())
+        .unwrap_or_else(|| "VIDEO_001".into());
+    let plan = BuildPlan {
+        schema_version: SCHEMA_VERSION,
+        request: base_req,
+        batch_id: bid,
+        batch_root: broot.to_string_lossy().into_owned(),
+        created_at: Utc::now().to_rfc3339(),
+        recovery_session_id: String::new(),
+        projects,
+    };
+    atomic_json(&broot.join("plan.json"), &plan)?;
+    atomic_json(
+        &broot.join("checkpoint.json"),
+        &Checkpoint {
+            completed_projects: 0,
+            total_projects: plan.projects.len(),
+            status: "Подготовка".into(),
+            history_applied: false,
+            updated_at: Utc::now().to_rfc3339(),
+            current_project: first_project,
+            current_phase: "PLAN_PERSISTED".into(),
+            completed_steps: vec!["PLAN_PERSISTED".into()],
+        },
+    )?;
+    Ok(plan)
+}
+fn manual_result_from_manifest(m: &BatchManifest, s: &BatchStatus) -> ManualBuildResult {
+    let projects = m
+        .projects
+        .iter()
+        .filter_map(|p| {
+            Some(ManualProjectResult {
+                project_id: p.project_id.clone(),
+                job_id: p.job_id.clone()?,
+                video_number: p.video_number?,
+                folder_path: p.folder_path.clone(),
+                cover_path: p.image_path.clone(),
+                tracks_count: p.tracks.len(),
+                status: "READY_RENDER".into(),
+            })
+        })
+        .collect::<Vec<_>>();
+    ManualBuildResult {
+        status: "ready".into(),
+        batch: summary_from(m, s),
+        projects,
+    }
+}
+
 fn plan_build(req: &BuildRequest) -> Result<BuildPlan, String> {
     if req.project_count == 0 || req.project_count > 10000 {
         return Err("Количество проектов должно быть 1–10000".into());
@@ -1394,13 +1628,34 @@ fn execute_plan(app: Option<&AppHandle>, plan: &BuildPlan) -> Result<BatchSummar
             copy_and_sync(Path::new(&p.image_source),&tmp.join(&p.image_name))
                 .map_err(|e| format!("Изображение {}: {e}", p.project_id))?;
             for t in &p.tracks {
-                copy_and_sync(Path::new(&t.source),&tmp.join(&t.dest_name))
+                let dst = tmp.join(&t.dest_name);
+                if let Some(parent) = dst.parent() {
+                    fs::create_dir_all(parent).map_err(|e| format!("Папка tracks {}: {e}", p.project_id))?;
+                }
+                copy_and_sync(Path::new(&t.source),&dst)
                     .map_err(|e| format!("Трек {}: {e}", t.source))?;
             }
             sync_dir(&tmp);
             if final_dir.exists() { let _ = fs::remove_dir_all(&final_dir); }
             fs::rename(&tmp, &final_dir).map_err(|e| e.to_string())?;
             sync_dir(&broot);
+        }
+        if plan.request.mode == "manual" {
+            atomic_json(
+                &final_dir.join("manifest.json"),
+                &json!({
+                    "schemaVersion": 1,
+                    "source": "VYRON Manual Assembly",
+                    "channelId": plan.request.channel_id,
+                    "channelName": plan.request.channel_name,
+                    "projectId": p.project_id,
+                    "jobId": p.job_id,
+                    "videoNumber": p.video_number,
+                    "cover": p.image_name,
+                    "tracks": p.tracks.iter().map(|t| t.dest_name.clone()).collect::<Vec<_>>(),
+                    "createdAt": plan.created_at
+                }),
+            )?;
         }
         atomic_json(&commit_dir.join(format!("{}.json",p.project_id)),&json!({"schemaVersion":1,"projectId":p.project_id,"batchId":plan.batch_id,"verified":project_ready(p,&final_dir),"committedAt":Utc::now().to_rfc3339()}))?;
         cp.completed_projects = i + 1;
@@ -1799,6 +2054,61 @@ pub async fn build_production_batch(
     .await
     .map_err(|e| e.to_string())?
 }
+
+#[tauri::command]
+pub fn scan_manual_production_music(path: String) -> Result<Vec<String>, String> {
+    let root = PathBuf::from(path.trim());
+    if !root.is_dir() {
+        return Err("Выбранная музыкальная папка недоступна".into());
+    }
+    Ok(recursive_audio(&root)
+        .into_iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect())
+}
+
+#[tauri::command]
+pub async fn build_manual_production_batch(
+    app: AppHandle,
+    request: ManualBuildRequest,
+) -> Result<ManualBuildResult, String> {
+    let app2 = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _g = build_lock().lock().map_err(|_| "Build lock".to_string())?;
+        let mut map = request_map(&request.workspace, &request.channel_id)?;
+        if let Some(path) = map.get(&request.request_id).cloned() {
+            if let Ok((m, _)) = load_manifest(&path) {
+                let s: BatchStatus = read_json(Path::new(&m.status_path));
+                return Ok(manual_result_from_manifest(&m, &s));
+            }
+        }
+        let mut plan = plan_manual_build(&request)?;
+        if plan.request.channel_id != request.channel_id {
+            return Err("BLOCK: project.channelId != selectedChannelId".into());
+        }
+        register_plan_recovery(&app2, &mut plan)?;
+        let summary = match execute_plan(Some(&app2), &plan) {
+            Ok(x) => x,
+            Err(e) => {
+                if !plan.recovery_session_id.is_empty() {
+                    let _ = recovery::mark_waiting(&app2, &plan.recovery_session_id, &e);
+                }
+                return Err(e);
+            }
+        };
+        let (manifest, _) = load_manifest(&summary.manifest_path)?;
+        if manifest.channel_id != request.channel_id {
+            return Err("BLOCK: project.channelId != selectedChannelId".into());
+        }
+        let status: BatchStatus = read_json(Path::new(&manifest.status_path));
+        map.insert(request.request_id.clone(), summary.manifest_path.clone());
+        save_request_map(&request.workspace, &request.channel_id, &map)?;
+        Ok(manual_result_from_manifest(&manifest, &status))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 pub async fn resume_production_batch(
     app: AppHandle,
