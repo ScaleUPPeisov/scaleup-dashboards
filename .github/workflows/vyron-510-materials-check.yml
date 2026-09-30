@@ -33,3 +33,6 @@ jobs:
 
       - name: Rust compile and Materials unit tests
         run: cargo test --manifest-path src-tauri/Cargo.toml materials_manager --lib --no-fail-fast
+
+      - name: Existing Production Manager regressions
+        run: cargo test --manifest-path src-tauri/Cargo.toml production_manager_tests --lib --no-fail-fast
