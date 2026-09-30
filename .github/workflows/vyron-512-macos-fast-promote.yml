@@ -1,0 +1,209 @@
+name: VYRON 5.1.2 macOS Fast Promote
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: vyron-512-macos-fast-promote
+  cancel-in-progress: false
+
+env:
+  VERSION: '5.1.2'
+  TAG: v5.1.2
+  RELEASE_REPO: ScaleUPPeisov/vyron-releases
+  CANDIDATE_RUN_ID: '36729408730'
+  PRODUCT_SOURCE_SHA: 'abdd863f808b31b24a9aa527965a420a206d0aaa'
+
+jobs:
+  promote:
+    name: Promote verified macOS 5.1.2 candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      RELEASE_TOKEN: ${{ secrets.VYRON_RELEASES_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: abdd863f808b31b24a9aa527965a420a206d0aaa
+
+      - name: Verify production baseline and candidate provenance
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$RELEASE_TOKEN"
+          curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json -o /tmp/mac-before.json
+          curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json -o /tmp/win-before.json
+          python3 - <<'PY'
+          import json
+          mac=json.load(open('/tmp/mac-before.json')); win=json.load(open('/tmp/win-before.json'))
+          assert mac['version']=='5.1.1',mac['version']
+          assert win['version']=='5.1.1',win['version']
+          print('MAC_BASELINE=5.1.1')
+          print('WINDOWS_LOCKED=5.1.1')
+          PY
+          sha256sum /tmp/win-before.json | awk '{print $1}' >/tmp/win-before.sha
+          RUN_JSON="$(gh api "repos/ScaleUPPeisov/scaleup-dashboards/actions/runs/$CANDIDATE_RUN_ID")"
+          test "$(printf '%s' "$RUN_JSON" | jq -r .conclusion)" = "success"
+          JOBS_JSON="$(gh api "repos/ScaleUPPeisov/scaleup-dashboards/actions/runs/$CANDIDATE_RUN_ID/jobs")"
+          for step in \
+            'Verify exact source and green regression' \
+            'Freeze production feeds and verify 5.1.2 identity' \
+            'Build and verify signed macOS 5.1.2' \
+            'Verify updater signature' \
+            'Physical macOS 5.1.1 to 5.1.2 continuity and idle API audit' \
+            'Verify feeds unchanged and write candidate gate'; do
+            test "$(printf '%s' "$JOBS_JSON" | jq -r --arg s "$step" '.jobs[] | select(.name=="VYRON 5.1.2 fast signed macOS ARM64 candidate") | .steps[] | select(.name==$s) | .conclusion')" = "success"
+          done
+          if GH_TOKEN="$RELEASE_TOKEN" gh release view "$TAG" --repo "$RELEASE_REPO" >/dev/null 2>&1; then
+            echo 'BLOCKER=V5_1_2_RELEASE_ALREADY_EXISTS'
+            exit 1
+          fi
+          echo 'MACOS_5_1_2_CANDIDATE_PROVENANCE=PASS'
+
+      - name: Download exact verified macOS candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: VYRON-5.1.2-MACOS-SIGNED-CANDIDATE
+          path: candidate-macos
+          repository: ScaleUPPeisov/scaleup-dashboards
+          run-id: 36729408730
+          github-token: ${{ github.token }}
+
+      - name: Verify candidate bytes and gate summary
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          DMG="$(find candidate-macos -type f -name 'VYRON-5.1.2-arm64.dmg' -print -quit)"
+          DMG_SHA="$(find candidate-macos -type f -name 'VYRON-5.1.2-arm64.dmg.sha256' -print -quit)"
+          UPDATER="$(find candidate-macos -type f -name 'VYRON.app.tar.gz' -print -quit)"
+          UPDATER_SHA="$(find candidate-macos -type f -name 'VYRON.app.tar.gz.sha256' -print -quit)"
+          SIG="$(find candidate-macos -type f -name 'VYRON.app.tar.gz.sig' -print -quit)"
+          GATE="$(find candidate-macos -type f -name 'gate-summary.txt' -print -quit)"
+          test -s "$DMG"; test -s "$DMG_SHA"; test -s "$UPDATER"; test -s "$UPDATER_SHA"; test -s "$SIG"; test -s "$GATE"
+          test "$(sha256sum "$DMG" | awk '{print $1}')" = "$(awk '{print tolower($1)}' "$DMG_SHA" | tr -d '\r')"
+          test "$(sha256sum "$UPDATER" | awk '{print $1}')" = "$(awk '{print tolower($1)}' "$UPDATER_SHA" | tr -d '\r')"
+          grep -F "HEAD=$PRODUCT_SOURCE_SHA" "$GATE"
+          grep -F 'VERSION=5.1.2' "$GATE"
+          grep -F 'MATERIALS_MANAGER=PASS' "$GATE"
+          grep -F 'PRODUCTION_MANAGER_REGRESSION=PASS' "$GATE"
+          grep -F 'V503_UPLOAD_COUNTER_REGRESSION=PASS' "$GATE"
+          grep -F 'MACOS_SIGNED_BUILD=PASS' "$GATE"
+          grep -F 'MACOS_UPDATER_SIGNATURE=PASS' "$GATE"
+          grep -F 'MACOS_5_1_1_TO_5_1_2_CONTINUITY=PASS' "$GATE"
+          grep -F 'YOUTUBE_DATA_API_IDLE_REQUESTS=0' "$GATE"
+          grep -F 'VYRON_5_1_2_MAC_CANDIDATE_READY=YES' "$GATE"
+          mkdir -p release/mac
+          cp "$DMG" release/mac/VYRON-5.1.2-arm64.dmg
+          cp "$DMG_SHA" release/mac/VYRON-5.1.2-arm64.dmg.sha256
+          cp "$UPDATER" release/mac/VYRON.app.tar.gz
+          cp "$UPDATER_SHA" release/mac/VYRON.app.tar.gz.sha256
+          cp "$SIG" release/mac/VYRON.app.tar.gz.sig
+          echo 'MACOS_5_1_2_CANDIDATE_BYTES=PASS'
+
+      - name: Reverify updater signature
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq minisign
+          python3 - <<'PY'
+          import base64,json
+          from pathlib import Path
+          conf=json.load(open('src-tauri/tauri.conf.json'))
+          def env(raw):
+            x=raw.strip()
+            try:
+              y=base64.b64decode(x,validate=True)
+              if y.startswith(b'untrusted comment:'): return y
+            except Exception: pass
+            return x+b'\n'
+          Path('/tmp/vyron.pub').write_bytes(env(str(conf['plugins']['updater']['pubkey']).encode()))
+          Path('/tmp/vyron-mac.sig').write_bytes(env(Path('release/mac/VYRON.app.tar.gz.sig').read_bytes()))
+          PY
+          minisign -Vm release/mac/VYRON.app.tar.gz -x /tmp/vyron-mac.sig -p /tmp/vyron.pub
+          echo 'MACOS_5_1_2_UPDATER_SIGNATURE_REVERIFY=PASS'
+
+      - name: Publish macOS 5.1.2 release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat >/tmp/release-notes.md <<'EOF'
+          ## VYRON 5.1.2 — Manual Project Assembly
+
+          - Returns manual project assembly as an additional mode in Production → Materials.
+          - Choose the channel explicitly, then select images from Downloads and music files or a music folder from an external disk.
+          - Creates VIDEO_XXX projects with cover, tracks/ and manifest.json.
+          - Manual projects enter the existing READY_RENDER → ENDLUME → RENDER_COMPLETED → SAFE_TO_CLEAN pipeline.
+          - Current Image Library, Music Library and Materials Manager remain unchanged and continue to work in parallel.
+          - Source images and source music are copied into projects and are never deleted by manual assembly.
+          - Google accounts, YouTube profiles, OAuth, Client ID/Secret, Keychain/Credential Manager, migration, quota, uploadHistory and updater endpoints were not rewritten.
+          - macOS physical 5.1.1 → 5.1.2 continuity passed with zero idle YouTube API requests.
+          - Product source: abdd863f808b31b24a9aa527965a420a206d0aaa.
+          EOF
+          GH_TOKEN="$RELEASE_TOKEN" gh release create "$TAG" --repo "$RELEASE_REPO" --title "VYRON 5.1.2 — Manual Project Assembly" --notes-file /tmp/release-notes.md             release/mac/VYRON-5.1.2-arm64.dmg             release/mac/VYRON-5.1.2-arm64.dmg.sha256             release/mac/VYRON.app.tar.gz             release/mac/VYRON.app.tar.gz.sha256             release/mac/VYRON.app.tar.gz.sig
+          echo 'MACOS_5_1_2_RELEASE_ASSETS=PUBLISHED'
+
+      - name: Promote macOS updater feed only
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git clone "https://x-access-token:$RELEASE_TOKEN@github.com/$RELEASE_REPO.git" release-repo
+          test "$(sha256sum release-repo/updates/windows-latest.json | awk '{print $1}')" = "$(cat /tmp/win-before.sha)"
+          MAC_SIG="$(tr -d '\r\n' < release/mac/VYRON.app.tar.gz.sig)"
+          PUB_DATE="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          python3 - "$MAC_SIG" "$PUB_DATE" <<'PY'
+          import json,sys
+          from pathlib import Path
+          sig,pub=sys.argv[1:3]
+          repo='ScaleUPPeisov/vyron-releases'
+          notes='VYRON 5.1.2 — Manual Project Assembly: explicit channel, direct image/music selection, VIDEO_XXX projects, existing ENDLUME and SAFE_TO_CLEAN pipeline.'
+          data={'version':'5.1.2','notes':notes,'pub_date':pub,'platforms':{'darwin-aarch64':{
+            'url':f'https://github.com/{repo}/releases/download/v5.1.2/VYRON.app.tar.gz','signature':sig
+          }}}
+          Path('release-repo/updates/latest.json').write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          PY
+          cd release-repo
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add updates/latest.json
+          test -z "$(git status --porcelain -- updates/windows-latest.json)"
+          git commit -m 'release: promote VYRON 5.1.2 macOS updater'
+          git push origin main
+          echo 'MACOS_FEED_PROMOTED=5.1.2'
+
+      - name: Final macOS production verification
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          GH_TOKEN="$RELEASE_TOKEN" gh api "repos/$RELEASE_REPO/releases/tags/$TAG" >/tmp/release.json
+          GH_TOKEN="$RELEASE_TOKEN" gh api "repos/$RELEASE_REPO/contents/updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 -d >/tmp/latest-after.json
+          GH_TOKEN="$RELEASE_TOKEN" gh api "repos/$RELEASE_REPO/contents/updates/windows-latest.json?ref=main" --jq .content | tr -d '\n' | base64 -d >/tmp/win-after.json
+          python3 - <<'PY'
+          import json
+          rel=json.load(open('/tmp/release.json')); latest=json.load(open('/tmp/latest-after.json')); win=json.load(open('/tmp/win-after.json'))
+          assets={x['name']:x for x in rel['assets']}
+          required={'VYRON-5.1.2-arm64.dmg','VYRON-5.1.2-arm64.dmg.sha256','VYRON.app.tar.gz','VYRON.app.tar.gz.sha256','VYRON.app.tar.gz.sig'}
+          assert required <= set(assets),required-set(assets)
+          assert not rel['draft'] and not rel['prerelease']
+          assert latest['version']=='5.1.2'
+          assert set(latest['platforms'])=={'darwin-aarch64'}
+          assert win['version']=='5.1.1'
+          print('MACOS_PRODUCTION=5.1.2')
+          print('WINDOWS_STILL_LOCKED=5.1.1')
+          PY
+          test "$(sha256sum /tmp/win-after.json | awk '{print $1}')" = "$(cat /tmp/win-before.sha)"
+          rm -rf /tmp/v511-mac-remote && mkdir /tmp/v511-mac-remote
+          GH_TOKEN="$RELEASE_TOKEN" gh release download "$TAG" --repo "$RELEASE_REPO" --dir /tmp/v511-mac-remote             --pattern 'VYRON-5.1.2-arm64.dmg' --pattern 'VYRON.app.tar.gz' --pattern 'VYRON.app.tar.gz.sig'
+          cmp -s release/mac/VYRON-5.1.2-arm64.dmg /tmp/v511-mac-remote/VYRON-5.1.2-arm64.dmg
+          cmp -s release/mac/VYRON.app.tar.gz /tmp/v511-mac-remote/VYRON.app.tar.gz
+          cmp -s release/mac/VYRON.app.tar.gz.sig /tmp/v511-mac-remote/VYRON.app.tar.gz.sig
+          curl -fL --range 0-0 "https://github.com/$RELEASE_REPO/releases/download/$TAG/VYRON-5.1.2-arm64.dmg" -o /tmp/mac-byte >/dev/null 2>&1
+          echo 'REMOTE_MACOS_5_1_2_BYTE_IDENTITY=PASS'
+          echo 'VYRON_5_1_2_MACOS_PRODUCTION=PASS'
