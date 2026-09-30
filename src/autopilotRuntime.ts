@@ -63,14 +63,17 @@ async function processChannel(channel:Channel,summary:AutopilotSummary,aiBudget:
 
   if(s.autoAssignMusic&&inbox.music.length){
     const alloc=musicAllocation(jobs,inbox.music,channel.minTracks);
-    for(const a of alloc){const j=useApp.getState().jobs.find(x=>x.id===a.jobId);if(!j?.folder)continue;try{const r=await api.ingestTracks(j.folder,a.files,channel.minTracks);useApp.getState().patchJob(j.id,{tracksCount:r.tracksCount,status:r.status as VideoJob['status'],lastAutomationAt:new Date().toISOString()});summary.tracksMoved+=a.files.length}catch(e){logError(summary,`${channel.name} Video_${j.number}: музыка`,e)}}
+    const patches:Array<{id:string;patch:Partial<VideoJob>}>=[],byId=new Map(useApp.getState().jobs.map(j=>[j.id,j] as const));
+    for(const a of alloc){const j=byId.get(a.jobId);if(!j?.folder)continue;try{const r=await api.ingestTracks(j.folder,a.files,channel.minTracks);patches.push({id:j.id,patch:{tracksCount:r.tracksCount,status:r.status as VideoJob['status'],lastAutomationAt:new Date().toISOString()}});summary.tracksMoved+=a.files.length}catch(e){logError(summary,`${channel.name} Video_${j.number}: музыка`,e)}}
+    if(patches.length)useApp.getState().patchJobsBatch(patches);
   }
 
   jobs=useApp.getState().jobs.filter(j=>j.channelId===channel.id&&j.status!=='SCHEDULED'&&j.status!=='ERROR').sort((a,b)=>a.number-b.number);
-  inbox=await api.scanChannelInbox(workspace,channel.name);
   if(s.autoAssignImages&&inbox.images.length){
     const alloc=imageAllocation(jobs,inbox.images);
-    for(const a of alloc){const j=useApp.getState().jobs.find(x=>x.id===a.jobId);if(!j?.folder)continue;try{const r=await api.ingestCover(j.folder,a.file,channel.minTracks);useApp.getState().patchJob(j.id,{...r,lastAutomationAt:new Date().toISOString()});summary.imagesMoved++}catch(e){logError(summary,`${channel.name} Video_${j.number}: изображение`,e)}}
+    const patches:Array<{id:string;patch:Partial<VideoJob>}>=[],byId=new Map(useApp.getState().jobs.map(j=>[j.id,j] as const));
+    for(const a of alloc){const j=byId.get(a.jobId);if(!j?.folder)continue;try{const r=await api.ingestCover(j.folder,a.file,channel.minTracks);patches.push({id:j.id,patch:{...r,lastAutomationAt:new Date().toISOString()}});summary.imagesMoved++}catch(e){logError(summary,`${channel.name} Video_${j.number}: изображение`,e)}}
+    if(patches.length)useApp.getState().patchJobsBatch(patches);
   }
 
   jobs=useApp.getState().jobs.filter(j=>j.channelId===channel.id&&j.status!=='SCHEDULED'&&j.status!=='ERROR').sort((a,b)=>a.number-b.number);
