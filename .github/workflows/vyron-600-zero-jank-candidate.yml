@@ -1,9 +1,6 @@
 name: VYRON 6.0.0 Zero-Jank macOS Candidate
 
 on:
-  push:
-    branches:
-      - candidate/vyron-6.0.0-zero-jank
   workflow_dispatch:
 
 permissions:
