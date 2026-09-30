@@ -1,0 +1,54 @@
+/* VYRON 6.0.1 — authoritative zero-jank performance layer.
+   Imported last: older V070/V080/V090 visual generations must not re-enable runtime blur or longer page transitions. */
+
+.bgGlow{
+  filter:none;
+  -webkit-filter:none;
+  will-change:auto;
+}
+.sidebar,
+.topbar{
+  backdrop-filter:none;
+  -webkit-backdrop-filter:none;
+}
+.pageWrap{
+  animation:vyronV601PageIn 90ms cubic-bezier(.2,.8,.2,1) both;
+  will-change:auto;
+}
+@keyframes vyronV601PageIn{
+  from{opacity:.72;transform:translateY(2px)}
+  to{opacity:1;transform:translateY(0)}
+}
+.reduceMotion .pageWrap{animation:none}
+
+.virtualScrollViewport{
+  position:relative;
+  height:min(66vh,720px);
+  min-height:320px;
+  overflow:auto;
+  overflow-anchor:none;
+  contain:strict;
+  overscroll-behavior:contain;
+  scrollbar-width:thin;
+}
+.virtualScrollCanvas{
+  position:relative;
+  width:100%;
+  min-height:100%;
+}
+.virtualMeasuredRow{
+  position:absolute;
+  top:0;
+  left:0;
+  right:0;
+  padding-bottom:7px;
+  contain:layout paint style;
+}
+.productionVirtualList .productionJob{
+  margin:0;
+  transform:none;
+  transition:border-color 100ms ease,background-color 100ms ease;
+}
+.productionVirtualList .productionJob:hover{
+  transform:none;
+}
