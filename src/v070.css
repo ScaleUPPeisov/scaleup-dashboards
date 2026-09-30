@@ -18,7 +18,7 @@
 }
 body{background:#07111b;font-size:13px}
 .appShell{background:linear-gradient(145deg,#09131e 0%,#07111b 48%,#08131d 100%)}
-.bgGlow{opacity:.055;filter:blur(96px)}
+.bgGlow{opacity:.055;filter:none}
 .sidebar{width:210px;flex-basis:210px;padding:16px 12px 14px;background:rgba(6,15,23,.96);border-right:1px solid rgba(144,177,198,.1);backdrop-filter:none}
 .brand{padding:2px 8px 16px;gap:9px}.brandMark{width:31px;height:31px;border-radius:9px;box-shadow:none;font-size:13px}.brand b{font-size:12px;letter-spacing:1.25px}.brand small{font-size:8px;letter-spacing:1.2px}
 .sidebar nav{gap:2px}.sidebar nav button{height:36px;min-height:36px;padding:0 10px;border-radius:9px;gap:9px;font-size:12px;font-weight:570;color:#8397a6;transition:background .14s ease,color .14s ease,transform .14s ease}.sidebar nav button:hover{background:rgba(255,255,255,.035);color:#e8f2f8;transform:none}.sidebar nav button.active{background:rgba(85,215,241,.085);color:#bfeffc;box-shadow:inset 2px 0 #55d7f1}.sidebar nav span{width:17px;font-size:14px}.sideFoot{padding:9px 10px;border-radius:10px;background:rgba(255,255,255,.025);border-color:rgba(94,214,173,.12)}
