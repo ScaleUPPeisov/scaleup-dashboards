@@ -38,8 +38,8 @@ jobs:
         run: |
           set -Eeuo pipefail
           test -n "$RELEASE_TOKEN"
-          curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json -o /tmp/latest-before.json
-          curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json -o /tmp/win-before.json
+          GH_TOKEN="$RELEASE_TOKEN" gh api "repos/$RELEASE_REPO/contents/updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 -d > /tmp/latest-before.json
+          GH_TOKEN="$RELEASE_TOKEN" gh api "repos/$RELEASE_REPO/contents/updates/windows-latest.json?ref=main" --jq .content | tr -d '\n' | base64 -d > /tmp/win-before.json
           python3 - <<'PY'
           import json
           latest=json.load(open('/tmp/latest-before.json')); win=json.load(open('/tmp/win-before.json'))
