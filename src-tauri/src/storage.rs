@@ -245,6 +245,56 @@ pub async fn save_state(app: AppHandle, state: Value) -> Result<Value, String> {
         .map_err(|e|format!("STATE_SAVE_TASK_FAILED: {e}"))?
 }
 
+const DOMAIN_STATE_KEYS: &[&str] = &[
+    "channels","jobs","competitors","settings","logs","uploadHistory",
+    "activityJournal","statisticsHistory","fingerprintCache","projectLifecycle",
+];
+
+fn load_disk_state_for_domain_merge(app:&AppHandle)->Value{
+    let primary=state_file(app).ok().and_then(|p|fs::read(p).ok()).and_then(|b|serde_json::from_slice::<Value>(&b).ok());
+    let mirror=state_mirror_file(app).ok().and_then(|p|fs::read(p).ok()).and_then(|b|serde_json::from_slice::<Value>(&b).ok());
+    migrate_state(primary.or(mirror).unwrap_or_else(default_state)).0
+}
+
+fn save_state_domains_impl(app:&AppHandle,domains:Value)->Result<Value,String>{
+    let _write_guard=state_write_lock().lock().map_err(|_|"STATE_WRITE_LOCK_POISONED".to_string())?;
+    let incoming=domains.as_object().ok_or_else(||"STATE_DOMAINS_INVALID".to_string())?;
+    let mut merged=load_disk_state_for_domain_merge(app);
+    let target=merged.as_object_mut().ok_or_else(||"STATE_ROOT_INVALID".to_string())?;
+    let mut written=Vec::new();
+    for key in DOMAIN_STATE_KEYS{
+        if let Some(value)=incoming.get(*key){
+            target.insert((*key).to_string(),value.clone());
+            written.push((*key).to_string());
+        }
+    }
+    target.insert("version".into(),json!(10));
+    if written.is_empty(){return Ok(json!({"ok":true,"domains":[],"securityWarnings":0}))}
+    // Only a settings-domain save is allowed to invoke the existing secret migration path.
+    // Job/activity/statistics autosaves never touch Keychain / Credential Manager.
+    let (disk,warnings)=if incoming.contains_key("settings"){
+        secure_state_for_disk_best_effort(&merged)
+    }else{
+        (sanitized_state_for_disk(&merged),Vec::new())
+    };
+    let p=state_file(app)?;
+    atomic_write(&p,&disk)?;
+    let mirror_warning=write_state_mirror(app,&disk).err();
+    Ok(json!({
+        "ok":true,
+        "domains":written,
+        "securityWarning":warnings.first().cloned().or(mirror_warning),
+        "securityWarnings":warnings.len()
+    }))
+}
+
+#[tauri::command]
+pub async fn save_state_domains(app:AppHandle,domains:Value)->Result<Value,String>{
+    tauri::async_runtime::spawn_blocking(move||save_state_domains_impl(&app,domains))
+        .await
+        .map_err(|e|format!("STATE_DOMAIN_SAVE_TASK_FAILED: {e}"))?
+}
+
 #[cfg(test)]
 mod v213_storage_tests {
     use super::*;
