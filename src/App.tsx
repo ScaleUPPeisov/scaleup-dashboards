@@ -47,7 +47,7 @@ import {LiveInventoryBridge} from './LiveInventoryBridge';
 import {LiveContentInventory} from './LiveContentInventory';
 import {inventoryTotals,useLiveInventory} from './renderInventoryRuntime';
 import {ensureTask,reconcileUploadTasks,updateTask} from './taskEngine';
-import {globalDailyUploadStatus,subscribeGlobalDailyUploadStatus} from './youtubePublishSafety';
+import {globalDailyUploadStatus,restorePublishLedgerFromUploadHistory,subscribeGlobalDailyUploadStatus} from './youtubePublishSafety';
 import {UiErrorBoundary} from './UiErrorBoundary';
 import {SafeArtwork} from './SafeArtwork';
 import {OwnerProfile} from './OwnerProfile';
@@ -82,9 +82,10 @@ const nav:{id:string;page:Page;icon:string;label:string;youtubeTab?:'history'}[]
 const statusLabel:Record<JobStatus,string>={NEED_IMAGE:'Нужна картинка',WAITING_MUSIC:'Ждёт музыку',READY_RENDER:'Готов к рендеру',RENDERING:'Рендерится',READY_UPLOAD:'Готов к YouTube',UPLOADING:'Загружается',SCHEDULED:'Запланирован',ERROR:'Ошибка'};
 
 export function App(){
-  const booted=useApp(s=>s.booted),hydrate=useApp(s=>s.hydrate),settings=useApp(s=>s.settings),page=useApp(s=>s.page),setPage=useApp(s=>s.setPage),log=useApp(s=>s.log);
+  const booted=useApp(s=>s.booted),hydrate=useApp(s=>s.hydrate),settings=useApp(s=>s.settings),uploadHistory=useApp(s=>s.uploadHistory),page=useApp(s=>s.page),setPage=useApp(s=>s.setPage),log=useApp(s=>s.log);
   const [license,setLicense]=useState<LicenseStatus|null>(null);
   useLayoutEffect(()=>{if(booted)beginStartupQuotaProbe()},[booted]);
+  useEffect(()=>{if(booted)restorePublishLedgerFromUploadHistory(uploadHistory)},[booted,uploadHistory]);
   const updaterStatus=useUpdaterRuntime(s=>s.status),updaterLatest=useUpdaterRuntime(s=>s.latestVersion),updaterLatestRevision=useUpdaterRuntime(s=>s.latestBuildRevision),updaterCheck=useUpdaterRuntime(s=>s.check),bootstrapUpdater=useUpdaterRuntime(s=>s.bootstrapVersion),markUpdated=useUpdaterRuntime(s=>s.markUpdated);
   useEffect(()=>{api.loadState().then(hydrate).catch(e=>{hydrate(EMPTY_STATE);useApp.getState().log(`Не удалось загрузить состояние: ${String(e)}`,'error')});api.license().then(setLicense).catch(()=>setLicense({valid:false}))},[]);
   useEffect(()=>{if(booted&&!settings.workspace){api.defaultWorkspace().then(workspace=>{useApp.getState().patchSettings({workspace});useApp.getState().log(`Workspace: ${workspace}`)}).catch(e=>log(`Workspace: ${String(e)}`,'error'))}},[booted,settings.workspace]);
