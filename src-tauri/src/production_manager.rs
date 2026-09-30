@@ -2159,11 +2159,18 @@ fn validate_cleanup_candidate(
     Ok(ValidCleanupCandidate { folder: folder_can, output: output_can })
 }
 
-fn cleanup_completed_assets(m: &BatchManifest, st: &BatchStatus) -> Result<CleanupResult, String> {
+fn cleanup_completed_assets_selected(
+    m: &BatchManifest,
+    st: &BatchStatus,
+    wanted: Option<&HashSet<String>>,
+) -> Result<CleanupResult, String> {
     let status = st.projects.iter().map(|x| (x.project_id.as_str(), x)).collect::<HashMap<_, _>>();
     let batch_root = safe_cleanup_root(Path::new(&m.root_path))?;
     let mut out = CleanupResult::default();
     for project in &m.projects {
+        if wanted.map(|ids| !ids.contains(&project.project_id)).unwrap_or(false) {
+            continue;
+        }
         match validate_cleanup_candidate(&batch_root, project, status.get(project.project_id.as_str()).copied()) {
             Ok(candidate) => {
                 out.eligible_projects += 1;
@@ -2182,11 +2189,70 @@ fn cleanup_completed_assets(m: &BatchManifest, st: &BatchStatus) -> Result<Clean
     }
     Ok(out)
 }
+fn cleanup_completed_assets(m: &BatchManifest, st: &BatchStatus) -> Result<CleanupResult, String> {
+    cleanup_completed_assets_selected(m, st, None)
+}
 #[tauri::command]
 pub fn cleanup_completed_production_assets(manifest_path: String) -> Result<CleanupResult, String> {
     let (m, _) = load_manifest(&manifest_path)?;
     let st = read_production_batch_status(manifest_path)?;
     cleanup_completed_assets(&m, &st)
+}
+
+#[tauri::command]
+pub fn cleanup_completed_production_projects(
+    manifest_path: String,
+    project_ids: Vec<String>,
+) -> Result<CleanupResult, String> {
+    let wanted = project_ids.into_iter().collect::<HashSet<_>>();
+    if wanted.is_empty() {
+        return Ok(CleanupResult::default());
+    }
+    let (m, _) = load_manifest(&manifest_path)?;
+    let st = read_production_batch_status(manifest_path)?;
+    cleanup_completed_assets_selected(&m, &st, Some(&wanted))
+}
+
+#[tauri::command]
+pub fn apply_production_cleanup_policy(
+    manifest_path: String,
+    policy: String,
+    uploaded_job_ids: Vec<String>,
+) -> Result<CleanupResult, String> {
+    if policy == "prompt" || policy == "never" {
+        return Ok(CleanupResult::default());
+    }
+    if policy != "auto3d" && policy != "afterUpload" {
+        return Err("Неизвестная cleanup policy".into());
+    }
+    let (m, _) = load_manifest(&manifest_path)?;
+    let st = read_production_batch_status(manifest_path)?;
+    let uploaded = uploaded_job_ids.into_iter().collect::<HashSet<_>>();
+    let mut wanted = HashSet::new();
+    for project in &m.projects {
+        let Some(row) = st.projects.iter().find(|x| x.project_id == project.project_id) else { continue };
+        if row.render_status != "Completed" { continue; }
+        if policy == "afterUpload" {
+            if project.job_id.as_ref().map(|x| uploaded.contains(x)).unwrap_or(false) {
+                wanted.insert(project.project_id.clone());
+            }
+            continue;
+        }
+        let Some(output) = row.output_file.as_deref() else { continue };
+        let Ok(meta) = fs::metadata(output) else { continue };
+        let Ok(modified) = meta.modified() else { continue };
+        let old_enough = SystemTime::now()
+            .duration_since(modified)
+            .map(|x| x.as_secs() >= 3 * 24 * 60 * 60)
+            .unwrap_or(false);
+        if old_enough {
+            wanted.insert(project.project_id.clone());
+        }
+    }
+    if wanted.is_empty() {
+        return Ok(CleanupResult::default());
+    }
+    cleanup_completed_assets_selected(&m, &st, Some(&wanted))
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
