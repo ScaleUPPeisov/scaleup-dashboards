@@ -1,11 +1,6 @@
 name: VYRON 5.1.1 Windows Fast Promote
 
 on:
-  push:
-    branches:
-      - hotfix/vyron-5.1.1-windows-handoff
-    paths:
-      - '.github/workflows/vyron-511-windows-fast-promote.yml'
   workflow_dispatch:
 
 permissions:
