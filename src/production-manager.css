@@ -5,3 +5,29 @@
 
 /* VYRON 1.0.12 Production UX */
 .pmFileCount{display:flex;align-items:baseline;gap:8px;margin:auto 0 15px}.pmFileCount b{font-size:28px;color:#dff7ff}.pmFileCount span{font-size:9px;color:#66869b}.pmStorageUnified{display:flex;align-items:center;gap:18px;justify-content:space-between;padding:16px 18px}.pmStorageUnifiedMain{min-width:0;flex:1}.pmStorageUnifiedMain small{color:var(--cyan);font-size:8px;font-weight:900;letter-spacing:1px}.pmStorageUnifiedMain h3{font-size:12px;margin:5px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.pmStorageUnifiedMain p{margin:0;color:#66859a;font-size:8px}.pmStorageError{width:100%;color:#ff8999;font-size:8px}.productionNavFive{display:grid!important;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px}.productionNavFive button{text-align:center}.actualProductionCounts{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin:14px 0}.actualProductionCounts>div{border:1px solid #17364b;background:#071723;border-radius:10px;padding:12px}.actualProductionCounts small{display:block;color:#67869b;font-size:8px}.actualProductionCounts b{display:block;margin-top:5px;font-size:20px;color:#dff7ff}.simpleFlow{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:12px 0}.simpleFlow span,.simpleFlow button{border:1px solid #17364b;background:#081723;border-radius:9px;padding:9px 11px;color:#7795a8;font-size:8px;font-weight:800}.simpleFlow .done{border-color:rgba(60,224,173,.28);color:#6ee1bf}.simpleFlow i{font-style:normal;color:#496b82}@media(max-width:1000px){.pmStorageUnified{align-items:flex-start;flex-direction:column}.productionNavFive{grid-template-columns:repeat(3,minmax(0,1fr))}.actualProductionCounts{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+
+/* VYRON 5.1.0 — Materials Manager */
+.materialsManager{display:grid;gap:16px}
+.materialsHero,.materialsTableHead,.materialsCleanup{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}
+.materialsHero h2,.materialsTableHead h3,.materialsCleanup h3{margin:4px 0 6px}
+.materialsHero p,.materialsCleanup p{margin:0;max-width:860px;opacity:.78}
+.materialsTablePanel{overflow:hidden}
+.materialsTable{overflow:auto;border-radius:14px}
+.materialsRow{display:grid;grid-template-columns:minmax(180px,1.35fr) minmax(120px,.85fr) minmax(120px,.85fr) minmax(100px,.7fr) minmax(100px,.7fr) minmax(140px,.9fr) minmax(120px,.8fr) minmax(260px,1.6fr);gap:10px;align-items:center;min-width:1250px;padding:12px 14px;border-top:1px solid rgba(255,255,255,.07)}
+.materialsHeader{position:sticky;top:0;z-index:2;border-top:0;background:rgba(4,15,28,.96);font-size:11px;text-transform:uppercase;letter-spacing:.08em;opacity:.72}
+.materialsRow>span{display:flex;flex-direction:column;gap:3px;min-width:0}
+.materialsRow>span>b{font-size:15px}
+.materialsRow>span>small{opacity:.62;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.materialsChannel b{font-size:14px!important}
+.materialsDanger b{font-weight:800}
+.materialsActions{display:flex!important;flex-direction:row!important;flex-wrap:wrap;gap:6px!important}
+.materialsActions button{padding:8px 10px}
+.materialsCleanup{align-items:center;flex-wrap:wrap}
+.materialsCleanupStats{display:flex;gap:10px;flex-wrap:wrap}
+.materialsCleanupStats span{min-width:120px;padding:10px 14px;border:1px solid rgba(255,255,255,.09);border-radius:12px;display:flex;flex-direction:column;gap:2px}
+.materialsCleanupStats b{font-size:18px}
+.materialsCleanupStats small{opacity:.62}
+.materialsPolicy{display:flex;flex-direction:column;gap:6px;min-width:260px;font-size:12px;opacity:.9}
+.materialsPolicy select{min-height:38px}
+@media(max-width:900px){.materialsHero,.materialsTableHead,.materialsCleanup{flex-direction:column}.materialsCleanupStats{width:100%}.materialsCleanupStats span{flex:1}}
