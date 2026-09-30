@@ -26,4 +26,4 @@ jobs:
       - name: TypeScript and Vite build
         run: npm run build
       - name: Protected regressions
-        run: npx vitest run src/v510MaterialsManager.test.ts src/v512ManualAssembly.test.ts src/v503UploadCounterRestore.test.ts src/youtubePublishSafety.test.ts src/v400QuotaUploadLimitSeparation.test.ts src/v501LocalCleanupZeroQuota.test.ts src/v2115Rc7OauthUpdateContinuity.test.ts src/v500Performance.test.ts
+        run: npx vitest run src/v510MaterialsManager.test.ts src/v512ManualAssembly.test.ts src/v503UploadCounterRestore.test.ts src/youtubePublishSafety.test.ts src/v400QuotaUploadLimitSeparation.test.ts src/v501LocalCleanupZeroQuota.test.ts src/v2115Rc7OauthUpdateContinuity.test.ts src/v500Performance.test.ts src/v601RealZeroJank.test.ts
