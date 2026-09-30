@@ -1,4 +1,5 @@
 import {nextYoutubeQuotaResetAt,youtubePtDate} from './youtubeQuota';
+import type {UploadHistoryRecord} from './types';
 export type PublishUploadRecord={id:string;channelId:string;jobId:string;filePath:string;fingerprint:string;fileSize:number;startedAt:string;completedAt?:string;videoId?:string;status:'started'|'completed'|'failed';error?:string};
 export type ChannelUploadLock={channelId:string;token:string;acquiredAt:string};
 const RECORDS='vyron:youtube-publish-records:v1';
@@ -13,6 +14,36 @@ function emitGlobalUploadStatusChanged(){for(const cb of [...globalUploadListene
 export function subscribeGlobalDailyUploadStatus(cb:()=>void){globalUploadListeners.add(cb);return()=>{globalUploadListeners.delete(cb)}}
 export function publishRecords():PublishUploadRecord[]{const x=get<any[]>(RECORDS,[]);return Array.isArray(x)?x:[]}
 function saveRecords(rows:PublishUploadRecord[]){set(RECORDS,rows.slice(-2000));emitGlobalUploadStatusChanged()}
+function completedUploadKey(row:Pick<PublishUploadRecord,'videoId'|'jobId'|'fingerprint'>){
+ const video=String(row.videoId||'').trim();if(video)return 'video:'+video;
+ const job=String(row.jobId||'').trim();if(job)return 'job:'+job;
+ return 'fingerprint:'+String(row.fingerprint||'').trim()
+}
+function uniqueCompletedUploads(rows:PublishUploadRecord[]){
+ const seen=new Set<string>(),out:PublishUploadRecord[]=[];
+ for(const row of rows){
+  if(row.status!=='completed'||!row.videoId)continue;
+  const key=completedUploadKey(row);if(seen.has(key))continue;seen.add(key);out.push(row)
+ }
+ return out
+}
+export function restorePublishLedgerFromUploadHistory(history:UploadHistoryRecord[]){
+ const current=publishRecords(),existingVideoIds=new Set(current.filter(x=>x.status==='completed'&&x.videoId).map(x=>String(x.videoId)));
+ const recovered:PublishUploadRecord[]=[];
+ for(const row of history||[]){
+  const videoId=String(row.youtubeVideoId||'').trim();
+  if(row.status!=='UPLOADED'||!videoId||existingVideoIds.has(videoId))continue;
+  existingVideoIds.add(videoId);
+  recovered.push({
+   id:'history:'+String(row.id||videoId),channelId:row.channelId,jobId:row.jobId,filePath:row.localFilePath||'',
+   fingerprint:String(row.sha256||'history:'+videoId),fileSize:Number(row.fileSize)||0,startedAt:row.uploadedAt,
+   completedAt:row.uploadedAt,videoId,status:'completed'
+  })
+ }
+ if(!recovered.length)return 0;
+ saveRecords([...current,...recovered]);
+ return recovered.length
+}
 export function uploadsByVyronLast24h(channelId:string,now=Date.now()){const min=now-24*60*60*1000;return publishRecords().filter(x=>x.channelId===channelId&&x.status==='completed'&&Boolean(x.videoId)&&Date.parse(x.completedAt||x.startedAt)>=min)}
 export function findSuccessfulUpload(channelId:string,fingerprint:string){return publishRecords().slice().reverse().find(x=>x.channelId===channelId&&x.fingerprint===fingerprint&&x.status==='completed'&&Boolean(x.videoId))}
 export function beginPublishAttempt(x:Omit<PublishUploadRecord,'id'|'startedAt'|'status'>){const row:PublishUploadRecord={...x,id:crypto.randomUUID(),startedAt:new Date().toISOString(),status:'started'};saveRecords([...publishRecords(),row]);return row}
@@ -29,12 +60,11 @@ export function acquireChannelUploadLock(channelId:string){if(runtimeLocks.some(
 export function releaseChannelUploadLock(channelId:string,token:string){runtimeLocks=runtimeLocks.filter(x=>!(x.channelId===channelId&&x.token===token))}
 export function isChannelUploadLocked(channelId:string){return runtimeLocks.some(x=>x.channelId===channelId)}
 export function clearRuntimeChannelUploadLocks(){runtimeLocks=[]}
-export function uploadsByVyronToday(channelId:string,now=new Date()){return publishRecords().filter(x=>{if(x.channelId!==channelId||x.status!=='completed'||!x.videoId)return false;const d=new Date(x.completedAt||x.startedAt);return !Number.isNaN(d.getTime())&&d.getFullYear()===now.getFullYear()&&d.getMonth()===now.getMonth()&&d.getDate()===now.getDate()})}
+export function uploadsByVyronToday(channelId:string,now=new Date()){return uniqueCompletedUploads(publishRecords()).filter(x=>{if(x.channelId!==channelId)return false;const d=new Date(x.completedAt||x.startedAt);return !Number.isNaN(d.getTime())&&d.getFullYear()===now.getFullYear()&&d.getMonth()===now.getMonth()&&d.getDate()===now.getDate()})}
 export const VYRON_GLOBAL_DAILY_UPLOAD_LIMIT=100;
 export function uploadsByVyronQuotaDay(now=new Date()){
  const day=youtubePtDate(now);
- return publishRecords().filter(x=>{
-  if(x.status!=='completed'||!x.videoId)return false;
+ return uniqueCompletedUploads(publishRecords()).filter(x=>{
   const d=new Date(x.completedAt||x.startedAt);
   return !Number.isNaN(d.getTime())&&youtubePtDate(d)===day
  })
