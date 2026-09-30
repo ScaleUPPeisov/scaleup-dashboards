@@ -85,7 +85,7 @@ jobs:
           PY
           node - <<'NODE'
           const p=require('./package.json'),l=require('./package-lock.json'),t=require('./src-tauri/tauri.conf.json');
-          for(const v of [p.version,l.version,l.packages[''].version,t.version]) if(v!=='5.0.3') process.exit(2);
+          for(const v of [p.version,l.version,l.packages[''].version,t.version]) if(v!=='5.1.0') process.exit(2);
           if(t.identifier!=='studio.channelflow.desktop'||t.bundle.createUpdaterArtifacts!==true) process.exit(3);
           console.log('VYRON_5_1_0_IDENTITY=PASS');
           NODE
