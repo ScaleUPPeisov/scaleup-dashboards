@@ -61,7 +61,9 @@ export function appendJobsToSummary(source:JobSummary,jobs:VideoJob[]):JobSummar
 export function replaceJobsInSummary(source:JobSummary,replacements:Array<{before:VideoJob;after:VideoJob}>):JobSummary{
   if(!replacements.length)return source;
   if(replacements.some(x=>x.before.channelId!==x.after.channelId||x.before.number!==x.after.number))return source;
+  const relevant=replacements.filter(({before,after})=>before.status!==after.status||isActiveError(before)!==isActiveError(after));
+  if(!relevant.length)return source;
   const s=cloneSummary(source);
-  for(const {before,after} of replacements){removeMutable(s,before);addMutable(s,after)}
+  for(const {before,after} of relevant){removeMutable(s,before);addMutable(s,after)}
   return s;
 }
