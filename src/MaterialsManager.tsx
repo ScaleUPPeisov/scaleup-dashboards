@@ -129,7 +129,7 @@ export function MaterialsManager(){
           const need=Math.max(0,waiting-available);
           return <div className="materialsRow" key={ch.id}>
             <span className="materialsChannel"><b>{ch.name}</b><small>{ch.id}</small></span>
-            <span><b>{n(row?.musicTotal)}</b><small>своб. {n(row?.musicFree)} • назнач. {n(row?.musicAssigned)}</small></span>
+            <span><b>{n(row?.musicTotal)}</b><small>своб. {n(row?.musicFree)} • назнач. {n(row?.musicAssigned)}</small><small title={row?.musicLibraryPath||''}>{row?.musicLibraryPath||'Music Library не выбрана'}</small></span>
             <span><b>{n(available)}</b><small>master: {n(row?.image.total)}</small></span>
             <span><b>{n(row?.image.assigned)}</b><small>ASSIGNED</small></span>
             <span><b>{n(row?.image.used)}</b><small>USED{row?.image.missing?' • missing '+n(row.image.missing):''}</small></span>
