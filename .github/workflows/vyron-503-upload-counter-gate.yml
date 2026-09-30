@@ -1,0 +1,73 @@
+name: VYRON Upload Counter Hotfix Gate
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-5.0.3-upload-counter
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-503-upload-counter-gate
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+
+      - name: Exact hotfix scope
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git diff --name-only a7970e435753404f4ffdba5a4e8f1c1bfafff1c6...HEAD | tee /tmp/changed.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          rows=[x.strip() for x in Path('/tmp/changed.txt').read_text().splitlines() if x.strip()]
+          product=[x for x in rows if not x.startswith('.github/workflows/')]
+          allowed={'src/youtubePublishSafety.ts','src/App.tsx','src/v503UploadCounterRestore.test.ts'}
+          extra=[x for x in product if x not in allowed]
+          assert not extra, f'OUT_OF_SCOPE_PRODUCT_FILES={extra}'
+          sensitive=[x for x in product if any(k in x.lower() for k in ('oauth','credential','keychain','migration','updater','youtube.rs','storage.rs'))]
+          assert not sensitive, f'SENSITIVE_PRODUCT_FILES_CHANGED={sensitive}'
+          print('HOTFIX_SCOPE=PASS',product)
+          PY
+
+      - name: Upload counter restoration tests
+        run: >
+          npx vitest run
+          src/v503UploadCounterRestore.test.ts
+          src/youtubePublishSafety.test.ts
+          src/v400QuotaUploadLimitSeparation.test.ts
+          src/v501LocalCleanupZeroQuota.test.ts
+          src/v2115Rc7OauthUpdateContinuity.test.ts
+
+      - name: Production frontend build
+        run: npm run build
+
+      - name: No YouTube API recovery path
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          src=Path('src/youtubePublishSafety.ts').read_text()
+          start=src.index('export function restorePublishLedgerFromUploadHistory')
+          end=src.index('export function uploadsByVyronLast24h')
+          body=src[start:end]
+          forbidden=('api.','channels.list','videos.list','playlistItems.list','search.list')
+          found=[x for x in forbidden if x in body]
+          assert not found, f'UPLOAD_COUNTER_RECOVERY_API_CALL={found}'
+          print('UPLOAD_COUNTER_RECOVERY_API_UNITS=0')
+          PY
