@@ -5,8 +5,11 @@ import {open} from '@tauri-apps/plugin-dialog';
 export type DistributionMode='even'|'random'|'alphabetical'|'no-repeat';
 export type ImportSession={schemaVersion:number;sessionId:string;channelId:string;channelName:string;active:boolean;startedAt:string;stoppedAt?:string|null;downloadsPath:string;importPath:string;collected:{id:string;number:number;path:string;sourcePath:string;capturedAt:string}[]};
 export type MusicSummary={libraryPath:string;tracks:number;indexedAt:string};
+export type ImageSummary={total:number;available:number;assigned:number;used:number;missing:number;rootPath:string};
+export type MaterialsSummary={channelId:string;image:ImageSummary;musicLibraryPath:string;musicTotal:number;musicFree:number;musicAssigned:number;musicUsed:number};
+export type ImageImportResult={added:number;duplicates:number;skipped:number;available:number;libraryPath:string};
 export type BatchSummary={batchId:string;channelId:string;channelName:string;createdAt:string;projectCount:number;tracksAssigned:number;status:string;manifestPath:string;rootPath:string;completedProjects:number;errorProjects:number};
-export type ChannelProductionState={settings:{musicLibrary?:string};importSession:ImportSession;music?:MusicSummary|null;batches:BatchSummary[]};
+export type ChannelProductionState={settings:{musicLibrary?:string};importSession:ImportSession;music?:MusicSummary|null;images?:ImageSummary|null;batches:BatchSummary[]};
 export type RecoveryUiContext={page?:string;channelId?:string;productionTab?:string;selectedBatchId?:string;selectedProjectIds?:string[];filter?:string};
 export type BuildRequest={requestId:string;workspace:string;outputWorkspace?:string;channelId:string;channelName:string;projectCount:number;tracksPerProject:number;mode:DistributionMode;allowImageReuse:boolean;jobLinks:{jobId:string;number:number}[];recoveryUiContext?:RecoveryUiContext};
 export type ProductionStorageStatus={path:string;exists:boolean;writable:boolean;external:boolean;freeBytes?:number|null;error?:string|null};
@@ -24,6 +27,10 @@ export type RecoveryCandidate={recoverySchemaVersion:number;recoverySessionId:st
 
 export const productionManagerApi={
   chooseMusicFolder:async(defaultPath?:string)=>{const p=await open({directory:true,multiple:false,title:'Папка музыкальной библиотеки канала',defaultPath:defaultPath||undefined});return typeof p==='string'?p:'';},
+  materialsDownloadsPath:()=>invoke<string>('production_materials_downloads_path'),
+  chooseMaterialImages:async(defaultPath?:string)=>{const p=await open({directory:false,multiple:true,title:'Изображения для выбранного YouTube-канала',defaultPath:defaultPath||undefined,filters:[{name:'Images',extensions:['jpg','jpeg','png','webp']}]});return !p?[]:Array.isArray(p)?p:[p];},
+  importMaterialImages:(workspace:string,channelId:string,channelName:string,files:string[])=>invoke<ImageImportResult>('import_production_material_images',{workspace,channelId,channelName,files}),
+  materialsSummary:(workspace:string,channelId:string)=>invoke<MaterialsSummary>('production_materials_summary',{workspace,channelId}),
   chooseProductionRoot:async(defaultPath?:string)=>{const p=await open({directory:true,multiple:false,title:'Папка для проектов VYRON',defaultPath:defaultPath||undefined});return typeof p==='string'?p:'';},
   chooseArchiveRoot:async(defaultPath?:string)=>{const p=await open({directory:true,multiple:false,title:'Папка безопасного архива MP4',defaultPath:defaultPath||undefined});return typeof p==='string'?p:'';},
   storageStatus:(path:string)=>invoke<ProductionStorageStatus>('production_storage_status',{path}),
