@@ -12,6 +12,9 @@ export type BatchSummary={batchId:string;channelId:string;channelName:string;cre
 export type ChannelProductionState={settings:{musicLibrary?:string};importSession:ImportSession;music?:MusicSummary|null;images?:ImageSummary|null;batches:BatchSummary[]};
 export type RecoveryUiContext={page?:string;channelId?:string;productionTab?:string;selectedBatchId?:string;selectedProjectIds?:string[];filter?:string};
 export type BuildRequest={requestId:string;workspace:string;outputWorkspace?:string;channelId:string;channelName:string;projectCount:number;tracksPerProject:number;mode:DistributionMode;allowImageReuse:boolean;jobLinks:{jobId:string;number:number}[];recoveryUiContext?:RecoveryUiContext};
+export type ManualBuildRequest={requestId:string;workspace:string;outputWorkspace?:string;channelId:string;channelName:string;images:string[];audioFiles:string[];tracksPerProject:number;jobLinks:{jobId:string;number:number;channelId:string}[];recoveryUiContext?:RecoveryUiContext};
+export type ManualProjectResult={projectId:string;jobId:string;videoNumber:number;folderPath:string;coverPath:string;tracksCount:number;status:'READY_RENDER'|string};
+export type ManualBuildResult={status:'ready'|string;batch:BatchSummary;projects:ManualProjectResult[]};
 export type ProductionStorageStatus={path:string;exists:boolean;writable:boolean;external:boolean;freeBytes?:number|null;error?:string|null};
 export type BuildResult={status:'ready'|'insufficient_images';availableImages:number;requestedProjects:number;batch?:BatchSummary|null;message?:string|null};
 export type Validation={batchId:string;ready:number;errors:number;endlumeExists:boolean;items:{projectId:string;ok:boolean;error?:string|null}[]};
@@ -27,6 +30,10 @@ export type RecoveryCandidate={recoverySchemaVersion:number;recoverySessionId:st
 
 export const productionManagerApi={
   chooseMusicFolder:async(defaultPath?:string)=>{const p=await open({directory:true,multiple:false,title:'Папка музыкальной библиотеки канала',defaultPath:defaultPath||undefined});return typeof p==='string'?p:'';},
+  chooseManualMusicFiles:async(defaultPath?:string)=>{const p=await open({directory:false,multiple:true,title:'Музыка для ручной сборки',defaultPath:defaultPath||undefined,filters:[{name:'Audio',extensions:['mp3','wav','m4a','aac','flac','ogg','opus']}]});return !p?[]:Array.isArray(p)?p:[p];},
+  chooseManualMusicFolder:async(defaultPath?:string)=>{const p=await open({directory:true,multiple:false,title:'Папка музыки для ручной сборки',defaultPath:defaultPath||undefined});return typeof p==='string'?p:'';},
+  scanManualMusic:(path:string)=>invoke<string[]>('scan_manual_production_music',{path}),
+  manualBuild:(request:ManualBuildRequest)=>invoke<ManualBuildResult>('build_manual_production_batch',{request}),
   materialsDownloadsPath:()=>invoke<string>('production_materials_downloads_path'),
   chooseMaterialImages:async(defaultPath?:string)=>{const p=await open({directory:false,multiple:true,title:'Изображения для выбранного YouTube-канала',defaultPath:defaultPath||undefined,filters:[{name:'Images',extensions:['jpg','jpeg','png','webp']}]});return !p?[]:Array.isArray(p)?p:[p];},
   importMaterialImages:(workspace:string,channelId:string,channelName:string,files:string[])=>invoke<ImageImportResult>('import_production_material_images',{workspace,channelId,channelName,files}),
