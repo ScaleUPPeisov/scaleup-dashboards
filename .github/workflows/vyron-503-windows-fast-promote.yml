@@ -1,0 +1,233 @@
+name: VYRON 5.0.3 Windows Fast Promote
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-5.0.3-upload-counter
+    paths:
+      - '.github/workflows/vyron-503-windows-fast-promote.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: vyron-503-windows-fast-promote
+  cancel-in-progress: false
+
+env:
+  VERSION: '5.0.3'
+  TAG: v5.0.3
+  RELEASE_REPO: ScaleUPPeisov/vyron-releases
+  CANDIDATE_RUN_ID: '36652530850'
+  PRODUCT_SOURCE_SHA: '7a5faacae0d082c1d435f4ba74fb2a2eef42b81a'
+
+jobs:
+  promote:
+    name: Promote verified Windows 5.0.3 candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RELEASE_TOKEN: ${{ secrets.VYRON_RELEASES_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 7a5faacae0d082c1d435f4ba74fb2a2eef42b81a
+
+      - name: Verify production baseline and candidate provenance
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$RELEASE_TOKEN"
+          curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json -o /tmp/latest-before.json
+          curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json -o /tmp/win-before.json
+          python3 - <<'PY'
+          import json
+          latest=json.load(open('/tmp/latest-before.json')); win=json.load(open('/tmp/win-before.json'))
+          assert latest['version']=='5.0.3',latest['version']
+          assert set(latest['platforms'])=={'darwin-aarch64'},latest['platforms'].keys()
+          assert win['version']=='5.0.1',win['version']
+          print('MAC_PRODUCTION=5.0.3')
+          print('WINDOWS_BASELINE=5.0.1')
+          PY
+          RUN_JSON="$(gh api "repos/ScaleUPPeisov/scaleup-dashboards/actions/runs/$CANDIDATE_RUN_ID")"
+          test "$(printf '%s' "$RUN_JSON" | jq -r .conclusion)" = "success"
+          JOBS_JSON="$(gh api "repos/ScaleUPPeisov/scaleup-dashboards/actions/runs/$CANDIDATE_RUN_ID/jobs")"
+          for step in             'Verify exact source and green regression'             'Windows 5.0.2 plus 5.0.3 regression and native compile'             'Build Windows 5.0.3 signed candidate'             'Verify Windows updater signature'             'Physical Windows 5.0.1 to 5.0.3 continuity'             'Write candidate gate'; do
+            test "$(printf '%s' "$JOBS_JSON" | jq -r --arg s "$step" '.jobs[] | select(.name=="VYRON 5.0.3 Windows x64 signed candidate") | .steps[] | select(.name==$s) | .conclusion')" = "success"
+          done
+          GH_TOKEN="$RELEASE_TOKEN" gh release view "$TAG" --repo "$RELEASE_REPO" >/dev/null
+          echo 'WINDOWS_5_0_3_CANDIDATE_PROVENANCE=PASS'
+
+      - name: Download exact verified Windows candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: VYRON-5.0.3-WINDOWS-SIGNED-CANDIDATE
+          path: candidate-windows
+          repository: ScaleUPPeisov/scaleup-dashboards
+          run-id: 36652530850
+          github-token: ${{ github.token }}
+
+      - name: Verify candidate bytes and gate summary
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          EXE="$(find candidate-windows -type f -name 'VYRON_5.0.3_x64-setup.exe' -print -quit)"
+          EXE_SHA="$(find candidate-windows -type f -name 'VYRON_5.0.3_x64-setup.exe.sha256' -print -quit)"
+          SIG="$(find candidate-windows -type f -name 'VYRON_5.0.3_x64-setup.exe.sig' -print -quit)"
+          GATE="$(find candidate-windows -type f -name 'gate-summary.txt' -print -quit)"
+          test -s "$EXE"; test -s "$EXE_SHA"; test -s "$SIG"; test -s "$GATE"
+          ACTUAL="$(sha256sum "$EXE" | awk '{print $1}')"
+          EXPECTED="$(python3 - "$EXE_SHA" <<'PY'
+          import re,sys
+          raw=open(sys.argv[1],'rb').read().decode('utf-8-sig','replace')
+          m=re.search(r'(?i)\b[0-9a-f]{64}\b',raw)
+          if not m: raise SystemExit('SHA256_FILE_INVALID')
+          print(m.group(0).lower())
+          PY
+          )"
+          test "$ACTUAL" = "$EXPECTED"
+          grep -F "HEAD=$PRODUCT_SOURCE_SHA" "$GATE"
+          grep -F 'VERSION=5.0.3' "$GATE"
+          grep -F 'V502_FULL_REFRESH_REGRESSION=PASS' "$GATE"
+          grep -F 'V503_UPLOAD_COUNTER_RESTORE=PASS' "$GATE"
+          grep -F 'WINDOWS_X64_BUILD=PASS' "$GATE"
+          grep -F 'WINDOWS_UPDATER_SIGNATURE=PASS' "$GATE"
+          grep -F 'WINDOWS_5_0_1_TO_5_0_3_CONTINUITY=PASS' "$GATE"
+          grep -F 'VYRON_5_0_3_WINDOWS_CANDIDATE_READY=YES' "$GATE"
+          mkdir -p release/windows
+          cp "$EXE" release/windows/VYRON_5.0.3_x64-setup.exe
+          cp "$EXE_SHA" release/windows/VYRON_5.0.3_x64-setup.exe.sha256
+          cp "$SIG" release/windows/VYRON_5.0.3_x64-setup.exe.sig
+          echo 'WINDOWS_5_0_3_CANDIDATE_BYTES=PASS'
+
+      - name: Reverify updater signature
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq minisign
+          python3 - <<'PY'
+          import base64,json
+          from pathlib import Path
+          conf=json.load(open('src-tauri/tauri.conf.json'))
+          def env(raw):
+            x=raw.strip()
+            try:
+              y=base64.b64decode(x,validate=True)
+              if y.startswith(b'untrusted comment:'): return y
+            except Exception: pass
+            return x+b'\n'
+          Path('/tmp/vyron.pub').write_bytes(env(str(conf['plugins']['updater']['pubkey']).encode()))
+          Path('/tmp/vyron-win.sig').write_bytes(env(Path('release/windows/VYRON_5.0.3_x64-setup.exe.sig').read_bytes()))
+          PY
+          minisign -Vm release/windows/VYRON_5.0.3_x64-setup.exe -x /tmp/vyron-win.sig -p /tmp/vyron.pub
+          echo 'WINDOWS_5_0_3_UPDATER_SIGNATURE_REVERIFY=PASS'
+
+      - name: Add Windows assets to existing 5.0.3 release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          GH_TOKEN="$RELEASE_TOKEN" gh release upload "$TAG" --repo "$RELEASE_REPO" --clobber             release/windows/VYRON_5.0.3_x64-setup.exe             release/windows/VYRON_5.0.3_x64-setup.exe.sha256             release/windows/VYRON_5.0.3_x64-setup.exe.sig
+          cat >/tmp/release-notes.md <<'EOF'
+          ## VYRON 5.0.3 — Upload Counter Restore Hotfix
+
+          Production hotfix for macOS and Windows.
+
+          - Restores today's successful VYRON upload count from persisted uploadHistory after app update or restart.
+          - Example: 10 successful uploads correctly displays 10 / 100 and 90 remaining instead of 0 / 100.
+          - The next successful upload updates immediately to 11 / 100; failed uploads do not increment the counter.
+          - Topbar and YouTube API Quota card use the same reactive global upload status.
+          - Recovery is local-only and performs 0 additional YouTube Data API requests.
+          - VYRON 5.0.2 Full Refresh functionality remains covered on Windows 5.0.3.
+          - OAuth profiles, Google credentials, Client ID/Secret, Keychain/Credential Manager, migration, Render/Projects, schedule, ENDLUME and updater logic were not rewritten by this hotfix.
+          - macOS physical 5.0.2 → 5.0.3 continuity passed.
+          - Windows physical 5.0.1 → 5.0.3 continuity passed.
+          - Product source for both platforms: 7a5faacae0d082c1d435f4ba74fb2a2eef42b81a.
+          EOF
+          GH_TOKEN="$RELEASE_TOKEN" gh release edit "$TAG" --repo "$RELEASE_REPO" --notes-file /tmp/release-notes.md
+          echo 'WINDOWS_5_0_3_RELEASE_ASSETS=PUBLISHED'
+
+      - name: Promote shared and Windows updater feeds
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git clone "https://x-access-token:$RELEASE_TOKEN@github.com/$RELEASE_REPO.git" release-repo
+          MAC_SIG="$(python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/latest-before.json'))
+          print(d['platforms']['darwin-aarch64']['signature'])
+          PY
+          )"
+          WIN_SIG="$(tr -d '\r\n' < release/windows/VYRON_5.0.3_x64-setup.exe.sig)"
+          PUB_DATE="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          python3 - "$MAC_SIG" "$WIN_SIG" "$PUB_DATE" <<'PY'
+          import json,sys
+          from pathlib import Path
+          mac_sig,win_sig,pub=sys.argv[1:4]
+          repo='ScaleUPPeisov/vyron-releases'
+          notes='VYRON 5.0.3 — Upload Counter Restore Hotfix: restores today\'s successful VYRON uploads after update/restart; local-only, zero extra YouTube API requests.'
+          shared={
+            'version':'5.0.3','notes':notes,'pub_date':pub,
+            'platforms':{
+              'darwin-aarch64':{
+                'url':f'https://github.com/{repo}/releases/download/v5.0.3/VYRON.app.tar.gz',
+                'signature':mac_sig
+              },
+              'windows-x86_64':{
+                'url':f'https://github.com/{repo}/releases/download/v5.0.3/VYRON_5.0.3_x64-setup.exe',
+                'signature':win_sig
+              }
+            }
+          }
+          windows={
+            'version':'5.0.3','notes':notes,'pub_date':pub,
+            'platforms':{'windows-x86_64':shared['platforms']['windows-x86_64']}
+          }
+          Path('release-repo/updates/latest.json').write_text(json.dumps(shared,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          Path('release-repo/updates/windows-latest.json').write_text(json.dumps(windows,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          PY
+          cd release-repo
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add updates/latest.json updates/windows-latest.json
+          git commit -m 'release: promote VYRON 5.0.3 Windows updater'
+          git push origin main
+          echo 'WINDOWS_FEED_PROMOTED=5.0.3'
+
+      - name: Final production verification
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          GH_TOKEN="$RELEASE_TOKEN" gh api "repos/$RELEASE_REPO/releases/tags/$TAG" >/tmp/release.json
+          GH_TOKEN="$RELEASE_TOKEN" gh api "repos/$RELEASE_REPO/contents/updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 -d >/tmp/latest-after.json
+          GH_TOKEN="$RELEASE_TOKEN" gh api "repos/$RELEASE_REPO/contents/updates/windows-latest.json?ref=main" --jq .content | tr -d '\n' | base64 -d >/tmp/win-after.json
+          python3 - <<'PY'
+          import json
+          rel=json.load(open('/tmp/release.json')); latest=json.load(open('/tmp/latest-after.json')); win=json.load(open('/tmp/win-after.json'))
+          assets={x['name']:x for x in rel['assets']}
+          required={
+            'VYRON-5.0.3-arm64.dmg','VYRON.app.tar.gz','VYRON.app.tar.gz.sig',
+            'VYRON_5.0.3_x64-setup.exe','VYRON_5.0.3_x64-setup.exe.sha256','VYRON_5.0.3_x64-setup.exe.sig'
+          }
+          assert required <= set(assets),required-set(assets)
+          assert not rel['draft'] and not rel['prerelease']
+          assert latest['version']=='5.0.3'
+          assert set(latest['platforms'])=={'darwin-aarch64','windows-x86_64'}
+          assert win['version']=='5.0.3'
+          assert set(win['platforms'])=={'windows-x86_64'}
+          print('MACOS_PRODUCTION=5.0.3')
+          print('WINDOWS_PRODUCTION=5.0.3')
+          print('VYRON_5_0_3_SHARED_FEED=PASS')
+          PY
+          rm -rf /tmp/v503-win-remote && mkdir /tmp/v503-win-remote
+          GH_TOKEN="$RELEASE_TOKEN" gh release download "$TAG" --repo "$RELEASE_REPO" --dir /tmp/v503-win-remote             --pattern 'VYRON_5.0.3_x64-setup.exe'             --pattern 'VYRON_5.0.3_x64-setup.exe.sig'
+          cmp -s release/windows/VYRON_5.0.3_x64-setup.exe /tmp/v503-win-remote/VYRON_5.0.3_x64-setup.exe
+          cmp -s release/windows/VYRON_5.0.3_x64-setup.exe.sig /tmp/v503-win-remote/VYRON_5.0.3_x64-setup.exe.sig
+          curl -fL --range 0-0 "https://github.com/$RELEASE_REPO/releases/download/$TAG/VYRON_5.0.3_x64-setup.exe" -o /tmp/win-byte >/dev/null 2>&1
+          echo 'REMOTE_WINDOWS_5_0_3_BYTE_IDENTITY=PASS'
+          echo 'VYRON_5_0_3_WINDOWS_PRODUCTION=PASS'
