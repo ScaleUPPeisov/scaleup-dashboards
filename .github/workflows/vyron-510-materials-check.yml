@@ -1,0 +1,35 @@
+name: VYRON 5.1.0 Materials Check
+
+on:
+  push:
+    branches:
+      - feature/vyron-5.1.0-materials-manager
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: TypeScript and Vite production build
+        run: npm run build
+
+      - name: VYRON 5.1.0 targeted contracts
+        run: npx vitest run src/v510MaterialsManager.test.ts
+
+      - name: Rust compile and Materials unit tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml materials_manager --lib --no-fail-fast
