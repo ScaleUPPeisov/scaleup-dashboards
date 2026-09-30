@@ -1,0 +1,259 @@
+name: VYRON 6.0.0 Zero-Jank Production Promote
+
+on:
+  push:
+    branches:
+      - candidate/vyron-6.0.0-zero-jank
+    paths:
+      - '.github/workflows/vyron-600-production-promote.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: vyron-600-production-promote
+  cancel-in-progress: false
+
+env:
+  VERSION: '6.0.0'
+  TAG: v6.0.0
+  RELEASE_REPO: ScaleUPPeisov/vyron-releases
+  PRODUCT_SOURCE_SHA: '0f16fac6f4a50d083dad37a44684c8accbacf4ce'
+  MAC_RUN_ID: '36741870028'
+  WINDOWS_RUN_ID: '36742849185'
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      RELEASE_TOKEN: ${{ secrets.VYRON_RELEASES_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.PRODUCT_SOURCE_SHA }}
+          fetch-depth: 0
+
+      - name: Wait for both verified candidates
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$PRODUCT_SOURCE_SHA"
+          for pair in "mac:$MAC_RUN_ID" "windows:$WINDOWS_RUN_ID"; do
+            name="${pair%%:*}"; id="${pair##*:}"
+            for i in $(seq 1 120); do
+              json="$(gh api "repos/ScaleUPPeisov/scaleup-dashboards/actions/runs/$id")"
+              status="$(printf '%s' "$json" | jq -r .status)"
+              conclusion="$(printf '%s' "$json" | jq -r '.conclusion // empty')"
+              echo "$name candidate: status=$status conclusion=$conclusion"
+              if [ "$status" = completed ]; then
+                test "$conclusion" = success
+                test "$(printf '%s' "$json" | jq -r .head_sha)" = "$([ "$name" = mac ] && echo "$PRODUCT_SOURCE_SHA" || echo a44748b2e93cdee3b226c8a929cfcb577cb7b884)"
+                break
+              fi
+              sleep 10
+              if [ "$i" = 120 ]; then echo "CANDIDATE_TIMEOUT=$name"; exit 31; fi
+            done
+          done
+          echo 'BOTH_CANDIDATES_GREEN=PASS'
+
+      - name: Verify production baseline and release availability
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$RELEASE_TOKEN"
+          curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json -o /tmp/latest-before.json
+          curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json -o /tmp/windows-before.json
+          python3 - <<'PY'
+          import json
+          mac=json.load(open('/tmp/latest-before.json'))
+          win=json.load(open('/tmp/windows-before.json'))
+          assert mac['version']=='5.1.2',mac['version']
+          assert win['version']=='5.1.2',win['version']
+          assert 'darwin-aarch64' in mac['platforms']
+          assert 'windows-x86_64' in mac['platforms']
+          assert 'windows-x86_64' in win['platforms']
+          print('PRODUCTION_BASELINE=5.1.2')
+          PY
+          if GH_TOKEN="$RELEASE_TOKEN" gh release view "$TAG" --repo "$RELEASE_REPO" >/dev/null 2>&1; then
+            echo 'V6_RELEASE_ALREADY_EXISTS'
+            exit 32
+          fi
+
+      - name: Download exact macOS candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: VYRON-6.0.0-ZERO-JANK-MACOS-CANDIDATE
+          path: candidate-mac
+          repository: ScaleUPPeisov/scaleup-dashboards
+          run-id: 36741870028
+          github-token: ${{ github.token }}
+
+      - name: Download exact Windows candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: VYRON-6.0.0-ZERO-JANK-WINDOWS-CANDIDATE
+          path: candidate-win
+          repository: ScaleUPPeisov/scaleup-dashboards
+          run-id: 36742849185
+          github-token: ${{ github.token }}
+
+      - name: Verify candidate provenance and bytes
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          MAC_DMG="$(find candidate-mac -type f -name 'VYRON-6.0.0-PERFORMANCE-CANDIDATE-arm64.dmg' -print -quit)"
+          MAC_UPDATER="$(find candidate-mac -type f -name 'VYRON.app.tar.gz' -print -quit)"
+          MAC_SIG="$(find candidate-mac -type f -name 'VYRON.app.tar.gz.sig' -print -quit)"
+          MAC_GATE="$(find candidate-mac -type f -name 'gate-summary.txt' -print -quit)"
+          WIN_EXE="$(find candidate-win -type f -name 'VYRON_6.0.0_x64-setup.exe' -print -quit)"
+          WIN_SIG="$(find candidate-win -type f -name 'VYRON_6.0.0_x64-setup.exe.sig' -print -quit)"
+          WIN_SHA="$(find candidate-win -type f -name 'VYRON_6.0.0_x64-setup.exe.sha256' -print -quit)"
+          WIN_GATE="$(find candidate-win -type f -name 'gate-summary.txt' -print -quit)"
+          for f in "$MAC_DMG" "$MAC_UPDATER" "$MAC_SIG" "$MAC_GATE" "$WIN_EXE" "$WIN_SIG" "$WIN_SHA" "$WIN_GATE"; do test -s "$f"; done
+          grep -F "CANDIDATE=$PRODUCT_SOURCE_SHA" "$MAC_GATE"
+          grep -F 'VERSION=6.0.0' "$MAC_GATE"
+          grep -F 'PRODUCTION_FEED_MUTATED=NO' "$MAC_GATE"
+          grep -F 'OAUTH_KEYCHAIN_PATHS_MUTATED=NO' "$MAC_GATE"
+          grep -F 'BRANDING_ASSET_PATHS_MUTATED=NO' "$MAC_GATE"
+          grep -F "HEAD=$PRODUCT_SOURCE_SHA" "$WIN_GATE"
+          grep -F 'VERSION=6.0.0' "$WIN_GATE"
+          grep -F 'FRONTEND_BUILD=PASS' "$WIN_GATE"
+          grep -F 'PROTECTED_REGRESSIONS=PASS' "$WIN_GATE"
+          grep -F 'WINDOWS_X64_BUILD=PASS' "$WIN_GATE"
+          grep -F 'WINDOWS_UPDATER_SIGNATURE=PASS' "$WIN_GATE"
+          grep -F 'VYRON_6_0_0_WINDOWS_CANDIDATE_READY=YES' "$WIN_GATE"
+          test "$(sha256sum "$WIN_EXE" | awk '{print $1}')" = "$(tr -d '\r\n ' < "$WIN_SHA" | tr '[:upper:]' '[:lower:]')"
+          mkdir -p release
+          cp "$MAC_DMG" release/VYRON-6.0.0-arm64.dmg
+          cp "$MAC_UPDATER" release/VYRON.app.tar.gz
+          cp "$MAC_SIG" release/VYRON.app.tar.gz.sig
+          cp "$WIN_EXE" release/VYRON_6.0.0_x64-setup.exe
+          cp "$WIN_SIG" release/VYRON_6.0.0_x64-setup.exe.sig
+          sha256sum release/VYRON-6.0.0-arm64.dmg | awk '{print $1}' > release/VYRON-6.0.0-arm64.dmg.sha256
+          sha256sum release/VYRON.app.tar.gz | awk '{print $1}' > release/VYRON.app.tar.gz.sha256
+          sha256sum release/VYRON_6.0.0_x64-setup.exe | awk '{print $1}' > release/VYRON_6.0.0_x64-setup.exe.sha256
+          echo 'CANDIDATE_BYTE_PROVENANCE=PASS'
+
+      - name: Reverify both updater signatures
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq minisign
+          python3 - <<'PY'
+          import base64,json
+          from pathlib import Path
+          conf=json.load(open('src-tauri/tauri.conf.json'))
+          def env_bytes(raw:bytes)->bytes:
+            x=raw.strip()
+            try:
+              y=base64.b64decode(x,validate=True)
+              if y.startswith(b'untrusted comment:'): return y
+            except Exception: pass
+            return x+b'\n'
+          Path('/tmp/vyron.pub').write_bytes(env_bytes(str(conf['plugins']['updater']['pubkey']).encode()))
+          for src,dst in [
+            ('release/VYRON.app.tar.gz.sig','/tmp/mac.sig'),
+            ('release/VYRON_6.0.0_x64-setup.exe.sig','/tmp/win.sig')
+          ]:
+            Path(dst).write_bytes(env_bytes(Path(src).read_bytes()))
+          PY
+          minisign -Vm release/VYRON.app.tar.gz -x /tmp/mac.sig -p /tmp/vyron.pub
+          minisign -Vm release/VYRON_6.0.0_x64-setup.exe -x /tmp/win.sig -p /tmp/vyron.pub
+          echo 'BOTH_UPDATER_SIGNATURES=PASS'
+
+      - name: Publish VYRON 6.0.0 release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat >/tmp/release-notes.md <<'EOF'
+          ## VYRON 6.0.0 — Zero-Jank Performance Core
+
+          - Batch job updates: mass Production/Autopilot changes use one Zustand transaction instead of repeated full-array commits.
+          - Persistence work is coalesced and deferred away from the immediate UI-critical path.
+          - FPS diagnostics are off by default and, when enabled, report frame pacing metrics rather than a misleading average FPS only.
+          - Navigation no longer forces a full keyed page remount.
+          - Heavy realtime shell blur was replaced with cheaper compositor-friendly gradients while preserving the existing VYRON visual structure.
+          - Production refresh and Autopilot media allocation use batched state updates.
+          - Materials Manager, Manual Assembly, ENDLUME integration, upload counter and existing YouTube workflows passed protected regressions.
+          - OAuth, Google accounts, YouTube profiles, Client ID/Secret, Keychain/Credential Manager, updater endpoints and branding asset paths were not changed by the performance refactor.
+          - Product source: 0f16fac6f4a50d083dad37a44684c8accbacf4ce.
+          EOF
+          GH_TOKEN="$RELEASE_TOKEN" gh release create "$TAG" --repo "$RELEASE_REPO" --title "VYRON 6.0.0 — Zero-Jank Performance Core" --notes-file /tmp/release-notes.md             release/VYRON-6.0.0-arm64.dmg             release/VYRON-6.0.0-arm64.dmg.sha256             release/VYRON.app.tar.gz             release/VYRON.app.tar.gz.sha256             release/VYRON.app.tar.gz.sig             release/VYRON_6.0.0_x64-setup.exe             release/VYRON_6.0.0_x64-setup.exe.sha256             release/VYRON_6.0.0_x64-setup.exe.sig
+          echo 'VYRON_600_RELEASE_ASSETS=PUBLISHED'
+
+      - name: Promote macOS and Windows updater feeds
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git clone "https://x-access-token:$RELEASE_TOKEN@github.com/$RELEASE_REPO.git" release-repo
+          MAC_SIG="$(tr -d '\r\n' < release/VYRON.app.tar.gz.sig)"
+          WIN_SIG="$(tr -d '\r\n' < release/VYRON_6.0.0_x64-setup.exe.sig)"
+          PUB_DATE="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          python3 - "$MAC_SIG" "$WIN_SIG" "$PUB_DATE" <<'PY'
+          import json,sys
+          from pathlib import Path
+          mac_sig,win_sig,pub=sys.argv[1:4]
+          repo='ScaleUPPeisov/vyron-releases'
+          notes='VYRON 6.0.0 — Zero-Jank Performance Core: batched jobs, deferred persistence, frame-pacing diagnostics and lighter compositor work.'
+          both={
+            'version':'6.0.0','notes':notes,'pub_date':pub,
+            'platforms':{
+              'darwin-aarch64':{'url':f'https://github.com/{repo}/releases/download/v6.0.0/VYRON.app.tar.gz','signature':mac_sig},
+              'windows-x86_64':{'url':f'https://github.com/{repo}/releases/download/v6.0.0/VYRON_6.0.0_x64-setup.exe','signature':win_sig}
+            }
+          }
+          win={
+            'version':'6.0.0','notes':notes,'pub_date':pub,
+            'platforms':{
+              'windows-x86_64':{'url':f'https://github.com/{repo}/releases/download/v6.0.0/VYRON_6.0.0_x64-setup.exe','signature':win_sig}
+            }
+          }
+          Path('release-repo/updates/latest.json').write_text(json.dumps(both,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          Path('release-repo/updates/windows-latest.json').write_text(json.dumps(win,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          PY
+          cd release-repo
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add updates/latest.json updates/windows-latest.json
+          git commit -m 'release: promote VYRON 6.0.0'
+          git push origin main
+          echo 'VYRON_600_FEEDS_PROMOTED'
+
+      - name: Final production verification
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          GH_TOKEN="$RELEASE_TOKEN" gh api "repos/$RELEASE_REPO/releases/tags/$TAG" >/tmp/release.json
+          GH_TOKEN="$RELEASE_TOKEN" gh api "repos/$RELEASE_REPO/contents/updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 -d >/tmp/latest.json
+          GH_TOKEN="$RELEASE_TOKEN" gh api "repos/$RELEASE_REPO/contents/updates/windows-latest.json?ref=main" --jq .content | tr -d '\n' | base64 -d >/tmp/windows.json
+          python3 - <<'PY'
+          import json
+          rel=json.load(open('/tmp/release.json'))
+          latest=json.load(open('/tmp/latest.json'))
+          win=json.load(open('/tmp/windows.json'))
+          required={
+            'VYRON-6.0.0-arm64.dmg','VYRON-6.0.0-arm64.dmg.sha256',
+            'VYRON.app.tar.gz','VYRON.app.tar.gz.sha256','VYRON.app.tar.gz.sig',
+            'VYRON_6.0.0_x64-setup.exe','VYRON_6.0.0_x64-setup.exe.sha256','VYRON_6.0.0_x64-setup.exe.sig'
+          }
+          assets={x['name'] for x in rel['assets']}
+          assert required <= assets, required-assets
+          assert not rel['draft'] and not rel['prerelease']
+          assert latest['version']=='6.0.0'
+          assert set(latest['platforms'])=={'darwin-aarch64','windows-x86_64'}
+          assert win['version']=='6.0.0'
+          assert set(win['platforms'])=={'windows-x86_64'}
+          print('VYRON_6_0_0_PRODUCTION=PASS')
+          PY
+          curl -fL --range 0-0 "https://github.com/$RELEASE_REPO/releases/download/$TAG/VYRON-6.0.0-arm64.dmg" -o /tmp/mac-byte >/dev/null 2>&1
+          curl -fL --range 0-0 "https://github.com/$RELEASE_REPO/releases/download/$TAG/VYRON_6.0.0_x64-setup.exe" -o /tmp/win-byte >/dev/null 2>&1
+          echo 'REMOTE_RELEASE_BYTES=PASS'
