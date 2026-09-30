@@ -9,6 +9,7 @@ import {appendJournalEvent,normalizeActivityJournal} from './activityJournalCore
 import {migrateUploadHistoryFingerprintProvenance} from './storageLifecycle';
 import {appendStatisticsSnapshot,normalizeStatisticsHistory} from './youtubeStatisticsCenter';
 import {resolvedJobStatus} from './activeErrors';
+import {appendJobsToSummary,buildJobSummary,emptyJobSummary,replaceJobsInSummary,type JobSummary} from './jobSummary';
 
 export const DEFAULT_SETTINGS:Settings={
   workspace:'',renderRootPath:'',endlumePath:'',youtubeApiKey:'',autoCheckUpdates:true,reduceMotion:false,fpsMonitor:false,interfaceDensity:'compact',
@@ -23,7 +24,7 @@ export const DEFAULT_SETTINGS:Settings={
 export const EMPTY_STATE:AppState={version:10,channels:[],jobs:[],competitors:[],settings:DEFAULT_SETTINGS,logs:[],uploadHistory:[],activityJournal:[],statisticsHistory:{},fingerprintCache:{},projectLifecycle:{}};
 
 type Store=AppState&{
-  page:Page; booted:boolean; notice?:string;
+  page:Page; booted:boolean; notice?:string; jobSummary:JobSummary;
   hydrate:(s:AppState)=>void; setPage:(p:Page)=>void; persist:()=>Promise<void>;
   addChannel:(p:Partial<Channel>)=>Channel; updateChannel:(id:string,p:Partial<Channel>)=>void; removeChannel:(id:string)=>void;
   setJobs:(jobs:VideoJob[])=>void; patchJob:(id:string,p:Partial<VideoJob>)=>void; patchJobsBatch:(patches:Array<{id:string;patch:Partial<VideoJob>}>)=>void; addJobs:(jobs:VideoJob[])=>void;
@@ -99,8 +100,8 @@ function remapStatisticsHistory(history:ChannelStatisticsHistory,aliases:Map<str
 }
 
 export const useApp=create<Store>((set,get)=>({
-  ...EMPTY_STATE,page:'dashboard',booted:false,
-  hydrate:s=>{const dedup=dedupeHydratedChannels((s.channels||[]).filter(Boolean)),remap=(id:string)=>dedup.aliases.get(id)||id,jobs=(s.jobs||[]).filter(Boolean).map(j=>normalizeJob({...j,channelId:remap(j.channelId)})),activityJournal=normalizeActivityJournal((s as any).activityJournal).map(e=>e.channelId&&dedup.aliases.has(e.channelId)?{...e,channelId:remap(e.channelId)}:e),rawHistory:Array<UploadHistoryRecord>=Array.isArray((s as any).uploadHistory)?(s as any).uploadHistory.map((x:UploadHistoryRecord)=>dedup.aliases.has(x.channelId)?{...x,channelId:remap(x.channelId)}:x):[],uploadHistory=migrateUploadHistoryFingerprintProvenance(rawHistory,activityJournal,jobs),provenanceChanged=uploadHistory.some((x,i)=>x.fingerprintProofSource!==rawHistory[i]?.fingerprintProofSource||x.proofSchemaVersion!==rawHistory[i]?.proofSchemaVersion),statisticsHistory=remapStatisticsHistory(normalizeStatisticsHistory((s as any).statisticsHistory),dedup.aliases),competitors=(s.competitors||[]).map(x=>dedup.aliases.has(x.channelId)?{...x,channelId:remap(x.channelId)}:x);set({...EMPTY_STATE,...s,version:10,channels:dedup.channels,jobs,competitors,settings:{...DEFAULT_SETTINGS,...s.settings,youtubeIntelligenceAutoRefresh:false},logs:s.logs||[],uploadHistory,activityJournal,statisticsHistory,fingerprintCache:(s as any).fingerprintCache||{},projectLifecycle:(s as any).projectLifecycle||{},booted:true});if(provenanceChanged||dedup.changed)scheduleSave()},
+  ...EMPTY_STATE,page:'dashboard',booted:false,jobSummary:emptyJobSummary(),
+  hydrate:s=>{const dedup=dedupeHydratedChannels((s.channels||[]).filter(Boolean)),remap=(id:string)=>dedup.aliases.get(id)||id,jobs=(s.jobs||[]).filter(Boolean).map(j=>normalizeJob({...j,channelId:remap(j.channelId)})),activityJournal=normalizeActivityJournal((s as any).activityJournal).map(e=>e.channelId&&dedup.aliases.has(e.channelId)?{...e,channelId:remap(e.channelId)}:e),rawHistory:Array<UploadHistoryRecord>=Array.isArray((s as any).uploadHistory)?(s as any).uploadHistory.map((x:UploadHistoryRecord)=>dedup.aliases.has(x.channelId)?{...x,channelId:remap(x.channelId)}:x):[],uploadHistory=migrateUploadHistoryFingerprintProvenance(rawHistory,activityJournal,jobs),provenanceChanged=uploadHistory.some((x,i)=>x.fingerprintProofSource!==rawHistory[i]?.fingerprintProofSource||x.proofSchemaVersion!==rawHistory[i]?.proofSchemaVersion),statisticsHistory=remapStatisticsHistory(normalizeStatisticsHistory((s as any).statisticsHistory),dedup.aliases),competitors=(s.competitors||[]).map(x=>dedup.aliases.has(x.channelId)?{...x,channelId:remap(x.channelId)}:x);set({...EMPTY_STATE,...s,version:10,channels:dedup.channels,jobs,jobSummary:buildJobSummary(jobs,1),competitors,settings:{...DEFAULT_SETTINGS,...s.settings,youtubeIntelligenceAutoRefresh:false},logs:s.logs||[],uploadHistory,activityJournal,statisticsHistory,fingerprintCache:(s as any).fingerprintCache||{},projectLifecycle:(s as any).projectLifecycle||{},booted:true});if(provenanceChanged||dedup.changed)scheduleSave()},
   setPage:page=>set({page}),
   persist:persistStoreState,
   addChannel:p=>{
@@ -109,8 +110,8 @@ export const useApp=create<Store>((set,get)=>({
     set(s=>({channels:[...s.channels,channel]}));scheduleSave();return channel;
   },
   updateChannel:(id,p)=>{set(s=>({channels:s.channels.map(c=>c.id===id?normalizeChannel({...c,...p}):c)}));scheduleSave()},
-  removeChannel:id=>{set(s=>({channels:s.channels.filter(c=>c.id!==id),jobs:s.jobs.filter(j=>j.channelId!==id),competitors:s.competitors.filter(c=>c.channelId!==id)}));scheduleSave()},
-  setJobs:jobs=>{set({jobs:jobs.map(normalizeJob)});scheduleSave()},
+  removeChannel:id=>{set(s=>{const jobs=s.jobs.filter(j=>j.channelId!==id);return{channels:s.channels.filter(c=>c.id!==id),jobs,jobSummary:buildJobSummary(jobs,s.jobSummary.revision+1),competitors:s.competitors.filter(c=>c.channelId!==id)}});scheduleSave()},
+  setJobs:jobs=>{const normalized=jobs.map(normalizeJob);set(s=>({jobs:normalized,jobSummary:buildJobSummary(normalized,s.jobSummary.revision+1)}));scheduleSave()},
   patchJob:(id,p)=>{get().patchJobsBatch([{id,patch:p}])},
   patchJobsBatch:patches=>{
     if(!patches.length)return;
@@ -119,10 +120,16 @@ export const useApp=create<Store>((set,get)=>({
       const prev=patchMap.get(entry.id);
       patchMap.set(entry.id,prev?{...prev,...entry.patch}:entry.patch);
     }
-    set(s=>({jobs:s.jobs.map(j=>{const patch=patchMap.get(j.id);return patch?normalizeJob({...j,...patch}):j})}));
+    set(s=>{
+      const replacements:Array<{before:VideoJob;after:VideoJob}>=[];
+      const jobs=s.jobs.map(j=>{const patch=patchMap.get(j.id);if(!patch)return j;const after=normalizeJob({...j,...patch});replacements.push({before:j,after});return after});
+      const structural=replacements.some(x=>x.before.channelId!==x.after.channelId||x.before.number!==x.after.number);
+      const jobSummary=structural?buildJobSummary(jobs,s.jobSummary.revision+1):replaceJobsInSummary(s.jobSummary,replacements);
+      return {jobs,jobSummary};
+    });
     scheduleSave();
   },
-  addJobs:jobs=>{set(s=>({jobs:[...s.jobs,...jobs.map(normalizeJob)]}));scheduleSave()},
+  addJobs:jobs=>{const normalized=jobs.map(normalizeJob);set(s=>({jobs:[...s.jobs,...normalized],jobSummary:appendJobsToSummary(s.jobSummary,normalized)}));scheduleSave()},
   addCompetitor:c=>{set(s=>({competitors:[...s.competitors,c]}));scheduleSave()},
   patchCompetitor:(id,p)=>{set(s=>({competitors:s.competitors.map(c=>c.id===id?{...c,...p}:c)}));scheduleSave()},
   removeCompetitor:id=>{set(s=>({competitors:s.competitors.filter(c=>c.id!==id)}));scheduleSave()},
