@@ -1326,7 +1326,7 @@ fn plan_build(req: &BuildRequest) -> Result<BuildPlan, String> {
             video_number: link.map(|x| x.number),
             image_asset_id,
             image_source: image_path.clone(),
-            image_name: format!("image.{}", ext(Path::new(&image_path))),
+            image_name: format!("cover.{}", ext(Path::new(&image_path))),
             tracks: pt,
             sequence_fingerprint: fp,
         });
@@ -1444,7 +1444,7 @@ fn execute_plan(app: Option<&AppHandle>, plan: &BuildPlan) -> Result<BatchSummar
             })
             .collect::<Vec<_>>();
         manifest.projects.push(ManifestProject {
-            project_id: p.video_number.map(|n| format!("VIDEO_{:03}", n)).unwrap_or_else(|| format!("{}:{}", plan.batch_id, p.project_id)),
+            project_id: p.project_id.clone(),
             job_id: p.job_id.clone(),
             video_number: p.video_number,
             folder_path: folder.to_string_lossy().into_owned(),
@@ -1778,7 +1778,7 @@ pub async fn build_production_batch(
         register_plan_recovery(&app2,&mut plan)?;
         let image_assignments = plan.projects.iter().filter_map(|p| p.image_asset_id.as_ref().map(|asset_id| materials_manager::ImageAssignment {
             asset_id: asset_id.clone(),
-            project_id: p.project_id.clone(),
+            project_id: p.video_number.map(|n| format!("VIDEO_{:03}", n)).unwrap_or_else(|| format!("{}:{}", plan.batch_id, p.project_id)),
             job_id: p.job_id.clone(),
         })).collect::<Vec<_>>();
         materials_manager::mark_assigned(&plan.request.workspace, &plan.request.channel_id, &image_assignments)?;
@@ -2121,6 +2121,7 @@ const CLEANUP_OUTPUT_INVALID: &str = "OUTPUT_INVALID";
 const CLEANUP_OUTPUT_INSIDE_PROJECT: &str = "OUTPUT_INSIDE_PROJECT";
 const CLEANUP_UNSAFE_PROJECT_PATH: &str = "UNSAFE_PROJECT_PATH";
 const CLEANUP_ALREADY_REMOVED: &str = "ALREADY_REMOVED";
+const CLEANUP_MAPPING_MISMATCH: &str = "PROJECT_MAPPING_MISMATCH";
 const CLEANUP_UNKNOWN: &str = "UNKNOWN";
 
 fn bump_cleanup_reason(reasons: &mut HashMap<String, usize>, reason: &str) {
@@ -2137,6 +2138,9 @@ fn validate_cleanup_candidate(
     row: Option<&BatchProjectStatus>,
 ) -> Result<ValidCleanupCandidate, &'static str> {
     let Some(row) = row else { return Err(CLEANUP_STATUS_MISSING) };
+    if row.project_id != project.project_id || row.job_id != project.job_id || row.video_number != project.video_number {
+        return Err(CLEANUP_MAPPING_MISMATCH);
+    }
     if row.render_status != "Completed" { return Err(CLEANUP_NOT_COMPLETED) }
     let Some(output_raw) = row.output_file.as_deref().filter(|x| !x.trim().is_empty()) else {
         return Err(CLEANUP_OUTPUT_MISSING)
