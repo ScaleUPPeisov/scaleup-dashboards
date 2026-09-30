@@ -3,7 +3,7 @@ name: VYRON 5.1.1 macOS Candidate
 on:
   push:
     branches:
-      - feature/vyron-5.1.1-materials-manager
+      - hotfix/vyron-5.1.1-windows-handoff
     paths:
       - '.github/workflows/vyron-511-macos-candidate.yml'
   workflow_dispatch:
