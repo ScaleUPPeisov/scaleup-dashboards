@@ -55,6 +55,7 @@ export const productionManagerApi={
   validateProjects:(manifestPath:string,endlumePath:string,projectIds:string[])=>invoke<Validation>('validate_production_projects',{manifestPath,endlumePath,projectIds}),
   deleteBatchProjects:(manifestPath:string,projectIds:string[])=>invoke<DeleteResult>('delete_production_batch_projects',{manifestPath,projectIds}),
   deleteJobFolder:(workspace:string,folder:string,jobId:string)=>invoke<void>('delete_production_job_folder',{workspace,folder,jobId}),
+  previewCompletedProjects:(manifestPath:string)=>invoke<string[]>('preview_completed_production_projects',{manifestPath}),
   cleanupCompletedAssets:(manifestPath:string)=>invoke<CleanupResult>('cleanup_completed_production_assets',{manifestPath}),
   cleanupCompletedProjects:(manifestPath:string,projectIds:string[])=>invoke<CleanupResult>('cleanup_completed_production_projects',{manifestPath,projectIds}),
   applyCleanupPolicy:(manifestPath:string,policy:'prompt'|'never'|'auto3d'|'afterUpload',uploadedJobIds:string[])=>invoke<CleanupResult>('apply_production_cleanup_policy',{manifestPath,policy,uploadedJobIds}),
