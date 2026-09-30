@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import {describe,expect,it} from 'vitest';
 
 const materialsRust=fs.readFileSync('src-tauri/src/materials_manager.rs','utf8');
+const materialsRuntime=materialsRust.split('#[cfg(test)]')[0];
 const productionRust=fs.readFileSync('src-tauri/src/production_manager.rs','utf8');
 const materialsUi=fs.readFileSync('src/MaterialsManager.tsx','utf8');
 const managerUi=fs.readFileSync('src/ProductionManager.tsx','utf8');
@@ -81,6 +82,6 @@ describe('VYRON 5.1.0 Materials Manager contract',()=>{
     expect(productionRust).toContain('Legacy Import Session keeps its old allowImageReuse behavior');
     expect(productionRust).toContain('if use_material_library');
     expect(productionRust).not.toContain('remove_dir_all(&session.import_path');
-    expect(materialsRust).not.toContain('remove_dir_all');
+    expect(materialsRuntime).not.toContain('remove_dir_all');
   });
 });
