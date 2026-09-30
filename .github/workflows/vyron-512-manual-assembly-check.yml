@@ -1,0 +1,48 @@
+name: VYRON 5.1.2 Manual Assembly Check
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-5.1.2-manual-assembly
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - name: Checkout hotfix
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: TypeScript and Vite production build
+        run: npm run build
+
+      - name: Materials and Manual Assembly contracts
+        run: npx vitest run src/v510MaterialsManager.test.ts src/v512ManualAssembly.test.ts
+
+      - name: Protected production regressions
+        run: npx vitest run src/v503UploadCounterRestore.test.ts src/youtubePublishSafety.test.ts src/v501LocalCleanupZeroQuota.test.ts src/v2115Rc7OauthUpdateContinuity.test.ts
+
+      - name: Materials native tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml materials_manager --lib --no-fail-fast
+
+      - name: Production Manager native regressions
+        run: cargo test --manifest-path src-tauri/Cargo.toml production_manager_tests --lib --no-fail-fast
