@@ -218,7 +218,7 @@ jobs:
           hdiutil attach "$OLD_DMG" -nobrowse -readonly -mountpoint "$OLD_M"
           OLD_APP="$OLD_M/VYRON.app"
           test "$(plutil -extract CFBundleShortVersionString raw -o - "$OLD_APP/Contents/Info.plist")" = "$MAC_BASELINE"
-          env -i HOME="$HOME_FIXTURE" USER="$USER" PATH='/usr/bin:/bin:/usr/sbin:/sbin' TMPDIR="$RUNNER_TEMP/" "$OLD_APP/Contents/MacOS/$EXECUTABLE" >candidate-macos/baseline-503.log 2>&1 &
+          env -i HOME="$HOME_FIXTURE" USER="$USER" PATH='/usr/bin:/bin:/usr/sbin:/sbin' TMPDIR="$RUNNER_TEMP/" "$OLD_APP/Contents/MacOS/$EXECUTABLE" >candidate-macos/baseline-510.log 2>&1 &
           P=$!; sleep 8; kill -0 "$P"; kill "$P" || true; wait "$P" || true
           hdiutil detach "$OLD_M"
           python3 scripts/v501_candidate_fixture.py verify "$APP_DATA/state.json" "$VYRON_ROOT"
@@ -229,7 +229,7 @@ jobs:
           if [ -s "$API_AUDIT" ]; then cat "$API_AUDIT"; exit 51; fi
           kill "$P" || true; wait "$P" || true
           python3 scripts/v501_candidate_fixture.py verify "$APP_DATA/state.json" "$VYRON_ROOT"
-          echo 'MACOS_5_0_3_TO_5_1_1_CONTINUITY=PASS'
+          echo 'MACOS_5_1_0_TO_5_1_1_CONTINUITY=PASS'
           echo 'YOUTUBE_DATA_API_IDLE_REQUESTS=0'
 
       - name: Verify feeds unchanged and write candidate gate
@@ -249,7 +249,7 @@ jobs:
             echo 'V503_UPLOAD_COUNTER_REGRESSION=PASS'
             echo 'MACOS_SIGNED_BUILD=PASS'
             echo 'MACOS_UPDATER_SIGNATURE=PASS'
-            echo 'MACOS_5_0_3_TO_5_1_1_CONTINUITY=PASS'
+            echo 'MACOS_5_1_0_TO_5_1_1_CONTINUITY=PASS'
             echo 'FIXTURE_CHANNELS=32'
             echo 'YOUTUBE_DATA_API_IDLE_REQUESTS=0'
             echo 'PRODUCTION_FEED_MUTATED=NO'
