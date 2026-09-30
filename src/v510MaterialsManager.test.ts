@@ -11,10 +11,10 @@ const lib=fs.readFileSync('src-tauri/src/lib.rs','utf8');
 const tauri=JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json','utf8'));
 const pkg=JSON.parse(fs.readFileSync('package.json','utf8'));
 
-describe('VYRON 5.1.0 Materials Manager contract',()=>{
-  it('uses one 5.1.0 application identity without changing updater endpoints',()=>{
-    expect(pkg.version).toBe('5.1.0');
-    expect(tauri.version).toBe('5.1.0');
+describe('VYRON 5.1.1 Materials Manager contract',()=>{
+  it('uses one 5.1.1 application identity without changing updater endpoints',()=>{
+    expect(pkg.version).toBe('5.1.1');
+    expect(tauri.version).toBe('5.1.1');
     expect(tauri.identifier).toBe('studio.channelflow.desktop');
     expect(tauri.plugins.updater.endpoints).toEqual([
       'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json',
