@@ -33,36 +33,73 @@ type Store=AppState&{
   patchSettings:(p:Partial<Settings>)=>void; recordUploadHistory:(r:UploadHistoryRecord)=>void; replaceUploadHistory:(rows:UploadHistoryRecord[])=>void; appendActivity:(e:ActivityEvent)=>void; appendActivities:(e:ActivityEvent[])=>void; replaceActivityJournal:(rows:ActivityEvent[])=>void; recordStatisticsSnapshot:(row:ChannelStatisticsSnapshot)=>void; replaceStatisticsHistory:(rows:ChannelStatisticsHistory)=>void; cacheFingerprint:(path:string,e:FingerprintCacheEntry)=>void; cacheFingerprints:(entries:Record<string,FingerprintCacheEntry>)=>void; patchProjectLifecycle:(key:string,p:ProjectLifecycleRecord)=>void; log:(message:string,level?:'info'|'warn'|'error')=>void; toast:(message:string)=>void;
 };
 
+type PersistDomain='channels'|'jobs'|'competitors'|'settings'|'logs'|'uploadHistory'|'activityJournal'|'statisticsHistory'|'fingerprintCache'|'projectLifecycle';
+const ALL_PERSIST_DOMAINS:PersistDomain[]=['channels','jobs','competitors','settings','logs','uploadHistory','activityJournal','statisticsHistory','fingerprintCache','projectLifecycle'];
 let saveTimer:number|undefined;
 let persistInFlight:Promise<void>|null=null;
 let persistAgain=false;
+const dirtyDomains=new Set<PersistDomain>();
 const SAVE_DEBOUNCE_MS=750;
 let persistIdleHandle:number|undefined;
+
 function persistedSnapshot(s:Store):AppState{
   return{version:10,channels:s.channels,jobs:s.jobs,competitors:s.competitors,settings:s.settings,logs:s.logs,uploadHistory:s.uploadHistory,activityJournal:s.activityJournal,statisticsHistory:s.statisticsHistory,fingerprintCache:s.fingerprintCache,projectLifecycle:s.projectLifecycle}
 }
+function persistedDomains(s:Store,domains:PersistDomain[]):Partial<AppState>{
+  const out:Partial<AppState>={version:10};
+  for(const domain of domains)(out as any)[domain]=(s as any)[domain];
+  return out;
+}
 async function persistStoreState(){
+  if(persistInFlight)await persistInFlight;
+  const started=performance.now();
+  const result=await api.saveState(persistedSnapshot(useApp.getState()));
+  performance.measure?.('vyron:persist:full',{start:started,end:performance.now()});
+  dirtyDomains.clear();
+  if(result?.securityWarning){const h=humanizeError(result.securityWarning,'storage');notifyWarning(h.title,h.message,{operationId:'keychain-autosave-warning'})}
+}
+async function persistDirtyStoreState(){
   if(persistInFlight){persistAgain=true;return persistInFlight}
   const run=(async()=>{
     do{
       persistAgain=false;
-      const result=await api.saveState(persistedSnapshot(useApp.getState()));
-      if(result?.securityWarning){const h=humanizeError(result.securityWarning,'storage');notifyWarning(h.title,h.message,{operationId:'keychain-autosave-warning'})}
-    }while(persistAgain)
+      const domains=[...dirtyDomains];
+      if(!domains.length)break;
+      dirtyDomains.clear();
+      const state=useApp.getState();
+      const snapshotStarted=performance.now();
+      const payload=persistedDomains(state,domains);
+      performance.measure?.('vyron:persist:snapshot',{start:snapshotStarted,end:performance.now()});
+      const ipcStarted=performance.now();
+      try{
+        const result=await api.saveStateDomains(payload);
+        performance.measure?.('vyron:persist:ipc',{start:ipcStarted,end:performance.now()});
+        if(result?.securityWarning){const h=humanizeError(result.securityWarning,'storage');notifyWarning(h.title,h.message,{operationId:'state-autosave-warning'})}
+      }catch(e){
+        domains.forEach(x=>dirtyDomains.add(x));
+        throw e;
+      }
+    }while(persistAgain||dirtyDomains.size>0)
   })();
   persistInFlight=run;
   try{await run}finally{if(persistInFlight===run)persistInFlight=null}
 }
-function scheduleSave(){
+function scheduleSave(...domains:(PersistDomain|'all')[]){
+  const targets=domains.length?domains:['all'];
+  for(const domain of targets){
+    if(domain==='all')ALL_PERSIST_DOMAINS.forEach(x=>dirtyDomains.add(x));
+    else dirtyDomains.add(domain);
+  }
   window.clearTimeout(saveTimer);
   if(persistIdleHandle!==undefined&&'cancelIdleCallback' in window)(window as any).cancelIdleCallback(persistIdleHandle);
   saveTimer=window.setTimeout(()=>{
     saveTimer=undefined;
-    const run=()=>{persistIdleHandle=undefined;void persistStoreState().catch(e=>{const h=humanizeError(e,'storage');notifyError(h.title,h.message,{operationId:'state-save-failed'})})};
+    const run=()=>{persistIdleHandle=undefined;void persistDirtyStoreState().catch(e=>{const h=humanizeError(e,'storage');notifyError(h.title,h.message,{operationId:'state-save-failed'})})};
     if('requestIdleCallback' in window)persistIdleHandle=(window as any).requestIdleCallback(run,{timeout:1200});
     else run();
   },SAVE_DEBOUNCE_MS)
 }
+
 function normalizeJob(j:VideoJob):VideoJob{const status=j.status==='ERROR'&&!String(j.error||'').trim()?resolvedJobStatus(j):j.status;const lifecycle=j.storageLifecycle||(j.youtubeVideoId?'UPLOADED':status==='UPLOADING'?'UPLOADING':status==='ERROR'?'FAILED':j.finalPath?'NEW':undefined);return {...j,status,tags:Array.isArray(j.tags)?j.tags:[],metadataSource:j.metadataSource||'template',uploadProgress:j.uploadProgress||0,storageLifecycle:lifecycle}}
 export function normalizeChannel(c:Channel):Channel{
   const raw=c as Partial<Channel>;
@@ -102,17 +139,17 @@ function remapStatisticsHistory(history:ChannelStatisticsHistory,aliases:Map<str
 
 export const useApp=create<Store>((set,get)=>({
   ...EMPTY_STATE,page:'dashboard',booted:false,jobSummary:emptyJobSummary(),jobIndex:buildJobRuntimeIndex([]),
-  hydrate:s=>{const dedup=dedupeHydratedChannels((s.channels||[]).filter(Boolean)),remap=(id:string)=>dedup.aliases.get(id)||id,jobs=(s.jobs||[]).filter(Boolean).map(j=>normalizeJob({...j,channelId:remap(j.channelId)})),activityJournal=normalizeActivityJournal((s as any).activityJournal).map(e=>e.channelId&&dedup.aliases.has(e.channelId)?{...e,channelId:remap(e.channelId)}:e),rawHistory:Array<UploadHistoryRecord>=Array.isArray((s as any).uploadHistory)?(s as any).uploadHistory.map((x:UploadHistoryRecord)=>dedup.aliases.has(x.channelId)?{...x,channelId:remap(x.channelId)}:x):[],uploadHistory=migrateUploadHistoryFingerprintProvenance(rawHistory,activityJournal,jobs),provenanceChanged=uploadHistory.some((x,i)=>x.fingerprintProofSource!==rawHistory[i]?.fingerprintProofSource||x.proofSchemaVersion!==rawHistory[i]?.proofSchemaVersion),statisticsHistory=remapStatisticsHistory(normalizeStatisticsHistory((s as any).statisticsHistory),dedup.aliases),competitors=(s.competitors||[]).map(x=>dedup.aliases.has(x.channelId)?{...x,channelId:remap(x.channelId)}:x);set({...EMPTY_STATE,...s,version:10,channels:dedup.channels,jobs,jobSummary:buildJobSummary(jobs,1),jobIndex:buildJobRuntimeIndex(jobs),competitors,settings:{...DEFAULT_SETTINGS,...s.settings,youtubeIntelligenceAutoRefresh:false},logs:s.logs||[],uploadHistory,activityJournal,statisticsHistory,fingerprintCache:(s as any).fingerprintCache||{},projectLifecycle:(s as any).projectLifecycle||{},booted:true});if(provenanceChanged||dedup.changed)scheduleSave()},
+  hydrate:s=>{const dedup=dedupeHydratedChannels((s.channels||[]).filter(Boolean)),remap=(id:string)=>dedup.aliases.get(id)||id,jobs=(s.jobs||[]).filter(Boolean).map(j=>normalizeJob({...j,channelId:remap(j.channelId)})),activityJournal=normalizeActivityJournal((s as any).activityJournal).map(e=>e.channelId&&dedup.aliases.has(e.channelId)?{...e,channelId:remap(e.channelId)}:e),rawHistory:Array<UploadHistoryRecord>=Array.isArray((s as any).uploadHistory)?(s as any).uploadHistory.map((x:UploadHistoryRecord)=>dedup.aliases.has(x.channelId)?{...x,channelId:remap(x.channelId)}:x):[],uploadHistory=migrateUploadHistoryFingerprintProvenance(rawHistory,activityJournal,jobs),provenanceChanged=uploadHistory.some((x,i)=>x.fingerprintProofSource!==rawHistory[i]?.fingerprintProofSource||x.proofSchemaVersion!==rawHistory[i]?.proofSchemaVersion),statisticsHistory=remapStatisticsHistory(normalizeStatisticsHistory((s as any).statisticsHistory),dedup.aliases),competitors=(s.competitors||[]).map(x=>dedup.aliases.has(x.channelId)?{...x,channelId:remap(x.channelId)}:x);set({...EMPTY_STATE,...s,version:10,channels:dedup.channels,jobs,jobSummary:buildJobSummary(jobs,1),jobIndex:buildJobRuntimeIndex(jobs),competitors,settings:{...DEFAULT_SETTINGS,...s.settings,youtubeIntelligenceAutoRefresh:false},logs:s.logs||[],uploadHistory,activityJournal,statisticsHistory,fingerprintCache:(s as any).fingerprintCache||{},projectLifecycle:(s as any).projectLifecycle||{},booted:true});if(provenanceChanged||dedup.changed)scheduleSave('all')},
   setPage:page=>set({page}),
   persist:persistStoreState,
   addChannel:p=>{
     const id=crypto.randomUUID();const name=(p.name||'Новый канал').trim();const defaultTracks=get().settings.tracksPerVideo||10;
     const channel:Channel={id,name,slug:slugify(name),cadenceDays:p.cadenceDays||2,targetBufferDays:p.targetBufferDays||60,publishHour:p.publishHour??18,publishMinute:p.publishMinute??0,language:p.language||'RU',genre:p.genre||'Music',country:p.country||'Россия',minTracks:p.minTracks||defaultTracks,targetDurationMin:p.targetDurationMin||get().settings.endlumeTargetDurationMin||120,enabled:p.enabled??true,youtubeProfileId:p.youtubeProfileId,youtubeChannelId:p.youtubeChannelId,seo:p.seo||{titlePatterns:['{topic} • Session {number}','{genre} — {topic} | Mix {number}'],descriptionTemplate:'{title}\n\nНовая подборка в стиле {genre}.',tags:[p.genre||'music','mix','playlist'],banned:[],aiPrompt:''}};
-    set(s=>({channels:[...s.channels,channel]}));scheduleSave();return channel;
+    set(s=>({channels:[...s.channels,channel]}));scheduleSave('channels');return channel;
   },
-  updateChannel:(id,p)=>{set(s=>({channels:s.channels.map(c=>c.id===id?normalizeChannel({...c,...p}):c)}));scheduleSave()},
-  removeChannel:id=>{set(s=>{const jobs=s.jobs.filter(j=>j.channelId!==id);return{channels:s.channels.filter(c=>c.id!==id),jobs,jobSummary:buildJobSummary(jobs,s.jobSummary.revision+1),jobIndex:buildJobRuntimeIndex(jobs),competitors:s.competitors.filter(c=>c.channelId!==id)}});scheduleSave()},
-  setJobs:jobs=>{const normalized=jobs.map(normalizeJob);set(s=>({jobs:normalized,jobSummary:buildJobSummary(normalized,s.jobSummary.revision+1),jobIndex:buildJobRuntimeIndex(normalized)}));scheduleSave()},
+  updateChannel:(id,p)=>{set(s=>({channels:s.channels.map(c=>c.id===id?normalizeChannel({...c,...p}):c)}));scheduleSave('channels')},
+  removeChannel:id=>{set(s=>{const jobs=s.jobs.filter(j=>j.channelId!==id);return{channels:s.channels.filter(c=>c.id!==id),jobs,jobSummary:buildJobSummary(jobs,s.jobSummary.revision+1),jobIndex:buildJobRuntimeIndex(jobs),competitors:s.competitors.filter(c=>c.channelId!==id)}});scheduleSave('channels','jobs','competitors')},
+  setJobs:jobs=>{const normalized=jobs.map(normalizeJob);set(s=>({jobs:normalized,jobSummary:buildJobSummary(normalized,s.jobSummary.revision+1),jobIndex:buildJobRuntimeIndex(normalized)}));scheduleSave('jobs')},
   patchJob:(id,p)=>{get().patchJobsBatch([{id,patch:p}])},
   patchJobsBatch:patches=>{
     if(!patches.length)return;
@@ -129,24 +166,24 @@ export const useApp=create<Store>((set,get)=>({
       const jobIndex=structural?buildJobRuntimeIndex(jobs):patchJobRuntimeIndex(s.jobIndex,replacements,jobs);
       return {jobs,jobSummary,jobIndex};
     });
-    scheduleSave();
+    scheduleSave('jobs');
   },
-  addJobs:jobs=>{const normalized=jobs.map(normalizeJob);set(s=>{const next=[...s.jobs,...normalized];return{jobs:next,jobSummary:appendJobsToSummary(s.jobSummary,normalized),jobIndex:buildJobRuntimeIndex(next)}});scheduleSave()},
-  addCompetitor:c=>{set(s=>({competitors:[...s.competitors,c]}));scheduleSave()},
-  patchCompetitor:(id,p)=>{set(s=>({competitors:s.competitors.map(c=>c.id===id?{...c,...p}:c)}));scheduleSave()},
-  removeCompetitor:id=>{set(s=>({competitors:s.competitors.filter(c=>c.id!==id)}));scheduleSave()},
-  patchSettings:p=>{set(s=>({settings:{...s.settings,...p}}));scheduleSave()},
-  recordUploadHistory:r=>{set(s=>({uploadHistory:[...s.uploadHistory,r]}));scheduleSave()},
-  replaceUploadHistory:rows=>{set({uploadHistory:rows});scheduleSave()},
-  appendActivity:e=>{set(s=>({activityJournal:appendJournalEvent(s.activityJournal,e)}));scheduleSave()},
-  appendActivities:rows=>{set(s=>({activityJournal:rows.reduce((acc,e)=>appendJournalEvent(acc,e),s.activityJournal)}));scheduleSave()},
-  replaceActivityJournal:rows=>{set({activityJournal:normalizeActivityJournal(rows)});scheduleSave()},
-  recordStatisticsSnapshot:row=>{set(s=>({statisticsHistory:appendStatisticsSnapshot(s.statisticsHistory,row)}));scheduleSave()},
-  replaceStatisticsHistory:rows=>{set({statisticsHistory:normalizeStatisticsHistory(rows)});scheduleSave()},
-  cacheFingerprint:(path,e)=>{set(s=>({fingerprintCache:{...s.fingerprintCache,[path]:e}}));scheduleSave()},
-  cacheFingerprints:entries=>{if(!Object.keys(entries).length)return;set(s=>({fingerprintCache:{...s.fingerprintCache,...entries}}));scheduleSave()},
-  patchProjectLifecycle:(key,p)=>{set(s=>({projectLifecycle:{...s.projectLifecycle,[key]:p}}));scheduleSave()},
-  log:(message,level='info')=>{const safe=redactSensitive(message);set(s=>({logs:[{at:new Date().toISOString(),level,message:safe},...s.logs].slice(0,500)}));scheduleSave()},
+  addJobs:jobs=>{const normalized=jobs.map(normalizeJob);set(s=>{const next=[...s.jobs,...normalized];return{jobs:next,jobSummary:appendJobsToSummary(s.jobSummary,normalized),jobIndex:buildJobRuntimeIndex(next)}});scheduleSave('jobs')},
+  addCompetitor:c=>{set(s=>({competitors:[...s.competitors,c]}));scheduleSave('competitors')},
+  patchCompetitor:(id,p)=>{set(s=>({competitors:s.competitors.map(c=>c.id===id?{...c,...p}:c)}));scheduleSave('competitors')},
+  removeCompetitor:id=>{set(s=>({competitors:s.competitors.filter(c=>c.id!==id)}));scheduleSave('competitors')},
+  patchSettings:p=>{set(s=>({settings:{...s.settings,...p}}));scheduleSave('settings')},
+  recordUploadHistory:r=>{set(s=>({uploadHistory:[...s.uploadHistory,r]}));scheduleSave('uploadHistory')},
+  replaceUploadHistory:rows=>{set({uploadHistory:rows});scheduleSave('uploadHistory')},
+  appendActivity:e=>{set(s=>({activityJournal:appendJournalEvent(s.activityJournal,e)}));scheduleSave('activityJournal')},
+  appendActivities:rows=>{set(s=>({activityJournal:rows.reduce((acc,e)=>appendJournalEvent(acc,e),s.activityJournal)}));scheduleSave('activityJournal')},
+  replaceActivityJournal:rows=>{set({activityJournal:normalizeActivityJournal(rows)});scheduleSave('activityJournal')},
+  recordStatisticsSnapshot:row=>{set(s=>({statisticsHistory:appendStatisticsSnapshot(s.statisticsHistory,row)}));scheduleSave('statisticsHistory')},
+  replaceStatisticsHistory:rows=>{set({statisticsHistory:normalizeStatisticsHistory(rows)});scheduleSave('statisticsHistory')},
+  cacheFingerprint:(path,e)=>{set(s=>({fingerprintCache:{...s.fingerprintCache,[path]:e}}));scheduleSave('fingerprintCache')},
+  cacheFingerprints:entries=>{if(!Object.keys(entries).length)return;set(s=>({fingerprintCache:{...s.fingerprintCache,...entries}}));scheduleSave('fingerprintCache')},
+  patchProjectLifecycle:(key,p)=>{set(s=>({projectLifecycle:{...s.projectLifecycle,[key]:p}}));scheduleSave('projectLifecycle')},
+  log:(message,level='info')=>{const safe=redactSensitive(message);set(s=>({logs:[{at:new Date().toISOString(),level,message:safe},...s.logs].slice(0,500)}));scheduleSave('logs')},
   toast:notice=>{notifyLegacy(notice)}
 }));
 
