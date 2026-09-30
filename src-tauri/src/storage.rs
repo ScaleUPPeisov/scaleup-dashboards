@@ -47,7 +47,7 @@ fn write_state_mirror(app:&AppHandle,state:&Value)->Result<(),String>{
 }
 
 fn default_state() -> Value {
-    json!({"version":10,"channels":[],"jobs":[],"competitors":[],"settings":{"workspace":"","endlumePath":"","youtubeApiKey":"","autoCheckUpdates":true,"reduceMotion":false,"fpsMonitor":true},"logs":[],"uploadHistory":[],"activityJournal":[],"statisticsHistory":{},"fingerprintCache":{},"projectLifecycle":{}})
+    json!({"version":10,"channels":[],"jobs":[],"competitors":[],"settings":{"workspace":"","endlumePath":"","youtubeApiKey":"","autoCheckUpdates":true,"reduceMotion":false,"fpsMonitor":false},"logs":[],"uploadHistory":[],"activityJournal":[],"statisticsHistory":{},"fingerprintCache":{},"projectLifecycle":{}})
 }
 
 const STATE_YOUTUBE_API_KEY: &str = "state.youtubeApiKey";
