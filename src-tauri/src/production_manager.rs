@@ -2638,6 +2638,65 @@ pub fn delete_production_batch_projects(
     delete_production_batch_projects_inner(&verified, manifest_path, project_ids)
 }
 
+fn endlume_inbox_dir() -> Result<PathBuf, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var_os("HOME").ok_or_else(|| "HOME не найден".to_string())?;
+        return Ok(PathBuf::from(home)
+            .join("Library/Application Support")
+            .join("studio.endlume.desktop")
+            .join("VYRON Inbox"));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let appdata = std::env::var_os("APPDATA").ok_or_else(|| "APPDATA не найден".to_string())?;
+        return Ok(PathBuf::from(appdata)
+            .join("studio.endlume.desktop")
+            .join("VYRON Inbox"));
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let base = std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|x| PathBuf::from(x).join(".local/share")))
+            .ok_or_else(|| "Каталог данных пользователя не найден".to_string())?;
+        Ok(base.join("studio.endlume.desktop").join("VYRON Inbox"))
+    }
+}
+
+fn write_endlume_handoff_request(
+    inbox: &Path,
+    batch_id: &str,
+    handoff_id: &str,
+    subset_path: &Path,
+    source_manifest_path: &str,
+    selected_project_ids: &[String],
+    requested_at: &str,
+) -> Result<PathBuf, String> {
+    fs::create_dir_all(inbox).map_err(|e| format!("VYRON Inbox: {e}"))?;
+    let request = inbox.join(format!(
+        "{}-{}.json",
+        safe_component(batch_id),
+        safe_component(handoff_id)
+    ));
+    atomic_json(
+        &request,
+        &json!({
+            "schemaVersion": 1,
+            "batchId": batch_id,
+            "manifestPath": subset_path.to_string_lossy(),
+            "requestedAt": requested_at,
+            "selectedProjectIds": selected_project_ids,
+            "sourceManifestPath": source_manifest_path,
+            "handoffId": handoff_id
+        }),
+    )?;
+    if !request.is_file() {
+        return Err("Не удалось создать inbox-запрос ENDLUME".into());
+    }
+    Ok(request)
+}
+
 #[tauri::command]
 pub fn open_production_batch_in_endlume(
     endlume_path: String,
@@ -2679,6 +2738,7 @@ pub fn open_production_batch_in_endlume(
     if !repeated.is_empty() && !force_resend.unwrap_or(false) {
         return Err(format!("ENDLUME_ALREADY_SENT:{}", repeated.join(",")));
     }
+
     let handoff_id = Uuid::new_v4().to_string();
     let root = PathBuf::from(&m.root_path);
     // ENDLUME validates that manifest parent == rootPath, therefore the immutable subset manifest
@@ -2692,56 +2752,65 @@ pub fn open_production_batch_in_endlume(
         safe_component(&handoff_id)
     ));
     atomic_json(&subset_path, &subset)?;
+
     let now = Utc::now().to_rfc3339();
+    let inbox = endlume_inbox_dir()?;
+    let request = write_endlume_handoff_request(
+        &inbox,
+        &m.batch_id,
+        &handoff_id,
+        &subset_path,
+        &manifest_path,
+        &ids,
+        &now,
+    )?;
+
+    let launch = {
+        #[cfg(target_os = "macos")]
+        {
+            Command::new("open")
+                .arg(&app)
+                .spawn()
+                .map(|_| ())
+                .map_err(|e| format!("Не удалось открыть ENDLUME: {e}"))
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            Command::new(&app)
+                .spawn()
+                .map(|_| ())
+                .map_err(|e| format!("Не удалось открыть ENDLUME: {e}"))
+        }
+    };
+    if let Err(e) = launch {
+        let _ = fs::remove_file(&request);
+        let _ = fs::remove_file(&subset_path);
+        return Err(e);
+    }
+
+    // Commit the "sent" ledger only after the durable inbox request exists and ENDLUME launches.
+    // This prevents false "already sent" state if handoff creation or launch fails.
     for id in &ids {
         let row = ledger.projects.entry(id.clone()).or_default();
         row.sent_at = now.clone();
         row.count = row.count.saturating_add(1);
     }
     ledger.schema_version = 1;
-    atomic_json(&handoff_ledger_path(&m), &ledger)?;
-    #[cfg(target_os = "macos")]
-    {
-        let home = std::env::var("HOME").map_err(|_| "HOME не найден".to_string())?;
-        let inbox = PathBuf::from(home)
-            .join("Library/Application Support/studio.endlume.desktop/VYRON Inbox");
-        fs::create_dir_all(&inbox).map_err(|e| e.to_string())?;
-        let request = inbox.join(format!(
-            "{}-{}.json",
-            safe_component(&m.batch_id),
-            safe_component(&handoff_id)
-        ));
-        atomic_json(
-            &request,
-            &json!({"schemaVersion":1,"batchId":m.batch_id,"manifestPath":subset_path.to_string_lossy(),"requestedAt":now,"selectedProjectIds":ids,"sourceManifestPath":manifest_path,"handoffId":handoff_id}),
-        )?;
-        if !request.is_file() {
-            return Err("Не удалось создать inbox-запрос ENDLUME".into());
-        }
-        Command::new("open")
-            .arg(&app)
-            .spawn()
-            .map_err(|e| format!("Не удалось открыть ENDLUME: {e}"))?;
-        return Ok(HandoffReceipt {
-            batch_id: m.batch_id,
-            manifest_path: subset_path.to_string_lossy().into_owned(),
-            request_path: request.to_string_lossy().into_owned(),
-            selected_project_ids: ids,
-            repeated_project_ids: repeated,
-        });
+    if let Err(e) = atomic_json(&handoff_ledger_path(&m), &ledger) {
+        let _ = fs::remove_file(&request);
+        let _ = fs::remove_file(&subset_path);
+        return Err(e);
     }
-    #[cfg(not(target_os = "macos"))]
-    {
-        Command::new(&app).spawn().map_err(|e| e.to_string())?;
-        Ok(HandoffReceipt {
-            batch_id: m.batch_id,
-            manifest_path: subset_path.to_string_lossy().into_owned(),
-            request_path: String::new(),
-            selected_project_ids: ids,
-            repeated_project_ids: repeated,
-        })
-    }
+
+    Ok(HandoffReceipt {
+        batch_id: m.batch_id,
+        manifest_path: subset_path.to_string_lossy().into_owned(),
+        request_path: request.to_string_lossy().into_owned(),
+        selected_project_ids: ids,
+        repeated_project_ids: repeated,
+    })
 }
+
 #[tauri::command]
 pub fn production_endlume_handoff_consumed(request_path: String) -> Result<bool, String> {
     if request_path.is_empty() {
