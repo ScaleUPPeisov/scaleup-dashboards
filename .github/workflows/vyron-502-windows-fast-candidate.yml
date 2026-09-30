@@ -175,12 +175,12 @@ jobs:
               @{id='fixture-a';name='Fixture A';slug='fixture-a';enabled=$true;youtubeProfileId='PROFILE_A';youtubeChannelId='TEST_CH_A';renderFolderPath='D:\Render\Fixture A';projectsFolderPath='D:\Projects\Fixture A';safeDailyUploadLimit=10;cadenceDays=1;scheduleMode='interval';publishIntervalDays=1;publishHour=18;publishMinute=0;targetBufferDays=30;language='EN';genre='Music';country='US';minTracks=10;targetDurationMin=120;stats=@{subscriberCount=1001;viewCount=100100;videoCount=31;statisticsUpdatedAt='2026-09-29T00:00:00Z';source='LIVE_REFRESH'};seo=@{titlePatterns=@();descriptionTemplate='';tags=@();banned=@()}},
               @{id='fixture-a-copy';name='Fixture A copy';slug='fixture-a-copy';enabled=$true;youtubeProfileId='PROFILE_A';youtubeChannelId='TEST_CH_A';renderFolderPath='D:\Render\Fixture A';projectsFolderPath='D:\Projects\Fixture A';cadenceDays=1;publishHour=18;publishMinute=0;targetBufferDays=30;language='EN';genre='Music';country='US';minTracks=10;targetDurationMin=120;seo=@{titlePatterns=@();descriptionTemplate='';tags=@();banned=@()}}
             )
-            jobs=@(@{id='fixture-job';channelId='fixture-a-copy';number=1;folder='D:\fixture';status='READY_UPLOAD';createdAt='2026-09-29T00:00:00Z';tracksCount=10;minTracks=10;finalPath='D:\Render\Fixture A\001.mov';title='Fixture';description='';tags=@();storageLifecycle='NEW'})
+            jobs=@(@{id='fixture-job';channelId='fixture-a';number=1;folder='D:\fixture';status='READY_UPLOAD';createdAt='2026-09-29T00:00:00Z';tracksCount=10;minTracks=10;finalPath='D:\Render\Fixture A\001.mov';title='Fixture';description='';tags=@();storageLifecycle='NEW'})
             competitors=@()
             settings=@{workspace='D:\VYRON';renderRootPath='D:\Render';endlumePath='';youtubeApiKey='';openaiApiKey='';autoCheckUpdates=$false;reduceMotion=$false;fpsMonitor=$false;localProfileName='Кирилл';localProfileRole='Owner / YouTube Manager';localProfileCompany='VYRON / ScaleUP';localProfileAvatarPath='D:\VYRON\avatar.webp';estimatedRpmUsd=2.5}
             logs=@()
-            uploadHistory=@(@{id='fixture-history';jobId='fixture-job';channelId='fixture-a-copy';youtubeVideoId='fixture-video';localFilePath='D:\old.mov';originalFilename='old.mov';uploadedAt='2026-09-29T00:00:00Z';fileSize=123;sha256=('a'*64);status='UPLOADED'})
-            activityJournal=@(@{eventId='fixture-event';timestamp='2026-09-29T00:00:00Z';eventType='UPLOAD_ACCEPTED';status='SUCCESS';source='LIVE_OPERATION';channelId='fixture-a-copy'})
+            uploadHistory=@(@{id='fixture-history';jobId='fixture-job';channelId='fixture-a';youtubeVideoId='fixture-video';localFilePath='D:\old.mov';originalFilename='old.mov';uploadedAt='2026-09-29T00:00:00Z';fileSize=123;sha256=('a'*64);status='UPLOADED'})
+            activityJournal=@(@{eventId='fixture-event';timestamp='2026-09-29T00:00:00Z';eventType='UPLOAD_ACCEPTED';status='SUCCESS';source='LIVE_OPERATION';channelId='fixture-a'})
             statisticsHistory=@{'fixture-a'=@(@{channelId='fixture-a';capturedAt='2026-09-29T00:00:00Z';source='LIVE_REFRESH';subscriberCount=1001;viewCount=100100;videoCount=31})}
             fingerprintCache=@{'fixture-fp'=@{path='D:\old.mov';size=123;mtimeMs=1;sha256=('a'*64);computedAt='2026-09-29T00:00:00Z'}}
             projectLifecycle=@{'fixture-project'=@{projectId='fixture-project';projectPath='D:\project';status='RENDERED';renderExists=$true;updatedAt='2026-09-29T00:00:00Z'}}
@@ -208,7 +208,7 @@ jobs:
           Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
           Start-Sleep -Seconds 1
           $saved=Get-Content (Join-Path $appData 'state.json') -Raw | ConvertFrom-Json
-          if($saved.channels.Count -ne 1){throw 'CHANNEL_DEDUPE_FAILED'}
+          if($saved.channels.Count -ne 1){throw 'CHANNEL_PRESERVATION_FAILED'}
           $c=$saved.channels[0]
           if($c.youtubeProfileId -ne 'PROFILE_A' -or $c.youtubeChannelId -ne 'TEST_CH_A'){throw 'OAUTH_BINDING_CHANGED'}
           if($c.renderFolderPath -ne 'D:\Render\Fixture A'){throw 'RENDER_PATH_CHANGED'}
