@@ -1842,26 +1842,31 @@ fn enrich_handoff(mut status: BatchStatus, m: &BatchManifest) -> BatchStatus {
     }
     status
 }
+fn sync_material_image_usage(m: &BatchManifest, status: &BatchStatus) -> Result<(), String> {
+    let plan: BuildPlan = read_json(&PathBuf::from(&m.root_path).join("plan.json"));
+    if plan.request.workspace.is_empty() {
+        return Ok(());
+    }
+    let completed_at = status.updated_at.clone();
+    let used = m.projects.iter().filter_map(|p| {
+        let asset_id = p.image_asset_id.as_ref()?;
+        let row = status.projects.iter().find(|x| x.project_id == p.project_id)?;
+        if row.render_status != "Completed" { return None; }
+        Some(materials_manager::RenderedImageUse {
+            asset_id: asset_id.clone(),
+            project_id: p.video_number.map(|n| format!("VIDEO_{:03}", n)).unwrap_or_else(|| format!("{}:{}", m.batch_id, p.project_id)),
+            job_id: p.job_id.clone(),
+            completed_at: completed_at.clone(),
+        })
+    }).collect::<Vec<_>>();
+    materials_manager::mark_rendered_used(&plan.request.workspace, &m.channel_id, &used)
+}
+
 #[tauri::command]
 pub fn read_production_batch_status(manifest_path: String) -> Result<BatchStatus, String> {
     let (m, _) = load_manifest(&manifest_path)?;
     let status = enrich_handoff(read_json(Path::new(&m.status_path)), &m);
-    let plan: BuildPlan = read_json(&PathBuf::from(&m.root_path).join("plan.json"));
-    if !plan.request.workspace.is_empty() {
-        let completed_at = status.updated_at.clone();
-        let used = m.projects.iter().filter_map(|p| {
-            let asset_id = p.image_asset_id.as_ref()?;
-            let row = status.projects.iter().find(|x| x.project_id == p.project_id)?;
-            if row.render_status != "Completed" { return None; }
-            Some(materials_manager::RenderedImageUse {
-                asset_id: asset_id.clone(),
-                project_id: p.video_number.map(|n| format!("VIDEO_{:03}", n)).unwrap_or_else(|| format!("{}:{}", m.batch_id, p.project_id)),
-                job_id: p.job_id.clone(),
-                completed_at: completed_at.clone(),
-            })
-        }).collect::<Vec<_>>();
-        materials_manager::mark_rendered_used(&plan.request.workspace, &m.channel_id, &used)?;
-    }
+    sync_material_image_usage(&m, &status)?;
     Ok(status)
 }
 #[tauri::command]
@@ -2343,6 +2348,10 @@ fn collect_global_cleanup(workspaces: &[String]) -> (GlobalProjectCleanupPreview
         };
         channels.insert(m.channel_id.clone());
         let status: BatchStatus = read_json(Path::new(&m.status_path));
+        if let Err(e) = sync_material_image_usage(&m, &status) {
+            preview.errors.push(format!("{}: Materials state: {e}", mp.display()));
+            continue;
+        }
         let batch_root = PathBuf::from(&m.root_path);
         let status_by_id = status.projects.iter().map(|x| (x.project_id.as_str(), x)).collect::<HashMap<_, _>>();
         for project in &m.projects {
