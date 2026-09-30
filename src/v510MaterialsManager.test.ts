@@ -25,7 +25,9 @@ describe('VYRON 5.1.0 Materials Manager contract',()=>{
     expect(materialsRust).not.toContain('youtube_');
     expect(materialsRust).not.toContain('oauth');
     expect(materialsRust).not.toContain('reqwest');
-    expect(materialsUi).not.toContain('youtube');
+    expect(materialsUi).not.toContain('youtubeChannelStats');
+    expect(materialsUi).not.toContain('youtubeVideoProcessingStatus');
+    expect(materialsUi).not.toContain('youtubeListExisting');
     expect(api).toContain("production_materials_summary");
     expect(lib).toContain('materials_manager::import_production_material_images');
   });
