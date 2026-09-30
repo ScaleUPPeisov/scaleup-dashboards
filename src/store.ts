@@ -11,7 +11,7 @@ import {appendStatisticsSnapshot,normalizeStatisticsHistory} from './youtubeStat
 import {resolvedJobStatus} from './activeErrors';
 
 export const DEFAULT_SETTINGS:Settings={
-  workspace:'',renderRootPath:'',endlumePath:'',youtubeApiKey:'',autoCheckUpdates:true,reduceMotion:false,fpsMonitor:true,interfaceDensity:'compact',
+  workspace:'',renderRootPath:'',endlumePath:'',youtubeApiKey:'',autoCheckUpdates:true,reduceMotion:false,fpsMonitor:false,interfaceDensity:'compact',
   autopilotMode:'off',autopilotEnabled:false,autoCreatePlan:true,autoAssignMusic:true,autoAssignImages:true,autoGenerateMetadata:false,
   autoQueueRender:true,autoOpenEndlume:false,autoUploadYoutube:false,autopilotIntervalSec:30,tracksPerVideo:10,
   openaiApiKey:'',openaiModel:'',youtubeOAuthClientId:'',youtubeCategoryId:'10',
@@ -26,7 +26,7 @@ type Store=AppState&{
   page:Page; booted:boolean; notice?:string;
   hydrate:(s:AppState)=>void; setPage:(p:Page)=>void; persist:()=>Promise<void>;
   addChannel:(p:Partial<Channel>)=>Channel; updateChannel:(id:string,p:Partial<Channel>)=>void; removeChannel:(id:string)=>void;
-  setJobs:(jobs:VideoJob[])=>void; patchJob:(id:string,p:Partial<VideoJob>)=>void; addJobs:(jobs:VideoJob[])=>void;
+  setJobs:(jobs:VideoJob[])=>void; patchJob:(id:string,p:Partial<VideoJob>)=>void; patchJobsBatch:(patches:Array<{id:string;patch:Partial<VideoJob>}>)=>void; addJobs:(jobs:VideoJob[])=>void;
   addCompetitor:(c:Competitor)=>void; patchCompetitor:(id:string,p:Partial<Competitor>)=>void; removeCompetitor:(id:string)=>void;
   patchSettings:(p:Partial<Settings>)=>void; recordUploadHistory:(r:UploadHistoryRecord)=>void; replaceUploadHistory:(rows:UploadHistoryRecord[])=>void; appendActivity:(e:ActivityEvent)=>void; appendActivities:(e:ActivityEvent[])=>void; replaceActivityJournal:(rows:ActivityEvent[])=>void; recordStatisticsSnapshot:(row:ChannelStatisticsSnapshot)=>void; replaceStatisticsHistory:(rows:ChannelStatisticsHistory)=>void; cacheFingerprint:(path:string,e:FingerprintCacheEntry)=>void; cacheFingerprints:(entries:Record<string,FingerprintCacheEntry>)=>void; patchProjectLifecycle:(key:string,p:ProjectLifecycleRecord)=>void; log:(message:string,level?:'info'|'warn'|'error')=>void; toast:(message:string)=>void;
 };
@@ -34,7 +34,8 @@ type Store=AppState&{
 let saveTimer:number|undefined;
 let persistInFlight:Promise<void>|null=null;
 let persistAgain=false;
-const SAVE_DEBOUNCE_MS=550;
+const SAVE_DEBOUNCE_MS=750;
+let persistIdleHandle:number|undefined;
 function persistedSnapshot(s:Store):AppState{
   return{version:10,channels:s.channels,jobs:s.jobs,competitors:s.competitors,settings:s.settings,logs:s.logs,uploadHistory:s.uploadHistory,activityJournal:s.activityJournal,statisticsHistory:s.statisticsHistory,fingerprintCache:s.fingerprintCache,projectLifecycle:s.projectLifecycle}
 }
@@ -52,9 +53,12 @@ async function persistStoreState(){
 }
 function scheduleSave(){
   window.clearTimeout(saveTimer);
+  if(persistIdleHandle!==undefined&&'cancelIdleCallback' in window)(window as any).cancelIdleCallback(persistIdleHandle);
   saveTimer=window.setTimeout(()=>{
     saveTimer=undefined;
-    void persistStoreState().catch(e=>{const h=humanizeError(e,'storage');notifyError(h.title,h.message,{operationId:'state-save-failed'})})
+    const run=()=>{persistIdleHandle=undefined;void persistStoreState().catch(e=>{const h=humanizeError(e,'storage');notifyError(h.title,h.message,{operationId:'state-save-failed'})})};
+    if('requestIdleCallback' in window)persistIdleHandle=(window as any).requestIdleCallback(run,{timeout:1200});
+    else run();
   },SAVE_DEBOUNCE_MS)
 }
 function normalizeJob(j:VideoJob):VideoJob{const status=j.status==='ERROR'&&!String(j.error||'').trim()?resolvedJobStatus(j):j.status;const lifecycle=j.storageLifecycle||(j.youtubeVideoId?'UPLOADED':status==='UPLOADING'?'UPLOADING':status==='ERROR'?'FAILED':j.finalPath?'NEW':undefined);return {...j,status,tags:Array.isArray(j.tags)?j.tags:[],metadataSource:j.metadataSource||'template',uploadProgress:j.uploadProgress||0,storageLifecycle:lifecycle}}
@@ -107,7 +111,17 @@ export const useApp=create<Store>((set,get)=>({
   updateChannel:(id,p)=>{set(s=>({channels:s.channels.map(c=>c.id===id?normalizeChannel({...c,...p}):c)}));scheduleSave()},
   removeChannel:id=>{set(s=>({channels:s.channels.filter(c=>c.id!==id),jobs:s.jobs.filter(j=>j.channelId!==id),competitors:s.competitors.filter(c=>c.channelId!==id)}));scheduleSave()},
   setJobs:jobs=>{set({jobs:jobs.map(normalizeJob)});scheduleSave()},
-  patchJob:(id,p)=>{set(s=>({jobs:s.jobs.map(j=>j.id===id?normalizeJob({...j,...p}):j)}));scheduleSave()},
+  patchJob:(id,p)=>{get().patchJobsBatch([{id,patch:p}])},
+  patchJobsBatch:patches=>{
+    if(!patches.length)return;
+    const patchMap=new Map<string,Partial<VideoJob>>();
+    for(const entry of patches){
+      const prev=patchMap.get(entry.id);
+      patchMap.set(entry.id,prev?{...prev,...entry.patch}:entry.patch);
+    }
+    set(s=>({jobs:s.jobs.map(j=>{const patch=patchMap.get(j.id);return patch?normalizeJob({...j,...patch}):j})}));
+    scheduleSave();
+  },
   addJobs:jobs=>{set(s=>({jobs:[...s.jobs,...jobs.map(normalizeJob)]}));scheduleSave()},
   addCompetitor:c=>{set(s=>({competitors:[...s.competitors,c]}));scheduleSave()},
   patchCompetitor:(id,p)=>{set(s=>({competitors:s.competitors.map(c=>c.id===id?{...c,...p}:c)}));scheduleSave()},
