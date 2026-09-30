@@ -1,4 +1,4 @@
-import React,{useEffect,useMemo,useState} from 'react';
+import React,{memo,useEffect,useMemo,useState} from 'react';
 import {productionManagerApi,type GlobalProjectCleanupPreview,type MaterialsSummary} from './productionManagerApi';
 import {patchChannelProductionPrefs,useProductionPrefs} from './productionPrefs';
 import {createJobsCount} from './autopilotCore';
@@ -9,9 +9,39 @@ function n(value:number|undefined){return (value||0).toLocaleString('ru-RU')}
 function gb(value:number|undefined){return ((value||0)/1024/1024/1024).toFixed(2)}
 function fileName(path:string){return path.split(/[\\/]/).filter(Boolean).pop()||path}
 
+type MaterialsChannelRowProps={
+  channel:{id:string;name:string};
+  row?:MaterialsSummary;
+  busy:string;
+  onImport:(channel:{id:string;name:string})=>Promise<void>;
+  onMusic:(channel:{id:string;name:string})=>Promise<void>;
+  onReindex:(channelId:string)=>Promise<void>;
+};
+
+const MaterialsChannelRow=memo(function MaterialsChannelRow({channel,row,busy,onImport,onMusic,onReindex}:MaterialsChannelRowProps){
+  const waiting=useApp(s=>s.jobSummary.byChannelStatus[channel.id]?.NEED_IMAGE||0);
+  const ready=useApp(s=>s.jobSummary.byChannelStatus[channel.id]?.READY_RENDER||0);
+  const available=row?.image.available||0;
+  const need=Math.max(0,waiting-available);
+  return <div className="materialsRow" data-materials-channel-row={channel.id}>
+    <span className="materialsChannel"><b>{channel.name}</b><small>{channel.id}</small></span>
+    <span><b>{n(row?.musicTotal)}</b><small>своб. {n(row?.musicFree)} • назнач. {n(row?.musicAssigned)}</small><small title={row?.musicLibraryPath||''}>{row?.musicLibraryPath||'Music Library не выбрана'}</small></span>
+    <span><b>{n(available)}</b><small>master: {n(row?.image.total)}</small></span>
+    <span><b>{n(row?.image.assigned)}</b><small>ASSIGNED</small></span>
+    <span><b>{n(row?.image.used)}</b><small>USED{row?.image.missing?' • missing '+n(row.image.missing):''}</small></span>
+    <span className={need>0?'materialsDanger':''}><b>{need>0?'🔴 '+need:'0'}</b><small>ждут cover: {waiting}</small></span>
+    <span><b>{ready}</b><small>готовы к ENDLUME</small></span>
+    <span className="materialsActions">
+      <button className="primary" disabled={!!busy} onClick={()=>void onImport(channel)}>+ ИЗОБРАЖЕНИЯ</button>
+      <button disabled={!!busy} onClick={()=>void onMusic(channel)}>{row?.musicLibraryPath?'МУЗЫКА':'+ МУЗЫКА'}</button>
+      {row?.musicLibraryPath&&<button disabled={!!busy} onClick={()=>void onReindex(channel.id)}>↻</button>}
+      {row?.image.rootPath&&<button onClick={()=>void productionManagerApi.openFolder(row.image.rootPath)}>ПАПКА</button>}
+    </span>
+  </div>
+});
+
 export function MaterialsManager(){
   const channels=useApp(s=>s.channels);
-  const jobs=useApp(s=>s.jobs);
   const setJobs=useApp(s=>s.setJobs);
   const settings=useApp(s=>s.settings);
   const toast=useApp(s=>s.toast);
@@ -25,6 +55,7 @@ export function MaterialsManager(){
   const [manualMusic,setManualMusic]=useState<string[]>([]);
   const [manualMusicRoot,setManualMusicRoot]=useState('');
   const [manualBusy,setManualBusy]=useState('');
+  const maxManualNumber=useApp(s=>manualChannelId?(s.jobSummary.maxNumberByChannel[manualChannelId]||0):0);
   const workspace=settings.workspace||'';
 
   const cleanupRoots=useMemo(()=>[
@@ -36,8 +67,7 @@ export function MaterialsManager(){
   const manualChannel=channels.find(x=>x.id===manualChannelId);
   const manualTracksPerProject=Math.max(1,Math.min(100,prefs.byChannel[manualChannelId]?.tracksPerProject||manualChannel?.minTracks||10));
   const manualCanBuild=Boolean(manualChannel&&manualImages.length&&manualMusic.length>=manualTracksPerProject);
-  const manualExisting=manualChannelId?jobs.filter(j=>j.channelId===manualChannelId):[];
-  const manualFrom=Math.max(0,...manualExisting.map(j=>j.number))+1;
+  const manualFrom=maxManualNumber+1;
   const manualTo=manualFrom+Math.max(0,manualImages.length-1);
   const manualRequiredTracks=manualImages.length*manualTracksPerProject;
 
@@ -53,7 +83,7 @@ export function MaterialsManager(){
     }else setCleanup(null);
   }
 
-  useEffect(()=>{void refresh()},[workspace,channels.map(x=>x.id).join('|'),jobs.length,cleanupRoots.join('|')]);
+  useEffect(()=>{void refresh()},[workspace,channels.map(x=>x.id).join('|'),cleanupRoots.join('|')]);
 
   async function importImages(channel:{id:string;name:string}){
     if(!workspace){toast('Сначала выберите рабочую папку VYRON');return}
@@ -223,28 +253,7 @@ export function MaterialsManager(){
       <div className="materialsTableHead"><div><small>IMAGE + MUSIC LIBRARY</small><h3>Все каналы</h3></div><span>{channels.length} каналов</span></div>
       <div className="materialsTable">
         <div className="materialsRow materialsHeader"><span>Канал</span><span>Музыка</span><span>Изображения</span><span>Назначено</span><span>Использовано</span><span>Нужны изображения</span><span>READY_RENDER</span><span>Действия</span></div>
-        {channels.slice().sort((a,b)=>a.name.localeCompare(b.name,'ru')).map(ch=>{
-          const row=rows[ch.id];
-          const waiting=jobs.filter(j=>j.channelId===ch.id&&j.status==='NEED_IMAGE').length;
-          const ready=jobs.filter(j=>j.channelId===ch.id&&j.status==='READY_RENDER').length;
-          const available=row?.image.available||0;
-          const need=Math.max(0,waiting-available);
-          return <div className="materialsRow" key={ch.id}>
-            <span className="materialsChannel"><b>{ch.name}</b><small>{ch.id}</small></span>
-            <span><b>{n(row?.musicTotal)}</b><small>своб. {n(row?.musicFree)} • назнач. {n(row?.musicAssigned)}</small><small title={row?.musicLibraryPath||''}>{row?.musicLibraryPath||'Music Library не выбрана'}</small></span>
-            <span><b>{n(available)}</b><small>master: {n(row?.image.total)}</small></span>
-            <span><b>{n(row?.image.assigned)}</b><small>ASSIGNED</small></span>
-            <span><b>{n(row?.image.used)}</b><small>USED{row?.image.missing?' • missing '+n(row.image.missing):''}</small></span>
-            <span className={need>0?'materialsDanger':''}><b>{need>0?'🔴 '+need:'0'}</b><small>ждут cover: {waiting}</small></span>
-            <span><b>{ready}</b><small>готовы к ENDLUME</small></span>
-            <span className="materialsActions">
-              <button className="primary" disabled={!!busy} onClick={()=>void importImages(ch)}>+ ИЗОБРАЖЕНИЯ</button>
-              <button disabled={!!busy} onClick={()=>void chooseMusic(ch)}>{row?.musicLibraryPath?'МУЗЫКА':'+ МУЗЫКА'}</button>
-              {row?.musicLibraryPath&&<button disabled={!!busy} onClick={()=>void reindexMusic(ch.id)}>↻</button>}
-              {row?.image.rootPath&&<button onClick={()=>void productionManagerApi.openFolder(row.image.rootPath)}>ПАПКА</button>}
-            </span>
-          </div>
-        })}
+        {channels.slice().sort((a,b)=>a.name.localeCompare(b.name,'ru')).map(ch=><MaterialsChannelRow key={ch.id} channel={ch} row={rows[ch.id]} busy={busy} onImport={importImages} onMusic={chooseMusic} onReindex={reindexMusic}/>)}
       </div>
     </section>
 
