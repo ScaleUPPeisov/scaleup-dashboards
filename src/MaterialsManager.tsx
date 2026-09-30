@@ -1,21 +1,30 @@
 import React,{useEffect,useMemo,useState} from 'react';
 import {productionManagerApi,type GlobalProjectCleanupPreview,type MaterialsSummary} from './productionManagerApi';
-import {useProductionPrefs} from './productionPrefs';
+import {patchChannelProductionPrefs,useProductionPrefs} from './productionPrefs';
+import {createJobsCount} from './autopilotCore';
 import {useApp} from './store';
 import {notifySuccess} from './notificationCenter';
 
 function n(value:number|undefined){return (value||0).toLocaleString('ru-RU')}
 function gb(value:number|undefined){return ((value||0)/1024/1024/1024).toFixed(2)}
+function fileName(path:string){return path.split(/[\\/]/).filter(Boolean).pop()||path}
 
 export function MaterialsManager(){
   const channels=useApp(s=>s.channels);
   const jobs=useApp(s=>s.jobs);
+  const setJobs=useApp(s=>s.setJobs);
   const settings=useApp(s=>s.settings);
   const toast=useApp(s=>s.toast);
   const [prefs,patchPrefs]=useProductionPrefs();
   const [rows,setRows]=useState<Record<string,MaterialsSummary>>({});
   const [busy,setBusy]=useState('');
   const [cleanup,setCleanup]=useState<GlobalProjectCleanupPreview|null>(null);
+  const [manualOpen,setManualOpen]=useState(false);
+  const [manualChannelId,setManualChannelId]=useState('');
+  const [manualImages,setManualImages]=useState<string[]>([]);
+  const [manualMusic,setManualMusic]=useState<string[]>([]);
+  const [manualMusicRoot,setManualMusicRoot]=useState('');
+  const [manualBusy,setManualBusy]=useState('');
   const workspace=settings.workspace||'';
 
   const cleanupRoots=useMemo(()=>[
@@ -23,6 +32,14 @@ export function MaterialsManager(){
     prefs.productionRoot,
     ...Object.values(prefs.byChannel||{}).map(x=>x.productionRoot)
   ].map(x=>(x||'').trim()).filter((x,i,a)=>Boolean(x)&&a.indexOf(x)===i),[settings.workspace,prefs.productionRoot,prefs.byChannel]);
+
+  const manualChannel=channels.find(x=>x.id===manualChannelId);
+  const manualTracksPerProject=Math.max(1,Math.min(100,prefs.byChannel[manualChannelId]?.tracksPerProject||manualChannel?.minTracks||10));
+  const manualCanBuild=Boolean(manualChannel&&manualImages.length&&manualMusic.length>=manualTracksPerProject);
+  const manualExisting=manualChannelId?jobs.filter(j=>j.channelId===manualChannelId):[];
+  const manualFrom=Math.max(0,...manualExisting.map(j=>j.number))+1;
+  const manualTo=manualFrom+Math.max(0,manualImages.length-1);
+  const manualRequiredTracks=manualImages.length*manualTracksPerProject;
 
   async function refresh(){
     if(!workspace){setRows({});setCleanup(null);return}
@@ -78,6 +95,91 @@ export function MaterialsManager(){
     finally{setBusy('')}
   }
 
+  function openManualAssembly(){
+    const id=(prefs.selectedChannelId&&channels.some(x=>x.id===prefs.selectedChannelId)?prefs.selectedChannelId:channels[0]?.id)||'';
+    setManualChannelId(id);setManualImages([]);setManualMusic([]);setManualMusicRoot('');setManualOpen(true);
+  }
+
+  function changeManualChannel(id:string){
+    setManualChannelId(id);
+    setManualImages([]);
+    setManualMusic([]);
+    setManualMusicRoot('');
+  }
+
+  async function chooseManualImages(){
+    if(!manualChannel)return;
+    setManualBusy('images');
+    try{
+      let defaultPath='';try{defaultPath=await productionManagerApi.materialsDownloadsPath()}catch{}
+      const files=await productionManagerApi.chooseMaterialImages(defaultPath||undefined);
+      if(files.length)setManualImages(files);
+    }catch(e){toast('Не удалось выбрать изображения: '+String(e))}
+    finally{setManualBusy('')}
+  }
+
+  async function chooseManualMusicFiles(){
+    if(!manualChannel)return;
+    setManualBusy('music');
+    try{
+      const files=await productionManagerApi.chooseManualMusicFiles(manualMusicRoot||rows[manualChannel.id]?.musicLibraryPath||undefined);
+      if(files.length){setManualMusic(files);setManualMusicRoot('')}
+    }catch(e){toast('Не удалось выбрать музыку: '+String(e))}
+    finally{setManualBusy('')}
+  }
+
+  async function chooseManualMusicFolder(){
+    if(!manualChannel)return;
+    setManualBusy('music-folder');
+    try{
+      const root=await productionManagerApi.chooseManualMusicFolder(manualMusicRoot||rows[manualChannel.id]?.musicLibraryPath||undefined);
+      if(!root)return;
+      const files=await productionManagerApi.scanManualMusic(root);
+      if(!files.length){toast('В выбранной папке нет поддерживаемых аудиофайлов');return}
+      setManualMusicRoot(root);setManualMusic(files);
+    }catch(e){toast('Не удалось прочитать папку музыки: '+String(e))}
+    finally{setManualBusy('')}
+  }
+
+  async function buildManualProjects(){
+    if(!workspace||!manualChannel||!manualCanBuild)return;
+    const outputWorkspace=(prefs.byChannel[manualChannel.id]?.productionRoot||prefs.productionRoot||workspace||'').trim();
+    if(!outputWorkspace){toast('Сначала выберите Production workspace');return}
+    setManualBusy('build');
+    try{
+      const storage=await productionManagerApi.storageStatus(outputWorkspace);
+      if(!storage.exists||!storage.writable)throw new Error(storage.error||'Production workspace недоступен');
+      const currentJobs=useApp.getState().jobs;
+      const staged=createJobsCount(manualChannel,currentJobs,manualImages.length);
+      if(staged.length!==manualImages.length||staged.some(j=>j.channelId!==manualChannel.id))throw new Error('BLOCK: project.channelId != selectedChannelId');
+      const result=await productionManagerApi.manualBuild({
+        requestId:crypto.randomUUID(),
+        workspace,
+        outputWorkspace,
+        channelId:manualChannel.id,
+        channelName:manualChannel.name,
+        images:[...manualImages],
+        audioFiles:[...manualMusic],
+        tracksPerProject:manualTracksPerProject,
+        jobLinks:staged.map(j=>({jobId:j.id,number:j.number,channelId:j.channelId})),
+        recoveryUiContext:{page:'production',channelId:manualChannel.id,productionTab:'manager'}
+      });
+      const byJob=new Map(result.projects.map(x=>[x.jobId,x]));
+      if(byJob.size!==staged.length)throw new Error('MANUAL_BUILD_RESULT_MISMATCH');
+      const committed=staged.map(j=>{
+        const p=byJob.get(j.id);if(!p)throw new Error('MANUAL_PROJECT_MAPPING_MISSING:'+j.id);
+        return {...j,folder:p.folderPath,coverPath:p.coverPath,tracksCount:p.tracksCount,minTracks:manualTracksPerProject,status:'READY_RENDER' as const};
+      });
+      setJobs([...useApp.getState().jobs,...committed]);
+      patchChannelProductionPrefs(manualChannel.id,{lastBatchId:result.batch.batchId,selectedProjectIds:result.projects.map(x=>x.projectId)});
+      patchPrefs({selectedChannelId:manualChannel.id});
+      notifySuccess('Ручная сборка готова',manualChannel.name+' • '+committed.length+' проектов • VIDEO_'+String(staged[0]?.number||0).padStart(3,'0')+' — VIDEO_'+String(staged[staged.length-1]?.number||0).padStart(3,'0'),{operationId:'manual-assembly:'+result.batch.batchId});
+      setManualOpen(false);setManualImages([]);setManualMusic([]);setManualMusicRoot('');
+      await refresh();
+    }catch(e){toast('Ручная сборка не выполнена: '+String(e))}
+    finally{setManualBusy('')}
+  }
+
   async function cleanSafeProjects(){
     if(!cleanup?.eligibleProjects||!cleanupRoots.length)return;
     const message=[
@@ -114,7 +216,7 @@ export function MaterialsManager(){
   return <div className="materialsManager">
     <section className="panel materialsHero">
       <div><small>PRODUCTION → MATERIALS</small><h2>Материалы по каналам</h2><p>Изображения привязываются к channelId вручную при импорте. Имя файла не используется для определения канала.</p></div>
-      <div className="pmActions"><button disabled={!!busy} onClick={()=>void refresh()}>↻ ОБНОВИТЬ</button></div>
+      <div className="pmActions"><button className="primary" disabled={!!busy} onClick={openManualAssembly}>+ РУЧНАЯ СБОРКА</button><button disabled={!!busy} onClick={()=>void refresh()}>↻ ОБНОВИТЬ</button></div>
     </section>
 
     <section className="panel materialsTablePanel">
@@ -163,5 +265,49 @@ export function MaterialsManager(){
       </label>
       <div className="pmActions"><button className="danger" disabled={busy==='cleanup'||!cleanup?.eligibleProjects} onClick={()=>void cleanSafeProjects()}>{busy==='cleanup'?'ОЧИЩАЮ…':'ОЧИСТИТЬ '+(cleanup?.eligibleProjects||0)+' ПРОЕКТОВ'}</button></div>
     </section>
+
+    {manualOpen&&<div className="modalBackdrop" onMouseDown={()=>{if(!manualBusy)setManualOpen(false)}}>
+      <section className="confirmModal manualAssemblyModal" onMouseDown={e=>e.stopPropagation()}>
+        <small>PRODUCTION → MATERIALS • ДОПОЛНИТЕЛЬНЫЙ РЕЖИМ</small>
+        <h2>РУЧНАЯ СБОРКА ПРОЕКТОВ</h2>
+        <p>Image Library и Music Library не изменяются. Файлы используются только для выбранного channelId и копируются в обычный Production batch.</p>
+
+        <label className="manualField">Канал
+          <select value={manualChannelId} disabled={!!manualBusy} onChange={e=>changeManualChannel(e.target.value)}>
+            {channels.slice().sort((a,b)=>a.name.localeCompare(b.name,'ru')).map(ch=><option key={ch.id} value={ch.id}>{ch.name}</option>)}
+          </select>
+          <small>{manualChannel?.id||'—'}</small>
+        </label>
+
+        <div className="manualSection">
+          <div><small>ИЗОБРАЖЕНИЯ</small><b>{manualImages.length.toLocaleString('ru-RU')} выбрано</b></div>
+          <div className="pmActions"><button className="primary" disabled={!!manualBusy} onClick={()=>void chooseManualImages()}>ВЫБРАТЬ ИЗ DOWNLOADS</button>{manualImages.length>0&&<button disabled={!!manualBusy} onClick={()=>setManualImages([])}>ОЧИСТИТЬ</button>}</div>
+          {manualImages.length>0&&<div className="manualPreviewList">{manualImages.slice(0,8).map((x,i)=><span key={x}>{String(i+1).padStart(2,'0')} • {fileName(x)}</span>)}{manualImages.length>8&&<span>+ ещё {manualImages.length-8}</span>}</div>}
+        </div>
+
+        <div className="manualSection">
+          <div><small>МУЗЫКА</small><b>{manualMusic.length.toLocaleString('ru-RU')} файлов</b></div>
+          <div className="pmActions"><button className="primary" disabled={!!manualBusy} onClick={()=>void chooseManualMusicFiles()}>ВЫБРАТЬ С ДИСКА</button><button disabled={!!manualBusy} onClick={()=>void chooseManualMusicFolder()}>ВЫБРАТЬ ПАПКУ</button>{manualMusic.length>0&&<button disabled={!!manualBusy} onClick={()=>{setManualMusic([]);setManualMusicRoot('')}}>ОЧИСТИТЬ</button>}</div>
+          {manualMusicRoot&&<code className="pmPath">{manualMusicRoot}</code>}
+          {manualMusic.length>0&&<div className="manualPreviewList">{manualMusic.slice(0,6).map((x,i)=><span key={x}>{String(i+1).padStart(2,'0')} • {fileName(x)}</span>)}{manualMusic.length>6&&<span>+ ещё {manualMusic.length-6}</span>}</div>}
+        </div>
+
+        <div className="manualAssemblySummary">
+          <span><small>Канал</small><b>{manualChannel?.name||'—'}</b></span>
+          <span><small>Изображений</small><b>{manualImages.length}</b></span>
+          <span><small>Музыки</small><b>{manualMusic.length}</b></span>
+          <span><small>Треков на видео</small><b>{manualTracksPerProject}</b></span>
+          <span><small>Будет создано</small><b>{manualCanBuild?manualImages.length:0} проектов</b></span>
+          <span><small>Диапазон</small><b>{manualImages.length?'VIDEO_'+String(manualFrom).padStart(3,'0')+' — VIDEO_'+String(manualTo).padStart(3,'0'):'—'}</b></span>
+        </div>
+        {manualImages.length>0&&manualMusic.length<manualTracksPerProject&&<div className="pmShortage"><div><b>Недостаточно музыки</b><span>Нужно минимум {manualTracksPerProject} уникальных файлов для одного проекта.</span></div></div>}
+        {manualCanBuild&&manualMusic.length<manualRequiredTracks&&<small className="pmHint">Выбрано меньше {manualRequiredTracks} треков на весь batch — после исчерпания списка музыка будет использоваться повторно, но внутри одного VIDEO дублей не будет.</small>}
+
+        <div className="manualModalActions">
+          <button disabled={!!manualBusy} onClick={()=>setManualOpen(false)}>ОТМЕНА</button>
+          <button className="primary" disabled={!manualCanBuild||!!manualBusy} onClick={()=>void buildManualProjects()}>{manualBusy==='build'?'СОБИРАЮ…':'СОБРАТЬ '+(manualCanBuild?manualImages.length:0)+' ПРОЕКТОВ'}</button>
+        </div>
+      </section>
+    </div>}
   </div>
 }
