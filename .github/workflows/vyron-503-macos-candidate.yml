@@ -1,0 +1,254 @@
+name: VYRON 5.0.3 macOS Candidate
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-5.0.3-upload-counter
+    paths:
+      - '.github/workflows/vyron-503-macos-candidate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: vyron-503-macos-candidate
+  cancel-in-progress: true
+
+env:
+  VERSION: '5.0.3'
+  MAC_BASELINE: '5.0.2'
+  WINDOWS_STABLE: '5.0.1'
+  CANDIDATE_HEAD: '7a5faacae0d082c1d435f4ba74fb2a2eef42b81a'
+  REGRESSION_RUN_ID: '36651539140'
+  BUNDLE_ID: studio.channelflow.desktop
+  EXECUTABLE: channelflow
+  EXPECTED_SIGNING_CERT_SHA1: 2C8B0BD4EE1C000D29DD0667BF1068D4673692C9
+
+jobs:
+  macos-candidate:
+    name: VYRON 5.0.3 signed macOS ARM64 candidate
+    runs-on: macos-14
+    timeout-minutes: 120
+    env:
+      VYRON_TAURI_SIGNING_PRIVATE_KEY_RAW: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      VYRON_MACOS_SIGNING_P12_BASE64: ${{ secrets.VYRON_MACOS_SIGNING_P12_BASE64 }}
+      VYRON_MACOS_SIGNING_P12_PASSWORD: ${{ secrets.VYRON_MACOS_SIGNING_P12_PASSWORD }}
+      VYRON_MACOS_SIGNING_IDENTITY: ${{ secrets.VYRON_MACOS_SIGNING_IDENTITY }}
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 7a5faacae0d082c1d435f4ba74fb2a2eef42b81a
+          fetch-depth: 0
+
+      - name: Verify exact source and green regression
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_HEAD"
+          RUN_JSON="$(gh api "repos/ScaleUPPeisov/scaleup-dashboards/actions/runs/$REGRESSION_RUN_ID")"
+          test "$(printf '%s' "$RUN_JSON" | jq -r .conclusion)" = "success"
+          test "$(printf '%s' "$RUN_JSON" | jq -r .head_sha)" = "$CANDIDATE_HEAD"
+          echo 'VYRON_5_0_3_REGRESSION_PROVENANCE=PASS'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Freeze production feeds and verify 5.0.3 identity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json -o /tmp/mac-before.json
+          curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json -o /tmp/win-before.json
+          python3 - <<'PY'
+          import json
+          mac=json.load(open('/tmp/mac-before.json')); win=json.load(open('/tmp/win-before.json'))
+          assert mac['version']=='5.0.2',mac['version']
+          assert win['version']=='5.0.1',win['version']
+          print('PRODUCTION_BASELINE=mac:5.0.2 windows:5.0.1')
+          PY
+          node - <<'NODE'
+          const p=require('./package.json'),l=require('./package-lock.json'),t=require('./src-tauri/tauri.conf.json');
+          for(const v of [p.version,l.version,l.packages[''].version,t.version]) if(v!=='5.0.3') process.exit(2);
+          if(t.identifier!=='studio.channelflow.desktop'||t.bundle.createUpdaterArtifacts!==true) process.exit(3);
+          console.log('VYRON_5_0_3_IDENTITY=PASS');
+          NODE
+          grep -F 'version = "5.0.3"' src-tauri/Cargo.toml
+          grep -A1 -F 'name = "channelflow"' src-tauri/Cargo.lock | grep -F 'version = "5.0.3"'
+
+      - name: Refresh upload counter regression on macOS
+        run: >
+          npx vitest run
+          src/v503UploadCounterRestore.test.ts
+          src/youtubePublishSafety.test.ts
+          src/v400QuotaUploadLimitSeparation.test.ts
+          src/v501LocalCleanupZeroQuota.test.ts
+          src/v2115Rc7OauthUpdateContinuity.test.ts
+
+      - name: Import VYRON signing identity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          KEYCHAIN="$RUNNER_TEMP/vyron-503-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)$(uuidgen)"
+          P12="$RUNNER_TEMP/vyron-503-signing.p12"
+          printf '%s' "$VYRON_MACOS_SIGNING_P12_BASE64" | base64 --decode > "$P12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$P12" -k "$KEYCHAIN" -P "$VYRON_MACOS_SIGNING_P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security >/dev/null
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          LOGIN_KEYCHAIN="$(security default-keychain -d user | tr -d '"')"
+          security list-keychains -d user -s "$KEYCHAIN" "$LOGIN_KEYCHAIN"
+          ID_SHA1="$(security find-certificate -Z -c "$VYRON_MACOS_SIGNING_IDENTITY" "$KEYCHAIN" 2>/dev/null | awk '/SHA-1 hash:/{print $3; exit}')"
+          test "$(printf '%s' "$ID_SHA1" | tr '[:lower:]' '[:upper:]')" = "$EXPECTED_SIGNING_CERT_SHA1"
+          echo "VYRON_SIGNING_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+          echo "VYRON_SIGNING_KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> "$GITHUB_ENV"
+
+      - name: Canonicalize updater signing key
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import base64,os
+          raw=os.environ['VYRON_TAURI_SIGNING_PRIVATE_KEY_RAW'].strip().replace('\\r\\n','\n').replace('\\n','\n')
+          candidates=[raw]
+          for _ in range(5):
+              current=candidates[-1].strip()
+              try: decoded=base64.b64decode(current,validate=True).decode('utf-8').strip()
+              except Exception: break
+              if decoded in candidates: break
+              candidates.append(decoded)
+          plain=next((x for x in candidates if x.startswith('untrusted comment:')),None)
+          assert plain,'TAURI_SIGNING_PRIVATE_KEY_FORMAT_UNRECOGNIZED'
+          canonical=base64.b64encode((plain.rstrip()+'\n').encode('utf-8')).decode('ascii')
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as fp:
+              fp.write('TAURI_SIGNING_PRIVATE_KEY_CANONICAL='+canonical+'\n')
+          print('::add-mask::'+canonical)
+          print('TAURI_UPDATER_KEY_CANONICAL=READY')
+          PY
+
+      - name: Build and verify signed macOS 5.0.3
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          security unlock-keychain -p "$VYRON_SIGNING_KEYCHAIN_PASSWORD" "$VYRON_SIGNING_KEYCHAIN"
+          export APPLE_SIGNING_IDENTITY="$VYRON_MACOS_SIGNING_IDENTITY"
+          export TAURI_SIGNING_PRIVATE_KEY="$TAURI_SIGNING_PRIVATE_KEY_CANONICAL"
+          npx tauri build --target aarch64-apple-darwin --bundles app,dmg
+          mkdir -p candidate-macos
+          APP="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)"
+          DMG="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -name '*.dmg' -print -quit)"
+          UPDATER="$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name '*.app.tar.gz' -print -quit)"
+          SIG="$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name '*.app.tar.gz.sig' -print -quit)"
+          test -d "$APP"; test -s "$DMG"; test -s "$UPDATER"; test -s "$SIG"
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = "$BUNDLE_ID"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = "$VERSION"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -dv --verbose=4 "$APP" 2>&1 | tee candidate-macos/codesign-details.txt
+          ! grep -F 'Signature=adhoc' candidate-macos/codesign-details.txt
+          hdiutil verify "$DMG"
+          cp "$DMG" candidate-macos/VYRON-5.0.3-arm64.dmg
+          cp "$UPDATER" candidate-macos/VYRON.app.tar.gz
+          cp "$SIG" candidate-macos/VYRON.app.tar.gz.sig
+          shasum -a 256 candidate-macos/VYRON-5.0.3-arm64.dmg > candidate-macos/VYRON-5.0.3-arm64.dmg.sha256
+          shasum -a 256 candidate-macos/VYRON.app.tar.gz > candidate-macos/VYRON.app.tar.gz.sha256
+          echo "APP_PATH=$APP" >> "$GITHUB_ENV"
+
+      - name: Verify updater signature
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import base64,json
+          from pathlib import Path
+          conf=json.load(open('src-tauri/tauri.conf.json'))
+          def env(raw):
+            x=raw.strip()
+            try:
+              y=base64.b64decode(x,validate=True)
+              if y.startswith(b'untrusted comment:'): return y
+            except Exception: pass
+            return x+b'\n'
+          Path('/tmp/vyron.pub').write_bytes(env(str(conf['plugins']['updater']['pubkey']).encode()))
+          Path('/tmp/vyron.sig').write_bytes(env(Path('candidate-macos/VYRON.app.tar.gz.sig').read_bytes()))
+          PY
+          brew list minisign >/dev/null 2>&1 || brew install minisign >/dev/null
+          minisign -Vm candidate-macos/VYRON.app.tar.gz -x /tmp/vyron.sig -p /tmp/vyron.pub
+          echo 'MACOS_5_0_3_UPDATER_SIGNATURE=PASS'
+
+      - name: Physical macOS 5.0.2 to 5.0.3 continuity and idle API audit
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          HOME_FIXTURE="$RUNNER_TEMP/vyron-503-home"
+          APP_DATA="$HOME_FIXTURE/Library/Application Support/studio.channelflow.desktop"
+          DOC_STATE="$HOME_FIXTURE/Documents/VYRON/State"
+          VYRON_ROOT="$RUNNER_TEMP/ВАЙРОН"
+          mkdir -p "$APP_DATA" "$DOC_STATE" "$VYRON_ROOT"
+          python3 scripts/v501_candidate_fixture.py seed "$APP_DATA/state.json" "$VYRON_ROOT"
+          cp "$APP_DATA/state.json" "$DOC_STATE/app-state.json"
+          OLD_DMG="$RUNNER_TEMP/VYRON-5.0.2-arm64.dmg"
+          curl -fL --retry 3 'https://github.com/ScaleUPPeisov/vyron-releases/releases/download/v5.0.2/VYRON-5.0.2-arm64.dmg' -o "$OLD_DMG"
+          OLD_M="$RUNNER_TEMP/vyron-502-mount"; mkdir -p "$OLD_M"
+          hdiutil attach "$OLD_DMG" -nobrowse -readonly -mountpoint "$OLD_M"
+          OLD_APP="$OLD_M/VYRON.app"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$OLD_APP/Contents/Info.plist")" = "$MAC_BASELINE"
+          env -i HOME="$HOME_FIXTURE" USER="$USER" PATH='/usr/bin:/bin:/usr/sbin:/sbin' TMPDIR="$RUNNER_TEMP/" "$OLD_APP/Contents/MacOS/$EXECUTABLE" >candidate-macos/baseline-502.log 2>&1 &
+          P=$!; sleep 8; kill -0 "$P"; kill "$P" || true; wait "$P" || true
+          hdiutil detach "$OLD_M"
+          python3 scripts/v501_candidate_fixture.py verify "$APP_DATA/state.json" "$VYRON_ROOT"
+          API_AUDIT="$RUNNER_TEMP/vyron-api-audit.tsv"
+          rm -f "$API_AUDIT"
+          env -i HOME="$HOME_FIXTURE" USER="$USER" PATH='/usr/bin:/bin:/usr/sbin:/sbin' TMPDIR="$RUNNER_TEMP/" VYRON_API_AUDIT_PATH="$API_AUDIT" "$APP_PATH/Contents/MacOS/$EXECUTABLE" >candidate-macos/candidate-503-idle.log 2>&1 &
+          P=$!; sleep 30; kill -0 "$P"
+          if [ -s "$API_AUDIT" ]; then cat "$API_AUDIT"; exit 51; fi
+          kill "$P" || true; wait "$P" || true
+          python3 scripts/v501_candidate_fixture.py verify "$APP_DATA/state.json" "$VYRON_ROOT"
+          echo 'MACOS_5_0_2_TO_5_0_3_CONTINUITY=PASS'
+          echo 'YOUTUBE_DATA_API_IDLE_REQUESTS=0'
+
+      - name: Verify feeds unchanged and write candidate gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json -o /tmp/mac-after.json
+          curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json -o /tmp/win-after.json
+          cmp -s /tmp/mac-before.json /tmp/mac-after.json
+          cmp -s /tmp/win-before.json /tmp/win-after.json
+          {
+            echo "HEAD=$CANDIDATE_HEAD"
+            echo 'VERSION=5.0.3'
+            echo "REGRESSION_RUN_ID=$REGRESSION_RUN_ID"
+            echo 'UPLOAD_COUNTER_RESTORE=PASS'
+            echo 'MACOS_SIGNED_BUILD=PASS'
+            echo 'MACOS_UPDATER_SIGNATURE=PASS'
+            echo 'MACOS_5_0_2_TO_5_0_3_CONTINUITY=PASS'
+            echo 'FIXTURE_CHANNELS=32'
+            echo 'YOUTUBE_DATA_API_IDLE_REQUESTS=0'
+            echo 'PRODUCTION_FEED_MUTATED=NO'
+            echo 'VYRON_5_0_3_MAC_CANDIDATE_READY=YES'
+          } | tee candidate-macos/gate-summary.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-5.0.3-MACOS-SIGNED-CANDIDATE
+          path: candidate-macos/**
+          if-no-files-found: error
+          retention-days: 14
