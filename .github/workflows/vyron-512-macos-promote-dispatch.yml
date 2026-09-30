@@ -1,0 +1,21 @@
+name: VYRON 5.1.2 macOS Promote Dispatcher
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-5.1.2-manual-assembly
+    paths:
+      - '.github/workflows/vyron-512-macos-promote-dispatch.yml'
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch verified macOS promote
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run vyron-512-macos-fast-promote.yml --repo ScaleUPPeisov/scaleup-dashboards --ref hotfix/vyron-5.1.2-manual-assembly
