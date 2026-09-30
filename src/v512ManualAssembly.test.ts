@@ -9,10 +9,10 @@ const css=fs.readFileSync('src/production-manager.css','utf8');
 const pkg=JSON.parse(fs.readFileSync('package.json','utf8'));
 const tauri=JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json','utf8'));
 
-describe('VYRON 6.0.0 manual assembly additive contract',()=>{
-  it('keeps 6.0.0 identity and existing updater endpoints',()=>{
-    expect(pkg.version).toBe('6.0.0');
-    expect(tauri.version).toBe('6.0.0');
+describe('VYRON 6.0.1 manual assembly additive contract',()=>{
+  it('keeps 6.0.1 identity and existing updater endpoints',()=>{
+    expect(pkg.version).toBe('6.0.1');
+    expect(tauri.version).toBe('6.0.1');
     expect(tauri.identifier).toBe('studio.channelflow.desktop');
     expect(tauri.plugins.updater.endpoints).toEqual([
       'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json',
