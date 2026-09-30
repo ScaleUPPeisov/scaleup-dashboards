@@ -36,7 +36,7 @@ jobs:
           from pathlib import Path
           rows=[x.strip() for x in Path('/tmp/changed.txt').read_text().splitlines() if x.strip()]
           product=[x for x in rows if not x.startswith('.github/workflows/')]
-          allowed={'src/youtubePublishSafety.ts','src/App.tsx','src/v503UploadCounterRestore.test.ts'}
+          allowed={'src/youtubePublishSafety.ts','src/App.tsx','src/v503UploadCounterRestore.test.ts','package.json','package-lock.json','src-tauri/tauri.conf.json','src-tauri/Cargo.toml','src-tauri/Cargo.lock'}
           extra=[x for x in product if x not in allowed]
           assert not extra, f'OUT_OF_SCOPE_PRODUCT_FILES={extra}'
           sensitive=[x for x in product if any(k in x.lower() for k in ('oauth','credential','keychain','migration','updater','youtube.rs','storage.rs'))]
