@@ -4,7 +4,7 @@ import type {DistributionMode} from './productionManagerApi';
 export type ProductionTab='queue'|'materials'|'manager';
 export type CleanupPolicy='prompt'|'never'|'auto3d'|'afterUpload';
 export type ChannelProductionPrefs={projectCount:number;tracksPerProject:number;mode:DistributionMode;allowImageReuse:boolean;lastBatchId?:string;selectedProjectIds:string[];productionRoot?:string};
-export type ProductionPrefs={version:2;selectedChannelId?:string;tab:ProductionTab;byChannel:Record<string,ChannelProductionPrefs>;selectedJobIds:string[];productionRoot?:string;cleanupPolicy:CleanupPolicy};
+export type ProductionPrefs={version:2;selectedChannelId?:string;tab:ProductionTab;byChannel:Record<string,ChannelProductionPrefs>;selectedJobIds:string[];productionRoot?:string;cleanupPolicy?:CleanupPolicy};
 const KEY='vyron:production-manager:v2';
 const EVENT='vyron-production-prefs-changed';
 const defaults=():ProductionPrefs=>({version:2,tab:'queue',byChannel:{},selectedJobIds:[],cleanupPolicy:'prompt'});
