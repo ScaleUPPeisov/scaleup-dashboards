@@ -11,6 +11,7 @@ import {appendStatisticsSnapshot,normalizeStatisticsHistory} from './youtubeStat
 import {resolvedJobStatus} from './activeErrors';
 import {appendJobsToSummary,buildJobSummary,emptyJobSummary,replaceJobsInSummary,type JobSummary} from './jobSummary';
 import {buildJobRuntimeIndex,patchJobRuntimeIndex,type JobRuntimeIndex} from './jobRuntimeIndex';
+import {beginNavigationPerf,recordPerfMetric} from './performanceRuntime';
 
 export const DEFAULT_SETTINGS:Settings={
   workspace:'',renderRootPath:'',endlumePath:'',youtubeApiKey:'',autoCheckUpdates:true,reduceMotion:false,fpsMonitor:false,interfaceDensity:'compact',
@@ -69,11 +70,11 @@ async function persistDirtyStoreState(){
       const state=useApp.getState();
       const snapshotStarted=performance.now();
       const payload=persistedDomains(state,domains);
-      performance.measure?.('vyron:persist:snapshot',{start:snapshotStarted,end:performance.now()});
+      recordPerfMetric('persistSnapshot',performance.now()-snapshotStarted);
       const ipcStarted=performance.now();
       try{
         const result=await api.saveStateDomains(payload);
-        performance.measure?.('vyron:persist:ipc',{start:ipcStarted,end:performance.now()});
+        recordPerfMetric('persistIpc',performance.now()-ipcStarted);
         if(result?.securityWarning){const h=humanizeError(result.securityWarning,'storage');notifyWarning(h.title,h.message,{operationId:'state-autosave-warning'})}
       }catch(e){
         domains.forEach(x=>dirtyDomains.add(x));
@@ -140,7 +141,7 @@ function remapStatisticsHistory(history:ChannelStatisticsHistory,aliases:Map<str
 export const useApp=create<Store>((set,get)=>({
   ...EMPTY_STATE,page:'dashboard',booted:false,jobSummary:emptyJobSummary(),jobIndex:buildJobRuntimeIndex([]),
   hydrate:s=>{const dedup=dedupeHydratedChannels((s.channels||[]).filter(Boolean)),remap=(id:string)=>dedup.aliases.get(id)||id,jobs=(s.jobs||[]).filter(Boolean).map(j=>normalizeJob({...j,channelId:remap(j.channelId)})),activityJournal=normalizeActivityJournal((s as any).activityJournal).map(e=>e.channelId&&dedup.aliases.has(e.channelId)?{...e,channelId:remap(e.channelId)}:e),rawHistory:Array<UploadHistoryRecord>=Array.isArray((s as any).uploadHistory)?(s as any).uploadHistory.map((x:UploadHistoryRecord)=>dedup.aliases.has(x.channelId)?{...x,channelId:remap(x.channelId)}:x):[],uploadHistory=migrateUploadHistoryFingerprintProvenance(rawHistory,activityJournal,jobs),provenanceChanged=uploadHistory.some((x,i)=>x.fingerprintProofSource!==rawHistory[i]?.fingerprintProofSource||x.proofSchemaVersion!==rawHistory[i]?.proofSchemaVersion),statisticsHistory=remapStatisticsHistory(normalizeStatisticsHistory((s as any).statisticsHistory),dedup.aliases),competitors=(s.competitors||[]).map(x=>dedup.aliases.has(x.channelId)?{...x,channelId:remap(x.channelId)}:x);set({...EMPTY_STATE,...s,version:10,channels:dedup.channels,jobs,jobSummary:buildJobSummary(jobs,1),jobIndex:buildJobRuntimeIndex(jobs),competitors,settings:{...DEFAULT_SETTINGS,...s.settings,youtubeIntelligenceAutoRefresh:false},logs:s.logs||[],uploadHistory,activityJournal,statisticsHistory,fingerprintCache:(s as any).fingerprintCache||{},projectLifecycle:(s as any).projectLifecycle||{},booted:true});if(provenanceChanged||dedup.changed)scheduleSave('all')},
-  setPage:page=>set({page}),
+  setPage:page=>{beginNavigationPerf();set({page})},
   persist:persistStoreState,
   addChannel:p=>{
     const id=crypto.randomUUID();const name=(p.name||'Новый канал').trim();const defaultTracks=get().settings.tracksPerVideo||10;
@@ -158,6 +159,7 @@ export const useApp=create<Store>((set,get)=>({
       const prev=patchMap.get(entry.id);
       patchMap.set(entry.id,prev?{...prev,...entry.patch}:entry.patch);
     }
+    const batchStarted=performance.now();
     set(s=>{
       const replacements:Array<{before:VideoJob;after:VideoJob}>=[];
       const jobs=s.jobs.map(j=>{const patch=patchMap.get(j.id);if(!patch)return j;const after=normalizeJob({...j,...patch});replacements.push({before:j,after});return after});
@@ -166,6 +168,7 @@ export const useApp=create<Store>((set,get)=>({
       const jobIndex=structural?buildJobRuntimeIndex(jobs):patchJobRuntimeIndex(s.jobIndex,replacements,jobs);
       return {jobs,jobSummary,jobIndex};
     });
+    recordPerfMetric('storeBatch',performance.now()-batchStarted);
     scheduleSave('jobs');
   },
   addJobs:jobs=>{const normalized=jobs.map(normalizeJob);set(s=>{const next=[...s.jobs,...normalized];return{jobs:next,jobSummary:appendJobsToSummary(s.jobSummary,normalized),jobIndex:buildJobRuntimeIndex(next)}});scheduleSave('jobs')},
