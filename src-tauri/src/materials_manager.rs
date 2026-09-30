@@ -530,13 +530,13 @@ mod tests {
         let asset = available_images(w.to_str().unwrap(), "neon").unwrap().remove(0);
         mark_assigned(w.to_str().unwrap(), "neon", &[ImageAssignment {
             asset_id: asset.asset_id.clone(),
-            project_id: "001".into(),
+            project_id: "VIDEO_001".into(),
             job_id: Some("job-1".into()),
         }]).unwrap();
         assert_eq!(image_summary(w.to_str().unwrap(), "neon").unwrap().assigned, 1);
         mark_rendered_used(w.to_str().unwrap(), "neon", &[RenderedImageUse {
             asset_id: asset.asset_id,
-            project_id: "001".into(),
+            project_id: "VIDEO_001".into(),
             job_id: Some("job-1".into()),
             completed_at: "2026-09-30T00:00:00Z".into(),
         }]).unwrap();
@@ -544,6 +544,30 @@ mod tests {
         assert_eq!(summary.assigned, 0);
         assert_eq!(summary.used, 1);
         assert_eq!(summary.available, 0);
+        let _ = fs::remove_dir_all(w);
+    }
+
+    #[test]
+    fn wrong_channel_assignment_is_blocked() {
+        let w = temp_workspace("wrong-channel");
+        let src = w.join("sample.jpg");
+        write_image(&src, b"channel-owned-image");
+        import_images(w.to_str().unwrap(), "neon", "Neon Drive", vec![src.to_string_lossy().into_owned()]).unwrap();
+        let asset = available_images(w.to_str().unwrap(), "neon").unwrap().remove(0);
+        let foreign = ImageLibrary {
+            schema_version: SCHEMA_VERSION,
+            channel_id: "aegean".into(),
+            channel_name: "Aegean Afterglow".into(),
+            updated_at: Utc::now().to_rfc3339(),
+            assets: vec![asset.clone()],
+        };
+        atomic_json(&library_path(w.to_str().unwrap(), "aegean").unwrap(), &foreign).unwrap();
+        let err = mark_assigned(w.to_str().unwrap(), "aegean", &[ImageAssignment {
+            asset_id: asset.asset_id,
+            project_id: "VIDEO_001".into(),
+            job_id: Some("job-aegean".into()),
+        }]).unwrap_err();
+        assert!(err.contains("cross-channel"));
         let _ = fs::remove_dir_all(w);
     }
 }
