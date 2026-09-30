@@ -102,6 +102,7 @@ export const api={
   studioDraftsClear:()=>invoke<{ok:boolean}>('studio_drafts_clear'),
   loadState:()=>invoke<AppState>('load_state'),
   saveState:(state:AppState)=>invoke<StateSaveResult>('save_state',{state}),
+  saveStateDomains:(domains:Partial<AppState>)=>invoke<StateSaveResult>('save_state_domains',{domains}),
   securityKeychainDiagnostics:()=>invoke<KeychainDiagnostic>('security_keychain_diagnostics'),
   securityKeychainRuntimeDiagnostics:()=>invoke<KeychainRuntimeDiagnostic>('security_keychain_runtime_diagnostics'),
   securityOauthInventory:()=>invoke<OAuthLocalInventory>('security_oauth_inventory'),
