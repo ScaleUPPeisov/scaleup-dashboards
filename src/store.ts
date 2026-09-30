@@ -86,7 +86,7 @@ async function persistDirtyStoreState(){
   try{await run}finally{if(persistInFlight===run)persistInFlight=null}
 }
 function scheduleSave(...domains:(PersistDomain|'all')[]){
-  const targets=domains.length?domains:['all'];
+  const targets:(PersistDomain|'all')[]=domains.length?domains:['all'];
   for(const domain of targets){
     if(domain==='all')ALL_PERSIST_DOMAINS.forEach(x=>dirtyDomains.add(x));
     else dirtyDomains.add(domain);
