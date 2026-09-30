@@ -208,27 +208,85 @@ function Settings({license,setLicense}:{license:LicenseStatus;setLicense:(x:Lice
 function Toggle({label,text,value,onChange}:{label:string;text:string;value:boolean;onChange:(v:boolean)=>void}){return <button className="toggleRow" onClick={()=>onChange(!value)}><div><b>{label}</b><small>{text}</small></div><i className={value?'on':''}><em/></i></button>}
 function Empty({title,text,action,onClick}:{title:string;text:string;action?:string;onClick?:()=>void}){return <div className="empty"><i>◇</i><h3>{title}</h3><p>{text}</p>{action&&<button className="primary" onClick={onClick}>{action}</button>}</div>}
 function FpsMonitor(){
-  const [metrics,setMetrics]=useState({fps:0,p50:0,p95:0,p99:0,worst:0,dropped:0,long50:0,long100:0});
-  const ref=useRef({last:performance.now(),frames:[] as number[],raf:0,long50:0,long100:0,lastPublish:0});
+  type FrameMetric={fps:number;p50:number;p95:number;p99:number;worst:number;dropped:number};
+  const zero:FrameMetric={fps:0,p50:0,p95:0,p99:0,worst:0,dropped:0};
+  const [metrics,setMetrics]=useState({
+    frame:zero,scroll:zero,inputP95:0,inputLast:0,longSupported:false,long50:0,long100:0,
+    reactP95:0,storeP95:0,persistP95:0,fsP95:0,navP95:0,domRows:0,totalRows:0
+  });
+  const ref=useRef({
+    last:performance.now(),frames:[] as number[],scrollFrames:[] as number[],input:[] as number[],raf:0,
+    long50:0,long100:0,lastPublish:0,lastScrollAt:0,longSupported:false
+  });
   useEffect(()=>{
+    const r=ref.current;
     let observer:PerformanceObserver|undefined;
-    try{observer=new PerformanceObserver(list=>{for(const entry of list.getEntries()){if(entry.duration>50)ref.current.long50++;if(entry.duration>100)ref.current.long100++}});observer.observe({entryTypes:['longtask']})}catch{}
-    const pct=(rows:number[],p:number)=>rows.length?rows[Math.min(rows.length-1,Math.floor((rows.length-1)*p))]:0;
+    const supported=Boolean((PerformanceObserver as any).supportedEntryTypes?.includes?.('longtask'));
+    r.longSupported=supported;
+    if(supported){
+      try{
+        observer=new PerformanceObserver(list=>{for(const entry of list.getEntries()){if(entry.duration>50)r.long50++;if(entry.duration>100)r.long100++}});
+        observer.observe({entryTypes:['longtask']});
+      }catch{r.longSupported=false}
+    }
+    const pct=(rows:number[],p:number)=>{if(!rows.length)return 0;const sorted=[...rows].sort((a,b)=>a-b);return sorted[Math.min(sorted.length-1,Math.floor((sorted.length-1)*p))]||0};
+    const calc=(rows:number[]):FrameMetric=>{
+      if(!rows.length)return zero;
+      const avg=rows.reduce((a,b)=>a+b,0)/rows.length;
+      return {fps:Math.round(1000/avg),p50:pct(rows,.5),p95:pct(rows,.95),p99:pct(rows,.99),worst:Math.max(...rows),dropped:rows.filter(x=>x>20).length/rows.length*100};
+    };
+    const onScroll=()=>{r.lastScrollAt=performance.now()};
+    const onPointer=(event:PointerEvent)=>{
+      if(event.button!==0)return;
+      const started=performance.now();
+      requestAnimationFrame(()=>{
+        const latency=performance.now()-started;
+        r.input.push(latency);if(r.input.length>120)r.input.shift();
+      });
+    };
+    document.addEventListener('scroll',onScroll,{capture:true,passive:true});
+    document.addEventListener('pointerdown',onPointer,{capture:true,passive:true});
     const loop=(t:number)=>{
-      const r=ref.current,delta=t-r.last;r.last=t;
-      if(delta>0&&delta<1000){r.frames.push(delta);if(r.frames.length>360)r.frames.shift()}
+      const delta=t-r.last;r.last=t;
+      if(delta>0&&delta<1000){
+        r.frames.push(delta);if(r.frames.length>480)r.frames.shift();
+        if(t-r.lastScrollAt<180){r.scrollFrames.push(delta);if(r.scrollFrames.length>360)r.scrollFrames.shift()}
+      }
       if(t-r.lastPublish>=700&&r.frames.length){
-        const rows=[...r.frames].sort((a,b)=>a-b),avg=r.frames.reduce((a,b)=>a+b,0)/r.frames.length;
-        setMetrics({fps:Math.round(1000/avg),p50:pct(rows,.5),p95:pct(rows,.95),p99:pct(rows,.99),worst:rows[rows.length-1],dropped:r.frames.filter(x=>x>20).length/r.frames.length*100,long50:r.long50,long100:r.long100});
+        const react=perfMetricStats('reactCommit'),store=perfMetricStats('storeBatch'),ps=perfMetricStats('persistSnapshot'),pi=perfMetricStats('persistIpc'),fs=perfMetricStats('filesystemScan'),nav=perfMetricStats('navigation');
+        const viewport=document.querySelector('[data-virtualized-list="true"]') as HTMLElement|null;
+        setMetrics({
+          frame:calc(r.frames),scroll:calc(r.scrollFrames),inputP95:pct(r.input,.95),inputLast:r.input[r.input.length-1]||0,
+          longSupported:r.longSupported,long50:r.long50,long100:r.long100,
+          reactP95:react.p95,storeP95:store.p95,persistP95:ps.p95+pi.p95,fsP95:fs.p95,navP95:nav.p95,
+          domRows:viewport?Number(viewport.dataset.mountedRows||0):document.querySelectorAll('[data-production-job-row]').length,
+          totalRows:viewport?Number(viewport.dataset.totalRows||0):0
+        });
         r.lastPublish=t;
       }
       r.raf=requestAnimationFrame(loop);
     };
-    ref.current.raf=requestAnimationFrame(loop);
-    return()=>{cancelAnimationFrame(ref.current.raf);observer?.disconnect()};
+    r.raf=requestAnimationFrame(loop);
+    return()=>{
+      cancelAnimationFrame(r.raf);observer?.disconnect();
+      document.removeEventListener('scroll',onScroll,true);
+      document.removeEventListener('pointerdown',onPointer,true);
+    };
   },[]);
-  const bad=metrics.p95>30||metrics.long50>0;
-  return <div className={`fps fpsDetailed ${bad?'bad':''}`}><b>{metrics.fps||'…'} FPS</b><span>p50 {metrics.p50.toFixed(1)} ms</span><span>p95 {metrics.p95.toFixed(1)} ms</span><span>p99 {metrics.p99.toFixed(1)} ms</span><span>worst {metrics.worst.toFixed(1)} ms</span><span>dropped {metrics.dropped.toFixed(1)}%</span><span>long &gt;50 {metrics.long50} • &gt;100 {metrics.long100}</span></div>
+  const f=metrics.frame,s=metrics.scroll;
+  const bad=(s.p95||f.p95)>30||(s.worst||f.worst)>80||(s.dropped||f.dropped)>2;
+  return <div className={`fps fpsDetailed fpsV2 ${bad?'bad':''}`}>
+    <b>{f.fps||'…'} FPS • FRAME PACING V2</b>
+    <span>frame p50 {f.p50.toFixed(1)} • p95 {f.p95.toFixed(1)} • p99 {f.p99.toFixed(1)} • max {f.worst.toFixed(1)} ms</span>
+    <span>frame dropped {f.dropped.toFixed(1)}%</span>
+    <span>SCROLL {s.fps||'…'} FPS • p95 {s.p95.toFixed(1)} • p99 {s.p99.toFixed(1)} • max {s.worst.toFixed(1)} • drop {s.dropped.toFixed(1)}%</span>
+    <span>input p95 {metrics.inputP95.toFixed(1)} ms • last {metrics.inputLast.toFixed(1)} ms</span>
+    <span>navigation p95 {metrics.navP95.toFixed(1)} ms • React commit p95 {metrics.reactP95.toFixed(1)} ms</span>
+    <span>store batch p95 {metrics.storeP95.toFixed(1)} ms • persist p95 {metrics.persistP95.toFixed(1)} ms</span>
+    <span>filesystem p95 {metrics.fsP95.toFixed(1)} ms</span>
+    <span>DOM rows {metrics.domRows}{metrics.totalRows?' / '+metrics.totalRows:''}</span>
+    <span>{metrics.longSupported?`long >50 ${metrics.long50} • >100 ${metrics.long100}`:'LongTask API: unsupported'}</span>
+  </div>
 }
 function formatUpdaterBytes(n:number){if(!n)return '—';const mb=n/1024/1024;return `${mb.toFixed(mb>=100?0:1)} MB`}
 function UpdaterSidebar(){
