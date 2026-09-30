@@ -1,0 +1,173 @@
+name: VYRON 6.0.0 Zero-Jank Windows Candidate
+
+on:
+  push:
+    branches:
+      - candidate/vyron-6.0.0-zero-jank
+    paths:
+      - '.github/workflows/vyron-600-windows-candidate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: vyron-600-windows-candidate
+  cancel-in-progress: true
+
+env:
+  VERSION: '6.0.0'
+  PRODUCT_SOURCE_SHA: '0f16fac6f4a50d083dad37a44684c8accbacf4ce'
+  BUNDLE_ID: studio.channelflow.desktop
+
+jobs:
+  windows-candidate:
+    runs-on: windows-latest
+    timeout-minutes: 110
+    env:
+      VYRON_TAURI_SIGNING_PRIVATE_KEY_RAW: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.PRODUCT_SOURCE_SHA }}
+          fetch-depth: 0
+
+      - name: Verify exact source and production baseline
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if((git rev-parse HEAD).Trim() -ne $env:PRODUCT_SOURCE_SHA){throw 'SOURCE_SHA_MISMATCH'}
+          Invoke-WebRequest 'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json' -OutFile "$env:RUNNER_TEMP\mac.json"
+          Invoke-WebRequest 'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json' -OutFile "$env:RUNNER_TEMP\win.json"
+          $mac=Get-Content "$env:RUNNER_TEMP\mac.json" -Raw | ConvertFrom-Json
+          $win=Get-Content "$env:RUNNER_TEMP\win.json" -Raw | ConvertFrom-Json
+          if($mac.version -ne '5.1.2'){throw "MAC_BASELINE_UNEXPECTED=$($mac.version)"}
+          if($win.version -ne '5.1.2'){throw "WINDOWS_BASELINE_UNEXPECTED=$($win.version)"}
+          node -e "const p=require('./package.json'),l=require('./package-lock.json'),t=require('./src-tauri/tauri.conf.json'); for(const v of [p.version,l.version,l.packages[''].version,t.version]) if(v!=='6.0.0') process.exit(2); if(t.identifier!=='studio.channelflow.desktop'||t.bundle.createUpdaterArtifacts!==true) process.exit(3)"
+          if($LASTEXITCODE -ne 0){throw "IDENTITY_FAILED=$LASTEXITCODE"}
+          Write-Host 'WINDOWS_600_SOURCE_BASELINE=PASS'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Build and protected regressions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          npm run build
+          if($LASTEXITCODE -ne 0){throw 'FRONTEND_BUILD_FAILED'}
+          npx vitest run src/v510MaterialsManager.test.ts src/v512ManualAssembly.test.ts src/v503UploadCounterRestore.test.ts src/youtubePublishSafety.test.ts src/v400QuotaUploadLimitSeparation.test.ts src/v501LocalCleanupZeroQuota.test.ts src/v2115Rc7OauthUpdateContinuity.test.ts src/v500Performance.test.ts
+          if($LASTEXITCODE -ne 0){throw 'PROTECTED_REGRESSION_FAILED'}
+
+      - name: Canonicalize updater signing key
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          import base64,os
+          raw=os.environ['VYRON_TAURI_SIGNING_PRIVATE_KEY_RAW'].strip().replace('\\r\\n','\n').replace('\\n','\n')
+          candidates=[raw]
+          for _ in range(5):
+              current=candidates[-1].strip()
+              try: decoded=base64.b64decode(current,validate=True).decode('utf-8').strip()
+              except Exception: break
+              if decoded in candidates: break
+              candidates.append(decoded)
+          plain=next((x for x in candidates if x.startswith('untrusted comment:')),None)
+          assert plain,'TAURI_SIGNING_PRIVATE_KEY_FORMAT_UNRECOGNIZED'
+          canonical=base64.b64encode((plain.rstrip()+'\n').encode()).decode()
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as fp: fp.write('TAURI_SIGNING_PRIVATE_KEY='+canonical+'\n')
+          print('::add-mask::'+canonical)
+          PY
+
+      - name: Build Windows x64 signed candidate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          npx tauri build --target x86_64-pc-windows-msvc --bundles nsis --config src-tauri/tauri.windows.conf.json
+          if($LASTEXITCODE -ne 0){throw 'WINDOWS_BUILD_FAILED'}
+          $installer=Get-ChildItem src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis -Filter '*-setup.exe' | Select-Object -First 1
+          if(-not $installer){throw 'NSIS_MISSING'}
+          $sig=Get-Item ($installer.FullName + '.sig') -ErrorAction Stop
+          New-Item -ItemType Directory -Force -Path candidate-windows | Out-Null
+          Copy-Item $installer.FullName candidate-windows/VYRON_6.0.0_x64-setup.exe
+          Copy-Item $sig.FullName candidate-windows/VYRON_6.0.0_x64-setup.exe.sig
+          (Get-FileHash candidate-windows/VYRON_6.0.0_x64-setup.exe -Algorithm SHA256).Hash.ToLowerInvariant() | Set-Content candidate-windows/VYRON_6.0.0_x64-setup.exe.sha256
+          Write-Host 'WINDOWS_600_BUILD=PASS'
+
+      - name: Verify Windows updater signature
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $verifyRoot=Join-Path $env:RUNNER_TEMP 'vyron-signature-verify'
+          New-Item -ItemType Directory -Force -Path (Join-Path $verifyRoot 'src') | Out-Null
+          @'
+          [package]
+          name = "vyron-signature-verify"
+          version = "0.0.0"
+          edition = "2021"
+          [dependencies]
+          base64 = "0.22"
+          minisign-verify = "=0.2.5"
+          '@ | Set-Content -Encoding utf8 (Join-Path $verifyRoot 'Cargo.toml')
+          @'
+          use base64::{engine::general_purpose::STANDARD, Engine as _};
+          use minisign_verify::{PublicKey, Signature};
+          use std::{env,fs};
+          fn decode(encoded:&str)->String{String::from_utf8(STANDARD.decode(encoded.trim()).unwrap()).unwrap()}
+          fn main(){
+            let a:Vec<String>=env::args().collect(); assert_eq!(a.len(),4);
+            let artifact=fs::read(&a[1]).unwrap();
+            let sig=decode(&fs::read_to_string(&a[2]).unwrap());
+            let conf=fs::read_to_string(&a[3]).unwrap();
+            let marker="\"pubkey\": \""; let start=conf.find(marker).unwrap()+marker.len();
+            let tail=&conf[start..]; let end=tail.find('\"').unwrap();
+            let pk=PublicKey::decode(&decode(&tail[..end])).unwrap();
+            let sg=Signature::decode(&sig).unwrap();
+            pk.verify(&artifact,&sg,true).unwrap();
+            println!("WINDOWS_UPDATER_SIGNATURE=PASS");
+          }
+          '@ | Set-Content -Encoding utf8 (Join-Path $verifyRoot 'src/main.rs')
+          cargo run --quiet --release --manifest-path (Join-Path $verifyRoot 'Cargo.toml') -- candidate-windows/VYRON_6.0.0_x64-setup.exe candidate-windows/VYRON_6.0.0_x64-setup.exe.sig src-tauri/tauri.conf.json
+          if($LASTEXITCODE -ne 0){throw 'WINDOWS_SIGNATURE_VERIFY_FAILED'}
+
+      - name: Verify feeds unchanged and write gate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          Invoke-WebRequest 'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json' -OutFile "$env:RUNNER_TEMP\mac-after.json"
+          Invoke-WebRequest 'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json' -OutFile "$env:RUNNER_TEMP\win-after.json"
+          if((Get-FileHash "$env:RUNNER_TEMP\mac.json").Hash -ne (Get-FileHash "$env:RUNNER_TEMP\mac-after.json").Hash){throw 'MAC_FEED_MUTATED'}
+          if((Get-FileHash "$env:RUNNER_TEMP\win.json").Hash -ne (Get-FileHash "$env:RUNNER_TEMP\win-after.json").Hash){throw 'WINDOWS_FEED_MUTATED'}
+          @(
+            "HEAD=$env:PRODUCT_SOURCE_SHA",
+            'VERSION=6.0.0',
+            'FRONTEND_BUILD=PASS',
+            'PROTECTED_REGRESSIONS=PASS',
+            'WINDOWS_X64_BUILD=PASS',
+            'WINDOWS_UPDATER_SIGNATURE=PASS',
+            'PRODUCTION_FEEDS_MUTATED=NO',
+            'VYRON_6_0_0_WINDOWS_CANDIDATE_READY=YES'
+          ) | Set-Content candidate-windows/gate-summary.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-6.0.0-ZERO-JANK-WINDOWS-CANDIDATE
+          path: candidate-windows/**
+          if-no-files-found: error
+          retention-days: 14
