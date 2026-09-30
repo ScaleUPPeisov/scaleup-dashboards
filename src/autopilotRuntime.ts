@@ -6,6 +6,7 @@ import {useApp} from './store';
 import type {AutopilotSummary,Channel,Settings,VideoJob} from './types';
 import {humanizeError} from './errorCenter';
 import {inventorySnapshot} from './renderInventoryRuntime';
+import {recordPerfMetric} from './performanceRuntime';
 
 let running=false;
 let lastEndlumeLaunch=0;
@@ -99,7 +100,9 @@ async function processChannel(channel:Channel,summary:AutopilotSummary,aiBudget:
     }
   }
 
+  const inboxStarted=performance.now();
   snapshot.inbox=await api.scanChannelInbox(snapshot.workspace,channel.name);
+  recordPerfMetric('filesystemScan',performance.now()-inboxStarted);
 
   if(settings.autoAssignMusic&&snapshot.inbox.music.length){
     const alloc=musicAllocation(activeJobs(snapshot),snapshot.inbox.music,channel.minTracks);
@@ -130,7 +133,9 @@ async function processChannel(channel:Channel,summary:AutopilotSummary,aiBudget:
   for(const job of activeJobs(snapshot)){
     try{
       if(job.folder){
+        const refreshStarted=performance.now();
         const refreshed=await api.refreshJob(job.folder,channel.minTracks);
+        recordPerfMetric('filesystemScan',performance.now()-refreshStarted);
         applyLocal(snapshot,job.id,{...refreshed,lastAutomationAt:new Date().toISOString()},patches);
       }
       let current=snapshot.jobById.get(job.id)!;
