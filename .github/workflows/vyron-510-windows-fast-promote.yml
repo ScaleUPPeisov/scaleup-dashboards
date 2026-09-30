@@ -1,6 +1,11 @@
 name: VYRON 5.1.0 Windows Fast Promote
 
 on:
+  push:
+    branches:
+      - feature/vyron-5.1.0-materials-manager
+    paths:
+      - '.github/workflows/vyron-510-windows-fast-promote.yml'
   workflow_dispatch:
 
 permissions:
