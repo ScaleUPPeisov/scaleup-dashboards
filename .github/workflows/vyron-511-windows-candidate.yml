@@ -231,7 +231,7 @@ jobs:
           if($saved.settings.localProfileAvatarPath -ne 'D:\VYRON\avatar.webp'){throw 'OWNER_AVATAR_CHANGED'}
           if($saved.fingerprintCache.'fixture-fp'.size -ne 123){throw 'FINGERPRINT_CHANGED'}
           if($saved.projectLifecycle.'fixture-project'.status -ne 'RENDERED'){throw 'PROJECT_LIFECYCLE_CHANGED'}
-          Write-Host 'WINDOWS_5_0_3_TO_5_1_1_CONTINUITY=PASS'
+          Write-Host 'WINDOWS_5_1_0_TO_5_1_1_CONTINUITY=PASS'
 
       - name: Verify production feeds unchanged
         shell: pwsh
@@ -260,7 +260,7 @@ jobs:
             'V503_UPLOAD_COUNTER_REGRESSION=PASS',
             'WINDOWS_X64_BUILD=PASS',
             'WINDOWS_UPDATER_SIGNATURE=PASS',
-            'WINDOWS_5_0_3_TO_5_1_1_CONTINUITY=PASS',
+            'WINDOWS_5_1_0_TO_5_1_1_CONTINUITY=PASS',
             'PRODUCTION_FEEDS_MUTATED=NO',
             'VYRON_5_1_1_WINDOWS_CANDIDATE_READY=YES'
           ) | Set-Content candidate-windows/gate-summary.txt
