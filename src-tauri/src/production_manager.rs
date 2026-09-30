@@ -1848,10 +1848,11 @@ fn sync_material_image_usage(m: &BatchManifest, status: &BatchStatus) -> Result<
         return Ok(());
     }
     let completed_at = status.updated_at.clone();
+    let batch_root = PathBuf::from(&m.root_path);
     let used = m.projects.iter().filter_map(|p| {
         let asset_id = p.image_asset_id.as_ref()?;
         let row = status.projects.iter().find(|x| x.project_id == p.project_id)?;
-        if row.render_status != "Completed" { return None; }
+        if validate_cleanup_candidate(&batch_root, p, Some(row)).is_err() { return None; }
         Some(materials_manager::RenderedImageUse {
             asset_id: asset_id.clone(),
             project_id: p.video_number.map(|n| format!("VIDEO_{:03}", n)).unwrap_or_else(|| format!("{}:{}", m.batch_id, p.project_id)),
@@ -2201,6 +2202,19 @@ fn cleanup_completed_assets_selected(
 fn cleanup_completed_assets(m: &BatchManifest, st: &BatchStatus) -> Result<CleanupResult, String> {
     cleanup_completed_assets_selected(m, st, None)
 }
+#[tauri::command]
+pub fn preview_completed_production_projects(manifest_path: String) -> Result<Vec<String>, String> {
+    let (m, _) = load_manifest(&manifest_path)?;
+    let st: BatchStatus = read_json(Path::new(&m.status_path));
+    let batch_root = PathBuf::from(&m.root_path);
+    let status = st.projects.iter().map(|x| (x.project_id.as_str(), x)).collect::<HashMap<_, _>>();
+    Ok(m.projects.iter().filter_map(|project| {
+        validate_cleanup_candidate(&batch_root, project, status.get(project.project_id.as_str()).copied())
+            .ok()
+            .map(|_| project.project_id.clone())
+    }).collect())
+}
+
 #[tauri::command]
 pub fn cleanup_completed_production_assets(manifest_path: String) -> Result<CleanupResult, String> {
     let (m, _) = load_manifest(&manifest_path)?;
