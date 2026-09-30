@@ -15,7 +15,7 @@ env:
   VERSION: '5.1.2'
   TAG: v5.1.2
   RELEASE_REPO: ScaleUPPeisov/vyron-releases
-  CANDIDATE_RUN_ID: '36728754023'
+  CANDIDATE_RUN_ID: '36729330720'
   PRODUCT_SOURCE_SHA: 'abdd863f808b31b24a9aa527965a420a206d0aaa'
 
 jobs:
@@ -52,8 +52,15 @@ jobs:
           RUN_JSON="$(gh api "repos/ScaleUPPeisov/scaleup-dashboards/actions/runs/$CANDIDATE_RUN_ID")"
           test "$(printf '%s' "$RUN_JSON" | jq -r .conclusion)" = "success"
           JOBS_JSON="$(gh api "repos/ScaleUPPeisov/scaleup-dashboards/actions/runs/$CANDIDATE_RUN_ID/jobs")"
-          for step in             'Verify exact source and green regression'             'Verify production baseline and 5.1.2 identity'             'Windows 5.1.2 protected regression and native compile'             'Build Windows 5.1.2 signed candidate'             'Verify Windows updater signature'             'Physical Windows 5.1.1 to 5.1.2 continuity'             'Verify production feeds unchanged'             'Write candidate gate'; do
-            test "$(printf '%s' "$JOBS_JSON" | jq -r --arg s "$step" '.jobs[] | select(.name=="VYRON 5.1.2 Windows x64 signed candidate") | .steps[] | select(.name==$s) | .conclusion')" = "success"
+          for step in \
+            'Verify exact source and green regression' \
+            'Verify production baseline and 5.1.2 identity' \
+            'Build Windows 5.1.2 signed candidate' \
+            'Verify Windows updater signature' \
+            'Physical Windows 5.1.1 to 5.1.2 continuity' \
+            'Verify production feeds unchanged' \
+            'Write candidate gate'; do
+            test "$(printf '%s' "$JOBS_JSON" | jq -r --arg s "$step" '.jobs[] | select(.name=="VYRON 5.1.2 Windows x64 fast signed candidate") | .steps[] | select(.name==$s) | .conclusion')" = "success"
           done
           GH_TOKEN="$RELEASE_TOKEN" gh release view "$TAG" --repo "$RELEASE_REPO" >/dev/null
           echo 'WINDOWS_5_1_2_CANDIDATE_PROVENANCE=PASS'
@@ -64,7 +71,7 @@ jobs:
           name: VYRON-5.1.2-WINDOWS-SIGNED-CANDIDATE
           path: candidate-windows
           repository: ScaleUPPeisov/scaleup-dashboards
-          run-id: 36728754023
+          run-id: 36729330720
           github-token: ${{ github.token }}
 
       - name: Verify candidate bytes and gate summary
