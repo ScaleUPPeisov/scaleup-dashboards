@@ -24,8 +24,7 @@ function normalizeChannelPrefs(value:unknown):ChannelProductionPrefs{
     allowImageReuse:value.allowImageReuse===true,
     lastBatchId:typeof value.lastBatchId==='string'&&value.lastBatchId.trim()?value.lastBatchId:undefined,
     selectedProjectIds:Array.isArray(value.selectedProjectIds)?value.selectedProjectIds.filter((x):x is string=>typeof x==='string'):[],
-    productionRoot:typeof value.productionRoot==='string'?value.productionRoot:undefined,
-    cleanupPolicy:validCleanupPolicy(value.cleanupPolicy)
+    productionRoot:typeof value.productionRoot==='string'?value.productionRoot:undefined
   };
 }
 function normalizePrefs(value:unknown):ProductionPrefs|undefined{
@@ -38,7 +37,8 @@ function normalizePrefs(value:unknown):ProductionPrefs|undefined{
     tab:validTab(value.tab),
     byChannel,
     selectedJobIds:Array.isArray(value.selectedJobIds)?value.selectedJobIds.filter((x):x is string=>typeof x==='string'):[],
-    productionRoot:typeof value.productionRoot==='string'?value.productionRoot:undefined
+    productionRoot:typeof value.productionRoot==='string'?value.productionRoot:undefined,
+    cleanupPolicy:validCleanupPolicy(value.cleanupPolicy)
   };
 }
 
