@@ -13,6 +13,7 @@ let lastEndlumeLaunch=0;
 const RENDER_REQUEUE_MS=10*60*1000;
 const ENDLUME_LAUNCH_COOLDOWN_MS=5*60*1000;
 const CHANNEL_CONCURRENCY=3;
+const FILESYSTEM_REFRESH_STALE_MS=5*60*1000;
 
 type Patch={id:string;patch:Partial<VideoJob>};
 type ChannelAutomationSnapshot={
@@ -35,6 +36,13 @@ function logError(summary:AutopilotSummary,label:string,e:unknown){
 }
 function activeJobs(snapshot:ChannelAutomationSnapshot){
   return snapshot.jobs.filter(j=>j.status!=='SCHEDULED'&&j.status!=='ERROR').sort((a,b)=>a.number-b.number);
+}
+function needsFilesystemRefresh(job:VideoJob,now=Date.now()){
+  if(!job.folder)return false;
+  if(job.status==='RENDERING')return true;
+  if(!job.lastAutomationAt)return true;
+  const last=Date.parse(job.lastAutomationAt);
+  return !Number.isFinite(last)||now-last>=FILESYSTEM_REFRESH_STALE_MS;
 }
 function applyLocal(snapshot:ChannelAutomationSnapshot,id:string,patch:Partial<VideoJob>,patches:Patch[]){
   const before=snapshot.jobById.get(id);if(!before)return;
@@ -132,15 +140,20 @@ async function processChannel(channel:Channel,summary:AutopilotSummary,aiBudget:
 
   for(const job of activeJobs(snapshot)){
     try{
-      if(job.folder){
+      if(job.folder&&needsFilesystemRefresh(job)){
         const refreshStarted=performance.now();
         const refreshed=await api.refreshJob(job.folder,channel.minTracks);
         recordPerfMetric('filesystemScan',performance.now()-refreshStarted);
         applyLocal(snapshot,job.id,{...refreshed,lastAutomationAt:new Date().toISOString()},patches);
       }
       let current=snapshot.jobById.get(job.id)!;
-      if(aiBudget.left>0&&current.folder&&await maybeGenerateAi(snapshot,current,patches)){
-        summary.metadataGenerated++;aiBudget.left--;current=snapshot.jobById.get(job.id)!;
+      const canAi=settings.autoGenerateMetadata&&current.folder&&!current.metadataLocked&&current.metadataSource!=='ai'&&current.metadataSource!=='import';
+      if(canAi&&aiBudget.left>0){
+        aiBudget.left--;
+        try{
+          if(await maybeGenerateAi(snapshot,current,patches)){summary.metadataGenerated++;current=snapshot.jobById.get(job.id)!}
+          else aiBudget.left++;
+        }catch(e){aiBudget.left++;throw e}
       }
       if(current.folder&&current.title)await api.writeJobMetadata(current.folder,current.title,current.description,current.tags,current.publishAt,current.metadataSource||'template');
     }catch(e){logError(summary,`${channel.name} Video_${job.number}: обновление`,e)}
