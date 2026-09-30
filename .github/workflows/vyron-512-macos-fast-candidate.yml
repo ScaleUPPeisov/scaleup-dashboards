@@ -13,7 +13,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: vyron-512-macos-fast-candidate
+  group: vyron-512-macos-candidate
   cancel-in-progress: true
 
 env:
