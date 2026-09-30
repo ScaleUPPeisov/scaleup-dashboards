@@ -3,7 +3,7 @@ import {api} from './api';
 import {runAutopilotCycle} from './autopilotRuntime';
 import {createJobsCount,createMissingJobs} from './autopilotCore';
 import {useApp} from './store';
-import type {Channel,JobStatus} from './types';
+import type {Channel,JobStatus,VideoJob} from './types';
 import {ProductionWorkspace} from './ProductionWorkspace';
 import {ProductionManager} from './ProductionManager';
 import {MaterialsManager} from './MaterialsManager';
