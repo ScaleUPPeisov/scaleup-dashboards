@@ -24,10 +24,8 @@ describe('VYRON 6.0.1 Windows migration/UI hotfix contracts',()=>{
 
   it('anchors owner and LOCAL CORE as one sidebar footer group',()=>{
     expect(styles).toContain('.sidebar .sidebarFooter');
-    const footer=styles.slice(styles.lastIndexOf('.sidebar .sidebarFooter'));
-    expect(footer).toContain('margin-top:auto');
-    expect(footer).toContain('flex-direction:column');
-    expect(footer).toContain('.sideFoot');
+    expect(styles).toMatch(/\.sidebar \.sidebarFooter\s*\{[^}]*margin-top:auto[^}]*flex-direction:column/s);
+    expect(styles).toContain('.sidebar .sidebarFooter .sideFoot');
   });
 
   it('keeps FPS HUD off by default and exposes its toggle only in Diagnostics',()=>{
