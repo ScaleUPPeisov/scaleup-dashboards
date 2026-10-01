@@ -50,8 +50,8 @@ function OperationsDashboard(){
  useEffect(()=>{
   let live=true;
   const refresh=()=>void api.youtubeProfiles().then(x=>{if(live)setProfiles(x)}).catch(()=>{});
-  refresh();window.addEventListener('vyron:oauth-state-changed',refresh);
-  return()=>{live=false;window.removeEventListener('vyron:oauth-state-changed',refresh)}
+  const timer=window.setTimeout(refresh,100);window.addEventListener('vyron:oauth-state-changed',refresh);
+  return()=>{live=false;window.clearTimeout(timer);window.removeEventListener('vyron:oauth-state-changed',refresh)}
  },[bindingKey]);
 
  const enabled=useMemo(()=>channels.filter(c=>c.enabled!==false),[channels]);
