@@ -3,6 +3,24 @@ export type ReleaseSectionKey='features'|'fixes'|'interface'|'reliability'|'secu
 export type ReleaseHistoryEntry={date:string;version:string;title:string;type:ReleaseType;platforms?:Array<'macOS'|'Windows'>;highlights:string[];sections:Partial<Record<ReleaseSectionKey,string[]>>;technicalItems?:string[];technicalBuilds?:number[];tag?:string;publishedAt?:string;prerelease?:boolean};
 export const VYRON_RELEASE_HISTORY:ReleaseHistoryEntry[]=[
   {
+    "date":"2026-10-01","version":"6.1.0","title":"Metadata Queue & macOS Smoothness","type":"MINOR","platforms":["macOS","Windows"],
+    "highlights":[
+      "Unlimited per-channel SEO Metadata Queue хранит будущие title, description, tags и publish schedule на диске.",
+      "Каждый назначенный VIDEO получает metadata.json, а подтверждённо использованные записи больше не назначаются повторно.",
+      "Завершённые SEO Pack можно безопасно очистить с сохранением compact ledger.",
+      "WKWebView hot paths на macOS получили отдельные frame-pacing оптимизации без изменения Windows UI."
+    ],
+    "sections":{
+      "features":["Persistent FIFO Metadata Queue по channelId с duplicate protection и paged UI.","Per-video metadata.json sidecar и automatic atomic reservation перед публикацией.","Metadata Queue входит в защищённую Mac ↔ Windows migration."],
+      "fixes":["Устаревшая дата из SEO Pack не публикуется молча в прошлом: SEO fields сохраняются, время берётся из действующего schedule.","Queue record становится APPLIED только после подтверждённого YouTube videoId."],
+      "interface":["SEO Queue встроена в YouTube → Метаданные: остаток, reserved, used, errors, next record и cleanup."],
+      "reliability":["Queue хранится на диске chunked storage и не зависит от React draft/localStorage.","Pack purge оставляет compact ledger с recordHash/jobId/youtubeVideoId."],
+      "security":["OAuth/Google credentials и updater keys не изменяются Metadata Queue."],
+      "technical":["Source branch: feature/vyron-6.1.0-metadata-queue-macos-smoothness.","Production publication и tag v6.1.0 выполняются только после GREEN release gates."]
+    },
+    "tag":"v6.1.0"
+  },
+  {
     "date":"2026-10-01","version":"6.0.1","title":"Windows Migration / UI Hotfix","type":"PATCH","platforms":["Windows"],
     "highlights":[
       "Исправлен перенос VYRON macOS ↔ Windows с единым portable crypto format и защитой от CRLF/BOM transport artifacts.",
