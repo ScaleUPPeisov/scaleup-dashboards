@@ -1,9 +1,9 @@
-name: VYRON 3.3.0 Cross Platform Migration E2E
+name: VYRON Cross Platform Migration E2E
 
 on:
   push:
     branches:
-      - release/vyron-3.0.0
+      - hotfix/vyron-6.0.1-windows-migration-ui
   workflow_dispatch:
 
 permissions:
@@ -20,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: release/vyron-3.0.0
+          ref: ${{ github.sha }}
       - uses: dtolnay/rust-toolchain@stable
       - name: Export synthetic encrypted package on macOS
         shell: bash
@@ -42,7 +42,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: release/vyron-3.0.0
+          ref: ${{ github.sha }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/download-artifact@v4
         with:
@@ -72,7 +72,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: release/vyron-3.0.0
+          ref: ${{ github.sha }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/download-artifact@v4
         with:
@@ -91,7 +91,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: release/vyron-3.0.0
+          ref: ${{ github.sha }}
       - uses: dtolnay/rust-toolchain@stable
       - name: Export synthetic encrypted package on Windows
         shell: pwsh
@@ -115,7 +115,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: release/vyron-3.0.0
+          ref: ${{ github.sha }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/download-artifact@v4
         with:
@@ -141,7 +141,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: release/vyron-3.0.0
+          ref: ${{ github.sha }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/download-artifact@v4
         with:
