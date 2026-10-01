@@ -44,7 +44,22 @@ export function ProductionOS(){
  const preview=useMemo(()=>planTargets().map(ch=>{const existing=jobs.filter(j=>j.channelId===ch.id);const max=Math.max(0,...existing.map(j=>j.number));return {ch,from:max+1,to:max+planCount,count:planCount}}),[planScope,channelId,planCount,channels.length,jobs.length]);
  async function createExact(){const targets=planTargets();if(!targets.length){toast('Выбери канал');return}const n=Math.max(1,Math.min(1000,Math.floor(planCount)));let next=[...useApp.getState().jobs],created=0;for(const ch of targets){const rows=createJobsCount(ch,next,n);next=[...next,...rows];created+=rows.length}setJobs(next);setPlanOpen(false);toast(`Создано ${created} проектов${targets.length>1?` • ${n} на канал`:''}`)}
  async function ensure(){if(!c)return;const r=await api.ensureChannelInbox(settings.workspace,c.name);setInbox(r);return r}
- async function importImages(){if(!c)return;let root=projectRoot;if(!root){root=await api.defaultWorkspace();useApp.getState().patchSettings({workspace:root})}const storage=await productionManagerApi.storageStatus(root);if(!storage.exists||!storage.writable){toast(storage.error||`Папка проектов недоступна: ${root}`);return}const files=await api.chooseImages();if(!files.length)return;const pending=jobs.filter(j=>j.channelId===c.id&&j.status==='NEED_IMAGE').sort((a,b)=>a.number-b.number);const nums=pending.slice(0,files.length).map(j=>j.number);if(!nums.length){toast('Нет проектов, ожидающих изображение');return}const imported=await api.importImages(root,c.id,c.name,files,c.minTracks,nums);for(const x of imported){const old=useApp.getState().jobs.find(j=>j.channelId===c.id&&j.number===x.number);if(old)useApp.getState().patchJob(old.id,x);else useApp.getState().addJobs([x])}toast(`${files.length} изображений распределено по VIDEO_${String(nums[0]).padStart(3,'0')}…`)}
+ async function importImages(){
+  if(!c)return;
+  let workspace=settings.workspace;
+  if(!workspace){workspace=await api.defaultWorkspace();useApp.getState().patchSettings({workspace})}
+  let defaultPath='';try{defaultPath=await productionManagerApi.materialsDownloadsPath()}catch{}
+  const files=await productionManagerApi.chooseMaterialImages(defaultPath||undefined);
+  if(!files.length)return;
+  setBusy(true);
+  try{
+    const imported=await productionManagerApi.importMaterialImages(workspace,c.id,c.name,files);
+    setInbox({root:imported.libraryPath});
+    window.dispatchEvent(new CustomEvent('vyron:production-materials-changed',{detail:{channelId:c.id}}));
+    notifySuccess('Изображения импортированы',`${c.name} • добавлено ${imported.added} • дубликаты ${imported.duplicates} • доступно ${imported.available}`,{operationId:`manual-material-import:${c.id}:${Date.now()}`});
+  }catch(e){toast('Не удалось импортировать изображения: '+String(e))}
+  finally{setBusy(false)}
+ }
 
  const globalCleanupRoots=()=>[settings.workspace,prefs.productionRoot,...Object.values(prefs.byChannel||{}).map(x=>x.productionRoot)].map(x=>(x||'').trim()).filter((x,i,a)=>Boolean(x)&&a.indexOf(x)===i);
  async function beginGlobalProjectCleanup(){const roots=globalCleanupRoots();if(!roots.length){toast('Нет настроенных Production workspace для очистки');return}setCleanupBusy(true);try{const preview=await productionManagerApi.previewGlobalProjectCleanup(roots);setCleanupPreview(preview);setCleanupConfirmed(false);setCleanupPhase(1)}catch(e){notifyError('Не удалось проверить PROJECT-папки',String(e),{operationId:`global-project-cleanup-preview:${Date.now()}`})}finally{setCleanupBusy(false)}}
