@@ -16,6 +16,8 @@ use crate::security;
 const SCHEMA:u32=1;
 const AAD:&[u8]=b"VYRON-OAUTH-VAULT-v1";
 const CLIENT_AAD:&[u8]=b"VYRON-OAUTH-CLIENT-v1";
+#[cfg(target_os="windows")]
+const WINDOWS_VAULT_KEY_ACCOUNT:&str="oauth.vault.master_key";
 
 #[derive(Debug,Clone,Default,Serialize,Deserialize)]
 #[serde(rename_all="camelCase")]
@@ -151,12 +153,56 @@ fn clear_caches(){
  if let Ok(mut cache)=vault_cache().lock(){*cache=None}
 }
 
+#[derive(Debug,Clone,Copy,PartialEq,Eq)]
+enum LocalKeySource{CanonicalCredential,DocumentFile,AppDataFile,Missing}
+#[derive(Debug,Clone,Copy)]
+struct LocalKeyProbe{
+ source:LocalKeySource,
+ key:Option<[u8;32]>,
+ canonical_credential_present:bool,
+ doc_key_present:bool,
+ app_key_present:bool,
+}
+impl LocalKeyProbe{fn available(&self)->bool{self.key.is_some()}}
+
+fn persistent_local_key_probe(app:&AppHandle)->Result<LocalKeyProbe,String>{
+ let p=local_paths(app)?;
+ let doc_key=read_key_file(&p.doc_key)?;
+ let app_key=read_key_file(&p.app_key)?;
+ #[cfg(target_os="windows")]
+ {
+  if let Some(encoded)=security::canonical_get_secret(WINDOWS_VAULT_KEY_ACCOUNT)?{
+   let key=decode_key(&encoded)?;
+   return Ok(LocalKeyProbe{
+    source:LocalKeySource::CanonicalCredential,key:Some(key),
+    canonical_credential_present:true,
+    doc_key_present:doc_key.is_some(),app_key_present:app_key.is_some()
+   })
+  }
+ }
+ if let Some(key)=doc_key{
+  return Ok(LocalKeyProbe{
+   source:LocalKeySource::DocumentFile,key:Some(key),
+   canonical_credential_present:false,doc_key_present:true,app_key_present:app_key.is_some()
+  })
+ }
+ if let Some(key)=app_key{
+  return Ok(LocalKeyProbe{
+   source:LocalKeySource::AppDataFile,key:Some(key),
+   canonical_credential_present:false,doc_key_present:false,app_key_present:true
+  })
+ }
+ Ok(LocalKeyProbe{
+  source:LocalKeySource::Missing,key:None,canonical_credential_present:false,
+  doc_key_present:false,app_key_present:false
+ })
+}
+
 fn local_key(app:&AppHandle,create:bool)->Result<[u8;32],String>{
  if let Ok(cache)=master_cache().lock(){if let Some(key)=*cache{return Ok(key)}}
  let p=local_paths(app)?;
  #[cfg(target_os="windows")]
  {
-  const WINDOWS_VAULT_KEY_ACCOUNT:&str="oauth.vault.master_key";
   if let Some(encoded)=security::canonical_get_secret_cached(WINDOWS_VAULT_KEY_ACCOUNT)?{
    let key=decode_key(&encoded)?;cache_key(key);return Ok(key)
   }
@@ -282,7 +328,7 @@ fn write(app:&AppHandle,vault:&PlainVault)->Result<(),String>{
 }
 
 fn read_legacy_with_keychain(app:&AppHandle,interactive:bool,p:&LocalPaths)->Result<PlainVault,String>{
- let source=if p.legacy_backup.exists(){&p.legacy_backup}else{&p.app_vault};
+ let source=if p.legacy_backup.exists(){&p.legacy_backup}else if p.app_vault.exists(){&p.app_vault}else{&p.doc_vault};
  if !source.exists(){return Err("OAUTH_VAULT_LEGACY_SOURCE_MISSING".into())}
  let encoded=security::oauth_vault_master_key_get(interactive)
   .map_err(|e|format!("OAUTH_VAULT_LEGACY_KEYCHAIN_MIGRATION_REQUIRED: {e}"))?
@@ -304,20 +350,23 @@ fn migrate_legacy_vault(app:&AppHandle,vault:&PlainVault,p:&LocalPaths)->Result<
  }
  Ok(())
 }
-fn read_local(app:&AppHandle)->Result<PlainVault,String>{
- let p=local_paths(app)?;
- let key=local_key(app,false)?;
+fn read_local_with_key(p:&LocalPaths,key:&[u8;32],mirror_app_to_doc:bool)->Result<PlainVault,String>{
  if p.doc_vault.exists(){
   let bytes=fs::read(&p.doc_vault).map_err(|e|format!("OAUTH_VAULT_READ_FAILED: {e}"))?;
-  return decode_vault(&bytes,&key)
+  return decode_vault(&bytes,key)
  }
  if p.app_vault.exists(){
   let bytes=fs::read(&p.app_vault).map_err(|e|format!("OAUTH_VAULT_READ_FAILED: {e}"))?;
-  let vault=decode_vault(&bytes,&key)?;
-  write_private_atomic(&p.doc_vault,&bytes)?;
+  let vault=decode_vault(&bytes,key)?;
+  if mirror_app_to_doc{write_private_atomic(&p.doc_vault,&bytes)?;}
   return Ok(vault)
  }
  Ok(PlainVault::default())
+}
+fn read_local(app:&AppHandle)->Result<PlainVault,String>{
+ let p=local_paths(app)?;
+ let key=local_key(app,false)?;
+ read_local_with_key(&p,&key,true)
 }
 fn migration_pending(error:&str)->bool{
  error.contains("OAUTH_VAULT_LEGACY_KEYCHAIN_MIGRATION_REQUIRED")
@@ -326,16 +375,24 @@ fn migration_pending(error:&str)->bool{
 }
 #[derive(Debug,Clone,Copy,PartialEq,Eq)]
 enum StartupKeyPlan{LocalPersistent,LegacyKeychainMigration,Empty}
-fn startup_key_plan(local_key_present:bool,legacy_vault_present:bool)->StartupKeyPlan{
- if local_key_present{StartupKeyPlan::LocalPersistent}
- else if legacy_vault_present{StartupKeyPlan::LegacyKeychainMigration}
+fn startup_key_plan(local_key_available:bool,vault_or_legacy_present:bool)->StartupKeyPlan{
+ if local_key_available{StartupKeyPlan::LocalPersistent}
+ else if vault_or_legacy_present{StartupKeyPlan::LegacyKeychainMigration}
  else{StartupKeyPlan::Empty}
 }
 fn read(app:&AppHandle,interactive:bool)->Result<PlainVault,String>{
  if let Ok(cache)=vault_cache().lock(){if let Some(v)=cache.as_ref(){return Ok(v.clone())}}
  let p=local_paths(app)?;
- match startup_key_plan(p.doc_key.exists()||p.app_key.exists(),p.app_vault.exists()||p.legacy_backup.exists()){
+ let vault_or_legacy_present=p.doc_vault.exists()||p.app_vault.exists()||p.legacy_backup.exists();
+ let current_key_available=match local_key(app,false){
+  Ok(_)=>true,
+  Err(e) if e.contains("OAUTH_VAULT_LOCAL_KEY_MISSING")=>false,
+  Err(e)=>return Err(e),
+ };
+ match startup_key_plan(current_key_available,vault_or_legacy_present){
   StartupKeyPlan::LocalPersistent=>{
+   // Current Windows Credential Manager key always wins. Key-file existence is
+   // never used to select the startup architecture.
    let vault=read_local(app)?;
    cache_vault(&vault);Ok(vault)
   },
@@ -423,8 +480,9 @@ pub fn clear_profile_refresh(app:&AppHandle,profile_id:&str)->Result<(),String>{
 
 pub fn recover_master_key_interactive(app:&AppHandle)->Result<(),String>{
  let p=local_paths(app)?;
- // Healthy local storage means Keychain is irrelevant; recovery is already complete.
- if (p.doc_key.exists()||p.app_key.exists())&&read_local(app).is_ok(){return Ok(())}
+ // A readable current vault through the resolved current key is authoritative,
+ // including Windows Credential Manager with zero vault.key files.
+ if local_key(app,false).is_ok()&&read_local(app).is_ok(){return Ok(())}
  let legacy=read_legacy_with_keychain(app,true,&p)?;
  let current=read_local(app).unwrap_or_default();
  let mut merged=legacy;
@@ -436,9 +494,13 @@ pub fn recover_master_key_interactive(app:&AppHandle)->Result<(),String>{
 
 pub fn local_storage_status(app:&AppHandle)->Result<serde_json::Value,String>{
  let p=local_paths(app)?;
- let local_key=p.doc_key.exists()||p.app_key.exists();
- let local_vault=p.doc_vault.exists();
- let readable=if local_key&&local_vault{read_local(app).is_ok()}else{false};
+ let probe=persistent_local_key_probe(app)?;
+ let local_key=probe.available();
+ let local_vault=p.doc_vault.exists()||p.app_vault.exists();
+ let readable=match probe.key.as_ref(){
+  Some(key) if local_vault=>read_local_with_key(&p,key,false).is_ok(),
+  _=>false,
+ };
  let backup_count=[1,2,3].iter().filter(|n|p.backups.join(format!("oauth-vault-{n}.enc")).exists()).count();
  Ok(serde_json::json!({
   "root":p.root.display().to_string(),
@@ -449,6 +511,10 @@ pub fn local_storage_status(app:&AppHandle)->Result<serde_json::Value,String>{
   "vaultPath":p.doc_vault.display().to_string(),
   "keyPath":p.doc_key.display().to_string(),
   "localKeyPresent":local_key,
+  "localKeySource":format!("{:?}",probe.source),
+  "canonicalCredentialPresent":probe.canonical_credential_present,
+  "docKeyFilePresent":probe.doc_key_present,
+  "appKeyFilePresent":probe.app_key_present,
   "localVaultPresent":local_vault,
   "localVaultReadable":readable,
   "legacyVaultPresent":p.legacy_backup.exists(),
@@ -547,26 +613,153 @@ pub fn merge_portable_snapshot(app:&AppHandle,value:&serde_json::Value)->Result<
  }))
 }
 
-pub fn copy_encrypted_snapshot(app:&AppHandle,destination:&Path)->Result<(),String>{
- let p=local_paths(app)?;
- if !p.doc_vault.exists(){
-  let empty=PlainVault::default();
-  write(app,&empty)?;
+#[derive(Debug,Clone,Serialize,Deserialize,PartialEq,Eq)]
+#[serde(rename_all="camelCase")]
+struct VaultSnapshotMeta{
+ existed:bool,
+ source:String,
+ storage_kind:String,
+ current_local_key_present:bool,
+ current_canonical_key_present:bool,
+ doc_key_file_present:bool,
+ app_key_file_present:bool,
+}
+
+fn classify_snapshot_bytes(bytes:&[u8],key:Option<&[u8;32]>)->&'static str{
+ match key{
+  Some(key) if decode_vault(bytes,key).is_ok()=>"current-local",
+  _=>"opaque-legacy",
  }
- fs::copy(&p.doc_vault,destination).map_err(|e|format!("MIGRATION_OAUTH_BACKUP_FAILED: {e}"))?;
+}
+
+fn snapshot_from_paths(
+ p:&LocalPaths,
+ destination:&Path,
+ probe:&LocalKeyProbe,
+)->Result<VaultSnapshotMeta,String>{
+ let (source_name,source_path)=if p.doc_vault.exists(){
+  ("doc",&p.doc_vault)
+ }else if p.app_vault.exists(){
+  ("app",&p.app_vault)
+ }else{
+  return Ok(VaultSnapshotMeta{
+   existed:false,source:"none".into(),storage_kind:"absent".into(),
+   current_local_key_present:probe.available(),
+   current_canonical_key_present:probe.canonical_credential_present,
+   doc_key_file_present:probe.doc_key_present,app_key_file_present:probe.app_key_present,
+  })
+ };
+ let bytes=fs::read(source_path).map_err(|e|format!("MIGRATION_OAUTH_BACKUP_READ_FAILED: {e}"))?;
+ if let Some(parent)=destination.parent(){fs::create_dir_all(parent).map_err(|e|format!("MIGRATION_OAUTH_BACKUP_MKDIR_FAILED: {e}"))?;}
+ fs::write(destination,&bytes).map_err(|e|format!("MIGRATION_OAUTH_BACKUP_FAILED: {e}"))?;
  private_file(destination);
+ Ok(VaultSnapshotMeta{
+  existed:true,source:source_name.into(),
+  storage_kind:classify_snapshot_bytes(&bytes,probe.key.as_ref()).into(),
+  current_local_key_present:probe.available(),
+  current_canonical_key_present:probe.canonical_credential_present,
+  doc_key_file_present:probe.doc_key_present,app_key_file_present:probe.app_key_present,
+ })
+}
+
+pub fn copy_encrypted_snapshot(app:&AppHandle,destination:&Path)->Result<serde_json::Value,String>{
+ let p=local_paths(app)?;
+ // Read-only probe + raw encrypted byte copy. No key creation, no vault write,
+ // no Credential Manager mutation, no profile mutation.
+ let probe=persistent_local_key_probe(app)?;
+ let meta=snapshot_from_paths(&p,destination,&probe)?;
+ serde_json::to_value(meta).map_err(|e|format!("MIGRATION_OAUTH_BACKUP_META_FAILED: {e}"))
+}
+
+fn parse_snapshot_meta(
+ metadata:Option<&serde_json::Value>,
+ source_exists:bool,
+ probe:&LocalKeyProbe,
+ source_bytes:Option<&[u8]>,
+)->Result<VaultSnapshotMeta,String>{
+ if let Some(value)=metadata{
+  if !value.is_null(){
+   return serde_json::from_value(value.clone()).map_err(|e|format!("MIGRATION_OAUTH_SNAPSHOT_META_INVALID: {e}"))
+  }
+ }
+ // 6.0.2 rollback snapshots had no OAuth metadata. Safely classify them:
+ // if the snapshot decrypts with the CURRENT canonical/local key, it is current-local.
+ // Otherwise preserve it as opaque bytes and never demand the obsolete legacy key.
+ let kind=source_bytes.map(|b|classify_snapshot_bytes(b,probe.key.as_ref())).unwrap_or("absent");
+ Ok(VaultSnapshotMeta{
+  existed:source_exists,source:if source_exists{"doc".into()}else{"none".into()},
+  storage_kind:kind.into(),
+  current_local_key_present:probe.available(),
+  current_canonical_key_present:probe.canonical_credential_present,
+  doc_key_file_present:probe.doc_key_present,app_key_file_present:probe.app_key_present,
+ })
+}
+
+fn remove_file_if_exists(path:&Path)->Result<(),String>{
+ if path.exists(){fs::remove_file(path).map_err(|e|format!("MIGRATION_OAUTH_RESTORE_REMOVE_FAILED: {}: {e}",path.display()))?;}
  Ok(())
 }
 
-pub fn restore_encrypted_snapshot(app:&AppHandle,source:&Path)->Result<(),String>{
- let p=local_paths(app)?;
- let key=local_key(app,false)?;
+fn restore_snapshot_to_paths(
+ p:&LocalPaths,
+ source:&Path,
+ meta:&VaultSnapshotMeta,
+ current_key:Option<&[u8;32]>,
+)->Result<(),String>{
+ if !meta.existed||meta.storage_kind=="absent"{
+  remove_file_if_exists(&p.doc_vault)?;
+  remove_file_if_exists(&p.app_vault)?;
+  return Ok(())
+ }
  let bytes=fs::read(source).map_err(|e|format!("MIGRATION_OAUTH_RESTORE_READ_FAILED: {e}"))?;
- let _=decode_vault(&bytes,&key)?;
- write_private_atomic(&p.doc_vault,&bytes)?;
- write_private_atomic(&p.app_vault,&bytes)?;
+ match meta.storage_kind.as_str(){
+  "current-local"=>{
+   let key=current_key.ok_or_else(||"MIGRATION_OAUTH_CURRENT_LOCAL_KEY_MISSING".to_string())?;
+   let _=decode_vault(&bytes,key)?;
+   write_private_atomic(&p.doc_vault,&bytes)?;
+   write_private_atomic(&p.app_vault,&bytes)?;
+   let _=read_local_with_key(p,key,false)?;
+  },
+  "opaque-legacy"=>{
+   // Opaque legacy bytes are restored byte-for-byte. Never validate them with
+   // the new current key and never request the obsolete legacy key during rollback.
+   if meta.source=="app"{
+    write_private_atomic(&p.app_vault,&bytes)?;
+    remove_file_if_exists(&p.doc_vault)?;
+   }else{
+    write_private_atomic(&p.doc_vault,&bytes)?;
+    remove_file_if_exists(&p.app_vault)?;
+   }
+  },
+  other=>return Err(format!("MIGRATION_OAUTH_SNAPSHOT_KIND_UNSUPPORTED: {other}")),
+ }
+ Ok(())
+}
+
+pub fn restore_encrypted_snapshot(
+ app:&AppHandle,
+ source:&Path,
+ metadata:Option<&serde_json::Value>,
+)->Result<(),String>{
+ let p=local_paths(app)?;
+ let probe=persistent_local_key_probe(app)?;
+ let bytes=if source.exists(){Some(fs::read(source).map_err(|e|format!("MIGRATION_OAUTH_RESTORE_READ_FAILED: {e}"))?)}else{None};
+ let meta=parse_snapshot_meta(metadata,source.exists(),&probe,bytes.as_deref())?;
+ restore_snapshot_to_paths(&p,source,&meta,probe.key.as_ref())?;
+
+ #[cfg(target_os="windows")]
+ if !meta.current_canonical_key_present{
+  // If the import created the canonical key after a snapshot that had none,
+  // rollback restores that absence. No secret material is stored in metadata.
+  security::canonical_delete_secret(WINDOWS_VAULT_KEY_ACCOUNT)?;
+ }
+
  clear_caches();
- let _=read(app,false)?;
+
+ if meta.storage_kind=="current-local"&&meta.existed{
+  let key=local_key(app,false)?;
+  let _=read_local_with_key(&p,&key,false)?;
+ }
  Ok(())
 }
 
