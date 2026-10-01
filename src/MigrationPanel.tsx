@@ -218,21 +218,26 @@ export function MigrationPanel(){
    {file&&<p className="note mono">{file}</p>}
   </section>
 
-  {packageDiagnostics&&<section className="settingsCard">
-   <small>PACKAGE DIAGNOSTICS • SAFE • BEFORE DECRYPT</small>
-   <h3>Проверка .vyron</h3>
-   <div className="settingsInfoGrid">
-    <span><small>Source OS</small><b>{packageDiagnostics.sourceOs||'—'}</b></span>
-    <span><small>Created with VYRON</small><b>{packageDiagnostics.appVersion||'—'}</b></span>
-    <span><small>Schema</small><b>{packageDiagnostics.schema}</b></span>
-    <span><small>KDF</small><b>{packageDiagnostics.kdf||'—'}</b></span>
-    <span><small>Salt</small><b>{packageDiagnostics.saltValid?'VALID':'INVALID'} • {packageDiagnostics.saltLength} bytes</b></span>
-    <span><small>Nonce</small><b>{packageDiagnostics.nonceValid?'VALID':'INVALID'} • {packageDiagnostics.nonceLength} bytes</b></span>
-    <span><small>Ciphertext</small><b>{packageDiagnostics.ciphertextPresent?'PRESENT':'MISSING'} • {packageDiagnostics.ciphertextLength} bytes</b></span>
-   </div>
-   <label>Bundle SHA-256<div className="pathLine"><input readOnly className="mono" value={packageDiagnostics.bundleSha256}/><button onClick={()=>void navigator.clipboard.writeText(packageDiagnostics.bundleSha256)}>КОПИРОВАТЬ SHA-256</button></div></label>
-   <p className="note">Пароль, derived key, plaintext и OAuth secrets здесь никогда не отображаются.</p>
-  </section>}
+  {packageDiagnostics ? (
+   <section className="settingsCard">
+    <small>PACKAGE DIAGNOSTICS • SAFE • BEFORE DECRYPT</small>
+    <h3>Проверка .vyron</h3>
+    <pre className="note mono">{[
+     'Source OS: '+(packageDiagnostics.sourceOs||'—'),
+     'Created with VYRON: '+(packageDiagnostics.appVersion||'—'),
+     'Schema: '+String(packageDiagnostics.schema),
+     'KDF: '+(packageDiagnostics.kdf||'—'),
+     'Salt: '+(packageDiagnostics.saltValid?'VALID':'INVALID')+' • '+packageDiagnostics.saltLength+' bytes',
+     'Nonce: '+(packageDiagnostics.nonceValid?'VALID':'INVALID')+' • '+packageDiagnostics.nonceLength+' bytes',
+     'Ciphertext: '+(packageDiagnostics.ciphertextPresent?'PRESENT':'MISSING')+' • '+packageDiagnostics.ciphertextLength+' bytes',
+     'Bundle SHA-256: '+packageDiagnostics.bundleSha256
+    ].join('\n')}</pre>
+    <div className="publishActions">
+     <button onClick={()=>{void navigator.clipboard.writeText(packageDiagnostics.bundleSha256)}}>КОПИРОВАТЬ SHA-256</button>
+    </div>
+    <p className="note">Пароль, derived key, plaintext и OAuth secrets здесь никогда не отображаются.</p>
+   </section>
+  ) : null}
 
   {preview&&<section className="settingsCard">
    <small>IMPORT PLAN • {preview.sourceOs.toUpperCase()} • VYRON {preview.appVersion}</small>
