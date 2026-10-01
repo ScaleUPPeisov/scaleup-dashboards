@@ -17,6 +17,7 @@ type MaterialsPerfDiagState={
   rowRenders:number;
   click?:DiagClick;
   ipc:DiagIpc[];
+  phases:Record<string,number>;
   lastReport?:string;
 };
 
@@ -26,7 +27,7 @@ declare global{
 
 function state():MaterialsPerfDiagState{
   if(!window.__VYRON_MATERIALS_DIAG__)window.__VYRON_MATERIALS_DIAG__={
-    sequence:0,appRenders:0,productionRenders:0,materialsRenders:0,rowRenders:0,ipc:[]
+    sequence:0,appRenders:0,productionRenders:0,materialsRenders:0,rowRenders:0,ipc:[],phases:{}
   };
   return window.__VYRON_MATERIALS_DIAG__;
 }
@@ -45,6 +46,7 @@ export function diagCount(kind:'app'|'production'|'materials'|'row'){
 
 export function beginMaterialsDiagClick(from:string){
   const s=state(),id=++s.sequence;
+  s.phases={};
   s.click={
     id,from,startedAt:performance.now(),
     appBase:s.appRenders,
@@ -76,6 +78,7 @@ export function completeMaterialsDiagOnNextPaint(){
         'ProductionOS renders: '+(s.productionRenders-click.productionBase),
         'MaterialsManager renders: '+(s.materialsRenders-click.materialsBase),
         'Materials rows renders: '+(s.rowRenders-click.rowBase),
+        ...Object.entries(s.phases).map(([name,duration])=>'phase '+name+': '+duration.toFixed(1)+' ms'),
         'Production IPC calls: '+ipc.length,
         ...ipc.slice(0,20).map(x=>'IPC '+x.command+' '+(x.duration??0).toFixed(1)+' ms '+(x.ok===false?'ERR':'OK')),
         '',
@@ -91,6 +94,8 @@ export function completeMaterialsDiagOnNextPaint(){
     });
   });
 }
+
+export function recordMaterialsDiagPhase(name:string,duration:number){state().phases[name]=duration}
 
 export function beginMaterialsIpc(command:string){
   const row:DiagIpc={command,startedAt:performance.now()};
