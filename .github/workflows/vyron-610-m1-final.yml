@@ -1,0 +1,166 @@
+name: VYRON 6.1.0 Final M1 Performance
+
+on:
+  push:
+    branches:
+      - perf/vyron-6.1.0-m1-final
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-610-final-m1
+  cancel-in-progress: true
+
+env:
+  VERSION: '6.1.0'
+  PRODUCT_EQUIVALENT_BASE: '410e441361450a0cb6ade0f50102767776d0de28'
+  BUNDLE_ID: studio.channelflow.desktop
+  VYRON_M1_PERF_PROBE: '1'
+
+jobs:
+  m1-final:
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: perf/vyron-6.1.0-m1-final
+          fetch-depth: 0
+
+      - name: Prove production equivalence and Apple Silicon runner
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(uname -m)" = "arm64"
+          sysctl -n machdep.cpu.brand_string | tee "$RUNNER_TEMP/cpu.txt"
+          grep -E 'Apple M1|Apple M2|Apple M3|Apple M4' "$RUNNER_TEMP/cpu.txt"
+          python3 - <<'PY'
+          import subprocess,os
+          allowed={
+            'src/M1PerformanceProbe.tsx',
+            '.github/workflows/vyron-610-m1-final.yml',
+          }
+          changed=set(filter(None,subprocess.check_output(
+            ['git','diff','--name-only',os.environ['PRODUCT_EQUIVALENT_BASE']+'...HEAD'],
+            text=True
+          ).splitlines()))
+          extra=changed-allowed
+          if extra: raise SystemExit('PRODUCTION_EQUIVALENCE_FAILED:'+','.join(sorted(extra)))
+          print('PRODUCT_CODE_EQUIVALENCE=PASS')
+          PY
+          node - <<'NODE'
+          const p=require('./package.json'),t=require('./src-tauri/tauri.conf.json');
+          if(p.version!=='6.1.0'||t.version!=='6.1.0')throw new Error('VERSION_MISMATCH');
+          if(t.identifier!=='studio.channelflow.desktop')throw new Error('BUNDLE_ID_CHANGED');
+          NODE
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Frontend compile + Metadata Queue contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm run build
+          npx vitest run src/v610MetadataQueue.test.ts
+          echo 'M1_FRONTEND_GATE=PASS'
+
+      - name: Build production ARM64 app
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          export APPLE_SIGNING_IDENTITY='-'
+          npx tauri build --target aarch64-apple-darwin --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          APP="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)"
+          test -d "$APP"
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = "$BUNDLE_ID"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = "$VERSION"
+          file "$APP/Contents/MacOS/channelflow" | grep -q arm64
+          codesign --verify --deep --strict "$APP"
+          echo "APP_PATH=$APP" >> "$GITHUB_ENV"
+
+      - name: Seed isolated owner license
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ROOT="$HOME/Library/Application Support/studio.channelflow.desktop"
+          mkdir -p "$ROOT"
+          cat >"$ROOT/license.json" <<'JSON'
+          {
+            "valid": true,
+            "type": "owner-lifetime",
+            "expiresAt": null,
+            "maskedKey": "CI-PERF",
+            "activatedAt": "2026-10-01T00:00:00Z"
+          }
+          JSON
+
+      - name: Physical WKWebView M1 performance gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          REPORT="$RUNNER_TEMP/vyron-m1-performance.json"
+          LOG="$RUNNER_TEMP/vyron-m1-performance.log"
+          rm -f "$REPORT"
+          VYRON_M1_PERF_PROBE=1 VYRON_M1_PERF_REPORT="$REPORT" \
+            "$APP_PATH/Contents/MacOS/channelflow" >"$LOG" 2>&1 &
+          PID=$!
+          trap 'kill "$PID" >/dev/null 2>&1 || true' EXIT
+          for i in {1..150}; do
+            test -s "$REPORT" && break
+            kill -0 "$PID"
+            sleep 1
+          done
+          test -s "$REPORT"
+          cat "$REPORT"
+          python3 - "$REPORT" <<'PY'
+          import json,sys
+          p=json.load(open(sys.argv[1]))
+          if not p.get('pass'):
+              raise SystemExit('M1_PERFORMANCE_GATE_FAILED:'+json.dumps(p,ensure_ascii=False))
+          a=p['aggregate'];d=p['dataset']
+          assert d['metadataRecords']==5000
+          assert d['assignedJobs']==1000
+          assert a['fps']>=57
+          assert a['p50']<=17.5
+          assert a['p95']<=20.5
+          assert a['p99']<=33.5
+          assert a['dropped']<2
+          assert a['long50']==0
+          print('M1_PERFORMANCE_GATE=PASS')
+          PY
+          ! grep -Eiq 'panic|segmentation fault|fatal error' "$LOG"
+          kill "$PID" >/dev/null 2>&1 || true
+          wait "$PID" >/dev/null 2>&1 || true
+          trap - EXIT
+
+      - name: Preserve benchmark evidence
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p m1-performance
+          cp "$RUNNER_TEMP/vyron-m1-performance.json" m1-performance/report.json 2>/dev/null || true
+          cp "$RUNNER_TEMP/vyron-m1-performance.log" m1-performance/runtime.log 2>/dev/null || true
+          cp "$RUNNER_TEMP/cpu.txt" m1-performance/cpu.txt 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: VYRON-6.1.0-FINAL-M1-PERFORMANCE
+          path: m1-performance/**
+          if-no-files-found: warn
+          retention-days: 30
