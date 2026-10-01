@@ -1,7 +1,7 @@
 import React,{useEffect,useMemo,useState} from 'react';
 import {api} from './api';
 import {useApp} from './store';
-import type {Channel,YoutubeProfile} from './types';
+import type {Channel,Page,YoutubeProfile} from './types';
 import {humanizeError} from './errorCenter';
 import {isFutureChannel} from './channelIdentity';
 import {buildReadyVideoInventory} from './readyVideoInventory';
@@ -30,7 +30,7 @@ const numeric=(x:unknown):x is number=>typeof x==='number'&&Number.isFinite(x);
 const money=(n:number)=>new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:2}).format(n);
 const shortDateTime=(iso?:string)=>iso?new Intl.DateTimeFormat('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(iso)):'—';
 
-export function DashboardOS(){const page=useApp(s=>s.page),setPage=useApp(s=>s.setPage);return <ScreenErrorBoundary page={page} onHome={()=>setPage('dashboard')}>{page==='autopilot'?<CommandCenter/>:<OperationsDashboard/>}</ScreenErrorBoundary>}
+export function DashboardOS({pageOverride}:{pageOverride?:Extract<Page,'dashboard'|'autopilot'>}={}){const page=useApp(s=>pageOverride||s.page),setPage=useApp(s=>s.setPage);return <ScreenErrorBoundary page={page} onHome={()=>setPage('dashboard')}>{page==='autopilot'?<CommandCenter/>:<OperationsDashboard/>}</ScreenErrorBoundary>}
 
 function exactConnectedCount(channels:Channel[],profiles:YoutubeProfile[]){
  const byId=new Map(profiles.map(x=>[x.id,x]));
