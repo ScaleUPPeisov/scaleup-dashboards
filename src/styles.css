@@ -229,3 +229,16 @@ button.secondary{background:rgba(255,255,255,.035);border-color:#294156;color:#9
 .fpsDetailed{display:grid;gap:2px;min-width:132px;line-height:1.35}.fpsDetailed b{font-size:9px}.fpsDetailed span{display:block;font-size:7px;opacity:.78}.pageWrap{will-change:auto}.sidebar,.topbar{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}.bgGlow{filter:none!important;will-change:auto!important}
 
 
+
+/* VYRON 6.1.0 — persistent Metadata Queue */
+.metadataQueuePanel{display:grid;gap:12px}
+.metadataQueueFacts{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}
+.metadataQueueFacts>span{display:flex;flex-direction:column;gap:4px;padding:10px 12px;border:1px solid rgba(255,255,255,.065);border-radius:10px;background:rgba(255,255,255,.018)}
+.metadataQueueFacts small{font-size:9px;color:#7995a6}.metadataQueueFacts b{font-size:18px;color:#e6f7ff}
+.metadataQueueImportHint,.metadataQueueCleanup{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;border:1px solid rgba(255,255,255,.06);border-radius:10px;background:rgba(4,17,28,.58)}
+.metadataQueueImportHint span,.metadataQueueCleanup span{color:#7896a8;font-size:11px}.metadataQueueCleanup>div{display:flex;flex:1 1 280px;flex-direction:column;gap:3px}
+.metadataQueueToolbar{display:flex;align-items:end;gap:8px;flex-wrap:wrap}.metadataQueueToolbar label{display:grid;gap:4px}.metadataQueueToolbar>span{margin-left:auto;color:#7896a8;font-size:10px}
+.metadataQueueRows{display:grid;gap:6px;max-height:430px;overflow:auto;contain:content}
+.metadataQueueRow{display:grid;grid-template-columns:minmax(150px,.8fr) minmax(220px,2fr) minmax(110px,.6fr);align-items:center;gap:10px;padding:9px 10px;border:1px solid rgba(255,255,255,.055);border-radius:8px;background:rgba(255,255,255,.012)}
+.metadataQueueRow span{display:grid;gap:2px}.metadataQueueRow small,.metadataQueueRow em{font-size:9px;color:#6f8da0;font-style:normal}.metadataQueueRow strong{font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media(max-width:1100px){.metadataQueueFacts{grid-template-columns:repeat(3,minmax(0,1fr))}.metadataQueueRow{grid-template-columns:1fr}}
