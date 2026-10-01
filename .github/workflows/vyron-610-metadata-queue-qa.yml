@@ -61,8 +61,6 @@ jobs:
         run: >
           npx vitest run
           src/v610MetadataQueue.test.ts
-          src/v510MaterialsManager.test.ts
-          src/v512ManualAssembly.test.ts
           src/v503UploadCounterRestore.test.ts
           src/youtubePublishSafety.test.ts
           src/v400QuotaUploadLimitSeparation.test.ts
@@ -70,6 +68,29 @@ jobs:
           src/v2115Rc7OauthUpdateContinuity.test.ts
           src/v500Performance.test.ts
           tests/vyron-603-production-hotfix.test.mjs
+
+      - name: Protected Materials / Manual Assembly byte continuity
+        run: |
+          set -Eeuo pipefail
+          git diff --exit-code "$BASELINE_SHA"...HEAD -- \
+            src/MaterialsManager.tsx \
+            src/ProductionManager.tsx \
+            src/productionManagerApi.ts \
+            src/production-manager.css \
+            src-tauri/src/materials_manager.rs \
+            src-tauri/src/production_manager.rs
+          grep -F 'materials_manager::import_production_material_images' src-tauri/src/lib.rs
+          grep -F 'production_manager::build_manual_production_batch' src-tauri/src/lib.rs
+          grep -F 'production_manager::open_production_batch_in_endlume' src-tauri/src/lib.rs
+          node - <<'NODE'
+          const t=require('./src-tauri/tauri.conf.json');
+          const expected=[
+            'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json',
+            'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json'
+          ];
+          if(JSON.stringify(t.plugins.updater.endpoints)!==JSON.stringify(expected))throw new Error('UPDATER_ENDPOINTS_CHANGED');
+          NODE
+          echo 'MATERIALS_MANUAL_ASSEMBLY_CONTINUITY=PASS'
 
       - name: Full frontend suite audit
         id: fullnpm
