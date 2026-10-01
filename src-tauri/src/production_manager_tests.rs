@@ -294,48 +294,38 @@ fn acceptance_delete_selected_and_delete_all_batch_projects() {
     fs::create_dir_all(&m.output_dir).unwrap();
     for row in &mut st.projects {
         let output = PathBuf::from(&m.output_dir).join(format!("{}.mp4", row.project_id));
-        fs::write(&output, b"verified render").unwrap();
+        fs::write(&output, b"render must survive manual project delete").unwrap();
         row.render_status = "Completed".into();
         row.output_file = Some(output.to_string_lossy().into_owned());
     }
     atomic_json(&status_path, &st).unwrap();
-    let verified = m
-        .projects
-        .iter()
-        .filter_map(|p| p.job_id.clone())
-        .collect::<HashSet<_>>();
 
-    let blocked = delete_production_batch_projects_inner(
-        &HashSet::new(),
+    // Explicit manual delete must not require YouTube upload proof.
+    let first = delete_production_batch_projects_inner(
         summary.manifest_path.clone(),
         vec!["001".into()],
-    )
-    .unwrap_err();
-    assert!(blocked.contains("verified YouTube upload proof"));
-    assert!(Path::new(&m.projects[0].folder_path).exists());
+    ).unwrap();
+    assert_eq!(first.deleted_project_ids, vec!["001".to_string()]);
+    assert!(!Path::new(&m.projects[0].folder_path).exists());
+    assert_eq!(first.batch.as_ref().unwrap().project_count, 9);
 
     let r = delete_production_batch_projects_inner(
-        &verified,
         summary.manifest_path.clone(),
-        vec!["001".into(), "002".into(), "003".into()],
-    )
-    .unwrap();
-    assert_eq!(r.deleted_project_ids.len(), 3);
+        vec!["002".into(), "003".into()],
+    ).unwrap();
+    assert_eq!(r.deleted_project_ids.len(), 2);
     let b = r.batch.unwrap();
     assert_eq!(b.project_count, 7);
     let (m2, _) = load_manifest(&b.manifest_path).unwrap();
     assert_eq!(m2.projects.len(), 7);
-    let ids = m2
-        .projects
-        .iter()
-        .map(|p| p.project_id.clone())
-        .collect::<Vec<_>>();
-    let r2 =
-        delete_production_batch_projects_inner(&verified, b.manifest_path.clone(), ids).unwrap();
-    let final_batch = r2.batch.unwrap();
-    assert_eq!(final_batch.project_count, 0);
-    let (final_manifest, _) = load_manifest(&final_batch.manifest_path).unwrap();
+
+    let ids = m2.projects.iter().map(|p| p.project_id.clone()).collect::<Vec<_>>();
+    let r2 = delete_production_batch_projects_inner(b.manifest_path.clone(), ids).unwrap();
+    assert!(r2.batch.is_none());
+    let (final_manifest, _) = load_manifest(&b.manifest_path).unwrap();
     assert!(final_manifest.projects.is_empty());
+
+    // Manual delete never touches Render output.
     assert!(Path::new(&m.output_dir).is_dir());
     for row in st.projects {
         let output = row.output_file.unwrap();
