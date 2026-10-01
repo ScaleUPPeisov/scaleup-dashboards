@@ -755,11 +755,6 @@ pub fn restore_encrypted_snapshot(
  }
 
  clear_caches();
-
- if meta.storage_kind=="current-local"&&meta.existed{
-  let key=local_key(app,false)?;
-  let _=read_local_with_key(&p,&key,false)?;
- }
  Ok(())
 }
 
