@@ -57,6 +57,24 @@ export function ProductionOS(){
  const globalCleanupRoots=()=>[settings.workspace,prefs.productionRoot,...Object.values(prefs.byChannel||{}).map(x=>x.productionRoot)].map(x=>(x||'').trim()).filter((x,i,a)=>Boolean(x)&&a.indexOf(x)===i);
  async function beginGlobalProjectCleanup(){const roots=globalCleanupRoots();if(!roots.length){toast('Нет настроенных Production workspace для очистки');return}setCleanupBusy(true);try{const preview=await productionManagerApi.previewGlobalProjectCleanup(roots);setCleanupPreview(preview);setCleanupConfirmed(false);setCleanupPhase(1)}catch(e){notifyError('Не удалось проверить PROJECT-папки',String(e),{operationId:`global-project-cleanup-preview:${Date.now()}`})}finally{setCleanupBusy(false)}}
  async function executeGlobalProjectCleanup(){if(!cleanupPreview||!cleanupConfirmed)return;const roots=globalCleanupRoots();setCleanupBusy(true);try{const r=await productionManagerApi.executeGlobalProjectCleanup(roots,true);setCleanupPhase(0);setCleanupPreview(null);setCleanupConfirmed(false);notifySuccess('PROJECT-папки очищены',`Все каналы • удалено ${r.deletedProjects} • освобождено ${(r.bytesFreed/1024/1024/1024).toFixed(2)} GB • готовые рендеры защищены: ${r.protectedRenders}.`,{operationId:`global-project-cleanup:${Date.now()}`});if(r.errors.length)notifyError('Не все PROJECT-папки удалены',`${r.failedProjects} ошибок. ${r.errors.slice(0,12).join(' | ')}`,{operationId:`global-project-cleanup-errors:${Date.now()}`})}catch(e){notifyError('Глобальная очистка PROJECT-папок не выполнена',String(e),{operationId:`global-project-cleanup-failed:${Date.now()}`})}finally{setCleanupBusy(false)}}
+ async function runMaterialsBenchmark(){
+  if(diagBusy)return;
+  setDiagBusy(true);resetMaterialsBenchmark();
+  try{
+    for(let i=0;i<10;i++){
+      setSection('overview');
+      await twoFrames();
+      beginMaterialsDiagClick('benchmark-'+(i+1));
+      const t0=performance.now();setSection('materials');const t1=performance.now();
+      recordMaterialsDiagPhase('benchmark setSection sync',t1-t0);
+      const m=await completeMaterialsDiagOnNextPaint();
+      if(m)appendMaterialsBenchmark(m);
+    }
+    const el=document.getElementById('materials-diag-overlay');if(el)el.textContent=benchmarkReport();
+  }finally{setDiagBusy(false)}
+ }
+ const diagStorageNode=<section className="panel pmStorageUnified"><div className="pmStorageUnifiedMain"><small>ХРАНИЛИЩЕ ПРОЕКТОВ</small><h3>{projectRoot||'Папка не выбрана'}</h3><p>{projectStorage?.external?'Внешний диск':'Внутренний диск'} • {projectStorage?.writable?'запись доступна':'нужно проверить доступ'}{typeof projectStorage?.freeBytes==='number'?\` • свободно ${(projectStorage.freeBytes/1024/1024/1024).toFixed(1)} GB\`:''}{liveInventory?\` • Live ready: ${liveInventory.readyVideos} • ${liveInventory.folderState}\`:''}</p></div><div className="pmActions"><button className="primary" onClick={()=>void chooseProjectRoot('global')}>ИЗМЕНИТЬ ПАПКУ</button>{c&&<button onClick={()=>void chooseProjectRoot('channel')}>ОТДЕЛЬНАЯ ПАПКА ДЛЯ КАНАЛА</button>}{projectRoot&&<button onClick={()=>void productionManagerApi.openFolder(projectRoot)}>ОТКРЫТЬ В FINDER</button>}</div>{projectStorage?.error&&<div className="pmStorageError">{projectStorage.error}</div>}</section>;
+
  return <>
   <div className="pageHeader"><div><small>PRODUCTION PIPELINE</small><h1>Производство</h1><p>Материалы → проекты → ENDLUME. YouTube-публикация вынесена в YouTube Center и не дублируется внутри Production.</p></div><div className="headerActions"><button disabled={busy} onClick={refreshAll}>{busy?'Проверяю…':'↻ Обновить статусы'}</button><button onClick={maintainBuffer}>Поддержать буфер</button><button className="danger" disabled={cleanupBusy} onClick={()=>void beginGlobalProjectCleanup()}>{cleanupBusy?'ПРОВЕРЯЮ…':'ОЧИСТИТЬ PROJECT-ПАПКИ ВСЕХ КАНАЛОВ'}</button><button className="primary compactAction" onClick={()=>setPlanOpen(true)}>+ Создать проекты</button></div></div>
   <section className="panel pmStorageUnified"><div className="pmStorageUnifiedMain"><small>ХРАНИЛИЩЕ ПРОЕКТОВ</small><h3>{projectRoot||'Папка не выбрана'}</h3><p>{projectStorage?.external?'Внешний диск':'Внутренний диск'} • {projectStorage?.writable?'запись доступна':'нужно проверить доступ'}{typeof projectStorage?.freeBytes==='number'?` • свободно ${(projectStorage.freeBytes/1024/1024/1024).toFixed(1)} GB`:''}{liveInventory?` • Live ready: ${liveInventory.readyVideos} • ${liveInventory.folderState}`:''}</p></div><div className="pmActions"><button className="primary" onClick={()=>void chooseProjectRoot('global')}>ИЗМЕНИТЬ ПАПКУ</button>{c&&<button onClick={()=>void chooseProjectRoot('channel')}>ОТДЕЛЬНАЯ ПАПКА ДЛЯ КАНАЛА</button>}{projectRoot&&<button onClick={()=>void productionManagerApi.openFolder(projectRoot)}>ОТКРЫТЬ В FINDER</button>}</div>{projectStorage?.error&&<div className="pmStorageError">{projectStorage.error}</div>}</section>
