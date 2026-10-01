@@ -187,10 +187,7 @@ fn resolve_production_images(workspace: &str, channel_id: &str) -> Result<Vec<Re
         if !seen.insert(sha.clone()) { continue; }
         out.push(ResolvedProductionImage {
             path: image.path,
-            source: "MATERIAL_LIBRARY",
             asset_id: Some(image.asset_id),
-            reusable: true,
-            sha256: sha,
         });
     }
 
@@ -202,10 +199,7 @@ fn resolve_production_images(workspace: &str, channel_id: &str) -> Result<Vec<Re
         if !seen.insert(sha.clone()) { continue; }
         out.push(ResolvedProductionImage {
             path: image.path,
-            source: "IMPORT_SESSION",
             asset_id: None,
-            reusable: true,
-            sha256: sha,
         });
     }
     Ok(out)
@@ -666,10 +660,7 @@ struct PlanProject {
 #[derive(Clone, Debug)]
 struct ResolvedProductionImage {
     path: String,
-    source: &'static str,
     asset_id: Option<String>,
-    reusable: bool,
-    sha256: String,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -2934,7 +2925,7 @@ fn delete_production_batch_projects_inner(
         return Ok(DeleteResult {
             deleted_project_ids,
             deleted_job_ids,
-            batch: Some(summary_from(&m, &st)),
+            batch: None,
         });
     }
     atomic_json(&mp, &m)?;
