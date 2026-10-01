@@ -6,7 +6,6 @@ import {useApp} from './store';
 import type {Channel,JobStatus,VideoJob} from './types';
 import {ProductionWorkspace} from './ProductionWorkspace';
 import {ProductionManager} from './ProductionManager';
-import {MaterialsManager} from './MaterialsManager';
 import {productionManagerApi,type ProductionStorageStatus,type GlobalProjectCleanupPreview} from './productionManagerApi';
 import {scanFactualRenderRuntime} from './renderRuntimeEvidence';
 import {replaceFactualActiveRenders} from './activeOperationFacts';
