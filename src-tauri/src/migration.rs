@@ -15,6 +15,7 @@ use std::{
 };
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
+use unicode_normalization::UnicodeNormalization;
 
 use crate::{oauth_vault, security, storage};
 
@@ -98,14 +99,39 @@ fn source_os() -> String {
     std::env::consts::OS.to_string()
 }
 
-fn canonical_passphrase(passphrase: &str) -> &str {
-    // A migration password is portable text, not an OS-specific secret.
-    // Keep legacy packages compatible by only normalizing transport artifacts
-    // that commonly appear after clipboard/file handoff between macOS/Windows.
+fn legacy_canonical_passphrase(passphrase: &str) -> String {
     passphrase
         .strip_prefix('\u{feff}')
         .unwrap_or(passphrase)
         .trim_end_matches(&['\r', '\n'][..])
+        .to_string()
+}
+
+fn canonical_passphrase_v2(passphrase: &str) -> String {
+    legacy_canonical_passphrase(passphrase).nfc().collect()
+}
+
+fn legacy_nfd_passphrase(passphrase: &str) -> String {
+    legacy_canonical_passphrase(passphrase).nfd().collect()
+}
+
+fn push_unique_candidate(
+    out: &mut Vec<(&'static str, String)>,
+    label: &'static str,
+    candidate: String,
+) {
+    if !out.iter().any(|(_, existing)| existing.as_bytes() == candidate.as_bytes()) {
+        out.push((label, candidate));
+    }
+}
+
+fn passphrase_compatibility_candidates(passphrase: &str) -> Vec<(&'static str, String)> {
+    let mut out = Vec::new();
+    push_unique_candidate(&mut out, "RAW", passphrase.to_string());
+    push_unique_candidate(&mut out, "LEGACY_CANON", legacy_canonical_passphrase(passphrase));
+    push_unique_candidate(&mut out, "NFC", canonical_passphrase_v2(passphrase));
+    push_unique_candidate(&mut out, "NFD", legacy_nfd_passphrase(passphrase));
+    out
 }
 
 fn derive_key(passphrase: &str, salt: &[u8]) -> Result<[u8; 32], String> {
@@ -145,7 +171,7 @@ fn payload_hash(state: &Value, oauth: &Value, youtube: &Value, google: &Value, i
 fn encrypt_payload(payload: &PortablePayload, passphrase: &str) -> Result<Vec<u8>, String> {
     let mut salt = [0u8; 16];
     OsRng.fill_bytes(&mut salt);
-    let key = derive_key(canonical_passphrase(passphrase), &salt)?;
+    let key = derive_key(&canonical_passphrase_v2(passphrase), &salt)?;
     let mut nonce = [0u8; 24];
     OsRng.fill_bytes(&mut nonce);
     let plain = serde_json::to_vec(payload)
@@ -173,6 +199,31 @@ fn encrypt_payload(payload: &PortablePayload, passphrase: &str) -> Result<Vec<u8
     .map_err(|e| format!("MIGRATION_ENVELOPE_SERIALIZE_FAILED: {e}"))
 }
 
+fn bundle_sha256(bytes: &[u8]) -> String {
+    hex::encode(Sha256::digest(bytes))
+}
+
+fn envelope_diagnostics(bytes: &[u8]) -> Result<Value, String> {
+    let envelope: BundleEnvelope =
+        serde_json::from_slice(bytes).map_err(|e| format!("MIGRATION_BUNDLE_INVALID: {e}"))?;
+    let salt = B64.decode(&envelope.salt).ok();
+    let nonce = B64.decode(&envelope.nonce).ok();
+    let ciphertext = B64.decode(&envelope.ciphertext).ok();
+    Ok(json!({
+        "sourceOs": envelope.source_os,
+        "appVersion": envelope.app_version,
+        "schema": envelope.schema_version,
+        "kdf": envelope.kdf,
+        "saltValid": salt.as_ref().map(|x|x.len()==16).unwrap_or(false),
+        "saltLength": salt.as_ref().map(|x|x.len()).unwrap_or(0),
+        "nonceValid": nonce.as_ref().map(|x|x.len()==24).unwrap_or(false),
+        "nonceLength": nonce.as_ref().map(|x|x.len()).unwrap_or(0),
+        "ciphertextPresent": ciphertext.as_ref().map(|x|!x.is_empty()).unwrap_or(false),
+        "ciphertextLength": ciphertext.as_ref().map(|x|x.len()).unwrap_or(0),
+        "bundleSha256": bundle_sha256(bytes)
+    }))
+}
+
 fn decrypt_payload(bytes: &[u8], passphrase: &str) -> Result<PortablePayload, String> {
     let envelope: BundleEnvelope =
         serde_json::from_slice(bytes).map_err(|e| format!("MIGRATION_BUNDLE_INVALID: {e}"))?;
@@ -183,50 +234,72 @@ fn decrypt_payload(bytes: &[u8], passphrase: &str) -> Result<PortablePayload, St
         ));
     }
     let salt = B64
-        .decode(envelope.salt)
+        .decode(&envelope.salt)
         .map_err(|_| "MIGRATION_SALT_INVALID".to_string())?;
     let nonce = B64
-        .decode(envelope.nonce)
+        .decode(&envelope.nonce)
         .map_err(|_| "MIGRATION_NONCE_INVALID".to_string())?;
     if salt.len() != 16 || nonce.len() != 24 {
         return Err("MIGRATION_ENVELOPE_LENGTH_INVALID".into());
     }
     let ciphertext = B64
-        .decode(envelope.ciphertext)
+        .decode(&envelope.ciphertext)
         .map_err(|_| "MIGRATION_CIPHERTEXT_INVALID".to_string())?;
+    if ciphertext.is_empty() {
+        return Err("MIGRATION_CIPHERTEXT_EMPTY".into());
+    }
 
-    let decrypt_with = |candidate: &str| -> Result<Vec<u8>, String> {
-        let key = derive_key(candidate, &salt)?;
-        XChaCha20Poly1305::new(Key::from_slice(&key))
-            .decrypt(
-                XNonce::from_slice(&nonce),
-                Payload {
-                    msg: &ciphertext,
-                    aad: AAD,
-                },
-            )
-            .map_err(|_| "MIGRATION_AUTHENTICATION_FAILED".to_string())
-    };
-
-    // Legacy bundles used the raw passphrase bytes. Try that first so updates
-    // never invalidate an existing package. If authentication fails, retry with
-    // the canonical cross-platform text form (BOM / CRLF transport artifacts removed).
-    let plain = match decrypt_with(passphrase) {
-        Ok(plain) => plain,
-        Err(_) => {
-            let canonical = canonical_passphrase(passphrase);
-            if canonical == passphrase {
-                return Err(
-                    "MIGRATION_AUTHENTICATION_FAILED: wrong passphrase or corrupted bundle"
-                        .to_string(),
-                );
+    let mut attempts = Vec::<String>::new();
+    let mut decrypted: Option<Vec<u8>> = None;
+    for (label, candidate) in passphrase_compatibility_candidates(passphrase) {
+        let result = derive_key(&candidate, &salt).and_then(|key| {
+            XChaCha20Poly1305::new(Key::from_slice(&key))
+                .decrypt(
+                    XNonce::from_slice(&nonce),
+                    Payload {
+                        msg: &ciphertext,
+                        aad: AAD,
+                    },
+                )
+                .map_err(|_| "MIGRATION_AUTHENTICATION_FAILED".to_string())
+        });
+        match result {
+            Ok(plain) => {
+                attempts.push(format!("{label}_PASS"));
+                decrypted = Some(plain);
+                break;
             }
-            decrypt_with(canonical).map_err(|_| {
-                "MIGRATION_AUTHENTICATION_FAILED: wrong passphrase or corrupted bundle"
-                    .to_string()
-            })?
+            Err(_) => attempts.push(format!("{label}_FAILED")),
         }
+    }
+
+    let Some(plain) = decrypted else {
+        eprintln!(
+            "MIGRATION_AUTH_DIAGNOSTIC schema={} appVersion={} sourceOs={} kdf={} saltLen={} nonceLen={} ciphertextLen={} candidates={}",
+            envelope.schema_version,
+            envelope.app_version,
+            envelope.source_os,
+            envelope.kdf,
+            salt.len(),
+            nonce.len(),
+            ciphertext.len(),
+            attempts.join(",")
+        );
+        return Err(format!("MIGRATION_AUTHENTICATION_FAILED: {}", attempts.join("|")));
     };
+
+    eprintln!(
+        "MIGRATION_AUTH_DIAGNOSTIC schema={} appVersion={} sourceOs={} kdf={} saltLen={} nonceLen={} ciphertextLen={} candidates={}",
+        envelope.schema_version,
+        envelope.app_version,
+        envelope.source_os,
+        envelope.kdf,
+        salt.len(),
+        nonce.len(),
+        ciphertext.len(),
+        attempts.join(",")
+    );
+
     let payload: PortablePayload = serde_json::from_slice(&plain)
         .map_err(|e| format!("MIGRATION_PAYLOAD_INVALID: {e}"))?;
     if payload.schema_version != BUNDLE_SCHEMA {
@@ -897,6 +970,12 @@ fn read_bundle(path: &str, passphrase: &str) -> Result<PortablePayload, String> 
 }
 
 #[tauri::command]
+pub fn migration_package_diagnostics(path: String) -> Result<Value, String> {
+    let bytes = fs::read(&path).map_err(|e| format!("MIGRATION_READ_FAILED: {e}"))?;
+    envelope_diagnostics(&bytes)
+}
+
+#[tauri::command]
 pub fn migration_export(
     app: AppHandle,
     path: String,
@@ -926,6 +1005,7 @@ pub fn migration_export(
         payload_sha256: checksum,
     };
     let bytes = encrypt_payload(&payload, &passphrase)?;
+    let bundle_sha256 = bundle_sha256(&bytes);
     write_atomic(Path::new(&path), &bytes)?;
     let profiles = oauth
         .get("profiles")
@@ -941,6 +1021,7 @@ pub fn migration_export(
         "channels": state.get("channels").and_then(Value::as_array).map(|x|x.len()).unwrap_or(0),
         "profiles": profiles,
         "encrypted": true,
+        "bundleSha256": bundle_sha256,
         "secretValuesLogged": false
     }))
 }
