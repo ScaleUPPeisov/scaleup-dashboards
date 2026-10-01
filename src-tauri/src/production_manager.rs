@@ -1477,9 +1477,9 @@ fn plan_build(req: &BuildRequest) -> Result<BuildPlan, String> {
     if available_images == 0 {
         return Err("Сначала импортируй изображения в Production → Materials".into());
     }
-    // Materials Manager never reuses an ASSIGNED/USED master automatically.
-    // Legacy Import Session keeps its old allowImageReuse behavior for backwards compatibility.
-    if req.project_count > available_images && (use_material_library || !req.allow_image_reuse) {
+    // Manual VYRON 4-compatible flow: explicit allowImageReuse applies to either image source.
+    // Reused Materials Library assets are treated as reusable source files and are not consumed.
+    if req.project_count > available_images && !req.allow_image_reuse {
         return Err(format!(
             "INSUFFICIENT_IMAGES:{}:{}",
             available_images,
@@ -1515,8 +1515,9 @@ fn plan_build(req: &BuildRequest) -> Result<BuildPlan, String> {
     let mut projects = Vec::new();
     for i in 0..req.project_count {
         let (image_path, image_asset_id) = if use_material_library {
-            let image = &material_images[i];
-            (image.path.clone(), Some(image.asset_id.clone()))
+            let image = &material_images[i % material_images.len()];
+            let asset_id = if req.allow_image_reuse { None } else { Some(image.asset_id.clone()) };
+            (image.path.clone(), asset_id)
         } else {
             let image = &session.collected[i % session.collected.len()];
             (image.path.clone(), None)
@@ -2001,7 +2002,7 @@ pub async fn build_production_batch(
             .collected
             .len()
     };
-    if request.project_count > available && (material_summary.total > 0 || !request.allow_image_reuse) {
+    if request.project_count > available && !request.allow_image_reuse {
         return Ok(BuildResult {
             status: "insufficient_images".into(),
             available_images: available,
