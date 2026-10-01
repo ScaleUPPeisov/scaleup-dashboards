@@ -98,6 +98,16 @@ fn source_os() -> String {
     std::env::consts::OS.to_string()
 }
 
+fn canonical_passphrase(passphrase: &str) -> &str {
+    // A migration password is portable text, not an OS-specific secret.
+    // Keep legacy packages compatible by only normalizing transport artifacts
+    // that commonly appear after clipboard/file handoff between macOS/Windows.
+    passphrase
+        .strip_prefix('\u{feff}')
+        .unwrap_or(passphrase)
+        .trim_end_matches(&['\r', '\n'][..])
+}
+
 fn derive_key(passphrase: &str, salt: &[u8]) -> Result<[u8; 32], String> {
     if passphrase.chars().count() < MIN_PASSPHRASE {
         return Err(format!(
@@ -135,7 +145,7 @@ fn payload_hash(state: &Value, oauth: &Value, youtube: &Value, google: &Value, i
 fn encrypt_payload(payload: &PortablePayload, passphrase: &str) -> Result<Vec<u8>, String> {
     let mut salt = [0u8; 16];
     OsRng.fill_bytes(&mut salt);
-    let key = derive_key(passphrase, &salt)?;
+    let key = derive_key(canonical_passphrase(passphrase), &salt)?;
     let mut nonce = [0u8; 24];
     OsRng.fill_bytes(&mut nonce);
     let plain = serde_json::to_vec(payload)
@@ -184,18 +194,39 @@ fn decrypt_payload(bytes: &[u8], passphrase: &str) -> Result<PortablePayload, St
     let ciphertext = B64
         .decode(envelope.ciphertext)
         .map_err(|_| "MIGRATION_CIPHERTEXT_INVALID".to_string())?;
-    let key = derive_key(passphrase, &salt)?;
-    let plain = XChaCha20Poly1305::new(Key::from_slice(&key))
-        .decrypt(
-            XNonce::from_slice(&nonce),
-            Payload {
-                msg: &ciphertext,
-                aad: AAD,
-            },
-        )
-        .map_err(|_| {
-            "MIGRATION_AUTHENTICATION_FAILED: wrong passphrase or corrupted bundle".to_string()
-        })?;
+
+    let decrypt_with = |candidate: &str| -> Result<Vec<u8>, String> {
+        let key = derive_key(candidate, &salt)?;
+        XChaCha20Poly1305::new(Key::from_slice(&key))
+            .decrypt(
+                XNonce::from_slice(&nonce),
+                Payload {
+                    msg: &ciphertext,
+                    aad: AAD,
+                },
+            )
+            .map_err(|_| "MIGRATION_AUTHENTICATION_FAILED".to_string())
+    };
+
+    // Legacy bundles used the raw passphrase bytes. Try that first so updates
+    // never invalidate an existing package. If authentication fails, retry with
+    // the canonical cross-platform text form (BOM / CRLF transport artifacts removed).
+    let plain = match decrypt_with(passphrase) {
+        Ok(plain) => plain,
+        Err(_) => {
+            let canonical = canonical_passphrase(passphrase);
+            if canonical == passphrase {
+                return Err(
+                    "MIGRATION_AUTHENTICATION_FAILED: wrong passphrase or corrupted bundle"
+                        .to_string(),
+                );
+            }
+            decrypt_with(canonical).map_err(|_| {
+                "MIGRATION_AUTHENTICATION_FAILED: wrong passphrase or corrupted bundle"
+                    .to_string()
+            })?
+        }
+    };
     let payload: PortablePayload = serde_json::from_slice(&plain)
         .map_err(|e| format!("MIGRATION_PAYLOAD_INVALID: {e}"))?;
     if payload.schema_version != BUNDLE_SCHEMA {
@@ -1230,6 +1261,19 @@ mod tests {
         assert!(result.unwrap_err().contains("INJECTED_MIGRATION_FAILURE"));
         assert_eq!(fs::read(&live).unwrap(),b"before");
         let _=fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn migration_passphrase_survives_cross_platform_clipboard_line_endings() {
+        let payload = sample_payload();
+        let enc = encrypt_payload(&payload, "portable migration password\r\n").unwrap();
+        let restored = decrypt_payload(&enc, "portable migration password\n").unwrap();
+        assert_eq!(restored.payload_sha256, payload.payload_sha256);
+
+        // Legacy raw-byte packages remain readable because decrypt tries raw first.
+        let legacy_key = derive_key("legacy password with newline\r\n", &[7u8; 16]).unwrap();
+        let same_raw_key = derive_key("legacy password with newline\r\n", &[7u8; 16]).unwrap();
+        assert_eq!(legacy_key, same_raw_key);
     }
 
     #[test]
