@@ -143,10 +143,24 @@ export function App(){
   if(!license.valid)return <Activation onActivated={setLicense}/>;
   return <div className="appShell"><LiveInventoryBridge/><ChannelRunwayScheduler/><ProductionStatusBridge/><ChannelStatisticsScheduler/><OwnerInventoryScheduler/><UploadProcessingMonitor/><RecoveryGate/><Sidebar/><main className="main"><Topbar/><PageRouter license={license}/></main><GlobalTaskIndicator/><GlobalUploadIndicator/><UploadCenterGlobal/><GlobalTaskCenter/><CommandPalette/><MetadataQueueAssignmentBridge/><M1PerformanceProbe/>{settings.fpsMonitor&&<FpsMonitor/>}<UpdateExperience/><MajorUpdateCelebration/><NotificationCenter/><div className="bgGlow a"/><div className="bgGlow b"/></div>
 }
+const CachedDashboardRoute=React.memo(({mode}:{mode:'dashboard'|'autopilot'})=><DashboardOS pageOverride={mode}/>);
+const CachedChannelsRoute=React.memo(()=> <ChannelsOS/>);
+const CachedYouTubeRoute=React.memo(({routeTab}:{routeTab?:'publish'|'metadata'|'uploaded'})=><YouTubeCenter routeTab={routeTab}/>);
+
 function PageRouter({license}:{license:LicenseStatus}){
-  const page=useApp(s=>s.page),setPage=useApp(s=>s.setPage);
-  const screen=page==='dashboard'||page==='autopilot'?<DashboardOS/>:page==='accounts'?<SettingsOS license={license}/>:page==='channels'?<ChannelsOS/>:page==='production'||page==='content'?<ProductionOS/>:page==='inventory'?<LiveContentInventory/>:page==='youtube'?<YouTubeCenter/>:page==='competitors'?<CompetitorsPage/>:page==='analytics'?<AnalyticsPage/>:page==='metadata'?<YouTubeCenter initialTab='metadata'/>:page==='existing'?<YouTubeCenter initialTab='uploaded'/>:page==='publisher'?<YouTubeCenter initialTab='publish'/>:<SettingsOS license={license}/>;
-  return <div className="pageWrap"><UiErrorBoundary scope={String(page)} onHome={()=>setPage('dashboard')}>{(page==='dashboard'||page==='autopilot')&&<DashboardUploadSummary/>}{screen}</UiErrorBoundary></div>
+  const page=useApp(s=>s.page),setPage=useApp(s=>s.setPage),mounted=useRef(new Set<string>());
+  const dashboardMode: 'dashboard'|'autopilot'=page==='autopilot'?'autopilot':'dashboard';
+  const youtubeRouteTab=page==='metadata'?'metadata':page==='existing'?'uploaded':page==='publisher'?'publish':undefined;
+  const canonical=page==='autopilot'?'dashboard':page==='metadata'||page==='existing'||page==='publisher'?'youtube':page;
+  if(canonical==='dashboard'||canonical==='channels'||canonical==='youtube')mounted.current.add(canonical);
+
+  const transient=canonical==='production'?<ProductionOS/>:canonical==='content'?<ProductionOS/>:canonical==='inventory'?<LiveContentInventory/>:canonical==='competitors'?<CompetitorsPage/>:canonical==='analytics'?<AnalyticsPage/>:canonical==='accounts'?<SettingsOS license={license}/>:canonical==='settings'?<SettingsOS license={license}/>:null;
+  return <div className="pageWrap">
+    {mounted.current.has('dashboard')&&<div className="routeKeepAlive" hidden={canonical!=='dashboard'} aria-hidden={canonical!=='dashboard'}><UiErrorBoundary scope="dashboard" onHome={()=>setPage('dashboard')}>{canonical==='dashboard'&&<DashboardUploadSummary/>}<CachedDashboardRoute mode={dashboardMode}/></UiErrorBoundary></div>}
+    {mounted.current.has('channels')&&<div className="routeKeepAlive" hidden={canonical!=='channels'} aria-hidden={canonical!=='channels'}><UiErrorBoundary scope="channels" onHome={()=>setPage('dashboard')}><CachedChannelsRoute/></UiErrorBoundary></div>}
+    {mounted.current.has('youtube')&&<div className="routeKeepAlive" hidden={canonical!=='youtube'} aria-hidden={canonical!=='youtube'}><UiErrorBoundary scope="youtube" onHome={()=>setPage('dashboard')}><CachedYouTubeRoute routeTab={youtubeRouteTab}/></UiErrorBoundary></div>}
+    {canonical!=='dashboard'&&canonical!=='channels'&&canonical!=='youtube'&&<UiErrorBoundary scope={String(page)} onHome={()=>setPage('dashboard')}>{transient}</UiErrorBoundary>}
+  </div>
 }
 
 function useRuntimeVersion(){const [version,setVersion]=useState('');useEffect(()=>{void api.appVersion().then(setVersion).catch(()=>{})},[]);return version}
