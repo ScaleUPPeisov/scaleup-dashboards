@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::HashMap,
+    collections::{HashMap,VecDeque},
     fs,
     path::{Path, PathBuf},
     sync::{Mutex, OnceLock},
@@ -143,6 +143,21 @@ pub struct QueuePage{
     rows:Vec<MetadataRecord>,
 }
 
+#[derive(Debug,Clone,Deserialize)]
+#[serde(rename_all="camelCase")]
+pub struct MetadataReservationRequest{
+    pub job_id:String,
+    pub video_number:u64,
+    #[serde(default)] pub project_folder:Option<String>,
+}
+
+#[derive(Debug,Clone,Serialize)]
+#[serde(rename_all="camelCase")]
+pub struct MetadataReservationResult{
+    pub job_id:String,
+    pub record:Option<MetadataRecord>,
+}
+
 fn now()->String{chrono::Utc::now().to_rfc3339()}
 fn sha256_bytes(bytes:&[u8])->String{hex::encode(Sha256::digest(bytes))}
 fn safe_channel_key(channel_id:&str)->String{sha256_bytes(channel_id.as_bytes())[..24].to_string()}
@@ -270,13 +285,16 @@ fn refresh_manifest(app:&AppHandle,m:&mut PackManifest)->Result<(),String>{
     m.complete=m.total>0&&m.counts.available==0&&m.counts.reserved==0&&m.counts.applying==0&&m.counts.error==0&&m.counts.applied==m.total;
     save_manifest(app,m)
 }
-fn update_index_pack(app:&AppHandle,index:&mut ChannelIndex,m:&PackManifest)->Result<(),String>{
+fn sync_index_pack(index:&mut ChannelIndex,m:&PackManifest){
     if let Some(p)=index.packs.iter_mut().find(|x|x.pack_id==m.pack_id){
         p.pack_hash=m.pack_hash.clone();p.source_hash=m.source_hash.clone();p.total=m.total;p.complete=m.complete;p.purged=m.purged;
     }else{
         index.packs.push(PackRef{pack_id:m.pack_id.clone(),pack_hash:m.pack_hash.clone(),source_hash:m.source_hash.clone(),created_at:m.created_at.clone(),total:m.total,complete:m.complete,purged:m.purged});
     }
     index.packs.sort_by(|a,b|a.created_at.cmp(&b.created_at).then_with(||a.pack_id.cmp(&b.pack_id)));
+}
+fn update_index_pack(app:&AppHandle,index:&mut ChannelIndex,m:&PackManifest)->Result<(),String>{
+    sync_index_pack(index,m);
     save_index(app,index)
 }
 fn queue_summary_locked(app:&AppHandle,channel_id:&str,channel_name:&str)->Result<QueueSummary,String>{
@@ -446,6 +464,88 @@ pub fn metadata_queue_reserve(app:AppHandle,channel_id:String,channel_name:Strin
         }
     }
     Ok(None)
+}
+
+#[tauri::command]
+pub fn metadata_queue_reserve_batch(
+    app:AppHandle,
+    channel_id:String,
+    channel_name:String,
+    requests:Vec<MetadataReservationRequest>,
+)->Result<Vec<MetadataReservationResult>,String>{
+    let _guard=queue_lock().lock().map_err(|_|"METADATA_QUEUE_LOCK_POISONED".to_string())?;
+    if requests.is_empty(){return Ok(Vec::new())}
+    let mut index=load_index(&app,&channel_id,&channel_name)?;
+    let mut results=requests.iter().map(|r|MetadataReservationResult{job_id:r.job_id.clone(),record:None}).collect::<Vec<_>>();
+    let mut request_pos=HashMap::<String,usize>::new();
+    for (i,r) in requests.iter().enumerate(){
+        if r.job_id.trim().is_empty(){return Err("METADATA_QUEUE_JOB_REQUIRED".into())}
+        request_pos.entry(r.job_id.clone()).or_insert(i);
+    }
+
+    // Pass 1: recover any durable reservation for the same job. This makes restart,
+    // retry and repeated batch assignment idempotent without consuming a new record.
+    for pref in index.packs.clone(){
+        let m=load_manifest(&app,&channel_id,&pref.pack_id)?;
+        if m.purged{continue}
+        for chunk in 0..m.chunks{
+            for row in load_chunk(&app,&channel_id,&m.pack_id,chunk)?{
+                let Some(job_id)=row.reserved_job_id.as_ref() else{continue};
+                let Some(pos)=request_pos.get(job_id).copied() else{continue};
+                if results[pos].record.is_none(){results[pos].record=Some(row);}
+            }
+        }
+    }
+
+    let mut pending=VecDeque::<usize>::new();
+    for i in 0..requests.len(){if results[i].record.is_none(){pending.push_back(i)}}
+    let mut index_dirty=false;
+
+    // Pass 2: consume AVAILABLE rows in durable FIFO order. Each physical chunk is
+    // written at most once no matter how many VIDEO jobs are assigned from it.
+    'packs:for pref in index.packs.clone(){
+        if pending.is_empty(){break}
+        let mut m=load_manifest(&app,&channel_id,&pref.pack_id)?;
+        if m.purged{continue}
+        let mut pack_dirty=false;
+        for chunk in 0..m.chunks{
+            if pending.is_empty(){break}
+            let mut rows=load_chunk(&app,&channel_id,&m.pack_id,chunk)?;
+            let mut chunk_dirty=false;
+            for row in &mut rows{
+                if pending.is_empty(){break}
+                if row.status!="AVAILABLE"{continue}
+                let Some(pos)=pending.pop_front() else{break};
+                let req=&requests[pos];
+                let at=now();
+                row.status="RESERVED".into();
+                row.reserved_job_id=Some(req.job_id.clone());
+                row.reserved_video_number=Some(req.video_number);
+                row.reserved_at=Some(at);
+                row.error=None;
+                results[pos].record=Some(row.clone());
+                chunk_dirty=true;
+                pack_dirty=true;
+            }
+            if chunk_dirty{save_chunk(&app,&channel_id,&m.pack_id,chunk,&rows)?;}
+        }
+        if pack_dirty{
+            refresh_manifest(&app,&mut m)?;
+            sync_index_pack(&mut index,&m);
+            index_dirty=true;
+        }
+        if pending.is_empty(){break 'packs}
+    }
+    if index_dirty{save_index(&app,&index)?;}
+
+    // Sidecars are written after durable reservation commits. A sidecar write failure
+    // never frees/reuses the record; retrying the same job rehydrates the same record.
+    for (i,result) in results.iter().enumerate(){
+        if let (Some(folder),Some(record))=(requests[i].project_folder.as_deref(),result.record.as_ref()){
+            write_sidecar(folder,record)?;
+        }
+    }
+    Ok(results)
 }
 
 #[tauri::command]
