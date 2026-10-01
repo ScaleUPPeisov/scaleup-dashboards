@@ -60,6 +60,7 @@ jobs:
         run: >
           npx vitest run
           src/v610MetadataQueue.test.ts
+          src/v610PublisherInventoryReconcile.test.ts
           src/v503UploadCounterRestore.test.ts
           src/youtubePublishSafety.test.ts
           src/v400QuotaUploadLimitSeparation.test.ts
@@ -67,6 +68,16 @@ jobs:
           src/v2115Rc7OauthUpdateContinuity.test.ts
           src/v500Performance.test.ts
           tests/vyron-603-production-hotfix.test.mjs
+
+      - name: Publisher inventory blocker contract
+        run: |
+          set -Eeuo pipefail
+          grep -F "reconcilePublisherInventory({channelId,exactRoot:result.root,ready:readyRows(rows,current),jobs:current})" src/PublisherOS.tsx
+          grep -F "publisherInventoryJobs({jobs,channelId,readyPhysicalPaths:publisherReadyPhysicalPaths,recoveryJobIds})" src/PublisherOS.tsx
+          grep -F "sourceOrigin:'render-scan'" src/publisherInventoryReconcile.ts
+          ! grep -F "j.sourceOrigin==='render-scan'&&Boolean(j.finalPath)" src/PublisherOS.tsx
+          echo 'PUBLISHER_INVENTORY_RECONCILIATION=PASS'
+          echo 'LOCAL_SCAN_YOUTUBE_API_REQUESTS=0'
 
       - name: Protected Materials / Manual Assembly byte continuity
         run: |
