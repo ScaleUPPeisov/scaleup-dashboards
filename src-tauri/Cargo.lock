@@ -568,6 +568,7 @@ dependencies = [
  "tauri-plugin-updater",
  "tokio",
  "trash",
+ "unicode-normalization",
  "urlencoding",
  "uuid",
  "windows-sys 0.59.0",
@@ -5016,6 +5017,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "96bd2f2237fe450fcd0a1d2f5f4e91711124f7857ba2e964247776ebeeb7b0c4"
 dependencies = [
  "unic-common",
+]
+
+[[package]]
+name = "unicode-normalization"
+version = "0.1.25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5fd4f6878c9cb28d874b009da9e8d183b5abc80117c40bbd187a1fde336be6e8"
+dependencies = [
+ "tinyvec",
 ]
 
 [[package]]
