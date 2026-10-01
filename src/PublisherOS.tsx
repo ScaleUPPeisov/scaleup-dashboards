@@ -479,9 +479,9 @@ export function PublisherOS(){
     if(!j.finalPath)throw new Error('LOCAL_FILE_REQUIRED');
     const liveFile=await api.localSourceStatus(j.finalPath);if(!liveFile.exists||!liveFile.isFile)throw new Error('LOCAL_FILE_REQUIRED: файл сейчас недоступен');
     const fp=await fingerprintForJob(j),selectedIndex=selected.findIndex(x=>x.id===j.id);
-    let row=metadataRowForJob(draft.rows,j,Math.max(0,selectedIndex));
+    let row=j.metadataSource==='queue'?undefined:metadataRowForJob(draft.rows,j,Math.max(0,selectedIndex));
     let queueRecord=null;
-    if(!row){
+    if(!row&&j.metadataSource!=='queue'){
       queueRecord=await api.metadataQueueReserve(channel.id,channel.name,j.id,j.number,j.folder||undefined);
       if(queueRecord){queueReserved=true;row=metadataQueueRowAsImported(queueRecord)}
     }
