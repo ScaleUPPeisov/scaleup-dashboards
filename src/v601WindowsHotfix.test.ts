@@ -46,8 +46,11 @@ describe('VYRON 6.0.1 Windows migration/UI hotfix contracts',()=>{
   it('uses one portable migration crypto implementation with legacy-compatible raw-first decrypt',()=>{
     expect(migration).toContain('Argon2::new(Algorithm::Argon2id');
     expect(migration).toContain('XChaCha20Poly1305');
-    expect(migration).toContain('canonical_passphrase');
-    expect(migration).toContain('match decrypt_with(passphrase)');
+    expect(migration).toContain('passphrase_compatibility_candidates');
+    expect(migration).toContain('push_unique_candidate(&mut out, "RAW"');
+    expect(migration).toContain('"LEGACY_CANON"');
+    expect(migration).toContain('"NFC"');
+    expect(migration).toContain('"NFD"');
     expect(migration).toContain('trim_end_matches');
   });
 });
