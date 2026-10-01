@@ -43,6 +43,7 @@ import {MajorUpdateCelebration} from './MajorUpdateCelebration';
 import {VYRON_5_ARTWORK,VYRON_MAJOR_UPGRADE_TARGET_KEY,VYRON_MAJOR_VERSION,VYRON_UPDATE_CELEBRATION_NOTES_KEY,VYRON_UPDATE_CELEBRATION_TARGET_KEY} from './vyronBrand';
 import {activeErrorCount,activeJobErrors,clearActiveJobErrorPatch} from './activeErrors';
 import {CommandPalette} from './CommandPalette';
+import {M1PerformanceProbe} from './M1PerformanceProbe';
 import {LiveInventoryBridge} from './LiveInventoryBridge';
 import {LiveContentInventory} from './LiveContentInventory';
 import {inventoryTotals,useLiveInventory} from './renderInventoryRuntime';
@@ -140,7 +141,7 @@ export function App(){
   if(!booted||!license)return <Boot/>;
   if(!license.valid)return <Activation onActivated={setLicense}/>;
   const screen=page==='dashboard'||page==='autopilot'?<DashboardOS/>:page==='accounts'?<SettingsOS license={license}/>:page==='channels'?<ChannelsOS/>:page==='production'||page==='content'?<ProductionOS/>:page==='inventory'?<LiveContentInventory/>:page==='youtube'?<YouTubeCenter/>:page==='competitors'?<CompetitorsPage/>:page==='analytics'?<AnalyticsPage/>:page==='metadata'?<YouTubeCenter initialTab='metadata'/>:page==='existing'?<YouTubeCenter initialTab='uploaded'/>:page==='publisher'?<YouTubeCenter initialTab='publish'/>:<SettingsOS license={license}/>;
-  return <div className="appShell"><LiveInventoryBridge/><ChannelRunwayScheduler/><ProductionStatusBridge/><ChannelStatisticsScheduler/><OwnerInventoryScheduler/><UploadProcessingMonitor/><RecoveryGate/><Sidebar page={page} setPage={setPage}/><main className="main"><Topbar/><div className="pageWrap"><UiErrorBoundary scope={String(page)} onHome={()=>setPage('dashboard')}>{(page==='dashboard'||page==='autopilot')&&<DashboardUploadSummary/>}{screen}</UiErrorBoundary></div></main><GlobalTaskIndicator/><GlobalUploadIndicator/><UploadCenterGlobal/><GlobalTaskCenter/><CommandPalette/>{settings.fpsMonitor&&<FpsMonitor/>}<UpdateExperience/><MajorUpdateCelebration/><NotificationCenter/><div className="bgGlow a"/><div className="bgGlow b"/></div>
+  return <div className="appShell"><LiveInventoryBridge/><ChannelRunwayScheduler/><ProductionStatusBridge/><ChannelStatisticsScheduler/><OwnerInventoryScheduler/><UploadProcessingMonitor/><RecoveryGate/><Sidebar page={page} setPage={setPage}/><main className="main"><Topbar/><div className="pageWrap"><UiErrorBoundary scope={String(page)} onHome={()=>setPage('dashboard')}>{(page==='dashboard'||page==='autopilot')&&<DashboardUploadSummary/>}{screen}</UiErrorBoundary></div></main><GlobalTaskIndicator/><GlobalUploadIndicator/><UploadCenterGlobal/><GlobalTaskCenter/><CommandPalette/><M1PerformanceProbe/>{settings.fpsMonitor&&<FpsMonitor/>}<UpdateExperience/><MajorUpdateCelebration/><NotificationCenter/><div className="bgGlow a"/><div className="bgGlow b"/></div>
 }
 function useRuntimeVersion(){const [version,setVersion]=useState('');useEffect(()=>{void api.appVersion().then(setVersion).catch(()=>{})},[]);return version}
 function Boot(){return <div className="boot"><div className="logoMark"><span>▶</span></div><b>VYRON YT PEISOV</b><small>AUTONOMOUS CONTENT OS</small><i/></div>}
@@ -220,19 +221,21 @@ function FpsMonitor(){
   useEffect(()=>{
     let observer:PerformanceObserver|undefined;
     try{observer=new PerformanceObserver(list=>{for(const entry of list.getEntries()){if(entry.duration>50)ref.current.long50++;if(entry.duration>100)ref.current.long100++}});observer.observe({entryTypes:['longtask']})}catch{}
+    const reset=()=>{const r=ref.current;r.last=performance.now();r.frames=[];r.long50=0;r.long100=0;r.lastPublish=performance.now();setMetrics({fps:0,p50:0,p95:0,p99:0,worst:0,dropped:0,long50:0,long100:0})};
+    window.addEventListener('vyron:fps-reset',reset);
     const pct=(rows:number[],p:number)=>rows.length?rows[Math.min(rows.length-1,Math.floor((rows.length-1)*p))]:0;
     const loop=(t:number)=>{
       const r=ref.current,delta=t-r.last;r.last=t;
       if(delta>0&&delta<1000){r.frames.push(delta);if(r.frames.length>360)r.frames.shift()}
       if(t-r.lastPublish>=700&&r.frames.length){
         const rows=[...r.frames].sort((a,b)=>a-b),avg=r.frames.reduce((a,b)=>a+b,0)/r.frames.length;
-        setMetrics({fps:Math.round(1000/avg),p50:pct(rows,.5),p95:pct(rows,.95),p99:pct(rows,.99),worst:rows[rows.length-1],dropped:r.frames.filter(x=>x>20).length/r.frames.length*100,long50:r.long50,long100:r.long100});
+        const next={fps:Math.round(1000/avg),p50:pct(rows,.5),p95:pct(rows,.95),p99:pct(rows,.99),worst:rows[rows.length-1],dropped:r.frames.filter(x=>x>20).length/r.frames.length*100,long50:r.long50,long100:r.long100};setMetrics(next);window.dispatchEvent(new CustomEvent('vyron:fps-metrics',{detail:next}));
         r.lastPublish=t;
       }
       r.raf=requestAnimationFrame(loop);
     };
     ref.current.raf=requestAnimationFrame(loop);
-    return()=>{cancelAnimationFrame(ref.current.raf);observer?.disconnect()};
+    return()=>{cancelAnimationFrame(ref.current.raf);observer?.disconnect();window.removeEventListener('vyron:fps-reset',reset)};
   },[]);
   const bad=metrics.p95>30||metrics.long50>0;
   return <div className={`fps fpsDetailed ${bad?'bad':''}`}><b>{metrics.fps||'…'} FPS</b><span>p50 {metrics.p50.toFixed(1)} ms</span><span>p95 {metrics.p95.toFixed(1)} ms</span><span>p99 {metrics.p99.toFixed(1)} ms</span><span>worst {metrics.worst.toFixed(1)} ms</span><span>dropped {metrics.dropped.toFixed(1)}%</span><span>long &gt;50 {metrics.long50} • &gt;100 {metrics.long100}</span></div>
