@@ -38,6 +38,8 @@ export function ProductionManager({view='all'}:{view?:'all'|'materials'|'builder
   const [session,setSession]=useState<ImportSession|null>(null);
   const [music,setMusic]=useState<MusicSummary|null>(null);
   const [images,setImages]=useState<ImageSummary|null>(null);
+  const [resolvedImagesAvailable,setResolvedImagesAvailable]=useState(0);
+  const [collectorCollected,setCollectorCollected]=useState(0);
   const [batches,setBatches]=useState<BatchSummary[]>([]);
   const [busy,setBusy]=useState('');
   const [progress,setProgress]=useState<{completed:number;total:number;stage:string}|null>(null);
@@ -52,17 +54,20 @@ export function ProductionManager({view='all'}:{view?:'all'|'materials'|'builder
   const productionRoot=(channelPrefs.productionRoot||prefs.productionRoot||workspace).trim();
   const customProductionRoot=Boolean(channelPrefs.productionRoot||prefs.productionRoot);
   const endlumePath=settings.endlumePath||'';
-  const collected=images&&images.total>0?images.available:(session?.collected.length||0);
+  const collected=resolvedImagesAvailable;
   const requiredTracks=projectCount*tracksPerProject;
 
   useEffect(()=>{if(!prefs.selectedChannelId&&channels[0])patchPrefs({selectedChannelId:channels[0].id})},[prefs.selectedChannelId,channels.length]);
 
   async function refreshState(){
-    if(!workspace||!channelId){setSession(null);setMusic(null);setImages(null);setBatches([]);return}
+    if(!workspace||!channelId){setSession(null);setMusic(null);setImages(null);setResolvedImagesAvailable(0);setCollectorCollected(0);setBatches([]);return}
     let base:BatchSummary[]=[];
     try{
       const state:ChannelProductionState=await productionManagerApi.state(workspace,channelId);
-      setSession(state.importSession||null);setMusic(state.music||null);setImages(state.images||null);base=state.batches||[];
+      setSession(state.importSession||null);
+      setCollectorCollected(state.importSession?.collected.length||0);
+      setResolvedImagesAvailable(state.resolvedImagesAvailable||0);
+      setMusic(state.music||null);setImages(state.images||null);base=state.batches||[];
     }catch{
       try{base=await productionManagerApi.batches(workspace,channelId)}catch{}
     }
@@ -86,7 +91,7 @@ export function ProductionManager({view='all'}:{view?:'all'|'materials'|'builder
   useEffect(()=>{
     let live=true;
     const offs:Promise<()=>void>[]=[];
-    offs.push(productionManagerApi.onImportProgress(p=>{if(live&&p.channelId===channelId)void refreshState()}));
+    offs.push(productionManagerApi.onImportProgress(p=>{if(live&&p.channelId===channelId)setCollectorCollected(p.collected)}));
     offs.push(productionManagerApi.onImportError(p=>{if(live&&p.channelId===channelId)setImportError(p.message||'Ошибка сбора изображений')}));
     offs.push(productionManagerApi.onBatchProgress(p=>{
       if(!live)return;
@@ -98,7 +103,7 @@ export function ProductionManager({view='all'}:{view?:'all'|'materials'|'builder
 
   useEffect(()=>{
     if(!workspace||!channelId||!session?.active)return;
-    const timer=window.setInterval(()=>{productionManagerApi.importStatus(workspace,channelId).then(next=>{setSession(next);if(!next.active)setImportError('')}).catch(e=>setImportError(String(e)))},1200);
+    const timer=window.setInterval(()=>{productionManagerApi.importStatus(workspace,channelId).then(next=>{setSession(next);setCollectorCollected(next.collected.length);if(!next.active)setImportError('')}).catch(e=>setImportError(String(e)))},800);
     return()=>window.clearInterval(timer);
   },[workspace,channelId,session?.active]);
 
@@ -111,7 +116,13 @@ export function ProductionManager({view='all'}:{view?:'all'|'materials'|'builder
     try{
       const next=session?.active?await productionManagerApi.stopImport(workspace,channel.id):await productionManagerApi.startImport(workspace,channel.id,channel.name);
       setSession(next);
-      if(next.active)notifyInfo('Сбор изображений запущен','Скачивайте изображения в Downloads.',{operationId:`collector-start:${next.sessionId}`});else notifySuccess('Изображения собраны',`Собрано ${next.collected.length.toLocaleString('ru-RU')} файлов.`,{operationId:`collector-stop:${next.sessionId}:${next.collected.length}`});
+      setCollectorCollected(next.collected.length);
+      if(next.active){
+        notifyInfo('Сбор изображений запущен',`Канал: ${channel.name} • Downloads: ${next.downloadsPath}`,{operationId:`collector-start:${next.sessionId}`});
+      }else{
+        await refreshState();
+        notifySuccess('Сбор изображений завершён',`Собрано: ${next.collected.length.toLocaleString('ru-RU')} изображений • Канал: ${channel.name}`,{operationId:`collector-stop:${next.sessionId}:${next.collected.length}`});
+      }
     }catch(e){toast(String(e))}finally{setBusy('')}
   }
 
@@ -136,7 +147,7 @@ export function ProductionManager({view='all'}:{view?:'all'|'materials'|'builder
   function ensureJobLinks(){
     if(!channel)return [] as typeof jobLinks;
     const current=useApp.getState().jobs;
-    const existing=current.filter(j=>j.channelId===channel.id).sort((a,b)=>a.number-b.number);
+    const existing=current.filter(j=>j.channelId===channel.id&&!j.folder&&j.status==='NEED_IMAGE').sort((a,b)=>a.number-b.number);
     if(existing.length>=projectCount)return existing.slice(0,projectCount);
     const created=createJobsCount(channel,current,projectCount-existing.length);
     const next=[...current,...created];
@@ -189,7 +200,9 @@ export function ProductionManager({view='all'}:{view?:'all'|'materials'|'builder
   const setSelectedProjects=(ids:string[])=>patchChannelProductionPrefs(channelId,{selectedProjectIds:[...new Set(ids)]});
   const toggleProject=(id:string)=>setSelectedProjects(selectedProjectIds.includes(id)?selectedProjectIds.filter(x=>x!==id):[...selectedProjectIds,id]);
   async function deleteBatchProjects(ids:string[],all=false){
-    const batch=result?.batch;if(!batch||!ids.length)return;if(!confirm(all?'Удалить все проекты этого batch?':'Удалить выбранные проекты?'))return;
+    const batch=result?.batch;if(!batch||!ids.length)return;
+    if(!confirm(all?'Удалить все проекты этого batch?':'Удалить выбранные проекты?'))return;
+    if(!confirm('Проекты будут перемещены в Корзину. Render / Music Library / Image Library не будут удалены. Продолжить?'))return;
     setBusy('delete');try{const r=await productionManagerApi.deleteBatchProjects(batch.manifestPath,ids);if(r.deletedJobIds.length)setJobs(useApp.getState().jobs.filter(j=>!r.deletedJobIds.includes(j.id)));setSelectedProjects([]);await refreshState();if(r.batch){setResult({status:'ready',availableImages:collected,requestedProjects:r.batch.projectCount,batch:r.batch});patchChannelProductionPrefs(channelId,{lastBatchId:r.batch.batchId});setBatchStatus(await productionManagerApi.status(r.batch.manifestPath))}else{setResult(null);setBatchStatus(null);patchChannelProductionPrefs(channelId,{lastBatchId:undefined})}toast(`Удалено проектов: ${r.deletedProjectIds.length}`)}catch(e){toast(`Не удалось удалить проекты: ${String(e)}`)}finally{setBusy('')}
   }
 
@@ -237,7 +250,7 @@ export function ProductionManager({view='all'}:{view?:'all'|'materials'|'builder
   return <div className="productionManager">
     <section className="panel pmHero"><div><small>ПОДГОТОВКА ДЛЯ ENDLUME</small><h2>Материалы и сборка проектов</h2><p>Соберите изображения и музыку, затем создайте готовые папки проектов для ENDLUME.</p></div><div className="pmChannelBadge"><small>ТЕКУЩИЙ КАНАЛ</small><b>{channel?.name||'—'}</b><span>Берётся из общего Production workspace</span></div></section>
     {view!=='builder'&&<div className="pmGrid">
-      <section className="panel pmCard"><div className="pmCardHead"><span><small>01</small><h3>Изображения</h3></span><b className={session?.active&&!importError?'live':''}>{importError?'● ОШИБКА':session?.active?(collected?'● СБОР ИДЁТ':'● ЖДУ ФАЙЛЫ'):'ГОТОВО'}</b></div><p>VYRON YT PEISOV следит за Downloads только во время активной import-сессии выбранного канала и создаёт собственную нумерацию.</p><div className="pmFileCount"><b>{collected.toLocaleString('ru-RU')}</b><span>файлов собрано</span></div>{importError&&<div className="pmShortage"><div><b>Проблема со сбором изображений</b><span>{importError}</span></div></div>}<div className="pmActions"><button className="primary" disabled={busy==='import'} onClick={toggleImport}>{session?.active?'ЗАВЕРШИТЬ СБОР':'НАЧАТЬ СБОР'}</button></div><small className="pmHint">{session?.active?`Слежу: ${shortPath(session.downloadsPath)} • Копии: ${shortPath(session.importPath)}`:session?.importPath?shortPath(session.importPath):'После запуска скачивайте изображения из ChatGPT как обычно.'}</small></section>
+      <section className="panel pmCard"><div className="pmCardHead"><span><small>01</small><h3>Изображения</h3></span><b className={session?.active&&!importError?'live':''}>{importError?'● ОШИБКА':session?.active?'● СБОР АКТИВЕН':'ГОТОВО'}</b></div><p>VYRON YT PEISOV следит за Downloads только во время активной import-сессии выбранного канала и создаёт собственную нумерацию.</p><div className="pmFileCount"><b>{collectorCollected.toLocaleString('ru-RU')}</b><span>файлов собрано</span></div>{importError&&<div className="pmShortage"><div><b>Проблема со сбором изображений</b><span>{importError}</span></div></div>}<div className="pmActions"><button className="primary" disabled={busy==='import'} onClick={toggleImport}>{session?.active?'ЗАВЕРШИТЬ СБОР':'НАЧАТЬ СБОР'}</button></div><small className="pmHint">{session?.active?`Папка: ${shortPath(session.downloadsPath)} • Собрано: ${collectorCollected}`:session?.importPath?`Последний сбор: ${shortPath(session.importPath)} • Builder доступно: ${collected}`:'После запуска скачивайте изображения из ChatGPT как обычно.'}</small></section>
       <section className="panel pmCard"><div className="pmCardHead"><span><small>02</small><h3>Музыкальная библиотека</h3></span><b>{(music?.tracks||0).toLocaleString('ru-RU')} треков</b></div><p>Оригинальная библиотека не изменяется. В batch копируются только назначенные треки.</p><code className="pmPath">{shortPath(music?.libraryPath)}</code><div className="pmActions"><button className="primary" disabled={busy==='music'} onClick={chooseMusic}>ВЫБРАТЬ ПАПКУ</button><button disabled={busy==='music'||!music?.libraryPath} onClick={reindexMusic}>ОБНОВИТЬ БИБЛИОТЕКУ</button></div><small className="pmHint">Добавленные и удалённые треки учитываются после переиндексации.</small></section>
     </div>}
 
