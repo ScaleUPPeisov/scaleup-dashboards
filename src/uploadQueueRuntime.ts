@@ -33,6 +33,7 @@ async function executeUpload(spec:ImmutableUploadJob){
   const startedAt=new Date().toISOString();
   useApp.getState().patchJob(spec.jobId,{status:'UPLOADING',storageLifecycle:'UPLOADING',uploadProgress:0,error:undefined,uploadFingerprint:spec.fingerprint,currentSourceFingerprint:spec.fingerprint,currentSourceFileSize:spec.fileSize,currentSourceModifiedAt:spec.modifiedAt,sourceGenerationKey:`${spec.channelId}:${spec.fingerprint}:${spec.fileSize}`,title:spec.title,description:spec.description,tags:[...spec.tags],publishAt:spec.publishAt});
   journal({eventType:'UPLOAD_STARTED',status:'STARTED',source:'LIVE_OPERATION',timestamp:startedAt,operationId,batchId,channelId:spec.channelId,channelName:spec.channelName,profileId:spec.profileId,jobId:spec.jobId,localSourcePath:spec.filePath,details:{filename:baseName(spec.filePath),fileSize:spec.fileSize,title:spec.title,publishAt:spec.publishAt}});
+  if(spec.metadataSource==='queue')await api.metadataQueueMarkApplying(spec.channelId,spec.jobId);
   if(job.folder)await api.writeJobMetadata(job.folder,spec.title,spec.description,[...spec.tags],spec.publishAt,spec.metadataSource||job.metadataSource||'template');
   phase='TRANSFER_STARTED';
   const uploaded=await api.youtubeUpload(spec.profileId,spec.jobId,spec.filePath,spec.title,spec.description,[...spec.tags],spec.publishAt,spec.categoryId,operationId,{channelId:spec.channelId,projectId:spec.projectId,totalBytes:spec.fileSize,startedAt:new Date().toISOString()});
@@ -51,6 +52,7 @@ async function executeUpload(spec:ImmutableUploadJob){
     throw new Error(uploaded.verificationError||`UPLOAD_VERIFY_FAILED: videoId=${uploaded.videoId}; videos.list verification failed`)
   }
   completePublishAttempt(attempt.id,uploaded.videoId);
+  if(spec.metadataSource==='queue')await api.metadataQueueMarkApplied(spec.channelId,spec.jobId,uploaded.videoId,job.folder||undefined);
   const fresh=useApp.getState(),projectEntry=Object.entries(fresh.projectLifecycle).find(([,x])=>x.jobId===spec.jobId);
   let nextHistory=recordVerifiedUpload(fresh.uploadHistory,{jobId:spec.jobId,channelId:spec.channelId,profileId:spec.profileId,youtubeChannelId:spec.youtubeChannelId,youtubeVideoId:uploaded.videoId,localFilePath:spec.filePath,originalFilename:baseName(spec.filePath),projectId:spec.projectId||projectEntry?.[1].projectId,sourceProjectPath:projectEntry?.[1].projectPath,batchId,titleAtUpload:spec.title,uploadedAt:acceptedAt,fileSize:spec.fileSize,sha256:spec.fingerprint,fingerprintProofSource:'UPLOAD_TIME',fingerprintCapturedAt:startedAt,sourceGenerationKeyAtUpload:`${spec.channelId}:${spec.fingerprint}:${spec.fileSize}`,uploadOperationId:operationId,proofSchemaVersion:1,publishAt:spec.publishAt,overrideDuplicate:spec.allowDuplicate,sourceLifecycle:'PRESENT',processingState:'UPLOAD_ACCEPTED',identityVerifiedAt:acceptedAt});
   useApp.getState().replaceUploadHistory(nextHistory);
@@ -77,6 +79,7 @@ async function executeUpload(spec:ImmutableUploadJob){
   useApp.getState().patchJob(spec.jobId,{status:'SCHEDULED',storageLifecycle:'UPLOADED',youtubeVideoId:uploaded.videoId,uploadProgress:100,uploadedAt:acceptedAt,uploadAcceptedAt:acceptedAt,processingState,processingCheckedAt,processingError,uploadInterruptedAt:undefined,error:thumbError||undefined});
   useApp.getState().updateChannel(spec.channelId,{lastUploadAt:acceptedAt,knownUploadLimitState:'ok',lastDailyLimitError:undefined});phase='COMPLETE';completeTask(taskId,`YouTube ID: ${uploaded.videoId}`);
  }catch(error){
+  if(spec.metadataSource==='queue')await api.metadataQueueMarkError(spec.channelId,spec.jobId,String(error),useApp.getState().jobs.find(x=>x.id===spec.jobId)?.folder||undefined).catch(()=>undefined);
   const pending=await api.youtubeUploadSessions().catch(()=>[]),recoverable=pending.some(x=>x.jobId===spec.jobId);
   const current=useApp.getState().jobs.find(x=>x.id===spec.jobId),acceptedVideoId=current?.youtubeVideoId,duplicateGuard=String(error).includes('UPLOAD_ALREADY_HAS_VIDEO_ID');
   if(recoverable&&!acceptedVideoId)attentionTask(taskId,'Загрузка прервана — требуется безопасное продолжение существующей upload session');
