@@ -1,0 +1,135 @@
+name: VYRON 6.1.0 Windows Candidate
+
+on:
+  push:
+    branches: [release/vyron-6.1.0]
+    paths: ['.github/workflows/vyron-610-windows-candidate.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  VERSION: '6.1.0'
+  PRODUCT_SOURCE_SHA: 'cc8d44f0be40ab1c65089d2a4024bb192d088b13'
+  QA_RUN_ID: '36888243988'
+  BUILD_REVISION: '610001'
+
+jobs:
+  candidate:
+    runs-on: windows-latest
+    timeout-minutes: 150
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VYRON_TAURI_SIGNING_PRIVATE_KEY_RAW: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      VYRON_BUILD_REVISION: '610001'
+      VYRON_COMMIT_SHA: 'cc8d44f0be40ab1c65089d2a4024bb192d088b13'
+      VYRON_UPDATE_CHANNEL: stable
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.PRODUCT_SOURCE_SHA }}
+          fetch-depth: 0
+
+      - name: Wait exact full QA
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if((git rev-parse HEAD).Trim() -ne $env:PRODUCT_SOURCE_SHA){throw 'SOURCE_MISMATCH'}
+          for($i=1;$i -le 240;$i++){
+            $j=gh api "repos/${{ github.repository }}/actions/runs/$env:QA_RUN_ID" | ConvertFrom-Json
+            if($j.head_sha -ne $env:PRODUCT_SOURCE_SHA){throw 'QA_HEAD_MISMATCH'}
+            if($j.status -eq 'completed'){
+              if($j.conclusion -ne 'success'){throw "QA_NOT_GREEN=$($j.conclusion)"}
+              break
+            }
+            if($i -eq 240){throw 'QA_TIMEOUT'}
+            Start-Sleep -Seconds 10
+          }
+          Write-Host 'FULL_QA=PASS'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci --no-audit --no-fund
+
+      - name: Normalize updater key
+        shell: bash
+        run: |
+          python - <<'PY'
+          import base64,os
+          raw=os.environ['VYRON_TAURI_SIGNING_PRIVATE_KEY_RAW'].strip().replace('\\r\\n','\n').replace('\\n','\n')
+          rows=[raw]
+          for _ in range(5):
+              try:y=base64.b64decode(rows[-1].strip(),validate=True).decode().strip()
+              except Exception:break
+              if y in rows:break
+              rows.append(y)
+          plain=next((x for x in rows if x.startswith('untrusted comment:')),None);assert plain
+          out=base64.b64encode((plain.rstrip()+'\n').encode()).decode()
+          open(os.environ['GITHUB_ENV'],'a',encoding='utf8').write('TAURI_SIGNING_PRIVATE_KEY='+out+'\n')
+          print('::add-mask::'+out)
+          PY
+
+      - name: Build signed Windows x64
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          npx tauri build --target x86_64-pc-windows-msvc --bundles nsis --config src-tauri/tauri.windows.conf.json
+          if($LASTEXITCODE -ne 0){throw 'WINDOWS_BUILD_FAILED'}
+          $exe=Get-ChildItem src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis -Filter '*-setup.exe' | Select-Object -First 1
+          if(-not $exe){throw 'NSIS_MISSING'}
+          $sig=Get-Item ($exe.FullName+'.sig') -ErrorAction Stop
+          New-Item -ItemType Directory -Force out | Out-Null
+          $dest='out/VYRON_'+$env:VERSION+'_x64-setup.exe'
+          Copy-Item $exe.FullName $dest
+          Copy-Item $sig.FullName ($dest+'.sig')
+          (Get-FileHash $dest -Algorithm SHA256).Hash.ToLowerInvariant() | Set-Content ($dest+'.sha256')
+          @(
+            'SOURCE='+$env:PRODUCT_SOURCE_SHA,
+            'VERSION='+$env:VERSION,
+            'BUILD_REVISION='+$env:BUILD_REVISION,
+            'WINDOWS_X64_BUILD=PASS'
+          ) | Set-Content out/gate-summary.txt
+
+      - name: Verify updater signature
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $root=Join-Path $env:RUNNER_TEMP 'sigverify'
+          New-Item -ItemType Directory -Force -Path (Join-Path $root 'src') | Out-Null
+          @'
+          [package]
+          name="sigverify"
+          version="0.0.0"
+          edition="2021"
+          [dependencies]
+          base64="0.22"
+          minisign-verify="=0.2.5"
+          '@ | Set-Content -Encoding utf8 (Join-Path $root 'Cargo.toml')
+          @'
+          use base64::{engine::general_purpose::STANDARD,Engine as _};
+          use minisign_verify::{PublicKey,Signature};
+          use std::{env,fs};
+          fn dec(x:&str)->String{String::from_utf8(STANDARD.decode(x.trim()).unwrap()).unwrap()}
+          fn main(){let a:Vec<String>=env::args().collect();let bytes=fs::read(&a[1]).unwrap();let sig=Signature::decode(&dec(&fs::read_to_string(&a[2]).unwrap())).unwrap();let c=fs::read_to_string(&a[3]).unwrap();let m="\"pubkey\": \"";let s=c.find(m).unwrap()+m.len();let t=&c[s..];let e=t.find('"').unwrap();let pk=PublicKey::decode(&dec(&t[..e])).unwrap();pk.verify(&bytes,&sig,true).unwrap();println!("WINDOWS_UPDATER_SIGNATURE=PASS");}
+          '@ | Set-Content -Encoding utf8 (Join-Path $root 'src/main.rs')
+          $dest='out/VYRON_'+$env:VERSION+'_x64-setup.exe'
+          cargo run --quiet --release --manifest-path (Join-Path $root 'Cargo.toml') -- $dest ($dest+'.sig') src-tauri/tauri.conf.json
+          if($LASTEXITCODE -ne 0){throw 'WINDOWS_SIGNATURE_VERIFY_FAILED'}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-6.1.0-WINDOWS-CANDIDATE
+          path: out/**
+          if-no-files-found: error
+          retention-days: 30
