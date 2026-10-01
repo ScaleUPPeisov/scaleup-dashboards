@@ -1344,6 +1344,75 @@ mod tests {
         let _=fs::remove_dir_all(root);
     }
 
+    fn encrypt_payload_legacy_raw_for_test(payload: &PortablePayload, passphrase: &str) -> Vec<u8> {
+        let salt = [17u8; 16];
+        let nonce = [23u8; 24];
+        let key = derive_key(passphrase, &salt).unwrap();
+        let plain = serde_json::to_vec(payload).unwrap();
+        let ciphertext = XChaCha20Poly1305::new(Key::from_slice(&key))
+            .encrypt(
+                XNonce::from_slice(&nonce),
+                Payload { msg: &plain, aad: AAD },
+            )
+            .unwrap();
+        serde_json::to_vec_pretty(&BundleEnvelope {
+            schema_version: BUNDLE_SCHEMA,
+            app_version: payload.app_version.clone(),
+            source_os: payload.source_os.clone(),
+            created_at: payload.created_at.clone(),
+            bundle_uuid: payload.bundle_uuid.clone(),
+            kdf: "argon2id:m=65536,t=3,p=1 + XChaCha20-Poly1305".into(),
+            salt: B64.encode(salt),
+            nonce: B64.encode(nonce),
+            ciphertext: B64.encode(ciphertext),
+        }).unwrap()
+    }
+
+    #[test]
+    fn legacy_v600_unicode_nfd_password_is_readable_from_nfc_input() {
+        let payload = sample_payload();
+        let nfc = "й-ё-é-portable-password-123";
+        let nfd: String = nfc.nfd().collect();
+        assert_ne!(nfc.as_bytes(), nfd.as_bytes());
+
+        // Reproduce exact VYRON 6.0.0 key behavior: raw UTF-8 bytes into Argon2.
+        let legacy = encrypt_payload_legacy_raw_for_test(&payload, &nfd);
+        let restored = decrypt_payload(&legacy, nfc).unwrap();
+        assert_eq!(restored.payload_sha256, payload.payload_sha256);
+
+        // New packages are NFC-canonical, so either visual form opens the same bundle.
+        let portable = encrypt_payload(&payload, &nfd).unwrap();
+        assert!(decrypt_payload(&portable, nfc).is_ok());
+        assert!(decrypt_payload(&portable, &nfd).is_ok());
+    }
+
+    #[test]
+    fn intentional_password_spaces_are_never_trimmed() {
+        let payload = sample_payload();
+        let spaced = " password 123 ";
+        let encoded = encrypt_payload(&payload, spaced).unwrap();
+        assert!(decrypt_payload(&encoded, spaced).is_ok());
+        assert!(decrypt_payload(&encoded, "password 123").is_err());
+    }
+
+    #[test]
+    fn package_diagnostics_are_safe_and_include_bundle_sha256() {
+        let payload = sample_payload();
+        let encoded = encrypt_payload(&payload, "portable-password-123").unwrap();
+        let diag = envelope_diagnostics(&encoded).unwrap();
+        assert_eq!(diag["schema"], BUNDLE_SCHEMA);
+        assert_eq!(diag["sourceOs"], payload.source_os);
+        assert_eq!(diag["appVersion"], payload.app_version);
+        assert_eq!(diag["saltValid"], true);
+        assert_eq!(diag["nonceValid"], true);
+        assert_eq!(diag["ciphertextPresent"], true);
+        assert_eq!(diag["bundleSha256"], bundle_sha256(&encoded));
+        let text = serde_json::to_string(&diag).unwrap();
+        assert!(!text.contains("portable-password-123"));
+        assert!(!text.contains("refreshToken"));
+        assert!(!text.contains("clientSecret"));
+    }
+
     #[test]
     fn migration_passphrase_survives_cross_platform_clipboard_line_endings() {
         let payload = sample_payload();
