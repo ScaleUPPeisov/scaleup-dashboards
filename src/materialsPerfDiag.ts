@@ -18,6 +18,7 @@ type MaterialsPerfDiagState={
   click?:DiagClick;
   ipc:DiagIpc[];
   phases:Record<string,number>;
+  renderCauses:Record<string,number>;
   lastReport?:string;
 };
 
@@ -27,7 +28,7 @@ declare global{
 
 function state():MaterialsPerfDiagState{
   if(!window.__VYRON_MATERIALS_DIAG__)window.__VYRON_MATERIALS_DIAG__={
-    sequence:0,appRenders:0,productionRenders:0,materialsRenders:0,rowRenders:0,ipc:[],phases:{}
+    sequence:0,appRenders:0,productionRenders:0,materialsRenders:0,rowRenders:0,ipc:[],phases:{},renderCauses:{}
   };
   return window.__VYRON_MATERIALS_DIAG__;
 }
@@ -47,6 +48,7 @@ export function diagCount(kind:'app'|'production'|'materials'|'row'){
 export function beginMaterialsDiagClick(from:string){
   const s=state(),id=++s.sequence;
   s.phases={};
+  s.renderCauses={};
   s.click={
     id,from,startedAt:performance.now(),
     appBase:s.appRenders,
@@ -79,6 +81,7 @@ export function completeMaterialsDiagOnNextPaint(){
         'MaterialsManager renders: '+(s.materialsRenders-click.materialsBase),
         'Materials rows renders: '+(s.rowRenders-click.rowBase),
         ...Object.entries(s.phases).map(([name,duration])=>'phase '+name+': '+duration.toFixed(1)+' ms'),
+        ...Object.entries(s.renderCauses).map(([name,count])=>'render cause '+name+': '+count),
         'Production IPC calls: '+ipc.length,
         ...ipc.slice(0,20).map(x=>'IPC '+x.command+' '+(x.duration??0).toFixed(1)+' ms '+(x.ok===false?'ERR':'OK')),
         '',
@@ -93,6 +96,17 @@ export function completeMaterialsDiagOnNextPaint(){
       try{performance.measure('materials-click-to-frame-'+click.id,'materials-click-'+click.id,'materials-first-frame-'+click.id)}catch{}
     });
   });
+}
+
+let lastProductionInputs:Record<string,unknown>|undefined;
+export function recordProductionRenderInputs(inputs:Record<string,unknown>){
+  const s=state(),prev=lastProductionInputs;
+  if(s.click&&prev){
+    for(const [name,value] of Object.entries(inputs)){
+      if(prev[name]!==value)s.renderCauses[name]=(s.renderCauses[name]||0)+1;
+    }
+  }
+  lastProductionInputs=inputs;
 }
 
 export function recordMaterialsDiagPhase(name:string,duration:number){state().phases[name]=duration}
