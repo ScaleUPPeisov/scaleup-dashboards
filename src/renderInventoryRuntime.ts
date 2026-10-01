@@ -12,6 +12,7 @@ import {
   type RenderScanSummary
 } from './renderScanClassifier';
 import {uploadTelemetrySnapshot} from './uploadTelemetry';
+import {beginInventoryScan,finishInventoryScan,isMaterialsInventoryPaused,recordInventorySnapshotMutation} from './materialsPerfDiag';
 
 export type InventoryFolderState='ONLINE'|'OFFLINE'|'SCANNING'|'ERROR';
 export type InventoryLevel='NORMAL'|'SOON'|'LOW'|'EMPTY'|'OFFLINE';
@@ -99,6 +100,7 @@ export const useLiveInventory=create<LiveInventoryState>((set)=>({
   audit:[],
   globalScanning:false,
   setSnapshot:row=>set(s=>{
+    recordInventorySnapshotMutation();
     const snapshots={...s.snapshots,[row.channelId]:row};
     if(row.folderState!=='SCANNING')scheduleInventoryCachePersist(snapshots);
     return{snapshots}
@@ -230,32 +232,35 @@ function auditFor(previous:ChannelInventorySnapshot|undefined,next:ChannelInvent
 }
 
 async function scanInventoryChannelOnce(channelId:string,reason:InventoryScanReason):Promise<ChannelInventorySnapshot|undefined>{
+  if(isMaterialsInventoryPaused())return useLiveInventory.getState().snapshots[channelId];
+  const diag=beginInventoryScan(channelId,reason);
   const state=useApp.getState(),channel=state.channels.find(c=>c.id===channelId);
-  if(!channel)return;
+  if(!channel){finishInventoryScan(diag);return;}
   const store=useLiveInventory.getState(),previous=store.snapshots[channelId],root=String(channel.renderFolderPath||'').trim();
   if(!root){
-    const next=offlineSnapshot(channel,previous,'RENDER_FOLDER_NOT_CONFIGURED');store.setSnapshot(next);auditFor(previous,next,reason);return next
+    const next=offlineSnapshot(channel,previous,'RENDER_FOLDER_NOT_CONFIGURED');store.setSnapshot(next);auditFor(previous,next,reason);finishInventoryScan(diag);return next
   }
   store.setSnapshot({...baseSnapshot(channel,previous),channelName:channel.name,renderFolderPath:root,folderState:'SCANNING',stale:Boolean(previous?.stale),error:undefined});
   const status=await api.localSourceStatus(root).catch(()=>null);
   if(!status?.exists||status.isFile){
-    const next=offlineSnapshot(channel,previous,'RENDER_FOLDER_OFFLINE');store.setSnapshot(next);auditFor(previous,next,reason);return next
+    const next=offlineSnapshot(channel,previous,'RENDER_FOLDER_OFFLINE');store.setSnapshot(next);auditFor(previous,next,reason);finishInventoryScan(diag);return next
   }
   try{
     const current=useApp.getState(),cheap=await api.scanRenderFolder(root),result=await fingerprintNeededFiles(cheap,current.jobs,current.uploadHistory,channelId,reason==='publisher');
     const rows=classifyChannelRenderFiles(result.files,current.jobs,current.uploadHistory,channelId,result.root);
     const next=buildInventorySnapshotFromScan(channel,result,rows,current.jobs,uploadingForChannel(channelId,current.jobs));
-    store.setSnapshot(next);auditFor(previous,next,reason);return next
+    store.setSnapshot(next);auditFor(previous,next,reason);finishInventoryScan(diag);return next
   }catch(error){
     const next=errorSnapshot(channel,previous,String(error));store.setSnapshot(next);
     store.pushAudit({id:eventId(channelId,'error'),at:nowIso(),channelId,kind:'ERROR',message:`scan error: ${String(error)}`,readyBefore:previous?.readyVideos,readyAfter:previous?.readyVideos});
-    return next
+    finishInventoryScan(diag);return next
   }
 }
 
 const channelScanInFlight=new Map<string,Promise<ChannelInventorySnapshot|undefined>>();
 const channelScanPending=new Map<string,InventoryScanReason>();
 export function scanInventoryChannel(channelId:string,reason:InventoryScanReason='manual-channel'):Promise<ChannelInventorySnapshot|undefined>{
+  if(isMaterialsInventoryPaused())return Promise.resolve(useLiveInventory.getState().snapshots[channelId]);
   const active=channelScanInFlight.get(channelId);
   if(active){
     channelScanPending.set(channelId,reason);
@@ -279,6 +284,7 @@ export function scanInventoryChannel(channelId:string,reason:InventoryScanReason
 
 let allInventoryScanInFlight:Promise<void>|null=null;
 export function scanAllInventories(reason:InventoryScanReason='manual-all'):Promise<void>{
+  if(isMaterialsInventoryPaused())return Promise.resolve();
   if(allInventoryScanInFlight)return allInventoryScanInFlight;
   const run=(async()=>{
     const store=useLiveInventory.getState();store.setGlobalScanning(true);
