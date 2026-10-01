@@ -871,6 +871,26 @@ mod tests{
  }
 
  #[test]
+ #[cfg(target_os="windows")]
+ fn windows_credential_manager_master_key_is_valid_without_key_files(){
+  static LOCK:std::sync::Mutex<()>=std::sync::Mutex::new(());
+  let _guard=LOCK.lock().unwrap();
+  let tenant=format!("oauth-vault-603-{}",uuid::Uuid::new_v4());
+  security::set_active_tenant(Some(&tenant));
+  let encoded=B64.encode([8u8;32]);
+  security::canonical_set_secret(WINDOWS_VAULT_KEY_ACCOUNT,&encoded).unwrap();
+  security::canonical_forget_cache(WINDOWS_VAULT_KEY_ACCOUNT);
+  let stored=security::canonical_get_secret(WINDOWS_VAULT_KEY_ACCOUNT).unwrap();
+  let probe=local_key_probe_from_material(stored.as_deref(),None,None).unwrap();
+  assert_eq!(probe.source,LocalKeySource::CanonicalCredential);
+  assert!(probe.available());
+  assert!(!probe.doc_key_present&&!probe.app_key_present);
+  assert_eq!(startup_key_plan(probe.available(),true),StartupKeyPlan::LocalPersistent);
+  security::canonical_delete_secret(WINDOWS_VAULT_KEY_ACCOUNT).unwrap();
+  security::set_active_tenant(None);
+ }
+
+ #[test]
  fn failed_602_state_current_vault_wins_even_when_legacy_backup_exists(){
   let key=[11u8;32];
   let legacy_key=[12u8;32];
