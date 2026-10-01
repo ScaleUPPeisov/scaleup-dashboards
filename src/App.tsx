@@ -52,6 +52,7 @@ import {UiErrorBoundary} from './UiErrorBoundary';
 import {SafeArtwork} from './SafeArtwork';
 import {OwnerProfile} from './OwnerProfile';
 import {beginStartupQuotaProbe} from './startupQuotaProbe';
+import {diagCount} from './materialsPerfDiag';
 
 async function notifyUpdateAvailable(version:string){
   const notifiedKey='vyron:update-notified-version';
@@ -82,6 +83,7 @@ const nav:{id:string;page:Page;icon:string;label:string;youtubeTab?:'history'}[]
 const statusLabel:Record<JobStatus,string>={NEED_IMAGE:'Нужна картинка',WAITING_MUSIC:'Ждёт музыку',READY_RENDER:'Готов к рендеру',RENDERING:'Рендерится',READY_UPLOAD:'Готов к YouTube',UPLOADING:'Загружается',SCHEDULED:'Запланирован',ERROR:'Ошибка'};
 
 export function App(){
+  diagCount('app');
   const booted=useApp(s=>s.booted),hydrate=useApp(s=>s.hydrate),settings=useApp(s=>s.settings),uploadHistory=useApp(s=>s.uploadHistory),page=useApp(s=>s.page),setPage=useApp(s=>s.setPage),log=useApp(s=>s.log);
   const [license,setLicense]=useState<LicenseStatus|null>(null);
   useLayoutEffect(()=>{if(booted)beginStartupQuotaProbe()},[booted]);
