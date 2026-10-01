@@ -2881,19 +2881,6 @@ fn delete_production_batch_projects_inner(
         .iter()
         .filter_map(|p| p.job_id.clone())
         .collect::<Vec<_>>();
-    for p in &selected {
-        let dir = PathBuf::from(&p.folder_path);
-        if dir.exists() {
-            let root = safe_cleanup_root(Path::new(&m.root_path))?;
-            let safe = canonical_under(&root, &dir)?;
-            trash::delete(&safe).map_err(|e| {
-                format!(
-                    "Не удалось переместить проект {} в Корзину: {e}",
-                    p.project_id
-                )
-            })?
-        }
-    }
     m.projects.retain(|p| !wanted.contains(&p.project_id));
     m.project_count = m.projects.len();
     let status_path = PathBuf::from(&m.status_path);
