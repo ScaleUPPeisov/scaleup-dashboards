@@ -1407,6 +1407,27 @@ mod tests {
     }
 
     #[test]
+    fn windows_clean_import_35_channels_is_non_destructive_and_idempotent() {
+        let local=json!({"channels":[],"jobs":[],"uploadHistory":[],"activityJournal":[],"statisticsHistory":{},"settings":{}});
+        let channels=(0..35).map(|i|json!({
+            "id":format!("import-{i:02}"),
+            "youtubeChannelId":format!("UC_REAL_{i:02}"),
+            "name":format!("Channel {i:02}")
+        })).collect::<Vec<_>>();
+        let imported=json!({"channels":channels,"jobs":[],"uploadHistory":[],"activityJournal":[],"statisticsHistory":{},"settings":{}});
+        let (once,s1,_)=merge_states(&local,&imported);
+        assert_eq!(s1.local_channels,0);
+        assert_eq!(s1.imported_channels,35);
+        assert_eq!(s1.new_channels,35);
+        assert_eq!(s1.after_channels,35);
+        assert_eq!(s1.deleted_channels,0);
+        let (twice,s2,_)=merge_states(&once,&imported);
+        assert_eq!(s2.after_channels,35);
+        assert_eq!(s2.new_channels,0);
+        assert_eq!(s2.deleted_channels,0);
+    }
+
+    #[test]
     fn raw_legacy_password_bytes_remain_first_class() {
         let payload = sample_payload();
         let pass = "legacy raw password 123";
