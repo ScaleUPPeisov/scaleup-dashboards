@@ -9,16 +9,16 @@ const lib=read('src-tauri/src/lib.rs');
 const pkg=JSON.parse(read('package.json'));
 const tauri=JSON.parse(read('src-tauri/tauri.conf.json'));
 
-describe('VYRON 6.0.2 real migration compatibility candidate',()=>{
-  it('uses 6.0.2 candidate identity without changing updater endpoints',()=>{
-    expect(pkg.version).toBe('6.0.2');
-    expect(tauri.version).toBe('6.0.2');
+describe('VYRON 6.0.3 real migration compatibility candidate',()=>{
+  it('uses 6.0.3 candidate identity without changing updater endpoints',()=>{
+    expect(pkg.version).toBe('6.0.3');
+    expect(tauri.version).toBe('6.0.3');
     expect(tauri.identifier).toBe('studio.channelflow.desktop');
     expect(tauri.plugins.updater.endpoints).toEqual([
       'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json',
       'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json'
     ]);
-    expect(VYRON_CURRENT_RELEASE.version).toBe('6.0.2');
+    expect(VYRON_CURRENT_RELEASE.version).toBe('6.0.3');
     expect(VYRON_CURRENT_RELEASE.prerelease).toBe(true);
   });
 
