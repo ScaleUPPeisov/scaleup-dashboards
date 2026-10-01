@@ -3,6 +3,19 @@ export type ReleaseSectionKey='features'|'fixes'|'interface'|'reliability'|'secu
 export type ReleaseHistoryEntry={date:string;version:string;title:string;type:ReleaseType;platforms?:Array<'macOS'|'Windows'>;highlights:string[];sections:Partial<Record<ReleaseSectionKey,string[]>>;technicalItems?:string[];technicalBuilds?:number[];tag?:string;publishedAt?:string;prerelease?:boolean};
 export const VYRON_RELEASE_HISTORY:ReleaseHistoryEntry[]=[
   {
+    "date":"2026-10-01","version":"6.0.3","title":"Windows OAuth Vault Migration Commit / Rollback Hotfix","type":"RC","platforms":["Windows"],"prerelease":true,
+    "highlights":[
+      "Windows vault startup now resolves oauth.vault.master_key from Credential Manager instead of inferring key availability from vault.key files.",
+      "Migration rollback snapshots are read-only and no longer create an empty OAuth vault or master key.",
+      "Failed 6.0.2 transition state can recover a readable current vault even when an unreadable legacy backup is also present."
+    ],
+    "sections":{
+      "reliability":["Current local vault is attempted first whenever the current Windows key is available.","Rollback metadata records vault source/type and restores current-local or opaque-legacy bytes without the wrong key path."],
+      "security":["Snapshot metadata stores no master key, refresh token, client secret, or plaintext OAuth secret.","Imported portable OAuth remains encrypted under the current Windows local key after commit."],
+      "technical":["Candidate only. Migration package Argon2/XChaCha/schema-2 crypto is unchanged from 6.0.2.","Production updater feeds remain unchanged until owner approval."]
+    }
+  },
+  {
     "date":"2026-10-01","version":"6.0.2","title":"Real Migration Compatibility Candidate","type":"RC","platforms":["Windows"],"prerelease":true,
     "highlights":[
       "Реальная совместимость проверяется от точного macOS 6.0.0 exporter commit, а не current→current synthetic fixture.",
