@@ -96,6 +96,7 @@ export function completeMaterialsDiagOnNextPaint(){
 }
 
 export function recordMaterialsDiagPhase(name:string,duration:number){state().phases[name]=duration}
+export function recordMaterialsCommitBoundary(){const s=state();if(s.click)s.phases['click → React commit']=performance.now()-s.click.startedAt}
 
 export function beginMaterialsIpc(command:string){
   const row:DiagIpc={command,startedAt:performance.now()};
