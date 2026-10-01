@@ -1,0 +1,151 @@
+name: VYRON 6.1.0 macOS Candidate
+
+on:
+  push:
+    branches: [release/vyron-6.1.0]
+    paths: ['.github/workflows/vyron-610-macos-candidate.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  VERSION: '6.1.0'
+  PRODUCT_SOURCE_SHA: 'cc8d44f0be40ab1c65089d2a4024bb192d088b13'
+  QA_RUN_ID: '36888243988'
+  BUNDLE_ID: 'studio.channelflow.desktop'
+  BUILD_REVISION: '610001'
+  EXPECTED_SIGNING_CERT_SHA1: '2C8B0BD4EE1C000D29DD0667BF1068D4673692C9'
+
+jobs:
+  candidate:
+    runs-on: macos-14
+    timeout-minutes: 150
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VYRON_TAURI_SIGNING_PRIVATE_KEY_RAW: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      VYRON_MACOS_SIGNING_P12_BASE64: ${{ secrets.VYRON_MACOS_SIGNING_P12_BASE64 }}
+      VYRON_MACOS_SIGNING_P12_PASSWORD: ${{ secrets.VYRON_MACOS_SIGNING_P12_PASSWORD }}
+      VYRON_MACOS_SIGNING_IDENTITY: ${{ secrets.VYRON_MACOS_SIGNING_IDENTITY }}
+      VYRON_BUILD_REVISION: '610001'
+      VYRON_COMMIT_SHA: 'cc8d44f0be40ab1c65089d2a4024bb192d088b13'
+      VYRON_UPDATE_CHANNEL: stable
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.PRODUCT_SOURCE_SHA }}
+          fetch-depth: 0
+
+      - name: Wait exact full QA
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$PRODUCT_SOURCE_SHA"
+          for i in $(seq 1 240); do
+            j="$(gh api "repos/${{ github.repository }}/actions/runs/$QA_RUN_ID")"
+            status="$(printf '%s' "$j"|python3 -c 'import json,sys;print(json.load(sys.stdin)["status"])')"
+            conclusion="$(printf '%s' "$j"|python3 -c 'import json,sys;print(json.load(sys.stdin).get("conclusion") or "")')"
+            head="$(printf '%s' "$j"|python3 -c 'import json,sys;print(json.load(sys.stdin)["head_sha"])')"
+            test "$head" = "$PRODUCT_SOURCE_SHA"
+            if [ "$status" = completed ]; then test "$conclusion" = success; break; fi
+            [ "$i" -lt 240 ] || exit 31
+            sleep 10
+          done
+          echo FULL_QA=PASS
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci --no-audit --no-fund
+
+      - name: Import Developer ID
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          KEYCHAIN="$RUNNER_TEMP/vyron610.keychain-db"
+          PASS="$(uuidgen)$(uuidgen)"
+          P12="$RUNNER_TEMP/vyron610.p12"
+          printf '%s' "$VYRON_MACOS_SIGNING_P12_BASE64"|base64 --decode > "$P12"
+          security create-keychain -p "$PASS" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$PASS" "$KEYCHAIN"
+          security import "$P12" -k "$KEYCHAIN" -P "$VYRON_MACOS_SIGNING_P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security >/dev/null
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$PASS" "$KEYCHAIN" >/dev/null
+          LOGIN="$(security default-keychain -d user|tr -d '"')"
+          security list-keychains -d user -s "$KEYCHAIN" "$LOGIN"
+          SHA="$(security find-certificate -Z -c "$VYRON_MACOS_SIGNING_IDENTITY" "$KEYCHAIN"|awk '/SHA-1 hash:/{print $3;exit}')"
+          test "$(printf '%s' "$SHA"|tr '[:lower:]' '[:upper:]')" = "$EXPECTED_SIGNING_CERT_SHA1"
+          echo "SIGN_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+          echo "SIGN_PASS=$PASS" >> "$GITHUB_ENV"
+
+      - name: Normalize updater key
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import base64,os
+          raw=os.environ['VYRON_TAURI_SIGNING_PRIVATE_KEY_RAW'].strip().replace('\\r\\n','\n').replace('\\n','\n')
+          rows=[raw]
+          for _ in range(5):
+              try:y=base64.b64decode(rows[-1].strip(),validate=True).decode().strip()
+              except Exception:break
+              if y in rows:break
+              rows.append(y)
+          plain=next((x for x in rows if x.startswith('untrusted comment:')),None);assert plain
+          out=base64.b64encode((plain.rstrip()+'\n').encode()).decode()
+          open(os.environ['GITHUB_ENV'],'a').write('TAURI_SIGNING_PRIVATE_KEY='+out+'\n')
+          print('::add-mask::'+out)
+          PY
+
+      - name: Build signed 6.1.0 ARM64
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          security unlock-keychain -p "$SIGN_PASS" "$SIGN_KEYCHAIN"
+          export APPLE_SIGNING_IDENTITY="$VYRON_MACOS_SIGNING_IDENTITY"
+          npx tauri build --target aarch64-apple-darwin --bundles app,dmg
+          APP="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name VYRON.app -print -quit)"
+          DMG="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -name '*.dmg' -print -quit)"
+          UPD="$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name '*.app.tar.gz' -print -quit)"
+          SIG="$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name '*.app.tar.gz.sig' -print -quit)"
+          test -d "$APP";test -s "$DMG";test -s "$UPD";test -s "$SIG"
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = "$BUNDLE_ID"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = "$VERSION"
+          file "$APP/Contents/MacOS/channelflow"|grep -q arm64
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          hdiutil verify "$DMG"
+          mkdir -p candidate
+          cp "$DMG" "candidate/VYRON-$VERSION-arm64.dmg"
+          cp "$UPD" candidate/VYRON.app.tar.gz
+          cp "$SIG" candidate/VYRON.app.tar.gz.sig
+          shasum -a 256 "candidate/VYRON-$VERSION-arm64.dmg"|awk '{print $1}' > "candidate/VYRON-$VERSION-arm64.dmg.sha256"
+          shasum -a 256 candidate/VYRON.app.tar.gz|awk '{print $1}' > candidate/VYRON.app.tar.gz.sha256
+          printf 'SOURCE=%s\nVERSION=%s\nBUILD_REVISION=%s\nCODESIGN=PASS\nDMG_VERIFY=PASS\n' "$PRODUCT_SOURCE_SHA" "$VERSION" "$BUILD_REVISION" > candidate/gate-summary.txt
+
+      - name: Physical launch smoke
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          M="$RUNNER_TEMP/vyron610";mkdir -p "$M"
+          hdiutil attach "candidate/VYRON-$VERSION-arm64.dmg" -nobrowse -readonly -mountpoint "$M"
+          trap 'hdiutil detach "$M" >/dev/null 2>&1||true' EXIT
+          "$M/VYRON.app/Contents/MacOS/channelflow" >"$RUNNER_TEMP/launch.log" 2>&1 &
+          P=$!;sleep 8;kill -0 "$P";kill "$P"||true;wait "$P"||true
+          ! grep -Eiq 'panic|segmentation fault|fatal error' "$RUNNER_TEMP/launch.log"
+          hdiutil detach "$M";trap - EXIT
+          echo MACOS_610_LAUNCH=PASS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-6.1.0-MACOS-CANDIDATE
+          path: candidate/**
+          if-no-files-found: error
+          retention-days: 30
