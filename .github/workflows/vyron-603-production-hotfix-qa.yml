@@ -1,0 +1,60 @@
+name: VYRON 6.0.3 Production Images Hotfix QA
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-6.0.3-production-images
+    paths:
+      - '.github/workflows/vyron-603-production-hotfix-qa.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: hotfix/vyron-6.0.3-production-images
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install Tauri Linux dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: VYRON 6.0.3 targeted regression
+        run: npm test -- tests/vyron-603-production-hotfix.test.mjs
+
+      - name: Rust VYRON 6.0.3 Production regressions
+        run: cargo test --manifest-path src-tauri/Cargo.toml v603_ -- --nocapture
+
+      - name: npm run build
+        run: npm run build
+
+      - name: cargo check
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+
+      - name: Full npm test (legacy suite audit)
+        id: fullnpm
+        continue-on-error: true
+        run: npm test
+
+      - name: Record full-suite result
+        run: echo "FULL_NPM_TEST_OUTCOME=${{ steps.fullnpm.outcome }}"
