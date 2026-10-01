@@ -309,6 +309,7 @@ fn acceptance_delete_selected_and_delete_all_batch_projects() {
         &HashSet::new(),
         summary.manifest_path.clone(),
         vec!["001".into()],
+        false,
     )
     .unwrap_err();
     assert!(blocked.contains("verified YouTube upload proof"));
@@ -318,6 +319,7 @@ fn acceptance_delete_selected_and_delete_all_batch_projects() {
         &verified,
         summary.manifest_path.clone(),
         vec!["001".into(), "002".into(), "003".into()],
+        false,
     )
     .unwrap();
     assert_eq!(r.deleted_project_ids.len(), 3);
@@ -331,7 +333,7 @@ fn acceptance_delete_selected_and_delete_all_batch_projects() {
         .map(|p| p.project_id.clone())
         .collect::<Vec<_>>();
     let r2 =
-        delete_production_batch_projects_inner(&verified, b.manifest_path.clone(), ids).unwrap();
+        delete_production_batch_projects_inner(&verified, b.manifest_path.clone(), ids, false).unwrap();
     let final_batch = r2.batch.unwrap();
     assert_eq!(final_batch.project_count, 0);
     let (final_manifest, _) = load_manifest(&final_batch.manifest_path).unwrap();
@@ -341,6 +343,38 @@ fn acceptance_delete_selected_and_delete_all_batch_projects() {
         let output = row.output_file.unwrap();
         assert!(Path::new(&output).exists());
     }
+    cleanup(&ws);
+}
+
+#[test]
+fn acceptance_owner_manual_delete_bypasses_upload_proof_but_blocks_active_render() {
+    let (ws, cid, name) = fixture(2, 12);
+    let plan = plan_build(&request(&ws, &cid, &name, 2, 5, "even", false)).unwrap();
+    let summary = execute_plan(None, &plan).unwrap();
+    let (m, _) = load_manifest(&summary.manifest_path).unwrap();
+    let status_path = PathBuf::from(&m.status_path);
+    let mut st: BatchStatus = read_json(&status_path);
+    st.projects[0].render_status = "Error".into();
+    st.projects[1].render_status = "Rendering".into();
+    atomic_json(&status_path, &st).unwrap();
+
+    let deleted = delete_production_batch_projects_inner(
+        &HashSet::new(),
+        summary.manifest_path.clone(),
+        vec!["001".into()],
+        true,
+    ).unwrap();
+    assert_eq!(deleted.deleted_project_ids, vec!["001".to_string()]);
+    assert!(!Path::new(&m.projects[0].folder_path).exists());
+
+    let blocked = delete_production_batch_projects_inner(
+        &HashSet::new(),
+        summary.manifest_path.clone(),
+        vec!["002".into()],
+        true,
+    ).unwrap_err();
+    assert!(blocked.contains("BLOCK_ACTIVE_RENDER"));
+    assert!(Path::new(&m.projects[1].folder_path).exists());
     cleanup(&ws);
 }
 
