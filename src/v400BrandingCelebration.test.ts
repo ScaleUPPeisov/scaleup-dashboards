@@ -11,8 +11,8 @@ const conf=JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json','utf8'));
 describe('VYRON update branding + one-time celebration',()=>{
   it('uses the owner artwork in sidebar without replacing system app icons',()=>{
     expect(app).toContain('sidebarBrandArtwork');
-    expect(app).toContain('VYRON_4_ARTWORK');
-    expect(conf.bundle.icon).toEqual(['icons/32x32.png','icons/128x128.png','icons/128x128@2x.png','icons/icon.icns']);
+    expect(app).toContain('VYRON_5_ARTWORK');
+    expect(conf.bundle.icon).toEqual(['icons/32x32.png','icons/128x128.png','icons/128x128@2x.png','icons/icon.icns','icons/icon.ico']);
     expect(updateExperience).toContain("../src-tauri/icons/icon.png")
   });
 
