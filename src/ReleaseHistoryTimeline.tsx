@@ -29,16 +29,16 @@ function ReleaseCard({row,expanded,onToggle}:{row:ReleaseHistoryEntry;expanded:b
   </div>}
  </article>
 }
-export function ReleaseHistoryTimeline(){
+export function ReleaseHistoryTimeline({currentVersion=VYRON_CURRENT_RELEASE.version}:{currentVersion?:string}){
  const [query,setQuery]=useState(''),[filter,setFilter]=useState<Filter>('all'),[expanded,setExpanded]=useState('');
  const rows=useMemo(()=>{const q=query.trim().toLocaleLowerCase('ru-RU');return VYRON_RELEASE_HISTORY.filter(x=>categoryHas(x,filter)&&(!q||releaseText(x).includes(q)))},[query,filter]);
  const grouped=useMemo(()=>groupReleaseHistoryByDay(rows),[rows]);
  const generations=[...new Set(VYRON_RELEASE_HISTORY.map(x=>x.version.split('.')[0]+'.x'))].sort((a,b)=>Number(a)-Number(b));
  return <section className="settingsCard releaseHistoryCard releaseHistoryV320">
-  <div className="historyHero"><div><small>ИСТОРИЯ VYRON</small><h3>Путь от первого релиза до автономной системы</h3><p>Продуктовая история без шума CI: версии и RC — в timeline, технические preview-сборки спрятаны в деталях.</p></div><span className="historyCurrent">VYRON {VYRON_CURRENT_RELEASE.version}</span></div>
+  <div className="historyHero"><div><small>ИСТОРИЯ VYRON</small><h3>Путь от первого релиза до автономной системы</h3><p>Продуктовая история без шума CI: версии и RC — в timeline, технические preview-сборки спрятаны в деталях.</p></div><span className="historyCurrent">VYRON {currentVersion}</span></div>
   <div className="historySummary">
    <span><small>Первый релиз</small><b>{dateFmt.format(new Date(VYRON_FIRST_RELEASE.date+'T12:00:00Z'))}</b></span>
-   <span><small>Текущая версия</small><b>{VYRON_CURRENT_RELEASE.version}</b></span>
+   <span><small>Текущая версия</small><b>{currentVersion}</b></span>
    <span><small>Дней разработки</small><b>{daysOfDevelopment()}</b></span>
    <span><small>Релизов</small><b>{VYRON_RELEASE_HISTORY.length}</b></span>
    <span><small>Поколения</small><b>{generations.join(' → ')}</b></span>
