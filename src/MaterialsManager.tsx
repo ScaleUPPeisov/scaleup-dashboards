@@ -89,6 +89,8 @@ export function MaterialsManager(){
     await refreshChannels(channels.map(x=>x.id));
   }
 
+  useEffect(()=>{setCleanup(null)},[cleanupRoots.join('|')]);
+
   useEffect(()=>{
     const ids=channels.map(x=>x.id);
     if(!workspace){refreshGeneration.current++;setRows({});setCleanup(null);setLoadingRows(false);return}
