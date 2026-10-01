@@ -3,6 +3,7 @@ import {api} from './api';
 import {useApp} from './store';
 import type {Channel,Page,VideoJob} from './types';
 import type {MetadataQueueInput} from './metadataQueue';
+import {notifyMetadataQueueChanged} from './MetadataQueueAssignmentBridge';
 
 type FpsMetrics={fps:number;p50:number;p95:number;p99:number;worst:number;dropped:number;long50:number;long100:number};
 const sleep=(ms:number)=>new Promise<void>(r=>window.setTimeout(r,ms));
@@ -83,7 +84,17 @@ export function M1PerformanceProbe(){
         useApp.setState({channels,jobs});
         useApp.getState().patchSettings({fpsMonitor:true,autoCheckUpdates:false,autopilotEnabled:false});
         await api.metadataQueueImport(channels[0].id,channels[0].name,'m1-perf-5000.json','vyron-610-m1-perf-5000-v1',syntheticMetadata());
-        await sleep(1400);
+        const assignmentStarted=performance.now();
+        notifyMetadataQueueChanged();
+        for(let i=0;i<300;i++){
+          const assigned=useApp.getState().jobs.filter(j=>j.metadataSource==='queue').length;
+          if(assigned>=1000)break;
+          await sleep(100);
+        }
+        const assignedJobs=useApp.getState().jobs.filter(j=>j.metadataSource==='queue').length;
+        if(assignedJobs<1000)throw new Error('METADATA_BATCH_ASSIGNMENT_INCOMPLETE:'+assignedJobs);
+        const assignmentMs=performance.now()-assignmentStarted;
+        await sleep(1000);
         const rounds:FpsMetrics[]=[];
         for(let round=0;round<3&&!cancelled;round++){
           latest=null;window.dispatchEvent(new CustomEvent('vyron:fps-reset'));await sleep(850);
@@ -106,7 +117,7 @@ export function M1PerformanceProbe(){
         const pass=aggregate.fps>=57&&aggregate.p50<=17.5&&aggregate.p95<=20.5&&aggregate.p99<=33.5&&aggregate.dropped<2&&aggregate.long50===0;
         await api.performanceProbeReport({
           schemaVersion:1,version:'6.1.0',at:new Date().toISOString(),pass,target,aggregate,rounds,
-          dataset:{channels:35,jobs:1000,metadataRecords:5000,navigationSwitchesPerRound:30,rounds:3},
+          dataset:{channels:35,jobs:1000,metadataRecords:5000,assignedJobs,assignmentMs,navigationSwitchesPerRound:30,rounds:3},
           runtime:{userAgent:navigator.userAgent,platform:navigator.platform,hardwareConcurrency:navigator.hardwareConcurrency,screen:[screen.width,screen.height,devicePixelRatio]},
           scenarios:['Главная→Каналы→Производство→YouTube→Аналитика→Настройки × 30','Production Materials/Builder','YouTube Metadata + 5000-record queue','modal open/close','long scroll']
         });
