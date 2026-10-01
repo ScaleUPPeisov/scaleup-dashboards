@@ -225,10 +225,13 @@ fn effective_source_hash(source_hash:&str,source_name:&str,records:&[MetadataInp
     let bytes=serde_json::to_vec(&(source_name,records)).map_err(|e|format!("METADATA_QUEUE_SOURCE_SERIALIZE: {e}"))?;
     Ok(sha256_bytes(&bytes))
 }
-fn pack_hash(channel_id:&str,source_hash:&str,records:&[MetadataInput])->Result<String,String>{
+fn pack_hash(channel_id:&str,_source_hash:&str,records:&[MetadataInput])->Result<String,String>{
+    // Pack identity is derived from channel + ordered record fingerprints. sourceHash is
+    // retained separately for exact-file duplicate diagnostics, but deleting the DOCX or
+    // restoring a UI draft cannot accidentally create the same logical pack twice.
     let mut h=Sha256::new();
-    h.update(channel_id.as_bytes());h.update(b"\0");h.update(source_hash.as_bytes());
-    for r in records{h.update(record_hash(r)?.as_bytes());}
+    h.update(channel_id.as_bytes());h.update(b"\0");
+    for r in records{h.update(record_hash(r)?.as_bytes());h.update(b"\n");}
     Ok(hex::encode(h.finalize()))
 }
 fn status_rank(status:&str)->u8{
@@ -273,6 +276,7 @@ fn update_index_pack(app:&AppHandle,index:&mut ChannelIndex,m:&PackManifest)->Re
     }else{
         index.packs.push(PackRef{pack_id:m.pack_id.clone(),pack_hash:m.pack_hash.clone(),source_hash:m.source_hash.clone(),created_at:m.created_at.clone(),total:m.total,complete:m.complete,purged:m.purged});
     }
+    index.packs.sort_by(|a,b|a.created_at.cmp(&b.created_at).then_with(||a.pack_id.cmp(&b.pack_id)));
     save_index(app,index)
 }
 fn queue_summary_locked(app:&AppHandle,channel_id:&str,channel_name:&str)->Result<QueueSummary,String>{
