@@ -39,23 +39,26 @@ export function MetadataQueueAssignmentBridge(){
           if(!summary||summary.available<=0)continue;
           const candidates=useApp.getState().jobs
             .filter(j=>j.channelId===channel.id&&Boolean(j.folder)&&!j.youtubeVideoId&&j.metadataSource!=='queue'&&j.metadataSource!=='import'&&j.metadataSource!=='ai'&&!j.metadataLocked)
-            .sort((a,b)=>a.number-b.number);
-          let remaining=summary.available;
-          for(const job of candidates){
-            if(!alive||remaining<=0)break;
-            const key=channel.id+':'+job.id+':'+job.folder;
-            if(attempted.current.has(key))continue;
-            attempted.current.add(key);
-            const record=await api.metadataQueueReserve(channel.id,channel.name,job.id,job.number,job.folder||undefined).catch(error=>{
-              notifyWarning('Metadata Queue: assignment error',String(error),{operationId:'metadata-queue-assign:'+job.id});
-              return null;
-            });
-            if(!record)break;
-            remaining--;
-            const row=metadataQueueRowAsImported(record);
-            const current=useApp.getState().jobs.find(x=>x.id===job.id);
+            .sort((a,b)=>a.number-b.number)
+            .filter(j=>!attempted.current.has(channel.id+':'+j.id+':'+j.folder))
+            .slice(0,summary.available);
+          if(!candidates.length)continue;
+          for(const job of candidates)attempted.current.add(channel.id+':'+job.id+':'+job.folder);
+          const reserved=await api.metadataQueueReserveBatch(channel.id,channel.name,candidates.map(job=>({
+            jobId:job.id,videoNumber:job.number,projectFolder:job.folder||undefined
+          }))).catch(error=>{
+            notifyWarning('Metadata Queue: batch assignment error',String(error),{operationId:'metadata-queue-assign:'+channel.id});
+            return [];
+          });
+          if(!alive||!reserved.length)continue;
+          const byId=new Map(useApp.getState().jobs.map(j=>[j.id,j] as const));
+          const patches=[] as Array<{id:string;patch:Partial<(typeof candidates)[number]>}>;
+          for(const result of reserved){
+            if(!result.record)continue;
+            const current=byId.get(result.jobId);
             if(!current)continue;
-            useApp.getState().patchJob(job.id,{
+            const row=metadataQueueRowAsImported(result.record);
+            patches.push({id:current.id,patch:{
               title:row.title??current.title,
               description:row.description??current.description,
               tags:row.tags?.length?[...row.tags]:current.tags,
@@ -63,8 +66,9 @@ export function MetadataQueueAssignmentBridge(){
               metadataSource:'queue',
               metadataLocked:true,
               error:undefined,
-            });
+            }});
           }
+          if(patches.length)useApp.getState().patchJobsBatch(patches);
         }
       }finally{
         running.current=false;
