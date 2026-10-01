@@ -14,6 +14,11 @@ type Preview={
  sourceOs:string;appVersion:string;createdAt:string;bundleUuid:string;summary:Summary;
  remap:Array<{channelId:string;channelName:string;field:string;oldPath:string}>;willDelete:number
 };
+type PackageDiagnostics={
+ sourceOs:string;appVersion:string;schema:number;kdf:string;
+ saltValid:boolean;saltLength:number;nonceValid:boolean;nonceLength:number;
+ ciphertextPresent:boolean;ciphertextLength:number;bundleSha256:string
+};
 
 const LEDGER='vyron:youtube-quota-ledger:v3';
 const GUARD='vyron:youtube-quota-guard:v1';
@@ -130,6 +135,7 @@ export function MigrationPanel(){
  const [passphrase,setPassphrase]=useState('');
  const [file,setFile]=useState('');
  const [preview,setPreview]=useState<Preview|undefined>();
+ const [packageDiagnostics,setPackageDiagnostics]=useState<PackageDiagnostics|undefined>();
  const [busy,setBusy]=useState(false);
  const strong=passphrase.length>=10;
  const counts=useMemo(()=>preview?.summary,[preview]);
@@ -142,14 +148,21 @@ export function MigrationPanel(){
   setBusy(true);
   try{
    const r:any=await invoke('migration_export',{path,passphrase,browserState:browserState()});
-   notifySuccess('Пакет переноса создан',String(r.channels)+' каналов • '+String(r.profiles)+' OAuth профилей • encrypted');
+   notifySuccess('Пакет переноса создан',String(r.channels)+' каналов • '+String(r.profiles)+' OAuth профилей • SHA-256 '+String(r.bundleSha256||'—'));
   }catch(e){notifyError('Экспорт VYRON',String(e))}
   finally{setBusy(false)}
  }
 
  async function chooseImport(){
   const p=await open({title:'Выбрать пакет переноса VYRON',multiple:false,filters:[{name:'VYRON Migration',extensions:['vyron']}]});
-  if(typeof p==='string'){setFile(p);setPreview(undefined)}
+  if(typeof p!=='string')return;
+  setFile(p);setPreview(undefined);setPackageDiagnostics(undefined);
+  try{
+   const d=await invoke<PackageDiagnostics>('migration_package_diagnostics',{path:p});
+   setPackageDiagnostics(d);
+  }catch(e){
+   notifyError('Диагностика пакета',String(e));
+  }
  }
 
  async function doPreview(){
@@ -203,6 +216,22 @@ export function MigrationPanel(){
     <button disabled={busy||!file||!strong} onClick={doPreview}>Проверить импорт</button>
    </div>
    {file&&<p className="note mono">{file}</p>}
+  </section>
+
+  {packageDiagnostics&&<section className="settingsCard">
+   <small>PACKAGE DIAGNOSTICS • SAFE • BEFORE DECRYPT</small>
+   <h3>Проверка .vyron</h3>
+   <div className="settingsInfoGrid">
+    <span><small>Source OS</small><b>{packageDiagnostics.sourceOs||'—'}</b></span>
+    <span><small>Created with VYRON</small><b>{packageDiagnostics.appVersion||'—'}</b></span>
+    <span><small>Schema</small><b>{packageDiagnostics.schema}</b></span>
+    <span><small>KDF</small><b>{packageDiagnostics.kdf||'—'}</b></span>
+    <span><small>Salt</small><b>{packageDiagnostics.saltValid?'VALID':'INVALID'} • {packageDiagnostics.saltLength} bytes</b></span>
+    <span><small>Nonce</small><b>{packageDiagnostics.nonceValid?'VALID':'INVALID'} • {packageDiagnostics.nonceLength} bytes</b></span>
+    <span><small>Ciphertext</small><b>{packageDiagnostics.ciphertextPresent?'PRESENT':'MISSING'} • {packageDiagnostics.ciphertextLength} bytes</b></span>
+   </div>
+   <label>Bundle SHA-256<div className="pathLine"><input readOnly className="mono" value={packageDiagnostics.bundleSha256}/><button onClick={()=>void navigator.clipboard.writeText(packageDiagnostics.bundleSha256)}>КОПИРОВАТЬ SHA-256</button></div></label>
+   <p className="note">Пароль, derived key, plaintext и OAuth secrets здесь никогда не отображаются.</p>
   </section>
 
   {preview&&<section className="settingsCard">
