@@ -19,10 +19,11 @@ const OPEN_TAB_KEY='vyron:youtube-open-tab:v1';
 let requestedGlobalHistory=false;
 function normalizeTab(tab:Tab):Exclude<Tab,'calendar'|'data'|'queue'>{if(tab==='calendar')return'schedule';if(tab==='data')return'statistics';if(tab==='queue')return'publish';return tab}
 function consumeRequestedTab(initial:Tab){try{const raw=localStorage.getItem(OPEN_TAB_KEY) as Tab|null;if(raw){localStorage.removeItem(OPEN_TAB_KEY);requestedGlobalHistory=raw==='history';return normalizeTab(raw)}}catch{}requestedGlobalHistory=false;return normalizeTab(initial)}
-export function YouTubeCenter({initialTab='publish'}:{initialTab?:Tab}){
+export function YouTubeCenter({initialTab='publish',routeTab}:{initialTab?:Tab;routeTab?:'publish'|'metadata'|'uploaded'}){
  const setPage=useApp(s=>s.setPage);
  const [tab,setTab]=useState(()=>consumeRequestedTab(initialTab)),[activeChannel,setActiveChannel]=useState(()=>loadActivePublishChannel()),[historyGlobal,setHistoryGlobal]=useState(()=>requestedGlobalHistory);
  useEffect(()=>subscribeActivePublishChannel(setActiveChannel),[]);
+ useEffect(()=>{if(routeTab)setTab(routeTab)},[routeTab]);
  useEffect(()=>{const openHistory=(event:Event)=>{setHistoryGlobal(Boolean((event as CustomEvent<{global?:boolean}>).detail?.global));setTab('history')},openStatistics=()=>setTab('statistics'),openAccounts=()=>setTab('accounts');window.addEventListener('vyron:youtube-history',openHistory);window.addEventListener('vyron:youtube-statistics',openStatistics);window.addEventListener('vyron:youtube-accounts',openAccounts);return()=>{window.removeEventListener('vyron:youtube-history',openHistory);window.removeEventListener('vyron:youtube-statistics',openStatistics);window.removeEventListener('vyron:youtube-accounts',openAccounts)}},[]);
  const tabs:[typeof tab,string][]=[['publish','Публикация'],['metadata','Метаданные'],['schedule','Расписание'],['uploaded','Загруженные'],['command','Командный центр'],['runway','План каналов'],['statistics','Статистика'],['history','История'],['accounts','Аккаунты']];
  const content=tab==='publish'?<PublisherOS/>:tab==='uploaded'?<ExistingVideos/>:tab==='metadata'?<MetadataTabs/>:tab==='schedule'?<ScheduleWorkspace/>:tab==='command'?<CommandCenter/>:tab==='runway'?<ChannelRunway/>:tab==='statistics'?<StatisticsCenter/>:tab==='history'?<ActivityHistory globalView={historyGlobal}/>:<AccountsPage/>;
