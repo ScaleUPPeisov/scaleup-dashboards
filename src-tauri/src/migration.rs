@@ -865,7 +865,11 @@ fn create_rollback_snapshot(app: &AppHandle, id: &str) -> Result<PathBuf, String
         fs::copy(&sp, dir.join("state.json"))
             .map_err(|e| format!("MIGRATION_STATE_BACKUP_FAILED: {e}"))?;
     }
-    oauth_vault::copy_encrypted_snapshot(app, &dir.join("oauth-vault.enc"))?;
+
+    // OAuth snapshot is strictly read-only against live storage. It may copy raw
+    // encrypted bytes, but it must never create/rotate a key or vault.
+    let oauth_meta=oauth_vault::copy_encrypted_snapshot(app, &dir.join("oauth-vault.enc"))?;
+
     let (yp,gp)=metadata_paths(app)?;
     if yp.exists(){fs::copy(&yp,dir.join("youtube-oauth.json")).map_err(|e|format!("MIGRATION_YOUTUBE_METADATA_BACKUP_FAILED: {e}"))?;}
     if gp.exists(){fs::copy(&gp,dir.join("google-config.json")).map_err(|e|format!("MIGRATION_GOOGLE_CONFIG_BACKUP_FAILED: {e}"))?;}
@@ -873,7 +877,8 @@ fn create_rollback_snapshot(app: &AppHandle, id: &str) -> Result<PathBuf, String
         dir.join("meta.json"),
         serde_json::to_vec_pretty(&json!({
             "id": id,
-            "createdAt": chrono::Utc::now().to_rfc3339()
+            "createdAt": chrono::Utc::now().to_rfc3339(),
+            "oauthVault": oauth_meta
         }))
         .map_err(|e| e.to_string())?,
     )
@@ -904,6 +909,15 @@ fn backup_secret_cleanup_accounts(dir:&Path)->Result<Vec<String>,String>{
         .filter_map(|x|x.as_str().map(str::to_string)).collect())
 }
 
+fn backup_meta(dir:&Path)->Result<Option<Value>,String>{
+    let meta_path=dir.join("meta.json");
+    if !meta_path.exists(){return Ok(None)}
+    let meta:Value=serde_json::from_slice(
+        &fs::read(&meta_path).map_err(|e|format!("MIGRATION_BACKUP_META_READ_FAILED: {e}"))?
+    ).map_err(|e|format!("MIGRATION_BACKUP_META_PARSE_FAILED: {e}"))?;
+    Ok(Some(meta))
+}
+
 fn restore_optional_file(live:&Path,backup:&Path)->Result<(),String>{
     if backup.exists(){
         let bytes=fs::read(backup).map_err(|e|format!("MIGRATION_ROLLBACK_READ_FAILED: {}: {e}",backup.display()))?;
@@ -917,10 +931,15 @@ fn restore_optional_file(live:&Path,backup:&Path)->Result<(),String>{
 fn restore_snapshot_dir(app: &AppHandle, dir: &Path) -> Result<(), String> {
     let live_state=state_path(app)?;
     restore_optional_file(&live_state,&dir.join("state.json"))?;
+
+    let meta=backup_meta(dir)?;
+    let oauth_meta=meta.as_ref().and_then(|m|m.get("oauthVault"));
     let oauth = dir.join("oauth-vault.enc");
-    if oauth.exists() {
-        oauth_vault::restore_encrypted_snapshot(app, &oauth)?;
-    }
+    // Always invoke restore: a new-format snapshot may explicitly represent
+    // "OAuth vault absent" and rollback must remove a vault/key created later.
+    // Old 6.0.2 snapshots are auto-classified by oauth_vault without legacy-key demand.
+    oauth_vault::restore_encrypted_snapshot(app, &oauth, oauth_meta)?;
+
     let (yp,gp)=metadata_paths(app)?;
     restore_optional_file(&yp,&dir.join("youtube-oauth.json"))?;
     restore_optional_file(&gp,&dir.join("google-config.json"))?;
