@@ -2706,8 +2706,10 @@ fn collect_global_cleanup(workspaces: &[String]) -> (GlobalProjectCleanupPreview
     (preview, candidates)
 }
 #[tauri::command]
-pub fn preview_global_production_project_cleanup(workspaces: Vec<String>) -> Result<GlobalProjectCleanupPreview, String> {
-    Ok(collect_global_cleanup(&workspaces).0)
+pub async fn preview_global_production_project_cleanup(workspaces: Vec<String>) -> Result<GlobalProjectCleanupPreview, String> {
+    tokio::task::spawn_blocking(move || collect_global_cleanup(&workspaces).0)
+        .await
+        .map_err(|e| format!("Cleanup preview worker failed: {e}"))
 }
 fn execute_global_cleanup_with<F>(workspaces: &[String], confirmed: bool, mut delete: F) -> Result<GlobalProjectCleanupResult, String>
 where F: FnMut(&Path) -> Result<(), String> {
@@ -2739,10 +2741,14 @@ where F: FnMut(&Path) -> Result<(), String> {
     Ok(result)
 }
 #[tauri::command]
-pub fn execute_global_production_project_cleanup(workspaces: Vec<String>, confirmed: bool) -> Result<GlobalProjectCleanupResult, String> {
-    execute_global_cleanup_with(&workspaces, confirmed, |path| {
-        trash::delete(path).map_err(|e| format!("Не удалось переместить PROJECT-папку в Корзину: {e}"))
+pub async fn execute_global_production_project_cleanup(workspaces: Vec<String>, confirmed: bool) -> Result<GlobalProjectCleanupResult, String> {
+    tokio::task::spawn_blocking(move || {
+        execute_global_cleanup_with(&workspaces, confirmed, |path| {
+            trash::delete(path).map_err(|e| format!("Не удалось переместить PROJECT-папку в Корзину: {e}"))
+        })
     })
+    .await
+    .map_err(|e| format!("Cleanup worker failed: {e}"))?
 }
 
 #[tauri::command]
