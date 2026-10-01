@@ -19,7 +19,7 @@ const file=(n:number,fp=hash(n),pathRoot=root):RenderFolderVideoFile=>({
 const job=(n:number,overrides:Partial<VideoJob>={}):VideoJob=>({
   id:'job-'+n,channelId,number:n,folder:root,status:'READY_UPLOAD',createdAt:'2026-10-01T00:00:00Z',
   tracksCount:10,minTracks:10,finalPath:file(n).path,title:'VIDEO_'+String(n).padStart(3,'0'),description:'',tags:[],
-  currentSourceFingerprint:hash(n),currentSourceFileSize:file(n).size,currentSourceModifiedAt:file(n).modifiedAt,
+  currentSourceFingerprint:hash(n),currentSourceFileSize:file(n).size,currentSourceModifiedAt:file(n).modifiedAt??undefined,
   storageLifecycle:'NEW',...overrides
 });
 const uploaded=(n:number,fp=hash(n),path=file(n).path,jobId='old-'+n):UploadHistoryRecord=>({
@@ -40,7 +40,7 @@ function createdFromRows(rows:ReturnType<typeof reconcilePublisherInventory>['cr
   return rows.map((r,i)=>job(r.sequence||i+1,{
     id:'created-'+(i+1),finalPath:r.file.path,sourceOrigin:'render-scan',
     currentSourceFingerprint:r.currentFingerprint||r.file.fingerprint,
-    currentSourceFileSize:r.file.size,currentSourceModifiedAt:r.file.modifiedAt,
+    currentSourceFileSize:r.file.size,currentSourceModifiedAt:r.file.modifiedAt??undefined,
   }))
 }
 
