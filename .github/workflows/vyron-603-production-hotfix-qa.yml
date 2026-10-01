@@ -1,5 +1,6 @@
 name: VYRON 6.0.3 Production Images Hotfix QA
 # rerun after final manual-delete cleanup
+# rerun after targeted assertion correction
 
 on:
   push:
