@@ -1,4 +1,4 @@
-import React,{useEffect,useMemo,useState} from 'react';
+import React,{useEffect,useMemo,useRef,useState} from 'react';
 import {productionManagerApi,type GlobalProjectCleanupPreview,type MaterialsSummary} from './productionManagerApi';
 import {patchChannelProductionPrefs,useProductionPrefs} from './productionPrefs';
 import {createJobsCount} from './autopilotCore';
@@ -8,6 +8,8 @@ import {notifySuccess} from './notificationCenter';
 function n(value:number|undefined){return (value||0).toLocaleString('ru-RU')}
 function gb(value:number|undefined){return ((value||0)/1024/1024/1024).toFixed(2)}
 function fileName(path:string){return path.split(/[\\/]/).filter(Boolean).pop()||path}
+const materialsSummaryCache=new Map<string,MaterialsSummary>();
+function summaryCacheKey(workspace:string,channelId:string){return workspace+'\u0000'+channelId}
 
 export function MaterialsManager(){
   const channels=useApp(s=>s.channels);
@@ -25,7 +27,19 @@ export function MaterialsManager(){
   const [manualMusic,setManualMusic]=useState<string[]>([]);
   const [manualMusicRoot,setManualMusicRoot]=useState('');
   const [manualBusy,setManualBusy]=useState('');
+  const [loadingRows,setLoadingRows]=useState(true);
+  const refreshGeneration=useRef(0);
   const workspace=settings.workspace||'';
+  const channelIdsKey=useMemo(()=>channels.map(x=>x.id).sort().join('|'),[channels]);
+  const jobCountersByChannel=useMemo(()=>{
+    const out:Record<string,{waiting:number;ready:number}>={};
+    for(const job of jobs){
+      const row=out[job.channelId]||(out[job.channelId]={waiting:0,ready:0});
+      if(job.status==='NEED_IMAGE')row.waiting++;
+      if(job.status==='READY_RENDER')row.ready++;
+    }
+    return out;
+  },[jobs]);
 
   const cleanupRoots=useMemo(()=>[
     settings.workspace,
@@ -41,19 +55,56 @@ export function MaterialsManager(){
   const manualTo=manualFrom+Math.max(0,manualImages.length-1);
   const manualRequiredTracks=manualImages.length*manualTracksPerProject;
 
-  async function refresh(){
-    if(!workspace){setRows({});setCleanup(null);return}
-    const next:Record<string,MaterialsSummary>={};
-    for(const ch of channels){
-      try{next[ch.id]=await productionManagerApi.materialsSummary(workspace,ch.id)}catch{}
+  async function loadSummaries(channelIds:string[],generation:number){
+    try{
+      const summaries=await productionManagerApi.materialsSummaries(workspace,channelIds);
+      if(generation!==refreshGeneration.current)return;
+      setRows(prev=>{
+        const next={...prev};
+        for(const summary of summaries){
+          next[summary.channelId]=summary;
+          materialsSummaryCache.set(summaryCacheKey(workspace,summary.channelId),summary);
+        }
+        return next;
+      });
+    }catch{
+      // External/offline storage must never make navigation fail. Keep cached/empty rows visible.
+    }finally{
+      if(generation===refreshGeneration.current)setLoadingRows(false);
     }
-    setRows(next);
-    if(cleanupRoots.length){
-      try{setCleanup(await productionManagerApi.previewGlobalProjectCleanup(cleanupRoots))}catch{setCleanup(null)}
-    }else setCleanup(null);
   }
 
-  useEffect(()=>{void refresh()},[workspace,channels.map(x=>x.id).join('|'),jobs.length,cleanupRoots.join('|')]);
+  async function refreshChannels(channelIds:string[]){
+    if(!workspace){setRows({});setLoadingRows(false);return}
+    const generation=++refreshGeneration.current;
+    if(channelIds.some(id=>!rows[id]))setLoadingRows(true);
+    await loadSummaries(channelIds,generation);
+  }
+
+  async function refreshChannel(channelId:string){
+    await refreshChannels([channelId]);
+  }
+
+  async function refresh(){
+    await refreshChannels(channels.map(x=>x.id));
+  }
+
+  useEffect(()=>{
+    const ids=channels.map(x=>x.id);
+    if(!workspace){refreshGeneration.current++;setRows({});setCleanup(null);setLoadingRows(false);return}
+    const cached:Record<string,MaterialsSummary>={};
+    for(const id of ids){
+      const hit=materialsSummaryCache.get(summaryCacheKey(workspace,id));
+      if(hit)cached[id]=hit;
+    }
+    setRows(cached);
+    setLoadingRows(ids.some(id=>!cached[id]));
+    const generation=++refreshGeneration.current;
+    let first=0,second=0;
+    // Double RAF guarantees the Materials shell paints before any filesystem IPC begins.
+    first=requestAnimationFrame(()=>{second=requestAnimationFrame(()=>{void loadSummaries(ids,generation)})});
+    return ()=>{cancelAnimationFrame(first);cancelAnimationFrame(second);refreshGeneration.current++};
+  },[workspace,channelIdsKey]);
 
   async function importImages(channel:{id:string;name:string}){
     if(!workspace){toast('Сначала выберите рабочую папку VYRON');return}
@@ -67,7 +118,7 @@ export function MaterialsManager(){
       if(!window.confirm('Канал: '+channel.name+'\nВыбрано: '+files.length+' изображений\n\nИмпортировать в Image Library этого канала?'))return;
       const result=await productionManagerApi.importMaterialImages(workspace,channel.id,channel.name,files);
       notifySuccess('Изображения импортированы',channel.name+' • добавлено '+result.added+' • дубликаты '+result.duplicates+' • пропущено '+result.skipped,{operationId:'materials-images:'+channel.id+':'+Date.now()});
-      await refresh();
+      await refreshChannel(channel.id);
     }catch(e){toast('Не удалось импортировать изображения: '+String(e))}
     finally{setBusy('')}
   }
@@ -82,7 +133,7 @@ export function MaterialsManager(){
       await productionManagerApi.setMusicLibrary(workspace,channel.id,channel.name,path);
       const indexed=await productionManagerApi.indexMusic(workspace,channel.id);
       notifySuccess('Музыкальная библиотека обновлена',channel.name+' • '+indexed.tracks.toLocaleString('ru-RU')+' треков',{operationId:'materials-music:'+channel.id+':'+indexed.indexedAt});
-      await refresh();
+      await refreshChannel(channel.id);
     }catch(e){toast('Не удалось обновить Music Library: '+String(e))}
     finally{setBusy('')}
   }
@@ -90,7 +141,7 @@ export function MaterialsManager(){
   async function reindexMusic(channelId:string){
     if(!workspace)return;
     setBusy('music:'+channelId);
-    try{await productionManagerApi.indexMusic(workspace,channelId);await refresh()}
+    try{await productionManagerApi.indexMusic(workspace,channelId);await refreshChannel(channelId)}
     catch(e){toast('Не удалось переиндексировать музыку: '+String(e))}
     finally{setBusy('')}
   }
@@ -175,9 +226,17 @@ export function MaterialsManager(){
       patchPrefs({selectedChannelId:manualChannel.id});
       notifySuccess('Ручная сборка готова',manualChannel.name+' • '+committed.length+' проектов • VIDEO_'+String(staged[0]?.number||0).padStart(3,'0')+' — VIDEO_'+String(staged[staged.length-1]?.number||0).padStart(3,'0'),{operationId:'manual-assembly:'+result.batch.batchId});
       setManualOpen(false);setManualImages([]);setManualMusic([]);setManualMusicRoot('');
-      await refresh();
+      await refreshChannel(manualChannel.id);
     }catch(e){toast('Ручная сборка не выполнена: '+String(e))}
     finally{setManualBusy('')}
+  }
+
+  async function previewCleanup(){
+    if(!cleanupRoots.length){setCleanup(null);return}
+    setBusy('cleanup-preview');
+    try{setCleanup(await productionManagerApi.previewGlobalProjectCleanup(cleanupRoots))}
+    catch(e){setCleanup(null);toast('Не удалось проверить Safe Cleanup: '+String(e))}
+    finally{setBusy('')}
   }
 
   async function cleanSafeProjects(){
@@ -206,6 +265,7 @@ export function MaterialsManager(){
     try{
       const result=await productionManagerApi.executeGlobalProjectCleanup(cleanupRoots,true);
       notifySuccess('Безопасная очистка завершена','Удалено '+result.deletedProjects+' проектов • освобождено '+gb(result.bytesFreed)+' GB • Render сохранены: '+result.protectedRenders,{operationId:'materials-cleanup:'+Date.now()});
+      setCleanup(null);
       await refresh();
     }catch(e){toast('Cleanup не выполнен: '+String(e))}
     finally{setBusy('')}
@@ -220,19 +280,20 @@ export function MaterialsManager(){
     </section>
 
     <section className="panel materialsTablePanel">
-      <div className="materialsTableHead"><div><small>IMAGE + MUSIC LIBRARY</small><h3>Все каналы</h3></div><span>{channels.length} каналов</span></div>
+      <div className="materialsTableHead"><div><small>IMAGE + MUSIC LIBRARY</small><h3>Все каналы</h3></div><span>{loadingRows?'Загрузка в фоне • ':''}{channels.length} каналов</span></div>
       <div className="materialsTable">
         <div className="materialsRow materialsHeader"><span>Канал</span><span>Музыка</span><span>Изображения</span><span>Назначено</span><span>Использовано</span><span>Нужны изображения</span><span>READY_RENDER</span><span>Действия</span></div>
         {channels.slice().sort((a,b)=>a.name.localeCompare(b.name,'ru')).map(ch=>{
           const row=rows[ch.id];
-          const waiting=jobs.filter(j=>j.channelId===ch.id&&j.status==='NEED_IMAGE').length;
-          const ready=jobs.filter(j=>j.channelId===ch.id&&j.status==='READY_RENDER').length;
+          const counters=jobCountersByChannel[ch.id]||{waiting:0,ready:0};
+          const waiting=counters.waiting;
+          const ready=counters.ready;
           const available=row?.image.available||0;
           const need=Math.max(0,waiting-available);
           return <div className="materialsRow" key={ch.id}>
             <span className="materialsChannel"><b>{ch.name}</b><small>{ch.id}</small></span>
-            <span><b>{n(row?.musicTotal)}</b><small>своб. {n(row?.musicFree)} • назнач. {n(row?.musicAssigned)}</small><small title={row?.musicLibraryPath||''}>{row?.musicLibraryPath||'Music Library не выбрана'}</small></span>
-            <span><b>{n(available)}</b><small>master: {n(row?.image.total)}</small></span>
+            <span><b>{row?n(row.musicTotal):'…'}</b><small>{row?'своб. '+n(row.musicFree)+' • назнач. '+n(row.musicAssigned):'Загрузка…'}</small><small title={row?.musicLibraryPath||''}>{row?(row.musicLibraryPath||'Music Library не выбрана'):'Данные читаются в фоне'}</small></span>
+            <span><b>{row?n(available):'…'}</b><small>{row?'master: '+n(row.image.total):'Загрузка…'}</small></span>
             <span><b>{n(row?.image.assigned)}</b><small>ASSIGNED</small></span>
             <span><b>{n(row?.image.used)}</b><small>USED{row?.image.missing?' • missing '+n(row.image.missing):''}</small></span>
             <span className={need>0?'materialsDanger':''}><b>{need>0?'🔴 '+need:'0'}</b><small>ждут cover: {waiting}</small></span>
@@ -249,11 +310,11 @@ export function MaterialsManager(){
     </section>
 
     <section className="panel materialsCleanup">
-      <div><small>SAFE CLEANUP</small><h3>Готово к очистке</h3><p>Eligibility определяется валидным завершённым Render. Master Image Library и source Music Library не удаляются.</p></div>
+      <div><small>SAFE CLEANUP</small><h3>Готово к очистке</h3><p>Проверка запускается только вручную и выполняется в фоне. Открытие Материалов больше не сканирует Production workspace.</p></div>
       <div className="materialsCleanupStats">
-        <span><b>{n(cleanup?.eligibleProjects)}</b><small>проектов</small></span>
-        <span><b>{gb(cleanup?.estimatedBytes)} GB</b><small>можно освободить</small></span>
-        <span><b>{n(cleanup?.protectedRenders)}</b><small>Render защищены</small></span>
+        <span><b>{cleanup?n(cleanup.eligibleProjects):'—'}</b><small>проектов</small></span>
+        <span><b>{cleanup?gb(cleanup.estimatedBytes)+' GB':'—'}</b><small>можно освободить</small></span>
+        <span><b>{cleanup?n(cleanup.protectedRenders):'—'}</b><small>Render защищены</small></span>
       </div>
       <label className="materialsPolicy">После успешного Render
         <select value={prefs.cleanupPolicy||'prompt'} onChange={e=>patchPrefs({cleanupPolicy:e.target.value as 'prompt'|'never'|'auto3d'|'afterUpload'})}>
@@ -263,7 +324,7 @@ export function MaterialsManager(){
           <option value="afterUpload">После успешной загрузки на YouTube</option>
         </select>
       </label>
-      <div className="pmActions"><button className="danger" disabled={busy==='cleanup'||!cleanup?.eligibleProjects} onClick={()=>void cleanSafeProjects()}>{busy==='cleanup'?'ОЧИЩАЮ…':'ОЧИСТИТЬ '+(cleanup?.eligibleProjects||0)+' ПРОЕКТОВ'}</button></div>
+      <div className="pmActions"><button disabled={!!busy} onClick={()=>void previewCleanup()}>{busy==='cleanup-preview'?'ПРОВЕРЯЮ…':'ПРОВЕРИТЬ'}</button><button className="danger" disabled={!!busy||!cleanup?.eligibleProjects} onClick={()=>void cleanSafeProjects()}>{busy==='cleanup'?'ОЧИЩАЮ…':'ОЧИСТИТЬ '+(cleanup?.eligibleProjects||0)+' ПРОЕКТОВ'}</button></div>
     </section>
 
     {manualOpen&&<div className="modalBackdrop" onMouseDown={()=>{if(!manualBusy)setManualOpen(false)}}>
