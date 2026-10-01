@@ -26,8 +26,9 @@ import {buildLegacyRecoveryPreview,canRefreshCurrentGenerationEvidence,classifyC
 import {completeTask,ensureTask,failTask,startTask,updateTask} from './taskEngine';
 import {ModalPortal} from './ModalPortal';
 import {cleanupCandidateBytes,cleanupCandidateIds,confirmedCleanupCandidates,latestChannelUploadBatchId,postUploadCleanupEligible} from './postUploadCleanup';
-import {scanInventoryChannel,useLiveInventory} from './renderInventoryRuntime';
+import {readyRows,scanInventoryChannel,useLiveInventory} from './renderInventoryRuntime';
 import {metadataQueuePublishAtIsFuture,metadataQueueRowAsImported} from './metadataQueue';
+import {publisherReadyPathSet,reconcilePublisherInventory} from './publisherInventoryReconcile';
 
 const status=(j:VideoJob)=>j.status==='READY_UPLOAD'?'В ОЧЕРЕДИ':j.status==='UPLOADING'?'ЗАГРУЖАЕТСЯ':j.status==='SCHEDULED'?'YOUTUBE ✓':j.status==='ERROR'?'ОШИБКА':j.status;
 const pct=(a:number,b:number)=>b?Math.min(100,Math.max(0,a/b*100)):0;
@@ -53,8 +54,9 @@ export function PublisherOS(){
  const recoveryJobIds=useMemo(()=>new Set(recoveryJobs.map(j=>j.id)),[recoveryJobs]);
  const setDraftPatch=(p:Partial<PublishWorkspaceDraft>)=>setDraft(d=>savePublishWorkspace(channelId,{...d,...p}));
  const supersededJobIds=useMemo(()=>new Set(jobs.filter(j=>j.channelId===channelId&&j.sourcePreviousJobId).map(j=>j.sourcePreviousJobId!)),[jobs,channelId]);
- const currentPhysicalPaths=useMemo(()=>new Set(renderScan?renderScan.result.files.map(f=>normalizeRenderPath(f.path)):[]),[renderScan]);
- const allChannelJobs=useMemo(()=>jobs.filter(j=>j.channelId===channelId&&j.sourceOrigin==='render-scan'&&Boolean(j.finalPath)&&currentPhysicalPaths.has(normalizeRenderPath(j.finalPath||''))&&!j.removedFromPublishList&&!recoveryJobIds.has(j.id)&&!supersededJobIds.has(j.id)&&!j.youtubeVideoId&&!j.uploadedAt&&j.storageLifecycle!=='UPLOADED'&&j.status!=='SCHEDULED'&&['READY_UPLOAD','UPLOADING','ERROR'].includes(j.status)).sort((a,b)=>a.number-b.number),[jobs,channelId,recoveryJobs,supersededJobIds,currentPhysicalPaths]);
+ const physicalReadyRows=useMemo(()=>renderScan?readyRows(renderScan.rows,jobs):[],[renderScan,jobs]);
+ const publisherReadyPhysicalPaths=useMemo(()=>publisherReadyPathSet(physicalReadyRows,renderScan?.result.root||channelRenderFolder),[physicalReadyRows,renderScan?.result.root,channelRenderFolder]);
+ const allChannelJobs=useMemo(()=>jobs.filter(j=>j.channelId===channelId&&Boolean(j.finalPath)&&publisherReadyPhysicalPaths.has(normalizeRenderPath(j.finalPath||''))&&!j.removedFromPublishList&&!recoveryJobIds.has(j.id)&&!supersededJobIds.has(j.id)&&!j.youtubeVideoId&&!j.uploadedAt&&j.storageLifecycle!=='UPLOADED'&&j.status!=='SCHEDULED'&&['READY_UPLOAD','UPLOADING','ERROR'].includes(j.status)).sort((a,b)=>a.number-b.number),[jobs,channelId,recoveryJobs,supersededJobIds,publisherReadyPhysicalPaths]);
  const uploadStateById=useMemo(()=>new Map(allChannelJobs.map(j=>[j.id,classifyUploadState(j,uploadHistory)] as const)),[allChannelJobs,uploadHistory]);
  const stateOf=(j:VideoJob)=>uploadStateById.get(j.id)||classifyUploadState(j,uploadHistory);
  const selectableJobs=useMemo(()=>sourceAvailability==='ONLINE'?allChannelJobs.filter(j=>uploadStateById.get(j.id)==='NEW'&&!recoveryJobIds.has(j.id)):[],[allChannelJobs,uploadStateById,recoveryJobIds,sourceAvailability]);
@@ -75,7 +77,7 @@ export function PublisherOS(){
  const uploadQuota=youtubeUploadQuotaState(quotaProjectKey||null),quotaPlan=useMemo(()=>planYoutubeQuota([{method:'videos.insert',count:uploadableSelected.length,label:'Загрузка видео'},{method:'videos.list',count:uploadableSelected.length,label:'Проверка загрузки'},{method:'thumbnails.set',count:uploadableThumbCount,label:'Обложки'}],undefined,quotaProjectKey||undefined),[uploadableSelected.length,uploadableThumbCount,quotaRev,quotaProjectKey]),quota=youtubeQuotaUsage();
  const combinedDailyRemaining=Math.min(daily.remaining??Number.POSITIVE_INFINITY,globalDaily.remaining);
  const videoCapacity=publisherVideoCapacity(uploadQuota.remaining,combinedDailyRemaining,uploadableSelected.length);
- const stateCounts=uploadStateCounters(allChannelJobs,uploadHistory),newCount=sourceAvailability==='ONLINE'?selectableJobs.length:(liveSnapshot?.readyVideos||0),uploadedCount=stateCounts.ON_YOUTUBE,processingCount=stateCounts.PROCESSING,verifyCount=stateCounts.VERIFY_REQUIRED,errorCount=stateCounts.ERRORS;
+ const stateCounts=uploadStateCounters(allChannelJobs,uploadHistory),newCount=sourceAvailability==='ONLINE'?selectableJobs.length:0,uploadedCount=stateCounts.ON_YOUTUBE,processingCount=stateCounts.PROCESSING,verifyCount=stateCounts.VERIFY_REQUIRED,errorCount=stateCounts.ERRORS;
  const latestCleanupBatchId=latestChannelUploadBatchId(uploadHistory,channelId);
  const batchCleanupRows=useMemo(()=>latestCleanupBatchId?confirmedCleanupCandidates(uploadHistory,jobs,channelId,latestCleanupBatchId):[],[uploadHistory,jobs,channelId,latestCleanupBatchId]);
  const channelCleanupRows=useMemo(()=>confirmedCleanupCandidates(uploadHistory,jobs,channelId),[uploadHistory,jobs,channelId]);
@@ -279,9 +281,10 @@ export function PublisherOS(){
       else if(!flagged&&j.scanRecoveryState)patchJob(j.id,{scanRecoveryState:undefined})
     }
     const scannedAt=snapshot.lastScanAt||new Date().toISOString(),scanPreview:RenderScanPreview={result,rows,summary,scannedAt};
+    const reconciliation=reconcilePublisherInventory({channelId,exactRoot:result.root,ready:readyRows(rows,current),jobs:current});
+    if(reconciliation.normalizePatches.length)useApp.getState().patchJobsBatch(reconciliation.normalizePatches);
     setRenderScan(scanPreview);
-    const currentCandidates=rows.filter(r=>r.classification==='NEW_CANDIDATE'||r.classification==='NEW_GENERATION');
-    if(currentCandidates.length)materializeRenderGenerationRows(currentCandidates,false,scanPreview);
+    if(reconciliation.createRows.length)materializeRenderGenerationRows(reconciliation.createRows,false,scanPreview);
     journal({eventId:`render-scan:${channelId}:${scannedAt}`,eventType:'RENDER_FOLDER_SCANNED',status:'SUCCESS',source:'LIVE_OPERATION',timestamp:scannedAt,channelId,channelName:channel?.name,details:{folder:result.root,rootType:'CHANNEL_SPECIFIC',found:summary.TOTAL_CLASSIFIED_FILES,knownExact:summary.KNOWN_EXACT,uploadedLocalCopies:summary.UPLOADED_LOCAL_COPY,newCandidates:summary.NEW_CANDIDATE,newGenerations:summary.NEW_GENERATION,legacyIdentityUnproven:summary.LEGACY_IDENTITY_UNPROVEN,verifyRequired:summary.VERIFY_REQUIRED,ambiguous:summary.AMBIGUOUS,invalid:summary.INVALID,crossChannelRecovery:bad.length,truncated:result.truncated,youtubeApiRequests:0}});
     completeTask(taskId,`${snapshot.readyVideos} ready • ${summary.TOTAL_CLASSIFIED_FILES} physical • YouTube API 0`);
     result.truncated?notifyWarning('Сканирование ограничено',`Найдено ${summary.TOTAL_CLASSIFIED_FILES} видео. Часть папки не прочитана.`,{operationId:taskId}):notifyInfo('Папка просканирована',`Live Inventory: ${snapshot.readyVideos} готово • физических файлов ${summary.TOTAL_CLASSIFIED_FILES}.`,{operationId:taskId})
