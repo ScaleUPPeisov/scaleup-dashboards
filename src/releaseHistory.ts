@@ -3,9 +3,22 @@ export type ReleaseSectionKey='features'|'fixes'|'interface'|'reliability'|'secu
 export type ReleaseHistoryEntry={date:string;version:string;title:string;type:ReleaseType;platforms?:Array<'macOS'|'Windows'>;highlights:string[];sections:Partial<Record<ReleaseSectionKey,string[]>>;technicalItems?:string[];technicalBuilds?:number[];tag?:string;publishedAt?:string;prerelease?:boolean};
 export const VYRON_RELEASE_HISTORY:ReleaseHistoryEntry[]=[
   {
+    "date":"2026-10-01","version":"6.0.2","title":"Real Migration Compatibility Candidate","type":"RC","platforms":["Windows"],"prerelease":true,
+    "highlights":[
+      "Реальная совместимость проверяется от точного macOS 6.0.0 exporter commit, а не current→current synthetic fixture.",
+      "Legacy schema-2 import сохраняет raw UTF-8 и добавляет контролируемую Unicode NFC/NFD compatibility.",
+      "Backup & Migration показывает безопасные envelope diagnostics и SHA-256 до расшифровки."
+    ],
+    "sections":{
+      "reliability":["MERGE остаётся идемпотентным и non-destructive; повторный импорт не создаёт дубли и не удаляет локальные каналы."],
+      "security":["Пароль, derived key, plaintext, refresh/access tokens и client_secret не логируются.","Wrong password и tampered ciphertext продолжают отклоняться XChaCha20Poly1305 authentication."],
+      "technical":["Candidate only. Production updater feeds не изменяются.","Exact legacy exporter source: 0f16fac6f4a50d083dad37a44684c8accbacf4ce."]
+    }
+  },
+  {
     "date":"2026-10-01","version":"6.0.1","title":"Windows Migration / UI Hotfix","type":"PATCH","platforms":["Windows"],
     "highlights":[
-      "Исправлен перенос VYRON macOS ↔ Windows с единым portable crypto format и защитой от CRLF/BOM transport artifacts.",
+      "Добавлен первый Windows migration hotfix с raw-first decrypt и CRLF/BOM fallback; реальная Unicode compatibility доработана в 6.0.2 candidate.",
       "Windows release запускается без отдельного console window и использует официальный VYRON icon.",
       "Owner / LOCAL CORE закреплены снизу sidebar, FPS HUD перенесён в Диагностику, история показывает runtime version."
     ],
