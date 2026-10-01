@@ -38,7 +38,33 @@ export function reconcilePublisherInventory({
     readyPhysicalPaths.add(path);
 
     if(row.classification==='NEW_CANDIDATE'||row.classification==='NEW_GENERATION'){
-      createRows.push(row);
+      const fp=String(row.currentFingerprint||row.file.fingerprint||'').trim().toLowerCase();
+      const existingSameGeneration=jobs.find(job=>
+        job.channelId===channelId
+        &&!job.youtubeVideoId
+        &&!job.uploadedAt
+        &&job.storageLifecycle!=='UPLOADED'
+        &&normalizeRenderPath(job.finalPath||'')===path
+        &&Boolean(fp)
+        &&String(job.currentSourceFingerprint||'').trim().toLowerCase()===fp
+        &&Number(job.currentSourceFileSize)===Number(row.currentFileSize??row.file.size)
+      );
+      if(existingSameGeneration){
+        normalizePatches.push({
+          id:existingSameGeneration.id,
+          patch:{
+            sourceOrigin:'render-scan',
+            finalPath:row.file.path,
+            currentSourceFingerprint:fp,
+            currentSourceFileSize:row.currentFileSize??row.file.size,
+            currentSourceModifiedAt:row.file.modifiedAt||existingSameGeneration.currentSourceModifiedAt,
+            status:'READY_UPLOAD',
+            storageLifecycle:'NEW',
+            scanRecoveryState:undefined,
+            error:undefined,
+          }
+        });
+      }else createRows.push(row);
       continue
     }
 
