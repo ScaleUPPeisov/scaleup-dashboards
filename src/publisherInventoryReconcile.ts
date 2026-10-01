@@ -83,3 +83,33 @@ export function publisherReadyPathSet(ready:RenderScanRow[],exactRoot:string){
   }
   return out
 }
+
+
+export function publisherInventoryJobs({
+  jobs,
+  channelId,
+  readyPhysicalPaths,
+  recoveryJobIds=new Set<string>(),
+}:{
+  jobs:VideoJob[];
+  channelId:string;
+  readyPhysicalPaths:ReadonlySet<string>;
+  recoveryJobIds?:ReadonlySet<string>;
+}){
+  const supersededJobIds=new Set(
+    jobs.filter(j=>j.channelId===channelId&&j.sourcePreviousJobId).map(j=>j.sourcePreviousJobId!)
+  );
+  return jobs.filter(j=>
+    j.channelId===channelId
+    &&Boolean(j.finalPath)
+    &&readyPhysicalPaths.has(normalizeRenderPath(j.finalPath||''))
+    &&!j.removedFromPublishList
+    &&!recoveryJobIds.has(j.id)
+    &&!supersededJobIds.has(j.id)
+    &&!j.youtubeVideoId
+    &&!j.uploadedAt
+    &&j.storageLifecycle!=='UPLOADED'
+    &&j.status!=='SCHEDULED'
+    &&['READY_UPLOAD','UPLOADING','ERROR'].includes(j.status)
+  ).sort((a,b)=>a.number-b.number)
+}
