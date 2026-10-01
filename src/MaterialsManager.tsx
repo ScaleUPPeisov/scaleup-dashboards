@@ -4,6 +4,7 @@ import {patchChannelProductionPrefs,useProductionPrefs} from './productionPrefs'
 import {createJobsCount} from './autopilotCore';
 import {useApp} from './store';
 import {notifySuccess} from './notificationCenter';
+import {diagCount,type MaterialsDiagMode} from './materialsPerfDiag';
 
 function n(value:number|undefined){return (value||0).toLocaleString('ru-RU')}
 function gb(value:number|undefined){return ((value||0)/1024/1024/1024).toFixed(2)}
@@ -75,9 +76,14 @@ async function loadMaterialsSnapshot(
   try{return await task}finally{if(materialsInFlight.get(cacheKey)===task)materialsInFlight.delete(cacheKey)}
 }
 
-export function MaterialsManager(){
+const DIAG_RANK:Record<MaterialsDiagMode,number>={A:1,B:2,C:3,D:4,E:5,F:6,G:7,H:8,I:9,J:10};
+const EMPTY_JOBS:any[]=[];
+
+export function MaterialsManager({diagMode='J',diagStorage}:{diagMode?:MaterialsDiagMode;diagStorage?:React.ReactNode}){
+  diagCount('materials');
+  const rank=DIAG_RANK[diagMode];
   const channels=useApp(s=>s.channels);
-  const jobs=useApp(s=>s.jobs);
+  const jobs=useApp(s=>rank>=9?s.jobs:EMPTY_JOBS as typeof s.jobs);
   const setJobs=useApp(s=>s.setJobs);
   const settings=useApp(s=>s.settings);
   const toast=useApp(s=>s.toast);
@@ -149,6 +155,7 @@ export function MaterialsManager(){
   }
 
   useEffect(()=>{
+    if(diagMode!=='J')return;
     let cancelled=false;
     let timer:number|undefined;
     if(!workspace){setRows({});setCleanup(null);return}
@@ -166,7 +173,7 @@ export function MaterialsManager(){
       });
     },0);
     return()=>{cancelled=true;if(timer!==undefined)window.clearTimeout(timer)};
-  },[cacheKey,jobRevision]);
+  },[cacheKey,jobRevision,diagMode]);
 
   async function importImages(channel:{id:string;name:string}){
     if(!workspace){toast('Сначала выберите рабочую папку VYRON');return}
@@ -326,20 +333,31 @@ export function MaterialsManager(){
 
   if(!channels.length)return <section className="panel"><b>Нет каналов</b><p>Подключите YouTube-каналы, затем Materials будет вести отдельную библиотеку для каждого channelId.</p></section>;
 
-  return <div className="materialsManager">
+  const showStorage=rank>=3;
+  const showControls=rank>=4;
+  const showTable=rank>=5;
+  const rowLimit=diagMode==='E'?0:diagMode==='F'?1:diagMode==='G'?5:rank>=8?35:0;
+  const useRealData=rank>=9;
+  const visibleChannels=sortedChannels.slice(0,rowLimit);
+
+  return <div className="materialsManager" data-materials-diag-mode={diagMode}>
     <section className="panel materialsHero">
-      <div><small>PRODUCTION → MATERIALS</small><h2>Материалы по каналам</h2><p>Изображения привязываются к channelId вручную при импорте. Имя файла не используется для определения канала.</p></div>
-      <div className="pmActions"><button className="primary" disabled={!!busy} onClick={openManualAssembly}>+ РУЧНАЯ СБОРКА</button><button disabled={!!busy} onClick={()=>void refresh(true)}>↻ ОБНОВИТЬ</button></div>
+      <div><small>PRODUCTION → MATERIALS • DIAG {diagMode}</small><h2>Материалы по каналам</h2><p>Изображения привязываются к channelId вручную при импорте. Имя файла не используется для определения канала.</p></div>
     </section>
 
-    <section className="panel materialsTablePanel">
-      <div className="materialsTableHead"><div><small>IMAGE + MUSIC LIBRARY</small><h3>Все каналы</h3></div><span>{channels.length} каналов</span></div>
+    {showStorage&&diagStorage}
+
+    {showControls&&<section className="panel"><div className="pmActions"><button className="primary" disabled={!!busy} onClick={openManualAssembly}>+ РУЧНАЯ СБОРКА</button><button disabled={!!busy} onClick={()=>void refresh(true)}>↻ ОБНОВИТЬ</button></div></section>}
+
+    {showTable&&<section className="panel materialsTablePanel">
+      <div className="materialsTableHead"><div><small>IMAGE + MUSIC LIBRARY</small><h3>Все каналы</h3></div><span>{visibleChannels.length} / {channels.length} каналов</span></div>
       <div className="materialsTable">
         <div className="materialsRow materialsHeader"><span>Канал</span><span>Музыка</span><span>Изображения</span><span>Назначено</span><span>Использовано</span><span>Нужны изображения</span><span>READY_RENDER</span><span>Действия</span></div>
-        {sortedChannels.map(ch=>{
-          const row=rows[ch.id];
-          const waiting=jobCounts[ch.id]?.waiting||0;
-          const ready=jobCounts[ch.id]?.ready||0;
+        {visibleChannels.map(ch=>{
+          diagCount('row');
+          const row=useRealData?rows[ch.id]:undefined;
+          const waiting=useRealData?(jobCounts[ch.id]?.waiting||0):0;
+          const ready=useRealData?(jobCounts[ch.id]?.ready||0):0;
           const available=row?.image.available||0;
           const need=Math.max(0,waiting-available);
           return <div className="materialsRow" key={ch.id}>
@@ -359,9 +377,9 @@ export function MaterialsManager(){
           </div>
         })}
       </div>
-    </section>
+    </section>}
 
-    <section className="panel materialsCleanup">
+    {diagMode==='J'&&<section className="panel materialsCleanup">
       <div><small>SAFE CLEANUP</small><h3>Готово к очистке</h3><p>Eligibility определяется валидным завершённым Render. Master Image Library и source Music Library не удаляются.</p></div>
       <div className="materialsCleanupStats">
         <span><b>{n(cleanup?.eligibleProjects)}</b><small>проектов</small></span>
@@ -377,9 +395,9 @@ export function MaterialsManager(){
         </select>
       </label>
       <div className="pmActions"><button className="danger" disabled={busy==='cleanup'||!cleanup?.eligibleProjects} onClick={()=>void cleanSafeProjects()}>{busy==='cleanup'?'ОЧИЩАЮ…':'ОЧИСТИТЬ '+(cleanup?.eligibleProjects||0)+' ПРОЕКТОВ'}</button></div>
-    </section>
+    </section>}
 
-    {manualOpen&&<div className="modalBackdrop" onMouseDown={()=>{if(!manualBusy)setManualOpen(false)}}>
+    {diagMode==='J'&&manualOpen&&<div className="modalBackdrop" onMouseDown={()=>{if(!manualBusy)setManualOpen(false)}}>
       <section className="confirmModal manualAssemblyModal" onMouseDown={e=>e.stopPropagation()}>
         <small>PRODUCTION → MATERIALS • ДОПОЛНИТЕЛЬНЫЙ РЕЖИМ</small>
         <h2>РУЧНАЯ СБОРКА ПРОЕКТОВ</h2>
