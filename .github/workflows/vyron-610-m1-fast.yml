@@ -1,0 +1,131 @@
+name: VYRON 6.1.0 M1 Fast Gate
+
+on:
+  push:
+    branches:
+      - release/vyron-6.1.0
+    paths:
+      - '.github/workflows/vyron-610-m1-fast.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-610-m1-fast
+  cancel-in-progress: true
+
+env:
+  VERSION: '6.1.0'
+  PRODUCT_SOURCE_SHA: '52c04af36813d4b42c22c67a1978d886265cd34f'
+  BUNDLE_ID: 'studio.channelflow.desktop'
+  VYRON_M1_PERF_PROBE: '1'
+
+jobs:
+  m1:
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: \${{ env.PRODUCT_SOURCE_SHA }}
+          fetch-depth: 0
+
+      - name: Verify exact M1 source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$PRODUCT_SOURCE_SHA"
+          test "$(uname -m)" = arm64
+          sysctl -n machdep.cpu.brand_string
+          test "$(node -p "require('./package.json').version")" = "$VERSION"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Fast TypeScript gate
+        run: |
+          npm run build
+          npx vitest run src/v610MetadataQueue.test.ts src/v610PublisherInventoryReconcile.test.ts
+
+      - name: Build production ARM64 app
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          export APPLE_SIGNING_IDENTITY='-'
+          npx tauri build --target aarch64-apple-darwin --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          APP="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)"
+          test -d "$APP"
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = "$BUNDLE_ID"
+          file "$APP/Contents/MacOS/channelflow" | grep -q arm64
+          echo "APP_PATH=$APP" >> "$GITHUB_ENV"
+
+      - name: Seed CI owner license
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for ROOT in \
+            "$HOME/Library/Application Support/studio.channelflow.desktop" \
+            "$HOME/Library/Application Support/VYRON" \
+            "$HOME/Library/Application Support/channelflow"
+          do
+            mkdir -p "$ROOT"
+            cat >"$ROOT/license.json" <<'JSON'
+          {"valid":true,"type":"owner-lifetime","expiresAt":null,"maskedKey":"CI-PERF","activatedAt":"2026-10-01T00:00:00Z"}
+          JSON
+          done
+
+      - name: Run M1 WKWebView gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          REPORT="$RUNNER_TEMP/vyron-m1-performance.json"
+          LOG="$RUNNER_TEMP/vyron-m1-performance.log"
+          rm -f "$REPORT"
+          VYRON_M1_PERF_PROBE=1 VYRON_M1_PERF_REPORT="$REPORT" "$APP_PATH/Contents/MacOS/channelflow" >"$LOG" 2>&1 &
+          PID=$!
+          trap 'kill "$PID" >/dev/null 2>&1 || true' EXIT
+          sleep 4
+          for i in {1..120}; do
+            test -s "$REPORT" && break
+            kill -0 "$PID"
+            sleep 1
+          done
+          test -s "$REPORT"
+          cat "$REPORT"
+          python3 - "$REPORT" <<'PY'
+          import json,sys
+          p=json.load(open(sys.argv[1]))
+          a=p.get("aggregate",{})
+          print("M1_RESULT",json.dumps({"pass":p.get("pass"),"aggregate":a,"routeTimings":p.get("routeTimings"),"dataset":p.get("dataset")},ensure_ascii=False))
+          if not p.get("pass"):raise SystemExit(1)
+          PY
+          kill "$PID" >/dev/null 2>&1 || true
+          wait "$PID" >/dev/null 2>&1 || true
+          trap - EXIT
+
+      - name: Preserve M1 evidence
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p m1
+          cp "$RUNNER_TEMP/vyron-m1-performance.json" m1/report.json 2>/dev/null || true
+          cp "$RUNNER_TEMP/vyron-m1-performance.log" m1/runtime.log 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: VYRON-6.1.0-M1-FAST
+          path: m1/**
+          if-no-files-found: warn
+          retention-days: 14
