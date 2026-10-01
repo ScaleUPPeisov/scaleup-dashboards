@@ -1014,6 +1014,9 @@ pub fn migration_import(
 ) -> Result<Value, String> {
     let payload = read_bundle(&path, &passphrase)?;
     let local = storage::load_state(app.clone());
+    let local_channels=local.get("channels").and_then(Value::as_array).cloned().unwrap_or_default();
+    let imported_channels=payload.state.get("channels").and_then(Value::as_array).cloned().unwrap_or_default();
+    let channel_id_remap=build_channel_id_remap(&local_channels,&imported_channels);
     let (merged, mut summary, remaps) = merge_states(&local, &payload.state);
     let oauth_plan = oauth_vault::portable_merge_plan(&app,&payload.oauth_vault)?;
     summary.imported_profiles = oauth_plan
