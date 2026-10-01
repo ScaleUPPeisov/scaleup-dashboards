@@ -2813,6 +2813,7 @@ fn delete_production_batch_projects_inner(
     verified: &HashSet<String>,
     manifest_path: String,
     project_ids: Vec<String>,
+    confirmed_owner_delete: bool,
 ) -> Result<DeleteResult, String> {
     let (mut m, mp) = load_manifest(&manifest_path)?;
     let wanted = project_ids.into_iter().collect::<HashSet<_>>();
@@ -2834,6 +2835,21 @@ fn delete_production_batch_projects_inner(
     }
     let status_now: BatchStatus = read_json(Path::new(&m.status_path));
     for p in &selected {
+        let row = status_now
+            .projects
+            .iter()
+            .find(|x| x.project_id == p.project_id)
+            .ok_or_else(|| format!("BLOCK: status {} не найден", p.project_id))?;
+        if confirmed_owner_delete {
+            let status = row.render_status.to_ascii_lowercase();
+            if status.contains("rendering") || status.contains("processing") || status == "active" {
+                return Err(format!(
+                    "BLOCK_ACTIVE_RENDER: {} сейчас используется ENDLUME",
+                    p.project_id
+                ));
+            }
+            continue;
+        }
         let Some(job) = p.job_id.as_deref() else {
             return Err(format!("BLOCK: {} не имеет job mapping", p.project_id));
         };
@@ -2843,11 +2859,6 @@ fn delete_production_batch_projects_inner(
                 p.project_id
             ));
         }
-        let row = status_now
-            .projects
-            .iter()
-            .find(|x| x.project_id == p.project_id)
-            .ok_or_else(|| format!("BLOCK: status {} не найден", p.project_id))?;
         if row.render_status != "Completed" {
             return Err(format!("BLOCK: {} не SAFE_TO_CLEAN", p.project_id));
         }
@@ -2943,9 +2954,15 @@ pub fn delete_production_batch_projects(
     app: AppHandle,
     manifest_path: String,
     project_ids: Vec<String>,
+    confirmed_owner_delete: Option<bool>,
 ) -> Result<DeleteResult, String> {
     let verified = verified_uploaded_job_ids(&app);
-    delete_production_batch_projects_inner(&verified, manifest_path, project_ids)
+    delete_production_batch_projects_inner(
+        &verified,
+        manifest_path,
+        project_ids,
+        confirmed_owner_delete.unwrap_or(false),
+    )
 }
 
 fn endlume_inbox_dir() -> Result<PathBuf, String> {
