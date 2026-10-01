@@ -3,6 +3,7 @@ import {api} from './api';
 import {useApp} from './store';
 import {refreshInventoryUploadCounts,scanAllInventories,scanInventoryChannel} from './renderInventoryRuntime';
 import {subscribeUploadTelemetry} from './uploadTelemetry';
+import {isMaterialsInventoryPaused} from './materialsPerfDiag';
 
 const WATCH_DEBOUNCE_MS=1500;
 const SAFETY_RECONCILE_MS=15*60_000;
@@ -28,12 +29,14 @@ export function LiveInventoryBridge(){
       try{await api.inventoryWatchRoots(configuredRoots())}catch{}
     };
     const scanStartup=async()=>{
+      if(isMaterialsInventoryPaused())return;
       await armWatch();
       await new Promise<void>(resolve=>window.setTimeout(resolve,INITIAL_SCAN_DELAY_MS));
-      if(!disposed){lastFullScanAt=Date.now();await scanAllInventories('startup')}
+      if(!disposed&&!isMaterialsInventoryPaused()){lastFullScanAt=Date.now();await scanAllInventories('startup')}
       if(!disposed)await armWatch();
     };
     const debounce=(channelId:string)=>{
+      if(isMaterialsInventoryPaused())return;
       const prior=timers.current.get(channelId);if(prior!==undefined)window.clearTimeout(prior);
       const timer=window.setTimeout(()=>{
         timers.current.delete(channelId);
@@ -45,7 +48,7 @@ export function LiveInventoryBridge(){
     void scanStartup();
 
     const reconcile=async(reason:'focus'|'periodic')=>{
-      if(disposed)return;
+      if(disposed||isMaterialsInventoryPaused())return;
       const now=Date.now();
       if(reason==='focus'&&now-lastFullScanAt<FOCUS_RESCAN_MIN_MS)return;
       lastFullScanAt=now;
