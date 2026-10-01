@@ -1,4 +1,4 @@
-import React,{useEffect,useMemo,useState} from 'react';
+import React,{useEffect,useLayoutEffect,useMemo,useState} from 'react';
 import {api} from './api';
 import {runAutopilotCycle} from './autopilotRuntime';
 import {createJobsCount,createMissingJobs} from './autopilotCore';
@@ -17,7 +17,7 @@ import {sortChannelsAlphabetically} from './channelSort';
 import {hasChannelNameConflict} from './channelIdentity';
 import {useLiveInventory} from './renderInventoryRuntime';
 import {ProductionPipelinePanel} from './ProductionPipelinePanel';
-import {beginMaterialsDiagClick,completeMaterialsDiagOnNextPaint,diagCount,lastMaterialsDiagReport,recordMaterialsDiagPhase} from './materialsPerfDiag';
+import {beginMaterialsDiagClick,completeMaterialsDiagOnNextPaint,diagCount,lastMaterialsDiagReport,recordMaterialsCommitBoundary,recordMaterialsDiagPhase} from './materialsPerfDiag';
 
 type Tab='queue'|'materials'|'manager';
 const statusLabel:Record<JobStatus,string>={NEED_IMAGE:'Нужно изображение',WAITING_MUSIC:'Нужно аудио',READY_RENDER:'Готов к ENDLUME',RENDERING:'Рендер',READY_UPLOAD:'Готов к YouTube',UPLOADING:'Загрузка YouTube',SCHEDULED:'Запланирован',ERROR:'Ошибка'};
@@ -25,6 +25,7 @@ const stageOrder:JobStatus[]=['NEED_IMAGE','WAITING_MUSIC','READY_RENDER','RENDE
 
 export function ProductionOS(){
  diagCount('production');
+ useLayoutEffect(()=>{recordMaterialsCommitBoundary()});
  const channels=useApp(s=>s.channels),addChannel=useApp(s=>s.addChannel),jobs=useApp(s=>s.jobs),setJobs=useApp(s=>s.setJobs),patchJob=useApp(s=>s.patchJob),patchJobsBatch=useApp(s=>s.patchJobsBatch),settings=useApp(s=>s.settings),toast=useApp(s=>s.toast),setPage=useApp(s=>s.setPage),liveSnapshots=useLiveInventory(s=>s.snapshots);const [prefs,patchPrefs]=useProductionPrefs();const tab=(prefs.tab||'queue') as Tab;const channelId=(prefs.selectedChannelId&&channels.some(c=>c.id===prefs.selectedChannelId)?prefs.selectedChannelId:channels[0]?.id)||'';const setTab=(v:Tab)=>patchPrefs({tab:v});const setChannelId=(id:string)=>patchPrefs({selectedChannelId:id});const [futureOpen,setFutureOpen]=useState(false),[futureName,setFutureName]=useState(''),[filter,setFilter]=useState('all'),[busy,setBusy]=useState(false),[inbox,setInbox]=useState<any>(),[planOpen,setPlanOpen]=useState(false),[planCount,setPlanCount]=useState(30),[planScope,setPlanScope]=useState<'one'|'all'>('one');const [section,setSection]=useState<'overview'|'materials'|'builder'>(()=>tab==='materials'?'materials':tab==='manager'?'builder':'overview');const scopedJobs=jobs;const filtered=scopedJobs.filter(j=>filter==='all'||j.channelId===filter||j.status===filter).sort((a,b)=>a.number-b.number);const c=channels.find(x=>x.id===channelId),liveInventory=c?liveSnapshots[c.id]:undefined;const selectedJobIds=(prefs.selectedJobIds||[]).filter(id=>jobs.some(j=>j.id===id));const projectRoot=resolveProductionRootFromPrefs(prefs,channelId,settings.workspace);const [projectStorage,setProjectStorage]=useState<ProductionStorageStatus|null>(null);const [cleanupPreview,setCleanupPreview]=useState<GlobalProjectCleanupPreview|null>(null),[cleanupPhase,setCleanupPhase]=useState<0|1|2>(0),[cleanupConfirmed,setCleanupConfirmed]=useState(false),[cleanupBusy,setCleanupBusy]=useState(false);
  useEffect(()=>{if(!prefs.selectedChannelId&&channels[0])patchPrefs({selectedChannelId:channels[0].id})},[channels.length,prefs.selectedChannelId]);
  useEffect(()=>{let live=true;if(!projectRoot){setProjectStorage(null);return}productionManagerApi.storageStatus(projectRoot).then(x=>{if(live)setProjectStorage(x)}).catch(e=>{if(live)setProjectStorage({path:projectRoot,exists:false,writable:false,external:projectRoot.startsWith('/Volumes/'),freeBytes:null,error:String(e)})});return()=>{live=false}},[projectRoot]);
