@@ -1,0 +1,232 @@
+name: VYRON 6.0.2 Windows Candidate Finalize
+
+on:
+  push:
+    branches:
+      - candidate/vyron-6.0.2-real-migration
+    paths:
+      - '.github/workflows/vyron-602-windows-finalize.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: vyron-602-windows-finalize
+  cancel-in-progress: false
+
+env:
+  VERSION: '6.0.2'
+  V600_SHA: 0f16fac6f4a50d083dad37a44684c8accbacf4ce
+  SOURCE_RUN: '36811907427'
+
+jobs:
+  finalize:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    env:
+      VYRON_TAURI_SIGNING_PRIVATE_KEY_RAW: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Download exact V600 macOS-origin artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: real-v600-macos-origin
+          path: real-v600
+          run-id: 36811907427
+          github-token: ${{ github.token }}
+
+      - name: Verify exact-origin evidence and current identity
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          node -e "const p=require('./package.json'),l=require('./package-lock.json'),t=require('./src-tauri/tauri.conf.json');for(const v of [p.version,l.version,l.packages[''].version,t.version])if(v!=='6.0.2')process.exit(2)"
+          if($LASTEXITCODE -ne 0){throw 'V602_IDENTITY_FAILED'}
+          if(-not (Test-Path 'real-v600/real-v600-origin.vyron')){throw 'REAL_V600_ARTIFACT_MISSING'}
+          if(-not (Test-Path 'real-v600/real-v600-origin.vyron.sha256')){throw 'REAL_V600_SHA_MISSING'}
+          $actual=(Get-FileHash 'real-v600/real-v600-origin.vyron' -Algorithm SHA256).Hash.ToLowerInvariant()
+          $expected=(Get-Content 'real-v600/real-v600-origin.vyron.sha256' -Raw).Trim().Split()[0].ToLowerInvariant()
+          if($actual -ne $expected){throw 'REAL_V600_ARTIFACT_HASH_MISMATCH'}
+          $latest=Invoke-RestMethod 'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json'
+          $win=Invoke-RestMethod 'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json'
+          if($latest.version -ne '6.0.0'){throw "MAC_FEED_CHANGED=$($latest.version)"}
+          if($win.version -ne '6.0.1'){throw "WINDOWS_FEED_CHANGED=$($win.version)"}
+          Write-Host "REAL_V600_EXPORTER_COMMIT=$env:V600_SHA"
+          Write-Host "REAL_V600_ARTIFACT_SHA256=$actual"
+          Write-Host 'PRODUCTION_FEEDS_MUTATED=NO'
+
+      - name: Set NFC Windows password
+        shell: pwsh
+        run: |
+          @'
+          import os,unicodedata
+          p=unicodedata.normalize('NFC','й-ё-é-real-v600-password-123')
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f:
+              f.write('VYRON_FIXTURE_KIND=windows\n')
+              f.write('VYRON_FIXTURE_IN='+os.path.abspath('real-v600/real-v600-origin.vyron')+'\n')
+              f.write('VYRON_FIXTURE_PASS<<VYRONPASS\n'+p+'\nVYRONPASS\n')
+          '@ | python -
+
+      - name: Mandatory REAL V600 macOS to V602 Windows gate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          cargo test --locked --manifest-path src-tauri/Cargo.toml migration::tests::cross_platform_fixture_import_merge_and_reexport -- --ignored --exact --nocapture
+          if($LASTEXITCODE -ne 0){throw 'REAL_V600_COMPAT_FAILED'}
+          Write-Host 'REAL_V600_MAC_TO_V602_WINDOWS_COMPAT=PASS'
+          Write-Host 'IDEMPOTENT_IMPORT=PASS'
+          Write-Host 'WRONG_PASSWORD=FAIL_SECURELY'
+          Write-Host 'TAMPERED_CIPHERTEXT=FAIL_SECURELY'
+
+      - name: Unicode/raw/spaces/diagnostics gates
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $tests=@(
+            'migration::tests::raw_legacy_password_bytes_remain_first_class',
+            'migration::tests::legacy_v600_unicode_nfd_password_is_readable_from_nfc_input',
+            'migration::tests::unicode_password_matrix_ascii_cyrillic_and_accented_latin',
+            'migration::tests::intentional_password_spaces_are_never_trimmed',
+            'migration::tests::encryption_rejects_tamper_and_wrong_password',
+            'migration::tests::channel_merge_is_idempotent_and_never_deletes',
+            'migration::tests::package_diagnostics_are_safe_and_include_bundle_sha256'
+          )
+          foreach($t in $tests){
+            cargo test --locked --manifest-path src-tauri/Cargo.toml $t -- --exact --nocapture
+            if($LASTEXITCODE -ne 0){throw "FAILED=$t"}
+          }
+          Write-Host 'UNICODE_TESTS=PASS'
+          Write-Host 'RAW_LEGACY_PASSWORD=PASS'
+          Write-Host 'INTENTIONAL_SPACES=PASS'
+
+      - name: Frontend build and protected regressions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          npm ci --no-audit --no-fund
+          npm run build
+          if($LASTEXITCODE -ne 0){throw 'FRONTEND_BUILD_FAILED'}
+          npx vitest run src/v602RealMigrationCompatibility.test.ts src/v601WindowsHotfix.test.ts src/v320HistoryUx.test.ts src/v400BrandingCelebration.test.ts src/v510MaterialsManager.test.ts src/v512ManualAssembly.test.ts src/v503UploadCounterRestore.test.ts src/youtubePublishSafety.test.ts src/v400QuotaUploadLimitSeparation.test.ts src/v501LocalCleanupZeroQuota.test.ts src/v2115Rc7OauthUpdateContinuity.test.ts src/v500Performance.test.ts
+          if($LASTEXITCODE -ne 0){throw 'PROTECTED_REGRESSION_FAILED'}
+          Write-Host 'FRONTEND_BUILD=PASS'
+          Write-Host 'PROTECTED_REGRESSIONS=PASS'
+
+      - name: Canonicalize updater signing key
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          import base64,os
+          raw=os.environ['VYRON_TAURI_SIGNING_PRIVATE_KEY_RAW'].strip().replace('\\r\\n','\n').replace('\\n','\n')
+          candidates=[raw]
+          for _ in range(5):
+              cur=candidates[-1].strip()
+              try: dec=base64.b64decode(cur,validate=True).decode('utf-8').strip()
+              except Exception: break
+              if dec in candidates: break
+              candidates.append(dec)
+          plain=next((x for x in candidates if x.startswith('untrusted comment:')),None)
+          assert plain
+          canonical=base64.b64encode((plain.rstrip()+'\n').encode()).decode()
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f:f.write('TAURI_SIGNING_PRIVATE_KEY='+canonical+'\n')
+          print('::add-mask::'+canonical)
+          PY
+
+      - name: Build signed Windows candidate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          npx tauri build --target x86_64-pc-windows-msvc --bundles nsis --config src-tauri/tauri.windows.conf.json
+          if($LASTEXITCODE -ne 0){throw 'WINDOWS_BUILD_FAILED'}
+          $installer=Get-ChildItem src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis -Filter '*-setup.exe' | Select-Object -First 1
+          if(-not $installer){throw 'NSIS_MISSING'}
+          $sig=Get-Item ($installer.FullName+'.sig') -ErrorAction Stop
+          New-Item -ItemType Directory -Force candidate | Out-Null
+          Copy-Item $installer.FullName candidate/VYRON_6.0.2_x64-setup.exe
+          Copy-Item $sig.FullName candidate/VYRON_6.0.2_x64-setup.exe.sig
+          $sha=(Get-FileHash candidate/VYRON_6.0.2_x64-setup.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $sha | Set-Content candidate/VYRON_6.0.2_x64-setup.exe.sha256
+          @(
+            "HEAD=$env:GITHUB_SHA",
+            "V600_EXPORTER=$env:V600_SHA",
+            'VERSION=6.0.2',
+            'REAL_V600_MAC_TO_V602_WINDOWS_COMPAT=PASS',
+            'UNICODE_TESTS=PASS',
+            'RAW_LEGACY_PASSWORD=PASS',
+            'INTENTIONAL_SPACES=PASS',
+            'IDEMPOTENT_IMPORT=PASS',
+            'WRONG_PASSWORD=FAIL_SECURELY',
+            'TAMPERED_CIPHERTEXT=FAIL_SECURELY',
+            'FRONTEND_BUILD=PASS',
+            'PROTECTED_REGRESSIONS=PASS',
+            'WINDOWS_BUILD=PASS',
+            'PRODUCTION_FEEDS_MUTATED=NO',
+            'STATUS=READY_FOR_OWNER_TEST'
+          ) | Set-Content candidate/gate-summary.txt
+          Write-Host "INSTALLER_SHA256=$sha"
+
+      - name: Verify updater signature
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $verifyRoot=Join-Path $env:RUNNER_TEMP 'vyron-signature-verify'
+          New-Item -ItemType Directory -Force -Path (Join-Path $verifyRoot 'src') | Out-Null
+          @'
+          [package]
+          name = "vyron-signature-verify"
+          version = "0.0.0"
+          edition = "2021"
+          [dependencies]
+          base64 = "0.22"
+          minisign-verify = "=0.2.5"
+          '@ | Set-Content -Encoding utf8 (Join-Path $verifyRoot 'Cargo.toml')
+          @'
+          use base64::{engine::general_purpose::STANDARD, Engine as _};
+          use minisign_verify::{PublicKey, Signature};
+          use std::{env,fs};
+          fn decode(x:&str)->String{String::from_utf8(STANDARD.decode(x.trim()).unwrap()).unwrap()}
+          fn main(){
+            let a:Vec<String>=env::args().collect();
+            let artifact=fs::read(&a[1]).unwrap();
+            let sig=Signature::decode(&decode(&fs::read_to_string(&a[2]).unwrap())).unwrap();
+            let conf=fs::read_to_string(&a[3]).unwrap();
+            let m="\"pubkey\": \""; let s=conf.find(m).unwrap()+m.len(); let t=&conf[s..]; let e=t.find('\"').unwrap();
+            let pk=PublicKey::decode(&decode(&t[..e])).unwrap();
+            pk.verify(&artifact,&sig,true).unwrap();
+            println!("WINDOWS_UPDATER_SIGNATURE=PASS");
+          }
+          '@ | Set-Content -Encoding utf8 (Join-Path $verifyRoot 'src/main.rs')
+          cargo run --quiet --release --manifest-path (Join-Path $verifyRoot 'Cargo.toml') -- candidate/VYRON_6.0.2_x64-setup.exe candidate/VYRON_6.0.2_x64-setup.exe.sig src-tauri/tauri.conf.json
+          if($LASTEXITCODE -ne 0){throw 'SIGNATURE_VERIFY_FAILED'}
+          Add-Content candidate/gate-summary.txt 'WINDOWS_UPDATER_SIGNATURE=PASS'
+
+      - name: Final no-publish assertion
+        shell: pwsh
+        run: |
+          $latest=Invoke-RestMethod 'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json'
+          $win=Invoke-RestMethod 'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json'
+          if($latest.version -ne '6.0.0' -or $win.version -ne '6.0.1'){throw 'PRODUCTION_FEED_MUTATED'}
+          Write-Host 'PRODUCTION_FEEDS_MUTATED=NO'
+          Write-Host 'STATUS=READY_FOR_OWNER_TEST'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-6.0.2-REAL-MIGRATION-WINDOWS-CANDIDATE
+          path: candidate/**
+          if-no-files-found: error
+          retention-days: 30
