@@ -151,6 +151,7 @@ function PageRouter({license}:{license:LicenseStatus}){
   const canonical=page==='autopilot'?'dashboard':page==='metadata'||page==='existing'||page==='publisher'?'youtube':page;
   const youtubeActive=canonical==='youtube';
   if(youtubeActive)youtubeMounted.current=true;
+  useEffect(()=>{if(youtubeActive)window.dispatchEvent(new Event('vyron:youtube-route-active'))},[youtubeActive]);
 
   const transient=canonical==='dashboard'?<><DashboardUploadSummary/><DashboardOS/></>
     :canonical==='channels'?<ChannelsOS/>
