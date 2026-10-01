@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: vyron-610-metadata-queue-qa
+  cancel-in-progress: true
+
 env:
   VERSION: '6.1.0'
   BASELINE_SHA: 'dc923c35835e147e901c2a18d0f48cd5ca59cccc'
@@ -108,3 +112,134 @@ jobs:
 
       - name: Native compile gate
         run: cargo check --manifest-path src-tauri/Cargo.toml
+
+
+  m1-performance:
+    needs: qa
+    runs-on: macos-14
+    timeout-minutes: 90
+    env:
+      VYRON_M1_PERF_PROBE: '1'
+      BUNDLE_ID: studio.channelflow.desktop
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/vyron-6.1.0-metadata-queue-macos-smoothness
+          fetch-depth: 0
+
+      - name: Verify Apple Silicon M1 runner and exact source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(uname -m)" = "arm64"
+          sysctl -n machdep.cpu.brand_string | tee "$RUNNER_TEMP/cpu.txt"
+          grep -E 'Apple M1|Apple M2|Apple M3|Apple M4' "$RUNNER_TEMP/cpu.txt"
+          git merge-base --is-ancestor "$BASELINE_SHA" HEAD
+          test "$(node -p "require('./package.json').version")" = "$VERSION"
+          echo "M1_RUNNER=PASS"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Build production ARM64 app for physical WKWebView measurement
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          export APPLE_SIGNING_IDENTITY='-'
+          npx tauri build --target aarch64-apple-darwin --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          APP="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)"
+          test -d "$APP"
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = "$BUNDLE_ID"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = "$VERSION"
+          file "$APP/Contents/MacOS/channelflow" | grep -q arm64
+          codesign --verify --deep --strict "$APP"
+          echo "APP_PATH=$APP" >> "$GITHUB_ENV"
+
+      - name: Seed local owner license for isolated CI runner
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for ROOT in \
+            "$HOME/Library/Application Support/studio.channelflow.desktop" \
+            "$HOME/Library/Application Support/VYRON" \
+            "$HOME/Library/Application Support/channelflow"
+          do
+            mkdir -p "$ROOT"
+            cat >"$ROOT/license.json" <<'JSON'
+          {
+            "valid": true,
+            "type": "owner-lifetime",
+            "expiresAt": null,
+            "maskedKey": "CI-PERF",
+            "activatedAt": "2026-10-01T00:00:00Z"
+          }
+          JSON
+          done
+
+      - name: Run production WKWebView M1 performance gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          REPORT="$RUNNER_TEMP/vyron-m1-performance.json"
+          LOG="$RUNNER_TEMP/vyron-m1-performance.log"
+          rm -f "$REPORT"
+          VYRON_M1_PERF_PROBE=1 VYRON_M1_PERF_REPORT="$REPORT" \
+            "$APP_PATH/Contents/MacOS/channelflow" >"$LOG" 2>&1 &
+          PID=$!
+          trap 'kill "$PID" >/dev/null 2>&1 || true' EXIT
+          sleep 4
+          osascript -e 'tell application "System Events" to set frontmost of first process whose name contains "VYRON" to true' >/dev/null 2>&1 || true
+          for i in {1..120}; do
+            test -s "$REPORT" && break
+            kill -0 "$PID"
+            sleep 1
+          done
+          test -s "$REPORT"
+          cat "$REPORT"
+          python3 - "$REPORT" <<'PY'
+          import json,sys
+          p=json.load(open(sys.argv[1]))
+          if not p.get("pass"):
+              raise SystemExit("M1_PERFORMANCE_GATE_FAILED: "+json.dumps(p,ensure_ascii=False))
+          a=p["aggregate"]
+          assert a["fps"] >= 57
+          assert a["p50"] <= 17.5
+          assert a["p95"] <= 20.5
+          assert a["p99"] <= 33.5
+          assert a["dropped"] < 2
+          assert a["long50"] == 0
+          print("M1_PERFORMANCE_GATE=PASS")
+          PY
+          kill "$PID" >/dev/null 2>&1 || true
+          wait "$PID" >/dev/null 2>&1 || true
+          trap - EXIT
+          ! grep -Eiq 'panic|segmentation fault|fatal error' "$LOG"
+
+      - name: Preserve physical performance evidence
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p m1-performance
+          cp "$RUNNER_TEMP/vyron-m1-performance.json" m1-performance/report.json 2>/dev/null || true
+          cp "$RUNNER_TEMP/vyron-m1-performance.log" m1-performance/runtime.log 2>/dev/null || true
+          cp "$RUNNER_TEMP/cpu.txt" m1-performance/cpu.txt 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: VYRON-6.1.0-M1-PERFORMANCE
+          path: m1-performance/**
+          if-no-files-found: warn
+          retention-days: 30
