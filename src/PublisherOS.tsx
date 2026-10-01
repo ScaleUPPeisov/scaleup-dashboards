@@ -55,12 +55,13 @@ export function PublisherOS(){
  const setDraftPatch=(p:Partial<PublishWorkspaceDraft>)=>setDraft(d=>savePublishWorkspace(channelId,{...d,...p}));
  const physicalReadyRows=useMemo(()=>renderScan?readyRows(renderScan.rows,jobs):[],[renderScan,jobs]);
  const publisherReadyPhysicalPaths=useMemo(()=>publisherReadyPathSet(physicalReadyRows,renderScan?.result.root||channelRenderFolder),[physicalReadyRows,renderScan?.result.root,channelRenderFolder]);
- const allChannelJobs=useMemo(()=>publisherInventoryJobs({jobs,channelId,readyPhysicalPaths:publisherReadyPhysicalPaths,recoveryJobIds}),[jobs,channelId,publisherReadyPhysicalPaths,recoveryJobIds]);
+ const currentPhysicalPaths=useMemo(()=>new Set(renderScan?renderScan.result.files.map(f=>normalizeRenderPath(f.path)):[]),[renderScan]);
+ const allChannelJobs=useMemo(()=>publisherInventoryJobs({jobs,channelId,readyPhysicalPaths:currentPhysicalPaths,recoveryJobIds}),[jobs,channelId,currentPhysicalPaths,recoveryJobIds]);
  const uploadStateById=useMemo(()=>new Map(allChannelJobs.map(j=>[j.id,classifyUploadState(j,uploadHistory)] as const)),[allChannelJobs,uploadHistory]);
  const stateOf=(j:VideoJob)=>uploadStateById.get(j.id)||classifyUploadState(j,uploadHistory);
- const selectableJobs=useMemo(()=>sourceAvailability==='ONLINE'?allChannelJobs.filter(j=>uploadStateById.get(j.id)==='NEW'&&!recoveryJobIds.has(j.id)):[],[allChannelJobs,uploadStateById,recoveryJobIds,sourceAvailability]);
+ const selectableJobs=useMemo(()=>sourceAvailability==='ONLINE'?allChannelJobs.filter(j=>publisherReadyPhysicalPaths.has(normalizeRenderPath(j.finalPath||''))&&uploadStateById.get(j.id)==='NEW'&&!recoveryJobIds.has(j.id)):[],[allChannelJobs,publisherReadyPhysicalPaths,uploadStateById,recoveryJobIds,sourceAvailability]);
  const selectableJobIds=useMemo(()=>new Set(selectableJobs.map(j=>j.id)),[selectableJobs]);
- const channelJobs=useMemo(()=>allChannelJobs.filter(j=>{const st=uploadStateById.get(j.id);if(videoFilter==='all')return true;if(videoFilter==='new')return st==='NEW';if(videoFilter==='youtube')return st==='READY'||st==='UPLOAD_ACCEPTED';if(videoFilter==='processing')return st==='YOUTUBE_PROCESSING'||st==='QUEUED'||st==='UPLOADING';if(videoFilter==='verify')return st==='VERIFY_REQUIRED';return Boolean(st&&errorUploadStates.has(st))}),[allChannelJobs,uploadStateById,videoFilter]);
+ const channelJobs=useMemo(()=>allChannelJobs.filter(j=>{const st=uploadStateById.get(j.id);if(videoFilter==='all')return true;if(videoFilter==='new')return selectableJobIds.has(j.id);if(videoFilter==='youtube')return st==='READY'||st==='UPLOAD_ACCEPTED';if(videoFilter==='processing')return st==='YOUTUBE_PROCESSING'||st==='QUEUED'||st==='UPLOADING';if(videoFilter==='verify')return st==='VERIFY_REQUIRED';return Boolean(st&&errorUploadStates.has(st))}),[allChannelJobs,uploadStateById,selectableJobIds,videoFilter]);
  const selected=canonicalSelectedJobs(selectableJobs,draft.selectedIds),thumbMap=useMemo(()=>mapThumbnailsToJobs(selected,draft.thumbs),[selected.map(j=>j.id).join('|'),draft.thumbs.join('|')]);
  const thumbnailsEnabled=draft.thumbs.length>0,selectedThumbnail=(j:VideoJob)=>thumbnailsEnabled?(thumbMap[j.id]||j.thumbnailPath||''):'';
  const globalDaily=globalDailyUploadStatus();
