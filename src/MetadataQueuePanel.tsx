@@ -3,6 +3,7 @@ import {api} from './api';
 import type {ImportedMetadata} from './metadata';
 import {metadataQueueInput,metadataQueueLowStockThreshold,type MetadataQueuePage,type MetadataQueueSummary} from './metadataQueue';
 import {notifyError,notifyInfo,notifySuccess} from './notificationCenter';
+import {notifyMetadataQueueChanged} from './MetadataQueueAssignmentBridge';
 
 const PAGE_SIZE=50;
 
@@ -37,7 +38,7 @@ export function MetadataQueuePanel({channelId,channelName,dailyTarget,rows,sourc
     setBusy(true);
     try{
       const result=await api.metadataQueueImport(channelId,channelName,sourceLabel,sourceHash,rows.map(metadataQueueInput));
-      setSummary(result.summary);setOffset(0);setStatus('');
+      setSummary(result.summary);setOffset(0);setStatus('');notifyMetadataQueueChanged();
       await refresh(0,'');
       if(result.duplicate)notifyInfo('Этот SEO Pack уже импортирован','Existing: '+result.existing+' • New: 0');
       else notifySuccess('SEO Queue пополнена','Добавлено '+result.added+' metadata records • '+channelName);
@@ -49,7 +50,7 @@ export function MetadataQueuePanel({channelId,channelName,dailyTarget,rows,sourc
     if(!window.confirm('Удалить использованный payload этого SEO Pack? Компактный ledger с record hash / jobId / YouTube ID останется. Исходный DOCX вне VYRON не удаляется.'))return;
     setBusy(true);
     try{
-      const s=await api.metadataQueuePurgePack(channelId,packId);setSummary(s);await refresh(0,status);notifySuccess('Использованный SEO Pack очищен','Payload перемещён в Корзину. Compact ledger сохранён.')
+      const s=await api.metadataQueuePurgePack(channelId,packId);setSummary(s);notifyMetadataQueueChanged();await refresh(0,status);notifySuccess('Использованный SEO Pack очищен','Payload перемещён в Корзину. Compact ledger сохранён.')
     }catch(e){notifyError('Не удалось очистить SEO Pack',String(e))}
     finally{setBusy(false)}
   }
