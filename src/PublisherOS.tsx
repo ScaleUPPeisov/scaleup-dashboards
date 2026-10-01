@@ -28,7 +28,7 @@ import {ModalPortal} from './ModalPortal';
 import {cleanupCandidateBytes,cleanupCandidateIds,confirmedCleanupCandidates,latestChannelUploadBatchId,postUploadCleanupEligible} from './postUploadCleanup';
 import {readyRows,scanInventoryChannel,useLiveInventory} from './renderInventoryRuntime';
 import {metadataQueuePublishAtIsFuture,metadataQueueRowAsImported} from './metadataQueue';
-import {publisherReadyPathSet,reconcilePublisherInventory} from './publisherInventoryReconcile';
+import {publisherInventoryJobs,publisherReadyPathSet,reconcilePublisherInventory} from './publisherInventoryReconcile';
 
 const status=(j:VideoJob)=>j.status==='READY_UPLOAD'?'В ОЧЕРЕДИ':j.status==='UPLOADING'?'ЗАГРУЖАЕТСЯ':j.status==='SCHEDULED'?'YOUTUBE ✓':j.status==='ERROR'?'ОШИБКА':j.status;
 const pct=(a:number,b:number)=>b?Math.min(100,Math.max(0,a/b*100)):0;
@@ -53,10 +53,9 @@ export function PublisherOS(){
  const recoveryJobs=useMemo(()=>channelRenderFolder?crossChannelScanRecoveryJobs(jobs,uploadHistory,channelId,channelRenderFolder):[],[jobs,uploadHistory,channelId,channelRenderFolder]);
  const recoveryJobIds=useMemo(()=>new Set(recoveryJobs.map(j=>j.id)),[recoveryJobs]);
  const setDraftPatch=(p:Partial<PublishWorkspaceDraft>)=>setDraft(d=>savePublishWorkspace(channelId,{...d,...p}));
- const supersededJobIds=useMemo(()=>new Set(jobs.filter(j=>j.channelId===channelId&&j.sourcePreviousJobId).map(j=>j.sourcePreviousJobId!)),[jobs,channelId]);
  const physicalReadyRows=useMemo(()=>renderScan?readyRows(renderScan.rows,jobs):[],[renderScan,jobs]);
  const publisherReadyPhysicalPaths=useMemo(()=>publisherReadyPathSet(physicalReadyRows,renderScan?.result.root||channelRenderFolder),[physicalReadyRows,renderScan?.result.root,channelRenderFolder]);
- const allChannelJobs=useMemo(()=>jobs.filter(j=>j.channelId===channelId&&Boolean(j.finalPath)&&publisherReadyPhysicalPaths.has(normalizeRenderPath(j.finalPath||''))&&!j.removedFromPublishList&&!recoveryJobIds.has(j.id)&&!supersededJobIds.has(j.id)&&!j.youtubeVideoId&&!j.uploadedAt&&j.storageLifecycle!=='UPLOADED'&&j.status!=='SCHEDULED'&&['READY_UPLOAD','UPLOADING','ERROR'].includes(j.status)).sort((a,b)=>a.number-b.number),[jobs,channelId,recoveryJobs,supersededJobIds,publisherReadyPhysicalPaths]);
+ const allChannelJobs=useMemo(()=>publisherInventoryJobs({jobs,channelId,readyPhysicalPaths:publisherReadyPhysicalPaths,recoveryJobIds}),[jobs,channelId,publisherReadyPhysicalPaths,recoveryJobIds]);
  const uploadStateById=useMemo(()=>new Map(allChannelJobs.map(j=>[j.id,classifyUploadState(j,uploadHistory)] as const)),[allChannelJobs,uploadHistory]);
  const stateOf=(j:VideoJob)=>uploadStateById.get(j.id)||classifyUploadState(j,uploadHistory);
  const selectableJobs=useMemo(()=>sourceAvailability==='ONLINE'?allChannelJobs.filter(j=>uploadStateById.get(j.id)==='NEW'&&!recoveryJobIds.has(j.id)):[],[allChannelJobs,uploadStateById,recoveryJobIds,sourceAvailability]);
