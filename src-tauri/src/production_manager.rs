@@ -174,6 +174,42 @@ fn hash_file(path: &Path) -> Result<String, String> {
     }
     Ok(hex::encode(h.finalize()))
 }
+
+fn resolve_production_images(workspace: &str, channel_id: &str) -> Result<Vec<ResolvedProductionImage>, String> {
+    let mut out = Vec::new();
+    let mut seen = HashSet::<String>::new();
+
+    // Prefer canonical Materials Library assets when the same bytes are present in both sources.
+    for image in materials_manager::available_images(workspace, channel_id)? {
+        let path = PathBuf::from(&image.path);
+        if !path.is_file() { continue; }
+        let sha = if image.sha256.trim().is_empty() { hash_file(&path)? } else { image.sha256.clone() };
+        if !seen.insert(sha.clone()) { continue; }
+        out.push(ResolvedProductionImage {
+            path: image.path,
+            source: "MATERIAL_LIBRARY",
+            asset_id: Some(image.asset_id),
+            reusable: true,
+            sha256: sha,
+        });
+    }
+
+    let session: ImportSession = read_json(&session_path(workspace, channel_id)?);
+    for image in session.collected {
+        let path = PathBuf::from(&image.path);
+        if !path.is_file() { continue; }
+        let sha = match hash_file(&path) { Ok(x) => x, Err(_) => continue };
+        if !seen.insert(sha.clone()) { continue; }
+        out.push(ResolvedProductionImage {
+            path: image.path,
+            source: "IMPORT_SESSION",
+            asset_id: None,
+            reusable: true,
+            sha256: sha,
+        });
+    }
+    Ok(out)
+}
 fn seq_hash(ids: &[String]) -> String {
     let mut h = Sha256::new();
     for id in ids {
@@ -601,6 +637,8 @@ pub struct ChannelState {
     pub music: Option<MusicSummary>,
     #[serde(default)]
     pub images: Option<materials_manager::ImageSummary>,
+    #[serde(default)]
+    pub resolved_images_available: usize,
     pub batches: Vec<BatchSummary>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -623,6 +661,15 @@ struct PlanProject {
     image_name: String,
     tracks: Vec<PlanTrack>,
     sequence_fingerprint: String,
+}
+
+#[derive(Clone, Debug)]
+struct ResolvedProductionImage {
+    path: String,
+    source: &'static str,
+    asset_id: Option<String>,
+    reusable: bool,
+    sha256: String,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -883,7 +930,9 @@ fn spawn_import_watcher(
         let mut seen = collector_seen_at_start(&session, &baseline);
         let mut pending = HashMap::<String, ImportProbe>::new();
         let mut last_error: Option<String> = None;
-        while !stop.load(Ordering::SeqCst) {
+        let mut final_flush_cycles = 0u8;
+        loop {
+            let stopping = stop.load(Ordering::SeqCst);
             let files = match recursive_images(&downloads) {
                 Ok(files) => {
                     last_error = None;
@@ -895,7 +944,13 @@ fn spawn_import_watcher(
                         let _=app.emit("production-import-error",json!({"channelId":channel_id,"sessionId":session.session_id,"message":message}));
                         last_error = Some(message);
                     }
-                    thread::sleep(Duration::from_millis(650));
+                    if stopping {
+                        final_flush_cycles = final_flush_cycles.saturating_add(1);
+                        if final_flush_cycles >= 6 { break; }
+                        thread::sleep(Duration::from_millis(200));
+                    } else {
+                        thread::sleep(Duration::from_millis(400));
+                    }
                     continue;
                 }
             };
@@ -974,7 +1029,14 @@ fn spawn_import_watcher(
                 let _ = atomic_json(&state_path, &session);
                 let _=app.emit("production-import-progress",json!({"channelId":channel_id,"sessionId":session.session_id,"collected":session.collected.len(),"bytes":before_size}));
             }
-            thread::sleep(Duration::from_millis(650));
+            if stopping {
+                final_flush_cycles = final_flush_cycles.saturating_add(1);
+                if final_flush_cycles >= 6 { break; }
+                thread::sleep(Duration::from_millis(200));
+            } else {
+                final_flush_cycles = 0;
+                thread::sleep(Duration::from_millis(400));
+            }
         }
         session.active = false;
         session.stopped_at = Some(Utc::now().to_rfc3339());
@@ -1048,12 +1110,20 @@ pub fn stop_production_import(
             x.store(true, Ordering::SeqCst);
         }
     }
+    // The watcher owns the final write. Wait for its final flush/ack instead of
+    // overwriting session.json with a potentially stale UI snapshot.
+    for _ in 0..160 {
+        let running = import_stops()
+            .lock()
+            .ok()
+            .map(|m| m.contains_key(&channel_id))
+            .unwrap_or(false);
+        if !running { break; }
+        thread::sleep(Duration::from_millis(25));
+    }
     let p = session_path(&workspace, &channel_id)?;
-    let mut s: ImportSession = read_json(&p);
-    s.active = false;
-    s.stopped_at = Some(Utc::now().to_rfc3339());
-    atomic_json(&p, &s)?;
-    Ok(s)
+    let s: ImportSession = read_json(&p);
+    Ok(normalize_import_runtime(&workspace, &channel_id, s))
 }
 #[tauri::command]
 pub fn production_import_status(
@@ -1469,16 +1539,11 @@ fn plan_build(req: &BuildRequest) -> Result<BuildPlan, String> {
     ) {
         return Err("Неизвестный режим распределения".into());
     }
-    let session: ImportSession = read_json(&session_path(&req.workspace, &req.channel_id)?);
-    let material_summary = materials_manager::image_summary(&req.workspace, &req.channel_id)?;
-    let material_images = materials_manager::available_images(&req.workspace, &req.channel_id)?;
-    let use_material_library = material_summary.total > 0;
-    let available_images = if use_material_library { material_images.len() } else { session.collected.len() };
+    let resolved_images = resolve_production_images(&req.workspace, &req.channel_id)?;
+    let available_images = resolved_images.len();
     if available_images == 0 {
         return Err("Сначала импортируй изображения в Production → Materials".into());
     }
-    // Manual VYRON 4-compatible flow: explicit allowImageReuse applies to either image source.
-    // Reused Materials Library assets are treated as reusable source files and are not consumed.
     if req.project_count > available_images && !req.allow_image_reuse {
         return Err(format!(
             "INSUFFICIENT_IMAGES:{}:{}",
@@ -1514,14 +1579,9 @@ fn plan_build(req: &BuildRequest) -> Result<BuildPlan, String> {
     let mut cursor = 0usize;
     let mut projects = Vec::new();
     for i in 0..req.project_count {
-        let (image_path, image_asset_id) = if use_material_library {
-            let image = &material_images[i % material_images.len()];
-            let asset_id = if req.allow_image_reuse { None } else { Some(image.asset_id.clone()) };
-            (image.path.clone(), asset_id)
-        } else {
-            let image = &session.collected[i % session.collected.len()];
-            (image.path.clone(), None)
-        };
+        let image = &resolved_images[i % resolved_images.len()];
+        let image_path = image.path.clone();
+        let image_asset_id = if req.allow_image_reuse { None } else { image.asset_id.clone() };
         let picks = choose_sequence(
             &req.mode,
             &idx.tracks,
@@ -1994,14 +2054,7 @@ pub async fn build_production_batch(
     app: AppHandle,
     request: BuildRequest,
 ) -> Result<BuildResult, String> {
-    let material_summary = materials_manager::image_summary(&request.workspace, &request.channel_id)?;
-    let available = if material_summary.total > 0 {
-        materials_manager::available_images(&request.workspace, &request.channel_id)?.len()
-    } else {
-        read_json::<ImportSession>(&session_path(&request.workspace, &request.channel_id)?)
-            .collected
-            .len()
-    };
+    let available = resolve_production_images(&request.workspace, &request.channel_id)?.len();
     if request.project_count > available && !request.allow_image_reuse {
         return Ok(BuildResult {
             status: "insufficient_images".into(),
@@ -2225,11 +2278,13 @@ pub fn production_channel_state(
         })
     };
     let images = materials_manager::image_summary(&workspace, &channel_id).ok();
+    let resolved_images_available = resolve_production_images(&workspace, &channel_id)?.len();
     Ok(ChannelState {
         settings,
         import_session,
         music,
         images,
+        resolved_images_available,
         batches: list_production_batches(workspace, channel_id)?,
     })
 }
@@ -2330,34 +2385,6 @@ pub fn validate_production_projects(
     }
     Ok(validate_manifest_projects(&m, &endlume_path, Some(&ids)))
 }
-fn verified_uploaded_job_ids(app: &AppHandle) -> HashSet<String> {
-    let Ok(dir) = app.path().app_data_dir() else {
-        return HashSet::new();
-    };
-    let state: Value = fs::read(dir.join("state.json"))
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_else(|| json!({}));
-    state
-        .get("uploadHistory")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|row| {
-            let status = row.get("status").and_then(Value::as_str).unwrap_or("");
-            let video = row
-                .get("youtubeVideoId")
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            let job = row.get("jobId").and_then(Value::as_str).unwrap_or("");
-            if status == "UPLOADED" && !video.trim().is_empty() && !job.trim().is_empty() {
-                Some(job.to_string())
-            } else {
-                None
-            }
-        })
-        .collect()
-}
 fn safe_cleanup_root(root: &Path) -> Result<PathBuf, String> {
     let c = root
         .canonicalize()
@@ -2386,7 +2413,6 @@ fn canonical_under(root: &Path, path: &Path) -> Result<PathBuf, String> {
 }
 #[tauri::command]
 pub fn delete_production_job_folder(
-    app: AppHandle,
     workspace: String,
     folder: String,
     job_id: String,
@@ -2394,11 +2420,8 @@ pub fn delete_production_job_folder(
     if folder.trim().is_empty() {
         return Ok(());
     }
-    if job_id.trim().is_empty() || !verified_uploaded_job_ids(&app).contains(job_id.trim()) {
-        return Err(
-            "BLOCK: project не имеет verified YouTube upload proof и не является SAFE_TO_CLEAN"
-                .into(),
-        );
+    if job_id.trim().is_empty() {
+        return Err("BLOCK: project не имеет job mapping".into());
     }
     let root = PathBuf::from(workspace);
     let p = PathBuf::from(folder);
@@ -2406,6 +2429,12 @@ pub fn delete_production_job_folder(
         return Ok(());
     }
     let safe = canonical_under(&root, &p)?;
+    if !safe.join("manifest.json").is_file() {
+        return Err("BLOCK: manual delete разрешён только для VYRON project folder".into());
+    }
+    if safe.file_name().and_then(|x| x.to_str()).map(|x| x.eq_ignore_ascii_case("Rendered")).unwrap_or(false) {
+        return Err("BLOCK: Render root нельзя удалять как project".into());
+    }
     trash::delete(&safe).map_err(|e| format!("Не удалось переместить project в Корзину: {e}"))
 }
 
@@ -2817,7 +2846,6 @@ pub fn archive_production_rendered_videos(
 }
 
 fn delete_production_batch_projects_inner(
-    verified: &HashSet<String>,
     manifest_path: String,
     project_ids: Vec<String>,
 ) -> Result<DeleteResult, String> {
@@ -2839,46 +2867,20 @@ fn delete_production_batch_projects_inner(
     if selected.is_empty() {
         return Err("Выбранные проекты не найдены в batch".into());
     }
-    let status_now: BatchStatus = read_json(Path::new(&m.status_path));
+
+    // Explicit user delete is intentionally independent from SAFE_TO_CLEAN / YouTube proof.
+    // Filesystem safety remains strict: only manifest-owned project folders under this batch root.
+    let root = safe_cleanup_root(Path::new(&m.root_path))?;
     for p in &selected {
-        let Some(job) = p.job_id.as_deref() else {
-            return Err(format!("BLOCK: {} не имеет job mapping", p.project_id));
-        };
-        if !verified.contains(job) {
-            return Err(format!(
-                "BLOCK: {} не имеет verified YouTube upload proof",
-                p.project_id
-            ));
+        let dir = PathBuf::from(&p.folder_path);
+        if !dir.exists() { continue; }
+        let safe = canonical_under(&root, &dir)?;
+        if safe.file_name().and_then(|x| x.to_str()).map(|x| x.eq_ignore_ascii_case("Rendered")).unwrap_or(false) {
+            return Err(format!("BLOCK: {} указывает на Render root", p.project_id));
         }
-        let row = status_now
-            .projects
-            .iter()
-            .find(|x| x.project_id == p.project_id)
-            .ok_or_else(|| format!("BLOCK: status {} не найден", p.project_id))?;
-        if row.render_status != "Completed" {
-            return Err(format!("BLOCK: {} не SAFE_TO_CLEAN", p.project_id));
-        }
-        let Some(output) = row.output_file.as_deref().filter(|x| !x.trim().is_empty()) else {
-            return Err(format!("BLOCK: {} не SAFE_TO_CLEAN", p.project_id));
-        };
-        let output_path = PathBuf::from(output);
-        if !output_path.is_file()
-            || fs::metadata(&output_path)
-                .map(|x| x.len() == 0)
-                .unwrap_or(true)
-        {
-            return Err(format!("BLOCK: {} render отсутствует", p.project_id));
-        }
-        let rendered = PathBuf::from(&m.root_path)
-            .join("Rendered")
-            .canonicalize()
-            .map_err(|_| format!("BLOCK: {} Rendered недоступен", p.project_id))?;
-        let output_canon = output_path
-            .canonicalize()
-            .map_err(|_| format!("BLOCK: {} render недоступен", p.project_id))?;
-        if !output_canon.starts_with(&rendered) {
-            return Err(format!("BLOCK: {} render вне Rendered", p.project_id));
-        }
+        trash::delete(&safe).map_err(|e| {
+            format!("Не удалось переместить проект {} в Корзину: {e}", p.project_id)
+        })?;
     }
     let deleted_project_ids = selected
         .iter()
@@ -2947,12 +2949,10 @@ fn delete_production_batch_projects_inner(
 
 #[tauri::command]
 pub fn delete_production_batch_projects(
-    app: AppHandle,
     manifest_path: String,
     project_ids: Vec<String>,
 ) -> Result<DeleteResult, String> {
-    let verified = verified_uploaded_job_ids(&app);
-    delete_production_batch_projects_inner(&verified, manifest_path, project_ids)
+    delete_production_batch_projects_inner(manifest_path, project_ids)
 }
 
 fn endlume_inbox_dir() -> Result<PathBuf, String> {
