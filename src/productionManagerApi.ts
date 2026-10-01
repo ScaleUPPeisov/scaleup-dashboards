@@ -60,7 +60,7 @@ export const productionManagerApi={
   batches:(workspace:string,channelId:string)=>invoke<BatchSummary[]>('list_production_batches',{workspace,channelId}),
   validate:(manifestPath:string,endlumePath:string)=>invoke<Validation>('validate_production_batch',{manifestPath,endlumePath}),
   validateProjects:(manifestPath:string,endlumePath:string,projectIds:string[])=>invoke<Validation>('validate_production_projects',{manifestPath,endlumePath,projectIds}),
-  deleteBatchProjects:(manifestPath:string,projectIds:string[])=>invoke<DeleteResult>('delete_production_batch_projects',{manifestPath,projectIds}),
+  deleteBatchProjects:(manifestPath:string,projectIds:string[],confirmedOwnerDelete=false)=>invoke<DeleteResult>('delete_production_batch_projects',{manifestPath,projectIds,confirmedOwnerDelete}),
   deleteJobFolder:(workspace:string,folder:string,jobId:string)=>invoke<void>('delete_production_job_folder',{workspace,folder,jobId}),
   previewCompletedProjects:(manifestPath:string)=>invoke<string[]>('preview_completed_production_projects',{manifestPath}),
   cleanupCompletedAssets:(manifestPath:string)=>invoke<CleanupResult>('cleanup_completed_production_assets',{manifestPath}),
