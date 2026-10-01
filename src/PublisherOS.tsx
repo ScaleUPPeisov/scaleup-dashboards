@@ -50,13 +50,14 @@ export function PublisherOS(){
  const docInput=useRef<HTMLInputElement>(null);const channel=channels.find(c=>c.id===channelId),profileId=channel?.youtubeProfileId||'',channelRenderFolder=(channel?.renderFolderPath||'').trim(),channelProjectsFolder=(channel?.projectsFolderPath||'').trim();
  const [folderDiscoveryBusy,setFolderDiscoveryBusy]=useState(false),[dryRunBusy,setDryRunBusy]=useState(false),[dryRunReport,setDryRunReport]=useState<DryRunReport|null>(null),[sourceAvailability,setSourceAvailability]=useState<RenderSourceAvailability>(channelRenderFolder?'UNKNOWN':'MISSING');
  const liveSnapshot=useLiveInventory(st=>st.snapshots[channelId]);
- const recoveryJobs=useMemo(()=>channelRenderFolder?crossChannelScanRecoveryJobs(jobs,uploadHistory,channelId,channelRenderFolder):[],[jobs,uploadHistory,channelId,channelRenderFolder]);
+ const channelScopedJobs=useMemo(()=>jobs.filter(j=>j.channelId===channelId),[jobs,channelId]);
+ const recoveryJobs=useMemo(()=>channelRenderFolder?crossChannelScanRecoveryJobs(channelScopedJobs,uploadHistory,channelId,channelRenderFolder):[],[channelScopedJobs,uploadHistory,channelId,channelRenderFolder]);
  const recoveryJobIds=useMemo(()=>new Set(recoveryJobs.map(j=>j.id)),[recoveryJobs]);
  const setDraftPatch=(p:Partial<PublishWorkspaceDraft>)=>setDraft(d=>savePublishWorkspace(channelId,{...d,...p}));
- const physicalReadyRows=useMemo(()=>renderScan?readyRows(renderScan.rows,jobs):[],[renderScan,jobs]);
+ const physicalReadyRows=useMemo(()=>renderScan?readyRows(renderScan.rows,channelScopedJobs):[],[renderScan,channelScopedJobs]);
  const publisherReadyPhysicalPaths=useMemo(()=>publisherReadyPathSet(physicalReadyRows,renderScan?.result.root||channelRenderFolder),[physicalReadyRows,renderScan?.result.root,channelRenderFolder]);
  const currentPhysicalPaths=useMemo(()=>new Set(renderScan?renderScan.result.files.map(f=>normalizeRenderPath(f.path)):[]),[renderScan]);
- const allChannelJobs=useMemo(()=>publisherInventoryJobs({jobs,channelId,readyPhysicalPaths:currentPhysicalPaths,recoveryJobIds}),[jobs,channelId,currentPhysicalPaths,recoveryJobIds]);
+ const allChannelJobs=useMemo(()=>publisherInventoryJobs({jobs:channelScopedJobs,channelId,readyPhysicalPaths:currentPhysicalPaths,recoveryJobIds}),[channelScopedJobs,channelId,currentPhysicalPaths,recoveryJobIds]);
  const uploadStateById=useMemo(()=>new Map(allChannelJobs.map(j=>[j.id,classifyUploadState(j,uploadHistory)] as const)),[allChannelJobs,uploadHistory]);
  const stateOf=(j:VideoJob)=>uploadStateById.get(j.id)||classifyUploadState(j,uploadHistory);
  const selectableJobs=useMemo(()=>sourceAvailability==='ONLINE'?allChannelJobs.filter(j=>publisherReadyPhysicalPaths.has(normalizeRenderPath(j.finalPath||''))&&uploadStateById.get(j.id)==='NEW'&&!recoveryJobIds.has(j.id)):[],[allChannelJobs,publisherReadyPhysicalPaths,uploadStateById,recoveryJobIds,sourceAvailability]);
@@ -79,8 +80,8 @@ export function PublisherOS(){
  const videoCapacity=publisherVideoCapacity(uploadQuota.remaining,combinedDailyRemaining,uploadableSelected.length);
  const stateCounts=uploadStateCounters(allChannelJobs,uploadHistory),newCount=sourceAvailability==='ONLINE'?selectableJobs.length:0,uploadedCount=stateCounts.ON_YOUTUBE,processingCount=stateCounts.PROCESSING,verifyCount=stateCounts.VERIFY_REQUIRED,errorCount=stateCounts.ERRORS;
  const latestCleanupBatchId=latestChannelUploadBatchId(uploadHistory,channelId);
- const batchCleanupRows=useMemo(()=>latestCleanupBatchId?confirmedCleanupCandidates(uploadHistory,jobs,channelId,latestCleanupBatchId):[],[uploadHistory,jobs,channelId,latestCleanupBatchId]);
- const channelCleanupRows=useMemo(()=>confirmedCleanupCandidates(uploadHistory,jobs,channelId),[uploadHistory,jobs,channelId]);
+ const batchCleanupRows=useMemo(()=>latestCleanupBatchId?confirmedCleanupCandidates(uploadHistory,channelScopedJobs,channelId,latestCleanupBatchId):[],[uploadHistory,channelScopedJobs,channelId,latestCleanupBatchId]);
+ const channelCleanupRows=useMemo(()=>confirmedCleanupCandidates(uploadHistory,channelScopedJobs,channelId),[uploadHistory,channelScopedJobs,channelId]);
  const uploadForJob=(jobId:string)=>latestUploadRecord(uploadHistory,jobId);
  const refreshSessions=()=>api.youtubeUploadSessions().then(setSessions).catch(()=>setSessions([]));
  useEffect(()=>{const off=subscribeYoutubeQuota(()=>setQuotaRev(x=>x+1)),offClock=subscribeYoutubeQuotaClock(setClock);void refreshSessions();return()=>{off();offClock()}},[]);
