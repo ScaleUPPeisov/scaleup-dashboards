@@ -22,6 +22,7 @@ env:
   RELEASE_REPO: ScaleUPPeisov/vyron-releases
   PRODUCT_SOURCE_SHA: '42634c3dd65ec65da0447b9ac8452a4ddf808185'
   BUNDLE_ID: studio.channelflow.desktop
+  EXPECTED_SIGNING_CERT_SHA1: 2C8B0BD4EE1C000D29DD0667BF1068D4673692C9
 
 jobs:
   gate:
@@ -117,7 +118,8 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
           LOGIN_KEYCHAIN="$(security default-keychain -d user | tr -d '"')"
           security list-keychains -d user -s "$KEYCHAIN" "$LOGIN_KEYCHAIN"
-          security find-identity -v -p codesigning "$KEYCHAIN" | grep -F "$VYRON_MACOS_SIGNING_IDENTITY"
+          ID_SHA1="$(security find-certificate -Z -c "$VYRON_MACOS_SIGNING_IDENTITY" "$KEYCHAIN" 2>/dev/null | awk '/SHA-1 hash:/{print $3; exit}')"
+          test "$(printf '%s' "$ID_SHA1" | tr '[:lower:]' '[:upper:]')" = "$EXPECTED_SIGNING_CERT_SHA1"
           echo "VYRON_SIGNING_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
           echo "VYRON_SIGNING_KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> "$GITHUB_ENV"
       - name: Normalize updater signing key
