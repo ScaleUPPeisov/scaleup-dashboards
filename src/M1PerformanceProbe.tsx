@@ -34,13 +34,16 @@ function syntheticJobs(channels:Channel[]):VideoJob[]{
     };
   });
 }
-function syntheticMetadata():MetadataQueueInput[]{
-  return Array.from({length:5000},(_,i)=>({
-    sourceNumber:i+1,title:'SEO Performance Title '+String(i+1).padStart(4,'0'),
-    description:'Persistent metadata queue performance fixture '+(i+1),
-    tags:['music','ambient','queue'],publishAt:'2026-11-01T18:00:00+07:00',
-    publishTime:'18:00',publishTimezone:'Asia/Krasnoyarsk',publishUtcOffsetMinutes:420
-  }));
+function syntheticMetadata(start:number,count:number):MetadataQueueInput[]{
+  return Array.from({length:count},(_,i)=>{
+    const n=start+i;
+    return {
+      sourceNumber:n,title:'SEO Performance Title '+String(n).padStart(4,'0'),
+      description:'Persistent metadata queue performance fixture '+n,
+      tags:['music','ambient','queue'],publishAt:'2026-11-01T18:00:00+07:00',
+      publishTime:'18:00',publishTimezone:'Asia/Krasnoyarsk',publishUtcOffsetMinutes:420
+    }
+  });
 }
 function clickButton(text:string){
   const needle=text.toLocaleLowerCase('ru-RU');
@@ -83,7 +86,23 @@ export function M1PerformanceProbe(){
         const channels=syntheticChannels(),jobs=syntheticJobs(channels);
         useApp.setState({channels,jobs});
         useApp.getState().patchSettings({fpsMonitor:true,autoCheckUpdates:false,autopilotEnabled:false});
-        await api.metadataQueueImport(channels[0].id,channels[0].name,'m1-perf-5000.json','vyron-610-m1-perf-5000-v1',syntheticMetadata());
+        // 5000 records TOTAL across the same 35 channels that own the 1000 jobs.
+        // The previous probe imported all 5000 only into channel[0], so exactly 29
+        // jobs (1000 / 35 rounded up) were correctly assigned and the probe falsely
+        // reported a queue failure before FPS measurement even started.
+        let metadataOffset=1;
+        for(let i=0;i<channels.length;i++){
+          const count=142+(i<30?1:0); // 30*143 + 5*142 = 5000
+          const rows=syntheticMetadata(metadataOffset,count);
+          await api.metadataQueueImport(
+            channels[i].id,channels[i].name,
+            'm1-perf-5000-part-'+String(i+1).padStart(2,'0')+'.json',
+            'vyron-610-m1-perf-5000-v2-'+String(i+1).padStart(2,'0'),
+            rows
+          );
+          metadataOffset+=count;
+        }
+        if(metadataOffset!==5001)throw new Error('METADATA_FIXTURE_TOTAL_MISMATCH:'+String(metadataOffset-1));
         const assignmentStarted=performance.now();
         notifyMetadataQueueChanged();
         for(let i=0;i<300;i++){
