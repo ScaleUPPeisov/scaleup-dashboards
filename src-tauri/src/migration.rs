@@ -134,6 +134,25 @@ fn passphrase_compatibility_candidates(passphrase: &str) -> Vec<(&'static str, S
     out
 }
 
+fn auth_failed_label(label: &str) -> &'static str {
+    match label {
+        "RAW" => "RAW_FAILED",
+        "LEGACY_CANON" => "LEGACY_CANON_FAILED",
+        "NFC" => "NFC_FAILED",
+        "NFD" => "NFD_FAILED",
+        _ => "UNKNOWN_CANDIDATE_FAILED",
+    }
+}
+fn auth_pass_label(label: &str) -> &'static str {
+    match label {
+        "RAW" => "RAW_PASS",
+        "LEGACY_CANON" => "LEGACY_CANON_PASS",
+        "NFC" => "NFC_PASS",
+        "NFD" => "NFD_PASS",
+        _ => "UNKNOWN_CANDIDATE_PASS",
+    }
+}
+
 fn derive_key(passphrase: &str, salt: &[u8]) -> Result<[u8; 32], String> {
     if passphrase.chars().count() < MIN_PASSPHRASE {
         return Err(format!(
@@ -265,11 +284,11 @@ fn decrypt_payload(bytes: &[u8], passphrase: &str) -> Result<PortablePayload, St
         });
         match result {
             Ok(plain) => {
-                attempts.push(format!("{label}_PASS"));
+                attempts.push(auth_pass_label(label).to_string());
                 decrypted = Some(plain);
                 break;
             }
-            Err(_) => attempts.push(format!("{label}_FAILED")),
+            Err(_) => attempts.push(auth_failed_label(label).to_string()),
         }
     }
 
@@ -1384,6 +1403,25 @@ mod tests {
         let portable = encrypt_payload(&payload, &nfd).unwrap();
         assert!(decrypt_payload(&portable, nfc).is_ok());
         assert!(decrypt_payload(&portable, &nfd).is_ok());
+    }
+
+    #[test]
+    fn unicode_password_matrix_ascii_cyrillic_and_accented_latin() {
+        let payload = sample_payload();
+        for base in [
+            "portable-password-123",
+            "Кирилл-пароль-123",
+            "й-ё-пароль-123",
+            "café-password-123",
+        ] {
+            let nfc: String = base.nfc().collect();
+            let nfd: String = base.nfd().collect();
+            let encoded_from_nfc = encrypt_payload(&payload, &nfc).unwrap();
+            assert!(decrypt_payload(&encoded_from_nfc, &nfc).is_ok(), "{base} NFC");
+            assert!(decrypt_payload(&encoded_from_nfc, &nfd).is_ok(), "{base} NFD input");
+            let encoded_from_nfd = encrypt_payload(&payload, &nfd).unwrap();
+            assert!(decrypt_payload(&encoded_from_nfd, &nfc).is_ok(), "{base} portable NFC");
+        }
     }
 
     #[test]
