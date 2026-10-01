@@ -1388,6 +1388,17 @@ mod tests {
     }
 
     #[test]
+    fn raw_legacy_password_bytes_remain_first_class() {
+        let payload = sample_payload();
+        let pass = "legacy raw password 123";
+        let legacy = encrypt_payload_legacy_raw_for_test(&payload, pass);
+        let restored = decrypt_payload(&legacy, pass).unwrap();
+        assert_eq!(restored.payload_sha256, payload.payload_sha256);
+        let candidates = passphrase_compatibility_candidates(pass);
+        assert_eq!(candidates.first().map(|x|x.0), Some("RAW"));
+    }
+
+    #[test]
     fn legacy_v600_unicode_nfd_password_is_readable_from_nfc_input() {
         let payload = sample_payload();
         let nfc = "й-ё-é-portable-password-123";
