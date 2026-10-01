@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: vyron-610-metadata-queue-qa
+  group: vyron-610-metadata-queue-qa-fastmac
   cancel-in-progress: true
 
 env:
