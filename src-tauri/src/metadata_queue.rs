@@ -492,6 +492,32 @@ pub fn metadata_queue_purge_pack(app:AppHandle,channel_id:String,pack_id:String)
     queue_summary_locked(&app,&channel_id,&index.channel_name)
 }
 
+
+fn copy_dir_recursive(src:&Path,dst:&Path)->Result<(),String>{
+    fs::create_dir_all(dst).map_err(|e|format!("METADATA_QUEUE_BACKUP_MKDIR: {e}"))?;
+    for entry in fs::read_dir(src).map_err(|e|format!("METADATA_QUEUE_BACKUP_READDIR: {e}"))?.filter_map(Result::ok){
+        let from=entry.path();let to=dst.join(entry.file_name());
+        if from.is_dir(){copy_dir_recursive(&from,&to)?;}else{fs::copy(&from,&to).map_err(|e|format!("METADATA_QUEUE_BACKUP_COPY {}: {e}",from.display()))?;}
+    }
+    Ok(())
+}
+
+pub fn backup_to(app:&AppHandle,backup_dir:&Path)->Result<(),String>{
+    let live=root(app)?;
+    let target=backup_dir.join("metadata-queue");
+    if target.exists(){fs::remove_dir_all(&target).map_err(|e|format!("METADATA_QUEUE_BACKUP_REPLACE: {e}"))?;}
+    if live.exists(){copy_dir_recursive(&live,&target)?;}
+    Ok(())
+}
+
+pub fn restore_from(app:&AppHandle,backup_dir:&Path)->Result<(),String>{
+    let live=root(app)?;
+    let saved=backup_dir.join("metadata-queue");
+    if live.exists(){fs::remove_dir_all(&live).map_err(|e|format!("METADATA_QUEUE_ROLLBACK_REMOVE: {e}"))?;}
+    if saved.exists(){copy_dir_recursive(&saved,&live)?;}else{fs::create_dir_all(&live).map_err(|e|format!("METADATA_QUEUE_ROLLBACK_MKDIR: {e}"))?;}
+    Ok(())
+}
+
 pub fn portable_snapshot(app:&AppHandle)->Result<Value,String>{
     let _guard=queue_lock().lock().map_err(|_|"METADATA_QUEUE_LOCK_POISONED".to_string())?;
     let channels_root=root(app)?.join("channels");
