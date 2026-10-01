@@ -73,7 +73,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           grep -F "reconcilePublisherInventory({channelId,exactRoot:result.root,ready:readyRows(rows,current),jobs:current})" src/PublisherOS.tsx
-          grep -F "publisherInventoryJobs({jobs,channelId,readyPhysicalPaths:publisherReadyPhysicalPaths,recoveryJobIds})" src/PublisherOS.tsx
+          grep -F "publisherInventoryJobs({jobs,channelId,readyPhysicalPaths:currentPhysicalPaths,recoveryJobIds})" src/PublisherOS.tsx
           grep -F "sourceOrigin:'render-scan'" src/publisherInventoryReconcile.ts
           ! grep -F "j.sourceOrigin==='render-scan'&&Boolean(j.finalPath)" src/PublisherOS.tsx
           echo 'PUBLISHER_INVENTORY_RECONCILIATION=PASS'
