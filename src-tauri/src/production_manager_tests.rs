@@ -717,3 +717,104 @@ fn acceptance_manual_plan_does_not_touch_materials_library_assignment() {
     assert_eq!(materials_manager::image_summary(&req.workspace, &req.channel_id).unwrap().total, 0);
     cleanup(&workspace);
 }
+
+
+#[test]
+fn v603_direct_material_import_is_visible_to_builder() {
+    let (ws, cid, name) = fixture(0, 80);
+    let src_root = ws.parent().unwrap().join("direct-images");
+    fs::create_dir_all(&src_root).unwrap();
+    let mut files = Vec::new();
+    for i in 0..30 {
+        let p = src_root.join(format!("direct-{i:02}.jpg"));
+        fs::write(&p, format!("direct-image-{i}").as_bytes()).unwrap();
+        files.push(p.to_string_lossy().into_owned());
+    }
+    let imported = materials_manager::import_images(
+        &ws.to_string_lossy(),
+        &cid,
+        &name,
+        files,
+    ).unwrap();
+    assert_eq!(imported.added, 30);
+    assert_eq!(resolve_production_images(&ws.to_string_lossy(), &cid).unwrap().len(), 30);
+    let plan = plan_build(&request(&ws, &cid, &name, 30, 10, "even", false)).unwrap();
+    assert_eq!(plan.projects.len(), 30);
+    cleanup(&ws);
+}
+
+#[test]
+fn v603_mixed_image_sources_are_sha_deduplicated() {
+    let (ws, cid, name) = fixture(10, 80);
+    let session: ImportSession = read_json(&session_path(&ws.to_string_lossy(), &cid).unwrap());
+    let src_root = ws.parent().unwrap().join("mixed-materials");
+    fs::create_dir_all(&src_root).unwrap();
+    let duplicate = src_root.join("duplicate.jpg");
+    fs::copy(&session.collected[0].path, &duplicate).unwrap();
+    let mut files = vec![duplicate.to_string_lossy().into_owned()];
+    for i in 0..4 {
+        let p = src_root.join(format!("material-{i}.jpg"));
+        fs::write(&p, format!("material-unique-{i}").as_bytes()).unwrap();
+        files.push(p.to_string_lossy().into_owned());
+    }
+    let imported = materials_manager::import_images(
+        &ws.to_string_lossy(),
+        &cid,
+        &name,
+        files,
+    ).unwrap();
+    assert_eq!(imported.added, 5);
+    let resolved = resolve_production_images(&ws.to_string_lossy(), &cid).unwrap();
+    assert_eq!(resolved.len(), 14);
+    let plan = plan_build(&request(&ws, &cid, &name, 14, 10, "even", false)).unwrap();
+    assert_eq!(plan.projects.len(), 14);
+    cleanup(&ws);
+}
+
+#[test]
+fn v603_material_images_can_be_reused_for_more_projects() {
+    let (ws, cid, name) = fixture(0, 80);
+    let src_root = ws.parent().unwrap().join("reuse-materials");
+    fs::create_dir_all(&src_root).unwrap();
+    let mut files = Vec::new();
+    for i in 0..5 {
+        let p = src_root.join(format!("reuse-{i}.jpg"));
+        fs::write(&p, format!("reuse-image-{i}").as_bytes()).unwrap();
+        files.push(p.to_string_lossy().into_owned());
+    }
+    materials_manager::import_images(&ws.to_string_lossy(), &cid, &name, files).unwrap();
+    let err = plan_build(&request(&ws, &cid, &name, 30, 10, "even", false)).unwrap_err();
+    assert!(err.starts_with("INSUFFICIENT_IMAGES:5:30"));
+    let plan = plan_build(&request(&ws, &cid, &name, 30, 10, "even", true)).unwrap();
+    assert_eq!(plan.projects.len(), 30);
+    assert_eq!(plan.projects[0].image_source, plan.projects[5].image_source);
+    cleanup(&ws);
+}
+
+#[test]
+fn v603_manual_batch_delete_does_not_require_youtube_upload_proof() {
+    let (ws, cid, name) = fixture(1, 20);
+    let plan = plan_build(&request(&ws, &cid, &name, 1, 10, "even", false)).unwrap();
+    let summary = execute_plan(None, &plan).unwrap();
+    let project_dir = PathBuf::from(&plan.batch_root).join("001");
+    assert!(project_dir.is_dir());
+    let deleted = delete_production_batch_projects_inner(
+        summary.manifest_path.clone(),
+        vec!["001".into()],
+    ).unwrap();
+    assert_eq!(deleted.deleted_project_ids, vec!["001".to_string()]);
+    assert_eq!(deleted.deleted_job_ids, vec!["job-0".to_string()]);
+    assert!(deleted.batch.is_none());
+    assert!(!project_dir.exists());
+    cleanup(&ws);
+}
+
+#[test]
+fn v603_automatic_cleanup_still_requires_completed_render() {
+    let (ws, cid, name) = fixture(1, 20);
+    let plan = plan_build(&request(&ws, &cid, &name, 1, 10, "even", false)).unwrap();
+    let summary = execute_plan(None, &plan).unwrap();
+    let eligible = preview_completed_production_projects(summary.manifest_path).unwrap();
+    assert!(eligible.is_empty());
+    cleanup(&ws);
+}
