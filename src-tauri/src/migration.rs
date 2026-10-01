@@ -16,7 +16,7 @@ use std::{
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
-use crate::{oauth_vault, security, storage};
+use crate::{metadata_queue, oauth_vault, security, storage};
 
 const BUNDLE_SCHEMA: u32 = 2;
 const AAD: &[u8] = b"VYRON-MIGRATION-BUNDLE-v2";
@@ -51,6 +51,8 @@ struct PortablePayload {
     google_config: Value,
     integration_secrets: Value,
     browser_state: Value,
+    #[serde(default)]
+    metadata_queue: Value,
     payload_sha256: String,
 }
 
@@ -140,6 +142,19 @@ fn payload_hash(state: &Value, oauth: &Value, youtube: &Value, google: &Value, i
     Ok(hex::encode(Sha256::digest(portable_core_bytes(
         state, oauth, youtube, google, integration, browser,
     )?)))
+}
+
+fn payload_hash_with_queue(state:&Value,oauth:&Value,youtube:&Value,google:&Value,integration:&Value,browser:&Value,metadata_queue:&Value)->Result<String,String>{
+    let bytes=serde_json::to_vec(&json!({
+        "state":state,
+        "oauthVault":oauth,
+        "youtubeMetadata":youtube,
+        "googleConfig":google,
+        "integrationSecrets":integration,
+        "browserState":browser,
+        "metadataQueue":metadata_queue
+    })).map_err(|e|format!("MIGRATION_PAYLOAD_SERIALIZE_FAILED: {e}"))?;
+    Ok(hex::encode(Sha256::digest(bytes)))
 }
 
 fn encrypt_payload(payload: &PortablePayload, passphrase: &str) -> Result<Vec<u8>, String> {
@@ -232,9 +247,14 @@ fn decrypt_payload(bytes: &[u8], passphrase: &str) -> Result<PortablePayload, St
     if payload.schema_version != BUNDLE_SCHEMA {
         return Err("MIGRATION_PAYLOAD_SCHEMA_INVALID".into());
     }
-    let expected = payload_hash(&payload.state, &payload.oauth_vault, &payload.youtube_metadata, &payload.google_config, &payload.integration_secrets, &payload.browser_state)?;
+    let expected = payload_hash_with_queue(&payload.state, &payload.oauth_vault, &payload.youtube_metadata, &payload.google_config, &payload.integration_secrets, &payload.browser_state, &payload.metadata_queue)?;
     if expected != payload.payload_sha256 {
-        return Err("MIGRATION_INTEGRITY_FAILED: payload hash mismatch".into());
+        // 6.0.x schema-2 bundles predate metadataQueue. Accept their exact legacy
+        // checksum so an application update never invalidates an existing migration package.
+        let legacy = payload_hash(&payload.state, &payload.oauth_vault, &payload.youtube_metadata, &payload.google_config, &payload.integration_secrets, &payload.browser_state)?;
+        if legacy != payload.payload_sha256 {
+            return Err("MIGRATION_INTEGRITY_FAILED: payload hash mismatch".into());
+        }
     }
     if payload.bundle_uuid != envelope.bundle_uuid {
         return Err("MIGRATION_MANIFEST_MISMATCH".into());
@@ -777,6 +797,7 @@ fn create_rollback_snapshot(app: &AppHandle, id: &str) -> Result<PathBuf, String
     let (yp,gp)=metadata_paths(app)?;
     if yp.exists(){fs::copy(&yp,dir.join("youtube-oauth.json")).map_err(|e|format!("MIGRATION_YOUTUBE_METADATA_BACKUP_FAILED: {e}"))?;}
     if gp.exists(){fs::copy(&gp,dir.join("google-config.json")).map_err(|e|format!("MIGRATION_GOOGLE_CONFIG_BACKUP_FAILED: {e}"))?;}
+    metadata_queue::backup_to(app,&dir).map_err(|e|format!("MIGRATION_METADATA_QUEUE_BACKUP_FAILED: {e}"))?;
     fs::write(
         dir.join("meta.json"),
         serde_json::to_vec_pretty(&json!({
@@ -832,6 +853,7 @@ fn restore_snapshot_dir(app: &AppHandle, dir: &Path) -> Result<(), String> {
     let (yp,gp)=metadata_paths(app)?;
     restore_optional_file(&yp,&dir.join("youtube-oauth.json"))?;
     restore_optional_file(&gp,&dir.join("google-config.json"))?;
+    metadata_queue::restore_from(app,dir).map_err(|e|format!("MIGRATION_METADATA_QUEUE_ROLLBACK_FAILED: {e}"))?;
     cleanup_integration_accounts(&backup_secret_cleanup_accounts(dir)?)?;
     Ok(())
 }
@@ -908,9 +930,10 @@ pub fn migration_export(
     let youtube_metadata=portable_youtube_metadata(&app)?;
     let google_config=portable_google_config(&app)?;
     let integration_secrets=portable_integration_secrets(&app)?;
+    let metadata_queue=metadata_queue::portable_snapshot(&app)?;
     let created = chrono::Utc::now().to_rfc3339();
     let id = Uuid::new_v4().to_string();
-    let checksum = payload_hash(&state, &oauth, &youtube_metadata, &google_config, &integration_secrets, &browser_state)?;
+    let checksum = payload_hash_with_queue(&state, &oauth, &youtube_metadata, &google_config, &integration_secrets, &browser_state, &metadata_queue)?;
     let payload = PortablePayload {
         schema_version: BUNDLE_SCHEMA,
         app_version: app_version(),
@@ -923,6 +946,7 @@ pub fn migration_export(
         google_config,
         integration_secrets,
         browser_state,
+        metadata_queue,
         payload_sha256: checksum,
     };
     let bytes = encrypt_payload(&payload, &passphrase)?;
@@ -1024,14 +1048,16 @@ pub fn migration_import(
                 .map_err(|e|format!("MIGRATION_METADATA_COMMIT_FAILED: {e}"))?;
             let integration_result=merge_integration_secrets(&payload.integration_secrets)
                 .map_err(|e|format!("MIGRATION_INTEGRATION_SECRET_COMMIT_FAILED: {e}"))?;
+            let metadata_queue_result=metadata_queue::merge_portable_snapshot(&app,&payload.metadata_queue,&channel_id_remap)
+                .map_err(|e|format!("MIGRATION_METADATA_QUEUE_COMMIT_FAILED: {e}"))?;
             let verify=storage::load_state(app.clone());
             let after=verify.get("channels").and_then(Value::as_array).map(|x|x.len()).unwrap_or(0);
             if after!=summary.after_channels{return Err("MIGRATION_VERIFY_FAILED: channel count mismatch".into())}
-            Ok((oauth_result,metadata_result,integration_result))
+            Ok((oauth_result,metadata_result,integration_result,metadata_queue_result))
         },
         ||restore_snapshot_dir(&app,&backup)
     );
-    let (oauth_result,metadata_result,integration_result)=match transaction{
+    let (oauth_result,metadata_result,integration_result,metadata_queue_result)=match transaction{
         Ok(v)=>v,
         Err(e)=>{
             if !e.contains("MIGRATION_ROLLBACK_FAILED"){
@@ -1060,6 +1086,7 @@ pub fn migration_import(
         "oauth": oauth_result,
         "metadata": metadata_result,
         "integrationSecrets": integration_result,
+        "metadataQueue": metadata_queue_result,
         "remap": remaps,
         "browserState": payload.browser_state,
         "rollbackSnapshot": backup_id,
