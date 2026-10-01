@@ -143,23 +143,27 @@ export function App(){
   if(!license.valid)return <Activation onActivated={setLicense}/>;
   return <div className="appShell"><LiveInventoryBridge/><ChannelRunwayScheduler/><ProductionStatusBridge/><ChannelStatisticsScheduler/><OwnerInventoryScheduler/><UploadProcessingMonitor/><RecoveryGate/><Sidebar/><main className="main"><Topbar/><PageRouter license={license}/></main><GlobalTaskIndicator/><GlobalUploadIndicator/><UploadCenterGlobal/><GlobalTaskCenter/><CommandPalette/><MetadataQueueAssignmentBridge/><M1PerformanceProbe/>{settings.fpsMonitor&&<FpsMonitor/>}<UpdateExperience/><MajorUpdateCelebration/><NotificationCenter/><div className="bgGlow a"/><div className="bgGlow b"/></div>
 }
-const CachedDashboardRoute=React.memo(({mode}:{mode:'dashboard'|'autopilot'})=><DashboardOS pageOverride={mode}/>);
-const CachedChannelsRoute=React.memo(()=> <ChannelsOS/>);
-const CachedYouTubeRoute=React.memo(({routeTab}:{routeTab?:'publish'|'metadata'|'uploaded'})=><YouTubeCenter routeTab={routeTab}/>);
+const CachedYouTubeRoute=React.memo(({routeTab,active}:{routeTab?:'publish'|'metadata'|'uploaded';active:boolean})=><YouTubeCenter routeTab={routeTab} active={active}/>);
 
 function PageRouter({license}:{license:LicenseStatus}){
-  const page=useApp(s=>s.page),setPage=useApp(s=>s.setPage),mounted=useRef(new Set<string>());
-  const dashboardMode: 'dashboard'|'autopilot'=page==='autopilot'?'autopilot':'dashboard';
+  const page=useApp(s=>s.page),setPage=useApp(s=>s.setPage),youtubeMounted=useRef(false);
   const youtubeRouteTab=page==='metadata'?'metadata':page==='existing'?'uploaded':page==='publisher'?'publish':undefined;
   const canonical=page==='autopilot'?'dashboard':page==='metadata'||page==='existing'||page==='publisher'?'youtube':page;
-  if(canonical==='dashboard'||canonical==='channels'||canonical==='youtube')mounted.current.add(canonical);
+  const youtubeActive=canonical==='youtube';
+  if(youtubeActive)youtubeMounted.current=true;
 
-  const transient=canonical==='production'?<ProductionOS/>:canonical==='content'?<ProductionOS/>:canonical==='inventory'?<LiveContentInventory/>:canonical==='competitors'?<CompetitorsPage/>:canonical==='analytics'?<AnalyticsPage/>:canonical==='accounts'?<SettingsOS license={license}/>:canonical==='settings'?<SettingsOS license={license}/>:null;
+  const transient=canonical==='dashboard'?<><DashboardUploadSummary/><DashboardOS/></>
+    :canonical==='channels'?<ChannelsOS/>
+    :canonical==='production'||canonical==='content'?<ProductionOS/>
+    :canonical==='inventory'?<LiveContentInventory/>
+    :canonical==='competitors'?<CompetitorsPage/>
+    :canonical==='analytics'?<AnalyticsPage/>
+    :canonical==='accounts'||canonical==='settings'?<SettingsOS license={license}/>
+    :null;
+
   return <div className="pageWrap">
-    {mounted.current.has('dashboard')&&<div className="routeKeepAlive" hidden={canonical!=='dashboard'} aria-hidden={canonical!=='dashboard'}><UiErrorBoundary scope="dashboard" onHome={()=>setPage('dashboard')}>{canonical==='dashboard'&&<DashboardUploadSummary/>}<CachedDashboardRoute mode={dashboardMode}/></UiErrorBoundary></div>}
-    {mounted.current.has('channels')&&<div className="routeKeepAlive" hidden={canonical!=='channels'} aria-hidden={canonical!=='channels'}><UiErrorBoundary scope="channels" onHome={()=>setPage('dashboard')}><CachedChannelsRoute/></UiErrorBoundary></div>}
-    {mounted.current.has('youtube')&&<div className="routeKeepAlive" hidden={canonical!=='youtube'} aria-hidden={canonical!=='youtube'}><UiErrorBoundary scope="youtube" onHome={()=>setPage('dashboard')}><CachedYouTubeRoute routeTab={youtubeRouteTab}/></UiErrorBoundary></div>}
-    {canonical!=='dashboard'&&canonical!=='channels'&&canonical!=='youtube'&&<UiErrorBoundary scope={String(page)} onHome={()=>setPage('dashboard')}>{transient}</UiErrorBoundary>}
+    {youtubeMounted.current&&<div className="routeKeepAlive" hidden={!youtubeActive} aria-hidden={!youtubeActive}><UiErrorBoundary scope="youtube" onHome={()=>setPage('dashboard')}><CachedYouTubeRoute routeTab={youtubeRouteTab} active={youtubeActive}/></UiErrorBoundary></div>}
+    {!youtubeActive&&<UiErrorBoundary scope={String(page)} onHome={()=>setPage('dashboard')}>{transient}</UiErrorBoundary>}
   </div>
 }
 
