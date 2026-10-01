@@ -315,21 +315,25 @@ fn write_profile_snapshot(p:&LocalPaths,vault:&PlainVault)->Result<(),String>{
  let bytes=serde_json::to_vec_pretty(&rows).map_err(|e|format!("OAUTH_PROFILE_SNAPSHOT_SERIALIZE_FAILED: {e}"))?;
  write_private_atomic(&p.state.join("profiles.json"),&bytes)
 }
+fn write_current_vault_with_key(p:&LocalPaths,vault:&PlainVault,key:&[u8;32])->Result<(),String>{
+ preserve_legacy_vault_once(p)?;
+ let plain=serde_json::to_vec(vault).map_err(|e|format!("OAUTH_VAULT_SERIALIZE_FAILED: {e}"))?;
+ let envelope=encrypt_bytes(&plain,key,AAD)?;
+ verify_encrypted_vault(&envelope,key,vault)?;
+ rotate_backups(p);
+ write_private_atomic(&p.doc_vault,&envelope)?;
+ let readback=fs::read(&p.doc_vault).map_err(|e|format!("OAUTH_VAULT_READBACK_FAILED: {e}"))?;
+ verify_encrypted_vault(&readback,key,vault)?;
+ // Application Support is a working mirror, never the only copy.
+ write_private_atomic(&p.app_vault,&envelope)?;
+ write_client_snapshot(p,vault,key)?;
+ write_profile_snapshot(p,vault)?;
+ Ok(())
+}
 fn write(app:&AppHandle,vault:&PlainVault)->Result<(),String>{
  let p=local_paths(app)?;
  let key=local_key(app,true)?;
- preserve_legacy_vault_once(&p)?;
- let plain=serde_json::to_vec(vault).map_err(|e|format!("OAUTH_VAULT_SERIALIZE_FAILED: {e}"))?;
- let envelope=encrypt_bytes(&plain,&key,AAD)?;
- verify_encrypted_vault(&envelope,&key,vault)?;
- rotate_backups(&p);
- write_private_atomic(&p.doc_vault,&envelope)?;
- let readback=fs::read(&p.doc_vault).map_err(|e|format!("OAUTH_VAULT_READBACK_FAILED: {e}"))?;
- verify_encrypted_vault(&readback,&key,vault)?;
- // Application Support is a working mirror, never the only copy.
- write_private_atomic(&p.app_vault,&envelope)?;
- write_client_snapshot(&p,vault,&key)?;
- write_profile_snapshot(&p,vault)?;
+ write_current_vault_with_key(&p,vault,&key)?;
  cache_vault(vault);
  Ok(())
 }
@@ -922,10 +926,21 @@ mod tests{
   assert_eq!(added,31);
   assert_eq!(updated,0);
   assert_eq!(local.profiles.len(),31);
+
+  // Exercise the same encrypted current-vault commit/readback path used by production.
+  let root=std::env::temp_dir().join(format!("vyron-oauth-31-commit-{}",uuid::Uuid::new_v4()));
+  let p=test_paths(&root);
+  let key=[18u8;32];
+  write_current_vault_with_key(&p,&local,&key).unwrap();
+  let committed=read_local_with_key(&p,&key,false).unwrap();
+  assert_eq!(committed.profiles.len(),31);
+  assert!(committed.profiles.values().all(|x|!x.refresh_token.is_empty()));
+
   let before=local.profiles.len();
   let (added2,_)=merge_portable_into_local(&mut local,&incoming).unwrap();
   assert_eq!(added2,0);
   assert_eq!(local.profiles.len(),before);
+  let _=fs::remove_dir_all(root);
  }
 
  #[test]
