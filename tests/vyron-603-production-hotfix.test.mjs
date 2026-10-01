@@ -46,7 +46,7 @@ describe('VYRON 6.0.3 critical Production hotfix',()=>{
     expect(manual).not.toContain('if !verified.contains');
     expect(manual).toContain('trash::delete(&safe)');
     expect(manual).toContain('canonical_under(&root, &dir)');
-    expect(backend).toContain('fn evaluate_cleanup_candidate');
+    expect(backend).toContain('fn validate_cleanup_candidate');
     expect(backend).toContain('CLEANUP_OUTPUT_MISSING');
     expect(backend).toContain('CLEANUP_OUTPUT_INVALID');
   });
