@@ -1,0 +1,330 @@
+name: VYRON 6.0.1 Windows Hotfix Release
+
+on:
+  push:
+    branches:
+      - release/vyron-6.0.1-windows-hotfix
+    paths:
+      - '.github/workflows/vyron-601-windows-release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: vyron-601-windows-release
+  cancel-in-progress: false
+
+env:
+  VERSION: '6.0.1'
+  TAG: v6.0.1
+  RELEASE_REPO: ScaleUPPeisov/vyron-releases
+  BUNDLE_ID: studio.channelflow.desktop
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    env:
+      VYRON_TAURI_SIGNING_PRIVATE_KEY_RAW: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify VYRON 6.0.1 source identity
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          node -e "const p=require('./package.json'),l=require('./package-lock.json'),t=require('./src-tauri/tauri.conf.json'); for(const v of [p.version,l.version,l.packages[''].version,t.version]) if(v!=='6.0.1') process.exit(2); if(t.identifier!=='studio.channelflow.desktop'||t.bundle.createUpdaterArtifacts!==true) process.exit(3)"
+          if($LASTEXITCODE -ne 0){throw "IDENTITY_FAILED=$LASTEXITCODE"}
+          if(-not (Select-String -Path src-tauri/Cargo.toml -SimpleMatch 'version = "6.0.1"')){throw 'CARGO_TOML_VERSION_MISMATCH'}
+          $lock=Get-Content src-tauri/Cargo.lock -Raw
+          if($lock -notmatch 'name = "channelflow"\r?\nversion = "6\.0\.1"'){throw 'CARGO_LOCK_VERSION_MISMATCH'}
+          Write-Host "SOURCE_SHA=$env:GITHUB_SHA"
+          Write-Host 'VYRON_601_IDENTITY=PASS'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Frontend and protected regressions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          npm run build
+          if($LASTEXITCODE -ne 0){throw 'FRONTEND_BUILD_FAILED'}
+          npx vitest run src/v601WindowsHotfix.test.ts src/v320HistoryUx.test.ts src/v400BrandingCelebration.test.ts src/v510MaterialsManager.test.ts src/v512ManualAssembly.test.ts src/v503UploadCounterRestore.test.ts src/youtubePublishSafety.test.ts src/v400QuotaUploadLimitSeparation.test.ts src/v501LocalCleanupZeroQuota.test.ts src/v2115Rc7OauthUpdateContinuity.test.ts src/v500Performance.test.ts
+          if($LASTEXITCODE -ne 0){throw 'PROTECTED_REGRESSION_FAILED'}
+
+      - name: Native migration safety regressions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          cargo test --manifest-path src-tauri/Cargo.toml migration::tests::migration_passphrase_survives_cross_platform_clipboard_line_endings -- --exact
+          if($LASTEXITCODE -ne 0){throw 'MIGRATION_PASSPHRASE_COMPAT_FAILED'}
+          cargo test --manifest-path src-tauri/Cargo.toml migration::tests::encryption_rejects_tamper_and_wrong_password -- --exact
+          if($LASTEXITCODE -ne 0){throw 'MIGRATION_CRYPTO_AUTH_FAILED'}
+          cargo test --manifest-path src-tauri/Cargo.toml migration::tests::channel_merge_is_idempotent_and_never_deletes -- --exact
+          if($LASTEXITCODE -ne 0){throw 'MIGRATION_IDEMPOTENCY_FAILED'}
+
+      - name: Canonicalize updater signing key
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          import base64,os
+          raw=os.environ['VYRON_TAURI_SIGNING_PRIVATE_KEY_RAW'].strip().replace('\\r\\n','\n').replace('\\n','\n')
+          candidates=[raw]
+          for _ in range(5):
+              current=candidates[-1].strip()
+              try: decoded=base64.b64decode(current,validate=True).decode('utf-8').strip()
+              except Exception: break
+              if decoded in candidates: break
+              candidates.append(decoded)
+          plain=next((x for x in candidates if x.startswith('untrusted comment:')),None)
+          assert plain,'TAURI_SIGNING_PRIVATE_KEY_FORMAT_UNRECOGNIZED'
+          canonical=base64.b64encode((plain.rstrip()+'\n').encode()).decode()
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as fp: fp.write('TAURI_SIGNING_PRIVATE_KEY='+canonical+'\n')
+          print('::add-mask::'+canonical)
+          PY
+
+      - name: Build signed Windows x64 release
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          npx tauri build --target x86_64-pc-windows-msvc --bundles nsis --config src-tauri/tauri.windows.conf.json
+          if($LASTEXITCODE -ne 0){throw 'WINDOWS_BUILD_FAILED'}
+          $installer=Get-ChildItem src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis -Filter '*-setup.exe' | Select-Object -First 1
+          if(-not $installer){throw 'NSIS_MISSING'}
+          $sig=Get-Item ($installer.FullName + '.sig') -ErrorAction Stop
+          New-Item -ItemType Directory -Force -Path release-windows | Out-Null
+          Copy-Item $installer.FullName release-windows/VYRON_6.0.1_x64-setup.exe
+          Copy-Item $sig.FullName release-windows/VYRON_6.0.1_x64-setup.exe.sig
+          (Get-FileHash release-windows/VYRON_6.0.1_x64-setup.exe -Algorithm SHA256).Hash.ToLowerInvariant() | Set-Content release-windows/VYRON_6.0.1_x64-setup.exe.sha256
+          @(
+            "HEAD=$env:GITHUB_SHA",
+            'VERSION=6.0.1',
+            'FRONTEND_BUILD=PASS',
+            'PROTECTED_REGRESSIONS=PASS',
+            'MIGRATION_CRYPTO_TESTS=PASS',
+            'MIGRATION_IDEMPOTENCY_TEST=PASS',
+            'WINDOWS_X64_BUILD=PASS'
+          ) | Set-Content release-windows/gate-summary.txt
+
+      - name: Verify Windows updater signature
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $verifyRoot=Join-Path $env:RUNNER_TEMP 'vyron-signature-verify'
+          New-Item -ItemType Directory -Force -Path (Join-Path $verifyRoot 'src') | Out-Null
+          @'
+          [package]
+          name = "vyron-signature-verify"
+          version = "0.0.0"
+          edition = "2021"
+          [dependencies]
+          base64 = "0.22"
+          minisign-verify = "=0.2.5"
+          '@ | Set-Content -Encoding utf8 (Join-Path $verifyRoot 'Cargo.toml')
+          @'
+          use base64::{engine::general_purpose::STANDARD, Engine as _};
+          use minisign_verify::{PublicKey, Signature};
+          use std::{env,fs};
+          fn decode(encoded:&str)->String{String::from_utf8(STANDARD.decode(encoded.trim()).unwrap()).unwrap()}
+          fn main(){
+            let a:Vec<String>=env::args().collect(); assert_eq!(a.len(),4);
+            let artifact=fs::read(&a[1]).unwrap();
+            let sig=decode(&fs::read_to_string(&a[2]).unwrap());
+            let conf=fs::read_to_string(&a[3]).unwrap();
+            let marker="\"pubkey\": \""; let start=conf.find(marker).unwrap()+marker.len();
+            let tail=&conf[start..]; let end=tail.find('\"').unwrap();
+            let pk=PublicKey::decode(&decode(&tail[..end])).unwrap();
+            let sg=Signature::decode(&sig).unwrap();
+            pk.verify(&artifact,&sg,true).unwrap();
+            println!("WINDOWS_UPDATER_SIGNATURE=PASS");
+          }
+          '@ | Set-Content -Encoding utf8 (Join-Path $verifyRoot 'src/main.rs')
+          cargo run --quiet --release --manifest-path (Join-Path $verifyRoot 'Cargo.toml') -- release-windows/VYRON_6.0.1_x64-setup.exe release-windows/VYRON_6.0.1_x64-setup.exe.sig src-tauri/tauri.conf.json
+          if($LASTEXITCODE -ne 0){throw 'WINDOWS_SIGNATURE_VERIFY_FAILED'}
+          Add-Content release-windows/gate-summary.txt 'WINDOWS_UPDATER_SIGNATURE=PASS'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-6.0.1-WINDOWS-RELEASE-CANDIDATE
+          path: release-windows/**
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    needs: build-windows
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      RELEASE_TOKEN: ${{ secrets.VYRON_RELEASES_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: VYRON-6.0.1-WINDOWS-RELEASE-CANDIDATE
+          path: release-windows
+
+      - name: Verify production baseline and candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -n "$RELEASE_TOKEN"
+          test -s release-windows/VYRON_6.0.1_x64-setup.exe
+          test -s release-windows/VYRON_6.0.1_x64-setup.exe.sig
+          test -s release-windows/VYRON_6.0.1_x64-setup.exe.sha256
+          test -s release-windows/gate-summary.txt
+          grep -F "HEAD=$GITHUB_SHA" release-windows/gate-summary.txt
+          grep -F 'VERSION=6.0.1' release-windows/gate-summary.txt
+          grep -F 'FRONTEND_BUILD=PASS' release-windows/gate-summary.txt
+          grep -F 'PROTECTED_REGRESSIONS=PASS' release-windows/gate-summary.txt
+          grep -F 'MIGRATION_CRYPTO_TESTS=PASS' release-windows/gate-summary.txt
+          grep -F 'MIGRATION_IDEMPOTENCY_TEST=PASS' release-windows/gate-summary.txt
+          grep -F 'WINDOWS_X64_BUILD=PASS' release-windows/gate-summary.txt
+          grep -F 'WINDOWS_UPDATER_SIGNATURE=PASS' release-windows/gate-summary.txt
+          test "$(sha256sum release-windows/VYRON_6.0.1_x64-setup.exe | awk '{print $1}')" = "$(tr -d '\r\n ' < release-windows/VYRON_6.0.1_x64-setup.exe.sha256 | tr '[:upper:]' '[:lower:]')"
+
+          curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json -o /tmp/latest-before.json
+          curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json -o /tmp/windows-before.json
+          python3 - <<'PY'
+          import json
+          latest=json.load(open('/tmp/latest-before.json'))
+          win=json.load(open('/tmp/windows-before.json'))
+          assert latest['version']=='6.0.0', latest['version']
+          assert win['version']=='6.0.0', win['version']
+          print('PRODUCTION_BASELINE_6_0_0=PASS')
+          PY
+          if GH_TOKEN="$RELEASE_TOKEN" gh release view "$TAG" --repo "$RELEASE_REPO" >/dev/null 2>&1; then
+            echo 'V6_0_1_RELEASE_ALREADY_EXISTS'
+            exit 32
+          fi
+
+      - name: Reverify updater signature on publish runner
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq minisign
+          python3 - <<'PY'
+          import base64,json
+          from pathlib import Path
+          conf=json.load(open('src-tauri/tauri.conf.json'))
+          def env_bytes(raw:bytes)->bytes:
+            x=raw.strip()
+            try:
+              y=base64.b64decode(x,validate=True)
+              if y.startswith(b'untrusted comment:'): return y
+            except Exception: pass
+            return x+b'\n'
+          Path('/tmp/vyron.pub').write_bytes(env_bytes(str(conf['plugins']['updater']['pubkey']).encode()))
+          Path('/tmp/win.sig').write_bytes(env_bytes(Path('release-windows/VYRON_6.0.1_x64-setup.exe.sig').read_bytes()))
+          PY
+          minisign -Vm release-windows/VYRON_6.0.1_x64-setup.exe -x /tmp/win.sig -p /tmp/vyron.pub
+          echo 'WINDOWS_601_SIGNATURE_REVERIFY=PASS'
+
+      - name: Publish VYRON 6.0.1 Windows release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat >/tmp/release-notes.md <<EOF
+          ## VYRON 6.0.1 — Windows Migration / UI Hotfix
+
+          - Fixed macOS ↔ Windows migration password transport compatibility while preserving legacy raw-passphrase bundles.
+          - Windows production build now uses the GUI subsystem: no extra console window.
+          - Official VYRON Windows icon is bundled for EXE/taskbar/installer.
+          - Owner / LOCAL CORE footer is anchored cleanly at the bottom of the sidebar.
+          - Update history shows the actual runtime version and includes VYRON 6.0.1.
+          - FPS / Performance HUD is off by default and moved to Settings → Diagnostics.
+          - Protected Zero-Jank, OAuth continuity, Materials, Manual Assembly and upload-safety regressions passed.
+          - Cross-platform migration E2E passed before release preparation.
+          - Product source: $GITHUB_SHA.
+          EOF
+          GH_TOKEN="$RELEASE_TOKEN" gh release create "$TAG" --repo "$RELEASE_REPO"             --title "VYRON 6.0.1 — Windows Migration / UI Hotfix"             --notes-file /tmp/release-notes.md             release-windows/VYRON_6.0.1_x64-setup.exe             release-windows/VYRON_6.0.1_x64-setup.exe.sha256             release-windows/VYRON_6.0.1_x64-setup.exe.sig
+          echo 'VYRON_601_WINDOWS_RELEASE=PUBLISHED'
+
+      - name: Promote Windows updater feed only
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          LATEST_BEFORE_SHA="$(sha256sum /tmp/latest-before.json | awk '{print $1}')"
+          git clone "https://x-access-token:$RELEASE_TOKEN@github.com/$RELEASE_REPO.git" release-repo
+          WIN_SIG="$(tr -d '\r\n' < release-windows/VYRON_6.0.1_x64-setup.exe.sig)"
+          PUB_DATE="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          python3 - "$WIN_SIG" "$PUB_DATE" <<'PY'
+          import json,sys
+          from pathlib import Path
+          sig,pub=sys.argv[1:3]
+          repo='ScaleUPPeisov/vyron-releases'
+          data={
+            'version':'6.0.1',
+            'notes':'VYRON 6.0.1 — Windows Migration / UI Hotfix: migration portability, GUI launch, official icon, sidebar/footer, history and diagnostics fixes.',
+            'pub_date':pub,
+            'platforms':{
+              'windows-x86_64':{
+                'url':f'https://github.com/{repo}/releases/download/v6.0.1/VYRON_6.0.1_x64-setup.exe',
+                'signature':sig
+              }
+            }
+          }
+          Path('release-repo/updates/windows-latest.json').write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          PY
+          cd release-repo
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add updates/windows-latest.json
+          git diff --cached --quiet && { echo 'WINDOWS_FEED_NOT_CHANGED'; exit 33; }
+          git commit -m 'release: promote VYRON 6.0.1 Windows'
+          git push origin main
+          cd ..
+          curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json -o /tmp/latest-after.json
+          test "$LATEST_BEFORE_SHA" = "$(sha256sum /tmp/latest-after.json | awk '{print $1}')"
+          echo 'MACOS_GENERAL_FEED_MUTATED=NO'
+          echo 'WINDOWS_601_FEED_PROMOTED=PASS'
+
+      - name: Final production verification
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          GH_TOKEN="$RELEASE_TOKEN" gh api "repos/$RELEASE_REPO/releases/tags/$TAG" >/tmp/release.json
+          GH_TOKEN="$RELEASE_TOKEN" gh api "repos/$RELEASE_REPO/contents/updates/windows-latest.json?ref=main" --jq .content | tr -d '\n' | base64 -d >/tmp/windows.json
+          GH_TOKEN="$RELEASE_TOKEN" gh api "repos/$RELEASE_REPO/contents/updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 -d >/tmp/latest.json
+          python3 - <<'PY'
+          import json
+          rel=json.load(open('/tmp/release.json'))
+          win=json.load(open('/tmp/windows.json'))
+          latest=json.load(open('/tmp/latest.json'))
+          assets={x['name'] for x in rel['assets']}
+          required={'VYRON_6.0.1_x64-setup.exe','VYRON_6.0.1_x64-setup.exe.sha256','VYRON_6.0.1_x64-setup.exe.sig'}
+          assert required <= assets, required-assets
+          assert not rel['draft'] and not rel['prerelease']
+          assert win['version']=='6.0.1'
+          assert set(win['platforms'])=={'windows-x86_64'}
+          assert latest['version']=='6.0.0'
+          assert 'darwin-aarch64' in latest['platforms']
+          print('VYRON_6_0_1_WINDOWS_PRODUCTION=PASS')
+          print('MACOS_GENERAL_FEED_STILL_6_0_0=PASS')
+          PY
+          curl -fL --range 0-0 "https://github.com/$RELEASE_REPO/releases/download/$TAG/VYRON_6.0.1_x64-setup.exe" -o /tmp/win-byte >/dev/null 2>&1
+          echo 'REMOTE_WINDOWS_RELEASE_BYTES=PASS'
