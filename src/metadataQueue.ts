@@ -107,3 +107,6 @@ export function metadataQueuePublishAtIsFuture(value?:string,now=Date.now()){
   const at=Date.parse(value);
   return Number.isFinite(at)&&at>now;
 }
+
+export type MetadataQueueReservationRequest={jobId:string;videoNumber:number;projectFolder?:string};
+export type MetadataQueueReservationResult={jobId:string;record:MetadataQueueRecord|null};
