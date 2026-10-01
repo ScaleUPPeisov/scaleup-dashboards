@@ -232,7 +232,7 @@ export function MigrationPanel(){
    </div>
    <label>Bundle SHA-256<div className="pathLine"><input readOnly className="mono" value={packageDiagnostics.bundleSha256}/><button onClick={()=>void navigator.clipboard.writeText(packageDiagnostics.bundleSha256)}>КОПИРОВАТЬ SHA-256</button></div></label>
    <p className="note">Пароль, derived key, plaintext и OAuth secrets здесь никогда не отображаются.</p>
-  </section>
+  </section>}
 
   {preview&&<section className="settingsCard">
    <small>IMPORT PLAN • {preview.sourceOs.toUpperCase()} • VYRON {preview.appVersion}</small>
