@@ -89,7 +89,7 @@ export function M1PerformanceProbe(){
           latest=null;window.dispatchEvent(new CustomEvent('vyron:fps-reset'));await sleep(850);
           await runNavigationRound(round);
           if(!latest)throw new Error('PERFORMANCE_METRICS_NOT_EMITTED');
-          rounds.push({...latest});
+          rounds.push({...latest as FpsMetrics});
         }
         if(cancelled||rounds.length!==3)return;
         const aggregate={
