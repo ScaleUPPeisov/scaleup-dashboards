@@ -87,10 +87,16 @@ export function buildReadyVideoInventory(
   now=new Date()
 ):ReadyVideoInventorySnapshot{
   const nowMs=now.getTime(),channelById=new Map(channels.map(c=>[c.id,c])),runtimeByJob=new Map(runtimeUploads.map(x=>[x.jobId,x]));
+  const lifecycleByJob=new Map<string,ProjectLifecycleRecord>();
+  for(const lifecycle of Object.values(projectLifecycle||{})){if(lifecycle?.jobId)lifecycleByJob.set(lifecycle.jobId,lifecycle)}
+  const latestUploadByJob=new Map<string,UploadHistoryRecord>();
+  for(const row of uploadHistory){if(row.status==='UPLOADED'&&row.youtubeVideoId)latestUploadByJob.set(row.jobId,row)}
   const items:ReadyVideoInventoryItem[]=[];
+  let globalFinalVideoCount=0;
   for(const job of jobs){
+    if(job.finalPath&&job.storageLifecycle!=='TRASHED')globalFinalVideoCount++;
     const channel=channelById.get(job.channelId);if(!channel)continue;
-    const lifecycleEntry=lifecycleForJob(job.id,projectLifecycle),lifecycle=lifecycleEntry?.[1],upload=latestUpload(job.id,uploadHistory),runtime=runtimeByJob.get(job.id);
+    const lifecycle=lifecycleByJob.get(job.id),upload=latestUploadByJob.get(job.id),runtime=runtimeByJob.get(job.id);
     const hasFinal=productionVideoExists(job,lifecycle);
     if(!hasFinal&&!upload&&!runtime&&job.status!=='ERROR'&&job.status!=='SCHEDULED')continue;
     let status:ReadyVideoInventoryStatus|undefined;
@@ -99,7 +105,18 @@ export function buildReadyVideoInventory(
     else if(upload){status=isFuture(upload.publishAt||job.publishAt,nowMs)?'SCHEDULED':'PUBLISHED'}
     else if(job.status==='SCHEDULED'||job.youtubeVideoId||job.storageLifecycle==='UPLOADED'){status=isFuture(job.publishAt,nowMs)?'SCHEDULED':'PUBLISHED'}
     else if(job.status==='ERROR'||job.storageLifecycle==='FAILED'||(job.status==='UPLOADING'&&!runtime))status='ERROR';
-    else if(isReadyAvailable(job,uploadHistory,projectLifecycle,runtimeUploads))status='READY';
+    else{
+      const ready=job.status==='READY_UPLOAD'
+        &&hasFinal
+        &&!job.error
+        &&!job.removedFromPublishList
+        &&!job.youtubeVideoId
+        &&!job.uploadedAt
+        &&!['UPLOADED','TRASHED','FAILED','UPLOADING','QUEUED'].includes(String(job.storageLifecycle||''))
+        &&!upload
+        &&!(runtime?.status==='UPLOADING'||runtime?.status==='QUEUED');
+      if(ready)status='READY';
+    }
     if(!status)continue;
     const projectName=basename(lifecycle?.projectPath)||basename(job.folder)||videoCode(job);
     items.push({
@@ -109,14 +126,24 @@ export function buildReadyVideoInventory(
     });
   }
   items.sort((a,b)=>a.channelName.localeCompare(b.channelName,'ru')||a.videoCode.localeCompare(b.videoCode));
+  const grouped=new Map<string,ReadyVideoInventoryItem[]>();
+  for(const item of items){const rows=grouped.get(item.channelId);if(rows)rows.push(item);else grouped.set(item.channelId,[item])}
   const byChannel:Record<string,ChannelReadyInventory>={};
   for(const channel of channels){
-    const rows=items.filter(x=>x.channelId===channel.id),free=rows.filter(x=>x.status==='READY').length,scheduled=rows.filter(x=>x.status==='SCHEDULED').length,uploading=rows.filter(x=>x.status==='UPLOADING'||x.status==='QUEUED').length,published=rows.filter(x=>x.status==='PUBLISHED').length,errors=rows.filter(x=>x.status==='ERROR').length;
+    const rows=grouped.get(channel.id)||[];
+    let free=0,scheduled=0,uploading=0,published=0,errors=0;
+    for(const row of rows){
+      if(row.status==='READY')free++;
+      else if(row.status==='SCHEDULED')scheduled++;
+      else if(row.status==='UPLOADING'||row.status==='QUEUED')uploading++;
+      else if(row.status==='PUBLISHED')published++;
+      else if(row.status==='ERROR')errors++;
+    }
     byChannel[channel.id]={channelId:channel.id,channelName:channel.name,free,scheduled,uploading,published,errors,stockDays:Math.max(0,Math.round(free*scheduleAverageIntervalDays(channel))),itemIds:rows.map(x=>x.jobId)};
   }
   const channelRows=channels.map(c=>byChannel[c.id]).filter(Boolean).sort((a,b)=>a.channelName.localeCompare(b.channelName,'ru'));
   return{
-    globalFinalVideoCount:jobs.filter(j=>Boolean(j.finalPath)&&j.storageLifecycle!=='TRASHED').length,
+    globalFinalVideoCount,
     globalFreeCount:channelRows.reduce((n,x)=>n+x.free,0),channels:channelRows,items,byChannel
   };
 }
