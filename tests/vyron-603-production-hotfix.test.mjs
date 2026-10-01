@@ -42,7 +42,8 @@ describe('VYRON 6.0.3 critical Production hotfix',()=>{
     const manualStart=backend.indexOf('fn delete_production_batch_projects_inner');
     const manualEnd=backend.indexOf('fn endlume_inbox_dir',manualStart);
     const manual=backend.slice(manualStart,manualEnd);
-    expect(manual).not.toMatch(/verified YouTube|verified_uploaded_job_ids|SAFE_TO_CLEAN/);
+    expect(manual).not.toContain('verified_uploaded_job_ids');
+    expect(manual).not.toContain('if !verified.contains');
     expect(manual).toContain('trash::delete(&safe)');
     expect(manual).toContain('canonical_under(&root, &dir)');
     expect(backend).toContain('fn evaluate_cleanup_candidate');
