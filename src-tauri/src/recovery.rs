@@ -42,6 +42,7 @@ pub struct RecoveryUiContext{
     pub channel_id:Option<String>,
     pub production_tab:Option<String>,
     pub selected_batch_id:Option<String>,
+    #[serde(default)]
     pub selected_project_ids:Vec<String>,
     pub filter:Option<String>,
 }
