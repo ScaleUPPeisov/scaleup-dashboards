@@ -34,10 +34,10 @@ function syntheticJobs(channels:Channel[]):VideoJob[]{
     };
   });
 }
-function syntheticMetadata():MetadataQueueInput[]{
-  return Array.from({length:5000},(_,i)=>({
-    sourceNumber:i+1,title:'SEO Performance Title '+String(i+1).padStart(4,'0'),
-    description:'Persistent metadata queue performance fixture '+(i+1),
+function syntheticMetadata(count:number,offset:number):MetadataQueueInput[]{
+  return Array.from({length:count},(_,i)=>({
+    sourceNumber:offset+i+1,title:'SEO Performance Title '+String(offset+i+1).padStart(4,'0'),
+    description:'Persistent metadata queue performance fixture '+(offset+i+1),
     tags:['music','ambient','queue'],publishAt:'2026-11-01T18:00:00+07:00',
     publishTime:'18:00',publishTimezone:'Asia/Krasnoyarsk',publishUtcOffsetMinutes:420
   }));
@@ -83,7 +83,20 @@ export function M1PerformanceProbe(){
         const channels=syntheticChannels(),jobs=syntheticJobs(channels);
         useApp.setState({channels,jobs});
         useApp.getState().patchSettings({fpsMonitor:true,autoCheckUpdates:false,autopilotEnabled:false});
-        await api.metadataQueueImport(channels[0].id,channels[0].name,'m1-perf-5000.json','vyron-610-m1-perf-5000-v1',syntheticMetadata());
+        let metadataOffset=0;
+        for(let i=0;i<channels.length;i++){
+          const count=Math.floor(5000/channels.length)+(i<5000%channels.length?1:0);
+          const channel=channels[i];
+          await api.metadataQueueImport(
+            channel.id,
+            channel.name,
+            'm1-perf-'+String(i+1).padStart(2,'0')+'.json',
+            'vyron-610-m1-perf-channel-'+String(i+1).padStart(2,'0')+'-v1',
+            syntheticMetadata(count,metadataOffset)
+          );
+          metadataOffset+=count;
+        }
+        if(metadataOffset!==5000)throw new Error('METADATA_DISTRIBUTION_MISMATCH:'+metadataOffset);
         const assignmentStarted=performance.now();
         notifyMetadataQueueChanged();
         for(let i=0;i<300;i++){
