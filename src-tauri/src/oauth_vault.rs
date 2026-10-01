@@ -835,6 +835,166 @@ mod tests{
   assert_eq!(local.profiles.len(),3);
   assert_eq!(local.profiles.get("p1").unwrap().refresh_token,"local-refresh");
  }
+ fn test_paths(root:&Path)->LocalPaths{
+  let auth=root.join("Auth");
+  let state=root.join("State");
+  let backups=root.join("Backups");
+  let logs=root.join("Logs");
+  let auth_backup=auth.join("backup");
+  let app=root.join("AppData");
+  for d in [&auth,&state,&backups,&logs,&auth_backup,&app]{fs::create_dir_all(d).unwrap();}
+  LocalPaths{
+   root:root.to_path_buf(),auth:auth.clone(),state,backups:backups.clone(),logs,auth_backup,
+   doc_vault:auth.join("oauth-vault.enc"),doc_key:auth.join("vault.key"),
+   client_snapshot:auth.join("oauth-client.json.enc"),
+   app_vault:app.join("oauth-vault.enc"),app_key:app.join("oauth-vault.key"),
+   legacy_backup:backups.join("oauth-vault-keychain-legacy.enc"),
+  }
+ }
+
+ #[test]
+ fn windows_canonical_key_without_key_files_selects_current_local_vault(){
+  let probe=LocalKeyProbe{
+   source:LocalKeySource::CanonicalCredential,key:Some([7u8;32]),
+   canonical_credential_present:true,doc_key_present:false,app_key_present:false
+  };
+  assert!(probe.available());
+  assert!(!probe.doc_key_present&&!probe.app_key_present);
+  assert_eq!(startup_key_plan(probe.available(),true),StartupKeyPlan::LocalPersistent);
+ }
+
+ #[test]
+ fn failed_602_state_current_vault_wins_even_when_legacy_backup_exists(){
+  let key=[11u8;32];
+  let legacy_key=[12u8;32];
+  let mut current=PlainVault::default();
+  current.profiles.insert("current".into(),VaultProfile{profile_uuid:"current".into(),refresh_token:"current-refresh".into(),..Default::default()});
+  let current_bytes=encrypt_bytes(&serde_json::to_vec(&current).unwrap(),&key,AAD).unwrap();
+  let legacy_bytes=encrypt_bytes(&serde_json::to_vec(&PlainVault::default()).unwrap(),&legacy_key,AAD).unwrap();
+  assert_eq!(classify_snapshot_bytes(&current_bytes,Some(&key)),"current-local");
+  assert!(decode_vault(&legacy_bytes,&key).is_err());
+  assert_eq!(startup_key_plan(true,true),StartupKeyPlan::LocalPersistent);
+ }
+
+ #[test]
+ fn portable_merge_31_profiles_into_clean_windows_state_is_complete_and_non_destructive(){
+  let mut profiles=serde_json::Map::new();
+  for i in 0..31{
+   let id=format!("profile-{i:02}");
+   profiles.insert(id.clone(),serde_json::json!({
+    "profileUuid":id,
+    "expectedChannelId":format!("UC_TEST_{i:02}"),
+    "refreshToken":format!("refresh-{i:02}"),
+    "clientSecret":format!("secret-{i:02}"),
+    "credentialGeneration":1
+   }));
+  }
+  let incoming=serde_json::json!({"globalClientId":"client","globalClientSecret":"secret","profiles":profiles});
+  let mut local=PlainVault::default();
+  let (added,updated)=merge_portable_into_local(&mut local,&incoming).unwrap();
+  assert_eq!(added,31);
+  assert_eq!(updated,0);
+  assert_eq!(local.profiles.len(),31);
+  let before=local.profiles.len();
+  let (added2,_)=merge_portable_into_local(&mut local,&incoming).unwrap();
+  assert_eq!(added2,0);
+  assert_eq!(local.profiles.len(),before);
+ }
+
+ #[test]
+ fn migration_backup_is_zero_side_effects_on_live_oauth_storage(){
+  let root=std::env::temp_dir().join(format!("vyron-oauth-backup-{}",uuid::Uuid::new_v4()));
+  let p=test_paths(&root);
+  let key=[21u8;32];
+  let mut vault=PlainVault::default();
+  vault.profiles.insert("p1".into(),VaultProfile{profile_uuid:"p1".into(),refresh_token:"keep".into(),..Default::default()});
+  let live=encrypt_bytes(&serde_json::to_vec(&vault).unwrap(),&key,AAD).unwrap();
+  fs::write(&p.app_vault,&live).unwrap();
+  let before_app=fs::read(&p.app_vault).unwrap();
+  let before_doc=p.doc_vault.exists();
+  let before_doc_key=p.doc_key.exists();
+  let before_app_key=p.app_key.exists();
+  let destination=root.join("snapshot").join("oauth-vault.enc");
+  let probe=LocalKeyProbe{
+   source:LocalKeySource::CanonicalCredential,key:Some(key),canonical_credential_present:true,
+   doc_key_present:false,app_key_present:false
+  };
+  let meta=snapshot_from_paths(&p,&destination,&probe).unwrap();
+  assert_eq!(meta.source,"app");
+  assert_eq!(meta.storage_kind,"current-local");
+  assert_eq!(fs::read(&p.app_vault).unwrap(),before_app);
+  assert_eq!(p.doc_vault.exists(),before_doc);
+  assert_eq!(p.doc_key.exists(),before_doc_key);
+  assert_eq!(p.app_key.exists(),before_app_key);
+  assert_eq!(fs::read(&destination).unwrap(),before_app);
+  let _=fs::remove_dir_all(root);
+ }
+
+ #[test]
+ fn migration_backup_of_absent_vault_creates_no_live_or_snapshot_vault(){
+  let root=std::env::temp_dir().join(format!("vyron-oauth-absent-backup-{}",uuid::Uuid::new_v4()));
+  let p=test_paths(&root);
+  let destination=root.join("snapshot").join("oauth-vault.enc");
+  let probe=LocalKeyProbe{
+   source:LocalKeySource::Missing,key:None,canonical_credential_present:false,
+   doc_key_present:false,app_key_present:false
+  };
+  let meta=snapshot_from_paths(&p,&destination,&probe).unwrap();
+  assert!(!meta.existed);
+  assert_eq!(meta.storage_kind,"absent");
+  assert!(!p.doc_vault.exists()&&!p.app_vault.exists());
+  assert!(!p.doc_key.exists()&&!p.app_key.exists());
+  assert!(!destination.exists());
+  let _=fs::remove_dir_all(root);
+ }
+
+ #[test]
+ fn rollback_current_local_snapshot_uses_current_key_not_legacy_key(){
+  let root=std::env::temp_dir().join(format!("vyron-oauth-rollback-current-{}",uuid::Uuid::new_v4()));
+  let p=test_paths(&root);
+  let key=[31u8;32];
+  let mut before=PlainVault::default();
+  before.profiles.insert("before".into(),VaultProfile{profile_uuid:"before".into(),refresh_token:"r1".into(),..Default::default()});
+  let before_bytes=encrypt_bytes(&serde_json::to_vec(&before).unwrap(),&key,AAD).unwrap();
+  let snapshot=root.join("snapshot.enc");
+  fs::write(&snapshot,&before_bytes).unwrap();
+  let mut after=PlainVault::default();
+  after.profiles.insert("after".into(),VaultProfile{profile_uuid:"after".into(),refresh_token:"r2".into(),..Default::default()});
+  let after_bytes=encrypt_bytes(&serde_json::to_vec(&after).unwrap(),&key,AAD).unwrap();
+  fs::write(&p.doc_vault,&after_bytes).unwrap();
+  fs::write(&p.app_vault,&after_bytes).unwrap();
+  let meta=VaultSnapshotMeta{
+   existed:true,source:"doc".into(),storage_kind:"current-local".into(),
+   current_local_key_present:true,current_canonical_key_present:true,
+   doc_key_file_present:false,app_key_file_present:false
+  };
+  restore_snapshot_to_paths(&p,&snapshot,&meta,Some(&key)).unwrap();
+  let restored=decode_vault(&fs::read(&p.doc_vault).unwrap(),&key).unwrap();
+  assert!(restored.profiles.contains_key("before"));
+  assert!(!restored.profiles.contains_key("after"));
+  let _=fs::remove_dir_all(root);
+ }
+
+ #[test]
+ fn rollback_opaque_legacy_snapshot_restores_raw_bytes_without_current_key_validation(){
+  let root=std::env::temp_dir().join(format!("vyron-oauth-rollback-legacy-{}",uuid::Uuid::new_v4()));
+  let p=test_paths(&root);
+  let old_key=[41u8;32];let current_key=[42u8;32];
+  let legacy=encrypt_bytes(&serde_json::to_vec(&PlainVault::default()).unwrap(),&old_key,AAD).unwrap();
+  let snapshot=root.join("legacy.enc");fs::write(&snapshot,&legacy).unwrap();
+  fs::write(&p.doc_vault,b"failed-import-current-placeholder").unwrap();
+  let meta=VaultSnapshotMeta{
+   existed:true,source:"app".into(),storage_kind:"opaque-legacy".into(),
+   current_local_key_present:false,current_canonical_key_present:false,
+   doc_key_file_present:false,app_key_file_present:false
+  };
+  restore_snapshot_to_paths(&p,&snapshot,&meta,Some(&current_key)).unwrap();
+  assert_eq!(fs::read(&p.app_vault).unwrap(),legacy);
+  assert!(!p.doc_vault.exists());
+  assert!(decode_vault(&legacy,&current_key).is_err());
+  let _=fs::remove_dir_all(root);
+ }
+
  #[test]fn local_storage_contract_is_stable(){
   let source=include_str!("oauth_vault.rs");
   for part in ["VYRON","Auth","State","Backups","Logs","oauth-vault.enc","vault.key","oauth-client.json.enc","profiles.json"]{assert!(source.contains(part));}
