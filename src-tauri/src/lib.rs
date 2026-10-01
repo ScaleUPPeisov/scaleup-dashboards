@@ -18,6 +18,7 @@ mod media_tools;
 mod local_delete;
 mod migration;
 mod metadata_queue;
+mod performance_probe;
 mod inventory_watch;
 mod profile;
 
@@ -54,6 +55,7 @@ pub fn run(){
             license::license_status,license::activate_license,
             migration::migration_export,migration::migration_preview,migration::migration_import,migration::migration_restore_latest,
             metadata_queue::metadata_queue_import,metadata_queue::metadata_queue_summary,metadata_queue::metadata_queue_page,metadata_queue::metadata_queue_reserve,metadata_queue::metadata_queue_mark_applying,metadata_queue::metadata_queue_mark_applied,metadata_queue::metadata_queue_mark_error,metadata_queue::metadata_queue_purge_pack,
+            performance_probe::performance_probe_enabled,performance_probe::performance_probe_report,
             storage::load_state,storage::save_state,profile::profile_import_avatar,profile::profile_avatar_data,security::security_keychain_diagnostics,security::security_keychain_runtime_diagnostics,security::security_canonical_account_diagnostic,security::security_canonical_retry_secret_access,security::security_oauth_inventory,
             files::store_profile_avatar,files::import_images,files::add_tracks,files::refresh_job,files::prepare_job_folder,files::ensure_channel_inbox,files::scan_channel_inbox,files::ingest_tracks,files::ingest_cover,files::write_job_metadata,files::enqueue_render,files::reveal_path,files::open_endlume,local_delete::trash_local_file,local_delete::local_source_status,local_delete::scan_render_folder,local_delete::discover_channel_folders,local_delete::vyron_filesystem_preview,local_delete::vyron_filesystem_apply,inventory_watch::inventory_watch_roots,
             system::diagnostics,system::default_workspace,
