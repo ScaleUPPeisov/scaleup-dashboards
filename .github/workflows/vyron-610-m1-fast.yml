@@ -28,7 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: \${{ env.PRODUCT_SOURCE_SHA }}
+          ref: ${{ env.PRODUCT_SOURCE_SHA }}
           fetch-depth: 0
 
       - name: Verify exact M1 source
