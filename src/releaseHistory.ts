@@ -3,6 +3,19 @@ export type ReleaseSectionKey='features'|'fixes'|'interface'|'reliability'|'secu
 export type ReleaseHistoryEntry={date:string;version:string;title:string;type:ReleaseType;platforms?:Array<'macOS'|'Windows'>;highlights:string[];sections:Partial<Record<ReleaseSectionKey,string[]>>;technicalItems?:string[];technicalBuilds?:number[];tag?:string;publishedAt?:string;prerelease?:boolean};
 export const VYRON_RELEASE_HISTORY:ReleaseHistoryEntry[]=[
   {
+    "date":"2026-10-01","version":"6.0.1","title":"Windows Migration / UI Hotfix","type":"PATCH","platforms":["Windows"],
+    "highlights":[
+      "Исправлен перенос VYRON macOS ↔ Windows с единым portable crypto format и защитой от CRLF/BOM transport artifacts.",
+      "Windows release запускается без отдельного console window и использует официальный VYRON icon.",
+      "Owner / LOCAL CORE закреплены снизу sidebar, FPS HUD перенесён в Диагностику, история показывает runtime version."
+    ],
+    "sections":{
+      "fixes":["Windows GUI subsystem без консольного окна.","История обновлений больше не застревает на 5.0.1.","FPS / Performance HUD доступен только через Настройки → Диагностика."],
+      "reliability":["Повторный импорт migration package остаётся idempotent и не удаляет существующие каналы.","Legacy migration packages сохраняют raw-passphrase compatibility."],
+      "technical":["Windows-only production hotfix поверх VYRON 6.0.0 Zero-Jank.","Source branch: release/vyron-6.0.1-windows-hotfix."]
+    }
+  },
+  {
     "date":"2026-09-30","version":"6.0.0","title":"Zero-Jank / VYRON 6","type":"MAJOR","platforms":["macOS","Windows"],
     "highlights":[
       "VYRON переведён на поколение 6.0.0 без сброса существующих каналов и авторизации.",
