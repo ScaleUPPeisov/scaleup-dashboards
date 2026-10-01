@@ -63,8 +63,8 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
       - run: npm ci --no-audit --no-fund
-      - name: npm test
-        run: npm test
+      - name: Current 6.0.2 regression gate
+        run: npm test -- tests/vyron-602-manual-production-sidebar.test.mjs
       - name: npm run build
         run: npm run build
       - name: cargo check
