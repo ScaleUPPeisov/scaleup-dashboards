@@ -38,6 +38,7 @@ export const productionManagerApi={
   chooseMaterialImages:async(defaultPath?:string)=>{const p=await open({directory:false,multiple:true,title:'Изображения для выбранного YouTube-канала',defaultPath:defaultPath||undefined,filters:[{name:'Images',extensions:['jpg','jpeg','png','webp']}]});return !p?[]:Array.isArray(p)?p:[p];},
   importMaterialImages:(workspace:string,channelId:string,channelName:string,files:string[])=>invoke<ImageImportResult>('import_production_material_images',{workspace,channelId,channelName,files}),
   materialsSummary:(workspace:string,channelId:string)=>invoke<MaterialsSummary>('production_materials_summary',{workspace,channelId}),
+  materialsSummaries:(workspace:string,channelIds:string[])=>invoke<MaterialsSummary[]>('production_materials_summaries',{workspace,channelIds}),
   chooseProductionRoot:async(defaultPath?:string)=>{const p=await open({directory:true,multiple:false,title:'Папка для проектов VYRON',defaultPath:defaultPath||undefined});return typeof p==='string'?p:'';},
   chooseArchiveRoot:async(defaultPath?:string)=>{const p=await open({directory:true,multiple:false,title:'Папка безопасного архива MP4',defaultPath:defaultPath||undefined});return typeof p==='string'?p:'';},
   storageStatus:(path:string)=>invoke<ProductionStorageStatus>('production_storage_status',{path}),
