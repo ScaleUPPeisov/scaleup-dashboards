@@ -3,6 +3,18 @@ export type ReleaseSectionKey='features'|'fixes'|'interface'|'reliability'|'secu
 export type ReleaseHistoryEntry={date:string;version:string;title:string;type:ReleaseType;platforms?:Array<'macOS'|'Windows'>;highlights:string[];sections:Partial<Record<ReleaseSectionKey,string[]>>;technicalItems?:string[];technicalBuilds?:number[];tag?:string;publishedAt?:string;prerelease?:boolean};
 export const VYRON_RELEASE_HISTORY:ReleaseHistoryEntry[]=[
   {
+    "date":"2026-09-30","version":"6.0.0","title":"Zero-Jank / VYRON 6","type":"MAJOR","platforms":["macOS","Windows"],
+    "highlights":[
+      "VYRON переведён на поколение 6.0.0 без сброса существующих каналов и авторизации.",
+      "Zero-Jank performance architecture сохранена как базовая для production UI.",
+      "Ручная сборка проектов сохранена как часть production contract."
+    ],
+    "sections":{
+      "reliability":["Существующие OAuth-профили, каналы и локальное состояние сохраняются при обновлении."],
+      "technical":["Source identity: candidate/vyron-6.0.0-zero-jank."]
+    }
+  },
+  {
     "date":"2026-09-29","version":"5.0.1","title":"Zero Background Quota / Owner Hotfix","type":"PATCH","platforms":["macOS"],"prerelease":true,
     "highlights":[
       "🔒 Idle YouTube Data API quota теперь абсолютный 0: без auto statistics, owner inventory, processing polling и OAuth recovery.",
