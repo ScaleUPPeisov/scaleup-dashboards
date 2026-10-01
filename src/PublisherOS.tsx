@@ -27,6 +27,7 @@ import {completeTask,ensureTask,failTask,startTask,updateTask} from './taskEngin
 import {ModalPortal} from './ModalPortal';
 import {cleanupCandidateBytes,cleanupCandidateIds,confirmedCleanupCandidates,latestChannelUploadBatchId,postUploadCleanupEligible} from './postUploadCleanup';
 import {scanInventoryChannel,useLiveInventory} from './renderInventoryRuntime';
+import {metadataQueuePublishAtIsFuture,metadataQueueRowAsImported} from './metadataQueue';
 
 const status=(j:VideoJob)=>j.status==='READY_UPLOAD'?'В ОЧЕРЕДИ':j.status==='UPLOADING'?'ЗАГРУЖАЕТСЯ':j.status==='SCHEDULED'?'YOUTUBE ✓':j.status==='ERROR'?'ОШИБКА':j.status;
 const pct=(a:number,b:number)=>b?Math.min(100,Math.max(0,a/b*100)):0;
@@ -473,11 +474,24 @@ export function PublisherOS(){
   if(!batch.length){notifyWarning('Загрузка заблокирована',recovery.length?'Сначала продолжите или отмените сохранённую resumable session.':'По вашему локальному дневному лимиту VYRON сейчас нельзя ставить новые видео в очередь.');return}
   configureUploadQueue(settings.youtubeUploadConcurrency||2,settings.youtubeUploadPerChannelConcurrency||1);setBusy(true);const batchId=`upload-batch:${channelId}:${Date.now()}`,queued:string[]=[],queueIds:string[]=[],failed:string[]=[];
   try{
-   for(const j of batch){try{
-    if(!j.finalPath)throw new Error('LOCAL_FILE_REQUIRED');const liveFile=await api.localSourceStatus(j.finalPath);if(!liveFile.exists||!liveFile.isFile)throw new Error('LOCAL_FILE_REQUIRED: файл сейчас недоступен');const fp=await fingerprintForJob(j),selectedIndex=selected.findIndex(x=>x.id===j.id),row=metadataRowForJob(draft.rows,j,Math.max(0,selectedIndex)),publishAt=effectivePublishAt(j);if(!publishAt)throw new Error('PUBLISH_AT_REQUIRED: дата публикации отсутствует');const payload=resolvedUploadMetadata(j,row,publishAt,settings.youtubeCategoryId),projectEntry=Object.values(useApp.getState().projectLifecycle).find(x=>x.jobId===j.id),thumbnailPath=selectedThumbnail(j)||undefined;
-    patchJob(j.id,{title:payload.title,description:payload.description,tags:payload.tags,publishAt:payload.publishAt,metadataSource:row?'import':j.metadataSource,metadataLocked:row?true:j.metadataLocked,error:undefined});
-    const queueEntry=enqueueUpload({jobId:j.id,batchId,projectId:projectEntry?.projectId,localVideoIdentity:`${channelId}:${j.id}:${fp.fingerprint}`,videoNumber:j.number,channelId:channel.id,channelName:channel.name,profileId,youtubeChannelId:channel.youtubeChannelId,filePath:j.finalPath,fingerprint:fp.fingerprint,fileSize:fp.size,modifiedAt:fp.modifiedAt,publishAt:payload.publishAt!,title:payload.title,description:payload.description,tags:[...payload.tags],categoryId:payload.categoryId,thumbnailPath,metadataSource:row?'import':(j.metadataSource||'template'),quotaProjectKey:quotaProjectKey||undefined,quotaOperations:[{method:'videos.insert',count:1,label:'Загрузка видео'},{method:'videos.list',count:1,label:'Проверка videoId'},{method:'videos.list',count:1,label:'Проверка processing'},...(thumbnailPath?[{method:'thumbnails.set' as const,count:1,label:'Обложка'}]:[])],allowDuplicate:false,submittedAt:new Date().toISOString()} as const);queued.push(j.id);queueIds.push(queueEntry.queueId);log(`[UPLOAD_QUEUE] QUEUED job=${j.id} channel=${channel.id} profile=${profileId}`)
-   }catch(error){const h=humanizeError(error,'upload');failed.push(`VIDEO_${String(j.number).padStart(3,'0')}: ${h.message}`);log(`[UPLOAD_QUEUE] submit failed job=${j.id}: ${h.message}`,'warn')}}
+   for(const j of batch){let queueReserved=false;try{
+    if(!j.finalPath)throw new Error('LOCAL_FILE_REQUIRED');
+    const liveFile=await api.localSourceStatus(j.finalPath);if(!liveFile.exists||!liveFile.isFile)throw new Error('LOCAL_FILE_REQUIRED: файл сейчас недоступен');
+    const fp=await fingerprintForJob(j),selectedIndex=selected.findIndex(x=>x.id===j.id);
+    let row=metadataRowForJob(draft.rows,j,Math.max(0,selectedIndex));
+    let queueRecord=null;
+    if(!row){
+      queueRecord=await api.metadataQueueReserve(channel.id,channel.name,j.id,j.number,j.folder||undefined);
+      if(queueRecord){queueReserved=true;row=metadataQueueRowAsImported(queueRecord)}
+    }
+    let publishAt=effectivePublishAt(j);
+    if(queueRecord&&metadataQueuePublishAtIsFuture(queueRecord.publishAt))publishAt=queueRecord.publishAt;
+    if(!publishAt)throw new Error('PUBLISH_AT_REQUIRED: дата публикации отсутствует');
+    const metadataSource=queueRecord?'queue':row?'import':(j.metadataSource||'template');
+    const payload=resolvedUploadMetadata(j,row,publishAt,settings.youtubeCategoryId),projectEntry=Object.values(useApp.getState().projectLifecycle).find(x=>x.jobId===j.id),thumbnailPath=selectedThumbnail(j)||undefined;
+    patchJob(j.id,{title:payload.title,description:payload.description,tags:payload.tags,publishAt:payload.publishAt,metadataSource,metadataLocked:row?true:j.metadataLocked,error:undefined});
+    const queueEntry=enqueueUpload({jobId:j.id,batchId,projectId:projectEntry?.projectId,localVideoIdentity:`${channelId}:${j.id}:${fp.fingerprint}`,videoNumber:j.number,channelId:channel.id,channelName:channel.name,profileId,youtubeChannelId:channel.youtubeChannelId,filePath:j.finalPath,fingerprint:fp.fingerprint,fileSize:fp.size,modifiedAt:fp.modifiedAt,publishAt:payload.publishAt!,title:payload.title,description:payload.description,tags:[...payload.tags],categoryId:payload.categoryId,thumbnailPath,metadataSource,quotaProjectKey:quotaProjectKey||undefined,quotaOperations:[{method:'videos.insert',count:1,label:'Загрузка видео'},{method:'videos.list',count:1,label:'Проверка videoId'},{method:'videos.list',count:1,label:'Проверка processing'},...(thumbnailPath?[{method:'thumbnails.set' as const,count:1,label:'Обложка'}]:[])],allowDuplicate:false,submittedAt:new Date().toISOString()} as const);queued.push(j.id);queueIds.push(queueEntry.queueId);log(`[UPLOAD_QUEUE] QUEUED job=${j.id} channel=${channel.id} profile=${profileId}`)
+   }catch(error){const h=humanizeError(error,'upload');if(queueReserved)void api.metadataQueueMarkError(channel.id,j.id,h.message,j.folder||undefined).catch(()=>undefined);failed.push(`VIDEO_${String(j.number).padStart(3,'0')}: ${h.message}`);log(`[UPLOAD_QUEUE] submit failed job=${j.id}: ${h.message}`,'warn')}}
    if(queued.length){persistQueuedScheduleMode();setDraftPatch({selectedIds:draft.selectedIds.filter(id=>!queued.includes(id))});notifySuccess('Добавлено в очередь',`${queued.length} видео • канал ${channel.name} • concurrency ${settings.youtubeUploadConcurrency||2}. Переключение вкладок и каналов загрузку не остановит.`)}
    if(queueIds.length){void waitForUploadQueueEntries(queueIds).then(entries=>{const batchFailures:BatchFailure[]=entries.filter(x=>x.state==='FAILED').map(x=>{const h=humanizeError(x.error||'UPLOAD_FAILED','upload');return{id:x.spec.jobId,message:`VIDEO_${String(x.spec.videoNumber).padStart(3,'0')}: ${h.message}`,technicalDetail:h.detail}});const failureToast=batchFailureToast(batchFailures);if(failureToast)notifyError(failureToast.title,failureToast.message,{persistError:false})})}
    if(failed.length)notifyWarning('Часть видео не добавлена',failed.join(' • '));
