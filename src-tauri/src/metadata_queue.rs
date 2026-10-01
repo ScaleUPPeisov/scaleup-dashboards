@@ -338,6 +338,22 @@ fn write_sidecar(project_folder:&str,record:&MetadataRecord)->Result<(),String>{
     });
     write_json(&path,&value)
 }
+
+fn write_sidecars_parallel(tasks:&[(String,MetadataRecord)])->Result<(),String>{
+    const MAX_WORKERS:usize=8;
+    for batch in tasks.chunks(MAX_WORKERS){
+        let results=std::thread::scope(|scope|{
+            batch.iter()
+                .map(|(folder,record)|scope.spawn(move||write_sidecar(folder,record)))
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|h|h.join().map_err(|_|"METADATA_QUEUE_SIDECAR_THREAD_PANIC".to_string()).and_then(|x|x))
+                .collect::<Vec<_>>()
+        });
+        for result in results{result?;}
+    }
+    Ok(())
+}
 fn mutate_by_job<F>(app:&AppHandle,channel_id:&str,job_id:&str,mutator:F)->Result<Option<MetadataRecord>,String>
 where F:FnOnce(&mut MetadataRecord){
     let mut index=load_index(app,channel_id,"")?;
@@ -538,13 +554,17 @@ pub fn metadata_queue_reserve_batch(
     }
     if index_dirty{save_index(&app,&index)?;}
 
-    // Sidecars are written after durable reservation commits. A sidecar write failure
-    // never frees/reuses the record; retrying the same job rehydrates the same record.
-    for (i,result) in results.iter().enumerate(){
-        if let (Some(folder),Some(record))=(requests[i].project_folder.as_deref(),result.record.as_ref()){
-            write_sidecar(folder,record)?;
+    // Reservation durability is complete before sidecars begin. Do not hold the
+    // global queue lock during project-folder I/O: large multi-channel batches would
+    // otherwise serialize every metadata.json write and stall assignment for tens of seconds.
+    let sidecars=requests.iter().zip(results.iter()).filter_map(|(req,result)|{
+        match (req.project_folder.as_ref(),result.record.as_ref()){
+            (Some(folder),Some(record))=>Some((folder.clone(),record.clone())),
+            _=>None
         }
-    }
+    }).collect::<Vec<_>>();
+    drop(_guard);
+    write_sidecars_parallel(&sidecars)?;
     Ok(results)
 }
 
@@ -706,5 +726,20 @@ mod tests{
     fn record_fingerprint_is_stable(){
         let row=MetadataInput{source_number:Some(1),title:Some("A".into()),description:Some("B".into()),tags:vec!["x".into()],publish_at:None,publish_time:None,publish_timezone:None,publish_utc_offset_minutes:None};
         assert_eq!(record_hash(&row).unwrap(),record_hash(&row).unwrap());
+    }
+    #[test]
+    fn sidecar_batch_writes_in_parallel_without_collisions(){
+        let root=std::env::temp_dir().join(format!("vyron-metadata-sidecar-{}-{}",std::process::id(),chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()));
+        let record=MetadataRecord{
+            id:"r1".into(),channel_id:"c1".into(),pack_id:"p1".into(),sequence:1,source_number:Some(1),
+            title:Some("Title".into()),description:Some("Description".into()),tags:vec!["tag".into()],
+            publish_at:None,publish_time:None,publish_timezone:None,publish_utc_offset_minutes:None,status:"RESERVED".into(),
+            reserved_job_id:Some("j1".into()),reserved_video_number:Some(1),youtube_video_id:None,created_at:"now".into(),
+            reserved_at:Some("now".into()),applied_at:None,source_hash:"s".into(),record_hash:"h".into(),error:None
+        };
+        let tasks=(0..32).map(|i|(root.join(format!("job-{i}")).to_string_lossy().to_string(),record.clone())).collect::<Vec<_>>();
+        write_sidecars_parallel(&tasks).unwrap();
+        for (folder,_) in &tasks{assert!(Path::new(folder).join("metadata.json").is_file());}
+        let _=fs::remove_dir_all(root);
     }
 }
