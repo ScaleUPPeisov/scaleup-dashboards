@@ -165,20 +165,18 @@ struct LocalKeyProbe{
 }
 impl LocalKeyProbe{fn available(&self)->bool{self.key.is_some()}}
 
-fn persistent_local_key_probe(app:&AppHandle)->Result<LocalKeyProbe,String>{
- let p=local_paths(app)?;
- let doc_key=read_key_file(&p.doc_key)?;
- let app_key=read_key_file(&p.app_key)?;
- #[cfg(target_os="windows")]
- {
-  if let Some(encoded)=security::canonical_get_secret(WINDOWS_VAULT_KEY_ACCOUNT)?{
-   let key=decode_key(&encoded)?;
-   return Ok(LocalKeyProbe{
-    source:LocalKeySource::CanonicalCredential,key:Some(key),
-    canonical_credential_present:true,
-    doc_key_present:doc_key.is_some(),app_key_present:app_key.is_some()
-   })
-  }
+fn local_key_probe_from_material(
+ canonical_encoded:Option<&str>,
+ doc_key:Option<[u8;32]>,
+ app_key:Option<[u8;32]>,
+)->Result<LocalKeyProbe,String>{
+ if let Some(encoded)=canonical_encoded{
+  let key=decode_key(encoded)?;
+  return Ok(LocalKeyProbe{
+   source:LocalKeySource::CanonicalCredential,key:Some(key),
+   canonical_credential_present:true,
+   doc_key_present:doc_key.is_some(),app_key_present:app_key.is_some()
+  })
  }
  if let Some(key)=doc_key{
   return Ok(LocalKeyProbe{
@@ -198,40 +196,49 @@ fn persistent_local_key_probe(app:&AppHandle)->Result<LocalKeyProbe,String>{
  })
 }
 
+fn persistent_local_key_probe(app:&AppHandle)->Result<LocalKeyProbe,String>{
+ let p=local_paths(app)?;
+ let doc_key=read_key_file(&p.doc_key)?;
+ let app_key=read_key_file(&p.app_key)?;
+ #[cfg(target_os="windows")]
+ {
+  let canonical=security::canonical_get_secret(WINDOWS_VAULT_KEY_ACCOUNT)?;
+  return local_key_probe_from_material(canonical.as_deref(),doc_key,app_key)
+ }
+ #[cfg(not(target_os="windows"))]
+ {
+  local_key_probe_from_material(None,doc_key,app_key)
+ }
+}
+
 fn local_key(app:&AppHandle,create:bool)->Result<[u8;32],String>{
  if let Ok(cache)=master_cache().lock(){if let Some(key)=*cache{return Ok(key)}}
  let p=local_paths(app)?;
- #[cfg(target_os="windows")]
- {
-  if let Some(encoded)=security::canonical_get_secret_cached(WINDOWS_VAULT_KEY_ACCOUNT)?{
-   let key=decode_key(&encoded)?;cache_key(key);return Ok(key)
+ let probe=persistent_local_key_probe(app)?;
+ if let Some(key)=probe.key{
+  #[cfg(target_os="windows")]
+  if probe.source!=LocalKeySource::CanonicalCredential{
+   security::canonical_set_secret(WINDOWS_VAULT_KEY_ACCOUNT,&B64.encode(key))?;
   }
-  if let Some(key)=read_key_file(&p.doc_key)?.or(read_key_file(&p.app_key)?){
-   let encoded=B64.encode(key);
-   security::canonical_set_secret(WINDOWS_VAULT_KEY_ACCOUNT,&encoded)?;
-   cache_key(key);return Ok(key)
+  #[cfg(not(target_os="windows"))]
+  match probe.source{
+   LocalKeySource::DocumentFile if !p.app_key.exists()=>{let _=write_private_atomic(&p.app_key,B64.encode(key).as_bytes());},
+   LocalKeySource::AppDataFile if !p.doc_key.exists()=>{write_private_atomic(&p.doc_key,B64.encode(key).as_bytes())?;},
+   _=>{}
   }
-  if !create{return Err("OAUTH_VAULT_LOCAL_KEY_MISSING".into())}
-  let mut key=[0u8;32];OsRng.fill_bytes(&mut key);
-  let encoded=B64.encode(key);
-  security::canonical_set_secret(WINDOWS_VAULT_KEY_ACCOUNT,&encoded)?;
-  cache_key(key);return Ok(key)
- }
- if let Some(key)=read_key_file(&p.doc_key)?{
-  if !p.app_key.exists(){let _=write_private_atomic(&p.app_key,B64.encode(key).as_bytes());}
-  cache_key(key);return Ok(key)
- }
- if let Some(key)=read_key_file(&p.app_key)?{
-  write_private_atomic(&p.doc_key,B64.encode(key).as_bytes())?;
-  cache_key(key);return Ok(key)
+  cache_key(key);
+  return Ok(key)
  }
  if !create{return Err("OAUTH_VAULT_LOCAL_KEY_MISSING".into())}
  let mut key=[0u8;32];OsRng.fill_bytes(&mut key);
  let encoded=B64.encode(key);
- write_private_atomic(&p.doc_key,encoded.as_bytes())?;
- write_private_atomic(&p.app_key,encoded.as_bytes())?;
- // Normal local-key creation performs ZERO Keychain operations. The old Keychain
- // master key is consulted only by the explicit legacy migration/recovery path.
+ #[cfg(target_os="windows")]
+ security::canonical_set_secret(WINDOWS_VAULT_KEY_ACCOUNT,&encoded)?;
+ #[cfg(not(target_os="windows"))]
+ {
+  write_private_atomic(&p.doc_key,encoded.as_bytes())?;
+  write_private_atomic(&p.app_key,encoded.as_bytes())?;
+ }
  cache_key(key);
  Ok(key)
 }
@@ -854,11 +861,11 @@ mod tests{
 
  #[test]
  fn windows_canonical_key_without_key_files_selects_current_local_vault(){
-  let probe=LocalKeyProbe{
-   source:LocalKeySource::CanonicalCredential,key:Some([7u8;32]),
-   canonical_credential_present:true,doc_key_present:false,app_key_present:false
-  };
+  let encoded=B64.encode([7u8;32]);
+  let probe=local_key_probe_from_material(Some(&encoded),None,None).unwrap();
+  assert_eq!(probe.source,LocalKeySource::CanonicalCredential);
   assert!(probe.available());
+  assert!(probe.canonical_credential_present);
   assert!(!probe.doc_key_present&&!probe.app_key_present);
   assert_eq!(startup_key_plan(probe.available(),true),StartupKeyPlan::LocalPersistent);
  }
