@@ -39,7 +39,7 @@ describe('VYRON 6.0.1 Windows migration/UI hotfix contracts',()=>{
   });
 
   it('shows actual runtime version in the history while retaining canonical history',()=>{
-    expect(VYRON_CURRENT_RELEASE.version).toBe('6.0.1');
+    expect(VYRON_CURRENT_RELEASE.version).toBe('6.0.2');
     expect(settings).toContain('<ReleaseHistoryTimeline currentVersion={updaterCurrent||undefined}/>');
   });
 
