@@ -9,6 +9,72 @@ function n(value:number|undefined){return (value||0).toLocaleString('ru-RU')}
 function gb(value:number|undefined){return ((value||0)/1024/1024/1024).toFixed(2)}
 function fileName(path:string){return path.split(/[\\/]/).filter(Boolean).pop()||path}
 
+type MaterialsCacheSnapshot={
+  rows:Record<string,MaterialsSummary>;
+  cleanup:GlobalProjectCleanupPreview|null;
+  jobRevision:string;
+  updatedAt:number;
+};
+
+const MATERIALS_SCAN_CONCURRENCY=4;
+const materialsCache=new Map<string,MaterialsCacheSnapshot>();
+const materialsInFlight=new Map<string,Promise<MaterialsCacheSnapshot>>();
+
+function makeJobsRevision(jobs:Array<{id:string;status:string;folder?:string}>){
+  return jobs.map(j=>j.id+':'+j.status+':'+(j.folder||'')).join('|');
+}
+
+function makeMaterialsCacheKey(workspace:string,channelIds:string[],cleanupRoots:string[]){
+  return [workspace,channelIds.join('|'),cleanupRoots.join('|')].join('::');
+}
+
+async function mapLimited<T,R>(items:T[],limit:number,run:(item:T)=>Promise<R>):Promise<R[]>{
+  const out=new Array<R>(items.length);
+  let cursor=0;
+  const workers=Array.from({length:Math.min(Math.max(1,limit),Math.max(1,items.length))},async()=>{
+    for(;;){
+      const index=cursor++;
+      if(index>=items.length)return;
+      out[index]=await run(items[index]);
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
+
+async function loadMaterialsSnapshot(
+  cacheKey:string,
+  workspace:string,
+  channels:Array<{id:string}>,
+  cleanupRoots:string[],
+  jobRevision:string,
+  force=false
+):Promise<MaterialsCacheSnapshot>{
+  if(!force){
+    const hot=materialsCache.get(cacheKey);
+    if(hot&&hot.jobRevision===jobRevision)return hot;
+    const running=materialsInFlight.get(cacheKey);
+    if(running)return running;
+  }
+  const task=(async()=>{
+    const entries=await mapLimited(channels,MATERIALS_SCAN_CONCURRENCY,async ch=>{
+      try{return [ch.id,await productionManagerApi.materialsSummary(workspace,ch.id)] as const}
+      catch{return [ch.id,null] as const}
+    });
+    const rows:Record<string,MaterialsSummary>={};
+    for(const [id,row] of entries)if(row)rows[id]=row;
+    let cleanup:GlobalProjectCleanupPreview|null=null;
+    if(cleanupRoots.length){
+      try{cleanup=await productionManagerApi.previewGlobalProjectCleanup(cleanupRoots)}catch{}
+    }
+    const snapshot={rows,cleanup,jobRevision,updatedAt:Date.now()};
+    materialsCache.set(cacheKey,snapshot);
+    return snapshot;
+  })();
+  materialsInFlight.set(cacheKey,task);
+  try{return await task}finally{if(materialsInFlight.get(cacheKey)===task)materialsInFlight.delete(cacheKey)}
+}
+
 export function MaterialsManager(){
   const channels=useApp(s=>s.channels);
   const jobs=useApp(s=>s.jobs);
@@ -16,15 +82,6 @@ export function MaterialsManager(){
   const settings=useApp(s=>s.settings);
   const toast=useApp(s=>s.toast);
   const [prefs,patchPrefs]=useProductionPrefs();
-  const [rows,setRows]=useState<Record<string,MaterialsSummary>>({});
-  const [busy,setBusy]=useState('');
-  const [cleanup,setCleanup]=useState<GlobalProjectCleanupPreview|null>(null);
-  const [manualOpen,setManualOpen]=useState(false);
-  const [manualChannelId,setManualChannelId]=useState('');
-  const [manualImages,setManualImages]=useState<string[]>([]);
-  const [manualMusic,setManualMusic]=useState<string[]>([]);
-  const [manualMusicRoot,setManualMusicRoot]=useState('');
-  const [manualBusy,setManualBusy]=useState('');
   const workspace=settings.workspace||'';
 
   const cleanupRoots=useMemo(()=>[
@@ -32,6 +89,20 @@ export function MaterialsManager(){
     prefs.productionRoot,
     ...Object.values(prefs.byChannel||{}).map(x=>x.productionRoot)
   ].map(x=>(x||'').trim()).filter((x,i,a)=>Boolean(x)&&a.indexOf(x)===i),[settings.workspace,prefs.productionRoot,prefs.byChannel]);
+  const channelIds=useMemo(()=>channels.map(x=>x.id),[channels]);
+  const jobRevision=useMemo(()=>makeJobsRevision(jobs),[jobs]);
+  const cacheKey=useMemo(()=>makeMaterialsCacheKey(workspace,channelIds,cleanupRoots),[workspace,channelIds,cleanupRoots]);
+  const cached=materialsCache.get(cacheKey);
+
+  const [rows,setRows]=useState<Record<string,MaterialsSummary>>(()=>cached?.rows||{});
+  const [busy,setBusy]=useState('');
+  const [cleanup,setCleanup]=useState<GlobalProjectCleanupPreview|null>(()=>cached?.cleanup||null);
+  const [manualOpen,setManualOpen]=useState(false);
+  const [manualChannelId,setManualChannelId]=useState('');
+  const [manualImages,setManualImages]=useState<string[]>([]);
+  const [manualMusic,setManualMusic]=useState<string[]>([]);
+  const [manualMusicRoot,setManualMusicRoot]=useState('');
+  const [manualBusy,setManualBusy]=useState('');
 
   const manualChannel=channels.find(x=>x.id===manualChannelId);
   const manualTracksPerProject=Math.max(1,Math.min(100,prefs.byChannel[manualChannelId]?.tracksPerProject||manualChannel?.minTracks||10));
@@ -40,20 +111,62 @@ export function MaterialsManager(){
   const manualFrom=Math.max(0,...manualExisting.map(j=>j.number))+1;
   const manualTo=manualFrom+Math.max(0,manualImages.length-1);
   const manualRequiredTracks=manualImages.length*manualTracksPerProject;
-
-  async function refresh(){
-    if(!workspace){setRows({});setCleanup(null);return}
-    const next:Record<string,MaterialsSummary>={};
-    for(const ch of channels){
-      try{next[ch.id]=await productionManagerApi.materialsSummary(workspace,ch.id)}catch{}
+  const jobCounts=useMemo(()=>{
+    const out:Record<string,{waiting:number;ready:number}>={};
+    for(const job of jobs){
+      const row=out[job.channelId]||(out[job.channelId]={waiting:0,ready:0});
+      if(job.status==='NEED_IMAGE')row.waiting++;
+      if(job.status==='READY_RENDER')row.ready++;
     }
-    setRows(next);
-    if(cleanupRoots.length){
-      try{setCleanup(await productionManagerApi.previewGlobalProjectCleanup(cleanupRoots))}catch{setCleanup(null)}
-    }else setCleanup(null);
+    return out;
+  },[jobs]);
+  const sortedChannels=useMemo(()=>channels.slice().sort((a,b)=>a.name.localeCompare(b.name,'ru')),[channels]);
+
+  async function refresh(force=true){
+    if(!workspace){setRows({});setCleanup(null);return}
+    const revision=makeJobsRevision(useApp.getState().jobs);
+    const snapshot=await loadMaterialsSnapshot(cacheKey,workspace,channels,cleanupRoots,revision,force);
+    setRows(snapshot.rows);
+    setCleanup(snapshot.cleanup);
   }
 
-  useEffect(()=>{void refresh()},[workspace,channels.map(x=>x.id).join('|'),jobs.length,cleanupRoots.join('|')]);
+  async function refreshChannel(channelId:string){
+    if(!workspace)return;
+    try{
+      const row=await productionManagerApi.materialsSummary(workspace,channelId);
+      const revision=makeJobsRevision(useApp.getState().jobs);
+      const hot=materialsCache.get(cacheKey);
+      const nextRows={...(hot?.rows||rows),[channelId]:row};
+      const snapshot:MaterialsCacheSnapshot={
+        rows:nextRows,
+        cleanup:hot?.cleanup??cleanup,
+        jobRevision:revision,
+        updatedAt:Date.now()
+      };
+      materialsCache.set(cacheKey,snapshot);
+      setRows(nextRows);
+    }catch{}
+  }
+
+  useEffect(()=>{
+    let cancelled=false;
+    let timer:number|undefined;
+    if(!workspace){setRows({});setCleanup(null);return}
+    const hot=materialsCache.get(cacheKey);
+    if(hot){
+      setRows(hot.rows);
+      setCleanup(hot.cleanup);
+      if(hot.jobRevision===jobRevision)return;
+    }
+    timer=window.setTimeout(()=>{
+      void loadMaterialsSnapshot(cacheKey,workspace,channels,cleanupRoots,jobRevision,false).then(snapshot=>{
+        if(cancelled)return;
+        setRows(snapshot.rows);
+        setCleanup(snapshot.cleanup);
+      });
+    },0);
+    return()=>{cancelled=true;if(timer!==undefined)window.clearTimeout(timer)};
+  },[cacheKey,jobRevision]);
 
   async function importImages(channel:{id:string;name:string}){
     if(!workspace){toast('Сначала выберите рабочую папку VYRON');return}
@@ -67,7 +180,7 @@ export function MaterialsManager(){
       if(!window.confirm('Канал: '+channel.name+'\nВыбрано: '+files.length+' изображений\n\nИмпортировать в Image Library этого канала?'))return;
       const result=await productionManagerApi.importMaterialImages(workspace,channel.id,channel.name,files);
       notifySuccess('Изображения импортированы',channel.name+' • добавлено '+result.added+' • дубликаты '+result.duplicates+' • пропущено '+result.skipped,{operationId:'materials-images:'+channel.id+':'+Date.now()});
-      await refresh();
+      await refreshChannel(channel.id);
     }catch(e){toast('Не удалось импортировать изображения: '+String(e))}
     finally{setBusy('')}
   }
@@ -82,7 +195,7 @@ export function MaterialsManager(){
       await productionManagerApi.setMusicLibrary(workspace,channel.id,channel.name,path);
       const indexed=await productionManagerApi.indexMusic(workspace,channel.id);
       notifySuccess('Музыкальная библиотека обновлена',channel.name+' • '+indexed.tracks.toLocaleString('ru-RU')+' треков',{operationId:'materials-music:'+channel.id+':'+indexed.indexedAt});
-      await refresh();
+      await refreshChannel(channel.id);
     }catch(e){toast('Не удалось обновить Music Library: '+String(e))}
     finally{setBusy('')}
   }
@@ -175,7 +288,7 @@ export function MaterialsManager(){
       patchPrefs({selectedChannelId:manualChannel.id});
       notifySuccess('Ручная сборка готова',manualChannel.name+' • '+committed.length+' проектов • VIDEO_'+String(staged[0]?.number||0).padStart(3,'0')+' — VIDEO_'+String(staged[staged.length-1]?.number||0).padStart(3,'0'),{operationId:'manual-assembly:'+result.batch.batchId});
       setManualOpen(false);setManualImages([]);setManualMusic([]);setManualMusicRoot('');
-      await refresh();
+      await refreshChannel(manualChannel.id);
     }catch(e){toast('Ручная сборка не выполнена: '+String(e))}
     finally{setManualBusy('')}
   }
@@ -206,7 +319,7 @@ export function MaterialsManager(){
     try{
       const result=await productionManagerApi.executeGlobalProjectCleanup(cleanupRoots,true);
       notifySuccess('Безопасная очистка завершена','Удалено '+result.deletedProjects+' проектов • освобождено '+gb(result.bytesFreed)+' GB • Render сохранены: '+result.protectedRenders,{operationId:'materials-cleanup:'+Date.now()});
-      await refresh();
+      await refresh(true);
     }catch(e){toast('Cleanup не выполнен: '+String(e))}
     finally{setBusy('')}
   }
@@ -216,17 +329,17 @@ export function MaterialsManager(){
   return <div className="materialsManager">
     <section className="panel materialsHero">
       <div><small>PRODUCTION → MATERIALS</small><h2>Материалы по каналам</h2><p>Изображения привязываются к channelId вручную при импорте. Имя файла не используется для определения канала.</p></div>
-      <div className="pmActions"><button className="primary" disabled={!!busy} onClick={openManualAssembly}>+ РУЧНАЯ СБОРКА</button><button disabled={!!busy} onClick={()=>void refresh()}>↻ ОБНОВИТЬ</button></div>
+      <div className="pmActions"><button className="primary" disabled={!!busy} onClick={openManualAssembly}>+ РУЧНАЯ СБОРКА</button><button disabled={!!busy} onClick={()=>void refresh(true)}>↻ ОБНОВИТЬ</button></div>
     </section>
 
     <section className="panel materialsTablePanel">
       <div className="materialsTableHead"><div><small>IMAGE + MUSIC LIBRARY</small><h3>Все каналы</h3></div><span>{channels.length} каналов</span></div>
       <div className="materialsTable">
         <div className="materialsRow materialsHeader"><span>Канал</span><span>Музыка</span><span>Изображения</span><span>Назначено</span><span>Использовано</span><span>Нужны изображения</span><span>READY_RENDER</span><span>Действия</span></div>
-        {channels.slice().sort((a,b)=>a.name.localeCompare(b.name,'ru')).map(ch=>{
+        {sortedChannels.map(ch=>{
           const row=rows[ch.id];
-          const waiting=jobs.filter(j=>j.channelId===ch.id&&j.status==='NEED_IMAGE').length;
-          const ready=jobs.filter(j=>j.channelId===ch.id&&j.status==='READY_RENDER').length;
+          const waiting=jobCounts[ch.id]?.waiting||0;
+          const ready=jobCounts[ch.id]?.ready||0;
           const available=row?.image.available||0;
           const need=Math.max(0,waiting-available);
           return <div className="materialsRow" key={ch.id}>
@@ -274,7 +387,7 @@ export function MaterialsManager(){
 
         <label className="manualField">Канал
           <select value={manualChannelId} disabled={!!manualBusy} onChange={e=>changeManualChannel(e.target.value)}>
-            {channels.slice().sort((a,b)=>a.name.localeCompare(b.name,'ru')).map(ch=><option key={ch.id} value={ch.id}>{ch.name}</option>)}
+            {sortedChannels.map(ch=><option key={ch.id} value={ch.id}>{ch.name}</option>)}
           </select>
           <small>{manualChannel?.id||'—'}</small>
         </label>
