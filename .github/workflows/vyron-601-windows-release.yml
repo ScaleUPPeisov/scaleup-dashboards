@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - release/vyron-6.0.1-windows-hotfix
-    paths:
-      - '.github/workflows/vyron-601-windows-release.yml'
   workflow_dispatch:
 
 permissions:
