@@ -2,10 +2,10 @@ import React,{useEffect,useMemo,useState} from 'react';
 import {buildYoutubeQuotaPlan,clearYoutubeQuotaGuard,loadYoutubeQuotaPlan,saveYoutubeQuotaPlan,setYoutubeQuotaLimit,subscribeYoutubeQuota,subscribeYoutubeQuotaClock,youtubeQuotaBucketUsage,youtubeQuotaClockSnapshot,youtubeQuotaState,youtubeQuotaUsage} from './youtubeQuota';
 import {globalDailyUploadStatus,subscribeGlobalDailyUploadStatus} from './youtubePublishSafety';
 
-export function QuotaMeter({compact=false,defaultChannels=100}:{compact?:boolean;defaultChannels?:number}){
+export function QuotaMeter({compact=false,defaultChannels=100,active=true}:{compact?:boolean;defaultChannels?:number;active?:boolean}){
  const [usage,setUsage]=useState(()=>youtubeQuotaUsage()),[guard,setGuard]=useState(()=>youtubeQuotaState()),[clock,setClock]=useState(()=>youtubeQuotaClockSnapshot()),[successfulUploads,setSuccessfulUploads]=useState(()=>globalDailyUploadStatus());
  const initial=loadYoutubeQuotaPlan();const [channels,setChannels]=useState(initial.channels||Math.max(1,defaultChannels)),[videos,setVideos]=useState(initial.videosPerChannel||30);
- useEffect(()=>{const refresh=()=>{setUsage(youtubeQuotaUsage());setGuard(youtubeQuotaState())};const off=subscribeYoutubeQuota(refresh),offClock=subscribeYoutubeQuotaClock(setClock),offUploads=subscribeGlobalDailyUploadStatus(()=>setSuccessfulUploads(globalDailyUploadStatus()));return()=>{off();offClock();offUploads()}},[]);
+ useEffect(()=>{if(!active)return;setUsage(youtubeQuotaUsage());setGuard(youtubeQuotaState());setClock(youtubeQuotaClockSnapshot());setSuccessfulUploads(globalDailyUploadStatus());const refresh=()=>{setUsage(youtubeQuotaUsage());setGuard(youtubeQuotaState())};const off=subscribeYoutubeQuota(refresh),offClock=subscribeYoutubeQuotaClock(setClock),offUploads=subscribeGlobalDailyUploadStatus(()=>setSuccessfulUploads(globalDailyUploadStatus()));return()=>{off();offClock();offUploads()}},[active]);
  const plan=useMemo(()=>buildYoutubeQuotaPlan(channels,videos,usage),[channels,videos,usage.ptDate,usage.limit,usage.used]);const pct=Math.min(100,usage.limit?usage.used/usage.limit*100:0),remaining=Math.max(0,usage.limit-usage.used);const uploadUsage=youtubeQuotaBucketUsage('videoUploads');
  const savePlan=()=>{saveYoutubeQuotaPlan({channels,videosPerChannel:videos});setUsage(youtubeQuotaUsage())};
  return <section className={`quotaMeter ${guard.blocked?'blocked':''} ${compact?'compact':''}`}>
