@@ -1,0 +1,295 @@
+name: VYRON 6.0.2 Real Migration Candidate
+
+on:
+  push:
+    branches:
+      - candidate/vyron-6.0.2-real-migration
+    paths:
+      - '.github/workflows/vyron-602-real-migration-candidate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: vyron-602-real-migration-candidate
+  cancel-in-progress: false
+
+env:
+  V600_SHA: 0f16fac6f4a50d083dad37a44684c8accbacf4ce
+  VERSION: '6.0.2'
+
+jobs:
+  export-real-v600-macos:
+    runs-on: macos-14
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 0f16fac6f4a50d083dad37a44684c8accbacf4ce
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Exact 6.0.0 source and NFD password bytes
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$V600_SHA"
+          python3 - <<'PY'
+          import os,unicodedata
+          p=unicodedata.normalize('NFD','й-ё-é-real-v600-password-123')
+          assert p != unicodedata.normalize('NFC',p)
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f:
+              f.write('VYRON_FIXTURE_KIND=macos\n')
+              f.write('VYRON_FIXTURE_OUT='+os.environ['RUNNER_TEMP']+'/real-v600-origin.vyron\n')
+              f.write('VYRON_FIXTURE_PASS<<VYRONPASS\n'+p+'\nVYRONPASS\n')
+          print('REAL_V600_PASSWORD_FORM=NFD_RAW_UTF8')
+          print('REAL_V600_PASSWORD_UTF8_LEN='+str(len(p.encode("utf-8"))))
+          PY
+      - name: Export encrypted fixture using exact VYRON 6.0.0 implementation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cargo test --manifest-path src-tauri/Cargo.toml migration::tests::cross_platform_fixture_export -- --ignored --exact --nocapture
+          test -s "$VYRON_FIXTURE_OUT"
+          shasum -a 256 "$VYRON_FIXTURE_OUT" | awk '{print $1}' > "$RUNNER_TEMP/real-v600-origin.vyron.sha256"
+          echo "REAL_V600_EXPORTER_COMMIT=$V600_SHA"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: real-v600-macos-origin
+          path: |
+            ${{ runner.temp }}/real-v600-origin.vyron
+            ${{ runner.temp }}/real-v600-origin.vyron.sha256
+          if-no-files-found: error
+
+  export-v602-macos:
+    runs-on: macos-14
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Prepare current macOS fixture
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os,unicodedata
+          p=unicodedata.normalize('NFD','й-ё-é-real-v600-password-123')
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f:
+              f.write('VYRON_FIXTURE_KIND=macos\n')
+              f.write('VYRON_FIXTURE_OUT='+os.environ['RUNNER_TEMP']+'/v602-macos-origin.vyron\n')
+              f.write('VYRON_FIXTURE_PASS<<VYRONPASS\n'+p+'\nVYRONPASS\n')
+          PY
+      - name: Export with current VYRON 6.0.2 implementation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cargo test --manifest-path src-tauri/Cargo.toml migration::tests::cross_platform_fixture_export -- --ignored --exact --nocapture
+          test -s "$VYRON_FIXTURE_OUT"
+          echo 'V602_MAC_EXPORT=PASS'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v602-macos-origin
+          path: ${{ runner.temp }}/v602-macos-origin.vyron
+          if-no-files-found: error
+
+  windows-compat-build:
+    needs: [export-real-v600-macos, export-v602-macos]
+    runs-on: windows-latest
+    timeout-minutes: 150
+    env:
+      VYRON_TAURI_SIGNING_PRIVATE_KEY_RAW: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - uses: actions/download-artifact@v4
+        with:
+          name: real-v600-macos-origin
+          path: real-v600
+      - uses: actions/download-artifact@v4
+        with:
+          name: v602-macos-origin
+          path: current-mac
+      - name: Verify 6.0.2 identity and production feeds unchanged
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          node -e "const p=require('./package.json'),t=require('./src-tauri/tauri.conf.json');if(p.version!=='6.0.2'||t.version!=='6.0.2')process.exit(2)"
+          if($LASTEXITCODE -ne 0){throw 'VERSION_IDENTITY_FAILED'}
+          $latest=(Invoke-RestMethod 'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json')
+          $win=(Invoke-RestMethod 'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json')
+          if($latest.version -ne '6.0.0'){throw "MAC_GENERAL_FEED_CHANGED=$($latest.version)"}
+          if($win.version -ne '6.0.1'){throw "WINDOWS_FEED_CHANGED=$($win.version)"}
+          Write-Host 'PRODUCTION_FEEDS_BASELINE=PASS'
+      - name: Set visually identical NFC Windows password
+        shell: pwsh
+        run: |
+          @'
+          import os,unicodedata
+          p=unicodedata.normalize('NFC','й-ё-é-real-v600-password-123')
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f:
+              f.write('VYRON_FIXTURE_KIND=windows\n')
+              f.write('VYRON_FIXTURE_PASS<<VYRONPASS\n'+p+'\nVYRONPASS\n')
+          print('WINDOWS_PASSWORD_FORM=NFC')
+          print('WINDOWS_PASSWORD_UTF8_LEN='+str(len(p.encode("utf-8"))))
+          '@ | python -
+      - name: REAL V600 macOS exporter to V602 Windows importer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:VYRON_FIXTURE_IN=(Resolve-Path 'real-v600/real-v600-origin.vyron').Path
+          Remove-Item Env:VYRON_FIXTURE_OUT -ErrorAction SilentlyContinue
+          cargo test --manifest-path src-tauri/Cargo.toml migration::tests::cross_platform_fixture_import_merge_and_reexport -- --ignored --exact --nocapture
+          if($LASTEXITCODE -ne 0){throw 'REAL_V600_COMPAT_FAILED'}
+          Write-Host 'REAL_V600_MAC_TO_V602_WINDOWS_COMPAT=PASS'
+          Write-Host 'IDEMPOTENT_IMPORT=PASS'
+          Write-Host 'WRONG_PASSWORD=FAIL_SECURELY'
+          Write-Host 'TAMPERED_CIPHERTEXT=FAIL_SECURELY'
+      - name: V602 macOS to V602 Windows
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:VYRON_FIXTURE_IN=(Resolve-Path 'current-mac/v602-macos-origin.vyron').Path
+          Remove-Item Env:VYRON_FIXTURE_OUT -ErrorAction SilentlyContinue
+          cargo test --manifest-path src-tauri/Cargo.toml migration::tests::cross_platform_fixture_import_merge_and_reexport -- --ignored --exact --nocapture
+          if($LASTEXITCODE -ne 0){throw 'CURRENT_CROSS_PLATFORM_FAILED'}
+          Write-Host 'V602_MAC_TO_V602_WINDOWS=PASS'
+      - name: Unicode raw legacy spaces and crypto tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $tests=@(
+            'migration::tests::raw_legacy_password_bytes_remain_first_class',
+            'migration::tests::legacy_v600_unicode_nfd_password_is_readable_from_nfc_input',
+            'migration::tests::unicode_password_matrix_ascii_cyrillic_and_accented_latin',
+            'migration::tests::intentional_password_spaces_are_never_trimmed',
+            'migration::tests::encryption_rejects_tamper_and_wrong_password',
+            'migration::tests::channel_merge_is_idempotent_and_never_deletes',
+            'migration::tests::package_diagnostics_are_safe_and_include_bundle_sha256'
+          )
+          foreach($t in $tests){
+            cargo test --manifest-path src-tauri/Cargo.toml $t -- --exact --nocapture
+            if($LASTEXITCODE -ne 0){throw "FAILED=$t"}
+          }
+          Write-Host 'UNICODE_TESTS=PASS'
+          Write-Host 'RAW_LEGACY_PASSWORD=PASS'
+          Write-Host 'INTENTIONAL_SPACES=PASS'
+      - name: Frontend and protected regressions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          npm ci --no-audit --no-fund
+          npm run build
+          if($LASTEXITCODE -ne 0){throw 'FRONTEND_BUILD_FAILED'}
+          npx vitest run src/v602RealMigrationCompatibility.test.ts src/v601WindowsHotfix.test.ts src/v320HistoryUx.test.ts src/v400BrandingCelebration.test.ts src/v510MaterialsManager.test.ts src/v512ManualAssembly.test.ts src/v503UploadCounterRestore.test.ts src/youtubePublishSafety.test.ts src/v400QuotaUploadLimitSeparation.test.ts src/v501LocalCleanupZeroQuota.test.ts src/v2115Rc7OauthUpdateContinuity.test.ts src/v500Performance.test.ts
+          if($LASTEXITCODE -ne 0){throw 'PROTECTED_REGRESSION_FAILED'}
+      - name: Canonicalize updater signing key
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          import base64,os
+          raw=os.environ['VYRON_TAURI_SIGNING_PRIVATE_KEY_RAW'].strip().replace('\\r\\n','\n').replace('\\n','\n')
+          candidates=[raw]
+          for _ in range(5):
+              current=candidates[-1].strip()
+              try: decoded=base64.b64decode(current,validate=True).decode('utf-8').strip()
+              except Exception: break
+              if decoded in candidates: break
+              candidates.append(decoded)
+          plain=next((x for x in candidates if x.startswith('untrusted comment:')),None)
+          assert plain,'TAURI_SIGNING_PRIVATE_KEY_FORMAT_UNRECOGNIZED'
+          canonical=base64.b64encode((plain.rstrip()+'\n').encode()).decode()
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as fp: fp.write('TAURI_SIGNING_PRIVATE_KEY='+canonical+'\n')
+          print('::add-mask::'+canonical)
+          PY
+      - name: Build signed VYRON 6.0.2 Windows candidate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          npx tauri build --target x86_64-pc-windows-msvc --bundles nsis --config src-tauri/tauri.windows.conf.json
+          if($LASTEXITCODE -ne 0){throw 'WINDOWS_BUILD_FAILED'}
+          $installer=Get-ChildItem src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis -Filter '*-setup.exe' | Select-Object -First 1
+          if(-not $installer){throw 'NSIS_MISSING'}
+          $sig=Get-Item ($installer.FullName+'.sig') -ErrorAction Stop
+          New-Item -ItemType Directory -Force -Path candidate | Out-Null
+          Copy-Item $installer.FullName candidate/VYRON_6.0.2_x64-setup.exe
+          Copy-Item $sig.FullName candidate/VYRON_6.0.2_x64-setup.exe.sig
+          (Get-FileHash candidate/VYRON_6.0.2_x64-setup.exe -Algorithm SHA256).Hash.ToLowerInvariant() | Set-Content candidate/VYRON_6.0.2_x64-setup.exe.sha256
+          @(
+            "HEAD=$env:GITHUB_SHA",
+            "V600_EXPORTER=$env:V600_SHA",
+            'VERSION=6.0.2',
+            'REAL_V600_MAC_TO_V602_WINDOWS_COMPAT=PASS',
+            'V602_MAC_TO_V602_WINDOWS=PASS',
+            'UNICODE_TESTS=PASS',
+            'RAW_LEGACY_PASSWORD=PASS',
+            'INTENTIONAL_SPACES=PASS',
+            'IDEMPOTENT_IMPORT=PASS',
+            'WRONG_PASSWORD=FAIL_SECURELY',
+            'TAMPERED_CIPHERTEXT=FAIL_SECURELY',
+            'FRONTEND_BUILD=PASS',
+            'PROTECTED_REGRESSIONS=PASS',
+            'WINDOWS_BUILD=PASS',
+            'PRODUCTION_FEEDS_MUTATED=NO',
+            'STATUS=READY_FOR_OWNER_TEST'
+          ) | Set-Content candidate/gate-summary.txt
+      - name: Verify updater signature
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $verifyRoot=Join-Path $env:RUNNER_TEMP 'vyron-signature-verify'
+          New-Item -ItemType Directory -Force -Path (Join-Path $verifyRoot 'src') | Out-Null
+          @'
+          [package]
+          name = "vyron-signature-verify"
+          version = "0.0.0"
+          edition = "2021"
+          [dependencies]
+          base64 = "0.22"
+          minisign-verify = "=0.2.5"
+          '@ | Set-Content -Encoding utf8 (Join-Path $verifyRoot 'Cargo.toml')
+          @'
+          use base64::{engine::general_purpose::STANDARD, Engine as _};
+          use minisign_verify::{PublicKey, Signature};
+          use std::{env,fs};
+          fn decode(encoded:&str)->String{String::from_utf8(STANDARD.decode(encoded.trim()).unwrap()).unwrap()}
+          fn main(){
+            let a:Vec<String>=env::args().collect(); assert_eq!(a.len(),4);
+            let artifact=fs::read(&a[1]).unwrap();
+            let sig=decode(&fs::read_to_string(&a[2]).unwrap());
+            let conf=fs::read_to_string(&a[3]).unwrap();
+            let marker="\"pubkey\": \""; let start=conf.find(marker).unwrap()+marker.len();
+            let tail=&conf[start..]; let end=tail.find('\"').unwrap();
+            let pk=PublicKey::decode(&decode(&tail[..end])).unwrap();
+            let sg=Signature::decode(&sig).unwrap();
+            pk.verify(&artifact,&sg,true).unwrap();
+            println!("WINDOWS_UPDATER_SIGNATURE=PASS");
+          }
+          '@ | Set-Content -Encoding utf8 (Join-Path $verifyRoot 'src/main.rs')
+          cargo run --quiet --release --manifest-path (Join-Path $verifyRoot 'Cargo.toml') -- candidate/VYRON_6.0.2_x64-setup.exe candidate/VYRON_6.0.2_x64-setup.exe.sig src-tauri/tauri.conf.json
+          if($LASTEXITCODE -ne 0){throw 'SIGNATURE_VERIFY_FAILED'}
+          Add-Content candidate/gate-summary.txt 'WINDOWS_UPDATER_SIGNATURE=PASS'
+      - name: Final production-feed no-write verification
+        shell: pwsh
+        run: |
+          $latest=(Invoke-RestMethod 'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json')
+          $win=(Invoke-RestMethod 'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json')
+          if($latest.version -ne '6.0.0' -or $win.version -ne '6.0.1'){throw 'PRODUCTION_FEED_MUTATED'}
+          Write-Host 'PRODUCTION_FEEDS_MUTATED=NO'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-6.0.2-REAL-MIGRATION-WINDOWS-CANDIDATE
+          path: candidate/**
+          if-no-files-found: error
+          retention-days: 30
