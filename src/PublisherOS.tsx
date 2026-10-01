@@ -85,7 +85,14 @@ export function PublisherOS(){
  useEffect(()=>{const off=subscribeYoutubeQuota(()=>setQuotaRev(x=>x+1)),offClock=subscribeYoutubeQuotaClock(setClock);void refreshSessions();return()=>{off();offClock()}},[]);
  useEffect(()=>{if(!channelId)return;saveActivePublishChannel(channelId);setDraft(loadPublishWorkspace(channelId));setFingerprints({});setRenderScan(null);setLegacyRecoveryPreview(null);setScheduleStartMode('continue');setScheduleSync({state:'idle',futureCount:0,occupied:[],timezone:PUBLISHER_TIMEZONE});void refreshSessions()},[channelId]);
  useEffect(()=>{let live=true;const check=async()=>{if(!channelRenderFolder){if(live)setSourceAvailability('MISSING');return}try{const st=await api.localSourceStatus(channelRenderFolder);if(!live)return;setSourceAvailability(st.exists&&!st.isFile?'ONLINE':'OFFLINE')}catch{if(live)setSourceAvailability('OFFLINE')}};void check();const timer=window.setInterval(()=>void check(),5000);const onFocus=()=>void check();window.addEventListener('focus',onFocus);return()=>{live=false;window.clearInterval(timer);window.removeEventListener('focus',onFocus)}},[channelId,channelRenderFolder]);
- useEffect(()=>{if(!liveSnapshot)return;if(liveSnapshot.folderState==='ONLINE'&&liveSnapshot.result&&liveSnapshot.rows&&liveSnapshot.summary){setSourceAvailability('ONLINE');setRenderScan(prev=>({result:liveSnapshot.result!,rows:liveSnapshot.rows!,summary:liveSnapshot.summary!,scannedAt:liveSnapshot.lastScanAt||new Date().toISOString(),importReport:prev?.importReport}))}else if(liveSnapshot.folderState==='OFFLINE')setSourceAvailability('OFFLINE')},[liveSnapshot?.folderState,liveSnapshot?.lastScanAt]);
+ useEffect(()=>{if(!liveSnapshot)return;if(liveSnapshot.folderState==='ONLINE'&&liveSnapshot.result&&liveSnapshot.rows&&liveSnapshot.summary){
+  setSourceAvailability('ONLINE');
+  const preview:RenderScanPreview={result:liveSnapshot.result,rows:liveSnapshot.rows,summary:liveSnapshot.summary,scannedAt:liveSnapshot.lastScanAt||new Date().toISOString()};
+  const current=useApp.getState().jobs,rec=reconcilePublisherInventory({channelId,exactRoot:liveSnapshot.result.root,ready:readyRows(liveSnapshot.rows,current),jobs:current});
+  if(rec.normalizePatches.length)useApp.getState().patchJobsBatch(rec.normalizePatches);
+  setRenderScan(preview);
+  if(rec.createRows.length)materializeRenderGenerationRows(rec.createRows,false,preview,true);
+ }else if(liveSnapshot.folderState==='OFFLINE')setSourceAvailability('OFFLINE')},[liveSnapshot?.folderState,liveSnapshot?.lastScanAt]);
  useEffect(()=>{if(!channel||!settings.workspace)return;if(channelRenderFolder&&channelProjectsFolder)return;void discoverChannelFolders(true)},[channelId,channel?.name,settings.workspace]);
  useEffect(()=>{let live=true;setQuotaProjectKey('');setQuotaProjectLabel('Не удалось определить API-проект для квоты');if(!profileId)return()=>{live=false};void Promise.all([api.youtubeProfiles(),api.youtubeGoogleConfig()]).then(([profiles,config])=>{if(!live)return;const identity=youtubeQuotaProjectIdentity(profiles.find(x=>x.id===profileId),config);setQuotaProjectKey(identity.projectKey||'');setQuotaProjectLabel(identity.label);setQuotaRev(x=>x+1)}).catch(()=>{if(live){setQuotaProjectKey('');setQuotaProjectLabel('Не удалось определить API-проект для квоты')}});return()=>{live=false}},[profileId]);
  useEffect(()=>{if(sourceAvailability!=='ONLINE')return;const valid=new Set(selectableJobs.map(j=>j.id));const next=draft.selectedIds.filter(id=>valid.has(id));if(next.length!==draft.selectedIds.length)setDraftPatch({selectedIds:next})},[sourceAvailability,selectableJobs.map(j=>`${j.id}:${j.status}:${j.youtubeVideoId||''}`).join('|')]);
@@ -290,7 +297,7 @@ export function PublisherOS(){
   }catch(e){const h=humanizeError(e,'storage');failTask(taskId,h.message);notifyWarning('Не удалось просканировать папку рендера',h.message,{operationId:taskId})}
   finally{setRenderScanBusy(false)}
  }
- function materializeRenderGenerationRows(rows:RenderScanRow[],explicitLegacyOverride=false,scanOverride?:RenderScanPreview){
+ function materializeRenderGenerationRows(rows:RenderScanRow[],explicitLegacyOverride=false,scanOverride?:RenderScanPreview,silent=false){
   const activeScan=scanOverride||renderScan;
   if(!activeScan||!channel||!rows.length)return;
   const current=useApp.getState().jobs.filter(j=>j.channelId===channelId),plan=planRenderScanImport(rows,current,new Set(recoveryJobs.map(j=>j.id))),created:VideoJob[]=[],details:string[]=[];
@@ -316,7 +323,7 @@ export function PublisherOS(){
   const report={requested:rows.length,added:created.length,skipped:plan.skipped.length+details.length,alreadyKnown,errors:details.length,details:[...plan.skipped.map(x=>`${x.name}: ${x.reason}`),...details]};
   const nowJobs=[...current,...created],nextRows=classifyChannelRenderFiles(activeScan.result.files,nowJobs,useApp.getState().uploadHistory,channelId,activeScan.result.root);
   setRenderScan({...activeScan,rows:nextRows,summary:summarizeRenderScan(nextRows),importReport:report});
-  notifySuccess('Локальные поколения добавлены',`Запрошено: ${report.requested} • добавлено: ${report.added} • пропущено: ${report.skipped} • уже известно: ${report.alreadyKnown} • ошибок: ${report.errors}. YouTube upload: 0.`)
+  if(!silent)notifySuccess('Локальные поколения добавлены',`Запрошено: ${report.requested} • добавлено: ${report.added} • пропущено: ${report.skipped} • уже известно: ${report.alreadyKnown} • ошибок: ${report.errors}. YouTube upload: 0.`)
  }
  function addScannedRenderCandidates(){
   if(!renderScan||!channel)return;
