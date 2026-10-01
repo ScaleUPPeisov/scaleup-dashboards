@@ -467,11 +467,28 @@ pub fn import_production_material_images(
 }
 
 #[tauri::command]
-pub fn production_materials_summary(
+pub async fn production_materials_summary(
     workspace: String,
     channel_id: String,
 ) -> Result<MaterialsSummary, String> {
-    materials_summary(&workspace, &channel_id)
+    tokio::task::spawn_blocking(move || materials_summary(&workspace, &channel_id))
+        .await
+        .map_err(|e| format!("Materials worker failed: {e}"))?
+}
+
+#[tauri::command]
+pub async fn production_materials_summaries(
+    workspace: String,
+    channel_ids: Vec<String>,
+) -> Result<Vec<MaterialsSummary>, String> {
+    tokio::task::spawn_blocking(move || {
+        channel_ids
+            .into_iter()
+            .filter_map(|channel_id| materials_summary(&workspace, &channel_id).ok())
+            .collect::<Vec<_>>()
+    })
+    .await
+    .map_err(|e| format!("Materials worker failed: {e}"))
 }
 
 #[tauri::command]
