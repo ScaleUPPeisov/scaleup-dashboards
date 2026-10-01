@@ -233,30 +233,87 @@ button>*{min-width:0;max-width:100%}
 
 
 /* ================================================================
-   VYRON 3.2.0 — SIDEBAR / HISTORY / CRASH RECOVERY UX CONTRACT
-   This file remains the LAST imported CSS layer.
+   VYRON 6.0.2 — AUTHORITATIVE SIDEBAR GEOMETRY CONTRACT
+   One grid, one SVG icon family, one footer stack.
    ================================================================ */
-
-/* One sidebar component, one geometry, one active state. */
-.sidebar{display:flex!important;flex-direction:column!important;min-height:0!important;overflow:hidden!important}
-.sidebar>.brand{flex:0 0 auto}
-.sidebarNav{display:flex!important;flex:1 1 auto!important;min-height:0!important;flex-direction:column!important;gap:4px!important;overflow-y:auto!important;overflow-x:hidden!important;padding:6px 8px 10px!important}
-.sidebar nav .sidebarNavItem{
-  position:relative!important;width:100%!important;height:38px!important;min-height:38px!important;max-height:38px!important;
-  display:grid!important;grid-template-columns:24px minmax(0,1fr)!important;align-items:center!important;
-  column-gap:10px!important;padding:0 10px!important;margin:0!important;border-radius:9px!important;
-  border:1px solid transparent!important;background:transparent!important;color:#7f96a6!important;
-  font-weight:570!important;text-align:left!important;transform:none!important;overflow:hidden!important;
+.sidebar{
+  width:228px;min-width:228px;max-width:228px;flex:0 0 228px;
+  height:100vh;min-height:0;display:flex;flex-direction:column;overflow:hidden;
 }
-.sidebar nav .sidebarNavItem::before{content:""!important;position:absolute!important;left:0!important;top:8px!important;bottom:8px!important;width:2px!important;border-radius:3px!important;background:transparent!important;box-shadow:none!important}
-.sidebar nav .sidebarNavItem.active{background:rgba(67,216,255,.075)!important;border-color:rgba(67,216,255,.11)!important;color:#d9f7ff!important;transform:none!important}
-.sidebar nav .sidebarNavItem.active::before{background:var(--cyan)!important;box-shadow:0 0 8px rgba(67,216,255,.22)!important}
-.sidebar nav .sidebarNavItem:not(.active):hover{background:rgba(255,255,255,.025)!important;border-color:transparent!important;color:#a9bfcd!important;transform:none!important}
-.sidebar nav .sidebarNavItem:focus-visible{outline:1px solid rgba(67,216,255,.5)!important;outline-offset:-1px!important}
-.sidebarIconSlot{width:24px!important;height:24px!important;display:grid!important;place-items:center!important;justify-self:center!important;font-size:13px!important;line-height:1!important}
-.sidebarLabel{min-width:0!important;display:block!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important}
-.sideFoot{position:static!important;flex:0 0 auto!important;margin-top:auto!important}
-@media(max-height:760px){.sidebarNav{padding-bottom:6px!important}.sidebar nav .sidebarNavItem{height:34px!important;min-height:34px!important;max-height:34px!important}.sideFoot{margin-top:4px!important}}
+.sidebar>.brand{flex:0 0 auto}
+.sidebarNav{
+  width:100%;display:flex;flex:1 1 auto;min-height:0;flex-direction:column;
+  gap:4px;overflow-y:auto;overflow-x:hidden;padding:6px 8px 10px;
+}
+.sidebar nav .sidebarNavItem{
+  position:relative;width:100%;height:38px;min-height:38px;max-height:38px;min-width:0;
+  display:grid;grid-template-columns:24px minmax(0,1fr) auto;align-items:center;
+  column-gap:10px;padding:0 10px;margin:0;box-sizing:border-box;border-radius:9px;
+  border:1px solid transparent;background:transparent;color:#7f96a6;
+  font-weight:570;text-align:left;transform:none;overflow:hidden;
+}
+.sidebar nav .sidebarNavItem::before{
+  content:"";position:absolute;left:0;top:8px;bottom:8px;width:2px;border-radius:3px;background:transparent;
+}
+.sidebar nav .sidebarNavItem.active{
+  background:rgba(67,216,255,.075);border-color:rgba(67,216,255,.11);color:#d9f7ff;transform:none;
+}
+.sidebar nav .sidebarNavItem.active::before{background:var(--cyan);box-shadow:0 0 8px rgba(67,216,255,.22)}
+.sidebar nav .sidebarNavItem:not(.active):hover{
+  background:rgba(255,255,255,.025);border-color:transparent;color:#a9bfcd;transform:none;
+}
+.sidebar nav .sidebarNavItem:focus-visible{outline:1px solid rgba(67,216,255,.5);outline-offset:-1px}
+.sidebarIconSlot{
+  width:24px;height:24px;min-width:24px;display:grid;place-items:center;justify-self:center;
+  color:currentColor;overflow:visible;
+}
+.sidebarIconSlot svg{
+  display:block;width:18px;height:18px;min-width:18px;max-width:18px;flex:none;overflow:visible;
+}
+.sidebarLabel{
+  width:auto;min-width:0;max-width:none;display:block;text-align:left;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.sidebarCount{justify-self:end}
+.sidebarFooter{
+  width:100%;min-width:0;flex:0 0 auto;margin-top:auto;padding:8px;
+  display:flex;flex-direction:column;gap:8px;box-sizing:border-box;
+  background:linear-gradient(180deg,rgba(5,15,26,0),rgba(5,15,26,.98) 18%);
+}
+.sidebarFooter .ownerProfileCompact,.sidebarFooter .sideFoot{
+  width:100%;min-width:0;min-height:48px;margin:0;box-sizing:border-box;
+  display:grid;align-items:center;gap:10px;padding:8px 10px;border-radius:11px;
+  text-align:left;transform:none;
+}
+.sidebarFooter .ownerProfileCompact{
+  grid-template-columns:32px minmax(0,1fr);
+  border:1px solid rgba(116,170,205,.12);background:rgba(9,24,39,.58);color:#dff2fb;
+}
+.sidebarFooter .ownerProfileAvatar{
+  width:32px;height:32px;min-width:32px;max-width:32px;margin:0;
+  display:grid;place-items:center;overflow:hidden;border-radius:9px;
+}
+.sidebarFooter .ownerProfileAvatar img{width:100%;height:100%;display:block;object-fit:cover}
+.sidebarFooter .ownerProfileCompact>span:last-child{min-width:0;display:grid;align-content:center;gap:2px;text-align:left}
+.sidebarFooter .ownerProfileCompact b{display:block;margin:0;line-height:1.2;font-size:9px}
+.sidebarFooter .ownerProfileCompact small{display:block;margin:0;line-height:1.2;font-size:8px}
+.sidebarFooter .sideFoot{
+  grid-template-columns:24px minmax(0,1fr);
+  border:1px solid rgba(63,224,173,.14);background:rgba(20,42,51,.45);
+}
+.sidebarFooter .sideFoot>i{
+  width:8px;height:8px;margin:0;justify-self:center;align-self:center;border-radius:50%;
+}
+.sidebarFooter .sideFoot>div{min-width:0;display:grid;align-content:center;gap:2px}
+.sidebarFooter .sideFoot b,.sidebarFooter .sideFoot small{margin:0;line-height:1.2}
+@media(max-height:760px){
+  .sidebarNav{padding-bottom:6px}
+  .sidebar nav .sidebarNavItem{height:34px;min-height:34px;max-height:34px}
+  .sidebarFooter{padding-top:6px;padding-bottom:6px}
+}
+@media(max-width:1024px){
+  .sidebar{width:228px;min-width:228px;max-width:228px;flex-basis:228px}
+}
 
 /* Compact release history timeline. */
 .releaseHistoryV320{overflow:hidden}
@@ -303,47 +360,3 @@ button>*{min-width:0;max-width:100%}
 .recoveryDialogV320 footer{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-top:14px}.recoveryDialogV320 footer button{flex:0 1 auto}
 @media(max-width:700px){.recoveryFactsV320{grid-template-columns:repeat(2,minmax(0,1fr))!important}.recoveryDialogV320 footer button{flex:1 1 160px}}
 @media(max-height:760px){.recoveryOverlay{place-items:start center!important;padding:8px!important}.recoveryDialogV320{max-height:calc(100vh - 16px)!important}}
-
-
-/* ================================================================
-   VYRON 3.2.1 — PHYSICAL SIDEBAR REGRESSION / SAFE DESKTOP WIDTH
-   Legacy ".sidebar nav span{width:17px}" must never size the text label.
-   ================================================================ */
-.sidebar{
-  width:228px!important;
-  min-width:228px!important;
-  max-width:228px!important;
-  flex:0 0 228px!important;
-  flex-shrink:0!important;
-}
-.sidebarNav{width:100%!important;box-sizing:border-box!important}
-.sidebar nav .sidebarNavItem{
-  grid-template-columns:24px minmax(0,1fr)!important;
-  width:100%!important;
-  min-width:0!important;
-  box-sizing:border-box!important;
-}
-.sidebar nav .sidebarIconSlot{
-  width:24px!important;
-  min-width:24px!important;
-  max-width:24px!important;
-  text-align:center!important;
-  overflow:visible!important;
-}
-.sidebar nav .sidebarLabel{
-  width:auto!important;
-  min-width:0!important;
-  max-width:none!important;
-  display:block!important;
-  text-align:left!important;
-  white-space:nowrap!important;
-  overflow:visible!important;
-  text-overflow:clip!important;
-  overflow-wrap:normal!important;
-  word-break:normal!important;
-}
-.sidebar>.brand,.sidebar>.sideFoot{width:100%!important;min-width:0!important;box-sizing:border-box!important}
-.sideFoot{overflow:hidden!important}
-@media(max-width:1024px){
-  .sidebar{width:228px!important;min-width:228px!important;max-width:228px!important;flex-basis:228px!important}
-}
