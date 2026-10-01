@@ -10,6 +10,7 @@ import { relaunch } from '@tauri-apps/plugin-process';
 import type {YoutubeExistingVideo, AppState, ChannelAnalytics, Competitor, Diagnostics, InboxScan, LicenseStatus, VideoJob, YoutubeProfile, YoutubeChannelStatistics } from './types';
 import {bindYoutubeQuotaOperationProject,recordYoutubeApiRequest,recordYoutubeCommand,registerYoutubeUploadProject,youtubeGuardedCall,youtubeQuotaProjectIdentity,type YoutubeApiRequestEvent} from './youtubeQuota';
 import {endUploadRuntime,registerUploadRuntime,type UploadProgressFact} from './uploadTelemetry';
+import type {MetadataQueueImportResult,MetadataQueueInput,MetadataQueuePage,MetadataQueueRecord,MetadataQueueSummary} from './metadataQueue';
 
 export type AiMetadata={title:string;description:string;tags:string[]};
 export type YoutubeUploadResult={videoId?:string;channelId?:string;channelTitle?:string;scheduled:boolean;resumed?:boolean;verified?:boolean;verificationError?:string;actual?:{id?:string;channelId?:string;privacyStatus?:string;publishAt?:string|null}};
@@ -139,6 +140,14 @@ export const api={
   ingestTracks:(jobFolder:string,files:string[],minTracks:number)=>invoke<{tracksCount:number;status:string}>('ingest_tracks',{jobFolder,files,minTracks}),
   ingestCover:(jobFolder:string,file:string,minTracks:number)=>invoke<Partial<VideoJob>>('ingest_cover',{jobFolder,file,minTracks}),
   writeJobMetadata:(jobFolder:string,title:string,description:string,tags:string[],publishAt:string|undefined,source:string)=>invoke<void>('write_job_metadata',{jobFolder,title,description,tags,publishAt,source}),
+  metadataQueueImport:(channelId:string,channelName:string,sourceName:string,sourceHash:string,records:MetadataQueueInput[])=>invoke<MetadataQueueImportResult>('metadata_queue_import',{channelId,channelName,sourceName,sourceHash,records}),
+  metadataQueueSummary:(channelId:string,channelName:string)=>invoke<MetadataQueueSummary>('metadata_queue_summary',{channelId,channelName}),
+  metadataQueuePage:(channelId:string,channelName:string,offset=0,limit=100,status?:string)=>invoke<MetadataQueuePage>('metadata_queue_page',{channelId,channelName,offset,limit,status}),
+  metadataQueueReserve:(channelId:string,channelName:string,jobId:string,videoNumber:number,projectFolder?:string)=>invoke<MetadataQueueRecord|null>('metadata_queue_reserve',{channelId,channelName,jobId,videoNumber,projectFolder}),
+  metadataQueueMarkApplying:(channelId:string,jobId:string)=>invoke<MetadataQueueRecord|null>('metadata_queue_mark_applying',{channelId,jobId}),
+  metadataQueueMarkApplied:(channelId:string,jobId:string,youtubeVideoId:string,projectFolder?:string)=>invoke<MetadataQueueRecord|null>('metadata_queue_mark_applied',{channelId,jobId,youtubeVideoId,projectFolder}),
+  metadataQueueMarkError:(channelId:string,jobId:string,error:string,projectFolder?:string)=>invoke<MetadataQueueRecord|null>('metadata_queue_mark_error',{channelId,jobId,error,projectFolder}),
+  metadataQueuePurgePack:(channelId:string,packId:string)=>invoke<MetadataQueueSummary>('metadata_queue_purge_pack',{channelId,packId}),
   enqueueRender:(workspace:string,jobFolder:string)=>invoke<{queueFile:string}>('enqueue_render',{workspace,jobFolder}),
   reveal:(path:string)=>invoke<void>('reveal_path',{path}),
   openEndlume:(path:string)=>invoke<void>('open_endlume',{path}),
