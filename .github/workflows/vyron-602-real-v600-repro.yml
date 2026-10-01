@@ -1,0 +1,82 @@
+name: VYRON 6.0.2 Real V600 Migration Reproduction
+
+on:
+  push:
+    branches:
+      - candidate/vyron-6.0.2-real-migration
+    paths:
+      - '.github/workflows/vyron-602-real-v600-repro.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export-real-v600:
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 0f16fac6f4a50d083dad37a44684c8accbacf4ce
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Create NFD password bytes on macOS
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os,unicodedata
+          p=unicodedata.normalize('NFD','Кирилл-пароль-é-123')
+          assert p != unicodedata.normalize('NFC',p)
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f:
+              f.write('VYRON_FIXTURE_KIND=macos\n')
+              f.write('VYRON_FIXTURE_OUT='+os.environ['RUNNER_TEMP']+'/real-v600-origin.vyron\n')
+              f.write('VYRON_FIXTURE_PASS<<VYRONPASS\n'+p+'\nVYRONPASS\n')
+          print('V600_PASSWORD_FORM=NFD')
+          print('V600_PASSWORD_UTF8_LEN='+str(len(p.encode('utf-8'))))
+          PY
+      - name: Export with exact VYRON 6.0.0 implementation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "0f16fac6f4a50d083dad37a44684c8accbacf4ce"
+          cargo test --manifest-path src-tauri/Cargo.toml migration::tests::cross_platform_fixture_export -- --ignored --exact --nocapture
+          test -s "$VYRON_FIXTURE_OUT"
+          shasum -a 256 "$VYRON_FIXTURE_OUT" > "$RUNNER_TEMP/real-v600-origin.vyron.sha256"
+          echo 'REAL_V600_EXPORTER_COMMIT=0f16fac6f4a50d083dad37a44684c8accbacf4ce'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: real-v600-macos-origin
+          path: |
+            ${{ runner.temp }}/real-v600-origin.vyron
+            ${{ runner.temp }}/real-v600-origin.vyron.sha256
+
+  reproduce-on-current-windows:
+    needs: export-real-v600
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/download-artifact@v4
+        with:
+          name: real-v600-macos-origin
+          path: real-v600
+      - name: Create visually identical NFC password on Windows
+        shell: pwsh
+        run: |
+          @'
+          import os,unicodedata
+          p=unicodedata.normalize('NFC','Кирилл-пароль-é-123')
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f:
+              f.write('VYRON_FIXTURE_KIND=windows\n')
+              f.write('VYRON_FIXTURE_IN='+os.path.abspath('real-v600/real-v600-origin.vyron')+'\n')
+              f.write('VYRON_FIXTURE_PASS<<VYRONPASS\n'+p+'\nVYRONPASS\n')
+          print('WINDOWS_PASSWORD_FORM=NFC')
+          print('WINDOWS_PASSWORD_UTF8_LEN='+str(len(p.encode('utf-8'))))
+          '@ | python -
+      - name: Confirm VYRON 6.0.1 crypto path cannot authenticate old NFD bytes
+        shell: pwsh
+        run: |
+          cargo test --manifest-path src-tauri/Cargo.toml migration::tests::cross_platform_fixture_import_merge_and_reexport -- --ignored --exact --nocapture
+          if($LASTEXITCODE -eq 0){throw 'EXPECTED_REAL_FORMAT_REPRO_TO_FAIL_BUT_IT_PASSED'}
+          Write-Host 'REAL_V600_TO_V601_UNICODE_NORMALIZATION_FAILURE=REPRODUCED'
