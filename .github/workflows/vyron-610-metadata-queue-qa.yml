@@ -1,0 +1,72 @@
+name: VYRON 6.1.0 Metadata Queue QA
+
+on:
+  push:
+    branches:
+      - feature/vyron-6.1.0-metadata-queue-macos-smoothness
+    paths:
+      - '.github/workflows/vyron-610-metadata-queue-qa.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  VERSION: '6.1.0'
+  BASELINE_SHA: 'dc923c35835e147e901c2a18d0f48cd5ca59cccc'
+
+jobs:
+  qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/vyron-6.1.0-metadata-queue-macos-smoothness
+          fetch-depth: 0
+
+      - name: Verify source ancestry and version
+        run: |
+          set -Eeuo pipefail
+          git merge-base --is-ancestor "$BASELINE_SHA" HEAD
+          node - <<'NODE'
+          const p=require('./package.json'),l=require('./package-lock.json'),t=require('./src-tauri/tauri.conf.json');
+          for(const v of [p.version,l.version,l.packages[''].version,t.version]) if(v!=='6.1.0') throw new Error('VERSION_MISMATCH '+v);
+          if(t.identifier!=='studio.channelflow.desktop') throw new Error('BUNDLE_ID_CHANGED');
+          NODE
+          grep -F 'version = "6.1.0"' src-tauri/Cargo.toml
+          grep -A1 -F 'name = "channelflow"' src-tauri/Cargo.lock | grep -F 'version = "6.1.0"'
+          git diff "$BASELINE_SHA"...HEAD -- src-tauri/src/oauth_vault.rs src-tauri/src/security.rs src-tauri/src/youtube.rs || true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install Tauri Linux dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: TypeScript production build
+        run: npm run build
+
+      - name: Full frontend regressions
+        run: npm test
+
+      - name: Metadata Queue Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml metadata_queue --lib -- --nocapture
+
+      - name: Migration regressions
+        run: cargo test --manifest-path src-tauri/Cargo.toml migration --lib -- --nocapture
+
+      - name: Native compile gate
+        run: cargo check --manifest-path src-tauri/Cargo.toml
