@@ -109,6 +109,8 @@ export const api={
   license:()=>invoke<LicenseStatus>('license_status'),
   activate:(key:string)=>invoke<LicenseStatus>('activate_license',{key}),
   diagnostics:(workspace:string)=>invoke<Diagnostics>('diagnostics',{workspace}),
+  performanceProbeEnabled:()=>invoke<boolean>('performance_probe_enabled'),
+  performanceProbeReport:(payload:unknown)=>invoke<string>('performance_probe_report',{payload}),
   defaultWorkspace:()=>invoke<string>('default_workspace'),
   chooseWorkspace:async()=>{const r=await open({directory:true,multiple:false,title:'Папка VYRON YT PEISOV'});return typeof r==='string'?r:null},
   chooseOwnerProfileAvatar:async()=>{const r=await open({directory:false,multiple:false,title:'Фото профиля VYRON',filters:[{name:'Images',extensions:['png','jpg','jpeg','webp']}]});return typeof r==='string'?r:null},
