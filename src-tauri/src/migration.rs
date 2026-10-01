@@ -1140,6 +1140,7 @@ mod tests {
             google_config: google,
             integration_secrets: integration,
             browser_state: browser,
+            metadata_queue: Value::Null,
         }
     }
 
@@ -1407,7 +1408,63 @@ mod tests {
         let google=json!({"project_id":format!("fixture-project-{kind}"),"client_id":format!("fixture-client-{kind}")});
         let integration=json!({"youtubeApiKey":format!("fixture-youtube-api-{kind}")});
         let browser=json!({"quotaLedger":{"fixture":kind},"operationLedger":[]});
-        let checksum=payload_hash(&state,&oauth,&youtube,&google,&integration,&browser).unwrap();
+        let queue_channel=if kind=="macos"{"mac-a"}else{"win-d"};
+        let queue_pack=format!("fixture-pack-{kind}");
+        let queue_hash=format!("fixture-pack-hash-{kind}");
+        let record_hash=format!("fixture-record-hash-{kind}");
+        let metadata_queue=json!({
+            "schemaVersion":1,
+            "channels":[{
+                "index":{
+                    "schemaVersion":1,
+                    "channelId":queue_channel,
+                    "channelName":format!("Fixture Queue {kind}"),
+                    "packs":[{
+                        "packId":queue_pack,
+                        "packHash":queue_hash,
+                        "sourceHash":format!("fixture-source-hash-{kind}"),
+                        "createdAt":"2026-09-27T00:00:00Z",
+                        "total":1,
+                        "complete":false,
+                        "purged":false
+                    }]
+                },
+                "packs":[{
+                    "manifest":{
+                        "schemaVersion":1,
+                        "packId":queue_pack,
+                        "channelId":queue_channel,
+                        "channelName":format!("Fixture Queue {kind}"),
+                        "sourceName":format!("fixture-{kind}.docx"),
+                        "sourceHash":format!("fixture-source-hash-{kind}"),
+                        "packHash":queue_hash,
+                        "createdAt":"2026-09-27T00:00:00Z",
+                        "total":1,
+                        "chunkSize":250,
+                        "chunks":1,
+                        "counts":{"available":1,"reserved":0,"applying":0,"applied":0,"error":0},
+                        "complete":false,
+                        "purged":false
+                    },
+                    "records":[{
+                        "id":format!("fixture-record-{kind}"),
+                        "channelId":queue_channel,
+                        "packId":queue_pack,
+                        "sequence":1,
+                        "sourceNumber":1,
+                        "title":format!("Fixture Queue Title {kind}"),
+                        "description":"Fixture queue description",
+                        "tags":["fixture","queue"],
+                        "status":"AVAILABLE",
+                        "createdAt":"2026-09-27T00:00:00Z",
+                        "sourceHash":format!("fixture-source-hash-{kind}"),
+                        "recordHash":record_hash
+                    }],
+                    "ledger":null
+                }]
+            }]
+        });
+        let checksum=payload_hash_with_queue(&state,&oauth,&youtube,&google,&integration,&browser,&metadata_queue).unwrap();
         PortablePayload{
             schema_version:BUNDLE_SCHEMA,
             app_version:"3.3.0".into(),
@@ -1420,6 +1477,7 @@ mod tests {
             google_config:google,
             integration_secrets:integration,
             browser_state:browser,
+            metadata_queue,
             payload_sha256:checksum,
         }
     }
@@ -1482,9 +1540,16 @@ mod tests {
         assert!(repeated.get("projectLifecycle").and_then(Value::as_object).map(|x|x.len()).unwrap_or(0)>=2);
 
         if let Some(out)=output{
-            let next=fixture_payload(&local_kind,repeated);
+            let mut next=fixture_payload(&local_kind,repeated);
+            // The encrypted cross-platform fixture must carry the imported Metadata Queue
+            // intact through a second OS. Disk merge semantics are separately covered by
+            // metadata_queue status/hash/idempotency tests.
+            next.metadata_queue=payload.metadata_queue.clone();
+            next.payload_sha256=payload_hash_with_queue(&next.state,&next.oauth_vault,&next.youtube_metadata,&next.google_config,&next.integration_secrets,&next.browser_state,&next.metadata_queue).unwrap();
             let encoded=encrypt_payload(&next,&pass).unwrap();
             write_atomic(Path::new(&out),&encoded).unwrap();
+            let verify=decrypt_payload(&fs::read(&out).unwrap(),&pass).unwrap();
+            assert_eq!(verify.metadata_queue,payload.metadata_queue);
         }
     }
 
