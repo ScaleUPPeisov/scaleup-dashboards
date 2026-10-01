@@ -203,7 +203,7 @@ export function MaterialsManager(){
   async function reindexMusic(channelId:string){
     if(!workspace)return;
     setBusy('music:'+channelId);
-    try{await productionManagerApi.indexMusic(workspace,channelId);await refresh()}
+    try{await productionManagerApi.indexMusic(workspace,channelId);await refreshChannel(channelId)}
     catch(e){toast('Не удалось переиндексировать музыку: '+String(e))}
     finally{setBusy('')}
   }
