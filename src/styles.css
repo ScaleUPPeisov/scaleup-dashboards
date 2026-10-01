@@ -250,3 +250,21 @@ button.secondary{background:rgba(255,255,255,.035);border-color:#294156;color:#9
 .platform-macos .vyronNotice,.platform-macos .recoveryOverlay,.platform-macos .uploadCenterBackdrop,.platform-macos .updateExperienceBackdrop{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
 .platform-macos .recoveryOverlay,.platform-macos .uploadCenterBackdrop,.platform-macos .updateExperienceBackdrop{background:rgba(1,7,12,.91)}
 .platform-macos .metadataQueueRows{content-visibility:auto;contain:strict}
+.platform-macos .pageWrap .panel,
+.platform-macos .pageWrap .settingsCard,
+.platform-macos .pageWrap .publishCard,
+.platform-macos .pageWrap .productionChannelRow,
+.platform-macos .pageWrap .channelContextBar,
+.platform-macos .pageWrap .analyticsBreakdown,
+.platform-macos .pageWrap .metadataPanel,
+.platform-macos .pageWrap .batchControl{
+  contain:layout paint style;
+}
+.platform-macos .pageWrap .panel,
+.platform-macos .pageWrap .settingsCard,
+.platform-macos .pageWrap .publishCard,
+.platform-macos .pageWrap .productionChannelRow{
+  content-visibility:auto;
+  contain-intrinsic-size:auto 180px;
+}
+
