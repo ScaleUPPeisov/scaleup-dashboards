@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - candidate/vyron-6.0.2-real-migration
-    paths:
-      - '.github/workflows/vyron-602-real-migration-candidate.yml'
   workflow_dispatch:
 
 permissions:
