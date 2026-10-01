@@ -10,7 +10,7 @@ import { relaunch } from '@tauri-apps/plugin-process';
 import type {YoutubeExistingVideo, AppState, ChannelAnalytics, Competitor, Diagnostics, InboxScan, LicenseStatus, VideoJob, YoutubeProfile, YoutubeChannelStatistics } from './types';
 import {bindYoutubeQuotaOperationProject,recordYoutubeApiRequest,recordYoutubeCommand,registerYoutubeUploadProject,youtubeGuardedCall,youtubeQuotaProjectIdentity,type YoutubeApiRequestEvent} from './youtubeQuota';
 import {endUploadRuntime,registerUploadRuntime,type UploadProgressFact} from './uploadTelemetry';
-import type {MetadataQueueImportResult,MetadataQueueInput,MetadataQueuePage,MetadataQueueRecord,MetadataQueueSummary} from './metadataQueue';
+import type {MetadataQueueImportResult,MetadataQueueInput,MetadataQueuePage,MetadataQueueRecord,MetadataQueueReservationRequest,MetadataQueueReservationResult,MetadataQueueSummary} from './metadataQueue';
 
 export type AiMetadata={title:string;description:string;tags:string[]};
 export type YoutubeUploadResult={videoId?:string;channelId?:string;channelTitle?:string;scheduled:boolean;resumed?:boolean;verified?:boolean;verificationError?:string;actual?:{id?:string;channelId?:string;privacyStatus?:string;publishAt?:string|null}};
@@ -146,6 +146,7 @@ export const api={
   metadataQueueSummary:(channelId:string,channelName:string)=>invoke<MetadataQueueSummary>('metadata_queue_summary',{channelId,channelName}),
   metadataQueuePage:(channelId:string,channelName:string,offset=0,limit=100,status?:string)=>invoke<MetadataQueuePage>('metadata_queue_page',{channelId,channelName,offset,limit,status}),
   metadataQueueReserve:(channelId:string,channelName:string,jobId:string,videoNumber:number,projectFolder?:string)=>invoke<MetadataQueueRecord|null>('metadata_queue_reserve',{channelId,channelName,jobId,videoNumber,projectFolder}),
+  metadataQueueReserveBatch:(channelId:string,channelName:string,requests:MetadataQueueReservationRequest[])=>invoke<MetadataQueueReservationResult[]>('metadata_queue_reserve_batch',{channelId,channelName,requests}),
   metadataQueueMarkApplying:(channelId:string,jobId:string)=>invoke<MetadataQueueRecord|null>('metadata_queue_mark_applying',{channelId,jobId}),
   metadataQueueMarkApplied:(channelId:string,jobId:string,youtubeVideoId:string,projectFolder?:string)=>invoke<MetadataQueueRecord|null>('metadata_queue_mark_applied',{channelId,jobId,youtubeVideoId,projectFolder}),
   metadataQueueMarkError:(channelId:string,jobId:string,error:string,projectFolder?:string)=>invoke<MetadataQueueRecord|null>('metadata_queue_mark_error',{channelId,jobId,error,projectFolder}),
