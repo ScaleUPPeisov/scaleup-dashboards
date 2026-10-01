@@ -69,16 +69,29 @@ async function notifyUpdateAvailable(version:string){
   }catch{}
 }
 
-const nav:{id:string;page:Page;icon:string;label:string;youtubeTab?:'history'}[]=[
-  {id:'dashboard',page:'dashboard',icon:'⌂',label:'Главная'},
-  {id:'channels',page:'channels',icon:'▣',label:'Каналы'},
-  {id:'production',page:'production',icon:'◆',label:'Производство'},
-  {id:'inventory',page:'inventory',icon:'▤',label:'Запас видео'},
-  {id:'youtube',page:'youtube',icon:'▶',label:'YouTube'},
-  {id:'analytics',page:'analytics',icon:'⌁',label:'Аналитика'},
-  {id:'competitors',page:'competitors',icon:'◎',label:'Конкуренты'},
-  {id:'settings',page:'settings',icon:'⚙',label:'Настройки'}
+type SidebarIconName='home'|'channels'|'production'|'inventory'|'youtube'|'analytics'|'competitors'|'settings';
+const nav:{id:string;page:Page;icon:SidebarIconName;label:string;youtubeTab?:'history'}[]=[
+  {id:'dashboard',page:'dashboard',icon:'home',label:'Главная'},
+  {id:'channels',page:'channels',icon:'channels',label:'Каналы'},
+  {id:'production',page:'production',icon:'production',label:'Производство'},
+  {id:'inventory',page:'inventory',icon:'inventory',label:'Запас видео'},
+  {id:'youtube',page:'youtube',icon:'youtube',label:'YouTube'},
+  {id:'analytics',page:'analytics',icon:'analytics',label:'Аналитика'},
+  {id:'competitors',page:'competitors',icon:'competitors',label:'Конкуренты'},
+  {id:'settings',page:'settings',icon:'settings',label:'Настройки'}
 ];
+
+function SidebarIcon({name}:{name:SidebarIconName}){
+  const common={viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:1.8,strokeLinecap:'round' as const,strokeLinejoin:'round' as const,'aria-hidden':true};
+  if(name==='home')return <svg {...common}><path d="M3.5 10.5 12 3.7l8.5 6.8"/><path d="M5.8 9.4v10.1h12.4V9.4"/><path d="M9.5 19.5v-6h5v6"/></svg>;
+  if(name==='channels')return <svg {...common}><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/></svg>;
+  if(name==='production')return <svg {...common}><path d="m12 3.5 7.5 4.3L12 12 4.5 7.8 12 3.5Z"/><path d="m4.5 12 7.5 4.3 7.5-4.3"/><path d="m4.5 16.2 7.5 4.3 7.5-4.3"/></svg>;
+  if(name==='inventory')return <svg {...common}><rect x="4" y="4" width="16" height="5" rx="1.5"/><rect x="4" y="10.5" width="16" height="4" rx="1.5"/><rect x="4" y="16" width="16" height="4" rx="1.5"/></svg>;
+  if(name==='youtube')return <svg {...common}><rect x="3" y="5.5" width="18" height="13" rx="4"/><path d="m10 9 5 3-5 3V9Z"/></svg>;
+  if(name==='analytics')return <svg {...common}><path d="M4 19.5V5"/><path d="M4 19.5h16"/><path d="m7 15 4-4 3 2 5-6"/></svg>;
+  if(name==='competitors')return <svg {...common}><circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3"/></svg>;
+  return <svg {...common}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.86 2.86-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.1a1.7 1.7 0 0 0-1.4-1.65 1.7 1.7 0 0 0-1.88.34l-.06.06-2.86-2.86.06-.06A1.7 1.7 0 0 0 3.8 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H2v-4h.1A1.7 1.7 0 0 0 3.75 8.2a1.7 1.7 0 0 0-.34-1.88l-.06-.06L6.2 3.4l.06.06A1.7 1.7 0 0 0 8.14 3.8a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V2h4v.1a1.7 1.7 0 0 0 1.4 1.65 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.86 2.86-.06.06A1.7 1.7 0 0 0 19.4 8.1a1.7 1.7 0 0 0 .6 1 1.7 1.7 0 0 0 1.1.4h.1v4h-.1a1.7 1.7 0 0 0-1.7 1.5Z"/></svg>;
+}
 const statusLabel:Record<JobStatus,string>={NEED_IMAGE:'Нужна картинка',WAITING_MUSIC:'Ждёт музыку',READY_RENDER:'Готов к рендеру',RENDERING:'Рендерится',READY_UPLOAD:'Готов к YouTube',UPLOADING:'Загружается',SCHEDULED:'Запланирован',ERROR:'Ошибка'};
 
 export function App(){
@@ -131,7 +144,7 @@ export function App(){
 function useRuntimeVersion(){const [version,setVersion]=useState('');useEffect(()=>{void api.appVersion().then(setVersion).catch(()=>{})},[]);return version}
 function Boot(){return <div className="boot"><div className="logoMark"><span>▶</span></div><b>VYRON YT PEISOV</b><small>AUTONOMOUS CONTENT OS</small><i/></div>}
 function Activation({onActivated}:{onActivated:(x:LicenseStatus)=>void}){const version=useRuntimeVersion();const [key,setKey]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState('');return <div className="activation"><div className="activationCard"><div className="brand big"><div className="brandMark">▶</div><div><b>VYRON YT PEISOV</b><small>CONTENT OS</small></div></div><h1>Активация VYRON YT PEISOV</h1><p>Используется совместимая лицензия владельца ENDLUME Studio.</p><input autoFocus value={key} placeholder="Ключ ENDLUME / VYRON YT PEISOV" onChange={e=>setKey(e.target.value)} onKeyDown={e=>e.key==='Enter'&&document.getElementById('activate')?.click()}/>{error&&<div className="errorBox">{error}</div>}<button id="activate" className="primary full" disabled={busy||!key.trim()} onClick={async()=>{setBusy(true);setError('');try{onActivated(await api.activate(key))}catch(e){setError(String(e))}finally{setBusy(false)}}}>{busy?'ПРОВЕРЯЮ…':'АКТИВИРОВАТЬ →'}</button><small>VYRON YT PEISOV {version||'…'} • macOS Apple Silicon / Windows x64</small></div></div>}
-function Sidebar({page,setPage}:{page:Page;setPage:(p:Page)=>void}){const auto=useApp(s=>s.settings.autopilotEnabled),channels=useApp(s=>s.channels),inventoryReady=useLiveInventory(s=>inventoryTotals(s.snapshots,channels).ready);const activePage:Page=page==='autopilot'?'dashboard':page==='accounts'?'settings':page==='metadata'||page==='existing'||page==='publisher'?'youtube':page==='content'?'production':page;return <aside className="sidebar"><div className="brand"><SafeArtwork className="sidebarBrandArtwork" src={VYRON_5_ARTWORK} alt="" fallback="V"/><div><b>VYRON YT PEISOV</b><small>AUTONOMOUS OS</small></div></div><nav className="sidebarNav">{nav.map(n=>{const active=activePage===n.page&&!n.youtubeTab;const open=()=>{if(n.youtubeTab){try{localStorage.setItem('vyron:youtube-open-tab:v1',n.youtubeTab)}catch{}setPage('youtube');window.setTimeout(()=>window.dispatchEvent(new CustomEvent('vyron:youtube-history',{detail:{global:true}})),0);return}setPage(n.page)};return <button key={n.id} className={'sidebarNavItem'+(active?' active':'')} aria-current={active?'page':undefined} onClick={open}><span className="sidebarIconSlot" aria-hidden="true">{n.icon}</span><span className="sidebarLabel">{n.label}</span>{n.page==='inventory'&&<span className="sidebarCount">{inventoryReady}</span>}</button>})}</nav><div className="sidebarFooter"><OwnerProfile/><div className="sideFoot"><i className={auto?'autoOn':''}/><div><b>{auto?'AUTOPILOT ON':'LOCAL CORE'}</b><small>{auto?'очередь работает':'состояние сохраняется'}</small></div></div></div></aside>}
+function Sidebar({page,setPage}:{page:Page;setPage:(p:Page)=>void}){const auto=useApp(s=>s.settings.autopilotEnabled),channels=useApp(s=>s.channels),inventoryReady=useLiveInventory(s=>inventoryTotals(s.snapshots,channels).ready);const activePage:Page=page==='autopilot'?'dashboard':page==='accounts'?'settings':page==='metadata'||page==='existing'||page==='publisher'?'youtube':page==='content'?'production':page;return <aside className="sidebar"><div className="brand"><SafeArtwork className="sidebarBrandArtwork" src={VYRON_5_ARTWORK} alt="" fallback="V"/><div><b>VYRON YT PEISOV</b><small>AUTONOMOUS OS</small></div></div><nav className="sidebarNav">{nav.map(n=>{const active=activePage===n.page&&!n.youtubeTab;const open=()=>{if(n.youtubeTab){try{localStorage.setItem('vyron:youtube-open-tab:v1',n.youtubeTab)}catch{}setPage('youtube');window.setTimeout(()=>window.dispatchEvent(new CustomEvent('vyron:youtube-history',{detail:{global:true}})),0);return}setPage(n.page)};return <button key={n.id} className={'sidebarNavItem'+(active?' active':'')} aria-current={active?'page':undefined} onClick={open}><span className="sidebarIconSlot"><SidebarIcon name={n.icon}/></span><span className="sidebarLabel">{n.label}</span>{n.page==='inventory'&&<span className="sidebarCount">{inventoryReady}</span>}</button>})}</nav><div className="sidebarFooter"><OwnerProfile/><div className="sideFoot"><i className={auto?'autoOn':''}/><div><b>{auto?'AUTOPILOT ON':'LOCAL CORE'}</b><small>{auto?'очередь работает':'состояние сохраняется'}</small></div></div></div></aside>}
 function Topbar(){
  const version=useRuntimeVersion();const channels=useApp(s=>s.channels),jobs=useApp(s=>s.jobs),patchJob=useApp(s=>s.patchJob),auto=useApp(s=>s.settings.autopilotEnabled);
  const [quota,setQuota]=useState(()=>youtubeQuotaUsage()),[clock,setClock]=useState(()=>youtubeQuotaClockSnapshot()),[globalUploads,setGlobalUploads]=useState(()=>globalDailyUploadStatus()),[history,setHistory]=useState<ErrorHistoryItem[]>(()=>readErrorHistory()),[errorsOpen,setErrorsOpen]=useState(false),[connectedCount,setConnectedCount]=useState(0);
