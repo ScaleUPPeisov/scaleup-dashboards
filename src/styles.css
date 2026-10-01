@@ -235,3 +235,23 @@ button.secondary{background:rgba(255,255,255,.035);border-color:#294156;color:#9
 
 /* VYRON 6.0 zero-jank compositor overrides */
 .fpsDetailed{display:grid;gap:2px;min-width:132px;line-height:1.35}.fpsDetailed b{font-size:9px}.fpsDetailed span{display:block;font-size:7px;opacity:.78}.pageWrap{will-change:auto}.sidebar,.topbar{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}.bgGlow{filter:none!important;will-change:auto!important}
+
+
+/* VYRON 6.0.1 hotfix: keep owner/local-core footer anchored and scale-safe. */
+.sidebar .sidebarNav{flex:0 1 auto;min-height:0}
+.sidebar .sidebarFooter{
+  margin-top:auto;
+  width:100%;
+  min-width:0;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  padding-top:14px;
+}
+.sidebar .sidebarFooter .sideFoot{
+  margin-top:0;
+  width:100%;
+}
+.sidebar .sidebarFooter > *{
+  min-width:0;
+}
