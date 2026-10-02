@@ -143,38 +143,28 @@ export function App(){
   if(!license.valid)return <Activation onActivated={setLicense}/>;
   return <div className="appShell"><LiveInventoryBridge/><ChannelRunwayScheduler/><ProductionStatusBridge/><ChannelStatisticsScheduler/><OwnerInventoryScheduler/><UploadProcessingMonitor/><RecoveryGate/><Sidebar/><main className="main"><Topbar/><PageRouter license={license}/></main><GlobalTaskIndicator/><GlobalUploadIndicator/><UploadCenterGlobal/><GlobalTaskCenter/><CommandPalette/><MetadataQueueAssignmentBridge/><M1PerformanceProbe/>{settings.fpsMonitor&&<FpsMonitor/>}<UpdateExperience/><MajorUpdateCelebration/><NotificationCenter/><div className="bgGlow a"/><div className="bgGlow b"/></div>
 }
-const CachedDashboardRoute=React.memo(({mode}:{mode:'dashboard'|'autopilot'})=><DashboardOS pageOverride={mode}/>);
-const CachedChannelsRoute=React.memo(()=> <ChannelsOS/>);
-const CachedProductionRoute=React.memo(()=> <ProductionOS/>);
 const CachedYouTubeRoute=React.memo(({routeTab,active}:{routeTab?:'publish'|'metadata'|'uploaded';active:boolean})=><YouTubeCenter routeTab={routeTab} active={active}/>);
-const CachedAnalyticsRoute=React.memo(()=> <AnalyticsPage/>);
-const CachedSettingsRoute=React.memo(({license}:{license:LicenseStatus})=><SettingsOS license={license}/>);
 
 function PageRouter({license}:{license:LicenseStatus}){
-  const page=useApp(s=>s.page),setPage=useApp(s=>s.setPage),mounted=useRef(new Set<string>());
-  const canonical=page==='autopilot'?'dashboard'
-    :page==='metadata'||page==='existing'||page==='publisher'?'youtube'
-    :page==='content'?'production'
-    :page==='accounts'?'settings'
-    :page;
-  const dashboardMode:'dashboard'|'autopilot'=page==='autopilot'?'autopilot':'dashboard';
+  const page=useApp(s=>s.page),setPage=useApp(s=>s.setPage),youtubeMounted=useRef(false);
   const youtubeRouteTab=page==='metadata'?'metadata':page==='existing'?'uploaded':page==='publisher'?'publish':undefined;
-  const coreRoute=canonical==='dashboard'||canonical==='channels'||canonical==='production'||canonical==='youtube'||canonical==='analytics'||canonical==='settings';
-  if(coreRoute)mounted.current.add(canonical);
+  const canonical=page==='autopilot'?'dashboard':page==='metadata'||page==='existing'||page==='publisher'?'youtube':page;
   const youtubeActive=canonical==='youtube';
+  if(youtubeActive)youtubeMounted.current=true;
   useEffect(()=>{if(youtubeActive)window.dispatchEvent(new Event('vyron:youtube-route-active'))},[youtubeActive]);
 
-  const layer=(id:string,node:React.ReactNode)=>mounted.current.has(id)?<div className={'routeLayer '+(canonical===id?'active':'inactive')} data-route={id} aria-hidden={canonical!==id}><UiErrorBoundary scope={id} onHome={()=>setPage('dashboard')}>{node}</UiErrorBoundary></div>:null;
-  const transient=canonical==='inventory'?<LiveContentInventory/>:canonical==='competitors'?<CompetitorsPage/>:null;
+  const transient=canonical==='dashboard'?<><DashboardUploadSummary/><DashboardOS/></>
+    :canonical==='channels'?<ChannelsOS/>
+    :canonical==='production'||canonical==='content'?<ProductionOS/>
+    :canonical==='inventory'?<LiveContentInventory/>
+    :canonical==='competitors'?<CompetitorsPage/>
+    :canonical==='analytics'?<AnalyticsPage/>
+    :canonical==='accounts'||canonical==='settings'?<SettingsOS license={license}/>
+    :null;
 
-  return <div className="pageWrap layeredRoutes">
-    {layer('dashboard',<><DashboardUploadSummary/><CachedDashboardRoute mode={dashboardMode}/></>)}
-    {layer('channels',<CachedChannelsRoute/>)}
-    {layer('production',<CachedProductionRoute/>)}
-    {layer('youtube',<CachedYouTubeRoute routeTab={youtubeRouteTab} active={youtubeActive}/>)}
-    {layer('analytics',<CachedAnalyticsRoute/>)}
-    {layer('settings',<CachedSettingsRoute license={license}/>)}
-    {!coreRoute&&<div className="routeLayer active transient" data-route={String(canonical)}><UiErrorBoundary scope={String(page)} onHome={()=>setPage('dashboard')}>{transient}</UiErrorBoundary></div>}
+  return <div className="pageWrap">
+    {youtubeMounted.current&&<div className="routeKeepAlive" hidden={!youtubeActive} aria-hidden={!youtubeActive}><UiErrorBoundary scope="youtube" onHome={()=>setPage('dashboard')}><CachedYouTubeRoute routeTab={youtubeRouteTab} active={youtubeActive}/></UiErrorBoundary></div>}
+    {!youtubeActive&&<UiErrorBoundary scope={String(page)} onHome={()=>setPage('dashboard')}>{transient}</UiErrorBoundary>}
   </div>
 }
 
