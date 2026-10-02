@@ -11,6 +11,7 @@ import {appendStatisticsSnapshot,normalizeStatisticsHistory} from './youtubeStat
 import {resolvedJobStatus} from './activeErrors';
 import {performanceFixtureCounts,stripPerformanceFixtures} from './performanceFixtures';
 import {restorePublishLedgerFromUploadHistory} from './youtubePublishSafety';
+import {traceRouteSetPageRequested,traceRouteStoreUpdated} from './m1RouteLifecycleTrace';
 
 export const DEFAULT_SETTINGS:Settings={
   workspace:'',renderRootPath:'',endlumePath:'',youtubeApiKey:'',autoCheckUpdates:true,reduceMotion:false,fpsMonitor:false,interfaceDensity:'compact',
@@ -133,7 +134,7 @@ function remapStatisticsHistory(history:ChannelStatisticsHistory,aliases:Map<str
 export const useApp=create<Store>((set,get)=>({
   ...EMPTY_STATE,page:'dashboard',booted:false,
   hydrate:s=>{const repair=stripPerformanceFixtures(s);s=repair.state;const dedup=dedupeHydratedChannels((s.channels||[]).filter(Boolean)),remap=(id:string)=>dedup.aliases.get(id)||id,jobs=(s.jobs||[]).filter(Boolean).map(j=>normalizeJob({...j,channelId:remap(j.channelId)})),activityJournal=normalizeActivityJournal((s as any).activityJournal).map(e=>e.channelId&&dedup.aliases.has(e.channelId)?{...e,channelId:remap(e.channelId)}:e),rawHistory:Array<UploadHistoryRecord>=Array.isArray((s as any).uploadHistory)?(s as any).uploadHistory.map((x:UploadHistoryRecord)=>dedup.aliases.has(x.channelId)?{...x,channelId:remap(x.channelId)}:x):[],uploadHistory=migrateUploadHistoryFingerprintProvenance(rawHistory,activityJournal,jobs),provenanceChanged=uploadHistory.some((x,i)=>x.fingerprintProofSource!==rawHistory[i]?.fingerprintProofSource||x.proofSchemaVersion!==rawHistory[i]?.proofSchemaVersion),statisticsHistory=remapStatisticsHistory(normalizeStatisticsHistory((s as any).statisticsHistory),dedup.aliases),competitors=(s.competitors||[]).map(x=>dedup.aliases.has(x.channelId)?{...x,channelId:remap(x.channelId)}:x);set({...EMPTY_STATE,...s,version:10,channels:dedup.channels,jobs,competitors,settings:{...DEFAULT_SETTINGS,...s.settings,youtubeIntelligenceAutoRefresh:false},logs:s.logs||[],uploadHistory,activityJournal,statisticsHistory,fingerprintCache:(s as any).fingerprintCache||{},projectLifecycle:(s as any).projectLifecycle||{},booted:true});restorePublishLedgerFromUploadHistory(uploadHistory);if(provenanceChanged||dedup.changed||repair.changed)scheduleSave()},
-  setPage:page=>set({page}),
+  setPage:page=>{traceRouteSetPageRequested(page);set({page});traceRouteStoreUpdated(page)},
   persist:persistStoreState,
   addChannel:p=>{
     const id=crypto.randomUUID();const name=(p.name||'Новый канал').trim();const defaultTracks=get().settings.tracksPerVideo||10;

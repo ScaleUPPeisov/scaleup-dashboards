@@ -1,4 +1,4 @@
-import React,{useEffect,useRef,useState} from 'react';
+import React,{useEffect,useLayoutEffect,useRef,useState} from 'react';
 import {PublisherOS} from './PublisherOS';
 import {ExistingVideos} from './ExistingVideos';
 import {MetadataTabs} from './MetadataTabs';
@@ -14,6 +14,7 @@ import {loadActivePublishChannel,subscribeActivePublishChannel} from './publishW
 import {UiErrorBoundary} from './UiErrorBoundary';
 import {useApp} from './store';
 import {beginYoutubeRouteDiagnostics,recordYoutubeRouteEvent} from './youtubeRouteDiagnostics';
+import {traceRouteLayoutEffect,traceYoutubeFunctionEntered} from './m1RouteLifecycleTrace';
 
 type Tab='publish'|'uploaded'|'metadata'|'schedule'|'calendar'|'command'|'runway'|'data'|'statistics'|'accounts'|'history'|'queue';
 const OPEN_TAB_KEY='vyron:youtube-open-tab:v1';
@@ -24,9 +25,11 @@ const CachedYouTubeChannelBar=React.memo(YouTubeChannelBar);
 function normalizeTab(tab:Tab):Exclude<Tab,'calendar'|'data'|'queue'>{if(tab==='calendar')return'schedule';if(tab==='data')return'statistics';if(tab==='queue')return'publish';return tab}
 function consumeRequestedTab(initial:Tab){try{const raw=localStorage.getItem(OPEN_TAB_KEY) as Tab|null;if(raw){localStorage.removeItem(OPEN_TAB_KEY);requestedGlobalHistory=raw==='history';return normalizeTab(raw)}}catch{}requestedGlobalHistory=false;return normalizeTab(initial)}
 export function YouTubeCenter({initialTab='publish',routeTab,active=true}:{initialTab?:Tab;routeTab?:'publish'|'metadata'|'uploaded';active?:boolean}){
+ traceYoutubeFunctionEntered();
  const setPage=useApp(s=>s.setPage),routeActiveRef=useRef(active),routeTabRef=useRef<typeof routeTab>(undefined),diagnosticStartedRef=useRef(false);routeActiveRef.current=active;if(active&&!diagnosticStartedRef.current){diagnosticStartedRef.current=true;beginYoutubeRouteDiagnostics()}
  const [tab,setTab]=useState(()=>normalizeTab(routeTab||consumeRequestedTab(initialTab))),[activeChannel,setActiveChannel]=useState(()=>resolveYoutubeActiveChannel(useApp.getState().channels||[],loadActivePublishChannel())),[historyGlobal,setHistoryGlobal]=useState(()=>requestedGlobalHistory),[quotaOpen,setQuotaOpen]=useState(false);
  const activeChannelRef=useRef(activeChannel);activeChannelRef.current=activeChannel;
+ useLayoutEffect(()=>{if(active)traceRouteLayoutEffect('youtube','youtube-root')},[active]);
  if(routeTabRef.current!==routeTab){routeTabRef.current=routeTab;if(routeTab&&tab!==routeTab)setTab(routeTab)}
  useEffect(()=>{try{localStorage.setItem(OPEN_TAB_KEY,tab)}catch{}},[tab]);
  useEffect(()=>{if(!active)return;return subscribeActivePublishChannel(id=>{const next=resolveYoutubeActiveChannel(useApp.getState().channels||[],id);if(next===activeChannelRef.current)return;activeChannelRef.current=next;recordYoutubeRouteEvent('YouTubeCenter','state-write:activeChannel');setActiveChannel(next)})},[active]);

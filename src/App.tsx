@@ -1,4 +1,4 @@
-import React,{useEffect,useLayoutEffect,useMemo,useRef,useState} from 'react';
+import React,{useEffect,useInsertionEffect,useLayoutEffect,useMemo,useRef,useState} from 'react';
 import { api } from './api';
 import { runAutopilotCycle } from './autopilotRuntime';
 import { createMissingJobs } from './autopilotCore';
@@ -57,6 +57,7 @@ import {UiErrorBoundary} from './UiErrorBoundary';
 import {SafeArtwork} from './SafeArtwork';
 import {OwnerProfile} from './OwnerProfile';
 import {beginStartupQuotaProbe} from './startupQuotaProbe';
+import {traceRouteCommitPhase,traceRouteLayoutEffect,traceRouteRouterRender} from './m1RouteLifecycleTrace';
 
 async function notifyUpdateAvailable(version:string){
   const notifiedKey='vyron:update-notified-version';
@@ -208,6 +209,9 @@ function PageRouter({license}:{license:LicenseStatus}){
   const page=useApp(s=>s.page),setPage=useApp(s=>s.setPage);
   const youtubeRouteTab=page==='metadata'?'metadata':page==='existing'?'uploaded':page==='publisher'?'publish':undefined;
   const canonical=page==='autopilot'?'dashboard':page==='metadata'||page==='existing'||page==='publisher'?'youtube':page;
+  traceRouteRouterRender(String(canonical));
+  useInsertionEffect(()=>{traceRouteCommitPhase(String(canonical))},[canonical]);
+  useLayoutEffect(()=>{traceRouteLayoutEffect(String(canonical),'router')},[canonical]);
   const heavyRoute=canonical==='dashboard'||canonical==='channels';
   const [settledRoute,setSettledRoute]=useState<string>('');
   useEffect(()=>{

@@ -1,0 +1,179 @@
+name: VYRON 6.1.0 WKWebView Route Layer Lifecycle Trace
+
+on:
+  push:
+    branches:
+      - diagnostic/vyron-6.1.0-route-layer-lifecycle
+
+permissions:
+  contents: read
+
+env:
+  VERSION: '6.1.0'
+  RELEASE_BASE: '4de188b2cf50d3f58cd7074a6e57ccb67c15e1b2'
+  HARNESS_BASE: '89278a5fae1a79bb21777c2b79d669030f6ab98f'
+  PROBE_BLOB: 'f580a12c6bbc85de9b9c429f487a5e94c0449ecc'
+  BUNDLE_ID: studio.channelflow.desktop
+
+jobs:
+  passive-trace:
+    runs-on: macos-14
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: diagnostic/vyron-6.1.0-route-layer-lifecycle
+          fetch-depth: 0
+
+      - name: Verify passive-only lifecycle diagnostic
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git merge-base --is-ancestor "$HARNESS_BASE" HEAD
+          test "$(git rev-parse "$RELEASE_BASE:src/M1PerformanceProbe.tsx")" = "$PROBE_BLOB"
+          test "$(git rev-parse "HEAD:src/M1PerformanceProbe.tsx")" = "$PROBE_BLOB"
+          git diff --exit-code "$RELEASE_BASE"...HEAD -- src/M1PerformanceProbe.tsx
+          git diff --exit-code "$HARNESS_BASE"...HEAD --             src/M1PerformanceProbe.tsx src/PublisherOS.tsx src/PublisherShell.tsx             src/ChannelRunway.tsx src/MaterialsManager.tsx src/ProductionManager.tsx             src/youtubePublishSafety.ts src/styles.css             src-tauri/src/oauth_vault.rs src-tauri/src/security.rs src-tauri/src/youtube.rs             src-tauri/src/performance_probe.rs src-tauri/src/lib.rs
+          CHANGED="$(git diff --name-only "$HARNESS_BASE"...HEAD | sort)"
+          ALLOWED="$(printf '%s\n'             '.github/workflows/vyron-610-route-layer-lifecycle.yml'             'src/App.tsx'             'src/YouTubeCenter.tsx'             'src/api.ts'             'src/m1RouteLifecycleTrace.ts'             'src/store.ts' | sort)"
+          test "$CHANGED" = "$ALLOWED"
+          echo "CSS_CHANGES=0"
+          echo "PRODUCTION_PATCH=NONE"
+          echo "M1PerformanceProbe unchanged: YES"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci --no-audit --no-fund
+      - name: TypeScript build
+        run: npm run build
+      - name: Route contracts
+        run: >
+          npx vitest run
+          src/v610M1RoutePerformance.test.ts
+          src/v610PublisherColdRoute.test.ts
+
+      - name: Build one passive-trace ARM64 app
+        shell: bash
+        env:
+          VITE_M1_PARITY_DIAG: '1'
+          VITE_M1_ROUTE_TRACE: '1'
+        run: |
+          set -Eeuo pipefail
+          export APPLE_SIGNING_IDENTITY='-'
+          npx tauri build --target aarch64-apple-darwin --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          APP="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)"
+          test -d "$APP"
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = "$BUNDLE_ID"
+          file "$APP/Contents/MacOS/channelflow" | grep -q arm64
+          codesign --verify --deep --strict "$APP"
+          echo "APP_PATH=$APP" >> "$GITHUB_ENV"
+
+      - name: Seed isolated owner license
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          LICENSE="$RUNNER_TEMP/license.json"
+          printf '%s\n' '{"valid":true,"type":"owner-lifetime","expiresAt":null,"maskedKey":"CI-ROUTE-TRACE","activatedAt":"2026-10-02T00:00:00Z"}' > "$LICENSE"
+          for ROOT in "$HOME/Library/Application Support/studio.channelflow.desktop" "$HOME/Library/Application Support/VYRON" "$HOME/Library/Application Support/channelflow"; do
+            mkdir -p "$ROOT"
+            cp "$LICENSE" "$ROOT/license.json"
+          done
+
+      - name: Run passive exact-workload trace once
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          REPORT="$RUNNER_TEMP/route-lifecycle-report.json"
+          LOG="$RUNNER_TEMP/route-lifecycle-runtime.log"
+          PERF_ROOT="$RUNNER_TEMP/route-lifecycle-profile"
+          rm -f "$REPORT" "$LOG"
+          rm -rf "$PERF_ROOT"
+          mkdir -p "$PERF_ROOT"
+          VYRON_M1_PERF_PROBE=1           VYRON_M1_PERF_ROOT="$PERF_ROOT"           VYRON_M1_PERF_REPORT="$REPORT"           VYRON_M1_PARITY_DIAG=1           VYRON_M1_PARITY_EXIT_AFTER_REPORT=1           VYRON_M1_PARITY_RUNNER_ARCH="$(uname -m)"           VYRON_M1_PARITY_MACOS="$(sw_vers -productVersion)"           VYRON_M1_PARITY_BASE_HEAD="$RELEASE_BASE"           VYRON_M1_CSS_VARIANT=base             "$APP_PATH/Contents/MacOS/channelflow" >"$LOG" 2>&1
+          test -s "$REPORT"
+          python3 - "$REPORT" "$RUNNER_TEMP/route-lifecycle-summary.json" <<'PY'
+          import json,sys
+          p=json.load(open(sys.argv[1]))
+          d=p.get("dataset") or {}
+          assert d.get("channels")==35 and d.get("jobs")==1000,p
+          assert d.get("metadataRecords")==5000 and d.get("assignedJobs")==1000,p
+          assert d.get("navigationSwitchesPerRound")==30 and d.get("rounds")==3,p
+          diag=p.get("nonGateDiagnostics") or {}
+          parity=diag.get("m1Parity") or {}
+          assert parity.get("fpsMonitorSetting") is True,parity
+          life=diag.get("routeLifecycle") or {}
+          assert life.get("enabled") is True,life
+          summaries=life.get("summaries") or {}
+          yt=summaries.get("youtube") or {}
+          required=["t0_t1","t1_t2","t2_t3","t3_t4","t4_t5","t5_t6","t6_t7","t7_t8","t0_t6"]
+          for k in required:
+              assert (yt.get(k) or {}).get("count",0)>0,(k,yt)
+          routes={}
+          for r in ["dashboard","channels","production","settings","analytics"]:
+              x=(summaries.get(r) or {}).get("t0_t6") or {}
+              assert x.get("count",0)>0,(r,summaries.get(r))
+              routes[r]=x
+          phase={
+            "T0-T4":yt.get("t0_t4") or {},
+            "T4-T6":yt.get("t4_t6") or {},
+            "T6-T8":yt.get("t6_t8") or {}
+          }
+          primary=max(phase,key=lambda k:float((phase[k] or {}).get("p95") or 0))
+          subsystem={
+            "T0-T4":"JS / Zustand / React route activation",
+            "T4-T6":"browser style/layout/paint/compositor after commit",
+            "T6-T8":"subsequent compositor/frame scheduling"
+          }[primary]
+          segments={k:yt.get(k) for k in required}
+          exact=max(required[:-1],key=lambda k:float((yt.get(k) or {}).get("p95") or 0))
+          records=life.get("records") or []
+          sensors={
+            "mutationObserverCallbacks":sum(int(x.get("mutationObserverCallbacks",0)) for x in records if x.get("route")=="youtube" and not x.get("incompleteReason")),
+            "mutationRecords":sum(int(x.get("mutationRecords",0)) for x in records if x.get("route")=="youtube" and not x.get("incompleteReason")),
+            "resizeObserverCallbacks":sum(int(x.get("resizeObserverCallbacks",0)) for x in records if x.get("route")=="youtube" and not x.get("incompleteReason")),
+            "intersectionObserverCallbacks":sum(int(x.get("intersectionObserverCallbacks",0)) for x in records if x.get("route")=="youtube" and not x.get("incompleteReason")),
+            "rafScheduledT0T6":sum(int(x.get("rafScheduledT0T6",0)) for x in records if x.get("route")=="youtube" and not x.get("incompleteReason")),
+            "styleLayoutReads":sum(int(x.get("getComputedStyleReads",0))+int(x.get("getBoundingClientRectReads",0))+int(x.get("getClientRectsReads",0)) for x in records if x.get("route")=="youtube" and not x.get("incompleteReason"))
+          }
+          out={
+            "m1PerformanceProbeBlob":"f580a12c6bbc85de9b9c429f487a5e94c0449ecc",
+            "youtube":segments,
+            "comparisonT0T6":routes,
+            "primaryBottleneckInterval":exact.replace("_","-").upper(),
+            "primaryPhase":primary,
+            "likelySubsystem":subsystem,
+            "sensors":sensors,
+            "codeChangesForFix":0,
+            "productionPatch":"NONE"
+          }
+          json.dump(out,open(sys.argv[2],"w"),indent=2)
+          print(json.dumps(out,indent=2))
+          PY
+
+      - name: Preserve trace evidence
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/trace-evidence"
+          cp "$RUNNER_TEMP/route-lifecycle-report.json" "$RUNNER_TEMP/trace-evidence/report.json" 2>/dev/null || true
+          cp "$RUNNER_TEMP/route-lifecycle-summary.json" "$RUNNER_TEMP/trace-evidence/summary.json" 2>/dev/null || true
+          cp "$RUNNER_TEMP/route-lifecycle-runtime.log" "$RUNNER_TEMP/trace-evidence/runtime.log" 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: VYRON-6.1.0-ROUTE-LAYER-LIFECYCLE
+          path: ${{ runner.temp }}/trace-evidence/**
+          if-no-files-found: warn
+          retention-days: 30

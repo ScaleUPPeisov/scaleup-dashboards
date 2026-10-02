@@ -1,6 +1,7 @@
 export type StudioDraftBridgeItem={studioKey:string;title:string;editUrl?:string;videoId?:string;channelId?:string;seenAtMs:number};
 import { invoke } from '@tauri-apps/api/core';
 import {youtubeRouteDiagnosticsSnapshot} from './youtubeRouteDiagnostics';
+import {routeLifecycleTraceSnapshot} from './m1RouteLifecycleTrace';
 import { getVersion } from '@tauri-apps/api/app';
 import { listen } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
@@ -131,7 +132,8 @@ export const api={
     };
     return invoke<string>('performance_probe_report',{payload:{...base,nonGateDiagnostics:{
       youtubeRoute:youtubeRouteDiagnosticsSnapshot(),
-      m1Parity:parity
+      m1Parity:parity,
+      routeLifecycle:routeLifecycleTraceSnapshot()
     }}});
   },
   defaultWorkspace:()=>invoke<string>('default_workspace'),
