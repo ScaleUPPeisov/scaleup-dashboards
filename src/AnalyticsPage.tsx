@@ -65,5 +65,7 @@ export function AnalyticsPage(){
    <div className="analyticsCharts"><LineChart rows={rows} value={x=>x.views} label="Просмотры"/><LineChart rows={rows} value={x=>x.watchMinutes/60} label="Watch time, часы"/><LineChart rows={rows} value={x=>x.subscribersGained-x.subscribersLost} label="Net подписчики"/></div>
    <section className="panel analyticsTopVideos"><div className="panelHead"><div><small>TOP VIDEOS</small><h3>Лучшие видео за сохранённый период</h3></div><span>{exact?dayLabel(period):analytics.periodDays+' дней • кэш'}</span></div>{analytics.topVideos?.length?<div className="topVideoTable">{analytics.topVideos.slice(0,10).map(v=><article key={v.id}>{v.thumbnail?<img src={v.thumbnail}/>:<i/>}<div><b>{v.title}</b><small>{v.publishedAt?new Date(v.publishedAt).toLocaleDateString('ru-RU'):'—'}</small></div><span><small>Просмотры</small><b>{formatNumber(v.views)}</b></span><span><small>Watch time</small><b>{num(v.watchMinutes/60,1)} ч</b></span><span><small>Avg duration</small><b>{duration(v.averageViewDuration)}</b></span><span><small>Avg %</small><b>{num(v.averageViewPercentage,1)}%</b></span><span><small>CTR</small><b>—</b></span><span><small>Подписчики</small><b>{v.subscribersGained==null?'—':'+'+formatNumber(v.subscribersGained)}</b></span></article>)}</div>:<p>Нет данных по видео.</p>}</section>
    <div className="analyticsBreakdownGrid"><Breakdown title="Источники трафика" rows={analytics.trafficSources||[]}/><Breakdown title="Страны" rows={analytics.countries||[]}/>{analytics.devices?.length?<Breakdown title="Устройства" rows={analytics.devices}/>:null}{analytics.audience?.length?<Breakdown title="Подписаны / не подписаны" rows={analytics.audience}/>:null}</div>
-  </>}</>}</></div>;
+   </>}
+   </>}
+  </div>;
 }
