@@ -18,7 +18,6 @@ type JobDerivedState={
 
 export const EMPTY_JOBS:VideoJob[]=[];
 export const EMPTY_SCHEDULE:YoutubeScheduleFacts={scheduledCount:0};
-const EMPTY_WORKSPACE:ProductionWorkspaceSummary={working:0,materials:0,building:0,render:0,youtube:0,errors:0};
 
 function buildDerived(){
  const state=useApp.getState(),jobs=state.jobs,channels=state.channels,now=Date.now();
