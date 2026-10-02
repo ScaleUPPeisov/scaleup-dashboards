@@ -9,7 +9,7 @@ export type PaintProfilerEntry={
  commitTime:number;
 };
 
-const enabled=import.meta.env.VITE_YT_PAINT_DIAG==='1';
+const enabled=(import.meta as any).env?.VITE_YT_PAINT_DIAG==='1';
 let entries:PaintProfilerEntry[]=[];
 
 export function YoutubePaintProfiler({id,children}:{id:string;children:ReactNode}){

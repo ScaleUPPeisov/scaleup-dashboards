@@ -58,7 +58,7 @@ import {SafeArtwork} from './SafeArtwork';
 import {OwnerProfile} from './OwnerProfile';
 import {beginStartupQuotaProbe} from './startupQuotaProbe';
 
-const YOUTUBE_PAINT_DIAGNOSTIC=import.meta.env.VITE_YT_PAINT_DIAG==='1';
+const YOUTUBE_PAINT_DIAGNOSTIC=(import.meta as any).env?.VITE_YT_PAINT_DIAG==='1';
 
 async function notifyUpdateAvailable(version:string){
   const notifiedKey='vyron:update-notified-version';
