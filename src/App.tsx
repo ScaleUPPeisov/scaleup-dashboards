@@ -1,4 +1,4 @@
-import React,{startTransition,useEffect,useLayoutEffect,useMemo,useRef,useState} from 'react';
+import React,{useEffect,useLayoutEffect,useMemo,useRef,useState} from 'react';
 import { api } from './api';
 import { runAutopilotCycle } from './autopilotRuntime';
 import { createMissingJobs } from './autopilotCore';
@@ -143,44 +143,63 @@ export function App(){
   if(!license.valid)return <Activation onActivated={setLicense}/>;
   return <div className="appShell"><LiveInventoryBridge/><ChannelRunwayScheduler/><ProductionStatusBridge/><ChannelStatisticsScheduler/><OwnerInventoryScheduler/><UploadProcessingMonitor/><RecoveryGate/><Sidebar/><main className="main"><Topbar/><PageRouter license={license}/></main><GlobalTaskIndicator/><GlobalUploadIndicator/><UploadCenterGlobal/><GlobalTaskCenter/><CommandPalette/><MetadataQueueAssignmentBridge/><M1PerformanceProbe/>{settings.fpsMonitor&&<FpsMonitor/>}<UpdateExperience/><MajorUpdateCelebration/><NotificationCenter/><div className="bgGlow a"/><div className="bgGlow b"/></div>
 }
+const CachedDashboardRoute=React.memo(({mode}:{mode:'dashboard'|'autopilot'})=><><DashboardUploadSummary/><DashboardOS pageOverride={mode}/></>);
+const CachedChannelsRoute=React.memo(ChannelsOS);
+const CachedProductionRoute=React.memo(ProductionOS);
 const CachedYouTubeRoute=React.memo(({routeTab,active}:{routeTab?:'publish'|'metadata'|'uploaded';active:boolean})=><YouTubeCenter routeTab={routeTab} active={active}/>);
+const CachedAnalyticsRoute=React.memo(AnalyticsPage);
+const CachedSettingsRoute=React.memo(({license}:{license:LicenseStatus})=><SettingsOS license={license}/>);
 const HEAVY_ROUTE_SETTLE_MS=90;
+
 function RouteWarmup({route}:{route:string}){
-  const title=route==='dashboard'?'Главная':route==='channels'?'Каналы':route==='production'?'Производство':route==='youtube'?'YouTube':route==='analytics'?'Аналитика':route==='settings'?'Настройки':'VYRON';
+  const title=route==='dashboard'?'Главная':route==='channels'?'Каналы':route==='youtube'?'YouTube':'VYRON';
   return <section className="routeWarmup" aria-live="polite"><small>VYRON • FAST ROUTE</small><h1>{title}</h1><div className="routeWarmupLine"><i/><i/><i/></div></section>
 }
 
 function PageRouter({license}:{license:LicenseStatus}){
-  const page=useApp(s=>s.page),setPage=useApp(s=>s.setPage),youtubeMounted=useRef(false);
-  const youtubeRouteTab=page==='metadata'?'metadata':page==='existing'?'uploaded':page==='publisher'?'publish':undefined;
-  const canonical=page==='autopilot'?'dashboard':page==='metadata'||page==='existing'||page==='publisher'?'youtube':page==='content'?'production':page==='accounts'?'settings':page;
-  const heavyRoute=canonical==='dashboard'||canonical==='channels'||canonical==='production'||canonical==='youtube'||canonical==='analytics'||canonical==='settings';
+  const page=useApp(s=>s.page),setPage=useApp(s=>s.setPage);
+  const dashboardMounted=useRef(false),channelsMounted=useRef(false),productionMounted=useRef(false),youtubeMounted=useRef(false),analyticsMounted=useRef(false),settingsMounted=useRef(false);
+  const dashboardModeRef=useRef<'dashboard'|'autopilot'>('dashboard'),youtubeTabRef=useRef<'publish'|'metadata'|'uploaded'|undefined>(undefined);
+  const canonical:Page=page==='autopilot'?'dashboard':page==='metadata'||page==='existing'||page==='publisher'?'youtube':page==='content'?'production':page==='accounts'?'settings':page;
+
+  if(canonical==='dashboard')dashboardModeRef.current=page==='autopilot'?'autopilot':'dashboard';
+  if(canonical==='youtube')youtubeTabRef.current=page==='metadata'?'metadata':page==='existing'?'uploaded':page==='publisher'?'publish':undefined;
+
+  const coldRoute=(canonical==='dashboard'&&!dashboardMounted.current)||(canonical==='channels'&&!channelsMounted.current)||(canonical==='youtube'&&!youtubeMounted.current);
   const [settledRoute,setSettledRoute]=useState<string>('');
   useEffect(()=>{
-    if(!heavyRoute){setSettledRoute(String(canonical));return}
+    if(!coldRoute)return;
     setSettledRoute('');
-    const id=window.setTimeout(()=>startTransition(()=>setSettledRoute(String(canonical))),HEAVY_ROUTE_SETTLE_MS);
+    const id=window.setTimeout(()=>setSettledRoute(String(canonical)),HEAVY_ROUTE_SETTLE_MS);
     return()=>window.clearTimeout(id)
-  },[canonical,heavyRoute]);
-  const heavyReady=!heavyRoute||settledRoute===canonical;
-  const youtubeSelected=canonical==='youtube';
-  const youtubeActive=youtubeSelected&&heavyReady;
-  if(youtubeActive)youtubeMounted.current=true;
+  },[canonical,coldRoute]);
+  const coldReady=!coldRoute||settledRoute===canonical;
+
+  if(canonical==='production')productionMounted.current=true;
+  if(canonical==='analytics')analyticsMounted.current=true;
+  if(canonical==='settings')settingsMounted.current=true;
+  if(coldReady&&canonical==='dashboard')dashboardMounted.current=true;
+  if(coldReady&&canonical==='channels')channelsMounted.current=true;
+  if(coldReady&&canonical==='youtube')youtubeMounted.current=true;
+
+  const youtubeSelected=canonical==='youtube',youtubeActive=youtubeSelected&&youtubeMounted.current&&coldReady;
   useEffect(()=>{if(youtubeActive)window.dispatchEvent(new Event('vyron:youtube-route-active'))},[youtubeActive]);
 
-  const transient=canonical==='dashboard'?(heavyReady?<><DashboardUploadSummary/><DashboardOS/></>:<RouteWarmup route="dashboard"/>)
-    :canonical==='channels'?(heavyReady?<ChannelsOS/>:<RouteWarmup route="channels"/>)
-    :canonical==='production'?(heavyReady?<ProductionOS/>:<RouteWarmup route="production"/>)
-    :canonical==='inventory'?<LiveContentInventory/>
-    :canonical==='competitors'?<CompetitorsPage/>
-    :canonical==='analytics'?(heavyReady?<AnalyticsPage/>:<RouteWarmup route="analytics"/>)
-    :canonical==='settings'?(heavyReady?<SettingsOS license={license}/>:<RouteWarmup route="settings"/>)
-    :null;
+  const transient=canonical==='inventory'?<LiveContentInventory/>:canonical==='competitors'?<CompetitorsPage/>:null;
+  const coldTitle=canonical==='dashboard'?'dashboard':canonical==='channels'?'channels':canonical==='youtube'?'youtube':'';
 
   return <div className="pageWrap">
-    {youtubeMounted.current&&<div className="routeKeepAlive" hidden={!youtubeActive} aria-hidden={!youtubeActive}><UiErrorBoundary scope="youtube" onHome={()=>setPage('dashboard')}><CachedYouTubeRoute routeTab={youtubeRouteTab} active={youtubeActive}/></UiErrorBoundary></div>}
-    {youtubeSelected&&!heavyReady&&<RouteWarmup route="youtube"/>}
-    {!youtubeSelected&&<UiErrorBoundary scope={String(page)} onHome={()=>setPage('dashboard')}>{transient}</UiErrorBoundary>}
+    {dashboardMounted.current&&<div className="routeKeepAlive" hidden={canonical!=='dashboard'} aria-hidden={canonical!=='dashboard'}><UiErrorBoundary scope="dashboard" onHome={()=>setPage('dashboard')}><CachedDashboardRoute mode={dashboardModeRef.current}/></UiErrorBoundary></div>}
+    {channelsMounted.current&&<div className="routeKeepAlive" hidden={canonical!=='channels'} aria-hidden={canonical!=='channels'}><UiErrorBoundary scope="channels" onHome={()=>setPage('dashboard')}><CachedChannelsRoute/></UiErrorBoundary></div>}
+    {productionMounted.current&&<div className="routeKeepAlive" hidden={canonical!=='production'} aria-hidden={canonical!=='production'}><UiErrorBoundary scope="production" onHome={()=>setPage('dashboard')}><CachedProductionRoute/></UiErrorBoundary></div>}
+    {youtubeMounted.current&&<div className="routeKeepAlive" hidden={!youtubeSelected} aria-hidden={!youtubeSelected}><UiErrorBoundary scope="youtube" onHome={()=>setPage('dashboard')}><CachedYouTubeRoute routeTab={youtubeTabRef.current} active={youtubeActive}/></UiErrorBoundary></div>}
+    {analyticsMounted.current&&<div className="routeKeepAlive" hidden={canonical!=='analytics'} aria-hidden={canonical!=='analytics'}><UiErrorBoundary scope="analytics" onHome={()=>setPage('dashboard')}><CachedAnalyticsRoute/></UiErrorBoundary></div>}
+    {settingsMounted.current&&<div className="routeKeepAlive" hidden={canonical!=='settings'} aria-hidden={canonical!=='settings'}><UiErrorBoundary scope="settings" onHome={()=>setPage('dashboard')}><CachedSettingsRoute license={license}/></UiErrorBoundary></div>}
+    {coldRoute&&!coldReady&&coldTitle&&<RouteWarmup route={coldTitle}/>}
+    {!dashboardMounted.current&&canonical==='dashboard'&&coldReady&&<RouteWarmup route="dashboard"/>}
+    {!channelsMounted.current&&canonical==='channels'&&coldReady&&<RouteWarmup route="channels"/>}
+    {!youtubeMounted.current&&youtubeSelected&&coldReady&&<RouteWarmup route="youtube"/>}
+    {!['dashboard','channels','production','youtube','analytics','settings'].includes(String(canonical))&&transient&&<UiErrorBoundary scope={String(page)} onHome={()=>setPage('dashboard')}>{transient}</UiErrorBoundary>}
   </div>
 }
 
