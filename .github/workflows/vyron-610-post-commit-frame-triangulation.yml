@@ -1,0 +1,204 @@
+name: VYRON 6.1.0 Post Commit Frame Delivery Triangulation
+
+on:
+  push:
+    branches:
+      - diagnostic/vyron-6.1.0-post-commit-frame-triangulation
+
+permissions:
+  contents: read
+
+env:
+  VERSION: '6.1.0'
+  RELEASE_BASE: '4de188b2cf50d3f58cd7074a6e57ccb67c15e1b2'
+  TRACE_HEAD: '393ec54d7c9ce3a67202ced4554b486dc5decf82'
+  PROBE_BLOB: 'f580a12c6bbc85de9b9c429f487a5e94c0449ecc'
+  BUNDLE_ID: studio.channelflow.desktop
+
+jobs:
+  passive-triangulation:
+    runs-on: macos-14
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: diagnostic/vyron-6.1.0-post-commit-frame-triangulation
+          fetch-depth: 0
+
+      - name: Verify passive triangulation contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git merge-base --is-ancestor "$TRACE_HEAD" HEAD
+          test "$(git rev-parse "$RELEASE_BASE:src/M1PerformanceProbe.tsx")" = "$PROBE_BLOB"
+          test "$(git rev-parse "HEAD:src/M1PerformanceProbe.tsx")" = "$PROBE_BLOB"
+          git diff --exit-code "$TRACE_HEAD"...HEAD --             src/App.tsx src/YouTubeCenter.tsx src/store.ts src/api.ts             src/M1PerformanceProbe.tsx src/PublisherOS.tsx src/PublisherShell.tsx             src/ChannelRunway.tsx src/MaterialsManager.tsx src/ProductionManager.tsx             src/youtubePublishSafety.ts src/styles.css             src-tauri/src/performance_probe.rs src-tauri/src/lib.rs src-tauri/src/oauth_vault.rs             src-tauri/src/security.rs src-tauri/src/youtube.rs
+          CHANGED="$(git diff --name-only "$TRACE_HEAD"...HEAD | sort)"
+          ALLOWED="$(printf '%s\n'             '.github/workflows/vyron-610-post-commit-frame-triangulation.yml'             'src/m1RouteLifecycleTrace.ts' | sort)"
+          test "$CHANGED" = "$ALLOWED"
+          echo "BEHAVIOR_VARIANTS=0"
+          echo "CODE_CHANGES_FOR_FIX=0"
+          echo "PRODUCTION_PATCH=NONE"
+          echo "M1PerformanceProbe unchanged: YES"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+      - run: npx vitest run src/v610M1RoutePerformance.test.ts src/v610PublisherColdRoute.test.ts
+
+      - name: Build one ARM64 passive-triangulation app
+        shell: bash
+        env:
+          VITE_M1_PARITY_DIAG: '1'
+          VITE_M1_ROUTE_TRACE: '1'
+        run: |
+          set -Eeuo pipefail
+          export APPLE_SIGNING_IDENTITY='-'
+          npx tauri build --target aarch64-apple-darwin --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          APP="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)"
+          test -d "$APP"
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = "$BUNDLE_ID"
+          file "$APP/Contents/MacOS/channelflow" | grep -q arm64
+          codesign --verify --deep --strict "$APP"
+          echo "APP_PATH=$APP" >> "$GITHUB_ENV"
+
+      - name: Seed isolated owner license
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          LICENSE="$RUNNER_TEMP/license.json"
+          printf '%s\n' '{"valid":true,"type":"owner-lifetime","expiresAt":null,"maskedKey":"CI-POST-COMMIT-TRACE","activatedAt":"2026-10-02T00:00:00Z"}' > "$LICENSE"
+          for ROOT in "$HOME/Library/Application Support/studio.channelflow.desktop" "$HOME/Library/Application Support/VYRON" "$HOME/Library/Application Support/channelflow"; do
+            mkdir -p "$ROOT"
+            cp "$LICENSE" "$ROOT/license.json"
+          done
+
+      - name: Run exact workload passive triangulation once
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          REPORT="$RUNNER_TEMP/post-commit-report.json"
+          SUMMARY="$RUNNER_TEMP/post-commit-summary.json"
+          LOG="$RUNNER_TEMP/post-commit-runtime.log"
+          PERF_ROOT="$RUNNER_TEMP/post-commit-profile"
+          rm -f "$REPORT" "$SUMMARY" "$LOG"
+          rm -rf "$PERF_ROOT"
+          mkdir -p "$PERF_ROOT"
+          VYRON_M1_PERF_PROBE=1           VYRON_M1_PERF_ROOT="$PERF_ROOT"           VYRON_M1_PERF_REPORT="$REPORT"           VYRON_M1_PARITY_DIAG=1           VYRON_M1_PARITY_EXIT_AFTER_REPORT=1           VYRON_M1_PARITY_RUNNER_ARCH="$(uname -m)"           VYRON_M1_PARITY_MACOS="$(sw_vers -productVersion)"           VYRON_M1_PARITY_BASE_HEAD="$RELEASE_BASE"           VYRON_M1_CSS_VARIANT=base             "$APP_PATH/Contents/MacOS/channelflow" >"$LOG" 2>&1
+          test -s "$REPORT"
+
+          python3 - "$REPORT" "$SUMMARY" <<'PY'
+          import json,sys
+          p=json.load(open(sys.argv[1]))
+          d=p.get("dataset") or {}
+          assert d.get("channels")==35 and d.get("jobs")==1000,p
+          assert d.get("metadataRecords")==5000 and d.get("assignedJobs")==1000,p
+          assert d.get("navigationSwitchesPerRound")==30 and d.get("rounds")==3,p
+          diag=p.get("nonGateDiagnostics") or {}
+          parity=diag.get("m1Parity") or {}
+          assert parity.get("fpsMonitorSetting") is True,parity
+          life=diag.get("routeLifecycle") or {}
+          assert life.get("enabled") is True,life
+          assert life.get("nativeRafCaptured") is True,life
+          pc=life.get("postCommit") or {}
+          routes=["youtube","dashboard","channels","production","settings","analytics"]
+          for route in routes:
+              r=pc.get(route) or {}
+              for key in ["t5_microtask","t5_messageChannel","t5_timeout0","t5_nativeRaf1","nativeRaf1_nativeRaf2","nativeRaf2_nativeRaf3"]:
+                  assert (r.get(key) or {}).get("count",0)>0,(route,key,r)
+
+          yt=pc["youtube"]
+          def p95(key):
+              v=(yt.get(key) or {}).get("p95")
+              return float(v) if v is not None else 9999.0
+          micro=p95("t5_microtask")
+          message=p95("t5_messageChannel")
+          timeout=p95("t5_timeout0")
+          raf1=p95("t5_nativeRaf1")
+          raf12=p95("nativeRaf1_nativeRaf2")
+          raf23=p95("nativeRaf2_nativeRaf3")
+          max_raf=max(raf1,raf12,raf23)
+          task_fast=(micro<=5 and message<=10 and timeout<=10)
+          tasks_track_raf=(max(message,timeout)>=20 and max(message,timeout)>=max_raf*0.7)
+
+          comparison={r:(pc.get(r) or {}).get("t5_nativeRaf1") for r in routes if r!="youtube"}
+          other_p95=[float((comparison[r] or {}).get("p95") or 0) for r in comparison]
+          youtube_specific=raf1>=(max(other_p95) if other_p95 else 0)+8
+
+          if task_fast and max_raf>=20:
+              main_thread="FREE"
+              compositor="IMPLICATED"
+              if youtube_specific:
+                  primary="YouTube-specific WKWebView frame/layer delivery after layout effect"
+                  next_target="YouTube-specific WKWebView layer activation/lifecycle after commit; keep React and CSS closed."
+              else:
+                  primary="Shared WKWebView compositor/frame scheduling after layout effect"
+                  next_target="Shared PageRouter/pageWrap/WKWebView layer lifecycle; keep visual CSS and React optimization closed."
+          elif tasks_track_raf:
+              main_thread="BLOCKED"
+              compositor="NOT PROVEN"
+              primary="Post-commit main-thread task delay before frame delivery"
+              next_target="Attribute the blocking post-commit task without changing route behavior."
+          else:
+              main_thread="INCONCLUSIVE"
+              compositor="NOT PROVEN"
+              primary="Post-commit scheduling remains ambiguous"
+              next_target="Narrow native task-vs-frame scheduling with the same passive lifecycle harness."
+
+          lt=life.get("longTask") or {}
+          mut=life.get("youtubeMutationsT5ToNativeRaf1") or {}
+          out={
+            "m1PerformanceProbeBlob":"f580a12c6bbc85de9b9c429f487a5e94c0449ecc",
+            "youtube":{
+              "t5Microtask":yt.get("t5_microtask"),
+              "t5MessageChannel":yt.get("t5_messageChannel"),
+              "t5Timeout0":yt.get("t5_timeout0"),
+              "t5NativeRaf1":yt.get("t5_nativeRaf1"),
+              "raf1Raf2":yt.get("nativeRaf1_nativeRaf2"),
+              "raf2Raf3":yt.get("nativeRaf2_nativeRaf3")
+            },
+            "comparisonNativeRaf1":comparison,
+            "longTask":lt,
+            "mutationsT5ToRaf1":mut,
+            "resizeObserverTiming":yt.get("resizeObserver"),
+            "intersectionObserverTiming":yt.get("intersectionObserver"),
+            "mainThread":main_thread,
+            "compositor":compositor,
+            "primaryBottleneck":primary,
+            "nextTarget":next_target,
+            "codeChangesForFix":0,
+            "productionPatch":"NONE",
+            "m1PerformanceProbeUnchanged":True
+          }
+          json.dump(out,open(sys.argv[2],"w"),indent=2)
+          print(json.dumps(out,indent=2))
+          PY
+
+      - name: Preserve triangulation evidence
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/evidence"
+          cp "$RUNNER_TEMP/post-commit-report.json" "$RUNNER_TEMP/evidence/report.json" 2>/dev/null || true
+          cp "$RUNNER_TEMP/post-commit-summary.json" "$RUNNER_TEMP/evidence/summary.json" 2>/dev/null || true
+          cp "$RUNNER_TEMP/post-commit-runtime.log" "$RUNNER_TEMP/evidence/runtime.log" 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: VYRON-6.1.0-POST-COMMIT-FRAME-TRIANGULATION
+          path: ${{ runner.temp }}/evidence/**
+          if-no-files-found: warn
+          retention-days: 30
