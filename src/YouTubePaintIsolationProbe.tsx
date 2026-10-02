@@ -128,17 +128,17 @@ export function YouTubePaintIsolationProbe(){
     await frames(4);
 
     const measure=async(name:VariantName,samples=12)=>{
-      const frameSamples:FrameSample[]=[],profiles:PaintProfilerEntry[]=[];
+      const frameSamples:FrameSample[]=[],profiles:PaintProfilerEntry[]=[],syncMounts:number[]=[];
       for(let i=0;i<samples&&!cancelled;i++){
        flushSync(()=>setSpec(null));await frames(2);resetYoutubePaintProfiler();
-       const started=performance.now();flushSync(()=>setSpec({name,token:++token}));
+       const started=performance.now();flushSync(()=>setSpec({name,token:++token}));const syncMount=performance.now()-started;syncMounts.push(syncMount);
        let last=started;const deltas:number[]=[];
        for(let r=0;r<3;r++){await frame();const now=performance.now();deltas.push(now-last);last=now}
        await frame();
        frameSamples.push({raf1:deltas[0],raf2:deltas[1],raf3:deltas[2]});
        profiles.push(...youtubePaintProfilerSnapshot());
       }
-      return{frames:summarizeFrames(frameSamples),profiler:summarizeProfiler(profiles)}
+      return{frames:summarizeFrames(frameSamples),syncMount:summarize(syncMounts),profiler:summarizeProfiler(profiles)}
     };
 
     setStatus('React profiler + production census');
@@ -166,6 +166,8 @@ export function YouTubePaintIsolationProbe(){
      schemaVersion:1,diagnosticOnly:true,baseHead:'4de188b2cf50d3f58cd7074a6e57ccb67c15e1b2',at:new Date().toISOString(),
      dataset:{channels:35,jobs:1000,samplesPerVariant:12},
      reactProfiler:production.profiler,
+     reactProfilerCallbacksAvailable:Object.values(production.profiler as Record<string,{samples?:number}>).some(x=>(x?.samples||0)>0),
+     synchronousMount:production.syncMount,
      observedProductionFrames:production.frames,
      conclusion,
      domCensus,
