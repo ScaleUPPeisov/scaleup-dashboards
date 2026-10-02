@@ -1,0 +1,154 @@
+name: VYRON 6.1.0 YouTube React Profiler Diagnostic
+
+on:
+  push:
+    branches:
+      - diag/vyron-6.1.0-youtube-react-profiler
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-610-youtube-react-profiler
+  cancel-in-progress: true
+
+env:
+  VERSION: '6.1.0'
+  RELEASE_BASE_HEAD: '4de188b2cf50d3f58cd7074a6e57ccb67c15e1b2'
+  VITE_YT_PAINT_DIAG: '1'
+  NODE_ENV: 'development'
+
+jobs:
+  profiler:
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: diag/vyron-6.1.0-youtube-react-profiler
+          fetch-depth: 0
+
+      - name: Verify non-release profiling branch
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git merge-base --is-ancestor "$RELEASE_BASE_HEAD" HEAD
+          git diff --exit-code "$RELEASE_BASE_HEAD"...HEAD -- src/M1PerformanceProbe.tsx
+          echo 'RELEASE_CANDIDATE_CHANGED=NO'
+          echo 'M1_PERFORMANCE_PROBE_CHANGED=NO'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Development React profiling compile
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          NODE_ENV=development VITE_YT_PAINT_DIAG=1 npm run build
+
+      - name: Verify Apple Silicon runner
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(uname -m)" = "arm64"
+          sysctl -n machdep.cpu.brand_string | tee "$RUNNER_TEMP/cpu.txt"
+          grep -E 'Apple M1|Apple M2|Apple M3|Apple M4' "$RUNNER_TEMP/cpu.txt"
+
+      - name: Build React profiling ARM64 app
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          export APPLE_SIGNING_IDENTITY='-'
+          NODE_ENV=development VITE_YT_PAINT_DIAG=1 npx tauri build --target aarch64-apple-darwin --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          APP="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)"
+          test -d "$APP"
+          file "$APP/Contents/MacOS/channelflow" | grep -q arm64
+          echo "APP_PATH=$APP" >> "$GITHUB_ENV"
+
+      - name: Seed isolated owner license
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for ROOT in             "$HOME/Library/Application Support/studio.channelflow.desktop"             "$HOME/Library/Application Support/VYRON"             "$HOME/Library/Application Support/channelflow"
+          do
+            mkdir -p "$ROOT"
+            cat >"$ROOT/license.json" <<'JSON'
+          {
+            "valid": true,
+            "type": "owner-lifetime",
+            "expiresAt": null,
+            "maskedKey": "CI-REACT-PROFILER",
+            "activatedAt": "2026-10-02T00:00:00Z"
+          }
+          JSON
+          done
+
+      - name: Run NON-GATE physical React profiler
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          REPORT="$RUNNER_TEMP/vyron-youtube-react-profiler.json"
+          LOG="$RUNNER_TEMP/vyron-youtube-react-profiler.log"
+          PERF_ROOT="$RUNNER_TEMP/vyron-youtube-react-profiler-root"
+          rm -f "$REPORT"
+          rm -rf "$PERF_ROOT"
+          mkdir -p "$PERF_ROOT"
+          VYRON_M1_PERF_PROBE=1           VYRON_M1_PERF_ROOT="$PERF_ROOT"           VYRON_M1_PERF_REPORT="$REPORT"           "$APP_PATH/Contents/MacOS/channelflow" >"$LOG" 2>&1 &
+          PID=$!
+          cleanup(){ kill "$PID" >/dev/null 2>&1 || true; rm -rf "$PERF_ROOT"; }
+          trap cleanup EXIT
+          sleep 4
+          osascript -e 'tell application "System Events" to set frontmost of first process whose name contains "VYRON" to true' >/dev/null 2>&1 || true
+          for i in {1..180}; do
+            test -s "$REPORT" && break
+            kill -0 "$PID"
+            sleep 1
+          done
+          test -s "$REPORT"
+          cat "$REPORT"
+          python3 - "$REPORT" <<'PY'
+          import json,sys
+          p=json.load(open(sys.argv[1]))
+          if p.get("error"):
+              raise SystemExit("REACT_PROFILER_DIAGNOSTIC_FAILED: "+p["error"])
+          prof=p.get("reactProfiler",{})
+          samples=sum((v or {}).get("samples",0) for v in prof.values())
+          if samples<=0:
+              raise SystemExit("REACT_PROFILER_CALLBACKS_MISSING")
+          print("REACT_PROFILER_DIAGNOSTIC=COMPLETE")
+          print("REACT_PROFILER_SAMPLES="+str(samples))
+          PY
+          kill "$PID" >/dev/null 2>&1 || true
+          wait "$PID" >/dev/null 2>&1 || true
+          rm -rf "$PERF_ROOT"
+          trap - EXIT
+
+      - name: Preserve profiler evidence
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p youtube-react-profiler
+          cp "$RUNNER_TEMP/vyron-youtube-react-profiler.json" youtube-react-profiler/report.json 2>/dev/null || true
+          cp "$RUNNER_TEMP/vyron-youtube-react-profiler.log" youtube-react-profiler/runtime.log 2>/dev/null || true
+          cp "$RUNNER_TEMP/cpu.txt" youtube-react-profiler/cpu.txt 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: VYRON-6.1.0-YOUTUBE-REACT-PROFILER
+          path: youtube-react-profiler/**
+          if-no-files-found: warn
+          retention-days: 30
