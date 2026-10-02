@@ -63,18 +63,42 @@ jobs:
       - name: TypeScript production build
         run: npm run build
 
-      - name: VYRON 6.1.0 targeted frontend regressions
+      - name: Publisher targeted regressions
+        run: >
+          npx vitest run
+          src/v610PublisherInventoryReconcile.test.ts
+          src/v300PublisherUiContracts.test.ts
+          src/publisherQuota.test.ts
+          src/publisherSchedule.test.ts
+
+      - name: Channel Runway authoritative refresh regressions
+        run: >
+          npx vitest run
+          src/v610ChannelRunwayFleetRefresh.test.ts
+          src/v502FullRefresh.test.ts
+          src/channelRunway.test.ts
+          src/contentRunway.test.ts
+
+      - name: Upload reliability regressions
+        run: |
+          set -Eeuo pipefail
+          npx vitest run src/uploadQueue.test.ts src/v400QuotaUploadLimitSeparation.test.ts
+          cargo test --manifest-path src-tauri/Cargo.toml v211_upload_transport_tests --lib -- --nocapture
+
+      - name: Protected targeted regressions
         run: >
           npx vitest run
           src/v610MetadataQueue.test.ts
-          src/v610PublisherInventoryReconcile.test.ts
-          src/v610M1RoutePerformance.test.ts
-          src/v400QuotaUploadLimitSeparation.test.ts
           src/v501LocalCleanupZeroQuota.test.ts
           src/v2115Rc7OauthUpdateContinuity.test.ts
+          tests/vyron-603-production-hotfix.test.mjs
+
+      - name: M1 targeted structural regressions
+        run: >
+          npx vitest run
+          src/v610M1RoutePerformance.test.ts
           src/v500Performance.test.ts
           src/v610PerformanceProbeIsolation.test.ts
-          tests/vyron-603-production-hotfix.test.mjs
 
       - name: Publisher inventory blocker contract
         run: |

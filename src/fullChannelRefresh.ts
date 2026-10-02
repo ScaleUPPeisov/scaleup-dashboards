@@ -1,8 +1,9 @@
 import {useApp} from './store';
 import {scanAllInventories,useLiveInventory} from './renderInventoryRuntime';
-import {refreshStaleOwnerInventories,type OwnerInventoryRefreshSummary} from './youtubeOwnerInventory';
+import {refreshOwnerInventoriesAuthoritative,type OwnerInventoryRefreshSummary} from './youtubeOwnerInventory';
 import {refreshYoutubeChannelStatisticsSelection,type ChannelStatisticsRefreshSummary} from './youtubeChannelStatsRuntime';
 import {youtubeQuotaUsage} from './youtubeQuota';
+import {recalculateChannelRunway} from './channelRunwayStore';
 
 export type FullChannelRefreshLocalSummary={
   requested:number;
@@ -39,6 +40,8 @@ export async function refreshAllChannelData(channelIds:string[]):Promise<FullCha
   const errors:string[]=[];
   const quotaBefore=youtubeQuotaUsage().used;
   const enabled=useApp.getState().channels.filter(c=>c.enabled!==false);
+  const requestedIds=new Set(channelIds.filter(Boolean));
+  const requested=enabled.filter(c=>!requestedIds.size||requestedIds.has(c.id));
 
   // Local Render scan is independent of YouTube and must never spend API quota.
   const localRun=scanAllInventories('manual-all').catch(error=>{
@@ -56,12 +59,15 @@ export async function refreshAllChannelData(channelIds:string[]):Promise<FullCha
   try{
     // Owner inventory is the authoritative source for future publishAt / Scheduled.
     // It intentionally runs after the stats batch to avoid overlapping YouTube API traffic.
-    owner=await refreshStaleOwnerInventories(enabled,true);
+    owner=await refreshOwnerInventoriesAuthoritative(requested,true);
   }catch(error){
     errors.push('YOUTUBE_OWNER_INVENTORY: '+String(error));
   }
 
   await localRun;
+  // Recalculate the persisted schedule-derived fleet view after both authoritative
+  // YouTube projections and zero-quota Render inventory have settled.
+  recalculateChannelRunway(enabled,new Date(),false);
 
   // Flush the already-updated Zustand state to the existing persistence layer.
   // This does not touch OAuth/keychain storage and does not replace the database.

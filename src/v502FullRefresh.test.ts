@@ -41,7 +41,7 @@ describe('VYRON 5.0.2 full refresh hotfix',()=>{
     expect(dashboard).toContain('refreshAllChannelData(plan.channelIds)');
     expect(pipeline).toContain("scanAllInventories('manual-all')");
     expect(pipeline).toContain('refreshYoutubeChannelStatisticsSelection(channelIds,true)');
-    expect(pipeline).toContain('refreshStaleOwnerInventories(enabled,true)');
+    expect(pipeline).toContain('refreshOwnerInventoriesAuthoritative(requested,true)');
     expect(pipeline).toContain('Local Render scan is independent of YouTube');
     expect(pipeline).not.toContain('window.location.reload');
   });
@@ -64,10 +64,10 @@ describe('VYRON 5.0.2 full refresh hotfix',()=>{
     const view=confirmedScheduledRunwaySnapshot(channel,base,record,30);
     expect(view.scheduledVideoCount).toBe(9);
     expect(view.readyVideoCount).toBe(30);
-    expect(view.contentRunwayDays).toBe(9);
+    expect(view.contentRunwayDays).toBe(39);
     expect(view.scheduledRunwayDays).toBe(9);
-    expect(view.projectedReadySlots).toEqual([]);
-    expect(view.projectedRunwayEnd).toBe(record.scheduledUntil);
+    expect(view.projectedReadySlots).toHaveLength(30);
+    expect(view.projectedRunwayEnd).toBe('2026-11-07');
   });
 
   it('does not add updater, OAuth reset or credential mutation to the hotfix pipeline',()=>{

@@ -178,22 +178,30 @@ export function confirmedScheduledRunwaySnapshot(
   channel:Channel,
   base:ContentRunwaySnapshot,
   record:ChannelRunwayRecord|undefined,
-  readyVideoCount:number
+  readyVideoCount:number,
+  now=new Date()
 ):ContentRunwaySnapshot{
   const known=Boolean(record&&record.status!=='no-data');
   const confirmedDays=known?Math.max(0,Number(record?.runwayDays)||0):0;
   const ready=Math.max(0,Math.floor(Number(readyVideoCount)||0));
+  const projectedReadySlots=projectReadyPublishSlots(channel,record?.scheduledUntil,ready,now);
+  const projectedRunwayEnd=projectedReadySlots.length
+    ?new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Krasnoyarsk',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(projectedReadySlots.at(-1)!))
+    :record?.scheduledUntil;
+  const today=todayKrasnoyarskDate(now);
+  const projectedDays=projectedRunwayEnd?Math.max(0,calendarDaysBetween(today,projectedRunwayEnd)??0):0;
+  const contentDays=known||ready?projectedDays:0;
   return{
     ...base,
     scheduledThrough:record?.scheduledUntil,
     scheduledVideoCount:record?.scheduledVideoCount||0,
     readyVideoCount:ready,
-    projectedRunwayEnd:record?.scheduledUntil,
-    contentRunwayDays:confirmedDays,
+    projectedRunwayEnd,
+    contentRunwayDays:contentDays,
     scheduledRunwayDays:confirmedDays,
-    projectedReadySlots:[],
-    status:known?runwayStatus(confirmedDays,true):'no-data',
-    deficitDays:Math.max(0,Math.max(0,channel.targetBufferDays||0)-confirmedDays)
+    projectedReadySlots,
+    status:known||ready?runwayStatus(contentDays,true):'no-data',
+    deficitDays:Math.max(0,Math.max(0,channel.targetBufferDays||0)-contentDays)
   };
 }
 

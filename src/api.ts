@@ -1,5 +1,6 @@
 export type StudioDraftBridgeItem={studioKey:string;title:string;editUrl?:string;videoId?:string;channelId?:string;seenAtMs:number};
 import { invoke } from '@tauri-apps/api/core';
+import {youtubeRouteDiagnosticsSnapshot} from './youtubeRouteDiagnostics';
 import { getVersion } from '@tauri-apps/api/app';
 import { listen } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
@@ -112,7 +113,7 @@ export const api={
   performanceProbeEnabled:()=>invoke<boolean>('performance_probe_enabled'),
   performanceProbeAssertIsolated:()=>invoke<string>('performance_probe_assert_isolated'),
   performanceProbeCleanup:()=>invoke<{root:string;removed:boolean}>('performance_probe_cleanup'),
-  performanceProbeReport:(payload:unknown)=>invoke<string>('performance_probe_report',{payload}),
+  performanceProbeReport:(payload:unknown)=>invoke<string>('performance_probe_report',{payload:payload&&typeof payload==='object'?{...(payload as Record<string,unknown>),nonGateDiagnostics:{youtubeRoute:youtubeRouteDiagnosticsSnapshot()}}:payload}),
   defaultWorkspace:()=>invoke<string>('default_workspace'),
   chooseWorkspace:async()=>{const r=await open({directory:true,multiple:false,title:'Папка VYRON YT PEISOV'});return typeof r==='string'?r:null},
   chooseOwnerProfileAvatar:async()=>{const r=await open({directory:false,multiple:false,title:'Фото профиля VYRON',filters:[{name:'Images',extensions:['png','jpg','jpeg','webp']}]});return typeof r==='string'?r:null},

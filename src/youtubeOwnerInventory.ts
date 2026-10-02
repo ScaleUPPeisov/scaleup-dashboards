@@ -2,7 +2,8 @@ import {api} from './api';
 import {readAuthoritativeExistingSnapshot,readExistingCache,replaceExistingCacheFromSync,scheduleSyncTruthFromInfo} from './channelSchedule';
 import type {Channel,YoutubeExistingVideo} from './types';
 import {markYoutubeCache} from './youtubeCache';
-import {bindYoutubeQuotaTraceContext,youtubeQuotaState,youtubeQuotaUsage} from './youtubeQuota';
+import {bindYoutubeQuotaTraceContext,youtubeOperationActualCost,youtubeQuotaState,youtubeQuotaUsage} from './youtubeQuota';
+import {classifyYoutubeChannels} from './youtubeStatisticsCenter';
 import {upsertChannelRunwayFromYoutube} from './channelRunwayStore';
 
 export const OWNER_INVENTORY_TTL_MS=6*60*60*1000;
@@ -115,42 +116,105 @@ export function ownerInventoryCacheStale(channelId:string,nowMs=Date.now(),ttlMs
   return !Number.isFinite(at)||nowMs-at>=ttlMs
 }
 
-export type OwnerInventoryRefreshSummary={requested:number;updated:number;failed:number;skippedFresh:number;skippedUnlinked:number;stoppedForQuota:boolean};
+export type OwnerInventoryFleetStatus='UPDATED'|'UNLINKED'|'MISMATCH'|'DUPLICATE'|'OAUTH_BLOCKED'|'API_FAILED'|'QUOTA_STOPPED'|'FRESH_CACHE';
+export type OwnerInventoryRefreshRow={
+  channelId:string;channelName:string;status:OwnerInventoryFleetStatus;
+  profileId?:string;youtubeChannelId?:string;apiRequests:number;quotaUnits:number;error?:string;
+};
+export type OwnerInventoryRefreshSummary={
+  requested:number;updated:number;failed:number;skippedFresh:number;skippedUnlinked:number;stoppedForQuota:boolean;
+  apiRequests:number;quotaUnits:number;rows:OwnerInventoryRefreshRow[];
+  counts:Record<OwnerInventoryFleetStatus,number>;
+};
+
+const BLOCKED_OWNER_CREDENTIAL_STATES=new Set(['NEEDS_ONE_TIME_LOCAL_MIGRATION','CANONICAL_PRESENT_UNVERIFIED','CHECK_ON_USE','RECOVERABLE','KEYCHAIN_BLOCKED','RECONNECT_REQUIRED','MISSING','WRONG_CHANNEL','FAILED','KEYCHAIN_ERROR']);
+
+function emptyOwnerCounts():Record<OwnerInventoryFleetStatus,number>{
+  return{UPDATED:0,UNLINKED:0,MISMATCH:0,DUPLICATE:0,OAUTH_BLOCKED:0,API_FAILED:0,QUOTA_STOPPED:0,FRESH_CACHE:0}
+}
+function duplicateExtraChannelIds(channels:Channel[],profiles:Awaited<ReturnType<typeof api.youtubeProfiles>>){
+  const classification=classifyYoutubeChannels(channels,profiles),extras=new Set<string>();
+  for(const duplicate of classification.duplicates){
+    const ordered=duplicate.channelIds.slice().sort();
+    for(const id of ordered.slice(1))extras.add(id)
+  }
+  return{classification,extras}
+}
+function pushOwnerRow(summary:OwnerInventoryRefreshSummary,row:OwnerInventoryRefreshRow){
+  summary.rows.push(row);summary.counts[row.status]++;
+  if(row.status==='UPDATED')summary.updated++;
+  else if(row.status==='API_FAILED')summary.failed++;
+  else if(row.status==='FRESH_CACHE')summary.skippedFresh++;
+  else if(row.status==='UNLINKED'||row.status==='MISMATCH'||row.status==='DUPLICATE'||row.status==='OAUTH_BLOCKED')summary.skippedUnlinked++;
+}
+export async function refreshOwnerInventoriesAuthoritative(
+  channels:Channel[],
+  force=false,
+  suppliedProfiles?:Awaited<ReturnType<typeof api.youtubeProfiles>>
+):Promise<OwnerInventoryRefreshSummary>{
+  const enabled=channels.filter(c=>c.enabled!==false);
+  const summary:OwnerInventoryRefreshSummary={requested:0,updated:0,failed:0,skippedFresh:0,skippedUnlinked:0,stoppedForQuota:false,apiRequests:0,quotaUnits:0,rows:[],counts:emptyOwnerCounts()};
+  const profiles=suppliedProfiles||await api.youtubeProfiles();
+  const {classification,extras}=duplicateExtraChannelIds(enabled,profiles);
+  const unlinked=new Set([...classification.unlinked,...classification.orphans].map(c=>c.id));
+  const mismatched=new Set(classification.mismatched.map(c=>c.id));
+  const eligibleById=new Map(classification.eligible.map(x=>[x.channel.id,x]));
+  let quotaStopped=false;
+
+  for(const channel of enabled){
+    const linked=eligibleById.get(channel.id);
+    if(extras.has(channel.id)){pushOwnerRow(summary,{channelId:channel.id,channelName:channel.name,status:'DUPLICATE',profileId:channel.youtubeProfileId,youtubeChannelId:channel.youtubeChannelId,apiRequests:0,quotaUnits:0});continue}
+    if(mismatched.has(channel.id)){pushOwnerRow(summary,{channelId:channel.id,channelName:channel.name,status:'MISMATCH',profileId:channel.youtubeProfileId,youtubeChannelId:channel.youtubeChannelId,apiRequests:0,quotaUnits:0});continue}
+    if(unlinked.has(channel.id)||!linked){pushOwnerRow(summary,{channelId:channel.id,channelName:channel.name,status:'UNLINKED',profileId:channel.youtubeProfileId,youtubeChannelId:channel.youtubeChannelId,apiRequests:0,quotaUnits:0});continue}
+    if(BLOCKED_OWNER_CREDENTIAL_STATES.has(String(linked.profile.credentialStatus||''))){
+      pushOwnerRow(summary,{channelId:channel.id,channelName:channel.name,status:'OAUTH_BLOCKED',profileId:linked.profile.id,youtubeChannelId:linked.youtubeChannelId,apiRequests:0,quotaUnits:0,error:'credentialStatus='+String(linked.profile.credentialStatus||'UNKNOWN')});
+      continue
+    }
+    if(!force&&!ownerInventoryCacheStale(channel.id)){
+      pushOwnerRow(summary,{channelId:channel.id,channelName:channel.name,status:'FRESH_CACHE',profileId:linked.profile.id,youtubeChannelId:linked.youtubeChannelId,apiRequests:0,quotaUnits:0});
+      continue
+    }
+    if(quotaStopped||youtubeQuotaState().blocked||Math.max(0,youtubeQuotaUsage().limit-youtubeQuotaUsage().used)<250){
+      quotaStopped=true;summary.stoppedForQuota=true;
+      pushOwnerRow(summary,{channelId:channel.id,channelName:channel.name,status:'QUOTA_STOPPED',profileId:linked.profile.id,youtubeChannelId:linked.youtubeChannelId,apiRequests:0,quotaUnits:0});
+      continue
+    }
+
+    summary.requested++;
+    const cached=ownerInventoryForChannel(channel.id),videoCount=cached.available?cached.total:50;
+    const estimatedUnits=1+Math.max(1,Math.ceil(videoCount/50))+(videoCount?Math.ceil(videoCount/50):0);
+    const operationId='owner-inventory:'+(force?'manual':'background')+':'+channel.id+':'+Date.now();
+    bindYoutubeQuotaTraceContext(operationId,{reason:'OWNER_INVENTORY_REFRESH',channelIds:[channel.id],mode:force?'MANUAL':'BACKGROUND',estimatedUnits});
+    try{
+      const result=await api.youtubeListExisting(linked.profile.id,5000,operationId);
+      const actual=youtubeOperationActualCost(operationId),apiRequests=Object.values(actual.methods).reduce((n,x)=>n+x.calls,0),quotaUnits=actual.buckets.general;
+      summary.apiRequests+=apiRequests;summary.quotaUnits+=quotaUnits;
+      replaceExistingCacheFromSync(channel.id,result.videos||[],result);
+      markYoutubeCache('existing',channel.id);
+      if(!(result.syncComplete??result.complete)){
+        pushOwnerRow(summary,{channelId:channel.id,channelName:channel.name,status:'API_FAILED',profileId:linked.profile.id,youtubeChannelId:linked.youtubeChannelId,apiRequests,quotaUnits,error:'AUTHORITATIVE_INVENTORY_INCOMPLETE'});
+        continue
+      }
+      upsertChannelRunwayFromYoutube(channel,result.videos||[],new Date());
+      pushOwnerRow(summary,{channelId:channel.id,channelName:channel.name,status:'UPDATED',profileId:linked.profile.id,youtubeChannelId:linked.youtubeChannelId,apiRequests,quotaUnits});
+    }catch(error){
+      const actual=youtubeOperationActualCost(operationId),apiRequests=Object.values(actual.methods).reduce((n,x)=>n+x.calls,0),quotaUnits=actual.buckets.general;
+      summary.apiRequests+=apiRequests;summary.quotaUnits+=quotaUnits;
+      pushOwnerRow(summary,{channelId:channel.id,channelName:channel.name,status:'API_FAILED',profileId:linked.profile.id,youtubeChannelId:linked.youtubeChannelId,apiRequests,quotaUnits,error:String(error)});
+    }
+  }
+  if(typeof window!=='undefined')window.dispatchEvent(new CustomEvent(OWNER_INVENTORY_EVENT,{detail:summary}));
+  return summary
+}
 
 export function refreshStaleOwnerInventories(channels:Channel[],force=false):Promise<OwnerInventoryRefreshSummary>{
   const ids=channels.filter(c=>c.enabled!==false).map(c=>c.id).sort();
   const runKey=(force?'force:':'stale:')+ids.join('|');
   const existing=ownerInventoryRuns.get(runKey);
   if(existing)return existing;
-  const task=(async():Promise<OwnerInventoryRefreshSummary>=>{
-  const summary:OwnerInventoryRefreshSummary={requested:0,updated:0,failed:0,skippedFresh:0,skippedUnlinked:0,stoppedForQuota:false};
-  const profiles=await api.youtubeProfiles();
-  const byId=new Map(profiles.map(x=>[x.id,x]));
-  for(const channel of channels.filter(c=>c.enabled!==false)){
-    const profile=channel.youtubeProfileId?byId.get(channel.youtubeProfileId):undefined;
-    if(!profile?.id||!profile.channelId||!channel.youtubeChannelId||profile.channelId!==channel.youtubeChannelId){summary.skippedUnlinked++;continue}
-    if(!force&&!ownerInventoryCacheStale(channel.id)){summary.skippedFresh++;continue}
-    const usage=youtubeQuotaUsage();
-    if(youtubeQuotaState().blocked||Math.max(0,usage.limit-usage.used)<250){summary.stoppedForQuota=true;break}
-    summary.requested++;
-    try{
-      const cached=ownerInventoryForChannel(channel.id),videoCount=cached.available?cached.total:50;
-      const estimatedUnits=1+Math.max(1,Math.ceil(videoCount/50))+(videoCount?Math.ceil(videoCount/50):0);
-      const operationId='owner-inventory:'+(force?'manual':'background')+':'+channel.id+':'+Date.now();
-      bindYoutubeQuotaTraceContext(operationId,{reason:'OWNER_INVENTORY_REFRESH',channelIds:[channel.id],mode:force?'MANUAL':'BACKGROUND',estimatedUnits});
-      const result=await api.youtubeListExisting(profile.id,5000,operationId);
-      replaceExistingCacheFromSync(channel.id,result.videos||[],result);
-      if(result.syncComplete??result.complete)upsertChannelRunwayFromYoutube(channel,result.videos||[],new Date());
-      markYoutubeCache('existing',channel.id);
-      summary.updated++;
-    }catch{
-      summary.failed++
-    }
-  }
-  window.dispatchEvent(new CustomEvent(OWNER_INVENTORY_EVENT,{detail:summary}));
-  return summary
-})();
+  const task=refreshOwnerInventoriesAuthoritative(channels,force);
   ownerInventoryRuns.set(runKey,task);
   void task.finally(()=>{if(ownerInventoryRuns.get(runKey)===task)ownerInventoryRuns.delete(runKey)});
   return task;
 }
+

@@ -3,7 +3,9 @@ import {api,type GoogleConfigStatus} from './api';
 import {useApp} from './store';
 import type {Channel,YoutubeProfile} from './types';
 import {classifyYoutubeChannels} from './youtubeStatisticsCenter';
-import {refreshYoutubeChannelStatistics,refreshYoutubeProfileStatistics,type ChannelStatisticsRefreshProgress} from './youtubeChannelStatsRuntime';
+import {refreshYoutubeProfileStatistics,type ChannelStatisticsRefreshProgress} from './youtubeChannelStatsRuntime';
+import {refreshAllChannelData} from './fullChannelRefresh';
+import {refreshOwnerInventoriesAuthoritative} from './youtubeOwnerInventory';
 import {compactChannelStat,subscriberStatLabel} from './youtubeChannelStats';
 import {
   compareRunwayRecords,
@@ -15,8 +17,7 @@ import {
 import {
   loadChannelRunwayStore,
   recalculateChannelRunway,
-  subscribeChannelRunway,
-  upsertChannelRunwayFromYoutube
+  subscribeChannelRunway
 } from './channelRunwayStore';
 import {buildContentRunway,confirmedScheduledRunwaySnapshot,contentRunwayQuotaView,type ContentRunwaySnapshot} from './contentRunway';
 import {useLiveInventory} from './renderInventoryRuntime';
@@ -148,21 +149,40 @@ export function ChannelRunway(){
     if(!linked){toast(`${channel.name}: YouTube не связан точно с OAuth profile • API call не выполнен`);return}
     setBusy(channel.id);
     try{
-      const result=await api.youtubeListExisting(linked.profile.id,1000);
-      if(!(result.syncComplete??result.complete)){toast(`${channel.name}: синхронизация неполная • ${result.videosHydrated??result.received}/${result.uniqueVideoIds??result.youtubeFound} • расписание не заменено`);return}
-      const nextStore=upsertChannelRunwayFromYoutube(channel,result.videos||[],new Date());
-      setSnapshot(nextStore);
-      const r=nextStore.channels[channel.id];
-      toast(`${channel.name}: расписание обновлено • ${r?.scheduledVideoCount||0} запланировано • до ${dateLabel(r?.scheduledUntil)}`);
+      const result=await refreshOwnerInventoriesAuthoritative([channel],true,profiles);
+      const row=result.rows[0];
+      setSnapshot(loadChannelRunwayStore());
+      const r=loadChannelRunwayStore().channels[channel.id];
+      if(row?.status==='UPDATED')toast(`${channel.name}: расписание обновлено • ${r?.scheduledVideoCount||0} запланировано • до ${dateLabel(r?.scheduledUntil)} • API ${row.apiRequests} • quota ${row.quotaUnits}`);
+      else toast(`${channel.name}: расписание не обновлено • ${row?.status||'API_FAILED'}${row?.error?' • '+row.error:''}`);
     }catch(e){
       toast(isYoutubeQuotaError(e)?youtubeQuotaMessage():`Расписание ${channel.name}: ${String(e)}`);
     }finally{setBusy('')}
   }
 
   async function refreshAllStats(){
-    if(statsBusy)return;setStatsBusy(true);setStatsProgress({done:0,total:youtubeClassification.eligible.length});
-    try{const result=await refreshYoutubeChannelStatistics(true,setStatsProgress);toast(result.failed?`YouTube данные: обновлено ${result.updated}, ошибок ${result.failed}`:`✓ YouTube данные: ${result.updated} каналов • API ${result.apiRequests} • quota ${result.quotaUnits}`)}
-    catch(e){toast(`Статистика каналов: ${String(e)}`)}finally{setStatsBusy(false)}
+    if(statsBusy)return;
+    setStatsBusy(true);setStatsProgress({done:0,total:active.length});
+    try{
+      const result=await refreshAllChannelData(active.map(c=>c.id));
+      setSnapshot(loadChannelRunwayStore());
+      setStatsProgress({done:active.length,total:active.length});
+      const owner=result.owner,counts=owner?.counts;
+      const updated=owner?.updated||0;
+      const skipped=[
+        counts?.UNLINKED?`UNLINKED ${counts.UNLINKED}`:'',
+        counts?.MISMATCH?`MISMATCH ${counts.MISMATCH}`:'',
+        counts?.DUPLICATE?`DUPLICATE ${counts.DUPLICATE}`:'',
+        counts?.OAUTH_BLOCKED?`OAUTH_BLOCKED ${counts.OAUTH_BLOCKED}`:'',
+        counts?.API_FAILED?`API_FAILED ${counts.API_FAILED}`:'',
+        counts?.QUOTA_STOPPED?`QUOTA_STOPPED ${counts.QUOTA_STOPPED}`:''
+      ].filter(Boolean).join(' • ');
+      const stats=result.stats;
+      const complete=Boolean(owner&&updated===active.length&&!owner.failed&&!owner.stoppedForQuota&&!result.errors.length&&(!stats||(!stats.failed&&!stats.credentialBlocked)));
+      const text=`Обновлено ${updated} / ${active.length} • inventory API ${owner?.apiRequests||0} • inventory quota ${owner?.quotaUnits||0} • Render READY ${result.local.ready} • local quota 0${skipped?' • '+skipped:''}`;
+      toast((complete?'✓ ':'⚠ ')+text);
+    }catch(e){toast(`Обновление всех каналов: ${String(e)}`)}
+    finally{setStatsBusy(false)}
   }
   async function refreshRowStats(channel:Channel){
     const linked=linkedByLocalId.get(channel.id);if(!linked){toast(`${channel.name}: YouTube не подключён • API call 0`);return}
@@ -174,7 +194,7 @@ export function ChannelRunway(){
   return <section className="panel channelRunway">
     <div className="runwayHead">
       <div><small>CONTENT RUNWAY • LOCAL + QUOTA AWARE</small><h3>Запас контента</h3><p>VYRON соединяет подтверждённое YouTube-расписание с реально готовыми локальными render-файлами. Local projects и реально подключённые YouTube-каналы считаются отдельно.</p></div>
-      <div className="headerActions"><span className="localOnlyBadge">CALCULATION • ZERO API</span><button disabled={statsBusy||!youtubeClassification.eligible.length} onClick={()=>void refreshAllStats()}>{statsBusy?`↻ ${statsProgress.done} / ${statsProgress.total}`:'↻ Обновить YouTube данные'}</button></div>
+      <div className="headerActions"><span className="localOnlyBadge">LOCAL READY • ZERO API</span><button disabled={statsBusy||!active.length} onClick={()=>void refreshAllStats()}>{statsBusy?`↻ ${statsProgress.done} / ${statsProgress.total}`:'↻ ОБНОВИТЬ ВСЕ КАНАЛЫ'}</button></div>
     </div>
     {rowFailures>0&&<div className="errorBox"><b>Часть данных «Плана каналов» повреждена или несовместима</b><p>VYRON пропустил {rowFailures} проблемных каналов вместо падения всего интерфейса. Каналы, OAuth и настройки не изменены.</p></div>}
 

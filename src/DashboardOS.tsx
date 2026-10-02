@@ -125,7 +125,7 @@ function OperationsDashboard(){
   const classification=classifyYoutubeChannels(enabled,profiles),config=await api.youtubeGoogleConfig().catch(()=>null),batches=planStatisticsProjectBatches(classification.eligible,config,50);
   const statsUnits=batches.length;
   const ownerUnits=classification.eligible.reduce((sum,row)=>{const cached=ownerInventoryForChannel(row.channel.id),videoCount=cached.available?cached.total:50,pages=Math.max(1,Math.ceil(videoCount/50));return sum+1+pages+(videoCount?pages:0)},0);
-  setStatsPreview({channelIds:classification.eligible.map(x=>x.channel.id),eligible:classification.eligible.length,workspace:enabled.length,projectGroups:new Set(batches.map(x=>x.groupKey)).size,requests:batches.length,statsUnits,ownerUnits,units:statsUnits+ownerUnits});
+  setStatsPreview({channelIds:enabled.map(x=>x.id),eligible:classification.eligible.length,workspace:enabled.length,projectGroups:new Set(batches.map(x=>x.groupKey)).size,requests:batches.length,statsUnits,ownerUnits,units:statsUnits+ownerUnits});
  }
  async function refreshAllChannelStatistics(){
   const plan=statsPreview;if(!plan||statsBusy)return;setStatsPreview(null);setStatsBusy(true);setStatsResult('');
@@ -133,11 +133,13 @@ function OperationsDashboard(){
    const r=await refreshAllChannelData(plan.channelIds);
    const stats=r.stats;
    const statsText=stats?`Статистика: ${stats.updated} / ${plan.eligible}`:'Статистика: ошибка';
-   const ownerText=r.owner?`Scheduled sync: ${r.owner.updated} / ${r.owner.requested}`:'Scheduled sync: ошибка';
+   const owner=r.owner,counts=owner?.counts;
+   const skipped=[counts?.UNLINKED?`UNLINKED ${counts.UNLINKED}`:'',counts?.MISMATCH?`MISMATCH ${counts.MISMATCH}`:'',counts?.DUPLICATE?`DUPLICATE ${counts.DUPLICATE}`:'',counts?.OAUTH_BLOCKED?`OAUTH_BLOCKED ${counts.OAUTH_BLOCKED}`:'',counts?.API_FAILED?`API_FAILED ${counts.API_FAILED}`:'',counts?.QUOTA_STOPPED?`QUOTA_STOPPED ${counts.QUOTA_STOPPED}`:''].filter(Boolean).join(' • ');
+   const ownerText=owner?`Scheduled sync: ${owner.updated} / ${plan.workspace} • API ${owner.apiRequests} • quota ${owner.quotaUnits}`:'Scheduled sync: ошибка';
    const localText=`Render: ${r.local.online} / ${r.local.requested} • READY ${r.local.ready}`;
-   const text=`${statsText} • ${ownerText} • ${localText} • API quota +${r.quotaDelta}`;
+   const text=`${statsText} • ${ownerText} • ${localText} • API quota +${r.quotaDelta}${skipped?' • '+skipped:''}`;
    setStatsResult(text);
-   const partial=Boolean(r.errors.length||!stats||stats.failed||stats.credentialBlocked||!r.owner||r.owner.failed||r.owner.stoppedForQuota||r.local.issues);
+   const partial=Boolean(r.errors.length||!stats||stats.failed||stats.credentialBlocked||!owner||owner.updated!==plan.workspace||owner.failed||owner.stoppedForQuota||r.local.issues);
    if(partial)notifyWarning('Каналы обновлены частично',text+(r.errors.length?' • '+r.errors.slice(0,2).join(' • '):''));
    else notifySuccess('Все каналы обновлены',text);
   }catch(e){notifyWarning('Каналы не обновлены',String(e))}

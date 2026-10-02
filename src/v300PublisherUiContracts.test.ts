@@ -7,7 +7,9 @@ describe('VYRON 3.0.0 Publisher/UI contracts',()=>{
  const styles=fs.readFileSync('src/styles.css','utf8');
  const history=fs.readFileSync('src/releaseHistory.ts','utf8');
  it('Select All includes only canonical eligible NEW rows and Select None clears selection',()=>{
-  expect(p).toContain("const selectableJobs=useMemo(()=>sourceAvailability==='ONLINE'?allChannelJobs.filter(j=>uploadStateById.get(j.id)==='NEW'&&!recoveryJobIds.has(j.id))");
+  expect(p).toContain("publisherDerived=usePublisherDerived");
+  expect(p).toContain("publisherDerived.selectableJobs");
+  expect(p).toContain("publisherDerived.selectableJobIds");
   expect(p).toContain("channelJobs.filter(j=>selectableJobIds.has(j.id)).map(j=>j.id)");
   expect(p).toContain('>Выбрать все</button>');
   expect(p).toContain("setDraftPatch({selectedIds:[]})");
