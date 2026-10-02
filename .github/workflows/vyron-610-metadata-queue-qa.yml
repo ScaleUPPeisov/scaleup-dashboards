@@ -68,6 +68,7 @@ jobs:
           npx vitest run
           src/v610MetadataQueue.test.ts
           src/v610PublisherInventoryReconcile.test.ts
+          src/v610M1RoutePerformance.test.ts
           src/v400QuotaUploadLimitSeparation.test.ts
           src/v501LocalCleanupZeroQuota.test.ts
           src/v2115Rc7OauthUpdateContinuity.test.ts
