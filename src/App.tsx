@@ -217,6 +217,8 @@ function PageRouter({license}:{license:LicenseStatus}){
   },[canonical,heavyRoute]);
   const heavyReady=!heavyRoute||settledRoute===canonical;
   const youtubeSelected=canonical==='youtube';
+  const youtubeRouteMountedRef=useRef(false);
+  if(youtubeSelected)youtubeRouteMountedRef.current=true;
 
   const transient=canonical==='dashboard'?(heavyReady?<><DashboardUploadSummary/><DashboardOS/></>:<RouteWarmup route="dashboard"/>)
     :canonical==='channels'?(heavyReady?<ChannelsOS/>:<RouteWarmup route="channels"/>)
@@ -227,8 +229,10 @@ function PageRouter({license}:{license:LicenseStatus}){
     :canonical==='accounts'||canonical==='settings'?<SettingsOS license={license}/>
     :null;
 
-  return <div className="pageWrap">
-    {youtubeSelected?<UiErrorBoundary scope="youtube" onHome={()=>setPage('dashboard')}><CachedYouTubeRoute routeTab={youtubeRouteTab} active/></UiErrorBoundary>:<UiErrorBoundary scope={String(page)} onHome={()=>setPage('dashboard')}>{transient}</UiErrorBoundary>}
+  const youtubeHiddenStyle:React.CSSProperties|undefined=youtubeSelected?undefined:{position:'absolute',inset:0,visibility:'hidden',pointerEvents:'none'};
+  return <div className="pageWrap" style={{position:'relative'}}>
+    {youtubeRouteMountedRef.current&&<div data-youtube-persistent-host="true" aria-hidden={!youtubeSelected} inert={!youtubeSelected} style={youtubeHiddenStyle}><UiErrorBoundary scope="youtube" onHome={()=>setPage('dashboard')}><CachedYouTubeRoute routeTab={youtubeRouteTab} active={youtubeSelected}/></UiErrorBoundary></div>}
+    {!youtubeSelected&&<UiErrorBoundary scope={String(page)} onHome={()=>setPage('dashboard')}>{transient}</UiErrorBoundary>}
   </div>
 }
 

@@ -25,12 +25,14 @@ describe('VYRON 6.1.0 M1 route pacing hotfix',()=>{
   expect(css).toContain('content-visibility:auto');
   expect(css).toContain('contain-intrinsic-size:auto 190px');
  });
- it('YouTube has no hidden heavy keepalive or activation-timer commit train',()=>{
+ it('YouTube persistent host keeps the route instance while inactive guards stop background work',()=>{
   const app=read('App.tsx'),center=read('YouTubeCenter.tsx'),bar=read('YouTubeChannelBar.tsx'),publisher=read('PublisherOS.tsx');
   expect(app).not.toContain('routeKeepAlive');
-  expect(app).not.toContain('youtubeMounted');
+  expect(app).toContain('youtubeRouteMountedRef');
+  expect(app).toContain('data-youtube-persistent-host="true"');
+  expect(app).toContain('inert={!youtubeSelected}');
   expect(center).toContain('localStorage.setItem(OPEN_TAB_KEY,tab)');
-  expect(center).toContain('quotaOpen&&active&&<CachedQuotaMeter');
+  expect(center).toContain('quotaOpen&&<CachedQuotaMeter compact active={active}/>');
   expect(bar).toContain('useJobDerived(s=>s.scheduleByChannel[activeId]||EMPTY_SCHEDULE)');
   expect(bar).toContain('!routeActive||!detailsOpen');
   expect(bar).not.toContain('setTimeout(refresh,100)');
