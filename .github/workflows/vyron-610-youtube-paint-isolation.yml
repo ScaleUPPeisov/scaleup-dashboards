@@ -72,6 +72,27 @@ jobs:
           codesign --verify --deep --strict "$APP"
           echo "APP_PATH=$APP" >> "$GITHUB_ENV"
 
+      - name: Seed local owner license for diagnostic App shell
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for ROOT in \
+            "$HOME/Library/Application Support/studio.channelflow.desktop" \
+            "$HOME/Library/Application Support/VYRON" \
+            "$HOME/Library/Application Support/channelflow"
+          do
+            mkdir -p "$ROOT"
+            cat >"$ROOT/license.json" <<'JSON'
+          {
+            "valid": true,
+            "type": "owner-lifetime",
+            "expiresAt": null,
+            "maskedKey": "CI-DIAG",
+            "activatedAt": "2026-10-02T00:00:00Z"
+          }
+          JSON
+          done
+
       - name: Run physical WKWebView paint isolation
         shell: bash
         run: |
@@ -96,7 +117,7 @@ jobs:
           python3 - "$REPORT" <<'PY'
           import json,sys
           p=json.load(open(sys.argv[1]))
-          assert p.get("kind")=="YOUTUBE_WKWEBVIEW_PAINT_ISOLATION",p
+          assert p.get("kind")=="YOUTUBE_WKWEBVIEW_PAINT_ISOLATION_APP_SHELL",p
           assert p.get("releaseCandidateChanged") is False,p
           assert p.get("baseHead")=="4de188b2cf50d3f58cd7074a6e57ccb67c15e1b2",p
           assert "error" not in p,p

@@ -56,7 +56,8 @@ import {UiErrorBoundary} from './UiErrorBoundary';
 import {SafeArtwork} from './SafeArtwork';
 import {OwnerProfile} from './OwnerProfile';
 import {beginStartupQuotaProbe} from './startupQuotaProbe';
-import {YoutubePaintIsolationProbe} from './YoutubePaintIsolationProbe';
+import {YoutubePaintIsolationController} from './YoutubePaintIsolationController';
+import {youtubePaintDiagnosticEnabled} from './youtubePaintDiagnosticRuntime';
 
 async function notifyUpdateAvailable(version:string){
   const notifiedKey='vyron:update-notified-version';
@@ -192,7 +193,7 @@ function ProductionApp(){
   useEffect(()=>{if(!booted||!settings.autopilotEnabled)return;void runAutopilotCycle();const ms=Math.max(10,settings.autopilotIntervalSec||30)*1000;const id=window.setInterval(()=>void runAutopilotCycle(),ms);return()=>window.clearInterval(id)},[booted,settings.autopilotEnabled,settings.autopilotIntervalSec]);
   if(!booted||!license)return <Boot/>;
   if(!license.valid)return <Activation onActivated={setLicense}/>;
-  return <div className="appShell"><LiveInventoryBridge/><ChannelRunwayScheduler/><ProductionStatusBridge/><ChannelStatisticsScheduler/><OwnerInventoryScheduler/><UploadProcessingMonitor/><RecoveryGate/><Sidebar/><main className="main"><Topbar/><PageRouter license={license}/></main><GlobalTaskIndicator/><GlobalUploadIndicator/><UploadCenterGlobal/><GlobalTaskCenter/><CommandPalette/><MetadataQueueAssignmentBridge/><M1PerformanceProbe/>{settings.fpsMonitor&&<FpsMonitor/>}<UpdateExperience/><MajorUpdateCelebration/><NotificationCenter/><div className="bgGlow a"/><div className="bgGlow b"/></div>
+  return <div className="appShell"><LiveInventoryBridge/><ChannelRunwayScheduler/><ProductionStatusBridge/><ChannelStatisticsScheduler/><OwnerInventoryScheduler/><UploadProcessingMonitor/><RecoveryGate/><Sidebar/><main className="main"><Topbar/><PageRouter license={license}/></main><GlobalTaskIndicator/><GlobalUploadIndicator/><UploadCenterGlobal/><GlobalTaskCenter/><CommandPalette/><MetadataQueueAssignmentBridge/>{youtubePaintDiagnosticEnabled()?<YoutubePaintIsolationController/>:<M1PerformanceProbe/>}{settings.fpsMonitor&&<FpsMonitor/>}<UpdateExperience/><MajorUpdateCelebration/><NotificationCenter/><div className="bgGlow a"/><div className="bgGlow b"/></div>
 }
 const CachedDashboardRoute=React.memo(({mode}:{mode:'dashboard'|'autopilot'})=><><DashboardUploadSummary/><DashboardOS pageOverride={mode}/></>);
 const CachedChannelsRoute=React.memo(ChannelsOS);
@@ -342,6 +343,5 @@ function UpdaterSidebar(){
 
 
 export function App(){
-  const diagnostic=Boolean((import.meta as any).env?.VITE_YT_PAINT_DIAG==='1');
-  return diagnostic?<YoutubePaintIsolationProbe/>:<ProductionApp/>;
+  return <ProductionApp/>;
 }
