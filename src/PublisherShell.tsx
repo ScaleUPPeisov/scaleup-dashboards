@@ -1,0 +1,47 @@
+import React from 'react';
+import type {Channel} from './types';
+
+export type PublisherShellProps={
+ channels:Pick<Channel,'id'|'name'>[];
+ channelId:string;
+ selectedCount:number;
+ newCount:number;
+ uploadedCount:number;
+ processingCount:number;
+ errorCount:number;
+ folderReady:boolean;
+ recoveryCount:number;
+ onChannel:(id:string)=>void;
+ onClear:()=>void;
+ onFolders:()=>void;
+ onRecovery:()=>void;
+ onMetadata:()=>void;
+ onThumbs:()=>void;
+ onSchedule:()=>void;
+ onCleanup:()=>void;
+};
+
+export const PublisherShell=React.memo(function PublisherShell(p:PublisherShellProps){
+ return <>
+  <div className="pageHeader publishMasterHead">
+   <div>
+    <small>YOUTUBE • ПУБЛИКАЦИЯ</small>
+    <h2>Публикация на YouTube</h2>
+    <p>{p.newCount} новых · {p.uploadedCount} на YouTube · {p.processingCount} обрабатываются · {p.errorCount} ошибок</p>
+   </div>
+   <div className="headerActions">
+    <select value={p.channelId} onChange={e=>p.onChannel(e.target.value)}>{p.channels.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>
+    <button onClick={p.onClear}>Очистить черновик</button>
+   </div>
+  </div>
+  <div className="publishToolbar publishDemandActions">
+   <span><b>{p.selectedCount}</b> выбрано</span>
+   <button onClick={p.onFolders}>{p.folderReady?'Папки ✓':'Папки ⚠'}</button>
+   <button onClick={p.onRecovery}>{'Recovery'+(p.recoveryCount?' '+p.recoveryCount:'')}</button>
+   <button onClick={p.onMetadata}>Метаданные</button>
+   <button onClick={p.onThumbs}>Обложки</button>
+   <button onClick={p.onSchedule}>Расписание</button>
+   <button onClick={p.onCleanup}>Очистка</button>
+  </div>
+ </>;
+});
