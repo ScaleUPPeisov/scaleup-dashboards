@@ -25,13 +25,16 @@ describe('VYRON 6.1.0 M1 route pacing hotfix',()=>{
   expect(css).toContain('content-visibility:auto');
   expect(css).toContain('contain-intrinsic-size:auto 190px');
  });
- it('YouTube keeps only active heavy body mounted and channel schedule facts do not subscribe to all jobs',()=>{
-  const center=read('YouTubeCenter.tsx'),bar=read('YouTubeChannelBar.tsx'),publisher=read('PublisherOS.tsx');
-  expect(center).toContain('{active&&<div key={tab+\':\'+activeChannel}');
-  expect(center).not.toContain('routeStage');
+ it('YouTube has no hidden heavy keepalive or activation-timer commit train',()=>{
+  const app=read('App.tsx'),center=read('YouTubeCenter.tsx'),bar=read('YouTubeChannelBar.tsx'),publisher=read('PublisherOS.tsx');
+  expect(app).not.toContain('routeKeepAlive');
+  expect(app).not.toContain('youtubeMounted');
+  expect(center).toContain('localStorage.setItem(OPEN_TAB_KEY,tab)');
   expect(bar).toContain('useJobDerived(s=>s.scheduleByChannel[activeId]||EMPTY_SCHEDULE)');
   expect(bar).not.toContain('s.jobs');
-  expect(publisher).toContain('useJobDerived(s=>s.jobsByChannel[channelId]||EMPTY_JOBS)');
+  expect(publisher).toContain('batchActive?resolvePublisherBatchSchedule');
+  expect(publisher).not.toContain('vyron:youtube-route-active');
+  expect(publisher).not.toContain('setTimeout(()=>{if(routeIsActive())void refreshSessions()},90)');
  });
  it('global Sidebar inventory calculation is not embedded in the Zustand selector',()=>{
   const src=read('App.tsx');

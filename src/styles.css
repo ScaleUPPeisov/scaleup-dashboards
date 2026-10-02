@@ -303,3 +303,6 @@ button.secondary{background:rgba(255,255,255,.035);border-color:#294156;color:#9
 
 /* VYRON 6.1.0 M1: real DOM stays mounted; WKWebView may skip offscreen layout/paint. */
 .settingsDeferredCard{content-visibility:auto;contain-intrinsic-size:auto 190px;contain:layout style paint}
+
+/* VYRON 6.1.0 YouTube hotfix: browser-native offscreen containment, no RAF-driven reveal. */
+.youtubeChannelContext .publishStep,.youtubeChannelContext .recoveryPublishPanel,.youtubeChannelContext .channelFolderBindings{content-visibility:auto;contain-intrinsic-size:auto 260px;contain:layout style paint}

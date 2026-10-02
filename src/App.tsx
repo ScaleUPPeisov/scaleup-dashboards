@@ -204,7 +204,7 @@ function RouteWarmup({route}:{route:string}){
 }
 
 function PageRouter({license}:{license:LicenseStatus}){
-  const page=useApp(s=>s.page),setPage=useApp(s=>s.setPage),youtubeMounted=useRef(false);
+  const page=useApp(s=>s.page),setPage=useApp(s=>s.setPage);
   const youtubeRouteTab=page==='metadata'?'metadata':page==='existing'?'uploaded':page==='publisher'?'publish':undefined;
   const canonical=page==='autopilot'?'dashboard':page==='metadata'||page==='existing'||page==='publisher'?'youtube':page;
   const heavyRoute=canonical==='dashboard'||canonical==='channels';
@@ -217,9 +217,6 @@ function PageRouter({license}:{license:LicenseStatus}){
   },[canonical,heavyRoute]);
   const heavyReady=!heavyRoute||settledRoute===canonical;
   const youtubeSelected=canonical==='youtube';
-  const youtubeActive=youtubeSelected;
-  if(youtubeActive)youtubeMounted.current=true;
-  useEffect(()=>{if(youtubeActive)window.dispatchEvent(new Event('vyron:youtube-route-active'))},[youtubeActive]);
 
   const transient=canonical==='dashboard'?(heavyReady?<><DashboardUploadSummary/><DashboardOS/></>:<RouteWarmup route="dashboard"/>)
     :canonical==='channels'?(heavyReady?<ChannelsOS/>:<RouteWarmup route="channels"/>)
@@ -231,8 +228,7 @@ function PageRouter({license}:{license:LicenseStatus}){
     :null;
 
   return <div className="pageWrap">
-    {youtubeMounted.current&&<div className="routeKeepAlive" hidden={!youtubeActive} aria-hidden={!youtubeActive}><UiErrorBoundary scope="youtube" onHome={()=>setPage('dashboard')}><CachedYouTubeRoute routeTab={youtubeRouteTab} active={youtubeActive}/></UiErrorBoundary></div>}
-    {!youtubeSelected&&<UiErrorBoundary scope={String(page)} onHome={()=>setPage('dashboard')}>{transient}</UiErrorBoundary>}
+    {youtubeSelected?<UiErrorBoundary scope="youtube" onHome={()=>setPage('dashboard')}><CachedYouTubeRoute routeTab={youtubeRouteTab} active/></UiErrorBoundary>:<UiErrorBoundary scope={String(page)} onHome={()=>setPage('dashboard')}>{transient}</UiErrorBoundary>}
   </div>
 }
 
