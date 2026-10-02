@@ -81,9 +81,9 @@ export function MetadataPage(){
  const patternPublishDays=Math.max(1,Math.floor(channel?.publishDays||3)),patternPauseDays=Math.max(1,Math.floor(channel?.pauseDays||1));
  const schedulePairs=useMemo(()=>selectedYt.map((v,i)=>({v,row:rows[i]})).filter(x=>scheduleMode==='manual'||!x.v.publishAt),[selectedYt,rows,scheduleMode]);
  const schedulePairIds=useMemo(()=>schedulePairs.map(x=>x.v.id),[schedulePairs]);
- const schedulePairRevision=useMemo(()=>schedulePairRevision,[schedulePairIds]);
+ const schedulePairRevision=useMemo(()=>schedulePairIds.join('|'),[schedulePairIds]);
  const effectiveStart=scheduleMode==='auto'?(scheduleTruth==='complete'&&scheduleState?.nextAvailableAt?toKratLocalInput(scheduleState.nextAvailableAt):''):start;
- const patternGenerated=useMemo(()=>strategy==='pattern'&&channel?.patternAnchorDate?generatePatternSchedule(channel,yt,schedulePairs.length,schedulePairIds):{dates:[],calendar:[]},[strategy,channel?.id,channel?.patternAnchorDate,channel?.publishDays,channel?.pauseDays,channel?.publishHour,channel?.publishMinute,yt,schedulePairs.length,schedulePairIds.join('|'),scheduleRevision]);
+ const patternGenerated=useMemo(()=>strategy==='pattern'&&channel?.patternAnchorDate?generatePatternSchedule(channel,yt,schedulePairs.length,schedulePairIds):{dates:[],calendar:[]},[strategy,channel?.id,channel?.patternAnchorDate,channel?.publishDays,channel?.pauseDays,channel?.publishHour,channel?.publishMinute,yt,schedulePairs.length,schedulePairRevision,scheduleRevision]);
  const schedulePreview=useMemo(()=>strategy==='pattern'?schedulePairs.map((x,i)=>({...x.v,publishAt:patternGenerated.dates[i]})).filter(v=>Boolean(v.publishAt)):effectiveStart?buildExistingScheduleFromLocal(schedulePairs.map(x=>x.v),effectiveStart,cadence,schedulePairs.map(x=>x.row)):[],[strategy,schedulePairs,effectiveStart,cadence,patternGenerated.dates]);
  const previewFirst=schedulePreview[0]?.publishAt,previewLast=schedulePreview.length?schedulePreview[schedulePreview.length-1]?.publishAt:undefined;
  const defaultPublishTime=scheduleState?.defaultPublishTime||`${String(channel?.publishHour||0).padStart(2,'0')}:${String(channel?.publishMinute||0).padStart(2,'0')}`;
