@@ -6,6 +6,7 @@ import type {MetadataQueueInput} from './metadataQueue';
 
 type FpsMetrics={fps:number;p50:number;p95:number;p99:number;worst:number;dropped:number;long50:number;long100:number};
 type RouteTiming={page:Page;samples:number[]};
+type ScenarioTimings=Map<string,number[]>;
 const sleep=(ms:number)=>new Promise<void>(r=>window.setTimeout(r,ms));
 const frame=()=>new Promise<void>(r=>requestAnimationFrame(()=>r()));
 async function frames(n:number){for(let i=0;i<n;i++)await frame()}
@@ -49,6 +50,13 @@ function clickButton(text:string){
   const needle=text.toLocaleLowerCase('ru-RU');
   const el=[...document.querySelectorAll<HTMLButtonElement>('button')].find(x=>(x.textContent||'').toLocaleLowerCase('ru-RU').includes(needle));
   el?.click();
+  return Boolean(el);
+}
+function recordScenario(timings:ScenarioTimings,label:string,elapsed:number){
+  const bucket=timings.get(label)||[];bucket.push(elapsed);timings.set(label,bucket)
+}
+async function timeScenario(timings:ScenarioTimings,label:string,action:()=>void|Promise<void>,frameCount=0){
+  const started=performance.now();await action();if(frameCount)await frames(frameCount);recordScenario(timings,label,performance.now()-started)
 }
 async function scrollHotContainers(){
   const roots=[document.querySelector<HTMLElement>('.pageWrap'),document.querySelector<HTMLElement>('.metadataQueueRows')].filter(Boolean) as HTMLElement[];
@@ -57,7 +65,7 @@ async function scrollHotContainers(){
     el.scrollTop=0;await frames(2);
   }
 }
-async function runNavigationRound(round:number,routeTimings:Map<Page,number[]>){
+async function runNavigationRound(round:number,routeTimings:Map<Page,number[]>,scenarioTimings:ScenarioTimings){
   const route:Page[]=['dashboard','channels','production','youtube','analytics','settings'];
   for(let i=0;i<30;i++){
     const page=route[i%route.length],started=performance.now();
@@ -65,15 +73,19 @@ async function runNavigationRound(round:number,routeTimings:Map<Page,number[]>){
     await frames(3);
     const elapsed=performance.now()-started;
     const bucket=routeTimings.get(page)||[];bucket.push(elapsed);routeTimings.set(page,bucket);
-    if(page==='production'&&i%12===2){clickButton('Материалы');await frames(3);clickButton('Builder');await frames(3)}
-    if(i%6===5)await scrollHotContainers();
+    if(page==='production'&&i%12===2){
+      await timeScenario(scenarioTimings,'production-materials',()=>{clickButton('Материалы')},3);
+      await timeScenario(scenarioTimings,'production-builder',()=>{clickButton('Builder')},3);
+    }
+    if(i%6===5)await timeScenario(scenarioTimings,'route-scroll',scrollHotContainers);
   }
-  useApp.getState().setPage('metadata');await frames(12);await scrollHotContainers();
-  window.dispatchEvent(new CustomEvent('vyron:open-error-center'));await frames(5);
+  await timeScenario(scenarioTimings,'metadata-settle',()=>{useApp.getState().setPage('metadata')},12);
+  await timeScenario(scenarioTimings,'metadata-scroll',scrollHotContainers);
+  await timeScenario(scenarioTimings,'error-center-open',()=>{window.dispatchEvent(new CustomEvent('vyron:open-error-center'))},5);
   const close=[...document.querySelectorAll<HTMLButtonElement>('.errorCenterModal button')].find(x=>(x.textContent||'').trim()==='Закрыть');
-  close?.click();await frames(4);
-  useApp.getState().setPage('dashboard');await frames(8);
-  await sleep(900+round*100);
+  await timeScenario(scenarioTimings,'error-center-close',()=>{close?.click()},4);
+  await timeScenario(scenarioTimings,'dashboard-final-settle',()=>{useApp.getState().setPage('dashboard')},8);
+  const idleStarted=performance.now();await sleep(900+round*100);recordScenario(scenarioTimings,'round-idle',performance.now()-idleStarted);
 }
 
 export function M1PerformanceProbe(){
@@ -136,10 +148,10 @@ export function M1PerformanceProbe(){
         if(assignedJobs!==1000)throw new Error('METADATA_BATCH_ASSIGNMENT_INCOMPLETE:'+assignedJobs);
         const assignmentMs=performance.now()-assignmentStarted;
         await sleep(1000);
-        const rounds:FpsMetrics[]=[],routeTimings=new Map<Page,number[]>();
+        const rounds:FpsMetrics[]=[],routeTimings=new Map<Page,number[]>(),scenarioTimings:ScenarioTimings=new Map();
         for(let round=0;round<3&&!cancelled;round++){
           latest=null;window.dispatchEvent(new CustomEvent('vyron:fps-reset'));await sleep(850);
-          await runNavigationRound(round,routeTimings);
+          await runNavigationRound(round,routeTimings,scenarioTimings);
           if(!latest)throw new Error('PERFORMANCE_METRICS_NOT_EMITTED');
           rounds.push({...latest as FpsMetrics});
         }
@@ -160,6 +172,7 @@ export function M1PerformanceProbe(){
           schemaVersion:1,version:'6.1.0',at:new Date().toISOString(),pass,target,aggregate,rounds,
           dataset:{channels:35,jobs:1000,metadataRecords:5000,assignedJobs,assignmentMs,navigationSwitchesPerRound:30,rounds:3},
           routeTimings:Object.fromEntries([...routeTimings.entries()].map(([page,samples])=>[page,{samples:samples.length,median:median(samples),p95:[...samples].sort((a,b)=>a-b)[Math.min(samples.length-1,Math.floor((samples.length-1)*.95))],worst:Math.max(...samples)}])),
+          scenarioTimings:Object.fromEntries([...scenarioTimings.entries()].map(([label,samples])=>[label,{samples:samples.length,median:median(samples),p95:[...samples].sort((a,b)=>a-b)[Math.min(samples.length-1,Math.floor((samples.length-1)*.95))],worst:Math.max(...samples),values:samples}])),
           runtime:{userAgent:navigator.userAgent,platform:navigator.platform,hardwareConcurrency:navigator.hardwareConcurrency,screen:[screen.width,screen.height,devicePixelRatio]},
           scenarios:['Главная→Каналы→Производство→YouTube→Аналитика→Настройки × 30','Production Materials/Builder','YouTube Metadata + 5000-record queue','modal open/close','long scroll']
         });
