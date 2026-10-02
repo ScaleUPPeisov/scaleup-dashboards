@@ -243,6 +243,15 @@ button.secondary{background:rgba(255,255,255,.035);border-color:#294156;color:#9
 .metadataQueueRow span{display:grid;gap:2px}.metadataQueueRow small,.metadataQueueRow em{font-size:9px;color:#6f8da0;font-style:normal}.metadataQueueRow strong{font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media(max-width:1100px){.metadataQueueFacts{grid-template-columns:repeat(3,minmax(0,1fr))}.metadataQueueRow{grid-template-columns:1fr}}
 
+/* VYRON 6.1.0 — layered core routes: preserve layout on macOS route switches. */
+.pageWrap.layeredRoutes{position:relative;flex:1;min-height:0;overflow:hidden;padding:0;animation:none!important;contain:layout style}
+.routeLayer{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;padding:30px 34px 60px;scrollbar-width:thin;scrollbar-color:#1f435a transparent;overscroll-behavior:contain;contain:layout style;visibility:hidden;opacity:0;pointer-events:none}
+.routeLayer::-webkit-scrollbar{width:8px}.routeLayer::-webkit-scrollbar-thumb{background:#1e3d50;border-radius:10px}
+.routeLayer.active{visibility:visible;opacity:1;pointer-events:auto}
+.routeLayer.inactive{visibility:hidden;opacity:0;pointer-events:none}
+.platform-macos .routeLayer{animation:none!important}
+@media(max-width:900px){.routeLayer{padding:24px 22px 50px}}
+
 /* VYRON 6.1.0 — WKWebView frame-pacing overrides. Keep Windows visuals untouched. */
 .platform-macos .pageWrap{overscroll-behavior:contain;animation-duration:.08s}
 .platform-macos .primary,.platform-macos .ghost,.platform-macos .settingsAction,.platform-macos .danger,.platform-macos .iconBtn,.platform-macos .jobActions button,.platform-macos .cardActions button,.platform-macos .publisherNotice button,.platform-macos .settingsTabs button,.platform-macos .addLine button,.platform-macos .pathLine button{transition:transform .12s ease,background-color .12s ease,border-color .12s ease}
