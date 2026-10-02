@@ -1,29 +1,26 @@
 import {describe,expect,it} from 'vitest';import fs from 'node:fs';
 describe('VYRON 3.0.0 Publisher/UI contracts',()=>{
  const p=fs.readFileSync('src/PublisherOS.tsx','utf8');
- const picker=fs.readFileSync('src/PublisherVideoPicker.tsx','utf8');
  const inventory=fs.readFileSync('src/renderInventoryRuntime.ts','utf8');
  const bar=fs.readFileSync('src/YouTubeChannelBar.tsx','utf8');
  const settings=fs.readFileSync('src/SettingsOS.tsx','utf8');
  const styles=fs.readFileSync('src/styles.css','utf8');
  const history=fs.readFileSync('src/releaseHistory.ts','utf8');
  it('Select All includes only canonical eligible NEW rows and Select None clears selection',()=>{
-  expect(p).toContain("publisherDerived=usePublisherDerived");
-  expect(p).toContain("publisherDerived.selectableJobs");
-  expect(p).toContain("publisherDerived.selectableJobIds");
+  expect(p).toContain("const selectableJobs=useMemo(()=>sourceAvailability==='ONLINE'?allChannelJobs.filter(j=>uploadStateById.get(j.id)==='NEW'&&!recoveryJobIds.has(j.id))");
   expect(p).toContain("channelJobs.filter(j=>selectableJobIds.has(j.id)).map(j=>j.id)");
   expect(p).toContain('>Выбрать все</button>');
   expect(p).toContain("setDraftPatch({selectedIds:[]})");
   expect(p).toContain('>Снять выбор</button>');
-  expect(picker).toContain('disabledReason');
+  expect(p).toContain('disabledReason');
  });
  it('keeps dual exact channel folders and safe discovery wiring',()=>{expect(p).toContain('projectsFolderPath');expect(p).toContain('discoverChannelFolders');expect(p).toContain('found.render.length===1');expect(p).toContain('found.projects.length===1')});
  it('shows fingerprint generation evidence and never fixes selection by forcing checkboxes',()=>{
   expect(p).toContain('Показать доказательство статуса');
   expect(p).toContain('Новая версия файла');
-  expect(picker).toContain("disabled={!fresh||p.busy}");
+  expect(p).toContain("disabled={!fresh||busy}");
   expect(p).toContain("renderScan.summary.NEW_CANDIDATE+renderScan.summary.NEW_GENERATION");
-  expect(picker).toContain("disabled={!fresh||p.busy}");
+  expect(p).toContain("disabled={!fresh||busy}");
  });
  it('normal Publisher auto-materializes unmatched current fingerprints without YouTube-ID gate',()=>{
   expect(p).toContain("const currentCandidates=rows.filter(r=>r.classification==='NEW_CANDIDATE'||r.classification==='NEW_GENERATION')");

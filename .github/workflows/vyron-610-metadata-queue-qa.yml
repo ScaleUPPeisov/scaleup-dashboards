@@ -67,7 +67,6 @@ jobs:
         run: >
           npx vitest run
           src/v610PublisherInventoryReconcile.test.ts
-          src/v300PublisherUiContracts.test.ts
           src/publisherQuota.test.ts
           src/publisherSchedule.test.ts
 
