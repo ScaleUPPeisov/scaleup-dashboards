@@ -59,7 +59,7 @@ async function timeScenario(timings:ScenarioTimings,label:string,action:()=>void
   const started=performance.now();await action();if(frameCount)await frames(frameCount);recordScenario(timings,label,performance.now()-started)
 }
 async function scrollHotContainers(){
-  const roots=[document.querySelector<HTMLElement>('.routeLayer.active')||document.querySelector<HTMLElement>('.pageWrap'),document.querySelector<HTMLElement>('.metadataQueueRows')].filter(Boolean) as HTMLElement[];
+  const roots=[document.querySelector<HTMLElement>('.pageWrap'),document.querySelector<HTMLElement>('.metadataQueueRows')].filter(Boolean) as HTMLElement[];
   for(const el of roots){
     el.scrollTop=el.scrollHeight;await frames(2);
     el.scrollTop=0;await frames(2);
