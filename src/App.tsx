@@ -57,7 +57,7 @@ import {UiErrorBoundary} from './UiErrorBoundary';
 import {SafeArtwork} from './SafeArtwork';
 import {OwnerProfile} from './OwnerProfile';
 import {beginStartupQuotaProbe} from './startupQuotaProbe';
-import {traceRouteCommitPhase,traceRouteLayoutEffect,traceRouteRouterRender} from './m1RouteLifecycleTrace';
+import {tracePassiveEffect,traceRouteCommitPhase,traceRouteLayoutEffect,traceRouteRouterRender} from './m1RouteLifecycleTrace';
 
 async function notifyUpdateAvailable(version:string){
   const notifiedKey='vyron:update-notified-version';
@@ -214,12 +214,12 @@ function PageRouter({license}:{license:LicenseStatus}){
   useLayoutEffect(()=>{traceRouteLayoutEffect(String(canonical),'router')},[canonical]);
   const heavyRoute=canonical==='dashboard'||canonical==='channels';
   const [settledRoute,setSettledRoute]=useState<string>('');
-  useEffect(()=>{
+  useEffect(()=>tracePassiveEffect('PageRouter.routeSettle',()=>{
     if(!heavyRoute){setSettledRoute(String(canonical));return}
     setSettledRoute('');
     const id=window.setTimeout(()=>setSettledRoute(String(canonical)),HEAVY_ROUTE_SETTLE_MS);
     return()=>window.clearTimeout(id)
-  },[canonical,heavyRoute]);
+  }),[canonical,heavyRoute]);
   const heavyReady=!heavyRoute||settledRoute===canonical;
   const youtubeSelected=canonical==='youtube';
 

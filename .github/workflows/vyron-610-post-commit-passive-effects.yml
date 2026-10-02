@@ -1,0 +1,177 @@
+name: VYRON 6.1.0 Post Commit Passive Effect Attribution
+
+on:
+  push:
+    branches:
+      - diagnostic/vyron-6.1.0-post-commit-passive-effects
+
+permissions:
+  contents: read
+
+env:
+  VERSION: '6.1.0'
+  RELEASE_BASE: '4de188b2cf50d3f58cd7074a6e57ccb67c15e1b2'
+  LAST_DIAG_HEAD: '063798a3adb1aec7f9973a2d36cdb5f91dc6919a'
+  PROBE_BLOB: 'f580a12c6bbc85de9b9c429f487a5e94c0449ecc'
+  BUNDLE_ID: studio.channelflow.desktop
+
+jobs:
+  passive-effects:
+    runs-on: macos-14
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: diagnostic/vyron-6.1.0-post-commit-passive-effects
+          fetch-depth: 0
+
+      - name: Verify passive attribution only
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git merge-base --is-ancestor "$LAST_DIAG_HEAD" HEAD
+          test "$(git rev-parse "$RELEASE_BASE:src/M1PerformanceProbe.tsx")" = "$PROBE_BLOB"
+          test "$(git rev-parse "HEAD:src/M1PerformanceProbe.tsx")" = "$PROBE_BLOB"
+          git diff --exit-code "$RELEASE_BASE"...HEAD -- src/M1PerformanceProbe.tsx
+          git diff --exit-code "$LAST_DIAG_HEAD"...HEAD --             src/store.ts src/api.ts src/M1PerformanceProbe.tsx src/styles.css             src/PublisherShell.tsx src/ChannelRunway.tsx src/MaterialsManager.tsx src/ProductionManager.tsx             src/youtubePublishSafety.ts src-tauri/src/performance_probe.rs src-tauri/src/lib.rs             src-tauri/src/oauth_vault.rs src-tauri/src/security.rs src-tauri/src/youtube.rs
+          CHANGED="$(git diff --name-only "$LAST_DIAG_HEAD"...HEAD | sort)"
+          ALLOWED="$(printf '%s\n'             '.github/workflows/vyron-610-post-commit-passive-effects.yml'             'src/App.tsx'             'src/PublisherOS.tsx'             'src/YouTubeCenter.tsx'             'src/YouTubeChannelBar.tsx'             'src/m1RouteLifecycleTrace.ts' | sort)"
+          test "$CHANGED" = "$ALLOWED"
+          echo "CODE_CHANGES_FOR_FIX=0"
+          echo "PRODUCTION_PATCH=NONE"
+          echo "M1PerformanceProbe unchanged: YES"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+      - run: npx vitest run src/v610M1RoutePerformance.test.ts src/v610PublisherColdRoute.test.ts
+
+      - name: Build one ARM64 passive-effect diagnostic app
+        shell: bash
+        env:
+          VITE_M1_PARITY_DIAG: '1'
+          VITE_M1_ROUTE_TRACE: '1'
+        run: |
+          set -Eeuo pipefail
+          export APPLE_SIGNING_IDENTITY='-'
+          npx tauri build --target aarch64-apple-darwin --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          APP="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)"
+          test -d "$APP"
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = "$BUNDLE_ID"
+          file "$APP/Contents/MacOS/channelflow" | grep -q arm64
+          codesign --verify --deep --strict "$APP"
+          echo "APP_PATH=$APP" >> "$GITHUB_ENV"
+
+      - name: Seed isolated owner license
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          LICENSE="$RUNNER_TEMP/license.json"
+          printf '%s\n' '{"valid":true,"type":"owner-lifetime","expiresAt":null,"maskedKey":"CI-PASSIVE-EFFECTS","activatedAt":"2026-10-02T00:00:00Z"}' > "$LICENSE"
+          for ROOT in "$HOME/Library/Application Support/studio.channelflow.desktop" "$HOME/Library/Application Support/VYRON" "$HOME/Library/Application Support/channelflow"; do
+            mkdir -p "$ROOT"
+            cp "$LICENSE" "$ROOT/license.json"
+          done
+
+      - name: Run exact workload once
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          REPORT="$RUNNER_TEMP/passive-effects-report.json"
+          SUMMARY="$RUNNER_TEMP/passive-effects-summary.json"
+          LOG="$RUNNER_TEMP/passive-effects-runtime.log"
+          PERF_ROOT="$RUNNER_TEMP/passive-effects-profile"
+          rm -f "$REPORT" "$SUMMARY" "$LOG"
+          rm -rf "$PERF_ROOT"
+          mkdir -p "$PERF_ROOT"
+          VYRON_M1_PERF_PROBE=1           VYRON_M1_PERF_ROOT="$PERF_ROOT"           VYRON_M1_PERF_REPORT="$REPORT"           VYRON_M1_PARITY_DIAG=1           VYRON_M1_PARITY_EXIT_AFTER_REPORT=1           VYRON_M1_PARITY_RUNNER_ARCH="$(uname -m)"           VYRON_M1_PARITY_MACOS="$(sw_vers -productVersion)"           VYRON_M1_PARITY_BASE_HEAD="$RELEASE_BASE"           VYRON_M1_CSS_VARIANT=base             "$APP_PATH/Contents/MacOS/channelflow" >"$LOG" 2>&1
+          test -s "$REPORT"
+
+          python3 - "$REPORT" "$SUMMARY" <<'PY'
+          import json,sys
+          p=json.load(open(sys.argv[1]))
+          d=p.get("dataset") or {}
+          assert d.get("channels")==35 and d.get("jobs")==1000,p
+          assert d.get("metadataRecords")==5000 and d.get("assignedJobs")==1000,p
+          assert d.get("navigationSwitchesPerRound")==30 and d.get("rounds")==3,p
+          diag=p.get("nonGateDiagnostics") or {}
+          assert (diag.get("m1Parity") or {}).get("fpsMonitorSetting") is True,diag
+          life=diag.get("routeLifecycle") or {}
+          pe=life.get("passiveEffects") or {}
+          assert life.get("enabled") is True,life
+          assert (pe.get("t5_firstPassiveEffect") or {}).get("count",0)>0,pe
+          assert (pe.get("totalSynchronousPassiveEffectTime") or {}).get("count",0)>0,pe
+
+          first=pe.get("t5_firstPassiveEffect") or {}
+          total=pe.get("totalSynchronousPassiveEffectTime") or {}
+          after_msg=pe.get("lastPassiveEnd_messageChannel") or {}
+          after_raf=pe.get("lastPassiveEnd_nativeRaf1") or {}
+          top=pe.get("topEffects") or []
+          slow=pe.get("invocationsOver8ms") or []
+          pc=(life.get("postCommit") or {}).get("youtube") or {}
+          message_p95=float((pc.get("t5_messageChannel") or {}).get("p95") or 0)
+          raf_p95=float((pc.get("t5_nativeRaf1") or {}).get("p95") or 0)
+          first_p95=float(first.get("p95") or 0)
+          total_med=float(total.get("median") or 0)
+          total_p95=float(total.get("p95") or 0)
+          repeated_slow=[x for x in top if int(x.get("count") or 0)>=2 and float(x.get("p95") or 0)>=8]
+
+          if total_med>=30 or total_p95>=30 or repeated_slow:
+              source="PASSIVE_EFFECTS"
+              culprit=(repeated_slow[0].get("name") if repeated_slow else (top[0].get("name") if top else "aggregate passive effect flush"))
+          elif first_p95>=40:
+              source="PRE_PASSIVE_BROWSER_WORK"
+              culprit="delay before passive effect flush"
+          elif total_p95<=5 and max(message_p95,raf_p95)>=50:
+              source="PRE_PASSIVE_BROWSER_WORK"
+              culprit="browser/WKWebView post-commit lifecycle while app passive JS is effectively idle"
+          else:
+              source="INCONCLUSIVE"
+              culprit=(top[0].get("name") if top else "no single passive effect isolated")
+
+          out={
+            "t5FirstPassiveEffect":first,
+            "passiveEffectsTotal":total,
+            "lastPassiveEndMessageChannel":after_msg,
+            "lastPassiveEndNativeRaf1":after_raf,
+            "topEffects":top,
+            "invocationsOver8ms":slow,
+            "mainThreadDelaySource":source,
+            "primaryCulprit":culprit,
+            "codeChangesForFix":0,
+            "productionPatch":"NONE",
+            "m1PerformanceProbeUnchanged":True,
+            "m1PerformanceProbeBlob":"f580a12c6bbc85de9b9c429f487a5e94c0449ecc"
+          }
+          json.dump(out,open(sys.argv[2],"w"),indent=2)
+          print(json.dumps(out,indent=2))
+          PY
+
+      - name: Preserve evidence
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/evidence"
+          cp "$RUNNER_TEMP/passive-effects-report.json" "$RUNNER_TEMP/evidence/report.json" 2>/dev/null || true
+          cp "$RUNNER_TEMP/passive-effects-summary.json" "$RUNNER_TEMP/evidence/summary.json" 2>/dev/null || true
+          cp "$RUNNER_TEMP/passive-effects-runtime.log" "$RUNNER_TEMP/evidence/runtime.log" 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: VYRON-6.1.0-POST-COMMIT-PASSIVE-EFFECTS
+          path: ${{ runner.temp }}/evidence/**
+          if-no-files-found: warn
+          retention-days: 30
