@@ -33,6 +33,7 @@ import {PublisherShell} from './PublisherShell';
 import {EMPTY_PUBLISHER_DERIVED,publisherRowFacts,usePublisherDerived} from './publisherDerivedRuntime';
 import {recordYoutubeRouteEvent} from './youtubeRouteDiagnostics';
 import {PublisherVideoPicker} from './PublisherVideoPicker';
+import {YoutubePaintProfiler} from './youtubePaintDiagnosticRuntime';
 
 const status=(j:VideoJob)=>j.status==='READY_UPLOAD'?'В ОЧЕРЕДИ':j.status==='UPLOADING'?'ЗАГРУЖАЕТСЯ':j.status==='SCHEDULED'?'YOUTUBE ✓':j.status==='ERROR'?'ОШИБКА':j.status;
 const pct=(a:number,b:number)=>b?Math.min(100,Math.max(0,a/b*100)):0;
@@ -68,7 +69,7 @@ function PublisherOSLightController({onAdvanced}:{onAdvanced:(panel:PublisherAdv
  const sourceOnline=publisherDerived.inventoryReady;
  const channelJobs=videoFilter==='new'&&!sourceOnline?[]:publisherDerived.filters[videoFilter];
  const counts=publisherDerived.counts,newCount=sourceOnline?publisherDerived.selectableJobs.length:0;
- return <>
+ return <YoutubePaintProfiler id="PublisherOS"><>
   <PublisherShell channels={orderedChannels} channelId={channelId} selectedCount={draft.selectedIds.length} newCount={newCount} uploadedCount={counts.ON_YOUTUBE} processingCount={counts.PROCESSING} errorCount={counts.ERRORS} folderReady={Boolean(channel?.renderFolderPath)} recoveryCount={0} onChannel={()=>{}} onClear={()=>setDraft(clearPublishWorkspace(channelId))} onFolders={()=>onAdvanced('folders')} onRecovery={()=>onAdvanced('recovery')} onMetadata={()=>onAdvanced('metadata')} onThumbs={()=>onAdvanced('thumbs')} onSchedule={()=>onAdvanced('schedule')} onCleanup={()=>onAdvanced('cleanup')}/>
   <section className="panel publishStep publisherColdPanel">
    <div className="panelHead"><div><small>01 • VIDEO</small><h3>Готовые видео</h3><p>{newCount} новых · {counts.ON_YOUTUBE} на YouTube · {counts.PROCESSING} обрабатываются · {counts.ERRORS} ошибок</p></div><span>{draft.selectedIds.length} выбрано</span></div>
@@ -77,7 +78,7 @@ function PublisherOSLightController({onAdvanced}:{onAdvanced:(panel:PublisherAdv
    {!sourceOnline&&<div className="publishCheck"><b>{channel?.renderFolderPath?'Папка ещё не подтверждена Live Inventory':'Папка рендера не настроена'}</b><span>Откройте «Папки» или «Расширенные действия» для сканирования и восстановления.</span></div>}
    <PublisherVideoPicker jobs={channelJobs} selectedIds={draft.selectedIds} selectableIds={publisherDerived.selectableJobIds} busy={false} rowFacts={publisherDerived.rowFactsById} recoveryIds={EMPTY_PATH_SET} windowKey={channelId+':'+videoFilter} onToggle={id=>setDraftPatch({selectedIds:draft.selectedIds.includes(id)?draft.selectedIds.filter(x=>x!==id):[...draft.selectedIds,id]})} onRemove={()=>onAdvanced('actions')} onClearRemoteMissing={()=>onAdvanced('actions')}/>
   </section>
- </>;
+ </></YoutubePaintProfiler>;
 }
 
 function PublisherOSAdvanced({activityRef,initialPanel}:{activityRef?:React.MutableRefObject<boolean>;initialPanel:PublisherAdvancedPanel}){

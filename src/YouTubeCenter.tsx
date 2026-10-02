@@ -14,6 +14,7 @@ import {loadActivePublishChannel,subscribeActivePublishChannel} from './publishW
 import {UiErrorBoundary} from './UiErrorBoundary';
 import {useApp} from './store';
 import {beginYoutubeRouteDiagnostics,recordYoutubeRouteEvent} from './youtubeRouteDiagnostics';
+import {YoutubePaintProfiler} from './youtubePaintDiagnosticRuntime';
 
 type Tab='publish'|'uploaded'|'metadata'|'schedule'|'calendar'|'command'|'runway'|'data'|'statistics'|'accounts'|'history'|'queue';
 const OPEN_TAB_KEY='vyron:youtube-open-tab:v1';
@@ -34,5 +35,5 @@ export function YouTubeCenter({initialTab='publish',routeTab,active=true}:{initi
  const tabs:[typeof tab,string][]=[['publish','Публикация'],['metadata','Метаданные'],['schedule','Расписание'],['uploaded','Загруженные'],['command','Командный центр'],['runway','План каналов'],['statistics','Статистика'],['history','История'],['accounts','Аккаунты']];
  const content=tab==='publish'?<CachedPublisher activityRef={routeActiveRef}/>:tab==='uploaded'?<ExistingVideos/>:tab==='metadata'?<MetadataTabs active={active}/>:tab==='schedule'?<ScheduleWorkspace/>:tab==='command'?<CommandCenter/>:tab==='runway'?<ChannelRunway/>:tab==='statistics'?<StatisticsCenter/>:tab==='history'?<ActivityHistory globalView={historyGlobal}/>:<AccountsPage/>;
  const tabLabel=tabs.find(([id])=>id===tab)?.[1]||'YouTube';
- return <><div className="youtubeCenterHead"><div><small>VYRON • YOUTUBE</small><h1>YouTube</h1><p>Публикация, метаданные, расписание и управление каналом в одном рабочем пространстве.</p></div><button className="compact" onClick={()=>setQuotaOpen(x=>!x)}>{quotaOpen?'Скрыть квоту':'Квота'}</button></div>{quotaOpen&&active&&<CachedQuotaMeter compact active/>}{active&&<CachedYouTubeChannelBar active/>}<div className="youtubeTabs youtubeMasterTabs">{tabs.map(([id,label])=><button key={id} className={tab===id?'active':''} onClick={()=>setTab(id)}>{label}</button>)}</div>{active&&<div key={tab+':'+activeChannel} className="youtubeChannelContext"><UiErrorBoundary scope={tabLabel} onHome={()=>setPage('dashboard')}>{content}</UiErrorBoundary></div>}</>;
+ return <YoutubePaintProfiler id="YouTubeCenter"><><div className="youtubeCenterHead"><div><small>VYRON • YOUTUBE</small><h1>YouTube</h1><p>Публикация, метаданные, расписание и управление каналом в одном рабочем пространстве.</p></div><button className="compact" onClick={()=>setQuotaOpen(x=>!x)}>{quotaOpen?'Скрыть квоту':'Квота'}</button></div>{quotaOpen&&active&&<CachedQuotaMeter compact active/>}{active&&<CachedYouTubeChannelBar active/>}<div className="youtubeTabs youtubeMasterTabs">{tabs.map(([id,label])=><button key={id} className={tab===id?'active':''} onClick={()=>setTab(id)}>{label}</button>)}</div>{active&&<div key={tab+':'+activeChannel} className="youtubeChannelContext"><UiErrorBoundary scope={tabLabel} onHome={()=>setPage('dashboard')}>{content}</UiErrorBoundary></div>}</></YoutubePaintProfiler>;
 }

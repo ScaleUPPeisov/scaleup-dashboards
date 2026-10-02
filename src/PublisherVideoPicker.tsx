@@ -3,6 +3,7 @@ import type {VideoJob} from './types';
 import {baseName} from './publishCenterCore';
 import type {PublisherVideoRowFact} from './publisherDerivedRuntime';
 import {recordYoutubeRouteEvent} from './youtubeRouteDiagnostics';
+import {YoutubePaintProfiler} from './youtubePaintDiagnosticRuntime';
 
 export type PublisherVideoPickerProps={
  jobs:VideoJob[];
@@ -25,8 +26,8 @@ export const PublisherVideoPicker=React.memo(function PublisherVideoPicker(p:Pub
   if(limit!==24){recordYoutubeRouteEvent('PublisherVideoPicker','limit-reset');setLimit(24)}
  },[p.windowKey,limit]);
  const rows=p.jobs.slice(0,limit);
- if(!p.jobs.length)return <div className="publishVideoRows"><p>Для выбранного фильтра видео нет.</p></div>;
- return <>
+ if(!p.jobs.length)return <YoutubePaintProfiler id="PublisherVideoPicker"><div className="publishVideoRows"><p>Для выбранного фильтра видео нет.</p></div></YoutubePaintProfiler>;
+ return <YoutubePaintProfiler id="PublisherVideoPicker"><>
   <div className="publishVideoRows">
    {rows.map(j=>{
     const fact=p.rowFacts.get(j.id),st=fact?.state||'VERIFY_REQUIRED';
@@ -50,5 +51,5 @@ export const PublisherVideoPicker=React.memo(function PublisherVideoPicker(p:Pub
    })}
   </div>
   {p.jobs.length>limit&&<button className="compact publisherMoreRows" onClick={()=>setLimit(x=>Math.min(p.jobs.length,x+24))}>{'Показать ещё ('+(p.jobs.length-limit)+')'}</button>}
- </>;
+ </></YoutubePaintProfiler>;
 });

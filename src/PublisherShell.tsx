@@ -1,4 +1,5 @@
 import React from 'react';
+import {YoutubePaintProfiler} from './youtubePaintDiagnosticRuntime';
 import type {Channel} from './types';
 
 export type PublisherShellProps={
@@ -23,7 +24,7 @@ export type PublisherShellProps={
 
 export const PublisherShell=React.memo(function PublisherShell(p:PublisherShellProps){
  const activeName=p.channels.find(c=>c.id===p.channelId)?.name||'Канал не выбран';
- return <>
+ return <YoutubePaintProfiler id="PublisherShell"><>
   <div className="pageHeader publishMasterHead">
    <div>
     <small>YOUTUBE • ПУБЛИКАЦИЯ</small>
@@ -44,5 +45,5 @@ export const PublisherShell=React.memo(function PublisherShell(p:PublisherShellP
    <button onClick={p.onSchedule}>Расписание</button>
    <button onClick={p.onCleanup}>Очистка</button>
   </div>
- </>;
+ </></YoutubePaintProfiler>;
 });

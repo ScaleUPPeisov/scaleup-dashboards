@@ -306,3 +306,28 @@ button.secondary{background:rgba(255,255,255,.035);border-color:#294156;color:#9
 
 /* VYRON 6.1.0 YouTube hotfix: browser-native offscreen containment, no RAF-driven reveal. */
 .youtubeChannelContext .publishStep,.youtubeChannelContext .recoveryPublishPanel,.youtubeChannelContext .channelFolderBindings{content-visibility:auto;contain-intrinsic-size:auto 260px;contain:layout style paint}
+
+
+/* NON-GATE YouTube WKWebView paint isolation only. Diagnostic branch/build. */
+.youtubePaintDiagHost{position:relative}
+.diagnosticBanner{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:0 0 12px;padding:10px 14px;border:1px solid rgba(255,255,255,.12);border-radius:12px;background:rgba(10,12,18,.94)}
+.diagnosticBanner small{opacity:.68}.diagnosticBanner b{font-size:13px}
+.youtubePaintDiagStage{contain:layout style paint}
+.diagnosticSelectIsolation{display:flex;gap:12px;padding:16px}
+.diagnosticSelectIsolation select{min-width:280px}
+.ytPaintDiagMinimal,.ytPaintDiagMinimal *{
+  box-shadow:none!important;
+  text-shadow:none!important;
+  background-image:none!important;
+  transition:none!important;
+  animation:none!important;
+  filter:none!important;
+  backdrop-filter:none!important;
+}
+.ytPaintDiagMinimal .panel,
+.ytPaintDiagMinimal .youtubeChannelBar,
+.ytPaintDiagMinimal .youtubeCenterHead,
+.ytPaintDiagMinimal .youtubeTabs,
+.ytPaintDiagMinimal .publishMasterHead,
+.ytPaintDiagMinimal .publishToolbar{background:#15171c!important}
+.ytPaintDiagMinimal .channelAvatar{width:52px!important;height:52px!important;min-width:52px!important;min-height:52px!important;max-width:52px!important;max-height:52px!important;object-fit:cover!important}
