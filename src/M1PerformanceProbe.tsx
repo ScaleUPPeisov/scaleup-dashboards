@@ -51,7 +51,8 @@ function clickButton(text:string){
   el?.click();
 }
 async function scrollHotContainers(){
-  const roots=[document.querySelector<HTMLElement>('.pageWrap'),document.querySelector<HTMLElement>('.metadataQueueRows')].filter(Boolean) as HTMLElement[];
+  const activeRoute=document.querySelector<HTMLElement>('.routeLayer.active');
+  const roots=[activeRoute,document.querySelector<HTMLElement>('.metadataQueueRows')].filter(Boolean) as HTMLElement[];
   for(const el of roots){
     el.scrollTop=el.scrollHeight;await frames(2);
     el.scrollTop=0;await frames(2);
