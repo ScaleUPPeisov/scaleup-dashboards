@@ -2,6 +2,18 @@ import {readFileSync} from 'node:fs';
 import {beforeEach,describe,expect,it,vi} from 'vitest';
 import type {Channel,YoutubeExistingVideo,YoutubeProfile} from './types';
 
+class MemoryStorage{
+ private m=new Map<string,string>();
+ getItem(k:string){return this.m.get(k)??null}
+ setItem(k:string,v:string){this.m.set(k,String(v))}
+ removeItem(k:string){this.m.delete(k)}
+ clear(){this.m.clear()}
+ key(i:number){return[...this.m.keys()][i]??null}
+ get length(){return this.m.size}
+}
+const storage=new MemoryStorage();
+Object.defineProperty(globalThis,'localStorage',{value:storage,configurable:true});
+
 const fixture=vi.hoisted(()=>({
  profiles:[] as YoutubeProfile[],
  responses:new Map<string,{videos:YoutubeExistingVideo[];syncComplete:boolean;complete:boolean}>()
