@@ -17,7 +17,7 @@ concurrency:
 
 env:
   VERSION: '6.1.0'
-  PRODUCT_SOURCE_SHA: '5371a05f0e81ad520b0ef4ef55b53e544ce8e74c'
+  PRODUCT_SOURCE_SHA: 'a8a4fc437324dd93c69a27d27ef8ed1a100c6694'
   BUNDLE_ID: 'studio.channelflow.desktop'
   VYRON_M1_PERF_PROBE: '1'
 
