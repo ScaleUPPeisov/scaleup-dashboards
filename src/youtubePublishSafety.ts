@@ -8,6 +8,8 @@ const RECORDS='vyron:youtube-publish-records:v1';
 // leave a localStorage lock that disables publishing for up to two hours after restart.
 let runtimeLocks:ChannelUploadLock[]=[];
 const globalUploadListeners=new Set<()=>void>();
+let durableVerifiedUploads:PublishUploadRecord[]=[];
+let durableVerifiedUploadsKey='';
 function get<T>(key:string,fallback:T):T{try{const v=JSON.parse(localStorage.getItem(key)||'null');return v??fallback}catch{return fallback}}
 function set(key:string,v:unknown){try{localStorage.setItem(key,JSON.stringify(v))}catch{}}
 function emitGlobalUploadStatusChanged(){for(const cb of [...globalUploadListeners]){try{cb()}catch{}}}
@@ -27,21 +29,40 @@ function uniqueCompletedUploads(rows:PublishUploadRecord[]){
  }
  return out
 }
-export function restorePublishLedgerFromUploadHistory(history:UploadHistoryRecord[]){
- const current=publishRecords(),existingVideoIds=new Set(current.filter(x=>x.status==='completed'&&x.videoId).map(x=>String(x.videoId)));
- const recovered:PublishUploadRecord[]=[];
+function verifiedHistoryUploads(history:UploadHistoryRecord[]){
+ const seen=new Set<string>(),out:PublishUploadRecord[]=[];
  for(const row of history||[]){
   const videoId=String(row.youtubeVideoId||'').trim();
-  if(row.status!=='UPLOADED'||!videoId||existingVideoIds.has(videoId))continue;
-  existingVideoIds.add(videoId);
-  recovered.push({
-   id:'history:'+String(row.id||videoId),channelId:row.channelId,jobId:row.jobId,filePath:row.localFilePath||'',
-   fingerprint:String(row.sha256||'history:'+videoId),fileSize:Number(row.fileSize)||0,startedAt:row.uploadedAt,
-   completedAt:row.uploadedAt,videoId,status:'completed'
+  if(row.status!=='UPLOADED'||!videoId||seen.has(videoId))continue;
+  seen.add(videoId);
+  const completedAt=String(row.uploadedAt||'').trim();
+  out.push({
+   id:'history:'+String(row.id||videoId),channelId:String(row.channelId||''),jobId:String(row.jobId||''),filePath:String(row.localFilePath||''),
+   fingerprint:String(row.sha256||'history:'+videoId),fileSize:Number(row.fileSize)||0,startedAt:completedAt,completedAt,videoId,status:'completed'
   })
  }
- if(!recovered.length)return 0;
- saveRecords([...current,...recovered]);
+ return out
+}
+function globalVerifiedUploads(){
+ // Durable uploadHistory wins ordering/timestamps when the same videoId is also present in the runtime ledger.
+ return uniqueCompletedUploads([...durableVerifiedUploads,...publishRecords()])
+}
+export function restorePublishLedgerFromUploadHistory(history:UploadHistoryRecord[]){
+ const nextEvidence=verifiedHistoryUploads(history);
+ const nextKey=nextEvidence.map(x=>`${x.videoId}@${x.completedAt||x.startedAt}`).sort().join('|');
+ const evidenceChanged=nextKey!==durableVerifiedUploadsKey;
+ durableVerifiedUploads=nextEvidence;
+ durableVerifiedUploadsKey=nextKey;
+ const current=publishRecords(),existingVideoIds=new Set(current.filter(x=>x.status==='completed'&&x.videoId).map(x=>String(x.videoId)));
+ const recovered:PublishUploadRecord[]=[];
+ for(const row of nextEvidence){
+  const videoId=String(row.videoId||'').trim();
+  if(!videoId||existingVideoIds.has(videoId))continue;
+  existingVideoIds.add(videoId);
+  recovered.push(row)
+ }
+ if(recovered.length)saveRecords([...current,...recovered]);
+ else if(evidenceChanged)emitGlobalUploadStatusChanged();
  return recovered.length
 }
 export function uploadsByVyronLast24h(channelId:string,now=Date.now()){const min=now-24*60*60*1000;return publishRecords().filter(x=>x.channelId===channelId&&x.status==='completed'&&Boolean(x.videoId)&&Date.parse(x.completedAt||x.startedAt)>=min)}
@@ -64,7 +85,7 @@ export function uploadsByVyronToday(channelId:string,now=new Date()){return uniq
 export const VYRON_GLOBAL_DAILY_UPLOAD_LIMIT=100;
 export function uploadsByVyronQuotaDay(now=new Date()){
  const day=youtubePtDate(now);
- return uniqueCompletedUploads(publishRecords()).filter(x=>{
+ return globalVerifiedUploads().filter(x=>{
   const d=new Date(x.completedAt||x.startedAt);
   return !Number.isNaN(d.getTime())&&youtubePtDate(d)===day
  })
