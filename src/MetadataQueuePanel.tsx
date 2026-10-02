@@ -1,4 +1,4 @@
-import React,{useCallback,useEffect,useState} from 'react';
+import React,{useCallback,useEffect,useRef,useState} from 'react';
 import {api} from './api';
 import type {ImportedMetadata} from './metadata';
 import {metadataQueueInput,metadataQueueLowStockThreshold,type MetadataQueuePage,type MetadataQueueSummary} from './metadataQueue';
@@ -24,8 +24,16 @@ export function MetadataQueuePanel({channelId,channelName,dailyTarget,rows,sourc
     setSummary(s);setPage(p);
   },[channelId,channelName,offset,status]);
 
-  useEffect(()=>{setOffset(0);void refresh(0,status).catch(()=>{setSummary(null);setPage(null)})},[channelId]);
-  useEffect(()=>{if(!channelId)return;void refresh(offset,status).catch(()=>{})},[offset,status]);
+  const refreshChannelRef=useRef(''),refreshKeyRef=useRef('');
+  useEffect(()=>{
+    if(!channelId)return;
+    const channelChanged=refreshChannelRef.current!==channelId;
+    if(channelChanged){refreshChannelRef.current=channelId;if(offset!==0)setOffset(0)}
+    const nextOffset=channelChanged?0:offset,key=channelId+'|'+nextOffset+'|'+status;
+    if(refreshKeyRef.current===key)return;
+    refreshKeyRef.current=key;
+    void refresh(nextOffset,status).catch(()=>{setSummary(null);setPage(null)})
+  },[channelId,offset,status,refresh]);
 
   const threshold=metadataQueueLowStockThreshold(dailyTarget);
   const low=Boolean(summary&&summary.available>0&&summary.available<=threshold);
