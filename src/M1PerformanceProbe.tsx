@@ -1,6 +1,6 @@
 import React,{useEffect} from 'react';
 import {api} from './api';
-import {useApp} from './store';
+import {enterPerformanceProbeMode,exitPerformanceProbeMode,useApp} from './store';
 import type {Channel,Page,VideoJob} from './types';
 import type {MetadataQueueInput} from './metadataQueue';
 
@@ -94,11 +94,22 @@ export function M1PerformanceProbe(){
   useEffect(()=>{
     let cancelled=false;
     let latest:FpsMetrics|null=null;
+    let originalState:any;
+    let probeMode=false;
     const onMetrics=(event:Event)=>{latest=(event as CustomEvent<FpsMetrics>).detail};
     window.addEventListener('vyron:fps-metrics',onMetrics);
     void (async()=>{
       try{
         if(!(await api.performanceProbeEnabled()))return;
+        await api.performanceProbeAssertIsolated();
+        await enterPerformanceProbeMode();
+        probeMode=true;
+        const before=useApp.getState();
+        originalState={
+          channels:before.channels,jobs:before.jobs,competitors:before.competitors,settings:before.settings,logs:before.logs,
+          uploadHistory:before.uploadHistory,activityJournal:before.activityJournal,statisticsHistory:before.statisticsHistory,
+          fingerprintCache:before.fingerprintCache,projectLifecycle:before.projectLifecycle,page:before.page
+        };
         const channels=syntheticChannels(),jobs=syntheticJobs(channels);
         useApp.setState({channels,jobs});
         useApp.getState().patchSettings({fpsMonitor:true,autoCheckUpdates:false,autopilotEnabled:false});
@@ -170,6 +181,7 @@ export function M1PerformanceProbe(){
         };
         const target={fps:60,p50:16.7,p95:20,p99:33,dropped:2,long50:0};
         const pass=aggregate.fps>=57&&aggregate.p50<=17.5&&aggregate.p95<=20.5&&aggregate.p99<=33.5&&aggregate.dropped<2&&aggregate.long50===0;
+        await api.performanceProbeCleanup();
         await api.performanceProbeReport({
           schemaVersion:1,version:'6.1.0',at:new Date().toISOString(),pass,target,aggregate,rounds,
           dataset:{channels:35,jobs:1000,metadataRecords:5000,assignedJobs,assignmentMs,navigationSwitchesPerRound:30,rounds:3},
@@ -181,6 +193,12 @@ export function M1PerformanceProbe(){
         });
       }catch(error){
         if(await api.performanceProbeEnabled().catch(()=>false))await api.performanceProbeReport({schemaVersion:1,version:'6.1.0',pass:false,error:String(error),at:new Date().toISOString()}).catch(()=>undefined);
+      }finally{
+        if(originalState)useApp.setState(originalState);
+        if(probeMode){
+          await api.performanceProbeCleanup().catch(()=>undefined);
+          exitPerformanceProbeMode();
+        }
       }
     })();
     return()=>{cancelled=true;window.removeEventListener('vyron:fps-metrics',onMetrics)};

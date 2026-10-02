@@ -9,6 +9,7 @@ import {appendJournalEvent,normalizeActivityJournal} from './activityJournalCore
 import {migrateUploadHistoryFingerprintProvenance} from './storageLifecycle';
 import {appendStatisticsSnapshot,normalizeStatisticsHistory} from './youtubeStatisticsCenter';
 import {resolvedJobStatus} from './activeErrors';
+import {performanceFixtureCounts,stripPerformanceFixtures} from './performanceFixtures';
 
 export const DEFAULT_SETTINGS:Settings={
   workspace:'',renderRootPath:'',endlumePath:'',youtubeApiKey:'',autoCheckUpdates:true,reduceMotion:false,fpsMonitor:false,interfaceDensity:'compact',
@@ -36,27 +37,57 @@ let persistInFlight:Promise<void>|null=null;
 let persistAgain=false;
 const SAVE_DEBOUNCE_MS=750;
 let persistIdleHandle:number|undefined;
+let persistenceSuspended=false;
+let performanceProbeMode=false;
+
+function cancelScheduledPersistence(){
+  if(typeof window!=='undefined'){
+    window.clearTimeout(saveTimer);
+    if(persistIdleHandle!==undefined&&'cancelIdleCallback' in window)(window as any).cancelIdleCallback(persistIdleHandle);
+  }
+  saveTimer=undefined;persistIdleHandle=undefined;persistAgain=false;
+}
+export async function enterPerformanceProbeMode(){
+  persistenceSuspended=true;
+  cancelScheduledPersistence();
+  const active=persistInFlight;
+  if(active)await active;
+  performanceProbeMode=true;
+}
+export function exitPerformanceProbeMode(){
+  cancelScheduledPersistence();
+  performanceProbeMode=false;
+  persistenceSuspended=false;
+}
+export function isPerformanceProbeMode(){return performanceProbeMode}
+
 function persistedSnapshot(s:Store):AppState{
   return{version:10,channels:s.channels,jobs:s.jobs,competitors:s.competitors,settings:s.settings,logs:s.logs,uploadHistory:s.uploadHistory,activityJournal:s.activityJournal,statisticsHistory:s.statisticsHistory,fingerprintCache:s.fingerprintCache,projectLifecycle:s.projectLifecycle}
 }
 async function persistStoreState(){
+  if(persistenceSuspended)return;
   if(persistInFlight){persistAgain=true;return persistInFlight}
   const run=(async()=>{
     do{
       persistAgain=false;
-      const result=await api.saveState(persistedSnapshot(useApp.getState()));
+      if(persistenceSuspended)return;
+      const snapshot=persistedSnapshot(useApp.getState());
+      const fixtures=performanceFixtureCounts(snapshot);
+      if(fixtures.channels||fixtures.jobs)throw new Error(`PERFORMANCE_FIXTURE_PERSISTENCE_BLOCKED: channels=${fixtures.channels} jobs=${fixtures.jobs}`);
+      const result=await api.saveState(snapshot);
       if(result?.securityWarning){const h=humanizeError(result.securityWarning,'storage');notifyWarning(h.title,h.message,{operationId:'keychain-autosave-warning'})}
-    }while(persistAgain)
+    }while(persistAgain&&!persistenceSuspended)
   })();
   persistInFlight=run;
   try{await run}finally{if(persistInFlight===run)persistInFlight=null}
 }
 function scheduleSave(){
+  if(persistenceSuspended)return;
   window.clearTimeout(saveTimer);
   if(persistIdleHandle!==undefined&&'cancelIdleCallback' in window)(window as any).cancelIdleCallback(persistIdleHandle);
   saveTimer=window.setTimeout(()=>{
     saveTimer=undefined;
-    const run=()=>{persistIdleHandle=undefined;void persistStoreState().catch(e=>{const h=humanizeError(e,'storage');notifyError(h.title,h.message,{operationId:'state-save-failed'})})};
+    const run=()=>{persistIdleHandle=undefined;if(persistenceSuspended)return;void persistStoreState().catch(e=>{const h=humanizeError(e,'storage');notifyError(h.title,h.message,{operationId:'state-save-failed'})})};
     if('requestIdleCallback' in window)persistIdleHandle=(window as any).requestIdleCallback(run,{timeout:1200});
     else run();
   },SAVE_DEBOUNCE_MS)
@@ -100,7 +131,7 @@ function remapStatisticsHistory(history:ChannelStatisticsHistory,aliases:Map<str
 
 export const useApp=create<Store>((set,get)=>({
   ...EMPTY_STATE,page:'dashboard',booted:false,
-  hydrate:s=>{const dedup=dedupeHydratedChannels((s.channels||[]).filter(Boolean)),remap=(id:string)=>dedup.aliases.get(id)||id,jobs=(s.jobs||[]).filter(Boolean).map(j=>normalizeJob({...j,channelId:remap(j.channelId)})),activityJournal=normalizeActivityJournal((s as any).activityJournal).map(e=>e.channelId&&dedup.aliases.has(e.channelId)?{...e,channelId:remap(e.channelId)}:e),rawHistory:Array<UploadHistoryRecord>=Array.isArray((s as any).uploadHistory)?(s as any).uploadHistory.map((x:UploadHistoryRecord)=>dedup.aliases.has(x.channelId)?{...x,channelId:remap(x.channelId)}:x):[],uploadHistory=migrateUploadHistoryFingerprintProvenance(rawHistory,activityJournal,jobs),provenanceChanged=uploadHistory.some((x,i)=>x.fingerprintProofSource!==rawHistory[i]?.fingerprintProofSource||x.proofSchemaVersion!==rawHistory[i]?.proofSchemaVersion),statisticsHistory=remapStatisticsHistory(normalizeStatisticsHistory((s as any).statisticsHistory),dedup.aliases),competitors=(s.competitors||[]).map(x=>dedup.aliases.has(x.channelId)?{...x,channelId:remap(x.channelId)}:x);set({...EMPTY_STATE,...s,version:10,channels:dedup.channels,jobs,competitors,settings:{...DEFAULT_SETTINGS,...s.settings,youtubeIntelligenceAutoRefresh:false},logs:s.logs||[],uploadHistory,activityJournal,statisticsHistory,fingerprintCache:(s as any).fingerprintCache||{},projectLifecycle:(s as any).projectLifecycle||{},booted:true});if(provenanceChanged||dedup.changed)scheduleSave()},
+  hydrate:s=>{const repair=stripPerformanceFixtures(s);s=repair.state;const dedup=dedupeHydratedChannels((s.channels||[]).filter(Boolean)),remap=(id:string)=>dedup.aliases.get(id)||id,jobs=(s.jobs||[]).filter(Boolean).map(j=>normalizeJob({...j,channelId:remap(j.channelId)})),activityJournal=normalizeActivityJournal((s as any).activityJournal).map(e=>e.channelId&&dedup.aliases.has(e.channelId)?{...e,channelId:remap(e.channelId)}:e),rawHistory:Array<UploadHistoryRecord>=Array.isArray((s as any).uploadHistory)?(s as any).uploadHistory.map((x:UploadHistoryRecord)=>dedup.aliases.has(x.channelId)?{...x,channelId:remap(x.channelId)}:x):[],uploadHistory=migrateUploadHistoryFingerprintProvenance(rawHistory,activityJournal,jobs),provenanceChanged=uploadHistory.some((x,i)=>x.fingerprintProofSource!==rawHistory[i]?.fingerprintProofSource||x.proofSchemaVersion!==rawHistory[i]?.proofSchemaVersion),statisticsHistory=remapStatisticsHistory(normalizeStatisticsHistory((s as any).statisticsHistory),dedup.aliases),competitors=(s.competitors||[]).map(x=>dedup.aliases.has(x.channelId)?{...x,channelId:remap(x.channelId)}:x);set({...EMPTY_STATE,...s,version:10,channels:dedup.channels,jobs,competitors,settings:{...DEFAULT_SETTINGS,...s.settings,youtubeIntelligenceAutoRefresh:false},logs:s.logs||[],uploadHistory,activityJournal,statisticsHistory,fingerprintCache:(s as any).fingerprintCache||{},projectLifecycle:(s as any).projectLifecycle||{},booted:true});if(provenanceChanged||dedup.changed||repair.changed)scheduleSave()},
   setPage:page=>set({page}),
   persist:persistStoreState,
   addChannel:p=>{

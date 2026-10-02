@@ -4,6 +4,8 @@ import { runAutopilotCycle } from './autopilotRuntime';
 import { createMissingJobs } from './autopilotCore';
 import { parseMetadataFile,type ImportedMetadata } from './metadata';
 import { EMPTY_STATE,useApp } from './store';
+import {performanceFixtureCounts} from './performanceFixtures';
+import {findFutureChannelMatch} from './channelIdentity';
 import type { AutopilotSummary, Channel, Competitor, InboxScan, JobStatus, LicenseStatus, Page, VideoJob, YoutubeProfile } from './types';
 import { bufferDays,deficit,formatNumber,priorityFor,requiredVideos } from './core';
 import { ExistingVideos } from './ExistingVideos';
@@ -71,6 +73,32 @@ async function notifyUpdateAvailable(version:string){
   }catch{}
 }
 
+type PerformanceRepairMarker={removedChannels?:number;removedJobs?:number};
+
+async function recoverChannelsFromLocalOauthProfiles(){
+  const profiles=await api.youtubeProfiles();
+  const state=useApp.getState();
+  let restored=0,bound=0;
+  for(const profile of profiles){
+    if(!profile.id||!profile.channelId)continue;
+    const current=useApp.getState();
+    const exact=current.channels.find(c=>c.youtubeChannelId===profile.channelId||c.youtubeProfileId===profile.id);
+    if(exact){
+      if(exact.youtubeProfileId!==profile.id||exact.youtubeChannelId!==profile.channelId){
+        current.updateChannel(exact.id,{youtubeProfileId:profile.id,youtubeChannelId:profile.channelId});bound++;
+      }
+      continue
+    }
+    const future=findFutureChannelMatch(current.channels,profile.channelTitle);
+    if(future){
+      current.updateChannel(future.id,{youtubeProfileId:profile.id,youtubeChannelId:profile.channelId});bound++;continue
+    }
+    current.addChannel({name:profile.channelTitle||'YouTube канал',youtubeProfileId:profile.id,youtubeChannelId:profile.channelId});
+    restored++;
+  }
+  return{restored,bound,profiles:profiles.length}
+}
+
 type SidebarIconName='home'|'channels'|'production'|'inventory'|'youtube'|'analytics'|'competitors'|'settings';
 const nav:{id:string;page:Page;icon:SidebarIconName;label:string;youtubeTab?:'history'}[]=[
   {id:'dashboard',page:'dashboard',icon:'home',label:'Главная'},
@@ -102,7 +130,29 @@ export function App(){
   useLayoutEffect(()=>{if(booted)beginStartupQuotaProbe()},[booted]);
   useEffect(()=>{if(booted)restorePublishLedgerFromUploadHistory(uploadHistory)},[booted,uploadHistory]);
   const updaterStatus=useUpdaterRuntime(s=>s.status),updaterLatest=useUpdaterRuntime(s=>s.latestVersion),updaterLatestRevision=useUpdaterRuntime(s=>s.latestBuildRevision),updaterCheck=useUpdaterRuntime(s=>s.check),bootstrapUpdater=useUpdaterRuntime(s=>s.bootstrapVersion),markUpdated=useUpdaterRuntime(s=>s.markUpdated);
-  useEffect(()=>{api.loadState().then(hydrate).catch(e=>{hydrate(EMPTY_STATE);useApp.getState().log(`Не удалось загрузить состояние: ${String(e)}`,'error')});api.license().then(setLicense).catch(()=>setLicense({valid:false}))},[]);
+  useEffect(()=>{
+    void (async()=>{
+      let queueRepair:{channelsRemoved:number;packsRemoved:number;recordsRemoved:number}|undefined;
+      try{queueRepair=await api.metadataQueueCleanupPerformanceFixtures()}catch{}
+      try{
+        const loaded=await api.loadState() as typeof EMPTY_STATE&{__performanceRepair?:PerformanceRepairMarker};
+        const backendRepair=loaded.__performanceRepair;delete loaded.__performanceRepair;
+        const fallback=performanceFixtureCounts(loaded);
+        hydrate(loaded);
+        const removedChannels=backendRepair?.removedChannels??fallback.channels;
+        const removedJobs=backendRepair?.removedJobs??fallback.jobs;
+        if(removedChannels||removedJobs){
+          const recovered=await recoverChannelsFromLocalOauthProfiles();
+          await useApp.getState().persist();
+          notifySuccess('Performance fixtures удалены',`Synthetic channels: ${removedChannels} • jobs: ${removedJobs} • реальные каналы восстановлены локально: ${recovered.restored} • Google login: 0`,{operationId:'performance-fixture-repair'});
+        }
+        if(queueRepair&&(queueRepair.packsRemoved||queueRepair.recordsRemoved)){
+          useApp.getState().log(`Performance Metadata Queue cleanup: packs=${queueRepair.packsRemoved}, records=${queueRepair.recordsRemoved}`);
+        }
+      }catch(e){hydrate(EMPTY_STATE);useApp.getState().log(`Не удалось загрузить состояние: ${String(e)}`,'error')}
+    })();
+    void api.license().then(setLicense).catch(()=>setLicense({valid:false}));
+  },[]);
   useEffect(()=>{if(booted&&!settings.workspace){api.defaultWorkspace().then(workspace=>{useApp.getState().patchSettings({workspace});useApp.getState().log(`Workspace: ${workspace}`)}).catch(e=>log(`Workspace: ${String(e)}`,'error'))}},[booted,settings.workspace]);
   useEffect(()=>{if(booted&&settings.autoUploadYoutube)useApp.getState().patchSettings({autoUploadYoutube:false})},[booted,settings.autoUploadYoutube]);
   useEffect(()=>{

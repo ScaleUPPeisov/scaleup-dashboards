@@ -50,6 +50,35 @@ fn default_state() -> Value {
     json!({"version":10,"channels":[],"jobs":[],"competitors":[],"settings":{"workspace":"","endlumePath":"","youtubeApiKey":"","autoCheckUpdates":true,"reduceMotion":false,"fpsMonitor":true},"logs":[],"uploadHistory":[],"activityJournal":[],"statisticsHistory":{},"fingerprintCache":{},"projectLifecycle":{}})
 }
 
+fn exact_two_digits(value:&str)->bool{value.len()==2&&value.bytes().all(|b|b.is_ascii_digit())}
+fn strict_performance_channel(value:&Value)->bool{
+    let id=value.get("id").and_then(Value::as_str).unwrap_or("");
+    let name=value.get("name").and_then(Value::as_str).unwrap_or("");
+    id.strip_prefix("perf-channel-").map(exact_two_digits).unwrap_or(false)
+        &&name.strip_prefix("Performance Channel ").map(exact_two_digits).unwrap_or(false)
+}
+fn strict_performance_job(value:&Value)->bool{
+    let id=value.get("id").and_then(Value::as_str).unwrap_or("");
+    let channel=value.get("channelId").and_then(Value::as_str).unwrap_or("");
+    id.strip_prefix("perf-job-").map(|x|x.len()==4&&x.bytes().all(|b|b.is_ascii_digit())).unwrap_or(false)
+        &&channel.strip_prefix("perf-channel-").map(exact_two_digits).unwrap_or(false)
+}
+fn performance_fixture_counts(state:&Value)->(usize,usize){
+    let channels=state.get("channels").and_then(Value::as_array).map(|x|x.iter().filter(|v|strict_performance_channel(v)).count()).unwrap_or(0);
+    let jobs=state.get("jobs").and_then(Value::as_array).map(|x|x.iter().filter(|v|strict_performance_job(v)).count()).unwrap_or(0);
+    (channels,jobs)
+}
+fn strip_performance_fixtures(mut state:Value)->(Value,usize,usize){
+    let mut removed_channels=0usize;let mut removed_jobs=0usize;
+    if let Some(rows)=state.get_mut("channels").and_then(Value::as_array_mut){
+        rows.retain(|v|{let synthetic=strict_performance_channel(v);if synthetic{removed_channels+=1};!synthetic});
+    }
+    if let Some(rows)=state.get_mut("jobs").and_then(Value::as_array_mut){
+        rows.retain(|v|{let synthetic=strict_performance_job(v);if synthetic{removed_jobs+=1};!synthetic});
+    }
+    (state,removed_channels,removed_jobs)
+}
+
 const STATE_YOUTUBE_API_KEY: &str = "state.youtubeApiKey";
 const STATE_OPENAI_API_KEY: &str = "state.openaiApiKey";
 
@@ -214,18 +243,22 @@ pub fn load_state(app: AppHandle) -> Value {
     let raw = primary
         .or_else(||state_mirror_file(&app).ok().and_then(|p|fs::read(p).ok()).and_then(|b|serde_json::from_slice::<Value>(&b).ok()))
         .unwrap_or_else(default_state);
-    let (state, changed) = migrate_state(raw);
+    let (migrated, changed) = migrate_state(raw);
+    let (state,removed_channels,removed_jobs)=strip_performance_fixtures(migrated);
+    let repaired=removed_channels>0||removed_jobs>0;
     let legacy_plaintext=!state_secret(&state,"youtubeApiKey").is_empty()||!state_secret(&state,"openaiApiKey").is_empty();
-    let disk=sanitized_state_for_disk(&state);
+    let mut disk=sanitized_state_for_disk(&state);
     // Passive startup must never read/write Keychain or trigger legacy secret migration.
-    // If legacy plaintext exists, keep the original file untouched until an explicit
-    // secret-required operation performs the one-time migration.
-    if (changed||recovered_from_mirror)&&!legacy_plaintext{let _=atomic_write(&path,&disk);}else if path.exists(){let _=security::private_permissions(&path);}
+    // Strict performance fixtures are removed before either the UI or state mirror sees them.
+    if (changed||recovered_from_mirror||repaired)&&!legacy_plaintext{let _=atomic_write(&path,&disk);}else if path.exists(){let _=security::private_permissions(&path);}
     let _=write_state_mirror(&app,&disk);
+    if repaired{disk["__performanceRepair"]=json!({"removedChannels":removed_channels,"removedJobs":removed_jobs});}
     disk
 }
 
 fn save_state_impl(app: &AppHandle, state: Value) -> Result<Value, String> {
+    let (perf_channels,perf_jobs)=performance_fixture_counts(&state);
+    if perf_channels>0||perf_jobs>0{return Err(format!("PERFORMANCE_FIXTURE_PERSISTENCE_BLOCKED: channels={perf_channels} jobs={perf_jobs}"))}
     let _write_guard=state_write_lock().lock().map_err(|_|"STATE_WRITE_LOCK_POISONED".to_string())?;
     let p = state_file(app)?;
     let (disk, warnings) = secure_state_for_disk_best_effort(&state);
@@ -264,6 +297,23 @@ mod v213_storage_tests {
         let (m2, changed2) = migrate_state(m.clone());
         assert!(!changed2);
         assert_eq!(m2, m);
+    }
+    #[test]
+    fn performance_fixture_cleanup_is_strict_and_preserves_real_rows(){
+        let state=json!({"channels":[
+            {"id":"real-1","name":"Performance Channel 01"},
+            {"id":"perf-channel-01","name":"Performance Channel 01"},
+            {"id":"perf-channel-02","name":"Real Channel"}
+        ],"jobs":[
+            {"id":"real-job","channelId":"perf-channel-01"},
+            {"id":"perf-job-0001","channelId":"perf-channel-01"},
+            {"id":"perf-job-0002","channelId":"real-1"}
+        ]});
+        let (clean,channels,jobs)=strip_performance_fixtures(state);
+        assert_eq!(channels,1);assert_eq!(jobs,1);
+        assert_eq!(clean["channels"].as_array().unwrap().len(),2);
+        assert_eq!(clean["jobs"].as_array().unwrap().len(),2);
+        assert_eq!(performance_fixture_counts(&clean),(0,0));
     }
     #[test]
     fn sanitized_state_never_writes_api_secrets_to_disk() {

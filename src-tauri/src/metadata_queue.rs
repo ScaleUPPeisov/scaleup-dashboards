@@ -135,6 +135,14 @@ pub struct QueueImportResult{
 
 #[derive(Debug,Clone,Serialize)]
 #[serde(rename_all="camelCase")]
+pub struct PerformanceFixtureCleanup{
+    channels_removed:usize,
+    packs_removed:usize,
+    records_removed:usize,
+}
+
+#[derive(Debug,Clone,Serialize)]
+#[serde(rename_all="camelCase")]
 pub struct QueuePage{
     channel_id:String,
     offset:usize,
@@ -163,8 +171,12 @@ fn sha256_bytes(bytes:&[u8])->String{hex::encode(Sha256::digest(bytes))}
 fn safe_channel_key(channel_id:&str)->String{sha256_bytes(channel_id.as_bytes())[..24].to_string()}
 
 fn root(app:&AppHandle)->Result<PathBuf,String>{
-    let p=app.path().document_dir().map_err(|e|format!("METADATA_QUEUE_DOCUMENTS_PATH: {e}"))?
-        .join("VYRON").join("MetadataQueue");
+    let p=if std::env::var("VYRON_M1_PERF_PROBE").ok().as_deref()==Some("1"){
+        crate::performance_probe::performance_storage_root()?.join("MetadataQueue")
+    }else{
+        app.path().document_dir().map_err(|e|format!("METADATA_QUEUE_DOCUMENTS_PATH: {e}"))?
+            .join("VYRON").join("MetadataQueue")
+    };
     fs::create_dir_all(&p).map_err(|e|format!("METADATA_QUEUE_MKDIR: {e}"))?;
     Ok(p)
 }
@@ -373,6 +385,53 @@ where F:FnOnce(&mut MetadataRecord){
         }
     }
     Ok(None)
+}
+
+fn exact_two_digits(value:&str)->bool{value.len()==2&&value.bytes().all(|b|b.is_ascii_digit())}
+fn performance_channel_id(value:&str)->bool{value.strip_prefix("perf-channel-").map(exact_two_digits).unwrap_or(false)}
+fn performance_channel_name(value:&str)->bool{value.strip_prefix("Performance Channel ").map(exact_two_digits).unwrap_or(false)}
+fn performance_source_name(value:&str)->bool{
+    value.strip_prefix("m1-perf-5000-part-")
+        .and_then(|x|x.strip_suffix(".json"))
+        .map(exact_two_digits).unwrap_or(false)
+}
+fn performance_manifest(m:&PackManifest)->bool{
+    performance_channel_id(&m.channel_id)
+        &&performance_source_name(&m.source_name)
+        &&m.source_hash.starts_with("vyron-610-m1-perf-5000-v2-")
+}
+
+#[tauri::command]
+pub fn metadata_queue_cleanup_performance_fixtures(app:AppHandle)->Result<PerformanceFixtureCleanup,String>{
+    let _guard=queue_lock().lock().map_err(|_|"METADATA_QUEUE_LOCK_POISONED".to_string())?;
+    let channels_root=root(&app)?.join("channels");
+    if !channels_root.exists(){return Ok(PerformanceFixtureCleanup{channels_removed:0,packs_removed:0,records_removed:0})}
+    let mut channels_removed=0usize;let mut packs_removed=0usize;let mut records_removed=0usize;
+    for entry in fs::read_dir(&channels_root).map_err(|e|format!("METADATA_QUEUE_CLEANUP_READDIR: {e}"))?.filter_map(Result::ok){
+        let dir=entry.path();let index_file=dir.join("index.json");if !index_file.exists(){continue}
+        let mut index:ChannelIndex=read_json(&index_file)?;
+        let mut removed_ids=Vec::<String>::new();
+        for pref in index.packs.clone(){
+            let manifest_file=dir.join("packs").join(&pref.pack_id).join("manifest.json");
+            if !manifest_file.exists(){continue}
+            let manifest:PackManifest=read_json(&manifest_file)?;
+            if !performance_manifest(&manifest){continue}
+            records_removed+=manifest.total;packs_removed+=1;removed_ids.push(pref.pack_id.clone());
+            let pack_dir=dir.join("packs").join(&pref.pack_id);
+            if pack_dir.exists(){fs::remove_dir_all(&pack_dir).map_err(|e|format!("METADATA_QUEUE_CLEANUP_PACK: {e}"))?;}
+            let ledger=dir.join("ledger").join(format!("{}.json",pref.pack_id));
+            if ledger.exists(){fs::remove_file(&ledger).map_err(|e|format!("METADATA_QUEUE_CLEANUP_LEDGER: {e}"))?;}
+        }
+        if removed_ids.is_empty(){continue}
+        index.packs.retain(|p|!removed_ids.iter().any(|id|id==&p.pack_id));
+        if index.packs.is_empty()&&performance_channel_id(&index.channel_id)&&performance_channel_name(&index.channel_name){
+            fs::remove_dir_all(&dir).map_err(|e|format!("METADATA_QUEUE_CLEANUP_CHANNEL: {e}"))?;
+            channels_removed+=1;
+        }else{
+            write_json(&index_file,&index)?;
+        }
+    }
+    Ok(PerformanceFixtureCleanup{channels_removed,packs_removed,records_removed})
 }
 
 #[tauri::command]
@@ -718,6 +777,14 @@ pub fn merge_portable_snapshot(app:&AppHandle,value:&Value,channel_remap:&HashMa
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test]
+    fn performance_fixture_match_requires_all_markers(){
+        let base=PackManifest{schema_version:1,pack_id:"p".into(),channel_id:"perf-channel-01".into(),channel_name:"Performance Channel 01".into(),source_name:"m1-perf-5000-part-01.json".into(),source_hash:"vyron-610-m1-perf-5000-v2-01".into(),pack_hash:"h".into(),created_at:"now".into(),total:143,chunk_size:250,chunks:1,counts:QueueCounts::default(),complete:false,purged:false};
+        assert!(performance_manifest(&base));
+        let mut real=base.clone();real.channel_id="real-channel".into();assert!(!performance_manifest(&real));
+        let mut wrong_name=base.clone();wrong_name.source_name="my-performance-data.json".into();assert!(!performance_manifest(&wrong_name));
+        let mut wrong_hash=base.clone();wrong_hash.source_hash="real-hash".into();assert!(!performance_manifest(&wrong_hash));
+    }
     #[test]
     fn status_never_moves_applied_backwards(){assert!(status_rank("APPLIED")>status_rank("ERROR"));assert!(status_rank("ERROR")>status_rank("AVAILABLE"))}
     #[test]

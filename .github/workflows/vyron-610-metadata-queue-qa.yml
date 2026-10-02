@@ -67,6 +67,7 @@ jobs:
           src/v501LocalCleanupZeroQuota.test.ts
           src/v2115Rc7OauthUpdateContinuity.test.ts
           src/v500Performance.test.ts
+          src/v610PerformanceProbeIsolation.test.ts
           tests/vyron-603-production-hotfix.test.mjs
 
       - name: Publisher inventory blocker contract
@@ -126,6 +127,7 @@ jobs:
     timeout-minutes: 90
     env:
       VYRON_M1_PERF_PROBE: '1'
+      VYRON_M1_PERF_ROOT: ${{ runner.temp }}/vyron-m1-profile
       BUNDLE_ID: studio.channelflow.desktop
     steps:
       - uses: actions/checkout@v4
@@ -201,10 +203,13 @@ jobs:
           REPORT="$RUNNER_TEMP/vyron-m1-performance.json"
           LOG="$RUNNER_TEMP/vyron-m1-performance.log"
           rm -f "$REPORT"
-          VYRON_M1_PERF_PROBE=1 VYRON_M1_PERF_REPORT="$REPORT" \
+          rm -rf "$VYRON_M1_PERF_ROOT"
+          mkdir -p "$VYRON_M1_PERF_ROOT"
+          VYRON_M1_PERF_PROBE=1 VYRON_M1_PERF_ROOT="$VYRON_M1_PERF_ROOT" VYRON_M1_PERF_REPORT="$REPORT" \
             "$APP_PATH/Contents/MacOS/channelflow" >"$LOG" 2>&1 &
           PID=$!
-          trap 'kill "$PID" >/dev/null 2>&1 || true' EXIT
+          cleanup(){ kill "$PID" >/dev/null 2>&1 || true; rm -rf "$VYRON_M1_PERF_ROOT"; }
+          trap cleanup EXIT
           sleep 4
           osascript -e 'tell application "System Events" to set frontmost of first process whose name contains "VYRON" to true' >/dev/null 2>&1 || true
           for i in {1..120}; do
@@ -230,6 +235,7 @@ jobs:
           PY
           kill "$PID" >/dev/null 2>&1 || true
           wait "$PID" >/dev/null 2>&1 || true
+          rm -rf "$VYRON_M1_PERF_ROOT"
           trap - EXIT
           ! grep -Eiq 'panic|segmentation fault|fatal error' "$LOG"
 
