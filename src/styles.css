@@ -300,3 +300,6 @@ button.secondary{background:rgba(255,255,255,.035);border-color:#294156;color:#9
   contain:layout paint style;
   contain-intrinsic-size:auto 44px;
 }
+
+/* VYRON 6.1.0 M1: real DOM stays mounted; WKWebView may skip offscreen layout/paint. */
+.settingsDeferredCard{content-visibility:auto;contain-intrinsic-size:auto 190px;contain:layout style paint}

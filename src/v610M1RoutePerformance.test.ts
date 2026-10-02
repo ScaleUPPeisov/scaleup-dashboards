@@ -4,37 +4,42 @@ import {describe,expect,it} from 'vitest';
 const read=(name:string)=>readFileSync(decodeURIComponent(new URL('./'+name,import.meta.url).pathname),'utf8');
 
 describe('VYRON 6.1.0 M1 route pacing hotfix',()=>{
- it('Production shell does not subscribe to the full jobs collection before detailed UI needs it',()=>{
-  const src=read('ProductionOS.tsx');
-  expect(src).toContain("useProgressiveRouteContent('production',3)");
-  expect(src).toContain('useApp(s=>queueDetailsOpen||planOpen?s.jobs:EMPTY_JOBS)');
-  expect(src).toContain("routeStage>=1&&<StableProductionPipelinePanel/>");
-  expect(src).toContain("routeStage>=2&&<StableProductionWorkspace/>");
-  expect(src).not.toContain("useStableRouteContent");
+ it('hot routes do not schedule React stage commits across the first RAFs',()=>{
+  for(const name of ['ProductionOS.tsx','SettingsOS.tsx','YouTubeCenter.tsx']){
+   const src=read(name);
+   expect(src).not.toContain('useProgressiveRouteContent');
+   expect(src).not.toContain('requestAnimationFrame(');
+  }
  });
- it('Settings mounts General cards in separate real animation-frame chunks',()=>{
-  const src=read('SettingsOS.tsx');
-  expect(src).toContain("useProgressiveRouteContent('settings-general',3,tab==='general')");
-  expect(src).toContain('{generalStage>=1&&<section className="settingsCard vyronFilesystemCard">');
-  expect(src).toContain('{generalStage>=2&&<><section className="settingsCard"><small>INTERFACE</small>');
-  expect(src).toContain('{generalStage>=3&&<section className="settingsCard"><small>LOCAL AUTOMATION</small>');
+ it('Production shell avoids an unconditional full-jobs subscription and leaf summaries use mutation-time cache',()=>{
+  const shell=read('ProductionOS.tsx'),pipeline=read('ProductionPipelinePanel.tsx'),workspace=read('ProductionWorkspace.tsx');
+  expect(shell).not.toContain('useApp(s=>s.jobs)');
+  expect(shell).toContain('queueDetailsOpen||planOpen?s.jobs:EMPTY_JOBS');
+  expect(pipeline).toContain('useJobDerived(s=>s.pipeline)');
+  expect(workspace).toContain('useJobDerived(s=>s.workspaceByChannel)');
  });
- it('YouTube keeps lightweight route state but removes heavy inactive DOM and mounts visible UI progressively',()=>{
-  const app=read('App.tsx'),center=read('YouTubeCenter.tsx'),bar=read('YouTubeChannelBar.tsx');
-  expect(app).toContain("const heavyRoute=canonical==='dashboard'||canonical==='channels';");
-  expect(app).toContain('const youtubeActive=youtubeSelected;');
-  expect(center).toContain("useProgressiveRouteContent('youtube',2,active)");
-  expect(center).toContain('routeStage>=2&&<div key={tab+\':\'+activeChannel}');
-  expect(bar).toContain('routeActive?(s.jobs||[]):EMPTY_JOBS');
-  expect(bar).not.toContain('useStableRouteContent');
+ it('Settings uses one stable General render path with browser-native offscreen containment',()=>{
+  const src=read('SettingsOS.tsx'),css=read('styles.css');
+  expect(src).not.toContain('generalStage');
+  expect(src).toContain('settingsDeferredCard');
+  expect(css).toContain('content-visibility:auto');
+  expect(css).toContain('contain-intrinsic-size:auto 190px');
  });
- it('records non-gate progressive mount frame diagnostics at a 25 ms budget',()=>{
-  const src=read('useProgressiveRouteContent.ts');
-  expect(src).toContain('const BUDGET_MS=25');
-  expect(src).toContain('[VYRON_ROUTE_MOUNT_BUDGET]');
-  expect(src).toContain('requestAnimationFrame(advance)');
+ it('YouTube keeps only active heavy body mounted and channel schedule facts do not subscribe to all jobs',()=>{
+  const center=read('YouTubeCenter.tsx'),bar=read('YouTubeChannelBar.tsx'),publisher=read('PublisherOS.tsx');
+  expect(center).toContain('{active&&<div key={tab+\':\'+activeChannel}');
+  expect(center).not.toContain('routeStage');
+  expect(bar).toContain('useJobDerived(s=>s.scheduleByChannel[activeId]||EMPTY_SCHEDULE)');
+  expect(bar).not.toContain('s.jobs');
+  expect(publisher).toContain('useJobDerived(s=>s.jobsByChannel[channelId]||EMPTY_JOBS)');
  });
- it('preserves the proven Analytics deferral and does not alter M1 probe semantics',()=>{
+ it('global Sidebar inventory calculation is not embedded in the Zustand selector',()=>{
+  const src=read('App.tsx');
+  expect(src).toContain('useLiveInventory(s=>s.snapshots)');
+  expect(src).toContain('useMemo(()=>inventoryTotals(inventorySnapshots,channels).ready');
+  expect(src).not.toContain('useLiveInventory(s=>inventoryTotals(');
+ });
+ it('preserves Analytics and M1 probe semantics',()=>{
   const analytics=read('AnalyticsPage.tsx'),probe=read('M1PerformanceProbe.tsx');
   expect(analytics).toContain('useStableRouteContent');
   expect(analytics).toContain('{stableRoute&&<YouTubeChannelBar/>}');

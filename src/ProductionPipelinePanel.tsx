@@ -1,13 +1,12 @@
-import React,{useMemo} from 'react';
-import {useApp} from './store';
-import {buildProductionPipeline,PRODUCTION_PIPELINE_ORDER,type ProductionPipelineStage} from './productionPipeline';
+import React from 'react';
+import {PRODUCTION_PIPELINE_ORDER,type ProductionPipelineStage} from './productionPipeline';
+import {useJobDerived} from './jobDerivedRuntime';
 
 const labels:Record<ProductionPipelineStage,string>={
  SOURCE:'SOURCE',READY:'READY',RENDERING:'RENDERING',RENDERED:'RENDERED',METADATA:'METADATA',READY_UPLOAD:'READY TO UPLOAD',UPLOADING:'UPLOADING',PROCESSING:'PROCESSING',SCHEDULED:'SCHEDULED',PUBLISHED:'PUBLISHED',ERROR:'ERROR'
 };
 export function ProductionPipelinePanel(){
- const jobs=useApp(s=>s.jobs),history=useApp(s=>s.uploadHistory);
- const snapshot=useMemo(()=>buildProductionPipeline(jobs,history,new Date()),[jobs,history]);
+ const snapshot=useJobDerived(s=>s.pipeline);
  return <section className="panel productionPipelineV5">
   <div className="panelHead"><div><small>PRODUCTION PIPELINE</small><h3>Конвейер производства</h3><p>Каждая задача учитывается ровно в одном этапе. Published today считается отдельно по подтверждённому uploadHistory.</p></div><span>{snapshot.total} задач</span></div>
   <div className="pipelineConveyor">{PRODUCTION_PIPELINE_ORDER.map((stage,i)=><React.Fragment key={stage}><div className={'pipelineStage stage-'+stage.toLowerCase()}><small>{labels[stage]}</small><b>{snapshot.counts[stage]}</b></div>{i<PRODUCTION_PIPELINE_ORDER.length-1&&<i className="pipelineArrow">→</i>}</React.Fragment>)}</div>

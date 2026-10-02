@@ -8,22 +8,21 @@ import {channelCountrySource,channelLanguageSource,channelStatsStatusLabel,compa
 import {refreshYoutubeProfileStatistics} from './youtubeChannelStatsRuntime';
 import {classifyYoutubeChannels} from './youtubeStatisticsCenter';
 import {ChannelAvatar} from './ChannelAvatar';
-import type {VideoJob} from './types';
+import {EMPTY_SCHEDULE,useJobDerived} from './jobDerivedRuntime';
 
 export function filterYoutubeChannels(channels:Channel[],query:string){const q=query.trim().toLocaleLowerCase('ru-RU');const ordered=sortChannelsAlphabetically(channels);if(!q)return ordered;return ordered.filter(c=>[c.name,c.slug,c.youtubeChannelId,c.stats?.handle].filter(Boolean).some(v=>String(v).toLocaleLowerCase('ru-RU').includes(q)))}
 export function resolveYoutubeActiveChannel(channels:Channel[],saved:string){return channels.some(c=>c.id===saved)?saved:(sortChannelsAlphabetically(channels)[0]?.id||'')}
 const fmtDate=(iso?:string)=>iso?new Date(iso).toLocaleDateString('ru-RU'):'—';
 const fmtDateTime=(iso?:string)=>iso?new Date(iso).toLocaleString('ru-RU'):'—';
-const EMPTY_JOBS:VideoJob[]=[];
 
 export function YouTubeChannelBar({active:routeActive=true}:{active?:boolean}={}){
- const channels=useApp(s=>s.channels)||[],jobs=useApp(s=>routeActive?(s.jobs||[]):EMPTY_JOBS),channelKey=channels.map(c=>c.id).join('|');
+ const channels=useApp(s=>s.channels)||[],channelKey=channels.map(c=>c.id).join('|');
  const [activeId,setActiveId]=useState(()=>resolveYoutubeActiveChannel(channels,loadActivePublishChannel())),[query,setQuery]=useState(''),[feedback,setFeedback]=useState(''),[refreshing,setRefreshing]=useState(false),[profiles,setProfiles]=useState<YoutubeProfile[]>([]);
  useEffect(()=>{if(!routeActive)return;return subscribeActivePublishChannel(id=>{setActiveId(resolveYoutubeActiveChannel(channels,id));const c=channels.find(x=>x.id===id);if(c)setFeedback('Активный канал: '+c.name)})},[routeActive,channelKey]);
  useEffect(()=>{if(!routeActive)return;let live=true;const refresh=()=>void api.youtubeProfiles().then(p=>{if(live)setProfiles(p)}).catch(()=>{});const timer=window.setTimeout(refresh,100);window.addEventListener('vyron:oauth-state-changed',refresh);return()=>{live=false;window.clearTimeout(timer);window.removeEventListener('vyron:oauth-state-changed',refresh)}},[routeActive]);
  useEffect(()=>{if(!routeActive)return;const resolved=resolveYoutubeActiveChannel(channels,loadActivePublishChannel());if(resolved&&resolved!==loadActivePublishChannel())saveActivePublishChannel(resolved);setActiveId(resolved)},[routeActive,channelKey]);
  const visible=useMemo(()=>filterYoutubeChannels(channels,query),[channels,query]),active=channels.find(c=>c.id===activeId),activeLinked=classifyYoutubeChannels(active?[active]:[],profiles).linked[0],profile=profiles.find(p=>p.id===active?.youtubeProfileId);
- const stats=active?.stats,{nextScheduled,scheduledCount}=useMemo(()=>{const now=Date.now();let nextScheduled:string|undefined,scheduledCount=0,nextAt=Number.POSITIVE_INFINITY;for(const j of jobs){if(j.channelId!==activeId||!j.publishAt)continue;const at=new Date(j.publishAt).getTime();if(!Number.isFinite(at)||at<=now)continue;scheduledCount++;if(at<nextAt){nextAt=at;nextScheduled=j.publishAt}}return{nextScheduled,scheduledCount}},[jobs,activeId]),lastSync=stats?.statisticsUpdatedAt||stats?.updatedAt||active?.analytics?.updatedAt;
+ const stats=active?.stats,{nextScheduled,scheduledCount}=useJobDerived(s=>s.scheduleByChannel[activeId]||EMPTY_SCHEDULE),lastSync=stats?.statisticsUpdatedAt||stats?.updatedAt||active?.analytics?.updatedAt;
  async function refreshActive(){const current=useApp.getState().channels.find(c=>c.id===activeId);if(!current?.youtubeProfileId||!current.youtubeChannelId)return;const p=profiles.find(x=>x.id===current.youtubeProfileId&&x.channelId===current.youtubeChannelId);if(!p){setFeedback('⚠ '+current.name+': профиль YouTube не связан точно');return}setRefreshing(true);try{const fresh=await refreshYoutubeProfileStatistics(p,'channel-bar:'+current.id+':'+Date.now());setFeedback(fresh?'✓ Данные канала обновлены':'⚠ Не удалось обновить; показан локальный кэш')}finally{setRefreshing(false)}}
  function choose(nextId:string){if(!channels.some(c=>c.id===nextId))return;saveActivePublishChannel(nextId);setActiveId(nextId);setQuery('');setFeedback('Активный канал: '+(channels.find(c=>c.id===nextId)?.name||nextId))}
  return <section className="youtubeChannelBar channelContextBar" aria-label="Активный YouTube канал"><div className="channelContextIdentity">{active?<ChannelAvatar channel={active} size="lg"/>:<span className="channelAvatar channelAvatar-lg channelAvatarFallback">Y</span>}<div><small>АКТИВНЫЙ КАНАЛ</small><b>{active?.name||'Канал не выбран'}</b><span>{stats?.handle||active?.youtubeChannelId||active?.id||'—'}</span></div></div>

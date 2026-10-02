@@ -264,7 +264,7 @@ jobs:
 
 
   migration-mac-export:
-    needs: qa
+    needs: [qa, m1-performance]
     runs-on: macos-14
     timeout-minutes: 45
     steps:
@@ -347,7 +347,7 @@ jobs:
           echo 'MACOS_WINDOWS_MACOS_METADATA_QUEUE_ROUNDTRIP=PASS'
 
   migration-win-export:
-    needs: qa
+    needs: [qa, m1-performance]
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
