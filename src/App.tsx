@@ -1,4 +1,4 @@
-import React,{useEffect,useLayoutEffect,useMemo,useRef,useState} from 'react';
+import React,{startTransition,useEffect,useLayoutEffect,useMemo,useRef,useState} from 'react';
 import { api } from './api';
 import { runAutopilotCycle } from './autopilotRuntime';
 import { createMissingJobs } from './autopilotCore';
@@ -146,20 +146,20 @@ export function App(){
 const CachedYouTubeRoute=React.memo(({routeTab,active}:{routeTab?:'publish'|'metadata'|'uploaded';active:boolean})=><YouTubeCenter routeTab={routeTab} active={active}/>);
 const HEAVY_ROUTE_SETTLE_MS=90;
 function RouteWarmup({route}:{route:string}){
-  const title=route==='dashboard'?'Главная':route==='channels'?'Каналы':route==='youtube'?'YouTube':'VYRON';
+  const title=route==='dashboard'?'Главная':route==='channels'?'Каналы':route==='production'?'Производство':route==='youtube'?'YouTube':route==='analytics'?'Аналитика':route==='settings'?'Настройки':'VYRON';
   return <section className="routeWarmup" aria-live="polite"><small>VYRON • FAST ROUTE</small><h1>{title}</h1><div className="routeWarmupLine"><i/><i/><i/></div></section>
 }
 
 function PageRouter({license}:{license:LicenseStatus}){
   const page=useApp(s=>s.page),setPage=useApp(s=>s.setPage),youtubeMounted=useRef(false);
   const youtubeRouteTab=page==='metadata'?'metadata':page==='existing'?'uploaded':page==='publisher'?'publish':undefined;
-  const canonical=page==='autopilot'?'dashboard':page==='metadata'||page==='existing'||page==='publisher'?'youtube':page;
-  const heavyRoute=canonical==='dashboard'||canonical==='channels'||canonical==='youtube';
+  const canonical=page==='autopilot'?'dashboard':page==='metadata'||page==='existing'||page==='publisher'?'youtube':page==='content'?'production':page==='accounts'?'settings':page;
+  const heavyRoute=canonical==='dashboard'||canonical==='channels'||canonical==='production'||canonical==='youtube'||canonical==='analytics'||canonical==='settings';
   const [settledRoute,setSettledRoute]=useState<string>('');
   useEffect(()=>{
     if(!heavyRoute){setSettledRoute(String(canonical));return}
     setSettledRoute('');
-    const id=window.setTimeout(()=>setSettledRoute(String(canonical)),HEAVY_ROUTE_SETTLE_MS);
+    const id=window.setTimeout(()=>startTransition(()=>setSettledRoute(String(canonical))),HEAVY_ROUTE_SETTLE_MS);
     return()=>window.clearTimeout(id)
   },[canonical,heavyRoute]);
   const heavyReady=!heavyRoute||settledRoute===canonical;
@@ -170,11 +170,11 @@ function PageRouter({license}:{license:LicenseStatus}){
 
   const transient=canonical==='dashboard'?(heavyReady?<><DashboardUploadSummary/><DashboardOS/></>:<RouteWarmup route="dashboard"/>)
     :canonical==='channels'?(heavyReady?<ChannelsOS/>:<RouteWarmup route="channels"/>)
-    :canonical==='production'||canonical==='content'?<ProductionOS/>
+    :canonical==='production'?(heavyReady?<ProductionOS/>:<RouteWarmup route="production"/>)
     :canonical==='inventory'?<LiveContentInventory/>
     :canonical==='competitors'?<CompetitorsPage/>
-    :canonical==='analytics'?<AnalyticsPage/>
-    :canonical==='accounts'||canonical==='settings'?<SettingsOS license={license}/>
+    :canonical==='analytics'?(heavyReady?<AnalyticsPage/>:<RouteWarmup route="analytics"/>)
+    :canonical==='settings'?(heavyReady?<SettingsOS license={license}/>:<RouteWarmup route="settings"/>)
     :null;
 
   return <div className="pageWrap">
