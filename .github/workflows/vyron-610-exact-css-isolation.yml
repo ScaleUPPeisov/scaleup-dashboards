@@ -1,0 +1,405 @@
+name: VYRON 6.1.0 Exact Workload CSS Isolation
+
+on:
+  push:
+    branches:
+      - diagnostic/vyron-6.1.0-exact-css-isolation
+
+permissions:
+  contents: read
+
+env:
+  VERSION: '6.1.0'
+  RELEASE_BASE: '4de188b2cf50d3f58cd7074a6e57ccb67c15e1b2'
+  PARITY_HEAD: '9127a5d505345d02a35882267ba3357e0fea8ae9'
+  PROBE_BLOB: 'f580a12c6bbc85de9b9c429f487a5e94c0449ecc'
+  BUNDLE_ID: studio.channelflow.desktop
+
+jobs:
+  build-once:
+    runs-on: macos-14
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: diagnostic/vyron-6.1.0-exact-css-isolation
+          fetch-depth: 0
+
+      - name: Verify exact-workload diagnostic contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git merge-base --is-ancestor "$PARITY_HEAD" HEAD
+          test "$(git rev-parse "$RELEASE_BASE:src/M1PerformanceProbe.tsx")" = "$PROBE_BLOB"
+          test "$(git rev-parse "HEAD:src/M1PerformanceProbe.tsx")" = "$PROBE_BLOB"
+          git diff --exit-code "$RELEASE_BASE"...HEAD -- src/M1PerformanceProbe.tsx
+          git diff --exit-code "$PARITY_HEAD"...HEAD --             src/App.tsx src/M1PerformanceProbe.tsx             src/YouTubeCenter.tsx src/PublisherOS.tsx src/YouTubeChannelBar.tsx             src/ChannelRunway.tsx src/MaterialsManager.tsx src/ProductionManager.tsx             src/youtubePublishSafety.ts src-tauri/src/oauth_vault.rs src-tauri/src/security.rs src-tauri/src/youtube.rs
+          CHANGED="$(git diff --name-only "$PARITY_HEAD"...HEAD | sort)"
+          ALLOWED="$(printf '%s\n'             '.github/workflows/vyron-610-exact-css-isolation.yml'             'src-tauri/src/lib.rs'             'src-tauri/src/performance_probe.rs'             'src/M1ParityPassiveObserver.tsx'             'src/api.ts' | sort)"
+          test "$CHANGED" = "$ALLOWED"
+          test "$(node -p "require('./package.json').version")" = "$VERSION"
+          test "$(node -p "require('./src-tauri/tauri.conf.json').identifier")" = "$BUNDLE_ID"
+          echo "M1_PERFORMANCE_PROBE_BLOB_UNCHANGED=YES"
+          echo "RELEASE_HEAD_UNCHANGED=$RELEASE_BASE"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Production TypeScript build
+        run: npm run build
+
+      - name: Exact parity compile contracts
+        run: >
+          npx vitest run
+          src/v610M1RoutePerformance.test.ts
+          src/v610PublisherColdRoute.test.ts
+
+      - name: Build diagnostic ARM64 app once
+        shell: bash
+        env:
+          VITE_M1_PARITY_DIAG: '1'
+        run: |
+          set -Eeuo pipefail
+          export APPLE_SIGNING_IDENTITY='-'
+          npx tauri build --target aarch64-apple-darwin --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          APP="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)"
+          test -d "$APP"
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = "$BUNDLE_ID"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = "$VERSION"
+          file "$APP/Contents/MacOS/channelflow" | grep -q arm64
+          codesign --verify --deep --strict "$APP"
+          tar -czf "$RUNNER_TEMP/vyron-exact-css-app.tar.gz" -C "$(dirname "$APP")" "$(basename "$APP")"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-6.1.0-EXACT-CSS-APP
+          path: ${{ runner.temp }}/vyron-exact-css-app.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  base-gate:
+    needs: build-once
+    runs-on: macos-14
+    timeout-minutes: 120
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: VYRON-6.1.0-EXACT-CSS-APP
+          path: ${{ runner.temp }}/app-package
+
+      - name: Extract and verify shared app
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$RUNNER_TEMP/app"
+          tar -xzf "$RUNNER_TEMP/app-package/vyron-exact-css-app.tar.gz" -C "$RUNNER_TEMP/app"
+          APP="$RUNNER_TEMP/app/VYRON.app"
+          test -d "$APP"
+          file "$APP/Contents/MacOS/channelflow" | grep -q arm64
+          codesign --verify --deep --strict "$APP"
+          echo "APP_PATH=$APP" >> "$GITHUB_ENV"
+
+      - name: Seed isolated owner license
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          LICENSE="$RUNNER_TEMP/license.json"
+          cat >"$LICENSE" <<'JSON'
+          {
+            "valid": true,
+            "type": "owner-lifetime",
+            "expiresAt": null,
+            "maskedKey": "CI-EXACT-CSS",
+            "activatedAt": "2026-10-02T00:00:00Z"
+          }
+          JSON
+          mkdir -p "$HOME/Library/Application Support/studio.channelflow.desktop"
+          mkdir -p "$HOME/Library/Application Support/VYRON"
+          mkdir -p "$HOME/Library/Application Support/channelflow"
+          cp "$LICENSE" "$HOME/Library/Application Support/studio.channelflow.desktop/license.json"
+          cp "$LICENSE" "$HOME/Library/Application Support/VYRON/license.json"
+          cp "$LICENSE" "$HOME/Library/Application Support/channelflow/license.json"
+
+      - name: Run authoritative BASE gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          REPORT="$RUNNER_TEMP/report-base.json"
+          LOG="$RUNNER_TEMP/runtime-base.log"
+          PERF_ROOT="$RUNNER_TEMP/profile-base"
+          rm -f "$REPORT" "$LOG"
+          rm -rf "$PERF_ROOT"
+          mkdir -p "$PERF_ROOT"
+          ARCH="$(uname -m)"
+          MACOS="$(sw_vers -productVersion)"
+          VYRON_M1_PERF_PROBE=1           VYRON_M1_PERF_ROOT="$PERF_ROOT"           VYRON_M1_PERF_REPORT="$REPORT"           VYRON_M1_PARITY_DIAG=1           VYRON_M1_PARITY_EXIT_AFTER_REPORT=1           VYRON_M1_PARITY_RUNNER_ARCH="$ARCH"           VYRON_M1_PARITY_MACOS="$MACOS"           VYRON_M1_PARITY_BASE_HEAD="$RELEASE_BASE"           VYRON_M1_CSS_VARIANT=base             "$APP_PATH/Contents/MacOS/channelflow" >"$LOG" 2>&1
+          test -s "$REPORT"
+          python3 - "$REPORT" <<'PY'
+          import json,sys
+          p=json.load(open(sys.argv[1]))
+          d=p.get("dataset") or {}
+          a=((p.get("nonGateDiagnostics") or {}).get("m1Parity") or {})
+          yt=((p.get("routeFrameTimings") or {}).get("youtube:raf1") or {})
+          assert d.get("channels")==35,p
+          assert d.get("jobs")==1000,p
+          assert d.get("metadataRecords")==5000,p
+          assert d.get("assignedJobs")==1000,p
+          assert d.get("navigationSwitchesPerRound")==30,p
+          assert d.get("rounds")==3,p
+          assert a.get("channels")==35,a
+          assert a.get("jobs")==1000,a
+          assert a.get("assignedJobs")==1000,a
+          assert a.get("fpsMonitorSetting") is True,a
+          assert a.get("currentPageBeforeEnteringYoutube")=="production",a
+          assert a.get("variantRequested")=="base",a
+          assert a.get("variantApplied")=="base",a
+          assert isinstance(a.get("variantAppliedAt"),(int,float)),a
+          assert a.get("variantAppliedBeforeFirstYoutube") is True,a
+          assert float(yt.get("p95",0))>=40.0,yt
+          print("EXACT_FIXTURE_PARITY=PASS")
+          print("BASE_PARITY=PASS")
+          print("YOUTUBE_RAF1_P95=",yt.get("p95"))
+          PY
+
+      - name: Preserve BASE evidence
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/base-evidence"
+          cp "$RUNNER_TEMP/report-base.json" "$RUNNER_TEMP/base-evidence/report-base.json" 2>/dev/null || true
+          cp "$RUNNER_TEMP/runtime-base.log" "$RUNNER_TEMP/base-evidence/runtime-base.log" 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: VYRON-6.1.0-EXACT-CSS-base
+          path: ${{ runner.temp }}/base-evidence/**
+          if-no-files-found: warn
+          retention-days: 30
+
+  variants:
+    needs: [build-once, base-gate]
+    runs-on: macos-14
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [shadows, gradients, transitions, filters, opaque, pseudo]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: VYRON-6.1.0-EXACT-CSS-APP
+          path: ${{ runner.temp }}/app-package
+
+      - name: Extract and verify shared app
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$RUNNER_TEMP/app"
+          tar -xzf "$RUNNER_TEMP/app-package/vyron-exact-css-app.tar.gz" -C "$RUNNER_TEMP/app"
+          APP="$RUNNER_TEMP/app/VYRON.app"
+          test -d "$APP"
+          file "$APP/Contents/MacOS/channelflow" | grep -q arm64
+          codesign --verify --deep --strict "$APP"
+          echo "APP_PATH=$APP" >> "$GITHUB_ENV"
+
+      - name: Seed isolated owner license
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          LICENSE="$RUNNER_TEMP/license.json"
+          cat >"$LICENSE" <<'JSON'
+          {
+            "valid": true,
+            "type": "owner-lifetime",
+            "expiresAt": null,
+            "maskedKey": "CI-EXACT-CSS",
+            "activatedAt": "2026-10-02T00:00:00Z"
+          }
+          JSON
+          mkdir -p "$HOME/Library/Application Support/studio.channelflow.desktop"
+          mkdir -p "$HOME/Library/Application Support/VYRON"
+          mkdir -p "$HOME/Library/Application Support/channelflow"
+          cp "$LICENSE" "$HOME/Library/Application Support/studio.channelflow.desktop/license.json"
+          cp "$LICENSE" "$HOME/Library/Application Support/VYRON/license.json"
+          cp "$LICENSE" "$HOME/Library/Application Support/channelflow/license.json"
+
+      - name: Run exact-workload CSS variant
+        shell: bash
+        env:
+          CSS_VARIANT: ${{ matrix.variant }}
+        run: |
+          set -Eeuo pipefail
+          REPORT="$RUNNER_TEMP/report-$CSS_VARIANT.json"
+          LOG="$RUNNER_TEMP/runtime-$CSS_VARIANT.log"
+          PERF_ROOT="$RUNNER_TEMP/profile-$CSS_VARIANT"
+          rm -f "$REPORT" "$LOG"
+          rm -rf "$PERF_ROOT"
+          mkdir -p "$PERF_ROOT"
+          ARCH="$(uname -m)"
+          MACOS="$(sw_vers -productVersion)"
+          VYRON_M1_PERF_PROBE=1           VYRON_M1_PERF_ROOT="$PERF_ROOT"           VYRON_M1_PERF_REPORT="$REPORT"           VYRON_M1_PARITY_DIAG=1           VYRON_M1_PARITY_EXIT_AFTER_REPORT=1           VYRON_M1_PARITY_RUNNER_ARCH="$ARCH"           VYRON_M1_PARITY_MACOS="$MACOS"           VYRON_M1_PARITY_BASE_HEAD="$RELEASE_BASE"           VYRON_M1_CSS_VARIANT="$CSS_VARIANT"             "$APP_PATH/Contents/MacOS/channelflow" >"$LOG" 2>&1
+          test -s "$REPORT"
+          python3 - "$REPORT" "$CSS_VARIANT" <<'PY'
+          import json,sys
+          p=json.load(open(sys.argv[1]))
+          variant=sys.argv[2]
+          d=p.get("dataset") or {}
+          a=((p.get("nonGateDiagnostics") or {}).get("m1Parity") or {})
+          assert d.get("channels")==35,p
+          assert d.get("jobs")==1000,p
+          assert d.get("metadataRecords")==5000,p
+          assert d.get("assignedJobs")==1000,p
+          assert d.get("navigationSwitchesPerRound")==30,p
+          assert d.get("rounds")==3,p
+          assert a.get("channels")==35,a
+          assert a.get("jobs")==1000,a
+          assert a.get("assignedJobs")==1000,a
+          assert a.get("fpsMonitorSetting") is True,a
+          assert a.get("currentPageBeforeEnteringYoutube")=="production",a
+          assert a.get("variantRequested")==variant,a
+          assert a.get("variantApplied")==variant,a
+          assert isinstance(a.get("variantAppliedAt"),(int,float)),a
+          assert a.get("variantAppliedBeforeFirstYoutube") is True,a
+          print("EXACT_FIXTURE_PARITY=PASS")
+          print("CSS_VARIANT=",variant)
+          PY
+
+      - name: Preserve variant evidence
+        if: always()
+        shell: bash
+        env:
+          CSS_VARIANT: ${{ matrix.variant }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/variant-evidence"
+          cp "$RUNNER_TEMP/report-$CSS_VARIANT.json" "$RUNNER_TEMP/variant-evidence/report-$CSS_VARIANT.json" 2>/dev/null || true
+          cp "$RUNNER_TEMP/runtime-$CSS_VARIANT.log" "$RUNNER_TEMP/variant-evidence/runtime-$CSS_VARIANT.log" 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: VYRON-6.1.0-EXACT-CSS-${{ matrix.variant }}
+          path: ${{ runner.temp }}/variant-evidence/**
+          if-no-files-found: warn
+          retention-days: 30
+
+  summarize:
+    needs: [base-gate, variants]
+    if: always() && needs.base-gate.result == 'success' && needs.variants.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: VYRON-6.1.0-EXACT-CSS-*
+          path: reports
+          merge-multiple: true
+
+      - name: Build authoritative comparison table
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import glob,json,os
+          names=["base","shadows","gradients","transitions","filters","opaque","pseudo"]
+          reports={}
+          for name in names:
+              path=f"reports/report-{name}.json"
+              if not os.path.exists(path):
+                  raise SystemExit(f"missing {path}")
+              reports[name]=json.load(open(path))
+
+          def frame(p,key):
+              x=(p.get("routeFrameTimings") or {}).get(key) or {}
+              return {"p50":x.get("median"),"p95":x.get("p95"),"worst":x.get("worst")}
+          def route_p95(p,page):
+              return ((p.get("routeFrameTimings") or {}).get(page+":raf1") or {}).get("p95")
+          rows={}
+          for name,p in reports.items():
+              a=p.get("aggregate") or {}
+              audit=((p.get("nonGateDiagnostics") or {}).get("m1Parity") or {})
+              rows[name]={
+                  "global":{k:a.get(k) for k in ["fps","p50","p95","p99","worst","dropped","long50","long100"]},
+                  "youtube":{"raf1":frame(p,"youtube:raf1"),"raf2":frame(p,"youtube:raf2"),"raf3":frame(p,"youtube:raf3")},
+                  "routes":{
+                      "production":route_p95(p,"production"),
+                      "settings":route_p95(p,"settings"),
+                      "analytics":route_p95(p,"analytics"),
+                      "channels":route_p95(p,"channels"),
+                      "dashboard":route_p95(p,"dashboard")
+                  },
+                  "diagnostic":{
+                      "variantRequested":audit.get("variantRequested"),
+                      "variantApplied":audit.get("variantApplied"),
+                      "variantAppliedAt":audit.get("variantAppliedAt"),
+                      "variantAppliedBeforeFirstYoutube":audit.get("variantAppliedBeforeFirstYoutube"),
+                      "variantRuleCount":audit.get("variantRuleCount")
+                  }
+              }
+
+          base=rows["base"]
+          candidates=[]
+          for name in names[1:]:
+              row=rows[name]
+              delta=(base["youtube"]["raf1"]["p95"] or 0)-(row["youtube"]["raf1"]["p95"] or 0)
+              regressions={
+                  "raf2P95":(row["youtube"]["raf2"]["p95"] or 0)-(base["youtube"]["raf2"]["p95"] or 0),
+                  "raf3P95":(row["youtube"]["raf3"]["p95"] or 0)-(base["youtube"]["raf3"]["p95"] or 0),
+                  "globalP95":(row["global"]["p95"] or 0)-(base["global"]["p95"] or 0),
+                  "globalP99":(row["global"]["p99"] or 0)-(base["global"]["p99"] or 0),
+                  "dropped":(row["global"]["dropped"] or 0)-(base["global"]["dropped"] or 0)
+              }
+              significant=(
+                  regressions["raf2P95"]>=3 or regressions["raf3P95"]>=3 or
+                  regressions["globalP95"]>=3 or regressions["globalP99"]>=3 or
+                  regressions["dropped"]>=1
+              )
+              candidates.append({"variant":name,"raf1P95Delta":delta,"globalRegression":significant,"regressions":regressions})
+
+          eligible=[x for x in candidates if x["raf1P95Delta"]>=3 and not x["globalRegression"]]
+          eligible.sort(key=lambda x:x["raf1P95Delta"],reverse=True)
+          winner=eligible[0] if eligible else None
+          out={
+              "releaseHeadUnchanged":True,
+              "releaseHead":"4de188b2cf50d3f58cd7074a6e57ccb67c15e1b2",
+              "m1PerformanceProbeBlob":"f580a12c6bbc85de9b9c429f487a5e94c0449ecc",
+              "rows":rows,
+              "candidates":candidates,
+              "primaryWinner":winner["variant"] if winner else "NO PROVEN CSS PROPERTY",
+              "winnerRaf1P95Delta":winner["raf1P95Delta"] if winner else None,
+              "winnerGlobalRegression":winner["globalRegression"] if winner else None,
+              "productionPatch":"NONE",
+              "regressionThresholds":{"raf2P95Ms":3,"raf3P95Ms":3,"globalP95Ms":3,"globalP99Ms":3,"droppedPercentagePoints":1}
+          }
+          with open("exact-css-summary.json","w") as f: json.dump(out,f,indent=2)
+
+          headers=["variant","FPS","p50","p95","p99","worst","dropped","long50","long100","yt raf1 p50","yt raf1 p95","yt raf1 worst","yt raf2 p95","yt raf3 p95","prod raf1 p95","settings raf1 p95","analytics raf1 p95","channels raf1 p95","dashboard raf1 p95"]
+          lines=["| "+" | ".join(headers)+" |","|"+"|".join(["---"]*len(headers))+"|"]
+          for name in names:
+              r=rows[name]; g=r["global"]; y=r["youtube"]; q=r["routes"]
+              vals=[name,g["fps"],g["p50"],g["p95"],g["p99"],g["worst"],g["dropped"],g["long50"],g["long100"],y["raf1"]["p50"],y["raf1"]["p95"],y["raf1"]["worst"],y["raf2"]["p95"],y["raf3"]["p95"],q["production"],q["settings"],q["analytics"],q["channels"],q["dashboard"]]
+              lines.append("| "+" | ".join(str(v) for v in vals)+" |")
+          lines += ["",f"PRIMARY WINNER: {out['primaryWinner']}",f"PRODUCTION PATCH: {out['productionPatch']}"]
+          open("exact-css-summary.md","w").write("\n".join(lines)+"\n")
+          print(open("exact-css-summary.md").read())
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-6.1.0-EXACT-CSS-FINAL
+          path: |
+            exact-css-summary.json
+            exact-css-summary.md
+          if-no-files-found: error
+          retention-days: 30

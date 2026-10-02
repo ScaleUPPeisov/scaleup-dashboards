@@ -44,6 +44,19 @@ pub fn performance_probe_cleanup()->Result<Value,String>{
 }
 
 #[tauri::command]
+pub fn performance_probe_css_variant()->Result<String,String>{
+    if !enabled(){return Err("PERFORMANCE_PROBE_DISABLED".into())}
+    if env::var("VYRON_M1_PARITY_DIAG").ok().as_deref()!=Some("1"){
+        return Err("M1_CSS_VARIANT_REQUIRES_DIAGNOSTIC_BUILD".into())
+    }
+    let variant=env::var("VYRON_M1_CSS_VARIANT").unwrap_or_else(|_|"base".into()).to_ascii_lowercase();
+    match variant.as_str(){
+        "base"|"shadows"|"gradients"|"transitions"|"filters"|"opaque"|"pseudo"=>Ok(variant),
+        _=>Err(format!("INVALID_M1_CSS_VARIANT:{variant}"))
+    }
+}
+
+#[tauri::command]
 pub fn performance_probe_report(mut payload:Value)->Result<String,String>{
     if !enabled(){return Err("PERFORMANCE_PROBE_DISABLED".into())}
     validated_storage_root(false)?;

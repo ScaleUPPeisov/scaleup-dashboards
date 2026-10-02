@@ -113,6 +113,7 @@ export const api={
   performanceProbeEnabled:()=>invoke<boolean>('performance_probe_enabled'),
   performanceProbeAssertIsolated:()=>invoke<string>('performance_probe_assert_isolated'),
   performanceProbeCleanup:()=>invoke<{root:string;removed:boolean}>('performance_probe_cleanup'),
+  performanceProbeCssVariant:()=>invoke<'base'|'shadows'|'gradients'|'transitions'|'filters'|'opaque'|'pseudo'>('performance_probe_css_variant'),
   performanceProbeReport:(payload:unknown)=>{
     const base=payload&&typeof payload==='object'?{...(payload as Record<string,unknown>)}:payload;
     if(!base||typeof base!=='object')return invoke<string>('performance_probe_report',{payload:base});
