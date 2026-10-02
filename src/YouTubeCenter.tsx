@@ -7,13 +7,13 @@ import {ChannelRunway} from './ChannelRunway';
 import {AccountsPage} from './AccountsPage';
 import {QuotaMeter} from './QuotaMeter';
 import {ScheduleWorkspace} from './ScheduleWorkspace';
-import {YouTubeChannelBar} from './YouTubeChannelBar';
+import {YouTubeChannelBar,resolveYoutubeActiveChannel} from './YouTubeChannelBar';
 import {ActivityHistory} from './ActivityHistory';
 import {StatisticsCenter} from './StatisticsCenter';
 import {loadActivePublishChannel,subscribeActivePublishChannel} from './publishWorkspaceState';
 import {UiErrorBoundary} from './UiErrorBoundary';
 import {useApp} from './store';
-import {beginYoutubeRouteDiagnostics} from './youtubeRouteDiagnostics';
+import {beginYoutubeRouteDiagnostics,recordYoutubeRouteEvent} from './youtubeRouteDiagnostics';
 
 type Tab='publish'|'uploaded'|'metadata'|'schedule'|'calendar'|'command'|'runway'|'data'|'statistics'|'accounts'|'history'|'queue';
 const OPEN_TAB_KEY='vyron:youtube-open-tab:v1';
@@ -25,10 +25,11 @@ function normalizeTab(tab:Tab):Exclude<Tab,'calendar'|'data'|'queue'>{if(tab==='
 function consumeRequestedTab(initial:Tab){try{const raw=localStorage.getItem(OPEN_TAB_KEY) as Tab|null;if(raw){localStorage.removeItem(OPEN_TAB_KEY);requestedGlobalHistory=raw==='history';return normalizeTab(raw)}}catch{}requestedGlobalHistory=false;return normalizeTab(initial)}
 export function YouTubeCenter({initialTab='publish',routeTab,active=true}:{initialTab?:Tab;routeTab?:'publish'|'metadata'|'uploaded';active?:boolean}){
  const setPage=useApp(s=>s.setPage),routeActiveRef=useRef(active),routeTabRef=useRef<typeof routeTab>(undefined),diagnosticStartedRef=useRef(false);routeActiveRef.current=active;if(active&&!diagnosticStartedRef.current){diagnosticStartedRef.current=true;beginYoutubeRouteDiagnostics()}
- const [tab,setTab]=useState(()=>normalizeTab(routeTab||consumeRequestedTab(initialTab))),[activeChannel,setActiveChannel]=useState(()=>loadActivePublishChannel()),[historyGlobal,setHistoryGlobal]=useState(()=>requestedGlobalHistory),[quotaOpen,setQuotaOpen]=useState(false);
+ const [tab,setTab]=useState(()=>normalizeTab(routeTab||consumeRequestedTab(initialTab))),[activeChannel,setActiveChannel]=useState(()=>resolveYoutubeActiveChannel(useApp.getState().channels||[],loadActivePublishChannel())),[historyGlobal,setHistoryGlobal]=useState(()=>requestedGlobalHistory),[quotaOpen,setQuotaOpen]=useState(false);
+ const activeChannelRef=useRef(activeChannel);activeChannelRef.current=activeChannel;
  if(routeTabRef.current!==routeTab){routeTabRef.current=routeTab;if(routeTab&&tab!==routeTab)setTab(routeTab)}
  useEffect(()=>{try{localStorage.setItem(OPEN_TAB_KEY,tab)}catch{}},[tab]);
- useEffect(()=>{if(!active)return;return subscribeActivePublishChannel(setActiveChannel)},[active]);
+ useEffect(()=>{if(!active)return;return subscribeActivePublishChannel(id=>{const next=resolveYoutubeActiveChannel(useApp.getState().channels||[],id);if(next===activeChannelRef.current)return;activeChannelRef.current=next;recordYoutubeRouteEvent('YouTubeCenter','state-write:activeChannel');setActiveChannel(next)})},[active]);
  useEffect(()=>{if(!active)return;const openHistory=(event:Event)=>{setHistoryGlobal(Boolean((event as CustomEvent<{global?:boolean}>).detail?.global));setTab('history')},openStatistics=()=>setTab('statistics'),openAccounts=()=>setTab('accounts');window.addEventListener('vyron:youtube-history',openHistory);window.addEventListener('vyron:youtube-statistics',openStatistics);window.addEventListener('vyron:youtube-accounts',openAccounts);return()=>{window.removeEventListener('vyron:youtube-history',openHistory);window.removeEventListener('vyron:youtube-statistics',openStatistics);window.removeEventListener('vyron:youtube-accounts',openAccounts)}},[active]);
  const tabs:[typeof tab,string][]=[['publish','Публикация'],['metadata','Метаданные'],['schedule','Расписание'],['uploaded','Загруженные'],['command','Командный центр'],['runway','План каналов'],['statistics','Статистика'],['history','История'],['accounts','Аккаунты']];
  const content=tab==='publish'?<CachedPublisher activityRef={routeActiveRef}/>:tab==='uploaded'?<ExistingVideos/>:tab==='metadata'?<MetadataTabs active={active}/>:tab==='schedule'?<ScheduleWorkspace/>:tab==='command'?<CommandCenter/>:tab==='runway'?<ChannelRunway/>:tab==='statistics'?<StatisticsCenter/>:tab==='history'?<ActivityHistory globalView={historyGlobal}/>:<AccountsPage/>;

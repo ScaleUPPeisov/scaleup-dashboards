@@ -1,5 +1,6 @@
-import React,{useEffect,useState} from 'react';
+import React,{useEffect,useRef,useState} from 'react';
 import type {Channel} from './types';
+import {recordYoutubeRouteEvent} from './youtubeRouteDiagnostics';
 
 export type ChannelAvatarSize='sm'|'md'|'lg';
 
@@ -20,11 +21,15 @@ export function ChannelAvatar({channel,size='md',className='',title}:{channel:Ch
   const primary=channelAvatarSource(channel);
   const [src,setSrc]=useState(()=>primary||cachedAvatar(key));
   const [failed,setFailed]=useState(false);
+  const sourceIdentityRef=useRef(key+'\u0000'+primary);
 
   useEffect(()=>{
+    const identity=key+'\u0000'+primary;
+    if(sourceIdentityRef.current===identity)return;
+    sourceIdentityRef.current=identity;
     if(!primary)return;
-    setSrc(primary);setFailed(false);
-    try{localStorage.setItem(key,primary)}catch{}
+    if(src!==primary){recordYoutubeRouteEvent('ChannelAvatar','state-write:src-change');setSrc(primary)}
+    if(failed){recordYoutubeRouteEvent('ChannelAvatar','state-write:clear-failed');setFailed(false)}
   },[key,primary]);
 
   if(!src||failed){
@@ -37,10 +42,13 @@ export function ChannelAvatar({channel,size='md',className='',title}:{channel:Ch
     title={title||channel.name}
     loading="lazy"
     decoding="async"
-    onLoad={()=>{try{localStorage.setItem(key,src)}catch{}}}
+    onLoad={()=>{
+      try{if(localStorage.getItem(key)!==src)localStorage.setItem(key,src)}catch{}
+    }}
     onError={()=>{
       const fallback=cachedAvatar(key);
-      if(fallback&&fallback!==src){setSrc(fallback);return}
+      if(fallback&&fallback!==src){recordYoutubeRouteEvent('ChannelAvatar','state-write:fallback-src');setSrc(fallback);return}
+      recordYoutubeRouteEvent('ChannelAvatar','state-write:failed');
       setFailed(true)
     }}
   />

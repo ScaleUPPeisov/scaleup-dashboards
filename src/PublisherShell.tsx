@@ -22,6 +22,7 @@ export type PublisherShellProps={
 };
 
 export const PublisherShell=React.memo(function PublisherShell(p:PublisherShellProps){
+ const activeName=p.channels.find(c=>c.id===p.channelId)?.name||'Канал не выбран';
  return <>
   <div className="pageHeader publishMasterHead">
    <div>
@@ -30,7 +31,7 @@ export const PublisherShell=React.memo(function PublisherShell(p:PublisherShellP
     <p>{p.newCount} новых · {p.uploadedCount} на YouTube · {p.processingCount} обрабатываются · {p.errorCount} ошибок</p>
    </div>
    <div className="headerActions">
-    <select value={p.channelId} onChange={e=>p.onChannel(e.target.value)}>{p.channels.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>
+    <span className="publisherActiveChannel" title="Канал меняется в верхней панели">{activeName}</span>
     <button onClick={p.onClear}>Очистить черновик</button>
    </div>
   </div>
