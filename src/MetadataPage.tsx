@@ -35,7 +35,8 @@ export function MetadataPage(){
  const [channelId,setChannelId]=useState(()=>{const saved=loadActivePublishChannel();return channels.length?(channels.some(c=>c.id===saved)?saved:channels[0].id):saved}),[target,setTarget]=useState<Target>('youtube'),[rows,setRows]=useState<ImportedMetadata[]>([]),[paste,setPaste]=useState(''),[yt,setYt]=useState<YoutubeExistingVideo[]>([]),[busy,setBusy]=useState(false),[order,setOrder]=useState<'oldest'|'newest'>('newest'),[limit,setLimit]=useState(1000),[filter,setFilter]=useState<ExistingFilter>('private'),[docxStrict,setDocxStrict]=useState(false),[start,setStart]=useState(defaultMetadataStart),[cadence,setCadence]=useState(2),[scheduleMode,setScheduleMode]=useState<'auto'|'manual'>('auto'),[customPattern,setCustomPattern]=useState(false),[scheduleRevision,setScheduleRevision]=useState(0),[scheduleSyncAttempt,setScheduleSyncAttempt]=useState<'idle'|'loading'|'complete'|'incomplete'|'failed'>('idle'),[syncStatus,setSyncStatus]=useState(''),[applyProgress,setApplyProgress]=useState(''),[applyReport,setApplyReport]=useState<ApplyReport|null>(null),[history,setHistory]=useState<MetadataOperationHistory[]>([]),[draftSavedAt,setDraftSavedAt]=useState(''),[draftStatus,setDraftStatus]=useState<MetadataDraftSaveStatus>('saved');const file=useRef<HTMLInputElement>(null),restoring=useRef(false),suppressAutosave=useRef(false),latestDraft=useRef<{channelId:string;draft:MetadataDraft}|null>(null);
  const channel=channels.find(c=>c.id===channelId),profileId=channel?.youtubeProfileId||'';
  const [queueSource,setQueueSource]=useState<{name:string;hash:string}>({name:'GPT.txt',hash:''});
- const currentDraft=():MetadataDraft=>({version:1,updatedAt:new Date().toISOString(),target,rows,paste,order,filter,docxStrict,start,cadence,scheduleMode,selectedVideos:compactSelected(yt)});
+ const compactSelectedYt=useMemo(()=>compactSelected(yt),[yt]);
+ const currentDraft=():MetadataDraft=>({version:1,updatedAt:new Date().toISOString(),target,rows,paste,order,filter,docxStrict,start,cadence,scheduleMode,selectedVideos:compactSelectedYt});
  latestDraft.current=channelId?{channelId,draft:currentDraft()}:null;
  function persistCurrentDraft(){if(channelId&&!restoring.current&&!suppressAutosave.current){const d=currentDraft();saveMetadataDraft(channelId,d);setDraftSavedAt(d.updatedAt);setDraftStatus('saved')}}
  function switchMetadataChannel(nextId:string){if(nextId===channelId)return;if(!channels.some(c=>c.id===nextId))return;persistCurrentDraft();saveActivePublishChannel(nextId);setChannelId(nextId)}
@@ -80,6 +81,7 @@ export function MetadataPage(){
  const patternPublishDays=Math.max(1,Math.floor(channel?.publishDays||3)),patternPauseDays=Math.max(1,Math.floor(channel?.pauseDays||1));
  const schedulePairs=useMemo(()=>selectedYt.map((v,i)=>({v,row:rows[i]})).filter(x=>scheduleMode==='manual'||!x.v.publishAt),[selectedYt,rows,scheduleMode]);
  const schedulePairIds=useMemo(()=>schedulePairs.map(x=>x.v.id),[schedulePairs]);
+ const schedulePairRevision=useMemo(()=>schedulePairRevision,[schedulePairIds]);
  const effectiveStart=scheduleMode==='auto'?(scheduleTruth==='complete'&&scheduleState?.nextAvailableAt?toKratLocalInput(scheduleState.nextAvailableAt):''):start;
  const patternGenerated=useMemo(()=>strategy==='pattern'&&channel?.patternAnchorDate?generatePatternSchedule(channel,yt,schedulePairs.length,schedulePairIds):{dates:[],calendar:[]},[strategy,channel?.id,channel?.patternAnchorDate,channel?.publishDays,channel?.pauseDays,channel?.publishHour,channel?.publishMinute,yt,schedulePairs.length,schedulePairIds.join('|'),scheduleRevision]);
  const schedulePreview=useMemo(()=>strategy==='pattern'?schedulePairs.map((x,i)=>({...x.v,publishAt:patternGenerated.dates[i]})).filter(v=>Boolean(v.publishAt)):effectiveStart?buildExistingScheduleFromLocal(schedulePairs.map(x=>x.v),effectiveStart,cadence,schedulePairs.map(x=>x.row)):[],[strategy,schedulePairs,effectiveStart,cadence,patternGenerated.dates]);
@@ -93,8 +95,8 @@ export function MetadataPage(){
  function changeDefaultTime(value:string){const m=value.match(/^(\d{2}):(\d{2})$/);if(!m||!channel)return;updateChannel(channel.id,{publishHour:+m[1],publishMinute:+m[2]});setScheduleRevision(x=>x+1)}
 
  const matches=useMemo<Match[]>(()=>rows.map((row,index)=>{if(target==='future'){const pool=future;const job=row.number?pool.find(j=>j.number===row.number):pool[index];return{row,job,index}}const video=selectedYt[index];return{row,video,index}}),[rows,target,future,selectedYt]);
- const matched=matches.filter(m=>target==='future'?m.job:m.video).length;
- const shown=yt.filter(v=>matchesExistingFilter(v,filter));
+ const matched=useMemo(()=>matches.reduce((n,m)=>n+Number(Boolean(target==='future'?m.job:m.video)),0),[matches,target]);
+ const shown=useMemo(()=>yt.filter(v=>matchesExistingFilter(v,filter)),[yt,filter]);
  const selectVisible=()=>setYt(x=>{const ids=selectedVisibleIds(x,filter);return x.map(v=>({...v,selected:ids.has(v.id)}))});
  const selectLatest30=()=>setYt(x=>{const ids=latestPrivateIds(x,30);return x.map(v=>({...v,selected:ids.has(v.id)}))});
  const selectNone=()=>setYt(x=>x.map(v=>({...v,selected:false})));

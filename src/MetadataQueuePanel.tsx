@@ -21,7 +21,8 @@ export function MetadataQueuePanel({channelId,channelName,dailyTarget,rows,sourc
       api.metadataQueueSummary(channelId,channelName),
       api.metadataQueuePage(channelId,channelName,nextOffset,PAGE_SIZE,nextStatus||undefined),
     ]);
-    setSummary(s);setPage(p);
+    setSummary(s);
+    await new Promise<void>(resolve=>requestAnimationFrame(()=>{setPage(p);resolve()}));
   },[channelId,channelName,offset,status]);
 
   const refreshChannelRef=useRef(''),refreshKeyRef=useRef('');
