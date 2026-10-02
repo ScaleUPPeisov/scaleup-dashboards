@@ -1,7 +1,7 @@
 import React,{useEffect,useRef} from 'react';
 import {createPortal} from 'react-dom';
 
-export function ModalPortal({children,onClose,closeOnBackdrop=true,closeOnEscape=true,className='modalBackdrop'}:{children:React.ReactNode;onClose?:()=>void;closeOnBackdrop?:boolean;closeOnEscape?:boolean;className?:string}){
+export function ModalPortal({children,onClose,closeOnBackdrop=true,closeOnEscape=true,className='modalBackdrop',autoFocusOnOpen=true}:{children:React.ReactNode;onClose?:()=>void;closeOnBackdrop?:boolean;closeOnEscape?:boolean;className?:string;autoFocusOnOpen?:boolean}){
  const previousFocus=useRef<HTMLElement|null>(null);
  const rootRef=useRef<HTMLDivElement|null>(null);
  useEffect(()=>{
@@ -17,8 +17,8 @@ export function ModalPortal({children,onClose,closeOnBackdrop=true,closeOnEscape
    if(e.shiftKey&&active===first){e.preventDefault();last.focus()}else if(!e.shiftKey&&active===last){e.preventDefault();first.focus()}
   };
   document.addEventListener('keydown',onKey);
-  requestAnimationFrame(()=>{const target=rootRef.current?.querySelector<HTMLElement>('[autofocus],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])');target?.focus({preventScroll:true});window.scrollTo(scrollX,scrollY)});
+  if(autoFocusOnOpen)requestAnimationFrame(()=>{const target=rootRef.current?.querySelector<HTMLElement>('[autofocus],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])');target?.focus({preventScroll:true});window.scrollTo(scrollX,scrollY)});
   return()=>{document.removeEventListener('keydown',onKey);previousFocus.current?.focus({preventScroll:true});window.scrollTo(scrollX,scrollY)}
- },[onClose,closeOnEscape]);
+ },[onClose,closeOnEscape,autoFocusOnOpen]);
  return createPortal(<div ref={rootRef} className={className} role="presentation" tabIndex={-1} onMouseDown={e=>{if(e.target===e.currentTarget&&closeOnBackdrop&&onClose)onClose()}}>{children}</div>,document.body)
 }
