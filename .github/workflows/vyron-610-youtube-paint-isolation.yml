@@ -1,0 +1,125 @@
+name: VYRON 6.1.0 YouTube Paint Isolation
+
+on:
+  push:
+    branches:
+      - diagnostic/youtube-wkwebview-paint-isolation
+
+permissions:
+  contents: read
+
+env:
+  VERSION: '6.1.0'
+  BASE_HEAD: '4de188b2cf50d3f58cd7074a6e57ccb67c15e1b2'
+  BUNDLE_ID: studio.channelflow.desktop
+
+jobs:
+  diagnostic:
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: diagnostic/youtube-wkwebview-paint-isolation
+          fetch-depth: 0
+
+      - name: Verify diagnostic branch ancestry
+        run: |
+          set -Eeuo pipefail
+          git merge-base --is-ancestor "$BASE_HEAD" HEAD
+          test "$(node -p "require('./package.json').version")" = "$VERSION"
+          test "$(node -p "require('./src-tauri/tauri.conf.json').identifier")" = "$BUNDLE_ID"
+          git diff --exit-code "$BASE_HEAD"...HEAD -- src/M1PerformanceProbe.tsx
+          echo "RELEASE_M1_PROBE_UNCHANGED=PASS"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: TypeScript production build
+        run: npm run build
+
+      - name: Diagnostic targeted compile contracts
+        run: >
+          npx vitest run
+          src/youtubePaintIsolationDiagnostic.test.ts
+          src/v610M1RoutePerformance.test.ts
+          src/v610PublisherColdRoute.test.ts
+
+      - name: Build diagnostic ARM64 app
+        shell: bash
+        env:
+          VITE_YT_PAINT_DIAG: '1'
+        run: |
+          set -Eeuo pipefail
+          export APPLE_SIGNING_IDENTITY='-'
+          npx tauri build --target aarch64-apple-darwin --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          APP="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)"
+          test -d "$APP"
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = "$BUNDLE_ID"
+          file "$APP/Contents/MacOS/channelflow" | grep -q arm64
+          codesign --verify --deep --strict "$APP"
+          echo "APP_PATH=$APP" >> "$GITHUB_ENV"
+
+      - name: Run physical WKWebView paint isolation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          REPORT="$RUNNER_TEMP/vyron-youtube-paint-isolation.json"
+          LOG="$RUNNER_TEMP/vyron-youtube-paint-isolation.log"
+          PERF_ROOT="$RUNNER_TEMP/vyron-youtube-paint-profile"
+          rm -f "$REPORT"
+          rm -rf "$PERF_ROOT"
+          mkdir -p "$PERF_ROOT"
+          VYRON_M1_PERF_PROBE=1 VYRON_M1_PERF_ROOT="$PERF_ROOT" VYRON_M1_PERF_REPORT="$REPORT"             "$APP_PATH/Contents/MacOS/channelflow" >"$LOG" 2>&1 &
+          PID=$!
+          cleanup(){ kill "$PID" >/dev/null 2>&1 || true; rm -rf "$PERF_ROOT"; }
+          trap cleanup EXIT
+          for i in {1..180}; do
+            test -s "$REPORT" && break
+            kill -0 "$PID"
+            sleep 1
+          done
+          test -s "$REPORT"
+          cat "$REPORT"
+          python3 - "$REPORT" <<'PY'
+          import json,sys
+          p=json.load(open(sys.argv[1]))
+          assert p.get("kind")=="YOUTUBE_WKWEBVIEW_PAINT_ISOLATION",p
+          assert p.get("releaseCandidateChanged") is False,p
+          assert p.get("baseHead")=="4de188b2cf50d3f58cd7074a6e57ccb67c15e1b2",p
+          assert "error" not in p,p
+          print("YOUTUBE_PAINT_ISOLATION=PASS")
+          PY
+          kill "$PID" >/dev/null 2>&1 || true
+          wait "$PID" >/dev/null 2>&1 || true
+          rm -rf "$PERF_ROOT"
+          trap - EXIT
+          ! grep -Eiq 'panic|segmentation fault|fatal error' "$LOG"
+
+      - name: Preserve diagnostic evidence
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p youtube-paint-diagnostic
+          cp "$RUNNER_TEMP/vyron-youtube-paint-isolation.json" youtube-paint-diagnostic/report.json 2>/dev/null || true
+          cp "$RUNNER_TEMP/vyron-youtube-paint-isolation.log" youtube-paint-diagnostic/runtime.log 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: VYRON-6.1.0-YOUTUBE-PAINT-ISOLATION
+          path: youtube-paint-diagnostic/**
+          if-no-files-found: warn
+          retention-days: 30

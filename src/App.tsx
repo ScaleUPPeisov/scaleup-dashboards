@@ -56,6 +56,7 @@ import {UiErrorBoundary} from './UiErrorBoundary';
 import {SafeArtwork} from './SafeArtwork';
 import {OwnerProfile} from './OwnerProfile';
 import {beginStartupQuotaProbe} from './startupQuotaProbe';
+import {YoutubePaintIsolationProbe} from './YoutubePaintIsolationProbe';
 
 async function notifyUpdateAvailable(version:string){
   const notifiedKey='vyron:update-notified-version';
@@ -124,7 +125,7 @@ function SidebarIcon({name}:{name:SidebarIconName}){
 }
 const statusLabel:Record<JobStatus,string>={NEED_IMAGE:'Нужна картинка',WAITING_MUSIC:'Ждёт музыку',READY_RENDER:'Готов к рендеру',RENDERING:'Рендерится',READY_UPLOAD:'Готов к YouTube',UPLOADING:'Загружается',SCHEDULED:'Запланирован',ERROR:'Ошибка'};
 
-export function App(){
+function ProductionApp(){
   const booted=useApp(s=>s.booted),hydrate=useApp(s=>s.hydrate),settings=useApp(s=>s.settings),uploadHistory=useApp(s=>s.uploadHistory),log=useApp(s=>s.log);
   const [license,setLicense]=useState<LicenseStatus|null>(null);
   useLayoutEffect(()=>{if(booted)beginStartupQuotaProbe()},[booted]);
@@ -337,4 +338,10 @@ function UpdaterSidebar(){
  const available=['AVAILABLE','DOWNLOADING','VERIFYING','READY_TO_INSTALL','INSTALLING','READY_TO_RESTART','RESTARTING'].includes(status);
  const installNow=async()=>{const now=currentUpdaterBlockers(jobs,channels.map(x=>x.id));await install(now)};
  return <section className={`updaterSidebar ${available?'available':''} ${status==='ERROR'?'error':''}`} data-updater-status={status}><div className="updaterVersion"><span>VYRON {current||'…'}</span>{status==='UP_TO_DATE'||status==='UPDATED'?<small>✓ Актуальная версия</small>:status==='CHECKING'?<small>Проверка обновлений…</small>:null}</div>{available&&<><b>🔔 Доступно обновление {latest}</b>{status==='AVAILABLE'&&<button className="updaterPrimary" onClick={()=>void download()}>ОБНОВИТЬ</button>}{(status==='DOWNLOADING'||status==='VERIFYING')&&<><small>{status==='DOWNLOADING'?`⬇ ${progress.toFixed(0)}%`:'Проверка пакета…'} {total>0&&`• ${formatUpdaterBytes(downloaded)} / ${formatUpdaterBytes(total)}`}</small><div className="updaterMiniProgress"><i style={{width:`${progress}%`}}/></div></>}{status==='READY_TO_INSTALL'&&<><small>✓ Обновление загружено и готово к установке.</small>{blockers.length>0&&<div className="updaterBlockers">Сначала завершите задачи:<br/>{updaterBlockerText(blockers).split('\n').map(x=><span key={x}>{x}</span>)}</div>}<button className="updaterPrimary" disabled={blockers.length>0} onClick={()=>void installNow()}>УСТАНОВИТЬ И ПЕРЕЗАПУСТИТЬ</button></>}{status==='INSTALLING'&&<small>Установка…</small>}{status==='READY_TO_RESTART'&&<small>✓ Готово к перезапуску</small>}{status==='RESTARTING'&&<small>Перезапуск…</small>}</>}{status==='ERROR'&&<><b>Обновление: ошибка</b><small>{errorCode||'UPDATER_ERROR'}</small><button onClick={()=>void check({force:true})}>ПОВТОРИТЬ</button></>}</section>
+}
+
+
+export function App(){
+  const diagnostic=Boolean((import.meta as any).env?.VITE_YT_PAINT_DIAG==='1');
+  return diagnostic?<YoutubePaintIsolationProbe/>:<ProductionApp/>;
 }
