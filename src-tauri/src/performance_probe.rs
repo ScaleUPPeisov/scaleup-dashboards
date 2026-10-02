@@ -44,19 +44,32 @@ pub fn performance_probe_cleanup()->Result<Value,String>{
 }
 
 #[tauri::command]
-pub fn performance_probe_report(payload:Value)->Result<String,String>{
+pub fn performance_probe_report(mut payload:Value)->Result<String,String>{
     if !enabled(){return Err("PERFORMANCE_PROBE_DISABLED".into())}
     validated_storage_root(false)?;
     let path=env::var("VYRON_M1_PERF_REPORT")
         .map(PathBuf::from)
         .unwrap_or_else(|_|env::temp_dir().join("vyron-m1-performance.json"));
+    if env::var("VYRON_M1_PARITY_DIAG").ok().as_deref()==Some("1"){
+        if let Value::Object(ref mut map)=payload{
+            map.insert("parityRunner".into(),json!({
+                "architecture":env::var("VYRON_M1_PARITY_RUNNER_ARCH").unwrap_or_default(),
+                "macOS":env::var("VYRON_M1_PARITY_MACOS").unwrap_or_default(),
+                "baseHead":env::var("VYRON_M1_PARITY_BASE_HEAD").unwrap_or_default()
+            }));
+        }
+    }
     if let Some(parent)=path.parent(){fs::create_dir_all(parent).map_err(|e|format!("PERFORMANCE_PROBE_MKDIR: {e}"))?;}
     let tmp=path.with_extension(format!("tmp-{}",std::process::id()));
     fs::write(&tmp,serde_json::to_vec_pretty(&payload).map_err(|e|format!("PERFORMANCE_PROBE_SERIALIZE: {e}"))?)
         .map_err(|e|format!("PERFORMANCE_PROBE_WRITE: {e}"))?;
     if path.exists(){fs::remove_file(&path).map_err(|e|format!("PERFORMANCE_PROBE_REPLACE: {e}"))?;}
     fs::rename(&tmp,&path).map_err(|e|format!("PERFORMANCE_PROBE_RENAME: {e}"))?;
-    Ok(path.to_string_lossy().to_string())
+    let out=path.to_string_lossy().to_string();
+    if env::var("VYRON_M1_PARITY_EXIT_AFTER_REPORT").ok().as_deref()==Some("1"){
+        std::process::exit(0);
+    }
+    Ok(out)
 }
 
 #[cfg(test)]

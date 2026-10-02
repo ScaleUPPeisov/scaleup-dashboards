@@ -1,0 +1,170 @@
+name: VYRON 6.1.0 M1 Diagnostic Parity Gate
+
+on:
+  push:
+    branches:
+      - diagnostic/vyron-6.1.0-m1-parity-gate
+
+permissions:
+  contents: read
+
+env:
+  VERSION: '6.1.0'
+  BASE_HEAD: '4de188b2cf50d3f58cd7074a6e57ccb67c15e1b2'
+  PROBE_BLOB: 'f580a12c6bbc85de9b9c429f487a5e94c0449ecc'
+  BUNDLE_ID: studio.channelflow.desktop
+
+jobs:
+  m1-parity:
+    runs-on: macos-14
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: diagnostic/vyron-6.1.0-m1-parity-gate
+          fetch-depth: 0
+
+      - name: Verify parity diagnostic ancestry and protected source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git merge-base --is-ancestor "$BASE_HEAD" HEAD
+          test "$(git rev-parse "$BASE_HEAD:src/M1PerformanceProbe.tsx")" = "$PROBE_BLOB"
+          test "$(git rev-parse "HEAD:src/M1PerformanceProbe.tsx")" = "$PROBE_BLOB"
+          git diff --exit-code "$BASE_HEAD"...HEAD -- src/M1PerformanceProbe.tsx
+          git diff --exit-code "$BASE_HEAD"...HEAD --             src/YouTubeCenter.tsx src/PublisherOS.tsx src/YouTubeChannelBar.tsx             src/ChannelRunway.tsx src/MaterialsManager.tsx src/ProductionManager.tsx             src/youtubePublishSafety.ts src-tauri/src/oauth_vault.rs src-tauri/src/security.rs src-tauri/src/youtube.rs
+          CHANGED="$(git diff --name-only "$BASE_HEAD"...HEAD | sort)"
+          ALLOWED="$(printf '%s\n'             '.github/workflows/vyron-610-m1-parity-gate.yml'             'src-tauri/src/performance_probe.rs'             'src/App.tsx'             'src/M1ParityPassiveObserver.tsx'             'src/api.ts' | sort)"
+          test "$CHANGED" = "$ALLOWED"
+          test "$(node -p "require('./package.json').version")" = "$VERSION"
+          test "$(node -p "require('./src-tauri/tauri.conf.json').identifier")" = "$BUNDLE_ID"
+          echo "M1_PERFORMANCE_PROBE_BLOB_UNCHANGED=YES"
+          echo "RELEASE_CANDIDATE_CHANGES=0"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Production TypeScript build
+        run: npm run build
+
+      - name: Parity diagnostic compile gate
+        run: >
+          npx vitest run
+          src/v610M1RoutePerformance.test.ts
+          src/v610PublisherColdRoute.test.ts
+
+      - name: Build diagnostic ARM64 app with unchanged M1 probe
+        shell: bash
+        env:
+          VITE_M1_PARITY_DIAG: '1'
+        run: |
+          set -Eeuo pipefail
+          export APPLE_SIGNING_IDENTITY='-'
+          npx tauri build --target aarch64-apple-darwin --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          APP="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)"
+          test -d "$APP"
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = "$BUNDLE_ID"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = "$VERSION"
+          file "$APP/Contents/MacOS/channelflow" | grep -q arm64
+          codesign --verify --deep --strict "$APP"
+          echo "APP_PATH=$APP" >> "$GITHUB_ENV"
+
+      - name: Seed local owner license
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for ROOT in             "$HOME/Library/Application Support/studio.channelflow.desktop"             "$HOME/Library/Application Support/VYRON"             "$HOME/Library/Application Support/channelflow"
+          do
+            mkdir -p "$ROOT"
+            cat >"$ROOT/license.json" <<'JSON'
+          {
+            "valid": true,
+            "type": "owner-lifetime",
+            "expiresAt": null,
+            "maskedKey": "CI-M1-PARITY",
+            "activatedAt": "2026-10-02T00:00:00Z"
+          }
+          JSON
+          done
+
+      - name: Run physical base parity once
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          REPORT="$RUNNER_TEMP/vyron-m1-parity.json"
+          SUMMARY="$RUNNER_TEMP/vyron-m1-parity-summary.json"
+          LOG="$RUNNER_TEMP/vyron-m1-parity.log"
+          PERF_ROOT="$RUNNER_TEMP/vyron-m1-parity-profile"
+          rm -f "$REPORT" "$SUMMARY" "$LOG"
+          rm -rf "$PERF_ROOT"
+          mkdir -p "$PERF_ROOT"
+          ARCH="$(uname -m)"
+          MACOS="$(sw_vers -productVersion)"
+          echo "runner_architecture=$ARCH"
+          echo "macOS=$MACOS"
+          VYRON_M1_PERF_PROBE=1           VYRON_M1_PERF_ROOT="$PERF_ROOT"           VYRON_M1_PERF_REPORT="$REPORT"           VYRON_M1_PARITY_DIAG=1           VYRON_M1_PARITY_EXIT_AFTER_REPORT=1           VYRON_M1_PARITY_RUNNER_ARCH="$ARCH"           VYRON_M1_PARITY_MACOS="$MACOS"           VYRON_M1_PARITY_BASE_HEAD="$BASE_HEAD"             "$APP_PATH/Contents/MacOS/channelflow" >"$LOG" 2>&1
+          test -s "$REPORT"
+          cat "$REPORT"
+          python3 - "$REPORT" "$SUMMARY" <<'PY'
+          import json,sys
+          p=json.load(open(sys.argv[1]))
+          dataset=p.get("dataset") or {}
+          assert dataset.get("channels")==35,p
+          assert dataset.get("jobs")==1000,p
+          assert dataset.get("metadataRecords")==5000,p
+          assert dataset.get("assignedJobs")==1000,p
+          assert dataset.get("navigationSwitchesPerRound")==30,p
+          assert dataset.get("rounds")==3,p
+          yt=(p.get("routeFrameTimings") or {}).get("youtube:raf1") or {}
+          passive=((p.get("nonGateDiagnostics") or {}).get("m1Parity") or {})
+          exact_fixture=(
+            passive.get("channels")==35 and
+            passive.get("jobs")==1000 and
+            passive.get("assignedJobs")==1000 and
+            passive.get("fpsMonitorSetting") is True and
+            passive.get("currentPageBeforeEnteringYoutube")=="production"
+          )
+          parity=bool(exact_fixture and float(yt.get("p95",0))>=40.0)
+          summary={
+            "exactFixtureParity":"PASS" if exact_fixture else "FAIL",
+            "parity":"PASS" if parity else "FAIL",
+            "youtubeRaf1P95":yt.get("p95"),
+            "knownReleaseYoutubeRaf1P95":53,
+            "cssVariantsExecuted":False,
+            "passive":passive,
+            "runner":p.get("parityRunner") or {}
+          }
+          json.dump(summary,open(sys.argv[2],"w"),indent=2)
+          print(json.dumps(summary,indent=2))
+          if not parity:
+            raise SystemExit(2)
+          PY
+
+      - name: Preserve parity evidence
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p m1-parity-diagnostic
+          cp "$RUNNER_TEMP/vyron-m1-parity.json" m1-parity-diagnostic/report.json 2>/dev/null || true
+          cp "$RUNNER_TEMP/vyron-m1-parity-summary.json" m1-parity-diagnostic/summary.json 2>/dev/null || true
+          cp "$RUNNER_TEMP/vyron-m1-parity.log" m1-parity-diagnostic/runtime.log 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: VYRON-6.1.0-M1-PARITY-GATE
+          path: m1-parity-diagnostic/**
+          if-no-files-found: warn
+          retention-days: 30

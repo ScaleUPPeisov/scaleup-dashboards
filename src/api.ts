@@ -113,7 +113,25 @@ export const api={
   performanceProbeEnabled:()=>invoke<boolean>('performance_probe_enabled'),
   performanceProbeAssertIsolated:()=>invoke<string>('performance_probe_assert_isolated'),
   performanceProbeCleanup:()=>invoke<{root:string;removed:boolean}>('performance_probe_cleanup'),
-  performanceProbeReport:(payload:unknown)=>invoke<string>('performance_probe_report',{payload:payload&&typeof payload==='object'?{...(payload as Record<string,unknown>),nonGateDiagnostics:{youtubeRoute:youtubeRouteDiagnosticsSnapshot()}}:payload}),
+  performanceProbeReport:(payload:unknown)=>{
+    const base=payload&&typeof payload==='object'?{...(payload as Record<string,unknown>)}:payload;
+    if(!base||typeof base!=='object')return invoke<string>('performance_probe_report',{payload:base});
+    const parityEnabled=import.meta.env.VITE_M1_PARITY_DIAG==='1';
+    const passive=(window as any).__VYRON_M1_PARITY_PASSIVE__ as Record<string,unknown>|undefined;
+    const parity=parityEnabled?{
+      ...(passive||{}),
+      window:[window.innerWidth,window.innerHeight],
+      outerWindow:[window.outerWidth,window.outerHeight],
+      devicePixelRatio:window.devicePixelRatio,
+      prefersReducedMotion:window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+      documentVisibility:document.visibilityState,
+      fpsMonitorMounted:Boolean(document.querySelector('.fps.fpsDetailed'))
+    }:undefined;
+    return invoke<string>('performance_probe_report',{payload:{...base,nonGateDiagnostics:{
+      youtubeRoute:youtubeRouteDiagnosticsSnapshot(),
+      ...(parity?{m1Parity:parity}:{})
+    }}});
+  },
   defaultWorkspace:()=>invoke<string>('default_workspace'),
   chooseWorkspace:async()=>{const r=await open({directory:true,multiple:false,title:'Папка VYRON YT PEISOV'});return typeof r==='string'?r:null},
   chooseOwnerProfileAvatar:async()=>{const r=await open({directory:false,multiple:false,title:'Фото профиля VYRON',filters:[{name:'Images',extensions:['png','jpg','jpeg','webp']}]});return typeof r==='string'?r:null},
