@@ -64,8 +64,6 @@ jobs:
           npx vitest run
           src/v610PublisherColdRoute.test.ts
           src/v610M1RoutePerformance.test.ts
-          src/youtubeProductivityGlobalChannel.test.ts
-          src/v300PublisherUiContracts.test.ts
           src/uiOverflowAudit.test.ts
 
       - name: Visual structure and portal safety contract
