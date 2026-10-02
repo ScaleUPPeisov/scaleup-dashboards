@@ -243,6 +243,21 @@ button.secondary{background:rgba(255,255,255,.035);border-color:#294156;color:#9
 .metadataQueueRow span{display:grid;gap:2px}.metadataQueueRow small,.metadataQueueRow em{font-size:9px;color:#6f8da0;font-style:normal}.metadataQueueRow strong{font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media(max-width:1100px){.metadataQueueFacts{grid-template-columns:repeat(3,minmax(0,1fr))}.metadataQueueRow{grid-template-columns:1fr}}
 
+/* VYRON 6.1.0 — macOS row-level layout containment for heavy fleet/publisher views. */
+.platform-macos .channelFleetCard,
+.platform-macos .publishVideoRow,
+.platform-macos .renderIdentityEvidence,
+.platform-macos .topVideoTable>article,
+.platform-macos .decisionRows>article{
+  content-visibility:auto;
+  contain:layout paint style;
+  contain-intrinsic-size:auto 132px;
+}
+.platform-macos .youtubeChannelContext,
+.platform-macos .channelFleetGrid{
+  contain:layout paint style;
+}
+
 /* VYRON 6.1.0 — WKWebView frame-pacing overrides. Keep Windows visuals untouched. */
 .platform-macos .pageWrap{overscroll-behavior:contain;animation-duration:.08s}
 .platform-macos .primary,.platform-macos .ghost,.platform-macos .settingsAction,.platform-macos .danger,.platform-macos .iconBtn,.platform-macos .jobActions button,.platform-macos .cardActions button,.platform-macos .publisherNotice button,.platform-macos .settingsTabs button,.platform-macos .addLine button,.platform-macos .pathLine button{transition:transform .12s ease,background-color .12s ease,border-color .12s ease}
