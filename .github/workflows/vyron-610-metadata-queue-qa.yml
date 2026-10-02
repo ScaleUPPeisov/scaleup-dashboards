@@ -127,7 +127,6 @@ jobs:
     timeout-minutes: 90
     env:
       VYRON_M1_PERF_PROBE: '1'
-      VYRON_M1_PERF_ROOT: ${{ runner.temp }}/vyron-m1-profile
       BUNDLE_ID: studio.channelflow.desktop
     steps:
       - uses: actions/checkout@v4
@@ -202,13 +201,14 @@ jobs:
           set -Eeuo pipefail
           REPORT="$RUNNER_TEMP/vyron-m1-performance.json"
           LOG="$RUNNER_TEMP/vyron-m1-performance.log"
+          PERF_ROOT="$RUNNER_TEMP/vyron-m1-profile"
           rm -f "$REPORT"
-          rm -rf "$VYRON_M1_PERF_ROOT"
-          mkdir -p "$VYRON_M1_PERF_ROOT"
-          VYRON_M1_PERF_PROBE=1 VYRON_M1_PERF_ROOT="$VYRON_M1_PERF_ROOT" VYRON_M1_PERF_REPORT="$REPORT" \
+          rm -rf "$PERF_ROOT"
+          mkdir -p "$PERF_ROOT"
+          VYRON_M1_PERF_PROBE=1 VYRON_M1_PERF_ROOT="$PERF_ROOT" VYRON_M1_PERF_REPORT="$REPORT" \
             "$APP_PATH/Contents/MacOS/channelflow" >"$LOG" 2>&1 &
           PID=$!
-          cleanup(){ kill "$PID" >/dev/null 2>&1 || true; rm -rf "$VYRON_M1_PERF_ROOT"; }
+          cleanup(){ kill "$PID" >/dev/null 2>&1 || true; rm -rf "$PERF_ROOT"; }
           trap cleanup EXIT
           sleep 4
           osascript -e 'tell application "System Events" to set frontmost of first process whose name contains "VYRON" to true' >/dev/null 2>&1 || true
@@ -235,7 +235,7 @@ jobs:
           PY
           kill "$PID" >/dev/null 2>&1 || true
           wait "$PID" >/dev/null 2>&1 || true
-          rm -rf "$VYRON_M1_PERF_ROOT"
+          rm -rf "$PERF_ROOT"
           trap - EXIT
           ! grep -Eiq 'panic|segmentation fault|fatal error' "$LOG"
 
