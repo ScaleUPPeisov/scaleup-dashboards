@@ -2,7 +2,7 @@ import {useEffect} from 'react';
 import {api} from './api';
 import {useApp} from './store';
 
-type CssVariant='base'|'shadows'|'gradients'|'transitions'|'filters'|'opaque'|'pseudo';
+type CssVariant='base'|'shadows'|'gradients'|'transitions'|'filters'|'opaque'|'pseudo'|'filters_opaque';
 type PassiveAudit={
   enabled:boolean;
   youtubeEntries:number;
@@ -33,7 +33,7 @@ function cssForVariant(variant:CssVariant){
   if(variant==='gradients')return TARGET+'{background-image:none!important}';
   if(variant==='transitions')return TARGET+'{transition:none!important;animation:none!important}';
   if(variant==='filters')return TARGET+'{filter:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}';
-  if(variant==='opaque')return [
+  const opaqueCss=[
     '.youtubeChannelContext{--os-panel:rgb(9,22,35);--os-panel2:rgb(11,27,43)}',
     '.youtubeChannelBar{background-color:rgb(6,22,34)!important}',
     '.youtubeMasterTabs{background-color:rgb(4,13,23)!important}',
@@ -41,6 +41,8 @@ function cssForVariant(variant:CssVariant){
     '.youtubeChannelSearch,.youtubeRecentChannels button{background-color:rgb(10,19,29)!important}',
     '.youtubeChannelStats>span{background-color:rgb(8,29,42)!important}'
   ].join('\n');
+  if(variant==='opaque')return opaqueCss;
+  if(variant==='filters_opaque')return TARGET+'{filter:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}\n'+opaqueCss;
   // Current exact-workload census has zero decorative YouTube pseudo-elements.
   // Keep PSEUDO as an explicit no-op rather than removing semantic generated content.
   return '';

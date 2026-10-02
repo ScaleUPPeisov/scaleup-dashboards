@@ -1,0 +1,454 @@
+name: VYRON 6.1.0 Filters Opaque Combination
+
+on:
+  push:
+    branches:
+      - diagnostic/vyron-6.1.0-filters-opaque-combo
+
+permissions:
+  contents: write
+
+env:
+  VERSION: '6.1.0'
+  RELEASE_BASE: '4de188b2cf50d3f58cd7074a6e57ccb67c15e1b2'
+  EXACT_HEAD: '00b4b2ed825cfbf68a32f7826c3322a2879ec991'
+  PROBE_BLOB: 'f580a12c6bbc85de9b9c429f487a5e94c0449ecc'
+  BUNDLE_ID: studio.channelflow.desktop
+  CANDIDATE_BRANCH: candidate/vyron-6.1.0-filters-opaque
+
+jobs:
+  build-once:
+    runs-on: macos-14
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: diagnostic/vyron-6.1.0-filters-opaque-combo
+          fetch-depth: 0
+
+      - name: Verify combination-only diagnostic contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git merge-base --is-ancestor "$EXACT_HEAD" HEAD
+          test "$(git rev-parse "$RELEASE_BASE:src/M1PerformanceProbe.tsx")" = "$PROBE_BLOB"
+          test "$(git rev-parse "HEAD:src/M1PerformanceProbe.tsx")" = "$PROBE_BLOB"
+          git diff --exit-code "$RELEASE_BASE"...HEAD -- src/M1PerformanceProbe.tsx
+          git diff --exit-code "$EXACT_HEAD"...HEAD --             src/App.tsx src/M1PerformanceProbe.tsx src/YouTubeCenter.tsx src/PublisherOS.tsx             src/YouTubeChannelBar.tsx src/ChannelRunway.tsx src/MaterialsManager.tsx             src/ProductionManager.tsx src/youtubePublishSafety.ts             src-tauri/src/oauth_vault.rs src-tauri/src/security.rs src-tauri/src/youtube.rs             src-tauri/src/lib.rs
+          CHANGED="$(git diff --name-only "$EXACT_HEAD"...HEAD | sort)"
+          ALLOWED="$(printf '%s\n'             '.github/workflows/vyron-610-filters-opaque-combo.yml'             'src-tauri/src/performance_probe.rs'             'src/M1ParityPassiveObserver.tsx'             'src/api.ts' | sort)"
+          test "$CHANGED" = "$ALLOWED"
+          test "$(node -p "require('./package.json').version")" = "$VERSION"
+          test "$(node -p "require('./src-tauri/tauri.conf.json').identifier")" = "$BUNDLE_ID"
+          echo "M1_PERFORMANCE_PROBE_BLOB_UNCHANGED=YES"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Production TypeScript build
+        run: npm run build
+
+      - name: Exact workload compile contracts
+        run: >
+          npx vitest run
+          src/v610M1RoutePerformance.test.ts
+          src/v610PublisherColdRoute.test.ts
+
+      - name: Build diagnostic ARM64 app once
+        shell: bash
+        env:
+          VITE_M1_PARITY_DIAG: '1'
+        run: |
+          set -Eeuo pipefail
+          export APPLE_SIGNING_IDENTITY='-'
+          npx tauri build --target aarch64-apple-darwin --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          APP="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)"
+          test -d "$APP"
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = "$BUNDLE_ID"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = "$VERSION"
+          file "$APP/Contents/MacOS/channelflow" | grep -q arm64
+          codesign --verify --deep --strict "$APP"
+          tar -czf "$RUNNER_TEMP/vyron-filters-opaque-app.tar.gz" -C "$(dirname "$APP")" "$(basename "$APP")"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-6.1.0-FILTERS-OPAQUE-APP
+          path: ${{ runner.temp }}/vyron-filters-opaque-app.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  base:
+    needs: build-once
+    runs-on: macos-14
+    timeout-minutes: 120
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: VYRON-6.1.0-FILTERS-OPAQUE-APP
+          path: ${{ runner.temp }}/pkg
+
+      - name: Prepare shared app and isolated license
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$RUNNER_TEMP/app"
+          tar -xzf "$RUNNER_TEMP/pkg/vyron-filters-opaque-app.tar.gz" -C "$RUNNER_TEMP/app"
+          APP="$RUNNER_TEMP/app/VYRON.app"
+          test -d "$APP"
+          codesign --verify --deep --strict "$APP"
+          file "$APP/Contents/MacOS/channelflow" | grep -q arm64
+          echo "APP_PATH=$APP" >> "$GITHUB_ENV"
+          LICENSE="$RUNNER_TEMP/license.json"
+          cat >"$LICENSE" <<'JSON'
+          {"valid":true,"type":"owner-lifetime","expiresAt":null,"maskedKey":"CI-FILTERS-OPAQUE","activatedAt":"2026-10-02T00:00:00Z"}
+          JSON
+          for ROOT in "$HOME/Library/Application Support/studio.channelflow.desktop" "$HOME/Library/Application Support/VYRON" "$HOME/Library/Application Support/channelflow"; do
+            mkdir -p "$ROOT"
+            cp "$LICENSE" "$ROOT/license.json"
+          done
+
+      - name: Run BASE control
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          REPORT="$RUNNER_TEMP/report-base.json"
+          LOG="$RUNNER_TEMP/runtime-base.log"
+          PERF_ROOT="$RUNNER_TEMP/profile-base"
+          rm -f "$REPORT" "$LOG"
+          rm -rf "$PERF_ROOT"
+          mkdir -p "$PERF_ROOT"
+          ARCH="$(uname -m)"
+          MACOS="$(sw_vers -productVersion)"
+          VYRON_M1_PERF_PROBE=1           VYRON_M1_PERF_ROOT="$PERF_ROOT"           VYRON_M1_PERF_REPORT="$REPORT"           VYRON_M1_PARITY_DIAG=1           VYRON_M1_PARITY_EXIT_AFTER_REPORT=1           VYRON_M1_PARITY_RUNNER_ARCH="$ARCH"           VYRON_M1_PARITY_MACOS="$MACOS"           VYRON_M1_PARITY_BASE_HEAD="$RELEASE_BASE"           VYRON_M1_CSS_VARIANT=base             "$APP_PATH/Contents/MacOS/channelflow" >"$LOG" 2>&1
+          test -s "$REPORT"
+          python3 - "$REPORT" <<'PY'
+          import json,sys
+          p=json.load(open(sys.argv[1]))
+          d=p.get("dataset") or {}
+          a=((p.get("nonGateDiagnostics") or {}).get("m1Parity") or {})
+          y=((p.get("routeFrameTimings") or {}).get("youtube:raf1") or {})
+          assert d.get("channels")==35 and d.get("jobs")==1000,p
+          assert d.get("metadataRecords")==5000 and d.get("assignedJobs")==1000,p
+          assert d.get("navigationSwitchesPerRound")==30 and d.get("rounds")==3,p
+          assert a.get("fpsMonitorSetting") is True,a
+          assert a.get("variantRequested")=="base" and a.get("variantApplied")=="base",a
+          assert a.get("variantAppliedBeforeFirstYoutube") is True,a
+          assert float(y.get("p95",0))>=40.0,y
+          print("BASE_CONTROL=PASS")
+          PY
+
+      - name: Preserve BASE evidence
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/evidence"
+          cp "$RUNNER_TEMP/report-base.json" "$RUNNER_TEMP/evidence/report-base.json" 2>/dev/null || true
+          cp "$RUNNER_TEMP/runtime-base.log" "$RUNNER_TEMP/evidence/runtime-base.log" 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: VYRON-6.1.0-FILTERS-OPAQUE-base
+          path: ${{ runner.temp }}/evidence/**
+          if-no-files-found: warn
+          retention-days: 30
+
+  filters-opaque:
+    needs: [build-once, base]
+    runs-on: macos-14
+    timeout-minutes: 120
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: VYRON-6.1.0-FILTERS-OPAQUE-APP
+          path: ${{ runner.temp }}/pkg
+
+      - name: Prepare shared app and isolated license
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$RUNNER_TEMP/app"
+          tar -xzf "$RUNNER_TEMP/pkg/vyron-filters-opaque-app.tar.gz" -C "$RUNNER_TEMP/app"
+          APP="$RUNNER_TEMP/app/VYRON.app"
+          test -d "$APP"
+          codesign --verify --deep --strict "$APP"
+          file "$APP/Contents/MacOS/channelflow" | grep -q arm64
+          echo "APP_PATH=$APP" >> "$GITHUB_ENV"
+          LICENSE="$RUNNER_TEMP/license.json"
+          cat >"$LICENSE" <<'JSON'
+          {"valid":true,"type":"owner-lifetime","expiresAt":null,"maskedKey":"CI-FILTERS-OPAQUE","activatedAt":"2026-10-02T00:00:00Z"}
+          JSON
+          for ROOT in "$HOME/Library/Application Support/studio.channelflow.desktop" "$HOME/Library/Application Support/VYRON" "$HOME/Library/Application Support/channelflow"; do
+            mkdir -p "$ROOT"
+            cp "$LICENSE" "$ROOT/license.json"
+          done
+
+      - name: Run FILTERS_OPAQUE exact workload
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          REPORT="$RUNNER_TEMP/report-filters_opaque.json"
+          LOG="$RUNNER_TEMP/runtime-filters_opaque.log"
+          PERF_ROOT="$RUNNER_TEMP/profile-filters_opaque"
+          rm -f "$REPORT" "$LOG"
+          rm -rf "$PERF_ROOT"
+          mkdir -p "$PERF_ROOT"
+          ARCH="$(uname -m)"
+          MACOS="$(sw_vers -productVersion)"
+          VYRON_M1_PERF_PROBE=1           VYRON_M1_PERF_ROOT="$PERF_ROOT"           VYRON_M1_PERF_REPORT="$REPORT"           VYRON_M1_PARITY_DIAG=1           VYRON_M1_PARITY_EXIT_AFTER_REPORT=1           VYRON_M1_PARITY_RUNNER_ARCH="$ARCH"           VYRON_M1_PARITY_MACOS="$MACOS"           VYRON_M1_PARITY_BASE_HEAD="$RELEASE_BASE"           VYRON_M1_CSS_VARIANT=filters_opaque             "$APP_PATH/Contents/MacOS/channelflow" >"$LOG" 2>&1
+          test -s "$REPORT"
+          python3 - "$REPORT" <<'PY'
+          import json,sys
+          p=json.load(open(sys.argv[1]))
+          d=p.get("dataset") or {}
+          a=((p.get("nonGateDiagnostics") or {}).get("m1Parity") or {})
+          assert d.get("channels")==35 and d.get("jobs")==1000,p
+          assert d.get("metadataRecords")==5000 and d.get("assignedJobs")==1000,p
+          assert d.get("navigationSwitchesPerRound")==30 and d.get("rounds")==3,p
+          assert a.get("fpsMonitorSetting") is True,a
+          assert a.get("variantRequested")=="filters_opaque" and a.get("variantApplied")=="filters_opaque",a
+          assert a.get("variantAppliedBeforeFirstYoutube") is True,a
+          print("FILTERS_OPAQUE_FIXTURE=PASS")
+          PY
+
+      - name: Preserve combination evidence
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/evidence"
+          cp "$RUNNER_TEMP/report-filters_opaque.json" "$RUNNER_TEMP/evidence/report-filters_opaque.json" 2>/dev/null || true
+          cp "$RUNNER_TEMP/runtime-filters_opaque.log" "$RUNNER_TEMP/evidence/runtime-filters_opaque.log" 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: VYRON-6.1.0-FILTERS-OPAQUE-combo
+          path: ${{ runner.temp }}/evidence/**
+          if-no-files-found: warn
+          retention-days: 30
+
+  decision:
+    needs: [base, filters-opaque]
+    runs-on: ubuntu-latest
+    outputs:
+      full_gate: ${{ steps.compare.outputs.full_gate }}
+      raf1_delta: ${{ steps.compare.outputs.raf1_delta }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: VYRON-6.1.0-FILTERS-OPAQUE-base
+          path: reports/base
+      - uses: actions/download-artifact@v4
+        with:
+          name: VYRON-6.1.0-FILTERS-OPAQUE-combo
+          path: reports/combo
+
+      - id: compare
+        name: Evaluate full M1 gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          b=json.load(open("reports/base/report-base.json"))
+          c=json.load(open("reports/combo/report-filters_opaque.json"))
+          ba=b.get("aggregate") or {}; ca=c.get("aggregate") or {}
+          by=((b.get("routeFrameTimings") or {}).get("youtube:raf1") or {})
+          cy=((c.get("routeFrameTimings") or {}).get("youtube:raf1") or {})
+          delta=float(by.get("p95",0))-float(cy.get("p95",0))
+          gate=(
+            float(ca.get("fps",0))>=57 and
+            float(ca.get("p50",999))<=17.5 and
+            float(ca.get("p95",999))<=20.5 and
+            float(ca.get("p99",999))<=33.5 and
+            float(ca.get("dropped",999))<2 and
+            int(ca.get("long50",999))==0 and
+            delta>=3
+          )
+          print("full_gate="+("PASS" if gate else "FAIL"))
+          print("raf1_delta="+str(delta))
+          summary={"base":b,"filters_opaque":c,"fullM1Gate":"PASS" if gate else "FAIL","youtubeRaf1P95Delta":delta,"productionPatch":"YES" if gate else "NO"}
+          json.dump(summary,open("filters-opaque-decision.json","w"),indent=2)
+          PY
+          cat filters-opaque-decision.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-6.1.0-FILTERS-OPAQUE-DECISION
+          path: filters-opaque-decision.json
+          if-no-files-found: error
+          retention-days: 30
+
+  production-candidate:
+    needs: decision
+    if: needs.decision.outputs.full_gate == 'PASS'
+    runs-on: macos-14
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_BASE }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Create one CSS-only production candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE_BASE"
+          test "$(git rev-parse "HEAD:src/M1PerformanceProbe.tsx")" = "$PROBE_BLOB"
+          git switch -c "$CANDIDATE_BRANCH"
+          cat >> src/styles.css <<'CSS'
+
+          /* VYRON 6.1.0 — proven WKWebView FILTERS + OPAQUE paint fix */
+          .youtubeCenterHead,.youtubeCenterHead *,
+          .youtubeChannelBar,.youtubeChannelBar *,
+          .youtubeMasterTabs,.youtubeMasterTabs *,
+          .youtubeChannelContext,.youtubeChannelContext *{
+            filter:none!important;
+            backdrop-filter:none!important;
+            -webkit-backdrop-filter:none!important;
+          }
+          .youtubeChannelContext{
+            --os-panel:rgb(9,22,35);
+            --os-panel2:rgb(11,27,43);
+          }
+          .youtubeChannelBar{background-color:rgb(6,22,34)!important}
+          .youtubeMasterTabs{background-color:rgb(4,13,23)!important}
+          .youtubeMasterTabs button.active{background-color:rgb(14,37,45)!important}
+          .youtubeChannelSearch,
+          .youtubeRecentChannels button{background-color:rgb(10,19,29)!important}
+          .youtubeChannelStats>span{background-color:rgb(8,29,42)!important}
+          CSS
+          git add src/styles.css
+          test "$(git diff --cached --name-only)" = "src/styles.css"
+          git diff --cached -- src/styles.css
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "perf(vyron): apply proven filters opaque WKWebView fix"
+          CANDIDATE_HEAD="$(git rev-parse HEAD)"
+          test "$(git rev-parse "HEAD:src/M1PerformanceProbe.tsx")" = "$PROBE_BLOB"
+          git push origin "$CANDIDATE_BRANCH"
+          echo "CANDIDATE_HEAD=$CANDIDATE_HEAD" >> "$GITHUB_ENV"
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Candidate TypeScript and targeted tests
+        run: |
+          set -Eeuo pipefail
+          npm run build
+          npx vitest run src/v610M1RoutePerformance.test.ts src/v610PublisherColdRoute.test.ts
+
+      - name: Build candidate ARM64 app
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          export APPLE_SIGNING_IDENTITY='-'
+          npx tauri build --target aarch64-apple-darwin --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          APP="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)"
+          test -d "$APP"
+          file "$APP/Contents/MacOS/channelflow" | grep -q arm64
+          codesign --verify --deep --strict "$APP"
+          echo "APP_PATH=$APP" >> "$GITHUB_ENV"
+
+      - name: Seed isolated owner license
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          LICENSE="$RUNNER_TEMP/license.json"
+          cat >"$LICENSE" <<'JSON'
+          {"valid":true,"type":"owner-lifetime","expiresAt":null,"maskedKey":"CI-CANDIDATE","activatedAt":"2026-10-02T00:00:00Z"}
+          JSON
+          for ROOT in "$HOME/Library/Application Support/studio.channelflow.desktop" "$HOME/Library/Application Support/VYRON" "$HOME/Library/Application Support/channelflow"; do
+            mkdir -p "$ROOT"
+            cp "$LICENSE" "$ROOT/license.json"
+          done
+
+      - name: Physical M1 candidate gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          REPORT_DIR="$RUNNER_TEMP/candidate-report"
+          REPORT="$REPORT_DIR/report-candidate.json"
+          LOG="$RUNNER_TEMP/runtime-candidate.log"
+          PERF_ROOT="$RUNNER_TEMP/profile-candidate"
+          rm -rf "$REPORT_DIR" "$PERF_ROOT"
+          rm -f "$LOG"
+          mkdir -p "$REPORT_DIR" "$PERF_ROOT"
+          VYRON_M1_PERF_PROBE=1           VYRON_M1_PERF_ROOT="$PERF_ROOT"           VYRON_M1_PERF_REPORT="$REPORT"             "$APP_PATH/Contents/MacOS/channelflow" >"$LOG" 2>&1 &
+          PID=$!
+          python3 - "$REPORT_DIR" "$REPORT" <<'PY'
+          import os,select,sys
+          directory,path=sys.argv[1],sys.argv[2]
+          fd=os.open(directory,os.O_RDONLY)
+          try:
+              kq=select.kqueue()
+              ev=select.kevent(fd,filter=select.KQ_FILTER_VNODE,flags=select.KQ_EV_ADD|select.KQ_EV_CLEAR,fflags=select.KQ_NOTE_WRITE|select.KQ_NOTE_EXTEND|select.KQ_NOTE_RENAME)
+              kq.control([ev],0)
+              while not os.path.isfile(path):
+                  kq.control(None,1)
+          finally:
+              os.close(fd)
+          PY
+          kill "$PID" >/dev/null 2>&1 || true
+          wait "$PID" >/dev/null 2>&1 || true
+          test -s "$REPORT"
+          python3 - "$REPORT" <<'PY'
+          import json,sys
+          p=json.load(open(sys.argv[1]))
+          a=p.get("aggregate") or {}
+          d=p.get("dataset") or {}
+          assert d.get("channels")==35 and d.get("jobs")==1000,p
+          assert d.get("metadataRecords")==5000 and d.get("assignedJobs")==1000,p
+          gate=(
+            float(a.get("fps",0))>=57 and
+            float(a.get("p50",999))<=17.5 and
+            float(a.get("p95",999))<=20.5 and
+            float(a.get("p99",999))<=33.5 and
+            float(a.get("dropped",999))<2 and
+            int(a.get("long50",999))==0
+          )
+          print("CANDIDATE_M1_GATE="+("PASS" if gate else "FAIL"))
+          if not gate: raise SystemExit(2)
+          PY
+
+      - name: Preserve candidate evidence
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/candidate-evidence"
+          cp "$RUNNER_TEMP/candidate-report/report-candidate.json" "$RUNNER_TEMP/candidate-evidence/report-candidate.json" 2>/dev/null || true
+          cp "$RUNNER_TEMP/runtime-candidate.log" "$RUNNER_TEMP/candidate-evidence/runtime-candidate.log" 2>/dev/null || true
+          printf '%s\n' "$CANDIDATE_HEAD" > "$RUNNER_TEMP/candidate-evidence/candidate-head.txt"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: VYRON-6.1.0-FILTERS-OPAQUE-CANDIDATE
+          path: ${{ runner.temp }}/candidate-evidence/**
+          if-no-files-found: warn
+          retention-days: 30
