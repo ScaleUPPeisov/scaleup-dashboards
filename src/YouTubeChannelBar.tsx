@@ -8,7 +8,6 @@ import {channelCountrySource,channelLanguageSource,channelStatsStatusLabel,compa
 import {refreshYoutubeProfileStatistics} from './youtubeChannelStatsRuntime';
 import {classifyYoutubeChannels} from './youtubeStatisticsCenter';
 import {ChannelAvatar} from './ChannelAvatar';
-import {useStableRouteContent} from './useStableRouteContent';
 import type {VideoJob} from './types';
 
 export function filterYoutubeChannels(channels:Channel[],query:string){const q=query.trim().toLocaleLowerCase('ru-RU');const ordered=sortChannelsAlphabetically(channels);if(!q)return ordered;return ordered.filter(c=>[c.name,c.slug,c.youtubeChannelId,c.stats?.handle].filter(Boolean).some(v=>String(v).toLocaleLowerCase('ru-RU').includes(q)))}
@@ -18,7 +17,7 @@ const fmtDateTime=(iso?:string)=>iso?new Date(iso).toLocaleString('ru-RU'):'—'
 const EMPTY_JOBS:VideoJob[]=[];
 
 export function YouTubeChannelBar({active:routeActive=true}:{active?:boolean}={}){
- const channels=useApp(s=>s.channels)||[],stableRoute=useStableRouteContent(),jobs=useApp(s=>stableRoute?(s.jobs||[]):EMPTY_JOBS),channelKey=channels.map(c=>c.id).join('|');
+ const channels=useApp(s=>s.channels)||[],jobs=useApp(s=>routeActive?(s.jobs||[]):EMPTY_JOBS),channelKey=channels.map(c=>c.id).join('|');
  const [activeId,setActiveId]=useState(()=>resolveYoutubeActiveChannel(channels,loadActivePublishChannel())),[query,setQuery]=useState(''),[feedback,setFeedback]=useState(''),[refreshing,setRefreshing]=useState(false),[profiles,setProfiles]=useState<YoutubeProfile[]>([]);
  useEffect(()=>{if(!routeActive)return;return subscribeActivePublishChannel(id=>{setActiveId(resolveYoutubeActiveChannel(channels,id));const c=channels.find(x=>x.id===id);if(c)setFeedback('Активный канал: '+c.name)})},[routeActive,channelKey]);
  useEffect(()=>{if(!routeActive)return;let live=true;const refresh=()=>void api.youtubeProfiles().then(p=>{if(live)setProfiles(p)}).catch(()=>{});const timer=window.setTimeout(refresh,100);window.addEventListener('vyron:oauth-state-changed',refresh);return()=>{live=false;window.clearTimeout(timer);window.removeEventListener('vyron:oauth-state-changed',refresh)}},[routeActive]);

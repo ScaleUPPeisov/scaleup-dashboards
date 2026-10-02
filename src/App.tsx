@@ -207,7 +207,7 @@ function PageRouter({license}:{license:LicenseStatus}){
   const page=useApp(s=>s.page),setPage=useApp(s=>s.setPage),youtubeMounted=useRef(false);
   const youtubeRouteTab=page==='metadata'?'metadata':page==='existing'?'uploaded':page==='publisher'?'publish':undefined;
   const canonical=page==='autopilot'?'dashboard':page==='metadata'||page==='existing'||page==='publisher'?'youtube':page;
-  const heavyRoute=canonical==='dashboard'||canonical==='channels'||canonical==='youtube';
+  const heavyRoute=canonical==='dashboard'||canonical==='channels';
   const [settledRoute,setSettledRoute]=useState<string>('');
   useEffect(()=>{
     if(!heavyRoute){setSettledRoute(String(canonical));return}
@@ -217,7 +217,7 @@ function PageRouter({license}:{license:LicenseStatus}){
   },[canonical,heavyRoute]);
   const heavyReady=!heavyRoute||settledRoute===canonical;
   const youtubeSelected=canonical==='youtube';
-  const youtubeActive=youtubeSelected&&heavyReady;
+  const youtubeActive=youtubeSelected;
   if(youtubeActive)youtubeMounted.current=true;
   useEffect(()=>{if(youtubeActive)window.dispatchEvent(new Event('vyron:youtube-route-active'))},[youtubeActive]);
 
@@ -232,7 +232,6 @@ function PageRouter({license}:{license:LicenseStatus}){
 
   return <div className="pageWrap">
     {youtubeMounted.current&&<div className="routeKeepAlive" hidden={!youtubeActive} aria-hidden={!youtubeActive}><UiErrorBoundary scope="youtube" onHome={()=>setPage('dashboard')}><CachedYouTubeRoute routeTab={youtubeRouteTab} active={youtubeActive}/></UiErrorBoundary></div>}
-    {youtubeSelected&&!heavyReady&&<RouteWarmup route="youtube"/>}
     {!youtubeSelected&&<UiErrorBoundary scope={String(page)} onHome={()=>setPage('dashboard')}>{transient}</UiErrorBoundary>}
   </div>
 }
