@@ -143,44 +143,39 @@ export function App(){
   if(!license.valid)return <Activation onActivated={setLicense}/>;
   return <div className="appShell"><LiveInventoryBridge/><ChannelRunwayScheduler/><ProductionStatusBridge/><ChannelStatisticsScheduler/><OwnerInventoryScheduler/><UploadProcessingMonitor/><RecoveryGate/><Sidebar/><main className="main"><Topbar/><PageRouter license={license}/></main><GlobalTaskIndicator/><GlobalUploadIndicator/><UploadCenterGlobal/><GlobalTaskCenter/><CommandPalette/><MetadataQueueAssignmentBridge/><M1PerformanceProbe/>{settings.fpsMonitor&&<FpsMonitor/>}<UpdateExperience/><MajorUpdateCelebration/><NotificationCenter/><div className="bgGlow a"/><div className="bgGlow b"/></div>
 }
+const CachedDashboardRoute=React.memo(({mode}:{mode:'dashboard'|'autopilot'})=><><DashboardUploadSummary/><DashboardOS pageOverride={mode}/></>);
+const CachedChannelsRoute=React.memo(()=> <ChannelsOS/>);
+const CachedProductionRoute=React.memo(()=> <ProductionOS/>);
 const CachedYouTubeRoute=React.memo(({routeTab,active}:{routeTab?:'publish'|'metadata'|'uploaded';active:boolean})=><YouTubeCenter routeTab={routeTab} active={active}/>);
-const HEAVY_ROUTE_SETTLE_MS=90;
-function RouteWarmup({route}:{route:string}){
-  const title=route==='dashboard'?'Главная':route==='channels'?'Каналы':route==='youtube'?'YouTube':'VYRON';
-  return <section className="routeWarmup" aria-live="polite"><small>VYRON • FAST ROUTE</small><h1>{title}</h1><div className="routeWarmupLine"><i/><i/><i/></div></section>
-}
+const CachedAnalyticsRoute=React.memo(()=> <AnalyticsPage/>);
+const CachedSettingsRoute=React.memo(({license}:{license:LicenseStatus})=><SettingsOS license={license}/>);
+
+type LayerRoute='dashboard'|'channels'|'production'|'youtube'|'analytics'|'settings';
+const layerRoutes:LayerRoute[]=['dashboard','channels','production','youtube','analytics','settings'];
 
 function PageRouter({license}:{license:LicenseStatus}){
-  const page=useApp(s=>s.page),setPage=useApp(s=>s.setPage),youtubeMounted=useRef(false);
-  const youtubeRouteTab=page==='metadata'?'metadata':page==='existing'?'uploaded':page==='publisher'?'publish':undefined;
-  const canonical=page==='autopilot'?'dashboard':page==='metadata'||page==='existing'||page==='publisher'?'youtube':page;
-  const heavyRoute=canonical==='dashboard'||canonical==='channels'||canonical==='youtube';
-  const [settledRoute,setSettledRoute]=useState<string>('');
-  useEffect(()=>{
-    if(!heavyRoute){setSettledRoute(String(canonical));return}
-    setSettledRoute('');
-    const id=window.setTimeout(()=>setSettledRoute(String(canonical)),HEAVY_ROUTE_SETTLE_MS);
-    return()=>window.clearTimeout(id)
-  },[canonical,heavyRoute]);
-  const heavyReady=!heavyRoute||settledRoute===canonical;
-  const youtubeSelected=canonical==='youtube';
-  const youtubeActive=youtubeSelected&&heavyReady;
-  if(youtubeActive)youtubeMounted.current=true;
+  const page=useApp(s=>s.page),setPage=useApp(s=>s.setPage),mounted=useRef(new Set<LayerRoute>());
+  const dashboardMode=useRef<'dashboard'|'autopilot'>('dashboard');
+  const youtubeTab=useRef<'publish'|'metadata'|'uploaded'|undefined>(undefined);
+  const canonical:Page=page==='autopilot'?'dashboard':page==='metadata'||page==='existing'||page==='publisher'?'youtube':page==='content'?'production':page==='accounts'?'settings':page;
+  const layer=(layerRoutes as string[]).includes(canonical)?canonical as LayerRoute:null;
+  if(layer)mounted.current.add(layer);
+  if(canonical==='dashboard')dashboardMode.current=page==='autopilot'?'autopilot':'dashboard';
+  if(canonical==='youtube')youtubeTab.current=page==='metadata'?'metadata':page==='existing'?'uploaded':page==='publisher'?'publish':undefined;
+  const youtubeActive=canonical==='youtube';
   useEffect(()=>{if(youtubeActive)window.dispatchEvent(new Event('vyron:youtube-route-active'))},[youtubeActive]);
 
-  const transient=canonical==='dashboard'?(heavyReady?<><DashboardUploadSummary/><DashboardOS/></>:<RouteWarmup route="dashboard"/>)
-    :canonical==='channels'?(heavyReady?<ChannelsOS/>:<RouteWarmup route="channels"/>)
-    :canonical==='production'||canonical==='content'?<ProductionOS/>
-    :canonical==='inventory'?<LiveContentInventory/>
-    :canonical==='competitors'?<CompetitorsPage/>
-    :canonical==='analytics'?<AnalyticsPage/>
-    :canonical==='accounts'||canonical==='settings'?<SettingsOS license={license}/>
-    :null;
+  const layerClass=(name:LayerRoute)=>'routeLayer '+(canonical===name?'active':'inactive');
+  const fallback=canonical==='inventory'?<LiveContentInventory/>:canonical==='competitors'?<CompetitorsPage/>:null;
 
-  return <div className="pageWrap">
-    {youtubeMounted.current&&<div className="routeKeepAlive" hidden={!youtubeActive} aria-hidden={!youtubeActive}><UiErrorBoundary scope="youtube" onHome={()=>setPage('dashboard')}><CachedYouTubeRoute routeTab={youtubeRouteTab} active={youtubeActive}/></UiErrorBoundary></div>}
-    {youtubeSelected&&!heavyReady&&<RouteWarmup route="youtube"/>}
-    {!youtubeSelected&&<UiErrorBoundary scope={String(page)} onHome={()=>setPage('dashboard')}>{transient}</UiErrorBoundary>}
+  return <div className="pageWrap routeStack">
+    {mounted.current.has('dashboard')&&<section className={layerClass('dashboard')} aria-hidden={canonical!=='dashboard'}><UiErrorBoundary scope="dashboard" onHome={()=>setPage('dashboard')}><CachedDashboardRoute mode={dashboardMode.current}/></UiErrorBoundary></section>}
+    {mounted.current.has('channels')&&<section className={layerClass('channels')} aria-hidden={canonical!=='channels'}><UiErrorBoundary scope="channels" onHome={()=>setPage('dashboard')}><CachedChannelsRoute/></UiErrorBoundary></section>}
+    {mounted.current.has('production')&&<section className={layerClass('production')} aria-hidden={canonical!=='production'}><UiErrorBoundary scope="production" onHome={()=>setPage('dashboard')}><CachedProductionRoute/></UiErrorBoundary></section>}
+    {mounted.current.has('youtube')&&<section className={layerClass('youtube')} aria-hidden={!youtubeActive}><UiErrorBoundary scope="youtube" onHome={()=>setPage('dashboard')}><CachedYouTubeRoute routeTab={youtubeTab.current} active={youtubeActive}/></UiErrorBoundary></section>}
+    {mounted.current.has('analytics')&&<section className={layerClass('analytics')} aria-hidden={canonical!=='analytics'}><UiErrorBoundary scope="analytics" onHome={()=>setPage('dashboard')}><CachedAnalyticsRoute/></UiErrorBoundary></section>}
+    {mounted.current.has('settings')&&<section className={layerClass('settings')} aria-hidden={canonical!=='settings'}><UiErrorBoundary scope="settings" onHome={()=>setPage('dashboard')}><CachedSettingsRoute license={license}/></UiErrorBoundary></section>}
+    {!layer&&fallback&&<section className="routeLayer active"><UiErrorBoundary scope={String(page)} onHome={()=>setPage('dashboard')}>{fallback}</UiErrorBoundary></section>}
   </div>
 }
 
