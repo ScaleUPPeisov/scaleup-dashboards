@@ -113,7 +113,7 @@ export const api={
   performanceProbeEnabled:()=>invoke<boolean>('performance_probe_enabled'),
   performanceProbeAssertIsolated:()=>invoke<string>('performance_probe_assert_isolated'),
   performanceProbeCleanup:()=>invoke<{root:string;removed:boolean}>('performance_probe_cleanup'),
-  performanceProbeCssVariant:()=>invoke<'base'|'shadows'|'gradients'|'transitions'|'filters'|'opaque'|'pseudo'|'filters_opaque'|'bg_glow_off'|'appshell_gradient_off'|'body_gradient_off'|'pagewrap_animation_off'|'global_decor_off'|'bg_glow_appshell_off'|'bg_glow_body_off'|'appshell_body_off'>('performance_probe_css_variant'),
+  performanceProbeCssVariant:()=>invoke<'base'|'shadows'|'gradients'|'transitions'|'filters'|'opaque'|'pseudo'|'filters_opaque'|'bg_glow_off'|'appshell_gradient_off'|'body_gradient_off'|'pagewrap_animation_off'|'global_decor_off'|'bg_glow_appshell_off'|'bg_glow_body_off'|'appshell_body_off'|'filters_bg_glow_off'>('performance_probe_css_variant'),
   performanceProbeReport:(payload:unknown)=>{
     const base=payload&&typeof payload==='object'?{...(payload as Record<string,unknown>)}:payload;
     if(!base||typeof base!=='object')return invoke<string>('performance_probe_report',{payload:base});

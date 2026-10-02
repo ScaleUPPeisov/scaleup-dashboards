@@ -2,7 +2,7 @@ import {useEffect} from 'react';
 import {api} from './api';
 import {useApp} from './store';
 
-type CssVariant='base'|'shadows'|'gradients'|'transitions'|'filters'|'opaque'|'pseudo'|'filters_opaque'|'bg_glow_off'|'appshell_gradient_off'|'body_gradient_off'|'pagewrap_animation_off'|'global_decor_off'|'bg_glow_appshell_off'|'bg_glow_body_off'|'appshell_body_off';
+type CssVariant='base'|'shadows'|'gradients'|'transitions'|'filters'|'opaque'|'pseudo'|'filters_opaque'|'bg_glow_off'|'appshell_gradient_off'|'body_gradient_off'|'pagewrap_animation_off'|'global_decor_off'|'bg_glow_appshell_off'|'bg_glow_body_off'|'appshell_body_off'|'filters_bg_glow_off';
 type PassiveAudit={
   enabled:boolean;
   youtubeEntries:number;
@@ -44,6 +44,7 @@ function cssForVariant(variant:CssVariant){
   if(variant==='gradients')return TARGET+'{background-image:none!important}';
   if(variant==='transitions')return TARGET+'{transition:none!important;animation:none!important}';
   if(variant==='filters')return TARGET+'{filter:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}';
+  if(variant==='filters_bg_glow_off')return TARGET+'{filter:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}\n'+bgGlowOff;
   const opaqueCss=[
     '.youtubeChannelContext{--os-panel:rgb(9,22,35);--os-panel2:rgb(11,27,43)}',
     '.youtubeChannelBar{background-color:rgb(6,22,34)!important}',
