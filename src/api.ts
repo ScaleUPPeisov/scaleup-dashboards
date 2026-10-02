@@ -116,7 +116,7 @@ export const api={
   performanceProbeReport:(payload:unknown)=>{
     const base=payload&&typeof payload==='object'?{...(payload as Record<string,unknown>)}:payload;
     if(!base||typeof base!=='object')return invoke<string>('performance_probe_report',{payload:base});
-    const parityEnabled=import.meta.env.VITE_M1_PARITY_DIAG==='1';
+    const parityEnabled=(import.meta as any).env?.VITE_M1_PARITY_DIAG==='1';
     const passive=(window as any).__VYRON_M1_PARITY_PASSIVE__ as Record<string,unknown>|undefined;
     const parity=parityEnabled?{
       ...(passive||{}),
