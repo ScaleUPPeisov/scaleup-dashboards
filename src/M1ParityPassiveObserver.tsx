@@ -2,7 +2,7 @@ import {useEffect} from 'react';
 import {api} from './api';
 import {useApp} from './store';
 
-type CssVariant='base'|'shadows'|'gradients'|'transitions'|'filters'|'opaque'|'pseudo'|'filters_opaque';
+type CssVariant='base'|'shadows'|'gradients'|'transitions'|'filters'|'opaque'|'pseudo'|'filters_opaque'|'bg_glow_off'|'appshell_gradient_off'|'body_gradient_off'|'pagewrap_animation_off'|'global_decor_off'|'bg_glow_appshell_off'|'bg_glow_body_off'|'appshell_body_off';
 type PassiveAudit={
   enabled:boolean;
   youtubeEntries:number;
@@ -29,6 +29,17 @@ const TARGET=ROOTS.flatMap(root=>[root,root+' *']).join(',');
 
 function cssForVariant(variant:CssVariant){
   if(variant==='base')return '';
+  const bgGlowOff='.bgGlow.a,.bgGlow.b{display:none!important}';
+  const appShellGradientOff='.appShell{background-image:none!important}';
+  const bodyGradientOff='body{background-image:none!important}';
+  if(variant==='bg_glow_off')return bgGlowOff;
+  if(variant==='appshell_gradient_off')return appShellGradientOff;
+  if(variant==='body_gradient_off')return bodyGradientOff;
+  if(variant==='pagewrap_animation_off')return '.pageWrap{animation:none!important;transition:none!important}';
+  if(variant==='global_decor_off')return [bgGlowOff,appShellGradientOff,bodyGradientOff].join('\n');
+  if(variant==='bg_glow_appshell_off')return [bgGlowOff,appShellGradientOff].join('\n');
+  if(variant==='bg_glow_body_off')return [bgGlowOff,bodyGradientOff].join('\n');
+  if(variant==='appshell_body_off')return [appShellGradientOff,bodyGradientOff].join('\n');
   if(variant==='shadows')return TARGET+'{box-shadow:none!important;text-shadow:none!important}';
   if(variant==='gradients')return TARGET+'{background-image:none!important}';
   if(variant==='transitions')return TARGET+'{transition:none!important;animation:none!important}';

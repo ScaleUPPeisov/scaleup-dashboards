@@ -1,0 +1,341 @@
+name: VYRON 6.1.0 Global WKWebView Compositing Isolation
+
+on:
+  push:
+    branches:
+      - diagnostic/vyron-6.1.0-global-wkwebview-compositing
+
+permissions:
+  contents: read
+
+env:
+  VERSION: '6.1.0'
+  RELEASE_BASE: '4de188b2cf50d3f58cd7074a6e57ccb67c15e1b2'
+  LAST_DIAG_HEAD: 'f586522edc1809cc7b6cd79492960d4f513c7202'
+  PROBE_BLOB: 'f580a12c6bbc85de9b9c429f487a5e94c0449ecc'
+  BUNDLE_ID: studio.channelflow.desktop
+
+jobs:
+  build-once:
+    runs-on: macos-14
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: diagnostic/vyron-6.1.0-global-wkwebview-compositing
+          fetch-depth: 0
+
+      - name: Verify global diagnostic contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git merge-base --is-ancestor "$LAST_DIAG_HEAD" HEAD
+          test "$(git rev-parse "$RELEASE_BASE:src/M1PerformanceProbe.tsx")" = "$PROBE_BLOB"
+          test "$(git rev-parse "HEAD:src/M1PerformanceProbe.tsx")" = "$PROBE_BLOB"
+          git diff --exit-code "$RELEASE_BASE"...HEAD -- src/M1PerformanceProbe.tsx
+          git diff --exit-code "$LAST_DIAG_HEAD"...HEAD --             src/App.tsx src/M1PerformanceProbe.tsx src/YouTubeCenter.tsx src/PublisherOS.tsx             src/YouTubeChannelBar.tsx src/ChannelRunway.tsx src/MaterialsManager.tsx             src/ProductionManager.tsx src/youtubePublishSafety.ts src/styles.css             src-tauri/src/oauth_vault.rs src-tauri/src/security.rs src-tauri/src/youtube.rs src-tauri/src/lib.rs
+          CHANGED="$(git diff --name-only "$LAST_DIAG_HEAD"...HEAD | sort)"
+          ALLOWED="$(printf '%s\n'             '.github/workflows/vyron-610-global-wkwebview-compositing.yml'             'src-tauri/src/performance_probe.rs'             'src/M1ParityPassiveObserver.tsx'             'src/api.ts' | sort)"
+          test "$CHANGED" = "$ALLOWED"
+          echo "M1_PERFORMANCE_PROBE_BLOB_UNCHANGED=YES"
+          echo "PRODUCTION_PATCH=NONE"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+      - run: npx vitest run src/v610M1RoutePerformance.test.ts src/v610PublisherColdRoute.test.ts
+
+      - name: Build diagnostic ARM64 app once
+        shell: bash
+        env:
+          VITE_M1_PARITY_DIAG: '1'
+        run: |
+          set -Eeuo pipefail
+          export APPLE_SIGNING_IDENTITY='-'
+          npx tauri build --target aarch64-apple-darwin --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          APP="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)"
+          test -d "$APP"
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = "$BUNDLE_ID"
+          file "$APP/Contents/MacOS/channelflow" | grep -q arm64
+          codesign --verify --deep --strict "$APP"
+          tar -czf "$RUNNER_TEMP/vyron-global-compositing-app.tar.gz" -C "$(dirname "$APP")" "$(basename "$APP")"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-6.1.0-GLOBAL-COMPOSITING-APP
+          path: ${{ runner.temp }}/vyron-global-compositing-app.tar.gz
+          retention-days: 7
+
+  base-gate:
+    needs: build-once
+    runs-on: macos-14
+    timeout-minutes: 120
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: VYRON-6.1.0-GLOBAL-COMPOSITING-APP
+          path: ${{ runner.temp }}/pkg
+
+      - name: Prepare BASE app
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$RUNNER_TEMP/app"
+          tar -xzf "$RUNNER_TEMP/pkg/vyron-global-compositing-app.tar.gz" -C "$RUNNER_TEMP/app"
+          APP="$RUNNER_TEMP/app/VYRON.app"
+          test -d "$APP"
+          echo "APP_PATH=$APP" >> "$GITHUB_ENV"
+          LICENSE="$RUNNER_TEMP/license.json"
+          printf '%s\n' '{"valid":true,"type":"owner-lifetime","expiresAt":null,"maskedKey":"CI-GLOBAL-COMP","activatedAt":"2026-10-02T00:00:00Z"}' > "$LICENSE"
+          for ROOT in "$HOME/Library/Application Support/studio.channelflow.desktop" "$HOME/Library/Application Support/VYRON" "$HOME/Library/Application Support/channelflow"; do mkdir -p "$ROOT"; cp "$LICENSE" "$ROOT/license.json"; done
+
+      - name: Run authoritative BASE
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          REPORT="$RUNNER_TEMP/report-base.json"
+          PERF_ROOT="$RUNNER_TEMP/profile-base"
+          mkdir -p "$PERF_ROOT"
+          VYRON_M1_PERF_PROBE=1           VYRON_M1_PERF_ROOT="$PERF_ROOT"           VYRON_M1_PERF_REPORT="$REPORT"           VYRON_M1_PARITY_DIAG=1           VYRON_M1_PARITY_EXIT_AFTER_REPORT=1           VYRON_M1_PARITY_RUNNER_ARCH="$(uname -m)"           VYRON_M1_PARITY_MACOS="$(sw_vers -productVersion)"           VYRON_M1_PARITY_BASE_HEAD="$RELEASE_BASE"           VYRON_M1_CSS_VARIANT=base             "$APP_PATH/Contents/MacOS/channelflow"
+          test -s "$REPORT"
+          python3 - "$REPORT" <<'PY'
+          import json,sys
+          p=json.load(open(sys.argv[1])); d=p.get("dataset") or {}; a=((p.get("nonGateDiagnostics") or {}).get("m1Parity") or {}); y=((p.get("routeFrameTimings") or {}).get("youtube:raf1") or {})
+          assert d.get("channels")==35 and d.get("jobs")==1000 and d.get("metadataRecords")==5000 and d.get("assignedJobs")==1000,p
+          assert d.get("navigationSwitchesPerRound")==30 and d.get("rounds")==3,p
+          assert a.get("fpsMonitorSetting") is True and a.get("variantApplied")=="base" and a.get("variantAppliedBeforeFirstYoutube") is True,a
+          assert float(y.get("p95",0))>=40.0,y
+          print("BASE_PARITY=PASS")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-6.1.0-GLOBAL-base
+          path: ${{ runner.temp }}/report-base.json
+          retention-days: 30
+
+  variants:
+    needs: [build-once, base-gate]
+    runs-on: macos-14
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [bg_glow_off, appshell_gradient_off, body_gradient_off, pagewrap_animation_off, global_decor_off]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: VYRON-6.1.0-GLOBAL-COMPOSITING-APP
+          path: ${{ runner.temp }}/pkg
+
+      - name: Prepare variant app
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$RUNNER_TEMP/app"
+          tar -xzf "$RUNNER_TEMP/pkg/vyron-global-compositing-app.tar.gz" -C "$RUNNER_TEMP/app"
+          APP="$RUNNER_TEMP/app/VYRON.app"
+          echo "APP_PATH=$APP" >> "$GITHUB_ENV"
+          LICENSE="$RUNNER_TEMP/license.json"
+          printf '%s\n' '{"valid":true,"type":"owner-lifetime","expiresAt":null,"maskedKey":"CI-GLOBAL-COMP","activatedAt":"2026-10-02T00:00:00Z"}' > "$LICENSE"
+          for ROOT in "$HOME/Library/Application Support/studio.channelflow.desktop" "$HOME/Library/Application Support/VYRON" "$HOME/Library/Application Support/channelflow"; do mkdir -p "$ROOT"; cp "$LICENSE" "$ROOT/license.json"; done
+
+      - name: Run global compositing variant
+        shell: bash
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          set -Eeuo pipefail
+          REPORT="$RUNNER_TEMP/report-$VARIANT.json"
+          PERF_ROOT="$RUNNER_TEMP/profile-$VARIANT"
+          mkdir -p "$PERF_ROOT"
+          VYRON_M1_PERF_PROBE=1           VYRON_M1_PERF_ROOT="$PERF_ROOT"           VYRON_M1_PERF_REPORT="$REPORT"           VYRON_M1_PARITY_DIAG=1           VYRON_M1_PARITY_EXIT_AFTER_REPORT=1           VYRON_M1_PARITY_RUNNER_ARCH="$(uname -m)"           VYRON_M1_PARITY_MACOS="$(sw_vers -productVersion)"           VYRON_M1_PARITY_BASE_HEAD="$RELEASE_BASE"           VYRON_M1_CSS_VARIANT="$VARIANT"             "$APP_PATH/Contents/MacOS/channelflow"
+          test -s "$REPORT"
+          python3 - "$REPORT" "$VARIANT" <<'PY'
+          import json,sys
+          p=json.load(open(sys.argv[1])); v=sys.argv[2]; d=p.get("dataset") or {}; a=((p.get("nonGateDiagnostics") or {}).get("m1Parity") or {})
+          assert d.get("channels")==35 and d.get("jobs")==1000 and d.get("metadataRecords")==5000 and d.get("assignedJobs")==1000,p
+          assert a.get("fpsMonitorSetting") is True and a.get("variantRequested")==v and a.get("variantApplied")==v,a
+          assert a.get("variantAppliedBeforeFirstYoutube") is True,a
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-6.1.0-GLOBAL-${{ matrix.variant }}
+          path: ${{ runner.temp }}/report-${{ matrix.variant }}.json
+          retention-days: 30
+
+  first-decision:
+    needs: [base-gate, variants]
+    runs-on: ubuntu-latest
+    outputs:
+      second_stage: ${{ steps.decide.outputs.second_stage }}
+      primary_cause: ${{ steps.decide.outputs.primary_cause }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: VYRON-6.1.0-GLOBAL-*
+          path: reports
+          merge-multiple: true
+
+      - id: decide
+        shell: bash
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json,os
+          names=["base","bg_glow_off","appshell_gradient_off","body_gradient_off","pagewrap_animation_off","global_decor_off"]
+          ps={n:json.load(open(f"reports/report-{n}.json")) for n in names}
+          def yt(p,k): return ((p.get("routeFrameTimings") or {}).get("youtube:"+k) or {})
+          b=ps["base"]; ba=b.get("aggregate") or {}; bp=float(yt(b,"raf1").get("p95",0))
+          evidence=[]
+          rows={}
+          for n,p in ps.items():
+              a=p.get("aggregate") or {}; y1=yt(p,"raf1"); y2=yt(p,"raf2"); y3=yt(p,"raf3")
+              delta=bp-float(y1.get("p95",0))
+              ok=(n!="base" and delta>=8 and float(a.get("p95",999))<=float(ba.get("p95",999)) and float(a.get("p99",999))<=float(ba.get("p99",999)) and float(a.get("dropped",999))<=float(ba.get("dropped",999)))
+              rows[n]={"aggregate":a,"raf1":y1,"raf2":y2,"raf3":y3,"delta":delta,"evidence":ok}
+              if ok:evidence.append(n)
+          individuals=[n for n in evidence if n!="global_decor_off"]
+          only_decor=(evidence==["global_decor_off"] or (not individuals and "global_decor_off" in evidence))
+          strong=only_decor and float(rows["global_decor_off"]["raf1"].get("p95",999))<=35
+          if individuals:
+              individuals.sort(key=lambda n:rows[n]["delta"],reverse=True)
+              primary=individuals[0]
+              second="NO"
+          elif strong:
+              primary="GLOBAL_DECOR_INTERACTION"
+              second="YES"
+          else:
+              primary="NO_MATERIAL_GLOBAL_CSS_CAUSE"
+              second="NO"
+          json.dump({"rows":rows,"evidence":evidence,"primaryCause":primary,"secondStage":second},open("first-decision.json","w"),indent=2)
+          print("second_stage="+second)
+          print("primary_cause="+primary)
+          PY
+          cat first-decision.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-6.1.0-GLOBAL-FIRST-DECISION
+          path: first-decision.json
+          retention-days: 30
+
+  second-stage:
+    needs: [build-once, first-decision]
+    if: needs.first-decision.outputs.second_stage == 'YES'
+    runs-on: macos-14
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [bg_glow_appshell_off, bg_glow_body_off, appshell_body_off]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: VYRON-6.1.0-GLOBAL-COMPOSITING-APP
+          path: ${{ runner.temp }}/pkg
+      - shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$RUNNER_TEMP/app"
+          tar -xzf "$RUNNER_TEMP/pkg/vyron-global-compositing-app.tar.gz" -C "$RUNNER_TEMP/app"
+          echo "APP_PATH=$RUNNER_TEMP/app/VYRON.app" >> "$GITHUB_ENV"
+          LICENSE="$RUNNER_TEMP/license.json"
+          printf '%s\n' '{"valid":true,"type":"owner-lifetime","expiresAt":null,"maskedKey":"CI-GLOBAL-COMP","activatedAt":"2026-10-02T00:00:00Z"}' > "$LICENSE"
+          for ROOT in "$HOME/Library/Application Support/studio.channelflow.desktop" "$HOME/Library/Application Support/VYRON" "$HOME/Library/Application Support/channelflow"; do mkdir -p "$ROOT"; cp "$LICENSE" "$ROOT/license.json"; done
+      - shell: bash
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          set -Eeuo pipefail
+          REPORT="$RUNNER_TEMP/report-$VARIANT.json"; PERF_ROOT="$RUNNER_TEMP/profile-$VARIANT"; mkdir -p "$PERF_ROOT"
+          VYRON_M1_PERF_PROBE=1 VYRON_M1_PERF_ROOT="$PERF_ROOT" VYRON_M1_PERF_REPORT="$REPORT"           VYRON_M1_PARITY_DIAG=1 VYRON_M1_PARITY_EXIT_AFTER_REPORT=1           VYRON_M1_PARITY_RUNNER_ARCH="$(uname -m)" VYRON_M1_PARITY_MACOS="$(sw_vers -productVersion)"           VYRON_M1_PARITY_BASE_HEAD="$RELEASE_BASE" VYRON_M1_CSS_VARIANT="$VARIANT"             "$APP_PATH/Contents/MacOS/channelflow"
+          test -s "$REPORT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-6.1.0-GLOBAL-STAGE2-${{ matrix.variant }}
+          path: ${{ runner.temp }}/report-${{ matrix.variant }}.json
+          retention-days: 30
+
+  final-summary:
+    needs: [base-gate, variants, first-decision, second-stage]
+    if: always() && needs.base-gate.result == 'success' && needs.variants.result == 'success' && (needs.second-stage.result == 'success' || needs.second-stage.result == 'skipped')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: VYRON-6.1.0-GLOBAL-*
+          path: reports
+          merge-multiple: true
+      - name: Build final table and decision
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json,os,glob
+          names=["base","bg_glow_off","appshell_gradient_off","body_gradient_off","pagewrap_animation_off","global_decor_off"]
+          ps={n:json.load(open(f"reports/report-{n}.json")) for n in names}
+          def frame(p,key): return ((p.get("routeFrameTimings") or {}).get(key) or {})
+          def route(p,page): return frame(p,page+":raf1").get("p95")
+          b=ps["base"]; ba=b.get("aggregate") or {}; baseyt=float(frame(b,"youtube:raf1").get("p95",0))
+          rows={}
+          evidence=[]
+          for n,p in ps.items():
+              a=p.get("aggregate") or {}; y1=frame(p,"youtube:raf1"); y2=frame(p,"youtube:raf2"); y3=frame(p,"youtube:raf3")
+              delta=baseyt-float(y1.get("p95",0))
+              ev=(n!="base" and delta>=8 and float(a.get("p95",999))<=float(ba.get("p95",999)) and float(a.get("p99",999))<=float(ba.get("p99",999)) and float(a.get("dropped",999))<=float(ba.get("dropped",999)))
+              rows[n]={
+                "global":{k:a.get(k) for k in ["fps","p50","p95","p99","worst","dropped","long50","long100"]},
+                "youtube":{"raf1":{"p50":y1.get("median"),"p95":y1.get("p95"),"worst":y1.get("worst")},"raf2P95":y2.get("p95"),"raf3P95":y3.get("p95")},
+                "routes":{"production":route(p,"production"),"settings":route(p,"settings"),"analytics":route(p,"analytics"),"channels":route(p,"channels"),"dashboard":route(p,"dashboard")},
+                "raf1Delta":delta,"evidence":ev
+              }
+              if ev:evidence.append(n)
+          individuals=[n for n in evidence if n!="global_decor_off"]
+          stage2={}
+          for path in glob.glob("reports/report-*_off.json"):
+              n=os.path.basename(path)[7:-5]
+              if n in names: continue
+              p=json.load(open(path)); a=p.get("aggregate") or {}; y=frame(p,"youtube:raf1")
+              stage2[n]={"global":a,"youtubeRaf1P95":y.get("p95"),"raf1Delta":baseyt-float(y.get("p95",0))}
+          if individuals:
+              individuals.sort(key=lambda n:rows[n]["raf1Delta"],reverse=True)
+              cause=individuals[0]
+              next_action="STOP: individual global layer isolated; no production patch in diagnostic run."
+          elif stage2:
+              ranked=sorted(stage2,key=lambda n:stage2[n]["raf1Delta"],reverse=True)
+              cause="GLOBAL_DECOR_PAIR:"+ranked[0]
+              next_action="Use pair evidence to narrow the remaining global decor interaction; do not return to React optimization."
+          else:
+              cause="NO_MATERIAL_GLOBAL_CSS_CAUSE"
+              next_action="STOP CSS/paint isolation. Investigate WKWebView route/layer lifecycle and pageWrap compositing behavior."
+          out={"rows":rows,"secondStage":stage2,"primaryCause":cause,"nextAction":next_action,"productionPatch":"NONE","releaseHead":"4de188b2cf50d3f58cd7074a6e57ccb67c15e1b2","m1PerformanceProbeBlob":"f580a12c6bbc85de9b9c429f487a5e94c0449ecc"}
+          json.dump(out,open("global-compositing-final.json","w"),indent=2)
+          headers=["variant","FPS","p50","p95","p99","worst","dropped","long50","long100","yt raf1 p50","yt raf1 p95","yt raf1 worst","yt raf2 p95","yt raf3 p95","prod","settings","analytics","channels","dashboard"]
+          lines=["| "+" | ".join(headers)+" |","|"+"|".join(["---"]*len(headers))+"|"]
+          for n in names:
+              r=rows[n];g=r["global"];y=r["youtube"];q=r["routes"]
+              vals=[n,g["fps"],g["p50"],g["p95"],g["p99"],g["worst"],g["dropped"],g["long50"],g["long100"],y["raf1"]["p50"],y["raf1"]["p95"],y["raf1"]["worst"],y["raf2P95"],y["raf3P95"],q["production"],q["settings"],q["analytics"],q["channels"],q["dashboard"]]
+              lines.append("| "+" | ".join(str(v) for v in vals)+" |")
+          lines += ["",f"PRIMARY CAUSE: {cause}",f"NEXT ACTION: {next_action}","PRODUCTION PATCH: NONE","M1PerformanceProbe unchanged: YES"]
+          open("global-compositing-final.md","w").write("\n".join(lines)+"\n")
+          print(open("global-compositing-final.md").read())
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-6.1.0-GLOBAL-COMPOSITING-FINAL
+          path: |
+            global-compositing-final.json
+            global-compositing-final.md
+          retention-days: 30

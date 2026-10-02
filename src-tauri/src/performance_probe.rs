@@ -51,7 +51,7 @@ pub fn performance_probe_css_variant()->Result<String,String>{
     }
     let variant=env::var("VYRON_M1_CSS_VARIANT").unwrap_or_else(|_|"base".into()).to_ascii_lowercase();
     match variant.as_str(){
-        "base"|"shadows"|"gradients"|"transitions"|"filters"|"opaque"|"pseudo"|"filters_opaque"=>Ok(variant),
+        "base"|"shadows"|"gradients"|"transitions"|"filters"|"opaque"|"pseudo"|"filters_opaque"|"bg_glow_off"|"appshell_gradient_off"|"body_gradient_off"|"pagewrap_animation_off"|"global_decor_off"|"bg_glow_appshell_off"|"bg_glow_body_off"|"appshell_body_off"=>Ok(variant),
         _=>Err(format!("INVALID_M1_CSS_VARIANT:{variant}"))
     }
 }
