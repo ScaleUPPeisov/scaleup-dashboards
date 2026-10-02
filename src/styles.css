@@ -291,14 +291,3 @@ button.secondary{background:rgba(255,255,255,.035);border-color:#294156;color:#9
   contain-intrinsic-size:auto 180px;
 }
 
-
-
-/* VYRON 6.1.0 — persistent route layers for macOS frame pacing */
-.routeStack{position:relative;flex:1;min-height:0;overflow:hidden;padding:0!important;animation:none!important;contain:layout paint style}
-.routeLayer{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;padding:30px 34px 60px;scrollbar-width:thin;scrollbar-color:#1f435a transparent;visibility:hidden;pointer-events:none;opacity:0;z-index:0;contain:layout paint style;transform:translateZ(0);backface-visibility:hidden}
-.routeLayer::-webkit-scrollbar{width:8px}.routeLayer::-webkit-scrollbar-thumb{background:#1e3d50;border-radius:10px}
-.routeLayer.active{visibility:visible;pointer-events:auto;opacity:1;z-index:1}
-.routeLayer.inactive{visibility:hidden;pointer-events:none;opacity:0;z-index:0}
-.platform-macos .routeLayer{will-change:visibility,opacity;overscroll-behavior:contain}
-.platform-macos .routeLayer.active{contain:layout paint style}
-@media(max-width:900px){.routeLayer{padding:24px 22px 50px}}
