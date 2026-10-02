@@ -1,6 +1,7 @@
 import {describe,expect,it} from 'vitest';import fs from 'node:fs';
 describe('VYRON 3.0.0 Publisher/UI contracts',()=>{
  const p=fs.readFileSync('src/PublisherOS.tsx','utf8');
+ const picker=fs.readFileSync('src/PublisherVideoPicker.tsx','utf8');
  const inventory=fs.readFileSync('src/renderInventoryRuntime.ts','utf8');
  const bar=fs.readFileSync('src/YouTubeChannelBar.tsx','utf8');
  const settings=fs.readFileSync('src/SettingsOS.tsx','utf8');
@@ -14,15 +15,15 @@ describe('VYRON 3.0.0 Publisher/UI contracts',()=>{
   expect(p).toContain('>Выбрать все</button>');
   expect(p).toContain("setDraftPatch({selectedIds:[]})");
   expect(p).toContain('>Снять выбор</button>');
-  expect(p).toContain('disabledReason');
+  expect(picker).toContain('disabledReason');
  });
  it('keeps dual exact channel folders and safe discovery wiring',()=>{expect(p).toContain('projectsFolderPath');expect(p).toContain('discoverChannelFolders');expect(p).toContain('found.render.length===1');expect(p).toContain('found.projects.length===1')});
  it('shows fingerprint generation evidence and never fixes selection by forcing checkboxes',()=>{
   expect(p).toContain('Показать доказательство статуса');
   expect(p).toContain('Новая версия файла');
-  expect(p).toContain("disabled={!fresh||busy}");
+  expect(picker).toContain("disabled={!fresh||p.busy}");
   expect(p).toContain("renderScan.summary.NEW_CANDIDATE+renderScan.summary.NEW_GENERATION");
-  expect(p).toContain("disabled={!fresh||busy}");
+  expect(picker).toContain("disabled={!fresh||p.busy}");
  });
  it('normal Publisher auto-materializes unmatched current fingerprints without YouTube-ID gate',()=>{
   expect(p).toContain("const currentCandidates=rows.filter(r=>r.classification==='NEW_CANDIDATE'||r.classification==='NEW_GENERATION')");

@@ -1,3 +1,4 @@
+import {readFileSync} from 'node:fs';
 import {beforeEach,describe,expect,it,vi} from 'vitest';
 import type {Channel,YoutubeExistingVideo,YoutubeProfile} from './types';
 
@@ -91,4 +92,15 @@ describe('VYRON 6.1 authoritative fleet runway refresh',()=>{
   expect(result.apiRequests).toBe(30);
   expect(result.quotaUnits).toBe(30);
  });
+ it('wires one full fleet action through stats + authoritative owner inventory + zero-quota local scan',()=>{
+  const full=readFileSync('src/fullChannelRefresh.ts','utf8'),runway=readFileSync('src/ChannelRunway.tsx','utf8');
+  expect(full).toContain("scanAllInventories('manual-all')");
+  expect(full).toContain('refreshYoutubeChannelStatisticsSelection(channelIds,true)');
+  expect(full).toContain('refreshOwnerInventoriesAuthoritative(requested,true)');
+  expect(full).toContain('recalculateChannelRunway(enabled,new Date(),false)');
+  expect(runway).toContain('refreshAllChannelData(active.map(c=>c.id))');
+  expect(runway).toContain('↻ ОБНОВИТЬ ВСЕ КАНАЛЫ');
+  expect(runway).toContain('LOCAL READY • ZERO API');
+ });
+
 });

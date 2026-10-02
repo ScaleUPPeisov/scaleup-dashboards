@@ -75,7 +75,6 @@ jobs:
         run: >
           npx vitest run
           src/v610ChannelRunwayFleetRefresh.test.ts
-          src/v502FullRefresh.test.ts
           src/channelRunway.test.ts
           src/contentRunway.test.ts
 
