@@ -32,11 +32,11 @@ jobs:
           test "$(git rev-parse HEAD^)" = "$BASE_HEAD"
           test "$(node -p "require('./package.json').version")" = "$VERSION"
           test "$(node -p "require('./src-tauri/tauri.conf.json').identifier")" = "$BUNDLE_ID"
-          mapfile -t changed < <(git diff --name-only "$BASE_HEAD"...HEAD | sort)
-          printf '%s\n' "${changed[@]}"
-          test "${#changed[@]}" -eq 2
-          test "${changed[0]}" = "src/YouTubeCenter.tsx"
-          test "${changed[1]}" = "src/styles.css"
+          CHANGED="$(git diff --name-only "$BASE_HEAD"...HEAD | sort)"
+          printf '%s\n' "$CHANGED"
+          test "$(printf '%s\n' "$CHANGED" | sed '/^$/d' | wc -l | tr -d ' ')" = "2"
+          printf '%s\n' "$CHANGED" | grep -Fx 'src/YouTubeCenter.tsx'
+          printf '%s\n' "$CHANGED" | grep -Fx 'src/styles.css'
           git diff --exit-code "$BASE_HEAD"...HEAD -- src/M1PerformanceProbe.tsx
           git diff --exit-code "$BASE_HEAD"...HEAD --             src/ChannelRunway.tsx src/YouTubeChannelBar.tsx src/PublisherOS.tsx             src/youtubePublishSafety.ts src/MetadataTabs.tsx             src/MaterialsManager.tsx src/ProductionManager.tsx             src-tauri/src/oauth_vault.rs src-tauri/src/security.rs src-tauri/src/youtube.rs
           echo "EXACT_PRODUCTION_CANDIDATE=PASS"

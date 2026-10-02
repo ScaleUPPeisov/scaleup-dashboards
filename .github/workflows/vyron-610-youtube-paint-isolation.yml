@@ -1,9 +1,7 @@
 name: VYRON 6.1.0 YouTube Paint Isolation
 
 on:
-  push:
-    branches:
-      - diagnostic/youtube-wkwebview-paint-isolation
+  workflow_dispatch:
 
 permissions:
   contents: read
