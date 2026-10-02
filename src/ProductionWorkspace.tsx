@@ -1,6 +1,5 @@
 import React,{useMemo} from 'react';
 import {useApp} from './store';
-import {activeErrorCount} from './activeErrors';
 import type {Channel,VideoJob} from './types';
 
 const EMPTY_JOBS:VideoJob[]=[];
@@ -26,7 +25,7 @@ export function ProductionWorkspace(){
  const channels=useApp(s=>s.channels),jobs=useApp(s=>s.jobs);
  const snapshot=useMemo(()=>{
   const byChannel=new Map<string,VideoJob[]>(),workingIds=new Set<string>();
-  let materials=0,building=0,render=0,youtube=0;
+  let materials=0,building=0,render=0,youtube=0,errors=0;
   for(const j of jobs){
    const bucket=byChannel.get(j.channelId);if(bucket)bucket.push(j);else byChannel.set(j.channelId,[j]);
    if(j.status!=='SCHEDULED')workingIds.add(j.channelId);
@@ -34,8 +33,9 @@ export function ProductionWorkspace(){
    if(j.status==='READY_RENDER'||j.status==='RENDERING')building++;
    if(j.status==='READY_RENDER')render++;
    if(j.status==='READY_UPLOAD')youtube++;
+   if(j.status==='ERROR'&&Boolean(j.error?.trim()))errors++;
   }
-  return {byChannel,summary:{working:channels.reduce((n,c)=>n+(workingIds.has(c.id)?1:0),0),materials,building,render,youtube,errors:activeErrorCount(jobs)}};
+  return {byChannel,summary:{working:channels.reduce((n,c)=>n+(workingIds.has(c.id)?1:0),0),materials,building,render,youtube,errors}};
  },[channels,jobs]);
  const summary=snapshot.summary;
  return <section className="productionWorkspace compactProduction"><div className="productionSummary"><span><small>Каналы в работе</small><b>{summary.working}</b></span><span><small>Ждут материалов</small><b>{summary.materials}</b></span><span><small>Собираются</small><b>{summary.building}</b></span><span><small>Готовы к рендеру</small><b>{summary.render}</b></span><span><small>Готовы к YouTube</small><b>{summary.youtube}</b></span><span className={summary.errors?'warn':''}><small>Ошибки</small><b>{summary.errors}</b></span></div><div className="productionFleet">{channels.map(c=><ChannelRow key={c.id} channel={c} jobs={snapshot.byChannel.get(c.id)||EMPTY_JOBS}/>)}</div>{!channels.length&&<div className="empty"><b>Каналов пока нет</b><p>Добавьте канал, чтобы VYRON показал производственную очередь.</p></div>}<details className="advancedPanel"><summary>Технические сведения</summary><p>Здесь остаются служебные состояния очередей и диагностика. Основной экран показывает только рабочие действия.</p></details></section>
