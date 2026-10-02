@@ -1,5 +1,4 @@
 import {readFileSync} from 'node:fs';
-import {fileURLToPath} from 'node:url';
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 import {
  beginPublishAttempt,
@@ -69,7 +68,7 @@ describe('VYRON 6.1.0 global verified upload counter',()=>{
 
  it('UI CONTRACT: Dashboard, QuotaMeter and Publisher all subscribe to the shared counter',()=>{
   for(const file of ['DashboardOS.tsx','QuotaMeter.tsx','PublisherOS.tsx']){
-   const src=readFileSync(fileURLToPath(new URL('./'+file,import.meta.url)),'utf8');
+   const src=readFileSync(decodeURIComponent(new URL('./'+file,import.meta.url).pathname),'utf8');
    expect(src,file).toContain('subscribeGlobalDailyUploadStatus');
   }
  });
@@ -120,7 +119,7 @@ describe('VYRON 6.1.0 global verified upload counter',()=>{
  });
 
  it('NO API COST: counter recovery is local-only',()=>{
-  const src=readFileSync(fileURLToPath(new URL('./youtubePublishSafety.ts',import.meta.url)),'utf8');
+  const src=readFileSync(decodeURIComponent(new URL('./youtubePublishSafety.ts',import.meta.url).pathname),'utf8');
   const start=src.indexOf('export function restorePublishLedgerFromUploadHistory');
   const end=src.indexOf('export function uploadsByVyronLast24h');
   const body=src.slice(start,end);
