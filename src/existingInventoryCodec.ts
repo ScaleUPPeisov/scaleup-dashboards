@@ -38,7 +38,7 @@ export function encodeInventory(channelId:string,c:ExistingInventoryCache){
   return{schemaVersion:2,channelId,updatedAt:c.updatedAt,lastCompleteAt:c.lastCompleteAt,syncInfo:normalizeSyncInfo(c.syncInfo),lastCompleteSyncInfo:normalizeSyncInfo(c.lastCompleteSyncInfo),videos:normalizeExistingVideos(c.videos),baselineDelta:baselineDelta(c.videos,c.baseline),lastUndo:normalizeExistingVideos(c.lastUndo).map(compactBaselineVideo)}
 }
 export function decodeInventory(value:unknown):ExistingInventoryCache|undefined{
-  if(!record(value)||value.schemaVersion!==2||typeof value.channelId!=='string')return;
+  if(!record(value)||value.schemaVersion!==2||typeof value.channelId!=='string'||!Array.isArray(value.videos)||!record(value.baselineDelta))return;
   const videos=normalizeExistingVideos(value.videos);
   return{version:1,updatedAt:str(value.updatedAt)||'1970-01-01T00:00:00.000Z',videos,baseline:baselineFromDelta(videos,value.baselineDelta),lastUndo:normalizeExistingVideos(value.lastUndo),syncInfo:normalizeSyncInfo(value.syncInfo),lastCompleteAt:str(value.lastCompleteAt),lastCompleteSyncInfo:normalizeSyncInfo(value.lastCompleteSyncInfo)}
 }
