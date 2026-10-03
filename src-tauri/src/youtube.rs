@@ -7589,3 +7589,54 @@ mod v300_google_identity_metadata_tests{
   assert!(source.contains("reconnect_authorized_channel_matches"));
  }
 }
+
+
+#[cfg(test)]
+mod v611_channel_runway_inventory_hotfix_tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    #[test]
+    fn lumiere_shape_counts_fifteen_future_private_videos_as_scheduled() {
+        let now=Utc.with_ymd_and_hms(2026,10,3,0,0,0).single().unwrap();
+        let mut rows=Vec::<Value>::new();
+        for day in 29..=30 {
+            rows.push(json!({"id":format!("pub-sep-{day}"),"privacyStatus":"public","publishedAt":format!("2026-09-{day}T12:00:00Z")}));
+        }
+        for day in 1..=3 {
+            rows.push(json!({"id":format!("pub-oct-{day}"),"privacyStatus":"public","publishedAt":format!("2026-10-{day:02}T12:00:00Z")}));
+        }
+        for day in 4..=18 {
+            rows.push(json!({"id":format!("scheduled-{day}"),"privacyStatus":"private","publishAt":format!("2026-10-{day:02}T11:00:00Z")}));
+        }
+        let (private_count,scheduled_count,public_count,unlisted_count)=inventory_bucket_counts(&rows,now);
+        assert_eq!(rows.len(),20);
+        assert_eq!(scheduled_count,15);
+        assert_eq!(public_count,5);
+        assert_eq!(private_count,0);
+        assert_eq!(unlisted_count,0);
+        assert_eq!(rows.last().and_then(|x|x.get("publishAt")).and_then(Value::as_str),Some("2026-10-18T11:00:00Z"));
+    }
+
+    #[test]
+    fn authoritative_row_preserves_private_status_and_publish_at() {
+        let raw=json!({
+            "id":"scheduled-18",
+            "snippet":{"channelId":"UC-LUMIERE","title":"Scheduled","description":"","tags":[],"categoryId":"10","publishedAt":"2026-10-03T00:00:00Z"},
+            "status":{"privacyStatus":"private","publishAt":"2026-10-18T11:00:00Z"},
+            "contentDetails":{"duration":"PT2H"},
+            "statistics":{"viewCount":"0"}
+        });
+        let row=authoritative_inventory_row(&raw,0).unwrap();
+        assert_eq!(row.get("privacyStatus").and_then(Value::as_str),Some("private"));
+        assert_eq!(row.get("publishAt").and_then(Value::as_str),Some("2026-10-18T11:00:00Z"));
+        assert_eq!(row.get("channelId").and_then(Value::as_str),Some("UC-LUMIERE"));
+    }
+
+    #[test]
+    fn full_sync_estimate_reports_completed_operation_cost() {
+        let estimate=full_sync_estimate(20);
+        assert_eq!(estimate.get("apiRequests").and_then(Value::as_u64),Some(3));
+        assert_eq!(estimate.get("estimatedQuotaCost").and_then(Value::as_u64),Some(3));
+    }
+}
