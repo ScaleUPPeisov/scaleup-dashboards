@@ -1,5 +1,6 @@
 import type {Channel,YoutubeExistingVideo} from './types';
 export type ExistingCache={version:1;updatedAt:string;videos:YoutubeExistingVideo[];baseline:Record<string,YoutubeExistingVideo>;lastUndo:YoutubeExistingVideo[];syncInfo:any;lastCompleteAt?:string;lastCompleteSyncInfo?:any};
+export type StorageWriteResult={ok:boolean;errorCode?:'STORAGE_UNAVAILABLE'|'STORAGE_QUOTA_EXCEEDED'|'STORAGE_WRITE_FAILED'|'STORAGE_READBACK_FAILED';error?:string;bytes?:number};
 export type ScheduleMode='interval'|'pattern';
 export type SchedulePattern={publishDays:number;pauseDays:number;anchorDate:string};
 export type ScheduleSyncTruth='complete'|'incomplete'|'unknown';
@@ -43,6 +44,15 @@ function normalizeBaseline(value:unknown){
   for(const [key,row] of Object.entries(value)){const video=normalizeExistingVideo(row,index++);if(video)out[key||video.id]=video}
   return out;
 }
+const compactBaselineVideo=(v:YoutubeExistingVideo):YoutubeExistingVideo=>({
+  id:v.id,position:v.position,title:v.title,description:v.description,tags:[...(v.tags||[])],categoryId:v.categoryId,
+  publishedAt:v.publishedAt,privacyStatus:v.privacyStatus,publishAt:v.publishAt,selected:false,channelId:v.channelId,verified:v.verified
+});
+const compactBaselineFromVideos=(videos:YoutubeExistingVideo[])=>Object.fromEntries(normalizeVideoArray(videos).map(v=>[v.id,compactBaselineVideo(v)]));
+function storageWriteError(error:unknown):StorageWriteResult{
+  const name=String((error as any)?.name||''),message=String((error as any)?.message||error||'storage write failed');
+  return{ok:false,errorCode:name==='QuotaExceededError'||/quota/i.test(message)?'STORAGE_QUOTA_EXCEEDED':'STORAGE_WRITE_FAILED',error:message}
+}
 function normalizeSyncInfo(value:unknown){return value===null||isRecord(value)?value:null}
 export function scheduleSyncTruthFromInfo(value:unknown):ScheduleSyncTruth{
   if(!isRecord(value))return'unknown';
@@ -56,8 +66,9 @@ export function futureScheduledVideos(videos:YoutubeExistingVideo[],nowMs=Date.n
 }
 function authoritativeCacheVideos(cache:ExistingCache|undefined){
   if(!cache)return[] as YoutubeExistingVideo[];
-  const baseline=Object.values(cache.baseline||{});
-  return baseline.length?normalizeVideoArray(baseline):normalizeVideoArray(cache.videos);
+  const videos=normalizeVideoArray(cache.videos);
+  if(videos.length)return videos;
+  return normalizeVideoArray(Object.values(cache.baseline||{}));
 }
 export function readAuthoritativeExistingInventory(channelId:string){
   return authoritativeCacheVideos(readExistingCache(channelId)).map(cloneVideo);
@@ -65,19 +76,33 @@ export function readAuthoritativeExistingInventory(channelId:string){
 export function readExistingCache(channelId:string):ExistingCache|undefined{
   if(!channelId)return;
   try{
-    const x=JSON.parse(localStorage.getItem(existingCacheKey(channelId))||'null');
+    const key=existingCacheKey(channelId),raw=localStorage.getItem(key),x=JSON.parse(raw||'null');
     if(!isRecord(x)||x.version!==1)return;
-    return{version:1,updatedAt:optionalString(x.updatedAt)||'1970-01-01T00:00:00.000Z',videos:normalizeVideoArray(x.videos),baseline:normalizeBaseline(x.baseline),lastUndo:normalizeVideoArray(x.lastUndo),syncInfo:normalizeSyncInfo(x.syncInfo),lastCompleteAt:optionalString(x.lastCompleteAt),lastCompleteSyncInfo:normalizeSyncInfo(x.lastCompleteSyncInfo)};
+    const cache:ExistingCache={version:1,updatedAt:optionalString(x.updatedAt)||'1970-01-01T00:00:00.000Z',videos:normalizeVideoArray(x.videos),baseline:normalizeBaseline(x.baseline),lastUndo:normalizeVideoArray(x.lastUndo),syncInfo:normalizeSyncInfo(x.syncInfo),lastCompleteAt:optionalString(x.lastCompleteAt),lastCompleteSyncInfo:normalizeSyncInfo(x.lastCompleteSyncInfo)};
+    // One-time, idempotent compaction for legacy v1 caches. Failure leaves the readable legacy payload untouched.
+    if(raw){
+      const compact:ExistingCache={...cache,baseline:compactBaselineFromVideos(Object.values(cache.baseline||{}))};
+      const compactRaw=JSON.stringify(compact);
+      if(compactRaw.length<raw.length){try{localStorage.setItem(key,compactRaw)}catch{}}
+    }
+    return cache;
   }catch{return}
 }
-export function writeExistingCache(channelId:string,x:ExistingCache){
- if(!channelId)return;
+export function writeExistingCache(channelId:string,x:ExistingCache):StorageWriteResult{
+ if(!channelId)return{ok:false,errorCode:'STORAGE_WRITE_FAILED',error:'channelId is required'};
+ if(typeof localStorage==='undefined')return{ok:false,errorCode:'STORAGE_UNAVAILABLE',error:'localStorage is unavailable'};
  try{
   const prev=readExistingCache(channelId);
-  const payload:ExistingCache={...x,lastCompleteAt:x.lastCompleteAt??prev?.lastCompleteAt,lastCompleteSyncInfo:x.lastCompleteSyncInfo??prev?.lastCompleteSyncInfo};
-  localStorage.setItem(existingCacheKey(channelId),JSON.stringify(payload));
-  window.dispatchEvent(new CustomEvent(EVENT,{detail:{channelId,updatedAt:payload.updatedAt}}))
- }catch{}
+  const payload:ExistingCache={...x,baseline:compactBaselineFromVideos(Object.values(x.baseline||{})),lastCompleteAt:x.lastCompleteAt??prev?.lastCompleteAt,lastCompleteSyncInfo:x.lastCompleteSyncInfo??prev?.lastCompleteSyncInfo};
+  const raw=JSON.stringify(payload),key=existingCacheKey(channelId);
+  localStorage.setItem(key,raw);
+  const readback=localStorage.getItem(key);
+  if(!readback)return{ok:false,errorCode:'STORAGE_READBACK_FAILED',error:'Existing Videos cache readback is empty'};
+  const parsed=JSON.parse(readback);
+  if(parsed?.version!==1||parsed?.updatedAt!==payload.updatedAt)return{ok:false,errorCode:'STORAGE_READBACK_FAILED',error:'Existing Videos cache readback mismatch'};
+  try{window.dispatchEvent(new CustomEvent(EVENT,{detail:{channelId,updatedAt:payload.updatedAt}}))}catch{}
+  return{ok:true,bytes:raw.length}
+ }catch(error){return storageWriteError(error)}
 }
 const cloneVideo=(v:YoutubeExistingVideo)=>({...v,tags:[...(Array.isArray(v.tags)?v.tags:[])]});
 export function mergeInventoryRowsPreservingCached(previous:YoutubeExistingVideo[],incoming:YoutubeExistingVideo[]){
@@ -145,9 +170,9 @@ export function reconcileExistingSyncAfterTargetedRetry(syncInfo:any,currentVide
 export function replaceExistingCacheFromSync(channelId:string,videos:YoutubeExistingVideo[],syncInfo:any){
  const rows=normalizeVideoArray(videos).map(cloneVideo),prev=readExistingCache(channelId),complete=syncInfo?.syncComplete===true||syncInfo?.complete===true,now=new Date().toISOString();
  const displayRows=complete?rows:mergeInventoryRowsPreservingCached(prev?.videos||[],rows);
- const baseline=complete?Object.fromEntries(rows.map(v=>[v.id,cloneVideo(v)])):(prev?.baseline||{});
- writeExistingCache(channelId,{version:1,updatedAt:now,videos:displayRows,baseline,lastUndo:complete?[]:(prev?.lastUndo||[]),syncInfo:normalizeSyncInfo(syncInfo),lastCompleteAt:complete?now:prev?.lastCompleteAt,lastCompleteSyncInfo:complete?normalizeSyncInfo(syncInfo):prev?.lastCompleteSyncInfo})
- return{videos:displayRows,baseline,lastCompleteAt:complete?now:prev?.lastCompleteAt};
+ const baseline=complete?compactBaselineFromVideos(rows):(prev?.baseline||{});
+ const persistence=writeExistingCache(channelId,{version:1,updatedAt:now,videos:displayRows,baseline,lastUndo:complete?[]:(prev?.lastUndo||[]),syncInfo:normalizeSyncInfo(syncInfo),lastCompleteAt:complete?now:prev?.lastCompleteAt,lastCompleteSyncInfo:complete?normalizeSyncInfo(syncInfo):prev?.lastCompleteSyncInfo});
+ return{videos:displayRows,baseline,lastCompleteAt:complete?now:prev?.lastCompleteAt,persisted:persistence.ok,persistErrorCode:persistence.errorCode,persistError:persistence.error,persistedBytes:persistence.bytes};
 }
 export function readAuthoritativeExistingSnapshot(channelId:string){
  const cache=readExistingCache(channelId),videos=authoritativeCacheVideos(cache).map(cloneVideo);
@@ -155,7 +180,7 @@ export function readAuthoritativeExistingSnapshot(channelId:string){
  const currentComplete=scheduleSyncTruthFromInfo(cache.syncInfo)==='complete';
  return{videos,updatedAt:cache.lastCompleteAt||(currentComplete?cache.updatedAt:undefined),syncInfo:cache.lastCompleteSyncInfo||(currentComplete?cache.syncInfo:null)};
 }
-export function mergeExistingCacheVideos(channelId:string,updates:YoutubeExistingVideo[]){const prev=readExistingCache(channelId);const map=new Map((prev?.videos||[]).map(v=>[v.id,cloneVideo(v)]));const base={...(prev?.baseline||{})};for(const u of normalizeVideoArray(updates)){map.set(u.id,cloneVideo(u));base[u.id]=cloneVideo(u)}writeExistingCache(channelId,{version:1,updatedAt:new Date().toISOString(),videos:[...map.values()],baseline:base,lastUndo:prev?.lastUndo||[],syncInfo:prev?.syncInfo||null,lastCompleteAt:prev?.lastCompleteAt,lastCompleteSyncInfo:prev?.lastCompleteSyncInfo})}
+export function mergeExistingCacheVideos(channelId:string,updates:YoutubeExistingVideo[]){const prev=readExistingCache(channelId);const map=new Map((prev?.videos||[]).map(v=>[v.id,cloneVideo(v)]));const base={...(prev?.baseline||{})};for(const u of normalizeVideoArray(updates)){map.set(u.id,cloneVideo(u));base[u.id]=compactBaselineVideo(u)}return writeExistingCache(channelId,{version:1,updatedAt:new Date().toISOString(),videos:[...map.values()],baseline:base,lastUndo:prev?.lastUndo||[],syncInfo:prev?.syncInfo||null,lastCompleteAt:prev?.lastCompleteAt,lastCompleteSyncInfo:prev?.lastCompleteSyncInfo})}
 const pad=(n:number)=>String(n).padStart(2,'0');
 function parts(iso:string){const d=new Date(iso);if(Number.isNaN(d.getTime()))return;const p=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Krasnoyarsk',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(d);const get=(t:string)=>p.find(x=>x.type===t)?.value||'';return{date:`${get('year')}-${get('month')}-${get('day')}`,time:`${get('hour')}:${get('minute')}`}}
 export function krasDateKey(iso?:string){return iso?parts(iso)?.date:undefined}
