@@ -181,11 +181,15 @@ export function reconcileExistingSyncAfterTargetedRetry(syncInfo:any,currentVide
  };
  return{videos:merged,syncInfo:nextInfo};
 }
-export function replaceExistingCacheFromSync(channelId:string,videos:YoutubeExistingVideo[],syncInfo:any){
- const rows=normalizeVideoArray(videos).map(cloneVideo),prev=readExistingCache(channelId),complete=syncInfo?.syncComplete===true||syncInfo?.complete===true,now=new Date().toISOString();
+export async function replaceExistingCacheFromSync(channelId:string,videos:YoutubeExistingVideo[],syncInfo:any){
+ const rows=normalizeVideoArray(videos).map(cloneVideo),complete=syncInfo?.syncComplete===true||syncInfo?.complete===true,now=new Date().toISOString();
+ let prev:ExistingCache|undefined;
+ try{prev=await loadExistingCache(channelId)}catch(error){
+  if(!complete)return{videos:rows,baseline:{},lastCompleteAt:undefined,persisted:false,persistErrorCode:'INVENTORY_STORAGE_CORRUPT' as const,persistError:String(error),persistedBytes:undefined};
+ }
  const displayRows=complete?rows:mergeInventoryRowsPreservingCached(prev?.videos||[],rows);
  const baseline=complete?compactBaselineFromVideos(rows):(prev?.baseline||{});
- const persistence=writeExistingCache(channelId,{version:1,updatedAt:now,videos:displayRows,baseline,lastUndo:complete?[]:(prev?.lastUndo||[]),syncInfo:normalizeSyncInfo(syncInfo),lastCompleteAt:complete?now:prev?.lastCompleteAt,lastCompleteSyncInfo:complete?normalizeSyncInfo(syncInfo):prev?.lastCompleteSyncInfo});
+ const persistence=await writeExistingCache(channelId,{version:1,updatedAt:now,videos:displayRows,baseline,lastUndo:complete?[]:(prev?.lastUndo||[]),syncInfo:normalizeSyncInfo(syncInfo),lastCompleteAt:complete?now:prev?.lastCompleteAt,lastCompleteSyncInfo:complete?normalizeSyncInfo(syncInfo):prev?.lastCompleteSyncInfo});
  return{videos:displayRows,baseline,lastCompleteAt:complete?now:prev?.lastCompleteAt,persisted:persistence.ok,persistErrorCode:persistence.errorCode,persistError:persistence.error,persistedBytes:persistence.bytes};
 }
 export function readAuthoritativeExistingSnapshot(channelId:string){
@@ -194,7 +198,13 @@ export function readAuthoritativeExistingSnapshot(channelId:string){
  const currentComplete=scheduleSyncTruthFromInfo(cache.syncInfo)==='complete';
  return{videos,updatedAt:cache.lastCompleteAt||(currentComplete?cache.updatedAt:undefined),syncInfo:cache.lastCompleteSyncInfo||(currentComplete?cache.syncInfo:null)};
 }
-export function mergeExistingCacheVideos(channelId:string,updates:YoutubeExistingVideo[]){const prev=readExistingCache(channelId);const map=new Map((prev?.videos||[]).map(v=>[v.id,cloneVideo(v)]));const base={...(prev?.baseline||{})};for(const u of normalizeVideoArray(updates)){map.set(u.id,cloneVideo(u));base[u.id]=compactBaselineVideo(u)}return writeExistingCache(channelId,{version:1,updatedAt:new Date().toISOString(),videos:[...map.values()],baseline:base,lastUndo:prev?.lastUndo||[],syncInfo:prev?.syncInfo||null,lastCompleteAt:prev?.lastCompleteAt,lastCompleteSyncInfo:prev?.lastCompleteSyncInfo})}
+export async function loadAuthoritativeExistingSnapshot(channelId:string){
+ const cache=await loadExistingCache(channelId),videos=authoritativeCacheVideos(cache).map(cloneVideo);
+ if(!cache||!videos.length)return;
+ const currentComplete=scheduleSyncTruthFromInfo(cache.syncInfo)==='complete';
+ return{videos,updatedAt:cache.lastCompleteAt||(currentComplete?cache.updatedAt:undefined),syncInfo:cache.lastCompleteSyncInfo||(currentComplete?cache.syncInfo:null)};
+}
+export async function mergeExistingCacheVideos(channelId:string,updates:YoutubeExistingVideo[]){const prev=await loadExistingCache(channelId);const map=new Map((prev?.videos||[]).map(v=>[v.id,cloneVideo(v)]));const base={...(prev?.baseline||{})};for(const u of normalizeVideoArray(updates)){map.set(u.id,cloneVideo(u));base[u.id]=compactBaselineVideo(u)}return await writeExistingCache(channelId,{version:1,updatedAt:new Date().toISOString(),videos:[...map.values()],baseline:base,lastUndo:prev?.lastUndo||[],syncInfo:prev?.syncInfo||null,lastCompleteAt:prev?.lastCompleteAt,lastCompleteSyncInfo:prev?.lastCompleteSyncInfo})}
 const pad=(n:number)=>String(n).padStart(2,'0');
 function parts(iso:string){const d=new Date(iso);if(Number.isNaN(d.getTime()))return;const p=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Krasnoyarsk',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(d);const get=(t:string)=>p.find(x=>x.type===t)?.value||'';return{date:`${get('year')}-${get('month')}-${get('day')}`,time:`${get('hour')}:${get('minute')}`}}
 export function krasDateKey(iso?:string){return iso?parts(iso)?.date:undefined}
