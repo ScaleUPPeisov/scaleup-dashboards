@@ -154,6 +154,7 @@ export async function refreshOwnerInventoriesAuthoritative(
   suppliedProfiles?:Awaited<ReturnType<typeof api.youtubeProfiles>>
 ):Promise<OwnerInventoryRefreshSummary>{
   const enabled=channels.filter(c=>c.enabled!==false);
+  await hydrateExistingInventoryCaches(enabled.map(c=>c.id));
   const summary:OwnerInventoryRefreshSummary={requested:0,updated:0,failed:0,skippedFresh:0,skippedUnlinked:0,stoppedForQuota:false,apiRequests:0,quotaUnits:0,rows:[],counts:emptyOwnerCounts()};
   const profiles=suppliedProfiles||await api.youtubeProfiles();
   const {classification,extras}=duplicateExtraChannelIds(enabled,profiles);
