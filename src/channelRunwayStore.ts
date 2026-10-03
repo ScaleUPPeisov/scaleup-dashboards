@@ -15,6 +15,7 @@ export type ChannelRunwayStore={
 };
 
 type StorageLike=Pick<Storage,'getItem'|'setItem'>;
+export type ChannelRunwayPersistResult={ok:boolean;value:ChannelRunwayStore;errorCode?:'STORAGE_UNAVAILABLE'|'STORAGE_QUOTA_EXCEEDED'|'STORAGE_WRITE_FAILED'|'STORAGE_READBACK_FAILED';error?:string};
 const EVENT='vyron-channel-runway';
 const existingCacheKey=(channelId:string)=>`vyron:existing-cache:v1:${channelId}`;
 const VALID_STATUS=new Set(['large','plan','prepare','urgent','ended','no-data']);
@@ -69,10 +70,21 @@ export function loadChannelRunwayStore(storage:StorageLike|undefined=browserStor
   }catch{return defaultStore()}
 }
 
-export function saveChannelRunwayStore(value:ChannelRunwayStore,storage:StorageLike|undefined=browserStorage()){
-  try{if(storage)storage.setItem(CHANNEL_RUNWAY_STORAGE_KEY,JSON.stringify(value))}catch{}
-  emit();
-  return value;
+export function saveChannelRunwayStore(value:ChannelRunwayStore,storage:StorageLike|undefined=browserStorage()):ChannelRunwayPersistResult{
+  if(!storage)return{ok:false,value,errorCode:'STORAGE_UNAVAILABLE',error:'Channel Runway storage unavailable'};
+  try{
+    const raw=JSON.stringify(value);
+    storage.setItem(CHANNEL_RUNWAY_STORAGE_KEY,raw);
+    const readback=storage.getItem(CHANNEL_RUNWAY_STORAGE_KEY);
+    if(!readback)return{ok:false,value,errorCode:'STORAGE_READBACK_FAILED',error:'Channel Runway readback is empty'};
+    const parsed=JSON.parse(readback) as ChannelRunwayStore;
+    if(parsed?.version!==1||!parsed.channels||typeof parsed.channels!=='object')return{ok:false,value,errorCode:'STORAGE_READBACK_FAILED',error:'Channel Runway readback mismatch'};
+    emit();
+    return{ok:true,value};
+  }catch(error){
+    const name=String((error as any)?.name||''),message=String((error as any)?.message||error||'Channel Runway storage write failed');
+    return{ok:false,value,errorCode:name==='QuotaExceededError'||/quota/i.test(message)?'STORAGE_QUOTA_EXCEEDED':'STORAGE_WRITE_FAILED',error:message};
+  }
 }
 
 type ExistingCache={
@@ -134,7 +146,8 @@ export function recalculateChannelRunway(
   const validIds=new Set(channels.map(c=>c.id));
   for(const id of Object.keys(next.channels))if(!validIds.has(id))delete next.channels[id];
   if(markDaily)next.lastKrasnoyarskDate=krasnoyarskClock(now).dateKey;
-  return saveChannelRunwayStore(next,storage);
+  saveChannelRunwayStore(next,storage);
+  return next;
 }
 
 export function upsertChannelRunwayFromYoutube(
