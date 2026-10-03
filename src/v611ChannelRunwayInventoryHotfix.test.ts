@@ -22,7 +22,9 @@ if(typeof (globalThis as any).window==='undefined')Object.defineProperty(globalT
 
 const fixture=vi.hoisted(()=>({
   profiles:[] as YoutubeProfile[],
-  responses:new Map<string,any>()
+  responses:new Map<string,any>(),
+  inventoryFiles:new Map<string,any>(),
+  failNativeWrites:false
 }));
 vi.mock('./api',()=>({api:{
   youtubeProfiles:vi.fn(async()=>fixture.profiles),
@@ -37,7 +39,7 @@ vi.mock('./youtubeQuota',()=>({
 vi.mock('./youtubeCache',()=>({markYoutubeCache:vi.fn()}));
 
 import {api} from './api';
-import {existingCacheKey,readExistingCache,replaceExistingCacheFromSync} from './channelSchedule';
+import {existingCacheKey,loadExistingCache,replaceExistingCacheFromSync} from './channelSchedule';
 import {CHANNEL_RUNWAY_STORAGE_KEY} from './channelRunwayCore';
 import {loadChannelRunwayStore} from './channelRunwayStore';
 import {ownerInventoryFromVideos,refreshOwnerInventoriesAuthoritative} from './youtubeOwnerInventory';
@@ -71,7 +73,7 @@ function response(){
 }
 
 describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
-  beforeEach(()=>{storage.clear();fixture.profiles=[profile];fixture.responses.clear();fixture.responses.set(profile.id,response());vi.clearAllMocks()});
+  beforeEach(()=>{storage.clear();fixture.profiles=[profile];fixture.responses.clear();fixture.responses.set(profile.id,response());fixture.inventoryFiles.clear();fixture.failNativeWrites=false;vi.clearAllMocks()});
 
   it('Lumière real-shape fixture has 20 total, 15 scheduled and scheduled-through 2026-10-18',async()=>{
     const inv=ownerInventoryFromVideos('lumiere',lumiereVideos(),undefined,{scheduleComplete:true},Date.parse('2026-10-03T00:00:00Z'));
@@ -93,31 +95,24 @@ describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
     expect(youtubeOperationActualCost).not.toHaveBeenCalled();
   });
 
-  it('persists one canonical full inventory with compact edit baseline',()=>{
-    const r=response(),naive=JSON.stringify({version:1,updatedAt:'x',videos:r.videos,baseline:Object.fromEntries(r.videos.map((v:YoutubeExistingVideo)=>[v.id,v])),lastUndo:[],syncInfo:r});
-    const out=replaceExistingCacheFromSync('lumiere',r.videos,r);
+  it('persists canonical inventory natively without duplicating full baseline or heavy localStorage',async()=>{
+    const r=response(),out=await replaceExistingCacheFromSync('lumiere',r.videos,r);
     expect(out.persisted).toBe(true);
-    const raw=localStorage.getItem(existingCacheKey('lumiere'))!;
-    expect(raw.length).toBeLessThan(naive.length);
-    const saved=JSON.parse(raw),b=saved.baseline['s-18'];
-    expect(b.title).toBe('Title s-18');expect(b.description).toBe('Description s-18');expect(b.tags).toEqual(['deep','house']);
-    expect(b.categoryId).toBe('10');expect(b.privacyStatus).toBe('private');expect(b.publishAt).toContain('2026-10-18');
-    expect(b.thumbnail).toBeUndefined();expect(b.duration).toBeUndefined();expect(b.views).toBeUndefined();
-    expect(readExistingCache('lumiere')?.videos).toHaveLength(20);
+    const native=fixture.inventoryFiles.get('lumiere');
+    expect(native.videos).toHaveLength(20);
+    expect(native.baselineDelta).toEqual({});
+    expect(native.videos.find((v:any)=>v.id==='s-18').description).toBe('Description s-18');
+    expect(localStorage.getItem(existingCacheKey('lumiere'))).toBeNull();
+    expect((await loadExistingCache('lumiere'))?.videos).toHaveLength(20);
   });
 
-  it('QuotaExceededError returns PERSISTENCE_FAILED and preserves previous valid runway truth',async()=>{
+  it('native write failure returns PERSISTENCE_FAILED and preserves previous runway truth',async()=>{
     const previous={version:1,lastLocalCalculation:'2026-10-02T00:00:00.000Z',channels:{lumiere:{channelId:'lumiere',channelName:'Lumière de Minuit',scheduledUntil:'2026-10-10',scheduledVideoCount:7,lastScheduleSync:'2026-10-02T00:00:00.000Z',lastLocalCalculation:'2026-10-02T00:00:00.000Z',runwayDays:8,priority:'critical',status:'urgent'}}};
-    storage.seed(CHANNEL_RUNWAY_STORAGE_KEY,JSON.stringify(previous));
-    storage.failWrites=true;
+    storage.seed(CHANNEL_RUNWAY_STORAGE_KEY,JSON.stringify(previous));fixture.failNativeWrites=true;
     const result=await refreshOwnerInventoriesAuthoritative([channel()],true,[profile]);
     expect(result.rows[0].status).toBe('PERSISTENCE_FAILED');
-    expect(result.updated).toBe(0);expect(result.failed).toBe(1);
-    expect(result.rows[0].error).toContain('API повторно не запускайте');
-    storage.failWrites=false;
-    const persisted=loadChannelRunwayStore();
-    expect(persisted.channels.lumiere.scheduledVideoCount).toBe(7);
-    expect(persisted.channels.lumiere.scheduledUntil).toBe('2026-10-10');
+    expect(result.updated).toBe(0);expect(result.failed).toBe(1);expect(result.rows[0].error).toContain('API повторно не запускайте');
+    const persisted=loadChannelRunwayStore();expect(persisted.channels.lumiere.scheduledVideoCount).toBe(7);expect(persisted.channels.lumiere.scheduledUntil).toBe('2026-10-10');
   });
 
   it('single refresh makes exactly one authoritative inventory call',async()=>{
