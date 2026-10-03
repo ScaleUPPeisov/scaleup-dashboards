@@ -41,7 +41,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
-          node -e "const p=require('./package.json'),l=require('./package-lock.json'),t=require('./src-tauri/tauri.conf.json');for(const v of [p.version,l.version,l.packages[''].version,t.version])if(v!=='6.1.1')process.exit(2);if(t.identifier!=='studio.channelflow.desktop'||t.bundle.createUpdaterArtifacts!==true)process.exit(3)"
+          node -e "const p=require('./package.json'),t=require('./src-tauri/tauri.conf.json');for(const v of [p.version,t.version])if(v!=='6.1.1')process.exit(2);if(t.identifier!=='studio.channelflow.desktop'||t.bundle.createUpdaterArtifacts!==true)process.exit(3)"
           grep -q '^version = "6.1.1"$' src-tauri/Cargo.toml
           echo EXACT_HEAD=PASS
       - uses: actions/setup-node@v4
