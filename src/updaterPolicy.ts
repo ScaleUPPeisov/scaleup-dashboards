@@ -45,8 +45,12 @@ export function updaterVersionStatus(current:string,latest:string){
 export function classifyUpdaterError(error:unknown,stage:UpdaterStage){
   const detail=String(error??'');
   const s=detail.toLowerCase();
-  if(s.includes('running_from_dmg')||s.includes('запущен из установочного образа'))return{code:'RUNNING_FROM_DMG',detail};
+  if(s.includes('running_from_dmg')||s.includes('запущен из установочного образа')||s.includes('запущен из dmg'))return{code:'RUNNING_FROM_DMG',detail};
+  if(s.includes('app_replacement_not_applied'))return{code:'APP_REPLACEMENT_NOT_APPLIED',detail};
+  if(s.includes('app_replacement_codesign_failed'))return{code:'APP_REPLACEMENT_CODESIGN_FAILED',detail};
+  if(s.includes('update_target_path_changed')||s.includes('updater_restart_path_mismatch')||s.includes('updater_restart_path_missing'))return{code:'UPDATER_RESTART_PATH_MISMATCH',detail};
   if(s.includes('app_not_replaceable')||s.includes('bundle не найден')||s.includes('нет записи на том'))return{code:'APP_NOT_REPLACEABLE',detail};
+  if(s.includes('artifact_sha_mismatch')||s.includes('manifest_sha_invalid'))return{code:'UPDATER_ARTIFACT_HASH_MISMATCH',detail};
   if(s.includes('signature')||s.includes('minisign')||s.includes('public key'))return{code:'UPDATER_SIGNATURE_INVALID',detail};
   if(s.includes('platform')||s.includes('darwin-aarch64')&&s.includes('not found'))return{code:'UPDATER_PLATFORM_NOT_FOUND',detail};
   if(stage==='check')return{code:'UPDATER_MANIFEST_FETCH_FAILED',detail};
@@ -56,8 +60,12 @@ export function classifyUpdaterError(error:unknown,stage:UpdaterStage){
 }
 
 export function updaterFailureMessage(code:string,detail:string){
-  if(code==='RUNNING_FROM_DMG')return 'VYRON запущен из установочного образа. Переместите VYRON в Applications один раз и повторите обновление.';
-  if(code==='APP_NOT_REPLACEABLE')return `Установленный VYRON.app нельзя безопасно заменить. Проверьте, что приложение находится в Applications и доступно для записи. ${detail}`;
+  if(code==='RUNNING_FROM_DMG')return 'VYRON запущен из DMG. Переместите VYRON.app в Applications.';
+  if(code==='APP_REPLACEMENT_NOT_APPLIED')return `Файл VYRON.app на диске не был заменён новой версией. Перезапуск отменён. ${detail}`;
+  if(code==='APP_REPLACEMENT_CODESIGN_FAILED')return `Новая VYRON.app не прошла codesign-проверку. Перезапуск отменён. ${detail}`;
+  if(code==='UPDATER_RESTART_PATH_MISMATCH')return `VYRON отказался запускать другую копию приложения. Проверьте путь установленного VYRON.app. ${detail}`;
+  if(code==='UPDATER_ARTIFACT_HASH_MISMATCH')return `SHA256 скачанного обновления не совпадает с manifest. Установка остановлена. ${detail}`;
+  if(code==='APP_NOT_REPLACEABLE')return `Установленный VYRON.app нельзя безопасно заменить. Проверьте, что приложение находится в Applications и доступно для замены. ${detail}`;
   if(code==='UPDATER_ARCHIVE_DOWNLOAD_FAILED')return `Не удалось скачать файл обновления с GitHub. ${detail}`;
   if(code==='UPDATER_MANIFEST_FETCH_FAILED')return `Не удалось проверить обновление. ${detail}`;
   if(code==='UPDATER_SIGNATURE_INVALID')return `Проверка подписи обновления не пройдена. ${detail}`;
