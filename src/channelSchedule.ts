@@ -94,6 +94,14 @@ function authoritativeCacheVideos(cache:ExistingCache|undefined){
   const baseline=Object.values(cache.baseline||{});
   return baseline.length?normalizeVideoArray(baseline):normalizeVideoArray(cache.videos);
 }
+function normalizeExistingCache(value:unknown):ExistingCache|undefined{
+  if(!isRecord(value)||value.version!==1)return;
+  return{version:1,updatedAt:optionalString(value.updatedAt)||'1970-01-01T00:00:00.000Z',videos:normalizeVideoArray(value.videos),baseline:normalizeBaseline(value.baseline),lastUndo:normalizeVideoArray(value.lastUndo),syncInfo:normalizeSyncInfo(value.syncInfo),lastCompleteAt:optionalString(value.lastCompleteAt),lastCompleteSyncInfo:normalizeSyncInfo(value.lastCompleteSyncInfo)}
+}
+function readLegacyExistingCache(channelId:string):ExistingCache|undefined{
+  if(!channelId||typeof localStorage==='undefined')return;
+  try{return normalizeExistingCache(JSON.parse(localStorage.getItem(existingCacheKey(channelId))||'null'))}catch{return}
+}
 export function readAuthoritativeExistingInventory(channelId:string){
   return authoritativeCacheVideos(readExistingCache(channelId)).map(cloneVideo);
 }
