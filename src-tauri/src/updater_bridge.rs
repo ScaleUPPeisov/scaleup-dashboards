@@ -121,6 +121,7 @@ fn mac_runtime_snapshot(app:&tauri::AppHandle,probe_replace:bool)->Result<serde_
     let parent_device=fs::metadata(parent).ok().map(|m|m.dev());
     let bundle_device=fs::metadata(&bundle).ok().map(|m|m.dev());
     let copies=duplicate_app_copies(&bundle);
+    let duplicate_copies=copies.len()>1;
     let canonical_bundle=canonical_text(&bundle);
     let canonical_exe=canonical_text(&exe);
     let exe_sha=sha256_file(&exe).ok();
@@ -143,7 +144,7 @@ fn mac_runtime_snapshot(app:&tauri::AppHandle,probe_replace:bool)->Result<serde_
       "bundleReplaceable":bundle_replaceable,
       "replaceProbeError":parent_probe.err(),
       "duplicateAppCopies":copies,
-      "duplicateCopies":copies.len()>1,
+      "duplicateCopies":duplicate_copies,
       "targetPlatform":if cfg!(target_arch="aarch64"){"darwin-aarch64"}else{"darwin-x86_64"},
       "signatureConfigured":true,
       "secretValuesIncluded":false
