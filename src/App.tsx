@@ -181,7 +181,51 @@ export function App(){
     return()=>{disposed=true;clearTimer();document.removeEventListener('visibilitychange',onVisibility);window.removeEventListener('online',maybeRunFresh)};
   },[booted,settings.autoCheckUpdates,bootstrapUpdater,updaterCheck]);
   useEffect(()=>{if(updaterStatus!=='AVAILABLE'||!updaterLatest)return;const identity=`${updaterLatest}:build-${updaterLatestRevision||0}`;void notifyUpdateAvailable(identity)},[updaterStatus,updaterLatest,updaterLatestRevision]);
-  useEffect(()=>{if(!booted)return;void api.updaterRuntimeIdentity().then(async runtime=>{const raw=localStorage.getItem('vyron:update-installing-target'),legacy=localStorage.getItem('vyron:update-installing-version');if(!raw&&!legacy)return;let target:{productVersion:string;buildRevision?:number;artifactSha256?:string;channel?:string;notes?:string;releaseDate?:string};try{target=raw?JSON.parse(raw):{productVersion:legacy||''}}catch{target={productVersion:legacy||''}}const versionOk=target.productVersion===runtime.productVersion,revisionRequired=target.channel==='owner-preview'||Number(target.buildRevision||0)>0,revisionOk=!revisionRequired||Number(target.buildRevision)===runtime.buildRevision;if(versionOk&&revisionOk){localStorage.setItem(VYRON_UPDATE_CELEBRATION_TARGET_KEY,runtime.productVersion);if(target.notes?.trim())localStorage.setItem(VYRON_UPDATE_CELEBRATION_NOTES_KEY,target.notes.trim());else localStorage.removeItem(VYRON_UPDATE_CELEBRATION_NOTES_KEY);if(runtime.productVersion===VYRON_MAJOR_VERSION)localStorage.setItem(VYRON_MAJOR_UPGRADE_TARGET_KEY,VYRON_MAJOR_VERSION);localStorage.removeItem('vyron:update-installing-version');localStorage.removeItem('vyron:update-installing-target');markUpdated(runtime.productVersion,runtime.buildRevision);let health=`VYRON обновлён до ${runtime.productVersion} • build ${runtime.buildRevision}.`;try{const [profiles,states]=await Promise.all([api.youtubeProfiles(),api.youtubeOauthCredentialStates()]);const ready=states.profiles.filter(x=>x.credentialState==='READY').length,reconnect=states.profiles.filter(x=>x.credentialState==='RECONNECT_REQUIRED'||x.credentialState==='MISSING').length,blocked=states.profiles.filter(x=>x.credentialState==='KEYCHAIN_BLOCKED'||x.credentialState==='RECOVERABLE_KEYCHAIN_BLOCKED').length;health+=` Каналы: ${profiles.length} • OAuth READY: ${ready} • Требуют входа: ${reconnect} • Keychain blocked: ${blocked} • Данные сохранены: ✓`;if(states.youtubeApiRequests!==0||states.keychainSecretReads!==0)throw new Error('POST_UPDATE_PASSIVE_AUDIT_SIDE_EFFECT_DETECTED')}catch(e){health+=` Данные сохранены: ✓ • OAuth health: откройте «Аккаунты» для пассивной проверки. ${String(e).includes('SIDE_EFFECT')?'Пассивный аудит остановлен.':''}`}notifySuccess('VYRON обновлён',health,{operationId:`update-installed:${runtime.productVersion}:build-${runtime.buildRevision}`});return}localStorage.removeItem('vyron:update-installing-version');localStorage.removeItem('vyron:update-installing-target');const detail=`POST_UPDATE_BUILD_MISMATCH: expectedVersion=${target.productVersion}; expectedBuild=${target.buildRevision??'n/a'}; runtimeVersion=${runtime.productVersion}; runtimeBuild=${runtime.buildRevision}`;useUpdaterRuntime.setState({status:'ERROR',errorCode:'POST_UPDATE_BUILD_MISMATCH',errorMessage:detail,currentVersion:runtime.productVersion,currentBuildRevision:runtime.buildRevision});notifyError('Обновление не подтверждено',`После перезапуска ожидался ${target.productVersion} • build ${target.buildRevision??'—'}, но запущен ${runtime.productVersion} • build ${runtime.buildRevision}.`,{operationId:`update-build-mismatch:${target.productVersion}:${target.buildRevision}:${runtime.buildRevision}`})}).catch(()=>{})},[booted,markUpdated]);
+  useEffect(()=>{
+    if(!booted)return;
+    void api.updaterRuntimeIdentity().then(async runtime=>{
+      const raw=localStorage.getItem('vyron:update-installing-target'),legacy=localStorage.getItem('vyron:update-installing-version');
+      if(!raw&&!legacy)return;
+      let target:{
+        productVersion:string;buildRevision?:number;artifactSha256?:string;channel?:string;notes?:string;releaseDate?:string;
+        expectedAppBundlePath?:string;expectedAppBundleCanonicalPath?:string;previousExecutableSha256?:string;
+        installedExecutableSha256?:string;installedExecutablePath?:string;installedVerified?:boolean;installFailure?:string;relaunchFailure?:string
+      };
+      try{target=raw?JSON.parse(raw):{productVersion:legacy||''}}catch{target={productVersion:legacy||''}}
+      const runtimeDiag=await api.updaterRuntimeDiagnostics().catch(()=>undefined);
+      const expectedBundlePath=target.expectedAppBundlePath||runtime.currentAppBundlePath||runtimeDiag?.currentAppBundlePath||'';
+      const verifiedTarget=expectedBundlePath?await api.updaterVerifyInstalledTarget(target.productVersion,expectedBundlePath,target.previousExecutableSha256||'').catch(()=>undefined):undefined;
+      const expectedCanonical=target.expectedAppBundleCanonicalPath||verifiedTarget?.destinationAppBundleCanonicalPath||expectedBundlePath;
+      const installedSha=target.installedExecutableSha256||verifiedTarget?.installedExecutableSha256||'';
+      const runtimePath=runtime.currentAppBundleCanonicalPath||runtime.currentAppBundlePath||runtimeDiag?.currentAppBundleCanonicalPath||runtimeDiag?.currentAppBundlePath||'';
+      const runtimeSha=runtime.currentExecutableSha256||runtimeDiag?.currentExecutableSha256||'';
+      const versionOk=target.productVersion===runtime.productVersion;
+      const revisionRequired=target.channel==='owner-preview'||Number(target.buildRevision||0)>0;
+      const revisionOk=!revisionRequired||Number(target.buildRevision)===runtime.buildRevision;
+      const pathOk=Boolean(expectedCanonical&&runtimePath&&expectedCanonical===runtimePath);
+      const shaOk=Boolean(installedSha&&runtimeSha&&installedSha.toLowerCase()===runtimeSha.toLowerCase());
+      if(versionOk&&revisionOk&&pathOk&&shaOk){
+        localStorage.setItem(VYRON_UPDATE_CELEBRATION_TARGET_KEY,runtime.productVersion);
+        if(target.notes?.trim())localStorage.setItem(VYRON_UPDATE_CELEBRATION_NOTES_KEY,target.notes.trim());else localStorage.removeItem(VYRON_UPDATE_CELEBRATION_NOTES_KEY);
+        if(runtime.productVersion===VYRON_MAJOR_VERSION)localStorage.setItem(VYRON_MAJOR_UPGRADE_TARGET_KEY,VYRON_MAJOR_VERSION);
+        localStorage.removeItem('vyron:update-installing-version');
+        localStorage.removeItem('vyron:update-installing-target');
+        markUpdated(runtime.productVersion,runtime.buildRevision);
+        let health=`VYRON обновлён до ${runtime.productVersion} • build ${runtime.buildRevision} • path ✓ • SHA256 ✓.`;
+        try{
+          const [profiles,states]=await Promise.all([api.youtubeProfiles(),api.youtubeOauthCredentialStates()]);
+          const ready=states.profiles.filter(x=>x.credentialState==='READY').length,reconnect=states.profiles.filter(x=>x.credentialState==='RECONNECT_REQUIRED'||x.credentialState==='MISSING').length,blocked=states.profiles.filter(x=>x.credentialState==='KEYCHAIN_BLOCKED'||x.credentialState==='RECOVERABLE_KEYCHAIN_BLOCKED').length;
+          health+=` Каналы: ${profiles.length} • OAuth READY: ${ready} • Требуют входа: ${reconnect} • Keychain blocked: ${blocked} • Данные сохранены: ✓`;
+          if(states.youtubeApiRequests!==0||states.keychainSecretReads!==0)throw new Error('POST_UPDATE_PASSIVE_AUDIT_SIDE_EFFECT_DETECTED')
+        }catch(e){health+=` Данные сохранены: ✓ • OAuth health: откройте «Аккаунты» для пассивной проверки. ${String(e).includes('SIDE_EFFECT')?'Пассивный аудит остановлен.':''}`}
+        notifySuccess('VYRON обновлён',health,{operationId:`update-installed:${runtime.productVersion}:build-${runtime.buildRevision}`});
+        return
+      }
+      const detail=`POST_UPDATE_IDENTITY_MISMATCH: expectedVersion=${target.productVersion}; runtimeVersion=${runtime.productVersion}; expectedPath=${expectedCanonical||'n/a'}; runtimePath=${runtimePath||'n/a'}; expectedSha=${installedSha||'n/a'}; runtimeSha=${runtimeSha||'n/a'}; installFailure=${target.installFailure||'none'}; relaunchFailure=${target.relaunchFailure||'none'}`;
+      useUpdaterRuntime.setState({status:'ERROR',errorCode:'POST_UPDATE_IDENTITY_MISMATCH',errorMessage:detail,currentVersion:runtime.productVersion,currentBuildRevision:runtime.buildRevision});
+      notifyError('Обновление не подтверждено',`Ожидался VYRON ${target.productVersion}. Запущен ${runtime.productVersion}. Путь: ${runtimePath||'не определён'}. Диагностика обновления сохранена.`,{operationId:`update-identity-mismatch:${target.productVersion}:${runtime.productVersion}`})
+    }).catch(()=>{})
+  },[booted,markUpdated]);
   useEffect(()=>{document.documentElement.classList.toggle('reduceMotion',settings.reduceMotion)},[settings.reduceMotion]);
   useEffect(()=>{const mac=/Macintosh|Mac OS X/.test(navigator.userAgent);document.documentElement.classList.toggle('platform-macos',mac);return()=>document.documentElement.classList.remove('platform-macos')},[]);
   useEffect(()=>{document.documentElement.classList.toggle('compactDensity',(settings.interfaceDensity||'compact')==='compact');document.documentElement.classList.toggle('comfortableDensity',settings.interfaceDensity==='comfortable')},[settings.interfaceDensity]);
