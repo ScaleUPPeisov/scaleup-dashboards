@@ -70,14 +70,18 @@ export type ExistingVideoSyncResult={channelId?:string;channelTitle?:string;yout
 export type ExistingVideoTargetedRetryResult={requestedIds:string[];videosHydrated:number;missingHydrationCount:number;missingHydrationIds:string[];scheduleDataIncompleteCount:number;scheduleIncompleteIds:string[];hydrationErrors:string[];apiRequests:number;complete:boolean;scheduleComplete:boolean;videos:import('./types').YoutubeExistingVideo[]};
 export type YoutubeScheduleUpdateResult={id:string;verified:boolean;skipped:boolean;skipReason?:'ALREADY_PUBLISHED'|'ALREADY_CORRECT'|'UNSUPPORTED_STATE'|null;scheduleAccepted:boolean;scheduleVerified:boolean;metadataPreserved:boolean;statusPreserved:boolean;snippetWrites:0;thumbnailWrites:0;playlistWrites:0;videosInsert:0;mismatches?:string[];before?:{publishAt?:string|null;privacyStatus?:string;snippet?:Record<string,unknown>;preservedStatus?:Record<string,unknown>};actual?:{publishAt?:string|null;privacyStatus?:string;snippet?:Record<string,unknown>;preservedStatus?:Record<string,unknown>}};
 export type CompetitorCandidate={channelId:string;name:string;url:string;handle?:string;publishedAt?:string;country?:string;thumbnail?:string;subscribers?:number;views?:number;videos?:number;similarity:number};
-export type UpdaterRuntimeIdentity={productVersion:string;buildRevision:number;commit:string;channel:'stable'|'owner-preview'|string;bundleId:string};
+export type UpdaterAppCopy={path:string;canonicalPath?:string;exists:boolean;version?:string|null;bundleId?:string|null;executablePath?:string;executableSha256?:string|null;isRunningTarget?:boolean};
+export type UpdaterRuntimeIdentity={productVersion:string;buildRevision:number;commit:string;channel:'stable'|'owner-preview'|string;bundleId:string;targetPlatform?:string;currentExecutablePath?:string;currentExecutableCanonicalPath?:string;currentExecutableSha256?:string;currentAppBundlePath?:string;currentAppBundleCanonicalPath?:string;runningLocation?:'system-applications'|'user-applications'|'mounted-dmg'|'other'|string;duplicateCopies?:boolean};
 export type OwnerPreviewCheck={available:boolean;productVersion:string;announcedVersion?:string;currentBuildRevision:number;latestBuildRevision:number;notes?:string;date?:string;artifactUrl?:string;endpoint:string;channel:'owner-preview'};
 export type OwnerPreviewDownload={downloaded:true;announcedVersion:string;targetBuildRevision:number;artifactSha256:string;signatureVerified:true;channel:'owner-preview'};
 export type OwnerPreviewInstall={installed:true;productVersion:string;targetBuildRevision:number;artifactSha256:string;signatureVerified:true;channel:'owner-preview'};
 export type OwnerPreviewProgress={chunkBytes:number;totalBytes?:number|null;targetBuildRevision:number};
+export type StableUpdaterCheck={available:boolean;currentVersion:string;latestVersion:string;date?:string;body?:string;target?:string;artifactUrl?:string;expectedArtifactSha256?:string|null;manifestSignatureSha256?:string;channel:'stable'};
+export type StableUpdaterDownload={downloaded:true;targetVersion:string;downloadedArtifactSha256:string;expectedManifestSha256?:string|null;manifestSignatureSha256:string;artifactUrl:string;runningAppPath:string;currentExecutableSha256:string;signatureVerified:true};
+export type UpdaterInstalledTarget={verified:true;destinationAppBundlePath:string;destinationAppBundleCanonicalPath:string;installedVersion:string;bundleId:string;installedExecutablePath:string;installedExecutableSha256:string;previousExecutableSha256:string;codesignVerified:true;downloadedArtifactSha256?:string;expectedManifestSha256?:string|null;manifestSignatureSha256?:string;artifactUrl?:string};
 export type UpdaterTransferProgress={status:'DOWNLOADING'|'VERIFYING';percent:number;downloadedBytes:number;totalBytes:number};
-export type UpdaterInstallPreflight={currentExecutablePath:string;currentAppBundlePath?:string|null;underApplications:boolean;runningFromDmg:boolean;bundleReplaceable:boolean;currentVersion:string;bundleId:string;targetPlatform:string;signatureConfigured:boolean;secretValuesIncluded:false};
-export type CheckedUpdaterCandidate={none:false;version:string;date?:string;body:string;current:string;latest:string;status:'AVAILABLE';endpoint:string;versionComparison:string;buildRevision?:number;currentBuildRevision?:number;artifactSha256?:string;channel?:string;download:(onProgress?:(p:UpdaterTransferProgress)=>void)=>Promise<void>;install:(onStatus?:(s:'VERIFYING'|'INSTALLING'|'READY_TO_RESTART')=>void)=>Promise<void>;restart:()=>Promise<void>};
+export type UpdaterInstallPreflight={currentExecutablePath:string;currentExecutableCanonicalPath?:string;currentExecutableSha256?:string|null;currentAppBundlePath?:string|null;currentAppBundleCanonicalPath?:string|null;bundleVersion?:string|null;bundleParentDirectory?:string;volumeDevice?:number|null;parentVolumeDevice?:number|null;writableParent?:boolean;underApplications:boolean;runningLocation?:'system-applications'|'user-applications'|'mounted-dmg'|'other'|string;runningFromDmg:boolean;bundleReplaceable:boolean;replaceProbeError?:string|null;duplicateAppCopies?:UpdaterAppCopy[];duplicateCopies?:boolean;currentVersion:string;bundleId:string;targetPlatform:string;signatureConfigured:boolean;secretValuesIncluded:false};
+export type CheckedUpdaterCandidate={none:false;version:string;date?:string;body:string;current:string;latest:string;status:'AVAILABLE';endpoint:string;versionComparison:string;buildRevision?:number;currentBuildRevision?:number;artifactSha256?:string;channel?:string;download:(onProgress?:(p:UpdaterTransferProgress)=>void)=>Promise<void>;install:(onStatus?:(s:'VERIFYING'|'INSTALLING'|'READY_TO_RESTART')=>void)=>Promise<UpdaterInstalledTarget|void>;restart:(exactBundlePath?:string)=>Promise<void>};
 export type NoUpdaterCandidate={none:true;current:string;latest:string;status:'UP_TO_DATE';endpoint:string;versionComparison:string;buildRevision?:number;currentBuildRevision?:number;channel?:string};
 export type CheckedUpdater=CheckedUpdaterCandidate|NoUpdaterCandidate;
 export const METHOD_LEDGER_COMMANDS=new Set(['youtube_oauth_profile_health','youtube_channel_statistics','youtube_channel_statistics_batch','youtube_upload_video','youtube_list_existing_videos','youtube_retry_existing_video_hydration','youtube_video_processing_status','youtube_video_processing_status_batch','youtube_backup_existing_videos','youtube_update_existing_video','youtube_update_existing_schedule','youtube_list_playlists','youtube_playlist_membership','youtube_set_thumbnail']);
@@ -221,10 +225,44 @@ export const api={
   onYoutubeApiRequest:(cb:(data:YoutubeApiRequestEvent)=>void)=>listen<YoutubeApiRequestEvent>('youtube-api-request',e=>{recordYoutubeApiRequest(e.payload);cb(e.payload)}),
   appVersion:()=>getVersion(),
   updaterRuntimeIdentity:()=>invoke<UpdaterRuntimeIdentity>('updater_runtime_identity'),
+  updaterRuntimeDiagnostics:()=>invoke<UpdaterInstallPreflight>('updater_runtime_diagnostics'),
   updaterInstallPreflight:()=>invoke<UpdaterInstallPreflight>('updater_install_preflight'),
+  updaterVerifyInstalledTarget:(expectedVersion:string,expectedBundlePath:string,previousExecutableSha256:string)=>invoke<UpdaterInstalledTarget>('updater_verify_installed_target',{expectedVersion,expectedBundlePath,previousExecutableSha256}),
+  updaterRelaunchExact:(bundlePath:string)=>invoke<void>('updater_relaunch_exact',{bundlePath}),
   checkUpdate:async():Promise<CheckedUpdater>=>{
     const identity=await invoke<UpdaterRuntimeIdentity>('updater_runtime_identity');
     const current=identity.productVersion||await getVersion();
+    if(identity.channel!=='owner-preview'&&identity.targetPlatform?.startsWith('darwin')){
+      let stable:StableUpdaterCheck;
+      try{stable=await invoke<StableUpdaterCheck>('updater_stable_check')}catch(error){const x=classifyUpdaterError(error,'check');throw new Error(`${x.code}: ${updaterFailureMessage(x.code,x.detail)}`)}
+      if(!stable.available)return {none:true,current,latest:current,status:'UP_TO_DATE',endpoint:UPDATER_ENDPOINTS[0],versionComparison:updaterVersionStatus(current,current),currentBuildRevision:identity.buildRevision,channel:identity.channel};
+      let downloaded=0,total=0,downloadResult:StableUpdaterDownload|undefined,installed:UpdaterInstalledTarget|undefined;
+      return {none:false,version:stable.latestVersion,date:stable.date,body:stable.body||'',current,latest:stable.latestVersion,status:'AVAILABLE',endpoint:UPDATER_ENDPOINTS[0],versionComparison:updaterVersionStatus(current,stable.latestVersion),currentBuildRevision:identity.buildRevision,artifactSha256:stable.expectedArtifactSha256||undefined,channel:identity.channel,
+        download:async(onProgress?:(p:UpdaterTransferProgress)=>void)=>{
+          await invoke<string>('prepare_updater_tempdir');
+          const stop=await listen<{chunkBytes:number;totalBytes?:number|null;targetVersion:string}>('stable-update-progress',e=>{
+            const chunk=Math.max(0,Number(e.payload.chunkBytes||0));total=Math.max(total,Number(e.payload.totalBytes||0));downloaded+=chunk;
+            onProgress?.({status:'DOWNLOADING',percent:total>0?Math.min(100,downloaded/total*100):0,downloadedBytes:downloaded,totalBytes:total});
+          });
+          try{downloadResult=await invoke<StableUpdaterDownload>('updater_stable_download');onProgress?.({status:'VERIFYING',percent:100,downloadedBytes:downloaded||total,totalBytes:total});if(!downloadResult.signatureVerified)throw new Error('UPDATER_SIGNATURE_INVALID: stable updater signature not verified')}
+          catch(error){const x=classifyUpdaterError(error,'download');throw new Error(`${x.code}: ${updaterFailureMessage(x.code,x.detail)}`)}
+          finally{stop()}
+        },
+        install:async(onStatus?:(s:'VERIFYING'|'INSTALLING'|'READY_TO_RESTART')=>void)=>{
+          onStatus?.('VERIFYING');onStatus?.('INSTALLING');
+          try{
+            installed=await invoke<UpdaterInstalledTarget>('updater_stable_install',{expectedVersion:stable.latestVersion});
+            if(!installed.verified)throw new Error('APP_REPLACEMENT_NOT_APPLIED: on-disk verification did not pass');
+          }catch(error){const x=classifyUpdaterError(error,'install');throw new Error(`${x.code}: ${updaterFailureMessage(x.code,x.detail)}`)}
+          onStatus?.('READY_TO_RESTART');return installed;
+        },
+        restart:async(exactBundlePath?:string)=>{
+          const path=exactBundlePath||installed?.destinationAppBundlePath||downloadResult?.runningAppPath;
+          if(!path)throw new Error('UPDATER_RESTART_PATH_MISSING: exact updated VYRON.app path is unavailable');
+          try{await invoke<void>('updater_relaunch_exact',{bundlePath:path})}catch(error){const x=classifyUpdaterError(error,'relaunch');throw new Error(`${x.code}: ${updaterFailureMessage(x.code,x.detail)}`)}
+        }
+      };
+    }
     if(identity.channel==='owner-preview'){
       let preview:OwnerPreviewCheck;
       try{preview=await invoke<OwnerPreviewCheck>('updater_owner_preview_check')}catch(error){const x=classifyUpdaterError(error,'check');throw new Error(`${x.code}: ${updaterFailureMessage(x.code,x.detail)}`)}
@@ -246,7 +284,7 @@ export const api={
           try{await invoke<OwnerPreviewInstall>('updater_owner_preview_install')}catch(error){const x=classifyUpdaterError(error,'install');throw new Error(`${x.code}: ${updaterFailureMessage(x.code,x.detail)}`)}
           onStatus?.('READY_TO_RESTART');
         },
-        restart:async()=>{try{await relaunch()}catch(error){const x=classifyUpdaterError(error,'relaunch');throw new Error(`${x.code}: ${updaterFailureMessage(x.code,x.detail)}`)}}
+        restart:async(_exactBundlePath?:string)=>{try{await relaunch()}catch(error){const x=classifyUpdaterError(error,'relaunch');throw new Error(`${x.code}: ${updaterFailureMessage(x.code,x.detail)}`)}}
       };
     }
     let update:any;
@@ -269,7 +307,7 @@ export const api={
         try{await update.install()}catch(error){const x=classifyUpdaterError(error,'install');throw new Error(`${x.code}: ${updaterFailureMessage(x.code,x.detail)}`)}
         onStatus?.('READY_TO_RESTART');
       },
-      restart:async()=>{try{await relaunch()}catch(error){const x=classifyUpdaterError(error,'relaunch');throw new Error(`${x.code}: ${updaterFailureMessage(x.code,x.detail)}`)}}
+      restart:async(_exactBundlePath?:string)=>{try{await relaunch()}catch(error){const x=classifyUpdaterError(error,'relaunch');throw new Error(`${x.code}: ${updaterFailureMessage(x.code,x.detail)}`)}}
     };
   }
 };
