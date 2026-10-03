@@ -53,7 +53,12 @@ function storageWriteError(error:unknown):StorageWriteResult{
   const name=String((error as any)?.name||''),message=String((error as any)?.message||error||'storage write failed');
   return{ok:false,errorCode:name==='QuotaExceededError'||/quota/i.test(message)?'STORAGE_QUOTA_EXCEEDED':'STORAGE_WRITE_FAILED',error:message}
 }
-function normalizeSyncInfo(value:unknown){return value===null||isRecord(value)?value:null}
+function normalizeSyncInfo(value:unknown){
+  if(value===null)return null;
+  if(!isRecord(value))return null;
+  const {videos:_videos,...compact}=value;
+  return compact;
+}
 export function scheduleSyncTruthFromInfo(value:unknown):ScheduleSyncTruth{
   if(!isRecord(value))return'unknown';
   if(value.scheduleComplete===true)return'complete';
@@ -66,9 +71,8 @@ export function futureScheduledVideos(videos:YoutubeExistingVideo[],nowMs=Date.n
 }
 function authoritativeCacheVideos(cache:ExistingCache|undefined){
   if(!cache)return[] as YoutubeExistingVideo[];
-  const videos=normalizeVideoArray(cache.videos);
-  if(videos.length)return videos;
-  return normalizeVideoArray(Object.values(cache.baseline||{}));
+  const baseline=Object.values(cache.baseline||{});
+  return baseline.length?normalizeVideoArray(baseline):normalizeVideoArray(cache.videos);
 }
 export function readAuthoritativeExistingInventory(channelId:string){
   return authoritativeCacheVideos(readExistingCache(channelId)).map(cloneVideo);
