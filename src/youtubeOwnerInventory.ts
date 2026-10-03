@@ -1,10 +1,11 @@
 import {api} from './api';
 import {readAuthoritativeExistingSnapshot,readExistingCache,replaceExistingCacheFromSync,scheduleSyncTruthFromInfo} from './channelSchedule';
+import {deriveRunwayRecord} from './channelRunwayCore';
 import type {Channel,YoutubeExistingVideo} from './types';
 import {markYoutubeCache} from './youtubeCache';
 import {bindYoutubeQuotaTraceContext,youtubeOperationActualCost,youtubeQuotaState,youtubeQuotaUsage} from './youtubeQuota';
 import {classifyYoutubeChannels} from './youtubeStatisticsCenter';
-import {upsertChannelRunwayFromYoutube} from './channelRunwayStore';
+import {loadChannelRunwayStore,upsertChannelRunwayFromYoutube} from './channelRunwayStore';
 
 export const OWNER_INVENTORY_TTL_MS=6*60*60*1000;
 export const OWNER_INVENTORY_EVENT='vyron:owner-inventory-refresh';
@@ -116,7 +117,7 @@ export function ownerInventoryCacheStale(channelId:string,nowMs=Date.now(),ttlMs
   return !Number.isFinite(at)||nowMs-at>=ttlMs
 }
 
-export type OwnerInventoryFleetStatus='UPDATED'|'UNLINKED'|'MISMATCH'|'DUPLICATE'|'OAUTH_BLOCKED'|'API_FAILED'|'QUOTA_STOPPED'|'FRESH_CACHE';
+export type OwnerInventoryFleetStatus='UPDATED'|'UNLINKED'|'MISMATCH'|'DUPLICATE'|'OAUTH_BLOCKED'|'API_FAILED'|'PERSISTENCE_FAILED'|'QUOTA_STOPPED'|'FRESH_CACHE';
 export type OwnerInventoryRefreshRow={
   channelId:string;channelName:string;status:OwnerInventoryFleetStatus;
   profileId?:string;youtubeChannelId?:string;apiRequests:number;quotaUnits:number;error?:string;
@@ -130,7 +131,7 @@ export type OwnerInventoryRefreshSummary={
 const BLOCKED_OWNER_CREDENTIAL_STATES=new Set(['NEEDS_ONE_TIME_LOCAL_MIGRATION','CANONICAL_PRESENT_UNVERIFIED','CHECK_ON_USE','RECOVERABLE','KEYCHAIN_BLOCKED','RECONNECT_REQUIRED','MISSING','WRONG_CHANNEL','FAILED','KEYCHAIN_ERROR']);
 
 function emptyOwnerCounts():Record<OwnerInventoryFleetStatus,number>{
-  return{UPDATED:0,UNLINKED:0,MISMATCH:0,DUPLICATE:0,OAUTH_BLOCKED:0,API_FAILED:0,QUOTA_STOPPED:0,FRESH_CACHE:0}
+  return{UPDATED:0,UNLINKED:0,MISMATCH:0,DUPLICATE:0,OAUTH_BLOCKED:0,API_FAILED:0,PERSISTENCE_FAILED:0,QUOTA_STOPPED:0,FRESH_CACHE:0}
 }
 function duplicateExtraChannelIds(channels:Channel[],profiles:Awaited<ReturnType<typeof api.youtubeProfiles>>){
   const classification=classifyYoutubeChannels(channels,profiles),extras=new Set<string>();
@@ -143,7 +144,7 @@ function duplicateExtraChannelIds(channels:Channel[],profiles:Awaited<ReturnType
 function pushOwnerRow(summary:OwnerInventoryRefreshSummary,row:OwnerInventoryRefreshRow){
   summary.rows.push(row);summary.counts[row.status]++;
   if(row.status==='UPDATED')summary.updated++;
-  else if(row.status==='API_FAILED')summary.failed++;
+  else if(row.status==='API_FAILED'||row.status==='PERSISTENCE_FAILED')summary.failed++;
   else if(row.status==='FRESH_CACHE')summary.skippedFresh++;
   else if(row.status==='UNLINKED'||row.status==='MISMATCH'||row.status==='DUPLICATE'||row.status==='OAUTH_BLOCKED')summary.skippedUnlinked++;
 }
@@ -187,15 +188,33 @@ export async function refreshOwnerInventoriesAuthoritative(
     bindYoutubeQuotaTraceContext(operationId,{reason:'OWNER_INVENTORY_REFRESH',channelIds:[channel.id],mode:force?'MANUAL':'BACKGROUND',estimatedUnits});
     try{
       const result=await api.youtubeListExisting(linked.profile.id,5000,operationId);
-      const actual=youtubeOperationActualCost(operationId),apiRequests=Object.values(actual.methods).reduce((n,x)=>n+x.calls,0),quotaUnits=actual.buckets.general;
+      const backendApi=Number(result.fullSyncApiRequests),backendQuota=Number(result.fullSyncEstimatedQuotaCost);
+      const fallback=!Number.isFinite(backendApi)||backendApi<1?youtubeOperationActualCost(operationId):null;
+      const apiRequests=Number.isFinite(backendApi)&&backendApi>=1?backendApi:Object.values(fallback?.methods||{}).reduce((n:number,x:any)=>n+Number(x.calls||0),0);
+      const quotaUnits=Number.isFinite(backendQuota)&&backendQuota>=0?backendQuota:Number(fallback?.buckets.general||apiRequests);
       summary.apiRequests+=apiRequests;summary.quotaUnits+=quotaUnits;
-      replaceExistingCacheFromSync(channel.id,result.videos||[],result);
+      if(result.channelId&&String(result.channelId)!==String(linked.youtubeChannelId)){
+        pushOwnerRow(summary,{channelId:channel.id,channelName:channel.name,status:'API_FAILED',profileId:linked.profile.id,youtubeChannelId:linked.youtubeChannelId,apiRequests,quotaUnits,error:'AUTHORITATIVE_CHANNEL_ID_MISMATCH'});
+        continue
+      }
+      const cache=replaceExistingCacheFromSync(channel.id,result.videos||[],result);
+      if(!cache.persisted){
+        pushOwnerRow(summary,{channelId:channel.id,channelName:channel.name,status:'PERSISTENCE_FAILED',profileId:linked.profile.id,youtubeChannelId:linked.youtubeChannelId,apiRequests,quotaUnits,error:`Данные YouTube получены, но VYRON не смог сохранить их локально. API повторно не запускайте. Ошибка: ${cache.persistErrorCode||'STORAGE_WRITE_FAILED'}`});
+        continue
+      }
       markYoutubeCache('existing',channel.id);
       if(!(result.syncComplete??result.complete)){
         pushOwnerRow(summary,{channelId:channel.id,channelName:channel.name,status:'API_FAILED',profileId:linked.profile.id,youtubeChannelId:linked.youtubeChannelId,apiRequests,quotaUnits,error:'AUTHORITATIVE_INVENTORY_INCOMPLETE'});
         continue
       }
-      upsertChannelRunwayFromYoutube(channel,result.videos||[],new Date());
+      const now=new Date(),expected=deriveRunwayRecord(channel,result.videos||[],now,now.toISOString(),true);
+      const runwayWrite=upsertChannelRunwayFromYoutube(channel,result.videos||[],now);
+      const persisted=loadChannelRunwayStore().channels[channel.id];
+      const readbackOk=runwayWrite.ok&&Boolean(persisted)&&persisted.channelId===channel.id&&Boolean(persisted.lastScheduleSync)&&persisted.scheduledVideoCount===expected.scheduledVideoCount&&persisted.scheduledUntil===expected.scheduledUntil;
+      if(!readbackOk){
+        pushOwnerRow(summary,{channelId:channel.id,channelName:channel.name,status:'PERSISTENCE_FAILED',profileId:linked.profile.id,youtubeChannelId:linked.youtubeChannelId,apiRequests,quotaUnits,error:`Данные YouTube получены, но VYRON не смог сохранить их локально. API повторно не запускайте. Ошибка: ${runwayWrite.errorCode||'STORAGE_READBACK_FAILED'}`});
+        continue
+      }
       pushOwnerRow(summary,{channelId:channel.id,channelName:channel.name,status:'UPDATED',profileId:linked.profile.id,youtubeChannelId:linked.youtubeChannelId,apiRequests,quotaUnits});
     }catch(error){
       const actual=youtubeOperationActualCost(operationId),apiRequests=Object.values(actual.methods).reduce((n,x)=>n+x.calls,0),quotaUnits=actual.buckets.general;
