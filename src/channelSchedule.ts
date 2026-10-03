@@ -1,7 +1,8 @@
 import type {Channel,YoutubeExistingVideo} from './types';
 import {api} from './api';
 export type ExistingCache={version:1;updatedAt:string;videos:YoutubeExistingVideo[];baseline:Record<string,YoutubeExistingVideo>;lastUndo:YoutubeExistingVideo[];syncInfo:any;lastCompleteAt?:string;lastCompleteSyncInfo?:any};
-export type StorageWriteResult={ok:boolean;errorCode?:'STORAGE_UNAVAILABLE'|'STORAGE_QUOTA_EXCEEDED'|'STORAGE_WRITE_FAILED'|'STORAGE_READBACK_FAILED';error?:string;bytes?:number};
+export type StorageWriteResult={ok:boolean;errorCode?:'STORAGE_UNAVAILABLE'|'STORAGE_QUOTA_EXCEEDED'|'STORAGE_WRITE_FAILED'|'STORAGE_READBACK_FAILED'|'INVENTORY_STORAGE_CORRUPT';error?:string;bytes?:number};
+export type InventoryMigrationSummary={scanned:number;migrated:number;failed:number;removedLegacy:number;apiRequests:0;failures:Array<{channelId:string;error:string}>};
 export type ScheduleMode='interval'|'pattern';
 export type SchedulePattern={publishDays:number;pauseDays:number;anchorDate:string};
 export type ScheduleSyncTruth='complete'|'incomplete'|'unknown';
@@ -9,6 +10,9 @@ export type ChannelScheduleState={channelId:string;lastPublishedAt?:string;lastS
 export type PatternCalendarDay={date:string;kind:'video'|'pause'|'occupied';publishSlot:boolean;occupied:boolean};
 const EVENT='vyron-channel-schedule-changed';
 export const existingCacheKey=(channelId:string)=>`vyron:existing-cache:v1:${channelId}`;
+export const existingCacheSummaryKey=(channelId:string)=>`vyron:existing-cache-index:v2:${channelId}`;
+const NATIVE_INVENTORY_SCHEMA_VERSION=2;
+const nativeExistingCacheMemory=new Map<string,ExistingCache>();
 const isRecord=(x:unknown):x is Record<string,unknown>=>Boolean(x)&&typeof x==='object'&&!Array.isArray(x);
 const optionalString=(x:unknown)=>typeof x==='string'&&x.trim()?x:undefined;
 function normalizeExistingVideo(value:unknown,index=0):YoutubeExistingVideo|undefined{
