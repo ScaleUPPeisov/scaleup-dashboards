@@ -459,13 +459,7 @@ jobs:
               cd ..
               gh api "repos/$RELEASE_REPO/contents/updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 -d >/tmp/baseline-latest.json
               gh api "repos/$RELEASE_REPO/contents/updates/windows-latest.json?ref=main" --jq .content | tr -d '\n' | base64 -d >/tmp/baseline-windows.json
-              python3 - <<'PY'
-              import json
-              a=json.load(open('/tmp/baseline-latest.json'));w=json.load(open('/tmp/baseline-windows.json'))
-              assert a['version']=='6.1.1',a['version']
-              assert w['version']=='6.1.1',w['version']
-              print('SAME_VERSION_BASELINE_6_1_1=PASS')
-              PY
+              python3 -c "import json; a=json.load(open('/tmp/baseline-latest.json')); w=json.load(open('/tmp/baseline-windows.json')); assert a['version']=='6.1.1',a['version']; assert w['version']=='6.1.1',w['version']; print('SAME_VERSION_BASELINE_6_1_1=PASS')"
               gh release edit "$TAG" --repo "$RELEASE_REPO" --prerelease
             fi
           fi
