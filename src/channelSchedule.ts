@@ -1,4 +1,5 @@
 import type {Channel,YoutubeExistingVideo} from './types';
+import {api} from './api';
 export type ExistingCache={version:1;updatedAt:string;videos:YoutubeExistingVideo[];baseline:Record<string,YoutubeExistingVideo>;lastUndo:YoutubeExistingVideo[];syncInfo:any;lastCompleteAt?:string;lastCompleteSyncInfo?:any};
 export type StorageWriteResult={ok:boolean;errorCode?:'STORAGE_UNAVAILABLE'|'STORAGE_QUOTA_EXCEEDED'|'STORAGE_WRITE_FAILED'|'STORAGE_READBACK_FAILED';error?:string;bytes?:number};
 export type ScheduleMode='interval'|'pattern';
