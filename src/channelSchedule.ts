@@ -1,5 +1,6 @@
 import type {Channel,YoutubeExistingVideo} from './types';
-import {api} from './api';
+import {readExistingInventoryMemory,loadExistingInventory,writeExistingInventory,deleteExistingInventory} from './existingInventoryNative';
+import {migrateLegacyExistingInventories,hydrateExistingInventories} from './existingInventoryMigration';
 export type ExistingCache={version:1;updatedAt:string;videos:YoutubeExistingVideo[];baseline:Record<string,YoutubeExistingVideo>;lastUndo:YoutubeExistingVideo[];syncInfo:any;lastCompleteAt?:string;lastCompleteSyncInfo?:any};
 export type StorageWriteResult={ok:boolean;errorCode?:'STORAGE_UNAVAILABLE'|'STORAGE_QUOTA_EXCEEDED'|'STORAGE_WRITE_FAILED'|'STORAGE_READBACK_FAILED'|'INVENTORY_STORAGE_CORRUPT';error?:string;bytes?:number};
 export type InventoryMigrationSummary={scanned:number;migrated:number;failed:number;removedLegacy:number;apiRequests:0;failures:Array<{channelId:string;error:string}>};
@@ -106,35 +107,16 @@ export function readAuthoritativeExistingInventory(channelId:string){
   return authoritativeCacheVideos(readExistingCache(channelId)).map(cloneVideo);
 }
 export function readExistingCache(channelId:string):ExistingCache|undefined{
-  if(!channelId)return;
-  try{
-    const key=existingCacheKey(channelId),raw=localStorage.getItem(key),x=JSON.parse(raw||'null');
-    if(!isRecord(x)||x.version!==1)return;
-    const cache:ExistingCache={version:1,updatedAt:optionalString(x.updatedAt)||'1970-01-01T00:00:00.000Z',videos:normalizeVideoArray(x.videos),baseline:normalizeBaseline(x.baseline),lastUndo:normalizeVideoArray(x.lastUndo),syncInfo:normalizeSyncInfo(x.syncInfo),lastCompleteAt:optionalString(x.lastCompleteAt),lastCompleteSyncInfo:normalizeSyncInfo(x.lastCompleteSyncInfo)};
-    // One-time, idempotent compaction for legacy v1 caches. Failure leaves the readable legacy payload untouched.
-    if(raw){
-      const compact:ExistingCache={...cache,baseline:compactBaselineFromVideos(Object.values(cache.baseline||{}))};
-      const compactRaw=JSON.stringify(compact);
-      if(compactRaw.length<raw.length){try{localStorage.setItem(key,compactRaw)}catch{}}
-    }
-    return cache;
-  }catch{return}
+  return readExistingInventoryMemory(channelId) as ExistingCache|undefined
 }
-export function writeExistingCache(channelId:string,x:ExistingCache):StorageWriteResult{
- if(!channelId)return{ok:false,errorCode:'STORAGE_WRITE_FAILED',error:'channelId is required'};
- if(typeof localStorage==='undefined')return{ok:false,errorCode:'STORAGE_UNAVAILABLE',error:'localStorage is unavailable'};
- try{
-  const prev=readExistingCache(channelId);
-  const payload:ExistingCache={...x,baseline:compactBaselineFromVideos(Object.values(x.baseline||{})),lastCompleteAt:x.lastCompleteAt??prev?.lastCompleteAt,lastCompleteSyncInfo:x.lastCompleteSyncInfo??prev?.lastCompleteSyncInfo};
-  const raw=JSON.stringify(payload),key=existingCacheKey(channelId);
-  localStorage.setItem(key,raw);
-  const readback=localStorage.getItem(key);
-  if(!readback)return{ok:false,errorCode:'STORAGE_READBACK_FAILED',error:'Existing Videos cache readback is empty'};
-  const parsed=JSON.parse(readback);
-  if(parsed?.version!==1||parsed?.updatedAt!==payload.updatedAt)return{ok:false,errorCode:'STORAGE_READBACK_FAILED',error:'Existing Videos cache readback mismatch'};
-  try{window.dispatchEvent(new CustomEvent(EVENT,{detail:{channelId,updatedAt:payload.updatedAt}}))}catch{}
-  return{ok:true,bytes:raw.length}
- }catch(error){return storageWriteError(error)}
+export async function loadExistingCache(channelId:string):Promise<ExistingCache|undefined>{
+  return await loadExistingInventory(channelId) as ExistingCache|undefined
+}
+export const migrateLegacyExistingCaches=migrateLegacyExistingInventories;
+export const hydrateExistingInventoryCaches=hydrateExistingInventories;
+export const deleteExistingInventoryCache=deleteExistingInventory;
+export async function writeExistingCache(channelId:string,x:ExistingCache):Promise<StorageWriteResult>{
+  return await writeExistingInventory(channelId,x) as StorageWriteResult
 }
 const cloneVideo=(v:YoutubeExistingVideo)=>({...v,tags:[...(Array.isArray(v.tags)?v.tags:[])]});
 export function mergeInventoryRowsPreservingCached(previous:YoutubeExistingVideo[],incoming:YoutubeExistingVideo[]){
