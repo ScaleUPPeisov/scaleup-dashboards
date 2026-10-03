@@ -11,6 +11,7 @@ import {appendStatisticsSnapshot,normalizeStatisticsHistory} from './youtubeStat
 import {resolvedJobStatus} from './activeErrors';
 import {performanceFixtureCounts,stripPerformanceFixtures} from './performanceFixtures';
 import {restorePublishLedgerFromUploadHistory} from './youtubePublishSafety';
+import {deleteExistingInventory} from './existingInventoryNative';
 
 export const DEFAULT_SETTINGS:Settings={
   workspace:'',renderRootPath:'',endlumePath:'',youtubeApiKey:'',autoCheckUpdates:true,reduceMotion:false,fpsMonitor:false,interfaceDensity:'compact',
@@ -141,7 +142,7 @@ export const useApp=create<Store>((set,get)=>({
     set(s=>({channels:[...s.channels,channel]}));scheduleSave();return channel;
   },
   updateChannel:(id,p)=>{set(s=>({channels:s.channels.map(c=>c.id===id?normalizeChannel({...c,...p}):c)}));scheduleSave()},
-  removeChannel:id=>{set(s=>({channels:s.channels.filter(c=>c.id!==id),jobs:s.jobs.filter(j=>j.channelId!==id),competitors:s.competitors.filter(c=>c.channelId!==id)}));scheduleSave()},
+  removeChannel:id=>{set(s=>({channels:s.channels.filter(c=>c.id!==id),jobs:s.jobs.filter(j=>j.channelId!==id),competitors:s.competitors.filter(c=>c.channelId!==id)}));scheduleSave();void deleteExistingInventory(id).catch(e=>notifyWarning('Inventory cleanup',String(e),{operationId:`inventory-delete:${id}`}))},
   setJobs:jobs=>{set({jobs:jobs.map(normalizeJob)});scheduleSave()},
   patchJob:(id,p)=>{get().patchJobsBatch([{id,patch:p}])},
   patchJobsBatch:patches=>{
