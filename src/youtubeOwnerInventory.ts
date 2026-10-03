@@ -197,7 +197,7 @@ export async function refreshOwnerInventoriesAuthoritative(
         pushOwnerRow(summary,{channelId:channel.id,channelName:channel.name,status:'API_FAILED',profileId:linked.profile.id,youtubeChannelId:linked.youtubeChannelId,apiRequests,quotaUnits,error:'AUTHORITATIVE_CHANNEL_ID_MISMATCH'});
         continue
       }
-      const cache=replaceExistingCacheFromSync(channel.id,result.videos||[],result);
+      const cache=await replaceExistingCacheFromSync(channel.id,result.videos||[],result);
       if(!cache.persisted){
         pushOwnerRow(summary,{channelId:channel.id,channelName:channel.name,status:'PERSISTENCE_FAILED',profileId:linked.profile.id,youtubeChannelId:linked.youtubeChannelId,apiRequests,quotaUnits,error:`Данные YouTube получены, но VYRON не смог сохранить их локально. API повторно не запускайте. Ошибка: ${cache.persistErrorCode||'STORAGE_WRITE_FAILED'}`});
         continue
