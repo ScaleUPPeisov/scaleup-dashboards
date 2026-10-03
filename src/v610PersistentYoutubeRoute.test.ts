@@ -27,8 +27,8 @@ describe('VYRON 6.1 persistent YouTube route production candidate',()=>{
     expect(center).toContain('[tab,setTab]=useState');
     expect(center).toContain('[activeChannel,setActiveChannel]=useState');
     expect(center).toContain('<CachedYouTubeChannelBar active={active}/>');
-    expect(center).toContain('<div key={tab+':'+activeChannel} className="youtubeChannelContext">');
-    expect(center).not.toContain('{active&&<div key={tab+':'+activeChannel}');
+    expect(center).toContain('<div key={tab+\':\'+activeChannel} className="youtubeChannelContext">');
+    expect(center).not.toContain('{active&&<div key={tab+\':\'+activeChannel}');
   });
 
   it('keeps the current Publisher workspace mounted and passes explicit active state',()=>{
