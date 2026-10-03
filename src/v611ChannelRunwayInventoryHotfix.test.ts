@@ -28,7 +28,10 @@ const fixture=vi.hoisted(()=>({
 }));
 vi.mock('./api',()=>({api:{
   youtubeProfiles:vi.fn(async()=>fixture.profiles),
-  youtubeListExisting:vi.fn(async(profileId:string)=>fixture.responses.get(profileId))
+  youtubeListExisting:vi.fn(async(profileId:string)=>fixture.responses.get(profileId)),
+  youtubeInventoryRead:vi.fn(async(channelId:string)=>fixture.inventoryFiles.has(channelId)?{found:true,schemaVersion:2,channelId,path:'native',payload:fixture.inventoryFiles.get(channelId)}:{found:false,schemaVersion:2,channelId,path:'native'}),
+  youtubeInventoryWrite:vi.fn(async(channelId:string,payload:any)=>{if(fixture.failNativeWrites)throw new Error('INVENTORY_STORAGE_WRITE_FAILED: forced');fixture.inventoryFiles.set(channelId,structuredClone(payload));return{ok:true,verified:true,schemaVersion:2,channelId,path:'native',bytes:JSON.stringify(payload).length}}),
+  youtubeInventoryDelete:vi.fn(async(channelId:string)=>{fixture.inventoryFiles.delete(channelId);return{ok:true,channelId,deleted:true}})
 }}));
 vi.mock('./youtubeQuota',()=>({
   bindYoutubeQuotaTraceContext:vi.fn(),
