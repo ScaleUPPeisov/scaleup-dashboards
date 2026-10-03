@@ -8,7 +8,7 @@ import {countBuckets,existingBucket,latestPrivateIds,matchesExistingFilter,selec
 import {parseMetadataFile,validateSequentialMetadata,type ImportedMetadata} from './metadata';
 import {buildExistingScheduleFromLocal,orderedExistingVideos,overlayExistingMetadata} from './youtubeExisting';
 import {isYoutubeQuotaError,markYoutubeQuotaExceeded,planYoutubeQuota,releaseYoutubeQuotaReservation,reserveYoutubeQuota,youtubeOperationActualCost,youtubeQuotaMessage,youtubeQuotaState,youtubeQuotaUsage} from './youtubeQuota';
-import {existingSyncDiagnosticWarnings,existingSyncIncompleteSummary,readExistingCache,reconcileExistingSyncAfterTargetedRetry,replaceExistingCacheFromSync,targetedExistingRetryIds,writeExistingCache} from './channelSchedule';
+import {existingSyncDiagnosticWarnings,existingSyncIncompleteSummary,loadExistingCache,reconcileExistingSyncAfterTargetedRetry,replaceExistingCacheFromSync,targetedExistingRetryIds,writeExistingCache} from './channelSchedule';
 import {sortChannelsAlphabetically} from './channelSort';
 import {humanizeError} from './errorCenter';
 import {markYoutubeCache,youtubeCacheAgeLabel} from './youtubeCache';
