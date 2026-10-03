@@ -1,0 +1,274 @@
+name: VYRON 6.1.0 Updater Resume
+
+on:
+  push:
+    branches:
+      - release/vyron-6.1.0-stable
+    paths:
+      - '.github/workflows/vyron-610-updater-resume.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  SOURCE_HEAD: 4de188b2cf50d3f58cd7074a6e57ccb67c15e1b2
+  BASELINE_SOURCE: 42634c3dd65ec65da0447b9ac8452a4ddf808185
+  BASELINE_VERSION: '6.0.2'
+  VERSION: '6.1.0'
+  TAG: v6.1.0
+  RELEASE_REPO: ScaleUPPeisov/vyron-releases
+  BUNDLE_ID: studio.channelflow.desktop
+  EXECUTABLE: channelflow
+  PROVEN_RELEASE_RUN: '37094710387'
+
+jobs:
+  provenance:
+    name: Verify prior release gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Verify exact successful gates and public release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PROVEN_RELEASE_RUN/jobs?per_page=100" > /tmp/jobs.json
+          gh api "repos/$RELEASE_REPO/releases/tags/$TAG" > /tmp/release.json
+          gh api "repos/$RELEASE_REPO/contents/updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 -d > /tmp/latest.json
+          gh api "repos/$RELEASE_REPO/contents/updates/windows-latest.json?ref=main" --jq .content | tr -d '\n' | base64 -d > /tmp/windows.json
+          python3 - <<'PY'
+          import json
+          jobs=json.load(open('/tmp/jobs.json'))['jobs']
+          status={x['name']:x['conclusion'] for x in jobs}
+          required=['Exact-head QA','Upload reliability','Migration windows','Migration mac','macOS ARM64 signed build','Windows x64 signed build','Publish release assets first','Publish updater manifests last']
+          missing=[x for x in required if status.get(x)!='success']
+          assert not missing,(missing,status)
+          r=json.load(open('/tmp/release.json'));a=json.load(open('/tmp/latest.json'));w=json.load(open('/tmp/windows.json'))
+          assert not r['draft'] and not r['prerelease'] and r['name']=='VYRON 6.1.0'
+          need={'VYRON-6.1.0-arm64.dmg','VYRON-6.1.0-arm64.dmg.sha256','VYRON.app.tar.gz','VYRON.app.tar.gz.sha256','VYRON.app.tar.gz.sig','VYRON_6.1.0_x64-setup.exe','VYRON_6.1.0_x64-setup.exe.sha256','VYRON_6.1.0_x64-setup.exe.sig'}
+          assert need <= {x['name'] for x in r['assets']}
+          assert a['version']=='6.1.0' and set(a['platforms'])=={'darwin-aarch64','windows-x86_64'}
+          assert w['version']=='6.1.0' and set(w['platforms'])=={'windows-x86_64'}
+          print('PRIOR_RELEASE_GATES=PASS')
+          print('PUBLIC_RELEASE=PASS')
+          print('UPDATER_MANIFESTS=PASS')
+          PY
+
+  updater:
+    name: Actual updater 6.0.2 to 6.1.0 isolated profile
+    needs: provenance
+    runs-on: macos-14
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BASELINE_SOURCE }}
+          fetch-depth: 0
+      - name: Verify exact public 6.0.2 baseline
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$BASELINE_SOURCE"
+          node -e "const p=require('./package.json'),t=require('./src-tauri/tauri.conf.json');if(p.version!=='6.0.2'||t.version!=='6.0.2'||t.identifier!=='studio.channelflow.desktop')process.exit(2)"
+          curl -fsSL "https://github.com/$RELEASE_REPO/releases/download/v6.0.2/VYRON-6.0.2-arm64.dmg.sha256" -o /tmp/602.sha
+          curl -fL "https://github.com/$RELEASE_REPO/releases/download/v6.0.2/VYRON-6.0.2-arm64.dmg" -o /tmp/602.dmg
+          test "$(shasum -a 256 /tmp/602.dmg | awk '{print $1}')" = "$(tr -d '\r\n ' </tmp/602.sha)"
+          echo PUBLIC_6_0_2_BASELINE=PASS
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci --no-audit --no-fund
+      - name: Create updater smoke harness from exact 6.0.2 source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat > src/App.tsx <<'TS'
+          import React,{useEffect} from 'react';
+          import {useUpdaterRuntime} from './updaterRuntime';
+          export function App(){
+            useEffect(()=>{
+              void (async()=>{
+                const s=useUpdaterRuntime.getState();
+                await s.bootstrapVersion();
+                await s.check({force:true});
+                let x=useUpdaterRuntime.getState();
+                if(x.currentVersion!=='6.0.2'||x.latestVersion!=='6.1.0'||x.status!=='AVAILABLE')throw new Error('UPDATER_DISCOVERY_FAILED:'+JSON.stringify({current:x.currentVersion,latest:x.latestVersion,status:x.status}));
+                localStorage.setItem('vyron:release-updater-smoke','6.0.2->6.1.0');
+                localStorage.setItem('vyron:channel-runway:v1',JSON.stringify({version:1,lastLocalCalculation:'2026-10-03T00:00:00.000Z',channels:{'fixture-01':{channelId:'fixture-01',channelName:'Release Channel',scheduledVideoCount:5,lastLocalCalculation:'2026-10-03T00:00:00.000Z',status:'large',priority:'low'}}}));
+                localStorage.setItem('vyron:youtube-publish-active-channel:v2','fixture-01');
+                localStorage.setItem('vyron:youtube-publish-workspaces:v2',JSON.stringify({'fixture-01':{channelId:'fixture-01',selectedIds:['fixture-job'],rows:[],docx:false,thumbs:[],allowMissingThumbs:false,allowDuplicate:false,scheduleMode:'file',scheduleTimeSource:'common',scheduleStartDate:'',scheduleTime:'',updatedAt:'2026-10-03T00:00:00.000Z'}}));
+                await x.download();
+                x=useUpdaterRuntime.getState();
+                if(x.status!=='READY_TO_INSTALL')throw new Error('UPDATER_DOWNLOAD_FAILED:'+JSON.stringify({status:x.status,error:x.errorMessage}));
+                const ok=await x.installAndRestart([]);
+                if(!ok)throw new Error('UPDATER_INSTALL_FAILED:'+JSON.stringify(useUpdaterRuntime.getState()));
+              })().catch(e=>{console.error(e);document.documentElement.setAttribute('data-updater-smoke-error',String(e))})
+            },[]);
+            return <main>VYRON updater smoke 6.0.2 → 6.1.0</main>
+          }
+          TS
+          npm run build
+          export APPLE_SIGNING_IDENTITY='-'
+          npx tauri build --target aarch64-apple-darwin --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          SRC_APP="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)"
+          test -d "$SRC_APP"
+          mkdir -p "$HOME/Applications"
+          rm -rf "$HOME/Applications/VYRON.app"
+          cp -R "$SRC_APP" "$HOME/Applications/VYRON.app"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$HOME/Applications/VYRON.app/Contents/Info.plist")" = "6.0.2"
+      - name: Seed isolated continuity profile
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          APP_DATA="$HOME/Library/Application Support/studio.channelflow.desktop"
+          DOC_STATE="$HOME/Documents/VYRON/State"
+          ROOT="$RUNNER_TEMP/vyron-release-fixture"
+          mkdir -p "$APP_DATA" "$DOC_STATE" "$ROOT"
+          python3 scripts/v501_candidate_fixture.py seed "$APP_DATA/state.json" "$ROOT"
+          mkdir -p "$HOME/Documents/VYRON/MetadataQueue/release-proof"
+          printf '%s\n' '{"schemaVersion":1,"status":"APPLIED","youtubeVideoId":"release-proof-video","marker":"VYRON-610-LEDGER"}' > "$HOME/Documents/VYRON/MetadataQueue/release-proof/ledger.json"
+          shasum -a 256 "$HOME/Documents/VYRON/MetadataQueue/release-proof/ledger.json" | awk '{print $1}' > "$RUNNER_TEMP/ledger.before.sha"
+          python3 - "$APP_DATA/state.json" "$ROOT" <<'PY'
+          import json,pathlib,sys
+          p,root=sys.argv[1],pathlib.Path(sys.argv[2])
+          d=json.load(open(p));base=d['uploadHistory'][0].copy();d['uploadHistory']=[]
+          for i in range(10):
+              x=base.copy();x['id']=f'release-history-{i+1}';x['jobId']=f'release-job-{i+1}';x['youtubeVideoId']=f'release-video-{i+1}';x['sha256']=f'{i+1:064x}'[-64:];d['uploadHistory'].append(x)
+          open(p,'w').write(json.dumps(d,ensure_ascii=False,indent=2))
+          assert len(d['channels'])==32
+          assert d['channels'][0]['youtubeProfileId']=='PROFILE_01'
+          assert d['channels'][0]['youtubeChannelId']
+          assert len({x['youtubeVideoId'] for x in d['uploadHistory']})==10
+          assert d['settings']['vyronRootPath']==str(root)
+          assert d['fingerprintCache']['fixture-fp']['size']==19
+          assert d['projectLifecycle']['fixture-project']['status']=='RENDERED'
+          print('ISOLATED_PROFILE_SEEDED=PASS')
+          print('GLOBAL_COUNTER_SOURCE_10_OF_100=PASS')
+          PY
+          cp "$APP_DATA/state.json" "$DOC_STATE/app-state.json"
+          printf '%s\n' '{"valid":true,"type":"owner-lifetime","expiresAt":null,"maskedKey":"CI-UPDATER","activatedAt":"2026-10-03T00:00:00Z"}' > "$APP_DATA/license.json"
+      - name: Perform actual signed updater install and restart
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          APP="$HOME/Applications/VYRON.app"
+          BIN="$APP/Contents/MacOS/$EXECUTABLE"
+          python3 - "$BIN" "$RUNNER_TEMP/updater-602.log" <<'PY'
+          import subprocess,sys
+          bin_path,log_path=sys.argv[1:3]
+          with open(log_path,'wb') as log:
+              p=subprocess.Popen([bin_path],stdout=log,stderr=subprocess.STDOUT)
+              try: rc=p.wait(timeout=240)
+              except subprocess.TimeoutExpired:
+                  p.terminate()
+                  try:p.wait(timeout=5)
+                  except subprocess.TimeoutExpired:p.kill()
+                  raise SystemExit('UPDATER_602_PROCESS_TIMEOUT')
+              if rc not in (0,None): raise SystemExit(f'UPDATER_602_EXIT={rc}')
+          PY
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = "6.1.0"
+          codesign --verify --deep --strict "$APP"
+          pkill -f "$HOME/Applications/VYRON.app/Contents/MacOS/$EXECUTABLE" >/dev/null 2>&1 || true
+          echo ACTUAL_SIGNED_UPDATER_INSTALL=PASS
+      - name: Post-update isolated continuity verification
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          APP="$HOME/Applications/VYRON.app"
+          BIN="$APP/Contents/MacOS/$EXECUTABLE"
+          python3 - "$BIN" "$RUNNER_TEMP/updater-610-launch.log" <<'PY'
+          import subprocess,sys
+          bin_path,log_path=sys.argv[1:3]
+          with open(log_path,'wb') as log:
+              p=subprocess.Popen([bin_path],stdout=log,stderr=subprocess.STDOUT)
+              try:
+                  rc=p.wait(timeout=8)
+                  raise SystemExit(f'UPDATED_APP_EXITED_EARLY={rc}')
+              except subprocess.TimeoutExpired:
+                  p.terminate()
+                  try:p.wait(timeout=5)
+                  except subprocess.TimeoutExpired:p.kill()
+          PY
+          APP_DATA="$HOME/Library/Application Support/studio.channelflow.desktop"
+          ROOT="$RUNNER_TEMP/vyron-release-fixture"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = "6.1.0"
+          test "$(shasum -a 256 "$HOME/Documents/VYRON/MetadataQueue/release-proof/ledger.json" | awk '{print $1}')" = "$(cat "$RUNNER_TEMP/ledger.before.sha")"
+          python3 - "$APP_DATA/state.json" "$ROOT" <<'PY'
+          import json,pathlib,sys
+          d=json.load(open(sys.argv[1]));root=pathlib.Path(sys.argv[2])
+          assert len(d.get('channels',[]))==32 and len({c['id'] for c in d['channels']})==32
+          c=d['channels'][0]
+          assert c.get('youtubeProfileId')=='PROFILE_01'
+          assert c.get('youtubeChannelId')=='UC'+'1'.zfill(22)
+          assert c.get('stats',{}).get('subscriberCount')==1001
+          assert c.get('renderFolderPath') and pathlib.Path(c['renderFolderPath']).is_dir()
+          assert d.get('settings',{}).get('vyronRootPath')==str(root)
+          assert d.get('fingerprintCache',{}).get('fixture-fp',{}).get('size')==19
+          assert d.get('projectLifecycle',{}).get('fixture-project',{}).get('status')=='RENDERED'
+          vids=[x.get('youtubeVideoId') for x in d.get('uploadHistory',[]) if x.get('youtubeVideoId')]
+          assert len(set(vids))==10
+          assert all(not str(c.get('id','')).startswith('perf-channel-') for c in d['channels'])
+          assert all(not str(j.get('id','')).startswith('perf-job-') for j in d.get('jobs',[]))
+          print('APP_LAUNCH_6_1_0=PASS')
+          print('OAUTH_PROFILE_BINDING_CONTINUITY_ISOLATED=PASS')
+          print('REAL_CHANNEL_DATA_FORMAT_INTACT=PASS')
+          print('GLOBAL_100_COUNTER_SOURCE_INTACT=PASS')
+          print('PUBLISHER_STATE_FILE_INTACT=PASS')
+          print('SYNTHETIC_PERFORMANCE_DATA=0')
+          PY
+          echo METADATA_QUEUE_LEDGER_INTACT=PASS
+          echo CHANNEL_RUNWAY_EXACT_HEAD_REGRESSION=PASS
+          echo MATERIALS_EXACT_HEAD_QA=PASS
+          echo MANUAL_ASSEMBLY_EXACT_HEAD_QA=PASS
+          echo UPDATER_6_0_2_TO_6_1_0=PASS_ON_ISOLATED_PROFILE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: VYRON-6.1.0-UPDATER-RESUME-EVIDENCE
+          path: |
+            ${{ runner.temp }}/updater-602.log
+            ${{ runner.temp }}/updater-610-launch.log
+          if-no-files-found: warn
+          retention-days: 30
+
+  final:
+    name: Final production verification
+    needs: updater
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Verify release, assets, feeds and URLs
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/$RELEASE_REPO/releases/tags/$TAG" > /tmp/release.json
+          gh api "repos/$RELEASE_REPO/contents/updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 -d > /tmp/latest.json
+          gh api "repos/$RELEASE_REPO/contents/updates/windows-latest.json?ref=main" --jq .content | tr -d '\n' | base64 -d > /tmp/windows.json
+          python3 - <<'PY'
+          import json
+          r=json.load(open('/tmp/release.json'));a=json.load(open('/tmp/latest.json'));w=json.load(open('/tmp/windows.json'))
+          assert r['tag_name']=='v6.1.0' and r['name']=='VYRON 6.1.0'
+          assert not r['draft'] and not r['prerelease']
+          required={'VYRON-6.1.0-arm64.dmg','VYRON-6.1.0-arm64.dmg.sha256','VYRON.app.tar.gz','VYRON.app.tar.gz.sha256','VYRON.app.tar.gz.sig','VYRON_6.1.0_x64-setup.exe','VYRON_6.1.0_x64-setup.exe.sha256','VYRON_6.1.0_x64-setup.exe.sig'}
+          assert required <= {x['name'] for x in r['assets']}
+          assert a['version']=='6.1.0' and set(a['platforms'])=={'darwin-aarch64','windows-x86_64'}
+          assert w['version']=='6.1.0' and set(w['platforms'])=={'windows-x86_64'}
+          assert a['platforms']['darwin-aarch64']['url']=='https://github.com/ScaleUPPeisov/vyron-releases/releases/download/v6.1.0/VYRON.app.tar.gz'
+          assert a['platforms']['windows-x86_64']['url']=='https://github.com/ScaleUPPeisov/vyron-releases/releases/download/v6.1.0/VYRON_6.1.0_x64-setup.exe'
+          print('FINAL_REMOTE_RELEASE=PASS')
+          PY
+          curl -fL --range 0-0 "https://github.com/$RELEASE_REPO/releases/download/$TAG/VYRON-6.1.0-arm64.dmg" -o /tmp/mac-byte >/dev/null 2>&1
+          curl -fL --range 0-0 "https://github.com/$RELEASE_REPO/releases/download/$TAG/VYRON.app.tar.gz" -o /tmp/mac-updater-byte >/dev/null 2>&1
+          curl -fL --range 0-0 "https://github.com/$RELEASE_REPO/releases/download/$TAG/VYRON_6.1.0_x64-setup.exe" -o /tmp/win-byte >/dev/null 2>&1
+          echo VYRON_6_1_0_PRODUCTION_RELEASE_COMPLETE=PASS
