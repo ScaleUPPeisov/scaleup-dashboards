@@ -54,7 +54,7 @@ function setResponse(profileId:string,count:number){fixture.responses.set(profil
 
 describe('VYRON 6.1 authoritative fleet runway refresh',()=>{
  beforeEach(()=>{
-  fixture.profiles=[];fixture.responses.clear();vi.clearAllMocks();
+  fixture.profiles=[];fixture.responses.clear();fixture.inventoryFiles.clear();vi.clearAllMocks();
   try{localStorage.clear()}catch{}
  });
 
