@@ -1,0 +1,67 @@
+name: VYRON 6.1.2 Updater Fast Gate
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-6.1.2-real-mac-updater
+    paths:
+      - 'src-tauri/src/updater_bridge.rs'
+      - 'src-tauri/src/lib.rs'
+      - 'src/api.ts'
+      - 'src/updaterRuntime.ts'
+      - 'src/App.tsx'
+      - 'src/updaterPolicy.ts'
+      - 'src/v612RealMacUpdaterHotfix.test.ts'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'src-tauri/Cargo.toml'
+      - 'src-tauri/Cargo.lock'
+      - 'src-tauri/tauri.conf.json'
+      - '.github/workflows/vyron-612-updater-fast-gate.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  fast-gate:
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Scope and protected-state proof
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git diff --exit-code b99f03bf0891fbfb887603888b693abea457739b...HEAD --             src-tauri/src/oauth_vault.rs src-tauri/src/security.rs src-tauri/src/youtube.rs             src/youtubeOwnerInventory.ts src/channelSchedule.ts src/channelRunwayStore.ts src/ChannelRunway.tsx             src/metadataQueue.ts src/MetadataQueueAssignmentBridge.tsx src/youtubePublishSafety.ts             src/MaterialsManager.tsx src/ManualAssembly.tsx
+          node -e "const p=require('./package.json'),l=require('./package-lock.json'),t=require('./src-tauri/tauri.conf.json');if(p.version!=='6.1.2'||l.version!=='6.1.2'||l.packages[''].version!=='6.1.2'||t.version!=='6.1.2')process.exit(2);if(t.identifier!=='studio.channelflow.desktop')process.exit(3)"
+          echo CHANNEL_RUNWAY_HOTFIX_UNCHANGED=PASS
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci --no-audit --no-fund
+      - name: Frontend compile
+        run: npm run build
+      - name: Updater and protected targeted regressions
+        run: >
+          npx vitest run
+          src/v612RealMacUpdaterHotfix.test.ts
+          src/updaterRuntime.test.ts
+          src/updaterHotfix.test.ts
+          src/v2115Rc5UpdaterReliability.test.ts
+          src/v2115Rc7OauthUpdateContinuity.test.ts
+          src/v611ChannelRunwayInventoryHotfix.test.ts
+          src/v610ChannelRunwayFleetRefresh.test.ts
+          src/v610GlobalUploadCounter.test.ts
+          src/youtubePublishSafety.test.ts
+      - name: Rust updater/full library tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib -- --nocapture
+      - name: Rust check
+        run: cargo check --manifest-path src-tauri/Cargo.toml
