@@ -1,4 +1,5 @@
 import type {Channel,YoutubeExistingVideo} from './types';
+import {readAuthoritativeExistingSnapshot} from './channelSchedule';
 import {
   CHANNEL_RUNWAY_STORAGE_KEY,
   deriveRunwayRecord,
@@ -131,8 +132,14 @@ export function recalculateChannelRunway(
       continue;
     }
 
-    // Existing Videos stores drafts/selections in `videos`, so they are never used as YouTube truth here.
-    // Bootstrap only from its baseline. An empty cache without syncInfo means "Нет данных", not 0 days.
+    // 6.1.2 authoritative Existing Videos truth is native-disk backed.
+    // This synchronous snapshot reads only already-hydrated memory/legacy fallback and never calls YouTube.
+    const native=readAuthoritativeExistingSnapshot(channel.id);
+    if(native?.videos.length){
+      next.channels[channel.id]=deriveRunwayRecord(channel,native.videos,now,native.updatedAt,true);
+      continue;
+    }
+    // Legacy v1 cache remains a restart-safe fallback until verified migration retires it.
     const cached=readExistingRunwayCache(channel.id,storage);
     const baseline=confirmedBaseline(cached);
     const cacheKnown=Boolean(cached?.syncInfo||baseline.length);
