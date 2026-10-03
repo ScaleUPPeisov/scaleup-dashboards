@@ -40,10 +40,14 @@ export async function loadExistingInventory(channelId:string){
 }
 export async function writeExistingInventory(channelId:string,input:ExistingInventoryCache):Promise<InventoryWriteResult>{
   try{
-    const result=await api.youtubeInventoryWrite(channelId,encodeInventory(channelId,input));
+    let previous=memory.get(channelId);
+    if(!previous){try{const native=await api.youtubeInventoryRead(channelId);if(native.found)previous=decodeInventory(native.payload)}catch{}}
+    if(!previous)previous=legacy(channelId);
+    const cache:ExistingInventoryCache={...input,lastCompleteAt:input.lastCompleteAt??previous?.lastCompleteAt,lastCompleteSyncInfo:input.lastCompleteSyncInfo??previous?.lastCompleteSyncInfo};
+    const result=await api.youtubeInventoryWrite(channelId,encodeInventory(channelId,cache));
     if(!result.verified)throw new Error('INVENTORY_STORAGE_READBACK_FAILED');
     const readback=await api.youtubeInventoryRead(channelId),decoded=readback.found?decodeInventory(readback.payload):undefined;
-    if(!decoded||decoded.updatedAt!==input.updatedAt)throw new Error('INVENTORY_STORAGE_READBACK_FAILED');
+    if(!decoded||decoded.updatedAt!==cache.updatedAt)throw new Error('INVENTORY_STORAGE_READBACK_FAILED');
     memory.set(channelId,decoded);summary(channelId,decoded);
     return{ok:true,bytes:result.bytes}
   }catch(error){return failure(error)}
