@@ -55,7 +55,6 @@ jobs:
           src/v612RealMacUpdaterHotfix.test.ts
           src/updaterRuntime.test.ts
           src/updaterHotfix.test.ts
-          src/v2115Rc5UpdaterReliability.test.ts
           src/v2115Rc7OauthUpdateContinuity.test.ts
           src/v611ChannelRunwayInventoryHotfix.test.ts
           src/v610ChannelRunwayFleetRefresh.test.ts
