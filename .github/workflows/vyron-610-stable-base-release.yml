@@ -29,7 +29,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: $PRODUCT_SOURCE_SHA
+          ref: ${{ env.PRODUCT_SOURCE_SHA }}
           fetch-depth: 0
       - name: Verify exact stable source and release baseline
         shell: bash
@@ -69,7 +69,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: $PRODUCT_SOURCE_SHA
+          ref: ${{ env.PRODUCT_SOURCE_SHA }}
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -114,7 +114,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: $PRODUCT_SOURCE_SHA
+          ref: ${{ env.PRODUCT_SOURCE_SHA }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -129,7 +129,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: $PRODUCT_SOURCE_SHA
+          ref: ${{ env.PRODUCT_SOURCE_SHA }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -147,7 +147,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: $PRODUCT_SOURCE_SHA
+          ref: ${{ env.PRODUCT_SOURCE_SHA }}
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -183,7 +183,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: $PRODUCT_SOURCE_SHA
+          ref: ${{ env.PRODUCT_SOURCE_SHA }}
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -273,7 +273,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: $PRODUCT_SOURCE_SHA
+          ref: ${{ env.PRODUCT_SOURCE_SHA }}
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -334,7 +334,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: $PRODUCT_SOURCE_SHA
+          ref: ${{ env.PRODUCT_SOURCE_SHA }}
       - uses: actions/download-artifact@v4
         with:
           name: VYRON-6.1.0-MAC-RELEASE
