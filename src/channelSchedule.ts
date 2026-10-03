@@ -68,7 +68,10 @@ function baselineFromDelta(videos:YoutubeExistingVideo[],value:unknown){
 
 function storageWriteError(error:unknown):StorageWriteResult{
   const name=String((error as any)?.name||''),message=String((error as any)?.message||error||'storage write failed');
-  return{ok:false,errorCode:name==='QuotaExceededError'||/quota/i.test(message)?'STORAGE_QUOTA_EXCEEDED':'STORAGE_WRITE_FAILED',error:message}
+  if(/INVENTORY_STORAGE_CORRUPT/i.test(message))return{ok:false,errorCode:'INVENTORY_STORAGE_CORRUPT',error:message};
+  if(name==='QuotaExceededError'||/quota/i.test(message))return{ok:false,errorCode:'STORAGE_QUOTA_EXCEEDED',error:message};
+  if(/READBACK|CHANNEL_MISMATCH|SCHEMA_MISMATCH/i.test(message))return{ok:false,errorCode:'STORAGE_READBACK_FAILED',error:message};
+  return{ok:false,errorCode:'STORAGE_WRITE_FAILED',error:message}
 }
 function normalizeSyncInfo(value:unknown){
   if(value===null)return null;
