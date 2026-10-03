@@ -85,7 +85,9 @@ export function ChannelRunway(){
   useEffect(()=>{
     setSnapshot(recalculateChannelRunway(channels,new Date(),false));
     const off=subscribeChannelRunway(()=>setSnapshot(loadChannelRunwayStore()));
-    return off;
+    const onNativeInventory=()=>setSnapshot(recalculateChannelRunway(useApp.getState().channels,new Date(),false));
+    window.addEventListener('vyron:existing-inventory-native-ready',onNativeInventory);
+    return()=>{off();window.removeEventListener('vyron:existing-inventory-native-ready',onNativeInventory)}
   },[signature]);
 
   useEffect(()=>{
