@@ -38,7 +38,7 @@ async function ensureUpdaterInstallable(set:(x:Partial<UpdaterRuntimeState>)=>vo
   const fn=(api as typeof api&{updaterInstallPreflight?:()=>Promise<UpdaterInstallPreflight>}).updaterInstallPreflight;
   if(!fn)return undefined;
   const preflight=await fn();set({preflight});
-  if(preflight.runningFromDmg)throw new Error('RUNNING_FROM_DMG: VYRON запущен из установочного образа');
+  if(preflight.runningFromDmg)throw new Error('RUNNING_FROM_DMG: VYRON запущен из DMG. Переместите VYRON.app в Applications.');
   if(!preflight.bundleReplaceable)throw new Error('APP_NOT_REPLACEABLE: установленный VYRON.app недоступен для безопасной замены');
   return preflight;
 }
@@ -118,14 +118,54 @@ export const useUpdaterRuntime=create<UpdaterRuntimeState>((set,get)=>({
       const s=get();const code=recordFailure('install',error,s.currentVersion,s.latestVersion);
       set({status:'ERROR',errorCode:code,errorMessage:String(error)});return false
     }
-    const target=get().latestVersion||candidate!.version;const targetRevision=candidate!.buildRevision??get().latestBuildRevision;localStorage.setItem('vyron:update-installing-version',target);localStorage.setItem('vyron:update-installing-target',JSON.stringify({productVersion:target,buildRevision:targetRevision,artifactSha256:candidate!.artifactSha256||'',channel:candidate!.channel||get().updateChannel,notes:get().notes||'',releaseDate:get().releaseDate||''}));
+    const target=get().latestVersion||candidate!.version;
+    const targetRevision=candidate!.buildRevision??get().latestBuildRevision;
+    let preflight:UpdaterInstallPreflight|undefined;
+    let marker:any={productVersion:target,buildRevision:targetRevision,artifactSha256:candidate!.artifactSha256||'',channel:candidate!.channel||get().updateChannel,notes:get().notes||'',releaseDate:get().releaseDate||'',startedAt:new Date().toISOString()};
     try{
-      await ensureUpdaterInstallable(set);
+      preflight=await ensureUpdaterInstallable(set);
+      marker={...marker,
+        expectedAppBundlePath:preflight?.currentAppBundlePath||undefined,
+        expectedAppBundleCanonicalPath:preflight?.currentAppBundleCanonicalPath||undefined,
+        runningExecutablePath:preflight?.currentExecutablePath||undefined,
+        previousExecutableSha256:preflight?.currentExecutableSha256||undefined,
+        runningLocation:preflight?.runningLocation||undefined,
+        duplicateCopies:Boolean(preflight?.duplicateCopies),
+        duplicateAppCopies:preflight?.duplicateAppCopies||[]
+      };
+      localStorage.setItem('vyron:update-installing-version',target);
+      localStorage.setItem('vyron:update-installing-target',JSON.stringify(marker));
       set({status:'VERIFYING',blockers:[]});
-      await candidate!.install(status=>set({status}));
+      const installed=await candidate!.install(status=>set({status}));
+      if(installed){
+        marker={...marker,
+          installedVerified:true,
+          expectedAppBundlePath:installed.destinationAppBundlePath,
+          expectedAppBundleCanonicalPath:installed.destinationAppBundleCanonicalPath,
+          installedExecutablePath:installed.installedExecutablePath,
+          installedExecutableSha256:installed.installedExecutableSha256,
+          downloadedArtifactSha256:installed.downloadedArtifactSha256,
+          expectedManifestSha256:installed.expectedManifestSha256,
+          manifestSignatureSha256:installed.manifestSignatureSha256,
+          codesignVerified:installed.codesignVerified
+        };
+        localStorage.setItem('vyron:update-installing-target',JSON.stringify(marker));
+      }
       set({status:'READY_TO_RESTART'});
-    }catch(error){localStorage.removeItem('vyron:update-installing-version');localStorage.removeItem('vyron:update-installing-target');const s=get();const code=recordFailure('install',error,s.currentVersion,target);set({status:'ERROR',errorCode:code,errorMessage:String(error)});return false}
-    try{set({status:'RESTARTING'});await candidate!.restart();return true}catch(error){const s=get();const code=recordFailure('relaunch',error,s.currentVersion,target);set({status:'ERROR',errorCode:code,errorMessage:String(error)});return false}
+    }catch(error){
+      marker={...marker,installFailure:String(error),failedAt:new Date().toISOString()};
+      try{localStorage.setItem('vyron:update-installing-target',JSON.stringify(marker))}catch{}
+      const state=get();const code=recordFailure('install',error,state.currentVersion,target);set({status:'ERROR',errorCode:code,errorMessage:String(error)});return false
+    }
+    try{
+      set({status:'RESTARTING'});
+      await candidate!.restart(marker.expectedAppBundlePath);
+      return true
+    }catch(error){
+      marker={...marker,relaunchFailure:String(error),failedAt:new Date().toISOString()};
+      try{localStorage.setItem('vyron:update-installing-target',JSON.stringify(marker))}catch{}
+      const state=get();const code=recordFailure('relaunch',error,state.currentVersion,target);set({status:'ERROR',errorCode:code,errorMessage:String(error)});return false
+    }
   })();
     installPromise=task;
     try{return await task}finally{if(installPromise===task)installPromise=undefined}
