@@ -12,8 +12,6 @@ export type PatternCalendarDay={date:string;kind:'video'|'pause'|'occupied';publ
 const EVENT='vyron-channel-schedule-changed';
 export const existingCacheKey=(channelId:string)=>`vyron:existing-cache:v1:${channelId}`;
 export const existingCacheSummaryKey=(channelId:string)=>`vyron:existing-cache-index:v2:${channelId}`;
-const NATIVE_INVENTORY_SCHEMA_VERSION=2;
-const nativeExistingCacheMemory=new Map<string,ExistingCache>();
 const isRecord=(x:unknown):x is Record<string,unknown>=>Boolean(x)&&typeof x==='object'&&!Array.isArray(x);
 const optionalString=(x:unknown)=>typeof x==='string'&&x.trim()?x:undefined;
 function normalizeExistingVideo(value:unknown,index=0):YoutubeExistingVideo|undefined{
@@ -55,25 +53,6 @@ const compactBaselineVideo=(v:YoutubeExistingVideo):YoutubeExistingVideo=>({
   publishedAt:v.publishedAt,privacyStatus:v.privacyStatus,publishAt:v.publishAt,selected:false,channelId:v.channelId,verified:v.verified
 });
 const compactBaselineFromVideos=(videos:YoutubeExistingVideo[])=>Object.fromEntries(normalizeVideoArray(videos).map(v=>[v.id,compactBaselineVideo(v)]));
-const baselineEditableSame=(a:YoutubeExistingVideo,b:YoutubeExistingVideo)=>a.title===b.title&&a.description===b.description&&JSON.stringify(a.tags||[])===JSON.stringify(b.tags||[])&&a.categoryId===b.categoryId&&a.privacyStatus===b.privacyStatus&&(a.publishAt||'')===(b.publishAt||'')&&(a.publishedAt||'')===(b.publishedAt||'');
-function baselineDeltaFrom(videos:YoutubeExistingVideo[],baseline:Record<string,YoutubeExistingVideo>){
- const current=new Map(normalizeVideoArray(videos).map(v=>[v.id,v])),delta:Record<string,YoutubeExistingVideo>={};
- for(const [id,raw] of Object.entries(baseline||{})){const base=normalizeExistingVideo(raw);if(!base)continue;const row=current.get(id);if(!row||!baselineEditableSame(row,base))delta[id]=compactBaselineVideo(base)}
- return delta
-}
-function baselineFromDelta(videos:YoutubeExistingVideo[],value:unknown){
- const baseline=compactBaselineFromVideos(videos);
- for(const [id,row] of Object.entries(normalizeBaseline(value)))baseline[id]=compactBaselineVideo(row);
- return baseline
-}
-
-function storageWriteError(error:unknown):StorageWriteResult{
-  const name=String((error as any)?.name||''),message=String((error as any)?.message||error||'storage write failed');
-  if(/INVENTORY_STORAGE_CORRUPT/i.test(message))return{ok:false,errorCode:'INVENTORY_STORAGE_CORRUPT',error:message};
-  if(name==='QuotaExceededError'||/quota/i.test(message))return{ok:false,errorCode:'STORAGE_QUOTA_EXCEEDED',error:message};
-  if(/READBACK|CHANNEL_MISMATCH|SCHEMA_MISMATCH/i.test(message))return{ok:false,errorCode:'STORAGE_READBACK_FAILED',error:message};
-  return{ok:false,errorCode:'STORAGE_WRITE_FAILED',error:message}
-}
 function normalizeSyncInfo(value:unknown){
   if(value===null)return null;
   if(!isRecord(value))return null;
@@ -94,14 +73,6 @@ function authoritativeCacheVideos(cache:ExistingCache|undefined){
   if(!cache)return[] as YoutubeExistingVideo[];
   const baseline=Object.values(cache.baseline||{});
   return baseline.length?normalizeVideoArray(baseline):normalizeVideoArray(cache.videos);
-}
-function normalizeExistingCache(value:unknown):ExistingCache|undefined{
-  if(!isRecord(value)||value.version!==1)return;
-  return{version:1,updatedAt:optionalString(value.updatedAt)||'1970-01-01T00:00:00.000Z',videos:normalizeVideoArray(value.videos),baseline:normalizeBaseline(value.baseline),lastUndo:normalizeVideoArray(value.lastUndo),syncInfo:normalizeSyncInfo(value.syncInfo),lastCompleteAt:optionalString(value.lastCompleteAt),lastCompleteSyncInfo:normalizeSyncInfo(value.lastCompleteSyncInfo)}
-}
-function readLegacyExistingCache(channelId:string):ExistingCache|undefined{
-  if(!channelId||typeof localStorage==='undefined')return;
-  try{return normalizeExistingCache(JSON.parse(localStorage.getItem(existingCacheKey(channelId))||'null'))}catch{return}
 }
 export function readAuthoritativeExistingInventory(channelId:string){
   return authoritativeCacheVideos(readExistingCache(channelId)).map(cloneVideo);
