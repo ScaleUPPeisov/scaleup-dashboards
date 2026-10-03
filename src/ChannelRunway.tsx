@@ -175,6 +175,7 @@ export function ChannelRunway(){
         counts?.DUPLICATE?`DUPLICATE ${counts.DUPLICATE}`:'',
         counts?.OAUTH_BLOCKED?`OAUTH_BLOCKED ${counts.OAUTH_BLOCKED}`:'',
         counts?.API_FAILED?`API_FAILED ${counts.API_FAILED}`:'',
+        counts?.PERSISTENCE_FAILED?`PERSISTENCE_FAILED ${counts.PERSISTENCE_FAILED}`:'',
         counts?.QUOTA_STOPPED?`QUOTA_STOPPED ${counts.QUOTA_STOPPED}`:''
       ].filter(Boolean).join(' • ');
       const stats=result.stats;
