@@ -52,10 +52,10 @@ fn canonical_text(path:&Path)->String{
 #[cfg(target_os="macos")]
 fn bundle_location(bundle:&Path)->&'static str{
     let text=bundle.to_string_lossy();
-    if text.starts_with("/Volumes/"){return"mounted-dmg"}
-    if text.starts_with("/Applications/"){return"system-applications"}
+    if text.starts_with("/Volumes/"){return "mounted-dmg"}
+    if text.starts_with("/Applications/"){return "system-applications"}
     if let Ok(home)=std::env::var("HOME"){
-        if bundle.starts_with(Path::new(&home).join("Applications")){return"user-applications"}
+        if bundle.starts_with(Path::new(&home).join("Applications")){return "user-applications"}
     }
     "other"
 }
