@@ -17,7 +17,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  SOURCE_HEAD: ${{ github.sha }}
+  SOURCE_HEAD: 656d740dd9a1195fced39e025eaf0cb51c5ead3c
   VERSION: '6.1.2'
   TAG: v6.1.2
   BASELINE_VERSION: '6.1.1'
@@ -441,6 +441,34 @@ jobs:
           minisign -Vm release-win/VYRON_6.1.2_x64-setup.exe -x /tmp/win.sig -p /tmp/vyron.pub
           echo MAC_SIGNATURE=PASS
           echo WINDOWS_SIGNATURE=PASS
+      - name: Prepare safe same-version 6.1.2 replacement
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -n "$GH_TOKEN"
+          if gh release view "$TAG" --repo "$RELEASE_REPO" >/dev/null 2>&1; then
+            IS_PRERELEASE="$(gh release view "$TAG" --repo "$RELEASE_REPO" --json isPrerelease --jq .isPrerelease)"
+            if [ "$IS_PRERELEASE" = "false" ]; then
+              git clone "https://x-access-token:$GH_TOKEN@github.com/$RELEASE_REPO.git" release-baseline
+              cd release-baseline
+              test "$(git log -1 --pretty=%s)" = "release: publish VYRON 6.1.2 updater manifests"
+              git config user.name 'github-actions[bot]'
+              git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+              git revert --no-edit HEAD
+              git push origin main
+              cd ..
+              gh api "repos/$RELEASE_REPO/contents/updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 -d >/tmp/baseline-latest.json
+              gh api "repos/$RELEASE_REPO/contents/updates/windows-latest.json?ref=main" --jq .content | tr -d '\n' | base64 -d >/tmp/baseline-windows.json
+              python3 - <<'PY'
+              import json
+              a=json.load(open('/tmp/baseline-latest.json'));w=json.load(open('/tmp/baseline-windows.json'))
+              assert a['version']=='6.1.1',a['version']
+              assert w['version']=='6.1.1',w['version']
+              print('SAME_VERSION_BASELINE_6_1_1=PASS')
+              PY
+              gh release edit "$TAG" --repo "$RELEASE_REPO" --prerelease
+            fi
+          fi
       - name: Create GitHub release and upload all assets
         shell: bash
         run: |
