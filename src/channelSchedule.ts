@@ -54,6 +54,18 @@ const compactBaselineVideo=(v:YoutubeExistingVideo):YoutubeExistingVideo=>({
   publishedAt:v.publishedAt,privacyStatus:v.privacyStatus,publishAt:v.publishAt,selected:false,channelId:v.channelId,verified:v.verified
 });
 const compactBaselineFromVideos=(videos:YoutubeExistingVideo[])=>Object.fromEntries(normalizeVideoArray(videos).map(v=>[v.id,compactBaselineVideo(v)]));
+const baselineEditableSame=(a:YoutubeExistingVideo,b:YoutubeExistingVideo)=>a.title===b.title&&a.description===b.description&&JSON.stringify(a.tags||[])===JSON.stringify(b.tags||[])&&a.categoryId===b.categoryId&&a.privacyStatus===b.privacyStatus&&(a.publishAt||'')===(b.publishAt||'')&&(a.publishedAt||'')===(b.publishedAt||'');
+function baselineDeltaFrom(videos:YoutubeExistingVideo[],baseline:Record<string,YoutubeExistingVideo>){
+ const current=new Map(normalizeVideoArray(videos).map(v=>[v.id,v])),delta:Record<string,YoutubeExistingVideo>={};
+ for(const [id,raw] of Object.entries(baseline||{})){const base=normalizeExistingVideo(raw);if(!base)continue;const row=current.get(id);if(!row||!baselineEditableSame(row,base))delta[id]=compactBaselineVideo(base)}
+ return delta
+}
+function baselineFromDelta(videos:YoutubeExistingVideo[],value:unknown){
+ const baseline=compactBaselineFromVideos(videos);
+ for(const [id,row] of Object.entries(normalizeBaseline(value)))baseline[id]=compactBaselineVideo(row);
+ return baseline
+}
+
 function storageWriteError(error:unknown):StorageWriteResult{
   const name=String((error as any)?.name||''),message=String((error as any)?.message||error||'storage write failed');
   return{ok:false,errorCode:name==='QuotaExceededError'||/quota/i.test(message)?'STORAGE_QUOTA_EXCEEDED':'STORAGE_WRITE_FAILED',error:message}
