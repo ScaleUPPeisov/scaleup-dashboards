@@ -110,7 +110,7 @@ export const useLiveInventory=create<LiveInventoryState>((set)=>({
 function activeReadyJob(job:VideoJob|undefined){
   if(!job)return false;
   if(job.removedFromPublishList||job.youtubeVideoId||job.uploadedAt)return false;
-  if(job.storageLifecycle==='UPLOADED'||job.storageLifecycle==='TRASHED'||job.storageLifecycle==='TRASHED_BY_VYRON'||job.storageLifecycle==='FAILED')return false;
+  if(job.storageLifecycle==='UPLOADED'||job.storageLifecycle==='TRASHED'||job.storageLifecycle==='TRASHED_BY_VYRON')return false;
   if(job.status==='UPLOADING'||job.status==='SCHEDULED')return false;
   // Live Inventory is a physical stock monitor. If a KNOWN_EXACT render file
   // still exists and has no successful-upload evidence, count it as available
@@ -305,7 +305,7 @@ export function refreshInventoryUploadCounts(){
       const unavailablePaths=new Set<string>();
       for(const x of active)if(x.filePath)unavailablePaths.add(normalizeRenderPath(x.filePath));
       for(const job of state.jobs.filter(j=>j.channelId===channel.id)){
-        const unavailable=job.status==='UPLOADING'||Boolean(job.youtubeVideoId)||Boolean(job.uploadedAt)||Boolean(job.removedFromPublishList)||['UPLOADED','TRASHED','TRASHED_BY_VYRON','FAILED'].includes(String(job.storageLifecycle||''));
+        const unavailable=job.status==='UPLOADING'||Boolean(job.youtubeVideoId)||Boolean(job.uploadedAt)||Boolean(job.removedFromPublishList)||['UPLOADED','TRASHED','TRASHED_BY_VYRON'].includes(String(job.storageLifecycle||''));
         if(unavailable&&job.finalPath)unavailablePaths.add(normalizeRenderPath(job.finalPath))
       }
       readyVideos=readyRows(current.rows,state.jobs).filter(row=>!unavailablePaths.has(normalizeRenderPath(row.file.path))).length;
