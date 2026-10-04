@@ -1,0 +1,60 @@
+name: VYRON 6.1.2 Mobile Sync Protected Gate
+
+on:
+  push:
+    branches:
+      - feature/vyron-6.1.2-mobile-sync
+    paths:
+      - 'src/mobileSyncBridge.ts'
+      - 'src/mobileSyncBridge.test.ts'
+      - 'src/main.tsx'
+      - 'src-tauri/src/mobile_sync.rs'
+      - 'src-tauri/src/lib.rs'
+      - '.github/workflows/vyron-612-mobile-sync-gate.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  protected-gate:
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Exact source and protected scope
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git merge-base --is-ancestor 656d740dd9a1195fced39e025eaf0cb51c5ead3c HEAD
+          git diff --exit-code 656d740dd9a1195fced39e025eaf0cb51c5ead3c...HEAD --             src-tauri/src/oauth.rs             src-tauri/src/oauth_vault.rs             src-tauri/src/security.rs             src-tauri/src/youtube.rs             src/metadataQueue.ts             src/MetadataQueueAssignmentBridge.tsx             src/MaterialsManager.tsx             src/ManualAssembly.tsx             src/publisherRuntime.ts             src/ProductionStatusBridge.tsx             src/updaterRuntime.ts             src/updaterPolicy.ts
+          node -e "const p=require('./package.json'),l=require('./package-lock.json'),t=require('./src-tauri/tauri.conf.json');if(p.version!=='6.1.2'||l.version!=='6.1.2'||l.packages[''].version!=='6.1.2'||t.version!=='6.1.2')process.exit(2)"
+          echo PROTECTED_SCOPE=PASS
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci --no-audit --no-fund
+      - name: Frontend production build
+        run: npm run build
+      - name: Sync + protected regressions
+        run: >
+          npx vitest run
+          src/mobileSyncBridge.test.ts
+          src/v612RealMacUpdaterHotfix.test.ts
+          src/v612NativeInventoryStress.test.ts
+          src/v612NativeInventoryTruth.test.ts
+          src/v611ChannelRunwayInventoryHotfix.test.ts
+          src/v610ChannelRunwayFleetRefresh.test.ts
+          src/v610GlobalUploadCounter.test.ts
+          src/v2115Rc7OauthUpdateContinuity.test.ts
+          src/youtubePublishSafety.test.ts
+      - name: Rust full library tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib -- --nocapture
+      - name: Rust check
+        run: cargo check --manifest-path src-tauri/Cargo.toml

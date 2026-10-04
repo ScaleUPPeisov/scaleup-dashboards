@@ -112,7 +112,7 @@ jobs:
               if wf==here:
                   continue
               text = wf.read_text(errors='ignore')
-              chunks = re.split(r'(?=\n\s*- name:)', text)
+              chunks = re.split(r'(?=\n(?:\s*-\s+(?:name:|uses:)|  [A-Za-z0-9_-]+:\s*$))', text, flags=re.M)
               for chunk in chunks:
                   if 'actions/upload-artifact@' in chunk and bad.search(chunk):
                       print(f'PRIVACY_GATE=FAIL:SENSITIVE_ARTIFACT_UPLOAD:file={wf}')

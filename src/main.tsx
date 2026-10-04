@@ -1,6 +1,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
+import {startMobileSyncBridge} from './mobileSyncBridge';
 import './styles.css';
 import './v060.css';
 import './v070.css';
@@ -15,3 +16,5 @@ import './ui-layout-contract.css';
 import './live-inventory.css';
 import './v400-celebration.css';
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);
+
+startMobileSyncBridge();

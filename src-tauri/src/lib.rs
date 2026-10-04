@@ -22,6 +22,7 @@ mod metadata_queue;
 mod performance_probe;
 mod inventory_watch;
 mod profile;
+mod mobile_sync;
 
 #[cfg_attr(mobile,tauri::mobile_entry_point)]
 pub fn run(){
@@ -43,6 +44,17 @@ pub fn run(){
             // Mark this runtime dirty before any recoverable local work starts.
             // A graceful exit flips it clean only when no unfinished recovery transaction remains.
             recovery::initialize_runtime(app.handle()).map_err(|e|Box::<dyn std::error::Error>::from(std::io::Error::new(std::io::ErrorKind::Other,e)))?;
+            // Mobile sync pairing is an additive one-time bootstrap only. It never changes
+            // Google OAuth / YouTube credentials and persists only the dedicated sync token.
+            if let Some(pairing_code)=mobile_sync::startup_pairing_code(){
+                let handle=app.handle().clone();
+                tauri::async_runtime::spawn(async move{
+                    match mobile_sync::mobile_sync_claim_pairing(handle,pairing_code).await{
+                        Ok(_)=>println!("VYRON_MOBILE_PAIRING=PASS"),
+                        Err(e)=>eprintln!("VYRON_MOBILE_PAIRING=FAIL:{}",e),
+                    }
+                });
+            }
             // Physical default: always make the main window visible on the CURRENT monitor.
             // Center first to discard stale coordinates from a removed/external display,
             // then maximize to the current macOS work area.
@@ -53,7 +65,7 @@ pub fn run(){
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![studio_drafts::studio_drafts_start_bridge,studio_drafts::studio_drafts_list,studio_drafts::studio_drafts_clear,updater_bridge::updater_install_preflight,updater_bridge::updater_runtime_diagnostics,updater_bridge::prepare_updater_tempdir,updater_bridge::updater_runtime_identity,updater_bridge::updater_stable_check,updater_bridge::updater_stable_download,updater_bridge::updater_stable_install,updater_bridge::updater_verify_installed_target,updater_bridge::updater_relaunch_exact,updater_bridge::updater_owner_preview_check,updater_bridge::updater_owner_preview_download,updater_bridge::updater_owner_preview_install,
-            license::license_status,license::activate_license,
+            license::license_status,license::activate_license,mobile_sync::mobile_sync_claim_pairing,mobile_sync::mobile_sync_enqueue,mobile_sync::mobile_sync_flush,mobile_sync::mobile_sync_status,mobile_sync::mobile_sync_set_device_token,mobile_sync::mobile_sync_clear_device_token,
             migration::migration_export,migration::migration_preview,migration::migration_import,migration::migration_restore_latest,
             metadata_queue::metadata_queue_import,metadata_queue::metadata_queue_summary,metadata_queue::metadata_queue_page,metadata_queue::metadata_queue_reserve,metadata_queue::metadata_queue_reserve_batch,metadata_queue::metadata_queue_mark_applying,metadata_queue::metadata_queue_mark_applied,metadata_queue::metadata_queue_mark_error,metadata_queue::metadata_queue_purge_pack,metadata_queue::metadata_queue_cleanup_performance_fixtures,
             performance_probe::performance_probe_enabled,performance_probe::performance_probe_assert_isolated,performance_probe::performance_probe_cleanup,performance_probe::performance_probe_report,
