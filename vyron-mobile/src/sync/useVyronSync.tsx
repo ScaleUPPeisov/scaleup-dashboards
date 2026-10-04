@@ -154,10 +154,27 @@ export function useVyronSync(): VyronSyncModel {
     setSyncStatus("syncing");
     setSyncError(null);
 
+    const recordReceipt = (eventId: string | null | undefined) => {
+      if (!eventId) return;
+      const receivedAt = new Date().toISOString();
+      void supabase!.from("vyron_mobile_sync_events").update({
+        mobile_receive_at: receivedAt,
+        mobile_device_id: device?.id ?? null,
+      }).eq("event_id", eventId).is("mobile_receive_at", null);
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        void supabase!.from("vyron_mobile_sync_events").update({
+          mobile_paint_at: new Date().toISOString(),
+          mobile_device_id: device?.id ?? null,
+        }).eq("event_id", eventId).is("mobile_paint_at", null);
+      }));
+    };
+
     const apply = (table: string, payload: any) => {
       if (!live) return;
       const row = payload.new as any;
       const old = payload.old as any;
+      const eventId = row?.last_event_id ?? row?.source_event_id ?? null;
+      recordReceipt(eventId);
       setSnapshot(prev => {
         let next = prev;
         if (table === "vyron_mobile_channels") {
@@ -229,21 +246,6 @@ export function useVyronSync(): VyronSyncModel {
       ]) {
         realtime = realtime.on("postgres_changes", { event: "*", schema: "public", table, filter: `owner_id=eq.${userId}` }, payload => apply(table, payload));
       }
-      realtime = realtime.on("postgres_changes", { event: "INSERT", schema: "public", table: "vyron_mobile_sync_events", filter: `owner_id=eq.${userId}` }, payload => {
-        const event = payload.new as any;
-        const receivedAt = new Date().toISOString();
-        if (!event?.event_id) return;
-        void supabase!.from("vyron_mobile_sync_events").update({
-          mobile_receive_at: receivedAt,
-          mobile_device_id: device?.id ?? null,
-        }).eq("event_id", event.event_id);
-        requestAnimationFrame(() => requestAnimationFrame(() => {
-          void supabase!.from("vyron_mobile_sync_events").update({
-            mobile_paint_at: new Date().toISOString(),
-            mobile_device_id: device?.id ?? null,
-          }).eq("event_id", event.event_id);
-        }));
-      });
       channelRef.current = realtime;
       realtime.subscribe(status => {
         if (!live) return;
