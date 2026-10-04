@@ -146,7 +146,7 @@ async fn flush_internal(app: &AppHandle) -> Value {
     }
     let now = now_ms();
     let due: Vec<usize> = queue.iter().enumerate()
-        .filter(|(_, x)| x.next_attempt_ms <= now)
+        .take_while(|(_, x)| x.next_attempt_ms <= now)
         .take(MAX_BATCH)
         .map(|(i, _)| i)
         .collect();
@@ -194,22 +194,39 @@ async fn flush_internal(app: &AppHandle) -> Value {
     }
 
     let mut successful=std::collections::HashSet::<String>::new();
+    let mut permanent=std::collections::HashSet::<String>::new();
+    let mut retryable_failed:Option<String>=None;
+    let mut permanent_code:Option<String>=None;
     if let Some(results)=value.get("results").and_then(Value::as_array) {
         for result in results {
+            let id=result.get("eventId").and_then(Value::as_str).unwrap_or("");
+            if id.is_empty(){continue}
             if result.get("ok").and_then(Value::as_bool)==Some(true) {
-                if let Some(id)=result.get("eventId").and_then(Value::as_str) { successful.insert(id.to_string()); }
+                successful.insert(id.to_string());
+            } else if result.get("retryable").and_then(Value::as_bool)==Some(false) {
+                permanent.insert(id.to_string());
+                permanent_code=result.get("code").and_then(Value::as_str).map(str::to_string);
+            } else {
+                retryable_failed=Some(id.to_string());
+                break;
             }
         }
     }
-    for i in &due {
-        if let Some(row)=queue.get_mut(*i) {
-            let id=event_id(&row.event).unwrap_or("");
-            if !successful.contains(id) { bump(row); }
+    if let Some(failed_id)=retryable_failed.as_deref() {
+        if let Some(i)=due.iter().copied().find(|i|event_id(&queue[*i].event)==Some(failed_id)){
+            if let Some(row)=queue.get_mut(i){bump(row)}
         }
     }
-    queue.retain(|x| event_id(&x.event).map(|id| !successful.contains(id)).unwrap_or(true));
+    queue.retain(|x|{
+        let id=event_id(&x.event).unwrap_or("");
+        !successful.contains(id)&&!permanent.contains(id)
+    });
     status.last_server_time=value.get("serverTime").and_then(Value::as_str).map(str::to_string);
-    if !successful.is_empty() {
+    if let Some(code)=permanent_code {
+        status.last_error=Some(format!("PERMANENT_EVENT_REJECTED:{code}"));
+    } else if retryable_failed.is_some() {
+        status.last_error=Some("RETRYABLE_EVENT_APPLY_FAILED".into());
+    } else if !successful.is_empty() {
         status.last_success_at=Some(now_iso());
         status.last_error=None;
     }
