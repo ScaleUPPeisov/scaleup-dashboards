@@ -309,7 +309,8 @@ async function applyEvent(ownerId: string, device: any, e: any) {
     const desktopProjectId = txt(payload.desktop_project_id, 200);
     const state = txt(payload.status, 32).toUpperCase();
     const projectId = await resolveProject(ownerId, desktopProjectId);
-    if (!projectId || !projectStates.has(state)) return { ok: false, code: "project_status_invalid" };
+    if (!projectId) return { ok: false, code: "project_missing", eventId };
+    if (!projectStates.has(state)) return { ok: false, code: "project_status_invalid", eventId };
     const progress = num(payload.progress);
     const errorMessage = txt(payload.error_message, 2000) || null;
     const { error } = await db.from("vyron_mobile_project_status").insert({
@@ -396,14 +397,36 @@ async function heartbeat(req: Request, b: any) {
   return out({ ok: true, serverTime: now, deviceId: auth.device.id });
 }
 
+const permanentEventCodes = new Set([
+  "invalid_event","secret_field_blocked","channel_invalid","project_invalid",
+  "project_status_invalid","publisher_invalid","endlume_invalid",
+  "notification_invalid","notification_dedup_missing","event_type_not_allowed"
+]);
+
 async function ingest(req: Request, b: any) {
   const auth = await authDesktop(req);
   if (!auth.ok) return out({ ok: false, code: auth.code }, 401);
   const events = Array.isArray(b.events) ? b.events : [b.event].filter(Boolean);
   if (!events.length || events.length > 100) return out({ ok: false, code: "events_invalid" }, 400);
   await db.from("vyron_mobile_devices").update({ last_seen_at: iso(), updated_at: iso(), app_version: txt(b.app_version || auth.device.app_version, 64) }).eq("id", auth.device.id);
-  const results = [];
-  for (const e of events) results.push(await applyEvent(auth.ownerId, auth.device, e));
+  const results:any[] = [];
+  for (const e of events) {
+    const result:any = await applyEvent(auth.ownerId, auth.device, e);
+    if (result.ok) {
+      results.push(result);
+      continue;
+    }
+    const eventId = result.eventId || uuid(e?.event_id);
+    const retryable = !permanentEventCodes.has(String(result.code || ""));
+    const enriched = { ...result, eventId, retryable };
+    results.push(enriched);
+    if (eventId) {
+      await db.from("vyron_mobile_sync_events").update({
+        apply_error: txt(result.code || "apply_failed", 200),
+      }).eq("event_id", eventId).eq("owner_id", auth.ownerId).is("applied_at", null);
+    }
+    break;
+  }
   return out({ ok: results.every((x: any) => x.ok), serverTime: iso(), results });
 }
 
