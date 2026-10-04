@@ -264,6 +264,26 @@ fn device_name()->String{
     std::env::var("COMPUTERNAME").or_else(|_|std::env::var("HOSTNAME")).unwrap_or_else(|_|"VYRON Desktop".into())
 }
 
+fn pairing_code_from_args<I,S>(args:I)->Option<String>
+where I:IntoIterator<Item=S>,S:AsRef<str>{
+    let mut iter=args.into_iter();
+    while let Some(raw)=iter.next(){
+        let arg=raw.as_ref();
+        if arg=="--pair-mobile"{
+            return iter.next().map(|x|x.as_ref().trim().to_ascii_uppercase()).filter(|x|!x.is_empty())
+        }
+        if let Some(value)=arg.strip_prefix("--pair-mobile="){
+            let code=value.trim().to_ascii_uppercase();
+            if !code.is_empty(){return Some(code)}
+        }
+    }
+    None
+}
+
+pub fn startup_pairing_code()->Option<String>{
+    pairing_code_from_args(std::env::args())
+}
+
 #[tauri::command]
 pub async fn mobile_sync_claim_pairing(app:AppHandle,pairing_code:String)->Result<Value,String>{
     let code=pairing_code.trim().to_ascii_uppercase();
@@ -370,5 +390,13 @@ mod tests {
         let queue=vec![item("00000000-0000-4000-a000-000000000001",0),item("00000000-0000-4000-a000-000000000002",5000),item("00000000-0000-4000-a000-000000000003",0)];
         assert_eq!(due_prefix_indices(&queue,1000),vec![0]);
         assert_eq!(due_prefix_indices(&queue,6000),vec![0,1,2]);
+    }
+    #[test]
+    fn cli_pairing_parser_accepts_both_forms_without_touching_other_args(){
+        let a=pairing_code_from_args(["VYRON","--pair-mobile","ABCD2-EFGH3"]);
+        let b=pairing_code_from_args(["VYRON","--pair-mobile=abcd2-efgh3","--other"]);
+        assert_eq!(a.as_deref(),Some("ABCD2-EFGH3"));
+        assert_eq!(b.as_deref(),Some("ABCD2-EFGH3"));
+        assert_eq!(pairing_code_from_args(["VYRON","--other"]),None);
     }
 }
