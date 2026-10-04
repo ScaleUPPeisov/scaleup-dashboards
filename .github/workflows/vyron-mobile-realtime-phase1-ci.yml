@@ -57,3 +57,18 @@ jobs:
         run: |
           set -Eeuo pipefail
           xcodebuild             -workspace ios/VYRON.xcworkspace             -scheme VYRON             -sdk iphonesimulator             -configuration Debug             -derivedDataPath "$RUNNER_TEMP/vyron-mobile-derived"             CODE_SIGNING_ALLOWED=NO             build
+      - name: Package iPhone Simulator acceptance app
+        run: |
+          set -Eeuo pipefail
+          APP="$RUNNER_TEMP/vyron-mobile-derived/Build/Products/Debug-iphonesimulator/VYRON.app"
+          test -d "$APP"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "$RUNNER_TEMP/VYRON-Mobile-iPhoneSimulator.zip"
+          shasum -a 256 "$RUNNER_TEMP/VYRON-Mobile-iPhoneSimulator.zip" > "$RUNNER_TEMP/VYRON-Mobile-iPhoneSimulator.sha256"
+      - name: Upload iPhone Simulator acceptance app
+        uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-MOBILE-IPHONE-SIMULATOR
+          path: |
+            ${{ runner.temp }}/VYRON-Mobile-iPhoneSimulator.zip
+            ${{ runner.temp }}/VYRON-Mobile-iPhoneSimulator.sha256
+          retention-days: 5
