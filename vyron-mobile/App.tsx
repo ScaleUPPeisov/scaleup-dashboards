@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from "react";
 import {
+  Alert,
   Pressable,
   ScrollView,
   StatusBar,
@@ -281,8 +282,8 @@ function AnalyticsScreen() {
   );
 }
 
-function SettingsRow({icon,label,value,tone=C.cyan}:{icon:any;label:string;value?:string;tone?:string}) {
-  return <Pressable onPress={()=>Haptics.selectionAsync()} style={({pressed})=>[styles.settingsRow,pressed&&{opacity:.72}]}><View style={[styles.settingsIcon,{backgroundColor:tone+"18"}]}><Ionicons name={icon} size={20} color={tone}/></View><Text style={styles.settingsLabel}>{label}</Text>{value?<Text style={styles.settingsValue}>{value}</Text>:null}<Ionicons name="chevron-forward" size={18} color={C.tertiary}/></Pressable>;
+function SettingsRow({icon,label,value,tone=C.cyan,onPress}:{icon:any;label:string;value?:string;tone?:string;onPress?:()=>void}) {
+  return <Pressable onPress={()=>{Haptics.selectionAsync();onPress?.()}} style={({pressed})=>[styles.settingsRow,pressed&&{opacity:.72}]}><View style={[styles.settingsIcon,{backgroundColor:tone+"18"}]}><Ionicons name={icon} size={20} color={tone}/></View><Text style={styles.settingsLabel}>{label}</Text>{value?<Text style={styles.settingsValue}>{value}</Text>:null}<Ionicons name="chevron-forward" size={18} color={C.tertiary}/></Pressable>;
 }
 
 function SettingsScreen() {
@@ -304,7 +305,11 @@ function SettingsScreen() {
         <SettingsRow icon="sync-outline" label="Синхронизация" value={statusText} tone={statusTone}/>
         <SettingsRow icon="notifications-outline" label="Уведомления" value={String(sync.notifications.filter(x=>!x.read_at).length)+" событий"}/>
         <SettingsRow icon="moon-outline" label="Тёмная тема" value="Всегда"/>
-        <SettingsRow icon="phone-portrait-outline" label="Подключённые устройства" value={String(sync.devices.length)}/>
+        <SettingsRow icon="phone-portrait-outline" label="Подключённые устройства" value={String(sync.devices.length)} onPress={()=>{void (async()=>{
+          const r=await sync.createPairingCode();
+          if(!r.ok||!r.code){Alert.alert("Сопряжение VYRON",r.error||"Не удалось создать код");return}
+          Alert.alert("Код для Desktop",r.code+"\n\nДействует 10 минут и сгорает после первого подключения.")
+        })()}}/>
         <SettingsRow icon="logo-youtube" label="YouTube аккаунты" value={String(sync.channels.filter(x=>x.youtube_channel_id).length)} tone={C.red}/>
         <SettingsRow icon="flash-outline" label="ENDLUME" value={endlumeConnected?"● Подключено":"Нет связи"} tone={endlumeConnected?C.purple:C.sub}/>
         <SettingsRow icon="server-outline" label="Хранилище" value="—"/>
