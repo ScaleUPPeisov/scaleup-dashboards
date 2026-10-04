@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from "react";
 import {
   Alert,
+  Image,
   Pressable,
   ScrollView,
   StatusBar,
@@ -180,7 +181,7 @@ function ChannelsScreen() {
         return <Pressable key={c.id} style={({pressed})=>pressed&&{transform:[{scale:.98}]}}>
           <Card>
             <View style={styles.channelTop}>
-              <LinearGradient colors={[C.blue,C.violet]} style={styles.avatar}><Text style={styles.avatarText}>{c.name.slice(0,2).toUpperCase()||String(i+1).padStart(2,"0")}</Text></LinearGradient>
+              <LinearGradient colors={[C.blue,C.violet]} style={styles.avatar}>{c.avatar_url?<Image source={{uri:c.avatar_url}} style={styles.avatarImage}/>:<Text style={styles.avatarText}>{c.name.slice(0,2).toUpperCase()||String(i+1).padStart(2,"0")}</Text>}</LinearGradient>
               <View style={{flex:1}}><Text style={styles.cardTitle}>{c.name}</Text><Text style={styles.muted}>{formatMetric(stat?.subscriber_count)} подписчиков <Text style={{color:delta==null?C.sub:delta<0?C.red:C.green}}>{delta==null?"—":(delta>=0?"+":"")+formatMetric(delta)}</Text></Text></View>
               <Sparkline tone={tone} values={channelSparkline(sync.stats,c.id,28)}/>
             </View>
@@ -423,6 +424,7 @@ const styles=StyleSheet.create({
   channelTop:{flexDirection:"row",alignItems:"center",gap:11},
   avatar:{width:44,height:44,borderRadius:15,alignItems:"center",justifyContent:"center"},
   avatarText:{color:"#fff",fontWeight:"900",fontSize:12},
+  avatarImage:{width:"100%",height:"100%",borderRadius:15},
   metricsRow:{flexDirection:"row",justifyContent:"space-between",marginTop:17,paddingRight:40},
   metricValue:{color:C.text,fontSize:21,fontWeight:"900"},
   metricLabel:{color:C.tertiary,fontSize:10,marginTop:2},
