@@ -8,6 +8,7 @@ export type PublisherInventoryReconciliation={
   createRows:RenderScanRow[];
   readyPhysicalPaths:Set<string>;
   unresolved:RenderScanRow[];
+  restoredJobIds:string[];
 };
 
 /**
@@ -31,6 +32,7 @@ export function reconcilePublisherInventory({
   const createRows:RenderScanRow[]=[];
   const readyPhysicalPaths=new Set<string>();
   const unresolved:RenderScanRow[]=[];
+  const restoredJobIds:string[]=[];
 
   for(const row of ready){
     const path=normalizeRenderPath(row.file.path);
@@ -39,15 +41,33 @@ export function reconcilePublisherInventory({
 
     if(row.classification==='NEW_CANDIDATE'||row.classification==='NEW_GENERATION'){
       const fp=String(row.currentFingerprint||row.file.fingerprint||'').trim().toLowerCase();
-      const existingSameGeneration=jobs.find(job=>
+      const size=Number(row.currentFileSize??row.file.size);
+      const matched=row.matchedJobId?byId.get(row.matchedJobId):undefined;
+      const matchedFp=String(matched?.currentSourceFingerprint||'').trim().toLowerCase();
+      const reusableMatched=Boolean(
+        matched
+        &&matched.channelId===channelId
+        &&!matched.youtubeVideoId
+        &&!matched.uploadedAt
+        &&matched.storageLifecycle!=='UPLOADED'
+        &&matched.storageLifecycle!=='TRASHED'
+        &&matched.storageLifecycle!=='TRASHED_BY_VYRON'
+        &&!matched.removedFromPublishList
+        &&normalizeRenderPath(matched.finalPath||'')===path
+        &&(!matchedFp||(matchedFp===fp&&Number(matched.currentSourceFileSize)===size))
+      );
+      const existingSameGeneration=reusableMatched?matched:jobs.find(job=>
         job.channelId===channelId
         &&!job.youtubeVideoId
         &&!job.uploadedAt
         &&job.storageLifecycle!=='UPLOADED'
+        &&job.storageLifecycle!=='TRASHED'
+        &&job.storageLifecycle!=='TRASHED_BY_VYRON'
+        &&!job.removedFromPublishList
         &&normalizeRenderPath(job.finalPath||'')===path
         &&Boolean(fp)
         &&String(job.currentSourceFingerprint||'').trim().toLowerCase()===fp
-        &&Number(job.currentSourceFileSize)===Number(row.currentFileSize??row.file.size)
+        &&Number(job.currentSourceFileSize)===size
       );
       if(existingSameGeneration){
         normalizePatches.push({
@@ -55,15 +75,17 @@ export function reconcilePublisherInventory({
           patch:{
             sourceOrigin:'render-scan',
             finalPath:row.file.path,
-            currentSourceFingerprint:fp,
-            currentSourceFileSize:row.currentFileSize??row.file.size,
+            currentSourceFingerprint:fp||existingSameGeneration.currentSourceFingerprint,
+            currentSourceFileSize:size,
             currentSourceModifiedAt:row.file.modifiedAt||existingSameGeneration.currentSourceModifiedAt,
+            sourceGenerationKey:fp?`${channelId}:${fp}:${size}`:existingSameGeneration.sourceGenerationKey,
             status:'READY_UPLOAD',
             storageLifecycle:'NEW',
             scanRecoveryState:undefined,
             error:undefined,
           }
         });
+        if(existingSameGeneration.status==='ERROR'||existingSameGeneration.storageLifecycle==='FAILED'||Boolean(existingSameGeneration.error))restoredJobIds.push(existingSameGeneration.id);
       }else createRows.push(row);
       continue
     }
@@ -90,15 +112,17 @@ export function reconcilePublisherInventory({
         currentSourceFingerprint:row.currentFingerprint||row.file.fingerprint||job.currentSourceFingerprint,
         currentSourceFileSize:row.currentFileSize??row.file.size,
         currentSourceModifiedAt:row.file.modifiedAt||job.currentSourceModifiedAt,
+        sourceGenerationKey:(row.currentFingerprint||row.file.fingerprint)?`${channelId}:${row.currentFingerprint||row.file.fingerprint}:${row.currentFileSize??row.file.size}`:job.sourceGenerationKey,
         status:'READY_UPLOAD',
         storageLifecycle:'NEW',
         scanRecoveryState:undefined,
         error:undefined,
       }
     });
+    if(job.status==='ERROR'||job.storageLifecycle==='FAILED'||Boolean(job.error))restoredJobIds.push(job.id);
   }
 
-  return{normalizePatches,createRows,readyPhysicalPaths,unresolved}
+  return{normalizePatches,createRows,readyPhysicalPaths,unresolved,restoredJobIds}
 }
 
 export function publisherReadyPathSet(ready:RenderScanRow[],exactRoot:string){
@@ -138,4 +162,16 @@ export function publisherInventoryJobs({
     &&j.status!=='SCHEDULED'
     &&['READY_UPLOAD','UPLOADING','ERROR'].includes(j.status)
   ).sort((a,b)=>a.number-b.number)
+}
+
+
+export function publisherCurrentPhysicalSize(job:VideoJob,files:ReadonlyArray<{path:string;size:number}>){
+  const path=normalizeRenderPath(job.finalPath||'');
+  if(path){
+    const scanned=files.find(file=>normalizeRenderPath(file.path)===path);
+    const scanSize=Number(scanned?.size);
+    if(Number.isFinite(scanSize)&&scanSize>0)return scanSize
+  }
+  const stored=Number(job.currentSourceFileSize);
+  return Number.isFinite(stored)&&stored>0?stored:undefined
 }
