@@ -2,6 +2,7 @@ import {invoke} from '@tauri-apps/api/core';
 import {useApp} from './store';
 import {useLiveInventory,type ChannelInventorySnapshot} from './renderInventoryRuntime';
 import type {AppState,Channel,ChannelStatisticsSnapshot,JobStatus,VideoJob} from './types';
+import {scanFactualRenderRuntime,type RuntimeRenderEvidence} from './renderRuntimeEvidence';
 
 type SyncEvent={
   event_id:string;
@@ -24,6 +25,8 @@ const jobSignatures=new Map<string,string>();
 const publisherSignatures=new Map<string,string>();
 const endlumeSignatures=new Map<string,string>();
 const inventorySignatures=new Map<string,string>();
+const renderEvidenceSignatures=new Map<string,string>();
+let renderProbeRunning=false;
 
 function hash32(input:string,seed:number){
   let h=(2166136261^seed)>>>0;
@@ -269,6 +272,49 @@ function emitInventory(snapshots:Record<string,ChannelInventorySnapshot>){
   initialInventoryPass=false;enqueue(rows)
 }
 
+
+export function syncObservedRenderEvidence(evidence:RuntimeRenderEvidence){
+  const state=useApp.getState();
+  const at=new Date(evidence.observedAtMs).toISOString();
+  const rows:SyncEvent[]=[];
+  for(const item of evidence.rows){
+    const r=item.row;if(!r.jobId)continue;
+    const job=state.jobs.find(x=>x.id===r.jobId);if(!job)continue;
+    const status=r.renderStatus==='Rendering'?'RENDERING':r.renderStatus==='Completed'?'COMPLETED':r.renderStatus==='Error'?'ERROR':null;
+    if(!status)continue;
+    const progress=status==='COMPLETED'?100:(typeof r.progress==='number'&&Number.isFinite(r.progress)?Math.max(0,Math.min(100,r.progress)):null);
+    const key=r.jobId;
+    const fact={desktop_project_id:key,status,progress,error_message:r.error||null,timestamp:at};
+    const sig=stable(fact);
+    if(renderEvidenceSignatures.get(key)===sig)continue;
+    renderEvidenceSignatures.set(key,sig);
+    rows.push(event('project_status','project_status',key,fact,at));
+    rows.push(event('endlume_upsert','endlume_job',key,{
+      desktop_job_id:key,
+      desktop_project_id:key,
+      state:status==='RENDERING'?'rendering':status==='COMPLETED'?'completed':'failed',
+      current_project:'VIDEO_'+String(r.videoNumber||job.number).padStart(3,'0'),
+      progress,
+      last_activity:at,
+      machine_name:null,
+      error_message:r.error||null,
+      updated_at:at
+    },at));
+  }
+  enqueue(rows)
+}
+
+async function probeRenderProgress(){
+  if(renderProbeRunning)return;
+  const state=useApp.getState();
+  if(!state.booted||!state.settings.workspace||!state.jobs.some(x=>x.status==='RENDERING'))return;
+  renderProbeRunning=true;
+  try{
+    const evidence=await scanFactualRenderRuntime(state.settings.workspace,state.channels);
+    syncObservedRenderEvidence(evidence)
+  }catch{}finally{renderProbeRunning=false}
+}
+
 export function startMobileSyncBridge(){
   if(started)return;started=true;
   emitAppState(useApp.getState());
@@ -276,6 +322,7 @@ export function startMobileSyncBridge(){
   const unsubApp=useApp.subscribe(state=>emitAppState(state));
   const unsubInventory=useLiveInventory.subscribe(state=>emitInventory(state.snapshots));
   const interval=window.setInterval(flush,10_000);
+  const renderInterval=window.setInterval(()=>void probeRenderProgress(),1_000);
   const online=()=>{
     if(offlineAt){
       const at=offlineAt;offlineAt=undefined;
@@ -285,7 +332,7 @@ export function startMobileSyncBridge(){
   };
   const offline=()=>{offlineAt=new Date().toISOString()};
   window.addEventListener('online',online);window.addEventListener('offline',offline);
-  window.addEventListener('beforeunload',()=>{unsubApp();unsubInventory();window.clearInterval(interval);window.removeEventListener('online',online);window.removeEventListener('offline',offline)},{once:true});
+  window.addEventListener('beforeunload',()=>{unsubApp();unsubInventory();window.clearInterval(interval);window.clearInterval(renderInterval);window.removeEventListener('online',online);window.removeEventListener('offline',offline)},{once:true});
 }
 
 export function mobileSyncBridgeTestHooks(){
