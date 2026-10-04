@@ -74,7 +74,7 @@ jobs:
       - name: Capture all five tabs
         run: |
           mkdir -p visual-qa
-          cat > /tmp/vyron-visual.mjs <<'JS'
+          cat > visual-qa/run.mjs <<'JS'
           import { webkit } from 'playwright';
 
           const browser = await webkit.launch();
@@ -135,7 +135,7 @@ jobs:
 
           await browser.close();
           JS
-          node /tmp/vyron-visual.mjs
+          node visual-qa/run.mjs
 
       - name: Upload visual QA
         uses: actions/upload-artifact@v4
