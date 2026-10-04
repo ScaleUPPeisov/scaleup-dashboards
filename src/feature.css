@@ -1,0 +1,5 @@
+.dot.green{background:#6ee7a8;box-shadow:0 0 12px rgba(110,231,168,.35)}
+.disabled-feature{opacity:.58}
+.beta-badge{font-size:9px;letter-spacing:.09em;color:#8f8f98;padding:5px 7px;border:1px solid rgba(255,255,255,.08);border-radius:999px;white-space:nowrap}
+.disabled-feature select{cursor:not-allowed}
+.panel:has(#smartCuts:checked){border-color:rgba(110,231,168,.11)}
