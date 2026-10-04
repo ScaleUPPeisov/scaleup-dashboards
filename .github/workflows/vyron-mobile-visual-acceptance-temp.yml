@@ -17,6 +17,8 @@ jobs:
         working-directory: vyron-mobile
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - uses: actions/setup-node@v4
         with:
@@ -25,7 +27,7 @@ jobs:
       - name: Verify exact App source
         run: |
           test "$(git rev-parse HEAD^)" = "a22b7430a552b2f4d129a6e7e1f972dcdd3eecfc"
-          git diff --exit-code a22b7430a552b2f4d129a6e7e1f972dcdd3eecfc -- vyron-mobile/App.tsx
+          git diff --exit-code a22b7430a552b2f4d129a6e7e1f972dcdd3eecfc -- App.tsx
 
       - name: Install app
         run: npm install --no-audit --no-fund
