@@ -1,0 +1,16 @@
+{
+  "expo": {
+    "name": "VYRON",
+    "slug": "vyron-mobile",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.scaleup.vyronmobile"
+    },
+    "android": {
+      "package": "com.scaleup.vyronmobile"
+    }
+  }
+}
