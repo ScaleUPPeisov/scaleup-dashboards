@@ -17,6 +17,7 @@ export type MobileChannelRow = {
   deleted_at: string | null;
   created_at: string;
   updated_at: string;
+  last_event_id: string | null;
 };
 
 export type ChannelStatRow = {
@@ -64,6 +65,7 @@ export type ProjectRow = {
   deleted_at: string | null;
   created_at: string;
   updated_at: string;
+  last_event_id: string | null;
 };
 
 export type InventoryRow = {
@@ -79,6 +81,7 @@ export type InventoryRow = {
   stale: boolean;
   source_updated_at: string | null;
   updated_at: string;
+  last_event_id: string | null;
 };
 
 export type PublisherJobRow = {
@@ -93,6 +96,7 @@ export type PublisherJobRow = {
   error_message: string | null;
   source_updated_at: string | null;
   updated_at: string;
+  last_event_id: string | null;
 };
 
 export type EndlumeJobRow = {
@@ -108,6 +112,7 @@ export type EndlumeJobRow = {
   error_message: string | null;
   source_updated_at: string | null;
   updated_at: string;
+  last_event_id: string | null;
 };
 
 export type DeviceRow = {
@@ -136,6 +141,7 @@ export type NotificationRow = {
   occurred_at: string;
   read_at: string | null;
   created_at: string;
+  source_event_id: string | null;
 };
 
 export type SyncEventRow = {
