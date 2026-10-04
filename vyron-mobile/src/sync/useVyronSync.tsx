@@ -216,7 +216,7 @@ export function useVyronSync(): VyronSyncModel {
         if (live) setDataLoading(false);
       }
 
-      let realtime = supabase.channel(`vyron-mobile:${userId}`);
+      let realtime = supabase!.channel(`vyron-mobile:${userId}`);
       for (const table of [
         "vyron_mobile_channels",
         "vyron_mobile_channel_stats",
@@ -275,7 +275,7 @@ export function useVyronSync(): VyronSyncModel {
       live = false;
       if (heartbeat) clearInterval(heartbeat);
       if (channelRef.current) {
-        void supabase.removeChannel(channelRef.current);
+        void supabase!.removeChannel(channelRef.current);
         channelRef.current = null;
       }
     };
