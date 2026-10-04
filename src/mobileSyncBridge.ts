@@ -15,6 +15,7 @@ type SyncEvent={
 
 const pending:SyncEvent[]=[];
 let timer:number|undefined;
+let transportBusy=false;
 let started=false;
 let initialAppPass=true;
 let initialInventoryPass=true;
@@ -44,18 +45,24 @@ function event(type:string,entity:string,key:string,payload:Record<string,unknow
   return{event_id:deterministicSyncUuid(type+':'+key+':'+sig),event_type:type,entity_type:entity,entity_key:key,desktop_event_at:at,payload}
 }
 function scheduleDrain(){
-  if(timer!==undefined||!pending.length)return;
+  if(timer!==undefined||transportBusy||!pending.length)return;
   timer=window.setTimeout(()=>{
     timer=undefined;
+    if(transportBusy){scheduleDrain();return}
     const batch=pending.splice(0,100);
-    void invoke('mobile_sync_enqueue',{events:batch}).catch(()=>{}).finally(()=>scheduleDrain());
+    transportBusy=true;
+    void invoke('mobile_sync_enqueue',{events:batch}).catch(()=>{}).finally(()=>{transportBusy=false;scheduleDrain()});
   },80)
 }
 function enqueue(rows:SyncEvent[]){
   if(rows.length)pending.push(...rows);
   scheduleDrain()
 }
-function flush(){void invoke('mobile_sync_flush').catch(()=>{})}
+function flush(){
+  if(transportBusy||pending.length){scheduleDrain();return}
+  transportBusy=true;
+  void invoke('mobile_sync_flush').catch(()=>{}).finally(()=>{transportBusy=false;scheduleDrain()})
+}
 function sourceStats(channel:Channel){
   const s=channel.stats;
   return{
