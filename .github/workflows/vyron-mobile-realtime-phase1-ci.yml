@@ -38,7 +38,7 @@ jobs:
         run: npx expo export --platform ios --output-dir dist-ios
 
   ios-simulator-build:
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 60
     defaults:
       run:
