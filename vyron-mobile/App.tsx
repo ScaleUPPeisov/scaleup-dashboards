@@ -37,6 +37,17 @@ const C = {
 };
 
 type Tab = "home" | "channels" | "projects" | "analytics" | "settings";
+
+const UI = {
+  pagePadding: 16,
+  pageGap: 12,
+  radius: 22,
+  controlRadius: 16,
+  controlHeight: 44,
+  navHeight: 82,
+  iconSize: 21,
+} as const;
+
 function progressWidth(value:number): `${number}%` { return `${Math.max(0,Math.min(100,value))}%`; }
 
 function Card({ children, style }: any) {
@@ -52,7 +63,19 @@ function Card({ children, style }: any) {
   );
 }
 
-function Header({ title }: { title: string }) {
+function TopActionButton({label,icon="add",onPress}:{label:string;icon?:any;onPress:()=>void}) {
+  return (
+    <Pressable
+      onPress={()=>{Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);onPress()}}
+      style={({pressed})=>[styles.topActionButton,pressed&&styles.pressedScale]}
+    >
+      <Ionicons name={icon} size={18} color="#fff"/>
+      <Text style={styles.topActionButtonText}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function Header({ title, subtitle, actionLabel, actionIcon, onAction }: { title: string; subtitle?: string; actionLabel?: string; actionIcon?: any; onAction?: ()=>void }) {
   const sync = useVyronSyncContext();
   const offline = sync.syncStatus !== "online" && sync.syncStatus !== "syncing";
   const syncText = sync.syncStatus === "unconfigured"
@@ -60,19 +83,62 @@ function Header({ title }: { title: string }) {
     : "Нет подключения · " + relativeSyncTime(sync.lastSuccessfulSyncAt);
   return (
     <View style={styles.header}>
-      <View style={{flex:1}}>
+      <View style={styles.brandRow}>
         <Text style={styles.brand}>VYRON</Text>
-        <Text style={styles.pageTitle}>{title}</Text>
-        {offline ? <Text style={styles.syncMeta}>{syncText}</Text> : null}
+        <Pressable
+          onPress={() => Haptics.selectionAsync()}
+          style={({ pressed }) => [styles.iconButton, pressed && styles.pressedScale]}
+        >
+          <Ionicons name="notifications-outline" size={UI.iconSize} color={C.text} />
+          <View style={styles.notificationDot} />
+        </Pressable>
       </View>
-      <Pressable
-        onPress={() => Haptics.selectionAsync()}
-        style={({ pressed }) => [styles.iconButton, pressed && { transform: [{ scale: 0.96 }] }]}
-      >
-        <Ionicons name="notifications-outline" size={22} color={C.text} />
-        <View style={styles.notificationDot} />
-      </Pressable>
+      <View style={styles.titleRow}>
+        <View style={styles.titleCopy}>
+          <Text style={styles.pageTitle}>{title}</Text>
+          {subtitle ? <Text style={styles.pageSubtitle}>{subtitle}</Text> : null}
+        </View>
+        {actionLabel && onAction ? <TopActionButton label={actionLabel} icon={actionIcon} onPress={onAction}/> : null}
+      </View>
+      {offline ? <Text style={styles.syncMeta}>{syncText}</Text> : null}
     </View>
+  );
+}
+
+function PageContainer({children}:{children:React.ReactNode}) {
+  return <PageContainer>{children}</PageContainer>;
+}
+
+function SectionHeading({title,action}:{title:string;action?:string}) {
+  return <View style={styles.sectionHead}><Text style={styles.sectionTitle}>{title}</Text>{action ? <Text style={styles.sectionAction}>{action}</Text> : null}</View>;
+}
+
+function SearchField({value,onChangeText,placeholder}:{value?:string;onChangeText?:(text:string)=>void;placeholder:string}) {
+  return (
+    <View style={styles.search}>
+      <Ionicons name="search" size={18} color={C.tertiary}/>
+      <TextInput value={value} onChangeText={onChangeText} placeholder={placeholder} placeholderTextColor={C.tertiary} style={styles.searchInput}/>
+    </View>
+  );
+}
+
+function FilterChip({label,active,onPress}:{label:string;active:boolean;onPress:()=>void}) {
+  return (
+    <Pressable onPress={()=>{onPress();Haptics.selectionAsync()}} style={({pressed})=>[styles.filter,active&&styles.filterActive,pressed&&{opacity:.78}]}>
+      <Text style={[styles.filterText,active&&styles.filterTextActive]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function EmptyStateCard({icon="cloud-outline",title,detail}:{icon?:any;title:string;detail?:string}) {
+  return (
+    <Card style={styles.emptyStateCard}>
+      <View style={styles.emptyStateIcon}><Ionicons name={icon} size={20} color={C.cyan}/></View>
+      <View style={{flex:1}}>
+        <Text style={styles.emptyStateTitle}>{title}</Text>
+        {detail ? <Text style={styles.emptyStateDetail}>{detail}</Text> : null}
+      </View>
+    </Card>
   );
 }
 
@@ -87,12 +153,12 @@ function Sparkline({ tone = C.blue, values = [] }: { tone?: string; values?: num
   return <Svg width="104" height="38" viewBox="0 0 104 38"><Path d={path} fill="none" stroke={tone} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></Svg>;
 }
 
-function Kpi({ value, label, delta }: { value: string; label: string; delta: string }) {
+function MetricCard({ value, label, delta }: { value: string; label: string; delta: string }) {
   return (
-    <Card style={styles.kpi}>
-      <Text style={styles.kpiValue}>{value}</Text>
-      <Text style={styles.kpiLabel}>{label}</Text>
-      <Text style={[styles.kpiDelta, { color: delta === "—" ? C.sub : delta.startsWith("↓") ? C.red : C.green }]}>{delta}</Text>
+    <Card style={styles.metricCard}>
+      <Text style={styles.metricCardValue}>{value}</Text>
+      <Text style={styles.metricCardLabel}>{label}</Text>
+      <Text style={[styles.metricCardDelta, { color: delta === "—" ? C.sub : delta.startsWith("↓") ? C.red : C.green }]}>{delta}</Text>
     </Card>
   );
 }
@@ -119,7 +185,7 @@ function HomeScreen() {
   const normal=Math.max(0,sync.channels.length-attention.length);
   const health=sync.channels.length?Math.round(normal/sync.channels.length*100):null;
   return (
-    <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+    <PageContainer>
       <Header title="Главная" />
       <Card style={styles.hero}>
         <Text style={styles.eyebrow}>СЕТЬ КАНАЛОВ</Text>
@@ -131,14 +197,14 @@ function HomeScreen() {
           <View><Text style={styles.heroStatValue}>{health==null?"—":String(health)+"%"}</Text><Text style={styles.heroStatLabel}>в норме</Text></View>
         </View>
       </Card>
-      <View style={styles.sectionHead}><Text style={styles.sectionTitle}>Сейчас</Text><Text style={styles.sectionAction}>{sync.syncStatus==="online"?"Live":"Cache"}</Text></View>
+      <SectionHeading title="Сейчас" action={sync.syncStatus==="online"?"Live":"Cache"}/>
       <View style={styles.grid2}>
         <Card style={styles.compact}><Ionicons name="cloud-upload-outline" size={20} color={C.cyan} /><Text style={styles.compactValue}>{publishing}</Text><Text style={styles.compactLabel}>публикации сегодня</Text></Card>
         <Card style={styles.compact}><Ionicons name="flash-outline" size={20} color={C.purple} /><Text style={styles.compactValue}>{rendering}</Text><Text style={styles.compactLabel}>рендерятся</Text></Card>
         <Card style={styles.compact}><Ionicons name="checkmark-circle-outline" size={20} color={C.green} /><Text style={styles.compactValue}>{completed}</Text><Text style={styles.compactLabel}>завершено</Text></Card>
         <Card style={styles.compact}><Ionicons name="warning-outline" size={20} color={C.red} /><Text style={styles.compactValue}>{errors}</Text><Text style={styles.compactLabel}>ошибки</Text></Card>
       </View>
-      <View style={styles.sectionHead}><Text style={styles.sectionTitle}>Требует внимания</Text><Text style={styles.sectionAction}>{attention.length}</Text></View>
+      <SectionHeading title="Требует внимания" action={String(attention.length)}/>
       {attention.length?attention.slice(0,4).map(c=>{
         const state=channelState(c,sync),tone=state.tone==="red"?C.red:C.amber;
         const inv=sync.inventory.find(x=>x.channel_id===c.id);
@@ -149,7 +215,7 @@ function HomeScreen() {
         <View style={styles.rowBetween}><View><Text style={styles.cardTitle}>{endlume?.machine_name||"ENDLUME"}</Text><Text style={styles.muted}>{endlume?.current_project||"Нет активного проекта"}</Text></View><Text style={[styles.kpiDelta,{color:C.purple}]}>{endlume?.progress==null?"—":String(Math.round(endlume.progress))+"%"}</Text></View>
         {endlume?.progress!=null?<View style={styles.progressTrack}><LinearGradient colors={[C.blue,C.purple]} style={[styles.progressFill,{width:progressWidth(endlume.progress)}]} /></View>:null}
       </Card>
-    </ScrollView>
+    </PageContainer>
   );
 }
 
@@ -164,16 +230,18 @@ function ChannelsScreen() {
     return c.name.toLowerCase().includes(q.toLowerCase())&&matchesFilter;
   });
   return (
-    <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-      <Header title="Каналы" />
-      <Pressable style={({pressed})=>[styles.primaryButton,pressed&&{transform:[{scale:.98}]}]} onPress={()=>{Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);Alert.alert("Добавление канала","Добавь канал в Desktop VYRON. После сохранения он автоматически появится здесь через Realtime.")}}>
-        <Ionicons name="add" size={20} color="#fff" /><Text style={styles.primaryButtonText}>Добавить канал</Text>
-      </Pressable>
-      <View style={styles.search}><Ionicons name="search" size={18} color={C.tertiary}/><TextInput value={q} onChangeText={setQ} placeholder="Поиск каналов…" placeholderTextColor={C.tertiary} style={styles.searchInput}/></View>
+    <PageContainer>
+      <Header
+        title="Каналы"
+        actionLabel="Добавить"
+        actionIcon="add"
+        onAction={()=>Alert.alert("Добавление канала","Добавь канал в Desktop VYRON. После сохранения он автоматически появится здесь через Realtime.")}
+      />
+      <SearchField value={q} onChangeText={setQ} placeholder="Поиск каналов…"/>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filters}>
-        {["Все","Активные","Нужен контент","Ошибки"].map(x=><Pressable key={x} onPress={()=>{setFilter(x);Haptics.selectionAsync()}} style={[styles.filter,filter===x&&styles.filterActive]}><Text style={[styles.filterText,filter===x&&styles.filterTextActive]}>{x}</Text></Pressable>)}
+        {["Все","Активные","Нужен контент","Ошибки"].map(x=><FilterChip key={x} label={x} active={filter===x} onPress={()=>setFilter(x)}/>)}
       </ScrollView>
-      {!filtered.length?<Card><Text style={styles.muted}>{sync.dataLoading?"Синхронизация…":"Каналы пока не синхронизированы"}</Text></Card>:null}
+      {!filtered.length?<EmptyStateCard icon="albums-outline" title={sync.dataLoading?"Синхронизация…":"Каналы пока не синхронизированы"} detail={sync.dataLoading?"Получаем актуальные данные VYRON":"Новый канал появится здесь после синхронизации с Desktop VYRON"}/>:null}
       {filtered.map((c,i)=>{
         const stat=stats28.get(c.id),inv=sync.inventory.find(x=>x.channel_id===c.id),state=channelState(c,sync);
         const tone=state.tone==="green"?C.green:state.tone==="amber"?C.amber:state.tone==="red"?C.red:C.cyan;
@@ -195,7 +263,7 @@ function ChannelsScreen() {
           </Card>
         </Pressable>
       })}
-    </ScrollView>
+    </PageContainer>
   );
 }
 
@@ -204,17 +272,16 @@ function ProjectsScreen() {
   const counts=(status:string)=>sync.projects.filter(x=>x.status===status).length;
   const fmtDuration=(seconds:number|null)=>seconds==null?"—":Math.floor(seconds/60)+":"+String(Math.round(seconds%60)).padStart(2,"0");
   return (
-    <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-      <Header title="Проекты" />
-      <Text style={styles.subtitle}>Управляйте своими видеопроектами</Text>
+    <PageContainer>
+      <Header title="Проекты" subtitle="Управляйте своими видеопроектами" />
       <View style={styles.grid2}>
-        <Kpi value={String(counts("READY_RENDER"))} label="готовы" delta="—"/>
-        <Kpi value={String(counts("RENDERING"))} label="рендерятся" delta="—"/>
-        <Kpi value={String(counts("COMPLETED"))} label="завершено" delta="—"/>
-        <Kpi value={String(counts("ERROR"))} label="ошибки" delta="—"/>
+        <MetricCard value={String(counts("READY_RENDER"))} label="готовы" delta="—"/>
+        <MetricCard value={String(counts("RENDERING"))} label="рендерятся" delta="—"/>
+        <MetricCard value={String(counts("COMPLETED"))} label="завершено" delta="—"/>
+        <MetricCard value={String(counts("ERROR"))} label="ошибки" delta="—"/>
       </View>
-      <View style={styles.search}><Ionicons name="search" size={18} color={C.tertiary}/><TextInput placeholder="Поиск проектов…" placeholderTextColor={C.tertiary} style={styles.searchInput}/></View>
-      {!sync.projects.length?<Card><Text style={styles.muted}>{sync.dataLoading?"Синхронизация…":"Проекты пока не синхронизированы"}</Text></Card>:null}
+      <SearchField placeholder="Поиск проектов…"/>
+      {!sync.projects.length?<EmptyStateCard icon="layers-outline" title={sync.dataLoading?"Синхронизация…":"Проекты пока не синхронизированы"} detail={sync.dataLoading?"Получаем проекты и статусы рендера":"Проекты Desktop VYRON появятся здесь автоматически"}/>:null}
       {sync.projects.map(p=>{
         const channel=sync.channels.find(c=>c.id===p.channel_id);
         const tone=p.status==="READY_RENDER"?C.cyan:p.status==="RENDERING"?C.purple:p.status==="COMPLETED"?C.green:p.status==="ERROR"?C.red:C.tertiary;
@@ -225,7 +292,7 @@ function ProjectsScreen() {
           {p.status==="ERROR" ? <Pressable onPress={()=>{Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);Alert.alert("Повтор рендера","Запусти Retry в Desktop VYRON / ENDLUME. Mobile автоматически покажет новый статус и прогресс.")}} style={styles.retry}><Ionicons name="refresh" size={16} color={C.text}/><Text style={styles.retryText}>Повторить</Text></Pressable> : null}
         </Card>
       })}
-    </ScrollView>
+    </PageContainer>
   );
 }
 
@@ -258,17 +325,17 @@ function AnalyticsScreen() {
   const firstShare=trafficTotal&&a.traffic[0]?a.traffic[0][1]/trafficTotal:0;
   const circumference=276.46,dash=(circumference*firstShare).toFixed(1);
   return (
-    <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+    <PageContainer>
       <Header title="Аналитика" />
       <View style={styles.grid2}>
-        <Kpi value={formatMetric(a.views)} label="Просмотры" delta="—"/>
-        <Kpi value={a.subscribers==null?"—":(a.subscribers>=0?"+":"")+formatMetric(a.subscribers)} label="Подписчики" delta="—"/>
-        <Kpi value={a.watchTime==null?"—":formatMetric(a.watchTime/60)+" ч"} label="Watch time" delta="—"/>
-        <Kpi value={a.ctr==null?"—":formatMetric(a.ctr)+"%"} label="CTR" delta="—"/>
+        <MetricCard value={formatMetric(a.views)} label="Просмотры" delta="—"/>
+        <MetricCard value={a.subscribers==null?"—":(a.subscribers>=0?"+":"")+formatMetric(a.subscribers)} label="Подписчики" delta="—"/>
+        <MetricCard value={a.watchTime==null?"—":formatMetric(a.watchTime/60)+" ч"} label="Watch time" delta="—"/>
+        <MetricCard value={a.ctr==null?"—":formatMetric(a.ctr)+"%"} label="CTR" delta="—"/>
       </View>
       <View style={styles.segment}>{([7,28,90] as const).map(x=><Pressable key={x} onPress={()=>{setPeriod(x);Haptics.selectionAsync()}} style={[styles.segmentItem,period===x&&styles.segmentActive]}><Text style={[styles.segmentText,period===x&&styles.segmentTextActive]}>{x} дней</Text></Pressable>)}</View>
       <BigChart values={a.daily.map(x=>x.value)} total={formatMetric(a.views)}/>
-      <View style={styles.sectionHead}><Text style={styles.sectionTitle}>Топ каналов</Text><Text style={styles.sectionAction}>{period} дней</Text></View>
+      <SectionHeading title="Топ каналов" action={period+" дней"}/>
       {a.topChannels.length?a.topChannels.slice(0,5).map((x,i)=><Card key={x.channel.id} style={styles.rankCard}><Text style={styles.rank}>{i+1}</Text><View style={{flex:1}}><Text style={styles.cardTitle}>{x.channel.name}</Text><Text style={styles.muted}>{formatMetric(x.views)} просмотров</Text></View><Sparkline tone={i===0?C.green:C.blue} values={channelSparkline(sync.stats,x.channel.id,period)}/></Card>):<Card><Text style={styles.muted}>Нет данных за выбранный период</Text></Card>}
       <Card>
         <Text style={styles.sectionTitle}>Источники трафика</Text>
@@ -280,7 +347,7 @@ function AnalyticsScreen() {
           <View style={{gap:10}}>{a.traffic.length?a.traffic.slice(0,4).map(([key,value])=><Text key={key} style={styles.muted}>● {key} {trafficTotal?Math.round(value/trafficTotal*100):0}%</Text>):<Text style={styles.muted}>Нет данных</Text>}</View>
         </View>
       </Card>
-    </ScrollView>
+    </PageContainer>
   );
 }
 
@@ -297,7 +364,7 @@ function SettingsScreen() {
   const endlumeConnected=sync.endlumeJobs.some(x=>x.state!=="disconnected"&&x.last_activity&&now-Date.parse(x.last_activity)<60000);
   const initials=name.split(/\s+/).slice(0,2).map(x=>x[0]).join("").toUpperCase().slice(0,2);
   return (
-    <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+    <PageContainer>
       <Header title="Настройки" />
       <Card style={styles.profileCard}>
         <LinearGradient colors={[C.blue,C.violet]} style={styles.profileAvatar}><Text style={styles.profileAvatarText}>{initials}</Text></LinearGradient>
@@ -325,7 +392,7 @@ function SettingsScreen() {
       }):<Card><Text style={styles.muted}>Устройства пока не синхронизированы</Text></Card>}
       <Pressable onPress={()=>void sync.signOut()} style={styles.logout}><Ionicons name="log-out-outline" size={19} color={C.red}/><Text style={styles.logoutText}>Выйти</Text></Pressable>
       <Text style={styles.version}>VYRON Mobile 0.1.0</Text>
-    </ScrollView>
+    </PageContainer>
   );
 }
 
@@ -336,6 +403,20 @@ const nav = [
   ["analytics","stats-chart-outline","Аналитика"],
   ["settings","settings-outline","Настройки"],
 ] as const;
+
+function BottomNavigation({tab,onChange}:{tab:Tab;onChange:(tab:Tab)=>void}) {
+  return (
+    <View style={styles.nav}>
+      {nav.map(([id,icon,label])=>{
+        const active=tab===id;
+        return <Pressable key={id} onPress={()=>{onChange(id);Haptics.selectionAsync()}} style={({pressed})=>[styles.navItem,pressed&&styles.pressedScale]}>
+          <View style={active?styles.navGlow:undefined}><Ionicons name={icon} size={UI.iconSize} color={active?C.blue:C.tertiary}/></View>
+          <Text numberOfLines={1} style={[styles.navLabel,active&&styles.navLabelActive]}>{label}</Text>
+        </Pressable>
+      })}
+    </View>
+  );
+}
 
 function AppShell() {
   const [tab,setTab]=useState<Tab>("home");
@@ -351,15 +432,7 @@ function AppShell() {
     <SafeAreaView style={styles.safe} edges={["top"]}>
       <StatusBar barStyle="light-content"/>
       <View style={styles.screen}>{screen}</View>
-      <View style={styles.nav}>
-        {nav.map(([id,icon,label])=>{
-          const active=tab===id;
-          return <Pressable key={id} onPress={()=>{setTab(id);Haptics.selectionAsync()}} style={({pressed})=>[styles.navItem,pressed&&{transform:[{scale:.96}]}]}>
-            <View style={active?styles.navGlow:undefined}><Ionicons name={icon} size={22} color={active?C.blue:C.tertiary}/></View>
-            <Text numberOfLines={1} style={[styles.navLabel,active&&styles.navLabelActive]}>{label}</Text>
-          </Pressable>
-        })}
-      </View>
+      <BottomNavigation tab={tab} onChange={setTab}/>
     </SafeAreaView>
   );
 }
@@ -382,14 +455,23 @@ export default function App() {
 const styles=StyleSheet.create({
   safe:{flex:1,backgroundColor:C.bg},
   screen:{flex:1,backgroundColor:C.bg},
-  content:{paddingHorizontal:16,paddingBottom:110,gap:12},
-  header:{paddingTop:8,paddingBottom:8,flexDirection:"row",alignItems:"flex-start",justifyContent:"space-between"},
+  content:{paddingHorizontal:UI.pagePadding,paddingBottom:UI.navHeight+28,gap:UI.pageGap},
+  pressedScale:{transform:[{scale:.97}]},
+
+  header:{paddingTop:8,paddingBottom:6,gap:10},
+  brandRow:{minHeight:44,flexDirection:"row",alignItems:"center",justifyContent:"space-between"},
   brand:{color:C.text,fontSize:28,fontWeight:"900",letterSpacing:3.2},
-  pageTitle:{color:C.text,fontSize:32,fontWeight:"800",marginTop:12,letterSpacing:-.6},
-  syncMeta:{color:C.amber,fontSize:10,fontWeight:"700",marginTop:5},
+  titleRow:{minHeight:44,flexDirection:"row",alignItems:"center",justifyContent:"space-between",gap:12},
+  titleCopy:{flex:1,minWidth:0},
+  pageTitle:{color:C.text,fontSize:28,fontWeight:"800",letterSpacing:-.5},
+  pageSubtitle:{color:C.sub,fontSize:12,marginTop:3},
+  syncMeta:{color:C.amber,fontSize:10,fontWeight:"700",marginTop:-3},
   iconButton:{width:44,height:44,borderRadius:16,borderWidth:1,borderColor:C.border,backgroundColor:"#0E1624",alignItems:"center",justifyContent:"center"},
   notificationDot:{position:"absolute",right:10,top:9,width:7,height:7,borderRadius:4,backgroundColor:C.red},
-  card:{borderRadius:22,borderWidth:1,borderColor:C.border,padding:16,overflow:"hidden"},
+  topActionButton:{minHeight:40,maxHeight:40,paddingHorizontal:13,borderRadius:14,backgroundColor:C.blue,flexDirection:"row",alignItems:"center",justifyContent:"center",gap:6,shadowColor:C.blue,shadowOpacity:.24,shadowRadius:10,shadowOffset:{width:0,height:4}},
+  topActionButtonText:{color:"#fff",fontSize:12,fontWeight:"800"},
+
+  card:{borderRadius:UI.radius,borderWidth:1,borderColor:C.border,padding:16,overflow:"hidden",shadowColor:"#000",shadowOpacity:.20,shadowRadius:18,shadowOffset:{width:0,height:10}},
   hero:{padding:18},
   eyebrow:{color:C.sub,fontSize:11,fontWeight:"800",letterSpacing:1.4},
   heroValue:{color:C.text,fontSize:31,fontWeight:"900",letterSpacing:-.8,marginTop:7},
@@ -397,48 +479,61 @@ const styles=StyleSheet.create({
   heroStats:{flexDirection:"row",justifyContent:"space-between",marginTop:20},
   heroStatValue:{color:C.text,fontSize:18,fontWeight:"800"},
   heroStatLabel:{color:C.tertiary,fontSize:10,marginTop:3},
-  sectionHead:{flexDirection:"row",justifyContent:"space-between",alignItems:"center",marginTop:5},
+
+  sectionHead:{minHeight:28,flexDirection:"row",justifyContent:"space-between",alignItems:"center",marginTop:4},
   sectionTitle:{color:C.text,fontSize:17,fontWeight:"800"},
   sectionAction:{color:C.blue,fontSize:12,fontWeight:"700"},
+
   grid2:{flexDirection:"row",flexWrap:"wrap",gap:10},
-  compact:{width:"48.5%",minHeight:116},
-  compactValue:{color:C.text,fontSize:27,fontWeight:"900",marginTop:11},
+  compact:{width:"48.5%",minHeight:110},
+  compactValue:{color:C.text,fontSize:27,fontWeight:"900",marginTop:10},
   compactLabel:{color:C.sub,fontSize:11,marginTop:3},
+  metricCard:{width:"48.5%",minHeight:104},
+  metricCardValue:{color:C.text,fontSize:24,fontWeight:"900",letterSpacing:-.5},
+  metricCardLabel:{color:C.sub,fontSize:11,marginTop:4},
+  metricCardDelta:{fontSize:11,fontWeight:"800",marginTop:8},
+
   rowBetween:{flexDirection:"row",alignItems:"center",justifyContent:"space-between",gap:10},
   cardTitle:{color:C.text,fontSize:15,fontWeight:"800"},
   muted:{color:C.sub,fontSize:12,marginTop:3},
-  badge:{alignSelf:"flex-start",minHeight:30,borderRadius:12,borderWidth:1,paddingHorizontal:10,flexDirection:"row",alignItems:"center",gap:7},
+  tiny:{color:C.tertiary,fontSize:10},
+
+  badge:{alignSelf:"flex-start",minHeight:28,borderRadius:12,borderWidth:1,paddingHorizontal:10,flexDirection:"row",alignItems:"center",gap:7},
   badgeText:{fontSize:10,fontWeight:"800"},
   dot:{width:6,height:6,borderRadius:3},
+
   progressTrack:{height:6,borderRadius:6,backgroundColor:"#1A2435",overflow:"hidden",marginTop:14},
   progressFill:{height:"100%",borderRadius:6},
-  primaryButton:{minHeight:48,borderRadius:16,backgroundColor:C.blue,flexDirection:"row",gap:7,alignItems:"center",justifyContent:"center"},
+
+  primaryButton:{minHeight:UI.controlHeight,borderRadius:UI.controlRadius,backgroundColor:C.blue,flexDirection:"row",gap:7,alignItems:"center",justifyContent:"center"},
   primaryButtonText:{color:"#fff",fontSize:14,fontWeight:"800"},
-  search:{height:48,borderRadius:16,borderWidth:1,borderColor:C.border,backgroundColor:"#0D1522",paddingHorizontal:14,flexDirection:"row",alignItems:"center",gap:10},
+  search:{height:UI.controlHeight,borderRadius:UI.controlRadius,borderWidth:1,borderColor:C.border,backgroundColor:"#0D1522",paddingHorizontal:14,flexDirection:"row",alignItems:"center",gap:10},
   searchInput:{flex:1,color:C.text,fontSize:14},
-  filters:{gap:8,paddingRight:16},
-  filter:{height:36,paddingHorizontal:14,borderRadius:13,borderWidth:1,borderColor:C.border,justifyContent:"center",backgroundColor:"#0D1522"},
+  filters:{gap:8,paddingRight:UI.pagePadding},
+  filter:{height:32,paddingHorizontal:13,borderRadius:12,borderWidth:1,borderColor:C.border,justifyContent:"center",backgroundColor:"#0D1522"},
   filterActive:{borderColor:C.blue+"77",backgroundColor:C.blue+"18"},
-  filterText:{color:C.sub,fontSize:12,fontWeight:"700"},
+  filterText:{color:C.sub,fontSize:11,fontWeight:"700"},
   filterTextActive:{color:C.text},
+
+  emptyStateCard:{minHeight:82,flexDirection:"row",alignItems:"center",gap:12,paddingVertical:14},
+  emptyStateIcon:{width:38,height:38,borderRadius:13,backgroundColor:C.cyan+"12",borderWidth:1,borderColor:C.cyan+"2D",alignItems:"center",justifyContent:"center"},
+  emptyStateTitle:{color:C.text,fontSize:13,fontWeight:"800"},
+  emptyStateDetail:{color:C.sub,fontSize:11,lineHeight:15,marginTop:3},
+
   channelTop:{flexDirection:"row",alignItems:"center",gap:11},
   avatar:{width:44,height:44,borderRadius:15,alignItems:"center",justifyContent:"center"},
   avatarText:{color:"#fff",fontWeight:"900",fontSize:12},
   avatarImage:{width:"100%",height:"100%",borderRadius:15},
-  metricsRow:{flexDirection:"row",justifyContent:"space-between",marginTop:17,paddingRight:40},
+  metricsRow:{flexDirection:"row",justifyContent:"space-between",marginTop:16,paddingRight:40},
   metricValue:{color:C.text,fontSize:21,fontWeight:"900"},
   metricLabel:{color:C.tertiary,fontSize:10,marginTop:2},
   metricDelta:{fontSize:10,fontWeight:"800",marginTop:3},
-  rule:{height:1,backgroundColor:C.border,marginVertical:14},
-  subtitle:{color:C.sub,fontSize:13,marginTop:-7,marginBottom:2},
-  kpi:{width:"48.5%",minHeight:110},
-  kpiValue:{color:C.text,fontSize:24,fontWeight:"900",letterSpacing:-.5},
-  kpiLabel:{color:C.sub,fontSize:11,marginTop:4},
-  kpiDelta:{fontSize:11,fontWeight:"800",marginTop:8},
-  projectMeta:{flexDirection:"row",justifyContent:"space-between",marginTop:14},
-  tiny:{color:C.tertiary,fontSize:10},
-  retry:{alignSelf:"flex-start",marginTop:14,minHeight:38,borderRadius:12,borderWidth:1,borderColor:C.red+"55",paddingHorizontal:13,flexDirection:"row",alignItems:"center",gap:7,backgroundColor:C.red+"12"},
+  rule:{height:1,backgroundColor:C.border,marginVertical:13},
+
+  projectMeta:{flexDirection:"row",justifyContent:"space-between",marginTop:13},
+  retry:{alignSelf:"flex-start",marginTop:13,minHeight:36,borderRadius:12,borderWidth:1,borderColor:C.red+"55",paddingHorizontal:12,flexDirection:"row",alignItems:"center",gap:7,backgroundColor:C.red+"12"},
   retryText:{color:C.text,fontSize:11,fontWeight:"800"},
+
   segment:{height:42,padding:4,borderRadius:14,borderWidth:1,borderColor:C.border,backgroundColor:"#0D1522",flexDirection:"row"},
   segmentItem:{flex:1,alignItems:"center",justifyContent:"center",borderRadius:10},
   segmentActive:{backgroundColor:C.blue+"22",borderWidth:1,borderColor:C.blue+"44"},
@@ -447,20 +542,23 @@ const styles=StyleSheet.create({
   rankCard:{flexDirection:"row",alignItems:"center",gap:12},
   rank:{color:C.tertiary,fontSize:16,fontWeight:"900",width:18},
   trafficWrap:{flexDirection:"row",alignItems:"center",gap:25,marginTop:8},
+
   profileCard:{flexDirection:"row",alignItems:"center",gap:13},
   profileAvatar:{width:54,height:54,borderRadius:18,alignItems:"center",justifyContent:"center"},
   profileAvatarText:{color:"#fff",fontSize:17,fontWeight:"900"},
   profileName:{color:C.text,fontSize:18,fontWeight:"900"},
-  settingsRow:{minHeight:56,flexDirection:"row",alignItems:"center",gap:10,borderBottomWidth:1,borderBottomColor:C.border},
+  settingsRow:{minHeight:54,flexDirection:"row",alignItems:"center",gap:10,borderBottomWidth:1,borderBottomColor:C.border},
   settingsIcon:{width:34,height:34,borderRadius:11,alignItems:"center",justifyContent:"center"},
   settingsLabel:{color:C.text,fontSize:13,fontWeight:"700",flex:1},
   settingsValue:{color:C.sub,fontSize:10},
-  logout:{minHeight:48,borderRadius:16,borderWidth:1,borderColor:C.red+"55",backgroundColor:C.red+"0E",flexDirection:"row",alignItems:"center",justifyContent:"center",gap:8},
+  logout:{minHeight:UI.controlHeight,borderRadius:UI.controlRadius,borderWidth:1,borderColor:C.red+"55",backgroundColor:C.red+"0E",flexDirection:"row",alignItems:"center",justifyContent:"center",gap:8},
   logoutText:{color:C.red,fontWeight:"800",fontSize:13},
   version:{textAlign:"center",color:C.tertiary,fontSize:10,marginTop:1},
+
   authWrap:{flex:1,justifyContent:"center",paddingHorizontal:20,gap:14},
-  authInput:{height:48,marginTop:12,borderRadius:14,borderWidth:1,borderColor:C.border,backgroundColor:"#0D1522",paddingHorizontal:14},
-  nav:{position:"absolute",left:0,right:0,bottom:0,minHeight:82,paddingTop:10,paddingBottom:18,paddingHorizontal:8,flexDirection:"row",backgroundColor:"rgba(8,13,22,0.96)",borderTopWidth:1,borderTopColor:C.border},
+  authInput:{height:UI.controlHeight,marginTop:12,borderRadius:14,borderWidth:1,borderColor:C.border,backgroundColor:"#0D1522",paddingHorizontal:14},
+
+  nav:{position:"absolute",left:0,right:0,bottom:0,minHeight:UI.navHeight,paddingTop:10,paddingBottom:18,paddingHorizontal:8,flexDirection:"row",backgroundColor:"rgba(8,13,22,0.96)",borderTopWidth:1,borderTopColor:C.border},
   navItem:{flex:1,minHeight:50,alignItems:"center",justifyContent:"center",gap:5},
   navGlow:{shadowColor:C.blue,shadowOpacity:.75,shadowRadius:12,shadowOffset:{width:0,height:0}},
   navLabel:{color:C.tertiary,fontSize:8.5,fontWeight:"700"},
