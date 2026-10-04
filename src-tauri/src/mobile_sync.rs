@@ -352,6 +352,15 @@ mod tests {
         assert!(validate_sanitized(&json!({"payload":{"youtube_channel_id":"UC123","views":4}})).is_ok());
     }
     #[test]
+    fn retry_backoff_preserves_event_id(){
+        let id=uuid::Uuid::new_v4().to_string();
+        let mut item=QueueItem{event:json!({"event_id":id.clone(),"event_type":"channel_upsert"}),attempts:0,next_attempt_ms:0};
+        bump(&mut item);
+        assert_eq!(item.event.get("event_id").and_then(Value::as_str),Some(id.as_str()));
+        assert_eq!(item.attempts,1);
+        assert!(item.next_attempt_ms>0);
+    }
+    #[test]
     fn reconnect_flush_never_skips_backoff_head(){
         let item=|id:&str,next:i64|QueueItem{
             event:json!({"event_id":id}),
