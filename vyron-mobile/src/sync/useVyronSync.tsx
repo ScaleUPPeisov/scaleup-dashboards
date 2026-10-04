@@ -298,9 +298,23 @@ export function useVyronSync(): VyronSyncModel {
     await supabase?.auth.signOut();
   }, []);
 
+  const createPairingCode = useCallback(async () => {
+    if (!supabase || !session) return { ok: false, error: "Требуется вход в VYRON Mobile" };
+    try {
+      const { data, error } = await supabase.functions.invoke("vyron-mobile-sync-ingest", {
+        body: { action: "create_pairing_code" },
+      });
+      if (error) return { ok: false, error: safeError(error) };
+      if (!data?.ok || !data?.pairingCode) return { ok: false, error: String(data?.code || "Не удалось создать код") };
+      return { ok: true, code: String(data.pairingCode), expiresAt: String(data.expiresAt || "") };
+    } catch (e) {
+      return { ok: false, error: safeError(e) };
+    }
+  }, [session]);
+
   return useMemo(() => ({
-    ...snapshot, session, authLoading, dataLoading, syncStatus, syncError, mobileDeviceId, signIn, signOut, refresh,
-  }), [snapshot, session, authLoading, dataLoading, syncStatus, syncError, mobileDeviceId, signIn, signOut, refresh]);
+    ...snapshot, session, authLoading, dataLoading, syncStatus, syncError, mobileDeviceId, signIn, signOut, refresh, createPairingCode,
+  }), [snapshot, session, authLoading, dataLoading, syncStatus, syncError, mobileDeviceId, signIn, signOut, refresh, createPairingCode]);
 }
 
 const SyncContext = createContext<VyronSyncModel | null>(null);
