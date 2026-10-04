@@ -29,6 +29,8 @@ const inventorySignatures=new Map<string,string>();
 const renderEvidenceSignatures=new Map<string,string>();
 let renderProbeRunning=false;
 let lastEndlumeConnectivity:'connected'|'disconnected'|undefined;
+let lastEndlumeAggregateState:'idle'|'rendering'|'disconnected'|undefined;
+let lastEndlumeHeartbeatAtMs=0;
 
 function stable(value:unknown){return JSON.stringify(value)}
 function event(type:string,entity:string,key:string,payload:Record<string,unknown>,at=new Date().toISOString()):SyncEvent{
@@ -289,12 +291,16 @@ export function syncObservedRenderEvidence(evidence:RuntimeRenderEvidence){
   const at=new Date(evidence.observedAtMs).toISOString();
   const rows:SyncEvent[]=[];
   const connectivity:'connected'|'disconnected'=evidence.reliable?'connected':'disconnected';
-  if(lastEndlumeConnectivity!==connectivity){
-    const previous=lastEndlumeConnectivity;
+  const aggregateState:'idle'|'rendering'|'disconnected'=evidence.reliable?(evidence.activeJobIds.size?'rendering':'idle'):'disconnected';
+  const previousConnectivity=lastEndlumeConnectivity;
+  const heartbeatDue=evidence.observedAtMs-lastEndlumeHeartbeatAtMs>=30_000;
+  if(previousConnectivity!==connectivity||lastEndlumeAggregateState!==aggregateState||heartbeatDue){
     lastEndlumeConnectivity=connectivity;
+    lastEndlumeAggregateState=aggregateState;
+    lastEndlumeHeartbeatAtMs=evidence.observedAtMs;
     rows.push(event('endlume_upsert','endlume_job','__endlume_state__',{
       desktop_job_id:'__endlume_state__',
-      state:evidence.reliable?(evidence.activeJobIds.size?'rendering':'idle'):'disconnected',
+      state:aggregateState,
       current_project:null,
       progress:null,
       last_activity:at,
@@ -302,7 +308,7 @@ export function syncObservedRenderEvidence(evidence:RuntimeRenderEvidence){
       error_message:evidence.reliable?null:'ENDLUME_RUNTIME_UNAVAILABLE',
       updated_at:at
     },at));
-    if(previous==='connected'&&connectivity==='disconnected'){
+    if(previousConnectivity==='connected'&&connectivity==='disconnected'){
       rows.push(notification('endlume_disconnected','endlume_disconnected:'+at.slice(0,16),'ENDLUME отключён','Desktop не видит runtime ENDLUME','endlume','__endlume_state__',at))
     }
   }
