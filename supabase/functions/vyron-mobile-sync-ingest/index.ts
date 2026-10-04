@@ -177,15 +177,20 @@ async function applyEvent(ownerId: string, device: any, e: any) {
     const desktopChannelId = txt(payload.desktop_channel_id, 200);
     const channelId = await resolveChannel(ownerId, desktopChannelId);
     if (!channelId) return { ok: false, code: "channel_missing" };
+    const requestedPeriod = int(payload.period_days);
+    const periodDays = requestedPeriod === 7 || requestedPeriod === 28 || requestedPeriod === 90 ? requestedPeriod : 28;
     const { error } = await db.from("vyron_mobile_channel_stats").insert({
       owner_id: ownerId, channel_id: channelId, source_event_id: eventId,
       timestamp: date(payload.timestamp) || desktopEventAt,
+      period_days: periodDays,
       subscriber_count: int(payload.subscriber_count),
       subscriber_delta_today: int(payload.subscriber_delta_today),
       subscriber_delta_7d: int(payload.subscriber_delta_7d),
       subscriber_delta_28d: int(payload.subscriber_delta_28d),
+      subscriber_delta_period: int(payload.subscriber_delta_period),
       views_total: int(payload.views_total), views_today: int(payload.views_today),
       views_7d: int(payload.views_7d), views_28d: int(payload.views_28d),
+      views_period: int(payload.views_period),
       video_count: int(payload.video_count), watch_time: num(payload.watch_time),
       ctr: num(payload.ctr), average_view_duration: num(payload.average_view_duration),
       last_published_at: date(payload.last_published_at),
