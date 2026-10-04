@@ -199,7 +199,7 @@ function notification(kind:string,key:string,title:string,body:string,entityType
   },at)
 }
 
-function emitAppState(state:AppState){
+function emitAppState(state:ReturnType<typeof useApp.getState>){
   if(!state.booted)return;
   const rows:SyncEvent[]=[];
   const activeIds=new Set(state.channels.map(x=>x.id));
@@ -249,7 +249,7 @@ function inventoryPayload(row:ChannelInventorySnapshot,state:AppState){
   const jobs=state.jobs.filter(x=>x.channelId===row.channelId);
   const scheduled=jobs.filter(x=>x.status==='SCHEDULED').length;
   const published=state.uploadHistory.filter(x=>x.channelId===row.channelId).length;
-  const future=jobs.map(x=>x.publishAt).filter((x):x is string=>Boolean(x)&&Date.parse(x)>Date.now()).sort()[0]||null;
+  const future=jobs.map(x=>x.publishAt).filter((x):x is string=>typeof x==='string'&&Date.parse(x)>Date.now()).sort()[0]||null;
   return{
     desktop_channel_id:row.channelId,
     ready_video_count:row.readyVideos,
