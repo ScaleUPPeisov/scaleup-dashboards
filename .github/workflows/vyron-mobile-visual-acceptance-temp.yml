@@ -1,0 +1,145 @@
+name: TEMP VYRON Mobile Visual Acceptance
+
+on:
+  push:
+    branches:
+      - qa/vyron-mobile-visual-acceptance-885b
+
+permissions:
+  contents: read
+
+jobs:
+  visual:
+    runs-on: macos-14
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: vyron-mobile
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify exact App source
+        run: |
+          test "$(git rev-parse 885b56ee75100b385b7b2ecc611e3ed9e43ea80c:vyron-mobile/App.tsx)" = "$(git rev-parse HEAD:vyron-mobile/App.tsx)"
+          git diff --exit-code 885b56ee75100b385b7b2ecc611e3ed9e43ea80c -- App.tsx
+
+      - name: Install app
+        run: npm install --no-audit --no-fund
+
+      - name: Prepare runner-only visual harness
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("App.tsx")
+          s = p.read_text()
+          needle = 'function AuthGate(){\n  const sync=useVyronSyncContext();'
+          if needle not in s:
+              raise SystemExit("AuthGate signature not found")
+          s = s.replace(needle, 'function AuthGate(){\n  return <AppShell/>;\n  const sync=useVyronSyncContext();', 1)
+          p.write_text(s)
+
+          import json
+          app = Path("app.json")
+          cfg = json.loads(app.read_text())
+          cfg.setdefault("expo", {}).setdefault("web", {})["output"] = "single"
+          app.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n")
+          PY
+          echo "QA harness modifies only runner working tree; repository branch is untouched."
+
+      - name: Build Expo web
+        run: npm run build:web
+
+      - name: Install Playwright WebKit
+        run: |
+          npm install --no-save playwright@1.55.0
+          npx playwright install webkit
+
+      - name: Serve build
+        run: |
+          python3 -m http.server 4173 --directory dist >/tmp/vyron-mobile-http.log 2>&1 &
+          echo $! > /tmp/vyron-mobile-http.pid
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:4173 >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat /tmp/vyron-mobile-http.log
+          exit 1
+
+      - name: Capture all five tabs
+        run: |
+          mkdir -p visual-qa
+          cat > visual-qa/run.mjs <<'JS'
+          import { webkit } from 'playwright';
+
+          const browser = await webkit.launch();
+          const context = await browser.newContext({
+            viewport: { width: 393, height: 852 },
+            deviceScaleFactor: 3,
+            isMobile: true,
+            hasTouch: true,
+            locale: 'ru-RU',
+            userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
+          });
+          const page = await context.newPage();
+          await page.goto('http://127.0.0.1:4173', { waitUntil: 'networkidle' });
+          await page.waitForTimeout(500);
+
+          const tabs = [
+            ['home', 'Главная'],
+            ['channels', 'Каналы'],
+            ['projects', 'Проекты'],
+            ['analytics', 'Аналитика'],
+            ['settings', 'Настройки'],
+          ];
+
+          const geometry = {};
+          for (const [id, label] of tabs) {
+            if (label !== 'Главная') {
+              await page.getByText(label, { exact: true }).last().click();
+              await page.waitForTimeout(250);
+            }
+            const metrics = await page.evaluate((pageTitle) => {
+              const all = Array.from(document.querySelectorAll('*'));
+              const txt = (v) => all.find(el => el.textContent === v);
+              const rect = (el) => {
+                if (!el) return null;
+                const r = el.getBoundingClientRect();
+                return { x:r.x, y:r.y, width:r.width, height:r.height };
+              };
+              const vyron = txt('VYRON');
+              const title = txt(pageTitle);
+              const navLabels = ['Главная','Каналы','Проекты','Аналитика','Настройки'].map(v => ({ label:v, rect:rect(txt(v)) }));
+              return { vyron:rect(vyron), title:rect(title), navLabels };
+            }, label);
+            geometry[id] = metrics;
+            await page.screenshot({ path: `visual-qa/${id}.png`, fullPage: false });
+          }
+
+          // Repeat the full switching sequence once more to catch layout instability.
+          for (const label of ['Главная','Каналы','Проекты','Аналитика','Настройки','Главная']) {
+            await page.getByText(label, { exact: true }).last().click();
+            await page.waitForTimeout(120);
+          }
+
+          const fs = await import('node:fs');
+          fs.writeFileSync('visual-qa/geometry.json', JSON.stringify({
+            viewport: { width:393, height:852, dpr:3 },
+            geometry
+          }, null, 2));
+
+          await browser.close();
+          JS
+          node visual-qa/run.mjs
+
+      - name: Upload visual QA
+        uses: actions/upload-artifact@v4
+        with:
+          name: vyron-mobile-visual-acceptance-885b
+          path: vyron-mobile/visual-qa/
+          if-no-files-found: error
