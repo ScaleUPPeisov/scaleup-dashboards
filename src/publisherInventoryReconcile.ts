@@ -12,6 +12,19 @@ export type PublisherInventoryReconciliation={
 };
 
 /**
+ * Shared physical eligibility contract.
+ * A stale ERROR/FAILED state is recoverable when fresh physical classification
+ * proves the current generation, but real upload/trash/queue evidence always wins.
+ */
+export function currentPhysicalUploadEligible(job:VideoJob|undefined){
+  if(!job)return false;
+  if(job.youtubeVideoId||job.uploadedAt)return false;
+  if(['UPLOADED','TRASHED','TRASHED_BY_VYRON','QUEUED','UPLOADING'].includes(String(job.storageLifecycle||'')))return false;
+  if(job.status==='UPLOADING'||job.status==='SCHEDULED')return false;
+  return true;
+}
+
+/**
  * Canonical bridge between a fresh physical inventory snapshot and Publisher jobs.
  * Input rows MUST already be filtered through renderInventoryRuntime.readyRows().
  * No filesystem or YouTube API work happens here.
@@ -47,21 +60,13 @@ export function reconcilePublisherInventory({
       const reusableMatched=Boolean(
         matched
         &&matched.channelId===channelId
-        &&!matched.youtubeVideoId
-        &&!matched.uploadedAt
-        &&matched.storageLifecycle!=='UPLOADED'
-        &&matched.storageLifecycle!=='TRASHED'
-        &&matched.storageLifecycle!=='TRASHED_BY_VYRON'
+        &&currentPhysicalUploadEligible(matched)
         &&normalizeRenderPath(matched.finalPath||'')===path
         &&(!matchedFp||(matchedFp===fp&&Number(matched.currentSourceFileSize)===size))
       );
       const existingSameGeneration=reusableMatched?matched:jobs.find(job=>
         job.channelId===channelId
-        &&!job.youtubeVideoId
-        &&!job.uploadedAt
-        &&job.storageLifecycle!=='UPLOADED'
-        &&job.storageLifecycle!=='TRASHED'
-        &&job.storageLifecycle!=='TRASHED_BY_VYRON'
+        &&currentPhysicalUploadEligible(job)
         &&normalizeRenderPath(job.finalPath||'')===path
         &&Boolean(fp)
         &&String(job.currentSourceFingerprint||'').trim().toLowerCase()===fp
@@ -95,7 +100,7 @@ export function reconcilePublisherInventory({
     }
 
     const job=byId.get(row.matchedJobId);
-    if(!job||job.channelId!==channelId){
+    if(!job||job.channelId!==channelId||!currentPhysicalUploadEligible(job)){
       unresolved.push(row);
       continue
     }
@@ -156,11 +161,8 @@ export function publisherInventoryJobs({
     &&!j.removedFromPublishList
     &&!recoveryJobIds.has(j.id)
     &&!supersededJobIds.has(j.id)
-    &&!j.youtubeVideoId
-    &&!j.uploadedAt
-    &&j.storageLifecycle!=='UPLOADED'
-    &&j.status!=='SCHEDULED'
-    &&['READY_UPLOAD','UPLOADING','ERROR'].includes(j.status)
+    &&currentPhysicalUploadEligible(j)
+    &&['READY_UPLOAD','ERROR'].includes(j.status)
   ).sort((a,b)=>a.number-b.number)
 }
 
