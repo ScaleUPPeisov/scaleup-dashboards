@@ -60,7 +60,7 @@ fn save_status(app: &AppHandle, status: &SyncRuntimeStatus) {
 }
 
 fn forbidden_key(key: &str) -> bool {
-    let k = key.to_ascii_lowercase().replace(['-', '_'], "");
+    let k = key.to_ascii_lowercase().replace('-', "").replace('_', "");
     [
         "accesstoken", "refreshtoken", "clientsecret", "clientidsecret", "oauthcredential",
         "keychain", "credentialmanager", "githubtoken", "authorization", "apikeysecret",
@@ -93,16 +93,17 @@ fn bump(item: &mut QueueItem) {
     item.next_attempt_ms = now_ms() + backoff_ms(item.attempts);
 }
 fn auth_secret() -> Result<Option<(String, &'static str)>, String> {
+    if let Some(token)=security::canonical_get_secret_cached(SYNC_DEVICE_ACCOUNT)?
+        .filter(|x|!x.trim().is_empty()){
+        return Ok(Some((token,"x-vyron-sync-device")))
+    }
     #[cfg(target_os = "windows")]
     {
         return security::canonical_get_secret_cached(WINDOWS_SESSION_ACCOUNT)
             .map(|v| v.filter(|x| !x.trim().is_empty()).map(|x| (x, "x-vyron-session")));
     }
     #[cfg(not(target_os = "windows"))]
-    {
-        return security::canonical_get_secret_cached(SYNC_DEVICE_ACCOUNT)
-            .map(|v| v.filter(|x| !x.trim().is_empty()).map(|x| (x, "x-vyron-sync-device")));
-    }
+    { Ok(None) }
 }
 
 async fn flush_internal(app: &AppHandle) -> Value {
