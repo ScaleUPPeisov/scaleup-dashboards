@@ -44,6 +44,16 @@ function currentGenerationFingerprint(job:VideoJob){const fp=String(job.currentS
 function sourceMatchesCurrentJob(job:VideoJob,file:RenderFolderVideoFile){const fp=currentFingerprint(file),jobFp=currentGenerationFingerprint(job);return Boolean(fp&&jobFp&&fp===jobFp&&job.currentSourceFileSize===file.size)}
 function historicalEvidenceForJob(job:VideoJob,history:UploadHistoryRecord[],channelId:string){return historyForJob(history,channelId,job.id)||successfulHistory(history,channelId).slice().reverse().find(x=>normalizeRenderPath(x.localFilePath)===normalizeRenderPath(job.finalPath||''))}
 function staleWrongRootScanJob(job:VideoJob,history:UploadHistoryRecord[],channelId:string,exactRoot:string){if(!job.finalPath||renderPathInsideRoot(job.finalPath,exactRoot))return false;if(historicalEvidenceForJob(job,history,channelId))return false;return job.sourceOrigin==='render-scan'||job.scanRecoveryState==='CROSS_CHANNEL_SCAN_RECOVERY_REQUIRED'}
+function supersededCurrentJobIds(jobs:VideoJob[]){return new Set(jobs.filter(j=>Boolean(j.sourcePreviousJobId)).map(j=>j.sourcePreviousJobId!))}
+function preferCurrentLeaf(candidates:VideoJob[],file:RenderFolderVideoFile,superseded:ReadonlySet<string>){
+ const active=candidates.filter(j=>!isHistoricalGeneration(j));if(!active.length)return undefined;
+ // Generation chains can retain multiple active records for one physical path.
+ // The leaf (not referenced as sourcePreviousJobId) is the canonical current job.
+ // Never repair a superseded predecessor merely because it appears first in store order.
+ const leaves=active.filter(j=>!superseded.has(j.id));
+ const pool=leaves.length?leaves:active;
+ return pool.find(j=>sourceMatchesCurrentJob(j,file))||pool[0]
+}
 
 export function renderFileNeedsFingerprint(file:RenderFolderVideoFile,jobs:VideoJob[],history:UploadHistoryRecord[],channelId:string,exactRoot:string){
  const path=normalizeRenderPath(file.path),sequence=renderSequence(file.name);
@@ -60,7 +70,7 @@ export function renderFileNeedsFingerprint(file:RenderFolderVideoFile,jobs:Video
 }
 
 export function classifyChannelRenderFiles(files:RenderFolderVideoFile[],jobs:VideoJob[],history:UploadHistoryRecord[],channelId:string,exactRoot:string):RenderScanRow[]{
- const scoped=jobs.filter(j=>j.channelId===channelId),seen=new Set<string>(),historyRows=successfulHistory(history,channelId);
+ const scoped=jobs.filter(j=>j.channelId===channelId),superseded=supersededCurrentJobIds(scoped),seen=new Set<string>(),historyRows=successfulHistory(history,channelId);
  return files.map(file=>{
   const path=normalizeRenderPath(file.path),sequence=renderSequence(file.name),fp=currentFingerprint(file);
   const base=(classification:RenderScanPrimaryClass,reason:string,matchedJobId?:string):RenderScanRow=>({file,sequence,matchedJobId,classification,reason,currentFingerprint:fp,currentFileSize:file.size});
@@ -71,7 +81,7 @@ export function classifyChannelRenderFiles(files:RenderFolderVideoFile[],jobs:Vi
   if(verified)return rowEvidence(base('UPLOADED_LOCAL_COPY',normalizeRenderPath(verified.localFilePath)===path?'FINGERPRINT_VERIFIED_EXACT_PATH_UPLOAD':'FINGERPRINT_VERIFIED_SAME_CHANNEL_UPLOAD',verified.jobId),verified);
 
   const exactJobs=scoped.filter(j=>normalizeRenderPath(j.finalPath||'')===path);
-  const activeExact=exactJobs.find(j=>!isHistoricalGeneration(j));
+  const activeExact=preferCurrentLeaf(exactJobs,file,superseded);
   if(activeExact){
    if(fp&&sourceMatchesCurrentJob(activeExact,file))return base('KNOWN_EXACT','CURRENT_GENERATION_FINGERPRINT_MATCH',activeExact.id);
    if(fp)return base('NEW_GENERATION','ACTIVE_EXACT_PATH_SOURCE_CHANGED',activeExact.id);
@@ -95,14 +105,15 @@ export function classifyChannelRenderFiles(files:RenderFolderVideoFile[],jobs:Vi
   }
 
   if(fp){
-   const currentJob=scoped.find(j=>!isHistoricalGeneration(j)&&currentGenerationFingerprint(j)===fp&&j.currentSourceFileSize===file.size);
+   const exactCurrent=scoped.filter(j=>!isHistoricalGeneration(j)&&currentGenerationFingerprint(j)===fp&&j.currentSourceFileSize===file.size);
+   const currentJob=exactCurrent.find(j=>!superseded.has(j.id))||exactCurrent[0];
    if(currentJob)return base('KNOWN_EXACT','CURRENT_GENERATION_FINGERPRINT_MATCH',currentJob.id);
   }
 
   if(!sequence)return base('INVALID','SEQUENCE_NOT_FOUND');
 
   const sameNumber=scoped.filter(j=>j.number===sequence&&!staleWrongRootScanJob(j,historyRows,channelId,exactRoot));
-  const activeSame=sameNumber.find(j=>!isHistoricalGeneration(j));
+  const activeSame=preferCurrentLeaf(sameNumber,file,superseded);
   if(activeSame){
    if(fp&&sourceMatchesCurrentJob(activeSame,file))return base('KNOWN_EXACT','SAME_ACTIVE_GENERATION_FINGERPRINT_MATCH',activeSame.id);
    if(fp)return base('NEW_GENERATION','ACTIVE_SEQUENCE_REUSED_WITH_NEW_FINGERPRINT',activeSame.id);
