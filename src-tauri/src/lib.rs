@@ -44,6 +44,17 @@ pub fn run(){
             // Mark this runtime dirty before any recoverable local work starts.
             // A graceful exit flips it clean only when no unfinished recovery transaction remains.
             recovery::initialize_runtime(app.handle()).map_err(|e|Box::<dyn std::error::Error>::from(std::io::Error::new(std::io::ErrorKind::Other,e)))?;
+            // Mobile sync pairing is an additive one-time bootstrap only. It never changes
+            // Google OAuth / YouTube credentials and persists only the dedicated sync token.
+            if let Some(pairing_code)=mobile_sync::startup_pairing_code(){
+                let handle=app.handle().clone();
+                tauri::async_runtime::spawn(async move{
+                    match mobile_sync::mobile_sync_claim_pairing(handle,pairing_code).await{
+                        Ok(_)=>println!("VYRON_MOBILE_PAIRING=PASS"),
+                        Err(e)=>eprintln!("VYRON_MOBILE_PAIRING=FAIL:{}",e),
+                    }
+                });
+            }
             // Physical default: always make the main window visible on the CURRENT monitor.
             // Center first to discard stale coordinates from a removed/external display,
             // then maximize to the current macOS work area.
