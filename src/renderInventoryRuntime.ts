@@ -12,6 +12,7 @@ import {
   type RenderScanSummary
 } from './renderScanClassifier';
 import {uploadTelemetrySnapshot} from './uploadTelemetry';
+import {currentPhysicalUploadEligible,reconcilePublisherInventory} from './publisherInventoryReconcile';
 
 export type InventoryFolderState='ONLINE'|'OFFLINE'|'SCANNING'|'ERROR';
 export type InventoryLevel='NORMAL'|'SOON'|'LOW'|'EMPTY'|'OFFLINE';
@@ -108,16 +109,9 @@ export const useLiveInventory=create<LiveInventoryState>((set)=>({
 }));
 
 function activeReadyJob(job:VideoJob|undefined){
-  if(!job)return false;
-  // 6.1.5: a legacy UI-only hide flag must not override a fresh physical file.
-  // Reconciliation clears removedFromPublishList once exact current bytes are proven.
-  if(job.youtubeVideoId||job.uploadedAt)return false;
-  if(job.storageLifecycle==='UPLOADED'||job.storageLifecycle==='TRASHED'||job.storageLifecycle==='TRASHED_BY_VYRON')return false;
-  if(job.status==='UPLOADING'||job.status==='SCHEDULED')return false;
-  // Live Inventory is a physical stock monitor. If a KNOWN_EXACT render file
-  // still exists and has no successful-upload evidence, count it as available
-  // even when an old local job status drifted away from READY_UPLOAD.
-  return true;
+  // Live Inventory and Publisher must share the same physical eligibility semantics.
+  // ERROR/FAILED alone is recoverable; real upload/trash/queue evidence is not.
+  return currentPhysicalUploadEligible(job);
 }
 export function readyRows(rows:RenderScanRow[],jobs:VideoJob[]){
   const byId=new Map(jobs.map(j=>[j.id,j]));
@@ -245,8 +239,22 @@ async function scanInventoryChannelOnce(channelId:string,reason:InventoryScanRea
   }
   try{
     const current=useApp.getState(),cheap=await api.scanRenderFolder(root),result=await fingerprintNeededFiles(cheap,current.jobs,current.uploadHistory,channelId,reason==='publisher');
-    const rows=classifyChannelRenderFiles(result.files,current.jobs,current.uploadHistory,channelId,result.root);
-    const next=buildInventorySnapshotFromScan(channel,result,rows,current.jobs,uploadingForChannel(channelId,current.jobs));
+    const initialRows=classifyChannelRenderFiles(result.files,current.jobs,current.uploadHistory,channelId,result.root);
+    const reconciliation=reconcilePublisherInventory({
+      channelId,
+      exactRoot:result.root,
+      ready:readyRows(initialRows,current.jobs),
+      jobs:current.jobs,
+    });
+    if(reconciliation.normalizePatches.length)useApp.getState().patchJobsBatch(reconciliation.normalizePatches);
+
+    // 6.1.6 invariant: never publish a physical READY snapshot against pre-reconcile jobs.
+    // Re-read the canonical store and rebuild classification in the same scan transaction.
+    const fresh=useApp.getState();
+    const rows=reconciliation.normalizePatches.length
+      ?classifyChannelRenderFiles(result.files,fresh.jobs,fresh.uploadHistory,channelId,result.root)
+      :initialRows;
+    const next=buildInventorySnapshotFromScan(channel,result,rows,fresh.jobs,uploadingForChannel(channelId,fresh.jobs));
     store.setSnapshot(next);auditFor(previous,next,reason);return next
   }catch(error){
     const next=errorSnapshot(channel,previous,String(error));store.setSnapshot(next);
