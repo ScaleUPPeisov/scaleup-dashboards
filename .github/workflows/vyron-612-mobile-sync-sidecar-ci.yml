@@ -60,7 +60,8 @@ jobs:
           src/v610PublisherInventoryReconcile.test.ts
           src/youtubePublishSafety.test.ts
           src/v2115Rc7OauthUpdateContinuity.test.ts
-          tests/vyron-602-manual-production-sidebar.test.mjs
+          src/v512ManualAssembly.test.ts
+          src/v510MaterialsManager.test.ts
       - name: Rust mobile sync tests
         run: cargo test --manifest-path src-tauri/Cargo.toml mobile_sync --lib -- --nocapture
       - name: Rust full library QA
