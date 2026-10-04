@@ -92,6 +92,13 @@ fn bump(item: &mut QueueItem) {
     item.attempts = item.attempts.saturating_add(1);
     item.next_attempt_ms = now_ms() + backoff_ms(item.attempts);
 }
+fn due_prefix_indices(queue:&[QueueItem],now:i64)->Vec<usize>{
+    queue.iter().enumerate()
+        .take_while(|(_,x)|x.next_attempt_ms<=now)
+        .take(MAX_BATCH)
+        .map(|(i,_)|i)
+        .collect()
+}
 fn auth_secret() -> Result<Option<(String, &'static str)>, String> {
     if let Some(token)=security::canonical_get_secret_cached(SYNC_DEVICE_ACCOUNT)?
         .filter(|x|!x.trim().is_empty()){
@@ -145,11 +152,7 @@ async fn flush_internal(app: &AppHandle) -> Value {
         }
     }
     let now = now_ms();
-    let due: Vec<usize> = queue.iter().enumerate()
-        .take_while(|(_, x)| x.next_attempt_ms <= now)
-        .take(MAX_BATCH)
-        .map(|(i, _)| i)
-        .collect();
+    let due=due_prefix_indices(&queue,now);
     if due.is_empty() {
         let s=load_status(app);
         return json!({"ok":true,"queued":queue.len(),"state":"backoff","lastSuccessAt":s.last_success_at,"lastError":s.last_error});
@@ -347,5 +350,16 @@ mod tests {
     fn secret_fields_are_rejected(){
         assert!(validate_sanitized(&json!({"payload":{"refresh_token":"nope"}})).is_err());
         assert!(validate_sanitized(&json!({"payload":{"youtube_channel_id":"UC123","views":4}})).is_ok());
+    }
+    #[test]
+    fn reconnect_flush_never_skips_backoff_head(){
+        let item=|id:&str,next:i64|QueueItem{
+            event:json!({"event_id":id}),
+            attempts:0,
+            next_attempt_ms:next,
+        };
+        let queue=vec![item("00000000-0000-4000-a000-000000000001",0),item("00000000-0000-4000-a000-000000000002",5000),item("00000000-0000-4000-a000-000000000003",0)];
+        assert_eq!(due_prefix_indices(&queue,1000),vec![0]);
+        assert_eq!(due_prefix_indices(&queue,6000),vec![0,1,2]);
     }
 }
