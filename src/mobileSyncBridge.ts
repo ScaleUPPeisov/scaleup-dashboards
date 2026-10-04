@@ -30,20 +30,9 @@ const renderEvidenceSignatures=new Map<string,string>();
 let renderProbeRunning=false;
 let lastEndlumeConnectivity:'connected'|'disconnected'|undefined;
 
-function hash32(input:string,seed:number){
-  let h=(2166136261^seed)>>>0;
-  for(let i=0;i<input.length;i++){h^=input.charCodeAt(i);h=Math.imul(h,16777619)}
-  h^=h>>>16;h=Math.imul(h,0x7feb352d);h^=h>>>15;h=Math.imul(h,0x846ca68b);h^=h>>>16;
-  return h>>>0
-}
-export function deterministicSyncUuid(seed:string){
-  const parts=[0,1,2,3].map(x=>hash32(seed,x).toString(16).padStart(8,'0')).join('');
-  return parts.slice(0,8)+'-'+parts.slice(8,12)+'-4'+parts.slice(13,16)+'-a'+parts.slice(17,20)+'-'+parts.slice(20,32)
-}
 function stable(value:unknown){return JSON.stringify(value)}
 function event(type:string,entity:string,key:string,payload:Record<string,unknown>,at=new Date().toISOString()):SyncEvent{
-  const sig=stable(payload);
-  return{event_id:deterministicSyncUuid(type+':'+key+':'+sig),event_type:type,entity_type:entity,entity_key:key,desktop_event_at:at,payload}
+  return{event_id:crypto.randomUUID(),event_type:type,entity_type:entity,entity_key:key,desktop_event_at:at,payload}
 }
 function scheduleDrain(){
   if(timer!==undefined||transportBusy||!pending.length)return;
@@ -379,5 +368,5 @@ export function startMobileSyncBridge(){
 }
 
 export function mobileSyncBridgeTestHooks(){
-  return{deterministicSyncUuid,mapProjectStatus}
+  return{mapProjectStatus}
 }
