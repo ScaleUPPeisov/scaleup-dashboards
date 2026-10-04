@@ -83,10 +83,14 @@ export function classifyChannelRenderFiles(files:RenderFolderVideoFile[],jobs:Vi
   if(historicalExact||pathHistory){
    const proof=historicalExact?historicalEvidenceForJob(historicalExact,historyRows,channelId):pathHistory;
    if(!fp)return rowEvidence(base('VERIFY_REQUIRED','CURRENT_FINGERPRINT_REQUIRED_FOR_HISTORICAL_PATH',historicalExact?.id||proof?.jobId),proof);
+   // A historical job's own current-generation fingerprint is enough to prove that
+   // the same bytes are still sitting on disk. Do not manufacture a NEW generation
+   // merely because trusted uploadHistory is missing; YouTube ID/uploadedAt/trash wins.
+   if(historicalExact&&sourceMatchesCurrentJob(historicalExact,file)){
+    return rowEvidence(base('UPLOADED_LOCAL_COPY','HISTORICAL_JOB_CURRENT_GENERATION_MATCH',historicalExact.id),proof);
+   }
    if(proof&&trustedHistory(proof))return rowEvidence(base('NEW_GENERATION','EXACT_PATH_PHYSICAL_FINGERPRINT_CHANGED',historicalExact?.id||proof.jobId),proof);
-   // Legacy upload records without trusted fingerprint must not deadlock current bytes.
-   // At this point verifiedHistoryForFile already proved there is NO exact successful
-   // same-channel SHA+size match, so the current physical content is a safe upload candidate.
+   // Legacy upload records without trusted fingerprint must not deadlock genuinely changed bytes.
    return rowEvidence(base('NEW_GENERATION','LEGACY_HISTORY_WITHOUT_FINGERPRINT_CURRENT_BYTES_UNSEEN',historicalExact?.id||proof?.jobId),proof);
   }
 
