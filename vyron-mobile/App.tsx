@@ -461,7 +461,7 @@ const styles=StyleSheet.create({
   header:{paddingTop:8,paddingBottom:6,gap:10},
   brandRow:{minHeight:44,flexDirection:"row",alignItems:"center",justifyContent:"space-between"},
   brand:{color:C.text,fontSize:28,fontWeight:"900",letterSpacing:3.2},
-  titleRow:{minHeight:44,flexDirection:"row",alignItems:"center",justifyContent:"space-between",gap:12},
+  titleRow:{height:52,flexDirection:"row",alignItems:"flex-start",justifyContent:"space-between",gap:12},
   titleCopy:{flex:1,minWidth:0},
   pageTitle:{color:C.text,fontSize:28,fontWeight:"800",letterSpacing:-.5},
   pageSubtitle:{color:C.sub,fontSize:12,marginTop:3},
