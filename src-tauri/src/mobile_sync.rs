@@ -200,6 +200,53 @@ fn redact_error(raw:&str)->String{
     s
 }
 
+
+fn sync_device_id(app:&AppHandle)->Result<String,String>{
+    let p=sync_dir(app)?.join("device-id");
+    if let Ok(v)=fs::read_to_string(&p){
+        let v=v.trim();
+        if !v.is_empty(){return Ok(v.to_string())}
+    }
+    let id=uuid::Uuid::new_v4().to_string();
+    security::write_private_atomic(&p,id.as_bytes())?;
+    Ok(id)
+}
+fn platform_name()->&'static str{
+    #[cfg(target_os="macos")] { return "macos"; }
+    #[cfg(target_os="windows")] { return "windows"; }
+    #[cfg(not(any(target_os="macos",target_os="windows")))] { return "unknown"; }
+}
+fn device_name()->String{
+    std::env::var("COMPUTERNAME").or_else(|_|std::env::var("HOSTNAME")).unwrap_or_else(|_|"VYRON Desktop".into())
+}
+
+#[tauri::command]
+pub async fn mobile_sync_claim_pairing(app:AppHandle,pairing_code:String)->Result<Value,String>{
+    let code=pairing_code.trim().to_ascii_uppercase();
+    if code.len()<10||code.len()>16{return Err("MOBILE_SYNC_PAIRING_CODE_FORMAT".into())}
+    let client=reqwest::Client::builder().timeout(std::time::Duration::from_secs(8)).build().map_err(|e|format!("MOBILE_SYNC_PAIRING_HTTP:{e}"))?;
+    let response=client.post(ENDPOINT).json(&json!({
+        "action":"claim_pairing_code",
+        "pairing_code":code,
+        "device_id":sync_device_id(&app)?,
+        "name":device_name(),
+        "platform":platform_name(),
+        "architecture":std::env::consts::ARCH,
+        "app_version":app.package_info().version.to_string()
+    })).send().await.map_err(|e|format!("MOBILE_SYNC_PAIRING_NETWORK:{}",redact_error(&e.to_string())))?;
+    let status=response.status();
+    let value:Value=response.json().await.map_err(|e|format!("MOBILE_SYNC_PAIRING_RESPONSE:{}",redact_error(&e.to_string())))?;
+    if !status.is_success()||value.get("ok").and_then(Value::as_bool)!=Some(true){
+        let code=value.get("code").and_then(Value::as_str).unwrap_or("pairing_failed");
+        return Err(format!("MOBILE_SYNC_PAIRING_FAILED:{code}"))
+    }
+    let token=value.get("syncDeviceToken").and_then(Value::as_str).ok_or_else(||"MOBILE_SYNC_PAIRING_TOKEN_MISSING".to_string())?;
+    security::canonical_set_secret(SYNC_DEVICE_ACCOUNT,token)?;
+    security::invalidate_secret_cache(SYNC_DEVICE_ACCOUNT);
+    let _=fs::remove_file(queue_path(&app)?);
+    Ok(json!({"ok":true,"paired":true,"deviceId":value.get("deviceId").cloned().unwrap_or(Value::Null)}))
+}
+
 #[tauri::command]
 pub async fn mobile_sync_enqueue(app: AppHandle, events: Vec<Value>) -> Value {
     if events.is_empty() { return flush_internal(&app).await; }
