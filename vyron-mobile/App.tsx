@@ -104,49 +104,62 @@ function StatusBadge({ label, tone }: { label: string; tone: string }) {
 }
 
 function HomeScreen() {
+  const sync=useVyronSyncContext();
+  const a=aggregateAnalytics(sync,28);
+  const attention=sync.channels.filter(c=>{const state=channelState(c,sync);return state.tone==="amber"||state.tone==="red"});
+  const today=new Date().toDateString();
+  const publishing=sync.publisherJobs.filter(x=>x.scheduled_at&&new Date(x.scheduled_at).toDateString()===today).length;
+  const rendering=sync.projects.filter(x=>x.status==="RENDERING").length;
+  const completed=sync.projects.filter(x=>x.status==="COMPLETED").length;
+  const errors=sync.projects.filter(x=>x.status==="ERROR").length;
+  const endlume=sync.endlumeJobs.find(x=>x.state==="rendering")||sync.endlumeJobs[0];
+  const normal=Math.max(0,sync.channels.length-attention.length);
+  const health=sync.channels.length?Math.round(normal/sync.channels.length*100):null;
   return (
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
       <Header title="Главная" />
       <Card style={styles.hero}>
         <Text style={styles.eyebrow}>СЕТЬ КАНАЛОВ</Text>
-        <Text style={styles.heroValue}>35 каналов</Text>
-        <Text style={styles.heroSub}>32 работают штатно · 3 требуют внимания</Text>
+        <Text style={styles.heroValue}>{sync.channels.length} каналов</Text>
+        <Text style={styles.heroSub}>{normal} работают штатно · {attention.length} требуют внимания</Text>
         <View style={styles.heroStats}>
-          <View><Text style={styles.heroStatValue}>3.8M</Text><Text style={styles.heroStatLabel}>просмотров / 28д</Text></View>
-          <View><Text style={styles.heroStatValue}>+8 420</Text><Text style={styles.heroStatLabel}>подписчиков</Text></View>
-          <View><Text style={styles.heroStatValue}>92%</Text><Text style={styles.heroStatLabel}>в норме</Text></View>
+          <View><Text style={styles.heroStatValue}>{formatMetric(a.views)}</Text><Text style={styles.heroStatLabel}>просмотров / 28д</Text></View>
+          <View><Text style={styles.heroStatValue}>{a.subscribers==null?"—":(a.subscribers>=0?"+":"")+formatMetric(a.subscribers)}</Text><Text style={styles.heroStatLabel}>подписчиков</Text></View>
+          <View><Text style={styles.heroStatValue}>{health==null?"—":String(health)+"%"}</Text><Text style={styles.heroStatLabel}>в норме</Text></View>
         </View>
       </Card>
-
-      <View style={styles.sectionHead}><Text style={styles.sectionTitle}>Сейчас</Text><Text style={styles.sectionAction}>Live</Text></View>
+      <View style={styles.sectionHead}><Text style={styles.sectionTitle}>Сейчас</Text><Text style={styles.sectionAction}>{sync.syncStatus==="online"?"Live":"Cache"}</Text></View>
       <View style={styles.grid2}>
-        <Card style={styles.compact}><Ionicons name="cloud-upload-outline" size={20} color={C.cyan} /><Text style={styles.compactValue}>4</Text><Text style={styles.compactLabel}>публикации сегодня</Text></Card>
-        <Card style={styles.compact}><Ionicons name="flash-outline" size={20} color={C.purple} /><Text style={styles.compactValue}>3</Text><Text style={styles.compactLabel}>рендерятся</Text></Card>
-        <Card style={styles.compact}><Ionicons name="checkmark-circle-outline" size={20} color={C.green} /><Text style={styles.compactValue}>27</Text><Text style={styles.compactLabel}>готово</Text></Card>
-        <Card style={styles.compact}><Ionicons name="warning-outline" size={20} color={C.red} /><Text style={styles.compactValue}>2</Text><Text style={styles.compactLabel}>ошибки</Text></Card>
+        <Card style={styles.compact}><Ionicons name="cloud-upload-outline" size={20} color={C.cyan} /><Text style={styles.compactValue}>{publishing}</Text><Text style={styles.compactLabel}>публикации сегодня</Text></Card>
+        <Card style={styles.compact}><Ionicons name="flash-outline" size={20} color={C.purple} /><Text style={styles.compactValue}>{rendering}</Text><Text style={styles.compactLabel}>рендерятся</Text></Card>
+        <Card style={styles.compact}><Ionicons name="checkmark-circle-outline" size={20} color={C.green} /><Text style={styles.compactValue}>{completed}</Text><Text style={styles.compactLabel}>завершено</Text></Card>
+        <Card style={styles.compact}><Ionicons name="warning-outline" size={20} color={C.red} /><Text style={styles.compactValue}>{errors}</Text><Text style={styles.compactLabel}>ошибки</Text></Card>
       </View>
-
-      <View style={styles.sectionHead}><Text style={styles.sectionTitle}>Требует внимания</Text><Text style={styles.sectionAction}>3</Text></View>
+      <View style={styles.sectionHead}><Text style={styles.sectionTitle}>Требует внимания</Text><Text style={styles.sectionAction}>{attention.length}</Text></View>
+      {attention.length?attention.slice(0,4).map(c=>{
+        const state=channelState(c,sync),tone=state.tone==="red"?C.red:C.amber;
+        const inv=sync.inventory.find(x=>x.channel_id===c.id);
+        return <Card key={c.id}><View style={styles.rowBetween}><View style={{flex:1}}><Text style={styles.cardTitle}>{c.name}</Text><Text style={styles.muted}>{inv?.stale?"Последний подтверждённый локальный snapshot":"Контент / публикация требует внимания"}</Text></View><StatusBadge label={state.label} tone={tone}/></View></Card>
+      }):<Card><Text style={styles.muted}>Нет активных предупреждений</Text></Card>}
+      <View style={styles.sectionHead}><Text style={styles.sectionTitle}>ENDLUME</Text><Text style={[styles.sectionAction,{color:endlume?.state==="rendering"||endlume?.state==="connected"?C.green:C.sub}]}>{endlume?"● "+endlume.state:"Нет данных"}</Text></View>
       <Card>
-        <View style={styles.rowBetween}><View><Text style={styles.cardTitle}>Midnight Cruise</Text><Text style={styles.muted}>Запас контента заканчивается</Text></View><StatusBadge label="6 дней" tone={C.amber} /></View>
-      </Card>
-      <Card>
-        <View style={styles.rowBetween}><View><Text style={styles.cardTitle}>After 2AM</Text><Text style={styles.muted}>Ошибка последней загрузки</Text></View><StatusBadge label="Ошибка" tone={C.red} /></View>
-      </Card>
-
-      <View style={styles.sectionHead}><Text style={styles.sectionTitle}>ENDLUME</Text><Text style={[styles.sectionAction,{color:C.green}]}>● Онлайн</Text></View>
-      <Card>
-        <View style={styles.rowBetween}><View><Text style={styles.cardTitle}>MacBook Air M1</Text><Text style={styles.muted}>Rendering VIDEO_242</Text></View><Text style={[styles.kpiDelta,{color:C.purple}]}>68%</Text></View>
-        <View style={styles.progressTrack}><LinearGradient colors={[C.blue,C.purple]} style={[styles.progressFill,{width:"68%"}]} /></View>
+        <View style={styles.rowBetween}><View><Text style={styles.cardTitle}>{endlume?.machine_name||"ENDLUME"}</Text><Text style={styles.muted}>{endlume?.current_project||"Нет активного проекта"}</Text></View><Text style={[styles.kpiDelta,{color:C.purple}]}>{endlume?.progress==null?"—":String(Math.round(endlume.progress))+"%"}</Text></View>
+        {endlume?.progress!=null?<View style={styles.progressTrack}><LinearGradient colors={[C.blue,C.purple]} style={[styles.progressFill,{width:String(Math.max(0,Math.min(100,endlume.progress)))+"%"}]} /></View>:null}
       </Card>
     </ScrollView>
   );
 }
 
 function ChannelsScreen() {
+  const sync=useVyronSyncContext();
   const [filter, setFilter] = useState("Все");
   const [q, setQ] = useState("");
-  const filtered = channels.filter(c => c.name.toLowerCase().includes(q.toLowerCase()) && (filter === "Все" || (filter === "Нужен контент" && c.tone === C.amber) || (filter === "Ошибки" && c.tone === C.red) || (filter === "Активные" && c.tone !== C.red)));
+  const stats28=latestStats(sync.stats,28);
+  const filtered = sync.channels.filter(c => {
+    const state=channelState(c,sync);
+    const matchesFilter=filter==="Все"||(filter==="Активные"&&state.tone!=="red")||(filter==="Нужен контент"&&state.tone==="amber")||(filter==="Ошибки"&&state.tone==="red");
+    return c.name.toLowerCase().includes(q.toLowerCase())&&matchesFilter;
+  });
   return (
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
       <Header title="Каналы" />
@@ -157,24 +170,28 @@ function ChannelsScreen() {
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filters}>
         {["Все","Активные","Нужен контент","Ошибки"].map(x=><Pressable key={x} onPress={()=>{setFilter(x);Haptics.selectionAsync()}} style={[styles.filter,filter===x&&styles.filterActive]}><Text style={[styles.filterText,filter===x&&styles.filterTextActive]}>{x}</Text></Pressable>)}
       </ScrollView>
-      {filtered.map((c,i)=>(
-        <Pressable key={c.name} style={({pressed})=>pressed&&{transform:[{scale:.98}]}}>
+      {!filtered.length?<Card><Text style={styles.muted}>{sync.dataLoading?"Синхронизация…":"Каналы пока не синхронизированы"}</Text></Card>:null}
+      {filtered.map((c,i)=>{
+        const stat=stats28.get(c.id),inv=sync.inventory.find(x=>x.channel_id===c.id),state=channelState(c,sync);
+        const tone=state.tone==="green"?C.green:state.tone==="amber"?C.amber:state.tone==="red"?C.red:C.cyan;
+        const delta=stat?.subscriber_delta_today;
+        return <Pressable key={c.id} style={({pressed})=>pressed&&{transform:[{scale:.98}]}}>
           <Card>
             <View style={styles.channelTop}>
-              <LinearGradient colors={[C.blue,C.violet]} style={styles.avatar}><Text style={styles.avatarText}>{String(i+1).padStart(2,"0")}</Text></LinearGradient>
-              <View style={{flex:1}}><Text style={styles.cardTitle}>{c.name}</Text><Text style={styles.muted}>{c.subs} подписчиков <Text style={{color:c.delta.startsWith("-")?C.red:C.green}}>{c.delta}</Text></Text></View>
-              <Sparkline tone={c.tone}/>
+              <LinearGradient colors={[C.blue,C.violet]} style={styles.avatar}><Text style={styles.avatarText}>{c.name.slice(0,2).toUpperCase()||String(i+1).padStart(2,"0")}</Text></LinearGradient>
+              <View style={{flex:1}}><Text style={styles.cardTitle}>{c.name}</Text><Text style={styles.muted}>{formatMetric(stat?.subscriber_count)} подписчиков <Text style={{color:delta==null?C.sub:delta<0?C.red:C.green}}>{delta==null?"—":(delta>=0?"+":"")+formatMetric(delta)}</Text></Text></View>
+              <Sparkline tone={tone} values={channelSparkline(sync.stats,c.id,28)}/>
             </View>
             <View style={styles.metricsRow}>
-              <View><Text style={styles.metricValue}>{c.today}</Text><Text style={styles.metricLabel}>сегодня</Text><Text style={[styles.metricDelta,{color:C.green}]}>{c.growth}</Text></View>
-              <View><Text style={styles.metricValue}>{c.period}</Text><Text style={styles.metricLabel}>за 28 дней</Text><Text style={[styles.metricDelta,{color:C.green}]}>↑32%</Text></View>
+              <View><Text style={styles.metricValue}>{formatMetric(stat?.views_today)}</Text><Text style={styles.metricLabel}>сегодня</Text><Text style={[styles.metricDelta,{color:C.sub}]}>—</Text></View>
+              <View><Text style={styles.metricValue}>{formatMetric(viewsForPeriod(stat,28))}</Text><Text style={styles.metricLabel}>за 28 дней</Text><Text style={[styles.metricDelta,{color:C.sub}]}>—</Text></View>
             </View>
             <View style={styles.rule}/>
-            <View style={styles.rowBetween}><Text style={styles.muted}>{c.videos} видео готово</Text><Text style={styles.muted}>Запас: <Text style={{color:c.tone,fontWeight:"700"}}>{c.days} дней</Text></Text></View>
-            <View style={{marginTop:12}}><StatusBadge label={c.status} tone={c.tone}/></View>
+            <View style={styles.rowBetween}><Text style={styles.muted}>{inv?inv.ready_video_count:"—"} видео готово</Text><Text style={styles.muted}>Запас: <Text style={{color:tone,fontWeight:"700"}}>{inv?.remaining_content_days==null?"—":formatMetric(inv.remaining_content_days)+" дней"}</Text></Text></View>
+            <View style={{marginTop:12}}><StatusBadge label={state.label} tone={tone}/></View>
           </Card>
         </Pressable>
-      ))}
+      })}
     </ScrollView>
   );
 }
