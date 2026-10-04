@@ -59,7 +59,7 @@ function scheduleDrain(delayMs=80){
       retryLater=true;
     }).finally(()=>{
       transportBusy=false;
-      if(retryLater)window.setTimeout(()=>scheduleDrain(),5_000);
+      if(retryLater)scheduleDrain(5_000);
       else scheduleDrain()
     });
   },delayMs)
