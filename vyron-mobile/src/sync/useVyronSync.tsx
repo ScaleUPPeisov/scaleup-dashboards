@@ -150,6 +150,7 @@ export function useVyronSync(): VyronSyncModel {
 
     let live = true;
     let heartbeat: ReturnType<typeof setInterval> | undefined;
+    let device: DeviceRow | null = null;
     let mobileDeviceRecordId: string | null = null;
     setDataLoading(true);
     setSyncStatus("syncing");
@@ -212,7 +213,6 @@ export function useVyronSync(): VyronSyncModel {
       if (cached) setSnapshot(cached);
       hydratedUser.current = userId;
 
-      let device: DeviceRow | null = null;
       try {
         device = await registerMobileDevice(userId);
         mobileDeviceRecordId = device?.id ?? null;
