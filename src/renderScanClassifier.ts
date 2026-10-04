@@ -51,6 +51,13 @@ function currentGenerationLeaf(candidates:VideoJob[],scoped:VideoJob[],file:Rend
  return pool.find(j=>sourceMatchesCurrentJob(j,file))
    ||pool.slice().sort((a,b)=>Date.parse(b.createdAt)-Date.parse(a.createdAt))[0];
 }
+function currentGenerationRecoveryBlocked(job:VideoJob){
+ return Boolean(
+  job.youtubeVideoId||job.uploadedAt
+  ||['UPLOADED','TRASHED','TRASHED_BY_VYRON','QUEUED','UPLOADING'].includes(String(job.storageLifecycle||''))
+  ||job.status==='UPLOADING'||job.status==='SCHEDULED'
+ );
+}
 function historicalEvidenceForJob(job:VideoJob,history:UploadHistoryRecord[],channelId:string){return historyForJob(history,channelId,job.id)||successfulHistory(history,channelId).slice().reverse().find(x=>normalizeRenderPath(x.localFilePath)===normalizeRenderPath(job.finalPath||''))}
 function staleWrongRootScanJob(job:VideoJob,history:UploadHistoryRecord[],channelId:string,exactRoot:string){if(!job.finalPath||renderPathInsideRoot(job.finalPath,exactRoot))return false;if(historicalEvidenceForJob(job,history,channelId))return false;return job.sourceOrigin==='render-scan'||job.scanRecoveryState==='CROSS_CHANNEL_SCAN_RECOVERY_REQUIRED'}
 
@@ -82,6 +89,7 @@ export function classifyChannelRenderFiles(files:RenderFolderVideoFile[],jobs:Vi
   const exactJobs=scoped.filter(j=>normalizeRenderPath(j.finalPath||'')===path);
   const activeExact=currentGenerationLeaf(exactJobs,scoped,file);
   if(activeExact){
+   if(currentGenerationRecoveryBlocked(activeExact))return base('VERIFY_REQUIRED','CURRENT_LEAF_RECOVERY_BLOCKED',activeExact.id);
    if(fp&&sourceMatchesCurrentJob(activeExact,file))return base('KNOWN_EXACT','CURRENT_GENERATION_FINGERPRINT_MATCH',activeExact.id);
    if(fp)return base('NEW_GENERATION','ACTIVE_EXACT_PATH_SOURCE_CHANGED',activeExact.id);
    return base('VERIFY_REQUIRED','CURRENT_FINGERPRINT_REQUIRED_FOR_ACTIVE_PATH',activeExact.id);
@@ -113,6 +121,7 @@ export function classifyChannelRenderFiles(files:RenderFolderVideoFile[],jobs:Vi
   const sameNumber=scoped.filter(j=>j.number===sequence&&!staleWrongRootScanJob(j,historyRows,channelId,exactRoot));
   const activeSame=currentGenerationLeaf(sameNumber,scoped,file);
   if(activeSame){
+   if(currentGenerationRecoveryBlocked(activeSame))return base('VERIFY_REQUIRED','CURRENT_LEAF_RECOVERY_BLOCKED',activeSame.id);
    if(fp&&sourceMatchesCurrentJob(activeSame,file))return base('KNOWN_EXACT','SAME_ACTIVE_GENERATION_FINGERPRINT_MATCH',activeSame.id);
    if(fp)return base('NEW_GENERATION','ACTIVE_SEQUENCE_REUSED_WITH_NEW_FINGERPRINT',activeSame.id);
    return base('VERIFY_REQUIRED','CURRENT_FINGERPRINT_REQUIRED_FOR_REUSED_SEQUENCE',activeSame.id);
