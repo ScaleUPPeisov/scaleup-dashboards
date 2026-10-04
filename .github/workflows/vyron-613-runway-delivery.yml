@@ -17,7 +17,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  SOURCE_HEAD: 656d740dd9a1195fced39e025eaf0cb51c5ead3c
+  SOURCE_HEAD: c673f85a596b34bcd004609a6b24cd6f35b69284
   VERSION: '6.1.3'
   TAG: v6.1.3
   BASELINE_VERSION: '6.1.2'
