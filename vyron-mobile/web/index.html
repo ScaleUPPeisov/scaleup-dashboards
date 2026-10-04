@@ -30,9 +30,16 @@ button,input{font:inherit}.app{max-width:460px;margin:0 auto;min-height:100vh;pa
 </style>
 </head>
 <body>
-<div id="root"></div>
+<div id="root"><div class="login"><div class="brand">VYRON</div><h1>Загрузка…</h1><div class="card"><div class="muted">Подключаем VYRON Mobile</div></div></div></div>
+<script>
+window.addEventListener("error",function(e){
+  const root=document.getElementById("root");
+  if(root) root.innerHTML='<div class="login"><div class="brand">VYRON</div><h1>Ошибка запуска</h1><div class="card"><div class="error">'+String(e.message||"Не удалось загрузить приложение")+'</div></div></div>';
+});
+</script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.js"></script>
 <script>
+if(!window.supabase){throw new Error("Supabase SDK не загрузился");}
 const { createClient } = window.supabase;
 const SUPABASE_URL="https://odlseljmogaguyqdlkyv.supabase.co";
 const SUPABASE_KEY="sb_publishable_zKjzhQTdTG8f9BfR2X5NVg_zQgjo70f";
