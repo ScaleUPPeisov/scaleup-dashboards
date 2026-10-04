@@ -1,0 +1,1 @@
+create index if not exists vyron_mobile_pairing_claimed_device_idx on public.vyron_mobile_pairing_codes(claimed_device_id);

@@ -1,0 +1,122 @@
+name: VYRON Mobile Web Safari Smoke
+
+on:
+  push:
+    branches:
+      - feature/vyron-mobile-design-lock
+    paths:
+      - '.github/workflows/vyron-mobile-web-safari-smoke.yml'
+      - 'vyron-mobile/web/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  webkit-iphone14pro:
+    runs-on: macos-14
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch exact deployed VYRON HTML origin
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$RUNNER_TEMP/vyron-web"
+          curl -fsS --retry 3 --max-time 20             https://odlseljmogaguyqdlkyv.supabase.co/functions/v1/vyron-html-origin             -o "$RUNNER_TEMP/vyron-web/index.html"
+          test -s "$RUNNER_TEMP/vyron-web/index.html"
+          grep -q '<title>VYRON Mobile</title>' "$RUNNER_TEMP/vyron-web/index.html"
+          grep -q 'sb_publishable_' "$RUNNER_TEMP/vyron-web/index.html"
+          ! grep -q 'sb_secret_' "$RUNNER_TEMP/vyron-web/index.html"
+          ! grep -q 'service_role' "$RUNNER_TEMP/vyron-web/index.html"
+
+      - name: Serve with exact production CSP
+        shell: bash
+        run: |
+          cat > "$RUNNER_TEMP/vyron-web/server.py" <<'PY'
+          from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
+          import os
+          ROOT=os.environ["VYRON_WEB_ROOT"]
+          CSP="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src https://odlseljmogaguyqdlkyv.supabase.co wss://odlseljmogaguyqdlkyv.supabase.co; img-src 'self' data: https:; font-src 'self' data:; base-uri 'none'; frame-ancestors 'none'"
+          class H(SimpleHTTPRequestHandler):
+              def __init__(self,*args,**kwargs):
+                  super().__init__(*args,directory=ROOT,**kwargs)
+              def end_headers(self):
+                  self.send_header("Content-Security-Policy",CSP)
+                  self.send_header("X-Content-Type-Options","nosniff")
+                  self.send_header("Cache-Control","no-store, max-age=0")
+                  super().end_headers()
+          ThreadingHTTPServer(("127.0.0.1",4173),H).serve_forever()
+          PY
+          VYRON_WEB_ROOT="$RUNNER_TEMP/vyron-web" python3 "$RUNNER_TEMP/vyron-web/server.py" >"$RUNNER_TEMP/vyron-web/server.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/vyron-web/server.pid"
+          for i in {1..30}; do
+            curl -fsS http://127.0.0.1:4173/ >/dev/null && exit 0
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/vyron-web/server.log"
+          exit 1
+
+      - name: Install Playwright WebKit
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP"
+          npm init -y >/dev/null 2>&1
+          npm install --no-audit --no-fund playwright@1.55.0
+          npx playwright install webkit
+
+      - name: iPhone 14 Pro WebKit runtime acceptance
+        shell: bash
+        run: |
+          cat > "$RUNNER_TEMP/vyron-web/smoke.mjs" <<'JS'
+          import { webkit } from 'playwright';
+
+          const browser = await webkit.launch({ headless: true });
+          const context = await browser.newContext({
+            viewport: { width: 393, height: 852 },
+            deviceScaleFactor: 3,
+            isMobile: true,
+            hasTouch: true,
+            userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1',
+          });
+          const page = await context.newPage();
+          const pageErrors = [];
+          const consoleErrors = [];
+          page.on('pageerror', e => pageErrors.push(String(e)));
+          page.on('console', m => { if (m.type() === 'error') consoleErrors.push(m.text()); });
+
+          const response = await page.goto('http://127.0.0.1:4173/', { waitUntil: 'domcontentloaded', timeout: 15000 });
+          if (!response || response.status() !== 200) throw new Error('HTTP_NOT_200');
+
+          await page.waitForSelector('#email', { state: 'visible', timeout: 10000 });
+          await page.waitForSelector('#password', { state: 'visible', timeout: 10000 });
+          await page.waitForSelector('#login', { state: 'visible', timeout: 10000 });
+
+          const text = await page.locator('body').innerText();
+          if (!text.includes('VYRON') || !text.includes('Вход')) throw new Error('LOGIN_TEXT_MISSING');
+          if (text.includes('Подключение аккаунта')) throw new Error('STUCK_ON_BOOT_FALLBACK');
+          if (pageErrors.length) throw new Error('PAGE_ERRORS: ' + pageErrors.join(' | '));
+          if (consoleErrors.length) throw new Error('CONSOLE_ERRORS: ' + consoleErrors.join(' | '));
+
+          const shot = process.env.RUNNER_TEMP + '/vyron-web/iphone14pro-pass.png';
+          await page.screenshot({ path: shot, fullPage: true });
+          console.log('VYRON_WEBKIT_IPHONE14PRO=PASS');
+          console.log('EMAIL_VISIBLE=PASS');
+          console.log('PASSWORD_VISIBLE=PASS');
+          console.log('LOGIN_BUTTON_VISIBLE=PASS');
+          console.log('JS_ERRORS=0');
+          await browser.close();
+          JS
+          cd "$RUNNER_TEMP"
+          node "$RUNNER_TEMP/vyron-web/smoke.mjs"
+
+      - name: Upload Safari smoke proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-MOBILE-WEB-SAFARI-SMOKE
+          path: |
+            ${{ runner.temp }}/vyron-web/iphone14pro-pass.png
+            ${{ runner.temp }}/vyron-web/server.log
+          retention-days: 5
