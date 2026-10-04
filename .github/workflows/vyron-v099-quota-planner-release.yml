@@ -181,10 +181,18 @@ jobs:
           Path('release/latest.json').write_text(json.dumps(feed,ensure_ascii=False,indent=2)+'\n')
           PY
 
+      - name: Stage public CI artifact
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf vyron-v099-public-artifact
+          mkdir -p vyron-v099-public-artifact
+          cp -R .vyron-v051/release/. vyron-v099-public-artifact/
+
       - uses: actions/upload-artifact@v4
         with:
           name: VYRON-macOS-AppleSilicon-v0.9.9-signed
-          path: .vyron-v051/release/
+          path: vyron-v099-public-artifact/
           retention-days: 30
 
       - name: Publish GitHub Release
