@@ -1,6 +1,5 @@
 import {describe,expect,it} from "vitest";
 import {applyRealtimeChange,realtimeTransportStatus} from "./reducer";
-import {EMPTY_SNAPSHOT} from "./cache";
 import type {MobileChannelRow,MobileSnapshot,ProjectRow} from "./types";
 
 const channel=(overrides:Partial<MobileChannelRow>={}):MobileChannelRow=>({
@@ -15,7 +14,8 @@ const project=(overrides:Partial<ProjectRow>={}):ProjectRow=>({
   last_sync_at:"2026-10-04T08:00:00Z",deleted_at:null,created_at:"2026-10-04T08:00:00Z",
   updated_at:"2026-10-04T08:00:00Z",last_event_id:"e2",...overrides
 });
-const snapshot=(patch:Partial<MobileSnapshot>={}):MobileSnapshot=>({...EMPTY_SNAPSHOT,...patch});
+const EMPTY:MobileSnapshot={channels:[],stats:[],projects:[],inventory:[],publisherJobs:[],endlumeJobs:[],devices:[],notifications:[],lastSuccessfulSyncAt:null};
+const snapshot=(patch:Partial<MobileSnapshot>={}):MobileSnapshot=>({...EMPTY,...patch});
 
 describe("VYRON Mobile realtime reducer",()=>{
   it("inserts a new desktop channel without replacing the rest of the app",()=>{
