@@ -288,7 +288,7 @@ async function applyEvent(ownerId: string, device: any, e: any) {
       owner_id: ownerId, desktop_project_id: desktopProjectId, channel_id: channelId,
       project_name: txt(payload.project_name || desktopProjectId, 300), status: state,
       progress: num(payload.progress), track_count: int(payload.track_count), duration_seconds: num(payload.duration_seconds),
-      machine: txt(payload.machine, 160) || null, source_created_at: date(payload.created_at),
+      machine: txt(payload.machine, 160) || txt(device.name, 160) || null, source_created_at: date(payload.created_at),
       source_updated_at: date(payload.updated_at), error_message: txt(payload.error_message, 2000) || null,
       last_sync_at: stamp, deleted_at: null, last_event_id: eventId, updated_at: stamp,
     };
