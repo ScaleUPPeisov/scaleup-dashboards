@@ -1,4 +1,4 @@
-name: VYRON Mobile Realtime Phase 1 CI
+name: VYRON Mobile Realtime Phase 1 Full Gate
 
 on:
   push:
