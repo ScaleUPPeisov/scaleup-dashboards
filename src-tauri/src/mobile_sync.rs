@@ -316,6 +316,7 @@ pub async fn mobile_sync_enqueue(app: AppHandle, events: Vec<Value>) -> Value {
     if events.is_empty() { return flush_internal(&app).await; }
     let mut queue=match load_queue(&app){Ok(x)=>x,Err(e)=>return json!({"ok":false,"state":"queue_error","error":e})};
     let existing:std::collections::HashSet<String>=queue.iter().filter_map(|x|event_id(&x.event).map(str::to_string)).collect();
+    let mut saturated=false;
     for mut event in events.into_iter().take(MAX_BATCH) {
         if let Err(e)=validate_sanitized(&event){return json!({"ok":false,"state":"blocked","error":e})}
         if event_id(&event).is_none() {
@@ -323,11 +324,15 @@ pub async fn mobile_sync_enqueue(app: AppHandle, events: Vec<Value>) -> Value {
         }
         let id=event_id(&event).unwrap_or("").to_string();
         if existing.contains(&id)||queue.iter().any(|x|event_id(&x.event)==Some(id.as_str())){continue}
-        if queue.len()>=MAX_QUEUE{break}
+        if queue.len()>=MAX_QUEUE{saturated=true;break}
         queue.push(QueueItem{event,attempts:0,next_attempt_ms:0});
     }
     if let Err(e)=save_queue(&app,&queue){return json!({"ok":false,"state":"queue_error","error":e})}
-    flush_internal(&app).await
+    let flushed=flush_internal(&app).await;
+    if saturated{
+        return json!({"ok":false,"state":"queue_full","queued":load_queue(&app).map(|x|x.len()).unwrap_or(MAX_QUEUE),"flush":flushed})
+    }
+    flushed
 }
 
 #[tauri::command]
