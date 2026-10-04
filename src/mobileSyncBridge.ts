@@ -40,16 +40,17 @@ function event(type:string,entity:string,key:string,payload:Record<string,unknow
   const sig=stable(payload);
   return{event_id:deterministicSyncUuid(type+':'+key+':'+sig),event_type:type,entity_type:entity,entity_key:key,desktop_event_at:at,payload}
 }
-function enqueue(rows:SyncEvent[]){
-  if(!rows.length)return;
-  pending.push(...rows);
-  if(timer!==undefined)return;
+function scheduleDrain(){
+  if(timer!==undefined||!pending.length)return;
   timer=window.setTimeout(()=>{
     timer=undefined;
     const batch=pending.splice(0,100);
-    void invoke('mobile_sync_enqueue',{events:batch}).catch(()=>{});
-    if(pending.length)enqueue([]);
+    void invoke('mobile_sync_enqueue',{events:batch}).catch(()=>{}).finally(()=>scheduleDrain());
   },80)
+}
+function enqueue(rows:SyncEvent[]){
+  if(rows.length)pending.push(...rows);
+  scheduleDrain()
 }
 function flush(){void invoke('mobile_sync_flush').catch(()=>{})}
 function sourceStats(channel:Channel){
@@ -98,8 +99,7 @@ function channelPayload(channel:Channel){
     name:channel.name,
     avatar_url:channel.stats?.thumbnail||channel.analytics?.channelThumbnail||null,
     status:channel.enabled===false?'disabled':'active',
-    created_at:null,
-    updated_at:new Date().toISOString()
+    created_at:null
   }
 }
 function emitStats(state:AppState,channel:Channel,rows:SyncEvent[]){
@@ -154,7 +154,6 @@ function projectPayload(job:VideoJob){
     duration_seconds:null,
     machine:null,
     created_at:job.createdAt,
-    updated_at:new Date().toISOString(),
     error_message:job.error||job.processingError||null
   }
 }
@@ -166,8 +165,7 @@ function publisherPayload(job:VideoJob){
     progress:job.status==='UPLOADING'?(job.uploadProgress??null):null,
     scheduled_at:job.publishAt||null,
     youtube_video_id:job.youtubeVideoId||null,
-    error_message:job.error||job.processingError||null,
-    updated_at:new Date().toISOString()
+    error_message:job.error||job.processingError||null
   }
 }
 function endlumePayload(job:VideoJob){
@@ -180,10 +178,9 @@ function endlumePayload(job:VideoJob){
     state,
     current_project:'VIDEO_'+String(job.number).padStart(3,'0'),
     progress:state==='completed'?100:null,
-    last_activity:new Date().toISOString(),
+    last_activity:null,
     machine_name:null,
-    error_message:state==='failed'?(job.error||'ENDLUME render failed'):null,
-    updated_at:new Date().toISOString()
+    error_message:state==='failed'?(job.error||'ENDLUME render failed'):null
   }
 }
 function notification(kind:string,key:string,title:string,body:string,entityType:string,entityKey:string,at:string){
@@ -252,8 +249,7 @@ function inventoryPayload(row:ChannelInventorySnapshot,state:AppState){
     last_local_inventory_scan:row.lastScanAt||row.lastConfirmedAt||null,
     next_scheduled_publication:future,
     folder_state:row.folderState,
-    stale:row.stale,
-    updated_at:new Date().toISOString()
+    stale:row.stale
   }
 }
 function emitInventory(snapshots:Record<string,ChannelInventorySnapshot>){
