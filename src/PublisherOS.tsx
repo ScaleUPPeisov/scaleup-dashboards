@@ -134,7 +134,7 @@ function PublisherOSAdvanced({activityRef,initialPanel}:{activityRef?:React.Muta
  const actionJobs=removeRequest?removeRequest.ids.map(id=>channelScopedJobs.find(j=>j.id===id)).filter((j):j is VideoJob=>Boolean(j)):[];
  const actionSizes=actionJobs.map(j=>publisherCurrentPhysicalSize(j,renderScan?.result.files||liveSnapshot?.result?.files||[]));
  const actionSizeReadable=actionJobs.length>0&&actionSizes.every((n):n is number=>typeof n==='number'&&n>0);
- const actionSizeBytes=actionSizes.reduce((sum,n)=>sum+(n||0),0);
+ const actionSizeBytes=actionSizes.reduce<number>((sum,n)=>sum+(n??0),0);
  const refreshSessions=()=>api.youtubeUploadSessions().then(setSessions).catch(()=>setSessions([]));
  useEffect(()=>{if(!batchActive)return;const off=subscribeYoutubeQuota(()=>{if(routeIsActive()){recordYoutubeRouteEvent('PublisherOS','quota-revision');setQuotaRev(x=>x+1)}}),offClock=subscribeYoutubeQuotaClock(x=>{if(routeIsActive()){recordYoutubeRouteEvent('PublisherOS','quota-clock');setClock(x)}});return()=>{off();offClock()}},[batchActive]);
  useEffect(()=>{if(!channelId)return;const persisted=loadActivePublishChannel();if(persisted!==channelId){recordYoutubeRouteEvent('PublisherOS','persist-active-channel+dispatch');saveActivePublishChannel(channelId)}else recordYoutubeRouteEvent('PublisherOS','initial-active-channel-dispatch-skipped');if(initialChannelRef.current===channelId)return;initialChannelRef.current=channelId;recordYoutubeRouteEvent('PublisherOS','draft-hydration');setDraft(loadPublishWorkspace(channelId));setFingerprints({});setRenderScan(null);setLegacyRecoveryPreview(null);setScheduleStartMode('continue');setScheduleSync({state:'idle',futureCount:0,occupied:[],timezone:PUBLISHER_TIMEZONE})},[channelId]);
