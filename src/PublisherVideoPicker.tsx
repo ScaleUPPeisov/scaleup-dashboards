@@ -37,7 +37,7 @@ export const PublisherVideoPicker=React.memo(function PublisherVideoPicker(p:Pub
     const label=recovery?'НЕВЕРНАЯ ПРИВЯЗКА':st==='NEW'?'НОВОЕ':st==='UPLOAD_ACCEPTED'?'НА YOUTUBE':st==='READY'?'READY':st==='YOUTUBE_PROCESSING'?'ОБРАБОТКА YOUTUBE':st==='VERIFY_REQUIRED'?'ИСТОРИЯ':st==='REMOTE_MISSING'?'YOUTUBE: НЕ НАЙДЕНО':st;
     return <div key={j.id} className={'publishVideoRow '+(p.selectedIds.includes(j.id)?'selected ':'')+(!fresh?'uploaded':'')}>
      <label className="publishVideoSelect">
-      <input type="checkbox" disabled={!fresh||p.busy} checked={fresh&&p.selectedIds.includes(j.id)} onChange={()=>fresh&&p.onToggle(j.id)}/>
+      <input type="checkbox" disabled={!fresh||p.busy} checked={p.selectedIds.includes(j.id)} onChange={()=>fresh&&p.onToggle(j.id)}/>
       <span>
        <b>{'VIDEO_'+String(j.number).padStart(3,'0')}</b>
        <small>{baseName(j.finalPath||'')+' • '+label+(videoId?' • YouTube ID: '+videoId:'')+(fact?.latestUploadedAt?' • '+new Date(fact.latestUploadedAt).toLocaleDateString('ru-RU'):'')+(!fresh?' • '+disabledReason:'')}</small>
