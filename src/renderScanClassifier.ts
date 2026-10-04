@@ -45,11 +45,13 @@ function sourceMatchesCurrentJob(job:VideoJob,file:RenderFolderVideoFile){const 
 function currentGenerationLeaf(candidates:VideoJob[],scoped:VideoJob[],file:RenderFolderVideoFile){
  const active=candidates.filter(j=>!isHistoricalGeneration(j));
  if(!active.length)return;
- const superseded=new Set(scoped.filter(j=>!isHistoricalGeneration(j)&&j.sourcePreviousJobId).map(j=>j.sourcePreviousJobId!));
+ // Any descendant generation, including an uploaded/trashed historical leaf,
+ // supersedes its predecessor. Never fall back to a referenced predecessor.
+ const superseded=new Set(scoped.filter(j=>j.sourcePreviousJobId).map(j=>j.sourcePreviousJobId!));
  const leaves=active.filter(j=>!superseded.has(j.id));
- const pool=leaves.length?leaves:active;
- return pool.find(j=>sourceMatchesCurrentJob(j,file))
-   ||pool.slice().sort((a,b)=>Date.parse(b.createdAt)-Date.parse(a.createdAt))[0];
+ if(!leaves.length)return;
+ return leaves.find(j=>sourceMatchesCurrentJob(j,file))
+   ||leaves.slice().sort((a,b)=>Date.parse(b.createdAt)-Date.parse(a.createdAt))[0];
 }
 function currentGenerationRecoveryBlocked(job:VideoJob){
  return Boolean(
