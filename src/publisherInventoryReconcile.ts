@@ -52,7 +52,6 @@ export function reconcilePublisherInventory({
         &&matched.storageLifecycle!=='UPLOADED'
         &&matched.storageLifecycle!=='TRASHED'
         &&matched.storageLifecycle!=='TRASHED_BY_VYRON'
-        &&!matched.removedFromPublishList
         &&normalizeRenderPath(matched.finalPath||'')===path
         &&(!matchedFp||(matchedFp===fp&&Number(matched.currentSourceFileSize)===size))
       );
@@ -63,7 +62,6 @@ export function reconcilePublisherInventory({
         &&job.storageLifecycle!=='UPLOADED'
         &&job.storageLifecycle!=='TRASHED'
         &&job.storageLifecycle!=='TRASHED_BY_VYRON'
-        &&!job.removedFromPublishList
         &&normalizeRenderPath(job.finalPath||'')===path
         &&Boolean(fp)
         &&String(job.currentSourceFingerprint||'').trim().toLowerCase()===fp
@@ -81,6 +79,7 @@ export function reconcilePublisherInventory({
             sourceGenerationKey:fp?`${channelId}:${fp}:${size}`:existingSameGeneration.sourceGenerationKey,
             status:'READY_UPLOAD',
             storageLifecycle:'NEW',
+            removedFromPublishList:false,
             scanRecoveryState:undefined,
             error:undefined,
           }
@@ -115,6 +114,7 @@ export function reconcilePublisherInventory({
         sourceGenerationKey:(row.currentFingerprint||row.file.fingerprint)?`${channelId}:${row.currentFingerprint||row.file.fingerprint}:${row.currentFileSize??row.file.size}`:job.sourceGenerationKey,
         status:'READY_UPLOAD',
         storageLifecycle:'NEW',
+        removedFromPublishList:false,
         scanRecoveryState:undefined,
         error:undefined,
       }

@@ -109,7 +109,9 @@ export const useLiveInventory=create<LiveInventoryState>((set)=>({
 
 function activeReadyJob(job:VideoJob|undefined){
   if(!job)return false;
-  if(job.removedFromPublishList||job.youtubeVideoId||job.uploadedAt)return false;
+  // 6.1.5: a legacy UI-only hide flag must not override a fresh physical file.
+  // Reconciliation clears removedFromPublishList once exact current bytes are proven.
+  if(job.youtubeVideoId||job.uploadedAt)return false;
   if(job.storageLifecycle==='UPLOADED'||job.storageLifecycle==='TRASHED'||job.storageLifecycle==='TRASHED_BY_VYRON')return false;
   if(job.status==='UPLOADING'||job.status==='SCHEDULED')return false;
   // Live Inventory is a physical stock monitor. If a KNOWN_EXACT render file

@@ -1,3 +1,5 @@
+import {normalizeYoutubeTags} from './youtubeMetadataValidation';
+
 export type ImportedMetadata={
   number?:number;
   channel?:string;
@@ -20,8 +22,8 @@ function numberFrom(value:unknown,source=''){
 }
 
 function tagsFrom(value:unknown){
-  if(Array.isArray(value))return value.map(String).map(x=>x.trim()).filter(Boolean);
-  if(typeof value==='string')return value.split(/[,;\n]/).map(x=>x.trim().replace(/^#/,'')).filter(Boolean);
+  if(Array.isArray(value))return normalizeYoutubeTags(value);
+  if(typeof value==='string')return normalizeYoutubeTags(value.split(/[,;\n]/),{stripLeadingHash:true});
   return undefined
 }
 

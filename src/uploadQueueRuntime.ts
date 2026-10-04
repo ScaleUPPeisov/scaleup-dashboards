@@ -10,6 +10,8 @@ import {isYoutubeQuotaError,releaseYoutubeQuotaReservation,reserveYoutubeQuotaAt
 import {MultiChannelUploadQueue,type ImmutableUploadJob,type UploadQueueSnapshot} from './uploadQueue';
 import {journal,journalProcessingState} from './activityJournalRuntime';
 import {attentionTask,cancelTask,completeTask,ensureTask,failTask,startTask} from './taskEngine';
+import {loadPublishWorkspace,savePublishWorkspace} from './publishWorkspaceState';
+import {retryableYoutubeMetadataState} from './youtubeMetadataValidation';
 
 async function executeUpload(spec:ImmutableUploadJob){
  const taskId=`upload:${spec.jobId}`;startTask(taskId,'Проверка перед загрузкой');
@@ -81,7 +83,18 @@ async function executeUpload(spec:ImmutableUploadJob){
  }catch(error){
   if(spec.metadataSource==='queue')await api.metadataQueueMarkError(spec.channelId,spec.jobId,String(error),useApp.getState().jobs.find(x=>x.id===spec.jobId)?.folder||undefined).catch(()=>undefined);
   const pending=await api.youtubeUploadSessions().catch(()=>[]),recoverable=pending.some(x=>x.jobId===spec.jobId);
-  const current=useApp.getState().jobs.find(x=>x.id===spec.jobId),acceptedVideoId=current?.youtubeVideoId,duplicateGuard=String(error).includes('UPLOAD_ALREADY_HAS_VIDEO_ID');
+  const current=useApp.getState().jobs.find(x=>x.id===spec.jobId),acceptedVideoId=current?.youtubeVideoId,duplicateGuard=String(error).includes('UPLOAD_ALREADY_HAS_VIDEO_ID'),retryableMetadata=retryableYoutubeMetadataState(error,acceptedVideoId);
+  if(retryableMetadata){
+   if(attempt)failPublishAttempt(attempt.id,error);
+   await api.youtubeCancelUploadSession(spec.jobId).catch(()=>undefined);
+   const h=humanizeError(error,'upload'),workspace=loadPublishWorkspace(spec.channelId);
+   useApp.getState().patchJob(spec.jobId,{status:retryableMetadata.status,storageLifecycle:retryableMetadata.storageLifecycle,uploadProgress:retryableMetadata.uploadProgress,error:h.message,uploadInterruptedAt:undefined});
+   savePublishWorkspace(spec.channelId,{selectedIds:[...new Set([...workspace.selectedIds,spec.jobId])]});
+   attentionTask(taskId,`Метаданные YouTube отклонены (${retryableMetadata.code}). Видео сохранено для немедленного повтора.`);
+   journal({eventType:'UPLOAD_FAILED',status:'INFO',source:'LIVE_OPERATION',operationId,batchId,channelId:spec.channelId,channelName:spec.channelName,profileId:spec.profileId,jobId:spec.jobId,localSourcePath:spec.filePath,errorCode:retryableMetadata.code,details:{filename:baseName(spec.filePath),error:h.message,phase,retryableMetadata:true,youtubeRequestSent:phase!=='PRECHECK',videosInsertSent:phase!=='PRECHECK',videoIdReceivedThisAttempt:false}});
+   appendErrorHistory('Метаданные YouTube отклонены',`VIDEO_${String(spec.videoNumber).padStart(3,'0')}: ${h.message}`,h.detail,{errorCode:retryableMetadata.code,videoId:spec.jobId,filePath:spec.filePath,stage:phase==='PRECHECK'?'preflight':'upload-transfer',channelId:spec.channelId,profileId:spec.profileId,operationId,rootIssueKey:`${batchId}:${retryableMetadata.code}:${spec.jobId}`,youtubeRequestSent:phase!=='PRECHECK',videosInsertSent:phase!=='PRECHECK',videoIdReceivedThisAttempt:false,operationPhase:phase});
+   throw error
+  }
   if(recoverable&&!acceptedVideoId)attentionTask(taskId,'Загрузка прервана — требуется безопасное продолжение существующей upload session');
   else if(acceptedVideoId)attentionTask(taskId,`YouTube ID уже получен: ${acceptedVideoId}. Требуется remote verification перед любым повтором.`);
   else failTask(taskId,String(error));
