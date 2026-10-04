@@ -1,28 +1,17 @@
 import Storage from "expo-sqlite/kv-store";
 import type { MobileSnapshot } from "./types";
+import { decodeCachedSnapshot, EMPTY_MOBILE_SNAPSHOT } from "./cacheCodec";
 
 const SNAPSHOT_PREFIX = "vyron-mobile:snapshot:v1:";
 const DEVICE_ID_KEY = "vyron-mobile:device-id:v1";
 
-export const EMPTY_SNAPSHOT: MobileSnapshot = {
-  channels: [],
-  stats: [],
-  projects: [],
-  inventory: [],
-  publisherJobs: [],
-  endlumeJobs: [],
-  devices: [],
-  notifications: [],
-  lastSuccessfulSyncAt: null,
-};
+export const EMPTY_SNAPSHOT: MobileSnapshot = EMPTY_MOBILE_SNAPSHOT;
 
 export async function loadSnapshot(userId: string): Promise<MobileSnapshot | null> {
   try {
     const raw = await Storage.getItem(SNAPSHOT_PREFIX + userId);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as MobileSnapshot;
-    if (!parsed || !Array.isArray(parsed.channels) || !Array.isArray(parsed.projects)) return null;
-    return { ...EMPTY_SNAPSHOT, ...parsed };
+    return decodeCachedSnapshot(raw);
   } catch {
     return null;
   }
