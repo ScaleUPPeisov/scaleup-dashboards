@@ -56,11 +56,11 @@ jobs:
       - name: Build for iPhone Simulator
         run: |
           set -Eeuo pipefail
-          xcodebuild             -workspace ios/VYRON.xcworkspace             -scheme VYRON             -sdk iphonesimulator             -configuration Debug             -derivedDataPath "$RUNNER_TEMP/vyron-mobile-derived"             CODE_SIGNING_ALLOWED=NO             build
+          xcodebuild             -workspace ios/VYRON.xcworkspace             -scheme VYRON             -sdk iphonesimulator             -configuration Release             -derivedDataPath "$RUNNER_TEMP/vyron-mobile-derived"             CODE_SIGNING_ALLOWED=NO             build
       - name: Package iPhone Simulator acceptance app
         run: |
           set -Eeuo pipefail
-          APP="$RUNNER_TEMP/vyron-mobile-derived/Build/Products/Debug-iphonesimulator/VYRON.app"
+          APP="$RUNNER_TEMP/vyron-mobile-derived/Build/Products/Release-iphonesimulator/VYRON.app"
           test -d "$APP"
           ditto -c -k --sequesterRsrc --keepParent "$APP" "$RUNNER_TEMP/VYRON-Mobile-iPhoneSimulator.zip"
           shasum -a 256 "$RUNNER_TEMP/VYRON-Mobile-iPhoneSimulator.zip" > "$RUNNER_TEMP/VYRON-Mobile-iPhoneSimulator.sha256"
