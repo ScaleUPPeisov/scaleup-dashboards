@@ -47,7 +47,7 @@ const job=(id:string,n:number,patch:Partial<VideoJob>={}):VideoJob=>({
   tracksCount:10,minTracks:10,finalPath:file(n).path,
   title:`VIDEO_${String(n).padStart(3,'0')}`,description:'',tags:[],
   storageLifecycle:'NEW',currentSourceFingerprint:hash(n),
-  currentSourceFileSize:file(n).size,currentSourceModifiedAt:file(n).modifiedAt,
+  currentSourceFileSize:file(n).size,currentSourceModifiedAt:file(n).modifiedAt??undefined,
   sourceGenerationKey:`${channelId}:${hash(n)}:${file(n).size}`,
   ...patch,
 });
