@@ -28,6 +28,7 @@ const endlumeSignatures=new Map<string,string>();
 const inventorySignatures=new Map<string,string>();
 const renderEvidenceSignatures=new Map<string,string>();
 let renderProbeRunning=false;
+let lastEndlumeConnectivity:'connected'|'disconnected'|undefined;
 
 function hash32(input:string,seed:number){
   let h=(2166136261^seed)>>>0;
@@ -234,8 +235,22 @@ function emitAppState(state:ReturnType<typeof useApp.getState>){
         if(prev.status!=='ERROR'&&project.status==='ERROR')rows.push(notification('render_failed','render_failed:'+job.id+':'+at.slice(0,16),'Ошибка рендера',String(project.error_message||project.project_name),'project',job.id,at));
       }
     }
-    const pub=publisherPayload(job),pubSig=stable(pub);
-    if(publisherSignatures.get(job.id)!==pubSig){publisherSignatures.set(job.id,pubSig);rows.push(event('publisher_upsert','publisher_job',job.id,pub))}
+    const pub=publisherPayload(job),pubSig=stable(pub),previousPublisherSig=publisherSignatures.get(job.id);
+    if(previousPublisherSig!==pubSig){
+      publisherSignatures.set(job.id,pubSig);rows.push(event('publisher_upsert','publisher_job',job.id,pub));
+      if(!initialAppPass&&previousPublisherSig){
+        const prev=JSON.parse(previousPublisherSig) as typeof pub;
+        const at=new Date().toISOString();
+        if(!prev.youtube_video_id&&pub.youtube_video_id){
+          rows.push(notification('upload_completed','upload_completed:'+job.id+':'+pub.youtube_video_id,'Загрузка завершена',job.title||('VIDEO_'+String(job.number).padStart(3,'0')),'publisher_job',job.id,at))
+        }
+        if(prev.status==='UPLOADING'&&pub.status==='ERROR'){
+          rows.push(notification('upload_failed','upload_failed:'+job.id+':'+String(pub.error_message||'error'),'Ошибка загрузки',String(pub.error_message||job.title||job.id),'publisher_job',job.id,at))
+        }else if(prev.status!=='ERROR'&&pub.status==='ERROR'){
+          rows.push(notification('publisher_error','publisher_error:'+job.id+':'+String(pub.error_message||'error'),'Ошибка Publisher',String(pub.error_message||job.title||job.id),'publisher_job',job.id,at))
+        }
+      }
+    }
     const end=endlumePayload(job);
     if(end){
       const endSig=stable(end);
@@ -284,6 +299,24 @@ export function syncObservedRenderEvidence(evidence:RuntimeRenderEvidence){
   const state=useApp.getState();
   const at=new Date(evidence.observedAtMs).toISOString();
   const rows:SyncEvent[]=[];
+  const connectivity:'connected'|'disconnected'=evidence.reliable?'connected':'disconnected';
+  if(lastEndlumeConnectivity!==connectivity){
+    const previous=lastEndlumeConnectivity;
+    lastEndlumeConnectivity=connectivity;
+    rows.push(event('endlume_upsert','endlume_job','__endlume_state__',{
+      desktop_job_id:'__endlume_state__',
+      state:evidence.reliable?(evidence.activeJobIds.size?'rendering':'idle'):'disconnected',
+      current_project:null,
+      progress:null,
+      last_activity:at,
+      machine_name:null,
+      error_message:evidence.reliable?null:'ENDLUME_RUNTIME_UNAVAILABLE',
+      updated_at:at
+    },at));
+    if(previous==='connected'&&connectivity==='disconnected'){
+      rows.push(notification('endlume_disconnected','endlume_disconnected:'+at.slice(0,16),'ENDLUME отключён','Desktop не видит runtime ENDLUME','endlume','__endlume_state__',at))
+    }
+  }
   for(const item of evidence.rows){
     const r=item.row;if(!r.jobId)continue;
     const job=state.jobs.find(x=>x.id===r.jobId);if(!job)continue;
@@ -311,10 +344,11 @@ export function syncObservedRenderEvidence(evidence:RuntimeRenderEvidence){
   enqueue(rows)
 }
 
-async function probeRenderProgress(){
+async function probeRenderProgress(force=false){
   if(renderProbeRunning)return;
   const state=useApp.getState();
-  if(!state.booted||!state.settings.workspace||!state.jobs.some(x=>x.status==='RENDERING'))return;
+  if(!state.booted||!state.settings.workspace)return;
+  if(!force&&!state.jobs.some(x=>x.status==='RENDERING'))return;
   renderProbeRunning=true;
   try{
     const evidence=await scanFactualRenderRuntime(state.settings.workspace,state.channels);
@@ -330,6 +364,8 @@ export function startMobileSyncBridge(){
   const unsubInventory=useLiveInventory.subscribe(state=>emitInventory(state.snapshots));
   const interval=window.setInterval(flush,10_000);
   const renderInterval=window.setInterval(()=>void probeRenderProgress(),1_000);
+  const connectivityInterval=window.setInterval(()=>void probeRenderProgress(true),7_000);
+  void probeRenderProgress(true);
   const online=()=>{
     if(offlineAt){
       const at=offlineAt;offlineAt=undefined;
@@ -339,7 +375,7 @@ export function startMobileSyncBridge(){
   };
   const offline=()=>{offlineAt=new Date().toISOString()};
   window.addEventListener('online',online);window.addEventListener('offline',offline);
-  window.addEventListener('beforeunload',()=>{unsubApp();unsubInventory();window.clearInterval(interval);window.clearInterval(renderInterval);window.removeEventListener('online',online);window.removeEventListener('offline',offline)},{once:true});
+  window.addEventListener('beforeunload',()=>{unsubApp();unsubInventory();window.clearInterval(interval);window.clearInterval(renderInterval);window.clearInterval(connectivityInterval);window.removeEventListener('online',online);window.removeEventListener('offline',offline)},{once:true});
 }
 
 export function mobileSyncBridgeTestHooks(){
