@@ -286,27 +286,37 @@ function SettingsRow({icon,label,value,tone=C.cyan}:{icon:any;label:string;value
 }
 
 function SettingsScreen() {
+  const sync=useVyronSyncContext();
+  const name=String(sync.session?.user.user_metadata?.full_name||sync.session?.user.email||"VYRON");
+  const statusText=sync.syncStatus==="online"?"● Онлайн":sync.syncStatus==="syncing"?"Синхронизация…":sync.syncStatus==="error"?"Ошибка синхронизации":sync.syncStatus==="unconfigured"?"Не настроено":"Нет подключения";
+  const statusTone=sync.syncStatus==="online"?C.green:sync.syncStatus==="syncing"?C.cyan:sync.syncStatus==="error"?C.red:C.amber;
+  const now=Date.now();
+  const endlumeConnected=sync.endlumeJobs.some(x=>x.state!=="disconnected"&&x.last_activity&&now-Date.parse(x.last_activity)<60000);
+  const initials=name.split(/\s+/).slice(0,2).map(x=>x[0]).join("").toUpperCase().slice(0,2);
   return (
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
       <Header title="Настройки" />
       <Card style={styles.profileCard}>
-        <LinearGradient colors={[C.blue,C.violet]} style={styles.profileAvatar}><Text style={styles.profileAvatarText}>КП</Text></LinearGradient>
-        <View><Text style={styles.profileName}>Кирилл Пейсов</Text><Text style={styles.muted}>35 каналов под управлением</Text></View>
+        <LinearGradient colors={[C.blue,C.violet]} style={styles.profileAvatar}><Text style={styles.profileAvatarText}>{initials}</Text></LinearGradient>
+        <View><Text style={styles.profileName}>{name}</Text><Text style={styles.muted}>{sync.channels.length} каналов под управлением</Text></View>
       </Card>
       <Card style={{paddingVertical:4}}>
-        <SettingsRow icon="sync-outline" label="Синхронизация" value="● Онлайн" tone={C.green}/>
-        <SettingsRow icon="notifications-outline" label="Уведомления" value="Включены"/>
+        <SettingsRow icon="sync-outline" label="Синхронизация" value={statusText} tone={statusTone}/>
+        <SettingsRow icon="notifications-outline" label="Уведомления" value={String(sync.notifications.filter(x=>!x.read_at).length)+" событий"}/>
         <SettingsRow icon="moon-outline" label="Тёмная тема" value="Всегда"/>
-        <SettingsRow icon="phone-portrait-outline" label="Подключённые устройства" value="2"/>
-        <SettingsRow icon="logo-youtube" label="YouTube аккаунты" value="35" tone={C.red}/>
-        <SettingsRow icon="flash-outline" label="ENDLUME" value="● Подключено" tone={C.purple}/>
-        <SettingsRow icon="server-outline" label="Хранилище" value="TOSHIBA"/>
+        <SettingsRow icon="phone-portrait-outline" label="Подключённые устройства" value={String(sync.devices.length)}/>
+        <SettingsRow icon="logo-youtube" label="YouTube аккаунты" value={String(sync.channels.filter(x=>x.youtube_channel_id).length)} tone={C.red}/>
+        <SettingsRow icon="flash-outline" label="ENDLUME" value={endlumeConnected?"● Подключено":"Нет связи"} tone={endlumeConnected?C.purple:C.sub}/>
+        <SettingsRow icon="server-outline" label="Хранилище" value="—"/>
         <SettingsRow icon="shield-checkmark-outline" label="Безопасность"/>
       </Card>
+      <Text style={styles.tiny}>{relativeSyncTime(sync.lastSuccessfulSyncAt)}</Text>
       <Text style={styles.sectionTitle}>Устройства</Text>
-      <Card><View style={styles.rowBetween}><View><Text style={styles.cardTitle}>MacBook Air M1</Text><Text style={[styles.muted,{color:C.green}]}>● Сейчас в сети</Text></View><Ionicons name="laptop-outline" size={24} color={C.cyan}/></View></Card>
-      <Card><View style={styles.rowBetween}><View><Text style={styles.cardTitle}>iPhone 14 Pro</Text><Text style={[styles.muted,{color:C.green}]}>● Сейчас в сети</Text></View><Ionicons name="phone-portrait-outline" size={24} color={C.cyan}/></View></Card>
-      <Pressable style={styles.logout}><Ionicons name="log-out-outline" size={19} color={C.red}/><Text style={styles.logoutText}>Выйти</Text></Pressable>
+      {sync.devices.length?sync.devices.map(d=>{
+        const online=now-Date.parse(d.last_seen_at)<45000;
+        return <Card key={d.id}><View style={styles.rowBetween}><View><Text style={styles.cardTitle}>{d.name}</Text><Text style={[styles.muted,{color:online?C.green:C.sub}]}>{online?"● Сейчас в сети":"Последняя связь: "+new Date(d.last_seen_at).toLocaleString("ru-RU")}</Text></View><Ionicons name={d.device_kind==="desktop"?"laptop-outline":"phone-portrait-outline"} size={24} color={C.cyan}/></View></Card>
+      }):<Card><Text style={styles.muted}>Устройства пока не синхронизированы</Text></Card>}
+      <Pressable onPress={()=>void sync.signOut()} style={styles.logout}><Ionicons name="log-out-outline" size={19} color={C.red}/><Text style={styles.logoutText}>Выйти</Text></Pressable>
       <Text style={styles.version}>VYRON Mobile 0.1.0</Text>
     </ScrollView>
   );
@@ -347,8 +357,19 @@ function AppShell() {
   );
 }
 
+function AuthGate(){
+  const sync=useVyronSyncContext();
+  const [email,setEmail]=useState("");
+  const [password,setPassword]=useState("");
+  const [error,setError]=useState("");
+  const [busy,setBusy]=useState(false);
+  if(sync.authLoading)return <SafeAreaView style={styles.safe}><View style={styles.authWrap}><Text style={styles.brand}>VYRON</Text><Text style={styles.muted}>Авторизация…</Text></View></SafeAreaView>;
+  if(sync.session)return <AppShell/>;
+  return <SafeAreaView style={styles.safe}><View style={styles.authWrap}><Text style={styles.brand}>VYRON</Text><Text style={styles.pageTitle}>Вход</Text><Card><Text style={styles.muted}>Аккаунт VYRON Mobile</Text><TextInput autoCapitalize="none" keyboardType="email-address" value={email} onChangeText={setEmail} placeholder="Email" placeholderTextColor={C.tertiary} style={[styles.searchInput,styles.authInput]}/><TextInput secureTextEntry value={password} onChangeText={setPassword} placeholder="Пароль" placeholderTextColor={C.tertiary} style={[styles.searchInput,styles.authInput]}/>{error?<Text style={[styles.muted,{color:C.red}]}>{error}</Text>:null}<Pressable disabled={busy} onPress={async()=>{setBusy(true);setError("");const r=await sync.signIn(email,password);if(!r.ok)setError(r.error||"Ошибка входа");setBusy(false)}} style={({pressed})=>[styles.primaryButton,pressed&&{transform:[{scale:.98}]},busy&&{opacity:.6}]}><Text style={styles.primaryButtonText}>{busy?"Вход…":"Войти"}</Text></Pressable></Card></View></SafeAreaView>;
+}
+
 export default function App() {
-  return <SafeAreaProvider><AppShell/></SafeAreaProvider>;
+  return <SafeAreaProvider><VyronSyncProvider><AuthGate/></VyronSyncProvider></SafeAreaProvider>;
 }
 
 const styles=StyleSheet.create({
@@ -429,6 +450,8 @@ const styles=StyleSheet.create({
   logout:{minHeight:48,borderRadius:16,borderWidth:1,borderColor:C.red+"55",backgroundColor:C.red+"0E",flexDirection:"row",alignItems:"center",justifyContent:"center",gap:8},
   logoutText:{color:C.red,fontWeight:"800",fontSize:13},
   version:{textAlign:"center",color:C.tertiary,fontSize:10,marginTop:1},
+  authWrap:{flex:1,justifyContent:"center",paddingHorizontal:20,gap:14},
+  authInput:{height:48,marginTop:12,borderRadius:14,borderWidth:1,borderColor:C.border,backgroundColor:"#0D1522",paddingHorizontal:14},
   nav:{position:"absolute",left:0,right:0,bottom:0,minHeight:82,paddingTop:10,paddingBottom:18,paddingHorizontal:8,flexDirection:"row",backgroundColor:"rgba(8,13,22,0.96)",borderTopWidth:1,borderTopColor:C.border},
   navItem:{flex:1,minHeight:50,alignItems:"center",justifyContent:"center",gap:5},
   navGlow:{shadowColor:C.blue,shadowOpacity:.75,shadowRadius:12,shadowOffset:{width:0,height:0}},
