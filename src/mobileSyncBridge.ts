@@ -36,15 +36,33 @@ function stable(value:unknown){return JSON.stringify(value)}
 function event(type:string,entity:string,key:string,payload:Record<string,unknown>,at=new Date().toISOString()):SyncEvent{
   return{event_id:crypto.randomUUID(),event_type:type,entity_type:entity,entity_key:key,desktop_event_at:at,payload}
 }
-function scheduleDrain(){
+function retryableEnqueueResult(value:unknown){
+  if(!value||typeof value!=='object')return false;
+  const row=value as {ok?:unknown;state?:unknown};
+  return row.ok===false&&(row.state==='queue_error'||row.state==='queue_full');
+}
+function scheduleDrain(delayMs=80){
   if(timer!==undefined||transportBusy||!pending.length)return;
   timer=window.setTimeout(()=>{
     timer=undefined;
     if(transportBusy){scheduleDrain();return}
     const batch=pending.splice(0,100);
     transportBusy=true;
-    void invoke('mobile_sync_enqueue',{events:batch}).catch(()=>{}).finally(()=>{transportBusy=false;scheduleDrain()});
-  },80)
+    let retryLater=false;
+    void invoke('mobile_sync_enqueue',{events:batch}).then(result=>{
+      if(retryableEnqueueResult(result)){
+        pending.unshift(...batch);
+        retryLater=true;
+      }
+    }).catch(()=>{
+      pending.unshift(...batch);
+      retryLater=true;
+    }).finally(()=>{
+      transportBusy=false;
+      if(retryLater)window.setTimeout(()=>scheduleDrain(),5_000);
+      else scheduleDrain()
+    });
+  },delayMs)
 }
 function enqueue(rows:SyncEvent[]){
   if(rows.length)pending.push(...rows);
@@ -374,5 +392,5 @@ export function startMobileSyncBridge(){
 }
 
 export function mobileSyncBridgeTestHooks(){
-  return{mapProjectStatus}
+  return{mapProjectStatus,retryableEnqueueResult}
 }
