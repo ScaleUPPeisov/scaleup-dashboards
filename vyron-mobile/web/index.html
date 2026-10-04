@@ -31,8 +31,9 @@ button,input{font:inherit}.app{max-width:460px;margin:0 auto;min-height:100vh;pa
 </head>
 <body>
 <div id="root"></div>
-<script type="module">
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.117.2";
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.js"></script>
+<script>
+const { createClient } = window.supabase;
 const SUPABASE_URL="https://odlseljmogaguyqdlkyv.supabase.co";
 const SUPABASE_KEY="sb_publishable_zKjzhQTdTG8f9BfR2X5NVg_zQgjo70f";
 const supabase=createClient(SUPABASE_URL,SUPABASE_KEY,{auth:{storage:localStorage,persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
