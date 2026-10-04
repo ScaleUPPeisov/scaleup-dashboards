@@ -11,6 +11,10 @@
     },
     "android": {
       "package": "com.scaleup.vyronmobile"
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static"
     }
   }
 }
