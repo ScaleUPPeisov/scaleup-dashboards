@@ -111,15 +111,39 @@ async fn flush_internal(app: &AppHandle) -> Value {
         Ok(x) => x,
         Err(e) => return json!({"ok":false,"queued":0,"state":"queue_error","error":e}),
     };
-    if queue.is_empty() {
-        let s = load_status(app);
-        return json!({"ok":true,"queued":0,"state":"idle","lastSuccessAt":s.last_success_at,"lastError":s.last_error});
-    }
     let auth = match auth_secret() {
         Ok(Some(x)) => x,
         Ok(None) => return json!({"ok":true,"queued":queue.len(),"state":"unpaired"}),
         Err(e) => return json!({"ok":true,"queued":queue.len(),"state":"secure_storage_unavailable","error":redact_error(&e)}),
     };
+    if queue.is_empty() {
+        let client=match reqwest::Client::builder().timeout(std::time::Duration::from_secs(4)).build(){
+            Ok(x)=>x,
+            Err(e)=>return json!({"ok":true,"queued":0,"state":"offline","error":format!("HTTP_CLIENT:{e}")}),
+        };
+        let response=client.post(ENDPOINT)
+            .header(auth.1,auth.0)
+            .json(&json!({"action":"heartbeat","app_version":app.package_info().version.to_string()}))
+            .send().await;
+        let mut status=load_status(app);
+        match response{
+            Ok(r) if r.status().is_success()=>{
+                let value:Value=r.json().await.unwrap_or_else(|_|json!({}));
+                status.last_success_at=Some(now_iso());
+                status.last_server_time=value.get("serverTime").and_then(Value::as_str).map(str::to_string);
+                status.last_error=None;save_status(app,&status);
+                return json!({"ok":true,"queued":0,"state":"online","lastSuccessAt":status.last_success_at,"lastServerTime":status.last_server_time})
+            }
+            Ok(r)=>{
+                status.last_error=Some(format!("HEARTBEAT_HTTP:{}",r.status().as_u16()));save_status(app,&status);
+                return json!({"ok":true,"queued":0,"state":"offline","lastError":status.last_error})
+            }
+            Err(e)=>{
+                status.last_error=Some(format!("HEARTBEAT_NETWORK:{}",redact_error(&e.to_string())));save_status(app,&status);
+                return json!({"ok":true,"queued":0,"state":"offline","lastError":status.last_error})
+            }
+        }
+    }
     let now = now_ms();
     let due: Vec<usize> = queue.iter().enumerate()
         .filter(|(_, x)| x.next_attempt_ms <= now)
