@@ -219,6 +219,7 @@ async function applyEvent(ownerId: string, device: any, e: any) {
   const payload = e.payload && typeof e.payload === "object" ? e.payload : {};
   if (!eventId || !eventType || !desktopEventAt) return { ok: false, code: "invalid_event" };
 
+  let duplicate = false;
   const { error: eventError } = await db.from("vyron_mobile_sync_events").insert({
     event_id: eventId, owner_id: ownerId, device_id: device.id, event_type: eventType,
     entity_type: txt(e.entity_type || eventType.split("_")[0], 64),
@@ -226,8 +227,11 @@ async function applyEvent(ownerId: string, device: any, e: any) {
     desktop_event_at: desktopEventAt, payload_version: 1,
   });
   if (eventError) {
-    if (eventError.code === "23505") return { ok: true, duplicate: true, eventId };
-    return { ok: false, code: "event_insert_failed" };
+    if (eventError.code !== "23505") return { ok: false, code: "event_insert_failed" };
+    const { data: existing } = await db.from("vyron_mobile_sync_events")
+      .select("applied_at").eq("event_id", eventId).eq("owner_id", ownerId).maybeSingle();
+    if (existing?.applied_at) return { ok: true, duplicate: true, eventId };
+    duplicate = true;
   }
 
   const stamp = iso();
@@ -241,13 +245,13 @@ async function applyEvent(ownerId: string, device: any, e: any) {
       name, avatar_url: txt(payload.avatar_url, 1000) || null,
       status: txt(payload.status || "active", 64),
       source_created_at: date(payload.created_at), source_updated_at: date(payload.updated_at),
-      last_sync_at: stamp, device_id: device.id, deleted_at: null, updated_at: stamp,
+      last_sync_at: stamp, device_id: device.id, deleted_at: null, last_event_id: eventId, updated_at: stamp,
     };
     const { error } = await db.from("vyron_mobile_channels").upsert(row, { onConflict: "owner_id,desktop_channel_id" });
     if (error) return { ok: false, code: "channel_upsert_failed" };
   } else if (eventType === "channel_delete") {
     const desktopChannelId = txt(payload.desktop_channel_id, 200);
-    const { error } = await db.from("vyron_mobile_channels").update({ deleted_at: stamp, last_sync_at: stamp, updated_at: stamp })
+    const { error } = await db.from("vyron_mobile_channels").update({ deleted_at: stamp, last_sync_at: stamp, last_event_id: eventId, updated_at: stamp })
       .eq("owner_id", ownerId).eq("desktop_channel_id", desktopChannelId);
     if (error) return { ok: false, code: "channel_delete_failed" };
   } else if (eventType === "channel_stats") {
@@ -286,7 +290,7 @@ async function applyEvent(ownerId: string, device: any, e: any) {
       progress: num(payload.progress), track_count: int(payload.track_count), duration_seconds: num(payload.duration_seconds),
       machine: txt(payload.machine, 160) || null, source_created_at: date(payload.created_at),
       source_updated_at: date(payload.updated_at), error_message: txt(payload.error_message, 2000) || null,
-      last_sync_at: stamp, deleted_at: null, updated_at: stamp,
+      last_sync_at: stamp, deleted_at: null, last_event_id: eventId, updated_at: stamp,
     };
     const { error } = await db.from("vyron_mobile_projects").upsert(row, { onConflict: "owner_id,desktop_project_id" });
     if (error) return { ok: false, code: "project_upsert_failed" };
@@ -302,7 +306,7 @@ async function applyEvent(ownerId: string, device: any, e: any) {
       status: state, progress, error_message: errorMessage, timestamp: date(payload.timestamp) || desktopEventAt,
     });
     if (error && error.code !== "23505") return { ok: false, code: "project_status_insert_failed" };
-    await db.from("vyron_mobile_projects").update({ status: state, progress, error_message: errorMessage, source_updated_at: date(payload.timestamp) || desktopEventAt, last_sync_at: stamp, updated_at: stamp }).eq("id", projectId).eq("owner_id", ownerId);
+    await db.from("vyron_mobile_projects").update({ status: state, progress, error_message: errorMessage, source_updated_at: date(payload.timestamp) || desktopEventAt, last_sync_at: stamp, last_event_id: eventId, updated_at: stamp }).eq("id", projectId).eq("owner_id", ownerId);
   } else if (eventType === "inventory_upsert") {
     const channelId = await resolveChannel(ownerId, txt(payload.desktop_channel_id, 200));
     if (!channelId) return { ok: false, code: "inventory_channel_missing" };
@@ -315,7 +319,7 @@ async function applyEvent(ownerId: string, device: any, e: any) {
       last_local_inventory_scan: date(payload.last_local_inventory_scan),
       next_scheduled_publication: date(payload.next_scheduled_publication),
       folder_state: txt(payload.folder_state, 32) || null, stale: Boolean(payload.stale),
-      source_updated_at: date(payload.updated_at) || desktopEventAt, updated_at: stamp,
+      source_updated_at: date(payload.updated_at) || desktopEventAt, last_event_id: eventId, updated_at: stamp,
     }, { onConflict: "channel_id" });
     if (error) return { ok: false, code: "inventory_upsert_failed" };
   } else if (eventType === "publisher_upsert") {
@@ -327,7 +331,7 @@ async function applyEvent(ownerId: string, device: any, e: any) {
       status: txt(payload.status, 64), progress: num(payload.progress),
       scheduled_at: date(payload.scheduled_at), youtube_video_id: txt(payload.youtube_video_id, 200) || null,
       error_message: txt(payload.error_message, 2000) || null,
-      source_updated_at: date(payload.updated_at) || desktopEventAt, updated_at: stamp,
+      source_updated_at: date(payload.updated_at) || desktopEventAt, last_event_id: eventId, updated_at: stamp,
     }, { onConflict: "owner_id,desktop_job_id" });
     if (error) return { ok: false, code: "publisher_upsert_failed" };
   } else if (eventType === "endlume_upsert") {
@@ -341,7 +345,7 @@ async function applyEvent(ownerId: string, device: any, e: any) {
       last_activity: date(payload.last_activity) || desktopEventAt,
       machine_name: txt(payload.machine_name, 160) || txt(device.name, 160) || null,
       error_message: txt(payload.error_message, 2000) || null,
-      source_updated_at: date(payload.updated_at) || desktopEventAt, updated_at: stamp,
+      source_updated_at: date(payload.updated_at) || desktopEventAt, last_event_id: eventId, updated_at: stamp,
     }, { onConflict: "owner_id,desktop_job_id" });
     if (error) return { ok: false, code: "endlume_upsert_failed" };
   } else if (eventType === "notification") {
@@ -353,14 +357,32 @@ async function applyEvent(ownerId: string, device: any, e: any) {
       owner_id: ownerId, event_type: kind, dedup_key: dedupKey,
       title: txt(payload.title, 300), body: txt(payload.body, 2000) || null,
       entity_type: txt(payload.entity_type, 64) || null, entity_key: txt(payload.entity_key, 200) || null,
-      occurred_at: date(payload.occurred_at) || desktopEventAt,
+      occurred_at: date(payload.occurred_at) || desktopEventAt, source_event_id: eventId,
     }, { onConflict: "owner_id,dedup_key", ignoreDuplicates: true });
     if (error) return { ok: false, code: "notification_failed" };
   } else {
     return { ok: false, code: "event_type_not_allowed" };
   }
 
-  return { ok: true, duplicate: false, eventId };
+  await db.from("vyron_mobile_sync_events").update({
+    applied_at: iso(),
+    apply_error: null,
+  }).eq("event_id", eventId).eq("owner_id", ownerId);
+  return { ok: true, duplicate, eventId };
+}
+
+
+async function heartbeat(req: Request, b: any) {
+  const auth = await authDesktop(req);
+  if (!auth.ok) return out({ ok: false, code: auth.code }, 401);
+  const now = iso();
+  const { error } = await db.from("vyron_mobile_devices").update({
+    last_seen_at: now,
+    updated_at: now,
+    app_version: txt(b.app_version || auth.device.app_version, 64),
+  }).eq("id", auth.device.id).eq("owner_id", auth.ownerId);
+  if (error) return out({ ok: false, code: "heartbeat_failed" }, 500);
+  return out({ ok: true, serverTime: now, deviceId: auth.device.id });
 }
 
 async function ingest(req: Request, b: any) {
@@ -384,6 +406,7 @@ Deno.serve(async req => {
     if (b.action === "create_pairing_code") return await createPairingCode(req);
     if (b.action === "claim_pairing_code") return await claimPairingCode(b);
     if (b.action === "provision_desktop_device") return await provision(req, b);
+    if (b.action === "heartbeat") return await heartbeat(req, b);
     if (b.action === "ingest") return await ingest(req, b);
     return out({ ok: false, code: "action" }, 400);
   } catch (e) {
