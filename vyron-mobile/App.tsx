@@ -106,7 +106,7 @@ function Header({ title, subtitle, actionLabel, actionIcon, onAction }: { title:
 }
 
 function PageContainer({children}:{children:React.ReactNode}) {
-  return <PageContainer>{children}</PageContainer>;
+  return <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>{children}</ScrollView>;
 }
 
 function SectionHeading({title,action}:{title:string;action?:string}) {
