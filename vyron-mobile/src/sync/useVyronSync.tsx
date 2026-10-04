@@ -150,6 +150,7 @@ export function useVyronSync(): VyronSyncModel {
 
     let live = true;
     let heartbeat: ReturnType<typeof setInterval> | undefined;
+    let mobileDeviceRecordId: string | null = null;
     setDataLoading(true);
     setSyncStatus("syncing");
     setSyncError(null);
@@ -159,12 +160,12 @@ export function useVyronSync(): VyronSyncModel {
       const receivedAt = new Date().toISOString();
       void supabase!.from("vyron_mobile_sync_events").update({
         mobile_receive_at: receivedAt,
-        mobile_device_id: device?.id ?? null,
+        mobile_device_id: mobileDeviceRecordId,
       }).eq("event_id", eventId).is("mobile_receive_at", null);
       requestAnimationFrame(() => requestAnimationFrame(() => {
         void supabase!.from("vyron_mobile_sync_events").update({
           mobile_paint_at: new Date().toISOString(),
-          mobile_device_id: device?.id ?? null,
+          mobile_device_id: mobileDeviceRecordId,
         }).eq("event_id", eventId).is("mobile_paint_at", null);
       }));
     };
@@ -214,6 +215,7 @@ export function useVyronSync(): VyronSyncModel {
       let device: DeviceRow | null = null;
       try {
         device = await registerMobileDevice(userId);
+        mobileDeviceRecordId = device?.id ?? null;
       } catch (e) {
         setSyncError(safeError(e));
       }
