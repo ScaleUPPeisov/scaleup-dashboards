@@ -1,5 +1,5 @@
 # VYRON 6.1.7 Current Generation Leaf Recovery hotfix
-# release trigger: verify exact 6.1.7 product head 382e7fa1f7b71bd62bc4487b47db92d3263d4eaa
+# release trigger: verify exact 6.1.7 product head 2029f725e2cb47bd4230ce18b94ff55e0c855889
 name: VYRON 6.1.7 Current Generation Leaf Recovery
 
 on:
@@ -18,7 +18,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  SOURCE_HEAD: 382e7fa1f7b71bd62bc4487b47db92d3263d4eaa
+  SOURCE_HEAD: 2029f725e2cb47bd4230ce18b94ff55e0c855889
   VERSION: '6.1.7'
   TAG: v6.1.7
   BASELINE_VERSION: '6.1.6'
