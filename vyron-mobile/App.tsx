@@ -13,6 +13,8 @@ import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import { Ionicons } from "@expo/vector-icons";
 import Svg, { Circle, Defs, LinearGradient as SvgGradient, Path, Stop } from "react-native-svg";
+import { VyronSyncProvider, useVyronSyncContext } from "./src/sync/useVyronSync";
+import { aggregateAnalytics, channelSparkline, channelState, formatMetric, latestStats, relativeSyncTime, viewsForPeriod } from "./src/sync/selectors";
 
 const C = {
   bg: "#080D16",
@@ -34,20 +36,6 @@ const C = {
 
 type Tab = "home" | "channels" | "projects" | "analytics" | "settings";
 
-const channels = [
-  { name: "Neon Drive", subs: "1 847", delta: "+21", today: "18 430", period: "126 000", growth: "↑16%", days: 23, videos: 23, status: "Всё нормально", tone: C.green },
-  { name: "Midnight Cruise", subs: "3 204", delta: "+37", today: "26 910", period: "188 400", growth: "↑24%", days: 6, videos: 6, status: "Нужно добавить видео", tone: C.amber },
-  { name: "Velvet Nights", subs: "986", delta: "+8", today: "7 430", period: "54 200", growth: "↑9%", days: 15, videos: 15, status: "Публикация сегодня", tone: C.cyan },
-  { name: "After 2AM", subs: "2 418", delta: "-4", today: "11 070", period: "99 100", growth: "↓3%", days: 0, videos: 0, status: "Ошибка загрузки", tone: C.red },
-];
-
-const projects = [
-  { id: "VIDEO_241", channel: "Neon Drive", status: "READY_RENDER", tone: C.cyan, meta: "2:34 · 12 треков", device: "Mac mini", time: "Сегодня, 14:32" },
-  { id: "VIDEO_242", channel: "Midnight Cruise", status: "RENDERING", tone: C.purple, meta: "2:12 · 10 треков", device: "MacBook Air M1", time: "Сейчас", progress: 68 },
-  { id: "VIDEO_239", channel: "Velvet Nights", status: "COMPLETED", tone: C.green, meta: "2:06 · 10 треков", device: "Mac mini", time: "Сегодня, 12:14" },
-  { id: "VIDEO_238", channel: "After 2AM", status: "ERROR", tone: C.red, meta: "1:58 · 10 треков", device: "MacBook Air M1", time: "Сегодня, 11:42" },
-];
-
 function Card({ children, style }: any) {
   return (
     <LinearGradient
@@ -62,11 +50,17 @@ function Card({ children, style }: any) {
 }
 
 function Header({ title }: { title: string }) {
+  const sync = useVyronSyncContext();
+  const offline = sync.syncStatus !== "online" && sync.syncStatus !== "syncing";
+  const syncText = sync.syncStatus === "unconfigured"
+    ? "Backend не настроен"
+    : "Нет подключения · " + relativeSyncTime(sync.lastSuccessfulSyncAt);
   return (
     <View style={styles.header}>
-      <View>
+      <View style={{flex:1}}>
         <Text style={styles.brand}>VYRON</Text>
         <Text style={styles.pageTitle}>{title}</Text>
+        {offline ? <Text style={styles.syncMeta}>{syncText}</Text> : null}
       </View>
       <Pressable
         onPress={() => Haptics.selectionAsync()}
@@ -79,12 +73,15 @@ function Header({ title }: { title: string }) {
   );
 }
 
-function Sparkline({ tone = C.blue }: { tone?: string }) {
-  return (
-    <Svg width="104" height="38" viewBox="0 0 104 38">
-      <Path d="M2 30 C13 27, 15 18, 25 22 S42 29, 52 17 S70 19, 80 10 S95 12, 102 4" fill="none" stroke={tone} strokeWidth="2.5" strokeLinecap="round" />
-    </Svg>
-  );
+function Sparkline({ tone = C.blue, values = [] }: { tone?: string; values?: number[] }) {
+  if (values.length < 2) return <View style={{width:104,height:38,alignItems:"center",justifyContent:"center"}}><Text style={styles.tiny}>—</Text></View>;
+  const min=Math.min(...values),max=Math.max(...values),range=Math.max(1,max-min);
+  const path=values.map((v,i)=>{
+    const x=2+(100*i/Math.max(1,values.length-1));
+    const y=34-30*((v-min)/range);
+    return (i===0?"M":"L")+x.toFixed(1)+" "+y.toFixed(1);
+  }).join(" ");
+  return <Svg width="104" height="38" viewBox="0 0 104 38"><Path d={path} fill="none" stroke={tone} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></Svg>;
 }
 
 function Kpi({ value, label, delta }: { value: string; label: string; delta: string }) {
@@ -92,7 +89,7 @@ function Kpi({ value, label, delta }: { value: string; label: string; delta: str
     <Card style={styles.kpi}>
       <Text style={styles.kpiValue}>{value}</Text>
       <Text style={styles.kpiLabel}>{label}</Text>
-      <Text style={[styles.kpiDelta, { color: delta.startsWith("↓") ? C.red : C.green }]}>{delta}</Text>
+      <Text style={[styles.kpiDelta, { color: delta === "—" ? C.sub : delta.startsWith("↓") ? C.red : C.green }]}>{delta}</Text>
     </Card>
   );
 }
@@ -325,6 +322,7 @@ const styles=StyleSheet.create({
   header:{paddingTop:8,paddingBottom:8,flexDirection:"row",alignItems:"flex-start",justifyContent:"space-between"},
   brand:{color:C.text,fontSize:28,fontWeight:"900",letterSpacing:3.2},
   pageTitle:{color:C.text,fontSize:32,fontWeight:"800",marginTop:12,letterSpacing:-.6},
+  syncMeta:{color:C.amber,fontSize:10,fontWeight:"700",marginTop:5},
   iconButton:{width:44,height:44,borderRadius:16,borderWidth:1,borderColor:C.border,backgroundColor:"#0E1624",alignItems:"center",justifyContent:"center"},
   notificationDot:{position:"absolute",right:10,top:9,width:7,height:7,borderRadius:4,backgroundColor:C.red},
   card:{borderRadius:22,borderWidth:1,borderColor:C.border,padding:16,overflow:"hidden"},
