@@ -267,8 +267,8 @@ pub async fn mobile_sync_claim_pairing(app:AppHandle,pairing_code:String)->Resul
     let token=value.get("syncDeviceToken").and_then(Value::as_str).ok_or_else(||"MOBILE_SYNC_PAIRING_TOKEN_MISSING".to_string())?;
     security::canonical_set_secret(SYNC_DEVICE_ACCOUNT,token)?;
     security::invalidate_secret_cache(SYNC_DEVICE_ACCOUNT);
-    let _=fs::remove_file(queue_path(&app)?);
-    Ok(json!({"ok":true,"paired":true,"deviceId":value.get("deviceId").cloned().unwrap_or(Value::Null)}))
+    let initial_sync=flush_internal(&app).await;
+    Ok(json!({"ok":true,"paired":true,"deviceId":value.get("deviceId").cloned().unwrap_or(Value::Null),"initialSync":initial_sync}))
 }
 
 #[tauri::command]
