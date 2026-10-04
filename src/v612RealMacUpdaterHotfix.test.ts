@@ -77,8 +77,8 @@ describe('VYRON 6.1.2 real mac updater hotfix',()=>{
     for(const cmd of ['updater_runtime_diagnostics','updater_stable_check','updater_stable_download','updater_stable_install','updater_verify_installed_target','updater_relaunch_exact'])expect(lib).toContain(cmd);
   });
 
-  it('keeps updater identity and signing endpoints unchanged while version is 6.1.2',()=>{
-    expect(conf.version).toBe('6.1.2');
+  it('keeps updater identity and signing endpoints unchanged while version is 6.1.3',()=>{
+    expect(conf.version).toBe('6.1.3');
     expect(conf.identifier).toBe('studio.channelflow.desktop');
     expect(conf.plugins.updater.pubkey).toBe('dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEREODQ1NDdERTI1MEYxQzAKUldUQThWRGlmVlNFM1RHdW5WQnE2eG9BYTBnQlNmbUtmVU84UHJQMUNvZWZ4Qmo0L2hYcUd4UDEK');
     expect(conf.plugins.updater.endpoints).toEqual([
