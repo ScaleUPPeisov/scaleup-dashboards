@@ -212,7 +212,7 @@ function HomeScreen() {
       }):<Card><Text style={styles.muted}>Нет активных предупреждений</Text></Card>}
       <View style={styles.sectionHead}><Text style={styles.sectionTitle}>ENDLUME</Text><Text style={[styles.sectionAction,{color:endlume?.state==="rendering"||endlume?.state==="connected"?C.green:C.sub}]}>{endlume?"● "+endlume.state:"Нет данных"}</Text></View>
       <Card>
-        <View style={styles.rowBetween}><View><Text style={styles.cardTitle}>{endlume?.machine_name||"ENDLUME"}</Text><Text style={styles.muted}>{endlume?.current_project||"Нет активного проекта"}</Text></View><Text style={[styles.kpiDelta,{color:C.purple}]}>{endlume?.progress==null?"—":String(Math.round(endlume.progress))+"%"}</Text></View>
+        <View style={styles.rowBetween}><View><Text style={styles.cardTitle}>{endlume?.machine_name||"ENDLUME"}</Text><Text style={styles.muted}>{endlume?.current_project||"Нет активного проекта"}</Text></View><Text style={[styles.metricCardDelta,{color:C.purple}]}>{endlume?.progress==null?"—":String(Math.round(endlume.progress))+"%"}</Text></View>
         {endlume?.progress!=null?<View style={styles.progressTrack}><LinearGradient colors={[C.blue,C.purple]} style={[styles.progressFill,{width:progressWidth(endlume.progress)}]} /></View>:null}
       </Card>
     </PageContainer>
