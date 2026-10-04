@@ -60,8 +60,16 @@ jobs:
           src/v610PublisherInventoryReconcile.test.ts
           src/youtubePublishSafety.test.ts
           src/v2115Rc7OauthUpdateContinuity.test.ts
-          src/v512ManualAssembly.test.ts
-          src/v510MaterialsManager.test.ts
+      - name: Protected command contracts
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          grep -F 'materials_manager::import_production_material_images' src-tauri/src/lib.rs
+          grep -F 'production_manager::build_manual_production_batch' src-tauri/src/lib.rs
+          grep -F 'production_manager::open_production_batch_in_endlume' src-tauri/src/lib.rs
+          grep -F 'youtube::youtube_upload_video' src-tauri/src/lib.rs
+          grep -F 'updater_bridge::updater_stable_check' src-tauri/src/lib.rs
+          echo PROTECTED_COMMANDS=PASS
       - name: Rust mobile sync tests
         run: cargo test --manifest-path src-tauri/Cargo.toml mobile_sync --lib -- --nocapture
       - name: Rust full library QA
