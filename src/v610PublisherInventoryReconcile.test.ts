@@ -4,7 +4,7 @@ import type {UploadHistoryRecord,VideoJob} from './types';
 import {classifyChannelRenderFiles,normalizeRenderPath} from './renderScanClassifier';
 import {readyRows} from './renderInventoryRuntime';
 import {classifyUploadState} from './storageLifecycle';
-import {publisherInventoryJobs,publisherReadyPathSet,reconcilePublisherInventory} from './publisherInventoryReconcile';
+import {publisherCurrentPhysicalSize,publisherInventoryJobs,publisherReadyPathSet,reconcilePublisherInventory} from './publisherInventoryReconcile';
 
 const channelId='aegean';
 const root='/Volumes/TOSHIBA EXT/ВАЙРОН/Render/Aegean Afterglow';
@@ -138,4 +138,58 @@ describe('VYRON 6.1.0 Publisher inventory reconciliation blocker',()=>{
     expect(selectedIds).toHaveLength(30);
     expect(new Set(selectedIds).size).toBe(30);
   });
+  it('TEST 9: fresh scan restores 10 failed known physical jobs and creates only 11 truly new jobs',()=>{
+    const files=Array.from({length:21},(_,i)=>file(i+11));
+    const failed=Array.from({length:10},(_,i)=>job(i+11,{status:'ERROR',storageLifecycle:'FAILED',error:'UPLOAD_FAILED'}));
+    const rows=classifyChannelRenderFiles(files,failed,[],channelId,root);
+    expect(rows.filter(r=>r.classification==='KNOWN_EXACT')).toHaveLength(10);
+    expect(rows.filter(r=>r.classification==='NEW_CANDIDATE')).toHaveLength(11);
+    const ready=readyRows(rows,failed);
+    expect(ready).toHaveLength(21);
+    const rec=reconcilePublisherInventory({channelId,exactRoot:root,ready,jobs:failed});
+    expect(rec.restoredJobIds).toHaveLength(10);
+    expect(rec.createRows).toHaveLength(11);
+    const normalized=applyPatches(failed,rec.normalizePatches);
+    expect(normalized.every(j=>j.status==='READY_UPLOAD'&&j.storageLifecycle==='NEW'&&!j.error)).toBe(true);
+    const all=[...normalized,...createdFromRows(rec.createRows)];
+    expect(selectable(all,ready)).toHaveLength(21);
+  });
+
+  it('TEST 10: failed exact-path job without old fingerprint is reused instead of duplicated',()=>{
+    const failed=job(11,{status:'ERROR',storageLifecycle:'FAILED',error:'UPLOAD_FAILED',currentSourceFingerprint:undefined,currentSourceFileSize:undefined});
+    const rows=classifyChannelRenderFiles([file(11)],[failed],[],channelId,root);
+    expect(rows[0].classification).toBe('NEW_GENERATION');
+    const ready=readyRows(rows,[failed]);
+    const rec=reconcilePublisherInventory({channelId,exactRoot:root,ready,jobs:[failed]});
+    expect(rec.createRows).toHaveLength(0);
+    expect(rec.restoredJobIds).toEqual([failed.id]);
+    const normalized=applyPatches([failed],rec.normalizePatches)[0];
+    expect(normalized.id).toBe(failed.id);
+    expect(normalized.status).toBe('READY_UPLOAD');
+    expect(normalized.storageLifecycle).toBe('NEW');
+    expect(normalized.currentSourceFingerprint).toBe(hash(11));
+    expect(normalized.currentSourceFileSize).toBe(file(11).size);
+  });
+
+  it('TEST 11: current physical size wins over missing/zero historical size display source',()=>{
+    const current=job(11,{currentSourceFileSize:0});
+    const bytes=500*1024*1024;
+    expect(publisherCurrentPhysicalSize(current,[{path:current.finalPath!,size:bytes}])).toBe(bytes);
+    expect((bytes/1024/1024/1024).toFixed(2)).toBe('0.49');
+    expect(publisherCurrentPhysicalSize({...current,finalPath:root+'/missing.mov'},[])).toBeUndefined();
+  });
+
+  it('TEST 12: trusted successful-upload proof still blocks current identical bytes',()=>{
+    const current=file(11);
+    const proof=uploaded(11,current.fingerprint!,current.path);
+    proof.fileSize=current.size;
+    const failed=job(11,{status:'ERROR',storageLifecycle:'FAILED',error:'UPLOAD_FAILED'});
+    const rows=classifyChannelRenderFiles([current],[failed],[proof],channelId,root);
+    expect(rows[0].classification).toBe('UPLOADED_LOCAL_COPY');
+    expect(readyRows(rows,[failed])).toHaveLength(0);
+    const rec=reconcilePublisherInventory({channelId,exactRoot:root,ready:readyRows(rows,[failed]),jobs:[failed]});
+    expect(rec.restoredJobIds).toHaveLength(0);
+    expect(rec.normalizePatches).toHaveLength(0);
+  });
+
 });
