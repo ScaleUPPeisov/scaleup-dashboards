@@ -174,4 +174,5 @@ export type VyronSyncModel = MobileSnapshot & {
   signIn: (email: string, password: string) => Promise<{ ok: boolean; error?: string }>;
   signOut: () => Promise<void>;
   refresh: () => Promise<void>;
+  createPairingCode: () => Promise<{ ok: boolean; code?: string; expiresAt?: string; error?: string }>;
 };
