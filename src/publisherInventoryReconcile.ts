@@ -41,6 +41,7 @@ export function reconcilePublisherInventory({
   jobs:VideoJob[];
 }):PublisherInventoryReconciliation{
   const byId=new Map(jobs.map(j=>[j.id,j]));
+  const supersededJobIds=new Set(jobs.filter(j=>j.channelId===channelId&&j.sourcePreviousJobId).map(j=>j.sourcePreviousJobId!));
   const normalizePatches:PublisherInventoryPatch[]=[];
   const createRows:RenderScanRow[]=[];
   const readyPhysicalPaths=new Set<string>();
@@ -56,22 +57,33 @@ export function reconcilePublisherInventory({
       const fp=String(row.currentFingerprint||row.file.fingerprint||'').trim().toLowerCase();
       const size=Number(row.currentFileSize??row.file.size);
       const matched=row.matchedJobId?byId.get(row.matchedJobId):undefined;
+      const eligibleAtPath=jobs.filter(job=>
+        job.channelId===channelId
+        &&currentPhysicalUploadEligible(job)
+        &&normalizeRenderPath(job.finalPath||'')===path
+      );
+      const leaves=eligibleAtPath.filter(job=>!supersededJobIds.has(job.id));
+      const exactLeaf=Boolean(fp)?leaves.find(job=>
+        String(job.currentSourceFingerprint||'').trim().toLowerCase()===fp
+        &&Number(job.currentSourceFileSize)===size
+      ):undefined;
+      const leafWithoutFingerprint=leaves.find(job=>!String(job.currentSourceFingerprint||'').trim());
+      const exactFallback=leaves.length?undefined:(Boolean(fp)?eligibleAtPath.find(job=>
+        String(job.currentSourceFingerprint||'').trim().toLowerCase()===fp
+        &&Number(job.currentSourceFileSize)===size
+      ):undefined);
       const matchedFp=String(matched?.currentSourceFingerprint||'').trim().toLowerCase();
       const reusableMatched=Boolean(
-        matched
+        !leaves.length
+        &&matched
         &&matched.channelId===channelId
         &&currentPhysicalUploadEligible(matched)
         &&normalizeRenderPath(matched.finalPath||'')===path
         &&(!matchedFp||(matchedFp===fp&&Number(matched.currentSourceFileSize)===size))
       );
-      const existingSameGeneration=reusableMatched?matched:jobs.find(job=>
-        job.channelId===channelId
-        &&currentPhysicalUploadEligible(job)
-        &&normalizeRenderPath(job.finalPath||'')===path
-        &&Boolean(fp)
-        &&String(job.currentSourceFingerprint||'').trim().toLowerCase()===fp
-        &&Number(job.currentSourceFileSize)===size
-      );
+      // A sourcePreviousJobId chain means predecessor rows are superseded even if they
+      // appear first in persisted store order. Repair the current leaf, never the hidden predecessor.
+      const existingSameGeneration=exactLeaf||leafWithoutFingerprint||exactFallback||(reusableMatched?matched:undefined);
       if(existingSameGeneration){
         normalizePatches.push({
           id:existingSameGeneration.id,
@@ -99,7 +111,13 @@ export function reconcilePublisherInventory({
       continue
     }
 
-    const job=byId.get(row.matchedJobId);
+    const matched=byId.get(row.matchedJobId);
+    const fp=String(row.currentFingerprint||row.file.fingerprint||'').trim().toLowerCase(),size=Number(row.currentFileSize??row.file.size);
+    const eligibleAtPath=jobs.filter(job=>job.channelId===channelId&&currentPhysicalUploadEligible(job)&&normalizeRenderPath(job.finalPath||'')===path);
+    const leaves=eligibleAtPath.filter(job=>!supersededJobIds.has(job.id));
+    const exactLeaf=Boolean(fp)?leaves.find(job=>String(job.currentSourceFingerprint||'').trim().toLowerCase()===fp&&Number(job.currentSourceFileSize)===size):undefined;
+    const leafWithoutFingerprint=leaves.find(job=>!String(job.currentSourceFingerprint||'').trim());
+    const job=exactLeaf||leafWithoutFingerprint||(!matched||supersededJobIds.has(matched.id)?undefined:matched)||(!leaves.length?matched:undefined);
     if(!job||job.channelId!==channelId||!currentPhysicalUploadEligible(job)){
       unresolved.push(row);
       continue
