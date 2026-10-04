@@ -1,0 +1,59 @@
+name: VYRON Mobile Realtime Phase 1 CI
+
+on:
+  push:
+    branches:
+      - feature/vyron-mobile-design-lock
+    paths:
+      - 'vyron-mobile/**'
+      - 'supabase/functions/vyron-mobile-sync-ingest/**'
+      - '.github/workflows/vyron-mobile-realtime-phase1-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-mobile-realtime-phase1-ci
+  cancel-in-progress: true
+
+jobs:
+  mobile-js:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: vyron-mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --no-audit --no-fund
+      - name: TypeScript
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm test
+      - name: Production iOS JS export
+        run: npx expo export --platform ios --output-dir dist-ios
+
+  ios-simulator-build:
+    runs-on: macos-14
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: vyron-mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --no-audit --no-fund
+      - name: Generate iOS project
+        run: npx expo prebuild --platform ios --clean --no-install
+      - name: Install CocoaPods
+        run: cd ios && pod install
+      - name: Build for iPhone Simulator
+        run: |
+          set -Eeuo pipefail
+          xcodebuild             -workspace ios/VYRON.xcworkspace             -scheme VYRON             -sdk iphonesimulator             -configuration Debug             -derivedDataPath "$RUNNER_TEMP/vyron-mobile-derived"             CODE_SIGNING_ALLOWED=NO             build
