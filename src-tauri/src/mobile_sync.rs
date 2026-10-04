@@ -219,8 +219,7 @@ async fn flush_internal(app: &AppHandle) -> Value {
 }
 
 fn redact_error(raw:&str)->String{
-    let mut s=raw.replace('
-'," ");
+    let mut s=raw.replace('\n'," ");
     if s.len()>300{s.truncate(300)}
     s
 }
