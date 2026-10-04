@@ -1,4 +1,5 @@
 # VYRON 6.1.5 Publisher hide recovery / invalidTags hotfix
+# release trigger: verify exact 6.1.5 product head 07a3516256181a0df57ca6b3464b78047f756926
 name: VYRON 6.1.5 Hide + InvalidTags Hotfix
 
 on:
