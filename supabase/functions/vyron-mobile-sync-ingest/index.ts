@@ -31,6 +31,16 @@ function token() {
   const b = crypto.getRandomValues(new Uint8Array(32));
   return btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
+function pairingCode() {
+  const alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+  const b = crypto.getRandomValues(new Uint8Array(10));
+  let s = "";
+  for (const x of b) s += alphabet[x % alphabet.length];
+  return s.slice(0,5) + "-" + s.slice(5);
+}
+function normalizePairingCode(v: unknown) {
+  return txt(v, 32).toUpperCase().replace(/[^2-9A-HJ-NP-Z]/g, "");
+}
 function uuid(v: unknown) {
   const s = txt(v, 64);
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s) ? s : null;
@@ -95,6 +105,73 @@ async function authDesktop(req: Request) {
   }, { onConflict: "owner_id,device_id" }).select("*").single();
   if (error || !device) return { ok: false as const, code: "device_register_failed" };
   return { ok: true as const, ownerId, device };
+}
+
+
+async function createPairingCode(req: Request) {
+  const user = await authUser(req);
+  if (!user) return out({ ok: false, code: "auth_required" }, 401);
+  const raw = pairingCode();
+  const normalized = normalizePairingCode(raw);
+  const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
+  await db.from("vyron_mobile_pairing_codes").delete().eq("owner_id", user.id).is("claimed_at", null);
+  const { error } = await db.from("vyron_mobile_pairing_codes").insert({
+    owner_id: user.id,
+    code_hash: await hash(normalized),
+    expires_at: expiresAt,
+  });
+  if (error) return out({ ok: false, code: "pairing_create_failed" }, 500);
+  return out({ ok: true, pairingCode: raw, expiresAt });
+}
+
+async function claimPairingCode(b: any) {
+  const normalized = normalizePairingCode(b.pairing_code);
+  const deviceId = txt(b.device_id, 160);
+  const name = txt(b.name || "VYRON Desktop", 160);
+  const platform = txt(b.platform, 24).toLowerCase();
+  const appVersion = txt(b.app_version, 64);
+  const architecture = txt(b.architecture, 64) || null;
+  if (normalized.length !== 10 || !deviceId || !["macos","windows"].includes(platform)) {
+    return out({ ok: false, code: "pairing_invalid" }, 400);
+  }
+  const codeHash = await hash(normalized);
+  const { data: pair } = await db.from("vyron_mobile_pairing_codes").select("*").eq("code_hash", codeHash).maybeSingle();
+  if (!pair || pair.claimed_at || Date.parse(pair.expires_at) <= Date.now()) {
+    return out({ ok: false, code: "pairing_expired_or_invalid" }, 401);
+  }
+  const now = iso();
+  const { data: device, error: de } = await db.from("vyron_mobile_devices").upsert({
+    owner_id: pair.owner_id,
+    device_id: deviceId,
+    name,
+    platform,
+    app_version: appVersion,
+    architecture,
+    device_kind: "desktop",
+    last_seen_at: now,
+    updated_at: now,
+  }, { onConflict: "owner_id,device_id" }).select("*").single();
+  if (de || !device) return out({ ok: false, code: "pairing_device_failed" }, 500);
+
+  const raw = token();
+  const tokenHash = await hash(raw);
+  await db.from("vyron_mobile_device_credentials").delete().eq("device_id", device.id);
+  const { error: ce } = await db.from("vyron_mobile_device_credentials").insert({
+    device_id: device.id,
+    owner_id: pair.owner_id,
+    token_hash: tokenHash,
+  });
+  if (ce) return out({ ok: false, code: "pairing_credential_failed" }, 500);
+
+  const { error: pe } = await db.from("vyron_mobile_pairing_codes").update({
+    claimed_at: now,
+    claimed_device_id: device.id,
+  }).eq("id", pair.id).is("claimed_at", null);
+  if (pe) {
+    await db.from("vyron_mobile_device_credentials").delete().eq("device_id", device.id);
+    return out({ ok: false, code: "pairing_claim_failed" }, 409);
+  }
+  return out({ ok: true, syncDeviceToken: raw, deviceId: device.id, ownerId: pair.owner_id });
 }
 
 async function provision(req: Request, b: any) {
@@ -262,7 +339,7 @@ async function applyEvent(ownerId: string, device: any, e: any) {
       owner_id: ownerId, desktop_job_id: desktopJobId, project_id: projectId, state,
       current_project: txt(payload.current_project, 300) || null, progress: num(payload.progress),
       last_activity: date(payload.last_activity) || desktopEventAt,
-      machine_name: txt(payload.machine_name, 160) || null,
+      machine_name: txt(payload.machine_name, 160) || txt(device.name, 160) || null,
       error_message: txt(payload.error_message, 2000) || null,
       source_updated_at: date(payload.updated_at) || desktopEventAt, updated_at: stamp,
     }, { onConflict: "owner_id,desktop_job_id" });
@@ -304,6 +381,8 @@ Deno.serve(async req => {
   let b: any;
   try { b = await req.json(); } catch { return out({ ok: false, code: "json" }, 400); }
   try {
+    if (b.action === "create_pairing_code") return await createPairingCode(req);
+    if (b.action === "claim_pairing_code") return await claimPairingCode(b);
     if (b.action === "provision_desktop_device") return await provision(req, b);
     if (b.action === "ingest") return await ingest(req, b);
     return out({ ok: false, code: "action" }, 400);
