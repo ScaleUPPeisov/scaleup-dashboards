@@ -43,6 +43,12 @@ jobs:
               raise SystemExit("AuthGate signature not found")
           s = s.replace(needle, 'function AuthGate(){\n  return <AppShell/>;\n  const sync=useVyronSyncContext();', 1)
           p.write_text(s)
+
+          import json
+          app = Path("app.json")
+          cfg = json.loads(app.read_text())
+          cfg.setdefault("expo", {}).setdefault("web", {})["output"] = "single"
+          app.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n")
           PY
           echo "QA harness modifies only runner working tree; repository branch is untouched."
 
