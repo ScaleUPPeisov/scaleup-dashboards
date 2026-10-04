@@ -1,0 +1,85 @@
+name: VYRON 6.1.2 Mobile Sync Sidecar CI
+
+on:
+  push:
+    branches:
+      - feature/vyron-6.1.2-mobile-sync
+    paths:
+      - 'src/mobileSyncBridge.ts'
+      - 'src/mobileSyncBridge.test.ts'
+      - 'src/main.tsx'
+      - 'src-tauri/src/mobile_sync.rs'
+      - 'src-tauri/src/lib.rs'
+      - '.github/workflows/vyron-612-mobile-sync-sidecar-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-612-mobile-sync-sidecar-ci
+  cancel-in-progress: true
+
+env:
+  SOURCE_BASE: 656d740dd9a1195fced39e025eaf0cb51c5ead3c
+
+jobs:
+  protected-qa:
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Exact source and protected byte continuity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git merge-base --is-ancestor "$SOURCE_BASE" HEAD
+          test "$(node -p "require('./package.json').version")" = "6.1.2"
+          git diff --exit-code "$SOURCE_BASE"...HEAD --             src-tauri/src/oauth_vault.rs             src-tauri/src/security.rs             src-tauri/src/youtube.rs             src-tauri/src/metadata_queue.rs             src-tauri/src/materials_manager.rs             src-tauri/src/production_manager.rs             src-tauri/src/updater_bridge.rs             src/MaterialsManager.tsx             src/ManualAssembly.tsx             src/PublisherOS.tsx             src/publisherRuntime.ts             src/channelRunwayCore.ts             src/renderInventoryRuntime.ts             src/store.ts
+          echo PROTECTED_BYTES=PASS
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci --no-audit --no-fund
+      - name: Frontend production build
+        run: npm run build
+      - name: Sync and protected regressions
+        run: >
+          npx vitest run
+          src/mobileSyncBridge.test.ts
+          src/v612NativeInventoryTruth.test.ts
+          src/v611ChannelRunwayInventoryHotfix.test.ts
+          src/v610MetadataQueue.test.ts
+          src/v610PublisherInventoryReconcile.test.ts
+          src/youtubePublishSafety.test.ts
+          src/v2115Rc7OauthUpdateContinuity.test.ts
+          tests/vyron-602-manual-production-sidebar.test.mjs
+      - name: Rust mobile sync tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml mobile_sync --lib -- --nocapture
+      - name: Rust full library QA
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib -- --nocapture
+      - name: Rust compile
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+
+  cross-platform-compile:
+    needs: protected-qa
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: cargo check --manifest-path src-tauri/Cargo.toml
