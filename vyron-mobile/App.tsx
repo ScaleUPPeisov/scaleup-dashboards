@@ -36,6 +36,7 @@ const C = {
 };
 
 type Tab = "home" | "channels" | "projects" | "analytics" | "settings";
+function progressWidth(value:number): `${number}%` { return `${Math.max(0,Math.min(100,value))}%`; }
 
 function Card({ children, style }: any) {
   return (
@@ -145,7 +146,7 @@ function HomeScreen() {
       <View style={styles.sectionHead}><Text style={styles.sectionTitle}>ENDLUME</Text><Text style={[styles.sectionAction,{color:endlume?.state==="rendering"||endlume?.state==="connected"?C.green:C.sub}]}>{endlume?"● "+endlume.state:"Нет данных"}</Text></View>
       <Card>
         <View style={styles.rowBetween}><View><Text style={styles.cardTitle}>{endlume?.machine_name||"ENDLUME"}</Text><Text style={styles.muted}>{endlume?.current_project||"Нет активного проекта"}</Text></View><Text style={[styles.kpiDelta,{color:C.purple}]}>{endlume?.progress==null?"—":String(Math.round(endlume.progress))+"%"}</Text></View>
-        {endlume?.progress!=null?<View style={styles.progressTrack}><LinearGradient colors={[C.blue,C.purple]} style={[styles.progressFill,{width:String(Math.max(0,Math.min(100,endlume.progress)))+"%"}]} /></View>:null}
+        {endlume?.progress!=null?<View style={styles.progressTrack}><LinearGradient colors={[C.blue,C.purple]} style={[styles.progressFill,{width:progressWidth(endlume.progress)}]} /></View>:null}
       </Card>
     </ScrollView>
   );
@@ -219,7 +220,7 @@ function ProjectsScreen() {
         return <Card key={p.id}>
           <View style={styles.rowBetween}><View style={{flex:1}}><Text style={styles.cardTitle}>{p.project_name}{channel?" — "+channel.name:""}</Text><Text style={styles.muted}>{fmtDuration(p.duration_seconds)} · {p.track_count==null?"—":p.track_count} треков</Text></View><StatusBadge label={p.status} tone={tone}/></View>
           <View style={styles.projectMeta}><Text style={styles.tiny}>{p.source_updated_at?new Date(p.source_updated_at).toLocaleString("ru-RU"):"—"}</Text><Text style={styles.tiny}>{p.machine||"—"}</Text></View>
-          {p.status==="RENDERING"?<>{p.progress!=null?<View style={styles.progressTrack}><LinearGradient colors={[C.blue,C.purple]} style={[styles.progressFill,{width:String(Math.max(0,Math.min(100,p.progress)))+"%"}]} /></View>:<View style={styles.progressTrack}/>}<Text style={[styles.tiny,{color:p.progress==null?C.sub:C.purple,marginTop:7}]}>{p.progress==null?"Прогресс ожидается":String(Math.round(p.progress))+"%"}</Text></>:null}
+          {p.status==="RENDERING"?<>{p.progress!=null?<View style={styles.progressTrack}><LinearGradient colors={[C.blue,C.purple]} style={[styles.progressFill,{width:progressWidth(p.progress)}]} /></View>:<View style={styles.progressTrack}/>}<Text style={[styles.tiny,{color:p.progress==null?C.sub:C.purple,marginTop:7}]}>{p.progress==null?"Прогресс ожидается":String(Math.round(p.progress))+"%"}</Text></>:null}
           {p.status==="ERROR" ? <Pressable onPress={()=>Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)} style={styles.retry}><Ionicons name="refresh" size={16} color={C.text}/><Text style={styles.retryText}>Повторить</Text></Pressable> : null}
         </Card>
       })}
