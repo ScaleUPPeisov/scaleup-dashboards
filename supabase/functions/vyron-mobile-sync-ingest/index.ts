@@ -58,6 +58,16 @@ function safeJsonArray(v: unknown, max = 200) {
     return clean;
   });
 }
+function hasForbiddenKey(v: unknown): boolean {
+  if (Array.isArray(v)) return v.some(hasForbiddenKey);
+  if (!v || typeof v !== "object") return false;
+  for (const [key, value] of Object.entries(v as Record<string, unknown>)) {
+    const k = key.toLowerCase().replace(/[-_]/g, "");
+    if (/(accesstoken|refreshtoken|clientsecret|clientidsecret|oauthcredential|keychain|credentialmanager|githubtoken|authorization|servicerole|password|privatekey)/.test(k)) return true;
+    if (hasForbiddenKey(value)) return true;
+  }
+  return false;
+}
 
 async function authUser(req: Request) {
   const raw = req.headers.get("authorization") ?? "";
@@ -218,6 +228,7 @@ async function applyEvent(ownerId: string, device: any, e: any) {
   const desktopEventAt = date(e.desktop_event_at);
   const payload = e.payload && typeof e.payload === "object" ? e.payload : {};
   if (!eventId || !eventType || !desktopEventAt) return { ok: false, code: "invalid_event" };
+  if (hasForbiddenKey(payload)) return { ok: false, code: "secret_field_blocked" };
 
   let duplicate = false;
   const { error: eventError } = await db.from("vyron_mobile_sync_events").insert({
