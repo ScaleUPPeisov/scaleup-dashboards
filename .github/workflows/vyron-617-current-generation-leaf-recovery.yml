@@ -7,14 +7,14 @@ on:
     branches:
       - hotfix/vyron-6.1.7-current-generation-leaf-recovery
     paths:
-      - '.github/workflows/vyron-616-physical-publisher-consistency.yml'
+      - '.github/workflows/vyron-617-current-generation-leaf-recovery.yml'
 
 permissions:
   contents: read
   actions: read
 
 concurrency:
-  group: vyron-616-physical-publisher-consistency
+  group: vyron-617-current-generation-leaf-recovery
   cancel-in-progress: true
 
 env:
