@@ -42,6 +42,15 @@ function isHistoricalGeneration(job:VideoJob){return Boolean(job.youtubeVideoId|
 export function canRefreshCurrentGenerationEvidence(job:VideoJob){return !isHistoricalGeneration(job)}
 function currentGenerationFingerprint(job:VideoJob){const fp=String(job.currentSourceFingerprint||'').trim().toLowerCase();return trustedSha256(fp)?fp:undefined}
 function sourceMatchesCurrentJob(job:VideoJob,file:RenderFolderVideoFile){const fp=currentFingerprint(file),jobFp=currentGenerationFingerprint(job);return Boolean(fp&&jobFp&&fp===jobFp&&job.currentSourceFileSize===file.size)}
+function currentGenerationLeaf(candidates:VideoJob[],scoped:VideoJob[],file:RenderFolderVideoFile){
+ const active=candidates.filter(j=>!isHistoricalGeneration(j));
+ if(!active.length)return;
+ const superseded=new Set(scoped.filter(j=>!isHistoricalGeneration(j)&&j.sourcePreviousJobId).map(j=>j.sourcePreviousJobId!));
+ const leaves=active.filter(j=>!superseded.has(j.id));
+ const pool=leaves.length?leaves:active;
+ return pool.find(j=>sourceMatchesCurrentJob(j,file))
+   ||pool.slice().sort((a,b)=>Date.parse(b.createdAt)-Date.parse(a.createdAt))[0];
+}
 function historicalEvidenceForJob(job:VideoJob,history:UploadHistoryRecord[],channelId:string){return historyForJob(history,channelId,job.id)||successfulHistory(history,channelId).slice().reverse().find(x=>normalizeRenderPath(x.localFilePath)===normalizeRenderPath(job.finalPath||''))}
 function staleWrongRootScanJob(job:VideoJob,history:UploadHistoryRecord[],channelId:string,exactRoot:string){if(!job.finalPath||renderPathInsideRoot(job.finalPath,exactRoot))return false;if(historicalEvidenceForJob(job,history,channelId))return false;return job.sourceOrigin==='render-scan'||job.scanRecoveryState==='CROSS_CHANNEL_SCAN_RECOVERY_REQUIRED'}
 
@@ -71,7 +80,7 @@ export function classifyChannelRenderFiles(files:RenderFolderVideoFile[],jobs:Vi
   if(verified)return rowEvidence(base('UPLOADED_LOCAL_COPY',normalizeRenderPath(verified.localFilePath)===path?'FINGERPRINT_VERIFIED_EXACT_PATH_UPLOAD':'FINGERPRINT_VERIFIED_SAME_CHANNEL_UPLOAD',verified.jobId),verified);
 
   const exactJobs=scoped.filter(j=>normalizeRenderPath(j.finalPath||'')===path);
-  const activeExact=exactJobs.find(j=>!isHistoricalGeneration(j));
+  const activeExact=currentGenerationLeaf(exactJobs,scoped,file);
   if(activeExact){
    if(fp&&sourceMatchesCurrentJob(activeExact,file))return base('KNOWN_EXACT','CURRENT_GENERATION_FINGERPRINT_MATCH',activeExact.id);
    if(fp)return base('NEW_GENERATION','ACTIVE_EXACT_PATH_SOURCE_CHANGED',activeExact.id);
@@ -102,7 +111,7 @@ export function classifyChannelRenderFiles(files:RenderFolderVideoFile[],jobs:Vi
   if(!sequence)return base('INVALID','SEQUENCE_NOT_FOUND');
 
   const sameNumber=scoped.filter(j=>j.number===sequence&&!staleWrongRootScanJob(j,historyRows,channelId,exactRoot));
-  const activeSame=sameNumber.find(j=>!isHistoricalGeneration(j));
+  const activeSame=currentGenerationLeaf(sameNumber,scoped,file);
   if(activeSame){
    if(fp&&sourceMatchesCurrentJob(activeSame,file))return base('KNOWN_EXACT','SAME_ACTIVE_GENERATION_FINGERPRINT_MATCH',activeSame.id);
    if(fp)return base('NEW_GENERATION','ACTIVE_SEQUENCE_REUSED_WITH_NEW_FINGERPRINT',activeSame.id);
