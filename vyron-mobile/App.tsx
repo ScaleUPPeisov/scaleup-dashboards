@@ -197,65 +197,84 @@ function ChannelsScreen() {
 }
 
 function ProjectsScreen() {
+  const sync=useVyronSyncContext();
+  const counts=(status:string)=>sync.projects.filter(x=>x.status===status).length;
+  const fmtDuration=(seconds:number|null)=>seconds==null?"—":Math.floor(seconds/60)+":"+String(Math.round(seconds%60)).padStart(2,"0");
   return (
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
       <Header title="Проекты" />
       <Text style={styles.subtitle}>Управляйте своими видеопроектами</Text>
       <View style={styles.grid2}>
-        <Kpi value="12" label="готовы" delta="↑2"/>
-        <Kpi value="3" label="рендерятся" delta="↑1"/>
-        <Kpi value="27" label="завершено" delta="↑8"/>
-        <Kpi value="2" label="ошибки" delta="↓1"/>
+        <Kpi value={String(counts("READY_RENDER"))} label="готовы" delta="—"/>
+        <Kpi value={String(counts("RENDERING"))} label="рендерятся" delta="—"/>
+        <Kpi value={String(counts("COMPLETED"))} label="завершено" delta="—"/>
+        <Kpi value={String(counts("ERROR"))} label="ошибки" delta="—"/>
       </View>
       <View style={styles.search}><Ionicons name="search" size={18} color={C.tertiary}/><TextInput placeholder="Поиск проектов…" placeholderTextColor={C.tertiary} style={styles.searchInput}/></View>
-      {projects.map(p=>(
-        <Card key={p.id}>
-          <View style={styles.rowBetween}><View><Text style={styles.cardTitle}>{p.id} — {p.channel}</Text><Text style={styles.muted}>{p.meta}</Text></View><StatusBadge label={p.status} tone={p.tone}/></View>
-          <View style={styles.projectMeta}><Text style={styles.tiny}>{p.time}</Text><Text style={styles.tiny}>{p.device}</Text></View>
-          {p.progress ? <><View style={styles.progressTrack}><LinearGradient colors={[C.blue,C.purple]} style={[styles.progressFill,{width:`${p.progress}%`}]} /></View><Text style={[styles.tiny,{color:C.purple,marginTop:7}]}>{p.progress}%</Text></> : null}
+      {!sync.projects.length?<Card><Text style={styles.muted}>{sync.dataLoading?"Синхронизация…":"Проекты пока не синхронизированы"}</Text></Card>:null}
+      {sync.projects.map(p=>{
+        const channel=sync.channels.find(c=>c.id===p.channel_id);
+        const tone=p.status==="READY_RENDER"?C.cyan:p.status==="RENDERING"?C.purple:p.status==="COMPLETED"?C.green:p.status==="ERROR"?C.red:C.tertiary;
+        return <Card key={p.id}>
+          <View style={styles.rowBetween}><View style={{flex:1}}><Text style={styles.cardTitle}>{p.project_name}{channel?" — "+channel.name:""}</Text><Text style={styles.muted}>{fmtDuration(p.duration_seconds)} · {p.track_count==null?"—":p.track_count} треков</Text></View><StatusBadge label={p.status} tone={tone}/></View>
+          <View style={styles.projectMeta}><Text style={styles.tiny}>{p.source_updated_at?new Date(p.source_updated_at).toLocaleString("ru-RU"):"—"}</Text><Text style={styles.tiny}>{p.machine||"—"}</Text></View>
+          {p.status==="RENDERING"?<>{p.progress!=null?<View style={styles.progressTrack}><LinearGradient colors={[C.blue,C.purple]} style={[styles.progressFill,{width:String(Math.max(0,Math.min(100,p.progress)))+"%"}]} /></View>:<View style={styles.progressTrack}/>}<Text style={[styles.tiny,{color:p.progress==null?C.sub:C.purple,marginTop:7}]}>{p.progress==null?"Прогресс ожидается":String(Math.round(p.progress))+"%"}</Text></>:null}
           {p.status==="ERROR" ? <Pressable onPress={()=>Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)} style={styles.retry}><Ionicons name="refresh" size={16} color={C.text}/><Text style={styles.retryText}>Повторить</Text></Pressable> : null}
         </Card>
-      ))}
+      })}
     </ScrollView>
   );
 }
 
-function BigChart() {
+function BigChart({values,total}:{values:number[];total:string}) {
+  let path="";
+  if(values.length>=2){
+    const min=Math.min(...values),max=Math.max(...values),range=Math.max(1,max-min);
+    path=values.map((v,i)=>{
+      const x=340*i/Math.max(1,values.length-1),y=148-124*((v-min)/range);
+      return (i?"L":"M")+x.toFixed(1)+" "+y.toFixed(1);
+    }).join(" ");
+  }
   return (
     <Card style={{paddingBottom:14}}>
-      <View style={styles.rowBetween}><View><Text style={styles.eyebrow}>РОСТ ПРОСМОТРОВ</Text><Text style={styles.heroValue}>3.8M</Text></View><Text style={[styles.kpiDelta,{color:C.green}]}>↑16%</Text></View>
-      <Svg width="100%" height="170" viewBox="0 0 340 170">
+      <View style={styles.rowBetween}><View><Text style={styles.eyebrow}>РОСТ ПРОСМОТРОВ</Text><Text style={styles.heroValue}>{total}</Text></View></View>
+      {path?<Svg width="100%" height="170" viewBox="0 0 340 170">
         <Defs><SvgGradient id="g" x1="0" y1="0" x2="0" y2="1"><Stop offset="0" stopColor={C.blue} stopOpacity=".30"/><Stop offset="1" stopColor={C.blue} stopOpacity="0"/></SvgGradient></Defs>
-        <Path d="M0 148 C35 135 40 115 72 122 S118 140 146 96 S204 112 228 70 S278 78 340 24 L340 170 L0 170 Z" fill="url(#g)"/>
-        <Path d="M0 148 C35 135 40 115 72 122 S118 140 146 96 S204 112 228 70 S278 78 340 24" fill="none" stroke={C.blue} strokeWidth="3" strokeLinecap="round"/>
-      </Svg>
+        <Path d={path+" L340 170 L0 170 Z"} fill="url(#g)"/>
+        <Path d={path} fill="none" stroke={C.blue} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
+      </Svg>:<View style={{height:170,alignItems:"center",justifyContent:"center"}}><Text style={styles.muted}>Нет данных за выбранный период</Text></View>}
     </Card>
   );
 }
 
 function AnalyticsScreen() {
-  const [period,setPeriod]=useState("28 дней");
+  const sync=useVyronSyncContext();
+  const [period,setPeriod]=useState<7|28|90>(28);
+  const a=aggregateAnalytics(sync,period);
+  const trafficTotal=a.traffic.reduce((n,x)=>n+x[1],0);
+  const firstShare=trafficTotal&&a.traffic[0]?a.traffic[0][1]/trafficTotal:0;
+  const circumference=276.46,dash=(circumference*firstShare).toFixed(1);
   return (
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
       <Header title="Аналитика" />
       <View style={styles.grid2}>
-        <Kpi value="3.8M" label="Просмотры" delta="↑16%"/>
-        <Kpi value="+8 420" label="Подписчики" delta="↑24%"/>
-        <Kpi value="28.4K ч" label="Watch time" delta="↑32%"/>
-        <Kpi value="6.2%" label="CTR" delta="↑1.3%"/>
+        <Kpi value={formatMetric(a.views)} label="Просмотры" delta="—"/>
+        <Kpi value={a.subscribers==null?"—":(a.subscribers>=0?"+":"")+formatMetric(a.subscribers)} label="Подписчики" delta="—"/>
+        <Kpi value={a.watchTime==null?"—":formatMetric(a.watchTime/60)+" ч"} label="Watch time" delta="—"/>
+        <Kpi value={a.ctr==null?"—":formatMetric(a.ctr)+"%"} label="CTR" delta="—"/>
       </View>
-      <View style={styles.segment}>{["7 дней","28 дней","90 дней"].map(x=><Pressable key={x} onPress={()=>{setPeriod(x);Haptics.selectionAsync()}} style={[styles.segmentItem,period===x&&styles.segmentActive]}><Text style={[styles.segmentText,period===x&&styles.segmentTextActive]}>{x}</Text></Pressable>)}</View>
-      <BigChart/>
-      <View style={styles.sectionHead}><Text style={styles.sectionTitle}>Топ каналов</Text><Text style={styles.sectionAction}>{period}</Text></View>
-      {channels.slice(0,3).map((c,i)=><Card key={c.name} style={styles.rankCard}><Text style={styles.rank}>{i+1}</Text><View style={{flex:1}}><Text style={styles.cardTitle}>{c.name}</Text><Text style={styles.muted}>{c.period} просмотров</Text></View><Sparkline tone={i===0?C.green:C.blue}/></Card>)}
+      <View style={styles.segment}>{([7,28,90] as const).map(x=><Pressable key={x} onPress={()=>{setPeriod(x);Haptics.selectionAsync()}} style={[styles.segmentItem,period===x&&styles.segmentActive]}><Text style={[styles.segmentText,period===x&&styles.segmentTextActive]}>{x} дней</Text></Pressable>)}</View>
+      <BigChart values={a.daily.map(x=>x.value)} total={formatMetric(a.views)}/>
+      <View style={styles.sectionHead}><Text style={styles.sectionTitle}>Топ каналов</Text><Text style={styles.sectionAction}>{period} дней</Text></View>
+      {a.topChannels.length?a.topChannels.slice(0,5).map((x,i)=><Card key={x.channel.id} style={styles.rankCard}><Text style={styles.rank}>{i+1}</Text><View style={{flex:1}}><Text style={styles.cardTitle}>{x.channel.name}</Text><Text style={styles.muted}>{formatMetric(x.views)} просмотров</Text></View><Sparkline tone={i===0?C.green:C.blue} values={channelSparkline(sync.stats,x.channel.id,period)}/></Card>):<Card><Text style={styles.muted}>Нет данных за выбранный период</Text></Card>}
       <Card>
         <Text style={styles.sectionTitle}>Источники трафика</Text>
         <View style={styles.trafficWrap}>
           <Svg width="120" height="120" viewBox="0 0 120 120">
             <Circle cx="60" cy="60" r="44" stroke="#192335" strokeWidth="14" fill="none"/>
-            <Circle cx="60" cy="60" r="44" stroke={C.blue} strokeWidth="14" fill="none" strokeDasharray="185 92" strokeLinecap="round" transform="rotate(-90 60 60)"/>
+            {trafficTotal?<Circle cx="60" cy="60" r="44" stroke={C.blue} strokeWidth="14" fill="none" strokeDasharray={dash+" "+String(circumference)} strokeLinecap="round" transform="rotate(-90 60 60)"/>:null}
           </Svg>
-          <View style={{gap:10}}><Text style={styles.muted}>● Рекомендации 67%</Text><Text style={styles.muted}>● Поиск 18%</Text><Text style={styles.muted}>● Внешние 9%</Text><Text style={styles.muted}>● Другое 6%</Text></View>
+          <View style={{gap:10}}>{a.traffic.length?a.traffic.slice(0,4).map(([key,value])=><Text key={key} style={styles.muted}>● {key} {trafficTotal?Math.round(value/trafficTotal*100):0}%</Text>):<Text style={styles.muted}>Нет данных</Text>}</View>
         </View>
       </Card>
     </ScrollView>
