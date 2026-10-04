@@ -7,14 +7,14 @@ on:
     branches:
       - hotfix/vyron-6.1.6-physical-ready-publisher-consistency
     paths:
-      - '.github/workflows/vyron-615-publisher-hide-invalidtags.yml'
+      - '.github/workflows/vyron-616-physical-publisher-consistency.yml'
 
 permissions:
   contents: read
   actions: read
 
 concurrency:
-  group: vyron-615-publisher-hide-invalidtags
+  group: vyron-616-physical-publisher-consistency
   cancel-in-progress: true
 
 env:
