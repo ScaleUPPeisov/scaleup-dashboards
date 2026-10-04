@@ -165,7 +165,7 @@ function ChannelsScreen() {
   return (
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
       <Header title="Каналы" />
-      <Pressable style={({pressed})=>[styles.primaryButton,pressed&&{transform:[{scale:.98}]}]} onPress={()=>Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}>
+      <Pressable style={({pressed})=>[styles.primaryButton,pressed&&{transform:[{scale:.98}]}]} onPress={()=>{Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);Alert.alert("Добавление канала","Добавь канал в Desktop VYRON. После сохранения он автоматически появится здесь через Realtime.")}}>
         <Ionicons name="add" size={20} color="#fff" /><Text style={styles.primaryButtonText}>Добавить канал</Text>
       </Pressable>
       <View style={styles.search}><Ionicons name="search" size={18} color={C.tertiary}/><TextInput value={q} onChangeText={setQ} placeholder="Поиск каналов…" placeholderTextColor={C.tertiary} style={styles.searchInput}/></View>
@@ -221,7 +221,7 @@ function ProjectsScreen() {
           <View style={styles.rowBetween}><View style={{flex:1}}><Text style={styles.cardTitle}>{p.project_name}{channel?" — "+channel.name:""}</Text><Text style={styles.muted}>{fmtDuration(p.duration_seconds)} · {p.track_count==null?"—":p.track_count} треков</Text></View><StatusBadge label={p.status} tone={tone}/></View>
           <View style={styles.projectMeta}><Text style={styles.tiny}>{p.source_updated_at?new Date(p.source_updated_at).toLocaleString("ru-RU"):"—"}</Text><Text style={styles.tiny}>{p.machine||"—"}</Text></View>
           {p.status==="RENDERING"?<>{p.progress!=null?<View style={styles.progressTrack}><LinearGradient colors={[C.blue,C.purple]} style={[styles.progressFill,{width:progressWidth(p.progress)}]} /></View>:<View style={styles.progressTrack}/>}<Text style={[styles.tiny,{color:p.progress==null?C.sub:C.purple,marginTop:7}]}>{p.progress==null?"Прогресс ожидается":String(Math.round(p.progress))+"%"}</Text></>:null}
-          {p.status==="ERROR" ? <Pressable onPress={()=>Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)} style={styles.retry}><Ionicons name="refresh" size={16} color={C.text}/><Text style={styles.retryText}>Повторить</Text></Pressable> : null}
+          {p.status==="ERROR" ? <Pressable onPress={()=>{Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);Alert.alert("Повтор рендера","Запусти Retry в Desktop VYRON / ENDLUME. Mobile автоматически покажет новый статус и прогресс.")}} style={styles.retry}><Ionicons name="refresh" size={16} color={C.text}/><Text style={styles.retryText}>Повторить</Text></Pressable> : null}
         </Card>
       })}
     </ScrollView>
