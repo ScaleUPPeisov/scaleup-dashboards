@@ -149,6 +149,7 @@ async function claimPairingCode(b: any) {
   if (!pair || pair.claimed_at || Date.parse(pair.expires_at) <= Date.now()) {
     return out({ ok: false, code: "pairing_expired_or_invalid" }, 401);
   }
+
   const now = iso();
   const { data: device, error: de } = await db.from("vyron_mobile_devices").upsert({
     owner_id: pair.owner_id,
@@ -163,6 +164,14 @@ async function claimPairingCode(b: any) {
   }, { onConflict: "owner_id,device_id" }).select("*").single();
   if (de || !device) return out({ ok: false, code: "pairing_device_failed" }, 500);
 
+  const { data: claimed, error: pe } = await db.from("vyron_mobile_pairing_codes").update({
+    claimed_at: now,
+    claimed_device_id: device.id,
+  }).eq("id", pair.id).is("claimed_at", null).select("id").maybeSingle();
+  if (pe || !claimed) {
+    return out({ ok: false, code: "pairing_expired_or_invalid" }, 409);
+  }
+
   const raw = token();
   const tokenHash = await hash(raw);
   await db.from("vyron_mobile_device_credentials").delete().eq("device_id", device.id);
@@ -173,14 +182,6 @@ async function claimPairingCode(b: any) {
   });
   if (ce) return out({ ok: false, code: "pairing_credential_failed" }, 500);
 
-  const { error: pe } = await db.from("vyron_mobile_pairing_codes").update({
-    claimed_at: now,
-    claimed_device_id: device.id,
-  }).eq("id", pair.id).is("claimed_at", null);
-  if (pe) {
-    await db.from("vyron_mobile_device_credentials").delete().eq("device_id", device.id);
-    return out({ ok: false, code: "pairing_claim_failed" }, 409);
-  }
   return out({ ok: true, syncDeviceToken: raw, deviceId: device.id, ownerId: pair.owner_id });
 }
 
