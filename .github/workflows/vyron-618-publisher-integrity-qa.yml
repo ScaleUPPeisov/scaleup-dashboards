@@ -17,7 +17,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  SOURCE_HEAD: 22daa088036dae4aae2bbf7f7c21a37e1dbbd35b
+  SOURCE_HEAD: 94537bf8e5a2cf407578acb341a5b2918772f565
 
 jobs:
   qa:
