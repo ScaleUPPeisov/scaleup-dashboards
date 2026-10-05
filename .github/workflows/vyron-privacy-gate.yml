@@ -108,15 +108,46 @@ jobs:
           import pathlib, re, sys
           bad = re.compile(r'(user-data|app-data|Application Support|AppData|keychain|credential-export|migration-export|account-export|channel-export|\.sqlite|\.db\b|\.vyron)', re.I)
           here=pathlib.Path('.github/workflows/vyron-privacy-gate.yml')
+
+          def indent(line):
+              return len(line)-len(line.lstrip(' '))
+
+          def upload_paths(lines, start):
+              step_indent=indent(lines[start])
+              out=[]
+              i=start+1
+              while i<len(lines):
+                  raw=lines[i]; stripped=raw.strip(); level=indent(raw)
+                  if stripped.startswith('- ') and level<=step_indent:
+                      break
+                  if stripped.startswith('path:'):
+                      value=stripped.split(':',1)[1].strip()
+                      if value in ('|','>','|-','>-'):
+                          block_indent=None;i+=1
+                          while i<len(lines):
+                              row=lines[i]; row_stripped=row.strip(); row_indent=indent(row)
+                              if not row_stripped:
+                                  i+=1;continue
+                              if block_indent is None:block_indent=row_indent
+                              if row_indent<block_indent:break
+                              out.append(row_stripped);i+=1
+                          continue
+                      out.append(value.strip('"\''))
+                  i+=1
+              return out
+
           for wf in pathlib.Path('.github/workflows').glob('*.y*ml'):
               if wf==here:
                   continue
-              text = wf.read_text(errors='ignore')
-              chunks = re.split(r'(?=\n\s*- name:)', text)
-              for chunk in chunks:
-                  if 'actions/upload-artifact@' in chunk and bad.search(chunk):
-                      print(f'PRIVACY_GATE=FAIL:SENSITIVE_ARTIFACT_UPLOAD:file={wf}')
-                      sys.exit(1)
+              lines=wf.read_text(errors='ignore').splitlines()
+              for i,line in enumerate(lines):
+                  if 'uses: actions/upload-artifact@' not in line:
+                      continue
+                  paths=upload_paths(lines,i)
+                  for path in paths:
+                      if bad.search(path):
+                          print(f'PRIVACY_GATE=FAIL:SENSITIVE_ARTIFACT_UPLOAD:file={wf}:path={path}')
+                          sys.exit(1)
           print('SENSITIVE_ARTIFACT_UPLOAD=BLOCKED')
           PY
 
