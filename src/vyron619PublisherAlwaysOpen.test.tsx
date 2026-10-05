@@ -68,4 +68,10 @@ describe('VYRON 6.1.9 Publisher core sections are always open',()=>{
   }
   renderer.unmount();
  });
+
+ it('core section visibility is not controlled by x=>!x state toggles',async()=>{
+  const {readFile}=await import('node:fs/promises');
+  const source=await readFile(new URL('./PublisherOS.tsx',import.meta.url),'utf8');
+  expect(source).not.toMatch(/set(?:Folders|Recovery|Metadata|Thumbnail|Schedule|Cleanup)Open\(\s*x\s*=>\s*!x\s*\)/);
+ });
 });
