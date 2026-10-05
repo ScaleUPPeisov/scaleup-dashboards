@@ -1,0 +1,42 @@
+name: VYRON 6.1.9 Test First
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-6.1.9-publisher-always-open-schedule-source
+  pull_request:
+    branches:
+      - hotfix/vyron-6.1.8-publisher-integrity
+
+permissions:
+  contents: read
+
+jobs:
+  reproduce-and-gate:
+    name: Publisher always-open + schedule-source gate
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Install render-test harness without changing product dependencies
+        run: npm install --no-save --no-package-lock react-test-renderer@19.1.1
+      - name: Real Publisher cold-render regression
+        id: publisher_ui
+        continue-on-error: true
+        run: npx vitest run src/vyron619PublisherAlwaysOpen.test.tsx
+      - name: Independent date/time source regression
+        id: schedule_sources
+        continue-on-error: true
+        run: npx vitest run src/vyron619ScheduleSources.test.ts
+      - name: Test-first acceptance
+        shell: bash
+        run: |
+          echo "PUBLISHER_UI=${{ steps.publisher_ui.outcome }}"
+          echo "SCHEDULE_SOURCES=${{ steps.schedule_sources.outcome }}"
+          test "${{ steps.publisher_ui.outcome }}" = success
+          test "${{ steps.schedule_sources.outcome }}" = success
