@@ -85,6 +85,35 @@ jobs:
         id: publisher_diag_09
         continue-on-error: true
         run: npx vitest run src/vyron617CurrentGenerationLeafRecovery.test.ts
+
+      - name: Publisher marker 01 - vyron618PublisherIntegrity FAILED
+        if: always() && steps.publisher_diag_01.outcome == 'failure'
+        run: exit 1
+      - name: Publisher marker 02 - publisherMetadata FAILED
+        if: always() && steps.publisher_diag_02.outcome == 'failure'
+        run: exit 1
+      - name: Publisher marker 03 - uploadQueue FAILED
+        if: always() && steps.publisher_diag_03.outcome == 'failure'
+        run: exit 1
+      - name: Publisher marker 04 - v610PublisherColdRoute FAILED
+        if: always() && steps.publisher_diag_04.outcome == 'failure'
+        run: exit 1
+      - name: Publisher marker 05 - v610PublisherInventoryReconcile FAILED
+        if: always() && steps.publisher_diag_05.outcome == 'failure'
+        run: exit 1
+      - name: Publisher marker 06 - v614PublisherPhysicalInventoryHotfix FAILED
+        if: always() && steps.publisher_diag_06.outcome == 'failure'
+        run: exit 1
+      - name: Publisher marker 07 - vyron615PublisherHotfix FAILED
+        if: always() && steps.publisher_diag_07.outcome == 'failure'
+        run: exit 1
+      - name: Publisher marker 08 - vyron616PhysicalPublisherConsistency FAILED
+        if: always() && steps.publisher_diag_08.outcome == 'failure'
+        run: exit 1
+      - name: Publisher marker 09 - vyron617CurrentGenerationLeafRecovery FAILED
+        if: always() && steps.publisher_diag_09.outcome == 'failure'
+        run: exit 1
+
       - name: Publisher diagnostic gate - temporary
         if: always()
         shell: bash
