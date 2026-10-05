@@ -32,7 +32,7 @@ function inferClockFromInstants(instants:string[],source:YoutubePublishClockEvid
  const ranked=[...buckets.entries()].sort((a,b)=>b[1].count-a[1].count||Date.parse(b[1].latest)-Date.parse(a[1].latest));const [time,evidence]=ranked[0];
  return{time,source,evidenceCount:evidence.count,latestEvidenceAt:evidence.latest,timezone:PUBLISHER_TIMEZONE}
 }
-export function inferYoutubePublishClock(videos:YoutubeScheduleLike[],now=new Date()):YoutubePublishClockEvidence|undefined{
+export function inferYoutubePublishClock(videos:Array<YoutubeScheduleLike&{publishedAt?:string}>,now=new Date()):YoutubePublishClockEvidence|undefined{
  const nowMs=now.getTime();
  const scheduled=videos.filter(v=>v.privacyStatus==='private'&&Boolean(v.publishAt)&&Number.isFinite(Date.parse(v.publishAt!))&&Date.parse(v.publishAt!)>nowMs).map(v=>v.publishAt!);
  const scheduledClock=inferClockFromInstants(scheduled,'scheduled');if(scheduledClock)return scheduledClock;
