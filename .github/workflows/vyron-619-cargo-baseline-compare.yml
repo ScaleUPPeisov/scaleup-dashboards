@@ -1,0 +1,84 @@
+name: VYRON 6.1.9 Cargo Baseline Compare
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-6.1.9-publisher-always-open-schedule-source
+    paths:
+      - '.github/workflows/vyron-619-cargo-baseline-compare.yml'
+
+permissions:
+  contents: read
+
+env:
+  CANDIDATE_HEAD: 74436bad565ced15f919393780210cb5bfd4ac21
+  BASE_618_HEAD: fbaf8a7bda252a3dcc5c1ebceea046cafe0cf5c0
+
+jobs:
+  compare:
+    name: exact cargo check baseline comparison on macos-14
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_HEAD }}
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Candidate exact cargo check
+        id: candidate
+        shell: bash
+        run: |
+          set +e
+          cargo check --manifest-path src-tauri/Cargo.toml 2>&1 | tee /tmp/candidate.log
+          code=${PIPESTATUS[0]}
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          grep -E '^(error(\[[^]]+\])?:|Caused by:|  process didn.t exit successfully:)' /tmp/candidate.log | sed -E 's#/Users/runner/work/[^ ]+#<WORKSPACE>#g' | head -80 > /tmp/candidate.errors || true
+          echo "CANDIDATE_EXIT=$code"
+          exit 0
+      - name: Checkout approved VYRON 6.1.8 baseline
+        shell: bash
+        run: |
+          git reset --hard
+          git clean -ffdx
+          git checkout --detach "$BASE_618_HEAD"
+          test "$(git rev-parse HEAD)" = "$BASE_618_HEAD"
+      - name: Baseline exact cargo check
+        id: baseline
+        shell: bash
+        run: |
+          set +e
+          cargo check --manifest-path src-tauri/Cargo.toml 2>&1 | tee /tmp/baseline.log
+          code=${PIPESTATUS[0]}
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          grep -E '^(error(\[[^]]+\])?:|Caused by:|  process didn.t exit successfully:)' /tmp/baseline.log | sed -E 's#/Users/runner/work/[^ ]+#<WORKSPACE>#g' | head -80 > /tmp/baseline.errors || true
+          echo "BASELINE_EXIT=$code"
+          exit 0
+      - name: Classify gate
+        shell: bash
+        env:
+          CANDIDATE_EXIT: ${{ steps.candidate.outputs.exit_code }}
+          BASELINE_EXIT: ${{ steps.baseline.outputs.exit_code }}
+        run: |
+          set -Eeuo pipefail
+          echo "CANDIDATE_EXIT=$CANDIDATE_EXIT"
+          echo "BASELINE_EXIT=$BASELINE_EXIT"
+          echo '--- candidate errors ---'
+          cat /tmp/candidate.errors || true
+          echo '--- baseline errors ---'
+          cat /tmp/baseline.errors || true
+          if [ "$CANDIDATE_EXIT" = "0" ]; then
+            echo 'CLASSIFICATION=CANDIDATE_PASS'
+            exit 0
+          fi
+          if [ "$BASELINE_EXIT" = "0" ]; then
+            echo 'CLASSIFICATION=REAL_6_1_9_REGRESSION'
+            exit 1
+          fi
+          if cmp -s /tmp/candidate.errors /tmp/baseline.errors; then
+            echo 'CLASSIFICATION=BASELINE_INVALID_NEW_GATE_SAME_ERROR'
+            exit 0
+          fi
+          echo 'CLASSIFICATION=BASELINE_ALSO_FAILS_ERROR_TEXT_DIFFERS'
+          diff -u /tmp/baseline.errors /tmp/candidate.errors || true
+          exit 2
