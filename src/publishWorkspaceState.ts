@@ -46,10 +46,13 @@ export function savePublishWorkspace(channelId:string,draft:Partial<PublishWorks
  const next:PublishWorkspaceDraft={...prev,...draft,channelId,selectedIds,rows:nextRows,updatedAt:now};
  return writeWorkspace(channelId,next)
 }
+export function retirePublishWorkspaceDraft(prev:PublishWorkspaceDraft,jobId:string,updatedAt=new Date().toISOString()):PublishWorkspaceDraft{
+ if(!jobId)return prev;
+ return{...prev,selectedIds:prev.selectedIds.filter(id=>id!==jobId),rows:prev.rows.filter(row=>row.boundJobId!==jobId),updatedAt}
+}
 export function retireCompletedWorkspaceMetadata(channelId:string,jobId:string){
  if(!channelId||!jobId)return loadPublishWorkspace(channelId);
- const prev=loadPublishWorkspace(channelId),next:PublishWorkspaceDraft={...prev,selectedIds:prev.selectedIds.filter(id=>id!==jobId),rows:prev.rows.filter(row=>row.boundJobId!==jobId),updatedAt:new Date().toISOString()};
- return writeWorkspace(channelId,next)
+ return writeWorkspace(channelId,retirePublishWorkspaceDraft(loadPublishWorkspace(channelId),jobId))
 }
 export function clearPublishWorkspace(channelId:string){const rows=all();delete rows[channelId];try{localStorage.setItem(KEY,JSON.stringify(rows))}catch{}return empty(channelId)}
 export function loadActivePublishChannel(){try{return localStorage.getItem(ACTIVE)||''}catch{return''}}
