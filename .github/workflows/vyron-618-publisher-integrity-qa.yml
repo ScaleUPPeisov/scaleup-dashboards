@@ -1,4 +1,4 @@
-# VYRON 6.1.8 Publisher Integrity candidate QA. Product version remains 6.1.7 until this gate is green.
+# VYRON 6.1.8 Publisher Integrity final-product QA.
 name: VYRON 6.1.8 Publisher Integrity QA
 
 on:
@@ -17,11 +17,11 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  SOURCE_HEAD: 94537bf8e5a2cf407578acb341a5b2918772f565
+  SOURCE_HEAD: fbaf8a7bda252a3dcc5c1ebceea046cafe0cf5c0
 
 jobs:
   qa:
-    name: macOS candidate QA
+    name: macOS final-product QA
     runs-on: macos-14
     timeout-minutes: 120
     steps:
@@ -29,14 +29,20 @@ jobs:
         with:
           ref: ${{ env.SOURCE_HEAD }}
           fetch-depth: 0
-      - name: Verify exact product candidate
+      - name: Verify exact 6.1.8 product head
         shell: bash
         run: |
           set -Eeuo pipefail
           test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
-          node -e "const p=require('./package.json'),t=require('./src-tauri/tauri.conf.json');if(p.version!=='6.1.7'||t.version!=='6.1.7')process.exit(2)"
-          grep -q '^version = "6.1.7"$' src-tauri/Cargo.toml
-          echo CANDIDATE_VERSION_NOT_BUMPED=PASS
+          node -e "const p=require('./package.json'),l=require('./package-lock.json'),t=require('./src-tauri/tauri.conf.json');if(p.version!=='6.1.8'||l.version!=='6.1.8'||l.packages?.['']?.version!=='6.1.8'||t.version!=='6.1.8')process.exit(2)"
+          python3 - <<'PY'
+          import pathlib,re
+          cargo=pathlib.Path('src-tauri/Cargo.toml').read_text(); package=cargo.split('[package]',1)[1].split('\n[',1)[0]
+          assert re.search(r'(?m)^version\s*=\s*"6\.1\.8"\s*$',package)
+          lock=pathlib.Path('src-tauri/Cargo.lock').read_text(); block=[b for b in lock.split('[[package]]') if re.search(r'(?m)^name\s*=\s*"channelflow"\s*$',b)]
+          assert len(block)==1 and re.search(r'(?m)^version\s*=\s*"6\.1\.8"\s*$',block[0])
+          PY
+          echo FINAL_VERSION_6_1_8=PASS
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
