@@ -11,6 +11,16 @@ export type ImportedMetadata={
   publishTimezone?:string;
   publishUtcOffsetMinutes?:number;
   source:string;
+  // Internal Publisher binding. These fields are persisted only by VYRON and are never parsed from user SEO files.
+  metadataImportedAt?:string;
+  metadataLegacyPersisted?:boolean;
+  metadataBindingIssue?:'METADATA_CHANNEL_MISMATCH'|'METADATA_GENERATION_STALE';
+  boundChannelId?:string;
+  boundChannelName?:string;
+  boundJobId?:string;
+  boundSourceGenerationKey?:string;
+  boundSourceFingerprint?:string;
+  boundSourceFileSize?:number;
 };
 
 function numberFrom(value:unknown,source=''){
