@@ -23,6 +23,14 @@ export type PublisherShellProps={
 
 export const PublisherShell=React.memo(function PublisherShell(p:PublisherShellProps){
  const activeName=p.channels.find(c=>c.id===p.channelId)?.name||'Канал не выбран';
+ const controls=[
+  {key:'folders',label:p.folderReady?'Папки ✓':'Папки ⚠',hint:'Видео и проекты',onClick:p.onFolders},
+  {key:'recovery',label:'Recovery'+(p.recoveryCount?' '+p.recoveryCount:''),hint:'Незавершённые загрузки',onClick:p.onRecovery},
+  {key:'metadata',label:'Метаданные',hint:'Название, описание, теги',onClick:p.onMetadata},
+  {key:'thumbs',label:'Обложки',hint:'Thumbnail mapping',onClick:p.onThumbs},
+  {key:'schedule',label:'Расписание',hint:'Дата и время публикации',onClick:p.onSchedule},
+  {key:'cleanup',label:'Очистка',hint:'Только подтверждённые файлы',onClick:p.onCleanup},
+ ];
  return <>
   <div className="pageHeader publishMasterHead">
    <div>
@@ -35,14 +43,11 @@ export const PublisherShell=React.memo(function PublisherShell(p:PublisherShellP
     <button onClick={p.onClear}>Очистить черновик</button>
    </div>
   </div>
-  <div className="publishToolbar publishDemandActions">
-   <span><b>{p.selectedCount}</b> выбрано</span>
-   <button onClick={p.onFolders}>{p.folderReady?'Папки ✓':'Папки ⚠'}</button>
-   <button onClick={p.onRecovery}>{'Recovery'+(p.recoveryCount?' '+p.recoveryCount:'')}</button>
-   <button onClick={p.onMetadata}>Метаданные</button>
-   <button onClick={p.onThumbs}>Обложки</button>
-   <button onClick={p.onSchedule}>Расписание</button>
-   <button onClick={p.onCleanup}>Очистка</button>
+  <div className="publishToolbar publishDemandActions publisherPermanentControlDock" data-publisher-controls="always-visible">
+   <span className="publisherSelectedCount"><b>{p.selectedCount}</b> выбрано</span>
+   <div className="publisherPermanentControlGrid">
+    {controls.map(control=><button key={control.key} data-publisher-control={control.key} onClick={control.onClick}><b>{control.label}</b><small>{control.hint}</small></button>)}
+   </div>
   </div>
  </>;
 });

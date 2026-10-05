@@ -1,3 +1,5 @@
+import {publisherIntegrityError,validateImmutableUploadSpec} from './publisherIntegrity';
+
 export type UploadQueueState='QUEUED'|'RUNNING'|'SUCCEEDED'|'FAILED';
 export type UploadQueueQuotaOperation={method:'videos.insert'|'videos.list'|'thumbnails.set';count:number;label?:string};
 
@@ -49,6 +51,7 @@ export type UploadQueueSnapshot={
 type Executor=(spec:ImmutableUploadJob)=>Promise<void>;
 type Listener=(snapshot:UploadQueueSnapshot)=>void;
 
+function assertSpecIntegrity(spec:ImmutableUploadJob){const result=validateImmutableUploadSpec(spec,true);if(!result.valid)throw publisherIntegrityError(spec.videoNumber,result.issues)}
 function cloneSpec(input:ImmutableUploadJob):ImmutableUploadJob{
   return Object.freeze({...input,tags:Object.freeze([...input.tags]),quotaOperations:Object.freeze(input.quotaOperations.map(x=>Object.freeze({...x})))}) as ImmutableUploadJob;
 }
@@ -79,6 +82,7 @@ export class MultiChannelUploadQueue{
     return this.entries.some(x=>(x.state==='QUEUED'||x.state==='RUNNING')&&identityKeys(x.spec).some(k=>keys.has(k)));
   }
   enqueue(input:ImmutableUploadJob){
+    assertSpecIntegrity(input);
     const spec=cloneSpec(input);
     if(this.hasDuplicate(spec))throw new Error('UPLOAD_QUEUE_DUPLICATE: project/fingerprint already queued or running');
     const entry:UploadQueueEntry=Object.freeze({queueId:`uploadq:${++this.sequence}:${spec.jobId}`,spec,state:'QUEUED',submittedSequence:this.sequence});
@@ -110,6 +114,7 @@ export class MultiChannelUploadQueue{
     try{
       while(this.entries.filter(x=>x.state==='RUNNING').length<this.concurrency){
         const next=this.nextStartable();if(!next)break;
+        try{assertSpecIntegrity(next.spec)}catch(error){this.replace(next.queueId,{state:'FAILED',finishedAt:nowIso(),error:String(error)});continue}
         this.replace(next.queueId,{state:'RUNNING',startedAt:nowIso()});
         void this.executor(next.spec).then(()=>this.replace(next.queueId,{state:'SUCCEEDED',finishedAt:nowIso()})).catch(error=>this.replace(next.queueId,{state:'FAILED',finishedAt:nowIso(),error:String(error)})).finally(()=>void this.pump());
       }

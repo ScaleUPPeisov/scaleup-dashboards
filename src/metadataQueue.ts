@@ -87,6 +87,7 @@ export function metadataQueueInput(row:ImportedMetadata):MetadataQueueInput{
 export function metadataQueueRowAsImported(row:MetadataQueueRecord):ImportedMetadata{
   return {
     number:row.sourceNumber??row.sequence,
+    channel:row.channelId,
     title:row.title,
     description:row.description,
     tags:[...row.tags],
@@ -95,6 +96,10 @@ export function metadataQueueRowAsImported(row:MetadataQueueRecord):ImportedMeta
     publishTimezone:row.publishTimezone,
     publishUtcOffsetMinutes:row.publishUtcOffsetMinutes,
     source:`queue:${row.packId}:${row.id}`,
+    metadataImportedAt:row.reservedAt||row.createdAt,
+    metadataLegacyPersisted:false,
+    boundChannelId:row.channelId,
+    boundJobId:row.reservedJobId,
   };
 }
 

@@ -1,0 +1,90 @@
+# VYRON 6.1.8 Publisher Integrity final-product QA.
+name: VYRON 6.1.8 Publisher Integrity QA
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-6.1.8-publisher-integrity
+    paths:
+      - '.github/workflows/vyron-618-publisher-integrity-qa.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: vyron-618-publisher-integrity-qa
+  cancel-in-progress: true
+
+env:
+  SOURCE_HEAD: fbaf8a7bda252a3dcc5c1ebceea046cafe0cf5c0
+
+jobs:
+  qa:
+    name: macOS final-product QA
+    runs-on: macos-14
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_HEAD }}
+          fetch-depth: 0
+      - name: Verify exact 6.1.8 product head
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
+          node -e "const p=require('./package.json'),l=require('./package-lock.json'),t=require('./src-tauri/tauri.conf.json');if(p.version!=='6.1.8'||l.version!=='6.1.8'||l.packages?.['']?.version!=='6.1.8'||t.version!=='6.1.8')process.exit(2)"
+          python3 - <<'PY'
+          import pathlib,re
+          cargo=pathlib.Path('src-tauri/Cargo.toml').read_text(); package=cargo.split('[package]',1)[1].split('\n[',1)[0]
+          assert re.search(r'(?m)^version\s*=\s*"6\.1\.8"\s*$',package)
+          lock=pathlib.Path('src-tauri/Cargo.lock').read_text(); block=[b for b in lock.split('[[package]]') if re.search(r'(?m)^name\s*=\s*"channelflow"\s*$',b)]
+          assert len(block)==1 and re.search(r'(?m)^version\s*=\s*"6\.1\.8"\s*$',block[0])
+          PY
+          echo FINAL_VERSION_6_1_8=PASS
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci --no-audit --no-fund
+      - name: TypeScript production build
+        run: npm run build
+      - name: 6.1.8 Publisher integrity regressions
+        run: >
+          npx vitest run
+          src/vyron618PublisherIntegrity.test.ts
+          src/publisherMetadata.test.ts
+          src/uploadQueue.test.ts
+          src/v610PublisherColdRoute.test.ts
+          src/v610PublisherInventoryReconcile.test.ts
+          src/v614PublisherPhysicalInventoryHotfix.test.ts
+          src/vyron615PublisherHotfix.test.ts
+          src/vyron616PhysicalPublisherConsistency.test.ts
+          src/vyron617CurrentGenerationLeafRecovery.test.ts
+      - name: Protected global upload regressions
+        run: >
+          npx vitest run
+          src/v610GlobalUploadCounter.test.ts
+          src/v503UploadCounterRestore.test.ts
+          src/youtubePublishSafety.test.ts
+          src/v400QuotaUploadLimitSeparation.test.ts
+          src/v501LocalCleanupZeroQuota.test.ts
+      - name: Rust library QA
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib -- --nocapture
+      - name: Rust compile
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+      - name: Strict do-not-touch audit
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git diff --name-only b77b65cb3fe5fa504eb58533cba05f51eae2d751 "$SOURCE_HEAD" > /tmp/vyron618-files.txt
+          cat /tmp/vyron618-files.txt
+          ! grep -Eq '(^|/)(youtube\.rs|keychain|oauth|credential|updater|renderScanClassifier\.ts)$' /tmp/vyron618-files.txt
+          git diff --quiet b77b65cb3fe5fa504eb58533cba05f51eae2d751 "$SOURCE_HEAD" -- src/renderScanClassifier.ts
+          git diff --quiet b77b65cb3fe5fa504eb58533cba05f51eae2d751 "$SOURCE_HEAD" -- src-tauri/src/youtube.rs
+          echo OAUTH_KEYCHAIN_UPLOAD_TRANSPORT_LEAF_RECOVERY_UNTOUCHED=PASS

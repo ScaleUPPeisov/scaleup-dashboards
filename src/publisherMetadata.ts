@@ -1,5 +1,6 @@
 import type {ImportedMetadata} from './metadata';
 import type {VideoJob} from './types';
+import {assertFinalUploadPayload,metadataGenerationMatches} from './publisherIntegrity';
 
 const DATE_ONLY=/^\d{4}-\d{2}-\d{2}$/;
 function dateKey(raw?:string){if(!raw)return'';const m=String(raw).match(/^(\d{4}-\d{2}-\d{2})/);return m?.[1]||''}
@@ -28,7 +29,20 @@ function normalizedRowInstant(row:ImportedMetadata,defaultOffsetMinutes=420){
  if(raw){if(DATE_ONLY.test(raw))return undefined;const d=new Date(raw);return Number.isFinite(d.getTime())?d.toISOString():undefined}
  return undefined
 }
-export function metadataRowForJob(rows:ImportedMetadata[],job:VideoJob,index:number){const exact=rows.find(x=>x.number===job.number);if(exact)return exact;const relative=rows.find(x=>x.number===index+1);return relative||rows[index]}
+function invalidMetadataRow(row:ImportedMetadata,job:VideoJob){
+ if(row.metadataBindingIssue)return true;
+ if(row.metadataLegacyPersisted&&!row.boundJobId)return true;
+ return !metadataGenerationMatches(row,job)
+}
+function blockedRow(row:ImportedMetadata,job:VideoJob):ImportedMetadata{
+ const issue=row.metadataBindingIssue||(metadataGenerationMatches(row,job)?undefined:'METADATA_GENERATION_STALE');
+ return{...row,title:undefined,description:undefined,tags:undefined,publishAt:undefined,publishTime:undefined,publishTimezone:undefined,publishUtcOffsetMinutes:undefined,metadataBindingIssue:issue||'METADATA_GENERATION_STALE'}
+}
+export function metadataRowForJob(rows:ImportedMetadata[],job:VideoJob,index:number){
+ const exact=rows.find(x=>x.number===job.number),relative=rows.find(x=>x.number===index+1),candidate=exact||relative||rows[index];
+ if(!candidate)return undefined;
+ return invalidMetadataRow(candidate,job)?blockedRow(candidate,job):candidate
+}
 export function metadataPublishAt(row:ImportedMetadata|undefined,fallback?:string,defaultOffsetMinutes=420){
  if(!row)return fallback&&Number.isFinite(Date.parse(fallback))?new Date(fallback).toISOString():undefined;
  const direct=normalizedRowInstant(row,defaultOffsetMinutes);if(direct)return direct;
@@ -39,4 +53,8 @@ export function metadataPublishAtForDate(row:ImportedMetadata|undefined,day:stri
  if(!row?.publishTime||!DATE_ONLY.test(day))return undefined;
  return normalizedRowInstant({...row,publishAt:day},defaultOffsetMinutes)
 }
-export function resolvedUploadMetadata(job:VideoJob,row:ImportedMetadata|undefined,publishAt?:string,defaultCategory='10'){return{title:(row?.title||job.title).trim(),description:row?.description??job.description,tags:row?.tags?.length?row.tags:job.tags,publishAt:publishAt||metadataPublishAt(row,job.publishAt),categoryId:defaultCategory||'10'}}
+export function resolvedUploadMetadata(job:VideoJob,row:ImportedMetadata|undefined,publishAt?:string,defaultCategory='10',safeMode=true){
+ const payload={title:(row?.title||job.title).trim(),description:row?.description??job.description,tags:row?.tags?.length?row.tags:job.tags,publishAt:publishAt||metadataPublishAt(row,job.publishAt),categoryId:defaultCategory||'10'};
+ assertFinalUploadPayload({job,channel:{id:job.channelId,name:row?.boundChannelName||job.channelId},payload,metadata:row,metadataSource:row?'import':job.metadataSource,safeMode});
+ return payload
+}
