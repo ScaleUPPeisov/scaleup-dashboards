@@ -99,6 +99,14 @@ jobs:
           src/youtubePublishSafety.test.ts
           src/v2115Rc7OauthUpdateContinuity.test.ts
 
+      - name: Restore exact production node_modules after CI-only render harness
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm ci --no-audit --no-fund
+          git diff --quiet
+          echo PRODUCTION_NODE_MODULES_RESTORED=PASS
+
       - name: Frontend production build
         run: npm run build
 
