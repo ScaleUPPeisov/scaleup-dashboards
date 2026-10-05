@@ -1,0 +1,55 @@
+name: VYRON 6.1.9 Apply Product Fix
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-6.1.9-publisher-always-open-schedule-source
+    paths:
+      - 'scripts/apply_vyron619_hotfix.py'
+      - '.github/workflows/vyron-619-apply-fix.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vyron-619-apply-product-fix
+  cancel-in-progress: true
+
+jobs:
+  apply-and-verify:
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: hotfix/vyron-6.1.9-publisher-always-open-schedule-source
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Apply deterministic product patch
+        run: python3 scripts/apply_vyron619_hotfix.py
+      - run: npm ci --no-audit --no-fund
+      - name: Install render-test harness without product dependency change
+        run: npm install --no-save --no-package-lock react-test-renderer@19.1.1
+      - name: VYRON 6.1.9 test-first regressions
+        run: npx vitest run src/vyron619PublisherAlwaysOpen.test.tsx src/vyron619ScheduleSources.test.ts
+      - name: Existing schedule continuation regression
+        run: npx vitest run src/scheduleContinuation.test.ts src/publisherMetadata.test.ts
+      - name: Production build
+        run: npm run build
+      - name: Commit verified product patch
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git status --short
+          git add src/PublisherOS.tsx src/scheduleContinuation.ts
+          if git diff --cached --quiet; then
+            echo NO_PRODUCT_DIFF
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix(vyron): keep Publisher open and split schedule sources'
+          git push origin HEAD:hotfix/vyron-6.1.9-publisher-always-open-schedule-source
