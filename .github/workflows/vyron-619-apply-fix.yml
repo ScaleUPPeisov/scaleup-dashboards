@@ -1,5 +1,5 @@
 name: VYRON 6.1.9 Apply Product Fix
-# trigger-after-workflow-registration
+# carrier-repair-v2
 
 on:
   push:
@@ -7,6 +7,7 @@ on:
       - hotfix/vyron-6.1.9-publisher-always-open-schedule-source
     paths:
       - 'scripts/apply_vyron619_hotfix.py'
+      - 'scripts/repair_vyron619_patch_carrier.py'
       - '.github/workflows/vyron-619-apply-fix.yml'
 
 permissions:
@@ -29,6 +30,10 @@ jobs:
         with:
           node-version: '22'
           cache: npm
+      - name: Repair and syntax-check deterministic product patch carrier
+        run: |
+          python3 scripts/repair_vyron619_patch_carrier.py
+          python3 -m py_compile scripts/apply_vyron619_hotfix.py
       - name: Apply deterministic product patch
         run: python3 scripts/apply_vyron619_hotfix.py
       - run: npm ci --no-audit --no-fund
