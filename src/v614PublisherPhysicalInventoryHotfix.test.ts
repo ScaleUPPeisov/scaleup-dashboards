@@ -26,14 +26,18 @@ describe('VYRON 6.1.4 Publisher physical inventory hotfix',()=>{
 
   it('opens the full advanced workflow by default without adding automatic YouTube sync calls',()=>{
     const os=read('PublisherOS.tsx');
-    for(const marker of [
-      '[foldersOpen,setFoldersOpen]=useState(true)',
-      '[recoveryOpen,setRecoveryOpen]=useState(true)',
-      '[metadataOpen,setMetadataOpen]=useState(true)',
-      '[thumbnailOpen,setThumbnailOpen]=useState(true)',
-      '[scheduleOpen,setScheduleOpen]=useState(true)',
-      '[cleanupOpen,setCleanupOpen]=useState(true)'
-    ])expect(os).toContain(marker);
+    for(const sectionId of [
+      'publisher-folders',
+      'publisher-recovery',
+      'publisher-metadata',
+      'publisher-thumbs',
+      'publisher-schedule',
+      'publisher-cleanup'
+    ])expect(os).toContain(`id="${sectionId}"`);
+    expect(os).toContain('return <PublisherOSAdvanced activityRef={activityRef}/>;');
+    expect(os).not.toContain('PublisherOSLightController');
+    for(const state of ['foldersOpen','recoveryOpen','metadataOpen','thumbnailOpen','scheduleOpen','cleanupOpen'])expect(os).not.toContain(`[${state},`);
+    expect(os).not.toMatch(/set(?:Folders|Recovery|Metadata|Thumbnail|Schedule|Cleanup)Open\(\s*x\s*=>\s*!x\s*\)/);
     expect(os).not.toContain('useEffect(()=>void syncScheduleFromYoutube');
     expect(os).not.toContain('useEffect(()=>{void syncScheduleFromYoutube');
   });
