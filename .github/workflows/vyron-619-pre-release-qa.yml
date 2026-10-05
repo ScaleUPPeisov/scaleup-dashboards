@@ -48,18 +48,73 @@ jobs:
         run: npm install --no-save --no-package-lock react-test-renderer@19.1.1
       - name: VYRON 6.1.9 behavioral regressions
         run: npx vitest run src/vyron619PublisherAlwaysOpen.test.tsx src/vyron619ScheduleSources.test.ts src/scheduleContinuation.test.ts
-      - name: Publisher integrity regression pack
-        run: >
-          npx vitest run
-          src/vyron618PublisherIntegrity.test.ts
-          src/publisherMetadata.test.ts
-          src/uploadQueue.test.ts
-          src/v610PublisherColdRoute.test.ts
-          src/v610PublisherInventoryReconcile.test.ts
-          src/v614PublisherPhysicalInventoryHotfix.test.ts
-          src/vyron615PublisherHotfix.test.ts
-          src/vyron616PhysicalPublisherConsistency.test.ts
-          src/vyron617CurrentGenerationLeafRecovery.test.ts
+
+      - name: Publisher diagnostic 01 - vyron618PublisherIntegrity
+        id: publisher_diag_01
+        continue-on-error: true
+        run: npx vitest run src/vyron618PublisherIntegrity.test.ts
+      - name: Publisher diagnostic 02 - publisherMetadata
+        id: publisher_diag_02
+        continue-on-error: true
+        run: npx vitest run src/publisherMetadata.test.ts
+      - name: Publisher diagnostic 03 - uploadQueue
+        id: publisher_diag_03
+        continue-on-error: true
+        run: npx vitest run src/uploadQueue.test.ts
+      - name: Publisher diagnostic 04 - v610PublisherColdRoute
+        id: publisher_diag_04
+        continue-on-error: true
+        run: npx vitest run src/v610PublisherColdRoute.test.ts
+      - name: Publisher diagnostic 05 - v610PublisherInventoryReconcile
+        id: publisher_diag_05
+        continue-on-error: true
+        run: npx vitest run src/v610PublisherInventoryReconcile.test.ts
+      - name: Publisher diagnostic 06 - v614PublisherPhysicalInventoryHotfix
+        id: publisher_diag_06
+        continue-on-error: true
+        run: npx vitest run src/v614PublisherPhysicalInventoryHotfix.test.ts
+      - name: Publisher diagnostic 07 - vyron615PublisherHotfix
+        id: publisher_diag_07
+        continue-on-error: true
+        run: npx vitest run src/vyron615PublisherHotfix.test.ts
+      - name: Publisher diagnostic 08 - vyron616PhysicalPublisherConsistency
+        id: publisher_diag_08
+        continue-on-error: true
+        run: npx vitest run src/vyron616PhysicalPublisherConsistency.test.ts
+      - name: Publisher diagnostic 09 - vyron617CurrentGenerationLeafRecovery
+        id: publisher_diag_09
+        continue-on-error: true
+        run: npx vitest run src/vyron617CurrentGenerationLeafRecovery.test.ts
+      - name: Publisher diagnostic gate - temporary
+        if: always()
+        shell: bash
+        env:
+          PUB01: ${{ steps.publisher_diag_01.outcome }}
+          PUB02: ${{ steps.publisher_diag_02.outcome }}
+          PUB03: ${{ steps.publisher_diag_03.outcome }}
+          PUB04: ${{ steps.publisher_diag_04.outcome }}
+          PUB05: ${{ steps.publisher_diag_05.outcome }}
+          PUB06: ${{ steps.publisher_diag_06.outcome }}
+          PUB07: ${{ steps.publisher_diag_07.outcome }}
+          PUB08: ${{ steps.publisher_diag_08.outcome }}
+          PUB09: ${{ steps.publisher_diag_09.outcome }}
+        run: |
+          set -Eeuo pipefail
+          failed=0
+          for n in 01 02 03 04 05 06 07 08 09; do
+            var="PUB${n}"
+            outcome="${!var}"
+            echo "PUBLISHER_DIAGNOSTIC_${n}=${outcome}"
+            if [ "$outcome" != "success" ]; then
+              failed=1
+            fi
+          done
+          if [ "$failed" != "0" ]; then
+            echo PUBLISHER_DIAGNOSTIC_GATE=FAIL
+            exit 1
+          fi
+          echo PUBLISHER_DIAGNOSTIC_GATE=PASS
+
       - name: Protected global upload regressions
         run: >
           npx vitest run
