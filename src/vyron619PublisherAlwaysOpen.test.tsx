@@ -45,6 +45,7 @@ describe('VYRON 6.1.9 Publisher core sections are always open',()=>{
  beforeEach(()=>{installBrowserStubs();vi.resetModules()});
 
  it('cold mount renders all six working sections with zero clicks, including empty Recovery',async()=>{
+  // @ts-expect-error CI-only render harness; intentionally not a VYRON product dependency.
   const {act,create}=await import('react-test-renderer');
   const {PublisherOS}=await import('./PublisherOS');
   let renderer:any;
@@ -56,6 +57,7 @@ describe('VYRON 6.1.9 Publisher core sections are always open',()=>{
  });
 
  it('top controls cannot hide any core section',async()=>{
+  // @ts-expect-error CI-only render harness; intentionally not a VYRON product dependency.
   const {act,create}=await import('react-test-renderer');
   const {PublisherOS}=await import('./PublisherOS');
   let renderer:any;
@@ -70,6 +72,7 @@ describe('VYRON 6.1.9 Publisher core sections are always open',()=>{
  });
 
  it('core section visibility is not controlled by x=>!x state toggles',async()=>{
+  // @ts-expect-error Node-only test helper; no runtime dependency in VYRON.
   const {readFile}=await import('node:fs/promises');
   const source=await readFile(new URL('./PublisherOS.tsx',import.meta.url),'utf8');
   expect(source).not.toMatch(/set(?:Folders|Recovery|Metadata|Thumbnail|Schedule|Cleanup)Open\(\s*x\s*=>\s*!x\s*\)/);
