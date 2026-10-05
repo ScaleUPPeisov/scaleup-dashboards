@@ -17,11 +17,11 @@ describe('VYRON 6.1 final YouTube cold route',()=>{
   expect(picker).toContain('p.jobs.slice(0,limit)');
   expect(picker).toContain('useState(24)');
  });
- it('cold Publisher mounts light controller and not advanced hooks',()=>{
+ it('cold Publisher mounts production advanced shell without a light-controller gate',()=>{
   const p=read('PublisherOS.tsx');
-  expect(p).toContain('PublisherOSLightController');
-  expect(p).toContain("if(advancedPanel)return <PublisherOSAdvanced");
   expect(p).toContain('function PublisherOSAdvanced');
+  expect(p).toContain('return <PublisherOSAdvanced initialPanel={null} initialMode="production" />;');
+  expect(p).not.toContain('if(advancedPanel)return <PublisherOSAdvanced');
   expect(p).not.toContain('useApp(s=>s.uploadHistory)');
   expect(p).not.toContain('useApp(s=>s.fingerprintCache)');
   expect(p).not.toContain('useApp(s=>s.projectLifecycle)');
