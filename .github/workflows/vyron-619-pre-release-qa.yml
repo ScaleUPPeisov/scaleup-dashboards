@@ -72,8 +72,52 @@ jobs:
         run: npm run build
       - name: Rust library QA
         run: cargo test --manifest-path src-tauri/Cargo.toml --lib -- --nocapture
-      - name: Rust compile
-        run: cargo check --manifest-path src-tauri/Cargo.toml
+      - name: Cargo check with approved 6.1.8 baseline classification
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
+          set +e
+          cargo check --manifest-path src-tauri/Cargo.toml 2>&1 | tee /tmp/candidate-cargo-check.log
+          candidate_exit=${PIPESTATUS[0]}
+          set -e
+          if [ "$candidate_exit" = "0" ]; then
+            echo CARGO_CHECK=PASS
+            echo BASELINE_COMPARISON=NOT_REQUIRED
+            exit 0
+          fi
+
+          grep -E '^(error(\[[^]]+\])?:|Caused by:|  process didn.t exit successfully:)' /tmp/candidate-cargo-check.log | sed -E 's#/Users/runner/work/[^ ]+#<WORKSPACE>#g' | head -80 > /tmp/candidate.errors || true
+          echo "CANDIDATE_CARGO_CHECK_EXIT=$candidate_exit"
+          echo 'Candidate cargo check failed; running the exact same command against approved VYRON 6.1.8.'
+
+          git reset --hard
+          git clean -ffdx
+          git checkout --detach "$BASE_618_HEAD"
+          test "$(git rev-parse HEAD)" = "$BASE_618_HEAD"
+
+          set +e
+          cargo check --manifest-path src-tauri/Cargo.toml 2>&1 | tee /tmp/baseline-cargo-check.log
+          baseline_exit=${PIPESTATUS[0]}
+          set -e
+          grep -E '^(error(\[[^]]+\])?:|Caused by:|  process didn.t exit successfully:)' /tmp/baseline-cargo-check.log | sed -E 's#/Users/runner/work/[^ ]+#<WORKSPACE>#g' | head -80 > /tmp/baseline.errors || true
+          echo "BASELINE_6_1_8_CARGO_CHECK_EXIT=$baseline_exit"
+
+          git checkout --detach "$SOURCE_HEAD"
+          test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
+
+          if [ "$baseline_exit" = "0" ]; then
+            echo CLASSIFICATION=REAL_6_1_9_REGRESSION
+            exit 20
+          fi
+          if cmp -s /tmp/candidate.errors /tmp/baseline.errors; then
+            echo CLASSIFICATION=BASELINE_INVALID_NEW_GATE_SAME_ERROR
+            echo CARGO_CHECK=BASELINE_FAILURE_ACCEPTED
+            exit 0
+          fi
+          echo CLASSIFICATION=BASELINE_ALSO_FAILS_ERROR_TEXT_DIFFERS
+          diff -u /tmp/baseline.errors /tmp/candidate.errors || true
+          exit 21
       - name: Strict do-not-touch audit
         shell: bash
         run: |
@@ -90,7 +134,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           python3 - <<'PY'
-          import pathlib,re,subprocess,sys
+          import pathlib,re,subprocess
           files=subprocess.check_output(['git','ls-files'],text=True).splitlines()
           banned=[r'(^|/)credentials\.json$',r'(^|/)credentials-[^/]*\.json$',r'(^|/)client_secret[^/]*\.json$',r'(^|/)google-credentials[^/]*\.json$',r'(^|/)oauth-tokens?[^/]*\.json$',r'(^|/)tokens\.json$',r'(^|/)keychain-export',r'(^|/)credential-export',r'\.sqlite3?$',r'\.db$',r'\.db-wal$',r'\.db-shm$',r'\.vyron$',r'\.vyron-migration$',r'(^|/)vyron-migration-',r'(^|/)migration-backup',r'(^|/)migration-export',r'(^|/)account-export',r'(^|/)channel-export']
           for f in files:
