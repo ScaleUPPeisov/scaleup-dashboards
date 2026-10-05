@@ -50,8 +50,8 @@ export function validateFinalUploadPayload(input:{
  else if(RESERVED_TITLES.has(upper))issues.push({code:'FINAL_TITLE_RESERVED',message:`запрещённое служебное название «${title}»`});
  else if(input.safeMode!==false&&TECHNICAL_VIDEO_TITLE.test(title))issues.push({code:'FINAL_TITLE_TECHNICAL_PLACEHOLDER',message:`технический placeholder «${title}» нельзя публиковать как финальное название`});
 
- const row=input.metadata;
- if(row?.metadataBindingIssue==='METADATA_CHANNEL_MISMATCH'||(row?.channel&&!metadataChannelMatches(row.channel,input.channel))){
+ const row=input.metadata,hasChannelProof=Boolean(row?.boundChannelId||row?.boundChannelName||row?.metadataBindingIssue==='METADATA_CHANNEL_MISMATCH');
+ if(row?.metadataBindingIssue==='METADATA_CHANNEL_MISMATCH'||(hasChannelProof&&row?.channel&&!metadataChannelMatches(row.channel,input.channel))){
   issues.push({code:'METADATA_CHANNEL_MISMATCH',message:`метаданные предназначены для канала «${row?.channel||'другой канал'}», активный канал «${input.channel.name}»`});
  }
  if(row&&!metadataGenerationMatches(row,input.job)){
