@@ -1,0 +1,102 @@
+name: VYRON 6.1.8 Version Bump
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-6.1.8-publisher-integrity
+    paths:
+      - '.github/workflows/vyron-618-version-bump.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vyron-618-version-bump
+  cancel-in-progress: true
+
+env:
+  CANDIDATE_HEAD: 94537bf8e5a2cf407578acb341a5b2918772f565
+  VERSION: 6.1.8
+  BRANCH: hotfix/vyron-6.1.8-publisher-integrity
+
+jobs:
+  bump:
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify only CI changed since green candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git cat-file -e "$CANDIDATE_HEAD^{commit}"
+          test -z "$(git diff --name-only "$CANDIDATE_HEAD" HEAD | grep -v '^.github/workflows/' || true)"
+          echo PRODUCT_DELTA_SINCE_GREEN_CANDIDATE=NONE
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Bump npm/Tauri/Cargo versions
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm version "$VERSION" --no-git-tag-version
+          python3 - <<'PY'
+          import json, pathlib, os, re
+          version=os.environ['VERSION']
+          tauri=pathlib.Path('src-tauri/tauri.conf.json')
+          data=json.loads(tauri.read_text())
+          data['version']=version
+          tauri.write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
+          cargo=pathlib.Path('src-tauri/Cargo.toml')
+          text=cargo.read_text()
+          head,sep,tail=text.partition('[package]')
+          assert sep,'CARGO_PACKAGE_SECTION_MISSING'
+          package,sep2,rest=tail.partition('\n[')
+          updated,n=re.subn(r'(?m)^version\s*=\s*"[^"]+"',f'version = "{version}"',package,count=1)
+          assert n==1,'CARGO_PACKAGE_VERSION_NOT_FOUND'
+          cargo.write_text(head+sep+updated+(sep2+rest if sep2 else ''))
+          PY
+          cargo check --manifest-path src-tauri/Cargo.toml
+      - name: Verify all version sources
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          node - <<'NODE'
+          const fs=require('fs');
+          const p=require('./package.json');
+          const l=require('./package-lock.json');
+          const t=require('./src-tauri/tauri.conf.json');
+          const v=process.env.VERSION;
+          if(p.version!==v||l.version!==v||l.packages?.['']?.version!==v||t.version!==v) throw new Error('NPM_OR_TAURI_VERSION_MISMATCH');
+          NODE
+          python3 - <<'PY'
+          import pathlib,re,os
+          v=os.environ['VERSION']
+          cargo=pathlib.Path('src-tauri/Cargo.toml').read_text()
+          package=cargo.split('[package]',1)[1].split('\n[',1)[0]
+          assert re.search(r'(?m)^version\s*=\s*"'+re.escape(v)+r'"\s*$',package), 'CARGO_TOML_VERSION_MISMATCH'
+          name=re.search(r'(?m)^name\s*=\s*"([^"]+)"',package).group(1)
+          lock=pathlib.Path('src-tauri/Cargo.lock').read_text()
+          blocks=lock.split('[[package]]')
+          hit=[b for b in blocks if re.search(r'(?m)^name\s*=\s*"'+re.escape(name)+r'"\s*$',b)]
+          assert len(hit)==1, f'CARGO_LOCK_PACKAGE_{name}_COUNT={len(hit)}'
+          assert re.search(r'(?m)^version\s*=\s*"'+re.escape(v)+r'"\s*$',hit[0]), 'CARGO_LOCK_VERSION_MISMATCH'
+          print('ALL_VERSION_SOURCES=PASS')
+          PY
+      - name: Commit exact product version bump
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git status --short
+          git add package.json package-lock.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock
+          test -n "$(git diff --cached --name-only)"
+          git config user.name 'ScaleUPPeisov'
+          git config user.email 'peisov.business@gmail.com'
+          git commit -m 'release(vyron): bump product version to 6.1.8'
+          FINAL_PRODUCT_HEAD="$(git rev-parse HEAD)"
+          echo "FINAL_PRODUCT_HEAD=$FINAL_PRODUCT_HEAD"
+          git push origin "HEAD:$BRANCH"
