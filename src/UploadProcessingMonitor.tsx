@@ -29,7 +29,7 @@ export async function runUploadProcessingMonitorCycle(){
    try{
     const p=await api.youtubeVideoProcessingStatus(row.profileId,row.youtubeVideoId,`processing-owner-check:${row.jobId}`);
     const current=useApp.getState(),processingState=p.processingState,remoteError=p.processingFailureReason||p.rejectionReason||undefined,previous=row.processingState;
-    const uploadedAt=Date.parse(row.uploadedAt||''),longRunning=!remoteError&&processingState!=='READY'&&processingState!=='PROCESSING_FAILED'&&processingState!=='REJECTED'&&Number.isFinite(uploadedAt)&&Date.now()-uploadedAt>=LONG_RUNNING_MS;
+    const uploadedAt=Date.parse(row.uploadedAt||''),longRunning=!remoteError&&processingState!=='READY'&&processingState!=='PROCESSING_FAILED'&&Number.isFinite(uploadedAt)&&Date.now()-uploadedAt>=LONG_RUNNING_MS;
     const visibilityNote=longRunning?'YouTube всё ещё обрабатывает видео; VYRON продолжает безопасную проверку статуса.':undefined,error=remoteError||visibilityNote;
     const history=updateUploadProcessing(current.uploadHistory,row.jobId,{
       processingState,processingCheckedAt:p.processingCheckedAt,processingStatus:p.processingStatus,
