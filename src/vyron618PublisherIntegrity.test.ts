@@ -73,14 +73,16 @@ describe('VYRON 6.1.8 Publisher integrity',()=>{
   expect(draft.rows.map(x=>x.boundJobId)).toEqual(['job-9','job-10'])
  });
 
- it('keeps every Publisher control represented on cold entry without mounting heavy computations',()=>{
+ it('keeps every Publisher control represented while cold-mounting the production advanced shell',()=>{
   const shell=readFileSync(decodeURIComponent(new URL('./PublisherShell.tsx',import.meta.url).pathname),'utf8');
   const publisher=readFileSync(decodeURIComponent(new URL('./PublisherOS.tsx',import.meta.url).pathname),'utf8');
   expect(shell).toContain('data-publisher-controls="always-visible"');
   for(const label of ['Папки','Recovery','Метаданные','Обложки','Расписание','Очистка','Очистить черновик'])expect(shell).toContain(label);
-  expect(publisher).toContain('PublisherOSLightController');
+  expect(publisher).toContain('function PublisherOSAdvanced');
   expect(publisher).toContain('<PublisherShell');
-  expect(publisher).toContain("if(advancedPanel)return <PublisherOSAdvanced")
+  expect(publisher).toContain('return <PublisherOSAdvanced initialPanel={null} initialMode="production" />;');
+  expect(publisher).not.toContain('PublisherOSLightController');
+  expect(publisher).not.toContain("if(advancedPanel)return <PublisherOSAdvanced")
  });
 
  it('polls only eligible nonterminal processing rows and never READY/failed terminal rows',()=>{
