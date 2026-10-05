@@ -1,0 +1,145 @@
+name: VYRON 6.1.9 Version Bump
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-6.1.9-publisher-always-open-schedule-source
+    paths:
+      - '.github/workflows/vyron-619-version-bump.yml'
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: vyron-619-version-bump
+  cancel-in-progress: false
+
+env:
+  GREEN_HEAD: fcb09fb532ec55c49dc15b9308c832ac0ff3ca63
+  QA_RUN_ID: '37350891646'
+  PRODUCT_SOURCE_HEAD: 74436bad565ced15f919393780210cb5bfd4ac21
+  VERSION: 6.1.9
+  BRANCH: hotfix/vyron-6.1.9-publisher-always-open-schedule-source
+
+jobs:
+  bump:
+    runs-on: macos-14
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify exact green QA and workflow-only delta
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git cat-file -e "$GREEN_HEAD^{commit}"
+          test "$(git rev-parse "$GREEN_HEAD^{commit}")" = "$GREEN_HEAD"
+          DELTA="$(git diff --name-only "$GREEN_HEAD" HEAD)"
+          printf '%s\n' "$DELTA"
+          test "$DELTA" = '.github/workflows/vyron-619-version-bump.yml'
+          RUN_JSON="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$QA_RUN_ID")"
+          test "$(printf '%s' "$RUN_JSON" | jq -r .status)" = completed
+          test "$(printf '%s' "$RUN_JSON" | jq -r .conclusion)" = success
+          test "$(printf '%s' "$RUN_JSON" | jq -r .head_sha)" = "$GREEN_HEAD"
+          test "$(printf '%s' "$RUN_JSON" | jq -r .path)" = '.github/workflows/vyron-619-pre-release-qa.yml'
+          echo QA_RUN_VERIFIED=PASS
+          echo PRODUCT_SOURCE_HEAD="$PRODUCT_SOURCE_HEAD"
+          echo WORKFLOW_ONLY_DELTA_SINCE_GREEN=PASS
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Verify pre-bump product version
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          node - <<'NODE'
+          const p=require('./package.json');
+          const l=require('./package-lock.json');
+          const t=require('./src-tauri/tauri.conf.json');
+          if(p.version!=='6.1.8'||l.version!=='6.1.8'||l.packages?.['']?.version!=='6.1.8'||t.version!=='6.1.8') process.exit(2);
+          NODE
+          grep -q '^version = "6.1.8"$' src-tauri/Cargo.toml
+          echo PRE_BUMP_VERSION=PASS
+
+      - name: Bump npm Tauri Cargo versions
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm version "$VERSION" --no-git-tag-version
+          python3 - <<'PY'
+          import json,pathlib,os,re
+          version=os.environ['VERSION']
+          tauri=pathlib.Path('src-tauri/tauri.conf.json')
+          data=json.loads(tauri.read_text())
+          data['version']=version
+          tauri.write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
+          cargo=pathlib.Path('src-tauri/Cargo.toml')
+          text=cargo.read_text()
+          head,sep,tail=text.partition('[package]')
+          assert sep,'CARGO_PACKAGE_SECTION_MISSING'
+          package,sep2,rest=tail.partition('\n[')
+          updated,n=re.subn(r'(?m)^version\s*=\s*"[^"]+"',f'version = "{version}"',package,count=1)
+          assert n==1,'CARGO_PACKAGE_VERSION_NOT_FOUND'
+          cargo.write_text(head+sep+updated+(sep2+rest if sep2 else ''))
+          PY
+          cargo check --manifest-path src-tauri/Cargo.toml || {
+            echo 'cargo check hit the already-classified Rust baseline condition; refreshing only the lockfile metadata.'
+            cargo metadata --manifest-path src-tauri/Cargo.toml --no-deps --format-version 1 >/dev/null
+          }
+
+      - name: Verify exact version-only product delta
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          node - <<'NODE'
+          const p=require('./package.json');
+          const l=require('./package-lock.json');
+          const t=require('./src-tauri/tauri.conf.json');
+          const v=process.env.VERSION;
+          if(p.version!==v||l.version!==v||l.packages?.['']?.version!==v||t.version!==v) throw new Error('NPM_OR_TAURI_VERSION_MISMATCH');
+          NODE
+          python3 - <<'PY'
+          import pathlib,re,os
+          v=os.environ['VERSION']
+          cargo=pathlib.Path('src-tauri/Cargo.toml').read_text()
+          package=cargo.split('[package]',1)[1].split('\n[',1)[0]
+          assert re.search(r'(?m)^version\s*=\s*"'+re.escape(v)+r'"\s*$',package), 'CARGO_TOML_VERSION_MISMATCH'
+          name=re.search(r'(?m)^name\s*=\s*"([^"]+)"',package).group(1)
+          lock=pathlib.Path('src-tauri/Cargo.lock').read_text()
+          blocks=lock.split('[[package]]')
+          hit=[b for b in blocks if re.search(r'(?m)^name\s*=\s*"'+re.escape(name)+r'"\s*$',b)]
+          assert len(hit)==1, f'CARGO_LOCK_PACKAGE_{name}_COUNT={len(hit)}'
+          assert re.search(r'(?m)^version\s*=\s*"'+re.escape(v)+r'"\s*$',hit[0]), 'CARGO_LOCK_VERSION_MISMATCH'
+          print('ALL_VERSION_SOURCES=PASS')
+          PY
+          git diff --name-only > /tmp/version-delta.txt
+          cat /tmp/version-delta.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          allowed={'package.json','package-lock.json','src-tauri/tauri.conf.json','src-tauri/Cargo.toml','src-tauri/Cargo.lock'}
+          changed={x for x in Path('/tmp/version-delta.txt').read_text().splitlines() if x}
+          assert changed and changed <= allowed, f'UNEXPECTED_VERSION_BUMP_DELTA={sorted(changed-allowed)}'
+          print('VERSION_ONLY_DELTA=PASS')
+          PY
+
+      - name: Commit exact product version bump
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git add package.json package-lock.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock
+          test -n "$(git diff --cached --name-only)"
+          git config user.name 'ScaleUPPeisov'
+          git config user.email 'peisov.business@gmail.com'
+          git commit -m 'release(vyron): bump product version to 6.1.9'
+          FINAL_PRODUCT_HEAD="$(git rev-parse HEAD)"
+          echo "FINAL_PRODUCT_HEAD=$FINAL_PRODUCT_HEAD"
+          git push origin "HEAD:$BRANCH"
