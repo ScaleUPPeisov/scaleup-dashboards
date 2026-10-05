@@ -80,9 +80,9 @@ describe('VYRON 6.1.8 Publisher integrity',()=>{
   for(const label of ['Папки','Recovery','Метаданные','Обложки','Расписание','Очистка','Очистить черновик'])expect(shell).toContain(label);
   expect(publisher).toContain('function PublisherOSAdvanced');
   expect(publisher).toContain('<PublisherShell');
-  expect(publisher).toContain('return <PublisherOSAdvanced initialPanel={null} initialMode="production" />;');
+  expect(publisher).toContain('return <PublisherOSAdvanced activityRef={activityRef}/>');
   expect(publisher).not.toContain('PublisherOSLightController');
-  expect(publisher).not.toContain("if(advancedPanel)return <PublisherOSAdvanced")
+  expect(publisher).not.toContain('if(advancedPanel)return <PublisherOSAdvanced')
  });
 
  it('polls only eligible nonterminal processing rows and never READY/failed terminal rows',()=>{
