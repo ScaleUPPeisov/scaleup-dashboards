@@ -1,0 +1,149 @@
+name: VYRON 6.1.9 Pre-Release QA
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-6.1.9-publisher-always-open-schedule-source
+    paths:
+      - '.github/workflows/vyron-619-pre-release-qa.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-619-pre-release-qa
+  cancel-in-progress: true
+
+env:
+  SOURCE_HEAD: 7ebd8de6802bbaba585a531ea03f215eb04f18ce
+  BASE_618_HEAD: fbaf8a7bda252a3dcc5c1ebceea046cafe0cf5c0
+
+jobs:
+  qa:
+    name: macOS full product QA
+    runs-on: macos-14
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_HEAD }}
+          fetch-depth: 0
+      - name: Verify exact candidate and 6.1.8 pre-bump state
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
+          node -e "const p=require('./package.json'),l=require('./package-lock.json'),t=require('./src-tauri/tauri.conf.json');if(p.version!=='6.1.8'||l.version!=='6.1.8'||l.packages?.['']?.version!=='6.1.8'||t.version!=='6.1.8')process.exit(2)"
+          echo EXACT_619_CANDIDATE=PASS
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci --no-audit --no-fund
+      - name: Install CI-only render harness
+        run: npm install --no-save --no-package-lock react-test-renderer@19.1.1
+      - name: VYRON 6.1.9 behavioral regressions
+        run: npx vitest run src/vyron619PublisherAlwaysOpen.test.tsx src/vyron619ScheduleSources.test.ts src/scheduleContinuation.test.ts
+      - name: Publisher integrity regression pack
+        run: >
+          npx vitest run
+          src/vyron618PublisherIntegrity.test.ts
+          src/publisherMetadata.test.ts
+          src/uploadQueue.test.ts
+          src/v610PublisherColdRoute.test.ts
+          src/v610PublisherInventoryReconcile.test.ts
+          src/v614PublisherPhysicalInventoryHotfix.test.ts
+          src/vyron615PublisherHotfix.test.ts
+          src/vyron616PhysicalPublisherConsistency.test.ts
+          src/vyron617CurrentGenerationLeafRecovery.test.ts
+      - name: Protected global upload regressions
+        run: >
+          npx vitest run
+          src/v610GlobalUploadCounter.test.ts
+          src/v503UploadCounterRestore.test.ts
+          src/youtubePublishSafety.test.ts
+          src/v400QuotaUploadLimitSeparation.test.ts
+          src/v501LocalCleanupZeroQuota.test.ts
+      - name: TypeScript production build
+        run: npm run build
+      - name: Rust library QA
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib -- --nocapture
+      - name: Rust compile
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+      - name: Strict do-not-touch audit
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git diff --name-only "$BASE_618_HEAD" "$SOURCE_HEAD" > /tmp/vyron619-files.txt
+          cat /tmp/vyron619-files.txt
+          git diff --quiet "$BASE_618_HEAD" "$SOURCE_HEAD" -- src/renderScanClassifier.ts
+          git diff --quiet "$BASE_618_HEAD" "$SOURCE_HEAD" -- src-tauri/src/youtube.rs
+          git diff --quiet "$BASE_618_HEAD" "$SOURCE_HEAD" -- src-tauri/src/keychain.rs || test ! -f src-tauri/src/keychain.rs
+          ! grep -Eq '(^|/)(youtube\.rs|keychain|oauth|credential|updater|renderScanClassifier\.ts)$' /tmp/vyron619-files.txt
+          echo OAUTH_KEYCHAIN_UPLOAD_TRANSPORT_UNTOUCHED=PASS
+      - name: Privacy gate - tracked files and high-confidence secrets
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import pathlib,re,subprocess,sys
+          files=subprocess.check_output(['git','ls-files'],text=True).splitlines()
+          banned=[r'(^|/)credentials\.json$',r'(^|/)credentials-[^/]*\.json$',r'(^|/)client_secret[^/]*\.json$',r'(^|/)google-credentials[^/]*\.json$',r'(^|/)oauth-tokens?[^/]*\.json$',r'(^|/)tokens\.json$',r'(^|/)keychain-export',r'(^|/)credential-export',r'\.sqlite3?$',r'\.db$',r'\.db-wal$',r'\.db-shm$',r'\.vyron$',r'\.vyron-migration$',r'(^|/)vyron-migration-',r'(^|/)migration-backup',r'(^|/)migration-export',r'(^|/)account-export',r'(^|/)channel-export']
+          for f in files:
+              if any(re.search(p,f,re.I) for p in banned):
+                  raise SystemExit('PRIVACY_GATE=FAIL:SENSITIVE_TRACKED_FILE:'+f)
+          patterns=[re.compile(rb'ya29\.[A-Za-z0-9._~-]{20,}'),re.compile(rb'1//[A-Za-z0-9._~-]{20,}'),re.compile(rb'GOCSPX-[A-Za-z0-9_-]{20,}'),re.compile(rb'AIza[0-9A-Za-z_-]{20,}'),re.compile(rb'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----')]
+          for f in files:
+              p=pathlib.Path(f)
+              try:data=p.read_bytes()
+              except Exception:continue
+              if any(rx.search(data) for rx in patterns):
+                  raise SystemExit('PRIVACY_GATE=FAIL:HIGH_CONFIDENCE_SECRET:'+f)
+          print('PRIVACY_TRACKED_FILES_AND_SECRET_SCAN=PASS')
+          PY
+      - name: Privacy gate - artifact upload paths only
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import pathlib,re
+          bad=re.compile(r'(user-data|app-data|Application Support|AppData|keychain|credential-export|migration-export|account-export|channel-export|\.sqlite|\.db\b|\.vyron)',re.I)
+          def indent(line):return len(line)-len(line.lstrip(' '))
+          def upload_paths(lines,start):
+              step_indent=indent(lines[start]);out=[];i=start+1
+              while i<len(lines):
+                  raw=lines[i];stripped=raw.strip();level=indent(raw)
+                  if stripped.startswith('- ') and level<=step_indent:break
+                  if stripped.startswith('path:'):
+                      value=stripped.split(':',1)[1].strip()
+                      if value in ('|','>','|-','>-'):
+                          block_indent=None;i+=1
+                          while i<len(lines):
+                              row=lines[i];rs=row.strip();ri=indent(row)
+                              if not rs:i+=1;continue
+                              if block_indent is None:block_indent=ri
+                              if ri<block_indent:break
+                              out.append(rs);i+=1
+                          continue
+                      out.append(value.strip('"\''))
+                  i+=1
+              return out
+          for wf in pathlib.Path('.github/workflows').glob('*.y*ml'):
+              lines=wf.read_text(errors='ignore').splitlines()
+              for i,line in enumerate(lines):
+                  if 'uses: actions/upload-artifact@' not in line:continue
+                  for path in upload_paths(lines,i):
+                      if bad.search(path):raise SystemExit(f'PRIVACY_GATE=FAIL:SENSITIVE_ARTIFACT_UPLOAD:{wf}:{path}')
+          print('SENSITIVE_ARTIFACT_UPLOAD=BLOCKED')
+          PY
+      - name: QA summary
+        run: |
+          echo VYRON_6_1_9_BEHAVIORAL=PASS
+          echo PUBLISHER_INTEGRITY=PASS
+          echo RUST_QA=PASS
+          echo PRIVACY_GATE=PASS
+          echo VYRON_6_1_9_PRE_RELEASE_QA=PASS
