@@ -13,7 +13,7 @@ export type FinalUploadPayload={title:string;description:string;tags:readonly st
 export type PublisherIntegrityChannel={id:string;name:string};
 
 const RESERVED_TITLES=new Set(['LOGIC','TITLE','НАЗВАНИЕ']);
-const TECHNICAL_VIDEO_TITLE=/^VIDEO[\s_-]*0*\d+$/i;
+const TECHNICAL_VIDEO_TITLE=/^VIDEO(?:[_-]?0*\d+)$/i;
 const normalize=(value?:string)=>String(value||'').trim().replace(/\s+/g,' ').toLocaleLowerCase('ru-RU');
 const fingerprint=(value?:string)=>String(value||'').trim().toLowerCase();
 
