@@ -35,6 +35,19 @@ jobs:
           test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
           node -e "const p=require('./package.json'),l=require('./package-lock.json'),t=require('./src-tauri/tauri.conf.json');if(p.version!=='6.1.8'||l.version!=='6.1.8'||l.packages?.['']?.version!=='6.1.8'||t.version!=='6.1.8')process.exit(2)"
           echo EXACT_619_CANDIDATE=PASS
+      - name: Apply approved test-only 6.1.9 alignment
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
+          git fetch --no-tags --depth=1 origin "$GITHUB_SHA"
+          git show "$GITHUB_SHA:src/v610PublisherColdRoute.test.ts" > src/v610PublisherColdRoute.test.ts
+          git show "$GITHUB_SHA:src/v614PublisherPhysicalInventoryHotfix.test.ts" > src/v614PublisherPhysicalInventoryHotfix.test.ts
+          expected="$(printf '%s\n' src/v610PublisherColdRoute.test.ts src/v614PublisherPhysicalInventoryHotfix.test.ts | sort)"
+          actual="$(git diff --name-only | sort)"
+          test "$actual" = "$expected"
+          test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
+          echo TEST_ONLY_ALIGNMENT=PASS
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -49,90 +62,42 @@ jobs:
       - name: VYRON 6.1.9 behavioral regressions
         run: npx vitest run src/vyron619PublisherAlwaysOpen.test.tsx src/vyron619ScheduleSources.test.ts src/scheduleContinuation.test.ts
 
-      - name: Publisher case C01 - mutation-time row facts only
-        id: publisher_case_c01
-        continue-on-error: true
-        run: npx vitest run src/v610PublisherColdRoute.test.ts -t "PublisherVideoPicker consumes mutation-time row facts only"
-      - name: Publisher case C02 - cold Publisher advanced shell
-        id: publisher_case_c02
-        continue-on-error: true
-        run: npx vitest run src/v610PublisherColdRoute.test.ts -t "cold Publisher mounts production advanced shell without a light-controller gate"
-      - name: Publisher case C03 - guarded writes and avatar geometry
-        id: publisher_case_c03
-        continue-on-error: true
-        run: npx vitest run src/v610PublisherColdRoute.test.ts -t "mount-time no-op state writes are guarded and avatars have fixed geometry"
-      - name: Publisher case C04 - top channel option tree
-        id: publisher_case_c04
-        continue-on-error: true
-        run: npx vitest run src/v610PublisherColdRoute.test.ts -t "only the top channel bar builds the channel option tree"
-
-      - name: Publisher case P01 - deliberate selection preservation
-        id: publisher_case_p01
-        continue-on-error: true
-        run: npx vitest run src/v614PublisherPhysicalInventoryHotfix.test.ts -t "keeps deliberate 10-video selection even when selectableJobs transiently drops to zero"
-      - name: Publisher case P02 - full advanced workflow default
-        id: publisher_case_p02
-        continue-on-error: true
-        run: npx vitest run src/v614PublisherPhysicalInventoryHotfix.test.ts -t "opens the full advanced workflow by default without adding automatic YouTube sync calls"
-      - name: Publisher case P03 - zero YouTube API reconciliation
-        id: publisher_case_p03
-        continue-on-error: true
-        run: npx vitest run src/v614PublisherPhysicalInventoryHotfix.test.ts -t "local reconciliation remains zero-YouTube-API code"
-      - name: Publisher case P04 - current physical size
-        id: publisher_case_p04
-        continue-on-error: true
-        run: npx vitest run src/v614PublisherPhysicalInventoryHotfix.test.ts -t "Action modal uses current scan/currentSource size and never uploadHistory-only fake 0.00 GB"
-
-      - name: Publisher marker C01 FAILED - mutation-time row facts only
-        if: always() && steps.publisher_case_c01.outcome == 'failure'
-        run: exit 1
-      - name: Publisher marker C02 FAILED - cold Publisher advanced shell
-        if: always() && steps.publisher_case_c02.outcome == 'failure'
-        run: exit 1
-      - name: Publisher marker C03 FAILED - guarded writes and avatar geometry
-        if: always() && steps.publisher_case_c03.outcome == 'failure'
-        run: exit 1
-      - name: Publisher marker C04 FAILED - top channel option tree
-        if: always() && steps.publisher_case_c04.outcome == 'failure'
-        run: exit 1
-      - name: Publisher marker P01 FAILED - deliberate selection preservation
-        if: always() && steps.publisher_case_p01.outcome == 'failure'
-        run: exit 1
-      - name: Publisher marker P02 FAILED - full advanced workflow default
-        if: always() && steps.publisher_case_p02.outcome == 'failure'
-        run: exit 1
-      - name: Publisher marker P03 FAILED - zero YouTube API reconciliation
-        if: always() && steps.publisher_case_p03.outcome == 'failure'
-        run: exit 1
-      - name: Publisher marker P04 FAILED - current physical size
-        if: always() && steps.publisher_case_p04.outcome == 'failure'
-        run: exit 1
-
-      - name: Publisher case diagnostic gate - temporary
-        if: always()
-        shell: bash
-        env:
-          C01: ${{ steps.publisher_case_c01.outcome }}
-          C02: ${{ steps.publisher_case_c02.outcome }}
-          C03: ${{ steps.publisher_case_c03.outcome }}
-          C04: ${{ steps.publisher_case_c04.outcome }}
-          P01: ${{ steps.publisher_case_p01.outcome }}
-          P02: ${{ steps.publisher_case_p02.outcome }}
-          P03: ${{ steps.publisher_case_p03.outcome }}
-          P04: ${{ steps.publisher_case_p04.outcome }}
-        run: |
-          set -Eeuo pipefail
-          failed=0
-          for var in C01 C02 C03 C04 P01 P02 P03 P04; do
-            outcome="${!var}"
-            echo "PUBLISHER_CASE_${var}=${outcome}"
-            if [ "$outcome" != "success" ]; then failed=1; fi
-          done
-          if [ "$failed" != "0" ]; then
-            echo PUBLISHER_CASE_DIAGNOSTIC_GATE=FAIL
-            exit 1
-          fi
-          echo PUBLISHER_CASE_DIAGNOSTIC_GATE=PASS
+      - name: Publisher integrity regression pack 1 of 3
+        run: >
+          npx vitest run
+          src/vyron618PublisherIntegrity.test.ts
+          src/publisherMetadata.test.ts
+          src/uploadQueue.test.ts
+          src/v610PublisherColdRoute.test.ts
+          src/v610PublisherInventoryReconcile.test.ts
+          src/v614PublisherPhysicalInventoryHotfix.test.ts
+          src/vyron615PublisherHotfix.test.ts
+          src/vyron616PhysicalPublisherConsistency.test.ts
+          src/vyron617CurrentGenerationLeafRecovery.test.ts
+      - name: Publisher integrity regression pack 2 of 3
+        run: >
+          npx vitest run
+          src/vyron618PublisherIntegrity.test.ts
+          src/publisherMetadata.test.ts
+          src/uploadQueue.test.ts
+          src/v610PublisherColdRoute.test.ts
+          src/v610PublisherInventoryReconcile.test.ts
+          src/v614PublisherPhysicalInventoryHotfix.test.ts
+          src/vyron615PublisherHotfix.test.ts
+          src/vyron616PhysicalPublisherConsistency.test.ts
+          src/vyron617CurrentGenerationLeafRecovery.test.ts
+      - name: Publisher integrity regression pack 3 of 3
+        run: >
+          npx vitest run
+          src/vyron618PublisherIntegrity.test.ts
+          src/publisherMetadata.test.ts
+          src/uploadQueue.test.ts
+          src/v610PublisherColdRoute.test.ts
+          src/v610PublisherInventoryReconcile.test.ts
+          src/v614PublisherPhysicalInventoryHotfix.test.ts
+          src/vyron615PublisherHotfix.test.ts
+          src/vyron616PhysicalPublisherConsistency.test.ts
+          src/vyron617CurrentGenerationLeafRecovery.test.ts
 
       - name: Protected global upload regressions
         run: >
@@ -261,7 +226,7 @@ jobs:
       - name: QA summary
         run: |
           echo VYRON_6_1_9_BEHAVIORAL=PASS
-          echo PUBLISHER_INTEGRITY=PASS
+          echo PUBLISHER_INTEGRITY_3X=PASS
           echo RUST_QA=PASS
           echo PRIVACY_GATE=PASS
           echo VYRON_6_1_9_PRE_RELEASE_QA=PASS
