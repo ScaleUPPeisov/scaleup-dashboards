@@ -17,11 +17,11 @@ function sameUserRows(a:ImportedMetadata[],b:ImportedMetadata[]){try{return JSON
 function normalizeChannel(value?:string){return String(value||'').trim().replace(/\s+/g,' ').toLocaleLowerCase('ru-RU')}
 function generationStartedAt(job:VideoJob){const created=Date.parse(job.createdAt||''),modified=Number(job.currentSourceModifiedAt||0);return Math.max(Number.isFinite(created)?created:0,Number.isFinite(modified)?modified:0)}
 function clearBinding(row:ImportedMetadata):ImportedMetadata{return{...row,metadataLegacyPersisted:false,metadataBindingIssue:undefined,boundChannelId:undefined,boundChannelName:undefined,boundJobId:undefined,boundSourceGenerationKey:undefined,boundSourceFingerprint:undefined,boundSourceFileSize:undefined}}
-function bindRows(channelId:string,rows:ImportedMetadata[],selectedIds:string[]){
+function bindRows(channelId:string,rows:ImportedMetadata[],selectedIds:string[]):ImportedMetadata[]{
  if(!channelId||!selectedIds.length||!rows.length)return rows;
  const state=useApp.getState(),channel=state.channels.find(x=>x.id===channelId),selectedSet=new Set(selectedIds),jobs=state.jobs.filter(j=>j.channelId===channelId&&selectedSet.has(j.id)).sort((a,b)=>a.number-b.number);
  if(!channel||!jobs.length)return rows;
- return rows.map((row,index)=>{
+ return rows.map((row,index):ImportedMetadata=>{
   const job=(row.number!=null?jobs.find(j=>j.number===row.number):undefined)||jobs[index];if(!job)return row;
   const explicit=normalizeChannel(row.channel),channelMatch=!explicit||explicit===normalizeChannel(channel.id)||explicit===normalizeChannel(channel.name);
   if(row.boundJobId&&row.boundJobId!==job.id)return{...row,metadataBindingIssue:'METADATA_GENERATION_STALE'};
@@ -32,7 +32,8 @@ function bindRows(channelId:string,rows:ImportedMetadata[],selectedIds:string[])
    (row.boundSourceFingerprint&&job.currentSourceFingerprint&&row.boundSourceFingerprint.toLowerCase()!==job.currentSourceFingerprint.toLowerCase())||
    (row.boundSourceFileSize!=null&&job.currentSourceFileSize!=null&&Number(row.boundSourceFileSize)!==Number(job.currentSourceFileSize))
   );
-  return{...row,metadataLegacyPersisted:false,metadataBindingIssue:staleGeneration?'METADATA_GENERATION_STALE':channelMatch?undefined:'METADATA_CHANNEL_MISMATCH',boundChannelId:channel.id,boundChannelName:channel.name,boundJobId:job.id,boundSourceGenerationKey:job.sourceGenerationKey,boundSourceFingerprint:job.currentSourceFingerprint,boundSourceFileSize:job.currentSourceFileSize};
+  const metadataBindingIssue:ImportedMetadata['metadataBindingIssue']=staleGeneration?'METADATA_GENERATION_STALE':channelMatch?undefined:'METADATA_CHANNEL_MISMATCH';
+  return{...row,metadataLegacyPersisted:false,metadataBindingIssue,boundChannelId:channel.id,boundChannelName:channel.name,boundJobId:job.id,boundSourceGenerationKey:job.sourceGenerationKey,boundSourceFingerprint:job.currentSourceFingerprint,boundSourceFileSize:job.currentSourceFileSize};
  })
 }
 function writeWorkspace(channelId:string,next:PublishWorkspaceDraft){const rows=all();rows[channelId]=next;try{localStorage.setItem(KEY,JSON.stringify(rows))}catch{}return next}
