@@ -82,3 +82,5 @@ jobs:
           echo 'CLASSIFICATION=BASELINE_ALSO_FAILS_ERROR_TEXT_DIFFERS'
           diff -u /tmp/baseline.errors /tmp/candidate.errors || true
           exit 2
+      - name: Comparison completed
+        run: echo CARGO_BASELINE_COMPARE_DONE=1
