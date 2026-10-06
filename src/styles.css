@@ -270,7 +270,7 @@ button.secondary{background:rgba(255,255,255,.035);border-color:#294156;color:#9
 .platform-macos .pageWrap{overscroll-behavior:contain;animation-duration:.08s}
 .platform-macos .primary,.platform-macos .ghost,.platform-macos .settingsAction,.platform-macos .danger,.platform-macos .iconBtn,.platform-macos .jobActions button,.platform-macos .cardActions button,.platform-macos .publisherNotice button,.platform-macos .settingsTabs button,.platform-macos .addLine button,.platform-macos .pathLine button{transition:transform .12s ease,background-color .12s ease,border-color .12s ease}
 .platform-macos .primary:hover:not(:disabled){box-shadow:0 9px 22px rgba(55,218,255,.12)}
-.platform-macos .vyronNotice,.platform-macos .recoveryOverlay,.platform-macos .uploadCenterBackdrop,.platform-macos .updateExperienceBackdrop{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
+.platform-macos .vyronNotice,.platform-macos .recoveryOverlay,.platform-macos .uploadCenterBackdrop,.platform-macos .updateExperienceBackdrop,.platform-macos .stickyBatch,.platform-macos .majorCelebrationBackdrop,.platform-macos .existingPreview em{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
 .platform-macos .recoveryOverlay,.platform-macos .uploadCenterBackdrop,.platform-macos .updateExperienceBackdrop{background:rgba(1,7,12,.91)}
 .platform-macos .metadataQueueRows{content-visibility:auto;contain:strict}
 .platform-macos .pageWrap .panel,
