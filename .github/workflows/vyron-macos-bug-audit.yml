@@ -1,0 +1,172 @@
+name: VYRON macOS Bug Audit Diagnostics
+
+on:
+  push:
+    branches:
+      - qa/vyron-6.1.10-full-system-certification
+    paths:
+      - '.github/workflows/vyron-macos-bug-audit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_HEAD: 588e2070877512daa637077223c678af6a216831
+
+jobs:
+  diagnostics:
+    name: macOS 6.1.9 non-destructive bug audit
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_HEAD }}
+          fetch-depth: 0
+
+      - name: Prove exact immutable product source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
+          test -z "$(git status --porcelain)"
+          test "$(node -p "require('./package.json').version")" = "6.1.9"
+          echo "AUDIT_SOURCE_HEAD=$(git rev-parse HEAD)"
+          echo "PRODUCT_SOURCE_MUTATIONS=0"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install exact dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Create ephemeral performance diagnostic
+        shell: bash
+        run: |
+          cat > src/__vyron_audit_perf.test.ts <<'EOF'
+          import {describe,it} from 'vitest';
+          import {performance} from 'node:perf_hooks';
+          import {useApp} from './store';
+          import {usePublisherDerived} from './publisherDerivedRuntime';
+          import {uploadStateCounters} from './storageLifecycle';
+
+          const HASH='a'.repeat(64);
+          const percentile=(xs:number[],p:number)=>xs.slice().sort((a,b)=>a-b)[Math.min(xs.length-1,Math.floor(xs.length*p))]||0;
+          function fixtures(channels:number,jobsCount:number){
+            const jobs:any[]=[];
+            const history:any[]=[];
+            for(let i=0;i<jobsCount;i++){
+              const cid='c'+(i%channels),id='j'+i,size=1000000+i;
+              const uploaded=i%2===0;
+              jobs.push({id,channelId:cid,number:i+1,status:uploaded?'SCHEDULED':'READY_UPLOAD',finalPath:'/tmp/'+cid+'/VIDEO_'+String(i+1).padStart(3,'0')+'.mov',storageLifecycle:uploaded?'UPLOADED':'NEW',youtubeVideoId:uploaded?'yt'+i:undefined,currentSourceFingerprint:HASH,currentSourceFileSize:size,processingState:uploaded?'READY':undefined,tags:[]});
+              if(uploaded)history.push({id:'h'+i,jobId:id,channelId:cid,status:'UPLOADED',youtubeVideoId:'yt'+i,localFilePath:jobs.at(-1).finalPath,originalFilename:'VIDEO.mov',uploadedAt:'2026-10-01T00:00:00Z',fileSize:size,sha256:HASH,fingerprintProofSource:'UPLOAD_TIME',proofSchemaVersion:1,processingState:'READY'});
+            }
+            return{jobs,history};
+          }
+          function measureDerived(channels:number,jobsCount:number,rounds:number){
+            const {jobs,history}=fixtures(channels,jobsCount);
+            useApp.setState({jobs:[],uploadHistory:[]} as any);
+            const xs:number[]=[];
+            for(let r=0;r<rounds;r++){
+              const cloned=jobs.map((j,i)=>i===r%jobs.length?{...j,error:j.error}:j);
+              const t0=performance.now();
+              useApp.setState({jobs:cloned,uploadHistory:history} as any);
+              xs.push(performance.now()-t0);
+            }
+            const derived=usePublisherDerived.getState();
+            return{channels,jobs:jobsCount,history:history.length,rounds,p50Ms:+percentile(xs,.50).toFixed(3),p95Ms:+percentile(xs,.95).toFixed(3),maxMs:+Math.max(...xs).toFixed(3),derivedChannels:Object.keys(derived.byChannel).length};
+          }
+          function measureCounters(channels:number,jobsCount:number,rounds:number){
+            const {jobs,history}=fixtures(channels,jobsCount),xs:number[]=[];
+            for(let r=0;r<rounds;r++){const t0=performance.now();uploadStateCounters(jobs,history);xs.push(performance.now()-t0)}
+            return{channels,jobs:jobsCount,history:history.length,rounds,p50Ms:+percentile(xs,.50).toFixed(3),p95Ms:+percentile(xs,.95).toFixed(3),maxMs:+Math.max(...xs).toFixed(3)};
+          }
+          describe('VYRON 6.1.9 macOS audit performance',()=>{
+            it('measures realistic scale without changing product code',()=>{
+              const cases:[[number,number],...[number,number][]]=[[1,100],[10,100],[35,900],[50,1500]];
+              const derived=cases.map(([c,j])=>measureDerived(c,j,j>=900?12:20));
+              const counters=cases.map(([c,j])=>measureCounters(c,j,j>=900?12:20));
+              console.log('AUDIT_DERIVED='+JSON.stringify(derived));
+              console.log('AUDIT_COUNTERS='+JSON.stringify(counters));
+            },120000);
+            it('runs a bounded 1500-job mutation soak and reports heap growth',()=>{
+              const {jobs,history}=fixtures(50,1500);
+              useApp.setState({jobs,uploadHistory:history} as any);
+              global.gc?.();
+              const start=process.memoryUsage().heapUsed;
+              const t0=performance.now();
+              for(let r=0;r<120;r++){
+                const idx=r%jobs.length;
+                const next=jobs.slice();next[idx]={...next[idx],error:r%2?'x':undefined};
+                useApp.setState({jobs:next,uploadHistory:history} as any);
+              }
+              global.gc?.();
+              const end=process.memoryUsage().heapUsed;
+              console.log('AUDIT_SOAK='+JSON.stringify({cycles:120,elapsedMs:+(performance.now()-t0).toFixed(1),heapStart:start,heapEnd:end,heapDelta:end-start}));
+            },120000);
+          });
+          EOF
+
+      - name: Run focused current-generation regression pack
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p qa-evidence
+          npx vitest run \
+            src/v610PublisherColdRoute.test.ts \
+            src/v610PublisherInventoryReconcile.test.ts \
+            src/v611ChannelRunwayInventoryHotfix.test.ts \
+            src/v612NativeInventoryStress.test.ts \
+            src/v612NativeInventoryTruth.test.ts \
+            src/v614PublisherPhysicalInventoryHotfix.test.ts \
+            src/vyron615PublisherHotfix.test.ts \
+            src/vyron616PhysicalPublisherConsistency.test.ts \
+            src/vyron617CurrentGenerationLeafRecovery.test.ts \
+            src/vyron618PublisherIntegrity.test.ts \
+            src/vyron619ScheduleSources.test.ts \
+            src/uploadQueue.test.ts \
+            src/youtubePublishSafety.test.ts \
+            src/publisherMetadata.test.ts \
+            src/v510MaterialsManager.test.ts \
+            src/v512ManualAssembly.test.ts \
+            2>&1 | tee qa-evidence/focused-regressions.log || true
+
+      - name: Run realistic scale diagnostic
+        shell: bash
+        env:
+          NODE_OPTIONS: --expose-gc
+        run: |
+          set -o pipefail
+          npx vitest run src/__vyron_audit_perf.test.ts --reporter=verbose 2>&1 | tee qa-evidence/performance.log
+
+      - name: Static timer and subscription audit
+        shell: bash
+        run: |
+          python3 - <<'PY' | tee qa-evidence/runtime-static-map.txt
+          from pathlib import Path
+          import re
+          for p in sorted(Path('src').glob('*.ts*')):
+              s=p.read_text(errors='ignore')
+              timers=len(re.findall(r'\b(?:setInterval|setTimeout)\s*\(',s))
+              app_sub=len(re.findall(r'useApp\.subscribe\s*\(',s))
+              live_sub=len(re.findall(r'useLiveInventory\.subscribe\s*\(',s))
+              get_state=len(re.findall(r'useApp\.getState\s*\(',s))
+              if timers or app_sub or live_sub or get_state>=5:
+                  print(f'{p}\ttimers={timers}\tappSubscribe={app_sub}\tliveSubscribe={live_sub}\tgetState={get_state}')
+          PY
+
+      - name: Remove ephemeral test and prove checkout product unchanged
+        shell: bash
+        run: |
+          rm -f src/__vyron_audit_perf.test.ts
+          test -z "$(git status --porcelain)"
+          echo PRODUCT_SOURCE_MUTATIONS=0
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: VYRON-6.1.9-MACOS-BUG-AUDIT-DIAGNOSTICS
+          path: qa-evidence
+          retention-days: 30
