@@ -75,8 +75,9 @@ function OperationsDashboard(){
  const ownerScheduledValue=ownerTotals.availableChannels?ownerPrefix+fmt(ownerTotals.scheduled):'—';
 
  const active=enabled.find(c=>c.id===activeId)||enabled[0],activeInv=active?inventory.byChannel[active.id]:undefined,activeLive=active?liveSnapshots[active.id]:undefined,activeOwner=active?ownerByChannel.get(active.id):undefined,activeQueued=active?queue.queued.filter(x=>x.spec.channelId===active.id).length:0;
- const jobErrors=activeJobErrors(jobs),actionableErrors=jobErrors.length,readyEndlume=jobs.filter(j=>j.status==='READY_RENDER').length,rendering=jobs.filter(j=>j.status==='RENDERING').length;
- const now=new Date(),dailyOps=buildDailyOperations(enabled,uploadHistory,liveSnapshots,now),uploadedTodayRows=uploadHistory.filter(x=>sameLocalDay(x.uploadedAt,now)&&Boolean(x.youtubeVideoId)),uploadedToday=dailyOps.uploadedToday,failedToday=queue.recent.filter(x=>x.state==='FAILED'&&sameLocalDay(x.finishedAt,now)).length;
+ const {jobErrors,readyEndlume,rendering}=useMemo(()=>({jobErrors:activeJobErrors(jobs),readyEndlume:jobs.filter(j=>j.status==='READY_RENDER').length,rendering:jobs.filter(j=>j.status==='RENDERING').length}),[jobs]),actionableErrors=jobErrors.length;
+ // Upload telemetry re-renders this screen up to 10x/s during uploads; these scans over the full upload history only depend on the local day, not on telemetry.
+ const now=new Date(),dayKey=now.toDateString(),{dailyOps,uploadedTodayRows}=useMemo(()=>{const at=new Date();return{dailyOps:buildDailyOperations(enabled,uploadHistory,liveSnapshots,at),uploadedTodayRows:uploadHistory.filter(x=>sameLocalDay(x.uploadedAt,at)&&Boolean(x.youtubeVideoId))}},[enabled,uploadHistory,liveSnapshots,dayKey]),uploadedToday=dailyOps.uploadedToday,failedToday=queue.recent.filter(x=>x.state==='FAILED'&&sameLocalDay(x.finishedAt,now)).length;
  const apiQuota=youtubeQuotaUsage();
  const activeTodayChannels=new Set<string>([
   ...uploadedTodayRows.map(x=>x.channelId),
