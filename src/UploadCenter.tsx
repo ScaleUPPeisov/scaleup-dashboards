@@ -35,10 +35,18 @@ function UploadCenterModal(){
  const succeeded=queue.recent.filter(x=>x.state==='SUCCEEDED'),failed=queue.recent.filter(x=>x.state==='FAILED');
  const batchTotal=queue.queued.length+queue.running.length+queue.recent.length;
  const batchDone=succeeded.length+failed.length;
- const cleanup=cleanupPreclassification(history,jobs),cleanupCandidates=cleanup.eligible.filter(x=>cleanupEligibleUpload(x,jobs.find(j=>j.id===x.jobId)));
- const processingKept=cleanup.processing.length;
- const failedSources=jobs.filter(x=>x.status==='ERROR'&&x.finalPath&&x.storageLifecycle!=='TRASHED').length;
- const persisted=history.slice().reverse().slice(0,12);
+ // This modal re-renders every second (clock) and up to 10x/s on telemetry; the history/jobs scans below depend only on history and jobs.
+ const{cleanup,cleanupCandidates,processingKept,failedSources,persisted}=useMemo(()=>{
+  const cleanup=cleanupPreclassification(history,jobs),jobById=new Map<string,(typeof jobs)[number]>();
+  for(const j of jobs)if(!jobById.has(j.id))jobById.set(j.id,j);
+  return{
+   cleanup,
+   cleanupCandidates:cleanup.eligible.filter(x=>cleanupEligibleUpload(x,jobById.get(x.jobId))),
+   processingKept:cleanup.processing.length,
+   failedSources:jobs.filter(x=>x.status==='ERROR'&&x.finalPath&&x.storageLifecycle!=='TRASHED').length,
+   persisted:history.slice().reverse().slice(0,12)
+  }
+ },[history,jobs]);
  async function scanLocalSources(){
   if(sourceScanBusy)return;setSourceScanBusy(true);
   try{
