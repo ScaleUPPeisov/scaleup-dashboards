@@ -261,6 +261,8 @@ button.secondary{background:rgba(255,255,255,.035);border-color:#294156;color:#9
   contain:layout paint style;
   contain-intrinsic-size:auto 132px;
 }
+/* Fleet cards are ~3x taller than the generic 132px estimate; a realistic placeholder keeps the scrollbar and layout from jumping as cards enter the viewport (auto = remembers the real size once rendered). */
+.platform-macos .channelFleetCard{contain-intrinsic-size:auto 300px}
 .platform-macos .youtubeChannelContext,
 .platform-macos .channelFleetGrid{
   contain:layout paint style;
