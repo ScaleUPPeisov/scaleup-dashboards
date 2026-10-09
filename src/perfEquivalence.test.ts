@@ -64,3 +64,22 @@ describe('publishRecords parse cache keeps behavior identical',()=>{
     expect(publishRecords()).toEqual([]);expect(globalDailyUploadStatus(100,now).used).toBe(0);
   });
 });
+
+describe('uploadsByVyronToday dedupe cache keeps behavior identical',()=>{
+  beforeEach(()=>storage.clear());
+  it('matches a reference dedupe+filter over randomized ledgers, including duplicates and other days',()=>{
+    let seed=11;const rnd=()=>{seed=(seed*1103515245+12345)&0x7fffffff;return seed/0x7fffffff};
+    const today=new Date();const iso=(d:number)=>{const x=new Date(today);x.setDate(x.getDate()-d);x.setHours(10,0,0,0);return x.toISOString()};
+    const key=(r:any)=>{const v=String(r.videoId||'').trim();if(v)return 'video:'+v;const j=String(r.jobId||'').trim();if(j)return 'job:'+j;return 'fingerprint:'+String(r.fingerprint||'').trim()};
+    for(let round=0;round<60;round++){
+      const n=Math.floor(rnd()*80);
+      const rows=Array.from({length:n},(_,i)=>({id:'r'+i,channelId:'c'+Math.floor(rnd()*4),jobId:'j'+Math.floor(rnd()*30),filePath:'/f',fingerprint:'fp'+Math.floor(rnd()*30),fileSize:1,startedAt:iso(0),completedAt:iso(rnd()<.3?1:0),videoId:rnd()<.8?'v'+Math.floor(rnd()*40):undefined,status:rnd()<.8?'completed':'failed'}));
+      storage.setItem(KEY,JSON.stringify(rows));
+      const seen=new Set<string>(),uniq:any[]=[];for(const r of rows){if(r.status!=='completed'||!r.videoId)continue;const k=key(r);if(seen.has(k))continue;seen.add(k);uniq.push(r)}
+      for(let c=0;c<4;c++){
+        const ref=uniq.filter(x=>x.channelId==='c'+c&&new Date(x.completedAt||x.startedAt).toDateString()===today.toDateString()).map(x=>x.id);
+        expect(uploadsByVyronToday('c'+c,today).map(x=>x.id)).toEqual(ref);
+      }
+    }
+  });
+});

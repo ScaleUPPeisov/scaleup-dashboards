@@ -92,7 +92,10 @@ export function acquireChannelUploadLock(channelId:string){if(runtimeLocks.some(
 export function releaseChannelUploadLock(channelId:string,token:string){runtimeLocks=runtimeLocks.filter(x=>!(x.channelId===channelId&&x.token===token))}
 export function isChannelUploadLocked(channelId:string){return runtimeLocks.some(x=>x.channelId===channelId)}
 export function clearRuntimeChannelUploadLocks(){runtimeLocks=[]}
-export function uploadsByVyronToday(channelId:string,now=new Date()){return uniqueCompletedUploads(publishRecords()).filter(x=>{if(x.channelId!==channelId)return false;const d=new Date(x.completedAt||x.startedAt);return !Number.isNaN(d.getTime())&&d.getFullYear()===now.getFullYear()&&d.getMonth()===now.getMonth()&&d.getDate()===now.getDate()})}
+// Dedupe once per ledger snapshot: publishRecords() returns the same array until the stored string changes, and every card asks for its own channel.
+let uniqueSource:PublishUploadRecord[]|null=null,uniqueResult:PublishUploadRecord[]=[];
+function uniqueLedgerUploads(){const rows=publishRecords();if(rows!==uniqueSource){uniqueResult=uniqueCompletedUploads(rows);uniqueSource=rows}return uniqueResult}
+export function uploadsByVyronToday(channelId:string,now=new Date()){return uniqueLedgerUploads().filter(x=>{if(x.channelId!==channelId)return false;const d=new Date(x.completedAt||x.startedAt);return !Number.isNaN(d.getTime())&&d.getFullYear()===now.getFullYear()&&d.getMonth()===now.getMonth()&&d.getDate()===now.getDate()})}
 export const VYRON_GLOBAL_DAILY_UPLOAD_LIMIT=100;
 export function uploadsByVyronQuotaDay(now=new Date()){
  const day=youtubePtDate(now);
