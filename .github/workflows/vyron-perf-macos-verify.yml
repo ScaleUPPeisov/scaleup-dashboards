@@ -1,0 +1,80 @@
+name: VYRON perf macOS verify (no publish)
+
+on:
+  push:
+    branches:
+      - ci/verify-perf-macos
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-perf-macos-verify
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: macOS build and test (no secrets, no upload, no release)
+    runs-on: macos-14
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Source identity
+        run: |
+          git log --oneline -3
+          echo "HEAD=$(git rev-parse HEAD)"
+          node -p "'package.json version: '+require('./package.json').version"
+          rustc --version && cargo --version && node --version
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: npm ci
+        run: npm ci --no-audit --no-fund
+
+      - name: TypeScript
+        id: tsc
+        continue-on-error: true
+        run: npx tsc --noEmit
+
+      - name: Frontend production build
+        id: fe
+        continue-on-error: true
+        run: npm run build
+
+      - name: Unit tests (vitest)
+        id: vitest
+        continue-on-error: true
+        run: |
+          npx vitest run --reporter=json --outputFile=vitest.json || true
+          node -e "const r=require('./vitest.json');console.log('VITEST failed tests:',r.numFailedTests,'passed:',r.numPassedTests,'failed files:',r.testResults.filter(f=>f.status!=='passed').length)"
+
+      - name: cargo check
+        id: cargo_check
+        continue-on-error: true
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+
+      - name: cargo test --lib
+        id: cargo_test
+        continue-on-error: true
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+
+      - name: Tauri release binary (compile only, no bundle, no signing)
+        id: tauri
+        continue-on-error: true
+        run: npx tauri build --target aarch64-apple-darwin --no-bundle
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "TSC=${{ steps.tsc.outcome }}"
+          echo "FRONTEND_BUILD=${{ steps.fe.outcome }}"
+          echo "VITEST_STEP=${{ steps.vitest.outcome }}"
+          echo "CARGO_CHECK=${{ steps.cargo_check.outcome }}"
+          echo "CARGO_TEST=${{ steps.cargo_test.outcome }}"
+          echo "TAURI_NO_BUNDLE=${{ steps.tauri.outcome }}"
