@@ -14,7 +14,18 @@ function get<T>(key:string,fallback:T):T{try{const v=JSON.parse(localStorage.get
 function set(key:string,v:unknown){try{localStorage.setItem(key,JSON.stringify(v))}catch{}}
 function emitGlobalUploadStatusChanged(){for(const cb of [...globalUploadListeners]){try{cb()}catch{}}}
 export function subscribeGlobalDailyUploadStatus(cb:()=>void){globalUploadListeners.add(cb);return()=>{globalUploadListeners.delete(cb)}}
-export function publishRecords():PublishUploadRecord[]{const x=get<any[]>(RECORDS,[]);return Array.isArray(x)?x:[]}
+// publishRecords() is read once per channel card (safeDailyStatus) and by the topbar, so JSON.parse of the whole ledger on every call is the cost.
+// Cache the parsed rows keyed by the exact raw localStorage string: any write (saveRecords, tests, another window) changes the string and invalidates it.
+// Every caller builds a new array (map/filter/slice/spread) and never mutates the returned one in place.
+let recordsRaw:string|null=null,recordsParsed:PublishUploadRecord[]=[];
+export function publishRecords():PublishUploadRecord[]{
+ let raw:string|null;
+ try{raw=localStorage.getItem(RECORDS)}catch{return[]}
+ if(raw===recordsRaw)return recordsParsed;
+ let parsed:PublishUploadRecord[]=[];
+ try{const v=JSON.parse(raw||'null');parsed=Array.isArray(v)?v:[]}catch{parsed=[]}
+ recordsRaw=raw;recordsParsed=parsed;return parsed
+}
 function saveRecords(rows:PublishUploadRecord[]){set(RECORDS,rows.slice(-2000));emitGlobalUploadStatusChanged()}
 function completedUploadKey(row:Pick<PublishUploadRecord,'videoId'|'jobId'|'fingerprint'>){
  const video=String(row.videoId||'').trim();if(video)return 'video:'+video;
