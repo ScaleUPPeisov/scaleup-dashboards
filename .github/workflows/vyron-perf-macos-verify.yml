@@ -17,6 +17,16 @@ jobs:
     name: macOS build and test (no secrets, no upload, no release)
     runs-on: macos-14
     timeout-minutes: 75
+    outputs:
+      tsc: ${{ steps.sum.outputs.tsc }}
+      fe: ${{ steps.sum.outputs.fe }}
+      vfail: ${{ steps.vitest.outputs.vfail }}
+      vpass: ${{ steps.vitest.outputs.vpass }}
+      ccheck: ${{ steps.sum.outputs.ccheck }}
+      ctest: ${{ steps.sum.outputs.ctest }}
+      cpass: ${{ steps.cargo_test.outputs.cpass }}
+      cfail: ${{ steps.cargo_test.outputs.cfail }}
+      tauri: ${{ steps.sum.outputs.tauri }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -52,7 +62,9 @@ jobs:
         continue-on-error: true
         run: |
           npx vitest run --reporter=json --outputFile=vitest.json || true
-          node -e "const r=require('./vitest.json');console.log('VITEST failed tests:',r.numFailedTests,'passed:',r.numPassedTests,'failed files:',r.testResults.filter(f=>f.status!=='passed').length)"
+          node -e "const r=require('./vitest.json');console.log('VITEST failed tests:',r.numFailedTests,'passed:',r.numPassedTests)"
+          echo "vfail=$(node -p "require('./vitest.json').numFailedTests")" >> "$GITHUB_OUTPUT"
+          echo "vpass=$(node -p "require('./vitest.json').numPassedTests")" >> "$GITHUB_OUTPUT"
 
       - name: cargo check
         id: cargo_check
@@ -62,7 +74,14 @@ jobs:
       - name: cargo test --lib
         id: cargo_test
         continue-on-error: true
-        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+        shell: bash
+        run: |
+          set +e
+          cargo test --manifest-path src-tauri/Cargo.toml --lib 2>&1 | tee cargo-test.log
+          ec=${PIPESTATUS[0]}
+          echo "cpass=$(grep -E '^test result' cargo-test.log | sed -E 's/.* ([0-9]+) passed.*/\1/' | head -1)" >> "$GITHUB_OUTPUT"
+          echo "cfail=$(grep -E '^test result' cargo-test.log | sed -E 's/.*passed; ([0-9]+) failed.*/\1/' | head -1)" >> "$GITHUB_OUTPUT"
+          exit $ec
 
       - name: Tauri release binary (compile only, no bundle, no signing)
         id: tauri
@@ -70,11 +89,19 @@ jobs:
         run: npx tauri build --target aarch64-apple-darwin --no-bundle
 
       - name: Summary
+        id: sum
         if: always()
         run: |
-          echo "TSC=${{ steps.tsc.outcome }}"
-          echo "FRONTEND_BUILD=${{ steps.fe.outcome }}"
-          echo "VITEST_STEP=${{ steps.vitest.outcome }}"
-          echo "CARGO_CHECK=${{ steps.cargo_check.outcome }}"
-          echo "CARGO_TEST=${{ steps.cargo_test.outcome }}"
-          echo "TAURI_NO_BUNDLE=${{ steps.tauri.outcome }}"
+          echo "tsc=${{ steps.tsc.outcome }}" >> "$GITHUB_OUTPUT"
+          echo "fe=${{ steps.fe.outcome }}" >> "$GITHUB_OUTPUT"
+          echo "ccheck=${{ steps.cargo_check.outcome }}" >> "$GITHUB_OUTPUT"
+          echo "ctest=${{ steps.cargo_test.outcome }}" >> "$GITHUB_OUTPUT"
+          echo "tauri=${{ steps.tauri.outcome }}" >> "$GITHUB_OUTPUT"
+
+  report:
+    name: "RESULT tsc=${{ needs.verify.outputs.tsc }} build=${{ needs.verify.outputs.fe }} vitestFailed=${{ needs.verify.outputs.vfail }} vitestPassed=${{ needs.verify.outputs.vpass }} cargoCheck=${{ needs.verify.outputs.ccheck }} cargoTest=${{ needs.verify.outputs.ctest }} rustPassed=${{ needs.verify.outputs.cpass }} rustFailed=${{ needs.verify.outputs.cfail }} tauriNoBundle=${{ needs.verify.outputs.tauri }}"
+    needs: verify
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "see job name"
