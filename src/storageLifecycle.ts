@@ -35,7 +35,7 @@ export function markHistorySourceState(history:UploadHistoryRecord[],id:string,s
 
 
 export type CanonicalUploadState='NEW'|'QUEUED'|'UPLOADING'|'UPLOAD_ACCEPTED'|'VERIFY_REQUIRED'|'YOUTUBE_PROCESSING'|'READY'|'UPLOAD_FAILED'|'PROCESSING_FAILED'|'REJECTED'|'REMOTE_MISSING'|'SOURCE_MISSING'|'TRASHED';
-export function latestUploadRecord(history:UploadHistoryRecord[],jobId:string){return history.slice().reverse().find(x=>x.jobId===jobId&&x.status==='UPLOADED'&&!x.staleLinkClearedAt)}
+export function latestUploadRecord(history:UploadHistoryRecord[],jobId:string){for(let i=history.length-1;i>=0;i--){const x=history[i];if(x.jobId===jobId&&x.status==='UPLOADED'&&!x.staleLinkClearedAt)return x}return undefined}
 function trustedGenerationHash(value?:string){return /^[a-f0-9]{64}$/i.test(String(value||'').trim())}
 function currentGenerationMatchesProof(job:VideoJob,proof?:UploadHistoryRecord){
  const current=String(job.currentSourceFingerprint||'').trim().toLowerCase();

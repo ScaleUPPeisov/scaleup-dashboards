@@ -50,7 +50,9 @@ type OperationLedgerRow=YoutubeQuotaTraceRow;
 function lsGet(key:string){try{return typeof localStorage==='undefined'?null:localStorage.getItem(key)}catch{return null}}
 function lsSet(key:string,value:string){try{if(typeof localStorage!=='undefined')localStorage.setItem(key,value)}catch{}}
 function emit(){try{if(typeof window!=='undefined')window.dispatchEvent(new Event(EVT))}catch{}}
-function parts(date:Date,timeZone:string){return new Intl.DateTimeFormat('en-CA',{timeZone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(date).reduce<Record<string,string>>((a,x)=>(a[x.type]=x.value,a),{})}
+// Constructing an Intl.DateTimeFormat is ~100x more expensive than formatting with a reused one; callers run this per upload record.
+const PARTS_FORMATTERS=new Map<string,Intl.DateTimeFormat>();
+function parts(date:Date,timeZone:string){let f=PARTS_FORMATTERS.get(timeZone);if(!f){f=new Intl.DateTimeFormat('en-CA',{timeZone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'});PARTS_FORMATTERS.set(timeZone,f)}return f.formatToParts(date).reduce<Record<string,string>>((a,x)=>(a[x.type]=x.value,a),{})}
 export function youtubePtDate(now=new Date()){const p=parts(now,'America/Los_Angeles');return `${p.year}-${p.month}-${p.day}`}
 function pacificOffsetMs(utc:Date){const p=parts(utc,'America/Los_Angeles');const asUtc=Date.UTC(+p.year,+p.month-1,+p.day,+p.hour,+p.minute,+p.second);return asUtc-utc.getTime()}
 export function nextYoutubeQuotaResetAt(now=new Date()){
