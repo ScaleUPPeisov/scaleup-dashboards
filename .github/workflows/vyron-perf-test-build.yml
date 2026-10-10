@@ -40,6 +40,28 @@ jobs:
           codesign --force --deep -s - "$APP"
           ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/VYRON-PerfTest.zip"
           ls -la "$RUNNER_TEMP/VYRON-PerfTest.zip"
+      - name: Launch smoke (simulates user download)
+        continue-on-error: true
+        run: |
+          set +e
+          D="$RUNNER_TEMP/dl"; rm -rf "$D"; mkdir -p "$D"; ditto -x -k "$RUNNER_TEMP/VYRON-PerfTest.zip" "$D"
+          APP="$D/VYRON PerfTest.app"
+          xattr -w com.apple.quarantine "0081;00000000;Safari;" "$APP"
+          OUT=""
+          OUT="$OUT\nSPCTL: $(spctl --assess --type execute -vv "$APP" 2>&1)"
+          OUT="$OUT\nCODESIGN: $(codesign -dv --verbose=2 "$APP" 2>&1 | head -12)"
+          OUT="$OUT\nVERIFY: $(codesign --verify --deep --strict "$APP" 2>&1)"
+          OUT="$OUT\nARCH: $(lipo -archs "$APP/Contents/MacOS/"* 2>&1)"
+          xattr -cr "$APP"
+          BIN="$(ls "$APP/Contents/MacOS/"* | head -1)"
+          "$BIN" > "$RUNNER_TEMP/app.log" 2>&1 &
+          PID=$!
+          sleep 20
+          if kill -0 $PID 2>/dev/null; then OUT="$OUT\nALIVE after 20s: YES"; else wait $PID; OUT="$OUT\nALIVE after 20s: NO exit=$?"; fi
+          OUT="$OUT\nAPPLOG: $(head -c 3000 "$RUNNER_TEMP/app.log")"
+          OUT="$OUT\nCRASH: $(ls -t ~/Library/Logs/DiagnosticReports 2>/dev/null | head -3)"
+          kill $PID 2>/dev/null
+          echo "::notice title=smoke::$(printf "$OUT" | tr '\n' '|' | head -c 6000)"
       - uses: actions/upload-artifact@v4
         with:
           name: VYRON-PerfTest-macOS-arm64
