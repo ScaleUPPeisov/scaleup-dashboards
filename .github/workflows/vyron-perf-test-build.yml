@@ -1,0 +1,47 @@
+name: VYRON Perf Test Build (unsigned, isolated, NOT a release)
+
+on:
+  push:
+    branches:
+      - perf/vyron-macos-premium-ui-120hz
+    paths:
+      - '.github/workflows/vyron-perf-test-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci --no-audit --no-fund
+      # Isolated build: different bundle id + name => separate data dir/Keychain/updater, no secrets used, no release, no manifests.
+      - name: Build isolated test app
+        run: |
+          npx tauri build --bundles app --target aarch64-apple-darwin \
+            --config '{"identifier":"studio.channelflow.perftest","productName":"VYRON PerfTest","bundle":{"createUpdaterArtifacts":false},"plugins":{"updater":{"endpoints":["http://127.0.0.1:9/none.json"]}}}'
+      - name: Ad-hoc sign and zip
+        run: |
+          APP="$(find src-tauri/target -name 'VYRON PerfTest.app' -maxdepth 6 | head -1)"
+          echo "APP=$APP"
+          codesign --force --deep -s - "$APP"
+          ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/VYRON-PerfTest.zip"
+          ls -la "$RUNNER_TEMP/VYRON-PerfTest.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-PerfTest-macOS-arm64
+          path: ${{ runner.temp }}/VYRON-PerfTest.zip
+          retention-days: 3
