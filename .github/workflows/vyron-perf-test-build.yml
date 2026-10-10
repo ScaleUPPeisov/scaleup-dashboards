@@ -15,6 +15,8 @@ jobs:
   build:
     runs-on: macos-14
     timeout-minutes: 60
+    outputs:
+      diag: ${{ steps.diag.outputs.line }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -62,8 +64,26 @@ jobs:
           OUT="$OUT\nCRASH: $(ls -t ~/Library/Logs/DiagnosticReports 2>/dev/null | head -3)"
           kill $PID 2>/dev/null
           echo "::notice title=smoke::$(printf "$OUT" | tr '\n' '|' | head -c 6000)"
+      - name: Launch diagnostics
+        id: diag
+        run: |
+          APP="$(find src-tauri/target -name 'VYRON PerfTest.app' -maxdepth 6 | head -1)"
+          BIN="$(ls "$APP"/Contents/MacOS/* | head -1)"
+          ARCH="$(lipo -info "$BIN" 2>&1 | sed 's/.*: //')"
+          SIG="$(codesign --verify --deep --strict "$APP" 2>&1 && echo sig-ok || echo sig-BAD)"
+          ( "$BIN" > "$RUNNER_TEMP/run.log" 2>&1 & echo $! > "$RUNNER_TEMP/pid"; sleep 12; if kill -0 "$(cat "$RUNNER_TEMP/pid")" 2>/dev/null; then echo ALIVE > "$RUNNER_TEMP/state"; kill "$(cat "$RUNNER_TEMP/pid")"; else wait "$(cat "$RUNNER_TEMP/pid")" 2>/dev/null; echo "EXIT-$?" > "$RUNNER_TEMP/state"; fi ) || true
+          ERR="$(tr '\n' ' ' < "$RUNNER_TEMP/run.log" | cut -c1-220)"
+          echo "line=$ARCH | $SIG | $(cat "$RUNNER_TEMP/state") | $ERR" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
           name: VYRON-PerfTest-macOS-arm64
           path: ${{ runner.temp }}/VYRON-PerfTest.zip
           retention-days: 3
+
+  report:
+    needs: build
+    if: always()
+    runs-on: ubuntu-latest
+    name: "DIAG ${{ needs.build.outputs.diag }}"
+    steps:
+      - run: echo done
