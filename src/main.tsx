@@ -14,4 +14,5 @@ import './v216.css';
 import './ui-layout-contract.css';
 import './live-inventory.css';
 import './v400-celebration.css';
+import './vyron-premium.css';
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);

@@ -1,0 +1,59 @@
+/* VYRON premium polish layer — additive, loaded last.
+   Zero-specificity (:where) defaults so every component-specific style still wins.
+   Only visuals/motion: no layout contracts, no logic, no Google/OAuth surfaces touched. */
+:root{
+  --vp-bg:#0A101B;--vp-surface:rgba(255,255,255,.035);--vp-surface-hover:rgba(92,108,255,.14);
+  --vp-line:rgba(155,168,190,.18);--vp-line-strong:rgba(108,99,255,.5);
+  --vp-text:#F4F7FF;--vp-muted:#9BA8BE;--vp-accent:#6C63FF;
+  --vp-ease:cubic-bezier(.2,.7,.2,1);
+}
+body{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro Text",Inter,"Segoe UI",system-ui,sans-serif;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+
+/* Default button: replaces the native grey look on any button that has no own styling */
+:where(button){
+  background:var(--vp-surface);color:var(--vp-text);
+  border:1px solid var(--vp-line);border-radius:10px;
+  font-weight:600;cursor:pointer;
+  transition:transform .12s var(--vp-ease),background-color .14s var(--vp-ease),border-color .14s var(--vp-ease),opacity .14s var(--vp-ease);
+}
+:where(button):hover:not(:disabled){background:var(--vp-surface-hover);border-color:var(--vp-line-strong)}
+:where(button):active:not(:disabled){transform:translateY(1px) scale(.992)}
+:where(button):disabled{opacity:.45;cursor:not-allowed}
+button:focus-visible,[role="button"]:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible{
+  outline:2px solid #5C6CFF;outline-offset:2px}
+
+/* Readable micro-labels (were 7–8px) */
+.topbarQuota>span small{font-size:9px;letter-spacing:.04em}
+.topbarQuota>span b{font-size:13px;font-variant-numeric:tabular-nums}
+
+/* Topbar: quota chips in one row when there is room, never overlapping the bell */
+.vyronMasterTopbar .topbarQuota{flex-wrap:nowrap!important;gap:6px!important}
+.vyronMasterTopbar .topbarQuota>span{flex:0 1 auto!important;white-space:nowrap}
+.vyronMasterTopbar .topbarQuota>span small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media (max-width:1280px){.vyronMasterTopbar .topbarQuota{flex-wrap:wrap!important}}
+
+/* Cards: one consistent premium surface */
+.panel,.settingsCard,.competitorCard{border-radius:18px}
+.channelFleetCard,.channelCard{border-radius:18px}
+
+/* Motion: short, transform/opacity only */
+@keyframes vyronPremiumIn{from{opacity:0;transform:translate3d(0,6px,0)}to{opacity:1;transform:none}}
+.pageWrap{animation:vyronPremiumIn .16s var(--vp-ease) both}
+.platform-macos .pageWrap{animation-duration:.12s}
+.sidebar nav button{transition:transform .14s var(--vp-ease),background-color .14s var(--vp-ease),border-color .14s var(--vp-ease),color .14s var(--vp-ease)}
+
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;scroll-behavior:auto!important}
+}
+
+/* Notification bell lives inside the topbar row instead of floating over page content */
+.notificationBellButton{top:14px!important;right:16px!important;width:36px!important;height:36px!important}
+.topbar.vyronMasterTopbar{padding-right:64px!important}
+.vyronMasterTopbar .topbarQuota>span{padding:5px 8px!important}
+.vyronMasterTopbar .topbarIdentity{min-width:0!important;flex:0 1 190px}
+.vyronMasterTopbar .topStatus{gap:6px!important}
+@media (max-width:900px){.notificationBellButton{top:auto!important;bottom:18px!important;right:18px!important}.topbar.vyronMasterTopbar{padding-right:14px!important}}
+.vyronMasterTopbar .topbarQuota>span{flex:0 0 auto!important}
+.vyronMasterTopbar .topbarQuota>span small{overflow:visible;text-overflow:clip}
+.vyronMasterTopbar .topbarIdentity{flex:0 1 150px}
+@media (max-width:1500px){.vyronMasterTopbar .topbarQuota{flex-wrap:wrap!important}}
