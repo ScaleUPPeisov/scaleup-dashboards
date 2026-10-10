@@ -34,7 +34,7 @@ jobs:
       - name: Build isolated test app
         run: |
           npx tauri build --bundles app --target aarch64-apple-darwin \
-            --config '{"identifier":"studio.channelflow.perftest","productName":"VYRON PerfTest","bundle":{"createUpdaterArtifacts":false},"plugins":{"updater":{"endpoints":["http://127.0.0.1:9/none.json"]}}}'
+            --config '{"identifier":"studio.channelflow.perftest","productName":"VYRON PerfTest","bundle":{"createUpdaterArtifacts":false},"plugins":{"updater":{"endpoints":["https://localhost:9/none.json"]}}}'
       - name: Ad-hoc sign and zip
         run: |
           APP="$(find src-tauri/target -name 'VYRON PerfTest.app' -maxdepth 6 | head -1)"
