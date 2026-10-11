@@ -41,6 +41,15 @@ jobs:
           node-version: '22'
           cache: npm
 
+      - name: Install one consistent current QA toolchain
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm ci --no-audit --no-fund
+          npm install --no-save --no-package-lock react-test-renderer@19.1.1
+          test -x node_modules/.bin/vitest
+          echo HISTORICAL_SOURCE_MUTATION=NO
+
       - name: Extract unique failing test files
         shell: bash
         run: |
@@ -52,7 +61,7 @@ jobs:
           echo "UNIQUE_FAILING_FILES=$(wc -l < "$RUNNER_TEMP/failing-files.txt" | tr -d ' ')"
           cat "$RUNNER_TEMP/failing-files.txt"
 
-      - name: Resolve introduction commit and declared contract version
+      - name: Resolve current contract ref and declared contract version
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -63,75 +72,82 @@ jobs:
           files=Path(os.environ['RUNNER_TEMP']+'/failing-files.txt').read_text().splitlines()
           rows=[]
           def sh(*args):
-            return subprocess.check_output(args,text=True).strip()
+            return subprocess.check_output(args,text=True,stderr=subprocess.DEVNULL).strip()
+          def show_json(ref,path):
+            try:return json.loads(sh('git','show',f'{ref}:{path}'))
+            except Exception:return {}
           for p in files:
-            commits=sh('git','log',safe,'--diff-filter=A','--format=%H','--',p).splitlines()
-            intro=commits[-1] if commits else ''
-            intro_date=sh('git','show','-s','--format=%cI',intro) if intro else ''
-            intro_msg=sh('git','show','-s','--format=%s',intro) if intro else ''
-            pkg_version=''
-            if intro:
-              try:
-                pkg=json.loads(sh('git','show',f'{intro}:package.json'))
-                pkg_version=str(pkg.get('version',''))
-              except Exception:
-                pass
+            # Contract ref = newest commit on proven safe-base ancestry that changed this test file.
+            # This is more accurate than introduction ref because many old tests were revised later.
+            refs=sh('git','log','-n','1','--format=%H',safe,'--',p).splitlines()
+            contract=refs[0] if refs else ''
+            if not contract:
+              # Merge-added paths can be invisible to a simple path log. Fall back to the newest
+              # safe-base ancestor where the exact file object exists.
+              candidates=sh('git','rev-list',safe).splitlines()
+              for c in candidates:
+                try:
+                  subprocess.check_call(['git','cat-file','-e',f'{c}:{p}'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+                  contract=c;break
+                except subprocess.CalledProcessError:
+                  pass
+            if not contract: raise SystemExit(f'NO_CONTRACT_REF:{p}')
+            date=sh('git','show','-s','--format=%cI',contract)
+            msg=sh('git','show','-s','--format=%s',contract)
+            pkg=show_json(contract,'package.json')
             current=Path(p).read_text(errors='replace')
             versions=[]
             for m in re.finditer(r'VYRON\s+([0-9]+(?:\.[0-9]+){1,2}(?:\s+RC\d+)?)',current,re.I):
               v=m.group(1)
               if v not in versions: versions.append(v)
             explicit_identity=bool(re.search(r"toBe\(['\"]\d+\.\d+\.\d+['\"]\)|VYRON_MAJOR_VERSION=.*\d+\.\d+\.\d+",current))
-            rows.append(dict(test_file=p,intro_commit=intro,intro_date=intro_date,intro_message=intro_msg,intro_package_version=pkg_version,declared_contract_versions=versions,contains_exact_version_identity_assertion=explicit_identity))
+            rows.append(dict(test_file=p,contract_ref=contract,contract_date=date,contract_message=msg,contract_package_version=str(pkg.get('version','')),declared_contract_versions=versions,contains_exact_version_identity_assertion=explicit_identity))
           Path(os.environ['RUNNER_TEMP']+'/provenance.json').write_text(json.dumps(rows,indent=2,ensure_ascii=False)+'\n')
           print(json.dumps(rows,indent=2,ensure_ascii=False))
           PY
 
-      - name: Execute every failing test file at its introduction ref
+      - name: Execute every failing test file at its contract ref using current QA toolchain
         shell: bash
         run: |
           set -Eeuo pipefail
           python3 - <<'PY'
-          import json, os, pathlib, subprocess
+          import json, os, pathlib
           rows=json.loads(pathlib.Path(os.environ['RUNNER_TEMP']+'/provenance.json').read_text())
           groups={}
-          for r in rows:
-            groups.setdefault(r['intro_commit'],[]).append(r['test_file'])
+          for r in rows: groups.setdefault(r['contract_ref'],[]).append(r['test_file'])
           pathlib.Path(os.environ['RUNNER_TEMP']+'/groups.json').write_text(json.dumps(groups,indent=2)+'\n')
-          print(f'UNIQUE_INTRO_COMMITS={len(groups)}')
+          print(f'UNIQUE_CONTRACT_REFS={len(groups)}')
           PY
           mkdir -p "$RUNNER_TEMP/results"
           i=0
-          while IFS= read -r intro; do
+          while IFS= read -r ref; do
             i=$((i+1))
-            test -n "$intro"
+            test -n "$ref"
             wt="$RUNNER_TEMP/wt-$i"
-            git worktree add --detach "$wt" "$intro"
-            files="$(INTRO="$intro" python3 - <<'PY'
+            git worktree add --detach "$wt" "$ref"
+            files="$(REF="$ref" python3 - <<'PY'
           import json,os,pathlib
           g=json.loads(pathlib.Path(os.environ['RUNNER_TEMP']+'/groups.json').read_text())
-          print('\n'.join(g[os.environ['INTRO']]))
+          print('\n'.join(g[os.environ['REF']]))
           PY
             )"
             printf '%s\n' "$files" > "$RUNNER_TEMP/results/$i-files.txt"
+            ln -s "$GITHUB_WORKSPACE/node_modules" "$wt/node_modules"
             (
               cd "$wt"
-              npm ci --no-audit --no-fund
-              if grep -R -q "react-test-renderer" $files 2>/dev/null; then
-                npm install --no-save --no-package-lock react-test-renderer@19.1.1
-              fi
               set +e
-              npx vitest run $files --reporter=json --outputFile="$RUNNER_TEMP/results/$i.json"
+              "$GITHUB_WORKSPACE/node_modules/.bin/vitest" run $files --reporter=json --outputFile="$RUNNER_TEMP/results/$i.json"
               code=$?
               set -e
               echo "$code" > "$RUNNER_TEMP/results/$i.exit"
               test -s "$RUNNER_TEMP/results/$i.json"
             )
+            rm -f "$wt/node_modules"
             git worktree remove --force "$wt"
           done < <(python3 - <<'PY'
           import json,os,pathlib
           g=json.loads(pathlib.Path(os.environ['RUNNER_TEMP']+'/groups.json').read_text())
-          print('\n'.join(k for k in g if k))
+          print('\n'.join(g.keys()))
           PY
           )
 
@@ -145,33 +161,33 @@ jobs:
           rows=json.loads((temp/'provenance.json').read_text())
           groups=json.loads((temp/'groups.json').read_text())
           by_file={}
-          for idx,intro in enumerate([k for k in groups if k],1):
+          refs=list(groups.keys())
+          for idx,ref in enumerate(refs,1):
             data=json.loads((temp/f'results/{idx}.json').read_text())
             for suite in data.get('testResults',[]):
               raw=str(suite.get('name','')).replace('\\','/')
               matched=None
-              for f in groups[intro]:
-                if raw.endswith('/'+f) or raw==f or raw.endswith(f):
-                  matched=f; break
+              for f in groups[ref]:
+                if raw.endswith('/'+f) or raw==f or raw.endswith(f): matched=f;break
               if not matched: continue
               assertions=suite.get('assertionResults',[])
               by_file[matched]={
-                'intro_total':len(assertions),
-                'intro_failed':sum(1 for a in assertions if a.get('status')=='failed'),
-                'intro_pending':sum(1 for a in assertions if a.get('status') in ('pending','skipped','todo')),
-                'intro_passed':sum(1 for a in assertions if a.get('status')=='passed'),
-                'intro_failure_names':[a.get('fullName') or a.get('title') for a in assertions if a.get('status')=='failed'],
+                'total':len(assertions),
+                'failed':sum(1 for a in assertions if a.get('status')=='failed'),
+                'pending':sum(1 for a in assertions if a.get('status') in ('pending','skipped','todo')),
+                'passed':sum(1 for a in assertions if a.get('status')=='passed'),
+                'failure_names':[a.get('fullName') or a.get('title') for a in assertions if a.get('status')=='failed'],
               }
-          lines=['# VYRON 6.1.10 — HISTORICAL CONTRACT TEST PROVENANCE','',f'- SAFE_BASE: `{os.environ["SAFE_BASE"]}`','- PRODUCT_MUTATION: NO','- CANDIDATE_BUILD: NO','- RELEASE: BLOCKED','']
+          lines=['# VYRON 6.1.10 — HISTORICAL CONTRACT TEST PROVENANCE','',f'- SAFE_BASE: `{os.environ["SAFE_BASE"]}`','- QA_TOOLCHAIN_SOURCE: CURRENT_SAFE_BRANCH_DEPENDENCIES','- HISTORICAL_SOURCE_MUTATION: NO','- PRODUCT_MUTATION: NO','- CANDIDATE_BUILD: NO','- RELEASE: BLOCKED','']
           proven=0; not_proven=0
           for r in rows:
             res=by_file.get(r['test_file'],{})
-            passed=res.get('intro_failed')==0 and res.get('intro_pending')==0 and res.get('intro_total',0)>0
+            passed=res.get('failed')==0 and res.get('pending')==0 and res.get('total',0)>0
             if passed: proven+=1
             else: not_proven+=1
-            lines += [f'## {r["test_file"]}','',f'- INTRO_COMMIT: `{r["intro_commit"]}`',f'- INTRO_DATE: {r["intro_date"]}',f'- INTRO_MESSAGE: {r["intro_message"]}',f'- INTRO_PACKAGE_VERSION: {r["intro_package_version"] or "UNKNOWN"}',f'- DECLARED_CONTRACT_VERSIONS: {", ".join(r["declared_contract_versions"]) or "NONE"}',f'- EXACT_VERSION_IDENTITY_ASSERTION: {"YES" if r["contains_exact_version_identity_assertion"] else "NO"}',f'- INTRO_TESTS_TOTAL: {res.get("intro_total","UNKNOWN")}',f'- INTRO_TESTS_PASSED: {res.get("intro_passed","UNKNOWN")}',f'- INTRO_TESTS_FAILED: {res.get("intro_failed","UNKNOWN")}',f'- INTRO_TESTS_PENDING: {res.get("intro_pending","UNKNOWN")}',f'- PASSED_AT_INTRO_REF: {"YES" if passed else "NO"}',f'- INTRO_FAILURES: {res.get("intro_failure_names",[])}','']
-          lines += ['## Summary','',f'- UNIQUE_FAILING_FILES: {len(rows)}',f'- FILES_PASSING_AT_INTRO_REF: {proven}',f'- FILES_NOT_PASSING_AT_INTRO_REF: {not_proven}','', 'Passing at the introduction ref is provenance evidence only. It does not by itself authorize excluding a test from current regression. Current-head routing/classification still requires contract-level review.','']
-          pathlib.Path('VYRON_6_1_10_HISTORICAL_TEST_PROVENANCE.md').write_text('\n'.join(lines))
+            lines += [f'## {r["test_file"]}','',f'- CONTRACT_REF: `{r["contract_ref"]}`',f'- CONTRACT_DATE: {r["contract_date"]}',f'- CONTRACT_MESSAGE: {r["contract_message"]}',f'- CONTRACT_PACKAGE_VERSION: {r["contract_package_version"] or "UNKNOWN"}',f'- DECLARED_CONTRACT_VERSIONS: {", ".join(r["declared_contract_versions"]) or "NONE"}',f'- EXACT_VERSION_IDENTITY_ASSERTION: {"YES" if r["contains_exact_version_identity_assertion"] else "NO"}',f'- CONTRACT_TESTS_TOTAL: {res.get("total","UNKNOWN")}',f'- CONTRACT_TESTS_PASSED: {res.get("passed","UNKNOWN")}',f'- CONTRACT_TESTS_FAILED: {res.get("failed","UNKNOWN")}',f'- CONTRACT_TESTS_PENDING: {res.get("pending","UNKNOWN")}',f'- PASSED_AT_CONTRACT_REF: {"YES" if passed else "NO"}',f'- CONTRACT_REF_FAILURES: {res.get("failure_names",[])}','']
+          lines += ['## Summary','',f'- UNIQUE_FAILING_FILES: {len(rows)}',f'- FILES_PASSING_AT_CONTRACT_REF: {proven}',f'- FILES_NOT_PASSING_AT_CONTRACT_REF: {not_proven}','', 'Passing at the latest test-contract ref is provenance evidence only. It does not authorize deleting or skipping the test. Files not passing at that ref require forward root-cause search before any harness classification.','']
+          pathlib.Path('VYRON_6_1_10_HISTORICAL_TEST_PROVENANCE.md').write_text('\n'.join(lines).rstrip()+'\n')
           print('\n'.join(lines[-8:]))
           PY
           git diff --check
