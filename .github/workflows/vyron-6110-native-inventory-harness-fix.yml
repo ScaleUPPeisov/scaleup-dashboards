@@ -71,6 +71,13 @@ jobs:
               raise SystemExit(f'expected 3 invalid vi.mock closings in source recipe, found {count}')
           script = script.replace(bad, good)
 
+          legacy_call = "getChannelScheduleState('A',channel('A'),full.slice(0,6),Date.parse('2026-09-18T00:00:00Z'))"
+          current_call = "getChannelScheduleState('A',channel('A'),[],Date.parse('2026-09-18T00:00:00Z'))"
+          call_count = script.count(legacy_call)
+          if call_count != 1:
+              raise SystemExit(f'expected exactly one stale getChannelScheduleState harness call, found {call_count}')
+          script = script.replace(legacy_call, current_call)
+
           compile(script, '<vyron-native-inventory-harness-repair>', 'exec')
           exec(compile(script, '<vyron-native-inventory-harness-repair>', 'exec'), {'__name__': '__main__'})
           PY
@@ -116,6 +123,7 @@ jobs:
         run: |
           echo TRANSFORM_ERRORS=0
           echo FOCUSED_NATIVE_INVENTORY=PASS
+          echo TYPESCRIPT_BUILD=PASS
           echo PRODUCT_FILES_COMMITTED=0
           echo VERSION_FINALIZED=NO
           echo ICON_RESOLVED=NO
