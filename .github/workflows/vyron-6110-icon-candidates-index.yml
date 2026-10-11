@@ -28,9 +28,24 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          test -f src/assets/vyron-4-artwork.webp
-          actual="$(git hash-object src/assets/vyron-4-artwork.webp)"
-          test "$actual" = "c4bb26bef69571df152fb0ecfe7da5a349663bb7"
+          path='src/assets/vyron-4-artwork.webp'
+          test -f "$path"
+          tracked_blob="$(git rev-parse HEAD:"$path")"
+          test "$tracked_blob" = "c4bb26bef69571df152fb0ecfe7da5a349663bb7"
+
+          # Historical artwork is tracked through Git LFS on this branch. Checkout without
+          # LFS yields the text pointer, which neither sips nor Pillow can decode.
+          if head -n 1 "$path" | grep -q '^version https://git-lfs.github.com/spec/v1'; then
+            echo 'CANDIDATE_19_LFS_POINTER=YES'
+            git lfs pull --include="$path" --exclude=''
+          else
+            echo 'CANDIDATE_19_LFS_POINTER=NO'
+          fi
+
+          echo "CANDIDATE_19_RUNTIME_FORMAT=$(file -b "$path")"
+          test -s "$path"
+          ! head -n 1 "$path" | grep -q '^version https://git-lfs.github.com/spec/v1'
+
           mkdir -p VYRON-ICON-CANDIDATES/previews
           python3 -m venv "$RUNNER_TEMP/icon-venv"
           "$RUNNER_TEMP/icon-venv/bin/python" -m pip install --disable-pip-version-check --quiet pillow
@@ -41,6 +56,8 @@ jobs:
           dst=Path('VYRON-ICON-CANDIDATES/previews/candidate-19.png')
           with Image.open(src) as im:
               im.load()
+              print('CANDIDATE_19_DECODED_FORMAT=' + str(im.format))
+              print('CANDIDATE_19_SIZE=' + f'{im.width}x{im.height}')
               im.convert('RGBA').save(dst,'PNG')
           if not dst.exists() or dst.stat().st_size == 0:
               raise SystemExit('candidate-19 preview was not created')
@@ -105,6 +122,7 @@ jobs:
           staged="$(git diff --cached --name-only | sort)"
           expected="$(printf '%s\n' VYRON-ICON-CANDIDATES/INDEX.md VYRON-ICON-CANDIDATES/previews/candidate-19.png | sort)"
           test "$staged" = "$expected"
+          git diff --cached --check
           git config user.name "VYRON QA"
           git config user.email "vyron-qa@users.noreply.github.com"
           git commit -m "docs(vyron): add owner-facing historical icon previews"
