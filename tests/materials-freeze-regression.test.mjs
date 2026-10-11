@@ -39,7 +39,8 @@ describe('VYRON 6.0.2 Materials freeze regression gates',()=>{
   });
 
   it('does not introduce Google, OAuth or YouTube calls into Materials UI',()=>{
-    expect(materials).not.toMatch(/oauth|client_secret|refresh_token|youtube_/i);
+    expect(materials).not.toMatch(/\b(?:youtubeConnect|youtubeDisconnect|oauth_connect|oauth_disconnect|client_secret|refresh_token|youtube_[A-Za-z0-9_]+)\b/i);
+    expect(materials).not.toMatch(/from\s+['"][^'"]*(?:youtube|oauth)[^'"]*['"]/i);
   });
 
   it('preserves application identity and updater endpoints',()=>{

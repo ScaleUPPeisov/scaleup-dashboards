@@ -79,15 +79,19 @@ describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
   beforeEach(()=>{storage.clear();fixture.profiles=[profile];fixture.responses.clear();fixture.responses.set(profile.id,response());fixture.inventoryFiles.clear();fixture.failNativeWrites=false;vi.clearAllMocks()});
 
   it('Lumière real-shape fixture has 20 total, 15 scheduled and scheduled-through 2026-10-18',async()=>{
-    const inv=ownerInventoryFromVideos('lumiere',lumiereVideos(),undefined,{scheduleComplete:true},Date.parse('2026-10-03T00:00:00Z'));
-    expect(inv.total).toBe(20);expect(inv.scheduled).toBe(15);expect(inv.lastScheduledAt).toContain('2026-10-18');
-    const result=await refreshOwnerInventoriesAuthoritative([channel()],true,[profile]);
-    expect(result.rows[0].status).toBe('UPDATED');
-    const r=loadChannelRunwayStore().channels.lumiere;
-    expect(r.scheduledVideoCount).toBe(15);
-    expect(r.scheduledUntil).toBe('2026-10-18');
-    expect(r.lastScheduleSync).toBeTruthy();
-    expect(r.status).not.toBe('no-data');
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-03T00:00:00Z'));
+    try{
+      const inv=ownerInventoryFromVideos('lumiere',lumiereVideos(),undefined,{scheduleComplete:true},Date.now());
+      expect(inv.total).toBe(20);expect(inv.scheduled).toBe(15);expect(inv.lastScheduledAt).toContain('2026-10-18');
+      const result=await refreshOwnerInventoriesAuthoritative([channel()],true,[profile]);
+      expect(result.rows[0].status).toBe('UPDATED');
+      const r=loadChannelRunwayStore().channels.lumiere;
+      expect(r.scheduledVideoCount).toBe(15);
+      expect(r.scheduledUntil).toBe('2026-10-18');
+      expect(r.lastScheduleSync).toBeTruthy();
+      expect(r.status).not.toBe('no-data');
+    }finally{vi.useRealTimers()}
   });
 
   it('uses backend completed-operation API/quota count instead of racy event snapshot and does not double-count it',async()=>{
