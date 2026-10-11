@@ -35,4 +35,23 @@ describe('VYRON 5 daily operations truth',()=>{
    const done=buildDailyOperations([channel()],[upload('ok',new Date(2026,8,28,20,0,0).toISOString())],{a:snapshot('a',30)},now);
    expect(done.rows[0].nextAction).toBe('Не требуется');
  });
+
+ it('separates disconnected storage from true errors and retains cached stock',()=>{
+   const now=new Date(2026,9,11,12,0,0);
+   const offline={...snapshot('a',10),folderState:'OFFLINE' as const,stale:true,lastSuccessAt:'2026-10-10T10:00:00.000Z'};
+   const result=buildDailyOperations([channel()],[],{a:offline},now);
+   expect(result.offlineChannels).toBe(1);
+   expect(result.errors).toBe(0);
+   expect(result.localReady).toBe(10);
+   expect(result.rows[0].folderState).toBe('UNAVAILABLE');
+   expect(result.rows[0].localReady).toBe(10);
+ });
+
+ it('counts only real scan/read failures as errors',()=>{
+   const now=new Date(2026,9,11,12,0,0);
+   const broken={...snapshot('a',0),folderState:'ERROR' as const,stale:false,error:'permission denied'};
+   const result=buildDailyOperations([channel()],[],{a:broken},now);
+   expect(result.errors).toBe(1);
+   expect(result.offlineChannels).toBe(0);
+ });
 });
