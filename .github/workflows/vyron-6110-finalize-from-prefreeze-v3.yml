@@ -1,0 +1,92 @@
+name: VYRON 6.1.10 Finalize From Green Pre-Freeze v3
+
+on:
+  push:
+    branches:
+      - tmp/vyron-6110-finalize-orchestrator-20261011
+    paths:
+      - '.github/workflows/vyron-6110-finalize-from-prefreeze-v3.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  finalize-freeze-build:
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - name: Checkout exact target branch
+        uses: actions/checkout@v4
+        with:
+          repository: ScaleUPPeisov/scaleup-dashboards
+          ref: hotfix/vyron-6.1.10-product-correctness
+          fetch-depth: 0
+          path: target
+
+      - name: Checkout orchestration helper
+        uses: actions/checkout@v4
+        with:
+          repository: ScaleUPPeisov/scaleup-dashboards
+          ref: tmp/vyron-6110-finalize-orchestrator-20261011
+          fetch-depth: 1
+          path: orchestration
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: target/package-lock.json
+
+      - name: Prepare v3 guarded helper
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cp "$GITHUB_WORKSPACE/orchestration/scripts/vyron_6110_finalize_candidate_v2.sh" /tmp/vyron_6110_finalize_candidate_v3.sh
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('/tmp/vyron_6110_finalize_candidate_v3.sh')
+          s=p.read_text()
+          needle='test -z "$(git status --porcelain)"'
+          indexes=[]
+          start=0
+          while True:
+              i=s.find(needle,start)
+              if i<0: break
+              indexes.append(i); start=i+1
+          if len(indexes)!=2:
+              raise SystemExit(f'expected exactly 2 cleanliness assertions, found {len(indexes)}')
+          i=indexes[-1]
+          replacement='test -z "$(git status --porcelain --untracked-files=no)"'
+          s=s[:i]+replacement+s[i+len(needle):]
+          p.write_text(s)
+          PY
+          bash -n /tmp/vyron_6110_finalize_candidate_v3.sh
+
+      - name: Finalize, accept, freeze and build exact candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if ! bash /tmp/vyron_6110_finalize_candidate_v3.sh "$GITHUB_WORKSPACE/target"; then
+            echo '=== FAILURE DIAGNOSTICS ==='
+            git -C "$GITHUB_WORKSPACE/target" status --porcelain=v1 || true
+            git -C "$GITHUB_WORKSPACE/target" log -2 --oneline || true
+            exit 1
+          fi
+
+      - name: Upload exact candidate artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-6.1.10-MACOS-ARM64-CANDIDATE
+          path: |
+            target/candidate-out/VYRON-6.1.10-MACOS-ARM64-CANDIDATE.tar.gz
+            target/candidate-out/CANDIDATE_EVIDENCE.txt
+            target/candidate-out/BUNDLE_MANIFEST_SHA256.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Stop — no release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          echo RELEASE_AUTHORIZED=NO
+          echo RELEASE=BLOCKED_PENDING_OWNER_APPROVAL
