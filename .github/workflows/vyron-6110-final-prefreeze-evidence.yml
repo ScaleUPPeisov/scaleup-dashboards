@@ -128,12 +128,19 @@ jobs:
           def current(path):
               return Path(path).read_text()
 
+          # These protected files exist on SAFE_BASE and must be byte-identical.
+          # Shared metadata files are audited separately below at symbol/function scope.
           exact_files = [
               "src/youtubePublishSafety.ts",
               "src/uploadQueue.ts",
-              "src/UploadProcessingMonitor.ts",
+              "src/UploadProcessingMonitor.tsx",
               "src/publisherIntegrity.ts",
+              "src/channelIdentity.ts",
+              "src/channelRunwayStore.ts",
+              "src/youtubeOauthState.ts",
               "src-tauri/src/security.rs",
+              "src-tauri/src/oauth_vault.rs",
+              "src-tauri/src/profile.rs",
               "src-tauri/tauri.conf.json",
           ]
           for path in exact_files:
@@ -230,38 +237,39 @@ jobs:
               )))
               raise SystemExit(1)
 
+          head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
           Path("VYRON_PROTECTED_FUNCTIONAL_DIFF_6_1_10.md").write_text(
           f"""# VYRON 6.1.10 — Protected Functional Diff
 
-          SAFE_BASE: `{base}`
-          CURRENT_HEAD: `{subprocess.check_output(["git","rev-parse","HEAD"], text=True).strip()}`
+SAFE_BASE: `{base}`
+CURRENT_HEAD: `{head}`
 
-          Function-aware comparison was performed against SAFE_BASE.
+Function-aware comparison was performed against SAFE_BASE.
 
-          Allowed 6.1.10 metadata-only differences in shared files:
-          - `src/api.ts`: `YoutubeExistingMutationPatch`
-          - `src/api.ts`: `api.youtubeUpdateExisting`
-          - `src-tauri/src/youtube.rs`: `youtube_update_existing_video`
+Allowed 6.1.10 metadata-only differences in shared files:
+- `src/api.ts`: `YoutubeExistingMutationPatch`
+- `src/api.ts`: `api.youtubeUpdateExisting`
+- `src-tauri/src/youtube.rs`: `youtube_update_existing_video`
 
-          Everything outside those metadata-only symbols is required to match SAFE_BASE exactly.
+The protected files listed in the gate are byte-identical to SAFE_BASE. In the two shared files above, everything outside the allowlisted metadata-only symbols is identical after normalization.
 
-          | Protected subsystem | Functional change |
-          |---|---|
-          | OAuth transport | NO |
-          | refresh-token storage | NO |
-          | native OAuth vault | NO |
-          | Google credential handling | NO |
-          | resumable YouTube upload transport | NO |
-          | account mapping | NO |
-          | channel identity mapping | NO |
-          | Publisher transport | NO |
-          | upload success fingerprints | NO |
-          | upload completion identity | NO |
-          | Global Counter persistence | NO |
-          | Today Counter persistence | NO |
+| Protected subsystem | Functional change |
+|---|---|
+| OAuth transport | NO |
+| refresh-token storage | NO |
+| native OAuth vault | NO |
+| Google credential handling | NO |
+| resumable YouTube upload transport | NO |
+| account mapping | NO |
+| channel identity mapping | NO |
+| Publisher transport | NO |
+| upload success fingerprints | NO |
+| upload completion identity | NO |
+| Global Counter persistence | NO |
+| Today Counter persistence | NO |
 
-          PROTECTED_FUNCTIONAL_DIFF=0
-          """)
+PROTECTED_FUNCTIONAL_DIFF=0
+""")
           print("PROTECTED_FUNCTIONAL_DIFF=0")
           PY
 
