@@ -1,0 +1,112 @@
+name: VYRON 6.1.10 Current Tree Regression
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-6.1.10-product-correctness
+    paths:
+      - '.github/workflows/vyron-6110-current-tree-regression.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SAFE_BASE: 588e2070877512daa637077223c678af6a216831
+  METADATA_GREEN_HEAD: cfba3100b59d56abd490e39be6294e995a8b63ce
+
+jobs:
+  full-regression:
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: hotfix/vyron-6.1.10-product-correctness
+          fetch-depth: 0
+
+      - name: Immutable current-tree safety gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git merge-base --is-ancestor "$SAFE_BASE" HEAD
+          git merge-base --is-ancestor "$METADATA_GREEN_HEAD" HEAD
+          test "$(node -p "require('./package.json').version")" = "6.1.9"
+          test "$(git status --porcelain)" = ""
+          echo FINALIZER_APPLIED=NO
+          echo VERSION_FINALIZED=NO
+          echo PRODUCT_COMMIT_ACTIONS=0
+          echo CANDIDATE_BUILD_ACTIONS=0
+          echo RELEASE_ACTIONS=0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install exact dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Run exact complete Vitest suite
+        id: vitest
+        shell: bash
+        run: |
+          set +e
+          npx vitest run --reporter=json --outputFile="$RUNNER_TEMP/current-tree-vitest.json"
+          status=$?
+          set -e
+          test -s "$RUNNER_TEMP/current-tree-vitest.json"
+          cp "$RUNNER_TEMP/current-tree-vitest.json" VYRON_6_1_10_CURRENT_TREE_VITEST.json
+          printf '%s\n' "$status" > VYRON_6_1_10_CURRENT_TREE_VITEST.exitcode
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Summarize exact counts
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          node <<'NODE'
+          import fs from 'node:fs';
+          const d=JSON.parse(fs.readFileSync('VYRON_6_1_10_CURRENT_TREE_VITEST.json','utf8'));
+          const out=[
+            `TOTAL_TESTS=${d.numTotalTests ?? 'UNKNOWN'}`,
+            `PASSED_TESTS=${d.numPassedTests ?? 'UNKNOWN'}`,
+            `FAILED_TESTS=${d.numFailedTests ?? 'UNKNOWN'}`,
+            `PENDING_TESTS=${d.numPendingTests ?? 'UNKNOWN'}`,
+            `FAILED_SUITES=${d.numFailedTestSuites ?? 'UNKNOWN'}`,
+            'FINALIZER_APPLIED=NO',
+            'VERSION_FINALIZED=NO',
+            'PRODUCT_COMMIT_CREATED=NO',
+            'CANDIDATE_HEAD_CREATED=NO',
+            'CANDIDATE_APP_BUILT=NO',
+            'RELEASE_ACTIONS=0'
+          ].join('\n')+'\n';
+          fs.writeFileSync('VYRON_6_1_10_CURRENT_TREE_SUMMARY.txt',out);
+          console.log(out);
+          NODE
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: VYRON-6.1.10-CURRENT-TREE-REGRESSION
+          path: |
+            VYRON_6_1_10_CURRENT_TREE_VITEST.json
+            VYRON_6_1_10_CURRENT_TREE_VITEST.exitcode
+            VYRON_6_1_10_CURRENT_TREE_SUMMARY.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Preserve exact suite result
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          status='${{ steps.vitest.outputs.exit_code }}'
+          test -n "$status"
+          echo "FULL_VITEST_EXIT_CODE=$status"
+          echo FINALIZER_APPLIED=NO
+          echo CANDIDATE_HEAD=NOT_CREATED
+          echo CANDIDATE_APP_BUILT=NO
+          echo RELEASE=BLOCKED
+          test "$status" -eq 0
