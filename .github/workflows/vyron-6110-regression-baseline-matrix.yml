@@ -34,6 +34,8 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci --no-audit --no-fund
+      - name: Install official CI-only render harness
+        run: npm install --no-save --no-package-lock react-test-renderer@19.1.1
       - name: Full Vitest at immutable safe base
         shell: bash
         run: |
@@ -45,7 +47,6 @@ jobs:
           echo "$code" > "$RUNNER_TEMP/exit-code.txt"
           node <<'NODE'
           import fs from 'node:fs';
-          import path from 'node:path';
           const root=process.cwd().replaceAll('\\','/');
           const data=JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/vitest.json`,'utf8'));
           const clean=s=>String(s??'').replace(/\u001b\[[0-9;]*m/g,'').replaceAll(root+'/','').trim();
@@ -53,22 +54,10 @@ jobs:
           for(const suite of data.testResults??[]){
             for(const a of suite.assertionResults??[]){
               if(a.status!=='failed')continue;
-              failures.push({
-                testFile:clean(suite.name),
-                testName:clean(a.fullName||a.title),
-                messages:(a.failureMessages??[]).map(clean),
-              });
+              failures.push({testFile:clean(suite.name),testName:clean(a.fullName||a.title),messages:(a.failureMessages??[]).map(clean)});
             }
           }
-          const out={
-            ref:process.env.SAFE_BASE,
-            total:data.numTotalTests??null,
-            failed:data.numFailedTests??failures.length,
-            passed:data.numPassedTests??null,
-            pending:data.numPendingTests??null,
-            failedSuites:data.numFailedTestSuites??null,
-            failures,
-          };
+          const out={ref:process.env.SAFE_BASE,total:data.numTotalTests??null,failed:data.numFailedTests??failures.length,passed:data.numPassedTests??null,pending:data.numPendingTests??null,failedSuites:data.numFailedTestSuites??null,failures};
           fs.writeFileSync(`${process.env.RUNNER_TEMP}/summary.json`,JSON.stringify(out,null,2)+'\n');
           console.log(JSON.stringify({ref:out.ref,total:out.total,failed:out.failed,passed:out.passed,pending:out.pending,failedSuites:out.failedSuites}));
           NODE
@@ -105,6 +94,8 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci --no-audit --no-fund
+      - name: Install official CI-only render harness
+        run: npm install --no-save --no-package-lock react-test-renderer@19.1.1
       - name: Full Vitest at current dev HEAD
         shell: bash
         run: |
@@ -124,22 +115,10 @@ jobs:
           for(const suite of data.testResults??[]){
             for(const a of suite.assertionResults??[]){
               if(a.status!=='failed')continue;
-              failures.push({
-                testFile:clean(suite.name),
-                testName:clean(a.fullName||a.title),
-                messages:(a.failureMessages??[]).map(clean),
-              });
+              failures.push({testFile:clean(suite.name),testName:clean(a.fullName||a.title),messages:(a.failureMessages??[]).map(clean)});
             }
           }
-          const out={
-            ref:fs.readFileSync(`${process.env.RUNNER_TEMP}/head.txt`,'utf8').trim(),
-            total:data.numTotalTests??null,
-            failed:data.numFailedTests??failures.length,
-            passed:data.numPassedTests??null,
-            pending:data.numPendingTests??null,
-            failedSuites:data.numFailedTestSuites??null,
-            failures,
-          };
+          const out={ref:fs.readFileSync(`${process.env.RUNNER_TEMP}/head.txt`,'utf8').trim(),total:data.numTotalTests??null,failed:data.numFailedTests??failures.length,passed:data.numPassedTests??null,pending:data.numPendingTests??null,failedSuites:data.numFailedTestSuites??null,failures};
           fs.writeFileSync(`${process.env.RUNNER_TEMP}/summary.json`,JSON.stringify(out,null,2)+'\n');
           console.log(JSON.stringify({ref:out.ref,total:out.total,failed:out.failed,passed:out.passed,pending:out.pending,failedSuites:out.failedSuites}));
           NODE
@@ -185,42 +164,21 @@ jobs:
           const current=[...dm.entries()].sort(([a],[b])=>a.localeCompare(b));
           let dCount=0,eCount=0;
           let failures=`# VYRON 6.1.10 — REGRESSION FAILURES\n\n`;
-          failures+=`Current development tree was tested WITHOUT the version/changelog finalizer.\n\n`;
-          failures+=`- SAFE_BASE: ${base.ref}\n`;
-          failures+=`- DEV_HEAD: ${dev.ref}\n`;
-          failures+=`- TOTAL_TESTS: ${dev.total}\n`;
-          failures+=`- FAILED_TESTS: ${dev.failed}\n`;
-          failures+=`- PASSED_TESTS: ${dev.passed}\n`;
-          failures+=`- PENDING_TESTS: ${dev.pending}\n\n`;
+          failures+=`Current development tree was tested WITHOUT the version/changelog finalizer and WITH the official 6.1.9 CI-only render harness.\n\n`;
+          failures+=`- SAFE_BASE: ${base.ref}\n- DEV_HEAD: ${dev.ref}\n- TOTAL_TESTS: ${dev.total}\n- FAILED_TESTS: ${dev.failed}\n- PASSED_TESTS: ${dev.passed}\n- PENDING_TESTS: ${dev.pending}\n\n`;
           current.forEach(([k,f],i)=>{
             const existed=bm.has(k);
             if(existed)dCount++;else eCount++;
             failures+=`## FAILURE_ID: F${String(i+1).padStart(3,'0')}\n\n`;
-            failures+=`- TEST_FILE: ${f.testFile}\n`;
-            failures+=`- TEST_NAME: ${f.testName}\n`;
-            failures+=`- EXPECTED: SEE_ASSERTION_MESSAGE\n`;
-            failures+=`- ACTUAL: SEE_ASSERTION_MESSAGE\n`;
-            failures+=`- SOURCE_PATH: ROOT_CAUSE_PENDING\n`;
-            failures+=`- RELATED_6_1_10_CHANGE: ${existed?'NONE_PROVEN — IDENTICAL TEST ALREADY FAILED AT SAFE_BASE':'PENDING_ROOT_CAUSE'}\n`;
+            failures+=`- TEST_FILE: ${f.testFile}\n- TEST_NAME: ${f.testName}\n- EXPECTED: SEE_ASSERTION_MESSAGE\n- ACTUAL: SEE_ASSERTION_MESSAGE\n- SOURCE_PATH: ROOT_CAUSE_PENDING\n`;
+            failures+=`- RELATED_6_1_10_CHANGE: ${existed?'NONE_PROVEN — SAME TEST ALREADY FAILED AT SAFE_BASE':'PENDING_ROOT_CAUSE'}\n`;
             failures+=`- CLASSIFICATION: ${existed?'D. UNRELATED_PREEXISTING_FAILURE':'E. UNKNOWN'}\n`;
             failures+=`- ACTION: ${existed?'DO_NOT_MISLABEL_AS_6_1_10_REGRESSION; ROOT_CAUSE_REQUIRED_BEFORE_ANY_FIX':'ROOT_CAUSE_REQUIRED_BEFORE_CHANGE'}\n`;
             failures+=`- ASSERTION_MESSAGE:\n\n\`\`\`text\n${cleanMessage(f)||'NO_MESSAGE'}\n\`\`\`\n\n`;
           });
           let matrix=`# VYRON 6.1.10 — SAFE BASE ↔ DEV REGRESSION MATRIX\n\n`;
-          matrix+=`| Metric | Safe base | Dev without finalizer |\n|---|---:|---:|\n`;
-          matrix+=`| Total | ${base.total} | ${dev.total} |\n`;
-          matrix+=`| Passed | ${base.passed} | ${dev.passed} |\n`;
-          matrix+=`| Failed | ${base.failed} | ${dev.failed} |\n`;
-          matrix+=`| Pending | ${base.pending} | ${dev.pending} |\n\n`;
-          matrix+=`- SAFE_BASE: \`${base.ref}\`\n`;
-          matrix+=`- DEV_HEAD: \`${dev.ref}\`\n`;
-          matrix+=`- CURRENT_DEV_FAILURES_ALREADY_FAILING_AT_SAFE_BASE: ${dCount}\n`;
-          matrix+=`- CURRENT_DEV_FAILURES_NOT_FAILING_AT_SAFE_BASE: ${eCount}\n`;
-          matrix+=`- AUTO_CLASSIFIED_D_PREEXISTING: ${dCount}\n`;
-          matrix+=`- REMAINING_E_UNKNOWN: ${eCount}\n`;
-          matrix+=`- FINALIZER_APPLIED: NO\n`;
-          matrix+=`- PRODUCT_MUTATION: NO\n`;
-          matrix+=`- CANDIDATE_BUILD: NO\n\n`;
+          matrix+=`| Metric | Safe base | Dev without finalizer |\n|---|---:|---:|\n| Total | ${base.total} | ${dev.total} |\n| Passed | ${base.passed} | ${dev.passed} |\n| Failed | ${base.failed} | ${dev.failed} |\n| Pending | ${base.pending} | ${dev.pending} |\n\n`;
+          matrix+=`- SAFE_BASE: \`${base.ref}\`\n- DEV_HEAD: \`${dev.ref}\`\n- CURRENT_DEV_FAILURES_ALREADY_FAILING_AT_SAFE_BASE: ${dCount}\n- CURRENT_DEV_FAILURES_NOT_FAILING_AT_SAFE_BASE: ${eCount}\n- AUTO_CLASSIFIED_D_PREEXISTING: ${dCount}\n- REMAINING_E_UNKNOWN: ${eCount}\n- OFFICIAL_CI_RENDER_HARNESS: INSTALLED\n- FINALIZER_APPLIED: NO\n- PRODUCT_MUTATION: NO\n- CANDIDATE_BUILD: NO\n\n`;
           matrix+=`A failure is classified D only when the exact test file + test name also fails at the immutable proven 6.1.9 safe base. All newly failing dev tests remain E.UNKNOWN until source-level root cause establishes A, B, or C.\n`;
           fs.writeFileSync('VYRON_6_1_10_REGRESSION_FAILURES.md',failures.trimEnd()+'\n');
           fs.writeFileSync('VYRON_6_1_10_REGRESSION_MATRIX.md',matrix.trimEnd()+'\n');
