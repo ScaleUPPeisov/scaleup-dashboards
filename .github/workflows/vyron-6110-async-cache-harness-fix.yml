@@ -1,0 +1,123 @@
+name: VYRON 6.1.10 Async Cache Harness Repair
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-6.1.10-product-correctness
+    paths:
+      - '.github/workflows/vyron-6110-async-cache-harness-fix.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  SAFE_BASE: 588e2070877512daa637077223c678af6a216831
+  BRANCH: hotfix/vyron-6.1.10-product-correctness
+
+jobs:
+  repair:
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: hotfix/vyron-6.1.10-product-correctness
+          fetch-depth: 0
+
+      - name: Safety gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git merge-base --is-ancestor "$SAFE_BASE" HEAD
+          test "$(node -p "require('./package.json').version")" = "6.1.9"
+          test "$(git status --porcelain)" = ""
+          echo PRODUCT_MUTATION=NO
+          echo VERSION_FINALIZED=NO
+          echo CANDIDATE_BUILD=NO
+          echo RELEASE=BLOCKED
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Apply only proven async-cache test corrections
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_exact(path, old, new, count=1):
+              p=Path(path); s=p.read_text()
+              actual=s.count(old)
+              assert actual==count, f'{path}: expected {count} occurrences, found {actual}: {old!r}'
+              p.write_text(s.replace(old,new))
+
+          p='src/schedulePhysicalRegression.test.ts'
+          replace_exact(p,"it('selects the latest factual future publishAt',()=>{","it('selects the latest factual future publishAt',async()=>{")
+          replace_exact(p,"  writeExistingCache(c.id,{version:1,updatedAt:'2026-09-18T00:00:00.000Z',videos:rows,baseline:Object.fromEntries(rows.map(v=>[v.id,v])),lastUndo:[],syncInfo:{complete:true,scheduleComplete:true,draftCandidateCount:0}});","  await writeExistingCache(c.id,{version:1,updatedAt:'2026-09-18T00:00:00.000Z',videos:rows,baseline:Object.fromEntries(rows.map(v=>[v.id,v])),lastUndo:[],syncInfo:{complete:true,scheduleComplete:true,draftCandidateCount:0}});")
+          replace_exact(p,"it('uses the complete 152-video baseline rather than six selected/edit rows',()=>{","it('uses the complete 152-video baseline rather than six selected/edit rows',async()=>{")
+          replace_exact(p,"  writeExistingCache(c.id,{version:1,updatedAt:'2026-09-18T00:00:00.000Z',videos:six,baseline:Object.fromEntries(all.map(v=>[v.id,v])),lastUndo:[],syncInfo:{complete:true,scheduleComplete:true,draftCandidateCount:0}});","  await writeExistingCache(c.id,{version:1,updatedAt:'2026-09-18T00:00:00.000Z',videos:six,baseline:Object.fromEntries(all.map(v=>[v.id,v])),lastUndo:[],syncInfo:{complete:true,scheduleComplete:true,draftCandidateCount:0}});")
+          replace_exact(p,"it('keeps schedule cache isolated by channel id',()=>{","it('keeps schedule cache isolated by channel id',async()=>{")
+          replace_exact(p,"  writeExistingCache(a.id,{version:1,updatedAt:'2026-09-18T00:00:00.000Z',videos:[va],baseline:{a:va},lastUndo:[],syncInfo:{complete:true,scheduleComplete:true}});","  await writeExistingCache(a.id,{version:1,updatedAt:'2026-09-18T00:00:00.000Z',videos:[va],baseline:{a:va},lastUndo:[],syncInfo:{complete:true,scheduleComplete:true}});")
+          replace_exact(p,"  writeExistingCache(b.id,{version:1,updatedAt:'2026-09-18T00:00:00.000Z',videos:[],baseline:{},lastUndo:[],syncInfo:{complete:true,scheduleComplete:true}});","  await writeExistingCache(b.id,{version:1,updatedAt:'2026-09-18T00:00:00.000Z',videos:[],baseline:{},lastUndo:[],syncInfo:{complete:true,scheduleComplete:true}});")
+
+          p='src/v2115ScheduleSyncHotfix.test.ts'
+          replace_exact(p,"it('treats factual 203/203 snapshot as complete and keeps all rows',()=>{","it('treats factual 203/203 snapshot as complete and keeps all rows',async()=>{")
+          replace_exact(p,"  replaceExistingCacheFromSync('A',rows,info);","  await replaceExistingCacheFromSync('A',rows,info);")
+          replace_exact(p,"it('partial 202/203 refresh preserves prior 203 cached rows and exposes exact retry id',()=>{","it('partial 202/203 refresh preserves prior 203 cached rows and exposes exact retry id',async()=>{")
+          replace_exact(p,"  replaceExistingCacheFromSync('A',rows,{complete:true,syncComplete:true,scheduleComplete:true,uniqueVideoIds:203,videosHydrated:203});","  await replaceExistingCacheFromSync('A',rows,{complete:true,syncComplete:true,scheduleComplete:true,uniqueVideoIds:203,videosHydrated:203});")
+          replace_exact(p,"  replaceExistingCacheFromSync('A',partial,info);","  await replaceExistingCacheFromSync('A',partial,info);")
+
+          p='src/youtubeInventoryRc4.test.ts'
+          replace_exact(p,"it('partial 152/166 sync never overwrites the previous 166 authoritative baseline',()=>{","it('partial 152/166 sync never overwrites the previous 166 authoritative baseline',async()=>{")
+          replace_exact(p,"  replaceExistingCacheFromSync('A',full,{complete:true,syncComplete:true,scheduleComplete:true,uniqueVideoIds:166,videosHydrated:166});","  await replaceExistingCacheFromSync('A',full,{complete:true,syncComplete:true,scheduleComplete:true,uniqueVideoIds:166,videosHydrated:166});")
+          replace_exact(p,"  replaceExistingCacheFromSync('A',partial,{complete:false,syncComplete:false,scheduleComplete:false,uniqueVideoIds:166,videosHydrated:152});","  await replaceExistingCacheFromSync('A',partial,{complete:false,syncComplete:false,scheduleComplete:false,uniqueVideoIds:166,videosHydrated:152});")
+          replace_exact(p,"it('schedule derives latest future publishAt from full baseline, not current subset',()=>{","it('schedule derives latest future publishAt from full baseline, not current subset',async()=>{")
+          replace_exact(p,"  replaceExistingCacheFromSync('A',full,{complete:true,syncComplete:true,scheduleComplete:true});","  await replaceExistingCacheFromSync('A',full,{complete:true,syncComplete:true,scheduleComplete:true});")
+          replace_exact(p,"it('keeps channel inventories isolated across restart-style cache reload',()=>{","it('keeps channel inventories isolated across restart-style cache reload',async()=>{")
+          replace_exact(p,"  replaceExistingCacheFromSync('A',a,{complete:true,syncComplete:true,scheduleComplete:true});","  await replaceExistingCacheFromSync('A',a,{complete:true,syncComplete:true,scheduleComplete:true});")
+          replace_exact(p,"  replaceExistingCacheFromSync('B',b,{complete:true,syncComplete:true,scheduleComplete:true});","  await replaceExistingCacheFromSync('B',b,{complete:true,syncComplete:true,scheduleComplete:true});")
+          PY
+          git diff --check
+          changed="$(git diff --name-only | sort)"
+          expected="$(printf '%s\n' src/schedulePhysicalRegression.test.ts src/v2115ScheduleSyncHotfix.test.ts src/youtubeInventoryRc4.test.ts | sort)"
+          test "$changed" = "$expected"
+          echo TEST_ONLY_SCOPE=PASS
+          echo PRODUCT_FILES_CHANGED=0
+
+      - name: Focused async-cache regressions
+        run: npx vitest run src/schedulePhysicalRegression.test.ts src/v2115ScheduleSyncHotfix.test.ts src/youtubeInventoryRc4.test.ts
+
+      - name: TypeScript build guard
+        run: npm run build
+
+      - name: Commit only after green focused proof
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git add src/schedulePhysicalRegression.test.ts src/v2115ScheduleSyncHotfix.test.ts src/youtubeInventoryRc4.test.ts
+          staged="$(git diff --cached --name-only | sort)"
+          expected="$(printf '%s\n' src/schedulePhysicalRegression.test.ts src/v2115ScheduleSyncHotfix.test.ts src/youtubeInventoryRc4.test.ts | sort)"
+          test "$staged" = "$expected"
+          git diff --cached --check
+          git config user.name "VYRON QA"
+          git config user.email "vyron-qa@users.noreply.github.com"
+          git commit -m "test(vyron): await async inventory cache regression writes"
+          git push origin "HEAD:$BRANCH"
+          echo QA_HARNESS_FIX_COMMITTED=YES
+          echo PRODUCT_FILES_COMMITTED=0
+
+      - name: Keep freeze blocked
+        shell: bash
+        run: |
+          echo FULL_REGRESSION_GREEN=NO
+          echo ICON_RESOLVED=NO
+          echo VYRON_6_1_10_CANDIDATE_HEAD=NOT_CREATED
+          echo CANDIDATE_APP_BUILT=NO
+          echo RELEASE=BLOCKED
+          exit 1
