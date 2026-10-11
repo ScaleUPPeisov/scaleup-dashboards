@@ -10,7 +10,7 @@ def replace_once(text: str, old: str, new: str, label: str) -> str:
 p=Path('src/ExistingVideos.tsx')
 s=p.read_text(encoding='utf-8')
 old="api.youtubeUpdateExisting(profileId,v.id,v.title,v.description,v.tags,v.publishAt,v.privacyStatus,v.categoryId,operationId)"
-new="api.youtubeUpdateExisting(profileId,v.id,{title:v.title,description:v.description,tags:v.tags,publishAt:v.publishAt,privacyStatus:v.privacyStatus,categoryId:v.categoryId},operationId)"
+new="api.youtubeUpdateExisting(profileId,v.id,{title:v.title,description:v.description,tags:v.tags,publishAt:v.publishAt,privacyStatus:v.privacyStatus as 'private'|'public'|'unlisted',categoryId:v.categoryId},operationId)"
 count=s.count(old)
 if count!=2:
     raise SystemExit(f'PATCH_GUARD_FAIL:existing-videos-callers:expected=2:actual={count}')
