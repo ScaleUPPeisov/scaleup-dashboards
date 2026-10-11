@@ -284,11 +284,16 @@ jobs:
           from pathlib import Path
           SAFE='588e2070877512daa637077223c678af6a216831'
 
-          def rows(path):
+          def rows(path, root):
               data=json.loads(Path(path).read_text())
+              repo_root=Path(root).resolve()
               out=[]
               for f in data.get('testResults',[]):
-                  file=f.get('name','')
+                  raw=f.get('name','')
+                  try:
+                      file=Path(raw).resolve().relative_to(repo_root).as_posix()
+                  except (ValueError, OSError):
+                      file=str(raw).replace('\\','/')
                   for a in f.get('assertionResults',[]):
                       if a.get('status')=='failed':
                           name=' > '.join([*(a.get('ancestorTitles') or []),a.get('title','')])
@@ -297,8 +302,8 @@ jobs:
                           out.append((file,name,msg[:500]))
               return out
 
-          safe=rows('/tmp/safe.json')
-          cur=rows('/tmp/current.json')
+          safe=rows('/tmp/safe.json','/tmp/vyron-safe')
+          cur=rows('/tmp/current.json',Path.cwd())
           sk={(f,n) for f,n,_ in safe}
           ck={(f,n) for f,n,_ in cur}
           new=ck-sk
