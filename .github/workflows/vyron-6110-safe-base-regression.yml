@@ -1,0 +1,98 @@
+name: VYRON 6.1.10 Safe Base Regression Baseline
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-6.1.10-product-correctness
+    paths:
+      - '.github/workflows/vyron-6110-safe-base-regression.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SAFE_BASE: 588e2070877512daa637077223c678af6a216831
+
+jobs:
+  baseline:
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 588e2070877512daa637077223c678af6a216831
+          fetch-depth: 0
+
+      - name: Exact safe-base gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$SAFE_BASE"
+          test "$(node -p "require('./package.json').version")" = "6.1.9"
+          test "$(git status --porcelain)" = ""
+          echo SAFE_BASE_EXACT=PASS
+          echo PRODUCT_CHANGES=0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install exact dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Run exact complete Vitest suite at safe base
+        id: vitest
+        shell: bash
+        run: |
+          set +e
+          npx vitest run --reporter=json --outputFile="$RUNNER_TEMP/safe-base-vitest.json"
+          status=$?
+          set -e
+          test -s "$RUNNER_TEMP/safe-base-vitest.json"
+          cp "$RUNNER_TEMP/safe-base-vitest.json" VYRON_6_1_9_SAFE_BASE_VITEST.json
+          printf '%s\n' "$status" > VYRON_6_1_9_SAFE_BASE_VITEST.exitcode
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Summarize baseline
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          node <<'NODE'
+          import fs from 'node:fs';
+          const d=JSON.parse(fs.readFileSync('VYRON_6_1_9_SAFE_BASE_VITEST.json','utf8'));
+          const out=[
+            `TOTAL_TESTS=${d.numTotalTests ?? 'UNKNOWN'}`,
+            `PASSED_TESTS=${d.numPassedTests ?? 'UNKNOWN'}`,
+            `FAILED_TESTS=${d.numFailedTests ?? 'UNKNOWN'}`,
+            `PENDING_TESTS=${d.numPendingTests ?? 'UNKNOWN'}`,
+            `FAILED_SUITES=${d.numFailedTestSuites ?? 'UNKNOWN'}`,
+            'SAFE_BASE_EXACT=YES',
+            'PRODUCT_CHANGES=0'
+          ].join('\n')+'\n';
+          fs.writeFileSync('VYRON_6_1_9_SAFE_BASE_SUMMARY.txt',out);
+          console.log(out);
+          NODE
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: VYRON-6.1.9-SAFE-BASE-REGRESSION
+          path: |
+            VYRON_6_1_9_SAFE_BASE_VITEST.json
+            VYRON_6_1_9_SAFE_BASE_VITEST.exitcode
+            VYRON_6_1_9_SAFE_BASE_SUMMARY.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Preserve baseline result
+        if: always()
+        shell: bash
+        run: |
+          status='${{ steps.vitest.outputs.exit_code }}'
+          test -n "$status"
+          echo "SAFE_BASE_VITEST_EXIT_CODE=$status"
+          test "$status" -eq 0
