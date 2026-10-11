@@ -3,6 +3,36 @@ export type ReleaseSectionKey='features'|'fixes'|'interface'|'reliability'|'secu
 export type ReleaseHistoryEntry={date:string;version:string;title:string;type:ReleaseType;platforms?:Array<'macOS'|'Windows'>;highlights:string[];sections:Partial<Record<ReleaseSectionKey,string[]>>;technicalItems?:string[];technicalBuilds?:number[];tag?:string;publishedAt?:string;prerelease?:boolean};
 export const VYRON_RELEASE_HISTORY:ReleaseHistoryEntry[]=[
   {
+    "date":"2026-10-11","version":"6.1.10","title":"Product Correctness & Safe Metadata PATCH","type":"PATCH","platforms":["macOS"],
+    "highlights":[
+      "Изменение названия, описания и тегов существующих видео больше не требует выбирать дату и время публикации.",
+      "Изменение расписания теперь является явным opt-in действием.",
+      "OFFLINE Render-диск отделён от настоящего ERROR, а последний подтверждённый запас видео сохраняется при временном отключении диска."
+    ],
+    "sections":{
+      "fixes":[
+        "Изменение названия, описания и тегов существующих видео больше не требует выбирать дату и время публикации.",
+        "Если пользователь не меняет расписание, VYRON не изменяет publishAt.",
+        "Если пользователь не меняет статус доступа, VYRON не изменяет PRIVATE / UNLISTED / PUBLIC.",
+        "Отключённый Render-диск больше не считается настоящей ошибкой."
+      ],
+      "interface":[
+        "Изменение расписания теперь является явным opt-in действием.",
+        "При массовом изменении метаданных VYRON показывает, какие поля изменятся, а какие останутся без изменений.",
+        "ONLINE / OFFLINE / STALE / ERROR отображаются как разные состояния."
+      ],
+      "reliability":[
+        "Последний подтверждённый запас видео остаётся доступен, когда диск временно отключён."
+      ],
+      "technical":[
+        "Обновлены regression guards для native verified inventory storage.",
+        "Исторический QA debt отделён от новых 6.1.10 regressions.",
+        "Иконка VYRON оставлена без изменений по решению владельца."
+      ]
+    },
+    "prerelease":true
+  },
+  {
     "date":"2026-10-01","version":"6.1.0","title":"Metadata Queue & macOS Smoothness","type":"MINOR","platforms":["macOS","Windows"],
     "highlights":[
       "Unlimited per-channel SEO Metadata Queue хранит будущие title, description, tags и publish schedule на диске.",

@@ -15,7 +15,7 @@ describe('VYRON 3.2 history and navigation UX',()=>{
  it('groups releases by day from one canonical source',()=>{
    const days=groupReleaseHistoryByDay();
    expect(days.length).toBeGreaterThan(5);
-   expect(days[0][0]).toBe('2026-10-01');
+   expect(days[0][0]).toBe(VYRON_RELEASE_HISTORY[0].date);
    expect(days.flatMap(x=>x[1]).length).toBe(VYRON_RELEASE_HISTORY.length);
  });
  it('keeps owner preview build noise inside technical details',()=>{
