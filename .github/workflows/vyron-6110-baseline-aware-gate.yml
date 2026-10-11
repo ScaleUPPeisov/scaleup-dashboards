@@ -1,0 +1,192 @@
+name: VYRON 6.1.10 Baseline Aware Freeze Gate
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-6.1.10-product-correctness
+    paths:
+      - '.github/workflows/vyron-6110-baseline-aware-gate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SAFE_BASE: 588e2070877512daa637077223c678af6a216831
+
+jobs:
+  gate:
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: hotfix/vyron-6.1.10-product-correctness
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install current dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Current full suite JSON
+        shell: bash
+        run: |
+          set +e
+          npx vitest run --reporter=json --outputFile="$RUNNER_TEMP/current.json"
+          ec=$?
+          echo "CURRENT_VITEST_EXIT=$ec"
+          test -s "$RUNNER_TEMP/current.json"
+          exit 0
+
+      - name: Current TypeScript production build
+        run: npm run build
+
+      - name: Current Rust check
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+
+      - name: Safe-base full suite JSON
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git worktree add --detach "$RUNNER_TEMP/safe-base" "$SAFE_BASE"
+          cd "$RUNNER_TEMP/safe-base"
+          npm ci --no-audit --no-fund
+          set +e
+          npx vitest run --reporter=json --outputFile="$RUNNER_TEMP/safe.json"
+          ec=$?
+          set -e
+          echo "SAFE_VITEST_EXIT=$ec"
+          test -s "$RUNNER_TEMP/safe.json"
+
+      - name: Exact failure-key and critical-matrix analysis
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import json, os, re
+          from pathlib import Path
+
+          cur = json.loads(Path(os.environ['RUNNER_TEMP'] + '/current.json').read_text())
+          safe = json.loads(Path(os.environ['RUNNER_TEMP'] + '/safe.json').read_text())
+
+          def rel_file(name):
+              name = (name or '').replace('\\','/')
+              for marker in ('/src/','/tests/'):
+                  if marker in name:
+                      return marker[1:] + name.split(marker,1)[1]
+              return name.rsplit('/',1)[-1] if name else '<unknown-file>'
+
+          def assertions(data):
+              rows=[]
+              for tr in data.get('testResults',[]) or []:
+                  file=rel_file(tr.get('name'))
+                  ars=tr.get('assertionResults',[]) or []
+                  for a in ars:
+                      title=a.get('fullName') or a.get('title') or ' > '.join((a.get('ancestorTitles') or [])+[a.get('title','')])
+                      rows.append((file,title.strip(),a.get('status','unknown')))
+              return rows
+
+          def failure_keys(data):
+              out=set()
+              for tr in data.get('testResults',[]) or []:
+                  file=rel_file(tr.get('name'))
+                  failed=False
+                  for a in tr.get('assertionResults',[]) or []:
+                      if a.get('status')=='failed':
+                          failed=True
+                          title=a.get('fullName') or a.get('title') or ' > '.join((a.get('ancestorTitles') or [])+[a.get('title','')])
+                          out.add(f'{file}::{title.strip()}')
+                  if tr.get('status')=='failed' and not failed:
+                      out.add(f'{file}::<FILE_LEVEL_FAILURE>')
+              return out
+
+          ckeys=failure_keys(cur); skeys=failure_keys(safe)
+          new=sorted(ckeys-skeys); resolved=sorted(skeys-ckeys); unchanged=sorted(ckeys&skeys)
+
+          def totals(d):
+              return {
+                'total': d.get('numTotalTests'),
+                'passed': d.get('numPassedTests'),
+                'failed': d.get('numFailedTests'),
+                'pending': d.get('numPendingTests'),
+                'files_total': d.get('numTotalTestSuites'),
+                'files_failed': d.get('numFailedTestSuites'),
+              }
+
+          current_rows=assertions(cur)
+          category_patterns={
+            'METADATA': re.compile(r'(?i)(metadata|missing_schedule|title[- ]only|description[- ]only|tags[- ]only|privacy.*preserv|publishat.*preserv|schedule opt[- ]in)'),
+            'INVENTORY': re.compile(r'(?i)(inventory|offline|stale|not_configured|cached inventory|reconnect|duplicate inventory)'),
+            'PUBLISHER': re.compile(r'(?i)(publisher integrity|publisher always open|current generation|leaf recovery|removedfrompublishlist|duplicate upload|queue persistence|error.*retry|failed.*retry)'),
+            'SCHEDULE': re.compile(r'(?i)(schedule sources|daily schedule|explicit date|metadata.*no[- ]schedule|missing_schedule|schedule.*semantics)'),
+            'COUNTERS': re.compile(r'(?i)(today uploads|global counter|remaining target|upload counter|counter.*persist|persistence contract)'),
+            'OAUTH': re.compile(r'(?i)(oauth continuity|native oauth vault|account mapping|refresh[- ]token|oauth.*vault|oauth.*mapping)')
+          }
+          matrix={}
+          matches={}
+          for cat,pat in category_patterns.items():
+              chosen=[r for r in current_rows if pat.search(r[1])]
+              matches[cat]=chosen
+              matrix[cat]='PASS' if chosen and all(r[2] != 'failed' for r in chosen) else 'FAIL'
+
+          out={
+            'safe':totals(safe),'current':totals(cur),
+            'safe_failure_keys':len(skeys),'current_failure_keys':len(ckeys),
+            'new_failure_keys':new,'resolved_baseline_failure_keys':resolved,
+            'unchanged_baseline_failure_keys':unchanged,'critical_matrix':matrix,
+            'critical_matches':{k:[{'file':f,'test':t,'status':s} for f,t,s in v] for k,v in matches.items()}
+          }
+          Path('VYRON_6_1_10_GATE_RESULT.json').write_text(json.dumps(out,ensure_ascii=False,indent=2))
+
+          lines=[
+            '# VYRON 6.1.10 — BASELINE-AWARE GATE RESULT','',
+            f"- SAFE_BASE: `{os.environ['SAFE_BASE']}`",
+            f"- CURRENT_HEAD: `{os.popen('git rev-parse HEAD').read().strip()}`",
+            f"- SAFE_TOTAL: {out['safe']['total']}",f"- SAFE_FAILED: {out['safe']['failed']}",
+            f"- CURRENT_TOTAL: {out['current']['total']}",f"- CURRENT_FAILED: {out['current']['failed']}",
+            f"- SAFE_FAILURE_KEYS: {len(skeys)}",f"- CURRENT_FAILURE_KEYS: {len(ckeys)}",
+            f"- NEW_6_1_10_FAILURE_KEYS: {len(new)}",f"- RESOLVED_BASELINE_FAILURE_KEYS: {len(resolved)}",
+            f"- UNCHANGED_BASELINE_FAILURE_KEYS: {len(unchanged)}",''
+          ]
+          lines += ['## Critical matrix']+[f'- {k}: {v} ({len(matches[k])} matched tests)' for k,v in matrix.items()]
+          lines += ['','## New failure keys'] + ([f'- {x}' for x in new] or ['- NONE'])
+          lines += ['','## Resolved baseline failure keys'] + ([f'- {x}' for x in resolved] or ['- NONE'])
+          Path('VYRON_6_1_10_GATE_RESULT.md').write_text('\n'.join(lines)+'\n')
+
+          print('\n'.join(lines))
+          print('BASELINE_AWARE_REGRESSION_STATUS=' + ('PASS' if not new else 'BLOCKED'))
+          for cat,val in matrix.items(): print(f'{cat}={val}')
+          PY
+
+      - name: Protected source diff inventory
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          echo '=== PRODUCT SOURCE FILES CHANGED VS SAFE BASE ==='
+          git diff --name-only "$SAFE_BASE"..HEAD -- src src-tauri package.json package-lock.json Cargo.toml Cargo.lock tauri.conf.json ':!src/**/*.test.ts' ':!src/**/*.test.tsx' | tee VYRON_6_1_10_PRODUCT_DIFF_FILES.txt
+          echo '=== FILES CONTAINING PROTECTED TRANSPORT/Vault TOKENS ==='
+          grep -RIlE 'oauth|refresh.?token|resumable|upload|success.?fingerprint|channel.?identity|account.?mapping' src src-tauri 2>/dev/null | sort | tee VYRON_6_1_10_PROTECTED_TOKEN_FILES.txt || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-6.1.10-BASELINE-AWARE-GATE
+          path: |
+            VYRON_6_1_10_GATE_RESULT.json
+            VYRON_6_1_10_GATE_RESULT.md
+            VYRON_6_1_10_PRODUCT_DIFF_FILES.txt
+            VYRON_6_1_10_PROTECTED_TOKEN_FILES.txt
+
+      - name: Enforce new-regression rule only
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import json
+          d=json.load(open('VYRON_6_1_10_GATE_RESULT.json'))
+          assert len(d['new_failure_keys']) == 0, d['new_failure_keys']
+          print('NEW_6_1_10_FAILURE_KEYS=0')
+          PY
