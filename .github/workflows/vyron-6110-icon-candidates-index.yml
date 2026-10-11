@@ -32,8 +32,18 @@ jobs:
           actual="$(git hash-object src/assets/vyron-4-artwork.webp)"
           test "$actual" = "c4bb26bef69571df152fb0ecfe7da5a349663bb7"
           mkdir -p VYRON-ICON-CANDIDATES/previews
-          sips -s format png src/assets/vyron-4-artwork.webp --out VYRON-ICON-CANDIDATES/previews/candidate-19.png >/dev/null
-          test -s VYRON-ICON-CANDIDATES/previews/candidate-19.png
+          python3 -m pip install --disable-pip-version-check --quiet pillow
+          python3 - <<'PY'
+          from PIL import Image
+          from pathlib import Path
+          src=Path('src/assets/vyron-4-artwork.webp')
+          dst=Path('VYRON-ICON-CANDIDATES/previews/candidate-19.png')
+          with Image.open(src) as im:
+              im.load()
+              im.convert('RGBA').save(dst,'PNG')
+          if not dst.exists() or dst.stat().st_size == 0:
+              raise SystemExit('candidate-19 preview was not created')
+          PY
           file VYRON-ICON-CANDIDATES/previews/candidate-19.png | grep -q 'PNG image data'
 
       - name: Build owner-facing INDEX.md from forensic manifest
