@@ -21,7 +21,7 @@ env:
 
 jobs:
   patch-test-commit:
-    if: ${{ !contains(github.event.head_commit.message || '', 'product correctness core') }}
+    if: ${{ !contains(github.event.head_commit.message || '', 'metadata schedule opt-in') }}
     runs-on: macos-14
     timeout-minutes: 45
     steps:
@@ -49,19 +49,15 @@ jobs:
       - name: Install exact dependencies
         run: npm ci --no-audit --no-fund
 
-      - name: Apply deterministic source patch
+      - name: Apply deterministic metadata patch
         shell: bash
         run: |
           set -Eeuo pipefail
           python3 scripts/vyron_6110_product_correctness_patch.py
+          git add -N src/vyron6110MetadataScheduleOptIn.test.ts
           git diff --check
           changed="$(git diff --name-only | sort)"
-          expected="$(printf '%s\n' \
-            src/DailyOperationsCenter.tsx \
-            src/MetadataPage.tsx \
-            src/dailyOperations.test.ts \
-            src/dailyOperations.ts \
-            src/vyron6110MetadataScheduleOptIn.test.ts | sort)"
+          expected="$(printf '%s\n' src/MetadataPage.tsx src/vyron6110MetadataScheduleOptIn.test.ts | sort)"
           test "$changed" = "$expected"
           echo PATCH_SCOPE=PASS
           printf '%s\n' "$changed"
@@ -99,8 +95,8 @@ jobs:
           set -Eeuo pipefail
           git config user.name "VYRON QA"
           git config user.email "vyron-qa@users.noreply.github.com"
-          git add src/MetadataPage.tsx src/dailyOperations.ts src/DailyOperationsCenter.tsx src/dailyOperations.test.ts src/vyron6110MetadataScheduleOptIn.test.ts
+          git add src/MetadataPage.tsx src/vyron6110MetadataScheduleOptIn.test.ts
           git diff --cached --check
-          git commit -m "fix(vyron): 6.1.10 product correctness core"
+          git commit -m "fix(vyron): metadata schedule opt-in"
           git push origin HEAD:hotfix/vyron-6.1.10-product-correctness
-          echo PRODUCT_CORRECTNESS_CORE=COMMITTED
+          echo METADATA_SCHEDULE_OPT_IN=COMMITTED
