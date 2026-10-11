@@ -6,7 +6,10 @@ on:
       - hotfix/vyron-6.1.10-product-correctness
     paths:
       - '.github/workflows/vyron-6110-apply-product-correctness.yml'
-      - 'scripts/vyron_6110_product_correctness_patch.py'
+      - 'scripts/vyron_6110_metadata_patch_frontend.py'
+      - 'scripts/vyron_6110_native_patch_1.py'
+      - 'scripts/vyron_6110_native_patch_2.py'
+      - 'scripts/vyron_6110_native_patch_3.py'
   workflow_dispatch:
 
 permissions:
@@ -21,9 +24,9 @@ env:
 
 jobs:
   patch-test-commit:
-    if: ${{ !contains(github.event.head_commit.message || '', 'metadata schedule opt-in') }}
+    if: ${{ !contains(github.event.head_commit.message || '', 'metadata exact patch contract') }}
     runs-on: macos-14
-    timeout-minutes: 45
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@v4
         with:
@@ -39,7 +42,7 @@ jobs:
           test "$(git show "$SAFE_BASE:package.json" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.stdout.write(JSON.parse(s).version))")" = "6.1.9"
           echo SAFE_BASE_ANCESTRY=PASS
           echo PRODUCTION_APP_TOUCHED=NO
-          echo OAUTH_KEYCHAIN_TOUCHED=NO
+          echo ENDLUME_TOUCHED=NO
 
       - uses: actions/setup-node@v4
         with:
@@ -49,24 +52,49 @@ jobs:
       - name: Install exact dependencies
         run: npm ci --no-audit --no-fund
 
-      - name: Apply deterministic metadata patch
+      - name: Apply exact field-level metadata patch
         shell: bash
         run: |
           set -Eeuo pipefail
-          python3 scripts/vyron_6110_product_correctness_patch.py
-          git add -N src/vyron6110MetadataScheduleOptIn.test.ts
+          python3 scripts/vyron_6110_metadata_patch_frontend.py
+          python3 scripts/vyron_6110_native_patch_1.py
+          python3 scripts/vyron_6110_native_patch_2.py
+          python3 scripts/vyron_6110_native_patch_3.py
+          git add -N src/metadataPatch.ts src/vyron6110MetadataPatch.test.ts src/vyron6110MetadataScheduleOptIn.test.ts
           git diff --check
           changed="$(git diff --name-only | sort)"
-          expected="$(printf '%s\n' src/MetadataPage.tsx src/vyron6110MetadataScheduleOptIn.test.ts | sort)"
+          expected="$(printf '%s\n' \
+            src/MetadataPage.tsx \
+            src/api.ts \
+            src/metadataPatch.ts \
+            src/vyron6110MetadataPatch.test.ts \
+            src/vyron6110MetadataScheduleOptIn.test.ts \
+            src-tauri/src/youtube.rs | sort)"
           test "$changed" = "$expected"
           echo PATCH_SCOPE=PASS
           printf '%s\n' "$changed"
 
-      - name: Focused VYRON 6.1.10 regressions
+      - name: Native protected-subsystem diff gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git diff --quiet -- src/youtubeQuota.ts src/uploadQueue.ts src/publisherRuntime.ts src/publishWorkspaceState.ts
+          git diff --unified=0 -- src-tauri/src/youtube.rs > /tmp/vyron-youtube.patch
+          sed -n '/^[+-][^-+]/p' /tmp/vyron-youtube.patch > /tmp/vyron-youtube.changed-lines || true
+          if grep -Eiq 'refresh_token|oauth_vault|keychain|videos\.insert|uploadType=resumable|resumable upload' /tmp/vyron-youtube.changed-lines; then
+            echo PROTECTED_YOUTUBE_SUBSYSTEM_TOUCHED=FAIL
+            cat /tmp/vyron-youtube.changed-lines
+            exit 1
+          fi
+          echo OAUTH_KEYCHAIN_UNTOUCHED=PASS
+          echo RESUMABLE_UPLOAD_UNTOUCHED=PASS
+
+      - name: Required metadata and inventory regressions
         run: >
           npx vitest run
-          src/dailyOperations.test.ts
+          src/vyron6110MetadataPatch.test.ts
           src/vyron6110MetadataScheduleOptIn.test.ts
+          src/dailyOperations.test.ts
           src/vyron619ScheduleSources.test.ts
           src/scheduleContinuation.test.ts
           src/v610GlobalUploadCounter.test.ts
@@ -77,26 +105,17 @@ jobs:
       - name: Production TypeScript build
         run: npm run build
 
-      - name: Protected subsystem diff gate
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          git diff --quiet -- src-tauri/src/youtube.rs
-          git diff --quiet -- src-tauri/src/keychain.rs || test ! -f src-tauri/src/keychain.rs
-          git diff --quiet -- src/youtubeQuota.ts
-          git diff --quiet -- src/uploadQueue.ts
-          echo YOUTUBE_NATIVE_TRANSPORT_UNTOUCHED=PASS
-          echo OAUTH_KEYCHAIN_UNTOUCHED=PASS
-          echo PUBLISHER_TRANSPORT_UNTOUCHED=PASS
+      - name: Native compile gate
+        run: cargo check --manifest-path src-tauri/Cargo.toml
 
-      - name: Commit only after tests pass
+      - name: Commit only after all gates pass
         shell: bash
         run: |
           set -Eeuo pipefail
           git config user.name "VYRON QA"
           git config user.email "vyron-qa@users.noreply.github.com"
-          git add src/MetadataPage.tsx src/vyron6110MetadataScheduleOptIn.test.ts
+          git add src/MetadataPage.tsx src/api.ts src/metadataPatch.ts src/vyron6110MetadataPatch.test.ts src/vyron6110MetadataScheduleOptIn.test.ts src-tauri/src/youtube.rs
           git diff --cached --check
-          git commit -m "fix(vyron): metadata schedule opt-in"
+          git commit -m "fix(vyron): metadata exact patch contract"
           git push origin HEAD:hotfix/vyron-6.1.10-product-correctness
-          echo METADATA_SCHEDULE_OPT_IN=COMMITTED
+          echo METADATA_EXACT_PATCH_CONTRACT=COMMITTED
