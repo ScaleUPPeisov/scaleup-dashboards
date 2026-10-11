@@ -8,7 +8,8 @@ export type DailyChannelOperation={
   events:UploadHistoryRecord[];
 };
 export type DailyOperationsSummary={
-  uploadedToday:number;processedChannels:number;unprocessedChannels:number;localReady:number;emptyChannels:number;errors:number;lastUploadAt?:string;rows:DailyChannelOperation[];
+  uploadedToday:number;processedChannels:number;unprocessedChannels:number;localReady:number;emptyChannels:number;
+  onlineChannels:number;offlineChannels:number;attentionChannels:number;errors:number;lastUploadAt?:string;rows:DailyChannelOperation[];
 };
 
 function sameLocalDay(iso:string|undefined,now:Date){
@@ -69,7 +70,10 @@ export function buildDailyOperations(channels:Channel[],history:UploadHistoryRec
     unprocessedChannels:rows.filter(x=>!x.processedToday).length,
     localReady:rows.reduce((n,x)=>n+(x.localReady||0),0),
     emptyChannels:rows.filter(x=>x.folderState==='AVAILABLE'&&x.localReady===0).length,
-    errors:rows.filter(x=>x.folderState==='ERROR'||x.folderState==='UNAVAILABLE').length,
+    onlineChannels:rows.filter(x=>x.folderState==='AVAILABLE').length,
+    offlineChannels:rows.filter(x=>x.folderState==='UNAVAILABLE').length,
+    attentionChannels:rows.filter(x=>x.folderState==='NOT_CONFIGURED'||x.folderState==='UNKNOWN').length,
+    errors:rows.filter(x=>x.folderState==='ERROR').length,
     lastUploadAt:last,rows
   }
 }
