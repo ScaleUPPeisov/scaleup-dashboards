@@ -1,0 +1,263 @@
+name: VYRON 6.1.10 Safe-Base Regression Matrix
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-6.1.10-product-correctness
+    paths:
+      - '.github/workflows/vyron-6110-regression-baseline-matrix.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vyron-6110-regression-baseline-matrix
+  cancel-in-progress: false
+
+env:
+  SAFE_BASE: 588e2070877512daa637077223c678af6a216831
+  BRANCH: hotfix/vyron-6.1.10-product-correctness
+
+jobs:
+  baseline:
+    name: Safe base full Vitest
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 588e2070877512daa637077223c678af6a216831
+          fetch-depth: 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Full Vitest at immutable safe base
+        shell: bash
+        run: |
+          set +e
+          npx vitest run --reporter=json --outputFile="$RUNNER_TEMP/vitest.json"
+          code=$?
+          set -e
+          test -s "$RUNNER_TEMP/vitest.json"
+          echo "$code" > "$RUNNER_TEMP/exit-code.txt"
+          node <<'NODE'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          const root=process.cwd().replaceAll('\\','/');
+          const data=JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/vitest.json`,'utf8'));
+          const clean=s=>String(s??'').replace(/\u001b\[[0-9;]*m/g,'').replaceAll(root+'/','').trim();
+          const failures=[];
+          for(const suite of data.testResults??[]){
+            for(const a of suite.assertionResults??[]){
+              if(a.status!=='failed')continue;
+              failures.push({
+                testFile:clean(suite.name),
+                testName:clean(a.fullName||a.title),
+                messages:(a.failureMessages??[]).map(clean),
+              });
+            }
+          }
+          const out={
+            ref:process.env.SAFE_BASE,
+            total:data.numTotalTests??null,
+            failed:data.numFailedTests??failures.length,
+            passed:data.numPassedTests??null,
+            pending:data.numPendingTests??null,
+            failedSuites:data.numFailedTestSuites??null,
+            failures,
+          };
+          fs.writeFileSync(`${process.env.RUNNER_TEMP}/summary.json`,JSON.stringify(out,null,2)+'\n');
+          console.log(JSON.stringify({ref:out.ref,total:out.total,failed:out.failed,passed:out.passed,pending:out.pending,failedSuites:out.failedSuites}));
+          NODE
+      - uses: actions/upload-artifact@v4
+        with:
+          name: safe-base-regression-json
+          path: |
+            ${{ runner.temp }}/summary.json
+            ${{ runner.temp }}/exit-code.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  dev:
+    name: Current dev full Vitest without finalizer
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: hotfix/vyron-6.1.10-product-correctness
+          fetch-depth: 0
+      - name: Safety gate — no version finalizer
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git merge-base --is-ancestor "$SAFE_BASE" HEAD
+          test "$(node -p "require('./package.json').version")" = "6.1.9"
+          test "$(git status --porcelain)" = ""
+          echo FINALIZER_APPLIED=NO
+          echo PRODUCT_MUTATION=NO
+          echo CANDIDATE_BUILD=NO
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Full Vitest at current dev HEAD
+        shell: bash
+        run: |
+          set +e
+          npx vitest run --reporter=json --outputFile="$RUNNER_TEMP/vitest.json"
+          code=$?
+          set -e
+          test -s "$RUNNER_TEMP/vitest.json"
+          echo "$code" > "$RUNNER_TEMP/exit-code.txt"
+          git rev-parse HEAD > "$RUNNER_TEMP/head.txt"
+          node <<'NODE'
+          import fs from 'node:fs';
+          const root=process.cwd().replaceAll('\\','/');
+          const data=JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/vitest.json`,'utf8'));
+          const clean=s=>String(s??'').replace(/\u001b\[[0-9;]*m/g,'').replaceAll(root+'/','').trim();
+          const failures=[];
+          for(const suite of data.testResults??[]){
+            for(const a of suite.assertionResults??[]){
+              if(a.status!=='failed')continue;
+              failures.push({
+                testFile:clean(suite.name),
+                testName:clean(a.fullName||a.title),
+                messages:(a.failureMessages??[]).map(clean),
+              });
+            }
+          }
+          const out={
+            ref:fs.readFileSync(`${process.env.RUNNER_TEMP}/head.txt`,'utf8').trim(),
+            total:data.numTotalTests??null,
+            failed:data.numFailedTests??failures.length,
+            passed:data.numPassedTests??null,
+            pending:data.numPendingTests??null,
+            failedSuites:data.numFailedTestSuites??null,
+            failures,
+          };
+          fs.writeFileSync(`${process.env.RUNNER_TEMP}/summary.json`,JSON.stringify(out,null,2)+'\n');
+          console.log(JSON.stringify({ref:out.ref,total:out.total,failed:out.failed,passed:out.passed,pending:out.pending,failedSuites:out.failedSuites}));
+          NODE
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dev-regression-json
+          path: |
+            ${{ runner.temp }}/summary.json
+            ${{ runner.temp }}/exit-code.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  compare:
+    name: Classify preexisting vs introduced
+    needs: [baseline, dev]
+    if: always() && needs.baseline.result == 'success' && needs.dev.result == 'success'
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: hotfix/vyron-6.1.10-product-correctness
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: safe-base-regression-json
+          path: ${{ runner.temp }}/base
+      - uses: actions/download-artifact@v4
+        with:
+          name: dev-regression-json
+          path: ${{ runner.temp }}/dev
+      - name: Build exact A–E triage starting point
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          node <<'NODE'
+          import fs from 'node:fs';
+          const base=JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/base/summary.json`,'utf8'));
+          const dev=JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/dev/summary.json`,'utf8'));
+          const key=f=>`${f.testFile} :: ${f.testName}`;
+          const bm=new Map(base.failures.map(f=>[key(f),f]));
+          const dm=new Map(dev.failures.map(f=>[key(f),f]));
+          const cleanMessage=f=>(f?.messages??[]).join('\n\n').trim();
+          const current=[...dm.entries()].sort(([a],[b])=>a.localeCompare(b));
+          let dCount=0,eCount=0;
+          let failures=`# VYRON 6.1.10 — REGRESSION FAILURES\n\n`;
+          failures+=`Current development tree was tested WITHOUT the version/changelog finalizer.\n\n`;
+          failures+=`- SAFE_BASE: ${base.ref}\n`;
+          failures+=`- DEV_HEAD: ${dev.ref}\n`;
+          failures+=`- TOTAL_TESTS: ${dev.total}\n`;
+          failures+=`- FAILED_TESTS: ${dev.failed}\n`;
+          failures+=`- PASSED_TESTS: ${dev.passed}\n`;
+          failures+=`- PENDING_TESTS: ${dev.pending}\n\n`;
+          current.forEach(([k,f],i)=>{
+            const existed=bm.has(k);
+            if(existed)dCount++;else eCount++;
+            failures+=`## FAILURE_ID: F${String(i+1).padStart(3,'0')}\n\n`;
+            failures+=`- TEST_FILE: ${f.testFile}\n`;
+            failures+=`- TEST_NAME: ${f.testName}\n`;
+            failures+=`- EXPECTED: SEE_ASSERTION_MESSAGE\n`;
+            failures+=`- ACTUAL: SEE_ASSERTION_MESSAGE\n`;
+            failures+=`- SOURCE_PATH: ROOT_CAUSE_PENDING\n`;
+            failures+=`- RELATED_6_1_10_CHANGE: ${existed?'NONE_PROVEN — IDENTICAL TEST ALREADY FAILED AT SAFE_BASE':'PENDING_ROOT_CAUSE'}\n`;
+            failures+=`- CLASSIFICATION: ${existed?'D. UNRELATED_PREEXISTING_FAILURE':'E. UNKNOWN'}\n`;
+            failures+=`- ACTION: ${existed?'DO_NOT_MISLABEL_AS_6_1_10_REGRESSION; ROOT_CAUSE_REQUIRED_BEFORE_ANY_FIX':'ROOT_CAUSE_REQUIRED_BEFORE_CHANGE'}\n`;
+            failures+=`- ASSERTION_MESSAGE:\n\n\`\`\`text\n${cleanMessage(f)||'NO_MESSAGE'}\n\`\`\`\n\n`;
+          });
+          let matrix=`# VYRON 6.1.10 — SAFE BASE ↔ DEV REGRESSION MATRIX\n\n`;
+          matrix+=`| Metric | Safe base | Dev without finalizer |\n|---|---:|---:|\n`;
+          matrix+=`| Total | ${base.total} | ${dev.total} |\n`;
+          matrix+=`| Passed | ${base.passed} | ${dev.passed} |\n`;
+          matrix+=`| Failed | ${base.failed} | ${dev.failed} |\n`;
+          matrix+=`| Pending | ${base.pending} | ${dev.pending} |\n\n`;
+          matrix+=`- SAFE_BASE: \`${base.ref}\`\n`;
+          matrix+=`- DEV_HEAD: \`${dev.ref}\`\n`;
+          matrix+=`- CURRENT_DEV_FAILURES_ALREADY_FAILING_AT_SAFE_BASE: ${dCount}\n`;
+          matrix+=`- CURRENT_DEV_FAILURES_NOT_FAILING_AT_SAFE_BASE: ${eCount}\n`;
+          matrix+=`- AUTO_CLASSIFIED_D_PREEXISTING: ${dCount}\n`;
+          matrix+=`- REMAINING_E_UNKNOWN: ${eCount}\n`;
+          matrix+=`- FINALIZER_APPLIED: NO\n`;
+          matrix+=`- PRODUCT_MUTATION: NO\n`;
+          matrix+=`- CANDIDATE_BUILD: NO\n\n`;
+          matrix+=`A failure is classified D only when the exact test file + test name also fails at the immutable proven 6.1.9 safe base. All newly failing dev tests remain E.UNKNOWN until source-level root cause establishes A, B, or C.\n`;
+          fs.writeFileSync('VYRON_6_1_10_REGRESSION_FAILURES.md',failures.trimEnd()+'\n');
+          fs.writeFileSync('VYRON_6_1_10_REGRESSION_MATRIX.md',matrix.trimEnd()+'\n');
+          console.log(matrix);
+          NODE
+          git diff --check
+      - name: Commit QA evidence only
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          changed="$(git status --porcelain | awk '{print $2}' | sort)"
+          expected="$(printf '%s\n' VYRON_6_1_10_REGRESSION_FAILURES.md VYRON_6_1_10_REGRESSION_MATRIX.md | sort)"
+          test "$changed" = "$expected"
+          git config user.name "VYRON QA"
+          git config user.email "vyron-qa@users.noreply.github.com"
+          git add VYRON_6_1_10_REGRESSION_FAILURES.md VYRON_6_1_10_REGRESSION_MATRIX.md
+          git diff --cached --check
+          git commit -m "test(vyron): classify safe-base regression failures"
+          git push origin "HEAD:$BRANCH"
+          echo PRODUCT_FILES_COMMITTED=0
+          echo QA_EVIDENCE_COMMITTED=YES
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: VYRON-6.1.10-REGRESSION-MATRIX
+          path: |
+            VYRON_6_1_10_REGRESSION_FAILURES.md
+            VYRON_6_1_10_REGRESSION_MATRIX.md
+          if-no-files-found: error
+          retention-days: 30
+      - name: Keep freeze blocked while current dev has failures
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          dev_failed="$(node -p "require('${RUNNER_TEMP}/dev/summary.json').failed")"
+          echo "DEV_FAILED=$dev_failed"
+          echo CANDIDATE_HEAD=NOT_CREATED
+          echo CANDIDATE_APP_BUILT=NO
+          echo RELEASE=BLOCKED
+          test "$dev_failed" -eq 0
