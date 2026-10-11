@@ -1,0 +1,201 @@
+name: VYRON 6.1.10 Freeze One Candidate
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-6.1.10-product-correctness
+    paths:
+      - '.github/workflows/vyron-6110-freeze-candidate.yml'
+      - 'scripts/vyron_6110_finalize_candidate.py'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vyron-6110-freeze-one-candidate
+  cancel-in-progress: false
+
+env:
+  SAFE_BASE: 588e2070877512daa637077223c678af6a216831
+  METADATA_GREEN_HEAD: cfba3100b59d56abd490e39be6294e995a8b63ce
+  BRANCH: hotfix/vyron-6.1.10-product-correctness
+  CANDIDATE_ARTIFACT: VYRON-6.1.10-MACOS-ARM64-CANDIDATE
+
+jobs:
+  freeze-build:
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: hotfix/vyron-6.1.10-product-correctness
+          fetch-depth: 0
+
+      - name: Immutable safety gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$GITHUB_REF_NAME" = "$BRANCH"
+          git merge-base --is-ancestor "$SAFE_BASE" HEAD
+          git merge-base --is-ancestor "$METADATA_GREEN_HEAD" HEAD
+          test "$(node -p "require('./package.json').version")" = "6.1.9"
+          git diff --quiet
+          echo BASE_ANCESTRY=PASS
+          echo METADATA_GREEN_ANCESTRY=PASS
+          echo PRODUCTION_APP_TOUCHED=NO
+          echo ENDLUME_TOUCHED=NO
+          echo RELEASE_ACTIONS=0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install exact dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Apply final guarded product/version/changelog layer
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 scripts/vyron_6110_finalize_candidate.py
+          git add -N VYRON_ICON_FORENSICS.md scripts/check-vyron-release-history.mjs src/vyron6110ReleaseHistoryVersion.test.ts
+          git diff --check
+          changed="$(git diff --name-only | sort)"
+          expected="$(printf '%s\n' \
+            VYRON_ICON_FORENSICS.md \
+            package-lock.json \
+            package.json \
+            scripts/check-vyron-release-history.mjs \
+            src/DailyOperationsCenter.tsx \
+            src/dailyOperations.test.ts \
+            src/dailyOperations.ts \
+            src/releaseHistory.ts \
+            src/vyron6110ReleaseHistoryVersion.test.ts \
+            src-tauri/Cargo.lock \
+            src-tauri/Cargo.toml \
+            src-tauri/tauri.conf.json | sort)"
+          test "$changed" = "$expected"
+          echo FINALIZER_SCOPE=PASS
+          printf '%s\n' "$changed"
+
+      - name: Protected subsystem zero-diff gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git diff --quiet -- \
+            src-tauri/src/youtube.rs \
+            src-tauri/src/oauth_vault.rs \
+            src/youtubeQuota.ts \
+            src/uploadQueue.ts \
+            src/uploadQueueRuntime.ts \
+            src/publisherRuntime.ts \
+            src/publishWorkspaceState.ts \
+            src/store.ts
+          echo OAUTH_TRANSPORT_UNTOUCHED=PASS
+          echo REFRESH_TOKEN_LOGIC_UNTOUCHED=PASS
+          echo RESUMABLE_UPLOAD_UNTOUCHED=PASS
+          echo ACCOUNT_MAPPING_UNTOUCHED=PASS
+          echo COUNTER_PERSISTENCE_UNTOUCHED=PASS
+
+      - name: Version and changelog guard
+        run: node scripts/check-vyron-release-history.mjs
+
+      - name: Complete TypeScript regression suite
+        run: npx vitest run
+
+      - name: Production frontend build
+        run: npm run build
+
+      - name: Native Rust regression suite
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Native compile gate
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+
+      - name: Freeze exactly one candidate source commit
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git config user.name "VYRON QA"
+          git config user.email "vyron-qa@users.noreply.github.com"
+          git add \
+            VYRON_ICON_FORENSICS.md \
+            package.json package-lock.json \
+            scripts/check-vyron-release-history.mjs \
+            src/DailyOperationsCenter.tsx src/dailyOperations.ts src/dailyOperations.test.ts \
+            src/releaseHistory.ts src/vyron6110ReleaseHistoryVersion.test.ts \
+            src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json
+          git diff --cached --check
+          git commit -m "release(vyron): freeze 6.1.10 candidate source"
+          CANDIDATE_HEAD="$(git rev-parse HEAD)"
+          git push origin "HEAD:$BRANCH"
+          echo "CANDIDATE_HEAD=$CANDIDATE_HEAD" >> "$GITHUB_ENV"
+          echo "VYRON_6_1_10_CANDIDATE_HEAD=$CANDIDATE_HEAD"
+          test "$(node -p "require('./package.json').version")" = "6.1.10"
+          test "$(git status --porcelain)" = ""
+
+      - name: Build isolated macOS arm64 candidate app
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm run tauri:build -- --bundles app
+          APP="$(find src-tauri/target -type d -path '*/release/bundle/macos/VYRON.app' -print -quit)"
+          test -n "$APP"
+          test -d "$APP"
+          INFO="$APP/Contents/Info.plist"
+          EXE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$INFO")"
+          EXE="$APP/Contents/MacOS/$EXE_NAME"
+          VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INFO")"
+          BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$INFO")"
+          ARCHS="$(lipo -archs "$EXE")"
+          test "$VERSION" = "6.1.10"
+          test "$BUNDLE_ID" = "studio.channelflow.desktop"
+          test "$ARCHS" = "arm64"
+          codesign --verify --deep --strict "$APP"
+          mkdir -p candidate-out
+          COPY="candidate-out/$CANDIDATE_ARTIFACT.app"
+          ditto "$APP" "$COPY"
+          tar -C candidate-out -czf "candidate-out/$CANDIDATE_ARTIFACT.tar.gz" "$CANDIDATE_ARTIFACT.app"
+          shasum -a 256 "$EXE" > candidate-out/executable.sha256
+          shasum -a 256 "candidate-out/$CANDIDATE_ARTIFACT.tar.gz" > candidate-out/archive.sha256
+          printf '%s\n' \
+            "DEVELOPMENT_STATUS=PASS" \
+            "BASE=$SAFE_BASE" \
+            "CANDIDATE_HEAD=$CANDIDATE_HEAD" \
+            "PRODUCT_VERSION=6.1.10" \
+            "BUNDLE_ID=$BUNDLE_ID" \
+            "ARCH=$ARCHS" \
+            "METADATA_PATCH_SEMANTICS=PASS" \
+            "INVENTORY_OFFLINE_NOT_ERROR=PASS" \
+            "CHANGELOG_VERSION_GUARD=PASS" \
+            "ICON_STATUS=OWNER_SELECTION_REQUIRED" \
+            "ICON_RESTORED=NO" \
+            "PRODUCTION_APP_TOUCHED=NO" \
+            "ENDLUME_TOUCHED=NO" \
+            "RELEASE=BLOCKED" \
+            > candidate-out/PRE_PHYSICAL_REPORT.txt
+          cat candidate-out/PRE_PHYSICAL_REPORT.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-6.1.10-MACOS-ARM64-CANDIDATE
+          path: |
+            candidate-out/VYRON-6.1.10-MACOS-ARM64-CANDIDATE.tar.gz
+            candidate-out/executable.sha256
+            candidate-out/archive.sha256
+            candidate-out/PRE_PHYSICAL_REPORT.txt
+            VYRON_ICON_FORENSICS.md
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Final no-release declaration
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          echo "VYRON_6_1_10_CANDIDATE_HEAD=$CANDIDATE_HEAD"
+          echo "PHYSICAL_QA_AUTHORIZATION=NEXT_PHASE_ONLY"
+          echo "GITHUB_RELEASE_CREATED=NO"
+          echo "PRODUCTION_INSTALL_PERFORMED=NO"
+          echo "RELEASE=BLOCKED"
