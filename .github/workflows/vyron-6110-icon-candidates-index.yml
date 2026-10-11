@@ -32,8 +32,9 @@ jobs:
           actual="$(git hash-object src/assets/vyron-4-artwork.webp)"
           test "$actual" = "c4bb26bef69571df152fb0ecfe7da5a349663bb7"
           mkdir -p VYRON-ICON-CANDIDATES/previews
-          python3 -m pip install --disable-pip-version-check --quiet pillow
-          python3 - <<'PY'
+          python3 -m venv "$RUNNER_TEMP/icon-venv"
+          "$RUNNER_TEMP/icon-venv/bin/python" -m pip install --disable-pip-version-check --quiet pillow
+          "$RUNNER_TEMP/icon-venv/bin/python" - <<'PY'
           from PIL import Image
           from pathlib import Path
           src=Path('src/assets/vyron-4-artwork.webp')
