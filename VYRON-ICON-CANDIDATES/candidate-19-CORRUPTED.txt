@@ -1,0 +1,6 @@
+original path: src/assets/vyron-4-artwork.webp
+commit SHA: 39662c2aa6fe1cc352d435463692e1d255860c76
+blob SHA: c4bb26bef69571df152fb0ecfe7da5a349663bb7
+dimensions/header information: RIFF/WebP VP8, 384x384
+decoder failures: sips failed; Pillow failed; ffmpeg failed with invalid/insufficient image data; dwebp failed with BITSTREAM_ERROR / NOT_ENOUGH_DATA
+historical context: historical VYRON artwork evidence from src/assets/vyron-4-artwork.webp; physically corrupted/truncated; must not be reconstructed, redrawn, or fabricated as a preview
