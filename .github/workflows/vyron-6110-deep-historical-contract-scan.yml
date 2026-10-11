@@ -1,0 +1,145 @@
+name: VYRON 6.1.10 Deep Historical Contract Scan
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-6.1.10-product-correctness
+    paths:
+      - '.github/workflows/vyron-6110-deep-historical-contract-scan.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  SAFE_BASE: 588e2070877512daa637077223c678af6a216831
+  BRANCH: hotfix/vyron-6.1.10-product-correctness
+
+jobs:
+  scan:
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: hotfix/vyron-6.1.10-product-correctness
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Safety and QA toolchain
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git merge-base --is-ancestor "$SAFE_BASE" HEAD
+          test "$(node -p "require('./package.json').version")" = "6.1.9"
+          test "$(git status --porcelain)" = ""
+          npm ci --no-audit --no-fund
+          npm install --no-save --no-package-lock react-test-renderer@19.1.1
+          echo PRODUCT_MUTATION=NO
+          echo CANDIDATE_BUILD=NO
+          echo RELEASE=BLOCKED
+
+      - name: Scan every test-history ref for the four unresolved files
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat > "$RUNNER_TEMP/files.txt" <<'EOF'
+          src/v300PublisherUiContracts.test.ts
+          src/v502FullRefresh.test.ts
+          src/v611ChannelRunwayInventoryHotfix.test.ts
+          tests/materials-freeze-regression.test.mjs
+          EOF
+          mkdir -p "$RUNNER_TEMP/scan"
+          python3 - <<'PY'
+          import json,os,pathlib,subprocess
+          safe=os.environ['SAFE_BASE']
+          files=[x.strip() for x in pathlib.Path(os.environ['RUNNER_TEMP']+'/files.txt').read_text().splitlines() if x.strip()]
+          rows=[]
+          for f in files:
+            refs=subprocess.check_output(['git','log','--format=%H',safe,'--',f],text=True).splitlines()
+            rows.append({'file':f,'refs':refs})
+          pathlib.Path(os.environ['RUNNER_TEMP']+'/refs.json').write_text(json.dumps(rows,indent=2)+'\n')
+          print(json.dumps(rows,indent=2))
+          PY
+          python3 - <<'PY'
+          import json,os,pathlib
+          rows=json.loads(pathlib.Path(os.environ['RUNNER_TEMP']+'/refs.json').read_text())
+          lines=[]
+          for r in rows:
+            for ref in r['refs']:
+              lines.append(ref+'\t'+r['file'])
+          pathlib.Path(os.environ['RUNNER_TEMP']+'/pairs.tsv').write_text('\n'.join(lines)+'\n')
+          print('PAIRS='+str(len(lines)))
+          PY
+          i=0
+          while IFS=$'\t' read -r ref file; do
+            i=$((i+1))
+            wt="$RUNNER_TEMP/wt-$i"
+            git worktree add --detach "$wt" "$ref" >/dev/null
+            ln -s "$GITHUB_WORKSPACE/node_modules" "$wt/node_modules"
+            set +e
+            (cd "$wt" && "$GITHUB_WORKSPACE/node_modules/.bin/vitest" run "$file" --reporter=json --outputFile="$RUNNER_TEMP/scan/$i.json")
+            code=$?
+            set -e
+            printf '%s\t%s\t%s\n' "$ref" "$file" "$code" > "$RUNNER_TEMP/scan/$i.meta"
+            rm -f "$wt/node_modules"
+            git worktree remove --force "$wt" >/dev/null
+          done < "$RUNNER_TEMP/pairs.tsv"
+
+      - name: Build exact deep-scan report
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import json,os,pathlib,subprocess
+          temp=pathlib.Path(os.environ['RUNNER_TEMP'])
+          pairs=[]
+          for idx,line in enumerate((temp/'pairs.tsv').read_text().splitlines(),1):
+            ref,file=line.split('\t',1)
+            data=json.loads((temp/f'scan/{idx}.json').read_text())
+            assertions=[]
+            for suite in data.get('testResults',[]): assertions.extend(suite.get('assertionResults',[]))
+            failed=[a.get('fullName') or a.get('title') for a in assertions if a.get('status')=='failed']
+            pending=[a.get('fullName') or a.get('title') for a in assertions if a.get('status') in ('pending','skipped','todo')]
+            try: version=json.loads(subprocess.check_output(['git','show',f'{ref}:package.json'],text=True)).get('version','UNKNOWN')
+            except Exception: version='UNKNOWN'
+            msg=subprocess.check_output(['git','show','-s','--format=%s',ref],text=True).strip()
+            date=subprocess.check_output(['git','show','-s','--format=%cI',ref],text=True).strip()
+            pairs.append({'file':file,'ref':ref,'version':version,'date':date,'message':msg,'total':len(assertions),'passed':sum(1 for a in assertions if a.get('status')=='passed'),'failed':len(failed),'pending':len(pending),'failure_names':failed,'green':len(assertions)>0 and not failed and not pending})
+          lines=['# VYRON 6.1.10 — DEEP HISTORICAL CONTRACT SCAN','',f'- SAFE_BASE: `{os.environ["SAFE_BASE"]}`','- PRODUCT_MUTATION: NO','- CANDIDATE_BUILD: NO','- RELEASE: BLOCKED','']
+          for file in sorted({p['file'] for p in pairs}):
+            lines += [f'## {file}','']
+            rows=[p for p in pairs if p['file']==file]
+            for p in rows:
+              lines += [f'### `{p["ref"]}`',f'- PACKAGE_VERSION: {p["version"]}',f'- DATE: {p["date"]}',f'- MESSAGE: {p["message"]}',f'- TOTAL: {p["total"]}',f'- PASSED: {p["passed"]}',f'- FAILED: {p["failed"]}',f'- PENDING: {p["pending"]}',f'- GREEN: {"YES" if p["green"] else "NO"}',f'- FAILURES: {p["failure_names"]}','']
+            greens=[p for p in rows if p['green']]
+            lines += [f'- ANY_GREEN_TEST_HISTORY_REF: {"YES" if greens else "NO"}',f'- NEWEST_GREEN_TEST_HISTORY_REF: `{greens[0]["ref"]}`' if greens else '- NEWEST_GREEN_TEST_HISTORY_REF: NONE','']
+          pathlib.Path('VYRON_6_1_10_DEEP_HISTORICAL_CONTRACT_SCAN.md').write_text('\n'.join(lines).rstrip()+'\n')
+          print('\n'.join(lines))
+          PY
+          git diff --check
+
+      - name: Commit QA evidence only
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git add VYRON_6_1_10_DEEP_HISTORICAL_CONTRACT_SCAN.md
+          test "$(git diff --cached --name-only)" = "VYRON_6_1_10_DEEP_HISTORICAL_CONTRACT_SCAN.md"
+          git diff --cached --check
+          git config user.name "VYRON QA"
+          git config user.email "vyron-qa@users.noreply.github.com"
+          git commit -m "test(vyron): record deep historical contract scan"
+          git push origin "HEAD:$BRANCH"
+          echo PRODUCT_FILES_COMMITTED=0
+
+      - name: Keep freeze blocked
+        shell: bash
+        run: |
+          echo FULL_REGRESSION_GREEN=NO
+          echo ICON_RESOLVED=NO
+          echo VYRON_6_1_10_CANDIDATE_HEAD=NOT_CREATED
+          echo CANDIDATE_APP_BUILT=NO
+          echo RELEASE=BLOCKED
+          exit 1
