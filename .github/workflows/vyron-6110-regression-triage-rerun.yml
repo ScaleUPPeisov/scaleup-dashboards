@@ -1,0 +1,127 @@
+name: VYRON 6.1.10 Full Regression Triage Rerun
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-6.1.10-product-correctness
+    paths:
+      - '.github/workflows/vyron-6110-regression-triage-rerun.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-6110-regression-triage-rerun
+  cancel-in-progress: false
+
+env:
+  SAFE_BASE: 588e2070877512daa637077223c678af6a216831
+  METADATA_GREEN_HEAD: cfba3100b59d56abd490e39be6294e995a8b63ce
+
+jobs:
+  rerun:
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: hotfix/vyron-6.1.10-product-correctness
+          fetch-depth: 0
+
+      - name: QA-only safety gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git merge-base --is-ancestor "$SAFE_BASE" HEAD
+          git merge-base --is-ancestor "$METADATA_GREEN_HEAD" HEAD
+          test "$(node -p "require('./package.json').version")" = "6.1.9"
+          test "$(git status --porcelain)" = ""
+          echo PRODUCT_COMMIT_ACTIONS=0
+          echo CANDIDATE_BUILD_ACTIONS=0
+          echo RELEASE_ACTIONS=0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install exact dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Reproduce pre-freeze tree ephemerally
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 scripts/vyron_6110_finalize_candidate.py
+          git add -N VYRON_ICON_FORENSICS.md scripts/check-vyron-release-history.mjs src/vyron6110ReleaseHistoryVersion.test.ts
+          git diff --check
+          echo EPHEMERAL_FINALIZER=PASS
+          echo PRODUCT_COMMIT_CREATED=NO
+
+      - name: Run exact complete Vitest suite and capture JSON plus verbose log
+        id: vitest
+        shell: bash
+        run: |
+          set +e
+          npx vitest run --reporter=json --outputFile="$RUNNER_TEMP/vyron-6110-vitest.json"
+          status=$?
+          npx vitest run --reporter=verbose > "$RUNNER_TEMP/vyron-6110-vitest-verbose.log" 2>&1
+          verbose_status=$?
+          set -e
+          test "$status" -eq "$verbose_status"
+          test -s "$RUNNER_TEMP/vyron-6110-vitest.json"
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          cp "$RUNNER_TEMP/vyron-6110-vitest.json" VYRON_6_1_10_FULL_VITEST.json
+          cp "$RUNNER_TEMP/vyron-6110-vitest-verbose.log" VYRON_6_1_10_FULL_VITEST.log
+          printf '%s\n' "$status" > VYRON_6_1_10_FULL_VITEST.exitcode
+          exit 0
+
+      - name: Summarize regression counts
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          node <<'NODE'
+          import fs from 'node:fs';
+          const d=JSON.parse(fs.readFileSync('VYRON_6_1_10_FULL_VITEST.json','utf8'));
+          const out=[
+            `TOTAL_TESTS=${d.numTotalTests ?? 'UNKNOWN'}`,
+            `PASSED_TESTS=${d.numPassedTests ?? 'UNKNOWN'}`,
+            `FAILED_TESTS=${d.numFailedTests ?? 'UNKNOWN'}`,
+            `PENDING_TESTS=${d.numPendingTests ?? 'UNKNOWN'}`,
+            `FAILED_SUITES=${d.numFailedTestSuites ?? 'UNKNOWN'}`,
+            `VITEST_EXIT_CODE=${process.env.VITEST_EXIT_CODE ?? 'SEE_EXITCODE_FILE'}`,
+            'PRODUCT_COMMIT_CREATED=NO',
+            'CANDIDATE_HEAD_CREATED=NO',
+            'CANDIDATE_APP_BUILT=NO',
+            'RELEASE_ACTIONS=0'
+          ].join('\n')+'\n';
+          fs.writeFileSync('VYRON_6_1_10_RERUN_SUMMARY.txt',out);
+          console.log(out);
+          NODE
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: VYRON-6.1.10-REGRESSION-RERUN
+          path: |
+            VYRON_6_1_10_FULL_VITEST.json
+            VYRON_6_1_10_FULL_VITEST.log
+            VYRON_6_1_10_FULL_VITEST.exitcode
+            VYRON_6_1_10_RERUN_SUMMARY.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Preserve regression result
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          status='${{ steps.vitest.outputs.exit_code }}'
+          test -n "$status"
+          echo "FULL_VITEST_EXIT_CODE=$status"
+          echo CANDIDATE_HEAD=NOT_CREATED
+          echo CANDIDATE_APP_BUILT=NO
+          echo RELEASE=BLOCKED
+          test "$status" -eq 0
