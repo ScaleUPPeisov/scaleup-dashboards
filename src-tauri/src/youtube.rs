@@ -4505,9 +4505,9 @@ pub async fn youtube_update_existing_video(
     app: AppHandle,
     profile_id: String,
     video_id: String,
-    title: String,
-    description: String,
-    tags: Vec<String>,
+    title: Option<String>,
+    description: Option<String>,
+    tags: Option<Vec<String>>,
     publish_at: Option<String>,
     privacy_status: Option<String>,
     category_id: Option<String>,
@@ -4547,12 +4547,19 @@ pub async fn youtube_update_existing_video(
             video_id
         ));
     }
-    let wanted_title = youtube_clean_title(&title);
-    if wanted_title.is_empty() {
+    let title_requested = title.is_some();
+    let description_requested = description.is_some();
+    let tags_requested = tags.is_some();
+    let category_requested = category_id.is_some();
+    let old_title = sn.get("title").and_then(|x| x.as_str()).unwrap_or("");
+    let wanted_title = title.as_deref().map(youtube_clean_title).unwrap_or_else(|| old_title.to_string());
+    if title_requested && wanted_title.is_empty() {
         return Err("YouTube title не может быть пустым".into());
     }
-    let wanted_desc = youtube_truncate_utf8_bytes(&description.replace(['<', '>'], " "), 5000);
-    let wanted_tags_vec = youtube_sanitize_tags(tags);
+    let old_desc = sn.get("description").and_then(|x| x.as_str()).unwrap_or("");
+    let wanted_desc = description.as_deref().map(|x| youtube_truncate_utf8_bytes(&x.replace(['<', '>'], " "), 5000)).unwrap_or_else(|| old_desc.to_string());
+    let old_tags_vec = sn.get("tags").and_then(|x| x.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect::<Vec<_>>()).unwrap_or_default();
+    let wanted_tags_vec = tags.as_ref().map(|x| youtube_sanitize_tags(x.clone())).unwrap_or(old_tags_vec);
     let old_category = sn
         .get("categoryId")
         .and_then(|x| x.as_str())
@@ -4563,7 +4570,8 @@ pub async fn youtube_update_existing_video(
         .filter(|x| !x.is_empty())
         .unwrap_or(old_category)
         .to_string();
-    let metadata_needed = !youtube_metadata_diff(
+    let metadata_requested = title_requested || description_requested || tags_requested || category_requested;
+    let metadata_needed = metadata_requested && !youtube_metadata_diff(
         &sn,
         &wanted_title,
         &wanted_desc,
@@ -4575,18 +4583,21 @@ pub async fn youtube_update_existing_video(
         .get("privacyStatus")
         .and_then(|x| x.as_str())
         .unwrap_or("private");
+    let privacy_requested = privacy_status.as_deref().filter(|x| matches!(*x, "private" | "public" | "unlisted")).is_some();
     let target_privacy = privacy_status
         .as_deref()
         .filter(|x| matches!(*x, "private" | "public" | "unlisted"))
         .unwrap_or(old_privacy)
         .to_string();
+    let publish_requested = publish_at.as_deref().map(str::trim).filter(|x| !x.is_empty()).is_some();
     let publish = publish_at
         .as_deref()
         .map(str::trim)
         .filter(|x| !x.is_empty());
     let old_publish = old_status.get("publishAt").and_then(|x| x.as_str());
-    let publish_changed = !same_publish_time(publish, old_publish);
-    let schedule_requested = publish_changed || target_privacy != old_privacy;
+    let publish_changed = publish_requested && !same_publish_time(publish, old_publish);
+    let privacy_changed = privacy_requested && target_privacy != old_privacy;
+    let schedule_requested = publish_changed || privacy_changed;
     if let Some(p) = publish {
         if target_privacy != "private" {
             return Err("Scheduled publishAt требует privacyStatus=private".into());
@@ -4683,15 +4694,16 @@ pub async fn youtube_update_existing_video(
         &wanted_category,
     );
     let metadata_verified = metadata_diff.is_empty();
-    let time_ok = same_publish_time(publish, gst.get("publishAt").and_then(|x| x.as_str()));
-    let privacy_ok =
-        gst.get("privacyStatus").and_then(|x| x.as_str()) == Some(target_privacy.as_str());
-    let schedule_verified = !schedule_requested || (time_ok && privacy_ok);
+    let expected_publish = if publish_requested { publish } else { old_publish };
+    let expected_privacy = if privacy_requested { target_privacy.as_str() } else { old_privacy };
+    let time_ok = same_publish_time(expected_publish, gst.get("publishAt").and_then(|x| x.as_str()));
+    let privacy_ok = gst.get("privacyStatus").and_then(|x| x.as_str()) == Some(expected_privacy);
+    let schedule_verified = time_ok && privacy_ok;
     let mut mismatches = metadata_diff;
-    if schedule_requested && !time_ok {
+    if !time_ok {
         mismatches.push("publishAt".into())
     }
-    if schedule_requested && !privacy_ok {
+    if !privacy_ok {
         mismatches.push("privacyStatus".into())
     }
     let verified = metadata_verified && schedule_verified;
