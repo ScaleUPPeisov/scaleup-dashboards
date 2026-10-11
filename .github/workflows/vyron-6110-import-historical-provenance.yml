@@ -1,0 +1,84 @@
+name: VYRON 6.1.10 Import Historical Provenance Evidence
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-6.1.10-product-correctness
+    paths:
+      - '.github/workflows/vyron-6110-import-historical-provenance.yml'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+env:
+  SAFE_BASE: 588e2070877512daa637077223c678af6a216831
+  BRANCH: hotfix/vyron-6.1.10-product-correctness
+  SOURCE_RUN_ID: '38136459760'
+
+jobs:
+  import:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: hotfix/vyron-6.1.10-product-correctness
+          fetch-depth: 0
+
+      - name: QA-only safety gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git merge-base --is-ancestor "$SAFE_BASE" HEAD
+          test "$(node -p "require('./package.json').version")" = "6.1.9"
+          test "$(git status --porcelain)" = ""
+          echo PRODUCT_MUTATION=NO
+          echo CANDIDATE_BUILD=NO
+          echo RELEASE=BLOCKED
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: VYRON-6.1.10-HISTORICAL-CONTRACT-PROVENANCE
+          path: ${{ runner.temp }}/historical
+          github-token: ${{ github.token }}
+          repository: ScaleUPPeisov/scaleup-dashboards
+          run-id: 38136459760
+
+      - name: Validate and print evidence
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          src="$RUNNER_TEMP/historical/VYRON_6_1_10_HISTORICAL_TEST_PROVENANCE.md"
+          test -s "$src"
+          grep -F -- '- PRODUCT_MUTATION: NO' "$src"
+          grep -F -- '- CANDIDATE_BUILD: NO' "$src"
+          grep -F -- '- FILES_PASSING_AT_CONTRACT_REF: 36' "$src"
+          grep -F -- '- FILES_NOT_PASSING_AT_CONTRACT_REF: 4' "$src"
+          cp "$src" VYRON_6_1_10_HISTORICAL_TEST_PROVENANCE.md
+          cat VYRON_6_1_10_HISTORICAL_TEST_PROVENANCE.md
+
+      - name: Commit QA evidence only
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git add VYRON_6_1_10_HISTORICAL_TEST_PROVENANCE.md
+          staged="$(git diff --cached --name-only)"
+          test "$staged" = "VYRON_6_1_10_HISTORICAL_TEST_PROVENANCE.md"
+          git diff --cached --check
+          git config user.name "VYRON QA"
+          git config user.email "vyron-qa@users.noreply.github.com"
+          git commit -m "test(vyron): record historical regression provenance"
+          git push origin "HEAD:$BRANCH"
+          echo PRODUCT_FILES_COMMITTED=0
+          echo QA_EVIDENCE_COMMITTED=YES
+
+      - name: Keep freeze blocked
+        shell: bash
+        run: |
+          echo FULL_REGRESSION_GREEN=NO
+          echo ICON_RESOLVED=NO
+          echo VYRON_6_1_10_CANDIDATE_HEAD=NOT_CREATED
+          echo CANDIDATE_APP_BUILT=NO
+          echo RELEASE=BLOCKED
+          exit 1
