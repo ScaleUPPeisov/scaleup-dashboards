@@ -139,12 +139,12 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          git add -A VYRON-ICON-CANDIDATES/INDEX.md VYRON-ICON-CANDIDATES/candidate-19-CORRUPTED.txt VYRON-ICON-CANDIDATES/previews/candidate-19.png
+          git add VYRON-ICON-CANDIDATES/INDEX.md VYRON-ICON-CANDIDATES/candidate-19-CORRUPTED.txt
           staged="$(git diff --cached --name-only)"
           test -n "$staged"
           while IFS= read -r p; do
             case "$p" in
-              VYRON-ICON-CANDIDATES/INDEX.md|VYRON-ICON-CANDIDATES/candidate-19-CORRUPTED.txt|VYRON-ICON-CANDIDATES/previews/candidate-19.png) ;;
+              VYRON-ICON-CANDIDATES/INDEX.md|VYRON-ICON-CANDIDATES/candidate-19-CORRUPTED.txt) ;;
               *) echo "forbidden staged path: $p"; exit 1 ;;
             esac
           done <<< "$staged"
