@@ -51,11 +51,11 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          # 1) Keychain source-slice harness: save_state became async long ago.
+          # 1) Keychain source-slice harness must stop at the immediate next function.
           p=Path('src/keychainPassiveArchitecture.test.ts')
           s=p.read_text()
           old="body(storage,'pub fn load_state','pub fn save_state')"
-          new="body(storage,'pub fn load_state','pub async fn save_state')"
+          new="body(storage,'pub fn load_state','fn save_state_impl')"
           assert s.count(old)==1, 'KEYCHAIN_HARNESS_PATTERN_MISMATCH'
           p.write_text(s.replace(old,new))
 
