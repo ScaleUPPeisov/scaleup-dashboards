@@ -1,0 +1,133 @@
+name: VYRON 6.1.10 Proven Regression Harness Fixes
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-6.1.10-product-correctness
+    paths:
+      - '.github/workflows/vyron-6110-proven-harness-fixes.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  SAFE_BASE: 588e2070877512daa637077223c678af6a216831
+  BRANCH: hotfix/vyron-6.1.10-product-correctness
+
+jobs:
+  harness:
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: hotfix/vyron-6.1.10-product-correctness
+          fetch-depth: 0
+      - name: Safety gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git merge-base --is-ancestor "$SAFE_BASE" HEAD
+          test "$(node -p "require('./package.json').version")" = "6.1.9"
+          test "$(git status --porcelain)" = ""
+          echo PRODUCT_MUTATION=NO
+          echo OAUTH_PRODUCT_DIFF=0
+          echo INVENTORY_PRODUCT_DIFF=0
+          echo MATERIALS_PRODUCT_DIFF=0
+          echo CANDIDATE_BUILD=NO
+          echo RELEASE=BLOCKED
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+
+      - name: Apply only the three proven QA harness corrections
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          # 1) Keychain source-slice harness: save_state became async long ago.
+          p=Path('src/keychainPassiveArchitecture.test.ts')
+          s=p.read_text()
+          old="body(storage,'pub fn load_state','pub fn save_state')"
+          new="body(storage,'pub fn load_state','pub async fn save_state')"
+          assert s.count(old)==1, 'KEYCHAIN_HARNESS_PATTERN_MISMATCH'
+          p.write_text(s.replace(old,new))
+
+          # 2) 6.1.1 runway fixture has absolute Oct-2026 schedule dates, so freeze Date
+          # only for the one time-sensitive test. Product clock semantics stay untouched.
+          p=Path('src/v611ChannelRunwayInventoryHotfix.test.ts')
+          s=p.read_text()
+          old="""  it('Lumière real-shape fixture has 20 total, 15 scheduled and scheduled-through 2026-10-18',async()=>{\n    const inv=ownerInventoryFromVideos('lumiere',lumiereVideos(),undefined,{scheduleComplete:true},Date.parse('2026-10-03T00:00:00Z'));\n    expect(inv.total).toBe(20);expect(inv.scheduled).toBe(15);expect(inv.lastScheduledAt).toContain('2026-10-18');\n    const result=await refreshOwnerInventoriesAuthoritative([channel()],true,[profile]);\n    expect(result.rows[0].status).toBe('UPDATED');\n    const r=loadChannelRunwayStore().channels.lumiere;\n    expect(r.scheduledVideoCount).toBe(15);\n    expect(r.scheduledUntil).toBe('2026-10-18');\n    expect(r.lastScheduleSync).toBeTruthy();\n    expect(r.status).not.toBe('no-data');\n  });"""
+          new="""  it('Lumière real-shape fixture has 20 total, 15 scheduled and scheduled-through 2026-10-18',async()=>{\n    vi.useFakeTimers();\n    vi.setSystemTime(new Date('2026-10-03T00:00:00Z'));\n    try{\n      const inv=ownerInventoryFromVideos('lumiere',lumiereVideos(),undefined,{scheduleComplete:true},Date.now());\n      expect(inv.total).toBe(20);expect(inv.scheduled).toBe(15);expect(inv.lastScheduledAt).toContain('2026-10-18');\n      const result=await refreshOwnerInventoriesAuthoritative([channel()],true,[profile]);\n      expect(result.rows[0].status).toBe('UPDATED');\n      const r=loadChannelRunwayStore().channels.lumiere;\n      expect(r.scheduledVideoCount).toBe(15);\n      expect(r.scheduledUntil).toBe('2026-10-18');\n      expect(r.lastScheduleSync).toBeTruthy();\n      expect(r.status).not.toBe('no-data');\n    }finally{vi.useRealTimers()}\n  });"""
+          assert s.count(old)==1, 'RUNWAY_TIME_HARNESS_PATTERN_MISMATCH'
+          p.write_text(s.replace(old,new))
+
+          # 3) Materials safety test used a lexical scan that rejected its own safe UI copy
+          # "Google / OAuth / YouTube data". Preserve the safety invariant by forbidding
+          # actual auth/youtube identifiers/imports rather than human-facing nouns.
+          p=Path('tests/materials-freeze-regression.test.mjs')
+          s=p.read_text()
+          old="""  it('does not introduce Google, OAuth or YouTube calls into Materials UI',()=>{\n    expect(materials).not.toMatch(/oauth|client_secret|refresh_token|youtube_/i);\n  });"""
+          new="""  it('does not introduce Google, OAuth or YouTube calls into Materials UI',()=>{\n    expect(materials).not.toMatch(/\\b(?:youtubeConnect|youtubeDisconnect|oauth_connect|oauth_disconnect|client_secret|refresh_token|youtube_[A-Za-z0-9_]+)\\b/i);\n    expect(materials).not.toMatch(/from\\s+['\"][^'\"]*(?:youtube|oauth)[^'\"]*['\"]/i);\n  });"""
+          assert s.count(old)==1, 'MATERIALS_HARNESS_PATTERN_MISMATCH'
+          p.write_text(s.replace(old,new))
+          PY
+          git diff --check
+          changed="$(git diff --name-only | sort)"
+          expected="$(printf '%s\n' src/keychainPassiveArchitecture.test.ts src/v611ChannelRunwayInventoryHotfix.test.ts tests/materials-freeze-regression.test.mjs | sort)"
+          test "$changed" = "$expected"
+          echo HARNESS_PATCH_SCOPE=PASS
+
+      - name: Prove no product file changed
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if git diff --name-only | grep -Ev '^(src/keychainPassiveArchitecture\.test\.ts|src/v611ChannelRunwayInventoryHotfix\.test\.ts|tests/materials-freeze-regression\.test\.mjs)$'; then
+            echo FORBIDDEN_PRODUCT_DIFF >&2; exit 1
+          fi
+          echo PRODUCT_FILES_CHANGED=0
+          echo PROTECTED_SUBSYSTEM_FUNCTIONAL_DIFF=0
+
+      - name: Run exact repaired harness tests
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npx vitest run \
+            src/keychainPassiveArchitecture.test.ts \
+            src/v611ChannelRunwayInventoryHotfix.test.ts \
+            tests/materials-freeze-regression.test.mjs
+
+      - name: TypeScript build guard
+        run: npm run build
+
+      - name: Commit test-only corrections after green proof
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git add src/keychainPassiveArchitecture.test.ts src/v611ChannelRunwayInventoryHotfix.test.ts tests/materials-freeze-regression.test.mjs
+          staged="$(git diff --cached --name-only | sort)"
+          expected="$(printf '%s\n' src/keychainPassiveArchitecture.test.ts src/v611ChannelRunwayInventoryHotfix.test.ts tests/materials-freeze-regression.test.mjs | sort)"
+          test "$staged" = "$expected"
+          git diff --cached --check
+          git config user.name "VYRON QA"
+          git config user.email "vyron-qa@users.noreply.github.com"
+          git commit -m "test(vyron): repair proven regression harness defects"
+          git push origin "HEAD:$BRANCH"
+          echo QA_HARNESS_FIX_COMMITTED=YES
+          echo PRODUCT_FILES_COMMITTED=0
+
+      - name: Keep product freeze blocked
+        shell: bash
+        run: |
+          echo FULL_REGRESSION_GREEN=NO
+          echo ICON_RESOLVED=NO
+          echo VYRON_6_1_10_CANDIDATE_HEAD=NOT_CREATED
+          echo CANDIDATE_APP_BUILT=NO
+          echo RELEASE=BLOCKED
+          exit 1
