@@ -5,7 +5,7 @@ import {buildDailyOperations} from './dailyOperations';
 import {ownerInventoryForChannel} from './youtubeOwnerInventory';
 import {saveActivePublishChannel} from './publishWorkspaceState';
 
-type Filter='ALL'|'UNPROCESSED'|'PROCESSED'|'EMPTY'|'NO_FOLDER'|'ERRORS';
+type Filter='ALL'|'UNPROCESSED'|'PROCESSED'|'EMPTY'|'OFFLINE'|'NO_FOLDER'|'ERRORS';
 
 const time=(iso?:string)=>iso?new Date(iso).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}):'—';
 const date=(iso?:string)=>iso?new Date(iso).toLocaleDateString('ru-RU'):'—';
@@ -18,8 +18,9 @@ export function DailyOperationsCenter({snapshots,onChooseRender}:{snapshots:Reco
     if(filter==='UNPROCESSED')return !row.processedToday;
     if(filter==='PROCESSED')return row.processedToday;
     if(filter==='EMPTY')return row.folderState==='AVAILABLE'&&row.localReady===0;
+    if(filter==='OFFLINE')return row.folderState==='UNAVAILABLE';
     if(filter==='NO_FOLDER')return row.folderState==='NOT_CONFIGURED';
-    if(filter==='ERRORS')return row.folderState==='ERROR'||row.folderState==='UNAVAILABLE';
+    if(filter==='ERRORS')return row.folderState==='ERROR';
     return true
   }),[summary,filter]);
   const detail=summary.rows.find(x=>x.channelId===detailChannel);
@@ -46,7 +47,10 @@ export function DailyOperationsCenter({snapshots,onChooseRender}:{snapshots:Reco
       <span><small>НЕ ОБРАБОТАНО</small><b>{summary.unprocessedChannels}</b></span>
       <span><small>ЛОКАЛЬНО ГОТОВО</small><b>{summary.localReady}</b></span>
       <span><small>ПУСТЫХ</small><b>{summary.emptyChannels}</b></span>
-      <span><small>ОШИБОК / НЕДОСТУПНО</small><b>{summary.errors}</b></span>
+      <span><small>ОНЛАЙН</small><b>{summary.onlineChannels}</b></span>
+      <span><small>ДИСКИ ОТКЛЮЧЕНЫ</small><b>{summary.offlineChannels}</b></span>
+      <span><small>ТРЕБУЮТ ВНИМАНИЯ</small><b>{summary.attentionChannels}</b></span>
+      <span><small>ОШИБКИ</small><b>{summary.errors}</b></span>
       <span><small>ПОСЛЕДНЯЯ ЗАГРУЗКА</small><b>{time(summary.lastUploadAt)}</b></span>
     </div>
     <div className="dailyOpsFilters">
@@ -55,6 +59,7 @@ export function DailyOperationsCenter({snapshots,onChooseRender}:{snapshots:Reco
         ['UNPROCESSED','Не обработано '+summary.unprocessedChannels],
         ['PROCESSED','Обработано '+summary.processedChannels],
         ['EMPTY','Нет видео '+summary.emptyChannels],
+        ['OFFLINE','Диски отключены '+summary.offlineChannels],
         ['NO_FOLDER','Нет папки '+summary.rows.filter(x=>x.folderState==='NOT_CONFIGURED').length],
         ['ERRORS','Ошибки '+summary.errors]
       ] as Array<[Filter,string]>).map(([id,label])=><button key={id} className={filter===id?'active':''} onClick={()=>setFilter(id)}>{label}</button>)}
@@ -71,7 +76,7 @@ export function DailyOperationsCenter({snapshots,onChooseRender}:{snapshots:Reco
               <option value="0">Без цели</option><option value="1">1/день</option><option value="5">5/день</option><option value="10">10/день</option>
             </select>
           </span>
-          <span><b>{row.localReady==null?'—':row.localReady}</b><small>{row.folderState==='UNAVAILABLE'?'последний подтверждённый запас':row.folderState==='NOT_CONFIGURED'?'Render не выбран':'готово к загрузке'}</small></span>
+          <span><b>{row.localReady==null?'—':row.localReady}</b><small>{row.folderState==='UNAVAILABLE'?'Диск отключён • последний подтверждённый запас':row.folderState==='NOT_CONFIGURED'?'Render не выбран':row.folderState==='ERROR'?'Ошибка чтения Render':'готово к загрузке'}</small></span>
           <span><b>{row.runwayDays==null?'Нет данных':row.runwayDays+' дн.'}</b></span>
           <span><b>{yt.available&&yt.lastScheduledAt?date(yt.lastScheduledAt):'Нет данных'}</b><small>{yt.available?(yt.complete?'cached complete':'cached partial'):'нет cached YouTube snapshot'}</small></span>
           <span><b>{time(row.lastUploadAt)}</b></span>
