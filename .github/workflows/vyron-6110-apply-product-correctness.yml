@@ -1,0 +1,106 @@
+name: VYRON 6.1.10 Apply Product Correctness Patch
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-6.1.10-product-correctness
+    paths:
+      - '.github/workflows/vyron-6110-apply-product-correctness.yml'
+      - 'scripts/vyron_6110_product_correctness_patch.py'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vyron-6110-product-correctness-patch
+  cancel-in-progress: false
+
+env:
+  SAFE_BASE: 588e2070877512daa637077223c678af6a216831
+
+jobs:
+  patch-test-commit:
+    if: ${{ !contains(github.event.head_commit.message || '', 'product correctness core') }}
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: hotfix/vyron-6.1.10-product-correctness
+          fetch-depth: 0
+
+      - name: Safety gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "${GITHUB_REF_NAME}" = "hotfix/vyron-6.1.10-product-correctness"
+          git merge-base --is-ancestor "$SAFE_BASE" HEAD
+          test "$(git show "$SAFE_BASE:package.json" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.stdout.write(JSON.parse(s).version))")" = "6.1.9"
+          echo SAFE_BASE_ANCESTRY=PASS
+          echo PRODUCTION_APP_TOUCHED=NO
+          echo OAUTH_KEYCHAIN_TOUCHED=NO
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install exact dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Apply deterministic source patch
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 scripts/vyron_6110_product_correctness_patch.py
+          git diff --check
+          changed="$(git diff --name-only | sort)"
+          expected="$(printf '%s\n' \
+            src/DailyOperationsCenter.tsx \
+            src/MetadataPage.tsx \
+            src/dailyOperations.test.ts \
+            src/dailyOperations.ts \
+            src/vyron6110MetadataScheduleOptIn.test.ts | sort)"
+          test "$changed" = "$expected"
+          echo PATCH_SCOPE=PASS
+          printf '%s\n' "$changed"
+
+      - name: Focused VYRON 6.1.10 regressions
+        run: >
+          npx vitest run
+          src/dailyOperations.test.ts
+          src/vyron6110MetadataScheduleOptIn.test.ts
+          src/vyron619ScheduleSources.test.ts
+          src/scheduleContinuation.test.ts
+          src/v610GlobalUploadCounter.test.ts
+          src/v503UploadCounterRestore.test.ts
+          src/vyron618PublisherIntegrity.test.ts
+          src/vyron617CurrentGenerationLeafRecovery.test.ts
+
+      - name: Production TypeScript build
+        run: npm run build
+
+      - name: Protected subsystem diff gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git diff --quiet -- src-tauri/src/youtube.rs
+          git diff --quiet -- src-tauri/src/keychain.rs || test ! -f src-tauri/src/keychain.rs
+          git diff --quiet -- src/youtubeQuota.ts
+          git diff --quiet -- src/uploadQueue.ts
+          echo YOUTUBE_NATIVE_TRANSPORT_UNTOUCHED=PASS
+          echo OAUTH_KEYCHAIN_UNTOUCHED=PASS
+          echo PUBLISHER_TRANSPORT_UNTOUCHED=PASS
+
+      - name: Commit only after tests pass
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git config user.name "VYRON QA"
+          git config user.email "vyron-qa@users.noreply.github.com"
+          git add src/MetadataPage.tsx src/dailyOperations.ts src/DailyOperationsCenter.tsx src/dailyOperations.test.ts src/vyron6110MetadataScheduleOptIn.test.ts
+          git diff --cached --check
+          git commit -m "fix(vyron): 6.1.10 product correctness core"
+          git push origin HEAD:hotfix/vyron-6.1.10-product-correctness
+          echo PRODUCT_CORRECTNESS_CORE=COMMITTED
