@@ -1,0 +1,167 @@
+name: VYRON 6.1.10 Icon All-Refs Forensics
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-6.1.10-product-correctness
+    paths:
+      - '.github/workflows/vyron-6110-icon-all-refs-forensics.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  SAFE_BASE: 588e2070877512daa637077223c678af6a216831
+  BRANCH: hotfix/vyron-6.1.10-product-correctness
+
+jobs:
+  forensic:
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: hotfix/vyron-6.1.10-product-correctness
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Safety gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git merge-base --is-ancestor "$SAFE_BASE" HEAD
+          test "$(node -p "require('./package.json').version")" = "6.1.9"
+          test "$(git status --porcelain)" = ""
+          echo PRODUCT_ICON_CHANGED=NO
+          echo PRODUCT_MUTATION=NO
+          echo CANDIDATE_BUILD=NO
+          echo RELEASE=BLOCKED
+
+      - name: Enumerate unique VYRON icon/artwork blobs across every branch and tag
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$RUNNER_TEMP/icon-scan"
+          git for-each-ref --format='%(refname)' refs/remotes/origin refs/tags \
+            | grep -v 'refs/remotes/origin/HEAD$' > "$RUNNER_TEMP/refs.txt"
+          python3 - <<'PY'
+          import json, os, pathlib, re, subprocess
+          tmp=pathlib.Path(os.environ['RUNNER_TEMP'])
+          refs=tmp.joinpath('refs.txt').read_text().splitlines()
+          records=[]
+          rx=re.compile(r'^(src-tauri/icons/[^/]+\.(?:icns|png|ico|svg|webp)|src/assets/[^/]*(?:vyron|logo|icon)[^/]*\.(?:png|webp|svg|icns))$',re.I)
+          for ref in refs:
+            try: out=subprocess.check_output(['git','ls-tree','-r',ref],text=True,stderr=subprocess.DEVNULL)
+            except subprocess.CalledProcessError: continue
+            for line in out.splitlines():
+              try: meta,path=line.split('\t',1); mode,typ,blob=meta.split()
+              except ValueError: continue
+              if typ!='blob' or not rx.match(path): continue
+              records.append({'ref':ref,'path':path,'blob':blob})
+          tmp.joinpath('icon-scan/records.json').write_text(json.dumps(records,indent=2)+'\n')
+          unique={}
+          for r in records:
+            u=unique.setdefault(r['blob'],{'blob':r['blob'],'paths':set(),'refs':set()})
+            u['paths'].add(r['path']);u['refs'].add(r['ref'])
+          serial=[]
+          for blob,u in unique.items(): serial.append({'blob':blob,'paths':sorted(u['paths']),'refs':sorted(u['refs'])})
+          serial.sort(key=lambda x:(x['paths'][0] if x['paths'] else '',x['blob']))
+          tmp.joinpath('icon-scan/unique.json').write_text(json.dumps(serial,indent=2)+'\n')
+          print('REFS_SCANNED='+str(len(refs)))
+          print('MATCHED_REF_PATH_RECORDS='+str(len(records)))
+          print('UNIQUE_IMAGE_BLOBS='+str(len(serial)))
+          PY
+
+      - name: Materialize previews without touching product assets
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p VYRON-ICON-CANDIDATES/raw VYRON-ICON-CANDIDATES/previews
+          python3 - <<'PY'
+          import json,os,pathlib,subprocess,re
+          tmp=pathlib.Path(os.environ['RUNNER_TEMP'])
+          items=json.loads(tmp.joinpath('icon-scan/unique.json').read_text())
+          manifest=[]
+          n=0
+          for item in items:
+            paths=item['paths']
+            # Exclude generic platform derivatives unless they are a distinct blob or VYRON-named artwork.
+            # Every unique blob is retained in evidence; preview conversion is best-effort.
+            n+=1
+            ext=pathlib.Path(paths[0]).suffix.lower() or '.bin'
+            raw=pathlib.Path('VYRON-ICON-CANDIDATES/raw')/f'candidate-{n:02d}{ext}'
+            with raw.open('wb') as f:
+              subprocess.check_call(['git','cat-file','blob',item['blob']],stdout=f)
+            preview=pathlib.Path('VYRON-ICON-CANDIDATES/previews')/f'candidate-{n:02d}.png'
+            ok=False
+            if ext=='.png':
+              preview.write_bytes(raw.read_bytes()); ok=True
+            elif ext in ('.icns','.ico','.webp'):
+              try:
+                subprocess.check_call(['sips','-s','format','png',str(raw),'--out',str(preview)],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL);ok=preview.exists()
+              except subprocess.CalledProcessError: pass
+            manifest.append({**item,'candidate_id':f'candidate-{n:02d}','raw':str(raw),'preview':str(preview) if ok else None})
+          pathlib.Path('VYRON-ICON-CANDIDATES/manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
+          print('CANDIDATES_MATERIALIZED='+str(len(manifest)))
+          print('PREVIEWS_MATERIALIZED='+str(sum(1 for x in manifest if x['preview'])))
+          PY
+
+      - name: Build forensic report with bundle-lineage classification
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import json,pathlib,subprocess,os
+          m=json.loads(pathlib.Path('VYRON-ICON-CANDIDATES/manifest.json').read_text())
+          rejected='9ae975a36e1677e2c49060f13b8651d446dabaf2'
+          artwork='c4bb26bef69571df152fb0ecfe7da5a349663bb7'
+          lines=['# VYRON ICON FORENSICS','','- PRODUCT_ICON_CHANGED: NO','- SAFE_BASE: `588e2070877512daa637077223c678af6a216831`','- CURRENT_GENERIC_V: REJECTED_BY_OWNER','- OWNER_SELECTION_REQUIRED: YES','- SELECTED_ICON: NONE','- ICON_RESTORED: NO','']
+          plausible=[]
+          for x in m:
+            paths=', '.join(f'`{p}`' for p in x['paths'])
+            refs=len(x['refs'])
+            if x['blob']==rejected:
+              classification='REJECTED_GENERIC_V_LINEAGE'; confidence='HIGH'
+            elif x['blob']==artwork:
+              classification='OWNER_PROVIDED_UI_ARTWORK_NOT_PROVEN_AS_BUNDLE_ICON'; confidence='HIGH_FOR_ARTWORK_ORIGIN__LOW_FOR_DOCK_ICON'
+              plausible.append(x['candidate_id'])
+            elif any(p.endswith('icon.icns') for p in x['paths']):
+              classification='BUNDLE_ICON_LINEAGE_CANDIDATE'; confidence='MEDIUM'; plausible.append(x['candidate_id'])
+            elif any('src-tauri/icons/' in p for p in x['paths']):
+              classification='TAURI_ICON_DERIVATIVE'; confidence='MEDIUM'; plausible.append(x['candidate_id'])
+            else:
+              classification='UI_ARTWORK_CANDIDATE'; confidence='LOW'; plausible.append(x['candidate_id'])
+            lines += [f'## {x["candidate_id"]}','',f'- BLOB: `{x["blob"]}`',f'- PATHS: {paths}',f'- REF_COUNT: {refs}',f'- PREVIEW: `{x["preview"] or "NONE"}`',f'- CLASSIFICATION: {classification}',f'- CONFIDENCE: {confidence}','']
+          lines += ['## Decision','',f'- UNIQUE_BLOBS_FOUND: {len(m)}',f'- PLAUSIBLE_NON_REJECTED_CANDIDATES: {len(plausible)}',f'- PLAUSIBLE_IDS: {", ".join(plausible) if plausible else "NONE"}','- SINGLE_STRONGLY_PROVEN_APPROVED_DOCK_ICON: NO','- OWNER_SELECTION_REQUIRED: YES','- FREEZE_ICON_GATE: BLOCKED','']
+          pathlib.Path('VYRON-ICON-CANDIDATES/VYRON_ICON_FORENSICS.md').write_text('\n'.join(lines).rstrip()+'\n')
+          print('\n'.join(lines[-9:]))
+          PY
+          git diff --check
+
+      - name: Commit forensic evidence only
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git add VYRON-ICON-CANDIDATES
+          staged="$(git diff --cached --name-only)"
+          test -n "$staged"
+          if printf '%s\n' "$staged" | grep -Ev '^VYRON-ICON-CANDIDATES/'; then
+            echo 'FORBIDDEN_NON_EVIDENCE_CHANGE' >&2; exit 1
+          fi
+          git diff --cached --check
+          git config user.name "VYRON QA"
+          git config user.email "vyron-qa@users.noreply.github.com"
+          git commit -m "test(vyron): record all-ref icon forensic candidates"
+          git push origin "HEAD:$BRANCH"
+          echo PRODUCT_ICON_CHANGED=NO
+          echo PRODUCT_FILES_COMMITTED=0
+
+      - name: Enforce icon hard stop
+        shell: bash
+        run: |
+          echo OWNER_SELECTION_REQUIRED=YES
+          echo ICON_RESTORED=NO
+          echo VYRON_6_1_10_CANDIDATE_HEAD=NOT_CREATED
+          echo CANDIDATE_APP_BUILT=NO
+          echo RELEASE=BLOCKED
+          exit 1
