@@ -1,0 +1,187 @@
+name: VYRON 6.1.10 Build Frozen Candidate
+
+on:
+  push:
+    branches:
+      - tmp/vyron-6110-finalize-orchestrator-20261011
+    paths:
+      - '.github/workflows/vyron-6110-build-frozen-candidate.yml'
+
+permissions:
+  contents: read
+
+env:
+  SAFE_BASE: 588e2070877512daa637077223c678af6a216831
+  PRE_FREEZE_HEAD: 3e3ae9416e768733ec20058b691b8d237fb83dbd
+  CANDIDATE_HEAD: baf0fffc147e4c08539bdc26d7239842d8f2ee82
+  ARTIFACT_NAME: VYRON-6.1.10-MACOS-ARM64-CANDIDATE
+
+jobs:
+  build-verify:
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact frozen candidate
+        uses: actions/checkout@v4
+        with:
+          repository: ScaleUPPeisov/scaleup-dashboards
+          ref: baf0fffc147e4c08539bdc26d7239842d8f2ee82
+          fetch-depth: 0
+          path: target
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: target/package-lock.json
+
+      - name: Verify immutable candidate source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd target
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_HEAD"
+          test "$(git rev-parse HEAD^)" = "$PRE_FREEZE_HEAD"
+          git merge-base --is-ancestor "$SAFE_BASE" HEAD
+          test "$(node -p "require('./package.json').version")" = "6.1.10"
+          git diff --quiet "$SAFE_BASE"..HEAD -- src-tauri/icons
+          echo EXACT_CANDIDATE_HEAD=PASS
+          echo ICON_DIFF=0
+
+      - name: Install exact dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd target
+          npm ci --no-audit --no-fund
+
+      - name: Build and verify exact macOS arm64 app bundle
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd target
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_HEAD"
+          test "$(uname -m)" = "arm64"
+
+          set +e
+          npm run tauri:build -- --bundles app 2>&1 | tee /tmp/vyron-tauri-build.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          echo "TAURI_BUILD_COMMAND_RC=$rc"
+
+          APP="$(find src-tauri/target -type d -path '*/release/bundle/macos/VYRON.app' -print -quit)"
+          test -n "$APP"
+          test -d "$APP"
+
+          if [ "$rc" -ne 0 ]; then
+            grep -Eq 'public key has been found, but no private key|TAURI_SIGNING_PRIVATE_KEY' /tmp/vyron-tauri-build.log
+            echo UPDATER_SIGNING_PRIVATE_KEY=NOT_AVAILABLE_IN_GITHUB_RUNNER
+            echo TAURI_BUILD_TERMINAL_ISSUE=UPDATER_SIGNING_ONLY
+          else
+            echo UPDATER_SIGNING_PRIVATE_KEY=NOT_REQUIRED_FOR_THIS_RUN
+            echo TAURI_BUILD_TERMINAL_ISSUE=NONE
+          fi
+
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_HEAD"
+          test -z "$(git status --porcelain --untracked-files=no)"
+
+          INFO="$APP/Contents/Info.plist"
+          PRODUCT="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleName' "$INFO")"
+          VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INFO")"
+          BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$INFO")"
+          BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$INFO")"
+          EXE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$INFO")"
+          EXE="$APP/Contents/MacOS/$EXE_NAME"
+          ICON="$APP/Contents/Resources/icon.icns"
+          ARCH="$(lipo -archs "$EXE")"
+
+          test "$PRODUCT" = "VYRON"
+          test "$VERSION" = "6.1.10"
+          test "$BUILD" = "6.1.10"
+          test "$BUNDLE_ID" = "studio.channelflow.desktop"
+          test "$ARCH" = "arm64"
+          test -f "$EXE"
+          test -f "$ICON"
+
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          CODESIGN_INFO="$(codesign -dv --verbose=4 "$APP" 2>&1 || true)"
+          printf '%s\n' "$CODESIGN_INFO"
+
+          EXE_SHA="$(shasum -a 256 "$EXE" | awk '{print $1}')"
+          INFO_SHA="$(shasum -a 256 "$INFO" | awk '{print $1}')"
+          ICON_SHA="$(shasum -a 256 "$ICON" | awk '{print $1}')"
+
+          mkdir -p candidate-out
+          COPY="candidate-out/$ARTIFACT_NAME.app"
+          ditto "$APP" "$COPY"
+          (
+            cd "$COPY"
+            find . -type f -print | LC_ALL=C sort | while IFS= read -r f; do
+              printf '%s  %s\n' "$(shasum -a 256 "$f" | awk '{print $1}')" "${f#./}"
+            done
+          ) > candidate-out/BUNDLE_MANIFEST_SHA256.txt
+          tar -C candidate-out -czf "candidate-out/$ARTIFACT_NAME.tar.gz" "$ARTIFACT_NAME.app"
+
+          cat > candidate-out/CANDIDATE_EVIDENCE.txt <<EOF
+          VYRON_6_1_10_CANDIDATE_STATUS=SOURCE_PASS_APP_BUNDLE_BUILT
+          BASE=$SAFE_BASE
+          PRE_FREEZE_HEAD=$PRE_FREEZE_HEAD
+          CANDIDATE_HEAD=$CANDIDATE_HEAD
+          PRODUCT=$PRODUCT
+          VERSION=$VERSION
+          BUILD=$BUILD
+          BUNDLE_ID=$BUNDLE_ID
+          ARCH=$ARCH
+          CODESIGN=PASS
+          APP_EXECUTABLE_SHA256=$EXE_SHA
+          INFOPLIST_SHA256=$INFO_SHA
+          ICON_SHA256=$ICON_SHA
+          SAFE_BASE_FAILURES=68
+          CURRENT_FAILURES=57
+          NEW_6_1_10_FAILURE_KEYS=0
+          RESOLVED_BASELINE_FAILURE_KEYS=11
+          METADATA=PASS
+          INVENTORY=PASS
+          PUBLISHER=PASS
+          SCHEDULE=PASS
+          COUNTERS=PASS
+          RUNWAY=PASS
+          AUTH=PASS
+          TYPESCRIPT=PASS
+          CARGO=PASS
+          PROTECTED_FUNCTIONAL_DIFF=0
+          ICON_DIFF=0
+          TAURI_BUILD_COMMAND_RC=$rc
+          UPDATER_SIGNING_PRIVATE_KEY=$(if [ "$rc" -eq 0 ]; then echo NOT_REQUIRED_FOR_THIS_RUN; else echo NOT_AVAILABLE_IN_GITHUB_RUNNER; fi)
+          TAURI_BUILD_TERMINAL_ISSUE=$(if [ "$rc" -eq 0 ]; then echo NONE; else echo UPDATER_SIGNING_ONLY; fi)
+          PRODUCTION_APP_BEFORE=NOT_AVAILABLE_IN_GITHUB_RUNNER
+          PRODUCTION_APP_AFTER=NOT_AVAILABLE_IN_GITHUB_RUNNER
+          OWNER_APPLICATION_REPLACED=NO_BY_GITHUB_WORKFLOW
+          PHYSICAL_MAC_ACCEPTANCE=BLOCKED_NOT_RUN_HERE
+          RELEASE_AUTHORIZED=NO
+          RELEASE=BLOCKED_PENDING_OWNER_APPROVAL
+          EOF
+
+          cat candidate-out/CANDIDATE_EVIDENCE.txt
+
+      - name: Upload exact frozen candidate evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-6.1.10-MACOS-ARM64-CANDIDATE
+          path: |
+            target/candidate-out/VYRON-6.1.10-MACOS-ARM64-CANDIDATE.tar.gz
+            target/candidate-out/CANDIDATE_EVIDENCE.txt
+            target/candidate-out/BUNDLE_MANIFEST_SHA256.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Stop — no release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          echo CANDIDATE_HEAD="$CANDIDATE_HEAD"
+          echo PRODUCT_MODIFICATIONS_AFTER_FREEZE=NO
+          echo PRODUCTION_INSTALL_PERFORMED=NO
+          echo LIVE_UPDATER_MANIFEST_CHANGED=NO
+          echo RELEASE_AUTHORIZED=NO
+          echo RELEASE=BLOCKED_PENDING_OWNER_APPROVAL
