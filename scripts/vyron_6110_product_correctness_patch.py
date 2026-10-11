@@ -8,9 +8,9 @@ def replace_once(text: str, old: str, new: str, label: str) -> str:
     return text.replace(old, new, 1)
 
 
-# -----------------------------------------------------------------------------
-# Metadata: schedule is explicit opt-in for existing YouTube videos.
-# -----------------------------------------------------------------------------
+# VYRON 6.1.10 metadata-only correction.
+# Inventory correction is committed separately; this patcher intentionally
+# touches only MetadataPage + its focused regression guard.
 p = Path("src/MetadataPage.tsx")
 s = p.read_text(encoding="utf-8")
 
@@ -73,112 +73,6 @@ s = replace_once(
 
 p.write_text(s, encoding="utf-8")
 
-
-# -----------------------------------------------------------------------------
-# Inventory: disconnected storage is not a true product error.
-# Keep the existing row-state contract for compatibility; split owner counters.
-# -----------------------------------------------------------------------------
-p = Path("src/dailyOperations.ts")
-s = p.read_text(encoding="utf-8")
-
-s = replace_once(
-    s,
-    "uploadedToday:number;processedChannels:number;unprocessedChannels:number;localReady:number;emptyChannels:number;errors:number;lastUploadAt?:string;rows:DailyChannelOperation[];",
-    "uploadedToday:number;processedChannels:number;unprocessedChannels:number;localReady:number;emptyChannels:number;onlineChannels:number;offlineChannels:number;attentionChannels:number;errors:number;lastUploadAt?:string;rows:DailyChannelOperation[];",
-    "inventory-summary-shape",
-)
-
-s = replace_once(
-    s,
-    "emptyChannels:rows.filter(x=>x.folderState==='AVAILABLE'&&x.localReady===0).length,\n    errors:rows.filter(x=>x.folderState==='ERROR'||x.folderState==='UNAVAILABLE').length,",
-    "emptyChannels:rows.filter(x=>x.folderState==='AVAILABLE'&&x.localReady===0).length,\n    onlineChannels:rows.filter(x=>x.folderState==='AVAILABLE').length,\n    offlineChannels:rows.filter(x=>x.folderState==='UNAVAILABLE').length,\n    attentionChannels:rows.filter(x=>x.folderState==='NOT_CONFIGURED'||x.folderState==='UNKNOWN').length,\n    errors:rows.filter(x=>x.folderState==='ERROR').length,",
-    "inventory-offline-not-error",
-)
-
-p.write_text(s, encoding="utf-8")
-
-
-# -----------------------------------------------------------------------------
-# Daily Operations UI: owner-facing separate counters and filters.
-# -----------------------------------------------------------------------------
-p = Path("src/DailyOperationsCenter.tsx")
-s = p.read_text(encoding="utf-8")
-
-s = replace_once(
-    s,
-    "type Filter='ALL'|'UNPROCESSED'|'PROCESSED'|'EMPTY'|'NO_FOLDER'|'ERRORS';",
-    "type Filter='ALL'|'UNPROCESSED'|'PROCESSED'|'EMPTY'|'OFFLINE'|'NO_FOLDER'|'ERRORS';",
-    "inventory-filter-type",
-)
-
-s = replace_once(
-    s,
-    "if(filter==='EMPTY')return row.folderState==='AVAILABLE'&&row.localReady===0;\n    if(filter==='NO_FOLDER')return row.folderState==='NOT_CONFIGURED';\n    if(filter==='ERRORS')return row.folderState==='ERROR'||row.folderState==='UNAVAILABLE';",
-    "if(filter==='EMPTY')return row.folderState==='AVAILABLE'&&row.localReady===0;\n    if(filter==='OFFLINE')return row.folderState==='UNAVAILABLE';\n    if(filter==='NO_FOLDER')return row.folderState==='NOT_CONFIGURED';\n    if(filter==='ERRORS')return row.folderState==='ERROR';",
-    "inventory-filter-logic",
-)
-
-s = replace_once(
-    s,
-    "<span><small>ОШИБОК / НЕДОСТУПНО</small><b>{summary.errors}</b></span>",
-    "<span><small>ОНЛАЙН</small><b>{summary.onlineChannels}</b></span>\n      <span><small>ДИСКИ ОТКЛЮЧЕНЫ</small><b>{summary.offlineChannels}</b></span>\n      <span><small>ТРЕБУЮТ ВНИМАНИЯ</small><b>{summary.attentionChannels}</b></span>\n      <span><small>ОШИБКИ</small><b>{summary.errors}</b></span>",
-    "inventory-kpis",
-)
-
-s = replace_once(
-    s,
-    "['EMPTY','Нет видео '+summary.emptyChannels],\n        ['NO_FOLDER','Нет папки '+summary.rows.filter(x=>x.folderState==='NOT_CONFIGURED').length],\n        ['ERRORS','Ошибки '+summary.errors]",
-    "['EMPTY','Нет видео '+summary.emptyChannels],\n        ['OFFLINE','Диски отключены '+summary.offlineChannels],\n        ['NO_FOLDER','Нет папки '+summary.rows.filter(x=>x.folderState==='NOT_CONFIGURED').length],\n        ['ERRORS','Ошибки '+summary.errors]",
-    "inventory-filter-buttons",
-)
-
-s = replace_once(
-    s,
-    "<span><b>{row.localReady==null?'—':row.localReady}</b><small>{row.folderState==='UNAVAILABLE'?'последний подтверждённый запас':row.folderState==='NOT_CONFIGURED'?'Render не выбран':'готово к загрузке'}</small></span>",
-    "<span><b>{row.localReady==null?'—':row.localReady}</b><small>{row.folderState==='UNAVAILABLE'?'Диск отключён • последний подтверждённый запас':row.folderState==='NOT_CONFIGURED'?'Render не выбран':row.folderState==='ERROR'?'Ошибка чтения Render':'готово к загрузке'}</small></span>",
-    "inventory-owner-copy",
-)
-
-p.write_text(s, encoding="utf-8")
-
-
-# -----------------------------------------------------------------------------
-# Regression tests: OFFLINE/UNAVAILABLE must never inflate true errors.
-# -----------------------------------------------------------------------------
-p = Path("src/dailyOperations.test.ts")
-s = p.read_text(encoding="utf-8")
-
-needle = "\n});\n"
-idx = s.rfind(needle)
-if idx < 0:
-    raise SystemExit("PATCH_GUARD_FAIL:daily-operations-test-tail")
-
-test = r'''
- it('separates disconnected storage from true errors and retains cached stock',()=>{
-   const now=new Date(2026,9,11,12,0,0);
-   const offline={...snapshot('a',10),folderState:'OFFLINE' as const,stale:true,lastSuccessAt:'2026-10-10T10:00:00.000Z'};
-   const result=buildDailyOperations([channel()],[],{a:offline},now);
-   expect(result.offlineChannels).toBe(1);
-   expect(result.errors).toBe(0);
-   expect(result.localReady).toBe(10);
-   expect(result.rows[0].folderState).toBe('UNAVAILABLE');
-   expect(result.rows[0].localReady).toBe(10);
- });
- it('counts only reachable scan/read failures as errors',()=>{
-   const now=new Date(2026,9,11,12,0,0);
-   const broken={...snapshot('a',0),folderState:'ERROR' as const,stale:false,error:'permission denied'};
-   const result=buildDailyOperations([channel()],[],{a:broken},now);
-   expect(result.errors).toBe(1);
-   expect(result.offlineChannels).toBe(0);
- });
-'''
-s = s[:idx] + test + s[idx:]
-p.write_text(s, encoding="utf-8")
-
-
-# -----------------------------------------------------------------------------
-# Source guard: metadata-only must not enter schedule path by default.
-# -----------------------------------------------------------------------------
 Path("src/vyron6110MetadataScheduleOptIn.test.ts").write_text(r'''import {describe,expect,it} from 'vitest';
 import fs from 'node:fs';
 
@@ -198,5 +92,5 @@ describe('VYRON 6.1.10 metadata schedule opt-in guard',()=>{
 });
 ''', encoding="utf-8")
 
-print("VYRON_6110_PRODUCT_CORRECTNESS_PATCH=APPLIED")
-print("TOUCHED=src/MetadataPage.tsx,src/dailyOperations.ts,src/DailyOperationsCenter.tsx,src/dailyOperations.test.ts,src/vyron6110MetadataScheduleOptIn.test.ts")
+print("VYRON_6110_METADATA_PATCH=APPLIED")
+print("TOUCHED=src/MetadataPage.tsx,src/vyron6110MetadataScheduleOptIn.test.ts")
