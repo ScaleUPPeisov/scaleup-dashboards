@@ -14,6 +14,7 @@ permissions:
 env:
   SAFE_BASE: 588e2070877512daa637077223c678af6a216831
   BRANCH: hotfix/vyron-6.1.10-product-correctness
+  RECIPE_COMMIT: b54a0a1448cd0cf930f482aa28a957b0d6859a80
 
 jobs:
   repair:
@@ -24,6 +25,7 @@ jobs:
         with:
           ref: hotfix/vyron-6.1.10-product-correctness
           fetch-depth: 0
+
       - name: Safety gate
         shell: bash
         run: |
@@ -32,174 +34,67 @@ jobs:
           test "$(node -p "require('./package.json').version")" = "6.1.9"
           test "$(git status --porcelain)" = ""
           echo PRODUCT_MUTATION=NO
-          echo PROTECTED_SUBSYSTEM_FUNCTIONAL_DIFF=0
           echo VERSION_FINALIZED=NO
           echo CANDIDATE_BUILD=NO
           echo RELEASE=BLOCKED
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
+
       - run: npm ci --no-audit --no-fund
-      - name: Apply native-inventory test harness correction only
+
+      - name: Apply proven native-inventory harness correction only
         shell: bash
         run: |
           set -Eeuo pipefail
+          git show "$RECIPE_COMMIT:.github/workflows/vyron-6110-native-inventory-harness-fix.yml" > /tmp/vyron-6110-recipe.yml
           python3 - <<'PY'
           from pathlib import Path
 
-          files={
-          'src/schedulePhysicalRegression.test.ts':'''import {beforeEach,describe,expect,it,vi} from 'vitest';
-          import {futureScheduledVideos,getChannelScheduleState,krasDateKey,readExistingCache,scheduleSyncTruthFromInfo,writeExistingCache} from './channelSchedule';
-          import {resetExistingInventoryMemoryForTests} from './existingInventoryNative';
-          import type {Channel,YoutubeExistingVideo} from './types';
+          raw = Path('/tmp/vyron-6110-recipe.yml').read_text()
+          start_marker = "          python3 - <<'PY'\n"
+          end_marker = "\n          PY"
+          start = raw.index(start_marker) + len(start_marker)
+          end = raw.index(end_marker, start)
+          script = raw[start:end]
+          script = '\n'.join(
+              line[10:] if line.startswith('          ') else line
+              for line in script.splitlines()
+          )
 
-          const native=vi.hoisted(()=>({files:new Map<string,any>()}));
-          vi.mock('./api',async(importOriginal)=>{const actual=await importOriginal<typeof import('./api')>();return{...actual,api:{...actual.api,
-           youtubeInventoryRead:vi.fn(async(channelId:string)=>native.files.has(channelId)?{found:true,schemaVersion:2,channelId,path:'native',payload:native.files.get(channelId)}:{found:false,schemaVersion:2,channelId,path:'native'}),
-           youtubeInventoryWrite:vi.fn(async(channelId:string,payload:any)=>{native.files.set(channelId,structuredClone(payload));return{ok:true,verified:true,schemaVersion:2,channelId,path:'native',bytes:JSON.stringify(payload).length}}),
-           youtubeInventoryDelete:vi.fn(async(channelId:string)=>{native.files.delete(channelId);return{ok:true,channelId,deleted:true}})
-          }}}});
+          bad = '}}}});'
+          good = '}}});'
+          count = script.count(bad)
+          if count != 3:
+              raise SystemExit(f'expected 3 invalid vi.mock closings in source recipe, found {count}')
+          script = script.replace(bad, good)
 
-          const mem=new Map<string,string>();
-          Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{
-           getItem:(k:string)=>mem.has(k)?mem.get(k)!:null,
-           setItem:(k:string,v:string)=>{mem.set(k,String(v))},
-           removeItem:(k:string)=>{mem.delete(k)},
-           clear:()=>mem.clear(),
-           key:(i:number)=>[...mem.keys()][i]??null,
-           get length(){return mem.size}
-          }});
-
-          const channel=(id:string):Channel=>({id,name:id,slug:id,cadenceDays:1,targetBufferDays:60,publishHour:4,publishMinute:0,language:'EN',genre:'Music',country:'US',minTracks:10,targetDurationMin:120,enabled:true,seo:{titlePatterns:[],descriptionTemplate:'',tags:[],banned:[]}});
-          const video=(id:string,privacyStatus='private',publishAt?:string):YoutubeExistingVideo=>({id,position:0,title:id,description:'',tags:[],categoryId:'10',privacyStatus,publishAt,selected:false});
-          const NOW=Date.parse('2026-09-18T00:00:00.000Z');
-          beforeEach(()=>{mem.clear();native.files.clear();resetExistingInventoryMemoryForTests()});
-
-          describe('physical schedule truth regression',()=>{
-           it('detects only future private publishAt using absolute timestamps',()=>{
-            const rows=[video('future','private','2026-09-18T00:00:01.000Z'),video('past','private','2026-09-17T23:59:59.000Z'),video('public','public','2026-11-01T00:00:00.000Z'),video('bad','private','legacy')];
-            expect(futureScheduledVideos(rows,NOW).map(x=>x.id)).toEqual(['future']);
-           });
-           it('selects the latest factual future publishAt',async()=>{
-            const c=channel('latest'),rows=[video('a','private','2026-10-01T21:00:00.000Z'),video('b','private','2026-11-09T21:00:00.000Z')];
-            expect((await writeExistingCache(c.id,{version:1,updatedAt:'2026-09-18T00:00:00.000Z',videos:rows,baseline:Object.fromEntries(rows.map(v=>[v.id,v])),lastUndo:[],syncInfo:{complete:true,scheduleComplete:true,draftCandidateCount:0}})).ok).toBe(true);
-            const state=getChannelScheduleState(c.id,c,[],NOW);
-            expect(state.lastScheduledAt).toBe('2026-11-09T21:00:00.000Z');
-            expect(state.nextAvailableAt).toBe('2026-11-10T21:00:00.000Z');
-           });
-           it('uses the complete 152-video baseline rather than six selected/edit rows',async()=>{
-            const c=channel('baseline');
-            const all=Array.from({length:152},(_,i)=>video('v'+i,'private',i===151?'2026-11-09T21:00:00.000Z':undefined));
-            const six=all.slice(0,6).map(v=>({...v,selected:true}));
-            expect((await writeExistingCache(c.id,{version:1,updatedAt:'2026-09-18T00:00:00.000Z',videos:six,baseline:Object.fromEntries(all.map(v=>[v.id,v])),lastUndo:[],syncInfo:{complete:true,scheduleComplete:true,draftCandidateCount:0}})).ok).toBe(true);
-            const state=getChannelScheduleState(c.id,c,[],NOW);
-            expect(Object.keys(readExistingCache(c.id)!.baseline)).toHaveLength(152);
-            expect(state.lastScheduledAt).toBe('2026-11-09T21:00:00.000Z');
-            expect(state.scheduledCount).toBe(1);
-           });
-           it('marks partial/fallback sync as non-authoritative instead of factual zero',()=>{
-            expect(scheduleSyncTruthFromInfo({complete:false,scheduleComplete:false})).toBe('incomplete');
-            expect(scheduleSyncTruthFromInfo({complete:true,draftCandidateCount:2})).toBe('incomplete');
-            expect(scheduleSyncTruthFromInfo(null)).toBe('unknown');
-           });
-           it('handles UTC to Krasnoyarsk day boundary without string comparison',()=>{
-            const rows=[video('edge','private','2026-09-18T17:00:00.000Z')];
-            expect(futureScheduledVideos(rows,Date.parse('2026-09-18T16:59:59.000Z'))).toHaveLength(1);
-            expect(krasDateKey(rows[0].publishAt)).toBe('2026-09-19');
-           });
-           it('keeps schedule cache isolated by channel id',async()=>{
-            const a=channel('A'),b=channel('B'),va=video('a','private','2026-10-01T21:00:00.000Z');
-            expect((await writeExistingCache(a.id,{version:1,updatedAt:'2026-09-18T00:00:00.000Z',videos:[va],baseline:{a:va},lastUndo:[],syncInfo:{complete:true,scheduleComplete:true}})).ok).toBe(true);
-            expect((await writeExistingCache(b.id,{version:1,updatedAt:'2026-09-18T00:00:00.000Z',videos:[],baseline:{},lastUndo:[],syncInfo:{complete:true,scheduleComplete:true}})).ok).toBe(true);
-            expect(getChannelScheduleState(a.id,a,[],NOW).lastScheduledAt).toBe(va.publishAt);
-            expect(getChannelScheduleState(b.id,b,[],NOW).lastScheduledAt).toBeUndefined();
-           });
-          });
-          ''',
-          'src/v2115ScheduleSyncHotfix.test.ts':'''import {beforeEach,describe,expect,it,vi} from 'vitest';
-          import {existingSyncIncompleteSummary,mergeInventoryRowsPreservingCached,readExistingCache,reconcileExistingSyncAfterTargetedRetry,replaceExistingCacheFromSync,targetedExistingRetryIds} from './channelSchedule';
-          import {resetExistingInventoryMemoryForTests} from './existingInventoryNative';
-          import {youtubeCommandUsesMethodLedger} from './api';
-          import {youtubeQuotaCost} from './youtubeQuota';
-          import type {YoutubeExistingVideo} from './types';
-
-          const native=vi.hoisted(()=>({files:new Map<string,any>()}));
-          vi.mock('./api',async(importOriginal)=>{const actual=await importOriginal<typeof import('./api')>();return{...actual,api:{...actual.api,
-           youtubeInventoryRead:vi.fn(async(channelId:string)=>native.files.has(channelId)?{found:true,schemaVersion:2,channelId,path:'native',payload:native.files.get(channelId)}:{found:false,schemaVersion:2,channelId,path:'native'}),
-           youtubeInventoryWrite:vi.fn(async(channelId:string,payload:any)=>{native.files.set(channelId,structuredClone(payload));return{ok:true,verified:true,schemaVersion:2,channelId,path:'native',bytes:JSON.stringify(payload).length}}),
-           youtubeInventoryDelete:vi.fn(async(channelId:string)=>{native.files.delete(channelId);return{ok:true,channelId,deleted:true}})
-          }}}});
-
-          const mem=new Map<string,string>();
-          Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{getItem:(k:string)=>mem.has(k)?mem.get(k)!:null,setItem:(k:string,v:string)=>{mem.set(k,String(v))},removeItem:(k:string)=>{mem.delete(k)},clear:()=>mem.clear(),key:(i:number)=>[...mem.keys()][i]??null,get length(){return mem.size}}});
-          if(typeof globalThis.window==='undefined')Object.defineProperty(globalThis,'window',{configurable:true,value:{dispatchEvent:()=>true,addEventListener:()=>{},removeEventListener:()=>{}}});
-          if(typeof globalThis.CustomEvent==='undefined')Object.defineProperty(globalThis,'CustomEvent',{configurable:true,value:class{detail:any;constructor(_name:string,init?:any){this.detail=init?.detail}}});
-
-          const mk=(n:number,privacyStatus='public',publishAt?:string):YoutubeExistingVideo=>({id:`v${n}`,position:n,title:`Video ${n}`,description:'',tags:[],categoryId:'10',privacyStatus,publishAt,publishedAt:'2026-01-01T00:00:00Z',selected:false});
-          const full203=()=>Array.from({length:203},(_,i)=>i<66?mk(i,'private',`2099-01-${String(i%28+1).padStart(2,'0')}T00:00:00Z`):mk(i,'public'));
-
-          describe('VYRON 2.1.15 RC2 schedule sync hotfix',()=>{
-           beforeEach(()=>{mem.clear();native.files.clear();resetExistingInventoryMemoryForTests()});
-           it('treats factual 203/203 snapshot as complete and keeps all rows',async()=>{
-            const rows=full203();
-            const info={complete:true,syncComplete:true,scheduleComplete:true,youtubeFound:203,inventoryExpected:203,uniqueVideoIds:203,videosHydrated:203,missingHydrationCount:0,incompleteReasons:[]};
-            const result=await replaceExistingCacheFromSync('A',rows,info);expect(result.persisted).toBe(true);
-            const cache=readExistingCache('A')!;expect(cache.videos).toHaveLength(203);expect(cache.baseline && Object.keys(cache.baseline)).toHaveLength(203);expect(cache.syncInfo.scheduleComplete).toBe(true);expect(cache.lastCompleteAt).toBeTruthy();
-           });
-           it('partial 202/203 refresh preserves prior 203 cached rows and exposes exact retry id',async()=>{
-            const rows=full203();
-            expect((await replaceExistingCacheFromSync('A',rows,{complete:true,syncComplete:true,scheduleComplete:true,uniqueVideoIds:203,videosHydrated:203})).persisted).toBe(true);
-            const partial=rows.slice(0,202);
-            const info={complete:false,syncComplete:false,scheduleComplete:false,inventoryExpected:203,uniqueVideoIds:203,videosHydrated:202,missingHydrationCount:1,missingHydrationIds:['v202'],failedHydrationIds:['v202'],incompleteReasons:['MISSING_VIDEO_HYDRATION'],inventoryIncompleteReasons:['MISSING_VIDEO_HYDRATION']};
-            expect((await replaceExistingCacheFromSync('A',partial,info)).persisted).toBe(true);
-            expect(readExistingCache('A')?.videos).toHaveLength(203);expect(targetedExistingRetryIds(info)).toEqual(['v202']);expect(existingSyncIncompleteSummary(info).join(' ')).toContain('1 видео');
-           });
-           it('successful targeted retry upgrades completeness without rereading the playlist',()=>{const rows=full203(),partial=rows.slice(0,202);const info={complete:false,syncComplete:false,scheduleComplete:false,inventoryExpected:203,uniqueVideoIds:203,videosHydrated:202,missingHydrationCount:1,missingHydrationIds:['v202'],failedHydrationIds:['v202'],incompleteReasons:['MISSING_VIDEO_HYDRATION'],inventoryIncompleteReasons:['MISSING_VIDEO_HYDRATION']};const retry={videos:[rows[202]],missingHydrationIds:[],scheduleIncompleteIds:[],hydrationErrors:[]};const out=reconcileExistingSyncAfterTargetedRetry(info,partial,retry);expect(out.videos).toHaveLength(203);expect(out.syncInfo.syncComplete).toBe(true);expect(out.syncInfo.scheduleComplete).toBe(true);expect(targetedExistingRetryIds(out.syncInfo)).toEqual([])});
-           it('merge keeps cached rows while replacing newly verified rows by id',()=>{const old=[mk(1),mk(2)],fresh={...mk(2),title:'verified'};const merged=mergeInventoryRowsPreservingCached(old,[fresh]);expect(merged).toHaveLength(2);expect(merged.find(x=>x.id==='v2')?.title).toBe('verified')});
-           it('truncation and hydration failures produce concrete reasons',()=>{const info={scheduleComplete:false,requested:1000,missingHydrationCount:1,playlistUnresolvedCount:0,scheduleDataIncompleteCount:0,hydrationErrors:['batch 4: timeout'],incompleteReasons:['LIMIT_TRUNCATED','MISSING_VIDEO_HYDRATION','HYDRATION_BATCH_FAILED']};const text=existingSyncIncompleteSummary(info).join(' | ');expect(text).toContain('Лимит 1000');expect(text).toContain('1 видео');expect(text).toContain('batch 4')});
-           it('full inventory and targeted retry are method-ledger commands, so compatibility estimator is not double-debited',()=>{expect(youtubeQuotaCost('youtube_list_existing_videos',{maxResults:203},{received:203})).toBe(11);expect(youtubeCommandUsesMethodLedger('youtube_list_existing_videos')).toBe(true);expect(youtubeCommandUsesMethodLedger('youtube_retry_existing_video_hydration')).toBe(true)});
-          });
-          ''',
-          'src/youtubeInventoryRc4.test.ts':'''import {beforeEach,describe,expect,it,vi} from 'vitest';
-          import {countBuckets,matchesExistingFilter} from './youtubeWorkflow';
-          import {getChannelScheduleState,readAuthoritativeExistingInventory,readExistingCache,replaceExistingCacheFromSync} from './channelSchedule';
-          import {resetExistingInventoryMemoryForTests} from './existingInventoryNative';
-          import type {Channel,YoutubeExistingVideo} from './types';
-
-          const native=vi.hoisted(()=>({files:new Map<string,any>()}));
-          vi.mock('./api',async(importOriginal)=>{const actual=await importOriginal<typeof import('./api')>();return{...actual,api:{...actual.api,
-           youtubeInventoryRead:vi.fn(async(channelId:string)=>native.files.has(channelId)?{found:true,schemaVersion:2,channelId,path:'native',payload:native.files.get(channelId)}:{found:false,schemaVersion:2,channelId,path:'native'}),
-           youtubeInventoryWrite:vi.fn(async(channelId:string,payload:any)=>{native.files.set(channelId,structuredClone(payload));return{ok:true,verified:true,schemaVersion:2,channelId,path:'native',bytes:JSON.stringify(payload).length}}),
-           youtubeInventoryDelete:vi.fn(async(channelId:string)=>{native.files.delete(channelId);return{ok:true,channelId,deleted:true}})
-          }}}});
-          const mem=new Map<string,string>();
-          Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{getItem:(k:string)=>mem.has(k)?mem.get(k)!:null,setItem:(k:string,v:string)=>{mem.set(k,String(v))},removeItem:(k:string)=>{mem.delete(k)},clear:()=>mem.clear(),key:(i:number)=>[...mem.keys()][i]??null,get length(){return mem.size}}});
-          if(typeof globalThis.window==='undefined')Object.defineProperty(globalThis,'window',{configurable:true,value:{dispatchEvent:()=>true}});
-          if(typeof globalThis.CustomEvent==='undefined')Object.defineProperty(globalThis,'CustomEvent',{configurable:true,value:class{detail:any;constructor(_name:string,init?:any){this.detail=init?.detail}}});
-          const mk=(id:string,privacyStatus:string,publishAt?:string,selected=false):YoutubeExistingVideo=>({id,position:Number(id.replace(/\D/g,''))||0,title:id,description:'',tags:[],categoryId:'10',privacyStatus,publishAt,publishedAt:'2026-01-01T00:00:00Z',selected});
-          const channel=(id:string):Channel=>({id,name:id,slug:id,cadenceDays:1,targetBufferDays:60,publishHour:4,publishMinute:0,language:'EN',genre:'Music',country:'US',minTracks:10,targetDurationMin:120,enabled:true,seo:{titlePatterns:[],descriptionTemplate:'',tags:[],banned:[]}});
-          function inventory166(){const rows:YoutubeExistingVideo[]=[];for(let i=0;i<14;i++)rows.push(mk('priv'+i,'private'));for(let i=0;i<5;i++)rows.push(mk('sched'+i,'private',`2099-01-${String(i+1).padStart(2,'0')}T00:00:00Z`));for(let i=0;i<140;i++)rows.push(mk('pub'+i,'public'));for(let i=0;i<7;i++)rows.push(mk('unl'+i,'unlisted'));return rows;}
-          describe('RC4 authoritative YouTube inventory',()=>{
-           beforeEach(()=>{mem.clear();native.files.clear();resetExistingInventoryMemoryForTests()});
-           it('keeps full counts independent from six selected rows',()=>{const rows=inventory166().map((v,i)=>({...v,selected:i<6}));expect(rows).toHaveLength(166);expect(rows.filter(v=>v.selected)).toHaveLength(6);expect(countBuckets(rows)).toEqual({private:14,scheduled:5,public:140,unlisted:7});expect(rows.filter(v=>matchesExistingFilter(v,'private'))).toHaveLength(14)});
-           it('partial 152/166 sync never overwrites the previous 166 authoritative baseline',async()=>{const full=inventory166();expect((await replaceExistingCacheFromSync('A',full,{complete:true,syncComplete:true,scheduleComplete:true,uniqueVideoIds:166,videosHydrated:166})).persisted).toBe(true);expect(readAuthoritativeExistingInventory('A')).toHaveLength(166);const partial=full.slice(0,152);expect((await replaceExistingCacheFromSync('A',partial,{complete:false,syncComplete:false,scheduleComplete:false,uniqueVideoIds:166,videosHydrated:152})).persisted).toBe(true);expect(readExistingCache('A')?.videos).toHaveLength(166);expect(readAuthoritativeExistingInventory('A')).toHaveLength(166);expect(readExistingCache('A')?.syncInfo?.syncComplete).toBe(false)});
-           it('schedule derives latest future publishAt from full baseline, not current subset',async()=>{const full=inventory166();expect((await replaceExistingCacheFromSync('A',full,{complete:true,syncComplete:true,scheduleComplete:true})).persisted).toBe(true);expect(readExistingCache('A')?.videos).toHaveLength(166);expect(Object.keys(readExistingCache('A')?.baseline||{})).toHaveLength(166);const state=getChannelScheduleState('A',channel('A'),full.slice(0,6),Date.parse('2026-09-18T00:00:00Z'));expect(state.scheduledCount).toBe(5);expect(state.lastScheduledAt).toBe('2099-01-05T00:00:00Z');expect(state.syncTruth).toBe('complete')});
-           it('keeps channel inventories isolated across restart-style cache reload',async()=>{const a=inventory166(),b=[mk('only-b','private')];expect((await replaceExistingCacheFromSync('A',a,{complete:true,syncComplete:true,scheduleComplete:true})).persisted).toBe(true);expect((await replaceExistingCacheFromSync('B',b,{complete:true,syncComplete:true,scheduleComplete:true})).persisted).toBe(true);expect(readAuthoritativeExistingInventory('A')).toHaveLength(166);expect(readAuthoritativeExistingInventory('B').map(v=>v.id)).toEqual(['only-b'])});
-          });
-          '''}
-          for path,content in files.items(): Path(path).write_text('\n'.join(line.strip() if line.startswith('          ') else line for line in content.splitlines()).lstrip())
+          compile(script, '<vyron-native-inventory-harness-repair>', 'exec')
+          exec(compile(script, '<vyron-native-inventory-harness-repair>', 'exec'), {'__name__': '__main__'})
           PY
+
           git diff --check
           changed="$(git diff --name-only | sort)"
           expected="$(printf '%s\n' src/schedulePhysicalRegression.test.ts src/v2115ScheduleSyncHotfix.test.ts src/youtubeInventoryRc4.test.ts | sort)"
           test "$changed" = "$expected"
           echo TEST_ONLY_SCOPE=PASS
           echo PRODUCT_FILES_CHANGED=0
+
+      - name: Transform and Vitest collection guard
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npx vitest list src/schedulePhysicalRegression.test.ts src/v2115ScheduleSyncHotfix.test.ts src/youtubeInventoryRc4.test.ts
+          echo TRANSFORM_ERRORS=0
+
       - name: Focused native inventory regressions
         run: npx vitest run src/schedulePhysicalRegression.test.ts src/v2115ScheduleSyncHotfix.test.ts src/youtubeInventoryRc4.test.ts
-      - name: TypeScript build guard
+
+      - name: TypeScript production build guard
         run: npm run build
+
       - name: Commit only after focused proof
         shell: bash
         run: |
@@ -215,12 +110,15 @@ jobs:
           git push origin "HEAD:$BRANCH"
           echo QA_HARNESS_FIX_COMMITTED=YES
           echo PRODUCT_FILES_COMMITTED=0
-      - name: Keep freeze blocked
+
+      - name: Report current freeze state
         shell: bash
         run: |
-          echo FULL_REGRESSION_GREEN=NO
+          echo TRANSFORM_ERRORS=0
+          echo FOCUSED_NATIVE_INVENTORY=PASS
+          echo PRODUCT_FILES_COMMITTED=0
+          echo VERSION_FINALIZED=NO
           echo ICON_RESOLVED=NO
           echo VYRON_6_1_10_CANDIDATE_HEAD=NOT_CREATED
           echo CANDIDATE_APP_BUILT=NO
-          echo RELEASE=BLOCKED
-          exit 1
+          echo RELEASE=BLOCKED_PENDING_FULL_GATE_AND_OWNER_ICON
