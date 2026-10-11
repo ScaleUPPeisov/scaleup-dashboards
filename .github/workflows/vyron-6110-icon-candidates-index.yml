@@ -33,8 +33,6 @@ jobs:
           tracked_blob="$(git rev-parse HEAD:"$path")"
           test "$tracked_blob" = "c4bb26bef69571df152fb0ecfe7da5a349663bb7"
 
-          # Historical artwork is tracked through Git LFS on this branch. Checkout without
-          # LFS yields the text pointer, which neither sips nor Pillow can decode.
           if head -n 1 "$path" | grep -q '^version https://git-lfs.github.com/spec/v1'; then
             echo 'CANDIDATE_19_LFS_POINTER=YES'
             git lfs pull --include="$path" --exclude=''
@@ -42,27 +40,25 @@ jobs:
             echo 'CANDIDATE_19_LFS_POINTER=NO'
           fi
 
-          echo "CANDIDATE_19_RUNTIME_FORMAT=$(file -b "$path")"
+          runtime_format="$(file -b "$path")"
+          echo "CANDIDATE_19_RUNTIME_FORMAT=$runtime_format"
           test -s "$path"
           ! head -n 1 "$path" | grep -q '^version https://git-lfs.github.com/spec/v1'
+          echo "$runtime_format" | grep -q 'Web/P image'
 
           mkdir -p VYRON-ICON-CANDIDATES/previews
-          python3 -m venv "$RUNNER_TEMP/icon-venv"
-          "$RUNNER_TEMP/icon-venv/bin/python" -m pip install --disable-pip-version-check --quiet pillow
-          "$RUNNER_TEMP/icon-venv/bin/python" - <<'PY'
-          from PIL import Image
-          from pathlib import Path
-          src=Path('src/assets/vyron-4-artwork.webp')
-          dst=Path('VYRON-ICON-CANDIDATES/previews/candidate-19.png')
-          with Image.open(src) as im:
-              im.load()
-              print('CANDIDATE_19_DECODED_FORMAT=' + str(im.format))
-              print('CANDIDATE_19_SIZE=' + f'{im.width}x{im.height}')
-              im.convert('RGBA').save(dst,'PNG')
-          if not dst.exists() or dst.stat().st_size == 0:
-              raise SystemExit('candidate-19 preview was not created')
-          PY
-          file VYRON-ICON-CANDIDATES/previews/candidate-19.png | grep -q 'PNG image data'
+          out='VYRON-ICON-CANDIDATES/previews/candidate-19.png'
+          if command -v ffmpeg >/dev/null 2>&1; then
+            echo 'CANDIDATE_19_DECODER=ffmpeg'
+            ffmpeg -hide_banner -loglevel error -y -i "$path" -frames:v 1 "$out"
+          else
+            echo 'CANDIDATE_19_DECODER=dwebp'
+            brew list webp >/dev/null 2>&1 || brew install webp
+            dwebp "$path" -o "$out" >/dev/null
+          fi
+          test -s "$out"
+          file "$out" | grep -q 'PNG image data'
+          echo "CANDIDATE_19_PREVIEW_FORMAT=$(file -b "$out")"
 
       - name: Build owner-facing INDEX.md from forensic manifest
         shell: bash
