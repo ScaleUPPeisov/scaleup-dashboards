@@ -1,0 +1,63 @@
+name: VYRON 6.1.10 Transform Gate Repair
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-6.1.10-product-correctness
+    paths:
+      - '.github/workflows/vyron-6110-transform-gate-repair.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  BRANCH: hotfix/vyron-6.1.10-product-correctness
+  TARGET: .github/workflows/vyron-6110-native-inventory-harness-fix.yml
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: hotfix/vyron-6.1.10-product-correctness
+          fetch-depth: 0
+      - name: Repair exact transform defect and add collection gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('.github/workflows/vyron-6110-native-inventory-harness-fix.yml')
+          s=p.read_text()
+          bad='          }}}});'
+          good='          }}});'
+          count=s.count(bad)
+          if count != 3:
+              raise SystemExit(f'expected exactly 3 invalid vi.mock closings, found {count}')
+          s=s.replace(bad,good)
+          needle='''      - name: Focused native inventory regressions\n        run: npx vitest run src/schedulePhysicalRegression.test.ts src/v2115ScheduleSyncHotfix.test.ts src/youtubeInventoryRc4.test.ts\n'''
+          guard='''      - name: Transform / Vitest collection guard\n        shell: bash\n        run: |\n          set -Eeuo pipefail\n          npx vitest list src/schedulePhysicalRegression.test.ts src/v2115ScheduleSyncHotfix.test.ts src/youtubeInventoryRc4.test.ts\n          echo TRANSFORM_ERRORS=0\n      - name: Focused native inventory regressions\n        run: npx vitest run src/schedulePhysicalRegression.test.ts src/v2115ScheduleSyncHotfix.test.ts src/youtubeInventoryRc4.test.ts\n'''
+          if needle not in s:
+              raise SystemExit('focused test step anchor not found')
+          s=s.replace(needle,guard,1)
+          p.write_text(s)
+          PY
+          test "$(grep -F -c '          }}});' "$TARGET")" = "3"
+          test "$(grep -F -c '          }}}});' "$TARGET" || true)" = "0"
+          grep -F 'echo TRANSFORM_ERRORS=0' "$TARGET"
+          git diff --check
+          changed="$(git diff --name-only | sort)"
+          test "$changed" = "$TARGET"
+      - name: Commit workflow repair and remove helper
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm .github/workflows/vyron-6110-transform-gate-repair.yml
+          git add "$TARGET" .github/workflows/vyron-6110-transform-gate-repair.yml
+          git diff --cached --check
+          git config user.name "VYRON QA"
+          git config user.email "vyron-qa@users.noreply.github.com"
+          git commit -m "ci(vyron): fix inventory harness transform gate"
+          git push origin "HEAD:$BRANCH"
