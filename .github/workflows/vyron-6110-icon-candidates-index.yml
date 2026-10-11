@@ -1,0 +1,106 @@
+name: VYRON 6.1.10 Icon Candidate Index
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-6.1.10-product-correctness
+    paths:
+      - '.github/workflows/vyron-6110-icon-candidates-index.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  BRANCH: hotfix/vyron-6.1.10-product-correctness
+
+jobs:
+  index:
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: hotfix/vyron-6.1.10-product-correctness
+          fetch-depth: 0
+
+      - name: Create missing candidate-19 visual preview
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -f src/assets/vyron-4-artwork.webp
+          actual="$(git hash-object src/assets/vyron-4-artwork.webp)"
+          test "$actual" = "c4bb26bef69571df152fb0ecfe7da5a349663bb7"
+          mkdir -p VYRON-ICON-CANDIDATES/previews
+          sips -s format png src/assets/vyron-4-artwork.webp --out VYRON-ICON-CANDIDATES/previews/candidate-19.png >/dev/null
+          test -s VYRON-ICON-CANDIDATES/previews/candidate-19.png
+          file VYRON-ICON-CANDIDATES/previews/candidate-19.png | grep -q 'PNG image data'
+
+      - name: Build owner-facing INDEX.md from forensic manifest
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import json,re,subprocess
+          from pathlib import Path
+
+          root=Path('VYRON-ICON-CANDIDATES')
+          manifest=json.loads((root/'manifest.json').read_text())
+          forensic=(root/'VYRON_ICON_FORENSICS.md').read_text()
+          if len(manifest)!=19:
+              raise SystemExit(f'expected 19 unique candidate blobs, found {len(manifest)}')
+
+          def meta(n):
+              m=re.search(rf'## candidate-{n:02d}\n(.*?)(?=\n## candidate-|\n## Decision)',forensic,re.S)
+              text=m.group(1) if m else ''
+              cls=re.search(r'- CLASSIFICATION: (.+)',text)
+              conf=re.search(r'- CONFIDENCE: (.+)',text)
+              return (cls.group(1).strip() if cls else 'UNCLASSIFIED',conf.group(1).strip() if conf else 'UNKNOWN')
+
+          lines=[
+            '# VYRON ICON CANDIDATES — OWNER VISUAL SELECTION','',
+            '> No final icon is selected by QA. The owner must choose visually before version finalization.','',
+            '- PRODUCT_ICON_CHANGED: NO',
+            '- OWNER_SELECTION_REQUIRED: YES',
+            '- SELECTED: NONE',
+            f'- CANDIDATE_COUNT: {len(manifest)}','',
+            '| Candidate | Visual | Commit | Blob SHA | Date | Source path | Historical usage | Classification | Confidence |',
+            '|---|---|---|---|---|---|---|---|---|'
+          ]
+          for i,item in enumerate(manifest,1):
+              blob=item['blob']; paths=item.get('paths') or []; refs=item.get('refs') or []
+              cls,conf=meta(i)
+              proc=subprocess.run(['git','log','--all','--find-object='+blob,'--format=%H|%aI|%s','--reverse'],text=True,capture_output=True)
+              first=(proc.stdout.strip().splitlines() or ['UNKNOWN|UNKNOWN|UNKNOWN'])[0].split('|',2)
+              commit=first[0] if first else 'UNKNOWN'; date=first[1] if len(first)>1 else 'UNKNOWN'
+              path='<br>'.join(f'`{p}`' for p in paths) or 'UNKNOWN'
+              usage=f'{len(refs)} refs'
+              if refs: usage += f'; sample `{refs[0].replace("refs/remotes/origin/","")}`'
+              preview=f'![candidate-{i:02d}](previews/candidate-{i:02d}.png)'
+              lines.append(f'| candidate-{i:02d} | {preview} | `{commit}` | `{blob}` | {date} | {path} | {usage} | {cls} | {conf} |')
+
+          lines += ['', '## Decision', '', '- FINAL_ICON: NONE', '- ICON_GATE_GREEN: NO', '- ACTION: OWNER MUST SELECT ONE CANDIDATE VISUALLY', '- DO_NOT_FINALIZE_VERSION_BEFORE_SELECTION: YES', '']
+          (root/'INDEX.md').write_text('\n'.join(lines))
+          PY
+          grep -q 'candidate-19' VYRON-ICON-CANDIDATES/INDEX.md
+          grep -q 'OWNER MUST SELECT' VYRON-ICON-CANDIDATES/INDEX.md
+          git diff --check
+
+      - name: Commit previews and index only
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git add VYRON-ICON-CANDIDATES/previews/candidate-19.png VYRON-ICON-CANDIDATES/INDEX.md
+          staged="$(git diff --cached --name-only | sort)"
+          expected="$(printf '%s\n' VYRON-ICON-CANDIDATES/INDEX.md VYRON-ICON-CANDIDATES/previews/candidate-19.png | sort)"
+          test "$staged" = "$expected"
+          git config user.name "VYRON QA"
+          git config user.email "vyron-qa@users.noreply.github.com"
+          git commit -m "docs(vyron): add owner-facing historical icon previews"
+          git push origin "HEAD:$BRANCH"
+          echo PRODUCT_ICON_CHANGED=NO
+          echo CANDIDATE_PREVIEWS_CREATED=YES
+          echo COUNT=19
+          echo OWNER_SELECTION_REQUIRED=YES
+          echo SELECTED=NONE
+          echo ICON_GATE_GREEN=NO
