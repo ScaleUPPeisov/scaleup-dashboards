@@ -1,0 +1,188 @@
+# VYRON ICON FORENSICS
+
+- PRODUCT_ICON_CHANGED: NO
+- SAFE_BASE: `588e2070877512daa637077223c678af6a216831`
+- CURRENT_GENERIC_V: REJECTED_BY_OWNER
+- OWNER_SELECTION_REQUIRED: YES
+- SELECTED_ICON: NONE
+- ICON_RESTORED: NO
+
+## candidate-01
+
+- BLOB: `537c03724ff90d2e582f6db1c6aaf38025860854`
+- PATHS: `src-tauri/icons/128x128.png`
+- REF_COUNT: 155
+- PREVIEW: `VYRON-ICON-CANDIDATES/previews/candidate-01.png`
+- CLASSIFICATION: TAURI_ICON_DERIVATIVE
+- CONFIDENCE: MEDIUM
+
+## candidate-02
+
+- BLOB: `82b31973560e2c6ccfc93a2f4b61586add2f2892`
+- PATHS: `src-tauri/icons/128x128@2x.png`
+- REF_COUNT: 155
+- PREVIEW: `VYRON-ICON-CANDIDATES/previews/candidate-02.png`
+- CLASSIFICATION: TAURI_ICON_DERIVATIVE
+- CONFIDENCE: MEDIUM
+
+## candidate-03
+
+- BLOB: `10598c4c525dba229c89718b52ef817569bb08ad`
+- PATHS: `src-tauri/icons/32x32.png`
+- REF_COUNT: 155
+- PREVIEW: `VYRON-ICON-CANDIDATES/previews/candidate-03.png`
+- CLASSIFICATION: TAURI_ICON_DERIVATIVE
+- CONFIDENCE: MEDIUM
+
+## candidate-04
+
+- BLOB: `a26692204ed3b5aa51e88e2b069acc52f43d3286`
+- PATHS: `src-tauri/icons/64x64.png`
+- REF_COUNT: 155
+- PREVIEW: `VYRON-ICON-CANDIDATES/previews/candidate-04.png`
+- CLASSIFICATION: TAURI_ICON_DERIVATIVE
+- CONFIDENCE: MEDIUM
+
+## candidate-05
+
+- BLOB: `68e82d1dfbb8f25a34ddd4a135ba9b625e66d6c8`
+- PATHS: `src-tauri/icons/Square107x107Logo.png`
+- REF_COUNT: 155
+- PREVIEW: `VYRON-ICON-CANDIDATES/previews/candidate-05.png`
+- CLASSIFICATION: TAURI_ICON_DERIVATIVE
+- CONFIDENCE: MEDIUM
+
+## candidate-06
+
+- BLOB: `4db1624ed256161e130aa4ffc1701b1973f011ee`
+- PATHS: `src-tauri/icons/Square142x142Logo.png`
+- REF_COUNT: 155
+- PREVIEW: `VYRON-ICON-CANDIDATES/previews/candidate-06.png`
+- CLASSIFICATION: TAURI_ICON_DERIVATIVE
+- CONFIDENCE: MEDIUM
+
+## candidate-07
+
+- BLOB: `d9ed9abf1eb6bcacf5caf2990bdfce60da1e83dc`
+- PATHS: `src-tauri/icons/Square150x150Logo.png`
+- REF_COUNT: 155
+- PREVIEW: `VYRON-ICON-CANDIDATES/previews/candidate-07.png`
+- CLASSIFICATION: TAURI_ICON_DERIVATIVE
+- CONFIDENCE: MEDIUM
+
+## candidate-08
+
+- BLOB: `d44bd95a5f9b8a33f2664aaebfc754376c5b9f31`
+- PATHS: `src-tauri/icons/Square284x284Logo.png`
+- REF_COUNT: 155
+- PREVIEW: `VYRON-ICON-CANDIDATES/previews/candidate-08.png`
+- CLASSIFICATION: TAURI_ICON_DERIVATIVE
+- CONFIDENCE: MEDIUM
+
+## candidate-09
+
+- BLOB: `195eb50f0df097592c7655b75b94854ee583b3e9`
+- PATHS: `src-tauri/icons/Square30x30Logo.png`
+- REF_COUNT: 155
+- PREVIEW: `VYRON-ICON-CANDIDATES/previews/candidate-09.png`
+- CLASSIFICATION: TAURI_ICON_DERIVATIVE
+- CONFIDENCE: MEDIUM
+
+## candidate-10
+
+- BLOB: `f2630e223aaffda2b3fe2759299010f2235a4d49`
+- PATHS: `src-tauri/icons/Square310x310Logo.png`
+- REF_COUNT: 155
+- PREVIEW: `VYRON-ICON-CANDIDATES/previews/candidate-10.png`
+- CLASSIFICATION: TAURI_ICON_DERIVATIVE
+- CONFIDENCE: MEDIUM
+
+## candidate-11
+
+- BLOB: `9af8d4ccd03da94a84df21cd5f99550cfbee54c1`
+- PATHS: `src-tauri/icons/Square44x44Logo.png`
+- REF_COUNT: 155
+- PREVIEW: `VYRON-ICON-CANDIDATES/previews/candidate-11.png`
+- CLASSIFICATION: TAURI_ICON_DERIVATIVE
+- CONFIDENCE: MEDIUM
+
+## candidate-12
+
+- BLOB: `8f76ce2cc277c2ab0a05673d60e3b704b28c1261`
+- PATHS: `src-tauri/icons/Square71x71Logo.png`
+- REF_COUNT: 155
+- PREVIEW: `VYRON-ICON-CANDIDATES/previews/candidate-12.png`
+- CLASSIFICATION: TAURI_ICON_DERIVATIVE
+- CONFIDENCE: MEDIUM
+
+## candidate-13
+
+- BLOB: `dcce87c590f027b3faf0c46f95b785360b519350`
+- PATHS: `src-tauri/icons/Square89x89Logo.png`
+- REF_COUNT: 155
+- PREVIEW: `VYRON-ICON-CANDIDATES/previews/candidate-13.png`
+- CLASSIFICATION: TAURI_ICON_DERIVATIVE
+- CONFIDENCE: MEDIUM
+
+## candidate-14
+
+- BLOB: `90b2139dcf8cb47ef49044600467f9ea3cdb6508`
+- PATHS: `src-tauri/icons/StoreLogo.png`
+- REF_COUNT: 155
+- PREVIEW: `VYRON-ICON-CANDIDATES/previews/candidate-14.png`
+- CLASSIFICATION: TAURI_ICON_DERIVATIVE
+- CONFIDENCE: MEDIUM
+
+## candidate-15
+
+- BLOB: `9ae975a36e1677e2c49060f13b8651d446dabaf2`
+- PATHS: `src-tauri/icons/icon.icns`
+- REF_COUNT: 155
+- PREVIEW: `VYRON-ICON-CANDIDATES/previews/candidate-15.png`
+- CLASSIFICATION: REJECTED_GENERIC_V_LINEAGE
+- CONFIDENCE: HIGH
+
+## candidate-16
+
+- BLOB: `fb2562cbf0e79b5b34658dde25c272b8db25e1d4`
+- PATHS: `src-tauri/icons/icon.ico`
+- REF_COUNT: 155
+- PREVIEW: `VYRON-ICON-CANDIDATES/previews/candidate-16.png`
+- CLASSIFICATION: TAURI_ICON_DERIVATIVE
+- CONFIDENCE: MEDIUM
+
+## candidate-17
+
+- BLOB: `b840224b17637a0df6bcbfaa3341d7caa12155f1`
+- PATHS: `src-tauri/icons/icon.png`
+- REF_COUNT: 4
+- PREVIEW: `VYRON-ICON-CANDIDATES/previews/candidate-17.png`
+- CLASSIFICATION: TAURI_ICON_DERIVATIVE
+- CONFIDENCE: MEDIUM
+
+## candidate-18
+
+- BLOB: `e68eb7f50ed1c66fe4c75bec3ca81ba08aefd0f0`
+- PATHS: `src-tauri/icons/icon.png`
+- REF_COUNT: 155
+- PREVIEW: `VYRON-ICON-CANDIDATES/previews/candidate-18.png`
+- CLASSIFICATION: TAURI_ICON_DERIVATIVE
+- CONFIDENCE: MEDIUM
+
+## candidate-19
+
+- BLOB: `c4bb26bef69571df152fb0ecfe7da5a349663bb7`
+- PATHS: `src/assets/vyron-4-artwork.webp`
+- REF_COUNT: 61
+- PREVIEW: `NONE`
+- CLASSIFICATION: OWNER_PROVIDED_UI_ARTWORK_NOT_PROVEN_AS_BUNDLE_ICON
+- CONFIDENCE: HIGH_FOR_ARTWORK_ORIGIN__LOW_FOR_DOCK_ICON
+
+## Decision
+
+- UNIQUE_BLOBS_FOUND: 19
+- PLAUSIBLE_NON_REJECTED_CANDIDATES: 18
+- PLAUSIBLE_IDS: candidate-01, candidate-02, candidate-03, candidate-04, candidate-05, candidate-06, candidate-07, candidate-08, candidate-09, candidate-10, candidate-11, candidate-12, candidate-13, candidate-14, candidate-16, candidate-17, candidate-18, candidate-19
+- SINGLE_STRONGLY_PROVEN_APPROVED_DOCK_ICON: NO
+- OWNER_SELECTION_REQUIRED: YES
+- FREEZE_ICON_GATE: BLOCKED
