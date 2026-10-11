@@ -1,0 +1,199 @@
+name: VYRON 6.1.10 Full Regression Triage
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-6.1.10-product-correctness
+    paths:
+      - '.github/workflows/vyron-6110-regression-triage.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vyron-6110-regression-triage
+  cancel-in-progress: false
+
+env:
+  SAFE_BASE: 588e2070877512daa637077223c678af6a216831
+  METADATA_GREEN_HEAD: cfba3100b59d56abd490e39be6294e995a8b63ce
+  BRANCH: hotfix/vyron-6.1.10-product-correctness
+
+jobs:
+  triage:
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: hotfix/vyron-6.1.10-product-correctness
+          fetch-depth: 0
+
+      - name: Immutable QA-only safety gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$GITHUB_REF_NAME" = "$BRANCH"
+          git merge-base --is-ancestor "$SAFE_BASE" HEAD
+          git merge-base --is-ancestor "$METADATA_GREEN_HEAD" HEAD
+          test "$(node -p "require('./package.json').version")" = "6.1.9"
+          test "$(git status --porcelain)" = ""
+          echo QA_ONLY=YES
+          echo PRODUCT_COMMIT_ALLOWED=NO
+          echo CANDIDATE_BUILD_ALLOWED=NO
+          echo RELEASE_ALLOWED=NO
+          echo PRODUCTION_APP_TOUCHED=NO
+          echo ENDLUME_TOUCHED=NO
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install exact dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Reproduce exact pre-freeze working tree ephemerally
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 scripts/vyron_6110_finalize_candidate.py
+          git add -N VYRON_ICON_FORENSICS.md scripts/check-vyron-release-history.mjs src/vyron6110ReleaseHistoryVersion.test.ts
+          git diff --check
+          changed="$(git diff --name-only | sort)"
+          expected="$(printf '%s\n' \
+            VYRON_ICON_FORENSICS.md \
+            package-lock.json \
+            package.json \
+            scripts/check-vyron-release-history.mjs \
+            src/DailyOperationsCenter.tsx \
+            src/dailyOperations.test.ts \
+            src/dailyOperations.ts \
+            src/releaseHistory.ts \
+            src/vyron6110ReleaseHistoryVersion.test.ts \
+            src-tauri/Cargo.lock \
+            src-tauri/Cargo.toml \
+            src-tauri/tauri.conf.json | sort)"
+          test "$changed" = "$expected"
+          echo REPRO_SCOPE=PASS
+
+      - name: Protected subsystem zero-diff gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git diff --quiet -- \
+            src-tauri/src/youtube.rs \
+            src-tauri/src/oauth_vault.rs \
+            src/youtubeQuota.ts \
+            src/uploadQueue.ts \
+            src/uploadQueueRuntime.ts \
+            src/publisherRuntime.ts \
+            src/publishWorkspaceState.ts \
+            src/store.ts
+          echo PROTECTED_SUBSYSTEM_FUNCTIONAL_DIFF=0
+
+      - name: Run complete Vitest suite and capture machine-readable failures
+        id: vitest
+        shell: bash
+        run: |
+          set +e
+          npx vitest run --reporter=json --outputFile="$RUNNER_TEMP/vyron-6110-vitest.json"
+          status=$?
+          set -e
+          test -s "$RUNNER_TEMP/vyron-6110-vitest.json"
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          echo "VITEST_EXIT_CODE=$status" >> "$GITHUB_ENV"
+          echo "FULL_VITEST_EXIT_CODE=$status"
+
+      - name: Build exhaustive initial failure ledger
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          node <<'NODE'
+          import fs from 'node:fs';
+          const p = `${process.env.RUNNER_TEMP}/vyron-6110-vitest.json`;
+          const out = `${process.env.RUNNER_TEMP}/VYRON_6_1_10_REGRESSION_FAILURES.md`;
+          const data = JSON.parse(fs.readFileSync(p, 'utf8'));
+          const failed = [];
+          for (const suite of data.testResults ?? []) {
+            for (const a of suite.assertionResults ?? []) {
+              if (a.status !== 'failed') continue;
+              failed.push({ suite, a });
+            }
+          }
+          const clean = (s) => String(s ?? '').replace(/\u001b\[[0-9;]*m/g, '');
+          const q = (s) => clean(s).replace(/\r/g, '').trim();
+          const fenced = (s) => `\n\`\`\`text\n${q(s) || 'NOT_SEPARATELY_PARSED — SEE ASSERTION_MESSAGE'}\n\`\`\`\n`;
+          let md = `# VYRON 6.1.10 — REGRESSION FAILURES\n\n`;
+          md += `Captured from complete Vitest suite on ephemeral pre-freeze working tree.\n\n`;
+          md += `- VITEST_EXIT_CODE: ${process.env.VITEST_EXIT_CODE}\n`;
+          md += `- TOTAL_TESTS: ${data.numTotalTests ?? 'UNKNOWN'}\n`;
+          md += `- FAILED_TESTS: ${data.numFailedTests ?? failed.length}\n`;
+          md += `- PASSED_TESTS: ${data.numPassedTests ?? 'UNKNOWN'}\n`;
+          md += `- PENDING_TESTS: ${data.numPendingTests ?? 'UNKNOWN'}\n`;
+          md += `- TEST_SUITES_FAILED: ${data.numFailedTestSuites ?? 'UNKNOWN'}\n\n`;
+          md += `Initial classification is E.UNKNOWN by design. No product or test fix is authorized from this ledger until root cause is proven.\n\n`;
+          failed.forEach(({suite, a}, i) => {
+            const msgs = (a.failureMessages ?? []).map(q).join('\n\n');
+            const match = msgs.match(/expected\s+(.+?)\s+to\s+(?:be|equal|deeply equal|contain|match)\s+(.+?)(?:\n|$)/i);
+            const actual = match?.[1] ?? '';
+            const expected = match?.[2] ?? '';
+            md += `## FAILURE_ID: F${String(i + 1).padStart(3, '0')}\n\n`;
+            md += `- TEST_FILE: ${q(suite.name)}\n`;
+            md += `- TEST_NAME: ${q(a.fullName || a.title)}\n`;
+            md += `- EXPECTED:${fenced(expected)}`;
+            md += `- ACTUAL:${fenced(actual)}`;
+            md += `- SOURCE_PATH: UNKNOWN_PENDING_ROOT_CAUSE\n`;
+            md += `- RELATED_6_1_10_CHANGE: UNKNOWN_PENDING_ROOT_CAUSE\n`;
+            md += `- CLASSIFICATION: E. UNKNOWN\n`;
+            md += `- ACTION: ROOT_CAUSE_REQUIRED_BEFORE_CHANGE\n`;
+            md += `- ASSERTION_MESSAGE:${fenced(msgs)}`;
+            const loc = a.location ? `${a.location.line ?? '?'}:${a.location.column ?? '?'}` : 'NOT_REPORTED';
+            md += `- LOCATION: ${loc}\n\n`;
+          });
+          if (failed.length === 0 && Number(data.numFailedTests ?? 0) !== 0) {
+            throw new Error('Vitest JSON reported failures but parser found none');
+          }
+          fs.writeFileSync(out, md);
+          console.log(md);
+          NODE
+
+      - name: Restore product tree and persist QA ledger only
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cp "$RUNNER_TEMP/VYRON_6_1_10_REGRESSION_FAILURES.md" "$RUNNER_TEMP/report.md"
+          git reset --hard HEAD
+          git clean -fd
+          cp "$RUNNER_TEMP/report.md" VYRON_6_1_10_REGRESSION_FAILURES.md
+          changed="$(git status --porcelain | awk '{print $2}')"
+          test "$changed" = "VYRON_6_1_10_REGRESSION_FAILURES.md"
+          git config user.name "VYRON QA"
+          git config user.email "vyron-qa@users.noreply.github.com"
+          git add VYRON_6_1_10_REGRESSION_FAILURES.md
+          git diff --cached --check
+          git commit -m "test(vyron): capture 6.1.10 full regression failures"
+          git push origin "HEAD:$BRANCH"
+          echo QA_LEDGER_COMMITTED=YES
+          echo PRODUCT_FILES_COMMITTED=0
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: VYRON-6.1.10-REGRESSION-TRIAGE
+          path: |
+            VYRON_6_1_10_REGRESSION_FAILURES.md
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Preserve failing gate result
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          echo "FULL_VITEST_EXIT_CODE=${VITEST_EXIT_CODE:-UNKNOWN}"
+          echo "CANDIDATE_HEAD=NOT_CREATED"
+          echo "CANDIDATE_APP_BUILT=NO"
+          echo "RELEASE=BLOCKED"
+          test "${VITEST_EXIT_CODE:-1}" -eq 0
