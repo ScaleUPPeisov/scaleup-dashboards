@@ -24,41 +24,37 @@ jobs:
           ref: hotfix/vyron-6.1.10-product-correctness
           fetch-depth: 0
 
-      - name: Create missing candidate-19 visual preview
+      - name: Verify decodable historical previews 01 through 18
         shell: bash
         run: |
           set -Eeuo pipefail
-          path='src/assets/vyron-4-artwork.webp'
-          test -f "$path"
-          tracked_blob="$(git rev-parse HEAD:"$path")"
-          test "$tracked_blob" = "c4bb26bef69571df152fb0ecfe7da5a349663bb7"
+          test "$(node -p "require('./package.json').version")" = "6.1.9"
+          test "$(git rev-parse HEAD:src/assets/vyron-4-artwork.webp)" = "c4bb26bef69571df152fb0ecfe7da5a349663bb7"
+          for n in $(seq -w 1 18); do
+            p="VYRON-ICON-CANDIDATES/previews/candidate-${n}.png"
+            test -s "$p"
+            file "$p" | grep -q 'PNG image data'
+          done
+          echo DECODABLE_PREVIEWS=18
 
-          if head -n 1 "$path" | grep -q '^version https://git-lfs.github.com/spec/v1'; then
-            echo 'CANDIDATE_19_LFS_POINTER=YES'
-            git lfs pull --include="$path" --exclude=''
-          else
-            echo 'CANDIDATE_19_LFS_POINTER=NO'
-          fi
-
-          runtime_format="$(file -b "$path")"
-          echo "CANDIDATE_19_RUNTIME_FORMAT=$runtime_format"
-          test -s "$path"
-          ! head -n 1 "$path" | grep -q '^version https://git-lfs.github.com/spec/v1'
-          echo "$runtime_format" | grep -q 'Web/P image'
-
-          mkdir -p VYRON-ICON-CANDIDATES/previews
-          out='VYRON-ICON-CANDIDATES/previews/candidate-19.png'
-          if command -v ffmpeg >/dev/null 2>&1; then
-            echo 'CANDIDATE_19_DECODER=ffmpeg'
-            ffmpeg -hide_banner -loglevel error -y -i "$path" -frames:v 1 "$out"
-          else
-            echo 'CANDIDATE_19_DECODER=dwebp'
-            brew list webp >/dev/null 2>&1 || brew install webp
-            dwebp "$path" -o "$out" >/dev/null
-          fi
-          test -s "$out"
-          file "$out" | grep -q 'PNG image data'
-          echo "CANDIDATE_19_PREVIEW_FORMAT=$(file -b "$out")"
+      - name: Record candidate 19 as corrupted historical evidence only
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          root='VYRON-ICON-CANDIDATES'
+          rm -f "$root/previews/candidate-19.png"
+          cat > "$root/candidate-19-CORRUPTED.txt" <<'EOF'
+original path: src/assets/vyron-4-artwork.webp
+commit SHA: 39662c2aa6fe1cc352d435463692e1d255860c76
+blob SHA: c4bb26bef69571df152fb0ecfe7da5a349663bb7
+dimensions/header information: RIFF/WebP VP8, 384x384
+decoder failures: sips failed; Pillow failed; ffmpeg failed with invalid/insufficient image data; dwebp failed with BITSTREAM_ERROR / NOT_ENOUGH_DATA
+historical context: historical VYRON artwork evidence from src/assets/vyron-4-artwork.webp; physically corrupted/truncated; must not be reconstructed, redrawn, or fabricated as a preview
+EOF
+          test ! -e "$root/previews/candidate-19.png"
+          test -s "$root/candidate-19-CORRUPTED.txt"
+          echo CORRUPTED_HISTORICAL_EVIDENCE=YES
+          echo FAKE_PIXELS_GENERATED=NO
 
       - name: Build owner-facing INDEX.md from forensic manifest
         shell: bash
@@ -79,53 +75,87 @@ jobs:
               text=m.group(1) if m else ''
               cls=re.search(r'- CLASSIFICATION: (.+)',text)
               conf=re.search(r'- CONFIDENCE: (.+)',text)
-              return (cls.group(1).strip() if cls else 'UNCLASSIFIED',conf.group(1).strip() if conf else 'UNKNOWN')
+              return (cls.group(1).strip() if cls else 'UNCLASSIFIED', conf.group(1).strip() if conf else 'UNKNOWN')
+
+          def first_commit(blob, n):
+              if n == 19:
+                  return ('39662c2aa6fe1cc352d435463692e1d255860c76','UNKNOWN')
+              proc=subprocess.run(['git','log','--all','--find-object='+blob,'--format=%H|%aI','--reverse'],text=True,capture_output=True,check=False)
+              first=(proc.stdout.strip().splitlines() or ['UNKNOWN|UNKNOWN'])[0].split('|',1)
+              return first[0], (first[1] if len(first)>1 else 'UNKNOWN')
+
+          def historical_version(refs):
+              pats=[]
+              for ref in refs:
+                  clean=ref.replace('refs/remotes/origin/','').replace('refs/tags/','')
+                  m=re.search(r'(?:vyron-|^v)(\d+\.\d+(?:\.\d+)?)', clean, re.I)
+                  if m: pats.append(m.group(1))
+              return pats[0] if pats else 'UNKNOWN'
 
           lines=[
             '# VYRON ICON CANDIDATES — OWNER VISUAL SELECTION','',
-            '> No final icon is selected by QA. The owner must choose visually before version finalization.','',
+            '> QA does not select the final icon. The owner must identify the correct historical icon visually before version finalization.','',
             '- PRODUCT_ICON_CHANGED: NO',
+            '- GENERIC_V: REJECTED',
             '- OWNER_SELECTION_REQUIRED: YES',
-            '- SELECTED: NONE',
-            f'- CANDIDATE_COUNT: {len(manifest)}','',
-            '| Candidate | Visual | Commit | Blob SHA | Date | Source path | Historical usage | Classification | Confidence |',
-            '|---|---|---|---|---|---|---|---|---|'
+            '- OWNER_SELECTED_ICON: NONE',
+            '- ICON_RESTORED: NO',
+            f'- TOTAL_HISTORICAL_CANDIDATES: {len(manifest)}',
+            '- DECODABLE_PREVIEWS: 18',
+            '- CORRUPTED_HISTORICAL_EVIDENCE: 1','',
+            '| NUMBER | PREVIEW FILE | SOURCE PATH | COMMIT | BLOB SHA | DATE | HISTORICAL VERSION | PACKAGED AS APP ICON? | OWNER-PROVIDED? | CONFIDENCE | NOTES |',
+            '|---|---|---|---|---|---|---|---|---|---|---|'
           ]
+
           for i,item in enumerate(manifest,1):
               blob=item['blob']; paths=item.get('paths') or []; refs=item.get('refs') or []
               cls,conf=meta(i)
-              proc=subprocess.run(['git','log','--all','--find-object='+blob,'--format=%H|%aI|%s','--reverse'],text=True,capture_output=True)
-              first=(proc.stdout.strip().splitlines() or ['UNKNOWN|UNKNOWN|UNKNOWN'])[0].split('|',2)
-              commit=first[0] if first else 'UNKNOWN'; date=first[1] if len(first)>1 else 'UNKNOWN'
+              commit,date=first_commit(blob,i)
               path='<br>'.join(f'`{p}`' for p in paths) or 'UNKNOWN'
-              usage=f'{len(refs)} refs'
-              if refs: usage += f'; sample `{refs[0].replace("refs/remotes/origin/","")}`'
-              preview=f'![candidate-{i:02d}](previews/candidate-{i:02d}.png)'
-              lines.append(f'| candidate-{i:02d} | {preview} | `{commit}` | `{blob}` | {date} | {path} | {usage} | {cls} | {conf} |')
+              version=historical_version(refs)
+              if i == 19:
+                  preview='`candidate-19-CORRUPTED.txt`'
+                  packaged='UNKNOWN'
+                  owner='YES'
+                  notes='CORRUPTED_HISTORICAL_EVIDENCE; no preview pixels generated; historical artwork not proven as bundle icon'
+              else:
+                  preview=f'`previews/candidate-{i:02d}.png`'
+                  packaged='YES' if any(str(p).startswith('src-tauri/icons/') for p in paths) else 'UNKNOWN'
+                  owner='UNKNOWN'
+                  notes=cls
+                  if blob == '9ae975a36e1677e2c49060f13b8651d446dabaf2':
+                      notes='REJECTED_GENERIC_V_LINEAGE'
+              lines.append(f'| candidate-{i:02d} | {preview} | {path} | `{commit}` | `{blob}` | {date} | {version} | {packaged} | {owner} | {conf} | {notes} |')
 
-          lines += ['', '## Decision', '', '- FINAL_ICON: NONE', '- ICON_GATE_GREEN: NO', '- ACTION: OWNER MUST SELECT ONE CANDIDATE VISUALLY', '- DO_NOT_FINALIZE_VERSION_BEFORE_SELECTION: YES', '']
+          lines += ['', '## Decision', '', '- FINAL_ICON: NONE', '- OWNER_SELECTION_REQUIRED: YES', '- ICON_GATE: BLOCKED_OWNER_SELECTION', '- DO_NOT_FINALIZE_VERSION_BEFORE_SELECTION: YES', '']
           (root/'INDEX.md').write_text('\n'.join(lines))
           PY
-          grep -q 'candidate-19' VYRON-ICON-CANDIDATES/INDEX.md
-          grep -q 'OWNER MUST SELECT' VYRON-ICON-CANDIDATES/INDEX.md
+          grep -q 'candidate-19-CORRUPTED.txt' VYRON-ICON-CANDIDATES/INDEX.md
+          grep -q 'OWNER_SELECTION_REQUIRED: YES' VYRON-ICON-CANDIDATES/INDEX.md
+          test ! -e VYRON-ICON-CANDIDATES/previews/candidate-19.png
           git diff --check
 
-      - name: Commit previews and index only
+      - name: Commit owner-review evidence only
         shell: bash
         run: |
           set -Eeuo pipefail
-          git add VYRON-ICON-CANDIDATES/previews/candidate-19.png VYRON-ICON-CANDIDATES/INDEX.md
-          staged="$(git diff --cached --name-only | sort)"
-          expected="$(printf '%s\n' VYRON-ICON-CANDIDATES/INDEX.md VYRON-ICON-CANDIDATES/previews/candidate-19.png | sort)"
-          test "$staged" = "$expected"
+          git add -A VYRON-ICON-CANDIDATES/INDEX.md VYRON-ICON-CANDIDATES/candidate-19-CORRUPTED.txt VYRON-ICON-CANDIDATES/previews/candidate-19.png
+          staged="$(git diff --cached --name-only)"
+          test -n "$staged"
+          while IFS= read -r p; do
+            case "$p" in
+              VYRON-ICON-CANDIDATES/INDEX.md|VYRON-ICON-CANDIDATES/candidate-19-CORRUPTED.txt|VYRON-ICON-CANDIDATES/previews/candidate-19.png) ;;
+              *) echo "forbidden staged path: $p"; exit 1 ;;
+            esac
+          done <<< "$staged"
           git diff --cached --check
           git config user.name "VYRON QA"
           git config user.email "vyron-qa@users.noreply.github.com"
-          git commit -m "docs(vyron): add owner-facing historical icon previews"
+          git commit -m "docs(vyron): package owner icon evidence without reconstruction"
           git push origin "HEAD:$BRANCH"
           echo PRODUCT_ICON_CHANGED=NO
-          echo CANDIDATE_PREVIEWS_CREATED=YES
-          echo COUNT=19
+          echo DECODABLE_PREVIEWS=18
+          echo CORRUPTED=1
           echo OWNER_SELECTION_REQUIRED=YES
-          echo SELECTED=NONE
-          echo ICON_GATE_GREEN=NO
+          echo OWNER_SELECTED_ICON=NONE
+          echo ICON_GATE=BLOCKED_OWNER_SELECTION
