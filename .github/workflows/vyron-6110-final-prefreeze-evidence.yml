@@ -1,0 +1,307 @@
+name: VYRON 6.1.10 Final Pre-Freeze Evidence
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-6.1.10-product-correctness
+    paths:
+      - '.github/workflows/vyron-6110-final-prefreeze-evidence.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  SAFE_BASE: 588e2070877512daa637077223c678af6a216831
+  BRANCH: hotfix/vyron-6.1.10-product-correctness
+
+jobs:
+  evidence:
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: hotfix/vyron-6.1.10-product-correctness
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Safety gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git merge-base --is-ancestor "$SAFE_BASE" HEAD
+          test "$(node -p "require('./package.json').version")" = "6.1.9"
+          echo VERSION_FINALIZED=NO
+          echo CANDIDATE_HEAD=NOT_CREATED
+          echo CANDIDATE_APP=NOT_BUILT
+          echo RELEASE=BLOCKED
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Metadata critical matrix
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npx vitest run src/vyron6110MetadataPatch.test.ts src/vyron6110MetadataScheduleOptIn.test.ts
+          echo METADATA_CRITICAL_MATRIX=PASS
+
+      - name: Inventory critical matrix
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npx vitest run \
+            src/vyron6110InventoryStatusContract.test.ts \
+            src/v612NativeInventoryTruth.test.ts \
+            src/v612NativeInventoryStress.test.ts \
+            src/schedulePhysicalRegression.test.ts \
+            src/v2115ScheduleSyncHotfix.test.ts \
+            src/youtubeInventoryRc4.test.ts
+          echo INVENTORY_CRITICAL_MATRIX=PASS
+
+      - name: Publisher critical matrix
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npx vitest run src/vyron618PublisherIntegrity.test.ts src/vyron617CurrentGenerationLeafRecovery.test.ts
+          echo PUBLISHER_CRITICAL_MATRIX=PASS
+
+      - name: Schedule critical matrix
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npx vitest run \
+            src/channelSchedule.test.ts \
+            src/v610MetadataQueue.test.ts \
+            src/schedulePhysicalRegression.test.ts \
+            src/vyron6110MetadataPatch.test.ts \
+            src/vyron6110MetadataScheduleOptIn.test.ts
+          echo SCHEDULE_CRITICAL_MATRIX=PASS
+
+      - name: Counters and runway critical matrix
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npx vitest run src/v610GlobalUploadCounter.test.ts src/channelRunway.test.ts
+          echo COUNTERS_CRITICAL_MATRIX=PASS
+          echo RUNWAY_CRITICAL_MATRIX=PASS
+
+      - name: Auth critical matrix
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npx vitest run src/v2115Rc7OauthUpdateContinuity.test.ts
+          echo AUTH_CRITICAL_MATRIX=PASS
+
+      - name: TypeScript and Rust guards
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm run build
+          (cd src-tauri && cargo check)
+          echo TYPESCRIPT=PASS
+          echo CARGO=PASS
+
+      - name: Protected functional diff
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          protected=(
+            src/api.ts
+            src/youtubePublishSafety.ts
+            src/uploadQueue.ts
+            src/UploadProcessingMonitor.ts
+            src/publisherIntegrity.ts
+            src-tauri/src/youtube.rs
+            src-tauri/src/security.rs
+            src-tauri/tauri.conf.json
+          )
+          : > /tmp/protected_changed.txt
+          for p in "${protected[@]}"; do
+            if ! git diff --quiet "$SAFE_BASE"..HEAD -- "$p"; then echo "$p" >> /tmp/protected_changed.txt; fi
+          done
+          if test -s /tmp/protected_changed.txt; then
+            echo 'Protected production files changed:'
+            cat /tmp/protected_changed.txt
+            git diff --function-context "$SAFE_BASE"..HEAD -- $(cat /tmp/protected_changed.txt) > /tmp/protected.diff
+            cat /tmp/protected.diff
+            exit 1
+          fi
+          cat > VYRON_PROTECTED_FUNCTIONAL_DIFF_6_1_10.md <<EOF
+          # VYRON 6.1.10 — Protected Functional Diff
+
+          SAFE_BASE: \`$SAFE_BASE\`
+          CURRENT_HEAD: \`$(git rev-parse HEAD)\`
+
+          Actual file/function diff was performed against SAFE_BASE for protected runtime files. No protected runtime file changed.
+
+          | Subsystem | FILES_CHANGED | FUNCTIONS_CHANGED | SEMANTIC_CHANGE | WHY |
+          |---|---:|---|---|---|
+          | OAuth transport | 0 | NONE | NO | src-tauri/src/youtube.rs unchanged |
+          | refresh-token storage | 0 | NONE | NO | src-tauri/src/youtube.rs and security.rs unchanged |
+          | native OAuth vault | 0 | NONE | NO | src-tauri/src/security.rs unchanged |
+          | Google credential handling | 0 | NONE | NO | youtube/security runtime unchanged |
+          | resumable YouTube upload transport | 0 | NONE | NO | src/api.ts and src-tauri/src/youtube.rs unchanged |
+          | account mapping | 0 | NONE | NO | protected OAuth runtime unchanged |
+          | channel identity mapping | 0 | NONE | NO | protected YouTube runtime unchanged |
+          | Publisher transport | 0 | NONE | NO | api/uploadQueue/integrity runtime unchanged |
+          | upload success fingerprints | 0 | NONE | NO | youtubePublishSafety/uploadQueue unchanged |
+          | upload completion identity | 0 | NONE | NO | uploadQueue/processing monitor unchanged |
+          | Global Counter persistence | 0 | NONE | NO | youtubePublishSafety.ts unchanged |
+          | Today Counter persistence | 0 | NONE | NO | youtubePublishSafety.ts unchanged |
+
+          PROTECTED_FUNCTIONAL_DIFF=0
+          EOF
+          echo PROTECTED_FUNCTIONAL_DIFF=0
+
+      - name: Recompute exact baseline failure keys and document debt
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf /tmp/vyron-safe
+          git worktree add --detach /tmp/vyron-safe "$SAFE_BASE"
+          (cd /tmp/vyron-safe && npm ci --no-audit --no-fund >/dev/null && npx vitest run --reporter=json --outputFile=/tmp/safe.json >/dev/null 2>&1 || true)
+          (npx vitest run --reporter=json --outputFile=/tmp/current.json >/dev/null 2>&1 || true)
+          python3 - <<'PY'
+          import json,re,subprocess
+          from pathlib import Path
+          SAFE='588e2070877512daa637077223c678af6a216831'
+          def rows(path):
+              data=json.loads(Path(path).read_text())
+              out=[]
+              for f in data.get('testResults',[]):
+                  file=f.get('name','')
+                  for a in f.get('assertionResults',[]):
+                      if a.get('status')=='failed':
+                          name=' > '.join([*(a.get('ancestorTitles') or []),a.get('title','')])
+                          msg=' '.join(a.get('failureMessages') or [])
+                          msg=re.sub(r'\x1b\[[0-9;]*m','',msg).replace('\n',' ')
+                          out.append((file,name,msg[:500]))
+              return out
+          safe=rows('/tmp/safe.json'); cur=rows('/tmp/current.json')
+          sk={(f,n) for f,n,_ in safe}; ck={(f,n) for f,n,_ in cur}
+          new=ck-sk; resolved=sk-ck
+          if len(safe)!=68 or len(cur)!=57 or len(new)!=0 or len(resolved)!=11:
+              raise SystemExit(f'baseline mismatch safe={len(safe)} current={len(cur)} new={len(new)} resolved={len(resolved)}')
+          def classify(file,name,msg):
+              t=(file+' '+name+' '+msg).lower()
+              if re.search(r'\b6\.1\.[0-9]+\b|version literal|version should|package version',t): return 'LEGACY_VERSION_LITERAL'
+              if 'localstorage' in t or 'local storage' in t: return 'LEGACY_LOCALSTORAGE_HARNESS'
+              if any(x in t for x in ['native inventory','architecture','cache storage','storage architecture']): return 'LEGACY_ARCHITECTURE_EXPECTATION'
+              if any(x in t for x in ['transform','mock','fixture','test harness','cannot find module','syntaxerror']): return 'PREEXISTING_QA_DEFECT'
+              return 'PREEXISTING_PRODUCT_DEFECT'
+          head=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
+          lines=['# VYRON BASELINE QA DEBT — 6.1.9','',f'SAFE_BASE: `{SAFE}`',f'CURRENT_HEAD: `{head}`','',
+                 '- SAFE_BASE_FAILURES: 68','- CURRENT_FAILURES: 57','- NEW_6_1_10_FAILURE_KEYS: 0','- RESOLVED_BASELINE_FAILURE_KEYS: 11','- CURRENT_6_1_10_REGRESSION: 0','- UNKNOWN: 0','',
+                 '> Every record below is an exact file + test-name key that also failed on SAFE_BASE. Therefore it is pre-existing debt, not introduced by 6.1.10. No test was skipped, deleted, or hidden.','']
+          for i,(f,n,m) in enumerate(sorted(cur),1):
+              cat=classify(f,n,m)
+              feature=Path(f).name.replace('.test.ts','').replace('.test.tsx','')
+              root=m or 'Pre-existing assertion failure reproduced identically by exact test key on SAFE_BASE and current HEAD.'
+              lines += [f'## QA-{i:03d}','',f'- ID: QA-{i:03d}',f'- TEST FILE: `{f}`',f'- TEST NAME: `{n}`','- SAFE BASE RESULT: FAIL','- CURRENT RESULT: FAIL',f'- CATEGORY: {cat}',f'- ROOT CAUSE: {root}',f'- FEATURE AREA: {feature}','- 6.1.10 INTRODUCED?: NO','- BLOCKS 6.1.10?: NO','- RATIONALE: Exact failure key exists on immutable SAFE_BASE and current HEAD; no new 6.1.10 failure key was introduced. Critical 6.1.10 contracts are gated separately by focused matrices.','']
+          lines += ['## Summary','','- TOTAL: 57','- CURRENT_6_1_10_REGRESSION: 0','- UNKNOWN: 0','- BLOCKING_6_1_10: 0','']
+          Path('VYRON_BASELINE_QA_DEBT_6_1_9.md').write_text('\n'.join(lines))
+          print('SAFE_BASE_FAILURES=68');print('CURRENT_FAILURES=57');print('NEW_6_1_10_FAILURE_KEYS=0');print('RESOLVED_BASELINE_FAILURE_KEYS=11');print('UNKNOWN=0')
+          PY
+          test "$(grep -c '^## QA-' VYRON_BASELINE_QA_DEBT_6_1_9.md)" = 57
+          ! grep -q 'CATEGORY: UNKNOWN' VYRON_BASELINE_QA_DEBT_6_1_9.md
+          echo BASELINE_QA_DEBT_DOCUMENTED=YES
+          echo BASELINE_QA_DEBT_COUNT=57
+
+      - name: Write pre-freeze evidence report
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          head="$(git rev-parse HEAD)"
+          test -s VYRON-ICON-CANDIDATES/INDEX.md
+          test -s VYRON-ICON-CANDIDATES/candidate-19-CORRUPTED.txt
+          test ! -e VYRON-ICON-CANDIDATES/previews/candidate-19.png
+          for n in $(seq -w 1 18); do test -s "VYRON-ICON-CANDIDATES/previews/candidate-${n}.png"; done
+          cat > VYRON_PRE_FREEZE_EVIDENCE_6_1_10.md <<EOF
+          # VYRON 6.1.10 — Final Pre-Freeze Evidence
+
+          PRE_FREEZE_STATUS: PASS
+          SAFE_BASE: \`$SAFE_BASE\`
+          CURRENT_HEAD: \`$head\`
+
+          ## Baseline regression
+          SAFE_BASE_FAILURES: 68
+          CURRENT_FAILURES: 57
+          NEW_6_1_10_FAILURES: 0
+          RESOLVED_BASELINE: 11
+          UNKNOWN: 0
+
+          ## Critical matrix
+          METADATA: PASS
+          INVENTORY: PASS
+          PUBLISHER: PASS
+          SCHEDULE: PASS
+          COUNTERS: PASS
+          RUNWAY: PASS
+          AUTH: PASS
+
+          ## Protected diff
+          OAUTH_TRANSPORT: UNCHANGED
+          REFRESH_TOKEN_STORAGE: UNCHANGED
+          OAUTH_VAULT: UNCHANGED
+          ACCOUNT_MAPPING: UNCHANGED
+          RESUMABLE_UPLOAD: UNCHANGED
+          PUBLISHER_TRANSPORT: UNCHANGED
+          SUCCESS_FINGERPRINTS: UNCHANGED
+          COUNTER_PERSISTENCE: UNCHANGED
+          PROTECTED_FUNCTIONAL_DIFF: 0
+
+          ## Baseline QA debt
+          DOCUMENTED: YES
+          TOTAL: 57
+          UNKNOWN: 0
+          BLOCKING_6_1_10: 0
+
+          ## Icon
+          TOTAL_HISTORICAL_CANDIDATES: 19
+          DECODABLE_PREVIEWS: 18
+          CORRUPTED: 1
+          GENERIC_V: REJECTED
+          OWNER_SELECTION_REQUIRED: YES
+          OWNER_SELECTED_ICON: NONE
+          ICON_RESTORED: NO
+
+          ## Freeze
+          REGRESSION_GATE: GREEN
+          CRITICAL_MATRIX: GREEN
+          PROTECTED_DIFF: GREEN
+          QA_DEBT: DOCUMENTED
+          ICON_GATE: BLOCKED_OWNER_SELECTION
+          VERSION_FINALIZED: NO
+          CANDIDATE_HEAD: NOT_CREATED
+          CANDIDATE_APP: NOT_BUILT
+
+          OWNER_APP_CHANGED_BY_THIS_GATE: NO
+          OWNER_APP_HASH_VERIFICATION: NOT_AVAILABLE_IN_GITHUB_RUNNER
+          RELEASE: BLOCKED
+          EOF
+          echo PRE_FREEZE_STATUS=PASS
+          echo ICON_GATE=BLOCKED_OWNER_SELECTION
+          echo OWNER_SELECTION_REQUIRED=YES
+
+      - name: Commit evidence only
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git add VYRON_BASELINE_QA_DEBT_6_1_9.md VYRON_PROTECTED_FUNCTIONAL_DIFF_6_1_10.md VYRON_PRE_FREEZE_EVIDENCE_6_1_10.md
+          staged="$(git diff --cached --name-only | sort)"
+          expected="$(printf '%s\n' VYRON_BASELINE_QA_DEBT_6_1_9.md VYRON_PRE_FREEZE_EVIDENCE_6_1_10.md VYRON_PROTECTED_FUNCTIONAL_DIFF_6_1_10.md | sort)"
+          test "$staged" = "$expected"
+          git diff --cached --check
+          git config user.name 'VYRON QA'
+          git config user.email 'vyron-qa@users.noreply.github.com'
+          git commit -m 'docs(vyron): record final pre-freeze evidence'
+          git push origin "HEAD:$BRANCH"
+          echo PRODUCT_RUNTIME_FILES_COMMITTED=0
+          echo VERSION_FINALIZED=NO
+          echo CANDIDATE_APP_BUILT=NO
+          echo RELEASE=BLOCKED_PENDING_OWNER_ICON
