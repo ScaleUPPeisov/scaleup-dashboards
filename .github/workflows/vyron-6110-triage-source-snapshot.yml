@@ -1,0 +1,46 @@
+name: VYRON 6.1.10 Triage Source Snapshot
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-6.1.10-product-correctness
+    paths:
+      - '.github/workflows/vyron-6110-triage-source-snapshot.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: hotfix/vyron-6.1.10-product-correctness
+          fetch-depth: 0
+      - name: Safety declaration
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(node -p "require('./package.json').version")" = "6.1.9"
+          test "$(git status --porcelain)" = ""
+          echo READ_ONLY_SNAPSHOT=YES
+          echo PRODUCT_CHANGES=0
+          echo CANDIDATE_BUILD=NO
+          echo RELEASE_ACTIONS=0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-6.1.10-TRIAGE-SOURCE-SNAPSHOT
+          path: |
+            src
+            tests
+            src-tauri/src
+            src-tauri/Cargo.toml
+            package.json
+            package-lock.json
+            scripts
+            VYRON_6_1_10_REGRESSION_FAILURES.md
+          if-no-files-found: error
+          retention-days: 7
