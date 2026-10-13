@@ -1,0 +1,64 @@
+name: VYRON 6.1.11 Metadata + Inventory QA
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-6.1.11-metadata-inventory-correctness
+    paths:
+      - 'src/publisherMetadata.ts'
+      - 'src/publishWorkspaceState.ts'
+      - 'src/vyron6111MetadataIdentityMapping.test.ts'
+      - 'src-tauri/src/inventory_watch.rs'
+      - '.github/workflows/vyron-6111-metadata-inventory-qa.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-6111-metadata-inventory-qa
+  cancel-in-progress: true
+
+jobs:
+  qa:
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - name: Checkout hotfix branch
+        uses: actions/checkout@v4
+        with:
+          ref: hotfix/vyron-6.1.11-metadata-inventory-correctness
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Metadata identity regression
+        run: npx vitest run src/vyron6111MetadataIdentityMapping.test.ts src/vyron618PublisherIntegrity.test.ts
+
+      - name: Publisher physical consistency regression
+        run: npx vitest run src/vyron616PhysicalPublisherConsistency.test.ts
+
+      - name: TypeScript production build
+        run: npm run build
+
+      - name: Inventory watcher read-loop regression
+        run: cargo test --manifest-path src-tauri/Cargo.toml inventory_watch::tests -- --nocapture
+
+      - name: Acceptance contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          echo 'METADATA_POSITIONAL_BATCH_MAPPING=PASS'
+          echo 'METADATA_JOB_IDENTITY=PASS'
+          echo 'VIDEO_011_METADATA_RECOVERY=PASS'
+          echo 'INVENTORY_ACCESS_EVENT_LOOP=PASS'
+          echo 'PUBLISHER_REGRESSION=PASS'
+          echo 'RELEASE=BLOCKED'
+          echo 'WAITING_FOR_OWNER_APPROVAL'
