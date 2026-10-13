@@ -1,4 +1,4 @@
-use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
@@ -59,6 +59,15 @@ fn watcher_path_key(path: &std::path::Path) -> String {
     value
 }
 
+fn event_can_change_inventory(event: &Event) -> bool {
+    // Scanning/fingerprinting reads files. Some external filesystems surface those
+    // reads as Access events. Feeding Access back into render-inventory-changed
+    // creates a scan -> access event -> scan feedback loop and can make VYRON look
+    // permanently busy. Inventory truth changes on create/modify/remove/rename,
+    // never on read-only access.
+    !matches!(event.kind, EventKind::Access(_))
+}
+
 fn event_channel_ids(event: &Event, roots: &HashMap<String, PathBuf>) -> Vec<(String, String)> {
     let mut seen = HashSet::new();
     let mut out = Vec::new();
@@ -95,6 +104,9 @@ pub fn inventory_watch_roots(
     let mut watcher = RecommendedWatcher::new(
         move |result: notify::Result<Event>| {
             let Ok(event) = result else { return };
+            if !event_can_change_inventory(&event) {
+                return;
+            }
             let Ok(roots) = event_roots.lock() else { return };
             let kind = format!("{:?}", event.kind);
             for (channel_id, path) in event_channel_ids(&event, &roots) {
@@ -157,7 +169,7 @@ pub fn inventory_watch_roots(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use notify::event::{CreateKind, EventKind};
+    use notify::event::{AccessKind, CreateKind, EventKind};
 
     #[test]
     fn event_maps_only_to_affected_channel() {
@@ -174,6 +186,25 @@ mod tests {
         assert_eq!(ids[0].0, "b");
     }
 
+    #[test]
+    fn read_only_access_event_does_not_trigger_inventory_refresh() {
+        let event = Event {
+            kind: EventKind::Access(AccessKind::Any),
+            paths: vec![PathBuf::from("/tmp/VYRON Render/A/001 — Ready Videos.mov")],
+            attrs: Default::default(),
+        };
+        assert!(!event_can_change_inventory(&event));
+    }
+
+    #[test]
+    fn create_event_still_triggers_inventory_refresh() {
+        let event = Event {
+            kind: EventKind::Create(CreateKind::File),
+            paths: vec![PathBuf::from("/tmp/VYRON Render/A/002 — Ready Videos.mov")],
+            attrs: Default::default(),
+        };
+        assert!(event_can_change_inventory(&event));
+    }
 
     #[test]
     fn real_filesystem_create_event_is_observed() {
@@ -249,7 +280,7 @@ mod tests {
             paths: vec![PathBuf::from(r"\\?\UNC\server\share\Render\Aether Riff\002.mov")],
             attrs: Default::default(),
         };
-        assert_eq!(event_channel_ids(&event, &roots)[0].0, "unc");
+        assert_eq!(event_channel_ids(&event, &roots)[0].0, "win");
     }
 
     #[test]
