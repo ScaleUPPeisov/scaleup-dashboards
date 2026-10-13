@@ -1,43 +1,67 @@
-name: VYRON 6.1.11 Metadata + Inventory QA
+name: VYRON 6.1.11 Post-Bump QA
 
 on:
   push:
     branches:
       - hotfix/vyron-6.1.11-metadata-inventory-correctness
     paths:
-      - 'src/publisherMetadata.ts'
-      - 'src/publishWorkspaceState.ts'
-      - 'src/vyron6111MetadataIdentityMapping.test.ts'
-      - 'src-tauri/src/inventory_watch.rs'
       - '.github/workflows/vyron-6111-metadata-inventory-qa.yml'
-  pull_request:
-    branches:
-      - hotfix/vyron-6.1.10-product-correctness
-    paths:
-      - 'src/publisherMetadata.ts'
-      - 'src/publishWorkspaceState.ts'
-      - 'src/vyron6111MetadataIdentityMapping.test.ts'
-      - 'src-tauri/src/inventory_watch.rs'
-      - '.github/workflows/vyron-6111-metadata-inventory-qa.yml'
-  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: vyron-6111-metadata-inventory-qa-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: vyron-6111-post-bump-qa
+  cancel-in-progress: false
+
+env:
+  SOURCE_HEAD: 284b1ef792f72078a9389b1ec78ffa8db58dca42
+  BEHAVIOR_HEAD: 1ed6713270cf85531ba5951daf295d7a9385c453
+  VERSION: 6.1.11
 
 jobs:
   qa:
     runs-on: macos-14
     timeout-minutes: 45
     steps:
-      - name: Checkout hotfix branch
+      - name: Checkout exact final product source
         uses: actions/checkout@v4
         with:
-          ref: hotfix/vyron-6.1.11-metadata-inventory-correctness
+          ref: ${{ env.SOURCE_HEAD }}
           fetch-depth: 0
+
+      - name: Verify source and version-only bump
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
+          git merge-base --is-ancestor "$BEHAVIOR_HEAD" "$SOURCE_HEAD"
+          git diff --name-only "$SOURCE_HEAD^" "$SOURCE_HEAD" >/tmp/bump-delta.txt
+          cat /tmp/bump-delta.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          allowed={'package.json','package-lock.json','src-tauri/tauri.conf.json','src-tauri/Cargo.toml','src-tauri/Cargo.lock'}
+          changed={x for x in Path('/tmp/bump-delta.txt').read_text().splitlines() if x}
+          assert changed and changed <= allowed, f'UNEXPECTED_PRODUCT_BUMP_DELTA={sorted(changed-allowed)}'
+          print('VERSION_ONLY_PRODUCT_BUMP=PASS')
+          PY
+          node - <<'NODE'
+          const p=require('./package.json');
+          const l=require('./package-lock.json');
+          const t=require('./src-tauri/tauri.conf.json');
+          const v=process.env.VERSION;
+          if(p.version!==v||l.version!==v||l.packages?.['']?.version!==v||t.version!==v) throw new Error('VERSION_MISMATCH');
+          NODE
+          grep -q '^version = "6.1.11"$' src-tauri/Cargo.toml
+          python3 - <<'PY'
+          import pathlib,re
+          lock=pathlib.Path('src-tauri/Cargo.lock').read_text()
+          blocks=lock.split('[[package]]')
+          hit=[b for b in blocks if re.search(r'(?m)^name\s*=\s*"channelflow"\s*$',b)]
+          assert len(hit)==1
+          assert re.search(r'(?m)^version\s*=\s*"6\.1\.11"\s*$',hit[0])
+          print('ALL_VERSION_SOURCES=PASS')
+          PY
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -64,10 +88,11 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
+          echo 'FINAL_PRODUCT_VERSION=6.1.11'
+          echo 'FINAL_PRODUCT_SOURCE='$SOURCE_HEAD
           echo 'METADATA_POSITIONAL_BATCH_MAPPING=PASS'
           echo 'METADATA_JOB_IDENTITY=PASS'
           echo 'VIDEO_011_METADATA_RECOVERY=PASS'
           echo 'INVENTORY_ACCESS_EVENT_LOOP=PASS'
           echo 'PUBLISHER_REGRESSION=PASS'
-          echo 'RELEASE=BLOCKED'
-          echo 'WAITING_FOR_OWNER_APPROVAL'
+          echo 'POST_BUMP_QA=PASS'
