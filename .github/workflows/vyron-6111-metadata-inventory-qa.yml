@@ -10,13 +10,22 @@ on:
       - 'src/vyron6111MetadataIdentityMapping.test.ts'
       - 'src-tauri/src/inventory_watch.rs'
       - '.github/workflows/vyron-6111-metadata-inventory-qa.yml'
+  pull_request:
+    branches:
+      - hotfix/vyron-6.1.10-product-correctness
+    paths:
+      - 'src/publisherMetadata.ts'
+      - 'src/publishWorkspaceState.ts'
+      - 'src/vyron6111MetadataIdentityMapping.test.ts'
+      - 'src-tauri/src/inventory_watch.rs'
+      - '.github/workflows/vyron-6111-metadata-inventory-qa.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: vyron-6111-metadata-inventory-qa
+  group: vyron-6111-metadata-inventory-qa-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
