@@ -1,0 +1,292 @@
+name: VYRON render routing physical QA
+
+on:
+  push:
+    branches:
+      - automation/vyron-render-routing-physical-qa-20261013
+    paths:
+      - '.github/workflows/vyron-render-routing-physical-qa.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-render-routing-physical-qa-20261013
+  cancel-in-progress: false
+
+env:
+  PRODUCT_SHA: 6c142993673815ca62466e73aafdc2a3700ca314
+  VYRON_ROOT: /Volumes/TOSHIBA EXT/ВАЙРОН
+
+jobs:
+  physical:
+    name: Real TOSHIBA split-destination gate
+    runs-on: [self-hosted, macOS, ARM64, endlume, macos-arm64]
+    timeout-minutes: 35
+    steps:
+      - name: Checkout exact committed hotfix
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.PRODUCT_SHA }}
+          fetch-depth: 1
+          clean: true
+          persist-credentials: false
+
+      - name: Prove runner and physical volume
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          echo "RUNNER_HOST=$(hostname)"
+          echo "RUNNER_ARCH=$(uname -m)"
+          test "$(uname -m)" = "arm64"
+          test "$(git rev-parse HEAD)" = "$PRODUCT_SHA"
+          test -d '/Volumes/TOSHIBA EXT'
+          test -d "$VYRON_ROOT"
+          test -w "$VYRON_ROOT"
+          mkdir -p "$VYRON_ROOT/ProductionManager/Batches" "$VYRON_ROOT/Render"
+          echo 'SELF_HOSTED_MAC_ARM64=ONLINE'
+          echo 'TOSHIBA_EXT=ONLINE'
+
+      - name: Verify committed routing source before physical render
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          grep -q 'INVALID_FINAL_RENDER_DESTINATION' src-tauri/src/production_manager.rs
+          grep -q 'join("Render")' src-tauri/src/production_manager.rs
+          ! grep -F 'output_dir: broot.join("Rendered")' src-tauri/src/production_manager.rs
+          ! grep -F 'destination_paths.push(PathBuf::from(&plan.batch_root).join("Rendered")' src-tauri/src/production_manager.rs
+          echo 'SOURCE_ROUTING_HOTFIX=PASS'
+
+      - name: Select two real channel render folders
+        id: channels
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          RENDER="$VYRON_ROOT/Render"
+          test -d "$RENDER"
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import os
+          from pathlib import Path
+          root=Path(os.environ['VYRON_ROOT'])/'Render'
+          preferred=['Aegean Afterglow','Midnight Interstate','Chrome City Radio','Silent Black Room']
+          dirs=[p for p in root.iterdir() if p.is_dir()]
+          by={p.name:p for p in dirs}
+          chosen=[]
+          for name in preferred:
+              if name in by and by[name] not in chosen: chosen.append(by[name])
+          for p in sorted(dirs,key=lambda x:x.name.lower()):
+              if p not in chosen: chosen.append(p)
+          if len(chosen)<2:
+              raise SystemExit('PHYSICAL_CHANNEL_DISCOVERY_FAILED: need at least 2 real Render channel folders')
+          a,b=chosen[:2]
+          print(f'channel1={a.name}')
+          print(f'channel2={b.name}')
+          print(f'dest1={a}')
+          print(f'dest2={b}')
+          PY
+          echo "CHANNEL_1=${{ steps.channels.outputs.channel1 }}"
+          echo "CHANNEL_2=${{ steps.channels.outputs.channel2 }}"
+
+      - name: Locate previously accepted ENDLUME 10.0.15 E2E physical app
+        id: endlume
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ROOT="$HOME/.github-runners/endlume-desktop-macos-arm64/_work"
+          APP=''
+          if [ -d "$ROOT" ]; then
+            APP="$(find "$ROOT" -type d -name 'ENDLUME YT Studio PEISOV.app' -path '*target-1015-physical*' -print -quit 2>/dev/null || true)"
+          fi
+          if [ -z "$APP" ]; then
+            for candidate in '/Applications/ENDLUME YT Studio PEISOV.app' "$HOME/Applications/ENDLUME YT Studio PEISOV.app"; do
+              if [ -d "$candidate" ]; then
+                EXE_NAME="$(/usr/bin/plutil -extract CFBundleExecutable raw -o - "$candidate/Contents/Info.plist" 2>/dev/null || true)"
+                if [ -n "$EXE_NAME" ] && strings "$candidate/Contents/MacOS/$EXE_NAME" 2>/dev/null | grep -q 'ENDLUME_E2E_RENDER_JOB'; then APP="$candidate"; break; fi
+              fi
+            done
+          fi
+          if [ -z "$APP" ] || [ ! -d "$APP" ]; then
+            echo 'ENDLUME_E2E_PHYSICAL_APP_NOT_FOUND'
+            exit 42
+          fi
+          EXE_NAME="$(/usr/bin/plutil -extract CFBundleExecutable raw -o - "$APP/Contents/Info.plist")"
+          EXE="$APP/Contents/MacOS/$EXE_NAME"
+          test -x "$EXE"
+          VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")"
+          echo "ENDLUME_APP=$APP"
+          echo "ENDLUME_VERSION=$VERSION"
+          echo "app=$APP" >> "$GITHUB_OUTPUT"
+          echo "exe=$EXE" >> "$GITHUB_OUTPUT"
+
+      - name: Build physical VYRON-style projects under Batches
+        id: fixture
+        shell: bash
+        env:
+          CHANNEL_1: ${{ steps.channels.outputs.channel1 }}
+          CHANNEL_2: ${{ steps.channels.outputs.channel2 }}
+          DEST_1: ${{ steps.channels.outputs.dest1 }}
+          DEST_2: ${{ steps.channels.outputs.dest2 }}
+        run: |
+          set -Eeuo pipefail
+          FFMPEG="$(command -v ffmpeg)"
+          test -x "$FFMPEG"
+          BATCH="$VYRON_ROOT/ProductionManager/Batches/render-routing-qa-${GITHUB_RUN_ID}"
+          P1="$BATCH/channel-1/project-001"
+          P2="$BATCH/channel-2/project-001"
+          mkdir -p "$P1" "$P2" "$DEST_1" "$DEST_2"
+          "$FFMPEG" -hide_banner -loglevel error -f lavfi -i 'color=c=0x182033:s=1920x1080' -frames:v 1 -y "$P1/cover.png"
+          "$FFMPEG" -hide_banner -loglevel error -f lavfi -i 'sine=frequency=440:sample_rate=48000:duration=8' -c:a libmp3lame -b:a 320k -ar 48000 -ac 2 -y "$P1/track.mp3"
+          cp "$P1/cover.png" "$P2/cover.png"
+          cp "$P1/track.mp3" "$P2/track.mp3"
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          batch=Path(os.environ['VYRON_ROOT'])/'ProductionManager'/'Batches'/f"render-routing-qa-{os.environ['GITHUB_RUN_ID']}"
+          rows=[]
+          for i,(channel,dest) in enumerate([(os.environ['CHANNEL_1'],os.environ['DEST_1']),(os.environ['CHANNEL_2'],os.environ['DEST_2'])],1):
+              p=batch/f'channel-{i}'/'project-001'
+              manifest={
+                'schemaVersion':1,
+                'source':'VYRON',
+                'batchId':f'physical-{os.environ["GITHUB_RUN_ID"]}-{i}',
+                'channelId':f'physical-channel-{i}',
+                'channelName':channel,
+                'rootPath':str(batch/f'channel-{i}'),
+                'outputDir':dest,
+                'projects':[{'id':f'physical-project-{i}','name':f'VYRON Routing QA {os.environ["GITHUB_RUN_ID"]} C{i}','folderPath':str(p)}]
+              }
+              mp=batch/f'channel-{i}'/'batch.json'; mp.write_text(json.dumps(manifest,ensure_ascii=False,indent=2))
+              rows.append({'channel':channel,'project':str(p),'output':dest,'manifest':str(mp)})
+          report=Path(os.environ['RUNNER_TEMP'])/'vyron-routing-fixture.json'
+          report.write_text(json.dumps({'batch':str(batch),'rows':rows},ensure_ascii=False,indent=2))
+          print(report)
+          PY
+          echo "batch=$BATCH" >> "$GITHUB_OUTPUT"
+          echo "report=$RUNNER_TEMP/vyron-routing-fixture.json" >> "$GITHUB_OUTPUT"
+          echo "PROJECT_1=$P1"
+          echo "PROJECT_2=$P2"
+          echo "DESTINATION_1=$DEST_1"
+          echo "DESTINATION_2=$DEST_2"
+
+      - name: Run real ENDLUME render with separate project and output paths
+        id: render
+        shell: bash
+        env:
+          ENDLUME_EXE: ${{ steps.endlume.outputs.exe }}
+          FIXTURE_REPORT: ${{ steps.fixture.outputs.report }}
+        run: |
+          set -Eeuo pipefail
+          FFPROBE="$(command -v ffprobe)"
+          test -x "$FFPROBE"
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          f=json.load(open(os.environ['FIXTURE_REPORT']))
+          jobs=[]
+          for i,row in enumerate(f['rows'],1):
+              p=Path(row['project'])
+              jobs.append({
+                'project':{
+                  'id':f'vyron-physical-{i}',
+                  'name':f'VYRON Routing QA {os.environ["GITHUB_RUN_ID"]} C{i}',
+                  'path':str(p),'media':[str(p/'cover.png')],'audio':[str(p/'track.mp3')],
+                  'valid':True,'error':None,'anchors':None,'selectedEffectId':'__none__',
+                  'outputDir':row['output'],'outputSource':'vyron','vyronManifestPath':row['manifest'],'vyronChannelName':row['channel']
+                },
+                'settings':{'width':1920,'height':1080,'fps':60,'codec':'h265','bitrateMbps':12.0,'durationHours':8/3600,'durationMode':'whole-track','loopMode':'image','crossfadeSec':0.0,'normalizeLufs':False,'outputDir':row['output'],'preset':'fast','encoderPreference':'auto'},
+                'effects':[],'subscribes':[],'ambient':None,
+                'ambientSettings':{'volumePct':18.0,'bassDb':0.0,'midDb':0.0,'trebleDb':0.0}
+              })
+          path=Path(os.environ['RUNNER_TEMP'])/'vyron-routing-jobs.json'
+          path.write_text(json.dumps({'jobs':jobs},ensure_ascii=False,indent=2))
+          print(path)
+          PY
+          export ENDLUME_E2E_RENDER_JOB="$RUNNER_TEMP/vyron-routing-jobs.json"
+          export ENDLUME_E2E_RESULT="$RUNNER_TEMP/vyron-routing-result.json"
+          export RUST_BACKTRACE=1
+          "$ENDLUME_EXE" >"$RUNNER_TEMP/vyron-routing-endlume.stdout" 2>"$RUNNER_TEMP/vyron-routing-endlume.stderr"
+          test -s "$ENDLUME_E2E_RESULT"
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          fixture=json.load(open(Path(os.environ['RUNNER_TEMP'])/'vyron-routing-fixture.json'))
+          result=json.load(open(Path(os.environ['RUNNER_TEMP'])/'vyron-routing-result.json'))
+          assert result.get('status')=='passed', result
+          by={r['id']:r for r in result['results']}
+          evidence=[]
+          for i,row in enumerate(fixture['rows'],1):
+              out=Path(by[f'vyron-physical-{i}']['outputPath']).resolve()
+              dest=Path(row['output']).resolve()
+              project=Path(row['project']).resolve()
+              assert out.is_file() and out.stat().st_size>1024,(i,out)
+              assert out.parent==dest,(i,out,dest)
+              assert not out.is_relative_to(Path(fixture['batch']).resolve()),(i,out)
+              assert project.is_relative_to(Path(fixture['batch']).resolve()),(i,project)
+              evidence.append({'channel':row['channel'],'projectPath':str(project),'finalMp4Path':str(out),'bytes':out.stat().st_size})
+          batch=Path(fixture['batch'])
+          batch_mp4=[str(p) for p in batch.rglob('*.mp4')]
+          assert batch_mp4==[],batch_mp4
+          report={'status':'PASS','rows':evidence,'batchesFinalMp4':batch_mp4}
+          outp=Path(os.environ['RUNNER_TEMP'])/'vyron-routing-physical-evidence.json'; outp.write_text(json.dumps(report,ensure_ascii=False,indent=2))
+          for row in evidence:
+              print('PHYSICAL_CHANNEL='+row['channel'])
+              print('PROJECT_PATH='+row['projectPath'])
+              print('FINAL_MP4_PATH='+row['finalMp4Path'])
+          print('BATCHES_FINAL_MP4_COUNT=0')
+          PY
+
+      - name: Verify physical inventory watcher sees final destinations
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          # Native watcher regression is the production notify/FSEvents implementation.
+          cargo test --manifest-path src-tauri/Cargo.toml inventory_watch::tests::real_filesystem_create_event_is_observed -- --nocapture
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          d=json.load(open(Path(os.environ['RUNNER_TEMP'])/'vyron-routing-physical-evidence.json'))
+          for row in d['rows']:
+              p=Path(row['finalMp4Path'])
+              assert p.is_file() and p.suffix.lower()=='.mp4'
+          print('LIVE_INVENTORY_FILESYSTEM_VISIBILITY=PASS')
+          PY
+
+      - name: Publisher physical folder visibility gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npx vitest run src/vyron616PhysicalPublisherConsistency.test.ts src/vyron618PublisherIntegrity.test.ts
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          d=json.load(open(Path(os.environ['RUNNER_TEMP'])/'vyron-routing-physical-evidence.json'))
+          for row in d['rows']:
+              dest=Path(row['finalMp4Path']).parent
+              assert any(p.suffix.lower()=='.mp4' and p.is_file() for p in dest.iterdir())
+          print('PUBLISHER_RENDER_FOLDER_PHYSICAL_VISIBILITY=PASS')
+          PY
+
+      - name: Physical summary
+        if: always()
+        shell: bash
+        run: |
+          set -u
+          echo "PRODUCT_SHA=$PRODUCT_SHA"
+          echo "RUNNER_HOST=$(hostname)"
+          echo "VYRON_ROOT=$VYRON_ROOT"
+          if [ -f "$RUNNER_TEMP/vyron-routing-physical-evidence.json" ]; then cat "$RUNNER_TEMP/vyron-routing-physical-evidence.json"; fi
+          echo 'RELEASE=NOT_PERFORMED'
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: VYRON-RENDER-ROUTING-PHYSICAL-EVIDENCE
+          path: |
+            ${{ runner.temp }}/vyron-routing-fixture.json
+            ${{ runner.temp }}/vyron-routing-jobs.json
+            ${{ runner.temp }}/vyron-routing-result.json
+            ${{ runner.temp }}/vyron-routing-physical-evidence.json
+            ${{ runner.temp }}/vyron-routing-endlume.stdout
+            ${{ runner.temp }}/vyron-routing-endlume.stderr
+          if-no-files-found: warn
+          retention-days: 7
