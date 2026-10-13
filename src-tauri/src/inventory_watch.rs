@@ -169,7 +169,7 @@ pub fn inventory_watch_roots(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use notify::event::{AccessKind, CreateKind, EventKind};
+    use notify::event::{AccessKind, CreateKind};
 
     #[test]
     fn event_maps_only_to_affected_channel() {
@@ -280,7 +280,7 @@ mod tests {
             paths: vec![PathBuf::from(r"\\?\UNC\server\share\Render\Aether Riff\002.mov")],
             attrs: Default::default(),
         };
-        assert_eq!(event_channel_ids(&event, &roots)[0].0, "win");
+        assert_eq!(event_channel_ids(&event, &roots)[0].0, "unc");
     }
 
     #[test]
