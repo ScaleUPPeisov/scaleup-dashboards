@@ -90,7 +90,7 @@ describe('VYRON 6.1.11 physical generation metadata identity mapping',()=>{
    // matched VIDEO_002 by technical number; VIDEO_011 was never bound.
    const targetNumber=index===0?2:index+1;
    const target=jobs.find(x=>x.number===targetNumber)!;
-   return{...row,metadataImportedAt,boundChannelId:channelId,boundChannelName:channel.name,boundJobId:target.id,boundSourceGenerationKey:target.sourceGenerationKey,boundSourceFingerprint:target.currentSourceFingerprint,boundSourceFileSize:target.currentSourceFileSize};
+   return{...row,metadataImportedAt:importedAt,boundChannelId:channelId,boundChannelName:channel.name,boundJobId:target.id,boundSourceGenerationKey:target.sourceGenerationKey,boundSourceFingerprint:target.currentSourceFingerprint,boundSourceFileSize:target.currentSourceFileSize};
   });
   localStorage.setItem(WORKSPACE_KEY,JSON.stringify({[channelId]:{channelId,selectedIds,rows:brokenRows,docx:true,thumbs:[],allowMissingThumbs:false,allowDuplicate:false,scheduleMode:'file',scheduleTimeSource:'common',scheduleStartDate:'',scheduleTime:'',updatedAt:importedAt}}));
 
