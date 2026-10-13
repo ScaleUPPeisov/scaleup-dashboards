@@ -53,7 +53,13 @@ function writeWorkspace(channelId:string,next:PublishWorkspaceDraft){const rows=
 export function loadPublishWorkspace(channelId:string):PublishWorkspaceDraft{if(!channelId)return empty('');const x=all()[channelId];if(!x)return empty(channelId);const selectedIds=Array.isArray(x.selectedIds)?x.selectedIds.map(String):[],cleanedRows=Array.isArray(x.rows)?x.rows.map(cleanRow):[],rows=repairLegacyOffsetBinding(channelId,cleanedRows,selectedIds);return{channelId,selectedIds,rows,docx:Boolean(x.docx),thumbs:Array.isArray(x.thumbs)?x.thumbs.map(String):[],allowMissingThumbs:Boolean(x.allowMissingThumbs),allowDuplicate:Boolean(x.allowDuplicate),scheduleMode:(['daily','2/2','3/1'].includes(String(x.scheduleMode))?String(x.scheduleMode):'file') as PublishScheduleMode,scheduleTimeSource:(x.scheduleTimeSource==='file'?'file':x.scheduleTimeSource==='youtube'?'youtube':'common') as PublishTimeSource,scheduleStartDate:String(x.scheduleStartDate||''),scheduleTime:String(x.scheduleTime||''),updatedAt:x.updatedAt||new Date(0).toISOString()}}
 export function savePublishWorkspace(channelId:string,draft:Partial<PublishWorkspaceDraft>){
  if(!channelId)return loadPublishWorkspace('');
- const prev=loadPublishWorkspace(channelId),now=new Date().toISOString(),incomingRows=Array.isArray(draft.rows)?draft.rows:prev.rows,rowsChanged=Array.isArray(draft.rows)&&!sameUserRows(incomingRows,prev.rows);
+ const prev=loadPublishWorkspace(channelId),now=new Date().toISOString(),suppliedRows=Array.isArray(draft.rows),incomingRows=suppliedRows?draft.rows!:prev.rows;
+ // readDoc() supplies freshly parsed rows without internal binding fields. Treat
+ // that as a real import even when the Word/SEO text is byte-for-byte identical
+ // to the previous pack. Persisted legacy rows are explicitly marked and do not
+ // qualify, so old metadata cannot silently become fresh for a new generation.
+ const freshUnboundImport=suppliedRows&&incomingRows.some(row=>!row.boundJobId&&!row.metadataImportedAt&&!row.metadataLegacyPersisted);
+ const rowsChanged=suppliedRows&&(!sameUserRows(incomingRows,prev.rows)||freshUnboundImport);
  let nextRows=rowsChanged?incomingRows.map(row=>({...clearBinding(row),metadataImportedAt:now})):incomingRows.map(row=>({...row}));
  const selectedIds=Array.isArray(draft.selectedIds)?draft.selectedIds.map(String):prev.selectedIds;
  nextRows=bindRows(channelId,nextRows,selectedIds);
