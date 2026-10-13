@@ -68,6 +68,21 @@ describe('VYRON 6.1.11 physical generation metadata identity mapping',()=>{
   expect(last?.title).toBe('SEO TITLE 10');
  });
 
+ it('reimports an identical Word pack as fresh metadata for the next physical batch',()=>{
+  const first=savePublishWorkspace(channelId,{selectedIds,rows,docx:true});
+  expect(first.rows[0].boundJobId).toBe('job-2');
+
+  const nextJobs=Array.from({length:10},(_,i)=>job(i+12)); // VIDEO_012 .. VIDEO_021
+  const nextIds=nextJobs.map(x=>x.id);
+  useApp.setState({channels:[channel],jobs:[...jobs,...nextJobs]} as any);
+  const second=savePublishWorkspace(channelId,{selectedIds:nextIds,rows:[...rows],docx:true});
+
+  expect(second.rows.map(x=>x.boundJobId)).toEqual(nextIds);
+  expect(new Set(second.rows.map(x=>x.boundJobId)).size).toBe(10);
+  expect(second.rows.every(x=>!x.metadataBindingIssue)).toBe(true);
+  expect(metadataRowForJob(second.rows,nextJobs[9],9)?.title).toBe('SEO TITLE 10');
+ });
+
  it('repairs the exact 6.1.10 duplicate-binding signature on workspace load',()=>{
   const importedAt='2026-10-13T10:00:00.000Z';
   const brokenRows=rows.map((row,index)=>{
