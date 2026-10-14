@@ -6,6 +6,10 @@ on:
       - hotfix/vyron-6.1.11-metadata-inventory-correctness
     paths:
       - '.github/workflows/vyron-6111-metadata-inventory-qa.yml'
+      - 'src/youtubeMetadataPostWriteVerification.ts'
+      - 'src/youtubeMetadataPostWriteVerificationInstall.ts'
+      - 'src/youtubeMetadataPostWriteVerification.test.ts'
+      - 'src/main.tsx'
 
 permissions:
   contents: read
