@@ -1,9 +1,9 @@
-name: VYRON 6.1.9 Version Bump
+name: VYRON 6.1.11 Version Bump
 
 on:
   push:
     branches:
-      - hotfix/vyron-6.1.9-publisher-always-open-schedule-source
+      - hotfix/vyron-6.1.11-metadata-inventory-correctness
     paths:
       - '.github/workflows/vyron-619-version-bump.yml'
 
@@ -12,15 +12,15 @@ permissions:
   actions: read
 
 concurrency:
-  group: vyron-619-version-bump
+  group: vyron-6111-version-bump
   cancel-in-progress: false
 
 env:
-  GREEN_HEAD: fcb09fb532ec55c49dc15b9308c832ac0ff3ca63
-  QA_RUN_ID: '37350891646'
-  PRODUCT_SOURCE_HEAD: 74436bad565ced15f919393780210cb5bfd4ac21
-  VERSION: 6.1.9
-  BRANCH: hotfix/vyron-6.1.9-publisher-always-open-schedule-source
+  GREEN_HEAD: 1ed6713270cf85531ba5951daf295d7a9385c453
+  QA_RUN_ID: '38387085225'
+  PRODUCT_SOURCE_HEAD: 1ed6713270cf85531ba5951daf295d7a9385c453
+  VERSION: 6.1.11
+  BRANCH: hotfix/vyron-6.1.11-metadata-inventory-correctness
 
 jobs:
   bump:
@@ -46,7 +46,7 @@ jobs:
           test "$(printf '%s' "$RUN_JSON" | jq -r .status)" = completed
           test "$(printf '%s' "$RUN_JSON" | jq -r .conclusion)" = success
           test "$(printf '%s' "$RUN_JSON" | jq -r .head_sha)" = "$GREEN_HEAD"
-          test "$(printf '%s' "$RUN_JSON" | jq -r .path)" = '.github/workflows/vyron-619-pre-release-qa.yml'
+          test "$(printf '%s' "$RUN_JSON" | jq -r .path)" = '.github/workflows/vyron-6111-metadata-inventory-qa.yml'
           echo QA_RUN_VERIFIED=PASS
           echo PRODUCT_SOURCE_HEAD="$PRODUCT_SOURCE_HEAD"
           echo WORKFLOW_ONLY_DELTA_SINCE_GREEN=PASS
@@ -65,9 +65,9 @@ jobs:
           const p=require('./package.json');
           const l=require('./package-lock.json');
           const t=require('./src-tauri/tauri.conf.json');
-          if(p.version!=='6.1.8'||l.version!=='6.1.8'||l.packages?.['']?.version!=='6.1.8'||t.version!=='6.1.8') process.exit(2);
+          if(p.version!=='6.1.10'||l.version!=='6.1.10'||l.packages?.['']?.version!=='6.1.10'||t.version!=='6.1.10') process.exit(2);
           NODE
-          grep -q '^version = "6.1.8"$' src-tauri/Cargo.toml
+          grep -q '^version = "6.1.10"$' src-tauri/Cargo.toml
           echo PRE_BUMP_VERSION=PASS
 
       - name: Bump npm Tauri Cargo versions
@@ -139,7 +139,7 @@ jobs:
           test -n "$(git diff --cached --name-only)"
           git config user.name 'ScaleUPPeisov'
           git config user.email 'peisov.business@gmail.com'
-          git commit -m 'release(vyron): bump product version to 6.1.9'
+          git commit -m 'release(vyron): bump product version to 6.1.11'
           FINAL_PRODUCT_HEAD="$(git rev-parse HEAD)"
           echo "FINAL_PRODUCT_HEAD=$FINAL_PRODUCT_HEAD"
           git push origin "HEAD:$BRANCH"

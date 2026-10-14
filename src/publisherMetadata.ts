@@ -39,7 +39,14 @@ function blockedRow(row:ImportedMetadata,job:VideoJob):ImportedMetadata{
  return{...row,title:undefined,description:undefined,tags:undefined,publishAt:undefined,publishTime:undefined,publishTimezone:undefined,publishUtcOffsetMinutes:undefined,metadataBindingIssue:issue||'METADATA_GENERATION_STALE'}
 }
 export function metadataRowForJob(rows:ImportedMetadata[],job:VideoJob,index:number){
- const exact=rows.find(x=>x.number===job.number),relative=rows.find(x=>x.number===index+1),candidate=exact||relative||rows[index];
+ // Durable VYRON binding is the source of truth once a row has been assigned.
+ // Fresh user SEO packs are batch-relative: row 1 belongs to the first selected
+ // physical job even when that job is VIDEO_002, VIDEO_057, etc. Never let the
+ // technical VIDEO number shift a fresh pack by one position.
+ const bound=rows.find(x=>x.boundJobId===job.id);
+ const positional=rows[index]||rows.find(x=>x.number===index+1);
+ const exactTechnicalNumber=rows.find(x=>x.number===job.number);
+ const candidate=bound||positional||exactTechnicalNumber;
  if(!candidate)return undefined;
  return invalidMetadataRow(candidate,job)?blockedRow(candidate,job):candidate
 }
