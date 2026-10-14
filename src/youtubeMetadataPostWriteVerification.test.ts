@@ -22,23 +22,23 @@ function failedVerification(actual: MetadataUpdateVerificationResult['actual'], 
 }
 
 describe('VYRON 6.1.11 metadata post-write semantic verification', () => {
-  it('TEST 1 — title exact', () => {
+  it('TEST 1 — exact title -> PASS', () => {
     expect(semanticMetadataMismatches({ title: 'Rainy Cafe Jazz' }, { title: 'Rainy Cafe Jazz' })).toEqual([]);
   });
 
-  it('TEST 2 — description CRLF vs LF', () => {
+  it('TEST 2 — CRLF vs LF description -> PASS', () => {
     expect(semanticMetadataMismatches({ description: 'line1\r\nline2' }, { description: 'line1\nline2' })).toEqual([]);
   });
 
-  it('TEST 3 — description harmless final newline', () => {
+  it('TEST 3 — harmless final newline -> PASS', () => {
     expect(semanticMetadataMismatches({ description: 'line1\nline2\n' }, { description: 'line1\nline2' })).toEqual([]);
   });
 
-  it('normalizes canonically equivalent Unicode', () => {
+  it('TEST 4 — Unicode NFC equivalence -> PASS', () => {
     expect(semanticMetadataMismatches({ title: 'Cafe\u0301' }, { title: 'Café' })).toEqual([]);
   });
 
-  it('TEST 4 — tag order', () => {
+  it('TEST 5 — reordered tags -> PASS', () => {
     expect(
       semanticMetadataMismatches(
         { tags: ['jazz', 'coffee', 'study'] },
@@ -47,16 +47,25 @@ describe('VYRON 6.1.11 metadata post-write semantic verification', () => {
     ).toEqual([]);
   });
 
-  it('handles duplicate and surrounding-whitespace representation deterministically', () => {
+  it('TEST 6 — whitespace-normalized tags -> PASS', () => {
     expect(
       semanticMetadataMismatches(
-        { tags: [' jazz ', 'coffee', 'jazz'] },
-        { tags: ['coffee', 'jazz'] },
+        { tags: [' jazz ', 'coffee ', ' study'] },
+        { tags: ['jazz', 'coffee', 'study'] },
       ),
     ).toEqual([]);
   });
 
-  it('TEST 5 — real missing tag fails', () => {
+  it('TEST 7 — duplicate-tag canonicalization -> PASS', () => {
+    expect(
+      semanticMetadataMismatches(
+        { tags: ['jazz', 'coffee', 'jazz', 'study'] },
+        { tags: ['study', 'jazz', 'coffee'] },
+      ),
+    ).toEqual([]);
+  });
+
+  it('TEST 8 — genuinely missing tag -> FAIL', () => {
     expect(
       semanticMetadataMismatches(
         { tags: ['jazz', 'coffee', 'study'] },
@@ -65,7 +74,16 @@ describe('VYRON 6.1.11 metadata post-write semantic verification', () => {
     ).toEqual(['tags']);
   });
 
-  it('TEST 6 — real title difference fails', () => {
+  it('TEST 9 — genuinely extra tag -> FAIL', () => {
+    expect(
+      semanticMetadataMismatches(
+        { tags: ['jazz', 'coffee'] },
+        { tags: ['jazz', 'coffee', 'study'] },
+      ),
+    ).toEqual(['tags']);
+  });
+
+  it('TEST 10 — genuinely different title -> FAIL', () => {
     expect(
       semanticMetadataMismatches(
         { title: 'Rainy Cafe Jazz' },
@@ -89,7 +107,7 @@ describe('VYRON 6.1.11 metadata post-write semantic verification', () => {
     expect(result.verificationError).toBeNull();
   });
 
-  it('TEST 7 — apparent formatting mismatch never emits a second write', async () => {
+  it('TEST 12 — harmless verification difference: update executor call count === 1', async () => {
     const execute = vi.fn(async () =>
       failedVerification(
         { description: 'line1\nline2', tags: ['study', 'jazz', 'coffee'] },
@@ -107,7 +125,7 @@ describe('VYRON 6.1.11 metadata post-write semantic verification', () => {
     expect(result.metadataVerified).toBe(true);
   });
 
-  it('TEST 8 — real verification failure never emits a second write', async () => {
+  it('TEST 13 — real verification mismatch: update executor call count === 1', async () => {
     const execute = vi.fn(async () => failedVerification({ tags: ['jazz', 'coffee'] }, ['tags']));
     const result = await runMetadataUpdateWithSemanticVerification(
       execute,
@@ -121,7 +139,7 @@ describe('VYRON 6.1.11 metadata post-write semantic verification', () => {
     expect(result.verificationError).toBe('Verification mismatch: tags');
   });
 
-  it('TEST 9 — API failure propagates actual error without reclassification or retry', async () => {
+  it('TEST 11 — API exception -> FAIL with original API error', async () => {
     const execute = vi.fn(async () => {
       throw new Error('quotaExceeded: YouTube API error');
     });
