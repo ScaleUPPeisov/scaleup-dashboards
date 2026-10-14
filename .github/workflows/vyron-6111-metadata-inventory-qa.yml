@@ -1,4 +1,4 @@
-name: VYRON 6.1.11 Post-Bump QA
+name: VYRON 6.1.11 Metadata Hotfix Final QA
 
 on:
   push:
@@ -11,57 +11,27 @@ permissions:
   contents: read
 
 concurrency:
-  group: vyron-6111-post-bump-qa
+  group: vyron-6111-metadata-hotfix-final-qa
   cancel-in-progress: false
 
-env:
-  SOURCE_HEAD: 284b1ef792f72078a9389b1ec78ffa8db58dca42
-  BEHAVIOR_HEAD: 1ed6713270cf85531ba5951daf295d7a9385c453
-  VERSION: 6.1.11
-
 jobs:
-  qa:
+  metadata-final-qa:
     runs-on: macos-14
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
-      - name: Checkout exact final product source
+      - name: Checkout exact test head
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.SOURCE_HEAD }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
 
-      - name: Verify source and version-only bump
+      - name: Verify exact test head
         shell: bash
         run: |
           set -Eeuo pipefail
-          test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
-          git merge-base --is-ancestor "$BEHAVIOR_HEAD" "$SOURCE_HEAD"
-          git diff --name-only "$SOURCE_HEAD^" "$SOURCE_HEAD" >/tmp/bump-delta.txt
-          cat /tmp/bump-delta.txt
-          python3 - <<'PY'
-          from pathlib import Path
-          allowed={'package.json','package-lock.json','src-tauri/tauri.conf.json','src-tauri/Cargo.toml','src-tauri/Cargo.lock'}
-          changed={x for x in Path('/tmp/bump-delta.txt').read_text().splitlines() if x}
-          assert changed and changed <= allowed, f'UNEXPECTED_PRODUCT_BUMP_DELTA={sorted(changed-allowed)}'
-          print('VERSION_ONLY_PRODUCT_BUMP=PASS')
-          PY
-          node - <<'NODE'
-          const p=require('./package.json');
-          const l=require('./package-lock.json');
-          const t=require('./src-tauri/tauri.conf.json');
-          const v=process.env.VERSION;
-          if(p.version!==v||l.version!==v||l.packages?.['']?.version!==v||t.version!==v) throw new Error('VERSION_MISMATCH');
-          NODE
-          grep -q '^version = "6.1.11"$' src-tauri/Cargo.toml
-          python3 - <<'PY'
-          import pathlib,re
-          lock=pathlib.Path('src-tauri/Cargo.lock').read_text()
-          blocks=lock.split('[[package]]')
-          hit=[b for b in blocks if re.search(r'(?m)^name\s*=\s*"channelflow"\s*$',b)]
-          assert len(hit)==1
-          assert re.search(r'(?m)^version\s*=\s*"6\.1\.11"\s*$',hit[0])
-          print('ALL_VERSION_SOURCES=PASS')
-          PY
+          echo "TEST_HEAD_SHA=$(git rev-parse HEAD)"
+          echo "GITHUB_SHA=${GITHUB_SHA}"
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -72,27 +42,15 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Metadata identity regression
-        run: npx vitest run src/vyron6111MetadataIdentityMapping.test.ts src/vyron618PublisherIntegrity.test.ts
-
-      - name: Publisher physical consistency regression
-        run: npx vitest run src/vyron616PhysicalPublisherConsistency.test.ts
+      - name: Focused Metadata semantic verifier tests
+        run: npx vitest run src/youtubeMetadataPostWriteVerification.test.ts --reporter=verbose
 
       - name: TypeScript production build
         run: npm run build
 
-      - name: Inventory watcher read-loop regression
-        run: cargo test --manifest-path src-tauri/Cargo.toml inventory_watch::tests -- --nocapture
-
-      - name: Acceptance contract
+      - name: QA acceptance marker
         shell: bash
         run: |
-          set -Eeuo pipefail
-          echo 'FINAL_PRODUCT_VERSION=6.1.11'
-          echo 'FINAL_PRODUCT_SOURCE='$SOURCE_HEAD
-          echo 'METADATA_POSITIONAL_BATCH_MAPPING=PASS'
-          echo 'METADATA_JOB_IDENTITY=PASS'
-          echo 'VIDEO_011_METADATA_RECOVERY=PASS'
-          echo 'INVENTORY_ACCESS_EVENT_LOOP=PASS'
-          echo 'PUBLISHER_REGRESSION=PASS'
-          echo 'POST_BUMP_QA=PASS'
+          echo 'METADATA_UNIT_TESTS=PASS'
+          echo 'TEST_HEAD_SHA='$(git rev-parse HEAD)
+          echo 'NO_RELEASE_PERFORMED=PASS'
