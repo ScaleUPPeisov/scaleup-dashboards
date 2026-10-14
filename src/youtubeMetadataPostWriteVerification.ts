@@ -4,7 +4,7 @@ export type MetadataVerificationPatch = {
   tags?: string[];
   categoryId?: string;
   publishAt?: string;
-  privacyStatus?: string;
+  privacyStatus?: 'private' | 'public' | 'unlisted';
 };
 
 export type MetadataVerificationActual = {
