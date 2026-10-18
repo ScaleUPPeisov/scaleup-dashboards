@@ -196,7 +196,7 @@ export function ChannelRunway(){
 
   return <section className="panel channelRunway">
     <div className="runwayHead">
-      <div><small>CONTENT RUNWAY • LOCAL + QUOTA AWARE</small><h3>Запас контента</h3><p>VYRON соединяет подтверждённое YouTube-расписание с реально готовыми локальными render-файлами. Local projects и реально подключённые YouTube-каналы считаются отдельно.</p></div>
+      <div><small>CONTENT RUNWAY • LOCAL + QUOTA AWARE</small><h3>Запас контента</h3><p>Главный ориентир — подтверждённая дата, до которой видео уже есть на YouTube. Локальный Render показан отдельно и никогда не продлевает YouTube-даты.</p></div>
       <div className="headerActions"><span className="localOnlyBadge">LOCAL READY • ZERO API</span><button disabled={statsBusy||!active.length} onClick={()=>void refreshAllStats()}>{statsBusy?`↻ ${statsProgress.done} / ${statsProgress.total}`:'↻ ОБНОВИТЬ ВСЕ КАНАЛЫ'}</button></div>
     </div>
     {rowFailures>0&&<div className="errorBox"><b>Часть данных «Плана каналов» повреждена или несовместима</b><p>VYRON пропустил {rowFailures} проблемных каналов вместо падения всего интерфейса. Каналы, OAuth и настройки не изменены.</p></div>}
@@ -205,31 +205,31 @@ export function ChannelRunway(){
       <div><small>ВСЕГО ПРОЕКТОВ</small><b>{active.length}</b><em>local VYRON</em></div>
       <div><small>YOUTUBE ПОДКЛЮЧЕНО</small><b>{youtubeClassification.eligible.length}</b><em>exact Profile + Channel ID</em></div>
       <div><small>НЕ ПОДКЛЮЧЕНО</small><b>{youtubeClassification.unlinked.length+youtubeClassification.orphans.length+youtubeClassification.mismatched.length}</b><em>API 0 • duplicates {youtubeClassification.duplicates.length}</em></div>
-      <div><small>ГОТОВЫХ ВИДЕО</small><b>{totalReady}</b><em>не загружены • dedupe включён</em></div>
+      <div><small>ГОТОВЫХ ВИДЕО</small><b>{totalReady}</b><em>локально • не означает uploaded</em></div>
       <div><small>ТРЕБУЮТ ВНИМАНИЯ</small><b>{attention.length}</b><em>content runway ≤ 45 дней</em></div>
       <div><small>КРИТИЧЕСКИЕ</small><b>{critical.length}</b><em>≤ 14 дней</em></div>
       <div><small>GENERAL API</small><b>{generalRemaining.toLocaleString('ru-RU')}</b><em>из {usage.limit.toLocaleString('ru-RU')} local ledger</em></div>
       <div><small>МОЖНО ОБРАБОТАТЬ СЕГОДНЯ</small><b>{capacityPlan.todayChannels}</b><em>по General API плану</em></div>
       <div><small>РЕКОМЕНДУЕМЫЙ ТЕМП</small><b>{tempoLabel(tempo)}</b><em>{batchCoverageDays?`пачка ≈ ${batchCoverageDays} дней`:`пачка ${batchSize} видео`}</em></div>
-      <div><small>СЛЕДУЮЩИЙ КАНАЛ</small><b>{next?.channel.name||'—'}</b><em>{next?`content runway ${next.content.contentRunwayDays} дн.`:'нет данных'}</em></div>
+      <div><small>СЛЕДУЮЩИЙ КАНАЛ</small><b>{next?.channel.name||'—'}</b><em>{next?`production runway ${next.content.contentRunwayDays} дн.`:'нет данных'}</em></div>
     </div>
 
     <div className={`runwayAdvice ${calm?'good':riskCount?'danger':'work'}`}>
       <b>{calm?'Спешить не нужно.':riskCount?'Есть риск по производственному плану.':'Работа по плану.'}</b>
-      <span>{tempo?`При текущем запасе ориентир — ${tempoLabel(tempo)} `:''}{next?`Следующий: ${next.channel.name}, content runway ${next.content.contentRunwayDays} дней до ${dateLabel(next.content.projectedRunwayEnd)}.`:'Сначала синхронизируй расписание каналов.'}{riskCount?` Риск не успеть: ${riskCount}.`:''}</span>
+      <span>{tempo?`При текущем запасе ориентир — ${tempoLabel(tempo)} `:''}{next?`Следующий: ${next.channel.name}, production runway ${next.content.contentRunwayDays} дней.`:'Сначала синхронизируй расписание каналов.'}{riskCount?` Риск не успеть: ${riskCount}.`:''}</span>
     </div>
 
     <div className="runwayTable">
       <div className="runwayRow runwayTh">
-        <span>Канал</span><span>YouTube</span><span>На диске</span><span>Обеспечено</span><span>Scheduled</span><span>Ready</span><span>Cadence</span><span>Uploads</span><span>Статус</span><span>Действие</span>
+        <span>Канал</span><span>На YouTube до</span><span>На диске</span><span>Локальный запас</span><span>Scheduled</span><span>Ready</span><span>Cadence</span><span>Uploads</span><span>Статус</span><span>Действие</span>
       </div>
       {rows.length===0?<div className="empty"><b>Нет активных каналов</b><p>Content Runway не создаёт демонстрационные данные.</p></div>:rows.map(({channel,record,content,uploadRemaining,uploadLimitKnown})=>{
         const meta=statusMeta[content.status];
         return <div className="runwayRow" key={channel.id}>
           <span className="runwayChannel runwayChannelWithAvatar"><ChannelAvatar channel={channel} size="sm"/><span><b>{channel.name}</b><small>{syncLabel(record.lastScheduleSync)}</small><small>{linkedByLocalId.has(channel.id)?`Subs ${subscriberStatLabel(channel.stats)} • Views ${compactChannelStat(channel.stats?.viewCount??channel.stats?.views)}`:'YouTube: НЕ ПОДКЛЮЧЁН'}</small></span></span>
-          <span><b>📺 YouTube</b><small>до {dateLabel(content.scheduledThrough)}</small></span>
-          <span>{content.readyVideoCount?<><b>💾 +{content.readyVideoCount} видео</b><small>до {dateLabel(content.projectedRunwayEnd)}</small></>:<><b>💾 0 видео</b><small>локального запаса нет</small></>}</span>
-          <span className={`runwayDays ${content.status}`} title={`Обеспечено на ${content.contentRunwayDays} дней`}>{`${content.contentRunwayDays} дн.`}</span>
+          <span>{content.scheduledThrough?<><b>📺 {dateLabel(content.scheduledThrough)}</b><small>{content.remoteScheduledDays>0?`ещё ${content.remoteScheduledDays} дн.`:'будущих видео нет'}</small></>:<><b>📺 Будущих видео нет</b><small>remote YouTube schedule</small></>}</span>
+          <span>{content.readyVideoCount?<><b>💾 {content.readyVideoCount} видео</b><small>только локальные файлы</small></>:<><b>💾 0 видео</b><small>локального запаса нет</small></>}</span>
+          <span className={`runwayDays ${content.status}`} title="Локальный запас не продлевает дату YouTube"><b>{content.localReadyDays} дн.</b><small>local only</small></span>
           <span>{content.scheduledVideoCount}</span>
           <span><b>{content.readyVideoCount}</b></span>
           <span>{scheduleFrequencyTruthLabel(channel,record)}</span>
@@ -241,7 +241,8 @@ export function ChannelRunway(){
     </div>
 
     <div className="runwayFoot">
-      <span>Расчёт runway: <b>локально • 0 YouTube API</b></span>
+      <span>YouTube date: <b>только authoritative remote schedule</b></span>
+      <span>Local stock: <b>отдельно • 0 YouTube API</b></span>
       <span>General API: <b>{usage.used.toLocaleString('ru-RU')} / {usage.limit.toLocaleString('ru-RU')}</b></span>
       <span>Video Uploads: <b>отдельный per-project ledger</b></span>
       <span>Размер пачки Quota Planner: <b>{batchSize} видео</b></span>
