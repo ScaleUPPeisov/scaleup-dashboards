@@ -8,7 +8,7 @@ const numeric=(value:unknown):value is number=>typeof value==='number'&&Number.i
 
 export function buildRpmCoverage(channels:Channel[],profiles:YoutubeProfile[]):RpmCoverage{
  const byProfileId=new Map(profiles.map(profile=>[profile.id,profile] as const));
- const rows=channels.map(channel=>{
+ const rows:RpmCoverageRow[]=channels.map(channel=>{
   const analytics=channel.analytics;
   if(analytics&&!analytics.allTime&&analytics.periodDays===28&&numeric(analytics.views)){
    return{channelId:channel.id,channelName:channel.name,state:'VALID' as const,views:analytics.views,updatedAt:analytics.updatedAt};
