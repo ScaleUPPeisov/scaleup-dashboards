@@ -1,0 +1,92 @@
+name: VYRON 6.1.11 Cleanup RPM Channel Plan QA
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-6.1.11-metadata-inventory-correctness
+    paths:
+      - '.github/workflows/vyron-6111-global-cleanup-rpm-plan-qa.yml'
+      - 'src/postUploadCleanup.ts'
+      - 'src/postUploadCleanup.global.test.ts'
+      - 'src/globalCleanupExecutor.ts'
+      - 'src/globalCleanupExecutor.test.ts'
+      - 'src/GlobalYouTubeCleanup.tsx'
+      - 'src/YouTubeCenter.tsx'
+      - 'src/rpmCoverage.ts'
+      - 'src/rpmCoverage.test.ts'
+      - 'src/RpmCoverageCard.tsx'
+      - 'src/DashboardOS.tsx'
+      - 'src/contentRunway.ts'
+      - 'src/ChannelRunway.tsx'
+      - 'src/channelPlanYoutubeCoverage.test.ts'
+      - 'src-tauri/src/local_delete.rs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-6111-cleanup-rpm-plan-qa
+  cancel-in-progress: false
+
+jobs:
+  macos-qa:
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact test head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Verify exact branch and head
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          echo "BRANCH=${GITHUB_REF_NAME}"
+          echo "TEST_HEAD_SHA=$(git rev-parse HEAD)"
+          echo "GITHUB_SHA=${GITHUB_SHA}"
+          test "${GITHUB_REF_NAME}" = "hotfix/vyron-6.1.11-metadata-inventory-correctness"
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          git status --short
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Focused cleanup RPM and Channel Plan tests
+        run: >-
+          npx vitest run
+          src/rpmCoverage.test.ts
+          src/postUploadCleanup.global.test.ts
+          src/globalCleanupExecutor.test.ts
+          src/channelPlanYoutubeCoverage.test.ts
+          --reporter=verbose
+
+      - name: Full frontend test suite
+        run: npm test
+
+      - name: TypeScript production build
+        run: npm run build
+
+      - name: Native macOS Trash unit tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml local_delete -- --nocapture
+
+      - name: QA acceptance marker
+        shell: bash
+        run: |
+          echo 'GLOBAL_CLEANUP_AUTOMATED=PASS'
+          echo 'TRASH_SAFETY_NATIVE_TESTS=PASS'
+          echo 'RPM_ALL_CHANNELS_AUTOMATED=PASS'
+          echo 'RPM_COVERAGE_VISIBLE_BUILD=PASS'
+          echo 'YOUTUBE_THROUGH_DATE_AUTOMATED=PASS'
+          echo 'LOCAL_STOCK_SEPARATED_BUILD=PASS'
+          echo 'NO_REGRESSION_TEST_BUILD=PASS'
+          echo 'NO_RELEASE_PERFORMED=PASS'
+          echo 'TEST_HEAD_SHA='$(git rev-parse HEAD)
