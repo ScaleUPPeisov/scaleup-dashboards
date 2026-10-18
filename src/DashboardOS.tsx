@@ -23,11 +23,11 @@ import {notifySuccess,notifyWarning} from './notificationCenter';
 import {planStatisticsProjectBatches} from './youtubeChannelStatsRuntime';
 import {refreshAllChannelData} from './fullChannelRefresh';
 import {classifyYoutubeChannels} from './youtubeStatisticsCenter';
+import {RpmCoverageCard} from './RpmCoverageCard';
 
 const fmt=(n:number)=>new Intl.NumberFormat('ru-RU').format(n);
 const sameLocalDay=(iso:string|undefined,now:Date)=>{if(!iso)return false;const d=new Date(iso);return !Number.isNaN(d.getTime())&&d.getFullYear()===now.getFullYear()&&d.getMonth()===now.getMonth()&&d.getDate()===now.getDate()};
 const numeric=(x:unknown):x is number=>typeof x==='number'&&Number.isFinite(x);
-const money=(n:number)=>new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:2}).format(n);
 const shortDateTime=(iso?:string)=>iso?new Intl.DateTimeFormat('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(iso)):'—';
 
 export function DashboardOS({pageOverride}:{pageOverride?:Extract<Page,'dashboard'|'autopilot'>}={}){const page=useApp(s=>pageOverride||s.page),setPage=useApp(s=>s.setPage);return <ScreenErrorBoundary page={page} onHome={()=>setPage('dashboard')}>{page==='autopilot'?<CommandCenter/>:<OperationsDashboard/>}</ScreenErrorBoundary>}
@@ -90,11 +90,7 @@ function OperationsDashboard(){
   if(!numeric(subscribers))return null;
   return{channel:c,subscribers,views:numeric(views)?views:undefined,remaining:Math.max(0,1000-subscribers),pct:Math.max(0,Math.min(100,subscribers/1000*100))}
  }).filter((x):x is NonNullable<typeof x>=>Boolean(x)).sort((a,b)=>a.remaining-b.remaining||b.subscribers-a.subscribers).slice(0,5),[enabled]);
-
- const analyticsRows=enabled.map(c=>c.analytics).filter((x):x is NonNullable<typeof x>=>Boolean(x&&!x.allTime&&x.periodDays===28&&numeric(x.views)));
- const analyticsViews=analyticsRows.reduce((n,x)=>n+(numeric(x.views)?x.views:0),0);
  const configuredRpm=numeric(settings.estimatedRpmUsd)&&settings.estimatedRpmUsd>0?settings.estimatedRpmUsd:undefined;
- const estimatedRevenue28=configuredRpm!=null&&analyticsViews>0?analyticsViews/1000*configuredRpm:undefined;
 
  const attention=useMemo(()=>{
   const rows:{key:string;label:string;text:string;page:'channels'|'production'|'inventory'|'youtube'|'settings'}[]=[];
@@ -242,12 +238,7 @@ function OperationsDashboard(){
     <footer><button onClick={()=>setPage('analytics')}>Аналитика</button></footer>
    </section>
 
-   <section className="opsCard revenueCard">
-    <div className="opsCardHead"><div><small>РАСЧЁТНЫЙ ДОХОД • 28 ДНЕЙ</small><h2>Оценка по заданному RPM</h2></div></div>
-    {configuredRpm==null?<p className="opsEmpty">RPM не настроен. VYRON не будет придумывать расчётный доход.</p>:analyticsRows.length&&analyticsViews>0?<div className="opsStats"><span><small>Расчётный доход</small><b>≈ {money(estimatedRevenue28||0)}</b></span><span><small>Настроенный RPM</small><b>{money(configuredRpm)}</b></span><span><small>Каналов с 28-day views</small><b>{analyticsRows.length}</b></span><span><small>Просмотры • 28 дней</small><b>{fmt(analyticsViews)}</b></span></div>:<p className="opsEmpty">RPM настроен, но нет актуальных просмотров за 28 дней.</p>}
-    <p className="opsSourceNote">Ориентировочная оценка: views ÷ 1000 × настроенный RPM. Не является подтверждённым доходом YouTube.</p>
-    <footer>{configuredRpm==null?<button onClick={openRpmSettings}>Настроить RPM</button>:<><button onClick={openRpmSettings}>Изменить RPM</button><button onClick={()=>setPage('analytics')}>Открыть аналитику</button></>}</footer>
-   </section>
+   <RpmCoverageCard channels={enabled} profiles={profiles} rpm={configuredRpm} onSettings={openRpmSettings} onAnalytics={()=>setPage('analytics')}/>
 
    <section className="opsCard">
     <div className="opsCardHead"><div><small>YOUTUBE • UPLOAD</small><h2>Передача файлов</h2></div></div>
