@@ -1,0 +1,283 @@
+name: VYRON 6.1.11 Deterministic Hosted Reproduction
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: "Frozen product candidate SHA"
+        required: true
+        default: "0a837760e4a46c6267d7c22cea51325c68495cae"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  deterministic-hosted-repro:
+    runs-on: macos-14
+
+    steps:
+      - name: Resolve candidate
+        shell: bash
+        env:
+          REQUESTED_SHA: ${{ inputs.candidate_sha }}
+          EXPECTED_SHA: 0a837760e4a46c6267d7c22cea51325c68495cae
+        run: |
+          echo "REQUESTED_SHA=$REQUESTED_SHA"
+          if [[ "$REQUESTED_SHA" != "$EXPECTED_SHA" ]]; then
+            echo "ERROR: candidate_sha must equal $EXPECTED_SHA"
+            exit 1
+          fi
+
+      - name: Checkout exact product SHA
+        uses: actions/checkout@v4
+        with:
+          ref: 0a837760e4a46c6267d7c22cea51325c68495cae
+          fetch-depth: 0
+
+      - name: Verify exact product SHA
+        shell: bash
+        env:
+          EXPECTED_SHA: 0a837760e4a46c6267d7c22cea51325c68495cae
+        run: |
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          echo "PRODUCT_CANDIDATE_SHA=$EXPECTED_SHA"
+          echo "ACTUAL_SHA=$ACTUAL_SHA"
+          if [[ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]]; then
+            echo "EXACT_SHA_VERIFIED=NO" >> "$GITHUB_ENV"
+            echo "ERROR: checked-out SHA does not match frozen candidate"
+            exit 1
+          fi
+          echo "ACTUAL_SHA=$ACTUAL_SHA" >> "$GITHUB_ENV"
+          echo "EXACT_SHA_VERIFIED=YES" >> "$GITHUB_ENV"
+
+      - name: Create evidence directory
+        shell: bash
+        run: |
+          EVIDENCE_DIR="$RUNNER_TEMP/vyron-6111-repro"
+          mkdir -p "$EVIDENCE_DIR"
+          : > "$EVIDENCE_DIR/environment.log"
+          : > "$EVIDENCE_DIR/install.log"
+          : > "$EVIDENCE_DIR/focused.log"
+          : > "$EVIDENCE_DIR/full.log"
+          : > "$EVIDENCE_DIR/build.log"
+          : > "$EVIDENCE_DIR/rust.log"
+          : > "$EVIDENCE_DIR/source-before.status"
+          : > "$EVIDENCE_DIR/source-after.status"
+          : > "$EVIDENCE_DIR/qa-summary.txt"
+          echo "EVIDENCE_DIR=$EVIDENCE_DIR" >> "$GITHUB_ENV"
+
+      - name: Capture environment evidence
+        shell: bash
+        run: |
+          {
+            date -u
+            git rev-parse HEAD
+            git status --porcelain
+            git branch --show-current || true
+            uname -a
+            uname -m
+            sw_vers
+            node --version
+            npm --version
+            rustc --version || true
+            cargo --version || true
+            echo "PRODUCT_CANDIDATE_SHA=0a837760e4a46c6267d7c22cea51325c68495cae"
+            echo "RUNNER_OS=$RUNNER_OS"
+            echo "RUNNER_ARCH=$RUNNER_ARCH"
+            echo "MACOS_VERSION=$(sw_vers -productVersion)"
+          } 2>&1 | tee "$EVIDENCE_DIR/environment.log"
+
+          ACTUAL_NOW="$(git rev-parse HEAD)"
+          if [[ "$ACTUAL_NOW" != "0a837760e4a46c6267d7c22cea51325c68495cae" ]]; then
+            echo "ERROR: product SHA changed before QA"
+            exit 1
+          fi
+
+          git status --porcelain > "$EVIDENCE_DIR/source-before.status"
+          echo "RUNNER_OS_VALUE=$RUNNER_OS" >> "$GITHUB_ENV"
+          echo "RUNNER_ARCH_VALUE=$RUNNER_ARCH" >> "$GITHUB_ENV"
+          echo "MACOS_VERSION_VALUE=$(sw_vers -productVersion)" >> "$GITHUB_ENV"
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Record active Node environment
+        shell: bash
+        run: |
+          {
+            echo "ACTIVE_NODE_VERSION=$(node --version)"
+            echo "ACTIVE_NPM_VERSION=$(npm --version)"
+          } | tee -a "$EVIDENCE_DIR/environment.log"
+
+      - name: Install dependencies with real exit code
+        shell: bash
+        run: |
+          set +e
+          set -o pipefail
+          npm ci --no-audit --no-fund \
+            2>&1 | tee "$EVIDENCE_DIR/install.log"
+          INSTALL_EXIT=${PIPESTATUS[0]}
+          echo "INSTALL_EXIT=$INSTALL_EXIT" >> "$EVIDENCE_DIR/qa-summary.txt"
+          echo "INSTALL_EXIT=$INSTALL_EXIT" >> "$GITHUB_ENV"
+          exit 0
+
+      - name: Run focused tests with real exit code
+        shell: bash
+        run: |
+          if [[ "$INSTALL_EXIT" != "0" ]]; then
+            echo "FOCUSED_EXIT=SKIPPED_INSTALL_FAILURE" | tee "$EVIDENCE_DIR/focused.log"
+            echo "FOCUSED_EXIT=SKIPPED_INSTALL_FAILURE" >> "$EVIDENCE_DIR/qa-summary.txt"
+            echo "FOCUSED_EXIT=SKIPPED_INSTALL_FAILURE" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          set +e
+          set -o pipefail
+          npx vitest run \
+            src/rpmCoverage.test.ts \
+            src/postUploadCleanup.global.test.ts \
+            src/globalCleanupExecutor.test.ts \
+            src/channelPlanYoutubeCoverage.test.ts \
+            --reporter=verbose \
+            2>&1 | tee "$EVIDENCE_DIR/focused.log"
+          FOCUSED_EXIT=${PIPESTATUS[0]}
+          echo "FOCUSED_EXIT=$FOCUSED_EXIT" >> "$EVIDENCE_DIR/qa-summary.txt"
+          echo "FOCUSED_EXIT=$FOCUSED_EXIT" >> "$GITHUB_ENV"
+          exit 0
+
+      - name: Run full frontend suite with real exit code
+        shell: bash
+        run: |
+          if [[ "$INSTALL_EXIT" != "0" ]]; then
+            echo "FULL_EXIT=SKIPPED_INSTALL_FAILURE" | tee "$EVIDENCE_DIR/full.log"
+            echo "FULL_EXIT=SKIPPED_INSTALL_FAILURE" >> "$EVIDENCE_DIR/qa-summary.txt"
+            echo "FULL_EXIT=SKIPPED_INSTALL_FAILURE" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          set +e
+          set -o pipefail
+          npm test 2>&1 | tee "$EVIDENCE_DIR/full.log"
+          FULL_EXIT=${PIPESTATUS[0]}
+          echo "FULL_EXIT=$FULL_EXIT" >> "$EVIDENCE_DIR/qa-summary.txt"
+          echo "FULL_EXIT=$FULL_EXIT" >> "$GITHUB_ENV"
+          exit 0
+
+      - name: Run production build with real exit code
+        shell: bash
+        run: |
+          if [[ "$INSTALL_EXIT" != "0" ]]; then
+            echo "BUILD_EXIT=SKIPPED_INSTALL_FAILURE" | tee "$EVIDENCE_DIR/build.log"
+            echo "BUILD_EXIT=SKIPPED_INSTALL_FAILURE" >> "$EVIDENCE_DIR/qa-summary.txt"
+            echo "BUILD_EXIT=SKIPPED_INSTALL_FAILURE" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          set +e
+          set -o pipefail
+          npm run build 2>&1 | tee "$EVIDENCE_DIR/build.log"
+          BUILD_EXIT=${PIPESTATUS[0]}
+          echo "BUILD_EXIT=$BUILD_EXIT" >> "$EVIDENCE_DIR/qa-summary.txt"
+          echo "BUILD_EXIT=$BUILD_EXIT" >> "$GITHUB_ENV"
+          exit 0
+
+      - name: Run Rust trash unit test with real exit code
+        shell: bash
+        run: |
+          set +e
+          set -o pipefail
+          cargo test \
+            --manifest-path src-tauri/Cargo.toml \
+            local_delete \
+            -- --nocapture \
+            2>&1 | tee "$EVIDENCE_DIR/rust.log"
+          RUST_EXIT=${PIPESTATUS[0]}
+          echo "RUST_EXIT=$RUST_EXIT" >> "$EVIDENCE_DIR/qa-summary.txt"
+          echo "RUST_EXIT=$RUST_EXIT" >> "$GITHUB_ENV"
+          exit 0
+
+      - name: Verify tracked product tree after QA
+        shell: bash
+        run: |
+          git status --porcelain > "$EVIDENCE_DIR/source-after.status"
+          git diff --stat
+          git diff -- src src-tauri package.json package-lock.json Cargo.toml Cargo.lock
+
+          if git diff --quiet && git diff --cached --quiet; then
+            SOURCE_TREE_CLEAN=YES
+          else
+            SOURCE_TREE_CLEAN=NO
+          fi
+
+          echo "SOURCE_TREE_CLEAN=$SOURCE_TREE_CLEAN" >> "$GITHUB_ENV"
+          echo "SOURCE_TREE_CLEAN=$SOURCE_TREE_CLEAN"
+
+      - name: Generate machine-readable summary
+        shell: bash
+        run: |
+          {
+            echo "PRODUCT_CANDIDATE_SHA=0a837760e4a46c6267d7c22cea51325c68495cae"
+            echo "ACTUAL_SHA=${ACTUAL_SHA:-$(git rev-parse HEAD)}"
+            echo "EXACT_SHA_VERIFIED=${EXACT_SHA_VERIFIED:-NO}"
+            echo "RUNNER_OS=${RUNNER_OS_VALUE:-$RUNNER_OS}"
+            echo "RUNNER_ARCH=${RUNNER_ARCH_VALUE:-$RUNNER_ARCH}"
+            echo "MACOS_VERSION=${MACOS_VERSION_VALUE:-$(sw_vers -productVersion)}"
+            echo "INSTALL_EXIT=${INSTALL_EXIT:-NOT_RECORDED}"
+            echo "FOCUSED_EXIT=${FOCUSED_EXIT:-NOT_RECORDED}"
+            echo "FULL_EXIT=${FULL_EXIT:-NOT_RECORDED}"
+            echo "BUILD_EXIT=${BUILD_EXIT:-NOT_RECORDED}"
+            echo "RUST_EXIT=${RUST_EXIT:-NOT_RECORDED}"
+            echo "SOURCE_TREE_CLEAN=${SOURCE_TREE_CLEAN:-NO}"
+            echo "PHYSICAL_QA=NOT_CLAIMED"
+            echo "PRODUCT_CHANGED=NO"
+            echo "VERSION_BUMPED=NO"
+            echo "UPDATER_PUBLISHED=NO"
+            echo "RELEASE_PERFORMED=NO"
+          } >> "$EVIDENCE_DIR/qa-summary.txt"
+
+          cat "$EVIDENCE_DIR/qa-summary.txt"
+
+      - name: Upload deterministic reproduction evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vyron-6111-deterministic-repro-${{ github.run_id }}
+          path: ${{ runner.temp }}/vyron-6111-repro/
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Final acceptance gate
+        if: always()
+        shell: bash
+        run: |
+          FAILED=0
+
+          check_equal() {
+            local name="$1"
+            local actual="$2"
+            local expected="$3"
+            if [[ "$actual" != "$expected" ]]; then
+              echo "FAILED_CONDITION: $name expected '$expected' got '$actual'"
+              FAILED=1
+            fi
+          }
+
+          check_equal "EXACT_SHA_VERIFIED" "${EXACT_SHA_VERIFIED:-NO}" "YES"
+          check_equal "INSTALL_EXIT" "${INSTALL_EXIT:-NOT_RECORDED}" "0"
+          check_equal "FOCUSED_EXIT" "${FOCUSED_EXIT:-NOT_RECORDED}" "0"
+          check_equal "FULL_EXIT" "${FULL_EXIT:-NOT_RECORDED}" "0"
+          check_equal "BUILD_EXIT" "${BUILD_EXIT:-NOT_RECORDED}" "0"
+          check_equal "RUST_EXIT" "${RUST_EXIT:-NOT_RECORDED}" "0"
+          check_equal "SOURCE_TREE_CLEAN" "${SOURCE_TREE_CLEAN:-NO}" "YES"
+
+          if [[ "$FAILED" -eq 0 ]]; then
+            echo "HOSTED_CI_GATE=PASS"
+            exit 0
+          fi
+
+          echo "HOSTED_CI_GATE=FAIL"
+          exit 1
