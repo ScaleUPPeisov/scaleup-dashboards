@@ -67,7 +67,9 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Focused cleanup RPM and Channel Plan tests
+      - id: focused
+        name: Focused cleanup RPM and Channel Plan tests
+        continue-on-error: true
         run: >-
           npx vitest run
           src/rpmCoverage.test.ts
@@ -76,21 +78,45 @@ jobs:
           src/channelPlanYoutubeCoverage.test.ts
           --reporter=verbose
 
-      - name: Full frontend test suite
+      - id: full
+        name: Full frontend test suite
+        continue-on-error: true
         run: npm test
 
-      - name: TypeScript production build
+      - id: build
+        name: TypeScript production build
+        continue-on-error: true
         run: npm run build
 
-      - name: Native macOS Trash unit tests
+      - id: rust
+        name: Native macOS Trash unit tests
+        continue-on-error: true
         run: cargo test --manifest-path src-tauri/Cargo.toml local_delete -- --nocapture
 
-      - name: Hosted CI acceptance marker
+      - name: Hosted CI acceptance result
+        if: always()
         shell: bash
+        env:
+          FOCUSED_OUTCOME: ${{ steps.focused.outcome }}
+          FULL_OUTCOME: ${{ steps.full.outcome }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          RUST_OUTCOME: ${{ steps.rust.outcome }}
         run: |
           set -Eeuo pipefail
-          test "$(git rev-parse HEAD)" = "$PRODUCT_CANDIDATE_SHA"
-          echo 'HOSTED_CI_GATE=PASS'
-          echo "HOSTED_CI_SHA=$(git rev-parse HEAD)"
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          echo "HOSTED_CI_SHA=$ACTUAL_SHA"
+          echo "FOCUSED_OUTCOME=$FOCUSED_OUTCOME"
+          echo "FULL_OUTCOME=$FULL_OUTCOME"
+          echo "BUILD_OUTCOME=$BUILD_OUTCOME"
+          echo "RUST_OUTCOME=$RUST_OUTCOME"
           echo 'PHYSICAL_QA=NOT_CLAIMED'
           echo 'NO_RELEASE_PERFORMED=PASS'
+          test "$ACTUAL_SHA" = "$PRODUCT_CANDIDATE_SHA"
+          if [ "$FOCUSED_OUTCOME" != success ] || \
+             [ "$FULL_OUTCOME" != success ] || \
+             [ "$BUILD_OUTCOME" != success ] || \
+             [ "$RUST_OUTCOME" != success ]; then
+            echo 'HOSTED_CI_GATE=FAIL'
+            exit 1
+          fi
+          echo 'HOSTED_CI_GATE=PASS'
