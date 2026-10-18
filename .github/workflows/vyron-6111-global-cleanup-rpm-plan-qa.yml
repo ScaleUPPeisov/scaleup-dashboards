@@ -6,49 +6,56 @@ on:
       - hotfix/vyron-6.1.11-metadata-inventory-correctness
     paths:
       - '.github/workflows/vyron-6111-global-cleanup-rpm-plan-qa.yml'
-      - 'src/postUploadCleanup.ts'
-      - 'src/postUploadCleanup.global.test.ts'
-      - 'src/globalCleanupExecutor.ts'
-      - 'src/globalCleanupExecutor.test.ts'
-      - 'src/GlobalYouTubeCleanup.tsx'
-      - 'src/YouTubeCenter.tsx'
-      - 'src/rpmCoverage.ts'
-      - 'src/rpmCoverage.test.ts'
-      - 'src/RpmCoverageCard.tsx'
-      - 'src/DashboardOS.tsx'
-      - 'src/contentRunway.ts'
-      - 'src/ChannelRunway.tsx'
-      - 'src/channelPlanYoutubeCoverage.test.ts'
-      - 'src-tauri/src/local_delete.rs'
   workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: 'Exact frozen VYRON product candidate SHA'
+        required: true
+        default: '0a837760e4a46c6267d7c22cea51325c68495cae'
 
 permissions:
   contents: read
 
+env:
+  PRODUCT_CANDIDATE_SHA: '0a837760e4a46c6267d7c22cea51325c68495cae'
+
 concurrency:
-  group: vyron-6111-cleanup-rpm-plan-qa
+  group: vyron-6111-cleanup-rpm-plan-hosted-ci
   cancel-in-progress: false
 
 jobs:
-  macos-qa:
+  hosted-ci-gate:
+    name: HOSTED_CI_GATE
     runs-on: macos-14
     timeout-minutes: 45
     steps:
-      - name: Checkout exact test head
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
-          fetch-depth: 0
-
-      - name: Verify exact branch and head
+      - name: Resolve requested candidate
         shell: bash
         run: |
           set -Eeuo pipefail
-          echo "BRANCH=${GITHUB_REF_NAME}"
-          echo "TEST_HEAD_SHA=$(git rev-parse HEAD)"
-          echo "GITHUB_SHA=${GITHUB_SHA}"
-          test "${GITHUB_REF_NAME}" = "hotfix/vyron-6.1.11-metadata-inventory-correctness"
-          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          REQUESTED="${{ github.event.inputs.candidate_sha }}"
+          if [ -z "$REQUESTED" ]; then REQUESTED="$PRODUCT_CANDIDATE_SHA"; fi
+          echo "REQUESTED_CANDIDATE_SHA=$REQUESTED" | tee -a "$GITHUB_ENV"
+          test "$REQUESTED" = "$PRODUCT_CANDIDATE_SHA"
+
+      - name: Checkout frozen product candidate
+        uses: actions/checkout@v4
+        with:
+          ref: '0a837760e4a46c6267d7c22cea51325c68495cae'
+          fetch-depth: 0
+
+      - name: Verify environment and exact candidate SHA
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          echo "PRODUCT_CANDIDATE_SHA=$PRODUCT_CANDIDATE_SHA"
+          echo "GITHUB_EVENT_SHA=$GITHUB_SHA"
+          echo "ACTUAL_SHA=$(git rev-parse HEAD)"
+          uname -a
+          uname -m
+          sw_vers
+          test "$(git rev-parse HEAD)" = "$PRODUCT_CANDIDATE_SHA"
+          test "$REQUESTED_CANDIDATE_SHA" = "$PRODUCT_CANDIDATE_SHA"
           git status --short
 
       - name: Setup Node
@@ -78,15 +85,12 @@ jobs:
       - name: Native macOS Trash unit tests
         run: cargo test --manifest-path src-tauri/Cargo.toml local_delete -- --nocapture
 
-      - name: QA acceptance marker
+      - name: Hosted CI acceptance marker
         shell: bash
         run: |
-          echo 'GLOBAL_CLEANUP_AUTOMATED=PASS'
-          echo 'TRASH_SAFETY_NATIVE_TESTS=PASS'
-          echo 'RPM_ALL_CHANNELS_AUTOMATED=PASS'
-          echo 'RPM_COVERAGE_VISIBLE_BUILD=PASS'
-          echo 'YOUTUBE_THROUGH_DATE_AUTOMATED=PASS'
-          echo 'LOCAL_STOCK_SEPARATED_BUILD=PASS'
-          echo 'NO_REGRESSION_TEST_BUILD=PASS'
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$PRODUCT_CANDIDATE_SHA"
+          echo 'HOSTED_CI_GATE=PASS'
+          echo "HOSTED_CI_SHA=$(git rev-parse HEAD)"
+          echo 'PHYSICAL_QA=NOT_CLAIMED'
           echo 'NO_RELEASE_PERFORMED=PASS'
-          echo 'TEST_HEAD_SHA='$(git rev-parse HEAD)
