@@ -6,7 +6,7 @@ on:
       candidate_sha:
         description: "Frozen product candidate SHA"
         required: true
-        default: "0a837760e4a46c6267d7c22cea51325c68495cae"
+        default: "506ca48f307a2cc2df5909d332e616edd7653b5f"
         type: string
 
 permissions:
@@ -21,7 +21,7 @@ jobs:
         shell: bash
         env:
           REQUESTED_SHA: ${{ inputs.candidate_sha }}
-          EXPECTED_SHA: 0a837760e4a46c6267d7c22cea51325c68495cae
+          EXPECTED_SHA: 506ca48f307a2cc2df5909d332e616edd7653b5f
         run: |
           echo "REQUESTED_SHA=$REQUESTED_SHA"
           if [[ "$REQUESTED_SHA" != "$EXPECTED_SHA" ]]; then
@@ -32,13 +32,13 @@ jobs:
       - name: Checkout exact product SHA
         uses: actions/checkout@v4
         with:
-          ref: 0a837760e4a46c6267d7c22cea51325c68495cae
+          ref: 506ca48f307a2cc2df5909d332e616edd7653b5f
           fetch-depth: 0
 
       - name: Verify exact product SHA
         shell: bash
         env:
-          EXPECTED_SHA: 0a837760e4a46c6267d7c22cea51325c68495cae
+          EXPECTED_SHA: 506ca48f307a2cc2df5909d332e616edd7653b5f
         run: |
           ACTUAL_SHA="$(git rev-parse HEAD)"
           echo "PRODUCT_CANDIDATE_SHA=$EXPECTED_SHA"
@@ -56,15 +56,9 @@ jobs:
         run: |
           EVIDENCE_DIR="$RUNNER_TEMP/vyron-6111-repro"
           mkdir -p "$EVIDENCE_DIR"
-          : > "$EVIDENCE_DIR/environment.log"
-          : > "$EVIDENCE_DIR/install.log"
-          : > "$EVIDENCE_DIR/focused.log"
-          : > "$EVIDENCE_DIR/full.log"
-          : > "$EVIDENCE_DIR/build.log"
-          : > "$EVIDENCE_DIR/rust.log"
-          : > "$EVIDENCE_DIR/source-before.status"
-          : > "$EVIDENCE_DIR/source-after.status"
-          : > "$EVIDENCE_DIR/qa-summary.txt"
+          for file in environment.log install.log focused.log full.log baseline-install.log baseline-full.log candidate-failures.txt baseline-failures.txt new-failures.txt build.log rust.log source-before.status source-after.status qa-summary.txt; do
+            : > "$EVIDENCE_DIR/$file"
+          done
           echo "EVIDENCE_DIR=$EVIDENCE_DIR" >> "$GITHUB_ENV"
 
       - name: Capture environment evidence
@@ -82,14 +76,15 @@ jobs:
             npm --version
             rustc --version || true
             cargo --version || true
-            echo "PRODUCT_CANDIDATE_SHA=0a837760e4a46c6267d7c22cea51325c68495cae"
+            echo "PRODUCT_CANDIDATE_SHA=506ca48f307a2cc2df5909d332e616edd7653b5f"
+            echo "REGRESSION_BASELINE_SHA=ebd1f8519a027a0c5029f110eafed793125e762f"
             echo "RUNNER_OS=$RUNNER_OS"
             echo "RUNNER_ARCH=$RUNNER_ARCH"
             echo "MACOS_VERSION=$(sw_vers -productVersion)"
           } 2>&1 | tee "$EVIDENCE_DIR/environment.log"
 
           ACTUAL_NOW="$(git rev-parse HEAD)"
-          if [[ "$ACTUAL_NOW" != "0a837760e4a46c6267d7c22cea51325c68495cae" ]]; then
+          if [[ "$ACTUAL_NOW" != "506ca48f307a2cc2df5909d332e616edd7653b5f" ]]; then
             echo "ERROR: product SHA changed before QA"
             exit 1
           fi
@@ -113,19 +108,18 @@ jobs:
             echo "ACTIVE_NPM_VERSION=$(npm --version)"
           } | tee -a "$EVIDENCE_DIR/environment.log"
 
-      - name: Install dependencies with real exit code
+      - name: Install candidate dependencies with real exit code
         shell: bash
         run: |
           set +e
           set -o pipefail
-          npm ci --no-audit --no-fund \
-            2>&1 | tee "$EVIDENCE_DIR/install.log"
+          npm ci --no-audit --no-fund 2>&1 | tee "$EVIDENCE_DIR/install.log"
           INSTALL_EXIT=${PIPESTATUS[0]}
           echo "INSTALL_EXIT=$INSTALL_EXIT" >> "$EVIDENCE_DIR/qa-summary.txt"
           echo "INSTALL_EXIT=$INSTALL_EXIT" >> "$GITHUB_ENV"
           exit 0
 
-      - name: Run focused tests with real exit code
+      - name: Run focused current-product tests with real exit code
         shell: bash
         run: |
           if [[ "$INSTALL_EXIT" != "0" ]]; then
@@ -142,6 +136,7 @@ jobs:
             src/postUploadCleanup.global.test.ts \
             src/globalCleanupExecutor.test.ts \
             src/channelPlanYoutubeCoverage.test.ts \
+            src/youtubeMetadataPostWriteVerification.test.ts \
             --reporter=verbose \
             2>&1 | tee "$EVIDENCE_DIR/focused.log"
           FOCUSED_EXIT=${PIPESTATUS[0]}
@@ -149,7 +144,7 @@ jobs:
           echo "FOCUSED_EXIT=$FOCUSED_EXIT" >> "$GITHUB_ENV"
           exit 0
 
-      - name: Run full frontend suite with real exit code
+      - name: Run candidate full frontend suite for regression evidence
         shell: bash
         run: |
           if [[ "$INSTALL_EXIT" != "0" ]]; then
@@ -165,6 +160,74 @@ jobs:
           FULL_EXIT=${PIPESTATUS[0]}
           echo "FULL_EXIT=$FULL_EXIT" >> "$EVIDENCE_DIR/qa-summary.txt"
           echo "FULL_EXIT=$FULL_EXIT" >> "$GITHUB_ENV"
+          exit 0
+
+      - name: Run baseline full suite and compare failed test identities
+        shell: bash
+        env:
+          BASELINE_SHA: ebd1f8519a027a0c5029f110eafed793125e762f
+        run: |
+          set +e
+          BASELINE_DIR="$RUNNER_TEMP/vyron-6111-baseline"
+          git worktree add --detach "$BASELINE_DIR" "$BASELINE_SHA"
+          WORKTREE_EXIT=$?
+          if [[ "$WORKTREE_EXIT" != "0" ]]; then
+            echo "BASELINE_INSTALL_EXIT=SKIPPED_WORKTREE_FAILURE" >> "$GITHUB_ENV"
+            echo "BASELINE_FULL_EXIT=SKIPPED_WORKTREE_FAILURE" >> "$GITHUB_ENV"
+            echo "FULL_REGRESSION_EXIT=1" >> "$GITHUB_ENV"
+            echo "BASELINE_WORKTREE_FAILED" > "$EVIDENCE_DIR/new-failures.txt"
+            exit 0
+          fi
+
+          cd "$BASELINE_DIR"
+          set -o pipefail
+          npm ci --no-audit --no-fund 2>&1 | tee "$EVIDENCE_DIR/baseline-install.log"
+          BASELINE_INSTALL_EXIT=${PIPESTATUS[0]}
+          echo "BASELINE_INSTALL_EXIT=$BASELINE_INSTALL_EXIT" >> "$GITHUB_ENV"
+
+          if [[ "$BASELINE_INSTALL_EXIT" == "0" ]]; then
+            npm test 2>&1 | tee "$EVIDENCE_DIR/baseline-full.log"
+            BASELINE_FULL_EXIT=${PIPESTATUS[0]}
+          else
+            BASELINE_FULL_EXIT=SKIPPED_INSTALL_FAILURE
+          fi
+          echo "BASELINE_FULL_EXIT=$BASELINE_FULL_EXIT" >> "$GITHUB_ENV"
+
+          cd "$GITHUB_WORKSPACE"
+          python3 - "$EVIDENCE_DIR/full.log" "$EVIDENCE_DIR/baseline-full.log" "$EVIDENCE_DIR/candidate-failures.txt" "$EVIDENCE_DIR/baseline-failures.txt" "$EVIDENCE_DIR/new-failures.txt" <<'PY'
+          import re, sys
+          candidate_log, baseline_log, candidate_out, baseline_out, new_out = sys.argv[1:]
+          ansi = re.compile(r'\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+          def failed_ids(path):
+              try:
+                  text = open(path, encoding='utf-8', errors='replace').read()
+              except FileNotFoundError:
+                  return set()
+              out = set()
+              for raw in text.splitlines():
+                  line = ansi.sub('', raw).strip()
+                  if line.startswith('FAIL  '):
+                      out.add(line[len('FAIL  '):].strip())
+              return out
+          candidate = failed_ids(candidate_log)
+          baseline = failed_ids(baseline_log)
+          new = sorted(candidate - baseline)
+          for path, rows in ((candidate_out, sorted(candidate)), (baseline_out, sorted(baseline)), (new_out, new)):
+              with open(path, 'w', encoding='utf-8') as f:
+                  for row in rows:
+                      f.write(row + '\n')
+          print(f'CANDIDATE_FAILED_TEST_IDENTITIES={len(candidate)}')
+          print(f'BASELINE_FAILED_TEST_IDENTITIES={len(baseline)}')
+          print(f'NEW_FAILED_TEST_IDENTITIES={len(new)}')
+          if new:
+              print('NEW_FAILURES:')
+              for row in new:
+                  print(row)
+          sys.exit(1 if new else 0)
+          PY
+          FULL_REGRESSION_EXIT=$?
+          echo "FULL_REGRESSION_EXIT=$FULL_REGRESSION_EXIT" >> "$GITHUB_ENV"
+          echo "FULL_REGRESSION_EXIT=$FULL_REGRESSION_EXIT" >> "$EVIDENCE_DIR/qa-summary.txt"
           exit 0
 
       - name: Run production build with real exit code
@@ -220,7 +283,8 @@ jobs:
         shell: bash
         run: |
           {
-            echo "PRODUCT_CANDIDATE_SHA=0a837760e4a46c6267d7c22cea51325c68495cae"
+            echo "PRODUCT_CANDIDATE_SHA=506ca48f307a2cc2df5909d332e616edd7653b5f"
+            echo "REGRESSION_BASELINE_SHA=ebd1f8519a027a0c5029f110eafed793125e762f"
             echo "ACTUAL_SHA=${ACTUAL_SHA:-$(git rev-parse HEAD)}"
             echo "EXACT_SHA_VERIFIED=${EXACT_SHA_VERIFIED:-NO}"
             echo "RUNNER_OS=${RUNNER_OS_VALUE:-$RUNNER_OS}"
@@ -229,11 +293,14 @@ jobs:
             echo "INSTALL_EXIT=${INSTALL_EXIT:-NOT_RECORDED}"
             echo "FOCUSED_EXIT=${FOCUSED_EXIT:-NOT_RECORDED}"
             echo "FULL_EXIT=${FULL_EXIT:-NOT_RECORDED}"
+            echo "BASELINE_INSTALL_EXIT=${BASELINE_INSTALL_EXIT:-NOT_RECORDED}"
+            echo "BASELINE_FULL_EXIT=${BASELINE_FULL_EXIT:-NOT_RECORDED}"
+            echo "FULL_REGRESSION_EXIT=${FULL_REGRESSION_EXIT:-NOT_RECORDED}"
             echo "BUILD_EXIT=${BUILD_EXIT:-NOT_RECORDED}"
             echo "RUST_EXIT=${RUST_EXIT:-NOT_RECORDED}"
             echo "SOURCE_TREE_CLEAN=${SOURCE_TREE_CLEAN:-NO}"
             echo "PHYSICAL_QA=NOT_CLAIMED"
-            echo "PRODUCT_CHANGED=NO"
+            echo "PRODUCT_CHANGED=YES_RPM_TYPE_ONLY"
             echo "VERSION_BUMPED=NO"
             echo "UPDATER_PUBLISHED=NO"
             echo "RELEASE_PERFORMED=NO"
@@ -269,10 +336,14 @@ jobs:
           check_equal "EXACT_SHA_VERIFIED" "${EXACT_SHA_VERIFIED:-NO}" "YES"
           check_equal "INSTALL_EXIT" "${INSTALL_EXIT:-NOT_RECORDED}" "0"
           check_equal "FOCUSED_EXIT" "${FOCUSED_EXIT:-NOT_RECORDED}" "0"
-          check_equal "FULL_EXIT" "${FULL_EXIT:-NOT_RECORDED}" "0"
+          check_equal "BASELINE_INSTALL_EXIT" "${BASELINE_INSTALL_EXIT:-NOT_RECORDED}" "0"
+          check_equal "FULL_REGRESSION_EXIT" "${FULL_REGRESSION_EXIT:-NOT_RECORDED}" "0"
           check_equal "BUILD_EXIT" "${BUILD_EXIT:-NOT_RECORDED}" "0"
           check_equal "RUST_EXIT" "${RUST_EXIT:-NOT_RECORDED}" "0"
           check_equal "SOURCE_TREE_CLEAN" "${SOURCE_TREE_CLEAN:-NO}" "YES"
+
+          echo "FULL_EXIT_INFORMATIONAL=${FULL_EXIT:-NOT_RECORDED}"
+          echo "BASELINE_FULL_EXIT_INFORMATIONAL=${BASELINE_FULL_EXIT:-NOT_RECORDED}"
 
           if [[ "$FAILED" -eq 0 ]]; then
             echo "HOSTED_CI_GATE=PASS"
