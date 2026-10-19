@@ -808,3 +808,56 @@ fn v603_automatic_cleanup_still_requires_completed_render() {
     assert!(eligible.is_empty());
     cleanup(&ws);
 }
+
+
+#[test]
+fn acceptance_render_output_routes_to_channel_render_root() {
+    let (ws, cid, name) = fixture(1, 2);
+    let plan = plan_build(&request(&ws, &cid, &name, 1, 1, "even", false)).unwrap();
+    let summary = execute_plan(None, &plan).unwrap();
+    let (manifest, _) = load_manifest(&summary.manifest_path).unwrap();
+    let expected = ws.join("Render").join(&name).canonicalize().unwrap();
+    assert_eq!(PathBuf::from(&manifest.output_dir), expected);
+    assert!(expected.is_dir());
+    assert!(!is_production_batches_path(&expected));
+    assert!(PathBuf::from(&manifest.root_path)
+        .starts_with(ws.join("ProductionManager").join("Batches")));
+    cleanup(&ws);
+}
+
+#[test]
+fn acceptance_final_render_destination_rejects_batches_tree() {
+    let forbidden = PathBuf::from(
+        "/Volumes/TOSHIBA EXT/ВАЙРОН/ProductionManager/Batches/channel/batch/Rendered",
+    );
+    assert_eq!(
+        validate_final_render_destination(&forbidden).unwrap_err(),
+        INVALID_FINAL_RENDER_DESTINATION
+    );
+}
+
+#[test]
+fn acceptance_render_output_is_channel_isolated() {
+    let root = std::env::temp_dir().join(format!("vyron-render-routing-{}", Uuid::new_v4()));
+    fs::create_dir_all(&root).unwrap();
+    let first = render_output_dir(&root.to_string_lossy(), "Channel Alpha").unwrap();
+    let second = render_output_dir(&root.to_string_lossy(), "Channel Beta").unwrap();
+    assert_eq!(
+        first,
+        root.join("Render")
+            .join("Channel Alpha")
+            .canonicalize()
+            .unwrap()
+    );
+    assert_eq!(
+        second,
+        root.join("Render")
+            .join("Channel Beta")
+            .canonicalize()
+            .unwrap()
+    );
+    assert_ne!(first, second);
+    assert!(!is_production_batches_path(&first));
+    assert!(!is_production_batches_path(&second));
+    let _ = fs::remove_dir_all(root);
+}

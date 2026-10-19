@@ -7,7 +7,7 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     io::Read,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     process::Command,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -132,6 +132,41 @@ fn batch_root_parent(workspace: &str, channel_id: &str) -> Result<PathBuf, Strin
     fs::create_dir_all(&p).map_err(|e| e.to_string())?;
     Ok(p)
 }
+const INVALID_FINAL_RENDER_DESTINATION: &str = "INVALID_FINAL_RENDER_DESTINATION";
+
+fn is_production_batches_path(path: &Path) -> bool {
+    let parts = path
+        .components()
+        .filter_map(|component| match component {
+            Component::Normal(value) => Some(value.to_string_lossy().to_ascii_lowercase()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    parts
+        .windows(2)
+        .any(|pair| pair[0] == "productionmanager" && pair[1] == "batches")
+}
+
+fn validate_final_render_destination(path: &Path) -> Result<(), String> {
+    if is_production_batches_path(path) {
+        return Err(INVALID_FINAL_RENDER_DESTINATION.into());
+    }
+    Ok(())
+}
+
+fn render_output_dir(output_workspace: &str, channel_name: &str) -> Result<PathBuf, String> {
+    let path = PathBuf::from(output_workspace)
+        .join("Render")
+        .join(safe_component(channel_name));
+    validate_final_render_destination(&path)?;
+    fs::create_dir_all(&path).map_err(|e| format!("Render output: {e}"))?;
+    let resolved = path
+        .canonicalize()
+        .map_err(|e| format!("Render output: {e}"))?;
+    validate_final_render_destination(&resolved)?;
+    Ok(resolved)
+}
+
 fn atomic_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
     use std::io::Write;
     if let Some(parent) = path.parent() {
@@ -1732,7 +1767,12 @@ fn execute_plan(app: Option<&AppHandle>, plan: &BuildPlan) -> Result<BatchSummar
         tracks_per_project: plan.request.tracks_per_project,
         mode: plan.request.mode.clone(),
         root_path: plan.batch_root.clone(),
-        output_dir: broot.join("Rendered").to_string_lossy().into_owned(),
+        output_dir: render_output_dir(
+            &resolve_output_workspace(&plan.request)?,
+            &plan.request.channel_name,
+        )?
+        .to_string_lossy()
+        .into_owned(),
         status_path: broot.join("status.json").to_string_lossy().into_owned(),
         status: "Готово".into(),
         projects: Vec::new(),
@@ -2006,7 +2046,12 @@ fn register_plan_recovery(app:&AppHandle,plan:&mut BuildPlan)->Result<(),String>
         for t in &p.tracks{source_paths.push((p.project_id.clone(),t.source.clone()));}
         destination_paths.push(PathBuf::from(&plan.batch_root).join(&p.project_id).to_string_lossy().into_owned());
     }
-    destination_paths.push(PathBuf::from(&plan.batch_root).join("Rendered").to_string_lossy().into_owned());
+    let output_workspace = resolve_output_workspace(&plan.request)?;
+    destination_paths.push(
+        render_output_dir(&output_workspace, &plan.request.channel_name)?
+            .to_string_lossy()
+            .into_owned(),
+    );
     let id=recovery::begin_production_session(app,recovery::ProductionRecoverySeed{
         recovery_session_id:String::new(),batch_id:plan.batch_id.clone(),channel_id:plan.request.channel_id.clone(),channel_name:plan.request.channel_name.clone(),
         root_path:plan.batch_root.clone(),project_ids,job_ids,source_paths,destination_paths,total_projects:plan.projects.len(),ui_context:plan.request.recovery_ui_context.clone()
@@ -3000,6 +3045,13 @@ pub fn open_production_batch_in_endlume(
     force_resend: Option<bool>,
 ) -> Result<HandoffReceipt, String> {
     let (m, _) = load_manifest(&manifest_path)?;
+    let final_destination = PathBuf::from(&m.output_dir);
+    validate_final_render_destination(&final_destination)?;
+    fs::create_dir_all(&final_destination).map_err(|e| format!("Render output: {e}"))?;
+    let resolved_final_destination = final_destination
+        .canonicalize()
+        .map_err(|e| format!("Render output: {e}"))?;
+    validate_final_render_destination(&resolved_final_destination)?;
     let app = PathBuf::from(&endlume_path);
     if !app.exists() {
         return Err("ENDLUME Studio не найден".into());

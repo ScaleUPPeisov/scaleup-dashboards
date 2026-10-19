@@ -1,0 +1,60 @@
+name: VYRON 6.1.11 Metadata Hotfix Final QA
+
+on:
+  push:
+    branches:
+      - hotfix/vyron-6.1.11-metadata-inventory-correctness
+    paths:
+      - '.github/workflows/vyron-6111-metadata-inventory-qa.yml'
+      - 'src/youtubeMetadataPostWriteVerification.ts'
+      - 'src/youtubeMetadataPostWriteVerificationInstall.ts'
+      - 'src/youtubeMetadataPostWriteVerification.test.ts'
+      - 'src/main.tsx'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-6111-metadata-hotfix-final-qa
+  cancel-in-progress: false
+
+jobs:
+  metadata-final-qa:
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact test head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Verify exact test head
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          echo "TEST_HEAD_SHA=$(git rev-parse HEAD)"
+          echo "GITHUB_SHA=${GITHUB_SHA}"
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Focused Metadata semantic verifier tests
+        run: npx vitest run src/youtubeMetadataPostWriteVerification.test.ts --reporter=verbose
+
+      - name: TypeScript production build
+        run: npm run build
+
+      - name: QA acceptance marker
+        shell: bash
+        run: |
+          echo 'METADATA_UNIT_TESTS=PASS'
+          echo 'TEST_HEAD_SHA='$(git rev-parse HEAD)
+          echo 'NO_RELEASE_PERFORMED=PASS'

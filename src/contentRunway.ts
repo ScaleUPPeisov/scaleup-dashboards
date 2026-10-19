@@ -21,6 +21,8 @@ export type ContentRunwaySnapshot={
   projectedRunwayEnd?:string;
   contentRunwayDays:number;
   scheduledRunwayDays:number;
+  remoteScheduledDays:number;
+  localReadyDays:number;
   projectedReadySlots:string[];
   cadenceLabel:string;
   status:ChannelRunwayStatus;
@@ -158,6 +160,7 @@ export function buildContentRunway(
   const today=todayKrasnoyarskDate(now);
   const rawDays=projectedRunwayEnd?calendarDaysBetween(today,projectedRunwayEnd):0;
   const contentRunwayDays=Math.max(0,rawDays??0);
+  const scheduledRunwayDays=Math.max(0,record?.runwayDays||0);
   return{
     channelId:channel.id,
     scheduledThrough:record?.scheduledUntil,
@@ -165,14 +168,15 @@ export function buildContentRunway(
     readyVideoCount:ready.readyCount,
     projectedRunwayEnd,
     contentRunwayDays,
-    scheduledRunwayDays:Math.max(0,record?.runwayDays||0),
+    scheduledRunwayDays,
+    remoteScheduledDays:scheduledRunwayDays,
+    localReadyDays:Math.max(0,contentRunwayDays-scheduledRunwayDays),
     projectedReadySlots,
     cadenceLabel:scheduleDescription(channel),
     status:runwayStatus(contentRunwayDays,true),
     deficitDays:Math.max(0,Math.max(0,channel.targetBufferDays||0)-contentRunwayDays)
   };
 }
-
 
 export function confirmedScheduledRunwaySnapshot(
   channel:Channel,
@@ -199,6 +203,8 @@ export function confirmedScheduledRunwaySnapshot(
     projectedRunwayEnd,
     contentRunwayDays:contentDays,
     scheduledRunwayDays:confirmedDays,
+    remoteScheduledDays:confirmedDays,
+    localReadyDays:Math.max(0,contentDays-confirmedDays),
     projectedReadySlots,
     status:known||ready?runwayStatus(contentDays,true):'no-data',
     deficitDays:Math.max(0,Math.max(0,channel.targetBufferDays||0)-contentDays)

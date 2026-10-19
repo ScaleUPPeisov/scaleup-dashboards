@@ -2,11 +2,11 @@ import type {ImportedMetadata} from './metadata';
 import type {VideoJob} from './types';
 import {useApp} from './store';
 
-export type PublishScheduleMode='file'|'daily'|'2/2'|'3/1';
+export type PublishScheduleMode='file'|'daily'|'2/2'|'3/1'|'every_n_days';
 export type PublishTimeSource='file'|'common'|'youtube';
-export type PublishWorkspaceDraft={channelId:string;selectedIds:string[];rows:ImportedMetadata[];docx:boolean;thumbs:string[];allowMissingThumbs:boolean;allowDuplicate:boolean;scheduleMode:PublishScheduleMode;scheduleTimeSource:PublishTimeSource;scheduleStartDate:string;scheduleTime:string;updatedAt:string};
+export type PublishWorkspaceDraft={channelId:string;selectedIds:string[];rows:ImportedMetadata[];docx:boolean;thumbs:string[];allowMissingThumbs:boolean;allowDuplicate:boolean;scheduleMode:PublishScheduleMode;scheduleTimeSource:PublishTimeSource;scheduleStartDate:string;scheduleTime:string;intervalDays:number;updatedAt:string};
 const KEY='vyron:youtube-publish-workspaces:v2',ACTIVE='vyron:youtube-publish-active-channel:v2',RECENT='vyron:youtube-recent-channels:v1',ACTIVE_EVENT='vyron:youtube-active-channel';
-const empty=(channelId:string):PublishWorkspaceDraft=>({channelId,selectedIds:[],rows:[],docx:false,thumbs:[],allowMissingThumbs:false,allowDuplicate:false,scheduleMode:'file',scheduleTimeSource:'common',scheduleStartDate:'',scheduleTime:'',updatedAt:new Date(0).toISOString()});
+const empty=(channelId:string):PublishWorkspaceDraft=>({channelId,selectedIds:[],rows:[],docx:false,thumbs:[],allowMissingThumbs:false,allowDuplicate:false,scheduleMode:'file',scheduleTimeSource:'common',scheduleStartDate:'',scheduleTime:'',intervalDays:3,updatedAt:new Date(0).toISOString()});
 function all():Record<string,PublishWorkspaceDraft>{try{const x=JSON.parse(localStorage.getItem(KEY)||'{}');return x&&typeof x==='object'?x:{}}catch{return{}}}
 function cleanRow(x:any):ImportedMetadata{
  const boundJobId=String(x?.boundJobId||'').trim()||undefined,metadataImportedAt=String(x?.metadataImportedAt||'').trim()||undefined;
@@ -22,9 +22,12 @@ function bindRows(channelId:string,rows:ImportedMetadata[],selectedIds:string[])
  const state=useApp.getState(),channel=state.channels.find(x=>x.id===channelId),selectedSet=new Set(selectedIds),jobs=state.jobs.filter(j=>j.channelId===channelId&&selectedSet.has(j.id)).sort((a,b)=>a.number-b.number);
  if(!channel||!jobs.length)return rows;
  return rows.map((row,index):ImportedMetadata=>{
-  const job=(row.number!=null?jobs.find(j=>j.number===row.number):undefined)||jobs[index];if(!job)return row;
+  // Once assigned, job identity wins forever. Fresh SEO/Word packs are relative
+  // to the selected physical batch, not to the global technical VIDEO number.
+  const boundJob=row.boundJobId?jobs.find(j=>j.id===row.boundJobId):undefined;
+  if(row.boundJobId&&!boundJob)return row;
+  const job=boundJob||jobs[index];if(!job)return row;
   const explicit=normalizeChannel(row.channel),channelMatch=!explicit||explicit===normalizeChannel(channel.id)||explicit===normalizeChannel(channel.name);
-  if(row.boundJobId&&row.boundJobId!==job.id)return{...row,metadataBindingIssue:'METADATA_GENERATION_STALE'};
   const importedAt=Date.parse(row.metadataImportedAt||''),generationAt=generationStartedAt(job);
   if(!row.boundJobId&&(!Number.isFinite(importedAt)||(generationAt>0&&importedAt+1000<generationAt)))return{...row,metadataLegacyPersisted:!Number.isFinite(importedAt)||row.metadataLegacyPersisted,metadataBindingIssue:'METADATA_GENERATION_STALE'};
   const staleGeneration=Boolean(
@@ -36,11 +39,27 @@ function bindRows(channelId:string,rows:ImportedMetadata[],selectedIds:string[])
   return{...row,metadataLegacyPersisted:false,metadataBindingIssue,boundChannelId:channel.id,boundChannelName:channel.name,boundJobId:job.id,boundSourceGenerationKey:job.sourceGenerationKey,boundSourceFingerprint:job.currentSourceFingerprint,boundSourceFileSize:job.currentSourceFileSize};
  })
 }
+function repairLegacyOffsetBinding(channelId:string,rows:ImportedMetadata[],selectedIds:string[]){
+ if(!selectedIds.length||rows.length<selectedIds.length)return rows;
+ const seen=new Set<string>();let duplicate=false;
+ for(const row of rows){if(!row.boundJobId)continue;if(seen.has(row.boundJobId)){duplicate=true;break}seen.add(row.boundJobId)}
+ if(!duplicate)return rows;
+ // 6.1.10 could bind row 1 and row 2 to VIDEO_002 when a ten-row SEO
+ // pack was applied to VIDEO_002..VIDEO_011. Duplicate durable bindings are
+ // invalid by definition, so this signature can be repaired deterministically.
+ return bindRows(channelId,rows.map(clearBinding),selectedIds)
+}
 function writeWorkspace(channelId:string,next:PublishWorkspaceDraft){const rows=all();rows[channelId]=next;try{localStorage.setItem(KEY,JSON.stringify(rows))}catch{}return next}
-export function loadPublishWorkspace(channelId:string):PublishWorkspaceDraft{if(!channelId)return empty('');const x=all()[channelId];if(!x)return empty(channelId);return{channelId,selectedIds:Array.isArray(x.selectedIds)?x.selectedIds.map(String):[],rows:Array.isArray(x.rows)?x.rows.map(cleanRow):[],docx:Boolean(x.docx),thumbs:Array.isArray(x.thumbs)?x.thumbs.map(String):[],allowMissingThumbs:Boolean(x.allowMissingThumbs),allowDuplicate:Boolean(x.allowDuplicate),scheduleMode:(['daily','2/2','3/1'].includes(String(x.scheduleMode))?String(x.scheduleMode):'file') as PublishScheduleMode,scheduleTimeSource:(x.scheduleTimeSource==='file'?'file':x.scheduleTimeSource==='youtube'?'youtube':'common') as PublishTimeSource,scheduleStartDate:String(x.scheduleStartDate||''),scheduleTime:String(x.scheduleTime||''),updatedAt:x.updatedAt||new Date(0).toISOString()}}
+export function loadPublishWorkspace(channelId:string):PublishWorkspaceDraft{if(!channelId)return empty('');const x=all()[channelId];if(!x)return empty(channelId);const selectedIds=Array.isArray(x.selectedIds)?x.selectedIds.map(String):[],cleanedRows=Array.isArray(x.rows)?x.rows.map(cleanRow):[],rows=repairLegacyOffsetBinding(channelId,cleanedRows,selectedIds);return{channelId,selectedIds,rows,docx:Boolean(x.docx),thumbs:Array.isArray(x.thumbs)?x.thumbs.map(String):[],allowMissingThumbs:Boolean(x.allowMissingThumbs),allowDuplicate:Boolean(x.allowDuplicate),scheduleMode:(['daily','2/2','3/1','every_n_days'].includes(String(x.scheduleMode))?String(x.scheduleMode):'file') as PublishScheduleMode,scheduleTimeSource:(x.scheduleTimeSource==='file'?'file':x.scheduleTimeSource==='youtube'?'youtube':'common') as PublishTimeSource,scheduleStartDate:String(x.scheduleStartDate||''),scheduleTime:String(x.scheduleTime||''),intervalDays:Number.isFinite(+x.intervalDays)&&Math.floor(+x.intervalDays)>=1?Math.floor(+x.intervalDays):3,updatedAt:x.updatedAt||new Date(0).toISOString()}}
 export function savePublishWorkspace(channelId:string,draft:Partial<PublishWorkspaceDraft>){
  if(!channelId)return loadPublishWorkspace('');
- const prev=loadPublishWorkspace(channelId),now=new Date().toISOString(),incomingRows=Array.isArray(draft.rows)?draft.rows:prev.rows,rowsChanged=Array.isArray(draft.rows)&&!sameUserRows(incomingRows,prev.rows);
+ const prev=loadPublishWorkspace(channelId),now=new Date().toISOString(),suppliedRows=Array.isArray(draft.rows),incomingRows=suppliedRows?draft.rows!:prev.rows;
+ // readDoc() supplies freshly parsed rows without internal binding fields. Treat
+ // that as a real import even when the Word/SEO text is byte-for-byte identical
+ // to the previous pack. Persisted legacy rows are explicitly marked and do not
+ // qualify, so old metadata cannot silently become fresh for a new generation.
+ const freshUnboundImport=suppliedRows&&incomingRows.some(row=>!row.boundJobId&&!row.metadataImportedAt&&!row.metadataLegacyPersisted);
+ const rowsChanged=suppliedRows&&(!sameUserRows(incomingRows,prev.rows)||freshUnboundImport);
  let nextRows=rowsChanged?incomingRows.map(row=>({...clearBinding(row),metadataImportedAt:now})):incomingRows.map(row=>({...row}));
  const selectedIds=Array.isArray(draft.selectedIds)?draft.selectedIds.map(String):prev.selectedIds;
  nextRows=bindRows(channelId,nextRows,selectedIds);

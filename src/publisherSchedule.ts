@@ -7,18 +7,19 @@ export function todayKrasnoyarskDate(now=new Date()){
  const p=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Krasnoyarsk',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(now);const get=(t:string)=>p.find(x=>x.type===t)?.value||'';return `${get('year')}-${get('month')}-${get('day')}`
 }
 export function publisherKrasnoyarskIso(date:string,time:string){if(!DATE.test(date)||!TIME.test(time))return'';const d=new Date(`${date}T${time}:00+07:00`);return Number.isFinite(d.getTime())?d.toISOString():''}
-export function publisherScheduleDateKeys(mode:PublishScheduleMode,startDate:string,count:number){
+export function publisherScheduleDateKeys(mode:PublishScheduleMode,startDate:string,count:number,intervalDays=3){
  const wanted=Math.max(0,Math.floor(count||0));if(mode==='file'||!wanted||!DATE.test(startDate))return[] as string[];
  const out:string[]=[];let key=startDate,guard=0;
  if(mode==='daily'){while(out.length<wanted&&guard++<20000){out.push(key);key=addCalendarDays(key,1)}return out}
+ if(mode==='every_n_days'){const step=Math.max(1,Math.floor(Number.isFinite(intervalDays)?intervalDays:3));while(out.length<wanted&&guard++<20000){out.push(key);key=addCalendarDays(key,step)}return out}
  const pattern=mode==='2/2'?{publishDays:2,pauseDays:2,anchorDate:startDate}:{publishDays:3,pauseDays:1,anchorDate:startDate};
  while(out.length<wanted&&guard++<50000){if(isPatternPublishDate(key,pattern))out.push(key);key=addCalendarDays(key,1)}return out
 }
-export function publisherScheduleDates(mode:PublishScheduleMode,startDate:string,time:string,count:number){
+export function publisherScheduleDates(mode:PublishScheduleMode,startDate:string,time:string,count:number,intervalDays=3){
  if(!TIME.test(time))return[] as string[];
- return publisherScheduleDateKeys(mode,startDate,count).map(day=>publisherKrasnoyarskIso(day,time)).filter(Boolean)
+ return publisherScheduleDateKeys(mode,startDate,count,intervalDays).map(day=>publisherKrasnoyarskIso(day,time)).filter(Boolean)
 }
-export function publisherSchedulePreview(mode:PublishScheduleMode,startDate:string,time:string,count:number){const dates=publisherScheduleDates(mode,startDate,time,count);return{count:dates.length,first:dates[0],last:dates[dates.length-1],dates}}
+export function publisherSchedulePreview(mode:PublishScheduleMode,startDate:string,time:string,count:number,intervalDays=3){const dates=publisherScheduleDates(mode,startDate,time,count,intervalDays);return{count:dates.length,first:dates[0],last:dates[dates.length-1],dates}}
 
 
 export type YoutubeScheduleLike={privacyStatus?:string;publishAt?:string};
