@@ -1,0 +1,106 @@
+name: VYRON 6.1.11 Every N Days Deterministic QA
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact product candidate SHA to verify
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-6111-every-n-days-qa-${{ inputs.candidate_sha }}
+  cancel-in-progress: false
+
+jobs:
+  deterministic-qa:
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 0
+
+      - name: Verify exact SHA
+        id: exact
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected='${{ inputs.candidate_sha }}'
+          actual="$(git rev-parse HEAD)"
+          echo "EXPECTED_SHA=$expected"
+          echo "ACTUAL_SHA=$actual"
+          if [ "$actual" != "$expected" ]; then
+            echo 'EXACT_SHA_VERIFIED=NO'
+            exit 1
+          fi
+          echo 'EXACT_SHA_VERIFIED=YES'
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set +e
+          npm ci --no-audit --no-fund
+          code=$?
+          echo "INSTALL_EXIT=$code"
+          exit "$code"
+
+      - name: New EVERY_N_DAYS interval tests
+        shell: bash
+        run: |
+          set +e
+          npx vitest run src/publisherSchedule.test.ts src/scheduleContinuation.test.ts src/publishWorkspaceState.interval.test.ts -t EVERY_N_DAYS --reporter=verbose
+          code=$?
+          echo "INTERVAL_TESTS_EXIT=$code"
+          exit "$code"
+
+      - name: Existing Publisher Scheduler focused tests
+        shell: bash
+        run: |
+          set +e
+          npx vitest run src/publisher*.test.ts src/scheduleContinuation.test.ts --reporter=verbose
+          code=$?
+          echo "PUBLISHER_SCHEDULER_TESTS_EXIT=$code"
+          exit "$code"
+
+      - name: Full frontend suite
+        shell: bash
+        run: |
+          set +e
+          npm test
+          code=$?
+          echo "FULL_FRONTEND_EXIT=$code"
+          exit "$code"
+
+      - name: Production build
+        shell: bash
+        run: |
+          set +e
+          npm run build
+          code=$?
+          echo "PRODUCTION_BUILD_EXIT=$code"
+          exit "$code"
+
+      - name: Source tree clean
+        shell: bash
+        run: |
+          set -euo pipefail
+          dirty="$(git status --porcelain)"
+          if [ -n "$dirty" ]; then
+            echo 'SOURCE_TREE_CLEAN=NO'
+            printf '%s\n' "$dirty"
+            exit 1
+          fi
+          echo 'SOURCE_TREE_CLEAN=YES'
+          echo 'HOSTED_QA_GATE=PASS'
