@@ -54,3 +54,19 @@ describe('VYRON 3.3.3 cadence date + per-video file time',()=>{
   expect(r.dates).not.toContain(occupied);
  });
 });
+
+
+describe('EVERY_N_DAYS continuation and time-source independence',()=>{
+ it('continues 3 calendar days after the last scheduled publication',()=>{
+  const videos=[{privacyStatus:'private',publishAt:'2026-11-03T07:00:00.000Z'}];
+  const r=recommendScheduleContinuation(videos,'every_n_days','14:00',new Date('2026-10-31T00:00:00.000Z'),3);
+  expect(r.recommendedStart).toBe('2026-11-06');
+  const next=resolvePublisherBatchSchedule({mode:'every_n_days',startDate:r.recommendedStart,time:'14:00',count:3,intervalDays:3,now:new Date('2026-11-01T00:00:00.000Z')});
+  expect(next.items.map(x=>x.publishAt?.slice(0,10))).toEqual(['2026-11-06','2026-11-09','2026-11-12']);
+ });
+ it('changes dates only while preserving each VIDEO time from file',()=>{
+  const rows=[{number:1,publishTime:'07:00',source:'docx'},{number:2,publishTime:'08:30',source:'docx'},{number:3,publishTime:'10:00',source:'docx'}];
+  const r=resolvePublisherBatchSchedule({mode:'every_n_days',startDate:'2026-11-01',time:'18:00',count:3,intervalDays:3,timeSource:'file',fileTimeRows:rows,now:new Date('2026-10-31T00:00:00.000Z')});
+  expect(r.items.map(x=>x.publishAt)).toEqual(['2026-11-01T00:00:00.000Z','2026-11-04T01:30:00.000Z','2026-11-07T03:00:00.000Z']);
+ });
+});

@@ -17,9 +17,9 @@ function metadataDateKey(row:ImportedMetadata|undefined,fallbackIso?:string){
  const fallback=validIso(fallbackIso);return fallback?localParts(fallback).date:undefined
 }
 export function futureScheduledPublishAts(videos:YoutubeScheduleLike[],now=new Date()){return videos.filter(v=>v.privacyStatus==='private'&&v.publishAt&&Number.isFinite(Date.parse(v.publishAt!))&&Date.parse(v.publishAt!)>now.getTime()).map(v=>new Date(v.publishAt!).toISOString()).sort((a,b)=>Date.parse(a)-Date.parse(b))}
-export function recommendScheduleContinuation(videos:YoutubeScheduleLike[],mode:PublishScheduleMode,time:string,now=new Date()){
+export function recommendScheduleContinuation(videos:YoutubeScheduleLike[],mode:PublishScheduleMode,time:string,now=new Date(),intervalDays=3){
  const occupied=futureScheduledPublishAts(videos,now),lastPublishAt=occupied.at(-1),today=todayKrasnoyarskDate(now),occupiedKeys=new Set(occupied.map(minuteKey));let date=today;
- if(lastPublishAt){const lastDate=localParts(lastPublishAt).date;date=addCalendarDays(lastDate,mode==='2/2'?2:1)}
+ if(lastPublishAt){const lastDate=localParts(lastPublishAt).date,step=mode==='2/2'?2:mode==='every_n_days'?Math.max(1,Math.floor(Number.isFinite(intervalDays)?intervalDays:3)):1;date=addCalendarDays(lastDate,step)}
  let guard=0;while(guard++<3700){const iso=publisherKrasnoyarskIso(date,time);if(iso&&Date.parse(iso)>now.getTime()&&!occupiedKeys.has(minuteKey(iso)))break;date=addCalendarDays(date,1)}
  return{futureCount:occupied.length,lastPublishAt,recommendedStart:date,occupied,timezone:PUBLISHER_TIMEZONE}
 }
@@ -41,7 +41,7 @@ export function inferYoutubePublishClock(videos:Array<YoutubeScheduleLike&{publi
 }
 
 export type BatchScheduleItem={publishAt?:string;status:'UNCHANGED'|'RESCHEDULED'|'MISSING';reason?:'PAST'|'CONFLICT'|'MISSING'};
-export type ResolvePublisherBatchScheduleOptions={mode:PublishScheduleMode;startDate:string;time:string;count:number;timeSource?:PublishTimeSource;fileTimeRows?:Array<ImportedMetadata|undefined>;filePublishAts?:Array<string|undefined>;occupied?:string[];now?:Date;fallbackIntervalDays?:number};
+export type ResolvePublisherBatchScheduleOptions={mode:PublishScheduleMode;startDate:string;time:string;count:number;timeSource?:PublishTimeSource;fileTimeRows?:Array<ImportedMetadata|undefined>;filePublishAts?:Array<string|undefined>;occupied?:string[];now?:Date;intervalDays?:number;fallbackIntervalDays?:number};
 export function resolvePublisherBatchSchedule(opts:ResolvePublisherBatchScheduleOptions){
  const count=Math.max(0,Math.floor(opts.count||0)),now=opts.now||new Date(),nowMs=now.getTime(),occupiedKeys=new Set((opts.occupied||[]).map(minuteKey).filter(Number.isFinite));const items:BatchScheduleItem[]=[],dates:string[]=[];let conflicts=0,pastCorrected=0;const reserve=(iso:string)=>{occupiedKeys.add(minuteKey(iso));dates.push(iso)};
  const timeSource:PublishTimeSource=opts.timeSource||(opts.mode==='file'?'file':'common');
@@ -49,9 +49,9 @@ export function resolvePublisherBatchSchedule(opts:ResolvePublisherBatchSchedule
   const useFileTime=timeSource==='file';
   if(!DATE.test(opts.startDate)||(!useFileTime&&!TIME.test(opts.time)))return{items:Array.from({length:count},()=>({status:'MISSING',reason:'MISSING'} as BatchScheduleItem)),dates,conflicts,pastCorrected};
   if(!useFileTime){
-   const candidates=publisherScheduleDates(opts.mode,opts.startDate,opts.time,Math.max(count*8,count+256));for(const iso of candidates){if(items.length>=count)break;const ms=Date.parse(iso),key=minuteKey(iso);if(!Number.isFinite(ms))continue;if(ms<=nowMs){pastCorrected++;continue}if(occupiedKeys.has(key)){conflicts++;continue}reserve(iso);items.push({publishAt:iso,status:'UNCHANGED'})}while(items.length<count)items.push({status:'MISSING',reason:'MISSING'});return{items,dates,conflicts,pastCorrected}
+   const candidates=publisherScheduleDates(opts.mode,opts.startDate,opts.time,Math.max(count*8,count+256),opts.intervalDays);for(const iso of candidates){if(items.length>=count)break;const ms=Date.parse(iso),key=minuteKey(iso);if(!Number.isFinite(ms))continue;if(ms<=nowMs){pastCorrected++;continue}if(occupiedKeys.has(key)){conflicts++;continue}reserve(iso);items.push({publishAt:iso,status:'UNCHANGED'})}while(items.length<count)items.push({status:'MISSING',reason:'MISSING'});return{items,dates,conflicts,pastCorrected}
   }
-  const rows=opts.fileTimeRows||[],candidateDays=publisherScheduleDateKeys(opts.mode,opts.startDate,Math.max(count*16,count+512)),today=todayKrasnoyarskDate(now);let cursor=0;
+  const rows=opts.fileTimeRows||[],candidateDays=publisherScheduleDateKeys(opts.mode,opts.startDate,Math.max(count*16,count+512),opts.intervalDays),today=todayKrasnoyarskDate(now);let cursor=0;
   for(let i=0;i<count;i++){
    const row=rows[i];let placed=false,itemPast=false,itemConflict=false;
    while(cursor<candidateDays.length){

@@ -2,11 +2,11 @@ import type {ImportedMetadata} from './metadata';
 import type {VideoJob} from './types';
 import {useApp} from './store';
 
-export type PublishScheduleMode='file'|'daily'|'2/2'|'3/1';
+export type PublishScheduleMode='file'|'daily'|'2/2'|'3/1'|'every_n_days';
 export type PublishTimeSource='file'|'common'|'youtube';
-export type PublishWorkspaceDraft={channelId:string;selectedIds:string[];rows:ImportedMetadata[];docx:boolean;thumbs:string[];allowMissingThumbs:boolean;allowDuplicate:boolean;scheduleMode:PublishScheduleMode;scheduleTimeSource:PublishTimeSource;scheduleStartDate:string;scheduleTime:string;updatedAt:string};
+export type PublishWorkspaceDraft={channelId:string;selectedIds:string[];rows:ImportedMetadata[];docx:boolean;thumbs:string[];allowMissingThumbs:boolean;allowDuplicate:boolean;scheduleMode:PublishScheduleMode;scheduleTimeSource:PublishTimeSource;scheduleStartDate:string;scheduleTime:string;intervalDays:number;updatedAt:string};
 const KEY='vyron:youtube-publish-workspaces:v2',ACTIVE='vyron:youtube-publish-active-channel:v2',RECENT='vyron:youtube-recent-channels:v1',ACTIVE_EVENT='vyron:youtube-active-channel';
-const empty=(channelId:string):PublishWorkspaceDraft=>({channelId,selectedIds:[],rows:[],docx:false,thumbs:[],allowMissingThumbs:false,allowDuplicate:false,scheduleMode:'file',scheduleTimeSource:'common',scheduleStartDate:'',scheduleTime:'',updatedAt:new Date(0).toISOString()});
+const empty=(channelId:string):PublishWorkspaceDraft=>({channelId,selectedIds:[],rows:[],docx:false,thumbs:[],allowMissingThumbs:false,allowDuplicate:false,scheduleMode:'file',scheduleTimeSource:'common',scheduleStartDate:'',scheduleTime:'',intervalDays:3,updatedAt:new Date(0).toISOString()});
 function all():Record<string,PublishWorkspaceDraft>{try{const x=JSON.parse(localStorage.getItem(KEY)||'{}');return x&&typeof x==='object'?x:{}}catch{return{}}}
 function cleanRow(x:any):ImportedMetadata{
  const boundJobId=String(x?.boundJobId||'').trim()||undefined,metadataImportedAt=String(x?.metadataImportedAt||'').trim()||undefined;
@@ -50,7 +50,7 @@ function repairLegacyOffsetBinding(channelId:string,rows:ImportedMetadata[],sele
  return bindRows(channelId,rows.map(clearBinding),selectedIds)
 }
 function writeWorkspace(channelId:string,next:PublishWorkspaceDraft){const rows=all();rows[channelId]=next;try{localStorage.setItem(KEY,JSON.stringify(rows))}catch{}return next}
-export function loadPublishWorkspace(channelId:string):PublishWorkspaceDraft{if(!channelId)return empty('');const x=all()[channelId];if(!x)return empty(channelId);const selectedIds=Array.isArray(x.selectedIds)?x.selectedIds.map(String):[],cleanedRows=Array.isArray(x.rows)?x.rows.map(cleanRow):[],rows=repairLegacyOffsetBinding(channelId,cleanedRows,selectedIds);return{channelId,selectedIds,rows,docx:Boolean(x.docx),thumbs:Array.isArray(x.thumbs)?x.thumbs.map(String):[],allowMissingThumbs:Boolean(x.allowMissingThumbs),allowDuplicate:Boolean(x.allowDuplicate),scheduleMode:(['daily','2/2','3/1'].includes(String(x.scheduleMode))?String(x.scheduleMode):'file') as PublishScheduleMode,scheduleTimeSource:(x.scheduleTimeSource==='file'?'file':x.scheduleTimeSource==='youtube'?'youtube':'common') as PublishTimeSource,scheduleStartDate:String(x.scheduleStartDate||''),scheduleTime:String(x.scheduleTime||''),updatedAt:x.updatedAt||new Date(0).toISOString()}}
+export function loadPublishWorkspace(channelId:string):PublishWorkspaceDraft{if(!channelId)return empty('');const x=all()[channelId];if(!x)return empty(channelId);const selectedIds=Array.isArray(x.selectedIds)?x.selectedIds.map(String):[],cleanedRows=Array.isArray(x.rows)?x.rows.map(cleanRow):[],rows=repairLegacyOffsetBinding(channelId,cleanedRows,selectedIds);return{channelId,selectedIds,rows,docx:Boolean(x.docx),thumbs:Array.isArray(x.thumbs)?x.thumbs.map(String):[],allowMissingThumbs:Boolean(x.allowMissingThumbs),allowDuplicate:Boolean(x.allowDuplicate),scheduleMode:(['daily','2/2','3/1','every_n_days'].includes(String(x.scheduleMode))?String(x.scheduleMode):'file') as PublishScheduleMode,scheduleTimeSource:(x.scheduleTimeSource==='file'?'file':x.scheduleTimeSource==='youtube'?'youtube':'common') as PublishTimeSource,scheduleStartDate:String(x.scheduleStartDate||''),scheduleTime:String(x.scheduleTime||''),intervalDays:Number.isFinite(+x.intervalDays)&&Math.floor(+x.intervalDays)>=1?Math.floor(+x.intervalDays):3,updatedAt:x.updatedAt||new Date(0).toISOString()}}
 export function savePublishWorkspace(channelId:string,draft:Partial<PublishWorkspaceDraft>){
  if(!channelId)return loadPublishWorkspace('');
  const prev=loadPublishWorkspace(channelId),now=new Date().toISOString(),suppliedRows=Array.isArray(draft.rows),incomingRows=suppliedRows?draft.rows!:prev.rows;
