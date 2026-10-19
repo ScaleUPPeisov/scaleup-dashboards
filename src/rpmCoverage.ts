@@ -19,12 +19,16 @@ export function buildRpmCoverage(channels:Channel[],profiles:YoutubeProfile[]):R
   if(profile?.analyticsAuthorized===false)return{channelId:channel.id,channelName:channel.name,state:'NO_ANALYTICS_ACCESS' as const};
   return{channelId:channel.id,channelName:channel.name,state:'NO_DATA' as const};
  });
- const valid=rows.filter((row):row is RpmCoverageRow&{state:'VALID';views:number}=>row.state==='VALID'&&numeric(row.views));
+ const valid=rows.filter(row=>row.state==='VALID'&&numeric(row.views));
+ const totalViews=rows.reduce((sum,row)=>{
+  if(row.state!=='VALID'||!numeric(row.views))return sum;
+  return sum+row.views;
+ },0);
  const validDates=valid.map(row=>row.updatedAt).filter((value):value is string=>Boolean(value)&&Number.isFinite(Date.parse(value!))).sort();
  return{
   rows,
   valid,
-  totalViews:valid.reduce((sum,row)=>sum+row.views,0),
+  totalViews,
   validChannels:valid.length,
   zeroViewChannels:valid.filter(row=>row.views===0).length,
   noData:rows.filter(row=>row.state==='NO_DATA').length,
