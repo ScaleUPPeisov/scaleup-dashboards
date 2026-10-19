@@ -6,7 +6,7 @@ on:
       candidate_sha:
         description: "Frozen product candidate SHA"
         required: true
-        default: "0a837760e4a46c6267d7c22cea51325c68495cae"
+        default: "b99fe5318e2803f5233eccac31e15e086f44f3ba"
         type: string
 
 permissions:
@@ -21,7 +21,7 @@ jobs:
         shell: bash
         env:
           REQUESTED_SHA: ${{ inputs.candidate_sha }}
-          EXPECTED_SHA: 0a837760e4a46c6267d7c22cea51325c68495cae
+          EXPECTED_SHA: b99fe5318e2803f5233eccac31e15e086f44f3ba
         run: |
           echo "REQUESTED_SHA=$REQUESTED_SHA"
           if [[ "$REQUESTED_SHA" != "$EXPECTED_SHA" ]]; then
@@ -32,13 +32,13 @@ jobs:
       - name: Checkout exact product SHA
         uses: actions/checkout@v4
         with:
-          ref: 0a837760e4a46c6267d7c22cea51325c68495cae
+          ref: b99fe5318e2803f5233eccac31e15e086f44f3ba
           fetch-depth: 0
 
       - name: Verify exact product SHA
         shell: bash
         env:
-          EXPECTED_SHA: 0a837760e4a46c6267d7c22cea51325c68495cae
+          EXPECTED_SHA: b99fe5318e2803f5233eccac31e15e086f44f3ba
         run: |
           ACTUAL_SHA="$(git rev-parse HEAD)"
           echo "PRODUCT_CANDIDATE_SHA=$EXPECTED_SHA"
@@ -82,14 +82,14 @@ jobs:
             npm --version
             rustc --version || true
             cargo --version || true
-            echo "PRODUCT_CANDIDATE_SHA=0a837760e4a46c6267d7c22cea51325c68495cae"
+            echo "PRODUCT_CANDIDATE_SHA=b99fe5318e2803f5233eccac31e15e086f44f3ba"
             echo "RUNNER_OS=$RUNNER_OS"
             echo "RUNNER_ARCH=$RUNNER_ARCH"
             echo "MACOS_VERSION=$(sw_vers -productVersion)"
           } 2>&1 | tee "$EVIDENCE_DIR/environment.log"
 
           ACTUAL_NOW="$(git rev-parse HEAD)"
-          if [[ "$ACTUAL_NOW" != "0a837760e4a46c6267d7c22cea51325c68495cae" ]]; then
+          if [[ "$ACTUAL_NOW" != "b99fe5318e2803f5233eccac31e15e086f44f3ba" ]]; then
             echo "ERROR: product SHA changed before QA"
             exit 1
           fi
@@ -220,7 +220,7 @@ jobs:
         shell: bash
         run: |
           {
-            echo "PRODUCT_CANDIDATE_SHA=0a837760e4a46c6267d7c22cea51325c68495cae"
+            echo "PRODUCT_CANDIDATE_SHA=b99fe5318e2803f5233eccac31e15e086f44f3ba"
             echo "ACTUAL_SHA=${ACTUAL_SHA:-$(git rev-parse HEAD)}"
             echo "EXACT_SHA_VERIFIED=${EXACT_SHA_VERIFIED:-NO}"
             echo "RUNNER_OS=${RUNNER_OS_VALUE:-$RUNNER_OS}"
