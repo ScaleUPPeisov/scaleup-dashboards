@@ -88,14 +88,15 @@ jobs:
           set -e
           echo "PRODUCTION_BUILD_EXIT=$code"
           exit "$code"
-      - name: Verify source tree clean
+      - name: Verify tracked source tree clean
         shell: bash
         run: |
           set -Eeuo pipefail
-          echo 'GIT_STATUS_BEGIN'
-          git status --short
-          echo 'GIT_STATUS_END'
-          test -z "$(git status --short)"
+          echo 'TRACKED_STATUS_BEGIN'
+          git status --short --untracked-files=no
+          echo 'TRACKED_STATUS_END'
+          git diff --exit-code
+          git diff --cached --exit-code
           echo 'SOURCE_TREE_CLEAN=YES'
 
   mac-build:
