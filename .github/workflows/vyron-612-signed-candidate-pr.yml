@@ -1,9 +1,9 @@
-name: VYRON 6.1.12 Signed Candidate PR Gate
+name: VYRON 6.1.13 Signed Candidate PR Gate
 
 on:
   pull_request:
     branches:
-      - release/vyron-6.1.12-signing
+      - release/vyron-6.1.13-signing
   workflow_dispatch:
 
 permissions:
@@ -11,8 +11,8 @@ permissions:
   actions: read
 
 env:
-  VERSION: '6.1.12'
-  SOURCE_SHA: '919c18c2e56658262f4e8df695ae6ee302e679ab'
+  VERSION: '6.1.13'
+  SOURCE_SHA: '559df977f12ac35912ce8c3d2d1a184897a3641f'
   BUNDLE_ID: 'studio.channelflow.desktop'
   EXPECTED_SIGNING_CERT_SHA1: '2C8B0BD4EE1C000D29DD0667BF1068D4673692C9'
 
@@ -71,24 +71,28 @@ jobs:
           if(p.version!==v||l.version!==v||l.packages?.['']?.version!==v||t.version!==v) process.exit(2);
           if(t.identifier!=='studio.channelflow.desktop'||t.bundle.createUpdaterArtifacts!==true) process.exit(3);
           NODE
-          grep -q '^version = "6.1.12"$' src-tauri/Cargo.toml
+          grep -q '^version = "6.1.13"$' src-tauri/Cargo.toml
           python3 - <<'PY'
           import pathlib,re
           lock=pathlib.Path('src-tauri/Cargo.lock').read_text()
           blocks=lock.split('[[package]]')
           hit=[b for b in blocks if re.search(r'(?m)^name\s*=\s*"channelflow"\s*$',b)]
-          assert len(hit)==1 and re.search(r'(?m)^version\s*=\s*"6\.1\.12"\s*$',hit[0])
+          assert len(hit)==1 and re.search(r'(?m)^version\s*=\s*"6\.1\.13"\s*$',hit[0])
           PY
           echo 'VERSION_IDENTITY=PASS'
 
       - name: Focused accepted tests
         run: >
           npx vitest run
-          src/rpmCoverage.test.ts
-          src/vyron618PublisherIntegrity.test.ts
-          src/publishWorkspaceState.interval.test.ts
-          src/publisherSchedule.test.ts
-          src/scheduleContinuation.test.ts
+          src/localChannelRunway.test.ts
+          src/contentRunway.test.ts
+          src/channelSchedule.test.ts
+          src/channelRunway.test.ts
+          src/v611ChannelRunwayInventoryHotfix.test.ts
+          src/v610ChannelRunwayFleetRefresh.test.ts
+
+      - name: TypeScript type check
+        run: npx tsc --noEmit
 
       - name: Production frontend build
         run: npm run build
@@ -143,9 +147,9 @@ jobs:
           test -n "$VYRON_MACOS_SIGNING_P12_BASE64"
           test -n "$VYRON_MACOS_SIGNING_P12_PASSWORD"
           test -n "$VYRON_MACOS_SIGNING_IDENTITY"
-          KEYCHAIN="$RUNNER_TEMP/vyron-612-release.keychain-db"
+          KEYCHAIN="$RUNNER_TEMP/vyron-613-release.keychain-db"
           KEYCHAIN_PASSWORD="$(uuidgen)$(uuidgen)"
-          P12="$RUNNER_TEMP/vyron-612-release.p12"
+          P12="$RUNNER_TEMP/vyron-613-release.p12"
           printf '%s' "$VYRON_MACOS_SIGNING_P12_BASE64" | base64 --decode > "$P12"
           chmod 600 "$P12"
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
@@ -238,7 +242,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: VYRON-6.1.12-MAC-SIGNED-CANDIDATE
+          name: VYRON-6.1.13-MAC-SIGNED-CANDIDATE
           path: release-mac/**
           if-no-files-found: error
           retention-days: 30
@@ -248,7 +252,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          rm -f "$RUNNER_TEMP/vyron-612-release.p12"
+          rm -f "$RUNNER_TEMP/vyron-613-release.p12"
           if [[ -n "${VYRON_SIGNING_KEYCHAIN:-}" ]]; then security delete-keychain "$VYRON_SIGNING_KEYCHAIN" >/dev/null 2>&1 || true; fi
 
   windows-signed:
@@ -320,9 +324,9 @@ jobs:
           if(-not $installer){throw 'NSIS_MISSING'}
           $sig=Get-Item ($installer.FullName + '.sig') -ErrorAction Stop
           New-Item -ItemType Directory -Force -Path release-windows | Out-Null
-          Copy-Item $installer.FullName release-windows/VYRON_6.1.12_x64-setup.exe
-          Copy-Item $sig.FullName release-windows/VYRON_6.1.12_x64-setup.exe.sig
-          (Get-FileHash release-windows/VYRON_6.1.12_x64-setup.exe -Algorithm SHA256).Hash.ToLowerInvariant() | Set-Content release-windows/VYRON_6.1.12_x64-setup.exe.sha256
+          Copy-Item $installer.FullName release-windows/VYRON_6.1.13_x64-setup.exe
+          Copy-Item $sig.FullName release-windows/VYRON_6.1.13_x64-setup.exe.sig
+          (Get-FileHash release-windows/VYRON_6.1.13_x64-setup.exe -Algorithm SHA256).Hash.ToLowerInvariant() | Set-Content release-windows/VYRON_6.1.13_x64-setup.exe.sha256
           Set-Content release-windows/source-head.txt $env:SOURCE_SHA
           Write-Host 'WINDOWS_PACKAGE=PASS'
 
@@ -359,7 +363,7 @@ jobs:
             println!("WINDOWS_UPDATER_SIGNATURE=PASS");
           }
           '@ | Set-Content -Encoding utf8 (Join-Path $verifyRoot 'src/main.rs')
-          cargo run --quiet --release --manifest-path (Join-Path $verifyRoot 'Cargo.toml') -- release-windows/VYRON_6.1.12_x64-setup.exe release-windows/VYRON_6.1.12_x64-setup.exe.sig src-tauri/tauri.conf.json
+          cargo run --quiet --release --manifest-path (Join-Path $verifyRoot 'Cargo.toml') -- release-windows/VYRON_6.1.13_x64-setup.exe release-windows/VYRON_6.1.13_x64-setup.exe.sig src-tauri/tauri.conf.json
           if($LASTEXITCODE -ne 0){throw 'WINDOWS_SIGNATURE_VERIFY_FAILED'}
           Write-Host 'UPDATER_SIGNING=PASS'
           Write-Host 'UPDATER_BUNDLE=PASS'
@@ -367,7 +371,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: VYRON-6.1.12-WINDOWS-SIGNED-CANDIDATE
+          name: VYRON-6.1.13-WINDOWS-SIGNED-CANDIDATE
           path: release-windows/**
           if-no-files-found: error
           retention-days: 30
