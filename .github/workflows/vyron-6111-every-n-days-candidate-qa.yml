@@ -99,11 +99,31 @@ jobs:
         shell: bash
         run: |
           set +e
-          npm test
-          code=$?
+          npm test 2>&1 | tee full-frontend-test.log
+          code=${PIPESTATUS[0]}
           set -e
           echo "FULL_FRONTEND_EXIT=$code"
+          if [ "$code" -ne 0 ]; then
+            {
+              echo "### Full frontend failure diagnostics"
+              echo
+              echo "FULL_FRONTEND_EXIT=$code"
+              echo
+              echo '```text'
+              tail -n 300 full-frontend-test.log
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
           exit "$code"
+
+      - name: Upload frontend test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-frontend-test-log
+          path: full-frontend-test.log
+          if-no-files-found: warn
+          retention-days: 1
 
       - name: Production build
         shell: bash
