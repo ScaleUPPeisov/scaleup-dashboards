@@ -1,9 +1,10 @@
 import React,{useEffect,useMemo,useRef,useState} from 'react';
-import {productionManagerApi,type GlobalProjectCleanupPreview,type MaterialsSummary} from './productionManagerApi';
+import {productionManagerApi,type GlobalCleanupRenderRoot,type GlobalProjectCleanupPreview,type MaterialsSummary} from './productionManagerApi';
 import {patchChannelProductionPrefs,useProductionPrefs} from './productionPrefs';
 import {createJobsCount} from './autopilotCore';
 import {useApp} from './store';
 import {notifySuccess} from './notificationCenter';
+import {renderChannelFolderPath} from './renderFolderSelection';
 
 function n(value:number|undefined){return (value||0).toLocaleString('ru-RU')}
 function gb(value:number|undefined){return ((value||0)/1024/1024/1024).toFixed(2)}
@@ -46,6 +47,11 @@ export function MaterialsManager(){
     prefs.productionRoot,
     ...Object.values(prefs.byChannel||{}).map(x=>x.productionRoot)
   ].map(x=>(x||'').trim()).filter((x,i,a)=>Boolean(x)&&a.indexOf(x)===i),[settings.workspace,prefs.productionRoot,prefs.byChannel]);
+  const cleanupRenderRoots=useMemo(()=>channels.map<GlobalCleanupRenderRoot>(channel=>({
+    channelId:channel.id,
+    channelName:channel.name,
+    renderRoot:(channel.renderFolderPath||(settings.renderRootPath?renderChannelFolderPath(settings.renderRootPath,channel.name):'')).trim()
+  })).filter(x=>Boolean(x.renderRoot)),[channels,settings.renderRootPath]);
 
   const manualChannel=channels.find(x=>x.id===manualChannelId);
   const manualTracksPerProject=Math.max(1,Math.min(100,prefs.byChannel[manualChannelId]?.tracksPerProject||manualChannel?.minTracks||10));
@@ -236,7 +242,7 @@ export function MaterialsManager(){
   async function previewCleanup(){
     if(!cleanupRoots.length){setCleanup(null);return}
     setBusy('cleanup-preview');
-    try{setCleanup(await productionManagerApi.previewGlobalProjectCleanup(cleanupRoots))}
+    try{setCleanup(await productionManagerApi.previewGlobalProjectCleanup(cleanupRoots,cleanupRenderRoots))}
     catch(e){setCleanup(null);toast('Не удалось проверить Safe Cleanup: '+String(e))}
     finally{setBusy('')}
   }
@@ -265,7 +271,7 @@ export function MaterialsManager(){
     if(!window.confirm('ФИНАЛЬНОЕ ПОДТВЕРЖДЕНИЕ: переместить только SAFE_TO_CLEAN project-папки в Корзину?'))return;
     setBusy('cleanup');
     try{
-      const result=await productionManagerApi.executeGlobalProjectCleanup(cleanupRoots,true);
+      const result=await productionManagerApi.executeGlobalProjectCleanup(cleanupRoots,cleanupRenderRoots,true);
       notifySuccess('Безопасная очистка завершена','Удалено '+result.deletedProjects+' проектов • освобождено '+gb(result.bytesFreed)+' GB • Render сохранены: '+result.protectedRenders,{operationId:'materials-cleanup:'+Date.now()});
       setCleanup(null);
       await refresh();
