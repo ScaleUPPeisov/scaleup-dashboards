@@ -2542,6 +2542,18 @@ fn cleanup_normalized_path(path: &Path) -> String {
         .trim_end_matches('/')
         .to_string()
 }
+fn cleanup_output_basename(raw: &str) -> Option<String> {
+    let normalized_separators = raw.replace('\\', "/");
+    Path::new(&normalized_separators)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+fn cleanup_normalized_filename(raw: &str) -> String {
+    raw.nfc().flat_map(char::to_lowercase).collect()
+}
 fn configured_cleanup_render_root<'a>(
     manifest: &BatchManifest,
     configured: &'a [GlobalCleanupRenderRoot],
@@ -2634,20 +2646,50 @@ fn resolve_cleanup_render(
     manifest: &BatchManifest,
     project: &ManifestProject,
     row: &BatchProjectStatus,
+    configured_root: Option<&Path>,
     roots: &[PathBuf],
-) -> Option<ResolvedCleanupRender> {
+) -> Result<Option<ResolvedCleanupRender>, ()> {
     if let Some(raw) = row.output_file.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
         let stored = PathBuf::from(raw);
         if stored.is_absolute() {
             if stored.exists() {
-                return Some(ResolvedCleanupRender { path: stored, source: "manifest" });
+                return Ok(Some(ResolvedCleanupRender { path: stored, source: "manifest" }));
             }
         } else {
             for root in roots {
                 let candidate = root.join(&stored);
                 if candidate.exists() {
-                    return Some(ResolvedCleanupRender { path: candidate, source: "manifest" });
+                    return Ok(Some(ResolvedCleanupRender { path: candidate, source: "manifest" }));
                 }
+            }
+        }
+
+        if let (Some(root), Some(basename)) = (configured_root, cleanup_output_basename(raw)) {
+            let wanted = cleanup_normalized_filename(&basename);
+            let mut matches = fs::read_dir(root)
+                .ok()
+                .into_iter()
+                .flatten()
+                .filter_map(Result::ok)
+                .filter(|entry| entry.file_type().map(|kind| kind.is_file()).unwrap_or(false))
+                .filter(|entry| {
+                    entry
+                        .file_name()
+                        .to_str()
+                        .map(|name| cleanup_normalized_filename(name) == wanted)
+                        .unwrap_or(false)
+                })
+                .map(|entry| entry.path())
+                .collect::<Vec<_>>();
+            matches.sort();
+            if matches.len() == 1 {
+                return Ok(Some(ResolvedCleanupRender {
+                    path: matches.remove(0),
+                    source: "relocated_output_basename",
+                }));
+            }
+            if matches.len() > 1 {
+                return Err(());
             }
         }
     }
@@ -2656,7 +2698,7 @@ fn resolve_cleanup_render(
         for name in &names {
             let candidate = root.join(format!("{name}.mp4"));
             if candidate.exists() {
-                return Some(ResolvedCleanupRender { path: candidate, source: "render_root" });
+                return Ok(Some(ResolvedCleanupRender { path: candidate, source: "render_root" }));
             }
         }
         let wanted = names
@@ -2683,10 +2725,10 @@ fn resolve_cleanup_render(
             .collect::<Vec<_>>();
         matches.sort();
         if matches.len() == 1 {
-            return Some(ResolvedCleanupRender { path: matches.remove(0), source: "fallback" });
+            return Ok(Some(ResolvedCleanupRender { path: matches.remove(0), source: "fallback" }));
         }
     }
-    None
+    Ok(None)
 }
 fn cleanup_final_reason(reason: &str) -> &str {
     match reason {
@@ -2750,9 +2792,16 @@ fn validate_cleanup_candidate(
         return Err(CLEANUP_NOT_COMPLETED)
     }
     let roots = cleanup_render_roots(manifest, configured_root);
-    let Some(resolved) = resolve_cleanup_render(manifest, project, row, &roots) else {
-        debug_cleanup_resolution(manifest, project, configured_root, None, None, false, CLEANUP_OUTPUT_MISSING);
-        return Err(CLEANUP_OUTPUT_MISSING)
+    let resolved = match resolve_cleanup_render(manifest, project, row, configured_root, &roots) {
+        Ok(Some(resolved)) => resolved,
+        Ok(None) => {
+            debug_cleanup_resolution(manifest, project, configured_root, None, None, false, CLEANUP_OUTPUT_MISSING);
+            return Err(CLEANUP_OUTPUT_MISSING)
+        }
+        Err(()) => {
+            debug_cleanup_resolution(manifest, project, configured_root, None, Some("relocated_output_basename_ambiguous"), false, CLEANUP_OUTPUT_MISSING);
+            return Err(CLEANUP_OUTPUT_MISSING)
+        }
     };
     let output_meta = match fs::metadata(&resolved.path) {
         Ok(x) if x.is_file() && x.len() > 0 => x,
@@ -3576,6 +3625,27 @@ mod v214_cleanup_render_gate_tests {
         atomic_json(&status_path, &status).unwrap();
         (workspace, project, output, batch_json, status_path)
     }
+    fn relocated_fixture(project_id: &str, filename: &str) -> (PathBuf, PathBuf, PathBuf, PathBuf, PathBuf, Vec<GlobalCleanupRenderRoot>) {
+        let (workspace, project, old_output, batch_json, status_path) = fixture(true);
+        fs::remove_file(&old_output).unwrap();
+        let render_root = workspace.join("Configured Render/Channel");
+        let output = render_root.join(filename);
+        make_valid_render(&output);
+        let mut manifest: BatchManifest = read_json(&batch_json);
+        manifest.output_dir = workspace.join("Offline Render/Channel").to_string_lossy().into_owned();
+        manifest.projects[0].project_id = project_id.into();
+        atomic_json(&batch_json, &manifest).unwrap();
+        let mut status: BatchStatus = read_json(&status_path);
+        status.projects[0].project_id = project_id.into();
+        status.projects[0].output_file = Some(format!("/old/batch/Rendered/{filename}"));
+        atomic_json(&status_path, &status).unwrap();
+        let roots = vec![GlobalCleanupRenderRoot {
+            channel_id: "channel".into(),
+            channel_name: "Channel".into(),
+            render_root: render_root.to_string_lossy().into_owned(),
+        }];
+        (workspace, project, output, batch_json, status_path, roots)
+    }
     #[test]
     fn completed_project_with_valid_render_is_safe_without_upload() {
         if !enabled() { return; }
@@ -3744,6 +3814,81 @@ mod v214_cleanup_render_gate_tests {
         let _ = fs::remove_dir_all(workspace);
     }
     #[test]
+    fn stale_absolute_output_011_relocates_by_exact_basename() {
+        if !enabled() { return; }
+        let (workspace, project, output, batch_json, status_path, roots) = relocated_fixture("011", "011 — Ready Videos.mp4");
+        let manifest: BatchManifest = read_json(&batch_json);
+        let status: BatchStatus = read_json(&status_path);
+        let configured_root = configured_cleanup_render_root(&manifest, &roots);
+        let search_roots = cleanup_render_roots(&manifest, configured_root);
+        let resolved = resolve_cleanup_render(&manifest, &manifest.projects[0], &status.projects[0], configured_root, &search_roots).unwrap().unwrap();
+        assert_eq!(resolved.source, "relocated_output_basename");
+        assert_eq!(resolved.path, output);
+        let preview = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &roots, false).0;
+        assert_eq!(preview.eligible_projects, 1);
+        assert!(project.exists() && output.exists());
+        let _ = fs::remove_dir_all(workspace);
+    }
+    #[test]
+    fn stale_absolute_output_012_relocates_by_exact_basename() {
+        if !enabled() { return; }
+        let (workspace, project, output, _, _, roots) = relocated_fixture("012", "012 — Ready Videos.mp4");
+        let preview = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &roots, false).0;
+        assert_eq!(preview.eligible_projects, 1);
+        assert_eq!(preview.skip_reasons.get(CLEANUP_OUTPUT_MISSING), None);
+        assert!(project.exists() && output.exists());
+        let _ = fs::remove_dir_all(workspace);
+    }
+    #[test]
+    fn relocated_basename_with_invalid_media_is_protected() {
+        if !enabled() { return; }
+        let (workspace, project, output, _, _, roots) = relocated_fixture("011", "011 — Ready Videos.mp4");
+        fs::write(&output, b"not valid media").unwrap();
+        let preview = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &roots, false).0;
+        assert_eq!(preview.eligible_projects, 0);
+        assert_eq!(preview.skip_reasons.get(CLEANUP_OUTPUT_INVALID), Some(&1));
+        assert!(project.exists() && output.exists());
+        let _ = fs::remove_dir_all(workspace);
+    }
+    #[test]
+    fn relocated_basename_inside_project_is_unsafe() {
+        if !enabled() { return; }
+        let (workspace, project, output, _, _, mut roots) = relocated_fixture("011", "011 — Ready Videos.mp4");
+        fs::remove_file(&output).unwrap();
+        let inside = project.join("011 — Ready Videos.mp4");
+        make_valid_render(&inside);
+        roots[0].render_root = project.to_string_lossy().into_owned();
+        let preview = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &roots, false).0;
+        assert_eq!(preview.eligible_projects, 0);
+        assert_eq!(preview.skip_reasons.get(CLEANUP_OUTPUT_INSIDE_PROJECT), Some(&1));
+        assert!(project.exists() && inside.exists());
+        let _ = fs::remove_dir_all(workspace);
+    }
+    #[test]
+    fn relocated_basename_does_not_override_active_render_gate() {
+        if !enabled() { return; }
+        let (workspace, project, output, _, status_path, roots) = relocated_fixture("011", "011 — Ready Videos.mp4");
+        let mut status: BatchStatus = read_json(&status_path);
+        status.projects[0].render_status = "Rendering".into();
+        atomic_json(&status_path, &status).unwrap();
+        let preview = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &roots, false).0;
+        assert_eq!(preview.eligible_projects, 0);
+        assert_eq!(preview.skip_reasons.get(CLEANUP_NOT_COMPLETED), Some(&1));
+        assert!(project.exists() && output.exists());
+        let _ = fs::remove_dir_all(workspace);
+    }
+    #[test]
+    fn missing_relocated_basename_continues_to_no_render() {
+        if !enabled() { return; }
+        let (workspace, project, output, _, _, roots) = relocated_fixture("011", "011 — Ready Videos.mp4");
+        fs::remove_file(&output).unwrap();
+        let preview = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &roots, false).0;
+        assert_eq!(preview.eligible_projects, 0);
+        assert_eq!(preview.skip_reasons.get(CLEANUP_OUTPUT_MISSING), Some(&1));
+        assert!(project.exists());
+        let _ = fs::remove_dir_all(workspace);
+    }
+    #[test]
     fn relative_persisted_output_resolves_from_channel_render_root() {
         if !enabled() { return; }
         let (workspace, project, output, _, status_path) = fixture(true);
@@ -3795,6 +3940,7 @@ mod v214_cleanup_render_gate_tests {
     fn delete_action_removes_only_project_and_preserves_render_and_metadata() {
         if !enabled() { return; }
         let (workspace, project, output, batch_json, status_path) = fixture(true);
+        let render_before = fs::read(&output).unwrap();
         let protected = ["upload-history.json", "schedule.json", "metadata.json", "channel-settings.json"]
             .map(|name| workspace.join(name));
         for (index, path) in protected.iter().enumerate() {
@@ -3803,6 +3949,7 @@ mod v214_cleanup_render_gate_tests {
         let before = protected.iter().map(|path| fs::read(path).unwrap()).collect::<Vec<_>>();
         let r = execute_global_cleanup_with(&[workspace.to_string_lossy().into_owned()], &[], true, |p| fs::remove_dir_all(p).map_err(|e| e.to_string())).unwrap();
         assert_eq!(r.deleted_projects, 1); assert_eq!(r.failed_projects, 0); assert!(r.deleted_job_ids.is_empty()); assert!(!project.exists()); assert!(output.exists()); assert!(batch_json.exists()); assert!(status_path.exists());
+        assert_eq!(fs::read(&output).unwrap(), render_before);
         assert_eq!(before, protected.iter().map(|path| fs::read(path).unwrap()).collect::<Vec<_>>());
         let _ = fs::remove_dir_all(workspace);
     }
