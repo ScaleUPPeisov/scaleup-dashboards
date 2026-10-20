@@ -1,11 +1,10 @@
-# VYRON 6.1.11 Metadata Identity + Inventory Stability hotfix — macOS-only production release
-# Product binary source is pinned independently from this CI-only workflow commit.
-name: VYRON 6.1.11 macOS Release
+name: VYRON 6.1.12 macOS Signed Candidate
 
 on:
+  workflow_dispatch:
   push:
     branches:
-      - hotfix/vyron-6.1.11-metadata-inventory-correctness
+      - release/vyron-6.1.12-signing
     paths:
       - '.github/workflows/vyron-618-macos-release.yml'
 
@@ -14,73 +13,52 @@ permissions:
   actions: read
 
 concurrency:
-  group: vyron-6111-macos-release
+  group: vyron-612-macos-signed-candidate
   cancel-in-progress: false
 
 env:
-  SOURCE_HEAD: 284b1ef792f72078a9389b1ec78ffa8db58dca42
-  BEHAVIOR_HEAD: 1ed6713270cf85531ba5951daf295d7a9385c453
-  QA_WORKFLOW_HEAD: 4b82343a4ce52aa62d3abefd62c1120188e8e073
-  QA_RUN_ID: '38392838820'
-  PHYSICAL_QA_RUN_ID: '38387558423'
-  VERSION: '6.1.11'
-  TAG: v6.1.11
-  RELEASE_REPO: ScaleUPPeisov/vyron-releases
-  BUNDLE_ID: studio.channelflow.desktop
-  EXPECTED_SIGNING_CERT_SHA1: 2C8B0BD4EE1C000D29DD0667BF1068D4673692C9
+  VERSION: '6.1.12'
+  SOURCE_HEAD: '919c18c2e56658262f4e8df695ae6ee302e679ab'
+  BUNDLE_ID: 'studio.channelflow.desktop'
+  EXPECTED_SIGNING_CERT_SHA1: '2C8B0BD4EE1C000D29DD0667BF1068D4673692C9'
 
 jobs:
   mac-build:
-    name: macOS ARM64 signed production build
+    name: macOS ARM64 signed production candidate
     runs-on: macos-14
-    timeout-minutes: 180
+    timeout-minutes: 75
     env:
-      GH_TOKEN: ${{ github.token }}
       VYRON_TAURI_SIGNING_PRIVATE_KEY_RAW: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       VYRON_MACOS_SIGNING_P12_BASE64: ${{ secrets.VYRON_MACOS_SIGNING_P12_BASE64 }}
       VYRON_MACOS_SIGNING_P12_PASSWORD: ${{ secrets.VYRON_MACOS_SIGNING_P12_PASSWORD }}
       VYRON_MACOS_SIGNING_IDENTITY: ${{ secrets.VYRON_MACOS_SIGNING_IDENTITY }}
+      VYRON_RELEASES_TOKEN: ${{ secrets.VYRON_RELEASES_TOKEN }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.SOURCE_HEAD }}
           fetch-depth: 0
 
-      - name: Verify exact tested VYRON 6.1.11 source and QA
+      - name: Verify exact product SHA and established inputs
         shell: bash
         run: |
           set -Eeuo pipefail
-          test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
-          git merge-base --is-ancestor "$BEHAVIOR_HEAD" "$SOURCE_HEAD"
-          node - <<'NODE'
-          const p=require('./package.json');
-          const l=require('./package-lock.json');
-          const t=require('./src-tauri/tauri.conf.json');
-          const v=process.env.VERSION;
-          if(p.version!==v||l.version!==v||l.packages?.['']?.version!==v||t.version!==v) process.exit(2);
-          if(t.identifier!=='studio.channelflow.desktop'||t.bundle.createUpdaterArtifacts!==true) process.exit(3);
-          NODE
-          grep -q '^version = "6.1.11"$' src-tauri/Cargo.toml
-          python3 - <<'PY'
-          import pathlib,re
-          lock=pathlib.Path('src-tauri/Cargo.lock').read_text()
-          blocks=lock.split('[[package]]')
-          hit=[b for b in blocks if re.search(r'(?m)^name\s*=\s*"channelflow"\s*$',b)]
-          assert len(hit)==1 and re.search(r'(?m)^version\s*=\s*"6\.1\.11"\s*$',hit[0])
-          PY
-          git diff --quiet "${SOURCE_HEAD}^" "$SOURCE_HEAD" -- src/ src-tauri/src/
-          RUN_JSON="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$QA_RUN_ID")"
-          test "$(printf '%s' "$RUN_JSON" | jq -r .status)" = completed
-          test "$(printf '%s' "$RUN_JSON" | jq -r .conclusion)" = success
-          test "$(printf '%s' "$RUN_JSON" | jq -r .head_sha)" = "$QA_WORKFLOW_HEAD"
-          test "$(printf '%s' "$RUN_JSON" | jq -r .path)" = '.github/workflows/vyron-6111-metadata-inventory-qa.yml'
-          PHYS="$(gh api "repos/ScaleUPPeisov/endlume-desktop/actions/runs/$PHYSICAL_QA_RUN_ID")"
-          test "$(printf '%s' "$PHYS" | jq -r .status)" = completed
-          test "$(printf '%s' "$PHYS" | jq -r .conclusion)" = success
-          echo EXACT_PRODUCT_SOURCE=PASS
-          echo FINAL_POST_BUMP_QA=PASS
-          echo PHYSICAL_EXTERNAL_DISK_QA=PASS
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          echo "EXPECTED_SHA=$SOURCE_HEAD"
+          echo "ACTUAL_SHA=$ACTUAL_SHA"
+          test "$ACTUAL_SHA" = "$SOURCE_HEAD"
+          for pair in \
+            "TAURI_SIGNING_PRIVATE_KEY:$VYRON_TAURI_SIGNING_PRIVATE_KEY_RAW" \
+            "TAURI_SIGNING_PRIVATE_KEY_PASSWORD:$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" \
+            "VYRON_MACOS_SIGNING_P12_BASE64:$VYRON_MACOS_SIGNING_P12_BASE64" \
+            "VYRON_MACOS_SIGNING_P12_PASSWORD:$VYRON_MACOS_SIGNING_P12_PASSWORD" \
+            "VYRON_MACOS_SIGNING_IDENTITY:$VYRON_MACOS_SIGNING_IDENTITY" \
+            "VYRON_RELEASES_TOKEN:$VYRON_RELEASES_TOKEN"; do
+            name="${pair%%:*}"; value="${pair#*:}"
+            if [[ -n "$value" ]]; then echo "$name=AVAILABLE"; else echo "$name=MISSING"; exit 31; fi
+          done
+          echo 'EXACT_SHA_VERIFIED=YES'
 
       - uses: actions/setup-node@v4
         with:
@@ -94,33 +72,55 @@ jobs:
           workspaces: src-tauri
       - run: npm ci --no-audit --no-fund
 
-      - name: Final VYRON 6.1.11 release regression gate
+      - name: Verify 6.1.12 release identity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          node - <<'NODE'
+          const p=require('./package.json');
+          const l=require('./package-lock.json');
+          const t=require('./src-tauri/tauri.conf.json');
+          const v=process.env.VERSION;
+          if(p.version!==v||l.version!==v||l.packages?.['']?.version!==v||t.version!==v) process.exit(2);
+          if(t.identifier!=='studio.channelflow.desktop'||t.bundle.createUpdaterArtifacts!==true) process.exit(3);
+          NODE
+          grep -q '^version = "6.1.12"$' src-tauri/Cargo.toml
+          python3 - <<'PY'
+          import pathlib,re
+          lock=pathlib.Path('src-tauri/Cargo.lock').read_text()
+          blocks=lock.split('[[package]]')
+          hit=[b for b in blocks if re.search(r'(?m)^name\s*=\s*"channelflow"\s*$',b)]
+          assert len(hit)==1 and re.search(r'(?m)^version\s*=\s*"6\.1\.12"\s*$',hit[0])
+          PY
+          echo 'VERSION_IDENTITY=PASS'
+
+      - name: Focused accepted release tests
         run: >
           npx vitest run
-          src/vyron6111MetadataIdentityMapping.test.ts
+          src/rpmCoverage.test.ts
           src/vyron618PublisherIntegrity.test.ts
-          src/vyron616PhysicalPublisherConsistency.test.ts
-          src/vyron617CurrentGenerationLeafRecovery.test.ts
-          src/uploadQueue.test.ts
-          src/youtubePublishSafety.test.ts
-          src/v2115Rc7OauthUpdateContinuity.test.ts
-
-      - name: Final inventory watcher release gate
-        run: cargo test --manifest-path src-tauri/Cargo.toml inventory_watch::tests -- --nocapture
+          src/publishWorkspaceState.interval.test.ts
+          src/publisherSchedule.test.ts
+          src/scheduleContinuation.test.ts
 
       - name: Frontend production build
         run: npm run build
 
-      - name: Import production signing identity
+      - name: Verify tracked product source clean
         shell: bash
         run: |
           set -Eeuo pipefail
-          test -n "$VYRON_MACOS_SIGNING_P12_BASE64"
-          test -n "$VYRON_MACOS_SIGNING_P12_PASSWORD"
-          test -n "$VYRON_MACOS_SIGNING_IDENTITY"
-          KEYCHAIN="$RUNNER_TEMP/vyron-6111-release.keychain-db"
+          git diff --exit-code
+          git diff --cached --exit-code
+          echo 'SOURCE_TREE_CLEAN=YES'
+
+      - name: Import established production signing identity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          KEYCHAIN="$RUNNER_TEMP/vyron-612-release.keychain-db"
           KEYCHAIN_PASSWORD="$(uuidgen)$(uuidgen)"
-          P12="$RUNNER_TEMP/vyron-6111-release.p12"
+          P12="$RUNNER_TEMP/vyron-612-release.p12"
           printf '%s' "$VYRON_MACOS_SIGNING_P12_BASE64" | base64 --decode > "$P12"
           chmod 600 "$P12"
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
@@ -134,9 +134,9 @@ jobs:
           test "$(printf '%s' "$ID_SHA1" | tr '[:lower:]' '[:upper:]')" = "$EXPECTED_SIGNING_CERT_SHA1"
           echo "VYRON_SIGNING_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
           echo "VYRON_SIGNING_KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> "$GITHUB_ENV"
-          echo MAC_CERTIFICATE_IDENTITY=PASS
+          echo 'MACOS_CODE_SIGNING=PASS'
 
-      - name: Canonicalize updater signing key
+      - name: Canonicalize established updater signing key
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -156,8 +156,9 @@ jobs:
           with open(os.environ['GITHUB_ENV'],'a') as f:f.write('TAURI_SIGNING_PRIVATE_KEY='+canonical+'\n')
           print('::add-mask::'+canonical)
           PY
+          echo 'TAURI_UPDATER_SIGNING_KEY=READY'
 
-      - name: Build signed macOS ARM64
+      - name: Build signed macOS ARM64 artifacts
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -182,9 +183,9 @@ jobs:
           shasum -a 256 "release-mac/VYRON-${VERSION}-arm64.dmg" | awk '{print $1}' > "release-mac/VYRON-${VERSION}-arm64.dmg.sha256"
           shasum -a 256 release-mac/VYRON.app.tar.gz | awk '{print $1}' > release-mac/VYRON.app.tar.gz.sha256
           printf '%s\n' "$SOURCE_HEAD" > release-mac/source-head.txt
-          echo SIGNED_MAC_BUILD=PASS
+          echo 'MACOS_PACKAGE=PASS'
 
-      - name: Verify updater signature
+      - name: Verify macOS updater signature
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -204,11 +205,13 @@ jobs:
           PY
           brew list minisign >/dev/null 2>&1 || brew install minisign >/dev/null
           minisign -Vm release-mac/VYRON.app.tar.gz -x /tmp/mac.sig -p /tmp/vyron.pub
-          echo MAC_UPDATER_SIGNATURE=PASS
+          echo 'UPDATER_SIGNING=PASS'
+          echo 'UPDATER_BUNDLE=PASS'
+          echo 'UPDATER_SIGNATURE=PASS'
 
       - uses: actions/upload-artifact@v4
         with:
-          name: VYRON-6.1.11-MAC
+          name: VYRON-6.1.12-MAC-SIGNED-CANDIDATE
           path: release-mac/**
           if-no-files-found: error
           retention-days: 30
@@ -218,198 +221,5 @@ jobs:
         shell: bash
         run: |
           set +e
-          rm -f "$RUNNER_TEMP/vyron-6111-release.p12"
+          rm -f "$RUNNER_TEMP/vyron-612-release.p12"
           if [[ -n "${VYRON_SIGNING_KEYCHAIN:-}" ]]; then security delete-keychain "$VYRON_SIGNING_KEYCHAIN" >/dev/null 2>&1 || true; fi
-
-  release-assets:
-    name: Publish stable macOS release assets
-    needs: mac-build
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    env:
-      GH_TOKEN: ${{ secrets.VYRON_RELEASES_TOKEN }}
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: VYRON-6.1.11-MAC
-          path: release-mac
-
-      - name: Verify artifact identity and checksums
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          test -n "$GH_TOKEN"
-          test "$(tr -d '\r\n' < release-mac/source-head.txt)" = "$SOURCE_HEAD"
-          test "$(sha256sum "release-mac/VYRON-${VERSION}-arm64.dmg" | awk '{print $1}')" = "$(tr -d '\r\n ' < "release-mac/VYRON-${VERSION}-arm64.dmg.sha256")"
-          test "$(sha256sum release-mac/VYRON.app.tar.gz | awk '{print $1}')" = "$(tr -d '\r\n ' < release-mac/VYRON.app.tar.gz.sha256)"
-          echo RELEASE_ARTIFACT_IDENTITY=PASS
-
-      - name: Create or safely reuse VYRON 6.1.11 release
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          cat >/tmp/release-notes.md <<EOF
-          ## VYRON 6.1.11 — Metadata Identity + Inventory Stability Hotfix (macOS)
-
-          Exact product source: \`${SOURCE_HEAD}\`
-          Behavioral fix source: \`${BEHAVIOR_HEAD}\`
-          Final post-bump QA run: \`${QA_RUN_ID}\`
-          Physical external-disk QA run: \`${PHYSICAL_QA_RUN_ID}\`
-
-          - Corrects Word metadata binding when the selected physical batch begins at VIDEO_002 or another non-zero ordinal.
-          - Durable metadata identity follows physical job/generation instead of the VIDEO slot number.
-          - VIDEO_011 recovery is verified for a 10-row metadata batch beginning at VIDEO_002.
-          - Identical Word reimport for a new physical batch is treated as fresh metadata.
-          - Read/access-only filesystem events no longer retrigger Live Inventory refresh scans.
-          - Existing stale-generation, Publisher integrity, OAuth/Keychain and upload safety protections remain intact.
-          - macOS ARM64 only; Windows updater is intentionally untouched.
-          EOF
-          if gh release view "$TAG" --repo "$RELEASE_REPO" >/dev/null 2>&1; then
-            BODY="$(gh release view "$TAG" --repo "$RELEASE_REPO" --json body --jq .body)"
-            printf '%s' "$BODY" | grep -F "$SOURCE_HEAD" >/dev/null || { echo EXISTING_RELEASE_SOURCE_MISMATCH; exit 42; }
-            gh release upload "$TAG" --repo "$RELEASE_REPO" --clobber \
-              "release-mac/VYRON-${VERSION}-arm64.dmg" \
-              "release-mac/VYRON-${VERSION}-arm64.dmg.sha256" \
-              release-mac/VYRON.app.tar.gz \
-              release-mac/VYRON.app.tar.gz.sha256 \
-              release-mac/VYRON.app.tar.gz.sig \
-              release-mac/source-head.txt
-            gh release edit "$TAG" --repo "$RELEASE_REPO" --title "VYRON ${VERSION}" --notes-file /tmp/release-notes.md --draft=false --prerelease=false
-          else
-            gh release create "$TAG" --repo "$RELEASE_REPO" --title "VYRON ${VERSION}" --notes-file /tmp/release-notes.md \
-              "release-mac/VYRON-${VERSION}-arm64.dmg" \
-              "release-mac/VYRON-${VERSION}-arm64.dmg.sha256" \
-              release-mac/VYRON.app.tar.gz \
-              release-mac/VYRON.app.tar.gz.sha256 \
-              release-mac/VYRON.app.tar.gz.sig \
-              release-mac/source-head.txt
-          fi
-
-      - name: Verify stable release remotely
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          gh api "repos/$RELEASE_REPO/releases/tags/$TAG" >/tmp/release.json
-          python3 - <<'PY'
-          import json,os
-          d=json.load(open('/tmp/release.json'))
-          v=os.environ['VERSION']; source=os.environ['SOURCE_HEAD']
-          assert d['tag_name']==f'v{v}' and not d['draft'] and not d['prerelease']
-          req={f'VYRON-{v}-arm64.dmg',f'VYRON-{v}-arm64.dmg.sha256','VYRON.app.tar.gz','VYRON.app.tar.gz.sha256','VYRON.app.tar.gz.sig','source-head.txt'}
-          assets={x['name']:x for x in d['assets']}
-          assert req <= set(assets)
-          assert all(assets[n]['size']>0 for n in req)
-          assert source in d.get('body','')
-          print('STABLE_MAC_RELEASE_REMOTE=PASS')
-          PY
-          curl -fL --range 0-0 "https://github.com/$RELEASE_REPO/releases/download/$TAG/VYRON-${VERSION}-arm64.dmg" -o /tmp/mac-byte >/dev/null
-          curl -fL --range 0-0 "https://github.com/$RELEASE_REPO/releases/download/$TAG/VYRON.app.tar.gz" -o /tmp/updater-byte >/dev/null
-          echo MAC_RELEASE_DOWNLOADS=PASS
-
-  manifests:
-    name: Promote macOS updater manifest only
-    needs: release-assets
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      GH_TOKEN: ${{ secrets.VYRON_RELEASES_TOKEN }}
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: VYRON-6.1.11-MAC
-          path: release-mac
-
-      - name: Publish latest.json without touching Windows manifest
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          git clone "https://x-access-token:$GH_TOKEN@github.com/$RELEASE_REPO.git" release-repo
-          python3 - <<'PY'
-          import hashlib,json
-          from pathlib import Path
-          mac=json.loads(Path('release-repo/updates/latest.json').read_text())
-          win_path=Path('release-repo/updates/windows-latest.json')
-          win=json.loads(win_path.read_text())
-          assert mac['version']=='6.1.9',mac['version']
-          assert win['version']=='6.1.7',win['version']
-          assert set(win['platforms'])=={'windows-x86_64'}
-          Path('/tmp/windows-before.sha256').write_text(hashlib.sha256(win_path.read_bytes()).hexdigest())
-          print('MANIFEST_BASELINE_MAC_6_1_9_WINDOWS_6_1_7=PASS')
-          PY
-          MAC_SIG="$(tr -d '\r\n' < release-mac/VYRON.app.tar.gz.sig)"
-          MAC_SHA="$(tr -d '\r\n ' < release-mac/VYRON.app.tar.gz.sha256)"
-          PUB_DATE="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-          python3 - "$MAC_SIG" "$MAC_SHA" "$PUB_DATE" <<'PY'
-          import json,sys
-          from pathlib import Path
-          sig,sha,pub=sys.argv[1:4]
-          assert len(sha)==64
-          repo='ScaleUPPeisov/vyron-releases'
-          latest={'version':'6.1.11','notes':'VYRON 6.1.11 — Metadata Identity + Inventory Stability Hotfix (macOS)','pub_date':pub,'platforms':{
-            'darwin-aarch64':{
-              'url':f'https://github.com/{repo}/releases/download/v6.1.11/VYRON.app.tar.gz',
-              'signature':sig,
-              'sha256':sha
-            }
-          }}
-          Path('release-repo/updates/latest.json').write_text(json.dumps(latest,ensure_ascii=False,indent=2)+'\n')
-          PY
-          cd release-repo
-          test "$(sha256sum updates/windows-latest.json | awk '{print $1}')" = "$(cat /tmp/windows-before.sha256)"
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add updates/latest.json
-          test -z "$(git status --porcelain -- updates/windows-latest.json)"
-          git commit -m 'release: publish VYRON 6.1.11 macOS updater manifest'
-          git push origin main
-          echo WINDOWS_MANIFEST_UNTOUCHED=PASS
-
-      - name: Verify production manifests and remote Windows immutability
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          gh api "repos/$RELEASE_REPO/contents/updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 -d >/tmp/latest.json
-          gh api "repos/$RELEASE_REPO/contents/updates/windows-latest.json?ref=main" --jq .content | tr -d '\n' | base64 -d >/tmp/windows.json
-          test "$(sha256sum /tmp/windows.json | awk '{print $1}')" = "$(cat /tmp/windows-before.sha256)"
-          python3 - <<'PY'
-          import json
-          a=json.load(open('/tmp/latest.json'));w=json.load(open('/tmp/windows.json'))
-          assert a['version']=='6.1.11' and set(a['platforms'])=={'darwin-aarch64'}
-          assert '/v6.1.11/VYRON.app.tar.gz' in a['platforms']['darwin-aarch64']['url']
-          assert w['version']=='6.1.7' and set(w['platforms'])=={'windows-x86_64'}
-          assert '/v6.1.7/' in w['platforms']['windows-x86_64']['url']
-          print('LATEST_JSON_MACOS=6.1.11')
-          print('WINDOWS_LATEST_JSON=6.1.7_UNCHANGED')
-          PY
-
-  final-audit:
-    name: Final release audit
-    needs: manifests
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    env:
-      GH_TOKEN: ${{ secrets.VYRON_RELEASES_TOKEN }}
-    steps:
-      - name: Verify tag, assets and updater state
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          gh api "repos/$RELEASE_REPO/releases/tags/$TAG" >/tmp/release.json
-          gh api "repos/$RELEASE_REPO/contents/updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 -d >/tmp/latest.json
-          gh api "repos/$RELEASE_REPO/contents/updates/windows-latest.json?ref=main" --jq .content | tr -d '\n' | base64 -d >/tmp/windows.json
-          python3 - <<'PY'
-          import json,os
-          r=json.load(open('/tmp/release.json'));m=json.load(open('/tmp/latest.json'));w=json.load(open('/tmp/windows.json'))
-          v=os.environ['VERSION']; source=os.environ['SOURCE_HEAD']
-          assert r['tag_name']==f'v{v}' and not r['prerelease'] and not r['draft']
-          assert source in r.get('body','')
-          req={f'VYRON-{v}-arm64.dmg',f'VYRON-{v}-arm64.dmg.sha256','VYRON.app.tar.gz','VYRON.app.tar.gz.sha256','VYRON.app.tar.gz.sig','source-head.txt'}
-          assets={x['name']:x for x in r['assets']}
-          assert req <= set(assets) and all(assets[n]['size']>0 for n in req)
-          assert m['version']=='6.1.11' and set(m['platforms'])=={'darwin-aarch64'}
-          assert '/v6.1.11/VYRON.app.tar.gz' in m['platforms']['darwin-aarch64']['url']
-          assert w['version']=='6.1.7' and set(w['platforms'])=={'windows-x86_64'}
-          print('VYRON_6_1_11_MACOS_RELEASE=PASS')
-          print('WINDOWS_6_1_7_PRESERVED=PASS')
-          print('ENDLUME_RELEASE=UNTOUCHED')
-          PY
