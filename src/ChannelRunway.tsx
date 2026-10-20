@@ -21,8 +21,9 @@ import {
 } from './channelRunwayStore';
 import {buildContentRunway,confirmedScheduledRunwaySnapshot,contentRunwayQuotaView,type ContentRunwaySnapshot} from './contentRunway';
 import {useLiveInventory} from './renderInventoryRuntime';
-import {configuredScheduleAverageIntervalDays,scheduleFrequencyTruthLabel} from './channelSchedule';
+import {configuredScheduleAverageIntervalDays,intervalDaysFor,scheduleFrequencyTruthLabel} from './channelSchedule';
 import {ChannelAvatar} from './ChannelAvatar';
+import {calculateLocalChannelRunway,formatLocalCalendarDate,parseLocalCalendarDate} from './localChannelRunway';
 import {
   buildYoutubeQuotaPlan,
   isYoutubeQuotaError,
@@ -225,11 +226,12 @@ export function ChannelRunway(){
       </div>
       {rows.length===0?<div className="empty"><b>Нет активных каналов</b><p>Content Runway не создаёт демонстрационные данные.</p></div>:rows.map(({channel,record,content,uploadRemaining,uploadLimitKnown})=>{
         const meta=statusMeta[content.status];
+        const localRunway=calculateLocalChannelRunway({now:new Date(),youtubeScheduledThrough:parseLocalCalendarDate(content.scheduledThrough),localVideoCount:content.readyVideoCount,publicationIntervalDays:intervalDaysFor(channel)});
         return <div className="runwayRow" key={channel.id}>
           <span className="runwayChannel runwayChannelWithAvatar"><ChannelAvatar channel={channel} size="sm"/><span><b>{channel.name}</b><small>{syncLabel(record.lastScheduleSync)}</small><small>{linkedByLocalId.has(channel.id)?`Subs ${subscriberStatLabel(channel.stats)} • Views ${compactChannelStat(channel.stats?.viewCount??channel.stats?.views)}`:'YouTube: НЕ ПОДКЛЮЧЁН'}</small></span></span>
           <span>{content.scheduledThrough?<><b>📺 {dateLabel(content.scheduledThrough)}</b><small>{content.remoteScheduledDays>0?`ещё ${content.remoteScheduledDays} дн.`:'будущих видео нет'}</small></>:<><b>📺 Будущих видео нет</b><small>remote YouTube schedule</small></>}</span>
           <span>{content.readyVideoCount?<><b>💾 {content.readyVideoCount} видео</b><small>только локальные файлы</small></>:<><b>💾 0 видео</b><small>локального запаса нет</small></>}</span>
-          <span className={`runwayDays ${content.status}`} title="Локальный запас не продлевает дату YouTube"><b>{content.localReadyDays} дн.</b><small>local only</small></span>
+          <span className="localStockRunwayCell" title="Покрытие: расписание YouTube + локальный запас"><b>{localRunway.localStockDays} дн.</b>{localRunway.coverageThrough?<><small className="localStockCoverage">до {formatLocalCalendarDate(localRunway.coverageThrough)}</small><small className="localStockRemaining">ещё {localRunway.totalRunwayDays} дн.</small></>:<small className="localStockRemaining">запаса нет</small>}</span>
           <span>{content.scheduledVideoCount}</span>
           <span><b>{content.readyVideoCount}</b></span>
           <span>{scheduleFrequencyTruthLabel(channel,record)}</span>
