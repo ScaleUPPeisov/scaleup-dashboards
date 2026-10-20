@@ -1,0 +1,129 @@
+name: VYRON 6.1.11 EVERY_N_DAYS Candidate QA
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact product candidate SHA to verify
+        required: true
+        type: string
+  push:
+    branches:
+      - qa/vyron-6111-every-n-days-d1b1c576
+    paths:
+      - .github/workflows/vyron-6111-every-n-days-candidate-qa.yml
+
+permissions:
+  contents: read
+
+jobs:
+  candidate-qa:
+    runs-on: ubuntu-latest
+    env:
+      PUSH_CANDIDATE_SHA: d1b1c57607de45cffdc0788c3a5efd144f302599
+    steps:
+      - name: Resolve exact candidate SHA
+        id: candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            EXPECTED_SHA="${{ inputs.candidate_sha }}"
+          else
+            EXPECTED_SHA="$PUSH_CANDIDATE_SHA"
+          fi
+          if ! [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Invalid candidate SHA: $EXPECTED_SHA" >&2
+            exit 2
+          fi
+          echo "EXPECTED_SHA=$EXPECTED_SHA"
+          echo "sha=$EXPECTED_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout exact product candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.candidate.outputs.sha }}
+          fetch-depth: 1
+
+      - name: Verify exact SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED_SHA="${{ steps.candidate.outputs.sha }}"
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          echo "EXPECTED_SHA=$EXPECTED_SHA"
+          echo "ACTUAL_SHA=$ACTUAL_SHA"
+          if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+            echo "EXACT_SHA_VERIFIED=NO" >&2
+            exit 3
+          fi
+          echo "EXACT_SHA_VERIFIED=YES"
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set +e
+          npm ci --no-audit --no-fund
+          code=$?
+          set -e
+          echo "INSTALL_EXIT=$code"
+          exit "$code"
+
+      - name: EVERY_N_DAYS focused tests
+        shell: bash
+        run: |
+          set +e
+          npx vitest run src/publisherSchedule.test.ts src/scheduleContinuation.test.ts src/publishWorkspaceState.interval.test.ts -t "EVERY_N_DAYS"
+          code=$?
+          set -e
+          echo "INTERVAL_TESTS_EXIT=$code"
+          exit "$code"
+
+      - name: Existing Publisher Scheduler focused tests
+        shell: bash
+        run: |
+          set +e
+          npx vitest run src/publisherSchedule.test.ts src/scheduleContinuation.test.ts
+          code=$?
+          set -e
+          echo "PUBLISHER_SCHEDULER_TESTS_EXIT=$code"
+          exit "$code"
+
+      - name: Full frontend test suite
+        shell: bash
+        run: |
+          set +e
+          npm test
+          code=$?
+          set -e
+          echo "FULL_FRONTEND_EXIT=$code"
+          exit "$code"
+
+      - name: Production build
+        shell: bash
+        run: |
+          set +e
+          npm run build
+          code=$?
+          set -e
+          echo "PRODUCTION_BUILD_EXIT=$code"
+          exit "$code"
+
+      - name: Verify source tree clean
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="$(git status --porcelain --untracked-files=all)"
+          if [ -n "$status" ]; then
+            echo "SOURCE_TREE_CLEAN=NO" >&2
+            printf '%s\n' "$status" >&2
+            exit 4
+          fi
+          echo "SOURCE_TREE_CLEAN=YES"
+          echo "HOSTED_QA_GATE=PASS"
