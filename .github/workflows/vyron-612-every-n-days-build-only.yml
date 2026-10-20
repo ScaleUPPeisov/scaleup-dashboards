@@ -70,7 +70,12 @@ jobs:
           assert n==1
           cargo.write_text(head+sep+updated+(sep2+rest if sep2 else ''))
           PY
-          cargo metadata --manifest-path src-tauri/Cargo.toml --no-deps --format-version 1 >/dev/null
+          set +e
+          cargo check --manifest-path src-tauri/Cargo.toml >/tmp/version-cargo-check.log 2>&1
+          CARGO_CHECK_EXIT=$?
+          set -e
+          echo "VERSION_LOCK_REFRESH_CARGO_CHECK_EXIT=$CARGO_CHECK_EXIT"
+          if [[ $CARGO_CHECK_EXIT -ne 0 ]]; then tail -80 /tmp/version-cargo-check.log; fi
       - name: Verify version-only delta
         shell: bash
         run: |
@@ -82,14 +87,14 @@ jobs:
           grep -q '^version = "6.1.12"$' src-tauri/Cargo.toml
           python3 - <<'PY'
           from pathlib import Path
-          import re
+          import re,subprocess
           lock=Path('src-tauri/Cargo.lock').read_text()
           blocks=lock.split('[[package]]')
           hit=[b for b in blocks if re.search(r'(?m)^name\s*=\s*"channelflow"\s*$',b)]
-          assert len(hit)==1
-          assert re.search(r'(?m)^version\s*=\s*"6\.1\.12"\s*$',hit[0])
+          assert len(hit)==1, f'CHANNELFLOW_LOCK_BLOCKS={len(hit)}'
+          assert re.search(r'(?m)^version\s*=\s*"6\.1\.12"\s*$',hit[0]), 'CARGO_LOCK_VERSION_MISMATCH'
           allowed={'package.json','package-lock.json','src-tauri/tauri.conf.json','src-tauri/Cargo.toml','src-tauri/Cargo.lock'}
-          changed=set(x for x in __import__('subprocess').check_output(['git','diff','--name-only'],text=True).splitlines() if x)
+          changed=set(x for x in subprocess.check_output(['git','diff','--name-only'],text=True).splitlines() if x)
           assert changed and changed <= allowed, f'UNEXPECTED_VERSION_DELTA={sorted(changed-allowed)}'
           print('VERSION_ONLY_DELTA=PASS')
           print('VERSION_FILES='+','.join(sorted(changed)))
@@ -168,13 +173,7 @@ jobs:
         id: signing
         shell: bash
         run: |
-          if [[ -n "$VYRON_TAURI_SIGNING_PRIVATE_KEY_RAW" && -n "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" && -n "$VYRON_MACOS_SIGNING_P12_BASE64" && -n "$VYRON_MACOS_SIGNING_P12_PASSWORD" && -n "$VYRON_MACOS_SIGNING_IDENTITY" ]]; then
-            echo 'available=yes' >> "$GITHUB_OUTPUT"
-            echo 'MAC_SIGNING_AVAILABLE=YES'
-          else
-            echo 'available=no' >> "$GITHUB_OUTPUT"
-            echo 'MAC_SIGNING_AVAILABLE=NO'
-          fi
+          if [[ -n "$VYRON_TAURI_SIGNING_PRIVATE_KEY_RAW" && -n "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" && -n "$VYRON_MACOS_SIGNING_P12_BASE64" && -n "$VYRON_MACOS_SIGNING_P12_PASSWORD" && -n "$VYRON_MACOS_SIGNING_IDENTITY" ]]; then echo 'available=yes' >> "$GITHUB_OUTPUT"; echo MAC_SIGNING_AVAILABLE=YES; else echo 'available=no' >> "$GITHUB_OUTPUT"; echo MAC_SIGNING_AVAILABLE=NO; fi
       - name: Import production macOS signing identity
         if: steps.signing.outputs.available == 'yes'
         shell: bash
@@ -319,7 +318,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          npx tauri build --target x86_64-pc-windows-msvc --bundles nsis --config 'src-tauri/tauri.windows.conf.json,{"bundle":{"createUpdaterArtifacts":false}}'
+          npx tauri build --target x86_64-pc-windows-msvc --bundles nsis --config src-tauri/tauri.windows.conf.json --config '{"bundle":{"createUpdaterArtifacts":false}}'
           if($LASTEXITCODE -ne 0){throw 'WINDOWS_BUILD_FAILED'}
       - name: Collect Windows artifacts
         shell: pwsh
