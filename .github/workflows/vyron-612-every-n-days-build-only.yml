@@ -9,142 +9,98 @@ on:
       - '.github/workflows/vyron-612-every-n-days-build-only.yml'
 
 permissions:
-  contents: write
+  contents: read
   actions: read
 
 env:
+  FINAL_SHA: 919c18c2e56658262f4e8df695ae6ee302e679ab
+  FINAL_PARENT_SHA: eb1908d363a78e9bff8608bc434d014310d03c85
   FEATURE_SHA: d1b1c57607de45cffdc0788c3a5efd144f302599
   VERSION: 6.1.12
-  BUILD_BRANCH: build/vyron-6.1.12-every-n-days
-  BUNDLE_ID: studio.channelflow.desktop
   EXPECTED_SIGNING_CERT_SHA1: 2C8B0BD4EE1C000D29DD0667BF1068D4673692C9
 
 jobs:
-  version-bump:
-    name: Create exact 6.1.12 build candidate
+  verify-build:
+    name: Focused verify + production build
     runs-on: macos-14
-    timeout-minutes: 60
-    outputs:
-      build_sha: ${{ steps.commit.outputs.build_sha }}
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ env.FEATURE_SHA }}
+          ref: ${{ env.FINAL_SHA }}
           fetch-depth: 0
-      - name: Verify exact frozen feature SHA
+      - name: Verify exact final candidate and parent
         shell: bash
         run: |
           set -Eeuo pipefail
           ACTUAL="$(git rev-parse HEAD)"
-          echo "FEATURE_EXPECTED_SHA=$FEATURE_SHA"
-          echo "FEATURE_ACTUAL_SHA=$ACTUAL"
-          test "$ACTUAL" = "$FEATURE_SHA"
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Bump only standard VYRON version sources
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          node - <<'NODE'
-          const p=require('./package.json'), l=require('./package-lock.json'), t=require('./src-tauri/tauri.conf.json');
-          if(p.version!=='6.1.11'||l.version!=='6.1.11'||l.packages?.['']?.version!=='6.1.11'||t.version!=='6.1.11') process.exit(2);
-          NODE
-          grep -q '^version = "6.1.11"$' src-tauri/Cargo.toml
-          npm version "$VERSION" --no-git-tag-version
-          python3 - <<'PY'
-          import json,pathlib,os,re
-          version=os.environ['VERSION']
-          tauri=pathlib.Path('src-tauri/tauri.conf.json')
-          data=json.loads(tauri.read_text())
-          data['version']=version
-          tauri.write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
-          cargo=pathlib.Path('src-tauri/Cargo.toml')
-          text=cargo.read_text()
-          head,sep,tail=text.partition('[package]')
-          assert sep
-          package,sep2,rest=tail.partition('\n[')
-          updated,n=re.subn(r'(?m)^version\s*=\s*"[^"]+"',f'version = "{version}"',package,count=1)
-          assert n==1
-          cargo.write_text(head+sep+updated+(sep2+rest if sep2 else ''))
-          PY
-          set +e
-          cargo check --manifest-path src-tauri/Cargo.toml >/tmp/version-cargo-check.log 2>&1
-          CARGO_CHECK_EXIT=$?
-          set -e
-          echo "VERSION_LOCK_REFRESH_CARGO_CHECK_EXIT=$CARGO_CHECK_EXIT"
-          if [[ $CARGO_CHECK_EXIT -ne 0 ]]; then tail -80 /tmp/version-cargo-check.log; fi
-      - name: Verify version-only delta
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          node - <<'NODE'
-          const p=require('./package.json'),l=require('./package-lock.json'),t=require('./src-tauri/tauri.conf.json'),v=process.env.VERSION;
-          if(p.version!==v||l.version!==v||l.packages?.['']?.version!==v||t.version!==v) process.exit(2);
-          NODE
-          grep -q '^version = "6.1.12"$' src-tauri/Cargo.toml
-          python3 - <<'PY'
-          from pathlib import Path
-          import re,subprocess
-          lock=Path('src-tauri/Cargo.lock').read_text()
-          blocks=lock.split('[[package]]')
-          hit=[b for b in blocks if re.search(r'(?m)^name\s*=\s*"channelflow"\s*$',b)]
-          assert len(hit)==1, f'CHANNELFLOW_LOCK_BLOCKS={len(hit)}'
-          assert re.search(r'(?m)^version\s*=\s*"6\.1\.12"\s*$',hit[0]), 'CARGO_LOCK_VERSION_MISMATCH'
-          allowed={'package.json','package-lock.json','src-tauri/tauri.conf.json','src-tauri/Cargo.toml','src-tauri/Cargo.lock'}
-          changed=set(x for x in subprocess.check_output(['git','diff','--name-only'],text=True).splitlines() if x)
-          assert changed and changed <= allowed, f'UNEXPECTED_VERSION_DELTA={sorted(changed-allowed)}'
-          print('VERSION_ONLY_DELTA=PASS')
-          print('VERSION_FILES='+','.join(sorted(changed)))
-          PY
-      - name: Commit version bump and push build branch
-        id: commit
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          git add package.json package-lock.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock
-          git config user.name 'VYRON Build Bot'
-          git config user.email 'actions@users.noreply.github.com'
-          git commit -m 'chore(vyron): bump version to 6.1.12'
-          BUILD_SHA="$(git rev-parse HEAD)"
-          test "$(git rev-parse HEAD^)" = "$FEATURE_SHA"
-          git push origin "HEAD:$BUILD_BRANCH"
-          echo "build_sha=$BUILD_SHA" >> "$GITHUB_OUTPUT"
-          echo "VERSION_COMMIT_SHA=$BUILD_SHA"
-          echo "BUILD_CANDIDATE_SHA=$BUILD_SHA"
-
-  frontend-build:
-    name: Production frontend build
-    needs: version-bump
-    runs-on: macos-14
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.version-bump.outputs.build_sha }}
-          fetch-depth: 0
-      - name: Verify exact build SHA
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          ACTUAL="$(git rev-parse HEAD)"
-          echo "EXPECTED_BUILD_SHA=${{ needs.version-bump.outputs.build_sha }}"
+          PARENT="$(git rev-parse HEAD^)"
           echo "ACTUAL_BUILD_SHA=$ACTUAL"
-          test "$ACTUAL" = '${{ needs.version-bump.outputs.build_sha }}'
+          echo "FINAL_BUILD_PARENT_SHA=$PARENT"
+          test "$ACTUAL" = "$FINAL_SHA"
+          test "$PARENT" = "$FINAL_PARENT_SHA"
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
       - name: Install
-        run: npm ci --no-audit --no-fund
+        shell: bash
+        run: |
+          set +e
+          npm ci --no-audit --no-fund
+          code=$?
+          set -e
+          echo "INSTALL_EXIT=$code"
+          exit "$code"
+      - name: RPM focused test
+        shell: bash
+        run: |
+          set +e
+          npx vitest run src/rpmCoverage.test.ts --reporter=verbose
+          code=$?
+          set -e
+          echo "RPM_TEST_EXIT=$code"
+          exit "$code"
+      - name: Publisher integrity focused test
+        shell: bash
+        run: |
+          set +e
+          npx vitest run src/vyron618PublisherIntegrity.test.ts --reporter=verbose
+          code=$?
+          set -e
+          echo "PUBLISHER_INTEGRITY_TEST_EXIT=$code"
+          exit "$code"
+      - name: EVERY_N_DAYS focused tests
+        shell: bash
+        run: |
+          set +e
+          npx vitest run src/publisherSchedule.test.ts src/scheduleContinuation.test.ts src/publishWorkspaceState.interval.test.ts --reporter=verbose
+          code=$?
+          set -e
+          echo "EVERY_N_DAYS_TESTS_EXIT=$code"
+          exit "$code"
       - name: Production build
-        run: npm run build
+        shell: bash
+        run: |
+          set +e
+          npm run build
+          code=$?
+          set -e
+          echo "PRODUCTION_BUILD_EXIT=$code"
+          exit "$code"
+      - name: Verify source tree clean
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          echo 'GIT_STATUS_BEGIN'
+          git status --short
+          echo 'GIT_STATUS_END'
+          test -z "$(git status --short)"
+          echo 'SOURCE_TREE_CLEAN=YES'
 
   mac-build:
     name: macOS ARM64 package
-    needs: [version-bump, frontend-build]
+    needs: verify-build
     runs-on: macos-14
     timeout-minutes: 180
     env:
@@ -156,8 +112,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.version-bump.outputs.build_sha }}
+          ref: ${{ env.FINAL_SHA }}
           fetch-depth: 0
+      - name: Verify exact source SHA
+        shell: bash
+        run: |
+          ACTUAL="$(git rev-parse HEAD)"
+          echo "ACTUAL_MAC_BUILD_SHA=$ACTUAL"
+          test "$ACTUAL" = "$FINAL_SHA"
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -173,15 +135,21 @@ jobs:
         id: signing
         shell: bash
         run: |
-          if [[ -n "$VYRON_TAURI_SIGNING_PRIVATE_KEY_RAW" && -n "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" && -n "$VYRON_MACOS_SIGNING_P12_BASE64" && -n "$VYRON_MACOS_SIGNING_P12_PASSWORD" && -n "$VYRON_MACOS_SIGNING_IDENTITY" ]]; then echo 'available=yes' >> "$GITHUB_OUTPUT"; echo MAC_SIGNING_AVAILABLE=YES; else echo 'available=no' >> "$GITHUB_OUTPUT"; echo MAC_SIGNING_AVAILABLE=NO; fi
+          if [[ -n "$VYRON_TAURI_SIGNING_PRIVATE_KEY_RAW" && -n "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" && -n "$VYRON_MACOS_SIGNING_P12_BASE64" && -n "$VYRON_MACOS_SIGNING_P12_PASSWORD" && -n "$VYRON_MACOS_SIGNING_IDENTITY" ]]; then
+            echo 'available=yes' >> "$GITHUB_OUTPUT"
+            echo 'MAC_SIGNING_AVAILABLE=YES'
+          else
+            echo 'available=no' >> "$GITHUB_OUTPUT"
+            echo 'MAC_SIGNING_AVAILABLE=NO'
+          fi
       - name: Import production macOS signing identity
         if: steps.signing.outputs.available == 'yes'
         shell: bash
         run: |
           set -Eeuo pipefail
-          KEYCHAIN="$RUNNER_TEMP/vyron-612-build.keychain-db"
+          KEYCHAIN="$RUNNER_TEMP/vyron-612-final.keychain-db"
           KEYCHAIN_PASSWORD="$(uuidgen)$(uuidgen)"
-          P12="$RUNNER_TEMP/vyron-612-build.p12"
+          P12="$RUNNER_TEMP/vyron-612-final.p12"
           printf '%s' "$VYRON_MACOS_SIGNING_P12_BASE64" | base64 --decode > "$P12"
           chmod 600 "$P12"
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
@@ -236,8 +204,10 @@ jobs:
         run: |
           set -Eeuo pipefail
           mkdir -p release-mac
+          APP="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
           DMG="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -name '*.dmg' -print -quit)"
-          test -s "$DMG"
+          test -d "$APP"; test -s "$DMG"
+          cp -R "$APP" release-mac/VYRON.app
           cp "$DMG" "release-mac/VYRON-${VERSION}-arm64.dmg"
           if [[ '${{ steps.signing.outputs.available }}' == 'yes' ]]; then
             UPDATER="$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name '*.app.tar.gz' -print -quit)"
@@ -246,19 +216,19 @@ jobs:
             cp "$UPDATER" release-mac/VYRON.app.tar.gz
             cp "$SIG" release-mac/VYRON.app.tar.gz.sig
           fi
-          echo '${{ needs.version-bump.outputs.build_sha }}' > release-mac/source-head.txt
+          printf '%s\n' "$FINAL_SHA" > release-mac/source-head.txt
           shasum -a 256 "release-mac/VYRON-${VERSION}-arm64.dmg" > "release-mac/VYRON-${VERSION}-arm64.dmg.sha256"
-          find release-mac -type f -maxdepth 1 -exec stat -f 'ARTIFACT|%N|%z' {} \;
+          find release-mac -type f -maxdepth 2 -exec stat -f 'ARTIFACT|%N|%z' {} \;
       - uses: actions/upload-artifact@v4
         with:
-          name: VYRON-6.1.12-MAC-BUILD-ONLY
+          name: VYRON-6.1.12-MAC-FINAL
           path: release-mac/**
           if-no-files-found: error
           retention-days: 30
 
   windows-build:
     name: Windows x64 NSIS package
-    needs: [version-bump, frontend-build]
+    needs: verify-build
     runs-on: windows-latest
     timeout-minutes: 180
     env:
@@ -267,8 +237,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.version-bump.outputs.build_sha }}
+          ref: ${{ env.FINAL_SHA }}
           fetch-depth: 0
+      - name: Verify exact source SHA
+        shell: bash
+        run: |
+          ACTUAL="$(git rev-parse HEAD)"
+          echo "ACTUAL_WINDOWS_BUILD_SHA=$ACTUAL"
+          test "$ACTUAL" = "$FINAL_SHA"
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -332,11 +308,11 @@ jobs:
             $sig=Get-Item ($installer.FullName+'.sig') -ErrorAction Stop
             Copy-Item $sig.FullName "release-win/VYRON_6.1.12_x64-setup.exe.sig"
           }
-          '${{ needs.version-bump.outputs.build_sha }}' | Set-Content release-win/source-head.txt
+          $env:FINAL_SHA | Set-Content release-win/source-head.txt
           Get-ChildItem release-win -File | ForEach-Object { Write-Host ('ARTIFACT|'+$_.FullName+'|'+$_.Length) }
       - uses: actions/upload-artifact@v4
         with:
-          name: VYRON-6.1.12-WINDOWS-BUILD-ONLY
+          name: VYRON-6.1.12-WINDOWS-FINAL
           path: release-win/**
           if-no-files-found: error
           retention-days: 30
