@@ -1,0 +1,343 @@
+name: VYRON 6.1.12 Every N Days Build Only
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - infra/vyron-6.1.12-build-only
+    paths:
+      - '.github/workflows/vyron-612-every-n-days-build-only.yml'
+
+permissions:
+  contents: write
+  actions: read
+
+env:
+  FEATURE_SHA: d1b1c57607de45cffdc0788c3a5efd144f302599
+  VERSION: 6.1.12
+  BUILD_BRANCH: build/vyron-6.1.12-every-n-days
+  BUNDLE_ID: studio.channelflow.desktop
+  EXPECTED_SIGNING_CERT_SHA1: 2C8B0BD4EE1C000D29DD0667BF1068D4673692C9
+
+jobs:
+  version-bump:
+    name: Create exact 6.1.12 build candidate
+    runs-on: macos-14
+    timeout-minutes: 60
+    outputs:
+      build_sha: ${{ steps.commit.outputs.build_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.FEATURE_SHA }}
+          fetch-depth: 0
+      - name: Verify exact frozen feature SHA
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ACTUAL="$(git rev-parse HEAD)"
+          echo "FEATURE_EXPECTED_SHA=$FEATURE_SHA"
+          echo "FEATURE_ACTUAL_SHA=$ACTUAL"
+          test "$ACTUAL" = "$FEATURE_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Bump only standard VYRON version sources
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          node - <<'NODE'
+          const p=require('./package.json'), l=require('./package-lock.json'), t=require('./src-tauri/tauri.conf.json');
+          if(p.version!=='6.1.11'||l.version!=='6.1.11'||l.packages?.['']?.version!=='6.1.11'||t.version!=='6.1.11') process.exit(2);
+          NODE
+          grep -q '^version = "6.1.11"$' src-tauri/Cargo.toml
+          npm version "$VERSION" --no-git-tag-version
+          python3 - <<'PY'
+          import json,pathlib,os,re
+          version=os.environ['VERSION']
+          tauri=pathlib.Path('src-tauri/tauri.conf.json')
+          data=json.loads(tauri.read_text())
+          data['version']=version
+          tauri.write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
+          cargo=pathlib.Path('src-tauri/Cargo.toml')
+          text=cargo.read_text()
+          head,sep,tail=text.partition('[package]')
+          assert sep
+          package,sep2,rest=tail.partition('\n[')
+          updated,n=re.subn(r'(?m)^version\s*=\s*"[^"]+"',f'version = "{version}"',package,count=1)
+          assert n==1
+          cargo.write_text(head+sep+updated+(sep2+rest if sep2 else ''))
+          PY
+          cargo metadata --manifest-path src-tauri/Cargo.toml --no-deps --format-version 1 >/dev/null
+      - name: Verify version-only delta
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          node - <<'NODE'
+          const p=require('./package.json'),l=require('./package-lock.json'),t=require('./src-tauri/tauri.conf.json'),v=process.env.VERSION;
+          if(p.version!==v||l.version!==v||l.packages?.['']?.version!==v||t.version!==v) process.exit(2);
+          NODE
+          grep -q '^version = "6.1.12"$' src-tauri/Cargo.toml
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          lock=Path('src-tauri/Cargo.lock').read_text()
+          blocks=lock.split('[[package]]')
+          hit=[b for b in blocks if re.search(r'(?m)^name\s*=\s*"channelflow"\s*$',b)]
+          assert len(hit)==1
+          assert re.search(r'(?m)^version\s*=\s*"6\.1\.12"\s*$',hit[0])
+          allowed={'package.json','package-lock.json','src-tauri/tauri.conf.json','src-tauri/Cargo.toml','src-tauri/Cargo.lock'}
+          changed=set(x for x in __import__('subprocess').check_output(['git','diff','--name-only'],text=True).splitlines() if x)
+          assert changed and changed <= allowed, f'UNEXPECTED_VERSION_DELTA={sorted(changed-allowed)}'
+          print('VERSION_ONLY_DELTA=PASS')
+          print('VERSION_FILES='+','.join(sorted(changed)))
+          PY
+      - name: Commit version bump and push build branch
+        id: commit
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git add package.json package-lock.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock
+          git config user.name 'VYRON Build Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git commit -m 'chore(vyron): bump version to 6.1.12'
+          BUILD_SHA="$(git rev-parse HEAD)"
+          test "$(git rev-parse HEAD^)" = "$FEATURE_SHA"
+          git push origin "HEAD:$BUILD_BRANCH"
+          echo "build_sha=$BUILD_SHA" >> "$GITHUB_OUTPUT"
+          echo "VERSION_COMMIT_SHA=$BUILD_SHA"
+          echo "BUILD_CANDIDATE_SHA=$BUILD_SHA"
+
+  frontend-build:
+    name: Production frontend build
+    needs: version-bump
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version-bump.outputs.build_sha }}
+          fetch-depth: 0
+      - name: Verify exact build SHA
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ACTUAL="$(git rev-parse HEAD)"
+          echo "EXPECTED_BUILD_SHA=${{ needs.version-bump.outputs.build_sha }}"
+          echo "ACTUAL_BUILD_SHA=$ACTUAL"
+          test "$ACTUAL" = '${{ needs.version-bump.outputs.build_sha }}'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install
+        run: npm ci --no-audit --no-fund
+      - name: Production build
+        run: npm run build
+
+  mac-build:
+    name: macOS ARM64 package
+    needs: [version-bump, frontend-build]
+    runs-on: macos-14
+    timeout-minutes: 180
+    env:
+      VYRON_TAURI_SIGNING_PRIVATE_KEY_RAW: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      VYRON_MACOS_SIGNING_P12_BASE64: ${{ secrets.VYRON_MACOS_SIGNING_P12_BASE64 }}
+      VYRON_MACOS_SIGNING_P12_PASSWORD: ${{ secrets.VYRON_MACOS_SIGNING_P12_PASSWORD }}
+      VYRON_MACOS_SIGNING_IDENTITY: ${{ secrets.VYRON_MACOS_SIGNING_IDENTITY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version-bump.outputs.build_sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci --no-audit --no-fund
+      - name: Detect signing availability
+        id: signing
+        shell: bash
+        run: |
+          if [[ -n "$VYRON_TAURI_SIGNING_PRIVATE_KEY_RAW" && -n "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" && -n "$VYRON_MACOS_SIGNING_P12_BASE64" && -n "$VYRON_MACOS_SIGNING_P12_PASSWORD" && -n "$VYRON_MACOS_SIGNING_IDENTITY" ]]; then
+            echo 'available=yes' >> "$GITHUB_OUTPUT"
+            echo 'MAC_SIGNING_AVAILABLE=YES'
+          else
+            echo 'available=no' >> "$GITHUB_OUTPUT"
+            echo 'MAC_SIGNING_AVAILABLE=NO'
+          fi
+      - name: Import production macOS signing identity
+        if: steps.signing.outputs.available == 'yes'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          KEYCHAIN="$RUNNER_TEMP/vyron-612-build.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)$(uuidgen)"
+          P12="$RUNNER_TEMP/vyron-612-build.p12"
+          printf '%s' "$VYRON_MACOS_SIGNING_P12_BASE64" | base64 --decode > "$P12"
+          chmod 600 "$P12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$P12" -k "$KEYCHAIN" -P "$VYRON_MACOS_SIGNING_P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security >/dev/null
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          LOGIN_KEYCHAIN="$(security default-keychain -d user | tr -d '"')"
+          security list-keychains -d user -s "$KEYCHAIN" "$LOGIN_KEYCHAIN"
+          ID_SHA1="$(security find-certificate -Z -c "$VYRON_MACOS_SIGNING_IDENTITY" "$KEYCHAIN" 2>/dev/null | awk '/SHA-1 hash:/{print $3; exit}')"
+          test "$(printf '%s' "$ID_SHA1" | tr '[:lower:]' '[:upper:]')" = "$EXPECTED_SIGNING_CERT_SHA1"
+          echo "VYRON_SIGNING_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+          echo "VYRON_SIGNING_KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> "$GITHUB_ENV"
+      - name: Canonicalize updater signing key
+        if: steps.signing.outputs.available == 'yes'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import base64,os
+          raw=os.environ['VYRON_TAURI_SIGNING_PRIVATE_KEY_RAW'].strip().replace('\\r\\n','\n').replace('\\n','\n')
+          candidates=[raw]
+          for _ in range(5):
+              cur=candidates[-1].strip()
+              try: dec=base64.b64decode(cur,validate=True).decode().strip()
+              except Exception: break
+              if dec in candidates: break
+              candidates.append(dec)
+          plain=next((x for x in candidates if x.startswith('untrusted comment:')),None)
+          assert plain,'TAURI_SIGNING_PRIVATE_KEY_FORMAT_UNRECOGNIZED'
+          canonical=base64.b64encode((plain.rstrip()+'\n').encode()).decode()
+          with open(os.environ['GITHUB_ENV'],'a') as f:f.write('TAURI_SIGNING_PRIVATE_KEY='+canonical+'\n')
+          print('::add-mask::'+canonical)
+          PY
+      - name: Build signed macOS ARM64
+        if: steps.signing.outputs.available == 'yes'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          security unlock-keychain -p "$VYRON_SIGNING_KEYCHAIN_PASSWORD" "$VYRON_SIGNING_KEYCHAIN"
+          export APPLE_SIGNING_IDENTITY="$VYRON_MACOS_SIGNING_IDENTITY"
+          npx tauri build --target aarch64-apple-darwin --bundles app,dmg
+      - name: Build unsigned local macOS ARM64 fallback
+        if: steps.signing.outputs.available != 'yes'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          export APPLE_SIGNING_IDENTITY='-'
+          npx tauri build --target aarch64-apple-darwin --bundles app,dmg --config '{"bundle":{"createUpdaterArtifacts":false}}'
+      - name: Collect macOS artifacts
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p release-mac
+          DMG="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -name '*.dmg' -print -quit)"
+          test -s "$DMG"
+          cp "$DMG" "release-mac/VYRON-${VERSION}-arm64.dmg"
+          if [[ '${{ steps.signing.outputs.available }}' == 'yes' ]]; then
+            UPDATER="$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name '*.app.tar.gz' -print -quit)"
+            SIG="$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name '*.app.tar.gz.sig' -print -quit)"
+            test -s "$UPDATER"; test -s "$SIG"
+            cp "$UPDATER" release-mac/VYRON.app.tar.gz
+            cp "$SIG" release-mac/VYRON.app.tar.gz.sig
+          fi
+          echo '${{ needs.version-bump.outputs.build_sha }}' > release-mac/source-head.txt
+          shasum -a 256 "release-mac/VYRON-${VERSION}-arm64.dmg" > "release-mac/VYRON-${VERSION}-arm64.dmg.sha256"
+          find release-mac -type f -maxdepth 1 -exec stat -f 'ARTIFACT|%N|%z' {} \;
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-6.1.12-MAC-BUILD-ONLY
+          path: release-mac/**
+          if-no-files-found: error
+          retention-days: 30
+
+  windows-build:
+    name: Windows x64 NSIS package
+    needs: [version-bump, frontend-build]
+    runs-on: windows-latest
+    timeout-minutes: 180
+    env:
+      VYRON_TAURI_SIGNING_PRIVATE_KEY_RAW: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version-bump.outputs.build_sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci --no-audit --no-fund
+      - name: Detect updater signing availability
+        id: signing
+        shell: bash
+        run: |
+          if [[ -n "$VYRON_TAURI_SIGNING_PRIVATE_KEY_RAW" && -n "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" ]]; then echo 'available=yes' >> "$GITHUB_OUTPUT"; echo WINDOWS_UPDATER_SIGNING_AVAILABLE=YES; else echo 'available=no' >> "$GITHUB_OUTPUT"; echo WINDOWS_UPDATER_SIGNING_AVAILABLE=NO; fi
+      - name: Canonicalize updater signing key
+        if: steps.signing.outputs.available == 'yes'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          import base64,os
+          raw=os.environ['VYRON_TAURI_SIGNING_PRIVATE_KEY_RAW'].strip().replace('\\r\\n','\n').replace('\\n','\n')
+          candidates=[raw]
+          for _ in range(5):
+              cur=candidates[-1].strip()
+              try: dec=base64.b64decode(cur,validate=True).decode().strip()
+              except Exception: break
+              if dec in candidates: break
+              candidates.append(dec)
+          plain=next((x for x in candidates if x.startswith('untrusted comment:')),None)
+          assert plain,'TAURI_SIGNING_PRIVATE_KEY_FORMAT_UNRECOGNIZED'
+          canonical=base64.b64encode((plain.rstrip()+'\n').encode()).decode()
+          with open(os.environ['GITHUB_ENV'],'a') as f:f.write('TAURI_SIGNING_PRIVATE_KEY='+canonical+'\n')
+          print('::add-mask::'+canonical)
+          PY
+      - name: Build Windows x64 signed updater package
+        if: steps.signing.outputs.available == 'yes'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          npx tauri build --target x86_64-pc-windows-msvc --bundles nsis --config src-tauri/tauri.windows.conf.json
+          if($LASTEXITCODE -ne 0){throw 'WINDOWS_BUILD_FAILED'}
+      - name: Build unsigned local Windows x64 fallback
+        if: steps.signing.outputs.available != 'yes'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          npx tauri build --target x86_64-pc-windows-msvc --bundles nsis --config 'src-tauri/tauri.windows.conf.json,{"bundle":{"createUpdaterArtifacts":false}}'
+          if($LASTEXITCODE -ne 0){throw 'WINDOWS_BUILD_FAILED'}
+      - name: Collect Windows artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force release-win | Out-Null
+          $installer=Get-ChildItem src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis -Filter '*-setup.exe' | Select-Object -First 1
+          if(-not $installer){throw 'NSIS_MISSING'}
+          Copy-Item $installer.FullName "release-win/VYRON_6.1.12_x64-setup.exe"
+          if('${{ steps.signing.outputs.available }}' -eq 'yes'){
+            $sig=Get-Item ($installer.FullName+'.sig') -ErrorAction Stop
+            Copy-Item $sig.FullName "release-win/VYRON_6.1.12_x64-setup.exe.sig"
+          }
+          '${{ needs.version-bump.outputs.build_sha }}' | Set-Content release-win/source-head.txt
+          Get-ChildItem release-win -File | ForEach-Object { Write-Host ('ARTIFACT|'+$_.FullName+'|'+$_.Length) }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-6.1.12-WINDOWS-BUILD-ONLY
+          path: release-win/**
+          if-no-files-found: error
+          retention-days: 30
