@@ -23,7 +23,7 @@ import {buildContentRunway,confirmedScheduledRunwaySnapshot,contentRunwayQuotaVi
 import {useLiveInventory} from './renderInventoryRuntime';
 import {configuredScheduleAverageIntervalDays,intervalDaysFor,scheduleFrequencyTruthLabel} from './channelSchedule';
 import {ChannelAvatar} from './ChannelAvatar';
-import {calculateLocalChannelRunway,formatLocalCalendarDate,parseLocalCalendarDate} from './localChannelRunway';
+import {calculateLocalChannelRunway,compareLocalChannelRunwayPriority,formatLocalCalendarDate,parseLocalCalendarDate,type LocalChannelRunway} from './localChannelRunway';
 import {
   buildYoutubeQuotaPlan,
   isYoutubeQuotaError,
@@ -73,7 +73,7 @@ function average(values:number[]){
   return values.reduce((a,b)=>a+b,0)/values.length;
 }
 
-type RunwayRow={channel:Channel;record:ChannelRunwayRecord;content:ContentRunwaySnapshot;uploadRemaining:number|null;uploadLimitKnown:boolean};
+type RunwayRow={channel:Channel;record:ChannelRunwayRecord;content:ContentRunwaySnapshot;localRunway:LocalChannelRunway;uploadRemaining:number|null;uploadLimitKnown:boolean};
 
 export function ChannelRunway(){
   const channels=useApp(s=>s.channels),jobs=useApp(s=>s.jobs),uploadHistory=useApp(s=>s.uploadHistory),projectLifecycle=useApp(s=>s.projectLifecycle),fingerprintCache=useApp(s=>s.fingerprintCache),toast=useApp(s=>s.toast);
@@ -108,22 +108,25 @@ export function ChannelRunway(){
   const usage=youtubeQuotaUsage();
   const rowState=useMemo(()=>{
     let failures=0;
+    const now=new Date();
     const rows=active.map(channel=>{
       try{
         const record=snapshot.channels[channel.id];if(!record){failures++;return null}
-        const baseContent=buildContentRunway(channel,record,jobs,uploadHistory,projectLifecycle,fingerprintCache,new Date());
+        const baseContent=buildContentRunway(channel,record,jobs,uploadHistory,projectLifecycle,fingerprintCache,now);
         const liveReady=liveSnapshots[channel.id]?.readyVideos;
         const content=confirmedScheduledRunwaySnapshot(channel,baseContent,record,Number.isFinite(liveReady)?Number(liveReady):baseContent.readyVideoCount);
+        const localRunway=calculateLocalChannelRunway({now,youtubeScheduledThrough:parseLocalCalendarDate(content.scheduledThrough),localVideoCount:content.readyVideoCount,publicationIntervalDays:intervalDaysFor(channel)});
         const profile=channel.youtubeProfileId?profileById.get(channel.youtubeProfileId):undefined;
         const projectKey=youtubeQuotaProjectIdentity(profile,googleConfig).projectKey;
         const upload=projectKey?youtubeUploadQuotaState(projectKey):null;
         const quota=contentRunwayQuotaView(usage,upload);
-        return{channel,record,content,uploadRemaining:quota.uploads.remaining,uploadLimitKnown:quota.uploads.limitKnown} satisfies RunwayRow;
+        return{channel,record,content,localRunway,uploadRemaining:quota.uploads.remaining,uploadLimitKnown:quota.uploads.limitKnown} satisfies RunwayRow;
       }catch{failures++;return null}
-    }).filter((x):x is RunwayRow=>Boolean(x)).sort((a,b)=>a.content.contentRunwayDays-b.content.contentRunwayDays||compareRunwayRecords(a.record,b.record));
+    }).filter((x):x is RunwayRow=>Boolean(x)).sort(compareLocalChannelRunwayPriority);
     return{rows,failures}
   },[active,snapshot,jobs,uploadHistory,projectLifecycle,fingerprintCache,liveSnapshots,profileById,googleConfig,usage.ptDate,usage.used,usage.limit]);
   const rows=rowState.rows,rowFailures=rowState.failures;
+  const productionPriorityRows=useMemo(()=>[...rows].sort((a,b)=>a.content.contentRunwayDays-b.content.contentRunwayDays||compareRunwayRecords(a.record,b.record)),[rows]);
 
   const quotaSettings=loadYoutubeQuotaPlan();
   const batchSize=Math.max(1,quotaSettings.videosPerChannel);
@@ -139,7 +142,7 @@ export function ChannelRunway(){
   const tempo=recommendedProductionIntervalDays(active.length,batchCoverageDays||0);
   const riskRecords=attention.map(x=>({...x.record,runwayDays:x.content.contentRunwayDays}));
   const riskCount=quotaRiskCount(riskRecords,capacityPlan.todayChannels,capacityPlan.fullDayChannels);
-  const next=rows[0];
+  const next=productionPriorityRows[0];
   const today=krasnoyarskClock(new Date()).dateKey;
   const nextStart=next?.record.nextProductionDate;
   const startLabel=nextStart?(nextStart<=today?'Сейчас':dateLabel(nextStart)):'—';
@@ -222,16 +225,15 @@ export function ChannelRunway(){
 
     <div className="runwayTable">
       <div className="runwayRow runwayTh">
-        <span>Канал</span><span>На YouTube до</span><span>На диске</span><span>Локальный запас</span><span>Scheduled</span><span>Ready</span><span>Cadence</span><span>Uploads</span><span>Статус</span><span>Действие</span>
+        <span>Канал</span><span>На YouTube до</span><span>На диске</span><span>Остаток дней</span><span>Scheduled</span><span>Ready</span><span>Cadence</span><span>Uploads</span><span>Статус</span><span>Действие</span>
       </div>
-      {rows.length===0?<div className="empty"><b>Нет активных каналов</b><p>Content Runway не создаёт демонстрационные данные.</p></div>:rows.map(({channel,record,content,uploadRemaining,uploadLimitKnown})=>{
+      {rows.length===0?<div className="empty"><b>Нет активных каналов</b><p>Content Runway не создаёт демонстрационные данные.</p></div>:rows.map(({channel,record,content,localRunway,uploadRemaining,uploadLimitKnown})=>{
         const meta=statusMeta[content.status];
-        const localRunway=calculateLocalChannelRunway({now:new Date(),youtubeScheduledThrough:parseLocalCalendarDate(content.scheduledThrough),localVideoCount:content.readyVideoCount,publicationIntervalDays:intervalDaysFor(channel)});
         return <div className="runwayRow" key={channel.id}>
           <span className="runwayChannel runwayChannelWithAvatar"><ChannelAvatar channel={channel} size="sm"/><span><b>{channel.name}</b><small>{syncLabel(record.lastScheduleSync)}</small><small>{linkedByLocalId.has(channel.id)?`Subs ${subscriberStatLabel(channel.stats)} • Views ${compactChannelStat(channel.stats?.viewCount??channel.stats?.views)}`:'YouTube: НЕ ПОДКЛЮЧЁН'}</small></span></span>
           <span>{content.scheduledThrough?<><b>📺 {dateLabel(content.scheduledThrough)}</b><small>{content.remoteScheduledDays>0?`ещё ${content.remoteScheduledDays} дн.`:'будущих видео нет'}</small></>:<><b>📺 Будущих видео нет</b><small>remote YouTube schedule</small></>}</span>
           <span>{content.readyVideoCount?<><b>💾 {content.readyVideoCount} видео</b><small>только локальные файлы</small></>:<><b>💾 0 видео</b><small>локального запаса нет</small></>}</span>
-          <span className="localStockRunwayCell" title="Покрытие: расписание YouTube + локальный запас"><b>{localRunway.localStockDays} дн.</b>{localRunway.coverageThrough?<><small className="localStockCoverage">до {formatLocalCalendarDate(localRunway.coverageThrough)}</small><small className="localStockRemaining">ещё {localRunway.totalRunwayDays} дн.</small></>:<small className="localStockRemaining">запаса нет</small>}</span>
+          <span className="localStockRunwayCell" title="Общий остаток: расписание YouTube + локальный запас"><b>{localRunway.totalRunwayDays} дн.</b>{localRunway.coverageThrough?<small className="localStockCoverage">до {formatLocalCalendarDate(localRunway.coverageThrough)}</small>:<small className="localStockRemaining">запас закончился</small>}</span>
           <span>{content.scheduledVideoCount}</span>
           <span><b>{content.readyVideoCount}</b></span>
           <span>{scheduleFrequencyTruthLabel(channel,record)}</span>

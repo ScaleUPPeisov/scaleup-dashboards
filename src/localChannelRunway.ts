@@ -14,6 +14,11 @@ export type LocalChannelRunway={
   totalRunwayDays:number;
 };
 
+export type LocalChannelRunwayPriorityRow={
+  channel:{name:string};
+  localRunway:LocalChannelRunway;
+};
+
 function startOfLocalDay(value:Date){
   return new Date(value.getFullYear(),value.getMonth(),value.getDate())
 }
@@ -49,6 +54,15 @@ export function calculateLocalChannelRunway(input:LocalChannelRunwayInput):Local
     coverageThrough,
     totalRunwayDays:Math.max(0,calendarDaysBetween(todayKey,coverageKey)??0)
   }
+}
+
+export function compareLocalChannelRunwayPriority(a:LocalChannelRunwayPriorityRow,b:LocalChannelRunwayPriorityRow){
+  const byRunway=a.localRunway.totalRunwayDays-b.localRunway.totalRunwayDays;
+  if(byRunway!==0)return byRunway;
+  const aCoverage=a.localRunway.coverageThrough?.getTime()??Number.NEGATIVE_INFINITY;
+  const bCoverage=b.localRunway.coverageThrough?.getTime()??Number.NEGATIVE_INFINITY;
+  if(aCoverage!==bCoverage)return aCoverage-bCoverage;
+  return a.channel.name.localeCompare(b.channel.name,'ru')
 }
 
 export function parseLocalCalendarDate(value?:string|null){
