@@ -3,8 +3,9 @@ import {productionManagerApi,type GlobalCleanupRenderRoot,type GlobalProjectClea
 import {patchChannelProductionPrefs,useProductionPrefs} from './productionPrefs';
 import {createJobsCount} from './autopilotCore';
 import {useApp} from './store';
-import {notifySuccess} from './notificationCenter';
+import {notifyError,notifySuccess} from './notificationCenter';
 import {renderChannelFolderPath} from './renderFolderSelection';
+import {clearDeletedProjectWorkspaces} from './globalProjectCleanupState';
 
 function n(value:number|undefined){return (value||0).toLocaleString('ru-RU')}
 function gb(value:number|undefined){return ((value||0)/1024/1024/1024).toFixed(2)}
@@ -243,14 +244,14 @@ export function MaterialsManager(){
     if(!cleanupRoots.length){setCleanup(null);return}
     setBusy('cleanup-preview');
     try{setCleanup(await productionManagerApi.previewGlobalProjectCleanup(cleanupRoots,cleanupRenderRoots))}
-    catch(e){setCleanup(null);toast('Не удалось проверить Safe Cleanup: '+String(e))}
+    catch(e){setCleanup(null);toast('Не удалось проверить Global Project Cleanup: '+String(e))}
     finally{setBusy('')}
   }
 
   async function cleanSafeProjects(){
     if(!cleanup?.eligibleProjects||!cleanupRoots.length)return;
     const message=[
-      'Готово к очистке: '+cleanup.eligibleProjects+' проектов • ~'+gb(cleanup.estimatedBytes)+' GB',
+      'Будет перемещено в Корзину: '+cleanup.eligibleProjects+' PROJECT-папок • ~'+gb(cleanup.estimatedBytes)+' GB',
       '',
       'БУДЕТ УДАЛЕНО:',
       '• project folders',
@@ -268,11 +269,14 @@ export function MaterialsManager(){
       'Продолжить?'
     ].join('\n');
     if(!window.confirm(message))return;
-    if(!window.confirm('ФИНАЛЬНОЕ ПОДТВЕРЖДЕНИЕ: переместить только SAFE_TO_CLEAN project-папки в Корзину?'))return;
+    if(!window.confirm('ФИНАЛЬНОЕ ПОДТВЕРЖДЕНИЕ: переместить все найденные PROJECT workspace-папки с безопасными путями в Корзину?'))return;
     setBusy('cleanup');
     try{
       const result=await productionManagerApi.executeGlobalProjectCleanup(cleanupRoots,cleanupRenderRoots,true);
-      notifySuccess('Безопасная очистка завершена','Удалено '+result.deletedProjects+' проектов • освобождено '+gb(result.bytesFreed)+' GB • Render сохранены: '+result.protectedRenders,{operationId:'materials-cleanup:'+Date.now()});
+      if(result.deletedJobIds.length)setJobs(clearDeletedProjectWorkspaces(useApp.getState().jobs,result.deletedJobIds));
+      window.dispatchEvent(new CustomEvent('vyron:production-materials-changed'));
+      if(result.failedProjects||result.remainingProjects||result.errors.length)notifyError('Глобальная очистка завершена частично','Удалено '+result.deletedProjects+' • осталось '+result.remainingProjects+' • ошибок '+result.errors.length+'. '+result.errors.slice(0,12).join(' | '),{operationId:'materials-cleanup-errors:'+Date.now()});
+      else notifySuccess('Глобальная очистка завершена','Удалено '+result.deletedProjects+' PROJECT-папок • осталось 0 • освобождено '+gb(result.bytesFreed)+' GB • Render-файлы не удалялись',{operationId:'materials-cleanup:'+Date.now()});
       setCleanup(null);
       await refresh();
     }catch(e){toast('Cleanup не выполнен: '+String(e))}
@@ -318,11 +322,11 @@ export function MaterialsManager(){
     </section>
 
     <section className="panel materialsCleanup">
-      <div><small>SAFE CLEANUP</small><h3>Готово к очистке</h3><p>Проверка запускается только вручную и выполняется в фоне. Открытие Материалов больше не сканирует Production workspace.</p></div>
+      <div><small>GLOBAL PROJECT CLEANUP</small><h3>Очистить PROJECT workspace</h3><p>Ручная проверка считает все PROJECT-папки с безопасными путями. Render, upload и metadata показываются только как информация и не исключают папки.</p></div>
       <div className="materialsCleanupStats">
-        <span><b>{cleanup?n(cleanup.eligibleProjects):'—'}</b><small>проектов</small></span>
+        <span><b>{cleanup?n(cleanup.eligibleProjects):'—'}</b><small>в Корзину</small></span>
         <span><b>{cleanup?gb(cleanup.estimatedBytes)+' GB':'—'}</b><small>можно освободить</small></span>
-        <span><b>{cleanup?n(cleanup.protectedRenders):'—'}</b><small>Render защищены</small></span>
+        <span><b>{cleanup?n(cleanup.protectedRenders):'—'}</b><small>Render остаются</small></span>
       </div>
       <label className="materialsPolicy">После успешного Render
         <select value={prefs.cleanupPolicy||'prompt'} onChange={e=>patchPrefs({cleanupPolicy:e.target.value as 'prompt'|'never'|'auto3d'|'afterUpload'})}>
@@ -332,7 +336,7 @@ export function MaterialsManager(){
           <option value="afterUpload">После успешной загрузки на YouTube</option>
         </select>
       </label>
-      <div className="pmActions"><button disabled={!!busy} onClick={()=>void previewCleanup()}>{busy==='cleanup-preview'?'ПРОВЕРЯЮ…':'ПРОВЕРИТЬ'}</button><button className="danger" disabled={!!busy||!cleanup?.eligibleProjects} onClick={()=>void cleanSafeProjects()}>{busy==='cleanup'?'ОЧИЩАЮ…':'ОЧИСТИТЬ '+(cleanup?.eligibleProjects||0)+' ПРОЕКТОВ'}</button></div>
+      <div className="pmActions"><button disabled={!!busy} onClick={()=>void previewCleanup()}>{busy==='cleanup-preview'?'ПРОВЕРЯЮ…':'ПРОВЕРИТЬ'}</button><button className="danger" disabled={!!busy||!cleanup?.eligibleProjects} onClick={()=>void cleanSafeProjects()}>{busy==='cleanup'?'ОЧИЩАЮ…':'ОЧИСТИТЬ '+(cleanup?.eligibleProjects||0)+' PROJECT-ПАПОК'}</button></div>
     </section>
 
     {manualOpen&&<div className="modalBackdrop" onMouseDown={()=>{if(!manualBusy)setManualOpen(false)}}>

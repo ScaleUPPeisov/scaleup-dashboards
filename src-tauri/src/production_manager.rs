@@ -2978,6 +2978,7 @@ pub struct GlobalProjectCleanupResult {
     pub found_projects: usize,
     pub deleted_projects: usize,
     pub failed_projects: usize,
+    pub remaining_projects: usize,
     pub skipped_projects: usize,
     pub protected_renders: usize,
     pub bytes_freed: u64,
@@ -2988,9 +2989,12 @@ pub struct GlobalProjectCleanupResult {
 #[derive(Clone, Debug)]
 struct GlobalCleanupCandidate {
     folder: PathBuf,
-    output: PathBuf,
+    protected_output: Option<PathBuf>,
     bytes: u64,
     label: String,
+    manifest_path: PathBuf,
+    project_id: String,
+    job_id: Option<String>,
 }
 fn directory_bytes(path: &Path) -> u64 {
     let mut total = 0u64;
@@ -2998,10 +3002,18 @@ fn directory_bytes(path: &Path) -> u64 {
     while let Some(dir) = stack.pop() {
         if let Ok(rd) = fs::read_dir(dir) {
             for e in rd.flatten() {
-                let ft = match e.file_type() { Ok(v) => v, Err(_) => continue };
-                if ft.is_symlink() { continue; }
-                if ft.is_dir() { stack.push(e.path()) }
-                else if ft.is_file() { total = total.saturating_add(e.metadata().map(|m| m.len()).unwrap_or(0)) }
+                let ft = match e.file_type() {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                if ft.is_symlink() {
+                    continue;
+                }
+                if ft.is_dir() {
+                    stack.push(e.path())
+                } else if ft.is_file() {
+                    total = total.saturating_add(e.metadata().map(|m| m.len()).unwrap_or(0))
+                }
             }
         }
     }
@@ -3012,29 +3024,111 @@ fn global_manifest_paths(workspaces: &[String]) -> Vec<PathBuf> {
     let mut seen = HashSet::new();
     for raw in workspaces {
         let w = raw.trim();
-        if w.is_empty() { continue; }
+        if w.is_empty() {
+            continue;
+        }
         let base = PathBuf::from(w).join("ProductionManager").join("Batches");
-        if !base.is_dir() { continue; }
-        let channels = match fs::read_dir(&base) { Ok(x) => x, Err(_) => continue };
+        if !base.is_dir() {
+            continue;
+        }
+        let channels = match fs::read_dir(&base) {
+            Ok(x) => x,
+            Err(_) => continue,
+        };
         for ch in channels.flatten() {
-            if !ch.file_type().map(|x| x.is_dir()).unwrap_or(false) { continue; }
-            let batches = match fs::read_dir(ch.path()) { Ok(x) => x, Err(_) => continue };
+            if !ch.file_type().map(|x| x.is_dir()).unwrap_or(false) {
+                continue;
+            }
+            let batches = match fs::read_dir(ch.path()) {
+                Ok(x) => x,
+                Err(_) => continue,
+            };
             for b in batches.flatten() {
-                if !b.file_type().map(|x| x.is_dir()).unwrap_or(false) { continue; }
+                if !b.file_type().map(|x| x.is_dir()).unwrap_or(false) {
+                    continue;
+                }
                 let m = b.path().join("batch.json");
                 if m.is_file() {
                     let key = m.to_string_lossy().into_owned();
-                    if seen.insert(key) { out.push(m) }
+                    if seen.insert(key) {
+                        out.push(m)
+                    }
                 }
             }
         }
     }
     out
 }
+fn validate_global_batch_root(
+    manifest_path: &Path,
+    declared_root: &Path,
+) -> Result<PathBuf, &'static str> {
+    if declared_root.as_os_str().is_empty() {
+        return Err(CLEANUP_UNSAFE_PROJECT_PATH);
+    }
+    let Some(manifest_parent) = manifest_path.parent() else {
+        return Err(CLEANUP_UNSAFE_PROJECT_PATH);
+    };
+    let actual_root =
+        safe_cleanup_root(manifest_parent).map_err(|_| CLEANUP_UNSAFE_PROJECT_PATH)?;
+    let declared = safe_cleanup_root(declared_root).map_err(|_| CLEANUP_UNSAFE_PROJECT_PATH)?;
+    if actual_root != declared || !actual_root.join("batch.json").is_file() {
+        return Err(CLEANUP_UNSAFE_PROJECT_PATH);
+    }
+    let parts = actual_root
+        .components()
+        .filter_map(|component| match component {
+            Component::Normal(value) => Some(value.to_string_lossy().to_ascii_lowercase()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let valid_depth = parts.windows(2).enumerate().any(|(index, pair)| {
+        pair[0] == "productionmanager" && pair[1] == "batches" && parts.len() >= index + 4
+    });
+    if !valid_depth {
+        return Err(CLEANUP_UNSAFE_PROJECT_PATH);
+    }
+    Ok(actual_root)
+}
+fn validate_global_project_folder(
+    batch_root: &Path,
+    folder: &Path,
+) -> Result<PathBuf, &'static str> {
+    if folder.as_os_str().is_empty() {
+        return Err(CLEANUP_UNSAFE_PROJECT_PATH);
+    }
+    let metadata = fs::symlink_metadata(folder).map_err(|_| CLEANUP_ALREADY_REMOVED)?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(CLEANUP_UNSAFE_PROJECT_PATH);
+    }
+    let safe = canonical_under(batch_root, folder).map_err(|_| CLEANUP_UNSAFE_PROJECT_PATH)?;
+    if safe.parent() != Some(batch_root) {
+        return Err(CLEANUP_UNSAFE_PROJECT_PATH);
+    }
+    let reserved = safe
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(|value| {
+            [
+                "render",
+                "rendered",
+                "productionmanager",
+                "batches",
+                "channels",
+                "materials",
+            ]
+            .iter()
+            .any(|blocked| value.eq_ignore_ascii_case(blocked))
+        })
+        .unwrap_or(true);
+    if reserved {
+        return Err(CLEANUP_UNSAFE_PROJECT_PATH);
+    }
+    Ok(safe)
+}
 fn collect_global_cleanup(
     workspaces: &[String],
     render_roots: &[GlobalCleanupRenderRoot],
-    sync_materials: bool,
 ) -> (GlobalProjectCleanupPreview, Vec<GlobalCleanupCandidate>) {
     let mut preview = GlobalProjectCleanupPreview::default();
     let mut candidates = Vec::new();
@@ -3043,41 +3137,78 @@ fn collect_global_cleanup(
     for mp in global_manifest_paths(workspaces) {
         let (m, _) = match load_manifest(mp.to_string_lossy().as_ref()) {
             Ok(x) => x,
-            Err(e) => { preview.errors.push(format!("{}: {e}", mp.display())); continue; }
+            Err(e) => {
+                preview.errors.push(format!("{}: {e}", mp.display()));
+                continue;
+            }
         };
         channels.insert(m.channel_id.clone());
         let status: BatchStatus = read_json(Path::new(&m.status_path));
-        if sync_materials {
-            if let Err(e) = sync_material_image_usage(&m, &status) {
-                preview.errors.push(format!("{}: Materials state: {e}", mp.display()));
+        let batch_root = match validate_global_batch_root(&mp, Path::new(&m.root_path)) {
+            Ok(root) => root,
+            Err(reason) => {
+                preview.skipped_projects =
+                    preview.skipped_projects.saturating_add(m.projects.len());
+                for _ in &m.projects {
+                    bump_cleanup_reason(&mut preview.skip_reasons, reason);
+                }
                 continue;
             }
-        }
-        let batch_root = PathBuf::from(&m.root_path);
+        };
         let configured_render_root = configured_cleanup_render_root(&m, render_roots);
-        let status_by_id = status.projects.iter().map(|x| (x.project_id.as_str(), x)).collect::<HashMap<_, _>>();
+        let status_by_id = status
+            .projects
+            .iter()
+            .map(|x| (x.project_id.as_str(), x))
+            .collect::<HashMap<_, _>>();
         for project in &m.projects {
-            preview.found_projects += 1;
-            match validate_cleanup_candidate(&batch_root, &m, project, status_by_id.get(project.project_id.as_str()).copied(), configured_render_root) {
-                Ok(candidate) => {
-                    let key = candidate.folder.to_string_lossy().into_owned();
-                    if !folders.insert(key) { continue; }
-                    let bytes = directory_bytes(&candidate.folder);
-                    preview.eligible_projects += 1;
-                    preview.protected_renders += 1;
-                    preview.estimated_bytes = preview.estimated_bytes.saturating_add(bytes);
-                    candidates.push(GlobalCleanupCandidate {
-                        folder: candidate.folder,
-                        output: candidate.output,
-                        bytes,
-                        label: format!("{} / {} / {}", m.channel_name, m.batch_id, project.project_id),
-                    });
-                }
+            let folder = match validate_global_project_folder(
+                &batch_root,
+                Path::new(project.folder_path.trim()),
+            ) {
+                Ok(folder) => folder,
                 Err(reason) => {
                     preview.skipped_projects += 1;
                     bump_cleanup_reason(&mut preview.skip_reasons, reason);
+                    continue;
                 }
+            };
+            let key = cleanup_normalized_path(&folder);
+            if !folders.insert(key) {
+                continue;
             }
+            preview.found_projects += 1;
+            preview.eligible_projects += 1;
+            let protected_output = match validate_cleanup_candidate(
+                &batch_root,
+                &m,
+                project,
+                status_by_id.get(project.project_id.as_str()).copied(),
+                configured_render_root,
+            ) {
+                Ok(candidate) => {
+                    preview.protected_renders += 1;
+                    Some(candidate.output)
+                }
+                Err(reason) => {
+                    bump_cleanup_reason(&mut preview.skip_reasons, reason);
+                    None
+                }
+            };
+            let bytes = directory_bytes(&folder);
+            preview.estimated_bytes = preview.estimated_bytes.saturating_add(bytes);
+            candidates.push(GlobalCleanupCandidate {
+                folder,
+                protected_output,
+                bytes,
+                label: format!(
+                    "{} / {} / {}",
+                    m.channel_name, m.batch_id, project.project_id
+                ),
+                manifest_path: mp.clone(),
+                project_id: project.project_id.clone(),
+                job_id: project.job_id.clone(),
+            });
         }
     }
     preview.scanned_channels = channels.len();
@@ -3088,9 +3219,53 @@ pub async fn preview_global_production_project_cleanup(
     workspaces: Vec<String>,
     render_roots: Vec<GlobalCleanupRenderRoot>,
 ) -> Result<GlobalProjectCleanupPreview, String> {
-    tokio::task::spawn_blocking(move || collect_global_cleanup(&workspaces, &render_roots, false).0)
+    tokio::task::spawn_blocking(move || collect_global_cleanup(&workspaces, &render_roots).0)
         .await
         .map_err(|e| format!("Cleanup preview worker failed: {e}"))
+}
+fn reconcile_global_cleanup_batch(
+    manifest_path: &Path,
+    deleted_project_ids: &HashSet<String>,
+) -> Result<(), String> {
+    if deleted_project_ids.is_empty() {
+        return Ok(());
+    }
+    let (mut manifest, mp) = load_manifest(manifest_path.to_string_lossy().as_ref())?;
+    manifest
+        .projects
+        .retain(|project| !deleted_project_ids.contains(&project.project_id));
+    manifest.project_count = manifest.projects.len();
+    let status_path = PathBuf::from(&manifest.status_path);
+    let mut status: BatchStatus = read_json(&status_path);
+    status
+        .projects
+        .retain(|project| !deleted_project_ids.contains(&project.project_id));
+    status.status = if status.projects.is_empty() {
+        "Удалён".into()
+    } else {
+        "Готово".into()
+    };
+    status.updated_at = Utc::now().to_rfc3339();
+    let batch_root = PathBuf::from(&manifest.root_path);
+    let plan_path = batch_root.join("plan.json");
+    if plan_path.exists() {
+        let mut plan: BuildPlan = read_json(&plan_path);
+        plan.projects
+            .retain(|project| !deleted_project_ids.contains(&project.project_id));
+        plan.request.project_count = plan.projects.len();
+        atomic_json(&plan_path, &plan)?;
+        let checkpoint_path = batch_root.join("checkpoint.json");
+        if checkpoint_path.exists() {
+            let mut checkpoint: Checkpoint = read_json(&checkpoint_path);
+            checkpoint.total_projects = plan.projects.len();
+            checkpoint.completed_projects =
+                checkpoint.completed_projects.min(checkpoint.total_projects);
+            checkpoint.updated_at = Utc::now().to_rfc3339();
+            atomic_json(&checkpoint_path, &checkpoint)?;
+        }
+    }
+    atomic_json(&mp, &manifest)?;
+    atomic_json(&status_path, &status)
 }
 fn execute_global_cleanup_with<F>(
     workspaces: &[String],
@@ -3098,9 +3273,13 @@ fn execute_global_cleanup_with<F>(
     confirmed: bool,
     mut delete: F,
 ) -> Result<GlobalProjectCleanupResult, String>
-where F: FnMut(&Path) -> Result<(), String> {
-    if !confirmed { return Err("Требуется явное подтверждение удаления PROJECT-папок".into()); }
-    let (preview, candidates) = collect_global_cleanup(workspaces, render_roots, true);
+where
+    F: FnMut(&Path) -> Result<(), String>,
+{
+    if !confirmed {
+        return Err("Требуется явное подтверждение удаления PROJECT-папок".into());
+    }
+    let (preview, candidates) = collect_global_cleanup(workspaces, render_roots);
     let mut result = GlobalProjectCleanupResult {
         scanned_channels: preview.scanned_channels,
         found_projects: preview.found_projects,
@@ -3110,20 +3289,51 @@ where F: FnMut(&Path) -> Result<(), String> {
         errors: preview.errors,
         ..Default::default()
     };
+    let mut reconciliations = HashMap::<PathBuf, HashSet<String>>::new();
+    let mut deleted_job_ids = HashSet::new();
     for c in candidates {
         match delete(&c.folder) {
             Ok(_) => {
-                if !c.output.exists() {
+                if c.protected_output
+                    .as_ref()
+                    .is_some_and(|output| !output.exists())
+                {
                     result.failed_projects += 1;
-                    result.errors.push(format!("{}: protected render unexpectedly missing after cleanup", c.label));
+                    result.errors.push(format!(
+                        "{}: protected render unexpectedly missing after cleanup",
+                        c.label
+                    ));
                     continue;
                 }
                 result.deleted_projects += 1;
                 result.bytes_freed = result.bytes_freed.saturating_add(c.bytes);
+                reconciliations
+                    .entry(c.manifest_path)
+                    .or_default()
+                    .insert(c.project_id);
+                if let Some(job_id) = c.job_id {
+                    deleted_job_ids.insert(job_id);
+                }
             }
-            Err(e) => { result.failed_projects += 1; result.errors.push(format!("{}: {e}", c.label)); }
+            Err(e) => {
+                result.failed_projects += 1;
+                result.errors.push(format!("{}: {e}", c.label));
+            }
         }
     }
+    for (manifest_path, deleted_project_ids) in reconciliations {
+        if let Err(error) = reconcile_global_cleanup_batch(&manifest_path, &deleted_project_ids) {
+            result.errors.push(format!(
+                "{}: project state reconciliation failed: {error}",
+                manifest_path.display()
+            ));
+        }
+    }
+    result.deleted_job_ids = deleted_job_ids.into_iter().collect();
+    result.deleted_job_ids.sort();
+    result.remaining_projects = collect_global_cleanup(workspaces, render_roots)
+        .0
+        .found_projects;
     Ok(result)
 }
 #[tauri::command]
@@ -3134,7 +3344,8 @@ pub async fn execute_global_production_project_cleanup(
 ) -> Result<GlobalProjectCleanupResult, String> {
     tokio::task::spawn_blocking(move || {
         execute_global_cleanup_with(&workspaces, &render_roots, confirmed, |path| {
-            trash::delete(path).map_err(|e| format!("Не удалось переместить PROJECT-папку в Корзину: {e}"))
+            trash::delete(path)
+                .map_err(|e| format!("Не удалось переместить PROJECT-папку в Корзину: {e}"))
         })
     })
     .await
@@ -3590,23 +3801,54 @@ mod v1015_image_validation_tests {
 #[cfg(test)]
 mod v214_cleanup_render_gate_tests {
     use super::*;
-    fn enabled() -> bool { std::env::var("VYRON_CLEANUP_REAL_TEST").ok().as_deref() == Some("1") }
+    fn enabled() -> bool {
+        std::env::var("VYRON_CLEANUP_REAL_TEST").ok().as_deref() == Some("1")
+    }
     fn make_valid_render(path: &Path) {
-        if let Some(parent) = path.parent() { fs::create_dir_all(parent).unwrap(); }
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
         let ffmpeg = crate::media_tools::resolve_media_tool("ffmpeg").unwrap();
-        let st = Command::new(ffmpeg).args([
-            "-hide_banner","-loglevel","error","-y",
-            "-f","lavfi","-i","testsrc2=size=640x360:rate=25",
-            "-f","lavfi","-i","sine=frequency=440:sample_rate=48000",
-            "-t","2","-c:v","libx264","-preset","ultrafast","-pix_fmt","yuv420p","-c:a","aac","-shortest"
-        ]).arg(path).status().unwrap();
+        let st = Command::new(ffmpeg)
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=size=640x360:rate=25",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:sample_rate=48000",
+                "-t",
+                "2",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-shortest",
+            ])
+            .arg(path)
+            .status()
+            .unwrap();
         assert!(st.success());
     }
     fn fixture(external_render: bool) -> (PathBuf, PathBuf, PathBuf, PathBuf, PathBuf) {
         let workspace = std::env::temp_dir().join(format!("vyron-v214-cleanup-{}", Uuid::new_v4()));
         let batch = workspace.join("ProductionManager/Batches/channel/batch-1");
         let project = batch.join("001");
-        let output = if external_render { workspace.join("Render/channel/001.mp4") } else { batch.join("Rendered/001.mp4") };
+        let output = if external_render {
+            workspace.join("Render/channel/001.mp4")
+        } else {
+            batch.join("Rendered/001.mp4")
+        };
         fs::create_dir_all(&project).unwrap();
         fs::write(project.join("image.jpg"), vec![1u8; 4096]).unwrap();
         fs::write(project.join("track.mp3"), vec![2u8; 8192]).unwrap();
@@ -3614,25 +3856,60 @@ mod v214_cleanup_render_gate_tests {
         let status_path = batch.join("status.json");
         let batch_json = batch.join("batch.json");
         let manifest = BatchManifest {
-            schema_version: SCHEMA_VERSION, source: "test".into(), batch_id: "batch-1".into(),
-            channel_id: "channel".into(), channel_name: "Channel".into(), root_path: batch.to_string_lossy().into_owned(),
-            output_dir: output.parent().unwrap().to_string_lossy().into_owned(), status_path: status_path.to_string_lossy().into_owned(),
-            projects: vec![ManifestProject { project_id: "001".into(), job_id: Some("job-001".into()), folder_path: project.to_string_lossy().into_owned(), image_path: project.join("image.jpg").to_string_lossy().into_owned(), ..Default::default() }],
-            project_count: 1, ..Default::default()
+            schema_version: SCHEMA_VERSION,
+            source: "test".into(),
+            batch_id: "batch-1".into(),
+            channel_id: "channel".into(),
+            channel_name: "Channel".into(),
+            root_path: batch.to_string_lossy().into_owned(),
+            output_dir: output.parent().unwrap().to_string_lossy().into_owned(),
+            status_path: status_path.to_string_lossy().into_owned(),
+            projects: vec![ManifestProject {
+                project_id: "001".into(),
+                job_id: Some("job-001".into()),
+                folder_path: project.to_string_lossy().into_owned(),
+                image_path: project.join("image.jpg").to_string_lossy().into_owned(),
+                ..Default::default()
+            }],
+            project_count: 1,
+            ..Default::default()
         };
-        let status = BatchStatus { batch_id: "batch-1".into(), projects: vec![BatchProjectStatus { project_id: "001".into(), job_id: Some("job-001".into()), render_status: "Completed".into(), output_file: Some(output.to_string_lossy().into_owned()), ..Default::default() }], ..Default::default() };
+        let status = BatchStatus {
+            batch_id: "batch-1".into(),
+            projects: vec![BatchProjectStatus {
+                project_id: "001".into(),
+                job_id: Some("job-001".into()),
+                render_status: "Completed".into(),
+                output_file: Some(output.to_string_lossy().into_owned()),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
         atomic_json(&batch_json, &manifest).unwrap();
         atomic_json(&status_path, &status).unwrap();
         (workspace, project, output, batch_json, status_path)
     }
-    fn relocated_fixture(project_id: &str, filename: &str) -> (PathBuf, PathBuf, PathBuf, PathBuf, PathBuf, Vec<GlobalCleanupRenderRoot>) {
+    fn relocated_fixture(
+        project_id: &str,
+        filename: &str,
+    ) -> (
+        PathBuf,
+        PathBuf,
+        PathBuf,
+        PathBuf,
+        PathBuf,
+        Vec<GlobalCleanupRenderRoot>,
+    ) {
         let (workspace, project, old_output, batch_json, status_path) = fixture(true);
         fs::remove_file(&old_output).unwrap();
         let render_root = workspace.join("Configured Render/Channel");
         let output = render_root.join(filename);
         make_valid_render(&output);
         let mut manifest: BatchManifest = read_json(&batch_json);
-        manifest.output_dir = workspace.join("Offline Render/Channel").to_string_lossy().into_owned();
+        manifest.output_dir = workspace
+            .join("Offline Render/Channel")
+            .to_string_lossy()
+            .into_owned();
         manifest.projects[0].project_id = project_id.into();
         atomic_json(&batch_json, &manifest).unwrap();
         let mut status: BatchStatus = read_json(&status_path);
@@ -3648,9 +3925,11 @@ mod v214_cleanup_render_gate_tests {
     }
     #[test]
     fn completed_project_with_valid_render_is_safe_without_upload() {
-        if !enabled() { return; }
+        if !enabled() {
+            return;
+        }
         let (workspace, project, output, _, _) = fixture(false);
-        let p = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &[], false).0;
+        let p = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &[]).0;
         assert_eq!(p.eligible_projects, 1);
         assert_eq!(p.skip_reasons.get("NOT_UPLOADED"), None);
         assert!(project.exists() && output.exists());
@@ -3658,7 +3937,9 @@ mod v214_cleanup_render_gate_tests {
     }
     #[test]
     fn preview_does_not_mutate_material_library() {
-        if !enabled() { return; }
+        if !enabled() {
+            return;
+        }
         let (workspace, _, _, batch_json, _) = fixture(false);
         let source = workspace.join("source.jpg");
         fs::write(&source, b"image-data").unwrap();
@@ -3667,7 +3948,8 @@ mod v214_cleanup_render_gate_tests {
             "channel",
             "Channel",
             vec![source.to_string_lossy().into_owned()],
-        ).unwrap();
+        )
+        .unwrap();
         let asset = materials_manager::available_images(workspace.to_str().unwrap(), "channel")
             .unwrap()
             .remove(0);
@@ -3679,7 +3961,8 @@ mod v214_cleanup_render_gate_tests {
                 project_id: "batch-1:001".into(),
                 job_id: Some("job-001".into()),
             }],
-        ).unwrap();
+        )
+        .unwrap();
         let mut manifest: BatchManifest = read_json(&batch_json);
         manifest.projects[0].image_asset_id = Some(asset.asset_id);
         atomic_json(&batch_json, &manifest).unwrap();
@@ -3693,109 +3976,300 @@ mod v214_cleanup_render_gate_tests {
         atomic_json(&PathBuf::from(&manifest.root_path).join("plan.json"), &plan).unwrap();
         let library = workspace.join("ProductionManager/Materials/Images/channel/library.json");
         let before = fs::read(&library).unwrap();
-        let preview = collect_global_cleanup(
-            &[workspace.to_string_lossy().into_owned()],
-            &[],
-            false,
-        ).0;
+        let preview = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &[]).0;
         assert_eq!(preview.eligible_projects, 1);
         assert_eq!(fs::read(&library).unwrap(), before);
         let _ = fs::remove_dir_all(workspace);
     }
     #[test]
     fn completed_project_with_valid_render_and_job_id_is_also_eligible() {
-        if !enabled() { return; }
+        if !enabled() {
+            return;
+        }
         let (workspace, _, _, _, _) = fixture(false);
-        let p = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &[], false).0;
+        let p = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &[]).0;
         assert_eq!(p.eligible_projects, 1);
         let _ = fs::remove_dir_all(workspace);
     }
     #[test]
-    fn rendering_project_is_protected() {
-        if !enabled() { return; }
+    fn global_owner_action_includes_all_mixed_project_states_and_reconciles_to_zero() {
+        if !enabled() {
+            return;
+        }
+        let (workspace, first_project, output, batch_json, status_path) = fixture(true);
+        let batch_root = batch_json.parent().unwrap().to_path_buf();
+        let ids = [
+            "valid",
+            "no-render",
+            "invalid-render",
+            "rendering",
+            "uploaded",
+            "without-upload",
+            "stale-metadata",
+            "normal",
+        ];
+        fs::rename(&first_project, batch_root.join(ids[0])).unwrap();
+        for id in ids.iter().skip(1) {
+            let folder = batch_root.join(id);
+            fs::create_dir_all(&folder).unwrap();
+            fs::write(folder.join("workspace.dat"), id.as_bytes()).unwrap();
+        }
+        let mut manifest: BatchManifest = read_json(&batch_json);
+        manifest.projects = ids
+            .iter()
+            .map(|id| ManifestProject {
+                project_id: (*id).into(),
+                job_id: if *id == "without-upload" {
+                    None
+                } else {
+                    Some(format!("job-{id}"))
+                },
+                folder_path: batch_root.join(id).to_string_lossy().into_owned(),
+                image_path: batch_root
+                    .join(id)
+                    .join("image.jpg")
+                    .to_string_lossy()
+                    .into_owned(),
+                ..Default::default()
+            })
+            .collect();
+        manifest.project_count = manifest.projects.len();
+        atomic_json(&batch_json, &manifest).unwrap();
+        let mut status = BatchStatus {
+            batch_id: "batch-1".into(),
+            ..Default::default()
+        };
+        for id in ids.iter().filter(|id| **id != "stale-metadata") {
+            status.projects.push(BatchProjectStatus {
+                project_id: (*id).into(),
+                job_id: if *id == "without-upload" {
+                    None
+                } else {
+                    Some(format!("job-{id}"))
+                },
+                render_status: if *id == "rendering" {
+                    "Rendering".into()
+                } else {
+                    "Completed".into()
+                },
+                output_file: match *id {
+                    "no-render" => None,
+                    "invalid-render" => Some(
+                        workspace
+                            .join("Render/channel/missing.mp4")
+                            .to_string_lossy()
+                            .into_owned(),
+                    ),
+                    _ => Some(output.to_string_lossy().into_owned()),
+                },
+                ..Default::default()
+            });
+        }
+        atomic_json(&status_path, &status).unwrap();
+        let workspaces = vec![workspace.to_string_lossy().into_owned()];
+        let preview = collect_global_cleanup(&workspaces, &[]).0;
+        assert_eq!(preview.found_projects, 8);
+        assert_eq!(preview.eligible_projects, 8);
+        assert_eq!(preview.skip_reasons.get(CLEANUP_NOT_COMPLETED), Some(&1));
+        assert_eq!(preview.skip_reasons.get(CLEANUP_OUTPUT_MISSING), Some(&2));
+        assert_eq!(preview.skip_reasons.get(CLEANUP_STATUS_MISSING), Some(&1));
+        let render_before = fs::read(&output).unwrap();
+        let qa_trash = workspace.join(".qa-trash");
+        fs::create_dir_all(&qa_trash).unwrap();
+        let result = execute_global_cleanup_with(&workspaces, &[], true, |path| {
+            let name = path
+                .file_name()
+                .ok_or_else(|| "missing project folder name".to_string())?;
+            fs::rename(path, qa_trash.join(name)).map_err(|error| error.to_string())
+        })
+        .unwrap();
+        assert_eq!(result.found_projects, 8);
+        assert_eq!(result.deleted_projects, 8);
+        assert_eq!(result.failed_projects, 0);
+        assert_eq!(result.remaining_projects, 0);
+        assert!(ids.iter().all(|id| !batch_root.join(id).exists()));
+        assert!(ids.iter().all(|id| qa_trash.join(id).is_dir()));
+        assert_eq!(fs::read(&output).unwrap(), render_before);
+        let restarted_manifest: BatchManifest = read_json(&batch_json);
+        let restarted_status: BatchStatus = read_json(&status_path);
+        assert!(restarted_manifest.projects.is_empty());
+        assert!(restarted_status.projects.is_empty());
+        let _ = fs::remove_dir_all(workspace);
+    }
+    #[test]
+    fn global_owner_action_keeps_strict_project_path_safety() {
+        if !enabled() {
+            return;
+        }
+        let (workspace, project, _, batch_json, _) = fixture(true);
+        let batch_root = batch_json.parent().unwrap().canonicalize().unwrap();
+        assert_eq!(
+            validate_global_project_folder(&batch_root, &project).unwrap(),
+            project.canonicalize().unwrap()
+        );
+        assert_eq!(
+            validate_global_project_folder(&batch_root, &workspace.join("Render/channel")),
+            Err(CLEANUP_UNSAFE_PROJECT_PATH)
+        );
+        assert_eq!(
+            validate_global_project_folder(&batch_root, &workspace),
+            Err(CLEANUP_UNSAFE_PROJECT_PATH)
+        );
+        assert_eq!(
+            validate_global_project_folder(&batch_root, Path::new("/")),
+            Err(CLEANUP_UNSAFE_PROJECT_PATH)
+        );
+        assert_eq!(
+            validate_global_project_folder(&batch_root, &workspace.join("ProductionManager")),
+            Err(CLEANUP_UNSAFE_PROJECT_PATH)
+        );
+        #[cfg(unix)]
+        {
+            let outside = workspace.join("outside");
+            fs::create_dir_all(&outside).unwrap();
+            let escaped = batch_root.join("escaped-project");
+            std::os::unix::fs::symlink(&outside, &escaped).unwrap();
+            assert_eq!(
+                validate_global_project_folder(&batch_root, &escaped),
+                Err(CLEANUP_UNSAFE_PROJECT_PATH)
+            );
+        }
+        let _ = fs::remove_dir_all(workspace);
+    }
+    #[test]
+    fn rendering_project_is_included_with_informational_counter() {
+        if !enabled() {
+            return;
+        }
         let (workspace, project, output, _, status_path) = fixture(false);
-        let mut st: BatchStatus = read_json(&status_path); st.projects[0].render_status = "Rendering".into(); atomic_json(&status_path, &st).unwrap();
-        let p = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &[], false).0;
-        assert_eq!(p.eligible_projects, 0); assert_eq!(p.skip_reasons.get(CLEANUP_NOT_COMPLETED), Some(&1)); assert!(project.exists() && output.exists());
+        let mut st: BatchStatus = read_json(&status_path);
+        st.projects[0].render_status = "Rendering".into();
+        atomic_json(&status_path, &st).unwrap();
+        let p = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &[]).0;
+        assert_eq!(p.eligible_projects, 1);
+        assert_eq!(p.skip_reasons.get(CLEANUP_NOT_COMPLETED), Some(&1));
+        assert!(project.exists() && output.exists());
         let _ = fs::remove_dir_all(workspace);
     }
     #[test]
-    fn missing_render_is_protected() {
-        if !enabled() { return; }
-        let (workspace, project, output, _, _) = fixture(false); fs::remove_file(&output).unwrap();
-        let p = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &[], false).0;
-        assert_eq!(p.eligible_projects, 0); assert_eq!(p.skip_reasons.get(CLEANUP_OUTPUT_MISSING), Some(&1)); assert!(project.exists());
+    fn missing_render_project_is_included() {
+        if !enabled() {
+            return;
+        }
+        let (workspace, project, output, _, _) = fixture(false);
+        fs::remove_file(&output).unwrap();
+        let p = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &[]).0;
+        assert_eq!(p.eligible_projects, 1);
+        assert_eq!(p.skip_reasons.get(CLEANUP_OUTPUT_MISSING), Some(&1));
+        assert!(project.exists());
         let _ = fs::remove_dir_all(workspace);
     }
     #[test]
-    fn zero_byte_render_is_protected() {
-        if !enabled() { return; }
-        let (workspace, project, output, _, _) = fixture(false); fs::write(&output, b"").unwrap();
-        let p = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &[], false).0;
-        assert_eq!(p.eligible_projects, 0); assert_eq!(p.skip_reasons.get(CLEANUP_OUTPUT_INVALID), Some(&1)); assert!(project.exists());
+    fn zero_byte_render_does_not_gate_global_cleanup() {
+        if !enabled() {
+            return;
+        }
+        let (workspace, project, output, _, _) = fixture(false);
+        fs::write(&output, b"").unwrap();
+        let p = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &[]).0;
+        assert_eq!(p.eligible_projects, 1);
+        assert_eq!(p.skip_reasons.get(CLEANUP_OUTPUT_INVALID), Some(&1));
+        assert!(project.exists());
         let _ = fs::remove_dir_all(workspace);
     }
     #[test]
-    fn corrupt_render_without_video_is_protected() {
-        if !enabled() { return; }
-        let (workspace, project, output, _, _) = fixture(false); fs::write(&output, b"not a video").unwrap();
-        let p = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &[], false).0;
-        assert_eq!(p.eligible_projects, 0); assert_eq!(p.skip_reasons.get(CLEANUP_OUTPUT_INVALID), Some(&1)); assert!(project.exists());
+    fn corrupt_render_does_not_gate_global_cleanup() {
+        if !enabled() {
+            return;
+        }
+        let (workspace, project, output, _, _) = fixture(false);
+        fs::write(&output, b"not a video").unwrap();
+        let p = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &[]).0;
+        assert_eq!(p.eligible_projects, 1);
+        assert_eq!(p.skip_reasons.get(CLEANUP_OUTPUT_INVALID), Some(&1));
+        assert!(project.exists());
         let _ = fs::remove_dir_all(workspace);
     }
     #[test]
-    fn temporary_render_is_protected_even_when_media_is_valid() {
-        if !enabled() { return; }
+    fn temporary_render_does_not_gate_global_cleanup() {
+        if !enabled() {
+            return;
+        }
         let (workspace, project, output, _, status_path) = fixture(false);
         let temporary = output.with_file_name("001.partial.mp4");
         fs::rename(&output, &temporary).unwrap();
         let mut status: BatchStatus = read_json(&status_path);
         status.projects[0].output_file = Some(temporary.to_string_lossy().into_owned());
         atomic_json(&status_path, &status).unwrap();
-        let p = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &[], false).0;
-        assert_eq!(p.eligible_projects, 0);
+        let p = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &[]).0;
+        assert_eq!(p.eligible_projects, 1);
         assert_eq!(p.skip_reasons.get(CLEANUP_OUTPUT_INVALID), Some(&1));
         assert!(project.exists() && temporary.exists());
         let _ = fs::remove_dir_all(workspace);
     }
     #[test]
-    fn render_inside_project_folder_is_never_cleaned() {
-        if !enabled() { return; }
+    fn render_diagnostic_inside_project_does_not_change_global_candidate_count() {
+        if !enabled() {
+            return;
+        }
         let (workspace, project, old_output, _, status_path) = fixture(false);
-        let inside = project.join("final.mp4"); make_valid_render(&inside); fs::remove_file(old_output).ok();
-        let mut st: BatchStatus = read_json(&status_path); st.projects[0].output_file = Some(inside.to_string_lossy().into_owned()); atomic_json(&status_path, &st).unwrap();
-        let p = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &[], false).0;
-        assert_eq!(p.eligible_projects, 0); assert_eq!(p.skip_reasons.get(CLEANUP_OUTPUT_INSIDE_PROJECT), Some(&1)); assert!(project.exists() && inside.exists());
+        let inside = project.join("final.mp4");
+        make_valid_render(&inside);
+        fs::remove_file(old_output).ok();
+        let mut st: BatchStatus = read_json(&status_path);
+        st.projects[0].output_file = Some(inside.to_string_lossy().into_owned());
+        atomic_json(&status_path, &st).unwrap();
+        let p = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &[]).0;
+        assert_eq!(p.eligible_projects, 1);
+        assert_eq!(p.skip_reasons.get(CLEANUP_OUTPUT_INSIDE_PROJECT), Some(&1));
+        assert!(project.exists() && inside.exists());
         let _ = fs::remove_dir_all(workspace);
     }
     #[test]
     fn project_folder_outside_safe_batch_root_is_protected() {
-        if !enabled() { return; }
+        if !enabled() {
+            return;
+        }
         let (workspace, project, output, batch_json, _) = fixture(false);
-        let outside = workspace.join("outside-project"); fs::create_dir_all(&outside).unwrap(); fs::write(outside.join("image.jpg"), b"x").unwrap();
-        let mut m: BatchManifest = read_json(&batch_json); m.projects[0].folder_path = outside.to_string_lossy().into_owned(); atomic_json(&batch_json, &m).unwrap();
-        let p = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &[], false).0;
-        assert_eq!(p.eligible_projects, 0); assert_eq!(p.skip_reasons.get(CLEANUP_UNSAFE_PROJECT_PATH), Some(&1)); assert!(outside.exists() && output.exists() && project.exists());
+        let outside = workspace.join("outside-project");
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("image.jpg"), b"x").unwrap();
+        let mut m: BatchManifest = read_json(&batch_json);
+        m.projects[0].folder_path = outside.to_string_lossy().into_owned();
+        atomic_json(&batch_json, &m).unwrap();
+        let p = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &[]).0;
+        assert_eq!(p.eligible_projects, 0);
+        assert_eq!(p.skip_reasons.get(CLEANUP_UNSAFE_PROJECT_PATH), Some(&1));
+        assert!(outside.exists() && output.exists() && project.exists());
         let _ = fs::remove_dir_all(workspace);
     }
     #[test]
     fn valid_external_render_makes_safe_project_eligible() {
-        if !enabled() { return; }
+        if !enabled() {
+            return;
+        }
         let (workspace, project, output, _, _) = fixture(true);
-        let p = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &[], false).0;
-        assert_eq!(p.eligible_projects, 1); assert_eq!(p.protected_renders, 1); assert!(project.exists() && output.exists());
+        let p = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &[]).0;
+        assert_eq!(p.eligible_projects, 1);
+        assert_eq!(p.protected_renders, 1);
+        assert!(project.exists() && output.exists());
         let _ = fs::remove_dir_all(workspace);
     }
     #[test]
     fn configured_channel_render_root_recovers_missing_persisted_output() {
-        if !enabled() { return; }
+        if !enabled() {
+            return;
+        }
         let (workspace, project, old_output, batch_json, status_path) = fixture(true);
         fs::remove_file(&old_output).unwrap();
         let render_root = workspace.join("Configured Render/Channel");
         let output = render_root.join("VIDEO_001.mp4");
         make_valid_render(&output);
         let mut manifest: BatchManifest = read_json(&batch_json);
-        manifest.output_dir = workspace.join("Offline Render/Channel").to_string_lossy().into_owned();
+        manifest.output_dir = workspace
+            .join("Offline Render/Channel")
+            .to_string_lossy()
+            .into_owned();
         manifest.projects[0].video_number = Some(1);
         atomic_json(&batch_json, &manifest).unwrap();
         let mut status: BatchStatus = read_json(&status_path);
@@ -3807,7 +4281,7 @@ mod v214_cleanup_render_gate_tests {
             channel_name: "Channel".into(),
             render_root: render_root.to_string_lossy().into_owned(),
         }];
-        let p = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &roots, false).0;
+        let p = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &roots).0;
         assert_eq!(p.eligible_projects, 1);
         assert_eq!(p.skip_reasons.get(CLEANUP_OUTPUT_MISSING), None);
         assert!(project.exists() && output.exists());
@@ -3815,94 +4289,127 @@ mod v214_cleanup_render_gate_tests {
     }
     #[test]
     fn stale_absolute_output_011_relocates_by_exact_basename() {
-        if !enabled() { return; }
-        let (workspace, project, output, batch_json, status_path, roots) = relocated_fixture("011", "011 — Ready Videos.mp4");
+        if !enabled() {
+            return;
+        }
+        let (workspace, project, output, batch_json, status_path, roots) =
+            relocated_fixture("011", "011 — Ready Videos.mp4");
         let manifest: BatchManifest = read_json(&batch_json);
         let status: BatchStatus = read_json(&status_path);
         let configured_root = configured_cleanup_render_root(&manifest, &roots);
         let search_roots = cleanup_render_roots(&manifest, configured_root);
-        let resolved = resolve_cleanup_render(&manifest, &manifest.projects[0], &status.projects[0], configured_root, &search_roots).unwrap().unwrap();
+        let resolved = resolve_cleanup_render(
+            &manifest,
+            &manifest.projects[0],
+            &status.projects[0],
+            configured_root,
+            &search_roots,
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(resolved.source, "relocated_output_basename");
         assert_eq!(resolved.path, output);
-        let preview = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &roots, false).0;
+        let preview = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &roots).0;
         assert_eq!(preview.eligible_projects, 1);
         assert!(project.exists() && output.exists());
         let _ = fs::remove_dir_all(workspace);
     }
     #[test]
     fn stale_absolute_output_012_relocates_by_exact_basename() {
-        if !enabled() { return; }
-        let (workspace, project, output, _, _, roots) = relocated_fixture("012", "012 — Ready Videos.mp4");
-        let preview = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &roots, false).0;
+        if !enabled() {
+            return;
+        }
+        let (workspace, project, output, _, _, roots) =
+            relocated_fixture("012", "012 — Ready Videos.mp4");
+        let preview = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &roots).0;
         assert_eq!(preview.eligible_projects, 1);
         assert_eq!(preview.skip_reasons.get(CLEANUP_OUTPUT_MISSING), None);
         assert!(project.exists() && output.exists());
         let _ = fs::remove_dir_all(workspace);
     }
     #[test]
-    fn relocated_basename_with_invalid_media_is_protected() {
-        if !enabled() { return; }
-        let (workspace, project, output, _, _, roots) = relocated_fixture("011", "011 — Ready Videos.mp4");
+    fn relocated_basename_with_invalid_media_is_still_included() {
+        if !enabled() {
+            return;
+        }
+        let (workspace, project, output, _, _, roots) =
+            relocated_fixture("011", "011 — Ready Videos.mp4");
         fs::write(&output, b"not valid media").unwrap();
-        let preview = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &roots, false).0;
-        assert_eq!(preview.eligible_projects, 0);
+        let preview = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &roots).0;
+        assert_eq!(preview.eligible_projects, 1);
         assert_eq!(preview.skip_reasons.get(CLEANUP_OUTPUT_INVALID), Some(&1));
         assert!(project.exists() && output.exists());
         let _ = fs::remove_dir_all(workspace);
     }
     #[test]
-    fn relocated_basename_inside_project_is_unsafe() {
-        if !enabled() { return; }
-        let (workspace, project, output, _, _, mut roots) = relocated_fixture("011", "011 — Ready Videos.mp4");
+    fn relocated_basename_inside_project_is_informational_for_global_cleanup() {
+        if !enabled() {
+            return;
+        }
+        let (workspace, project, output, _, _, mut roots) =
+            relocated_fixture("011", "011 — Ready Videos.mp4");
         fs::remove_file(&output).unwrap();
         let inside = project.join("011 — Ready Videos.mp4");
         make_valid_render(&inside);
         roots[0].render_root = project.to_string_lossy().into_owned();
-        let preview = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &roots, false).0;
-        assert_eq!(preview.eligible_projects, 0);
-        assert_eq!(preview.skip_reasons.get(CLEANUP_OUTPUT_INSIDE_PROJECT), Some(&1));
+        let preview = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &roots).0;
+        assert_eq!(preview.eligible_projects, 1);
+        assert_eq!(
+            preview.skip_reasons.get(CLEANUP_OUTPUT_INSIDE_PROJECT),
+            Some(&1)
+        );
         assert!(project.exists() && inside.exists());
         let _ = fs::remove_dir_all(workspace);
     }
     #[test]
-    fn relocated_basename_does_not_override_active_render_gate() {
-        if !enabled() { return; }
-        let (workspace, project, output, _, status_path, roots) = relocated_fixture("011", "011 — Ready Videos.mp4");
+    fn active_render_is_informational_for_global_cleanup() {
+        if !enabled() {
+            return;
+        }
+        let (workspace, project, output, _, status_path, roots) =
+            relocated_fixture("011", "011 — Ready Videos.mp4");
         let mut status: BatchStatus = read_json(&status_path);
         status.projects[0].render_status = "Rendering".into();
         atomic_json(&status_path, &status).unwrap();
-        let preview = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &roots, false).0;
-        assert_eq!(preview.eligible_projects, 0);
+        let preview = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &roots).0;
+        assert_eq!(preview.eligible_projects, 1);
         assert_eq!(preview.skip_reasons.get(CLEANUP_NOT_COMPLETED), Some(&1));
         assert!(project.exists() && output.exists());
         let _ = fs::remove_dir_all(workspace);
     }
     #[test]
-    fn missing_relocated_basename_continues_to_no_render() {
-        if !enabled() { return; }
-        let (workspace, project, output, _, _, roots) = relocated_fixture("011", "011 — Ready Videos.mp4");
+    fn missing_relocated_basename_is_included_as_no_render() {
+        if !enabled() {
+            return;
+        }
+        let (workspace, project, output, _, _, roots) =
+            relocated_fixture("011", "011 — Ready Videos.mp4");
         fs::remove_file(&output).unwrap();
-        let preview = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &roots, false).0;
-        assert_eq!(preview.eligible_projects, 0);
+        let preview = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &roots).0;
+        assert_eq!(preview.eligible_projects, 1);
         assert_eq!(preview.skip_reasons.get(CLEANUP_OUTPUT_MISSING), Some(&1));
         assert!(project.exists());
         let _ = fs::remove_dir_all(workspace);
     }
     #[test]
     fn relative_persisted_output_resolves_from_channel_render_root() {
-        if !enabled() { return; }
+        if !enabled() {
+            return;
+        }
         let (workspace, project, output, _, status_path) = fixture(true);
         let mut status: BatchStatus = read_json(&status_path);
         status.projects[0].output_file = Some("001.mp4".into());
         atomic_json(&status_path, &status).unwrap();
-        let p = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &[], false).0;
+        let p = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &[]).0;
         assert_eq!(p.eligible_projects, 1);
         assert!(project.exists() && output.exists());
         let _ = fs::remove_dir_all(workspace);
     }
     #[test]
     fn legacy_unicode_filename_is_matched_inside_known_render_root() {
-        if !enabled() { return; }
+        if !enabled() {
+            return;
+        }
         let (workspace, project, old_output, batch_json, status_path) = fixture(true);
         fs::remove_file(&old_output).unwrap();
         let output = old_output.parent().unwrap().join("VIDEO_E\u{301}01.mp4");
@@ -3914,52 +4421,98 @@ mod v214_cleanup_render_gate_tests {
         status.projects[0].project_id = "VIDEO_\u{c9}01".into();
         status.projects[0].output_file = None;
         atomic_json(&status_path, &status).unwrap();
-        let p = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &[], false).0;
+        let p = collect_global_cleanup(&[workspace.to_string_lossy().into_owned()], &[]).0;
         assert_eq!(p.eligible_projects, 1);
         assert!(project.exists() && output.exists());
         let _ = fs::remove_dir_all(workspace);
     }
     #[test]
     fn preview_and_execute_use_identical_candidate_paths() {
-        if !enabled() { return; }
+        if !enabled() {
+            return;
+        }
         let (workspace, project, output, _, _) = fixture(true);
         let workspaces = vec![workspace.to_string_lossy().into_owned()];
-        let (_, preview_candidates) = collect_global_cleanup(&workspaces, &[], false);
-        let preview_paths = preview_candidates.iter().map(|candidate| candidate.folder.clone()).collect::<Vec<_>>();
+        let (_, preview_candidates) = collect_global_cleanup(&workspaces, &[]);
+        let preview_paths = preview_candidates
+            .iter()
+            .map(|candidate| candidate.folder.clone())
+            .collect::<Vec<_>>();
         let mut execute_paths = Vec::new();
         let result = execute_global_cleanup_with(&workspaces, &[], true, |path| {
             execute_paths.push(path.to_path_buf());
-            Ok(())
-        }).unwrap();
+            fs::remove_dir_all(path).map_err(|error| error.to_string())
+        })
+        .unwrap();
         assert_eq!(preview_paths, execute_paths);
         assert_eq!(result.deleted_projects, preview_paths.len());
-        assert!(project.exists() && output.exists());
+        assert!(!project.exists() && output.exists());
         let _ = fs::remove_dir_all(workspace);
     }
     #[test]
     fn delete_action_removes_only_project_and_preserves_render_and_metadata() {
-        if !enabled() { return; }
+        if !enabled() {
+            return;
+        }
         let (workspace, project, output, batch_json, status_path) = fixture(true);
         let render_before = fs::read(&output).unwrap();
-        let protected = ["upload-history.json", "schedule.json", "metadata.json", "channel-settings.json"]
-            .map(|name| workspace.join(name));
+        let protected = [
+            "upload-history.json",
+            "schedule.json",
+            "metadata.json",
+            "channel-settings.json",
+        ]
+        .map(|name| workspace.join(name));
         for (index, path) in protected.iter().enumerate() {
             fs::write(path, format!("protected-{index}")).unwrap();
         }
-        let before = protected.iter().map(|path| fs::read(path).unwrap()).collect::<Vec<_>>();
-        let r = execute_global_cleanup_with(&[workspace.to_string_lossy().into_owned()], &[], true, |p| fs::remove_dir_all(p).map_err(|e| e.to_string())).unwrap();
-        assert_eq!(r.deleted_projects, 1); assert_eq!(r.failed_projects, 0); assert!(r.deleted_job_ids.is_empty()); assert!(!project.exists()); assert!(output.exists()); assert!(batch_json.exists()); assert!(status_path.exists());
+        let before = protected
+            .iter()
+            .map(|path| fs::read(path).unwrap())
+            .collect::<Vec<_>>();
+        let r = execute_global_cleanup_with(
+            &[workspace.to_string_lossy().into_owned()],
+            &[],
+            true,
+            |p| fs::remove_dir_all(p).map_err(|e| e.to_string()),
+        )
+        .unwrap();
+        assert_eq!(r.deleted_projects, 1);
+        assert_eq!(r.failed_projects, 0);
+        assert_eq!(r.remaining_projects, 0);
+        assert_eq!(r.deleted_job_ids, vec!["job-001"]);
+        assert!(!project.exists());
+        assert!(output.exists());
+        assert!(batch_json.exists());
+        assert!(status_path.exists());
+        let reconciled_manifest: BatchManifest = read_json(&batch_json);
+        let reconciled_status: BatchStatus = read_json(&status_path);
+        assert!(reconciled_manifest.projects.is_empty() && reconciled_status.projects.is_empty());
         assert_eq!(fs::read(&output).unwrap(), render_before);
-        assert_eq!(before, protected.iter().map(|path| fs::read(path).unwrap()).collect::<Vec<_>>());
+        assert_eq!(
+            before,
+            protected
+                .iter()
+                .map(|path| fs::read(path).unwrap())
+                .collect::<Vec<_>>()
+        );
         let _ = fs::remove_dir_all(workspace);
     }
     #[test]
     fn execute_requires_backend_confirmation() {
-        if !enabled() { return; }
+        if !enabled() {
+            return;
+        }
         let (workspace, project, output, _, _) = fixture(true);
-        let e = execute_global_cleanup_with(&[workspace.to_string_lossy().into_owned()], &[], false, |p| fs::remove_dir_all(p).map_err(|e| e.to_string())).unwrap_err();
-        assert!(e.contains("подтверждение")); assert!(project.exists() && output.exists());
+        let e = execute_global_cleanup_with(
+            &[workspace.to_string_lossy().into_owned()],
+            &[],
+            false,
+            |p| fs::remove_dir_all(p).map_err(|e| e.to_string()),
+        )
+        .unwrap_err();
+        assert!(e.contains("подтверждение"));
+        assert!(project.exists() && output.exists());
         let _ = fs::remove_dir_all(workspace);
     }
 }
-
