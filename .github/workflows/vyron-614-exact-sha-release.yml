@@ -1,11 +1,6 @@
-name: VYRON 6.1.14 Exact-SHA Signed Release Candidate
+name: VYRON 6.1.15 macOS Exact-SHA Release
 
 on:
-  push:
-    branches:
-      - hotfix/vyron-6.1.13-final-runway
-    paths:
-      - '.github/workflows/vyron-614-exact-sha-release.yml'
   workflow_dispatch:
 
 permissions:
@@ -13,98 +8,23 @@ permissions:
   actions: read
 
 concurrency:
-  group: vyron-614-exact-sha-release
+  group: vyron-615-macos-release
   cancel-in-progress: false
 
 env:
-  VERSION: '6.1.14'
-  SOURCE_SHA: 'bba8e3aba15653f304f1ebd9ec3f18289420f884'
-  BUNDLE_ID: 'studio.channelflow.desktop'
+  VERSION: '6.1.15'
+  TAG: v6.1.15
+  BASE_PRODUCT_SHA: '0eb775f38f0f0c9aeee43bd4d2ca4d5b13ca0bd7'
+  SOURCE_SHA: '51ba3f9e3f9526e101ec69e86c1bdd2fe496a7e2'
+  RELEASE_REPO: ScaleUPPeisov/vyron-releases
+  BUNDLE_ID: studio.channelflow.desktop
   EXPECTED_SIGNING_CERT_SHA1: '2C8B0BD4EE1C000D29DD0667BF1068D4673692C9'
 
 jobs:
-  gate:
-    name: Exact source and focused regression gate
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    env:
-      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-      VYRON_MACOS_SIGNING_P12_BASE64: ${{ secrets.VYRON_MACOS_SIGNING_P12_BASE64 }}
-      VYRON_MACOS_SIGNING_P12_PASSWORD: ${{ secrets.VYRON_MACOS_SIGNING_P12_PASSWORD }}
-      VYRON_MACOS_SIGNING_IDENTITY: ${{ secrets.VYRON_MACOS_SIGNING_IDENTITY }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ env.SOURCE_SHA }}
-          fetch-depth: 0
-
-      - name: Verify exact product SHA and signing inputs
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
-          for name in TAURI_SIGNING_PRIVATE_KEY VYRON_MACOS_SIGNING_P12_BASE64 VYRON_MACOS_SIGNING_P12_PASSWORD VYRON_MACOS_SIGNING_IDENTITY; do
-            test -n "${!name:-}"
-          done
-          echo 'EXACT_SHA_VERIFIED=YES'
-          echo 'SIGNING_INPUTS=AVAILABLE'
-
-      - name: Verify release identity
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          node - <<'NODE'
-          const p=require('./package.json');
-          const l=require('./package-lock.json');
-          const t=require('./src-tauri/tauri.conf.json');
-          const v=process.env.VERSION;
-          if(p.version!==v||l.version!==v||l.packages?.['']?.version!==v||t.version!==v) process.exit(2);
-          if(t.identifier!=='studio.channelflow.desktop'||t.bundle.createUpdaterArtifacts!==true) process.exit(3);
-          NODE
-          grep -q '^version = "6.1.14"$' src-tauri/Cargo.toml
-          python3 - <<'PY'
-          import pathlib,re
-          lock=pathlib.Path('src-tauri/Cargo.lock').read_text()
-          blocks=lock.split('[[package]]')
-          hit=[b for b in blocks if re.search(r'(?m)^name\s*=\s*"channelflow"\s*$',b)]
-          assert len(hit)==1 and re.search(r'(?m)^version\s*=\s*"6\.1\.14"\s*$',hit[0])
-          PY
-          echo 'VERSION_IDENTITY=PASS'
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-      - run: npm ci --no-audit --no-fund
-
-      - name: Focused cleanup regressions
-        run: >
-          npx vitest run
-          src/globalCleanupExecutor.test.ts
-          src/postUploadCleanup.global.test.ts
-          src/v2111GlobalCleanup.test.ts
-          src/v212CleanupCommandRegistration.test.ts
-          src/v214RealMacFollowup.test.ts
-
-      - name: TypeScript and production frontend build
-        run: |
-          npx tsc --noEmit
-          npm run build
-
-      - name: Verify source tree clean
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          git diff --exit-code
-          git diff --cached --exit-code
-          echo 'FOCUSED_QA=PASS'
-
   macos-signed:
-    name: macOS ARM64 signed candidate
-    needs: gate
+    name: macOS ARM64 signed production package
     runs-on: macos-14
-    timeout-minutes: 120
+    timeout-minutes: 180
     env:
       VYRON_TAURI_SIGNING_PRIVATE_KEY_RAW: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -116,6 +36,33 @@ jobs:
         with:
           ref: ${{ env.SOURCE_SHA }}
           fetch-depth: 0
+
+      - name: Verify exact source and version-only descendant
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          git merge-base --is-ancestor "$BASE_PRODUCT_SHA" "$SOURCE_SHA"
+          test "$(git diff --name-only "$BASE_PRODUCT_SHA..$SOURCE_SHA" | sort | tr '\n' ' ')" = "package-lock.json package.json src-tauri/Cargo.lock src-tauri/Cargo.toml src-tauri/tauri.conf.json "
+          node - <<'NODE'
+          const p=require('./package.json');
+          const l=require('./package-lock.json');
+          const t=require('./src-tauri/tauri.conf.json');
+          const v=process.env.VERSION;
+          if(p.version!==v||l.version!==v||l.packages?.['']?.version!==v||t.version!==v) process.exit(2);
+          if(t.identifier!==process.env.BUNDLE_ID||t.bundle.createUpdaterArtifacts!==true) process.exit(3);
+          NODE
+          grep -q '^version = "6.1.15"$' src-tauri/Cargo.toml
+          python3 - <<'PY'
+          import pathlib,re
+          lock=pathlib.Path('src-tauri/Cargo.lock').read_text()
+          blocks=lock.split('[[package]]')
+          hit=[b for b in blocks if re.search(r'(?m)^name\s*=\s*"channelflow"\s*$',b)]
+          assert len(hit)==1 and re.search(r'(?m)^version\s*=\s*"6\.1\.15"\s*$',hit[0])
+          PY
+          echo EXACT_SHA_VERIFIED=YES
+          echo VERSION_ONLY_DIFF=PASS
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -127,24 +74,19 @@ jobs:
         with:
           workspaces: src-tauri
       - run: npm ci --no-audit --no-fund
+      - name: Production frontend build
+        run: npm run build
 
-      - name: Verify exact SHA
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
-          echo 'EXACT_SHA_VERIFIED=YES'
-
-      - name: Import established macOS signing identity
+      - name: Import production signing identity
         shell: bash
         run: |
           set -Eeuo pipefail
           test -n "$VYRON_MACOS_SIGNING_P12_BASE64"
           test -n "$VYRON_MACOS_SIGNING_P12_PASSWORD"
           test -n "$VYRON_MACOS_SIGNING_IDENTITY"
-          KEYCHAIN="$RUNNER_TEMP/vyron-614-release.keychain-db"
+          KEYCHAIN="$RUNNER_TEMP/vyron-615-release.keychain-db"
           KEYCHAIN_PASSWORD="$(uuidgen)$(uuidgen)"
-          P12="$RUNNER_TEMP/vyron-614-release.p12"
+          P12="$RUNNER_TEMP/vyron-615-release.p12"
           printf '%s' "$VYRON_MACOS_SIGNING_P12_BASE64" | base64 --decode > "$P12"
           chmod 600 "$P12"
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
@@ -158,7 +100,7 @@ jobs:
           test "$(printf '%s' "$ID_SHA1" | tr '[:lower:]' '[:upper:]')" = "$EXPECTED_SIGNING_CERT_SHA1"
           echo "VYRON_SIGNING_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
           echo "VYRON_SIGNING_KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> "$GITHUB_ENV"
-          echo 'MACOS_SIGNING_IDENTITY=PASS'
+          echo CODE_SIGNING_IDENTITY=PASS
 
       - name: Canonicalize updater signing key
         shell: bash
@@ -182,7 +124,7 @@ jobs:
           print('::add-mask::'+canonical)
           PY
 
-      - name: Build signed macOS artifacts
+      - name: Build and verify signed macOS artifacts
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -207,9 +149,11 @@ jobs:
           shasum -a 256 "release-mac/VYRON-${VERSION}-arm64.dmg" | awk '{print $1}' > "release-mac/VYRON-${VERSION}-arm64.dmg.sha256"
           shasum -a 256 release-mac/VYRON.app.tar.gz | awk '{print $1}' > release-mac/VYRON.app.tar.gz.sha256
           printf '%s\n' "$SOURCE_SHA" > release-mac/source-head.txt
-          echo 'MACOS_PACKAGE=PASS'
+          echo MACOS_BUILD=PASS
+          echo CODE_SIGNING=PASS
+          echo PACKAGE=PASS
 
-      - name: Verify macOS updater signature
+      - name: Verify updater signature
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -229,11 +173,11 @@ jobs:
           PY
           brew list minisign >/dev/null 2>&1 || brew install minisign >/dev/null
           minisign -Vm release-mac/VYRON.app.tar.gz -x /tmp/mac.sig -p /tmp/vyron.pub
-          echo 'MACOS_UPDATER_SIGNATURE=PASS'
+          echo UPDATER_SIGNATURE=PASS
 
       - uses: actions/upload-artifact@v4
         with:
-          name: VYRON-6.1.14-MAC-SIGNED-CANDIDATE
+          name: VYRON-6.1.15-MAC
           path: release-mac/**
           if-no-files-found: error
           retention-days: 30
@@ -243,119 +187,134 @@ jobs:
         shell: bash
         run: |
           set +e
-          rm -f "$RUNNER_TEMP/vyron-614-release.p12"
+          rm -f "$RUNNER_TEMP/vyron-615-release.p12"
           if [[ -n "${VYRON_SIGNING_KEYCHAIN:-}" ]]; then security delete-keychain "$VYRON_SIGNING_KEYCHAIN" >/dev/null 2>&1 || true; fi
 
-  windows-signed:
-    name: Windows x64 updater-signed candidate
-    needs: gate
-    runs-on: windows-2022
-    timeout-minutes: 120
+  release-assets:
+    name: Publish GitHub release
+    needs: macos-signed
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
     env:
-      VYRON_TAURI_SIGNING_PRIVATE_KEY_RAW: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      GH_TOKEN: ${{ secrets.VYRON_RELEASES_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
         with:
-          ref: ${{ env.SOURCE_SHA }}
-          fetch-depth: 0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-pc-windows-msvc
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-      - run: npm ci --no-audit --no-fund
-
-      - name: Verify exact SHA and updater signing inputs
-        shell: pwsh
+          name: VYRON-6.1.15-MAC
+          path: release-mac
+      - name: Verify and publish release assets
+        shell: bash
         run: |
-          $ErrorActionPreference='Stop'
-          if((git rev-parse HEAD).Trim() -ne $env:SOURCE_SHA){throw 'SOURCE_SHA_MISMATCH'}
-          if([string]::IsNullOrWhiteSpace($env:VYRON_TAURI_SIGNING_PRIVATE_KEY_RAW)){throw 'TAURI_SIGNING_PRIVATE_KEY_MISSING'}
-          Write-Host 'EXACT_SHA_VERIFIED=YES'
+          set -Eeuo pipefail
+          test -n "$GH_TOKEN"
+          test "$(tr -d '\r\n' < release-mac/source-head.txt)" = "$SOURCE_SHA"
+          test "$(sha256sum "release-mac/VYRON-${VERSION}-arm64.dmg" | awk '{print $1}')" = "$(tr -d '\r\n ' < "release-mac/VYRON-${VERSION}-arm64.dmg.sha256")"
+          test "$(sha256sum release-mac/VYRON.app.tar.gz | awk '{print $1}')" = "$(tr -d '\r\n ' < release-mac/VYRON.app.tar.gz.sha256)"
+          cat >/tmp/release-notes.md <<EOF
+          ## VYRON 6.1.15 — Global Project Cleanup Hotfix (macOS)
 
-      - name: Canonicalize updater signing key
-        shell: pwsh
-        run: |
-          $ErrorActionPreference='Stop'
-          @'
-          import base64,os
-          raw=os.environ['VYRON_TAURI_SIGNING_PRIVATE_KEY_RAW'].strip().replace('\\r\\n','\n').replace('\\n','\n')
-          candidates=[raw]
-          for _ in range(5):
-              cur=candidates[-1].strip()
-              try: dec=base64.b64decode(cur,validate=True).decode().strip()
-              except Exception: break
-              if dec in candidates: break
-              candidates.append(dec)
-          plain=next((x for x in candidates if x.startswith('untrusted comment:')),None)
-          assert plain,'TAURI_SIGNING_PRIVATE_KEY_FORMAT_UNRECOGNIZED'
-          canonical=base64.b64encode((plain.rstrip()+'\n').encode()).decode()
-          with open(os.environ['GITHUB_ENV'],'a') as f:f.write('TAURI_SIGNING_PRIVATE_KEY='+canonical+'\n')
-          print('::add-mask::'+canonical)
-          '@ | python
-          if($LASTEXITCODE -ne 0){throw 'UPDATER_KEY_NORMALIZATION_FAILED'}
+          Exact product source: \`${SOURCE_SHA}\`
+          Verified base source: \`${BASE_PRODUCT_SHA}\`
 
-      - name: Build Windows NSIS and updater signature
-        shell: pwsh
-        run: |
-          $ErrorActionPreference='Stop'
-          npx tauri build --target x86_64-pc-windows-msvc --bundles nsis --config src-tauri/tauri.windows.conf.json
-          if($LASTEXITCODE -ne 0){throw 'WINDOWS_BUILD_FAILED'}
-          $installer=Get-ChildItem src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis -Filter '*-setup.exe' | Select-Object -First 1
-          if(-not $installer){throw 'NSIS_MISSING'}
-          $sig=Get-Item ($installer.FullName + '.sig') -ErrorAction Stop
-          New-Item -ItemType Directory -Force -Path release-windows | Out-Null
-          Copy-Item $installer.FullName release-windows/VYRON_6.1.14_x64-setup.exe
-          Copy-Item $sig.FullName release-windows/VYRON_6.1.14_x64-setup.exe.sig
-          (Get-FileHash release-windows/VYRON_6.1.14_x64-setup.exe -Algorithm SHA256).Hash.ToLowerInvariant() | Set-Content release-windows/VYRON_6.1.14_x64-setup.exe.sha256
-          Set-Content release-windows/source-head.txt $env:SOURCE_SHA
-          Write-Host 'WINDOWS_PACKAGE=PASS'
+          - Global owner cleanup includes every safe PROJECT workspace folder, independent of render, upload, metadata, or rendering state.
+          - Final render files, upload history, schedules, settings, credentials, and OAuth state remain protected.
+          - macOS ARM64 only. Windows artifacts and updater feed remain unchanged.
+          EOF
+          if gh release view "$TAG" --repo "$RELEASE_REPO" >/dev/null 2>&1; then
+            BODY="$(gh release view "$TAG" --repo "$RELEASE_REPO" --json body --jq .body)"
+            printf '%s' "$BODY" | grep -F "$SOURCE_SHA" >/dev/null || { echo EXISTING_RELEASE_SOURCE_MISMATCH; exit 42; }
+            gh release upload "$TAG" --repo "$RELEASE_REPO" --clobber \
+              "release-mac/VYRON-${VERSION}-arm64.dmg" "release-mac/VYRON-${VERSION}-arm64.dmg.sha256" \
+              release-mac/VYRON.app.tar.gz release-mac/VYRON.app.tar.gz.sha256 \
+              release-mac/VYRON.app.tar.gz.sig release-mac/source-head.txt
+          else
+            gh release create "$TAG" --repo "$RELEASE_REPO" --title "VYRON ${VERSION}" --notes-file /tmp/release-notes.md \
+              "release-mac/VYRON-${VERSION}-arm64.dmg" "release-mac/VYRON-${VERSION}-arm64.dmg.sha256" \
+              release-mac/VYRON.app.tar.gz release-mac/VYRON.app.tar.gz.sha256 \
+              release-mac/VYRON.app.tar.gz.sig release-mac/source-head.txt
+          fi
+          gh api "repos/$RELEASE_REPO/releases/tags/$TAG" >/tmp/release.json
+          python3 - <<'PY'
+          import json,os
+          d=json.load(open('/tmp/release.json'));v=os.environ['VERSION'];source=os.environ['SOURCE_SHA']
+          assert d['tag_name']==f'v{v}' and not d['draft'] and not d['prerelease'] and source in d.get('body','')
+          req={f'VYRON-{v}-arm64.dmg',f'VYRON-{v}-arm64.dmg.sha256','VYRON.app.tar.gz','VYRON.app.tar.gz.sha256','VYRON.app.tar.gz.sig','source-head.txt'}
+          assets={x['name']:x for x in d['assets']};assert req<=set(assets) and all(assets[n]['size']>0 for n in req)
+          PY
+          echo GITHUB_RELEASE_PUBLISHED=YES
 
-      - name: Verify Windows updater signature against embedded pubkey
-        shell: pwsh
-        run: |
-          $ErrorActionPreference='Stop'
-          $verifyRoot=Join-Path $env:RUNNER_TEMP 'vyron-signature-verify'
-          New-Item -ItemType Directory -Force -Path (Join-Path $verifyRoot 'src') | Out-Null
-          @'
-          [package]
-          name = "vyron-signature-verify"
-          version = "0.0.0"
-          edition = "2021"
-          [dependencies]
-          base64 = "0.22"
-          minisign-verify = "=0.2.5"
-          '@ | Set-Content -Encoding utf8 (Join-Path $verifyRoot 'Cargo.toml')
-          @'
-          use base64::{engine::general_purpose::STANDARD, Engine as _};
-          use minisign_verify::{PublicKey, Signature};
-          use std::{env,fs};
-          fn decode(encoded:&str)->String{String::from_utf8(STANDARD.decode(encoded.trim()).unwrap()).unwrap()}
-          fn main(){
-            let a:Vec<String>=env::args().collect(); assert_eq!(a.len(),4);
-            let artifact=fs::read(&a[1]).unwrap();
-            let sig=decode(&fs::read_to_string(&a[2]).unwrap());
-            let conf=fs::read_to_string(&a[3]).unwrap();
-            let marker="\"pubkey\": \""; let start=conf.find(marker).unwrap()+marker.len();
-            let tail=&conf[start..]; let end=tail.find('\"').unwrap();
-            let pk=PublicKey::decode(&decode(&tail[..end])).unwrap();
-            let sg=Signature::decode(&sig).unwrap();
-            pk.verify(&artifact,&sg,true).unwrap();
-            println!("WINDOWS_UPDATER_SIGNATURE=PASS");
-          }
-          '@ | Set-Content -Encoding utf8 (Join-Path $verifyRoot 'src/main.rs')
-          cargo run --quiet --release --manifest-path (Join-Path $verifyRoot 'Cargo.toml') -- release-windows/VYRON_6.1.14_x64-setup.exe release-windows/VYRON_6.1.14_x64-setup.exe.sig src-tauri/tauri.conf.json
-          if($LASTEXITCODE -ne 0){throw 'WINDOWS_SIGNATURE_VERIFY_FAILED'}
-
-      - uses: actions/upload-artifact@v4
+  macos-feed:
+    name: Publish macOS updater feed only
+    needs: release-assets
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ secrets.VYRON_RELEASES_TOKEN }}
+    steps:
+      - uses: actions/download-artifact@v4
         with:
-          name: VYRON-6.1.14-WINDOWS-SIGNED-CANDIDATE
-          path: release-windows/**
-          if-no-files-found: error
-          retention-days: 30
+          name: VYRON-6.1.15-MAC
+          path: release-mac
+      - name: Update latest.json and preserve Windows feed byte-for-byte
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git clone "https://x-access-token:$GH_TOKEN@github.com/$RELEASE_REPO.git" release-repo
+          sha256sum release-repo/updates/windows-latest.json | awk '{print $1}' > /tmp/windows-before.sha256
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          mac=json.loads(Path('release-repo/updates/latest.json').read_text())
+          win=json.loads(Path('release-repo/updates/windows-latest.json').read_text())
+          assert mac['version']=='6.1.14' and set(mac['platforms'])=={'darwin-aarch64'}
+          assert set(win['platforms'])=={'windows-x86_64'}
+          PY
+          MAC_SIG="$(tr -d '\r\n' < release-mac/VYRON.app.tar.gz.sig)"
+          MAC_SHA="$(tr -d '\r\n ' < release-mac/VYRON.app.tar.gz.sha256)"
+          PUB_DATE="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          python3 - "$MAC_SIG" "$MAC_SHA" "$PUB_DATE" <<'PY'
+          import json,sys
+          from pathlib import Path
+          sig,sha,pub=sys.argv[1:4];assert len(sha)==64
+          repo='ScaleUPPeisov/vyron-releases';v='6.1.15'
+          latest={'version':v,'notes':'VYRON 6.1.15 — Global Project Cleanup Hotfix (macOS)','pub_date':pub,'platforms':{
+            'darwin-aarch64':{'url':f'https://github.com/{repo}/releases/download/v{v}/VYRON.app.tar.gz','signature':sig,'sha256':sha}}}
+          Path('release-repo/updates/latest.json').write_text(json.dumps(latest,ensure_ascii=False,indent=2)+'\n')
+          PY
+          cd release-repo
+          test "$(sha256sum updates/windows-latest.json | awk '{print $1}')" = "$(cat /tmp/windows-before.sha256)"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add updates/latest.json
+          test -z "$(git status --porcelain -- updates/windows-latest.json)"
+          git commit -m 'release: publish VYRON 6.1.15 macOS updater manifest'
+          git push origin main
+          echo MACOS_UPDATER_FEED_UPDATED=YES
+
+  final-audit:
+    name: Final release audit
+    needs: macos-feed
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ secrets.VYRON_RELEASES_TOKEN }}
+    steps:
+      - name: Verify exact source, tag, assets, and macOS feed
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/$RELEASE_REPO/releases/tags/$TAG" >/tmp/release.json
+          gh api "repos/$RELEASE_REPO/contents/updates/latest.json?ref=main" --jq .content | tr -d '\n' | base64 -d >/tmp/latest.json
+          gh api "repos/$RELEASE_REPO/contents/updates/windows-latest.json?ref=main" --jq .content | tr -d '\n' | base64 -d >/tmp/windows.json
+          gh release download "$TAG" --repo "$RELEASE_REPO" --dir /tmp/vyron-615 --pattern source-head.txt --pattern "VYRON-${VERSION}-arm64.dmg.sha256"
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          r=json.load(open('/tmp/release.json'));m=json.load(open('/tmp/latest.json'));w=json.load(open('/tmp/windows.json'))
+          v=os.environ['VERSION'];source=os.environ['SOURCE_SHA']
+          assert r['tag_name']==f'v{v}' and source in r.get('body','')
+          assert Path('/tmp/vyron-615/source-head.txt').read_text().strip()==source
+          assert m['version']==v and set(m['platforms'])=={'darwin-aarch64'} and f'/v{v}/VYRON.app.tar.gz' in m['platforms']['darwin-aarch64']['url']
+          assert set(w['platforms'])=={'windows-x86_64'}
+          print('RELEASE_6_1_15=SUCCESS')
+          PY
