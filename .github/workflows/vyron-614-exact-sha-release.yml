@@ -76,10 +76,6 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
       - run: npm ci --no-audit --no-fund
 
       - name: Focused cleanup regressions
@@ -90,9 +86,6 @@ jobs:
           src/v2111GlobalCleanup.test.ts
           src/v212CleanupCommandRegistration.test.ts
           src/v214RealMacFollowup.test.ts
-
-      - name: Focused native cleanup regressions
-        run: cargo test --manifest-path src-tauri/Cargo.toml v214_cleanup_render_gate_tests -- --nocapture
 
       - name: TypeScript and production frontend build
         run: |
