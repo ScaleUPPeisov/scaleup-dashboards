@@ -192,11 +192,19 @@ jobs:
           test -s release/VYRON.app.tar.gz.sig
           grep -q '"version": "0.9.6"' release/latest.json
 
+      - name: Stage public CI artifact
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf vyron-v096-public-artifact
+          mkdir -p vyron-v096-public-artifact
+          cp -R .vyron-v051/release/. vyron-v096-public-artifact/
+
       - name: Upload CI artifact
         uses: actions/upload-artifact@v4
         with:
           name: VYRON-macOS-AppleSilicon-v0.9.6-signed
-          path: .vyron-v051/release/
+          path: vyron-v096-public-artifact/
           retention-days: 30
 
       - name: Publish GitHub Release

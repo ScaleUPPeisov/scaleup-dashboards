@@ -1,0 +1,18 @@
+create index if not exists vyron_mobile_devices_owner_idx on public.vyron_mobile_devices(owner_id);
+create index if not exists vyron_mobile_device_credentials_owner_idx on public.vyron_mobile_device_credentials(owner_id);
+create index if not exists vyron_mobile_license_links_owner_idx on public.vyron_mobile_license_links(owner_id);
+create index if not exists vyron_mobile_channels_owner_idx on public.vyron_mobile_channels(owner_id);
+create index if not exists vyron_mobile_channels_device_idx on public.vyron_mobile_channels(device_id);
+create index if not exists vyron_mobile_channel_stats_owner_idx on public.vyron_mobile_channel_stats(owner_id);
+create index if not exists vyron_mobile_content_inventory_owner_idx on public.vyron_mobile_content_inventory(owner_id);
+create index if not exists vyron_mobile_projects_owner_idx on public.vyron_mobile_projects(owner_id);
+create index if not exists vyron_mobile_projects_channel_idx on public.vyron_mobile_projects(channel_id);
+create index if not exists vyron_mobile_project_status_owner_idx on public.vyron_mobile_project_status(owner_id);
+create index if not exists vyron_mobile_project_status_project_time_idx on public.vyron_mobile_project_status(project_id,timestamp desc);
+create index if not exists vyron_mobile_publisher_jobs_owner_idx on public.vyron_mobile_publisher_jobs(owner_id);
+create index if not exists vyron_mobile_publisher_jobs_channel_idx on public.vyron_mobile_publisher_jobs(channel_id);
+create index if not exists vyron_mobile_endlume_jobs_owner_idx on public.vyron_mobile_endlume_jobs(owner_id);
+create index if not exists vyron_mobile_endlume_jobs_project_idx on public.vyron_mobile_endlume_jobs(project_id);
+create index if not exists vyron_mobile_sync_events_device_idx on public.vyron_mobile_sync_events(device_id);
+create index if not exists vyron_mobile_sync_events_mobile_device_idx on public.vyron_mobile_sync_events(mobile_device_id);
+create index if not exists vyron_mobile_notifications_owner_idx on public.vyron_mobile_notifications(owner_id);

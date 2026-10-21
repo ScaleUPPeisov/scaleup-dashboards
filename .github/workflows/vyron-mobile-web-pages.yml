@@ -1,0 +1,40 @@
+name: VYRON Mobile Web
+
+on:
+  push:
+    branches:
+      - feature/vyron-mobile-design-lock
+    paths:
+      - 'vyron-mobile/web/**'
+      - '.github/workflows/vyron-mobile-web-pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: vyron-mobile-pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+          token: ${{ secrets.VYRON_RELEASES_TOKEN }}
+      - name: Upload VYRON Mobile site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: vyron-mobile/web
+      - name: Deploy VYRON Mobile
+        id: deployment
+        uses: actions/deploy-pages@v4

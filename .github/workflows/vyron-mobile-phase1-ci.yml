@@ -1,0 +1,38 @@
+name: VYRON Mobile Realtime Phase 1 CI
+
+on:
+  push:
+    branches:
+      - feature/vyron-mobile-design-lock
+    paths:
+      - 'vyron-mobile/**'
+      - 'supabase/functions/vyron-mobile-sync-ingest/**'
+      - '.github/workflows/vyron-mobile-phase1-ci.yml'
+  pull_request:
+    paths:
+      - 'vyron-mobile/**'
+      - 'supabase/functions/vyron-mobile-sync-ingest/**'
+
+permissions:
+  contents: read
+
+jobs:
+  mobile:
+    runs-on: macos-14
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: vyron-mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install
+        run: npm install --no-audit --no-fund
+      - name: TypeScript
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm test
+      - name: Expo iOS bundle
+        run: npx expo export --platform ios --output-dir dist
