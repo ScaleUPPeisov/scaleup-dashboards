@@ -319,6 +319,7 @@ struct NetworkExport{
     videos:Vec<Value>,
     video_daily:Vec<Value>,
     traffic:Vec<Value>,
+    breakdowns:Vec<Value>,
     retention:Vec<Value>,
     events:Vec<Value>,
     findings:Vec<Value>,
@@ -352,7 +353,7 @@ async fn collect_channel(app:&AppHandle,client:&reqwest::Client,choice:&AiChanne
         "metadata":inventory_coverage,"daily":"unavailable","videoDaily":"unavailable",
         "traffic":"unavailable","retention":"unavailable","reach":"unavailable","errors":[]});
     let mut channel_daily=Vec::new();let mut video_daily=Vec::new();
-    let mut traffic=Vec::new();let mut retention=Vec::new();
+    let mut traffic=Vec::new();let mut breakdowns=Vec::new();let mut retention=Vec::new();
     if has_analytics{
         progress(app,run,index,total,choice,"CHANNEL_DAILY","История канала по дням");
         let mut failures=Vec::new();let mut successes=0usize;
@@ -403,6 +404,21 @@ async fn collect_channel(app:&AppHandle,client:&reqwest::Client,choice:&AiChanne
                 coverage["traffic"]=json!("available")},
             Err(e)=>{coverage["errors"].as_array_mut().unwrap().push(json!({"stage":"traffic","message":e}));},
         }
+        // Additional audience breakdowns; kept separate from the traffic API table.
+        for (dimension,label) in [("country","geography"),("deviceType","devices"),("subscribedStatus","audience")]{
+            match analytics(app,client,&token,cache,&start_s,&end_s,
+                "views,estimatedMinutesWatched",dimension,None,&format!("analytics.{label}")).await {
+                Ok(batch)=>{
+                    breakdowns.push(json!({"channelId":cid,"dimension":dimension,
+                        "periodStart":start_s,"periodEnd":end_s,
+                        "rows":batch.iter().map(|r|json!({"key":r.first(),
+                            "views":numeric(r.get(1)),"watchMinutes":numeric(r.get(2))})).collect::<Vec<_>>(),
+                        "source":"youtube_analytics_api_v2","fetchedAt":fetched_at}));
+                },
+                Err(e)=>coverage["errors"].as_array_mut().unwrap().push(json!({"stage":label,"message":e})),
+            }
+        }
+        coverage["audienceBreakdowns"]=json!(if breakdowns.len()==3{"available"}else if breakdowns.is_empty(){"unavailable"}else{"partial"});
         if request.include_retention.unwrap_or(false){
             progress(app,run,index,total,choice,"RETENTION","Кривые удержания доступных видео");
             let mut found=0usize;
@@ -430,8 +446,8 @@ async fn collect_channel(app:&AppHandle,client:&reqwest::Client,choice:&AiChanne
        "subscribers":numeric(stat.get("subscriberCount")),"totalViews":numeric(stat.get("viewCount")),
        "totalPublishedVideos":numeric(stat.get("videoCount")),"exportedVideoRecords":videos.len(),
        "periodStart":start_s,"periodEnd":end_s,"fetchedAt":fetched_at,"source":"youtube_data_api_v3",
-       "analyticsAuthorized":has_analytics});
-    Ok(NetworkExport{summary,coverage,channel_daily,videos,video_daily,traffic,retention,events,findings})
+       "analyticsAuthorized":has_analytics,"country":snippet.get("country"),"language":snippet.get("defaultLanguage")});
+    Ok(NetworkExport{summary,coverage,channel_daily,videos,video_daily,traffic,breakdowns,retention,events,findings})
 }
 fn archive_files(base:&Path)->Result<Vec<PathBuf>,String>{
     fn walk(root:&Path,dir:&Path,out:&mut Vec<PathBuf>)->Result<(),String>{
@@ -500,7 +516,7 @@ pub async fn youtube_ai_export(app:AppHandle,request:AiExportRequest)->Result<Va
         fs::create_dir_all(staging.join("channels")).map_err(|e|e.to_string())?;
         let client=reqwest::Client::builder().timeout(Duration::from_secs(60)).build().map_err(|e|e.to_string())?;
         let mut summary=Vec::new();let mut coverage=Vec::new();let mut all_events=Vec::new();
-        let mut all_retention=Vec::new();let mut findings=Vec::new();
+        let mut all_retention=Vec::new();let mut all_breakdowns=Vec::new();let mut findings=Vec::new();
         let mut channel_csv=csv_file(&staging.join("CHANNELS_DAILY.csv"),
             "channel_id,date,views,watch_minutes,subscribers_gained,subscribers_lost,average_view_duration,average_view_percentage,source,fetched_at\n")?;
         let mut videos_csv=csv_file(&staging.join("ALL_VIDEOS.csv"),
@@ -523,6 +539,7 @@ pub async fn youtube_ai_export(app:AppHandle,request:AiExportRequest)->Result<Va
                     save_json(&out_dir.join("channel_daily.json"),&json!(r.channel_daily))?;
                     save_json(&out_dir.join("videos_daily.json"),&json!(r.video_daily))?;
                     save_json(&out_dir.join("traffic.json"),&json!(r.traffic))?;
+                    save_json(&out_dir.join("audience_breakdowns.json"),&json!(r.breakdowns))?;
                     save_json(&out_dir.join("retention.json"),&json!(r.retention))?;
                     save_json(&out_dir.join("events.json"),&json!(r.events))?;
                     save_json(&out_dir.join("findings.json"),&json!(r.findings))?;
@@ -540,7 +557,7 @@ pub async fn youtube_ai_export(app:AppHandle,request:AiExportRequest)->Result<Va
                     for v in &r.video_daily{append_csv(&mut video_csv,&["channelId","videoId","date","views","watchMinutes","averageViewDuration","averageViewPercentage","subscribersGained","subscribersLost","source","fetchedAt"].iter().map(|k|vstr(&v[*k])).collect::<Vec<_>>())?}
                     for v in &r.traffic{append_csv(&mut traffic_csv,&["channelId","sourceType","views","watchMinutes","periodStart","periodEnd","source","fetchedAt"].iter().map(|k|vstr(&v[*k])).collect::<Vec<_>>())?}
                     summary.push(r.summary);coverage.push(r.coverage);
-                    all_events.extend(r.events);all_retention.extend(r.retention);findings.extend(r.findings);
+                    all_events.extend(r.events);all_retention.extend(r.retention);all_breakdowns.extend(r.breakdowns);findings.extend(r.findings);
                     progress(&app,&run,i+1,total,choice,"DONE","Данные сохранены в архиве");
                 }
                 Err(e)=>{
@@ -554,6 +571,7 @@ pub async fn youtube_ai_export(app:AppHandle,request:AiExportRequest)->Result<Va
         save_json(&staging.join("ALL_CHANNELS_SUMMARY.json"),&json!(summary))?;
         save_json(&staging.join("DATA_COVERAGE.json"),&json!(coverage))?;
         save_json(&staging.join("RETENTION.json"),&json!(all_retention))?;
+        save_json(&staging.join("AUDIENCE_BREAKDOWNS.json"),&json!(all_breakdowns))?;
         save_json(&staging.join("CHANNEL_EVENTS.json"),&json!(all_events))?;
         save_json(&staging.join("GROWTH_AND_DECLINE.json"),&json!(findings))?;
         let success=summary.len();
