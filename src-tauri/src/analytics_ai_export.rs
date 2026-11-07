@@ -1014,7 +1014,7 @@ mod tests{
     #[test] fn ai_zip_video_history_export_reads_merged_generation(){
         let root=std::env::temp_dir().join(format!("vyron-ai-history-{}",Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
-        let id="UC1234567890123456789012",video_id="aBc1234-X_y";
+        let id="UC1234567890123456789012";let video_id="aBc1234-X_y";
         let videos=vec![json!({"id":video_id,"snippet":{"channelId":id,"publishedAt":"2026-01-01T00:00:00Z"}})];
         let summary=json!({"channelId":id});
         crate::analytics360_cache::persist(&root,&summary,&json!({}),&[],
