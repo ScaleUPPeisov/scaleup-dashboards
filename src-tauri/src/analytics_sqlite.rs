@@ -9,7 +9,7 @@ use sha2::{Digest,Sha256};
 use std::{collections::HashSet,fs,io::Read,path::{Path,PathBuf},time::Duration};
 use uuid::Uuid;
 
-const SCHEMA_VERSION:i32=1;
+const SCHEMA_VERSION:i32=2;
 const DB_NAME:&str="analytics-v1.sqlite3";
 const SCHEMA:&str=r#"
 CREATE TABLE IF NOT EXISTS channels(
@@ -18,9 +18,12 @@ CREATE TABLE IF NOT EXISTS channels(
 CREATE TABLE IF NOT EXISTS videos(
  channel_id TEXT NOT NULL,video_id TEXT NOT NULL,published_at TEXT,
  observed_at TEXT NOT NULL,source TEXT NOT NULL,completeness TEXT NOT NULL,
- payload_json TEXT NOT NULL,PRIMARY KEY(channel_id,video_id),
+ payload_json TEXT NOT NULL,catalog_json TEXT,content_type TEXT,views_public INTEGER,
+ PRIMARY KEY(channel_id,video_id),
  FOREIGN KEY(channel_id) REFERENCES channels(channel_id) ON DELETE CASCADE);
 CREATE INDEX IF NOT EXISTS idx_videos_published ON videos(channel_id,published_at DESC);
+CREATE INDEX IF NOT EXISTS idx_videos_content ON videos(channel_id,content_type,published_at DESC);
+CREATE INDEX IF NOT EXISTS idx_videos_views ON videos(channel_id,views_public DESC);
 CREATE TABLE IF NOT EXISTS channel_daily(
  channel_id TEXT NOT NULL,date TEXT NOT NULL,views INTEGER,watch_minutes REAL,
  observed_at TEXT NOT NULL,source TEXT NOT NULL,completeness TEXT NOT NULL,
@@ -91,6 +94,10 @@ CREATE TABLE IF NOT EXISTS data_coverage(
  channel_id TEXT NOT NULL,generation TEXT NOT NULL,observed_at TEXT NOT NULL,
  source TEXT NOT NULL,completeness TEXT NOT NULL,payload_json TEXT NOT NULL,
  PRIMARY KEY(channel_id,generation),
+ FOREIGN KEY(channel_id) REFERENCES channels(channel_id) ON DELETE CASCADE);
+CREATE TABLE IF NOT EXISTS analytics_overviews(
+ channel_id TEXT NOT NULL,generation TEXT NOT NULL,updated_at TEXT NOT NULL,
+ payload_json TEXT NOT NULL,PRIMARY KEY(channel_id,generation),
  FOREIGN KEY(channel_id) REFERENCES channels(channel_id) ON DELETE CASCADE);
 CREATE TABLE IF NOT EXISTS analytics_migrations(
  channel_id TEXT NOT NULL,generation TEXT NOT NULL,source_digest TEXT NOT NULL,
@@ -165,6 +172,23 @@ fn prepare_db(path:&Path)->Result<Connection,String>{
         conn.pragma_update(None,"user_version",SCHEMA_VERSION).map_err(|e|e.to_string())?;
         conn.execute_batch("COMMIT;").map_err(|e|e.to_string())?;
     }
+    if version==1{
+        // Crash-safe v1 -> v2 upgrade; legacy generation markers are invalidated,
+        // so JSON remains the source until a full v2 reimport is verified.
+        conn.execute_batch("BEGIN IMMEDIATE;
+            ALTER TABLE videos ADD COLUMN catalog_json TEXT;
+            ALTER TABLE videos ADD COLUMN content_type TEXT;
+            ALTER TABLE videos ADD COLUMN views_public INTEGER;
+            CREATE INDEX IF NOT EXISTS idx_videos_content ON videos(channel_id,content_type,published_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_videos_views ON videos(channel_id,views_public DESC);
+            CREATE TABLE IF NOT EXISTS analytics_overviews(
+              channel_id TEXT NOT NULL,generation TEXT NOT NULL,updated_at TEXT NOT NULL,
+              payload_json TEXT NOT NULL,PRIMARY KEY(channel_id,generation),
+              FOREIGN KEY(channel_id) REFERENCES channels(channel_id) ON DELETE CASCADE);
+            DELETE FROM analytics_migrations;
+            PRAGMA user_version=2;
+            COMMIT;").map_err(|e|format!("SQLITE_V1_TO_V2_MIGRATION: {e}"))?;
+    }
     let quick:String=conn.query_row("PRAGMA quick_check",[],|r|r.get(0)).map_err(|e|e.to_string())?;
     if quick!="ok"{return Err(format!("SQLITE_RECOVERY_REQUIRED: integrity check: {quick}"))}
     Ok(conn)
@@ -188,6 +212,7 @@ fn read_current_verified(cache:&Path,channel_id:&str)->Result<Option<Connection>
     conn.busy_timeout(Duration::from_secs(5)).map_err(|e|e.to_string())?;
     let schema:i32=conn.query_row("PRAGMA user_version",[],|r|r.get(0))
         .map_err(|e|format!("SQLITE_RECOVERY_REQUIRED: schema read failed: {e}"))?;
+    if schema==1{return Ok(None)}
     if schema!=SCHEMA_VERSION{return Err("SQLITE_RECOVERY_REQUIRED: unrecognized database schema".into())}
     let exists=conn.query_row("SELECT 1 FROM analytics_migrations WHERE channel_id=?1 AND generation=?2",
         params![channel_id,generation],|r|r.get::<_,i64>(0))
@@ -277,6 +302,10 @@ fn import_generation(tx:&Transaction<'_>,channel:&str,generation:&str,root:&Path
         completeness=excluded.completeness,payload_json=excluded.payload_json",
         params![channel,text(summary,"name"),stamp,source(summary,"youtube_data_api_v3"),
         completeness(summary),to_json(summary)?]).map_err(|e|e.to_string())?;
+    tx.execute("INSERT INTO analytics_overviews(channel_id,generation,updated_at,payload_json)
+        VALUES(?1,?2,?3,?4)",
+        params![channel,generation,stamp,to_json(overview)?])
+        .map_err(|e|format!("SQLITE_OVERVIEW_IMPORT: {e}"))?;
     // Replace only channel-owned materializations, atomically. The last good
     // generation remains committed if any SQL row or verification fails.
     for table in ["retention_points","subtitles","video_daily",
@@ -295,10 +324,14 @@ fn import_generation(tx:&Transaction<'_>,channel:&str,generation:&str,root:&Path
             .filter(|v|!v.is_empty()).map(|x|x!=channel).unwrap_or(false){
             return Err("SQLITE_VIDEO_DETAILS_WRONG_CHANNEL".into())
         }
-        tx.execute("INSERT INTO videos(channel_id,video_id,published_at,observed_at,source,completeness,payload_json)
-          VALUES(?1,?2,?3,?4,?5,?6,?7)",
+        let views=video.get("viewsPublic").and_then(Value::as_i64)
+            .or_else(||text(video,"viewsPublic").and_then(|s|s.parse::<i64>().ok()));
+        tx.execute("INSERT INTO videos(channel_id,video_id,published_at,observed_at,source,completeness,
+              payload_json,catalog_json,content_type,views_public)
+          VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
             params![channel,id,text(video,"publishedAt"),observed(video,&stamp),
-                source(video,"youtube_data_api_v3"),completeness(video),to_json(&detail)?])
+                source(video,"youtube_data_api_v3"),completeness(video),to_json(&detail)?,
+                to_json(video)?,text(video,"contentType"),views])
             .map_err(|e|format!("SQLITE_INSERT_VIDEO: {e}"))?;
         tx.execute("INSERT INTO metadata_history(channel_id,video_id,generation,observed_at,source,completeness,payload_json)
           VALUES(?1,?2,?3,?4,?5,?6,?7)",
