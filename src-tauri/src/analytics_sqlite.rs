@@ -778,6 +778,38 @@ mod tests{
             serde_json::to_vec(&json!({"schemaVersion":1,"channelId":id,"generation":generation})).unwrap()).unwrap();
         (cache,id,generation)
     }
+    fn activate(cache:&Path,channel:&str,generation:&str){
+        fs::write(cache.join("ui-current.json"),
+            serde_json::to_vec(&json!({"channelId":channel,"generation":generation})).unwrap()).unwrap();
+    }
+    fn clone_generation(cache:&Path,channel:&str,original:&str,views:i64)->String{
+        let next=Uuid::new_v4().to_string();
+        let source=cache.join("ui-generations").join(original);
+        let target=cache.join("ui-generations").join(&next);
+        for subdir in ["video-details","video-days","retention"]{
+            fs::create_dir_all(target.join(subdir)).unwrap();
+            for entry in fs::read_dir(source.join(subdir)).unwrap(){
+                let entry=entry.unwrap();
+                fs::copy(entry.path(),target.join(subdir).join(entry.file_name())).unwrap();
+            }
+        }
+        for filename in ["video-catalog.json","reach-daily.json"]{
+            fs::copy(source.join(filename),target.join(filename)).unwrap();
+        }
+        let mut overview=obj(&source.join("overview.json")).unwrap();
+        overview["generation"]=json!(next);
+        fs::write(target.join("overview.json"),serde_json::to_vec(&overview).unwrap()).unwrap();
+        fs::write(target.join("channel-daily.json"),
+            serde_json::to_vec(&json!([{"date":"2026-01-01","views":views,"watchMinutes":30.0,
+                "subscribersGained":3,"subscribersLost":1,"source":"api"}])).unwrap()).unwrap();
+        activate(cache,channel,&next);
+        next
+    }
+    fn assert_channel_views(cache:&Path,channel:&str,views:i64){
+        let rows=read_channel_days(cache,channel,None,None).unwrap().unwrap();
+        assert_eq!(rows.len(),1);
+        assert_eq!(rows[0]["views"],views);
+    }
     #[test]fn migrates_verified_json_to_wal_and_keeps_original(){
         let (cache,id,_)=sample_cache();
         let initial=migrate_generation(&cache,&id).unwrap();
@@ -955,6 +987,138 @@ mod tests{
         let rolled_back=read_channel_days(&cache,&id,None,None).unwrap().unwrap();
         assert_eq!(rolled_back[0]["views"],12);
         let _=fs::remove_dir_all(cache);
+    }
+    #[test]fn a_b_a_b_switches_preserve_all_historical_receipts_and_no_duplicates(){
+        let (cache,channel,a)=sample_cache();
+        // Populate generation-keyed tables before initial verification.
+        let root=cache.join("ui-generations").join(&a);
+        let mut overview=obj(&root.join("overview.json")).unwrap();
+        overview["traffic"]=json!([{"sourceType":"YT_SEARCH","views":27}]);
+        overview["audienceBreakdowns"]=json!([{"type":"device","views":13},
+            {"type":"age","views":14}]);
+        fs::write(root.join("overview.json"),serde_json::to_vec(&overview).unwrap()).unwrap();
+        migrate_generation(&cache,&channel).unwrap();
+        let b=clone_generation(&cache,&channel,&a,99);
+        migrate_generation(&cache,&channel).unwrap();
+        assert_channel_views(&cache,&channel,99);
+        activate(&cache,&channel,&a);
+        assert!(read_channel_days(&cache,&channel,None,None).unwrap().is_none());
+        migrate_generation(&cache,&channel).unwrap();
+        assert_channel_views(&cache,&channel,12);
+        activate(&cache,&channel,&b);
+        assert!(read_channel_days(&cache,&channel,None,None).unwrap().is_none());
+        migrate_generation(&cache,&channel).unwrap();
+        assert_channel_views(&cache,&channel,99);
+        assert!(migrate_generation(&cache,&channel).unwrap().skipped);
+        let conn=prepare_db(&cache.join(DB_NAME)).unwrap();
+        for table in ["analytics_overviews","metadata_history","sync_jobs",
+            "data_coverage","traffic_sources","audience_demographics","devices"]{
+            let count:i64=conn.query_row(
+                &format!("SELECT COUNT(*) FROM {table} WHERE channel_id=?1"),
+                params![channel],|r|r.get(0)).unwrap();
+            let expected=2;
+            assert_eq!(count,expected,"{table} generated duplicates or lost history");
+        }
+        let active:i64=conn.query_row(
+            "SELECT COUNT(*) FROM analytics_migrations WHERE channel_id=?1",
+            params![channel],|r|r.get(0)).unwrap();
+        assert_eq!(active,1);
+        assert!(root.join("overview.json").exists());
+        assert!(cache.join("ui-generations").join(b).join("overview.json").exists());
+        let _=fs::remove_dir_all(cache);
+    }
+    #[test]fn historical_digest_change_is_rejected_before_any_sql_replacement(){
+        let (cache,channel,a)=sample_cache();
+        migrate_generation(&cache,&channel).unwrap();
+        let b=clone_generation(&cache,&channel,&a,99);
+        migrate_generation(&cache,&channel).unwrap();
+        let original=cache.join("ui-generations").join(&a).join("channel-daily.json");
+        fs::write(&original,b"[{\"date\":\"2026-01-01\",\"views\":999}]").unwrap();
+        activate(&cache,&channel,&a);
+        let error=migrate_generation(&cache,&channel).unwrap_err();
+        assert!(error.contains("SQLITE_RECOVERY_REQUIRED"),"{error}");
+        activate(&cache,&channel,&b);
+        assert_channel_views(&cache,&channel,99);
+        let conn=prepare_db(&cache.join(DB_NAME)).unwrap();
+        let still_verified:i64=conn.query_row(
+            "SELECT COUNT(*) FROM analytics_migrations WHERE channel_id=?1 AND generation=?2",
+            params![channel,b],|r|r.get(0)).unwrap();
+        assert_eq!(still_verified,1);
+        let _=fs::remove_dir_all(cache);
+    }
+    #[test]fn malformed_json_never_replaces_last_verified_sql_generation(){
+        let (cache,channel,a)=sample_cache();
+        migrate_generation(&cache,&channel).unwrap();
+        let b=clone_generation(&cache,&channel,&a,99);
+        let source=cache.join("ui-generations").join(&b).join("channel-daily.json");
+        fs::write(&source,b"{invalid-json}").unwrap();
+        let err=migrate_generation(&cache,&channel).unwrap_err();
+        assert!(err.contains("SQLITE_JSON_PARSE"),"{err}");
+        activate(&cache,&channel,&a);
+        assert_channel_views(&cache,&channel,12);
+        let _=fs::remove_dir_all(cache);
+    }
+    #[test]fn failed_import_after_sql_deletes_rolls_back_full_transaction(){
+        let (cache,channel,a)=sample_cache();
+        migrate_generation(&cache,&channel).unwrap();
+        let b=clone_generation(&cache,&channel,&a,99);
+        // canonical_source digests this file and can parse it. The failure
+        // occurs after SQL writes and replacement deletes have begun.
+        let invalid=cache.join("ui-generations").join(&b).join("video-days")
+            .join(format!("{}.json",video_path_key("aBc1234-X_y")));
+        fs::write(&invalid,serde_json::to_vec(&json!([
+            {"videoId":"aBc1234-X_y","date":"2026-01-01","views":20},
+            {"videoId":"WRONG-ID00","date":"2026-01-02","views":50}
+        ])).unwrap()).unwrap();
+        let error=migrate_generation(&cache,&channel).unwrap_err();
+        assert!(error.contains("SQLITE_VIDEO_DAILY_IDENTITY_MISMATCH"),"{error}");
+        activate(&cache,&channel,&a);
+        assert_channel_views(&cache,&channel,12);
+        let conn=prepare_db(&cache.join(DB_NAME)).unwrap();
+        let count:i64=conn.query_row(
+            "SELECT COUNT(*) FROM analytics_overviews WHERE channel_id=?1",
+            params![channel],|r|r.get(0)).unwrap();
+        assert_eq!(count,1);
+        let incomplete:i64=conn.query_row(
+            "SELECT COUNT(*) FROM sync_jobs WHERE channel_id=?1 AND generation=?2",
+            params![channel,b],|r|r.get(0)).unwrap();
+        assert_eq!(incomplete,0);
+        assert!(invalid.exists());
+        let _=fs::remove_dir_all(cache);
+    }
+    #[test]fn wrong_channel_reads_and_migrations_do_not_expose_any_other_channel(){
+        let (cache,channel,_)=sample_cache();
+        migrate_generation(&cache,&channel).unwrap();
+        let other="UC2222222222222222222222";
+        assert!(read_channel_days(&cache,other,None,None).is_err());
+        assert!(migrate_generation(&cache,other).is_err());
+        assert_channel_views(&cache,&channel,12);
+        let _=fs::remove_dir_all(cache);
+    }
+    #[test]fn two_independent_channel_stores_remain_isolated(){
+        let (one,channel_a,_)=sample_cache();
+        let (two,_same_id,b)=sample_cache();
+        let channel_b="UC3333333333333333333333";
+        let root=two.join("ui-generations").join(&b);
+        for path in [
+            two.join("ui-current.json"),root.join("overview.json"),
+            root.join("video-catalog.json"),
+            root.join("video-details").join(format!("{}.json",video_path_key("aBc1234-X_y")))
+        ]{
+            let contents=fs::read_to_string(&path).unwrap().replace(&channel_a,channel_b);
+            fs::write(&path,contents).unwrap();
+        }
+        let th=std::thread::spawn({let path=one.clone();let id=channel_a.clone();
+            move||migrate_generation(&path,&id).unwrap()});
+        let result=migrate_generation(&two,channel_b).unwrap();
+        assert_eq!(result.videos,1);
+        th.join().unwrap();
+        assert_channel_views(&one,&channel_a,12);
+        assert_channel_views(&two,channel_b,12);
+        assert!(read_channel_days(&two,&channel_a,None,None).is_err());
+        assert!(read_channel_days(&one,channel_b,None,None).is_err());
+        let _=fs::remove_dir_all(one);
+        let _=fs::remove_dir_all(two);
     }
     #[test]fn damaged_database_is_not_replaced_with_blank_file(){
         let (cache,id,_)=sample_cache();
