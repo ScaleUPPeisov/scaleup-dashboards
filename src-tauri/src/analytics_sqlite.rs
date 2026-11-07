@@ -6,7 +6,7 @@ use chrono::{NaiveDate,Utc};
 use rusqlite::{params,Connection,OptionalExtension,OpenFlags,Transaction,TransactionBehavior};
 use serde_json::{json,Value};
 use sha2::{Digest,Sha256};
-use std::{collections::HashSet,fs,path::{Path,PathBuf},time::Duration};
+use std::{collections::HashSet,fs,io::Read,path::{Path,PathBuf},time::Duration};
 use uuid::Uuid;
 
 const SCHEMA_VERSION:i32=1;
@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS metadata_history(
  channel_id TEXT NOT NULL,video_id TEXT NOT NULL,generation TEXT NOT NULL,
  observed_at TEXT NOT NULL,source TEXT NOT NULL,completeness TEXT NOT NULL,
  payload_json TEXT NOT NULL,PRIMARY KEY(channel_id,video_id,generation),
- FOREIGN KEY(channel_id,video_id) REFERENCES videos(channel_id,video_id) ON DELETE CASCADE);
+ FOREIGN KEY(channel_id) REFERENCES channels(channel_id) ON DELETE CASCADE);
 CREATE TABLE IF NOT EXISTS sync_jobs(
  channel_id TEXT NOT NULL,generation TEXT NOT NULL,status TEXT NOT NULL,
  started_at TEXT NOT NULL,finished_at TEXT,source_digest TEXT NOT NULL,
@@ -130,8 +130,10 @@ fn date(v:&Value)->Result<&str,String>{
 }
 fn verify_header(path:&Path)->Result<(),String>{
     if !path.exists(){return Ok(())}
-    let bytes=fs::read(path).map_err(|e|format!("SQLITE_FILE_READ: {e}"))?;
-    if !bytes.starts_with(b"SQLite format 3\0"){
+    let mut file=fs::File::open(path).map_err(|e|format!("SQLITE_FILE_OPEN: {e}"))?;
+    let mut header=[0u8;16];
+    file.read_exact(&mut header).map_err(|_|"SQLITE_RECOVERY_REQUIRED: unreadable existing database header".to_string())?;
+    if &header!=b"SQLite format 3\0"{
         return Err("SQLITE_RECOVERY_REQUIRED: invalid existing database header; no replacement attempted".into())
     }
     Ok(())
@@ -252,8 +254,7 @@ fn import_generation(tx:&Transaction<'_>,channel:&str,generation:&str,root:&Path
     // Replace only channel-owned materializations, atomically. The last good
     // generation remains committed if any SQL row or verification fails.
     for table in ["retention_points","subtitles","video_daily",
-        "reach_daily","video_reach_daily","channel_daily","channel_events",
-        "audience_demographics","traffic_sources","devices","videos"]{
+        "reach_daily","video_reach_daily","channel_daily","channel_events","videos"]{
         tx.execute(&format!("DELETE FROM {table} WHERE channel_id=?1"),params![channel])
             .map_err(|e|format!("SQLITE_CLEAR_{table}: {e}"))?;
     }
