@@ -560,6 +560,104 @@ pub(crate) fn read_video_days(cache:&Path,channel_id:&str,video_id:&str,start:Op
     Ok(Some(out))
 }
 
+/// One-channel SQL-backed Analytics 360 view. It reads only the requested
+/// video page and date range; millions of unrelated rows never enter React.
+/// A result is emitted only if the current generation has a VERIFIED marker.
+pub(crate) fn read_ui_snapshot(cache:&Path,channel_id:&str,page:u32,per_page:u32,period:&str,
+    start:Option<&str>,end:Option<&str>,video_id:Option<&str>,
+    content_type:Option<&str>,sort:Option<&str>)->Result<Option<Value>,String>{
+    if video_id.map(|x|!valid_video(x)).unwrap_or(false){
+        return Err("SQLITE_INVALID_VIDEO_ID".into())
+    }
+    let Some(conn)=read_current_verified(cache,channel_id)?else{return Ok(None)};
+    let pointer=obj(&cache.join("ui-current.json"))?;
+    let generation=text(&pointer,"generation").ok_or("SQLITE_POINTER_GENERATION_MISSING")?;
+    let overview_json:String=conn.query_row(
+        "SELECT payload_json FROM analytics_overviews WHERE channel_id=?1 AND generation=?2",
+        params![channel_id,generation],|r|r.get(0))
+        .map_err(|e|format!("SQLITE_OVERVIEW_READ: {e}"))?;
+    let overview:Value=serde_json::from_str(&overview_json)
+        .map_err(|e|format!("SQLITE_OVERVIEW_JSON_INVALID: {e}"))?;
+    if text(&overview,"channelId")!=Some(channel_id){
+        return Err("SQLITE_OVERVIEW_CHANNEL_MISMATCH".into())
+    }
+    let wanted=content_type.filter(|v|*v!="all");
+    let filtered_total:i64=conn.query_row(
+        "SELECT COUNT(*) FROM videos WHERE channel_id=?1 AND (?2 IS NULL OR content_type=?2)",
+        params![channel_id,wanted],|r|r.get(0)).map_err(|e|e.to_string())?;
+    let videos_total:i64=conn.query_row(
+        "SELECT COUNT(*) FROM videos WHERE channel_id=?1",params![channel_id],
+        |r|r.get(0)).map_err(|e|e.to_string())?;
+    let per_page=per_page.clamp(1,100) as i64;
+    let offset=(page as i64).saturating_mul(per_page).min(filtered_total);
+    let catalog_sql=if sort==Some("views"){
+        "SELECT catalog_json FROM videos WHERE channel_id=?1 AND
+           (?2 IS NULL OR content_type=?2) ORDER BY views_public DESC,published_at DESC
+           LIMIT ?3 OFFSET ?4"
+    }else{
+        "SELECT catalog_json FROM videos WHERE channel_id=?1 AND
+           (?2 IS NULL OR content_type=?2) ORDER BY published_at DESC
+           LIMIT ?3 OFFSET ?4"
+    };
+    let mut stmt=conn.prepare(catalog_sql).map_err(|e|e.to_string())?;
+    let rows=stmt.query_map(params![channel_id,wanted,per_page,offset],|r|r.get::<_,String>(0))
+        .map_err(|e|e.to_string())?;
+    let mut videos=Vec::new();
+    for row in rows{
+        let data=row.map_err(|e|e.to_string())?;
+        videos.push(serde_json::from_str::<Value>(&data)
+            .map_err(|e|format!("SQLITE_CATALOG_JSON_INVALID: {e}"))?);
+    }
+    drop(stmt);
+    let (mut selected,mut details,mut retention)=(Value::Null,Value::Null,Value::Null);
+    let mut selected_days=Vec::<Value>::new();
+    if let Some(id)=video_id{
+        let pair=conn.query_row(
+            "SELECT catalog_json,payload_json FROM videos WHERE channel_id=?1 AND video_id=?2",
+            params![channel_id,id],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))
+            .optional().map_err(|e|e.to_string())?
+            .ok_or("Видео отсутствует в этом канале")?;
+        selected=serde_json::from_str(&pair.0).map_err(|e|e.to_string())?;
+        details=serde_json::from_str(&pair.1).map_err(|e|e.to_string())?;
+        selected_days=read_video_days(cache,channel_id,id,start,end)?
+            .ok_or("SQLITE_VERIFIED_VIDEO_DAYS_UNAVAILABLE")?;
+        let mut stmt=conn.prepare(
+            "SELECT payload_json FROM retention_points
+             WHERE channel_id=?1 AND video_id=?2 ORDER BY point_index")
+            .map_err(|e|e.to_string())?;
+        let rows=stmt.query_map(params![channel_id,id],|r|r.get::<_,String>(0))
+            .map_err(|e|e.to_string())?;
+        let mut points=Vec::new();
+        for row in rows{
+            points.push(serde_json::from_str::<Value>(&row.map_err(|e|e.to_string())?)
+                .map_err(|e|e.to_string())?);
+        }
+        if !points.is_empty(){
+            retention=json!({"channelId":channel_id,"videoId":id,
+                "points":points,"source":"youtube_analytics_api_v2"});
+        }
+    }
+    let channel_daily=read_channel_days(cache,channel_id,start,end)?
+        .ok_or("SQLITE_VERIFIED_CHANNEL_DAYS_UNAVAILABLE")?;
+    let channel_reach=read_reach_aggregate(cache,channel_id,None,start,end)?
+        .ok_or("SQLITE_VERIFIED_CHANNEL_REACH_UNAVAILABLE")?;
+    let video_reach=if let Some(id)=video_id{
+        read_reach_aggregate(cache,channel_id,Some(id),start,end)?
+            .ok_or("SQLITE_VERIFIED_VIDEO_REACH_UNAVAILABLE")?
+    }else{Vec::new()};
+    Ok(Some(json!({
+        "status":"AVAILABLE","schemaVersion":2,"generation":generation,
+        "updatedAt":pointer.get("updatedAt"),"overview":overview,
+        "channelDaily":channel_daily,"channelReachDaily":channel_reach,
+        "videoReachDaily":video_reach,"videos":videos,
+        "videoCount":videos_total,"filteredVideoCount":filtered_total,
+        "page":page,"pageSize":per_page,"selectedVideo":selected,
+        "videoDetail":details,"videoDaily":selected_days,"retention":retention,
+        "period":period,"periodFrom":start,"periodTo":end,
+        "storageEngine":"sqlite_wal","storageVerified":true
+    })))
+}
+
 #[cfg(test)]
 mod tests{
     use super::*;
@@ -623,6 +721,26 @@ mod tests{
         let conn=prepare_db(&cache.join(DB_NAME)).unwrap();
         let count:i64=conn.query_row("SELECT COUNT(*) FROM analytics_migrations",[],|r|r.get(0)).unwrap();
         assert_eq!(count,0);
+        let _=fs::remove_dir_all(cache);
+    }
+    #[test]fn verified_sqlite_page_matches_json_source_and_video_passport(){
+        let (cache,id,_)=sample_cache();
+        migrate_generation(&cache,&id).unwrap();
+        let p=read_ui_snapshot(&cache,&id,0,40,"all",None,None,
+            Some("aBc1234-X_y"),Some("all"),Some("recent")).unwrap().unwrap();
+        assert_eq!(p["storageEngine"],"sqlite_wal");
+        assert_eq!(p["videoCount"],1);
+        assert_eq!(p["videos"][0]["videoId"],"aBc1234-X_y");
+        assert_eq!(p["selectedVideo"]["videoId"],"aBc1234-X_y");
+        assert_eq!(p["videoDetail"]["id"],"aBc1234-X_y");
+        assert_eq!(p["videoDaily"][0]["views"],12);
+        assert_eq!(p["channelDaily"][0]["views"],12);
+        assert_eq!(p["retention"]["points"].as_array().unwrap().len(),2);
+        assert_eq!(p["channelReachDaily"][0]["observedImpressions"],500);
+        let empty_page=read_ui_snapshot(&cache,&id,12,40,"all",None,None,
+            None,None,None).unwrap().unwrap();
+        assert_eq!(empty_page["filteredVideoCount"],1);
+        assert_eq!(empty_page["videos"].as_array().unwrap().len(),0);
         let _=fs::remove_dir_all(cache);
     }
     #[test]fn damaged_database_is_not_replaced_with_blank_file(){
