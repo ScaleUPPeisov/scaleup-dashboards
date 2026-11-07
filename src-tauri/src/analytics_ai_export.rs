@@ -448,13 +448,41 @@ fn change_findings(channel_id:&str,daily:&[Value])->Vec<Value>{
     }
     findings
 }
+async fn reporting_paginated(
+    app:&AppHandle,client:&reqwest::Client,token:&str,url:&str,field:&str,method:&str
+)->Result<Vec<Value>,String>{
+    let mut output=Vec::new();let mut token_next=String::new();let mut visited=HashSet::new();
+    for _ in 0..100 {
+        if !visited.insert(token_next.clone()){return Err(format!("{method}: repeated page token"))}
+        let params=if token_next.is_empty(){vec![]}else{vec![("pageToken",token_next.clone())]};
+        let response=get_json(app,client,token,url,&params,method).await?;
+        if let Some(rows)=response.get(field).and_then(Value::as_array){output.extend(rows.iter().cloned());}
+        token_next=text(response.get("nextPageToken"));
+        if token_next.is_empty(){return Ok(output)}
+    }
+    Err(format!("{method}: pagination exceeded safe page limit"))
+}
+fn latest_reporting_reach_files(reports:Vec<Value>)->Vec<Value>{
+    let mut latest=BTreeMap::<(String,String),Value>::new();
+    for report in reports{
+        let range=(text(report.get("startTime")),text(report.get("endTime")));
+        if range.0.is_empty()||range.1.is_empty(){continue}
+        let new_time=text(report.get("createTime"));
+        if latest.get(&range).map(|old|text(old.get("createTime"))<=new_time).unwrap_or(true){
+            latest.insert(range,report);
+        }
+    }
+    latest.into_values().collect()
+}
+
 async fn collect_reporting(app:&AppHandle,client:&reqwest::Client,token:&str,cache:&Path)->Value{
     let mut coverage=json!({"status":"unavailable","source":"youtube_reporting_api_v1","reason":null,
        "reachType":"channel_reach_basic_a1","reports":[]});
-    let jobs=match get_json(app,client,token,&format!("{REPORTING_API}/jobs"),&[],"reporting.jobs.list").await{
+    let jobs=match reporting_paginated(app,client,token,
+        &format!("{REPORTING_API}/jobs"),"jobs","reporting.jobs.list").await{
         Ok(v)=>v,Err(e)=>{coverage["reason"]=json!(e);return coverage}
     };
-    let mut job_id=jobs.get("jobs").and_then(Value::as_array).into_iter().flatten()
+    let mut job_id=jobs.iter()
         .find(|j|j.get("reportTypeId").and_then(Value::as_str)==Some("channel_reach_basic_a1"))
         .map(|j|text(j.get("id"))).unwrap_or_default();
     if job_id.is_empty(){
@@ -464,10 +492,13 @@ async fn collect_reporting(app:&AppHandle,client:&reqwest::Client,token:&str,cac
         }
     }
     if job_id.is_empty(){coverage["reason"]=json!("Reporting API не вернул ID задания");return coverage}
-    let listing=match get_json(app,client,token,&format!("{REPORTING_API}/jobs/{job_id}/reports"),&[],"reporting.reports.list").await{
+    let listing=match reporting_paginated(app,client,token,
+        &format!("{REPORTING_API}/jobs/{job_id}/reports"),"reports","reporting.reports.list").await{
         Ok(v)=>v,Err(e)=>{coverage["reason"]=json!(e);return coverage}
     };
-    let reports=listing.get("reports").and_then(Value::as_array).cloned().unwrap_or_default();
+    // YouTube can backfill or replace an older report for the same date.
+    // The latest createTime wins for that 24-hour period.
+    let reports=latest_reporting_reach_files(listing);
     let mut files=Vec::new();
     for report in reports {
         let url=text(report.get("downloadUrl"));let id=text(report.get("id"));
@@ -971,6 +1002,15 @@ pub async fn youtube_ai_export(app:AppHandle,request:AiExportRequest)->Result<Va
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test] fn reporting_backfill_prefers_newest_file_for_identical_period(){
+        let old=json!({"id":"old","startTime":"2026-10-01T00:00:00Z","endTime":"2026-10-02T00:00:00Z","createTime":"2026-10-03T00:00:00Z"});
+        let fresh=json!({"id":"fresh","startTime":"2026-10-01T00:00:00Z","endTime":"2026-10-02T00:00:00Z","createTime":"2026-10-04T00:00:00Z"});
+        let separate=json!({"id":"next","startTime":"2026-10-02T00:00:00Z","endTime":"2026-10-03T00:00:00Z","createTime":"2026-10-04T00:00:00Z"});
+        let result=latest_reporting_reach_files(vec![fresh.clone(),old,separate.clone()]);
+        assert_eq!(result.len(),2);
+        assert_eq!(result[0]["id"],"fresh");
+        assert_eq!(result[1]["id"],"next");
+    }
     #[test] fn ai_zip_video_history_export_reads_merged_generation(){
         let root=std::env::temp_dir().join(format!("vyron-ai-history-{}",Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
