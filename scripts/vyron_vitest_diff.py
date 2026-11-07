@@ -23,14 +23,25 @@ def load(path: str) -> tuple[set[str], dict[str, str], set[str]]:
     cases: set[str] = set()
     for suite in raw.get("testResults", []):
         location = stable_path(str(suite.get("name", "")))
-        for case in suite.get("assertionResults", []):
+        assertions = suite.get("assertionResults") or []
+        had_failed_assertion = False
+        for case in assertions:
             name = case.get("fullName") or case.get("title") or "unknown test"
             identity = f"{location} :: {name}"
             cases.add(identity)
             if case.get("status") == "failed":
+                had_failed_assertion = True
                 failures.add(identity)
                 messages = case.get("failureMessages") or []
                 errors[identity] = " | ".join(str(s)[:250] for s in messages[:2])
+        # Test-file import/setup failures can have ZERO assertion results.
+        # Omitting them would falsely report a clean regression gate.
+        if suite.get("status") == "failed" and not had_failed_assertion:
+            identity = f"{location} :: [SUITE_IMPORT_OR_SETUP_FAILURE]"
+            failures.add(identity)
+            cases.add(identity)
+            errors[identity] = str(suite.get("message") or
+                suite.get("failureMessage") or "Suite failed before/after test assertions")[:500]
     if not cases:
         raise ValueError(f"No test cases were parsed from {path}; refusing to treat empty runs as PASS")
     return failures, errors, cases
