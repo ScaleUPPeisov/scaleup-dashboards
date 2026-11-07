@@ -89,9 +89,13 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(),String> {
     let temp=path.with_extension(format!("{}.tmp",Uuid::new_v4()));
     let result=(|| -> Result<(),String> {
         let mut file=File::create(&temp).map_err(|e|e.to_string())?;
+        #[cfg(target_os="macos")]
+        crate::security::private_permissions(&temp)?;
         file.write_all(bytes).map_err(|e|e.to_string())?;
         file.sync_all().map_err(|e|e.to_string())?;
         fs::rename(&temp,path).map_err(|e|e.to_string())?;
+        #[cfg(target_os="macos")]
+        crate::security::private_permissions(path)?;
         Ok(())
     })();
     if result.is_err(){let _=fs::remove_file(temp);}
@@ -496,6 +500,10 @@ async fn download_reporting_csv(client:&reqwest::Client,token:&str,url:&str,path
     let temp=path.with_extension(format!("{}.part",Uuid::new_v4()));
     let result=async{
         let mut file=tokio::fs::File::create(&temp).await.map_err(|e|e.to_string())?;
+        #[cfg(unix)] {
+            use std::os::unix::fs::PermissionsExt;
+            tokio::fs::set_permissions(&temp,std::fs::Permissions::from_mode(0o600)).await.map_err(|e|e.to_string())?;
+        }
         let mut size=0u64;
         while let Some(chunk)=response.chunk().await.map_err(|e|format!("REPORTING_CHUNK: {e}"))? {
             size=size.saturating_add(chunk.len() as u64);
