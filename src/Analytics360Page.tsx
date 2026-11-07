@@ -213,6 +213,7 @@ export function Analytics360Page(){
  const [snapshot,setSnapshot]=useState<Snapshot|null>(null),[loading,setLoading]=useState(false);
  const [error,setError]=useState(''),[syncing,setSyncing]=useState(false),[refreshing,setRefreshing]=useState(false);
  const [progress,setProgress]=useState<Progress|null>(null),[includeRetention,setIncludeRetention]=useState(false);
+ const [includeReporting,setIncludeReporting]=useState(true);
  const [videoPage,setVideoPage]=useState(0),[videoType,setVideoType]=useState('all'),[videoSort,setVideoSort]=useState('recent');
  const [videoId,setVideoId]=useState<string|null>(null);
  const refreshToken=useRef(0);
@@ -253,7 +254,7 @@ export function Analytics360Page(){
    const output=await invoke<{status:string;completed:number;errors:{error:string}[]}>('youtube_ai_sync',{request:{
     channels:[{profileId:active.youtubeProfileId,channelId:active.youtubeChannelId,name:active.name}],
     period:'all',startDate:null,endDate:null,destination:'',
-    includeRetention,includeReporting:false
+    includeRetention,includeReporting
    }});
    if(output.completed===0)throw new Error(output.errors.map(e=>e.error).join(' | ')||'Синхронизация не завершена');
    await load();
@@ -305,7 +306,7 @@ export function Analytics360Page(){
   <div className="a360-sync"><div><strong>{active?.name||'Канал не выбран'}</strong>
    <span>Channel ID: {active?.youtubeChannelId||'Не привязан'} · OAuth: {eligible?'профиль совпадает':'нужна проверка'} · Архив: {ov?displayTime(ov.updatedAt):'не собран'}</span>
    {ov&&<span>История: {ov.summary.createdAt?displayDate(ov.summary.createdAt):'—'} → {ov.summary?.createdAt?'доступные даты API':'—'} · Видео: {channelsShown} · Данные: {String(coverage.daily||'NOT_YET_COLLECTED')}</span>}
-  </div><label><input type="checkbox" checked={includeRetention} onChange={e=>setIncludeRetention(e.target.checked)} disabled={syncing}/> Полные кривые удержания (дольше)</label></div>
+  </div><div className="a360-inline"><label><input type="checkbox" checked={includeRetention} onChange={e=>setIncludeRetention(e.target.checked)} disabled={syncing}/> Кривые удержания</label><label><input type="checkbox" checked={includeReporting} onChange={e=>setIncludeReporting(e.target.checked)} disabled={syncing}/> Отчёты показов / CTR (Reporting API)</label></div></div>
   {syncing&&<div className="a360-progress" role="status"><div className="a360-spinner"/><span>{progress?progress.name+' · '+progress.stage+' · '+progress.detail:'Подготовка безопасной синхронизации…'}</span></div>}
   <div className="a360-toolbar"><nav className="a360-tabs" aria-label="Разделы аналитики">{(Object.keys(tabLabels) as Tab[]).map(t=><button key={t} aria-current={tab===t?'page':undefined} className={tab===t?'active':''} onClick={()=>{setTab(t);setVideoId(null)}}>{tabLabels[t]}</button>)}</nav>
    <div className="a360-periods">{(Object.keys(periodLabels) as Period[]).map(p=><button key={p} className={p===period?'active':''} onClick={()=>{setPeriod(p);setVideoPage(0)}}>{periodLabels[p]}</button>)}</div></div>
