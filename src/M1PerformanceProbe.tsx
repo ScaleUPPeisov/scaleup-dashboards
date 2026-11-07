@@ -96,12 +96,30 @@ export function M1PerformanceProbe(){
     let latest:FpsMetrics|null=null;
     let originalState:any;
     let probeMode=false;
+    let longTaskObserver:PerformanceObserver|null=null;
+    let longTaskObserverSupported=false;
+    const observedLongTasksMs:number[]=[];
+    let isolatedIpcProbeMs:number|null=null;
     const onMetrics=(event:Event)=>{latest=(event as CustomEvent<FpsMetrics>).detail};
     window.addEventListener('vyron:fps-metrics',onMetrics);
     void (async()=>{
       try{
         if(!(await api.performanceProbeEnabled()))return;
+        const ipcStarted=performance.now();
         await api.performanceProbeAssertIsolated();
+        isolatedIpcProbeMs=performance.now()-ipcStarted;
+        // WKWebView versions differ: record unsupported Long Tasks API as
+        // null, never synthesize measurements from CI or rAF approximations.
+        if(typeof PerformanceObserver!=='undefined'&&
+           PerformanceObserver.supportedEntryTypes?.includes('longtask')){
+          try{
+            longTaskObserver=new PerformanceObserver(list=>{
+              for(const item of list.getEntries())observedLongTasksMs.push(item.duration);
+            });
+            longTaskObserver.observe({entryTypes:['longtask']});
+            longTaskObserverSupported=true;
+          }catch{longTaskObserver=null}
+        }
         await enterPerformanceProbeMode();
         probeMode=true;
         const before=useApp.getState();
@@ -183,8 +201,22 @@ export function M1PerformanceProbe(){
         const pass=aggregate.fps>=59&&aggregate.p50<=17.5&&aggregate.p95<=20.5&&aggregate.p99<=33.5&&aggregate.dropped<1&&aggregate.long50===0;
         const currentVersion=await api.appVersion().catch(()=>'unknown');
         await api.performanceProbeCleanup();
+        const sortedLongTasks=[...observedLongTasksMs].sort((a,b)=>a-b);
+        const observedLongTaskP95=sortedLongTasks.length?
+          sortedLongTasks[Math.min(sortedLongTasks.length-1,
+            Math.floor((sortedLongTasks.length-1)*.95))]:null;
         await api.performanceProbeReport({
           schemaVersion:2,version:currentVersion,at:new Date().toISOString(),pass,target,aggregate,rounds,
+          additionalPhysicalInstrumentation:{
+            isolatedIpcProbeMs,
+            longTaskApiSupported:longTaskObserverSupported,
+            longTasksObserved:longTaskObserverSupported?sortedLongTasks.length:null,
+            longTaskDurationP95Ms:longTaskObserverSupported?observedLongTaskP95:null,
+            longestObservedLongTaskMs:longTaskObserverSupported&&sortedLongTasks.length?
+              sortedLongTasks[sortedLongTasks.length-1]:null,
+            source:'window.performance + native PerformanceObserver when supported',
+            note:'Physical WebKit foreground only. Unsupported APIs are null, not zero.'
+          },
           measurementContext:'Physical foreground WKWebView observed frames; GitHub Actions results must not be described as physical MacBook Air M1 performance.',
           dataset:{channels:35,jobs:1000,metadataRecords:5000,assignedJobs,assignmentMs,navigationSwitchesPerRound:30,rounds:3},
           routeTimings:Object.fromEntries([...routeTimings.entries()].map(([page,samples])=>[page,{samples:samples.length,median:median(samples),p95:[...samples].sort((a,b)=>a-b)[Math.min(samples.length-1,Math.floor((samples.length-1)*.95))],worst:Math.max(...samples)}])),
@@ -196,6 +228,7 @@ export function M1PerformanceProbe(){
       }catch(error){
         if(await api.performanceProbeEnabled().catch(()=>false))await api.performanceProbeReport({schemaVersion:2,version:await api.appVersion().catch(()=>'unknown'),pass:false,error:String(error),at:new Date().toISOString()}).catch(()=>undefined);
       }finally{
+        longTaskObserver?.disconnect();
         if(originalState)useApp.setState(originalState);
         if(probeMode){
           await api.performanceProbeCleanup().catch(()=>undefined);
