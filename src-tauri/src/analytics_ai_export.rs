@@ -493,13 +493,13 @@ async fn collect_channel(app:&AppHandle,client:&reqwest::Client,choice:&AiChanne
         let mut failures=Vec::new();let mut successes=0usize;
         for (a,b) in window_dates(start,end,90) {
             match analytics(app,client,&token,cache,&a,&b,
-                "views,estimatedMinutesWatched,subscribersGained,subscribersLost,averageViewDuration,averageViewPercentage",
+                "views,estimatedMinutesWatched,subscribersGained,subscribersLost,averageViewDuration,averageViewPercentage,likes,comments,shares",
                 "day",None,"analytics.channelDaily").await {
                 Ok(batch)=>{successes+=1;for r in batch{
                     channel_daily.push(json!({"channelId":cid,"date":r.first(),"views":numeric(r.get(1)),
                     "watchMinutes":numeric(r.get(2)),"subscribersGained":numeric(r.get(3)),
                     "subscribersLost":numeric(r.get(4)),"averageViewDuration":numeric(r.get(5)),
-                    "averageViewPercentage":numeric(r.get(6)),"source":"youtube_analytics_api_v2",
+                    "averageViewPercentage":numeric(r.get(6)),"likes":numeric(r.get(7)),"comments":numeric(r.get(8)),"shares":numeric(r.get(9)),"source":"youtube_analytics_api_v2",
                     "fetchedAt":fetched_at}));
                 }},
                 Err(e)=>{failures.push(format!("{a}..{b}: {e}"));},
@@ -513,13 +513,14 @@ async fn collect_channel(app:&AppHandle,client:&reqwest::Client,choice:&AiChanne
             for ids_chunk in ids.chunks(25) {
                 let filter=format!("video=={}",ids_chunk.join(","));
                 match analytics(app,client,&token,cache,&a,&b,
-                    "views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,subscribersGained,subscribersLost",
+                    "views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,subscribersGained,subscribersLost,likes,comments,shares",
                     "day,video",Some(filter),"analytics.videoDaily").await{
                     Ok(batch)=>{successes+=1;for r in batch{
                         video_daily.push(json!({"channelId":cid,"date":r.first(),"videoId":r.get(1),
                             "views":numeric(r.get(2)),"watchMinutes":numeric(r.get(3)),
                             "averageViewDuration":numeric(r.get(4)),"averageViewPercentage":numeric(r.get(5)),
                             "subscribersGained":numeric(r.get(6)),"subscribersLost":numeric(r.get(7)),
+                            "likes":numeric(r.get(8)),"comments":numeric(r.get(9)),"shares":numeric(r.get(10)),
                             "source":"youtube_analytics_api_v2","fetchedAt":fetched_at}));
                     }},
                     Err(e)=>{failures+=1;if failures<=15{coverage["errors"].as_array_mut().unwrap().push(json!({"stage":"videoDaily","range":[a,b],"message":e}));}},
@@ -704,11 +705,11 @@ pub async fn youtube_ai_export(app:AppHandle,request:AiExportRequest)->Result<Va
         let mut summary=Vec::new();let mut coverage=Vec::new();let mut all_events=Vec::new();
         let mut all_retention=Vec::new();let mut all_breakdowns=Vec::new();let mut findings=Vec::new();
         let mut channel_csv=csv_file(&staging.join("CHANNELS_DAILY.csv"),
-            "channel_id,date,views,watch_minutes,subscribers_gained,subscribers_lost,average_view_duration,average_view_percentage,source,fetched_at\n")?;
+            "channel_id,date,views,watch_minutes,subscribers_gained,subscribers_lost,average_view_duration,average_view_percentage,likes,comments,shares,source,fetched_at\n")?;
         let mut videos_csv=csv_file(&staging.join("ALL_VIDEOS.csv"),
             "channel_id,video_id,url,title,description,published_at,duration_iso,privacy,category_id,tags,views_public,likes_public,comments_public,source,fetched_at\n")?;
         let mut video_csv=csv_file(&staging.join("VIDEOS_DAILY.csv"),
-            "channel_id,video_id,date,views,watch_minutes,average_view_duration,average_view_percentage,subscribers_gained,subscribers_lost,source,fetched_at\n")?;
+            "channel_id,video_id,date,views,watch_minutes,average_view_duration,average_view_percentage,subscribers_gained,subscribers_lost,likes,comments,shares,source,fetched_at\n")?;
         let mut lifecycle_csv=csv_file(&staging.join("VIDEO_LIFECYCLE.csv"),
             "channel_id,video_id,published_at,first_24_hours,views_3_days,views_7_days,views_14_days,views_30_days,views_90_days,observed_days_3,observed_days_7,observed_days_14,observed_days_30,observed_days_90,alignment_caveat\n")?;
         let mut traffic_csv=csv_file(&staging.join("TRAFFIC_SOURCES.csv"),
@@ -733,7 +734,7 @@ pub async fn youtube_ai_export(app:AppHandle,request:AiExportRequest)->Result<Va
                     save_json(&out_dir.join("events.json"),&json!(r.events))?;
                     save_json(&out_dir.join("findings.json"),&json!(r.findings))?;
                     copy_reporting(&channel_cache,&out_dir)?;
-                    for v in &r.channel_daily {append_csv(&mut channel_csv,&["channelId","date","views","watchMinutes","subscribersGained","subscribersLost","averageViewDuration","averageViewPercentage","source","fetchedAt"].iter().map(|k|vstr(&v[*k])).collect::<Vec<_>>())?}
+                    for v in &r.channel_daily {append_csv(&mut channel_csv,&["channelId","date","views","watchMinutes","subscribersGained","subscribersLost","averageViewDuration","averageViewPercentage","likes","comments","shares","source","fetchedAt"].iter().map(|k|vstr(&v[*k])).collect::<Vec<_>>())?}
                     for v in &r.videos{
                         let id=text(v.get("id"));let tags=v.pointer("/snippet/tags").map(|x|x.to_string()).unwrap_or_default();
                         append_csv(&mut videos_csv,&[choice.channel_id.clone(),id.clone(),format!("https://www.youtube.com/watch?v={id}"),
@@ -743,7 +744,7 @@ pub async fn youtube_ai_export(app:AppHandle,request:AiExportRequest)->Result<Va
                             text(v.pointer("/statistics/viewCount")),text(v.pointer("/statistics/likeCount")),
                             text(v.pointer("/statistics/commentCount")),"youtube_data_api_v3".into(),Utc::now().to_rfc3339()])?;
                     }
-                    for v in &r.video_daily{append_csv(&mut video_csv,&["channelId","videoId","date","views","watchMinutes","averageViewDuration","averageViewPercentage","subscribersGained","subscribersLost","source","fetchedAt"].iter().map(|k|vstr(&v[*k])).collect::<Vec<_>>())?}
+                    for v in &r.video_daily{append_csv(&mut video_csv,&["channelId","videoId","date","views","watchMinutes","averageViewDuration","averageViewPercentage","subscribersGained","subscribersLost","likes","comments","shares","source","fetchedAt"].iter().map(|k|vstr(&v[*k])).collect::<Vec<_>>())?}
                     for v in &r.lifecycle {
                         let fields=vec![vstr(&v["channelId"]),vstr(&v["videoId"]),vstr(&v["publishedAt"]),
                             String::new(),vstr(&v["ageWindowsCalendarDays"]["days3"]["views"]),
