@@ -285,7 +285,7 @@ def check_ai_zip(path: Path) -> dict:
             "sha256ManifestVerified":False,"missingRequiredFiles":[],
             "archivedChannels":None,"coverageEntries":None,"archiveVideoRows":None,
             "declaredVideoRows":None,"channelFailuresReported":None,
-            "csvFieldsPresent":False,"secretPatternWarnings":0}
+            "csvFieldsPresent":False,"secretScan":"NOT_PERFORMED"}
     if not path.is_file():
         return report
     with zipfile.ZipFile(path,"r") as zipf:
@@ -294,6 +294,8 @@ def check_ai_zip(path: Path) -> dict:
             name.startswith("/") or ".." in Path(name).parts for name in names):
             raise PreflightError("ZIP_DUPLICATE_OR_TRAVERSAL_ENTRY")
         report["missingRequiredFiles"]=sorted(REQUIRED_ZIP-set(names))
+        if report["missingRequiredFiles"]:
+            raise PreflightError("ZIP_REQUIRED_FILES_MISSING")
         first_bad=zipf.testzip()
         if first_bad is not None:
             raise PreflightError("ZIP_CRC_FAILURE")
@@ -321,9 +323,13 @@ def check_ai_zip(path: Path) -> dict:
             reader=csv.DictReader(io.TextIOWrapper(file,encoding="utf-8-sig",newline=""))
             required={"channel_id","video_id","views_public"}
             report["csvFieldsPresent"]=required.issubset(reader.fieldnames or [])
+            if not report["csvFieldsPresent"]:
+                raise PreflightError("ZIP_ALL_VIDEOS_CSV_FIELDS_MISSING")
             report["archiveVideoRows"]=sum(1 for _ in reader)
         report["declaredVideoRows"]=sum(int(c.get("archivedHistoricalVideoRecords",0))
             for c in coverage if isinstance(c,dict))
+        if report["declaredVideoRows"]!=report["archiveVideoRows"]:
+            raise PreflightError("ZIP_VIDEO_ROW_COUNT_MISMATCH")
         # No raw content, titles, secret values, or descriptions appear in output.
         # The archive receives local validation ONLY; this is not Google Studio parity.
     return report
@@ -376,9 +382,10 @@ def main() -> int:
         with os.fdopen(descriptor,"w",encoding="utf-8") as stream:
             json.dump(report,stream,ensure_ascii=False,indent=2)
         failures=sum(item.get("valueParity")=="FAIL" for item in report["sqlite"])
+        missing_zip=bool(args.ai_zip and not report["aiZip"]["archivePresent"])
         print(f"VYRON_OFFLINE_PREFLIGHT: channels={len(report['sqlite'])} "
               f"failed_parity={failures} report_written=YES")
-        return 2 if failures else 0
+        return 2 if failures or missing_zip else 0
     except (PreflightError,OSError,ValueError,sqlite3.DatabaseError) as error:
         # No personal paths, SQL payloads, token values or OAuth metadata in stderr.
         print("VYRON_OFFLINE_PREFLIGHT_FAILED: "+type(error).__name__)
