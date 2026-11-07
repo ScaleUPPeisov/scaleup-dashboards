@@ -152,6 +152,7 @@ fn prepare_db(path:&Path)->Result<Connection,String>{
         .map_err(|e|format!("SQLITE_PRAGMAS: {e}"))?;
     let version:i32=conn.query_row("PRAGMA user_version",[],|r|r.get(0)).map_err(|e|e.to_string())?;
     if version>SCHEMA_VERSION{return Err("SQLITE_RECOVERY_REQUIRED: database schema newer than application".into())}
+    if existed && version==0{return Err("SQLITE_RECOVERY_REQUIRED: existing database lacks schema version".into())}
     if version==0{
         // Transactional DDL avoids partially installed schema after a power loss.
         conn.execute_batch("BEGIN IMMEDIATE;").map_err(|e|e.to_string())?;
@@ -164,8 +165,6 @@ fn prepare_db(path:&Path)->Result<Connection,String>{
     }
     let quick:String=conn.query_row("PRAGMA quick_check",[],|r|r.get(0)).map_err(|e|e.to_string())?;
     if quick!="ok"{return Err(format!("SQLITE_RECOVERY_REQUIRED: integrity check: {quick}"))}
-    // Existing database is never recreated or silently wiped after corruption.
-    if existed && version==0{return Err("SQLITE_RECOVERY_REQUIRED: existing database lacks schema version".into())}
     Ok(conn)
 }
 fn canonical_source(cache:&Path,channel_id:&str)->Result<(String,PathBuf,Value,Value,Vec<Value>,Vec<Value>,Vec<Value>,String),String>{
@@ -252,9 +251,9 @@ fn import_generation(tx:&Transaction<'_>,channel:&str,generation:&str,root:&Path
         completeness(summary),to_json(summary)?]).map_err(|e|e.to_string())?;
     // Replace only channel-owned materializations, atomically. The last good
     // generation remains committed if any SQL row or verification fails.
-    for table in ["retention_points","metadata_history","subtitles","video_daily",
+    for table in ["retention_points","subtitles","video_daily",
         "reach_daily","video_reach_daily","channel_daily","channel_events",
-        "audience_demographics","traffic_sources","devices","data_coverage","sync_jobs","videos"]{
+        "audience_demographics","traffic_sources","devices","videos"]{
         tx.execute(&format!("DELETE FROM {table} WHERE channel_id=?1"),params![channel])
             .map_err(|e|format!("SQLITE_CLEAR_{table}: {e}"))?;
     }
@@ -397,14 +396,19 @@ pub(crate) fn migrate_generation(cache:&Path,channel_id:&str)->Result<MigrationR
     let path=cache.join(DB_NAME);
     let mut conn=prepare_db(&path)?;
     if let Some((old_digest,counts))=conn.query_row(
-       "SELECT source_digest,json_array(channel_days,video_days,videos,reach_rows,events)
+       "SELECT source_digest,channel_days,video_days,videos,reach_rows,events
         FROM analytics_migrations WHERE channel_id=?1 AND generation=?2",
-        params![channel_id,generation],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))
+        params![channel_id,generation],|r|Ok((r.get::<_,String>(0)?,
+            [r.get::<_,i64>(1)?,r.get::<_,i64>(2)?,r.get::<_,i64>(3)?,r.get::<_,i64>(4)?,r.get::<_,i64>(5)?])))
         .optional().map_err(|e|e.to_string())?{
         if old_digest!=digest{return Err("SQLITE_RECOVERY_REQUIRED: source generation bytes changed after verification".into())}
-        let n:Vec<usize>=serde_json::from_str(&counts).map_err(|e|e.to_string())?;
+        let n=counts;
         return Ok(MigrationResult{generation,skipped:true,channels:1,
-            channel_days:n[0],video_days:n[1],videos:n[2],reach_rows:n[3],events:n[4]});
+            channel_days:n[0].try_into().map_err(|_|"SQLITE_BAD_COUNT")?,
+            video_days:n[1].try_into().map_err(|_|"SQLITE_BAD_COUNT")?,
+            videos:n[2].try_into().map_err(|_|"SQLITE_BAD_COUNT")?,
+            reach_rows:n[3].try_into().map_err(|_|"SQLITE_BAD_COUNT")?,
+            events:n[4].try_into().map_err(|_|"SQLITE_BAD_COUNT")?});
     }
     // The source is immutable; copy the pointer to an additional recovery marker
     // before any SQLite mutation. Existing generations remain untouched.
