@@ -127,11 +127,27 @@ function SidebarIcon({name}:{name:SidebarIconName}){
 }
 const statusLabel:Record<JobStatus,string>={NEED_IMAGE:'Нужна картинка',WAITING_MUSIC:'Ждёт музыку',READY_RENDER:'Готов к рендеру',RENDERING:'Рендерится',READY_UPLOAD:'Готов к YouTube',UPLOADING:'Загружается',SCHEDULED:'Запланирован',ERROR:'Ошибка'};
 
-export function App(){
-  const booted=useApp(s=>s.booted),hydrate=useApp(s=>s.hydrate),settings=useApp(s=>s.settings),uploadHistory=useApp(s=>s.uploadHistory),log=useApp(s=>s.log);
+export // Keep the upload ledger observer outside the root render subscription.
+function PublishLedgerHydrator(){
+  const booted=useApp(s=>s.booted);
+  const uploadHistory=useApp(s=>s.uploadHistory);
+  useEffect(()=>{if(booted)restorePublishLedgerFromUploadHistory(uploadHistory)},[booted,uploadHistory]);
+  return null;
+}
+function App(){
+  // Scalar subscriptions prevent Publisher and unrelated settings updates
+  // from re-rendering the entire App route tree.
+  const booted=useApp(s=>s.booted),hydrate=useApp(s=>s.hydrate),log=useApp(s=>s.log);
+  const workspace=useApp(s=>s.settings.workspace);
+  const autoUploadYoutube=useApp(s=>s.settings.autoUploadYoutube);
+  const autoCheckUpdates=useApp(s=>s.settings.autoCheckUpdates);
+  const reduceMotion=useApp(s=>s.settings.reduceMotion);
+  const interfaceDensity=useApp(s=>s.settings.interfaceDensity);
+  const autopilotEnabled=useApp(s=>s.settings.autopilotEnabled);
+  const autopilotIntervalSec=useApp(s=>s.settings.autopilotIntervalSec);
+  const fpsMonitor=useApp(s=>s.settings.fpsMonitor);
   const [license,setLicense]=useState<LicenseStatus|null>(null);
   useLayoutEffect(()=>{if(booted)beginStartupQuotaProbe()},[booted]);
-  useEffect(()=>{if(booted)restorePublishLedgerFromUploadHistory(uploadHistory)},[booted,uploadHistory]);
   const updaterStatus=useUpdaterRuntime(s=>s.status),updaterLatest=useUpdaterRuntime(s=>s.latestVersion),updaterLatestRevision=useUpdaterRuntime(s=>s.latestBuildRevision),updaterCheck=useUpdaterRuntime(s=>s.check),bootstrapUpdater=useUpdaterRuntime(s=>s.bootstrapVersion),markUpdated=useUpdaterRuntime(s=>s.markUpdated);
   useEffect(()=>{
     void (async()=>{
@@ -156,33 +172,33 @@ export function App(){
     })();
     void api.license().then(setLicense).catch(()=>setLicense({valid:false}));
   },[]);
-  useEffect(()=>{if(booted&&!settings.workspace){api.defaultWorkspace().then(workspace=>{useApp.getState().patchSettings({workspace});useApp.getState().log(`Workspace: ${workspace}`)}).catch(e=>log(`Workspace: ${String(e)}`,'error'))}},[booted,settings.workspace]);
-  useEffect(()=>{if(booted&&settings.autoUploadYoutube)useApp.getState().patchSettings({autoUploadYoutube:false})},[booted,settings.autoUploadYoutube]);
+  useEffect(()=>{if(booted&&!workspace){api.defaultWorkspace().then(workspace=>{useApp.getState().patchSettings({workspace});useApp.getState().log(`Workspace: ${workspace}`)}).catch(e=>log(`Workspace: ${String(e)}`,'error'))}},[booted,workspace]);
+  useEffect(()=>{if(booted&&autoUploadYoutube)useApp.getState().patchSettings({autoUploadYoutube:false})},[booted,autoUploadYoutube]);
   useEffect(()=>{
     if(!booted)return;
     let disposed=false,timer:number|undefined;
     const clearTimer=()=>{if(timer!==undefined){window.clearTimeout(timer);timer=undefined}};
     const arm=()=>{
       clearTimer();
-      if(disposed||!settings.autoCheckUpdates)return;
+      if(disposed||!autoCheckUpdates)return;
       const state=useUpdaterRuntime.getState(),now=Date.now();
       const due=state.nextAutomaticCheckAt&&state.nextAutomaticCheckAt>now+1000?state.nextAutomaticCheckAt:now+UPDATER_AUTO_INTERVAL_MS;
       timer=window.setTimeout(()=>{void runAutomatic()},Math.max(1000,due-now));
     };
-    const runAutomatic=async()=>{if(disposed||!settings.autoCheckUpdates)return;await updaterCheck({silent:true});arm()};
+    const runAutomatic=async()=>{if(disposed||!autoCheckUpdates)return;await updaterCheck({silent:true});arm()};
     const maybeRunFresh=()=>{
-      if(disposed||!settings.autoCheckUpdates)return;
+      if(disposed||!autoCheckUpdates)return;
       const last=useUpdaterRuntime.getState().lastCheckAttemptAt;
       if(!shouldRunUpdaterAgeCheck(last))return;
       clearTimer();
       void updaterCheck({silent:true}).finally(arm);
     };
     const onVisibility=()=>{if(document.visibilityState==='visible')maybeRunFresh()};
-    void (async()=>{await bootstrapUpdater();if(disposed||!settings.autoCheckUpdates)return;await updaterCheck({silent:true});arm()})();
+    void (async()=>{await bootstrapUpdater();if(disposed||!autoCheckUpdates)return;await updaterCheck({silent:true});arm()})();
     document.addEventListener('visibilitychange',onVisibility);
     window.addEventListener('online',maybeRunFresh);
     return()=>{disposed=true;clearTimer();document.removeEventListener('visibilitychange',onVisibility);window.removeEventListener('online',maybeRunFresh)};
-  },[booted,settings.autoCheckUpdates,bootstrapUpdater,updaterCheck]);
+  },[booted,autoCheckUpdates,bootstrapUpdater,updaterCheck]);
   useEffect(()=>{if(updaterStatus!=='AVAILABLE'||!updaterLatest)return;const identity=`${updaterLatest}:build-${updaterLatestRevision||0}`;void notifyUpdateAvailable(identity)},[updaterStatus,updaterLatest,updaterLatestRevision]);
   useEffect(()=>{
     if(!booted)return;
@@ -229,16 +245,16 @@ export function App(){
       notifyError('Обновление не подтверждено',`Ожидался VYRON ${target.productVersion}. Запущен ${runtime.productVersion}. Путь: ${runtimePath||'не определён'}. Диагностика обновления сохранена.`,{operationId:`update-identity-mismatch:${target.productVersion}:${runtime.productVersion}`})
     }).catch(()=>{})
   },[booted,markUpdated]);
-  useEffect(()=>{document.documentElement.classList.toggle('reduceMotion',settings.reduceMotion)},[settings.reduceMotion]);
+  useEffect(()=>{document.documentElement.classList.toggle('reduceMotion',reduceMotion)},[reduceMotion]);
   useEffect(()=>{const mac=/Macintosh|Mac OS X/.test(navigator.userAgent);document.documentElement.classList.toggle('platform-macos',mac);return()=>document.documentElement.classList.remove('platform-macos')},[]);
-  useEffect(()=>{document.documentElement.classList.toggle('compactDensity',(settings.interfaceDensity||'compact')==='compact');document.documentElement.classList.toggle('comfortableDensity',settings.interfaceDensity==='comfortable')},[settings.interfaceDensity]);
+  useEffect(()=>{document.documentElement.classList.toggle('compactDensity',(interfaceDensity||'compact')==='compact');document.documentElement.classList.toggle('comfortableDensity',interfaceDensity==='comfortable')},[interfaceDensity]);
   useEffect(()=>{let unlisten:(()=>void)|undefined;void api.onYoutubeProgress(f=>{applyUploadProgressFact(f);journalUploadProgressMilestone(f);const row=uploadTelemetrySnapshot().active.find(x=>x.jobId===f.jobId);updateTask(`upload:${f.jobId}`,{progress:row?.percent,bytesCompleted:row?.bytesUploaded,bytesTotal:row?.totalBytes,speedBps:row?.speedBps,etaSeconds:row?.etaSeconds,detail:'Передача данных'})}).then(fn=>unlisten=fn);return()=>unlisten?.()},[]);
   useEffect(()=>{if(!booted)return;void Promise.all([api.youtubeActiveUploads(),api.youtubeUploadSessions()]).then(([facts,sessions])=>{seedActiveUploadFacts(facts);const state=useApp.getState(),activeIds=new Set(facts.map(x=>x.jobId));for(const f of facts){const job=state.jobs.find(j=>j.id===f.jobId),channel=job&&state.channels.find(c=>c.id===job.channelId);ensureTask({taskId:`upload:${f.jobId}`,type:'UPLOAD',state:'RUNNING',channelId:job?.channelId||f.channelId,channelName:channel?.name,profileId:f.profileId,jobId:f.jobId,label:job?`VIDEO_${String(job.number).padStart(3,'0')}`:'YouTube upload',detail:job?.finalPath?.split('/').pop()||f.filePath,progress:f.totalBytes&&f.totalBytes>0?Math.max(0,Math.min(100,(f.bytesUploaded||0)/f.totalBytes*100)):undefined,bytesCompleted:f.bytesUploaded,bytesTotal:f.totalBytes??undefined,resourceKey:`upload:${job?.channelId||f.channelId}:${f.jobId}`})}reconcileUploadTasks(activeIds,new Set());const patches=buildStaleOperationPatches(state.jobs,{uploadsKnown:true,rendersKnown:false,activeUploadIds:activeIds,activeRenderIds:new Set(),uploadSessionIds:new Set(sessions.map(x=>x.jobId)),now:new Date().toISOString()});state.patchJobsBatch(patches.map(x=>({id:x.jobId,patch:x.patch})))}).catch(()=>{})},[booted]);
   useEffect(()=>{let unlisten:(()=>void)|undefined;void api.onYoutubeApiRequest(()=>{}).then(fn=>unlisten=fn);return()=>unlisten?.()},[]);
-  useEffect(()=>{if(!booted||!settings.autopilotEnabled)return;void runAutopilotCycle();const ms=Math.max(10,settings.autopilotIntervalSec||30)*1000;const id=window.setInterval(()=>void runAutopilotCycle(),ms);return()=>window.clearInterval(id)},[booted,settings.autopilotEnabled,settings.autopilotIntervalSec]);
+  useEffect(()=>{if(!booted||!autopilotEnabled)return;void runAutopilotCycle();const ms=Math.max(10,autopilotIntervalSec||30)*1000;const id=window.setInterval(()=>void runAutopilotCycle(),ms);return()=>window.clearInterval(id)},[booted,autopilotEnabled,autopilotIntervalSec]);
   if(!booted||!license)return <Boot/>;
   if(!license.valid)return <Activation onActivated={setLicense}/>;
-  return <div className="appShell"><ExistingInventoryMigrationBridge/><LiveInventoryBridge/><ChannelRunwayScheduler/><ProductionStatusBridge/><ChannelStatisticsScheduler/><OwnerInventoryScheduler/><UploadProcessingMonitor/><RecoveryGate/><Sidebar/><main className="main"><Topbar/><PageRouter license={license}/></main><GlobalTaskIndicator/><GlobalUploadIndicator/><UploadCenterGlobal/><GlobalTaskCenter/><CommandPalette/><MetadataQueueAssignmentBridge/><M1PerformanceProbe/>{settings.fpsMonitor&&<FpsMonitor/>}<UpdateExperience/><MajorUpdateCelebration/><NotificationCenter/><div className="bgGlow a"/><div className="bgGlow b"/></div>
+  return <div className="appShell"><ExistingInventoryMigrationBridge/><LiveInventoryBridge/><ChannelRunwayScheduler/><ProductionStatusBridge/><ChannelStatisticsScheduler/><OwnerInventoryScheduler/><UploadProcessingMonitor/><RecoveryGate/><Sidebar/><main className="main"><Topbar/><PageRouter license={license}/></main><GlobalTaskIndicator/><GlobalUploadIndicator/><UploadCenterGlobal/><GlobalTaskCenter/><CommandPalette/><MetadataQueueAssignmentBridge/><PublishLedgerHydrator/><M1PerformanceProbe/>{fpsMonitor&&<FpsMonitor/>}<UpdateExperience/><MajorUpdateCelebration/><NotificationCenter/><div className="bgGlow a"/><div className="bgGlow b"/></div>
 }
 const CachedDashboardRoute=React.memo(({mode}:{mode:'dashboard'|'autopilot'})=><><DashboardUploadSummary/><DashboardOS pageOverride={mode}/></>);
 const CachedChannelsRoute=React.memo(ChannelsOS);
