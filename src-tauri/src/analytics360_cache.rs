@@ -465,7 +465,7 @@ fn load_from_disk(cache:&Path,page:u32,per_page:u32,period:&str,from:Option<&str
     let all=catalog.as_array().ok_or("ANALYTICS_CATALOG_INVALID")?;
     let (start,end)=period_dates(period,from,to)?;
     let json_days=||read_json(&root.join("channel-daily.json"))?
-        .as_array().cloned().ok_or("ANALYTICS_DAILY_INVALID".into());
+        .as_array().cloned().ok_or_else(||"ANALYTICS_DAILY_INVALID".to_string());
     #[cfg(target_os="macos")]
     let current=match crate::analytics_sqlite::read_channel_days(cache,
         overview.get("channelId").and_then(Value::as_str).unwrap_or(""),
