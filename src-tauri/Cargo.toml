@@ -30,6 +30,7 @@ urlencoding = "2"
 trash = "5"
 notify = "=7.0.0"
 unicode-normalization = "0.1"
+zip = { version = "=4.6.1", default-features = false }
 
 base64 = "0.22"
 chacha20poly1305 = "0.10"
