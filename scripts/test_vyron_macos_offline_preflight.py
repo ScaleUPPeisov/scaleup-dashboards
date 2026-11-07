@@ -70,11 +70,13 @@ def make_db(root: Path):
     return cache,generation
 
 
-def make_zip(path: Path, valid=True):
+def make_zip(path: Path, valid=True, secret=False):
     members={}
     for name in REQUIRED_ZIP-{"MANIFEST_SHA256.json"}:
         members[name]=b"[]"
     members["ALL_CHANNELS_SUMMARY.json"]=json.dumps([{"channelId":CHANNEL}]).encode()
+    if secret:
+        members["ALL_CHANNELS_SUMMARY.json"]=json.dumps([{"refresh_token":"FAKE_NO_REAL_SECRETS"}]).encode()
     members["DATA_COVERAGE.json"]=json.dumps([{"channelId":CHANNEL,
         "archivedHistoricalVideoRecords":1,"status":"success"}]).encode()
     members["ALL_VIDEOS.csv"]=(
@@ -150,6 +152,10 @@ class OfflinePreflightTests(unittest.TestCase):
             make_zip(bad,False)
             with self.assertRaisesRegex(PreflightError,"ZIP_SHA256_MISMATCH"):
                 check_ai_zip(bad)
+            sensitive=Path(d)/"secret.zip"
+            make_zip(sensitive,True,secret=True)
+            with self.assertRaisesRegex(PreflightError,"ZIP_POSSIBLE_SECRET_FIELD_FOUND"):
+                check_ai_zip(sensitive)
 
 if __name__=="__main__":
     unittest.main()
