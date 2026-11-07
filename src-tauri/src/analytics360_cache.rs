@@ -33,6 +33,19 @@ fn atomic_json(path:&Path,value:&Value)->Result<(),String>{
     if result.is_err(){let _=fs::remove_file(tmp);}
     result
 }
+/// Immutable generation files can share disk blocks on the same volume.
+/// A hard link is used only if serialized JSON bytes are identical; fallback
+/// remains atomic. Nothing ever writes through an existing hard-linked inode.
+fn write_or_reuse(previous:Option<&Path>,target:&Path,value:&Value)->Result<bool,String>{
+    let fresh=serde_json::to_vec(value).map_err(|e|e.to_string())?;
+    if let Some(old)=previous{
+        if fs::read(old).ok().as_deref()==Some(fresh.as_slice()){
+            if fs::hard_link(old,target).is_ok(){return Ok(true)}
+        }
+    }
+    atomic_json(target,value)?;
+    Ok(false)
+}
 fn duration_seconds(value:&str)->Option<u64>{
     if !value.starts_with("PT"){return None}
     let mut digits=String::new();let mut total=0u64;
@@ -271,6 +284,7 @@ pub(crate) fn persist(
             retention_by_video.insert(id.to_string(),row.clone());
         }
     }
+    let mut reused_files=0usize;
     let mut preserved_video_days=0usize;
     let mut merged_recent_video_days=Vec::<Value>::new();
     let recent_cutoff=Utc::now().date_naive()-Days::days(62);
@@ -288,7 +302,8 @@ pub(crate) fn persist(
         current_record["inventoryObservedNow"]=json!(true);
         current_record["lastObservedAt"]=json!(Utc::now().to_rfc3339());
         catalog.push(current_record);
-        atomic_json(&root.join("video-details").join(format!("{hashed}.json")),video)?;
+        let previous_detail=previous_root.as_ref().map(|p|p.join("video-details").join(format!("{hashed}.json")));
+        if write_or_reuse(previous_detail.as_deref(),&root.join("video-details").join(format!("{hashed}.json")),video)?{reused_files+=1}
         let file=format!("{hashed}.json");
         let previous_days=optional_prior_rows(previous_root.as_deref(),"video-days",&file);
         let current_days=days_by_video.remove(id).unwrap_or_default();
@@ -300,13 +315,16 @@ pub(crate) fn persist(
                 .map(|date|date>=recent_cutoff).unwrap_or(false)
         }).cloned());
         if !merged_days.is_empty(){
-            atomic_json(&root.join("video-days").join(&file),&json!(merged_days))?;
+            let source=previous_root.as_ref().map(|p|p.join("video-days").join(&file));
+            if write_or_reuse(source.as_deref(),&root.join("video-days").join(&file),&json!(merged_days))?{reused_files+=1}
         }
         if let Some(curve)=retention_by_video.remove(id){
-            atomic_json(&root.join("retention").join(&file),&curve)?;
+            let source=previous_root.as_ref().map(|p|p.join("retention").join(&file));
+            if write_or_reuse(source.as_deref(),&root.join("retention").join(&file),&curve)?{reused_files+=1}
         }else if let Some(previous)=previous_root.as_ref()
             .and_then(|p|read_json(&p.join("retention").join(&file)).ok()){
-            atomic_json(&root.join("retention").join(&file),&previous)?;
+            let source=previous_root.as_ref().map(|p|p.join("retention").join(&file));
+            if write_or_reuse(source.as_deref(),&root.join("retention").join(&file),&previous)?{reused_files+=1}
             preserved_retention_curves+=1;
         }
     }
@@ -326,7 +344,8 @@ pub(crate) fn persist(
         record["inventoryObservedNow"]=json!(false);
         record["inventoryCaveat"]=json!("Not observed in latest inventory; may be deleted, private, hidden or temporarily unavailable. No deletion inferred.");
         catalog.push(record);
-        atomic_json(&root.join("video-details").join(&file),&detail)?;
+        let source=previous_root.as_ref().map(|p|p.join("video-details").join(&file));
+        if write_or_reuse(source.as_deref(),&root.join("video-details").join(&file),&detail)?{reused_files+=1}
         if let Some(previous)=previous_root.as_ref()
             .and_then(|r|read_json(&r.join("video-days").join(&file)).ok()){
             if let Some(rows)=previous.as_array(){
@@ -337,11 +356,13 @@ pub(crate) fn persist(
                 }).cloned());
                 preserved_video_days+=rows.len();
             }
-            atomic_json(&root.join("video-days").join(&file),&previous)?;
+            let source=previous_root.as_ref().map(|p|p.join("video-days").join(&file));
+            if write_or_reuse(source.as_deref(),&root.join("video-days").join(&file),&previous)?{reused_files+=1}
         }
         if let Some(previous)=previous_root.as_ref()
             .and_then(|r|read_json(&r.join("retention").join(&file)).ok()){
-            atomic_json(&root.join("retention").join(&file),&previous)?;
+            let source=previous_root.as_ref().map(|p|p.join("retention").join(&file));
+            if write_or_reuse(source.as_deref(),&root.join("retention").join(&file),&previous)?{reused_files+=1}
             preserved_retention_curves+=1;
         }
         historical_only_videos+=1;
@@ -371,6 +392,7 @@ pub(crate) fn persist(
         "historicalOnlyVideosRetained":historical_only_videos,
         "retainedPriorReachRows":preserved_reach_rows,
         "retainedPriorRetentionCurves":preserved_retention_curves,
+        "unchangedSnapshotFilesHardLinked":reused_files,
         "mergedEventCount":all_events.len(),
         "derivedGrowthEventsFromMergedHistory":merged_findings.len(),
         "policy":"New observations supersede prior observations on matching dates, but missing/null metrics are carried forward with _vyronCarriedForwardFields and _vyronPriorFetchedAt; explicit zero is never treated as missing."
@@ -604,6 +626,22 @@ mod tests{
         assert_eq!(totals[0]["ctrScale"],"UNVERIFIED");
         let only_one=reach_aggregate(&rows,None,None,Some("aBc1234-X_y"));
         assert_eq!(only_one[0]["observedImpressions"],400);
+    }
+    #[cfg(unix)]
+    #[test]fn identical_snapshot_uses_hard_link_and_changed_file_uses_new_inode(){
+        use std::os::unix::fs::MetadataExt;
+        let root=std::env::temp_dir().join(format!("vyron-reuse-analytics-{}",Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let original=root.join("original.json");
+        let linked=root.join("linked.json");
+        let changed=root.join("changed.json");
+        let data=json!({"date":"2026-01-01","views":24});
+        atomic_json(&original,&data).unwrap();
+        assert!(write_or_reuse(Some(&original),&linked,&data).unwrap());
+        assert_eq!(fs::metadata(&original).unwrap().ino(),fs::metadata(&linked).unwrap().ino());
+        assert!(!write_or_reuse(Some(&original),&changed,&json!({"date":"2026-01-01","views":25})).unwrap());
+        assert_ne!(fs::metadata(&original).unwrap().ino(),fs::metadata(&changed).unwrap().ino());
+        let _=fs::remove_dir_all(root);
     }
     #[test]fn corrupted_published_generation_cannot_be_silently_overwritten(){
         let root=std::env::temp_dir().join(format!("vyron-corrupt-analytics-{}",Uuid::new_v4()));
