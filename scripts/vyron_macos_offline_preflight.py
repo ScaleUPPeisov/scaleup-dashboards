@@ -304,15 +304,24 @@ def check_ai_zip(path: Path) -> dict:
             raise PreflightError("ZIP_MANIFEST_INVALID")
         if set(manifest)!=(set(names)-{"MANIFEST_SHA256.json"}):
             raise PreflightError("ZIP_MANIFEST_FILESET_MISMATCH")
+        forbidden=(b'"refresh_token"',b'"access_token"',b'"client_secret"',
+                   b'"youtubeapikey"',b'"openaiapikey"',b'"google_email"',
+                   b'"authorization"')
         for name,expected in manifest.items():
             sha=hashlib.sha256()
+            tail=b""
             with zipf.open(name) as stream:
                 for block in iter(lambda:stream.read(1024*1024),b""):
                     sha.update(block)
+                    scan=(tail+block).lower()
+                    if any(needle in scan for needle in forbidden):
+                        raise PreflightError("ZIP_POSSIBLE_SECRET_FIELD_FOUND")
+                    tail=scan[-64:]
             if sha.hexdigest()!=expected:
                 raise PreflightError("ZIP_SHA256_MISMATCH")
         report["integrity"]="PASS"
         report["sha256ManifestVerified"]=True
+        report["secretScan"]="PASS"
         summaries=json.loads(zipf.read("ALL_CHANNELS_SUMMARY.json"))
         coverage=json.loads(zipf.read("DATA_COVERAGE.json"))
         report["archivedChannels"]=len(summaries)
