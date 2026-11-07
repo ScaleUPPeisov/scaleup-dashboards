@@ -180,7 +180,10 @@ pub(crate) fn persist(
         let id=video.get("id").and_then(Value::as_str).unwrap_or("");
         if !valid_video_id(id)||!known.insert(id.to_string()){continue}
         let hashed=key(id);
-        catalog.push(public_video_record(video));
+        let mut current_record=public_video_record(video);
+        current_record["inventoryObservedNow"]=json!(true);
+        current_record["lastObservedAt"]=json!(Utc::now().to_rfc3339());
+        catalog.push(current_record);
         atomic_json(&root.join("video-details").join(format!("{hashed}.json")),video)?;
         let file=format!("{hashed}.json");
         let previous_days=optional_prior_rows(previous_root.as_deref(),"video-days",&file);
@@ -198,6 +201,35 @@ pub(crate) fn persist(
             preserved_retention_curves+=1;
         }
     }
+    // A video missing from a later authoritative inventory is not proof that
+    // it was deleted. Preserve its last known metadata and historical metrics.
+    let previous_catalog=previous_root.as_ref()
+        .and_then(|r|read_json(&r.join("video-catalog.json")).ok())
+        .and_then(|v|v.as_array().cloned()).unwrap_or_default();
+    let mut historical_only_videos=0usize;
+    for old in previous_catalog{
+        let Some(id)=old.get("videoId").and_then(Value::as_str).filter(|id|valid_video_id(id))else{continue};
+        if !known.insert(id.to_string()){continue}
+        let file=format!("{}.json",key(id));
+        let Some(detail)=previous_root.as_ref()
+            .and_then(|r|read_json(&r.join("video-details").join(&file)).ok())else{continue};
+        let mut record=old.clone();
+        record["inventoryObservedNow"]=json!(false);
+        record["inventoryCaveat"]=json!("Not observed in latest inventory; may be deleted, private, hidden or temporarily unavailable. No deletion inferred.");
+        catalog.push(record);
+        atomic_json(&root.join("video-details").join(&file),&detail)?;
+        if let Some(previous)=previous_root.as_ref()
+            .and_then(|r|read_json(&r.join("video-days").join(&file)).ok()){
+            atomic_json(&root.join("video-days").join(&file),&previous)?;
+            preserved_video_days+=previous.as_array().map(Vec::len).unwrap_or(0);
+        }
+        if let Some(previous)=previous_root.as_ref()
+            .and_then(|r|read_json(&r.join("retention").join(&file)).ok()){
+            atomic_json(&root.join("retention").join(&file),&previous)?;
+            preserved_retention_curves+=1;
+        }
+        historical_only_videos+=1;
+    }
     catalog.sort_by(|a,b|b["publishedAt"].as_str().cmp(&a["publishedAt"].as_str()));
     let mut publications=HashMap::<String,u64>::new();
     for v in &catalog {
@@ -213,6 +245,7 @@ pub(crate) fn persist(
         "source":"local_previously_confirmed_api_rows",
         "retainedPriorChannelDays":preserved_channel_days,
         "retainedPriorVideoDays":preserved_video_days,
+        "historicalOnlyVideosRetained":historical_only_videos,
         "retainedPriorReachRows":preserved_reach_rows,
         "retainedPriorRetentionCurves":preserved_retention_curves,
         "policy":"New observations supersede prior observations on matching dates; untouched earlier confirmed dates retain original source and fetchedAt."
@@ -323,6 +356,24 @@ pub(crate) fn materialized_video_daily(cache:&Path,channel_id:&str,video_id:&str
     if !valid_video_id(video_id){return Err("ANALYTICS_INVALID_VIDEO_ID".into())}
     materialized_rows(cache,channel_id,&Path::new("video-days").join(format!("{}.json",key(video_id))))
 }
+pub(crate) fn materialized_video_records(cache:&Path,channel_id:&str)->Result<Vec<Value>,String>{
+    let catalog=materialized_rows(cache,channel_id,Path::new("video-catalog.json"))?;
+    let root=previous_generation_root(cache,channel_id).ok_or("ANALYTICS_MATERIALIZED_VIEW_MISSING")?;
+    let mut out=Vec::with_capacity(catalog.len());
+    for item in catalog{
+        let Some(id)=item.get("videoId").and_then(Value::as_str).filter(|id|valid_video_id(id))else{continue};
+        let file=root.join("video-details").join(format!("{}.json",key(id)));
+        let mut record=read_json(&file)?;
+        record["_vyronHistoricalRecord"]=json!({
+            "inventoryObservedNow":item.get("inventoryObservedNow"),
+            "lastObservedAt":item.get("lastObservedAt"),
+            "inventoryCaveat":item.get("inventoryCaveat"),
+            "source":"local_last_confirmed_youtube_data_api_snapshot"
+        });
+        out.push(record);
+    }
+    Ok(out)
+}
 pub(crate) fn materialized_reach_daily(cache:&Path,channel_id:&str)->Result<Vec<Value>,String>{
     materialized_rows(cache,channel_id,Path::new("reach-daily.json"))
 }
@@ -360,6 +411,22 @@ mod tests{
         let rows=vec![json!({"date":"2026-01-03","views":5}),json!({"date":"2026-01-05","views":7})];
         let result=filter_days(&rows,NaiveDate::from_ymd_opt(2026,1,4),NaiveDate::from_ymd_opt(2026,1,5));
         assert_eq!(result.len(),1);assert_eq!(result[0]["views"],7);
+    }
+    #[test]fn missing_video_in_new_inventory_keeps_confirmed_history(){
+        let temp=std::env::temp_dir().join(format!("vyron-history-video-{}",Uuid::new_v4()));
+        fs::create_dir_all(&temp).unwrap();
+        let cid="UC1234567890123456789012",vid="aBc1234-X_y";
+        let video=json!({"id":vid,"snippet":{"channelId":cid,"publishedAt":"2024-01-01T00:00:00Z","title":"Previously uploaded"}});
+        let summary=json!({"channelId":cid});
+        persist(&temp,&summary,&json!({}),&[],&[video],
+            &[json!({"videoId":vid,"date":"2024-01-02","views":43})],&[],&[],&[],&[],&[]).unwrap();
+        persist(&temp,&summary,&json!({}),&[],&[],&[],&[],&[],&[],&[],&[]).unwrap();
+        let result=load_from_disk(&temp,0,40,"all",None,None,Some(vid),None,None).unwrap();
+        assert_eq!(result["videoCount"],1);
+        assert_eq!(result["selectedVideo"]["inventoryObservedNow"],false);
+        assert_eq!(result["videoDaily"][0]["views"],43);
+        assert_eq!(materialized_video_records(&temp,cid).unwrap()[0]["_vyronHistoricalRecord"]["inventoryObservedNow"],false);
+        let _=fs::remove_dir_all(temp);
     }
     #[test]fn materialized_history_access_is_channel_scoped(){
         let root=std::env::temp_dir().join(format!("vyron-mat-{}",Uuid::new_v4()));
