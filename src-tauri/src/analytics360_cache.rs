@@ -401,6 +401,17 @@ pub(crate) fn persist(
         "updatedAt":Utc::now().to_rfc3339(),"summary":summary,"coverage":effective_coverage,
         "traffic":traffic,"audienceBreakdowns":breakdowns,"events":all_events,
         "growthAndDecline":merged_findings,"publicationsByDay":publications,"videosTotal":catalog.len()});
+    let fleet_snapshot=json!({
+        "schemaVersion":1,"channelId":cid,"updatedAt":index.get("updatedAt"),
+        "summary":{"channelId":cid,"name":summary.get("name"),
+            "subscribers":summary.get("subscribers"),
+            "analyticsAuthorized":summary.get("analyticsAuthorized"),
+            "fetchedAt":summary.get("fetchedAt")},
+        "growth7":merged_findings.iter().find(|v|v.get("windowDays").and_then(Value::as_i64)==Some(7)),
+        "growth28":merged_findings.iter().find(|v|v.get("windowDays").and_then(Value::as_i64)==Some(28)),
+        "videosTotal":catalog.len()
+    });
+    atomic_json(&root.join("fleet-summary.json"),&fleet_snapshot)?;
     atomic_json(&root.join("overview.json"),&index)?;
     atomic_json(&root.join("channel-daily.json"),&json!(merged_channel_days))?;
     atomic_json(&root.join("video-catalog.json"),&json!(catalog))?;
@@ -541,28 +552,40 @@ fn fleet_summaries(cache_root:&Path,channel_ids:&[String])->Vec<Value>{
     let mut seen=std::collections::HashSet::new();
     for channel_id in channel_ids{
         if !valid_channel_id(channel_id)||!seen.insert(channel_id){
-            out.push(json!({"channelId":channel_id,"status":"INVALID_CHANNEL_ID"}));
-            continue
+            out.push(json!({"channelId":channel_id,"status":"INVALID_CHANNEL_ID"}));continue
         }
         let cache=cache_root.join(channel_id);
-        if !cache.join("ui-current.json").exists(){
-            out.push(json!({"channelId":channel_id,"status":"NOT_YET_COLLECTED"}));
-            continue
+        let pointer_path=cache.join("ui-current.json");
+        if !pointer_path.exists(){
+            out.push(json!({"channelId":channel_id,"status":"NOT_YET_COLLECTED"}));continue
         }
-        match materialized_overview(&cache,channel_id){
-            Ok(overview)=>{
-                let rows=overview.get("growthAndDecline").and_then(Value::as_array);
-                let growth=|days:i64|{
-                    rows.and_then(|events|events.iter().find(|e|
-                        e.get("windowDays").and_then(Value::as_i64)==Some(days))).cloned()
-                };
-                out.push(json!({"channelId":channel_id,"status":"AVAILABLE",
-                    "updatedAt":overview.get("updatedAt"),
-                    "growth7":growth(7),"growth28":growth(28),
-                    "summary":overview.get("summary"),
-                    "coverage":overview.get("coverage"),
-                    "videosTotal":overview.get("videosTotal")}));
-            },
+        let summary=(||->Result<Value,String>{
+            let pointer=read_json(&pointer_path)?;
+            if pointer.get("channelId").and_then(Value::as_str)!=Some(channel_id.as_str()){
+                return Err("ANALYTICS_FLEET_WRONG_CHANNEL".into())
+            }
+            let generation=pointer.get("generation").and_then(Value::as_str).unwrap_or("");
+            if !safe_generation(generation){return Err("ANALYTICS_FLEET_INVALID_GENERATION".into())}
+            let compact=cache.join("ui-generations").join(generation).join("fleet-summary.json");
+            if compact.exists(){
+                // Fast path: ~1 small file per channel, not the entire historical
+                // event log and channel metadata for each of 35–50 channels.
+                let data=read_json(&compact)?;
+                if data.get("channelId").and_then(Value::as_str)!=Some(channel_id.as_str()){
+                    return Err("ANALYTICS_FLEET_COMPACT_CHANNEL_MISMATCH".into())
+                }
+                return Ok(data)
+            }
+            let old=materialized_overview(&cache,channel_id)?;
+            let findings=old.get("growthAndDecline").and_then(Value::as_array);
+            let find=|days:i64|findings.and_then(|rows|rows.iter()
+                .find(|v|v.get("windowDays").and_then(Value::as_i64)==Some(days))).cloned();
+            Ok(json!({"channelId":channel_id,"updatedAt":old.get("updatedAt"),
+                "summary":old.get("summary"),"videosTotal":old.get("videosTotal"),
+                "growth7":find(7),"growth28":find(28)}))
+        })();
+        match summary{
+            Ok(mut v)=>{v["status"]=json!("AVAILABLE");out.push(v);},
             Err(e)=>out.push(json!({"channelId":channel_id,"status":"CACHE_READ_ERROR","error":e})),
         }
     }
@@ -768,6 +791,22 @@ mod tests{
         assert_eq!(retained,1);
         assert_eq!(merged[1]["views"],8);
         assert_eq!(merged[0]["fetchedAt"],"old");
+    }
+    #[test]fn compact_fleet_cache_does_not_include_full_events_or_per_video_history(){
+        let root=std::env::temp_dir().join(format!("vyron-fleet-small-{}",Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let cid="UC1234567890123456789012";
+        let event=json!({"eventType":"video_title_changed","oldValue":"VERY_LONG_TEXT","videoId":"aBc1234-X_y"});
+        persist(&root,&json!({"channelId":cid,"name":"Music"}),&json!({}),&[],
+            &[],&[],&[],&[],&[],&[event],&[]).unwrap();
+        let pointer=read_json(&root.join("ui-current.json")).unwrap();
+        let gen=pointer["generation"].as_str().unwrap();
+        let compact=fs::read_to_string(root.join("ui-generations").join(gen).join("fleet-summary.json")).unwrap();
+        assert!(!compact.contains("VERY_LONG_TEXT"));
+        assert!(!compact.contains("video-days"));
+        let rows=fleet_summaries(root.parent().unwrap(),&[]);
+        assert!(rows.is_empty());
+        let _=fs::remove_dir_all(root);
     }
     #[test]fn fleet_reads_its_own_published_cache_and_marks_missing_channel(){
         let root=std::env::temp_dir().join(format!("vyron-fleet-analytics-{}",Uuid::new_v4()));
