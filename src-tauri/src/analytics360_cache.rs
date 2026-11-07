@@ -71,9 +71,34 @@ fn previous_generation_root(cache:&Path,channel_id:&str)->Option<PathBuf>{
     let overview=read_json(&root.join("overview.json")).ok()?;
     (overview.get("channelId").and_then(Value::as_str)==Some(channel_id)).then_some(root)
 }
-/// Merge only rows with a real calendar date. Fresh API rows supersede old
-/// observations for the same date, while untouched dates keep their original
-/// source/fetchedAt provenance. A partial new API sync cannot erase history.
+/// Preserve previously reported non-null metrics when a later partial API
+/// response omits fields. Explicit numerical zero is a legitimate new value.
+/// A carried-forward field retains previous provenance in a dedicated marker.
+fn merge_daily_observation(prior:&Value,latest:&Value)->Value{
+    let mut merged=latest.clone();
+    let Some(old)=prior.as_object()else{return merged};
+    let Some(new)=merged.as_object_mut()else{return merged};
+    let mut carried=Vec::<String>::new();
+    for (k,v) in old {
+        if k=="date"||k=="fetchedAt"||k=="source"||k=="_vyronCarriedForwardFields"{
+            continue
+        }
+        if !v.is_null()&&new.get(k).map(|x|x.is_null()).unwrap_or(true){
+            new.insert(k.clone(),v.clone());
+            carried.push(k.clone());
+        }
+    }
+    if !carried.is_empty(){
+        if let Some(prior_stamp)=prior.get("fetchedAt").and_then(Value::as_str){
+            new.insert("_vyronPriorFetchedAt".into(),json!(prior_stamp));
+        }
+        new.insert("_vyronCarriedForwardFields".into(),json!(carried));
+    }
+    merged
+}
+/// Merge only rows with valid dates; a partial API response never replaces
+/// previously confirmed values with null/missing fields. New explicit zero
+/// supersedes earlier values without ambiguity.
 fn merge_by_date(previous:&[Value],latest:&[Value])->(Vec<Value>,usize){
     let mut rows=BTreeMap::<String,Value>::new();
     let mut prior_dates=std::collections::HashSet::new();
@@ -90,7 +115,9 @@ fn merge_by_date(previous:&[Value],latest:&[Value])->(Vec<Value>,usize){
         if let Some(day)=row.get("date").and_then(Value::as_str){
             if NaiveDate::parse_from_str(day,"%Y-%m-%d").is_ok(){
                 latest_dates.insert(day.to_owned());
-                rows.insert(day.to_owned(),row.clone());
+                let value=rows.get(day).map(|old|merge_daily_observation(old,row))
+                    .unwrap_or_else(||row.clone());
+                rows.insert(day.to_owned(),value);
             }
         }
     }
@@ -248,7 +275,7 @@ pub(crate) fn persist(
         "historicalOnlyVideosRetained":historical_only_videos,
         "retainedPriorReachRows":preserved_reach_rows,
         "retainedPriorRetentionCurves":preserved_retention_curves,
-        "policy":"New observations supersede prior observations on matching dates; untouched earlier confirmed dates retain original source and fetchedAt."
+        "policy":"New observations supersede prior observations on matching dates, but missing/null metrics are carried forward with _vyronCarriedForwardFields and _vyronPriorFetchedAt; explicit zero is never treated as missing."
     });
     let index=json!({"schemaVersion":1,"channelId":cid,"generation":generation,
         "updatedAt":Utc::now().to_rfc3339(),"summary":summary,"coverage":effective_coverage,
@@ -454,6 +481,26 @@ mod tests{
         assert_eq!(totals[0]["ctrScale"],"UNVERIFIED");
         let only_one=reach_aggregate(&rows,None,None,Some("aBc1234-X_y"));
         assert_eq!(only_one[0]["observedImpressions"],400);
+    }
+    #[test]fn partial_same_day_row_must_not_erase_a_prior_metric(){
+        let previous=vec![json!({"date":"2026-01-01","views":18,"watchMinutes":42,
+            "fetchedAt":"2026-01-03","source":"youtube_analytics_api_v2"})];
+        let latest=vec![json!({"date":"2026-01-01","views":0,"watchMinutes":null,
+            "fetchedAt":"2026-01-04","source":"youtube_analytics_api_v2"})];
+        let (merged,retained)=merge_by_date(&previous,&latest);
+        assert_eq!(retained,0);
+        assert_eq!(merged[0]["views"],0);
+        assert_eq!(merged[0]["watchMinutes"],42);
+        assert_eq!(merged[0]["_vyronPriorFetchedAt"],"2026-01-03");
+        assert_eq!(merged[0]["_vyronCarriedForwardFields"][0],"watchMinutes");
+    }
+    #[test]fn missing_new_field_is_carried_forward_with_provenance(){
+        let (merged,_)=merge_by_date(
+           &[json!({"date":"2026-01-01","views":10,"likes":2,"fetchedAt":"old"})],
+           &[json!({"date":"2026-01-01","views":14,"fetchedAt":"new"})]);
+        assert_eq!(merged[0]["views"],14);
+        assert_eq!(merged[0]["likes"],2);
+        assert_eq!(merged[0]["fetchedAt"],"new");
     }
     #[test]fn merge_counts_only_prior_days_missing_in_latest_batch(){
         let (merged,retained)=merge_by_date(
