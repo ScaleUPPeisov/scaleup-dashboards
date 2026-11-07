@@ -6,6 +6,7 @@ on:
       - 'src/**'
       - 'src-tauri/src/**'
       - 'scripts/vyron_vitest_diff.py'
+      - 'scripts/test_vyron_vitest_diff.py'
       - '.github/workflows/vyron-vitest-baseline-diff.yml'
   workflow_dispatch:
 permissions:
@@ -24,7 +25,7 @@ jobs:
           cache: npm
       - name: Checkout exact stable 6.1.15 PR base in an isolated worktree
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || '51ba3f9e3f9526e101ec69e86c1bdd2fe496a7e2' }}
         run: |
           set -euo pipefail
           git worktree add --detach /tmp/vyron-6_1_15-baseline "$BASE_SHA"
@@ -50,6 +51,8 @@ jobs:
           set -e
           test -s /tmp/vyron-candidate-test-results.json
           echo "Candidate actual Vitest exit status: $status"
+      - name: Self-test the comparison policy against import failures and empty reports
+        run: python3 -m unittest discover -s scripts -p 'test_vyron_vitest_diff.py'
       - name: Compare tests by stable relative source path and full test name
         run: |
           python3 scripts/vyron_vitest_diff.py \
