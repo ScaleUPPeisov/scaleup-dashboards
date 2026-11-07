@@ -53,7 +53,7 @@ const num=(v:unknown,digits=0):string=>{
  const n=Number(v);return Number.isFinite(n)?n.toLocaleString('ru-RU',{maximumFractionDigits:digits}):'—';
 };
 const percent=(v:unknown)=>v===null||v===undefined?'—':num(v,1)+'%';
-const displayDate=(s?:string|null)=>s?new Date(s).toLocaleDateString('ru-RU'):'—';
+const displayDate=(s?:string|null)=>{if(!s)return '—';const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(s);return m?`${m[3]}.${m[2]}.${m[1]}`:new Date(s).toLocaleDateString('ru-RU');};
 const displayTime=(s?:string)=>s?new Date(s).toLocaleString('ru-RU'):'—';
 const signed=(v:number|null|undefined)=>v==null?'—':(v>0?'+':'')+num(v,1);
 const duration=(s:unknown)=>{const n=Number(s);if(s==null||!Number.isFinite(n))return '—';return Math.floor(n/60)+':'+String(Math.round(n%60)).padStart(2,'0')};
@@ -278,8 +278,12 @@ export function Analytics360Page(){
  const nowNet=gained!=null&&lost!=null?gained-lost:null;
  // Legacy summary is a separate official API snapshot, never mixed into an incomplete new series.
  const eligibleFallback=snapshot?.status!=='AVAILABLE'&&fallback?.periodDays===Number(period);
- const currentViews=views??(eligibleFallback?fallback?.views:null);
- const currentWatch=watch??(eligibleFallback?fallback?.watchMinutes:null);
+ // "All time" is a public cumulative channel counter, not a summation of
+ // possibly incomplete historical daily API rows. Watch time is deliberately
+ // unavailable until a complete covered daily range can be established.
+ const publicLifetimeViews=ov?.summary?.totalViews??active?.stats?.viewCount??null;
+ const currentViews=period==='all'?publicLifetimeViews:(views??(eligibleFallback?fallback?.views:null));
+ const currentWatch=period==='all'?null:(watch??(eligibleFallback?fallback?.watchMinutes:null));
  const reachDays=snapshot?.channelReachDaily||[];
  const reachImpressions=reachDays.length?reachDays.reduce((sum,d)=>sum+d.observedImpressions,0):null;
  const reachCtrRaw=reachRawWeighted(reachDays);
@@ -316,11 +320,11 @@ export function Analytics360Page(){
   {!loading&&snapshot?.status==='NOT_YET_COLLECTED'&&<div className="panel a360-note"><b>Полная история пока не синхронизирована</b><p>Нажмите «Собрать всю историю канала». Данные сохранятся локально в отдельных файлах; OAuth не будет сброшен. Быстрая аналитика в VYRON останется доступной.</p></div>}
   {!loading&&tab==='overview'&&<>
    <div className="a360-grid four">
-    <Kpi name={'Просмотры · '+selectedPeriodText} value={num(currentViews)} detail={viewsResult.status==='AVAILABLE'?(period==='28'?deltaFor(observations.find(x=>x.windowDays===28)):'Полный подтверждённый ряд'):'Данные: '+viewsResult.status}/>
-    <Kpi name="Часы просмотра" value={currentWatch==null?'—':num(currentWatch/60,1)}/>
-    <Kpi name="Подписчиков получено" value={num(gained??(eligibleFallback?fallback?.subscribersGained:null))}/>
-    <Kpi name="Чистый прирост" value={signed(nowNet??(eligibleFallback&&fallback?fallback.subscribersGained-fallback.subscribersLost:null))}/>
-    <Kpi name="Потеря подписчиков" value={num(lost??(eligibleFallback?fallback?.subscribersLost:null))}/>
+    <Kpi name={period==='all'?'Просмотры всего · публичный счётчик YouTube':'Просмотры · '+selectedPeriodText} value={num(currentViews)} detail={period==='all'?'Не сумма неполных дневных данных':viewsResult.status==='AVAILABLE'?(period==='28'?deltaFor(observations.find(x=>x.windowDays===28)):'Полный подтверждённый ряд'):'Данные: '+viewsResult.status}/>
+    <Kpi name={period==='all'?'Часы просмотра · вся история':'Часы просмотра'} value={currentWatch==null?'—':num(currentWatch/60,1)} detail={period==='all'?'Без полной истории не рассчитываются':undefined}/>
+    <Kpi name="Подписчиков получено" value={num(period==='all'?null:(gained??(eligibleFallback?fallback?.subscribersGained:null)))}/>
+    <Kpi name="Чистый прирост" value={signed(period==='all'?null:(nowNet??(eligibleFallback&&fallback?fallback.subscribersGained-fallback.subscribersLost:null)))}/>
+    <Kpi name="Потеря подписчиков" value={num(period==='all'?null:(lost??(eligibleFallback?fallback?.subscribersLost:null)))}/>
     <Kpi name="Всего подписчиков" value={num(ov?.summary.subscribers??active?.stats?.subscriberCount??active?.stats?.subscribers)}/>
     <Kpi name="Средняя длительность" value={fallback?.periodDays===Number(period)?duration(fallback.averageViewDuration):'—'}/>
     <Kpi name="Опубликованных видео" value={num(ov?.summary.totalPublishedVideos??active?.stats?.videoCount??active?.stats?.videos)}/>
