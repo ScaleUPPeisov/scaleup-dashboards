@@ -960,11 +960,14 @@ pub async fn youtube_ai_export(app:AppHandle,request:AiExportRequest)->Result<Va
                         .cloned().unwrap_or_default();
                     let merged_videos=crate::analytics360_cache::materialized_video_records(&channel_cache,&choice.channel_id)?;
                     let merged_reach=crate::analytics360_cache::materialized_reach_daily(&channel_cache,&choice.channel_id)?;
+                    let merged_retention=crate::analytics360_cache::materialized_retention(&channel_cache,&choice.channel_id)?;
                     let mut archive_coverage=r.coverage.clone();
                     archive_coverage["archiveHistorySource"]=json!("merged_published_analytics360_generation");
                     archive_coverage["archivedChannelDays"]=json!(merged_channel.len());
                     archive_coverage["archivedHistoricalVideoRecords"]=json!(merged_videos.len());
                     archive_coverage["archivedReachRows"]=json!(merged_reach.len());
+                    archive_coverage["archivedRetentionCurves"]=json!(merged_retention.len());
+                    archive_coverage["retentionHistorySource"]=json!("verified_merged_published_generation");
                     save_json(&out_dir.join("channel.json"),&r.summary)?;
                     save_json(&out_dir.join("coverage.json"),&archive_coverage)?;
                     save_json(&out_dir.join("videos.json"),&json!(merged_videos))?;
@@ -979,7 +982,7 @@ pub async fn youtube_ai_export(app:AppHandle,request:AiExportRequest)->Result<Va
                     save_json(&out_dir.join("video_lifecycle.json"),&json!(merged_lifecycle))?;
                     save_json(&out_dir.join("traffic.json"),&json!(r.traffic))?;
                     save_json(&out_dir.join("audience_breakdowns.json"),&json!(r.breakdowns))?;
-                    save_json(&out_dir.join("retention.json"),&json!(r.retention))?;
+                    save_json(&out_dir.join("retention.json"),&json!(merged_retention))?;
                     save_json(&out_dir.join("events.json"),&json!(merged_events))?;
                     save_json(&out_dir.join("findings.json"),&json!(merged_findings))?;
                     copy_reporting(&channel_cache,&out_dir)?;
@@ -1020,7 +1023,7 @@ pub async fn youtube_ai_export(app:AppHandle,request:AiExportRequest)->Result<Va
                             "reportCreateTime","reportId","source"].iter().map(|k|vstr(&v[*k])).collect::<Vec<_>>())?;
                     }
                     summary.push(r.summary);coverage.push(archive_coverage);
-                    all_events.extend(merged_events);all_retention.extend(r.retention);all_breakdowns.extend(r.breakdowns);findings.extend(merged_findings);
+                    all_events.extend(merged_events);all_retention.extend(merged_retention);all_breakdowns.extend(r.breakdowns);findings.extend(merged_findings);
                     progress(&app,&run,i+1,total,choice,"DONE","Данные сохранены в архиве");
                 }
                 Err(e)=>{
