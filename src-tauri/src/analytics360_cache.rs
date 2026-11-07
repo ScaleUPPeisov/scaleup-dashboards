@@ -457,6 +457,18 @@ fn load_from_disk(cache:&Path,page:u32,per_page:u32,period:&str,from:Option<&str
     let pointer_path=cache.join("ui-current.json");
     if !pointer_path.exists(){return Ok(json!({"status":"NOT_YET_COLLECTED","message":"Сначала синхронизируйте историю этого канала"}))}
     let pointer=read_json(&pointer_path)?;
+    #[cfg(target_os="macos")]
+    {
+        let cid=pointer.get("channelId").and_then(Value::as_str)
+            .ok_or("ANALYTICS_POINTER_CHANNEL_ID_MISSING")?;
+        let (start,end)=period_dates(period,from,to)?;
+        let start_text=start.map(|d|d.format("%Y-%m-%d").to_string());
+        let end_text=end.map(|d|d.format("%Y-%m-%d").to_string());
+        if let Some(snapshot)=crate::analytics_sqlite::read_ui_snapshot(cache,cid,page,per_page,period,
+            start_text.as_deref(),end_text.as_deref(),video_id,content_type,sort)?{
+            return Ok(snapshot)
+        }
+    }
     let gen=pointer.get("generation").and_then(Value::as_str).unwrap_or("");
     if !safe_generation(gen){return Err("ANALYTICS_CACHE_INVALID_GENERATION".into())}
     let root=cache.join("ui-generations").join(gen);
