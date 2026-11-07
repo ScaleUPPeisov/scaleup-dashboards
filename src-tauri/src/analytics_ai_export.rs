@@ -350,6 +350,35 @@ fn observe_metadata(cache:&Path,videos:&[Value],channel_id:&str,inventory_comple
     save_json(&cache.join("events.json"),&json!(events))?;
     Ok(events)
 }
+fn video_lifecycle_one(video:&Value,lookup:Option<&HashMap<String,f64>>,channel_id:&str)->Value{
+    let id=text(video.get("id"));
+    let date=text(video.pointer("/snippet/publishedAt"));
+    let published=date.get(..10).and_then(|s|NaiveDate::parse_from_str(s,"%Y-%m-%d").ok());
+    let mut windows=serde_json::Map::new();
+    for period in [3i64,7,14,30,90]{
+        let mut matched=0usize;
+        let mut total=0.0;
+        if let Some(start)=published{
+            for offset in 0..period{
+                let day=(start+Days::days(offset)).format("%Y-%m-%d").to_string();
+                if let Some(value)=lookup.and_then(|m|m.get(&day)){
+                    total+=value;matched+=1;
+                }
+            }
+        }
+        windows.insert(format!("days{period}"),json!({
+            "views":if matched==period as usize{Some(total)}else{None},
+            "observedDays":matched,"requiredDays":period,
+            "complete":matched==period as usize
+        }));
+    }
+    json!({"channelId":channel_id,"videoId":id,"publishedAt":date,
+        "first24HoursViews":Value::Null,"ageWindowsCalendarDays":windows,
+        "publicationTimezone":"UTC","analyticsDayTimezone":"America/Los_Angeles",
+        "caveat":"Window alignment by UTC publication calendar date is approximate, not exact hours after upload",
+        "source":"derived_from_youtube_analytics_daily"})
+}
+#[cfg(test)]
 fn video_lifecycle(videos:&[Value],daily:&[Value],channel_id:&str)->Vec<Value>{
     let mut by_video=HashMap::<String,HashMap<String,f64>>::new();
     for row in daily{
@@ -360,37 +389,11 @@ fn video_lifecycle(videos:&[Value],daily:&[Value],channel_id:&str)->Vec<Value>{
             by_video.entry(id).or_default().insert(day,views);
         }
     }
-    let mut output=Vec::new();
-    for video in videos{
-        let id=text(video.get("id"));
-        let date=text(video.pointer("/snippet/publishedAt"));
-        if id.is_empty(){continue}
-        let published=date.get(..10).and_then(|s|NaiveDate::parse_from_str(s,"%Y-%m-%d").ok());
-        let lookup=by_video.get(&id);
-        let mut windows=serde_json::Map::new();
-        for period in [3i64,7,14,30,90]{
-            let mut matched=0usize;
-            let mut total=0.0;
-            if let Some(start)=published{
-                for offset in 0..period{
-                    let key=(start+Days::days(offset)).format("%Y-%m-%d").to_string();
-                    if let Some(value)=lookup.and_then(|m|m.get(&key)){
-                        total+=value;matched+=1;
-                    }
-                }
-            }
-            // Missing days are UNKNOWN, not assumed zero. UTC publish dates may
-            // cross YouTube Analytics' Pacific calendar day boundaries.
-            windows.insert(format!("days{period}"),json!({"views":if matched==period as usize{Some(total)}else{None},
-              "observedDays":matched,"requiredDays":period,"complete":matched==period as usize}));
-        }
-        output.push(json!({"channelId":channel_id,"videoId":id,"publishedAt":date,
-            "first24HoursViews":Value::Null,"ageWindowsCalendarDays":windows,
-            "publicationTimezone":"UTC","analyticsDayTimezone":"America/Los_Angeles",
-            "caveat":"Window alignment by UTC publication calendar date is approximate, not exact hours after upload",
-            "source":"derived_from_youtube_analytics_daily"}));
-    }
-    output
+    videos.iter().filter(|video|!text(video.get("id")).is_empty())
+        .map(|video|{
+            let id=text(video.get("id"));
+            video_lifecycle_one(video,by_video.get(&id),channel_id)
+        }).collect()
 }
 fn percent_change(now:f64,before:f64)->Value{if before.abs()<f64::EPSILON {Value::Null}else{json!(((now-before)/before)*100.0)}}
 pub(crate) fn contributions_for_window(event:&Value,video_daily:&[Value])->Vec<Value>{
@@ -862,7 +865,7 @@ fn export_merged_video_history(cache:&Path,channel_id:&str,videos:&[Value],
     let mut output=File::create(path).map_err(|e|format!("AI_VIDEO_JSON_CREATE: {e}"))?;
     output.write_all(b"[").map_err(|e|e.to_string())?;
     let mut seen=HashSet::new();let mut first=true;let mut count=0usize;
-    let mut first_90_days=Vec::<Value>::new();
+    let mut lifecycles=Vec::<Value>::with_capacity(videos.len());
     for video in videos{
         let id=video.get("id").and_then(Value::as_str).unwrap_or("");
         if id.len()!=11||!id.bytes().all(|x|x.is_ascii_alphanumeric()||x==b'_'||x==b'-'){
@@ -871,13 +874,17 @@ fn export_merged_video_history(cache:&Path,channel_id:&str,videos:&[Value],
         if !seen.insert(id){continue}
         let published=video.pointer("/snippet/publishedAt").and_then(Value::as_str)
             .and_then(|s|s.get(..10)).and_then(|s|NaiveDate::parse_from_str(s,"%Y-%m-%d").ok());
+        let mut first_90_views=HashMap::<String,f64>::with_capacity(90);
         for row in crate::analytics360_cache::materialized_video_daily(cache,channel_id,id)?{
-            // Keep only the first 90 calendar days in RAM for lifecycle math;
-            // the full ten-year history is streamed to ZIP without duplication.
-            if let (Some(start),Some(date))=(published,
+            // Bounded per-video state: at most 90 date→views numbers, never
+            // hundreds of thousands of cloned JSON metric rows on the M1.
+            if let (Some(start),Some(day),Some(views))=(published,
                 row.get("date").and_then(Value::as_str)
-                    .and_then(|x|NaiveDate::parse_from_str(x,"%Y-%m-%d").ok())){
-                if date>=start && date<start+Days::days(90){first_90_days.push(row.clone())}
+                    .and_then(|x|NaiveDate::parse_from_str(x,"%Y-%m-%d").ok()),
+                numeric(row.get("views"))){
+                if day>=start && day<start+Days::days(90){
+                    first_90_views.insert(day.format("%Y-%m-%d").to_string(),views);
+                }
             }
             if !first{output.write_all(b",").map_err(|e|e.to_string())?}
             first=false;
@@ -887,10 +894,11 @@ fn export_merged_video_history(cache:&Path,channel_id:&str,videos:&[Value],
                 .iter().map(|k|vstr(&row[*k])).collect::<Vec<_>>())?;
             count+=1;
         }
+        lifecycles.push(video_lifecycle_one(video,Some(&first_90_views),channel_id));
     }
     output.write_all(b"]").map_err(|e|e.to_string())?;
     output.sync_all().map_err(|e|e.to_string())?;
-    Ok((count,first_90_days))
+    Ok((count,lifecycles))
 }
 
 #[tauri::command]
@@ -983,9 +991,8 @@ pub async fn youtube_ai_export(app:AppHandle,request:AiExportRequest)->Result<Va
                     save_json(&out_dir.join("videos.json"),&json!(merged_videos))?;
                     save_json(&out_dir.join("channel_daily.json"),&json!(merged_channel))?;
                     save_json(&out_dir.join("reach_daily.json"),&json!(merged_reach))?;
-                    let (merged_video_count,early_lifecycle_days)=export_merged_video_history(&channel_cache,&choice.channel_id,&merged_videos,
+                    let (merged_video_count,merged_lifecycle)=export_merged_video_history(&channel_cache,&choice.channel_id,&merged_videos,
                         &out_dir.join("videos_daily.json"),&mut video_csv)?;
-                    let merged_lifecycle=video_lifecycle(&merged_videos,&early_lifecycle_days,&choice.channel_id);
                     archive_coverage["archivedVideoDays"]=json!(merged_video_count);
                     archive_coverage["videoLifecycleCalculatedFromMergedHistory"]=json!(true);
                     save_json(&out_dir.join("coverage.json"),&archive_coverage)?;
@@ -1119,10 +1126,12 @@ mod tests{
             &[],&[],&[],&[],&[]).unwrap();
         let output=root.join("video-history.json");
         let mut csv=File::create(root.join("video-history.csv")).unwrap();
-        let (total,lifecycle_days)=export_merged_video_history(&root,id,&videos,&output,&mut csv).unwrap();
+        let (total,lifecycle)=export_merged_video_history(&root,id,&videos,&output,&mut csv).unwrap();
         drop(csv);
         assert_eq!(total,2);
-        assert_eq!(lifecycle_days.len(),2);
+        assert_eq!(lifecycle.len(),1);
+        assert_eq!(lifecycle[0]["ageWindowsCalendarDays"]["days3"]["observedDays"],2);
+        assert!(lifecycle[0]["ageWindowsCalendarDays"]["days3"]["views"].is_null());
         let raw:Value=serde_json::from_slice(&fs::read(&output).unwrap()).unwrap();
         assert_eq!(raw.as_array().unwrap().len(),2);
         assert_eq!(raw[0]["views"],4);
