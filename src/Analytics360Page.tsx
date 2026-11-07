@@ -114,8 +114,8 @@ function BreakdownCard({title,values,showWatch=false}:{title:string;values?:{key
  </section>;
 }
 const demographics:Record<string,string>={
- age13-17:'13–17',age18-24:'18–24',age25-34:'25–34',age35-44:'35–44',
- age45-54:'45–54',age55-64:'55–64',age65-:'65+',male:'Мужчины',female:'Женщины',
+ 'age13-17':'13–17','age18-24':'18–24','age25-34':'25–34','age35-44':'35–44',
+ 'age45-54':'45–54','age55-64':'55–64','age65-':'65+',male:'Мужчины',female:'Женщины',
  user_specified:'Другая категория'
 };
 function DemographicsCard({title,rows}:{title:string;rows?:{key?:string;viewerPercentage?:number|null}[]}){
