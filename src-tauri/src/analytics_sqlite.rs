@@ -509,6 +509,14 @@ pub(crate) fn migrate_generation(cache:&Path,channel_id:&str)->Result<MigrationR
         .map_err(|e|format!("SQLITE_BEGIN: {e}"))?;
     let result=import_generation(&tx,channel_id,&generation,&root,&overview,
         &catalog,&daily,&reach,&digest)?;
+    // An external process may have published another JSON generation while
+    // this writer was importing. Never commit a stale generation as current.
+    // The SQL transaction rolls back automatically on this error.
+    let active=obj(&cache.join("ui-current.json"))?;
+    if text(&active,"channelId")!=Some(channel_id)
+       ||text(&active,"generation")!=Some(generation.as_str()){
+        return Err("SQLITE_CONCURRENT_GENERATION_CHANGED: source JSON preserved".into())
+    }
     tx.commit().map_err(|e|format!("SQLITE_COMMIT: {e}"))?;
     // PASSIVE checkpoint has bounded impact on readers. A busy checkpoint is
     // not database corruption: the committed generation remains usable.
