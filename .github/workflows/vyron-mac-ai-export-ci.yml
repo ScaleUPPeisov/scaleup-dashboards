@@ -6,6 +6,7 @@ on:
     paths:
       - 'src/AiAnalyticsExport.tsx'
       - 'src/Analytics360Page.tsx'
+      - 'src/M1PerformanceProbe.tsx'
       - 'src/analytics360Core.ts'
       - 'src/analytics360Core.test.ts'
       - 'src/Analytics360.css'
@@ -77,12 +78,15 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: 'src-tauri -> target'
-      - name: TypeScript and Vite
+      - name: TypeScript, Vite and strict Analytics 360 tests
         run: |
           npm ci
           npm run build
+          npx vitest run src/analytics360Core.test.ts
       - name: Rust build tests on macOS ARM64
         working-directory: src-tauri
         run: |
           cargo test --locked --lib analytics_ai_export -- --nocapture
+          cargo test --locked --lib analytics360_cache -- --nocapture
+          cargo test --locked --lib v213_storage_tests -- --nocapture
           cargo check --locked --target aarch64-apple-darwin
