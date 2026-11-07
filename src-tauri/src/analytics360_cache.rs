@@ -415,7 +415,7 @@ mod tests{
     #[test]fn missing_video_in_new_inventory_keeps_confirmed_history(){
         let temp=std::env::temp_dir().join(format!("vyron-history-video-{}",Uuid::new_v4()));
         fs::create_dir_all(&temp).unwrap();
-        let cid="UC1234567890123456789012",vid="aBc1234-X_y";
+        let cid="UC1234567890123456789012";let vid="aBc1234-X_y";
         let video=json!({"id":vid,"snippet":{"channelId":cid,"publishedAt":"2024-01-01T00:00:00Z","title":"Previously uploaded"}});
         let summary=json!({"channelId":cid});
         persist(&temp,&summary,&json!({}),&[],&[video],
