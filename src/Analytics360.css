@@ -94,3 +94,23 @@
 @media(max-width:1250px){.a360-grid.four{grid-template-columns:repeat(2,minmax(0,1fr))}.a360-toolbar{display:grid}.a360-video-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:780px){.a360-grid.two,.a360-grid.four{grid-template-columns:minmax(0,1fr)}.a360-video-grid{grid-template-columns:1fr}.a360-sync{display:block}.a360-sync label{margin-top:10px}.a360-tabs button{flex:1}.a360 .pageHeader{display:grid}.a360-row-head{display:block}}
 @media(prefers-reduced-motion:reduce){.a360-spinner{animation:none}}
+
+.a360-fleet{display:grid;gap:13px}
+.a360-fleet .a360-row-head h3{margin:0 0 5px;font-size:16px}
+.a360-fleet .a360-row-head small{display:block;font-size:10px;color:#7c9eb2;line-height:1.5}
+.a360-fleet .a360-row-head button{padding:9px 12px;background:#0d3042;border:1px solid #33738e;color:#b9e9f4;border-radius:8px;flex-shrink:0}
+.a360-fleet .a360-grid .a360-kpi{min-height:84px;padding:13px}
+.a360-fleet-attention{border:1px solid #754d2d;background:#281d1a;border-radius:9px;padding:10px}
+.a360-fleet-attention summary{font-size:11px;font-weight:750;color:#f4c389;cursor:pointer}
+.a360-fleet-attention>div{display:grid;gap:7px;padding-top:11px}
+.a360-fleet-warning{display:grid;grid-template-columns:minmax(140px,220px) 1fr;align-items:center;gap:12px;text-align:left;padding:9px;background:#2d2421;border:1px solid #63432d;border-radius:7px}
+.a360-fleet-warning b{font-size:11px;color:#f9d5a9}
+.a360-fleet-warning span{font-size:10px;color:#cea98c;line-height:1.5}
+.a360-fleet-count{font-size:10px;color:#77a9bd}
+.a360 .a360-fleet-table{min-width:1380px}
+.a360-fleet-table td:first-child{min-width:155px;position:sticky;left:0;background:#0d2535}
+.a360-fleet-table th:first-child{position:sticky;left:0;z-index:2}
+.a360-fleet-table td{white-space:nowrap}
+.a360-fleet-table tr.a360-fleet-active td{background:#113b4d;color:#d6f4ff}
+.a360-fleet-table td strong{color:#d7ecf6}
+@media(max-width:780px){.a360-fleet-warning{grid-template-columns:1fr}.a360-fleet .a360-grid.four{grid-template-columns:repeat(2,minmax(0,1fr))}}
