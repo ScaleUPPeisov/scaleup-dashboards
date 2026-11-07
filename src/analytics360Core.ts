@@ -54,3 +54,26 @@ export function calendarMetricTotal<T extends {date:string}>(
  if(observed!==expected)return{value:null,status:observed?'PARTIAL':'NOT_YET_COLLECTED',observed,expected};
  return{value:total,status:'AVAILABLE',observed,expected};
 }
+
+/** Display-only decimation: preserve both ends and every bucket's extrema.
+ * Never mutate/delete source rows. Call independently for each contiguous
+ * non-null segment, so chart gaps remain gaps. */
+export function decimateExtrema<T extends {v:number}>(points:readonly T[],maxSamples=640):T[]{
+ const budget=Math.max(2,Math.floor(maxSamples));
+ if(points.length<=budget)return [...points];
+ const segments=Math.max(1,Math.floor((budget-2)/2));
+ const interior=points.length-2;
+ const selected=new Set<number>([0,points.length-1]);
+ for(let bucket=0;bucket<segments;bucket++){
+  const from=1+Math.floor(bucket*interior/segments);
+  const end=1+Math.floor((bucket+1)*interior/segments);
+  if(from>=end)continue;
+  let min=from,max=from;
+  for(let j=from+1;j<end;j++){
+   if(points[j].v<points[min].v)min=j;
+   if(points[j].v>points[max].v)max=j;
+  }
+  selected.add(min);selected.add(max);
+ }
+ return [...selected].sort((a,b)=>a-b).map(i=>points[i]);
+}
