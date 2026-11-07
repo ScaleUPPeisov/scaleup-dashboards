@@ -358,6 +358,17 @@ fn import_generation(tx:&Transaction<'_>,channel:&str,generation:&str,root:&Path
         if let Some(curve)=root.join("retention").join(format!("{key}.json"))
             .exists().then(||obj(&root.join("retention").join(format!("{key}.json")))).transpose()?{
             if text(&curve,"videoId")!=Some(id){return Err("SQLITE_RETENTION_ID_MISMATCH".into())}
+            if text(&curve,"channelId").map(|x|x!=channel).unwrap_or(false){
+                return Err("SQLITE_RETENTION_CHANNEL_MISMATCH".into())
+            }
+            // -1 is the authoritative full curve snapshot. Reconstructed point
+            // arrays would discard coverage, fetchedAt, source and API metadata.
+            // Keep normal point indices >=0 for efficient detail/analysis queries.
+            tx.execute("INSERT INTO retention_points(channel_id,video_id,point_index,observed_at,source,completeness,payload_json)
+                  VALUES(?1,?2,-1,?3,?4,?5,?6)",
+                params![channel,id,observed(&curve,&stamp),
+                    source(&curve,"youtube_analytics_api_v2"),completeness(&curve),to_json(&curve)?])
+                .map_err(|e|format!("SQLITE_RETENTION_SNAPSHOT_IMPORT: {e}"))?;
             if let Some(points)=curve.get("points").and_then(Value::as_array){
                 for (n,point) in points.iter().enumerate(){
                     tx.execute("INSERT INTO retention_points(channel_id,video_id,point_index,observed_at,source,completeness,payload_json)
@@ -635,20 +646,33 @@ pub(crate) fn read_ui_snapshot(cache:&Path,channel_id:&str,page:u32,per_page:u32
         details=serde_json::from_str(&pair.1).map_err(|e|e.to_string())?;
         selected_days=read_video_days(cache,channel_id,id,start,end)?
             .ok_or("SQLITE_VERIFIED_VIDEO_DAYS_UNAVAILABLE")?;
-        let mut stmt=conn.prepare(
+        let stored:Option<String>=conn.query_row(
             "SELECT payload_json FROM retention_points
-             WHERE channel_id=?1 AND video_id=?2 ORDER BY point_index")
-            .map_err(|e|e.to_string())?;
-        let rows=stmt.query_map(params![channel_id,id],|r|r.get::<_,String>(0))
-            .map_err(|e|e.to_string())?;
-        let mut points=Vec::new();
-        for row in rows{
-            points.push(serde_json::from_str::<Value>(&row.map_err(|e|e.to_string())?)
-                .map_err(|e|e.to_string())?);
-        }
-        if !points.is_empty(){
-            retention=json!({"channelId":channel_id,"videoId":id,
-                "points":points,"source":"youtube_analytics_api_v2"});
+             WHERE channel_id=?1 AND video_id=?2 AND point_index=-1",
+            params![channel_id,id],|r|r.get(0))
+            .optional().map_err(|e|format!("SQLITE_RETENTION_READ: {e}"))?;
+        if let Some(snapshot)=stored{
+            let exact:Value=serde_json::from_str(&snapshot)
+                .map_err(|e|format!("SQLITE_RETENTION_JSON_INVALID: {e}"))?;
+            if text(&exact,"videoId")!=Some(id) ||
+                text(&exact,"channelId").map(|x|x!=channel_id).unwrap_or(false){
+                return Err("SQLITE_RETENTION_SNAPSHOT_IDENTITY_MISMATCH".into())
+            }
+            retention=exact;
+        }else{
+            // Compatibility with already migrated v2 databases. Retain all
+            // original metadata from the immutable published JSON generation.
+            let key=video_path_key(id);
+            let source=cache.join("ui-generations").join(generation)
+                .join("retention").join(format!("{key}.json"));
+            if source.exists(){
+                let exact=obj(&source)?;
+                if text(&exact,"videoId")!=Some(id)||
+                    text(&exact,"channelId").map(|x|x!=channel_id).unwrap_or(false){
+                    return Err("SQLITE_RETENTION_LEGACY_IDENTITY_MISMATCH".into())
+                }
+                retention=exact;
+            }
         }
     }
     let channel_daily=read_channel_days(cache,channel_id,start,end)?
@@ -689,7 +713,7 @@ mod tests{
         fs::write(root.join("video-days").join(format!("{}.json",video_path_key(video_id))),
             serde_json::to_vec(&json!([{"videoId":video_id,"date":"2026-01-01","views":12,"source":"api"}])).unwrap()).unwrap();
         fs::write(root.join("retention").join(format!("{}.json",video_path_key(video_id))),
-            serde_json::to_vec(&json!({"videoId":video_id,"points":[[0.0,0.8],[0.5,0.4]]})).unwrap()).unwrap();
+            serde_json::to_vec(&json!({"videoId":video_id,"points":[[0.0,0.8],[0.5,0.4]],"retentionStatus":"PARTIAL","fetchedAt":"2026-10-01T07:00:00Z","provenance":"api_observed"})).unwrap()).unwrap();
         let docs=[
             ("overview.json",json!({"channelId":id,"generation":generation,"updatedAt":"2026-01-02",
                 "summary":{"channelId":id,"name":"Test"},"coverage":{"status":"PARTIAL"},
@@ -835,6 +859,9 @@ mod tests{
         assert_eq!(p["videoDaily"][0]["views"],12);
         assert_eq!(p["channelDaily"][0]["views"],12);
         assert_eq!(p["retention"]["points"].as_array().unwrap().len(),2);
+        assert_eq!(p["retention"]["retentionStatus"],"PARTIAL");
+        assert_eq!(p["retention"]["provenance"],"api_observed");
+        assert_eq!(p["retention"]["fetchedAt"],"2026-10-01T07:00:00Z");
         assert_eq!(p["channelReachDaily"][0]["observedImpressions"],500);
         let empty_page=read_ui_snapshot(&cache,&id,12,40,"all",None,None,
             None,None,None).unwrap().unwrap();
