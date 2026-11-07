@@ -14,6 +14,8 @@ mod youtube_intelligence;
 mod analytics_ai_export;
 mod analytics360_cache;
 mod analytics_reach;
+#[cfg(any(target_os="macos",test))]
+mod analytics_sqlite;
 mod ai;
 mod production_manager;
 mod materials_manager;
