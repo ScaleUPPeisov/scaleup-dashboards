@@ -18,6 +18,9 @@ on:
       - 'src-tauri/src/analytics360_cache.rs'
       - 'src-tauri/src/analytics_reach.rs'
       - 'src-tauri/src/analytics_sqlite.rs'
+      - 'src-tauri/src/oauth_vault.rs'
+      - 'src-tauri/src/youtube.rs'
+      - 'src-tauri/src/security.rs'
       - 'src-tauri/src/storage.rs'
       - 'src-tauri/src/lib.rs'
       - 'src-tauri/Cargo.toml'
@@ -72,6 +75,28 @@ jobs:
         working-directory: src-tauri
         run: |
           cargo test --locked --lib analytics_sqlite::tests::stress_fleet_50_10k_1m -- --ignored --nocapture
+
+  oauth-data-safety-gate:
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'src-tauri -> target'
+      - name: Independent Google OAuth profiles, token safety and existing recovery
+        working-directory: src-tauri
+        run: |
+          cargo test --locked --lib v241_oauth_singleflight_tests -- --nocapture
+          cargo test --locked --lib oauth_vault::tests -- --nocapture
+          cargo test --locked --lib v2110_oauth_continuity_tests -- --nocapture
+          cargo test --locked --lib v213_storage_tests -- --nocapture
+      - name: Verify no production OAuth identity was modified
+        run: |
+          git diff --exit-code -- src-tauri/tauri.conf.json src-tauri/tauri.macos.conf.json
 
   historical-vitest-audit:
     runs-on: ubuntu-latest
