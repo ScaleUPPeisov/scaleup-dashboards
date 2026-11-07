@@ -10,7 +10,8 @@ import type { AutopilotSummary, Channel, Competitor, InboxScan, JobStatus, Licen
 import { bufferDays,deficit,formatNumber,priorityFor,requiredVideos } from './core';
 import { ExistingVideos } from './ExistingVideos';
 import { AnalyticsPage } from './AnalyticsPage';
-import { Analytics360Page } from './Analytics360Page';
+const Analytics360Page = React.lazy(()=>import('./Analytics360Page').then(m=>({default:m.Analytics360Page})));
+// Code-split macOS-only Analytics 360 so inactive tabs and Windows do not load it eagerly.
 import { MetadataPage } from './MetadataPage';
 import { CompetitorsPage } from './CompetitorsPage';
 import { AccountsPage } from './AccountsPage';
@@ -269,7 +270,7 @@ function PageRouter({license}:{license:LicenseStatus}){
     :canonical==='production'||canonical==='content'?<ProductionOS/>
     :canonical==='inventory'?<LiveContentInventory/>
     :canonical==='competitors'?<CompetitorsPage/>
-    :canonical==='analytics'?((typeof navigator!=='undefined'&&/mac/i.test(navigator.platform||navigator.userAgent))?<Analytics360Page/>:<AnalyticsPage/>)
+    :canonical==='analytics'?((typeof navigator!=='undefined'&&/mac/i.test(navigator.platform||navigator.userAgent))?<React.Suspense fallback={<div className="panel">Загрузка аналитики…</div>}><Analytics360Page/></React.Suspense>:<AnalyticsPage/>)
     :canonical==='accounts'||canonical==='settings'?<SettingsOS license={license}/>
     :null;
 
