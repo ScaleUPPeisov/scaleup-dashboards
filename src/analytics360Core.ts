@@ -29,9 +29,9 @@ export function safeChannelId(id:string):boolean{return /^UC[a-zA-Z0-9_-]{22}$/.
 
 /** A complete YouTube day-series range is required before showing its total.
  * Dates omitted by API are unknown here; never silently treat them as zeros. */
-export function calendarMetricTotal(
- rows:readonly {date:string;[key:string]:unknown}[],
- key:string,
+export function calendarMetricTotal<T extends {date:string}>(
+ rows:readonly T[],
+ key:keyof T,
  start:string|null|undefined,
  end:string|null|undefined,
 ):MathResult{
