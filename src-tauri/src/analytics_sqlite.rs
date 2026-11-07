@@ -266,8 +266,8 @@ fn insert_json_row(tx:&Transaction<'_>,table:&str,channel:&str,generation:&str,i
     let (id_type,source_type)=(format!("{generation}:{i}"),source(row,kind));
     let data=to_json(row)?;
     let sql=match table{
-        "audience_demographics"=>"INSERT OR REPLACE INTO audience_demographics(channel_id,generation,item_key,observed_at,source,completeness,payload_json) VALUES (?1,?2,?3,?4,?5,?6,?7)",
-        "devices"=>"INSERT OR REPLACE INTO devices(channel_id,generation,item_key,observed_at,source,completeness,payload_json) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+        "audience_demographics"=>"INSERT INTO audience_demographics(channel_id,generation,item_key,observed_at,source,completeness,payload_json) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+        "devices"=>"INSERT INTO devices(channel_id,generation,item_key,observed_at,source,completeness,payload_json) VALUES (?1,?2,?3,?4,?5,?6,?7)",
         _=>return Err("SQLITE_UNSAFE_DYNAMIC_TABLE".into())
     };
     tx.execute(sql,params![channel,generation,id_type,observed(row,observed_at),
@@ -295,6 +295,43 @@ fn aggregate_reach(rows:&[Value])->Result<Vec<Value>,String>{
 fn import_generation(tx:&Transaction<'_>,channel:&str,generation:&str,root:&Path,overview:&Value,
    catalog:&[Value],daily:&[Value],reach:&[Value],digest:&str)->Result<MigrationResult,String>{
     let stamp=Utc::now().to_rfc3339();
+    // Historical sync_jobs rows are the immutable source-digest ledger. The
+    // active analytics_migrations marker deliberately tracks only the current
+    // materialized generation and is deleted when switching A -> B. A later
+    // B -> A therefore MUST check the historical ledger before replacing any
+    // generation-specific SQL rows; a reused UUID with different bytes is a
+    // recovery error, never an automatic overwrite.
+    let previous_digest:Option<String>=tx.query_row(
+        "SELECT source_digest FROM sync_jobs WHERE channel_id=?1 AND generation=?2",
+        params![channel,generation],|r|r.get(0))
+        .optional().map_err(|e|format!("SQLITE_HISTORICAL_DIGEST_READ: {e}"))?;
+    if let Some(ref prior)=previous_digest{
+        if prior!=digest{
+            return Err("SQLITE_RECOVERY_REQUIRED: historical source generation digest changed".into())
+        }
+        let previous_overview:Option<String>=tx.query_row(
+            "SELECT payload_json FROM analytics_overviews WHERE channel_id=?1 AND generation=?2",
+            params![channel,generation],|r|r.get(0))
+            .optional().map_err(|e|format!("SQLITE_HISTORICAL_OVERVIEW_READ: {e}"))?;
+        let Some(old_json)=previous_overview else{
+            return Err("SQLITE_RECOVERY_REQUIRED: verified historical overview missing".into())
+        };
+        let old_value:Value=serde_json::from_str(&old_json)
+            .map_err(|e|format!("SQLITE_RECOVERY_REQUIRED: historical overview damaged: {e}"))?;
+        if old_value!=*overview{
+            return Err("SQLITE_RECOVERY_REQUIRED: historical overview does not match source".into())
+        }
+    }
+    // Re-importing the same verified generation is explicitly supported.
+    // These tables have a (channel_id,generation,...) primary key. Clear only
+    // THAT generation, never the entire channel or another channel's history.
+    // A failure anywhere rolls back these deletes together with all new rows.
+    for table in ["analytics_overviews","metadata_history","traffic_sources",
+        "audience_demographics","devices","data_coverage","sync_jobs"]{
+        tx.execute(&format!("DELETE FROM {table} WHERE channel_id=?1 AND generation=?2"),
+            params![channel,generation])
+            .map_err(|e|format!("SQLITE_GENERATION_REIMPORT_CLEAR_{table}: {e}"))?;
+    }
     let summary=overview.get("summary").unwrap_or(&Value::Null);
     tx.execute("INSERT INTO channels(channel_id,name,observed_at,source,completeness,payload_json)
         VALUES (?1,?2,?3,?4,?5,?6) ON CONFLICT(channel_id) DO UPDATE SET
@@ -415,7 +452,7 @@ fn import_generation(tx:&Transaction<'_>,channel:&str,generation:&str,root:&Path
     let events=overview.get("events").and_then(Value::as_array).cloned().unwrap_or_default();
     for event in &events{
         let payload=to_json(event)?;
-        tx.execute("INSERT OR IGNORE INTO channel_events(channel_id,event_hash,event_type,observed_at,source,completeness,payload_json)
+        tx.execute("INSERT INTO channel_events(channel_id,event_hash,event_type,observed_at,source,completeness,payload_json)
           VALUES(?1,?2,?3,?4,?5,?6,?7)",
             params![channel,hash(&payload),text(event,"eventType"),observed(event,&stamp),
                 source(event,"detected_between_scans"),completeness(event),payload])
