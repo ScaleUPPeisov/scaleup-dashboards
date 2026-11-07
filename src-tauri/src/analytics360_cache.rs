@@ -476,11 +476,34 @@ fn load_from_disk(cache:&Path,page:u32,per_page:u32,period:&str,from:Option<&str
     };
     #[cfg(not(target_os="macos"))]
     let current=filter_days(&json_days()?,start,end);
-    let reach=read_json(&root.join("reach-daily.json")).ok()
-        .and_then(|v|v.as_array().cloned()).unwrap_or_default();
-    let channel_reach=reach_aggregate(&reach,start,end,None);
-    let selected_reach=video_id.map(|id|reach_aggregate(&reach,start,end,Some(id)))
-        .unwrap_or_default();
+    #[cfg(target_os="macos")]
+    let sql_reach_channel=crate::analytics_sqlite::read_reach_aggregate(cache,
+        overview.get("channelId").and_then(Value::as_str).unwrap_or(""),None,
+        start.map(|d|d.format("%Y-%m-%d").to_string()).as_deref(),
+        end.map(|d|d.format("%Y-%m-%d").to_string()).as_deref())?;
+    #[cfg(target_os="macos")]
+    let sql_reach_video=match video_id{
+        Some(id)=>crate::analytics_sqlite::read_reach_aggregate(cache,
+            overview.get("channelId").and_then(Value::as_str).unwrap_or(""),Some(id),
+            start.map(|d|d.format("%Y-%m-%d").to_string()).as_deref(),
+            end.map(|d|d.format("%Y-%m-%d").to_string()).as_deref())?,
+        None=>Some(Vec::new()),
+    };
+    #[cfg(target_os="macos")]
+    let use_sql_reach=sql_reach_channel.is_some()&&sql_reach_video.is_some();
+    #[cfg(not(target_os="macos"))]
+    let use_sql_reach=false;
+    let (channel_reach,selected_reach)=if use_sql_reach{
+        #[cfg(target_os="macos")]
+        { (sql_reach_channel.unwrap_or_default(),sql_reach_video.unwrap_or_default()) }
+        #[cfg(not(target_os="macos"))]
+        { unreachable!() }
+    }else{
+        let reach=read_json(&root.join("reach-daily.json")).ok()
+            .and_then(|v|v.as_array().cloned()).unwrap_or_default();
+        (reach_aggregate(&reach,start,end,None),
+         video_id.map(|id|reach_aggregate(&reach,start,end,Some(id))).unwrap_or_default())
+    };
     let mut visible=all.iter().filter(|v|content_type.filter(|s|*s!="all").map(|wanted|
          v.get("contentType").and_then(Value::as_str)==Some(wanted)).unwrap_or(true)).collect::<Vec<_>>();
     if sort==Some("views"){
