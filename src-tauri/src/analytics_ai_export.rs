@@ -577,14 +577,63 @@ async fn collect_channel(app:&AppHandle,client:&reqwest::Client,choice:&AiChanne
     let mut findings=change_findings(&cid,&channel_daily);
     for event in &mut findings{event["videoContributions"]=json!(contributions_for_window(event,&video_daily));}
     let lifecycle=video_lifecycle(&videos,&video_daily,&cid);
+    let recent_begin=end-Days::days(27);
+    let new_videos=videos.iter().filter(|v|v.pointer("/snippet/publishedAt").and_then(Value::as_str)
+        .and_then(|s|s.get(..10)).and_then(|s|NaiveDate::parse_from_str(s,"%Y-%m-%d").ok())
+        .map(|d|d>=recent_begin&&d<=end).unwrap_or(false)).count();
     let summary=json!({"channelId":cid,"name":text(snippet.get("title")),
        "url":format!("https://www.youtube.com/channel/{cid}"),"createdAt":created,
        "subscribers":numeric(stat.get("subscriberCount")),"totalViews":numeric(stat.get("viewCount")),
-       "totalPublishedVideos":numeric(stat.get("videoCount")),"exportedVideoRecords":videos.len(),
+       "totalPublishedVideos":numeric(stat.get("videoCount")),"exportedVideoRecords":videos.len(),"videosPublishedLast28Days":new_videos,
        "periodStart":start_s,"periodEnd":end_s,"fetchedAt":fetched_at,"source":"youtube_data_api_v3",
        "analyticsAuthorized":has_analytics,"country":snippet.get("country"),"language":snippet.get("defaultLanguage"),
        "vyronClassification":local_vyron_channel_labels(app,&cid)});
     Ok(NetworkExport{summary,coverage,channel_daily,videos,video_daily,lifecycle,traffic,breakdowns,retention,events,findings})
+}
+fn winner_engine(summaries:&[Value],findings:&[Value])->Value{
+    let mut ranking=Vec::<Value>::new();
+    for summary in summaries {
+        let id=text(summary.get("channelId"));
+        let event28=findings.iter().find(|e|e.get("channelId").and_then(Value::as_str)==Some(id.as_str())
+          &&e.get("windowDays").and_then(Value::as_i64)==Some(28));
+        let event7=findings.iter().find(|e|e.get("channelId").and_then(Value::as_str)==Some(id.as_str())
+          &&e.get("windowDays").and_then(Value::as_i64)==Some(7));
+        let growth28=event28.and_then(|e|numeric(e.get("changePercent")));
+        let growth7=event7.and_then(|e|numeric(e.get("changePercent")));
+        let views28=event28.and_then(|e|numeric(e.get("currentViews")));
+        let video_count=numeric(summary.get("exportedVideoRecords"));
+        let age=summary.get("createdAt").and_then(Value::as_str)
+            .and_then(|s|s.get(..10)).and_then(|s|NaiveDate::parse_from_str(s,"%Y-%m-%d").ok())
+            .map(|day|(Utc::now().date_naive()-day).num_days());
+        let count=video_count.filter(|v|*v>0.0);
+        ranking.push(json!({"channelId":id,"name":summary.get("name"),
+          "ageDays":age,"publishedVideoRecords":video_count,
+          "videosPublishedLast28Days":summary.get("videosPublishedLast28Days"),
+          "genreAndLanguage":summary.get("vyronClassification"),
+          "growth28Percent":growth28,"growth7Percent":growth7,
+          "current28Views":views28,
+          "viewsPerPublishedVideoIn28Days":match(views28,count){(Some(v),Some(n))=>Some(v/n),_=>None},
+          "recoverySignal":growth7.zip(growth28).map(|(a,b)|a>0.0&&b<0.0),
+          "rankingEligible":growth28.is_some(),
+          "rank":Value::Null,
+          "caveat":"Rank uses observed 28-day percentage growth only; compare channel age, uploads and views per video separately; not a causal score."}));
+    }
+    ranking.sort_by(|a,b|{
+        let first=numeric(a.get("growth28Percent"));
+        let second=numeric(b.get("growth28Percent"));
+        second.is_some().cmp(&first.is_some()).then_with(||{
+            second.unwrap_or(f64::NEG_INFINITY).partial_cmp(&first.unwrap_or(f64::NEG_INFINITY))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+    });
+    let mut position=0usize;
+    for item in &mut ranking {
+        if item.get("rankingEligible").and_then(Value::as_bool)==Some(true){
+            position+=1;item["rank"]=json!(position);
+        }
+    }
+    json!({"status":"descriptive_comparison_only","methodology":"Comparable 28-day periods. Exclude missing, zero-baseline or incomplete windows from numeric rank. No invented causal explanation.",
+          "createdAt":Utc::now().to_rfc3339(),"channels":ranking})
 }
 fn archive_files(base:&Path)->Result<Vec<PathBuf>,String>{
     fn walk(root:&Path,dir:&Path,out:&mut Vec<PathBuf>)->Result<(),String>{
@@ -729,11 +778,12 @@ pub async fn youtube_ai_export(app:AppHandle,request:AiExportRequest)->Result<Va
         save_json(&staging.join("AUDIENCE_BREAKDOWNS.json"),&json!(all_breakdowns))?;
         save_json(&staging.join("CHANNEL_EVENTS.json"),&json!(all_events))?;
         save_json(&staging.join("GROWTH_AND_DECLINE.json"),&json!(findings))?;
+        save_json(&staging.join("WINNER_ENGINE.json"),&winner_engine(&summary,&findings))?;
         let success=summary.len();
         let info=format!("# VYRON AI export\n\nЭкспорт: {}\nКаналов выбрано: {}. Успешно: {}.\n\nИсточники: YouTube Data API v3, YouTube Analytics API v2, YouTube Reporting API v1 (если отчёты доступны).\n\nДаты Analytics: по тихоокеанскому времени YouTube; дата публикации видео — UTC.\nОтсутствующие метрики представлены null/пустым полем; отсутствие строки не равно нулю.\n\nПервые 24 часа нельзя точно восстановить из дневных отчётов. VIDEO_LIFECYCLE.csv содержит приблизительные окна по календарным дням (UTC дата публикации, YouTube Analytics Pacific); при неполных днях числовое значение оставлено пустым.\nCTR и показы поступают из Reporting API, только после генерации и в пределах его доступной истории. Сырые reach CSV размещены в папке канала/reporting.\nИстория названий/описаний/приватности фиксируется только с момента первой синхронизации VYRON. Дата фактического изменения неизвестна.\nНеизвестные причины роста никогда не считаются доказательством.\n\nCSV кодировка UTF-8, JSON и Markdown в корне. Данные каждого канала — channels/<channel_id>/.\n\nПолнота и ошибки: DATA_COVERAGE.json. Никакие OAuth токены и пароли не экспортируются.\n",Utc::now().to_rfc3339(),total,success);
         write_document(&staging.join("AI_README.md"),&info)?;
         write_document(&staging.join("AI_PROMPT.md"),"Проанализируй ВСЕ каналы VYRON по данным архива. Сначала прочитай AI_README.md и DATA_COVERAGE.json. Не трактуй пустое значение как ноль. Сравни изменения просмотров за 7/28 дней, показатели одинакового возраста роликов, watch time с учётом длительности музыкальных видео, потери подписчиков, источники трафика. Используй видео из ALL_VIDEOS.csv, VIDEOS_DAILY.csv и VIDEO_LIFECYCLE.csv без ограничения топ-100. Сформулируй гипотезы, не выдавай их за установленную причину, приведи даты и доказательные метрики. Раздели рекомендации на срочные действия, эксперименты и наблюдение. При недостатке данных явно напиши, что именно отсутствует.\n")?;
-        let brief=format!("# Winner Engine input\n\nУспешных каналов: {} из {}.\nПроверенные события роста и падения: {}.\n\nСначала изучи ALL_CHANNELS_SUMMARY.json, GROWTH_AND_DECLINE.json и DATA_COVERAGE.json. Для каждого сильного канала сверь возраст роликов, публикации, просмотры, удержание, источники трафика. Данные с низкой полнотой не ранжируй как слабый канал.\n",success,total,findings.len());
+        let brief=format!("# Winner Engine input\n\nУспешных каналов: {} из {}.\nПроверенные события роста и падения: {}.\n\nСначала изучи WINNER_ENGINE.json, ALL_CHANNELS_SUMMARY.json, GROWTH_AND_DECLINE.json и DATA_COVERAGE.json. Для каждого сильного канала сверь возраст роликов, публикации, просмотры, удержание, источники трафика. Данные с низкой полнотой не ранжируй как слабый канал.\n",success,total,findings.len());
         write_document(&staging.join("RECOMMENDATIONS_INPUT.md"),&brief)?;
         let mut manifest=BTreeMap::new();
         for path in archive_files(&staging)?{
