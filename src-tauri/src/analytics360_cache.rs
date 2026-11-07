@@ -164,6 +164,22 @@ fn reach_aggregate(rows:&[Value],start:Option<NaiveDate>,end:Option<NaiveDate>,v
         "source":"youtube_reporting_api_channel_reach_basic_a1",
     })).collect()
 }
+fn merge_events(previous:&[Value],latest:&[Value])->Vec<Value>{
+    let mut result=Vec::with_capacity(previous.len()+latest.len());
+    let mut seen=std::collections::HashSet::<String>::new();
+    for event in previous.iter().chain(latest){
+        // Serialized full JSON key prevents accidentally treating title changes at
+        // different times as the same event, without double-counting uploadHistory.
+        if let Ok(k)=serde_json::to_string(event){
+            if seen.insert(k){result.push(event.clone());}
+        }
+    }
+    result
+}
+fn event_rows(root:Option<&Path>)->Vec<Value>{
+    root.and_then(|p|read_json(&p.join("overview.json")).ok())
+        .and_then(|v|v.get("events").and_then(Value::as_array).cloned()).unwrap_or_default()
+}
 fn optional_prior_rows(root:Option<&Path>,folder:&str,file:&str)->Vec<Value>{
     root.and_then(|p|read_json(&p.join(folder).join(file)).ok())
         .and_then(|v|v.as_array().cloned()).unwrap_or_default()
@@ -174,7 +190,7 @@ fn optional_prior_rows(root:Option<&Path>,folder:&str,file:&str)->Vec<Value>{
 pub(crate) fn persist(
     cache:&Path, summary:&Value,coverage:&Value,channel_daily:&[Value],videos:&[Value],
     video_daily:&[Value],traffic:&[Value],breakdowns:&[Value],
-    retention:&[Value],events:&[Value],findings:&[Value],
+    retention:&[Value],events:&[Value],_findings:&[Value],
 )->Result<(),String>{
     let cid=summary.get("channelId").and_then(Value::as_str).unwrap_or("");
     if !valid_channel_id(cid){return Err("ANALYTICS_CACHE_INVALID_CHANNEL_ID".into())}
@@ -197,6 +213,8 @@ pub(crate) fn persist(
         }
     }
     let mut preserved_video_days=0usize;
+    let mut merged_recent_video_days=Vec::<Value>::new();
+    let recent_cutoff=Utc::now().date_naive()-Days::days(62);
     let reach=crate::analytics_reach::read_reach(cache,coverage,cid);
     let previous_reach=optional_prior_rows(previous_root.as_deref(),"","reach-daily.json");
     let (merged_reach,preserved_reach_rows)=merge_reach_by_video_date(&previous_reach,&reach.rows);
@@ -217,6 +235,11 @@ pub(crate) fn persist(
         let current_days=days_by_video.remove(id).unwrap_or_default();
         let (merged_days,retained)=merge_by_date(&previous_days,&current_days);
         preserved_video_days+=retained;
+        merged_recent_video_days.extend(merged_days.iter().filter(|row|{
+            row.get("date").and_then(Value::as_str)
+                .and_then(|date|NaiveDate::parse_from_str(date,"%Y-%m-%d").ok())
+                .map(|date|date>=recent_cutoff).unwrap_or(false)
+        }).cloned());
         if !merged_days.is_empty(){
             atomic_json(&root.join("video-days").join(&file),&json!(merged_days))?;
         }
@@ -247,8 +270,15 @@ pub(crate) fn persist(
         atomic_json(&root.join("video-details").join(&file),&detail)?;
         if let Some(previous)=previous_root.as_ref()
             .and_then(|r|read_json(&r.join("video-days").join(&file)).ok()){
+            if let Some(rows)=previous.as_array(){
+                merged_recent_video_days.extend(rows.iter().filter(|row|{
+                    row.get("date").and_then(Value::as_str)
+                        .and_then(|date|NaiveDate::parse_from_str(date,"%Y-%m-%d").ok())
+                        .map(|date|date>=recent_cutoff).unwrap_or(false)
+                }).cloned());
+                preserved_video_days+=rows.len();
+            }
             atomic_json(&root.join("video-days").join(&file),&previous)?;
-            preserved_video_days+=previous.as_array().map(Vec::len).unwrap_or(0);
         }
         if let Some(previous)=previous_root.as_ref()
             .and_then(|r|read_json(&r.join("retention").join(&file)).ok()){
@@ -266,6 +296,13 @@ pub(crate) fn persist(
     }
     let old_channel_days=optional_prior_rows(previous_root.as_deref(),"","channel-daily.json");
     let (merged_channel_days,preserved_channel_days)=merge_by_date(&old_channel_days,channel_daily);
+    let historic_events=event_rows(previous_root.as_deref());
+    let all_events=merge_events(&historic_events,events);
+    let mut merged_findings=crate::analytics_ai_export::change_findings(cid,&merged_channel_days);
+    for event in &mut merged_findings{
+        event["videoContributions"]=json!(crate::analytics_ai_export::contributions_for_window(
+            event,&merged_recent_video_days));
+    }
     let mut effective_coverage=coverage.clone();
     effective_coverage["reachIngestion"]=reach.coverage;
     effective_coverage["cacheHistoryMerge"]=json!({
@@ -275,12 +312,14 @@ pub(crate) fn persist(
         "historicalOnlyVideosRetained":historical_only_videos,
         "retainedPriorReachRows":preserved_reach_rows,
         "retainedPriorRetentionCurves":preserved_retention_curves,
+        "mergedEventCount":all_events.len(),
+        "derivedGrowthEventsFromMergedHistory":merged_findings.len(),
         "policy":"New observations supersede prior observations on matching dates, but missing/null metrics are carried forward with _vyronCarriedForwardFields and _vyronPriorFetchedAt; explicit zero is never treated as missing."
     });
     let index=json!({"schemaVersion":1,"channelId":cid,"generation":generation,
         "updatedAt":Utc::now().to_rfc3339(),"summary":summary,"coverage":effective_coverage,
-        "traffic":traffic,"audienceBreakdowns":breakdowns,"events":events,
-        "growthAndDecline":findings,"publicationsByDay":publications,"videosTotal":catalog.len()});
+        "traffic":traffic,"audienceBreakdowns":breakdowns,"events":all_events,
+        "growthAndDecline":merged_findings,"publicationsByDay":publications,"videosTotal":catalog.len()});
     atomic_json(&root.join("overview.json"),&index)?;
     atomic_json(&root.join("channel-daily.json"),&json!(merged_channel_days))?;
     atomic_json(&root.join("video-catalog.json"),&json!(catalog))?;
@@ -481,6 +520,23 @@ mod tests{
         assert_eq!(totals[0]["ctrScale"],"UNVERIFIED");
         let only_one=reach_aggregate(&rows,None,None,Some("aBc1234-X_y"));
         assert_eq!(only_one[0]["observedImpressions"],400);
+    }
+    #[test]fn event_history_retained_and_deduplicated_across_resyncs(){
+        let root=std::env::temp_dir().join(format!("vyron-event-history-{}",Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let cid="UC1234567890123456789012";
+        let first=json!({"eventType":"video_title_changed","videoId":"aBc1234-X_y","observedAt":"2026-01-01T12:00:00Z"});
+        let next=json!({"eventType":"vyron_upload","videoId":"bbbbbbbbbbb","eventTime":"2026-01-02T12:00:00Z"});
+        persist(&root,&json!({"channelId":cid}),&json!({}),&[],&[],&[],&[],&[],
+            &[],&[first.clone()],&[]).unwrap();
+        persist(&root,&json!({"channelId":cid}),&json!({}),&[],&[],&[],&[],&[],
+            &[],&[first.clone(),next.clone()],&[]).unwrap();
+        let report=load_from_disk(&root,0,40,"all",None,None,None,None,None).unwrap();
+        let events=report["overview"]["events"].as_array().unwrap();
+        assert_eq!(events.len(),2);
+        assert_eq!(events[0],first);
+        assert_eq!(events[1],next);
+        let _=fs::remove_dir_all(root);
     }
     #[test]fn partial_same_day_row_must_not_erase_a_prior_metric(){
         let previous=vec![json!({"date":"2026-01-01","views":18,"watchMinutes":42,
