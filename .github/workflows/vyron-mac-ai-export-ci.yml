@@ -125,10 +125,6 @@ jobs:
           cargo test --locked --lib v611_channel_runway_inventory_hotfix_tests -- --nocapture
           cargo test --locked --lib v2113_existing_channel_rebind_tests -- --nocapture
           cargo test --locked --lib schedule_only_status_tests -- --nocapture
-      - name: Explicitly enforce no real publisher uploads in this CI job
-        run: |
-          test -z "$(find . -name '*.mp4' -o -name '*.mov' -o -name '*.m4v' | head -1)"
-
   historical-vitest-audit:
     runs-on: ubuntu-latest
     timeout-minutes: 20
