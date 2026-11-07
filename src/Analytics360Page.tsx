@@ -19,7 +19,8 @@ type ReachDay={date:string;observedImpressions:number;weightedCtrRaw:number|null
 type Video={
  videoId:string;channelId?:string;title?:string;thumbnail?:string;publishedAt?:string;
  durationIso?:string;durationSeconds?:number|null;contentType?:string;
- viewsPublic?:string|number|null;likesPublic?:string|number|null;commentsPublic?:string|number|null;privacyStatus?:string;
+ viewsPublic?:string|number|null;likesPublic?:string|number|null;commentsPublic?:string|null;privacyStatus?:string;
+ inventoryObservedNow?:boolean;lastObservedAt?:string;inventoryCaveat?:string;
 };
 type Breakdown={channelId:string;dimension:string;periodStart?:string;periodEnd?:string;rows:{key?:string;views?:number|null;watchMinutes?:number|null;viewerPercentage?:number|null}[]};
 type Finding={
@@ -183,7 +184,7 @@ function VideoPanel({video,detail,daily,retention,reach,onClose}:{video:Video;de
     <small>Нормированная позиция в видео. Значения выше 100% не обрезаются.</small></>:
     <Availability status="NOT_YET_COLLECTED" message="Кривая удержания не загружена или Google не предоставил показатель."/>}
   </section><section className="a360-subpanel"><h4>Метаданные</h4>
-   <p><b>Video ID: </b>{video.videoId}</p><p><b>Статус: </b>{video.privacyStatus||'Не определён'}</p>
+   <p><b>Video ID: </b>{video.videoId}</p><p><b>Статус: </b>{video.inventoryObservedNow===false?'Не найдено при последней синхронизации (не означает удаление)':(video.privacyStatus||'Не определён')}</p>
    <p><b>Теги: </b>{Array.isArray(snippet.tags)?snippet.tags.join(', '):'Нет данных'}</p>
    <details><summary>Описание</summary><p style={{whiteSpace:'pre-wrap'}}>{snippet.description||'Нет данных'}</p></details>
    <p><a href={'https://www.youtube.com/watch?v='+video.videoId} target="_blank" rel="noreferrer">Открыть на YouTube</a></p>
@@ -348,7 +349,7 @@ export function Analytics360Page(){
    <div className="a360-table-wrap"><table><thead><tr><th>Видео</th><th>Опубликовано</th><th>Длительность</th><th>Просмотры всего</th><th>Статус</th></tr></thead><tbody>
     {(snapshot?.videos||[]).map(v=><tr key={v.videoId} onClick={()=>setVideoId(v.videoId)} tabIndex={0} onKeyDown={e=>{if(e.key==='Enter')setVideoId(v.videoId)}}>
      <td><div className="a360-video-name">{v.thumbnail?<img src={v.thumbnail} loading="lazy"/>:<span/>}<strong>{v.title||v.videoId}</strong></div></td>
-     <td>{displayDate(v.publishedAt)}</td><td>{duration(v.durationSeconds)}</td><td>{num(parseN(v.viewsPublic))}</td><td>{v.privacyStatus||'—'}</td>
+     <td>{displayDate(v.publishedAt)}</td><td>{duration(v.durationSeconds)}</td><td>{num(parseN(v.viewsPublic))}</td><td>{v.inventoryObservedNow===false?'Нет в последней инвентаризации':(v.privacyStatus||'—')}</td>
     </tr>)}
    </tbody></table>{!snapshot?.videos?.length&&<Availability status="NOT_YET_COLLECTED" message="В этом фильтре нет подтверждённых видео. Shorts без доказательного признака не назначаются автоматически."/>}</div>
    <div className="a360-pagination"><span>Роликов: {snapshot?.filteredVideoCount??0} · Страница {videoPage+1}</span>
