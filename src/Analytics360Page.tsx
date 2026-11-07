@@ -99,7 +99,7 @@ function Graph({days,publications={},metric='views',title}:{days:Day[];publicati
  }
  if(current.length)segments.push(current);
  const missing=values.some(v=>v===null)||rows.some((d,i)=>i>0&&Date.parse(d.date+'T00:00:00Z')-Date.parse(rows[i-1].date+'T00:00:00Z')!==86400000);
- const allPublishMarkers=rows.filter(d=>Boolean(publications[d.date]));
+ const allPublishMarkers=rows.flatMap((d,i)=>publications[d.date]?[{d,i}]:[]);
  const markerStride=Math.max(1,Math.ceil(allPublishMarkers.length/240));
  const publishMarkers=allPublishMarkers.filter((_,i)=>i%markerStride===0);
 
@@ -111,14 +111,12 @@ function Graph({days,publications={},metric='views',title}:{days:Day[];publicati
     {segments.map((part,i)=>part.length>1?
      <polyline key={i} className="a360-trend-line" fill="none" points={decimateExtrema(part,500).map(p=>x(p.date).toFixed(2)+','+y(p.v).toFixed(2)).join(' ')}/>:
      <circle key={i} cx={x(part[0].date)} cy={y(part[0].v)} r={2.2} fill="#55ddfa"/>)}
-    {publishMarkers.map(d=>{
-     const i=rows.findIndex(x=>x.date===d.date);
-     return <g key={d.date}>
+    {publishMarkers.map(({d,i})=><g key={d.date}>
       <line x1={x(d.date)} y1={0} x2={x(d.date)} y2={height-12} className="a360-published-line"/>
       {values[i]!==null&&<circle cx={x(d.date)} cy={y(values[i]!)} r={3.3} className="a360-published-dot">
        <title>{d.date+' • Публикаций: '+publications[d.date]+' • '+title+': '+num(values[i])}</title>
       </circle>}
-     </g>})}
+     </g>)}
     {rows.length<=120?rows.map((d,i)=>values[i]!==null?<circle key={i} cx={x(d.date)} cy={y(values[i]!)} r={5} fill="transparent" stroke="transparent">
      <title>{d.date+': '+num(values[i])+'; публикаций '+(publications[d.date]||0)}</title>
     </circle>:null):null}
