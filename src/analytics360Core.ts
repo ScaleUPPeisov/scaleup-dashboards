@@ -77,3 +77,10 @@ export function decimateExtrema<T extends {v:number}>(points:readonly T[],maxSam
  }
  return [...selected].sort((a,b)=>a-b).map(i=>points[i]);
 }
+
+/** Async results from one YouTube account may never overwrite a newly selected
+ * account's UI, even if the older fetch completes later. */
+export function acceptSelectedChannelResult(requestChannelId:string,currentChannelId:string|undefined,
+ requestSequence:number,latestSequence:number):boolean{
+ return Boolean(requestChannelId)&&requestChannelId===currentChannelId&&requestSequence===latestSequence;
+}
