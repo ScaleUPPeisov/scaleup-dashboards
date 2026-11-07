@@ -41,6 +41,10 @@ fn reported_error(v: &Value, status: reqwest::StatusCode) -> String {
     let reason=v.pointer("/error/message").and_then(Value::as_str).unwrap_or("API error");
     format!("HTTP {}: {}",status.as_u16(),reason)
 }
+fn is_safe_channel_id(value:&str)->bool{
+    value.len()==24 && value.starts_with("UC") &&
+        value.bytes().all(|c|c.is_ascii_alphanumeric()||c==b'_'||c==b'-')
+}
 fn compact_hash(text: &str) -> String {
     let hash=Sha256::digest(text.as_bytes());
     hex::encode(&hash[..12])
@@ -565,7 +569,7 @@ pub async fn youtube_ai_export(app:AppHandle,request:AiExportRequest)->Result<Va
         let mut unique=HashSet::new();
         for choice in &request.channels{
             if !unique.insert(choice.channel_id.clone()){return Err("Дублируется Channel ID".into())}
-            if !choice.channel_id.starts_with("UC")||choice.channel_id.len()>128||choice.profile_id.is_empty(){
+            if !is_safe_channel_id(&choice.channel_id)||choice.profile_id.is_empty(){
                 return Err("Некорректная привязка YouTube канала".into())
             }
         }
@@ -682,6 +686,11 @@ mod tests{
     #[test] fn ranges(){let start=NaiveDate::from_ymd_opt(2026,1,1).unwrap();let end=NaiveDate::from_ymd_opt(2026,4,1).unwrap();
         let v=window_dates(start,end,90);assert_eq!(v.len(),2);assert_eq!(v[1].1,"2026-04-01");}
     #[test] fn baseline_zero_unknown(){assert!(percent_change(12.0,0.0).is_null());}
+    #[test] fn channel_id_cannot_escape_cache_directory(){
+       assert!(is_safe_channel_id("UC1234567890123456789012"));
+       assert!(!is_safe_channel_id("UC../../../secrets"));
+       assert!(!is_safe_channel_id("UCbad/path"));
+    }
     #[test] fn lifecycle_missing_days_are_unknown(){
        let videos=vec![json!({"id":"video-1","snippet":{"publishedAt":"2026-01-01T21:00:00Z"}})];
        let rows=vec![json!({"videoId":"video-1","date":"2026-01-01","views":10})];
