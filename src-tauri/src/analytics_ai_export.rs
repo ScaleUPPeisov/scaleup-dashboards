@@ -461,6 +461,7 @@ async fn collect_channel(app:&AppHandle,client:&reqwest::Client,choice:&AiChanne
     progress(app,run,index,total,choice,"OAuth","Проверка токена и владельца");
     let (token,scopes)=youtube::access_token_and_scopes(app,&choice.profile_id).await?;
     let has_analytics=scopes.iter().any(|x|x.ends_with("/yt-analytics.readonly")||x.ends_with("/yt-analytics-monetary.readonly"));
+    let has_monetary=scopes.iter().any(|x|x.ends_with("/yt-analytics-monetary.readonly"));
     let mine=get_json(app,client,&token,&format!("{DATA_API}/channels"),
         &[("part","snippet,contentDetails,statistics".into()),("mine","true".into())],"channels.list").await?;
     let own=mine.get("items").and_then(Value::as_array).into_iter().flatten()
@@ -486,6 +487,26 @@ async fn collect_channel(app:&AppHandle,client:&reqwest::Client,choice:&AiChanne
     let mut coverage=json!({"channelId":cid,"periodStart":start_s,"periodEnd":end_s,"fetchedAt":fetched_at,
         "metadata":inventory_coverage,"daily":"unavailable","videoDaily":"unavailable",
         "traffic":"unavailable","retention":"unavailable","reach":"unavailable","errors":[]});
+    let mut monetary=Value::Null;
+    if has_monetary && has_analytics {
+        // Monetary data is strictly optional and only exported when Google returns a report.
+        match analytics(app,client,&token,cache,&start_s,&end_s,
+            "views,estimatedRevenue","",None,"analytics.revenue").await{
+            Ok(batch)=>{
+                if let Some(row)=batch.first(){
+                    let views=numeric(row.first());let revenue=numeric(row.get(1));
+                    if let (Some(v),Some(m))=(views,revenue){
+                        monetary=json!({"currency":"USD","estimatedRevenue":m,
+                            "rpm":if v>0.0{Some(m/v*1000.0)}else{None},
+                            "viewsUsedForRpm":v,"source":"youtube_analytics_api_v2",
+                            "fetchedAt":fetched_at,"status":"reported"});
+                    }
+                }
+            },
+            Err(e)=>coverage["errors"].as_array_mut().unwrap().push(json!({"stage":"monetary","message":e})),
+        }
+    }
+    coverage["monetary"]=json!({"authorized":has_monetary,"available":!monetary.is_null()});
     let mut channel_daily=Vec::new();let mut video_daily=Vec::new();
     let mut traffic=Vec::new();let mut breakdowns=Vec::new();let mut retention=Vec::new();
     if has_analytics{
@@ -587,7 +608,8 @@ async fn collect_channel(app:&AppHandle,client:&reqwest::Client,choice:&AiChanne
        "subscribers":numeric(stat.get("subscriberCount")),"totalViews":numeric(stat.get("viewCount")),
        "totalPublishedVideos":numeric(stat.get("videoCount")),"exportedVideoRecords":videos.len(),"videosPublishedLast28Days":new_videos,
        "periodStart":start_s,"periodEnd":end_s,"fetchedAt":fetched_at,"source":"youtube_data_api_v3",
-       "analyticsAuthorized":has_analytics,"country":snippet.get("country"),"language":snippet.get("defaultLanguage"),
+       "analyticsAuthorized":has_analytics,"monetaryAuthorized":has_monetary,"monetary":monetary,
+       "country":snippet.get("country"),"language":snippet.get("defaultLanguage"),
        "vyronClassification":local_vyron_channel_labels(app,&cid)});
     Ok(NetworkExport{summary,coverage,channel_daily,videos,video_daily,lifecycle,traffic,breakdowns,retention,events,findings})
 }
