@@ -219,6 +219,19 @@ async fn analytics(app:&AppHandle,client:&reqwest::Client,token:&str,cache:&Path
     }
     Ok(output)
 }
+fn local_vyron_channel_labels(app:&AppHandle,channel_id:&str)->Value{
+    // Export only user-entered classification/schedule fields; no local paths or settings secrets.
+    let state=crate::storage::load_state(app.clone());
+    let found=state.get("channels").and_then(Value::as_array).into_iter().flatten()
+        .find(|c|c.get("youtubeChannelId").and_then(Value::as_str)==Some(channel_id));
+    match found{
+        Some(c)=>json!({"genre":c.get("genre"),"language":c.get("language"),"country":c.get("country"),
+            "cadenceDays":c.get("cadenceDays"),"publishHour":c.get("publishHour"),
+            "publishMinute":c.get("publishMinute"),"source":"vyron_local_configuration",
+            "meaning":"User-defined channel metadata and preferred schedule, not proven content format or YouTube performance"}),
+        None=>Value::Null,
+    }
+}
 fn local_vyron_upload_events(app:&AppHandle,channel_id:&str)->Vec<Value>{
     // Read-only and strict whitelist. Never export local paths, OAuth or any state object.
     let state=crate::storage::load_state(app.clone());
@@ -527,7 +540,8 @@ async fn collect_channel(app:&AppHandle,client:&reqwest::Client,choice:&AiChanne
        "subscribers":numeric(stat.get("subscriberCount")),"totalViews":numeric(stat.get("viewCount")),
        "totalPublishedVideos":numeric(stat.get("videoCount")),"exportedVideoRecords":videos.len(),
        "periodStart":start_s,"periodEnd":end_s,"fetchedAt":fetched_at,"source":"youtube_data_api_v3",
-       "analyticsAuthorized":has_analytics,"country":snippet.get("country"),"language":snippet.get("defaultLanguage")});
+       "analyticsAuthorized":has_analytics,"country":snippet.get("country"),"language":snippet.get("defaultLanguage"),
+       "vyronClassification":local_vyron_channel_labels(app,&cid)});
     Ok(NetworkExport{summary,coverage,channel_daily,videos,video_daily,lifecycle,traffic,breakdowns,retention,events,findings})
 }
 fn archive_files(base:&Path)->Result<Vec<PathBuf>,String>{
