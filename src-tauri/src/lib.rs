@@ -13,6 +13,7 @@ mod studio_drafts;
 mod youtube_intelligence;
 mod analytics_ai_export;
 mod analytics360_cache;
+mod analytics_reach;
 mod ai;
 mod production_manager;
 mod materials_manager;
