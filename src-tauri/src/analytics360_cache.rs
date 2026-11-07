@@ -419,9 +419,12 @@ pub(crate) fn persist(
     let pointer=json!({"schemaVersion":1,"generation":generation,
        "channelId":cid,"updatedAt":Utc::now().to_rfc3339()});
     atomic_json(&cache.join("ui-current.json"),&pointer)?;
-    // Pruning is best-effort and never rolls back a successfully published
-    // snapshot. Old generations under six hours are retained for active reads.
-    let _=prune_generations(cache,&generation,cid,std::time::Duration::from_secs(6*3600));
+    // SQLite is additive, and the verified immutable JSON generation remains
+    // a recoverable backup. Never prune JSON generations during migration.
+    // Database corruption is surfaced; it is NEVER replaced with an empty DB.
+    #[cfg(target_os="macos")]
+    crate::analytics_sqlite::migrate_generation(cache,cid)
+        .map_err(|e|format!("SQLITE_MIGRATION_FAILED_JSON_INTACT: {e}"))?;
     Ok(())
 }
 fn period_dates(period:&str,from:Option<&str>,to:Option<&str>)->Result<(Option<NaiveDate>,Option<NaiveDate>),String>{
@@ -459,11 +462,20 @@ fn load_from_disk(cache:&Path,page:u32,per_page:u32,period:&str,from:Option<&str
     let root=cache.join("ui-generations").join(gen);
     let overview=read_json(&root.join("overview.json"))?;
     let catalog=read_json(&root.join("video-catalog.json"))?;
-    let all_days=read_json(&root.join("channel-daily.json"))?;
     let all=catalog.as_array().ok_or("ANALYTICS_CATALOG_INVALID")?;
-    let days=all_days.as_array().ok_or("ANALYTICS_DAILY_INVALID")?;
     let (start,end)=period_dates(period,from,to)?;
-    let current=filter_days(days,start,end);
+    let json_days=||read_json(&root.join("channel-daily.json"))?
+        .as_array().cloned().ok_or("ANALYTICS_DAILY_INVALID".into());
+    #[cfg(target_os="macos")]
+    let current=match crate::analytics_sqlite::read_channel_days(cache,
+        overview.get("channelId").and_then(Value::as_str).unwrap_or(""),
+        start.map(|d|d.format("%Y-%m-%d").to_string()).as_deref(),
+        end.map(|d|d.format("%Y-%m-%d").to_string()).as_deref())?{
+        Some(rows)=>rows,
+        None=>filter_days(&json_days()?,start,end),
+    };
+    #[cfg(not(target_os="macos"))]
+    let current=filter_days(&json_days()?,start,end);
     let reach=read_json(&root.join("reach-daily.json")).ok()
         .and_then(|v|v.as_array().cloned()).unwrap_or_default();
     let channel_reach=reach_aggregate(&reach,start,end,None);
@@ -490,6 +502,18 @@ fn load_from_disk(cache:&Path,page:u32,per_page:u32,period:&str,from:Option<&str
             .cloned().ok_or("Видео отсутствует в этом канале")?;
         let filename=format!("{}.json",key(id));
         detail=read_json(&root.join("video-details").join(&filename))?;
+        #[cfg(target_os="macos")]
+        {
+            if let Some(rows)=crate::analytics_sqlite::read_video_days(cache,
+                overview.get("channelId").and_then(Value::as_str).unwrap_or(""),id,
+                start.map(|d|d.format("%Y-%m-%d").to_string()).as_deref(),
+                end.map(|d|d.format("%Y-%m-%d").to_string()).as_deref())?{
+                video_days=rows;
+            }else if let Ok(value)=read_json(&root.join("video-days").join(&filename)){
+                if let Some(rows)=value.as_array(){video_days=filter_days(rows,start,end)}
+            }
+        }
+        #[cfg(not(target_os="macos"))]
         if let Ok(value)=read_json(&root.join("video-days").join(&filename)){
             if let Some(rows)=value.as_array(){video_days=filter_days(rows,start,end)}
         }
@@ -519,10 +543,18 @@ pub(crate) fn materialized_overview(cache:&Path,channel_id:&str)->Result<Value,S
     Ok(overview)
 }
 pub(crate) fn materialized_channel_daily(cache:&Path,channel_id:&str)->Result<Vec<Value>,String>{
+    #[cfg(target_os="macos")]
+    if let Some(rows)=crate::analytics_sqlite::read_channel_days(cache,channel_id,None,None)?{
+        return Ok(rows);
+    }
     materialized_rows(cache,channel_id,Path::new("channel-daily.json"))
 }
 pub(crate) fn materialized_video_daily(cache:&Path,channel_id:&str,video_id:&str)->Result<Vec<Value>,String>{
     if !valid_video_id(video_id){return Err("ANALYTICS_INVALID_VIDEO_ID".into())}
+    #[cfg(target_os="macos")]
+    if let Some(rows)=crate::analytics_sqlite::read_video_days(cache,channel_id,video_id,None,None)?{
+        return Ok(rows);
+    }
     materialized_rows(cache,channel_id,&Path::new("video-days").join(format!("{}.json",key(video_id))))
 }
 pub(crate) fn materialized_video_records(cache:&Path,channel_id:&str)->Result<Vec<Value>,String>{
