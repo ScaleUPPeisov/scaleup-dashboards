@@ -76,24 +76,25 @@ fn previous_generation_root(cache:&Path,channel_id:&str)->Option<PathBuf>{
 /// source/fetchedAt provenance. A partial new API sync cannot erase history.
 fn merge_by_date(previous:&[Value],latest:&[Value])->(Vec<Value>,usize){
     let mut rows=BTreeMap::<String,Value>::new();
+    let mut prior_dates=std::collections::HashSet::new();
+    let mut latest_dates=std::collections::HashSet::new();
     for row in previous{
         if let Some(day)=row.get("date").and_then(Value::as_str){
             if NaiveDate::parse_from_str(day,"%Y-%m-%d").is_ok(){
+                prior_dates.insert(day.to_owned());
                 rows.insert(day.to_owned(),row.clone());
             }
         }
     }
-    let mut replaced=0usize;
     for row in latest{
         if let Some(day)=row.get("date").and_then(Value::as_str){
             if NaiveDate::parse_from_str(day,"%Y-%m-%d").is_ok(){
-                if rows.insert(day.to_owned(),row.clone()).is_some(){replaced+=1}
+                latest_dates.insert(day.to_owned());
+                rows.insert(day.to_owned(),row.clone());
             }
         }
     }
-    let retained=rows.len().saturating_sub(latest.iter().filter(|r|r.get("date")
-        .and_then(Value::as_str).and_then(|s|NaiveDate::parse_from_str(s,"%Y-%m-%d").ok())
-        .is_some()).count().saturating_sub(replaced));
+    let retained=prior_dates.difference(&latest_dates).count();
     (rows.into_values().collect(),retained)
 }
 fn optional_prior_rows(root:Option<&Path>,folder:&str,file:&str)->Vec<Value>{
@@ -288,6 +289,16 @@ mod tests{
         let rows=vec![json!({"date":"2026-01-03","views":5}),json!({"date":"2026-01-05","views":7})];
         let result=filter_days(&rows,NaiveDate::from_ymd_opt(2026,1,4),NaiveDate::from_ymd_opt(2026,1,5));
         assert_eq!(result.len(),1);assert_eq!(result[0]["views"],7);
+    }
+    #[test]fn merge_counts_only_prior_days_missing_in_latest_batch(){
+        let (merged,retained)=merge_by_date(
+            &[json!({"date":"2026-01-01","views":3,"fetchedAt":"old"}),
+              json!({"date":"2026-01-02","views":7,"fetchedAt":"old"})],
+            &[json!({"date":"2026-01-02","views":8,"fetchedAt":"new"})]);
+        assert_eq!(merged.len(),2);
+        assert_eq!(retained,1);
+        assert_eq!(merged[1]["views"],8);
+        assert_eq!(merged[0]["fetchedAt"],"old");
     }
     #[test]fn incomplete_resync_retains_earlier_channel_and_video_days(){
         let temp=std::env::temp_dir().join(format!("vyron-analytics-merge-{}",Uuid::new_v4()));
