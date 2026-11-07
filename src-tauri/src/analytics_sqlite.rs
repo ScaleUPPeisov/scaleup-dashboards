@@ -439,6 +439,13 @@ fn import_generation(tx:&Transaction<'_>,channel:&str,generation:&str,root:&Path
         ||count("channel_events")?!=events.len() as i64{
         return Err("SQLITE_MIGRATION_ROW_COUNT_MISMATCH".into())
     }
+    // SQLite FK enforcement is on for the entire transaction; verify again
+    // before marking the generation authoritative to detect structural mistakes.
+    let bad_relation:Option<String>=tx.query_row("PRAGMA foreign_key_check",[],|r|r.get(0))
+        .optional().map_err(|e|format!("SQLITE_FOREIGN_KEY_CHECK: {e}"))?;
+    if let Some(table)=bad_relation{
+        return Err(format!("SQLITE_FOREIGN_KEY_INTEGRITY_FAILED: {table}"))
+    }
     // Compare actual SQL sample payload with original JSON, not only row counts.
     if let Some(first)=daily.first(){
         let stored:String=tx.query_row("SELECT payload_json FROM channel_daily WHERE channel_id=?1 AND date=?2",
@@ -486,8 +493,10 @@ pub(crate) fn migrate_generation(cache:&Path,channel_id:&str)->Result<MigrationR
     let result=import_generation(&tx,channel_id,&generation,&root,&overview,
         &catalog,&daily,&reach,&digest)?;
     tx.commit().map_err(|e|format!("SQLITE_COMMIT: {e}"))?;
-    // PASSIVE checkpoint never blocks active readers; backup JSON remains.
-    let _=conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
+    // PASSIVE checkpoint has bounded impact on readers. A busy checkpoint is
+    // not database corruption: the committed generation remains usable.
+    let _checkpoint_state:Result<(i64,i64,i64),_>=conn.query_row(
+        "PRAGMA wal_checkpoint(PASSIVE)",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)));
     Ok(result)
 }
 /// Read only from a source-verified current generation. Never returns rows from
