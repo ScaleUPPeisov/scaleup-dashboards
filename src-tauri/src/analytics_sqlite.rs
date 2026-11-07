@@ -306,6 +306,12 @@ fn import_generation(tx:&Transaction<'_>,channel:&str,generation:&str,root:&Path
         VALUES(?1,?2,?3,?4)",
         params![channel,generation,stamp,to_json(overview)?])
         .map_err(|e|format!("SQLITE_OVERVIEW_IMPORT: {e}"))?;
+    // Only the CURRENT generation may advertise verified SQL rows. Old
+    // migration markers would become dangerous after replacing data: a user
+    // rolling back the JSON pointer could otherwise read newer SQLite rows
+    // while seeing an older generation ID. Keep old JSON source intact.
+    tx.execute("DELETE FROM analytics_migrations WHERE channel_id=?1",
+        params![channel]).map_err(|e|format!("SQLITE_CLEAR_OLD_VERIFICATION: {e}"))?;
     // Replace only channel-owned materializations, atomically. The last good
     // generation remains committed if any SQL row or verification fails.
     for table in ["retention_points","subtitles","video_daily",
@@ -867,6 +873,42 @@ mod tests{
             None,None,None).unwrap().unwrap();
         assert_eq!(empty_page["filteredVideoCount"],1);
         assert_eq!(empty_page["videos"].as_array().unwrap().len(),0);
+        let _=fs::remove_dir_all(cache);
+    }
+    #[test]fn rollback_to_older_json_generation_never_reads_newer_sqlite_values(){
+        let (cache,id,original_generation)=sample_cache();
+        let original_pointer=fs::read(cache.join("ui-current.json")).unwrap();
+        migrate_generation(&cache,&id).unwrap();
+        let next=Uuid::new_v4().to_string();
+        let source=cache.join("ui-generations").join(&original_generation);
+        let target=cache.join("ui-generations").join(&next);
+        for subdir in ["video-details","video-days","retention"]{
+            fs::create_dir_all(target.join(subdir)).unwrap();
+            for entry in fs::read_dir(source.join(subdir)).unwrap(){
+                let entry=entry.unwrap();
+                fs::copy(entry.path(),target.join(entry.file_name())).unwrap();
+            }
+        }
+        for filename in ["video-catalog.json","reach-daily.json"]{
+            fs::copy(source.join(filename),target.join(filename)).unwrap();
+        }
+        let mut overview=obj(&source.join("overview.json")).unwrap();
+        overview["generation"]=json!(next);
+        fs::write(target.join("overview.json"),serde_json::to_vec(&overview).unwrap()).unwrap();
+        let changed=json!([{"date":"2026-01-01","views":99,"watchMinutes":30.0}]);
+        fs::write(target.join("channel-daily.json"),serde_json::to_vec(&changed).unwrap()).unwrap();
+        fs::write(cache.join("ui-current.json"),
+            serde_json::to_vec(&json!({"channelId":id,"generation":next})).unwrap()).unwrap();
+        migrate_generation(&cache,&id).unwrap();
+        let newer=read_channel_days(&cache,&id,None,None).unwrap().unwrap();
+        assert_eq!(newer[0]["views"],99);
+        // Rollback is a pointer operation, not an implicit SQL reimport.
+        fs::write(cache.join("ui-current.json"),original_pointer).unwrap();
+        assert!(read_channel_days(&cache,&id,None,None).unwrap().is_none());
+        // The old source remains readable; an explicit remigration can verify it.
+        migrate_generation(&cache,&id).unwrap();
+        let rolled_back=read_channel_days(&cache,&id,None,None).unwrap().unwrap();
+        assert_eq!(rolled_back[0]["views"],12);
         let _=fs::remove_dir_all(cache);
     }
     #[test]fn damaged_database_is_not_replaced_with_blank_file(){
