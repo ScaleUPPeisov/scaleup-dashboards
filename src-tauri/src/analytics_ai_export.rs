@@ -173,7 +173,7 @@ async fn fetch_inventory(app:&AppHandle,client:&reqwest::Client,token:&str,uploa
         if !visited.insert(next.clone()){return Err("Повторяющийся pageToken; инвентаризация прервана".into())}
         let mut params=vec![("part","contentDetails".to_string()),("playlistId",uploads.to_string()),("maxResults","50".to_string())];
         if !next.is_empty(){params.push(("pageToken",next.clone()))}
-        let value=cached_query(app,client,token,cache,&format!("{DATA_API}/playlistItems"),&params,"playlistItems.list","2000-01-01").await?;
+        let value=get_json(app,client,token,&format!("{DATA_API}/playlistItems"),&params,"playlistItems.list").await?;
         for item in value.get("items").and_then(Value::as_array).into_iter().flatten(){
             let id=text(item.pointer("/contentDetails/videoId"));
             if !id.is_empty() && seen.insert(id.clone()){ids.push(id)}
@@ -224,10 +224,10 @@ fn observe_metadata(cache:&Path,videos:&[Value],channel_id:&str)->Result<Vec<Val
     for v in videos {
         let id=text(v.get("id"));if id.is_empty(){continue}
         let observed=json!({"title":v.pointer("/snippet/title"),"description":v.pointer("/snippet/description"),
-            "tags":v.pointer("/snippet/tags"),"privacyStatus":v.pointer("/status/privacyStatus"),
+            "tags":v.pointer("/snippet/tags"),"thumbnailUrls":v.pointer("/snippet/thumbnails"),"privacyStatus":v.pointer("/status/privacyStatus"),
             "publishedAt":v.pointer("/snippet/publishedAt")});
         if let Some(old)=previous.get(&id){
-            for key in ["title","description","tags","privacyStatus","publishedAt"]{
+            for key in ["title","description","tags","thumbnailUrls","privacyStatus","publishedAt"]{
                 if old.get(key)!=observed.get(key){
                     events.push(json!({"eventType":format!("video_{key}_changed"),"videoId":id,"channelId":channel_id,
                         "observedAt":Utc::now().to_rfc3339(),"origin":"detected_between_scans",
