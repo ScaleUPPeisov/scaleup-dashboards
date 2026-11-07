@@ -470,6 +470,45 @@ pub(crate) fn read_channel_days(cache:&Path,channel_id:&str,start:Option<&str>,e
     }
     Ok(Some(out))
 }
+/// Indexed reach aggregation avoids materializing millions of per-video CSV
+/// rows just to render a per-day graph; raw CTR units remain UNVERIFIED.
+pub(crate) fn read_reach_aggregate(cache:&Path,channel_id:&str,video_id:Option<&str>,
+ start:Option<&str>,end:Option<&str>)->Result<Option<Vec<Value>>,String>{
+    if video_id.map(|id|!valid_video(id)).unwrap_or(false){return Err("SQLITE_INVALID_VIDEO_ID".into())}
+    let Some(conn)=read_current_verified(cache,channel_id)? else{return Ok(None)};
+    let (sql,by_video)=if video_id.is_some(){(
+        "SELECT date,SUM(impressions),CASE WHEN SUM(impressions)>0
+          THEN SUM(impressions*ctr_raw)/SUM(impressions) ELSE NULL END
+         FROM video_reach_daily WHERE channel_id=?1 AND video_id=?2
+          AND (?3 IS NULL OR date>=?3) AND (?4 IS NULL OR date<=?4)
+          AND ctr_raw IS NOT NULL AND impressions IS NOT NULL
+         GROUP BY date ORDER BY date",true
+    )}else{(
+        "SELECT date,impressions,ctr_raw
+         FROM reach_daily WHERE channel_id=?1
+          AND (?2 IS NULL OR date>=?2) AND (?3 IS NULL OR date<=?3)
+         ORDER BY date",false
+    )};
+    let mut stmt=conn.prepare(sql).map_err(|e|e.to_string())?;
+    let mut cursor=if by_video{
+        stmt.query(params![channel_id,video_id,start,end]).map_err(|e|e.to_string())?
+    }else{
+        stmt.query(params![channel_id,start,end]).map_err(|e|e.to_string())?
+    };
+    let mut result=Vec::new();
+    while let Some(row)=cursor.next().map_err(|e|e.to_string())?{
+        let date:String=row.get(0).map_err(|e|e.to_string())?;
+        let impressions:Option<i64>=row.get(1).map_err(|e|e.to_string())?;
+        let ctr_raw:Option<f64>=row.get(2).map_err(|e|e.to_string())?;
+        result.push(json!({
+            "date":date,"observedImpressions":impressions,
+            "weightedCtrRaw":ctr_raw,"ctrScale":"UNVERIFIED",
+            "coverage":"OBSERVED_REPORT_ROWS_ONLY",
+            "source":"youtube_reporting_api_channel_reach_basic_a1"
+        }));
+    }
+    Ok(Some(result))
+}
 pub(crate) fn read_video_days(cache:&Path,channel_id:&str,video_id:&str,start:Option<&str>,end:Option<&str>)
  ->Result<Option<Vec<Value>>,String>{
     if !valid_video(video_id){return Err("SQLITE_INVALID_VIDEO_ID".into())}
@@ -534,6 +573,10 @@ mod tests{
         assert_eq!(rows.len(),1);assert_eq!(rows[0]["views"],12);
         let video=read_video_days(&cache,&id,"aBc1234-X_y",Some("2026-01-01"),None).unwrap().unwrap();
         assert_eq!(video.len(),1);assert_eq!(video[0]["views"],12);
+        let reach=read_reach_aggregate(&cache,&id,None,Some("2026-01-01"),None).unwrap().unwrap();
+        assert_eq!(reach.len(),1);
+        assert_eq!(reach[0]["observedImpressions"],500);
+        assert_eq!(reach[0]["ctrScale"],"UNVERIFIED");
         let _=fs::remove_dir_all(cache);
     }
     #[test]fn malformed_video_identity_rolls_back_without_erasing_json(){
