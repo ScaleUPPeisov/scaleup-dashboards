@@ -1,12 +1,17 @@
-name: VYRON macOS AI export compile gate
+name: VYRON macOS Ultimate + Analytics 360 safety gate
 
 on:
   pull_request:
     types: [opened, synchronize, reopened]
     paths:
       - 'src/AiAnalyticsExport.tsx'
+      - 'src/Analytics360Page.tsx'
+      - 'src/Analytics360.css'
+      - 'src/App.tsx'
       - 'src/AnalyticsPage.tsx'
       - 'src-tauri/src/analytics_ai_export.rs'
+      - 'src-tauri/src/analytics360_cache.rs'
+      - 'src-tauri/src/storage.rs'
       - 'src-tauri/src/lib.rs'
       - 'src-tauri/Cargo.toml'
       - 'src-tauri/Cargo.lock'
@@ -34,10 +39,13 @@ jobs:
         run: |
           npm ci
           npm run build
+          npm test
       - name: Rust type checking + exporter unit tests
         working-directory: src-tauri
         run: |
           cargo test --locked --lib analytics_ai_export -- --nocapture
+          cargo test --locked --lib analytics360_cache -- --nocapture
+          cargo test --locked --lib v213_storage_tests -- --nocapture
           cargo check --locked
   mac-arm64-compile:
     runs-on: macos-15
