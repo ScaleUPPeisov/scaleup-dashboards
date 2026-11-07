@@ -393,7 +393,7 @@ fn video_lifecycle(videos:&[Value],daily:&[Value],channel_id:&str)->Vec<Value>{
     output
 }
 fn percent_change(now:f64,before:f64)->Value{if before.abs()<f64::EPSILON {Value::Null}else{json!(((now-before)/before)*100.0)}}
-fn contributions_for_window(event:&Value,video_daily:&[Value])->Vec<Value>{
+pub(crate) fn contributions_for_window(event:&Value,video_daily:&[Value])->Vec<Value>{
     let days=event.get("windowDays").and_then(Value::as_i64).unwrap_or(0);
     let end=event.get("periodEnd").and_then(Value::as_str).and_then(|s|NaiveDate::parse_from_str(s,"%Y-%m-%d").ok());
     let Some(end)=end else{return vec![]};
@@ -434,7 +434,7 @@ fn contributions_for_window(event:&Value,video_daily:&[Value])->Vec<Value>{
     out.truncate(25);
     out
 }
-fn change_findings(channel_id:&str,daily:&[Value])->Vec<Value>{
+pub(crate) fn change_findings(channel_id:&str,daily:&[Value])->Vec<Value>{
     let m:HashMap<_,_>=daily.iter().filter_map(|x|Some((x.get("date")?.as_str()?.to_string(),numeric(x.get("views"))?))).collect();
     let mut findings=Vec::new();
     let last=Utc::now().date_naive()-Days::days(3);
