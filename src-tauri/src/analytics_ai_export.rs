@@ -19,6 +19,19 @@ const DATA_API: &str = "https://www.googleapis.com/youtube/v3";
 const ANALYTICS_API: &str = "https://youtubeanalytics.googleapis.com/v2/reports";
 const REPORTING_API: &str = "https://youtubereporting.googleapis.com/v1";
 
+
+static AI_EXPORT_BUSY:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
+struct AiRunGuard;
+impl Drop for AiRunGuard {
+    fn drop(&mut self){AI_EXPORT_BUSY.store(false,std::sync::atomic::Ordering::Release);}
+}
+fn acquire_ai_run()->Result<AiRunGuard,String>{
+    AI_EXPORT_BUSY.compare_exchange(false,true,
+        std::sync::atomic::Ordering::AcqRel,std::sync::atomic::Ordering::Acquire)
+        .map_err(|_|"ANALYTICS_SYNC_ALREADY_RUNNING: сначала завершите текущий сбор данных".to_string())?;
+    Ok(AiRunGuard)
+}
+
 #[derive(Clone, Deserialize)]
 #[serde(rename_all="camelCase")]
 pub struct AiChannelChoice {
@@ -703,6 +716,7 @@ fn file_hash(path:&Path)->Result<String,String>{
 }
 #[tauri::command]
 pub async fn youtube_ai_export(app:AppHandle,request:AiExportRequest)->Result<Value,String>{
+    let _run_guard=acquire_ai_run()?;
     #[cfg(not(target_os="macos"))]
     {let _=(app,request);return Err("Экспорт для ИИ доступен только в VYRON Mac".into());}
     #[cfg(target_os="macos")]
@@ -744,6 +758,15 @@ pub async fn youtube_ai_export(app:AppHandle,request:AiExportRequest)->Result<Va
             fs::create_dir_all(&out_dir).map_err(|e|e.to_string())?;
             match collect_channel(&app,&client,choice,&request,&channel_cache,&run,i,total).await{
                 Ok(r)=>{
+                    if let Err(e)=crate::analytics360_cache::persist(&channel_cache,
+                        &r.summary,&r.coverage,&r.channel_daily,&r.videos,&r.video_daily,
+                        &r.traffic,&r.breakdowns,&r.retention,&r.events,&r.findings){
+                        coverage.push(json!({"channelId":choice.channel_id,"name":choice.name,
+                            "status":"error","stage":"analytics360_cache","reason":e}));
+                        progress(&app,&run,i+1,total,choice,"ERROR","Не удалось сохранить Analytics 360");
+                        continue
+                    }
+
                     save_json(&out_dir.join("channel.json"),&r.summary)?;
                     save_json(&out_dir.join("coverage.json"),&r.coverage)?;
                     save_json(&out_dir.join("videos.json"),&json!(r.videos))?;
@@ -843,5 +866,65 @@ mod tests{
        assert_eq!(out[0]["ageWindowsCalendarDays"]["days3"]["observedDays"],1);
        assert!(out[0]["ageWindowsCalendarDays"]["days3"]["views"].is_null());
        assert!(out[0]["first24HoursViews"].is_null());
+    }
+}
+
+
+/// On-demand full-history sync populates the same per-channel Analytics 360 cache
+/// without generating a ZIP. No upload or Google account reconnection is attempted.
+#[tauri::command]
+pub async fn youtube_ai_sync(app:AppHandle,request:AiExportRequest)->Result<Value,String>{
+    #[cfg(not(target_os="macos"))]
+    {let _=(app,request);return Err("Analytics 360 доступна только на macOS".into())}
+    #[cfg(target_os="macos")]
+    {
+        let _run_guard=acquire_ai_run()?;
+        if request.channels.is_empty()||request.channels.len()>100{
+            return Err("Выберите от 1 до 100 каналов".into())
+        }
+        if !["all","365","90","30","custom"].contains(&request.period.as_str()){
+            return Err("Недопустимый период".into())
+        }
+        let mut seen=HashSet::new();
+        for c in &request.channels{
+            if !is_safe_channel_id(&c.channel_id)||c.profile_id.is_empty()||!seen.insert(&c.channel_id){
+                return Err("Некорректный или дублирующийся YouTube Channel ID".into())
+            }
+        }
+        let root=app.path().app_data_dir().map_err(|e|e.to_string())?.join("AIAnalytics").join("cache");
+        fs::create_dir_all(&root).map_err(|e|e.to_string())?;
+        let client=reqwest::Client::builder().timeout(Duration::from_secs(60)).build().map_err(|e|e.to_string())?;
+        let run=Uuid::new_v4().to_string();
+        let total=request.channels.len();
+        let mut completed=0usize;
+        let mut errors=Vec::<Value>::new();
+        for (i,c) in request.channels.iter().enumerate(){
+            let folder=root.join(&c.channel_id);
+            if let Err(e)=fs::create_dir_all(&folder){
+                errors.push(json!({"channelId":c.channel_id,"error":e.to_string()}));continue
+            }
+            match collect_channel(&app,&client,c,&request,&folder,&run,i,total).await {
+                Ok(r)=>{
+                    match crate::analytics360_cache::persist(&folder,&r.summary,&r.coverage,
+                        &r.channel_daily,&r.videos,&r.video_daily,&r.traffic,&r.breakdowns,
+                        &r.retention,&r.events,&r.findings){
+                        Ok(())=>{
+                            completed+=1;
+                            progress(&app,&run,i+1,total,c,"DONE","История канала доступна в Analytics 360");
+                        },
+                        Err(e)=>{
+                            errors.push(json!({"channelId":c.channel_id,"error":e}));
+                            progress(&app,&run,i+1,total,c,"ERROR","Не удалось сохранить историю");
+                        }
+                    }
+                },
+                Err(e)=>{
+                    errors.push(json!({"channelId":c.channel_id,"error":e}));
+                    progress(&app,&run,i+1,total,c,"ERROR","Ошибка синхронизации канала");
+                }
+            }
+        }
+        Ok(json!({"runId":run,"completed":completed,"total":total,
+            "errors":errors,"status":if completed==total{"COMPLETE"}else{"PARTIAL"}}))
     }
 }
