@@ -224,6 +224,7 @@ fn durable_replace(path:&Path,bytes:&[u8])->Result<(),String>{
     let temp=path.with_extension(format!("write-{nonce}.tmp"));
     let backup=path.with_extension("bak");
     let backup2=path.with_extension("bak2");
+    let is_state=matches!(path.file_name().and_then(|x|x.to_str()),Some("state.json"|"app-state.json"));
 
     fn synced_file(path:&Path,bytes:&[u8])->Result<(),String>{
         use std::fs::OpenOptions;
@@ -241,15 +242,15 @@ fn durable_replace(path:&Path,bytes:&[u8])->Result<(),String>{
         // Verify the serialized new state before touching the last known good copy.
         let candidate:Value=serde_json::from_slice(&fs::read(&temp).map_err(|e|e.to_string())?)
             .map_err(|e|format!("STATE_NEW_INVALID: {e}"))?;
-        if !state_looks_valid(&candidate){return Err("STATE_NEW_SCHEMA_INVALID".into())}
+        if is_state&&!state_looks_valid(&candidate){return Err("STATE_NEW_SCHEMA_INVALID".into())}
         if path.exists(){
             let prior=fs::read(path).map_err(|e|format!("STATE_OLD_READ: {e}"))?;
             if serde_json::from_slice::<Value>(&prior).ok().as_ref()
-                .map(state_looks_valid).unwrap_or(false){
+                .map(|v|!is_state||state_looks_valid(v)).unwrap_or(false){
                 if backup.exists(){
                     if let Ok(bytes)=fs::read(&backup){
                         if serde_json::from_slice::<Value>(&bytes).ok().as_ref()
-                            .map(state_looks_valid).unwrap_or(false){
+                            .map(|v|!is_state||state_looks_valid(v)).unwrap_or(false){
                             let previous=path.with_extension(format!("backup2-{nonce}.tmp"));
                             let second=(||->Result<(),String>{
                                 synced_file(&previous,&bytes)?;
@@ -430,6 +431,17 @@ mod v213_storage_tests {
         assert!(!state_looks_valid(&json!(null)));
         assert!(!state_looks_valid(&json!({"channels":[]})));
         assert!(state_looks_valid(&default_state()));
+    }
+    #[cfg(target_os="macos")]
+    #[test]
+    fn macos_mirror_channels_array_is_allowed(){
+        let root=std::env::temp_dir().join(format!("vyron-array-test-{}",uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let path=root.join("channels.json");
+        let channels=json!([{"id":"channel-1"}]);
+        atomic_write(&path,&channels).unwrap();
+        assert_eq!(serde_json::from_slice::<Value>(&fs::read(&path).unwrap()).unwrap(),channels);
+        let _=fs::remove_dir_all(root);
     }
     #[cfg(target_os="macos")]
     #[test]
