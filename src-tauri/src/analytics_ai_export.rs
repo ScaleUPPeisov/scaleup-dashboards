@@ -574,7 +574,7 @@ async fn collect_channel(app:&AppHandle,client:&reqwest::Client,choice:&AiChanne
             Err(e)=>{coverage["errors"].as_array_mut().unwrap().push(json!({"stage":"traffic","message":e}));},
         }
         // Additional audience breakdowns; kept separate from the traffic API table.
-        for (dimension,label) in [("country","geography"),("deviceType","devices"),("subscribedStatus","audience")]{
+        for (dimension,label) in [("country","geography"),("deviceType","devices"),("subscribedStatus","audience"),("creatorContentType","format")]{
             match analytics(app,client,&token,cache,&start_s,&end_s,
                 "views,estimatedMinutesWatched",dimension,None,&format!("analytics.{label}")).await {
                 Ok(batch)=>{
@@ -587,7 +587,31 @@ async fn collect_channel(app:&AppHandle,client:&reqwest::Client,choice:&AiChanne
                 Err(e)=>coverage["errors"].as_array_mut().unwrap().push(json!({"stage":label,"message":e})),
             }
         }
-        coverage["audienceBreakdowns"]=json!(if breakdowns.len()==3{"available"}else if breakdowns.is_empty(){"unavailable"}else{"partial"});
+        coverage["audienceBreakdowns"]=json!(if breakdowns.len()==4{"available"}else if breakdowns.is_empty(){"unavailable"}else{"partial"});
+        // Google's targeted viewer demographics report uses viewerPercentage,
+        // not views. Preserve its denominator semantics; never relabel it views.
+        let mut demographic_status=serde_json::Map::new();
+        for (dimension,label) in [("ageGroup","age"),("gender","gender")]{
+            match analytics(app,client,&token,cache,&start_s,&end_s,
+                "viewerPercentage",dimension,None,&format!("analytics.demographics.{label}")).await{
+                Ok(batch)=>{
+                    let count=batch.len();
+                    if count>0{
+                        breakdowns.push(json!({"channelId":cid,"dimension":dimension,
+                            "periodStart":start_s,"periodEnd":end_s,
+                            "rows":batch.into_iter().map(|r|json!({"key":r.first(),
+                                "viewerPercentage":numeric(r.get(1))})).collect::<Vec<_>>(),
+                            "source":"youtube_analytics_api_v2","fetchedAt":fetched_at}));
+                    }
+                    demographic_status.insert(dimension.to_string(),json!(if count>0{"AVAILABLE"}else{"INSUFFICIENT_DATA"}));
+                },
+                Err(e)=>{
+                    demographic_status.insert(dimension.to_string(),json!("ERROR"));
+                    coverage["errors"].as_array_mut().unwrap().push(json!({"stage":label,"message":e}));
+                }
+            }
+        }
+        coverage["demographics"]=Value::Object(demographic_status);
         if request.include_retention.unwrap_or(false){
             progress(app,run,index,total,choice,"RETENTION","Кривые удержания доступных видео");
             let mut found=0usize;
