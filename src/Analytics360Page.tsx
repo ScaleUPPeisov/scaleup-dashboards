@@ -5,7 +5,7 @@ import {useApp} from './store';
 import {api} from './api';
 import type {Channel,ChannelAnalytics,YoutubeProfile} from './types';
 import {refreshChannelAnalytics} from './youtubeIntelligence';
-import {calendarMetricTotal,decimateExtrema} from './analytics360Core';
+import {calendarMetricTotal,decimateExtrema,acceptSelectedChannelResult} from './analytics360Core';
 import {AnalyticsPage} from './AnalyticsPage';
 import {AiAnalyticsExport} from './AiAnalyticsExport';
 import {YouTubeChannelBar} from './YouTubeChannelBar';
@@ -216,8 +216,11 @@ export function Analytics360Page(){
  const [includeReporting,setIncludeReporting]=useState(true);
  const [videoPage,setVideoPage]=useState(0),[videoType,setVideoType]=useState('all'),[videoSort,setVideoSort]=useState('recent');
  const [videoId,setVideoId]=useState<string|null>(null);
+ const [syncRevision,setSyncRevision]=useState(0);
  const refreshToken=useRef(0);
  const active=channels.find(c=>c.id===activeId)||channels[0];
+ const selectedChannelRef=useRef<string|undefined>(active?.youtubeChannelId);
+ selectedChannelRef.current=active?.youtubeChannelId;
  const matching=profiles.find(p=>p.id===active?.youtubeProfileId&&p.channelId===active?.youtubeChannelId);
  const eligible=Boolean(matching&&active?.youtubeProfileId&&active?.youtubeChannelId);
  useEffect(()=>subscribeActivePublishChannel(id=>{if(channels.some(c=>c.id===id)){setActiveId(id);setVideoPage(0);setVideoId(null)}}),[channels.map(c=>c.id).join('|')]);
@@ -228,21 +231,22 @@ export function Analytics360Page(){
  },[]);
  function choose(id:string){if(!channels.some(c=>c.id===id))return;saveActivePublishChannel(id);setActiveId(id);setVideoPage(0);setVideoId(null)}
  async function load(){
-  if(!active?.youtubeChannelId){setSnapshot(null);return}
+  const requestedChannel=active?.youtubeChannelId;
+  if(!requestedChannel){++refreshToken.current;setSnapshot(null);setLoading(false);return}
   const version=++refreshToken.current;setLoading(true);setError('');
   try{
    const result=await invoke<Snapshot>('analytics360_read',{
-    channelId:active.youtubeChannelId,page:videoPage,pageSize:40,period,
+    channelId:requestedChannel,page:videoPage,pageSize:40,period,
     startDate:period==='custom'?startDate:null,endDate:period==='custom'?endDate:null,
     videoId,contentType:videoType,sort:videoSort,
    });
-   if(version===refreshToken.current)setSnapshot(result);
-  }catch(e){if(version===refreshToken.current){setSnapshot(null);setError(String(e))}}
-  finally{if(version===refreshToken.current)setLoading(false)}
+   if(acceptSelectedChannelResult(requestedChannel,selectedChannelRef.current,version,refreshToken.current))setSnapshot(result);
+  }catch(e){if(acceptSelectedChannelResult(requestedChannel,selectedChannelRef.current,version,refreshToken.current)){setSnapshot(null);setError(String(e))}}
+  finally{if(acceptSelectedChannelResult(requestedChannel,selectedChannelRef.current,version,refreshToken.current))setLoading(false)}
  }
  useEffect(()=>{if(!isMac)return;if(period==='custom'&&(!startDate||!endDate||startDate>endDate))return;
   void load();
- },[active?.youtubeChannelId,period,startDate,endDate,videoPage,videoType,videoSort,videoId,isMac]);
+ },[active?.youtubeChannelId,period,startDate,endDate,videoPage,videoType,videoSort,videoId,syncRevision,isMac]);
  useEffect(()=>{if(!syncing)return;let alive=true;let unlisten:(()=>void)|undefined;
   void listen<Progress>('vyron:ai-export-progress',e=>{if(alive&&e.payload.channelId===active?.youtubeChannelId)setProgress(e.payload)}).then(stop=>{if(alive)unlisten=stop;else stop()});
   return()=>{alive=false;unlisten?.()};
@@ -257,7 +261,7 @@ export function Analytics360Page(){
     includeRetention,includeReporting
    }});
    if(output.completed===0)throw new Error(output.errors.map(e=>e.error).join(' | ')||'Синхронизация не завершена');
-   await load();
+   setSyncRevision(v=>v+1);
   }catch(e){setError(String(e))}
   finally{setSyncing(false)}
  }
