@@ -8,30 +8,42 @@ import os
 import sys
 from pathlib import Path
 
-def load(path: str) -> tuple[set[str], dict[str, str], int]:
+def stable_path(value: str) -> str:
+    """Compare source paths across a detached baseline worktree and PR head."""
+    path = value.replace("\\", "/")
+    for anchor in ("/src/", "/tests/", "/test/", "/scripts/"):
+        if anchor in path:
+            return anchor[1:] + path.rsplit(anchor, 1)[1]
+    return Path(path).name
+
+def load(path: str) -> tuple[set[str], dict[str, str], set[str]]:
     raw = json.loads(Path(path).read_text(encoding="utf-8"))
-    result = set()
+    failures: set[str] = set()
     errors: dict[str, str] = {}
-    count = 0
+    cases: set[str] = set()
     for suite in raw.get("testResults", []):
-        location = str(suite.get("name", "")).replace("\\", "/")
+        location = stable_path(str(suite.get("name", "")))
         for case in suite.get("assertionResults", []):
-            count += 1
-            status = case.get("status")
             name = case.get("fullName") or case.get("title") or "unknown test"
             identity = f"{location} :: {name}"
-            if status == "failed":
-                result.add(identity)
+            cases.add(identity)
+            if case.get("status") == "failed":
+                failures.add(identity)
                 messages = case.get("failureMessages") or []
                 errors[identity] = " | ".join(str(s)[:250] for s in messages[:2])
-    return result, errors, count
+    if not cases:
+        raise ValueError(f"No test cases were parsed from {path}; refusing to treat empty runs as PASS")
+    return failures, errors, cases
 
 def main() -> int:
     if len(sys.argv) != 3:
         print("usage: vyron_vitest_diff.py <6.1.15.json> <pr.json>", file=sys.stderr)
         return 3
-    baseline, prior_details, prior_total = load(sys.argv[1])
-    current, current_details, current_total = load(sys.argv[2])
+    baseline, prior_details, baseline_cases = load(sys.argv[1])
+    current, current_details, current_cases = load(sys.argv[2])
+    prior_total, current_total = len(baseline_cases), len(current_cases)
+    removed_tests = sorted(baseline_cases - current_cases)
+    added_tests = sorted(current_cases - baseline_cases)
     introduced = sorted(current - baseline)
     inherited = sorted(current & baseline)
     fixed = sorted(baseline - current)
@@ -51,12 +63,17 @@ def main() -> int:
         f"- Failures new in PR: **{len(introduced)}**",
         f"- Baseline failures absent in PR: **{len(fixed)}**",
         f"- New critical contract failures: **{len(critical)}**",
+        f"- Baseline test cases missing or renamed in PR: **{len(removed_tests)}**",
+        f"- New test cases in PR: **{len(added_tests)}**",
         "",
         "## New failures",
         *([f"- {name}" for name in introduced] if introduced else ["None"]),
         "",
         "## Critical new failures",
         *([f"- {name}" for name in critical] if critical else ["None"]),
+        "",
+        "## Baseline tests missing or renamed in PR (investigate, not auto-fixed)",
+        *([f"- {name}" for name in removed_tests] if removed_tests else ["None"]),
         "",
         "## Pre-existing failures",
         *([f"- {name}" for name in inherited] if inherited else ["None"]),
@@ -73,7 +90,7 @@ def main() -> int:
     if summary:
         with open(summary, "a", encoding="utf-8") as out:
             out.write(report)
-    if critical:
+    if introduced or removed_tests:
         return 2
     return 0
 
