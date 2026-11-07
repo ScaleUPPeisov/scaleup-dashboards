@@ -26,3 +26,31 @@ export function compareExactWindows(current:readonly DatePoint[],previous:readon
 }
 export function safeVideoId(id:string):boolean{return /^[a-zA-Z0-9_-]{11}$/.test(id)}
 export function safeChannelId(id:string):boolean{return /^UC[a-zA-Z0-9_-]{22}$/.test(id)}
+
+/** A complete YouTube day-series range is required before showing its total.
+ * Dates omitted by API are unknown here; never silently treat them as zeros. */
+export function calendarMetricTotal(
+ rows:readonly {date:string;[key:string]:unknown}[],
+ key:string,
+ start:string|null|undefined,
+ end:string|null|undefined,
+):MathResult{
+ const startMs=start?Date.parse(start+'T00:00:00Z'):NaN;
+ const endMs=end?Date.parse(end+'T00:00:00Z'):NaN;
+ const expected=(endMs-startMs)/86400000+1;
+ if(!Number.isInteger(expected)||expected<1||expected>20000){
+   return{value:null,status:'INSUFFICIENT_DATA',observed:0,expected:0};
+ }
+ const seen=new Set<number>();let observed=0,total=0;
+ for(const row of rows){
+   const day=Date.parse(String(row.date||'')+'T00:00:00Z');
+   if(!Number.isFinite(day)||day<startMs||day>endMs)continue;
+   if(seen.has(day))return{value:null,status:'ERROR',observed,expected};
+   seen.add(day);
+   const v=row[key];
+   if(typeof v!=='number'||!Number.isFinite(v))continue;
+   total+=v;observed++;
+ }
+ if(observed!==expected)return{value:null,status:observed?'PARTIAL':'NOT_YET_COLLECTED',observed,expected};
+ return{value:total,status:'AVAILABLE',observed,expected};
+}
