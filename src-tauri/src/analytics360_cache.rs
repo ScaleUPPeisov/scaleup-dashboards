@@ -176,9 +176,11 @@ fn load_from_disk(cache:&Path,page:u32,per_page:u32,period:&str,from:Option<&str
     let offset=(page as usize).saturating_mul(per_page).min(filtered_total);
     let video_rows=visible.into_iter().skip(offset).take(per_page).cloned().collect::<Vec<_>>();
     let mut detail=Value::Null;let mut video_days=Vec::<Value>::new();let mut retention=Value::Null;
+    let mut selected_video=Value::Null;
     if let Some(id)=video_id{
         if !valid_video_id(id){return Err("Некорректный Video ID".into())}
-        if !all.iter().any(|v|v.get("videoId").and_then(Value::as_str)==Some(id)){return Err("Видео отсутствует в этом канале".into())}
+        selected_video=all.iter().find(|v|v.get("videoId").and_then(Value::as_str)==Some(id))
+            .cloned().ok_or("Видео отсутствует в этом канале")?;
         let filename=format!("{}.json",key(id));
         detail=read_json(&root.join("video-details").join(&filename))?;
         if let Ok(value)=read_json(&root.join("video-days").join(&filename)){
@@ -188,7 +190,7 @@ fn load_from_disk(cache:&Path,page:u32,per_page:u32,period:&str,from:Option<&str
     }
     Ok(json!({"status":"AVAILABLE","schemaVersion":1,"generation":gen,"updatedAt":pointer.get("updatedAt"),
         "overview":overview,"channelDaily":current,"videos":video_rows,"videoCount":all.len(),
-        "page":page,"pageSize":per_page,"filteredVideoCount":filtered_total,"videoDetail":detail,"videoDaily":video_days,"retention":retention,
+        "page":page,"pageSize":per_page,"filteredVideoCount":filtered_total,"selectedVideo":selected_video,"videoDetail":detail,"videoDaily":video_days,"retention":retention,
         "period":period,"periodFrom":start.map(|d|d.format("%Y-%m-%d").to_string()),
         "periodTo":end.map(|d|d.format("%Y-%m-%d").to_string())}))
 }
@@ -225,6 +227,23 @@ mod tests{
         let rows=vec![json!({"date":"2026-01-03","views":5}),json!({"date":"2026-01-05","views":7})];
         let result=filter_days(&rows,NaiveDate::from_ymd_opt(2026,1,4),NaiveDate::from_ymd_opt(2026,1,5));
         assert_eq!(result.len(),1);assert_eq!(result[0]["views"],7);
+    }
+    #[test]fn out_of_page_video_can_open_its_detail(){
+        let temp=std::env::temp_dir().join(format!("vyron-analytics-detail-{}",Uuid::new_v4()));
+        fs::create_dir_all(&temp).unwrap();
+        let channel="UC1234567890123456789012";
+        let videos=vec![
+            json!({"id":"aBc1234-X_y","snippet":{"channelId":channel,"title":"New","publishedAt":"2026-11-01T09:00:00Z"}}),
+            json!({"id":"bbbbbbbbbbb","snippet":{"channelId":channel,"title":"Older","publishedAt":"2026-01-01T09:00:00Z"}}),
+        ];
+        persist(&temp,&json!({"channelId":channel}),&json!({}),&[],&videos,&[],&[],&[],&[],&[],&[]).unwrap();
+        let r=load_from_disk(&temp,0,1,"all",None,None,Some("bbbbbbbbbbb"),Some("all"),None).unwrap();
+        assert_eq!(r["videoCount"],2);
+        assert_eq!(r["videos"].as_array().unwrap().len(),1);
+        assert_eq!(r["videos"][0]["videoId"],"aBc1234-X_y");
+        assert_eq!(r["selectedVideo"]["videoId"],"bbbbbbbbbbb");
+        assert_eq!(r["videoDetail"]["id"],"bbbbbbbbbbb");
+        let _=fs::remove_dir_all(temp);
     }
     #[test]fn shorter_videos_are_not_mislabeled_shorts(){
         let v=json!({"id":"aBc1234-X_y","contentDetails":{"duration":"PT2M12S"},"snippet":{"title":"music"}});
