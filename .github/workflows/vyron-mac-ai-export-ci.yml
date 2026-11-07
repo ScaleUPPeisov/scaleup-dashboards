@@ -6,6 +6,8 @@ on:
     paths:
       - 'src/AiAnalyticsExport.tsx'
       - 'src/Analytics360Page.tsx'
+      - 'src/analytics360Core.ts'
+      - 'src/analytics360Core.test.ts'
       - 'src/Analytics360.css'
       - 'src/App.tsx'
       - 'src/AnalyticsPage.tsx'
@@ -39,7 +41,7 @@ jobs:
         run: |
           npm ci
           npm run build
-          npm test
+          npx vitest run src/analytics360Core.test.ts
       - name: Rust type checking + exporter unit tests
         working-directory: src-tauri
         run: |
@@ -47,6 +49,19 @@ jobs:
           cargo test --locked --lib analytics360_cache -- --nocapture
           cargo test --locked --lib v213_storage_tests -- --nocapture
           cargo check --locked
+  historical-vitest-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: All historical tests (failures remain visible; no legacy test rewriting)
+        run: |
+          npm ci
+          npm test
   mac-arm64-compile:
     runs-on: macos-15
     timeout-minutes: 45
