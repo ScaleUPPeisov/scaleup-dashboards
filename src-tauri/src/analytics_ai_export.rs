@@ -475,6 +475,42 @@ fn latest_reporting_reach_files(reports:Vec<Value>)->Vec<Value>{
     latest.into_values().collect()
 }
 
+const MAX_REACH_CSV_DOWNLOAD:u64=100*1024*1024;
+fn trusted_reporting_download(url:&str)->bool{
+    reqwest::Url::parse(url).map(|u|
+        u.scheme()=="https"&&u.host_str()==Some("youtubereporting.googleapis.com")
+        &&u.port().is_none()&&u.username().is_empty()&&u.password().is_none()
+    ).unwrap_or(false)
+}
+async fn download_reporting_csv(client:&reqwest::Client,token:&str,url:&str,path:&Path)->Result<(),String>{
+    use tokio::io::AsyncWriteExt;
+    if !trusted_reporting_download(url){return Err("REPORTING_UNTRUSTED_DOWNLOAD_URL".into())}
+    let mut response=client.get(url).bearer_auth(token).send().await
+        .map_err(|e|format!("REPORTING_DOWNLOAD_NETWORK: {e}"))?;
+    if !response.status().is_success(){return Err(format!("REPORTING_DOWNLOAD_HTTP_{}",response.status().as_u16()))}
+    if response.content_length().map(|n|n>MAX_REACH_CSV_DOWNLOAD).unwrap_or(false){
+        return Err("REPORTING_CSV_TOO_LARGE".into())
+    }
+    let parent=path.parent().ok_or("REPORTING_DOWNLOAD_INVALID_DESTINATION")?;
+    tokio::fs::create_dir_all(parent).await.map_err(|e|e.to_string())?;
+    let temp=path.with_extension(format!("{}.part",Uuid::new_v4()));
+    let result=async{
+        let mut file=tokio::fs::File::create(&temp).await.map_err(|e|e.to_string())?;
+        let mut size=0u64;
+        while let Some(chunk)=response.chunk().await.map_err(|e|format!("REPORTING_CHUNK: {e}"))? {
+            size=size.saturating_add(chunk.len() as u64);
+            if size>MAX_REACH_CSV_DOWNLOAD{return Err("REPORTING_CSV_TOO_LARGE".to_string())}
+            file.write_all(&chunk).await.map_err(|e|e.to_string())?;
+        }
+        file.sync_all().await.map_err(|e|e.to_string())?;
+        if size==0{return Err("REPORTING_EMPTY_DOWNLOAD".to_string())}
+        tokio::fs::rename(&temp,path).await.map_err(|e|e.to_string())?;
+        Ok(())
+    }.await;
+    if result.is_err(){let _=tokio::fs::remove_file(&temp).await;}
+    result
+}
+
 async fn collect_reporting(app:&AppHandle,client:&reqwest::Client,token:&str,cache:&Path)->Value{
     let mut coverage=json!({"status":"unavailable","source":"youtube_reporting_api_v1","reason":null,
        "reachType":"channel_reach_basic_a1","reports":[]});
@@ -499,23 +535,23 @@ async fn collect_reporting(app:&AppHandle,client:&reqwest::Client,token:&str,cac
     // YouTube can backfill or replace an older report for the same date.
     // The latest createTime wins for that 24-hour period.
     let reports=latest_reporting_reach_files(listing);
-    let mut files=Vec::new();
+    let mut files=Vec::new();let mut errors=Vec::<String>::new();
     for report in reports {
         let url=text(report.get("downloadUrl"));let id=text(report.get("id"));
         if url.is_empty()||id.is_empty(){continue}
         let path=cache.join("reporting").join(format!("reach-{}.csv",compact_hash(&id)));
         if !path.exists(){
             youtube::emit_youtube_api_request(app,"reporting.media.download",None);
-            let response=client.get(&url).bearer_auth(token).send().await;
-            if let Ok(r)=response{
-                if r.status().is_success(){if let Ok(bytes)=r.bytes().await{let _=write_atomic(&path,&bytes);}}
+            if let Err(e)=download_reporting_csv(client,token,&url,&path).await{
+                errors.push(format!("report {}: {}",compact_hash(&id),e));
             }
         }
         if path.exists(){files.push(json!({"reportId":id,"file":path.file_name().and_then(|x|x.to_str()),
           "startTime":report.get("startTime"),"endTime":report.get("endTime"),"createdTime":report.get("createTime")}));}
     }
     coverage["reports"]=json!(files);
-    coverage["status"]=json!(if files.is_empty(){"pending"}else{"partial"});
+    coverage["downloadErrors"]=json!(errors);
+    coverage["status"]=json!(if !errors.is_empty(){"partial"}else if files.is_empty(){"pending"}else{"available_report_files"});
     coverage["reason"]=json!(if files.is_empty(){"Задание создано или отчёты пока не опубликованы; повторный экспорт подхватит их."}else{"Исторические отчёты ограничены сроками доступности Google."});
     coverage
 }
@@ -524,7 +560,9 @@ fn copy_reporting(cache:&Path,output:&Path)->Result<(),String>{
     let src=cache.join("reporting");if !src.exists(){return Ok(())}
     let dst=output.join("reporting");fs::create_dir_all(&dst).map_err(|e|e.to_string())?;
     for entry in fs::read_dir(src).map_err(|e|e.to_string())?{
-        let entry=entry.map_err(|e|e.to_string())?;if entry.file_type().map_err(|e|e.to_string())?.is_file(){
+        let entry=entry.map_err(|e|e.to_string())?;
+        let name=entry.file_name().to_string_lossy().to_string();
+        if name.starts_with("reach-")&&name.ends_with(".csv")&&entry.file_type().map_err(|e|e.to_string())?.is_file(){
             fs::copy(entry.path(),dst.join(entry.file_name())).map_err(|e|e.to_string())?;
         }
     }
@@ -1002,6 +1040,13 @@ pub async fn youtube_ai_export(app:AppHandle,request:AiExportRequest)->Result<Va
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test] fn google_reporting_download_url_must_be_https_expected_host(){
+        assert!(trusted_reporting_download("https://youtubereporting.googleapis.com/v1/media/abc?alt=media"));
+        assert!(!trusted_reporting_download("http://youtubereporting.googleapis.com/v1/media/abc"));
+        assert!(!trusted_reporting_download("https://youtubereporting.googleapis.com.evil.test/v1/media/abc"));
+        assert!(!trusted_reporting_download("https://attacker@youtubereporting.googleapis.com/v1/media/abc"));
+        assert!(!trusted_reporting_download("https://evil.test/steal"));
+    }
     #[test] fn reporting_backfill_prefers_newest_file_for_identical_period(){
         let old=json!({"id":"old","startTime":"2026-10-01T00:00:00Z","endTime":"2026-10-02T00:00:00Z","createTime":"2026-10-03T00:00:00Z"});
         let fresh=json!({"id":"fresh","startTime":"2026-10-01T00:00:00Z","endTime":"2026-10-02T00:00:00Z","createTime":"2026-10-04T00:00:00Z"});
