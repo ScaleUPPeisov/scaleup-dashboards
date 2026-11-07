@@ -5,7 +5,7 @@ import {useApp} from './store';
 import {api} from './api';
 import type {Channel,ChannelAnalytics,YoutubeProfile} from './types';
 import {refreshChannelAnalytics} from './youtubeIntelligence';
-import {calendarMetricTotal} from './analytics360Core';
+import {calendarMetricTotal,decimateExtrema} from './analytics360Core';
 import {AnalyticsPage} from './AnalyticsPage';
 import {AiAnalyticsExport} from './AiAnalyticsExport';
 import {YouTubeChannelBar} from './YouTubeChannelBar';
@@ -99,25 +99,30 @@ function Graph({days,publications={},metric='views',title}:{days:Day[];publicati
  }
  if(current.length)segments.push(current);
  const missing=values.some(v=>v===null)||rows.some((d,i)=>i>0&&Date.parse(d.date+'T00:00:00Z')-Date.parse(rows[i-1].date+'T00:00:00Z')!==86400000);
+ const allPublishMarkers=rows.filter(d=>Boolean(publications[d.date]));
+ const markerStride=Math.max(1,Math.ceil(allPublishMarkers.length/240));
+ const publishMarkers=allPublishMarkers.filter((_,i)=>i%markerStride===0);
+
  return <div className="a360-chart">
   <div className="a360-chart-heading"><strong>{title}</strong><small>{rows.length?rows[0].date+' — '+rows[rows.length-1].date:'Нет подтверждённых дневных данных'}</small></div>
   {valid.length?<>
    <svg role="img" aria-label={title+' по доступным датам; пробелы означают отсутствие данных'} viewBox={'0 0 '+width+' '+height} preserveAspectRatio="none">
     <line x1={0} y1={height-12} x2={width} y2={height-12} className="a360-axis"/>
     {segments.map((part,i)=>part.length>1?
-     <polyline key={i} className="a360-trend-line" fill="none" points={part.map(p=>x(p.date).toFixed(2)+','+y(p.v).toFixed(2)).join(' ')}/>:
+     <polyline key={i} className="a360-trend-line" fill="none" points={decimateExtrema(part,500).map(p=>x(p.date).toFixed(2)+','+y(p.v).toFixed(2)).join(' ')}/>:
      <circle key={i} cx={x(part[0].date)} cy={y(part[0].v)} r={2.2} fill="#55ddfa"/>)}
-    {rows.map((d,i)=>publications[d.date]?
-     <g key={d.date}>
+    {publishMarkers.map(d=>{
+     const i=rows.findIndex(x=>x.date===d.date);
+     return <g key={d.date}>
       <line x1={x(d.date)} y1={0} x2={x(d.date)} y2={height-12} className="a360-published-line"/>
       {values[i]!==null&&<circle cx={x(d.date)} cy={y(values[i]!)} r={3.3} className="a360-published-dot">
        <title>{d.date+' • Публикаций: '+publications[d.date]+' • '+title+': '+num(values[i])}</title>
       </circle>}
-     </g>:null)}
+     </g>})}
     {rows.length<=120?rows.map((d,i)=>values[i]!==null?<circle key={i} cx={x(d.date)} cy={y(values[i]!)} r={5} fill="transparent" stroke="transparent">
      <title>{d.date+': '+num(values[i])+'; публикаций '+(publications[d.date]||0)}</title>
     </circle>:null):null}
-   </svg><div className="a360-graph-foot"><span>{rows[0].date}</span><span>{missing?'Есть пропуски: линия прервана':'Вертикальная линия — публикация'}</span><span>{rows[rows.length-1].date}</span></div>
+   </svg><div className="a360-graph-foot"><span>{rows[0].date}</span><span>{missing?'Есть пропуски: линия прервана':'Вертикальная линия — публикация'}{markerStride>1?' · отметки: '+publishMarkers.length+' из '+allPublishMarkers.length:''}</span><span>{rows[rows.length-1].date}</span></div>
   </>:<Availability message="Данные за этот период ещё не получены через официальный YouTube Analytics API." status="NOT_YET_COLLECTED"/>}
  </div>;
 }
