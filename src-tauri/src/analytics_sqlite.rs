@@ -728,6 +728,91 @@ mod tests{
         assert_eq!(count,0);
         let _=fs::remove_dir_all(cache);
     }
+    /// Explicit stress fixture, never touches the owner's real data or OAuth.
+    /// 50 channels x 200 videos x 100 days = 1,000,000 video-day rows.
+    /// Run: cargo test --locked --lib analytics_sqlite::tests::stress_fleet_50_10k_1m -- --ignored --nocapture
+    #[test]
+    #[ignore = "10k video / 1m daily-row macOS stress benchmark; execute as separate CI performance gate"]
+    fn stress_fleet_50_10k_1m(){
+        use std::time::Instant;
+        let root=std::env::temp_dir().join(format!("vyron-sqlite-stress-{}",Uuid::new_v4()));
+        let started=Instant::now();
+        let mut total_db_bytes=0u64;let mut insert_ms=0u128;let mut queries_ms=0u128;
+        let mut peak_rss_kb=0u64;
+        let day_zero=NaiveDate::from_ymd_opt(2026,1,1).unwrap();
+        for channel_index in 0..50{
+            let cid=format!("UC{:022}",channel_index);
+            let cache=root.join(&cid);
+            let generation=Uuid::new_v4().to_string();
+            let gen_root=cache.join("ui-generations").join(&generation);
+            for folder in ["video-details","video-days","retention"]{
+                fs::create_dir_all(gen_root.join(folder)).unwrap();
+            }
+            let mut catalog=Vec::with_capacity(200);
+            for video_index in 0..200{
+                let vid=format!("{:011}",channel_index*200+video_index);
+                let detail=json!({"id":vid,"snippet":{"channelId":cid,"title":format!("Track {video_index}"),
+                    "publishedAt":"2026-01-01T00:00:00Z"}});
+                fs::write(gen_root.join("video-details").join(format!("{}.json",video_path_key(&vid))),
+                    serde_json::to_vec(&detail).unwrap()).unwrap();
+                catalog.push(json!({"videoId":vid,"channelId":cid,"title":format!("Track {video_index}"),
+                    "publishedAt":"2026-01-01T00:00:00Z","contentType":"video","viewsPublic":"1000"}));
+                let records=(0..100).map(|n|{
+                    let day=day_zero+chrono::Duration::days(n);
+                    json!({"videoId":vid,"date":day.format("%Y-%m-%d").to_string(),
+                        "views":10+n,"watchMinutes":120.0,"source":"synthetic_performance_fixture",
+                        "fetchedAt":"2026-05-01T00:00:00Z"})
+                }).collect::<Vec<_>>();
+                fs::write(gen_root.join("video-days").join(format!("{}.json",video_path_key(&vid))),
+                    serde_json::to_vec(&records).unwrap()).unwrap();
+                // Each video has a relatively large synthetic retention curve.
+                let points=(0..25).map(|x|json!([x as f64/25.0,1.0-x as f64/40.0])).collect::<Vec<_>>();
+                fs::write(gen_root.join("retention").join(format!("{}.json",video_path_key(&vid))),
+                    serde_json::to_vec(&json!({"videoId":vid,"points":points})).unwrap()).unwrap();
+            }
+            let days=(0..100).map(|n|{
+                let day=day_zero+chrono::Duration::days(n);
+                json!({"date":day.format("%Y-%m-%d").to_string(),"views":2200,
+                    "watchMinutes":12000.0,"source":"synthetic_performance_fixture"})
+            }).collect::<Vec<_>>();
+            let overview=json!({"channelId":cid,"generation":generation,
+                "summary":{"channelId":cid,"name":format!("Synthetic Channel {channel_index}")},
+                "events":[],"coverage":{"status":"AVAILABLE"},
+                "traffic":[],"audienceBreakdowns":[]});
+            for (filename,value) in [
+                ("overview.json",overview),("video-catalog.json",json!(catalog)),
+                ("channel-daily.json",json!(days)),("reach-daily.json",json!([]))
+            ]{
+                fs::write(gen_root.join(filename),serde_json::to_vec(&value).unwrap()).unwrap();
+            }
+            fs::write(cache.join("ui-current.json"),
+                serde_json::to_vec(&json!({"channelId":cid,"generation":generation})).unwrap()).unwrap();
+            let insert_start=Instant::now();
+            let result=migrate_generation(&cache,&cid).unwrap();
+            insert_ms+=insert_start.elapsed().as_millis();
+            assert_eq!(result.videos,200);
+            assert_eq!(result.video_days,20000);
+            let query_start=Instant::now();
+            let page=read_ui_snapshot(&cache,&cid,1,40,"all",None,None,None,None,Some("views"))
+                .unwrap().unwrap();
+            assert_eq!(page["videoCount"],200);
+            assert_eq!(page["videos"].as_array().unwrap().len(),40);
+            assert_eq!(page["channelDaily"].as_array().unwrap().len(),100);
+            queries_ms+=query_start.elapsed().as_millis();
+            total_db_bytes+=fs::metadata(cache.join(DB_NAME)).unwrap().len();
+            if let Ok(raw)=std::process::Command::new("ps").args([
+                "-o","rss=","-p",&std::process::id().to_string()]).output(){
+                if let Ok(value)=String::from_utf8(raw.stdout){
+                    peak_rss_kb=peak_rss_kb.max(value.trim().parse::<u64>().unwrap_or(0));
+                }
+            }
+        }
+        eprintln!("VYRON_SQLITE_SYNTHETIC_BENCH: channels=50 videos=10000 video_daily=1000000 retention_points=250000");
+        eprintln!("VYRON_SQLITE_SYNTHETIC_BENCH: migration_ms={} query_ms={} sqlite_bytes={} peak_process_rss_kb={} total_ms={}",
+            insert_ms,queries_ms,total_db_bytes,peak_rss_kb,started.elapsed().as_millis());
+        assert!(total_db_bytes>0);
+        let _=fs::remove_dir_all(root);
+    }
     #[test]fn verified_sqlite_page_matches_json_source_and_video_passport(){
         let (cache,id,_)=sample_cache();
         migrate_generation(&cache,&id).unwrap();
