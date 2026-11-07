@@ -9,6 +9,7 @@ import {calendarMetricTotal,decimateExtrema,acceptSelectedChannelResult} from '.
 import {AnalyticsPage} from './AnalyticsPage';
 import {AiAnalyticsExport} from './AiAnalyticsExport';
 import {YouTubeChannelBar} from './YouTubeChannelBar';
+import {Analytics360Fleet,type FleetReport} from './Analytics360Fleet';
 import {loadActivePublishChannel,saveActivePublishChannel,subscribeActivePublishChannel} from './publishWorkspaceState';
 import './Analytics360.css';
 
@@ -192,20 +193,9 @@ function VideoPanel({video,detail,daily,retention,reach,onClose}:{video:Video;de
   <small className="a360-footnote">Показы, CTR, точные первые 24/48 часов и подробные источники трафика каждого видео отображаются только при наличии подтверждённых отчётов. Публичный счётчик не равен просмотрам за выбранный период.</small>
  </section>;
 }
-function Fleet({channels,onChoose}:{channels:Channel[];onChoose:(channelId:string)=>void}){
- const [sort,setSort]=useState<'name'|'views'|'growth'>('name');
- const rows=useMemo(()=>[...channels].sort((a,b)=>sort==='name'?a.name.localeCompare(b.name,'ru'):sort==='views'?
-  Number(b.analytics?.views||0)-Number(a.analytics?.views||0):Number(b.analytics?.views||0)-Number(a.analytics?.views||0)),[channels,sort]);
- return <details className="panel a360-fleet"><summary>Все каналы · быстрый обзор ({channels.length})</summary>
-  <p>Локальные сохранённые снимки. Для точной межканальной аналитики используйте полную синхронизацию.</p>
-  <div className="a360-inline"><label>Сортировка <select value={sort} onChange={e=>setSort(e.target.value as typeof sort)}><option value="name">Название</option><option value="views">Просмотры в сохранённом снимке</option></select></label></div>
-  <div className="a360-table-wrap"><table><thead><tr><th>Канал</th><th>Подписчики</th><th>Просмотры*</th><th>Часы*</th><th>Видео</th><th>Обновлено</th></tr></thead><tbody>{rows.map(c=><tr key={c.id} onClick={()=>onChoose(c.id)} tabIndex={0} onKeyDown={e=>{if(e.key==='Enter')onChoose(c.id)}}><td><b>{c.name}</b></td><td>{num(c.stats?.subscriberCount??c.stats?.subscribers)}</td><td>{num(c.analytics?.views)}</td><td>{num(c.analytics?.watchMinutes==null?null:c.analytics.watchMinutes/60,1)}</td><td>{num(c.stats?.videoCount??c.stats?.videos)}</td><td>{displayDate(c.analytics?.updatedAt)}</td></tr>)}</tbody></table></div>
-  <small>* Период может различаться между каналами; такие цифры нельзя использовать для точного рейтинга без синхронизации одного периода.</small>
- </details>;
-}
 export function Analytics360Page(){
  const isMac=typeof navigator!=='undefined'&&/mac/i.test(navigator.platform||navigator.userAgent);
- const channels=useApp(s=>s.channels),setPage=useApp(s=>s.setPage);
+ const channels=useApp(s=>s.channels),jobs=useApp(s=>s.jobs),uploads=useApp(s=>s.uploadHistory);
  const [activeId,setActiveId]=useState(()=>loadActivePublishChannel()||channels[0]?.id||'');
  const [tab,setTab]=useState<Tab>('overview'),[period,setPeriod]=useState<Period>('28');
  const [startDate,setStartDate]=useState(''),[endDate,setEndDate]=useState('');
@@ -217,6 +207,9 @@ export function Analytics360Page(){
  const [videoPage,setVideoPage]=useState(0),[videoType,setVideoType]=useState('all'),[videoSort,setVideoSort]=useState('recent');
  const [videoId,setVideoId]=useState<string|null>(null);
  const [syncRevision,setSyncRevision]=useState(0);
+ const [fleetRevision,setFleetRevision]=useState(0);
+ const [fleetReports,setFleetReports]=useState<FleetReport[]>([]);
+ const [fleetLoading,setFleetLoading]=useState(false);
  const refreshToken=useRef(0);
  const active=channels.find(c=>c.id===activeId)||channels[0];
  const selectedChannelRef=useRef<string|undefined>(active?.youtubeChannelId);
@@ -230,6 +223,20 @@ export function Analytics360Page(){
   return()=>{live=false;window.removeEventListener('vyron:oauth-state-changed',reload)};
  },[]);
  function choose(id:string){if(!channels.some(c=>c.id===id))return;saveActivePublishChannel(id);setActiveId(id);setVideoPage(0);setVideoId(null)}
+ const fleetKey=channels.map(c=>c.youtubeChannelId||'').join('|');
+ useEffect(()=>{
+  if(!isMac)return;
+  const ids=[...new Set(channels.map(c=>c.youtubeChannelId).filter((x):x is string=>Boolean(x)))];
+  if(!ids.length){setFleetReports([]);setFleetLoading(false);return}
+  let mounted=true;
+  setFleetLoading(true);
+  void invoke<FleetReport[]>('analytics360_fleet',{channelIds:ids})
+    .then(rows=>{if(mounted)setFleetReports(rows)})
+    .catch(()=>{if(mounted)setFleetReports([])})
+    .finally(()=>{if(mounted)setFleetLoading(false)});
+  return()=>{mounted=false};
+ },[isMac,fleetKey,fleetRevision,syncRevision]);
+
  async function load(){
   const requestedChannel=active?.youtubeChannelId;
   if(!requestedChannel){++refreshToken.current;setSnapshot(null);setLoading(false);return}
@@ -262,6 +269,7 @@ export function Analytics360Page(){
    }});
    if(output.completed===0)throw new Error(output.errors.map(e=>e.error).join(' | ')||'Синхронизация не завершена');
    setSyncRevision(v=>v+1);
+   setFleetRevision(v=>v+1);
   }catch(e){setError(String(e))}
   finally{setSyncing(false)}
  }
@@ -308,7 +316,9 @@ export function Analytics360Page(){
    <div className="headerActions"><button disabled={refreshing||!active?.youtubeProfileId} onClick={()=>void quickRefresh()}>{refreshing?'Обновляю…':'↻ Быстрая статистика'}</button>
     <button className="primary" disabled={syncing||!eligible} onClick={()=>void syncDeep()}>{syncing?'Синхронизация…':'Собрать всю историю канала'}</button>
    </div></header>
-  <Fleet channels={channels} onChoose={choose}/>
+  <Analytics360Fleet channels={channels} profiles={profiles} jobs={jobs} uploads={uploads}
+   reports={fleetReports} loading={fleetLoading} activeId={active?.id} onChoose={choose}
+   onRefresh={()=>setFleetRevision(v=>v+1)}/>
   <AiAnalyticsExport channels={channels} profiles={profiles}/>
   <YouTubeChannelBar/>
   <div className="a360-sync"><div><strong>{active?.name||'Канал не выбран'}</strong>
