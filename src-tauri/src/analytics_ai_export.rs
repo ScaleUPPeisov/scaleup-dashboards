@@ -258,6 +258,48 @@ fn observe_metadata(cache:&Path,videos:&[Value],channel_id:&str)->Result<Vec<Val
     save_json(&cache.join("events.json"),&json!(events))?;
     Ok(events)
 }
+fn video_lifecycle(videos:&[Value],daily:&[Value],channel_id:&str)->Vec<Value>{
+    let mut by_video=HashMap::<String,HashMap<String,f64>>::new();
+    for row in daily{
+        let id=text(row.get("videoId"));
+        let day=text(row.get("date"));
+        if id.is_empty()||day.is_empty(){continue}
+        if let Some(views)=numeric(row.get("views")){
+            by_video.entry(id).or_default().insert(day,views);
+        }
+    }
+    let mut output=Vec::new();
+    for video in videos{
+        let id=text(video.get("id"));
+        let date=text(video.pointer("/snippet/publishedAt"));
+        if id.is_empty(){continue}
+        let published=date.get(..10).and_then(|s|NaiveDate::parse_from_str(s,"%Y-%m-%d").ok());
+        let lookup=by_video.get(&id);
+        let mut windows=serde_json::Map::new();
+        for period in [3i64,7,14,30,90]{
+            let mut matched=0usize;
+            let mut total=0.0;
+            if let Some(start)=published{
+                for offset in 0..period{
+                    let key=(start+Days::days(offset)).format("%Y-%m-%d").to_string();
+                    if let Some(value)=lookup.and_then(|m|m.get(&key)){
+                        total+=value;matched+=1;
+                    }
+                }
+            }
+            // Missing days are UNKNOWN, not assumed zero. UTC publish dates may
+            // cross YouTube Analytics' Pacific calendar day boundaries.
+            windows.insert(format!("days{period}"),json!({"views":if matched==period as usize{Some(total)}else{None},
+              "observedDays":matched,"requiredDays":period,"complete":matched==period as usize}));
+        }
+        output.push(json!({"channelId":channel_id,"videoId":id,"publishedAt":date,
+            "first24HoursViews":Value::Null,"ageWindowsCalendarDays":windows,
+            "publicationTimezone":"UTC","analyticsDayTimezone":"America/Los_Angeles",
+            "caveat":"Window alignment by UTC publication calendar date is approximate, not exact hours after upload",
+            "source":"derived_from_youtube_analytics_daily"}));
+    }
+    output
+}
 fn percent_change(now:f64,before:f64)->Value{if before.abs()<f64::EPSILON {Value::Null}else{json!(((now-before)/before)*100.0)}}
 fn change_findings(channel_id:&str,daily:&[Value])->Vec<Value>{
     let m:HashMap<_,_>=daily.iter().filter_map(|x|Some((x.get("date")?.as_str()?.to_string(),numeric(x.get("views"))?))).collect();
@@ -334,6 +376,7 @@ struct NetworkExport{
     channel_daily:Vec<Value>,
     videos:Vec<Value>,
     video_daily:Vec<Value>,
+    lifecycle:Vec<Value>,
     traffic:Vec<Value>,
     breakdowns:Vec<Value>,
     retention:Vec<Value>,
@@ -458,13 +501,14 @@ async fn collect_channel(app:&AppHandle,client:&reqwest::Client,choice:&AiChanne
         coverage["reach"]=collect_reporting(app,client,&token,cache).await;
     }else{coverage["reach"]=json!({"status":"skipped_by_user"});}
     let findings=change_findings(&cid,&channel_daily);
+    let lifecycle=video_lifecycle(&videos,&video_daily,&cid);
     let summary=json!({"channelId":cid,"name":text(snippet.get("title")),
        "url":format!("https://www.youtube.com/channel/{cid}"),"createdAt":created,
        "subscribers":numeric(stat.get("subscriberCount")),"totalViews":numeric(stat.get("viewCount")),
        "totalPublishedVideos":numeric(stat.get("videoCount")),"exportedVideoRecords":videos.len(),
        "periodStart":start_s,"periodEnd":end_s,"fetchedAt":fetched_at,"source":"youtube_data_api_v3",
        "analyticsAuthorized":has_analytics,"country":snippet.get("country"),"language":snippet.get("defaultLanguage")});
-    Ok(NetworkExport{summary,coverage,channel_daily,videos,video_daily,traffic,breakdowns,retention,events,findings})
+    Ok(NetworkExport{summary,coverage,channel_daily,videos,video_daily,lifecycle,traffic,breakdowns,retention,events,findings})
 }
 fn archive_files(base:&Path)->Result<Vec<PathBuf>,String>{
     fn walk(root:&Path,dir:&Path,out:&mut Vec<PathBuf>)->Result<(),String>{
@@ -540,6 +584,8 @@ pub async fn youtube_ai_export(app:AppHandle,request:AiExportRequest)->Result<Va
             "channel_id,video_id,url,title,description,published_at,duration_iso,privacy,category_id,tags,views_public,likes_public,comments_public,source,fetched_at\n")?;
         let mut video_csv=csv_file(&staging.join("VIDEOS_DAILY.csv"),
             "channel_id,video_id,date,views,watch_minutes,average_view_duration,average_view_percentage,subscribers_gained,subscribers_lost,source,fetched_at\n")?;
+        let mut lifecycle_csv=csv_file(&staging.join("VIDEO_LIFECYCLE.csv"),
+            "channel_id,video_id,published_at,first_24_hours,views_3_days,views_7_days,views_14_days,views_30_days,views_90_days,observed_days_3,observed_days_7,observed_days_14,observed_days_30,observed_days_90,alignment_caveat\n")?;
         let mut traffic_csv=csv_file(&staging.join("TRAFFIC_SOURCES.csv"),
             "channel_id,source_type,views,watch_minutes,start_date,end_date,source,fetched_at\n")?;
         let total=request.channels.len();
@@ -555,6 +601,7 @@ pub async fn youtube_ai_export(app:AppHandle,request:AiExportRequest)->Result<Va
                     save_json(&out_dir.join("videos.json"),&json!(r.videos))?;
                     save_json(&out_dir.join("channel_daily.json"),&json!(r.channel_daily))?;
                     save_json(&out_dir.join("videos_daily.json"),&json!(r.video_daily))?;
+                    save_json(&out_dir.join("video_lifecycle.json"),&json!(r.lifecycle))?;
                     save_json(&out_dir.join("traffic.json"),&json!(r.traffic))?;
                     save_json(&out_dir.join("audience_breakdowns.json"),&json!(r.breakdowns))?;
                     save_json(&out_dir.join("retention.json"),&json!(r.retention))?;
@@ -572,6 +619,21 @@ pub async fn youtube_ai_export(app:AppHandle,request:AiExportRequest)->Result<Va
                             text(v.pointer("/statistics/commentCount")),"youtube_data_api_v3".into(),Utc::now().to_rfc3339()])?;
                     }
                     for v in &r.video_daily{append_csv(&mut video_csv,&["channelId","videoId","date","views","watchMinutes","averageViewDuration","averageViewPercentage","subscribersGained","subscribersLost","source","fetchedAt"].iter().map(|k|vstr(&v[*k])).collect::<Vec<_>>())?}
+                    for v in &r.lifecycle {
+                        let fields=vec![vstr(&v["channelId"]),vstr(&v["videoId"]),vstr(&v["publishedAt"]),
+                            String::new(),vstr(&v["ageWindowsCalendarDays"]["days3"]["views"]),
+                            vstr(&v["ageWindowsCalendarDays"]["days7"]["views"]),
+                            vstr(&v["ageWindowsCalendarDays"]["days14"]["views"]),
+                            vstr(&v["ageWindowsCalendarDays"]["days30"]["views"]),
+                            vstr(&v["ageWindowsCalendarDays"]["days90"]["views"]),
+                            vstr(&v["ageWindowsCalendarDays"]["days3"]["observedDays"]),
+                            vstr(&v["ageWindowsCalendarDays"]["days7"]["observedDays"]),
+                            vstr(&v["ageWindowsCalendarDays"]["days14"]["observedDays"]),
+                            vstr(&v["ageWindowsCalendarDays"]["days30"]["observedDays"]),
+                            vstr(&v["ageWindowsCalendarDays"]["days90"]["observedDays"]),
+                            vstr(&v["caveat"])];
+                        append_csv(&mut lifecycle_csv,&fields)?;
+                    }
                     for v in &r.traffic{append_csv(&mut traffic_csv,&["channelId","sourceType","views","watchMinutes","periodStart","periodEnd","source","fetchedAt"].iter().map(|k|vstr(&v[*k])).collect::<Vec<_>>())?}
                     summary.push(r.summary);coverage.push(r.coverage);
                     all_events.extend(r.events);all_retention.extend(r.retention);all_breakdowns.extend(r.breakdowns);findings.extend(r.findings);
@@ -584,7 +646,7 @@ pub async fn youtube_ai_export(app:AppHandle,request:AiExportRequest)->Result<Va
                 }
             }
         }
-        drop(channel_csv);drop(videos_csv);drop(video_csv);drop(traffic_csv);
+        drop(channel_csv);drop(videos_csv);drop(video_csv);drop(lifecycle_csv);drop(traffic_csv);
         save_json(&staging.join("ALL_CHANNELS_SUMMARY.json"),&json!(summary))?;
         save_json(&staging.join("DATA_COVERAGE.json"),&json!(coverage))?;
         save_json(&staging.join("RETENTION.json"),&json!(all_retention))?;
@@ -592,9 +654,9 @@ pub async fn youtube_ai_export(app:AppHandle,request:AiExportRequest)->Result<Va
         save_json(&staging.join("CHANNEL_EVENTS.json"),&json!(all_events))?;
         save_json(&staging.join("GROWTH_AND_DECLINE.json"),&json!(findings))?;
         let success=summary.len();
-        let info=format!("# VYRON AI export\n\nЭкспорт: {}\nКаналов выбрано: {}. Успешно: {}.\n\nИсточники: YouTube Data API v3, YouTube Analytics API v2, YouTube Reporting API v1 (если отчёты доступны).\n\nДаты Analytics: по тихоокеанскому времени YouTube; дата публикации видео — UTC.\nОтсутствующие метрики представлены null/пустым полем; отсутствие строки не равно нулю.\n\nПервые 24 часа нельзя точно восстановить из дневных отчётов.\nCTR и показы поступают из Reporting API, только после генерации и в пределах его доступной истории. Сырые reach CSV размещены в папке канала/reporting.\nИстория названий/описаний/приватности фиксируется только с момента первой синхронизации VYRON. Дата фактического изменения неизвестна.\nНеизвестные причины роста никогда не считаются доказательством.\n\nCSV кодировка UTF-8, JSON и Markdown в корне. Данные каждого канала — channels/<channel_id>/.\n\nПолнота и ошибки: DATA_COVERAGE.json. Никакие OAuth токены и пароли не экспортируются.\n",Utc::now().to_rfc3339(),total,success);
+        let info=format!("# VYRON AI export\n\nЭкспорт: {}\nКаналов выбрано: {}. Успешно: {}.\n\nИсточники: YouTube Data API v3, YouTube Analytics API v2, YouTube Reporting API v1 (если отчёты доступны).\n\nДаты Analytics: по тихоокеанскому времени YouTube; дата публикации видео — UTC.\nОтсутствующие метрики представлены null/пустым полем; отсутствие строки не равно нулю.\n\nПервые 24 часа нельзя точно восстановить из дневных отчётов. VIDEO_LIFECYCLE.csv содержит приблизительные окна по календарным дням (UTC дата публикации, YouTube Analytics Pacific); при неполных днях числовое значение оставлено пустым.\nCTR и показы поступают из Reporting API, только после генерации и в пределах его доступной истории. Сырые reach CSV размещены в папке канала/reporting.\nИстория названий/описаний/приватности фиксируется только с момента первой синхронизации VYRON. Дата фактического изменения неизвестна.\nНеизвестные причины роста никогда не считаются доказательством.\n\nCSV кодировка UTF-8, JSON и Markdown в корне. Данные каждого канала — channels/<channel_id>/.\n\nПолнота и ошибки: DATA_COVERAGE.json. Никакие OAuth токены и пароли не экспортируются.\n",Utc::now().to_rfc3339(),total,success);
         write_document(&staging.join("AI_README.md"),&info)?;
-        write_document(&staging.join("AI_PROMPT.md"),"Проанализируй ВСЕ каналы VYRON по данным архива. Сначала прочитай AI_README.md и DATA_COVERAGE.json. Не трактуй пустое значение как ноль. Сравни изменения просмотров за 7/28 дней, показатели одинакового возраста роликов, watch time с учётом длительности музыкальных видео, потери подписчиков, источники трафика. Используй видео из ALL_VIDEOS.csv и VIDEOS_DAILY.csv без ограничения топ-100. Сформулируй гипотезы, не выдавай их за установленную причину, приведи даты и доказательные метрики. Раздели рекомендации на срочные действия, эксперименты и наблюдение. При недостатке данных явно напиши, что именно отсутствует.\n")?;
+        write_document(&staging.join("AI_PROMPT.md"),"Проанализируй ВСЕ каналы VYRON по данным архива. Сначала прочитай AI_README.md и DATA_COVERAGE.json. Не трактуй пустое значение как ноль. Сравни изменения просмотров за 7/28 дней, показатели одинакового возраста роликов, watch time с учётом длительности музыкальных видео, потери подписчиков, источники трафика. Используй видео из ALL_VIDEOS.csv, VIDEOS_DAILY.csv и VIDEO_LIFECYCLE.csv без ограничения топ-100. Сформулируй гипотезы, не выдавай их за установленную причину, приведи даты и доказательные метрики. Раздели рекомендации на срочные действия, эксперименты и наблюдение. При недостатке данных явно напиши, что именно отсутствует.\n")?;
         let brief=format!("# Winner Engine input\n\nУспешных каналов: {} из {}.\nПроверенные события роста и падения: {}.\n\nСначала изучи ALL_CHANNELS_SUMMARY.json, GROWTH_AND_DECLINE.json и DATA_COVERAGE.json. Для каждого сильного канала сверь возраст роликов, публикации, просмотры, удержание, источники трафика. Данные с низкой полнотой не ранжируй как слабый канал.\n",success,total,findings.len());
         write_document(&staging.join("RECOMMENDATIONS_INPUT.md"),&brief)?;
         let mut manifest=BTreeMap::new();
@@ -620,4 +682,12 @@ mod tests{
     #[test] fn ranges(){let start=NaiveDate::from_ymd_opt(2026,1,1).unwrap();let end=NaiveDate::from_ymd_opt(2026,4,1).unwrap();
         let v=window_dates(start,end,90);assert_eq!(v.len(),2);assert_eq!(v[1].1,"2026-04-01");}
     #[test] fn baseline_zero_unknown(){assert!(percent_change(12.0,0.0).is_null());}
+    #[test] fn lifecycle_missing_days_are_unknown(){
+       let videos=vec![json!({"id":"video-1","snippet":{"publishedAt":"2026-01-01T21:00:00Z"}})];
+       let rows=vec![json!({"videoId":"video-1","date":"2026-01-01","views":10})];
+       let out=video_lifecycle(&videos,&rows,"channel-1");
+       assert_eq!(out[0]["ageWindowsCalendarDays"]["days3"]["observedDays"],1);
+       assert!(out[0]["ageWindowsCalendarDays"]["days3"]["views"].is_null());
+       assert!(out[0]["first24HoursViews"].is_null());
+    }
 }
