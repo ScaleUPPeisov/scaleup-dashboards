@@ -5,6 +5,7 @@ import {useApp} from './store';
 import {api} from './api';
 import type {Channel,ChannelAnalytics,YoutubeProfile} from './types';
 import {refreshChannelAnalytics} from './youtubeIntelligence';
+import {calendarMetricTotal} from './analytics360Core';
 import {AnalyticsPage} from './AnalyticsPage';
 import {AiAnalyticsExport} from './AiAnalyticsExport';
 import {YouTubeChannelBar} from './YouTubeChannelBar';
@@ -27,7 +28,7 @@ type Finding={
 };
 type Overview={
  schemaVersion:number;updatedAt:string;
- summary:{channelId:string;name:string;createdAt?:string;subscribers?:number|null;totalViews?:number|null;totalPublishedVideos?:number|null;analyticsAuthorized?:boolean;monetary?:{estimatedRevenue?:number;rpm?:number;currency?:string}|null;videosPublishedLast28Days?:number};
+ summary:{channelId:string;name:string;createdAt?:string;subscribers?:number|null;totalViews?:number|null;totalPublishedVideos?:number|null;periodStart?:string;periodEnd?:string;analyticsAuthorized?:boolean;monetary?:{estimatedRevenue?:number;rpm?:number;currency?:string}|null;videosPublishedLast28Days?:number};
  coverage:Record<string,unknown>;
  audienceBreakdowns:Breakdown[];
  traffic:{sourceType?:string;views?:number|null;watchMinutes?:number|null}[];
@@ -71,30 +72,52 @@ function Availability({status='NOT_PROVIDED_BY_API',message}:{status?:string;mes
  return <div className="a360-unavailable"><span>{status.replaceAll('_',' ')}</span><p>{message}</p></div>;
 }
 function Graph({days,publications={},metric='views',title}:{days:Day[];publications?:Record<string,number>;metric?:'views'|'watchMinutes'|'subscribers';title:string}){
- const values=days.map(d=>metric==='subscribers'?(Number(d.subscribersGained||0)-Number(d.subscribersLost||0)):Number(d[metric]||0));
- const low=metric==='subscribers'?Math.min(0,...values):0;
- const high=Math.max(1,...values);
+ // Null is a missing measurement, never an implied zero. Break lines across missing dates.
+ const rows=useMemo(()=>[...days].sort((a,b)=>a.date.localeCompare(b.date)),[days]);
+ const valueOf=(d:Day):number|null=>{
+  if(metric==='subscribers')return typeof d.subscribersGained==='number'&&typeof d.subscribersLost==='number'
+    ?d.subscribersGained-d.subscribersLost:null;
+  const v=d[metric];return typeof v==='number'&&Number.isFinite(v)?v:null;
+ };
+ const values=rows.map(valueOf),valid=values.filter((x):x is number=>x!=null);
+ const low=metric==='subscribers'?Math.min(0,...valid):0;
+ const high=Math.max(1,...valid);
  const span=Math.max(1,high-low),width=760,height=164;
- const px=(i:number)=>days.length<2?0:i/(days.length-1)*width;
- const py=(value:number)=>height-12-((value-low)/span)*(height-28);
- const points=values.map((v,i)=>px(i).toFixed(2)+','+py(v).toFixed(2)).join(' ');
+ const startMs=rows.length?Date.parse(rows[0].date+'T00:00:00Z'):0;
+ const endMs=rows.length?Date.parse(rows[rows.length-1].date+'T00:00:00Z'):0;
+ const x=(date:string)=>endMs>startMs?(Date.parse(date+'T00:00:00Z')-startMs)/(endMs-startMs)*width:width/2;
+ const y=(value:number)=>height-12-((value-low)/span)*(height-28);
+ const segments:{date:string;v:number}[][]=[];let current:{date:string;v:number}[]=[];
+ for(let i=0;i<rows.length;i++){
+  const value=values[i],prior=i>0?Date.parse(rows[i-1].date+'T00:00:00Z'):NaN;
+  const now=Date.parse(rows[i].date+'T00:00:00Z');
+  if(value===null||(!Number.isNaN(prior)&&now-prior!==86400000)){
+   if(current.length)segments.push(current);
+   current=[];
+  }
+  if(value!==null)current.push({date:rows[i].date,v:value});
+ }
+ if(current.length)segments.push(current);
+ const missing=values.some(v=>v===null)||rows.some((d,i)=>i>0&&Date.parse(d.date+'T00:00:00Z')-Date.parse(rows[i-1].date+'T00:00:00Z')!==86400000);
  return <div className="a360-chart">
-  <div className="a360-chart-heading"><strong>{title}</strong><small>{days.length?days[0].date+' — '+days[days.length-1].date:'Нет подтверждённых дневных данных'}</small></div>
-  {days.length?<>
-   <svg role="img" aria-label={title+' по дням'} viewBox={'0 0 '+width+' '+height} preserveAspectRatio="none">
+  <div className="a360-chart-heading"><strong>{title}</strong><small>{rows.length?rows[0].date+' — '+rows[rows.length-1].date:'Нет подтверждённых дневных данных'}</small></div>
+  {valid.length?<>
+   <svg role="img" aria-label={title+' по доступным датам; пробелы означают отсутствие данных'} viewBox={'0 0 '+width+' '+height} preserveAspectRatio="none">
     <line x1={0} y1={height-12} x2={width} y2={height-12} className="a360-axis"/>
-    <polyline className="a360-trend-line" fill="none" points={points}/>
-    {days.map((d,i)=>publications[d.date]?
+    {segments.map((part,i)=>part.length>1?
+     <polyline key={i} className="a360-trend-line" fill="none" points={part.map(p=>x(p.date).toFixed(2)+','+y(p.v).toFixed(2)).join(' ')}/>:
+     <circle key={i} cx={x(part[0].date)} cy={y(part[0].v)} r={2.2} fill="#55ddfa"/>)}
+    {rows.map((d,i)=>publications[d.date]?
      <g key={d.date}>
-      <line x1={px(i)} y1={0} x2={px(i)} y2={height-12} className="a360-published-line"/>
-      <circle cx={px(i)} cy={py(values[i])} r={3.3} className="a360-published-dot">
+      <line x1={x(d.date)} y1={0} x2={x(d.date)} y2={height-12} className="a360-published-line"/>
+      {values[i]!==null&&<circle cx={x(d.date)} cy={y(values[i]!)} r={3.3} className="a360-published-dot">
        <title>{d.date+' • Публикаций: '+publications[d.date]+' • '+title+': '+num(values[i])}</title>
-      </circle>
+      </circle>}
      </g>:null)}
-    {days.length<=120?days.map((d,i)=><circle key={i} cx={px(i)} cy={py(values[i])} r={5} fill="transparent" stroke="transparent">
+    {rows.length<=120?rows.map((d,i)=>values[i]!==null?<circle key={i} cx={x(d.date)} cy={y(values[i]!)} r={5} fill="transparent" stroke="transparent">
      <title>{d.date+': '+num(values[i])+'; публикаций '+(publications[d.date]||0)}</title>
-    </circle>):null}
-   </svg><div className="a360-graph-foot"><span>{days[0].date}</span><span>Вертикальная линия — публикация</span><span>{days[days.length-1].date}</span></div>
+    </circle>:null):null}
+   </svg><div className="a360-graph-foot"><span>{rows[0].date}</span><span>{missing?'Есть пропуски: линия прервана':'Вертикальная линия — публикация'}</span><span>{rows[rows.length-1].date}</span></div>
   </>:<Availability message="Данные за этот период ещё не получены через официальный YouTube Analytics API." status="NOT_YET_COLLECTED"/>}
  </div>;
 }
@@ -225,10 +248,18 @@ export function Analytics360Page(){
  const ov=snapshot?.status==='AVAILABLE'?snapshot.overview:undefined;
  const fallback=active?.analytics;
  const daily:Day[]=snapshot?.status==='AVAILABLE'?(snapshot.channelDaily||[]):((fallback?.periodDays===Number(period))?fallback.daily:[]);
- const views=safeSum(daily,'views'),watch=safeSum(daily,'watchMinutes'),gained=safeSum(daily,'subscribersGained'),lost=safeSum(daily,'subscribersLost');
+ const exactStart=snapshot?.periodFrom||ov?.summary?.periodStart||null;
+ const exactEnd=snapshot?.periodTo||ov?.summary?.periodEnd||null;
+ const viewsResult=calendarMetricTotal(daily,'views',exactStart,exactEnd);
+ const watchResult=calendarMetricTotal(daily,'watchMinutes',exactStart,exactEnd);
+ const gainedResult=calendarMetricTotal(daily,'subscribersGained',exactStart,exactEnd);
+ const lostResult=calendarMetricTotal(daily,'subscribersLost',exactStart,exactEnd);
+ const views=viewsResult.value,watch=watchResult.value,gained=gainedResult.value,lost=lostResult.value;
  const nowNet=gained!=null&&lost!=null?gained-lost:null;
- const currentViews=views??(fallback?.periodDays===Number(period)?fallback.views:null);
- const currentWatch=watch??(fallback?.periodDays===Number(period)?fallback.watchMinutes:null);
+ // Legacy summary is a separate official API snapshot, never mixed into an incomplete new series.
+ const eligibleFallback=snapshot?.status!=='AVAILABLE'&&fallback?.periodDays===Number(period);
+ const currentViews=views??(eligibleFallback?fallback?.views:null);
+ const currentWatch=watch??(eligibleFallback?fallback?.watchMinutes:null);
  const channelsShown=Number(ov?.videosTotal??snapshot?.videoCount??0);
  const anyVideo=Boolean(videoId&&snapshot?.videos?.some(v=>v.videoId===videoId));
  const activeVideo=snapshot?.videos?.find(v=>v.videoId===videoId)||null;
@@ -262,11 +293,11 @@ export function Analytics360Page(){
   {!loading&&snapshot?.status==='NOT_YET_COLLECTED'&&<div className="panel a360-note"><b>Полная история пока не синхронизирована</b><p>Нажмите «Собрать всю историю канала». Данные сохранятся локально в отдельных файлах; OAuth не будет сброшен. Быстрая аналитика в VYRON останется доступной.</p></div>}
   {!loading&&tab==='overview'&&<>
    <div className="a360-grid four">
-    <Kpi name={'Просмотры · '+selectedPeriodText} value={num(currentViews)} detail={deltaFor(observations.find(x=>x.windowDays===28))}/>
+    <Kpi name={'Просмотры · '+selectedPeriodText} value={num(currentViews)} detail={viewsResult.status==='AVAILABLE'?(period==='28'?deltaFor(observations.find(x=>x.windowDays===28)):'Полный подтверждённый ряд'):'Данные: '+viewsResult.status}/>
     <Kpi name="Часы просмотра" value={currentWatch==null?'—':num(currentWatch/60,1)}/>
-    <Kpi name="Подписчиков получено" value={num(gained??fallback?.subscribersGained)}/>
-    <Kpi name="Чистый прирост" value={signed(nowNet??(fallback?fallback.subscribersGained-fallback.subscribersLost:null))}/>
-    <Kpi name="Потеря подписчиков" value={num(lost??fallback?.subscribersLost)}/>
+    <Kpi name="Подписчиков получено" value={num(gained??(eligibleFallback?fallback?.subscribersGained:null))}/>
+    <Kpi name="Чистый прирост" value={signed(nowNet??(eligibleFallback&&fallback?fallback.subscribersGained-fallback.subscribersLost:null))}/>
+    <Kpi name="Потеря подписчиков" value={num(lost??(eligibleFallback?fallback?.subscribersLost:null))}/>
     <Kpi name="Всего подписчиков" value={num(ov?.summary.subscribers??active?.stats?.subscriberCount??active?.stats?.subscribers)}/>
     <Kpi name="Средняя длительность" value={fallback?.periodDays===Number(period)?duration(fallback.averageViewDuration):'—'}/>
     <Kpi name="Опубликованных видео" value={num(ov?.summary.totalPublishedVideos??active?.stats?.videoCount??active?.stats?.videos)}/>
