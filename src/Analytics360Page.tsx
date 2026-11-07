@@ -19,7 +19,7 @@ type Video={
  durationIso?:string;durationSeconds?:number|null;contentType?:string;
  viewsPublic?:string|number|null;likesPublic?:string|number|null;commentsPublic?:string|number|null;privacyStatus?:string;
 };
-type Breakdown={channelId:string;dimension:string;periodStart?:string;periodEnd?:string;rows:{key?:string;views?:number|null;watchMinutes?:number|null}[]};
+type Breakdown={channelId:string;dimension:string;periodStart?:string;periodEnd?:string;rows:{key?:string;views?:number|null;watchMinutes?:number|null;viewerPercentage?:number|null}[]};
 type Finding={
  channelId:string;windowDays:number;periodEnd:string;currentViews:number;previousViews:number;
  changePercent:number|null;direction:string;source:string;status:string;note:string;
@@ -59,6 +59,7 @@ const sourceNames:Record<string,string>={
  RELATED_VIDEO:'Рекомендуемые видео',SUBSCRIBER:'Подписки',YT_SEARCH:'Поиск YouTube',
  YT_OTHER_PAGE:'Другие страницы YouTube',YT_CHANNEL:'Страницы каналов',PLAYLIST:'Плейлисты',
  EXT_URL:'Внешние сайты',NO_LINK_OTHER:'Прямые и неизвестные',
+ SHORTS:'Shorts',LIVE_STREAM:'Трансляции',VIDEO_ON_DEMAND:'Обычные видео',UNSPECIFIED:'Не определено',
  SHORTS:'Shorts',BROWSE_FEATURES:'Главная и функции выбора контента'
 };
 function safeSum(items:Day[],key:keyof Day):number|null{
@@ -111,6 +112,21 @@ function BreakdownCard({title,values,showWatch=false}:{title:string;values?:{key
     <div className="a360-bar"><i style={{width:share+'%'}}/></div>
    </div>})}</div>:<Availability message="Разбивка отсутствует в доступной статистике канала." status="NOT_YET_COLLECTED"/>}
  </section>;
+}
+const demographics:Record<string,string>={
+ age13-17:'13–17',age18-24:'18–24',age25-34:'25–34',age35-44:'35–44',
+ age45-54:'45–54',age55-64:'55–64',age65-:'65+',male:'Мужчины',female:'Женщины',
+ user_specified:'Другая категория'
+};
+function DemographicsCard({title,rows}:{title:string;rows?:{key?:string;viewerPercentage?:number|null}[]}){
+ return <section className="panel a360-panel"><h3>{title}</h3>
+  {rows?.length?<div className="a360-breakdowns">{rows.map((row,i)=>{
+   const share=row.viewerPercentage;
+   return <div key={String(row.key||'')+i} className="a360-breakdown-row"><div><b>{demographics[row.key||'']||row.key||'Неизвестно'}</b><span>{share==null?'—':num(share,1)+'%'}</span></div>
+    <div className="a360-bar"><i style={{width:Math.max(0,Math.min(100,share||0))+'%'}}/></div></div>
+  })}</div>:<Availability status="NOT_YET_COLLECTED" message="У Google ещё нет доступного отчёта по этой категории."/>}
+  <small>viewerPercentage из YouTube Analytics API. Категории относятся к доступной выборке Google, а не ко всем просмотрам.</small>
+ </section>
 }
 const parseN=(v:unknown):number|null=>v===null||v===undefined||v===''?null:Number.isFinite(Number(v))?Number(v):null;
 function VideoPanel({video,detail,daily,retention,onClose}:{video:Video;detail:any;daily:Day[];retention:any;onClose:()=>void}){
@@ -297,9 +313,11 @@ export function Analytics360Page(){
    <div className="a360-grid two"><BreakdownCard title="География · все доступные страны" values={group('country')} />
     <BreakdownCard title="Устройства · время просмотра" values={group('deviceType')} showWatch/>
     <BreakdownCard title="Время просмотра с подпиской / без подписки" values={group('subscribedStatus')} showWatch/>
-    <section className="panel a360-panel"><h3>Возраст и пол</h3><Availability message="Демографические отчёты пока не синхронизированы. Не подменяем их оценками." status="NOT_YET_COLLECTED"/></section>
+    <DemographicsCard title="Возраст зрителей" rows={group("ageGroup")}/>
+    <DemographicsCard title="Пол зрителей" rows={group("gender")}/>
     <section className="panel a360-panel"><h3>Новые, случайные, постоянные зрители</h3><Availability status="NOT_PROVIDED_BY_API" message="Внутренние сегменты YouTube Studio могут быть недоступны через официальные API."/></section>
     <section className="panel a360-panel"><h3>Когда аудитория смотрит YouTube · 7 × 24 часа</h3><Availability status="NOT_PROVIDED_BY_API" message="Достоверная тепловая карта активности аудитории не предоставлена. График просмотров собственных роликов не является заменой."/></section>
+    <BreakdownCard title="Просмотры собственного контента по форматам" values={group("creatorContentType")}/>
     <section className="panel a360-panel"><h3>Языки субтитров</h3><Availability status="NOT_YET_COLLECTED" message="Требуется подтверждённый отчёт YouTube Reporting API о субтитрах."/></section>
     <section className="panel a360-panel"><h3>Что ещё смотрит аудитория</h3><Availability status="NOT_PROVIDED_BY_API" message="Данные о других просматриваемых каналах и роликах отсутствуют в официальном наборе, доступном VYRON."/></section>
    </div>
