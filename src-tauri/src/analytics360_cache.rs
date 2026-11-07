@@ -536,6 +536,53 @@ pub(crate) fn materialized_reach_daily(cache:&Path,channel_id:&str)->Result<Vec<
     materialized_rows(cache,channel_id,Path::new("reach-daily.json"))
 }
 
+fn fleet_summaries(cache_root:&Path,channel_ids:&[String])->Vec<Value>{
+    let mut out=Vec::with_capacity(channel_ids.len());
+    let mut seen=std::collections::HashSet::new();
+    for channel_id in channel_ids{
+        if !valid_channel_id(channel_id)||!seen.insert(channel_id){
+            out.push(json!({"channelId":channel_id,"status":"INVALID_CHANNEL_ID"}));
+            continue
+        }
+        let cache=cache_root.join(channel_id);
+        if !cache.join("ui-current.json").exists(){
+            out.push(json!({"channelId":channel_id,"status":"NOT_YET_COLLECTED"}));
+            continue
+        }
+        match materialized_overview(&cache,channel_id){
+            Ok(overview)=>{
+                let rows=overview.get("growthAndDecline").and_then(Value::as_array);
+                let growth=|days:i64|{
+                    rows.and_then(|events|events.iter().find(|e|
+                        e.get("windowDays").and_then(Value::as_i64)==Some(days))).cloned()
+                };
+                out.push(json!({"channelId":channel_id,"status":"AVAILABLE",
+                    "updatedAt":overview.get("updatedAt"),
+                    "growth7":growth(7),"growth28":growth(28),
+                    "summary":overview.get("summary"),
+                    "coverage":overview.get("coverage"),
+                    "videosTotal":overview.get("videosTotal")}));
+            },
+            Err(e)=>out.push(json!({"channelId":channel_id,"status":"CACHE_READ_ERROR","error":e})),
+        }
+    }
+    out
+}
+#[tauri::command]
+pub async fn analytics360_fleet(app:AppHandle,channel_ids:Vec<String>)->Result<Vec<Value>,String>{
+    #[cfg(not(target_os="macos"))]{
+        let _=(app,channel_ids);
+        return Err("Analytics 360 Fleet доступна только на macOS".into())
+    }
+    #[cfg(target_os="macos")]{
+        if channel_ids.len()>200{return Err("Выберите не более 200 каналов".into())}
+        let root=app.path().app_data_dir().map_err(|e|e.to_string())?
+            .join("AIAnalytics").join("cache");
+        tauri::async_runtime::spawn_blocking(move||fleet_summaries(&root,&channel_ids))
+            .await.map_err(|e|format!("ANALYTICS_FLEET_TASK_FAILED: {e}"))
+    }
+}
+
 #[tauri::command]
 pub async fn analytics360_read(
     app:AppHandle,channel_id:String,page:Option<u32>,page_size:Option<u32>,period:Option<String>,
@@ -721,6 +768,20 @@ mod tests{
         assert_eq!(retained,1);
         assert_eq!(merged[1]["views"],8);
         assert_eq!(merged[0]["fetchedAt"],"old");
+    }
+    #[test]fn fleet_reads_its_own_published_cache_and_marks_missing_channel(){
+        let root=std::env::temp_dir().join(format!("vyron-fleet-analytics-{}",Uuid::new_v4()));
+        let a="UC1234567890123456789012".to_string();
+        let b="UC2222222222222222222222".to_string();
+        fs::create_dir_all(root.join(&a)).unwrap();
+        persist(&root.join(&a),&json!({"channelId":a,"name":"A"}),&json!({}),
+            &[],&[],&[],&[],&[],&[],&[],&[]).unwrap();
+        let result=fleet_summaries(&root,&[a.clone(),b.clone()]);
+        assert_eq!(result.len(),2);
+        assert_eq!(result[0]["status"],"AVAILABLE");
+        assert_eq!(result[0]["summary"]["channelId"],a);
+        assert_eq!(result[1]["status"],"NOT_YET_COLLECTED");
+        let _=fs::remove_dir_all(root);
     }
     #[test]fn incomplete_resync_retains_earlier_channel_and_video_days(){
         let temp=std::env::temp_dir().join(format!("vyron-analytics-merge-{}",Uuid::new_v4()));
