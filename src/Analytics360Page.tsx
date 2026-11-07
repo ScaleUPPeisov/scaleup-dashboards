@@ -15,6 +15,7 @@ import './Analytics360.css';
 type Tab='overview'|'content'|'audience'|'trends';
 type Period='7'|'28'|'90'|'365'|'all'|'custom';
 type Day={date:string;views?:number|null;watchMinutes?:number|null;subscribersGained?:number|null;subscribersLost?:number|null;averageViewDuration?:number|null;averageViewPercentage?:number|null;likes?:number|null;comments?:number|null;shares?:number|null};
+type ReachDay={date:string;observedImpressions:number;weightedCtrRaw:number|null;ctrScale:'UNVERIFIED';coverage:'OBSERVED_REPORT_ROWS_ONLY';source:string};
 type Video={
  videoId:string;channelId?:string;title?:string;thumbnail?:string;publishedAt?:string;
  durationIso?:string;durationSeconds?:number|null;contentType?:string;
@@ -38,7 +39,7 @@ type Overview={
 };
 type Snapshot={
  status:'AVAILABLE'|'NOT_YET_COLLECTED';updatedAt?:string;overview?:Overview;
- channelDaily?:Day[];videos?:Video[];videoCount?:number;filteredVideoCount?:number;
+ channelDaily?:Day[];channelReachDaily?:ReachDay[];videoReachDaily?:ReachDay[];videos?:Video[];videoCount?:number;filteredVideoCount?:number;
  page?:number;pageSize?:number;selectedVideo?:Video|null;videoDetail?:any;videoDaily?:Day[];retention?:any;
  period?:Period;periodFrom?:string|null;periodTo?:string|null;message?:string;
 };
@@ -154,14 +155,28 @@ function DemographicsCard({title,rows}:{title:string;rows?:{key?:string;viewerPe
   <small>viewerPercentage из YouTube Analytics API. Категории относятся к доступной выборке Google, а не ко всем просмотрам.</small>
  </section>
 }
+function reachRawWeighted(rows:ReachDay[]):number|null{
+ const valid=rows.filter(x=>Number.isFinite(x.observedImpressions)&&x.observedImpressions>=0&&
+  typeof x.weightedCtrRaw==='number'&&Number.isFinite(x.weightedCtrRaw));
+ const denominator=valid.reduce((s,x)=>s+x.observedImpressions,0);
+ return denominator>0?valid.reduce((s,x)=>s+x.observedImpressions*x.weightedCtrRaw!,0)/denominator:null;
+}
 const parseN=(v:unknown):number|null=>v===null||v===undefined||v===''?null:Number.isFinite(Number(v))?Number(v):null;
-function VideoPanel({video,detail,daily,retention,onClose}:{video:Video;detail:any;daily:Day[];retention:any;onClose:()=>void}){
+function VideoPanel({video,detail,daily,retention,reach,onClose}:{video:Video;detail:any;daily:Day[];retention:any;reach:ReachDay[];onClose:()=>void}){
  const snippet=detail?.snippet||{},stats=detail?.statistics||{},points:Array<any>=Array.isArray(retention?.points)?retention.points:[];
  const finite=points.map(x=>Array.isArray(x)?[Number(x[0]),Number(x[1])]:[]).filter(x=>x.length===2&&x.every(Number.isFinite));
  const maxRatio=Math.max(1,...finite.map(p=>p[1])),curve=finite.map(x=>(Math.min(1,Math.max(0,x[0]))*100).toFixed(2)+','+(72-Math.min(maxRatio,x[1])/maxRatio*66).toFixed(2)).join(' ');
  return <section className="panel a360-video-detail"><div className="a360-details-head"><div><small>АНАЛИТИКА ВИДЕО · {video.videoId}</small><h3>{video.title}</h3><p>{displayDate(video.publishedAt)} · {duration(video.durationSeconds)} · {video.contentType==='unknown'?'Формат не определён API':video.contentType}</p></div><button onClick={onClose}>Закрыть</button></div>
   <div className="a360-grid four"><Kpi name="Просмотры (публичный счётчик)" value={num(parseN(stats.viewCount)??parseN(video.viewsPublic))}/><Kpi name="Лайки" value={num(parseN(stats.likeCount)??parseN(video.likesPublic))}/><Kpi name="Комментарии" value={num(parseN(stats.commentCount)??parseN(video.commentsPublic))}/><Kpi name="Дней с аналитикой" value={num(daily.length)}/></div>
   <Graph days={daily} title="Просмотры видео по датам"/>
+  <section className="a360-subpanel">
+   <h4>Показы и CTR · YouTube Reporting API</h4>
+   <div className="a360-grid two">
+    <Kpi name="Наблюдаемые показы обложек" value={reach.length?num(reach.reduce((n,x)=>n+x.observedImpressions,0)):'—'} detail="Только доступные дни отчётов"/>
+    <Kpi name="CTR · исходное значение Google" value={reach.length?num(reachRawWeighted(reach),5):'—'} detail="Шкала пока не проверена; это не процент"/>
+   </div>
+   <small>Сводка охватывает только дни, для которых есть Reporting API CSV. Показатели не достраиваются за всю историю.</small>
+  </section>
   <div className="a360-grid two"><section className="a360-subpanel"><h4>Удержание аудитории</h4>
    {finite.length?<><svg viewBox="0 0 100 75" preserveAspectRatio="none" className="a360-retention-svg">
     <polyline points={curve} fill="none" stroke="#55dbff" strokeWidth={1.2}/></svg>
@@ -263,6 +278,9 @@ export function Analytics360Page(){
  const eligibleFallback=snapshot?.status!=='AVAILABLE'&&fallback?.periodDays===Number(period);
  const currentViews=views??(eligibleFallback?fallback?.views:null);
  const currentWatch=watch??(eligibleFallback?fallback?.watchMinutes:null);
+ const reachDays=snapshot?.channelReachDaily||[];
+ const reachImpressions=reachDays.length?reachDays.reduce((sum,d)=>sum+d.observedImpressions,0):null;
+ const reachCtrRaw=reachRawWeighted(reachDays);
  const channelsShown=Number(ov?.videosTotal??snapshot?.videoCount??0);
  const anyVideo=Boolean(videoId&&snapshot?.videos?.some(v=>v.videoId===videoId));
  const activeVideo=snapshot?.selectedVideo?.videoId===videoId?snapshot.selectedVideo:snapshot?.videos?.find(v=>v.videoId===videoId)||null;
@@ -318,8 +336,8 @@ export function Analytics360Page(){
   {!loading&&tab==='content'&&<>
    <div className="a360-grid four">
     <Kpi name="Просмотры" value={num(currentViews)}/>
-    <Kpi name="Показы обложек" value={fallback?.impressions!=null&&fallback.periodDays===Number(period)?num(fallback.impressions):'—'} detail="Не подменяется охватом"/>
-    <Kpi name="CTR обложек" value={fallback?.impressionCtr!=null&&fallback.periodDays===Number(period)?percent(fallback.impressionCtr):'—'} detail="Только при прямом источнике"/>
+    <Kpi name="Показы обложек · доступные отчёты" value={num(reachImpressions)} detail="Неполное покрытие Reporting API"/>
+    <Kpi name="CTR · исходное число Google" value={num(reachCtrRaw,5)} detail="Без знака % до проверки единиц"/>
     <Kpi name="Средний % просмотра" value={fallback?.averageViewPercentage!=null&&fallback.periodDays===Number(period)?percent(fallback.averageViewPercentage):'—'}/>
    </div>
    <Graph days={daily} title="Просмотры опубликованного контента" publications={featured}/>
@@ -337,7 +355,7 @@ export function Analytics360Page(){
     <button disabled={videoPage===0} onClick={()=>setVideoPage(p=>Math.max(0,p-1))}>← Назад</button>
     <button disabled={(videoPage+1)*40>=Number(snapshot?.filteredVideoCount||0)} onClick={()=>setVideoPage(p=>p+1)}>Вперёд →</button></div>
    </section>
-   {videoId&&<>{activeVideo?<VideoPanel video={activeVideo} detail={snapshot?.videoDetail} daily={snapshot?.videoDaily||[]} retention={snapshot?.retention} onClose={()=>setVideoId(null)}/>:
+   {videoId&&<>{activeVideo?<VideoPanel video={activeVideo} detail={snapshot?.videoDetail} daily={snapshot?.videoDaily||[]} retention={snapshot?.retention} reach={snapshot?.videoReachDaily||[]} onClose={()=>setVideoId(null)}/>:
     <div className="panel"><p>Не удалось прочитать сохранённые данные выбранного видео.</p><button onClick={()=>setVideoId(null)}>Закрыть</button></div>}</>}
    <div className="a360-grid two"><BreakdownCard title="Источники трафика" values={ov?.traffic?.map(t=>({key:t.sourceType,views:t.views,watchMinutes:t.watchMinutes}))}/>
    <section className="panel a360-panel"><h3>Ключевые моменты удержания</h3><Availability status="PARTIAL" message="Подробные кривые для выбранных видео доступны после включения сбора удержания. Автоматические пики и спады не имитируются без временных точек API."/></section></div>
