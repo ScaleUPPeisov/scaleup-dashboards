@@ -940,9 +940,19 @@ pub async fn youtube_ai_export(app:AppHandle,request:AiExportRequest)->Result<Va
             fs::create_dir_all(&out_dir).map_err(|e|e.to_string())?;
             match collect_channel(&app,&client,choice,&request,&channel_cache,&run,i,total).await{
                 Ok(r)=>{
-                    if let Err(e)=crate::analytics360_cache::persist(&channel_cache,
-                        &r.summary,&r.coverage,&r.channel_daily,&r.videos,&r.video_daily,
-                        &r.traffic,&r.breakdowns,&r.retention,&r.events,&r.findings){
+                    // All JSON materialization and SQLite WAL migration run on a
+                    // dedicated blocking worker, not the Tokio async executor.
+                    // Move the collected data into the worker and return it:
+                    // cloning one million rows would double memory pressure.
+                    progress(&app,&run,i,total,choice,"SQLITE","Сохранение аналитики в фоновом потоке");
+                    let saving_cache=channel_cache.clone();
+                    let (r,save_result)=tauri::async_runtime::spawn_blocking(move||{
+                        let result=crate::analytics360_cache::persist(&saving_cache,
+                            &r.summary,&r.coverage,&r.channel_daily,&r.videos,&r.video_daily,
+                            &r.traffic,&r.breakdowns,&r.retention,&r.events,&r.findings);
+                        (r,result)
+                    }).await.map_err(|e|format!("ANALYTICS_BLOCKING_WORKER_FAILED: {e}"))?;
+                    if let Err(e)=save_result{
                         coverage.push(json!({"channelId":choice.channel_id,"name":choice.name,
                             "status":"error","stage":"analytics360_cache","reason":e}));
                         progress(&app,&run,i+1,total,choice,"ERROR","Не удалось сохранить Analytics 360");
