@@ -313,6 +313,12 @@ fn import_generation(tx:&Transaction<'_>,channel:&str,generation:&str,root:&Path
         tx.execute(&format!("DELETE FROM {table} WHERE channel_id=?1"),params![channel])
             .map_err(|e|format!("SQLITE_CLEAR_{table}: {e}"))?;
     }
+    // Prepared statements persist across the entire batch transaction: no SQL
+    // parser allocation for each of 1,000,000 per-video observations.
+    let mut video_day_insert=tx.prepare_cached(
+        "INSERT INTO video_daily(channel_id,video_id,date,views,watch_minutes,observed_at,source,completeness,payload_json)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)"
+    ).map_err(|e|format!("SQLITE_PREPARE_VIDEO_DAILY: {e}"))?;
     let mut seen=HashSet::<String>::new();let mut video_rows=0usize;let mut daily_rows=0usize;
     for video in catalog{
         let id=text(video,"videoId").ok_or("SQLITE_MISSING_VIDEO_ID")?;
@@ -341,8 +347,7 @@ fn import_generation(tx:&Transaction<'_>,channel:&str,generation:&str,root:&Path
         for row in optional_arr(&root.join("video-days").join(format!("{key}.json")))?{
             if text(&row,"videoId")!=Some(id){return Err("SQLITE_VIDEO_DAILY_IDENTITY_MISMATCH".into())}
             let d=date(&row)?;
-            tx.execute("INSERT INTO video_daily(channel_id,video_id,date,views,watch_minutes,observed_at,source,completeness,payload_json)
-              VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+            video_day_insert.execute(
                 params![channel,id,d,row.get("views").and_then(Value::as_i64),
                     row.get("watchMinutes").and_then(Value::as_f64),
                     observed(&row,&stamp),source(&row,"youtube_analytics_api_v2"),
