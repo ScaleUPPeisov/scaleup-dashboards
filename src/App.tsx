@@ -127,14 +127,14 @@ function SidebarIcon({name}:{name:SidebarIconName}){
 }
 const statusLabel:Record<JobStatus,string>={NEED_IMAGE:'Нужна картинка',WAITING_MUSIC:'Ждёт музыку',READY_RENDER:'Готов к рендеру',RENDERING:'Рендерится',READY_UPLOAD:'Готов к YouTube',UPLOADING:'Загружается',SCHEDULED:'Запланирован',ERROR:'Ошибка'};
 
-export // Keep the upload ledger observer outside the root render subscription.
+// Keep the upload ledger observer outside the root render subscription.
 function PublishLedgerHydrator(){
   const booted=useApp(s=>s.booted);
   const uploadHistory=useApp(s=>s.uploadHistory);
   useEffect(()=>{if(booted)restorePublishLedgerFromUploadHistory(uploadHistory)},[booted,uploadHistory]);
   return null;
 }
-function App(){
+export function App(){
   // Scalar subscriptions prevent Publisher and unrelated settings updates
   // from re-rendering the entire App route tree.
   const booted=useApp(s=>s.booted),hydrate=useApp(s=>s.hydrate),log=useApp(s=>s.log);
