@@ -452,6 +452,14 @@ fn materialized_rows(cache:&Path,channel_id:&str,relative:&Path)->Result<Vec<Val
     if !target.exists(){return Ok(Vec::new())}
     read_json(&target)?.as_array().cloned().ok_or("ANALYTICS_MATERIALIZED_ROWS_INVALID".into())
 }
+pub(crate) fn materialized_overview(cache:&Path,channel_id:&str)->Result<Value,String>{
+    let root=previous_generation_root(cache,channel_id).ok_or("ANALYTICS_MATERIALIZED_VIEW_MISSING")?;
+    let overview=read_json(&root.join("overview.json"))?;
+    if overview.get("channelId").and_then(Value::as_str)!=Some(channel_id){
+        return Err("ANALYTICS_CHANNEL_MISMATCH".into())
+    }
+    Ok(overview)
+}
 pub(crate) fn materialized_channel_daily(cache:&Path,channel_id:&str)->Result<Vec<Value>,String>{
     materialized_rows(cache,channel_id,Path::new("channel-daily.json"))
 }
