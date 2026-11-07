@@ -208,7 +208,7 @@ fn csv_field(s:&str)->String {
     // with a spreadsheet formula prefix must remain inert. Raw metadata is
     // preserved separately in JSON for lossless machine analysis.
     let visible=s.trim_start_matches(|c:char|c.is_whitespace()||c=='\u{feff}');
-    let potentially_formula=visible.starts_with(['=','+','@']) ||
+    let potentially_formula=matches!(visible.chars().next(),Some('='|'+'|'@')) ||
         (visible.starts_with('-') && visible.parse::<f64>().is_err());
     let escaped=if potentially_formula{format!("'{s}")}else{s.to_string()};
     format!("\"{}\"",escaped.replace('"',"\"\""))
