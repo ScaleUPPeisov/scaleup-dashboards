@@ -4,7 +4,7 @@
 use chrono::{Duration as Days, NaiveDate, Utc};
 use serde_json::{json,Value};
 use sha2::{Digest,Sha256};
-use std::{collections::{BTreeMap,HashMap},fs::{self,OpenOptions},io::Write,path::{Path,PathBuf}};
+use std::{collections::{BTreeMap,HashMap},fs::{self,OpenOptions},io::Write,path::{Path,PathBuf},sync::{Arc,Mutex,OnceLock,Weak}};
 use tauri::{AppHandle,Manager};
 use uuid::Uuid;
 
@@ -252,6 +252,20 @@ fn prune_generations(cache:&Path,current:&str,channel_id:&str,minimum_age:std::t
     }
     Ok(removed)
 }
+/// Serialize writers for the same local analytics cache to prevent two
+/// concurrent syncs from racing across the JSON-pointer/SQLite-commit boundary.
+/// Independent channels retain concurrency. Weak entries prevent unbounded
+/// retention of test caches and removed channels.
+static ANALYTICS_WRITER_LOCKS:OnceLock<Mutex<HashMap<PathBuf,Weak<Mutex<()>>>>>=OnceLock::new();
+fn analytics_writer_lock(cache:&Path)->Arc<Mutex<()>>{
+    let map=ANALYTICS_WRITER_LOCKS.get_or_init(||Mutex::new(HashMap::new()));
+    let mut registry=map.lock().unwrap_or_else(|e|e.into_inner());
+    registry.retain(|_,weak|weak.strong_count()>0);
+    if let Some(lock)=registry.get(cache).and_then(Weak::upgrade){return lock}
+    let lock=Arc::new(Mutex::new(()));
+    registry.insert(cache.to_path_buf(),Arc::downgrade(&lock));
+    lock
+}
 /// Persists a complete immutable generation, then publishes ONE atomic pointer.
 /// An interrupted save leaves the previously published view intact.
 pub(crate) fn persist(
@@ -261,6 +275,8 @@ pub(crate) fn persist(
 )->Result<(),String>{
     let cid=summary.get("channelId").and_then(Value::as_str).unwrap_or("");
     if !valid_channel_id(cid){return Err("ANALYTICS_CACHE_INVALID_CHANNEL_ID".into())}
+    let writer_lock=analytics_writer_lock(cache);
+    let _writer_guard=writer_lock.lock().unwrap_or_else(|e|e.into_inner());
     let previous_root=previous_generation_root(cache,cid);
     // A corrupted generation pointer must never turn a partial sync into a fresh
     // history and silently abandon years of confirmed observations.
@@ -921,6 +937,29 @@ mod tests{
         assert_eq!(result[0]["summary"]["channelId"],a);
         assert_eq!(result[1]["status"],"NOT_YET_COLLECTED");
         let _=fs::remove_dir_all(root);
+    }
+    #[test]fn concurrent_same_channel_syncs_preserve_all_confirmed_daily_rows(){
+        let cache=std::env::temp_dir().join(format!("vyron-concurrent-cache-{}",Uuid::new_v4()));
+        fs::create_dir_all(&cache).unwrap();
+        let cid="UC1234567890123456789012";
+        let mut threads=Vec::new();
+        for index in 0..8{
+            let own=cache.clone();
+            threads.push(std::thread::spawn(move||{
+                let day=format!("2026-09-{:02}",index+1);
+                let row=json!({"date":day,"views":index+1,
+                    "source":"synthetic_concurrent_sync","fetchedAt":"2026-10-01"});
+                persist(&own,&json!({"channelId":cid}),&json!({}),&[row],
+                    &[],&[],&[],&[],&[],&[],&[]).unwrap();
+            }));
+        }
+        for thread in threads{thread.join().unwrap()}
+        let view=materialized_channel_daily(&cache,cid).unwrap();
+        assert_eq!(view.len(),8);
+        for index in 0..8{
+            assert!(view.iter().any(|v|v["views"]==index+1));
+        }
+        let _=fs::remove_dir_all(cache);
     }
     #[test]fn partial_retention_resync_appears_in_full_ai_archive(){
         let cache=std::env::temp_dir().join(format!("vyron-retention-export-{}",Uuid::new_v4()));
