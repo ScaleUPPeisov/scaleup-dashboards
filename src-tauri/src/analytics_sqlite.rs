@@ -169,6 +169,32 @@ fn prepare_db(path:&Path)->Result<Connection,String>{
     if quick!="ok"{return Err(format!("SQLITE_RECOVERY_REQUIRED: integrity check: {quick}"))}
     Ok(conn)
 }
+fn read_current_verified(cache:&Path,channel_id:&str)->Result<Option<Connection>,String>{
+    if !valid_channel(channel_id){return Err("SQLITE_INVALID_CHANNEL_ID".into())}
+    let path=cache.join(DB_NAME);
+    if !path.exists(){return Ok(None)}
+    verify_header(&path)?;
+    let pointer=obj(&cache.join("ui-current.json"))?;
+    if text(&pointer,"channelId")!=Some(channel_id){
+        return Err("SQLITE_POINTER_CHANNEL_MISMATCH".into())
+    }
+    let generation=text(&pointer,"generation").ok_or("SQLITE_POINTER_MISSING_GENERATION")?;
+    Uuid::parse_str(generation).map_err(|_|"SQLITE_POINTER_INVALID_GENERATION".to_string())?;
+    // READ_ONLY is important: ordinary UI lookups cannot create a replacement
+    // database or modify OAuth/analytics data after a storage failure.
+    let conn=Connection::open_with_flags(&path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY|OpenFlags::SQLITE_OPEN_NO_MUTEX)
+        .map_err(|e|format!("SQLITE_RECOVERY_REQUIRED: read-only open failed: {e}"))?;
+    conn.busy_timeout(Duration::from_secs(5)).map_err(|e|e.to_string())?;
+    let schema:i32=conn.query_row("PRAGMA user_version",[],|r|r.get(0))
+        .map_err(|e|format!("SQLITE_RECOVERY_REQUIRED: schema read failed: {e}"))?;
+    if schema!=SCHEMA_VERSION{return Err("SQLITE_RECOVERY_REQUIRED: unrecognized database schema".into())}
+    let exists=conn.query_row("SELECT 1 FROM analytics_migrations WHERE channel_id=?1 AND generation=?2",
+        params![channel_id,generation],|r|r.get::<_,i64>(0))
+        .optional().map_err(|e|format!("SQLITE_RECOVERY_REQUIRED: migration marker read failed: {e}"))?;
+    if exists.is_none(){return Ok(None)}
+    Ok(Some(conn))
+}
 fn canonical_source(cache:&Path,channel_id:&str)->Result<(String,PathBuf,Value,Value,Vec<Value>,Vec<Value>,Vec<Value>,String),String>{
     if !valid_channel(channel_id){return Err("SQLITE_INVALID_CHANNEL_ID".into())}
     let pointer=obj(&cache.join("ui-current.json"))?;
@@ -430,14 +456,7 @@ pub(crate) fn migrate_generation(cache:&Path,channel_id:&str)->Result<MigrationR
 /// an older SQLite generation if the JSON pointer already moved forward.
 pub(crate) fn read_channel_days(cache:&Path,channel_id:&str,start:Option<&str>,end:Option<&str>)
  ->Result<Option<Vec<Value>>,String>{
-    let path=cache.join(DB_NAME);
-    if !path.exists(){return Ok(None)}
-    let (generation,_root,_overview,_ptr,_cat,_days,_reach,digest)=canonical_source(cache,channel_id)?;
-    let conn=prepare_db(&path)?;
-    let verified:Option<String>=conn.query_row(
-        "SELECT source_digest FROM analytics_migrations WHERE channel_id=?1 AND generation=?2",
-        params![channel_id,generation],|r|r.get(0)).optional().map_err(|e|e.to_string())?;
-    if verified.as_deref()!=Some(digest.as_str()){return Ok(None)}
+    let Some(conn)=read_current_verified(cache,channel_id)? else{return Ok(None)};
     let mut stmt=conn.prepare(
         "SELECT payload_json FROM channel_daily WHERE channel_id=?1
          AND (?2 IS NULL OR date>=?2) AND (?3 IS NULL OR date<=?3) ORDER BY date")
@@ -446,11 +465,29 @@ pub(crate) fn read_channel_days(cache:&Path,channel_id:&str,start:Option<&str>,e
         .map_err(|e|e.to_string())?;
     let mut out=Vec::new();
     for row in result{
-        let json=row.map_err(|e|e.to_string())?;
-        out.push(serde_json::from_str(&json).map_err(|e|format!("SQLITE_READ_JSON: {e}"))?);
+        let value=row.map_err(|e|e.to_string())?;
+        out.push(serde_json::from_str(&value).map_err(|e|format!("SQLITE_READ_JSON: {e}"))?);
     }
     Ok(Some(out))
 }
+pub(crate) fn read_video_days(cache:&Path,channel_id:&str,video_id:&str,start:Option<&str>,end:Option<&str>)
+ ->Result<Option<Vec<Value>>,String>{
+    if !valid_video(video_id){return Err("SQLITE_INVALID_VIDEO_ID".into())}
+    let Some(conn)=read_current_verified(cache,channel_id)? else{return Ok(None)};
+    let mut stmt=conn.prepare(
+        "SELECT payload_json FROM video_daily WHERE channel_id=?1 AND video_id=?2
+         AND (?3 IS NULL OR date>=?3) AND (?4 IS NULL OR date<=?4) ORDER BY date")
+        .map_err(|e|e.to_string())?;
+    let result=stmt.query_map(params![channel_id,video_id,start,end],|r|r.get::<_,String>(0))
+        .map_err(|e|e.to_string())?;
+    let mut out=Vec::new();
+    for row in result{
+        let value=row.map_err(|e|e.to_string())?;
+        out.push(serde_json::from_str(&value).map_err(|e|format!("SQLITE_VIDEO_JSON: {e}"))?);
+    }
+    Ok(Some(out))
+}
+
 #[cfg(test)]
 mod tests{
     use super::*;
@@ -495,6 +532,8 @@ mod tests{
         assert!(cache.join("ui-current.json").exists());
         let rows=read_channel_days(&cache,&id,Some("2026-01-01"),Some("2026-01-01")).unwrap().unwrap();
         assert_eq!(rows.len(),1);assert_eq!(rows[0]["views"],12);
+        let video=read_video_days(&cache,&id,"aBc1234-X_y",Some("2026-01-01"),None).unwrap().unwrap();
+        assert_eq!(video.len(),1);assert_eq!(video[0]["views"],12);
         let _=fs::remove_dir_all(cache);
     }
     #[test]fn malformed_video_identity_rolls_back_without_erasing_json(){
