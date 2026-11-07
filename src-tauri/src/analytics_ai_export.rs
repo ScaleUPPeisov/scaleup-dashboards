@@ -215,6 +215,22 @@ async fn analytics(app:&AppHandle,client:&reqwest::Client,token:&str,cache:&Path
     }
     Ok(output)
 }
+fn local_vyron_upload_events(app:&AppHandle,channel_id:&str)->Vec<Value>{
+    // Read-only and strict whitelist. Never export local paths, OAuth or any state object.
+    let state=crate::storage::load_state(app.clone());
+    let mut events=Vec::new();
+    for record in state.get("uploadHistory").and_then(Value::as_array).into_iter().flatten(){
+        if record.get("youtubeChannelId").and_then(Value::as_str)!=Some(channel_id){continue}
+        let video_id=text(record.get("youtubeVideoId"));
+        let uploaded_at=text(record.get("uploadedAt"));
+        if video_id.is_empty()||uploaded_at.is_empty(){continue}
+        events.push(json!({"channelId":channel_id,"videoId":video_id,
+            "eventType":"vyron_upload","eventTime":uploaded_at,"timeSource":"vyron_local_upload_history",
+            "titleAtUpload":record.get("titleAtUpload"),"scheduledPublishAt":record.get("publishAt"),
+            "privacy":"not_recorded","confidence":"locally_recorded"}));
+    }
+    events
+}
 fn load_events(cache:&Path)->Vec<Value>{
     read_json(&cache.join("events.json")).and_then(|v|v.as_array().cloned()).unwrap_or_default()
 }
@@ -346,7 +362,8 @@ async fn collect_channel(app:&AppHandle,client:&reqwest::Client,choice:&AiChanne
     let fetched_at=Utc::now().to_rfc3339();
     progress(app,run,index,total,choice,"INVENTORY","Все видео и метаданные");
     let videos=fetch_inventory(app,client,&token,&playlist,&cid,cache).await?;
-    let events=observe_metadata(cache,&videos,&cid)?;
+    let mut events=observe_metadata(cache,&videos,&cid)?;
+    events.extend(local_vyron_upload_events(app,&cid));
     let ids=videos.iter().filter_map(|x|x.get("id").and_then(Value::as_str).map(str::to_string)).collect::<Vec<_>>();
     let inventory_coverage=read_json(&cache.join("inventory_coverage.json")).unwrap_or(Value::Null);
     let mut coverage=json!({"channelId":cid,"periodStart":start_s,"periodEnd":end_s,"fetchedAt":fetched_at,
