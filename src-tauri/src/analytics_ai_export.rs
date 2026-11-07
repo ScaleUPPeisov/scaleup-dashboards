@@ -333,6 +333,47 @@ fn video_lifecycle(videos:&[Value],daily:&[Value],channel_id:&str)->Vec<Value>{
     output
 }
 fn percent_change(now:f64,before:f64)->Value{if before.abs()<f64::EPSILON {Value::Null}else{json!(((now-before)/before)*100.0)}}
+fn contributions_for_window(event:&Value,video_daily:&[Value])->Vec<Value>{
+    let days=event.get("windowDays").and_then(Value::as_i64).unwrap_or(0);
+    let end=event.get("periodEnd").and_then(Value::as_str).and_then(|s|NaiveDate::parse_from_str(s,"%Y-%m-%d").ok());
+    let Some(end)=end else{return vec![]};
+    if days<1{return vec![]}
+    let current_start=end-Days::days(days-1);
+    let previous_start=current_start-Days::days(days);
+    let previous_end=current_start-Days::days(1);
+    let mut map=HashMap::<String,(f64,f64,usize,usize)>::new();
+    for point in video_daily{
+        let id=text(point.get("videoId"));
+        let date=text(point.get("date"));
+        let Some(date)=NaiveDate::parse_from_str(&date,"%Y-%m-%d").ok()else{continue};
+        let Some(views)=numeric(point.get("views"))else{continue};
+        if id.is_empty(){continue}
+        if date<previous_start||date>end{continue}
+        let row=map.entry(id).or_insert((0.0,0.0,0,0));
+        if date>=current_start{
+            row.0+=views;row.2+=1;
+        }else if date<=previous_end{
+            row.1+=views;row.3+=1;
+        }
+    }
+    let mut out=map.into_iter().map(|(id,(now,prior,observed_now,observed_prior))|{
+        let both_complete=observed_now>=days as usize&&observed_prior>=days as usize;
+        json!({"videoId":id,"currentObservedViews":now,"previousObservedViews":prior,
+            "currentObservedDays":observed_now,"previousObservedDays":observed_prior,
+            "requiredDaysPerWindow":days,
+            "confirmedDeltaViews":if both_complete{Some(now-prior)}else{None},
+            "observedSumDifference":now-prior,
+            "evidenceStatus":if both_complete{"complete"}else{"partial_missing_days"},
+            "warning":"Observed sum difference is not a confirmed total delta when some daily rows are missing."})
+    }).collect::<Vec<_>>();
+    out.sort_by(|a,b|{
+        let left=numeric(a.get("observedSumDifference")).unwrap_or(0.0).abs();
+        let right=numeric(b.get("observedSumDifference")).unwrap_or(0.0).abs();
+        right.partial_cmp(&left).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    out.truncate(25);
+    out
+}
 fn change_findings(channel_id:&str,daily:&[Value])->Vec<Value>{
     let m:HashMap<_,_>=daily.iter().filter_map(|x|Some((x.get("date")?.as_str()?.to_string(),numeric(x.get("views"))?))).collect();
     let mut findings=Vec::new();
@@ -533,7 +574,8 @@ async fn collect_channel(app:&AppHandle,client:&reqwest::Client,choice:&AiChanne
         progress(app,run,index,total,choice,"REACH","YouTube Reporting API: показы и CTR");
         coverage["reach"]=collect_reporting(app,client,&token,cache).await;
     }else{coverage["reach"]=json!({"status":"skipped_by_user"});}
-    let findings=change_findings(&cid,&channel_daily);
+    let mut findings=change_findings(&cid,&channel_daily);
+    for event in &mut findings{event["videoContributions"]=json!(contributions_for_window(event,&video_daily));}
     let lifecycle=video_lifecycle(&videos,&video_daily,&cid);
     let summary=json!({"channelId":cid,"name":text(snippet.get("title")),
        "url":format!("https://www.youtube.com/channel/{cid}"),"createdAt":created,
