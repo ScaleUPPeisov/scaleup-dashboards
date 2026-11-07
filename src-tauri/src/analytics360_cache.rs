@@ -134,11 +134,36 @@ fn merge_reach_by_video_date(prior:&[Value],latest:&[Value])->(Vec<Value>,usize)
         if NaiveDate::parse_from_str(date,"%Y-%m-%d").is_err()||!valid_video_id(video){return None}
         Some((date.into(),video.into()))
     };
+    // A newer complete Reporting file for a date replaces the entire older
+    // day, not merely the matching video IDs. Otherwise videos removed from
+    // the new daily report would remain and inflate reach totals.
+    let mut latest_date_stamp=HashMap::<String,String>::new();
+    for row in latest{
+        let Some((date,_))=key_of(row)else{continue};
+        let stamp=row.get("reportCreateTime").and_then(Value::as_str).unwrap_or("");
+        if !stamp.is_empty(){
+            latest_date_stamp.entry(date).and_modify(|old|{
+                if stamp>*old{*old=stamp.to_string();}
+            }).or_insert_with(||stamp.to_string());
+        }
+    }
     for row in prior{
-        if let Some(k)=key_of(row){prior_keys.insert(k.clone());rows.insert(k,row.clone());}
+        if let Some(k)=key_of(row){
+            let prior_stamp=row.get("reportCreateTime").and_then(Value::as_str).unwrap_or("");
+            if !prior_stamp.is_empty()&&latest_date_stamp.get(&k.0)
+                .map(|new_stamp|new_stamp.as_str()>prior_stamp).unwrap_or(false){
+                // Old raw downloaded report stays on disk for provenance.
+                continue
+            }
+            prior_keys.insert(k.clone());
+            rows.insert(k,row.clone());
+        }
     }
     for row in latest{
-        if let Some(k)=key_of(row){new_keys.insert(k.clone());rows.insert(k,row.clone());}
+        if let Some(k)=key_of(row){
+            new_keys.insert(k.clone());
+            rows.insert(k,row.clone());
+        }
     }
     let kept=prior_keys.difference(&new_keys).count();
     (rows.into_values().collect(),kept)
@@ -553,6 +578,20 @@ mod tests{
         assert!(materialized_channel_daily(&root,"UC2222222222222222222222").is_err());
         assert!(materialized_video_daily(&root,id,"../unsafe").is_err());
         let _=fs::remove_dir_all(root);
+    }
+    #[test]fn newer_daily_reporting_backfill_replaces_absent_video_rows(){
+        let old=vec![
+            json!({"date":"2026-01-01","videoId":"aBc1234-X_y","impressions":400,
+              "ctrRaw":0.04,"reportCreateTime":"2026-01-03T10:00:00Z"}),
+            json!({"date":"2026-01-01","videoId":"bbbbbbbbbbb","impressions":100,
+              "ctrRaw":0.02,"reportCreateTime":"2026-01-03T10:00:00Z"})];
+        let new=vec![json!({"date":"2026-01-01","videoId":"bbbbbbbbbbb","impressions":110,
+              "ctrRaw":0.02,"reportCreateTime":"2026-01-04T10:00:00Z"})];
+        let (merged,retained)=merge_reach_by_video_date(&old,&new);
+        assert_eq!(retained,0);
+        assert_eq!(merged.len(),1);
+        assert_eq!(merged[0]["videoId"],"bbbbbbbbbbb");
+        assert_eq!(merged[0]["impressions"],110);
     }
     #[test]fn reach_join_preserves_every_video_and_weights_impressions(){
         let prior=vec![json!({"date":"2026-01-01","videoId":"aBc1234-X_y","impressions":400,"ctrRaw":0.04})];
