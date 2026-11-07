@@ -68,6 +68,8 @@ export function AiAnalyticsExport({channels,profiles}:{channels:Channel[];profil
   }catch(e){setError(String(e));}
   finally{setRunning(false);}
  }
+ const isMac=typeof navigator!=='undefined'&&/mac/i.test(navigator.platform||navigator.userAgent);
+ if(!isMac)return null;
  return <section className="panel" style={{marginBottom:16}}>
   <div className="panelHead">
    <div><small>AI INTELLIGENCE · macOS</small><h3>Полный архив всех YouTube-каналов</h3></div>
