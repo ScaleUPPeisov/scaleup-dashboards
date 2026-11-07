@@ -610,6 +610,36 @@ pub(crate) fn materialized_video_records(cache:&Path,channel_id:&str)->Result<Ve
     }
     Ok(out)
 }
+/// AI ZIP must reflect the last atomically published MERGED retention data,
+/// not only the curves returned by the most recent partial API request.
+/// JSON generations are immutable; preserve the original curve object and
+/// provenance rather than reconstructing it from sampled SQL points.
+pub(crate) fn materialized_retention(cache:&Path,channel_id:&str)->Result<Vec<Value>,String>{
+    if !valid_channel_id(channel_id){return Err("ANALYTICS_CACHE_INVALID_CHANNEL_ID".into())}
+    let root=previous_generation_root(cache,channel_id)
+        .ok_or("ANALYTICS_MATERIALIZED_VIEW_MISSING")?;
+    let catalog=read_json(&root.join("video-catalog.json"))?;
+    let items=catalog.as_array().ok_or("ANALYTICS_CATALOG_INVALID")?;
+    let mut seen=std::collections::HashSet::<String>::new();
+    let mut curves=Vec::<Value>::new();
+    for row in items{
+        let id=row.get("videoId").and_then(Value::as_str)
+            .filter(|id|valid_video_id(id)).ok_or("ANALYTICS_CATALOG_VIDEO_ID_INVALID")?;
+        if !seen.insert(id.to_owned()){return Err("ANALYTICS_CATALOG_DUPLICATE_VIDEO_ID".into())}
+        let path=root.join("retention").join(format!("{}.json",key(id)));
+        if !path.exists(){continue}
+        let curve=read_json(&path)?;
+        if curve.get("videoId").and_then(Value::as_str)!=Some(id){
+            return Err("ANALYTICS_RETENTION_WRONG_VIDEO".into())
+        }
+        if curve.get("channelId").and_then(Value::as_str)
+            .map(|actual|actual!=channel_id).unwrap_or(false){
+            return Err("ANALYTICS_RETENTION_WRONG_CHANNEL".into())
+        }
+        curves.push(curve);
+    }
+    Ok(curves)
+}
 pub(crate) fn materialized_reach_daily(cache:&Path,channel_id:&str)->Result<Vec<Value>,String>{
     materialized_rows(cache,channel_id,Path::new("reach-daily.json"))
 }
@@ -891,6 +921,30 @@ mod tests{
         assert_eq!(result[0]["summary"]["channelId"],a);
         assert_eq!(result[1]["status"],"NOT_YET_COLLECTED");
         let _=fs::remove_dir_all(root);
+    }
+    #[test]fn partial_retention_resync_appears_in_full_ai_archive(){
+        let cache=std::env::temp_dir().join(format!("vyron-retention-export-{}",Uuid::new_v4()));
+        fs::create_dir_all(&cache).unwrap();
+        let cid="UC1234567890123456789012";
+        let first="aBc1234-X_y";
+        let second="bbbbbbbbbbb";
+        let make=|id:&str|json!({"id":id,"snippet":{"channelId":cid,
+            "publishedAt":"2025-01-01T00:00:00Z","title":"Song"}});
+        let old=json!({"channelId":cid,"videoId":first,"status":"AVAILABLE",
+            "points":[[0.0,1.0],[1.0,0.15]],"fetchedAt":"2026-10-01T00:00:00Z",
+            "source":"youtube_analytics_api_v2","curveMetadata":"KEEP"});
+        persist(&cache,&json!({"channelId":cid}),&json!({}),&[],
+            &[make(first),make(second)],&[],&[],&[],&[old.clone()],&[],&[]).unwrap();
+        let new=json!({"channelId":cid,"videoId":second,
+            "points":[[0.0,0.8],[1.0,0.2]],"fetchedAt":"2026-11-01T00:00:00Z"});
+        persist(&cache,&json!({"channelId":cid}),&json!({}),&[],
+            &[make(first),make(second)],&[],&[],&[],&[new.clone()],&[],&[]).unwrap();
+        let results=materialized_retention(&cache,cid).unwrap();
+        assert_eq!(results.len(),2);
+        assert!(results.contains(&old));
+        assert!(results.contains(&new));
+        assert_eq!(results[0]["curveMetadata"],"KEEP");
+        let _=fs::remove_dir_all(cache);
     }
     #[test]fn incomplete_resync_retains_earlier_channel_and_video_days(){
         let temp=std::env::temp_dir().join(format!("vyron-analytics-merge-{}",Uuid::new_v4()));
