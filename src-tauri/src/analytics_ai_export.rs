@@ -24,7 +24,10 @@ const MAX_NEW_ANALYTICS_QUERIES_PER_CHANNEL:usize=450;
 static ANALYTICS_NEW_REQUESTS:std::sync::atomic::AtomicUsize=std::sync::atomic::AtomicUsize::new(0);
 static ANALYTICS_QUOTA_BLOCKED:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
 fn reset_analytics_request_budget(){
+    // Different channels can belong to different Google Cloud OAuth projects.
+    // A quota failure for one must not poison all remaining channels in the fleet.
     ANALYTICS_NEW_REQUESTS.store(0,std::sync::atomic::Ordering::Release);
+    ANALYTICS_QUOTA_BLOCKED.store(false,std::sync::atomic::Ordering::Release);
 }
 fn analytics_quota_error(v:&Value,msg:&str)->bool{
     let reason=v.pointer("/error/errors/0/reason").and_then(Value::as_str).unwrap_or("").to_ascii_lowercase();
@@ -913,6 +916,13 @@ mod tests{
     #[test] fn ranges(){let start=NaiveDate::from_ymd_opt(2026,1,1).unwrap();let end=NaiveDate::from_ymd_opt(2026,4,1).unwrap();
         let v=window_dates(start,end,90);assert_eq!(v.len(),2);assert_eq!(v[1].1,"2026-04-01");}
     #[test] fn baseline_zero_unknown(){assert!(percent_change(12.0,0.0).is_null());}
+    #[test] fn quota_state_is_isolated_between_channels(){
+        ANALYTICS_NEW_REQUESTS.store(400,std::sync::atomic::Ordering::Release);
+        ANALYTICS_QUOTA_BLOCKED.store(true,std::sync::atomic::Ordering::Release);
+        reset_analytics_request_budget();
+        assert_eq!(ANALYTICS_NEW_REQUESTS.load(std::sync::atomic::Ordering::Acquire),0);
+        assert!(!ANALYTICS_QUOTA_BLOCKED.load(std::sync::atomic::Ordering::Acquire));
+    }
     #[test] fn quota_error_policy_distinguishes_permissions(){
         assert!(analytics_quota_error(&json!({"error":{"errors":[{"reason":"quotaExceeded"}]}}),"Request quota"));
         assert!(!analytics_quota_error(&json!({"error":{"errors":[{"reason":"insufficientPermissions"}]}}),"No permission"));
