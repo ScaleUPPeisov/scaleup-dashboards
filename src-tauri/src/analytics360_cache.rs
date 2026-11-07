@@ -307,6 +307,26 @@ fn load_from_disk(cache:&Path,page:u32,per_page:u32,period:&str,from:Option<&str
         "period":period,"periodFrom":start.map(|d|d.format("%Y-%m-%d").to_string()),
         "periodTo":end.map(|d|d.format("%Y-%m-%d").to_string())}))
 }
+/// Read the most recently atomically published generation for a channel.
+/// Used by AI ZIP so a partial second sync cannot silently truncate the archive.
+fn materialized_rows(cache:&Path,channel_id:&str,relative:&Path)->Result<Vec<Value>,String>{
+    if !valid_channel_id(channel_id){return Err("ANALYTICS_CACHE_INVALID_CHANNEL_ID".into())}
+    let root=previous_generation_root(cache,channel_id).ok_or("ANALYTICS_MATERIALIZED_VIEW_MISSING")?;
+    let target=root.join(relative);
+    if !target.exists(){return Ok(Vec::new())}
+    read_json(&target)?.as_array().cloned().ok_or("ANALYTICS_MATERIALIZED_ROWS_INVALID".into())
+}
+pub(crate) fn materialized_channel_daily(cache:&Path,channel_id:&str)->Result<Vec<Value>,String>{
+    materialized_rows(cache,channel_id,Path::new("channel-daily.json"))
+}
+pub(crate) fn materialized_video_daily(cache:&Path,channel_id:&str,video_id:&str)->Result<Vec<Value>,String>{
+    if !valid_video_id(video_id){return Err("ANALYTICS_INVALID_VIDEO_ID".into())}
+    materialized_rows(cache,channel_id,&Path::new("video-days").join(format!("{}.json",key(video_id))))
+}
+pub(crate) fn materialized_reach_daily(cache:&Path,channel_id:&str)->Result<Vec<Value>,String>{
+    materialized_rows(cache,channel_id,Path::new("reach-daily.json"))
+}
+
 #[tauri::command]
 pub async fn analytics360_read(
     app:AppHandle,channel_id:String,page:Option<u32>,page_size:Option<u32>,period:Option<String>,
@@ -340,6 +360,21 @@ mod tests{
         let rows=vec![json!({"date":"2026-01-03","views":5}),json!({"date":"2026-01-05","views":7})];
         let result=filter_days(&rows,NaiveDate::from_ymd_opt(2026,1,4),NaiveDate::from_ymd_opt(2026,1,5));
         assert_eq!(result.len(),1);assert_eq!(result[0]["views"],7);
+    }
+    #[test]fn materialized_history_access_is_channel_scoped(){
+        let root=std::env::temp_dir().join(format!("vyron-mat-{}",Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();let id="UC1234567890123456789012";
+        let video="aBc1234-X_y";
+        persist(&root,&json!({"channelId":id}),&json!({}),
+            &[json!({"date":"2026-01-02","views":7})],
+            &[json!({"id":video,"snippet":{"channelId":id,"publishedAt":"2026-01-02T00:00:00Z"}})],
+            &[json!({"videoId":video,"date":"2026-01-02","views":7})],
+            &[],&[],&[],&[],&[]).unwrap();
+        assert_eq!(materialized_channel_daily(&root,id).unwrap().len(),1);
+        assert_eq!(materialized_video_daily(&root,id,video).unwrap().len(),1);
+        assert!(materialized_channel_daily(&root,"UC2222222222222222222222").is_err());
+        assert!(materialized_video_daily(&root,id,"../unsafe").is_err());
+        let _=fs::remove_dir_all(root);
     }
     #[test]fn reach_join_preserves_every_video_and_weights_impressions(){
         let prior=vec![json!({"date":"2026-01-01","videoId":"aBc1234-X_y","impressions":400,"ctrRaw":0.04})];
