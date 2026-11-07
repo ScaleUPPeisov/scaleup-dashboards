@@ -97,6 +97,46 @@ fn merge_by_date(previous:&[Value],latest:&[Value])->(Vec<Value>,usize){
     let retained=prior_dates.difference(&latest_dates).count();
     (rows.into_values().collect(),retained)
 }
+fn merge_reach_by_video_date(prior:&[Value],latest:&[Value])->(Vec<Value>,usize){
+    let mut rows=BTreeMap::<(String,String),Value>::new();
+    let mut prior_keys=std::collections::HashSet::new();
+    let mut new_keys=std::collections::HashSet::new();
+    let key_of=|v:&Value|->Option<(String,String)>{
+        let date=v.get("date").and_then(Value::as_str)?;
+        let video=v.get("videoId").and_then(Value::as_str)?;
+        if NaiveDate::parse_from_str(date,"%Y-%m-%d").is_err()||!valid_video_id(video){return None}
+        Some((date.into(),video.into()))
+    };
+    for row in prior{
+        if let Some(k)=key_of(row){prior_keys.insert(k.clone());rows.insert(k,row.clone());}
+    }
+    for row in latest{
+        if let Some(k)=key_of(row){new_keys.insert(k.clone());rows.insert(k,row.clone());}
+    }
+    let kept=prior_keys.difference(&new_keys).count();
+    (rows.into_values().collect(),kept)
+}
+fn reach_aggregate(rows:&[Value],start:Option<NaiveDate>,end:Option<NaiveDate>,video_id:Option<&str>)->Vec<Value>{
+    let mut by_date=BTreeMap::<String,(u64,f64)>::new();
+    for row in rows{
+        let Some(day)=row.get("date").and_then(Value::as_str)else{continue};
+        let Some(date)=NaiveDate::parse_from_str(day,"%Y-%m-%d").ok()else{continue};
+        if start.map(|x|date<x).unwrap_or(false)||end.map(|x|date>x).unwrap_or(false){continue}
+        if video_id.map(|id|row.get("videoId").and_then(Value::as_str)!=Some(id)).unwrap_or(false){continue}
+        let Some(impressions)=row.get("impressions").and_then(Value::as_u64)else{continue};
+        let Some(ctr_raw)=row.get("ctrRaw").and_then(Value::as_f64).filter(|v|v.is_finite())else{continue};
+        let point=by_date.entry(day.to_string()).or_insert((0,0.0));
+        point.0=point.0.saturating_add(impressions);
+        point.1+=impressions as f64*ctr_raw;
+    }
+    by_date.into_iter().map(|(day,(imps,numerator))|json!({
+        "date":day,"observedImpressions":imps,
+        "weightedCtrRaw":if imps==0{None}else{Some(numerator/imps as f64)},
+        "ctrScale":"UNVERIFIED",
+        "coverage":"OBSERVED_REPORT_ROWS_ONLY",
+        "source":"youtube_reporting_api_channel_reach_basic_a1",
+    })).collect()
+}
 fn optional_prior_rows(root:Option<&Path>,folder:&str,file:&str)->Vec<Value>{
     root.and_then(|p|read_json(&p.join(folder).join(file)).ok())
         .and_then(|v|v.as_array().cloned()).unwrap_or_default()
@@ -130,6 +170,9 @@ pub(crate) fn persist(
         }
     }
     let mut preserved_video_days=0usize;
+    let reach=crate::analytics_reach::read_reach(cache,coverage,cid);
+    let previous_reach=optional_prior_rows(previous_root.as_deref(),"","reach-daily.json");
+    let (merged_reach,preserved_reach_rows)=merge_reach_by_video_date(&previous_reach,&reach.rows);
     let mut preserved_retention_curves=0usize;
     let mut catalog=Vec::with_capacity(videos.len());
     let mut known=std::collections::HashSet::new();
@@ -165,10 +208,12 @@ pub(crate) fn persist(
     let old_channel_days=optional_prior_rows(previous_root.as_deref(),"","channel-daily.json");
     let (merged_channel_days,preserved_channel_days)=merge_by_date(&old_channel_days,channel_daily);
     let mut effective_coverage=coverage.clone();
+    effective_coverage["reachIngestion"]=reach.coverage;
     effective_coverage["cacheHistoryMerge"]=json!({
         "source":"local_previously_confirmed_api_rows",
         "retainedPriorChannelDays":preserved_channel_days,
         "retainedPriorVideoDays":preserved_video_days,
+        "retainedPriorReachRows":preserved_reach_rows,
         "retainedPriorRetentionCurves":preserved_retention_curves,
         "policy":"New observations supersede prior observations on matching dates; untouched earlier confirmed dates retain original source and fetchedAt."
     });
@@ -179,6 +224,7 @@ pub(crate) fn persist(
     atomic_json(&root.join("overview.json"),&index)?;
     atomic_json(&root.join("channel-daily.json"),&json!(merged_channel_days))?;
     atomic_json(&root.join("video-catalog.json"),&json!(catalog))?;
+    atomic_json(&root.join("reach-daily.json"),&json!(merged_reach))?;
     let pointer=json!({"schemaVersion":1,"generation":generation,
        "channelId":cid,"updatedAt":Utc::now().to_rfc3339()});
     atomic_json(&cache.join("ui-current.json"),&pointer)?;
@@ -224,6 +270,11 @@ fn load_from_disk(cache:&Path,page:u32,per_page:u32,period:&str,from:Option<&str
     let days=all_days.as_array().ok_or("ANALYTICS_DAILY_INVALID")?;
     let (start,end)=period_dates(period,from,to)?;
     let current=filter_days(days,start,end);
+    let reach=read_json(&root.join("reach-daily.json")).ok()
+        .and_then(|v|v.as_array().cloned()).unwrap_or_default();
+    let channel_reach=reach_aggregate(&reach,start,end,None);
+    let selected_reach=video_id.map(|id|reach_aggregate(&reach,start,end,Some(id)))
+        .unwrap_or_default();
     let mut visible=all.iter().filter(|v|content_type.filter(|s|*s!="all").map(|wanted|
          v.get("contentType").and_then(Value::as_str)==Some(wanted)).unwrap_or(true)).collect::<Vec<_>>();
     if sort==Some("views"){
@@ -251,7 +302,7 @@ fn load_from_disk(cache:&Path,page:u32,per_page:u32,period:&str,from:Option<&str
         if let Ok(value)=read_json(&root.join("retention").join(filename)){retention=value;}
     }
     Ok(json!({"status":"AVAILABLE","schemaVersion":1,"generation":gen,"updatedAt":pointer.get("updatedAt"),
-        "overview":overview,"channelDaily":current,"videos":video_rows,"videoCount":all.len(),
+        "overview":overview,"channelDaily":current,"channelReachDaily":channel_reach,"videoReachDaily":selected_reach,"videos":video_rows,"videoCount":all.len(),
         "page":page,"pageSize":per_page,"filteredVideoCount":filtered_total,"selectedVideo":selected_video,"videoDetail":detail,"videoDaily":video_days,"retention":retention,
         "period":period,"periodFrom":start.map(|d|d.format("%Y-%m-%d").to_string()),
         "periodTo":end.map(|d|d.format("%Y-%m-%d").to_string())}))
@@ -289,6 +340,18 @@ mod tests{
         let rows=vec![json!({"date":"2026-01-03","views":5}),json!({"date":"2026-01-05","views":7})];
         let result=filter_days(&rows,NaiveDate::from_ymd_opt(2026,1,4),NaiveDate::from_ymd_opt(2026,1,5));
         assert_eq!(result.len(),1);assert_eq!(result[0]["views"],7);
+    }
+    #[test]fn reach_join_preserves_every_video_and_weights_impressions(){
+        let prior=vec![json!({"date":"2026-01-01","videoId":"aBc1234-X_y","impressions":400,"ctrRaw":0.04})];
+        let fresh=vec![json!({"date":"2026-01-01","videoId":"bbbbbbbbbbb","impressions":600,"ctrRaw":0.08})];
+        let (rows,kept)=merge_reach_by_video_date(&prior,&fresh);
+        assert_eq!(kept,1);assert_eq!(rows.len(),2);
+        let totals=reach_aggregate(&rows,None,None,None);
+        assert_eq!(totals[0]["observedImpressions"],1000);
+        assert!((totals[0]["weightedCtrRaw"].as_f64().unwrap()-0.064).abs()<0.0001);
+        assert_eq!(totals[0]["ctrScale"],"UNVERIFIED");
+        let only_one=reach_aggregate(&rows,None,None,Some("aBc1234-X_y"));
+        assert_eq!(only_one[0]["observedImpressions"],400);
     }
     #[test]fn merge_counts_only_prior_days_missing_in_latest_batch(){
         let (merged,retained)=merge_by_date(
