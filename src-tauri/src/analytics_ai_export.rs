@@ -856,10 +856,27 @@ fn verify_zip_manifest(archive:&mut ZipArchive<File>)->Result<(),String>{
         let mut item=archive.by_name(&name).map_err(|e|e.to_string())?;
         let mut sha=Sha256::new();
         let mut buf=[0u8;65536];
+        let mut tail=Vec::<u8>::new();
+        // Reject recognizable serialized OAuth/keychain secret fields.
+        // Streaming with overlap catches keys split across ZIP read blocks.
+        // Never log a matching value or archive content.
+        let forbidden:[&[u8];7]=[
+            b"\"refresh_token\"",b"\"access_token\"",b"\"client_secret\"",
+            b"\"youtubeApiKey\"",b"\"openaiApiKey\"",
+            b"\"google_email\"",b"\"authorization\""
+        ];
         loop{
             let len=item.read(&mut buf).map_err(|e|e.to_string())?;
             if len==0{break}
             sha.update(&buf[..len]);
+            let mut scan=tail;
+            scan.extend_from_slice(&buf[..len]);
+            if forbidden.iter().any(|needle|scan.windows(needle.len())
+                .any(|segment|segment.eq_ignore_ascii_case(needle))){
+                return Err("AI_ZIP_POSSIBLE_SECRET_FIELD_FOUND".into())
+            }
+            let overlap=64usize.min(scan.len());
+            tail=scan[scan.len()-overlap..].to_vec();
         }
         if hex::encode(sha.finalize())!=expected_hash.to_ascii_lowercase(){
             return Err("AI_ZIP_MANIFEST_DIGEST_MISMATCH".into())
@@ -1149,6 +1166,19 @@ mod tests{
         assert!(err.contains("AI_ZIP_MANIFEST_DIGEST_MISMATCH"),"{err}");
         assert!(!failed.exists());
         assert!(!failed.with_extension("partial").exists());
+        // A valid manifest must not override explicit OAuth/keychain secrecy.
+        let secret_path=stage.join("payload-0.json");
+        fs::write(&secret_path,b"{\"refresh_token\":\"FAKE_TEST_VALUE_NEVER_REAL\"}").unwrap();
+        let mut updated=BTreeMap::new();
+        for i in 0..13{
+            let filename=format!("payload-{i}.json");
+            updated.insert(filename.clone(),file_hash(&stage.join(&filename)).unwrap());
+        }
+        save_json(&stage.join("MANIFEST_SHA256.json"),&json!(updated)).unwrap();
+        let forbidden=root.join("sensitive.zip");
+        let err=build_zip(&stage,&forbidden).unwrap_err();
+        assert!(err.contains("AI_ZIP_POSSIBLE_SECRET_FIELD_FOUND"),"{err}");
+        assert!(!forbidden.exists());
         let _=fs::remove_dir_all(root);
     }
     #[test] fn google_reporting_download_url_must_be_https_expected_host(){
