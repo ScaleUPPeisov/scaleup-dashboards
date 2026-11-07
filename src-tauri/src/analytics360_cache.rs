@@ -185,6 +185,35 @@ fn optional_prior_rows(root:Option<&Path>,folder:&str,file:&str)->Vec<Value>{
         .and_then(|v|v.as_array().cloned()).unwrap_or_default()
 }
 
+fn prune_generations(cache:&Path,current:&str,channel_id:&str,minimum_age:std::time::Duration)->Result<usize,String>{
+    let parent=cache.join("ui-generations");
+    if !parent.is_dir(){return Ok(0)}
+    let mut known=Vec::<(PathBuf,std::time::SystemTime)>::new();
+    for entry in fs::read_dir(&parent).map_err(|e|e.to_string())?{
+        let entry=entry.map_err(|e|e.to_string())?;
+        if !entry.file_type().map_err(|e|e.to_string())?.is_dir(){continue}
+        let name=entry.file_name().to_string_lossy().to_string();
+        if !safe_generation(&name){continue}
+        let dir=entry.path();
+        let overview=match read_json(&dir.join("overview.json")){Ok(v)=>v,Err(_)=>continue};
+        if overview.get("channelId").and_then(Value::as_str)!=Some(channel_id){continue}
+        let modified=entry.metadata().and_then(|v|v.modified())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        known.push((dir,modified));
+    }
+    // Always keep at least the current + two complete prior generations,
+    // so a concurrent reader or an interrupted recovery can finish safely.
+    known.sort_by(|a,b|b.1.cmp(&a.1));
+    let now=std::time::SystemTime::now();
+    let mut removed=0usize;
+    for (i,(dir,modified)) in known.iter().enumerate(){
+        if dir.file_name().and_then(|x|x.to_str())==Some(current)||i<3{continue}
+        if now.duration_since(*modified).unwrap_or_default()<minimum_age{continue}
+        fs::remove_dir_all(dir).map_err(|e|format!("ANALYTICS_OLD_GENERATION_CLEANUP: {e}"))?;
+        removed+=1;
+    }
+    Ok(removed)
+}
 /// Persists a complete immutable generation, then publishes ONE atomic pointer.
 /// An interrupted save leaves the previously published view intact.
 pub(crate) fn persist(
@@ -195,6 +224,11 @@ pub(crate) fn persist(
     let cid=summary.get("channelId").and_then(Value::as_str).unwrap_or("");
     if !valid_channel_id(cid){return Err("ANALYTICS_CACHE_INVALID_CHANNEL_ID".into())}
     let previous_root=previous_generation_root(cache,cid);
+    // A corrupted generation pointer must never turn a partial sync into a fresh
+    // history and silently abandon years of confirmed observations.
+    if cache.join("ui-current.json").exists() && previous_root.is_none(){
+        return Err("ANALYTICS_CACHE_RECOVERY_REQUIRED: previous published generation is invalid; original cache preserved".into())
+    }
     let generation=Uuid::new_v4().to_string();
     let root=cache.join("ui-generations").join(&generation);
     for folder in ["video-details","video-days","retention"]{
@@ -327,6 +361,9 @@ pub(crate) fn persist(
     let pointer=json!({"schemaVersion":1,"generation":generation,
        "channelId":cid,"updatedAt":Utc::now().to_rfc3339()});
     atomic_json(&cache.join("ui-current.json"),&pointer)?;
+    // Pruning is best-effort and never rolls back a successfully published
+    // snapshot. Old generations under six hours are retained for active reads.
+    let _=prune_generations(cache,&generation,cid,std::time::Duration::from_secs(6*3600));
     Ok(())
 }
 fn period_dates(period:&str,from:Option<&str>,to:Option<&str>)->Result<(Option<NaiveDate>,Option<NaiveDate>),String>{
@@ -520,6 +557,38 @@ mod tests{
         assert_eq!(totals[0]["ctrScale"],"UNVERIFIED");
         let only_one=reach_aggregate(&rows,None,None,Some("aBc1234-X_y"));
         assert_eq!(only_one[0]["observedImpressions"],400);
+    }
+    #[test]fn corrupted_published_generation_cannot_be_silently_overwritten(){
+        let root=std::env::temp_dir().join(format!("vyron-corrupt-analytics-{}",Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("ui-current.json"),b"{invalid pointer").unwrap();
+        let channel="UC1234567890123456789012";
+        let error=persist(&root,&json!({"channelId":channel}),&json!({}),
+            &[],&[],&[],&[],&[],&[],&[],&[]).unwrap_err();
+        assert!(error.contains("ANALYTICS_CACHE_RECOVERY_REQUIRED"));
+        assert_eq!(fs::read(root.join("ui-current.json")).unwrap(),b"{invalid pointer");
+        let _=fs::remove_dir_all(root);
+    }
+    #[test]fn old_generations_are_pruned_but_latest_three_survive(){
+        let root=std::env::temp_dir().join(format!("vyron-prune-analytics-{}",Uuid::new_v4()));
+        fs::create_dir_all(root.join("ui-generations")).unwrap();
+        let cid="UC1234567890123456789012";
+        let mut generations=Vec::new();
+        for _ in 0..5{
+            let id=Uuid::new_v4().to_string();
+            let dir=root.join("ui-generations").join(&id);
+            fs::create_dir(&dir).unwrap();
+            atomic_json(&dir.join("overview.json"),&json!({"channelId":cid})).unwrap();
+            generations.push(id);
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        let last=generations.last().unwrap();
+        let removed=prune_generations(&root,last,cid,std::time::Duration::ZERO).unwrap();
+        assert_eq!(removed,2);
+        assert!(root.join("ui-generations").join(last).exists());
+        let survivors=fs::read_dir(root.join("ui-generations")).unwrap().count();
+        assert_eq!(survivors,3);
+        let _=fs::remove_dir_all(root);
     }
     #[test]fn event_history_retained_and_deduplicated_across_resyncs(){
         let root=std::env::temp_dir().join(format!("vyron-event-history-{}",Uuid::new_v4()));
