@@ -794,18 +794,21 @@ mod tests{
     }
     #[test]fn compact_fleet_cache_does_not_include_full_events_or_per_video_history(){
         let root=std::env::temp_dir().join(format!("vyron-fleet-small-{}",Uuid::new_v4()));
-        fs::create_dir_all(&root).unwrap();
         let cid="UC1234567890123456789012";
+        let cache=root.join(cid);
+        fs::create_dir_all(&cache).unwrap();
         let event=json!({"eventType":"video_title_changed","oldValue":"VERY_LONG_TEXT","videoId":"aBc1234-X_y"});
-        persist(&root,&json!({"channelId":cid,"name":"Music"}),&json!({}),&[],
+        persist(&cache,&json!({"channelId":cid,"name":"Music"}),&json!({}),&[],
             &[],&[],&[],&[],&[],&[event],&[]).unwrap();
-        let pointer=read_json(&root.join("ui-current.json")).unwrap();
+        let pointer=read_json(&cache.join("ui-current.json")).unwrap();
         let gen=pointer["generation"].as_str().unwrap();
-        let compact=fs::read_to_string(root.join("ui-generations").join(gen).join("fleet-summary.json")).unwrap();
+        let compact=fs::read_to_string(cache.join("ui-generations").join(gen).join("fleet-summary.json")).unwrap();
         assert!(!compact.contains("VERY_LONG_TEXT"));
         assert!(!compact.contains("video-days"));
-        let rows=fleet_summaries(root.parent().unwrap(),&[]);
-        assert!(rows.is_empty());
+        let rows=fleet_summaries(&root,&[cid.to_string()]);
+        assert_eq!(rows.len(),1);
+        assert_eq!(rows[0]["status"],"AVAILABLE");
+        assert_eq!(rows[0]["summary"]["name"],"Music");
         let _=fs::remove_dir_all(root);
     }
     #[test]fn fleet_reads_its_own_published_cache_and_marks_missing_channel(){
