@@ -56,6 +56,23 @@ jobs:
           cargo test --locked --lib analytics_reach -- --nocapture
           cargo test --locked --lib v213_storage_tests -- --nocapture
           cargo check --locked
+  sqlite-million-row-benchmark:
+    if: contains(github.event.pull_request.body, '[run-sqlite-stress]')
+    runs-on: macos-15
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'src-tauri -> target'
+      - name: 50 channels, 10k videos, 1m day rows, 250k retention points (isolated fixture)
+        working-directory: src-tauri
+        run: |
+          cargo test --locked --lib analytics_sqlite::tests::stress_fleet_50_10k_1m -- --ignored --nocapture
+
   historical-vitest-audit:
     runs-on: ubuntu-latest
     timeout-minutes: 20
