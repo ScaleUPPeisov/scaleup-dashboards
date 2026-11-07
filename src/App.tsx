@@ -10,6 +10,7 @@ import type { AutopilotSummary, Channel, Competitor, InboxScan, JobStatus, Licen
 import { bufferDays,deficit,formatNumber,priorityFor,requiredVideos } from './core';
 import { ExistingVideos } from './ExistingVideos';
 import { AnalyticsPage } from './AnalyticsPage';
+import { Analytics360Page } from './Analytics360Page';
 import { MetadataPage } from './MetadataPage';
 import { CompetitorsPage } from './CompetitorsPage';
 import { AccountsPage } from './AccountsPage';
@@ -268,7 +269,7 @@ function PageRouter({license}:{license:LicenseStatus}){
     :canonical==='production'||canonical==='content'?<ProductionOS/>
     :canonical==='inventory'?<LiveContentInventory/>
     :canonical==='competitors'?<CompetitorsPage/>
-    :canonical==='analytics'?<AnalyticsPage/>
+    :canonical==='analytics'?((typeof navigator!=='undefined'&&/mac/i.test(navigator.platform||navigator.userAgent))?<Analytics360Page/>:<AnalyticsPage/>)
     :canonical==='accounts'||canonical==='settings'?<SettingsOS license={license}/>
     :null;
 
