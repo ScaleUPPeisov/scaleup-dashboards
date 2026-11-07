@@ -827,6 +827,46 @@ fn archive_files(base:&Path)->Result<Vec<PathBuf>,String>{
     }
     let mut files=Vec::new();walk(base,base,&mut files)?;files.sort();Ok(files)
 }
+/// Verify archive bytes against the staged SHA256 manifest in addition to CRC.
+/// This is performed BEFORE publishing the ZIP to the user's chosen folder.
+/// It never needs network access or reads any OAuth credential store.
+fn verify_zip_manifest(archive:&mut ZipArchive<File>)->Result<(),String>{
+    let expected:BTreeMap<String,String>={
+        let mut item=archive.by_name("MANIFEST_SHA256.json")
+            .map_err(|e|format!("AI_ZIP_MANIFEST_MISSING: {e}"))?;
+        serde_json::from_reader(&mut item)
+            .map_err(|e|format!("AI_ZIP_MANIFEST_INVALID: {e}"))?
+    };
+    let mut actual=HashSet::<String>::new();
+    for i in 0..archive.len(){
+        let entry=archive.by_index(i).map_err(|e|e.to_string())?;
+        let name=entry.name().to_string();
+        if name.starts_with('/')||name.split('/').any(|part|part==".."||part.is_empty()){
+            return Err("AI_ZIP_UNSAFE_ENTRY_PATH".into())
+        }
+        if !actual.insert(name){return Err("AI_ZIP_DUPLICATE_ENTRY".into())}
+    }
+    let mut expected_files=expected.keys().cloned().collect::<HashSet<_>>();
+    expected_files.insert("MANIFEST_SHA256.json".to_string());
+    if actual!=expected_files{return Err("AI_ZIP_MANIFEST_FILESET_MISMATCH".into())}
+    for (name,expected_hash) in expected{
+        if expected_hash.len()!=64||!expected_hash.bytes().all(|b|b.is_ascii_hexdigit()){
+            return Err("AI_ZIP_MANIFEST_INVALID_DIGEST".into())
+        }
+        let mut item=archive.by_name(&name).map_err(|e|e.to_string())?;
+        let mut sha=Sha256::new();
+        let mut buf=[0u8;65536];
+        loop{
+            let len=item.read(&mut buf).map_err(|e|e.to_string())?;
+            if len==0{break}
+            sha.update(&buf[..len]);
+        }
+        if hex::encode(sha.finalize())!=expected_hash.to_ascii_lowercase(){
+            return Err("AI_ZIP_MANIFEST_DIGEST_MISMATCH".into())
+        }
+    }
+    Ok(())
+}
 fn build_zip(staging:&Path,output:&Path)->Result<(),String>{
     let tmp=output.with_extension("partial");
     let result=(||->Result<(),String>{
@@ -848,6 +888,10 @@ fn build_zip(staging:&Path,output:&Path)->Result<(),String>{
             let mut part=archive.by_index(i).map_err(|e|e.to_string())?;
             io::copy(&mut part,&mut io::sink()).map_err(|e|e.to_string())?;
         }
+        // CRC success alone does not prove the archive matches exported data.
+        // Fail closed on any manifest entry omission or byte-level mismatch.
+        verify_zip_manifest(&mut archive)?;
+        drop(archive);
         fs::rename(&tmp,output).map_err(|e|e.to_string())?;
         Ok(())
     })();
@@ -1083,6 +1127,30 @@ pub async fn youtube_ai_export(app:AppHandle,request:AiExportRequest)->Result<Va
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test] fn ai_zip_sha256_integrity_checked_before_publishing(){
+        let root=std::env::temp_dir().join(format!("vyron-sha-manifest-{}",Uuid::new_v4()));
+        let stage=root.join("stage");fs::create_dir_all(&stage).unwrap();
+        let mut manifest=BTreeMap::<String,String>::new();
+        for i in 0..13{
+            let name=format!("payload-{i}.json");
+            let path=stage.join(&name);
+            fs::write(&path,format!(r#"{{"id":{i},"status":"observed"}}"#)).unwrap();
+            manifest.insert(name,file_hash(&path).unwrap());
+        }
+        save_json(&stage.join("MANIFEST_SHA256.json"),&json!(manifest)).unwrap();
+        let archive=root.join("valid.zip");
+        build_zip(&stage,&archive).unwrap();
+        assert!(archive.exists());
+        // Replacing a staged CSV/JSON after computing the manifest must FAIL,
+        // rather than publishing a plausible but internally inconsistent ZIP.
+        fs::write(stage.join("payload-0.json"),b"{\"id\":999}").unwrap();
+        let failed=root.join("invalid.zip");
+        let err=build_zip(&stage,&failed).unwrap_err();
+        assert!(err.contains("AI_ZIP_MANIFEST_DIGEST_MISMATCH"),"{err}");
+        assert!(!failed.exists());
+        assert!(!failed.with_extension("partial").exists());
+        let _=fs::remove_dir_all(root);
+    }
     #[test] fn google_reporting_download_url_must_be_https_expected_host(){
         assert!(trusted_reporting_download("https://youtubereporting.googleapis.com/v1/media/abc?alt=media"));
         assert!(!trusted_reporting_download("http://youtubereporting.googleapis.com/v1/media/abc"));
