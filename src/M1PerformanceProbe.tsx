@@ -179,11 +179,13 @@ export function M1PerformanceProbe(){
           long50:Math.max(...rounds.map(x=>x.long50)),
           long100:Math.max(...rounds.map(x=>x.long100)),
         };
-        const target={fps:60,p50:16.7,p95:20,p99:33,dropped:2,long50:0};
-        const pass=aggregate.fps>=57&&aggregate.p50<=17.5&&aggregate.p95<=20.5&&aggregate.p99<=33.5&&aggregate.dropped<2&&aggregate.long50===0;
+        const target={fps:59,p50:16.7,p95:20,p99:33,dropped:1,long50:0};
+        const pass=aggregate.fps>=59&&aggregate.p50<=17.5&&aggregate.p95<=20.5&&aggregate.p99<=33.5&&aggregate.dropped<1&&aggregate.long50===0;
+        const currentVersion=await api.appVersion().catch(()=>'unknown');
         await api.performanceProbeCleanup();
         await api.performanceProbeReport({
-          schemaVersion:1,version:'6.1.0',at:new Date().toISOString(),pass,target,aggregate,rounds,
+          schemaVersion:2,version:currentVersion,at:new Date().toISOString(),pass,target,aggregate,rounds,
+          measurementContext:'Physical foreground WKWebView observed frames; GitHub Actions results must not be described as physical MacBook Air M1 performance.',
           dataset:{channels:35,jobs:1000,metadataRecords:5000,assignedJobs,assignmentMs,navigationSwitchesPerRound:30,rounds:3},
           routeTimings:Object.fromEntries([...routeTimings.entries()].map(([page,samples])=>[page,{samples:samples.length,median:median(samples),p95:[...samples].sort((a,b)=>a-b)[Math.min(samples.length-1,Math.floor((samples.length-1)*.95))],worst:Math.max(...samples)}])),
           scenarioTimings:Object.fromEntries([...scenarioTimings.entries()].map(([label,samples])=>[label,{samples:samples.length,median:median(samples),p95:[...samples].sort((a,b)=>a-b)[Math.min(samples.length-1,Math.floor((samples.length-1)*.95))],worst:Math.max(...samples),values:samples}])),
@@ -192,7 +194,7 @@ export function M1PerformanceProbe(){
           scenarios:['Главная→Каналы→Производство→YouTube→Аналитика→Настройки × 30','Production Materials/Builder','YouTube Metadata + 5000-record queue','modal open/close','long scroll']
         });
       }catch(error){
-        if(await api.performanceProbeEnabled().catch(()=>false))await api.performanceProbeReport({schemaVersion:1,version:'6.1.0',pass:false,error:String(error),at:new Date().toISOString()}).catch(()=>undefined);
+        if(await api.performanceProbeEnabled().catch(()=>false))await api.performanceProbeReport({schemaVersion:2,version:await api.appVersion().catch(()=>'unknown'),pass:false,error:String(error),at:new Date().toISOString()}).catch(()=>undefined);
       }finally{
         if(originalState)useApp.setState(originalState);
         if(probeMode){
