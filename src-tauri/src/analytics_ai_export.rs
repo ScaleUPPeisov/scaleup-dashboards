@@ -20,6 +20,25 @@ const ANALYTICS_API: &str = "https://youtubeanalytics.googleapis.com/v2/reports"
 const REPORTING_API: &str = "https://youtubereporting.googleapis.com/v1";
 
 
+const MAX_NEW_ANALYTICS_QUERIES_PER_CHANNEL:usize=450;
+static ANALYTICS_NEW_REQUESTS:std::sync::atomic::AtomicUsize=std::sync::atomic::AtomicUsize::new(0);
+static ANALYTICS_QUOTA_BLOCKED:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
+fn reset_analytics_request_budget(){
+    ANALYTICS_NEW_REQUESTS.store(0,std::sync::atomic::Ordering::Release);
+}
+fn analytics_quota_error(v:&Value,msg:&str)->bool{
+    let reason=v.pointer("/error/errors/0/reason").and_then(Value::as_str).unwrap_or("").to_ascii_lowercase();
+    let message=msg.to_ascii_lowercase();
+    reason.contains("quota")||reason.contains("dailylimit")||
+        message.contains("quota exceeded")||message.contains("quotaexceeded")||
+        message.contains("exceeded your quota")||message.contains("daily limit")
+}
+fn analytics_query_budget_available()->bool{
+    ANALYTICS_NEW_REQUESTS.fetch_update(std::sync::atomic::Ordering::AcqRel,
+       std::sync::atomic::Ordering::Acquire,
+       |current|(current<MAX_NEW_ANALYTICS_QUERIES_PER_CHANNEL).then_some(current+1)).is_ok()
+}
+
 static AI_EXPORT_BUSY:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
 struct AiRunGuard;
 impl Drop for AiRunGuard {
@@ -110,8 +129,9 @@ async fn get_json(app:&AppHandle,client:&reqwest::Client,token:&str,url:&str,par
                 if status.is_success(){return Ok(body)}
                 let msg=reported_error(&body,status);
                 let low=msg.to_lowercase();
-                if status.as_u16()==403 && (low.contains("quotaexceeded")||low.contains("dailylimit")){
-                    return Err(format!("{method}: {msg}"));
+                if status.as_u16()==403 && analytics_quota_error(&body,&msg){
+                    ANALYTICS_QUOTA_BLOCKED.store(true,std::sync::atomic::Ordering::Release);
+                    return Err(format!("ANALYTICS_API_QUOTA_EXHAUSTED: {method}: {msg}"));
                 }
                 if (status.as_u16()==429||status.is_server_error()||low.contains("ratelimit")) && attempt<2 {
                     tokio::time::sleep(Duration::from_millis(900*(attempt+1) as u64)).await;
@@ -137,7 +157,20 @@ async fn post_json(app:&AppHandle,client:&reqwest::Client,token:&str,url:&str,bo
 async fn cached_query(app:&AppHandle,client:&reqwest::Client,token:&str,cache:&Path,url:&str,params:&[(&str,String)],name:&str,range_end:&str)->Result<Value,String>{
     let key=compact_hash(&format!("{url}?{:?}",params));
     let path=cache.join(format!("{}-{}.json",name,key));
-    if is_stable_cache(&path,range_end){if let Some(value)=read_json(&path){return Ok(value)}}
+    // Immutable historical windows can be reused; recent windows remain fresh for
+    // six hours. A new full-inventory enumeration is always performed separately.
+    let ttl_ok=fs::metadata(&path).ok().and_then(|m|m.modified().ok())
+        .and_then(|when|when.elapsed().ok())
+        .map(|age|age<Duration::from_secs(6*60*60)).unwrap_or(false);
+    if is_stable_cache(&path,range_end)||ttl_ok {
+        if let Some(value)=read_json(&path){return Ok(value)}
+    }
+    if ANALYTICS_QUOTA_BLOCKED.load(std::sync::atomic::Ordering::Acquire){
+        return Err("ANALYTICS_API_QUOTA_EXHAUSTED: no more API requests this run".into())
+    }
+    if url==ANALYTICS_API&&!analytics_query_budget_available(){
+        return Err(format!("ANALYTICS_QUERY_BUDGET_REACHED: limit {} new requests per channel; repeat sync resumes using successful cached windows",MAX_NEW_ANALYTICS_QUERIES_PER_CHANNEL))
+    }
     let fresh=get_json(app,client,token,url,params,name).await?;
     save_json(&path,&fresh)?;
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -471,6 +504,7 @@ struct NetworkExport{
 }
 async fn collect_channel(app:&AppHandle,client:&reqwest::Client,choice:&AiChannelChoice,request:&AiExportRequest,cache:&Path,
     run:&str,index:usize,total:usize)->Result<NetworkExport,String>{
+    reset_analytics_request_budget();
     progress(app,run,index,total,choice,"OAuth","Проверка токена и владельца");
     let (token,scopes)=youtube::access_token_and_scopes(app,&choice.profile_id).await?;
     let has_analytics=scopes.iter().any(|x|x.ends_with("/yt-analytics.readonly")||x.ends_with("/yt-analytics-monetary.readonly"));
@@ -543,7 +577,7 @@ async fn collect_channel(app:&AppHandle,client:&reqwest::Client,choice:&AiChanne
         for error in failures{coverage["errors"].as_array_mut().unwrap().push(json!({"stage":"channelDaily","message":error}));}
         progress(app,run,index,total,choice,"VIDEO_DAILY", &format!("Все видео: {}",ids.len()));
         let mut successes=0usize;let mut failures=0usize;
-        for (a,b) in window_dates(start,end,60) {
+        'video_windows: for (a,b) in window_dates(start,end,60) {
             for ids_chunk in ids.chunks(25) {
                 let filter=format!("video=={}",ids_chunk.join(","));
                 match analytics(app,client,&token,cache,&a,&b,
@@ -557,7 +591,7 @@ async fn collect_channel(app:&AppHandle,client:&reqwest::Client,choice:&AiChanne
                             "likes":numeric(r.get(8)),"comments":numeric(r.get(9)),"shares":numeric(r.get(10)),
                             "source":"youtube_analytics_api_v2","fetchedAt":fetched_at}));
                     }},
-                    Err(e)=>{failures+=1;if failures<=15{coverage["errors"].as_array_mut().unwrap().push(json!({"stage":"videoDaily","range":[a,b],"message":e}));}},
+                    Err(e)=>{let terminal=e.contains("ANALYTICS_QUERY_BUDGET_REACHED")||e.contains("ANALYTICS_API_QUOTA_EXHAUSTED");failures+=1;if failures<=15{coverage["errors"].as_array_mut().unwrap().push(json!({"stage":"videoDaily","range":[a,b],"message":e}));}if terminal{break 'video_windows}},
                 }
                 if failures>0 && successes==0{break}
             }
@@ -741,6 +775,7 @@ fn file_hash(path:&Path)->Result<String,String>{
 #[tauri::command]
 pub async fn youtube_ai_export(app:AppHandle,request:AiExportRequest)->Result<Value,String>{
     let _run_guard=acquire_ai_run()?;
+    ANALYTICS_QUOTA_BLOCKED.store(false,std::sync::atomic::Ordering::Release);
     #[cfg(not(target_os="macos"))]
     {let _=(app,request);return Err("Экспорт для ИИ доступен только в VYRON Mac".into());}
     #[cfg(target_os="macos")]
@@ -878,6 +913,11 @@ mod tests{
     #[test] fn ranges(){let start=NaiveDate::from_ymd_opt(2026,1,1).unwrap();let end=NaiveDate::from_ymd_opt(2026,4,1).unwrap();
         let v=window_dates(start,end,90);assert_eq!(v.len(),2);assert_eq!(v[1].1,"2026-04-01");}
     #[test] fn baseline_zero_unknown(){assert!(percent_change(12.0,0.0).is_null());}
+    #[test] fn quota_error_policy_distinguishes_permissions(){
+        assert!(analytics_quota_error(&json!({"error":{"errors":[{"reason":"quotaExceeded"}]}}),"Request quota"));
+        assert!(!analytics_quota_error(&json!({"error":{"errors":[{"reason":"insufficientPermissions"}]}}),"No permission"));
+    }
+
     #[test] fn channel_id_cannot_escape_cache_directory(){
        assert!(is_safe_channel_id("UC1234567890123456789012"));
        assert!(!is_safe_channel_id("UC../../../secrets"));
@@ -903,6 +943,7 @@ pub async fn youtube_ai_sync(app:AppHandle,request:AiExportRequest)->Result<Valu
     #[cfg(target_os="macos")]
     {
         let _run_guard=acquire_ai_run()?;
+    ANALYTICS_QUOTA_BLOCKED.store(false,std::sync::atomic::Ordering::Release);
         if request.channels.is_empty()||request.channels.len()>100{
             return Err("Выберите от 1 до 100 каналов".into())
         }
