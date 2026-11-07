@@ -582,7 +582,6 @@ struct NetworkExport{
     channel_daily:Vec<Value>,
     videos:Vec<Value>,
     video_daily:Vec<Value>,
-    lifecycle:Vec<Value>,
     traffic:Vec<Value>,
     breakdowns:Vec<Value>,
     retention:Vec<Value>,
@@ -756,7 +755,6 @@ async fn collect_channel(app:&AppHandle,client:&reqwest::Client,choice:&AiChanne
     }else{coverage["reach"]=json!({"status":"skipped_by_user"});}
     let mut findings=change_findings(&cid,&channel_daily);
     for event in &mut findings{event["videoContributions"]=json!(contributions_for_window(event,&video_daily));}
-    let lifecycle=video_lifecycle(&videos,&video_daily,&cid);
     let recent_begin=end-Days::days(27);
     let new_videos=videos.iter().filter(|v|v.pointer("/snippet/publishedAt").and_then(Value::as_str)
         .and_then(|s|s.get(..10)).and_then(|s|NaiveDate::parse_from_str(s,"%Y-%m-%d").ok())
@@ -769,7 +767,7 @@ async fn collect_channel(app:&AppHandle,client:&reqwest::Client,choice:&AiChanne
        "analyticsAuthorized":has_analytics,"monetaryAuthorized":has_monetary,"monetary":monetary,
        "country":snippet.get("country"),"language":snippet.get("defaultLanguage"),
        "vyronClassification":local_vyron_channel_labels(app,&cid)});
-    Ok(NetworkExport{summary,coverage,channel_daily,videos,video_daily,lifecycle,traffic,breakdowns,retention,events,findings})
+    Ok(NetworkExport{summary,coverage,channel_daily,videos,video_daily,traffic,breakdowns,retention,events,findings})
 }
 fn winner_engine(summaries:&[Value],findings:&[Value])->Value{
     let mut ranking=Vec::<Value>::new();
