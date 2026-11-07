@@ -17,6 +17,7 @@ on:
       - 'src-tauri/src/analytics_ai_export.rs'
       - 'src-tauri/src/analytics360_cache.rs'
       - 'src-tauri/src/analytics_reach.rs'
+      - 'src-tauri/src/analytics_sqlite.rs'
       - 'src-tauri/src/storage.rs'
       - 'src-tauri/src/lib.rs'
       - 'src-tauri/Cargo.toml'
@@ -51,6 +52,7 @@ jobs:
         run: |
           cargo test --locked --lib analytics_ai_export -- --nocapture
           cargo test --locked --lib analytics360_cache -- --nocapture
+          cargo test --locked --lib analytics_sqlite -- --nocapture
           cargo test --locked --lib analytics_reach -- --nocapture
           cargo test --locked --lib v213_storage_tests -- --nocapture
           cargo check --locked
@@ -92,6 +94,7 @@ jobs:
         run: |
           cargo test --locked --lib analytics_ai_export -- --nocapture
           cargo test --locked --lib analytics360_cache -- --nocapture
+          cargo test --locked --lib analytics_sqlite -- --nocapture
           cargo test --locked --lib analytics_reach -- --nocapture
           cargo test --locked --lib v213_storage_tests -- --nocapture
           cargo check --locked --target aarch64-apple-darwin
