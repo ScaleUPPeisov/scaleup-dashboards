@@ -1,0 +1,43 @@
+name: VYRON macOS AI export compile gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'src/AiAnalyticsExport.tsx'
+      - 'src/AnalyticsPage.tsx'
+      - 'src-tauri/src/analytics_ai_export.rs'
+      - 'src-tauri/src/lib.rs'
+      - 'src-tauri/Cargo.toml'
+      - 'src-tauri/Cargo.lock'
+      - '.github/workflows/vyron-mac-ai-export-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mac-arm64-compile:
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'src-tauri -> target'
+      - name: TypeScript and Vite
+        run: |
+          npm ci
+          npm run build
+      - name: Rust build tests on macOS ARM64
+        working-directory: src-tauri
+        run: |
+          cargo test --locked --lib analytics_ai_export -- --nocapture
+          cargo check --locked --target aarch64-apple-darwin
