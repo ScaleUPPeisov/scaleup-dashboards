@@ -988,6 +988,128 @@ mod tests{
         assert_eq!(rolled_back[0]["views"],12);
         let _=fs::remove_dir_all(cache);
     }
+    #[test]fn value_level_json_sql_parity_survives_reopen_wal_checkpoint_and_foreign_keys(){
+        let (cache,channel,generation)=sample_cache();
+        let root=cache.join("ui-generations").join(&generation);
+        let mut overview=obj(&root.join("overview.json")).unwrap();
+        overview["traffic"]=json!([{"sourceType":"YT_SEARCH","views":22,
+            "watchMinutes":18.25,"fetchedAt":"2026-10-01T00:00:00Z"}]);
+        overview["audienceBreakdowns"]=json!([{"type":"device","views":8},
+            {"type":"age","views":14}]);
+        fs::write(root.join("overview.json"),serde_json::to_vec(&overview).unwrap()).unwrap();
+        let daily=json!([{"date":"2026-01-01","views":12,"watchMinutes":30.0,
+            "subscribersGained":6,"subscribersLost":2,"fetchedAt":"2026-10-01T00:00:00Z"}]);
+        fs::write(root.join("channel-daily.json"),serde_json::to_vec(&daily).unwrap()).unwrap();
+        let video_id="aBc1234-X_y";
+        let video_days=json!([{"videoId":video_id,"date":"2026-01-01","views":12,
+            "subscribersGained":3,"subscribersLost":1,"averageViewPercentage":64.5,
+            "watchMinutes":24.125,"source":"youtube_analytics_api_v2"}]);
+        fs::write(root.join("video-days").join(format!("{}.json",video_path_key(video_id))),
+            serde_json::to_vec(&video_days).unwrap()).unwrap();
+        migrate_generation(&cache,&channel).unwrap();
+        {
+            let conn=prepare_db(&cache.join(DB_NAME)).unwrap();
+            let version:i32=conn.query_row("PRAGMA user_version",[],|r|r.get(0)).unwrap();
+            assert_eq!(version,SCHEMA_VERSION);
+            let fk:i64=conn.query_row("PRAGMA foreign_keys",[],|r|r.get(0)).unwrap();
+            assert_eq!(fk,1);
+            let invalid:Option<String>=conn.query_row("PRAGMA foreign_key_check",[],|r|r.get(0))
+                .optional().unwrap();
+            assert_eq!(invalid,None);
+            let check:String=conn.query_row("PRAGMA integrity_check",[],|r|r.get(0)).unwrap();
+            assert_eq!(check,"ok");
+            for (table,source) in [
+                ("channel_daily",daily[0].clone()),
+                ("video_daily",video_days[0].clone()),
+                ("video_reach_daily",obj(&root.join("reach-daily.json")).unwrap()[0].clone()),
+                ("analytics_overviews",overview.clone()),
+                ("data_coverage",overview["coverage"].clone()),
+                ("metadata_history",obj(&root.join("video-catalog.json")).unwrap()[0].clone())
+            ] {
+                let raw:String=conn.query_row(
+                    &format!("SELECT payload_json FROM {table} WHERE channel_id=?1 LIMIT 1"),
+                    params![channel],|r|r.get(0)).unwrap();
+                let sql:Value=serde_json::from_str(&raw).unwrap();
+                assert_eq!(sql,source,"{table} JSON↔SQLite payload diverged");
+            }
+            let curve=obj(&root.join("retention").join(format!("{}.json",video_path_key(video_id)))).unwrap();
+            let raw:String=conn.query_row(
+                "SELECT payload_json FROM retention_points WHERE channel_id=?1 AND video_id=?2 AND point_index=-1",
+                params![channel,video_id],|r|r.get(0)).unwrap();
+            assert_eq!(serde_json::from_str::<Value>(&raw).unwrap(),curve);
+            let event:String=conn.query_row(
+                "SELECT payload_json FROM channel_events WHERE channel_id=?1",
+                params![channel],|r|r.get(0)).unwrap();
+            assert_eq!(serde_json::from_str::<Value>(&event).unwrap(),overview["events"][0]);
+            let traffic:String=conn.query_row(
+                "SELECT payload_json FROM traffic_sources WHERE channel_id=?1 AND generation=?2",
+                params![channel,generation],|r|r.get(0)).unwrap();
+            assert_eq!(serde_json::from_str::<Value>(&traffic).unwrap(),overview["traffic"][0]);
+            for table in ["devices","audience_demographics"]{
+                let raw:String=conn.query_row(
+                    &format!("SELECT payload_json FROM {table} WHERE channel_id=?1"),
+                    params![channel],|r|r.get(0)).unwrap();
+                let value:Value=serde_json::from_str(&raw).unwrap();
+                assert!(overview["audienceBreakdowns"].as_array().unwrap().contains(&value));
+            }
+            let checkpoint:(i64,i64,i64)=conn.query_row(
+                "PRAGMA wal_checkpoint(PASSIVE)",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).unwrap();
+            assert_eq!(checkpoint.0,0,"WAL readers blocked checkpoint");
+        }
+        assert_channel_views(&cache,&channel,12);
+        assert!(migrate_generation(&cache,&channel).unwrap().skipped);
+        let _=fs::remove_dir_all(cache);
+    }
+    #[test]fn interrupted_transaction_never_removes_verified_data_and_unknown_schema_is_read_only(){
+        let (cache,channel,_)=sample_cache();
+        migrate_generation(&cache,&channel).unwrap();
+        {
+            let mut conn=prepare_db(&cache.join(DB_NAME)).unwrap();
+            let tx=conn.transaction_with_behavior(TransactionBehavior::Immediate).unwrap();
+            tx.execute("DELETE FROM channel_daily WHERE channel_id=?1",params![channel]).unwrap();
+            assert_eq!(tx.query_row("SELECT COUNT(*) FROM channel_daily WHERE channel_id=?1",
+                params![channel],|r|r.get::<_,i64>(0)).unwrap(),0);
+            // Simulated process termination: leave without COMMIT; DROP rolls back.
+        }
+        assert_channel_views(&cache,&channel,12);
+        {
+            let conn=prepare_db(&cache.join(DB_NAME)).unwrap();
+            conn.pragma_update(None,"user_version",999).unwrap();
+        }
+        let error=read_channel_days(&cache,&channel,None,None).unwrap_err();
+        assert!(error.contains("SQLITE_RECOVERY_REQUIRED"),"{error}");
+        let error=migrate_generation(&cache,&channel).unwrap_err();
+        assert!(error.contains("SQLITE_RECOVERY_REQUIRED"),"{error}");
+        assert!(cache.join("ui-current.json").exists());
+        let _=fs::remove_dir_all(cache);
+    }
+    #[test]fn wal_readers_never_return_wrong_generation_during_switch(){
+        use std::sync::{Arc,Barrier};
+        let (cache,channel,a)=sample_cache();
+        migrate_generation(&cache,&channel).unwrap();
+        let b=clone_generation(&cache,&channel,&a,99);
+        let start=Arc::new(Barrier::new(9));
+        let mut readers=Vec::new();
+        for _ in 0..8{
+            let start=start.clone();let path=cache.clone();let cid=channel.clone();
+            readers.push(std::thread::spawn(move||{
+                start.wait();
+                for _ in 0..30{
+                    // Readers may see old pointer until writer enters, but must
+                    // never get a fabricated or cross-channel value.
+                    if let Some(rows)=read_channel_days(&path,&cid,None,None).unwrap(){
+                        let v=rows.first().unwrap()["views"].as_i64().unwrap();
+                        assert!(v==12||v==99,"unverified SQL generation");
+                    }
+                }
+            }));
+        }
+        start.wait();
+        migrate_generation(&cache,&channel).unwrap();
+        for thread in readers{thread.join().unwrap()}
+        assert_channel_views(&cache,&channel,99);
+        let _=fs::remove_dir_all(cache);
+    }
     #[test]fn a_b_a_b_switches_preserve_all_historical_receipts_and_no_duplicates(){
         let (cache,channel,a)=sample_cache();
         // Populate generation-keyed tables before initial verification.
