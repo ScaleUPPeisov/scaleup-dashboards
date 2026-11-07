@@ -104,10 +104,16 @@ pub(crate) fn persist(
         }
     }
     catalog.sort_by(|a,b|b["publishedAt"].as_str().cmp(&a["publishedAt"].as_str()));
+    let mut publications=HashMap::<String,u64>::new();
+    for v in &catalog {
+        if let Some(day)=v.get("publishedAt").and_then(Value::as_str).and_then(|s|s.get(..10)){
+            *publications.entry(day.to_string()).or_insert(0)+=1;
+        }
+    }
     let index=json!({"schemaVersion":1,"channelId":cid,"generation":generation,
         "updatedAt":Utc::now().to_rfc3339(),"summary":summary,"coverage":coverage,
         "traffic":traffic,"audienceBreakdowns":breakdowns,"events":events,
-        "growthAndDecline":findings,"videosTotal":catalog.len()});
+        "growthAndDecline":findings,"publicationsByDay":publications,"videosTotal":catalog.len()});
     atomic_json(&root.join("overview.json"),&index)?;
     atomic_json(&root.join("channel-daily.json"),&json!(channel_daily))?;
     atomic_json(&root.join("video-catalog.json"),&json!(catalog))?;
@@ -142,7 +148,7 @@ fn filter_days(rows:&[Value],start:Option<NaiveDate>,end:Option<NaiveDate>)->Vec
 fn safe_generation(value:&str)->bool{
     Uuid::parse_str(value).is_ok()
 }
-fn load_from_disk(cache:&Path,page:u32,per_page:u32,period:&str,from:Option<&str>,to:Option<&str>,video_id:Option<&str>)->Result<Value,String>{
+fn load_from_disk(cache:&Path,page:u32,per_page:u32,period:&str,from:Option<&str>,to:Option<&str>,video_id:Option<&str>,content_type:Option<&str>,sort:Option<&str>)->Result<Value,String>{
     let pointer_path=cache.join("ui-current.json");
     if !pointer_path.exists(){return Ok(json!({"status":"NOT_YET_COLLECTED","message":"Сначала синхронизируйте историю этого канала"}))}
     let pointer=read_json(&pointer_path)?;
@@ -156,9 +162,19 @@ fn load_from_disk(cache:&Path,page:u32,per_page:u32,period:&str,from:Option<&str
     let days=all_days.as_array().ok_or("ANALYTICS_DAILY_INVALID")?;
     let (start,end)=period_dates(period,from,to)?;
     let current=filter_days(days,start,end);
+    let mut visible=all.iter().filter(|v|content_type.filter(|s|*s!="all").map(|wanted|
+         v.get("contentType").and_then(Value::as_str)==Some(wanted)).unwrap_or(true)).collect::<Vec<_>>();
+    if sort==Some("views"){
+        visible.sort_by(|a,b|{
+            let count=|v:&&Value|v.get("viewsPublic").and_then(|x|x.as_u64()
+                .or_else(||x.as_str().and_then(|s|s.parse::<u64>().ok()))).unwrap_or(0);
+            count(b).cmp(&count(a))
+        });
+    }
     let per_page=per_page.clamp(1,100) as usize;
-    let offset=(page as usize).saturating_mul(per_page).min(all.len());
-    let video_rows=all.iter().skip(offset).take(per_page).cloned().collect::<Vec<_>>();
+    let filtered_total=visible.len();
+    let offset=(page as usize).saturating_mul(per_page).min(filtered_total);
+    let video_rows=visible.into_iter().skip(offset).take(per_page).cloned().collect::<Vec<_>>();
     let mut detail=Value::Null;let mut video_days=Vec::<Value>::new();let mut retention=Value::Null;
     if let Some(id)=video_id{
         if !valid_video_id(id){return Err("Некорректный Video ID".into())}
@@ -172,17 +188,17 @@ fn load_from_disk(cache:&Path,page:u32,per_page:u32,period:&str,from:Option<&str
     }
     Ok(json!({"status":"AVAILABLE","schemaVersion":1,"generation":gen,"updatedAt":pointer.get("updatedAt"),
         "overview":overview,"channelDaily":current,"videos":video_rows,"videoCount":all.len(),
-        "page":page,"pageSize":per_page,"videoDetail":detail,"videoDaily":video_days,"retention":retention,
+        "page":page,"pageSize":per_page,"filteredVideoCount":filtered_total,"videoDetail":detail,"videoDaily":video_days,"retention":retention,
         "period":period,"periodFrom":start.map(|d|d.format("%Y-%m-%d").to_string()),
         "periodTo":end.map(|d|d.format("%Y-%m-%d").to_string())}))
 }
 #[tauri::command]
 pub async fn analytics360_read(
     app:AppHandle,channel_id:String,page:Option<u32>,page_size:Option<u32>,period:Option<String>,
-    start_date:Option<String>,end_date:Option<String>,video_id:Option<String>,
+    start_date:Option<String>,end_date:Option<String>,video_id:Option<String>,content_type:Option<String>,sort:Option<String>,
 )->Result<Value,String>{
     #[cfg(not(target_os="macos"))] {
-        let _=(app,channel_id,page,page_size,period,start_date,end_date,video_id);
+        let _=(app,channel_id,page,page_size,period,start_date,end_date,video_id,content_type,sort);
         return Err("Analytics 360 доступна только на macOS".into());
     }
     #[cfg(target_os="macos")] {
@@ -190,7 +206,7 @@ pub async fn analytics360_read(
         let cache=app.path().app_data_dir().map_err(|e|e.to_string())?
             .join("AIAnalytics").join("cache").join(channel_id);
         tauri::async_runtime::spawn_blocking(move||load_from_disk(&cache,page.unwrap_or(0),page_size.unwrap_or(40),
-            period.as_deref().unwrap_or("28"),start_date.as_deref(),end_date.as_deref(),video_id.as_deref()))
+            period.as_deref().unwrap_or("28"),start_date.as_deref(),end_date.as_deref(),video_id.as_deref(),content_type.as_deref(),sort.as_deref()))
             .await.map_err(|e|format!("ANALYTICS_READ_TASK_FAILED: {e}"))?
     }
 }
