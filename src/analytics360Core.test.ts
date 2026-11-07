@@ -1,5 +1,5 @@
 import {describe,it,expect} from 'vitest';
-import {strictMetricTotal,weightedCtrPercent,compareExactWindows,calendarMetricTotal,decimateExtrema,safeChannelId,safeVideoId} from './analytics360Core';
+import {strictMetricTotal,weightedCtrPercent,compareExactWindows,calendarMetricTotal,decimateExtrema,acceptSelectedChannelResult,safeChannelId,safeVideoId} from './analytics360Core';
 describe('Analytics 360 metric accuracy',()=>{
  it('does not transform missing rows into zero',()=>{expect(strictMetricTotal([2,null,4],3)).toMatchObject({value:null,status:'PARTIAL'})});
  it('preserves real zero',()=>{expect(strictMetricTotal([0,0],2)).toMatchObject({value:0,status:'AVAILABLE'})});
@@ -29,6 +29,14 @@ describe('Analytics 360 metric accuracy',()=>{
  it('does not alter small series',()=>{
    const points=[{v:2},{v:1},{v:3}];
    expect(decimateExtrema(points,20)).toEqual(points);
+ });
+ it('does not apply delayed result to a different selected YouTube channel',()=>{
+   const first='UC1234567890123456789012';
+   const second='UC2222222222222222222222';
+   expect(acceptSelectedChannelResult(first,first,8,8)).toBe(true);
+   expect(acceptSelectedChannelResult(first,second,8,8)).toBe(false);
+   expect(acceptSelectedChannelResult(first,first,8,9)).toBe(false);
+   expect(acceptSelectedChannelResult(first,undefined,8,8)).toBe(false);
  });
  it('never lets YouTube identifiers become filesystem traversal',()=>{expect(safeChannelId('UC1234567890123456789012')).toBe(true);expect(safeChannelId('../../etc/passwd')).toBe(false);expect(safeVideoId('aBc1234-X_y')).toBe(true);expect(safeVideoId('a/../z')).toBe(false)});
 });
