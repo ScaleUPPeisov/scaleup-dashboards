@@ -971,6 +971,32 @@ pub async fn youtube_ai_export(app:AppHandle,request:AiExportRequest)->Result<Va
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test] fn ai_zip_video_history_export_reads_merged_generation(){
+        let root=std::env::temp_dir().join(format!("vyron-ai-history-{}",Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let id="UC1234567890123456789012",video_id="aBc1234-X_y";
+        let videos=vec![json!({"id":video_id,"snippet":{"channelId":id,"publishedAt":"2026-01-01T00:00:00Z"}})];
+        let summary=json!({"channelId":id});
+        crate::analytics360_cache::persist(&root,&summary,&json!({}),&[],
+            &videos,&[json!({"videoId":video_id,"date":"2026-01-01","views":4})],
+            &[],&[],&[],&[],&[]).unwrap();
+        crate::analytics360_cache::persist(&root,&summary,&json!({"videoDaily":"partial"}),&[],
+            &videos,&[json!({"videoId":video_id,"date":"2026-01-02","views":8})],
+            &[],&[],&[],&[],&[]).unwrap();
+        let output=root.join("video-history.json");
+        let mut csv=File::create(root.join("video-history.csv")).unwrap();
+        let total=export_merged_video_history(&root,id,&videos,&output,&mut csv).unwrap();
+        drop(csv);
+        assert_eq!(total,2);
+        let raw:Value=serde_json::from_slice(&fs::read(&output).unwrap()).unwrap();
+        assert_eq!(raw.as_array().unwrap().len(),2);
+        assert_eq!(raw[0]["views"],4);
+        assert_eq!(raw[1]["views"],8);
+        let csv=fs::read_to_string(root.join("video-history.csv")).unwrap();
+        assert!(csv.contains("2026-01-01"));
+        assert!(csv.contains("2026-01-02"));
+        let _=fs::remove_dir_all(root);
+    }
     #[test] fn csv_quote(){assert_eq!(csv_field("a,\"b\""),"\"a,\"\"b\"\"\"");}
     #[test] fn csv_spreadsheet_formula_is_inert(){
         assert_eq!(csv_field("=HYPERLINK(\"x\")"),"\"'=HYPERLINK(\"\"x\"\")\"");
