@@ -60,7 +60,7 @@ const sourceNames:Record<string,string>={
  YT_OTHER_PAGE:'Другие страницы YouTube',YT_CHANNEL:'Страницы каналов',PLAYLIST:'Плейлисты',
  EXT_URL:'Внешние сайты',NO_LINK_OTHER:'Прямые и неизвестные',
  SHORTS:'Shorts',LIVE_STREAM:'Трансляции',VIDEO_ON_DEMAND:'Обычные видео',UNSPECIFIED:'Не определено',
- SHORTS:'Shorts',BROWSE_FEATURES:'Главная и функции выбора контента'
+ BROWSE_FEATURES:'Главная и функции выбора контента'
 };
 function safeSum(items:Day[],key:keyof Day):number|null{
  const values=items.map(r=>r[key]).filter((x):x is number=>typeof x==='number'&&Number.isFinite(x));
