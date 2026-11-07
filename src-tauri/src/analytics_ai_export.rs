@@ -238,7 +238,7 @@ fn local_vyron_upload_events(app:&AppHandle,channel_id:&str)->Vec<Value>{
 fn load_events(cache:&Path)->Vec<Value>{
     read_json(&cache.join("events.json")).and_then(|v|v.as_array().cloned()).unwrap_or_default()
 }
-fn observe_metadata(cache:&Path,videos:&[Value],channel_id:&str)->Result<Vec<Value>,String>{
+fn observe_metadata(cache:&Path,videos:&[Value],channel_id:&str,inventory_complete:bool)->Result<Vec<Value>,String>{
     let previous=read_json(&cache.join("metadata_snapshot.json")).unwrap_or_else(||json!({}));
     let mut current=serde_json::Map::new();let mut events=load_events(cache);
     for v in videos {
@@ -257,6 +257,21 @@ fn observe_metadata(cache:&Path,videos:&[Value],channel_id:&str)->Result<Vec<Val
             }
         }
         current.insert(id,observed);
+    }
+    if let Some(known)=previous.as_object(){
+        for (id,last) in known{
+            if current.contains_key(id){continue}
+            if inventory_complete{
+                events.push(json!({"channelId":channel_id,"videoId":id,
+                    "eventType":"video_missing_from_latest_uploads_inventory",
+                    "observedAt":Utc::now().to_rfc3339(),"origin":"detected_between_scans",
+                    "confidence":"disappeared_from_complete_inventory_only",
+                    "note":"Отсутствует в полном списке YouTube; удаление или изменение приватности не доказано"}));
+            }else{
+                // Partial hydration must never erase the last known metadata.
+                current.insert(id.clone(),last.clone());
+            }
+        }
     }
     save_json(&cache.join("metadata_snapshot.json"),&Value::Object(current))?;
     save_json(&cache.join("events.json"),&json!(events))?;
@@ -409,10 +424,11 @@ async fn collect_channel(app:&AppHandle,client:&reqwest::Client,choice:&AiChanne
     let fetched_at=Utc::now().to_rfc3339();
     progress(app,run,index,total,choice,"INVENTORY","Все видео и метаданные");
     let videos=fetch_inventory(app,client,&token,&playlist,&cid,cache).await?;
-    let mut events=observe_metadata(cache,&videos,&cid)?;
+    let inventory_coverage=read_json(&cache.join("inventory_coverage.json")).unwrap_or(Value::Null);
+    let inventory_complete=inventory_coverage.get("complete").and_then(Value::as_bool)==Some(true);
+    let mut events=observe_metadata(cache,&videos,&cid,inventory_complete)?;
     events.extend(local_vyron_upload_events(app,&cid));
     let ids=videos.iter().filter_map(|x|x.get("id").and_then(Value::as_str).map(str::to_string)).collect::<Vec<_>>();
-    let inventory_coverage=read_json(&cache.join("inventory_coverage.json")).unwrap_or(Value::Null);
     let mut coverage=json!({"channelId":cid,"periodStart":start_s,"periodEnd":end_s,"fetchedAt":fetched_at,
         "metadata":inventory_coverage,"daily":"unavailable","videoDaily":"unavailable",
         "traffic":"unavailable","retention":"unavailable","reach":"unavailable","errors":[]});
