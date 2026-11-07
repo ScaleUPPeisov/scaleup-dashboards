@@ -1,0 +1,23 @@
+name: VYRON Mac offline preflight (synthetic-only)
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'scripts/vyron_macos_offline_preflight.py'
+      - 'scripts/test_vyron_macos_offline_preflight.py'
+      - '.github/workflows/vyron-macos-offline-preflight-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  synthetic-only:
+    runs-on: macos-15
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify metadata-only preflight on fully synthetic fixtures
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_vyron_macos_offline_preflight.py' -v
+      - name: Ensure workflow never requests secrets, auth or mounted user data
+        run: |
+          test -z "$(find . -maxdepth 1 -name 'youtube-oauth.json' -o -name 'state.json')"
