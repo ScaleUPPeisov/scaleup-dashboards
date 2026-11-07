@@ -156,7 +156,7 @@ fn merge_reach_by_video_date(prior:&[Value],latest:&[Value])->(Vec<Value>,usize)
         let stamp=row.get("reportCreateTime").and_then(Value::as_str).unwrap_or("");
         if !stamp.is_empty(){
             latest_date_stamp.entry(date).and_modify(|old|{
-                if stamp>*old{*old=stamp.to_string();}
+                if stamp>old.as_str(){*old=stamp.to_string();}
             }).or_insert_with(||stamp.to_string());
         }
     }
