@@ -81,6 +81,8 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin
@@ -94,9 +96,11 @@ jobs:
           cargo test --locked --lib oauth_vault::tests -- --nocapture
           cargo test --locked --lib v2110_oauth_continuity_tests -- --nocapture
           cargo test --locked --lib v213_storage_tests -- --nocapture
-      - name: Verify no production OAuth identity was modified
+      - name: Verify no production OAuth signing/bundle identity was modified from PR base
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          git diff --exit-code -- src-tauri/tauri.conf.json src-tauri/tauri.macos.conf.json
+          git diff --exit-code "$BASE_SHA" HEAD -- src-tauri/tauri.conf.json src-tauri/tauri.macos.conf.json
 
   historical-vitest-audit:
     runs-on: ubuntu-latest
