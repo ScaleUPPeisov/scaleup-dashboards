@@ -193,9 +193,19 @@ function VideoPanel({video,detail,daily,retention,reach,onClose}:{video:Video;de
   <small className="a360-footnote">Показы, CTR, точные первые 24/48 часов и подробные источники трафика каждого видео отображаются только при наличии подтверждённых отчётов. Публичный счётчик не равен просмотрам за выбранный период.</small>
  </section>;
 }
+// Jobs/upload history change frequently while Publisher is active. Keep their
+// Zustand subscriptions in the Fleet subtree instead of re-rendering charts,
+// video passports and the Analytics 360 shell on every upload progress patch.
+const FleetSubscriber=React.memo(function FleetSubscriber(
+ props:Omit<React.ComponentProps<typeof Analytics360Fleet>,'jobs'|'uploads'>,
+){
+ const jobs=useApp(s=>s.jobs);
+ const uploads=useApp(s=>s.uploadHistory);
+ return <Analytics360Fleet {...props} jobs={jobs} uploads={uploads}/>;
+});
 export function Analytics360Page(){
  const isMac=typeof navigator!=='undefined'&&/mac/i.test(navigator.platform||navigator.userAgent);
- const channels=useApp(s=>s.channels),jobs=useApp(s=>s.jobs),uploads=useApp(s=>s.uploadHistory);
+ const channels=useApp(s=>s.channels);
  const [activeId,setActiveId]=useState(()=>loadActivePublishChannel()||channels[0]?.id||'');
  const [tab,setTab]=useState<Tab>('overview'),[period,setPeriod]=useState<Period>('28');
  const [startDate,setStartDate]=useState(''),[endDate,setEndDate]=useState('');
@@ -222,7 +232,8 @@ export function Analytics360Page(){
   reload();window.addEventListener('vyron:oauth-state-changed',reload);
   return()=>{live=false;window.removeEventListener('vyron:oauth-state-changed',reload)};
  },[]);
- function choose(id:string){if(!channels.some(c=>c.id===id))return;saveActivePublishChannel(id);setActiveId(id);setVideoPage(0);setVideoId(null)}
+ const choose=React.useCallback((id:string)=>{if(!channels.some(c=>c.id===id))return;saveActivePublishChannel(id);setActiveId(id);setVideoPage(0);setVideoId(null)},[channels]);
+ const refreshFleet=React.useCallback(()=>setFleetRevision(v=>v+1),[]);
  const fleetKey=channels.map(c=>c.youtubeChannelId||'').join('|');
  useEffect(()=>{
   if(!isMac)return;
@@ -316,9 +327,9 @@ export function Analytics360Page(){
    <div className="headerActions"><button disabled={refreshing||!active?.youtubeProfileId} onClick={()=>void quickRefresh()}>{refreshing?'Обновляю…':'↻ Быстрая статистика'}</button>
     <button className="primary" disabled={syncing||!eligible} onClick={()=>void syncDeep()}>{syncing?'Синхронизация…':'Собрать всю историю канала'}</button>
    </div></header>
-  <Analytics360Fleet channels={channels} profiles={profiles} jobs={jobs} uploads={uploads}
+  <FleetSubscriber channels={channels} profiles={profiles}
    reports={fleetReports} loading={fleetLoading} activeId={active?.id} onChoose={choose}
-   onRefresh={()=>setFleetRevision(v=>v+1)}/>
+   onRefresh={refreshFleet}/>
   <AiAnalyticsExport channels={channels} profiles={profiles}/>
   <YouTubeChannelBar/>
   <div className="a360-sync"><div><strong>{active?.name||'Канал не выбран'}</strong>
