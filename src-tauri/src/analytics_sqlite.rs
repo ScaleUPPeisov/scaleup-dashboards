@@ -894,7 +894,7 @@ mod tests{
             fs::create_dir_all(target.join(subdir)).unwrap();
             for entry in fs::read_dir(source.join(subdir)).unwrap(){
                 let entry=entry.unwrap();
-                fs::copy(entry.path(),target.join(entry.file_name())).unwrap();
+                fs::copy(entry.path(),target.join(subdir).join(entry.file_name())).unwrap();
             }
         }
         for filename in ["video-catalog.json","reach-daily.json"]{
