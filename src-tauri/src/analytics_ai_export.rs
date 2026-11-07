@@ -860,17 +860,27 @@ fn file_hash(path:&Path)->Result<String,String>{
     Ok(hex::encode(hasher.finalize()))
 }
 fn export_merged_video_history(cache:&Path,channel_id:&str,videos:&[Value],
-    path:&Path,video_csv:&mut File)->Result<usize,String>{
+    path:&Path,video_csv:&mut File)->Result<(usize,Vec<Value>),String>{
     let mut output=File::create(path).map_err(|e|format!("AI_VIDEO_JSON_CREATE: {e}"))?;
     output.write_all(b"[").map_err(|e|e.to_string())?;
     let mut seen=HashSet::new();let mut first=true;let mut count=0usize;
+    let mut first_90_days=Vec::<Value>::new();
     for video in videos{
         let id=video.get("id").and_then(Value::as_str).unwrap_or("");
         if id.len()!=11||!id.bytes().all(|x|x.is_ascii_alphanumeric()||x==b'_'||x==b'-'){
             return Err("AI_VIDEO_INVALID_ID".into())
         }
         if !seen.insert(id){continue}
+        let published=video.pointer("/snippet/publishedAt").and_then(Value::as_str)
+            .and_then(|s|s.get(..10)).and_then(|s|NaiveDate::parse_from_str(s,"%Y-%m-%d").ok());
         for row in crate::analytics360_cache::materialized_video_daily(cache,channel_id,id)?{
+            // Keep only the first 90 calendar days in RAM for lifecycle math;
+            // the full ten-year history is streamed to ZIP without duplication.
+            if let (Some(start),Some(date))=(published,
+                row.get("date").and_then(Value::as_str)
+                    .and_then(|x|NaiveDate::parse_from_str(x,"%Y-%m-%d").ok())){
+                if date>=start && date<start+Days::days(90){first_90_days.push(row.clone())}
+            }
             if !first{output.write_all(b",").map_err(|e|e.to_string())?}
             first=false;
             serde_json::to_writer(&mut output,&row).map_err(|e|e.to_string())?;
@@ -882,7 +892,7 @@ fn export_merged_video_history(cache:&Path,channel_id:&str,videos:&[Value],
     }
     output.write_all(b"]").map_err(|e|e.to_string())?;
     output.sync_all().map_err(|e|e.to_string())?;
-    Ok(count)
+    Ok((count,first_90_days))
 }
 
 #[tauri::command]
@@ -962,11 +972,13 @@ pub async fn youtube_ai_export(app:AppHandle,request:AiExportRequest)->Result<Va
                     save_json(&out_dir.join("videos.json"),&json!(merged_videos))?;
                     save_json(&out_dir.join("channel_daily.json"),&json!(merged_channel))?;
                     save_json(&out_dir.join("reach_daily.json"),&json!(merged_reach))?;
-                    let merged_video_count=export_merged_video_history(&channel_cache,&choice.channel_id,&merged_videos,
+                    let (merged_video_count,early_lifecycle_days)=export_merged_video_history(&channel_cache,&choice.channel_id,&merged_videos,
                         &out_dir.join("videos_daily.json"),&mut video_csv)?;
+                    let merged_lifecycle=video_lifecycle(&merged_videos,&early_lifecycle_days,&choice.channel_id);
                     archive_coverage["archivedVideoDays"]=json!(merged_video_count);
+                    archive_coverage["videoLifecycleCalculatedFromMergedHistory"]=json!(true);
                     save_json(&out_dir.join("coverage.json"),&archive_coverage)?;
-                    save_json(&out_dir.join("video_lifecycle.json"),&json!(r.lifecycle))?;
+                    save_json(&out_dir.join("video_lifecycle.json"),&json!(merged_lifecycle))?;
                     save_json(&out_dir.join("traffic.json"),&json!(r.traffic))?;
                     save_json(&out_dir.join("audience_breakdowns.json"),&json!(r.breakdowns))?;
                     save_json(&out_dir.join("retention.json"),&json!(r.retention))?;
@@ -989,7 +1001,7 @@ pub async fn youtube_ai_export(app:AppHandle,request:AiExportRequest)->Result<Va
                             }else{"youtube_data_api_v3_current_inventory".into()},
                             Utc::now().to_rfc3339()])?;
                     }
-                    for v in &r.lifecycle {
+                    for v in &merged_lifecycle {
                         let fields=vec![vstr(&v["channelId"]),vstr(&v["videoId"]),vstr(&v["publishedAt"]),
                             String::new(),vstr(&v["ageWindowsCalendarDays"]["days3"]["views"]),
                             vstr(&v["ageWindowsCalendarDays"]["days7"]["views"]),
@@ -1069,6 +1081,19 @@ mod tests{
         assert_eq!(result[0]["id"],"fresh");
         assert_eq!(result[1]["id"],"next");
     }
+    #[test] fn complete_video_age_window_uses_previous_resync_history(){
+        let video="aBc1234-X_y";
+        let videos=vec![json!({"id":video,"snippet":{"publishedAt":"2026-01-01T07:00:00Z"}})];
+        let days=vec![
+            json!({"date":"2026-01-01","videoId":video,"views":2}),
+            json!({"date":"2026-01-02","videoId":video,"views":3}),
+            json!({"date":"2026-01-03","videoId":video,"views":4})
+        ];
+        let stats=video_lifecycle(&videos,&days,"UC1234567890123456789012");
+        assert_eq!(stats[0]["ageWindowsCalendarDays"]["days3"]["views"],9.0);
+        assert!(stats[0]["ageWindowsCalendarDays"]["days7"]["views"].is_null());
+        assert!(stats[0]["first24HoursViews"].is_null());
+    }
     #[test] fn ai_zip_video_history_export_reads_merged_generation(){
         let root=std::env::temp_dir().join(format!("vyron-ai-history-{}",Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
@@ -1083,9 +1108,10 @@ mod tests{
             &[],&[],&[],&[],&[]).unwrap();
         let output=root.join("video-history.json");
         let mut csv=File::create(root.join("video-history.csv")).unwrap();
-        let total=export_merged_video_history(&root,id,&videos,&output,&mut csv).unwrap();
+        let (total,lifecycle_days)=export_merged_video_history(&root,id,&videos,&output,&mut csv).unwrap();
         drop(csv);
         assert_eq!(total,2);
+        assert_eq!(lifecycle_days.len(),2);
         let raw:Value=serde_json::from_slice(&fs::read(&output).unwrap()).unwrap();
         assert_eq!(raw.as_array().unwrap().len(),2);
         assert_eq!(raw[0]["views"],4);
