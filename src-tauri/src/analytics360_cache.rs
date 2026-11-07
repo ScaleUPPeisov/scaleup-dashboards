@@ -4,7 +4,7 @@
 use chrono::{Duration as Days, NaiveDate, Utc};
 use serde_json::{json,Value};
 use sha2::{Digest,Sha256};
-use std::{collections::HashMap,fs::{self,File,OpenOptions},io::Write,path::{Path,PathBuf}};
+use std::{collections::{BTreeMap,HashMap},fs::{self,OpenOptions},io::Write,path::{Path,PathBuf}};
 use tauri::{AppHandle,Manager};
 use uuid::Uuid;
 
@@ -62,6 +62,45 @@ fn public_video_record(v:&Value)->Value{
         "privacyStatus":v.pointer("/status/privacyStatus"),"viewsPublic":v.pointer("/statistics/viewCount"),
         "likesPublic":v.pointer("/statistics/likeCount"),"commentsPublic":v.pointer("/statistics/commentCount")})
 }
+fn previous_generation_root(cache:&Path,channel_id:&str)->Option<PathBuf>{
+    let pointer=read_json(&cache.join("ui-current.json")).ok()?;
+    if pointer.get("channelId").and_then(Value::as_str)!=Some(channel_id){return None}
+    let generation=pointer.get("generation").and_then(Value::as_str)?;
+    if Uuid::parse_str(generation).is_err(){return None}
+    let root=cache.join("ui-generations").join(generation);
+    let overview=read_json(&root.join("overview.json")).ok()?;
+    (overview.get("channelId").and_then(Value::as_str)==Some(channel_id)).then_some(root)
+}
+/// Merge only rows with a real calendar date. Fresh API rows supersede old
+/// observations for the same date, while untouched dates keep their original
+/// source/fetchedAt provenance. A partial new API sync cannot erase history.
+fn merge_by_date(previous:&[Value],latest:&[Value])->(Vec<Value>,usize){
+    let mut rows=BTreeMap::<String,Value>::new();
+    for row in previous{
+        if let Some(day)=row.get("date").and_then(Value::as_str){
+            if NaiveDate::parse_from_str(day,"%Y-%m-%d").is_ok(){
+                rows.insert(day.to_owned(),row.clone());
+            }
+        }
+    }
+    let mut replaced=0usize;
+    for row in latest{
+        if let Some(day)=row.get("date").and_then(Value::as_str){
+            if NaiveDate::parse_from_str(day,"%Y-%m-%d").is_ok(){
+                if rows.insert(day.to_owned(),row.clone()).is_some(){replaced+=1}
+            }
+        }
+    }
+    let retained=rows.len().saturating_sub(latest.iter().filter(|r|r.get("date")
+        .and_then(Value::as_str).and_then(|s|NaiveDate::parse_from_str(s,"%Y-%m-%d").ok())
+        .is_some()).count().saturating_sub(replaced));
+    (rows.into_values().collect(),retained)
+}
+fn optional_prior_rows(root:Option<&Path>,folder:&str,file:&str)->Vec<Value>{
+    root.and_then(|p|read_json(&p.join(folder).join(file)).ok())
+        .and_then(|v|v.as_array().cloned()).unwrap_or_default()
+}
+
 /// Persists a complete immutable generation, then publishes ONE atomic pointer.
 /// An interrupted save leaves the previously published view intact.
 pub(crate) fn persist(
@@ -71,6 +110,7 @@ pub(crate) fn persist(
 )->Result<(),String>{
     let cid=summary.get("channelId").and_then(Value::as_str).unwrap_or("");
     if !valid_channel_id(cid){return Err("ANALYTICS_CACHE_INVALID_CHANNEL_ID".into())}
+    let previous_root=previous_generation_root(cache,cid);
     let generation=Uuid::new_v4().to_string();
     let root=cache.join("ui-generations").join(&generation);
     for folder in ["video-details","video-days","retention"]{
@@ -88,6 +128,8 @@ pub(crate) fn persist(
             retention_by_video.insert(id.to_string(),row.clone());
         }
     }
+    let mut preserved_video_days=0usize;
+    let mut preserved_retention_curves=0usize;
     let mut catalog=Vec::with_capacity(videos.len());
     let mut known=std::collections::HashSet::new();
     for video in videos{
@@ -96,11 +138,20 @@ pub(crate) fn persist(
         let hashed=key(id);
         catalog.push(public_video_record(video));
         atomic_json(&root.join("video-details").join(format!("{hashed}.json")),video)?;
-        if let Some(days)=days_by_video.remove(id){
-            atomic_json(&root.join("video-days").join(format!("{hashed}.json")),&json!(days))?;
+        let file=format!("{hashed}.json");
+        let previous_days=optional_prior_rows(previous_root.as_deref(),"video-days",&file);
+        let current_days=days_by_video.remove(id).unwrap_or_default();
+        let (merged_days,retained)=merge_by_date(&previous_days,&current_days);
+        preserved_video_days+=retained;
+        if !merged_days.is_empty(){
+            atomic_json(&root.join("video-days").join(&file),&json!(merged_days))?;
         }
         if let Some(curve)=retention_by_video.remove(id){
-            atomic_json(&root.join("retention").join(format!("{hashed}.json")),&curve)?;
+            atomic_json(&root.join("retention").join(&file),&curve)?;
+        }else if let Some(previous)=previous_root.as_ref()
+            .and_then(|p|read_json(&p.join("retention").join(&file)).ok()){
+            atomic_json(&root.join("retention").join(&file),&previous)?;
+            preserved_retention_curves+=1;
         }
     }
     catalog.sort_by(|a,b|b["publishedAt"].as_str().cmp(&a["publishedAt"].as_str()));
@@ -110,12 +161,22 @@ pub(crate) fn persist(
             *publications.entry(day.to_string()).or_insert(0)+=1;
         }
     }
+    let old_channel_days=optional_prior_rows(previous_root.as_deref(),"","channel-daily.json");
+    let (merged_channel_days,preserved_channel_days)=merge_by_date(&old_channel_days,channel_daily);
+    let mut effective_coverage=coverage.clone();
+    effective_coverage["cacheHistoryMerge"]=json!({
+        "source":"local_previously_confirmed_api_rows",
+        "retainedPriorChannelDays":preserved_channel_days,
+        "retainedPriorVideoDays":preserved_video_days,
+        "retainedPriorRetentionCurves":preserved_retention_curves,
+        "policy":"New observations supersede prior observations on matching dates; untouched earlier confirmed dates retain original source and fetchedAt."
+    });
     let index=json!({"schemaVersion":1,"channelId":cid,"generation":generation,
-        "updatedAt":Utc::now().to_rfc3339(),"summary":summary,"coverage":coverage,
+        "updatedAt":Utc::now().to_rfc3339(),"summary":summary,"coverage":effective_coverage,
         "traffic":traffic,"audienceBreakdowns":breakdowns,"events":events,
         "growthAndDecline":findings,"publicationsByDay":publications,"videosTotal":catalog.len()});
     atomic_json(&root.join("overview.json"),&index)?;
-    atomic_json(&root.join("channel-daily.json"),&json!(channel_daily))?;
+    atomic_json(&root.join("channel-daily.json"),&json!(merged_channel_days))?;
     atomic_json(&root.join("video-catalog.json"),&json!(catalog))?;
     let pointer=json!({"schemaVersion":1,"generation":generation,
        "channelId":cid,"updatedAt":Utc::now().to_rfc3339()});
@@ -227,6 +288,29 @@ mod tests{
         let rows=vec![json!({"date":"2026-01-03","views":5}),json!({"date":"2026-01-05","views":7})];
         let result=filter_days(&rows,NaiveDate::from_ymd_opt(2026,1,4),NaiveDate::from_ymd_opt(2026,1,5));
         assert_eq!(result.len(),1);assert_eq!(result[0]["views"],7);
+    }
+    #[test]fn incomplete_resync_retains_earlier_channel_and_video_days(){
+        let temp=std::env::temp_dir().join(format!("vyron-analytics-merge-{}",Uuid::new_v4()));
+        fs::create_dir_all(&temp).unwrap();
+        let channel="UC1234567890123456789012";
+        let vid="aBc1234-X_y";
+        let videos=vec![json!({"id":vid,"snippet":{"channelId":channel,"title":"Song","publishedAt":"2026-01-01T00:00:00Z"}})];
+        let summary=json!({"channelId":channel});
+        persist(&temp,&summary,&json!({}),
+            &[json!({"date":"2026-01-01","views":9,"source":"youtube_analytics_api_v2","fetchedAt":"2026-02-01"})],
+            &videos,&[json!({"videoId":vid,"date":"2026-01-01","views":9,"fetchedAt":"2026-02-01"})],
+            &[],&[],&[json!({"videoId":vid,"points":[[0,1]]})],&[],&[]).unwrap();
+        persist(&temp,&summary,&json!({"daily":"partial"}),
+            &[json!({"date":"2026-01-02","views":2,"fetchedAt":"2026-02-02"})],
+            &videos,&[json!({"videoId":vid,"date":"2026-01-02","views":2,"fetchedAt":"2026-02-02"})],
+            &[],&[],&[],&[],&[]).unwrap();
+        let result=load_from_disk(&temp,0,40,"all",None,None,Some(vid),Some("all"),None).unwrap();
+        assert_eq!(result["channelDaily"].as_array().unwrap().len(),2);
+        assert_eq!(result["channelDaily"][0]["fetchedAt"],"2026-02-01");
+        assert_eq!(result["videoDaily"].as_array().unwrap().len(),2);
+        assert_eq!(result["retention"]["points"][0][1],1);
+        assert_eq!(result["overview"]["coverage"]["cacheHistoryMerge"]["retainedPriorChannelDays"],1);
+        let _=fs::remove_dir_all(temp);
     }
     #[test]fn out_of_page_video_can_open_its_detail(){
         let temp=std::env::temp_dir().join(format!("vyron-analytics-detail-{}",Uuid::new_v4()));
