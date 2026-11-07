@@ -39,7 +39,7 @@ type Overview={
 type Snapshot={
  status:'AVAILABLE'|'NOT_YET_COLLECTED';updatedAt?:string;overview?:Overview;
  channelDaily?:Day[];videos?:Video[];videoCount?:number;filteredVideoCount?:number;
- page?:number;pageSize?:number;videoDetail?:any;videoDaily?:Day[];retention?:any;
+ page?:number;pageSize?:number;selectedVideo?:Video|null;videoDetail?:any;videoDaily?:Day[];retention?:any;
  period?:Period;periodFrom?:string|null;periodTo?:string|null;message?:string;
 };
 type Progress={channelId:string;name:string;stage:string;detail:string;completed:number;total:number};
@@ -262,7 +262,7 @@ export function Analytics360Page(){
  const currentWatch=watch??(eligibleFallback?fallback?.watchMinutes:null);
  const channelsShown=Number(ov?.videosTotal??snapshot?.videoCount??0);
  const anyVideo=Boolean(videoId&&snapshot?.videos?.some(v=>v.videoId===videoId));
- const activeVideo=snapshot?.videos?.find(v=>v.videoId===videoId)||null;
+ const activeVideo=snapshot?.selectedVideo?.videoId===videoId?snapshot.selectedVideo:snapshot?.videos?.find(v=>v.videoId===videoId)||null;
  const observations=ov?.growthAndDecline||[];
  const breakdowns=ov?.audienceBreakdowns||[];
  const group=(key:string)=>breakdowns.find(b=>b.dimension===key)?.rows;
@@ -335,7 +335,7 @@ export function Analytics360Page(){
     <button disabled={(videoPage+1)*40>=Number(snapshot?.filteredVideoCount||0)} onClick={()=>setVideoPage(p=>p+1)}>Вперёд →</button></div>
    </section>
    {videoId&&<>{activeVideo?<VideoPanel video={activeVideo} detail={snapshot?.videoDetail} daily={snapshot?.videoDaily||[]} retention={snapshot?.retention} onClose={()=>setVideoId(null)}/>:
-    <div className="panel"><p>Видео выбрано, но отсутствует на текущей странице. Перейдите к его странице в каталоге.</p><button onClick={()=>setVideoId(null)}>Закрыть</button></div>}</>}
+    <div className="panel"><p>Не удалось прочитать сохранённые данные выбранного видео.</p><button onClick={()=>setVideoId(null)}>Закрыть</button></div>}</>}
    <div className="a360-grid two"><BreakdownCard title="Источники трафика" values={ov?.traffic?.map(t=>({key:t.sourceType,views:t.views,watchMinutes:t.watchMinutes}))}/>
    <section className="panel a360-panel"><h3>Ключевые моменты удержания</h3><Availability status="PARTIAL" message="Подробные кривые для выбранных видео доступны после включения сбора удержания. Автоматические пики и спады не имитируются без временных точек API."/></section></div>
   </>}
