@@ -469,10 +469,16 @@ fn filter_days(rows:&[Value],start:Option<NaiveDate>,end:Option<NaiveDate>)->Vec
 fn safe_generation(value:&str)->bool{
     Uuid::parse_str(value).is_ok()
 }
-fn load_from_disk(cache:&Path,page:u32,per_page:u32,period:&str,from:Option<&str>,to:Option<&str>,video_id:Option<&str>,content_type:Option<&str>,sort:Option<&str>)->Result<Value,String>{
+fn load_from_disk(cache:&Path,channel_id:&str,page:u32,per_page:u32,period:&str,from:Option<&str>,to:Option<&str>,video_id:Option<&str>,content_type:Option<&str>,sort:Option<&str>)->Result<Value,String>{
+    if !valid_channel_id(channel_id){return Err("ANALYTICS_INVALID_REQUEST_CHANNEL".into())}
     let pointer_path=cache.join("ui-current.json");
     if !pointer_path.exists(){return Ok(json!({"status":"NOT_YET_COLLECTED","message":"Сначала синхронизируйте историю этого канала"}))}
     let pointer=read_json(&pointer_path)?;
+    // The caller's selected account is the authority, not a copied/corrupt
+    // cache pointer. Check before either the SQLite or JSON read path.
+    if pointer.get("channelId").and_then(Value::as_str)!=Some(channel_id){
+        return Err("ANALYTICS_POINTER_CHANNEL_MISMATCH".into())
+    }
     #[cfg(target_os="macos")]
     {
         let cid=pointer.get("channelId").and_then(Value::as_str)
@@ -489,6 +495,10 @@ fn load_from_disk(cache:&Path,page:u32,per_page:u32,period:&str,from:Option<&str
     if !safe_generation(gen){return Err("ANALYTICS_CACHE_INVALID_GENERATION".into())}
     let root=cache.join("ui-generations").join(gen);
     let overview=read_json(&root.join("overview.json"))?;
+    if overview.get("channelId").and_then(Value::as_str)!=Some(channel_id)
+        || overview.get("generation").and_then(Value::as_str)!=Some(gen){
+        return Err("ANALYTICS_OVERVIEW_IDENTITY_MISMATCH".into())
+    }
     let catalog=read_json(&root.join("video-catalog.json"))?;
     let all=catalog.as_array().ok_or("ANALYTICS_CATALOG_INVALID")?;
     let (start,end)=period_dates(period,from,to)?;
@@ -731,8 +741,8 @@ pub async fn analytics360_read(
     #[cfg(target_os="macos")] {
         if !valid_channel_id(&channel_id){return Err("Некорректный Channel ID".into())}
         let cache=app.path().app_data_dir().map_err(|e|e.to_string())?
-            .join("AIAnalytics").join("cache").join(channel_id);
-        tauri::async_runtime::spawn_blocking(move||load_from_disk(&cache,page.unwrap_or(0),page_size.unwrap_or(40),
+            .join("AIAnalytics").join("cache").join(&channel_id);
+        tauri::async_runtime::spawn_blocking(move||load_from_disk(&cache,&channel_id,page.unwrap_or(0),page_size.unwrap_or(40),
             period.as_deref().unwrap_or("28"),start_date.as_deref(),end_date.as_deref(),video_id.as_deref(),content_type.as_deref(),sort.as_deref()))
             .await.map_err(|e|format!("ANALYTICS_READ_TASK_FAILED: {e}"))?
     }
@@ -740,6 +750,40 @@ pub async fn analytics360_read(
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test]fn selected_channel_rejects_a_copied_foreign_cache_without_mutation(){
+        let temp=std::env::temp_dir().join(format!("vyron-wrong-channel-{}",Uuid::new_v4()));
+        fs::create_dir_all(&temp).unwrap();
+        let owner="UC1234567890123456789012";
+        let selected="UC2222222222222222222222";
+        persist(&temp,&json!({"channelId":owner}),&json!({}),
+            &[json!({"date":"2026-01-01","views":99})],&[],&[],&[],&[],&[],&[],&[]).unwrap();
+        let pointer_before=fs::read(temp.join("ui-current.json")).unwrap();
+        let error=load_from_disk(&temp,selected,0,40,"all",None,None,None,None,None).unwrap_err();
+        assert_eq!(error,"ANALYTICS_POINTER_CHANNEL_MISMATCH");
+        assert_eq!(fs::read(temp.join("ui-current.json")).unwrap(),pointer_before);
+        let actual=load_from_disk(&temp,owner,0,40,"all",None,None,None,None,None).unwrap();
+        assert_eq!(actual["channelDaily"][0]["views"],99);
+        fs::remove_dir_all(temp).unwrap();
+    }
+    #[test]fn json_fallback_rejects_overview_channel_and_generation_mismatch(){
+        let temp=std::env::temp_dir().join(format!("vyron-wrong-overview-{}",Uuid::new_v4()));
+        let cid="UC1234567890123456789012";
+        let generation=Uuid::new_v4().to_string();
+        let root=temp.join("ui-generations").join(&generation);
+        fs::create_dir_all(&root).unwrap();
+        atomic_json(&temp.join("ui-current.json"),&json!({"channelId":cid,"generation":generation})).unwrap();
+        for overview in [
+            json!({"channelId":"UC2222222222222222222222","generation":generation}),
+            json!({"channelId":cid,"generation":Uuid::new_v4().to_string()}),
+        ]{
+            atomic_json(&root.join("overview.json"),&overview).unwrap();
+            let before=fs::read(root.join("overview.json")).unwrap();
+            let error=load_from_disk(&temp,cid,0,40,"all",None,None,None,None,None).unwrap_err();
+            assert_eq!(error,"ANALYTICS_OVERVIEW_IDENTITY_MISMATCH");
+            assert_eq!(fs::read(root.join("overview.json")).unwrap(),before);
+        }
+        fs::remove_dir_all(temp).unwrap();
+    }
     #[test]fn safe_ids(){
         assert!(valid_channel_id("UC1234567890123456789012"));
         assert!(!valid_channel_id("UC../../../../unsafe/path"));
@@ -762,7 +806,7 @@ mod tests{
         persist(&temp,&summary,&json!({}),&[],&[video],
             &[json!({"videoId":vid,"date":"2024-01-02","views":43})],&[],&[],&[],&[],&[]).unwrap();
         persist(&temp,&summary,&json!({}),&[],&[],&[],&[],&[],&[],&[],&[]).unwrap();
-        let result=load_from_disk(&temp,0,40,"all",None,None,Some(vid),None,None).unwrap();
+        let result=load_from_disk(&temp,cid,0,40,"all",None,None,Some(vid),None,None).unwrap();
         assert_eq!(result["videoCount"],1);
         assert_eq!(result["selectedVideo"]["inventoryObservedNow"],false);
         assert_eq!(result["videoDaily"][0]["views"],43);
@@ -868,7 +912,7 @@ mod tests{
             &[],&[first.clone()],&[]).unwrap();
         persist(&root,&json!({"channelId":cid}),&json!({}),&[],&[],&[],&[],&[],
             &[],&[first.clone(),next.clone()],&[]).unwrap();
-        let report=load_from_disk(&root,0,40,"all",None,None,None,None,None).unwrap();
+        let report=load_from_disk(&root,cid,0,40,"all",None,None,None,None,None).unwrap();
         let events=report["overview"]["events"].as_array().unwrap();
         assert_eq!(events.len(),2);
         assert_eq!(events[0],first);
@@ -1000,7 +1044,7 @@ mod tests{
             &[json!({"date":"2026-01-02","views":2,"fetchedAt":"2026-02-02"})],
             &videos,&[json!({"videoId":vid,"date":"2026-01-02","views":2,"fetchedAt":"2026-02-02"})],
             &[],&[],&[],&[],&[]).unwrap();
-        let result=load_from_disk(&temp,0,40,"all",None,None,Some(vid),Some("all"),None).unwrap();
+        let result=load_from_disk(&temp,channel,0,40,"all",None,None,Some(vid),Some("all"),None).unwrap();
         assert_eq!(result["channelDaily"].as_array().unwrap().len(),2);
         assert_eq!(result["channelDaily"][0]["fetchedAt"],"2026-02-01");
         assert_eq!(result["videoDaily"].as_array().unwrap().len(),2);
@@ -1017,7 +1061,7 @@ mod tests{
             json!({"id":"bbbbbbbbbbb","snippet":{"channelId":channel,"title":"Older","publishedAt":"2026-01-01T09:00:00Z"}}),
         ];
         persist(&temp,&json!({"channelId":channel}),&json!({}),&[],&videos,&[],&[],&[],&[],&[],&[]).unwrap();
-        let r=load_from_disk(&temp,0,1,"all",None,None,Some("bbbbbbbbbbb"),Some("all"),None).unwrap();
+        let r=load_from_disk(&temp,channel,0,1,"all",None,None,Some("bbbbbbbbbbb"),Some("all"),None).unwrap();
         assert_eq!(r["videoCount"],2);
         assert_eq!(r["videos"].as_array().unwrap().len(),1);
         assert_eq!(r["videos"][0]["videoId"],"aBc1234-X_y");
@@ -1030,3 +1074,4 @@ mod tests{
         assert_eq!(public_video_record(&v)["contentType"],"unknown");
     }
 }
+
