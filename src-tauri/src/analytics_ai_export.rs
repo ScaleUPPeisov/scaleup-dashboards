@@ -1315,16 +1315,29 @@ pub async fn youtube_ai_sync(app:AppHandle,request:AiExportRequest)->Result<Valu
             }
             match collect_channel(&app,&client,c,&request,&folder,&run,i,total).await {
                 Ok(r)=>{
-                    match crate::analytics360_cache::persist(&folder,&r.summary,&r.coverage,
-                        &r.channel_daily,&r.videos,&r.video_daily,&r.traffic,&r.breakdowns,
-                        &r.retention,&r.events,&r.findings){
-                        Ok(())=>{
+                    // Move the collected payload, not a second clone, into the
+                    // blocking pool. Large JSON merging, SQLite WAL transactions
+                    // and fsync must not block the async YouTube collector.
+                    progress(&app,&run,i,total,c,"SQLITE","Сохранение истории в фоновом потоке");
+                    let saving_folder=folder.clone();
+                    let save_result=tauri::async_runtime::spawn_blocking(move||{
+                        crate::analytics360_cache::persist(&saving_folder,&r.summary,&r.coverage,
+                            &r.channel_daily,&r.videos,&r.video_daily,&r.traffic,&r.breakdowns,
+                            &r.retention,&r.events,&r.findings)
+                    }).await;
+                    match save_result {
+                        Ok(Ok(()))=>{
                             completed+=1;
                             progress(&app,&run,i+1,total,c,"DONE","История канала доступна в Analytics 360");
                         },
-                        Err(e)=>{
+                        Ok(Err(e))=>{
                             errors.push(json!({"channelId":c.channel_id,"error":e}));
                             progress(&app,&run,i+1,total,c,"ERROR","Не удалось сохранить историю");
+                        },
+                        Err(e)=>{
+                            errors.push(json!({"channelId":c.channel_id,
+                                "error":format!("ANALYTICS_SYNC_STORAGE_WORKER_FAILED: {e}")}));
+                            progress(&app,&run,i+1,total,c,"ERROR","Ошибка фонового сохранения истории");
                         }
                     }
                 },
