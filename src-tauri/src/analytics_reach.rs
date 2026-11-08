@@ -62,8 +62,13 @@ fn read_one(path:&Path,channel_id:&str,create_time:&str,report_id:&str,
     for col in required{if !indexes.contains_key(col){return Err(format!("REACH_UNSUPPORTED_SCHEMA: {col}"))}}
     let idx=|s:&str|*indexes.get(s).unwrap();
     let mut accepted=0usize;
+    let mut seen_lines=0usize;
+    // Commit only after parsing the ENTIRE report. A truncated late row
+    // must not publish earlier rows from that same corrupted CSV.
+    let mut provisional=BTreeMap::<(String,String),ReachPoint>::new();
     for line in lines{
-        if accepted>MAX_REPORT_ROWS{return Err("REACH_REPORT_ROW_LIMIT".into())}
+        seen_lines+=1;
+        if seen_lines>MAX_REPORT_ROWS{return Err("REACH_REPORT_ROW_LIMIT".into())}
         let line=line.map_err(|e|format!("REACH_ROW_READ: {e}"))?;
         if line.trim().is_empty(){continue}
         let cells=csv_cells(&line)?;
@@ -77,6 +82,11 @@ fn read_one(path:&Path,channel_id:&str,create_time:&str,report_id:&str,
         let key=(date.to_string(),video.to_string());
         let fresh=ReachPoint{date:date.into(),video_id:video.into(),
             impressions:imps,ctr_raw:ctr,create_time:create_time.into(),report_id:report_id.into()};
+        if provisional.get(&key).map(|old|old.create_time<=fresh.create_time).unwrap_or(true){
+            provisional.insert(key,fresh);
+        }
+    }
+    for (key,fresh) in provisional{
         if map.get(&key).map(|old|old.create_time<=fresh.create_time).unwrap_or(true){
             map.insert(key,fresh);
         }
@@ -132,6 +142,30 @@ mod tests{
         assert_eq!(r.rows[0]["impressions"],520);
         assert_eq!(r.rows[0]["ctrRaw"],0.05);
         assert_eq!(r.rows[0]["ctrScale"],"UNVERIFIED");
+        let _=fs::remove_dir_all(root);
+    }
+    #[test]fn corrupted_late_csv_row_must_not_contribute_partial_ctr_evidence(){
+        let root=std::env::temp_dir().join(format!("vyron-reach-atomic-{}",Uuid::new_v4()));
+        fs::create_dir_all(root.join("reporting")).unwrap();
+        let ch="UC1234567890123456789012";let video="aBc1234-X_y";
+        let good="reach-aaaaaaaaaaaaaaaaaaaaaaaa.csv";
+        let damaged="reach-bbbbbbbbbbbbbbbbbbbbbbbb.csv";
+        fs::write(root.join("reporting").join(good),format!(
+            "date,channel_id,video_id,video_thumbnail_impressions,video_thumbnail_impressions_ctr\n2026-11-02,{ch},{video},400,0.04\n"
+        )).unwrap();
+        // A later report must not overwrite the good row if ANY row is broken.
+        fs::write(root.join("reporting").join(damaged),format!(
+            "date,channel_id,video_id,video_thumbnail_impressions,video_thumbnail_impressions_ctr\n2026-11-02,{ch},{video},900,0.99\n\"unterminated"
+        )).unwrap();
+        let coverage=json!({"reach":{"reports":[
+            {"file":good,"reportId":"good","createdTime":"2026-11-03T01:00:00Z"},
+            {"file":damaged,"reportId":"damaged","createdTime":"2026-11-04T01:00:00Z"}]}});
+        let output=read_reach(&root,&coverage,ch);
+        assert_eq!(output.coverage["status"],"PARTIAL");
+        assert_eq!(output.rows.len(),1);
+        assert_eq!(output.rows[0]["impressions"],400);
+        assert_eq!(output.rows[0]["ctrRaw"],0.04);
+        assert_eq!(output.rows[0]["reportId"],"good");
         let _=fs::remove_dir_all(root);
     }
     #[test]fn rejects_directory_traversal_and_fake_schema(){
