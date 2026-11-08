@@ -11,7 +11,7 @@ describe('VYRON Analytics 360 on-demand sync responsiveness',()=>{
   expect(start).toBeGreaterThanOrEqual(0);
   expect(sync).toContain('spawn_blocking(move||{');
   expect(sync).toContain('analytics360_cache::persist(&saving_folder,&r.summary,&r.coverage,');
-  expect(sync).not.toContain('r.clone()');
+  expect(sync).not.toMatch(/\br\.clone\(\)/);
   expect(sync).toContain('ANALYTICS_SYNC_STORAGE_WORKER_FAILED');
   expect(sync).toContain('Ok(Err(e))');
   expect(sync).toContain('Ok(Ok(()))');
