@@ -402,8 +402,8 @@ pub(crate) fn contributions_for_window(event:&Value,video_daily:&[Value])->Vec<V
         .and_then(|s|NaiveDate::parse_from_str(s,"%Y-%m-%d").ok());
     let Some(end)=end else{return vec![]};
     if !(1..=365).contains(&days){return vec![]}
-    let current_start=end-Days::days(days as u64-1);
-    let previous_start=current_start-Days::days(days as u64);
+    let current_start=end-Days::days(days-1);
+    let previous_start=current_start-Days::days(days);
     let previous_end=current_start-Days::days(1);
     // A duplicate (video, date) is ambiguous. Never count it twice or allow
     // duplicate rows to manufacture a "complete" 7/28-day evidence window.
@@ -461,8 +461,8 @@ pub(crate) fn change_findings(channel_id:&str,daily:&[Value])->Vec<Value>{
     let mut findings=Vec::new();
     let last=Utc::now().date_naive()-Days::days(3);
     for days in [7i64,28i64]{
-        let a=(0..days).map(|i|m.get(&(last-Days::days(i as u64)).format("%Y-%m-%d").to_string()).copied()).collect::<Vec<_>>();
-        let b=(days..days*2).map(|i|m.get(&(last-Days::days(i as u64)).format("%Y-%m-%d").to_string()).copied()).collect::<Vec<_>>();
+        let a=(0..days).map(|i|m.get(&(last-Days::days(i)).format("%Y-%m-%d").to_string()).copied()).collect::<Vec<_>>();
+        let b=(days..days*2).map(|i|m.get(&(last-Days::days(i)).format("%Y-%m-%d").to_string()).copied()).collect::<Vec<_>>();
         if a.iter().any(Option::is_none)||b.iter().any(Option::is_none){continue}
         let current:f64=a.iter().flatten().sum();let before:f64=b.iter().flatten().sum();
         let pct=percent_change(current,before);
@@ -1289,7 +1289,7 @@ mod tests{
     }
     #[test] fn winner_engine_rejects_duplicate_or_invalid_channel_days(){
         let end=Utc::now().date_naive()-Days::days(3);
-        let mut series=(0..56u64).map(|i|
+        let mut series=(0..56i64).map(|i|
             json!({"date":(end-Days::days(i)).format("%Y-%m-%d").to_string(),"views":10})
         ).collect::<Vec<_>>();
         assert_eq!(change_findings("channel",&series).len(),2);
