@@ -5,7 +5,7 @@ import {useApp} from './store';
 import {api} from './api';
 import type {Channel,ChannelAnalytics,YoutubeProfile} from './types';
 import {refreshChannelAnalytics} from './youtubeIntelligence';
-import {calendarMetricTotal,decimateExtrema,acceptSelectedChannelResult} from './analytics360Core';
+import {calendarMetricTotal,decimateExtrema,acceptSelectedChannelResult,breakdownMetrics,analyticsRequestKey,scopedAnalyticsSnapshot} from './analytics360Core';
 import {AnalyticsPage} from './AnalyticsPage';
 import {AiAnalyticsExport} from './AiAnalyticsExport';
 import {YouTubeChannelBar} from './YouTubeChannelBar';
@@ -132,13 +132,13 @@ function Kpi({name,value,detail}:{name:string;value:string;detail?:string}){
 }
 function BreakdownCard({title,values,showWatch=false}:{title:string;values?:{key?:string;views?:number|null;watchMinutes?:number|null}[];showWatch?:boolean}){
  const values2=values||[];
- const base=values2.reduce((n,v)=>n+Number(showWatch?v.watchMinutes||0:v.views||0),0);
+ const metrics=breakdownMetrics(values2.map(v=>showWatch?v.watchMinutes:v.views));
  return <section className="panel a360-panel"><h3>{title}</h3>
   {values2.length?<div className="a360-breakdowns">{values2.map((x,i)=>{
-   const quantity=Number(showWatch?x.watchMinutes||0:x.views||0),share=base?quantity/base*100:0;
+   const {value:quantity,share}=metrics[i];
    return <div key={String(x.key||'')+i} className="a360-breakdown-row">
     <div><b>{sourceNames[x.key||'']||x.key||'Неизвестно'}</b><span>{percent(share)} · {num(quantity,1)} {showWatch?'мин':'просмотров'}</span></div>
-    <div className="a360-bar"><i style={{width:share+'%'}}/></div>
+    {share!==null&&<div className="a360-bar"><i style={{width:share+'%'}}/></div>}
    </div>})}</div>:<Availability message="Разбивка отсутствует в доступной статистике канала." status="NOT_YET_COLLECTED"/>}
  </section>;
 }
@@ -210,7 +210,7 @@ export function Analytics360Page(){
  const [tab,setTab]=useState<Tab>('overview'),[period,setPeriod]=useState<Period>('28');
  const [startDate,setStartDate]=useState(''),[endDate,setEndDate]=useState('');
  const [profiles,setProfiles]=useState<YoutubeProfile[]>([]);
- const [snapshot,setSnapshot]=useState<Snapshot|null>(null),[loading,setLoading]=useState(false);
+ const [loadedSnapshot,setLoadedSnapshot]=useState<{key:string;value:Snapshot}|null>(null),[loading,setLoading]=useState(false);
  const [error,setError]=useState(''),[syncing,setSyncing]=useState(false),[refreshing,setRefreshing]=useState(false);
  const [progress,setProgress]=useState<Progress|null>(null),[includeRetention,setIncludeRetention]=useState(false);
  const [includeReporting,setIncludeReporting]=useState(true);
@@ -222,6 +222,11 @@ export function Analytics360Page(){
  const [fleetLoading,setFleetLoading]=useState(false);
  const refreshToken=useRef(0);
  const active=channels.find(c=>c.id===activeId)||channels[0];
+ const requestKey=analyticsRequestKey({channelId:active?.youtubeChannelId,period,startDate,endDate,
+  page:videoPage,contentType:videoType,sort:videoSort,videoId,revision:syncRevision});
+ const requestKeyRef=useRef(requestKey);
+ requestKeyRef.current=requestKey;
+ const snapshot=scopedAnalyticsSnapshot(loadedSnapshot,requestKey);
  const selectedChannelRef=useRef<string|undefined>(active?.youtubeChannelId);
  selectedChannelRef.current=active?.youtubeChannelId;
  const matching=profiles.find(p=>p.id===active?.youtubeProfileId&&p.channelId===active?.youtubeChannelId);
@@ -250,21 +255,24 @@ export function Analytics360Page(){
 
  async function load(){
   const requestedChannel=active?.youtubeChannelId;
-  if(!requestedChannel){++refreshToken.current;setSnapshot(null);setLoading(false);return}
+  if(!requestedChannel){++refreshToken.current;setLoadedSnapshot(null);setLoading(false);return}
+  const requestedKey=requestKey;
   const version=++refreshToken.current;setLoading(true);setError('');
+  const isCurrent=()=>requestedKey===requestKeyRef.current&&acceptSelectedChannelResult(requestedChannel,selectedChannelRef.current,version,refreshToken.current);
   try{
    const result=await invoke<Snapshot>('analytics360_read',{
     channelId:requestedChannel,page:videoPage,pageSize:40,period,
     startDate:period==='custom'?startDate:null,endDate:period==='custom'?endDate:null,
     videoId,contentType:videoType,sort:videoSort,
    });
-   if(acceptSelectedChannelResult(requestedChannel,selectedChannelRef.current,version,refreshToken.current))setSnapshot(result);
-  }catch(e){if(acceptSelectedChannelResult(requestedChannel,selectedChannelRef.current,version,refreshToken.current)){setSnapshot(null);setError(String(e))}}
-  finally{if(acceptSelectedChannelResult(requestedChannel,selectedChannelRef.current,version,refreshToken.current))setLoading(false)}
+   if(isCurrent())setLoadedSnapshot({key:requestedKey,value:result});
+  }catch(e){if(isCurrent()){setLoadedSnapshot(null);setError(String(e))}}
+  finally{if(isCurrent())setLoading(false)}
  }
- useEffect(()=>{if(!isMac)return;if(period==='custom'&&(!startDate||!endDate||startDate>endDate))return;
+ useEffect(()=>{if(!isMac)return;if(period==='custom'&&(!startDate||!endDate||startDate>endDate)){++refreshToken.current;setLoading(false);setLoadedSnapshot(null);return}
   void load();
- },[active?.youtubeChannelId,period,startDate,endDate,videoPage,videoType,videoSort,videoId,syncRevision,isMac]);
+  return()=>{++refreshToken.current};
+ },[requestKey,isMac]);
  useEffect(()=>{if(!syncing)return;let alive=true;let unlisten:(()=>void)|undefined;
   void listen<Progress>('vyron:ai-export-progress',e=>{if(alive&&e.payload.channelId===active?.youtubeChannelId)setProgress(e.payload)}).then(stop=>{if(alive)unlisten=stop;else stop()});
   return()=>{alive=false;unlisten?.()};
@@ -430,3 +438,4 @@ export function Analytics360Page(){
   <footer className="a360-footnote">Источники: YouTube Data API v3, Analytics API v2 и Reporting API там, где доступен. Даты в API и YouTube Studio могут различаться из-за часовых поясов и задержки публикации статистики. Данные одного канала никогда не используются для другого.</footer>
  </div>;
 }
+

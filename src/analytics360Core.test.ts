@@ -1,6 +1,33 @@
 import {describe,it,expect} from 'vitest';
-import {strictMetricTotal,weightedCtrPercent,compareExactWindows,calendarMetricTotal,decimateExtrema,acceptSelectedChannelResult,safeChannelId,safeVideoId} from './analytics360Core';
+import {strictMetricTotal,weightedCtrPercent,compareExactWindows,calendarMetricTotal,decimateExtrema,acceptSelectedChannelResult,safeChannelId,safeVideoId,breakdownMetrics,analyticsRequestKey,scopedAnalyticsSnapshot,type AnalyticsRequest} from './analytics360Core';
 describe('Analytics 360 metric accuracy',()=>{
+ it('preserves missing breakdown values without inventing zero or inflated shares',()=>{
+   expect(breakdownMetrics([20,null,0,undefined,NaN,-1])).toEqual([
+    {value:20,share:null},{value:null,share:null},{value:0,share:null},
+    {value:null,share:null},{value:null,share:null},{value:null,share:null}]);
+   expect(breakdownMetrics([20,80,0])).toEqual([{value:20,share:20},{value:80,share:80},{value:0,share:0}]);
+   expect(breakdownMetrics([0,0])).toEqual([{value:0,share:null},{value:0,share:null}]);
+ });
+ it('rejects impossible calendar bounds and normalized invalid row dates',()=>{
+   expect(calendarMetricTotal([{date:'2026-03-02',views:9}],'views','2026-02-30','2026-02-30'))
+    .toMatchObject({status:'INSUFFICIENT_DATA',value:null});
+   expect(calendarMetricTotal([{date:'2026-02-30',views:9}],'views','2026-03-02','2026-03-02'))
+    .toMatchObject({status:'NOT_YET_COLLECTED',value:null});
+   expect(calendarMetricTotal([{date:'2024-02-29',views:0}],'views','2024-02-29','2024-02-29'))
+    .toMatchObject({status:'AVAILABLE',value:0});
+ });
+ it('hides loaded data immediately when any analytics request dimension changes',()=>{
+   const request:AnalyticsRequest={channelId:'UC1234567890123456789012',period:'custom',
+    startDate:'2026-01-01',endDate:'2026-01-31',page:0,contentType:'all',sort:'recent',videoId:null,revision:0};
+   const value={views:99},loaded={key:analyticsRequestKey(request),value};
+   expect(scopedAnalyticsSnapshot(loaded,analyticsRequestKey(request))).toBe(value);
+   for(const patch of [{channelId:undefined},{channelId:'UC2222222222222222222222'},
+    {period:'7'},{startDate:'2026-01-02'},{endDate:'2026-01-30'},{page:1},
+    {contentType:'live'},{sort:'views'},{videoId:'aBc1234-X_y'},{revision:1}]){
+     expect(scopedAnalyticsSnapshot(loaded,analyticsRequestKey({...request,...patch}))).toBeNull();
+   }
+   expect(scopedAnalyticsSnapshot(null,analyticsRequestKey(request))).toBeNull();
+ });
  it('does not transform missing rows into zero',()=>{expect(strictMetricTotal([2,null,4],3)).toMatchObject({value:null,status:'PARTIAL'})});
  it('preserves real zero',()=>{expect(strictMetricTotal([0,0],2)).toMatchObject({value:0,status:'AVAILABLE'})});
  it('requires a nonempty reach denominator',()=>{expect(weightedCtrPercent([{impressions:0,ctrPercent:2}]).value).toBeNull()});
@@ -40,3 +67,4 @@ describe('Analytics 360 metric accuracy',()=>{
  });
  it('never lets YouTube identifiers become filesystem traversal',()=>{expect(safeChannelId('UC1234567890123456789012')).toBe(true);expect(safeChannelId('../../etc/passwd')).toBe(false);expect(safeVideoId('aBc1234-X_y')).toBe(true);expect(safeVideoId('a/../z')).toBe(false)});
 });
+

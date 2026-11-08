@@ -3,6 +3,31 @@ export type MetricStatus='AVAILABLE'|'PARTIAL'|'NOT_AUTHORIZED'|'NOT_PROVIDED_BY
 export type DatePoint={date:string;views:number|null;watchMinutes?:number|null;subscribersGained?:number|null;subscribersLost?:number|null};
 export type ReachRow={impressions:number|null;ctrPercent:number|null};
 export type MathResult={value:number|null;status:MetricStatus;observed:number;expected:number};
+/** API omissions must not become zero or inflate shares of the known rows. */
+export function breakdownMetrics(values:readonly (number|null|undefined)[]):{value:number|null;share:number|null}[]{
+ const known=values.map(v=>typeof v==='number'&&Number.isFinite(v)&&v>=0?v:null);
+ const complete=known.every(v=>v!==null);
+ const total=known.reduce<number>((sum,v)=>sum+(v??0),0);
+ return known.map(value=>({value,share:complete&&total>0&&value!==null?value/total*100:null}));
+}
+
+export type AnalyticsRequest={channelId:string|undefined;period:string;startDate:string;endDate:string;page:number;contentType:string;sort:string;videoId:string|null;revision:number};
+export function analyticsRequestKey(request:AnalyticsRequest):string{
+ return JSON.stringify([request.channelId??null,request.period,
+  request.period==='custom'?request.startDate:null,request.period==='custom'?request.endDate:null,
+  request.page,request.contentType,request.sort,request.videoId,request.revision]);
+}
+/** Reject already-loaded data during the render BEFORE the next effect runs. */
+export function scopedAnalyticsSnapshot<T>(loaded:{key:string;value:T}|null,currentKey:string):T|null{
+ return loaded?.key===currentKey?loaded.value:null;
+}
+
+/** Date.parse normalizes impossible dates such as February 30 into March. */
+function calendarDay(value:string|null|undefined):number{
+ if(!value||!/^\d{4}-\d{2}-\d{2}$/.test(value))return NaN;
+ const ms=Date.parse(value+'T00:00:00Z');
+ return Number.isFinite(ms)&&new Date(ms).toISOString().slice(0,10)===value?ms:NaN;
+}
 export function strictMetricTotal(values:readonly (number|null|undefined)[],expected=values.length):MathResult{
  const present=values.filter((v):v is number=>typeof v==='number'&&Number.isFinite(v));
  if(!present.length)return{value:null,status:'NOT_YET_COLLECTED',observed:0,expected};
@@ -35,15 +60,15 @@ export function calendarMetricTotal<T extends {date:string}>(
  start:string|null|undefined,
  end:string|null|undefined,
 ):MathResult{
- const startMs=start?Date.parse(start+'T00:00:00Z'):NaN;
- const endMs=end?Date.parse(end+'T00:00:00Z'):NaN;
+ const startMs=calendarDay(start);
+ const endMs=calendarDay(end);
  const expected=(endMs-startMs)/86400000+1;
  if(!Number.isInteger(expected)||expected<1||expected>20000){
    return{value:null,status:'INSUFFICIENT_DATA',observed:0,expected:0};
  }
  const seen=new Set<number>();let observed=0,total=0;
  for(const row of rows){
-   const day=Date.parse(String(row.date||'')+'T00:00:00Z');
+   const day=calendarDay(row.date);
    if(!Number.isFinite(day)||day<startMs||day>endMs)continue;
    if(seen.has(day))return{value:null,status:'ERROR',observed,expected};
    seen.add(day);
@@ -84,3 +109,4 @@ export function acceptSelectedChannelResult(requestChannelId:string,currentChann
  requestSequence:number,latestSequence:number):boolean{
  return Boolean(requestChannelId)&&requestChannelId===currentChannelId&&requestSequence===latestSequence;
 }
+
