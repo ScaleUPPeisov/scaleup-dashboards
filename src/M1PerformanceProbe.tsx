@@ -3,8 +3,9 @@ import {api} from './api';
 import {enterPerformanceProbeMode,exitPerformanceProbeMode,useApp} from './store';
 import type {Channel,Page,VideoJob} from './types';
 import type {MetadataQueueInput} from './metadataQueue';
+import {summarizeFrameIntervals,meetsM1FrameTarget,type FrameMetrics} from './m1FrameMetrics';
 
-type FpsMetrics={fps:number;p50:number;p95:number;p99:number;worst:number;dropped:number;long50:number;long100:number};
+type FpsMetrics=FrameMetrics;
 type RouteTiming={page:Page;samples:number[]};
 type ScenarioTimings=Map<string,number[]>;
 type RouteFrameTimings=Map<string,number[]>;
@@ -93,15 +94,13 @@ async function runNavigationRound(round:number,routeTimings:Map<Page,number[]>,s
 export function M1PerformanceProbe(){
   useEffect(()=>{
     let cancelled=false;
-    let latest:FpsMetrics|null=null;
+    let stopCurrentCapture:(()=>void)|null=null;
     let originalState:any;
     let probeMode=false;
     let longTaskObserver:PerformanceObserver|null=null;
     let longTaskObserverSupported=false;
     const observedLongTasksMs:number[]=[];
     let isolatedIpcProbeMs:number|null=null;
-    const onMetrics=(event:Event)=>{latest=(event as CustomEvent<FpsMetrics>).detail};
-    window.addEventListener('vyron:fps-metrics',onMetrics);
     void (async()=>{
       try{
         if(!(await api.performanceProbeEnabled()))return;
@@ -179,12 +178,21 @@ export function M1PerformanceProbe(){
         if(assignedJobs!==1000)throw new Error('METADATA_BATCH_ASSIGNMENT_INCOMPLETE:'+assignedJobs);
         const assignmentMs=performance.now()-assignmentStarted;
         await sleep(1000);
-        const rounds:FpsMetrics[]=[],routeTimings=new Map<Page,number[]>(),scenarioTimings:ScenarioTimings=new Map(),routeFrameTimings:RouteFrameTimings=new Map();
+        const rounds:FpsMetrics[]=[],roundIntervals:number[][]=[],roundForeground:boolean[]=[],routeTimings=new Map<Page,number[]>(),scenarioTimings:ScenarioTimings=new Map(),routeFrameTimings:RouteFrameTimings=new Map();
         for(let round=0;round<3&&!cancelled;round++){
-          latest=null;window.dispatchEvent(new CustomEvent('vyron:fps-reset'));await sleep(850);
-          await runNavigationRound(round,routeTimings,scenarioTimings,routeFrameTimings);
-          if(!latest)throw new Error('PERFORMANCE_METRICS_NOT_EMITTED');
-          rounds.push({...latest as FpsMetrics});
+          window.dispatchEvent(new CustomEvent('vyron:fps-reset'));await sleep(850);
+          const intervals:number[]=[];
+          let foreground=document.visibilityState==='visible',last:number|null=null,raf=0;
+          const visibility=()=>{if(document.visibilityState!=='visible')foreground=false};
+          const capture=(now:number)=>{if(last!==null)intervals.push(now-last);last=now;raf=requestAnimationFrame(capture)};
+          document.addEventListener('visibilitychange',visibility);
+          raf=requestAnimationFrame(capture);
+          stopCurrentCapture=()=>{cancelAnimationFrame(raf);document.removeEventListener('visibilitychange',visibility)};
+          try{await frames(2);await runNavigationRound(round,routeTimings,scenarioTimings,routeFrameTimings)}
+          finally{stopCurrentCapture();stopCurrentCapture=null}
+          const metrics=summarizeFrameIntervals(intervals);
+          if(!metrics)throw new Error('PERFORMANCE_FRAME_SAMPLES_INVALID');
+          rounds.push(metrics);roundIntervals.push(intervals);roundForeground.push(foreground);
         }
         if(cancelled||rounds.length!==3)return;
         const aggregate={
@@ -198,7 +206,7 @@ export function M1PerformanceProbe(){
           long100:Math.max(...rounds.map(x=>x.long100)),
         };
         const target={fps:59,p50:16.7,p95:20,p99:33,dropped:1,long50:0};
-        const pass=aggregate.fps>=59&&aggregate.p50<=17.5&&aggregate.p95<=20.5&&aggregate.p99<=33.5&&aggregate.dropped<1&&aggregate.long50===0;
+        const pass=roundForeground.every(Boolean)&&rounds.every(meetsM1FrameTarget);
         const currentVersion=await api.appVersion().catch(()=>'unknown');
         await api.performanceProbeCleanup();
         const sortedLongTasks=[...observedLongTasksMs].sort((a,b)=>a-b);
@@ -206,7 +214,11 @@ export function M1PerformanceProbe(){
           sortedLongTasks[Math.min(sortedLongTasks.length-1,
             Math.floor((sortedLongTasks.length-1)*.95))]:null;
         await api.performanceProbeReport({
-          schemaVersion:2,version:currentVersion,at:new Date().toISOString(),pass,target,aggregate,rounds,
+          schemaVersion:3,version:currentVersion,at:new Date().toISOString(),pass,target,aggregate,rounds,
+          frameEvidence:{roundIntervalsMs:roundIntervals,roundForeground,
+            policy:'Every complete round must pass. No rolling window, FPS rounding or >=1000ms stall filtering. Hidden rounds invalidate PASS.',
+            droppedDefinition:'Observed rAF intervals >20ms / all observed intervals * 100',
+            longFrameDefinition:'long50/long100 count rAF intervals, not PerformanceObserver long tasks'},
           additionalPhysicalInstrumentation:{
             isolatedIpcProbeMs,
             longTaskApiSupported:longTaskObserverSupported,
@@ -228,6 +240,7 @@ export function M1PerformanceProbe(){
       }catch(error){
         if(await api.performanceProbeEnabled().catch(()=>false))await api.performanceProbeReport({schemaVersion:2,version:await api.appVersion().catch(()=>'unknown'),pass:false,error:String(error),at:new Date().toISOString()}).catch(()=>undefined);
       }finally{
+        stopCurrentCapture?.();
         longTaskObserver?.disconnect();
         if(originalState)useApp.setState(originalState);
         if(probeMode){
@@ -236,7 +249,8 @@ export function M1PerformanceProbe(){
         }
       }
     })();
-    return()=>{cancelled=true;window.removeEventListener('vyron:fps-metrics',onMetrics)};
+    return()=>{cancelled=true;stopCurrentCapture?.()};
   },[]);
   return null;
 }
+
