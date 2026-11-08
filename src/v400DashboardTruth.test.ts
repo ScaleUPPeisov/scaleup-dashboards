@@ -52,6 +52,6 @@ describe('VYRON 4.0.0 dashboard truth separation',()=>{
    expect(dashboard).toContain("const aggregate=(values:number[],total:number)=>values.length?");
    expect(dashboard).toContain(":'—'");
    expect(dashboard).toContain('aggregate(subscriberValues,subscriberTotal)');
-   expect(dashboard).toContain("values.length<enabled.length?'≥ ':'');
+   expect(dashboard).toContain("values.length<enabled.length?'≥ ':'')");
  });
 });
