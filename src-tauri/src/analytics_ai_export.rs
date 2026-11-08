@@ -541,6 +541,15 @@ async fn download_reporting_csv(client:&reqwest::Client,token:&str,url:&str,path
     result
 }
 
+fn validate_cached_reporting_csv(path:&Path)->Result<(),String>{
+    // symlink_metadata does not dereference a replacement path into unrelated
+    // user files; only downloader-created regular CSV bytes are eligible.
+    let meta=fs::symlink_metadata(path).map_err(|e|format!("REPORTING_CACHE_METADATA: {e}"))?;
+    if !meta.file_type().is_file()||meta.len()==0||meta.len()>MAX_REACH_CSV_DOWNLOAD{
+        return Err("REPORTING_CACHED_FILE_UNTRUSTED".into())
+    }
+    Ok(())
+}
 async fn collect_reporting(app:&AppHandle,client:&reqwest::Client,token:&str,cache:&Path)->Value{
     let mut coverage=json!({"status":"unavailable","source":"youtube_reporting_api_v1","reason":null,
        "reachType":"channel_reach_basic_a1","reports":[]});
@@ -570,14 +579,23 @@ async fn collect_reporting(app:&AppHandle,client:&reqwest::Client,token:&str,cac
         let url=text(report.get("downloadUrl"));let id=text(report.get("id"));
         if url.is_empty()||id.is_empty(){continue}
         let path=cache.join("reporting").join(format!("reach-{}.csv",compact_hash(&id)));
-        if !path.exists(){
-            youtube::emit_youtube_api_request(app,"reporting.media.download",None);
-            if let Err(e)=download_reporting_csv(client,token,&url,&path).await{
-                errors.push(format!("report {}: {}",compact_hash(&id),e));
-            }
+        let result=match fs::symlink_metadata(&path){
+            Ok(_)=>validate_cached_reporting_csv(&path),
+            Err(e) if e.kind()==io::ErrorKind::NotFound=>{
+                youtube::emit_youtube_api_request(app,"reporting.media.download",None);
+                match download_reporting_csv(client,token,&url,&path).await{
+                    Ok(())=>validate_cached_reporting_csv(&path),
+                    Err(e)=>Err(e),
+                }
+            },
+            Err(e)=>Err(format!("REPORTING_CACHE_METADATA: {e}")),
+        };
+        if let Err(e)=result{
+            errors.push(format!("report {}: {}",compact_hash(&id),e));
+            continue
         }
-        if path.exists(){files.push(json!({"reportId":id,"file":path.file_name().and_then(|x|x.to_str()),
-          "startTime":report.get("startTime"),"endTime":report.get("endTime"),"createdTime":report.get("createTime")}));}
+        files.push(json!({"reportId":id,"file":path.file_name().and_then(|x|x.to_str()),
+          "startTime":report.get("startTime"),"endTime":report.get("endTime"),"createdTime":report.get("createTime")}));
     }
     coverage["reports"]=json!(files);
     coverage["downloadErrors"]=json!(errors);
@@ -1230,6 +1248,24 @@ mod tests{
         assert!(!trusted_reporting_download("https://youtubereporting.googleapis.com.evil.test/v1/media/abc"));
         assert!(!trusted_reporting_download("https://attacker@youtubereporting.googleapis.com/v1/media/abc"));
         assert!(!trusted_reporting_download("https://evil.test/steal"));
+    }
+    #[cfg(unix)]
+    #[test] fn cached_reporting_must_never_read_symlinked_or_empty_files(){
+        use std::os::unix::fs::symlink;
+        let root=std::env::temp_dir().join(format!("vyron-reporting-cache-{}",Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let outside=root.join("outside.txt");
+        fs::write(&outside,b"synthetic-data").unwrap();
+        let valid=root.join("reach-valid.csv");
+        fs::write(&valid,b"date,impressions\n2026-11-01,100\n").unwrap();
+        assert!(validate_cached_reporting_csv(&valid).is_ok());
+        let alias=root.join("reach-link.csv");
+        symlink(&outside,&alias).unwrap();
+        assert!(validate_cached_reporting_csv(&alias).unwrap_err().contains("UNTRUSTED"));
+        let empty=root.join("reach-empty.csv");
+        fs::write(&empty,b"").unwrap();
+        assert!(validate_cached_reporting_csv(&empty).is_err());
+        let _=fs::remove_dir_all(root);
     }
     #[test] fn reporting_backfill_prefers_newest_file_for_identical_period(){
         let old=json!({"id":"old","startTime":"2026-10-01T00:00:00Z","endTime":"2026-10-02T00:00:00Z","createTime":"2026-10-03T00:00:00Z"});
