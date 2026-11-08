@@ -6,6 +6,37 @@ from pathlib import Path
 from scripts.vyron_vitest_diff import load, stable_path
 
 class VitestDiffTests(unittest.TestCase):
+    def load_case(self, status):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "vitest.json"
+            path.write_text(json.dumps({"testResults": [{
+                "name": "/tmp/src/oauth.test.ts", "status": "passed",
+                "assertionResults": [{"fullName": "preserves refresh token", "status": status}]
+            }]}), encoding="utf-8")
+            return load(str(path))
+
+    def test_newly_unexecuted_test_is_a_regression_even_if_previously_failed(self):
+        for prior in ("passed", "failed"):
+            for status in ("pending", "skipped", "todo", "disabled"):
+                with self.subTest(prior=prior, status=status):
+                    baseline, _, baseline_cases = self.load_case(prior)
+                    current, _, current_cases = self.load_case(status)
+                    self.assertEqual(baseline_cases, current_cases)
+                    self.assertTrue(current - baseline)
+                    self.assertIn(f"[NOT_EXECUTED:{status}]", next(iter(current)))
+
+    def test_unchanged_skipped_baseline_remains_visible(self):
+        baseline, _, _ = self.load_case("pending")
+        current, _, _ = self.load_case("pending")
+        self.assertTrue(current & baseline)
+        self.assertFalse(current - baseline)
+
+    def test_unknown_or_missing_status_fails_closed(self):
+        for status in (None, "unexpected", ""):
+            with self.subTest(status=status):
+                with self.assertRaisesRegex(ValueError, "Unknown assertion status"):
+                    self.load_case(status)
+
     def test_stable_source_path_across_baseline_and_pr_worktrees(self):
         base = "/tmp/vyron-6_1_15-baseline/src/oauth.test.ts"
         candidate = "/home/runner/work/scaleup-dashboards/scaleup-dashboards/src/oauth.test.ts"
@@ -57,3 +88,4 @@ class VitestDiffTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

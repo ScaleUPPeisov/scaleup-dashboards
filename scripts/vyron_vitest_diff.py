@@ -29,7 +29,16 @@ def load(path: str) -> tuple[set[str], dict[str, str], set[str]]:
             name = case.get("fullName") or case.get("title") or "unknown test"
             identity = f"{location} :: {name}"
             cases.add(identity)
-            if case.get("status") == "failed":
+            status = case.get("status")
+            if status not in {"passed", "failed", "pending", "skipped", "todo", "disabled"}:
+                raise ValueError(f"Unknown assertion status for {identity}: {status!r}")
+            if status not in {"passed", "failed"}:
+                # Preserve the case identity for deletion checks, but do not let
+                # failed -> skipped look fixed, or passed -> skipped look safe.
+                blocked = f"{identity} :: [NOT_EXECUTED:{status}]"
+                failures.add(blocked)
+                errors[blocked] = "Test was reported but did not execute"
+            elif status == "failed":
                 had_failed_assertion = True
                 failures.add(identity)
                 messages = case.get("failureMessages") or []
@@ -68,8 +77,8 @@ def main() -> int:
         "This is a direct run of both commit trees with the same Node version.",
         "Historical failures remain visible in the independent Historical Regression Audit.",
         "",
-        f"- Baseline tests executed: **{prior_total}**",
-        f"- Candidate tests executed: **{current_total}**",
+        f"- Baseline test cases reported: **{prior_total}**",
+        f"- Candidate test cases reported: **{current_total}**",
         f"- Failures already present in 6.1.15: **{len(inherited)}**",
         f"- Failures new in PR: **{len(introduced)}**",
         f"- Baseline failures absent in PR: **{len(fixed)}**",
@@ -89,10 +98,10 @@ def main() -> int:
         "## Pre-existing failures",
         *([f"- {name}" for name in inherited] if inherited else ["None"]),
         "",
-        "## Previously failed, now passing/absent",
+        "## Previous failure entries absent (may be passing, skipped or removed)",
         *([f"- {name}" for name in fixed] if fixed else ["None"]),
         "",
-        "Note: a missing test may indicate deletion or renaming; investigate before classifying as fixed.",
+        "Note: missing, renamed and newly unexecuted tests block this gate; an absent failure alone is not proof of a fix.",
     ]
     report = "\n".join(lines) + "\n"
     print(report)
@@ -107,3 +116,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
