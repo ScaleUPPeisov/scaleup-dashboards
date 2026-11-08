@@ -18,6 +18,10 @@ on:
       - 'src/m1FrameMetrics.test.ts'
       - 'src/analytics360Core.ts'
       - 'src/analytics360Core.test.ts'
+      - 'src/publisherMetadata.test.ts'
+      - 'tests/vyron-602-manual-production-sidebar.test.mjs'
+      - 'tests/vyron-mac-ai-export-progress.test.mjs'
+      - 'tests/vyron-mac-analytics-sync-worker.test.mjs'
       - 'src/Analytics360.css'
       - 'src/App.tsx'
       - 'src/AnalyticsPage.tsx'
@@ -56,7 +60,7 @@ jobs:
         run: |
           npm ci
           npm run build
-          npx vitest run src/analytics360Core.test.ts src/Analytics360Fleet.test.ts src/m1FrameMetrics.test.ts src/googleProjectDiagnostics.test.ts src/vyron619PublisherAlwaysOpen.test.tsx src/youtubeProductivityGlobalChannel.test.ts
+          npx vitest run src/analytics360Core.test.ts src/Analytics360Fleet.test.ts src/m1FrameMetrics.test.ts src/googleProjectDiagnostics.test.ts src/vyron619PublisherAlwaysOpen.test.tsx src/youtubeProductivityGlobalChannel.test.ts src/publisherMetadata.test.ts tests/vyron-602-manual-production-sidebar.test.mjs tests/vyron-mac-ai-export-progress.test.mjs tests/vyron-mac-analytics-sync-worker.test.mjs
       - name: Rust type checking + exporter unit tests
         working-directory: src-tauri
         run: |
@@ -164,7 +168,7 @@ jobs:
         run: |
           npm ci
           npm run build
-          npx vitest run src/analytics360Core.test.ts src/Analytics360Fleet.test.ts src/m1FrameMetrics.test.ts src/googleProjectDiagnostics.test.ts src/vyron619PublisherAlwaysOpen.test.tsx src/youtubeProductivityGlobalChannel.test.ts
+          npx vitest run src/analytics360Core.test.ts src/Analytics360Fleet.test.ts src/m1FrameMetrics.test.ts src/googleProjectDiagnostics.test.ts src/vyron619PublisherAlwaysOpen.test.tsx src/youtubeProductivityGlobalChannel.test.ts src/publisherMetadata.test.ts tests/vyron-602-manual-production-sidebar.test.mjs tests/vyron-mac-ai-export-progress.test.mjs tests/vyron-mac-analytics-sync-worker.test.mjs
       - name: Rust build tests on macOS ARM64
         working-directory: src-tauri
         run: |
