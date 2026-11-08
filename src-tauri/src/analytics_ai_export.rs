@@ -1267,6 +1267,19 @@ mod tests{
         assert_eq!(csv_field("music-title"),"\"music-title\"");
     }
 
+    #[test] fn sync_custom_date_preflight_rejects_impossible_ranges(){
+        let mut request=AiExportRequest{
+            channels:vec![],period:"custom".into(),
+            start_date:Some("2026-02-30".into()),end_date:Some("2026-03-01".into()),
+            destination:String::new(),include_retention:None,include_reporting:None,
+        };
+        assert!(period_dates(&request,None).is_err());
+        request.start_date=Some("2026-01-10".into());
+        request.end_date=Some("2026-01-05".into());
+        assert!(period_dates(&request,None).is_err());
+        request.end_date=Some("2026-01-12".into());
+        assert_eq!(period_dates(&request,None).unwrap().0.format("%Y-%m-%d").to_string(),"2026-01-10");
+    }
     #[test] fn ranges(){let start=NaiveDate::from_ymd_opt(2026,1,1).unwrap();let end=NaiveDate::from_ymd_opt(2026,4,1).unwrap();
         let v=window_dates(start,end,90);assert_eq!(v.len(),2);assert_eq!(v[1].1,"2026-04-01");}
     #[test] fn baseline_zero_unknown(){assert!(percent_change(12.0,0.0).is_null());}
@@ -1347,6 +1360,9 @@ pub async fn youtube_ai_sync(app:AppHandle,request:AiExportRequest)->Result<Valu
         if !["all","365","90","30","custom"].contains(&request.period.as_str()){
             return Err("Недопустимый период".into())
         }
+        // Preflight custom dates before OAuth and network requests, exactly
+        // as the ZIP export path does. Never query with an impossible range.
+        if request.period=="custom"{let _=period_dates(&request,None)?;}
         let mut seen=HashSet::new();
         for c in &request.channels{
             if !is_safe_channel_id(&c.channel_id)||c.profile_id.is_empty()||!seen.insert(&c.channel_id){
