@@ -3,6 +3,8 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
     paths:
+      - 'package.json'
+      - 'package-lock.json'
       - 'src/**'
       - 'src-tauri/src/**'
       - 'scripts/vyron_vitest_diff.py'

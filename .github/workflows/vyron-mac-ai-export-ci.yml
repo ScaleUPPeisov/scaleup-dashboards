@@ -4,6 +4,11 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
     paths:
+      - 'package.json'
+      - 'package-lock.json'
+      - 'src/googleProjectDiagnostics.test.ts'
+      - 'src/vyron619PublisherAlwaysOpen.test.tsx'
+      - 'src/youtubeProductivityGlobalChannel.test.ts'
       - 'src/AiAnalyticsExport.tsx'
       - 'src/Analytics360Page.tsx'
       - 'src/Analytics360Fleet.tsx'
@@ -51,7 +56,7 @@ jobs:
         run: |
           npm ci
           npm run build
-          npx vitest run src/analytics360Core.test.ts src/Analytics360Fleet.test.ts src/m1FrameMetrics.test.ts
+          npx vitest run src/analytics360Core.test.ts src/Analytics360Fleet.test.ts src/m1FrameMetrics.test.ts src/googleProjectDiagnostics.test.ts src/vyron619PublisherAlwaysOpen.test.tsx src/youtubeProductivityGlobalChannel.test.ts
       - name: Rust type checking + exporter unit tests
         working-directory: src-tauri
         run: |
@@ -159,7 +164,7 @@ jobs:
         run: |
           npm ci
           npm run build
-          npx vitest run src/analytics360Core.test.ts src/Analytics360Fleet.test.ts src/m1FrameMetrics.test.ts
+          npx vitest run src/analytics360Core.test.ts src/Analytics360Fleet.test.ts src/m1FrameMetrics.test.ts src/googleProjectDiagnostics.test.ts src/vyron619PublisherAlwaysOpen.test.tsx src/youtubeProductivityGlobalChannel.test.ts
       - name: Rust build tests on macOS ARM64
         working-directory: src-tauri
         run: |

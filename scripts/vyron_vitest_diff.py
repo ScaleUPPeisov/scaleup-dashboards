@@ -55,6 +55,22 @@ def load(path: str) -> tuple[set[str], dict[str, str], set[str]]:
         raise ValueError(f"No test cases were parsed from {path}; refusing to treat empty runs as PASS")
     return failures, errors, cases
 
+def recovered_suite_failures(baseline: set[str], current_cases: set[str], current_failures: set[str]) -> set[str]:
+    """An import-error placeholder is not a deleted test when that suite now runs.
+    Require actual cases in the SAME file and no failed/unexecuted case there.
+    Ordinary missing test identities must still block the comparison.
+    """
+    marker = " :: [SUITE_IMPORT_OR_SETUP_FAILURE]"
+    recovered = set()
+    for identity in baseline:
+        if not identity.endswith(marker):
+            continue
+        prefix = identity[:-len(marker)] + " :: "
+        real_cases = {case for case in current_cases if case.startswith(prefix) and case != identity}
+        if real_cases and not any(failure.startswith(prefix) for failure in current_failures):
+            recovered.add(identity)
+    return recovered
+
 def main() -> int:
     if len(sys.argv) != 3:
         print("usage: vyron_vitest_diff.py <6.1.15.json> <pr.json>", file=sys.stderr)
@@ -62,7 +78,8 @@ def main() -> int:
     baseline, prior_details, baseline_cases = load(sys.argv[1])
     current, current_details, current_cases = load(sys.argv[2])
     prior_total, current_total = len(baseline_cases), len(current_cases)
-    removed_tests = sorted(baseline_cases - current_cases)
+    recovered_suites = recovered_suite_failures(baseline, current_cases, current)
+    removed_tests = sorted(baseline_cases - current_cases - recovered_suites)
     added_tests = sorted(current_cases - baseline_cases)
     introduced = sorted(current - baseline)
     inherited = sorted(current & baseline)
@@ -85,6 +102,10 @@ def main() -> int:
         f"- New critical contract failures: **{len(critical)}**",
         f"- Baseline test cases missing or renamed in PR: **{len(removed_tests)}**",
         f"- New test cases in PR: **{len(added_tests)}**",
+        f"- Previously unimportable suites now executing without failures: **{len(recovered_suites)}**",
+        "",
+        "## Recovered suite import/setup failures",
+        *([f"- {name}" for name in sorted(recovered_suites)] if recovered_suites else ["None"]),
         "",
         "## New failures",
         *([f"- {name}" for name in introduced] if introduced else ["None"]),

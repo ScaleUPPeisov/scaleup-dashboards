@@ -3,9 +3,25 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from scripts.vyron_vitest_diff import load, stable_path
+from scripts.vyron_vitest_diff import load, stable_path, recovered_suite_failures
 
 class VitestDiffTests(unittest.TestCase):
+    def test_recovered_import_failure_requires_passing_cases_in_the_same_file(self):
+        marker = "src/oauth.test.ts :: [SUITE_IMPORT_OR_SETUP_FAILURE]"
+        case = "src/oauth.test.ts :: preserves credentials"
+        self.assertEqual(recovered_suite_failures({marker}, {case}, set()), {marker})
+        self.assertEqual(recovered_suite_failures({marker}, set(), set()), set())
+        self.assertEqual(recovered_suite_failures({marker}, {"src/other.test.ts :: ok"}, set()), set())
+        for failure in (case, case + " :: [NOT_EXECUTED:pending]", marker):
+            self.assertEqual(recovered_suite_failures({marker}, {case}, {failure}), set())
+
+    def test_recovered_suite_does_not_exempt_deleted_real_tests(self):
+        marker = "src/oauth.test.ts :: [SUITE_IMPORT_OR_SETUP_FAILURE]"
+        old_case = "src/oauth.test.ts :: old test"
+        current = {"src/oauth.test.ts :: new test"}
+        recovered = recovered_suite_failures({marker, old_case}, current, set())
+        self.assertEqual({marker, old_case} - current - recovered, {old_case})
+
     def load_case(self, status):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "vitest.json"

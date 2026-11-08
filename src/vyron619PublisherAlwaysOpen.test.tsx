@@ -1,5 +1,5 @@
 import React from 'react';
-import {beforeEach,describe,expect,it,vi} from 'vitest';
+import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 
 vi.mock('./api',()=>{
  const asyncEmpty=async()=>[];
@@ -42,7 +42,8 @@ const requiredSections=['Папки канала','Незавершённые з
 const controls=['folders','recovery','metadata','thumbs','schedule','cleanup'];
 
 describe('VYRON 6.1.9 Publisher core sections are always open',()=>{
- beforeEach(()=>{installBrowserStubs();vi.resetModules()});
+ beforeEach(()=>{installBrowserStubs();vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true);vi.resetModules()});
+ afterEach(()=>vi.unstubAllGlobals());
 
  it('cold mount renders all six working sections with zero clicks, including empty Recovery',async()=>{
   // @ts-expect-error CI-only render harness; intentionally not a VYRON product dependency.
@@ -53,7 +54,7 @@ describe('VYRON 6.1.9 Publisher core sections are always open',()=>{
   const text=renderedText(renderer);
   for(const label of requiredSections)expect(text,label).toContain(label);
   expect(text).toContain('Незавершённых загрузок нет');
-  renderer.unmount();
+  await act(async()=>{renderer.unmount()});
  });
 
  it('top controls cannot hide any core section',async()=>{
@@ -68,7 +69,7 @@ describe('VYRON 6.1.9 Publisher core sections are always open',()=>{
    const text=renderedText(renderer);
    for(const label of requiredSections)expect(text,`${control} hid ${label}`).toContain(label);
   }
-  renderer.unmount();
+  await act(async()=>{renderer.unmount()});
  });
 
  it('core section visibility is not controlled by x=>!x state toggles',async()=>{
