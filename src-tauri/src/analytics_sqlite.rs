@@ -529,6 +529,32 @@ pub(crate) fn migrate_generation(cache:&Path,channel_id:&str)->Result<MigrationR
         .optional().map_err(|e|e.to_string())?{
         if old_digest!=digest{return Err("SQLITE_RECOVERY_REQUIRED: source generation bytes changed after verification".into())}
         let n=counts;
+        // A receipt alone does not prove the current materialized rows survived
+        // a crash, disk edit or external write. Fail closed, preserving JSON.
+        let expected=[daily.len() as i64,n[1],catalog.len() as i64,reach.len() as i64,
+            overview.get("events").and_then(Value::as_array).map(|a|a.len()).unwrap_or(0) as i64];
+        if n!=expected{return Err("SQLITE_RECOVERY_REQUIRED: receipt/source counts disagree".into())}
+        for (table,want) in ["channel_daily","video_daily","videos","video_reach_daily","channel_events"]
+            .iter().zip(expected){
+            let actual:i64=conn.query_row(
+                &format!("SELECT COUNT(*) FROM {table} WHERE channel_id=?1"),
+                params![channel_id],|r|r.get(0))
+                .map_err(|e|format!("SQLITE_RECOVERY_REQUIRED: count {table}: {e}"))?;
+            if actual!=want{
+                return Err(format!("SQLITE_RECOVERY_REQUIRED: receipt rows missing or altered in {table}"))
+            }
+        }
+        if let Some(first)=daily.first(){
+            let stored:String=conn.query_row(
+                "SELECT payload_json FROM channel_daily WHERE channel_id=?1 AND date=?2",
+                params![channel_id,date(first)?],|r|r.get(0))
+                .map_err(|e|format!("SQLITE_RECOVERY_REQUIRED: sample row read: {e}"))?;
+            let stored_value:Value=serde_json::from_str(&stored)
+                .map_err(|e|format!("SQLITE_RECOVERY_REQUIRED: sample payload invalid: {e}"))?;
+            if stored_value!=*first{
+                return Err("SQLITE_RECOVERY_REQUIRED: stored sample differs from verified JSON".into())
+            }
+        }
         return Ok(MigrationResult{generation,skipped:true,channels:1,
             channel_days:n[0].try_into().map_err(|_|"SQLITE_BAD_COUNT")?,
             video_days:n[1].try_into().map_err(|_|"SQLITE_BAD_COUNT")?,
@@ -829,6 +855,36 @@ mod tests{
         assert_eq!(reach.len(),1);
         assert_eq!(reach[0]["observedImpressions"],500);
         assert_eq!(reach[0]["ctrScale"],"UNVERIFIED");
+        let _=fs::remove_dir_all(cache);
+    }
+    #[test]fn missing_sql_rows_never_pass_idempotent_receipt_check(){
+        let (cache,id,generation)=sample_cache();
+        migrate_generation(&cache,&id).unwrap();
+        let source=cache.join("ui-generations").join(&generation).join("channel-daily.json");
+        let original=fs::read(&source).unwrap();
+        let pointer=fs::read(cache.join("ui-current.json")).unwrap();
+        {
+            let conn=prepare_db(&cache.join(DB_NAME)).unwrap();
+            conn.execute("DELETE FROM channel_daily WHERE channel_id=?1",params![id]).unwrap();
+        }
+        let err=migrate_generation(&cache,&id).unwrap_err();
+        assert!(err.contains("SQLITE_RECOVERY_REQUIRED"),"{err}");
+        assert!(err.contains("channel_daily"),"{err}");
+        assert_eq!(fs::read(&source).unwrap(),original);
+        assert_eq!(fs::read(cache.join("ui-current.json")).unwrap(),pointer);
+        let _=fs::remove_dir_all(cache);
+    }
+    #[test]fn changed_sql_payload_with_unchanged_row_count_is_not_silently_trusted(){
+        let (cache,id,_)=sample_cache();
+        migrate_generation(&cache,&id).unwrap();
+        {
+            let conn=prepare_db(&cache.join(DB_NAME)).unwrap();
+            conn.execute("UPDATE channel_daily SET payload_json=?1 WHERE channel_id=?2",
+                params![r#"{"date":"2026-01-01","views":999}"#,id]).unwrap();
+        }
+        let err=migrate_generation(&cache,&id).unwrap_err();
+        assert!(err.contains("SQLITE_RECOVERY_REQUIRED"),"{err}");
+        assert!(err.contains("stored sample"),"{err}");
         let _=fs::remove_dir_all(cache);
     }
     #[test]fn malformed_video_identity_rolls_back_without_erasing_json(){
