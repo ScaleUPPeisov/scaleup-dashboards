@@ -218,9 +218,28 @@ fn event_rows(root:Option<&Path>)->Vec<Value>{
     root.and_then(|p|read_json(&p.join("overview.json")).ok())
         .and_then(|v|v.get("events").and_then(Value::as_array).cloned()).unwrap_or_default()
 }
-fn optional_prior_rows(root:Option<&Path>,folder:&str,file:&str)->Vec<Value>{
-    root.and_then(|p|read_json(&p.join(folder).join(file)).ok())
-        .and_then(|v|v.as_array().cloned()).unwrap_or_default()
+fn prior_value(root:Option<&Path>,folder:&str,file:&str,required:bool)->Result<Option<Value>,String>{
+    let Some(root)=root else{return Ok(None)};
+    let path=root.join(folder).join(file);
+    let exists=path.try_exists().map_err(|_|"ANALYTICS_HISTORY_READ_FAILED".to_string())?;
+    if !exists{
+        return if required{Err("ANALYTICS_HISTORY_REQUIRED_FILE_MISSING".into())}else{Ok(None)}
+    }
+    let value=read_json(&path).map_err(|_|"ANALYTICS_HISTORY_INVALID_JSON".to_string())?;
+    Ok(Some(value))
+}
+fn prior_rows(root:Option<&Path>,folder:&str,file:&str,required:bool)->Result<Vec<Value>,String>{
+    match prior_value(root,folder,file,required)?{
+        Some(value)=>value.as_array().cloned().ok_or_else(||"ANALYTICS_HISTORY_EXPECTED_ARRAY".into()),
+        None=>Ok(Vec::new()),
+    }
+}
+fn prior_object(root:Option<&Path>,folder:&str,file:&str,required:bool)->Result<Option<Value>,String>{
+    let value=prior_value(root,folder,file,required)?;
+    if value.as_ref().map(|v|!v.is_object()).unwrap_or(false){
+        return Err("ANALYTICS_HISTORY_EXPECTED_OBJECT".into())
+    }
+    Ok(value)
 }
 
 fn prune_generations(cache:&Path,current:&str,channel_id:&str,minimum_age:std::time::Duration)->Result<usize,String>{
@@ -305,7 +324,7 @@ pub(crate) fn persist(
     let mut merged_recent_video_days=Vec::<Value>::new();
     let recent_cutoff=Utc::now().date_naive()-Days::days(62);
     let reach=crate::analytics_reach::read_reach(cache,coverage,cid);
-    let previous_reach=optional_prior_rows(previous_root.as_deref(),"","reach-daily.json");
+    let previous_reach=prior_rows(previous_root.as_deref(),"","reach-daily.json",false)?;
     let (merged_reach,preserved_reach_rows)=merge_reach_by_video_date(&previous_reach,&reach.rows);
     let mut preserved_retention_curves=0usize;
     let mut catalog=Vec::with_capacity(videos.len());
@@ -321,7 +340,7 @@ pub(crate) fn persist(
         let previous_detail=previous_root.as_ref().map(|p|p.join("video-details").join(format!("{hashed}.json")));
         if write_or_reuse(previous_detail.as_deref(),&root.join("video-details").join(format!("{hashed}.json")),video)?{reused_files+=1}
         let file=format!("{hashed}.json");
-        let previous_days=optional_prior_rows(previous_root.as_deref(),"video-days",&file);
+        let previous_days=prior_rows(previous_root.as_deref(),"video-days",&file,false)?;
         let current_days=days_by_video.remove(id).unwrap_or_default();
         let (merged_days,retained)=merge_by_date(&previous_days,&current_days);
         preserved_video_days+=retained;
@@ -337,8 +356,7 @@ pub(crate) fn persist(
         if let Some(curve)=retention_by_video.remove(id){
             let source=previous_root.as_ref().map(|p|p.join("retention").join(&file));
             if write_or_reuse(source.as_deref(),&root.join("retention").join(&file),&curve)?{reused_files+=1}
-        }else if let Some(previous)=previous_root.as_ref()
-            .and_then(|p|read_json(&p.join("retention").join(&file)).ok()){
+        }else if let Some(previous)=prior_object(previous_root.as_deref(),"retention",&file,false)?{
             let source=previous_root.as_ref().map(|p|p.join("retention").join(&file));
             if write_or_reuse(source.as_deref(),&root.join("retention").join(&file),&previous)?{reused_files+=1}
             preserved_retention_curves+=1;
@@ -346,37 +364,33 @@ pub(crate) fn persist(
     }
     // A video missing from a later authoritative inventory is not proof that
     // it was deleted. Preserve its last known metadata and historical metrics.
-    let previous_catalog=previous_root.as_ref()
-        .and_then(|r|read_json(&r.join("video-catalog.json")).ok())
-        .and_then(|v|v.as_array().cloned()).unwrap_or_default();
+    let previous_catalog=prior_rows(previous_root.as_deref(),"","video-catalog.json",true)?;
     let mut historical_only_videos=0usize;
     for old in previous_catalog{
-        let Some(id)=old.get("videoId").and_then(Value::as_str).filter(|id|valid_video_id(id))else{continue};
+        let id=old.get("videoId").and_then(Value::as_str).filter(|id|valid_video_id(id))
+            .ok_or("ANALYTICS_HISTORY_INVALID_VIDEO_ID")?;
         if !known.insert(id.to_string()){continue}
         let file=format!("{}.json",key(id));
-        let Some(detail)=previous_root.as_ref()
-            .and_then(|r|read_json(&r.join("video-details").join(&file)).ok())else{continue};
+        let detail=prior_object(previous_root.as_deref(),"video-details",&file,true)?
+            .ok_or("ANALYTICS_HISTORY_REQUIRED_FILE_MISSING")?;
         let mut record=old.clone();
         record["inventoryObservedNow"]=json!(false);
         record["inventoryCaveat"]=json!("Not observed in latest inventory; may be deleted, private, hidden or temporarily unavailable. No deletion inferred.");
         catalog.push(record);
         let source=previous_root.as_ref().map(|p|p.join("video-details").join(&file));
         if write_or_reuse(source.as_deref(),&root.join("video-details").join(&file),&detail)?{reused_files+=1}
-        if let Some(previous)=previous_root.as_ref()
-            .and_then(|r|read_json(&r.join("video-days").join(&file)).ok()){
-            if let Some(rows)=previous.as_array(){
+        let rows=prior_rows(previous_root.as_deref(),"video-days",&file,false)?;
+        if !rows.is_empty(){
                 merged_recent_video_days.extend(rows.iter().filter(|row|{
                     row.get("date").and_then(Value::as_str)
                         .and_then(|date|NaiveDate::parse_from_str(date,"%Y-%m-%d").ok())
                         .map(|date|date>=recent_cutoff).unwrap_or(false)
                 }).cloned());
                 preserved_video_days+=rows.len();
-            }
             let source=previous_root.as_ref().map(|p|p.join("video-days").join(&file));
-            if write_or_reuse(source.as_deref(),&root.join("video-days").join(&file),&previous)?{reused_files+=1}
+            if write_or_reuse(source.as_deref(),&root.join("video-days").join(&file),&json!(rows))?{reused_files+=1}
         }
-        if let Some(previous)=previous_root.as_ref()
-            .and_then(|r|read_json(&r.join("retention").join(&file)).ok()){
+        if let Some(previous)=prior_object(previous_root.as_deref(),"retention",&file,false)?{
             let source=previous_root.as_ref().map(|p|p.join("retention").join(&file));
             if write_or_reuse(source.as_deref(),&root.join("retention").join(&file),&previous)?{reused_files+=1}
             preserved_retention_curves+=1;
@@ -390,7 +404,7 @@ pub(crate) fn persist(
             *publications.entry(day.to_string()).or_insert(0)+=1;
         }
     }
-    let old_channel_days=optional_prior_rows(previous_root.as_deref(),"","channel-daily.json");
+    let old_channel_days=prior_rows(previous_root.as_deref(),"","channel-daily.json",true)?;
     let (merged_channel_days,preserved_channel_days)=merge_by_date(&old_channel_days,channel_daily);
     let historic_events=event_rows(previous_root.as_deref());
     let all_events=merge_events(&historic_events,events);
@@ -750,6 +764,61 @@ pub async fn analytics360_read(
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test]fn corrupt_prior_rows_never_publish_a_truncated_history(){
+        for file in ["channel-daily.json".to_string(),"video-catalog.json".to_string(),
+            "reach-daily.json".to_string(),format!("video-days/{}.json",key("aBc1234-X_y"))]{
+            for bad in [b"{broken".as_slice(),b"{}".as_slice()]{
+                let temp=std::env::temp_dir().join(format!("vyron-corrupt-history-{}",Uuid::new_v4()));
+                fs::create_dir_all(&temp).unwrap();
+                let cid="UC1234567890123456789012";
+                let videos=vec![json!({"id":"aBc1234-X_y","snippet":{"channelId":cid}})];
+                persist(&temp,&json!({"channelId":cid}),&json!({}),
+                    &[json!({"date":"2026-01-01","views":99})],&videos,
+                    &[json!({"videoId":"aBc1234-X_y","date":"2026-01-01","views":42})],
+                    &[],&[],&[],&[],&[]).unwrap();
+                let pointer_before=fs::read(temp.join("ui-current.json")).unwrap();
+                let root=previous_generation_root(&temp,cid).unwrap();
+                fs::write(root.join(&file),bad).unwrap();
+                let error=persist(&temp,&json!({"channelId":cid}),&json!({}),
+                    &[],&videos,&[],&[],&[],&[],&[],&[]).unwrap_err();
+                assert!(error.starts_with("ANALYTICS_HISTORY_"),"{error}");
+                assert_eq!(fs::read(temp.join("ui-current.json")).unwrap(),pointer_before);
+                assert_eq!(fs::read(root.join(&file)).unwrap(),bad);
+                fs::remove_dir_all(temp).unwrap();
+            }
+        }
+    }
+    #[test]fn missing_required_history_is_not_an_empty_history(){
+        let temp=std::env::temp_dir().join(format!("vyron-missing-history-{}",Uuid::new_v4()));
+        fs::create_dir_all(&temp).unwrap();
+        assert!(prior_rows(None,"","channel-daily.json",true).unwrap().is_empty());
+        assert!(prior_rows(Some(&temp),"video-days","not-collected.json",false).unwrap().is_empty());
+        assert_eq!(prior_rows(Some(&temp),"","channel-daily.json",true).unwrap_err(),
+            "ANALYTICS_HISTORY_REQUIRED_FILE_MISSING");
+        fs::remove_dir_all(temp).unwrap();
+    }
+    #[test]fn historical_video_corruption_is_not_silently_dropped(){
+        let cid="UC1234567890123456789012";
+        let vid="aBc1234-X_y";
+        for folder in ["video-details","video-days","retention"]{
+            let temp=std::env::temp_dir().join(format!("vyron-historical-corruption-{}",Uuid::new_v4()));
+            fs::create_dir_all(&temp).unwrap();
+            persist(&temp,&json!({"channelId":cid}),&json!({}),&[],
+                &[json!({"id":vid,"snippet":{"channelId":cid}})],
+                &[json!({"videoId":vid,"date":"2026-01-01","views":42})],&[],&[],
+                &[json!({"videoId":vid,"points":[[0,1]]})],&[],&[]).unwrap();
+            let pointer_before=fs::read(temp.join("ui-current.json")).unwrap();
+            let source=previous_generation_root(&temp,cid).unwrap().join(folder).join(format!("{}.json",key(vid)));
+            fs::write(&source,b"{broken").unwrap();
+            // The video is absent from the new inventory, but its old history
+            // must still be read successfully before publishing a generation.
+            assert!(persist(&temp,&json!({"channelId":cid}),&json!({}),
+                &[],&[],&[],&[],&[],&[],&[],&[]).unwrap_err().starts_with("ANALYTICS_HISTORY_"));
+            assert_eq!(fs::read(temp.join("ui-current.json")).unwrap(),pointer_before);
+            assert_eq!(fs::read(source).unwrap(),b"{broken");
+            fs::remove_dir_all(temp).unwrap();
+        }
+    }
     #[test]fn selected_channel_rejects_a_copied_foreign_cache_without_mutation(){
         let temp=std::env::temp_dir().join(format!("vyron-wrong-channel-{}",Uuid::new_v4()));
         fs::create_dir_all(&temp).unwrap();
