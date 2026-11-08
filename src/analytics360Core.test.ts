@@ -66,5 +66,27 @@ describe('Analytics 360 metric accuracy',()=>{
    expect(acceptSelectedChannelResult(first,undefined,8,8)).toBe(false);
  });
  it('never lets YouTube identifiers become filesystem traversal',()=>{expect(safeChannelId('UC1234567890123456789012')).toBe(true);expect(safeChannelId('../../etc/passwd')).toBe(false);expect(safeVideoId('aBc1234-X_y')).toBe(true);expect(safeVideoId('a/../z')).toBe(false)});
+ it('does not count extra rows as a complete numeric window',()=>{
+   expect(strictMetricTotal([10,null,20],2)).toMatchObject({value:null,status:'PARTIAL',observed:2,expected:2});
+   expect(strictMetricTotal([10,20],1)).toMatchObject({value:null,status:'PARTIAL'});
+ });
+ it('does not fabricate growth from a duplicated day hiding a missing day',()=>{
+   const current=[{date:'2026-01-01',views:10},{date:'2026-01-01',views:10},{date:'2026-01-03',views:15}];
+   const previous=[{date:'2025-12-29',views:5},{date:'2025-12-30',views:5},{date:'2025-12-31',views:5}];
+   expect(compareExactWindows(current,previous,3)).toEqual({delta:null,percent:null,status:'INSUFFICIENT_DATA'});
+ });
+ it('rejects sparse, invalid-date and wrong-size comparison windows',()=>{
+   const prior=[{date:'2025-12-29',views:5},{date:'2025-12-30',views:5},{date:'2025-12-31',views:5}];
+   const sparse=[{date:'2026-01-01',views:5},{date:'2026-01-02',views:5},{date:'2026-01-04',views:10}];
+   const invalid=[{date:'2026-02-30',views:5},{date:'2026-03-01',views:5},{date:'2026-03-02',views:10}];
+   for(const rows of [sparse,invalid,sparse.slice(0,2)]){
+     expect(compareExactWindows(rows,prior,3)).toMatchObject({delta:null,percent:null,status:'INSUFFICIENT_DATA'});
+   }
+ });
+ it('compares complete unsorted daily windows without losing correct growth',()=>{
+   const current=[{date:'2026-01-03',views:30},{date:'2026-01-01',views:10},{date:'2026-01-02',views:20}];
+   const previous=[{date:'2025-12-31',views:10},{date:'2025-12-29',views:10},{date:'2025-12-30',views:10}];
+   expect(compareExactWindows(current,previous,3)).toMatchObject({status:'AVAILABLE',delta:30,percent:100});
+ });
 });
 

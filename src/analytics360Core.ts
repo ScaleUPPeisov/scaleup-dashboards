@@ -29,9 +29,11 @@ function calendarDay(value:string|null|undefined):number{
  return Number.isFinite(ms)&&new Date(ms).toISOString().slice(0,10)===value?ms:NaN;
 }
 export function strictMetricTotal(values:readonly (number|null|undefined)[],expected=values.length):MathResult{
+ if(!Number.isSafeInteger(expected)||expected<0)return{value:null,status:'ERROR',observed:0,expected};
  const present=values.filter((v):v is number=>typeof v==='number'&&Number.isFinite(v));
  if(!present.length)return{value:null,status:'NOT_YET_COLLECTED',observed:0,expected};
- if(present.length!==expected)return{value:null,status:'PARTIAL',observed:present.length,expected};
+ // Additional or duplicate input rows do not establish complete coverage.
+ if(values.length!==expected||present.length!==expected)return{value:null,status:'PARTIAL',observed:present.length,expected};
  return{value:present.reduce((a,b)=>a+b,0),status:'AVAILABLE',observed:present.length,expected};
 }
 export function weightedCtrPercent(rows:readonly ReachRow[]):MathResult{
@@ -42,9 +44,21 @@ export function weightedCtrPercent(rows:readonly ReachRow[]):MathResult{
  const totalWeighted=eligible.reduce((s,x)=>s+x.ctrPercent*x.impressions,0);
  return{value:totalWeighted/totalImpressions,status:'AVAILABLE',observed:eligible.length,expected:rows.length};
 }
+/** A row count alone cannot prove consecutive days: duplicate dates may hide a gap. */
+function exactDatedWindowTotal(rows:readonly DatePoint[],days:number):MathResult{
+ if(!Number.isSafeInteger(days)||days<1||days>20000||rows.length!==days)
+  return{value:null,status:'INSUFFICIENT_DATA',observed:0,expected:days};
+ const timestamps=rows.map(row=>calendarDay(row.date));
+ if(timestamps.some(time=>!Number.isFinite(time)))
+  return{value:null,status:'INSUFFICIENT_DATA',observed:0,expected:days};
+ const first=Math.min(...timestamps),last=Math.max(...timestamps);
+ if((last-first)/86400000+1!==days)
+  return{value:null,status:'INSUFFICIENT_DATA',observed:0,expected:days};
+ return calendarMetricTotal(rows,'views',new Date(first).toISOString().slice(0,10),new Date(last).toISOString().slice(0,10));
+}
 export function compareExactWindows(current:readonly DatePoint[],previous:readonly DatePoint[],days:number):{delta:number|null;percent:number|null;status:MetricStatus}{
- const one=strictMetricTotal(current.map(x=>x.views),days);
- const two=strictMetricTotal(previous.map(x=>x.views),days);
+ const one=exactDatedWindowTotal(current,days);
+ const two=exactDatedWindowTotal(previous,days);
  if(one.status!=='AVAILABLE'||two.status!=='AVAILABLE'||one.value==null||two.value==null)return{delta:null,percent:null,status:'INSUFFICIENT_DATA'};
  if(two.value===0)return{delta:one.value,percent:null,status:'INSUFFICIENT_DATA'};
  return{delta:one.value-two.value,percent:(one.value-two.value)/two.value*100,status:'AVAILABLE'};
