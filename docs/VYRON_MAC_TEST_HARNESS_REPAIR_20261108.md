@@ -22,3 +22,11 @@ Its GitHub macOS ARM64, Linux, OAuth, Publisher, Privacy, Offline and baseline c
 - Local before/after comparison: four failure entries resolved, zero new failures, zero real baseline cases removed. This local comparison is against d5e33c7c; the GitHub workflow separately compares the exact stable 6.1.15 source.
 
 The remaining 59 failures are not waived. No production data, Google credentials, updater, Windows runtime or application version changed. No merge, DMG or physical-M1 claim. The full master specification remains unfinished.
+
+## Follow-up: exercise the Autopilot entry point
+
+Commit `377b1d69` passed the exact 6.1.15 GitHub baseline comparison: 1,146 baseline cases vs 1,173 candidate cases; 59 inherited failures, zero new failures, zero missing real cases, one recovered import-error suite.
+
+The legacy OAuth-gate test matched an obsolete boolean expression that rejected an explicit zero limit. Current behavior deliberately supports explicit unlimited mode (zero), while missing configuration blocks work. Replace the source-text assertion with calls to `runYoutubeAutopilotForChannel` using mocked transport. Verify missing OAuth, disabled autopilot, disabled safe mode and missing daily limit each prevent session lookup, upload and resume. Existing eligibility tests separately cover explicit zero.
+
+After this follow-up: 8/8 focused Autopilot tests and TypeScript passed. Full local Vitest: 1,173 assertions, 58 failures, no skips; comparison against d5e33c7c resolves five failure entries with no new failures and no real test deletions. The remaining 58 failures are still release blockers; they have not been waived.
