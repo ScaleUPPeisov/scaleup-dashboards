@@ -33,6 +33,19 @@ describe('Analytics 360 metric accuracy',()=>{
  it('requires a nonempty reach denominator',()=>{expect(weightedCtrPercent([{impressions:0,ctrPercent:2}]).value).toBeNull()});
  it('weights CTR by impressions, never average of percentages',()=>{const r=weightedCtrPercent([{impressions:100,ctrPercent:10},{impressions:900,ctrPercent:2}]);expect(r.status).toBe('AVAILABLE');expect(r.value).toBeCloseTo(2.8)});
  it('refuses partial CTR',()=>{expect(weightedCtrPercent([{impressions:100,ctrPercent:4},{impressions:null,ctrPercent:null}]).status).toBe('PARTIAL')});
+ it('refuses impossible CTR percentages instead of presenting misleading averages',()=>{
+   for(const bad of [-1,101,NaN,Infinity]){
+     const r=weightedCtrPercent([{impressions:300,ctrPercent:bad},{impressions:700,ctrPercent:5}]);
+     expect(r).toMatchObject({value:null,status:'PARTIAL'});
+   }
+   expect(weightedCtrPercent([{impressions:200,ctrPercent:100},{impressions:800,ctrPercent:0}]))
+     .toMatchObject({status:'AVAILABLE',value:20});
+ });
+ it('does not report confirmed growth from negative YouTube daily views',()=>{
+   const current=[{date:'2026-01-02',views:-10}];
+   const previous=[{date:'2026-01-01',views:10}];
+   expect(compareExactWindows(current,previous,1)).toEqual({delta:null,percent:null,status:'INSUFFICIENT_DATA'});
+ });
  it('refuses percentage change over zero baseline',()=>{expect(compareExactWindows([{date:'2026-01-02',views:7}],[{date:'2026-01-01',views:0}],1)).toMatchObject({percent:null,status:'INSUFFICIENT_DATA'})});
  it('calculates a comparable period delta when complete',()=>{expect(compareExactWindows([{date:'2026-01-02',views:30}],[{date:'2026-01-01',views:10}],1)).toMatchObject({delta:20,percent:200,status:'AVAILABLE'})});
  it('rejects incomplete calendar periods, even when other rows have valid numbers',()=>{

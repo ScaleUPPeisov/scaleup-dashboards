@@ -37,7 +37,7 @@ export function strictMetricTotal(values:readonly (number|null|undefined)[],expe
  return{value:present.reduce((a,b)=>a+b,0),status:'AVAILABLE',observed:present.length,expected};
 }
 export function weightedCtrPercent(rows:readonly ReachRow[]):MathResult{
- const eligible=rows.filter((r):r is {impressions:number;ctrPercent:number}=>r.impressions!==null&&Number.isFinite(r.impressions)&&r.impressions>=0&&r.ctrPercent!==null&&Number.isFinite(r.ctrPercent));
+ const eligible=rows.filter((r):r is {impressions:number;ctrPercent:number}=>r.impressions!==null&&Number.isFinite(r.impressions)&&r.impressions>=0&&r.ctrPercent!==null&&Number.isFinite(r.ctrPercent)&&r.ctrPercent>=0&&r.ctrPercent<=100);
  const totalImpressions=eligible.reduce((s,x)=>s+x.impressions,0);
  if(!rows.length||!eligible.length||!totalImpressions)return{value:null,status:'INSUFFICIENT_DATA',observed:eligible.length,expected:rows.length};
  if(eligible.length!==rows.length)return{value:null,status:'PARTIAL',observed:eligible.length,expected:rows.length};
@@ -47,6 +47,9 @@ export function weightedCtrPercent(rows:readonly ReachRow[]):MathResult{
 /** A row count alone cannot prove consecutive days: duplicate dates may hide a gap. */
 function exactDatedWindowTotal(rows:readonly DatePoint[],days:number):MathResult{
  if(!Number.isSafeInteger(days)||days<1||days>20000||rows.length!==days)
+  return{value:null,status:'INSUFFICIENT_DATA',observed:0,expected:days};
+ // YouTube daily views cannot be negative; never rank corrupted observations.
+ if(rows.some(row=>row.views!==null&&row.views!==undefined&&(!Number.isFinite(row.views)||row.views<0)))
   return{value:null,status:'INSUFFICIENT_DATA',observed:0,expected:days};
  const timestamps=rows.map(row=>calendarDay(row.date));
  if(timestamps.some(time=>!Number.isFinite(time)))
