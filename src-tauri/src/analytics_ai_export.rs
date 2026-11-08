@@ -840,7 +840,13 @@ fn archive_files(base:&Path)->Result<Vec<PathBuf>,String>{
     fn walk(root:&Path,dir:&Path,out:&mut Vec<PathBuf>)->Result<(),String>{
         for entry in fs::read_dir(dir).map_err(|e|e.to_string())?{
             let entry=entry.map_err(|e|e.to_string())?;let p=entry.path();
-            if p.is_dir(){walk(root,&p,out)?}else if p.is_file(){out.push(p)}
+            // Do not follow a symlink into an OAuth vault, home folder or a
+            // directory loop if a concurrent process changes staging.
+            let kind=entry.file_type().map_err(|e|e.to_string())?;
+            if kind.is_symlink(){return Err("AI_ZIP_SYMLINK_IN_STAGING".into())}
+            if kind.is_dir(){walk(root,&p,out)?}
+            else if kind.is_file(){out.push(p)}
+            else{return Err("AI_ZIP_UNSUPPORTED_STAGING_ENTRY".into())}
         }
         Ok(())
     }
@@ -1163,6 +1169,24 @@ pub async fn youtube_ai_export(app:AppHandle,request:AiExportRequest)->Result<Va
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[cfg(unix)]
+    #[test] fn ai_zip_refuses_symlink_to_outside_staging(){
+        use std::os::unix::fs::symlink;
+        let root=std::env::temp_dir().join(format!("vyron-ai-zip-symlink-{}",Uuid::new_v4()));
+        let stage=root.join("stage");
+        fs::create_dir_all(&stage).unwrap();
+        let outside=root.join("outside.txt");
+        fs::write(&outside,b"synthetic-only").unwrap();
+        symlink(&outside,stage.join("untrusted.txt")).unwrap();
+        let err=archive_files(&stage).unwrap_err();
+        assert!(err.contains("AI_ZIP_SYMLINK_IN_STAGING"),"{err}");
+        let archive=root.join("must-not-exist.zip");
+        let err=build_zip(&stage,&archive).unwrap_err();
+        assert!(err.contains("AI_ZIP_SYMLINK_IN_STAGING"),"{err}");
+        assert!(!archive.exists());
+        assert!(!archive.with_extension("partial").exists());
+        let _=fs::remove_dir_all(root);
+    }
     #[test] fn ai_zip_sha256_integrity_checked_before_publishing(){
         let root=std::env::temp_dir().join(format!("vyron-sha-manifest-{}",Uuid::new_v4()));
         let stage=root.join("stage");fs::create_dir_all(&stage).unwrap();
