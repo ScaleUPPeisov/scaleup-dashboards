@@ -1308,7 +1308,7 @@ mod tests{
         ).collect::<Vec<_>>();
         let valid=contributions_for_window(&event,&series);
         assert_eq!(valid[0]["evidenceStatus"],"complete");
-        assert_eq!(valid[0]["confirmedDeltaViews"],40);
+        assert_eq!(valid[0]["confirmedDeltaViews"].as_f64(),Some(40.0));
         series.push(json!({"videoId":"video-1","date":"2026-01-04","views":999}));
         let conflicting=contributions_for_window(&event,&series);
         assert_eq!(conflicting[0]["evidenceStatus"],"partial_conflicting_days");
