@@ -1,4 +1,4 @@
-import React,{useEffect,useMemo,useState} from 'react';
+import React,{useMemo,useState} from 'react';
 import {invoke} from '@tauri-apps/api/core';
 import {listen} from '@tauri-apps/api/event';
 import {open} from '@tauri-apps/plugin-dialog';
@@ -40,12 +40,6 @@ export function AiAnalyticsExport({channels,profiles}:{channels:Channel[];profil
  const [error,setError]=useState('');
  const chosen=mode==='all'?connected:connected.filter(c=>selected.includes(c.channelId));
  const completed=Object.values(progress).filter(p=>p.stage==='DONE'||p.stage==='ERROR').length;
- useEffect(()=>{if(!running)return;let unlisten:(()=>void)|undefined;let live=true;
-  void listen<Progress>('vyron:ai-export-progress',event=>{
-   if(live)setProgress(old=>({...old,[event.payload.channelId]:event.payload}));
-  }).then(f=>{if(live)unlisten=f;else f()});
-  return()=>{live=false;unlisten?.()};
- },[running]);
  async function chooseFolder():Promise<string|null>{
   const value=await open({directory:true,multiple:false,title:'Выберите папку для AI ZIP'});
   return typeof value==='string'?value:null;
@@ -58,7 +52,13 @@ export function AiAnalyticsExport({channels,profiles}:{channels:Channel[];profil
   if(!directory){try{directory=await chooseFolder()||'';}catch(e){setError(String(e));return;}}
   if(!directory){setError('Папка сохранения не выбрана.');return;}
   setFolder(directory);setRunning(true);
+  let unlisten:(()=>void)|undefined;
   try{
+   // Subscribe BEFORE invoking Rust: a fast first-channel event must not be
+   // lost while React has yet to commit a new running=true render.
+   unlisten=await listen<Progress>('vyron:ai-export-progress',event=>{
+    setProgress(old=>({...old,[event.payload.channelId]:event.payload}));
+   });
    // Rust owns OAuth and local cache. No token is ever exposed to the UI.
    const output=await invoke<ExportResult>('youtube_ai_export',{request:{
     channels:chosen,period,startDate:period==='custom'?startDate:null,endDate:period==='custom'?endDate:null,
@@ -66,7 +66,7 @@ export function AiAnalyticsExport({channels,profiles}:{channels:Channel[];profil
    }});
    setResult(output);
   }catch(e){setError(String(e));}
-  finally{setRunning(false);}
+  finally{unlisten?.();setRunning(false);}
  }
  const isMac=typeof navigator!=='undefined'&&/mac/i.test(navigator.platform||navigator.userAgent);
  if(!isMac)return null;
