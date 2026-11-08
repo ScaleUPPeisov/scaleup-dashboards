@@ -60,6 +60,9 @@ export function metadataRowForJob(rows:ImportedMetadata[],job:VideoJob,index:num
 }
 export function metadataPublishAt(row:ImportedMetadata|undefined,fallback?:string,defaultOffsetMinutes=420){
  if(!row)return fallback&&Number.isFinite(Date.parse(fallback))?new Date(fallback).toISOString():undefined;
+ // An explicitly impossible source day must not fall back to an unrelated job date.
+ const explicitDay=dateKey(row.publishAt);
+ if(explicitDay&&!validCalendarDay(explicitDay))return undefined;
  const direct=normalizedRowInstant(row,defaultOffsetMinutes);if(direct)return direct;
  if(row.publishTime&&fallback){const tz=row.publishTimezone?.includes('/')?row.publishTimezone:'Asia/Krasnoyarsk',day=new Intl.DateTimeFormat('en-CA',{timeZone:tz,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(fallback));return row.publishTimezone?.includes('/')?ianaLocalIso(day,row.publishTime,row.publishTimezone):fixedOffsetIso(day,row.publishTime,Number.isFinite(row.publishUtcOffsetMinutes)?Number(row.publishUtcOffsetMinutes):defaultOffsetMinutes)}
  return undefined

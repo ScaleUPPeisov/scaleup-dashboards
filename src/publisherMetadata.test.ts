@@ -22,6 +22,7 @@ describe('publisher metadata is authoritative at upload time',()=>{
  it('uses the file values in the final upload payload',()=>expect(resolvedUploadMetadata(job(),{title:'new',description:'new d',tags:['a','b'],source:'x'},'2026-09-20T11:00:00.000Z','24')).toEqual({title:'new',description:'new d',tags:['a','b'],publishAt:'2026-09-20T11:00:00.000Z',categoryId:'24'}));
  it('rejects impossible calendar dates instead of silently scheduling on a different day',()=>{
   expect(metadataPublishAt({source:'x',publishAt:'2026-02-30T00:00:00.000Z',publishTime:'18:30'})).toBeUndefined();
+  expect(metadataPublishAt({source:'x',publishAt:'2026-02-30T00:00:00.000Z',publishTime:'18:30'},'2026-03-05T00:00:00.000Z')).toBeUndefined();
   expect(metadataPublishAt({source:'x',publishAt:'2026-02-30T00:00:00.000Z'})).toBeUndefined();
   expect(metadataPublishAtForDate({source:'x',publishTime:'18:30'},'2026-02-30')).toBeUndefined();
   expect(metadataPublishAtForDate({source:'x',publishTime:'18:30',publishTimezone:'Europe/Paris'},'2026-02-30')).toBeUndefined();
