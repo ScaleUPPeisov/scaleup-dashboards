@@ -398,36 +398,42 @@ fn video_lifecycle(videos:&[Value],daily:&[Value],channel_id:&str)->Vec<Value>{
 fn percent_change(now:f64,before:f64)->Value{if before.abs()<f64::EPSILON {Value::Null}else{json!(((now-before)/before)*100.0)}}
 pub(crate) fn contributions_for_window(event:&Value,video_daily:&[Value])->Vec<Value>{
     let days=event.get("windowDays").and_then(Value::as_i64).unwrap_or(0);
-    let end=event.get("periodEnd").and_then(Value::as_str).and_then(|s|NaiveDate::parse_from_str(s,"%Y-%m-%d").ok());
+    let end=event.get("periodEnd").and_then(Value::as_str)
+        .and_then(|s|NaiveDate::parse_from_str(s,"%Y-%m-%d").ok());
     let Some(end)=end else{return vec![]};
-    if days<1{return vec![]}
-    let current_start=end-Days::days(days-1);
-    let previous_start=current_start-Days::days(days);
+    if !(1..=365).contains(&days){return vec![]}
+    let current_start=end-Days::days(days as u64-1);
+    let previous_start=current_start-Days::days(days as u64);
     let previous_end=current_start-Days::days(1);
-    let mut map=HashMap::<String,(f64,f64,usize,usize)>::new();
+    // A duplicate (video, date) is ambiguous. Never count it twice or allow
+    // duplicate rows to manufacture a "complete" 7/28-day evidence window.
+    let mut unique=HashMap::<(String,NaiveDate),Option<f64>>::new();
     for point in video_daily{
         let id=text(point.get("videoId"));
         let date=text(point.get("date"));
         let Some(date)=NaiveDate::parse_from_str(&date,"%Y-%m-%d").ok()else{continue};
-        let Some(views)=numeric(point.get("views"))else{continue};
-        if id.is_empty(){continue}
-        if date<previous_start||date>end{continue}
-        let row=map.entry(id).or_insert((0.0,0.0,0,0));
-        if date>=current_start{
-            row.0+=views;row.2+=1;
-        }else if date<=previous_end{
-            row.1+=views;row.3+=1;
-        }
+        if id.is_empty()||date<previous_start||date>end{continue}
+        let value=numeric(point.get("views")).filter(|v|v.is_finite()&&*v>=0.0);
+        let key=(id,date);
+        if let Some(existing)=unique.get_mut(&key){*existing=None}
+        else{unique.insert(key,value);}
     }
-    let mut out=map.into_iter().map(|(id,(now,prior,observed_now,observed_prior))|{
-        let both_complete=observed_now>=days as usize&&observed_prior>=days as usize;
+    let mut map=HashMap::<String,(f64,f64,usize,usize,bool)>::new();
+    for ((id,date),value) in unique{
+        let row=map.entry(id).or_insert((0.0,0.0,0,0,false));
+        let Some(views)=value else{row.4=true;continue};
+        if date>=current_start{row.0+=views;row.2+=1;}
+        else if date<=previous_end{row.1+=views;row.3+=1;}
+    }
+    let mut out=map.into_iter().map(|(id,(now,prior,observed_now,observed_prior,conflict))|{
+        let both_complete=!conflict&&observed_now==days as usize&&observed_prior==days as usize;
         json!({"videoId":id,"currentObservedViews":now,"previousObservedViews":prior,
             "currentObservedDays":observed_now,"previousObservedDays":observed_prior,
             "requiredDaysPerWindow":days,
             "confirmedDeltaViews":if both_complete{Some(now-prior)}else{None},
             "observedSumDifference":now-prior,
-            "evidenceStatus":if both_complete{"complete"}else{"partial_missing_days"},
-            "warning":"Observed sum difference is not a confirmed total delta when some daily rows are missing."})
+            "evidenceStatus":if both_complete{"complete"}else if conflict{"partial_conflicting_days"}else{"partial_missing_days"},
+            "warning":"Observed sum difference is not a confirmed total delta when daily data is missing or conflicting."})
     }).collect::<Vec<_>>();
     out.sort_by(|a,b|{
         let left=numeric(a.get("observedSumDifference")).unwrap_or(0.0).abs();
@@ -437,13 +443,26 @@ pub(crate) fn contributions_for_window(event:&Value,video_daily:&[Value])->Vec<V
     out.truncate(25);
     out
 }
+
 pub(crate) fn change_findings(channel_id:&str,daily:&[Value])->Vec<Value>{
-    let m:HashMap<_,_>=daily.iter().filter_map(|x|Some((x.get("date")?.as_str()?.to_string(),numeric(x.get("views"))?))).collect();
+    let mut m=HashMap::<String,f64>::new();
+    let mut conflicting=HashSet::<String>::new();
+    for row in daily{
+        let date=text(row.get("date"));
+        if NaiveDate::parse_from_str(&date,"%Y-%m-%d").is_err(){continue}
+        let Some(views)=numeric(row.get("views")).filter(|v|v.is_finite()&&*v>=0.0)
+            else{conflicting.insert(date.clone());m.remove(&date);continue};
+        if conflicting.contains(&date){continue}
+        if m.insert(date.clone(),views).is_some(){
+            m.remove(&date);
+            conflicting.insert(date);
+        }
+    }
     let mut findings=Vec::new();
     let last=Utc::now().date_naive()-Days::days(3);
     for days in [7i64,28i64]{
-        let a=(0..days).map(|i|m.get(&(last-Days::days(i)).format("%Y-%m-%d").to_string()).copied()).collect::<Vec<_>>();
-        let b=(days..days*2).map(|i|m.get(&(last-Days::days(i)).format("%Y-%m-%d").to_string()).copied()).collect::<Vec<_>>();
+        let a=(0..days).map(|i|m.get(&(last-Days::days(i as u64)).format("%Y-%m-%d").to_string()).copied()).collect::<Vec<_>>();
+        let b=(days..days*2).map(|i|m.get(&(last-Days::days(i as u64)).format("%Y-%m-%d").to_string()).copied()).collect::<Vec<_>>();
         if a.iter().any(Option::is_none)||b.iter().any(Option::is_none){continue}
         let current:f64=a.iter().flatten().sum();let before:f64=b.iter().flatten().sum();
         let pct=percent_change(current,before);
@@ -1267,6 +1286,39 @@ mod tests{
        assert!(is_safe_channel_id("UC1234567890123456789012"));
        assert!(!is_safe_channel_id("UC../../../secrets"));
        assert!(!is_safe_channel_id("UCbad/path"));
+    }
+    #[test] fn winner_engine_rejects_duplicate_or_invalid_channel_days(){
+        let end=Utc::now().date_naive()-Days::days(3);
+        let mut series=(0..56u64).map(|i|
+            json!({"date":(end-Days::days(i)).format("%Y-%m-%d").to_string(),"views":10})
+        ).collect::<Vec<_>>();
+        assert_eq!(change_findings("channel",&series).len(),2);
+        series.push(json!({"date":end.format("%Y-%m-%d").to_string(),"views":100000}));
+        assert!(change_findings("channel",&series).is_empty(),
+            "duplicate dates cannot produce observed growth");
+        series.pop();
+        series[0]["views"]=json!(-10);
+        assert!(change_findings("channel",&series).is_empty(),
+            "invalid negative views cannot produce growth");
+    }
+    #[test] fn video_contributions_require_distinct_complete_calendar_days(){
+        let event=json!({"windowDays":2,"periodEnd":"2026-01-04"});
+        let mut series=(1..=4).map(|day|
+            json!({"videoId":"video-1","date":format!("2026-01-{day:02}"),"views":day*10})
+        ).collect::<Vec<_>>();
+        let valid=contributions_for_window(&event,&series);
+        assert_eq!(valid[0]["evidenceStatus"],"complete");
+        assert_eq!(valid[0]["confirmedDeltaViews"],40);
+        series.push(json!({"videoId":"video-1","date":"2026-01-04","views":999}));
+        let conflicting=contributions_for_window(&event,&series);
+        assert_eq!(conflicting[0]["evidenceStatus"],"partial_conflicting_days");
+        assert!(conflicting[0]["confirmedDeltaViews"].is_null());
+        assert_eq!(conflicting[0]["currentObservedDays"],1);
+        series.pop();
+        series[3]["views"]=json!(-5);
+        let invalid=contributions_for_window(&event,&series);
+        assert_eq!(invalid[0]["evidenceStatus"],"partial_conflicting_days");
+        assert!(invalid[0]["confirmedDeltaViews"].is_null());
     }
     #[test] fn lifecycle_missing_days_are_unknown(){
        let videos=vec![json!({"id":"video-1","snippet":{"publishedAt":"2026-01-01T21:00:00Z"}})];
