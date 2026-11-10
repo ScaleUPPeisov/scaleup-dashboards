@@ -71,6 +71,8 @@ pub struct AiExportRequest {
     destination: String,
     include_retention: Option<bool>,
     include_reporting: Option<bool>,
+    #[serde(default)]
+    export_mode: Option<String>,
 }
 fn reported_error(v: &Value, status: reqwest::StatusCode) -> String {
     let reason=v.pointer("/error/message").and_then(Value::as_str).unwrap_or("API error");
@@ -628,6 +630,33 @@ struct NetworkExport{
     events:Vec<Value>,
     findings:Vec<Value>,
 }
+/// Snapshot-only path: no OAuth, HTTP client, quota mutation, JSON generation
+/// publishing or SQLite migration. Missing caches are reported, not fabricated.
+fn collect_cached_channel(cache:&Path,channel_id:&str)->Result<NetworkExport,String>{
+    if !is_safe_channel_id(channel_id){return Err("AI_OFFLINE_INVALID_CHANNEL".into())}
+    if !cache.is_dir(){return Err("AI_OFFLINE_CACHE_NOT_FOUND".into())}
+    let overview=crate::analytics360_cache::materialized_overview(cache,channel_id)?;
+    let summary=overview.get("summary").cloned()
+        .filter(|v|v.get("channelId").and_then(Value::as_str)==Some(channel_id))
+        .ok_or("AI_OFFLINE_CACHE_IDENTITY_MISMATCH")?;
+    let mut coverage=overview.get("coverage").cloned().unwrap_or_else(||json!({}));
+    coverage["exportMode"]=json!("OFFLINE_CACHE");
+    coverage["lastSuccessfulSyncAt"]=overview.get("updatedAt").cloned().unwrap_or(Value::Null);
+    coverage["offlineApiRequests"]=json!(0);
+    let array=|field:&str|overview.get(field).and_then(Value::as_array).cloned().unwrap_or_default();
+    Ok(NetworkExport{
+        summary,coverage,
+        channel_daily:crate::analytics360_cache::materialized_channel_daily(cache,channel_id)?,
+        videos:crate::analytics360_cache::materialized_video_records(cache,channel_id)?,
+        // ZIP streams daily video rows from a verified per-video cache below.
+        video_daily:Vec::new(),
+        traffic:array("traffic"),
+        breakdowns:array("audienceBreakdowns"),
+        retention:Vec::new(),
+        events:array("events"),
+        findings:array("growthAndDecline"),
+    })
+}
 async fn collect_channel(app:&AppHandle,client:&reqwest::Client,choice:&AiChannelChoice,request:&AiExportRequest,cache:&Path,
     run:&str,index:usize,total:usize)->Result<NetworkExport,String>{
     reset_analytics_request_budget();
@@ -1008,6 +1037,10 @@ fn export_merged_video_history(cache:&Path,channel_id:&str,videos:&[Value],
 #[tauri::command]
 pub async fn youtube_ai_export(app:AppHandle,request:AiExportRequest)->Result<Value,String>{
     let _run_guard=acquire_ai_run()?;
+    let offline=request.export_mode.as_deref()==Some("offline");
+    if !matches!(request.export_mode.as_deref(),None|Some("online")|Some("offline")){
+        return Err("AI_EXPORT_INVALID_MODE".into())
+    }
     ANALYTICS_QUOTA_BLOCKED.store(false,std::sync::atomic::Ordering::Release);
     #[cfg(not(target_os="macos"))]
     {let _=(app,request);return Err("Экспорт для ИИ доступен только в VYRON Mac".into());}
@@ -1019,17 +1052,21 @@ pub async fn youtube_ai_export(app:AppHandle,request:AiExportRequest)->Result<Va
         let mut unique=HashSet::new();
         for choice in &request.channels{
             if !unique.insert(choice.channel_id.clone()){return Err("Дублируется Channel ID".into())}
-            if !is_safe_channel_id(&choice.channel_id)||choice.profile_id.is_empty(){
+            if !is_safe_channel_id(&choice.channel_id)||(!offline&&choice.profile_id.is_empty()){
                 return Err("Некорректная привязка YouTube канала".into())
             }
         }
         let destination=PathBuf::from(&request.destination);
         if !destination.is_dir(){return Err("Выбранная папка не существует".into())}
         let root=app.path().app_data_dir().map_err(|e|e.to_string())?.join("AIAnalytics");
-        let cache_root=root.join("cache");fs::create_dir_all(&cache_root).map_err(|e|e.to_string())?;
+        let cache_root=root.join("cache");
+        if offline {
+            if !cache_root.is_dir(){return Err("AI_OFFLINE_CACHE_NOT_FOUND".into())}
+        }else{fs::create_dir_all(&cache_root).map_err(|e|e.to_string())?;}
         let run=Uuid::new_v4().to_string();let staging=root.join("staging").join(&run);
         fs::create_dir_all(staging.join("channels")).map_err(|e|e.to_string())?;
-        let client=reqwest::Client::builder().timeout(Duration::from_secs(60)).build().map_err(|e|e.to_string())?;
+        let client=if offline{None}else{Some(reqwest::Client::builder()
+            .timeout(Duration::from_secs(60)).build().map_err(|e|e.to_string())?)};
         let mut summary=Vec::new();let mut coverage=Vec::new();let mut all_events=Vec::new();
         let mut all_retention=Vec::new();let mut all_breakdowns=Vec::new();let mut findings=Vec::new();
         let mut channel_csv=csv_file(&staging.join("CHANNELS_DAILY.csv"),
@@ -1047,29 +1084,50 @@ pub async fn youtube_ai_export(app:AppHandle,request:AiExportRequest)->Result<Va
         let total=request.channels.len();
         for (i,choice) in request.channels.iter().enumerate(){
             let channel_cache=cache_root.join(&choice.channel_id);
-            if let Err(e)=fs::create_dir_all(&channel_cache){coverage.push(json!({"channelId":choice.channel_id,"status":"error","reason":e.to_string()}));continue}
+            if offline {
+                if !channel_cache.is_dir(){
+                    coverage.push(json!({"channelId":choice.channel_id,"status":"error","reason":"AI_OFFLINE_CACHE_NOT_FOUND"}));
+                    progress(&app,&run,i+1,total,choice,"ERROR","Нет сохранённой аналитики");
+                    continue
+                }
+            }else if let Err(e)=fs::create_dir_all(&channel_cache){
+                coverage.push(json!({"channelId":choice.channel_id,"status":"error","reason":e.to_string()}));
+                continue
+            }
             let out_dir=staging.join("channels").join(&choice.channel_id);
             fs::create_dir_all(&out_dir).map_err(|e|e.to_string())?;
-            match collect_channel(&app,&client,choice,&request,&channel_cache,&run,i,total).await{
+            let collected=if offline{
+                collect_cached_channel(&channel_cache,&choice.channel_id)
+            }else{
+                collect_channel(&app,client.as_ref().ok_or("AI_EXPORT_ONLINE_CLIENT_MISSING")?,
+                    choice,&request,&channel_cache,&run,i,total).await
+            };
+            match collected{
                 Ok(r)=>{
                     // All JSON materialization and SQLite WAL migration run on a
                     // dedicated blocking worker, not the Tokio async executor.
                     // Move the collected data into the worker and return it:
                     // cloning one million rows would double memory pressure.
-                    progress(&app,&run,i,total,choice,"SQLITE","Сохранение аналитики в фоновом потоке");
-                    let saving_cache=channel_cache.clone();
-                    let (r,save_result)=tauri::async_runtime::spawn_blocking(move||{
-                        let result=crate::analytics360_cache::persist(&saving_cache,
-                            &r.summary,&r.coverage,&r.channel_daily,&r.videos,&r.video_daily,
-                            &r.traffic,&r.breakdowns,&r.retention,&r.events,&r.findings);
-                        (r,result)
-                    }).await.map_err(|e|format!("ANALYTICS_BLOCKING_WORKER_FAILED: {e}"))?;
-                    if let Err(e)=save_result{
-                        coverage.push(json!({"channelId":choice.channel_id,"name":choice.name,
-                            "status":"error","stage":"analytics360_cache","reason":e}));
-                        progress(&app,&run,i+1,total,choice,"ERROR","Не удалось сохранить Analytics 360");
-                        continue
-                    }
+                    let r=if offline {
+                        // No writes whatsoever to the user's published cache or SQLite.
+                        r
+                    }else{
+                        progress(&app,&run,i,total,choice,"SQLITE","Сохранение аналитики в фоновом потоке");
+                        let saving_cache=channel_cache.clone();
+                        let (saved,result)=tauri::async_runtime::spawn_blocking(move||{
+                            let result=crate::analytics360_cache::persist(&saving_cache,
+                                &r.summary,&r.coverage,&r.channel_daily,&r.videos,&r.video_daily,
+                                &r.traffic,&r.breakdowns,&r.retention,&r.events,&r.findings);
+                            (r,result)
+                        }).await.map_err(|e|format!("ANALYTICS_BLOCKING_WORKER_FAILED: {e}"))?;
+                        if let Err(e)=result{
+                            coverage.push(json!({"channelId":choice.channel_id,"name":choice.name,
+                                "status":"error","stage":"analytics360_cache","reason":e}));
+                            progress(&app,&run,i+1,total,choice,"ERROR","Не удалось сохранить Analytics 360");
+                            continue
+                        }
+                        saved
+                    };
 
                     // ZIP uses the last atomically published MERGED generation.
                     // Fresh API queries may stop at a quota limit; verified older
@@ -1085,6 +1143,8 @@ pub async fn youtube_ai_export(app:AppHandle,request:AiExportRequest)->Result<Va
                     let merged_retention=crate::analytics360_cache::materialized_retention(&channel_cache,&choice.channel_id)?;
                     let mut archive_coverage=r.coverage.clone();
                     archive_coverage["archiveHistorySource"]=json!("merged_published_analytics360_generation");
+                    archive_coverage["exportMode"]=json!(if offline{"OFFLINE_CACHE"}else{"SYNC_AND_EXPORT"});
+                    archive_coverage["lastSuccessfulSyncAt"]=merged_overview.get("updatedAt").cloned().unwrap_or(Value::Null);
                     archive_coverage["archivedChannelDays"]=json!(merged_channel.len());
                     archive_coverage["archivedHistoricalVideoRecords"]=json!(merged_videos.len());
                     archive_coverage["archivedReachRows"]=json!(merged_reach.len());
@@ -1327,11 +1387,40 @@ mod tests{
         assert_eq!(csv_field("music-title"),"\"music-title\"");
     }
 
+    #[test] fn offline_read_uses_published_cache_without_creating_new_generation(){
+        let cache=std::env::temp_dir().join(format!("vyron-ai-offline-{}",Uuid::new_v4()));
+        fs::create_dir_all(&cache).unwrap();
+        let cid="UC1234567890123456789012";
+        let video="aBc1234-X_y";
+        let summary=json!({"channelId":cid,"name":"Offline Synthetic"});
+        let source_video=json!({"id":video,"snippet":{"channelId":cid,"publishedAt":"2026-01-01T00:00:00Z"}});
+        crate::analytics360_cache::persist(&cache,&summary,&json!({"daily":"partial"}),
+            &[json!({"date":"2026-01-01","views":42})],&[source_video],
+            &[json!({"videoId":video,"date":"2026-01-01","views":42})],
+            &[],&[],&[],&[],&[]).unwrap();
+        let pointer_before=fs::read(cache.join("ui-current.json")).unwrap();
+        let count_before=fs::read_dir(cache.join("ui-generations")).unwrap().count();
+        let result=collect_cached_channel(&cache,cid).unwrap();
+        assert_eq!(result.summary["name"],"Offline Synthetic");
+        assert_eq!(result.channel_daily.len(),1);
+        assert_eq!(result.videos.len(),1);
+        assert_eq!(result.coverage["offlineApiRequests"],0);
+        assert!(result.coverage["lastSuccessfulSyncAt"].is_string());
+        assert_eq!(fs::read(cache.join("ui-current.json")).unwrap(),pointer_before);
+        assert_eq!(fs::read_dir(cache.join("ui-generations")).unwrap().count(),count_before);
+        let _=fs::remove_dir_all(cache);
+    }
+    #[test] fn offline_cache_missing_fails_without_creating_directory(){
+        let cache=std::env::temp_dir().join(format!("vyron-offline-missing-{}",Uuid::new_v4()));
+        let err=collect_cached_channel(&cache,"UC1234567890123456789012").unwrap_err();
+        assert_eq!(err,"AI_OFFLINE_CACHE_NOT_FOUND");
+        assert!(!cache.exists());
+    }
     #[test] fn sync_custom_date_preflight_rejects_impossible_ranges(){
         let mut request=AiExportRequest{
             channels:vec![],period:"custom".into(),
             start_date:Some("2026-02-30".into()),end_date:Some("2026-03-01".into()),
-            destination:String::new(),include_retention:None,include_reporting:None,
+            destination:String::new(),include_retention:None,include_reporting:None,export_mode:None,
         };
         assert!(period_dates(&request,None).is_err());
         request.start_date=Some("2026-01-10".into());
