@@ -733,6 +733,7 @@ async fn collect_channel(app:&AppHandle,client:&reqwest::Client,choice:&AiChanne
         progress(app,run,index,total,choice,"CHANNEL_DAILY","История канала по дням");
         let mut failures=Vec::new();let mut successes=0usize;
         for (a,b) in window_dates(start,end,90) {
+            ensure_export_active()?;
             match analytics(app,client,&token,cache,&a,&b,
                 "views,estimatedMinutesWatched,subscribersGained,subscribersLost,averageViewDuration,averageViewPercentage,likes,comments,shares",
                 "day",None,"analytics.channelDaily").await {
@@ -751,7 +752,9 @@ async fn collect_channel(app:&AppHandle,client:&reqwest::Client,choice:&AiChanne
         progress(app,run,index,total,choice,"VIDEO_DAILY", &format!("Все видео: {}",ids.len()));
         let mut successes=0usize;let mut failures=0usize;
         'video_windows: for (a,b) in window_dates(start,end,60) {
+            ensure_export_active()?;
             for ids_chunk in ids.chunks(25) {
+                ensure_export_active()?;
                 let filter=format!("video=={}",ids_chunk.join(","));
                 match analytics(app,client,&token,cache,&a,&b,
                     "views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,subscribersGained,subscribersLost,likes,comments,shares",
@@ -823,6 +826,7 @@ async fn collect_channel(app:&AppHandle,client:&reqwest::Client,choice:&AiChanne
             progress(app,run,index,total,choice,"RETENTION","Кривые удержания доступных видео");
             let mut found=0usize;
             for (i,id) in ids.iter().enumerate(){
+                ensure_export_active()?;
                 let filters=format!("video=={id}");
                 match analytics(app,client,&token,cache,&start_s,&end_s,
                     "audienceWatchRatio,relativeRetentionPerformance","elapsedVideoTimeRatio",Some(filters),"analytics.retention").await{
@@ -840,6 +844,7 @@ async fn collect_channel(app:&AppHandle,client:&reqwest::Client,choice:&AiChanne
         progress(app,run,index,total,choice,"REACH","YouTube Reporting API: показы и CTR");
         coverage["reach"]=collect_reporting(app,client,&token,cache).await;
     }else{coverage["reach"]=json!({"status":"skipped_by_user"});}
+    ensure_export_active()?;
     let mut findings=change_findings(&cid,&channel_daily);
     for event in &mut findings{event["videoContributions"]=json!(contributions_for_window(event,&video_daily));}
     let recent_begin=end-Days::days(27);
