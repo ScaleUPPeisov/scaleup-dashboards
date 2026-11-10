@@ -1211,6 +1211,9 @@ pub async fn youtube_ai_export(app:AppHandle,request:AiExportRequest)->Result<Va
     {
         if request.channels.is_empty()||request.channels.len()>200{return Err("Выбери от 1 до 200 каналов".into())}
         if !["all","365","90","30","custom"].contains(&request.period.as_str()){return Err("Недопустимый период".into())}
+        // Cache ZIP currently exports all verified historical rows. Never
+        // silently promise date slicing that the offline archive does not do.
+        if offline&&request.period!="all"{return Err("AI_OFFLINE_REQUIRES_ALL_CACHED_HISTORY".into())}
         if request.period=="custom"{let _=period_dates(&request,None)?;}
         let mut unique=HashSet::new();
         for choice in &request.channels{
