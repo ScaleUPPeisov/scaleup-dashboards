@@ -44,6 +44,7 @@ npm test
 npm run build
 cd src-tauri
 cargo test --locked --lib analytics_ai_export -- --nocapture
+# Includes synthetic Winner Engine 50-channel / 10,000-video load test
 cargo test --locked --lib analytics_sqlite -- --nocapture
 cargo test --locked --lib analytics360_cache -- --nocapture
 cargo check --locked
@@ -55,7 +56,7 @@ Check macOS ARM64 / Linux / OAuth / Publisher / Privacy / SQLite lock / offline 
 
 **BLOCKER:** pass all CI jobs at the final SHA; perform safe owner-approved offline snapshot/SQLite recovery parity; signed in-place OAuth/Keychain continuity and rollback; owner-approved online YouTube export against Studio to establish CTR scale; real MacBook Air M1 frame-timing and sustained 33–50-channel workloads; notarized candidate validation. No real accounts or production installations have been touched by this stage.
 
-**IMPORTANT:** implement additional video-level traffic-source and CTR/retention anomaly signals only after obtaining confirmed compatible API data; add real offline network-denial integration tests, ZIP integrity checks for 50-channel snapshots, and benchmark the Winner Engine on 10k+ videos. Cancellation is now requested through a dedicated Tauri command; no unfinished ZIP is published, but an in-flight HTTP request can run until its existing timeout and requires supervised acceptance.
+**IMPORTANT:** implement additional video-level traffic-source and CTR/retention anomaly signals only after obtaining confirmed compatible API data; add real offline network-denial integration tests, full ZIP integrity checks for 50-channel snapshots, and perform a physical M1 benchmark of Winner UI/SQLite reads. A new synthetic Rust test exercises 50 channels and 10,000 video evidence rows; its elapsed time is logged without claiming physical M1 performance. Cancellation is now requested through a dedicated Tauri command; no unfinished ZIP is published, but an in-flight HTTP request can run until its existing timeout and requires supervised acceptance.
 
 **OPTIONAL:** richer Winner Score experiments, larger virtualized result pages, additional charts, contextual explanations, configurable analytic thresholds.
 
