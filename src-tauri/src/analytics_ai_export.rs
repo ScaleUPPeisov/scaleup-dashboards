@@ -1268,6 +1268,7 @@ pub async fn youtube_ai_export(app:AppHandle,request:AiExportRequest)->Result<Va
             let out_dir=staging.join("channels").join(&choice.channel_id);
             fs::create_dir_all(&out_dir).map_err(|e|e.to_string())?;
             let collected=if offline{
+                progress(&app,&run,i,total,choice,"CACHE_READ","Чтение сохранённой аналитики без Google API");
                 collect_cached_channel(&channel_cache,&choice.channel_id)
             }else{
                 collect_channel(&app,client.as_ref().ok_or("AI_EXPORT_ONLINE_CLIENT_MISSING")?,
