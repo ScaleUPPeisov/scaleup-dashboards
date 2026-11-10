@@ -35,6 +35,7 @@ export function AiAnalyticsExport({channels,profiles}:{channels:Channel[];profil
  const [includeRetention,setIncludeRetention]=useState(false);
  const [includeReporting,setIncludeReporting]=useState(true);
  const [running,setRunning]=useState(false);
+ const [cancelling,setCancelling]=useState(false);
  const [folder,setFolder]=useState('');
  const [progress,setProgress]=useState<Record<string,Progress>>({});
  const [result,setResult]=useState<ExportResult|null>(null);
@@ -54,6 +55,7 @@ export function AiAnalyticsExport({channels,profiles}:{channels:Channel[];profil
  }
  async function start(){
   if(running||chosen.length===0)return;
+  setCancelling(false);
   if(period==='custom'&&(!startDate||!endDate||startDate>endDate)){setError('Укажите корректный диапазон дат.');return;}
   setError('');setResult(null);setProgress({});
   let directory=folder;
@@ -74,7 +76,13 @@ export function AiAnalyticsExport({channels,profiles}:{channels:Channel[];profil
    }});
    setResult(output);
   }catch(e){setError(String(e));}
-  finally{unlisten?.();setRunning(false);}
+  finally{unlisten?.();setRunning(false);setCancelling(false);}
+ }
+ async function cancel(){
+  if(!running||cancelling)return;
+  setCancelling(true);
+  try{await invoke('youtube_ai_export_cancel');}
+  catch(e){setError(String(e));setCancelling(false)}
  }
  const isMac=typeof navigator!=='undefined'&&/mac/i.test(navigator.platform||navigator.userAgent);
  if(!isMac)return null;
@@ -88,14 +96,14 @@ export function AiAnalyticsExport({channels,profiles}:{channels:Channel[];profil
   <p style={{margin:'4px 0 14px',opacity:.8}}>Все видео, дневная история, доступные показатели удержания, источники трафика, события и контроль полноты. Архив JSON + CSV + Markdown.</p>
   {opened&&<div style={{display:'grid',gap:14}}>
    <div style={{display:'flex',gap:12,flexWrap:'wrap',alignItems:'center'}}>
-    <label>Режим <select disabled={running} value={exportMode} onChange={e=>setExportMode(e.target.value as 'offline'|'online')}>
+    <label>Режим <select disabled={running} value={exportMode} onChange={e=>{const next=e.target.value as 'offline'|'online';setExportMode(next);if(next==='offline')setPeriod('all')}}>
      <option value="offline">Из локального кэша · без интернета</option>
      <option value="online">Обновить YouTube и экспортировать</option>
     </select></label>
     <label>Каналы <select disabled={running} value={mode} onChange={e=>setMode(e.target.value as 'all'|'selected')}>
      <option value="all">Все доступные ({choices.length})</option><option value="selected">Выбранные</option>
     </select></label>
-    <label>Период <select disabled={running} value={period} onChange={e=>setPeriod(e.target.value as Period)}>
+    <label>Период <select disabled={running||exportMode==='offline'} value={period} onChange={e=>setPeriod(e.target.value as Period)}>
      <option value="all">Вся доступная история</option><option value="365">Последний год</option>
      <option value="90">90 дней</option><option value="30">30 дней</option><option value="custom">Свой диапазон</option>
     </select></label>
@@ -126,6 +134,7 @@ export function AiAnalyticsExport({channels,profiles}:{channels:Channel[];profil
     <button className="primary" disabled={running||!chosen.length} onClick={()=>void start()}>
      {running?'Собираю архив…':'Начать экспорт · '+chosen.length+' каналов'}
     </button>
+    {running&&<button disabled={cancelling} onClick={()=>void cancel()}>{cancelling?'Остановка запрошена':'Остановить после текущего запроса'}</button>}
     <span>{exportMode==='offline'?'Без Google API, OAuth и сетевых запросов':'Онлайн-синхронизация Google API'} · JSON + CSV + Markdown</span>
    </div>
    {running&&<div role="status"><b>Обработано каналов: {completed} из {chosen.length}</b>
@@ -141,6 +150,7 @@ export function AiAnalyticsExport({channels,profiles}:{channels:Channel[];profil
     <p>Путь: <code>{result.path}</code></p>
     <small>SHA-256: {result.zipSha256}</small>
    </div>}
+   {cancelling&&running&&<small role="status">Остановка запрошена: незавершённый ZIP не будет опубликован. Уже подтверждённая аналитика других каналов сохраняется.</small>}
    {error&&<div className="errorBox" role="alert">{error}</div>}
    <small style={{opacity:.72}}>YouTube не гарантирует все метрики за прошлые годы. Отсутствующие значения остаются пустыми. Offline использует только сохранённую историю, без входа в Google; отсутствие кэша отражается как ошибка. Онлайн-режим расходует квоту YouTube. Не закрывайте VYRON до окончания экспорта.</small>
   </div>}
