@@ -22,6 +22,8 @@
 - The offline backend branches **before** creating the HTTP client and never enters `collect_channel`; therefore it never calls OAuth, Keychain refresh, YouTube APIs or uses Google API quota.
 - It validates channel IDs and existing local caches, reads published Analytics 360 snapshots and exports into a new staging/output ZIP. It does not call `persist` or `migrate_generation` and does not write to source JSON, current generation pointers, or SQLite.
 - A channel without local data is reported as missing in `DATA_COVERAGE.json` and is not silently fabricated or treated as zero.
+- Offline exports explicitly require `period=all` because the archive contains all locally saved history; the UI disables a misleading partial-period selection. Offline mode is the default in the export dialog. The online mode remains available and retains old command compatibility.
+- The online export can be cancelled through `youtube_ai_export_cancel`; requests check cancellation before subsequent API calls and between longer loops. The operation aborts before publishing a partial ZIP; previous confirmed cache generations are not rolled back.
 - Source provenance includes `exportMode`, `lastSuccessfulSyncAt`, `archiveHistorySource`, and `offlineApiRequests=0`.
 - Existing archive contract remains intact: ALL_VIDEOS.csv, VIDEOS_DAILY.csv, CHANNELS_DAILY.csv, VIDEO_LIFECYCLE.csv, REACH_DAILY.csv, CHANNEL_EVENTS.json, WINNER_ENGINE.json, AI_README.md, AI_PROMPT.md, and the SHA-256 manifest. Added WINNER_ANOMALIES.csv and WINNER_ENGINE.md.
 - Existing ZIP CRC, full manifest SHA-256 verification, formula-injection neutralization, path restrictions and sensitive-key guards remain active.
@@ -53,7 +55,7 @@ Check macOS ARM64 / Linux / OAuth / Publisher / Privacy / SQLite lock / offline 
 
 **BLOCKER:** pass all CI jobs at the final SHA; perform safe owner-approved offline snapshot/SQLite recovery parity; signed in-place OAuth/Keychain continuity and rollback; owner-approved online YouTube export against Studio to establish CTR scale; real MacBook Air M1 frame-timing and sustained 33–50-channel workloads; notarized candidate validation. No real accounts or production installations have been touched by this stage.
 
-**IMPORTANT:** implement additional video-level traffic-source and CTR/retention anomaly signals only after obtaining confirmed compatible API data; cancellation of long-running online exports; add real offline network-denial integration tests, ZIP integrity checks for 50-channel snapshots, and benchmark the Winner Engine on 10k+ videos.
+**IMPORTANT:** implement additional video-level traffic-source and CTR/retention anomaly signals only after obtaining confirmed compatible API data; add real offline network-denial integration tests, ZIP integrity checks for 50-channel snapshots, and benchmark the Winner Engine on 10k+ videos. Cancellation is now requested through a dedicated Tauri command; no unfinished ZIP is published, but an in-flight HTTP request can run until its existing timeout and requires supervised acceptance.
 
 **OPTIONAL:** richer Winner Score experiments, larger virtualized result pages, additional charts, contextual explanations, configurable analytic thresholds.
 
