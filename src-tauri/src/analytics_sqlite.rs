@@ -468,7 +468,10 @@ fn import_generation(tx:&Transaction<'_>,channel:&str,generation:&str,root:&Path
     }
     let audiences=overview.get("audienceBreakdowns").and_then(Value::as_array).cloned().unwrap_or_default();
     for (i,row) in audiences.iter().enumerate(){
-        let table=if text(row,"type").map(|x|x.to_ascii_lowercase().contains("device")).unwrap_or(false){
+        // The Analytics API collector records device categories in "dimension",
+        // not "type". Preserve the legacy "type" fallback for older snapshots.
+        let table=if ["dimension","type"].iter().filter_map(|field|text(row,field))
+            .any(|value|value.to_ascii_lowercase().contains("device")){
             "devices"
         }else{"audience_demographics"};
         insert_json_row(tx,table,channel,generation,i,row,&stamp,"youtube_analytics_api_v2")?;
@@ -835,6 +838,34 @@ mod tests{
         let rows=read_channel_days(cache,channel,None,None).unwrap().unwrap();
         assert_eq!(rows.len(),1);
         assert_eq!(rows[0]["views"],views);
+    }
+    #[test]fn device_dimension_is_stored_as_devices_without_misclassifying_demographics(){
+        let (cache,id,generation)=sample_cache();
+        let overview_path=cache.join("ui-generations").join(&generation).join("overview.json");
+        let mut overview=obj(&overview_path).unwrap();
+        overview["audienceBreakdowns"]=json!([
+            {"dimension":"deviceType","rows":[{"key":"MOBILE","views":24}]},
+            {"dimension":"ageGroup","rows":[{"key":"age18-24","viewerPercentage":33.0}]},
+            {"type":"legacy_device","rows":[{"key":"DESKTOP","views":5}]}
+        ]);
+        fs::write(&overview_path,serde_json::to_vec(&overview).unwrap()).unwrap();
+        migrate_generation(&cache,&id).unwrap();
+        let conn=prepare_db(&cache.join(DB_NAME)).unwrap();
+        let devices:i64=conn.query_row(
+            "SELECT COUNT(*) FROM devices WHERE channel_id=?1 AND generation=?2",
+            params![id,generation],|r|r.get(0)).unwrap();
+        let demographics:i64=conn.query_row(
+            "SELECT COUNT(*) FROM audience_demographics WHERE channel_id=?1 AND generation=?2",
+            params![id,generation],|r|r.get(0)).unwrap();
+        assert_eq!(devices,2,"current and legacy device rows must be in devices");
+        assert_eq!(demographics,1,"ageGroup must remain demographic data");
+        let first:String=conn.query_row(
+            "SELECT payload_json FROM devices WHERE channel_id=?1 AND generation=?2 ORDER BY item_key LIMIT 1",
+            params![id,generation],|r|r.get(0)).unwrap();
+        let payload:Value=serde_json::from_str(&first).unwrap();
+        assert_eq!(payload["dimension"],"deviceType");
+        drop(conn);
+        let _=fs::remove_dir_all(cache);
     }
     #[test]fn migrates_verified_json_to_wal_and_keeps_original(){
         let (cache,id,_)=sample_cache();
