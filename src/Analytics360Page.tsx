@@ -10,10 +10,11 @@ import {AnalyticsPage} from './AnalyticsPage';
 import {AiAnalyticsExport} from './AiAnalyticsExport';
 import {YouTubeChannelBar} from './YouTubeChannelBar';
 import {Analytics360Fleet,type FleetReport} from './Analytics360Fleet';
+import {Analytics360Winners} from './Analytics360Winners';
 import {loadActivePublishChannel,saveActivePublishChannel,subscribeActivePublishChannel} from './publishWorkspaceState';
 import './Analytics360.css';
 
-type Tab='overview'|'content'|'audience'|'trends';
+type Tab='overview'|'content'|'audience'|'trends'|'winners';
 type Period='7'|'28'|'90'|'365'|'all'|'custom';
 type Day={date:string;views?:number|null;watchMinutes?:number|null;subscribersGained?:number|null;subscribersLost?:number|null;averageViewDuration?:number|null;averageViewPercentage?:number|null;likes?:number|null;comments?:number|null;shares?:number|null};
 type ReachDay={date:string;observedImpressions:number;weightedCtrRaw:number|null;ctrScale:'UNVERIFIED';coverage:'OBSERVED_REPORT_ROWS_ONLY';source:string};
@@ -47,7 +48,7 @@ type Snapshot={
 };
 type Progress={channelId:string;name:string;stage:string;detail:string;completed:number;total:number};
 const periodLabels:Record<Period,string>={'7':'7 дней','28':'28 дней','90':'90 дней','365':'365 дней',all:'Всё время',custom:'Свои даты'};
-const tabLabels:Record<Tab,string>={overview:'Обзор',content:'Контент',audience:'Аудитория',trends:'Тренды и выводы'};
+const tabLabels:Record<Tab,string>={overview:'Обзор',content:'Контент',audience:'Аудитория',trends:'Тренды и выводы',winners:'Winner Engine'};
 const absent='Недоступно';
 const num=(v:unknown,digits=0):string=>{
  if(v===null||v===undefined||v==='')return '—';
@@ -351,6 +352,12 @@ export function Analytics360Page(){
   {error&&<div role="alert" className="errorBox">{error}</div>}
   {loading&&<p className="a360-wait">Загрузка сохранённой статистики выбранного канала…</p>}
   {!loading&&snapshot?.status==='NOT_YET_COLLECTED'&&<div className="panel a360-note"><b>Полная история пока не синхронизирована</b><p>Нажмите «Собрать всю историю канала». Данные сохранятся локально в отдельных файлах; OAuth не будет сброшен. Быстрая аналитика в VYRON останется доступной.</p></div>}
+  {tab==='winners'&&<Analytics360Winners channels={channels} onOpenVideo={(channelId,chosenVideoId)=>{
+    const next=channels.find(c=>c.youtubeChannelId===channelId);
+    if(!next)return;
+    saveActivePublishChannel(next.id);setActiveId(next.id);
+    setVideoPage(0);setVideoId(chosenVideoId);setTab('content');
+  }}/>}
   {!loading&&tab==='overview'&&<>
    <div className="a360-grid four">
     <Kpi name={period==='all'?'Просмотры всего · публичный счётчик YouTube':'Просмотры · '+selectedPeriodText} value={num(currentViews)} detail={period==='all'?'Не сумма неполных дневных данных':viewsResult.status==='AVAILABLE'?(period==='28'?deltaFor(observations.find(x=>x.windowDays===28)):'Полный подтверждённый ряд'):'Данные: '+viewsResult.status}/>
