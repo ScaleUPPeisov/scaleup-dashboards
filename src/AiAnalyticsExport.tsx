@@ -10,7 +10,7 @@ type ExportResult={ok:boolean;path:string;selected:number;successful:number;fail
 type Period='all'|'365'|'90'|'30'|'custom';
 const stages:Record<string,string>={
  OAuth:'Авторизация',INVENTORY:'Все видео',CHANNEL_DAILY:'История канала',VIDEO_DAILY:'История каждого видео',
- TRAFFIC:'Источники трафика',RETENTION:'Удержание',REACH:'Показы и CTR',DONE:'Готово',ERROR:'Ошибка',
+ TRAFFIC:'Источники трафика',RETENTION:'Удержание',REACH:'Показы и CTR',CACHE_READ:'Локальный кэш',SQLITE:'Сохранение истории',DONE:'Готово',ERROR:'Ошибка',
 };
 export function AiAnalyticsExport({channels,profiles}:{channels:Channel[];profiles:YoutubeProfile[]}){
  const connected=useMemo(()=>{
