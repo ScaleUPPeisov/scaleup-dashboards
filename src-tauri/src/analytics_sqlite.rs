@@ -11,6 +11,19 @@ use uuid::Uuid;
 
 const SCHEMA_VERSION:i32=2;
 const DB_NAME:&str="analytics-v1.sqlite3";
+// Fault injection is thread-local and only available to Rust test builds.
+// Production never throws synthetic errors and no user data is accessed.
+#[cfg(test)]
+thread_local!{static INJECT_MIGRATION_STAGE:std::cell::Cell<usize>=const{std::cell::Cell::new(0)};}
+#[cfg(test)]
+fn migration_fault_point(stage:usize)->Result<(),String>{
+    if INJECT_MIGRATION_STAGE.with(|f|f.get()==stage){
+        return Err(format!("SQLITE_TEST_INJECTED_INTERRUPTION_STAGE_{stage}"))
+    }
+    Ok(())
+}
+#[cfg(not(test))]
+fn migration_fault_point(_stage:usize)->Result<(),String>{Ok(())}
 const SCHEMA:&str=r#"
 CREATE TABLE IF NOT EXISTS channels(
  channel_id TEXT PRIMARY KEY NOT NULL, name TEXT, observed_at TEXT NOT NULL,
@@ -356,6 +369,7 @@ fn import_generation(tx:&Transaction<'_>,channel:&str,generation:&str,root:&Path
         tx.execute(&format!("DELETE FROM {table} WHERE channel_id=?1"),params![channel])
             .map_err(|e|format!("SQLITE_CLEAR_{table}: {e}"))?;
     }
+    migration_fault_point(1)?;
     // Prepared statements persist across the entire batch transaction: no SQL
     // parser allocation for each of 1,000,000 per-video observations.
     let mut video_day_insert=tx.prepare_cached(
@@ -423,6 +437,7 @@ fn import_generation(tx:&Transaction<'_>,channel:&str,generation:&str,root:&Path
             }
         }
     }
+    migration_fault_point(2)?;
     for row in daily{
         tx.execute("INSERT INTO channel_daily(channel_id,date,views,watch_minutes,observed_at,source,completeness,payload_json)
             VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
@@ -431,6 +446,7 @@ fn import_generation(tx:&Transaction<'_>,channel:&str,generation:&str,root:&Path
                 source(row,"youtube_analytics_api_v2"),completeness(row),to_json(row)?])
             .map_err(|e|format!("SQLITE_CHANNEL_DAILY_IMPORT: {e}"))?;
     }
+    migration_fault_point(3)?;
     for row in reach{
         let id=text(row,"videoId").ok_or("SQLITE_REACH_VIDEO_MISSING")?;
         if !valid_video(id){return Err("SQLITE_REACH_VIDEO_INVALID".into())}
@@ -510,6 +526,7 @@ fn import_generation(tx:&Transaction<'_>,channel:&str,generation:&str,root:&Path
         let actual:Value=serde_json::from_str(&stored).map_err(|e|e.to_string())?;
         if actual!=*first{return Err("SQLITE_MIGRATION_SAMPLE_MISMATCH".into())}
     }
+    migration_fault_point(4)?;
     tx.execute("INSERT INTO analytics_migrations(channel_id,generation,source_digest,verified_at,channel_days,video_days,videos,reach_rows,events)
         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
         params![channel,generation,digest,stamp,daily.len() as i64,daily_rows as i64,
@@ -583,6 +600,7 @@ pub(crate) fn migrate_generation(cache:&Path,channel_id:&str)->Result<MigrationR
        ||text(&active,"generation")!=Some(generation.as_str()){
         return Err("SQLITE_CONCURRENT_GENERATION_CHANGED: source JSON preserved".into())
     }
+    migration_fault_point(5)?;
     tx.commit().map_err(|e|format!("SQLITE_COMMIT: {e}"))?;
     // PASSIVE checkpoint has bounded impact on readers. A busy checkpoint is
     // not database corruption: the committed generation remains usable.
@@ -1328,6 +1346,36 @@ mod tests{
         assert!(read_channel_days(&one,channel_b,None,None).is_err());
         let _=fs::remove_dir_all(one);
         let _=fs::remove_dir_all(two);
+    }
+    #[test]fn five_migration_interruptions_preserve_previous_verified_sql_and_source_json(){
+        let (cache,channel,original)=sample_cache();
+        migrate_generation(&cache,&channel).unwrap();
+        let next=clone_generation(&cache,&channel,&original,99);
+        let pointer=fs::read(cache.join("ui-current.json")).unwrap();
+        let next_source=cache.join("ui-generations").join(&next).join("channel-daily.json");
+        let bytes=fs::read(&next_source).unwrap();
+        for stage in 1..=5{
+            INJECT_MIGRATION_STAGE.with(|setting|setting.set(stage));
+            let result=migrate_generation(&cache,&channel);
+            INJECT_MIGRATION_STAGE.with(|setting|setting.set(0));
+            let error=result.expect_err("injected migration must fail");
+            assert!(error.contains(&format!("SQLITE_TEST_INJECTED_INTERRUPTION_STAGE_{stage}")),"{error}");
+            assert_eq!(fs::read(&next_source).unwrap(),bytes,"source JSON must remain immutable");
+            assert_eq!(fs::read(cache.join("ui-current.json")).unwrap(),pointer,
+                "pointer must never be modified by failed SQL import");
+            let db=prepare_db(&cache.join(DB_NAME)).unwrap();
+            let marker:i64=db.query_row(
+                "SELECT COUNT(*) FROM analytics_migrations WHERE channel_id=?1 AND generation=?2",
+                params![channel,next],|r|r.get(0)).unwrap();
+            assert_eq!(marker,0,"interrupted generation cannot claim verification");
+            drop(db);
+            activate(&cache,&channel,&original);
+            assert_channel_views(&cache,&channel,12);
+            activate(&cache,&channel,&next);
+        }
+        migrate_generation(&cache,&channel).unwrap();
+        assert_channel_views(&cache,&channel,99);
+        let _=fs::remove_dir_all(cache);
     }
     #[test]fn damaged_database_is_not_replaced_with_blank_file(){
         let (cache,id,_)=sample_cache();
