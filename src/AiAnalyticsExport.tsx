@@ -76,7 +76,7 @@ export function AiAnalyticsExport({channels,profiles}:{channels:Channel[];profil
    }});
    setResult(output);
   }catch(e){setError(String(e));}
-  finally{unlisten?.();setRunning(false);setCancelling(false);}
+  finally{unlisten?.();setRunning(false);}
  }
  async function cancel(){
   if(!running||cancelling)return;
