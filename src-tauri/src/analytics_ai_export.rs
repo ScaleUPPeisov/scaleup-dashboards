@@ -43,6 +43,19 @@ fn analytics_query_budget_available()->bool{
 }
 
 static AI_EXPORT_BUSY:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
+static AI_EXPORT_CANCEL_REQUESTED:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
+fn export_cancelled()->bool{
+    AI_EXPORT_CANCEL_REQUESTED.load(std::sync::atomic::Ordering::Acquire)
+}
+fn ensure_export_active()->Result<(),String>{
+    if export_cancelled(){Err("AI_EXPORT_CANCELLED".into())}else{Ok(())}
+}
+#[tauri::command]
+pub fn youtube_ai_export_cancel()->Value{
+    let active=AI_EXPORT_BUSY.load(std::sync::atomic::Ordering::Acquire);
+    if active{AI_EXPORT_CANCEL_REQUESTED.store(true,std::sync::atomic::Ordering::Release);}
+    json!({"active":active,"requested":active,"scope":"CURRENT_ANALYTICS_RUN_ONLY"})
+}
 struct AiRunGuard;
 impl Drop for AiRunGuard {
     fn drop(&mut self){AI_EXPORT_BUSY.store(false,std::sync::atomic::Ordering::Release);}
@@ -51,6 +64,7 @@ fn acquire_ai_run()->Result<AiRunGuard,String>{
     AI_EXPORT_BUSY.compare_exchange(false,true,
         std::sync::atomic::Ordering::AcqRel,std::sync::atomic::Ordering::Acquire)
         .map_err(|_|"ANALYTICS_SYNC_ALREADY_RUNNING: сначала завершите текущий сбор данных".to_string())?;
+    AI_EXPORT_CANCEL_REQUESTED.store(false,std::sync::atomic::Ordering::Release);
     Ok(AiRunGuard)
 }
 
@@ -129,6 +143,7 @@ fn progress(app:&AppHandle,run:&str,index:usize,total:usize,choice:&AiChannelCho
 }
 async fn get_json(app:&AppHandle,client:&reqwest::Client,token:&str,url:&str,params:&[(&str,String)],method:&str)->Result<Value,String>{
     for attempt in 0..3 {
+        ensure_export_active()?;
         youtube::emit_youtube_api_request(app,method,None);
         let response=client.get(url).bearer_auth(token).query(params).send().await;
         match response {
@@ -158,12 +173,14 @@ async fn get_json(app:&AppHandle,client:&reqwest::Client,token:&str,url:&str,par
     Err(format!("{method}: retries exhausted"))
 }
 async fn post_json(app:&AppHandle,client:&reqwest::Client,token:&str,url:&str,body:Value)->Result<Value,String>{
+    ensure_export_active()?;
     youtube::emit_youtube_api_request(app,"reporting.jobs.create",None);
     let r=client.post(url).bearer_auth(token).json(&body).send().await.map_err(|e|format!("Reporting job: {e}"))?;
     let st=r.status();let value:Value=r.json().await.map_err(|e|e.to_string())?;
     if st.is_success(){Ok(value)}else{Err(reported_error(&value,st))}
 }
 async fn cached_query(app:&AppHandle,client:&reqwest::Client,token:&str,cache:&Path,url:&str,params:&[(&str,String)],name:&str,range_end:&str)->Result<Value,String>{
+    ensure_export_active()?;
     let key=compact_hash(&format!("{url}?{:?}",params));
     let path=cache.join(format!("{}-{}.json",name,key));
     // Immutable historical windows can be reused; recent windows remain fresh for
@@ -659,6 +676,7 @@ fn collect_cached_channel(cache:&Path,channel_id:&str)->Result<NetworkExport,Str
 }
 async fn collect_channel(app:&AppHandle,client:&reqwest::Client,choice:&AiChannelChoice,request:&AiExportRequest,cache:&Path,
     run:&str,index:usize,total:usize)->Result<NetworkExport,String>{
+    ensure_export_active()?;
     reset_analytics_request_budget();
     progress(app,run,index,total,choice,"OAuth","Проверка токена и владельца");
     let (token,scopes)=youtube::access_token_and_scopes(app,&choice.profile_id).await?;
@@ -1229,6 +1247,10 @@ pub async fn youtube_ai_export(app:AppHandle,request:AiExportRequest)->Result<Va
             "channel_id,video_id,date,impressions,ctr_raw,ctr_scale,report_create_time,report_id,source\n")?;
         let total=request.channels.len();
         for (i,choice) in request.channels.iter().enumerate(){
+            if export_cancelled(){
+                let _=fs::remove_dir_all(&staging);
+                return Err("AI_EXPORT_CANCELLED_BEFORE_ARCHIVE_PUBLISH".into())
+            }
             let channel_cache=cache_root.join(&choice.channel_id);
             if offline {
                 if !channel_cache.is_dir(){
@@ -1248,6 +1270,10 @@ pub async fn youtube_ai_export(app:AppHandle,request:AiExportRequest)->Result<Va
                 collect_channel(&app,client.as_ref().ok_or("AI_EXPORT_ONLINE_CLIENT_MISSING")?,
                     choice,&request,&channel_cache,&run,i,total).await
             };
+            if export_cancelled(){
+                let _=fs::remove_dir_all(&staging);
+                return Err("AI_EXPORT_CANCELLED_BEFORE_ARCHIVE_PUBLISH".into())
+            }
             match collected{
                 Ok(r)=>{
                     // All JSON materialization and SQLite WAL migration run on a
@@ -1383,6 +1409,10 @@ pub async fn youtube_ai_export(app:AppHandle,request:AiExportRequest)->Result<Va
                 }
             }
         }
+        if export_cancelled(){
+            let _=fs::remove_dir_all(&staging);
+            return Err("AI_EXPORT_CANCELLED_BEFORE_ARCHIVE_PUBLISH".into())
+        }
         drop(channel_csv);drop(videos_csv);drop(video_csv);drop(lifecycle_csv);drop(traffic_csv);drop(reach_csv);
         save_json(&staging.join("ALL_CHANNELS_SUMMARY.json"),&json!(summary))?;
         save_json(&staging.join("DATA_COVERAGE.json"),&json!(coverage))?;
@@ -1421,6 +1451,10 @@ pub async fn youtube_ai_export(app:AppHandle,request:AiExportRequest)->Result<Va
         }
         save_json(&staging.join("MANIFEST_SHA256.json"),&json!(manifest))?;
         let output=destination.join(format!("VYRON_AI_ALL_CHANNELS_{}_{}.zip",Utc::now().format("%Y%m%d_%H%M%S"),&run[..8]));
+        if export_cancelled(){
+            let _=fs::remove_dir_all(&staging);
+            return Err("AI_EXPORT_CANCELLED_BEFORE_ARCHIVE_PUBLISH".into())
+        }
         let stage=staging.clone();let out=output.clone();
         tauri::async_runtime::spawn_blocking(move||build_zip(&stage,&out))
             .await.map_err(|e|e.to_string())??;
@@ -1573,6 +1607,16 @@ mod tests{
         assert_eq!(csv_field("music-title"),"\"music-title\"");
     }
 
+    #[test] fn cancellation_signal_is_scoped_to_active_run_and_never_persists(){
+        AI_EXPORT_CANCEL_REQUESTED.store(false,std::sync::atomic::Ordering::Release);
+        assert!(ensure_export_active().is_ok());
+        let _run=acquire_ai_run().unwrap();
+        let response=youtube_ai_export_cancel();
+        assert_eq!(response["requested"],true);
+        assert!(ensure_export_active().unwrap_err().contains("AI_EXPORT_CANCELLED"));
+        AI_EXPORT_CANCEL_REQUESTED.store(false,std::sync::atomic::Ordering::Release);
+        assert!(ensure_export_active().is_ok());
+    }
     #[test] fn winner_engine_score_requires_complete_self_channel_baseline(){
         let cid="UC1234567890123456789012";
         let mk=|id:&str,cur:Value,old:Value,age:i64|json!({
