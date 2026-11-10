@@ -27,6 +27,7 @@ export function AiAnalyticsExport({channels,profiles}:{channels:Channel[];profil
  },[channels,profiles]);
  const [opened,setOpened]=useState(false);
  const [mode,setMode]=useState<'all'|'selected'>('all');
+ const [exportMode,setExportMode]=useState<'offline'|'online'>('offline');
  const [selected,setSelected]=useState<string[]>([]);
  const [period,setPeriod]=useState<Period>('all');
  const [startDate,setStartDate]=useState('');
@@ -38,7 +39,14 @@ export function AiAnalyticsExport({channels,profiles}:{channels:Channel[];profil
  const [progress,setProgress]=useState<Record<string,Progress>>({});
  const [result,setResult]=useState<ExportResult|null>(null);
  const [error,setError]=useState('');
- const chosen=mode==='all'?connected:connected.filter(c=>selected.includes(c.channelId));
+ const cached=useMemo(()=>{
+  const seen=new Set<string>();
+  return channels.filter(c=>/^UC[a-zA-Z0-9_-]{22}$/.test((c.youtubeChannelId||'').trim()))
+   .filter(c=>{const id=c.youtubeChannelId!.trim();if(seen.has(id))return false;seen.add(id);return true;})
+   .map(c=>({channelId:c.youtubeChannelId!.trim(),profileId:c.youtubeProfileId||'',name:c.name}));
+ },[channels]);
+ const choices=exportMode==='offline'?cached:connected;
+ const chosen=mode==='all'?choices:choices.filter(c=>selected.includes(c.channelId));
  const completed=Object.values(progress).filter(p=>p.stage==='DONE'||p.stage==='ERROR').length;
  async function chooseFolder():Promise<string|null>{
   const value=await open({directory:true,multiple:false,title:'Выберите папку для AI ZIP'});
@@ -62,7 +70,7 @@ export function AiAnalyticsExport({channels,profiles}:{channels:Channel[];profil
    // Rust owns OAuth and local cache. No token is ever exposed to the UI.
    const output=await invoke<ExportResult>('youtube_ai_export',{request:{
     channels:chosen,period,startDate:period==='custom'?startDate:null,endDate:period==='custom'?endDate:null,
-    destination:directory,includeRetention,includeReporting,
+    destination:directory,includeRetention,includeReporting,exportMode,
    }});
    setResult(output);
   }catch(e){setError(String(e));}
@@ -73,15 +81,19 @@ export function AiAnalyticsExport({channels,profiles}:{channels:Channel[];profil
  return <section className="panel" style={{marginBottom:16}}>
   <div className="panelHead">
    <div><small>AI INTELLIGENCE · macOS</small><h3>Полный архив всех YouTube-каналов</h3></div>
-   <button className="primary" disabled={running||!connected.length} onClick={()=>setOpened(v=>!v)}>
+   <button className="primary" disabled={running||!choices.length} onClick={()=>setOpened(v=>!v)}>
     {opened?'Свернуть параметры':'Экспорт всех каналов для ИИ'}
    </button>
   </div>
   <p style={{margin:'4px 0 14px',opacity:.8}}>Все видео, дневная история, доступные показатели удержания, источники трафика, события и контроль полноты. Архив JSON + CSV + Markdown.</p>
   {opened&&<div style={{display:'grid',gap:14}}>
    <div style={{display:'flex',gap:12,flexWrap:'wrap',alignItems:'center'}}>
+    <label>Режим <select disabled={running} value={exportMode} onChange={e=>setExportMode(e.target.value as 'offline'|'online')}>
+     <option value="offline">Из локального кэша · без интернета</option>
+     <option value="online">Обновить YouTube и экспортировать</option>
+    </select></label>
     <label>Каналы <select disabled={running} value={mode} onChange={e=>setMode(e.target.value as 'all'|'selected')}>
-     <option value="all">Все подключённые ({connected.length})</option><option value="selected">Выбранные</option>
+     <option value="all">Все доступные ({choices.length})</option><option value="selected">Выбранные</option>
     </select></label>
     <label>Период <select disabled={running} value={period} onChange={e=>setPeriod(e.target.value as Period)}>
      <option value="all">Вся доступная история</option><option value="365">Последний год</option>
@@ -91,18 +103,18 @@ export function AiAnalyticsExport({channels,profiles}:{channels:Channel[];profil
     <label>По <input type="date" disabled={running} value={endDate} onChange={e=>setEndDate(e.target.value)}/></label></>}
    </div>
    {mode==='selected'&&<div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(220px,1fr))',gap:8,maxHeight:220,overflowY:'auto'}}>
-    {connected.map(c=><label key={c.channelId} style={{display:'flex',alignItems:'center',gap:8}}>
+    {choices.map(c=><label key={c.channelId} style={{display:'flex',alignItems:'center',gap:8}}>
      <input type="checkbox" disabled={running} checked={selected.includes(c.channelId)}
       onChange={e=>setSelected(old=>e.target.checked?[...old,c.channelId]:old.filter(id=>id!==c.channelId))}/>{c.name}
     </label>)}
    </div>}
    <div style={{display:'flex',gap:14,flexWrap:'wrap'}}>
     <label style={{display:'flex',alignItems:'center',gap:7}}>
-     <input type="checkbox" checked={includeRetention} disabled={running} onChange={e=>setIncludeRetention(e.target.checked)}/>
+     <input type="checkbox" checked={includeRetention} disabled={running||exportMode==='offline'} onChange={e=>setIncludeRetention(e.target.checked)}/>
      Удержание каждого видео (много запросов)
     </label>
     <label style={{display:'flex',alignItems:'center',gap:7}}>
-     <input type="checkbox" checked={includeReporting} disabled={running} onChange={e=>setIncludeReporting(e.target.checked)}/>
+     <input type="checkbox" checked={includeReporting} disabled={running||exportMode==='offline'} onChange={e=>setIncludeReporting(e.target.checked)}/>
      Reporting API: показы и CTR, если отчёты доступны
     </label>
    </div>
@@ -114,7 +126,7 @@ export function AiAnalyticsExport({channels,profiles}:{channels:Channel[];profil
     <button className="primary" disabled={running||!chosen.length} onClick={()=>void start()}>
      {running?'Собираю архив…':'Начать экспорт · '+chosen.length+' каналов'}
     </button>
-    <span>JSON + CSV + Markdown · локальный кэш · без OAuth-токенов</span>
+    <span>{exportMode==='offline'?'Без Google API, OAuth и сетевых запросов':'Онлайн-синхронизация Google API'} · JSON + CSV + Markdown</span>
    </div>
    {running&&<div role="status"><b>Обработано каналов: {completed} из {chosen.length}</b>
     <div style={{display:'grid',gap:7,marginTop:10,maxHeight:260,overflowY:'auto'}}>
@@ -130,7 +142,7 @@ export function AiAnalyticsExport({channels,profiles}:{channels:Channel[];profil
     <small>SHA-256: {result.zipSha256}</small>
    </div>}
    {error&&<div className="errorBox" role="alert">{error}</div>}
-   <small style={{opacity:.72}}>YouTube не гарантирует все метрики за прошлые годы. Отсутствующие значения остаются пустыми; первый экспорт загружает доступные данные, следующие используют кэш. Не закрывайте VYRON до окончания экспорта.</small>
+   <small style={{opacity:.72}}>YouTube не гарантирует все метрики за прошлые годы. Отсутствующие значения остаются пустыми. Offline использует только сохранённую историю, без входа в Google; отсутствие кэша отражается как ошибка. Онлайн-режим расходует квоту YouTube. Не закрывайте VYRON до окончания экспорта.</small>
   </div>}
  </section>;
 }
