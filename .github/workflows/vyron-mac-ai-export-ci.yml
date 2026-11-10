@@ -13,6 +13,8 @@ on:
       - 'src/Analytics360Page.tsx'
       - 'src/Analytics360Fleet.tsx'
       - 'src/Analytics360Fleet.test.ts'
+      - 'src/Analytics360Winners.tsx'
+      - 'src/Analytics360Winners.test.ts'
       - 'src/M1PerformanceProbe.tsx'
       - 'src/m1FrameMetrics.ts'
       - 'src/m1FrameMetrics.test.ts'
@@ -60,7 +62,7 @@ jobs:
         run: |
           npm ci
           npm run build
-          npx vitest run src/analytics360Core.test.ts src/Analytics360Fleet.test.ts src/m1FrameMetrics.test.ts src/googleProjectDiagnostics.test.ts src/vyron619PublisherAlwaysOpen.test.tsx src/youtubeProductivityGlobalChannel.test.ts src/publisherMetadata.test.ts tests/vyron-602-manual-production-sidebar.test.mjs tests/vyron-mac-ai-export-progress.test.mjs tests/vyron-mac-analytics-sync-worker.test.mjs
+          npx vitest run src/analytics360Core.test.ts src/Analytics360Fleet.test.ts src/Analytics360Winners.test.ts src/m1FrameMetrics.test.ts src/googleProjectDiagnostics.test.ts src/vyron619PublisherAlwaysOpen.test.tsx src/youtubeProductivityGlobalChannel.test.ts src/publisherMetadata.test.ts tests/vyron-602-manual-production-sidebar.test.mjs tests/vyron-mac-ai-export-progress.test.mjs tests/vyron-mac-analytics-sync-worker.test.mjs
       - name: Rust type checking + exporter unit tests
         working-directory: src-tauri
         run: |
@@ -168,7 +170,7 @@ jobs:
         run: |
           npm ci
           npm run build
-          npx vitest run src/analytics360Core.test.ts src/Analytics360Fleet.test.ts src/m1FrameMetrics.test.ts src/googleProjectDiagnostics.test.ts src/vyron619PublisherAlwaysOpen.test.tsx src/youtubeProductivityGlobalChannel.test.ts src/publisherMetadata.test.ts tests/vyron-602-manual-production-sidebar.test.mjs tests/vyron-mac-ai-export-progress.test.mjs tests/vyron-mac-analytics-sync-worker.test.mjs
+          npx vitest run src/analytics360Core.test.ts src/Analytics360Fleet.test.ts src/Analytics360Winners.test.ts src/m1FrameMetrics.test.ts src/googleProjectDiagnostics.test.ts src/vyron619PublisherAlwaysOpen.test.tsx src/youtubeProductivityGlobalChannel.test.ts src/publisherMetadata.test.ts tests/vyron-602-manual-production-sidebar.test.mjs tests/vyron-mac-ai-export-progress.test.mjs tests/vyron-mac-analytics-sync-worker.test.mjs
       - name: Rust build tests on macOS ARM64
         working-directory: src-tauri
         run: |
