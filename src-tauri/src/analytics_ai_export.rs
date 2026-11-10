@@ -1626,6 +1626,28 @@ mod tests{
         AI_EXPORT_CANCEL_REQUESTED.store(false,std::sync::atomic::Ordering::Release);
         assert!(ensure_export_active().is_ok());
     }
+    #[test] fn winner_engine_synthetic_50_channels_10000_videos_no_cross_channel_baseline(){
+        let mut videos=Vec::<Value>::with_capacity(10_000);
+        for c in 0..50{
+            let cid=format!("UC{c:022}");
+            for index in 0..200{
+                videos.push(json!({"channelId":cid,"videoId":format!("{:011}",index),
+                    "ageDays":200,"current7Views":100+(index%10)*10,
+                    "previous7Views":100,"ctrPercent":Value::Null}));
+            }
+        }
+        let began=std::time::Instant::now();
+        let ranked=winner_video_rankings(&videos);
+        let elapsed=began.elapsed();
+        assert_eq!(ranked.len(),10_000);
+        assert!(ranked.iter().all(|v|{
+            let score=v["winnerScore"].as_i64();
+            score.map(|n|(0..=100).contains(&n)).unwrap_or(false)
+        }));
+        assert!(ranked.iter().all(|v|v["ctrScoreUsed"]==false));
+        eprintln!("SYNTHETIC_WINNER_50_CHANNELS_10000_VIDEOS_MS={}",elapsed.as_millis());
+        // Deliberately no wall-clock PASS threshold: CI runner != physical M1.
+    }
     #[test] fn winner_engine_score_requires_complete_self_channel_baseline(){
         let cid="UC1234567890123456789012";
         let mk=|id:&str,cur:Value,old:Value,age:i64|json!({
