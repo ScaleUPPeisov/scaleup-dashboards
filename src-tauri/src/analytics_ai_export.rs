@@ -1680,6 +1680,81 @@ mod tests{
 }
 
 
+/// Winner Engine read-only cache API. It never reads OAuth/Keychain,
+/// fetches the network, refreshes a token or publishes a cache generation.
+#[tauri::command]
+pub async fn analytics360_winners(app:AppHandle,channel_ids:Vec<String>)->Result<Value,String>{
+    #[cfg(not(target_os="macos"))]
+    {let _=(app,channel_ids);return Err("Winner Engine доступен только в VYRON Mac".into());}
+    #[cfg(target_os="macos")]
+    {
+        if channel_ids.is_empty()||channel_ids.len()>100{
+            return Err("WINNER_INVALID_CHANNEL_COUNT".into())
+        }
+        let mut unique=HashSet::new();
+        for id in &channel_ids{
+            if !is_safe_channel_id(id)||!unique.insert(id){
+                return Err("WINNER_INVALID_OR_DUPLICATE_CHANNEL_ID".into())
+            }
+        }
+        let cache_root=app.path().app_data_dir().map_err(|e|e.to_string())?
+            .join("AIAnalytics").join("cache");
+        tauri::async_runtime::spawn_blocking(move||{
+            let mut summaries=Vec::new();
+            let mut findings=Vec::new();
+            let mut evidence=Vec::new();
+            let mut coverage=Vec::new();
+            let last=Utc::now().date_naive()-Days::days(3);
+            for cid in &channel_ids{
+                let cache=cache_root.join(cid);
+                let output=(||->Result<(Value,Vec<Value>,Vec<Value>,Option<String>),String>{
+                    let overview=crate::analytics360_cache::materialized_overview(&cache,cid)?;
+                    let summary=overview.get("summary").cloned().ok_or("WINNER_SUMMARY_MISSING")?;
+                    if summary.get("channelId").and_then(Value::as_str)!=Some(cid){
+                        return Err("WINNER_CHANNEL_IDENTITY_MISMATCH".into())
+                    }
+                    let current_findings=overview.get("growthAndDecline").and_then(Value::as_array)
+                        .cloned().unwrap_or_default();
+                    let videos=crate::analytics360_cache::materialized_video_records(&cache,cid)?;
+                    let mut video_evidence=Vec::with_capacity(videos.len());
+                    for video in &videos{
+                        let id=video.get("id").and_then(Value::as_str)
+                            .filter(|v|v.len()==11&&v.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'_'||b==b'-'))
+                            .ok_or("WINNER_CACHED_VIDEO_ID_INVALID")?;
+                        let mut recent=HashMap::<NaiveDate,Option<Value>>::with_capacity(56);
+                        for row in crate::analytics360_cache::materialized_video_daily(&cache,cid,id)?{
+                            let day=row.get("date").and_then(Value::as_str)
+                                .and_then(|d|NaiveDate::parse_from_str(d,"%Y-%m-%d").ok());
+                            if let Some(day)=day{
+                                if day<=last && day>=last-Days::days(55){
+                                    if recent.contains_key(&day){recent.insert(day,None);}
+                                    else{recent.insert(day,Some(row));}
+                                }
+                            }
+                        }
+                        video_evidence.push(winner_video_evidence(video,cid,&recent));
+                    }
+                    Ok((summary,current_findings,video_evidence,
+                        overview.get("updatedAt").and_then(Value::as_str).map(str::to_owned)))
+                })();
+                match output{
+                    Ok((summary,events,videos,updated_at))=>{
+                        coverage.push(json!({"channelId":cid,"status":"AVAILABLE",
+                            "videosAnalyzed":videos.len(),"lastSuccessfulSyncAt":updated_at}));
+                        summaries.push(summary);findings.extend(events);evidence.extend(videos);
+                    },
+                    Err(e)=>coverage.push(json!({"channelId":cid,"status":"CACHE_UNAVAILABLE","reason":e}))
+                }
+            }
+            let mut result=winner_engine(&summaries,&findings,&evidence);
+            result["coverage"]=json!(coverage);
+            result["source"]=json!("READ_ONLY_LOCAL_PUBLISHED_ANALYTICS_CACHE");
+            result["offlineApiRequests"]=json!(0);
+            Ok(result)
+        }).await.map_err(|e|format!("WINNER_WORKER_JOIN: {e}"))?
+    }
+}
+
 /// On-demand full-history sync populates the same per-channel Analytics 360 cache
 /// without generating a ZIP. No upload or Google account reconnection is attempted.
 #[tauri::command]
