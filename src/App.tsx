@@ -108,6 +108,7 @@ const nav:{id:string;page:Page;icon:SidebarIconName;label:string;youtubeTab?:'hi
   {id:'channels',page:'channels',icon:'channels',label:'Каналы'},
   {id:'production',page:'production',icon:'production',label:'Производство'},
   {id:'inventory',page:'inventory',icon:'inventory',label:'Запас видео'},
+  // Global History reuses the local journal route and never starts OAuth or YouTube API work.
   {id:'history',page:'youtube',icon:'youtube',label:'История',youtubeTab:'history'},
   {id:'youtube',page:'youtube',icon:'youtube',label:'YouTube'},
   {id:'analytics',page:'analytics',icon:'analytics',label:'Аналитика'},
