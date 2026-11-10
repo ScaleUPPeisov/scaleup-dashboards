@@ -4,7 +4,7 @@ const pub=fs.readFileSync('src/PublisherOS.tsx','utf8');
 const api=fs.readFileSync('src/api.ts','utf8');
 const queueRuntime=fs.readFileSync('src/uploadQueueRuntime.ts','utf8');
 describe('PublisherOS storage/upload wiring',()=>{
- it('uses canonical selectable jobs',()=>expect(pub).toContain('canonicalSelectedJobs(selectableJobs,draft.selectedIds)'));
+ it('uses canonical selectable jobs',()=>expect(pub).toContain('canonicalSelectedJobs(allChannelJobs,draft.selectedIds)'));
  it('button uses truthful label helper',()=>expect(pub).toContain('publisherUploadButtonLabel'));
  it('batch executes uploadable subset',()=>expect(pub).toContain('let batch=uploadableSelected'));
  it('blocked items are isolated individually',()=>expect(pub).toContain('for(const x of blockedItems)'));

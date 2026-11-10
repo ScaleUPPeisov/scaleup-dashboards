@@ -31,12 +31,10 @@ describe('VYRON 3.2.1 physical regression patch',()=>{
  it('forces full readable sidebar labels and defeats legacy 17px span width',()=>{
   const app=read('src/App.tsx'),css=read('src/ui-layout-contract.css');
   for(const label of ['Главная','Каналы','Производство','YouTube','Аналитика','Конкуренты','Настройки'])expect(app).toContain(label);
-  expect(css).toContain('width:228px!important');
-  expect(css).toContain('flex:0 0 228px!important');
-  expect(css).toContain('.sidebar nav .sidebarLabel');
-  expect(css).toContain('width:auto!important');
-  expect(css).toContain('text-overflow:clip!important');
-  expect(css).toContain('overflow:visible!important');
+  expect(css).toContain('.sidebar{width:228px;min-width:228px;max-width:228px;flex-basis:228px}');
+  expect(css).toContain('.sidebarLabel{');
+  expect(css).toContain('width:auto;min-width:0;max-width:none');
+  expect(css).toContain('white-space:nowrap;overflow:hidden;text-overflow:ellipsis');
  });
  it('keeps account and external-disk actions wrap-safe with the short reconnect label',()=>{
   const accounts=read('src/AccountsPage.tsx'),publisher=read('src/PublisherOS.tsx'),css=read('src/ui-layout-contract.css');
@@ -56,8 +54,9 @@ describe('VYRON 3.2.1 physical regression patch',()=>{
  });
  it('allows a verified accepted upload to become cleanup-ready but blocks processing unknown',()=>{
   const accepted=history({processingState:'UPLOAD_ACCEPTED',identityVerifiedAt:'2026-09-23T10:00:01Z'});
-  expect(postUploadCleanupEligible(accepted,job())).toBe(true);
-  expect(postUploadCleanupEligible({...accepted,processingState:'YOUTUBE_PROCESSING'},job())).toBe(true);
+  expect(postUploadCleanupEligible(accepted,job())).toBe(false);
+  expect(postUploadCleanupEligible({...accepted,processingState:'YOUTUBE_PROCESSING'},job())).toBe(false);
+  expect(postUploadCleanupEligible({...accepted,processingState:'READY'},job())).toBe(true);
   expect(postUploadCleanupEligible({...accepted,processingState:'PROCESSING_UNKNOWN'},job())).toBe(false);
   expect(postUploadCleanupEligible({...accepted,identityVerifiedAt:undefined},job())).toBe(false);
  });

@@ -7,7 +7,7 @@ describe('VYRON 3.1 product consolidation contracts',()=>{
  it('schedule is one workspace with calendar and bulk modes',()=>{const s=read('./ScheduleWorkspace.tsx');expect(s).toContain('Календарь');expect(s).toContain('Массовое изменение');expect(s).toContain('<ScheduleOS/>')});
  it('competitor refresh stays in radar',()=>{const s=read('./CompetitorsPage.tsx');expect(s).toContain('refreshCompetitor');expect(s).toContain('competitors.filter(c=>c.channelId===channelId)');expect(s).not.toContain('Обновить через YouTube')});
  it('production has no duplicate ENDLUME primary tab',()=>{const s=read('./ProductionOS.tsx');expect(s).not.toContain(">ENDLUME</button>");expect(s).toContain('Подробная очередь')});
- it('keeps Shorts removed and one shared channel context',()=>{const y=read('./YouTubeCenter.tsx');expect(y).not.toContain('Shorts');expect(y).toContain('<YouTubeChannelBar/>')});
- it('removes static sidebar updater card and provides branded update UI',()=>{const a=read('./App.tsx'),u=read('./UpdateExperience.tsx');expect(a).not.toContain('<UpdaterSidebar/><nav>');expect(a).toContain('<UpdateExperience/>');expect(u).toContain("../src-tauri/icons/icon.png")});
+ it('keeps Shorts removed and one shared channel context',()=>{const y=read('./YouTubeCenter.tsx');expect(y).not.toContain('Shorts');expect(y).toContain('const CachedYouTubeChannelBar=React.memo(YouTubeChannelBar)');expect(y).toContain('<CachedYouTubeChannelBar active/>')});
+ it('removes static sidebar updater card and provides branded update UI',()=>{const a=read('./App.tsx'),u=read('./UpdateExperience.tsx');expect(a).not.toContain('<UpdaterSidebar/><nav>');expect(a).toContain('<UpdateExperience/>');expect(u).toContain("import {VYRON_5_ARTWORK} from './vyronBrand'");expect(u).toContain('src={VYRON_5_ARTWORK}')});
  it('normal notifications use eight seconds',()=>{const s=read('./notificationCenter.ts');expect(s).toContain('success:8000');expect(s).toContain('info:8000')});
 });

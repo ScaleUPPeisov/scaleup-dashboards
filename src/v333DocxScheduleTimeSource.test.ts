@@ -117,7 +117,7 @@ describe('VYRON 3.3.3 real DOCX schedule/time-source acceptance',()=>{
  it('Publisher UI exposes minimal file/common time source controls and keeps dry-run error separation',()=>{
   const ui=fs.readFileSync('src/PublisherOS.tsx','utf8');
   expect(ui).toContain('Источник времени');
-  expect(ui).toContain('Время берётся отдельно из метаданных каждого VIDEO');
+  expect(ui).toContain('Время берётся из соответствующей metadata-строки каждого VIDEO.');
   expect(ui).toContain("scheduleTimeSource==='file'");
   expect(ui).toContain("!publishAt&&!missingPublishTimeIds.has(j.id)");
   expect(ui).toContain('PUBLISH_AT_REQUIRED');

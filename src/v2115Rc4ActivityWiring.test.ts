@@ -7,7 +7,7 @@ describe('VYRON 2.1.15 RC4 activity history wiring',()=>{
  it('adds a durable History tab without replacing existing YouTube screens',()=>{
   const center=read('src/YouTubeCenter.tsx');
   expect(center).toContain("['history','История']");
-  expect(center).toContain('<ActivityHistory/>');
+  expect(center).toContain('<ActivityHistory globalView={historyGlobal}/>');
   for(const label of ['Публикация','Метаданные','Расписание','Загруженные','Аккаунты'])expect(center).toContain(label);
  });
  it('state v10 persists journal and legacy state gets an empty journal rather than invented events',()=>{
@@ -68,8 +68,8 @@ describe('VYRON 2.1.15 RC4 activity history wiring',()=>{
   expect(publisher).toContain("uploadStateById.get(j.id)==='NEW'&&!recoveryJobIds.has(j.id)");
   expect(publisher).toContain('selectableJobIds.has(j.id)');
   expect(publisher).not.toContain('Проверить YouTube ID');
-  expect(publisher).toContain("const currentCandidates=rows.filter(r=>r.classification==='NEW_CANDIDATE'||r.classification==='NEW_GENERATION')");
-  expect(publisher).toContain('materializeRenderGenerationRows(currentCandidates,false,scanPreview)');
+  expect(publisher).toContain('reconcilePublisherInventory({channelId');
+  expect(publisher).toContain('if(reconciliation.createRows.length)materializeRenderGenerationRows(reconciliation.createRows,false,scanPreview)');
   expect(publisher).toContain('youtubeVideoProcessingStatusBatch');
   expect(publisher).toContain("notifySuccess('Проверка YouTube завершена'");
   expect(publisher).not.toContain('Новых videos.insert: 0');

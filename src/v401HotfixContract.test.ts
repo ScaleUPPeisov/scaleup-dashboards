@@ -12,6 +12,7 @@ const inventory=fs.readFileSync('src/renderInventoryRuntime.ts','utf8');
 const bridge=fs.readFileSync('src/LiveInventoryBridge.tsx','utf8');
 const store=fs.readFileSync('src/store.ts','utf8');
 const brand=fs.readFileSync('src/vyronBrand.ts','utf8');
+const releases=fs.readFileSync('src/releaseHistory.ts','utf8');
 
 describe('VYRON 4.0.1 hotfix contract',()=>{
   it('keeps the new History shortcut global and separate from OAuth state',()=>{
@@ -44,6 +45,7 @@ describe('VYRON 4.0.1 hotfix contract',()=>{
   });
 
   it('uses 4.0.1 as the hotfix runtime identity',()=>{
-    expect(brand).toContain("VYRON_MAJOR_VERSION='4.0.1'");
+    expect(releases).toContain('"version":"4.0.1"');
+    expect(brand).toContain("VYRON_MAJOR_VERSION='6.0.0'");
   });
 });

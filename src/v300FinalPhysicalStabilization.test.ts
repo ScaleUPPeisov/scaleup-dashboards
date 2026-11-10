@@ -87,7 +87,8 @@ describe('VYRON 3.0.0 final physical stabilization contracts',()=>{
   expect(policy).toContain('APP_NOT_REPLACEABLE');
   expect(updater).toContain('ensureUpdaterInstallable');
   expect(updater).toContain("localStorage.setItem('vyron:update-installing-target'");
-  expect(app).toContain('POST_UPDATE_BUILD_MISMATCH');
+  expect(app).toContain('POST_UPDATE_IDENTITY_MISMATCH');
+  expect(app).toContain('const revisionOk=!revisionRequired||Number(target.buildRevision)===runtime.buildRevision');
   expect(app).toContain('target.buildRevision');
   expect(app).toContain('runtime.buildRevision');
  });
