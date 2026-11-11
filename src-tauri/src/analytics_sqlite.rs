@@ -6,7 +6,7 @@ use chrono::{NaiveDate,Utc};
 use rusqlite::{params,Connection,OptionalExtension,OpenFlags,Transaction,TransactionBehavior};
 use serde_json::{json,Value};
 use sha2::{Digest,Sha256};
-use std::{collections::HashSet,fs,io::Read,path::{Path,PathBuf},time::Duration};
+use std::{collections::HashSet,fs,io::{Read,Write},path::{Path,PathBuf},time::Duration};
 use uuid::Uuid;
 
 const SCHEMA_VERSION:i32=2;
@@ -157,6 +157,60 @@ fn verify_header(path:&Path)->Result<(),String>{
         return Err("SQLITE_RECOVERY_REQUIRED: invalid existing database header; no replacement attempted".into())
     }
     Ok(())
+}
+/// Preserve the JSON generation pointer before the first SQLite write.
+///
+/// A plain `fs::copy` can leave a truncated file if the process or machine
+/// stops mid-copy.  Worse, the old implementation accepted any pre-existing
+/// backup without checking it, so a later restart could silently keep that
+/// damaged recovery marker forever.  Write through a private temporary file,
+/// fsync it, atomically rename it, then byte-verify the durable result.  An
+/// existing backup is immutable: disagreement is a recovery error, never an
+/// automatic overwrite.
+fn ensure_pointer_backup(cache:&Path,generation:&str)->Result<PathBuf,String>{
+    Uuid::parse_str(generation).map_err(|_|"SQLITE_POINTER_INVALID_GENERATION".to_string())?;
+    let source=cache.join("ui-current.json");
+    let bytes=fs::read(&source).map_err(|e|format!("SQLITE_POINTER_BACKUP_READ: {e}"))?;
+    let source_pointer:Value=serde_json::from_slice(&bytes)
+        .map_err(|e|format!("SQLITE_POINTER_BACKUP_SOURCE_PARSE: {e}"))?;
+    let backup=cache.join(format!("ui-current-pre-sqlite-{generation}.json"));
+    if backup.exists(){
+        let existing=fs::read(&backup).map_err(|e|format!("SQLITE_POINTER_BACKUP_VERIFY: {e}"))?;
+        let backup_pointer:Value=serde_json::from_slice(&existing)
+            .map_err(|e|format!("SQLITE_RECOVERY_REQUIRED: pointer backup is not valid JSON: {e}"))?;
+        for field in ["channelId","generation"]{
+            if text(&backup_pointer,field)!=text(&source_pointer,field){
+                return Err(format!("SQLITE_RECOVERY_REQUIRED: immutable pointer backup {field} mismatch"))
+            }
+        }
+        return Ok(backup)
+    }
+    let temporary=cache.join(format!(".ui-current-pre-sqlite-{generation}-{}.tmp",Uuid::new_v4()));
+    let write_result=(||->Result<(),String>{
+        let mut file=fs::OpenOptions::new().write(true).create_new(true).open(&temporary)
+            .map_err(|e|format!("SQLITE_POINTER_BACKUP_CREATE: {e}"))?;
+        #[cfg(unix)]{
+            use std::os::unix::fs::PermissionsExt;
+            file.set_permissions(fs::Permissions::from_mode(0o600))
+                .map_err(|e|format!("SQLITE_POINTER_BACKUP_PERMISSIONS: {e}"))?;
+        }
+        file.write_all(&bytes).map_err(|e|format!("SQLITE_POINTER_BACKUP_WRITE: {e}"))?;
+        file.sync_all().map_err(|e|format!("SQLITE_POINTER_BACKUP_SYNC: {e}"))?;
+        drop(file);
+        fs::rename(&temporary,&backup).map_err(|e|format!("SQLITE_POINTER_BACKUP_RENAME: {e}"))?;
+        #[cfg(unix)]{
+            fs::File::open(cache).and_then(|directory|directory.sync_all())
+                .map_err(|e|format!("SQLITE_POINTER_BACKUP_DIRECTORY_SYNC: {e}"))?;
+        }
+        Ok(())
+    })();
+    if write_result.is_err(){let _=fs::remove_file(&temporary)}
+    write_result?;
+    let durable=fs::read(&backup).map_err(|e|format!("SQLITE_POINTER_BACKUP_VERIFY: {e}"))?;
+    if durable!=bytes{
+        return Err("SQLITE_RECOVERY_REQUIRED: pointer backup checksum mismatch".into())
+    }
+    Ok(backup)
 }
 fn prepare_db(path:&Path)->Result<Connection,String>{
     verify_header(path)?;
@@ -539,6 +593,9 @@ fn import_generation(tx:&Transaction<'_>,channel:&str,generation:&str,root:&Path
 pub(crate) fn migrate_generation(cache:&Path,channel_id:&str)->Result<MigrationResult,String>{
     let (generation,root,overview,_pointer,catalog,daily,reach,digest)=canonical_source(cache,channel_id)?;
     fs::create_dir_all(cache).map_err(|e|e.to_string())?;
+    // Establish and verify the immutable recovery marker before opening or
+    // creating SQLite. A damaged backup cannot cause any database mutation.
+    ensure_pointer_backup(cache,&generation)?;
     let path=cache.join(DB_NAME);
     let mut conn=prepare_db(&path)?;
     if let Some((old_digest,counts))=conn.query_row(
@@ -581,12 +638,6 @@ pub(crate) fn migrate_generation(cache:&Path,channel_id:&str)->Result<MigrationR
             videos:n[2].try_into().map_err(|_|"SQLITE_BAD_COUNT")?,
             reach_rows:n[3].try_into().map_err(|_|"SQLITE_BAD_COUNT")?,
             events:n[4].try_into().map_err(|_|"SQLITE_BAD_COUNT")?});
-    }
-    // The source is immutable; copy the pointer to an additional recovery marker
-    // before any SQLite mutation. Existing generations remain untouched.
-    let backup=cache.join(format!("ui-current-pre-sqlite-{}.json",generation));
-    if !backup.exists(){
-        fs::copy(cache.join("ui-current.json"),&backup).map_err(|e|format!("SQLITE_POINTER_BACKUP: {e}"))?;
     }
     let tx=conn.transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|e|format!("SQLITE_BEGIN: {e}"))?;
@@ -904,6 +955,38 @@ mod tests{
         assert_eq!(reach.len(),1);
         assert_eq!(reach[0]["observedImpressions"],500);
         assert_eq!(reach[0]["ctrScale"],"UNVERIFIED");
+        let _=fs::remove_dir_all(cache);
+    }
+    #[test]fn pointer_backup_is_atomic_private_and_verified_before_database_creation(){
+        let (cache,id,generation)=sample_cache();
+        let pointer=fs::read(cache.join("ui-current.json")).unwrap();
+        let backup=cache.join(format!("ui-current-pre-sqlite-{generation}.json"));
+        migrate_generation(&cache,&id).unwrap();
+        assert_eq!(fs::read(&backup).unwrap(),pointer);
+        assert!(!fs::read_dir(&cache).unwrap().any(|entry|{
+            entry.unwrap().file_name().to_string_lossy().ends_with(".tmp")
+        }));
+        #[cfg(unix)]{
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(fs::metadata(&backup).unwrap().permissions().mode()&0o777,0o600);
+        }
+        // A semantically identical pointer produced by a newer writer may
+        // contain different optional fields; the immutable recovery identity
+        // is channel + generation, not JSON whitespace or field ordering.
+        activate(&cache,&id,&generation);
+        assert!(migrate_generation(&cache,&id).unwrap().skipped);
+        let _=fs::remove_dir_all(cache);
+    }
+    #[test]fn corrupt_pointer_backup_fails_closed_before_sqlite_is_created(){
+        let (cache,id,generation)=sample_cache();
+        let source=fs::read(cache.join("ui-current.json")).unwrap();
+        let backup=cache.join(format!("ui-current-pre-sqlite-{generation}.json"));
+        fs::write(&backup,b"{truncated").unwrap();
+        let error=migrate_generation(&cache,&id).unwrap_err();
+        assert!(error.contains("SQLITE_RECOVERY_REQUIRED"),"{error}");
+        assert!(!cache.join(DB_NAME).exists(),"backup gate must precede SQLite creation");
+        assert_eq!(fs::read(cache.join("ui-current.json")).unwrap(),source);
+        assert_eq!(fs::read(&backup).unwrap(),b"{truncated");
         let _=fs::remove_dir_all(cache);
     }
     #[test]fn missing_sql_rows_never_pass_idempotent_receipt_check(){
@@ -1383,6 +1466,26 @@ mod tests{
         let err=migrate_generation(&cache,&id).unwrap_err();
         assert!(err.contains("SQLITE_RECOVERY_REQUIRED"));
         assert_eq!(fs::read(cache.join(DB_NAME)).unwrap(),b"definitely not SQLite");
+        let _=fs::remove_dir_all(cache);
+    }
+    #[test]fn truncated_database_page_fails_integrity_without_touching_json_history(){
+        let (cache,id,generation)=sample_cache();
+        migrate_generation(&cache,&id).unwrap();
+        let source=cache.join("ui-generations").join(generation).join("channel-daily.json");
+        let source_bytes=fs::read(&source).unwrap();
+        let database=cache.join(DB_NAME);
+        {
+            let conn=prepare_db(&database).unwrap();
+            let _:Result<(i64,i64,i64),_>=conn.query_row(
+                "PRAGMA wal_checkpoint(TRUNCATE)",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)));
+        }
+        let original_len=fs::metadata(&database).unwrap().len();
+        assert!(original_len>4096);
+        fs::OpenOptions::new().write(true).open(&database).unwrap().set_len(100).unwrap();
+        let error=migrate_generation(&cache,&id).unwrap_err();
+        assert!(error.contains("SQLITE_")||error.to_ascii_lowercase().contains("database"),"{error}");
+        assert_eq!(fs::metadata(&database).unwrap().len(),100,"damaged DB must not be replaced");
+        assert_eq!(fs::read(&source).unwrap(),source_bytes,"JSON recovery history is immutable");
         let _=fs::remove_dir_all(cache);
     }
     #[test]fn wrong_channel_and_changed_same_generation_are_rejected(){
