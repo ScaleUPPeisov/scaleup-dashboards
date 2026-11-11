@@ -1010,8 +1010,11 @@ fn winner_enrich_evidence(videos:&mut [Value],reach:&[Value],retention:&[Value])
         if !id.is_empty()&&count>0{retention_by_video.insert(id.to_string(),(total,count));}
     }
     for evidence in videos{
-        let id=evidence.get("videoId").and_then(Value::as_str).unwrap_or("");
-        if let Some((impressions,weighted,verified))=reach_by_video.get(id){
+        // Own the lookup key before mutating the JSON object. Keeping a &str
+        // borrowed from evidence across the mutations violates Rust's aliasing
+        // rules and made every Rust safety job fail to compile.
+        let id=evidence.get("videoId").and_then(Value::as_str).unwrap_or("").to_string();
+        if let Some((impressions,weighted,verified))=reach_by_video.get(&id){
             evidence["impressions"]=json!(impressions);
             if *verified&&*impressions>0.0{
                 evidence["ctrPercent"]=json!(weighted/impressions);
@@ -1022,7 +1025,7 @@ fn winner_enrich_evidence(videos:&mut [Value],reach:&[Value],retention:&[Value])
                 evidence["ctrStatus"]=json!("UNVERIFIED_REPORTING_UNITS");
             }
         }
-        if let Some((total,count))=retention_by_video.get(id){
+        if let Some((total,count))=retention_by_video.get(&id){
             evidence["retentionCurveMean"]=json!(total/(*count as f64));
             evidence["retentionCurveStatus"]=json!("AVAILABLE");
         }
