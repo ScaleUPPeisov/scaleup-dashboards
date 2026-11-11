@@ -1,4 +1,4 @@
-import {describe,it,expect} from 'vitest';
+import {describe,it,expect,vi} from 'vitest';
 import {MultiChannelUploadQueue,type ImmutableUploadJob} from './uploadQueue';
 
 const wait=()=>new Promise<void>(r=>setTimeout(r,0));
@@ -13,4 +13,38 @@ describe('multi-channel upload queue',()=>{
  it('keeps credentials isolated across simultaneous channels and UI-like switching',async()=>{const seen:Array<[string,string,string]>=[];const q=new MultiChannelUploadQueue(async s=>{seen.push([s.jobId,s.channelId,s.profileId])},2);q.enqueue(spec(1,'Beta Room','profile-fixture-alpha'));q.enqueue(spec(2,'Quartz Harbor','profile-lost'));await wait();await wait();expect(seen).toContainEqual(['j1','Beta Room','profile-fixture-alpha']);expect(seen).toContainEqual(['j2','Quartz Harbor','profile-lost'])});
  it('allows safe removal only while queued',async()=>{let release!:()=>void;const q=new MultiChannelUploadQueue(()=>new Promise<void>(r=>release=r),1);q.enqueue(spec(1,'A'));q.enqueue(spec(2,'B'));await wait();expect(q.removeQueued('j1')).toBe(false);expect(q.removeQueued('j2')).toBe(true);expect(q.snapshot().queued).toHaveLength(0);release()});
  it('waits for the exact submitted batch and returns every terminal failure beyond recent UI limits',async()=>{const q=new MultiChannelUploadQueue(async s=>{throw new Error(`boom-${s.jobId}`)},4);const ids:string[]=[];for(let i=1;i<=25;i++)ids.push(q.enqueue(spec(i,`C${i}`)).queueId);const rows=await q.waitForEntries(ids);expect(rows).toHaveLength(25);expect(rows.every(x=>x.state==='FAILED')).toBe(true);expect(rows.map(x=>x.spec.jobId)).toContain('j25')});
+ it('restores queued/running work after restart as fail-closed paused entries',async()=>{
+  let durable:unknown,release!:()=>void;
+  const persistence={load:()=>durable,save:(value:unknown)=>{durable=JSON.parse(JSON.stringify(value))}};
+  const first=new MultiChannelUploadQueue(()=>new Promise<void>(r=>release=r),1,1,{persistence});
+  first.enqueue(spec(1,'A'));first.enqueue(spec(2,'B'));await wait();
+  expect(first.snapshot().running).toHaveLength(1);expect(first.snapshot().queued).toHaveLength(1);
+  const restartedExecutor=vi.fn(async()=>{}),restarted=new MultiChannelUploadQueue(restartedExecutor,1,1,{persistence});
+  expect(restarted.snapshot().paused.map(x=>x.spec.jobId)).toEqual(['j1','j2']);
+  expect(restartedExecutor).not.toHaveBeenCalled();
+  expect(restarted.hasDuplicate(spec(1,'A'))).toBe(true);
+  expect(restarted.resumePaused('j1')).toBe(true);await wait();
+  expect(restartedExecutor).toHaveBeenCalledTimes(1);
+  release()
+ });
+ it('pauses quota failures without losing the immutable queue payload',async()=>{
+  const q=new MultiChannelUploadQueue(async()=>{throw new Error('UPLOAD_QUEUE_QUOTA_RECHECK_FAILED')},1,1,{pauseOnError:error=>String(error).includes('QUOTA_RECHECK')});
+  const entry=q.enqueue(spec(1,'A')),settled=q.waitForEntries([entry.queueId]);await wait();await wait();
+  expect(q.snapshot().paused).toHaveLength(1);
+  expect(q.snapshot().paused[0].spec.jobId).toBe('j1');
+  expect(q.snapshot().recent).toHaveLength(0);
+  expect((await settled)[0].state).toBe('PAUSED')
+ });
+ it('rejects corrupt and duplicate durable entries during recovery',()=>{
+  const good={queueId:'q1',spec:spec(1,'A'),state:'RUNNING',submittedSequence:5};
+  const persistence={load:()=>({version:1,entries:[good,{...good,queueId:'q2',submittedSequence:6},{queueId:'bad',spec:{},submittedSequence:7}]}),save:()=>{}};
+  const q=new MultiChannelUploadQueue(async()=>{},1,1,{persistence});
+  expect(q.snapshot().paused).toHaveLength(1);
+  expect(q.snapshot().paused[0].queueId).toBe('q1')
+ });
+ it('fails closed before executor start when durable enqueue cannot be written',async()=>{
+  const executor=vi.fn(async()=>{}),q=new MultiChannelUploadQueue(executor,1,1,{persistence:{load:()=>undefined,save:()=>{throw new Error('disk full')}}});
+  expect(()=>q.enqueue(spec(1,'A'))).toThrow(/UPLOAD_QUEUE_PERSIST_FAILED/);
+  await wait();expect(executor).not.toHaveBeenCalled();expect(q.snapshot().queued).toHaveLength(0)
+ });
 });
