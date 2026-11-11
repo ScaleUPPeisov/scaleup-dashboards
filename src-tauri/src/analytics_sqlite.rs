@@ -204,7 +204,7 @@ fn ensure_pointer_backup(cache:&Path,generation:&str)->Result<PathBuf,String>{
         }
         Ok(())
     })();
-    if write_result.is_err(){let _=fs::remove_file(&temporary)}
+    if write_result.is_err(){let _=fs::remove_file(&temporary);}
     write_result?;
     let durable=fs::read(&backup).map_err(|e|format!("SQLITE_POINTER_BACKUP_VERIFY: {e}"))?;
     if durable!=bytes{
