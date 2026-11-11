@@ -1,0 +1,44 @@
+name: VYRON PR22 RC tooling safety
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'scripts/macos/**'
+      - 'scripts/vyron_macos_offline_preflight.py'
+      - 'scripts/test_vyron_macos_offline_preflight.py'
+      - 'src-tauri/tauri.conf.json'
+      - 'src-tauri/tauri.pr22-probe.conf.json'
+      - 'docs/VYRON_PR22_MAC_OWNER_RUNBOOK.md'
+      - '.github/workflows/vyron-pr22-rc-tooling.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  safe-tooling-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shell syntax and no release mutations
+        run: |
+          bash -n scripts/macos/vyron-pr22-release-validation.sh
+          ! grep -E 'gh release|git push|security (add|delete)|notarytool submit|ditto .*/Applications' scripts/macos/vyron-pr22-release-validation.sh
+      - name: Python safety tests
+        run: |
+          python3 -m unittest scripts.macos.test_verify_vyron_pr22_performance scripts.test_vyron_macos_offline_preflight
+      - name: Bundle and updater isolation contract
+        run: |
+          python3 - <<'PY'
+          import json
+          stable=json.load(open('src-tauri/tauri.conf.json'))
+          probe=json.load(open('src-tauri/tauri.pr22-probe.conf.json'))
+          assert stable['version']=='6.1.15'
+          assert stable['identifier']=='studio.channelflow.desktop'
+          assert stable['bundle']['createUpdaterArtifacts'] is True
+          assert probe['identifier']=='studio.channelflow.desktop.pr22probe'
+          assert probe['bundle']['createUpdaterArtifacts'] is False
+          assert probe['plugins']['updater']['endpoints']==[]
+          PY

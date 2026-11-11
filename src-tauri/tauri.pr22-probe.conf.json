@@ -1,0 +1,14 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "VYRON PR22 Probe",
+  "identifier": "studio.channelflow.desktop.pr22probe",
+  "bundle": {
+    "targets": ["app"],
+    "createUpdaterArtifacts": false
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": []
+    }
+  }
+}
