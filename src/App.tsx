@@ -164,7 +164,13 @@ export function App(){
       try{
         // Avoid expensive/destructive maintenance before the app becomes usable.
         // A failed storage load must never silently hydrate an empty replacement.
-        const loaded=await withStartupDeadline(api.loadState(),'Загрузка локального состояния') as typeof EMPTY_STATE&{__performanceRepair?:PerformanceRepairMarker};
+        const loaded=await withStartupDeadline(api.loadState(),'Загрузка локального состояния') as typeof EMPTY_STATE&{__performanceRepair?:PerformanceRepairMarker;__stateRecoveryRequired?:boolean;__stateRecoveryError?:string};
+        // The native loader intentionally preserves an unrecoverable original and
+        // returns a diagnostic marker. Never hydrate its placeholder empty state:
+        // that would display 0 channels and risk later persistence attempts.
+        if(loaded.__stateRecoveryRequired){
+          throw new Error(loaded.__stateRecoveryError||'STATE_RECOVERY_REQUIRED: сохранённые данные требуют ручного восстановления');
+        }
         const backendRepair=loaded.__performanceRepair;delete loaded.__performanceRepair;
         const fallback=performanceFixtureCounts(loaded);
         hydrate(loaded);
