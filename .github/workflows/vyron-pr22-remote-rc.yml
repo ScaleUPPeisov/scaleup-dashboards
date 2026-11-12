@@ -1,5 +1,9 @@
 name: VYRON PR22 remote macOS RC
 
+# INCIDENT FREEZE: Only isolated/non-production builds are permitted. Jobs using
+# historical signing secrets are hard-disabled even if manually dispatched.
+# Never treat the legacy-signed 6.1.17 artifacts as release-eligible.
+
 on:
   push:
     branches:
@@ -22,9 +26,6 @@ on:
         type: choice
         options:
           - isolated
-          - signed-upgrade
-          - local-upgrade-6.1.17
-          - local-upgrade-6.1.16
 
 permissions:
   contents: read
@@ -179,7 +180,9 @@ jobs:
 
   signed-upgrade-arm64-rc:
     name: Signed and notarized production-identity RC
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'signed-upgrade'
+    # SECURITY INCIDENT 2026-11-12: legacy updater key presumed compromised.
+    # Do NOT re-enable without offline key rotation + independent bootstrapping.
+    if: ${{ false }}
     runs-on: macos-15
     environment: rc-signing
     timeout-minutes: 60
@@ -379,7 +382,10 @@ jobs:
 
   production-local-upgrade-arm64:
     name: Production identity local-signed updater candidate (6.1.17 / historic 6.1.16)
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/feature/vyron-macos-ultimate') || (github.event_name == 'workflow_dispatch' && (github.event.inputs.mode == 'local-upgrade-6.1.17' || github.event.inputs.mode == 'local-upgrade-6.1.16'))
+    # SECURITY INCIDENT 2026-11-12: old minisign key must never sign again.
+    # Both 6.1.16 historical rebuild and 6.1.17 local-signed candidate are quarantined.
+    # No legacy updater artifacts are production-eligible.
+    if: ${{ false }}
     runs-on: macos-15
     timeout-minutes: 60
     env:
