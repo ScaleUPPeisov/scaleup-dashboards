@@ -1,6 +1,11 @@
 name: VYRON PR22 remote macOS RC
 
 on:
+  push:
+    branches:
+      - feature/vyron-macos-ultimate
+    paths:
+      - '.github/workflows/vyron-pr22-remote-rc.yml'
   pull_request:
     types: [opened, synchronize, reopened]
     paths:
@@ -362,5 +367,251 @@ jobs:
         with:
           name: VYRON-Mac-Ultimate-PR22-signed-upgrade-arm64-${{ env.SOURCE_SHA }}
           path: ${{ runner.temp }}/vyron-pr22-signed-upgrade-rc/
+          if-no-files-found: error
+          retention-days: 14
+
+
+  production-local-upgrade-arm64:
+    name: Production identity 6.1.16 with existing local signer
+    if: github.event_name == 'push' && github.ref == 'refs/heads/feature/vyron-macos-ultimate'
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      VYRON_MACOS_SIGNING_P12_BASE64: ${{ secrets.VYRON_MACOS_SIGNING_P12_BASE64 }}
+      VYRON_MACOS_SIGNING_P12_PASSWORD: ${{ secrets.VYRON_MACOS_SIGNING_P12_PASSWORD }}
+      VYRON_MACOS_SIGNING_IDENTITY: ${{ secrets.VYRON_MACOS_SIGNING_IDENTITY }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      OLD_UPDATE_URL: https://github.com/ScaleUPPeisov/vyron-releases/releases/download/v6.1.15/VYRON.app.tar.gz
+      OLD_UPDATE_SHA256: 107e89d03119b0b53096867e61c40560b50495cc2c8061b4502af3b2ba22b266
+      CANDIDATE_URL: https://github.com/ScaleUPPeisov/vyron-releases/releases/download/v6.1.16/VYRON.app.tar.gz
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'src-tauri -> target'
+
+      - name: Verify existing secret contract without disclosure
+        run: |
+          set -euo pipefail
+          missing=()
+          [[ -n "$VYRON_MACOS_SIGNING_P12_BASE64" ]] || missing+=(VYRON_MACOS_SIGNING_P12_BASE64)
+          [[ -n "$VYRON_MACOS_SIGNING_P12_PASSWORD" ]] || missing+=(VYRON_MACOS_SIGNING_P12_PASSWORD)
+          [[ -n "$VYRON_MACOS_SIGNING_IDENTITY" ]] || missing+=(VYRON_MACOS_SIGNING_IDENTITY)
+          [[ -n "$TAURI_SIGNING_PRIVATE_KEY" ]] || missing+=(TAURI_SIGNING_PRIVATE_KEY)
+          if (( ${#missing[@]} )); then
+            echo "EXISTING_LOCAL_SIGNING_READY=false"
+            printf 'Missing required existing secret name: %s\n' "${missing[@]}"
+            exit 2
+          fi
+          test "$VYRON_MACOS_SIGNING_IDENTITY" = "VYRON Local Code Signing"
+          echo "EXISTING_LOCAL_SIGNING_READY=true"
+
+      - name: Import the existing local identity into an ephemeral keychain
+        run: |
+          set -euo pipefail
+          P12="$RUNNER_TEMP/vyron-existing-local-signing.p12"
+          CERT="$RUNNER_TEMP/vyron-existing-local-signing.pem"
+          KEYCHAIN="$RUNNER_TEMP/vyron-existing-local-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
+          printf '%s' "$VYRON_MACOS_SIGNING_P12_BASE64" | openssl base64 -d -A -out "$P12"
+          openssl pkcs12 -in "$P12" -nokeys -passin "pass:$VYRON_MACOS_SIGNING_P12_PASSWORD" -out "$CERT"
+          P12_CERT_SHA1="$(openssl x509 -in "$CERT" -noout -fingerprint -sha1 | sed 's/^sha1 Fingerprint=//I;s/://g' | tr '[:lower:]' '[:upper:]')"
+          test -n "$P12_CERT_SHA1"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$P12" -k "$KEYCHAIN" -P "$VYRON_MACOS_SIGNING_P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security add-trusted-cert -r trustRoot -p codeSign -k "$KEYCHAIN" "$CERT"
+          security list-keychains -d user -s "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          IMPORTED_SHA1="$(security find-identity -v -p codesigning "$KEYCHAIN" | awk -v name="$VYRON_MACOS_SIGNING_IDENTITY" 'index($0, "\"" name "\""){print $2; exit}')"
+          test -n "$IMPORTED_SHA1"
+          test "$(printf '%s' "$IMPORTED_SHA1" | tr '[:lower:]' '[:upper:]')" = "$P12_CERT_SHA1"
+          echo "APPLE_SIGNING_IDENTITY=$IMPORTED_SHA1" >> "$GITHUB_ENV"
+          echo "LOCAL_SIGNING_CERT_SHA1=$P12_CERT_SHA1" >> "$GITHUB_ENV"
+          rm -f "$P12" "$CERT"
+
+      - name: Install dependencies and verify stable source contract
+        run: |
+          set -euo pipefail
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
+          npm ci
+          npm run build
+          cargo check --locked --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin
+          node <<'NODE'
+          const fs=require('node:fs');
+          const stable=JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json','utf8'));
+          if(stable.version!=='6.1.15')throw new Error('PRODUCTION_VERSION_CHANGED');
+          if(stable.identifier!=='studio.channelflow.desktop')throw new Error('PRODUCTION_IDENTIFIER_CHANGED');
+          if(stable.bundle.createUpdaterArtifacts!==true)throw new Error('UPDATER_ARTIFACTS_DISABLED');
+          const expected='dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEREODQ1NDdERTI1MEYxQzAKUldUQThWRGlmVlNFM1RHdW5WQnE2eG9BYTBnQlNmbUtmVU84UHJQMUNvZWZ4Qmo0L2hYcUd4UDEK';
+          if(stable.plugins.updater.pubkey!==expected)throw new Error('UPDATER_PUBLIC_KEY_CHANGED');
+          if(!stable.plugins.updater.endpoints.includes('https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json'))throw new Error('PRODUCTION_ENDPOINT_CHANGED');
+          console.log('STABLE_SOURCE_CONTRACT=PASS');
+          NODE
+
+      - name: Download and verify the published 6.1.15 updater package
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/vyron-old"
+          curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 300             "$OLD_UPDATE_URL" -o "$RUNNER_TEMP/VYRON-6.1.15.app.tar.gz"
+          echo "$OLD_UPDATE_SHA256  $RUNNER_TEMP/VYRON-6.1.15.app.tar.gz" | shasum -a 256 -c -
+          curl --fail --location --retry 3 --connect-timeout 20 --max-time 60             https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json             -o "$RUNNER_TEMP/latest-6.1.15.json"
+          test "$(jq -r .version "$RUNNER_TEMP/latest-6.1.15.json")" = "6.1.15"
+          test "$(jq -r '.platforms["darwin-aarch64"].sha256' "$RUNNER_TEMP/latest-6.1.15.json")" = "$OLD_UPDATE_SHA256"
+          tar -xzf "$RUNNER_TEMP/VYRON-6.1.15.app.tar.gz" -C "$RUNNER_TEMP/vyron-old"
+          OLD_APP="$(find "$RUNNER_TEMP/vyron-old" -maxdepth 2 -name 'VYRON.app' -print -quit)"
+          test -n "$OLD_APP"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$OLD_APP/Contents/Info.plist")" = "studio.channelflow.desktop"
+          codesign --verify --deep --strict --verbose=2 "$OLD_APP"
+          OLD_DR="$(codesign -d -r- "$OLD_APP" 2>&1 | sed -n 's/^designated => //p')"
+          test -n "$OLD_DR"
+          echo "$OLD_DR" > "$RUNNER_TEMP/VYRON-6.1.15.designated-requirement.txt"
+          echo "OLD_APP=$OLD_APP" >> "$GITHUB_ENV"
+
+      - name: Verify the old updater signature against the embedded public key
+        run: |
+          set -euo pipefail
+          brew install minisign
+          node -e "const c=require('./src-tauri/tauri.conf.json');process.stdout.write(c.plugins.updater.pubkey)"             | openssl base64 -d -A > "$RUNNER_TEMP/vyron-updater.pub"
+          jq -r '.platforms["darwin-aarch64"].signature' "$RUNNER_TEMP/latest-6.1.15.json"             | openssl base64 -d -A > "$RUNNER_TEMP/VYRON-6.1.15.app.tar.gz.sig.decoded"
+          minisign -Vm "$RUNNER_TEMP/VYRON-6.1.15.app.tar.gz"             -p "$RUNNER_TEMP/vyron-updater.pub"             -x "$RUNNER_TEMP/VYRON-6.1.15.app.tar.gz.sig.decoded"
+          echo "OLD_UPDATER_SIGNATURE=PASS"
+
+      - name: Prepare production identity 6.1.16 config
+        env:
+          UPGRADE_CONFIG: ${{ runner.temp }}/tauri.6.1.16-production-identity.json
+        run: |
+          node <<'NODE'
+          const fs=require('node:fs');
+          const stable=JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json','utf8'));
+          const config={
+            $schema:'https://schema.tauri.app/config/2',
+            productName:'VYRON',
+            version:process.env.RC_VERSION,
+            identifier:stable.identifier,
+            bundle:{
+              targets:['app'],
+              createUpdaterArtifacts:true,
+              category:stable.bundle.category,
+              shortDescription:stable.bundle.shortDescription,
+              longDescription:stable.bundle.longDescription,
+              icon:stable.bundle.icon,
+              macOS:{...stable.bundle.macOS,bundleName:'VYRON'}
+            },
+            plugins:{updater:{
+              pubkey:stable.plugins.updater.pubkey,
+              endpoints:stable.plugins.updater.endpoints
+            }}
+          };
+          fs.writeFileSync(process.env.UPGRADE_CONFIG,JSON.stringify(config,null,2)+'\n');
+          console.log('PRODUCTION_IDENTITY_CONFIG=PASS');
+          NODE
+
+      - name: Build production identity 6.1.16 updater package
+        env:
+          UPGRADE_CONFIG: ${{ runner.temp }}/tauri.6.1.16-production-identity.json
+          VYRON_UPDATE_CHANNEL: stable
+        run: |
+          set -euo pipefail
+          npx tauri build --target aarch64-apple-darwin --bundles app --config "$UPGRADE_CONFIG"
+
+      - name: Verify local code identity, designated requirement and updater signature
+        env:
+          OUT: ${{ runner.temp }}/vyron-6.1.16-production-identity-candidate
+        run: |
+          set -euo pipefail
+          APP_PATH="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)"
+          UPDATE_PATH="$(find src-tauri/target/aarch64-apple-darwin/release/bundle -type f -name 'VYRON.app.tar.gz' -print -quit)"
+          SIG_PATH="$UPDATE_PATH.sig"
+          test -n "$APP_PATH"
+          test -n "$UPDATE_PATH"
+          test -s "$SIG_PATH"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Contents/Info.plist")" = "studio.channelflow.desktop"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Contents/Info.plist")" = "$RC_VERSION"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          NEW_DR="$(codesign -d -r- "$APP_PATH" 2>&1 | sed -n 's/^designated => //p')"
+          test -n "$NEW_DR"
+          OLD_DR="$(cat "$RUNNER_TEMP/VYRON-6.1.15.designated-requirement.txt")"
+          test "$NEW_DR" = "$OLD_DR"
+          printf '%s' "$NEW_DR" > "$RUNNER_TEMP/VYRON-6.1.16.designated-requirement.txt"
+          openssl base64 -d -A -in "$SIG_PATH" -out "$RUNNER_TEMP/VYRON-6.1.16.app.tar.gz.sig.decoded"
+          minisign -Vm "$UPDATE_PATH"             -p "$RUNNER_TEMP/vyron-updater.pub"             -x "$RUNNER_TEMP/VYRON-6.1.16.app.tar.gz.sig.decoded"
+          mkdir -p "$OUT"
+          cp "$UPDATE_PATH" "$OUT/VYRON.app.tar.gz"
+          cp "$SIG_PATH" "$OUT/VYRON.app.tar.gz.sig"
+          cp "$RUNNER_TEMP/VYRON-6.1.15.designated-requirement.txt" "$OUT/"
+          cp "$RUNNER_TEMP/VYRON-6.1.16.designated-requirement.txt" "$OUT/"
+          codesign --display --verbose=4 "$APP_PATH" > "$OUT/codesign.txt" 2>&1
+          codesign --verify --deep --strict --verbose=4 "$APP_PATH" > "$OUT/codesign-verify.txt" 2>&1
+          SHA256="$(shasum -a 256 "$OUT/VYRON.app.tar.gz" | awk '{print $1}')"
+          SIGNATURE="$(tr -d '\r\n' < "$OUT/VYRON.app.tar.gz.sig")"
+          export OUT SHA256 SIGNATURE
+          node <<'NODE'
+          const fs=require('node:fs'),path=require('node:path');
+          const out=process.env.OUT;
+          const candidate={
+            version:process.env.RC_VERSION,
+            notes:'VYRON 6.1.16 — Mac Ultimate upgrade candidate',
+            pub_date:new Date().toISOString(),
+            platforms:{
+              'darwin-aarch64':{
+                url:process.env.CANDIDATE_URL,
+                signature:process.env.SIGNATURE,
+                sha256:process.env.SHA256
+              }
+            }
+          };
+          const evidence={
+            schemaVersion:1,
+            artifactKind:'PRODUCTION_IDENTITY_LOCAL_SIGNED_UPDATER_CANDIDATE',
+            sourceSha:process.env.SOURCE_SHA,
+            version:process.env.RC_VERSION,
+            architecture:'aarch64',
+            runner:'macos-15',
+            bundleIdentifier:'studio.channelflow.desktop',
+            updaterPublicKeyMatches615:true,
+            updaterSignatureVerified:true,
+            oldUpdaterSignatureVerified:true,
+            applicationCodeSignatureVerified:true,
+            designatedRequirementMatches615:true,
+            localSigningCertificateSha1:process.env.LOCAL_SIGNING_CERT_SHA1,
+            updaterEndpointsPreserved:true,
+            productionFeedModified:false,
+            releasePublished:false,
+            physicalM1DataSafetyValidated:false,
+            gatekeeperAcceptanceClaimed:false
+          };
+          fs.writeFileSync(path.join(out,'latest.candidate.json'),JSON.stringify(candidate,null,2)+'\n');
+          fs.writeFileSync(path.join(out,'BUILD-MANIFEST.json'),JSON.stringify(evidence,null,2)+'\n');
+          fs.writeFileSync(path.join(out,'ROLLBACK-6.1.15.json'),fs.readFileSync(process.env.RUNNER_TEMP+'/latest-6.1.15.json'));
+          NODE
+          (
+            cd "$OUT"
+            for file in *; do
+              [[ "$file" == "SHA256SUMS.txt" ]] || shasum -a 256 "$file"
+            done > SHA256SUMS.txt
+            shasum -a 256 -c SHA256SUMS.txt
+          )
+
+      - name: Upload verified candidate without publishing release or feed
+        uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-6.1.16-production-identity-updater-candidate-${{ env.SOURCE_SHA }}
+          path: ${{ runner.temp }}/vyron-6.1.16-production-identity-candidate/
           if-no-files-found: error
           retention-days: 14
