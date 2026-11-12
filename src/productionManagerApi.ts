@@ -103,7 +103,7 @@ function listenProductionBuild(){
         if(task.state!=='RUNNING')continue;
         // Recovery and a new production request may share the event stream.
         // Never show progress belonging to another request.
-        if(p.requestId&&p.requestId!==task.requestId)continue;
+        if(p.requestId!==task.requestId)continue;
         task.progress={completed:p.completed,total:p.total,stage:p.stage};
         broadcastProductionBuild();
       }
