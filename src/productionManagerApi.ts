@@ -1,6 +1,7 @@
 import {invoke} from '@tauri-apps/api/core';
 import {listen,type UnlistenFn} from '@tauri-apps/api/event';
 import {open} from '@tauri-apps/plugin-dialog';
+import {recordPerformanceOperation} from './performanceTelemetry';
 
 export type DistributionMode='even'|'random'|'alphabetical'|'no-repeat';
 export type ImportSession={schemaVersion:number;sessionId:string;channelId:string;channelName:string;active:boolean;startedAt:string;stoppedAt?:string|null;downloadsPath:string;importPath:string;collected:{id:string;number:number;path:string;sourcePath:string;capturedAt:string}[]};
@@ -49,8 +50,8 @@ export const productionManagerApi={
   stopImport:(workspace:string,channelId:string)=>invoke<ImportSession>('stop_production_import',{workspace,channelId}),
   importStatus:(workspace:string,channelId:string)=>invoke<ImportSession>('production_import_status',{workspace,channelId}),
   setMusicLibrary:(workspace:string,channelId:string,channelName:string,path:string)=>invoke<ChannelSettings>('set_production_music_library',{workspace,channelId,channelName,path}),
-  indexMusic:(workspace:string,channelId:string)=>invoke<MusicSummary>('index_production_music_library',{workspace,channelId}),
-  state:(workspace:string,channelId:string)=>invoke<ChannelProductionState>('production_channel_state',{workspace,channelId}),
+  indexMusic:(workspace:string,channelId:string)=>{recordPerformanceOperation('music.index');return invoke<MusicSummary>('index_production_music_library',{workspace,channelId})},
+  state:(workspace:string,channelId:string)=>{recordPerformanceOperation('production.channelState');return invoke<ChannelProductionState>('production_channel_state',{workspace,channelId})},
   build:(request:BuildRequest)=>invoke<BuildResult>('build_production_batch',{request}),
   resume:(manifestOrRoot:string)=>invoke<BatchSummary>('resume_production_batch',{manifestOrRoot}),
   resumeRecovery:(recoverySessionId:string)=>invoke<BatchSummary>('resume_production_recovery',{recoverySessionId}),
@@ -60,7 +61,7 @@ export const productionManagerApi={
   markCleanShutdown:()=>invoke<void>('recovery_mark_clean_shutdown'),
   findRecovery:(workspaces:string[])=>invoke<RecoveryState[]>('find_production_recovery',{workspaces}),
   restartRecovery:(manifestOrRoot:string)=>invoke<BatchSummary>('restart_production_batch',{manifestOrRoot}),
-  batches:(workspace:string,channelId:string)=>invoke<BatchSummary[]>('list_production_batches',{workspace,channelId}),
+  batches:(workspace:string,channelId:string)=>{recordPerformanceOperation('production.listBatches');return invoke<BatchSummary[]>('list_production_batches',{workspace,channelId})},
   validate:(manifestPath:string,endlumePath:string)=>invoke<Validation>('validate_production_batch',{manifestPath,endlumePath}),
   validateProjects:(manifestPath:string,endlumePath:string,projectIds:string[])=>invoke<Validation>('validate_production_projects',{manifestPath,endlumePath,projectIds}),
   deleteBatchProjects:(manifestPath:string,projectIds:string[])=>invoke<DeleteResult>('delete_production_batch_projects',{manifestPath,projectIds}),
