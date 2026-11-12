@@ -25,7 +25,7 @@ function taskId(r:RecoveryCandidate){return'recovery:'+r.recoverySessionId}
 
 export function RecoveryGate(){
   const booted=useApp(s=>s.booted),workspace=useApp(s=>s.settings.workspace),channels=useApp(s=>s.channels),setPage=useApp(s=>s.setPage);
-  const [recovery,setRecovery]=useState<RecoveryCandidate|null>(null),[deadline,setDeadline]=useState<number|null>(null),[now,setNow]=useState(Date.now()),[busy,setBusy]=useState(false),[details,setDetails]=useState(false);
+  const [recovery,setRecovery]=useState<RecoveryCandidate|null>(null),[busy,setBusy]=useState(false),[details,setDetails]=useState(false);
   const checked=useRef(false),decided=useRef(false);
   const roots=useMemo(()=>{const p=readProductionPrefs();return [...new Set([workspace,p.productionRoot,...Object.values(p.byChannel||{}).map(x=>x.productionRoot)].filter(Boolean) as string[])]},[workspace,channels.length]);
 
@@ -39,7 +39,7 @@ export function RecoveryGate(){
         if(found)first=legacyCandidate(found);
       }
       if(!first){setRecovery(null);return}
-      decided.current=false;setRecovery(first);setBusy(false);setDetails(false);setDeadline(Date.now()+30_000);setNow(Date.now());
+      decided.current=false;setRecovery(first);setBusy(false);setDetails(false);
       ensureTask({taskId:taskId(first),type:'PRODUCTION_RECOVERY',state:first.safeToResume?'QUEUED':'ATTENTION_REQUIRED',channelId:first.channelId,channelName:first.channelName,label:'Batch '+first.batchId,detail:first.safeToResume?'Найдена незавершённая работа':waitText(first),progress:first.progress,completed:first.completedProjects,total:first.totalProjects,recoveryStatus:first.safeToResume?undefined:first.waitReason==='DRIVE_MISSING'?'Ожидает диск':'Требует внимания',resourceKey:'production-recovery:'+first.batchId});
       journal({eventId:'recovery-detected:'+first.recoverySessionId+':'+first.updatedAt,eventType:'RECOVERY_SESSION_DETECTED',status:'INFO',source:'LIVE_OPERATION',timestamp:new Date().toISOString(),batchId:first.batchId,channelId:first.channelId,channelName:first.channelName,details:{completed:first.completedProjects,total:first.totalProjects,checkpoint:first.lastCheckpoint,safe:first.safeToResume,waitReason:first.waitReason||''}});
     }catch(e){notifyError('Не удалось проверить восстановление',String(e),{operationId:'recovery-scan-error'})}
@@ -48,21 +48,21 @@ export function RecoveryGate(){
   useEffect(()=>{if(!booted||checked.current)return;checked.current=true;void scan(false)},[booted,roots.join('|')]);
   useEffect(()=>{const fn=()=>void scan(true);window.addEventListener(OPEN_EVENT,fn);return()=>window.removeEventListener(OPEN_EVENT,fn)},[roots.join('|')]);
 
+  // A recovery candidate is advisory. Navigation/startup must never trigger a write
+  // or start a recovered batch without an explicit user action.
   useEffect(()=>{
     if(!recovery||recovery.recoverySessionId.startsWith('legacy:')||busy)return;
-    const id=window.setInterval(()=>{void productionManagerApi.refreshRecoveryCandidate(recovery.recoverySessionId).then(next=>{
-      setRecovery(prev=>prev?.recoverySessionId===next.recoverySessionId?next:prev);
-      updateTask(taskId(next),{progress:next.progress,completed:next.completedProjects,total:next.totalProjects,detail:next.safeToResume?'Готово к безопасному продолжению':waitText(next),recoveryStatus:next.safeToResume?undefined:next.waitReason==='DRIVE_MISSING'?'Ожидает диск':'Требует внимания'});
-      if(next.safeToResume&&deadline!==null&&Date.now()>=deadline&&!decided.current)void resumeNow(next);
-    }).catch(()=>{})},2000);
-    return()=>window.clearInterval(id)
-  },[recovery?.recoverySessionId,busy,deadline]);
-
-  useEffect(()=>{
-    if(!recovery||deadline===null||busy)return;
-    const tick=()=>{const t=Date.now();setNow(t);if(t>=deadline&&recovery.safeToResume&&!decided.current)void resumeNow(recovery)};
-    tick();const id=window.setInterval(tick,250);return()=>window.clearInterval(id)
-  },[recovery?.recoverySessionId,recovery?.safeToResume,deadline,busy]);
+    let live=true;
+    const id=window.setInterval(()=>{
+      void productionManagerApi.refreshRecoveryCandidate(recovery.recoverySessionId).then(next=>{
+        if(!live)return;
+        if(next.state==='COMPLETED'){setRecovery(null);return}
+        setRecovery(prev=>prev?.recoverySessionId===next.recoverySessionId?next:prev);
+        updateTask(taskId(next),{progress:next.progress,completed:next.completedProjects,total:next.totalProjects,detail:next.safeToResume?'Готово к безопасному продолжению':waitText(next),recoveryStatus:next.safeToResume?undefined:next.waitReason==='DRIVE_MISSING'?'Ожидает диск':'Требует внимания'});
+      }).catch(()=>{});
+    },5000);
+    return()=>{live=false;window.clearInterval(id)};
+  },[recovery?.recoverySessionId,busy]);
 
   useEffect(()=>{
     if(!recovery||!busy)return;
@@ -70,8 +70,6 @@ export function RecoveryGate(){
     void productionManagerApi.onBatchProgress(p=>{if(p.batchId!==recovery.batchId)return;const pct=p.total?Math.round(p.completed/p.total*100):recovery.progress;updateTask(taskId(recovery),{progress:pct,completed:p.completed,total:p.total,detail:'Продолжение с checkpoint • '+p.completed+'/'+p.total,recoveryStatus:'Продолжено'});setRecovery(x=>x&&x.batchId===p.batchId?{...x,completedProjects:p.completed,totalProjects:p.total,progress:pct,lastCheckpoint:'Проект '+p.completed+'/'+p.total}:x)}).then(x=>off=x);
     return()=>off?.()
   },[recovery?.batchId,busy]);
-
-  const seconds=deadline===null?0:Math.max(0,Math.ceil((deadline-now)/1000));
 
   function restoreUiContext(r:RecoveryCandidate){
     const ctx=r.uiContext;
@@ -82,7 +80,7 @@ export function RecoveryGate(){
   }
   async function resumeNow(candidate=recovery){
     if(!candidate||decided.current||!candidate.safeToResume)return;
-    decided.current=true;setBusy(true);setDeadline(null);
+    decided.current=true;setBusy(true);
     startTask(taskId(candidate),'Восстановление с последнего подтверждённого checkpoint');
     updateTask(taskId(candidate),{recoveryStatus:'Восстанавливается'});
     journal({eventId:'recovery-started:'+candidate.recoverySessionId+':'+Date.now(),eventType:'RECOVERY_STARTED',status:'STARTED',source:'LIVE_OPERATION',timestamp:new Date().toISOString(),batchId:candidate.batchId,channelId:candidate.channelId,channelName:candidate.channelName,details:{completed:candidate.completedProjects,total:candidate.totalProjects,checkpoint:candidate.lastCheckpoint}});
@@ -102,7 +100,7 @@ export function RecoveryGate(){
     }
   }
   async function dismiss(){
-    if(!recovery||busy)return;decided.current=true;setDeadline(null);
+    if(!recovery||busy)return;decided.current=true;
     try{
       if(recovery.recoverySessionId.startsWith('legacy:'))localStorage.setItem(legacyDismissKey(recovery.batchId),'1');else await productionManagerApi.dismissRecovery(recovery.recoverySessionId);
       cancelTask(taskId(recovery),'Автоматическое восстановление отключено. Файлы сохранены.');
@@ -116,7 +114,7 @@ export function RecoveryGate(){
   return <div className="recoveryOverlay"><section className="recoveryDialog recoveryDialogV320">
     <div className="recoveryMark">↻</div><small>VYRON CRASH RECOVERY</small><h2>Найдена незавершённая работа</h2><p className="recoveryLead">{waiting?waitText(recovery):'VYRON восстановит рабочую сессию с последней подтверждённой точки.'}</p>
     <div className="recoveryFacts recoveryFactsV320"><span><small>Операция</small><b>Production</b></span><span><small>Канал</small><b>{recovery.channelName||'—'}</b></span><span><small>Проекты</small><b>{recovery.completedProjects} / {recovery.totalProjects}</b></span><span><small>Checkpoint</small><b>{recovery.lastCheckpoint||'—'}</b></span></div>
-    <div className={'recoveryCountdown '+(waiting?'waiting':'')}><small>{waiting?'Автопродолжение приостановлено':'Автоматическое восстановление через'}</small>{!waiting&&<><b>{seconds}</b><span>сек.</span></>}{waiting&&<b>{recovery.requiredVolumeName?'Ожидаем '+recovery.requiredVolumeName:'Требуется проверка'}</b>}</div>
+    <div className={'recoveryCountdown '+(waiting?'waiting':'')}><small>{waiting?'Автовосстановление отключено':'Восстановление запускается только вручную'}</small>{waiting&&<b>{recovery.requiredVolumeName?'Ожидаем '+recovery.requiredVolumeName:'Требуется проверка'}</b>}</div>
     {details&&<div className="recoveryDetails"><span>Batch: <b>{recovery.batchId}</b></span><span>Последняя запись: <b>{Number.isFinite(ts)?new Date(ts).toLocaleString('ru-RU'):'—'}</b></span><span>Recovery schema: <b>{recovery.recoverySchemaVersion}</b></span><span>Стратегия: <b>verify checkpoint → resume</b></span>{recovery.waitReason&&<span>Причина ожидания: <b>{recovery.waitReason}</b></span>}</div>}
     <footer><button className="primary" disabled={busy||waiting} onClick={()=>void resumeNow()}>{busy?'ВОССТАНАВЛИВАЮ…':'Восстановить сейчас'}</button><button disabled={busy} onClick={()=>void dismiss()}>Не восстанавливать</button><button className="ghost" disabled={busy} onClick={()=>setDetails(x=>!x)}>{details?'Скрыть':'Подробнее'}</button></footer>
   </section></div>
