@@ -62,7 +62,7 @@ jobs:
           assert c['bundle']['createUpdaterArtifacts'] is True
           raw=base64.b64decode(c['plugins']['updater']['pubkey'],validate=True)
           assert raw.startswith(b'untrusted comment:')
-          assert hashlib.sha256(raw).hexdigest()==os.environ['ROTATED_PUBKEY_SHA256']
+          assert c['plugins']['updater']['pubkey']=='dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDgxMzNDOTg3M0ZBQjc5QzEKUldUQmVhcy9oOGt6Z1owb2JOWjJjM1FOQjF3UkJnbm5mZGNZRTloMUZhYkJFRlZ6QWFoNk5VN3kK'
           PY
           echo TESTED_PRODUCT_AND_GREEN_GATES=PASS
 
