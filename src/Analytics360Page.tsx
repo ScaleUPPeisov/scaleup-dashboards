@@ -47,6 +47,13 @@ type Snapshot={
  period?:Period;periodFrom?:string|null;periodTo?:string|null;message?:string;
 };
 type Progress={channelId:string;name:string;stage:string;detail:string;completed:number;total:number};
+type DeepSyncSnapshot={running:boolean;progress:Progress|null;summary:string;error:string};
+const deepSyncSnapshot:DeepSyncSnapshot={running:false,progress:null,summary:'',error:''};
+const deepSyncObservers=new Set<(snapshot:DeepSyncSnapshot)=>void>();
+function patchDeepSync(next:Partial<DeepSyncSnapshot>){
+ Object.assign(deepSyncSnapshot,next);
+ for(const observer of deepSyncObservers)observer({...deepSyncSnapshot});
+}
 const periodLabels:Record<Period,string>={'7':'7 дней','28':'28 дней','90':'90 дней','365':'365 дней',all:'Всё время',custom:'Свои даты'};
 const tabLabels:Record<Tab,string>={overview:'Обзор',content:'Контент',audience:'Аудитория',trends:'Тренды и выводы',winners:'Winner Engine'};
 const absent='Недоступно';
@@ -212,8 +219,9 @@ export function Analytics360Page(){
  const [startDate,setStartDate]=useState(''),[endDate,setEndDate]=useState('');
  const [profiles,setProfiles]=useState<YoutubeProfile[]>([]);
  const [loadedSnapshot,setLoadedSnapshot]=useState<{key:string;value:Snapshot}|null>(null),[loading,setLoading]=useState(false);
- const [error,setError]=useState(''),[syncing,setSyncing]=useState(false),[refreshing,setRefreshing]=useState(false);
- const [progress,setProgress]=useState<Progress|null>(null),[includeRetention,setIncludeRetention]=useState(false);
+ const [error,setError]=useState(''),[syncing,setSyncing]=useState(deepSyncSnapshot.running),[refreshing,setRefreshing]=useState(false);
+ const [progress,setProgress]=useState<Progress|null>(deepSyncSnapshot.progress),[includeRetention,setIncludeRetention]=useState(false);
+ const [syncSummary,setSyncSummary]=useState(deepSyncSnapshot.summary);
  const [includeReporting,setIncludeReporting]=useState(true);
  const [videoPage,setVideoPage]=useState(0),[videoType,setVideoType]=useState('all'),[videoSort,setVideoSort]=useState('recent');
  const [videoId,setVideoId]=useState<string|null>(null);
@@ -288,29 +296,42 @@ export function Analytics360Page(){
   void load();
   return()=>{++refreshToken.current};
  },[requestKey,isMac]);
- useEffect(()=>{if(!syncing)return;let alive=true;let unlisten:(()=>void)|undefined;
-  void listen<Progress>('vyron:ai-export-progress',e=>{if(alive&&e.payload.channelId===active?.youtubeChannelId)setProgress(e.payload)}).then(stop=>{if(alive)unlisten=stop;else stop()});
-  return()=>{alive=false;unlisten?.()};
- },[syncing,active?.youtubeChannelId]);
+ useEffect(()=>{
+  const update=(snapshot:DeepSyncSnapshot)=>{
+   setSyncing(snapshot.running);setProgress(snapshot.progress);setSyncSummary(snapshot.summary);
+   if(snapshot.error)setError(snapshot.error);
+  };
+  deepSyncObservers.add(update);
+  update({...deepSyncSnapshot});
+  return()=>{deepSyncObservers.delete(update)};
+ },[]);
+ // Rust owns the long-running sync. This operation and its progress survive
+ // navigation while the renderer remains alive, without duplicate API requests.
  async function syncDeep(all=false){
-  if(syncing)return;
+  if(deepSyncSnapshot.running)return;
   const choices=all?connectedSyncChoices:(eligible&&active?.youtubeChannelId&&active?.youtubeProfileId
    ?[{profileId:active.youtubeProfileId,channelId:active.youtubeChannelId,name:active.name}]:[]);
   if(!choices.length){setError('Нет каналов с подтверждённой привязкой OAuth');return}
-  setSyncing(true);setError('');setProgress(null);
+  patchDeepSync({running:true,progress:null,error:'',summary:''});
+  setError('');
+  let stop:(()=>void)|undefined;
   try{
+   stop=await listen<Progress>('vyron:ai-export-progress',event=>patchDeepSync({progress:event.payload}));
    const output=await invoke<{status:string;completed:number;total:number;errors:{channelId:string;error:string}[]}>('youtube_ai_sync',{request:{
     channels:choices,period:'all',startDate:null,endDate:null,destination:'',
     includeRetention,includeReporting
    }});
-   if(output.completed===0)throw new Error(output.errors.map(e=>e.channelId+': '+e.error).join(' | ')||'Синхронизация не завершена');
-   // Reread committed SQLite snapshots, including Fleet Command Center.
-   setSyncRevision(v=>v+1);
-   setFleetRevision(v=>v+1);
-   if(output.status!=='COMPLETE')setError('Частичная синхронизация: '+output.completed+' из '+output.total+
-    '. Ошибки: '+output.errors.map(e=>e.channelId+': '+e.error).join(' | '));
-  }catch(e){setError(String(e))}
-  finally{setSyncing(false)}
+   const details=output.errors.map(e=>e.channelId+': '+e.error).join(' | ');
+   if(output.completed===0)throw new Error(details||'Синхронизация не завершена');
+   patchDeepSync({summary:'Синхронизировано '+output.completed+' из '+output.total+
+    (output.status!=='COMPLETE'?' • частично: '+details:'')});
+   window.dispatchEvent(new Event('vyron:analytics-cache-updated'));
+  }catch(e){
+   patchDeepSync({error:String(e),summary:'Синхронизация остановлена с ошибкой'});
+  }finally{
+   stop?.();
+   patchDeepSync({running:false});
+  }
  }
  async function quickRefresh(){
   if(!active?.youtubeProfileId)return;setRefreshing(true);setError('');
@@ -365,7 +386,8 @@ export function Analytics360Page(){
    <span>Channel ID: {active?.youtubeChannelId||'Не привязан'} · OAuth: {eligible?'профиль совпадает':'нужна проверка'} · Архив: {ov?displayTime(ov.updatedAt):'не собран'}</span>
    {ov&&<span>История: {ov.summary.createdAt?displayDate(ov.summary.createdAt):'—'} → {ov.summary?.createdAt?'доступные даты API':'—'} · Видео: {channelsShown} · Данные: {String(coverage.daily||'NOT_YET_COLLECTED')}</span>}
   </div><div className="a360-inline"><label><input type="checkbox" checked={includeRetention} onChange={e=>setIncludeRetention(e.target.checked)} disabled={syncing}/> Кривые удержания</label><label><input type="checkbox" checked={includeReporting} onChange={e=>setIncludeReporting(e.target.checked)} disabled={syncing}/> Отчёты показов / CTR (Reporting API)</label></div></div>
-  {syncing&&<div className="a360-progress" role="status"><div className="a360-spinner"/><span>{progress?progress.name+' · '+progress.stage+' · '+progress.detail:'Подготовка безопасной синхронизации…'}</span></div>}
+  {syncing&&<div className="a360-progress" role="status"><div className="a360-spinner"/><span>{progress?progress.name+' · '+progress.stage+' · '+progress.detail+' · '+progress.completed+'/'+progress.total:'Подготовка безопасной синхронизации…'}</span></div>}
+  {!syncing&&syncSummary&&<p role="status">{syncSummary}</p>}
   <div className="a360-toolbar"><nav className="a360-tabs" aria-label="Разделы аналитики">{(Object.keys(tabLabels) as Tab[]).map(t=><button key={t} aria-current={tab===t?'page':undefined} className={tab===t?'active':''} onClick={()=>{setTab(t);setVideoId(null)}}>{tabLabels[t]}</button>)}</nav>
    <div className="a360-periods">{(Object.keys(periodLabels) as Period[]).map(p=><button key={p} className={p===period?'active':''} onClick={()=>{setPeriod(p);setVideoPage(0)}}>{periodLabels[p]}</button>)}</div></div>
   {period==='custom'&&<div className="a360-inline"><label>С <input type="date" value={startDate} onChange={e=>setStartDate(e.target.value)}/></label><label>По <input type="date" value={endDate} onChange={e=>setEndDate(e.target.value)}/></label></div>}
