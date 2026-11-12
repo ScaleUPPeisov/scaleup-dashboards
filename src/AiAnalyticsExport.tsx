@@ -84,12 +84,12 @@ export function AiAnalyticsExport({channels,profiles,onDataSaved}:{channels:Chan
  async function start(){
   if(exportUi.running||chosen.length===0)return;
   setCancelling(false);
-  if(period==='custom'&&(!startDate||!endDate||startDate>endDate)){setError('Укажите корректный диапазон дат.');return;}
+  if(period==='custom'&&(!startDate||!endDate||startDate>endDate)){patchExportUi({error:'Укажите корректный диапазон дат.'});return;}
   setError('');setResult(null);setProgress({});
   patchExportUi({error:'',result:null,progress:{},cancelling:false});
   let directory=folder;
-  if(!directory){try{directory=await chooseFolder()||'';}catch(e){setError(String(e));return;}}
-  if(!directory){setError('Папка сохранения не выбрана.');return;}
+  if(!directory){try{directory=await chooseFolder()||'';}catch(e){patchExportUi({error:String(e)});return;}}
+  if(!directory){patchExportUi({error:'Папка сохранения не выбрана.'});return;}
   setFolder(directory);setRunning(true);
   const currentChoices=chosen.map(x=>({...x}));
   patchExportUi({folder:directory,running:true,activeChoices:currentChoices,opened:true});
@@ -107,7 +107,10 @@ export function AiAnalyticsExport({channels,profiles,onDataSaved}:{channels:Chan
    }});
    patchExportUi({result:output});
    journal({eventId:'analytics-ai-export:'+Date.now()+':'+output.zipSha256,eventType:'ANALYTICS_EXPORT_COMPLETED',status:output.failed>0?'PARTIAL':'SUCCESS',source:'LIVE_OPERATION',timestamp:new Date().toISOString(),details:{selected:output.selected,successful:output.successful,failed:output.failed,archivePath:output.path}});
-   if(output.successful>0)onDataSaved?.();
+   if(output.successful>0){
+    window.dispatchEvent(new Event('vyron:analytics-cache-updated'));
+    onDataSaved?.();
+   }
   }catch(e){
    journal({eventId:'analytics-ai-export-failed:'+Date.now(),eventType:'ANALYTICS_EXPORT_FAILED',status:'FAILED',source:'LIVE_OPERATION',timestamp:new Date().toISOString(),details:{message:String(e)}});
    patchExportUi({error:String(e)});
@@ -186,7 +189,7 @@ export function AiAnalyticsExport({channels,profiles,onDataSaved}:{channels:Chan
     <p>Путь: <code>{result.path}</code></p>
     <small>SHA-256: {result.zipSha256}</small>
     {result.path&&<div style={{marginTop:10}}><button onClick={()=>void invoke('reveal_path',{path:result.path})
-      .catch(e=>setError('Не удалось открыть ZIP в Finder: '+String(e)))}>Открыть файл в Finder</button></div>}
+      .catch(e=>patchExportUi({error:'Не удалось открыть ZIP в Finder: '+String(e)}))}>Открыть файл в Finder</button></div>}
    </div>}
    {cancelling&&running&&<small role="status">Остановка запрошена: незавершённый ZIP не будет опубликован. Уже подтверждённая аналитика других каналов сохраняется.</small>}
    {error&&<div className="errorBox" role="alert">{error}</div>}
