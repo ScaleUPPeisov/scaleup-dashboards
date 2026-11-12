@@ -418,6 +418,33 @@ jobs:
           test "$VYRON_MACOS_SIGNING_IDENTITY" = "VYRON Local Code Signing"
           echo "EXISTING_LOCAL_SIGNING_READY=true"
 
+      - name: Normalize the existing Tauri updater private key
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, os
+          raw=os.environ['TAURI_SIGNING_PRIVATE_KEY'].strip()
+          def decoded(value):
+              try:
+                  return base64.b64decode(value, validate=True).decode('utf-8')
+              except Exception:
+                  return None
+          once=decoded(raw)
+          if once and once.startswith('untrusted comment:'):
+              normalized=raw
+          else:
+              if once is None:
+                  raise SystemExit('TAURI_SIGNING_PRIVATE_KEY: invalid existing key encoding')
+              inner=once.strip()
+              twice=decoded(inner)
+              if not twice or not twice.startswith('untrusted comment:'):
+                  raise SystemExit('TAURI_SIGNING_PRIVATE_KEY: existing secret is not a Tauri minisign key')
+              normalized=inner
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f:
+              f.write('TAURI_SIGNING_PRIVATE_KEY='+normalized+'\n')
+          print('UPDATER_PRIVATE_KEY_NORMALIZATION=PASS')
+          PY
+
       - name: Import the existing local identity into an ephemeral keychain
         run: |
           set -euo pipefail
