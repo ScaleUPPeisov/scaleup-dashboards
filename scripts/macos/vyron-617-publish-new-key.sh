@@ -10,8 +10,14 @@ cd "$ROOT"
 [[ "$(id -u)" != 0 ]] || fail DO_NOT_RUN_AS_ROOT
 [[ "$(git branch --show-current)" == feature/vyron-macos-ultimate ]] || fail WRONG_GIT_BRANCH
 [[ -z "$(git status --porcelain)" ]] || fail UNCOMMITTED_SOURCE_CHANGES
-command -v gh >/dev/null || fail INSTALL_GITHUB_CLI_FIRST
-gh auth status -h github.com >/dev/null 2>&1 || fail LOGIN_TO_GH_FIRST
+if ! command -v gh >/dev/null 2>&1; then
+  if command -v brew >/dev/null 2>&1; then brew install gh; else fail INSTALL_GITHUB_CLI_FIRST; fi
+fi
+if ! gh auth status -h github.com >/dev/null 2>&1; then
+  echo "Authorize GitHub CLI in your browser; this does not reveal your signing key."
+  gh auth login --hostname github.com --git-protocol https --web
+fi
+gh auth status -h github.com >/dev/null 2>&1 || fail GITHUB_AUTH_FAILED
 if gh release view v6.1.17 --repo ScaleUPPeisov/vyron-releases >/dev/null 2>&1; then
   fail RELEASE_617_ALREADY_EXISTS_REFUSE_OVERWRITE
 fi
@@ -66,6 +72,22 @@ codesign --verify --deep --strict "$APP" || fail BUILT_CODESIGN_INVALID
 NEW_REQ="$(codesign -dr - "$APP" 2>&1 | sed -n 's/^designated => //p')"
 [[ "$NEW_REQ" == "$OLD_REQ" ]] || fail CODESIGN_IDENTITY_CHANGED
 hdiutil verify "$DMG" || fail DMG_INVALID
+# Verify that the archive's Tauri minisign signature matches the approved key.
+if ! command -v minisign >/dev/null 2>&1; then
+  if command -v brew >/dev/null 2>&1; then brew install minisign; else fail MINISIGN_REQUIRED; fi
+fi
+VERIFY_DIR="$(mktemp -d)"
+python3 - "$SIG" "$PUB" "$VERIFY_DIR" <<'PY'
+import base64, pathlib, sys
+signature, public_key, target = map(pathlib.Path, sys.argv[1:4])
+for src, output in ((signature, 'verify.sig'), (public_key, 'verify.pub')):
+    decoded = base64.b64decode(src.read_text().strip(), validate=True)
+    if not decoded.startswith(b'untrusted comment:'):
+        raise SystemExit('MINISIGN_FILE_FORMAT_INVALID')
+    (target / output).write_bytes(decoded)
+PY
+minisign -Vm "$ARCHIVE" -x "$VERIFY_DIR/verify.sig" -p "$VERIFY_DIR/verify.pub" || fail ROTATED_KEY_SIGNATURE_VERIFICATION_FAILED
+rm -rf "$VERIFY_DIR"
 OUT="$HOME/.vyron-release-candidates/v6.1.17"
 mkdir -p "$OUT"
 cp "$ARCHIVE" "$OUT/VYRON.app.tar.gz"
