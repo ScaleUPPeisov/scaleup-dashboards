@@ -28,45 +28,31 @@ jobs:
         run: |
           bash -n scripts/macos/vyron-pr22-release-validation.sh
           ! grep -E 'gh release|git push|security (add|delete)|notarytool submit|ditto .*/Applications' scripts/macos/vyron-pr22-release-validation.sh
-      - name: Incident freeze — no old Tauri updater key can be used in PR22
+      - name: Incident freeze - legacy updater signer must stay disabled
         run: |
           python3 - <<'PY'
-          import json,re
+          import json, re
           from pathlib import Path
-          w=Path('.github/workflows/vyron-pr22-remote-rc.yml').read_text()
-          assert 'jobs:\n' in w, 'MISSING_JOBS'
-          assert 'workflow_dispatch:' in w, 'MISSING_DISPATCH'
-          dispatch=w.split('workflow_dispatch:',1)[1].split('\npermissions:',1)[0]
-          assert '- isolated' in dispatch, 'ISOLATED_REVIEW_MODE_MISSING'
-          assert '- local-upgrade-' not in dispatch and '- signed-upgrade' not in dispatch, 'LEGACY_DISPATCH_SIGNING_ENABLED'
-          jobs=w.split('\njobs:\n',1)[1]
-          blocks=re.split(r'(?=^  [a-z][a-z0-9-]+:\n)',jobs,flags=re.M)
-          sensitive=('secrets.TAURI_SIGNING_PRIVATE_KEY','secrets.VYRON_MACOS_SIGNING_P12_BASE64','secrets.APPLE_CERTIFICATE')
-          checked=[]
+          wf = Path('.github/workflows/vyron-pr22-remote-rc.yml').read_text()
+          assert 'workflow_dispatch:' in wf and '\npermissions:' in wf
+          modes = wf.split('workflow_dispatch:', 1)[1].split('\npermissions:', 1)[0]
+          assert '- isolated' in modes
+          assert '- local-upgrade-' not in modes and '- signed-upgrade' not in modes
+          jobs = wf.split('\njobs:\n', 1)[1]
+          blocks = re.split(r'(?=^  [a-z][a-z0-9-]+:\n)', jobs, flags=re.M)
+          markers = ('secrets.TAURI_SIGNING_PRIVATE_KEY', 'secrets.VYRON_MACOS_SIGNING_P12_BASE64', 'secrets.APPLE_CERTIFICATE')
+          frozen = []
           for block in blocks:
-            if not any(x in block for x in sensitive):continue
-            name=block.splitlines()[0].strip().rstrip(':')
-            assert re.search(r'^    if: \$\{\{ false \}\}\s*        run: |
-          python3 -m unittest scripts.macos.test_verify_vyron_pr22_performance scripts.test_vyron_macos_offline_preflight
-      - name: Bundle and updater isolation contract
-        run: |
-          python3 - <<'PY'
-          import json
-          stable=json.load(open('src-tauri/tauri.conf.json'))
-          probe=json.load(open('src-tauri/tauri.pr22-probe.conf.json'))
-          assert stable['version']=='6.1.15'
-          assert stable['identifier']=='studio.channelflow.desktop'
-          assert stable['bundle']['createUpdaterArtifacts'] is True
-          assert probe['identifier']=='studio.channelflow.desktop.pr22probe'
-          assert probe['bundle']['createUpdaterArtifacts'] is False
-          assert probe['plugins']['updater']['endpoints']==[]
-          PY
-,block,flags=re.M), f'SIGNER_JOB_NOT_FROZEN: {name}'
-            checked.append(name)
-          assert set(checked)=={'signed-upgrade-arm64-rc','production-local-upgrade-arm64'}, f'SIGNING_SURFACE_CHANGED: {checked}'
-          stable=json.loads(Path('src-tauri/tauri.conf.json').read_text())
-          assert stable['version']=='6.1.15' and stable['identifier']=='studio.channelflow.desktop'
-          assert stable['plugins']['updater']['endpoints'][0]=='https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json'
+              if not any(marker in block for marker in markers):
+                  continue
+              name = block.splitlines()[0].strip().rstrip(':')
+              assert '    if: ${{ false }}\n' in block, 'SIGNING_JOB_NOT_FROZEN:' + name
+              frozen.append(name)
+          assert set(frozen) == {'signed-upgrade-arm64-rc', 'production-local-upgrade-arm64'}, frozen
+          conf = json.loads(Path('src-tauri/tauri.conf.json').read_text())
+          assert conf['version'] == '6.1.15'
+          assert conf['identifier'] == 'studio.channelflow.desktop'
+          assert conf['plugins']['updater']['endpoints'][0] == 'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json'
           assert Path('docs/security/VYRON_617_UPDATER_KEY_INCIDENT_2026-11-12.md').is_file()
           print('COMPROMISED_UPDATER_SIGNING_FROZEN=PASS')
           PY
