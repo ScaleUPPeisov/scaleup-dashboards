@@ -60,6 +60,26 @@ YouTube uploads, PR #22, or any existing SQLite/JSON data.
 
 5. `npm test` runs schedule, quota, batching, threshold and no-duplicate tests.
 
+## Docker deployment on a persistent private host
+
+The included `Dockerfile` and `compose.yaml` make the service runnable on a
+small **always-on** server. Docker does not provide a server by itself.
+
+```sh
+cd apps/vyron-control
+cp .env.example .env
+# Edit .env to insert a unique token and a restricted YouTube API key.
+# Create channels.json containing the actual channel IDs.
+docker compose up --build -d
+```
+
+The Compose service binds to `127.0.0.1:8787` only, stores snapshots in the
+persistent `vyron-data` Docker volume, and runs without root permissions.
+Configure Tailscale Serve/HTTPS and authorize your own iPhone before accessing
+it remotely. Do not use public port forwarding, share your token, or commit
+`.env`/`channels.json`. A restart policy maintains the process across VM
+reboots; the VM itself must stay online at the two scheduled times.
+
 ## Important deployment requirements
 
 This is a persistent **Node process with a durable writable directory**. To
