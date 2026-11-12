@@ -1765,6 +1765,9 @@ fn execute_plan(app: Option<&AppHandle>, plan: &BuildPlan) -> Result<BatchSummar
         atomic_json(&cp_path,&cp)?;
         if let Some(a)=app{
             if !plan.recovery_session_id.is_empty(){let _=recovery::checkpoint(a,&plan.recovery_session_id,"PROJECT_STAGING",i,plan.projects.len(),&format!("Подготовка проекта {}",p.project_id));}
+            // Report progress before a potentially slow HDD copy, not only
+            // after all ten-plus source files are durably flushed.
+            let _=a.emit("production-batch-progress",json!({"batchId":plan.batch_id,"requestId":plan.request.request_id,"completed":i,"total":plan.projects.len(),"stage":format!("Проект {}/{} • подготовка файлов",i+1,plan.projects.len())}));
         }
         if !project_ready(p, &final_dir) {
             let mut project_copy=CopyMetrics::default();
@@ -1775,13 +1778,22 @@ fn execute_plan(app: Option<&AppHandle>, plan: &BuildPlan) -> Result<BatchSummar
             fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
             copy_and_sync(Path::new(&p.image_source),&tmp.join(&p.image_name),&mut project_copy)
                 .map_err(|e| format!("Изображение {}: {e}", p.project_id))?;
-            for t in &p.tracks {
+            let mut last_copy_progress=Instant::now();
+            for (track_index,t) in p.tracks.iter().enumerate() {
                 let dst = tmp.join(&t.dest_name);
                 if let Some(parent) = dst.parent() {
                     fs::create_dir_all(parent).map_err(|e| format!("Папка tracks {}: {e}", p.project_id))?;
                 }
                 copy_and_sync(Path::new(&t.source),&dst,&mut project_copy)
                     .map_err(|e| format!("Трек {}: {e}", t.source))?;
+                // Time-gate events to avoid rerender storms on M1, but give
+                // HDD users an observable per-file heartbeat on slow copies.
+                if last_copy_progress.elapsed()>=Duration::from_millis(800) {
+                    if let Some(a)=app {
+                        let _=a.emit("production-batch-progress",json!({"batchId":plan.batch_id,"requestId":plan.request.request_id,"completed":i,"total":plan.projects.len(),"stage":format!("Проект {}/{} • MP3 {}/{}",i+1,plan.projects.len(),track_index+1,p.tracks.len())}));
+                    }
+                    last_copy_progress=Instant::now();
+                }
             }
             sync_dir(&tmp);
             if final_dir.exists() { let _ = fs::remove_dir_all(&final_dir); }
@@ -1821,7 +1833,7 @@ fn execute_plan(app: Option<&AppHandle>, plan: &BuildPlan) -> Result<BatchSummar
         atomic_json(&cp_path, &cp)?;
         if let Some(a) = app {
             if !plan.recovery_session_id.is_empty(){let _=recovery::checkpoint(a,&plan.recovery_session_id,"PROJECT_COMMITTED",i+1,plan.projects.len(),&format!("Проект {} подтверждён",p.project_id));}
-            let _=a.emit("production-batch-progress",json!({"batchId":plan.batch_id,"completed":i+1,"total":plan.projects.len(),"stage":"files"}));
+            let _=a.emit("production-batch-progress",json!({"batchId":plan.batch_id,"requestId":plan.request.request_id,"completed":i+1,"total":plan.projects.len(),"stage":"Файлы проекта сохранены"}));
         }
     }
     eprintln!("VYRON production copy totals: batch={} files={} cloned={} logical_bytes={} copy_ms={} sync_ms={}",
