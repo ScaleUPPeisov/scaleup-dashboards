@@ -12,7 +12,7 @@ const stages:Record<string,string>={
  OAuth:'Авторизация',INVENTORY:'Все видео',CHANNEL_DAILY:'История канала',VIDEO_DAILY:'История каждого видео',
  TRAFFIC:'Источники трафика',RETENTION:'Удержание',REACH:'Показы и CTR',CACHE_READ:'Локальный кэш',SQLITE:'Сохранение истории',DONE:'Готово',ERROR:'Ошибка',
 };
-export function AiAnalyticsExport({channels,profiles}:{channels:Channel[];profiles:YoutubeProfile[]}){
+export function AiAnalyticsExport({channels,profiles,onDataSaved}:{channels:Channel[];profiles:YoutubeProfile[];onDataSaved?:()=>void}){
  const connected=useMemo(()=>{
   const profileMap=new Map(profiles.map(p=>[p.id,p]));
   const result:Choice[]=[];
@@ -75,6 +75,7 @@ export function AiAnalyticsExport({channels,profiles}:{channels:Channel[];profil
     destination:directory,includeRetention,includeReporting,exportMode,
    }});
    setResult(output);
+   if(output.successful>0)onDataSaved?.();
   }catch(e){setError(String(e));}
   finally{unlisten?.();setRunning(false);}
  }
@@ -149,6 +150,8 @@ export function AiAnalyticsExport({channels,profiles}:{channels:Channel[];profil
     {result.failed>0&&<p>Ошибки по {result.failed} каналам записаны в DATA_COVERAGE.json.</p>}
     <p>Путь: <code>{result.path}</code></p>
     <small>SHA-256: {result.zipSha256}</small>
+    {result.path&&<div style={{marginTop:10}}><button onClick={()=>void invoke('reveal_path',{path:result.path})
+      .catch(e=>setError('Не удалось открыть ZIP в Finder: '+String(e)))}>Открыть файл в Finder</button></div>}
    </div>}
    {cancelling&&running&&<small role="status">Остановка запрошена: незавершённый ZIP не будет опубликован. Уже подтверждённая аналитика других каналов сохраняется.</small>}
    {error&&<div className="errorBox" role="alert">{error}</div>}
