@@ -136,6 +136,13 @@ function PublishLedgerHydrator(){
   useEffect(()=>{if(booted)restorePublishLedgerFromUploadHistory(uploadHistory)},[booted,uploadHistory]);
   return null;
 }
+const STARTUP_DEADLINE_MS=20_000;
+function withStartupDeadline<T>(work:Promise<T>,label:string):Promise<T>{
+  return new Promise((resolve,reject)=>{
+    const id=window.setTimeout(()=>reject(new Error(label+': превышено время ожидания '+STARTUP_DEADLINE_MS/1000+' секунд')),STARTUP_DEADLINE_MS);
+    work.then(result=>{window.clearTimeout(id);resolve(result)},error=>{window.clearTimeout(id);reject(error)});
+  });
+}
 export function App(){
   // Scalar subscriptions prevent Publisher and unrelated settings updates
   // from re-rendering the entire App route tree.
@@ -149,14 +156,15 @@ export function App(){
   const autopilotIntervalSec=useApp(s=>s.settings.autopilotIntervalSec);
   const fpsMonitor=useApp(s=>s.settings.fpsMonitor);
   const [license,setLicense]=useState<LicenseStatus|null>(null);
+  const [startupError,setStartupError]=useState('');
   useLayoutEffect(()=>{if(booted)beginStartupQuotaProbe()},[booted]);
   const updaterStatus=useUpdaterRuntime(s=>s.status),updaterLatest=useUpdaterRuntime(s=>s.latestVersion),updaterLatestRevision=useUpdaterRuntime(s=>s.latestBuildRevision),updaterCheck=useUpdaterRuntime(s=>s.check),bootstrapUpdater=useUpdaterRuntime(s=>s.bootstrapVersion),markUpdated=useUpdaterRuntime(s=>s.markUpdated);
   useEffect(()=>{
     void (async()=>{
-      let queueRepair:{channelsRemoved:number;packsRemoved:number;recordsRemoved:number}|undefined;
-      try{queueRepair=await api.metadataQueueCleanupPerformanceFixtures()}catch{}
       try{
-        const loaded=await api.loadState() as typeof EMPTY_STATE&{__performanceRepair?:PerformanceRepairMarker};
+        // Avoid expensive/destructive maintenance before the app becomes usable.
+        // A failed storage load must never silently hydrate an empty replacement.
+        const loaded=await withStartupDeadline(api.loadState(),'Загрузка локального состояния') as typeof EMPTY_STATE&{__performanceRepair?:PerformanceRepairMarker};
         const backendRepair=loaded.__performanceRepair;delete loaded.__performanceRepair;
         const fallback=performanceFixtureCounts(loaded);
         hydrate(loaded);
@@ -167,12 +175,16 @@ export function App(){
           await useApp.getState().persist();
           notifySuccess('Performance fixtures удалены',`Synthetic channels: ${removedChannels} • jobs: ${removedJobs} • реальные каналы восстановлены локально: ${recovered.restored} • Google login: 0`,{operationId:'performance-fixture-repair'});
         }
-        if(queueRepair&&(queueRepair.packsRemoved||queueRepair.recordsRemoved)){
-          useApp.getState().log(`Performance Metadata Queue cleanup: packs=${queueRepair.packsRemoved}, records=${queueRepair.recordsRemoved}`);
+        if(removedChannels||removedJobs){
+          void api.metadataQueueCleanupPerformanceFixtures().then(queueRepair=>{
+            if(queueRepair.packsRemoved||queueRepair.recordsRemoved)
+              useApp.getState().log(`Performance Metadata Queue cleanup: packs=${queueRepair.packsRemoved}, records=${queueRepair.recordsRemoved}`);
+          }).catch(()=>{});
         }
-      }catch(e){hydrate(EMPTY_STATE);useApp.getState().log(`Не удалось загрузить состояние: ${String(e)}`,'error')}
+      }catch(e){setStartupError('Не удалось загрузить сохранённое состояние: '+String(e));useApp.getState().log(`Не удалось загрузить состояние: ${String(e)}`,'error')}
     })();
-    void api.license().then(setLicense).catch(()=>setLicense({valid:false}));
+    void withStartupDeadline(api.license(),'Проверка лицензии').then(setLicense)
+      .catch(e=>setStartupError('Не удалось проверить лицензию: '+String(e)));
   },[]);
   useEffect(()=>{if(booted&&!workspace){api.defaultWorkspace().then(workspace=>{useApp.getState().patchSettings({workspace});useApp.getState().log(`Workspace: ${workspace}`)}).catch(e=>log(`Workspace: ${String(e)}`,'error'))}},[booted,workspace]);
   useEffect(()=>{if(booted&&autoUploadYoutube)useApp.getState().patchSettings({autoUploadYoutube:false})},[booted,autoUploadYoutube]);
@@ -254,6 +266,11 @@ export function App(){
   useEffect(()=>{if(!booted)return;void Promise.all([api.youtubeActiveUploads(),api.youtubeUploadSessions()]).then(([facts,sessions])=>{seedActiveUploadFacts(facts);const state=useApp.getState(),activeIds=new Set(facts.map(x=>x.jobId));for(const f of facts){const job=state.jobs.find(j=>j.id===f.jobId),channel=job&&state.channels.find(c=>c.id===job.channelId);ensureTask({taskId:`upload:${f.jobId}`,type:'UPLOAD',state:'RUNNING',channelId:job?.channelId||f.channelId,channelName:channel?.name,profileId:f.profileId,jobId:f.jobId,label:job?`VIDEO_${String(job.number).padStart(3,'0')}`:'YouTube upload',detail:job?.finalPath?.split('/').pop()||f.filePath,progress:f.totalBytes&&f.totalBytes>0?Math.max(0,Math.min(100,(f.bytesUploaded||0)/f.totalBytes*100)):undefined,bytesCompleted:f.bytesUploaded,bytesTotal:f.totalBytes??undefined,resourceKey:`upload:${job?.channelId||f.channelId}:${f.jobId}`})}reconcileUploadTasks(activeIds,new Set());const patches=buildStaleOperationPatches(state.jobs,{uploadsKnown:true,rendersKnown:false,activeUploadIds:activeIds,activeRenderIds:new Set(),uploadSessionIds:new Set(sessions.map(x=>x.jobId)),now:new Date().toISOString()});state.patchJobsBatch(patches.map(x=>({id:x.jobId,patch:x.patch})))}).catch(()=>{})},[booted]);
   useEffect(()=>{let unlisten:(()=>void)|undefined;void api.onYoutubeApiRequest(()=>{}).then(fn=>unlisten=fn);return()=>unlisten?.()},[]);
   useEffect(()=>{if(!booted||!autopilotEnabled)return;void runAutopilotCycle();const ms=Math.max(10,autopilotIntervalSec||30)*1000;const id=window.setInterval(()=>void runAutopilotCycle(),ms);return()=>window.clearInterval(id)},[booted,autopilotEnabled,autopilotIntervalSec]);
+  if(startupError)return <div className="boot" role="alert"><div className="logoMark"><span>!</span></div>
+    <b>VYRON — ошибка запуска</b><p>{startupError}</p>
+    <small>Локальные данные и авторизации не удалены. Автоматический сброс отключён.</small>
+    <button className="primary" onClick={()=>window.location.reload()}>Повторить запуск</button>
+  </div>;
   if(!booted||!license)return <Boot/>;
   if(!license.valid)return <Activation onActivated={setLicense}/>;
   return <div className="appShell"><ExistingInventoryMigrationBridge/><LiveInventoryBridge/><ChannelRunwayScheduler/><ProductionStatusBridge/><ChannelStatisticsScheduler/><OwnerInventoryScheduler/><UploadProcessingMonitor/><RecoveryGate/><Sidebar/><main className="main"><Topbar/><PageRouter license={license}/></main><GlobalTaskIndicator/><GlobalUploadIndicator/><UploadCenterGlobal/><GlobalTaskCenter/><CommandPalette/><MetadataQueueAssignmentBridge/><PublishLedgerHydrator/><M1PerformanceProbe/>{fpsMonitor&&<FpsMonitor/>}<UpdateExperience/><MajorUpdateCelebration/><NotificationCenter/><div className="bgGlow a"/><div className="bgGlow b"/></div>
