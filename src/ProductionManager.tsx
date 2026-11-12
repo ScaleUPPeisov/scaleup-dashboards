@@ -5,6 +5,7 @@ import {defaultChannelProductionPrefs,patchChannelProductionPrefs,useProductionP
 import {useApp} from './store';
 import {notifyInfo,notifySuccess} from './notificationCenter';
 import {openRecoveryFlow} from './RecoveryGate';
+import {journal} from './activityJournalRuntime';
 
 const MODES:Array<{id:DistributionMode;title:string;hint:string}>=[
   {id:'even',title:'Равномерно',hint:'Сначала используются треки с наименьшим числом использований.'},
@@ -172,16 +173,19 @@ export function ProductionManager({view='all'}:{view?:'all'|'materials'|'builder
       return;
     }
     const links=ensureJobLinks();
+    const requestId=crypto.randomUUID();
+    journal({eventId:'production-build-started:'+requestId,eventType:'PRODUCTION_BUILD_STARTED',status:'STARTED',source:'LIVE_OPERATION',timestamp:new Date().toISOString(),operationId:requestId,channelId:channel.id,channelName:channel.name,details:{projectCount,tracksPerProject,outputRoot:productionRoot||workspace}});
     setBusy('build');setProgress({completed:0,total:projectCount,stage:'Подготовка'});setValidation(null);
     try{
-      const built=await productionBuildRuntime.start({requestId:crypto.randomUUID(),workspace,outputWorkspace:productionRoot||workspace,channelId:channel.id,channelName:channel.name,projectCount,tracksPerProject,mode,allowImageReuse:reuse,jobLinks:links.map(j=>({jobId:j.id,number:j.number})),recoveryUiContext:{page:'production',channelId:channel.id,productionTab:prefs.tab,selectedBatchId:result?.batch?.batchId||channelPrefs.lastBatchId,selectedProjectIds}});
+      const built=await productionBuildRuntime.start({requestId,workspace,outputWorkspace:productionRoot||workspace,channelId:channel.id,channelName:channel.name,projectCount,tracksPerProject,mode,allowImageReuse:reuse,jobLinks:links.map(j=>({jobId:j.id,number:j.number})),recoveryUiContext:{page:'production',channelId:channel.id,productionTab:prefs.tab,selectedBatchId:result?.batch?.batchId||channelPrefs.lastBatchId,selectedProjectIds}});
       setResult(built);
       if(built.batch){
         setBatches(prev=>[built.batch!,...prev.filter(x=>x.batchId!==built.batch!.batchId)]);patchChannelProductionPrefs(channel.id,{lastBatchId:built.batch.batchId,selectedProjectIds:[]});
+        journal({eventId:'production-build-completed:'+requestId,eventType:'PRODUCTION_BUILD_COMPLETED',status:'SUCCESS',source:'LIVE_OPERATION',timestamp:new Date().toISOString(),operationId:requestId,batchId:built.batch.batchId,channelId:channel.id,channelName:channel.name,details:{projectCount:built.batch.projectCount,tracksAssigned:built.batch.tracksAssigned}});
         notifySuccess('Проекты созданы',`${built.batch.projectCount.toLocaleString('ru-RU')} проектов готовы для ENDLUME.`,{operationId:`batch-built:${built.batch.batchId}`});
         if(endlumePath){try{setValidation(await productionManagerApi.validate(built.batch.manifestPath,endlumePath))}catch{}}
       }
-    }catch(e){toast(String(e));setProgress(null)}finally{setBusy('')}
+    }catch(e){journal({eventId:'production-build-failed:'+requestId,eventType:'PRODUCTION_BUILD_FAILED',status:'FAILED',source:'LIVE_OPERATION',timestamp:new Date().toISOString(),operationId:requestId,channelId:channel.id,channelName:channel.name,details:{message:String(e)}});toast(String(e));setProgress(null)}finally{setBusy('')}
   }
 
   async function validateBatch(batch=result?.batch||null){
