@@ -3,7 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex},
+    time::Duration,
 };
 use tauri::{AppHandle, Emitter, State};
 
@@ -116,6 +117,11 @@ fn register_inventory_watch_roots(
 ) -> Result<InventoryWatchRegistration, String> {
     let event_roots = shared_roots.clone();
     let event_app = app.clone();
+    // A single project creates many filesystem events (each copied MP3 and
+    // checkpoint). Coalesce them per channel, keeping the trailing update so
+    // a busy external HDD does not trigger one full UI inventory scan per file.
+    let pending_events = Arc::new(Mutex::new(HashMap::<String, (String, String)>::new()));
+    let flush_scheduled = Arc::new(AtomicBool::new(false));
 
     let mut watcher = RecommendedWatcher::new(
         move |result: notify::Result<Event>| {
@@ -130,16 +136,36 @@ fn register_inventory_watch_roots(
                 let Ok(roots) = event_roots.lock() else { return };
                 event_channel_ids(&event, &roots)
             };
+            if affected.is_empty() { return; }
             let kind = format!("{:?}", event.kind);
-            for (channel_id, path) in affected {
-                let _ = event_app.emit(
-                    "render-inventory-changed",
-                    InventoryWatchEvent {
-                        channel_id,
-                        path,
-                        kind: kind.clone(),
-                    },
-                );
+            let schedule_flush = {
+                let Ok(mut pending) = pending_events.lock() else { return };
+                for (channel_id, path) in affected {
+                    pending.insert(channel_id, (path, kind.clone()));
+                }
+                // Swap while holding the mutex so the flushing worker cannot
+                // create a lost-event window between draining and re-arming.
+                !flush_scheduled.swap(true, Ordering::AcqRel)
+            };
+            if schedule_flush {
+                let pending = pending_events.clone();
+                let scheduled = flush_scheduled.clone();
+                let app = event_app.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_millis(180));
+                    let changes = {
+                        let Ok(mut events) = pending.lock() else { return };
+                        let changes = std::mem::take(&mut *events);
+                        scheduled.store(false, Ordering::Release);
+                        changes
+                    };
+                    for (channel_id, (path, kind)) in changes {
+                        let _ = app.emit(
+                            "render-inventory-changed",
+                            InventoryWatchEvent { channel_id, path, kind },
+                        );
+                    }
+                });
             }
         },
         Config::default(),
