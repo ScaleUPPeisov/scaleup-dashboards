@@ -58,6 +58,9 @@ jobs:
           assert Path('docs/security/VYRON_617_UPDATER_KEY_INCIDENT_2026-11-12.md').is_file()
           print('COMPROMISED_UPDATER_SIGNING_FROZEN=PASS')
           PY
+      - name: Rotated updater bridge contract (synthetic public-key only)
+        run: |
+          node --test scripts/macos/test-vyron-rotated-updater.mjs
       - name: Python safety tests
         run: |
           python3 -m unittest scripts.macos.test_verify_vyron_pr22_performance scripts.test_vyron_macos_offline_preflight
