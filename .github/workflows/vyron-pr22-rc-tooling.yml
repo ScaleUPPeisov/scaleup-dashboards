@@ -28,6 +28,7 @@ jobs:
       - name: Shell syntax and no release mutations
         run: |
           bash -n scripts/macos/vyron-pr22-release-validation.sh
+          bash -n scripts/macos/vyron-617-publish-new-key.sh
           ! grep -E 'gh release|git push|security (add|delete)|notarytool submit|ditto .*/Applications' scripts/macos/vyron-pr22-release-validation.sh
       - name: Incident freeze - legacy updater signer must stay disabled
         run: |
