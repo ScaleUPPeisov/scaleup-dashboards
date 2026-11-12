@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0b1020">
+  <meta name="description" content="VYRON CONTROL — мониторинг сети YouTube-каналов">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" type="image/svg+xml" href="/icon.svg">
+  <link rel="stylesheet" href="/styles.css">
+  <title>VYRON CONTROL</title>
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand"><img src="/icon.svg" alt="" width="42" height="42"><div><strong>VYRON</strong><small>CONTROL / CLOUD</small></div></div>
+      <div class="top-right"><span class="online"><span class="dot"></span>Контроль каналов</span><button id="logout" class="ghost" hidden>Выйти</button></div>
+    </header>
+    <section id="login" class="login card">
+      <span class="eyebrow">Личный доступ</span>
+      <h1>Твоя сеть каналов.<br>На iPhone.</h1>
+      <p class="muted">Введи секрет доступа к своему VYRON CONTROL. Он не отправляется сторонним сервисам.</p>
+      <form id="login-form">
+        <label for="access-token">Ключ доступа</label>
+        <input id="access-token" type="password" autocomplete="off" minlength="32" required placeholder="VYRON_CONTROL_TOKEN">
+        <button class="primary" type="submit">Открыть панель</button>
+      </form>
+      <p class="feedback" id="login-error" role="alert"></p>
+    </section>
+    <section id="dashboard" hidden>
+      <div class="headline">
+        <div><span class="eyebrow">YT NETWORK / ANALYTICS</span><h1>Панель управления</h1><p class="muted">Статистика YouTube даже при спящем Mac</p></div>
+        <button id="refresh" class="primary refresh">↻ Обновить каналы</button>
+      </div>
+      <div class="status-line"><span id="state-label">Загрузка данных…</span><span id="last-sync">—</span></div>
+      <div class="stats">
+        <article class="card metric"><div class="metric-label">Подписчики <span>♙</span></div><strong id="total-subs">—</strong><small id="subs-covered">—</small></article>
+        <article class="card metric"><div class="metric-label">Просмотры <span>◉</span></div><strong id="total-views">—</strong><small id="views-covered">—</small></article>
+        <article class="card metric"><div class="metric-label">Видео на YouTube <span>▣</span></div><strong id="total-videos">—</strong><small id="videos-covered">—</small></article>
+        <article class="card metric"><div class="metric-label">Квота VYRON CONTROL <span>◈</span></div><strong id="quota">—</strong><small id="quota-day">—</small></article>
+      </div>
+      <section class="card strip">
+        <div class="strip-head"><div><span class="eyebrow">АВТОСИНХРОНИЗАЦИЯ</span><h2>07:00 и 22:00</h2></div><span class="pill">Красноярск · UTC+7</span></div>
+        <p>Два запроса по расписанию для 1–50 каналов, если они в одной пакетной группе. Обновление с телефона вручную — по кнопке.</p>
+        <div class="quota-track"><div id="quota-progress"></div></div>
+        <small class="caution">Здесь учтены только запросы этого сервиса, не общая квота Google Cloud, VYRON на Mac или ENDLUME.</small>
+      </section>
+      <section class="card channel-section">
+        <div class="section-title"><div><span class="eyebrow">ВСЯ СЕТЬ</span><h2>Каналы <span id="channel-count"></span></h2></div><input id="search" type="search" placeholder="Найти канал"></div>
+        <div id="channels" class="channels"></div>
+      </section>
+      <section class="card event-section">
+        <div class="section-title"><div><span class="eyebrow">ОТМЕТКИ РОСТА</span><h2>Рубежи подписчиков 🎉</h2></div></div>
+        <div id="events" class="events"></div>
+        <p class="caution">YouTube округляет публичные значения подписчиков: уведомление означает зафиксированный публичный рубеж, а не точное число.</p>
+      </section>
+      <footer>VYRON CONTROL · Read-only public YouTube counters · Подробная Analytics 360° и контроль ENDLUME будут отдельным этапом.</footer>
+    </section>
+  </main>
+</body>
+</html>
