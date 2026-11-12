@@ -76,7 +76,7 @@ export const productionManagerApi={
   status:(manifestPath:string)=>invoke<BatchStatus>('read_production_batch_status',{manifestPath}),
   onImportProgress:(cb:(p:{channelId:string;collected:number;sessionId:string})=>void):Promise<UnlistenFn>=>listen('production-import-progress',e=>cb(e.payload as any)),
   onImportError:(cb:(p:{channelId:string;sessionId:string;message:string})=>void):Promise<UnlistenFn>=>listen('production-import-error',e=>cb(e.payload as any)),
-  onBatchProgress:(cb:(p:{batchId:string;completed:number;total:number;stage:string})=>void):Promise<UnlistenFn>=>listen('production-batch-progress',e=>cb(e.payload as any)),
+  onBatchProgress:(cb:(p:{batchId:string;requestId?:string;completed:number;total:number;stage:string})=>void):Promise<UnlistenFn>=>listen('production-batch-progress',e=>cb(e.payload as any)),
 };
 
 /**
@@ -101,6 +101,9 @@ function listenProductionBuild(){
     productionListener=productionManagerApi.onBatchProgress(p=>{
       for(const task of productionSnapshots.values()){
         if(task.state!=='RUNNING')continue;
+        // Recovery and a new production request may share the event stream.
+        // Never show progress belonging to another request.
+        if(p.requestId&&p.requestId!==task.requestId)continue;
         task.progress={completed:p.completed,total:p.total,stage:p.stage};
         broadcastProductionBuild();
       }
