@@ -451,6 +451,12 @@ jobs:
               if not twice or not twice.startswith('untrusted comment:'):
                   raise SystemExit('TAURI_SIGNING_PRIVATE_KEY: existing secret is not a Tauri minisign key')
               normalized=inner
+          # GitHub masks the original secret but not automatically its decoded or
+          # re-encoded representation. Register all representations as masks BEFORE
+          # appending the normalized key to GITHUB_ENV; later steps echo job env.
+          print('::add-mask::'+raw,flush=True)
+          if once: print('::add-mask::'+once.strip(),flush=True)
+          print('::add-mask::'+normalized,flush=True)
           with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f:
               f.write('TAURI_SIGNING_PRIVATE_KEY='+normalized+'\n')
           print('UPDATER_PRIVATE_KEY_NORMALIZATION=PASS')
