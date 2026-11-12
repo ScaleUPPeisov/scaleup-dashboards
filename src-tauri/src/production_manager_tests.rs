@@ -109,6 +109,73 @@ fn cleanup(workspace: &Path) {
 }
 
 #[test]
+fn music_library_configuration_survives_missing_index_channel_switch_and_offline_disk() {
+    let root = std::env::temp_dir().join(format!("vyron-music-config-{}", Uuid::new_v4()));
+    let workspace = root.join("workspace");
+    let music_a = root.join("music-a");
+    let music_b = root.join("music-b");
+    fs::create_dir_all(&workspace).unwrap();
+    fs::create_dir_all(&music_a).unwrap();
+    fs::create_dir_all(&music_b).unwrap();
+    let original = wav_bytes(41);
+    fs::write(music_a.join("a.wav"), &original).unwrap();
+    fs::write(music_b.join("b.wav"), wav_bytes(42)).unwrap();
+    let ws = workspace.to_string_lossy().into_owned();
+
+    set_production_music_library(
+        ws.clone(),
+        "channel-a".into(),
+        "A".into(),
+        music_a.to_string_lossy().into_owned(),
+    )
+    .unwrap();
+    set_production_music_library(
+        ws.clone(),
+        "channel-b".into(),
+        "B".into(),
+        music_b.to_string_lossy().into_owned(),
+    )
+    .unwrap();
+
+    let a_without_index = production_channel_state(ws.clone(), "channel-a".into()).unwrap();
+    let b_without_index = production_channel_state(ws.clone(), "channel-b".into()).unwrap();
+    assert_eq!(
+        a_without_index.music.as_ref().unwrap().library_path,
+        music_a.to_string_lossy()
+    );
+    assert_eq!(
+        b_without_index.music.as_ref().unwrap().library_path,
+        music_b.to_string_lossy()
+    );
+    assert_eq!(a_without_index.music.as_ref().unwrap().tracks, 0);
+    assert!(a_without_index.batches.is_empty());
+
+    index_music_sync(&ws, "channel-a").unwrap();
+    let indexed = production_channel_state(ws.clone(), "channel-a".into()).unwrap();
+    assert_eq!(indexed.music.as_ref().unwrap().tracks, 1);
+    assert_eq!(fs::read(music_a.join("a.wav")).unwrap(), original);
+
+    let disconnected = root.join("music-a-disconnected");
+    fs::rename(&music_a, &disconnected).unwrap();
+    let offline = production_channel_state(ws.clone(), "channel-a".into()).unwrap();
+    assert_eq!(
+        offline.music.as_ref().unwrap().library_path,
+        music_a.to_string_lossy()
+    );
+    assert!(!offline.music.as_ref().unwrap().available);
+    assert_eq!(offline.music.as_ref().unwrap().tracks, 1);
+
+    fs::rename(&disconnected, &music_a).unwrap();
+    let reconnected = production_channel_state(ws, "channel-a".into()).unwrap();
+    assert!(reconnected.music.as_ref().unwrap().available);
+    assert_eq!(
+        reconnected.music.as_ref().unwrap().library_path,
+        music_a.to_string_lossy()
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn acceptance_30_images_500_tracks_30x15_flat_450() {
     let (ws, cid, name) = fixture(30, 500);
     let req = request(&ws, &cid, &name, 30, 15, "even", false);

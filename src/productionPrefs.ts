@@ -3,12 +3,12 @@ import type {DistributionMode} from './productionManagerApi';
 
 export type ProductionTab='queue'|'materials'|'manager';
 export type CleanupPolicy='prompt'|'never'|'auto3d'|'afterUpload';
-export type ChannelProductionPrefs={projectCount:number;tracksPerProject:number;mode:DistributionMode;allowImageReuse:boolean;lastBatchId?:string;selectedProjectIds:string[];productionRoot?:string};
+export type ChannelProductionPrefs={projectCount:number;tracksPerProject:number;mode:DistributionMode;allowImageReuse:boolean;lastBatchId?:string;selectedProjectIds:string[];productionRoot?:string;musicLibraryHistory?:string[]};
 export type ProductionPrefs={version:2;selectedChannelId?:string;tab:ProductionTab;byChannel:Record<string,ChannelProductionPrefs>;selectedJobIds:string[];productionRoot?:string;cleanupPolicy?:CleanupPolicy};
 const KEY='vyron:production-manager:v2';
 const EVENT='vyron-production-prefs-changed';
 const defaults=():ProductionPrefs=>({version:2,tab:'queue',byChannel:{},selectedJobIds:[],cleanupPolicy:'prompt'});
-export const defaultChannelProductionPrefs=():ChannelProductionPrefs=>({projectCount:30,tracksPerProject:15,mode:'even',allowImageReuse:false,selectedProjectIds:[]});
+export const defaultChannelProductionPrefs=():ChannelProductionPrefs=>({projectCount:30,tracksPerProject:15,mode:'even',allowImageReuse:false,selectedProjectIds:[],musicLibraryHistory:[]});
 const isRecord=(x:unknown):x is Record<string,unknown>=>Boolean(x)&&typeof x==='object'&&!Array.isArray(x);
 const positiveInt=(x:unknown,fallback:number)=>Number.isFinite(Number(x))&&Number(x)>0?Math.max(1,Math.floor(Number(x))):fallback;
 const validMode=(x:unknown):DistributionMode=>x==='random'?'random':x==='alphabetical'?'alphabetical':x==='no-repeat'?'no-repeat':'even';
@@ -24,7 +24,8 @@ function normalizeChannelPrefs(value:unknown):ChannelProductionPrefs{
     allowImageReuse:value.allowImageReuse===true,
     lastBatchId:typeof value.lastBatchId==='string'&&value.lastBatchId.trim()?value.lastBatchId:undefined,
     selectedProjectIds:Array.isArray(value.selectedProjectIds)?value.selectedProjectIds.filter((x):x is string=>typeof x==='string'):[],
-    productionRoot:typeof value.productionRoot==='string'?value.productionRoot:undefined
+    productionRoot:typeof value.productionRoot==='string'?value.productionRoot:undefined,
+    musicLibraryHistory:Array.isArray(value.musicLibraryHistory)?[...new Set(value.musicLibraryHistory.filter((x):x is string=>typeof x==='string'&&Boolean(x.trim())).map(x=>x.trim()))].slice(0,8):[]
   };
 }
 function normalizePrefs(value:unknown):ProductionPrefs|undefined{

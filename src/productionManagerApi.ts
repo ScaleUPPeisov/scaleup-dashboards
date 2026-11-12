@@ -4,7 +4,8 @@ import {open} from '@tauri-apps/plugin-dialog';
 
 export type DistributionMode='even'|'random'|'alphabetical'|'no-repeat';
 export type ImportSession={schemaVersion:number;sessionId:string;channelId:string;channelName:string;active:boolean;startedAt:string;stoppedAt?:string|null;downloadsPath:string;importPath:string;collected:{id:string;number:number;path:string;sourcePath:string;capturedAt:string}[]};
-export type MusicSummary={libraryPath:string;tracks:number;indexedAt:string};
+export type MusicSummary={libraryPath:string;tracks:number;indexedAt:string;configuredAt:string;available:boolean};
+export type ChannelSettings={musicLibrary:string;updatedAt:string;channelId:string;channelName:string};
 export type ImageSummary={total:number;available:number;assigned:number;used:number;missing:number;rootPath:string};
 export type MaterialsSummary={channelId:string;image:ImageSummary;musicLibraryPath:string;musicTotal:number;musicFree:number;musicAssigned:number;musicUsed:number};
 export type ImageImportResult={added:number;duplicates:number;skipped:number;available:number;libraryPath:string};
@@ -47,7 +48,7 @@ export const productionManagerApi={
   startImport:(workspace:string,channelId:string,channelName:string)=>invoke<ImportSession>('start_production_import',{workspace,channelId,channelName}),
   stopImport:(workspace:string,channelId:string)=>invoke<ImportSession>('stop_production_import',{workspace,channelId}),
   importStatus:(workspace:string,channelId:string)=>invoke<ImportSession>('production_import_status',{workspace,channelId}),
-  setMusicLibrary:(workspace:string,channelId:string,channelName:string,path:string)=>invoke('set_production_music_library',{workspace,channelId,channelName,path}),
+  setMusicLibrary:(workspace:string,channelId:string,channelName:string,path:string)=>invoke<ChannelSettings>('set_production_music_library',{workspace,channelId,channelName,path}),
   indexMusic:(workspace:string,channelId:string)=>invoke<MusicSummary>('index_production_music_library',{workspace,channelId}),
   state:(workspace:string,channelId:string)=>invoke<ChannelProductionState>('production_channel_state',{workspace,channelId}),
   build:(request:BuildRequest)=>invoke<BuildResult>('build_production_batch',{request}),

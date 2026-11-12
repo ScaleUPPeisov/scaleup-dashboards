@@ -15,11 +15,20 @@ export function ProductionStatusBridge(){
   useEffect(()=>{
     if(!booted||!workspace||!channelIdsKey)return;
     let live=true,running=false;
+    const trackedChannels=new Map<string,number>();
+    const TRACK_FOR_MS=12*60*60_000;
+    const rememberActiveJobs=()=>{for(const job of useApp.getState().jobs)if(job.status==='RENDERING')trackedChannels.set(job.channelId,Date.now()+TRACK_FOR_MS)};
+    rememberActiveJobs();
     const run=async()=>{
       if(running||!live)return;
+      rememberActiveJobs();
+      const now=Date.now();
+      for(const [id,expires] of trackedChannels)if(expires<=now)trackedChannels.delete(id);
+      const candidates=useApp.getState().channels.filter(channel=>trackedChannels.has(channel.id));
+      if(!candidates.length)return;
       running=true;
       try{
-        const evidence=await scanFactualRenderRuntime(workspace,useApp.getState().channels);
+        const evidence=await scanFactualRenderRuntime(workspace,candidates);
         const initialHydration=!hydrated.current;
         for(const item of evidence.rows){
           const {batchId,row}=item;if(!row.jobId)continue;
@@ -42,9 +51,14 @@ export function ProductionStatusBridge(){
         }
       }finally{running=false}
     };
+    const onTracking=(event:Event)=>{
+      const channelId=(event as CustomEvent<{channelId?:string}>).detail?.channelId;
+      if(channelId){trackedChannels.set(channelId,Date.now()+TRACK_FOR_MS);void run()}
+    };
+    window.addEventListener('vyron:production-render-tracking',onTracking);
     void run();
-    const id=window.setInterval(()=>void run(),7000);
-    return()=>{live=false;window.clearInterval(id)};
+    const id=window.setInterval(()=>void run(),20_000);
+    return()=>{live=false;window.clearInterval(id);window.removeEventListener('vyron:production-render-tracking',onTracking)};
   },[booted,workspace,channelIdsKey]);
   return null;
 }

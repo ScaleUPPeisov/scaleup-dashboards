@@ -476,6 +476,8 @@ pub struct MusicSummary {
     pub library_path: String,
     pub tracks: usize,
     pub indexed_at: String,
+    pub configured_at: String,
+    pub available: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -1287,6 +1289,7 @@ pub async fn index_production_music_library(
     workspace: String,
     channel_id: String,
 ) -> Result<MusicSummary, String> {
+    let settings: ChannelSettings = read_json(&settings_path(&workspace, &channel_id)?);
     let idx =
         tauri::async_runtime::spawn_blocking(move || index_music_sync(&workspace, &channel_id))
             .await
@@ -1295,6 +1298,8 @@ pub async fn index_production_music_library(
         library_path: idx.library_path,
         tracks: idx.tracks.len(),
         indexed_at: idx.indexed_at,
+        configured_at: settings.updated_at,
+        available: true,
     })
 }
 
@@ -2384,13 +2389,27 @@ pub fn production_channel_state(
         read_json(&session_path(&workspace, &channel_id)?),
     );
     let idx: MusicIndex = read_json(&index_path(&workspace, &channel_id)?);
-    let music = if idx.library_path.is_empty() {
+    let music = if settings.music_library.is_empty() {
         None
     } else {
+        // The configured library is authoritative.  The index is only a cache
+        // of track metadata and may legitimately be absent or stale while an
+        // external disk is disconnected.
+        let index_matches_settings = idx.library_path == settings.music_library;
         Some(MusicSummary {
-            library_path: idx.library_path,
-            tracks: idx.tracks.len(),
-            indexed_at: idx.indexed_at,
+            library_path: settings.music_library.clone(),
+            tracks: if index_matches_settings {
+                idx.tracks.len()
+            } else {
+                0
+            },
+            indexed_at: if index_matches_settings {
+                idx.indexed_at
+            } else {
+                String::new()
+            },
+            configured_at: settings.updated_at.clone(),
+            available: Path::new(&settings.music_library).is_dir(),
         })
     };
     let images = materials_manager::image_summary(&workspace, &channel_id).ok();
@@ -2401,7 +2420,9 @@ pub fn production_channel_state(
         music,
         images,
         resolved_images_available,
-        batches: list_production_batches(workspace, channel_id)?,
+        // Batch history is intentionally demand-loaded by the builder/history
+        // screen. Opening Materials must not walk every historical batch.
+        batches: Vec::new(),
     })
 }
 fn validate_manifest_projects(
