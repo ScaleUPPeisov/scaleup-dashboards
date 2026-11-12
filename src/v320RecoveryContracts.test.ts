@@ -24,7 +24,7 @@ describe('VYRON 3.2 crash/power recovery contracts',()=>{
    expect(p).toContain('PROJECT_COMMITTED');
    expect(p.indexOf('register_plan_recovery(&app2,&mut plan)?')).toBeLessThan(p.indexOf('execute_plan(Some(&app2), &plan)'));
  });
- it('never automatically resumes interrupted batches and guards unsafe storage',()=>{
+ it('has 30 second safe-default recovery UI and never resumes unsafe storage',()=>{
    const g=read('src/RecoveryGate.tsx');
    expect(g).not.toContain('Date.now()+30_000');
    expect(g).toContain('Восстановление запускается только вручную');
