@@ -637,6 +637,12 @@ jobs:
           SHA256="$(shasum -a 256 "$OUT/VYRON.app.tar.gz" | awk '{print $1}')"
           SIGNATURE="$(tr -d '\r\n' < "$OUT/VYRON.app.tar.gz.sig")"
           export OUT SHA256 SIGNATURE
+          # Public diagnostics only: never print minisign private key/signature.
+          echo "UPDATE_ARCHIVE_SHA256=$SHA256"
+          echo "GATEKEEPER_STATUS=$GATEKEEPER_STATUS"
+          if [[ "$GATEKEEPER_STATUS" != "ACCEPTED_ON_CI_RUNNER" ]]; then
+            echo "::warning::Gatekeeper rejected self-signed VYRON app on CI. Owner-Mac in-app upgrade is NOT proven."
+          fi
           node <<'NODE'
           const fs=require('node:fs'),path=require('node:path');
           const out=process.env.OUT;
