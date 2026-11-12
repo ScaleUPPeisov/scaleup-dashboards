@@ -322,6 +322,8 @@ fn load_valid_candidate(path:&Path)->Option<Value>{
     state_looks_valid(&state).then_some(state)
 }
 
+// Kept synchronous for internal migration callers. The interactive startup
+// instead uses load_state_in_background to avoid blocking the AppKit dispatcher.
 #[tauri::command]
 pub fn load_state(app: AppHandle) -> Value {
     let path = match state_file(&app) {
@@ -354,6 +356,16 @@ pub fn load_state(app: AppHandle) -> Value {
     let _=write_state_mirror(&app,&disk);
     if repaired{disk["__performanceRepair"]=json!({"removedChannels":removed_channels,"removedJobs":removed_jobs});}
     disk
+}
+
+// Disk reads, backup validation and mirror writes can stall on slow storage.
+// Dispatch interactive startup to the blocking pool; do not change the
+// existing read/migration behavior or silently hydrate an empty state.
+#[tauri::command]
+pub async fn load_state_in_background(app: AppHandle) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || load_state(app))
+        .await
+        .map_err(|e| format!("STATE_LOAD_TASK_FAILED: {e}"))
 }
 
 fn save_state_impl(app: &AppHandle, state: Value) -> Result<Value, String> {
