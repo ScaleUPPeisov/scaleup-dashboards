@@ -3,6 +3,7 @@ import {invoke} from '@tauri-apps/api/core';
 import {listen} from '@tauri-apps/api/event';
 import {open} from '@tauri-apps/plugin-dialog';
 import type {Channel,YoutubeProfile} from './types';
+import {journal} from './activityJournalRuntime';
 
 type Choice={profileId:string;channelId:string;name:string};
 type Progress={runId:string;completed:number;total:number;channelId:string;name:string;stage:string;detail:string;at:string};
@@ -75,8 +76,12 @@ export function AiAnalyticsExport({channels,profiles,onDataSaved}:{channels:Chan
     destination:directory,includeRetention,includeReporting,exportMode,
    }});
    setResult(output);
+   journal({eventId:'analytics-ai-export:'+Date.now()+':'+output.zipSha256,eventType:'ANALYTICS_EXPORT_COMPLETED',status:output.failed>0?'PARTIAL':'SUCCESS',source:'LIVE_OPERATION',timestamp:new Date().toISOString(),details:{selected:output.selected,successful:output.successful,failed:output.failed,archivePath:output.path}});
    if(output.successful>0)onDataSaved?.();
-  }catch(e){setError(String(e));}
+  }catch(e){
+   journal({eventId:'analytics-ai-export-failed:'+Date.now(),eventType:'ANALYTICS_EXPORT_FAILED',status:'FAILED',source:'LIVE_OPERATION',timestamp:new Date().toISOString(),details:{message:String(e)}});
+   setError(String(e));
+  }
   finally{unlisten?.();setRunning(false);}
  }
  async function cancel(){
