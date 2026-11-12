@@ -10,8 +10,12 @@ services:
     ports:
       - "127.0.0.1:8787:8787"
     volumes:
-      - ./data:/data
+      - vyron-data:/data
       - ./channels.json:/config/channels.json:ro
+    init: true
     read_only: true
     security_opt:
       - no-new-privileges:true
+
+volumes:
+  vyron-data:
