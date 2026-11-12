@@ -1,0 +1,40 @@
+name: VYRON CONTROL isolated tests
+
+on:
+  push:
+    branches:
+      - "feature/vyron-control-*"
+    paths:
+      - "apps/vyron-control/**"
+      - ".github/workflows/vyron-control-ci.yml"
+  pull_request:
+    paths:
+      - "apps/vyron-control/**"
+      - ".github/workflows/vyron-control-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/vyron-control
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Check JavaScript syntax
+        run: |
+          node --check src/core.mjs
+          node --check src/store.mjs
+          node --check src/sync.mjs
+          node --check src/server.mjs
+          node --check public/app.js
+      - name: Run isolated deterministic tests
+        run: npm test
