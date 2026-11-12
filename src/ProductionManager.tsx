@@ -1,6 +1,6 @@
 import React,{useEffect,useMemo,useState} from 'react';
 import {createJobsCount} from './autopilotCore';
-import {productionManagerApi,type BatchStatus,type BatchSummary,type BuildResult,type ChannelProductionState,type DistributionMode,type ImageSummary,type ImportSession,type MusicSummary,type ProductionStorageStatus,type Validation} from './productionManagerApi';
+import {productionBuildRuntime,productionManagerApi,type BatchStatus,type BatchSummary,type BuildResult,type ChannelProductionState,type DistributionMode,type ImageSummary,type ImportSession,type MusicSummary,type ProductionStorageStatus,type Validation} from './productionManagerApi';
 import {defaultChannelProductionPrefs,patchChannelProductionPrefs,useProductionPrefs} from './productionPrefs';
 import {useApp} from './store';
 import {notifyInfo,notifySuccess} from './notificationCenter';
@@ -77,6 +77,20 @@ export function ProductionManager({view='all'}:{view?:'all'|'materials'|'builder
 
   useEffect(()=>{void refreshState();setResult(null);setValidation(null);setBatchStatus(null)},[workspace,productionRoot,channelId]);
   useEffect(()=>{
+    // Reconnect to the global operation rather than inventing a crash recovery
+    // whenever the Production React page remounts after navigation.
+    const sync=()=>{
+      const task=productionBuildRuntime.snapshot(channelId);
+      if(!task){setProgress(null);setBusy(v=>v==='build'?'':v);return}
+      setProgress(task.progress);
+      if(task.state==='RUNNING'){setBusy('build');return}
+      setBusy(v=>v==='build'?'':v);
+      if(task.state==='COMPLETED'&&task.result)setResult(task.result);
+    };
+    sync();
+    return productionBuildRuntime.subscribe(sync);
+  },[channelId]);
+  useEffect(()=>{
     const onMaterialsChanged=(event:Event)=>{
       const detail=(event as CustomEvent<{channelId?:string}>).detail;
       if(!detail?.channelId||detail.channelId===channelId)void refreshState();
@@ -93,11 +107,6 @@ export function ProductionManager({view='all'}:{view?:'all'|'materials'|'builder
     const offs:Promise<()=>void>[]=[];
     offs.push(productionManagerApi.onImportProgress(p=>{if(live&&p.channelId===channelId)setCollectorCollected(p.collected)}));
     offs.push(productionManagerApi.onImportError(p=>{if(live&&p.channelId===channelId)setImportError(p.message||'Ошибка сбора изображений')}));
-    offs.push(productionManagerApi.onBatchProgress(p=>{
-      if(!live)return;
-      setProgress({completed:p.completed,total:p.total,stage:p.stage});
-      if(p.total>0&&p.completed>=p.total)void refreshState();
-    }));
     return()=>{live=false;offs.forEach(p=>p.then(fn=>fn()).catch(()=>{}))}
   },[workspace,channelId]);
 
@@ -165,7 +174,7 @@ export function ProductionManager({view='all'}:{view?:'all'|'materials'|'builder
     const links=ensureJobLinks();
     setBusy('build');setProgress({completed:0,total:projectCount,stage:'Подготовка'});setValidation(null);
     try{
-      const built=await productionManagerApi.build({requestId:crypto.randomUUID(),workspace,outputWorkspace:productionRoot||workspace,channelId:channel.id,channelName:channel.name,projectCount,tracksPerProject,mode,allowImageReuse:reuse,jobLinks:links.map(j=>({jobId:j.id,number:j.number})),recoveryUiContext:{page:'production',channelId:channel.id,productionTab:prefs.tab,selectedBatchId:result?.batch?.batchId||channelPrefs.lastBatchId,selectedProjectIds}});
+      const built=await productionBuildRuntime.start({requestId:crypto.randomUUID(),workspace,outputWorkspace:productionRoot||workspace,channelId:channel.id,channelName:channel.name,projectCount,tracksPerProject,mode,allowImageReuse:reuse,jobLinks:links.map(j=>({jobId:j.id,number:j.number})),recoveryUiContext:{page:'production',channelId:channel.id,productionTab:prefs.tab,selectedBatchId:result?.batch?.batchId||channelPrefs.lastBatchId,selectedProjectIds}});
       setResult(built);
       if(built.batch){
         setBatches(prev=>[built.batch!,...prev.filter(x=>x.batchId!==built.batch!.batchId)]);patchChannelProductionPrefs(channel.id,{lastBatchId:built.batch.batchId,selectedProjectIds:[]});
