@@ -81,7 +81,7 @@ test('33 channels use one API call per refresh and milestones are idempotent', a
   assert.deepEqual([...new Set(fixture.data.events.map(e => e.milestone))], [200, 300]);
   await fixture.engine.tick();
   assert.equal(fixture.calls, 2);
-  assert.equal(fixture.engine.publicStatus().quota.spent, 2);
+  // The 07:00 and 22:00 Krasnoyarsk runs straddle the Pacific quota-day reset.\n  assert.equal(fixture.engine.publicStatus().quota.spent, 1);
   fixture.setTime('2026-11-13T15:06:00Z');
   await fixture.engine.refresh('manual');
   assert.equal(fixture.data.events.length, 66); // no duplicate notifications
