@@ -8,6 +8,7 @@ on:
       - 'scripts/vyron_macos_offline_preflight.py'
       - 'scripts/test_vyron_macos_offline_preflight.py'
       - 'src-tauri/tauri.conf.json'
+      - 'src-tauri/tauri.617-rotated.conf.json'
       - 'src-tauri/tauri.pr22-probe.conf.json'
       - 'docs/VYRON_PR22_MAC_OWNER_RUNBOOK.md'
       - '.github/workflows/vyron-pr22-rc-tooling.yml'
@@ -61,6 +62,7 @@ jobs:
       - name: Rotated updater bridge contract (synthetic public-key only)
         run: |
           node --test scripts/macos/test-vyron-rotated-updater.mjs
+          node --test scripts/macos/test-vyron-617-rotated-public-key.mjs
       - name: Python safety tests
         run: |
           python3 -m unittest scripts.macos.test_verify_vyron_pr22_performance scripts.test_vyron_macos_offline_preflight
