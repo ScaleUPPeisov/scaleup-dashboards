@@ -23,6 +23,8 @@ on:
         options:
           - isolated
           - signed-upgrade
+          - local-upgrade-6.1.17
+          - local-upgrade-6.1.16
 
 permissions:
   contents: read
@@ -376,11 +378,14 @@ jobs:
 
 
   production-local-upgrade-arm64:
-    name: Production identity 6.1.16 with existing local signer
-    if: github.event_name == 'push' && github.ref == 'refs/heads/feature/vyron-macos-ultimate'
+    name: Production identity local-signed updater candidate (6.1.17 / historic 6.1.16)
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/feature/vyron-macos-ultimate') || (github.event_name == 'workflow_dispatch' && (github.event.inputs.mode == 'local-upgrade-6.1.17' || github.event.inputs.mode == 'local-upgrade-6.1.16'))
     runs-on: macos-15
     timeout-minutes: 60
     env:
+      # Production 6.1.15 files stay immutable. Default push candidate is 6.1.17.
+      # Historic 6.1.16 can be regenerated only via explicit workflow_dispatch.
+      RC_VERSION: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'local-upgrade-6.1.16' && '6.1.16' || '6.1.17' }}
       VYRON_MACOS_SIGNING_P12_BASE64: ${{ secrets.VYRON_MACOS_SIGNING_P12_BASE64 }}
       VYRON_MACOS_SIGNING_P12_PASSWORD: ${{ secrets.VYRON_MACOS_SIGNING_P12_PASSWORD }}
       VYRON_MACOS_SIGNING_IDENTITY: ${{ secrets.VYRON_MACOS_SIGNING_IDENTITY }}
@@ -388,7 +393,8 @@ jobs:
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       OLD_UPDATE_URL: https://github.com/ScaleUPPeisov/vyron-releases/releases/download/v6.1.15/VYRON.app.tar.gz
       OLD_UPDATE_SHA256: 107e89d03119b0b53096867e61c40560b50495cc2c8061b4502af3b2ba22b266
-      CANDIDATE_URL: https://github.com/ScaleUPPeisov/vyron-releases/releases/download/v6.1.16/VYRON.app.tar.gz
+      # This is a reserved future release URL only; no release/feed is published here.
+      CANDIDATE_URL: https://github.com/ScaleUPPeisov/vyron-releases/releases/download/v${{ github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'local-upgrade-6.1.16' && '6.1.16' || '6.1.17' }}/VYRON.app.tar.gz
     steps:
       - uses: actions/checkout@v4
         with:
@@ -526,9 +532,9 @@ jobs:
           minisign -Vm "$RUNNER_TEMP/VYRON-6.1.15.app.tar.gz"             -p "$RUNNER_TEMP/vyron-updater.pub"             -x "$RUNNER_TEMP/VYRON-6.1.15.app.tar.gz.sig.decoded"
           echo "OLD_UPDATER_SIGNATURE=PASS"
 
-      - name: Prepare production identity 6.1.16 config
+      - name: Prepare production identity candidate config using historical signing material
         env:
-          UPGRADE_CONFIG: ${{ runner.temp }}/tauri.6.1.16-production-identity.json
+          UPGRADE_CONFIG: ${{ runner.temp }}/tauri.production-local-upgrade.json
         run: |
           node <<'NODE'
           const fs=require('node:fs');
@@ -556,9 +562,9 @@ jobs:
           console.log('PRODUCTION_IDENTITY_CONFIG=PASS');
           NODE
 
-      - name: Build production identity 6.1.16 updater package
+      - name: Build production identity updater package (not an isolated RC or DMG)
         env:
-          UPGRADE_CONFIG: ${{ runner.temp }}/tauri.6.1.16-production-identity.json
+          UPGRADE_CONFIG: ${{ runner.temp }}/tauri.production-local-upgrade.json
           VYRON_UPDATE_CHANNEL: stable
         run: |
           set -euo pipefail
@@ -566,7 +572,7 @@ jobs:
 
       - name: Verify local code identity, designated requirement and updater signature
         env:
-          OUT: ${{ runner.temp }}/vyron-6.1.16-production-identity-candidate
+          OUT: ${{ runner.temp }}/vyron-production-identity-candidate
         run: |
           set -euo pipefail
           APP_PATH="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)"
@@ -582,14 +588,42 @@ jobs:
           test -n "$NEW_DR"
           OLD_DR="$(cat "$RUNNER_TEMP/VYRON-6.1.15.designated-requirement.txt")"
           test "$NEW_DR" = "$OLD_DR"
-          printf '%s' "$NEW_DR" > "$RUNNER_TEMP/VYRON-6.1.16.designated-requirement.txt"
-          openssl base64 -d -A -in "$SIG_PATH" -out "$RUNNER_TEMP/VYRON-6.1.16.app.tar.gz.sig.decoded"
-          minisign -Vm "$UPDATE_PATH"             -p "$RUNNER_TEMP/vyron-updater.pub"             -x "$RUNNER_TEMP/VYRON-6.1.16.app.tar.gz.sig.decoded"
+          # Same cert-based designated requirement as the published 6.1.15 app.
+          # A cdhash-only or ad-hoc identity is never an acceptable upgrade.
+          case "$NEW_DR" in cdhash*) echo 'BLOCKER=CDHASH_ONLY_DESIGNATED_REQUIREMENT'; exit 1 ;; esac
+          codesign --display --verbose=4 "$APP_PATH" 2>&1 | tee "$RUNNER_TEMP/current-codesign.txt"
+          if grep -F 'Signature=adhoc' "$RUNNER_TEMP/current-codesign.txt"; then echo 'BLOCKER=AD_HOC_APP'; exit 1; fi
+          printf '%s\n' "$NEW_DR" > "$RUNNER_TEMP/VYRON-${RC_VERSION}.designated-requirement.txt"
+          openssl base64 -d -A -in "$SIG_PATH" -out "$RUNNER_TEMP/VYRON-${RC_VERSION}.app.tar.gz.sig.decoded"
+          minisign -Vm "$UPDATE_PATH" -p "$RUNNER_TEMP/vyron-updater.pub" -x "$RUNNER_TEMP/VYRON-${RC_VERSION}.app.tar.gz.sig.decoded"
+          # Verify the actual delivered .tar.gz contains the same signed app,
+          # bundle ID, version and requirement. Never trust only the prepackaged app.
+          PACKED_DIR="$RUNNER_TEMP/vyron-archive-unpacked"
+          mkdir -p "$PACKED_DIR"
+          tar -xzf "$UPDATE_PATH" -C "$PACKED_DIR"
+          PACKED_APP="$PACKED_DIR/VYRON.app"
+          test -d "$PACKED_APP"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PACKED_APP/Contents/Info.plist")" = 'studio.channelflow.desktop'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PACKED_APP/Contents/Info.plist")" = "$RC_VERSION"
+          codesign --verify --deep --strict --verbose=2 "$PACKED_APP"
+          PACKED_DR="$(codesign -d -r- "$PACKED_APP" 2>&1 | sed -n 's/^designated => //p')"
+          test "$PACKED_DR" = "$OLD_DR"
+          test "$PACKED_DR" = "$NEW_DR"
+          APP_EXECUTABLE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$PACKED_APP/Contents/Info.plist")"
+          file "$PACKED_APP/Contents/MacOS/$APP_EXECUTABLE" | grep -q arm64
+          # Gatekeeper may reject a valid self-signed code signature, even with
+          # a cryptographically valid Tauri update. Never alter trust/quarantine.
+          GATEKEEPER_STATUS=REJECTED_OR_UNTRUSTED
+          if spctl --assess --type execute --verbose=4 "$PACKED_APP" >"$RUNNER_TEMP/gatekeeper.txt" 2>&1; then
+            GATEKEEPER_STATUS=ACCEPTED_ON_CI_RUNNER
+          fi
+          export GATEKEEPER_STATUS
           mkdir -p "$OUT"
           cp "$UPDATE_PATH" "$OUT/VYRON.app.tar.gz"
           cp "$SIG_PATH" "$OUT/VYRON.app.tar.gz.sig"
           cp "$RUNNER_TEMP/VYRON-6.1.15.designated-requirement.txt" "$OUT/"
-          cp "$RUNNER_TEMP/VYRON-6.1.16.designated-requirement.txt" "$OUT/"
+          cp "$RUNNER_TEMP/VYRON-${RC_VERSION}.designated-requirement.txt" "$OUT/"
+          cp "$RUNNER_TEMP/gatekeeper.txt" "$OUT/gatekeeper.txt"
           codesign --display --verbose=4 "$APP_PATH" > "$OUT/codesign.txt" 2>&1
           codesign --verify --deep --strict --verbose=4 "$APP_PATH" > "$OUT/codesign-verify.txt" 2>&1
           SHA256="$(shasum -a 256 "$OUT/VYRON.app.tar.gz" | awk '{print $1}')"
@@ -600,7 +634,7 @@ jobs:
           const out=process.env.OUT;
           const candidate={
             version:process.env.RC_VERSION,
-            notes:'VYRON 6.1.16 — Mac Ultimate upgrade candidate',
+            notes:`VYRON ${process.env.RC_VERSION} — local signed production-identity updater candidate (NOT PUBLISHED)`,
             pub_date:new Date().toISOString(),
             platforms:{
               'darwin-aarch64':{
@@ -619,20 +653,41 @@ jobs:
             runner:'macos-15',
             bundleIdentifier:'studio.channelflow.desktop',
             updaterPublicKeyMatches615:true,
+            installed616BinaryCompared:false,
+            installed616BinaryComparedReason:'The owner-installed 6.1.16 app is not available on the GitHub CI runner. Compare the physical 6.1.16 designated requirement and certificate SHA-1 before installation.',
             updaterSignatureVerified:true,
             oldUpdaterSignatureVerified:true,
             applicationCodeSignatureVerified:true,
             designatedRequirementMatches615:true,
+            designatedRequirementMatchesPackedArchive:true,
+            gatekeeperStatusOnGithubRunner:process.env.GATEKEEPER_STATUS,
+            gatekeeperAcceptanceOnOwnerMac:false,
+            signingMode:'EXISTING_LOCAL_SELF_SIGNED_CERTIFICATE',
+            notarizationAvailable:false,
+            inAppUpgradeCompatibility:'PENDING_PHYSICAL_6_1_16_CHECK',
+            candidateUrlIsPublished:false,
             localSigningCertificateSha1:process.env.LOCAL_SIGNING_CERT_SHA1,
             updaterEndpointsPreserved:true,
             productionFeedModified:false,
             releasePublished:false,
             physicalM1DataSafetyValidated:false,
-            gatekeeperAcceptanceClaimed:false
+            gatekeeperAcceptanceClaimed:false,
+            approvalRequiredBeforeFeedOrRelease:true,
+            note:'This is a verifiable offline updater candidate, NOT an independently installable DMG and NOT a published update. Do not disable Gatekeeper.'
           };
           fs.writeFileSync(path.join(out,'latest.candidate.json'),JSON.stringify(candidate,null,2)+'\n');
           fs.writeFileSync(path.join(out,'BUILD-MANIFEST.json'),JSON.stringify(evidence,null,2)+'\n');
-          fs.writeFileSync(path.join(out,'ROLLBACK-6.1.15.json'),fs.readFileSync(process.env.RUNNER_TEMP+'/latest-6.1.15.json'));
+          fs.writeFileSync(path.join(out,'PUBLISHED-BASELINE-6.1.15.json'),fs.readFileSync(process.env.RUNNER_TEMP+'/latest-6.1.15.json'));
+          fs.writeFileSync(path.join(out,'INSTALLATION-STATUS.txt'),[
+            'LOCAL-SIGNED VYRON '+process.env.RC_VERSION+' updater candidate — NOT PUBLISHED',
+            'The release URL in latest.candidate.json is reserved and currently is not a download link.',
+            'Do not install GitHub Action artifacts by double-clicking; they are for offline release review.',
+            'Verify the exact code-signing certificate/DR against the OWNER-installed 6.1.16 binary before approval.',
+            'A self-signed certificate may fail macOS Gatekeeper after a valid minisign verification.',
+            'No quarantine removal, Gatekeeper disablement, new signing keys or feed modifications were performed.',
+            'Physical in-app updater/rollback testing and owner release authorization remain mandatory.',
+            ''
+          ].join('\n'));
           NODE
           (
             cd "$OUT"
@@ -645,7 +700,7 @@ jobs:
       - name: Upload verified candidate without publishing release or feed
         uses: actions/upload-artifact@v4
         with:
-          name: VYRON-6.1.16-production-identity-updater-candidate-${{ env.SOURCE_SHA }}
-          path: ${{ runner.temp }}/vyron-6.1.16-production-identity-candidate/
+          name: VYRON-${{ env.RC_VERSION }}-local-signed-production-updater-candidate-${{ env.SOURCE_SHA }}
+          path: ${{ runner.temp }}/vyron-production-identity-candidate/
           if-no-files-found: error
           retention-days: 14
