@@ -49,6 +49,8 @@ jobs:
               assert ('    if: ' + '$' + '{{ false }}' + '\n') in block, 'SIGNING_JOB_NOT_FROZEN:' + name
               frozen.append(name)
           assert set(frozen) == {'signed-upgrade-arm64-rc', 'production-local-upgrade-arm64'}, frozen
+          isolated = [b for b in blocks if b.startswith('  isolated-arm64-rc:\n')]
+          assert len(isolated) == 1 and ('    if: ' + '$' + '{{ false }}' + '\n') in isolated[0], 'UNSIGNED_ISOLATED_RC_NOT_FROZEN'
           conf = json.loads(Path('src-tauri/tauri.conf.json').read_text())
           assert conf['version'] == '6.1.15'
           assert conf['identifier'] == 'studio.channelflow.desktop'
