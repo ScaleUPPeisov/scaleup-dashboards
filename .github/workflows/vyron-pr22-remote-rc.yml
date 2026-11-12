@@ -30,6 +30,7 @@ concurrency:
 env:
   RC_VERSION: '6.1.16'
   RC_TEST_FEED: https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/rc/updates/latest.json
+  SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
   isolated-arm64-rc:
@@ -39,6 +40,8 @@ jobs:
     timeout-minutes: 55
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
 
       - uses: actions/setup-node@v4
         with:
@@ -132,7 +135,7 @@ jobs:
           const manifest={
             schemaVersion:1,
             artifactKind:'ISOLATED_TEST_RC',
-            sourceSha:process.env.GITHUB_SHA,
+            sourceSha:process.env.SOURCE_SHA,
             version:process.env.RC_VERSION,
             architecture:'aarch64',
             runner:'macos-15',
@@ -159,7 +162,7 @@ jobs:
       - name: Upload isolated RC artifact
         uses: actions/upload-artifact@v4
         with:
-          name: VYRON-Mac-Ultimate-PR22-isolated-arm64-${{ github.sha }}
+          name: VYRON-Mac-Ultimate-PR22-isolated-arm64-${{ env.SOURCE_SHA }}
           path: ${{ runner.temp }}/vyron-pr22-isolated-rc/
           if-no-files-found: error
           retention-days: 14
@@ -183,6 +186,8 @@ jobs:
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
 
       - uses: actions/setup-node@v4
         with:
@@ -326,7 +331,7 @@ jobs:
           const manifest={
             schemaVersion:1,
             artifactKind:'SIGNED_NOTARIZED_PRODUCTION_IDENTITY_RC',
-            sourceSha:process.env.GITHUB_SHA,
+            sourceSha:process.env.SOURCE_SHA,
             version:process.env.RC_VERSION,
             architecture:'aarch64',
             runner:'macos-15',
@@ -355,7 +360,7 @@ jobs:
       - name: Upload signed upgrade RC without publishing a feed or release
         uses: actions/upload-artifact@v4
         with:
-          name: VYRON-Mac-Ultimate-PR22-signed-upgrade-arm64-${{ github.sha }}
+          name: VYRON-Mac-Ultimate-PR22-signed-upgrade-arm64-${{ env.SOURCE_SHA }}
           path: ${{ runner.temp }}/vyron-pr22-signed-upgrade-rc/
           if-no-files-found: error
           retention-days: 14
