@@ -18,6 +18,7 @@ import { AccountsPage } from './AccountsPage';
 import { DashboardOS } from './DashboardOS';
 import { ChannelsOS } from './ChannelsOS';
 import { ProductionOS } from './ProductionOS';
+import { HistoryPage } from './HistoryPage';
 import { YouTubeCenter } from './YouTubeCenter';
 import { ChannelRunwayScheduler } from './ChannelRunwayScheduler';
 import { ProductionStatusBridge } from './ProductionStatusBridge';
@@ -108,8 +109,7 @@ const nav:{id:string;page:Page;icon:SidebarIconName;label:string;youtubeTab?:'hi
   {id:'channels',page:'channels',icon:'channels',label:'Каналы'},
   {id:'production',page:'production',icon:'production',label:'Производство'},
   {id:'inventory',page:'inventory',icon:'inventory',label:'Запас видео'},
-  // Global History reuses the local journal route and never starts OAuth or YouTube API work.
-  {id:'history',page:'youtube',icon:'youtube',label:'История',youtubeTab:'history'},
+  {id:'history',page:'history',icon:'youtube',label:'История'},
   {id:'youtube',page:'youtube',icon:'youtube',label:'YouTube'},
   {id:'analytics',page:'analytics',icon:'analytics',label:'Аналитика'},
   {id:'competitors',page:'competitors',icon:'competitors',label:'Конкуренты'},
@@ -286,6 +286,7 @@ function PageRouter({license}:{license:LicenseStatus}){
   const transient=canonical==='dashboard'?(heavyReady?<><DashboardUploadSummary/><DashboardOS/></>:<RouteWarmup route="dashboard"/>)
     :canonical==='channels'?(heavyReady?<ChannelsOS/>:<RouteWarmup route="channels"/>)
     :canonical==='production'||canonical==='content'?<ProductionOS/>
+    :canonical==='history'?<HistoryPage/>
     :canonical==='inventory'?<LiveContentInventory/>
     :canonical==='competitors'?<CompetitorsPage/>
     :canonical==='analytics'?((typeof navigator!=='undefined'&&/mac/i.test(navigator.platform||navigator.userAgent))?<React.Suspense fallback={<div className="panel">Загрузка аналитики…</div>}><Analytics360Page/></React.Suspense>:<AnalyticsPage/>)
