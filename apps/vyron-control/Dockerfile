@@ -3,6 +3,7 @@ WORKDIR /opt/vyron-control
 COPY --chown=node:node package.json ./
 COPY --chown=node:node src ./src
 COPY --chown=node:node public ./public
+RUN mkdir -p /data /config && chown node:node /data
 
 USER node
 ENV HOST=0.0.0.0
