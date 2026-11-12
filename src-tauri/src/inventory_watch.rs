@@ -33,12 +33,15 @@ pub struct InventoryWatchRegistration {
 pub struct InventoryWatchState {
     watcher: Arc<Mutex<Option<RecommendedWatcher>>>,
     roots: Arc<Mutex<HashMap<String, PathBuf>>>,
+    // Re-registration requests can overlap after moving I/O off the UI thread.
+    registration: Arc<Mutex<()>>,
 }
 impl Default for InventoryWatchState {
     fn default() -> Self {
         Self {
             watcher: Arc::new(Mutex::new(None)),
             roots: Arc::new(Mutex::new(HashMap::new())),
+            registration: Arc::new(Mutex::new(())),
         }
     }
 }
@@ -102,7 +105,10 @@ pub async fn inventory_watch_roots(
 ) -> Result<InventoryWatchRegistration, String> {
     let watcher_slot = state.watcher.clone();
     let shared_roots = state.roots.clone();
+    let registration = state.registration.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        let _registration_guard = registration.lock()
+            .map_err(|_| "INVENTORY_WATCH_REGISTRATION_LOCK_FAILED".to_string())?;
         register_inventory_watch_roots(app, watcher_slot, shared_roots, roots)
     })
     .await
