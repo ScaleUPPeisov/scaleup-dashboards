@@ -189,19 +189,41 @@ fn atomic_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
 #[derive(Default)]
 struct CopyMetrics {
     files: usize,
+    cloned_files: usize,
     bytes: u64,
     copy_ms: u128,
     sync_ms: u128,
 }
+// APFS clonefile creates an independent Copy-on-Write file, NOT a hard link.
+// On HFS+, exFAT or a different volume, use an ordinary durable byte copy.
+#[cfg(target_os="macos")]
+fn try_apfs_clone(src:&Path,dst:&Path)->bool{
+    use std::ffi::{c_char,CString};
+    use std::os::unix::ffi::OsStrExt;
+    unsafe extern "C" {fn clonefile(src:*const c_char,dst:*const c_char,flags:i32)->i32;}
+    if dst.exists(){return false}
+    let Ok(s)=CString::new(src.as_os_str().as_bytes()) else{return false};
+    let Ok(d)=CString::new(dst.as_os_str().as_bytes()) else{return false};
+    unsafe{clonefile(s.as_ptr(),d.as_ptr(),0)==0}
+}
 fn copy_and_sync(src:&Path,dst:&Path,metrics:&mut CopyMetrics)->Result<(),String>{
     let started=Instant::now();
-    let bytes=fs::copy(src,dst).map_err(|e|e.to_string())?;
+    #[cfg(target_os="macos")]
+    let cloned=try_apfs_clone(src,dst);
+    #[cfg(not(target_os="macos"))]
+    let cloned=false;
+    let bytes=if cloned {
+        fs::metadata(dst).map_err(|e|e.to_string())?.len()
+    }else{
+        // clonefile can fail on external HDD/exFAT; never create a hard link
+        // because later project edits must not mutate the source MP3.
+        fs::copy(src,dst).map_err(|e|e.to_string())?
+    };
     let copy_ms=started.elapsed().as_millis();
     let started=Instant::now();
-    // sync_data persists file content and metadata required to retrieve it,
-    // without forcing unrelated metadata updates on each HDD file.
     fs::OpenOptions::new().write(true).open(dst).and_then(|f|f.sync_data()).map_err(|e|e.to_string())?;
     metrics.files+=1;
+    if cloned{metrics.cloned_files+=1}
     metrics.bytes=metrics.bytes.saturating_add(bytes);
     metrics.copy_ms+=copy_ms;
     metrics.sync_ms+=started.elapsed().as_millis();
@@ -1766,11 +1788,12 @@ fn execute_plan(app: Option<&AppHandle>, plan: &BuildPlan) -> Result<BatchSummar
             fs::rename(&tmp, &final_dir).map_err(|e| e.to_string())?;
             sync_dir(&broot);
             total_copy.files+=project_copy.files;
+            total_copy.cloned_files+=project_copy.cloned_files;
             total_copy.bytes=total_copy.bytes.saturating_add(project_copy.bytes);
             total_copy.copy_ms+=project_copy.copy_ms;
             total_copy.sync_ms+=project_copy.sync_ms;
-            eprintln!("VYRON production copy: project={} files={} bytes={} copy_ms={} sync_ms={}",
-                p.project_id,project_copy.files,project_copy.bytes,project_copy.copy_ms,project_copy.sync_ms);
+            eprintln!("VYRON production copy: project={} files={} cloned={} logical_bytes={} copy_ms={} sync_ms={}",
+                p.project_id,project_copy.files,project_copy.cloned_files,project_copy.bytes,project_copy.copy_ms,project_copy.sync_ms);
         }
         if plan.request.mode == "manual" {
             atomic_json(
@@ -1801,8 +1824,8 @@ fn execute_plan(app: Option<&AppHandle>, plan: &BuildPlan) -> Result<BatchSummar
             let _=a.emit("production-batch-progress",json!({"batchId":plan.batch_id,"completed":i+1,"total":plan.projects.len(),"stage":"files"}));
         }
     }
-    eprintln!("VYRON production copy totals: batch={} files={} bytes={} copy_ms={} sync_ms={}",
-        plan.batch_id,total_copy.files,total_copy.bytes,total_copy.copy_ms,total_copy.sync_ms);
+    eprintln!("VYRON production copy totals: batch={} files={} cloned={} logical_bytes={} copy_ms={} sync_ms={}",
+        plan.batch_id,total_copy.files,total_copy.cloned_files,total_copy.bytes,total_copy.copy_ms,total_copy.sync_ms);
     let mut manifest = BatchManifest {
         schema_version: SCHEMA_VERSION,
         source: "VYRON Production Manager".into(),
@@ -3743,6 +3766,27 @@ pub fn production_endlume_handoff_consumed(request_path: String) -> Result<bool,
         return Ok(true);
     }
     Ok(!Path::new(&request_path).exists())
+}
+
+#[cfg(test)]
+mod production_copy_independence_tests {
+    use super::*;
+    #[test]
+    fn staging_copy_is_independent_of_source_file(){
+        let d=std::env::temp_dir().join(format!("vyron-copy-{}",Uuid::new_v4()));
+        fs::create_dir_all(&d).unwrap();
+        let src=d.join("master.mp3");
+        let dst=d.join("project.mp3");
+        fs::write(&src,b"master-audio-data").unwrap();
+        let mut stats=CopyMetrics::default();
+        copy_and_sync(&src,&dst,&mut stats).unwrap();
+        assert_eq!(stats.files,1);
+        assert_eq!(stats.bytes,17);
+        assert_eq!(fs::read(&dst).unwrap(),fs::read(&src).unwrap());
+        fs::write(&dst,b"edited-project").unwrap();
+        assert_eq!(fs::read(&src).unwrap(),b"master-audio-data");
+        let _=fs::remove_dir_all(d);
+    }
 }
 
 #[cfg(test)]
