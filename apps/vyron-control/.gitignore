@@ -1,0 +1,7 @@
+# Private service runtime data - never commit credentials or channel snapshots
+.env
+.env.*
+channels.json
+data/
+*.pem
+*.key
