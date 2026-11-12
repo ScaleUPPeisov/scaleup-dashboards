@@ -46,7 +46,7 @@ jobs:
               if not any(marker in block for marker in markers):
                   continue
               name = block.splitlines()[0].strip().rstrip(':')
-              assert '    if: ${{ false }}\n' in block, 'SIGNING_JOB_NOT_FROZEN:' + name
+              assert ('    if: ' + '$' + '{{ false }}' + '\n') in block, 'SIGNING_JOB_NOT_FROZEN:' + name
               frozen.append(name)
           assert set(frozen) == {'signed-upgrade-arm64-rc', 'production-local-upgrade-arm64'}, frozen
           conf = json.loads(Path('src-tauri/tauri.conf.json').read_text())
