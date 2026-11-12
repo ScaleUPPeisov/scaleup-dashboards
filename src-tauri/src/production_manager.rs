@@ -1986,19 +1986,21 @@ fn recovery_in_workspace(workspace: &str) -> Vec<RecoveryState> {
     out
 }
 
+fn find_production_recovery_sync(workspaces: Vec<String>) -> Result<Vec<RecoveryState>, String> {
+    let mut seen = HashSet::<String>::new();
+    let mut out = Vec::new();
+    for raw in workspaces {
+        let w = raw.trim();
+        if w.is_empty() || !seen.insert(w.to_string()) {continue}
+        out.extend(recovery_in_workspace(w));
+    }
+    out.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    Ok(out)
+}
 #[tauri::command]
 pub async fn find_production_recovery(workspaces: Vec<String>) -> Result<Vec<RecoveryState>, String> {
-    tauri::async_runtime::spawn_blocking(move||{
-        let mut seen = HashSet::<String>::new();
-        let mut out = Vec::new();
-        for raw in workspaces {
-            let w = raw.trim();
-            if w.is_empty() || !seen.insert(w.to_string()) {continue}
-            out.extend(recovery_in_workspace(w));
-        }
-        out.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-        Ok(out)
-    }).await.map_err(|e|e.to_string())?
+    tauri::async_runtime::spawn_blocking(move||find_production_recovery_sync(workspaces))
+        .await.map_err(|e|e.to_string())?
 }
 
 #[tauri::command]
