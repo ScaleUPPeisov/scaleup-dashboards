@@ -9,7 +9,6 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
     paths:
-      - '.github/workflows/vyron-pr22-remote-rc.yml'
       - 'package.json'
       - 'package-lock.json'
       - 'src/**'
@@ -29,7 +28,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: vyron-pr22-remote-rc-${{ github.event.pull_request.number || github.ref }}-${{ github.sha }}
+  group: vyron-pr22-remote-rc-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -433,12 +432,17 @@ jobs:
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
           security set-keychain-settings -lut 21600 "$KEYCHAIN"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-          security import "$P12" -k "$KEYCHAIN" -P "$VYRON_MACOS_SIGNING_P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security import "$P12" -k "$KEYCHAIN" -P "$VYRON_MACOS_SIGNING_P12_PASSWORD" -A -T /usr/bin/codesign -T /usr/bin/security
           security list-keychains -d user -s "$KEYCHAIN"
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" || true
           IMPORTED_SHA1="$(security find-identity -v -p codesigning "$KEYCHAIN" | awk -v name="$VYRON_MACOS_SIGNING_IDENTITY" 'index($0, "\"" name "\""){print $2; exit}')"
           test -n "$IMPORTED_SHA1"
           test "$(printf '%s' "$IMPORTED_SHA1" | tr '[:lower:]' '[:upper:]')" = "$P12_CERT_SHA1"
+          PROBE="$RUNNER_TEMP/vyron-local-signing-probe"
+          cp /bin/echo "$PROBE"
+          codesign --force --sign "$IMPORTED_SHA1" "$PROBE"
+          codesign --verify --strict --verbose=2 "$PROBE"
+          rm -f "$PROBE"
           echo "APPLE_SIGNING_IDENTITY=$IMPORTED_SHA1" >> "$GITHUB_ENV"
           echo "LOCAL_SIGNING_CERT_SHA1=$P12_CERT_SHA1" >> "$GITHUB_ENV"
           rm -f "$P12" "$CERT"
