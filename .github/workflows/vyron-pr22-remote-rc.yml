@@ -154,7 +154,7 @@ jobs:
               [[ "$file" == "SHA256SUMS.txt" ]] || shasum -a 256 "$file"
             done > SHA256SUMS.txt
           )
-          shasum -a 256 -c "$OUT/SHA256SUMS.txt"
+          (cd "$OUT" && shasum -a 256 -c SHA256SUMS.txt)
 
       - name: Upload isolated RC artifact
         uses: actions/upload-artifact@v4
@@ -350,7 +350,7 @@ jobs:
               [[ "$file" == "SHA256SUMS.txt" ]] || shasum -a 256 "$file"
             done > SHA256SUMS.txt
           )
-          shasum -a 256 -c "$OUT/SHA256SUMS.txt"
+          (cd "$OUT" && shasum -a 256 -c SHA256SUMS.txt)
 
       - name: Upload signed upgrade RC without publishing a feed or release
         uses: actions/upload-artifact@v4
