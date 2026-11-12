@@ -30,13 +30,13 @@ pub struct InventoryWatchRegistration {
 }
 
 pub struct InventoryWatchState {
-    watcher: Mutex<Option<RecommendedWatcher>>,
+    watcher: Arc<Mutex<Option<RecommendedWatcher>>>,
     roots: Arc<Mutex<HashMap<String, PathBuf>>>,
 }
 impl Default for InventoryWatchState {
     fn default() -> Self {
         Self {
-            watcher: Mutex::new(None),
+            watcher: Arc::new(Mutex::new(None)),
             roots: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -91,13 +91,29 @@ fn event_channel_ids(event: &Event, roots: &HashMap<String, PathBuf>) -> Vec<(St
     out
 }
 
+// Registering recursive FSEvents watchers can touch a slow/disconnected disk.
+// It must not execute on the Tauri command dispatcher / AppKit thread.
 #[tauri::command]
-pub fn inventory_watch_roots(
+pub async fn inventory_watch_roots(
     app: AppHandle,
     state: State<'_, InventoryWatchState>,
     roots: Vec<InventoryWatchRoot>,
 ) -> Result<InventoryWatchRegistration, String> {
+    let watcher_slot = state.watcher.clone();
     let shared_roots = state.roots.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        register_inventory_watch_roots(app, watcher_slot, shared_roots, roots)
+    })
+    .await
+    .map_err(|e| format!("INVENTORY_WATCH_TASK_FAILED: {e}"))?
+}
+
+fn register_inventory_watch_roots(
+    app: AppHandle,
+    watcher_slot: Arc<Mutex<Option<RecommendedWatcher>>>,
+    shared_roots: Arc<Mutex<HashMap<String, PathBuf>>>,
+    roots: Vec<InventoryWatchRoot>,
+) -> Result<InventoryWatchRegistration, String> {
     let event_roots = shared_roots.clone();
     let event_app = app.clone();
 
@@ -107,9 +123,15 @@ pub fn inventory_watch_roots(
             if !event_can_change_inventory(&event) {
                 return;
             }
-            let Ok(roots) = event_roots.lock() else { return };
+            // Never invoke Tauri event dispatch while holding the roots mutex:
+            // UI event processing may re-register watchers and otherwise wait
+            // on this same lock during a large production batch.
+            let affected = {
+                let Ok(roots) = event_roots.lock() else { return };
+                event_channel_ids(&event, &roots)
+            };
             let kind = format!("{:?}", event.kind);
-            for (channel_id, path) in event_channel_ids(&event, &roots) {
+            for (channel_id, path) in affected {
                 let _ = event_app.emit(
                     "render-inventory-changed",
                     InventoryWatchEvent {
@@ -152,7 +174,7 @@ pub fn inventory_watch_roots(
     } else {
         return Err("INVENTORY_WATCH_ROOT_LOCK_FAILED".into());
     }
-    if let Ok(mut watcher_guard) = state.watcher.lock() {
+    if let Ok(mut watcher_guard) = watcher_slot.lock() {
         *watcher_guard = Some(watcher);
     } else {
         return Err("INVENTORY_WATCH_STATE_LOCK_FAILED".into());
