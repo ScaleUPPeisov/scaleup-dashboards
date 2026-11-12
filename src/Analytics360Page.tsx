@@ -232,6 +232,14 @@ export function Analytics360Page(){
  selectedChannelRef.current=active?.youtubeChannelId;
  const matching=profiles.find(p=>p.id===active?.youtubeProfileId&&p.channelId===active?.youtubeChannelId);
  const eligible=Boolean(matching&&active?.youtubeProfileId&&active?.youtubeChannelId);
+ const connectedSyncChoices=useMemo(()=>{
+  const byProfile=new Map(profiles.map(p=>[p.id,p])),seen=new Set<string>();
+  return channels.flatMap(c=>{
+   const id=c.youtubeChannelId||'',profileId=c.youtubeProfileId||'';
+   if(!id||!profileId||seen.has(id)||byProfile.get(profileId)?.channelId!==id)return [];
+   seen.add(id);return [{profileId,channelId:id,name:c.name}];
+  });
+ },[channels,profiles]);
  useEffect(()=>subscribeActivePublishChannel(id=>{if(channels.some(c=>c.id===id)){setActiveId(id);setVideoPage(0);setVideoId(null)}}),[channels.map(c=>c.id).join('|')]);
  useEffect(()=>{if(!channels.some(c=>c.id===activeId)&&channels[0])setActiveId(channels[0].id)},[channels.map(c=>c.id).join('|'),activeId]);
  useEffect(()=>{let live=true;const reload=()=>void api.youtubeProfiles().then(p=>{if(live)setProfiles(p)}).catch(()=>{if(live)setProfiles([])});
@@ -278,18 +286,23 @@ export function Analytics360Page(){
   void listen<Progress>('vyron:ai-export-progress',e=>{if(alive&&e.payload.channelId===active?.youtubeChannelId)setProgress(e.payload)}).then(stop=>{if(alive)unlisten=stop;else stop()});
   return()=>{alive=false;unlisten?.()};
  },[syncing,active?.youtubeChannelId]);
- async function syncDeep(){
-  if(!active?.youtubeChannelId||!active.youtubeProfileId||syncing)return;
+ async function syncDeep(all=false){
+  if(syncing)return;
+  const choices=all?connectedSyncChoices:(eligible&&active?.youtubeChannelId&&active?.youtubeProfileId
+   ?[{profileId:active.youtubeProfileId,channelId:active.youtubeChannelId,name:active.name}]:[]);
+  if(!choices.length){setError('Нет каналов с подтверждённой привязкой OAuth');return}
   setSyncing(true);setError('');setProgress(null);
   try{
-   const output=await invoke<{status:string;completed:number;errors:{error:string}[]}>('youtube_ai_sync',{request:{
-    channels:[{profileId:active.youtubeProfileId,channelId:active.youtubeChannelId,name:active.name}],
-    period:'all',startDate:null,endDate:null,destination:'',
+   const output=await invoke<{status:string;completed:number;total:number;errors:{channelId:string;error:string}[]}>('youtube_ai_sync',{request:{
+    channels:choices,period:'all',startDate:null,endDate:null,destination:'',
     includeRetention,includeReporting
    }});
-   if(output.completed===0)throw new Error(output.errors.map(e=>e.error).join(' | ')||'Синхронизация не завершена');
+   if(output.completed===0)throw new Error(output.errors.map(e=>e.channelId+': '+e.error).join(' | ')||'Синхронизация не завершена');
+   // Reread committed SQLite snapshots, including Fleet Command Center.
    setSyncRevision(v=>v+1);
    setFleetRevision(v=>v+1);
+   if(output.status!=='COMPLETE')setError('Частичная синхронизация: '+output.completed+' из '+output.total+
+    '. Ошибки: '+output.errors.map(e=>e.channelId+': '+e.error).join(' | '));
   }catch(e){setError(String(e))}
   finally{setSyncing(false)}
  }
@@ -334,12 +347,13 @@ export function Analytics360Page(){
   <header className="pageHeader a360-head"><div><small>YOUTUBE ANALYTICS · VYRON MAC</small><h1>Analytics 360°</h1>
    <p>Настоящие метрики всех каналов, раздельная история каждого видео, никаких выдуманных CTR или первых 48 часов.</p></div>
    <div className="headerActions"><button disabled={refreshing||!active?.youtubeProfileId} onClick={()=>void quickRefresh()}>{refreshing?'Обновляю…':'↻ Быстрая статистика'}</button>
-    <button className="primary" disabled={syncing||!eligible} onClick={()=>void syncDeep()}>{syncing?'Синхронизация…':'Собрать всю историю канала'}</button>
+    <button disabled={syncing||!eligible} onClick={()=>void syncDeep(false)}>Собрать выбранный канал</button>
+    <button className="primary" disabled={syncing||!connectedSyncChoices.length} onClick={()=>void syncDeep(true)}>{syncing?'Синхронизация…':'Собрать всю историю каналов · '+connectedSyncChoices.length}</button>
    </div></header>
   <FleetSubscriber channels={channels} profiles={profiles}
    reports={fleetReports} loading={fleetLoading} activeId={active?.id} onChoose={choose}
    onRefresh={refreshFleet}/>
-  <AiAnalyticsExport channels={channels} profiles={profiles}/>
+  <AiAnalyticsExport channels={channels} profiles={profiles} onDataSaved={()=>{setSyncRevision(v=>v+1);setFleetRevision(v=>v+1)}}/>
   <YouTubeChannelBar/>
   <div className="a360-sync"><div><strong>{active?.name||'Канал не выбран'}</strong>
    <span>Channel ID: {active?.youtubeChannelId||'Не привязан'} · OAuth: {eligible?'профиль совпадает':'нужна проверка'} · Архив: {ov?displayTime(ov.updatedAt):'не собран'}</span>
