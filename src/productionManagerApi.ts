@@ -78,3 +78,62 @@ export const productionManagerApi={
   onImportError:(cb:(p:{channelId:string;sessionId:string;message:string})=>void):Promise<UnlistenFn>=>listen('production-import-error',e=>cb(e.payload as any)),
   onBatchProgress:(cb:(p:{batchId:string;completed:number;total:number;stage:string})=>void):Promise<UnlistenFn>=>listen('production-batch-progress',e=>cb(e.payload as any)),
 };
+
+/**
+ * Production builds live at module scope rather than inside a React page.
+ * Switching away from Production must not discard the operation or its progress.
+ * Rust is the authoritative executor and recovery journal after process restart.
+ */
+export type ProductionBuildRuntimeSnapshot={
+  channelId:string;
+  requestId:string;
+  state:'RUNNING'|'COMPLETED'|'FAILED';
+  progress:{completed:number;total:number;stage:string}|null;
+  result?:BuildResult;
+  error?:string;
+};
+const productionSnapshots=new Map<string,ProductionBuildRuntimeSnapshot>();
+const productionSubscribers=new Set<()=>void>();
+let productionListener:Promise<UnlistenFn>|null=null;
+function broadcastProductionBuild(){for(const subscriber of productionSubscribers)subscriber()}
+function listenProductionBuild(){
+  if(!productionListener){
+    productionListener=productionManagerApi.onBatchProgress(p=>{
+      for(const task of productionSnapshots.values()){
+        if(task.state!=='RUNNING')continue;
+        task.progress={completed:p.completed,total:p.total,stage:p.stage};
+        broadcastProductionBuild();
+      }
+    }).catch(error=>{productionListener=null;throw error});
+  }
+  return productionListener;
+}
+export const productionBuildRuntime={
+  snapshot:(channelId:string)=>productionSnapshots.get(channelId)||null,
+  subscribe:(callback:()=>void)=>{
+    productionSubscribers.add(callback);
+    return()=>{productionSubscribers.delete(callback)};
+  },
+  start:async(request:BuildRequest):Promise<BuildResult>=>{
+    const current=[...productionSnapshots.values()].find(task=>task.state==='RUNNING');
+    if(current)throw new Error(`Сборка уже выполняется для канала ${current.channelId}. Переключение вкладок не прерывает её.`);
+    const task:ProductionBuildRuntimeSnapshot={
+      channelId:request.channelId,requestId:request.requestId,state:'RUNNING',
+      progress:{completed:0,total:request.projectCount,stage:'Подготовка'}
+    };
+    productionSnapshots.set(request.channelId,task);
+    broadcastProductionBuild();
+    try{
+      await listenProductionBuild();
+      const result=await productionManagerApi.build(request);
+      task.state='COMPLETED';task.result=result;
+      task.progress={completed:result.batch?.projectCount||0,total:request.projectCount,stage:'Готово'};
+      broadcastProductionBuild();
+      return result;
+    }catch(error){
+      task.state='FAILED';task.error=String(error);
+      broadcastProductionBuild();
+      throw error;
+    }
+  }
+};
