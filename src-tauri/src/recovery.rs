@@ -314,7 +314,11 @@ pub fn initialize_runtime(app:&AppHandle)->Result<(),String>{
     Ok(())
 }
 pub fn mark_clean_shutdown(app:&AppHandle)->Result<(),String>{
-    let unfinished=load_sessions(app)?.iter().any(|s|matches!(s.state.as_str(),"ACTIVE"|"WAITING"|"RECOVERING"));
+    let unfinished=load_sessions(app)?.iter().any(|s|{
+        matches!(s.state.as_str(),"ACTIVE"|"WAITING"|"RECOVERING")
+        && !crate::production_manager::committed_batch_for_recovery(
+            Path::new(&s.root_path),&s.batch_id,s.total_projects)
+    });
     let mut m:RuntimeMarker=read_json(&runtime_path(app)?);
     if m.runtime_session_id.is_empty(){m.runtime_session_id=Uuid::new_v4().to_string();m.started_at=Utc::now().to_rfc3339();}
     m.clean_shutdown=!unfinished;
@@ -381,6 +385,22 @@ fn candidate_from_session(app:&AppHandle,s:&RecoveryJournalSession)->RecoveryCan
         let rel=relative_to_volume(Path::new(&s.root_path),v);
         match resolve_external_path(&s.root_path,v,rel.as_deref()){Ok(p)=>Some(p),Err(e)=>{wait=Some(e);None}}
     }else{Some(PathBuf::from(&s.root_path))};
+    // A crash between status.json and journal completion leaves an ACTIVE
+    // journal for a fully committed batch. Never present it as unfinished.
+    if let Some(root)=resolved_root.as_ref(){
+        if crate::production_manager::committed_batch_for_recovery(root,&s.batch_id,s.total_projects){
+            return RecoveryCandidate{
+                recovery_schema_version:s.recovery_schema_version,recovery_session_id:s.recovery_session_id.clone(),
+                operation_type:s.operation_type.clone(),state:"COMPLETED".into(),batch_id:s.batch_id.clone(),
+                channel_id:s.channel_id.clone(),channel_name:s.channel_name.clone(),root_path:s.root_path.clone(),
+                resolved_root_path:Some(root.to_string_lossy().into_owned()),completed_projects:s.total_projects,
+                total_projects:s.total_projects,progress:100.0,last_checkpoint:"Готово".into(),updated_at:s.updated_at.clone(),
+                safe_to_resume:false,wait_reason:None,required_volume_name,
+                dismissed:false,previous_session_ended_cleanly:clean,schema_compatible:true,
+                ui_context:s.ui_context.clone()
+            };
+        }
+    }
     if wait.is_none(){
         for e in &s.source_evidence{
             if let Err(reason)=validate_evidence(e){
@@ -404,14 +424,18 @@ fn candidate_from_session(app:&AppHandle,s:&RecoveryJournalSession)->RecoveryCan
     }
 }
 #[tauri::command]
-pub fn recovery_candidates(app:AppHandle,include_dismissed:Option<bool>)->Result<Vec<RecoveryCandidate>,String>{
-    let include=include_dismissed.unwrap_or(false);
-    let mut rows=load_sessions(&app)?.into_iter()
-        .filter(|s|matches!(s.state.as_str(),"ACTIVE"|"WAITING"|"RECOVERING"|"DISMISSED"))
-        .filter(|s|include||s.state!="DISMISSED")
-        .map(|s|candidate_from_session(&app,&s)).collect::<Vec<_>>();
-    rows.sort_by(|a,b|b.updated_at.cmp(&a.updated_at));
-    Ok(rows)
+pub async fn recovery_candidates(app:AppHandle,include_dismissed:Option<bool>)->Result<Vec<RecoveryCandidate>,String>{
+    tauri::async_runtime::spawn_blocking(move||{
+        let include=include_dismissed.unwrap_or(false);
+        let mut rows=load_sessions(&app)?.into_iter()
+            .filter(|s|matches!(s.state.as_str(),"ACTIVE"|"WAITING"|"RECOVERING"|"DISMISSED"))
+            .filter(|s|include||s.state!="DISMISSED")
+            .map(|s|candidate_from_session(&app,&s))
+            .filter(|c|c.state!="COMPLETED")
+            .collect::<Vec<_>>();
+        rows.sort_by(|a,b|b.updated_at.cmp(&a.updated_at));
+        Ok(rows)
+    }).await.map_err(|e|e.to_string())?
 }
 #[tauri::command]
 pub fn recovery_dismiss_session(app:AppHandle,recovery_session_id:String)->Result<(),String>{
@@ -420,14 +444,18 @@ pub fn recovery_dismiss_session(app:AppHandle,recovery_session_id:String)->Resul
     s.state="DISMISSED".into();s.dismissed_at=Some(Utc::now().to_rfc3339());s.updated_at=Utc::now().to_rfc3339();save_session(&app,&s)
 }
 #[tauri::command]
-pub fn recovery_refresh_candidate(app:AppHandle,recovery_session_id:String)->Result<RecoveryCandidate,String>{
-    let s=session(&app,&recovery_session_id)?;Ok(candidate_from_session(&app,&s))
+pub async fn recovery_refresh_candidate(app:AppHandle,recovery_session_id:String)->Result<RecoveryCandidate,String>{
+    tauri::async_runtime::spawn_blocking(move||{
+        let s=session(&app,&recovery_session_id)?;
+        Ok(candidate_from_session(&app,&s))
+    }).await.map_err(|e|e.to_string())?
 }
 #[tauri::command]
 pub fn recovery_mark_clean_shutdown(app:AppHandle)->Result<(),String>{mark_clean_shutdown(&app)}
 
 pub fn resolve_session_root(app:&AppHandle,id:&str)->Result<(RecoveryJournalSession,PathBuf),String>{
     let s=session(app,id)?;let candidate=candidate_from_session(app,&s);
+    if s.state=="COMPLETED"||candidate.state=="COMPLETED"{return Err("RECOVERY_ALREADY_COMPLETED".into())}
     if !candidate.schema_compatible{return Err("RECOVERY_SCHEMA_NEWER".into())}
     if !candidate.safe_to_resume{
         let reason=candidate.wait_reason.unwrap_or_else(||"RECOVERY_UNSAFE".into());let _=mark_waiting(app,id,&reason);return Err(reason)
@@ -463,6 +491,7 @@ pub fn remap_recovery_directory_path(s:&RecoveryJournalSession,original:&str)->R
 pub fn set_recovering(app:&AppHandle,id:&str)->Result<(),String>{
     let p=session_path(app,id)?;let mut s:RecoveryJournalSession=read_json(&p);
     if s.recovery_session_id.is_empty(){return Err("RECOVERY_SESSION_NOT_FOUND".into())}
+    if s.state=="COMPLETED"{return Err("RECOVERY_ALREADY_COMPLETED".into())}
     s.state="RECOVERING".into();s.updated_at=Utc::now().to_rfc3339();s.dismissed_at=None;save_session(app,&s)
 }
 
