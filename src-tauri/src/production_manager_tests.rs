@@ -429,7 +429,7 @@ fn acceptance_power_loss_checkpoint_is_detected_and_resumes_without_duplicates()
     let partial = root.join(".002.tmp");
     fs::create_dir_all(&partial).unwrap();
     fs::write(partial.join("broken.mp3"), b"partial").unwrap();
-    let rows = find_production_recovery(vec![ws.to_string_lossy().into_owned()]).unwrap();
+    let rows = find_production_recovery_sync(vec![ws.to_string_lossy().into_owned()]).unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].completed_projects, 1);
     assert_eq!(rows[0].current_project, "002");
@@ -438,7 +438,7 @@ fn acceptance_power_loss_checkpoint_is_detected_and_resumes_without_duplicates()
     assert!(!partial.exists());
     assert!(project_ready(first, &d));
     assert!(
-        find_production_recovery(vec![ws.to_string_lossy().into_owned()])
+        find_production_recovery_sync(vec![ws.to_string_lossy().into_owned()])
             .unwrap()
             .is_empty()
     );
@@ -451,7 +451,7 @@ fn acceptance_recovery_scan_never_creates_missing_external_mount() {
         .join(format!("vyron-missing-recovery-{}", Uuid::new_v4()))
         .join("not-mounted");
     assert!(!missing.exists());
-    let rows = find_production_recovery(vec![missing.to_string_lossy().into_owned()]).unwrap();
+    let rows = find_production_recovery_sync(vec![missing.to_string_lossy().into_owned()]).unwrap();
     assert!(rows.is_empty());
     assert!(!missing.exists());
 }
