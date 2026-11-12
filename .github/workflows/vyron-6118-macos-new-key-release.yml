@@ -113,7 +113,6 @@ jobs:
         run: |
           set -Eeuo pipefail
           test -n "$VYRON_MACOS_SIGNING_P12_BASE64"
-          test -n "$VYRON_MACOS_SIGNING_P12_PASSWORD"
           test -n "$VYRON_MACOS_SIGNING_IDENTITY"
           KEYCHAIN="$RUNNER_TEMP/vyron-6118.keychain-db"
           KEYCHAIN_PASSWORD="$(uuidgen)$(uuidgen)"
