@@ -42,7 +42,9 @@ env:
 jobs:
   isolated-arm64-rc:
     name: Isolated ARM64 RC artifact
-    if: github.event_name == 'pull_request' || github.event.inputs.mode == 'isolated'
+    # SECURITY INCIDENT: do not distribute another unsigned downloadable RC.
+    # This workflow remains in source as a recovery reference only.
+    if: ${{ false }}
     runs-on: macos-15
     timeout-minutes: 55
     # Keep the historical 6.1.16 production-local candidate unchanged.
