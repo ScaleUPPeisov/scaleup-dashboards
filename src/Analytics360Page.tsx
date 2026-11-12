@@ -248,6 +248,12 @@ export function Analytics360Page(){
  },[]);
  const choose=React.useCallback((id:string)=>{if(!channels.some(c=>c.id===id))return;saveActivePublishChannel(id);setActiveId(id);setVideoPage(0);setVideoId(null)},[channels]);
  const refreshFleet=React.useCallback(()=>setFleetRevision(v=>v+1),[]);
+ // A background ZIP may complete after the old page was unmounted.
+ useEffect(()=>{
+  const onCacheUpdated=()=>{setSyncRevision(v=>v+1);setFleetRevision(v=>v+1)};
+  window.addEventListener('vyron:analytics-cache-updated',onCacheUpdated);
+  return()=>window.removeEventListener('vyron:analytics-cache-updated',onCacheUpdated);
+ },[]);
  const fleetKey=channels.map(c=>c.youtubeChannelId||'').join('|');
  useEffect(()=>{
   if(!isMac)return;
@@ -353,7 +359,7 @@ export function Analytics360Page(){
   <FleetSubscriber channels={channels} profiles={profiles}
    reports={fleetReports} loading={fleetLoading} activeId={active?.id} onChoose={choose}
    onRefresh={refreshFleet}/>
-  <AiAnalyticsExport channels={channels} profiles={profiles} onDataSaved={()=>{setSyncRevision(v=>v+1);setFleetRevision(v=>v+1)}}/>
+  <AiAnalyticsExport channels={channels} profiles={profiles}/>
   <YouTubeChannelBar/>
   <div className="a360-sync"><div><strong>{active?.name||'Канал не выбран'}</strong>
    <span>Channel ID: {active?.youtubeChannelId||'Не привязан'} · OAuth: {eligible?'профиль совпадает':'нужна проверка'} · Архив: {ov?displayTime(ov.updatedAt):'не собран'}</span>
