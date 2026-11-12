@@ -33,7 +33,7 @@ describe('VYRON 3.3.4 live inventory safety contracts',()=>{
  it('sidebar keeps Запас видео before YouTube, exposes History, and shows the inventory badge',()=>{
   const production=app.indexOf("id:'production',page:'production'");
   const inventory=app.indexOf("id:'inventory',page:'inventory'");
-  const history=app.indexOf("id:'history',page:'youtube'");
+  const history=app.indexOf("id:'history',page:'history'");
   const youtube=app.indexOf("id:'youtube',page:'youtube'");
   expect(production).toBeGreaterThanOrEqual(0);
   expect(inventory).toBeGreaterThan(production);
