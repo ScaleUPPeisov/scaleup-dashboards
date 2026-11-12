@@ -454,8 +454,10 @@ jobs:
           # GitHub masks the original secret but not automatically its decoded or
           # re-encoded representation. Register all representations as masks BEFORE
           # appending the normalized key to GITHUB_ENV; later steps echo job env.
+          # Only mask single-line base64 secret forms. Never print decoded
+          # minisign content: it is multiline and could spill into job logs.
+          assert '\n' not in raw and '\r' not in raw and '\n' not in normalized and '\r' not in normalized
           print('::add-mask::'+raw,flush=True)
-          if once: print('::add-mask::'+once.strip(),flush=True)
           print('::add-mask::'+normalized,flush=True)
           with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f:
               f.write('TAURI_SIGNING_PRIVATE_KEY='+normalized+'\n')
