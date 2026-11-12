@@ -49,3 +49,4 @@ export function resetPerformanceTelemetryForTests(){
   for(const key of Object.keys(reasons))delete reasons[key];
   appReadyMs=null
 }
+

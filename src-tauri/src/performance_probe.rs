@@ -147,3 +147,4 @@ mod tests{
         assert!(validate_owner_report(&json!({"clientSecret":"hidden"})).is_err());
     }
 }
+

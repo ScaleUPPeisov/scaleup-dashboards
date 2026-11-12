@@ -28,3 +28,4 @@ export async function scanFactualRenderRuntime(workspace:string,channels:Channel
   }
   return{activeJobIds,rows,reliable,observedAtMs:Date.now()}
 }
+

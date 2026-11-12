@@ -33,3 +33,4 @@ describe('VYRON 6.1.17 owner performance validation',()=>{
     expect(api).toContain("recordPerformanceOperation('render.fingerprint')");
   });
 });
+
