@@ -39,8 +39,8 @@ describe('VYRON 5.0.0 product contract',()=>{
   expect(cargo).toMatch(/\[package\][\s\S]*version\s*=\s*"6\.1\.15"/);
  });
  it('removes only the top-level History shortcut while preserving YouTube navigation',()=>{
-  expect(app).toContain("id:'history',page:'youtube'");
-  expect(app).toContain("youtubeTab:'history'");
+  expect(app).toContain("id:'history',page:'history'");
+  expect(app).not.toContain("youtubeTab:'history'");
   expect(app).toContain("id:'youtube',page:'youtube'");
   expect(app).toContain("label:'Запас видео'");
  });
