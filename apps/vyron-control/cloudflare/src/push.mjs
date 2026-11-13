@@ -2,6 +2,7 @@
 // Sends only allowlisted event names, never user credentials or private files.
 import { buildPushPayload } from '@block65/webcrypto-web-push';
 
+export const PUSH_CRON='2,7,12,17,22,27,32,37,42,47,52,57 * * * *';
 const PUSH_KINDS=new Set([
   'subscriber_milestone','render_completed','render_failed','upload_completed',
   'upload_failed','disk_offline','quota_warning','agent_error'
