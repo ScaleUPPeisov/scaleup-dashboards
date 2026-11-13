@@ -5,6 +5,8 @@ import { DatabaseSync } from 'node:sqlite';
 import cloud from '../src/index.mjs';
 import { cronSlot, crossedMilestones, pacificDay, safeEvent, acceptedCommand } from '../src/core.mjs';
 import { manualSlot, reserveQuota, scheduledSync } from '../src/sync.mjs';
+import { startOAuth,callbackOAuth,authorizedProfiles,decryptSecret } from '../src/oauth.mjs';
+import { runAnalyticsBatch,nextAnalyticsSlot,parseDailyReport } from '../src/google-analytics.mjs';
 
 class D1Query {
   constructor(db,sql){this.db=db;this.sql=sql;this.args=[];}
@@ -27,6 +29,7 @@ class MockD1 {
     this.native=new DatabaseSync(':memory:');
     this.native.exec(readFileSync(new URL('../migrations/0001_init.sql',import.meta.url),'utf8'));
     this.native.exec(readFileSync(new URL('../migrations/0002_analytics.sql',import.meta.url),'utf8'));
+    this.native.exec(readFileSync(new URL('../migrations/0003_google_oauth.sql',import.meta.url),'utf8'));
   }
   prepare(sql){return new D1Query(this,sql);}
   async batch(stmts){
@@ -175,4 +178,109 @@ test('Mac Analytics 360 mirror snapshots are accepted without OAuth secrets',asy
   assert.equal(status.analyticsSummary.watchMinutes,12000);
   assert.equal(e.DB.native.prepare('SELECT length(daily_json) AS size FROM channel_analytics').get().size>2,true);
   assert.equal((await cloud.fetch(req(url,agent,'POST',[{...snap[0],channelId:'BAD'}]),e)).status,400);
+});
+
+test('Google OAuth is PKCE protected, offline read-only and encrypted at rest',async()=>{
+  const e=env(),channelId=id(2);
+  Object.assign(e,{
+    APP_ORIGIN:'https://vyron-control.example',
+    GOOGLE_OAUTH_CLIENT_ID:'TEST_CLIENT_ID',
+    GOOGLE_OAUTH_CLIENT_SECRET:'TEST_CLIENT_SECRET',
+    OAUTH_ENCRYPTION_KEY:'a'.repeat(64)
+  });
+  const started=await startOAuth(
+    req('/api/oauth/start',control,'POST',{}),e);
+  assert.equal(started.status,200);
+  const link=(await started.json()).authorizationUrl;
+  assert.equal(new URL(link).searchParams.get('access_type'),'offline');
+  assert.equal(new URL(link).searchParams.get('code_challenge_method'),'S256');
+  const scopes=new URL(link).searchParams.get('scope');
+  assert.match(scopes,/yt-analytics.readonly/);
+  assert.doesNotMatch(scopes,/youtube.upload/);
+  const state=new URL(link).searchParams.get('state');
+  assert.equal(typeof state,'string');
+  const cookie=started.headers.get('Set-Cookie').split(';')[0];
+  assert.equal(cookie,'vyron_oauth_state='+state);
+  const query=new URLSearchParams({state,code:'GOOGLE_CODE_TEST_VALID_1234'});
+  const callback=new Request('https://vyron-control.example/api/oauth/callback?'+query,{
+    headers:{Cookie:cookie}
+  });
+  const googleFetch=async(url,opts)=>{
+    if(url.includes('oauth2.googleapis.com/token')) {
+      const body=new URLSearchParams(opts.body);
+      assert.equal(body.get('client_secret'),'TEST_CLIENT_SECRET');
+      return new Response(JSON.stringify({
+        access_token:'ACCESS_TOKEN_DO_NOT_LOG',
+        refresh_token:'REFRESH_TOKEN_PRIVATE',
+        scope:'https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/yt-analytics.readonly'
+      }),{status:200});
+    }
+    if(url.includes('youtube/v3/channels')) {
+      assert.equal(opts.headers.Authorization,'Bearer ACCESS_TOKEN_DO_NOT_LOG');
+      return new Response(JSON.stringify({
+        items:[{id:channelId,snippet:{title:'Authorized channel'}}]
+      }),{status:200});
+    }
+    throw new Error('Unexpected OAuth mock URL');
+  };
+  const result=await callbackOAuth(callback,e,googleFetch);
+  assert.equal(result.status,302);
+  assert.equal(result.headers.get('Location'),'https://vyron-control.example/?oauth=connected');
+  const row=e.DB.native.prepare(
+    'SELECT refresh_token_cipher FROM google_oauth_profiles WHERE channel_id=?'
+  ).get(channelId);
+  assert.ok(row.refresh_token_cipher);
+  assert.equal(row.refresh_token_cipher.includes('REFRESH_TOKEN_PRIVATE'),false);
+  assert.equal(await decryptSecret(row.refresh_token_cipher,e),'REFRESH_TOKEN_PRIVATE');
+  const summary=await authorizedProfiles(e);
+  assert.equal(summary.profiles.length,1);
+  assert.equal(JSON.stringify(summary).includes('REFRESH_TOKEN_PRIVATE'),false);
+  await assert.rejects(()=>callbackOAuth(callback,e,googleFetch),/expired/);
+});
+
+test('authorized private Analytics can update while Mac sleeps, with 10-channel cron batches',async()=>{
+  const e=env(),channelId=id(5);
+  Object.assign(e,{
+    APP_ORIGIN:'https://vyron-control.example',
+    GOOGLE_OAUTH_CLIENT_ID:'TEST_CLIENT_ID',
+    GOOGLE_OAUTH_CLIENT_SECRET:'TEST_CLIENT_SECRET',
+    OAUTH_ENCRYPTION_KEY:'f'.repeat(64)
+  });
+  const {encryptSecret}=await import('../src/oauth.mjs');
+  const encrypted=await encryptSecret('PRIVATE_REFRESH_TOKEN',e);
+  await e.DB.prepare(
+    'INSERT INTO google_oauth_profiles(channel_id,channel_name,refresh_token_cipher,granted_scope,connected_at) VALUES (?,?,?,?,?)'
+  ).bind(channelId,'Test',encrypted,'read-only',new Date().toISOString()).run();
+  await e.DB.prepare('INSERT INTO channels(id,name) VALUES (?,?)').bind(channelId,'Test').run();
+  assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:05:00Z')}).offset,10);
+  assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:01:00Z')}),null);
+  const mockFetch=async(url,opts)=>{
+    if(url.includes('oauth2.googleapis.com/token')) {
+      assert.equal(new URLSearchParams(opts.body).get('refresh_token'),'PRIVATE_REFRESH_TOKEN');
+      return new Response(JSON.stringify({access_token:'SHORT_LIVED_TOKEN'}),{status:200});
+    }
+    if(url.includes('youtubeanalytics.googleapis.com')) {
+      assert.equal(opts.headers.Authorization,'Bearer SHORT_LIVED_TOKEN');
+      assert.match(url,/ids=channel%3D%3D/);
+      return new Response(JSON.stringify({
+        columnHeaders:['day','views','estimatedMinutesWatched',
+          'averageViewDuration','averageViewPercentage',
+          'subscribersGained','subscribersLost'].map(name=>({name})),
+        rows:[['2026-11-11',200,1000,160,62,9,1]]
+      }),{status:200});
+    }
+    throw new Error('unexpected endpoint');
+  };
+  const outcome=await runAnalyticsBatch(e,
+    {scheduledTime:Date.parse('2026-11-13T00:00:00Z')},mockFetch);
+  assert.equal(outcome.updated,1);
+  const stored=e.DB.native.prepare(
+    'SELECT source,views,watch_minutes FROM channel_analytics WHERE channel_id=?'
+  ).get(channelId);
+  assert.equal(stored.source,'GOOGLE_ANALYTICS_API');
+  assert.equal(stored.views,200);
+  assert.equal(stored.watch_minutes,1000);
+  const second=await runAnalyticsBatch(e,
+    {scheduledTime:Date.parse('2026-11-13T00:00:00Z')},mockFetch);
+  assert.equal(second.skipped,true);
 });
