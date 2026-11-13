@@ -150,6 +150,7 @@ async function load() {
     render(data);
     if (!eventHistoryExtended) await fetchEventHistory(true);
     await loadOauthProfiles();
+    await updatePushState();
   } catch (error) {
     if (error.status === 401) {
       sessionStorage.removeItem('vyron-control-access');
@@ -300,6 +301,80 @@ if(oauthOutcome==='connected'||oauthOutcome==='denied'||oauthOutcome==='failed')
     :oauthOutcome==='denied'?'Доступ Google не предоставлен.':'Не удалось подключить Google. Проверь настройку OAuth.';
   window.history.replaceState({},'',window.location.pathname);
 }
+function vapidKeyToBytes(value) {
+  const normalized=value.replaceAll('-','+').replaceAll('_','/');
+  const raw=atob(normalized+'='.repeat((4-normalized.length%4)%4));
+  return Uint8Array.from(raw,c=>c.charCodeAt(0));
+}
+async function updatePushState() {
+  const state=$('push-state'),msg=$('push-message');
+  if(!('serviceWorker' in navigator)||!('PushManager' in window)||
+      !('Notification' in window)||!window.isSecureContext){
+    state.textContent='Не поддерживается';
+    $('push-enable').disabled=true;
+    msg.textContent='Нужен HTTPS и поддерживаемый браузер. На iPhone добавь сайт на экран Домой.';
+    return;
+  }
+  try {
+    const setup=await api('/api/push/public-key');
+    if(!setup.supported||!setup.publicKey) {
+      state.textContent='Не настроено';
+      $('push-enable').disabled=true;
+      msg.textContent='Администратор ещё не настроил VAPID-ключи в Cloudflare.';
+      return;
+    }
+    const registration=await navigator.serviceWorker.register('/service-worker.js');
+    const sub=await registration.pushManager.getSubscription();
+    const granted=Notification.permission==='granted';
+    const enabled=Boolean(sub)&&granted;
+    state.textContent=enabled?'● Активны':'Не подключены';
+    $('push-enable').disabled=enabled;
+    $('push-disable').hidden=!enabled;
+  }catch(error){
+    state.textContent='Недоступно';
+    msg.textContent='Push сейчас недоступен: '+error.message;
+  }
+}
+$('push-enable').addEventListener('click',async()=>{
+  const button=$('push-enable'),msg=$('push-message');
+  button.disabled=true;
+  try {
+    if(!('serviceWorker' in navigator)||!('PushManager' in window)||
+       !('Notification' in window)||!window.isSecureContext)
+      throw new Error('Установи веб-приложение на главный экран iPhone и открой его по HTTPS.');
+    const permission=await Notification.requestPermission();
+    if(permission!=='granted')throw new Error('Разрешение на уведомления не предоставлено.');
+    const config=await api('/api/push/public-key');
+    if(!config.publicKey)throw new Error('VAPID-ключ ещё не настроен.');
+    const reg=await navigator.serviceWorker.register('/service-worker.js');
+    let sub=await reg.pushManager.getSubscription();
+    if(!sub) sub=await reg.pushManager.subscribe({
+      userVisibleOnly:true,applicationServerKey:vapidKeyToBytes(config.publicKey)
+    });
+    await api('/api/push/subscribe','POST',sub.toJSON());
+    msg.textContent='Уведомления подключены. Новые события будут приходить на iPhone.';
+    await updatePushState();
+  }catch(error){
+    msg.textContent='Не удалось включить: '+error.message;
+    button.disabled=false;
+  }
+});
+$('push-disable').addEventListener('click',async()=>{
+  const msg=$('push-message'),button=$('push-disable');
+  button.disabled=true;
+  try {
+    const reg=await navigator.serviceWorker.getRegistration();
+    const subscription=await reg?.pushManager?.getSubscription();
+    if(subscription){
+      await api('/api/push/unsubscribe','POST',{endpoint:subscription.endpoint});
+      await subscription.unsubscribe();
+    }
+    msg.textContent='Push-уведомления отключены.';
+    await updatePushState();
+  }catch(error){
+    msg.textContent='Ошибка отключения: '+error.message;
+  }finally{button.disabled=false;}
+});
 $('login-form').addEventListener('submit', async event => {
   event.preventDefault();
   accessToken = $('access-token').value.trim();
