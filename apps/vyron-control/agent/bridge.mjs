@@ -3,18 +3,20 @@ import { dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { cleanEvent,cleanStatus,checkRemoteCommand } from './logic.mjs';
+import { validatedChannelList } from '../cloudflare/src/core.mjs';
+import { createHash } from 'node:crypto';
 
 export class MacBridge {
   constructor({ url, token, deviceId='macbook_m1', eventsFile=null,
-      statusFile=null, cursorFile=join(homedir(),'.vyron-control-agent','cursor.json'),
+      statusFile=null, channelsFile=null, cursorFile=join(homedir(),'.vyron-control-agent','cursor.json'),
       fetchImpl=fetch }) {
     if (!/^https:\/\//.test(url) || !/^.{32,}$/.test(token))
       throw new Error('HTTPS URL and secure 32+ character agent token required');
     if (!/^[A-Za-z0-9_-]{3,50}$/.test(deviceId)) throw new Error('Invalid deviceId');
     this.url=url.replace(/\/$/,'');
     this.token=token;this.deviceId=deviceId;this.eventsFile=eventsFile;
-    this.statusFile=statusFile;this.cursorFile=cursorFile;this.fetchImpl=fetchImpl;
-    this.offset=0;this.busy=false;
+    this.statusFile=statusFile;this.channelsFile=channelsFile;this.cursorFile=cursorFile;this.fetchImpl=fetchImpl;
+    this.offset=0;this.busy=false;this.lastChannelHash=null;
   }
   async initialize() {
     try {
@@ -48,6 +50,27 @@ export class MacBridge {
       deviceId:this.deviceId,label:'VYRON / ENDLUME Mac',
       status:await this.readStatus()
     });
+  }
+  async syncChannelRegistry() {
+    if (!this.channelsFile) return { imported:0, reason:'no_export' };
+    let raw;
+    try {raw=JSON.parse(await readFile(this.channelsFile,'utf8'));}
+    catch(error) {
+      if(error.code==='ENOENT') return {imported:0, reason:'export_missing'};
+      throw error;
+    }
+    const entries=Array.isArray(raw)?raw:raw?.channels;
+    if (!Array.isArray(entries)) throw new Error('Expected channel export array');
+    const normalized=validatedChannelList(entries.map(ch=>({
+      id:ch.id ?? ch.channelId,
+      name:ch.name ?? ch.title
+    })));
+    if (!normalized.length) return { imported:0, reason:'empty_export' };
+    const hash=createHash('sha256').update(JSON.stringify(normalized)).digest('hex');
+    if (hash===this.lastChannelHash) return {imported:0, reason:'unchanged'};
+    await this.api('/api/agent/channels','POST',normalized);
+    this.lastChannelHash=hash;
+    return { imported:normalized.length };
   }
   async syncEvents() {
     if(!this.eventsFile)return {transmitted:0};
@@ -117,6 +140,7 @@ export class MacBridge {
     this.busy=true;
     try {
       await this.heartbeat();
+      await this.syncChannelRegistry();
       await this.syncEvents();
       await this.pendingCommands();
     } finally {this.busy=false;}
