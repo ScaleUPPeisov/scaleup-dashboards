@@ -452,6 +452,8 @@ test('Mac installer is valid shell and keeps agent token out of command history'
   const script=readFileSync(new URL('../../public/install-mac-agent.sh',import.meta.url),'utf8');
   execFileSync('bash',['-n'],{input:script});
   assert.match(script,/read -r -s -p .*AGENT_TOKEN <\/dev\/tty/);
+  assert.match(script,/if \(\( \$\{#AGENT_TOKEN\} < 32 \)\); then/);
+  assert.doesNotMatch(script,/\\\\\$\{#AGENT_TOKEN\}/);
   assert.match(script,/npm run agent:install/);
   assert.match(script,/chmod 700/);
   assert.doesNotMatch(script,/set -x/);
