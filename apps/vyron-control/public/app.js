@@ -17,10 +17,14 @@ const showDashboard = () => {
   $('dashboard').hidden = false;
   $('logout').hidden = false;
 };
-async function api(path, method = 'GET') {
+async function api(path, method = 'GET', body = undefined) {
   const response = await fetch(path, {
     method, cache: 'no-store',
-    headers: { Authorization: 'Bearer ' + accessToken }
+    headers: {
+      Authorization: 'Bearer ' + accessToken,
+      ...(body === undefined ? {} : {'Content-Type': 'application/json'})
+    },
+    ...(body === undefined ? {} : {body: JSON.stringify(body)})
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
