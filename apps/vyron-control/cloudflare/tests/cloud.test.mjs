@@ -26,6 +26,7 @@ class MockD1 {
   constructor(){
     this.native=new DatabaseSync(':memory:');
     this.native.exec(readFileSync(new URL('../migrations/0001_init.sql',import.meta.url),'utf8'));
+    this.native.exec(readFileSync(new URL('../migrations/0002_analytics.sql',import.meta.url),'utf8'));
   }
   prepare(sql){return new D1Query(this,sql);}
   async batch(stmts){
@@ -147,4 +148,31 @@ test('Mac event ingress is authenticated, deduped; commands await real Mac ACK',
   assert.equal(after.commands.length,0);
   assert.throws(()=>acceptedCommand({id:cid,targetDevice:'macbook_m1',kind:'publish_video'}));
   assert.throws(()=>safeEvent({id:'bad',kind:'arbitrary',title:'No',occurredAt:new Date().toISOString()}));
+});
+
+test('Mac Analytics 360 mirror snapshots are accepted without OAuth secrets',async()=>{
+  const e=env(),channelId=id(1);
+  await cloud.fetch(req('/api/channels',control,'POST',[{id:channelId,name:'Channel'}]),e);
+  const snap=[{
+    channelId,periodDays:28,views:5000,watchMinutes:12000,
+    avgViewSeconds:200,avgViewPercentage:65,
+    subscribersGained:100,subscribersLost:10,
+    impressions:9000,impressionCtr:4.5,
+    monetaryAuthorized:false,estimatedRevenue:999,
+    capturedAt:new Date().toISOString(),
+    daily:[{date:'2026-11-12',views:200,watchMinutes:400,
+      subscribersGained:1,subscribersLost:0}]
+  }];
+  const url='/api/agent/analytics';
+  assert.equal((await cloud.fetch(req(url,control,'POST',snap),e)).status,401);
+  assert.equal((await cloud.fetch(req(url,agent,'POST',snap),e)).status,200);
+  const status=await (await cloud.fetch(req('/api/status',control),e)).json();
+  assert.equal(status.channels[0].analytics.views,5000);
+  assert.equal(status.channels[0].analytics.watchMinutes,12000);
+  assert.equal(status.channels[0].analytics.estimatedRevenue,null);
+  assert.equal(status.channels[0].analytics.source,'VYRON_MAC_CACHE');
+  assert.equal(status.analyticsSummary.covered,1);
+  assert.equal(status.analyticsSummary.watchMinutes,12000);
+  assert.equal(e.DB.native.prepare('SELECT length(daily_json) AS size FROM channel_analytics').get().size>2,true);
+  assert.equal((await cloud.fetch(req(url,agent,'POST',[{...snap[0],channelId:'BAD'}]),e)).status,400);
 });
