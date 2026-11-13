@@ -78,6 +78,54 @@ https://developers.cloudflare.com/workers/configuration/cron-triggers/
    Replace all placeholders with real values. A standalone Mac agent can later
    import the registry exported by VYRON without manual channel-by-channel entry.
 
+## Independent private YouTube Analytics (read-only OAuth)
+
+Cloudflare code includes an independent Google OAuth 2.0 / PKCE flow. It does
+**not** reuse, extract or migrate VYRON's macOS Keychain tokens.
+
+1. In Google Cloud Console, enable **YouTube Data API v3** and
+   **YouTube Analytics API**. Configure an OAuth consent screen under your own
+   Google Cloud project. The app requires authorization to read the channels
+   you own/manage. The Google project may require publishing/verification
+   depending on the scope, test-user limits and Google's consent-screen policy.
+2. Create an OAuth 2.0 **Web application** client. Register the **exact**
+   HTTPS callback
+   `https://YOUR_WORKER.workers.dev/api/oauth/callback`.
+   Do not register an HTTP URI.
+3. Configure the new server-only secrets in Cloudflare (not GitHub):
+
+   ```sh
+   npx wrangler secret put GOOGLE_OAUTH_CLIENT_ID -c cloudflare/wrangler.jsonc
+   npx wrangler secret put GOOGLE_OAUTH_CLIENT_SECRET -c cloudflare/wrangler.jsonc
+   npx wrangler secret put OAUTH_ENCRYPTION_KEY -c cloudflare/wrangler.jsonc
+   ```
+
+   Generate `OAUTH_ENCRYPTION_KEY` as **64 lowercase hexadecimal characters**
+   (32 random bytes) and store the only safe backup outside the repository.
+   Losing it makes encrypted refresh tokens unreadable; this key must not be
+   copied into public messages, logs or GitHub Actions.
+
+4. Set `APP_ORIGIN` to the exact Worker HTTPS origin in the Wrangler
+   environment settings, e.g. `https://YOUR_WORKER.workers.dev`.
+   Then redeploy and recheck the Google redirect URI.
+5. On the iPhone dashboard select **Подключить Google-каналы**. Authorize
+   each Google identity/channel you manage and approve read-only scopes.
+   The cloud stores **AES-256-GCM encrypted** refresh tokens in D1; access
+   tokens are temporary and never sent to the iPhone.
+6. Two daily reporting windows begin at **07:00 and 22:00 Krasnoyarsk**.
+   YouTube public counters refresh exactly at those times. Detailed private
+   reports are processed in batches of 10 authorized channels at **07:00,
+   07:05, 07:10, 07:15 and 07:20** and similarly at 22:00–22:20, respecting
+   the 50-subrequest Worker Free limit. Only data Google has already processed
+   will be available in the report.
+
+Only `youtube.readonly` and `yt-analytics.readonly` OAuth scopes are
+requested. This does **not** grant YouTube publishing permission. Revenue
+requires a distinct monetary scope and explicit future owner consent;
+unavailable CTR metrics are never invented. Google OAuth refresh-token
+availability and expiry depend on Google consent-screen configuration.
+Additional YouTube Analytics request/quota limits apply separately.
+
 ## Free-tier behavior and constraints
 
 - The public-counter sync is ready to run without waking the Mac. The 07/22 cron
@@ -89,8 +137,7 @@ https://developers.cloudflare.com/workers/configuration/cron-triggers/
 - `api/status` shows the number of YouTube Data API calls reserved by this
   service on the current Pacific-time quota date. Other project-level consumers
   are not included.
-- Private CTR, audience retention, revenue and detailed YouTube Studio reports
-  are **not included yet**. They require safe OAuth / Google API access.
+- Private watch-time, average view duration, average view percentage and subscriber gains/losses have a read-only OAuth backend, but are **not live until Google consent/configuration is completed**. CTR and monetary reports remain unavailable unless supported by the authorized API.
 - PWA can show the last Mac state while the computer sleeps, but a sleeping Mac
   cannot render video or process commands. Commands stay queued until agent ACK.
 - No cloud URL, Google keys, Cloudflare deployment or live YouTube connections
