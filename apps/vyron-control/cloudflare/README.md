@@ -166,7 +166,7 @@ A VYRON export in this exact format must be created or adapted on the Mac before
 automatic channel enrollment works. Existing cloud channel snapshots survive
 later renames.
 
-The Mac bridge sends heartbeat every 45 seconds, uploads fine-grained JSONL
+In manual export mode, the Mac bridge sends a heartbeat every 45 seconds, uploads fine-grained JSONL
 events in idempotent batches and resumes from the durable byte cursor. It reads
 only explicitly configured paths and does **not** scan Keychain, local channel
 databases or YouTube credentials. No publishing, updater or destructive commands
@@ -187,6 +187,61 @@ Supported kinds: `render_started`, `render_progress`, `render_completed`,
 
 The bridge explicitly allowlists status and event fields; OAuth secrets, API
 keys and credentials are never intentionally transmitted.
+
+## Automatic Mac integration with VYRON 6.1.15
+
+The Mac bridge now reads the **existing VYRON app-data state file** by default:
+
+`~/Library/Application Support/studio.channelflow.desktop/state.json`
+
+It does not modify, migrate or replace the state. Only allowlisted fields
+(channel IDs/names, job counters, permitted journal events, and summaries of
+cached analytics) are exported to a **private** `~/.vyron-control-agent/`
+folder. OAuth tokens, Keychain data, music paths, passwords, file paths and
+freeform metadata are never sent to Cloudflare.
+
+No VYRON or ENDLUME application rebuild is needed for this initial,
+read-only connection. It uses the existing application journal and therefore
+cannot manufacture missing fine-grained events that the current VYRON version
+does not record. ENDLUME-specific progress still depends on the data VYRON has
+already recorded.
+
+Once the Cloudflare Worker has been deployed and `AGENT_TOKEN` configured,
+run these steps **on your own Mac**, not in GitHub Actions:
+
+```sh
+cd apps/vyron-control
+export VYRON_CONTROL_URL='https://YOUR_WORKER.workers.dev'
+export VYRON_AGENT_TOKEN='YOUR_SEPARATE_32PLUS_AGENT_TOKEN'
+npm run agent:install
+```
+
+`agent:install` installs a separate `studio.vyron.control.agent` macOS
+LaunchAgent. It creates a dedicated mode-0600 config file under
+`~/.vyron-control-agent/config.json` (the token is not placed in the plist).
+It then starts the service on login. The agent retries safely after network
+loss and preserves event IDs/offsets for idempotent recovery. It runs only
+while the Mac is awake; cloud analytics continues on the independent Worker.
+
+Uninstall without touching VYRON application data:
+`npm run agent:uninstall`. This preserves private agent configuration and
+sync history; rotate AGENT_TOKEN in Cloudflare to revoke remote access.
+
+To use another state mirror location, set
+`VYRON_AGENT_STATE_MIRROR=/full/path/to/app-state.json` **before launching
+the agent** and ensure the LaunchAgent has permission to read it. Never
+grant the bridge Full Disk Access unnecessarily.
+
+### Event coverage
+
+VYRON's existing activity journal is mapped to upload started/progress/accepted,
+render completions, production build status, schedule changes, OAuth errors,
+statistics refreshes and other allowlisted lifecycle events. At the start,
+the most recent 1,000 journal events are considered for import; subsequent
+changes are synced with replay protection. Cloud upload-completed events mean
+YouTube upload accepted, not guaranteed public publication. The cloud
+provides a paginated event timeline with filters for subscribers, render,
+upload and error events.
 
 ## Security / release policy
 
