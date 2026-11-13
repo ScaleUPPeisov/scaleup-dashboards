@@ -108,8 +108,16 @@ export VYRON_DEVICE_ID='macbook_m1'
 # Optional: explicit read-only export paths from VYRON/ENDLUME:
 export VYRON_AGENT_EVENTS_FILE='/private/path/to/vyron-events.jsonl'
 export VYRON_AGENT_STATUS_FILE='/private/path/to/vyron-status.json'
+export VYRON_AGENT_CHANNELS_FILE='/private/path/to/vyron-channels.json'
 npm run agent:start
 ```
+
+The channel registry file may be either an array of `{id,name}` objects or
+an object containing `channels: [{channelId,title}]`. The bridge uploads only
+the validated channel IDs and display names; it never sends Google credentials.
+A VYRON export in this exact format must be created or adapted on the Mac before
+automatic channel enrollment works. Existing cloud channel snapshots survive
+later renames.
 
 The Mac bridge sends heartbeat every 45 seconds, uploads fine-grained JSONL
 events in idempotent batches and resumes from the durable byte cursor. It reads
