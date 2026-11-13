@@ -81,11 +81,21 @@
         <p class="caution">Статус Mac считается актуальным, если от агента был сигнал за последние 3 минуты. При сне показываются последние сохранённые значения.</p>
       </section>
       <section class="card event-section">
-        <div class="section-title"><div><span class="eyebrow">ОТМЕТКИ РОСТА</span><h2>Рубежи подписчиков 🎉</h2></div></div>
+        <div class="section-title">
+          <div><span class="eyebrow">LIVE JOURNAL</span><h2>Все события VYRON</h2></div>
+          <select id="event-filter" aria-label="Фильтр событий">
+            <option value="all">Все события</option>
+            <option value="subscribers">Рубежи подписчиков</option>
+            <option value="uploads">Загрузки</option>
+            <option value="renders">Рендеры</option>
+            <option value="errors">Ошибки</option>
+          </select>
+        </div>
         <div id="events" class="events"></div>
+        <button id="events-more" class="ghost" hidden>Загрузить ещё события</button>
         <p class="caution">YouTube округляет публичные значения подписчиков: уведомление означает зафиксированный публичный рубеж, а не точное число.</p>
       </section>
-      <footer>VYRON CONTROL · Read-only public YouTube counters · Подробная Analytics 360° и контроль ENDLUME будут отдельным этапом.</footer>
+      <footer>VYRON CONTROL · YouTube публичные счётчики + авторизованная Analytics 360° + зеркало Mac. Данные помечаются по времени последней синхронизации.</footer>
     </section>
   </main>
 </body>
