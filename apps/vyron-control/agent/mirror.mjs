@@ -62,6 +62,41 @@ export function mirrorStatus(state) {
   };
 }
 
+export function mirrorAnalytics(state) {
+  const channels=Array.isArray(state?.channels)?state.channels:[];
+  return channels.flatMap(channel=>{
+    const id=channelIdFrom(channel),a=channel?.analytics;
+    if(!id || !a || typeof a!=='object')return [];
+    const days=Number(a.periodDays);
+    if(!Number.isSafeInteger(days)||days<1||days>365)return [];
+    const captured=Date.parse(a.updatedAt);
+    if(!Number.isFinite(captured))return [];
+    const numeric=(v)=>{
+      if(v===undefined||v===null)return null;
+      const n=Number(v);return Number.isFinite(n)&&n>=0?n:null;
+    };
+    const result={
+      channelId:id,periodDays:days,capturedAt:new Date(captured).toISOString(),
+      views:numeric(a.views),watchMinutes:numeric(a.watchMinutes),
+      avgViewSeconds:numeric(a.averageViewDuration),
+      avgViewPercentage:numeric(a.averageViewPercentage),
+      subscribersGained:numeric(a.subscribersGained),
+      subscribersLost:numeric(a.subscribersLost),
+      impressions:numeric(a.impressions),impressionCtr:numeric(a.impressionCtr),
+      monetaryAuthorized:a.monetaryAuthorized===true,
+      estimatedRevenue:a.monetaryAuthorized===true?numeric(a.estimatedRevenue):null,
+      daily:Array.isArray(a.daily)?a.daily.slice(-90).flatMap(row=>{
+        if(!/^\\d{4}-\\d{2}-\\d{2}$/.test(row?.date||''))return [];
+        return [{date:row.date,views:numeric(row.views),
+          watchMinutes:numeric(row.watchMinutes),
+          subscribersGained:numeric(row.subscribersGained),
+          subscribersLost:numeric(row.subscribersLost)}];
+      }):[]
+    };
+    return [result];
+  });
+}
+
 export function mirrorEvents(state) {
   const channels = Array.isArray(state?.channels) ? state.channels : [];
   const maps = new Map(channels.map(c => [c?.id,channelIdFrom(c)]));
@@ -115,6 +150,7 @@ export class MirrorExport {
     this.eventsFile=join(outDir,'events.jsonl');
     this.channelsFile=join(outDir,'channels.json');
     this.statusFile=join(outDir,'status.json');
+    this.analyticsFile=join(outDir,'analytics.json');
     this.cursorFile=join(outDir,'mirror-seen.json');
     this.seen=new Set();
     this.initialized=false;
@@ -141,8 +177,10 @@ export class MirrorExport {
       throw new Error('Invalid VYRON state mirror, refusing to export');
     const channels=mirrorChannels(state);
     const status=mirrorStatus(state);
+    const analytics=mirrorAnalytics(state);
     await privateJson(this.channelsFile,channels);
     await privateJson(this.statusFile,status);
+    await privateJson(this.analyticsFile,analytics);
     const all=mirrorEvents(state);
     // The first start imports the most recent history rather than flooding
     // a free-tier Worker with years of old journal rows.
@@ -158,6 +196,6 @@ export class MirrorExport {
       this.seen=new Set(ids);
     }
     this.lastSignature=signature;
-    return {status:'exported',events:pending.length,channels:channels.length};
+    return {status:'exported',events:pending.length,channels:channels.length,analytics:analytics.length};
   }
 }
