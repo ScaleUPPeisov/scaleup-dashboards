@@ -114,3 +114,41 @@ test('mirror refuses corrupted state without overwriting exported last good data
     await assert.rejects(()=>mirror.refresh(),/Invalid VYRON state mirror/);
   }finally{await rm(dir,{recursive:true,force:true});}
 });
+
+test('daily totals follow Krasnoyarsk date and midnight resets even without new VYRON events',async()=>{
+  const state=sampleState();
+  state.uploadHistory=[
+    {id:'one',status:'UPLOADED',uploadedAt:'2026-11-12T16:55:00Z'},
+    {id:'two',status:'UPLOADED',uploadedAt:'2026-11-12T17:05:00Z'},
+    {id:'three',status:'UPLOADED',uploadedAt:'2026-11-12T17:15:00Z'}
+  ];
+  state.activityJournal.push(
+    {eventId:'r1',eventType:'RENDER_COMPLETED',timestamp:'2026-11-12T16:00:00Z'},
+    {eventId:'r2',eventType:'RENDER_COMPLETED',timestamp:'2026-11-12T17:20:00Z'},
+    {eventId:'f1',eventType:'UPLOAD_FAILED',timestamp:'2026-11-12T17:30:00Z'}
+  );
+  const before=mirrorStatus(state,new Date('2026-11-12T16:59:00Z'));
+  assert.equal(before.uploadsToday,1);
+  const after=mirrorStatus(state,new Date('2026-11-12T17:45:00Z'));
+  assert.equal(after.uploadsToday,2);
+  assert.equal(after.rendersCompletedToday,1);
+  assert.equal(after.uploadFailuresToday,1);
+  assert.equal(after.jobsReadyUpload,1);
+  assert.equal(after.channelsTotal,2);
+  assert.equal(after.channelsBound,1);
+
+  const root=await mkdtemp(join(tmpdir(),'vyron-day-'));
+  try {
+    const mirrorFile=join(root,'state.json'),outDir=join(root,'export');
+    await writeFile(mirrorFile,JSON.stringify(state));
+    let current=new Date('2026-11-12T16:59:00Z');
+    const exp=new MirrorExport({mirrorFile,outDir,now:()=>current});
+    await exp.initialize();
+    assert.equal((await exp.refresh()).status,'exported');
+    assert.equal(JSON.parse(await readFile(exp.statusFile,'utf8')).uploadsToday,1);
+    current=new Date('2026-11-12T17:45:00Z');
+    assert.equal((await exp.refresh()).status,'exported');
+    assert.equal(JSON.parse(await readFile(exp.statusFile,'utf8')).uploadsToday,2);
+    assert.equal((await exp.refresh()).status,'unchanged');
+  }finally{await rm(root,{recursive:true,force:true});}
+});
