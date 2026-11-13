@@ -88,6 +88,15 @@ async function readJson(request, bytes=65536) {
   return JSON.parse(source);
 }
 function number(value) { return value == null ? null : Number(value); }
+function publicEventPayload(payload) {
+  const projectId=typeof payload?.projectId==='string'&&
+    /^[A-Za-z0-9_-]{1,150}$/.test(payload.projectId)?payload.projectId:null;
+  const errorCode=typeof payload?.errorCode==='string'&&
+    /^[A-Za-z0-9_-]{1,80}$/.test(payload.errorCode)?payload.errorCode:null;
+  const percent=Number.isFinite(payload?.percent)&&payload.percent>=0&&payload.percent<=100
+    ?Math.round(payload.percent):null;
+  return {projectId,errorCode,percent};
+}
 
 async function health(env) {
   if (!env.DB) return json({
@@ -202,11 +211,12 @@ async function fetchStatus(env) {
     covered:channels.filter(ch=>ch[key]!==null).length,total:channels.length
   });
   const events=(e.results||[]).map(row=>{
-    const payload=JSON.parse(row.payload_json||'{}');
+    let payload={};try{payload=JSON.parse(row.payload_json||'{}');}catch{}
     return {
       id:row.id,type:row.kind,channelId:row.channel_id,name:row.title,
       title:row.title,milestone:row.kind==='subscriber_milestone'?payload.milestone:null,
-      detectedAt:row.received_at,occurredAt:row.occurred_at,approximate:payload.approximate===true
+      detectedAt:row.received_at,occurredAt:row.occurred_at,
+      approximate:payload.approximate===true,...publicEventPayload(payload)
     };
   });
   const configured=Boolean(env.YOUTUBE_API_KEY)&&channels.length>0;
@@ -283,7 +293,8 @@ async function eventHistory(env,request) {
     return {id:row.id,type:row.kind,channelId:row.channel_id,
       name:row.title,title:row.title,
       milestone:row.kind==='subscriber_milestone'?payload.milestone:null,
-      occurredAt:row.occurred_at,detectedAt:row.received_at};
+      occurredAt:row.occurred_at,detectedAt:row.received_at,
+      approximate:payload.approximate===true,...publicEventPayload(payload)};
   });
   const last=results.at(-1);
   return json({events,nextCursor:results.length===limit&&last?

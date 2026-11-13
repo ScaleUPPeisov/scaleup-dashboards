@@ -124,11 +124,31 @@ function renderEvents(events) {
     return;
   }
   for (const event of events) {
-    const row = make('div', 'event');
+    const failed=event.type==='upload_failed'||event.type==='render_failed'||event.type==='agent_error';
+    const completed=event.type==='upload_completed'||event.type==='render_completed'||
+      (event.type==='agent_info'&&/^YOUTUBE READY\b/.test(event.title||''));
+    const icon=event.type==='subscriber_milestone'?'🎉':failed?'⛔':completed?'✅':
+      event.type==='upload_progress'||event.type==='render_progress'?'↗':'•';
+    const labels={
+      subscriber_milestone:number(event.milestone)+' подписчиков',
+      upload_queued:'В очереди',upload_started:'Загрузка началась',
+      upload_progress:'Загрузка',upload_completed:'YouTube принял видео',
+      upload_failed:'Ошибка загрузки',render_started:'Рендер начался',
+      render_progress:'Рендер',render_completed:'Рендер завершён',
+      render_failed:'Ошибка рендера',agent_error:'Ошибка агента',
+      agent_info:/^YOUTUBE READY\b/.test(event.title||'')?'YouTube: готово':
+        /^YOUTUBE PROCESSING\b/.test(event.title||'')?'YouTube: обработка':'Событие агента'
+    };
+    const row = make('div', 'event'+(failed?' event-error':completed?' event-success':''));
     const text = make('div', 'event-text');
-    text.append(make('strong', '', '🎉 ' + event.name),
-      make('span', '', event.type === 'subscriber_milestone' ? number(event.milestone) + ' подписчиков' : event.type.replaceAll('_',' ')),
-      make('span', '', time(event.detectedAt)));
+    const details=[];
+    if(event.projectId)details.push('Задание '+event.projectId.slice(0,8));
+    if(event.errorCode)details.push('Код '+event.errorCode);
+    if(event.percent!==null&&event.percent!==undefined)details.push(number(event.percent)+'%');
+    text.append(make('strong', '', icon+' '+event.name),
+      make('span', 'event-kind', labels[event.type]||event.type.replaceAll('_',' ')));
+    if(details.length)text.append(make('span','event-details',details.join(' · ')));
+    text.append(make('span', 'event-time', time(event.detectedAt)));
     row.append(text);
     list.append(row);
   }

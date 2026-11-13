@@ -363,7 +363,9 @@ test('full event history supports stable pagination and category filters',async(
   const events=[
     {id:'render_event_000001',kind:'render_completed',title:'Rendered',occurredAt:now},
     {id:'upload_event_000002',kind:'upload_started',title:'Upload',occurredAt:now},
-    {id:'upload_event_000003',kind:'upload_failed',title:'Upload failed',occurredAt:now},
+    {id:'upload_event_000003',kind:'upload_failed',title:'Upload failed',occurredAt:now,
+      payload:{projectId:'project_job_123456',errorCode:'YOUTUBE_RUNTIME',percent:42,
+        privatePath:'/must/not/be/returned'}},
     {id:'quota_event_000004',kind:'quota_warning',title:'Quota warning',occurredAt:now},
     {id:'render_event_000005',kind:'render_failed',title:'Render failed',occurredAt:now}
   ];
@@ -382,6 +384,11 @@ test('full event history supports stable pagination and category filters',async(
   assert.equal(new Set([...first.events,...second.events].map(x=>x.id)).size,4);
   const filtered=await (await cloud.fetch(req('/api/events?category=errors',control),e)).json();
   assert.equal(filtered.events.length,3);
+  const failed=filtered.events.find(x=>x.id==='upload_event_000003');
+  assert.equal(failed.projectId,'project_job_123456');
+  assert.equal(failed.errorCode,'YOUTUBE_RUNTIME');
+  assert.equal(failed.percent,42);
+  assert.equal(failed.privatePath,undefined);
   assert.equal((await cloud.fetch(req('/api/events?category=unknown',control),e)).status,400);
 });
 

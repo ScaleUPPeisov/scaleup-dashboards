@@ -3,5 +3,6 @@
 .env.*
 channels.json
 data/
+node_modules/
 *.pem
 *.key
