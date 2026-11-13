@@ -141,6 +141,50 @@ async function fetchStatus(env) {
   };
 }
 
+async function eventHistory(env,request) {
+  const params=new URL(request.url).searchParams;
+  const limit=Math.min(100,Math.max(1,Number(params.get('limit')||50)||50));
+  const category=params.get('category')||'all';
+  const groups={
+    all:null,
+    subscribers:['subscriber_milestone'],
+    renders:['render_started','render_progress','render_completed','render_failed'],
+    uploads:['upload_queued','upload_started','upload_progress','upload_completed','upload_failed'],
+    errors:['render_failed','upload_failed','agent_error','disk_offline','quota_warning']
+  };
+  if(!Object.prototype.hasOwnProperty.call(groups,category))
+    return errorReply('Unknown event category',400);
+  const beforeAt=params.get('beforeAt'),beforeId=params.get('beforeId');
+  let sql='SELECT id,kind,channel_id,title,payload_json,occurred_at,received_at FROM events WHERE 1=1';
+  const binds=[];
+  if(beforeAt||beforeId){
+    if(!beforeAt||!beforeId||!Number.isFinite(Date.parse(beforeAt))||
+      !/^[A-Za-z0-9:_-]{1,120}$/.test(beforeId))
+      return errorReply('Invalid event cursor',400);
+    sql+=' AND (received_at < ? OR (received_at = ? AND id < ?))';
+    binds.push(beforeAt,beforeAt,beforeId);
+  }
+  if(groups[category]) {
+    const kinds=groups[category];
+    sql+=' AND kind IN ('+kinds.map(()=>'?').join(',')+')';
+    binds.push(...kinds);
+  }
+  sql+=' ORDER BY received_at DESC,id DESC LIMIT ?';
+  binds.push(limit);
+  const {results=[]}=await env.DB.prepare(sql).bind(...binds).all();
+  const events=results.map(row=>{
+    let payload={};
+    try {payload=JSON.parse(row.payload_json||'{}');}catch{}
+    return {id:row.id,type:row.kind,channelId:row.channel_id,
+      name:row.title,title:row.title,
+      milestone:row.kind==='subscriber_milestone'?payload.milestone:null,
+      occurredAt:row.occurred_at,detectedAt:row.received_at};
+  });
+  const last=results.at(-1);
+  return json({events,nextCursor:results.length===limit&&last?
+    {beforeAt:last.received_at,beforeId:last.id}:null,category});
+}
+
 async function enrollChannels(env,request) {
   const items=validatedChannelList(await readJson(request,32000));
   if(!items.length) return errorReply('No channels to enroll',400);
@@ -272,6 +316,8 @@ export default {
         return json(await authorizedProfiles(env));
       if (url.pathname==='/api/oauth/disconnect'&&request.method==='POST')
         return json(await disconnectProfile(request,env));
+      if (url.pathname==='/api/events'&&request.method==='GET')
+        return eventHistory(env,request);
       if (url.pathname==='/api/status'&&request.method==='GET')
         return json(await fetchStatus(env));
       if (url.pathname==='/api/refresh'&&request.method==='POST') {
