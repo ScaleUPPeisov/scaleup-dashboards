@@ -10,7 +10,7 @@ export function sanitizedAnalytics(raw) {
   const capturedAt=new Date(raw.capturedAt);
   if (!Number.isFinite(capturedAt.getTime()))throw new Error('Invalid analytics timestamp');
   const periodDays=Number(raw.periodDays);
-  if(![7,28,90,365].includes(periodDays))throw new Error('Unsupported analytics period');
+  if(!Number.isSafeInteger(periodDays)||periodDays<1||periodDays>365)throw new Error('Unsupported analytics period');
   const daily=Array.isArray(raw.daily) ? raw.daily.slice(-90).flatMap(row=>{
     const date=typeof row.date==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(row.date)
       ?row.date:null;
