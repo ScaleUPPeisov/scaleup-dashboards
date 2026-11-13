@@ -252,7 +252,9 @@ test('authorized private Analytics can update while Mac sleeps, with 10-channel 
     'INSERT INTO google_oauth_profiles(channel_id,channel_name,refresh_token_cipher,granted_scope,connected_at) VALUES (?,?,?,?,?)'
   ).bind(channelId,'Test',encrypted,'read-only',new Date().toISOString()).run();
   await e.DB.prepare('INSERT INTO channels(id,name) VALUES (?,?)').bind(channelId,'Test').run();
-  assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:05:00Z')}).offset,10);
+  assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:05:00Z')}).offset,0);
+  assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:25:00Z')}).offset,40);
+  assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:00:00Z')}),null);
   assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:01:00Z')}),null);
   const mockFetch=async(url,opts)=>{
     if(url.includes('oauth2.googleapis.com/token')) {
@@ -272,7 +274,7 @@ test('authorized private Analytics can update while Mac sleeps, with 10-channel 
     throw new Error('unexpected endpoint');
   };
   const outcome=await runAnalyticsBatch(e,
-    {scheduledTime:Date.parse('2026-11-13T00:00:00Z')},mockFetch);
+    {scheduledTime:Date.parse('2026-11-13T00:05:00Z')},mockFetch);
   assert.equal(outcome.updated,1);
   const stored=e.DB.native.prepare(
     'SELECT source,views,watch_minutes FROM channel_analytics WHERE channel_id=?'
@@ -281,7 +283,7 @@ test('authorized private Analytics can update while Mac sleeps, with 10-channel 
   assert.equal(stored.views,200);
   assert.equal(stored.watch_minutes,1000);
   const second=await runAnalyticsBatch(e,
-    {scheduledTime:Date.parse('2026-11-13T00:00:00Z')},mockFetch);
+    {scheduledTime:Date.parse('2026-11-13T00:05:00Z')},mockFetch);
   assert.equal(second.skipped,true);
 });
 
