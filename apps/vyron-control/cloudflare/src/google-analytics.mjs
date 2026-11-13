@@ -1,10 +1,11 @@
 import { refreshAccessToken } from './oauth.mjs';
 
-// Cloudflare Workers Free allows 50 subrequests/invocation. A tranche of 10
-// channels uses <= 20 Google requests plus D1 operations, staying below the
-// free-tier invocation limit. Public counters still sync at exactly 07/22 KRSK.
+// Workers Free caps each invocation at 50 subrequests. Keep private Analytics
+// (10 Google profiles per invocation) in DIFFERENT cron minutes from public
+// counters, so the 07:00/22:00 counters never share that budget.
+// Each profile: refresh + analytics + D1 insert + D1 status = ~4 subrequests.
 const ANALYTICS_HOURS=new Set([0,15]);
-const ANALYTICS_MINUTES=new Set([0,5,10,15,20]);
+const ANALYTICS_MINUTES=new Set([5,10,15,20,25]);
 const BATCH_SIZE=10;
 
 function isoDay(ms){return new Date(ms).toISOString().slice(0,10);}
@@ -20,7 +21,7 @@ export function nextAnalyticsSlot(controller) {
   const day=isoDay(date.getTime()+7*3600*1000);
   const minute=String(date.getUTCMinutes()).padStart(2,'0');
   return {slot:`${day}@${krskHour}:${minute}:analytics`,
-    offset:Math.floor(date.getUTCMinutes()/5)*BATCH_SIZE,date};
+    offset:(Math.floor(date.getUTCMinutes()/5)-1)*BATCH_SIZE,date};
 }
 export function parseDailyReport(json,channelId,asOf) {
   if(!json||!Array.isArray(json.columnHeaders))throw new Error('YouTube Analytics invalid response');
