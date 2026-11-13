@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import cloud from '../src/index.mjs';
 import { cronSlot, crossedMilestones, pacificDay, safeEvent, acceptedCommand } from '../src/core.mjs';
@@ -444,6 +445,16 @@ test('Web Push notifications use encrypted VAPID payload builder and deduplicate
   assert.equal(second.attempted,0);
   assert.equal(fetchCount,1);
   assert.equal(e.DB.native.prepare("SELECT status FROM push_deliveries").get().status,'sent');
+});
+
+
+test('Mac installer is valid shell and keeps agent token out of command history',()=>{
+  const script=readFileSync(new URL('../../public/install-mac-agent.sh',import.meta.url),'utf8');
+  execFileSync('bash',['-n'],{input:script});
+  assert.match(script,/read -r -s -p .*AGENT_TOKEN <\/dev\/tty/);
+  assert.match(script,/npm run agent:install/);
+  assert.match(script,/chmod 700/);
+  assert.doesNotMatch(script,/set -x/);
 });
 
 test('free-tier cron schedules never run public counters, private Analytics and Web Push together',()=>{
