@@ -224,7 +224,9 @@ async function heartbeat(env,request) {
   const deviceId=String(data.deviceId||'');
   if (!/^[A-Za-z0-9_-]{3,50}$/.test(deviceId)) return errorReply('Invalid device ID');
   const keys=['vyronVersion','endlumeVersion','macAwake','diskOnline',
-    'rendersActive','uploadsQueued','uploadsCompleted','lastError','syncCursor'];
+    'rendersActive','uploadsQueued','uploadsCompleted','uploadsToday',
+    'rendersCompletedToday','uploadFailuresToday','jobsReadyUpload',
+    'channelsTotal','channelsBound','lastError','syncCursor'];
   const status={};
   for(const key of keys){
     const value=data.status?.[key];
