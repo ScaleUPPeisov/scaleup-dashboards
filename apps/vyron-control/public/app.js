@@ -83,6 +83,24 @@ function renderChannels(channels) {
       details.children[0].append(delta);
     }
     row.append(left, details);
+    if (ch.analytics) {
+      const a = ch.analytics;
+      const extras = make('div', 'channel-analytics');
+      const fields = [
+        ['Период', number(a.periodDays) + ' дн.'],
+        ['Просмотры', number(a.views)],
+        ['Время просмотра', a.watchMinutes == null ? '—' : number(Math.round(a.watchMinutes)) + ' мин'],
+        ['Удержание', a.averageViewPercentage == null ? '—' : a.averageViewPercentage.toFixed(1) + '%'],
+        ['CTR', a.impressionCtr == null ? 'Нет данных API' : a.impressionCtr.toFixed(1) + '%']
+      ];
+      for (const [label, value] of fields) {
+        const item = make('span', '', label + ': ' + value);
+        extras.append(item);
+      }
+      extras.append(make('span', 'mac-stale-label',
+        'Analytics 360° · кеш Mac от ' + time(a.updatedAt)));
+      row.append(extras);
+    }
     list.append(row);
   }
 }
