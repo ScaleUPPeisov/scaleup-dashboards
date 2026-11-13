@@ -76,6 +76,7 @@ export async function dispatchPush(env,fetchImpl=fetch,buildPayload=buildPushPay
   if(!env.VAPID_PRIVATE_KEY||!vapidPublic(env)||!env.VAPID_SUBJECT)
     return {skipped:true,reason:'vapid_not_configured'};
   const now=new Date().toISOString();
+  const retryBefore=new Date(Date.now()-5*60_000).toISOString();
   const {results=[]}=await env.DB.prepare(`
     SELECT p.endpoint_hash,p.subscription_json,e.id,e.kind,e.title,
       e.received_at,d.attempts
@@ -87,9 +88,9 @@ export async function dispatchPush(env,fetchImpl=fetch,buildPayload=buildPushPay
       'upload_completed','upload_failed','disk_offline','quota_warning','agent_error')
       AND (d.event_id IS NULL OR
         (d.status='retry' AND d.attempts < 3
-          AND d.updated_at < datetime('now','-5 minutes')))
+          AND d.updated_at < ?)))
     ORDER BY e.received_at ASC,e.id ASC LIMIT 8
-  `).all();
+  `).bind(retryBefore).all();
   let sent=0,failed=0;
   for(const row of results) {
     const subscription=JSON.parse(row.subscription_json);
