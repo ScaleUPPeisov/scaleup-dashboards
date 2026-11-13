@@ -88,7 +88,7 @@ export async function dispatchPush(env,fetchImpl=fetch,buildPayload=buildPushPay
     WHERE e.kind IN ('subscriber_milestone','render_completed','render_failed',
       'upload_completed','upload_failed','disk_offline','quota_warning','agent_error')
       AND (d.event_id IS NULL OR
-        (d.status='retry' AND d.attempts < 3
+        (d.status IN ('retry','sending') AND d.attempts < 3
           AND d.updated_at < ?))
     ORDER BY e.received_at ASC,e.id ASC LIMIT 8
   `).bind(retryBefore).all();
@@ -104,8 +104,9 @@ export async function dispatchPush(env,fetchImpl=fetch,buildPayload=buildPushPay
     const claim=await env.DB.prepare(`
       UPDATE push_deliveries
       SET status='sending',attempts=attempts+1,last_attempt_at=?,updated_at=?
-      WHERE endpoint_hash=? AND event_id=? AND status='retry' AND attempts < 3
-    `).bind(nowAt,nowAt,row.endpoint_hash,row.id).run();
+      WHERE endpoint_hash=? AND event_id=? AND attempts < 3
+        AND (status='retry' OR (status='sending' AND updated_at < ?))
+    `).bind(nowAt,nowAt,row.endpoint_hash,row.id,retryBefore).run();
     if(Number(claim.meta?.changes)!==1)continue;
     try {
       const payload=await buildPayload({
