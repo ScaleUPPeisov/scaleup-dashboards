@@ -7,6 +7,7 @@ import { cronSlot, crossedMilestones, pacificDay, safeEvent, acceptedCommand } f
 import { manualSlot, reserveQuota, scheduledSync } from '../src/sync.mjs';
 import { startOAuth,callbackOAuth,authorizedProfiles,decryptSecret } from '../src/oauth.mjs';
 import { runAnalyticsBatch,nextAnalyticsSlot,parseDailyReport } from '../src/google-analytics.mjs';
+import { validSubscription,registerPush,dispatchPush } from '../src/push.mjs';
 
 class D1Query {
   constructor(db,sql){this.db=db;this.sql=sql;this.args=[];}
@@ -313,4 +314,66 @@ test('full event history supports stable pagination and category filters',async(
   const filtered=await (await cloud.fetch(req('/api/events?category=errors',control),e)).json();
   assert.equal(filtered.events.length,3);
   assert.equal((await cloud.fetch(req('/api/events?category=unknown',control),e)).status,400);
+});
+
+test('iPhone Web Push subscriptions require valid Apple/Google HTTPS endpoints',async()=>{
+  const e=env();
+  const subscription={
+    endpoint:'https://webpush.push.apple.com/valid/test_sub_0001',
+    expirationTime:null,
+    keys:{p256dh:'A'.repeat(87),auth:'B'.repeat(22)}
+  };
+  assert.equal(validSubscription(subscription).endpoint,subscription.endpoint);
+  assert.throws(()=>validSubscription({...subscription,endpoint:'https://127.0.0.1/private'}));
+  assert.throws(()=>validSubscription({...subscription,endpoint:'http://webpush.push.apple.com/private'}));
+  assert.throws(()=>validSubscription({...subscription,endpoint:'https://example.com/private'}));
+  const request=new Request('https://vyron-control.example/api/push/subscribe',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(subscription)
+  });
+  assert.deepEqual(await registerPush(e,request),{subscribed:true});
+  assert.equal(e.DB.native.prepare('SELECT count(*) n FROM push_subscriptions').get().n,1);
+  const present=e.DB.native.prepare('SELECT subscription_json FROM push_subscriptions').get();
+  assert.ok(JSON.parse(present.subscription_json).keys.p256dh);
+});
+
+test('Web Push notifications use encrypted VAPID payload builder and deduplicate deliveries',async()=>{
+  const e=env();
+  Object.assign(e,{VAPID_PUBLIC_KEY:'A'.repeat(87),VAPID_PRIVATE_KEY:'PRIVATE_TEST',
+    VAPID_SUBJECT:'mailto:owner@example.test'});
+  const sub={
+    endpoint:'https://webpush.push.apple.com/test_device_subscription',
+    keys:{p256dh:'A'.repeat(87),auth:'B'.repeat(22)}
+  };
+  await registerPush(e,new Request('https://vyron-control.example/api/push/subscribe',{
+    method:'POST',body:JSON.stringify(sub)
+  }));
+  await e.DB.prepare("UPDATE push_subscriptions SET created_at='2020-01-01T00:00:00.000Z'").run();
+  const when=new Date().toISOString();
+  await e.DB.prepare(`
+    INSERT INTO events (id,kind,channel_id,title,occurred_at,received_at)
+    VALUES (?,?,?,?,?,?)
+  `).bind('milestone_2026_001','subscriber_milestone',null,
+    'Neon Drive FM: 200 подписчиков',when,when).run();
+  let fetchCount=0,builderCalls=0;
+  const sender=async(url,opts)=>{
+    assert.match(url,/webpush.push.apple.com/);
+    assert.equal(opts.method,'POST');
+    fetchCount++;
+    return {ok:true,status:201};
+  };
+  const builder=async(message,subscription,vapid)=>{
+    builderCalls++;
+    assert.match(message.data,/200 подписчиков/);
+    assert.equal(vapid.subject,'mailto:owner@example.test');
+    return {method:'POST',body:'test_encrypted'};
+  };
+  const first=await dispatchPush(e,sender,builder);
+  assert.equal(first.sent,1);
+  assert.equal(fetchCount,1);
+  assert.equal(builderCalls,1);
+  const second=await dispatchPush(e,sender,builder);
+  assert.equal(second.attempted,0);
+  assert.equal(fetchCount,1);
+  assert.equal(e.DB.native.prepare("SELECT status FROM push_deliveries").get().status,'sent');
 });
