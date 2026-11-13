@@ -10,6 +10,9 @@ let current = null;
 let eventCursor = null;
 let eventHistoryExtended = false;
 let eventRows = [];
+let macAgentToken = '';
+const macAgentInstallCommand =
+  'curl -fsSL https://vyron-control.endlume-peisov-3ee6109f.workers.dev/install-mac-agent.sh | bash';
 const showLogin = error => {
   $('login').hidden = false;
   $('dashboard').hidden = true;
@@ -217,6 +220,7 @@ $('events-more').addEventListener('click',()=>{
 function renderDevices(data) {
   const devices = data.devices || [];
   const device = devices[0];
+  $('mac-agent-prepare').textContent = device ? 'Переустановить Mac Bridge' : 'Подключить Mac';
   const button = $('mac-status-request');
   const commandList=$('mac-command-list');
   commandList.replaceChildren();
@@ -289,6 +293,42 @@ $('mac-status-request').addEventListener('click', async () => {
     $('mac-command-feedback').textContent = 'Не удалось отправить: '+error.message;
   } finally {button.disabled = false;}
 });
+$('mac-agent-prepare').addEventListener('click', async () => {
+  const button=$('mac-agent-prepare'),message=$('mac-agent-message');
+  button.disabled=true;
+  message.textContent='Создаём отдельный ключ только для телеметрии Mac…';
+  try {
+    const result=await api('/api/mac/agent-token','POST',{});
+    if(typeof result.agentToken!=='string'||result.agentToken.length<32)
+      throw new Error('Сервер не вернул корректный ключ агента.');
+    macAgentToken=result.agentToken;
+    $('mac-agent-command').textContent=macAgentInstallCommand;
+    $('mac-agent-command').hidden=false;
+    $('mac-agent-copy-command').hidden=false;
+    $('mac-agent-copy-token').hidden=false;
+    message.textContent='Сначала скопируй команду установки и запусти её в Терминале на Mac. Когда скрипт попросит ключ, вернись сюда, скопируй ключ агента и вставь его в Терминал. Ввод ключа будет скрыт.';
+  }catch(error) {
+    message.textContent='Не удалось подготовить Mac Bridge: '+error.message;
+  }finally {button.disabled=false;}
+});
+$('mac-agent-copy-command').addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(macAgentInstallCommand);
+    $('mac-agent-message').textContent='Команда скопирована. Вставь её в Терминал на Mac и нажми Enter.';
+  }catch(error) {
+    $('mac-agent-message').textContent='Не удалось скопировать команду. Выдели её в поле ниже и скопируй вручную.';
+  }
+});
+$('mac-agent-copy-token').addEventListener('click', async () => {
+  if(!macAgentToken)return;
+  try {
+    await navigator.clipboard.writeText(macAgentToken);
+    $('mac-agent-message').textContent='Ключ агента скопирован. Вставь его в скрытый запрос Терминала. Не отправляй ключ в чат.';
+  }catch(error) {
+    $('mac-agent-message').textContent='Не удалось скопировать ключ. Повтори на HTTPS-странице в актуальном Chrome.';
+  }
+});
+
 async function loadOauthProfiles() {
   const counter=$('oauth-count'),button=$('oauth-connect'),message=$('oauth-message');
   const container=$('oauth-profiles');
