@@ -54,10 +54,25 @@ async function sameToken(provided, expected) {
   for (let i=0;i<left.length;i++) diff |= left[i]^right[i];
   return diff === 0;
 }
+async function deriveAgentToken(controlToken) {
+  if (typeof controlToken !== 'string' || controlToken.length < REQUIRED_TOKEN_LENGTH) return '';
+  const key = await crypto.subtle.importKey(
+    'raw', new TextEncoder().encode(controlToken),
+    { name:'HMAC', hash:'SHA-256' }, false, ['sign']
+  );
+  const signature = await crypto.subtle.sign(
+    'HMAC', key, new TextEncoder().encode('VYRON CONTROL / MAC AGENT / v1')
+  );
+  return Array.from(new Uint8Array(signature),
+    byte => byte.toString(16).padStart(2,'0')).join('');
+}
 async function authenticate(request,env,role) {
   const supplied = request.headers.get('Authorization');
   const candidate = supplied?.startsWith('Bearer ') ? supplied.slice(7) : '';
-  if (role==='agent') return sameToken(candidate,env.AGENT_TOKEN);
+  if (role==='agent') {
+    const expected = env.AGENT_TOKEN || await deriveAgentToken(env.CONTROL_TOKEN);
+    return sameToken(candidate,expected);
+  }
   return sameToken(candidate,env.CONTROL_TOKEN);
 }
 function originMatch(request) {
@@ -218,7 +233,7 @@ async function fetchStatus(env) {
     },
     integrations:{
       youtubeDataApi:Boolean(env.YOUTUBE_API_KEY),
-      macBridge:Boolean(env.AGENT_TOKEN),
+      macBridge:Boolean(env.AGENT_TOKEN||env.CONTROL_TOKEN),
       googleOAuth:Boolean(env.GOOGLE_OAUTH_CLIENT_ID&&env.GOOGLE_OAUTH_CLIENT_SECRET&&
         env.OAUTH_ENCRYPTION_KEY&&env.APP_ORIGIN),
       webPush:Boolean(env.VAPID_PUBLIC_KEY&&env.VAPID_PRIVATE_KEY&&env.VAPID_SUBJECT)
@@ -412,6 +427,15 @@ export default {
     if(!await authenticate(request,env,agentRoute?'agent':'control'))
       return errorReply('Unauthorized',401);
     try {
+      if (url.pathname==='/api/mac/agent-token'&&request.method==='POST') {
+        if (env.AGENT_TOKEN)
+          return errorReply('AGENT_TOKEN is already configured in Cloudflare; use that configured key.',409);
+        return json({
+          agentToken:await deriveAgentToken(env.CONTROL_TOKEN),
+          scope:'mac-telemetry-only',
+          method:'derived-control-token-v1'
+        });
+      }
       if (url.pathname==='/api/admin/bootstrap'&&request.method==='POST')
         return bootstrapSchema(env);
       if (url.pathname==='/api/oauth/start'&&request.method==='POST')
