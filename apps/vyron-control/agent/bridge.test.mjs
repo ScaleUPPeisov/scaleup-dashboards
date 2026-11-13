@@ -76,3 +76,33 @@ test('bridge rejects unsafe remote commands',()=>{
   });
   assert.equal(cleanEvent({kind:'unapproved',occurredAt:new Date().toISOString()},'macbook_m1',0),null);
 });
+
+test('Mac agent bulk-imports exported YouTube channel registry once per change',async()=>{
+  const dir=await mkdtemp(join(tmpdir(),'vyron-channels-'));
+  try {
+    const channelsFile=join(dir,'channels.json');
+    const list=Array.from({length:33},(_,i)=>({
+      channelId:'UC'+String(i).padStart(22,'0'),title:'Channel '+i
+    }));
+    await writeFile(channelsFile,JSON.stringify({channels:list}));
+    const sent=[];
+    const bridge=new MacBridge({
+      url:'https://control.example',token:'T'.repeat(40),channelsFile,
+      fetchImpl:async(url,opts)=>{
+        sent.push({url,body:JSON.parse(opts.body)});
+        return {ok:true,json:async()=>({enrolled:33})};
+      }
+    });
+    assert.equal((await bridge.syncChannelRegistry()).imported,33);
+    assert.equal(sent.length,1);
+    assert.equal(sent[0].body.length,33);
+    assert.equal(sent[0].body[0].id,list[0].channelId);
+    assert.equal((await bridge.syncChannelRegistry()).reason,'unchanged');
+    assert.equal(sent.length,1);
+    list[0].title='Renamed channel';
+    await writeFile(channelsFile,JSON.stringify({channels:list}));
+    assert.equal((await bridge.syncChannelRegistry()).imported,33);
+    assert.equal(sent.length,2);
+    assert.equal(sent[1].body[0].name,'Renamed channel');
+  }finally{await rm(dir,{recursive:true,force:true});}
+});
