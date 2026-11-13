@@ -5,6 +5,23 @@ Independent, read-only companion service for the existing VYRON macOS app.
 Does not modify the production VYRON updater, the OAuth Keychain, ENDLUME,
 YouTube uploads, PR #22, or any existing SQLite/JSON data.
 
+## Zero-cost architecture (2026-11-13)
+
+The intended no-VPS build is now in **[cloudflare/README.md](cloudflare/README.md)**.
+Cloudflare Workers Free handles the 07:00/22:00 Krasnoyarsk scheduled refresh,
+while D1 persists channels and snapshots independently of a sleeping Mac.
+
+The new standalone **[agent/run.mjs](agent/run.mjs)** is a read-only Mac bridge
+that can forward fine-grained VYRON/ENDLUME events from explicitly configured
+exported JSONL/status files. It sends heartbeats and supports one safe remote
+command, `request_status`. It will **not** automatically discover local Mac
+databases or access YouTube credentials. Desktop event-export integration,
+Cloudflare ownership credentials and Google OAuth for private Analytics 360°
+are still outstanding.
+
+The original `src/server.mjs` Docker/Node implementation remains available
+for local development, but it is not the zero-cost always-on deployment.
+
 ## Implemented
 
 - Responsive Russian-language iPhone browser dashboard/PWA shell: channel list,
