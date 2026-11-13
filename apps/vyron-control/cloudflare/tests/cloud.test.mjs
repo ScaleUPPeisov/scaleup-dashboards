@@ -92,6 +92,26 @@ test('authenticated D1 bootstrap fills missing application tables idempotently',
   assert.equal(health.status,200);
 });
 
+test('owner can derive a Mac-only bridge token without adding another Cloudflare secret',async()=>{
+  const e=env();
+  delete e.AGENT_TOKEN;
+  const issued=await cloud.fetch(req('/api/mac/agent-token',control,'POST',{}),e);
+  assert.equal(issued.status,200);
+  const payload=await issued.json();
+  assert.match(payload.agentToken,/^[a-f0-9]{64}$/);
+  assert.equal(payload.scope,'mac-telemetry-only');
+  assert.notEqual(payload.agentToken,control);
+  const heartbeat=await cloud.fetch(req('/api/agent/heartbeat',payload.agentToken,'POST',{
+    deviceId:'macbook_m1',label:'MacBook M1',status:{macAwake:true}
+  }),e);
+  assert.equal(heartbeat.status,200);
+  assert.equal((await cloud.fetch(req('/api/status',payload.agentToken),e)).status,401);
+  const repeated=await cloud.fetch(req('/api/mac/agent-token',control,'POST',{}),e);
+  assert.equal((await repeated.json()).agentToken,payload.agentToken);
+  const denied=await cloud.fetch(req('/api/mac/agent-token','wrong-token','POST',{}),e);
+  assert.equal(denied.status,401);
+});
+
 test('authorization, origin guard, static asset CSP and immutable endpoint behavior',async()=>{
   const e=env();
   const health=await cloud.fetch(new Request('https://vyron-control.example/api/health'),e);
