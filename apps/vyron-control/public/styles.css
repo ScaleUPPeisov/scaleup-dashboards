@@ -68,3 +68,5 @@ input:focus{border-color:#7a9cf5;box-shadow:0 0 0 2px #5e80f43b}.primary{border:
 select{border:1px solid #354665;border-radius:11px;background:#11192a;color:#f3f6ff;
  padding:10px 12px;font:inherit;font-size:12px;max-width:100%}
 #events-more{display:block;margin:14px auto 0}
+
+.agent-command{margin:12px 0 0;padding:12px 14px;overflow-wrap:anywhere;white-space:pre-wrap;border:1px solid #30476c;border-radius:11px;background:#0b1222;color:#bcd0f0;font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace}
