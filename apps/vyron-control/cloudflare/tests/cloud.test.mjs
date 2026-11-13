@@ -70,6 +70,28 @@ test('cron times use Krasnoyarsk but Google quota resets in Pacific',()=>{
   assert.match(manualSlot(new Date('2026-11-13T15:00:00Z')),/^manual:/);
 });
 
+test('authenticated D1 bootstrap fills missing application tables idempotently',async()=>{
+  const e=env();
+  e.DB.native.exec('DROP TABLE push_deliveries');
+  const denied=await cloud.fetch(new Request('https://vyron-control.example/api/admin/bootstrap',{
+    method:'POST'
+  }),e);
+  assert.equal(denied.status,401);
+  const first=await cloud.fetch(req('/api/admin/bootstrap',control,'POST',{}),e);
+  assert.equal(first.status,200);
+  const firstBody=await first.json();
+  assert.equal(firstBody.ok,true);
+  assert.deepEqual(firstBody.createdTables,['push_deliveries']);
+  assert.equal(firstBody.presentTables,13);
+  const second=await cloud.fetch(req('/api/admin/bootstrap',control,'POST',{}),e);
+  assert.equal(second.status,200);
+  const secondBody=await second.json();
+  assert.equal(secondBody.ok,true);
+  assert.equal(secondBody.created,false);
+  const health=await cloud.fetch(new Request('https://vyron-control.example/api/health'),e);
+  assert.equal(health.status,200);
+});
+
 test('authorization, origin guard, static asset CSP and immutable endpoint behavior',async()=>{
   const e=env();
   const health=await cloud.fetch(new Request('https://vyron-control.example/api/health'),e);

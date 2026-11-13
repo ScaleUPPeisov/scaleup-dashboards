@@ -44,6 +44,13 @@ https://developers.cloudflare.com/workers/configuration/cron-triggers/
    npx wrangler d1 migrations apply vyron-control --remote -c cloudflare/wrangler.jsonc
    ```
 
+After the D1 binding and `CONTROL_TOKEN` are configured, the first successful
+dashboard login checks `/api/health`. If application tables are missing, the
+authenticated dashboard runs a fixed, idempotent bootstrap that creates only the
+13 application tables and their indexes; it never drops or overwrites data.
+This removes the need to paste a multi-statement SQL script into the D1 Console.
+For later schema changes, keep using versioned Wrangler migrations.
+
 4. Create the secrets *directly* in the Cloudflare account. The control token
    authorizes iPhone dashboard reads and safe control commands; the agent token
    is a **different** secret restricted to Mac telemetry and command acknowledgement.

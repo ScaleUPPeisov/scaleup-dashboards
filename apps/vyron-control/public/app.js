@@ -5,6 +5,7 @@ const time = iso => iso ? new Intl.DateTimeFormat('ru-RU', {
   hour: '2-digit', minute: '2-digit'
 }).format(new Date(iso)) + ' КРСК' : 'Нет данных';
 let accessToken = sessionStorage.getItem('vyron-control-access') || '';
+let schemaChecked = false;
 let current = null;
 let eventCursor = null;
 let eventHistoryExtended = false;
@@ -150,6 +151,20 @@ function render(data) {
 async function load() {
   if (!accessToken) return showLogin('');
   try {
+    if (!schemaChecked) {
+      const healthResponse = await fetch('/api/health', {cache:'no-store'});
+      const health = await healthResponse.json().catch(() => null);
+      if (health?.d1?.bound && health?.d1?.schema === false) {
+        const bootstrapped = await api('/api/admin/bootstrap', 'POST', {});
+        if (!bootstrapped.ok) throw new Error('Не удалось подготовить схему D1.');
+        const verifyResponse = await fetch('/api/health', {cache:'no-store'});
+        const verified = await verifyResponse.json().catch(() => null);
+        if (!verifyResponse.ok || !verified?.ok) throw new Error('Схема D1 всё ещё неполная.');
+      } else if (!health?.ok) {
+        throw new Error(health?.error || 'Не удалось проверить базу D1.');
+      }
+      schemaChecked = true;
+    }
     const data = await api('/api/status');
     showDashboard();
     render(data);
