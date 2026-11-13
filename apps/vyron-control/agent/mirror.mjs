@@ -1,0 +1,163 @@
+import { createHash } from 'node:crypto';
+import {
+  appendFile, chmod, mkdir, readFile, rename, stat, writeFile
+} from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { homedir } from 'node:os';
+
+// Read-only adapter for VYRON's EXISTING local state mirror (written by
+// src-tauri/src/storage.rs). No OAuth/Keychain access or mutation of VYRON.
+const VALID_CHANNEL = /^UC[A-Za-z0-9_-]{22}$/;
+const MAP = Object.freeze({
+  UPLOAD_QUEUED: 'upload_queued',
+  UPLOAD_STARTED: 'upload_started',
+  UPLOAD_PROGRESS: 'upload_progress',
+  UPLOAD_ACCEPTED: 'upload_completed',
+  UPLOAD_FAILED: 'upload_failed',
+  RENDER_COMPLETED: 'render_completed',
+  PRODUCTION_BUILD_STARTED: 'agent_info',
+  PRODUCTION_BUILD_COMPLETED: 'agent_info',
+  PRODUCTION_BUILD_FAILED: 'agent_error',
+  SCHEDULE_UPDATED: 'schedule_changed',
+  CHANNEL_STATS_REFRESH: 'channel_sync',
+  STATS_REFRESH_BATCH: 'channel_sync',
+  OAUTH_KEYCHAIN_ACCESS_DENIED: 'agent_error',
+  OAUTH_PROFILE_RECONNECT_REQUIRED: 'agent_error',
+  ANALYTICS_EXPORT_FAILED: 'agent_error',
+  ANALYTICS_EXPORT_COMPLETED: 'agent_info',
+  YOUTUBE_READY: 'agent_info',
+  YOUTUBE_PROCESSING: 'agent_info',
+  SOURCE_MISSING: 'agent_error',
+  SOURCE_RECOVERED: 'agent_info'
+});
+const MAX_SEEN = 20000;
+const MAX_IMPORT_PER_TICK = 1000;
+
+function channelIdFrom(row) {
+  const candidate = row?.youtubeChannelId || row?.stats?.channelId;
+  return typeof candidate === 'string' && VALID_CHANNEL.test(candidate)
+    ? candidate : null;
+}
+export function mirrorChannels(state) {
+  const channels = Array.isArray(state?.channels) ? state.channels : [];
+  const known = new Map();
+  for (const row of channels) {
+    const id = channelIdFrom(row);
+    if (!id) continue;
+    const name = String(row?.name || row?.stats?.channelTitle || id).slice(0,120);
+    if (!known.has(id)) known.set(id, { id, name });
+  }
+  return [...known.values()];
+}
+
+export function mirrorStatus(state) {
+  const jobs = Array.isArray(state?.jobs) ? state.jobs : [];
+  const uploaded = Array.isArray(state?.uploadHistory) ? state.uploadHistory : [];
+  return {
+    macAwake: true,
+    rendersActive: jobs.filter(x => x?.status === 'RENDERING').length,
+    uploadsQueued: jobs.filter(x => x?.status === 'READY_UPLOAD' || x?.status === 'UPLOADING').length,
+    uploadsCompleted: uploaded.filter(x => x?.status === 'UPLOADED').length,
+    syncCursor: 'mirror-v1'
+  };
+}
+
+export function mirrorEvents(state) {
+  const channels = Array.isArray(state?.channels) ? state.channels : [];
+  const maps = new Map(channels.map(c => [c?.id,channelIdFrom(c)]));
+  const names = new Map(channels.map(c => [c?.id,String(c?.name || 'Канал').slice(0,100)]));
+  const journal = Array.isArray(state?.activityJournal) ? state.activityJournal : [];
+  const events=[];
+  for (const row of journal) {
+    const kind = MAP[row?.eventType];
+    if (!kind || !row?.eventId || !row?.timestamp) continue;
+    const time = Date.parse(row.timestamp);
+    if (!Number.isFinite(time)) continue;
+    const hash=createHash('sha256').update(String(row.eventId)).digest('hex').slice(0,32);
+    const channelId = maps.get(row.channelId) || undefined;
+    const title = [String(row.eventType).replaceAll('_',' '),names.get(row.channelId)]
+      .filter(Boolean).join(' · ').slice(0,160);
+    const payload = {};
+    // Strict allowlist. Never forward details, localSourcePath, credentials,
+    // metadata, uploader tokens, Google profile IDs or file paths.
+    if (typeof row.jobId === 'string' && /^[A-Za-z0-9_-]{1,150}$/.test(row.jobId)) {
+      payload.projectId=row.jobId.slice(0,150);
+    }
+    if (typeof row.errorCode === 'string' && /^[A-Za-z0-9_-]{1,80}$/.test(row.errorCode)) {
+      payload.errorCode=row.errorCode;
+    }
+    const percent = row?.details?.percent;
+    if (typeof percent==='number' && Number.isFinite(percent) && percent>=0 && percent<=100)
+      payload.percent=Math.round(percent);
+    events.push({
+      id:'evt_'+hash,kind,title,occurredAt:new Date(time).toISOString(),
+      ...(channelId?{channelId}:{}),payload
+    });
+  }
+  return events;
+}
+
+async function privateJson(path,data) {
+  await mkdir(dirname(path),{recursive:true,mode:0o700});
+  const temp=path+'.tmp-'+process.pid;
+  await writeFile(temp,JSON.stringify(data),{flag:'w',mode:0o600});
+  await chmod(temp,0o600);
+  await rename(temp,path);
+}
+
+export class MirrorExport {
+  constructor({
+    mirrorFile=join(homedir(),'Documents','VYRON','State','app-state.json'),
+    outDir=join(homedir(),'.vyron-control-agent')
+  }={}) {
+    this.mirrorFile=mirrorFile;
+    this.outDir=outDir;
+    this.eventsFile=join(outDir,'events.jsonl');
+    this.channelsFile=join(outDir,'channels.json');
+    this.statusFile=join(outDir,'status.json');
+    this.cursorFile=join(outDir,'mirror-seen.json');
+    this.seen=new Set();
+    this.initialized=false;
+    this.lastSignature='';
+  }
+  async initialize() {
+    await mkdir(this.outDir,{recursive:true,mode:0o700});
+    await chmod(this.outDir,0o700);
+    try {
+      const parsed=JSON.parse(await readFile(this.cursorFile,'utf8'));
+      if (Array.isArray(parsed.ids)) this.seen=new Set(parsed.ids.slice(-MAX_SEEN));
+    } catch(error){if(error.code!=='ENOENT')throw error;}
+    this.initialized=true;
+  }
+  async refresh() {
+    if(!this.initialized)throw new Error('MirrorExport.initialize must run first');
+    let file;
+    try{file=await stat(this.mirrorFile);}
+    catch(error){if(error.code==='ENOENT')return {status:'mirror_missing',events:0};throw error;}
+    const signature=file.mtimeMs+':'+file.size;
+    if(signature===this.lastSignature) return {status:'unchanged',events:0};
+    const state=JSON.parse(await readFile(this.mirrorFile,'utf8'));
+    if (!state || !Array.isArray(state.channels) || !Array.isArray(state.jobs))
+      throw new Error('Invalid VYRON state mirror, refusing to export');
+    const channels=mirrorChannels(state);
+    const status=mirrorStatus(state);
+    await privateJson(this.channelsFile,channels);
+    await privateJson(this.statusFile,status);
+    const all=mirrorEvents(state);
+    // The first start imports the most recent history rather than flooding
+    // a free-tier Worker with years of old journal rows.
+    const limit=this.seen.size===0 ? 1000 : MAX_IMPORT_PER_TICK;
+    const pending=all.filter(e=>!this.seen.has(e.id)).slice(-limit);
+    if(pending.length) {
+      await appendFile(this.eventsFile,pending.map(e=>JSON.stringify(e)).join('\n')+'\n',
+        {mode:0o600});
+      await chmod(this.eventsFile,0o600);
+      for(const event of pending)this.seen.add(event.id);
+      const ids=[...this.seen].slice(-MAX_SEEN);
+      await privateJson(this.cursorFile,{ids});
+      this.seen=new Set(ids);
+    }
+    this.lastSignature=signature;
+    return {status:'exported',events:pending.length,channels:channels.length};
+  }
+}
