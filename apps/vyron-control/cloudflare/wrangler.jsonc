@@ -12,7 +12,7 @@
   "d1_databases": [{
     "binding": "DB",
     "database_name": "vyron-control",
-    "database_id": "00000000-0000-0000-0000-000000000000",
+    "database_id": "7e707d9f-5897-45ea-8f8f-1652b39e2148",
     "migrations_dir": "./migrations"
   }],
   "triggers": {
