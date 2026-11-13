@@ -6,6 +6,9 @@ const time = iso => iso ? new Intl.DateTimeFormat('ru-RU', {
 }).format(new Date(iso)) + ' КРСК' : 'Нет данных';
 let accessToken = sessionStorage.getItem('vyron-control-access') || '';
 let current = null;
+let eventCursor = null;
+let eventHistoryExtended = false;
+let eventRows = [];
 const showLogin = error => {
   $('login').hidden = false;
   $('dashboard').hidden = true;
@@ -136,7 +139,7 @@ function render(data) {
     data.configured ? 'Сервис готов к обновлению' : 'Требуется настройка YouTube API';
   $('refresh').disabled = !data.configured || data.syncing;
   renderChannels(data.channels);
-  renderEvents(data.events);
+  if (!eventHistoryExtended) renderEvents(data.events);
   renderDevices(data);
 }
 async function load() {
@@ -145,6 +148,7 @@ async function load() {
     const data = await api('/api/status');
     showDashboard();
     render(data);
+    if (!eventHistoryExtended) await fetchEventHistory(true);
     await loadOauthProfiles();
   } catch (error) {
     if (error.status === 401) {
@@ -156,6 +160,39 @@ async function load() {
     }
   }
 }
+async function fetchEventHistory(reset=false) {
+  const params=new URLSearchParams({
+    category:$('event-filter').value,limit:'50'
+  });
+  if(!reset && eventCursor) {
+    params.set('beforeAt',eventCursor.beforeAt);
+    params.set('beforeId',eventCursor.beforeId);
+  }
+  try {
+    const result=await api('/api/events?'+params);
+    eventCursor=result.nextCursor||null;
+    eventRows=reset?result.events:[...eventRows,...result.events];
+    renderEvents(eventRows);
+    $('events-more').hidden=!eventCursor;
+  }catch(error) {
+    if(reset && current){
+      eventRows=current.events||[];
+      renderEvents(eventRows);
+      $('events-more').hidden=true;
+    }
+  }
+}
+$('event-filter').addEventListener('change',()=>{
+  eventHistoryExtended=false;
+  eventCursor=null;eventRows=[];
+  fetchEventHistory(true);
+});
+$('events-more').addEventListener('click',()=>{
+  eventHistoryExtended=true;
+  const button=$('events-more');
+  button.disabled=true;
+  fetchEventHistory(false).finally(()=>{button.disabled=false;});
+});
 function renderDevices(data) {
   const devices = data.devices || [];
   const device = devices[0];
@@ -288,7 +325,7 @@ $('search').addEventListener('input', () => {
   if (current) renderChannels(current.channels);
 });
 // Local UI polling is free: it does NOT make a YouTube API request.
-setInterval(() => { if (accessToken && !document.hidden) load(); }, 60_000);
+setInterval(() => { if (accessToken && !document.hidden) load(); }, 15_000);
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && accessToken) load();
 });
