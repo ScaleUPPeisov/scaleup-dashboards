@@ -205,6 +205,7 @@ function renderDevices(data) {
     $('mac-renders').textContent = '—';
     $('mac-uploads').textContent = '—';
     $('mac-uploaded').textContent = '—';
+    for(const id of ['mac-uploaded-today','mac-rendered-today','mac-upload-failures','mac-channels-bound'])$(id).textContent='—';
     return;
   }
   const recent = device.lastSeenAt &&
@@ -216,6 +217,10 @@ function renderDevices(data) {
   $('mac-renders').textContent = number(s.rendersActive);
   $('mac-uploads').textContent = number(s.uploadsQueued);
   $('mac-uploaded').textContent = number(s.uploadsCompleted);
+  $('mac-uploaded-today').textContent = number(s.uploadsToday);
+  $('mac-rendered-today').textContent = number(s.rendersCompletedToday);
+  $('mac-upload-failures').textContent = number(s.uploadFailuresToday);
+  $('mac-channels-bound').textContent = s.channelsTotal == null ? '—' : number(s.channelsBound) + ' / ' + number(s.channelsTotal);
   button.dataset.deviceId = device.id;
   const recentCommands = data.commands || [];
   const queued = recentCommands.filter(c => c.target_device===device.id && c.state==='queued');
