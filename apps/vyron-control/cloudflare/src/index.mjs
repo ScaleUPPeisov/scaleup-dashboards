@@ -229,6 +229,8 @@ export default {
         return enrollChannels(env,request);
       if (url.pathname==='/api/commands'&&request.method==='POST')
         return createCommand(env,request);
+      if (url.pathname==='/api/agent/channels'&&request.method==='POST')
+        return enrollChannels(env,request);
       if (url.pathname==='/api/agent/events'&&request.method==='POST')
         return ingestAgentEvents(env,request);
       if (url.pathname==='/api/agent/heartbeat'&&request.method==='POST')
