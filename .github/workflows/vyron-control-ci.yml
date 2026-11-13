@@ -39,5 +39,8 @@ jobs:
           node --check cloudflare/src/core.mjs
           node --check cloudflare/src/sync.mjs
           node --check cloudflare/src/index.mjs
+          node --check agent/logic.mjs
+          node --check agent/bridge.mjs
+          node --check agent/run.mjs
       - name: Run isolated deterministic tests
         run: npm test
