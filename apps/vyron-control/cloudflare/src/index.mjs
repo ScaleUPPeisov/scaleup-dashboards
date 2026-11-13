@@ -3,6 +3,7 @@ import { manualSlot, runCountersSync, scheduledSync } from './sync.mjs';
 import { saveAnalytics } from './analytics.mjs';
 import { startOAuth,callbackOAuth,authorizedProfiles,disconnectProfile } from './oauth.mjs';
 import { runAnalyticsBatch } from './google-analytics.mjs';
+import { registerPush,unregisterPush,vapidPublic,dispatchPush } from './push.mjs';
 
 const REQUIRED_TOKEN_LENGTH = 32;
 
@@ -320,6 +321,12 @@ export default {
         return json(await disconnectProfile(request,env));
       if (url.pathname==='/api/events'&&request.method==='GET')
         return eventHistory(env,request);
+      if (url.pathname==='/api/push/public-key'&&request.method==='GET')
+        return json({supported:Boolean(vapidPublic(env)),publicKey:vapidPublic(env)});
+      if (url.pathname==='/api/push/subscribe'&&request.method==='POST')
+        return json(await registerPush(env,request));
+      if (url.pathname==='/api/push/unsubscribe'&&request.method==='POST')
+        return json(await unregisterPush(env,request));
       if (url.pathname==='/api/status'&&request.method==='GET')
         return json(await fetchStatus(env));
       if (url.pathname==='/api/refresh'&&request.method==='POST') {
@@ -361,7 +368,8 @@ export default {
   async scheduled(controller,env,ctx) {
     ctx.waitUntil(Promise.allSettled([
       scheduledSync(controller,env),
-      runAnalyticsBatch(env,controller)
+      runAnalyticsBatch(env,controller),
+      dispatchPush(env)
     ]).then(results=>{
       for (const result of results) if(result.status==='rejected')
         console.error('VYRON CONTROL scheduled task failed:',
