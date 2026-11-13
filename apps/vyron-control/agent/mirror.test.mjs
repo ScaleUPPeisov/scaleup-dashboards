@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp,readFile,writeFile,stat,rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import {join} from 'node:path';
-import {MirrorExport,mirrorChannels,mirrorStatus,mirrorEvents} from './mirror.mjs';
+import {MirrorExport,mirrorChannels,mirrorStatus,mirrorEvents,mirrorAnalytics} from './mirror.mjs';
 
 function sampleState() {
   const id='UC'+('x'.repeat(22));
@@ -13,7 +13,15 @@ function sampleState() {
     channels:[{
       id:'local-123',name:'Neon Drive FM',youtubeChannelId:id,
       youtubeProfileId:'private-profile-id',renderFolderPath:'/Volumes/SECRET',
-      seo:{descriptionTemplate:'sensitive'}
+      seo:{descriptionTemplate:'sensitive'},
+    analytics:{periodDays:28,updatedAt:new Date().toISOString(),
+      views:2000,watchMinutes:9000,averageViewDuration:180,
+      averageViewPercentage:58.2,subscribersGained:55,subscribersLost:3,
+      impressionCtr:5.3,impressions:40000,monetaryAuthorized:false,
+      estimatedRevenue:150,
+      refreshToken:'NEVER_SEND_REFRESH',
+      daily:[{date:'2026-11-12',views:100,watchMinutes:500,
+        subscribersGained:2,subscribersLost:1}]}
     },{id:'offline-456',name:'Unmapped channel',youtubeProfileId:'TOKEN'}],
     jobs:[
       {id:'job-1',status:'RENDERING',finalPath:'/Users/Private/video.mp4'},
@@ -45,6 +53,12 @@ test('mirror mapping exports only public YouTube IDs, event allowlist, minimal c
   assert.equal(status.rendersActive,1);
   assert.equal(status.uploadsQueued,2);
   assert.equal(status.uploadsCompleted,1);
+  const analytics=mirrorAnalytics(src);
+  assert.equal(analytics.length,1);
+  assert.equal(analytics[0].views,2000);
+  assert.equal(analytics[0].estimatedRevenue,null);
+  assert.equal(analytics[0].impressionCtr,5.3);
+  assert.equal(JSON.stringify(analytics).includes('NEVER_SEND_REFRESH'),false);
   const events=mirrorEvents(src);
   assert.equal(events.length,2);
   assert.equal(events[0].kind,'upload_progress');
