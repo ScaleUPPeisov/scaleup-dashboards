@@ -8,15 +8,15 @@ import { createHash } from 'node:crypto';
 
 export class MacBridge {
   constructor({ url, token, deviceId='macbook_m1', eventsFile=null,
-      statusFile=null, channelsFile=null, cursorFile=join(homedir(),'.vyron-control-agent','cursor.json'),
+      statusFile=null, channelsFile=null, analyticsFile=null, cursorFile=join(homedir(),'.vyron-control-agent','cursor.json'),
       fetchImpl=fetch }) {
     if (!/^https:\/\//.test(url) || !/^.{32,}$/.test(token))
       throw new Error('HTTPS URL and secure 32+ character agent token required');
     if (!/^[A-Za-z0-9_-]{3,50}$/.test(deviceId)) throw new Error('Invalid deviceId');
     this.url=url.replace(/\/$/,'');
     this.token=token;this.deviceId=deviceId;this.eventsFile=eventsFile;
-    this.statusFile=statusFile;this.channelsFile=channelsFile;this.cursorFile=cursorFile;this.fetchImpl=fetchImpl;
-    this.offset=0;this.busy=false;this.lastChannelHash=null;
+    this.statusFile=statusFile;this.channelsFile=channelsFile;this.analyticsFile=analyticsFile;this.cursorFile=cursorFile;this.fetchImpl=fetchImpl;
+    this.offset=0;this.busy=false;this.lastChannelHash=null;this.lastAnalyticsHash=null;
   }
   async initialize() {
     try {
@@ -71,6 +71,24 @@ export class MacBridge {
     await this.api('/api/agent/channels','POST',normalized);
     this.lastChannelHash=hash;
     return { imported:normalized.length };
+  }
+  async syncAnalytics() {
+    if(!this.analyticsFile)return {uploaded:0,reason:'no_export'};
+    let raw;
+    try{raw=JSON.parse(await readFile(this.analyticsFile,'utf8'));}
+    catch(error){
+      if(error.code==='ENOENT')return {uploaded:0,reason:'export_missing'};
+      throw error;
+    }
+    if(!Array.isArray(raw)||raw.length>100)throw new Error('Invalid analytics export');
+    if(!raw.length)return {uploaded:0,reason:'empty_export'};
+    const hash=createHash('sha256').update(JSON.stringify(raw)).digest('hex');
+    if(hash===this.lastAnalyticsHash)return {uploaded:0,reason:'unchanged'};
+    // Each chunk is independently idempotent in the D1 analytics table.
+    for(let i=0;i<raw.length;i+=25)
+      await this.api('/api/agent/analytics','POST',raw.slice(i,i+25));
+    this.lastAnalyticsHash=hash;
+    return {uploaded:raw.length};
   }
   async syncEvents() {
     if(!this.eventsFile)return {transmitted:0};
@@ -141,6 +159,7 @@ export class MacBridge {
     try {
       await this.heartbeat();
       await this.syncChannelRegistry();
+      await this.syncAnalytics();
       await this.syncEvents();
       await this.pendingCommands();
     } finally {this.busy=false;}
