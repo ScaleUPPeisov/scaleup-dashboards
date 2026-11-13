@@ -89,7 +89,7 @@ export async function dispatchPush(env,fetchImpl=fetch,buildPayload=buildPushPay
       'upload_completed','upload_failed','disk_offline','quota_warning','agent_error')
       AND (d.event_id IS NULL OR
         (d.status='retry' AND d.attempts < 3
-          AND d.updated_at < ?)))
+          AND d.updated_at < ?))
     ORDER BY e.received_at ASC,e.id ASC LIMIT 8
   `).bind(retryBefore).all();
   let sent=0,failed=0;
