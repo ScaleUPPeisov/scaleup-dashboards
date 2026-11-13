@@ -1,9 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp,readFile,writeFile,stat,rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { tmpdir,homedir } from 'node:os';
 import {join} from 'node:path';
 import {MirrorExport,mirrorChannels,mirrorStatus,mirrorEvents,mirrorAnalytics} from './mirror.mjs';
+
+test('default source path matches VYRON native state mirror',()=>{
+  const mirror=new MirrorExport();
+  assert.equal(mirror.mirrorFile,join(homedir(),'Documents','VYRON','State','app-state.json'));
+});
 
 function sampleState() {
   const id='UC'+('x'.repeat(22));
