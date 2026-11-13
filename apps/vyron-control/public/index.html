@@ -56,6 +56,13 @@
           <span class="pill" id="oauth-count">0 подключено</span>
         </div>
         <p class="muted">Закрытая аналитика, просмотры за 28 дней, удержание, время просмотра и прирост подписчиков. Работает в облаке, даже если Mac спит, после отдельного разрешения Google.</p>
+        <div class="mac-daily">
+          <div><span>Загружено сегодня</span><strong id="mac-uploaded-today">—</strong></div>
+          <div><span>Рендеров завершено сегодня</span><strong id="mac-rendered-today">—</strong></div>
+          <div><span>Ошибок загрузки сегодня</span><strong id="mac-upload-failures">—</strong></div>
+          <div><span>Каналов привязано</span><strong id="mac-channels-bound">—</strong></div>
+        </div>
+        <p class="caution">Дневные итоги — по календарю Красноярска. При спящем Mac это последний сохранённый снимок.</p>
         <div class="mac-actions">
           <button id="oauth-connect" class="primary" disabled>Подключить Google-каналы</button>
           <span class="caution" id="oauth-message">Требуется отдельная Google OAuth-конфигурация в Cloudflare.</span>
@@ -71,7 +78,7 @@
         <div class="mac-grid">
           <div class="mac-metric"><small>Mac</small><strong id="mac-state">Не подключён</strong><span id="mac-last">Последний сигнал: —</span></div>
           <div class="mac-metric"><small>Рендеры</small><strong id="mac-renders">—</strong><span>Активные</span></div>
-          <div class="mac-metric"><small>Загрузки</small><strong id="mac-uploads">—</strong><span>Ожидают публикации</span></div>
+          <div class="mac-metric"><small>В очереди/загружается</small><strong id="mac-uploads">—</strong><span>Задания подготовки и передачи видео</span></div>
           <div class="mac-metric"><small>Загружено на YouTube</small><strong id="mac-uploaded">—</strong><span>Всего принято YouTube, не обязательно опубликовано</span></div>
         </div>
         <div class="mac-actions">
