@@ -34,7 +34,8 @@ const files = {
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
   '/styles.css': ['styles.css', 'text/css; charset=utf-8'],
   '/manifest.webmanifest': ['manifest.webmanifest', 'application/manifest+json'],
-  '/icon.svg': ['icon.svg', 'image/svg+xml']
+  '/icon.svg': ['icon.svg', 'image/svg+xml'],
+  '/service-worker.js': ['service-worker.js', 'text/javascript; charset=utf-8']
 };
 function authed(header) {
   const claimed = typeof header === 'string' && header.startsWith('Bearer ')
