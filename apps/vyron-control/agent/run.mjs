@@ -1,8 +1,20 @@
 import { MacBridge } from './bridge.mjs';
 import { MirrorExport } from './mirror.mjs';
+import { readFile,stat } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 
-const url=process.env.VYRON_CONTROL_URL;
-const token=process.env.VYRON_AGENT_TOKEN;
+const configPath=process.env.VYRON_AGENT_CONFIG_FILE||
+  join(homedir(),'.vyron-control-agent','config.json');
+let local={};
+try {
+  const meta=await stat(configPath);
+  if((meta.mode&0o077)!==0)
+    throw new Error('Private agent config must be readable only by its owner (chmod 600).');
+  local=JSON.parse(await readFile(configPath,'utf8'));
+}catch(error){if(error.code!=='ENOENT')throw error;}
+const url=process.env.VYRON_CONTROL_URL||local.url;
+const token=process.env.VYRON_AGENT_TOKEN||local.token;
 if(!url||!token) {
   console.error('Set VYRON_CONTROL_URL (HTTPS) and VYRON_AGENT_TOKEN in a private process environment.');
   process.exit(1);
@@ -17,7 +29,7 @@ const mirror=process.env.VYRON_AGENT_NO_MIRROR==='1'?null:new MirrorExport({
 });
 if(mirror)await mirror.initialize();
 const bridge=new MacBridge({
-  url,token,deviceId:process.env.VYRON_DEVICE_ID||'macbook_m1',
+  url,token,deviceId:process.env.VYRON_DEVICE_ID||local.deviceId||'macbook_m1',
   eventsFile:process.env.VYRON_AGENT_EVENTS_FILE||mirror?.eventsFile||null,
   statusFile:process.env.VYRON_AGENT_STATUS_FILE||mirror?.statusFile||null,
   channelsFile:process.env.VYRON_AGENT_CHANNELS_FILE||mirror?.channelsFile||null,
