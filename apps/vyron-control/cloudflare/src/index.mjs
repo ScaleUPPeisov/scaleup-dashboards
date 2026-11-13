@@ -1,6 +1,8 @@
 import { acceptedCommand, pacificDay, safeEvent, validatedChannelList } from './core.mjs';
 import { manualSlot, runCountersSync, scheduledSync } from './sync.mjs';
 import { saveAnalytics } from './analytics.mjs';
+import { startOAuth,callbackOAuth,authorizedProfiles,disconnectProfile } from './oauth.mjs';
+import { runAnalyticsBatch } from './google-analytics.mjs';
 
 const REQUIRED_TOKEN_LENGTH = 32;
 
@@ -63,7 +65,8 @@ async function fetchStatus(env) {
       a.impression_ctr AS analytics_impression_ctr,
       a.estimated_revenue AS analytics_revenue,
       a.currency AS analytics_currency,
-      a.captured_at AS analytics_captured_at
+      a.captured_at AS analytics_captured_at,
+      a.source AS analytics_source
       FROM channels c LEFT JOIN channel_analytics a ON c.id=a.channel_id
       ORDER BY c.name LIMIT 120`).all(),
     db.prepare('SELECT id,kind,channel_id,title,payload_json,occurred_at,received_at FROM events ORDER BY received_at DESC LIMIT 80').all(),
@@ -93,7 +96,7 @@ async function fetchStatus(env) {
       estimatedRevenue:number(row.analytics_revenue),
       currency:row.analytics_currency,
       updatedAt:row.analytics_captured_at,
-      source:'VYRON_MAC_CACHE'
+      source:row.analytics_source||'VYRON_MAC_CACHE'
     }:null
   }));
   const sum=key=>({
@@ -249,11 +252,26 @@ export default {
       return new Response(response.body,{status:response.status,headers});
     }
     if(url.pathname==='/api/health'&&request.method==='GET') return json({ok:true});
+    if(url.pathname==='/api/oauth/callback'&&request.method==='GET') {
+      try {return await callbackOAuth(request,env);}
+      catch(error) {
+        console.error('OAuth callback failed (no token values):',String(error?.message||'Unknown').slice(0,120));
+        const app=String(env.APP_ORIGIN||'');
+        if(/^https:\/\//.test(app))return Response.redirect(app.replace(/\/$/,'')+'/?oauth=failed',302);
+        return errorReply('OAuth connection failed',400);
+      }
+    }
     if(!originMatch(request)) return errorReply('Origin not allowed',403);
     const agentRoute=url.pathname.startsWith('/api/agent/');
     if(!await authenticate(request,env,agentRoute?'agent':'control'))
       return errorReply('Unauthorized',401);
     try {
+      if (url.pathname==='/api/oauth/start'&&request.method==='POST')
+        return startOAuth(request,env);
+      if (url.pathname==='/api/oauth/profiles'&&request.method==='GET')
+        return json(await authorizedProfiles(env));
+      if (url.pathname==='/api/oauth/disconnect'&&request.method==='POST')
+        return json(await disconnectProfile(request,env));
       if (url.pathname==='/api/status'&&request.method==='GET')
         return json(await fetchStatus(env));
       if (url.pathname==='/api/refresh'&&request.method==='POST') {
@@ -293,8 +311,13 @@ export default {
     }
   },
   async scheduled(controller,env,ctx) {
-    ctx.waitUntil(scheduledSync(controller,env).catch(error=>{
-      console.error('VYRON CONTROL scheduled sync failed:',String(error.message||error));
+    ctx.waitUntil(Promise.allSettled([
+      scheduledSync(controller,env),
+      runAnalyticsBatch(env,controller)
+    ]).then(results=>{
+      for (const result of results) if(result.status==='rejected')
+        console.error('VYRON CONTROL scheduled task failed:',
+          String(result.reason?.message||result.reason).slice(0,160));
     }));
   }
 };
