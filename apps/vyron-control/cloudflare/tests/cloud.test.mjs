@@ -284,3 +284,30 @@ test('authorized private Analytics can update while Mac sleeps, with 10-channel 
     {scheduledTime:Date.parse('2026-11-13T00:00:00Z')},mockFetch);
   assert.equal(second.skipped,true);
 });
+
+test('full event history supports stable pagination and category filters',async()=>{
+  const e=env(),now=new Date().toISOString();
+  const events=[
+    {id:'render_event_000001',kind:'render_completed',title:'Rendered',occurredAt:now},
+    {id:'upload_event_000002',kind:'upload_started',title:'Upload',occurredAt:now},
+    {id:'upload_event_000003',kind:'upload_failed',title:'Upload failed',occurredAt:now},
+    {id:'quota_event_000004',kind:'quota_warning',title:'Quota warning',occurredAt:now},
+    {id:'render_event_000005',kind:'render_failed',title:'Render failed',occurredAt:now}
+  ];
+  const saved=await cloud.fetch(req('/api/agent/events',agent,'POST',{
+    deviceId:'macbook_m1',events
+  }),e);
+  assert.equal(saved.status,200);
+  const first=await (await cloud.fetch(req('/api/events?limit=2',control),e)).json();
+  assert.equal(first.events.length,2);
+  assert.ok(first.nextCursor);
+  const next=new URLSearchParams({
+    limit:'2',beforeAt:first.nextCursor.beforeAt,beforeId:first.nextCursor.beforeId
+  });
+  const second=await (await cloud.fetch(req('/api/events?'+next,control),e)).json();
+  assert.equal(second.events.length,2);
+  assert.equal(new Set([...first.events,...second.events].map(x=>x.id)).size,4);
+  const filtered=await (await cloud.fetch(req('/api/events?category=errors',control),e)).json();
+  assert.equal(filtered.events.length,3);
+  assert.equal((await cloud.fetch(req('/api/events?category=unknown',control),e)).status,400);
+});
