@@ -145,6 +145,7 @@ async function load() {
     const data = await api('/api/status');
     showDashboard();
     render(data);
+    await loadOauthProfiles();
   } catch (error) {
     if (error.status === 401) {
       sessionStorage.removeItem('vyron-control-access');
@@ -201,6 +202,62 @@ $('mac-status-request').addEventListener('click', async () => {
     $('mac-command-feedback').textContent = 'Не удалось отправить: '+error.message;
   } finally {button.disabled = false;}
 });
+async function loadOauthProfiles() {
+  const counter=$('oauth-count'),button=$('oauth-connect'),message=$('oauth-message');
+  const container=$('oauth-profiles');
+  try {
+    const result=await api('/api/oauth/profiles');
+    button.disabled=!result.configured;
+    counter.textContent=String(result.profiles?.length||0)+' подключено';
+    message.textContent=result.configured
+      ? 'Подключение защищено Google OAuth. На Mac ничего менять не требуется.'
+      : 'Google OAuth ещё не настроен в Cloudflare.';
+    container.replaceChildren();
+    for(const profile of result.profiles||[]) {
+      const line=make('div','oauth-profile');
+      const name=make('span','',profile.channel_name+' · '+profile.channel_id);
+      const status=make('small','',
+        profile.last_error?'Ошибка обновления: '+profile.last_error:
+        profile.last_success_at?'Обновлено '+time(profile.last_success_at):
+        'Ожидает первой синхронизации');
+      const disconnect=make('button','ghost','Отключить');
+      disconnect.addEventListener('click',async()=>{
+        if(!window.confirm('Отключить облачный доступ к аналитике '+profile.channel_name+'?'))return;
+        disconnect.disabled=true;
+        try {
+          await api('/api/oauth/disconnect','POST',{channelId:profile.channel_id});
+          await loadOauthProfiles();
+        }catch(e){message.textContent='Ошибка: '+e.message;disconnect.disabled=false;}
+      });
+      line.append(name,status,disconnect);
+      container.append(line);
+    }
+  }catch(error){
+    counter.textContent='OAuth недоступен';
+    button.disabled=true;
+    message.textContent='OAuth-сервер ещё не развернут или недоступен.';
+  }
+}
+$('oauth-connect').addEventListener('click',async()=>{
+  const button=$('oauth-connect');
+  button.disabled=true;
+  try{
+    const result=await api('/api/oauth/start','POST',{});
+    if(!/^https:\/\/accounts\.google\.com\//.test(result.authorizationUrl))
+      throw new Error('Неверная ссылка авторизации');
+    window.location.assign(result.authorizationUrl);
+  }catch(e){
+    $('oauth-message').textContent='Ошибка подключения: '+e.message;
+    button.disabled=false;
+  }
+});
+const oauthOutcome=new URLSearchParams(window.location.search).get('oauth');
+if(oauthOutcome==='connected'||oauthOutcome==='denied'||oauthOutcome==='failed'){
+  $('oauth-message').textContent=oauthOutcome==='connected'
+    ?'Google-канал подключён. Обновления начнутся в ближайший запланированный интервал.'
+    :oauthOutcome==='denied'?'Доступ Google не предоставлен.':'Не удалось подключить Google. Проверь настройку OAuth.';
+  window.history.replaceState({},'',window.location.pathname);
+}
 $('login-form').addEventListener('submit', async event => {
   event.preventDefault();
   accessToken = $('access-token').value.trim();
