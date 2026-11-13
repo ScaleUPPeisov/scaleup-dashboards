@@ -6,7 +6,8 @@
   "engines": { "node": ">=20.11" },
   "scripts": {
     "start": "node src/server.mjs",
-    "test": "node --test src/*.test.mjs cloudflare/tests/*.test.mjs",
+    "test": "node --test src/*.test.mjs cloudflare/tests/*.test.mjs agent/*.test.mjs",
+    "agent:start": "node agent/run.mjs",
     "cloud:dev": "npx wrangler dev -c cloudflare/wrangler.jsonc",
     "cloud:deploy": "npx wrangler deploy -c cloudflare/wrangler.jsonc"
   }
