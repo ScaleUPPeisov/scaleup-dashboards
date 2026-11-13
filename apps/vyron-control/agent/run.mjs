@@ -10,6 +10,7 @@ const bridge=new MacBridge({
   url,token,deviceId:process.env.VYRON_DEVICE_ID||'macbook_m1',
   eventsFile:process.env.VYRON_AGENT_EVENTS_FILE||null,
   statusFile:process.env.VYRON_AGENT_STATUS_FILE||null,
+  channelsFile:process.env.VYRON_AGENT_CHANNELS_FILE||null,
   cursorFile:process.env.VYRON_AGENT_CURSOR_FILE||undefined
 });
 await bridge.initialize();
