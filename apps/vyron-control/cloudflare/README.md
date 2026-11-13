@@ -51,19 +51,21 @@ authenticated dashboard runs a fixed, idempotent bootstrap that creates only the
 This removes the need to paste a multi-statement SQL script into the D1 Console.
 For later schema changes, keep using versioned Wrangler migrations.
 
-4. Create the secrets *directly* in the Cloudflare account. The control token
-   authorizes iPhone dashboard reads and safe control commands; the agent token
-   is a **different** secret restricted to Mac telemetry and command acknowledgement.
+4. Create the secrets directly in the Cloudflare account:
 
    ```sh
    npx wrangler secret put CONTROL_TOKEN -c cloudflare/wrangler.jsonc
-   npx wrangler secret put AGENT_TOKEN -c cloudflare/wrangler.jsonc
    npx wrangler secret put YOUTUBE_API_KEY -c cloudflare/wrangler.jsonc
    ```
 
-   Use independently generated random strings of 32+ characters for the first
-   two. The API key must be from the owner's Google Cloud project and restricted
-   to YouTube Data API v3; it must never be embedded in the iPhone website.
+   Use an independently generated random string of 32+ characters for CONTROL_TOKEN.
+   AGENT_TOKEN is optional: the owner dashboard can derive a separate Mac-only
+   telemetry token from CONTROL_TOKEN. That derived token is accepted only on
+   /api/agent/* and cannot read owner dashboard endpoints. Rotating CONTROL_TOKEN
+   also rotates the derived agent token. If you prefer a separately managed agent
+   secret, you may still configure AGENT_TOKEN directly in Cloudflare. The YouTube
+   API key must be from the owner's Google Cloud project and restricted to YouTube
+   Data API v3; it must never be embedded in the iPhone website.
 
 5. Deploy through your authorized Cloudflare account:
 
@@ -216,21 +218,19 @@ cannot manufacture missing fine-grained events that the current VYRON version
 does not record. ENDLUME-specific progress still depends on the data VYRON has
 already recorded.
 
-Once the Cloudflare Worker has been deployed and `AGENT_TOKEN` configured,
-run these steps **on your own Mac**, not in GitHub Actions:
+The dashboard includes a guided Mac setup button: **Подготовить подключение Mac**.
 
-```sh
-cd apps/vyron-control
-export VYRON_CONTROL_URL='https://YOUR_WORKER.workers.dev'
-export VYRON_AGENT_TOKEN='YOUR_SEPARATE_32PLUS_AGENT_TOKEN'
-npm run agent:install
-```
+1. Sign in to VYRON CONTROL and click that button.
+2. Copy the install command and run it in Terminal on the Mac.
+3. When the installer prompts for the agent key, return to the dashboard, copy the
+   Mac-only key, and paste it into Terminal. The prompt hides typed characters.
 
-`agent:install` installs a separate `studio.vyron.control.agent` macOS
-LaunchAgent. It creates a dedicated mode-0600 config file under
-`~/.vyron-control-agent/config.json` (the token is not placed in the plist).
-It then starts the service on login. The agent retries safely after network
-loss and preserves event IDs/offsets for idempotent recovery. It runs only
+The installer downloads the dedicated agent source from this repository, checks
+for macOS, Git and Node.js 22+, installs its dependency, and installs a separate
+studio.vyron.control.agent LaunchAgent. The token is stored only in
+~/.vyron-control-agent/config.json with mode 0600; it is not placed in the plist
+or shell history. The LaunchAgent starts on login and retries safely after network
+loss while preserving event IDs/offsets for idempotent recovery. It runs only
 while the Mac is awake; cloud analytics continues on the independent Worker.
 
 Uninstall without touching VYRON application data:
