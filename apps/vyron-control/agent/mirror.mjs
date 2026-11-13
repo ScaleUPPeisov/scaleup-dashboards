@@ -142,7 +142,7 @@ async function privateJson(path,data) {
 
 export class MirrorExport {
   constructor({
-    mirrorFile=join(homedir(),'Documents','VYRON','State','app-state.json'),
+    mirrorFile=join(homedir(),'Library','Application Support','studio.channelflow.desktop','state.json'),
     outDir=join(homedir(),'.vyron-control-agent')
   }={}) {
     this.mirrorFile=mirrorFile;
