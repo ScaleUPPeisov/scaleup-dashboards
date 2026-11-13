@@ -44,3 +44,15 @@ input:focus{border-color:#7a9cf5;box-shadow:0 0 0 2px #5e80f43b}.primary{border:
 .channel-analytics{display:flex;flex-wrap:wrap;gap:8px 14px;flex-basis:100%;border-top:1px solid #293b5a;padding-top:10px;color:#aac0e2;font-size:11px}
 .channel-analytics span{white-space:nowrap}
 .channel-analytics .mac-stale-label{color:#7fa7f2}
+
+/* Secure Google OAuth connection list */
+.oauth-section{padding:20px;margin-bottom:14px}
+.oauth-profiles{display:grid;gap:8px;margin-top:12px}
+.oauth-profile{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;
+  align-items:center;gap:12px;border:1px solid #273b5e;background:#10192b;
+  padding:10px 12px;border-radius:10px}
+.oauth-profile span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
+.oauth-profile small{font-size:11px;color:#95accf}
+.oauth-profile .ghost{font-size:11px}
+@media(max-width:600px){.oauth-section{padding:16px}.oauth-profile{grid-template-columns:1fr auto}
+.oauth-profile small{grid-row:2;grid-column:1/-1}}
