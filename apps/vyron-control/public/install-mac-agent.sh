@@ -38,7 +38,9 @@ printf '\nКлюч агента доступен в панели VYRON CONTROL.\
 printf 'Вернись в браузер, нажми «Скопировать ключ агента» и вставь его ниже.\n'
 read -r -s -p 'Ключ агента (ввод скрыт): ' AGENT_TOKEN </dev/tty
 printf '\n' >/dev/tty
-[[ "\${#AGENT_TOKEN}" -ge 32 ]] || fail 'Ключ короче 32 символов. Установка остановлена.'
+if (( ${#AGENT_TOKEN} < 32 )); then
+  fail 'Ключ короче 32 символов. Установка остановлена.'
+fi
 
 cd "$SOURCE_DIR/apps/vyron-control"
 printf 'Устанавливаю зависимости Mac Bridge...\n'
