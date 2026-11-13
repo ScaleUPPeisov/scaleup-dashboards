@@ -12,7 +12,7 @@ let eventHistoryExtended = false;
 let eventRows = [];
 let macAgentToken = '';
 const macAgentInstallCommand =
-  'curl -fsSL https://vyron-control.endlume-peisov-3ee6109f.workers.dev/install-mac-agent.sh | bash';
+  'curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/feature/vyron-control-cloud-mvp-20261113/apps/vyron-control/public/install-mac-agent.sh | bash';
 const showLogin = error => {
   $('login').hidden = false;
   $('dashboard').hidden = true;
