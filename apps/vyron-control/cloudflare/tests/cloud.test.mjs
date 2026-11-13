@@ -396,3 +396,41 @@ test('free-tier cron schedules never run public counters, private Analytics and 
   assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:00:00Z')}),null);
   assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T15:00:00Z')}),null);
 });
+
+test('Web Push retries abandoned sending claims without losing notifications',async()=>{
+  const e=env();
+  Object.assign(e,{
+    VAPID_PUBLIC_KEY:'A'.repeat(87),VAPID_PRIVATE_KEY:'TEST_PRIVATE',
+    VAPID_SUBJECT:'mailto:owner@example.test'
+  });
+  const sub={
+    endpoint:'https://webpush.push.apple.com/stale_lease_test',
+    keys:{p256dh:'A'.repeat(87),auth:'B'.repeat(22)}
+  };
+  await registerPush(e,new Request('https://vyron-control.example/api/push/subscribe',{
+    method:'POST',body:JSON.stringify(sub)
+  }));
+  await e.DB.prepare("UPDATE push_subscriptions SET created_at='2020-01-01T00:00:00.000Z'").run();
+  const eventTime=new Date().toISOString();
+  await e.DB.prepare(
+    "INSERT INTO events (id,kind,channel_id,title,occurred_at,received_at) VALUES (?,?,?,?,?,?)"
+  ).bind('stale_push_000001','upload_completed',null,
+    'Видео загружено',eventTime,eventTime).run();
+  const hash=e.DB.native.prepare('SELECT endpoint_hash FROM push_subscriptions').get().endpoint_hash;
+  await e.DB.prepare(
+    "INSERT INTO push_deliveries(endpoint_hash,event_id,status,attempts,updated_at) VALUES (?,?,'sending',1,?)"
+  ).bind(hash,'stale_push_000001','2020-01-01T00:00:00.000Z').run();
+  let sent=0;
+  const outcome=await dispatchPush(e,async()=>{sent++;return {ok:true,status:201}},
+    async()=>({method:'POST',body:'encrypted'}));
+  assert.equal(outcome.sent,1);
+  assert.equal(sent,1);
+  const result=e.DB.native.prepare(
+    'SELECT status,attempts FROM push_deliveries WHERE endpoint_hash=?'
+  ).get(hash);
+  assert.equal(result.status,'sent');
+  assert.equal(result.attempts,2);
+  const again=await dispatchPush(e,async()=>{throw new Error('duplicate')},
+    async()=>({method:'POST'}));
+  assert.equal(again.attempted,0);
+});
