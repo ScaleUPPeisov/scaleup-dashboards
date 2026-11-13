@@ -246,6 +246,39 @@ YouTube upload accepted, not guaranteed public publication. The cloud
 provides a paginated event timeline with filters for subscribers, render,
 upload and error events.
 
+## iPhone Web Push — subscriber milestone and production alerts
+
+The Worker includes opt-in RFC 8291 encrypted Web Push support, with a dedicated
+D1 delivery ledger, bounded retry queue and PWA service worker. It notifies on
+subscriber milestones (100/200/300 etc.), render completions/failures, upload
+acceptance/failures and important system warnings. The Worker checks pending
+deliveries every five minutes. Notifications are best-effort and may be delayed
+by the push provider or offline device; never treat push as proof of successful
+YouTube publication.
+
+**Configure VAPID keys privately, once:**
+
+1. On a trusted local Mac or computer with Node.js 22+, run
+   `cd apps/vyron-control && npm run push:keys`.
+2. Add the generated **public key** as Cloudflare Worker variable `VAPID_PUBLIC_KEY`.
+3. Add the generated **private key** using
+   `npx wrangler secret put VAPID_PRIVATE_KEY -c cloudflare/wrangler.jsonc`
+   and never commit it or send it in chat. Also set a valid
+   `VAPID_SUBJECT` value, e.g. `mailto:YOUR_EMAIL@example.com` (must be
+   your actual contact address).
+4. Apply the `0004_webpush.sql` D1 migration and deploy the Worker.
+5. On iPhone, open the HTTPS Worker URL in Safari, use **Share → Add to Home
+   Screen**, open the installed web app, log in, then tap **Включить
+   уведомления** and grant notification permission. Apple supports Web Push
+   for Home Screen web apps on iOS 16.4+; no Apple Developer subscription is
+   required for this PWA workflow.
+
+The push endpoint is only used for allowlisted Apple/Google/Mozilla/Windows
+push providers, never arbitrary HTTP destinations. Subscription and revoke
+operations require the owner's private CONTROL_TOKEN. Push subscriptions are
+not transferred to Google or GitHub. The `request_status` command remains
+read-only and does not grant upload or updater access.
+
 ## Security / release policy
 
 - The signing-key incident in existing VYRON PR #22 remains a production-release
