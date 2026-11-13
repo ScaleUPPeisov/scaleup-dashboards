@@ -50,15 +50,38 @@ export function mirrorChannels(state) {
   return [...known.values()];
 }
 
-export function mirrorStatus(state) {
+// A user's requested daily report uses Krasnoyarsk's calendar day,
+// regardless of the Mac's own time zone.
+function krasnoyarskDay(input) {
+  const at=new Date(input);
+  if(!Number.isFinite(at.getTime())) return null;
+  const parts=new Intl.DateTimeFormat('en-CA',{
+    timeZone:'Asia/Krasnoyarsk',year:'numeric',month:'2-digit',day:'2-digit'
+  }).formatToParts(at);
+  const p=Object.fromEntries(parts.map(({type,value})=>[type,value]));
+  return `${p.year}-${p.month}-${p.day}`;
+}
+export function mirrorStatus(state,now=new Date()) {
   const jobs = Array.isArray(state?.jobs) ? state.jobs : [];
   const uploaded = Array.isArray(state?.uploadHistory) ? state.uploadHistory : [];
+  const journal = Array.isArray(state?.activityJournal) ? state.activityJournal : [];
+  const channels = Array.isArray(state?.channels) ? state.channels : [];
+  const today = krasnoyarskDay(now);
+  const inToday = timestamp => Boolean(today) && krasnoyarskDay(timestamp)===today;
   return {
     macAwake: true,
+    channelsTotal: channels.length,
+    channelsBound: mirrorChannels(state).length,
     rendersActive: jobs.filter(x => x?.status === 'RENDERING').length,
+    jobsReadyUpload: jobs.filter(x => x?.status === 'READY_UPLOAD').length,
     uploadsQueued: jobs.filter(x => x?.status === 'READY_UPLOAD' || x?.status === 'UPLOADING').length,
     uploadsCompleted: uploaded.filter(x => x?.status === 'UPLOADED').length,
-    syncCursor: 'mirror-v1'
+    uploadsToday: uploaded.filter(x => x?.status === 'UPLOADED' && inToday(x?.uploadedAt)).length,
+    rendersCompletedToday: journal.filter(x =>
+      x?.eventType === 'RENDER_COMPLETED' && inToday(x.timestamp)).length,
+    uploadFailuresToday: journal.filter(x =>
+      x?.eventType === 'UPLOAD_FAILED' && inToday(x.timestamp)).length,
+    syncCursor: 'mirror-v2'
   };
 }
 
