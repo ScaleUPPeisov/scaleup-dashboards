@@ -13,6 +13,15 @@ function n(value) {
   const parsed=Number(value);
   return Number.isFinite(parsed)&&parsed>=0?parsed:0;
 }
+async function fetchAnalyticsReport(url,options,fetchImpl) {
+  let response;
+  for(let attempt=0;attempt<2;attempt++) {
+    response=await fetchImpl(url,options);
+    if(response.ok||!(response.status===429||response.status>=500))return response;
+    if(attempt===0)await new Promise(resolve=>setTimeout(resolve,250));
+  }
+  return response;
+}
 export function nextAnalyticsSlot(controller) {
   const date=new Date(controller.scheduledTime ?? Date.now());
   if(!ANALYTICS_HOURS.has(date.getUTCHours())||
@@ -77,14 +86,17 @@ export async function runAnalyticsBatch(env,controller,fetchImpl=fetch) {
       try {
         const token=await refreshAccessToken(profile,env,fetchImpl);
         const params=new URLSearchParams({
-          ids:'channel=='+profile.channel_id,
+          // A refresh token belongs to the channel/account selected during OAuth.
+          // YouTube Analytics requires channel==MINE for this authorization mode.
+          ids:'channel==MINE',
           startDate:isoDay(start),endDate:isoDay(end),
           metrics:'views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,subscribersGained,subscribersLost',
           dimensions:'day',sort:'day'
         });
-        const reply=await fetchImpl('https://youtubeanalytics.googleapis.com/v2/reports?'+params,{
+        const reply=await fetchAnalyticsReport(
+          'https://youtubeanalytics.googleapis.com/v2/reports?'+params,{
           headers:{Authorization:'Bearer '+token,Accept:'application/json'}
-        });
+        },fetchImpl);
         if(!reply.ok)throw new Error('YouTube Analytics HTTP '+reply.status);
         const snapshot=parseDailyReport(await reply.json(),profile.channel_id,
           new Date().toISOString());

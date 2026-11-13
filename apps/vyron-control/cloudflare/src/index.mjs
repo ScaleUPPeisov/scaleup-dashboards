@@ -6,6 +6,11 @@ import { runAnalyticsBatch } from './google-analytics.mjs';
 import { registerPush,unregisterPush,vapidPublic,dispatchPush,PUSH_CRON } from './push.mjs';
 
 const REQUIRED_TOKEN_LENGTH = 32;
+const EXPECTED_TABLES = Object.freeze([
+  'channels','channel_snapshots','events','sync_runs','quota_buckets','devices',
+  'commands','channel_analytics','google_oauth_sessions','google_oauth_profiles',
+  'cloud_analytics_runs','push_subscriptions','push_deliveries'
+]);
 
 function json(body,status=200) {
   return new Response(JSON.stringify(body),{
@@ -47,6 +52,33 @@ async function readJson(request, bytes=65536) {
   return JSON.parse(source);
 }
 function number(value) { return value == null ? null : Number(value); }
+
+async function health(env) {
+  if (!env.DB) return json({
+    ok:false,app:'vyron-control',d1:{bound:false,schema:false},
+    error:'D1 binding missing'
+  },503);
+  try {
+    const placeholders=EXPECTED_TABLES.map(()=>'?').join(',');
+    const {results=[]}=await env.DB.prepare(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name IN (${placeholders})`
+    ).bind(...EXPECTED_TABLES).all();
+    const present=new Set(results.map(row=>row.name));
+    const missing=EXPECTED_TABLES.filter(name=>!present.has(name));
+    const ok=missing.length===0;
+    return json({
+      ok,app:'vyron-control',
+      d1:{bound:true,schema:ok,expectedTables:EXPECTED_TABLES.length,
+        presentTables:EXPECTED_TABLES.length-missing.length,...(ok?{}:{missing})},
+      schedule:{timezone:'Asia/Krasnoyarsk',local:['07:00','22:00'],utc:['00:00','15:00']}
+    },ok?200:503);
+  } catch {
+    return json({
+      ok:false,app:'vyron-control',d1:{bound:true,schema:false},
+      error:'D1 health query failed'
+    },503);
+  }
+}
 
 async function fetchStatus(env) {
   const db = env.DB;
@@ -133,6 +165,13 @@ async function fetchStatus(env) {
       covered:channels.filter(ch=>ch.analytics!=null).length,
       total:channels.length,
       note:'Снимки из VYRON на Mac. Не являются новой аналитикой YouTube, пока Mac спит.'
+    },
+    integrations:{
+      youtubeDataApi:Boolean(env.YOUTUBE_API_KEY),
+      macBridge:Boolean(env.AGENT_TOKEN),
+      googleOAuth:Boolean(env.GOOGLE_OAUTH_CLIENT_ID&&env.GOOGLE_OAUTH_CLIENT_SECRET&&
+        env.OAUTH_ENCRYPTION_KEY&&env.APP_ORIGIN),
+      webPush:Boolean(env.VAPID_PUBLIC_KEY&&env.VAPID_PRIVATE_KEY&&env.VAPID_SUBJECT)
     },
     events, devices:(d.results||[]).map(x=>{
       let status={};try{status=JSON.parse(x.status_json||'{}');}catch{}
@@ -256,6 +295,16 @@ async function createCommand(env,request) {
     note:'Queued command is NOT proof of execution by the Mac.'},202);
 }
 
+async function cancelCommand(env,id) {
+  const at=new Date().toISOString();
+  const result=await env.DB.prepare(`
+    UPDATE commands SET state='cancelled',updated_at=?
+    WHERE id=? AND state='queued'
+  `).bind(at,id).run();
+  return json({id,cancelled:Number(result.meta?.changes)===1,
+    note:'Only a command that had not been acknowledged by the Mac can be cancelled.'});
+}
+
 async function pendingCommands(env,request) {
   const deviceId=new URL(request.url).searchParams.get('device');
   if(!/^[A-Za-z0-9_-]{3,50}$/.test(deviceId||'')) return errorReply('Invalid device ID');
@@ -298,7 +347,7 @@ export default {
       headers.set('Content-Security-Policy',"default-src 'self'; script-src 'self'; connect-src 'self'; style-src 'self'; img-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'");
       return new Response(response.body,{status:response.status,headers});
     }
-    if(url.pathname==='/api/health'&&request.method==='GET') return json({ok:true});
+    if(url.pathname==='/api/health'&&request.method==='GET') return health(env);
     if(url.pathname==='/api/oauth/callback'&&request.method==='GET') {
       try {return await callbackOAuth(request,env);}
       catch(error) {
@@ -339,6 +388,12 @@ export default {
         return enrollChannels(env,request);
       if (url.pathname==='/api/commands'&&request.method==='POST')
         return createCommand(env,request);
+      if (url.pathname.startsWith('/api/commands/')&&
+          url.pathname.endsWith('/cancel')&&request.method==='POST') {
+        const id=url.pathname.split('/')[3];
+        if(!/^[A-Za-z0-9_-]{16,80}$/.test(id||'')) return errorReply('Invalid command ID');
+        return cancelCommand(env,id);
+      }
       if (url.pathname==='/api/agent/channels'&&request.method==='POST')
         return enrollChannels(env,request);
       if (url.pathname==='/api/agent/analytics'&&request.method==='POST')

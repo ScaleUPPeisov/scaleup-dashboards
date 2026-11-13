@@ -47,7 +47,7 @@
         <small class="caution">Здесь учтены только запросы этого сервиса, не общая квота Google Cloud, VYRON на Mac или ENDLUME.</small>
       </section>
       <section class="card channel-section">
-        <div class="section-title"><div><span class="eyebrow">ВСЯ СЕТЬ</span><h2>Каналы <span id="channel-count"></span></h2></div><input id="search" type="search" placeholder="Найти канал"></div>
+        <div class="section-title"><div><span class="eyebrow">ВСЯ СЕТЬ</span><h2>Каналы <span id="channel-count"></span></h2></div><div class="channel-tools"><select id="channel-sort" aria-label="Сортировка каналов"><option value="name">По названию</option><option value="growth">По последнему приросту</option></select><input id="search" type="search" placeholder="Найти канал"></div></div>
         <div id="channels" class="channels"></div>
       </section>
       <section class="card push-section">
@@ -97,6 +97,7 @@
           <button class="ghost" id="mac-status-request" disabled>Запросить состояние Mac</button>
           <span id="mac-command-feedback" class="caution">Команда попадает в очередь. Пока Mac спит, она не выполняется.</span>
         </div>
+        <div id="mac-command-list" class="command-list"></div>
         <p class="caution">Статус Mac считается актуальным, если от агента был сигнал за последние 3 минуты. При сне показываются последние сохранённые значения.</p>
       </section>
       <section class="card event-section">

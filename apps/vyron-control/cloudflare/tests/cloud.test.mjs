@@ -72,10 +72,20 @@ test('cron times use Krasnoyarsk but Google quota resets in Pacific',()=>{
 
 test('authorization, origin guard, static asset CSP and immutable endpoint behavior',async()=>{
   const e=env();
+  const health=await cloud.fetch(new Request('https://vyron-control.example/api/health'),e);
+  assert.equal(health.status,200);
+  const healthBody=await health.json();
+  assert.equal(healthBody.app,'vyron-control');
+  assert.deepEqual(healthBody.d1,{bound:true,schema:true,expectedTables:13,presentTables:13});
   assert.equal((await cloud.fetch(req('/api/status','invalid'),e)).status,401);
   const good=await cloud.fetch(req('/api/status',control),e);
   assert.equal(good.status,200);
-  assert.equal((await good.json()).channels.length,0);
+  const goodBody=await good.json();
+  assert.equal(goodBody.channels.length,0);
+  assert.equal(goodBody.integrations.youtubeDataApi,true);
+  assert.equal(goodBody.integrations.googleOAuth,false);
+  assert.equal((await cloud.fetch(new Request('https://vyron-control.example/api/health'),
+    {...e,DB:null})).status,503);
   const blocked=await cloud.fetch(req('/api/channels',control,'POST',[{id:id(1)}],'https://attacker.invalid'),e);
   assert.equal(blocked.status,403);
   const asset=await cloud.fetch(new Request('https://vyron-control.example/'),e);
@@ -152,6 +162,17 @@ test('Mac event ingress is authenticated, deduped; commands await real Mac ACK',
   }),e)).status,200);
   const after=await (await cloud.fetch(req('/api/agent/commands?device=macbook_m1',agent),e)).json();
   assert.equal(after.commands.length,0);
+  const cancelId='mac_status_req_002';
+  await cloud.fetch(req('/api/commands',control,'POST',{
+    id:cancelId,kind:'request_status',targetDevice:'macbook_m1'
+  }),e);
+  const cancelled=await cloud.fetch(req('/api/commands/'+cancelId+'/cancel',control,'POST',{}),e);
+  assert.deepEqual(await cancelled.json(),{
+    id:cancelId,cancelled:true,
+    note:'Only a command that had not been acknowledged by the Mac can be cancelled.'
+  });
+  assert.equal((await cloud.fetch(req('/api/commands/'+cancelId+'/cancel',control,'POST',{}),e)).status,200);
+  assert.equal(e.DB.native.prepare('SELECT state FROM commands WHERE id=?').get(cancelId).state,'cancelled');
   assert.throws(()=>acceptedCommand({id:cid,targetDevice:'macbook_m1',kind:'publish_video'}));
   assert.throws(()=>safeEvent({id:'bad',kind:'arbitrary',title:'No',occurredAt:new Date().toISOString()}));
 });
@@ -259,6 +280,7 @@ test('authorized private Analytics can update while Mac sleeps, with 10-channel 
   assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:25:00Z')}).offset,40);
   assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:00:00Z')}),null);
   assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:01:00Z')}),null);
+  let analyticsAttempts=0;
   const mockFetch=async(url,opts)=>{
     if(url.includes('oauth2.googleapis.com/token')) {
       assert.equal(new URLSearchParams(opts.body).get('refresh_token'),'PRIVATE_REFRESH_TOKEN');
@@ -266,7 +288,9 @@ test('authorized private Analytics can update while Mac sleeps, with 10-channel 
     }
     if(url.includes('youtubeanalytics.googleapis.com')) {
       assert.equal(opts.headers.Authorization,'Bearer SHORT_LIVED_TOKEN');
-      assert.match(url,/ids=channel%3D%3D/);
+      assert.match(url,/ids=channel%3D%3DMINE/);
+      analyticsAttempts++;
+      if(analyticsAttempts===1)return new Response('temporary',{status:503});
       return new Response(JSON.stringify({
         columnHeaders:['day','views','estimatedMinutesWatched',
           'averageViewDuration','averageViewPercentage',
@@ -279,6 +303,7 @@ test('authorized private Analytics can update while Mac sleeps, with 10-channel 
   const outcome=await runAnalyticsBatch(e,
     {scheduledTime:Date.parse('2026-11-13T00:05:00Z')},mockFetch);
   assert.equal(outcome.updated,1);
+  assert.equal(analyticsAttempts,2);
   const stored=e.DB.native.prepare(
     'SELECT source,views,watch_minutes FROM channel_analytics WHERE channel_id=?'
   ).get(channelId);

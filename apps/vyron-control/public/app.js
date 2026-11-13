@@ -53,6 +53,11 @@ function renderChannels(channels) {
   const needle = $('search').value.trim().toLocaleLowerCase('ru-RU');
   const visible = channels.filter(ch =>
     ch.name.toLocaleLowerCase('ru-RU').includes(needle) || ch.id.toLowerCase().includes(needle));
+  if($('channel-sort').value==='growth')visible.sort((a,b)=>
+    ((b.subscribers??0)-(b.previousSubscribers??b.subscribers??0))-
+    ((a.subscribers??0)-(a.previousSubscribers??a.subscribers??0))||
+    a.name.localeCompare(b.name,'ru'));
+  else visible.sort((a,b)=>a.name.localeCompare(b.name,'ru'));
   const list = $('channels');
   list.replaceChildren();
   if (!visible.length) {
@@ -198,6 +203,8 @@ function renderDevices(data) {
   const devices = data.devices || [];
   const device = devices[0];
   const button = $('mac-status-request');
+  const commandList=$('mac-command-list');
+  commandList.replaceChildren();
   button.disabled = !device;
   if (!device) {
     $('mac-indicator').textContent = 'Нет подключения';
@@ -227,6 +234,28 @@ function renderDevices(data) {
   const queued = recentCommands.filter(c => c.target_device===device.id && c.state==='queued');
   if (queued.length) $('mac-command-feedback').textContent =
     queued.length + ' команд в ожидании подтверждения Mac.';
+  for(const command of recentCommands.filter(c=>c.target_device===device.id).slice(0,5)) {
+    const row=make('div','command-row');
+    row.append(make('span','',command.kind==='request_status'?'Запрос состояния':command.kind),
+      make('small','',command.state+' · '+time(command.updated_at)));
+    if(command.state==='queued') {
+      const cancel=make('button','ghost','Отменить');
+      cancel.addEventListener('click',async()=>{
+        cancel.disabled=true;
+        try {
+          const result=await api('/api/commands/'+encodeURIComponent(command.id)+'/cancel','POST',{});
+          $('mac-command-feedback').textContent=result.cancelled
+            ?'Ожидающая команда отменена.':'Команда уже была принята Mac и не отменена.';
+          await load();
+        }catch(error){
+          $('mac-command-feedback').textContent='Ошибка отмены: '+error.message;
+          cancel.disabled=false;
+        }
+      });
+      row.append(cancel);
+    }
+    commandList.append(row);
+  }
 }
 $('mac-status-request').addEventListener('click', async () => {
   const button = $('mac-status-request');
@@ -402,6 +431,9 @@ $('refresh').addEventListener('click', async () => {
   }
 });
 $('search').addEventListener('input', () => {
+  if (current) renderChannels(current.channels);
+});
+$('channel-sort').addEventListener('change', () => {
   if (current) renderChannels(current.channels);
 });
 // Local UI polling is free: it does NOT make a YouTube API request.
