@@ -38,3 +38,9 @@ input:focus{border-color:#7a9cf5;box-shadow:0 0 0 2px #5e80f43b}.primary{border:
 .mac-actions .ghost{white-space:nowrap}
 @media(max-width:700px){.mac-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:520px){.mac-section{padding:16px}.mac-actions{align-items:start;flex-direction:column}}
+
+/* Per-channel historical Analytics 360 snapshots, explicitly not live */
+.channel-row{flex-wrap:wrap}
+.channel-analytics{display:flex;flex-wrap:wrap;gap:8px 14px;flex-basis:100%;border-top:1px solid #293b5a;padding-top:10px;color:#aac0e2;font-size:11px}
+.channel-analytics span{white-space:nowrap}
+.channel-analytics .mac-stale-label{color:#7fa7f2}
