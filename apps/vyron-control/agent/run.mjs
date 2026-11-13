@@ -21,6 +21,7 @@ const bridge=new MacBridge({
   eventsFile:process.env.VYRON_AGENT_EVENTS_FILE||mirror?.eventsFile||null,
   statusFile:process.env.VYRON_AGENT_STATUS_FILE||mirror?.statusFile||null,
   channelsFile:process.env.VYRON_AGENT_CHANNELS_FILE||mirror?.channelsFile||null,
+  analyticsFile:process.env.VYRON_AGENT_ANALYTICS_FILE||mirror?.analyticsFile||null,
   cursorFile:process.env.VYRON_AGENT_CURSOR_FILE||undefined
 });
 await bridge.initialize();
