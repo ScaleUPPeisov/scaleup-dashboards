@@ -7,6 +7,7 @@ import { cronSlot, crossedMilestones, pacificDay, safeEvent, acceptedCommand } f
 import { manualSlot, reserveQuota, scheduledSync } from '../src/sync.mjs';
 import { startOAuth,callbackOAuth,authorizedProfiles,decryptSecret } from '../src/oauth.mjs';
 import { runAnalyticsBatch,nextAnalyticsSlot,parseDailyReport } from '../src/google-analytics.mjs';
+import { PUSH_CRON } from '../src/push.mjs';
 import { validSubscription,registerPush,dispatchPush } from '../src/push.mjs';
 
 class D1Query {
@@ -376,4 +377,22 @@ test('Web Push notifications use encrypted VAPID payload builder and deduplicate
   assert.equal(second.attempted,0);
   assert.equal(fetchCount,1);
   assert.equal(e.DB.native.prepare("SELECT status FROM push_deliveries").get().status,'sent');
+});
+
+test('free-tier cron schedules never run public counters, private Analytics and Web Push together',()=>{
+  const cfg=JSON.parse(readFileSync(new URL('../wrangler.jsonc',import.meta.url),'utf8'));
+  const crons=cfg.triggers.crons;
+  assert.ok(crons.includes(PUSH_CRON));
+  assert.ok(crons.includes('0 0 * * *'));
+  assert.ok(crons.includes('0 15 * * *'));
+  assert.ok(crons.includes('5,10,15,20,25 0,15 * * *'));
+  assert.notEqual(PUSH_CRON,'*/5 * * * *');
+  const pushMinutes=PUSH_CRON.split(' ')[0].split(',').map(Number);
+  assert.equal(pushMinutes.length,12);
+  for(const minute of pushMinutes)assert.equal(minute%5,2);
+  for(const minute of [0,5,10,15,20,25])
+    assert.equal(pushMinutes.includes(minute),false);
+  // Analytics must never run at the exact 07:00/22:00 public-counter tick.
+  assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:00:00Z')}),null);
+  assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T15:00:00Z')}),null);
 });
