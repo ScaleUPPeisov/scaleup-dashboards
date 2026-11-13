@@ -29,6 +29,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - name: Install pinned Web Push dependency
+        run: npm install --no-audit --no-fund --ignore-scripts
       - name: Check JavaScript syntax
         run: |
           node --check src/core.mjs
@@ -42,6 +44,8 @@ jobs:
           node --check cloudflare/src/analytics.mjs
           node --check cloudflare/src/oauth.mjs
           node --check cloudflare/src/google-analytics.mjs
+          node --check cloudflare/src/push.mjs
+          node --check public/service-worker.js
           node --check agent/mirror.mjs
           node --check agent/logic.mjs
           node --check agent/bridge.mjs
