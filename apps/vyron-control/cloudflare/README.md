@@ -7,8 +7,11 @@ production logs to this public GitHub repository.
 
 ## Why Cloudflare
 
-- Cron runs on UTC: `0 0 * * *` = 07:00 Krasnoyarsk; `0 15 * * *` = 22:00
-  Krasnoyarsk (Asia/Krasnoyarsk is UTC+7 year-round).
+- Public counter cron runs at `0 0 * * *` = 07:00 Krasnoyarsk and
+  `0 15 * * *` = 22:00 Krasnoyarsk (UTC+7). Private Analytics runs separately
+  in five ten-channel batches at 07:05, 07:10, 07:15, 07:20, 07:25
+  and again at 22:05–22:25. This separation avoids exceeding Workers Free's
+  50-subrequest limit at 07:00/22:00.
 - Workers Free: up to 100,000 requests/day and 5 account-wide cron triggers,
   subject to Cloudflare's current free plan limits.
 - D1 Free: 5 million rows read/day, 100,000 rows written/day, 5 GB total storage,
