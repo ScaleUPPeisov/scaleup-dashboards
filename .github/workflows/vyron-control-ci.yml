@@ -46,6 +46,8 @@ jobs:
           node --check agent/logic.mjs
           node --check agent/bridge.mjs
           node --check agent/run.mjs
+          node --check agent/install.mjs
+          node --check agent/uninstall.mjs
       - name: Run isolated deterministic tests
         run: npm test
       - name: Cloudflare Worker bundler dry-run (no credentials or deployment)
