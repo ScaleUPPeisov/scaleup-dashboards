@@ -5,8 +5,9 @@ import {
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 
-// Read-only adapter for VYRON's EXISTING local state mirror (written by
-// src-tauri/src/storage.rs). No OAuth/Keychain access or mutation of VYRON.
+// Read-only adapter for VYRON's EXISTING local state mirror written by
+// src-tauri/src/storage.rs at ~/Documents/VYRON/State/app-state.json.
+// No OAuth/Keychain access or mutation of VYRON.
 const VALID_CHANNEL = /^UC[A-Za-z0-9_-]{22}$/;
 const MAP = Object.freeze({
   UPLOAD_QUEUED: 'upload_queued',
@@ -165,7 +166,7 @@ async function privateJson(path,data) {
 
 export class MirrorExport {
   constructor({
-    mirrorFile=join(homedir(),'Library','Application Support','studio.channelflow.desktop','state.json'),
+    mirrorFile=join(homedir(),'Documents','VYRON','State','app-state.json'),
     outDir=join(homedir(),'.vyron-control-agent'),now=()=>new Date()
   }={}) {
     this.now=now;
