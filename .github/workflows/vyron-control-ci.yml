@@ -52,6 +52,7 @@ jobs:
           node --check agent/run.mjs
           node --check agent/install.mjs
           node --check agent/uninstall.mjs
+          node --check agent/generate-push-keys.mjs
       - name: Run isolated deterministic tests
         run: npm test
       - name: Cloudflare Worker bundler dry-run (no credentials or deployment)
