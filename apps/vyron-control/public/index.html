@@ -50,6 +50,23 @@
         <div class="section-title"><div><span class="eyebrow">ВСЯ СЕТЬ</span><h2>Каналы <span id="channel-count"></span></h2></div><input id="search" type="search" placeholder="Найти канал"></div>
         <div id="channels" class="channels"></div>
       </section>
+      <section class="card mac-section">
+        <div class="section-title">
+          <div><span class="eyebrow">LIVE DEVICES / CONTROL</span><h2>Mac + ENDLUME</h2></div>
+          <span class="pill" id="mac-indicator">Не подключён</span>
+        </div>
+        <div class="mac-grid">
+          <div class="mac-metric"><small>Mac</small><strong id="mac-state">Не подключён</strong><span id="mac-last">Последний сигнал: —</span></div>
+          <div class="mac-metric"><small>Рендеры</small><strong id="mac-renders">—</strong><span>Активные</span></div>
+          <div class="mac-metric"><small>Загрузки</small><strong id="mac-uploads">—</strong><span>Ожидают публикации</span></div>
+          <div class="mac-metric"><small>Опубликовано с Mac</small><strong id="mac-uploaded">—</strong><span>По данным агента</span></div>
+        </div>
+        <div class="mac-actions">
+          <button class="ghost" id="mac-status-request" disabled>Запросить состояние Mac</button>
+          <span id="mac-command-feedback" class="caution">Команда попадает в очередь. Пока Mac спит, она не выполняется.</span>
+        </div>
+        <p class="caution">Статус Mac считается актуальным, если от агента был сигнал за последние 3 минуты. При сне показываются последние сохранённые значения.</p>
+      </section>
       <section class="card event-section">
         <div class="section-title"><div><span class="eyebrow">ОТМЕТКИ РОСТА</span><h2>Рубежи подписчиков 🎉</h2></div></div>
         <div id="events" class="events"></div>
