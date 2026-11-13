@@ -30,6 +30,7 @@ class MockD1 {
     this.native.exec(readFileSync(new URL('../migrations/0001_init.sql',import.meta.url),'utf8'));
     this.native.exec(readFileSync(new URL('../migrations/0002_analytics.sql',import.meta.url),'utf8'));
     this.native.exec(readFileSync(new URL('../migrations/0003_google_oauth.sql',import.meta.url),'utf8'));
+    this.native.exec(readFileSync(new URL('../migrations/0004_webpush.sql',import.meta.url),'utf8'));
   }
   prepare(sql){return new D1Query(this,sql);}
   async batch(stmts){
