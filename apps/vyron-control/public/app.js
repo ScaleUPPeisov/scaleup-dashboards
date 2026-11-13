@@ -93,7 +93,7 @@ function renderEvents(events) {
     const row = make('div', 'event');
     const text = make('div', 'event-text');
     text.append(make('strong', '', '🎉 ' + event.name),
-      make('span', '', number(event.milestone) + ' подписчиков'),
+      make('span', '', event.type === 'subscriber_milestone' ? number(event.milestone) + ' подписчиков' : event.type.replaceAll('_',' ')),
       make('span', '', time(event.detectedAt)));
     row.append(text);
     list.append(row);
@@ -115,6 +115,7 @@ function render(data) {
   $('refresh').disabled = !data.configured || data.syncing;
   renderChannels(data.channels);
   renderEvents(data.events);
+  renderDevices(data);
 }
 async function load() {
   if (!accessToken) return showLogin('');
@@ -132,6 +133,52 @@ async function load() {
     }
   }
 }
+function renderDevices(data) {
+  const devices = data.devices || [];
+  const device = devices[0];
+  const button = $('mac-status-request');
+  button.disabled = !device;
+  if (!device) {
+    $('mac-indicator').textContent = 'Нет подключения';
+    $('mac-state').textContent = 'Не подключён';
+    $('mac-last').textContent = 'Ожидаем Mac Bridge';
+    $('mac-renders').textContent = '—';
+    $('mac-uploads').textContent = '—';
+    $('mac-uploaded').textContent = '—';
+    return;
+  }
+  const recent = device.lastSeenAt &&
+    Date.now() - Date.parse(device.lastSeenAt) < 180000;
+  $('mac-indicator').textContent = recent ? '● Mac онлайн' : '○ Mac спит / нет связи';
+  $('mac-state').textContent = recent ? 'На связи' : 'Последнее состояние';
+  $('mac-last').textContent = 'Последний сигнал: ' + time(device.lastSeenAt);
+  const s = device.status || {};
+  $('mac-renders').textContent = number(s.rendersActive);
+  $('mac-uploads').textContent = number(s.uploadsQueued);
+  $('mac-uploaded').textContent = number(s.uploadsCompleted);
+  button.dataset.deviceId = device.id;
+  const recentCommands = data.commands || [];
+  const queued = recentCommands.filter(c => c.target_device===device.id && c.state==='queued');
+  if (queued.length) $('mac-command-feedback').textContent =
+    queued.length + ' команд в ожидании подтверждения Mac.';
+}
+$('mac-status-request').addEventListener('click', async () => {
+  const button = $('mac-status-request');
+  const targetDevice = button.dataset.deviceId;
+  if (!targetDevice) return;
+  button.disabled = true;
+  try {
+    const result = await api('/api/commands','POST',{
+      id:crypto.randomUUID().replaceAll('-',''),kind:'request_status',targetDevice
+    });
+    $('mac-command-feedback').textContent = result.queued
+      ? 'Команда добавлена в очередь — ожидаем ответ Mac.'
+      : 'Команда уже существует; проверьте журнал.';
+    await load();
+  } catch(error) {
+    $('mac-command-feedback').textContent = 'Не удалось отправить: '+error.message;
+  } finally {button.disabled = false;}
+});
 $('login-form').addEventListener('submit', async event => {
   event.preventDefault();
   accessToken = $('access-token').value.trim();
