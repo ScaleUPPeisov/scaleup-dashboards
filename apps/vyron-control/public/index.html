@@ -50,6 +50,19 @@
         <div class="section-title"><div><span class="eyebrow">ВСЯ СЕТЬ</span><h2>Каналы <span id="channel-count"></span></h2></div><input id="search" type="search" placeholder="Найти канал"></div>
         <div id="channels" class="channels"></div>
       </section>
+      <section class="card oauth-section">
+        <div class="section-title">
+          <div><span class="eyebrow">GOOGLE / READ ONLY</span><h2>YouTube Analytics 360°</h2></div>
+          <span class="pill" id="oauth-count">0 подключено</span>
+        </div>
+        <p class="muted">Закрытая аналитика, просмотры за 28 дней, удержание, время просмотра и прирост подписчиков. Работает в облаке, даже если Mac спит, после отдельного разрешения Google.</p>
+        <div class="mac-actions">
+          <button id="oauth-connect" class="primary" disabled>Подключить Google-каналы</button>
+          <span class="caution" id="oauth-message">Требуется отдельная Google OAuth-конфигурация в Cloudflare.</span>
+        </div>
+        <div id="oauth-profiles" class="oauth-profiles"></div>
+        <p class="caution">Разрешение только на чтение. Для каждого Google-профиля требуется вход владельца; OAuth из macOS Keychain не копируется.</p>
+      </section>
       <section class="card mac-section">
         <div class="section-title">
           <div><span class="eyebrow">LIVE DEVICES / CONTROL</span><h2>Mac + ENDLUME</h2></div>
