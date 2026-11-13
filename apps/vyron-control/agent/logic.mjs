@@ -16,7 +16,9 @@ export function cleanStatus(source) {
   const status = {};
   for (const key of [
     'vyronVersion','endlumeVersion','macAwake','diskOnline',
-    'rendersActive','uploadsQueued','uploadsCompleted','lastError','syncCursor'
+    'rendersActive','uploadsQueued','uploadsCompleted','uploadsToday',
+    'rendersCompletedToday','uploadFailuresToday','jobsReadyUpload',
+    'channelsTotal','channelsBound','lastError','syncCursor'
   ]) {
     const value = obj[key];
     if (typeof value === 'boolean' || (Number.isSafeInteger(value) && value >= 0) ||
