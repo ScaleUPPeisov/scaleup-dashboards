@@ -1,5 +1,6 @@
 import { acceptedCommand, pacificDay, safeEvent, validatedChannelList } from './core.mjs';
 import { manualSlot, runCountersSync, scheduledSync } from './sync.mjs';
+import { saveAnalytics } from './analytics.mjs';
 
 const REQUIRED_TOKEN_LENGTH = 32;
 
@@ -49,7 +50,22 @@ async function fetchStatus(env) {
   const now = new Date();
   const day = pacificDay(now);
   const [c,e,q,s,d,cmd]=await Promise.all([
-    db.prepare('SELECT id,name,subscribers,views,videos,hidden_subscribers,previous_subscribers,updated_at FROM channels ORDER BY name LIMIT 120').all(),
+    db.prepare(`SELECT c.id,c.name,c.subscribers,c.views,c.videos,c.hidden_subscribers,
+      c.previous_subscribers,c.updated_at,
+      a.period_days AS analytics_period_days,
+      a.views AS analytics_views,
+      a.watch_minutes AS analytics_watch_minutes,
+      a.avg_view_seconds AS analytics_avg_view_seconds,
+      a.avg_view_percentage AS analytics_avg_view_percentage,
+      a.subscribers_gained AS analytics_subscribers_gained,
+      a.subscribers_lost AS analytics_subscribers_lost,
+      a.impressions AS analytics_impressions,
+      a.impression_ctr AS analytics_impression_ctr,
+      a.estimated_revenue AS analytics_revenue,
+      a.currency AS analytics_currency,
+      a.captured_at AS analytics_captured_at
+      FROM channels c LEFT JOIN channel_analytics a ON c.id=a.channel_id
+      ORDER BY c.name LIMIT 120`).all(),
     db.prepare('SELECT id,kind,channel_id,title,payload_json,occurred_at,received_at FROM events ORDER BY received_at DESC LIMIT 80').all(),
     db.prepare('SELECT spent FROM quota_buckets WHERE day_pt=?').bind(day).first(),
     db.prepare('SELECT slot,status,source,started_at,ended_at,error,updated_channels FROM sync_runs ORDER BY started_at DESC LIMIT 1').first(),
@@ -63,7 +79,22 @@ async function fetchStatus(env) {
     subscribersRounded:true,
     views:number(row.views),videos:number(row.videos),
     previousSubscribers:number(row.previous_subscribers),
-    updatedAt:row.updated_at
+    updatedAt:row.updated_at,
+    analytics:row.analytics_captured_at?{
+      periodDays:row.analytics_period_days,
+      views:number(row.analytics_views),
+      watchMinutes:number(row.analytics_watch_minutes),
+      averageViewDuration:number(row.analytics_avg_view_seconds),
+      averageViewPercentage:number(row.analytics_avg_view_percentage),
+      subscribersGained:number(row.analytics_subscribers_gained),
+      subscribersLost:number(row.analytics_subscribers_lost),
+      impressions:number(row.analytics_impressions),
+      impressionCtr:number(row.analytics_impression_ctr),
+      estimatedRevenue:number(row.analytics_revenue),
+      currency:row.analytics_currency,
+      updatedAt:row.analytics_captured_at,
+      source:'VYRON_MAC_CACHE'
+    }:null
   }));
   const sum=key=>({
     value:channels.reduce((s,ch)=>s+(ch[key]??0),0),
@@ -93,6 +124,12 @@ async function fetchStatus(env) {
     lastError:latestError,lastSource:s?.source||null,
     syncing:s?.status==='running',
     channels,totalSubscribers:sum('subscribers'),totalViews:sum('views'),totalVideos:sum('videos'),
+    analyticsSummary:{
+      watchMinutes:channels.reduce((s,ch)=>s+(ch.analytics?.watchMinutes??0),0),
+      covered:channels.filter(ch=>ch.analytics!=null).length,
+      total:channels.length,
+      note:'Снимки из VYRON на Mac. Не являются новой аналитикой YouTube, пока Mac спит.'
+    },
     events, devices:(d.results||[]).map(x=>{
       let status={};try{status=JSON.parse(x.status_json||'{}');}catch{}
       return {id:x.id,label:x.label,lastSeenAt:x.last_seen_at,status};
@@ -231,6 +268,8 @@ export default {
         return createCommand(env,request);
       if (url.pathname==='/api/agent/channels'&&request.method==='POST')
         return enrollChannels(env,request);
+      if (url.pathname==='/api/agent/analytics'&&request.method==='POST')
+        return json(await saveAnalytics(env,request));
       if (url.pathname==='/api/agent/events'&&request.method==='POST')
         return ingestAgentEvents(env,request);
       if (url.pathname==='/api/agent/heartbeat'&&request.method==='POST')
