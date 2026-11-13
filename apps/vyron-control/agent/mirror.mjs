@@ -166,8 +166,9 @@ async function privateJson(path,data) {
 export class MirrorExport {
   constructor({
     mirrorFile=join(homedir(),'Library','Application Support','studio.channelflow.desktop','state.json'),
-    outDir=join(homedir(),'.vyron-control-agent')
+    outDir=join(homedir(),'.vyron-control-agent'),now=()=>new Date()
   }={}) {
+    this.now=now;
     this.mirrorFile=mirrorFile;
     this.outDir=outDir;
     this.eventsFile=join(outDir,'events.jsonl');
@@ -193,13 +194,14 @@ export class MirrorExport {
     let file;
     try{file=await stat(this.mirrorFile);}
     catch(error){if(error.code==='ENOENT')return {status:'mirror_missing',events:0};throw error;}
-    const signature=file.mtimeMs+':'+file.size;
+    const instant=this.now();
+    const signature=file.mtimeMs+':'+file.size+':'+krasnoyarskDay(instant);
     if(signature===this.lastSignature) return {status:'unchanged',events:0};
     const state=JSON.parse(await readFile(this.mirrorFile,'utf8'));
     if (!state || !Array.isArray(state.channels) || !Array.isArray(state.jobs))
       throw new Error('Invalid VYRON state mirror, refusing to export');
     const channels=mirrorChannels(state);
-    const status=mirrorStatus(state);
+    const status=mirrorStatus(state,instant);
     const analytics=mirrorAnalytics(state);
     await privateJson(this.channelsFile,channels);
     await privateJson(this.statusFile,status);
