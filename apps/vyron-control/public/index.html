@@ -94,6 +94,13 @@
           <div class="mac-metric"><small>Загружено на YouTube</small><strong id="mac-uploaded">—</strong><span>Всего принято YouTube, не обязательно опубликовано</span></div>
         </div>
         <div class="mac-actions">
+          <button class="primary" id="mac-agent-prepare">Подготовить подключение Mac</button>
+          <button class="ghost" id="mac-agent-copy-command" hidden>Скопировать команду установки</button>
+          <button class="ghost" id="mac-agent-copy-token" hidden>Скопировать ключ агента</button>
+          <span id="mac-agent-message" class="caution">Один раз установим безопасный Mac Bridge. VYRON, ENDLUME, Keychain и updater не изменяются.</span>
+        </div>
+        <pre id="mac-agent-command" class="agent-command" hidden></pre>
+        <div class="mac-actions">
           <button class="ghost" id="mac-status-request" disabled>Запросить состояние Mac</button>
           <span id="mac-command-feedback" class="caution">Команда попадает в очередь. Пока Mac спит, она не выполняется.</span>
         </div>
