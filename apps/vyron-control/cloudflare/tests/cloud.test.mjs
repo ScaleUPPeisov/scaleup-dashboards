@@ -807,6 +807,7 @@ test('authorized private Analytics syncs 90-day trends and channel breakdowns in
 test('one shared Google profile requests Analytics for each concrete YouTube channel ID',async()=>{
   const e=env(),firstChannel=id(81),secondChannel=id(82);
   Object.assign(e,{
+    APP_ORIGIN:'https://vyron-control.example',
     GOOGLE_OAUTH_CLIENT_ID:'SHARED_ANALYTICS_CLIENT',
     GOOGLE_OAUTH_CLIENT_SECRET:'SHARED_ANALYTICS_SECRET',
     OAUTH_ENCRYPTION_KEY:'9'.repeat(64)
