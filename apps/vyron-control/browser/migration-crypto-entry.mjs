@@ -68,22 +68,33 @@ export async function decryptVyronMigration(arrayBuffer,passphrase) {
     .map(row=>[String(row.youtubeChannelId||''),String(row.name||row.title||row.youtubeChannelId||'')]));
   // Some healthy VYRON profiles predate expectedChannelId in the encrypted vault.
   // Their canonical binding still exists in state.channels via youtubeProfileId.
+  // One Google OAuth profile can own/manage multiple YouTube channels.
+  // Keep every channel binding; a Map<string,string> silently overwrites all
+  // but the final channel for shared profile UUIDs.
   const channelByProfile=new Map();
   for(const row of stateChannels) {
     const profileId=String(row?.youtubeProfileId||'').trim();
     const channelId=String(row?.youtubeChannelId||'').trim();
-    if(profileId&&VALID_CHANNEL.test(channelId))channelByProfile.set(profileId,channelId);
+    if(!profileId||!VALID_CHANNEL.test(channelId))continue;
+    const mapped=channelByProfile.get(profileId)||[];
+    if(!mapped.includes(channelId))mapped.push(channelId);
+    channelByProfile.set(profileId,mapped);
   }
   const profiles=[];
   for(const [id,value] of Object.entries(vault.profiles||{})) {
     const profileUuid=String(value?.profileUuid||id).trim();
-    const channelId=String(value?.expectedChannelId||
-      channelByProfile.get(profileUuid)||channelByProfile.get(id)||'').trim();
+    const expectedChannelId=String(value?.expectedChannelId||'').trim();
+    const mapped=channelByProfile.get(profileUuid)||channelByProfile.get(id)||[];
+    const channelIds=new Set(mapped);
+    if(VALID_CHANNEL.test(expectedChannelId))channelIds.add(expectedChannelId);
     const refreshToken=String(value?.refreshToken||'').trim();
     const clientSecret=String(value?.clientSecret||globalSecret).trim();
-    if(!VALID_CHANNEL.test(channelId)||!refreshToken||!clientSecret||!profileUuid)continue;
-    profiles.push({profileUuid,channelId,channelName:channels.get(channelId)||channelId,
-      refreshToken,clientId,clientSecret});
+    if(!refreshToken||!clientSecret||!profileUuid)continue;
+    for(const channelId of channelIds) {
+      if(!VALID_CHANNEL.test(channelId))continue;
+      profiles.push({profileUuid,channelId,
+        channelName:channels.get(channelId)||channelId,refreshToken,clientId,clientSecret});
+    }
   }
   if(!profiles.length)throw new Error('В пакете нет OAuth-профилей с refresh token.');
   if(profiles.length>100)throw new Error('Пакет содержит слишком много OAuth-профилей.');
