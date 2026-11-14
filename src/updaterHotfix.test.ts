@@ -8,6 +8,7 @@ describe('VYRON 2.1.3 updater hotfix',()=>{
     expect(UPDATER_ENDPOINTS[1]).toBe('https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json');
   });
   it('reports same-version semantics explicitly',()=>expect(updaterVersionStatus('2.1.2','2.1.2')).toBe('current == latest'));
+  it('rejects stale embedded updater configuration distinctly',()=>expect(classifyUpdaterError('UPDATER_CONFIGURATION_INVALID: legacy endpoint','check').code).toBe('UPDATER_CONFIGURATION_INVALID'));
   it('classifies manifest fetch failures',()=>expect(classifyUpdaterError('network timeout','check').code).toBe('UPDATER_MANIFEST_FETCH_FAILED'));
   it('classifies archive download failures',()=>expect(classifyUpdaterError('connection reset','download').code).toBe('UPDATER_ARCHIVE_DOWNLOAD_FAILED'));
   it('rejects signature failures distinctly',()=>expect(classifyUpdaterError('signature verification failed','download').code).toBe('UPDATER_SIGNATURE_INVALID'));

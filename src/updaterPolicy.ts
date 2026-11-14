@@ -45,6 +45,7 @@ export function updaterVersionStatus(current:string,latest:string){
 export function classifyUpdaterError(error:unknown,stage:UpdaterStage){
   const detail=String(error??'');
   const s=detail.toLowerCase();
+  if(s.includes('updater_configuration_invalid'))return{code:'UPDATER_CONFIGURATION_INVALID',detail};
   if(s.includes('running_from_dmg')||s.includes('запущен из установочного образа')||s.includes('запущен из dmg'))return{code:'RUNNING_FROM_DMG',detail};
   if(s.includes('app_replacement_not_applied'))return{code:'APP_REPLACEMENT_NOT_APPLIED',detail};
   if(s.includes('app_replacement_codesign_failed'))return{code:'APP_REPLACEMENT_CODESIGN_FAILED',detail};
@@ -60,6 +61,7 @@ export function classifyUpdaterError(error:unknown,stage:UpdaterStage){
 }
 
 export function updaterFailureMessage(code:string,detail:string){
+  if(code==='UPDATER_CONFIGURATION_INVALID')return `Встроенная конфигурация обновления VYRON не прошла проверку: публичный ключ или Stable feed не совпадает с ожидаемыми параметрами. ${detail}`;
   if(code==='RUNNING_FROM_DMG')return 'VYRON запущен из DMG. Переместите VYRON.app в Applications.';
   if(code==='APP_REPLACEMENT_NOT_APPLIED')return `Файл VYRON.app на диске не был заменён новой версией. Перезапуск отменён. ${detail}`;
   if(code==='APP_REPLACEMENT_CODESIGN_FAILED')return `Новая VYRON.app не прошла codesign-проверку. Перезапуск отменён. ${detail}`;

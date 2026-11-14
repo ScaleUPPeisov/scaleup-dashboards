@@ -55,6 +55,12 @@ fn updater_public_key_facts(encoded:&str)->(bool,Option<String>,Option<String>){
     (true,Some(key_id.to_ascii_uppercase()),Some(sha256_bytes(&key_bytes)))
 }
 
+const STABLE_UPDATER_ENDPOINT:&str="https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json";
+
+fn stable_updater_endpoint_pinned(endpoints:&[String])->bool{
+    endpoints.first().map(|endpoint|endpoint==STABLE_UPDATER_ENDPOINT).unwrap_or(false)
+}
+
 fn updater_config_diagnostics(app:&tauri::AppHandle)->serde_json::Value{
     let updater=app.config().plugins.0.get("updater");
     let encoded=updater.and_then(|value|value.get("pubkey")).and_then(|value|value.as_str()).unwrap_or("");
@@ -62,9 +68,11 @@ fn updater_config_diagnostics(app:&tauri::AppHandle)->serde_json::Value{
     let endpoints=updater.and_then(|value|value.get("endpoints")).and_then(|value|value.as_array())
       .map(|values|values.iter().filter_map(|value|value.as_str().map(str::to_string)).collect::<Vec<_>>())
       .unwrap_or_default();
-    let configured=key_valid&&!endpoints.is_empty();
+    let endpoint_pinned=stable_updater_endpoint_pinned(&endpoints);
+    let configured=key_valid&&endpoint_pinned;
     serde_json::json!({
       "updaterConfigurationValid":configured,
+      "updaterEndpointPinned":endpoint_pinned,
       "updaterPublicKeyConfigured":!encoded.trim().is_empty(),
       "updaterPublicKeyValid":key_valid,
       "updaterPublicKeyId":key_id,
@@ -79,7 +87,7 @@ fn updater_config_diagnostics(app:&tauri::AppHandle)->serde_json::Value{
 fn merge_updater_config_diagnostics(target:&mut serde_json::Value,app:&tauri::AppHandle){
     let diagnostics=updater_config_diagnostics(app);
     if let (Some(target),Some(source))=(target.as_object_mut(),diagnostics.as_object()){
-        for key in ["updaterConfigurationValid","updaterPublicKeyConfigured","updaterPublicKeyTrust","updaterPublicKeyValid","updaterPublicKeyId","updaterPublicKeySha256","updaterEndpoint","updaterEndpoints"]{
+        for key in ["updaterConfigurationValid","updaterEndpointPinned","updaterPublicKeyConfigured","updaterPublicKeyTrust","updaterPublicKeyValid","updaterPublicKeyId","updaterPublicKeySha256","updaterEndpoint","updaterEndpoints"]{
             if let Some(value)=source.get(key){target.insert(key.to_string(),value.clone());}
         }
     }
@@ -286,7 +294,7 @@ pub fn updater_install_preflight(app:tauri::AppHandle)->Result<serde_json::Value
             return Err("RUNNING_FROM_DMG: VYRON запущен из DMG. Переместите VYRON.app в Applications.".into())
         }
         if snapshot.get("updaterConfigurationValid").and_then(|x|x.as_bool())!=Some(true){
-            return Err("UPDATER_PUBLIC_KEY_INVALID: embedded minisign public key or updater endpoint is missing/invalid".into())
+            return Err("UPDATER_CONFIGURATION_INVALID: embedded minisign public key format or pinned stable updater endpoint is invalid".into())
         }
         Ok(snapshot)
     }
@@ -660,6 +668,15 @@ mod updater_key_diagnostic_tests{
         assert!(valid);
         assert_eq!(key_id.as_deref(),Some("8133C9873FAB79C1"));
         assert_eq!(fingerprint.as_deref(),Some("cbd37c85807e9b80f30612a1bc3a35bc75819b758ac62bb2bfee1881e6db938b"));
+    }
+
+    #[test]
+    fn pins_only_the_approved_stable_updater_feed(){
+        let approved=vec!["https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json".to_string()];
+        let legacy=vec!["https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/vyron-updates/latest.json".to_string()];
+        assert!(stable_updater_endpoint_pinned(&approved));
+        assert!(!stable_updater_endpoint_pinned(&legacy));
+        assert!(!stable_updater_endpoint_pinned(&[]));
     }
 
     #[test]
