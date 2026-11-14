@@ -183,7 +183,7 @@ export async function importVyronProfiles(data,env,fetchImpl=fetch) {
           'VYRON_MIGRATION',bundleUuid,now),
         env.DB.prepare('INSERT OR IGNORE INTO channels(id,name) VALUES (?,?)')
           .bind(row.channelId,channelName),
-        env.DB.prepare('INSERT OR IGNORE INTO channel_analytics_queue(channel_id,queued_at) VALUES (?,?)')
+        env.DB.prepare('INSERT INTO channel_analytics_queue(channel_id,queued_at) VALUES (?,?) ON CONFLICT(channel_id) DO UPDATE SET queued_at=excluded.queued_at,attempts=0,last_attempt_at=NULL,last_error=NULL,completed_at=NULL')
           .bind(row.channelId,now)
       ]);
       results.push({channelId:row.channelId,status:'imported'});
