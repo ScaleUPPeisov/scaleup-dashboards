@@ -1,4 +1,5 @@
 import {decryptVyronMigration} from './migration-crypto.js';
+import {compactProgressEvents} from './event-utils.mjs';
 
 const $ = id => document.getElementById(id);
 const number = value => value === null || value === undefined ? '—' : new Intl.NumberFormat('ru-RU').format(value);
@@ -455,16 +456,19 @@ function renderAnalytics(data) {
 function renderEvents(events) {
   const list = $('events');
   list.replaceChildren();
-  if (!events.length) {
+  const compacted=compactProgressEvents(events);
+  if (!compacted.length) {
     list.append(make('div', 'empty', 'Новые рубежи появятся после следующих обновлений. Первый снимок задаёт исходную точку.'));
     return;
   }
-  for (const event of events) {
+  for (const item of compacted) {
+    const {event,count}=item;
+    const ready=event.type==='agent_info'&&/^YOUTUBE READY\\b/.test(event.title||'');
     const failed=event.type==='upload_failed'||event.type==='render_failed'||event.type==='agent_error';
-    const completed=event.type==='upload_completed'||event.type==='render_completed'||
-      (event.type==='agent_info'&&/^YOUTUBE READY\b/.test(event.title||''));
+    const completed=event.type==='upload_completed'||event.type==='render_completed'||ready;
     const icon=event.type==='subscriber_milestone'?'🎉':failed?'⛔':completed?'✅':
-      event.type==='upload_progress'||event.type==='render_progress'?'↗':'•';
+      event.type==='upload_progress'||event.type==='render_progress'||
+      (event.type==='agent_info'&&/^YOUTUBE PROCESSING\\b/.test(event.title||''))?'↗':'•';
     const labels={
       subscriber_milestone:number(event.milestone)+' подписчиков',
       upload_queued:'В очереди',upload_started:'Загрузка началась',
@@ -472,8 +476,8 @@ function renderEvents(events) {
       upload_failed:'Ошибка загрузки',render_started:'Рендер начался',
       render_progress:'Рендер',render_completed:'Рендер завершён',
       render_failed:'Ошибка рендера',agent_error:'Ошибка агента',
-      agent_info:/^YOUTUBE READY\b/.test(event.title||'')?'YouTube: готово':
-        /^YOUTUBE PROCESSING\b/.test(event.title||'')?'YouTube: обработка':'Событие агента'
+      agent_info:ready?'YouTube: готово':
+        /^YOUTUBE PROCESSING\\b/.test(event.title||'')?'YouTube: обработка':'Событие агента'
     };
     const row = make('div', 'event'+(failed?' event-error':completed?' event-success':''));
     const text = make('div', 'event-text');
@@ -481,7 +485,8 @@ function renderEvents(events) {
     if(event.projectId)details.push('Задание '+event.projectId.slice(0,8));
     if(event.errorCode)details.push('Код '+event.errorCode);
     if(event.percent!==null&&event.percent!==undefined)details.push(number(event.percent)+'%');
-    text.append(make('strong', '', icon+' '+event.name),
+    if(count>1)details.push(number(count)+' обновлений прогресса объединено');
+    text.append(make('strong', '', icon+' '+(event.name||event.title||'Событие VYRON')),
       make('span', 'event-kind', labels[event.type]||event.type.replaceAll('_',' ')));
     if(details.length)text.append(make('span','event-details',details.join(' · ')));
     text.append(make('span', 'event-time', time(event.detectedAt)));
@@ -570,7 +575,7 @@ function renderOverview(data) {
 
   const list=$('overview-events');
   list.replaceChildren();
-  const events=(data.events||[]).slice(0,3);
+  const events=compactProgressEvents(data.events||[]).slice(0,3);
   if(!events.length) {
     list.append(make('p','overview-caption','Пока нет событий. Журнал заполнится после синхронизации VYRON.'));
     return;
@@ -591,14 +596,21 @@ function renderOverview(data) {
     channel_sync:'Канал синхронизирован',
     schedule_changed:'Расписание изменено'
   };
-  for(const event of events) {
+  for(const item of events) {
+    const {event,count}=item;
+    const ready=event.type==='agent_info'&&/^YOUTUBE READY\\b/.test(event.title||'');
     const failed=['upload_failed','render_failed','agent_error'].includes(event.type);
-    const complete=['upload_completed','render_completed'].includes(event.type);
+    const complete=['upload_completed','render_completed'].includes(event.type)||ready;
+    const title=event.type==='agent_info'
+      ?(ready?'YouTube: готово':/^YOUTUBE PROCESSING\\b/.test(event.title||'')
+        ?'YouTube: обработка':'Событие Mac Bridge')
+      :(eventLabels[event.type]||'Событие VYRON');
     const row=make('div','overview-event');
     row.append(make('span','overview-event-mark',failed?'!':complete?'✓':'·'));
     const copy=make('div','overview-event-copy');
-    copy.append(make('strong','',eventLabels[event.type]||'Событие VYRON'),
-      make('small','',(event.name||event.title||'')+' · '+time(event.detectedAt)));
+    copy.append(make('strong','',title),
+      make('small','',(event.name||event.title||'')+' · '+time(event.detectedAt)+
+        (count>1?' · '+number(count)+' обновлений':'') ));
     row.append(copy);
     list.append(row);
   }
@@ -727,7 +739,8 @@ $('events-more').addEventListener('click',()=>{
 });
 function renderDevices(data) {
   const devices = data.devices || [];
-  const device = devices[0];
+  const device = devices.slice().sort((a,b)=>
+    (Date.parse(b.lastSeenAt||'')||0)-(Date.parse(a.lastSeenAt||'')||0))[0];
   $('mac-agent-prepare').textContent = device ? 'Переустановить Mac Bridge' : 'Подключить Mac';
   const button = $('mac-status-request');
   const commandList=$('mac-command-list');
