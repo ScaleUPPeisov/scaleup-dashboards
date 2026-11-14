@@ -470,17 +470,20 @@ test('authorized private Analytics syncs 90-day trends and channel breakdowns in
         coreAttempts++;
         if(coreAttempts===1)return new Response('temporary',{status:503});
         return new Response(JSON.stringify({
-          columnHeaders:['day','views','engagedViews','estimatedMinutesWatched','averageViewDuration',
-            'averageViewPercentage','subscribersGained','subscribersLost','likes','dislikes','comments','shares']
-            .map(name=>({name})),
-          rows:[['2026-11-11',200,150,1000,160,62,9,1,18,3,4,2]]
+          columnHeaders:['day','views','engagedViews','redViews','estimatedMinutesWatched',
+            'estimatedRedMinutesWatched','averageViewDuration','averageViewPercentage',
+            'subscribersGained','subscribersLost','likes','dislikes','comments','shares',
+            'uniques','videosAddedToPlaylists','videosRemovedFromPlaylists'].map(name=>({name})),
+          rows:[['2026-11-11',200,150,5,1000,50,160,62,9,1,18,3,4,2,120,7,2]]
         }),{status:200});
       }
       const fixtures={
         'video,creatorContentType':{
-          columnHeaders:['video','creatorContentType','views','engagedViews','estimatedMinutesWatched',
-            'averageViewDuration','averageViewPercentage','likes','dislikes','comments','shares'],
-          rows:[['VID12345678','SHORTS',120,90,400,110,65,12,2,3,1]]
+          columnHeaders:['video','creatorContentType','views','engagedViews','redViews',
+            'estimatedMinutesWatched','estimatedRedMinutesWatched','averageViewDuration',
+            'averageViewPercentage','likes','dislikes','comments','shares',
+            'videosAddedToPlaylists','videosRemovedFromPlaylists'],
+          rows:[['VID12345678','SHORTS',120,90,3,400,20,110,65,12,2,3,1,4,1]]
         },
         'insightTrafficSourceType':{
           columnHeaders:['insightTrafficSourceType','views','estimatedMinutesWatched'],
@@ -497,6 +500,10 @@ test('authorized private Analytics syncs 90-day trends and channel breakdowns in
         'ageGroup,gender':{
           columnHeaders:['ageGroup','gender','viewerPercentage'],
           rows:[['25-34','FEMALE',35],['25-34','MALE',40]]
+        },
+        subscribedStatus:{
+          columnHeaders:['subscribedStatus','views','engagedViews','estimatedMinutesWatched','averageViewDuration'],
+          rows:[['SUBSCRIBED',60,45,300,120],['UNSUBSCRIBED',140,105,700,150]]
         },
         sharingService:{
           columnHeaders:['sharingService','shares'],rows:[['COPY_TO_CLIPBOARD',8],['WHATSAPP',2]]
@@ -527,7 +534,7 @@ test('authorized private Analytics syncs 90-day trends and channel breakdowns in
   assert.equal(outcome.updated,1);
   assert.equal(outcome.failed,0);
   assert.equal(outcome.periodDays,90);
-  assert.equal(analyticsAttempts,12);
+  assert.equal(analyticsAttempts,13);
   const stored=e.DB.native.prepare(
     'SELECT source,views,watch_minutes,daily_json FROM channel_analytics WHERE channel_id=?'
   ).get(channelId);
@@ -539,10 +546,16 @@ test('authorized private Analytics syncs 90-day trends and channel breakdowns in
   assert.equal(daily[0].engagedViews,150);
   assert.equal(daily[0].dislikes,3);
   assert.equal(daily[0].comments,4);
+  assert.equal(daily[0].uniqueViewers,120);
+  assert.equal(daily[0].redViews,5);
+  assert.equal(daily[0].redWatchMinutes,50);
+  assert.equal(daily[0].playlistAdds,7);
+  assert.equal(daily[0].playlistRemoves,2);
   const reports=JSON.parse(e.DB.native.prepare(
     'SELECT reports_json FROM channel_analytics_reports WHERE channel_id=?'
   ).get(channelId).reports_json);
   assert.equal(reports.topVideos[0].videoId,'VID12345678');
+  assert.equal(reports.topVideos[0].playlistAdds,4);
   assert.equal(reports.trafficSources[0].source,'RELATED_VIDEO');
   assert.equal(reports.devices[0].deviceType,'MOBILE');
   assert.equal(reports.countries[0].country,'US');
@@ -552,6 +565,7 @@ test('authorized private Analytics syncs 90-day trends and channel breakdowns in
   assert.equal(reports.playbackLocations[0].playbackLocation,'WATCH');
   assert.equal(reports.operatingSystems[0].operatingSystem,'ANDROID');
   assert.equal(reports.liveOrOnDemand[0].liveOrOnDemand,'LIVE');
+  assert.equal(reports.subscribedStatus[0].subscribedStatus,'SUBSCRIBED');
   assert.equal(reports.audienceRetention.length,3);
   assert.equal(reports.audienceRetention[2].relativeRetentionPerformance,0.1);
   const second=await runAnalyticsBatch(e,
@@ -580,12 +594,15 @@ test('manual refresh API processes every authorized channel in safe four-profile
     if(url.includes('youtubeanalytics.googleapis.com')){
       const dimensions=new URL(url).searchParams.get('dimensions');
       const fixtures={
-        day:{columnHeaders:['day','views','engagedViews','estimatedMinutesWatched','averageViewDuration',
-          'averageViewPercentage','subscribersGained','subscribersLost','likes','dislikes','comments','shares'],
-          rows:[['2026-11-11',20,15,100,30,50,2,1,3,0,1,1]]},
+        day:{columnHeaders:['day','views','engagedViews','redViews','estimatedMinutesWatched',
+          'estimatedRedMinutesWatched','averageViewDuration','averageViewPercentage','subscribersGained',
+          'subscribersLost','likes','dislikes','comments','shares','uniques',
+          'videosAddedToPlaylists','videosRemovedFromPlaylists'],
+          rows:[['2026-11-11',20,15,1,100,5,30,50,2,1,3,0,1,1,12,2,0]]},
         'video,creatorContentType':{columnHeaders:['video','creatorContentType','views','engagedViews',
-          'estimatedMinutesWatched','averageViewDuration','averageViewPercentage','likes','dislikes','comments','shares'],
-          rows:[['MANUALVID001','VIDEOS',10,7,50,30,50,2,0,1,0]]},
+          'redViews','estimatedMinutesWatched','estimatedRedMinutesWatched','averageViewDuration',
+          'averageViewPercentage','likes','dislikes','comments','shares','videosAddedToPlaylists','videosRemovedFromPlaylists'],
+          rows:[['MANUALVID001','VIDEOS',10,7,1,50,2,30,50,2,0,1,0,1,0]]},
         insightTrafficSourceType:{columnHeaders:['insightTrafficSourceType','views','estimatedMinutesWatched'],
           rows:[['YT_SEARCH',10,50]]},
         deviceType:{columnHeaders:['deviceType','views','estimatedMinutesWatched'],
@@ -594,6 +611,8 @@ test('manual refresh API processes every authorized channel in safe four-profile
           rows:[['US',10,50]]},
         'ageGroup,gender':{columnHeaders:['ageGroup','gender','viewerPercentage'],
           rows:[['25-34','FEMALE',50]]},
+        subscribedStatus:{columnHeaders:['subscribedStatus','views','engagedViews','estimatedMinutesWatched','averageViewDuration'],
+          rows:[['UNSUBSCRIBED',10,7,50,30]]},
         sharingService:{columnHeaders:['sharingService','shares'],rows:[['COPY_TO_CLIPBOARD',1]]},
         insightPlaybackLocationType:{columnHeaders:['insightPlaybackLocationType','views','estimatedMinutesWatched'],
           rows:[['WATCH',10,50]]},
