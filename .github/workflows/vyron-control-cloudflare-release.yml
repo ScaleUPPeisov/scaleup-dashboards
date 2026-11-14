@@ -1,0 +1,151 @@
+name: VYRON CONTROL — guarded Cloudflare release
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: "Read-only preflight or confirmed production deployment"
+        required: true
+        type: choice
+        default: preflight
+        options:
+          - preflight
+          - deploy
+      source_ref:
+        description: "Reviewed release snapshot (created only after PR #25 is merged)"
+        required: true
+        type: choice
+        default: release/vyron-control-production
+        options:
+          - release/vyron-control-production
+      confirm_production:
+        description: "I explicitly authorize applying D1 migrations and deploying production"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: vyron-control-cloudflare-production
+  cancel-in-progress: false
+
+jobs:
+  cloudflare:
+    name: VYRON CONTROL release preflight / deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: apps/vyron-control
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      VYRON_CONTROL_URL: https://vyron-control.endlume-peisov-3ee6109f.workers.dev
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_REF: ${{ inputs.source_ref }}
+      OPERATION: ${{ inputs.operation }}
+      CONFIRM_PRODUCTION: ${{ inputs.confirm_production }}
+    steps:
+      - name: Check out the exact release snapshot
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/vyron-control/package-lock.json
+
+      - name: Validate release selection and Cloudflare credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "::error::Run this release workflow from the repository default branch main."
+            exit 1
+          fi
+          if [[ "${SOURCE_REF}" != "release/vyron-control-production" ]]; then
+            echo "::error::Only the reviewed VYRON CONTROL release snapshot is allowed."
+            exit 1
+          fi
+          if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then
+            echo "::error::Repository secret CLOUDFLARE_API_TOKEN is missing."
+            exit 1
+          fi
+          if [[ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
+            echo "::error::Repository variable CLOUDFLARE_ACCOUNT_ID is missing."
+            exit 1
+          fi
+          echo "Release ref and Cloudflare credential presence validated. Secret values are not displayed."
+          echo "Release commit: $(git rev-parse HEAD)"
+
+      - name: Install pinned dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Run full VYRON CONTROL regression suite
+        run: npm test
+
+      - name: Read remote D1 migration state
+        run: npx --yes wrangler@4.102.0 d1 migrations list vyron-control --remote -c cloudflare/wrangler.jsonc
+
+      - name: Build Cloudflare Worker without deploying
+        run: npx --yes wrangler@4.102.0 deploy --dry-run -c cloudflare/wrangler.jsonc
+
+      - name: Require explicit production confirmation and merged application PR
+        if: ${{ inputs.operation == 'deploy' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${CONFIRM_PRODUCTION}" != "true" ]]; then
+            echo "::error::Production deployment requires confirm_production=true."
+            exit 1
+          fi
+          merged="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/25" --jq '.merged')"
+          if [[ "${merged}" != "true" ]]; then
+            echo "::error::Application PR #25 must be reviewed and merged before production deployment."
+            exit 1
+          fi
+          git fetch --no-tags origin feature/vyron-control-cloud-mvp-20261113
+          if ! git merge-base --is-ancestor HEAD FETCH_HEAD; then
+            echo "::error::Release snapshot is not contained in the reviewed application branch."
+            exit 1
+          fi
+          echo "PR #25 is merged and the release snapshot is contained in its reviewed base branch."
+
+      - name: Apply additive D1 migrations
+        if: ${{ inputs.operation == 'deploy' }}
+        run: npx --yes wrangler@4.102.0 d1 migrations apply vyron-control --remote -c cloudflare/wrangler.jsonc
+
+      - name: Deploy Worker and static dashboard assets
+        if: ${{ inputs.operation == 'deploy' }}
+        run: npx --yes wrangler@4.102.0 deploy -c cloudflare/wrangler.jsonc --keep-vars --strict --message "VYRON CONTROL release ${GITHUB_SHA}"
+
+      - name: Verify deployed Worker and D1 schema
+        if: ${{ inputs.operation == 'deploy' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          body="$(curl --fail --silent --show-error --retry 5 --retry-delay 2 "${VYRON_CONTROL_URL}/api/health")"
+          HEALTH_JSON="${body}" node --input-type=module -e '
+            const health = JSON.parse(process.env.HEALTH_JSON || "{}");
+            if (health.ok !== true || health.d1?.schema !== true ||
+                health.d1?.expectedTables !== 16 ||
+                health.d1?.presentTables !== 16) {
+              console.error("Worker health/schema verification failed:", JSON.stringify({
+                ok: health.ok, d1: health.d1, error: health.error
+              }));
+              process.exit(1);
+            }
+            console.log("Worker healthy; D1 schema verified:", health.d1.presentTables + "/" + health.d1.expectedTables);
+          '
+
+      - name: Confirm preflight-only run made no production changes
+        if: ${{ inputs.operation == 'preflight' }}
+        run: echo "Preflight complete. No D1 migrations were applied and no Worker was deployed."
