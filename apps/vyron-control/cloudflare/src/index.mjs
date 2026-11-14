@@ -3,7 +3,7 @@ import { manualSlot, runCountersSync, scheduledSync } from './sync.mjs';
 import { saveAnalytics } from './analytics.mjs';
 import { startOAuth,callbackOAuth,authorizedProfiles,disconnectProfile } from './oauth.mjs';
 import { importVyronProfiles } from './oauth-import.mjs';
-import { runAnalyticsBatch } from './google-analytics.mjs';
+import { runAnalyticsBatch,runManualAnalyticsBatch } from './google-analytics.mjs';
 import { registerPush,unregisterPush,vapidPublic,dispatchPush,PUSH_CRON } from './push.mjs';
 
 const REQUIRED_TOKEN_LENGTH = 32;
@@ -511,6 +511,10 @@ export default {
         });
         return json({...outcome,status:await fetchStatus(env)});
       }
+      if (url.pathname==='/api/analytics/refresh'&&request.method==='POST') {
+        const body=await readJson(request,2000);
+        return json(await runManualAnalyticsBatch(env,body));
+      }
       if (url.pathname==='/api/channels'&&request.method==='POST')
         return enrollChannels(env,request);
       if (url.pathname==='/api/commands'&&request.method==='POST')
@@ -542,6 +546,9 @@ export default {
       const message=String(e.message||'Unknown failure');
       const status=message.includes('budget exhausted')?429:
         message.includes('already')?409:
+        message.startsWith('YOUTUBE_CHANNELS_INCOMPLETE')||
+          message.startsWith('YouTube channels.list HTTP')||
+          message.startsWith('YouTube response missing items')?502:
         /Invalid|^INVALID_|Unexpected|not configured|No channels|Unsupported|too large/.test(message)?400:500;
       if(status===500)console.error('VYRON CONTROL request:',message);
       return errorReply(status===500?'Internal service error':message,status);
