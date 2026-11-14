@@ -10,7 +10,7 @@ const REQUIRED_TOKEN_LENGTH = 32;
 const EXPECTED_TABLES = Object.freeze([
   'channels','channel_snapshots','events','sync_runs','quota_buckets','devices',
   'commands','channel_analytics','channel_analytics_reports','google_oauth_sessions','google_oauth_profiles',
-  'google_oauth_client_credentials','cloud_analytics_runs','push_subscriptions','push_deliveries'
+  'google_oauth_client_credentials','cloud_analytics_runs','channel_analytics_queue','push_subscriptions','push_deliveries'
 ]);
 const BOOTSTRAP_STATEMENTS = Object.freeze([
   "CREATE TABLE IF NOT EXISTS channels (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, subscribers INTEGER, views INTEGER, videos INTEGER, hidden_subscribers INTEGER DEFAULT 0, max_milestone INTEGER, previous_subscribers INTEGER, updated_at TEXT)",
@@ -32,6 +32,8 @@ const BOOTSTRAP_STATEMENTS = Object.freeze([
   "CREATE TABLE IF NOT EXISTS google_oauth_profiles (channel_id TEXT PRIMARY KEY NOT NULL, channel_name TEXT NOT NULL, refresh_token_cipher TEXT NOT NULL, granted_scope TEXT NOT NULL, connected_at TEXT NOT NULL, last_success_at TEXT, last_error TEXT)",
   "CREATE TABLE IF NOT EXISTS google_oauth_client_credentials (channel_id TEXT PRIMARY KEY NOT NULL, profile_uuid TEXT NOT NULL, client_id_cipher TEXT NOT NULL, client_secret_cipher TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'VYRON_MIGRATION', bundle_uuid TEXT NOT NULL, imported_at TEXT NOT NULL)",
   "CREATE TABLE IF NOT EXISTS cloud_analytics_runs (slot TEXT PRIMARY KEY NOT NULL, status TEXT NOT NULL CHECK(status IN ('running','success','error')), started_at TEXT NOT NULL, ended_at TEXT, updated_channels INTEGER DEFAULT 0, error TEXT)",
+  "CREATE TABLE IF NOT EXISTS channel_analytics_queue (channel_id TEXT PRIMARY KEY NOT NULL, queued_at TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts >= 0), last_attempt_at TEXT, last_error TEXT, completed_at TEXT)",
+  "CREATE INDEX IF NOT EXISTS idx_channel_analytics_queue_pending ON channel_analytics_queue(completed_at,queued_at)",
   "CREATE TABLE IF NOT EXISTS push_subscriptions (endpoint_hash TEXT PRIMARY KEY NOT NULL, subscription_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
   "CREATE TABLE IF NOT EXISTS push_deliveries (endpoint_hash TEXT NOT NULL, event_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'retry' CHECK(status IN ('retry','sending','sent','failed')), attempts INTEGER NOT NULL DEFAULT 0, last_attempt_at TEXT, updated_at TEXT NOT NULL, PRIMARY KEY(endpoint_hash,event_id))",
   "CREATE INDEX IF NOT EXISTS idx_push_deliveries_retry ON push_deliveries(status,updated_at)"
