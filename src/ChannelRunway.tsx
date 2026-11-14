@@ -237,7 +237,7 @@ export function ChannelRunway(){
           <span><b>{content.readyVideoCount}</b></span>
           <span>{scheduleFrequencyTruthLabel(channel,record)}</span>
           <span className="runwayQuota">{uploadLimitKnown?<><b>{uploadRemaining}</b><small>доступно</small></>:<><b>—</b><small>лимит проекта не подтверждён</small></>}</span>
-          <span className={`runwayStatus ${content.status}`}><i>{meta.icon}</i>{meta.label}</span>
+          <span className={`runwayStatus ${youtubeStatus}`}><i>{meta.icon}</i>{meta.label}</span>
           <span>{linkedByLocalId.has(channel.id)?<><button disabled={busy===channel.id} onClick={()=>void syncChannel(channel)}>{busy===channel.id?'СИНХРОНИЗАЦИЯ…':'ОБНОВИТЬ РАСПИСАНИЕ'}</button><button disabled={busy===`stats:${channel.id}`||statsBusy} onClick={()=>void refreshRowStats(channel)}>{busy===`stats:${channel.id}`?'↻…':'↻ YT'}</button><button onClick={()=>openStatistics(channel)}>Статистика</button></>:<button onClick={()=>openAccounts(channel)}>Подключить</button>}</span>
         </div>
       })}
