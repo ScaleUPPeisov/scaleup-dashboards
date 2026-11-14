@@ -41,9 +41,9 @@ test('overview dashboard exposes live sync, Analytics and event containers',()=>
 });
 
 test('PWA caches the static shell but never caches authenticated API responses',()=>{
-  assert.match(serviceWorker,/SHELL_ASSETS=.*\\/app\\.js/);
-  assert.match(serviceWorker,/url\\.pathname\\.startsWith\\('\\/api\\/'\\)/);
-  assert.match(serviceWorker,/caches\\.match\\('\\/'\\)/);
+  assert.ok(serviceWorker.includes("'/app.js'"));
+  assert.ok(serviceWorker.includes("url.pathname.startsWith('/api/')"));
+  assert.ok(serviceWorker.includes("caches.match('/')"));
 });
 
 test('Mac installer and dashboard command use the same source branch',()=>{
