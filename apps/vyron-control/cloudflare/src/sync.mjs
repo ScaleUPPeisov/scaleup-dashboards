@@ -29,9 +29,22 @@ export async function runCountersSync(env, { source, slot, date = new Date(), fe
   const claimed = await db.prepare(
     'INSERT OR IGNORE INTO sync_runs(slot,status,source,started_at) VALUES (?,\'running\',?,?)'
   ).bind(slot,source,now).run();
-  if (claimChanges(claimed) !== 1) return { skipped: true, reason: 'slot_already_attempted' };
+  if (claimChanges(claimed) !== 1) {
+    const previous=await db.prepare(
+      'SELECT status,source,started_at FROM sync_runs WHERE slot=?'
+    ).bind(slot).first();
+    const failedAt=Date.parse(previous?.started_at||'');
+    const retryReady=source==='manual'&&previous?.source==='manual'&&
+      previous.status==='error'&&Number.isFinite(failedAt)&&date.getTime()-failedAt>=120000;
+    if(!retryReady)return {skipped:true,reason:'slot_already_attempted'};
+    const retry=await db.prepare(
+      "UPDATE sync_runs SET status='running',started_at=?,ended_at=NULL,error=NULL,updated_channels=0 WHERE slot=? AND status='error'"
+    ).bind(now,slot).run();
+    if(claimChanges(retry)!==1)return {skipped:true,reason:'slot_already_attempted'};
+  }
 
   let updatedChannels = 0;
+  const missingChannelIds = [];
   try {
     const { results: known } = await db.prepare(
       'SELECT id,name,subscribers,max_milestone FROM channels ORDER BY id'
@@ -87,6 +100,8 @@ export async function runCountersSync(env, { source, slot, date = new Date(), fe
           updated_at: observedAt
         });
       }
+      const returnedIds=new Set(rows.map(row=>row.id));
+      for(const expected of group)if(!returnedIds.has(expected.id))missingChannelIds.push(expected.id);
       if (rows.length) {
         const rowsJson = JSON.stringify(rows);
         const stmts = [
@@ -134,10 +149,14 @@ export async function runCountersSync(env, { source, slot, date = new Date(), fe
         updatedChannels += rows.length;
       }
     }
+    if(missingChannelIds.length) {
+      throw new Error('YOUTUBE_CHANNELS_INCOMPLETE: updated '+updatedChannels+'/'+known.length+
+        '; missing '+missingChannelIds.length+': '+missingChannelIds.join(', '));
+    }
     await db.prepare(
       "UPDATE sync_runs SET status='success', ended_at=?, updated_channels=? WHERE slot=?"
     ).bind(new Date().toISOString(),updatedChannels,slot).run();
-    return { skipped:false, updatedChannels };
+    return { skipped:false, updatedChannels, requestedChannels:known.length, complete:true };
   } catch (error) {
     await db.prepare(
       "UPDATE sync_runs SET status='error',ended_at=?,error=? WHERE slot=?"
