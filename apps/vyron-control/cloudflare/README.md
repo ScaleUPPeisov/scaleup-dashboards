@@ -308,7 +308,7 @@ grant the bridge Full Disk Access unnecessarily.
 - A new channel whose Google profile has never been authorized in CONTROL still
   needs a one-time read-only Google authorization in CONTROL (or a new encrypted
   VYRON migration import). After authorization, Analytics is queued automatically
-  and processed in batches of up to three profiles every five minutes. The daily
+  and processed in batches of up to two profiles every five minutes. The daily
   07:05–07:55 and 22:05–22:55 reporting windows remain in place.
 - Public counters continue hourly while the Mac sleeps. Detecting a newly added
   local VYRON channel necessarily waits until the Mac wakes and the Bridge can read

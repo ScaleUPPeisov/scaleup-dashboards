@@ -117,7 +117,7 @@ export function mirrorAnalytics(state) {
       monetaryAuthorized:a.monetaryAuthorized===true,
       estimatedRevenue:a.monetaryAuthorized===true?numeric(a.estimatedRevenue):null,
       daily:Array.isArray(a.daily)?a.daily.slice(-90).flatMap(row=>{
-        if(!/^\\d{4}-\\d{2}-\\d{2}$/.test(row?.date||''))return [];
+        if(!/^\d{4}-\d{2}-\d{2}$/.test(row?.date||''))return [];
         return [{date:row.date,views:numeric(row.views),
           watchMinutes:numeric(row.watchMinutes),
           subscribersGained:numeric(row.subscribersGained),

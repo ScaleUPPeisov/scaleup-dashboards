@@ -1,12 +1,13 @@
 import { refreshAccessToken } from './oauth.mjs';
 
 // Keep each Worker invocation below the Free-plan 50-subrequest ceiling.
-// One profile uses: token refresh + up to 12 Analytics reports + one D1 batch.
-// Three profiles plus the run claim/read/finalize remain below the limit.
+// Scheduled/manual batches use three profiles; first-time queue batches use two
+// because queue bookkeeping adds D1 subrequests to the same invocation.
 export const ANALYTICS_QUEUE_CRON='4,9,14,19,24,29,34,39,44,49,54,59 * * * *';
 const ANALYTICS_HOURS=new Set([0,15]);
 const ANALYTICS_MINUTES=new Set([5,10,15,20,25,30,35,40,45,50,55]);
 const BATCH_SIZE=3;
+const QUEUE_BATCH_SIZE=2;
 const PERIOD_DAYS=90;
 
 function isoDay(ms){return new Date(ms).toISOString().slice(0,10);}
@@ -122,9 +123,11 @@ export function parseDimensionReport(json,dimensions,metrics) {
   });
 }
 
-function reportParams(startDate,endDate,dimensions,metrics,sort,maxResults,filters) {
+function reportParams(channelId,startDate,endDate,dimensions,metrics,sort,maxResults,filters) {
+  if(!/^UC[A-Za-z0-9_-]{22}$/.test(String(channelId||'')))
+    throw new Error('Invalid Analytics channel ID');
   const params=new URLSearchParams({
-    ids:'channel==MINE',startDate,endDate,dimensions,metrics
+    ids:'channel=='+channelId,startDate,endDate,dimensions,metrics
   });
   if(sort)params.set('sort',sort);
   if(maxResults)params.set('maxResults',String(maxResults));
@@ -145,9 +148,9 @@ async function requestReport(token,params,fetchImpl,retryTransient=false) {
   if(!response.ok)throw new Error('YouTube Analytics HTTP '+response.status);
   return response.json();
 }
-async function optionalReport(token,startDate,endDate,dimensions,metrics,fetchImpl,sort,maxResults,filters) {
+async function optionalReport(token,channelId,startDate,endDate,dimensions,metrics,fetchImpl,sort,maxResults,filters) {
   try {
-    const params=reportParams(startDate,endDate,dimensions,metrics,sort,maxResults,filters);
+    const params=reportParams(channelId,startDate,endDate,dimensions,metrics,sort,maxResults,filters);
     const json=await requestReport(token,params,fetchImpl,false);
     return {rows:parseDimensionReport(json,dimensions,metrics),error:null};
   } catch(error) {
@@ -195,7 +198,7 @@ async function processBatch(env,details,fetchImpl=fetch) {
     for(const profile of result.results||[]) {
       try {
         const token=await refreshAccessToken(profile,env,fetchImpl);
-        const dailyParams=reportParams(startDate,endDate,'day',
+        const dailyParams=reportParams(profile.channel_id,startDate,endDate,'day',
           'views,engagedViews,redViews,estimatedMinutesWatched,estimatedRedMinutesWatched,'+
           'averageViewDuration,averageViewPercentage,subscribersGained,subscribersLost,'+
           'likes,dislikes,comments,shares,uniques,videosAddedToPlaylists,videosRemovedFromPlaylists','day');
@@ -205,33 +208,33 @@ async function processBatch(env,details,fetchImpl=fetch) {
 
         const [topVideos,trafficSources,devices,countries,demographics,sharingServices,
           playbackLocations,operatingSystems,liveOrOnDemand,subscribedStatus]=await Promise.all([
-          optionalReport(token,startDate,endDate,'video,creatorContentType',
+          optionalReport(token,profile.channel_id,startDate,endDate,'video,creatorContentType',
             'views,engagedViews,redViews,estimatedMinutesWatched,estimatedRedMinutesWatched,'+
             'averageViewDuration,averageViewPercentage,likes,dislikes,comments,shares,'+
             'videosAddedToPlaylists,videosRemovedFromPlaylists',
             fetchImpl,'-views',10),
-          optionalReport(token,startDate,endDate,'insightTrafficSourceType',
+          optionalReport(token,profile.channel_id,startDate,endDate,'insightTrafficSourceType',
             'views,estimatedMinutesWatched',fetchImpl,null,20),
-          optionalReport(token,startDate,endDate,'deviceType',
+          optionalReport(token,profile.channel_id,startDate,endDate,'deviceType',
             'views,estimatedMinutesWatched',fetchImpl,null,10),
-          optionalReport(token,startDate,endDate,'country',
+          optionalReport(token,profile.channel_id,startDate,endDate,'country',
             'views,estimatedMinutesWatched',fetchImpl,null,10),
-          optionalReport(token,startDate,endDate,'ageGroup,gender',
+          optionalReport(token,profile.channel_id,startDate,endDate,'ageGroup,gender',
             'viewerPercentage',fetchImpl,null,20),
-          optionalReport(token,startDate,endDate,'sharingService',
+          optionalReport(token,profile.channel_id,startDate,endDate,'sharingService',
             'shares',fetchImpl,null,20),
-          optionalReport(token,startDate,endDate,'insightPlaybackLocationType',
+          optionalReport(token,profile.channel_id,startDate,endDate,'insightPlaybackLocationType',
             'views,estimatedMinutesWatched',fetchImpl,null,20),
-          optionalReport(token,startDate,endDate,'operatingSystem',
+          optionalReport(token,profile.channel_id,startDate,endDate,'operatingSystem',
             'views,estimatedMinutesWatched',fetchImpl,null,20),
-          optionalReport(token,startDate,endDate,'liveOrOnDemand',
+          optionalReport(token,profile.channel_id,startDate,endDate,'liveOrOnDemand',
             'views,engagedViews,estimatedMinutesWatched,averageViewDuration',fetchImpl,null,10),
-          optionalReport(token,startDate,endDate,'subscribedStatus',
+          optionalReport(token,profile.channel_id,startDate,endDate,'subscribedStatus',
             'views,engagedViews,estimatedMinutesWatched,averageViewDuration',fetchImpl,null,10)
         ]);
         const topVideoId=String(topVideos.rows[0]?.video||'');
         const audienceRetention=topVideoId
-          ?await optionalReport(token,startDate,endDate,'elapsedVideoTimeRatio',
+          ?await optionalReport(token,profile.channel_id,startDate,endDate,'elapsedVideoTimeRatio',
             'audienceWatchRatio,relativeRetentionPerformance',fetchImpl,null,200,
             'video=='+topVideoId)
           :{rows:[],error:null};
@@ -374,7 +377,7 @@ export async function runQueuedAnalyticsBatch(env,controller,fetchImpl=fetch) {
     WHERE q.completed_at IS NULL AND q.attempts<8
       AND (q.last_attempt_at IS NULL OR q.last_attempt_at<=?)
     ORDER BY q.queued_at,q.channel_id LIMIT ?
-  `).bind(retryBefore,BATCH_SIZE).all();
+  `).bind(retryBefore,QUEUE_BATCH_SIZE).all();
   const rows=queued.results||[];
   if(!rows.length)return {skipped:true,reason:'no_queued_analytics',queued:0,updated:0,failed:0};
   const channelIds=rows.map(row=>row.channel_id);

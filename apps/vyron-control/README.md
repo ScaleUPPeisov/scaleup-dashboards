@@ -42,7 +42,7 @@ for local development, but it is not the zero-cost always-on deployment.
 - Optional manual refresh, minimum 5 minutes between manual requests.
   Local in-app status polling every 60 seconds does not call YouTube.
 - Newly authorized private Analytics reports are queued and processed in batches
-  of up to three channels every five minutes.
+  of up to two channels every five minutes.
 - Idempotent subscriber milestone log (100/200/300 and onward); initial sync
   establishes baseline without backfilling false celebrations. Subscriber counts
   exposed by YouTube are rounded; milestone detection is approximate.

@@ -629,6 +629,39 @@ test('newly authorized Analytics queue retries failed channels after five minute
   assert.equal(tooSoon.reason,'no_queued_analytics');
 });
 
+
+test('first-time Analytics queue caps each invocation at two profiles',async()=>{
+  const e=env();
+  Object.assign(e,{
+    GOOGLE_OAUTH_CLIENT_ID:'QUEUE_BATCH_CLIENT',
+    GOOGLE_OAUTH_CLIENT_SECRET:'QUEUE_BATCH_SECRET',
+    OAUTH_ENCRYPTION_KEY:'8'.repeat(64)
+  });
+  const encrypted=await encryptSecret('QUEUE_BATCH_REFRESH_TOKEN_123456789',e);
+  const channels=[id(911),id(912),id(913)];
+  for(let i=0;i<channels.length;i++){
+    const channelId=channels[i];
+    await e.DB.prepare(
+      'INSERT INTO google_oauth_profiles(channel_id,channel_name,refresh_token_cipher,granted_scope,connected_at) VALUES (?,?,?,?,?)'
+    ).bind(channelId,'Queue '+i,encrypted,'read-only',new Date().toISOString()).run();
+    await e.DB.prepare(
+      'INSERT INTO channel_analytics_queue(channel_id,queued_at) VALUES (?,?)'
+    ).bind(channelId,new Date(Date.now()-60_000).toISOString()).run();
+  }
+  const failedFetch=async url=>{
+    if(url.includes('oauth2.googleapis.com/token'))
+      return new Response(JSON.stringify({error:'invalid_grant'}),{status:400});
+    throw new Error('unexpected endpoint');
+  };
+  const outcome=await runQueuedAnalyticsBatch(e,{scheduledTime:Date.now()},failedFetch);
+  assert.equal(outcome.queued,2);
+  assert.equal(outcome.failed,2);
+  const rows=e.DB.native.prepare(
+    'SELECT channel_id,attempts FROM channel_analytics_queue ORDER BY channel_id'
+  ).all();
+  assert.deepEqual(rows.map(row=>row.attempts).sort(),[0,1,1]);
+});
+
 test('authorized private Analytics syncs 90-day trends and channel breakdowns in three-profile batches',async()=>{
   const e=env(),channelId=id(5);
   Object.assign(e,{
@@ -658,7 +691,7 @@ test('authorized private Analytics syncs 90-day trends and channel breakdowns in
     if(url.includes('youtubeanalytics.googleapis.com')) {
       assert.equal(opts.headers.Authorization,'Bearer SHORT_LIVED_TOKEN');
       const params=new URL(url).searchParams;
-      assert.equal(params.get('ids'),'channel==MINE');
+      assert.equal(params.get('ids'),'channel=='+channelId);
       const dimensions=params.get('dimensions');
       analyticsAttempts++;
       if(dimensions==='day') {
@@ -768,6 +801,48 @@ test('authorized private Analytics syncs 90-day trends and channel breakdowns in
   const second=await runAnalyticsBatch(e,
     {scheduledTime:Date.parse('2026-11-13T00:05:00Z')},mockFetch);
   assert.equal(second.skipped,true);
+});
+
+
+test('one shared Google profile requests Analytics for each concrete YouTube channel ID',async()=>{
+  const e=env(),firstChannel=id(81),secondChannel=id(82);
+  Object.assign(e,{
+    GOOGLE_OAUTH_CLIENT_ID:'SHARED_ANALYTICS_CLIENT',
+    GOOGLE_OAUTH_CLIENT_SECRET:'SHARED_ANALYTICS_SECRET',
+    OAUTH_ENCRYPTION_KEY:'9'.repeat(64)
+  });
+  const encrypted=await encryptSecret('SHARED_ANALYTICS_REFRESH_TOKEN',e);
+  for(const [channelId,name] of [[firstChannel,'First'],[secondChannel,'Second']]){
+    await e.DB.prepare(
+      'INSERT INTO google_oauth_profiles(channel_id,channel_name,refresh_token_cipher,granted_scope,connected_at) VALUES (?,?,?,?,?)'
+    ).bind(channelId,name,encrypted,'read-only',new Date().toISOString()).run();
+    await e.DB.prepare('INSERT INTO channels(id,name) VALUES (?,?)').bind(channelId,name).run();
+  }
+  const requested=new Set();
+  const mockFetch=async(url,opts)=>{
+    if(url.includes('oauth2.googleapis.com/token'))
+      return new Response(JSON.stringify({access_token:'SHARED_ANALYTICS_ACCESS'}),{status:200});
+    if(url.includes('youtubeanalytics.googleapis.com')){
+      const params=new URL(url).searchParams;
+      requested.add(params.get('ids'));
+      const dimensions=params.get('dimensions').split(',');
+      const metrics=params.get('metrics').split(',');
+      const headers=[...dimensions,...metrics].map(name=>({name}));
+      const rows=dimensions.includes('day')
+        ?[['2026-11-12',...metrics.map(()=>1)]]
+        :[];
+      return new Response(JSON.stringify({columnHeaders:headers,rows}),{status:200});
+    }
+    throw new Error('unexpected endpoint');
+  };
+  const outcome=await runManualAnalyticsBatch(e,{
+    offset:0,requestId:'shared-google-profile-001'
+  },mockFetch);
+  assert.equal(outcome.updated,2);
+  assert.equal(outcome.failed,0);
+  assert.deepEqual([...requested].sort(),[
+    'channel=='+firstChannel,'channel=='+secondChannel
+  ].sort());
 });
 
 test('manual refresh API processes every authorized channel in safe three-profile batches',async()=>{
