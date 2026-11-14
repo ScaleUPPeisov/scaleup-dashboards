@@ -1,6 +1,6 @@
 /* VYRON CONTROL PWA shell cache. Private API responses are never cached. */
-const SHELL_CACHE='vyron-control-shell-v2';
-const SHELL_ASSETS=['/','/styles.css','/app.js','/migration-crypto.js','/manifest.webmanifest','/icon.svg'];
+const SHELL_CACHE='vyron-control-shell-v3';
+const SHELL_ASSETS=['/','/styles.css','/app.js','/migration-crypto.js','/event-utils.mjs','/manifest.webmanifest','/icon.svg'];
 
 self.addEventListener('install',event=>{
   event.waitUntil(caches.open(SHELL_CACHE)
