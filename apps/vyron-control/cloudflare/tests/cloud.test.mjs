@@ -67,6 +67,27 @@ const id=i=>'UC'+String(i).padStart(22,'0');
 test('cron times use Krasnoyarsk but Google quota resets in Pacific',()=>{
   assert.equal(cronSlot('0 0 * * *',new Date('2026-11-13T00:00:00Z')),'2026-11-13@07:00');
   assert.equal(cronSlot('0 15 * * *',new Date('2026-11-13T15:00:00Z')),'2026-11-13@22:00');
+  const e=env(),hourlyChannel=id(800);
+  await e.DB.prepare('INSERT INTO channels(id,name) VALUES (?,?)').bind(hourlyChannel,'Hourly').run();
+  let hourlyCalls=0;
+  const hourlyFetch=async url=>{
+    hourlyCalls++;
+    return new Response(JSON.stringify({items:[{
+      id:hourlyChannel,snippet:{title:'Hourly'},
+      statistics:{subscriberCount:'12',viewCount:'120',videoCount:'3',hiddenSubscriberCount:false}
+    }]}),{status:200});
+  };
+  const hourly=await scheduledSync({
+    cron:'0 * * * *',scheduledTime:Date.parse('2026-11-13T01:00:00Z')
+  },e,hourlyFetch);
+  assert.equal(hourly.complete,true);
+  assert.equal(hourly.updatedChannels,1);
+  assert.equal(hourlyCalls,1);
+  const dailyCovered=await scheduledSync({
+    cron:'0 * * * *',scheduledTime:Date.parse('2026-11-13T00:00:00Z')
+  },e,hourlyFetch);
+  assert.equal(dailyCovered.reason,'covered_by_daily_window');
+  assert.equal(hourlyCalls,1);
   assert.equal(cronSlot('0 0 * * *',new Date('2026-11-13T00:01:00Z')),null);
   assert.equal(pacificDay(new Date('2026-11-13T00:00:00Z')),'2026-11-12');
   assert.equal(pacificDay(new Date('2026-11-13T15:00:00Z')),'2026-11-13');
@@ -412,6 +433,7 @@ test('encrypted VYRON migration profiles import idempotently with their original
   const second=await importVyronProfiles(data,e,fetchMock);
   assert.equal(first.imported,1);assert.equal(second.imported,1);
   assert.equal(e.DB.native.prepare('SELECT count(*) AS n FROM google_oauth_profiles').get().n,1);
+  assert.equal(e.DB.native.prepare('SELECT count(*) AS n FROM channel_analytics_queue').get().n,1);
   const stored=e.DB.native.prepare(`SELECT p.refresh_token_cipher,c.client_id_cipher,
     c.client_secret_cipher,c.profile_uuid FROM google_oauth_profiles p
     JOIN google_oauth_client_credentials c ON c.channel_id=p.channel_id`).get();
@@ -420,6 +442,101 @@ test('encrypted VYRON migration profiles import idempotently with their original
   assert.equal(await decryptSecret(stored.client_id_cipher,e),clientId);
   assert.equal(await decryptSecret(stored.client_secret_cipher,e),clientSecret);
   assert.equal(JSON.stringify(stored).includes(refreshToken),false);
+});
+
+test('VYRON Mac bridge enrollment immediately syncs newly added public channel counters',async()=>{
+  const e=env(),channelId=id(901);
+  let calls=0;
+  e.FETCH_IMPL=async url=>{
+    calls++;
+    assert.equal(new URL(url).searchParams.get('id'),channelId);
+    return new Response(JSON.stringify({items:[{
+      id:channelId,snippet:{title:'New VYRON channel'},
+      statistics:{subscriberCount:'1250',viewCount:'25000',videoCount:'40',hiddenSubscriberCount:false}
+    }]}),{status:200});
+  };
+  const first=await cloud.fetch(req('/api/agent/channels',agent,'POST',[
+    {id:channelId,name:'New VYRON channel'}
+  ]),e);
+  assert.equal(first.status,200);
+  const result=await first.json();
+  assert.equal(result.newlyEnrolled,1);
+  assert.equal(result.publicSync.complete,true);
+  assert.equal(result.publicSync.updatedChannels,1);
+  assert.equal(result.publicSync.requestedChannels,1);
+  assert.equal(calls,1);
+  const row=e.DB.native.prepare('SELECT subscribers,views,videos,updated_at FROM channels WHERE id=?').get(channelId);
+  assert.equal(row.subscribers,1250);
+  assert.equal(row.views,25000);
+  assert.ok(row.updated_at);
+  const repeated=await cloud.fetch(req('/api/agent/channels',agent,'POST',[
+    {id:channelId,name:'New VYRON channel'}
+  ]),e);
+  assert.equal(repeated.status,200);
+  assert.equal((await repeated.json()).publicSync.complete,true);
+  assert.equal(calls,1);
+});
+
+test('new VYRON channel reuses only its matching imported OAuth profile after Google verification',async()=>{
+  const e=env(),existingChannel=id(902),newChannel=id(903);
+  e.OAUTH_ENCRYPTION_KEY='a'.repeat(64);
+  const profileUuid='vyron-profile-902';
+  const clientId='471814393352-vyronclient.apps.googleusercontent.com';
+  const clientSecret='VYRON_CLIENT_SECRET';
+  const refreshToken='VYRON_REFRESH_TOKEN_123456789';
+  const refreshCipher=await encryptSecret(refreshToken,e);
+  const clientIdCipher=await encryptSecret(clientId,e);
+  const clientSecretCipher=await encryptSecret(clientSecret,e);
+  await e.DB.prepare(
+    'INSERT INTO channels(id,name) VALUES (?,?)'
+  ).bind(existingChannel,'Existing').run();
+  await e.DB.prepare(
+    'INSERT INTO google_oauth_profiles(channel_id,channel_name,refresh_token_cipher,granted_scope,connected_at) VALUES (?,?,?,?,?)'
+  ).bind(existingChannel,'Existing',refreshCipher,'readonly',new Date().toISOString()).run();
+  await e.DB.prepare(
+    'INSERT INTO google_oauth_client_credentials(channel_id,profile_uuid,client_id_cipher,client_secret_cipher,source,bundle_uuid,imported_at) VALUES (?,?,?,?,?,?,?)'
+  ).bind(existingChannel,profileUuid,clientIdCipher,clientSecretCipher,
+    'VYRON_MIGRATION','bundle-902',new Date().toISOString()).run();
+  await e.DB.prepare('INSERT INTO channels(id,name) VALUES (?,?)')
+    .bind(newChannel,'New').run();
+  const profileBinding=createHash('sha256')
+    .update('vyron-profile-binding-v1\\0'+profileUuid).digest('hex');
+  const fetchMock=async(url,opts)=>{
+    if(url.includes('oauth2.googleapis.com/token')) {
+      const body=new URLSearchParams(opts.body);
+      assert.equal(body.get('client_id'),clientId);
+      assert.equal(body.get('client_secret'),clientSecret);
+      assert.equal(body.get('refresh_token'),refreshToken);
+      return new Response(JSON.stringify({access_token:'VYRON_ACCESS'}),{status:200});
+    }
+    if(url.includes('youtube/v3/channels')) {
+      assert.equal(opts.headers.Authorization,'Bearer VYRON_ACCESS');
+      return new Response(JSON.stringify({items:[
+        {id:existingChannel,snippet:{title:'Existing'}},
+        {id:newChannel,snippet:{title:'New VYRON channel'}}
+      ]}),{status:200});
+    }
+    throw new Error('unexpected endpoint');
+  };
+  const result=await bindExistingVYRONProfiles(e,[
+    {id:newChannel,name:'New',profileBinding}
+  ],fetchMock);
+  assert.deepEqual(result.boundChannels,[{id:newChannel,name:'New VYRON channel'}]);
+  assert.deepEqual(result.needsAuthorization,[]);
+  const linked=e.DB.native.prepare(
+    'SELECT p.refresh_token_cipher,c.profile_uuid,c.client_id_cipher,c.client_secret_cipher '+
+    'FROM google_oauth_profiles p JOIN google_oauth_client_credentials c ON c.channel_id=p.channel_id '+
+    'WHERE p.channel_id=?'
+  ).get(newChannel);
+  assert.equal(linked.profile_uuid,profileUuid);
+  assert.equal(linked.refresh_token_cipher,refreshCipher);
+  assert.equal(await decryptSecret(linked.client_id_cipher,e),clientId);
+  assert.equal(await decryptSecret(linked.client_secret_cipher,e),clientSecret);
+  assert.equal(e.DB.native.prepare(
+    'SELECT count(*) AS n FROM channel_analytics_queue WHERE channel_id=?'
+  ).get(newChannel).n,1);
+  assert.equal(JSON.stringify(result).includes(profileUuid),false);
+  assert.equal(JSON.stringify(result).includes(refreshToken),false);
 });
 
 test('one imported Google profile can bind multiple YouTube channels without dropping either',async()=>{
