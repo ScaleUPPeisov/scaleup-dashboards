@@ -1,9 +1,8 @@
 import { createHash } from 'node:crypto';
 import {
-  appendFile, chmod, mkdir, readFile, rename, stat, writeFile
+  appendFile, chmod, mkdir, readFile, rename, stat, statfs, writeFile
 } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
-import { homedir } from 'node:os';
+import { arch, cpus, freemem, homedir, totalmem, uptime } from 'node:os';
 
 // Read-only adapter for VYRON's EXISTING local state mirror written by
 // src-tauri/src/storage.rs at ~/Documents/VYRON/State/app-state.json.
@@ -33,6 +32,133 @@ const MAP = Object.freeze({
 });
 const MAX_SEEN = 20000;
 const MAX_IMPORT_PER_TICK = 1000;
+const ERROR_EVENT_TYPES = new Set([
+  'UPLOAD_FAILED','RENDER_FAILED','PRODUCTION_BUILD_FAILED',
+  'OAUTH_KEYCHAIN_ACCESS_DENIED','OAUTH_PROFILE_RECONNECT_REQUIRED',
+  'ANALYTICS_EXPORT_FAILED','SOURCE_MISSING'
+]);
+const TELEMETRY_FIELDS = Object.freeze([
+  'vyronVersion','endlumeVersion','macOSVersion','macModel','architecture',
+  'uptimeSeconds','memoryTotalBytes','memoryFreeBytes',
+  'rootDiskTotalBytes','rootDiskFreeBytes','diskOnline'
+]);
+const GIB = 1024 ** 3;
+
+function plistString(source,key) {
+  if(typeof source!=='string')return null;
+  const marker='<key>'+key+'</key>';
+  const at=source.indexOf(marker);
+  if(at<0)return null;
+  const rest=source.slice(at+marker.length).trimStart();
+  if(!rest.startsWith('<string>'))return null;
+  const end=rest.indexOf('</string>');
+  return end>8?rest.slice(8,end).trim()||null:null;
+}
+
+async function appBundleVersion(names,overridePath) {
+  const candidates=[];
+  if(typeof overridePath==='string'&&overridePath.trim())candidates.push(overridePath.trim());
+  else for(const root of ['/Applications',join(homedir(),'Applications')])
+    for(const name of names)candidates.push(join(root,name+'.app'));
+  for(const candidate of candidates) {
+    const infoPath=candidate.endsWith('/Info.plist')
+      ?candidate:join(candidate,'Contents','Info.plist');
+    try {
+      const plist=await readFile(infoPath,'utf8');
+      const version=plistString(plist,'CFBundleShortVersionString')||
+        plistString(plist,'CFBundleVersion');
+      if(version)return version.slice(0,80);
+    } catch { /* App is not installed at this candidate path. */ }
+  }
+  return null;
+}
+
+function configuredExternalVolumes(state) {
+  const volumes=new Set();
+  const seen=new Set();
+  const add=value=>{
+    if(typeof value!=='string'||!value.startsWith('/Volumes/'))return;
+    const name=value.slice('/Volumes/'.length).split('/')[0];
+    if(name)volumes.add(join('/Volumes',name));
+  };
+  const visit=(value,depth=0)=>{
+    if(depth>5||!value||typeof value!=='object'||seen.has(value))return;
+    seen.add(value);
+    if(Array.isArray(value)) {
+      for(const item of value.slice(0,500))visit(item,depth+1);
+      return;
+    }
+    for(const item of Object.values(value).slice(0,300)) {
+      if(typeof item==='string')add(item);
+      else if(item&&typeof item==='object')visit(item,depth+1);
+    }
+  };
+  visit(state?.settings);
+  visit(state?.jobs);
+  visit(state?.channels);
+  add(process.env.VYRON_AGENT_EXTERNAL_VOLUME_PATH);
+  return [...volumes];
+}
+
+async function externalDiskOnline(state) {
+  const volumes=configuredExternalVolumes(state);
+  if(!volumes.length)return null;
+  const mounted=await Promise.all(volumes.map(async volume=>{
+    try {await stat(volume);return true;}
+    catch(error){return error?.code==='ENOENT'?false:null;}
+  }));
+  if(mounted.some(value=>value===false))return false;
+  return mounted.every(value=>value===true)?true:null;
+}
+
+export async function collectHostTelemetry(state) {
+  if(process.platform!=='darwin')return {};
+  const [vyronVersion,endlumeVersion,systemPlist,rootFs,diskOnline]=await Promise.all([
+    appBundleVersion(['VYRON','Vyron','VYRON CONTROL','ChannelFlow'],
+      process.env.VYRON_AGENT_VYRON_APP_PATH),
+    appBundleVersion(['ENDLUME','Endlume','ENDLUME Renderer'],
+      process.env.VYRON_AGENT_ENDLUME_APP_PATH),
+    readFile('/System/Library/CoreServices/SystemVersion.plist','utf8').catch(()=>null),
+    statfs('/').catch(()=>null),
+    externalDiskOnline(state)
+  ]);
+  const model=cpus()[0]?.model;
+  const telemetry={
+    architecture:arch(),
+    uptimeSeconds:Math.max(0,Math.floor(uptime())),
+    memoryTotalBytes:totalmem(),
+    memoryFreeBytes:freemem(),
+    diskOnline
+  };
+  const macOSVersion=plistString(systemPlist,'ProductVersion');
+  if(macOSVersion)telemetry.macOSVersion=macOSVersion;
+  if(model)telemetry.macModel=String(model).slice(0,120);
+  if(vyronVersion)telemetry.vyronVersion=vyronVersion;
+  if(endlumeVersion)telemetry.endlumeVersion=endlumeVersion;
+  if(rootFs) {
+    const total=Math.floor(rootFs.blocks*rootFs.bsize);
+    const free=Math.floor(rootFs.bavail*rootFs.bsize);
+    if(Number.isSafeInteger(total)&&total>=0)telemetry.rootDiskTotalBytes=total;
+    if(Number.isSafeInteger(free)&&free>=0)telemetry.rootDiskFreeBytes=free;
+  }
+  return telemetry;
+}
+
+function telemetryFingerprint(telemetry={}) {
+  const wholeGiB=value=>Number.isSafeInteger(value)?Math.floor(value/GIB):null;
+  return JSON.stringify({
+    vyronVersion:telemetry.vyronVersion||null,
+    endlumeVersion:telemetry.endlumeVersion||null,
+    macOSVersion:telemetry.macOSVersion||null,
+    macModel:telemetry.macModel||null,
+    architecture:telemetry.architecture||null,
+    diskOnline:typeof telemetry.diskOnline==='boolean'?telemetry.diskOnline:null,
+    uptimeBucket:Number.isSafeInteger(telemetry.uptimeSeconds)
+      ?Math.floor(telemetry.uptimeSeconds/300):null,
+    memoryFreeGiB:wholeGiB(telemetry.memoryFreeBytes),
+    rootDiskFreeGiB:wholeGiB(telemetry.rootDiskFreeBytes)
+  });
+}
 
 function channelIdFrom(row) {
   const candidate = row?.youtubeChannelId || row?.stats?.channelId;
@@ -69,13 +195,26 @@ function krasnoyarskDay(input) {
   const p=Object.fromEntries(parts.map(({type,value})=>[type,value]));
   return `${p.year}-${p.month}-${p.day}`;
 }
-export function mirrorStatus(state,now=new Date()) {
+export function mirrorStatus(state,now=new Date(),telemetry={}) {
   const jobs = Array.isArray(state?.jobs) ? state.jobs : [];
   const uploaded = Array.isArray(state?.uploadHistory) ? state.uploadHistory : [];
   const journal = Array.isArray(state?.activityJournal) ? state.activityJournal : [];
   const channels = Array.isArray(state?.channels) ? state.channels : [];
   const today = krasnoyarskDay(now);
   const inToday = timestamp => Boolean(today) && krasnoyarskDay(timestamp)===today;
+  const latestError=journal.filter(row=>ERROR_EVENT_TYPES.has(row?.eventType)&&
+    Number.isFinite(Date.parse(row?.timestamp)))
+    .sort((a,b)=>Date.parse(a.timestamp)-Date.parse(b.timestamp)).at(-1);
+  const rawError=String(latestError?.errorCode||latestError?.eventType||'');
+  const lastError=/^[A-Za-z0-9_-]{1,150}$/.test(rawError)?rawError:
+    latestError?'AGENT_ERROR':null;
+  const system={};
+  for(const key of TELEMETRY_FIELDS) {
+    const value=telemetry?.[key];
+    if(typeof value==='boolean'||
+      (Number.isSafeInteger(value)&&value>=0)||
+      (typeof value==='string'&&value.length<=150))system[key]=value;
+  }
   return {
     macAwake: true,
     channelsTotal: channels.length,
@@ -89,7 +228,9 @@ export function mirrorStatus(state,now=new Date()) {
       x?.eventType === 'RENDER_COMPLETED' && inToday(x.timestamp)).length,
     uploadFailuresToday: journal.filter(x =>
       x?.eventType === 'UPLOAD_FAILED' && inToday(x.timestamp)).length,
-    syncCursor: 'mirror-v2'
+    syncCursor: 'mirror-v2',
+    ...system,
+    ...(lastError?{lastError}:{})
   };
 }
 
@@ -174,9 +315,11 @@ async function privateJson(path,data) {
 export class MirrorExport {
   constructor({
     mirrorFile=join(homedir(),'Documents','VYRON','State','app-state.json'),
-    outDir=join(homedir(),'.vyron-control-agent'),now=()=>new Date()
+    outDir=join(homedir(),'.vyron-control-agent'),now=()=>new Date(),
+    collectTelemetry=collectHostTelemetry
   }={}) {
     this.now=now;
+    this.collectTelemetry=collectTelemetry;
     this.mirrorFile=mirrorFile;
     this.outDir=outDir;
     this.eventsFile=join(outDir,'events.jsonl');
@@ -203,13 +346,15 @@ export class MirrorExport {
     try{file=await stat(this.mirrorFile);}
     catch(error){if(error.code==='ENOENT')return {status:'mirror_missing',events:0};throw error;}
     const instant=this.now();
-    const signature=file.mtimeMs+':'+file.size+':'+krasnoyarskDay(instant);
-    if(signature===this.lastSignature) return {status:'unchanged',events:0};
     const state=JSON.parse(await readFile(this.mirrorFile,'utf8'));
     if (!state || !Array.isArray(state.channels) || !Array.isArray(state.jobs))
       throw new Error('Invalid VYRON state mirror, refusing to export');
+    const telemetry=await this.collectTelemetry(state);
+    const signature=file.mtimeMs+':'+file.size+':'+krasnoyarskDay(instant)+
+      ':'+telemetryFingerprint(telemetry);
+    if(signature===this.lastSignature) return {status:'unchanged',events:0};
     const channels=mirrorChannels(state);
-    const status=mirrorStatus(state,instant);
+    const status=mirrorStatus(state,instant,telemetry);
     const analytics=mirrorAnalytics(state);
     await privateJson(this.channelsFile,channels);
     await privateJson(this.statusFile,status);
