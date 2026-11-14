@@ -193,7 +193,7 @@ export async function runCountersSync(env, { source, slot, date = new Date(), fe
         if(rows.length) {
           const rowsJson=JSON.stringify(rows);
           const stmts=[
-            db.prepare(\`
+            db.prepare(`
               INSERT INTO channels (id,name,subscribers,views,videos,hidden_subscribers,
                 max_milestone,previous_subscribers,updated_at)
               SELECT json_extract(value,'$.id'),json_extract(value,'$.name'),
@@ -206,23 +206,23 @@ export async function runCountersSync(env, { source, slot, date = new Date(), fe
                 views=excluded.views,videos=excluded.videos,
                 hidden_subscribers=excluded.hidden_subscribers,max_milestone=excluded.max_milestone,
                 previous_subscribers=excluded.previous_subscribers,updated_at=excluded.updated_at
-            \`).bind(rowsJson),
-            db.prepare(\`
+            `).bind(rowsJson),
+            db.prepare(`
               INSERT OR IGNORE INTO channel_snapshots
                 (channel_id,observed_at,subscribers,views,videos)
               SELECT json_extract(value,'$.id'),json_extract(value,'$.updated_at'),
                 json_extract(value,'$.subscribers'),json_extract(value,'$.views'),
                 json_extract(value,'$.videos') FROM json_each(?)
-            \`).bind(rowsJson)
+            `).bind(rowsJson)
           ];
-          if(notices.length)stmts.push(db.prepare(\`
+          if(notices.length)stmts.push(db.prepare(`
             INSERT OR IGNORE INTO events
               (id,kind,channel_id,title,payload_json,occurred_at,received_at)
             SELECT json_extract(value,'$.id'),json_extract(value,'$.kind'),
               json_extract(value,'$.channel_id'),json_extract(value,'$.title'),
               json_extract(value,'$.payload_json'),json_extract(value,'$.occurred_at'),
               json_extract(value,'$.received_at') FROM json_each(?)
-          \`).bind(JSON.stringify(notices)));
+          `).bind(JSON.stringify(notices)));
           await db.batch(stmts);
           updatedChannels+=rows.length;
         }
