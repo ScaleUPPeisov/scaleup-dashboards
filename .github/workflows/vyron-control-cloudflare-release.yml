@@ -1,6 +1,14 @@
 name: VYRON CONTROL — guarded Cloudflare release
 
 on:
+  push:
+    branches:
+      - main
+      - feature/vyron-control-cloud-mvp-20261113
+      - release/vyron-control-production
+    paths:
+      - "apps/vyron-control/**"
+      - ".github/workflows/vyron-control-cloudflare-release.yml"
   workflow_dispatch:
     inputs:
       operation:
@@ -45,14 +53,14 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
       VYRON_CONTROL_URL: https://vyron-control.endlume-peisov-3ee6109f.workers.dev
       GH_TOKEN: ${{ github.token }}
-      SOURCE_REF: ${{ inputs.source_ref }}
-      OPERATION: ${{ inputs.operation }}
-      CONFIRM_PRODUCTION: ${{ inputs.confirm_production }}
+      SOURCE_REF: ${{ inputs.source_ref || (github.event_name == 'push' && github.ref_name != 'main' && github.ref_name) || 'release/vyron-control-production' }}
+      OPERATION: ${{ inputs.operation || 'preflight' }}
+      CONFIRM_PRODUCTION: ${{ inputs.confirm_production || false }}
     steps:
       - name: Check out the exact release snapshot
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.source_ref }}
+          ref: ${{ inputs.source_ref || (github.event_name == 'push' && github.ref_name != 'main' && github.ref_name) || 'release/vyron-control-production' }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -67,12 +75,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
-            echo "::error::Run this release workflow from the repository default branch main."
+          if [[ "${OPERATION}" == "deploy" && "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "::error::Production deployment must be manually dispatched from main."
             exit 1
           fi
-          if [[ "${SOURCE_REF}" != "release/vyron-control-production" ]]; then
-            echo "::error::Only the reviewed VYRON CONTROL release snapshot is allowed."
+          if [[ "${OPERATION}" == "deploy" && "${SOURCE_REF}" != "release/vyron-control-production" ]]; then
+            echo "::error::Only the reviewed VYRON CONTROL release snapshot is allowed for production deployment."
             exit 1
           fi
           if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then
@@ -95,11 +103,72 @@ jobs:
       - name: Read remote D1 migration state
         run: npx --yes wrangler@4.102.0 d1 migrations list vyron-control --remote -c cloudflare/wrangler.jsonc
 
+      - name: Read-only D1 schema and row-count audit
+        id: d1-audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          schema_json="$(npx --yes wrangler@4.102.0 d1 execute vyron-control --remote -c cloudflare/wrangler.jsonc --json --command "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name;")"
+          D1_SCHEMA_JSON="${schema_json}" node --input-type=module <<'NODE'
+          const results = JSON.parse(process.env.D1_SCHEMA_JSON || "[]");
+          const rows = results.flatMap(result => Array.isArray(result.results) ? result.results : []);
+          const tables = new Set(rows.map(row => String(row.name)));
+          const required = [
+            "channels","channel_snapshots","events","sync_runs","quota_buckets","devices",
+            "commands","channel_analytics","channel_analytics_reports","google_oauth_sessions",
+            "google_oauth_profiles","google_oauth_client_credentials","cloud_analytics_runs",
+            "channel_analytics_queue","push_subscriptions","push_deliveries"
+          ];
+          const missing = required.filter(name => !tables.has(name));
+          if (missing.length) {
+            console.error("D1 schema audit failed; missing tables:", missing.join(", "));
+            process.exit(1);
+          }
+          console.log("D1 schema inventory:", required.length + "/" + required.length + " application tables present.");
+          console.log("D1 migration ledger:", tables.has("d1_migrations") ? "present" : "not initialized yet");
+          NODE
+          COUNTS_SQL="SELECT 'channels' AS table_name, COUNT(*) AS row_count FROM channels
+          UNION ALL SELECT 'channel_snapshots', COUNT(*) FROM channel_snapshots
+          UNION ALL SELECT 'events', COUNT(*) FROM events
+          UNION ALL SELECT 'sync_runs', COUNT(*) FROM sync_runs
+          UNION ALL SELECT 'quota_buckets', COUNT(*) FROM quota_buckets
+          UNION ALL SELECT 'devices', COUNT(*) FROM devices
+          UNION ALL SELECT 'commands', COUNT(*) FROM commands
+          UNION ALL SELECT 'channel_analytics', COUNT(*) FROM channel_analytics
+          UNION ALL SELECT 'channel_analytics_reports', COUNT(*) FROM channel_analytics_reports
+          UNION ALL SELECT 'google_oauth_sessions', COUNT(*) FROM google_oauth_sessions
+          UNION ALL SELECT 'google_oauth_profiles', COUNT(*) FROM google_oauth_profiles
+          UNION ALL SELECT 'google_oauth_client_credentials', COUNT(*) FROM google_oauth_client_credentials
+          UNION ALL SELECT 'cloud_analytics_runs', COUNT(*) FROM cloud_analytics_runs
+          UNION ALL SELECT 'channel_analytics_queue', COUNT(*) FROM channel_analytics_queue
+          UNION ALL SELECT 'push_subscriptions', COUNT(*) FROM push_subscriptions
+          UNION ALL SELECT 'push_deliveries', COUNT(*) FROM push_deliveries
+          ORDER BY table_name;"
+          counts_json="$(npx --yes wrangler@4.102.0 d1 execute vyron-control --remote -c cloudflare/wrangler.jsonc --json --command "${COUNTS_SQL}")"
+          D1_COUNTS_JSON="${counts_json}" node --input-type=module <<'NODE'
+          import { appendFile } from "node:fs/promises";
+          const results = JSON.parse(process.env.D1_COUNTS_JSON || "[]");
+          const rows = results.flatMap(result => Array.isArray(result.results) ? result.results : []);
+          const counts = Object.fromEntries(rows.map(row => [String(row.table_name), Number(row.row_count)]));
+          if (Object.keys(counts).length !== 16 || Object.values(counts).some(value => !Number.isSafeInteger(value) || value < 0)) {
+            console.error("D1 row-count audit returned an incomplete or invalid result.");
+            process.exit(1);
+          }
+          if (counts.channels < 33 || counts.google_oauth_profiles < 31) {
+            console.error("D1 data baseline is below the verified live dashboard: expected at least 33 channels and 31 OAuth profiles.", JSON.stringify({
+              channels: counts.channels, google_oauth_profiles: counts.google_oauth_profiles
+            }));
+            process.exit(1);
+          }
+          console.log("D1 row counts (counts only; no row contents or credentials):", JSON.stringify(counts));
+          await appendFile(process.env.GITHUB_OUTPUT, "row_counts=" + JSON.stringify(counts) + "\n");
+          NODE
+
       - name: Build Cloudflare Worker without deploying
         run: npx --yes wrangler@4.102.0 deploy --dry-run -c cloudflare/wrangler.jsonc
 
       - name: Require explicit production confirmation and merged application PR
-        if: ${{ inputs.operation == 'deploy' }}
+        if: ${{ env.OPERATION == 'deploy' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -127,15 +196,57 @@ jobs:
           echo "PR #25 is merged and release snapshot matches the reviewed branch HEAD: ${release_sha}"
 
       - name: Apply additive D1 migrations
-        if: ${{ inputs.operation == 'deploy' }}
+        if: ${{ env.OPERATION == 'deploy' }}
         run: npx --yes wrangler@4.102.0 d1 migrations apply vyron-control --remote -c cloudflare/wrangler.jsonc
 
+      - name: Verify D1 application row counts survived migrations
+        if: ${{ env.OPERATION == 'deploy' }}
+        shell: bash
+        env:
+          EXPECTED_ROW_COUNTS: ${{ steps.d1-audit.outputs.row_counts }}
+        run: |
+          set -euo pipefail
+          COUNTS_SQL="SELECT 'channels' AS table_name, COUNT(*) AS row_count FROM channels
+          UNION ALL SELECT 'channel_snapshots', COUNT(*) FROM channel_snapshots
+          UNION ALL SELECT 'events', COUNT(*) FROM events
+          UNION ALL SELECT 'sync_runs', COUNT(*) FROM sync_runs
+          UNION ALL SELECT 'quota_buckets', COUNT(*) FROM quota_buckets
+          UNION ALL SELECT 'devices', COUNT(*) FROM devices
+          UNION ALL SELECT 'commands', COUNT(*) FROM commands
+          UNION ALL SELECT 'channel_analytics', COUNT(*) FROM channel_analytics
+          UNION ALL SELECT 'channel_analytics_reports', COUNT(*) FROM channel_analytics_reports
+          UNION ALL SELECT 'google_oauth_sessions', COUNT(*) FROM google_oauth_sessions
+          UNION ALL SELECT 'google_oauth_profiles', COUNT(*) FROM google_oauth_profiles
+          UNION ALL SELECT 'google_oauth_client_credentials', COUNT(*) FROM google_oauth_client_credentials
+          UNION ALL SELECT 'cloud_analytics_runs', COUNT(*) FROM cloud_analytics_runs
+          UNION ALL SELECT 'channel_analytics_queue', COUNT(*) FROM channel_analytics_queue
+          UNION ALL SELECT 'push_subscriptions', COUNT(*) FROM push_subscriptions
+          UNION ALL SELECT 'push_deliveries', COUNT(*) FROM push_deliveries
+          ORDER BY table_name;"
+          counts_json="$(npx --yes wrangler@4.102.0 d1 execute vyron-control --remote -c cloudflare/wrangler.jsonc --json --command "${COUNTS_SQL}")"
+          EXPECTED_ROW_COUNTS="${EXPECTED_ROW_COUNTS}" D1_COUNTS_JSON="${counts_json}" node --input-type=module <<'NODE'
+          const expected = JSON.parse(process.env.EXPECTED_ROW_COUNTS || "{}");
+          const results = JSON.parse(process.env.D1_COUNTS_JSON || "[]");
+          const rows = results.flatMap(result => Array.isArray(result.results) ? result.results : []);
+          const actual = Object.fromEntries(rows.map(row => [String(row.table_name), Number(row.row_count)]));
+          const changed = Object.keys(expected).filter(name => actual[name] !== expected[name]);
+          if (changed.length) {
+            console.error("D1 data preservation check failed:", JSON.stringify({
+              changed: Object.fromEntries(changed.map(name => [name, {
+                before: expected[name], after: actual[name]
+              }]))
+            }));
+            process.exit(1);
+          }
+          console.log("D1 data preservation verified: all 16 application-table row counts are unchanged.");
+          NODE
+
       - name: Deploy Worker and static dashboard assets
-        if: ${{ inputs.operation == 'deploy' }}
+        if: ${{ env.OPERATION == 'deploy' }}
         run: npx --yes wrangler@4.102.0 deploy -c cloudflare/wrangler.jsonc --keep-vars --strict --message "VYRON CONTROL release $(git rev-parse --short HEAD)"
 
       - name: Verify deployed Worker and D1 schema
-        if: ${{ inputs.operation == 'deploy' }}
+        if: ${{ env.OPERATION == 'deploy' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -154,5 +265,5 @@ jobs:
           '
 
       - name: Confirm preflight-only run made no production changes
-        if: ${{ inputs.operation == 'preflight' }}
+        if: ${{ env.OPERATION == 'preflight' }}
         run: echo "Preflight complete. No D1 migrations were applied and no Worker was deployed."
