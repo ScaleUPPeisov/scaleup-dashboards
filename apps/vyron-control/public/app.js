@@ -575,14 +575,30 @@ function renderOverview(data) {
     list.append(make('p','overview-caption','Пока нет событий. Журнал заполнится после синхронизации VYRON.'));
     return;
   }
+  const eventLabels={
+    subscriber_milestone:'Новый рубеж подписчиков',
+    upload_queued:'Видео добавлено в очередь',
+    upload_started:'Загрузка началась',
+    upload_progress:'Идёт загрузка видео',
+    upload_completed:'YouTube принял видео',
+    upload_failed:'Ошибка загрузки',
+    render_started:'Рендер начался',
+    render_progress:'Рендер выполняется',
+    render_completed:'Рендер завершён',
+    render_failed:'Ошибка рендера',
+    agent_error:'Ошибка Mac Bridge',
+    agent_info:'Событие Mac Bridge',
+    channel_sync:'Канал синхронизирован',
+    schedule_changed:'Расписание изменено'
+  };
   for(const event of events) {
     const failed=['upload_failed','render_failed','agent_error'].includes(event.type);
     const complete=['upload_completed','render_completed'].includes(event.type);
     const row=make('div','overview-event');
     row.append(make('span','overview-event-mark',failed?'!':complete?'✓':'·'));
     const copy=make('div','overview-event-copy');
-    copy.append(make('strong','',event.name||event.title||'Событие VYRON'),
-      make('small','',time(event.detectedAt)));
+    copy.append(make('strong','',eventLabels[event.type]||'Событие VYRON'),
+      make('small','',(event.name||event.title||'')+' · '+time(event.detectedAt)));
     row.append(copy);
     list.append(row);
   }
