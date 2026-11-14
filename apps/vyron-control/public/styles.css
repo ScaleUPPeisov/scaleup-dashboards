@@ -435,3 +435,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,su
 @media(max-width:760px){
   .mobile-nav button span svg{width:19px;height:19px}
 }
+
+@media(max-width:850px){
+  .channel-section .section-title{flex-wrap:wrap}
+}
