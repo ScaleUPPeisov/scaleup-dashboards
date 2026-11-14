@@ -1,6 +1,14 @@
 name: VYRON CONTROL — guarded Cloudflare release
 
 on:
+  push:
+    branches:
+      - main
+      - feature/vyron-control-cloud-mvp-20261113
+      - release/vyron-control-production
+    paths:
+      - "apps/vyron-control/**"
+      - ".github/workflows/vyron-control-cloudflare-release.yml"
   workflow_dispatch:
     inputs:
       operation:
@@ -45,14 +53,14 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
       VYRON_CONTROL_URL: https://vyron-control.endlume-peisov-3ee6109f.workers.dev
       GH_TOKEN: ${{ github.token }}
-      SOURCE_REF: ${{ inputs.source_ref }}
-      OPERATION: ${{ inputs.operation }}
-      CONFIRM_PRODUCTION: ${{ inputs.confirm_production }}
+      SOURCE_REF: ${{ inputs.source_ref || (github.event_name == 'push' && github.ref_name != 'main' && github.ref_name) || 'release/vyron-control-production' }}
+      OPERATION: ${{ inputs.operation || 'preflight' }}
+      CONFIRM_PRODUCTION: ${{ inputs.confirm_production || false }}
     steps:
       - name: Check out the exact release snapshot
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.source_ref }}
+          ref: ${{ inputs.source_ref || (github.event_name == 'push' && github.ref_name != 'main' && github.ref_name) || 'release/vyron-control-production' }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -67,12 +75,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
-            echo "::error::Run this release workflow from the repository default branch main."
+          if [[ "${OPERATION}" == "deploy" && "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "::error::Production deployment must be manually dispatched from main."
             exit 1
           fi
-          if [[ "${SOURCE_REF}" != "release/vyron-control-production" ]]; then
-            echo "::error::Only the reviewed VYRON CONTROL release snapshot is allowed."
+          if [[ "${OPERATION}" == "deploy" && "${SOURCE_REF}" != "release/vyron-control-production" ]]; then
+            echo "::error::Only the reviewed VYRON CONTROL release snapshot is allowed for production deployment."
             exit 1
           fi
           if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then
