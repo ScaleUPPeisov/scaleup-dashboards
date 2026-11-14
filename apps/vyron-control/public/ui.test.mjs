@@ -70,7 +70,7 @@ test('PWA caches every imported browser module but never authenticated API respo
 });
 
 test('Mac installer and dashboard command use the same source branch',()=>{
-  const branch='feature/vyron-control-mobile-analytics-20261114';
+  const branch='release/vyron-control-production';
   assert.ok(app.includes('/'+branch+'/apps/vyron-control/public/install-mac-agent.sh'));
   assert.ok(installer.includes("BRANCH='"+branch+"'"));
 });
