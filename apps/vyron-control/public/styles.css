@@ -93,9 +93,9 @@ select{border:1px solid #354665;border-radius:11px;background:#11192a;color:#f3f
 .analytics-panel-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
 .analytics-panel-head strong{font-size:13px}
 .analytics-panel-head small{font-size:10px;color:#7f96ba;white-space:nowrap}
-#analytics-trend{display:block;width:100%;height:190px;overflow:visible}
-#analytics-trend .trend-grid{stroke:#293a58;stroke-width:1;fill:none}
-#analytics-trend .trend-line{stroke:#7da5ff;stroke-width:3;fill:none;stroke-linecap:round;stroke-linejoin:round}
+#analytics-trend,#analytics-retention-curve{display:block;width:100%;height:190px;overflow:visible}
+#analytics-trend .trend-grid,#analytics-retention-curve .trend-grid{stroke:#293a58;stroke-width:1;fill:none}
+#analytics-trend .trend-line,#analytics-retention-curve .trend-line{stroke:#7da5ff;stroke-width:3;fill:none;stroke-linecap:round;stroke-linejoin:round}
 #analytics-trend .trend-area{fill:#5277ff;opacity:.12}
 .chart-caption{font-size:10px;color:#8197b9;line-height:1.5}
 .analytics-ranking{display:grid;gap:10px}
@@ -172,7 +172,7 @@ select{border:1px solid #354665;border-radius:11px;background:#11192a;color:#f3f
   .analytics-panel{padding:12px;border-radius:11px}
   .analytics-trend-panel{grid-column:auto}
   .analytics-panel-head strong{font-size:12px}
-  #analytics-trend{height:145px}
+  #analytics-trend,#analytics-retention-curve{height:145px}
   .analytics-rank-label,.analytics-rank-value{font-size:10px}
   .analytics-rank-sub{font-size:9px}
   .mac-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
