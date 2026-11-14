@@ -103,26 +103,19 @@ test('cron times use Krasnoyarsk but Google quota resets in Pacific',async()=>{
   assert.match(manualSlot(new Date('2026-11-13T15:00:00Z')),/^manual:/);
 });
 
-test('authenticated D1 bootstrap fills missing application tables idempotently',async()=>{
+test('D1 health check is read-only and never creates missing application tables',async()=>{
   const e=env();
   e.DB.native.exec('DROP TABLE push_deliveries');
-  const denied=await cloud.fetch(new Request('https://vyron-control.example/api/admin/bootstrap',{
-    method:'POST'
-  }),e);
-  assert.equal(denied.status,401);
-  const first=await cloud.fetch(req('/api/admin/bootstrap',control,'POST',{}),e);
-  assert.equal(first.status,200);
-  const firstBody=await first.json();
-  assert.equal(firstBody.ok,true);
-  assert.deepEqual(firstBody.createdTables,['push_deliveries']);
-  assert.equal(firstBody.presentTables,16);
-  const second=await cloud.fetch(req('/api/admin/bootstrap',control,'POST',{}),e);
-  assert.equal(second.status,200);
-  const secondBody=await second.json();
-  assert.equal(secondBody.ok,true);
-  assert.equal(secondBody.created,false);
   const health=await cloud.fetch(new Request('https://vyron-control.example/api/health'),e);
-  assert.equal(health.status,200);
+  assert.equal(health.status,503);
+  const body=await health.json();
+  assert.equal(body.ok,false);
+  assert.equal(body.d1.schema,false);
+  assert.deepEqual(body.d1.missing,['push_deliveries']);
+  assert.throws(()=>e.DB.native.prepare('SELECT * FROM push_deliveries').all(),/no such table/i);
+  const bootstrap=await cloud.fetch(req('/api/admin/bootstrap',control,'POST',{}),e);
+  assert.equal(bootstrap.status,404);
+  assert.throws(()=>e.DB.native.prepare('SELECT * FROM push_deliveries').all(),/no such table/i);
 });
 
 test('owner can derive a Mac-only bridge token without adding another Cloudflare secret',async()=>{
