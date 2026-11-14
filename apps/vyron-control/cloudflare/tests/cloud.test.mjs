@@ -561,16 +561,17 @@ test('manual refresh API processes every authorized channel in safe four-profile
     }
     throw new Error('unexpected manual analytics endpoint');
   };
+  e.FETCH_IMPL=mockFetch;
   const requestId='manualbatchrequest001';
   const first=await cloud.fetch(req('/api/analytics/refresh',control,'POST',{
     requestId,offset:0
-  }),{...e,fetch:mockFetch});
+  }),e);
   assert.equal(first.status,200);
   const firstBody=await first.json();
   assert.equal(firstBody.updated,4);
   const second=await cloud.fetch(req('/api/analytics/refresh',control,'POST',{
     requestId,offset:4
-  }),{...e,fetch:mockFetch});
+  }),e);
   assert.equal(second.status,200);
   const secondBody=await second.json();
   assert.equal(secondBody.updated,1);
