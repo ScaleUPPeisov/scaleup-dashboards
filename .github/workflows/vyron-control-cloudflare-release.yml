@@ -113,11 +113,13 @@ jobs:
             exit 1
           fi
           git fetch --no-tags origin feature/vyron-control-cloud-mvp-20261113
-          if ! git merge-base --is-ancestor HEAD FETCH_HEAD; then
-            echo "::error::Release snapshot is not contained in the reviewed application branch."
+          release_sha="$(git rev-parse HEAD)"
+          reviewed_sha="$(git rev-parse FETCH_HEAD)"
+          if [[ "${release_sha}" != "${reviewed_sha}" ]]; then
+            echo "::error::Release snapshot is stale. Update it to the exact reviewed application branch HEAD before deploying."
             exit 1
           fi
-          echo "PR #25 is merged and the release snapshot is contained in its reviewed base branch."
+          echo "PR #25 is merged and release snapshot matches the reviewed branch HEAD: ${release_sha}"
 
       - name: Apply additive D1 migrations
         if: ${{ inputs.operation == 'deploy' }}
@@ -125,7 +127,7 @@ jobs:
 
       - name: Deploy Worker and static dashboard assets
         if: ${{ inputs.operation == 'deploy' }}
-        run: npx --yes wrangler@4.102.0 deploy -c cloudflare/wrangler.jsonc --keep-vars --strict --message "VYRON CONTROL release ${GITHUB_SHA}"
+        run: npx --yes wrangler@4.102.0 deploy -c cloudflare/wrangler.jsonc --keep-vars --strict --message "VYRON CONTROL release $(git rev-parse --short HEAD)"
 
       - name: Verify deployed Worker and D1 schema
         if: ${{ inputs.operation == 'deploy' }}
