@@ -15,7 +15,9 @@ export function cleanStatus(source) {
   const obj = source && typeof source === 'object' && !Array.isArray(source) ? source : {};
   const status = {};
   for (const key of [
-    'vyronVersion','endlumeVersion','macAwake','diskOnline',
+    'vyronVersion','endlumeVersion','macOSVersion','macModel','architecture',
+    'uptimeSeconds','memoryTotalBytes','memoryFreeBytes','rootDiskTotalBytes',
+    'rootDiskFreeBytes','macAwake','diskOnline',
     'rendersActive','uploadsQueued','uploadsCompleted','uploadsToday',
     'rendersCompletedToday','uploadFailuresToday','jobsReadyUpload',
     'channelsTotal','channelsBound','lastError','syncCursor'
