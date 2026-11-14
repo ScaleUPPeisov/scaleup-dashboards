@@ -478,6 +478,10 @@ test('VYRON Mac bridge enrollment immediately syncs newly added public channel c
   assert.equal(row.subscribers,1250);
   assert.equal(row.views,25000);
   assert.ok(row.updated_at);
+  const status=await cloud.fetch(req('/api/status',control),e);
+  const statusBody=await status.json();
+  assert.equal(statusBody.channels[0].analyticsAuthorized,false);
+  assert.equal(statusBody.analyticsSummary.authorized,0);
   const repeated=await cloud.fetch(req('/api/agent/channels',agent,'POST',[
     {id:channelId,name:'New VYRON channel'}
   ]),e);
