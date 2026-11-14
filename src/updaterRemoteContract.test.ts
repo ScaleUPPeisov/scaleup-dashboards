@@ -1,9 +1,11 @@
 import {describe,expect,it} from 'vitest';
+import {UPDATER_ENDPOINTS} from './updaterPolicy';
 import {readFileSync} from 'node:fs';
 
 const app=readFileSync('src/App.tsx','utf8'),settings=readFileSync('src/SettingsOS.tsx','utf8'),api=readFileSync('src/api.ts','utf8'),runtime=readFileSync('src/updaterRuntime.ts','utf8'),history=readFileSync('src/errorHistory.ts','utf8'),config=JSON.parse(readFileSync('src-tauri/tauri.conf.json','utf8'));
 
 describe('VYRON remote in-app update product contract',()=>{
+ it('reports the exact updater endpoints configured in Tauri',()=>{expect(UPDATER_ENDPOINTS).toEqual(config.plugins.updater.endpoints)});
  it('keeps the existing signed stable feed and public key contract',()=>{expect(config.plugins.updater.endpoints[0]).toBe('https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json');expect(config.plugins.updater.endpoints[1]).toBe('https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json');expect(config.plugins.updater.pubkey).toContain('dW50cnVzdGVk');expect(config.plugins.updater.endpoints).toHaveLength(2)});
  it('uses the existing Tauri updater with separate download/install instead of a second download manager',()=>{expect(api).toContain("import { check } from '@tauri-apps/plugin-updater'");expect(api).toContain('await update.download(');expect(api).toContain('await update.install()');expect(api).not.toContain('downloadAndInstall(')});
  it('renders the dedicated update experience and does not mount the obsolete sidebar updater card',()=>{const updateUi=readFileSync('src/UpdateExperience.tsx','utf8');expect(app).toContain('<UpdateExperience/>');expect(app).not.toContain('<UpdaterSidebar/>');expect(updateUi).toContain('Обновить сейчас');expect(updateUi).toContain('Позже')});

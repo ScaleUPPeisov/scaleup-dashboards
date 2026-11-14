@@ -1,6 +1,6 @@
 export const UPDATER_ENDPOINTS=[
-  'https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/vyron-updates/latest.json',
-  'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/latest/download/latest.json'
+  'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json',
+  'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json'
 ] as const;
 
 export const UPDATER_CHECK_OPTIONS={

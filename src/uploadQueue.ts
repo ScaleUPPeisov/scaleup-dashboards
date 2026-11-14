@@ -59,7 +59,28 @@ function assertSpecIntegrity(spec:ImmutableUploadJob){const result=validateImmut
 function cloneSpec(input:ImmutableUploadJob):ImmutableUploadJob{
   return Object.freeze({...input,tags:Object.freeze([...input.tags]),quotaOperations:Object.freeze(input.quotaOperations.map(x=>Object.freeze({...x})))}) as ImmutableUploadJob;
 }
-function identityKeys(spec:ImmutableUploadJob){return [spec.projectId?`project:${spec.projectId}`:'',spec.fingerprint?`fingerprint:${spec.channelId}:${spec.fingerprint.toLowerCase()}`:''].filter(Boolean)}
+export type UploadQueueDuplicateKind='job_identity'|'project_video_identity'|'channel_fingerprint';
+export type UploadQueueDuplicateMatch={kind:UploadQueueDuplicateKind;entry:UploadQueueEntry};
+type UploadQueueIdentityKey={kind:UploadQueueDuplicateKind;value:string};
+function identityKeys(spec:ImmutableUploadJob):UploadQueueIdentityKey[]{
+  return[
+    {kind:'job_identity',value:`job:${spec.jobId}`},
+    {kind:'project_video_identity',value:`project-video:${JSON.stringify([spec.projectId||null,spec.localVideoIdentity])}`},
+    {kind:'channel_fingerprint',value:`channel-fingerprint:${JSON.stringify([spec.channelId,spec.fingerprint.trim().toLowerCase()])}`}
+  ];
+}
+function duplicateIdentity(left:ImmutableUploadJob,right:ImmutableUploadJob):UploadQueueDuplicateKind|undefined{
+  const rightKeys=new Set(identityKeys(right).map(x=>x.value));
+  return identityKeys(left).find(x=>rightKeys.has(x.value))?.kind;
+}
+const duplicateLabels:Record<UploadQueueDuplicateKind,string>={
+  job_identity:'совпал jobId — это же задание уже находится в очереди',
+  project_video_identity:'совпали projectId + localVideoIdentity — это же видео проекта уже находится в очереди',
+  channel_fingerprint:'совпал fingerprint в рамках этого канала; SHA-256 скрыт'
+};
+export function uploadQueueDuplicateError(kind:UploadQueueDuplicateKind){
+  return new Error(`UPLOAD_QUEUE_DUPLICATE: matched=${kind}; ${duplicateLabels[kind]}`);
+}
 function nowIso(){return new Date().toISOString()}
 function restoredEntry(value:unknown):UploadQueueEntry|undefined{
   if(!value||typeof value!=='object')return;
@@ -91,14 +112,20 @@ export class MultiChannelUploadQueue{
     return{concurrency:this.concurrency,perChannelConcurrency:this.perChannelConcurrency,paused,queued,running,recent};
   }
   getRuntimeFacts(){return this.entries.filter(x=>x.state==='PAUSED'||x.state==='QUEUED'||x.state==='RUNNING').map(x=>({jobId:x.spec.jobId,channelId:x.spec.channelId,status:x.state==='RUNNING'?'UPLOADING' as const:'QUEUED' as const}))}
-  hasDuplicate(spec:ImmutableUploadJob){
-    const keys=new Set(identityKeys(spec));
-    return this.entries.some(x=>(x.state==='PAUSED'||x.state==='QUEUED'||x.state==='RUNNING')&&identityKeys(x.spec).some(k=>keys.has(k)));
+  findDuplicate(spec:ImmutableUploadJob,excludeQueueId?:string):UploadQueueDuplicateMatch|undefined{
+    for(const entry of this.entries){
+      if(entry.queueId===excludeQueueId||!(entry.state==='PAUSED'||entry.state==='QUEUED'||entry.state==='RUNNING'))continue;
+      const kind=duplicateIdentity(spec,entry.spec);
+      if(kind)return{kind,entry};
+    }
+    return undefined;
   }
+  hasDuplicate(spec:ImmutableUploadJob){return Boolean(this.findDuplicate(spec))}
   enqueue(input:ImmutableUploadJob){
     assertSpecIntegrity(input);
     const spec=cloneSpec(input);
-    if(this.hasDuplicate(spec))throw new Error('UPLOAD_QUEUE_DUPLICATE: project/fingerprint already queued or running');
+    const duplicate=this.findDuplicate(spec);
+    if(duplicate)throw uploadQueueDuplicateError(duplicate.kind);
     const entry:UploadQueueEntry=Object.freeze({queueId:`uploadq:${++this.sequence}:${spec.jobId}`,spec,state:'QUEUED',submittedSequence:this.sequence});
     const previous=this.entries;this.entries=[...this.entries,entry];
     if(!this.persist()){this.entries=previous;throw new Error('UPLOAD_QUEUE_PERSIST_FAILED: durable queue state was not written')}
@@ -110,6 +137,8 @@ export class MultiChannelUploadQueue{
   }
   resumePaused(jobId:string){
     const hit=this.entries.find(x=>x.spec.jobId===jobId&&x.state==='PAUSED');if(!hit)return false;
+    const duplicate=this.findDuplicate(hit.spec,hit.queueId);
+    if(duplicate){this.replace(hit.queueId,{error:`RECOVERED_DUPLICATE_CONFLICT: matched=${duplicate.kind}; conflictingQueueId=${duplicate.entry.queueId}`});return false}
     const previous=this.entries;this.entries=this.entries.map(x=>x.queueId===hit.queueId?Object.freeze({...x,state:'QUEUED' as const,startedAt:undefined,finishedAt:undefined,error:undefined}):x);
     if(!this.persist()){this.entries=previous;return false}this.emit();void this.pump();return true
   }
@@ -131,8 +160,20 @@ export class MultiChannelUploadQueue{
     let raw:unknown;try{raw=this.options.persistence?.load()}catch{return}
     if(!raw||typeof raw!=='object')return;
     const value=raw as {version?:unknown;entries?:unknown};if(value.version!==1||!Array.isArray(value.entries))return;
-    const entries=value.entries.map(restoredEntry).filter((x):x is UploadQueueEntry=>Boolean(x)),identities=new Set<string>();
-    this.entries=entries.filter(row=>{const keys=identityKeys(row.spec);if(keys.some(k=>identities.has(k)))return false;keys.forEach(k=>identities.add(k));return true});
+    const entries=value.entries.map(restoredEntry).filter((x):x is UploadQueueEntry=>Boolean(x));
+    const conflicts=new Map<number,string[]>();
+    for(let i=0;i<entries.length;i++){
+      for(let j=0;j<i;j++){
+        const kind=duplicateIdentity(entries[i].spec,entries[j].spec);
+        if(!kind)continue;
+        const left=conflicts.get(i)||[];left.push(`RECOVERED_DUPLICATE_CONFLICT: matched=${kind}; conflictingQueueId=${entries[j].queueId}`);conflicts.set(i,left);
+        const right=conflicts.get(j)||[];right.push(`RECOVERED_DUPLICATE_CONFLICT: matched=${kind}; conflictingQueueId=${entries[i].queueId}`);conflicts.set(j,right);
+      }
+    }
+    this.entries=entries.map((row,index)=>{
+      const conflict=conflicts.get(index);
+      return conflict?Object.freeze({...row,error:`${row.error||'RECOVERED_AFTER_RESTART'} • ${conflict.join(' • ')}`}):row;
+    });
     this.sequence=this.entries.reduce((max,row)=>Math.max(max,row.submittedSequence),0);this.persist();
   }
   private persist(){if(!this.options.persistence)return true;const entries=this.entries.filter(x=>x.state==='PAUSED'||x.state==='QUEUED'||x.state==='RUNNING');try{this.options.persistence.save({version:1,savedAt:nowIso(),entries});return true}catch{return false}}

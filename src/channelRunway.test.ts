@@ -2,6 +2,7 @@ import {describe,expect,it} from 'vitest';
 import type {Channel,YoutubeExistingVideo} from './types';
 import {
   calendarDaysBetween,
+  compareYoutubeOnlyRunwayPriority,
   deriveRunwayRecord,
   krasnoyarskClock,
   quotaRiskCount,
@@ -44,6 +45,24 @@ describe('Channel Runway core',()=>{
     expect(record.status).toBe('large');
   });
 
+  it('sorts by YouTube-only runway, ignores local reserve, and puts unconfirmed channels last',()=>{
+    const rows=[
+      {channelName:'Channel B',remoteScheduledDays:20,scheduledUntil:'2026-11-09',known:true,localReadyVideos:0},
+      {channelName:'Channel A',remoteScheduledDays:5,scheduledUntil:'2026-10-25',known:true,localReadyVideos:30},
+      {channelName:'No future schedule',remoteScheduledDays:0,known:true,localReadyVideos:50},
+      {channelName:'Unknown',remoteScheduledDays:0,known:false,localReadyVideos:80}
+    ].sort(compareYoutubeOnlyRunwayPriority);
+    expect(rows.map(x=>x.channelName)).toEqual(['No future schedule','Channel A','Channel B','Unknown']);
+  });
+
+  it('uses schedule end date and channel name as deterministic tie-breakers',()=>{
+    const rows=[
+      {channelName:'Zulu',remoteScheduledDays:10,scheduledUntil:'2026-11-01',known:true},
+      {channelName:'Beta',remoteScheduledDays:10,scheduledUntil:'2026-10-30',known:true},
+      {channelName:'Alpha',remoteScheduledDays:10,scheduledUntil:'2026-10-30',known:true}
+    ].sort(compareYoutubeOnlyRunwayPriority);
+    expect(rows.map(x=>x.channelName)).toEqual(['Alpha','Beta','Zulu']);
+  });
   it('counts only true YouTube Scheduled private + future publishAt',()=>{
     const now=new Date('2026-09-02T08:00:00Z');
     const good=scheduled('2026-10-01T04:00:00+07:00');

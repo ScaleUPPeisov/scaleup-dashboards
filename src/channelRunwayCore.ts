@@ -143,6 +143,14 @@ export function recalculateRunwayRecord(record:ChannelRunwayRecord,now=new Date(
   };
 }
 
+export type YoutubeOnlyRunwayPriority={channelName:string;remoteScheduledDays:number;scheduledUntil?:string;known:boolean};
+export function compareYoutubeOnlyRunwayPriority(a:YoutubeOnlyRunwayPriority,b:YoutubeOnlyRunwayPriority){
+  if(a.known!==b.known)return a.known?-1:1;
+  if(!a.known)return a.channelName.localeCompare(b.channelName,'ru');
+  const ad=Number.isFinite(a.remoteScheduledDays)?Math.max(0,a.remoteScheduledDays):0;
+  const bd=Number.isFinite(b.remoteScheduledDays)?Math.max(0,b.remoteScheduledDays):0;
+  return ad-bd||(a.scheduledUntil||'').localeCompare(b.scheduledUntil||'')||a.channelName.localeCompare(b.channelName,'ru');
+}
 export function compareRunwayRecords(a:ChannelRunwayRecord,b:ChannelRunwayRecord){
   const ad=a.runwayDays,bd=b.runwayDays;
   if(ad===undefined&&bd===undefined)return a.channelName.localeCompare(b.channelName,'ru');
