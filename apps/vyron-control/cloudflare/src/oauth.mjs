@@ -162,6 +162,9 @@ export async function callbackOAuth(request,env,fetchImpl=fetch) {
     await env.DB.prepare(
       'INSERT OR IGNORE INTO channels(id,name) VALUES (?,?)'
     ).bind(id,name).run();
+    await env.DB.prepare(
+      'INSERT OR IGNORE INTO channel_analytics_queue(channel_id,queued_at) VALUES (?,?)'
+    ).bind(id,at).run();
   }
   // Never put access/refresh tokens or one-time code in the response URL.
   return safeRedirect(origin(env)+'/?oauth=connected');
