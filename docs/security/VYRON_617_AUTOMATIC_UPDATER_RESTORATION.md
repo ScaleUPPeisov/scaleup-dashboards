@@ -112,8 +112,8 @@ profile mappings and user media references before any release approval.
 
 ## 2026-11-14 PR #22 follow-up — release remains frozen
 
-The tracked `tauri.617-rotated.conf.json` and `tauri.618-rotated.conf.json`
-files contain a candidate public-key value, but their presence and matching
+The previously tracked `tauri.617-rotated.conf.json` and `tauri.618-rotated.conf.json`
+files contained a candidate public-key value, but their presence and matching
 fingerprints do **not** prove that a fresh private/public key pair was generated
 offline or that the public fingerprint was independently authenticated.
 They are not release authority and must not be used to sign or publish an update.
