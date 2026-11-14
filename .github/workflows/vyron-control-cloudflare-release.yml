@@ -112,6 +112,11 @@ jobs:
             echo "::error::Application PR #25 must be reviewed and merged before production deployment."
             exit 1
           fi
+          base_ref="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/25" --jq '.base.ref')"
+          if [[ "${base_ref}" != "feature/vyron-control-cloud-mvp-20261113" ]]; then
+            echo "::error::Application PR #25 must be merged into the reviewed VYRON CONTROL integration branch."
+            exit 1
+          fi
           git fetch --no-tags origin feature/vyron-control-cloud-mvp-20261113
           release_sha="$(git rev-parse HEAD)"
           reviewed_sha="$(git rev-parse FETCH_HEAD)"
