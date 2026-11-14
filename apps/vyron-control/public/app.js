@@ -18,6 +18,28 @@ let manualRefreshing = false;
 let activeMobileView = 'overview';
 const macAgentInstallCommand =
   'curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/feature/vyron-control-mobile-analytics-20261114/apps/vyron-control/public/install-mac-agent.sh | bash';
+
+let serviceWorkerRegistrationPromise=null;
+async function ensureServiceWorker() {
+  if(!('serviceWorker' in navigator)||!window.isSecureContext)return null;
+  if(!serviceWorkerRegistrationPromise) {
+    serviceWorkerRegistrationPromise=navigator.serviceWorker.register('/service-worker.js')
+      .catch(error=>{
+        serviceWorkerRegistrationPromise=null;
+        throw error;
+      });
+  }
+  return serviceWorkerRegistrationPromise;
+}
+let serviceWorkerReloading=false;
+if('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('controllerchange',()=>{
+    if(serviceWorkerReloading)return;
+    serviceWorkerReloading=true;
+    window.location.reload();
+  });
+  void ensureServiceWorker().catch(()=>{});
+}
 const showLogin = error => {
   activeMobileView='overview';
   $('login').hidden = false;
@@ -997,7 +1019,8 @@ async function updatePushState() {
       msg.textContent='Администратор ещё не настроил VAPID-ключи в Cloudflare.';
       return;
     }
-    const registration=await navigator.serviceWorker.register('/service-worker.js');
+    const registration=await ensureServiceWorker();
+    if(!registration)throw new Error('Service Worker недоступен в этом браузере.');
     const sub=await registration.pushManager.getSubscription();
     const granted=Notification.permission==='granted';
     const enabled=Boolean(sub)&&granted;
@@ -1020,7 +1043,8 @@ $('push-enable').addEventListener('click',async()=>{
     if(permission!=='granted')throw new Error('Разрешение на уведомления не предоставлено.');
     const config=await api('/api/push/public-key');
     if(!config.publicKey)throw new Error('VAPID-ключ ещё не настроен.');
-    const reg=await navigator.serviceWorker.register('/service-worker.js');
+    const reg=await ensureServiceWorker();
+    if(!reg)throw new Error('Service Worker недоступен в этом браузере.');
     let sub=await reg.pushManager.getSubscription();
     if(!sub) sub=await reg.pushManager.subscribe({
       userVisibleOnly:true,applicationServerKey:vapidKeyToBytes(config.publicKey)
