@@ -136,10 +136,9 @@ profiles are sent over HTTPS and re-encrypted with AES-256-GCM before D1 storage
    idempotent and never delete existing profiles.
    The cloud stores **AES-256-GCM encrypted** refresh tokens in D1; access
    tokens are temporary and never sent to the iPhone.
-6. Two daily reporting windows begin at **07:00 and 22:00 Krasnoyarsk**.
-   YouTube public counters refresh exactly at those times. Private Analytics
-   runs in eleven three-channel batches from :05 through :55 at each reporting
-   window. The dashboard's **Обновить всё** button runs public counters and
+6. Public counters refresh hourly, with dedicated baseline slots at **07:00 and
+   22:00 Krasnoyarsk**. Private Analytics reporting windows begin at those two
+   times and run in eleven three-channel batches from :05 through :55. The dashboard's **Обновить всё** button runs public counters and
    then processes all authorized Analytics channels in sequential three-profile
    batches. Each private report covers 90 days and includes daily views, engaged
    and unique viewers, watch time, retention, subscriber changes, likes/dislikes/
@@ -160,8 +159,9 @@ Additional YouTube Analytics request/quota limits apply separately.
 
 ## Free-tier behavior and constraints
 
-- The public-counter sync is ready to run without waking the Mac. The 07/22 cron
-  triggers are **at-most-once** by idempotent D1 `sync_runs`. Errors are recorded.
+- The public-counter sync is ready to run without waking the Mac. Hourly and
+  dedicated 07/22 slots are **at-most-once** by idempotent D1 `sync_runs`.
+  Errors are recorded.
 - Data is durable in D1, not an ephemeral Worker filesystem.
 - Snapshots persist per refresh; old events are not auto-deleted.
 - Subscriber milestone crossing is approximate because YouTube rounds displayed
@@ -286,10 +286,8 @@ grant the bridge Full Disk Access unnecessarily.
 - A new channel whose Google profile has never been authorized in CONTROL still
   needs a one-time read-only Google authorization in CONTROL (or a new encrypted
   VYRON migration import). After authorization, Analytics is queued automatically
-  and processed in batches of up to three profiles every five minutes. Existing
-  newly authorized channels are queued and processed in batches of up to three
-  profiles every five minutes. The daily 07:05–07:55 and 22:05–22:55 reporting
-  windows remain in place.
+  and processed in batches of up to three profiles every five minutes. The daily
+  07:05–07:55 and 22:05–22:55 reporting windows remain in place.
 - Public counters continue hourly while the Mac sleeps. Detecting a newly added
   local VYRON channel necessarily waits until the Mac wakes and the Bridge can read
   the local mirror; no cloud service can observe a local-only change while the Mac
