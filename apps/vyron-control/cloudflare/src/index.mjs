@@ -401,9 +401,10 @@ async function enrollChannels(env,request,{fromAgent=false}={}) {
       const date=new Date();
       const slot='agent-enroll:'+Math.floor(date.getTime()/60000)+':'+pendingIds.slice().sort().join(',');
       try {
-        publicSync=await runCountersSync(env,{
+        const outcome=await runCountersSync(env,{
           source:'agent-enroll',slot,date,channelIds:pendingIds,fetchImpl:env.FETCH_IMPL||fetch
         });
+        publicSync={...outcome,complete:outcome.complete===true};
       } catch(error) {
         console.error('VYRON CONTROL initial channel sync failed:',
           String(error?.message||'Unknown').slice(0,120));
@@ -414,13 +415,16 @@ async function enrollChannels(env,request,{fromAgent=false}={}) {
   }
 
   const analyticsCandidates=fromAgent?newIds:[];
-  let analyticsQueued=0;
+  let analyticsQueued=0,analyticsNeedsAuthorization=[];
   if(analyticsCandidates.length) {
     const auth=await env.DB.prepare(
       'SELECT channel_id FROM google_oauth_profiles WHERE channel_id IN ('+
       analyticsCandidates.map(()=>'?').join(',')+')'
     ).bind(...analyticsCandidates).all();
     const authorizedIds=(auth.results||[]).map(row=>row.channel_id);
+    const authorizedSet=new Set(authorizedIds);
+    analyticsNeedsAuthorization=newlyEnrolled
+      .filter(row=>!authorizedSet.has(row.id)).map(row=>({id:row.id,name:row.name}));
     if(authorizedIds.length) {
       const now=new Date().toISOString();
       await env.DB.batch(authorizedIds.map(id=>env.DB.prepare(`
@@ -435,7 +439,8 @@ async function enrollChannels(env,request,{fromAgent=false}={}) {
   return json({
     enrolled:items.length,newlyEnrolled:newlyEnrolled.length,
     existingChannelsPreserved:true,publicSync,
-    analytics:{autoBound:binding.boundChannels,needsAuthorization:binding.needsAuthorization,
+    analytics:{autoBound:binding.boundChannels,
+      needsAuthorization:analyticsNeedsAuthorization.length?analyticsNeedsAuthorization:binding.needsAuthorization,
       queued:analyticsQueued,profileChecksFailed:binding.profileChecksFailed||0}
   });
 }
