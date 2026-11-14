@@ -101,8 +101,10 @@ export function parseDailyReport(json,channelId,asOf,periodDays=PERIOD_DAYS) {
 
 export function parseDimensionReport(json,dimensions,metrics) {
   const headers=columnHeaders(json);
-  const dimensionNames=Array.isArray(dimensions)?dimensions:[dimensions];
-  const metricNames=Array.isArray(metrics)?metrics:[metrics];
+  const dimensionNames=(Array.isArray(dimensions)?dimensions:String(dimensions).split(','))
+    .map(name=>String(name).trim()).filter(Boolean);
+  const metricNames=(Array.isArray(metrics)?metrics:String(metrics).split(','))
+    .map(name=>String(name).trim()).filter(Boolean);
   if(dimensionNames.some(name=>headerIndex(headers,name)<0))
     throw new Error('YouTube Analytics missing report dimensions');
   if(metricNames.some(name=>headerIndex(headers,name)<0))
