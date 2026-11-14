@@ -190,6 +190,7 @@ test('manual channel refresh reports partial coverage instead of false success',
     source:'manual',slot:'manual:partial-coverage',date:new Date('2026-11-14T10:00:00Z'),
     fetchImpl:partialFetch
   }),/YOUTUBE_CHANNELS_INCOMPLETE: updated 31\/33; missing 2/);
+  assert.equal(partialCalls,2);
   const run=e.DB.native.prepare(
     "SELECT status,updated_channels,error FROM sync_runs WHERE slot='manual:partial-coverage'"
   ).get();
