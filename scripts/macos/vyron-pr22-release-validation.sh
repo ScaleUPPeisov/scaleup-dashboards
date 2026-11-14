@@ -120,7 +120,7 @@ run_physical_probe() {
   cd "$ROOT"
   [[ -d node_modules ]] || { echo "BLOCKER=RUN_OWNER_PREPARE_BEFORE_DISCONNECTING" >&2; exit 2; }
   cargo metadata --locked --offline --manifest-path src-tauri/Cargo.toml --no-deps >/dev/null
-  CARGO_NET_OFFLINE=true npx tauri build --target aarch64-apple-darwin --bundles app --config src-tauri/tauri.pr22-probe.conf.json
+  VYRON_NON_DISTRIBUTABLE_PROBE=studio.channelflow.desktop.pr22probe CARGO_NET_OFFLINE=true npx tauri build --target aarch64-apple-darwin --bundles app --config src-tauri/tauri.pr22-probe.conf.json
   local app="$ROOT/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/VYRON PR22 Probe.app"
   [[ -d "$app" ]] || { echo "BLOCKER=ISOLATED_PROBE_APP_MISSING" >&2; exit 2; }
   local executable

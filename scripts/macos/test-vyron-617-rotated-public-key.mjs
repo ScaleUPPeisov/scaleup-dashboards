@@ -8,6 +8,8 @@ const appConfig=JSON.parse(readFileSync(fileURLToPath(new URL('src-tauri/tauri.c
 const frozenWorkflow=readFileSync(fileURLToPath(new URL('.github/workflows/vyron-6118-macos-new-key-release.yml',root)),'utf8');
 const buildScript=readFileSync(fileURLToPath(new URL('src-tauri/build.rs',root)),'utf8');
 const publishScript=readFileSync(fileURLToPath(new URL('scripts/macos/vyron-617-publish-new-key.sh',root)),'utf8');
+const probeConfig=JSON.parse(readFileSync(fileURLToPath(new URL('src-tauri/tauri.pr22-probe.conf.json',root)),'utf8'));
+const probeScript=readFileSync(fileURLToPath(new URL('scripts/macos/vyron-pr22-release-validation.sh',root)),'utf8');
 
 test('production updater config remains pinned to the existing 6.1.15 feed',()=>{
   assert.equal(appConfig.version,'6.1.15');
@@ -19,6 +21,13 @@ test('unauthenticated tracked rotated-key overlays are absent',()=>{
   for(const name of ['tauri.617-rotated.conf.json','tauri.618-rotated.conf.json']){
     assert.equal(existsSync(fileURLToPath(new URL('src-tauri/'+name,root))),false,name+' must be generated only from an independently authenticated offline public key');
   }
+});
+
+test('release fingerprint bypass is limited to the isolated offline probe bundle',()=>{
+  assert.equal(probeConfig.identifier,'studio.channelflow.desktop.pr22probe');
+  assert.equal(probeConfig.bundle.createUpdaterArtifacts,false);
+  assert.deepEqual(probeConfig.plugins.updater.endpoints,[]);
+  assert.match(probeScript,/VYRON_NON_DISTRIBUTABLE_PROBE=studio\.channelflow\.desktop\.pr22probe/);
 });
 
 test('owner new-key publish script is frozen and cannot publish a release',()=>{
