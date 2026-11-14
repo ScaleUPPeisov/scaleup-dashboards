@@ -9,9 +9,10 @@ production logs to this public GitHub repository.
 
 - Public counter cron runs at `0 0 * * *` = 07:00 Krasnoyarsk and
   `0 15 * * *` = 22:00 Krasnoyarsk (UTC+7). Private Analytics runs separately
-  in five ten-channel batches at 07:05, 07:10, 07:15, 07:20, 07:25
-  and again at 22:05–22:25. This separation avoids exceeding Workers Free's
-  50-subrequest limit at 07:00/22:00.
+  in eleven three-channel batches at 07:05, 07:10, 07:15, 07:20, 07:25,
+  07:30, 07:35, 07:40, 07:45, 07:50 and 07:55, then again at 22:05–22:55.
+  Each batch stays below Workers Free's 50-subrequest limit and covers up to
+  33 authorized channels per reporting window.
 - Workers Free: up to 100,000 requests/day and 5 account-wide cron triggers,
   subject to Cloudflare's current free plan limits.
 - D1 Free: 5 million rows read/day, 100,000 rows written/day, 5 GB total storage,
@@ -135,7 +136,7 @@ profiles are sent over HTTPS and re-encrypted with AES-256-GCM before D1 storage
    tokens are temporary and never sent to the iPhone.
 6. Two daily reporting windows begin at **07:00 and 22:00 Krasnoyarsk**.
    YouTube public counters refresh exactly at those times. Private Analytics
-   runs in nine four-channel batches from :05 through :45 at each reporting
+   runs in eleven three-channel batches from :05 through :55 at each reporting
    window. The dashboard's **Обновить всё** button runs public counters and
    then processes all authorized Analytics channels in sequential three-profile
    batches. Each private report covers 90 days and includes daily views, engaged
