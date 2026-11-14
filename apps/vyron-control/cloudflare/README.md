@@ -1,9 +1,14 @@
-# VYRON CONTROL FREE CLOUD — Cloudflare Workers + D1
+# VYRON CONTROL — Cloudflare Workers + D1
 
-This is the free-tier cloud replacement for a paid VPS. It is **code only** until
-the owner creates a Cloudflare account, a D1 database and sets private secrets.
-Never commit any Google credentials, OAuth tokens, macOS Keychain data or real
-production logs to this public GitHub repository.
+A live Cloudflare Workers deployment and its D1 database already exist:
+
+https://vyron-control.endlume-peisov-3ee6109f.workers.dev/
+
+The current feature branch is a release candidate and may be newer than the live Worker. Passing CI does not deploy it. Use the guarded default-branch release workflow described below; never run an ad-hoc production deploy.
+
+**Protect the existing database:** the `database_id` in `wrangler.jsonc` points to the live D1 database. Do not run `wrangler d1 create`, replace that ID, or initialize a second database when updating this deployment. The existing D1 data includes channel registry, snapshots, events and encrypted OAuth profile records.
+
+Never commit any Google credentials, OAuth tokens, macOS Keychain data, private VAPID keys or real production logs to this public GitHub repository.
 
 ## Why Cloudflare
 
@@ -27,7 +32,24 @@ https://developers.cloudflare.com/workers/platform/limits/
 https://developers.cloudflare.com/d1/platform/limits/
 https://developers.cloudflare.com/workers/configuration/cron-triggers/
 
-## Account setup (owner action required)
+## Existing production release path
+
+For the already provisioned Worker and D1 database:
+
+1. Review and merge application PR #25 into `feature/vyron-control-cloud-mvp-20261113`.
+2. Create or update `release/vyron-control-production` at the exact HEAD of that reviewed branch.
+3. Review and merge the small workflow-only PR #26 into `main`. GitHub exposes `workflow_dispatch` workflows only after the workflow file is present on the default branch.
+4. In GitHub Actions, run **VYRON CONTROL — guarded Cloudflare release** with `operation=preflight` first. This runs tests, reads remote migration state and builds a Worker dry-run; it does not write to D1 or deploy.
+5. Only after the preflight is clean, a separate manual run with `operation=deploy` and `confirm_production=true` can proceed. The workflow additionally requires PR #25 to be merged and the release snapshot SHA to exactly match the reviewed feature branch HEAD.
+6. Verify the public `/api/health` response reports all 16 D1 tables after deployment.
+
+The existing production app is not affected by PRs or CI runs alone. The workflow does not print Cloudflare secrets and does not modify VYRON, ENDLUME, Keychain or the macOS updater.
+
+Web Push is currently optional and is not configured in the live service: without `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT`, push notifications remain disabled. This does not prevent the dashboard or cloud counters from working.
+
+## Fresh isolated environment (only when creating a separate new deployment)
+
+The following setup steps are for a completely separate Cloudflare environment. Do not use them to recreate or replace the existing production database.
 
 1. Register a **Workers Free** Cloudflare account. No paid plan should be selected.
 2. In a trusted terminal, from `apps/vyron-control`, authenticate Wrangler.
