@@ -380,10 +380,9 @@ async function enrollChannels(env,request,{fromAgent=false}={}) {
   `).bind(JSON.stringify(items)).run();
 
   let binding={boundChannels:[],needsAuthorization:[]};
-  if(fromAgent&&newlyEnrolled.length) {
+  if(fromAgent&&candidates.some(row=>row.profileBinding)) {
     try {
-      binding=await bindExistingVYRONProfiles(env,
-        candidates.filter(row=>!existingIds.has(row.id)),env.FETCH_IMPL||fetch);
+      binding=await bindExistingVYRONProfiles(env,candidates,env.FETCH_IMPL||fetch);
     } catch {
       binding={boundChannels:[],needsAuthorization:newlyEnrolled.map(row=>({id:row.id,name:row.name})),
         profileChecksFailed:1};
