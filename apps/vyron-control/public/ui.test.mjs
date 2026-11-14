@@ -52,6 +52,8 @@ test('PWA caches every imported browser module but never authenticated API respo
     assert.ok(serviceWorker.includes("'/"+modulePath+"'"),
       'offline shell is missing imported module: '+modulePath);
   assert.ok(serviceWorker.includes("vyron-control-shell-v3"));
+  assert.ok(app.includes('async function ensureServiceWorker()'));
+  assert.ok(app.includes('void ensureServiceWorker().catch'));
   assert.ok(serviceWorker.includes("url.pathname.startsWith('/api/')"));
   assert.ok(serviceWorker.includes("caches.match('/')"));
 });
