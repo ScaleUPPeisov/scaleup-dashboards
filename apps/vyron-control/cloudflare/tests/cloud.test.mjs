@@ -465,6 +465,8 @@ test('authorized private Analytics syncs 90-day trends and channel breakdowns in
       const dimensions=params.get('dimensions');
       analyticsAttempts++;
       if(dimensions==='day') {
+        assert.match(params.get('metrics'),/engagedViews/);
+        assert.match(params.get('metrics'),/dislikes/);
         coreAttempts++;
         if(coreAttempts===1)return new Response('temporary',{status:503});
         return new Response(JSON.stringify({
@@ -551,6 +553,7 @@ test('authorized private Analytics syncs 90-day trends and channel breakdowns in
   assert.equal(reports.operatingSystems[0].operatingSystem,'ANDROID');
   assert.equal(reports.liveOrOnDemand[0].liveOrOnDemand,'LIVE');
   assert.equal(reports.audienceRetention.length,3);
+  assert.equal(reports.audienceRetention[2].relativeRetentionPerformance,-0.1);
   const second=await runAnalyticsBatch(e,
     {scheduledTime:Date.parse('2026-11-13T00:05:00Z')},mockFetch);
   assert.equal(second.skipped,true);
