@@ -273,6 +273,16 @@ test('Mac Analytics 360 mirror snapshots are accepted without OAuth secrets',asy
   assert.equal(status.analyticsSummary.covered,1);
   assert.equal(status.analyticsSummary.watchMinutes,12000);
   assert.equal(e.DB.native.prepare('SELECT length(daily_json) AS size FROM channel_analytics').get().size>2,true);
+  await e.DB.prepare(
+    "UPDATE channel_analytics SET source='GOOGLE_ANALYTICS_API',captured_at=? WHERE channel_id=?"
+  ).bind(new Date(Date.now()+60000).toISOString(),channelId).run();
+  const newerMacSnapshot={...snap[0],views:999999,capturedAt:new Date(Date.now()+120000).toISOString()};
+  assert.equal((await cloud.fetch(req(url,agent,'POST',[newerMacSnapshot]),e)).status,200);
+  const protectedRow=e.DB.native.prepare(
+    'SELECT source,views FROM channel_analytics WHERE channel_id=?'
+  ).get(channelId);
+  assert.equal(protectedRow.source,'GOOGLE_ANALYTICS_API');
+  assert.equal(protectedRow.views,5000);
   assert.equal((await cloud.fetch(req(url,agent,'POST',[{...snap[0],channelId:'BAD'}]),e)).status,400);
 });
 
