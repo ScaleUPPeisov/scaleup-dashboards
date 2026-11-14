@@ -397,6 +397,9 @@ test('Google OAuth is PKCE protected, offline read-only and encrypted at rest',a
   const summary=await authorizedProfiles(e);
   assert.equal(summary.profiles.length,1);
   assert.equal(JSON.stringify(summary).includes('REFRESH_TOKEN_PRIVATE'),false);
+  assert.equal(e.DB.native.prepare(
+    'SELECT count(*) AS n FROM channel_analytics_queue WHERE channel_id=?'
+  ).get(channelId).n,1);
   await assert.rejects(()=>callbackOAuth(callback,e,googleFetch),/expired/);
 });
 
@@ -577,6 +580,43 @@ test('one imported Google profile can bind multiple YouTube channels without dro
   assert.equal(e.DB.native.prepare(
     "SELECT count(*) AS n FROM google_oauth_client_credentials WHERE profile_uuid='same-google-profile'"
   ).get().n,2);
+});
+
+test('newly authorized Analytics queue retries failed channels after five minutes',async()=>{
+  const e=env(),channelId=id(904);
+  Object.assign(e,{
+    GOOGLE_OAUTH_CLIENT_ID:'QUEUE_CLIENT',
+    GOOGLE_OAUTH_CLIENT_SECRET:'QUEUE_SECRET',
+    OAUTH_ENCRYPTION_KEY:'e'.repeat(64)
+  });
+  const encrypted=await encryptSecret('QUEUE_REFRESH_TOKEN_123456789',e);
+  await e.DB.prepare(
+    'INSERT INTO google_oauth_profiles(channel_id,channel_name,refresh_token_cipher,granted_scope,connected_at) VALUES (?,?,?,?,?)'
+  ).bind(channelId,'Queued channel',encrypted,'readonly',new Date().toISOString()).run();
+  await e.DB.prepare(
+    'INSERT INTO channel_analytics_queue(channel_id,queued_at) VALUES (?,?)'
+  ).bind(channelId,'2026-11-14T10:00:00.000Z').run();
+  const failedFetch=async url=>{
+    if(url.includes('oauth2.googleapis.com/token'))
+      return new Response(JSON.stringify({error:'invalid_grant'}),{status:400});
+    throw new Error('unexpected endpoint');
+  };
+  const first=await runQueuedAnalyticsBatch(e,{
+    scheduledTime:Date.parse('2026-11-14T10:02:00.000Z')
+  },failedFetch);
+  assert.equal(first.queued,1);
+  assert.equal(first.failed,1);
+  const queue=e.DB.native.prepare(
+    'SELECT attempts,last_attempt_at,last_error,completed_at FROM channel_analytics_queue WHERE channel_id=?'
+  ).get(channelId);
+  assert.equal(queue.attempts,1);
+  assert.ok(queue.last_attempt_at);
+  assert.ok(queue.last_error);
+  assert.equal(queue.completed_at,null);
+  const tooSoon=await runQueuedAnalyticsBatch(e,{
+    scheduledTime:Date.parse('2026-11-14T10:06:00.000Z')
+  },failedFetch);
+  assert.equal(tooSoon.reason,'no_queued_analytics');
 });
 
 test('authorized private Analytics syncs 90-day trends and channel breakdowns in three-profile batches',async()=>{
@@ -913,6 +953,8 @@ test('free-tier cron schedules never run public counters, private Analytics and 
   assert.ok(crons.includes(PUSH_CRON));
   assert.ok(crons.includes('0 0 * * *'));
   assert.ok(crons.includes('0 15 * * *'));
+  assert.ok(crons.includes('0 * * * *'));
+  assert.equal(crons.length,5);
   assert.ok(crons.includes('5,10,15,20,25,30,35,40,45,50,55 0,15 * * *'));
   assert.notEqual(PUSH_CRON,'*/5 * * * *');
   const pushMinutes=PUSH_CRON.split(' ')[0].split(',').map(Number);
