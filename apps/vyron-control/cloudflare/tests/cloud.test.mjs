@@ -478,7 +478,7 @@ test('authorized private Analytics syncs 90-day trends and channel breakdowns in
         'video,creatorContentType':{
           columnHeaders:['video','creatorContentType','views','engagedViews','estimatedMinutesWatched',
             'averageViewDuration','averageViewPercentage','likes','dislikes','comments','shares'],
-          rows:[['VIDEO1234567','SHORTS',120,90,400,110,65,12,2,3,1]]
+          rows:[['VID12345678','SHORTS',120,90,400,110,65,12,2,3,1]]
         },
         'insightTrafficSourceType':{
           columnHeaders:['insightTrafficSourceType','views','estimatedMinutesWatched'],
@@ -502,6 +502,18 @@ test('authorized private Analytics syncs 90-day trends and channel breakdowns in
         insightPlaybackLocationType:{
           columnHeaders:['insightPlaybackLocationType','views','estimatedMinutesWatched'],
           rows:[['WATCH',140,700],['EMBEDDED',60,300]]
+        },
+        operatingSystem:{
+          columnHeaders:['operatingSystem','views','estimatedMinutesWatched'],
+          rows:[['ANDROID',100,500],['IOS',100,500]]
+        },
+        liveOrOnDemand:{
+          columnHeaders:['liveOrOnDemand','views','engagedViews','estimatedMinutesWatched','averageViewDuration'],
+          rows:[['LIVE',20,10,100,60],['ON_DEMAND',180,140,900,160]]
+        },
+        elapsedVideoTimeRatio:{
+          columnHeaders:['elapsedVideoTimeRatio','audienceWatchRatio','relativeRetentionPerformance'],
+          rows:[['0.0',1.0,0.2],['0.5',0.65,0.1],['1.0',0.2,-0.1]]
         }
       };
       return new Response(JSON.stringify(fixtures[dimensions]||{columnHeaders:[],rows:[]}),{status:200});
@@ -513,7 +525,7 @@ test('authorized private Analytics syncs 90-day trends and channel breakdowns in
   assert.equal(outcome.updated,1);
   assert.equal(outcome.failed,0);
   assert.equal(outcome.periodDays,90);
-  assert.equal(analyticsAttempts,9);
+  assert.equal(analyticsAttempts,12);
   const stored=e.DB.native.prepare(
     'SELECT source,views,watch_minutes,daily_json FROM channel_analytics WHERE channel_id=?'
   ).get(channelId);
@@ -528,7 +540,7 @@ test('authorized private Analytics syncs 90-day trends and channel breakdowns in
   const reports=JSON.parse(e.DB.native.prepare(
     'SELECT reports_json FROM channel_analytics_reports WHERE channel_id=?'
   ).get(channelId).reports_json);
-  assert.equal(reports.topVideos[0].videoId,'VIDEO1234567');
+  assert.equal(reports.topVideos[0].videoId,'VID12345678');
   assert.equal(reports.trafficSources[0].source,'RELATED_VIDEO');
   assert.equal(reports.devices[0].deviceType,'MOBILE');
   assert.equal(reports.countries[0].country,'US');
@@ -536,6 +548,9 @@ test('authorized private Analytics syncs 90-day trends and channel breakdowns in
   assert.equal(reports.demographics[0].viewerPercentage,35);
   assert.equal(reports.sharingServices[0].sharingService,'COPY_TO_CLIPBOARD');
   assert.equal(reports.playbackLocations[0].playbackLocation,'WATCH');
+  assert.equal(reports.operatingSystems[0].operatingSystem,'ANDROID');
+  assert.equal(reports.liveOrOnDemand[0].liveOrOnDemand,'LIVE');
+  assert.equal(reports.audienceRetention.length,3);
   const second=await runAnalyticsBatch(e,
     {scheduledTime:Date.parse('2026-11-13T00:05:00Z')},mockFetch);
   assert.equal(second.skipped,true);
@@ -578,7 +593,13 @@ test('manual refresh API processes every authorized channel in safe four-profile
           rows:[['25-34','FEMALE',50]]},
         sharingService:{columnHeaders:['sharingService','shares'],rows:[['COPY_TO_CLIPBOARD',1]]},
         insightPlaybackLocationType:{columnHeaders:['insightPlaybackLocationType','views','estimatedMinutesWatched'],
-          rows:[['WATCH',10,50]]}
+          rows:[['WATCH',10,50]]},
+        operatingSystem:{columnHeaders:['operatingSystem','views','estimatedMinutesWatched'],
+          rows:[['ANDROID',10,50]]},
+        liveOrOnDemand:{columnHeaders:['liveOrOnDemand','views','engagedViews','estimatedMinutesWatched','averageViewDuration'],
+          rows:[['ON_DEMAND',10,7,50,30]]},
+        elapsedVideoTimeRatio:{columnHeaders:['elapsedVideoTimeRatio','audienceWatchRatio','relativeRetentionPerformance'],
+          rows:[['0.0',1,0.2],['1.0',0.3,-0.1]]}
       };
       const report=fixtures[dimensions];
       return new Response(JSON.stringify({
