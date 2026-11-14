@@ -169,11 +169,23 @@ async function processBatch(env,details,fetchImpl=fetch) {
 
   let done=0,errors=0,partial=0;
   try {
-    const result=await db.prepare(
-      "SELECT p.channel_id,p.refresh_token_cipher,c.client_id_cipher,c.client_secret_cipher " +
-      "FROM google_oauth_profiles p LEFT JOIN google_oauth_client_credentials c " +
-      "ON c.channel_id=p.channel_id ORDER BY p.channel_id LIMIT ? OFFSET ?"
-    ).bind(BATCH_SIZE,details.offset).all();
+    const selectedIds=Array.isArray(details.channelIds)?details.channelIds:null;
+    if(selectedIds&&(!selectedIds.length||selectedIds.length>BATCH_SIZE||
+      selectedIds.some(id=>!/^UC[A-Za-z0-9_-]{22}$/.test(String(id)))))
+      throw new Error('Invalid queued Analytics channel selection');
+    const profileQuery=selectedIds
+      ?db.prepare(
+        "SELECT p.channel_id,p.refresh_token_cipher,c.client_id_cipher,c.client_secret_cipher " +
+        "FROM google_oauth_profiles p LEFT JOIN google_oauth_client_credentials c " +
+        "ON c.channel_id=p.channel_id WHERE p.channel_id IN ("+
+        selectedIds.map(()=>'?').join(',')+") ORDER BY p.channel_id"
+      ).bind(...selectedIds)
+      :db.prepare(
+        "SELECT p.channel_id,p.refresh_token_cipher,c.client_id_cipher,c.client_secret_cipher " +
+        "FROM google_oauth_profiles p LEFT JOIN google_oauth_client_credentials c " +
+        "ON c.channel_id=p.channel_id ORDER BY p.channel_id LIMIT ? OFFSET ?"
+      ).bind(BATCH_SIZE,details.offset);
+    const result=await profileQuery.all();
     const end=Date.UTC(details.date.getUTCFullYear(),details.date.getUTCMonth(),
       details.date.getUTCDate()-2);
     const start=end-(PERIOD_DAYS-1)*86400000;
@@ -345,6 +357,56 @@ async function processBatch(env,details,fetchImpl=fetch) {
     ).bind(new Date().toISOString(),'Analytics batch failed',details.slot).run();
     throw error;
   }
+}
+
+
+export async function runQueuedAnalyticsBatch(env,controller,fetchImpl=fetch) {
+  if(!analyticsConfigured(env))
+    return {skipped:true,reason:'oauth_not_configured',queued:0,updated:0,failed:0};
+  const date=new Date(controller.scheduledTime??Date.now());
+  const now=date.toISOString();
+  const retryBefore=new Date(date.getTime()-5*60_000).toISOString();
+  const queued=await env.DB.prepare(`
+    SELECT q.channel_id,q.queued_at
+    FROM channel_analytics_queue q
+    JOIN google_oauth_profiles p ON p.channel_id=q.channel_id
+    WHERE q.completed_at IS NULL AND q.attempts<8
+      AND (q.last_attempt_at IS NULL OR q.last_attempt_at<=?)
+    ORDER BY q.queued_at,q.channel_id LIMIT ?
+  `).bind(retryBefore,BATCH_SIZE).all();
+  const rows=queued.results||[];
+  if(!rows.length)return {skipped:true,reason:'no_queued_analytics',queued:0,updated:0,failed:0};
+  const channelIds=rows.map(row=>row.channel_id);
+  const slot='queued-analytics:'+now.slice(0,16);
+  await env.DB.batch(rows.map(row=>env.DB.prepare(`
+    UPDATE channel_analytics_queue
+    SET attempts=attempts+1,last_attempt_at=?,last_error=NULL
+    WHERE channel_id=? AND completed_at IS NULL
+  `).bind(now,row.channel_id)));
+  const outcome=await processBatch(env,{slot,channelIds,offset:0,date},fetchImpl);
+  let completed=0;
+  for(const row of rows) {
+    const snapshot=await env.DB.prepare(
+      "SELECT captured_at FROM channel_analytics WHERE channel_id=? AND source='GOOGLE_ANALYTICS_API'"
+    ).bind(row.channel_id).first();
+    if(snapshot&&Date.parse(snapshot.captured_at)>=Date.parse(row.queued_at)) {
+      await env.DB.prepare(`
+        UPDATE channel_analytics_queue
+        SET completed_at=?,last_error=NULL
+        WHERE channel_id=?
+      `).bind(new Date().toISOString(),row.channel_id).run();
+      completed++;
+    } else {
+      const profile=await env.DB.prepare(
+        'SELECT last_error FROM google_oauth_profiles WHERE channel_id=?'
+      ).bind(row.channel_id).first();
+      await env.DB.prepare(
+        'UPDATE channel_analytics_queue SET last_error=? WHERE channel_id=?'
+      ).bind(String(profile?.last_error||'ANALYTICS_PENDING').slice(0,160),
+        row.channel_id).run();
+    }
+  }
+  return {...outcome,queued:rows.length,completed};
 }
 
 export async function runAnalyticsBatch(env,controller,fetchImpl=fetch) {
