@@ -1,5 +1,5 @@
 -- VYRON CONTROL: initial one-paste schema for Cloudflare D1 Console.
--- Generated from the four migrations in this exact branch.
+-- Generated from the six migrations in this exact branch.
 -- Safe on a newly created EMPTY database. No real credentials or data.
 -- Once deployed, Wrangler migrations can run idempotently using IF NOT EXISTS.
 
@@ -91,6 +91,17 @@ CREATE TABLE IF NOT EXISTS channel_analytics (
 );
 CREATE INDEX IF NOT EXISTS idx_channel_analytics_received ON channel_analytics(received_at DESC);
 
+-- ===== 0006_analytics_reports.sql =====
+-- Read-only aggregate YouTube Analytics breakdowns (no viewer-level records).
+CREATE TABLE IF NOT EXISTS channel_analytics_reports (
+  channel_id TEXT PRIMARY KEY NOT NULL,
+  reports_json TEXT NOT NULL DEFAULT '{}',
+  captured_at TEXT NOT NULL,
+  received_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_channel_analytics_reports_captured
+  ON channel_analytics_reports(captured_at DESC);
+
 -- ===== 0003_google_oauth.sql =====
 -- VYRON CONTROL Google OAuth for read-only YouTube Analytics.
 -- Credentials are AES-256-GCM encrypted by a Cloudflare *secret* key not in D1.
@@ -150,5 +161,5 @@ CREATE TABLE IF NOT EXISTS push_deliveries (
 );
 CREATE INDEX IF NOT EXISTS idx_push_deliveries_retry ON push_deliveries(status,updated_at);
 
--- Check installed tables. Expected application tables: 13.
+-- Check installed tables. Expected application tables: 15.
 SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name;

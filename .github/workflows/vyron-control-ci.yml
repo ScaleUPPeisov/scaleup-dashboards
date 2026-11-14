@@ -38,6 +38,8 @@ jobs:
           node --check src/sync.mjs
           node --check src/server.mjs
           node --check public/app.js
+          node --check public/migration-crypto.js
+          node --check browser/migration-crypto-entry.mjs
           node --check cloudflare/src/core.mjs
           node --check cloudflare/src/sync.mjs
           node --check cloudflare/src/index.mjs

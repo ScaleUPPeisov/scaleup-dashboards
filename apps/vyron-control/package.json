@@ -14,7 +14,7 @@
   },
   "scripts": {
     "start": "node src/server.mjs",
-    "test": "node --test src/*.test.mjs cloudflare/tests/*.test.mjs agent/*.test.mjs browser/*.test.mjs",
+    "test": "node --test src/*.test.mjs cloudflare/tests/*.test.mjs agent/*.test.mjs browser/*.test.mjs public/*.test.mjs",
     "agent:start": "node agent/run.mjs",
     "agent:install": "node agent/install.mjs",
     "push:keys": "node agent/generate-push-keys.mjs",

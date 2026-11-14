@@ -46,7 +46,14 @@ export function mirrorChannels(state) {
     const id = channelIdFrom(row);
     if (!id) continue;
     const name = String(row?.name || row?.stats?.channelTitle || id).slice(0,120);
-    if (!known.has(id)) known.set(id, { id, name });
+    if (!known.has(id)) {
+      const profileId=typeof row?.youtubeProfileId==='string'?row.youtubeProfileId.trim():'';
+      // Send only a one-way fingerprint, never the local OAuth profile ID or credentials.
+      const profileBinding=profileId&&profileId.length<=160
+        ?createHash('sha256').update('vyron-profile-binding-v1\\0'+profileId).digest('hex')
+        :null;
+      known.set(id,{id,name,...(profileBinding?{profileBinding}:{})});
+    }
   }
   return [...known.values()];
 }
@@ -110,7 +117,7 @@ export function mirrorAnalytics(state) {
       monetaryAuthorized:a.monetaryAuthorized===true,
       estimatedRevenue:a.monetaryAuthorized===true?numeric(a.estimatedRevenue):null,
       daily:Array.isArray(a.daily)?a.daily.slice(-90).flatMap(row=>{
-        if(!/^\\d{4}-\\d{2}-\\d{2}$/.test(row?.date||''))return [];
+        if(!/^\d{4}-\d{2}-\d{2}$/.test(row?.date||''))return [];
         return [{date:row.date,views:numeric(row.views),
           watchMinutes:numeric(row.watchMinutes),
           subscribersGained:numeric(row.subscribersGained),

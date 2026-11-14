@@ -2,15 +2,15 @@ import { acceptedCommand, pacificDay, safeEvent, validatedChannelList } from './
 import { manualSlot, runCountersSync, scheduledSync } from './sync.mjs';
 import { saveAnalytics } from './analytics.mjs';
 import { startOAuth,callbackOAuth,authorizedProfiles,disconnectProfile } from './oauth.mjs';
-import { importVyronProfiles } from './oauth-import.mjs';
-import { runAnalyticsBatch } from './google-analytics.mjs';
+import { importVyronProfiles,bindExistingVYRONProfiles } from './oauth-import.mjs';
+import { runAnalyticsBatch,runManualAnalyticsBatch,runQueuedAnalyticsBatch,ANALYTICS_QUEUE_CRON } from './google-analytics.mjs';
 import { registerPush,unregisterPush,vapidPublic,dispatchPush,PUSH_CRON } from './push.mjs';
 
 const REQUIRED_TOKEN_LENGTH = 32;
 const EXPECTED_TABLES = Object.freeze([
   'channels','channel_snapshots','events','sync_runs','quota_buckets','devices',
-  'commands','channel_analytics','google_oauth_sessions','google_oauth_profiles',
-  'google_oauth_client_credentials','cloud_analytics_runs','push_subscriptions','push_deliveries'
+  'commands','channel_analytics','channel_analytics_reports','google_oauth_sessions','google_oauth_profiles',
+  'google_oauth_client_credentials','cloud_analytics_runs','channel_analytics_queue','push_subscriptions','push_deliveries'
 ]);
 const BOOTSTRAP_STATEMENTS = Object.freeze([
   "CREATE TABLE IF NOT EXISTS channels (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, subscribers INTEGER, views INTEGER, videos INTEGER, hidden_subscribers INTEGER DEFAULT 0, max_milestone INTEGER, previous_subscribers INTEGER, updated_at TEXT)",
@@ -26,10 +26,14 @@ const BOOTSTRAP_STATEMENTS = Object.freeze([
   "CREATE INDEX IF NOT EXISTS idx_commands_pending ON commands(target_device,state,created_at)",
   "CREATE TABLE IF NOT EXISTS channel_analytics (channel_id TEXT PRIMARY KEY NOT NULL, period_days INTEGER NOT NULL, views INTEGER, watch_minutes REAL, avg_view_seconds REAL, avg_view_percentage REAL, subscribers_gained INTEGER, subscribers_lost INTEGER, impressions INTEGER, impression_ctr REAL, estimated_revenue REAL, currency TEXT, daily_json TEXT NOT NULL DEFAULT '[]', captured_at TEXT NOT NULL, received_at TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'VYRON_MAC_CACHE')",
   "CREATE INDEX IF NOT EXISTS idx_channel_analytics_received ON channel_analytics(received_at DESC)",
+  "CREATE TABLE IF NOT EXISTS channel_analytics_reports (channel_id TEXT PRIMARY KEY NOT NULL, reports_json TEXT NOT NULL DEFAULT '{}', captured_at TEXT NOT NULL, received_at TEXT NOT NULL)",
+  "CREATE INDEX IF NOT EXISTS idx_channel_analytics_reports_captured ON channel_analytics_reports(captured_at DESC)",
   "CREATE TABLE IF NOT EXISTS google_oauth_sessions (state_hash TEXT PRIMARY KEY NOT NULL, verifier_cipher TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL)",
   "CREATE TABLE IF NOT EXISTS google_oauth_profiles (channel_id TEXT PRIMARY KEY NOT NULL, channel_name TEXT NOT NULL, refresh_token_cipher TEXT NOT NULL, granted_scope TEXT NOT NULL, connected_at TEXT NOT NULL, last_success_at TEXT, last_error TEXT)",
   "CREATE TABLE IF NOT EXISTS google_oauth_client_credentials (channel_id TEXT PRIMARY KEY NOT NULL, profile_uuid TEXT NOT NULL, client_id_cipher TEXT NOT NULL, client_secret_cipher TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'VYRON_MIGRATION', bundle_uuid TEXT NOT NULL, imported_at TEXT NOT NULL)",
   "CREATE TABLE IF NOT EXISTS cloud_analytics_runs (slot TEXT PRIMARY KEY NOT NULL, status TEXT NOT NULL CHECK(status IN ('running','success','error')), started_at TEXT NOT NULL, ended_at TEXT, updated_channels INTEGER DEFAULT 0, error TEXT)",
+  "CREATE TABLE IF NOT EXISTS channel_analytics_queue (channel_id TEXT PRIMARY KEY NOT NULL, queued_at TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts >= 0), last_attempt_at TEXT, last_error TEXT, completed_at TEXT)",
+  "CREATE INDEX IF NOT EXISTS idx_channel_analytics_queue_pending ON channel_analytics_queue(completed_at,queued_at)",
   "CREATE TABLE IF NOT EXISTS push_subscriptions (endpoint_hash TEXT PRIMARY KEY NOT NULL, subscription_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
   "CREATE TABLE IF NOT EXISTS push_deliveries (endpoint_hash TEXT NOT NULL, event_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'retry' CHECK(status IN ('retry','sending','sent','failed')), attempts INTEGER NOT NULL DEFAULT 0, last_attempt_at TEXT, updated_at TEXT NOT NULL, PRIMARY KEY(endpoint_hash,event_id))",
   "CREATE INDEX IF NOT EXISTS idx_push_deliveries_retry ON push_deliveries(status,updated_at)"
@@ -90,6 +94,10 @@ async function readJson(request, bytes=65536) {
   return JSON.parse(source);
 }
 function number(value) { return value == null ? null : Number(value); }
+function parsedJson(value,fallback) {
+  try {const result=JSON.parse(value||'');return result&&typeof result==='object'?result:fallback;}
+  catch {return fallback;}
+}
 function publicEventPayload(payload) {
   const projectId=typeof payload?.projectId==='string'&&
     /^[A-Za-z0-9_-]{1,150}$/.test(payload.projectId)?payload.projectId:null;
@@ -117,7 +125,7 @@ async function health(env) {
       ok,app:'vyron-control',
       d1:{bound:true,schema:ok,expectedTables:EXPECTED_TABLES.length,
         presentTables:EXPECTED_TABLES.length-missing.length,...(ok?{}:{missing})},
-      schedule:{timezone:'Asia/Krasnoyarsk',local:['07:00','22:00'],utc:['00:00','15:00']}
+      schedule:{timezone:'Asia/Krasnoyarsk',local:['hourly','07:00','22:00'],utc:['hourly','00:00','15:00']}
     },ok?200:503);
   } catch {
     return json({
@@ -175,8 +183,13 @@ async function fetchStatus(env) {
       a.estimated_revenue AS analytics_revenue,
       a.currency AS analytics_currency,
       a.captured_at AS analytics_captured_at,
-      a.source AS analytics_source
+      a.source AS analytics_source,
+      a.daily_json AS analytics_daily_json,
+      r.reports_json AS analytics_reports_json,
+      o.channel_id IS NOT NULL AS analytics_authorized
       FROM channels c LEFT JOIN channel_analytics a ON c.id=a.channel_id
+      LEFT JOIN channel_analytics_reports r ON c.id=r.channel_id
+      LEFT JOIN google_oauth_profiles o ON c.id=o.channel_id
       ORDER BY c.name LIMIT 120`).all(),
     db.prepare('SELECT id,kind,channel_id,title,payload_json,occurred_at,received_at FROM events ORDER BY received_at DESC LIMIT 80').all(),
     db.prepare('SELECT spent FROM quota_buckets WHERE day_pt=?').bind(day).first(),
@@ -192,6 +205,7 @@ async function fetchStatus(env) {
     views:number(row.views),videos:number(row.videos),
     previousSubscribers:number(row.previous_subscribers),
     updatedAt:row.updated_at,
+    analyticsAuthorized:row.analytics_authorized===1,
     analytics:row.analytics_captured_at?{
       periodDays:row.analytics_period_days,
       views:number(row.analytics_views),
@@ -205,7 +219,9 @@ async function fetchStatus(env) {
       estimatedRevenue:number(row.analytics_revenue),
       currency:row.analytics_currency,
       updatedAt:row.analytics_captured_at,
-      source:row.analytics_source||'VYRON_MAC_CACHE'
+      source:row.analytics_source||'VYRON_MAC_CACHE',
+      daily:parsedJson(row.analytics_daily_json,[]),
+      reports:parsedJson(row.analytics_reports_json,{})
     }:null
   }));
   const sum=key=>({
@@ -227,7 +243,7 @@ async function fetchStatus(env) {
     "SELECT ended_at FROM sync_runs WHERE status='success' ORDER BY ended_at DESC LIMIT 1"
   ).first();
   return {
-    timezone:'Asia/Krasnoyarsk',schedule:['07:00','22:00'],
+    timezone:'Asia/Krasnoyarsk',schedule:['hourly','07:00','22:00'],
     quota:{ day,spent:q?.spent??0,
       budget:Number(env.QUOTA_DAILY_BUDGET||200),
       scope:'vyron-control-local-only',
@@ -237,12 +253,51 @@ async function fetchStatus(env) {
     lastError:latestError,lastSource:s?.source||null,
     syncing:s?.status==='running',
     channels,totalSubscribers:sum('subscribers'),totalViews:sum('views'),totalVideos:sum('videos'),
-    analyticsSummary:{
-      watchMinutes:channels.reduce((s,ch)=>s+(ch.analytics?.watchMinutes??0),0),
-      covered:channels.filter(ch=>ch.analytics!=null).length,
-      total:channels.length,
-      note:'Снимки из VYRON на Mac. Не являются новой аналитикой YouTube, пока Mac спит.'
-    },
+    analyticsSummary:(()=>{
+      const available=channels.filter(ch=>ch.analytics);
+      const views=available.reduce((sum,ch)=>sum+(ch.analytics.views??0),0);
+      const daily=new Map();
+      for(const channel of available)for(const row of channel.analytics.daily||[]){
+        const item=daily.get(row.date)||{
+          date:row.date,views:0,engagedViews:0,dislikes:0,watchMinutes:0,
+          subscribersGained:0,subscribersLost:0,likes:0,comments:0,shares:0,
+          uniqueViewers:0,redViews:0,redWatchMinutes:0,playlistAdds:0,playlistRemoves:0
+        };
+        item.views+=row.views??0;item.engagedViews+=row.engagedViews??0;
+        item.dislikes+=row.dislikes??0;item.watchMinutes+=row.watchMinutes??0;
+        item.subscribersGained+=row.subscribersGained??0;
+        item.subscribersLost+=row.subscribersLost??0;
+        item.likes+=row.likes??0;item.comments+=row.comments??0;item.shares+=row.shares??0;
+        item.uniqueViewers+=row.uniqueViewers??0;item.redViews+=row.redViews??0;
+        item.redWatchMinutes+=row.redWatchMinutes??0;
+        item.playlistAdds+=row.playlistAdds??0;item.playlistRemoves+=row.playlistRemoves??0;
+        daily.set(row.date,item);
+      }
+      return {
+        views,
+        engagedViews:available.reduce((sum,ch)=>sum+(ch.analytics.engagedViews??0),0),
+        dislikes:available.reduce((sum,ch)=>sum+(ch.analytics.dislikes??0),0),
+        uniqueViewersDailyAverage:daily.size?[...daily.values()].reduce((sum,row)=>sum+row.uniqueViewers,0)/daily.size:null,
+        redViews:available.reduce((sum,ch)=>sum+(ch.analytics.daily||[]).reduce((n,row)=>n+(row.redViews??0),0),0),
+        redWatchMinutes:available.reduce((sum,ch)=>sum+(ch.analytics.daily||[]).reduce((n,row)=>n+(row.redWatchMinutes??0),0),0),
+        playlistAdds:available.reduce((sum,ch)=>sum+(ch.analytics.daily||[]).reduce((n,row)=>n+(row.playlistAdds??0),0),0),
+        playlistRemoves:available.reduce((sum,ch)=>sum+(ch.analytics.daily||[]).reduce((n,row)=>n+(row.playlistRemoves??0),0),0),
+        watchMinutes:available.reduce((sum,ch)=>sum+(ch.analytics.watchMinutes??0),0),
+        subscribersGained:available.reduce((sum,ch)=>sum+(ch.analytics.subscribersGained??0),0),
+        subscribersLost:available.reduce((sum,ch)=>sum+(ch.analytics.subscribersLost??0),0),
+        likes:available.reduce((sum,ch)=>sum+(ch.analytics.daily||[]).reduce((n,row)=>n+(row.likes??0),0),0),
+        comments:available.reduce((sum,ch)=>sum+(ch.analytics.daily||[]).reduce((n,row)=>n+(row.comments??0),0),0),
+        shares:available.reduce((sum,ch)=>sum+(ch.analytics.daily||[]).reduce((n,row)=>n+(row.shares??0),0),0),
+        averageViewDuration:views?available.reduce((sum,ch)=>sum+
+          (ch.analytics.avgViewSeconds??0)*(ch.analytics.views??0),0)/views:null,
+        averageViewPercentage:views?available.reduce((sum,ch)=>sum+
+          (ch.analytics.avgViewPercentage??0)*(ch.analytics.views??0),0)/views:null,
+        daily:[...daily.values()].sort((a,b)=>a.date.localeCompare(b.date)),
+        covered:available.length,total:channels.length,
+        authorized:channels.filter(ch=>ch.analyticsAuthorized).length,periodDays:90,
+        note:'Авторизованные отчёты YouTube Analytics API. CTR миниатюр и доход без отдельных поддерживаемых прав не подменяются.'
+      };
+    })(),
     integrations:{
       youtubeDataApi:Boolean(env.YOUTUBE_API_KEY),
       macBridge:Boolean(env.AGENT_TOKEN||env.CONTROL_TOKEN),
@@ -303,16 +358,94 @@ async function eventHistory(env,request) {
     {beforeAt:last.received_at,beforeId:last.id}:null,category});
 }
 
-async function enrollChannels(env,request) {
-  const items=validatedChannelList(await readJson(request,32000));
-  if(!items.length) return errorReply('No channels to enroll',400);
-  const payload=JSON.stringify(items);
+async function enrollChannels(env,request,{fromAgent=false}={}) {
+  const raw=await readJson(request,32000);
+  if(!Array.isArray(raw))return errorReply('Expected channel list',400);
+  const items=validatedChannelList(raw.map(row=>({
+    id:row?.id??row?.channelId,name:row?.name??row?.title
+  })));
+  if(!items.length)return errorReply('No channels to enroll',400);
+  const rawById=new Map(raw.map(row=>[String(row?.id??row?.channelId??''),row]));
+  const candidates=items.map(channel=>{
+    const binding=String(rawById.get(channel.id)?.profileBinding||'');
+    return /^[a-f0-9]{64}$/i.test(binding)
+      ?{...channel,profileBinding:binding.toLowerCase()}:channel;
+  });
+  const placeholders=items.map(()=>'?').join(',');
+  const existing=await env.DB.prepare(
+    'SELECT id FROM channels WHERE id IN ('+placeholders+')'
+  ).bind(...items.map(row=>row.id)).all();
+  const existingIds=new Set((existing.results||[]).map(row=>row.id));
+  const newlyEnrolled=items.filter(row=>!existingIds.has(row.id));
   await env.DB.prepare(`
     INSERT INTO channels (id,name)
     SELECT json_extract(value,'$.id'),json_extract(value,'$.name') FROM json_each(?) WHERE 1
     ON CONFLICT(id) DO UPDATE SET name=excluded.name
-  `).bind(payload).run();
-  return json({enrolled:items.length,existingChannelsPreserved:true});
+  `).bind(JSON.stringify(items)).run();
+
+  let binding={boundChannels:[],needsAuthorization:[]};
+  if(fromAgent&&candidates.some(row=>row.profileBinding)) {
+    try {
+      binding=await bindExistingVYRONProfiles(env,candidates,env.FETCH_IMPL||fetch);
+    } catch {
+      binding={boundChannels:[],needsAuthorization:newlyEnrolled.map(row=>({id:row.id,name:row.name})),
+        profileChecksFailed:1};
+    }
+  }
+
+  const newIds=newlyEnrolled.map(row=>row.id);
+  let publicSync={complete:true,updatedChannels:0,requestedChannels:0,reason:'no_new_channels'};
+  if(fromAgent) {
+    const pending=await env.DB.prepare(
+      'SELECT id FROM channels WHERE id IN ('+placeholders+') AND updated_at IS NULL'
+    ).bind(...items.map(row=>row.id)).all();
+    const pendingIds=(pending.results||[]).map(row=>row.id);
+    if(pendingIds.length) {
+      const date=new Date();
+      const slot='agent-enroll:'+Math.floor(date.getTime()/60000)+':'+pendingIds.slice().sort().join(',');
+      try {
+        const outcome=await runCountersSync(env,{
+          source:'agent-enroll',slot,date,channelIds:pendingIds,fetchImpl:env.FETCH_IMPL||fetch
+        });
+        publicSync={...outcome,complete:outcome.complete===true};
+      } catch(error) {
+        console.error('VYRON CONTROL initial channel sync failed:',
+          String(error?.message||'Unknown').slice(0,120));
+        publicSync={complete:false,updatedChannels:0,requestedChannels:pendingIds.length,
+          reason:'initial_sync_failed'};
+      }
+    }
+  }
+
+  const analyticsCandidates=fromAgent?newIds:[];
+  let analyticsQueued=0,analyticsNeedsAuthorization=[];
+  if(analyticsCandidates.length) {
+    const auth=await env.DB.prepare(
+      'SELECT channel_id FROM google_oauth_profiles WHERE channel_id IN ('+
+      analyticsCandidates.map(()=>'?').join(',')+')'
+    ).bind(...analyticsCandidates).all();
+    const authorizedIds=(auth.results||[]).map(row=>row.channel_id);
+    const authorizedSet=new Set(authorizedIds);
+    analyticsNeedsAuthorization=newlyEnrolled
+      .filter(row=>!authorizedSet.has(row.id)).map(row=>({id:row.id,name:row.name}));
+    if(authorizedIds.length) {
+      const now=new Date().toISOString();
+      await env.DB.batch(authorizedIds.map(id=>env.DB.prepare(`
+        INSERT INTO channel_analytics_queue(channel_id,queued_at)
+        VALUES (?,?)
+        ON CONFLICT(channel_id) DO UPDATE SET queued_at=excluded.queued_at,
+          attempts=0,last_attempt_at=NULL,last_error=NULL,completed_at=NULL
+      `).bind(id,now)));
+      analyticsQueued=authorizedIds.length;
+    }
+  }
+  return json({
+    enrolled:items.length,newlyEnrolled:newlyEnrolled.length,
+    existingChannelsPreserved:true,publicSync,
+    analytics:{autoBound:binding.boundChannels,
+      needsAuthorization:analyticsNeedsAuthorization.length?analyticsNeedsAuthorization:binding.needsAuthorization,
+      queued:analyticsQueued,profileChecksFailed:binding.profileChecksFailed||0}
+  });
 }
 
 async function ingestAgentEvents(env,request) {
@@ -475,6 +608,10 @@ export default {
         });
         return json({...outcome,status:await fetchStatus(env)});
       }
+      if (url.pathname==='/api/analytics/refresh'&&request.method==='POST') {
+        const body=await readJson(request,2000);
+        return json(await runManualAnalyticsBatch(env,body,env.FETCH_IMPL||fetch));
+      }
       if (url.pathname==='/api/channels'&&request.method==='POST')
         return enrollChannels(env,request);
       if (url.pathname==='/api/commands'&&request.method==='POST')
@@ -486,7 +623,7 @@ export default {
         return cancelCommand(env,id);
       }
       if (url.pathname==='/api/agent/channels'&&request.method==='POST')
-        return enrollChannels(env,request);
+        return enrollChannels(env,request,{fromAgent:true});
       if (url.pathname==='/api/agent/analytics'&&request.method==='POST')
         return json(await saveAnalytics(env,request));
       if (url.pathname==='/api/agent/events'&&request.method==='POST')
@@ -506,6 +643,9 @@ export default {
       const message=String(e.message||'Unknown failure');
       const status=message.includes('budget exhausted')?429:
         message.includes('already')?409:
+        message.startsWith('YOUTUBE_CHANNELS_INCOMPLETE')||
+          message.startsWith('YouTube channels.list HTTP')||
+          message.startsWith('YouTube response missing items')?502:
         /Invalid|^INVALID_|Unexpected|not configured|No channels|Unsupported|too large/.test(message)?400:500;
       if(status===500)console.error('VYRON CONTROL request:',message);
       return errorReply(status===500?'Internal service error':message,status);
@@ -515,6 +655,7 @@ export default {
     ctx.waitUntil(Promise.allSettled([
       scheduledSync(controller,env),
       runAnalyticsBatch(env,controller),
+      ...(controller.cron===ANALYTICS_QUEUE_CRON?[runQueuedAnalyticsBatch(env,controller)]:[]),
       ...(controller.cron===PUSH_CRON?[dispatchPush(env)]:[])
     ]).then(results=>{
       for (const result of results) if(result.status==='rejected')

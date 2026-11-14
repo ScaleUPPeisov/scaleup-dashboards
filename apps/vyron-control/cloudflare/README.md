@@ -1,17 +1,24 @@
-# VYRON CONTROL FREE CLOUD — Cloudflare Workers + D1
+# VYRON CONTROL — Cloudflare Workers + D1
 
-This is the free-tier cloud replacement for a paid VPS. It is **code only** until
-the owner creates a Cloudflare account, a D1 database and sets private secrets.
-Never commit any Google credentials, OAuth tokens, macOS Keychain data or real
-production logs to this public GitHub repository.
+A live Cloudflare Workers deployment and its D1 database already exist:
+
+https://vyron-control.endlume-peisov-3ee6109f.workers.dev/
+
+The current feature branch is a release candidate and may be newer than the live Worker. Passing CI does not deploy it. Use the guarded default-branch release workflow described below; never run an ad-hoc production deploy.
+
+**Protect the existing database:** the `database_id` in `wrangler.jsonc` points to the live D1 database. Do not run `wrangler d1 create`, replace that ID, or initialize a second database when updating this deployment. The existing D1 data includes channel registry, snapshots, events and encrypted OAuth profile records.
+
+Never commit any Google credentials, OAuth tokens, macOS Keychain data, private VAPID keys or real production logs to this public GitHub repository.
 
 ## Why Cloudflare
 
-- Public counter cron runs at `0 0 * * *` = 07:00 Krasnoyarsk and
-  `0 15 * * *` = 22:00 Krasnoyarsk (UTC+7). Private Analytics runs separately
-  in five ten-channel batches at 07:05, 07:10, 07:15, 07:20, 07:25
-  and again at 22:05–22:25. This separation avoids exceeding Workers Free's
-  50-subrequest limit at 07:00/22:00.
+- Public counters refresh hourly, with dedicated `0 0 * * *` = 07:00 Krasnoyarsk and
+  `0 15 * * *` = 22:00 Krasnoyarsk (UTC+7) slots. Newly enrolled VYRON channels
+  receive an immediate targeted public-counter sync. Private Analytics runs separately
+  in eleven three-channel batches at 07:05, 07:10, 07:15, 07:20, 07:25,
+  07:30, 07:35, 07:40, 07:45, 07:50 and 07:55, then again at 22:05–22:55.
+  Each batch stays below Workers Free's 50-subrequest limit and covers up to
+  33 authorized channels per reporting window.
 - Workers Free: up to 100,000 requests/day and 5 account-wide cron triggers,
   subject to Cloudflare's current free plan limits.
 - D1 Free: 5 million rows read/day, 100,000 rows written/day, 5 GB total storage,
@@ -25,7 +32,24 @@ https://developers.cloudflare.com/workers/platform/limits/
 https://developers.cloudflare.com/d1/platform/limits/
 https://developers.cloudflare.com/workers/configuration/cron-triggers/
 
-## Account setup (owner action required)
+## Existing production release path
+
+For the already provisioned Worker and D1 database:
+
+1. Review and merge application PR #25 into `feature/vyron-control-cloud-mvp-20261113`.
+2. Create or update `release/vyron-control-production` at the exact HEAD of that reviewed branch.
+3. Review and merge the small workflow-only PR #26 into `main`. GitHub exposes `workflow_dispatch` workflows only after the workflow file is present on the default branch.
+4. In GitHub Actions, run **VYRON CONTROL — guarded Cloudflare release** with `operation=preflight` first. This runs tests, reads remote migration state and builds a Worker dry-run; it does not write to D1 or deploy.
+5. Only after the preflight is clean, a separate manual run with `operation=deploy` and `confirm_production=true` can proceed. The workflow additionally requires PR #25 to be merged and the release snapshot SHA to exactly match the reviewed feature branch HEAD.
+6. Verify the public `/api/health` response reports all 16 D1 tables after deployment.
+
+The existing production app is not affected by PRs or CI runs alone. The workflow does not print Cloudflare secrets and does not modify VYRON, ENDLUME, Keychain or the macOS updater.
+
+Web Push is currently optional and is not configured in the live service: without `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT`, push notifications remain disabled. This does not prevent the dashboard or cloud counters from working.
+
+## Fresh isolated environment (only when creating a separate new deployment)
+
+The following setup steps are for a completely separate Cloudflare environment. Do not use them to recreate or replace the existing production database.
 
 1. Register a **Workers Free** Cloudflare account. No paid plan should be selected.
 2. In a trusted terminal, from `apps/vyron-control`, authenticate Wrangler.
@@ -47,7 +71,7 @@ https://developers.cloudflare.com/workers/configuration/cron-triggers/
 After the D1 binding and `CONTROL_TOKEN` are configured, the first successful
 dashboard login checks `/api/health`. If application tables are missing, the
 authenticated dashboard runs a fixed, idempotent bootstrap that creates only the
-13 application tables and their indexes; it never drops or overwrites data.
+16 application tables and their indexes; it never drops or overwrites data.
 This removes the need to paste a multi-statement SQL script into the D1 Console.
 For later schema changes, keep using versioned Wrangler migrations.
 
@@ -74,8 +98,9 @@ For later schema changes, keep using versioned Wrangler migrations.
    ```
 
 6. Open the generated HTTPS `*.workers.dev` URL from iPhone; enter CONTROL_TOKEN
-   on the login screen. Add the channel IDs via the authenticated
-   `POST /api/channels` endpoint before the next scheduled run. Do not paste
+   on the login screen. Once the Mac Bridge is installed, new channels added in
+   VYRON are enrolled automatically; manual `POST /api/channels` is only a fallback.
+   Do not paste
    passwords/tokens into GitHub, commits, screenshots or this chat.
 
    Example request for an owner-controlled terminal:
@@ -87,8 +112,8 @@ For later schema changes, keep using versioned Wrangler migrations.
      --data '[{"id":"UCxxxxxxxxxxxxxxxxxxxxxx","name":"Example"}]'
    ```
 
-   Replace all placeholders with real values. A standalone Mac agent can later
-   import the registry exported by VYRON without manual channel-by-channel entry.
+   Replace all placeholders with real values. Once the Mac Bridge is installed,
+   VYRON channel changes are enrolled automatically; this manual endpoint is a fallback.
 
 ## Independent private YouTube Analytics (read-only OAuth)
 
@@ -127,29 +152,38 @@ profiles are sent over HTTPS and re-encrypted with AES-256-GCM before D1 storage
 5. On the dashboard either select **Подключить Google-каналы** and authorize
    each Google identity, or export a package from VYRON under
    **Настройки → Backup & Migration** and import it with its one-time password.
-   Imported profiles are checked against Google and the expected YouTube
-   Channel ID in batches of eight. Repeated imports are idempotent and never
-   delete existing profiles.
+   The importer preserves one-to-many mappings: one Google OAuth profile can
+   be associated with several YouTube channels. Every mapped channel is checked
+   against Google and stored as its own channel binding. Repeated imports are
+   idempotent and never delete existing profiles.
    The cloud stores **AES-256-GCM encrypted** refresh tokens in D1; access
    tokens are temporary and never sent to the iPhone.
-6. Two daily reporting windows begin at **07:00 and 22:00 Krasnoyarsk**.
-   YouTube public counters refresh exactly at those times. Detailed private
-   reports are processed in batches of 10 authorized channels at **07:00,
-   07:05, 07:10, 07:15 and 07:20** and similarly at 22:00–22:20, respecting
-   the 50-subrequest Worker Free limit. Only data Google has already processed
-   will be available in the report.
+6. Public counters refresh hourly, with dedicated baseline slots at **07:00 and
+   22:00 Krasnoyarsk**. Private Analytics reporting windows begin at those two
+   times and run in eleven three-channel batches from :05 through :55. The dashboard's **Обновить всё** button runs public counters and
+   then processes all authorized Analytics channels in sequential three-profile
+   batches. Each private report covers 90 days and includes daily views, engaged
+   and unique viewers, watch time, retention, subscriber changes, likes/dislikes/
+   comments/shares, YouTube Premium views, playlist additions/removals, top videos,
+   traffic sources, devices, operating systems, countries, audience age/gender,
+   subscriber vs non-subscriber views, sharing services, playback locations,
+   live/on-demand split and a retention curve for the network's top video. Only
+   data Google has already processed will be available in the report.
 
 Only `youtube.readonly` and `yt-analytics.readonly` OAuth scopes are
 requested. This does **not** grant YouTube publishing permission. Revenue
-requires a distinct monetary scope and explicit future owner consent;
-unavailable CTR metrics are never invented. Google OAuth refresh-token
-availability and expiry depend on Google consent-screen configuration.
+requires a distinct monetary scope, channel eligibility and explicit future
+owner consent. Thumbnail impression CTR is not returned by the channel reports
+used here, so the dashboard marks it unavailable instead of substituting an
+unrelated click metric. Google OAuth refresh-token availability and expiry
+depend on Google consent-screen configuration.
 Additional YouTube Analytics request/quota limits apply separately.
 
 ## Free-tier behavior and constraints
 
-- The public-counter sync is ready to run without waking the Mac. The 07/22 cron
-  triggers are **at-most-once** by idempotent D1 `sync_runs`. Errors are recorded.
+- The public-counter sync is ready to run without waking the Mac. Hourly and
+  dedicated 07/22 slots are **at-most-once** by idempotent D1 `sync_runs`.
+  Errors are recorded.
 - Data is durable in D1, not an ephemeral Worker filesystem.
 - Snapshots persist per refresh; old events are not auto-deleted.
 - Subscriber milestone crossing is approximate because YouTube rounds displayed
@@ -157,7 +191,7 @@ Additional YouTube Analytics request/quota limits apply separately.
 - `api/status` shows the number of YouTube Data API calls reserved by this
   service on the current Pacific-time quota date. Other project-level consumers
   are not included.
-- Private watch-time, average view duration, average view percentage and subscriber gains/losses have a read-only OAuth backend, but are **not live until Google consent/configuration is completed**. CTR and monetary reports remain unavailable unless supported by the authorized API.
+- Private Analytics is read-only and updates independently of the Mac. Reports are retained for 90 days and include engagement, top videos, traffic sources, devices, countries and audience age/gender where Google returns data. Missing breakdowns are explicitly marked; the service does not fabricate CTR or revenue.
 - PWA can show the last Mac state while the computer sleeps, but a sleeping Mac
   cannot render video or process commands. Commands stay queued until agent ACK.
 - No cloud URL, Google keys, Cloudflare deployment or live YouTube connections
@@ -210,15 +244,19 @@ keys and credentials are never intentionally transmitted.
 
 ## Automatic Mac integration with VYRON 6.1.15
 
-The Mac bridge now reads the **existing VYRON app-data state file** by default:
+The Mac bridge reads the **read-only state mirror explicitly written by VYRON** by default:
 
-`~/Library/Application Support/studio.channelflow.desktop/state.json`
+`~/Documents/VYRON/State/app-state.json`
+
+This is the path created by `src-tauri/src/storage.rs` (`state_mirror_file`), not
+VYRON's private application-data `state.json`.
 
 It does not modify, migrate or replace the state. Only allowlisted fields
 (channel IDs/names, job counters, permitted journal events, and summaries of
 cached analytics) are exported to a **private** `~/.vyron-control-agent/`
-folder. OAuth tokens, Keychain data, music paths, passwords, file paths and
-freeform metadata are never sent to Cloudflare.
+folder. The local `youtubeProfileId` is converted to a one-way SHA-256 binding
+fingerprint; the raw profile ID, OAuth tokens, Keychain data, music paths,
+passwords, file paths and freeform metadata are never sent to Cloudflare.
 
 No VYRON or ENDLUME application rebuild is needed for this initial,
 read-only connection. It uses the existing application journal and therefore
@@ -235,7 +273,12 @@ The dashboard includes a guided Mac setup button: **Подготовить по�
 
 The installer downloads the dedicated agent source from this repository, checks
 for macOS, Git and Node.js 22+, installs its dependency, and installs a separate
-studio.vyron.control.agent LaunchAgent. The token is stored only in
+studio.vyron.control.agent LaunchAgent. While the Mac is awake and online, it
+checks the VYRON state mirror every 45 seconds. A newly added VYRON channel is
+then enrolled in Cloudflare automatically, and its public counters are fetched
+immediately; subsequent public counters refresh hourly even while the Mac sleeps.
+If the Mac is asleep when a channel is added, enrollment resumes after wake.
+The token is stored only in
 ~/.vyron-control-agent/config.json with mode 0600; it is not placed in the plist
 or shell history. The LaunchAgent starts on login and retries safely after network
 loss while preserving event IDs/offsets for idempotent recovery. It runs only
@@ -249,6 +292,28 @@ To use another state mirror location, set
 `VYRON_AGENT_STATE_MIRROR=/full/path/to/app-state.json` **before launching
 the agent** and ensure the LaunchAgent has permission to read it. Never
 grant the bridge Full Disk Access unnecessarily.
+
+### Automatic channel and Analytics sync
+
+- Adding a YouTube channel in VYRON updates the native state mirror. The Mac Bridge
+  detects the change within its next 45-second cycle and sends only the channel ID,
+  display name and optional one-way OAuth-profile fingerprint.
+- Cloudflare inserts the channel idempotently and immediately fetches its public
+  counters. A failed initial sync is not cached by the Mac Bridge; it retries with
+  backoff. Public counters then refresh hourly from the cloud.
+- If the channel's fingerprint matches a VYRON OAuth profile already imported into
+  CONTROL, the Worker refreshes that profile and asks Google to confirm the new
+  channel before copying the encrypted token binding. No Keychain or local token
+  access is performed by the Bridge.
+- A new channel whose Google profile has never been authorized in CONTROL still
+  needs a one-time read-only Google authorization in CONTROL (or a new encrypted
+  VYRON migration import). After authorization, Analytics is queued automatically
+  and processed in batches of up to two profiles every five minutes. The daily
+  07:05–07:55 and 22:05–22:55 reporting windows remain in place.
+- Public counters continue hourly while the Mac sleeps. Detecting a newly added
+  local VYRON channel necessarily waits until the Mac wakes and the Bridge can read
+  the local mirror; no cloud service can observe a local-only change while the Mac
+  is offline.
 
 ### Event coverage
 

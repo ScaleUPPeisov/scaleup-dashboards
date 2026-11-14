@@ -1,4 +1,4 @@
-import {encryptSecret} from './oauth.mjs';
+import {encryptSecret,refreshAccessToken} from './oauth.mjs';
 
 const TOKEN_URL='https://oauth2.googleapis.com/token';
 const VALID_CHANNEL=/^UC[A-Za-z0-9_-]{22}$/;
@@ -42,6 +42,106 @@ function normalize(row) {
   return {profileUuid,channelId,channelName,refreshToken,clientId,clientSecret};
 }
 
+
+const PROFILE_BINDING_PREFIX='vyron-profile-binding-v1\\0';
+async function profileBindingHash(profileUuid) {
+  const bytes=new TextEncoder().encode(PROFILE_BINDING_PREFIX+profileUuid);
+  const digest=await crypto.subtle.digest('SHA-256',bytes);
+  return [...new Uint8Array(digest)].map(value=>value.toString(16).padStart(2,'0')).join('');
+}
+
+/**
+ * Bind newly enrolled VYRON channels to an OAuth profile already imported
+ * from VYRON, without exporting the local profile UUID or touching Keychain.
+ * A candidate is linked only after Google confirms the channel is visible
+ * to that exact imported refresh token.
+ */
+export async function bindExistingVYRONProfiles(env,candidates,fetchImpl=fetch) {
+  const wanted=(Array.isArray(candidates)?candidates:[]).filter(row=>
+    VALID_CHANNEL.test(String(row?.id||''))&&/^[a-f0-9]{64}$/i.test(String(row?.profileBinding||'')));
+  if(!wanted.length)return {boundChannels:[],needsAuthorization:[]};
+  const placeholders=wanted.map(()=>'?').join(',');
+  const existing=await env.DB.prepare(
+    'SELECT channel_id FROM google_oauth_profiles WHERE channel_id IN ('+placeholders+')'
+  ).bind(...wanted.map(row=>row.id)).all();
+  const already=new Set((existing.results||[]).map(row=>row.channel_id));
+  const pending=wanted.filter(row=>!already.has(row.id));
+  if(!pending.length)return {boundChannels:[],needsAuthorization:[]};
+
+  const source=await env.DB.prepare(`
+    SELECT p.channel_id,p.channel_name,p.refresh_token_cipher,p.granted_scope,p.connected_at,
+      c.profile_uuid,c.client_id_cipher,c.client_secret_cipher,c.source,c.bundle_uuid
+    FROM google_oauth_profiles p
+    JOIN google_oauth_client_credentials c ON c.channel_id=p.channel_id
+    WHERE c.source='VYRON_MIGRATION'
+    ORDER BY c.profile_uuid,p.channel_id
+  `).all();
+  const profilesByBinding=new Map();
+  for(const row of source.results||[]) {
+    const binding=await profileBindingHash(row.profile_uuid);
+    if(!profilesByBinding.has(binding))profilesByBinding.set(binding,row);
+  }
+  const groups=new Map();
+  for(const row of pending) {
+    const binding=String(row.profileBinding).toLowerCase();
+    if(!groups.has(binding))groups.set(binding,[]);
+    groups.get(binding).push(row);
+  }
+
+  const boundChannels=[],failedBindings=new Set();
+  for(const [binding,rows] of groups) {
+    const profile=profilesByBinding.get(binding);
+    if(!profile)continue;
+    try {
+      const accessToken=await refreshAccessToken(profile,env,fetchImpl);
+      const params=new URLSearchParams({part:'snippet',mine:'true',maxResults:'50'});
+      const reply=await fetchImpl('https://www.googleapis.com/youtube/v3/channels?'+params,{
+        headers:{Authorization:'Bearer '+accessToken,Accept:'application/json'}
+      });
+      if(!reply.ok)throw new Error('CHANNEL_VERIFY_FAILED');
+      const googleChannels=new Map(((await reply.json()).items||[])
+        .filter(item=>VALID_CHANNEL.test(item?.id))
+        .map(item=>[item.id,String(item.snippet?.title||item.id).slice(0,120)]));
+      for(const candidate of rows) {
+        const channelName=googleChannels.get(candidate.id);
+        if(!channelName)continue;
+        const now=new Date().toISOString();
+        await env.DB.batch([
+          env.DB.prepare(`
+            INSERT OR IGNORE INTO google_oauth_profiles
+              (channel_id,channel_name,refresh_token_cipher,granted_scope,connected_at,last_error)
+            VALUES (?,?,?,?,?,NULL)
+          `).bind(candidate.id,channelName,profile.refresh_token_cipher,
+            profile.granted_scope,profile.connected_at),
+          env.DB.prepare(`
+            INSERT OR IGNORE INTO google_oauth_client_credentials
+              (channel_id,profile_uuid,client_id_cipher,client_secret_cipher,source,bundle_uuid,imported_at)
+            VALUES (?,?,?,?,?,?,?)
+          `).bind(candidate.id,profile.profile_uuid,profile.client_id_cipher,
+            profile.client_secret_cipher,'VYRON_MIGRATION',profile.bundle_uuid,now),
+          env.DB.prepare(`
+            INSERT OR IGNORE INTO channel_analytics_queue(channel_id,queued_at)
+            VALUES (?,?)
+          `).bind(candidate.id,now)
+        ]);
+        const linked=await env.DB.prepare(
+          'SELECT channel_id FROM google_oauth_profiles WHERE channel_id=?'
+        ).bind(candidate.id).first();
+        if(linked)boundChannels.push({id:candidate.id,name:channelName});
+      }
+    } catch(error) {
+      failedBindings.add(binding);
+    }
+  }
+  const boundIds=new Set(boundChannels.map(row=>row.id));
+  return {
+    boundChannels,
+    needsAuthorization:pending.filter(row=>!boundIds.has(row.id))
+      .map(row=>({id:row.id,name:String(row.name||row.id).slice(0,120)})),
+    profileChecksFailed:failedBindings.size
+  };
+}
+
 export async function importVyronProfiles(data,env,fetchImpl=fetch) {
   const bundleUuid=text(data?.bundleUuid,160);
   if(!VALID_PROFILE.test(bundleUuid))throw new Error('INVALID_BUNDLE_ID');
@@ -82,7 +182,9 @@ export async function importVyronProfiles(data,env,fetchImpl=fetch) {
         `).bind(row.channelId,row.profileUuid,clientIdCipher,clientSecretCipher,
           'VYRON_MIGRATION',bundleUuid,now),
         env.DB.prepare('INSERT OR IGNORE INTO channels(id,name) VALUES (?,?)')
-          .bind(row.channelId,channelName)
+          .bind(row.channelId,channelName),
+        env.DB.prepare('INSERT INTO channel_analytics_queue(channel_id,queued_at) VALUES (?,?) ON CONFLICT(channel_id) DO UPDATE SET queued_at=excluded.queued_at,attempts=0,last_attempt_at=NULL,last_error=NULL,completed_at=NULL')
+          .bind(row.channelId,now)
       ]);
       results.push({channelId:row.channelId,status:'imported'});
     }catch(error){results.push({channelId:row?.channelId||null,status:'failed',reason:safeReason(error)});}

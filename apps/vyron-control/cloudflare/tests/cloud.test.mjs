@@ -1,15 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import cloud from '../src/index.mjs';
 import { cronSlot, crossedMilestones, pacificDay, safeEvent, acceptedCommand } from '../src/core.mjs';
-import { manualSlot, reserveQuota, scheduledSync } from '../src/sync.mjs';
-import { startOAuth,callbackOAuth,authorizedProfiles,decryptSecret } from '../src/oauth.mjs';
-import { importVyronProfiles } from '../src/oauth-import.mjs';
-import { runAnalyticsBatch,nextAnalyticsSlot,parseDailyReport } from '../src/google-analytics.mjs';
+import { manualSlot, reserveQuota, scheduledSync, runCountersSync } from '../src/sync.mjs';
+import { startOAuth,callbackOAuth,authorizedProfiles,decryptSecret,encryptSecret } from '../src/oauth.mjs';
+import { importVyronProfiles,bindExistingVYRONProfiles } from '../src/oauth-import.mjs';
+import { runAnalyticsBatch,runManualAnalyticsBatch,runQueuedAnalyticsBatch,nextAnalyticsSlot,parseDailyReport } from '../src/google-analytics.mjs';
 import { PUSH_CRON } from '../src/push.mjs';
+import { ANALYTICS_QUEUE_CRON } from '../src/google-analytics.mjs';
 import { validSubscription,registerPush,dispatchPush } from '../src/push.mjs';
 
 class D1Query {
@@ -36,6 +38,8 @@ class MockD1 {
     this.native.exec(readFileSync(new URL('../migrations/0003_google_oauth.sql',import.meta.url),'utf8'));
     this.native.exec(readFileSync(new URL('../migrations/0004_webpush.sql',import.meta.url),'utf8'));
     this.native.exec(readFileSync(new URL('../migrations/0005_vyron_oauth_import.sql',import.meta.url),'utf8'));
+    this.native.exec(readFileSync(new URL('../migrations/0006_analytics_reports.sql',import.meta.url),'utf8'));
+    this.native.exec(readFileSync(new URL('../migrations/0007_channel_analytics_queue.sql',import.meta.url),'utf8'));
   }
   prepare(sql){return new D1Query(this,sql);}
   async batch(stmts){
@@ -61,9 +65,35 @@ function req(path,token,method='GET',body=undefined,origin=null){
 }
 const id=i=>'UC'+String(i).padStart(22,'0');
 
-test('cron times use Krasnoyarsk but Google quota resets in Pacific',()=>{
+test('cron times use Krasnoyarsk but Google quota resets in Pacific',async()=>{
   assert.equal(cronSlot('0 0 * * *',new Date('2026-11-13T00:00:00Z')),'2026-11-13@07:00');
   assert.equal(cronSlot('0 15 * * *',new Date('2026-11-13T15:00:00Z')),'2026-11-13@22:00');
+  const e=env(),hourlyChannel=id(800);
+  await e.DB.prepare('INSERT INTO channels(id,name) VALUES (?,?)').bind(hourlyChannel,'Hourly').run();
+  let hourlyCalls=0;
+  const hourlyFetch=async url=>{
+    hourlyCalls++;
+    return new Response(JSON.stringify({items:[{
+      id:hourlyChannel,snippet:{title:'Hourly'},
+      statistics:{subscriberCount:'12',viewCount:'120',videoCount:'3',hiddenSubscriberCount:false}
+    }]}),{status:200});
+  };
+  const hourly=await scheduledSync({
+    cron:'0 * * * *',scheduledTime:Date.parse('2026-11-13T01:00:00Z')
+  },e,hourlyFetch);
+  assert.equal(hourly.complete,true);
+  assert.equal(hourly.updatedChannels,1);
+  assert.equal(hourlyCalls,1);
+  const dailyCovered=await scheduledSync({
+    cron:'0 * * * *',scheduledTime:Date.parse('2026-11-13T00:00:00Z')
+  },e,hourlyFetch);
+  assert.equal(dailyCovered.complete,true);
+  assert.equal(hourlyCalls,2);
+  const dailyDuplicate=await scheduledSync({
+    cron:'0 * * * *',scheduledTime:Date.parse('2026-11-13T00:00:00Z')
+  },e,hourlyFetch);
+  assert.equal(dailyDuplicate.skipped,true);
+  assert.equal(hourlyCalls,2);
   assert.equal(cronSlot('0 0 * * *',new Date('2026-11-13T00:01:00Z')),null);
   assert.equal(pacificDay(new Date('2026-11-13T00:00:00Z')),'2026-11-12');
   assert.equal(pacificDay(new Date('2026-11-13T15:00:00Z')),'2026-11-13');
@@ -85,7 +115,7 @@ test('authenticated D1 bootstrap fills missing application tables idempotently',
   const firstBody=await first.json();
   assert.equal(firstBody.ok,true);
   assert.deepEqual(firstBody.createdTables,['push_deliveries']);
-  assert.equal(firstBody.presentTables,14);
+  assert.equal(firstBody.presentTables,16);
   const second=await cloud.fetch(req('/api/admin/bootstrap',control,'POST',{}),e);
   assert.equal(second.status,200);
   const secondBody=await second.json();
@@ -121,7 +151,7 @@ test('authorization, origin guard, static asset CSP and immutable endpoint behav
   assert.equal(health.status,200);
   const healthBody=await health.json();
   assert.equal(healthBody.app,'vyron-control');
-  assert.deepEqual(healthBody.d1,{bound:true,schema:true,expectedTables:14,presentTables:14});
+  assert.deepEqual(healthBody.d1,{bound:true,schema:true,expectedTables:16,presentTables:16});
   assert.equal((await cloud.fetch(req('/api/status','invalid'),e)).status,401);
   const good=await cloud.fetch(req('/api/status',control),e);
   assert.equal(good.status,200);
@@ -170,6 +200,62 @@ test('33 channels batched, scheduled milestones, no duplicate runs, local quota'
   assert.deepEqual([...new Set(out.events.map(x=>x.milestone))].sort(),[200,300]);
   assert.equal(out.quota.scope,'vyron-control-local-only');
   assert.equal(e.DB.native.prepare("SELECT count(*) AS count FROM channel_snapshots").get().count,66);
+});
+
+test('manual channel refresh reports partial coverage instead of false success',async()=>{
+  const e=env(),list=Array.from({length:33},(_,i)=>({id:id(i+100),name:'Network '+i}));
+  await cloud.fetch(req('/api/channels',control,'POST',list),e);
+  let partialCalls=0;
+  const partialFetch=async url=>{
+    partialCalls++;
+    const requested=new URL(url).searchParams.get('id').split(',');
+    const returned=partialCalls===1?requested.slice(0,31):[];
+    return {ok:true,json:async()=>({items:returned.map(x=>({
+      id:x,snippet:{title:'Remote '+x},
+      statistics:{subscriberCount:'10',viewCount:'100',videoCount:'2',hiddenSubscriberCount:false}
+    }))})};
+  };
+  await assert.rejects(()=>runCountersSync(e,{
+    source:'manual',slot:'manual:partial-coverage',date:new Date('2026-11-14T10:00:00Z'),
+    fetchImpl:partialFetch
+  }),/YOUTUBE_CHANNELS_INCOMPLETE: updated 31\/33; missing 2/);
+  assert.equal(partialCalls,2);
+  const run=e.DB.native.prepare(
+    "SELECT status,updated_channels,error FROM sync_runs WHERE slot='manual:partial-coverage'"
+  ).get();
+  assert.equal(run.status,'error');
+  assert.equal(run.updated_channels,31);
+  assert.match(run.error,/missing 2/);
+  assert.equal(e.DB.native.prepare('SELECT count(*) AS n FROM channel_snapshots').get().n,31);
+});
+
+test('manual channel refresh retries omitted IDs and recovers complete 33-channel coverage',async()=>{
+  const e=env(),list=Array.from({length:33},(_,i)=>({id:id(i+200),name:'Network '+i}));
+  await cloud.fetch(req('/api/channels',control,'POST',list),e);
+  let calls=0;
+  const recoveringFetch=async url=>{
+    calls++;
+    const requested=new URL(url).searchParams.get('id').split(',');
+    const returned=calls===1?requested.slice(0,31):requested;
+    return {ok:true,json:async()=>({items:returned.map(x=>({
+      id:x,snippet:{title:'Recovered '+x},
+      statistics:{subscriberCount:'15',viewCount:'150',videoCount:'3',hiddenSubscriberCount:false}
+    }))})};
+  };
+  const outcome=await runCountersSync(e,{
+    source:'manual',slot:'manual:retry-missing',date:new Date('2026-11-14T10:05:00Z'),
+    fetchImpl:recoveringFetch
+  });
+  assert.equal(calls,2);
+  assert.equal(outcome.complete,true);
+  assert.equal(outcome.updatedChannels,33);
+  assert.equal(outcome.requestedChannels,33);
+  assert.equal(e.DB.native.prepare('SELECT count(*) AS n FROM channel_snapshots').get().n,33);
+  const run=e.DB.native.prepare(
+    "SELECT status,updated_channels FROM sync_runs WHERE slot='manual:retry-missing'"
+  ).get();
+  assert.equal(run.status,'success');
+  assert.equal(run.updated_channels,33);
 });
 
 test('quota guard blocks before sending requests',async()=>{
@@ -249,6 +335,16 @@ test('Mac Analytics 360 mirror snapshots are accepted without OAuth secrets',asy
   assert.equal(status.analyticsSummary.covered,1);
   assert.equal(status.analyticsSummary.watchMinutes,12000);
   assert.equal(e.DB.native.prepare('SELECT length(daily_json) AS size FROM channel_analytics').get().size>2,true);
+  await e.DB.prepare(
+    "UPDATE channel_analytics SET source='GOOGLE_ANALYTICS_API',captured_at=? WHERE channel_id=?"
+  ).bind(new Date(Date.now()+60000).toISOString(),channelId).run();
+  const newerMacSnapshot={...snap[0],views:999999,capturedAt:new Date(Date.now()+120000).toISOString()};
+  assert.equal((await cloud.fetch(req(url,agent,'POST',[newerMacSnapshot]),e)).status,200);
+  const protectedRow=e.DB.native.prepare(
+    'SELECT source,views FROM channel_analytics WHERE channel_id=?'
+  ).get(channelId);
+  assert.equal(protectedRow.source,'GOOGLE_ANALYTICS_API');
+  assert.equal(protectedRow.views,5000);
   assert.equal((await cloud.fetch(req(url,agent,'POST',[{...snap[0],channelId:'BAD'}]),e)).status,400);
 });
 
@@ -307,6 +403,9 @@ test('Google OAuth is PKCE protected, offline read-only and encrypted at rest',a
   const summary=await authorizedProfiles(e);
   assert.equal(summary.profiles.length,1);
   assert.equal(JSON.stringify(summary).includes('REFRESH_TOKEN_PRIVATE'),false);
+  assert.equal(e.DB.native.prepare(
+    'SELECT count(*) AS n FROM channel_analytics_queue WHERE channel_id=?'
+  ).get(channelId).n,1);
   await assert.rejects(()=>callbackOAuth(callback,e,googleFetch),/expired/);
 });
 
@@ -343,6 +442,7 @@ test('encrypted VYRON migration profiles import idempotently with their original
   const second=await importVyronProfiles(data,e,fetchMock);
   assert.equal(first.imported,1);assert.equal(second.imported,1);
   assert.equal(e.DB.native.prepare('SELECT count(*) AS n FROM google_oauth_profiles').get().n,1);
+  assert.equal(e.DB.native.prepare('SELECT count(*) AS n FROM channel_analytics_queue').get().n,1);
   const stored=e.DB.native.prepare(`SELECT p.refresh_token_cipher,c.client_id_cipher,
     c.client_secret_cipher,c.profile_uuid FROM google_oauth_profiles p
     JOIN google_oauth_client_credentials c ON c.channel_id=p.channel_id`).get();
@@ -351,14 +451,218 @@ test('encrypted VYRON migration profiles import idempotently with their original
   assert.equal(await decryptSecret(stored.client_id_cipher,e),clientId);
   assert.equal(await decryptSecret(stored.client_secret_cipher,e),clientSecret);
   assert.equal(JSON.stringify(stored).includes(refreshToken),false);
-  const analytics=await runAnalyticsBatch(e,
-    {scheduledTime:Date.parse('2026-11-13T00:05:00Z')},fetchMock);
-  assert.equal(analytics.updated,1);
-  assert.equal(e.DB.native.prepare(
-    'SELECT views FROM channel_analytics WHERE channel_id=?').get(channelId).views,77);
 });
 
-test('authorized private Analytics can update while Mac sleeps, with 10-channel cron batches',async()=>{
+test('VYRON Mac bridge enrollment immediately syncs newly added public channel counters',async()=>{
+  const e=env(),channelId=id(901);
+  let calls=0;
+  e.FETCH_IMPL=async url=>{
+    calls++;
+    assert.equal(new URL(url).searchParams.get('id'),channelId);
+    return new Response(JSON.stringify({items:[{
+      id:channelId,snippet:{title:'New VYRON channel'},
+      statistics:{subscriberCount:'1250',viewCount:'25000',videoCount:'40',hiddenSubscriberCount:false}
+    }]}),{status:200});
+  };
+  const first=await cloud.fetch(req('/api/agent/channels',agent,'POST',[
+    {id:channelId,name:'New VYRON channel'}
+  ]),e);
+  assert.equal(first.status,200);
+  const result=await first.json();
+  assert.equal(result.newlyEnrolled,1);
+  assert.equal(result.publicSync.complete,true);
+  assert.equal(result.publicSync.updatedChannels,1);
+  assert.equal(result.publicSync.requestedChannels,1);
+  assert.equal(calls,1);
+  const row=e.DB.native.prepare('SELECT subscribers,views,videos,updated_at FROM channels WHERE id=?').get(channelId);
+  assert.equal(row.subscribers,1250);
+  assert.equal(row.views,25000);
+  assert.ok(row.updated_at);
+  const status=await cloud.fetch(req('/api/status',control),e);
+  const statusBody=await status.json();
+  assert.equal(statusBody.channels[0].analyticsAuthorized,false);
+  assert.equal(statusBody.analyticsSummary.authorized,0);
+  const repeated=await cloud.fetch(req('/api/agent/channels',agent,'POST',[
+    {id:channelId,name:'New VYRON channel'}
+  ]),e);
+  assert.equal(repeated.status,200);
+  assert.equal((await repeated.json()).publicSync.complete,true);
+  assert.equal(calls,1);
+});
+
+test('new VYRON channel reuses only its matching imported OAuth profile after Google verification',async()=>{
+  const e=env(),existingChannel=id(902),newChannel=id(903);
+  e.OAUTH_ENCRYPTION_KEY='a'.repeat(64);
+  const profileUuid='vyron-profile-902';
+  const clientId='471814393352-vyronclient.apps.googleusercontent.com';
+  const clientSecret='VYRON_CLIENT_SECRET';
+  const refreshToken='VYRON_REFRESH_TOKEN_123456789';
+  const refreshCipher=await encryptSecret(refreshToken,e);
+  const clientIdCipher=await encryptSecret(clientId,e);
+  const clientSecretCipher=await encryptSecret(clientSecret,e);
+  await e.DB.prepare(
+    'INSERT INTO channels(id,name) VALUES (?,?)'
+  ).bind(existingChannel,'Existing').run();
+  await e.DB.prepare(
+    'INSERT INTO google_oauth_profiles(channel_id,channel_name,refresh_token_cipher,granted_scope,connected_at) VALUES (?,?,?,?,?)'
+  ).bind(existingChannel,'Existing',refreshCipher,'readonly',new Date().toISOString()).run();
+  await e.DB.prepare(
+    'INSERT INTO google_oauth_client_credentials(channel_id,profile_uuid,client_id_cipher,client_secret_cipher,source,bundle_uuid,imported_at) VALUES (?,?,?,?,?,?,?)'
+  ).bind(existingChannel,profileUuid,clientIdCipher,clientSecretCipher,
+    'VYRON_MIGRATION','bundle-902',new Date().toISOString()).run();
+  await e.DB.prepare('INSERT INTO channels(id,name) VALUES (?,?)')
+    .bind(newChannel,'New').run();
+  const profileBinding=createHash('sha256')
+    .update('vyron-profile-binding-v1\\0'+profileUuid).digest('hex');
+  const fetchMock=async(url,opts)=>{
+    if(url.includes('oauth2.googleapis.com/token')) {
+      const body=new URLSearchParams(opts.body);
+      assert.equal(body.get('client_id'),clientId);
+      assert.equal(body.get('client_secret'),clientSecret);
+      assert.equal(body.get('refresh_token'),refreshToken);
+      return new Response(JSON.stringify({access_token:'VYRON_ACCESS'}),{status:200});
+    }
+    if(url.includes('youtube/v3/channels')) {
+      assert.equal(opts.headers.Authorization,'Bearer VYRON_ACCESS');
+      return new Response(JSON.stringify({items:[
+        {id:existingChannel,snippet:{title:'Existing'}},
+        {id:newChannel,snippet:{title:'New VYRON channel'}}
+      ]}),{status:200});
+    }
+    throw new Error('unexpected endpoint');
+  };
+  const result=await bindExistingVYRONProfiles(e,[
+    {id:newChannel,name:'New',profileBinding}
+  ],fetchMock);
+  assert.deepEqual(result.boundChannels,[{id:newChannel,name:'New VYRON channel'}]);
+  assert.deepEqual(result.needsAuthorization,[]);
+  const linked=e.DB.native.prepare(
+    'SELECT p.refresh_token_cipher,c.profile_uuid,c.client_id_cipher,c.client_secret_cipher '+
+    'FROM google_oauth_profiles p JOIN google_oauth_client_credentials c ON c.channel_id=p.channel_id '+
+    'WHERE p.channel_id=?'
+  ).get(newChannel);
+  assert.equal(linked.profile_uuid,profileUuid);
+  assert.equal(linked.refresh_token_cipher,refreshCipher);
+  assert.equal(await decryptSecret(linked.client_id_cipher,e),clientId);
+  assert.equal(await decryptSecret(linked.client_secret_cipher,e),clientSecret);
+  assert.equal(e.DB.native.prepare(
+    'SELECT count(*) AS n FROM channel_analytics_queue WHERE channel_id=?'
+  ).get(newChannel).n,1);
+  assert.equal(JSON.stringify(result).includes(profileUuid),false);
+  assert.equal(JSON.stringify(result).includes(refreshToken),false);
+});
+
+test('one imported Google profile can bind multiple YouTube channels without dropping either',async()=>{
+  const e=env(),firstChannel=id(21),secondChannel=id(22);
+  Object.assign(e,{OAUTH_ENCRYPTION_KEY:'c'.repeat(64),
+    GOOGLE_OAUTH_CLIENT_ID:'WEB_CLIENT',GOOGLE_OAUTH_CLIENT_SECRET:'WEB_SECRET'});
+  const clientId='471814393352-sharedclient.apps.googleusercontent.com';
+  const clientSecret='SHARED_CLIENT_SECRET';
+  const refreshToken='SHARED_REFRESH_TOKEN_1234567890';
+  const fetchMock=async(url,opts)=>{
+    if(url.includes('oauth2.googleapis.com/token')){
+      const body=new URLSearchParams(opts.body);
+      assert.equal(body.get('client_id'),clientId);
+      assert.equal(body.get('client_secret'),clientSecret);
+      assert.equal(body.get('refresh_token'),refreshToken);
+      return new Response(JSON.stringify({access_token:'SHARED_ACCESS'}),{status:200});
+    }
+    if(url.includes('youtube/v3/channels'))return new Response(JSON.stringify({
+      items:[
+        {id:firstChannel,snippet:{title:'First channel'}},
+        {id:secondChannel,snippet:{title:'Second channel'}}
+      ]
+    }),{status:200});
+    throw new Error('unexpected endpoint');
+  };
+  const data={bundleUuid:'bundle-shared-001',profiles:[
+    {profileUuid:'same-google-profile',channelId:firstChannel,channelName:'First channel',
+      refreshToken,clientId,clientSecret},
+    {profileUuid:'same-google-profile',channelId:secondChannel,channelName:'Second channel',
+      refreshToken,clientId,clientSecret}
+  ]};
+  const result=await importVyronProfiles(data,e,fetchMock);
+  assert.equal(result.received,2);
+  assert.equal(result.imported,2);
+  assert.equal(result.failed,0);
+  assert.deepEqual(result.results.map(x=>x.channelId).sort(),[firstChannel,secondChannel].sort());
+  assert.equal(e.DB.native.prepare('SELECT count(*) AS n FROM google_oauth_profiles').get().n,2);
+  assert.equal(e.DB.native.prepare(
+    "SELECT count(*) AS n FROM google_oauth_client_credentials WHERE profile_uuid='same-google-profile'"
+  ).get().n,2);
+});
+
+test('newly authorized Analytics queue retries failed channels after five minutes',async()=>{
+  const e=env(),channelId=id(904);
+  Object.assign(e,{
+    GOOGLE_OAUTH_CLIENT_ID:'QUEUE_CLIENT',
+    GOOGLE_OAUTH_CLIENT_SECRET:'QUEUE_SECRET',
+    OAUTH_ENCRYPTION_KEY:'e'.repeat(64)
+  });
+  const encrypted=await encryptSecret('QUEUE_REFRESH_TOKEN_123456789',e);
+  await e.DB.prepare(
+    'INSERT INTO google_oauth_profiles(channel_id,channel_name,refresh_token_cipher,granted_scope,connected_at) VALUES (?,?,?,?,?)'
+  ).bind(channelId,'Queued channel',encrypted,'readonly',new Date().toISOString()).run();
+  await e.DB.prepare(
+    'INSERT INTO channel_analytics_queue(channel_id,queued_at) VALUES (?,?)'
+  ).bind(channelId,'2026-11-14T10:00:00.000Z').run();
+  const failedFetch=async url=>{
+    if(url.includes('oauth2.googleapis.com/token'))
+      return new Response(JSON.stringify({error:'invalid_grant'}),{status:400});
+    throw new Error('unexpected endpoint');
+  };
+  const first=await runQueuedAnalyticsBatch(e,{
+    scheduledTime:Date.parse('2026-11-14T10:02:00.000Z')
+  },failedFetch);
+  assert.equal(first.queued,1);
+  assert.equal(first.failed,1);
+  const queue=e.DB.native.prepare(
+    'SELECT attempts,last_attempt_at,last_error,completed_at FROM channel_analytics_queue WHERE channel_id=?'
+  ).get(channelId);
+  assert.equal(queue.attempts,1);
+  assert.ok(queue.last_attempt_at);
+  assert.ok(queue.last_error);
+  assert.equal(queue.completed_at,null);
+  const tooSoon=await runQueuedAnalyticsBatch(e,{
+    scheduledTime:Date.parse('2026-11-14T10:06:00.000Z')
+  },failedFetch);
+  assert.equal(tooSoon.reason,'no_queued_analytics');
+});
+
+
+test('first-time Analytics queue caps each invocation at two profiles',async()=>{
+  const e=env();
+  Object.assign(e,{
+    GOOGLE_OAUTH_CLIENT_ID:'QUEUE_BATCH_CLIENT',
+    GOOGLE_OAUTH_CLIENT_SECRET:'QUEUE_BATCH_SECRET',
+    OAUTH_ENCRYPTION_KEY:'8'.repeat(64)
+  });
+  const encrypted=await encryptSecret('QUEUE_BATCH_REFRESH_TOKEN_123456789',e);
+  const channels=[id(911),id(912),id(913)];
+  for(let i=0;i<channels.length;i++){
+    const channelId=channels[i];
+    await e.DB.prepare(
+      'INSERT INTO google_oauth_profiles(channel_id,channel_name,refresh_token_cipher,granted_scope,connected_at) VALUES (?,?,?,?,?)'
+    ).bind(channelId,'Queue '+i,encrypted,'read-only',new Date().toISOString()).run();
+    await e.DB.prepare(
+      'INSERT INTO channel_analytics_queue(channel_id,queued_at) VALUES (?,?)'
+    ).bind(channelId,new Date(Date.now()-60_000).toISOString()).run();
+  }
+  const failedFetch=async url=>{
+    if(url.includes('oauth2.googleapis.com/token'))
+      return new Response(JSON.stringify({error:'invalid_grant'}),{status:400});
+    throw new Error('unexpected endpoint');
+  };
+  const outcome=await runQueuedAnalyticsBatch(e,{scheduledTime:Date.now()},failedFetch);
+  assert.equal(outcome.queued,2);
+  assert.equal(outcome.failed,2);
+  const rows=e.DB.native.prepare(
+    'SELECT channel_id,attempts FROM channel_analytics_queue ORDER BY channel_id'
+  ).all();
+  assert.deepEqual(rows.map(row=>row.attempts).sort(),[0,1,1]);
+});
+
+test('authorized private Analytics syncs 90-day trends and channel breakdowns in three-profile batches',async()=>{
   const e=env(),channelId=id(5);
   Object.assign(e,{
     APP_ORIGIN:'https://vyron-control.example',
@@ -373,10 +677,12 @@ test('authorized private Analytics can update while Mac sleeps, with 10-channel 
   ).bind(channelId,'Test',encrypted,'read-only',new Date().toISOString()).run();
   await e.DB.prepare('INSERT INTO channels(id,name) VALUES (?,?)').bind(channelId,'Test').run();
   assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:05:00Z')}).offset,0);
-  assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:25:00Z')}).offset,40);
+  assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:25:00Z')}).offset,12);
+  assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:45:00Z')}).offset,24);
+  assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:55:00Z')}).offset,30);
   assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:00:00Z')}),null);
   assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:01:00Z')}),null);
-  let analyticsAttempts=0;
+  let analyticsAttempts=0,coreAttempts=0;
   const mockFetch=async(url,opts)=>{
     if(url.includes('oauth2.googleapis.com/token')) {
       assert.equal(new URLSearchParams(opts.body).get('refresh_token'),'PRIVATE_REFRESH_TOKEN');
@@ -384,31 +690,239 @@ test('authorized private Analytics can update while Mac sleeps, with 10-channel 
     }
     if(url.includes('youtubeanalytics.googleapis.com')) {
       assert.equal(opts.headers.Authorization,'Bearer SHORT_LIVED_TOKEN');
-      assert.match(url,/ids=channel%3D%3DMINE/);
+      const params=new URL(url).searchParams;
+      assert.equal(params.get('ids'),'channel=='+channelId);
+      const dimensions=params.get('dimensions');
       analyticsAttempts++;
-      if(analyticsAttempts===1)return new Response('temporary',{status:503});
-      return new Response(JSON.stringify({
-        columnHeaders:['day','views','estimatedMinutesWatched',
-          'averageViewDuration','averageViewPercentage',
-          'subscribersGained','subscribersLost'].map(name=>({name})),
-        rows:[['2026-11-11',200,1000,160,62,9,1]]
-      }),{status:200});
+      if(dimensions==='day') {
+        assert.match(params.get('metrics'),/engagedViews/);
+        assert.match(params.get('metrics'),/dislikes/);
+        coreAttempts++;
+        if(coreAttempts===1)return new Response('temporary',{status:503});
+        return new Response(JSON.stringify({
+          columnHeaders:['day','views','engagedViews','redViews','estimatedMinutesWatched',
+            'estimatedRedMinutesWatched','averageViewDuration','averageViewPercentage',
+            'subscribersGained','subscribersLost','likes','dislikes','comments','shares',
+            'uniques','videosAddedToPlaylists','videosRemovedFromPlaylists'].map(name=>({name})),
+          rows:[['2026-11-11',200,150,5,1000,50,160,62,9,1,18,3,4,2,120,7,2]]
+        }),{status:200});
+      }
+      const fixtures={
+        'video,creatorContentType':{
+          columnHeaders:['video','creatorContentType','views','engagedViews','redViews',
+            'estimatedMinutesWatched','estimatedRedMinutesWatched','averageViewDuration',
+            'averageViewPercentage','likes','dislikes','comments','shares',
+            'videosAddedToPlaylists','videosRemovedFromPlaylists'],
+          rows:[['VID12345678','SHORTS',120,90,3,400,20,110,65,12,2,3,1,4,1]]
+        },
+        'insightTrafficSourceType':{
+          columnHeaders:['insightTrafficSourceType','views','estimatedMinutesWatched'],
+          rows:[['RELATED_VIDEO',90,500],['YT_SEARCH',40,200]]
+        },
+        'deviceType':{
+          columnHeaders:['deviceType','views','estimatedMinutesWatched'],
+          rows:[['MOBILE',130,600],['TV',70,400]]
+        },
+        'country':{
+          columnHeaders:['country','views','estimatedMinutesWatched'],
+          rows:[['US',100,500],['GB',50,250]]
+        },
+        'ageGroup,gender':{
+          columnHeaders:['ageGroup','gender','viewerPercentage'],
+          rows:[['25-34','FEMALE',35],['25-34','MALE',40]]
+        },
+        subscribedStatus:{
+          columnHeaders:['subscribedStatus','views','engagedViews','estimatedMinutesWatched','averageViewDuration'],
+          rows:[['SUBSCRIBED',60,45,300,120],['UNSUBSCRIBED',140,105,700,150]]
+        },
+        sharingService:{
+          columnHeaders:['sharingService','shares'],rows:[['COPY_TO_CLIPBOARD',8],['WHATSAPP',2]]
+        },
+        insightPlaybackLocationType:{
+          columnHeaders:['insightPlaybackLocationType','views','estimatedMinutesWatched'],
+          rows:[['WATCH',140,700],['EMBEDDED',60,300]]
+        },
+        operatingSystem:{
+          columnHeaders:['operatingSystem','views','estimatedMinutesWatched'],
+          rows:[['ANDROID',100,500],['IOS',100,500]]
+        },
+        liveOrOnDemand:{
+          columnHeaders:['liveOrOnDemand','views','engagedViews','estimatedMinutesWatched','averageViewDuration'],
+          rows:[['LIVE',20,10,100,60],['ON_DEMAND',180,140,900,160]]
+        },
+        elapsedVideoTimeRatio:{
+          columnHeaders:['elapsedVideoTimeRatio','audienceWatchRatio','relativeRetentionPerformance'],
+          rows:[['0.0',1.0,0.2],['0.5',0.65,0.1],['1.0',0.2,0.1]]
+        }
+      };
+      return new Response(JSON.stringify(fixtures[dimensions]||{columnHeaders:[],rows:[]}),{status:200});
     }
     throw new Error('unexpected endpoint');
   };
   const outcome=await runAnalyticsBatch(e,
     {scheduledTime:Date.parse('2026-11-13T00:05:00Z')},mockFetch);
   assert.equal(outcome.updated,1);
-  assert.equal(analyticsAttempts,2);
+  assert.equal(outcome.failed,0);
+  assert.equal(outcome.periodDays,90);
+  assert.equal(analyticsAttempts,13);
   const stored=e.DB.native.prepare(
-    'SELECT source,views,watch_minutes FROM channel_analytics WHERE channel_id=?'
+    'SELECT source,views,watch_minutes,daily_json FROM channel_analytics WHERE channel_id=?'
   ).get(channelId);
   assert.equal(stored.source,'GOOGLE_ANALYTICS_API');
   assert.equal(stored.views,200);
   assert.equal(stored.watch_minutes,1000);
+  const daily=JSON.parse(stored.daily_json);
+  assert.equal(daily[0].likes,18);
+  assert.equal(daily[0].engagedViews,150);
+  assert.equal(daily[0].dislikes,3);
+  assert.equal(daily[0].comments,4);
+  assert.equal(daily[0].uniqueViewers,120);
+  assert.equal(daily[0].redViews,5);
+  assert.equal(daily[0].redWatchMinutes,50);
+  assert.equal(daily[0].playlistAdds,7);
+  assert.equal(daily[0].playlistRemoves,2);
+  const reports=JSON.parse(e.DB.native.prepare(
+    'SELECT reports_json FROM channel_analytics_reports WHERE channel_id=?'
+  ).get(channelId).reports_json);
+  assert.equal(reports.topVideos[0].videoId,'VID12345678');
+  assert.equal(reports.topVideos[0].playlistAdds,4);
+  assert.equal(reports.trafficSources[0].source,'RELATED_VIDEO');
+  assert.equal(reports.devices[0].deviceType,'MOBILE');
+  assert.equal(reports.countries[0].country,'US');
+  assert.equal(reports.demographics.length,2);
+  assert.equal(reports.demographics[0].viewerPercentage,35);
+  assert.equal(reports.sharingServices[0].sharingService,'COPY_TO_CLIPBOARD');
+  assert.equal(reports.playbackLocations[0].playbackLocation,'WATCH');
+  assert.equal(reports.operatingSystems[0].operatingSystem,'ANDROID');
+  assert.equal(reports.liveOrOnDemand[0].liveOrOnDemand,'LIVE');
+  assert.equal(reports.subscribedStatus[0].subscribedStatus,'SUBSCRIBED');
+  assert.equal(reports.audienceRetention.length,3);
+  assert.equal(reports.audienceRetention[2].relativeRetentionPerformance,0.1);
   const second=await runAnalyticsBatch(e,
     {scheduledTime:Date.parse('2026-11-13T00:05:00Z')},mockFetch);
   assert.equal(second.skipped,true);
+});
+
+
+test('one shared Google profile requests Analytics for each concrete YouTube channel ID',async()=>{
+  const e=env(),firstChannel=id(81),secondChannel=id(82);
+  Object.assign(e,{
+    APP_ORIGIN:'https://vyron-control.example',
+    GOOGLE_OAUTH_CLIENT_ID:'SHARED_ANALYTICS_CLIENT',
+    GOOGLE_OAUTH_CLIENT_SECRET:'SHARED_ANALYTICS_SECRET',
+    OAUTH_ENCRYPTION_KEY:'9'.repeat(64)
+  });
+  const encrypted=await encryptSecret('SHARED_ANALYTICS_REFRESH_TOKEN',e);
+  for(const [channelId,name] of [[firstChannel,'First'],[secondChannel,'Second']]){
+    await e.DB.prepare(
+      'INSERT INTO google_oauth_profiles(channel_id,channel_name,refresh_token_cipher,granted_scope,connected_at) VALUES (?,?,?,?,?)'
+    ).bind(channelId,name,encrypted,'read-only',new Date().toISOString()).run();
+    await e.DB.prepare('INSERT INTO channels(id,name) VALUES (?,?)').bind(channelId,name).run();
+  }
+  const requested=new Set();
+  const mockFetch=async(url,opts)=>{
+    if(url.includes('oauth2.googleapis.com/token'))
+      return new Response(JSON.stringify({access_token:'SHARED_ANALYTICS_ACCESS'}),{status:200});
+    if(url.includes('youtubeanalytics.googleapis.com')){
+      const params=new URL(url).searchParams;
+      requested.add(params.get('ids'));
+      const dimensions=params.get('dimensions').split(',');
+      const metrics=params.get('metrics').split(',');
+      const headers=[...dimensions,...metrics].map(name=>({name}));
+      const rows=dimensions.includes('day')
+        ?[['2026-11-12',...metrics.map(()=>1)]]
+        :[];
+      return new Response(JSON.stringify({columnHeaders:headers,rows}),{status:200});
+    }
+    throw new Error('unexpected endpoint');
+  };
+  const outcome=await runManualAnalyticsBatch(e,{
+    offset:0,requestId:'shared-google-profile-001'
+  },mockFetch);
+  assert.equal(outcome.updated,2);
+  assert.equal(outcome.failed,0);
+  assert.deepEqual([...requested].sort(),[
+    'channel=='+firstChannel,'channel=='+secondChannel
+  ].sort());
+});
+
+test('manual refresh API processes every authorized channel in safe three-profile batches',async()=>{
+  const e=env();
+  Object.assign(e,{
+    APP_ORIGIN:'https://vyron-control.example',
+    GOOGLE_OAUTH_CLIENT_ID:'MANUAL_CLIENT',
+    GOOGLE_OAUTH_CLIENT_SECRET:'MANUAL_SECRET',
+    OAUTH_ENCRYPTION_KEY:'d'.repeat(64)
+  });
+  const {encryptSecret}=await import('../src/oauth.mjs');
+  for(let index=0;index<5;index++){
+    const channelId=id(40+index);
+    const encrypted=await encryptSecret('MANUAL_REFRESH_'+index,e);
+    await e.DB.prepare(
+      'INSERT INTO google_oauth_profiles(channel_id,channel_name,refresh_token_cipher,granted_scope,connected_at) VALUES (?,?,?,?,?)'
+    ).bind(channelId,'Manual '+index,encrypted,'read-only',new Date().toISOString()).run();
+  }
+  const mockFetch=async(url,opts)=>{
+    if(url.includes('oauth2.googleapis.com/token'))
+      return new Response(JSON.stringify({access_token:'MANUAL_ACCESS'}),{status:200});
+    if(url.includes('youtubeanalytics.googleapis.com')){
+      const dimensions=new URL(url).searchParams.get('dimensions');
+      const fixtures={
+        day:{columnHeaders:['day','views','engagedViews','redViews','estimatedMinutesWatched',
+          'estimatedRedMinutesWatched','averageViewDuration','averageViewPercentage','subscribersGained',
+          'subscribersLost','likes','dislikes','comments','shares','uniques',
+          'videosAddedToPlaylists','videosRemovedFromPlaylists'],
+          rows:[['2026-11-11',20,15,1,100,5,30,50,2,1,3,0,1,1,12,2,0]]},
+        'video,creatorContentType':{columnHeaders:['video','creatorContentType','views','engagedViews',
+          'redViews','estimatedMinutesWatched','estimatedRedMinutesWatched','averageViewDuration',
+          'averageViewPercentage','likes','dislikes','comments','shares','videosAddedToPlaylists','videosRemovedFromPlaylists'],
+          rows:[['MANUALVID001','VIDEOS',10,7,1,50,2,30,50,2,0,1,0,1,0]]},
+        insightTrafficSourceType:{columnHeaders:['insightTrafficSourceType','views','estimatedMinutesWatched'],
+          rows:[['YT_SEARCH',10,50]]},
+        deviceType:{columnHeaders:['deviceType','views','estimatedMinutesWatched'],
+          rows:[['MOBILE',10,50]]},
+        country:{columnHeaders:['country','views','estimatedMinutesWatched'],
+          rows:[['US',10,50]]},
+        'ageGroup,gender':{columnHeaders:['ageGroup','gender','viewerPercentage'],
+          rows:[['25-34','FEMALE',50]]},
+        subscribedStatus:{columnHeaders:['subscribedStatus','views','engagedViews','estimatedMinutesWatched','averageViewDuration'],
+          rows:[['UNSUBSCRIBED',10,7,50,30]]},
+        sharingService:{columnHeaders:['sharingService','shares'],rows:[['COPY_TO_CLIPBOARD',1]]},
+        insightPlaybackLocationType:{columnHeaders:['insightPlaybackLocationType','views','estimatedMinutesWatched'],
+          rows:[['WATCH',10,50]]},
+        operatingSystem:{columnHeaders:['operatingSystem','views','estimatedMinutesWatched'],
+          rows:[['ANDROID',10,50]]},
+        liveOrOnDemand:{columnHeaders:['liveOrOnDemand','views','engagedViews','estimatedMinutesWatched','averageViewDuration'],
+          rows:[['ON_DEMAND',10,7,50,30]]},
+        elapsedVideoTimeRatio:{columnHeaders:['elapsedVideoTimeRatio','audienceWatchRatio','relativeRetentionPerformance'],
+          rows:[['0.0',1,0.2],['1.0',0.3,0.1]]}
+      };
+      const report=fixtures[dimensions];
+      return new Response(JSON.stringify({
+        columnHeaders:report.columnHeaders.map(name=>({name})),rows:report.rows
+      }),{status:200});
+    }
+    throw new Error('unexpected manual analytics endpoint');
+  };
+  e.FETCH_IMPL=mockFetch;
+  const requestId='manualbatchrequest001';
+  const first=await cloud.fetch(req('/api/analytics/refresh',control,'POST',{
+    requestId,offset:0
+  }),e);
+  assert.equal(first.status,200);
+  const firstBody=await first.json();
+  assert.equal(firstBody.updated,3);
+  const second=await cloud.fetch(req('/api/analytics/refresh',control,'POST',{
+    requestId,offset:3
+  }),e);
+  assert.equal(second.status,200);
+  const secondBody=await second.json();
+  assert.equal(secondBody.updated,2);
+  const duplicate=await cloud.fetch(req('/api/analytics/refresh',control,'POST',{
+    requestId,offset:3
+  }),e);
+  assert.equal((await duplicate.json()).skipped,true);
+  assert.equal(e.DB.native.prepare('SELECT count(*) AS n FROM channel_analytics_reports').get().n,5);
 });
 
 test('full event history supports stable pagination and category filters',async()=>{
@@ -522,10 +1036,15 @@ test('Mac installer is valid shell and keeps agent token out of command history'
 test('free-tier cron schedules never run public counters, private Analytics and Web Push together',()=>{
   const cfg=JSON.parse(readFileSync(new URL('../wrangler.jsonc',import.meta.url),'utf8'));
   const crons=cfg.triggers.crons;
+  assert.ok(crons.includes('0 * * * *'));
+  assert.ok(crons.includes(ANALYTICS_QUEUE_CRON));
   assert.ok(crons.includes(PUSH_CRON));
-  assert.ok(crons.includes('0 0 * * *'));
-  assert.ok(crons.includes('0 15 * * *'));
-  assert.ok(crons.includes('5,10,15,20,25 0,15 * * *'));
+  assert.equal(crons.length,4);
+  assert.ok(crons.includes('5,10,15,20,25,30,35,40,45,50,55 0,15 * * *'));
+  assert.equal(ANALYTICS_QUEUE_CRON.split(' ')[0].split(',').length,12);
+  assert.notEqual(ANALYTICS_QUEUE_CRON,PUSH_CRON);
+  const queueMinutes=ANALYTICS_QUEUE_CRON.split(' ')[0].split(',').map(Number);
+  for(const minute of queueMinutes)assert.equal(PUSH_CRON.split(' ')[0].split(',').map(Number).includes(minute),false);
   assert.notEqual(PUSH_CRON,'*/5 * * * *');
   const pushMinutes=PUSH_CRON.split(' ')[0].split(',').map(Number);
   assert.equal(pushMinutes.length,12);

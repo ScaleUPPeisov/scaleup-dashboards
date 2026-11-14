@@ -80,6 +80,7 @@ export async function saveAnalytics(env,request) {
         daily_json=excluded.daily_json,captured_at=excluded.captured_at,
         received_at=excluded.received_at,source=excluded.source
       WHERE excluded.captured_at >= channel_analytics.captured_at
+        AND channel_analytics.source <> 'GOOGLE_ANALYTICS_API'
     `).bind(JSON.stringify(chunk)).run();
   }
   return {accepted:rows.length,source:'VYRON_MAC_CACHE'};

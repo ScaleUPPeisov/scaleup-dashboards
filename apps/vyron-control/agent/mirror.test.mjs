@@ -54,6 +54,8 @@ test('mirror mapping exports only public YouTube IDs, event allowlist, minimal c
   const channels=mirrorChannels(src);
   assert.equal(channels.length,1);
   assert.equal(channels[0].name,'Neon Drive FM');
+  assert.match(channels[0].profileBinding,/^[a-f0-9]{64}$/);
+  assert.notEqual(channels[0].profileBinding,'private-profile-id');
   const status=mirrorStatus(src);
   assert.equal(status.rendersActive,1);
   assert.equal(status.uploadsQueued,2);
@@ -63,6 +65,8 @@ test('mirror mapping exports only public YouTube IDs, event allowlist, minimal c
   assert.equal(analytics[0].views,2000);
   assert.equal(analytics[0].estimatedRevenue,null);
   assert.equal(analytics[0].impressionCtr,5.3);
+  assert.equal(analytics[0].daily.length,1);
+  assert.equal(analytics[0].daily[0].date,'2026-11-12');
   assert.equal(JSON.stringify(analytics).includes('NEVER_SEND_REFRESH'),false);
   const events=mirrorEvents(src);
   assert.equal(events.length,2);

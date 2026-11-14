@@ -1,23 +1,29 @@
-# VYRON CONTROL — mobile public-channel counters (MVP)
+# VYRON CONTROL — private cloud control plane
 
 Independent, read-only companion service for the existing VYRON macOS app.
-**Development prototype, not a published release or deployed cloud service.**
+
+**A live Cloudflare Worker deployment already exists:**  
+https://vyron-control.endlume-peisov-3ee6109f.workers.dev/
+
+The current feature branch is a release candidate, not the live deployment. A commit or passing CI run does not update production; application changes become live only after the guarded release workflow completes. See [cloudflare/README.md](cloudflare/README.md) and the release entrypoint PR #26.
+
 Does not modify the production VYRON updater, the OAuth Keychain, ENDLUME,
 YouTube uploads, PR #22, or any existing SQLite/JSON data.
 
 ## Zero-cost architecture (2026-11-13)
 
 The intended no-VPS build is now in **[cloudflare/README.md](cloudflare/README.md)**.
-Cloudflare Workers Free handles the 07:00/22:00 Krasnoyarsk scheduled refresh,
-while D1 persists channels and snapshots independently of a sleeping Mac.
+Cloudflare Workers Free refreshes public counters hourly (with dedicated 07:00/22:00
+Krasnoyarsk slots), while D1 persists channels and snapshots independently of a sleeping Mac.
 
-The new standalone **[agent/run.mjs](agent/run.mjs)** is a read-only Mac bridge
-that can forward fine-grained VYRON/ENDLUME events from explicitly configured
-exported JSONL/status files. It sends heartbeats and supports one safe remote
-command, `request_status`. It will **not** automatically discover local Mac
-databases or access YouTube credentials. Desktop event-export integration,
-Cloudflare ownership credentials and Google OAuth for private Analytics 360°
-are still outstanding.
+The standalone **[agent/run.mjs](agent/run.mjs)** is a read-only Mac bridge.
+It reads the VYRON state mirror at `~/Documents/VYRON/State/app-state.json`,
+checks it every 45 seconds while the Mac is awake, automatically enrolls new
+channels, sends allowlisted events and status, and supports one safe remote
+command, `request_status`. It never reads Keychain or sends OAuth credentials.
+A one-way fingerprint can match a newly added channel to an already imported
+VYRON OAuth profile; otherwise a one-time Google authorization in CONTROL is
+required for private Analytics.
 
 The original `src/server.mjs` Docker/Node implementation remains available
 for local development, but it is not the zero-cost always-on deployment.
@@ -26,14 +32,17 @@ for local development, but it is not the zero-cost always-on deployment.
 
 - Responsive Russian-language iPhone browser dashboard/PWA shell: channel list,
   total subscriber/view/video counts, search, quota used by this service, milestone event log.
-- **All registered channels auto-refresh at 07:00 and 22:00 Asia/Krasnoyarsk**;
-  both times are resolved independently of the host/server time zone.
+- **All registered channels auto-refresh hourly**, with dedicated 07:00 and
+  22:00 Asia/Krasnoyarsk slots. Newly enrolled channels receive an immediate
+  targeted refresh. All times are resolved independently of the host/server time zone.
 - Public `channels.list(part=snippet,statistics)` via the YouTube Data API.
   Requests batch up to **50 IDs per request**, with one local-budget unit reserved
   before each attempt. The Google Cloud project's real quota is shared with
   **other callers** and is not visible to this service.
 - Optional manual refresh, minimum 5 minutes between manual requests.
   Local in-app status polling every 60 seconds does not call YouTube.
+- Newly authorized private Analytics reports are queued and processed in batches
+  of up to two channels every five minutes.
 - Idempotent subscriber milestone log (100/200/300 and onward); initial sync
   establishes baseline without backfilling false celebrations. Subscriber counts
   exposed by YouTube are rounded; milestone detection is approximate.
