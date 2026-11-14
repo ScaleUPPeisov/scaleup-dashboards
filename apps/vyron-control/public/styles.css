@@ -429,3 +429,9 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,su
   .channel-tools{grid-template-columns:repeat(2,minmax(0,1fr))}
   .channel-tools input{grid-column:1/-1}
 }
+
+.mobile-nav button span{display:grid;place-items:center}
+.mobile-nav button span svg{display:block;width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+@media(max-width:760px){
+  .mobile-nav button span svg{width:19px;height:19px}
+}
