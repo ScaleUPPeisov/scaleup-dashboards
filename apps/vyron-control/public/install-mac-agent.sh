@@ -2,7 +2,7 @@
 set -euo pipefail
 
 WORKER_URL='https://vyron-control.endlume-peisov-3ee6109f.workers.dev'
-BRANCH='feature/vyron-control-cloud-mvp-20261113'
+BRANCH='feature/vyron-control-mobile-analytics-20261114'
 REPOSITORY='https://github.com/ScaleUPPeisov/scaleup-dashboards.git'
 AGENT_HOME="$HOME/.vyron-control-agent"
 SOURCE_DIR="$AGENT_HOME/source"
