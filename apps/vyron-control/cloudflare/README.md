@@ -137,10 +137,11 @@ profiles are sent over HTTPS and re-encrypted with AES-256-GCM before D1 storage
    YouTube public counters refresh exactly at those times. Private Analytics
    runs in nine four-channel batches from :05 through :45 at each reporting
    window. The dashboard's **Обновить всё** button runs public counters and
-   then processes all authorized Analytics channels in sequential four-profile
-   batches. Each private report covers 90 days and includes daily views/watch
-   time/retention/subscriber changes/likes/comments/shares, top videos, traffic
-   sources, devices, countries and age/gender aggregates. Only data Google has
+   then processes all authorized Analytics channels in sequential three-profile
+   batches. Each private report covers 90 days and includes daily views, engaged
+   views, watch time, retention, subscriber changes, likes/dislikes/comments/shares,
+   top videos, traffic sources, devices, countries, audience age/gender, sharing
+   services and playback locations. Only data Google has
    already processed will be available in the report.
 
 Only `youtube.readonly` and `yt-analytics.readonly` OAuth scopes are
