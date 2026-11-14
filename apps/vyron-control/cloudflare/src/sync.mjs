@@ -159,8 +159,8 @@ export async function runCountersSync(env, { source, slot, date = new Date(), fe
     return { skipped:false, updatedChannels, requestedChannels:known.length, complete:true };
   } catch (error) {
     await db.prepare(
-      "UPDATE sync_runs SET status='error',ended_at=?,error=? WHERE slot=?"
-    ).bind(new Date().toISOString(),String(error.message).slice(0,350),slot).run();
+      "UPDATE sync_runs SET status='error',ended_at=?,error=?,updated_channels=? WHERE slot=?"
+    ).bind(new Date().toISOString(),String(error.message).slice(0,350),updatedChannels,slot).run();
     throw error;
   }
 }
