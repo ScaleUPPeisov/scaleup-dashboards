@@ -11,6 +11,7 @@ import { startOAuth,callbackOAuth,authorizedProfiles,decryptSecret,encryptSecret
 import { importVyronProfiles,bindExistingVYRONProfiles } from '../src/oauth-import.mjs';
 import { runAnalyticsBatch,runManualAnalyticsBatch,runQueuedAnalyticsBatch,nextAnalyticsSlot,parseDailyReport } from '../src/google-analytics.mjs';
 import { PUSH_CRON } from '../src/push.mjs';
+import { ANALYTICS_QUEUE_CRON } from '../src/google-analytics.mjs';
 import { validSubscription,registerPush,dispatchPush } from '../src/push.mjs';
 
 class D1Query {
@@ -86,8 +87,13 @@ test('cron times use Krasnoyarsk but Google quota resets in Pacific',async()=>{
   const dailyCovered=await scheduledSync({
     cron:'0 * * * *',scheduledTime:Date.parse('2026-11-13T00:00:00Z')
   },e,hourlyFetch);
-  assert.equal(dailyCovered.reason,'covered_by_daily_window');
-  assert.equal(hourlyCalls,1);
+  assert.equal(dailyCovered.complete,true);
+  assert.equal(hourlyCalls,2);
+  const dailyDuplicate=await scheduledSync({
+    cron:'0 * * * *',scheduledTime:Date.parse('2026-11-13T00:00:00Z')
+  },e,hourlyFetch);
+  assert.equal(dailyDuplicate.skipped,true);
+  assert.equal(hourlyCalls,2);
   assert.equal(cronSlot('0 0 * * *',new Date('2026-11-13T00:01:00Z')),null);
   assert.equal(pacificDay(new Date('2026-11-13T00:00:00Z')),'2026-11-12');
   assert.equal(pacificDay(new Date('2026-11-13T15:00:00Z')),'2026-11-13');
@@ -951,11 +957,13 @@ test('free-tier cron schedules never run public counters, private Analytics and 
   const cfg=JSON.parse(readFileSync(new URL('../wrangler.jsonc',import.meta.url),'utf8'));
   const crons=cfg.triggers.crons;
   assert.ok(crons.includes(PUSH_CRON));
-  assert.ok(crons.includes('0 0 * * *'));
-  assert.ok(crons.includes('0 15 * * *'));
   assert.ok(crons.includes('0 * * * *'));
-  assert.equal(crons.length,5);
+  assert.ok(crons.includes(ANALYTICS_QUEUE_CRON));
+  assert.ok(crons.includes(PUSH_CRON));
+  assert.equal(crons.length,4);
   assert.ok(crons.includes('5,10,15,20,25,30,35,40,45,50,55 0,15 * * *'));
+  assert.equal(ANALYTICS_QUEUE_CRON.split(' ')[0].split(',').length,12);
+  assert.notEqual(ANALYTICS_QUEUE_CRON,PUSH_CRON);
   assert.notEqual(PUSH_CRON,'*/5 * * * *');
   const pushMinutes=PUSH_CRON.split(' ')[0].split(',').map(Number);
   assert.equal(pushMinutes.length,12);
