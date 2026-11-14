@@ -205,3 +205,7 @@ select{border:1px solid #354665;border-radius:11px;background:#11192a;color:#f3f
   .mobile-nav button.active{background:#1a2a48;color:#c4d7ff}
   .login{margin:25px auto;padding:21px}
 }
+
+.oauth-profile-missing{border-color:#76533a;background:#241d1a}
+.oauth-profile-missing small{color:#e0b58a}
+.oauth-fallback{margin:12px 0}
