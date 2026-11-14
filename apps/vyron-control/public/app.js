@@ -178,6 +178,30 @@ function renderAnalyticsTrend(rows,period) {
     ' · всего '+number(values.reduce((sum,value)=>sum+value,0))+' просмотров';
   $('analytics-trend-range').textContent=period+' дней';
 }
+function renderAudienceRetention(video,channelName,rows) {
+  const svg=$('analytics-retention-curve'),caption=$('analytics-retention-caption');
+  svg.replaceChildren();
+  if(!rows?.length) {
+    caption.textContent='YouTube не вернул кривую удержания для лучшего видео за этот период.';
+    return;
+  }
+  const points=rows.slice().sort((a,b)=>a.elapsedVideoTimeRatio-b.elapsedVideoTimeRatio);
+  const width=720,height=190,left=34,right=14,top=16,bottom=24;
+  const max=Math.max(1,...points.map(row=>Number(row.audienceWatchRatio)||0));
+  const plotWidth=width-left-right,plotHeight=height-top-bottom;
+  for(let i=0;i<4;i++){
+    const y=top+i*plotHeight/3;
+    svg.append(svgNode('path',{d:'M '+left+' '+y+' H '+(width-right),class:'trend-grid'}));
+  }
+  const coords=points.map(row=>[
+    left+Math.max(0,Math.min(1,Number(row.elapsedVideoTimeRatio)||0))*plotWidth,
+    top+plotHeight-(Math.max(0,Number(row.audienceWatchRatio)||0)/max)*plotHeight
+  ]);
+  const line=coords.map((point,index)=>(index?'L ':'M ')+point[0]+' '+point[1]).join(' ');
+  svg.append(svgNode('path',{d:line,class:'trend-line'}));
+  caption.textContent=channelName+' · '+video+' · '+points.length+
+    ' сегментов · доля просмотров сегмента относительно просмотров ролика';
+}
 function renderRanking(targetId,items,{format=value=>number(value),empty='Нет данных за выбранный период'}={}) {
   const container=$(targetId);
   container.replaceChildren();
@@ -250,7 +274,7 @@ function renderAnalytics(data) {
 
   const topVideos=[];
   const traffic=new Map(),devices=new Map(),countries=new Map(),demographics=new Map(),
-    sharing=new Map(),playback=new Map();
+    sharing=new Map(),playback=new Map(),operatingSystems=new Map(),liveModes=new Map();
   const add=(map,key,row,weight=1)=>{
     if(!key)return;
     const item=map.get(key)||{label:key,value:0,sub:0};
@@ -281,6 +305,8 @@ function renderAnalytics(data) {
       item.value+=Number(row.shares)||0;sharing.set(key,item);
     }
     for(const row of reports.playbackLocations||[])add(playback,row.playbackLocation,row);
+    for(const row of reports.operatingSystems||[])add(operatingSystems,row.operatingSystem,row);
+    for(const row of reports.liveOrOnDemand||[])add(liveModes,row.liveOrOnDemand,row);
   }
   const byViews=map=>[...map.values()].sort((a,b)=>b.value-a.value).slice(0,8);
   const sourceNames={
@@ -296,6 +322,9 @@ function renderAnalytics(data) {
     TWITTER:'X / Twitter',OTHER:'Другие сервисы'};
   const playbackNames={WATCH:'Страница просмотра YouTube',EMBEDDED:'Встроенный плеер',
     EXTERNAL_APP:'Внешнее приложение',MOBILE:'Мобильное приложение',OTHER:'Другие места'};
+  const osNames={ANDROID:'Android',IOS:'iOS',WINDOWS:'Windows',MAC_OS:'macOS',
+    LINUX:'Linux',CHROME_OS:'ChromeOS',OTHER:'Другие ОС'};
+  const liveNames={LIVE:'Прямые эфиры',ON_DEMAND:'Обычные видео / Shorts'};
   renderRanking('analytics-top-videos',topVideos.sort((a,b)=>b.value-a.value).slice(0,10),{
     empty:'Нет данных о лучших видео. Google Analytics должен завершить первую синхронизацию.'
   });
@@ -320,6 +349,21 @@ function renderAnalytics(data) {
   renderRanking('analytics-playback',byViews(playback).map(item=>({
     ...item,label:playbackNames[item.label]||item.label
   })),{empty:'Нет данных о местах воспроизведения.'});
+  renderRanking('analytics-os',byViews(operatingSystems).map(item=>({
+    ...item,label:osNames[item.label]||item.label
+  })),{empty:'Нет данных об операционных системах.'});
+  renderRanking('analytics-live',byViews(liveModes).map(item=>({
+    ...item,label:liveNames[item.label]||item.label
+  })),{empty:'Нет данных по прямым эфирам и видео.'});
+  const retentionCandidate=connected.flatMap(channel=>{
+    const reports=channel.analytics.reports||{};
+    const video=reports.topVideos?.[0];
+    return video&&reports.audienceRetention?.length
+      ?[{videoId:video.videoId,channelName:channel.name,views:video.views,rows:reports.audienceRetention}]
+      :[];
+  }).sort((a,b)=>b.views-a.views)[0];
+  renderAudienceRetention(retentionCandidate?.videoId,retentionCandidate?.channelName,
+    retentionCandidate?.rows);
   if(!connected.length){
     $('analytics-updated').textContent='Нет облачных отчётов Google Analytics. Импортируй пакет VYRON и нажми «Обновить всё».';
   }
