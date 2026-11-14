@@ -45,6 +45,10 @@ fn main(){
     if trusted_key_sha256!="unverified" && !(trusted_key_sha256.len()==64 && trusted_key_sha256.chars().all(|c|c.is_ascii_hexdigit())){
         panic!("VYRON_TRUSTED_UPDATER_PUBLIC_KEY_SHA256 must be 64 hexadecimal characters or unverified");
     }
+    let profile=std::env::var("PROFILE").unwrap_or_else(|_|"debug".into());
+    if profile=="release" && trusted_key_sha256=="unverified"{
+        panic!("UPDATER_TRUST_FINGERPRINT_REQUIRED_FOR_RELEASE: refusing to build a distributable binary without an independently authenticated updater-key fingerprint");
+    }
 
     println!("cargo:rustc-env=VYRON_BUILD_REVISION={revision}");
     println!("cargo:rustc-env=VYRON_COMMIT_SHA={commit}");

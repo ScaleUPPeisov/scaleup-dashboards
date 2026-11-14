@@ -143,3 +143,9 @@ independently authenticated SHA-256 fingerprint of the decoded 42-byte Minisign
 public-key payload. Without that explicit build-time trust anchor, VYRON reports
 `NOT_INDEPENDENTLY_VERIFIED` and blocks Stable/Owner Preview update checks and
 downloads. A valid key format or pinned feed URL alone never authorizes an update.
+
+The build script also refuses `PROFILE=release` unless the independent updater
+public-key fingerprint is supplied and validated. This is a repository-wide
+fail-closed guard for old release workflows that still attempt to build with
+the quarantined legacy signer. Debug/test builds remain available; distributable
+release builds cannot be produced from an unverified trust configuration.
