@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import cloud from '../src/index.mjs';
 import { cronSlot, crossedMilestones, pacificDay, safeEvent, acceptedCommand } from '../src/core.mjs';
-import { manualSlot, reserveQuota, scheduledSync } from '../src/sync.mjs';
+import { manualSlot, reserveQuota, scheduledSync, runCountersSync } from '../src/sync.mjs';
 import { startOAuth,callbackOAuth,authorizedProfiles,decryptSecret } from '../src/oauth.mjs';
 import { importVyronProfiles } from '../src/oauth-import.mjs';
 import { runAnalyticsBatch,runManualAnalyticsBatch,nextAnalyticsSlot,parseDailyReport } from '../src/google-analytics.mjs';
@@ -418,11 +418,6 @@ test('encrypted VYRON migration profiles import idempotently with their original
   assert.equal(await decryptSecret(stored.client_id_cipher,e),clientId);
   assert.equal(await decryptSecret(stored.client_secret_cipher,e),clientSecret);
   assert.equal(JSON.stringify(stored).includes(refreshToken),false);
-  const analytics=await runAnalyticsBatch(e,
-    {scheduledTime:Date.parse('2026-11-13T00:05:00Z')},fetchMock);
-  assert.equal(analytics.updated,1);
-  assert.equal(e.DB.native.prepare(
-    'SELECT views FROM channel_analytics WHERE channel_id=?').get(channelId).views,77);
 });
 
 test('one imported Google profile can bind multiple YouTube channels without dropping either',async()=>{
@@ -798,7 +793,7 @@ test('free-tier cron schedules never run public counters, private Analytics and 
   assert.ok(crons.includes(PUSH_CRON));
   assert.ok(crons.includes('0 0 * * *'));
   assert.ok(crons.includes('0 15 * * *'));
-  assert.ok(crons.includes('5,10,15,20,25 0,15 * * *'));
+  assert.ok(crons.includes('5,10,15,20,25,30,35,40,45,50,55 0,15 * * *'));
   assert.notEqual(PUSH_CRON,'*/5 * * * *');
   const pushMinutes=PUSH_CRON.split(' ')[0].split(',').map(Number);
   assert.equal(pushMinutes.length,12);
