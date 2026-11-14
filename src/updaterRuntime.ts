@@ -40,6 +40,7 @@ async function ensureUpdaterInstallable(set:(x:Partial<UpdaterRuntimeState>)=>vo
   const preflight=await fn();set({preflight});
   if(preflight.runningFromDmg)throw new Error('RUNNING_FROM_DMG: VYRON запущен из DMG. Переместите VYRON.app в Applications.');
   if(!preflight.bundleReplaceable)throw new Error('APP_NOT_REPLACEABLE: установленный VYRON.app недоступен для безопасной замены');
+  if(preflight.updaterConfigurationValid===false)throw new Error('UPDATER_CONFIGURATION_INVALID: embedded updater key format or stable feed endpoint is not valid/pinned');
   return preflight;
 }
 

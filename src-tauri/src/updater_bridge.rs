@@ -293,9 +293,6 @@ pub fn updater_install_preflight(app:tauri::AppHandle)->Result<serde_json::Value
         if snapshot.get("runningFromDmg").and_then(|x|x.as_bool())==Some(true){
             return Err("RUNNING_FROM_DMG: VYRON запущен из DMG. Переместите VYRON.app в Applications.".into())
         }
-        if snapshot.get("updaterConfigurationValid").and_then(|x|x.as_bool())!=Some(true){
-            return Err("UPDATER_CONFIGURATION_INVALID: embedded minisign public key format or pinned stable updater endpoint is invalid".into())
-        }
         Ok(snapshot)
     }
     #[cfg(not(target_os="macos"))]
