@@ -1,0 +1,21 @@
+services:
+  vyron-control:
+    build: .
+    restart: unless-stopped
+    user: "1000:1000"
+    environment:
+      VYRON_CONTROL_TOKEN: ${VYRON_CONTROL_TOKEN:?Create a strong access token}
+      VYRON_YOUTUBE_API_KEY: ${VYRON_YOUTUBE_API_KEY:?Configure server-side YouTube Data API key}
+      VYRON_CONTROL_DAILY_BUDGET: ${VYRON_CONTROL_DAILY_BUDGET:-200}
+    ports:
+      - "127.0.0.1:8787:8787"
+    volumes:
+      - vyron-data:/data
+      - ./channels.json:/config/channels.json:ro
+    init: true
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  vyron-data:

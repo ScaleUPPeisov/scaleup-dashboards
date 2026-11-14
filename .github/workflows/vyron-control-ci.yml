@@ -1,0 +1,62 @@
+name: VYRON CONTROL isolated tests
+
+on:
+  push:
+    branches:
+      - "feature/vyron-control-*"
+    paths:
+      - "apps/vyron-control/**"
+      - ".github/workflows/vyron-control-ci.yml"
+  pull_request:
+    paths:
+      - "apps/vyron-control/**"
+      - ".github/workflows/vyron-control-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/vyron-control
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install pinned Web Push dependency
+        run: npm install --no-audit --no-fund --ignore-scripts
+      - name: Check JavaScript syntax
+        run: |
+          node --check src/core.mjs
+          node --check src/store.mjs
+          node --check src/sync.mjs
+          node --check src/server.mjs
+          node --check public/app.js
+          node --check public/migration-crypto.js
+          node --check browser/migration-crypto-entry.mjs
+          node --check cloudflare/src/core.mjs
+          node --check cloudflare/src/sync.mjs
+          node --check cloudflare/src/index.mjs
+          node --check cloudflare/src/analytics.mjs
+          node --check cloudflare/src/oauth.mjs
+          node --check cloudflare/src/google-analytics.mjs
+          node --check cloudflare/src/push.mjs
+          node --check public/service-worker.js
+          node --check agent/mirror.mjs
+          node --check agent/logic.mjs
+          node --check agent/bridge.mjs
+          node --check agent/run.mjs
+          node --check agent/install.mjs
+          node --check agent/uninstall.mjs
+          node --check agent/generate-push-keys.mjs
+      - name: Run isolated deterministic tests
+        run: npm test
+      - name: Cloudflare Worker bundler dry-run (no credentials or deployment)
+        run: npx --yes wrangler@4.102.0 deploy --dry-run -c cloudflare/wrangler.jsonc
+
