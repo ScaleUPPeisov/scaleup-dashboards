@@ -956,7 +956,6 @@ test('Mac installer is valid shell and keeps agent token out of command history'
 test('free-tier cron schedules never run public counters, private Analytics and Web Push together',()=>{
   const cfg=JSON.parse(readFileSync(new URL('../wrangler.jsonc',import.meta.url),'utf8'));
   const crons=cfg.triggers.crons;
-  assert.ok(crons.includes(PUSH_CRON));
   assert.ok(crons.includes('0 * * * *'));
   assert.ok(crons.includes(ANALYTICS_QUEUE_CRON));
   assert.ok(crons.includes(PUSH_CRON));
@@ -964,6 +963,8 @@ test('free-tier cron schedules never run public counters, private Analytics and 
   assert.ok(crons.includes('5,10,15,20,25,30,35,40,45,50,55 0,15 * * *'));
   assert.equal(ANALYTICS_QUEUE_CRON.split(' ')[0].split(',').length,12);
   assert.notEqual(ANALYTICS_QUEUE_CRON,PUSH_CRON);
+  const queueMinutes=ANALYTICS_QUEUE_CRON.split(' ')[0].split(',').map(Number);
+  for(const minute of queueMinutes)assert.equal(PUSH_CRON.split(' ')[0].split(',').map(Number).includes(minute),false);
   assert.notEqual(PUSH_CRON,'*/5 * * * *');
   const pushMinutes=PUSH_CRON.split(' ')[0].split(',').map(Number);
   assert.equal(pushMinutes.length,12);
