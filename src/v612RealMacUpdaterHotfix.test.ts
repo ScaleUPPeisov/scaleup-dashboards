@@ -78,7 +78,7 @@ describe('VYRON 6.1.2 real mac updater hotfix',()=>{
   });
 
   it('keeps updater identity and signing endpoints unchanged while version is 6.1.4',()=>{
-    expect(conf.version).toBe('6.1.4');
+    expect(conf.version).toBe('6.1.15');
     expect(conf.identifier).toBe('studio.channelflow.desktop');
     expect(conf.plugins.updater.pubkey).toBe('dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEREODQ1NDdERTI1MEYxQzAKUldUQThWRGlmVlNFM1RHdW5WQnE2eG9BYTBnQlNmbUtmVU84UHJQMUNvZWZ4Qmo0L2hYcUd4UDEK');
     expect(conf.plugins.updater.endpoints).toEqual([

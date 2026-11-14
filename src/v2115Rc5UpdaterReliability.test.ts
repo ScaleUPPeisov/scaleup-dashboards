@@ -17,8 +17,9 @@ describe('VYRON 2.1.15 RC5 updater reliability wiring',()=>{
     expect(app).toContain("window.addEventListener('online'");
   });
   it('keeps automatic checks disabled when autoCheckUpdates=false while manual force remains available',()=>{
-    expect(app).toContain('!settings.autoCheckUpdates');
-    expect(settings).toContain('checkUpdate({force:true})');
+    expect(app).toContain('!autoCheckUpdates');
+    expect(app).toContain('[booted,autoCheckUpdates,bootstrapUpdater,updaterCheck]');
+    expect(settings).toContain('useUpdaterRuntime.getState().check({force:true})');
   });
   it('keeps single-flight even for manual force and blocks checks during active updater transfer/install',()=>{
     expect(runtime).toContain('if(checkPromise)return checkPromise');

@@ -11,7 +11,7 @@ use std::{
     net::TcpListener,
     path::{Path, PathBuf},
     process::Command,
-    sync::{Mutex, OnceLock},
+    sync::{Arc, Mutex, OnceLock},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Emitter, Manager};
@@ -385,6 +385,19 @@ fn resolve_oauth_credential_states_local(app:&AppHandle)->Result<Vec<Value>,Stri
 struct SessionAccessToken{token:String,expires_at:i64}
 static ACCESS_TOKEN_SESSION:OnceLock<Mutex<HashMap<String,SessionAccessToken>>>=OnceLock::new();
 fn access_token_session()->&'static Mutex<HashMap<String,SessionAccessToken>>{ACCESS_TOKEN_SESSION.get_or_init(||Mutex::new(HashMap::new()))}
+// Prevent concurrent refresh_token HTTP requests for the same Google profile,
+// without ever serializing independent accounts or persisting secrets in locks.
+static PROFILE_REFRESH_LOCKS:OnceLock<Mutex<HashMap<String,Arc<tokio::sync::Mutex<()>>>>>=OnceLock::new();
+fn profile_refresh_lock(profile_id:&str)->Arc<tokio::sync::Mutex<()>>{
+ let registry=PROFILE_REFRESH_LOCKS.get_or_init(||Mutex::new(HashMap::new()));
+ let mut map=registry.lock().unwrap_or_else(|e|e.into_inner());
+ Arc::clone(map.entry(profile_id.to_string())
+  .or_insert_with(||Arc::new(tokio::sync::Mutex::new(()))))
+}
+fn refresh_error_requires_reconnect(error:&str)->bool{
+ error.starts_with("OAUTH_INVALID_GRANT:")
+}
+
 fn remember_access_token(profile_id:&str,token:&str,expires_at:i64){
  if token.trim().is_empty(){return}
  if let Ok(mut c)=access_token_session().lock(){c.insert(profile_id.to_string(),SessionAccessToken{token:token.to_string(),expires_at});}
@@ -2865,6 +2878,31 @@ async fn valid_access_token(app:&AppHandle,profile_id:&str)->Result<(String,OAut
       return Ok((token,s.profiles[idx].clone()))
     }
 
+    // Single-flight refresh per profile. A second request waits for the first
+    // refresh, then consumes the existing session token instead of exchanging
+    // the same refresh token twice. Other Google accounts proceed independently.
+    let lock=profile_refresh_lock(profile_id);
+    let _single_flight=lock.lock().await;
+    // A different call may have refreshed both token and metadata meanwhile.
+    s=load_store_metadata(app)?;
+    let idx=s.profiles.iter().position(|p|p.id==profile_id)
+        .ok_or_else(||"CREDENTIAL_MISSING: YouTube OAuth профиль отсутствует".to_string())?;
+    let needs_identity=s.profiles[idx].identity_validated_at.is_none()
+        ||s.profiles[idx].identity_validated_channel_id.as_deref()!=s.profiles[idx].channel_id.as_deref();
+    if let Some((token,expires_at))=session_access_token(profile_id){
+        s.profiles[idx].access_token=token.clone();
+        s.profiles[idx].expires_at=expires_at;
+        let expected_channel_id=s.profiles[idx].channel_id.clone();
+        if needs_identity{
+            validate_profile_identity(app,&mut s.profiles[idx],&token).await?;
+            let actual=s.profiles[idx].identity_validated_channel_id.clone();
+            record_profile_credential_validation(app,profile_id,"PASS",expected_channel_id.as_deref(),actual.as_deref())?;
+            write_oauth_metadata(&store_path(app)?,&s)?;
+        }else{
+            record_profile_credential_validation(app,profile_id,"TOKEN_REFRESH_PASS",expected_channel_id.as_deref(),None)?;
+        }
+        return Ok((token,s.profiles[idx].clone()))
+    }
     // Passive/background operations never read legacy Keychain. An explicit Sync
     // must migrate the profile refresh token first.
     let refresh=require_canonical_refresh(app,profile_id)?;
@@ -2875,7 +2913,7 @@ async fn valid_access_token(app:&AppHandle,profile_id:&str)->Result<(String,OAut
     let (token,expires)=match refresh_access_token_for_profile(app,profile_id,&client_id,&refresh).await{
       Ok(v)=>v,
       Err(e)=>{
-       if e.starts_with("OAUTH_INVALID_GRANT:"){
+       if refresh_error_requires_reconnect(&e){
         let _=record_profile_credential_validation(app,profile_id,"RECONNECT_REQUIRED",expected_channel_id.as_deref(),None);
        }
        return Err(e)
@@ -7650,5 +7688,56 @@ mod v611_channel_runway_inventory_hotfix_tests {
         let estimate=full_sync_estimate(20);
         assert_eq!(estimate.get("apiRequests").and_then(Value::as_u64),Some(3));
         assert_eq!(estimate.get("estimatedQuotaCost").and_then(Value::as_u64),Some(3));
+    }
+}
+
+#[cfg(test)]
+mod v241_oauth_singleflight_tests {
+    use super::*;
+    #[test]
+    fn thirty_five_google_profiles_have_independent_refresh_locks() {
+        let locks=(0..35).map(|i|profile_refresh_lock(&format!("oauth-profile-{i}")))
+            .collect::<Vec<_>>();
+        for i in 0..35 {
+            let same=profile_refresh_lock(&format!("oauth-profile-{i}"));
+            assert!(Arc::ptr_eq(&locks[i],&same));
+            assert!(same.try_lock().is_ok());
+            for j in (i+1)..35 {
+                assert!(!Arc::ptr_eq(&locks[i],&locks[j]));
+            }
+        }
+        let guard=locks[0].try_lock().unwrap();
+        assert!(profile_refresh_lock("oauth-profile-0").try_lock().is_err());
+        // Contention on one YouTube account does not freeze the 34 others.
+        assert!(profile_refresh_lock("oauth-profile-1").try_lock().is_ok());
+        drop(guard);
+        assert!(profile_refresh_lock("oauth-profile-0").try_lock().is_ok());
+    }
+    #[test]
+    fn transient_http_quota_keychain_and_network_errors_never_require_google_reconnect() {
+        for code in ["temporarily_unavailable","server_error","backendError",
+            "rate_limit_exceeded","invalid_client","unauthorized_client"] {
+            let error=oauth_refresh_error(&json!({"error":code,"error_description":"synthetic test"}));
+            assert!(!refresh_error_requires_reconnect(&error),"{code}");
+        }
+        for error in [
+            "OAUTH_NETWORK_ERROR: timeout","OAUTH_REFRESH_FAILED: HTTP 401",
+            "OAUTH_REFRESH_FAILED: HTTP 403","OAUTH_REFRESH_FAILED: HTTP 429",
+            "OAUTH_REFRESH_FAILED: HTTP 500","KEYCHAIN_INTERACTION_REQUIRED",
+            "KEYCHAIN_AUTH_FAILED","OAUTH_CLIENT_SECRET_REQUIRED",
+        ] {
+            assert!(!refresh_error_requires_reconnect(error),"{error}");
+        }
+        assert!(refresh_error_requires_reconnect(
+            &oauth_refresh_error(&json!({"error":"invalid_grant","error_description":"revoked"}))));
+    }
+    #[test]
+    fn different_profiles_have_distinct_refresh_forms_and_original_refresh_tokens() {
+        let first=refresh_token_form("client-a","secret-a","refresh-a");
+        let second=refresh_token_form("client-b","secret-b","refresh-b");
+        assert_eq!(first.iter().find(|(k,_)|k=="refresh_token").unwrap().1,"refresh-a");
+        assert_eq!(second.iter().find(|(k,_)|k=="refresh_token").unwrap().1,"refresh-b");
+        assert_ne!(first,second);
+        assert_eq!(first.iter().find(|(k,_)|k=="grant_type").unwrap().1,"refresh_token");
     }
 }

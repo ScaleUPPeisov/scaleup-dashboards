@@ -3,7 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex},
+    time::Duration,
 };
 use tauri::{AppHandle, Emitter, State};
 
@@ -30,14 +31,17 @@ pub struct InventoryWatchRegistration {
 }
 
 pub struct InventoryWatchState {
-    watcher: Mutex<Option<RecommendedWatcher>>,
+    watcher: Arc<Mutex<Option<RecommendedWatcher>>>,
     roots: Arc<Mutex<HashMap<String, PathBuf>>>,
+    // Re-registration requests can overlap after moving I/O off the UI thread.
+    registration: Arc<Mutex<()>>,
 }
 impl Default for InventoryWatchState {
     fn default() -> Self {
         Self {
-            watcher: Mutex::new(None),
+            watcher: Arc::new(Mutex::new(None)),
             roots: Arc::new(Mutex::new(HashMap::new())),
+            registration: Arc::new(Mutex::new(())),
         }
     }
 }
@@ -91,15 +95,39 @@ fn event_channel_ids(event: &Event, roots: &HashMap<String, PathBuf>) -> Vec<(St
     out
 }
 
+// Registering recursive FSEvents watchers can touch a slow/disconnected disk.
+// It must not execute on the Tauri command dispatcher / AppKit thread.
 #[tauri::command]
-pub fn inventory_watch_roots(
+pub async fn inventory_watch_roots(
     app: AppHandle,
     state: State<'_, InventoryWatchState>,
     roots: Vec<InventoryWatchRoot>,
 ) -> Result<InventoryWatchRegistration, String> {
+    let watcher_slot = state.watcher.clone();
     let shared_roots = state.roots.clone();
+    let registration = state.registration.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _registration_guard = registration.lock()
+            .map_err(|_| "INVENTORY_WATCH_REGISTRATION_LOCK_FAILED".to_string())?;
+        register_inventory_watch_roots(app, watcher_slot, shared_roots, roots)
+    })
+    .await
+    .map_err(|e| format!("INVENTORY_WATCH_TASK_FAILED: {e}"))?
+}
+
+fn register_inventory_watch_roots(
+    app: AppHandle,
+    watcher_slot: Arc<Mutex<Option<RecommendedWatcher>>>,
+    shared_roots: Arc<Mutex<HashMap<String, PathBuf>>>,
+    roots: Vec<InventoryWatchRoot>,
+) -> Result<InventoryWatchRegistration, String> {
     let event_roots = shared_roots.clone();
     let event_app = app.clone();
+    // A single project creates many filesystem events (each copied MP3 and
+    // checkpoint). Coalesce them per channel, keeping the trailing update so
+    // a busy external HDD does not trigger one full UI inventory scan per file.
+    let pending_events = Arc::new(Mutex::new(HashMap::<String, (String, String)>::new()));
+    let flush_scheduled = Arc::new(AtomicBool::new(false));
 
     let mut watcher = RecommendedWatcher::new(
         move |result: notify::Result<Event>| {
@@ -107,17 +135,43 @@ pub fn inventory_watch_roots(
             if !event_can_change_inventory(&event) {
                 return;
             }
-            let Ok(roots) = event_roots.lock() else { return };
+            // Never invoke Tauri event dispatch while holding the roots mutex:
+            // UI event processing may re-register watchers and otherwise wait
+            // on this same lock during a large production batch.
+            let affected = {
+                let Ok(roots) = event_roots.lock() else { return };
+                event_channel_ids(&event, &roots)
+            };
+            if affected.is_empty() { return; }
             let kind = format!("{:?}", event.kind);
-            for (channel_id, path) in event_channel_ids(&event, &roots) {
-                let _ = event_app.emit(
-                    "render-inventory-changed",
-                    InventoryWatchEvent {
-                        channel_id,
-                        path,
-                        kind: kind.clone(),
-                    },
-                );
+            let schedule_flush = {
+                let Ok(mut pending) = pending_events.lock() else { return };
+                for (channel_id, path) in affected {
+                    pending.insert(channel_id, (path, kind.clone()));
+                }
+                // Swap while holding the mutex so the flushing worker cannot
+                // create a lost-event window between draining and re-arming.
+                !flush_scheduled.swap(true, Ordering::AcqRel)
+            };
+            if schedule_flush {
+                let pending = pending_events.clone();
+                let scheduled = flush_scheduled.clone();
+                let app = event_app.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_millis(180));
+                    let changes = {
+                        let Ok(mut events) = pending.lock() else { return };
+                        let changes = std::mem::take(&mut *events);
+                        scheduled.store(false, Ordering::Release);
+                        changes
+                    };
+                    for (channel_id, (path, kind)) in changes {
+                        let _ = app.emit(
+                            "render-inventory-changed",
+                            InventoryWatchEvent { channel_id, path, kind },
+                        );
+                    }
+                });
             }
         },
         Config::default(),
@@ -152,7 +206,7 @@ pub fn inventory_watch_roots(
     } else {
         return Err("INVENTORY_WATCH_ROOT_LOCK_FAILED".into());
     }
-    if let Ok(mut watcher_guard) = state.watcher.lock() {
+    if let Ok(mut watcher_guard) = watcher_slot.lock() {
         *watcher_guard = Some(watcher);
     } else {
         return Err("INVENTORY_WATCH_STATE_LOCK_FAILED".into());

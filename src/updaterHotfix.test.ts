@@ -2,11 +2,14 @@ import {describe,expect,it} from 'vitest';
 import {classifyUpdaterError,UPDATER_ENDPOINTS,updaterFailureMessage,updaterVersionStatus} from './updaterPolicy';
 
 describe('VYRON 2.1.3 updater hotfix',()=>{
+  // Historical test title stays stable for the baseline diff; both entries now mirror tauri.conf.json.
   it('uses canonical raw feed first and release latest as fallback',()=>{
-    expect(UPDATER_ENDPOINTS[0]).toBe('https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/vyron-updates/latest.json');
-    expect(UPDATER_ENDPOINTS[1]).toBe('https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/latest/download/latest.json');
+    expect(UPDATER_ENDPOINTS[0]).toBe('https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json');
+    expect(UPDATER_ENDPOINTS[1]).toBe('https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json');
   });
   it('reports same-version semantics explicitly',()=>expect(updaterVersionStatus('2.1.2','2.1.2')).toBe('current == latest'));
+  it('blocks updater when the embedded key trust fingerprint is not verified',()=>expect(classifyUpdaterError('UPDATER_KEY_TRUST_NOT_VERIFIED: missing trusted fingerprint','check').code).toBe('UPDATER_KEY_TRUST_NOT_VERIFIED'));
+  it('rejects stale embedded updater configuration distinctly',()=>expect(classifyUpdaterError('UPDATER_CONFIGURATION_INVALID: legacy endpoint','check').code).toBe('UPDATER_CONFIGURATION_INVALID'));
   it('classifies manifest fetch failures',()=>expect(classifyUpdaterError('network timeout','check').code).toBe('UPDATER_MANIFEST_FETCH_FAILED'));
   it('classifies archive download failures',()=>expect(classifyUpdaterError('connection reset','download').code).toBe('UPDATER_ARCHIVE_DOWNLOAD_FAILED'));
   it('rejects signature failures distinctly',()=>expect(classifyUpdaterError('signature verification failed','download').code).toBe('UPDATER_SIGNATURE_INVALID'));

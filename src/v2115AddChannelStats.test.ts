@@ -100,10 +100,14 @@ describe('VYRON 2.1.15 RC1 Add Channel and channel statistics regression',()=>{
   it('keeps active stats at ten minutes while background network refresh is controlled at 45 minutes',()=>{
     const stats=read('src/youtubeChannelStats.ts');
     const scheduler=read('src/ChannelStatisticsScheduler.tsx');
+    const runtime=read('src/youtubeChannelStatsRuntime.ts');
     const app=read('src/App.tsx');
     expect(stats).toContain('CHANNEL_STATS_TTL_MS=10*60*1000');
-    expect(scheduler).toContain('setInterval(run,BACKGROUND_CHANNEL_STATS_TTL_MS)');expect(scheduler).toContain('BACKGROUND_CHANNEL_STATS_TTL_MS');
-    expect(scheduler).toContain('refreshYoutubeChannelStatistics(false)');
+    expect(runtime).toContain('BACKGROUND_CHANNEL_STATS_TTL_MS=45*60*1000');
+    expect(scheduler).not.toContain('setInterval');
+    expect(scheduler).not.toContain('setTimeout');
+    expect(scheduler).not.toContain('refreshYoutubeChannelStatistics(');
+    expect(scheduler).toContain('return null;');
     expect(app).toContain('<ChannelStatisticsScheduler/>');
   });
 

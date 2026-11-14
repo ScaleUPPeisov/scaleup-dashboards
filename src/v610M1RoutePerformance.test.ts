@@ -40,8 +40,8 @@ describe('VYRON 6.1.0 M1 route pacing hotfix',()=>{
   expect(publisher).toContain("import {PublisherVideoPicker} from './PublisherVideoPicker'");
   expect(publisher).toContain("import {EMPTY_PUBLISHER_DERIVED,publisherRowFacts,usePublisherDerived} from './publisherDerivedRuntime'");
   expect(publisher).toContain('publisherDerived=usePublisherDerived');
-  expect(publisher).toContain('PublisherOSLightController');
-  expect(publisher).toContain("if(advancedPanel)return <PublisherOSAdvanced");
+  expect(publisher).not.toContain('PublisherOSLightController');
+  expect(publisher).not.toContain("if(advancedPanel)return <PublisherOSAdvanced");
   expect(publisher).toContain('function PublisherOSAdvanced');
   expect(publisher).toContain('dynamicInventory?new Map(allChannelJobs.map');
   expect(publisher).toContain(':publisherDerived.uploadStateById');
@@ -49,8 +49,8 @@ describe('VYRON 6.1.0 M1 route pacing hotfix',()=>{
   expect(publisher).toContain('dynamicInventory?uploadStateCounters');
   expect(publisher).toContain(':publisherDerived.counts');
   expect(publisher).toContain('publisherDerived.rowFactsById');
-  expect(publisher).toContain('(metadataOpen||draft.rows.length>0)');
-  expect(publisher).toContain('(scheduleOpen||selected.length>0)');
+  expect(publisher).not.toContain('[metadataOpen,');
+  expect(publisher).not.toContain('[scheduleOpen,');
   expect(publisher).toContain('initial-active-channel-dispatch-skipped');
   expect(publisher).not.toContain('useApp(s=>s.uploadHistory)');
   expect(publisher).not.toContain('useApp(s=>s.fingerprintCache)');

@@ -27,7 +27,7 @@ describe('VYRON 2.0.11 requested feature contracts',()=>{
  });
  it('Topbar errors are clickable and updates contain dated canonical history',()=>{
   expect(read('./App.tsx')).toContain('setErrorsOpen(true)');
-  expect(read('./SettingsOS.tsx')).toContain('<ReleaseHistoryTimeline/>');
+  expect(read('./SettingsOS.tsx')).toContain('<ReleaseHistoryTimeline currentVersion={updaterCurrent||undefined}/>');
   expect(read('./ReleaseHistoryTimeline.tsx')).toContain('groupReleaseHistoryByDay');
   expect(read('./releaseHistory.ts')).toContain('"version": "2.0.11"');
  });

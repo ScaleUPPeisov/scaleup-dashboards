@@ -34,7 +34,8 @@ describe('VYRON 2.1.14 RC2 channel statistics contract',()=>{
   expect(types).toContain('stats?:YoutubeChannelStatistics');
   expect(types).toContain('statisticsUpdatedAt?:string');
   expect(store).toContain('channels:s.channels');
-  expect(store).toContain('channels:(s.channels||[]).filter(Boolean).map(normalizeChannel)');
+  expect(store).toContain('dedupeHydratedChannels((s.channels||[]).filter(Boolean))');
+  expect(store).toContain('channels:dedup.channels');
  });
  it('accounts page uses shared stale-cache runtime and preserves last values on errors',()=>{
   const ui=read('src/AccountsPage.tsx');

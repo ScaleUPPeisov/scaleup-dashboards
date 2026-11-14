@@ -139,8 +139,11 @@ describe('VYRON 2.1.15 RC4 multi-channel statistics center',()=>{
 
  it('background statistics cadence is controlled and linked-only runtime performs targeting',()=>{
   const scheduler=fs.readFileSync('src/ChannelStatisticsScheduler.tsx','utf8'),runtime=fs.readFileSync('src/youtubeChannelStatsRuntime.ts','utf8');
-  expect(scheduler).toContain('BACKGROUND_CHANNEL_STATS_TTL_MS');
-  expect(runtime).toContain('45*60*1000');
+  expect(scheduler).not.toContain('setInterval');
+  expect(scheduler).not.toContain('setTimeout');
+  expect(scheduler).not.toContain('refreshYoutubeChannelStatistics(');
+  expect(scheduler).toContain('return null;');
+  expect(runtime).toContain('BACKGROUND_CHANNEL_STATS_TTL_MS=45*60*1000');
   expect(runtime).toContain('classifyYoutubeChannels');
  });
 

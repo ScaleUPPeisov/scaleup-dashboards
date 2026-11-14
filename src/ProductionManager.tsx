@@ -1,10 +1,11 @@
 import React,{useEffect,useMemo,useState} from 'react';
 import {createJobsCount} from './autopilotCore';
-import {productionManagerApi,type BatchStatus,type BatchSummary,type BuildResult,type ChannelProductionState,type DistributionMode,type ImageSummary,type ImportSession,type MusicSummary,type ProductionStorageStatus,type Validation} from './productionManagerApi';
+import {productionBuildRuntime,productionManagerApi,type BatchStatus,type BatchSummary,type BuildResult,type ChannelProductionState,type DistributionMode,type ImageSummary,type ImportSession,type MusicSummary,type ProductionStorageStatus,type Validation} from './productionManagerApi';
 import {defaultChannelProductionPrefs,patchChannelProductionPrefs,useProductionPrefs} from './productionPrefs';
 import {useApp} from './store';
 import {notifyInfo,notifySuccess} from './notificationCenter';
 import {openRecoveryFlow} from './RecoveryGate';
+import {journal} from './activityJournalRuntime';
 
 const MODES:Array<{id:DistributionMode;title:string;hint:string}>=[
   {id:'even',title:'Равномерно',hint:'Сначала используются треки с наименьшим числом использований.'},
@@ -29,6 +30,7 @@ export function ProductionManager({view='all'}:{view?:'all'|'materials'|'builder
   const [prefs,patchPrefs]=useProductionPrefs();
   const channelId=(prefs.selectedChannelId&&channels.some(c=>c.id===prefs.selectedChannelId)?prefs.selectedChannelId:channels[0]?.id)||'';
   const channelPrefs={...defaultChannelProductionPrefs(),...(prefs.byChannel[channelId]||{})};
+  const musicLibraryHistory=channelPrefs.musicLibraryHistory||[];
   const projectCount=clamp(channelPrefs.projectCount,1,10000),tracksPerProject=clamp(channelPrefs.tracksPerProject,1,100),mode=(['even','random','alphabetical'].includes(channelPrefs.mode)?channelPrefs.mode:'even') as DistributionMode,allowImageReuse=Boolean(channelPrefs.allowImageReuse);
   const setProjectCount=(v:number|((n:number)=>number))=>patchChannelProductionPrefs(channelId,{projectCount:clamp(typeof v==='function'?v(projectCount):v,1,10000)});
   const setTracksPerProject=(v:number)=>patchChannelProductionPrefs(channelId,{tracksPerProject:clamp(v,1,100)});
@@ -59,23 +61,37 @@ export function ProductionManager({view='all'}:{view?:'all'|'materials'|'builder
 
   useEffect(()=>{if(!prefs.selectedChannelId&&channels[0])patchPrefs({selectedChannelId:channels[0].id})},[prefs.selectedChannelId,channels.length]);
 
-  async function refreshState(){
+  async function refreshState(loadHistory=view!=='materials'){
     if(!workspace||!channelId){setSession(null);setMusic(null);setImages(null);setResolvedImagesAvailable(0);setCollectorCollected(0);setBatches([]);return}
-    let base:BatchSummary[]=[];
     try{
       const state:ChannelProductionState=await productionManagerApi.state(workspace,channelId);
       setSession(state.importSession||null);
       setCollectorCollected(state.importSession?.collected.length||0);
       setResolvedImagesAvailable(state.resolvedImagesAvailable||0);
-      setMusic(state.music||null);setImages(state.images||null);base=state.batches||[];
-    }catch{
-      try{base=await productionManagerApi.batches(workspace,channelId)}catch{}
-    }
+      setMusic(state.music||null);setImages(state.images||null);
+    }catch{setSession(null);setMusic(null);setImages(null);setResolvedImagesAvailable(0);setCollectorCollected(0)}
+    if(!loadHistory){setBatches([]);return}
+    let base:BatchSummary[]=[];
+    try{base=await productionManagerApi.batches(workspace,channelId)}catch{}
     if(productionRoot&&productionRoot!==workspace){try{base=[...base,...await productionManagerApi.batches(productionRoot,channelId)]}catch{}}
-    const merged=[...new Map(base.map(b=>[b.batchId,b])).values()].sort((a,b)=>b.createdAt.localeCompare(a.createdAt));setBatches(merged);
+    setBatches([...new Map(base.map(b=>[b.batchId,b])).values()].sort((a,b)=>b.createdAt.localeCompare(a.createdAt)));
   }
 
-  useEffect(()=>{void refreshState();setResult(null);setValidation(null);setBatchStatus(null)},[workspace,productionRoot,channelId]);
+  useEffect(()=>{void refreshState(view!=='materials');setResult(null);setValidation(null);setBatchStatus(null)},[workspace,productionRoot,channelId,view]);
+  useEffect(()=>{
+    // Reconnect to the global operation rather than inventing a crash recovery
+    // whenever the Production React page remounts after navigation.
+    const sync=()=>{
+      const task=productionBuildRuntime.snapshot(channelId);
+      if(!task){setProgress(null);setBusy(v=>v==='build'?'':v);return}
+      setProgress(task.progress);
+      if(task.state==='RUNNING'){setBusy('build');return}
+      setBusy(v=>v==='build'?'':v);
+      if(task.state==='COMPLETED'&&task.result)setResult(task.result);
+    };
+    sync();
+    return productionBuildRuntime.subscribe(sync);
+  },[channelId]);
   useEffect(()=>{
     const onMaterialsChanged=(event:Event)=>{
       const detail=(event as CustomEvent<{channelId?:string}>).detail;
@@ -93,11 +109,6 @@ export function ProductionManager({view='all'}:{view?:'all'|'materials'|'builder
     const offs:Promise<()=>void>[]=[];
     offs.push(productionManagerApi.onImportProgress(p=>{if(live&&p.channelId===channelId)setCollectorCollected(p.collected)}));
     offs.push(productionManagerApi.onImportError(p=>{if(live&&p.channelId===channelId)setImportError(p.message||'Ошибка сбора изображений')}));
-    offs.push(productionManagerApi.onBatchProgress(p=>{
-      if(!live)return;
-      setProgress({completed:p.completed,total:p.total,stage:p.stage});
-      if(p.total>0&&p.completed>=p.total)void refreshState();
-    }));
     return()=>{live=false;offs.forEach(p=>p.then(fn=>fn()).catch(()=>{}))}
   },[workspace,channelId]);
 
@@ -129,11 +140,18 @@ export function ProductionManager({view='all'}:{view?:'all'|'materials'|'builder
   async function chooseMusic(){
     if(!workspace||!channel)return;
     const path=await productionManagerApi.chooseMusicFolder(music?.libraryPath||undefined);if(!path)return;
+    await selectMusicLibrary(path);
+  }
+
+  async function selectMusicLibrary(path:string){
+    if(!workspace||!channel||!path)return;
     setBusy('music');
     try{
-      await productionManagerApi.setMusicLibrary(workspace,channel.id,channel.name,path);
-      const indexed=await productionManagerApi.indexMusic(workspace,channel.id);
-      setMusic(indexed);notifySuccess('Музыкальная библиотека обновлена',`${indexed.tracks.toLocaleString('ru-RU')} треков доступно.`,{operationId:`music-index:${channel.id}:${indexed.indexedAt}`});
+      const settings=await productionManagerApi.setMusicLibrary(workspace,channel.id,channel.name,path);
+      const libraryPath=settings.musicLibrary||path;
+      patchChannelProductionPrefs(channel.id,{musicLibraryHistory:[libraryPath,...musicLibraryHistory.filter(x=>x!==libraryPath)].slice(0,8)});
+      setMusic({libraryPath,tracks:0,indexedAt:'',configuredAt:settings.updatedAt||new Date().toISOString(),available:true});
+      notifySuccess('Папка музыки сохранена','Нажмите «Обновить библиотеку», когда нужно перечитать список треков.',{operationId:`music-library:${channel.id}:${settings.updatedAt}`});
     }catch(e){toast(String(e))}finally{setBusy('')}
   }
 
@@ -163,16 +181,19 @@ export function ProductionManager({view='all'}:{view?:'all'|'materials'|'builder
       return;
     }
     const links=ensureJobLinks();
+    const requestId=crypto.randomUUID();
+    journal({eventId:'production-build-started:'+requestId,eventType:'PRODUCTION_BUILD_STARTED',status:'STARTED',source:'LIVE_OPERATION',timestamp:new Date().toISOString(),operationId:requestId,channelId:channel.id,channelName:channel.name,details:{projectCount,tracksPerProject,outputRoot:productionRoot||workspace}});
     setBusy('build');setProgress({completed:0,total:projectCount,stage:'Подготовка'});setValidation(null);
     try{
-      const built=await productionManagerApi.build({requestId:crypto.randomUUID(),workspace,outputWorkspace:productionRoot||workspace,channelId:channel.id,channelName:channel.name,projectCount,tracksPerProject,mode,allowImageReuse:reuse,jobLinks:links.map(j=>({jobId:j.id,number:j.number})),recoveryUiContext:{page:'production',channelId:channel.id,productionTab:prefs.tab,selectedBatchId:result?.batch?.batchId||channelPrefs.lastBatchId,selectedProjectIds}});
+      const built=await productionBuildRuntime.start({requestId,workspace,outputWorkspace:productionRoot||workspace,channelId:channel.id,channelName:channel.name,projectCount,tracksPerProject,mode,allowImageReuse:reuse,jobLinks:links.map(j=>({jobId:j.id,number:j.number})),recoveryUiContext:{page:'production',channelId:channel.id,productionTab:prefs.tab,selectedBatchId:result?.batch?.batchId||channelPrefs.lastBatchId,selectedProjectIds}});
       setResult(built);
       if(built.batch){
         setBatches(prev=>[built.batch!,...prev.filter(x=>x.batchId!==built.batch!.batchId)]);patchChannelProductionPrefs(channel.id,{lastBatchId:built.batch.batchId,selectedProjectIds:[]});
+        journal({eventId:'production-build-completed:'+requestId,eventType:'PRODUCTION_BUILD_COMPLETED',status:'SUCCESS',source:'LIVE_OPERATION',timestamp:new Date().toISOString(),operationId:requestId,batchId:built.batch.batchId,channelId:channel.id,channelName:channel.name,details:{projectCount:built.batch.projectCount,tracksAssigned:built.batch.tracksAssigned}});
         notifySuccess('Проекты созданы',`${built.batch.projectCount.toLocaleString('ru-RU')} проектов готовы для ENDLUME.`,{operationId:`batch-built:${built.batch.batchId}`});
         if(endlumePath){try{setValidation(await productionManagerApi.validate(built.batch.manifestPath,endlumePath))}catch{}}
       }
-    }catch(e){toast(String(e));setProgress(null)}finally{setBusy('')}
+    }catch(e){journal({eventId:'production-build-failed:'+requestId,eventType:'PRODUCTION_BUILD_FAILED',status:'FAILED',source:'LIVE_OPERATION',timestamp:new Date().toISOString(),operationId:requestId,channelId:channel.id,channelName:channel.name,details:{message:String(e)}});toast(String(e));setProgress(null)}finally{setBusy('')}
   }
 
   async function validateBatch(batch=result?.batch||null){
@@ -194,6 +215,7 @@ export function ProductionManager({view='all'}:{view?:'all'|'materials'|'builder
       let receipt;try{receipt=await productionManagerApi.openInEndlume(endlumePath,batch.manifestPath,ids,forceResend)}catch(e){const msg=String(e);if(msg.includes('ENDLUME_ALREADY_SENT:')&&!forceResend){const repeated=msg.split('ENDLUME_ALREADY_SENT:')[1]?.trim()||'';if(confirm(`${repeated} уже отправлен(ы) в ENDLUME. Отправить повторно?`)){setBusy('');await openEndlume(batch,true);return}}throw e}
       const consumed=await waitForHandoff(receipt.requestPath);
       if(!consumed){toast('ENDLUME открыт, но выбранные проекты не были приняты. Проверьте установленную версию ENDLUME.');return}
+      window.dispatchEvent(new CustomEvent('vyron:production-render-tracking',{detail:{channelId}}));
       notifySuccess('Передано в ENDLUME',`${receipt.selectedProjectIds.length.toLocaleString('ru-RU')} из ${batch.projectCount.toLocaleString('ru-RU')} проектов отправлено на рендер.`,{operationId:`endlume-handoff:${receipt.batchId}:${Date.now()}`});setSelectedProjects([]);await refreshState();setBatchStatus(await productionManagerApi.status(batch.manifestPath));
     }catch(e){toast(`Не удалось передать выбранные проекты в ENDLUME: ${String(e)}`)}finally{setBusy('')}
   }
@@ -251,7 +273,7 @@ export function ProductionManager({view='all'}:{view?:'all'|'materials'|'builder
     <section className="panel pmHero"><div><small>ПОДГОТОВКА ДЛЯ ENDLUME</small><h2>Материалы и сборка проектов</h2><p>Соберите изображения и музыку, затем создайте готовые папки проектов для ENDLUME.</p></div><div className="pmChannelBadge"><small>ТЕКУЩИЙ КАНАЛ</small><b>{channel?.name||'—'}</b><span>Берётся из общего Production workspace</span></div></section>
     {view!=='builder'&&<div className="pmGrid">
       <section className="panel pmCard"><div className="pmCardHead"><span><small>01</small><h3>Изображения</h3></span><b className={session?.active&&!importError?'live':''}>{importError?'● ОШИБКА':session?.active?'● СБОР АКТИВЕН':'ГОТОВО'}</b></div><p>VYRON YT PEISOV следит за Downloads только во время активной import-сессии выбранного канала и создаёт собственную нумерацию.</p><div className="pmFileCount"><b>{collectorCollected.toLocaleString('ru-RU')}</b><span>файлов собрано</span></div>{importError&&<div className="pmShortage"><div><b>Проблема со сбором изображений</b><span>{importError}</span></div></div>}<div className="pmActions"><button className="primary" disabled={busy==='import'} onClick={toggleImport}>{session?.active?'ЗАВЕРШИТЬ СБОР':'НАЧАТЬ СБОР'}</button></div><small className="pmHint">{session?.active?`Папка: ${shortPath(session.downloadsPath)} • Собрано: ${collectorCollected}`:session?.importPath?`Последний сбор: ${shortPath(session.importPath)} • Builder доступно: ${collected}`:'После запуска скачивайте изображения из ChatGPT как обычно.'}</small></section>
-      <section className="panel pmCard"><div className="pmCardHead"><span><small>02</small><h3>Музыкальная библиотека</h3></span><b>{(music?.tracks||0).toLocaleString('ru-RU')} треков</b></div><p>Оригинальная библиотека не изменяется. В batch копируются только назначенные треки.</p><code className="pmPath">{shortPath(music?.libraryPath)}</code><div className="pmActions"><button className="primary" disabled={busy==='music'} onClick={chooseMusic}>ВЫБРАТЬ ПАПКУ</button><button disabled={busy==='music'||!music?.libraryPath} onClick={reindexMusic}>ОБНОВИТЬ БИБЛИОТЕКУ</button></div><small className="pmHint">Добавленные и удалённые треки учитываются после переиндексации.</small></section>
+      <section className="panel pmCard"><div className="pmCardHead"><span><small>02</small><h3>Музыкальная библиотека</h3></span><b>{music&&!music.available?'ДИСК НЕДОСТУПЕН':`${(music?.tracks||0).toLocaleString('ru-RU')} треков`}</b></div><p>Оригинальная библиотека не изменяется. В batch копируются только назначенные треки.</p><code className="pmPath">{shortPath(music?.libraryPath)}</code><small className="pmHint">{music?.indexedAt?`${music.tracks.toLocaleString('ru-RU')} треков • Последнее обновление: ${new Date(music.indexedAt).toLocaleString('ru-RU')}`:music?.libraryPath?'Список треков ещё не обновлялся':'Папка не выбрана'}</small>{musicLibraryHistory.length>1&&<select aria-label="Недавние музыкальные библиотеки" value={music?.libraryPath||''} disabled={busy==='music'} onChange={e=>void selectMusicLibrary(e.target.value)}><option value="" disabled>Недавние папки</option>{musicLibraryHistory.map(path=><option key={path} value={path}>{path}</option>)}</select>}<div className="pmActions"><button className="primary" disabled={busy==='music'} onClick={chooseMusic}>ИЗМЕНИТЬ ПАПКУ</button><button disabled={busy==='music'||!music?.libraryPath} onClick={reindexMusic}>ОБНОВИТЬ БИБЛИОТЕКУ</button><button disabled={!music?.libraryPath} onClick={()=>void productionManagerApi.openFolder(music!.libraryPath)}>ОТКРЫТЬ В FINDER</button></div><small className="pmHint">{music&&!music.available?'Сохранённый путь не сброшен. Подключите диск и обновите библиотеку.':'Добавленные и удалённые треки учитываются только после ручного обновления.'}</small></section>
     </div>}
 
     {view!=='materials'&&<><section className="panel pmBuilder"><div className="pmBuilderHead"><div><small>03</small><h3>Собрать проекты для ENDLUME</h3><p>Укажите количество проектов и песен. В каждой папке будет одно изображение и выбранная музыка.</p></div><div className="pmFormula"><b>{projectCount}</b><span>×</span><b>{tracksPerProject}</b><span>=</span><strong>{requiredTracks}</strong><small>назначений</small></div></div>

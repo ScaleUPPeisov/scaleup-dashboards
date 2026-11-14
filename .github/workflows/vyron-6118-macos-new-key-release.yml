@@ -1,0 +1,21 @@
+# Intentionally frozen. Do not re-enable until a new updater key has been
+# generated offline, independently authenticated, and a trusted bootstrap path
+# has passed on a disposable Mac. No private key or release token belongs here.
+name: VYRON 6.1.18 release — FROZEN
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    if: ${{ false }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Explain release freeze
+        run: |
+          echo "VYRON 6.1.18 release is intentionally disabled."
+          echo "No independently generated updater key or trusted bootstrap has been approved."
+          echo "Stable feed remains unchanged."

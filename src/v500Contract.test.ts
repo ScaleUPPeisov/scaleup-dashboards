@@ -29,21 +29,26 @@ const cargo=fs.readFileSync('src-tauri/Cargo.toml','utf8');
 
 describe('VYRON 5.0.0 product contract',()=>{
  it('uses one 5.0.0 product identity without changing the bundle id',()=>{
-  expect(VYRON_MAJOR_VERSION).toBe('5.0.0');
-  expect(packageJson.version).toBe('5.0.0');
-  expect(packageLock.version).toBe('5.0.0');
-  expect(packageLock.packages[''].version).toBe('5.0.0');
-  expect(tauri.version).toBe('5.0.0');
+  expect(VYRON_RELEASE_HISTORY.some(x=>x.version==='5.0.0'&&x.type==='MAJOR')).toBe(true);
+  expect(VYRON_MAJOR_VERSION).toBe('6.0.0');
+  expect(packageJson.version).toBe('6.1.15');
+  expect(packageLock.version).toBe('6.1.15');
+  expect(packageLock.packages[''].version).toBe('6.1.15');
+  expect(tauri.version).toBe('6.1.15');
   expect(tauri.identifier).toBe('studio.channelflow.desktop');
-  expect(cargo).toMatch(/\[package\][\s\S]*version\s*=\s*"5\.0\.0"/);
+  expect(cargo).toMatch(/\[package\][\s\S]*version\s*=\s*"6\.1\.15"/);
  });
  it('removes only the top-level History shortcut while preserving YouTube navigation',()=>{
-  expect(app).not.toContain("id:'history',page:'youtube'");
+  expect(app).toContain("id:'history',page:'history'");
+  expect(app).not.toContain("youtubeTab:'history'");
   expect(app).toContain("id:'youtube',page:'youtube'");
   expect(app).toContain("label:'Запас видео'");
  });
  it('protects the first two minutes from heavy owner inventory refresh',()=>{
-  expect(OWNER_INVENTORY_COLD_START_DELAY_MS).toBeGreaterThanOrEqual(120_000);
+  expect(OWNER_INVENTORY_COLD_START_DELAY_MS).toBe(0);
+  expect(ownerScheduler).not.toContain('setInterval');
+  expect(ownerScheduler).not.toContain('setTimeout');
+  expect(ownerScheduler).not.toContain('refreshStaleOwnerInventories(');
  });
  it('uses the approved bundled VYRON artwork for the major update experience',()=>{
   expect(VYRON_5_ARTWORK).toBeTruthy();
@@ -55,9 +60,11 @@ describe('VYRON 5.0.0 product contract',()=>{
   expect(inventory).toContain('ЛОКАЛЬНЫЙ ЗАПАС');
  });
  it('has a canonical 5.0 major candidate plus the real production chain',()=>{
-  expect(VYRON_CURRENT_RELEASE.version).toBe('5.0.0');
-  expect(VYRON_CURRENT_RELEASE.type).toBe('MAJOR');
-  expect(VYRON_CURRENT_RELEASE.prerelease).toBe(true);
+  expect(VYRON_CURRENT_RELEASE.version).toBe('6.1.10');
+  const v5=VYRON_RELEASE_HISTORY.find(x=>x.version==='5.0.0');
+  expect(v5?.type).toBe('MAJOR');
+  expect(v5?.tag).toBe('v5.0.0');
+  expect(v5?.publishedAt).toBeTruthy();
   const versions=new Set(VYRON_RELEASE_HISTORY.map(x=>x.version));
   for(const v of ['4.0.1','4.0.0','3.3.5','3.3.4','3.3.3','3.3.2','3.3.1','3.3.0'])expect(versions.has(v)).toBe(true);
  });

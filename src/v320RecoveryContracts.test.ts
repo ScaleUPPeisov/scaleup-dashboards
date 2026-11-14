@@ -26,7 +26,9 @@ describe('VYRON 3.2 crash/power recovery contracts',()=>{
  });
  it('has 30 second safe-default recovery UI and never resumes unsafe storage',()=>{
    const g=read('src/RecoveryGate.tsx');
-   expect(g).toContain('Date.now()+30_000');
+   expect(g).not.toContain('Date.now()+30_000');
+   expect(g).toContain('Восстановление запускается только вручную');
+   expect(g).not.toContain('void resumeNow(next)');
    expect(g).toContain('Восстановить сейчас');
    expect(g).toContain('Не восстанавливать');
    expect(g).toContain('Подробнее');

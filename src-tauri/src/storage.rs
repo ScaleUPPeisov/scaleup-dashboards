@@ -212,6 +212,88 @@ fn migrate_state(mut state: Value) -> (Value, bool) {
     (state, changed)
 }
 
+// macOS: atomic replace on the SAME volume, without unlinking the existing state.
+// Keep two previous verified generations. Never migrate the user's Keychain here.
+#[cfg(target_os="macos")]
+fn durable_replace(path:&Path,bytes:&[u8])->Result<(),String>{
+    use std::fs::{File,OpenOptions};
+    use std::io::Write;
+    let parent=path.parent().ok_or("STATE_INVALID_PARENT")?;
+    fs::create_dir_all(parent).map_err(|e|format!("STATE_PARENT: {e}"))?;
+    let nonce=uuid::Uuid::new_v4().to_string();
+    let temp=path.with_extension(format!("write-{nonce}.tmp"));
+    let backup=path.with_extension("bak");
+    let backup2=path.with_extension("bak2");
+    let is_state=matches!(path.file_name().and_then(|x|x.to_str()),Some("state.json"|"app-state.json"));
+
+    fn synced_file(path:&Path,bytes:&[u8])->Result<(),String>{
+        use std::fs::OpenOptions;
+        use std::io::Write;
+        let mut output=OpenOptions::new().write(true).create_new(true).open(path)
+            .map_err(|e|format!("STATE_CREATE: {e}"))?;
+        security::private_permissions(path)?;
+        output.write_all(bytes).map_err(|e|format!("STATE_WRITE: {e}"))?;
+        output.sync_all().map_err(|e|format!("STATE_SYNC: {e}"))?;
+        Ok(())
+    }
+
+    let result=(||->Result<(),String>{
+        synced_file(&temp,bytes)?;
+        // Verify the serialized new state before touching the last known good copy.
+        let candidate:Value=serde_json::from_slice(&fs::read(&temp).map_err(|e|e.to_string())?)
+            .map_err(|e|format!("STATE_NEW_INVALID: {e}"))?;
+        if is_state&&!state_looks_valid(&candidate){return Err("STATE_NEW_SCHEMA_INVALID".into())}
+        if path.exists(){
+            let prior=fs::read(path).map_err(|e|format!("STATE_OLD_READ: {e}"))?;
+            if serde_json::from_slice::<Value>(&prior).ok().as_ref()
+                .map(|v|!is_state||state_looks_valid(v)).unwrap_or(false){
+                if backup.exists(){
+                    if let Ok(bytes)=fs::read(&backup){
+                        if serde_json::from_slice::<Value>(&bytes).ok().as_ref()
+                            .map(|v|!is_state||state_looks_valid(v)).unwrap_or(false){
+                            let previous=path.with_extension(format!("backup2-{nonce}.tmp"));
+                            let second=(||->Result<(),String>{
+                                synced_file(&previous,&bytes)?;
+                                fs::rename(&previous,&backup2).map_err(|e|format!("STATE_BACKUP2_REPLACE: {e}"))
+                            })();
+                            if second.is_err(){let _=fs::remove_file(&previous);}
+                            second?;
+                        }
+                    }
+                }
+                let new_backup=path.with_extension(format!("backup-{nonce}.tmp"));
+                let prepared=(||->Result<(),String>{
+                    synced_file(&new_backup,&prior)?;
+                    fs::rename(&new_backup,&backup).map_err(|e|format!("STATE_BACKUP_REPLACE: {e}"))
+                })();
+                if prepared.is_err(){let _=fs::remove_file(&new_backup);}
+                prepared?;
+            }else{
+                // Preserve corrupt bytes separately, never silently replace or destroy them.
+                let corrupt=path.with_extension(format!("corrupt-{nonce}.json"));
+                synced_file(&corrupt,&prior)?;
+            }
+        }
+        // On macOS rename over an existing regular file is an atomic replacement.
+        fs::rename(&temp,path).map_err(|e|format!("STATE_ATOMIC_RENAME: {e}"))?;
+        security::private_permissions(path)?;
+        // Best effort to flush directory metadata: failure does not mean the
+        // already-replaced state was not written.
+        let _=File::open(parent).and_then(|dir|dir.sync_all());
+        Ok(())
+    })();
+    if result.is_err(){let _=fs::remove_file(&temp);}
+    result
+}
+
+#[cfg(target_os="macos")]
+fn atomic_write(path:&Path,state:&Value)->Result<(),String>{
+    let bytes=serde_json::to_vec_pretty(state).map_err(|e|e.to_string())?;
+    durable_replace(path,&bytes)
+}
+
+// Keep non-macOS application behavior untouched.
+#[cfg(not(target_os="macos"))]
 fn atomic_write(path: &Path, state: &Value) -> Result<(), String> {
     let tmp = path.with_extension("tmp");
     let bytes = serde_json::to_vec_pretty(state).map_err(|e| e.to_string())?;
@@ -224,25 +306,45 @@ fn atomic_write(path: &Path, state: &Value) -> Result<(), String> {
     fs::rename(tmp, path).map_err(|e| e.to_string())?;
     security::private_permissions(path)?;
     let bak = path.with_extension("bak");
-    if bak.exists() {
-        let _ = security::private_permissions(&bak);
-    }
+    if bak.exists() { let _ = security::private_permissions(&bak); }
     Ok(())
 }
 
+fn state_looks_valid(v:&Value)->bool{
+    v.as_object().is_some() &&
+        v.get("channels").and_then(Value::as_array).is_some() &&
+        v.get("jobs").and_then(Value::as_array).is_some() &&
+        v.get("settings").and_then(Value::as_object).is_some()
+}
+fn load_valid_candidate(path:&Path)->Option<Value>{
+    let bytes=fs::read(path).ok()?;
+    let state:Value=serde_json::from_slice(&bytes).ok()?;
+    state_looks_valid(&state).then_some(state)
+}
+
+// Kept synchronous for internal migration callers. The interactive startup
+// instead uses load_state_in_background to avoid blocking the AppKit dispatcher.
 #[tauri::command]
 pub fn load_state(app: AppHandle) -> Value {
     let path = match state_file(&app) {
         Ok(p) => p,
         Err(_) => return default_state(),
     };
-    let primary = fs::read(&path)
-        .ok()
-        .and_then(|b| serde_json::from_slice::<Value>(&b).ok());
+    let primary=load_valid_candidate(&path);
     let recovered_from_mirror=primary.is_none();
-    let raw = primary
-        .or_else(||state_mirror_file(&app).ok().and_then(|p|fs::read(p).ok()).and_then(|b|serde_json::from_slice::<Value>(&b).ok()))
-        .unwrap_or_else(default_state);
+    let mirror=state_mirror_file(&app).ok().and_then(|p|load_valid_candidate(&p));
+    let backup=load_valid_candidate(&path.with_extension("bak"));
+    let backup2=load_valid_candidate(&path.with_extension("bak2"));
+    let recovered=primary.or(mirror).or(backup).or(backup2);
+    // If an existing file cannot be recovered, NEVER replace it with a blank
+    // collection of channels. Return an explicit blocking marker to the UI.
+    if recovered.is_none() && path.exists(){
+        let mut safe=default_state();
+        safe["__stateRecoveryRequired"]=json!(true);
+        safe["__stateRecoveryError"]=json!("STATE_UNRECOVERABLE: primary/mirror/backups invalid. Original data preserved; saving blocked.");
+        return safe;
+    }
+    let raw=recovered.unwrap_or_else(default_state);
     let (migrated, changed) = migrate_state(raw);
     let (state,removed_channels,removed_jobs)=strip_performance_fixtures(migrated);
     let repaired=removed_channels>0||removed_jobs>0;
@@ -256,7 +358,27 @@ pub fn load_state(app: AppHandle) -> Value {
     disk
 }
 
+// Disk reads, backup validation and mirror writes can stall on slow storage.
+// Dispatch interactive startup to the blocking pool; do not change the
+// existing read/migration behavior or silently hydrate an empty state.
+#[tauri::command]
+pub async fn load_state_in_background(app: AppHandle) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || load_state(app))
+        .await
+        .map_err(|e| format!("STATE_LOAD_TASK_FAILED: {e}"))
+}
+
 fn save_state_impl(app: &AppHandle, state: Value) -> Result<Value, String> {
+    if state.get("__stateRecoveryRequired").and_then(Value::as_bool)==Some(true){
+        return Err("STATE_RECOVERY_REQUIRED: refusing to persist an empty recovered state".into());
+    }
+    #[cfg(target_os="macos")]
+    {
+        let existing=state_file(app)?;
+        if existing.exists() && load_valid_candidate(&existing).is_none(){
+            return Err("STATE_RECOVERY_REQUIRED: original state is invalid; recover from a verified backup first".into());
+        }
+    }
     let (perf_channels,perf_jobs)=performance_fixture_counts(&state);
     if perf_channels>0||perf_jobs>0{return Err(format!("PERFORMANCE_FIXTURE_PERSISTENCE_BLOCKED: channels={perf_channels} jobs={perf_jobs}"))}
     let _write_guard=state_write_lock().lock().map_err(|_|"STATE_WRITE_LOCK_POISONED".to_string())?;
@@ -314,6 +436,52 @@ mod v213_storage_tests {
         assert_eq!(clean["channels"].as_array().unwrap().len(),2);
         assert_eq!(clean["jobs"].as_array().unwrap().len(),2);
         assert_eq!(performance_fixture_counts(&clean),(0,0));
+    }
+
+    #[test]
+    fn state_validator_rejects_empty_and_corrupt_shape(){
+        assert!(!state_looks_valid(&json!(null)));
+        assert!(!state_looks_valid(&json!({"channels":[]})));
+        assert!(state_looks_valid(&default_state()));
+    }
+    #[cfg(target_os="macos")]
+    #[test]
+    fn macos_mirror_channels_array_is_allowed(){
+        let root=std::env::temp_dir().join(format!("vyron-array-test-{}",uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let path=root.join("channels.json");
+        let channels=json!([{"id":"channel-1"}]);
+        atomic_write(&path,&channels).unwrap();
+        assert_eq!(serde_json::from_slice::<Value>(&fs::read(&path).unwrap()).unwrap(),channels);
+        let _=fs::remove_dir_all(root);
+    }
+    #[cfg(target_os="macos")]
+    #[test]
+    fn macos_replace_is_atomic_and_generational(){
+        let root=std::env::temp_dir().join(format!("vyron-state-test-{}",uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let file=root.join("state.json");
+        let mut original=default_state();
+        original["channels"]=json!([{"id":"A"}]);
+        atomic_write(&file,&original).unwrap();
+        let mut next=original.clone();next["channels"]=json!([{"id":"A"},{"id":"B"}]);
+        atomic_write(&file,&next).unwrap();
+        assert_eq!(load_valid_candidate(&file).unwrap()["channels"].as_array().unwrap().len(),2);
+        assert_eq!(load_valid_candidate(&file.with_extension("bak")).unwrap()["channels"].as_array().unwrap().len(),1);
+        let _=fs::remove_dir_all(root);
+    }
+    #[cfg(target_os="macos")]
+    #[test]
+    fn failed_backup_rotation_preserves_primary(){
+        let root=std::env::temp_dir().join(format!("vyron-state-test-{}",uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let file=root.join("state.json");let old=default_state();
+        atomic_write(&file,&old).unwrap();
+        fs::create_dir(file.with_extension("bak")).unwrap();
+        let mut next=old.clone();next["channels"]=json!([{"id":"must-not-appear"}]);
+        assert!(atomic_write(&file,&next).is_err());
+        assert_eq!(load_valid_candidate(&file).unwrap(),old);
+        let _=fs::remove_dir_all(root);
     }
     #[test]
     fn sanitized_state_never_writes_api_secrets_to_disk() {

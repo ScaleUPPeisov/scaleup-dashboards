@@ -12,6 +12,7 @@ const dashboard=fs.readFileSync('src/DashboardOS.tsx','utf8');
 const publisher=fs.readFileSync('src/PublisherOS.tsx','utf8');
 const settings=fs.readFileSync('src/SettingsOS.tsx','utf8');
 const styles=fs.readFileSync('src/styles.css','utf8');
+const layoutStyles=fs.readFileSync('src/ui-layout-contract.css','utf8');
 const localDelete=fs.readFileSync('src-tauri/src/local_delete.rs','utf8');
 
 function linked(i:number,client='123.apps.googleusercontent.com'){
@@ -37,9 +38,11 @@ describe('VYRON 5.0.1 owner hotfix contract',()=>{
   expect(ownerScheduler).not.toContain('setInterval');
   expect(ownerScheduler).not.toContain('setTimeout');
   expect(ownerScheduler).not.toContain('refreshStaleOwnerInventories(');
-  expect(processingMonitor).not.toContain('setInterval');
-  expect(processingMonitor).not.toContain('setTimeout');
-  expect(processingMonitor).toContain('export function UploadProcessingMonitor(){\n return null;');
+  expect(processingMonitor).toContain('PROCESSING_MONITOR_INTERVAL_MS=90_000');
+  expect(processingMonitor).toContain('if(cycleRunning)return');
+  expect(processingMonitor).toContain("x.processingState!=='READY'");
+  expect(processingMonitor).toContain("x.processingState!=='PROCESSING_FAILED'");
+  expect(processingMonitor).toContain("x.processingState!=='REJECTED'");
  });
  it('does not recover OAuth or upload to YouTube automatically',()=>{
   expect(app).not.toContain('youtubeOauthRecoverExistingProfiles()');
@@ -89,9 +92,9 @@ describe('VYRON 5.0.1 owner hotfix contract',()=>{
  });
  it('pins owner profile and Local Core in one sidebar footer',()=>{
   expect(app).toContain('<div className="sidebarFooter"><OwnerProfile/>');
-  expect(styles).toContain('.sidebarFooter{flex:0 0 auto;margin-top:auto');
-  expect(styles).toContain('.sidebar .sidebarNav{flex:1 1 auto;min-height:0;overflow-y:auto');
-  expect(styles).toContain('transform:none!important');
+  expect(layoutStyles).toMatch(/\.sidebarFooter\s*\{[^}]*flex:0 0 auto[^}]*margin-top:auto/s);
+  expect(layoutStyles).toMatch(/\.sidebarNav\s*\{[^}]*flex:1 1 auto[^}]*min-height:0[^}]*overflow-y:auto/s);
+  expect(layoutStyles).toContain('transform:none');
  });
  it('implements one VYRON root with non-destructive Projects/Render migration',()=>{
   expect(settings).toContain('Корневая папка ВАЙРОН');

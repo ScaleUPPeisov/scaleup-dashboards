@@ -5,17 +5,21 @@ import { createMissingJobs } from './autopilotCore';
 import { parseMetadataFile,type ImportedMetadata } from './metadata';
 import { EMPTY_STATE,useApp } from './store';
 import {performanceFixtureCounts} from './performanceFixtures';
+import {markPerformanceAppReady} from './performanceTelemetry';
 import {findFutureChannelMatch} from './channelIdentity';
 import type { AutopilotSummary, Channel, Competitor, InboxScan, JobStatus, LicenseStatus, Page, VideoJob, YoutubeProfile } from './types';
 import { bufferDays,deficit,formatNumber,priorityFor,requiredVideos } from './core';
 import { ExistingVideos } from './ExistingVideos';
 import { AnalyticsPage } from './AnalyticsPage';
+const Analytics360Page = React.lazy(()=>import('./Analytics360Page').then(m=>({default:m.Analytics360Page})));
+// Code-split macOS-only Analytics 360 so inactive tabs and Windows do not load it eagerly.
 import { MetadataPage } from './MetadataPage';
 import { CompetitorsPage } from './CompetitorsPage';
 import { AccountsPage } from './AccountsPage';
 import { DashboardOS } from './DashboardOS';
 import { ChannelsOS } from './ChannelsOS';
 import { ProductionOS } from './ProductionOS';
+import { HistoryPage } from './HistoryPage';
 import { YouTubeCenter } from './YouTubeCenter';
 import { ChannelRunwayScheduler } from './ChannelRunwayScheduler';
 import { ProductionStatusBridge } from './ProductionStatusBridge';
@@ -106,6 +110,7 @@ const nav:{id:string;page:Page;icon:SidebarIconName;label:string;youtubeTab?:'hi
   {id:'channels',page:'channels',icon:'channels',label:'Каналы'},
   {id:'production',page:'production',icon:'production',label:'Производство'},
   {id:'inventory',page:'inventory',icon:'inventory',label:'Запас видео'},
+  {id:'history',page:'history',icon:'youtube',label:'История'},
   {id:'youtube',page:'youtube',icon:'youtube',label:'YouTube'},
   {id:'analytics',page:'analytics',icon:'analytics',label:'Аналитика'},
   {id:'competitors',page:'competitors',icon:'competitors',label:'Конкуренты'},
@@ -125,18 +130,49 @@ function SidebarIcon({name}:{name:SidebarIconName}){
 }
 const statusLabel:Record<JobStatus,string>={NEED_IMAGE:'Нужна картинка',WAITING_MUSIC:'Ждёт музыку',READY_RENDER:'Готов к рендеру',RENDERING:'Рендерится',READY_UPLOAD:'Готов к YouTube',UPLOADING:'Загружается',SCHEDULED:'Запланирован',ERROR:'Ошибка'};
 
-export function App(){
-  const booted=useApp(s=>s.booted),hydrate=useApp(s=>s.hydrate),settings=useApp(s=>s.settings),uploadHistory=useApp(s=>s.uploadHistory),log=useApp(s=>s.log);
-  const [license,setLicense]=useState<LicenseStatus|null>(null);
-  useLayoutEffect(()=>{if(booted)beginStartupQuotaProbe()},[booted]);
+// Keep the upload ledger observer outside the root render subscription.
+function PublishLedgerHydrator(){
+  const booted=useApp(s=>s.booted);
+  const uploadHistory=useApp(s=>s.uploadHistory);
   useEffect(()=>{if(booted)restorePublishLedgerFromUploadHistory(uploadHistory)},[booted,uploadHistory]);
+  return null;
+}
+const STARTUP_DEADLINE_MS=20_000;
+function withStartupDeadline<T>(work:Promise<T>,label:string):Promise<T>{
+  return new Promise((resolve,reject)=>{
+    const id=window.setTimeout(()=>reject(new Error(label+': превышено время ожидания '+STARTUP_DEADLINE_MS/1000+' секунд')),STARTUP_DEADLINE_MS);
+    work.then(result=>{window.clearTimeout(id);resolve(result)},error=>{window.clearTimeout(id);reject(error)});
+  });
+}
+export function App(){
+  // Scalar subscriptions prevent Publisher and unrelated settings updates
+  // from re-rendering the entire App route tree.
+  const booted=useApp(s=>s.booted),hydrate=useApp(s=>s.hydrate),log=useApp(s=>s.log);
+  const workspace=useApp(s=>s.settings.workspace);
+  const autoUploadYoutube=useApp(s=>s.settings.autoUploadYoutube);
+  const autoCheckUpdates=useApp(s=>s.settings.autoCheckUpdates);
+  const reduceMotion=useApp(s=>s.settings.reduceMotion);
+  const interfaceDensity=useApp(s=>s.settings.interfaceDensity);
+  const autopilotEnabled=useApp(s=>s.settings.autopilotEnabled);
+  const autopilotIntervalSec=useApp(s=>s.settings.autopilotIntervalSec);
+  const fpsMonitor=useApp(s=>s.settings.fpsMonitor);
+  const [license,setLicense]=useState<LicenseStatus|null>(null);
+  const [startupError,setStartupError]=useState('');
+  useLayoutEffect(()=>{if(booted)beginStartupQuotaProbe()},[booted]);
+  useLayoutEffect(()=>{if(booted)markPerformanceAppReady()},[booted]);
   const updaterStatus=useUpdaterRuntime(s=>s.status),updaterLatest=useUpdaterRuntime(s=>s.latestVersion),updaterLatestRevision=useUpdaterRuntime(s=>s.latestBuildRevision),updaterCheck=useUpdaterRuntime(s=>s.check),bootstrapUpdater=useUpdaterRuntime(s=>s.bootstrapVersion),markUpdated=useUpdaterRuntime(s=>s.markUpdated);
   useEffect(()=>{
     void (async()=>{
-      let queueRepair:{channelsRemoved:number;packsRemoved:number;recordsRemoved:number}|undefined;
-      try{queueRepair=await api.metadataQueueCleanupPerformanceFixtures()}catch{}
       try{
-        const loaded=await api.loadState() as typeof EMPTY_STATE&{__performanceRepair?:PerformanceRepairMarker};
+        // Avoid expensive/destructive maintenance before the app becomes usable.
+        // A failed storage load must never silently hydrate an empty replacement.
+        const loaded=await withStartupDeadline(api.loadState(),'Загрузка локального состояния') as typeof EMPTY_STATE&{__performanceRepair?:PerformanceRepairMarker;__stateRecoveryRequired?:boolean;__stateRecoveryError?:string};
+        // The native loader intentionally preserves an unrecoverable original and
+        // returns a diagnostic marker. Never hydrate its placeholder empty state:
+        // that would display 0 channels and risk later persistence attempts.
+        if(loaded.__stateRecoveryRequired){
+          throw new Error(loaded.__stateRecoveryError||'STATE_RECOVERY_REQUIRED: сохранённые данные требуют ручного восстановления');
+        }
         const backendRepair=loaded.__performanceRepair;delete loaded.__performanceRepair;
         const fallback=performanceFixtureCounts(loaded);
         hydrate(loaded);
@@ -147,40 +183,44 @@ export function App(){
           await useApp.getState().persist();
           notifySuccess('Performance fixtures удалены',`Synthetic channels: ${removedChannels} • jobs: ${removedJobs} • реальные каналы восстановлены локально: ${recovered.restored} • Google login: 0`,{operationId:'performance-fixture-repair'});
         }
-        if(queueRepair&&(queueRepair.packsRemoved||queueRepair.recordsRemoved)){
-          useApp.getState().log(`Performance Metadata Queue cleanup: packs=${queueRepair.packsRemoved}, records=${queueRepair.recordsRemoved}`);
+        if(removedChannels||removedJobs){
+          void api.metadataQueueCleanupPerformanceFixtures().then(queueRepair=>{
+            if(queueRepair.packsRemoved||queueRepair.recordsRemoved)
+              useApp.getState().log(`Performance Metadata Queue cleanup: packs=${queueRepair.packsRemoved}, records=${queueRepair.recordsRemoved}`);
+          }).catch(()=>{});
         }
-      }catch(e){hydrate(EMPTY_STATE);useApp.getState().log(`Не удалось загрузить состояние: ${String(e)}`,'error')}
+      }catch(e){setStartupError('Не удалось загрузить сохранённое состояние: '+String(e));useApp.getState().log(`Не удалось загрузить состояние: ${String(e)}`,'error')}
     })();
-    void api.license().then(setLicense).catch(()=>setLicense({valid:false}));
+    void withStartupDeadline(api.license(),'Проверка лицензии').then(setLicense)
+      .catch(e=>setStartupError('Не удалось проверить лицензию: '+String(e)));
   },[]);
-  useEffect(()=>{if(booted&&!settings.workspace){api.defaultWorkspace().then(workspace=>{useApp.getState().patchSettings({workspace});useApp.getState().log(`Workspace: ${workspace}`)}).catch(e=>log(`Workspace: ${String(e)}`,'error'))}},[booted,settings.workspace]);
-  useEffect(()=>{if(booted&&settings.autoUploadYoutube)useApp.getState().patchSettings({autoUploadYoutube:false})},[booted,settings.autoUploadYoutube]);
+  useEffect(()=>{if(booted&&!workspace){api.defaultWorkspace().then(workspace=>{useApp.getState().patchSettings({workspace});useApp.getState().log(`Workspace: ${workspace}`)}).catch(e=>log(`Workspace: ${String(e)}`,'error'))}},[booted,workspace]);
+  useEffect(()=>{if(booted&&autoUploadYoutube)useApp.getState().patchSettings({autoUploadYoutube:false})},[booted,autoUploadYoutube]);
   useEffect(()=>{
     if(!booted)return;
     let disposed=false,timer:number|undefined;
     const clearTimer=()=>{if(timer!==undefined){window.clearTimeout(timer);timer=undefined}};
     const arm=()=>{
       clearTimer();
-      if(disposed||!settings.autoCheckUpdates)return;
+      if(disposed||!autoCheckUpdates)return;
       const state=useUpdaterRuntime.getState(),now=Date.now();
       const due=state.nextAutomaticCheckAt&&state.nextAutomaticCheckAt>now+1000?state.nextAutomaticCheckAt:now+UPDATER_AUTO_INTERVAL_MS;
       timer=window.setTimeout(()=>{void runAutomatic()},Math.max(1000,due-now));
     };
-    const runAutomatic=async()=>{if(disposed||!settings.autoCheckUpdates)return;await updaterCheck({silent:true});arm()};
+    const runAutomatic=async()=>{if(disposed||!autoCheckUpdates)return;await updaterCheck({silent:true});arm()};
     const maybeRunFresh=()=>{
-      if(disposed||!settings.autoCheckUpdates)return;
+      if(disposed||!autoCheckUpdates)return;
       const last=useUpdaterRuntime.getState().lastCheckAttemptAt;
       if(!shouldRunUpdaterAgeCheck(last))return;
       clearTimer();
       void updaterCheck({silent:true}).finally(arm);
     };
     const onVisibility=()=>{if(document.visibilityState==='visible')maybeRunFresh()};
-    void (async()=>{await bootstrapUpdater();if(disposed||!settings.autoCheckUpdates)return;await updaterCheck({silent:true});arm()})();
+    void (async()=>{await bootstrapUpdater();if(disposed||!autoCheckUpdates)return;await updaterCheck({silent:true});arm()})();
     document.addEventListener('visibilitychange',onVisibility);
     window.addEventListener('online',maybeRunFresh);
     return()=>{disposed=true;clearTimer();document.removeEventListener('visibilitychange',onVisibility);window.removeEventListener('online',maybeRunFresh)};
-  },[booted,settings.autoCheckUpdates,bootstrapUpdater,updaterCheck]);
+  },[booted,autoCheckUpdates,bootstrapUpdater,updaterCheck]);
   useEffect(()=>{if(updaterStatus!=='AVAILABLE'||!updaterLatest)return;const identity=`${updaterLatest}:build-${updaterLatestRevision||0}`;void notifyUpdateAvailable(identity)},[updaterStatus,updaterLatest,updaterLatestRevision]);
   useEffect(()=>{
     if(!booted)return;
@@ -227,16 +267,21 @@ export function App(){
       notifyError('Обновление не подтверждено',`Ожидался VYRON ${target.productVersion}. Запущен ${runtime.productVersion}. Путь: ${runtimePath||'не определён'}. Диагностика обновления сохранена.`,{operationId:`update-identity-mismatch:${target.productVersion}:${runtime.productVersion}`})
     }).catch(()=>{})
   },[booted,markUpdated]);
-  useEffect(()=>{document.documentElement.classList.toggle('reduceMotion',settings.reduceMotion)},[settings.reduceMotion]);
+  useEffect(()=>{document.documentElement.classList.toggle('reduceMotion',reduceMotion)},[reduceMotion]);
   useEffect(()=>{const mac=/Macintosh|Mac OS X/.test(navigator.userAgent);document.documentElement.classList.toggle('platform-macos',mac);return()=>document.documentElement.classList.remove('platform-macos')},[]);
-  useEffect(()=>{document.documentElement.classList.toggle('compactDensity',(settings.interfaceDensity||'compact')==='compact');document.documentElement.classList.toggle('comfortableDensity',settings.interfaceDensity==='comfortable')},[settings.interfaceDensity]);
+  useEffect(()=>{document.documentElement.classList.toggle('compactDensity',(interfaceDensity||'compact')==='compact');document.documentElement.classList.toggle('comfortableDensity',interfaceDensity==='comfortable')},[interfaceDensity]);
   useEffect(()=>{let unlisten:(()=>void)|undefined;void api.onYoutubeProgress(f=>{applyUploadProgressFact(f);journalUploadProgressMilestone(f);const row=uploadTelemetrySnapshot().active.find(x=>x.jobId===f.jobId);updateTask(`upload:${f.jobId}`,{progress:row?.percent,bytesCompleted:row?.bytesUploaded,bytesTotal:row?.totalBytes,speedBps:row?.speedBps,etaSeconds:row?.etaSeconds,detail:'Передача данных'})}).then(fn=>unlisten=fn);return()=>unlisten?.()},[]);
   useEffect(()=>{if(!booted)return;void Promise.all([api.youtubeActiveUploads(),api.youtubeUploadSessions()]).then(([facts,sessions])=>{seedActiveUploadFacts(facts);const state=useApp.getState(),activeIds=new Set(facts.map(x=>x.jobId));for(const f of facts){const job=state.jobs.find(j=>j.id===f.jobId),channel=job&&state.channels.find(c=>c.id===job.channelId);ensureTask({taskId:`upload:${f.jobId}`,type:'UPLOAD',state:'RUNNING',channelId:job?.channelId||f.channelId,channelName:channel?.name,profileId:f.profileId,jobId:f.jobId,label:job?`VIDEO_${String(job.number).padStart(3,'0')}`:'YouTube upload',detail:job?.finalPath?.split('/').pop()||f.filePath,progress:f.totalBytes&&f.totalBytes>0?Math.max(0,Math.min(100,(f.bytesUploaded||0)/f.totalBytes*100)):undefined,bytesCompleted:f.bytesUploaded,bytesTotal:f.totalBytes??undefined,resourceKey:`upload:${job?.channelId||f.channelId}:${f.jobId}`})}reconcileUploadTasks(activeIds,new Set());const patches=buildStaleOperationPatches(state.jobs,{uploadsKnown:true,rendersKnown:false,activeUploadIds:activeIds,activeRenderIds:new Set(),uploadSessionIds:new Set(sessions.map(x=>x.jobId)),now:new Date().toISOString()});state.patchJobsBatch(patches.map(x=>({id:x.jobId,patch:x.patch})))}).catch(()=>{})},[booted]);
   useEffect(()=>{let unlisten:(()=>void)|undefined;void api.onYoutubeApiRequest(()=>{}).then(fn=>unlisten=fn);return()=>unlisten?.()},[]);
-  useEffect(()=>{if(!booted||!settings.autopilotEnabled)return;void runAutopilotCycle();const ms=Math.max(10,settings.autopilotIntervalSec||30)*1000;const id=window.setInterval(()=>void runAutopilotCycle(),ms);return()=>window.clearInterval(id)},[booted,settings.autopilotEnabled,settings.autopilotIntervalSec]);
+  useEffect(()=>{if(!booted||!autopilotEnabled)return;void runAutopilotCycle();const ms=Math.max(10,autopilotIntervalSec||30)*1000;const id=window.setInterval(()=>void runAutopilotCycle(),ms);return()=>window.clearInterval(id)},[booted,autopilotEnabled,autopilotIntervalSec]);
+  if(startupError)return <div className="boot" role="alert"><div className="logoMark"><span>!</span></div>
+    <b>VYRON — ошибка запуска</b><p>{startupError}</p>
+    <small>Локальные данные и авторизации не удалены. Автоматический сброс отключён.</small>
+    <button className="primary" onClick={()=>window.location.reload()}>Повторить запуск</button>
+  </div>;
   if(!booted||!license)return <Boot/>;
   if(!license.valid)return <Activation onActivated={setLicense}/>;
-  return <div className="appShell"><ExistingInventoryMigrationBridge/><LiveInventoryBridge/><ChannelRunwayScheduler/><ProductionStatusBridge/><ChannelStatisticsScheduler/><OwnerInventoryScheduler/><UploadProcessingMonitor/><RecoveryGate/><Sidebar/><main className="main"><Topbar/><PageRouter license={license}/></main><GlobalTaskIndicator/><GlobalUploadIndicator/><UploadCenterGlobal/><GlobalTaskCenter/><CommandPalette/><MetadataQueueAssignmentBridge/><M1PerformanceProbe/>{settings.fpsMonitor&&<FpsMonitor/>}<UpdateExperience/><MajorUpdateCelebration/><NotificationCenter/><div className="bgGlow a"/><div className="bgGlow b"/></div>
+  return <div className="appShell"><ExistingInventoryMigrationBridge/><LiveInventoryBridge/><ChannelRunwayScheduler/><ProductionStatusBridge/><ChannelStatisticsScheduler/><OwnerInventoryScheduler/><UploadProcessingMonitor/><RecoveryGate/><Sidebar/><main className="main"><Topbar/><PageRouter license={license}/></main><GlobalTaskIndicator/><GlobalUploadIndicator/><UploadCenterGlobal/><GlobalTaskCenter/><CommandPalette/><MetadataQueueAssignmentBridge/><PublishLedgerHydrator/><M1PerformanceProbe/>{fpsMonitor&&<FpsMonitor/>}<UpdateExperience/><MajorUpdateCelebration/><NotificationCenter/><div className="bgGlow a"/><div className="bgGlow b"/></div>
 }
 const CachedDashboardRoute=React.memo(({mode}:{mode:'dashboard'|'autopilot'})=><><DashboardUploadSummary/><DashboardOS pageOverride={mode}/></>);
 const CachedChannelsRoute=React.memo(ChannelsOS);
@@ -266,9 +311,10 @@ function PageRouter({license}:{license:LicenseStatus}){
   const transient=canonical==='dashboard'?(heavyReady?<><DashboardUploadSummary/><DashboardOS/></>:<RouteWarmup route="dashboard"/>)
     :canonical==='channels'?(heavyReady?<ChannelsOS/>:<RouteWarmup route="channels"/>)
     :canonical==='production'||canonical==='content'?<ProductionOS/>
+    :canonical==='history'?<HistoryPage/>
     :canonical==='inventory'?<LiveContentInventory/>
     :canonical==='competitors'?<CompetitorsPage/>
-    :canonical==='analytics'?<AnalyticsPage/>
+    :canonical==='analytics'?((typeof navigator!=='undefined'&&/mac/i.test(navigator.platform||navigator.userAgent))?<React.Suspense fallback={<div className="panel">Загрузка аналитики…</div>}><Analytics360Page/></React.Suspense>:<AnalyticsPage/>)
     :canonical==='accounts'||canonical==='settings'?<SettingsOS license={license}/>
     :null;
 
@@ -383,3 +429,4 @@ function UpdaterSidebar(){
  const installNow=async()=>{const now=currentUpdaterBlockers(jobs,channels.map(x=>x.id));await install(now)};
  return <section className={`updaterSidebar ${available?'available':''} ${status==='ERROR'?'error':''}`} data-updater-status={status}><div className="updaterVersion"><span>VYRON {current||'…'}</span>{status==='UP_TO_DATE'||status==='UPDATED'?<small>✓ Актуальная версия</small>:status==='CHECKING'?<small>Проверка обновлений…</small>:null}</div>{available&&<><b>🔔 Доступно обновление {latest}</b>{status==='AVAILABLE'&&<button className="updaterPrimary" onClick={()=>void download()}>ОБНОВИТЬ</button>}{(status==='DOWNLOADING'||status==='VERIFYING')&&<><small>{status==='DOWNLOADING'?`⬇ ${progress.toFixed(0)}%`:'Проверка пакета…'} {total>0&&`• ${formatUpdaterBytes(downloaded)} / ${formatUpdaterBytes(total)}`}</small><div className="updaterMiniProgress"><i style={{width:`${progress}%`}}/></div></>}{status==='READY_TO_INSTALL'&&<><small>✓ Обновление загружено и готово к установке.</small>{blockers.length>0&&<div className="updaterBlockers">Сначала завершите задачи:<br/>{updaterBlockerText(blockers).split('\n').map(x=><span key={x}>{x}</span>)}</div>}<button className="updaterPrimary" disabled={blockers.length>0} onClick={()=>void installNow()}>УСТАНОВИТЬ И ПЕРЕЗАПУСТИТЬ</button></>}{status==='INSTALLING'&&<small>Установка…</small>}{status==='READY_TO_RESTART'&&<small>✓ Готово к перезапуску</small>}{status==='RESTARTING'&&<small>Перезапуск…</small>}</>}{status==='ERROR'&&<><b>Обновление: ошибка</b><small>{errorCode||'UPDATER_ERROR'}</small><button onClick={()=>void check({force:true})}>ПОВТОРИТЬ</button></>}</section>
 }
+

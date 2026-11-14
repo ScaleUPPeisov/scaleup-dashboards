@@ -18,8 +18,8 @@ describe('VYRON 3.0.0 final owner workflow contracts',()=>{
   expect(publisher).toContain('<ModalPortal onClose=');
  });
  it('treats current physical scan as the Publisher source of truth',()=>{
-  expect(publisher).toContain("currentPhysicalPaths.has(normalizeRenderPath(j.finalPath||''))");
-  expect(publisher).toContain("const selectableJobs=useMemo(()=>sourceAvailability==='ONLINE'?");
+  expect(publisher).toContain("publisherReadyPhysicalPaths.has(normalizeRenderPath(j.finalPath||''))");
+  expect(publisher).toContain("const selectableJobs=useMemo(()=>dynamicInventory?(sourceAvailability==='ONLINE'?");
   expect(publisher).toContain("if(!snapshot||snapshot.folderState!=='ONLINE'");
   expect(publisher).toContain("setSourceAvailability(snapshot?.folderState==='OFFLINE'?'OFFLINE':'UNKNOWN')");
   expect(publisher).toContain('Внешний диск недоступен');
@@ -43,7 +43,7 @@ describe('VYRON 3.0.0 final owner workflow contracts',()=>{
   expect(publisher).toContain('Технические сведения запроса');
   expect(publisher).toContain('Счётчики обновятся после фактической загрузки.');
   expect(publisher).toContain('Существующие обложки останутся без изменений');
-  expect(publisher).toContain('Дата и время берутся из метаданных каждого видео.');
+  expect(publisher).toContain('Дата и время — независимые источники.');
   expect(publisher).not.toContain('<span>Timezone:');
   expect(publisher).not.toContain('<b>Upload quota:');
   expect(publisher).not.toContain('<b>DRY RUN:');

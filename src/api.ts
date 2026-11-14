@@ -12,6 +12,7 @@ import type {YoutubeExistingVideo, AppState, ChannelAnalytics, Competitor, Diagn
 import {bindYoutubeQuotaOperationProject,recordYoutubeApiRequest,recordYoutubeCommand,registerYoutubeUploadProject,youtubeGuardedCall,youtubeQuotaProjectIdentity,type YoutubeApiRequestEvent} from './youtubeQuota';
 import {endUploadRuntime,registerUploadRuntime,type UploadProgressFact} from './uploadTelemetry';
 import type {MetadataQueueImportResult,MetadataQueueInput,MetadataQueuePage,MetadataQueueRecord,MetadataQueueReservationRequest,MetadataQueueReservationResult,MetadataQueueSummary} from './metadataQueue';
+import {recordPerformanceOperation} from './performanceTelemetry';
 
 export type AiMetadata={title:string;description:string;tags:string[]};
 export type YoutubeExistingMutationPatch={title?:string;description?:string;tags?:string[];publishAt?:string;privacyStatus?:'private'|'public'|'unlisted';categoryId?:string};
@@ -22,6 +23,7 @@ export type GoogleConfigStatus={configured:boolean;oauthReady:boolean;projectId?
 export type OAuthReconciliationDiagnostic={channelsTotal:number;profilesTotal:number;channelsWithYoutubeProfileId:number;profilesWithChannelId:number;orphanChannels:Array<{channelId:string;channelName:string;youtubeProfileId:string;reason:'ORPHAN_MAPPING'}>;orphanProfiles:Array<{profileId:string;youtubeChannelId?:string;channelTitle?:string}>;duplicateMappings:Array<{profileId:string;channelMappings:number}>;oauthStoreExists:boolean;secretValuesIncluded:false;keychainSecretsRead:false};
 export type YoutubeProcessingStatus={videoId:string;channelId?:string;remoteExists?:boolean;identityVerified:boolean;processingStatus:string;processingState:'READY'|'YOUTUBE_PROCESSING'|'PROCESSING_FAILED'|'PROCESSING_UNKNOWN';processingCheckedAt:string;processingProgress?:{partsTotal?:string|null;partsProcessed?:string|null;timeLeftMs?:string|null};processingFailureReason?:string|null;processingIssuesAvailability?:string|null;rejectionReason?:string|null;uploadStatus?:string|null;privacyStatus?:string|null;publishAt?:string|null};
 export type LocalSourceStatus={path:string;exists:boolean;isFile:boolean;size?:number|null;modifiedAt?:number|null};
+export type PerformanceRuntimeSample={cpuPercent?:number|null;rssBytes?:number|null;capturedAt:string};
 export type RenderFolderVideoFile={path:string;name:string;size:number;createdAt?:number|null;modifiedAt?:number|null;fingerprint?:string};
 export type RenderFolderScanResult={root:string;files:RenderFolderVideoFile[];scannedEntries:number;truncated:boolean};
 export type ChannelFolderDiscovery={render:string[];projects:string[];rootsChecked:string[]};
@@ -76,7 +78,7 @@ export type ExistingVideoTargetedRetryResult={requestedIds:string[];videosHydrat
 export type YoutubeScheduleUpdateResult={id:string;verified:boolean;skipped:boolean;skipReason?:'ALREADY_PUBLISHED'|'ALREADY_CORRECT'|'UNSUPPORTED_STATE'|null;scheduleAccepted:boolean;scheduleVerified:boolean;metadataPreserved:boolean;statusPreserved:boolean;snippetWrites:0;thumbnailWrites:0;playlistWrites:0;videosInsert:0;mismatches?:string[];before?:{publishAt?:string|null;privacyStatus?:string;snippet?:Record<string,unknown>;preservedStatus?:Record<string,unknown>};actual?:{publishAt?:string|null;privacyStatus?:string;snippet?:Record<string,unknown>;preservedStatus?:Record<string,unknown>}};
 export type CompetitorCandidate={channelId:string;name:string;url:string;handle?:string;publishedAt?:string;country?:string;thumbnail?:string;subscribers?:number;views?:number;videos?:number;similarity:number};
 export type UpdaterAppCopy={path:string;canonicalPath?:string;exists:boolean;version?:string|null;bundleId?:string|null;executablePath?:string;executableSha256?:string|null;isRunningTarget?:boolean};
-export type UpdaterRuntimeIdentity={productVersion:string;buildRevision:number;commit:string;channel:'stable'|'owner-preview'|string;bundleId:string;targetPlatform?:string;currentExecutablePath?:string;currentExecutableCanonicalPath?:string;currentExecutableSha256?:string;currentAppBundlePath?:string;currentAppBundleCanonicalPath?:string;runningLocation?:'system-applications'|'user-applications'|'mounted-dmg'|'other'|string;duplicateCopies?:boolean};
+export type UpdaterRuntimeIdentity={productVersion:string;buildRevision:number;commit:string;channel:'stable'|'owner-preview'|string;bundleId:string;targetPlatform?:string;updaterEndpoint?:string|null;updaterEndpoints?:string[];updaterConfigurationValid?:boolean;updaterEndpointPinned?:boolean;updaterPublicKeyConfigured?:boolean;updaterPublicKeyValid?:boolean;updaterPublicKeyTrust?:string;updaterPublicKeyTrustVerified?:boolean;updaterPublicKeyId?:string|null;updaterPublicKeySha256?:string|null;currentExecutablePath?:string;currentExecutableCanonicalPath?:string;currentExecutableSha256?:string;currentAppBundlePath?:string;currentAppBundleCanonicalPath?:string;runningLocation?:'system-applications'|'user-applications'|'mounted-dmg'|'other'|string;duplicateCopies?:boolean};
 export type OwnerPreviewCheck={available:boolean;productVersion:string;announcedVersion?:string;currentBuildRevision:number;latestBuildRevision:number;notes?:string;date?:string;artifactUrl?:string;endpoint:string;channel:'owner-preview'};
 export type OwnerPreviewDownload={downloaded:true;announcedVersion:string;targetBuildRevision:number;artifactSha256:string;signatureVerified:true;channel:'owner-preview'};
 export type OwnerPreviewInstall={installed:true;productVersion:string;targetBuildRevision:number;artifactSha256:string;signatureVerified:true;channel:'owner-preview'};
@@ -85,7 +87,7 @@ export type StableUpdaterCheck={available:boolean;currentVersion:string;latestVe
 export type StableUpdaterDownload={downloaded:true;targetVersion:string;downloadedArtifactSha256:string;expectedManifestSha256?:string|null;manifestSignatureSha256:string;artifactUrl:string;runningAppPath:string;currentExecutableSha256:string;signatureVerified:true};
 export type UpdaterInstalledTarget={verified:true;destinationAppBundlePath:string;destinationAppBundleCanonicalPath:string;installedVersion:string;bundleId:string;installedExecutablePath:string;installedExecutableSha256:string;previousExecutableSha256:string;codesignVerified:true;downloadedArtifactSha256?:string;expectedManifestSha256?:string|null;manifestSignatureSha256?:string;artifactUrl?:string};
 export type UpdaterTransferProgress={status:'DOWNLOADING'|'VERIFYING';percent:number;downloadedBytes:number;totalBytes:number};
-export type UpdaterInstallPreflight={currentExecutablePath:string;currentExecutableCanonicalPath?:string;currentExecutableSha256?:string|null;currentAppBundlePath?:string|null;currentAppBundleCanonicalPath?:string|null;bundleVersion?:string|null;bundleParentDirectory?:string;volumeDevice?:number|null;parentVolumeDevice?:number|null;writableParent?:boolean;underApplications:boolean;runningLocation?:'system-applications'|'user-applications'|'mounted-dmg'|'other'|string;runningFromDmg:boolean;bundleReplaceable:boolean;replaceProbeError?:string|null;duplicateAppCopies?:UpdaterAppCopy[];duplicateCopies?:boolean;currentVersion:string;bundleId:string;targetPlatform:string;signatureConfigured:boolean;secretValuesIncluded:false};
+export type UpdaterInstallPreflight={currentExecutablePath:string;currentExecutableCanonicalPath?:string;currentExecutableSha256?:string|null;currentAppBundlePath?:string|null;currentAppBundleCanonicalPath?:string|null;bundleVersion?:string|null;bundleParentDirectory?:string;volumeDevice?:number|null;parentVolumeDevice?:number|null;writableParent?:boolean;underApplications:boolean;runningLocation?:'system-applications'|'user-applications'|'mounted-dmg'|'other'|string;runningFromDmg:boolean;bundleReplaceable:boolean;replaceProbeError?:string|null;duplicateAppCopies?:UpdaterAppCopy[];duplicateCopies?:boolean;currentVersion:string;bundleId:string;targetPlatform:string;updaterConfigurationValid:boolean;updaterEndpointPinned:boolean;updaterPublicKeyConfigured:boolean;updaterPublicKeyValid:boolean;updaterPublicKeyTrust:string;updaterPublicKeyTrustVerified:boolean;updaterPublicKeyId?:string|null;updaterPublicKeySha256?:string|null;updaterEndpoint?:string|null;updaterEndpoints?:string[];secretValuesIncluded:false};
 export type CheckedUpdaterCandidate={none:false;version:string;date?:string;body:string;current:string;latest:string;status:'AVAILABLE';endpoint:string;versionComparison:string;buildRevision?:number;currentBuildRevision?:number;artifactSha256?:string;channel?:string;download:(onProgress?:(p:UpdaterTransferProgress)=>void)=>Promise<void>;install:(onStatus?:(s:'VERIFYING'|'INSTALLING'|'READY_TO_RESTART')=>void)=>Promise<UpdaterInstalledTarget|void>;restart:(exactBundlePath?:string)=>Promise<void>};
 export type NoUpdaterCandidate={none:true;current:string;latest:string;status:'UP_TO_DATE';endpoint:string;versionComparison:string;buildRevision?:number;currentBuildRevision?:number;channel?:string};
 export type CheckedUpdater=CheckedUpdaterCandidate|NoUpdaterCandidate;
@@ -111,7 +113,7 @@ export const api={
   studioDraftsStartBridge:()=>invoke<{ok:boolean;port:number;ttlMs:number}>('studio_drafts_start_bridge'),
   studioDraftsList:()=>invoke<{drafts:StudioDraftBridgeItem[];port:number;running:boolean}>('studio_drafts_list'),
   studioDraftsClear:()=>invoke<{ok:boolean}>('studio_drafts_clear'),
-  loadState:()=>invoke<AppState>('load_state'),
+  loadState:()=>invoke<AppState>('load_state_in_background'),
   saveState:(state:AppState)=>invoke<StateSaveResult>('save_state',{state}),
   youtubeInventoryRead:(channelId:string)=>invoke<YoutubeInventoryNativeRead>('youtube_inventory_read',{channelId}),
   youtubeInventoryWrite:(channelId:string,payload:unknown)=>invoke<YoutubeInventoryNativeWrite>('youtube_inventory_write',{channelId,payload}),
@@ -216,12 +218,12 @@ export const api={
   youtubeResumeUpload:async(jobId:string)=>{const session=(await invoke<YoutubeUploadSession[]>('youtube_upload_sessions')).find(x=>x.jobId===jobId);if(session)registerUploadRuntime({jobId,projectId:session.projectId,channelId:session.channelId||'',profileId:session.profileId,filePath:session.filePath,startedAt:new Date().toISOString()},session.total,session.offset);try{return await invoke<YoutubeUploadResult>('youtube_resume_upload',{jobId})}finally{endUploadRuntime(jobId)}},
   trashLocalFile:(path:string,allowedRoots:string[])=>invoke<{trashed:boolean;missing:boolean}>('trash_local_file',{path,allowedRoots}),
    localSourceStatus:(path:string)=>invoke<LocalSourceStatus>('local_source_status',{path}),
-  scanRenderFolder:(path:string)=>invoke<RenderFolderScanResult>('scan_render_folder',{path}),
+  scanRenderFolder:(path:string)=>{recordPerformanceOperation('render.scanFolder');return invoke<RenderFolderScanResult>('scan_render_folder',{path})},
   youtubeCancelUploadSession:(jobId:string)=>invoke<void>('youtube_cancel_upload_session',{jobId}),
   youtubeVideoProcessingStatus:(profileId:string,videoId:string,operationId?:string)=>ytInvoke<YoutubeProcessingStatus>('youtube_video_processing_status',{profileId,videoId,operationId}),
    youtubeVideoProcessingStatusBatch:(profileId:string,videoIds:string[],operationId?:string)=>ytInvoke<YoutubeProcessingBatchResult>('youtube_video_processing_status_batch',{profileId,videoIds,operationId}),
   youtubeSetThumbnail:(profileId:string,videoId:string,filePath:string,operationId?:string)=>ytInvoke<{ok:boolean;videoId:string;filePath:string}>('youtube_set_thumbnail',{profileId,videoId,filePath,operationId}),
-  youtubeFileFingerprint:(filePath:string,cache?:{size:number;mtimeMs:number;sha256:string})=>invoke<YoutubeFileFingerprint>('youtube_file_fingerprint',{filePath,cachedSize:cache?.size,cachedModifiedAt:cache?.mtimeMs,cachedHash:cache?.sha256}),
+  youtubeFileFingerprint:(filePath:string,cache?:{size:number;mtimeMs:number;sha256:string})=>{recordPerformanceOperation('render.fingerprint');return invoke<YoutubeFileFingerprint>('youtube_file_fingerprint',{filePath,cachedSize:cache?.size,cachedModifiedAt:cache?.mtimeMs,cachedHash:cache?.sha256})},
   youtubeListExisting:(profileId:string,maxResults=30,operationId?:string)=>ytInvoke<ExistingVideoSyncResult>('youtube_list_existing_videos',{profileId,maxResults,operationId}),
   youtubeRetryExistingHydration:(profileId:string,videoIds:string[],operationId?:string)=>ytInvoke<ExistingVideoTargetedRetryResult>('youtube_retry_existing_video_hydration',{profileId,videoIds,operationId}),
   youtubeBackupExisting:(profileId:string,videos:any[],operationId?:string)=>ytInvoke<{path:string;count:number;videos:YoutubeExistingVideo[]}>('youtube_backup_existing_videos',{profileId,videos,operationId}),
@@ -233,6 +235,8 @@ export const api={
   onYoutubeProgress:(cb:(data:UploadProgressFact)=>void)=>listen<UploadProgressFact>('youtube-upload-progress',e=>cb(e.payload)),
   onYoutubeApiRequest:(cb:(data:YoutubeApiRequestEvent)=>void)=>listen<YoutubeApiRequestEvent>('youtube-api-request',e=>{recordYoutubeApiRequest(e.payload);cb(e.payload)}),
   appVersion:()=>getVersion(),
+  performanceRuntimeSample:()=>invoke<PerformanceRuntimeSample>('performance_runtime_sample'),
+  performanceDiagnosticExport:(path:string,payload:unknown)=>invoke<string>('performance_diagnostic_export',{path,payload}),
   updaterRuntimeIdentity:()=>invoke<UpdaterRuntimeIdentity>('updater_runtime_identity'),
   updaterRuntimeDiagnostics:()=>invoke<UpdaterInstallPreflight>('updater_runtime_diagnostics'),
   updaterInstallPreflight:()=>invoke<UpdaterInstallPreflight>('updater_install_preflight'),
@@ -241,12 +245,18 @@ export const api={
   checkUpdate:async():Promise<CheckedUpdater>=>{
     const identity=await invoke<UpdaterRuntimeIdentity>('updater_runtime_identity');
     const current=identity.productVersion||await getVersion();
+    if(identity.updaterPublicKeyTrustVerified!==true){
+      throw new Error('UPDATER_KEY_TRUST_NOT_VERIFIED: embedded updater public-key fingerprint is not independently pinned to this build');
+    }
+    if(identity.channel!=='owner-preview'&&identity.targetPlatform?.startsWith('darwin')&&identity.updaterConfigurationValid===false){
+      throw new Error('UPDATER_CONFIGURATION_INVALID: embedded updater key format or stable feed endpoint is invalid');
+    }
     if(identity.channel!=='owner-preview'&&identity.targetPlatform?.startsWith('darwin')){
       let stable:StableUpdaterCheck;
       try{stable=await invoke<StableUpdaterCheck>('updater_stable_check')}catch(error){const x=classifyUpdaterError(error,'check');throw new Error(`${x.code}: ${updaterFailureMessage(x.code,x.detail)}`)}
-      if(!stable.available)return {none:true,current,latest:current,status:'UP_TO_DATE',endpoint:UPDATER_ENDPOINTS[0],versionComparison:updaterVersionStatus(current,current),currentBuildRevision:identity.buildRevision,channel:identity.channel};
+      if(!stable.available)return {none:true,current,latest:current,status:'UP_TO_DATE',endpoint:identity.updaterEndpoint||UPDATER_ENDPOINTS[0],versionComparison:updaterVersionStatus(current,current),currentBuildRevision:identity.buildRevision,channel:identity.channel};
       let downloaded=0,total=0,downloadResult:StableUpdaterDownload|undefined,installed:UpdaterInstalledTarget|undefined;
-      return {none:false,version:stable.latestVersion,date:stable.date,body:stable.body||'',current,latest:stable.latestVersion,status:'AVAILABLE',endpoint:UPDATER_ENDPOINTS[0],versionComparison:updaterVersionStatus(current,stable.latestVersion),currentBuildRevision:identity.buildRevision,artifactSha256:stable.expectedArtifactSha256||undefined,channel:identity.channel,
+      return {none:false,version:stable.latestVersion,date:stable.date,body:stable.body||'',current,latest:stable.latestVersion,status:'AVAILABLE',endpoint:identity.updaterEndpoint||UPDATER_ENDPOINTS[0],versionComparison:updaterVersionStatus(current,stable.latestVersion),currentBuildRevision:identity.buildRevision,artifactSha256:stable.expectedArtifactSha256||undefined,channel:identity.channel,
         download:async(onProgress?:(p:UpdaterTransferProgress)=>void)=>{
           await invoke<string>('prepare_updater_tempdir');
           const stop=await listen<{chunkBytes:number;totalBytes?:number|null;targetVersion:string}>('stable-update-progress',e=>{
@@ -298,9 +308,9 @@ export const api={
     }
     let update:any;
     try{update=await check(UPDATER_CHECK_OPTIONS)}catch(error){const x=classifyUpdaterError(error,'check');throw new Error(`${x.code}: ${updaterFailureMessage(x.code,x.detail)}`)}
-    if(!update)return {none:true,current,latest:current,status:'UP_TO_DATE',endpoint:UPDATER_ENDPOINTS[0],versionComparison:updaterVersionStatus(current,current),currentBuildRevision:identity.buildRevision,channel:identity.channel};
+    if(!update)return {none:true,current,latest:current,status:'UP_TO_DATE',endpoint:identity.updaterEndpoint||UPDATER_ENDPOINTS[0],versionComparison:updaterVersionStatus(current,current),currentBuildRevision:identity.buildRevision,channel:identity.channel};
     let downloaded=0,total=0;
-    return {none:false,version:update.version,date:update.date,body:update.body||'',current:update.currentVersion||current,latest:update.version,status:'AVAILABLE',endpoint:UPDATER_ENDPOINTS[0],versionComparison:updaterVersionStatus(update.currentVersion||current,update.version),currentBuildRevision:identity.buildRevision,channel:identity.channel,
+    return {none:false,version:update.version,date:update.date,body:update.body||'',current:update.currentVersion||current,latest:update.version,status:'AVAILABLE',endpoint:identity.updaterEndpoint||UPDATER_ENDPOINTS[0],versionComparison:updaterVersionStatus(update.currentVersion||current,update.version),currentBuildRevision:identity.buildRevision,channel:identity.channel,
       download:async(onProgress?:(p:UpdaterTransferProgress)=>void)=>{
         await invoke<string>('prepare_updater_tempdir');
         try{
@@ -320,3 +330,4 @@ export const api={
     };
   }
 };
+

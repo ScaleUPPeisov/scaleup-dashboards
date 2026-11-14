@@ -37,7 +37,7 @@ describe('VYRON 2.1 Error Center semantics',()=>{
   expect(queue).toContain('appendErrorHistory(h.title,`VIDEO_${String(spec.videoNumber).padStart(3,\'0\')}: ${h.message}`');
   expect(pub).toContain("import {batchFailureToast,type BatchFailure} from './errorPresentationPolicy'");
   expect(pub).toContain('waitForUploadQueueEntries(queueIds)');
-  expect(pub).toContain("entries.filter(x=>x.state==='FAILED')");
+  expect(pub).toContain("entries.filter(x=>x.state==='FAILED'&&!youtubeMetadataErrorCode(x.error||''))");
   expect(pub).toContain('const failureToast=batchFailureToast(batchFailures)');
   expect(pub).toContain('notifyError(failureToast.title,failureToast.message,{persistError:false})');
   expect(notify).toContain('persistError?:boolean');

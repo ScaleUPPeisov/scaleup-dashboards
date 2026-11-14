@@ -1,0 +1,187 @@
+name: VYRON macOS Ultimate + Analytics 360 safety gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'package.json'
+      - 'package-lock.json'
+      - 'src/googleProjectDiagnostics.test.ts'
+      - 'src/vyron619PublisherAlwaysOpen.test.tsx'
+      - 'src/youtubeProductivityGlobalChannel.test.ts'
+      - 'src/AiAnalyticsExport.tsx'
+      - 'src/Analytics360Page.tsx'
+      - 'src/Analytics360Fleet.tsx'
+      - 'src/Analytics360Fleet.test.ts'
+      - 'src/Analytics360Winners.tsx'
+      - 'src/Analytics360Winners.test.ts'
+      - 'src/M1PerformanceProbe.tsx'
+      - 'src/m1FrameMetrics.ts'
+      - 'src/m1FrameMetrics.test.ts'
+      - 'src/analytics360Core.ts'
+      - 'src/analytics360Core.test.ts'
+      - 'src/publisherMetadata.test.ts'
+      - 'tests/vyron-602-manual-production-sidebar.test.mjs'
+      - 'tests/vyron-mac-ai-export-progress.test.mjs'
+      - 'tests/vyron-mac-analytics-sync-worker.test.mjs'
+      - 'src/Analytics360.css'
+      - 'src/App.tsx'
+      - 'src/AnalyticsPage.tsx'
+      - 'src-tauri/src/analytics_ai_export.rs'
+      - 'src-tauri/src/analytics360_cache.rs'
+      - 'src-tauri/src/analytics_reach.rs'
+      - 'src-tauri/src/analytics_sqlite.rs'
+      - 'src-tauri/src/oauth_vault.rs'
+      - 'src-tauri/src/youtube.rs'
+      - 'src-tauri/src/security.rs'
+      - 'src-tauri/src/storage.rs'
+      - 'src-tauri/src/lib.rs'
+      - 'src-tauri/src/updater_bridge.rs'
+      - 'src-tauri/build.rs'
+      - 'src-tauri/Cargo.toml'
+      - 'src-tauri/Cargo.lock'
+      - '.github/workflows/vyron-mac-ai-export-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-compile-sanity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install Linux prerequisites for Tauri static compile
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev librsvg2-dev libayatana-appindicator3-dev
+      - name: Frontend TypeScript + Vite validation
+        run: |
+          npm ci
+          npm run build
+          npx vitest run src/analytics360Core.test.ts src/Analytics360Fleet.test.ts src/Analytics360Winners.test.ts src/m1FrameMetrics.test.ts src/googleProjectDiagnostics.test.ts src/vyron619PublisherAlwaysOpen.test.tsx src/youtubeProductivityGlobalChannel.test.ts src/publisherMetadata.test.ts tests/vyron-602-manual-production-sidebar.test.mjs tests/vyron-mac-ai-export-progress.test.mjs tests/vyron-mac-analytics-sync-worker.test.mjs
+      - name: Rust type checking + exporter unit tests
+        working-directory: src-tauri
+        run: |
+          cargo test --locked --lib analytics_ai_export -- --nocapture
+          cargo test --locked --lib analytics360_cache -- --nocapture
+          cargo test --locked --lib analytics_sqlite -- --nocapture
+          cargo test --locked --lib analytics_reach -- --nocapture
+          cargo test --locked --lib v213_storage_tests -- --nocapture
+          cargo test --locked --lib updater_key_diagnostic_tests -- --nocapture
+          cargo check --locked
+  sqlite-million-row-benchmark:
+    if: contains(github.event.pull_request.body, '[run-sqlite-stress]')
+    runs-on: macos-15
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'src-tauri -> target'
+      - name: 50 channels, 10k videos, 1m day rows, 250k retention points (isolated fixture)
+        working-directory: src-tauri
+        run: |
+          cargo test --locked --lib analytics_sqlite::tests::stress_fleet_50_10k_1m -- --ignored --nocapture
+
+  oauth-data-safety-gate:
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'src-tauri -> target'
+      - name: Independent Google OAuth profiles, token safety and existing recovery
+        working-directory: src-tauri
+        run: |
+          cargo test --locked --lib v241_oauth_singleflight_tests -- --nocapture
+          cargo test --locked --lib oauth_vault::tests -- --nocapture
+          cargo test --locked --lib v2110_oauth_continuity_tests -- --nocapture
+          cargo test --locked --lib v213_storage_tests -- --nocapture
+      - name: Verify no production OAuth signing/bundle identity was modified from PR base
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git diff --exit-code "$BASE_SHA" HEAD -- src-tauri/tauri.conf.json src-tauri/tauri.macos.conf.json
+
+  publisher-safety-gate:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'src-tauri -> target'
+      - name: Publisher upload transport, resumable state, exact identity and timezone tests
+        working-directory: src-tauri
+        run: |
+          cargo test --locked --lib v120_youtube_local_tests -- --nocapture
+          cargo test --locked --lib v211_upload_transport_tests -- --nocapture
+          cargo test --locked --lib v2111_runtime_upload_tests -- --nocapture
+          cargo test --locked --lib youtube_write_tests -- --nocapture
+          cargo test --locked --lib v2115_rc2_schedule_sync_hotfix_tests -- --nocapture
+          cargo test --locked --lib v216_upload_progress_tests -- --nocapture
+          cargo test --locked --lib v611_channel_runway_inventory_hotfix_tests -- --nocapture
+          cargo test --locked --lib v2113_existing_channel_rebind_tests -- --nocapture
+          cargo test --locked --lib schedule_only_status_tests -- --nocapture
+  historical-vitest-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: All historical tests (failures remain visible; no legacy test rewriting)
+        run: |
+          npm ci
+          npm test
+  mac-arm64-compile:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'src-tauri -> target'
+      - name: TypeScript, Vite and strict Analytics 360 tests
+        run: |
+          npm ci
+          npm run build
+          npx vitest run src/analytics360Core.test.ts src/Analytics360Fleet.test.ts src/Analytics360Winners.test.ts src/m1FrameMetrics.test.ts src/googleProjectDiagnostics.test.ts src/vyron619PublisherAlwaysOpen.test.tsx src/youtubeProductivityGlobalChannel.test.ts src/publisherMetadata.test.ts tests/vyron-602-manual-production-sidebar.test.mjs tests/vyron-mac-ai-export-progress.test.mjs tests/vyron-mac-analytics-sync-worker.test.mjs
+      - name: Rust build tests on macOS ARM64
+        working-directory: src-tauri
+        run: |
+          cargo test --locked --lib analytics_ai_export -- --nocapture
+          cargo test --locked --lib analytics360_cache -- --nocapture
+          cargo test --locked --lib analytics_sqlite -- --nocapture
+          cargo test --locked --lib analytics_reach -- --nocapture
+          cargo test --locked --lib v213_storage_tests -- --nocapture
+          cargo test --locked --lib updater_key_diagnostic_tests -- --nocapture
+          cargo check --locked --target aarch64-apple-darwin
+

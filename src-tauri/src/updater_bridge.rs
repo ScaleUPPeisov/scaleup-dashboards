@@ -26,6 +26,99 @@ fn sha256_text(value:&str)->String{
     hex::encode(Sha256::digest(value.as_bytes()))
 }
 
+fn sha256_bytes(value:&[u8])->String{
+    use sha2::{Digest,Sha256};
+    hex::encode(Sha256::digest(value))
+}
+
+fn updater_public_key_facts(encoded:&str)->(bool,Option<String>,Option<String>){
+    use base64::Engine as _;
+    let Ok(decoded)=base64::engine::general_purpose::STANDARD.decode(encoded.trim()) else{
+        return (false,None,None)
+    };
+    let text=String::from_utf8_lossy(&decoded);
+    let mut lines=text.lines().filter(|line|!line.trim().is_empty());
+    let Some(header)=lines.next() else{return (false,None,None)};
+    let Some(key_line)=lines.next() else{return (false,None,None)};
+    if lines.next().is_some(){return (false,None,None)}
+    let Some(key_id)=header.strip_prefix("untrusted comment: minisign public key:") else{
+        return (false,None,None)
+    };
+    let key_id=key_id.trim();
+    if key_id.len()!=16||!key_id.chars().all(|c|c.is_ascii_hexdigit()){
+        return (false,None,None)
+    }
+    let Ok(key_bytes)=base64::engine::general_purpose::STANDARD.decode(key_line.trim()) else{
+        return (false,None,None)
+    };
+    if key_bytes.len()!=42{return (false,None,None)}
+    (true,Some(key_id.to_ascii_uppercase()),Some(sha256_bytes(&key_bytes)))
+}
+
+const STABLE_UPDATER_ENDPOINT:&str="https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json";
+
+fn stable_updater_endpoint_pinned(endpoints:&[String])->bool{
+    endpoints.first().map(|endpoint|endpoint==STABLE_UPDATER_ENDPOINT).unwrap_or(false)
+}
+
+fn updater_public_key_trust_verified(actual:Option<&str>,expected:&str)->bool{
+    expected.len()==64
+      &&expected.chars().all(|c|c.is_ascii_hexdigit())
+      &&actual.map(|value|value.eq_ignore_ascii_case(expected)).unwrap_or(false)
+}
+
+fn updater_config_diagnostics(app:&tauri::AppHandle)->serde_json::Value{
+    let updater=app.config().plugins.0.get("updater");
+    let encoded=updater.and_then(|value|value.get("pubkey")).and_then(|value|value.as_str()).unwrap_or("");
+    let (key_valid,key_id,key_sha256)=updater_public_key_facts(encoded);
+    let endpoints=updater.and_then(|value|value.get("endpoints")).and_then(|value|value.as_array())
+      .map(|values|values.iter().filter_map(|value|value.as_str().map(str::to_string)).collect::<Vec<_>>())
+      .unwrap_or_default();
+    let endpoint_pinned=stable_updater_endpoint_pinned(&endpoints);
+    let expected_key_sha256=env!("VYRON_TRUSTED_UPDATER_PUBLIC_KEY_SHA256");
+    let trust_verified=updater_public_key_trust_verified(key_sha256.as_deref(),expected_key_sha256);
+    let trust_status=if expected_key_sha256=="unverified"{"NOT_INDEPENDENTLY_VERIFIED"}else if trust_verified{"FINGERPRINT_MATCH"}else{"FINGERPRINT_MISMATCH"};
+    let configured=key_valid&&endpoint_pinned;
+    serde_json::json!({
+      "updaterConfigurationValid":configured,
+      "updaterPublicKeyTrustVerified":trust_verified,
+      "updaterEndpointPinned":endpoint_pinned,
+      "updaterPublicKeyConfigured":!encoded.trim().is_empty(),
+      "updaterPublicKeyValid":key_valid,
+      "updaterPublicKeyId":key_id,
+      "updaterPublicKeySha256":key_sha256,
+      "updaterEndpoint":endpoints.first().cloned(),
+      "updaterEndpoints":endpoints,
+      "updaterPublicKeyTrust":trust_status,
+      "secretValuesIncluded":false
+    })
+}
+
+fn updater_config_is_trusted(diagnostics:&serde_json::Value)->bool{
+    diagnostics.get("updaterConfigurationValid").and_then(|value|value.as_bool())==Some(true)
+      &&diagnostics.get("updaterPublicKeyTrustVerified").and_then(|value|value.as_bool())==Some(true)
+}
+
+fn require_trusted_updater_config(app:&tauri::AppHandle)->Result<(),String>{
+    let diagnostics=updater_config_diagnostics(app);
+    if !updater_config_is_trusted(&diagnostics){
+        let endpoint=diagnostics.get("updaterEndpoint").and_then(|value|value.as_str()).unwrap_or("missing");
+        let fingerprint=diagnostics.get("updaterPublicKeySha256").and_then(|value|value.as_str()).unwrap_or("missing");
+        let trust=diagnostics.get("updaterPublicKeyTrust").and_then(|value|value.as_str()).unwrap_or("unverified");
+        return Err(format!("UPDATER_KEY_TRUST_NOT_VERIFIED: endpoint={endpoint}; public_key_sha256={fingerprint}; trust={trust}"));
+    }
+    Ok(())
+}
+
+fn merge_updater_config_diagnostics(target:&mut serde_json::Value,app:&tauri::AppHandle){
+    let diagnostics=updater_config_diagnostics(app);
+    if let (Some(target),Some(source))=(target.as_object_mut(),diagnostics.as_object()){
+        for key in ["updaterConfigurationValid","updaterEndpointPinned","updaterPublicKeyTrustVerified","updaterPublicKeyConfigured","updaterPublicKeyTrust","updaterPublicKeyValid","updaterPublicKeyId","updaterPublicKeySha256","updaterEndpoint","updaterEndpoints"]{
+            if let Some(value)=source.get(key){target.insert(key.to_string(),value.clone());}
+        }
+    }
+}
+
 #[cfg(target_os="macos")]
 fn plist_raw(bundle:&Path,key:&str)->Option<String>{
     let info=bundle.join("Contents/Info.plist");
@@ -125,7 +218,7 @@ fn mac_runtime_snapshot(app:&tauri::AppHandle,probe_replace:bool)->Result<serde_
     let canonical_bundle=canonical_text(&bundle);
     let canonical_exe=canonical_text(&exe);
     let exe_sha=sha256_file(&exe).ok();
-    Ok(serde_json::json!({
+    let mut snapshot=serde_json::json!({
       "currentExecutablePath":exe.to_string_lossy(),
       "currentExecutableCanonicalPath":canonical_exe,
       "currentExecutableSha256":exe_sha,
@@ -146,9 +239,10 @@ fn mac_runtime_snapshot(app:&tauri::AppHandle,probe_replace:bool)->Result<serde_
       "duplicateAppCopies":copies,
       "duplicateCopies":duplicate_copies,
       "targetPlatform":if cfg!(target_arch="aarch64"){"darwin-aarch64"}else{"darwin-x86_64"},
-      "signatureConfigured":true,
       "secretValuesIncluded":false
-    }))
+    });
+    merge_updater_config_diagnostics(&mut snapshot,app);
+    Ok(snapshot)
 }
 
 #[cfg(target_os="macos")]
@@ -196,6 +290,7 @@ fn manifest_platform_text(raw:&serde_json::Value,target:&str,key:&str)->Option<S
 }
 
 async fn stable_update(app:&tauri::AppHandle)->Result<Option<tauri_plugin_updater::Update>,String>{
+    require_trusted_updater_config(app)?;
     let updater=app.updater_builder().build().map_err(|e|format!("UPDATER_BUILD_FAILED: {e}"))?;
     updater.check().await.map_err(|e|format!("UPDATER_MANIFEST_FETCH_FAILED: {e}"))
 }
@@ -229,7 +324,7 @@ pub fn updater_install_preflight(app:tauri::AppHandle)->Result<serde_json::Value
     }
     #[cfg(not(target_os="macos"))]
     {
-        Ok(serde_json::json!({
+        let mut snapshot=serde_json::json!({
           "currentExecutablePath":std::env::current_exe().ok().map(|p|p.to_string_lossy().to_string()),
           "currentExecutableCanonicalPath":serde_json::Value::Null,
           "currentExecutableSha256":serde_json::Value::Null,
@@ -237,9 +332,11 @@ pub fn updater_install_preflight(app:tauri::AppHandle)->Result<serde_json::Value
           "currentAppBundleCanonicalPath":serde_json::Value::Null,
           "underApplications":false,"runningLocation":"other","runningFromDmg":false,"bundleReplaceable":true,
           "currentVersion":app.package_info().version.to_string(),"bundleId":app.config().identifier.clone(),
-          "targetPlatform":std::env::consts::OS,"signatureConfigured":true,"secretValuesIncluded":false,
+          "targetPlatform":std::env::consts::OS,"secretValuesIncluded":false,
           "duplicateAppCopies":[],"duplicateCopies":false
-        }))
+        });
+        merge_updater_config_diagnostics(&mut snapshot,&app);
+        Ok(snapshot)
     }
 }
 
@@ -288,6 +385,7 @@ pub fn updater_runtime_identity(app:tauri::AppHandle)->serde_json::Value{
       "bundleId":app.config().identifier.clone(),
       "targetPlatform":if cfg!(target_os="macos"){if cfg!(target_arch="aarch64"){"darwin-aarch64"}else{"darwin-x86_64"}}else{std::env::consts::OS}
     });
+    merge_updater_config_diagnostics(&mut identity,&app);
     #[cfg(target_os="macos")]
     if let Ok(snapshot)=mac_runtime_snapshot(&app,false){
         if let (Some(dst),Some(src))=(identity.as_object_mut(),snapshot.as_object()){
@@ -454,6 +552,7 @@ fn owner_preview_available(current_product:&str,current_revision:u64,remote_vers
 }
 
 async fn owner_preview_update(app:&tauri::AppHandle)->Result<Option<tauri_plugin_updater::Update>,String>{
+    require_trusted_updater_config(app)?;
     let current_revision=build_revision();
     let current_product=app.package_info().version.to_string();
     let endpoint=OWNER_PREVIEW_ENDPOINT.parse().map_err(|e|format!("OWNER_PREVIEW_ENDPOINT_INVALID: {e}"))?;
@@ -580,4 +679,58 @@ mod owner_preview_revision_tests{
    assert!(owner_preview_available("3.1.0",321,"3.1.0-preview.322"));
    assert!(!owner_preview_available("3.1.0",321,"3.0.1-preview.999"));
  }
+}
+
+#[cfg(test)]
+mod updater_key_diagnostic_tests{
+    use super::*;
+
+    const VALID_PUBLIC_KEY:&str="dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDgxMzNDOTg3M0ZBQjc5QzEKUldUQmVhcy9oOGt6Z1owb2JOWjJjM1FOQjF3UkJnbm5mZGNZRTloMUZhYkJFRlZ6QWFoNk5VN3kK";
+
+    #[test]
+    fn reports_public_key_format_and_fingerprint_without_claiming_trust(){
+        let (valid,key_id,fingerprint)=updater_public_key_facts(VALID_PUBLIC_KEY);
+        assert!(valid);
+        assert_eq!(key_id.as_deref(),Some("8133C9873FAB79C1"));
+        assert_eq!(fingerprint.as_deref(),Some("cbd37c85807e9b80f30612a1bc3a35bc75819b758ac62bb2bfee1881e6db938b"));
+    }
+
+    #[test]
+    fn backend_update_gate_requires_pinned_config_and_matching_trust_anchor(){
+        let trusted=serde_json::json!({"updaterConfigurationValid":true,"updaterPublicKeyTrustVerified":true});
+        let wrong_endpoint=serde_json::json!({"updaterConfigurationValid":false,"updaterPublicKeyTrustVerified":true});
+        let unverified_key=serde_json::json!({"updaterConfigurationValid":true,"updaterPublicKeyTrustVerified":false});
+        assert!(updater_config_is_trusted(&trusted));
+        assert!(!updater_config_is_trusted(&wrong_endpoint));
+        assert!(!updater_config_is_trusted(&unverified_key));
+        assert!(!updater_config_is_trusted(&serde_json::json!({})));
+    }
+
+    #[test]
+    fn trusts_only_an_independently_supplied_matching_fingerprint(){
+        let actual="cbd37c85807e9b80f30612a1bc3a35bc75819b758ac62bb2bfee1881e6db938b";
+        assert!(updater_public_key_trust_verified(Some(actual),actual));
+        assert!(!updater_public_key_trust_verified(Some(actual),"unverified"));
+        assert!(!updater_public_key_trust_verified(Some(actual),"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+        assert!(!updater_public_key_trust_verified(None,actual));
+    }
+
+    #[test]
+    fn pins_only_the_approved_stable_updater_feed(){
+        let approved=vec!["https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json".to_string()];
+        let legacy=vec!["https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/vyron-updates/latest.json".to_string()];
+        assert!(stable_updater_endpoint_pinned(&approved));
+        assert!(!stable_updater_endpoint_pinned(&legacy));
+        assert!(!stable_updater_endpoint_pinned(&[]));
+    }
+
+    #[test]
+    fn rejects_missing_or_malformed_public_keys(){
+        for value in ["","not-base64","e30=","dW50cnVzdGVkIGNvbW1lbnQ6IG5vdC1taW5pc2lnbiBrZXkK"]{
+            let (valid,key_id,fingerprint)=updater_public_key_facts(value);
+            assert!(!valid);
+            assert!(key_id.is_none());
+            assert!(fingerprint.is_none());
+        }
+    }
 }

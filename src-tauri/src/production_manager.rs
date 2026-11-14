@@ -14,7 +14,7 @@ use std::{
         Arc, Mutex, OnceLock,
     },
     thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Emitter, Manager};
 use unicode_normalization::UnicodeNormalization;
@@ -186,9 +186,48 @@ fn atomic_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
     if let Some(parent)=path.parent(){if let Ok(dir)=fs::File::open(parent){let _=dir.sync_all();}}
     Ok(())
 }
-fn copy_and_sync(src:&Path,dst:&Path)->Result<(),String>{
-    fs::copy(src,dst).map_err(|e|e.to_string())?;
-    fs::OpenOptions::new().write(true).open(dst).and_then(|f|f.sync_all()).map_err(|e|e.to_string())
+#[derive(Default)]
+struct CopyMetrics {
+    files: usize,
+    cloned_files: usize,
+    bytes: u64,
+    copy_ms: u128,
+    sync_ms: u128,
+}
+// APFS clonefile creates an independent Copy-on-Write file, NOT a hard link.
+// On HFS+, exFAT or a different volume, use an ordinary durable byte copy.
+#[cfg(target_os="macos")]
+fn try_apfs_clone(src:&Path,dst:&Path)->bool{
+    use std::ffi::{c_char,CString};
+    use std::os::unix::ffi::OsStrExt;
+    unsafe extern "C" {fn clonefile(src:*const c_char,dst:*const c_char,flags:i32)->i32;}
+    if dst.exists(){return false}
+    let Ok(s)=CString::new(src.as_os_str().as_bytes()) else{return false};
+    let Ok(d)=CString::new(dst.as_os_str().as_bytes()) else{return false};
+    unsafe{clonefile(s.as_ptr(),d.as_ptr(),0)==0}
+}
+fn copy_and_sync(src:&Path,dst:&Path,metrics:&mut CopyMetrics)->Result<(),String>{
+    let started=Instant::now();
+    #[cfg(target_os="macos")]
+    let cloned=try_apfs_clone(src,dst);
+    #[cfg(not(target_os="macos"))]
+    let cloned=false;
+    let bytes=if cloned {
+        fs::metadata(dst).map_err(|e|e.to_string())?.len()
+    }else{
+        // clonefile can fail on external HDD/exFAT; never create a hard link
+        // because later project edits must not mutate the source MP3.
+        fs::copy(src,dst).map_err(|e|e.to_string())?
+    };
+    let copy_ms=started.elapsed().as_millis();
+    let started=Instant::now();
+    fs::OpenOptions::new().write(true).open(dst).and_then(|f|f.sync_data()).map_err(|e|e.to_string())?;
+    metrics.files+=1;
+    if cloned{metrics.cloned_files+=1}
+    metrics.bytes=metrics.bytes.saturating_add(bytes);
+    metrics.copy_ms+=copy_ms;
+    metrics.sync_ms+=started.elapsed().as_millis();
+    Ok(())
 }
 fn sync_dir(path:&Path){#[cfg(unix)] if let Ok(dir)=fs::File::open(path){let _=dir.sync_all();}}
 fn read_json<T: for<'de> Deserialize<'de> + Default>(path: &Path) -> T {
@@ -437,6 +476,8 @@ pub struct MusicSummary {
     pub library_path: String,
     pub tracks: usize,
     pub indexed_at: String,
+    pub configured_at: String,
+    pub available: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -1248,6 +1289,7 @@ pub async fn index_production_music_library(
     workspace: String,
     channel_id: String,
 ) -> Result<MusicSummary, String> {
+    let settings: ChannelSettings = read_json(&settings_path(&workspace, &channel_id)?);
     let idx =
         tauri::async_runtime::spawn_blocking(move || index_music_sync(&workspace, &channel_id))
             .await
@@ -1256,6 +1298,8 @@ pub async fn index_production_music_library(
         library_path: idx.library_path,
         tracks: idx.tracks.len(),
         indexed_at: idx.indexed_at,
+        configured_at: settings.updated_at,
+        available: true,
     })
 }
 
@@ -1691,12 +1735,32 @@ fn project_ready(plan: &PlanProject, folder: &Path) -> bool {
         p.is_file() && fs::metadata(p).map(|m| m.len() > 0).unwrap_or(false)
     })
 }
+// A completed file count alone is not a committed batch. Confirm the final
+// checkpoint, batch manifest, status manifest AND all required output files.
+fn batch_committed_to_disk(broot:&Path, plan:&BuildPlan)->bool {
+    let expected=plan.projects.len();
+    if expected==0||plan.batch_id.is_empty(){return false}
+    let cp:Checkpoint=read_json(&broot.join("checkpoint.json"));
+    let manifest:BatchManifest=read_json(&broot.join("batch.json"));
+    let status:BatchStatus=read_json(&broot.join("status.json"));
+    if cp.status!="Готово"||cp.completed_projects!=expected||cp.total_projects!=expected{return false}
+    if manifest.status!="Готово"||manifest.batch_id!=plan.batch_id||manifest.project_count!=expected||manifest.projects.len()!=expected{return false}
+    if status.status!="Готово"||status.batch_id!=plan.batch_id||status.projects.len()!=expected{return false}
+    let ids=manifest.projects.iter().map(|p|p.project_id.as_str()).collect::<HashSet<_>>();
+    if ids.len()!=expected{return false}
+    plan.projects.iter().all(|p|ids.contains(p.project_id.as_str())&&project_ready(p,&broot.join(&p.project_id)))
+}
+pub(crate) fn committed_batch_for_recovery(broot:&Path,batch_id:&str,expected:usize)->bool {
+    let plan:BuildPlan=read_json(&broot.join("plan.json"));
+    plan.batch_id==batch_id&&plan.projects.len()==expected&&batch_committed_to_disk(broot,&plan)
+}
 fn execute_plan(app: Option<&AppHandle>, plan: &BuildPlan) -> Result<BatchSummary, String> {
     let broot = PathBuf::from(&plan.batch_root);
     let cp_path = broot.join("checkpoint.json");
     let commit_dir=broot.join(".vyron-committed");
     fs::create_dir_all(&commit_dir).map_err(|e|e.to_string())?;
     let mut cp: Checkpoint = read_json(&cp_path);
+    let mut total_copy=CopyMetrics::default();
     for (i, p) in plan.projects.iter().enumerate() {
         let final_dir = broot.join(&p.project_id);
         cp.current_project=p.project_id.clone();
@@ -1706,27 +1770,47 @@ fn execute_plan(app: Option<&AppHandle>, plan: &BuildPlan) -> Result<BatchSummar
         atomic_json(&cp_path,&cp)?;
         if let Some(a)=app{
             if !plan.recovery_session_id.is_empty(){let _=recovery::checkpoint(a,&plan.recovery_session_id,"PROJECT_STAGING",i,plan.projects.len(),&format!("Подготовка проекта {}",p.project_id));}
+            // Report progress before a potentially slow HDD copy, not only
+            // after all ten-plus source files are durably flushed.
+            let _=a.emit("production-batch-progress",json!({"batchId":plan.batch_id,"requestId":plan.request.request_id,"completed":i,"total":plan.projects.len(),"stage":format!("Проект {}/{} • подготовка файлов",i+1,plan.projects.len())}));
         }
         if !project_ready(p, &final_dir) {
+            let mut project_copy=CopyMetrics::default();
             let legacy_tmp=broot.join(format!(".{}.tmp",&p.project_id));
             if legacy_tmp.exists(){let _=fs::remove_dir_all(&legacy_tmp);}
             let tmp = broot.join(format!(".{}.vyron-partial", &p.project_id));
             if tmp.exists() { let _ = fs::remove_dir_all(&tmp); }
             fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
-            copy_and_sync(Path::new(&p.image_source),&tmp.join(&p.image_name))
+            copy_and_sync(Path::new(&p.image_source),&tmp.join(&p.image_name),&mut project_copy)
                 .map_err(|e| format!("Изображение {}: {e}", p.project_id))?;
-            for t in &p.tracks {
+            let mut last_copy_progress=Instant::now();
+            for (track_index,t) in p.tracks.iter().enumerate() {
                 let dst = tmp.join(&t.dest_name);
                 if let Some(parent) = dst.parent() {
                     fs::create_dir_all(parent).map_err(|e| format!("Папка tracks {}: {e}", p.project_id))?;
                 }
-                copy_and_sync(Path::new(&t.source),&dst)
+                copy_and_sync(Path::new(&t.source),&dst,&mut project_copy)
                     .map_err(|e| format!("Трек {}: {e}", t.source))?;
+                // Time-gate events to avoid rerender storms on M1, but give
+                // HDD users an observable per-file heartbeat on slow copies.
+                if last_copy_progress.elapsed()>=Duration::from_millis(800) {
+                    if let Some(a)=app {
+                        let _=a.emit("production-batch-progress",json!({"batchId":plan.batch_id,"requestId":plan.request.request_id,"completed":i,"total":plan.projects.len(),"stage":format!("Проект {}/{} • MP3 {}/{}",i+1,plan.projects.len(),track_index+1,p.tracks.len())}));
+                    }
+                    last_copy_progress=Instant::now();
+                }
             }
             sync_dir(&tmp);
             if final_dir.exists() { let _ = fs::remove_dir_all(&final_dir); }
             fs::rename(&tmp, &final_dir).map_err(|e| e.to_string())?;
             sync_dir(&broot);
+            total_copy.files+=project_copy.files;
+            total_copy.cloned_files+=project_copy.cloned_files;
+            total_copy.bytes=total_copy.bytes.saturating_add(project_copy.bytes);
+            total_copy.copy_ms+=project_copy.copy_ms;
+            total_copy.sync_ms+=project_copy.sync_ms;
+            eprintln!("VYRON production copy: project={} files={} cloned={} logical_bytes={} copy_ms={} sync_ms={}",
+                p.project_id,project_copy.files,project_copy.cloned_files,project_copy.bytes,project_copy.copy_ms,project_copy.sync_ms);
         }
         if plan.request.mode == "manual" {
             atomic_json(
@@ -1754,9 +1838,11 @@ fn execute_plan(app: Option<&AppHandle>, plan: &BuildPlan) -> Result<BatchSummar
         atomic_json(&cp_path, &cp)?;
         if let Some(a) = app {
             if !plan.recovery_session_id.is_empty(){let _=recovery::checkpoint(a,&plan.recovery_session_id,"PROJECT_COMMITTED",i+1,plan.projects.len(),&format!("Проект {} подтверждён",p.project_id));}
-            let _=a.emit("production-batch-progress",json!({"batchId":plan.batch_id,"completed":i+1,"total":plan.projects.len(),"stage":"files"}));
+            let _=a.emit("production-batch-progress",json!({"batchId":plan.batch_id,"requestId":plan.request.request_id,"completed":i+1,"total":plan.projects.len(),"stage":"Файлы проекта сохранены"}));
         }
     }
+    eprintln!("VYRON production copy totals: batch={} files={} cloned={} logical_bytes={} copy_ms={} sync_ms={}",
+        plan.batch_id,total_copy.files,total_copy.cloned_files,total_copy.bytes,total_copy.copy_ms,total_copy.sync_ms);
     let mut manifest = BatchManifest {
         schema_version: SCHEMA_VERSION,
         source: "VYRON Production Manager".into(),
@@ -1905,10 +1991,8 @@ fn recovery_in_workspace(workspace: &str) -> Vec<RecoveryState> {
             if cp.total_projects == 0 {
                 cp.total_projects = plan.projects.len();
             }
-            if matches!(
-                cp.status.as_str(),
-                "Готово" | "Заменено новой сборкой" | "Отменено"
-            ) {
+            if matches!(cp.status.as_str(),"Заменено новой сборкой"|"Отменено")
+                ||batch_committed_to_disk(&broot,&plan){
                 continue;
             }
             let actual = plan
@@ -1917,9 +2001,8 @@ fn recovery_in_workspace(workspace: &str) -> Vec<RecoveryState> {
                 .filter(|p| project_ready(p, &broot.join(&p.project_id)))
                 .count();
             if actual != cp.completed_projects {
+                // Discovery must be read-only. Persist progress only during an explicit resume.
                 cp.completed_projects = actual;
-                cp.updated_at = Utc::now().to_rfc3339();
-                let _ = atomic_json(&broot.join("checkpoint.json"), &cp);
             }
             let current = if actual < plan.projects.len() {
                 format!("{:03}", actual + 1)
@@ -1943,19 +2026,21 @@ fn recovery_in_workspace(workspace: &str) -> Vec<RecoveryState> {
     out
 }
 
-#[tauri::command]
-pub fn find_production_recovery(workspaces: Vec<String>) -> Result<Vec<RecoveryState>, String> {
+fn find_production_recovery_sync(workspaces: Vec<String>) -> Result<Vec<RecoveryState>, String> {
     let mut seen = HashSet::<String>::new();
     let mut out = Vec::new();
     for raw in workspaces {
         let w = raw.trim();
-        if w.is_empty() || !seen.insert(w.to_string()) {
-            continue;
-        }
+        if w.is_empty() || !seen.insert(w.to_string()) {continue}
         out.extend(recovery_in_workspace(w));
     }
     out.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     Ok(out)
+}
+#[tauri::command]
+pub async fn find_production_recovery(workspaces: Vec<String>) -> Result<Vec<RecoveryState>, String> {
+    tauri::async_runtime::spawn_blocking(move||find_production_recovery_sync(workspaces))
+        .await.map_err(|e|e.to_string())?
 }
 
 #[tauri::command]
@@ -2091,21 +2176,20 @@ pub async fn build_production_batch(
     app: AppHandle,
     request: BuildRequest,
 ) -> Result<BuildResult, String> {
-    let available = resolve_production_images(&request.workspace, &request.channel_id)?.len();
-    if request.project_count > available && !request.allow_image_reuse {
-        return Ok(BuildResult {
-            status: "insufficient_images".into(),
-            available_images: available,
-            requested_projects: request.project_count,
-            batch: None,
-            message: Some(format!(
-                "Доступно {available}, запрошено {}",
-                request.project_count
-            )),
-        });
-    }
     let app2 = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        // Image resolution can hash files on an external HDD: never run it on
+        // the Tauri command/UI dispatcher.
+        let available = resolve_production_images(&request.workspace, &request.channel_id)?.len();
+        if request.project_count > available && !request.allow_image_reuse {
+            return Ok(BuildResult {
+                status: "insufficient_images".into(),
+                available_images: available,
+                requested_projects: request.project_count,
+                batch: None,
+                message: Some(format!("Доступно {available}, запрошено {}",request.project_count)),
+            });
+        }
         let _g = build_lock().lock().map_err(|_| "Build lock".to_string())?;
         let mut map = request_map(&request.workspace, &request.channel_id)?;
         if let Some(path) = map.get(&request.request_id).cloned() {
@@ -2305,13 +2389,27 @@ pub fn production_channel_state(
         read_json(&session_path(&workspace, &channel_id)?),
     );
     let idx: MusicIndex = read_json(&index_path(&workspace, &channel_id)?);
-    let music = if idx.library_path.is_empty() {
+    let music = if settings.music_library.is_empty() {
         None
     } else {
+        // The configured library is authoritative.  The index is only a cache
+        // of track metadata and may legitimately be absent or stale while an
+        // external disk is disconnected.
+        let index_matches_settings = idx.library_path == settings.music_library;
         Some(MusicSummary {
-            library_path: idx.library_path,
-            tracks: idx.tracks.len(),
-            indexed_at: idx.indexed_at,
+            library_path: settings.music_library.clone(),
+            tracks: if index_matches_settings {
+                idx.tracks.len()
+            } else {
+                0
+            },
+            indexed_at: if index_matches_settings {
+                idx.indexed_at
+            } else {
+                String::new()
+            },
+            configured_at: settings.updated_at.clone(),
+            available: Path::new(&settings.music_library).is_dir(),
         })
     };
     let images = materials_manager::image_summary(&workspace, &channel_id).ok();
@@ -2322,7 +2420,9 @@ pub fn production_channel_state(
         music,
         images,
         resolved_images_available,
-        batches: list_production_batches(workspace, channel_id)?,
+        // Batch history is intentionally demand-loaded by the builder/history
+        // screen. Opening Materials must not walk every historical batch.
+        batches: Vec::new(),
     })
 }
 fn validate_manifest_projects(
@@ -3699,6 +3799,69 @@ pub fn production_endlume_handoff_consumed(request_path: String) -> Result<bool,
         return Ok(true);
     }
     Ok(!Path::new(&request_path).exists())
+}
+
+#[cfg(test)]
+mod production_copy_independence_tests {
+    use super::*;
+    #[test]
+    fn staging_copy_is_independent_of_source_file(){
+        let d=std::env::temp_dir().join(format!("vyron-copy-{}",Uuid::new_v4()));
+        fs::create_dir_all(&d).unwrap();
+        let src=d.join("master.mp3");
+        let dst=d.join("project.mp3");
+        fs::write(&src,b"master-audio-data").unwrap();
+        let mut stats=CopyMetrics::default();
+        copy_and_sync(&src,&dst,&mut stats).unwrap();
+        assert_eq!(stats.files,1);
+        assert_eq!(stats.bytes,17);
+        assert_eq!(fs::read(&dst).unwrap(),fs::read(&src).unwrap());
+        fs::write(&dst,b"edited-project").unwrap();
+        assert_eq!(fs::read(&src).unwrap(),b"master-audio-data");
+        let _=fs::remove_dir_all(d);
+    }
+}
+
+#[cfg(test)]
+mod completed_batch_regression_tests {
+    use super::*;
+    #[test]
+    fn completed_batch_requires_all_durable_manifests_and_files() {
+        let d=std::env::temp_dir().join(format!("vyron-commit-gate-{}",Uuid::new_v4()));
+        let p=d.join("001");
+        fs::create_dir_all(&p).unwrap();
+        fs::write(p.join("cover.jpg"),b"image").unwrap();
+        fs::write(p.join("001_audio.mp3"),b"audio").unwrap();
+        let plan=BuildPlan{
+            batch_id:"B".into(),batch_root:d.to_string_lossy().into_owned(),
+            projects:vec![PlanProject{
+                project_id:"001".into(),image_name:"cover.jpg".into(),
+                tracks:vec![PlanTrack{dest_name:"001_audio.mp3".into(),..Default::default()}],
+                ..Default::default()
+            }],..Default::default()
+        };
+        atomic_json(&d.join("plan.json"),&plan).unwrap();
+        let cp=Checkpoint{completed_projects:1,total_projects:1,status:"Готово".into(),..Default::default()};
+        let manifest=BatchManifest{
+            batch_id:"B".into(),status:"Готово".into(),project_count:1,
+            projects:vec![ManifestProject{project_id:"001".into(),..Default::default()}],
+            ..Default::default()
+        };
+        let status=BatchStatus{
+            batch_id:"B".into(),status:"Готово".into(),
+            projects:vec![BatchProjectStatus{project_id:"001".into(),..Default::default()}],
+            ..Default::default()
+        };
+        assert!(!committed_batch_for_recovery(&d,"B",1));
+        atomic_json(&d.join("checkpoint.json"),&cp).unwrap();
+        atomic_json(&d.join("batch.json"),&manifest).unwrap();
+        assert!(!committed_batch_for_recovery(&d,"B",1));
+        atomic_json(&d.join("status.json"),&status).unwrap();
+        assert!(committed_batch_for_recovery(&d,"B",1));
+        fs::remove_file(p.join("001_audio.mp3")).unwrap();
+        assert!(!committed_batch_for_recovery(&d,"B",1));
+        let _=fs::remove_dir_all(d);
+    }
 }
 
 #[cfg(test)]

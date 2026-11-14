@@ -6,7 +6,12 @@ import type {Channel} from './types';
 const __storage=new Map<string,string>();
 Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{get length(){return __storage.size},clear(){__storage.clear()},getItem(k:string){return __storage.has(k)?__storage.get(k)!:null},key(i:number){return Array.from(__storage.keys())[i]??null},removeItem(k:string){__storage.delete(k)},setItem(k:string,v:string){__storage.set(k,String(v))}}});
 const storeFixture=vi.hoisted(()=>({channels:[] as Channel[],jobs:[] as any[]}));
-vi.mock('./store',()=>({useApp:Object.assign((selector:(state:typeof storeFixture)=>unknown)=>selector(storeFixture),{getState:()=>storeFixture})}));
+// Use the real Zustand hook contract: derived stores subscribe at import time.
+// A selector-only mock fails before any of the five assertions can execute.
+vi.mock('./store',async()=>{
+ const {create}=await import('zustand');
+ return{useApp:create(()=>storeFixture)};
+});
 import {filterYoutubeChannels,resolveYoutubeActiveChannel,YouTubeChannelBar} from './YouTubeChannelBar';
 import {loadActivePublishChannel,loadRecentPublishChannels,saveActivePublishChannel} from './publishWorkspaceState';
 
