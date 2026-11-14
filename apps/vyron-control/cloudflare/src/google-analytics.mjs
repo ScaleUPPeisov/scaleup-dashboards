@@ -159,8 +159,8 @@ async function processBatch(env,details,fetchImpl=fetch) {
       try {
         const token=await refreshAccessToken(profile,env,fetchImpl);
         const dailyParams=reportParams(startDate,endDate,'day',
-          'views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,'+
-          'subscribersGained,subscribersLost,likes,comments,shares','day');
+          'views,engagedViews,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,'+
+          'subscribersGained,subscribersLost,likes,dislikes,comments,shares','day');
         const dailyJson=await requestReport(token,dailyParams,fetchImpl,true);
         const snapshot=parseDailyReport(dailyJson,profile.channel_id,
           new Date().toISOString(),PERIOD_DAYS);
