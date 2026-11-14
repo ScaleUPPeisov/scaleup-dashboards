@@ -120,7 +120,7 @@ function renderChannels(channels) {
         ['Чистый прирост',number((a.subscribersGained??0)-(a.subscribersLost??0))],
         ['Лайки',number(sum('likes'))],['Комментарии',number(sum('comments'))],
         ['Репосты',number(sum('shares'))],
-        ['CTR миниатюр','Не предоставляется текущим API']
+        ['CTR миниатюр','Нужен отдельный Reporting API']
       ];
       for (const [label, value] of fields)extras.append(make('span', '', label + ': ' + value));
       extras.append(make('span', 'mac-stale-label',
