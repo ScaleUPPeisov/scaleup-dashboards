@@ -2,8 +2,8 @@ import { acceptedCommand, pacificDay, safeEvent, validatedChannelList } from './
 import { manualSlot, runCountersSync, scheduledSync } from './sync.mjs';
 import { saveAnalytics } from './analytics.mjs';
 import { startOAuth,callbackOAuth,authorizedProfiles,disconnectProfile } from './oauth.mjs';
-import { importVyronProfiles } from './oauth-import.mjs';
-import { runAnalyticsBatch,runManualAnalyticsBatch } from './google-analytics.mjs';
+import { importVyronProfiles,bindExistingVYRONProfiles } from './oauth-import.mjs';
+import { runAnalyticsBatch,runManualAnalyticsBatch,runQueuedAnalyticsBatch } from './google-analytics.mjs';
 import { registerPush,unregisterPush,vapidPublic,dispatchPush,PUSH_CRON } from './push.mjs';
 
 const REQUIRED_TOKEN_LENGTH = 32;
@@ -125,7 +125,7 @@ async function health(env) {
       ok,app:'vyron-control',
       d1:{bound:true,schema:ok,expectedTables:EXPECTED_TABLES.length,
         presentTables:EXPECTED_TABLES.length-missing.length,...(ok?{}:{missing})},
-      schedule:{timezone:'Asia/Krasnoyarsk',local:['07:00','22:00'],utc:['00:00','15:00']}
+      schedule:{timezone:'Asia/Krasnoyarsk',local:['hourly','07:00','22:00'],utc:['hourly','00:00','15:00']}
     },ok?200:503);
   } catch {
     return json({
@@ -240,7 +240,7 @@ async function fetchStatus(env) {
     "SELECT ended_at FROM sync_runs WHERE status='success' ORDER BY ended_at DESC LIMIT 1"
   ).first();
   return {
-    timezone:'Asia/Krasnoyarsk',schedule:['07:00','22:00'],
+    timezone:'Asia/Krasnoyarsk',schedule:['hourly','07:00','22:00'],
     quota:{ day,spent:q?.spent??0,
       budget:Number(env.QUOTA_DAILY_BUDGET||200),
       scope:'vyron-control-local-only',
@@ -354,16 +354,90 @@ async function eventHistory(env,request) {
     {beforeAt:last.received_at,beforeId:last.id}:null,category});
 }
 
-async function enrollChannels(env,request) {
-  const items=validatedChannelList(await readJson(request,32000));
-  if(!items.length) return errorReply('No channels to enroll',400);
-  const payload=JSON.stringify(items);
+async function enrollChannels(env,request,{fromAgent=false}={}) {
+  const raw=await readJson(request,32000);
+  if(!Array.isArray(raw))return errorReply('Expected channel list',400);
+  const items=validatedChannelList(raw.map(row=>({
+    id:row?.id??row?.channelId,name:row?.name??row?.title
+  })));
+  if(!items.length)return errorReply('No channels to enroll',400);
+  const rawById=new Map(raw.map(row=>[String(row?.id??row?.channelId??''),row]));
+  const candidates=items.map(channel=>{
+    const binding=String(rawById.get(channel.id)?.profileBinding||'');
+    return /^[a-f0-9]{64}$/i.test(binding)
+      ?{...channel,profileBinding:binding.toLowerCase()}:channel;
+  });
+  const placeholders=items.map(()=>'?').join(',');
+  const existing=await env.DB.prepare(
+    'SELECT id FROM channels WHERE id IN ('+placeholders+')'
+  ).bind(...items.map(row=>row.id)).all();
+  const existingIds=new Set((existing.results||[]).map(row=>row.id));
+  const newlyEnrolled=items.filter(row=>!existingIds.has(row.id));
   await env.DB.prepare(`
     INSERT INTO channels (id,name)
     SELECT json_extract(value,'$.id'),json_extract(value,'$.name') FROM json_each(?) WHERE 1
     ON CONFLICT(id) DO UPDATE SET name=excluded.name
-  `).bind(payload).run();
-  return json({enrolled:items.length,existingChannelsPreserved:true});
+  `).bind(JSON.stringify(items)).run();
+
+  let binding={boundChannels:[],needsAuthorization:[]};
+  if(fromAgent&&newlyEnrolled.length) {
+    try {
+      binding=await bindExistingVYRONProfiles(env,
+        candidates.filter(row=>!existingIds.has(row.id)),env.FETCH_IMPL||fetch);
+    } catch {
+      binding={boundChannels:[],needsAuthorization:newlyEnrolled.map(row=>({id:row.id,name:row.name})),
+        profileChecksFailed:1};
+    }
+  }
+
+  const newIds=newlyEnrolled.map(row=>row.id);
+  let publicSync={complete:true,updatedChannels:0,requestedChannels:0,reason:'no_new_channels'};
+  if(fromAgent) {
+    const pending=await env.DB.prepare(
+      'SELECT id FROM channels WHERE id IN ('+placeholders+') AND updated_at IS NULL'
+    ).bind(...items.map(row=>row.id)).all();
+    const pendingIds=(pending.results||[]).map(row=>row.id);
+    if(pendingIds.length) {
+      const date=new Date();
+      const slot='agent-enroll:'+Math.floor(date.getTime()/60000)+':'+pendingIds.slice().sort().join(',');
+      try {
+        publicSync=await runCountersSync(env,{
+          source:'agent-enroll',slot,date,channelIds:pendingIds,fetchImpl:env.FETCH_IMPL||fetch
+        });
+      } catch(error) {
+        console.error('VYRON CONTROL initial channel sync failed:',
+          String(error?.message||'Unknown').slice(0,120));
+        publicSync={complete:false,updatedChannels:0,requestedChannels:pendingIds.length,
+          reason:'initial_sync_failed'};
+      }
+    }
+  }
+
+  const analyticsCandidates=fromAgent?newIds:[];
+  let analyticsQueued=0;
+  if(analyticsCandidates.length) {
+    const auth=await env.DB.prepare(
+      'SELECT channel_id FROM google_oauth_profiles WHERE channel_id IN ('+
+      analyticsCandidates.map(()=>'?').join(',')+')'
+    ).bind(...analyticsCandidates).all();
+    const authorizedIds=(auth.results||[]).map(row=>row.channel_id);
+    if(authorizedIds.length) {
+      const now=new Date().toISOString();
+      await env.DB.batch(authorizedIds.map(id=>env.DB.prepare(`
+        INSERT INTO channel_analytics_queue(channel_id,queued_at)
+        VALUES (?,?)
+        ON CONFLICT(channel_id) DO UPDATE SET queued_at=excluded.queued_at,
+          attempts=0,last_attempt_at=NULL,last_error=NULL,completed_at=NULL
+      `).bind(id,now)));
+      analyticsQueued=authorizedIds.length;
+    }
+  }
+  return json({
+    enrolled:items.length,newlyEnrolled:newlyEnrolled.length,
+    existingChannelsPreserved:true,publicSync,
+    analytics:{autoBound:binding.boundChannels,needsAuthorization:binding.needsAuthorization,
+      queued:analyticsQueued,profileChecksFailed:binding.profileChecksFailed||0}
+  });
 }
 
 async function ingestAgentEvents(env,request) {
@@ -541,7 +615,7 @@ export default {
         return cancelCommand(env,id);
       }
       if (url.pathname==='/api/agent/channels'&&request.method==='POST')
-        return enrollChannels(env,request);
+        return enrollChannels(env,request,{fromAgent:true});
       if (url.pathname==='/api/agent/analytics'&&request.method==='POST')
         return json(await saveAnalytics(env,request));
       if (url.pathname==='/api/agent/events'&&request.method==='POST')
@@ -573,7 +647,7 @@ export default {
     ctx.waitUntil(Promise.allSettled([
       scheduledSync(controller,env),
       runAnalyticsBatch(env,controller),
-      ...(controller.cron===PUSH_CRON?[dispatchPush(env)]:[])
+      ...(controller.cron===PUSH_CRON?[runQueuedAnalyticsBatch(env,controller),dispatchPush(env)]:[])
     ]).then(results=>{
       for (const result of results) if(result.status==='rejected')
         console.error('VYRON CONTROL scheduled task failed:',
