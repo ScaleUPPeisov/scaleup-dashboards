@@ -733,6 +733,8 @@ $('migration-import').addEventListener('click',async()=>{
     message.textContent='Расшифровываю пакет локально…';
     const bundle=await decryptVyronMigration(await file.arrayBuffer(),password);
     let imported=0,failed=0,processed=0;
+    const failedResults=[],channelNames=new Map(bundle.profiles.map(profile=>
+      [profile.channelId,profile.channelName||profile.channelId]));
     try {
       for(let offset=0;offset<bundle.profiles.length;offset+=8){
         const chunk=bundle.profiles.slice(offset,offset+8);
@@ -741,6 +743,9 @@ $('migration-import').addEventListener('click',async()=>{
           bundleUuid:bundle.bundleUuid,profiles:chunk
         });
         imported+=result.imported||0;failed+=result.failed||0;processed+=chunk.length;
+        for(const item of result.results||[])if(item.status==='failed')
+          failedResults.push((channelNames.get(item.channelId)||item.channelId||'Неизвестный канал')+
+            ' ('+(item.reason||'IMPORT_FAILED')+')');
       }
     } finally {
       for(const profile of bundle.profiles){
@@ -749,7 +754,9 @@ $('migration-import').addEventListener('click',async()=>{
     }
     $('migration-password').value='';$('migration-file').value='';
     message.textContent=failed
-      ?`Подключено ${imported} из ${bundle.profiles.length} каналов; не прошли проверку ${failed}. Повторный импорт безопасен.`
+      ?`Подключено ${imported} из ${bundle.profiles.length} каналов; не прошли проверку ${failed}. `+
+        (failedResults.length?'Проблемы: '+failedResults.join('; ')+'. ':'')+
+        'Повторный импорт безопасен.'
       :`Готово: ${imported} из ${bundle.profiles.length} каналов импортировано и проверено Google.`;
     await loadOauthProfiles();
   }catch(error){message.textContent='Импорт не выполнен: '+error.message;}
@@ -847,8 +854,8 @@ $('refresh').addEventListener('click', async () => {
   manualRefreshing=true;button.disabled=true;
   feedback.textContent='Шаг 1/2 · обновляем публичные счётчики всех каналов…';
   $('state-label').textContent='Запрашиваем свежие данные YouTube…';
-  let publicResult=null,publicError='',analyticsTotal=0,analyticsUpdated=0,
-    analyticsFailed=0,analyticsPartial=0,analyticsErrors=[];
+  let publicResult=null,publicError='',analyticsTotal=0,analyticsExpected=current?.channels?.length||0,
+    analyticsUpdated=0,analyticsFailed=0,analyticsPartial=0,analyticsErrors=[],missingAnalytics=[];
   try {
     try {publicResult=await api('/api/refresh','POST',{});}
     catch(error){publicError=error.message;}
@@ -856,11 +863,16 @@ $('refresh').addEventListener('click', async () => {
       const oauth=await api('/api/oauth/profiles');
       const profiles=oauth.profiles||[];
       analyticsTotal=profiles.length;
+      const connectedIds=new Set(profiles.map(profile=>profile.channel_id));
+      const allChannels=current?.channels||[];
+      analyticsExpected=allChannels.length||analyticsTotal;
+      missingAnalytics=allChannels.filter(channel=>!connectedIds.has(channel.id)).map(channel=>channel.name);
       if(analyticsTotal){
         const requestId=crypto.randomUUID().replaceAll('-','');
         for(let offset=0;offset<analyticsTotal;offset+=3){
           const completed=Math.min(offset+3,analyticsTotal);
-          feedback.textContent='Шаг 2/2 · Google Analytics: '+completed+' / '+analyticsTotal+' каналов…';
+          feedback.textContent='Шаг 2/2 · Google Analytics: '+completed+' / '+analyticsTotal+
+            ' подключённых каналов · всего '+analyticsExpected+'…';
           try {
             const batch=await api('/api/analytics/refresh','POST',{offset,requestId});
             analyticsUpdated+=batch.updated||0;
@@ -876,11 +888,11 @@ $('refresh').addEventListener('click', async () => {
       ?'Счётчики '+(publicMatch?publicMatch[1]+'/'+publicMatch[2]:'ошибка')+' · '+publicError
       :publicResult?.skipped?'Публичные счётчики уже обновлялись в этом 5-минутном окне'
       :'Счётчики '+(publicResult?.updatedChannels??0)+' / '+(publicResult?.requestedChannels??0);
-    const analyticsSummary=analyticsTotal
-      ?'Analytics '+analyticsUpdated+' / '+analyticsTotal+
-        (analyticsFailed?' · ошибок '+analyticsFailed:'')+
-        (analyticsPartial?' · неполных отчётов '+analyticsPartial:'')
-      :'Analytics OAuth: нет подключённых каналов';
+    const analyticsSummary='Analytics '+analyticsUpdated+' / '+analyticsExpected+
+      ' · OAuth '+analyticsTotal+' / '+analyticsExpected+
+      (missingAnalytics.length?' · нет привязки: '+missingAnalytics.join(', '):'')+
+      (analyticsFailed?' · ошибок '+analyticsFailed:'')+
+      (analyticsPartial?' · неполных отчётов '+analyticsPartial:'');
     feedback.textContent=[publicSummary,analyticsSummary,...analyticsErrors].join(' · ');
     $('state-label').textContent=publicError
       ?'Публичное обновление завершилось не полностью. Смотри детали ниже.'
