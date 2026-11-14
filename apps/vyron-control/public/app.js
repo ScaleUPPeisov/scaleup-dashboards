@@ -149,33 +149,60 @@ function svgNode(tag,attrs={}) {
   for(const [key,value] of Object.entries(attrs))node.setAttribute(key,String(value));
   return node;
 }
-function renderAnalyticsTrend(rows,period) {
+function renderAnalyticsTrend(rows,period,metric='views') {
   const svg=$('analytics-trend'),caption=$('analytics-trend-caption');
+  const title=$('analytics-trend-title');
   svg.replaceChildren();
+  const specs={
+    views:{label:'Просмотры',unit:'просмотров',value:row=>row.views||0},
+    engagedViews:{label:'Вовлечённые просмотры',unit:'просмотров',value:row=>row.engagedViews||0},
+    watchMinutes:{label:'Время просмотра',unit:'минут',value:row=>row.watchMinutes||0},
+    netSubscribers:{label:'Чистый прирост подписчиков',unit:'подписчиков',
+      value:row=>(row.subscribersGained||0)-(row.subscribersLost||0)},
+    averageViewPercentage:{label:'Среднее удержание',unit:'%',value:row=>
+      row.averageViewPercentage==null?null:Number(row.averageViewPercentage)}
+  };
+  const spec=specs[metric]||specs.views;
+  title.textContent='Динамика: '+spec.label.toLowerCase();
   if(!rows.length) {
     caption.textContent='Нет дневных данных Google Analytics. Проверь подключение OAuth и выполни «Обновить всё».';
     return;
   }
+  const pointsRows=rows.map(row=>({date:row.date,value:spec.value(row)}))
+    .filter(row=>row.value!==null&&Number.isFinite(row.value));
+  if(!pointsRows.length) {
+    caption.textContent='Google не вернул '+spec.label.toLowerCase()+' за выбранный период.';
+    return;
+  }
+  const values=pointsRows.map(row=>row.value);
+  const min=Math.min(0,...values),max=Math.max(0,...values),span=Math.max(1,max-min);
   const width=720,height=190,left=34,right=14,top=16,bottom=24;
-  const values=rows.map(row=>row.views||0),max=Math.max(1,...values);
   const plotWidth=width-left-right,plotHeight=height-top-bottom;
+  const yFor=value=>top+(max-value)/span*plotHeight;
   for(let i=0;i<4;i++){
     const y=top+i*plotHeight/3;
     svg.append(svgNode('path',{d:'M '+left+' '+y+' H '+(width-right),class:'trend-grid'}));
   }
-  const points=values.map((value,index)=>{
-    const x=left+(rows.length===1?plotWidth/2:index*plotWidth/(rows.length-1));
-    const y=top+plotHeight-(value/max)*plotHeight;
-    return [x,y];
-  });
-  const line=points.map((point,index)=>(index?'L ':'M ')+point[0]+' '+point[1]).join(' ');
-  const area=line+' L '+points[points.length-1][0]+' '+(top+plotHeight)+
-    ' L '+points[0][0]+' '+(top+plotHeight)+' Z';
+  const coords=values.map((value,index)=>[
+    left+(values.length===1?plotWidth/2:index*plotWidth/(values.length-1)),
+    yFor(value)
+  ]);
+  const line=coords.map((point,index)=>(index?'L ':'M ')+point[0]+' '+point[1]).join(' ');
+  const baseline=yFor(0);
+  const area=line+' L '+coords[coords.length-1][0]+' '+baseline+
+    ' L '+coords[0][0]+' '+baseline+' Z';
   svg.append(svgNode('path',{d:area,class:'trend-area'}));
   svg.append(svgNode('path',{d:line,class:'trend-line'}));
-  const first=rows[0].date,last=rows[rows.length-1].date;
-  caption.textContent=rows.length+' дней · '+first+' — '+last+
-    ' · всего '+number(values.reduce((sum,value)=>sum+value,0))+' просмотров';
+  const first=pointsRows[0].date,last=pointsRows[pointsRows.length-1].date;
+  const total=values.reduce((sum,value)=>sum+value,0);
+  const summary=metric==='averageViewPercentage'
+    ?'среднее '+(total/values.length).toFixed(1)+'%'
+    :metric==='watchMinutes'
+      ?'всего '+number(Math.round(total/60*10)/10)+' ч'
+      :metric==='netSubscribers'
+        ?'итого '+(total>0?'+':'')+number(total)+' подписчиков'
+        :'всего '+number(total)+' '+spec.unit;
+  caption.textContent=pointsRows.length+' дней · '+first+' — '+last+' · '+summary;
   $('analytics-trend-range').textContent=period+' дней';
 }
 function renderAudienceRetention(video,channelName,rows) {
@@ -282,7 +309,7 @@ function renderAnalytics(data) {
   const latest=connected.map(ch=>ch.analytics.updatedAt).filter(Boolean).sort().at(-1);
   $('analytics-updated').textContent='Google Analytics API: '+connected.length+' / '+(data.channels||[]).length+
     ' каналов · последний снимок '+time(latest);
-  renderAnalyticsTrend(daily,period);
+  renderAnalyticsTrend(daily,period,$('analytics-trend-metric').value);
 
   const topVideos=[];
   const traffic=new Map(),devices=new Map(),countries=new Map(),demographics=new Map(),
@@ -528,6 +555,9 @@ document.querySelectorAll('[data-mobile-target]').forEach(button=>{
 });
 window.addEventListener('resize',applyMobileView);
 $('analytics-period').addEventListener('change',()=>{
+  if(current)renderAnalytics(current);
+});
+$('analytics-trend-metric').addEventListener('change',()=>{
   if(current)renderAnalytics(current);
 });
 $('event-filter').addEventListener('change',()=>{
