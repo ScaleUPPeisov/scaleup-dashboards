@@ -255,19 +255,28 @@ async function fetchStatus(env) {
       for(const channel of available)for(const row of channel.analytics.daily||[]){
         const item=daily.get(row.date)||{
           date:row.date,views:0,engagedViews:0,dislikes:0,watchMinutes:0,
-          subscribersGained:0,subscribersLost:0,likes:0,comments:0,shares:0
+          subscribersGained:0,subscribersLost:0,likes:0,comments:0,shares:0,
+          uniqueViewers:0,redViews:0,redWatchMinutes:0,playlistAdds:0,playlistRemoves:0
         };
         item.views+=row.views??0;item.engagedViews+=row.engagedViews??0;
         item.dislikes+=row.dislikes??0;item.watchMinutes+=row.watchMinutes??0;
         item.subscribersGained+=row.subscribersGained??0;
         item.subscribersLost+=row.subscribersLost??0;
         item.likes+=row.likes??0;item.comments+=row.comments??0;item.shares+=row.shares??0;
+        item.uniqueViewers+=row.uniqueViewers??0;item.redViews+=row.redViews??0;
+        item.redWatchMinutes+=row.redWatchMinutes??0;
+        item.playlistAdds+=row.playlistAdds??0;item.playlistRemoves+=row.playlistRemoves??0;
         daily.set(row.date,item);
       }
       return {
         views,
         engagedViews:available.reduce((sum,ch)=>sum+(ch.analytics.engagedViews??0),0),
         dislikes:available.reduce((sum,ch)=>sum+(ch.analytics.dislikes??0),0),
+        uniqueViewersDailyAverage:daily.size?[...daily.values()].reduce((sum,row)=>sum+row.uniqueViewers,0)/daily.size:null,
+        redViews:available.reduce((sum,ch)=>sum+(ch.analytics.daily||[]).reduce((n,row)=>n+(row.redViews??0),0),0),
+        redWatchMinutes:available.reduce((sum,ch)=>sum+(ch.analytics.daily||[]).reduce((n,row)=>n+(row.redWatchMinutes??0),0),0),
+        playlistAdds:available.reduce((sum,ch)=>sum+(ch.analytics.daily||[]).reduce((n,row)=>n+(row.playlistAdds??0),0),0),
+        playlistRemoves:available.reduce((sum,ch)=>sum+(ch.analytics.daily||[]).reduce((n,row)=>n+(row.playlistRemoves??0),0),0),
         watchMinutes:available.reduce((sum,ch)=>sum+(ch.analytics.watchMinutes??0),0),
         subscribersGained:available.reduce((sum,ch)=>sum+(ch.analytics.subscribersGained??0),0),
         subscribersLost:available.reduce((sum,ch)=>sum+(ch.analytics.subscribersLost??0),0),
