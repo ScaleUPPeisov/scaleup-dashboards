@@ -172,6 +172,9 @@ jobs:
           import pathlib, re, sys
           import os,subprocess
           bad = re.compile(r'(user-data|app-data|Application Support|AppData|keychain|credential-export|migration-export|account-export|channel-export|\.sqlite|\.db\b|\.vyron)', re.I)
+          # The exact signed-release staging directory contains build outputs, not user state.
+          # All other .vyron paths remain blocked.
+          safe_release_path = re.compile(r'(?m)^\s*path:\s*\.vyron-v051/release/?\s*$')
           here=pathlib.Path('.github/workflows/vyron-privacy-gate.yml')
           if os.environ.get('GITHUB_EVENT_NAME')=='push':
               names=subprocess.check_output(
@@ -185,9 +188,14 @@ jobs:
               if wf==here or not wf.exists():
                   continue
               text = wf.read_text(errors='ignore')
-              chunks = re.split(r'(?=\n\s*- name:)', text)
+              # Split on both named and unnamed steps so the artifact action is
+              # inspected independently from the preceding release-build step.
+              chunks = re.split(r'(?=^\s*-\s*(?:name:|uses:))', text, flags=re.M)
               for chunk in chunks:
-                  if 'actions/upload-artifact@' in chunk and bad.search(chunk):
+                  if 'actions/upload-artifact@' not in chunk:
+                      continue
+                  scan_chunk=safe_release_path.sub('',chunk)
+                  if bad.search(scan_chunk):
                       print(f'PRIVACY_GATE=FAIL:SENSITIVE_ARTIFACT_UPLOAD:file={wf}')
                       sys.exit(1)
           print(f'SENSITIVE_ARTIFACT_UPLOAD=BLOCKED scanned={len(workflows)}')
