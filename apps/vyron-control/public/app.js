@@ -532,6 +532,7 @@ function renderOverview(data) {
       :'Установи Mac Bridge один раз для автообнаружения каналов';
 
   $('topbar-status-text').textContent=navigator.onLine?'Облако подключено':'Нет интернета';
+  $('topbar-dot').classList.toggle('offline',!navigator.onLine);
   const status=$('network-status');
   const state=!navigator.onLine?'warning':data.lastError?'warning':data.syncing?'syncing':data.configured?'online':'setup';
   status.dataset.state=state;
@@ -1070,6 +1071,7 @@ window.addEventListener('offline',()=>{
     $('network-status-label').textContent='Нет интернета';
   }
   $('topbar-status-text').textContent='Нет интернета';
+  $('topbar-dot').classList.add('offline');
   if($('state-label'))$('state-label').textContent='Нет соединения. Показываем последнюю загруженную оболочку приложения.';
 });
 window.addEventListener('online',()=>{
