@@ -887,6 +887,9 @@ $('refresh').addEventListener('click', async () => {
       :analyticsFailed||analyticsErrors.length
         ?'Публичные счётчики обновлены; часть Analytics-отчётов требует проверки.'
         :'Синхронизация завершена.';
+  } catch(error) {
+    feedback.textContent='Ошибка синхронизации: '+error.message;
+    $('state-label').textContent='Обновление завершилось с ошибкой.';
   } finally {
     manualRefreshing=false;
     if(current)$('refresh').disabled=!current.configured||current.syncing;
