@@ -432,7 +432,7 @@ test('one imported Google profile can bind multiple YouTube channels without dro
   ).get().n,2);
 });
 
-test('authorized private Analytics syncs 90-day trends and channel breakdowns in four-profile batches',async()=>{
+test('authorized private Analytics syncs 90-day trends and channel breakdowns in three-profile batches',async()=>{
   const e=env(),channelId=id(5);
   Object.assign(e,{
     APP_ORIGIN:'https://vyron-control.example',
@@ -573,7 +573,7 @@ test('authorized private Analytics syncs 90-day trends and channel breakdowns in
   assert.equal(second.skipped,true);
 });
 
-test('manual refresh API processes every authorized channel in safe four-profile batches',async()=>{
+test('manual refresh API processes every authorized channel in safe three-profile batches',async()=>{
   const e=env();
   Object.assign(e,{
     GOOGLE_OAUTH_CLIENT_ID:'MANUAL_CLIENT',
@@ -621,7 +621,7 @@ test('manual refresh API processes every authorized channel in safe four-profile
         liveOrOnDemand:{columnHeaders:['liveOrOnDemand','views','engagedViews','estimatedMinutesWatched','averageViewDuration'],
           rows:[['ON_DEMAND',10,7,50,30]]},
         elapsedVideoTimeRatio:{columnHeaders:['elapsedVideoTimeRatio','audienceWatchRatio','relativeRetentionPerformance'],
-          rows:[['0.0',1,0.2],['1.0',0.3,-0.1]]}
+          rows:[['0.0',1,0.2],['1.0',0.3,0.1]]}
       };
       const report=fixtures[dimensions];
       return new Response(JSON.stringify({
