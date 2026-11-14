@@ -552,12 +552,6 @@ function applyMobileView() {
   });
 }
 document.querySelectorAll('[data-mobile-target]').forEach(button=>{
-    const active=button.dataset.mobileTarget===activeMobileView;
-    button.classList.toggle('active',active);
-    button.setAttribute('aria-pressed',active?'true':'false');
-  });
-}
-document.querySelectorAll('[data-mobile-target]').forEach(button=>{
   button.addEventListener('click',()=>{
     activeMobileView=button.dataset.mobileTarget;
     applyMobileView();
