@@ -12,33 +12,6 @@ const EXPECTED_TABLES = Object.freeze([
   'commands','channel_analytics','channel_analytics_reports','google_oauth_sessions','google_oauth_profiles',
   'google_oauth_client_credentials','cloud_analytics_runs','channel_analytics_queue','push_subscriptions','push_deliveries'
 ]);
-const BOOTSTRAP_STATEMENTS = Object.freeze([
-  "CREATE TABLE IF NOT EXISTS channels (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, subscribers INTEGER, views INTEGER, videos INTEGER, hidden_subscribers INTEGER DEFAULT 0, max_milestone INTEGER, previous_subscribers INTEGER, updated_at TEXT)",
-  "CREATE TABLE IF NOT EXISTS channel_snapshots (channel_id TEXT NOT NULL, observed_at TEXT NOT NULL, subscribers INTEGER, views INTEGER, videos INTEGER, PRIMARY KEY(channel_id, observed_at))",
-  "CREATE INDEX IF NOT EXISTS idx_snapshots_at ON channel_snapshots(observed_at)",
-  "CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY NOT NULL, kind TEXT NOT NULL, channel_id TEXT, title TEXT NOT NULL, payload_json TEXT NOT NULL DEFAULT '{}', occurred_at TEXT NOT NULL, received_at TEXT NOT NULL)",
-  "CREATE INDEX IF NOT EXISTS idx_events_received ON events(received_at DESC)",
-  "CREATE TABLE IF NOT EXISTS sync_runs (slot TEXT PRIMARY KEY NOT NULL, status TEXT NOT NULL CHECK(status IN ('running','success','error')), source TEXT NOT NULL, started_at TEXT NOT NULL, ended_at TEXT, error TEXT, updated_channels INTEGER NOT NULL DEFAULT 0)",
-  "CREATE INDEX IF NOT EXISTS idx_sync_runs_started ON sync_runs(started_at DESC)",
-  "CREATE TABLE IF NOT EXISTS quota_buckets (day_pt TEXT PRIMARY KEY NOT NULL, spent INTEGER NOT NULL DEFAULT 0 CHECK(spent >= 0))",
-  "CREATE TABLE IF NOT EXISTS devices (id TEXT PRIMARY KEY NOT NULL, label TEXT NOT NULL, last_seen_at TEXT, status_json TEXT NOT NULL DEFAULT '{}')",
-  "CREATE TABLE IF NOT EXISTS commands (id TEXT PRIMARY KEY NOT NULL, target_device TEXT NOT NULL, kind TEXT NOT NULL, payload_json TEXT NOT NULL DEFAULT '{}', state TEXT NOT NULL DEFAULT 'queued' CHECK(state IN ('queued','accepted','completed','failed','cancelled')), created_at TEXT NOT NULL, updated_at TEXT NOT NULL, result_json TEXT)",
-  "CREATE INDEX IF NOT EXISTS idx_commands_pending ON commands(target_device,state,created_at)",
-  "CREATE TABLE IF NOT EXISTS channel_analytics (channel_id TEXT PRIMARY KEY NOT NULL, period_days INTEGER NOT NULL, views INTEGER, watch_minutes REAL, avg_view_seconds REAL, avg_view_percentage REAL, subscribers_gained INTEGER, subscribers_lost INTEGER, impressions INTEGER, impression_ctr REAL, estimated_revenue REAL, currency TEXT, daily_json TEXT NOT NULL DEFAULT '[]', captured_at TEXT NOT NULL, received_at TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'VYRON_MAC_CACHE')",
-  "CREATE INDEX IF NOT EXISTS idx_channel_analytics_received ON channel_analytics(received_at DESC)",
-  "CREATE TABLE IF NOT EXISTS channel_analytics_reports (channel_id TEXT PRIMARY KEY NOT NULL, reports_json TEXT NOT NULL DEFAULT '{}', captured_at TEXT NOT NULL, received_at TEXT NOT NULL)",
-  "CREATE INDEX IF NOT EXISTS idx_channel_analytics_reports_captured ON channel_analytics_reports(captured_at DESC)",
-  "CREATE TABLE IF NOT EXISTS google_oauth_sessions (state_hash TEXT PRIMARY KEY NOT NULL, verifier_cipher TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL)",
-  "CREATE TABLE IF NOT EXISTS google_oauth_profiles (channel_id TEXT PRIMARY KEY NOT NULL, channel_name TEXT NOT NULL, refresh_token_cipher TEXT NOT NULL, granted_scope TEXT NOT NULL, connected_at TEXT NOT NULL, last_success_at TEXT, last_error TEXT)",
-  "CREATE TABLE IF NOT EXISTS google_oauth_client_credentials (channel_id TEXT PRIMARY KEY NOT NULL, profile_uuid TEXT NOT NULL, client_id_cipher TEXT NOT NULL, client_secret_cipher TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'VYRON_MIGRATION', bundle_uuid TEXT NOT NULL, imported_at TEXT NOT NULL)",
-  "CREATE TABLE IF NOT EXISTS cloud_analytics_runs (slot TEXT PRIMARY KEY NOT NULL, status TEXT NOT NULL CHECK(status IN ('running','success','error')), started_at TEXT NOT NULL, ended_at TEXT, updated_channels INTEGER DEFAULT 0, error TEXT)",
-  "CREATE TABLE IF NOT EXISTS channel_analytics_queue (channel_id TEXT PRIMARY KEY NOT NULL, queued_at TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts >= 0), last_attempt_at TEXT, last_error TEXT, completed_at TEXT)",
-  "CREATE INDEX IF NOT EXISTS idx_channel_analytics_queue_pending ON channel_analytics_queue(completed_at,queued_at)",
-  "CREATE TABLE IF NOT EXISTS push_subscriptions (endpoint_hash TEXT PRIMARY KEY NOT NULL, subscription_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
-  "CREATE TABLE IF NOT EXISTS push_deliveries (endpoint_hash TEXT NOT NULL, event_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'retry' CHECK(status IN ('retry','sending','sent','failed')), attempts INTEGER NOT NULL DEFAULT 0, last_attempt_at TEXT, updated_at TEXT NOT NULL, PRIMARY KEY(endpoint_hash,event_id))",
-  "CREATE INDEX IF NOT EXISTS idx_push_deliveries_retry ON push_deliveries(status,updated_at)"
-]);
-
 function json(body,status=200) {
   return new Response(JSON.stringify(body),{
     status,headers: {'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store',
@@ -135,34 +108,6 @@ async function health(env) {
   }
 }
 
-
-async function bootstrapSchema(env) {
-  if (!env.DB) return json({ok:false,error:'D1 binding missing'},503);
-  try {
-    const placeholders=EXPECTED_TABLES.map(()=>'?').join(',');
-    const readTables=()=>env.DB.prepare(
-      `SELECT name FROM sqlite_master WHERE type='table' AND name IN (${placeholders})`
-    ).bind(...EXPECTED_TABLES).all();
-    const {results:before=[]}=await readTables();
-    const presentBefore=new Set(before.map(row=>row.name));
-    const missingBefore=EXPECTED_TABLES.filter(name=>!presentBefore.has(name));
-    if(missingBefore.length) {
-      await env.DB.batch(BOOTSTRAP_STATEMENTS.map(statement=>env.DB.prepare(statement)));
-    }
-    const {results:after=[]}=await readTables();
-    const presentAfter=new Set(after.map(row=>row.name));
-    const missingAfter=EXPECTED_TABLES.filter(name=>!presentAfter.has(name));
-    const ok=missingAfter.length===0;
-    return json({
-      ok,created:missingBefore.length>0,createdTables:missingBefore,
-      expectedTables:EXPECTED_TABLES.length,
-      presentTables:EXPECTED_TABLES.length-missingAfter.length,
-      ...(ok?{}:{missing:missingAfter})
-    },ok?200:503);
-  } catch {
-    return json({ok:false,error:'D1 schema bootstrap failed'},500);
-  }
-}
 
 async function fetchStatus(env) {
   const db = env.DB;
@@ -582,8 +527,6 @@ export default {
           method:'derived-control-token-v1'
         });
       }
-      if (url.pathname==='/api/admin/bootstrap'&&request.method==='POST')
-        return bootstrapSchema(env);
       if (url.pathname==='/api/oauth/start'&&request.method==='POST')
         return startOAuth(request,env);
       if (url.pathname==='/api/oauth/profiles'&&request.method==='GET')
