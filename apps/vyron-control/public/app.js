@@ -60,8 +60,20 @@ function displayAggregate(prefix, object) {
 }
 function renderChannels(channels) {
   const needle = $('search').value.trim().toLocaleLowerCase('ru-RU');
-  const visible = channels.filter(ch =>
-    ch.name.toLocaleLowerCase('ru-RU').includes(needle) || ch.id.toLowerCase().includes(needle));
+  const filterMode=$('channel-filter').value;
+  const visible = channels.filter(ch=>{
+    const matchesSearch=ch.name.toLocaleLowerCase('ru-RU').includes(needle)||
+      ch.id.toLowerCase().includes(needle);
+    if(!matchesSearch)return false;
+    if(filterMode==='analytics')return ch.analytics?.source==='GOOGLE_ANALYTICS_API';
+    if(filterMode==='needs-auth')return ch.analyticsAuthorized===false;
+    if(filterMode==='awaiting-report')
+      return ch.analyticsAuthorized===true&&ch.analytics?.source!=='GOOGLE_ANALYTICS_API';
+    if(filterMode==='public-pending')return !ch.updatedAt;
+    return true;
+  });
+  $('channel-count').textContent=visible.length===channels.length
+    ?'('+channels.length+')':'('+visible.length+' / '+channels.length+')';
   const sortMode=$('channel-sort').value;
   if(sortMode==='growth')visible.sort((a,b)=>
     ((b.subscribers??0)-(b.previousSubscribers??b.subscribers??0))-
@@ -77,8 +89,15 @@ function renderChannels(channels) {
   const list = $('channels');
   list.replaceChildren();
   if (!visible.length) {
-    list.append(make('div', 'empty', channels.length ? 'Каналы не найдены.' :
-      'Каналы ещё не подключены. Добавь их ID в конфигурацию сервиса.'));
+    const messages={
+      analytics:'Нет каналов с готовыми отчётами Google Analytics.',
+      'needs-auth':'Все каналы авторизованы или ещё не загружены.',
+      'awaiting-report':'Нет каналов, ожидающих первого Analytics-отчёта.',
+      'public-pending':'У всех каналов уже есть публичные данные.'
+    };
+    list.append(make('div','empty',channels.length
+      ?(messages[filterMode]||'Каналы не найдены.')
+      :'Каналы ещё не подключены. Добавь их в VYRON.'));
     return;
   }
   for (const ch of visible) {
@@ -1062,6 +1081,9 @@ $('search').addEventListener('input', () => {
 });
 $('channel-sort').addEventListener('change', () => {
   if (current) renderChannels(current.channels);
+});
+$('channel-filter').addEventListener('change',()=>{
+  if(current)renderChannels(current.channels);
 });
 // Local UI polling is free: it does NOT make a YouTube API request.
 window.addEventListener('offline',()=>{
