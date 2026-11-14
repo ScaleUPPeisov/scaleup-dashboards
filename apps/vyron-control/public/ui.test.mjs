@@ -45,7 +45,7 @@ test('overview dashboard exposes live sync, Analytics and event containers',()=>
 
 test('PWA caches every imported browser module but never authenticated API responses',()=>{
   assert.ok(serviceWorker.includes("'/app.js'"));
-  const importedModules=[...app.matchAll(/from\\s+['"]\\.\\/([^'"]+)['"]/g)]
+  const importedModules=[...app.matchAll(/from\s+['"]\.\/([^'"]+)['"]/g)]
     .map(match=>match[1]);
   assert.ok(importedModules.length>0,'expected browser modules to be imported');
   for(const modulePath of importedModules)
