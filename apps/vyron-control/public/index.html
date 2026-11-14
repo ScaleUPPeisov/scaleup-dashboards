@@ -106,8 +106,10 @@
           <article class="analytics-kpi"><small>Репосты</small><strong id="analytics-shares">—</strong><span>за период</span></article>
           <article class="analytics-kpi"><small>Средняя длительность</small><strong id="analytics-avg-duration">—</strong><span>на просмотр</span></article>
         </div>
-        <div class="analytics-panels">
-          <article class="analytics-panel analytics-trend-panel">
+        <div class="analytics-groups">
+          <details class="analytics-group" open>
+            <summary><strong>Динамика и лидеры сети</strong><small>График, лучшие видео и каналы</small></summary>
+            <div class="analytics-panels"><article class="analytics-panel analytics-trend-panel">
             <div class="analytics-panel-head"><strong id="analytics-trend-title">Динамика просмотров</strong><small id="analytics-trend-range">28 дней</small></div>
             <svg id="analytics-trend" viewBox="0 0 720 190" role="img" aria-label="График выбранного показателя по дням"></svg>
             <div id="analytics-trend-caption" class="chart-caption">Данные появятся после синхронизации Google Analytics.</div>
@@ -119,8 +121,11 @@
           <article class="analytics-panel">
             <div class="analytics-panel-head"><strong>Лидеры сети</strong><small>каналы · 90 дней</small></div>
             <div id="analytics-top-channels" class="analytics-ranking"></div>
-          </article>
-          <article class="analytics-panel">
+          </article></div>
+          </details>
+          <details class="analytics-group" open>
+            <summary><strong>Аудитория и источники</strong><small>География, устройства, трафик и действия</small></summary>
+            <div class="analytics-panels"><article class="analytics-panel">
             <div class="analytics-panel-head"><strong>Источники трафика</strong><small>просмотры</small></div>
             <div id="analytics-traffic" class="analytics-ranking"></div>
           </article>
@@ -155,12 +160,16 @@
           <article class="analytics-panel">
             <div class="analytics-panel-head"><strong>Прямые эфиры и видео</strong><small>live / on-demand</small></div>
             <div id="analytics-live" class="analytics-ranking"></div>
-          </article>
-          <article class="analytics-panel analytics-trend-panel">
+          </article></div>
+          </details>
+          <details class="analytics-group" open>
+            <summary><strong>Удержание аудитории</strong><small>Кривая лучшего видео сети</small></summary>
+            <div class="analytics-panels"><article class="analytics-panel analytics-trend-panel">
             <div class="analytics-panel-head"><strong>Удержание лучшего видео</strong><small>по сегментам ролика</small></div>
             <svg id="analytics-retention-curve" viewBox="0 0 720 190" role="img" aria-label="Кривая удержания аудитории лучшего видео"></svg>
             <div id="analytics-retention-caption" class="chart-caption">Кривая удержания появится после синхронизации.</div>
-          </article>
+          </article></div>
+          </details>
         </div>
         <p class="caution">CTR миниатюр требует отдельного YouTube Reporting API; доход требует отдельного разрешения и монетизации. Эти показатели не подменяются другими метриками.</p>
         <details class="oauth-details">
