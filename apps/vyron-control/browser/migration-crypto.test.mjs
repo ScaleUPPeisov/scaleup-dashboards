@@ -4,6 +4,7 @@ import {createHash} from 'node:crypto';
 import {argon2id} from 'hash-wasm';
 import {xchacha20poly1305} from '@noble/ciphers/chacha';
 import {decryptVyronMigration} from './migration-crypto-entry.mjs';
+import {decryptVyronMigration as decryptBuiltBundle} from '../public/migration-crypto.js';
 
 const enc=new TextEncoder();
 const b64=value=>Buffer.from(value).toString('base64');
@@ -64,5 +65,8 @@ test('browser decrypts native VYRON migration without sending its password',asyn
   assert.equal(mapped.find(x=>x.channelId===secondMappedChannelId)?.channelName,
     'Second channel on same Google profile');
   assert.equal(mapped[0]?.clientSecret,'TEST_GLOBAL_SECRET');
+  const built=await decryptBuiltBundle(bytes,password);
+  assert.deepEqual(built.profiles.map(x=>x.channelId).sort(),
+    [channelId,mappedChannelId,secondMappedChannelId].sort());
   await assert.rejects(()=>decryptVyronMigration(bytes,'wrong password value'),/Неверный пароль/);
 });
