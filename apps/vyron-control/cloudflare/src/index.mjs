@@ -422,7 +422,7 @@ export default {
       headers.set('X-Content-Type-Options','nosniff');
       headers.set('X-Frame-Options','DENY');
       headers.set('Referrer-Policy','no-referrer');
-      headers.set('Content-Security-Policy',"default-src 'self'; script-src 'self'; connect-src 'self'; style-src 'self'; img-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'");
+      headers.set('Content-Security-Policy',"default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; style-src 'self'; img-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'");
       return new Response(response.body,{status:response.status,headers});
     }
     if(url.pathname==='/api/health'&&request.method==='GET') return health(env);

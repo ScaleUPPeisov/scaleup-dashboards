@@ -134,7 +134,10 @@ test('authorization, origin guard, static asset CSP and immutable endpoint behav
   const blocked=await cloud.fetch(req('/api/channels',control,'POST',[{id:id(1)}],'https://attacker.invalid'),e);
   assert.equal(blocked.status,403);
   const asset=await cloud.fetch(new Request('https://vyron-control.example/'),e);
-  assert.match(asset.headers.get('Content-Security-Policy'),/frame-ancestors/);
+  const csp=asset.headers.get('Content-Security-Policy');
+  assert.match(csp,/frame-ancestors/);
+  assert.match(csp,/script-src 'self' 'wasm-unsafe-eval'/);
+  assert.doesNotMatch(csp,/(?:^|\s)'unsafe-eval'(?:\s|;|$)/);
 });
 
 test('33 channels batched, scheduled milestones, no duplicate runs, local quota',async()=>{
