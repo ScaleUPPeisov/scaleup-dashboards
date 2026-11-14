@@ -127,23 +127,22 @@ jobs:
           console.log("D1 schema inventory:", required.length + "/" + required.length + " application tables present.");
           console.log("D1 migration ledger:", tables.has("d1_migrations") ? "present" : "not initialized yet");
           NODE
-          COUNTS_SQL="SELECT 'channels' AS table_name, COUNT(*) AS row_count FROM channels
-          UNION ALL SELECT 'channel_snapshots', COUNT(*) FROM channel_snapshots
-          UNION ALL SELECT 'events', COUNT(*) FROM events
-          UNION ALL SELECT 'sync_runs', COUNT(*) FROM sync_runs
-          UNION ALL SELECT 'quota_buckets', COUNT(*) FROM quota_buckets
-          UNION ALL SELECT 'devices', COUNT(*) FROM devices
-          UNION ALL SELECT 'commands', COUNT(*) FROM commands
-          UNION ALL SELECT 'channel_analytics', COUNT(*) FROM channel_analytics
-          UNION ALL SELECT 'channel_analytics_reports', COUNT(*) FROM channel_analytics_reports
-          UNION ALL SELECT 'google_oauth_sessions', COUNT(*) FROM google_oauth_sessions
-          UNION ALL SELECT 'google_oauth_profiles', COUNT(*) FROM google_oauth_profiles
-          UNION ALL SELECT 'google_oauth_client_credentials', COUNT(*) FROM google_oauth_client_credentials
-          UNION ALL SELECT 'cloud_analytics_runs', COUNT(*) FROM cloud_analytics_runs
-          UNION ALL SELECT 'channel_analytics_queue', COUNT(*) FROM channel_analytics_queue
-          UNION ALL SELECT 'push_subscriptions', COUNT(*) FROM push_subscriptions
-          UNION ALL SELECT 'push_deliveries', COUNT(*) FROM push_deliveries
-          ORDER BY table_name;"
+          COUNTS_SQL="SELECT 'channels' AS table_name, COUNT(*) AS row_count FROM channels;
+          SELECT 'channel_snapshots' AS table_name, COUNT(*) AS row_count FROM channel_snapshots;
+          SELECT 'events' AS table_name, COUNT(*) AS row_count FROM events;
+          SELECT 'sync_runs' AS table_name, COUNT(*) AS row_count FROM sync_runs;
+          SELECT 'quota_buckets' AS table_name, COUNT(*) AS row_count FROM quota_buckets;
+          SELECT 'devices' AS table_name, COUNT(*) AS row_count FROM devices;
+          SELECT 'commands' AS table_name, COUNT(*) AS row_count FROM commands;
+          SELECT 'channel_analytics' AS table_name, COUNT(*) AS row_count FROM channel_analytics;
+          SELECT 'channel_analytics_reports' AS table_name, COUNT(*) AS row_count FROM channel_analytics_reports;
+          SELECT 'google_oauth_sessions' AS table_name, COUNT(*) AS row_count FROM google_oauth_sessions;
+          SELECT 'google_oauth_profiles' AS table_name, COUNT(*) AS row_count FROM google_oauth_profiles;
+          SELECT 'google_oauth_client_credentials' AS table_name, COUNT(*) AS row_count FROM google_oauth_client_credentials;
+          SELECT 'cloud_analytics_runs' AS table_name, COUNT(*) AS row_count FROM cloud_analytics_runs;
+          SELECT 'channel_analytics_queue' AS table_name, COUNT(*) AS row_count FROM channel_analytics_queue;
+          SELECT 'push_subscriptions' AS table_name, COUNT(*) AS row_count FROM push_subscriptions;
+          SELECT 'push_deliveries' AS table_name, COUNT(*) AS row_count FROM push_deliveries;"
           counts_json="$(npx --yes wrangler@4.102.0 d1 execute vyron-control --remote -c cloudflare/wrangler.jsonc --json --command "${COUNTS_SQL}")"
           D1_COUNTS_JSON="${counts_json}" node --input-type=module <<'NODE'
           import { appendFile } from "node:fs/promises";
@@ -206,23 +205,22 @@ jobs:
           EXPECTED_ROW_COUNTS: ${{ steps.d1-audit.outputs.row_counts }}
         run: |
           set -euo pipefail
-          COUNTS_SQL="SELECT 'channels' AS table_name, COUNT(*) AS row_count FROM channels
-          UNION ALL SELECT 'channel_snapshots', COUNT(*) FROM channel_snapshots
-          UNION ALL SELECT 'events', COUNT(*) FROM events
-          UNION ALL SELECT 'sync_runs', COUNT(*) FROM sync_runs
-          UNION ALL SELECT 'quota_buckets', COUNT(*) FROM quota_buckets
-          UNION ALL SELECT 'devices', COUNT(*) FROM devices
-          UNION ALL SELECT 'commands', COUNT(*) FROM commands
-          UNION ALL SELECT 'channel_analytics', COUNT(*) FROM channel_analytics
-          UNION ALL SELECT 'channel_analytics_reports', COUNT(*) FROM channel_analytics_reports
-          UNION ALL SELECT 'google_oauth_sessions', COUNT(*) FROM google_oauth_sessions
-          UNION ALL SELECT 'google_oauth_profiles', COUNT(*) FROM google_oauth_profiles
-          UNION ALL SELECT 'google_oauth_client_credentials', COUNT(*) FROM google_oauth_client_credentials
-          UNION ALL SELECT 'cloud_analytics_runs', COUNT(*) FROM cloud_analytics_runs
-          UNION ALL SELECT 'channel_analytics_queue', COUNT(*) FROM channel_analytics_queue
-          UNION ALL SELECT 'push_subscriptions', COUNT(*) FROM push_subscriptions
-          UNION ALL SELECT 'push_deliveries', COUNT(*) FROM push_deliveries
-          ORDER BY table_name;"
+          COUNTS_SQL="SELECT 'channels' AS table_name, COUNT(*) AS row_count FROM channels;
+          SELECT 'channel_snapshots' AS table_name, COUNT(*) AS row_count FROM channel_snapshots;
+          SELECT 'events' AS table_name, COUNT(*) AS row_count FROM events;
+          SELECT 'sync_runs' AS table_name, COUNT(*) AS row_count FROM sync_runs;
+          SELECT 'quota_buckets' AS table_name, COUNT(*) AS row_count FROM quota_buckets;
+          SELECT 'devices' AS table_name, COUNT(*) AS row_count FROM devices;
+          SELECT 'commands' AS table_name, COUNT(*) AS row_count FROM commands;
+          SELECT 'channel_analytics' AS table_name, COUNT(*) AS row_count FROM channel_analytics;
+          SELECT 'channel_analytics_reports' AS table_name, COUNT(*) AS row_count FROM channel_analytics_reports;
+          SELECT 'google_oauth_sessions' AS table_name, COUNT(*) AS row_count FROM google_oauth_sessions;
+          SELECT 'google_oauth_profiles' AS table_name, COUNT(*) AS row_count FROM google_oauth_profiles;
+          SELECT 'google_oauth_client_credentials' AS table_name, COUNT(*) AS row_count FROM google_oauth_client_credentials;
+          SELECT 'cloud_analytics_runs' AS table_name, COUNT(*) AS row_count FROM cloud_analytics_runs;
+          SELECT 'channel_analytics_queue' AS table_name, COUNT(*) AS row_count FROM channel_analytics_queue;
+          SELECT 'push_subscriptions' AS table_name, COUNT(*) AS row_count FROM push_subscriptions;
+          SELECT 'push_deliveries' AS table_name, COUNT(*) AS row_count FROM push_deliveries;"
           counts_json="$(npx --yes wrangler@4.102.0 d1 execute vyron-control --remote -c cloudflare/wrangler.jsonc --json --command "${COUNTS_SQL}")"
           EXPECTED_ROW_COUNTS="${EXPECTED_ROW_COUNTS}" D1_COUNTS_JSON="${counts_json}" node --input-type=module <<'NODE'
           const expected = JSON.parse(process.env.EXPECTED_ROW_COUNTS || "{}");
