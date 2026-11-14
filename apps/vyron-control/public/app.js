@@ -765,8 +765,8 @@ $('refresh').addEventListener('click', async () => {
       analyticsTotal=profiles.length;
       if(analyticsTotal){
         const requestId=crypto.randomUUID().replaceAll('-','');
-        for(let offset=0;offset<analyticsTotal;offset+=4){
-          const completed=Math.min(offset+4,analyticsTotal);
+        for(let offset=0;offset<analyticsTotal;offset+=3){
+          const completed=Math.min(offset+3,analyticsTotal);
           feedback.textContent='Шаг 2/2 · Google Analytics: '+completed+' / '+analyticsTotal+' каналов…';
           try {
             const batch=await api('/api/analytics/refresh','POST',{offset,requestId});
