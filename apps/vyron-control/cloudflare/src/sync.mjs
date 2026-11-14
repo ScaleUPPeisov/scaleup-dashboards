@@ -258,10 +258,12 @@ export async function runCountersSync(env, { source, slot, date = new Date(), fe
 export async function scheduledSync(controller, env, fetchImpl = fetch) {
   const now=new Date(controller.scheduledTime??Date.now());
   if(controller.cron==='0 * * * *') {
-    // The two Krasnoyarsk daily windows already have dedicated, separately
-    // audited slots; avoid a duplicate request at 07:00 and 22:00.
-    if(now.getUTCHours()===0||now.getUTCHours()===15)
-      return {skipped:true,reason:'covered_by_daily_window'};
+    // Preserve the named 07:00/22:00 Krasnoyarsk slots while using one hourly
+    // Cloudflare cron trigger for the complete public-counter schedule.
+    const dailyCron=now.getUTCHours()===0?'0 0 * * *':
+      now.getUTCHours()===15?'0 15 * * *':null;
+    const dailySlot=dailyCron?cronSlot(dailyCron,now):null;
+    if(dailySlot)return runCountersSync(env,{source:'schedule',slot:dailySlot,date:now,fetchImpl});
     const slot=now.toISOString().slice(0,13)+'@hourly';
     return runCountersSync(env,{source:'hourly',slot,date:now,fetchImpl});
   }
