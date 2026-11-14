@@ -92,7 +92,11 @@ export function parseDimensionReport(json,dimensions,metrics) {
   return (json.rows||[]).map(row=>{
     const out={};
     for(const name of dimensionNames)out[name]=String(row[headerIndex(headers,name)]??'');
-    for(const name of metricNames)out[name]=n(row[headerIndex(headers,name)]);
+    for(const name of metricNames) {
+      const value=Number(row[headerIndex(headers,name)]);
+      out[name]=Number.isFinite(value)
+        ?(name==='relativeRetentionPerformance'?value:Math.max(0,value)):0;
+    }
     return out;
   });
 }
@@ -317,7 +321,8 @@ export async function runAnalyticsBatch(env,controller,fetchImpl=fetch) {
   return processBatch(env,details,fetchImpl);
 }
 
-export async function runManualAnalyticsBatch(env,{offset,requestId},fetchImpl=fetch) {
+export async function runManualAnalyticsBatch(env,requestBody={},fetchImpl=fetch) {
+  const {offset,requestId}=requestBody||{};
   if(!analyticsConfigured(env))
     return {skipped:true,reason:'oauth_not_configured',updated:0,failed:0};
   const batchOffset=Number(offset);
