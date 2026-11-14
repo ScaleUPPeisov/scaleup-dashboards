@@ -172,6 +172,29 @@ test('33 channels batched, scheduled milestones, no duplicate runs, local quota'
   assert.equal(e.DB.native.prepare("SELECT count(*) AS count FROM channel_snapshots").get().count,66);
 });
 
+test('manual channel refresh reports partial coverage instead of false success',async()=>{
+  const e=env(),list=Array.from({length:33},(_,i)=>({id:id(i+100),name:'Network '+i}));
+  await cloud.fetch(req('/api/channels',control,'POST',list),e);
+  const partialFetch=async url=>{
+    const requested=new URL(url).searchParams.get('id').split(',');
+    return {ok:true,json:async()=>({items:requested.slice(0,31).map(x=>({
+      id:x,snippet:{title:'Remote '+x},
+      statistics:{subscriberCount:'10',viewCount:'100',videoCount:'2',hiddenSubscriberCount:false}
+    }))})};
+  };
+  await assert.rejects(()=>runCountersSync(e,{
+    source:'manual',slot:'manual:partial-coverage',date:new Date('2026-11-14T10:00:00Z'),
+    fetchImpl:partialFetch
+  }),/YOUTUBE_CHANNELS_INCOMPLETE: updated 31\/33; missing 2/);
+  const run=e.DB.native.prepare(
+    "SELECT status,updated_channels,error FROM sync_runs WHERE slot='manual:partial-coverage'"
+  ).get();
+  assert.equal(run.status,'error');
+  assert.equal(run.updated_channels,31);
+  assert.match(run.error,/missing 2/);
+  assert.equal(e.DB.native.prepare('SELECT count(*) AS n FROM channel_snapshots').get().n,31);
+});
+
 test('quota guard blocks before sending requests',async()=>{
   const e=env();
   await reserveQuota(e.DB,new Date('2026-11-13T00:00:00Z'),1);
