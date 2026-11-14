@@ -1,8 +1,8 @@
 import { refreshAccessToken } from './oauth.mjs';
 
 // Keep each Worker invocation below the Free-plan 50-subrequest ceiling.
-// One profile uses: token refresh + 6 Analytics reports + one D1 batch.
-// Four profiles plus the run claim/read/finalize remain below the limit.
+// One profile uses: token refresh + 8 Analytics reports + one D1 batch.
+// Three profiles plus the run claim/read/finalize remain below the limit.
 const ANALYTICS_HOURS=new Set([0,15]);
 const ANALYTICS_MINUTES=new Set([5,10,15,20,25,30,35,40,45,50,55]);
 const BATCH_SIZE=3;
