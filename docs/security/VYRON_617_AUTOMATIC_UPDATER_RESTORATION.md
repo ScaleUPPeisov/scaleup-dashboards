@@ -149,3 +149,8 @@ public-key fingerprint is supplied and validated. This is a repository-wide
 fail-closed guard for old release workflows that still attempt to build with
 the quarantined legacy signer. Debug/test builds remain available; distributable
 release builds cannot be produced from an unverified trust configuration.
+
+The owner-side `vyron-617-publish-new-key.sh` script is also frozen and exits
+before accessing GitHub or a private key. It must not be re-enabled until the
+offline key generation, independent fingerprint authentication, trusted
+bootstrap test and explicit owner release approval are complete.

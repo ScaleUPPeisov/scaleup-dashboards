@@ -7,6 +7,7 @@ const root=new URL('../../',import.meta.url);
 const appConfig=JSON.parse(readFileSync(fileURLToPath(new URL('src-tauri/tauri.conf.json',root)),'utf8'));
 const frozenWorkflow=readFileSync(fileURLToPath(new URL('.github/workflows/vyron-6118-macos-new-key-release.yml',root)),'utf8');
 const buildScript=readFileSync(fileURLToPath(new URL('src-tauri/build.rs',root)),'utf8');
+const publishScript=readFileSync(fileURLToPath(new URL('scripts/macos/vyron-617-publish-new-key.sh',root)),'utf8');
 
 test('production updater config remains pinned to the existing 6.1.15 feed',()=>{
   assert.equal(appConfig.version,'6.1.15');
@@ -18,6 +19,11 @@ test('unauthenticated tracked rotated-key overlays are absent',()=>{
   for(const name of ['tauri.617-rotated.conf.json','tauri.618-rotated.conf.json']){
     assert.equal(existsSync(fileURLToPath(new URL('src-tauri/'+name,root))),false,name+' must be generated only from an independently authenticated offline public key');
   }
+});
+
+test('owner new-key publish script is frozen and cannot publish a release',()=>{
+  assert.match(publishScript,/UPDATER_KEY_ROTATION_NOT_AUTHORIZED/);
+  assert.doesNotMatch(publishScript,/gh release create|gh release upload|git push|TAURI_SIGNING_PRIVATE_KEY/);
 });
 
 test('release profile refuses builds without an independently authenticated updater fingerprint',()=>{
