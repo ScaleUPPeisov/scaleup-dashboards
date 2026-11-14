@@ -87,7 +87,11 @@ function renderChannels(channels) {
     link.href = 'https://www.youtube.com/channel/' + encodeURIComponent(ch.id);
     link.target = '_blank';
     link.rel = 'noopener noreferrer';
-    left.append(link, make('small', '', ch.updatedAt ? 'Обновлено ' + time(ch.updatedAt) : 'Ожидает первой синхронизации'));
+    left.append(link,make('small','',ch.updatedAt?'Обновлено '+time(ch.updatedAt):'Ожидает первой синхронизации'));
+    if(ch.analyticsAuthorized===false)
+      left.append(make('small','caution','Google Analytics: требуется авторизация'));
+    else if(ch.analyticsAuthorized===true&&!ch.analytics)
+      left.append(make('small','caution','Google Analytics: ожидает первой синхронизации'));
     const details = make('div', 'channel-details');
     const vals = [
       [ch.subscribersHidden ? 'Скрыто' : number(ch.subscribers), 'Подписчики'],
@@ -307,8 +311,13 @@ function renderAnalytics(data) {
   $('analytics-shares').textContent=number(sum('shares'));
   $('analytics-avg-duration').textContent=formatDuration(avgDuration);
   const latest=connected.map(ch=>ch.analytics.updatedAt).filter(Boolean).sort().at(-1);
-  $('analytics-updated').textContent='Google Analytics API: '+connected.length+' / '+(data.channels||[]).length+
-    ' каналов · последний снимок '+time(latest);
+  const totalChannels=(data.channels||[]).length;
+  const authorized=data.analyticsSummary?.authorized??connected.length;
+  const needsAuthorization=Math.max(0,totalChannels-authorized);
+  $('analytics-updated').textContent='Analytics: отчёты '+connected.length+' / '+totalChannels+
+    ' · OAuth '+authorized+' / '+totalChannels+
+    (needsAuthorization?' · требуется авторизация для '+needsAuthorization:'')+
+    ' · последний снимок '+time(latest);
   renderAnalyticsTrend(daily,period,$('analytics-trend-metric').value);
 
   const topVideos=[];
