@@ -64,7 +64,7 @@ function req(path,token,method='GET',body=undefined,origin=null){
 }
 const id=i=>'UC'+String(i).padStart(22,'0');
 
-test('cron times use Krasnoyarsk but Google quota resets in Pacific',()=>{
+test('cron times use Krasnoyarsk but Google quota resets in Pacific',async()=>{
   assert.equal(cronSlot('0 0 * * *',new Date('2026-11-13T00:00:00Z')),'2026-11-13@07:00');
   assert.equal(cronSlot('0 15 * * *',new Date('2026-11-13T15:00:00Z')),'2026-11-13@22:00');
   const e=env(),hourlyChannel=id(800);
