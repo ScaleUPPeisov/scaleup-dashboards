@@ -80,6 +80,8 @@ export class MacBridge {
     const result=await this.api('/api/agent/channels','POST',normalized);
     if(result.publicSync?.complete===false)
       return {imported:0,reason:'initial_sync_pending',publicSync:result.publicSync};
+    if(Number(result.analytics?.profileChecksFailed||0)>0)
+      return {imported:0,reason:'profile_binding_retry',analytics:result.analytics};
     this.lastChannelHash=hash;
     this.lastChannelSyncAttemptAt=0;
     return {imported:normalized.length,result};
