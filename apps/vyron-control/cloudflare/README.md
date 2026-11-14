@@ -140,11 +140,12 @@ profiles are sent over HTTPS and re-encrypted with AES-256-GCM before D1 storage
    window. The dashboard's **Обновить всё** button runs public counters and
    then processes all authorized Analytics channels in sequential three-profile
    batches. Each private report covers 90 days and includes daily views, engaged
-   views, watch time, retention, subscriber changes, likes/dislikes/comments/shares,
-   top videos, traffic sources, devices, operating systems, countries, audience
-   age/gender, sharing services, playback locations, live/on-demand split and a
-   retention curve for the network's top video. Only data Google has
-   already processed will be available in the report.
+   and unique viewers, watch time, retention, subscriber changes, likes/dislikes/
+   comments/shares, YouTube Premium views, playlist additions/removals, top videos,
+   traffic sources, devices, operating systems, countries, audience age/gender,
+   subscriber vs non-subscriber views, sharing services, playback locations,
+   live/on-demand split and a retention curve for the network's top video. Only
+   data Google has already processed will be available in the report.
 
 Only `youtube.readonly` and `yt-analytics.readonly` OAuth scopes are
 requested. This does **not** grant YouTube publishing permission. Revenue
