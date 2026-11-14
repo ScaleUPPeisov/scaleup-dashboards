@@ -474,7 +474,7 @@ function renderOverviewTrend(rows) {
   svg.replaceChildren();
   const points=(rows||[]).slice(-14).map(row=>({
     date:row.date,value:Math.max(0,Number(row.views)||0)
-  })).filter(row=>/^\\d{4}-\\d{2}-\\d{2}$/.test(row.date));
+  })).filter(row=>/^\d{4}-\d{2}-\d{2}$/.test(row.date));
   if(!points.length) {
     caption.textContent='Нет дневных отчётов Google Analytics. Публичные просмотры обновляются отдельно.';
     return;
