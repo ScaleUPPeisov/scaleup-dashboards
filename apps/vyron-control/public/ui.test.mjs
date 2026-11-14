@@ -43,6 +43,17 @@ test('overview dashboard exposes live sync, Analytics and event containers',()=>
   assert.match(app,/function renderOverviewTrend\(rows\)/);
 });
 
+test('Mac system diagnostics expose real telemetry fields',()=>{
+  for(const id of [
+    'mac-vyron-version','mac-endlume-version','mac-os-version','mac-model',
+    'mac-architecture','mac-uptime','mac-memory','mac-root-disk',
+    'mac-power-state','mac-disk-state','mac-agent-error'
+  ])assert.ok(html.includes('id="'+id+'"'),'missing Mac diagnostic: '+id);
+  assert.match(app,/function formatBytes\(value\)/);
+  assert.match(app,/s\.memoryFreeBytes/);
+  assert.match(app,/s\.rootDiskFreeBytes/);
+});
+
 test('PWA caches every imported browser module but never authenticated API responses',()=>{
   assert.ok(serviceWorker.includes("'/app.js'"));
   const importedModules=[...app.matchAll(/from\s+['"]\.\/([^'"]+)['"]/g)]
