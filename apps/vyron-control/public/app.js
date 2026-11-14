@@ -343,6 +343,16 @@ function renderAnalytics(data) {
   renderRanking('analytics-top-videos',topVideos.sort((a,b)=>b.value-a.value).slice(0,10),{
     empty:'Нет данных о лучших видео. Google Analytics должен завершить первую синхронизацию.'
   });
+  const topChannels=connected.map(channel=>({
+    label:channel.name,value:channel.analytics.views||0,
+    sub:number(Math.round((channel.analytics.watchMinutes||0)/60))+' ч просмотра · '+
+      (channel.analytics.averageViewPercentage==null?'удержание —':
+        channel.analytics.averageViewPercentage.toFixed(1)+'% удержания'),
+    href:'https://www.youtube.com/channel/'+encodeURIComponent(channel.id)
+  })).sort((a,b)=>b.value-a.value).slice(0,10);
+  renderRanking('analytics-top-channels',topChannels,{
+    empty:'Лидеры появятся после первой облачной синхронизации.'
+  });
   renderRanking('analytics-traffic',byViews(traffic).map(item=>({
     ...item,label:sourceNames[item.label]||item.label
   })),{empty:'Источники трафика пока не получены.'});
