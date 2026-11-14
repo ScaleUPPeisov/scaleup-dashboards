@@ -205,11 +205,13 @@ function renderAnalytics(data) {
   const dailyMap=new Map();
   for(const channel of connected)for(const row of channel.analytics.daily||[]){
     const item=dailyMap.get(row.date)||{
-      date:row.date,views:0,watchMinutes:0,subscribersGained:0,subscribersLost:0,
-      likes:0,comments:0,shares:0,weightedDuration:0,weightedRetention:0,weight:0
+      date:row.date,views:0,engagedViews:0,dislikes:0,watchMinutes:0,
+      subscribersGained:0,subscribersLost:0,likes:0,comments:0,shares:0,
+      weightedDuration:0,weightedRetention:0,weight:0
     };
     const views=row.views||0;
-    item.views+=views;item.watchMinutes+=row.watchMinutes||0;
+    item.views+=views;item.engagedViews+=row.engagedViews||0;
+    item.dislikes+=row.dislikes||0;item.watchMinutes+=row.watchMinutes||0;
     item.subscribersGained+=row.subscribersGained||0;
     item.subscribersLost+=row.subscribersLost||0;
     item.likes+=row.likes||0;item.comments+=row.comments||0;item.shares+=row.shares||0;
@@ -231,11 +233,13 @@ function renderAnalytics(data) {
   const retention=weighted?daily.reduce((total,row)=>total+
     (row.averageViewPercentage||0)*(row.views||0),0)/weighted:null;
   $('analytics-views').textContent=number(views);
+  $('analytics-engaged-views').textContent=number(sum('engagedViews'));
   $('analytics-watch-hours').textContent=number(Math.round(watchMinutes/60*10)/10);
   $('analytics-net-subs').textContent=(gained-lost>0?'+':'')+number(gained-lost);
   $('analytics-subs-note').textContent=number(gained)+' получено · '+number(lost)+' потеряно';
   $('analytics-retention').textContent=retention==null?'—':retention.toFixed(1)+'%';
   $('analytics-likes').textContent=number(sum('likes'));
+  $('analytics-dislikes').textContent=number(sum('dislikes'));
   $('analytics-comments').textContent=number(sum('comments'));
   $('analytics-shares').textContent=number(sum('shares'));
   $('analytics-avg-duration').textContent=formatDuration(avgDuration);
@@ -245,7 +249,8 @@ function renderAnalytics(data) {
   renderAnalyticsTrend(daily,period);
 
   const topVideos=[];
-  const traffic=new Map(),devices=new Map(),countries=new Map(),demographics=new Map();
+  const traffic=new Map(),devices=new Map(),countries=new Map(),demographics=new Map(),
+    sharing=new Map(),playback=new Map();
   const add=(map,key,row,weight=1)=>{
     if(!key)return;
     const item=map.get(key)||{label:key,value:0,sub:0};
@@ -270,6 +275,12 @@ function renderAnalytics(data) {
       item.weighted+=(Number(row.viewerPercentage)||0)*channelWeight;
       item.weight+=channelWeight;demographics.set(key,item);
     }
+    for(const row of reports.sharingServices||[]){
+      const key=row.sharingService||'OTHER';
+      const item=sharing.get(key)||{label:key,value:0};
+      item.value+=Number(row.shares)||0;sharing.set(key,item);
+    }
+    for(const row of reports.playbackLocations||[])add(playback,row.playbackLocation,row);
   }
   const byViews=map=>[...map.values()].sort((a,b)=>b.value-a.value).slice(0,8);
   const sourceNames={
@@ -280,7 +291,11 @@ function renderAnalytics(data) {
   };
   const deviceNames={MOBILE:'Телефоны',DESKTOP:'Компьютеры',TV:'Телевизоры',
     TABLET:'Планшеты',GAME_CONSOLE:'Игровые консоли',UNKNOWN:'Неизвестно'};
-  const formatHours=value=>number(Math.round(value/60*10)/10)+' ч';
+  const sharingNames={COPY_TO_CLIPBOARD:'Копирование ссылки',WHATSAPP:'WhatsApp',
+    FACEBOOK:'Facebook',MESSENGER:'Messenger',EMAIL:'Электронная почта',
+    TWITTER:'X / Twitter',OTHER:'Другие сервисы'};
+  const playbackNames={WATCH:'Страница просмотра YouTube',EMBEDDED:'Встроенный плеер',
+    EXTERNAL_APP:'Внешнее приложение',MOBILE:'Мобильное приложение',OTHER:'Другие места'};
   renderRanking('analytics-top-videos',topVideos.sort((a,b)=>b.value-a.value).slice(0,10),{
     empty:'Нет данных о лучших видео. Google Analytics должен завершить первую синхронизацию.'
   });
@@ -299,6 +314,12 @@ function renderAnalytics(data) {
     format:value=>value.toFixed(1)+'%',
     empty:'YouTube не предоставил демографические данные для этого периода.'
   });
+  renderRanking('analytics-sharing',[...sharing.values()].sort((a,b)=>b.value-a.value).slice(0,8).map(item=>({
+    ...item,label:sharingNames[item.label]||item.label
+  })),{empty:'Нет данных о способах распространения видео.'});
+  renderRanking('analytics-playback',byViews(playback).map(item=>({
+    ...item,label:playbackNames[item.label]||item.label
+  })),{empty:'Нет данных о местах воспроизведения.'});
   if(!connected.length){
     $('analytics-updated').textContent='Нет облачных отчётов Google Analytics. Импортируй пакет VYRON и нажми «Обновить всё».';
   }
