@@ -54,6 +54,8 @@ test('mirror mapping exports only public YouTube IDs, event allowlist, minimal c
   const channels=mirrorChannels(src);
   assert.equal(channels.length,1);
   assert.equal(channels[0].name,'Neon Drive FM');
+  assert.match(channels[0].profileBinding,/^[a-f0-9]{64}$/);
+  assert.notEqual(channels[0].profileBinding,'private-profile-id');
   const status=mirrorStatus(src);
   assert.equal(status.rendersActive,1);
   assert.equal(status.uploadsQueued,2);
