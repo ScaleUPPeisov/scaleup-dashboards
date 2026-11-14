@@ -65,6 +65,33 @@ test('failed network leaves durable cursor unchanged for retry',async()=>{
   }finally{await rm(dir,{recursive:true,force:true});}
 });
 
+test('Mac bridge does not cache a registry until the first public sync completes',async()=>{
+  const dir=await mkdtemp(join(tmpdir(),'vyron-channel-retry-'));
+  try {
+    const channelsFile=join(dir,'channels.json');
+    await writeFile(channelsFile,JSON.stringify([
+      {id:'UC'+('9'.repeat(22)),name:'New channel'}
+    ]));
+    let attempts=0;
+    const bridge=new MacBridge({
+      url:'https://control.example',token:'T'.repeat(40),channelsFile,
+      fetchImpl:async()=>{
+        attempts++;
+        return {ok:true,json:async()=>attempts===1
+          ?{enrolled:1,publicSync:{complete:false,reason:'initial_sync_failed'}}
+          :{enrolled:1,publicSync:{complete:true,updatedChannels:1,requestedChannels:1}}};
+      }
+    });
+    assert.equal((await bridge.syncChannelRegistry()).reason,'initial_sync_pending');
+    assert.equal(bridge.lastChannelHash,null);
+    bridge.lastChannelSyncAttemptAt=0;
+    const recovered=await bridge.syncChannelRegistry();
+    assert.equal(recovered.imported,1);
+    assert.ok(bridge.lastChannelHash);
+    assert.equal(attempts,2);
+  }finally{await rm(dir,{recursive:true,force:true});}
+});
+
 test('bridge rejects unsafe remote commands',()=>{
   assert.deepEqual(checkRemoteCommand({kind:'request_status'}),{supported:true});
   for(const kind of ['publish_video','remote_update','delete_file','resume_publisher']){
@@ -82,7 +109,8 @@ test('Mac agent bulk-imports exported YouTube channel registry once per change',
   try {
     const channelsFile=join(dir,'channels.json');
     const list=Array.from({length:33},(_,i)=>({
-      channelId:'UC'+String(i).padStart(22,'0'),title:'Channel '+i
+      channelId:'UC'+String(i).padStart(22,'0'),title:'Channel '+i,
+      ...(i===0?{profileBinding:'a'.repeat(64)}:{})
     }));
     await writeFile(channelsFile,JSON.stringify({channels:list}));
     const sent=[];
@@ -97,6 +125,7 @@ test('Mac agent bulk-imports exported YouTube channel registry once per change',
     assert.equal(sent.length,1);
     assert.equal(sent[0].body.length,33);
     assert.equal(sent[0].body[0].id,list[0].channelId);
+    assert.equal(sent[0].body[0].profileBinding,'a'.repeat(64));
     assert.equal((await bridge.syncChannelRegistry()).reason,'unchanged');
     assert.equal(sent.length,1);
     list[0].title='Renamed channel';
