@@ -21,6 +21,7 @@ fn main(){
     println!("cargo:rerun-if-env-changed=VYRON_BUILD_REVISION");
     println!("cargo:rerun-if-env-changed=VYRON_COMMIT_SHA");
     println!("cargo:rerun-if-env-changed=VYRON_UPDATE_CHANNEL");
+    println!("cargo:rerun-if-env-changed=VYRON_TRUSTED_UPDATER_PUBLIC_KEY_SHA256");
     println!("cargo:rerun-if-changed=../.git/HEAD");
 
     let revision=std::env::var("VYRON_BUILD_REVISION").ok()
@@ -40,8 +41,14 @@ fn main(){
         panic!("VYRON_UPDATE_CHANNEL must be stable or owner-preview");
     }
 
+    let trusted_key_sha256=std::env::var("VYRON_TRUSTED_UPDATER_PUBLIC_KEY_SHA256").unwrap_or_else(|_|"unverified".into());
+    if trusted_key_sha256!="unverified" && !(trusted_key_sha256.len()==64 && trusted_key_sha256.chars().all(|c|c.is_ascii_hexdigit())){
+        panic!("VYRON_TRUSTED_UPDATER_PUBLIC_KEY_SHA256 must be 64 hexadecimal characters or unverified");
+    }
+
     println!("cargo:rustc-env=VYRON_BUILD_REVISION={revision}");
     println!("cargo:rustc-env=VYRON_COMMIT_SHA={commit}");
     println!("cargo:rustc-env=VYRON_UPDATE_CHANNEL={channel}");
+    println!("cargo:rustc-env=VYRON_TRUSTED_UPDATER_PUBLIC_KEY_SHA256={trusted_key_sha256}");
     tauri_build::build()
 }

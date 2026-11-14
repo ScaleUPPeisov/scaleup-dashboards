@@ -137,3 +137,9 @@ back to revision 0 / commit `development`.
 
 No key generation, private-key upload, release, merge or production update is
 authorized by this code change.
+
+A future build must also set `VYRON_TRUSTED_UPDATER_PUBLIC_KEY_SHA256` to the
+independently authenticated SHA-256 fingerprint of the decoded 42-byte Minisign
+public-key payload. Without that explicit build-time trust anchor, VYRON reports
+`NOT_INDEPENDENTLY_VERIFIED` and blocks Stable/Owner Preview update checks and
+downloads. A valid key format or pinned feed URL alone never authorizes an update.
