@@ -150,6 +150,88 @@ export async function runCountersSync(env, { source, slot, date = new Date(), fe
       }
     }
     if(missingChannelIds.length) {
+      // Retry omitted IDs once as a narrow request before reporting incomplete coverage.
+      const retryIds=[...new Set(missingChannelIds)];
+      const stillMissing=[];
+      for(const retryGroup of chunk(retryIds)) {
+        await reserveQuota(db,date,getQuotaBudget(env));
+        const retryQuery=new URLSearchParams({
+          part:'snippet,statistics',id:retryGroup.join(','),maxResults:'50',key:env.YOUTUBE_API_KEY
+        });
+        const retryResponse=await fetchImpl(
+          'https://www.googleapis.com/youtube/v3/channels?'+retryQuery,
+          {headers:{Accept:'application/json'}}
+        );
+        if(!retryResponse.ok)throw new Error('YouTube channels.list HTTP '+retryResponse.status);
+        const retryBody=await retryResponse.json();
+        if(!Array.isArray(retryBody.items))throw new Error('YouTube response missing items');
+        const allowed=new Set(retryGroup),rows=[],notices=[];
+        const observedAt=new Date().toISOString();
+        for(const item of retryBody.items) {
+          if(!allowed.has(item.id))continue;
+          const previous=baselineById.get(item.id);
+          const statistics=item.statistics||{};
+          const hidden=statistics.hiddenSubscriberCount===true;
+          const subscribers=hidden?null:publicCount(statistics.subscriberCount);
+          const milestone=baselineMilestone(subscribers);
+          const priorMax=previous.max_milestone==null?null:Number(previous.max_milestone);
+          const maxMilestone=milestone==null?priorMax:Math.max(milestone,priorMax??milestone);
+          const name=String(item.snippet?.title||previous.name||item.id).slice(0,120);
+          for(const m of crossedMilestones(priorMax,subscribers))notices.push({
+            id:item.id+':'+m,kind:'subscriber_milestone',channel_id:item.id,
+            title:name+': '+m+' подписчиков',
+            payload_json:JSON.stringify({milestone:m,approximate:true}),
+            occurred_at:observedAt,received_at:observedAt
+          });
+          rows.push({
+            id:item.id,name,subscribers,views:publicCount(statistics.viewCount),
+            videos:publicCount(statistics.videoCount),hidden_subscribers:hidden?1:0,
+            max_milestone:maxMilestone,previous_subscribers:previous.subscribers,
+            updated_at:observedAt
+          });
+        }
+        if(rows.length) {
+          const rowsJson=JSON.stringify(rows);
+          const stmts=[
+            db.prepare(\`
+              INSERT INTO channels (id,name,subscribers,views,videos,hidden_subscribers,
+                max_milestone,previous_subscribers,updated_at)
+              SELECT json_extract(value,'$.id'),json_extract(value,'$.name'),
+                json_extract(value,'$.subscribers'),json_extract(value,'$.views'),
+                json_extract(value,'$.videos'),json_extract(value,'$.hidden_subscribers'),
+                json_extract(value,'$.max_milestone'),json_extract(value,'$.previous_subscribers'),
+                json_extract(value,'$.updated_at')
+              FROM json_each(?) WHERE 1
+              ON CONFLICT(id) DO UPDATE SET name=excluded.name,subscribers=excluded.subscribers,
+                views=excluded.views,videos=excluded.videos,
+                hidden_subscribers=excluded.hidden_subscribers,max_milestone=excluded.max_milestone,
+                previous_subscribers=excluded.previous_subscribers,updated_at=excluded.updated_at
+            \`).bind(rowsJson),
+            db.prepare(\`
+              INSERT OR IGNORE INTO channel_snapshots
+                (channel_id,observed_at,subscribers,views,videos)
+              SELECT json_extract(value,'$.id'),json_extract(value,'$.updated_at'),
+                json_extract(value,'$.subscribers'),json_extract(value,'$.views'),
+                json_extract(value,'$.videos') FROM json_each(?)
+            \`).bind(rowsJson)
+          ];
+          if(notices.length)stmts.push(db.prepare(\`
+            INSERT OR IGNORE INTO events
+              (id,kind,channel_id,title,payload_json,occurred_at,received_at)
+            SELECT json_extract(value,'$.id'),json_extract(value,'$.kind'),
+              json_extract(value,'$.channel_id'),json_extract(value,'$.title'),
+              json_extract(value,'$.payload_json'),json_extract(value,'$.occurred_at'),
+              json_extract(value,'$.received_at') FROM json_each(?)
+          \`).bind(JSON.stringify(notices)));
+          await db.batch(stmts);
+          updatedChannels+=rows.length;
+        }
+        const returned=new Set(rows.map(row=>row.id));
+        for(const id of retryGroup)if(!returned.has(id))stillMissing.push(id);
+      }
+      missingChannelIds.splice(0,missingChannelIds.length,...stillMissing);
+    }
+    if(missingChannelIds.length) {
       throw new Error('YOUTUBE_CHANNELS_INCOMPLETE: updated '+updatedChannels+'/'+known.length+
         '; missing '+missingChannelIds.length+': '+missingChannelIds.join(', '));
     }
