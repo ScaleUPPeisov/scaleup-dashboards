@@ -28,6 +28,9 @@ test('five workspace navigation tabs resolve to real views',()=>{
   const views=[...html.matchAll(/data-mobile-view="([^"]+)"/g)].map(match=>match[1]);
   assert.deepEqual(targets,['analytics','channels','events','overview','system']);
   for(const target of targets)assert.ok(views.includes(target),'missing view: '+target);
+  assert.ok(html.indexOf('id="main-nav"')<html.indexOf('class="headline"'),
+    'desktop workspace navigation must appear before the active view');
+  assert.ok(html.includes('id="channel-filter"'),'channel status filter missing');
   assert.match(css,/\.mobile-view-hidden\s*\{\s*display:none!important\s*\}/);
 });
 
