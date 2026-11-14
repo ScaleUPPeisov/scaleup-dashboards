@@ -130,8 +130,10 @@ valid public key is **not** a statement that its trust has been independently
 verified. The UI must explicitly show that distinction.
 
 The build script accepts an explicit numeric build revision, exact Git commit
-and update channel. A release build must supply those values; the local
-development defaults remain visibly marked as development.
+and update channel. When explicit build metadata is absent, it derives the commit
+and a numeric revision from the checked-out Git repository (using the commit
+timestamp for shallow clones). Only source archives without Git metadata fall
+back to revision 0 / commit `development`.
 
 No key generation, private-key upload, release, merge or production update is
 authorized by this code change.
