@@ -153,7 +153,7 @@ jobs:
             process.exit(1);
           }
           console.log("D1 row counts (counts only; no row contents or credentials):", JSON.stringify(counts));
-          await appendFile(process.env.GITHUB_OUTPUT, "row_counts=" + JSON.stringify(counts) + "\\n");
+          await appendFile(process.env.GITHUB_OUTPUT, "row_counts=" + JSON.stringify(counts) + "\n");
           NODE
 
       - name: Build Cloudflare Worker without deploying
