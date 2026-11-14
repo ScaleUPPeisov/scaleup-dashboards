@@ -463,12 +463,12 @@ function renderEvents(events) {
   }
   for (const item of compacted) {
     const {event,count}=item;
-    const ready=event.type==='agent_info'&&/^YOUTUBE READY\\b/.test(event.title||'');
+    const ready=event.type==='agent_info'&&/^YOUTUBE READY\b/.test(event.title||'');
     const failed=event.type==='upload_failed'||event.type==='render_failed'||event.type==='agent_error';
     const completed=event.type==='upload_completed'||event.type==='render_completed'||ready;
     const icon=event.type==='subscriber_milestone'?'🎉':failed?'⛔':completed?'✅':
       event.type==='upload_progress'||event.type==='render_progress'||
-      (event.type==='agent_info'&&/^YOUTUBE PROCESSING\\b/.test(event.title||''))?'↗':'•';
+      (event.type==='agent_info'&&/^YOUTUBE PROCESSING\b/.test(event.title||''))?'↗':'•';
     const labels={
       subscriber_milestone:number(event.milestone)+' подписчиков',
       upload_queued:'В очереди',upload_started:'Загрузка началась',
@@ -477,7 +477,7 @@ function renderEvents(events) {
       render_progress:'Рендер',render_completed:'Рендер завершён',
       render_failed:'Ошибка рендера',agent_error:'Ошибка агента',
       agent_info:ready?'YouTube: готово':
-        /^YOUTUBE PROCESSING\\b/.test(event.title||'')?'YouTube: обработка':'Событие агента'
+        /^YOUTUBE PROCESSING\b/.test(event.title||'')?'YouTube: обработка':'Событие агента'
     };
     const row = make('div', 'event'+(failed?' event-error':completed?' event-success':''));
     const text = make('div', 'event-text');
@@ -598,11 +598,11 @@ function renderOverview(data) {
   };
   for(const item of events) {
     const {event,count}=item;
-    const ready=event.type==='agent_info'&&/^YOUTUBE READY\\b/.test(event.title||'');
+    const ready=event.type==='agent_info'&&/^YOUTUBE READY\b/.test(event.title||'');
     const failed=['upload_failed','render_failed','agent_error'].includes(event.type);
     const complete=['upload_completed','render_completed'].includes(event.type)||ready;
     const title=event.type==='agent_info'
-      ?(ready?'YouTube: готово':/^YOUTUBE PROCESSING\\b/.test(event.title||'')
+      ?(ready?'YouTube: готово':/^YOUTUBE PROCESSING\b/.test(event.title||'')
         ?'YouTube: обработка':'Событие Mac Bridge')
       :(eventLabels[event.type]||'Событие VYRON');
     const row=make('div','overview-event');
