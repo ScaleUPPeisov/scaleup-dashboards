@@ -36,7 +36,7 @@ test('new rotated pubkey creates a temporary overlay, preserving app identity an
   assert.equal(original,readFileSync(fileURLToPath(new URL('../../src-tauri/tauri.conf.json',import.meta.url)),'utf8'));
   assert.match(result.stdout,/ROTATED_UPDATER_OVERLAY_READY=PASS/);
   const decoded=Buffer.from(overlay.plugins.updater.pubkey,'base64').toString('utf8');
-  const publicBytes=Buffer.from(decoded.trimEnd().split(/\\r?\\n/)[1],'base64');
+  const publicBytes=Buffer.from(decoded.trimEnd().split(/\r?\n/)[1],'base64');
   const expectedFingerprint=createHash('sha256').update(publicBytes).digest('hex');
   assert.match(result.stdout,new RegExp('PUBLIC_KEY_SHA256='+expectedFingerprint));
   assert.doesNotMatch(result.stdout,/PRIVATE KEY|TEST-ONLY-KEY/);
