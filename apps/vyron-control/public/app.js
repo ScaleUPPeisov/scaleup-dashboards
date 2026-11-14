@@ -265,7 +265,7 @@ function renderAnalytics(data) {
   const uniqueDays=daily.filter(row=>row.uniqueDays>0);
   $('analytics-unique-viewers').textContent=uniqueDays.length
     ?number(Math.round(uniqueDays.reduce((total,row)=>total+row.uniqueViewers,0)/
-      uniqueDays.reduce((total,row)=>total+row.uniqueDays,0))):'—';
+      uniqueDays.length)):'—';
   $('analytics-watch-hours').textContent=number(Math.round(watchMinutes/60*10)/10);
   $('analytics-net-subs').textContent=(gained-lost>0?'+':'')+number(gained-lost);
   $('analytics-subs-note').textContent=number(gained)+' получено · '+number(lost)+' потеряно';
