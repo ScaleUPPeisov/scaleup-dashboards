@@ -415,3 +415,17 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,su
 }
 
 .dot.offline{background:#ffbd78;box-shadow:0 0 12px rgba(255,189,120,.6)}
+
+/* Channel discovery controls */
+.channel-tools{
+  display:grid;grid-template-columns:minmax(145px,1fr) minmax(155px,1fr) minmax(180px,1.2fr);
+  width:72%;max-width:72%;gap:8px;
+}
+.channel-tools select,.channel-tools input{width:100%;min-width:0}
+@media(max-width:850px){
+  .channel-tools{width:100%;max-width:100%}
+}
+@media(max-width:760px){
+  .channel-tools{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .channel-tools input{grid-column:1/-1}
+}
