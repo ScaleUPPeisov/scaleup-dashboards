@@ -604,6 +604,7 @@ test('authorized private Analytics syncs 90-day trends and channel breakdowns in
 test('manual refresh API processes every authorized channel in safe three-profile batches',async()=>{
   const e=env();
   Object.assign(e,{
+    APP_ORIGIN:'https://vyron-control.example',
     GOOGLE_OAUTH_CLIENT_ID:'MANUAL_CLIENT',
     GOOGLE_OAUTH_CLIENT_SECRET:'MANUAL_SECRET',
     OAUTH_ENCRYPTION_KEY:'d'.repeat(64)
