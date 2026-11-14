@@ -1,5 +1,5 @@
 import {
-  baselineMilestone, chunk, crossedMilestones, pacificDay, publicCount, cronSlot
+  baselineMilestone, chunk, crossedMilestones, pacificDay, publicCount, cronSlot, VIDEO_ID_PREFIX
 } from './core.mjs';
 
 function claimChanges(result) { return Number(result?.meta?.changes || 0); }
@@ -20,7 +20,7 @@ export async function reserveQuota(db, date, budget) {
   return day;
 }
 
-export async function runCountersSync(env, { source, slot, date = new Date(), fetchImpl = fetch }) {
+export async function runCountersSync(env, { source, slot, date = new Date(), fetchImpl = fetch, channelIds = null }) {
   const db = env.DB;
   if (!db) throw new Error('D1 binding missing');
   if (!env.YOUTUBE_API_KEY) throw new Error('YOUTUBE_API_KEY secret not configured');
@@ -46,10 +46,18 @@ export async function runCountersSync(env, { source, slot, date = new Date(), fe
   let updatedChannels = 0;
   const missingChannelIds = [];
   try {
-    const { results: known } = await db.prepare(
-      'SELECT id,name,subscribers,max_milestone FROM channels ORDER BY id'
-    ).all();
-    if (!known?.length) throw new Error('No channels enrolled');
+    const requestedIds=Array.isArray(channelIds)?[...new Set(channelIds)]:null;
+    if(requestedIds&&(!requestedIds.length||requestedIds.length>100||
+      requestedIds.some(id=>!VIDEO_ID_PREFIX.test(String(id)))))
+      throw new Error('Invalid channel refresh selection');
+    const knownQuery=requestedIds
+      ?db.prepare('SELECT id,name,subscribers,max_milestone FROM channels WHERE id IN ('+
+        requestedIds.map(()=>'?').join(',')+') ORDER BY id').bind(...requestedIds)
+      :db.prepare('SELECT id,name,subscribers,max_milestone FROM channels ORDER BY id');
+    const {results:known}=await knownQuery.all();
+    if(!known?.length)throw new Error('No channels enrolled');
+    if(requestedIds&&known.length!==requestedIds.length)
+      throw new Error('Requested channel refresh selection is incomplete');
     const baselineById = new Map(known.map(ch => [ch.id,ch]));
     for (const group of chunk(known)) {
       // Reserve before sending: HTTP errors can still consume upstream quota.
@@ -248,10 +256,18 @@ export async function runCountersSync(env, { source, slot, date = new Date(), fe
 }
 
 export async function scheduledSync(controller, env, fetchImpl = fetch) {
-  const now = new Date(controller.scheduledTime ?? Date.now());
-  const slot = cronSlot(controller.cron,now);
-  if (!slot) return { skipped:true,reason:'invalid_cron_or_time' };
-  return runCountersSync(env,{ source:'schedule',slot,date:now,fetchImpl });
+  const now=new Date(controller.scheduledTime??Date.now());
+  if(controller.cron==='0 * * * *') {
+    // The two Krasnoyarsk daily windows already have dedicated, separately
+    // audited slots; avoid a duplicate request at 07:00 and 22:00.
+    if(now.getUTCHours()===0||now.getUTCHours()===15)
+      return {skipped:true,reason:'covered_by_daily_window'};
+    const slot=now.toISOString().slice(0,13)+'@hourly';
+    return runCountersSync(env,{source:'hourly',slot,date:now,fetchImpl});
+  }
+  const slot=cronSlot(controller.cron,now);
+  if(!slot)return {skipped:true,reason:'invalid_cron_or_time'};
+  return runCountersSync(env,{source:'schedule',slot,date:now,fetchImpl});
 }
 
 export function manualSlot(date = new Date()) {
