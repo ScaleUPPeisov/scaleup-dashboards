@@ -753,7 +753,13 @@ function renderDevices(data) {
     $('mac-renders').textContent = '—';
     $('mac-uploads').textContent = '—';
     $('mac-uploaded').textContent = '—';
-    for(const id of ['mac-uploaded-today','mac-rendered-today','mac-upload-failures','mac-channels-bound'])$(id).textContent='—';
+    for(const id of [
+      'mac-uploaded-today','mac-rendered-today','mac-upload-failures','mac-channels-bound',
+      'mac-vyron-version','mac-endlume-version','mac-power-state','mac-disk-state',
+      'mac-ready-upload','mac-agent-error'
+    ])$(id).textContent='—';
+    $('mac-disk-state').classList.remove('state-bad');
+    $('mac-agent-error').classList.remove('state-bad');
     return;
   }
   const recent = device.lastSeenAt &&
@@ -762,6 +768,16 @@ function renderDevices(data) {
   $('mac-state').textContent = recent ? 'На связи' : 'Последнее состояние';
   $('mac-last').textContent = 'Последний сигнал: ' + time(device.lastSeenAt);
   const s = device.status || {};
+  $('mac-vyron-version').textContent=s.vyronVersion||'—';
+  $('mac-endlume-version').textContent=s.endlumeVersion||'—';
+  $('mac-power-state').textContent=s.macAwake===true?'Активен':
+    s.macAwake===false?'Сон':'Нет данных';
+  $('mac-disk-state').textContent=s.diskOnline===true?'Подключён':
+    s.diskOnline===false?'Недоступен':'Нет данных';
+  $('mac-ready-upload').textContent=s.jobsReadyUpload==null?'—':number(s.jobsReadyUpload);
+  $('mac-agent-error').textContent=s.lastError?String(s.lastError).slice(0,150):'Нет активных ошибок';
+  $('mac-disk-state').classList.toggle('state-bad',s.diskOnline===false);
+  $('mac-agent-error').classList.toggle('state-bad',Boolean(s.lastError));
   $('mac-renders').textContent = number(s.rendersActive);
   $('mac-uploads').textContent = number(s.uploadsQueued);
   $('mac-uploaded').textContent = number(s.uploadsCompleted);
