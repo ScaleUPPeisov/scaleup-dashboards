@@ -1,7 +1,12 @@
-# VYRON CONTROL — mobile public-channel counters (MVP)
+# VYRON CONTROL — private cloud control plane
 
 Independent, read-only companion service for the existing VYRON macOS app.
-**Development prototype, not a published release or deployed cloud service.**
+
+**A live Cloudflare Worker deployment already exists:**  
+https://vyron-control.endlume-peisov-3ee6109f.workers.dev/
+
+The current feature branch is a release candidate, not the live deployment. A commit or passing CI run does not update production; application changes become live only after the guarded release workflow completes. See [cloudflare/README.md](cloudflare/README.md) and the release entrypoint PR #26.
+
 Does not modify the production VYRON updater, the OAuth Keychain, ENDLUME,
 YouTube uploads, PR #22, or any existing SQLite/JSON data.
 
