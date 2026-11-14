@@ -81,6 +81,7 @@ export class MacBridge {
     if(result.publicSync?.complete===false)
       return {imported:0,reason:'initial_sync_pending',publicSync:result.publicSync};
     this.lastChannelHash=hash;
+    this.lastChannelSyncAttemptAt=0;
     return {imported:normalized.length,result};
   }
   async syncAnalytics() {
