@@ -94,7 +94,8 @@ CREATE INDEX IF NOT EXISTS idx_channel_analytics_received ON channel_analytics(r
 -- ===== 0003_google_oauth.sql =====
 -- VYRON CONTROL Google OAuth for read-only YouTube Analytics.
 -- Credentials are AES-256-GCM encrypted by a Cloudflare *secret* key not in D1.
--- Tokens from the existing VYRON macOS Keychain must never be imported.
+-- Native tokens are imported only from an explicit password-protected VYRON
+-- migration bundle; the bundle password never leaves the owner's browser.
 CREATE TABLE IF NOT EXISTS google_oauth_sessions (
  state_hash TEXT PRIMARY KEY NOT NULL,
  verifier_cipher TEXT NOT NULL,
@@ -109,6 +110,17 @@ CREATE TABLE IF NOT EXISTS google_oauth_profiles (
  connected_at TEXT NOT NULL,
  last_success_at TEXT,
  last_error TEXT
+);
+
+-- ===== 0005_vyron_oauth_import.sql =====
+CREATE TABLE IF NOT EXISTS google_oauth_client_credentials (
+  channel_id TEXT PRIMARY KEY NOT NULL,
+  profile_uuid TEXT NOT NULL,
+  client_id_cipher TEXT NOT NULL,
+  client_secret_cipher TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'VYRON_MIGRATION',
+  bundle_uuid TEXT NOT NULL,
+  imported_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS cloud_analytics_runs (
  slot TEXT PRIMARY KEY NOT NULL,

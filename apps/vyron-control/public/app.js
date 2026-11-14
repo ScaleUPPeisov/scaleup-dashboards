@@ -1,3 +1,5 @@
+import {decryptVyronMigration} from './migration-crypto.js';
+
 const $ = id => document.getElementById(id);
 const number = value => value === null || value === undefined ? '—' : new Intl.NumberFormat('ru-RU').format(value);
 const time = iso => iso ? new Intl.DateTimeFormat('ru-RU', {
@@ -405,6 +407,35 @@ if(oauthOutcome==='connected'||oauthOutcome==='denied'||oauthOutcome==='failed')
     :oauthOutcome==='denied'?'Доступ Google не предоставлен.':'Не удалось подключить Google. Проверь настройку OAuth.';
   window.history.replaceState({},'',window.location.pathname);
 }
+$('migration-import').addEventListener('click',async()=>{
+  const button=$('migration-import'),message=$('migration-message');
+  const file=$('migration-file').files?.[0],password=$('migration-password').value;
+  if(!file){message.textContent='Сначала выбери файл .vyron.';return;}
+  if(password.length<10){message.textContent='Введи пароль пакета — минимум 10 символов.';return;}
+  button.disabled=true;
+  try{
+    message.textContent='Расшифровываю пакет локально…';
+    const bundle=await decryptVyronMigration(await file.arrayBuffer(),password);
+    let imported=0,failed=0,processed=0;
+    for(let offset=0;offset<bundle.profiles.length;offset+=8){
+      const chunk=bundle.profiles.slice(offset,offset+8);
+      message.textContent=`Проверяю OAuth-профили: ${processed} из ${bundle.profiles.length}…`;
+      const result=await api('/api/oauth/import-vyron','POST',{
+        bundleUuid:bundle.bundleUuid,profiles:chunk
+      });
+      imported+=result.imported||0;failed+=result.failed||0;processed+=chunk.length;
+      for(const profile of chunk){
+        profile.refreshToken='';profile.clientSecret='';profile.clientId='';
+      }
+    }
+    $('migration-password').value='';$('migration-file').value='';
+    message.textContent=failed
+      ?`Импортировано ${imported}; не прошли проверку ${failed}. Рабочие профили сохранены.`
+      :`Готово: ${imported} OAuth-профилей импортировано и проверено Google.`;
+    await loadOauthProfiles();
+  }catch(error){message.textContent='Импорт не выполнен: '+error.message;}
+  finally{button.disabled=false;}
+});
 function vapidKeyToBytes(value) {
   const normalized=value.replaceAll('-','+').replaceAll('_','/');
   const raw=atob(normalized+'='.repeat((4-normalized.length%4)%4));

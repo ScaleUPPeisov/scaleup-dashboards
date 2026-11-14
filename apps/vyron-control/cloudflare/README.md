@@ -92,8 +92,12 @@ For later schema changes, keep using versioned Wrangler migrations.
 
 ## Independent private YouTube Analytics (read-only OAuth)
 
-Cloudflare code includes an independent Google OAuth 2.0 / PKCE flow. It does
-**not** reuse, extract or migrate VYRON's macOS Keychain tokens.
+Cloudflare code includes an independent Google OAuth 2.0 / PKCE flow. It never
+reads the macOS Keychain. The owner may alternatively select an explicitly
+exported, password-protected `.vyron` migration bundle in the dashboard. That
+bundle is decrypted locally in the browser with Argon2id + XChaCha20-Poly1305;
+the bundle and password are never uploaded. Only validated read-only OAuth
+profiles are sent over HTTPS and re-encrypted with AES-256-GCM before D1 storage.
 
 1. In Google Cloud Console, enable **YouTube Data API v3** and
    **YouTube Analytics API**. Configure an OAuth consent screen under your own
@@ -120,8 +124,12 @@ Cloudflare code includes an independent Google OAuth 2.0 / PKCE flow. It does
 4. Set `APP_ORIGIN` to the exact Worker HTTPS origin in the Wrangler
    environment settings, e.g. `https://YOUR_WORKER.workers.dev`.
    Then redeploy and recheck the Google redirect URI.
-5. On the iPhone dashboard select **Подключить Google-каналы**. Authorize
-   each Google identity/channel you manage and approve read-only scopes.
+5. On the dashboard either select **Подключить Google-каналы** and authorize
+   each Google identity, or export a package from VYRON under
+   **Настройки → Backup & Migration** and import it with its one-time password.
+   Imported profiles are checked against Google and the expected YouTube
+   Channel ID in batches of eight. Repeated imports are idempotent and never
+   delete existing profiles.
    The cloud stores **AES-256-GCM encrypted** refresh tokens in D1; access
    tokens are temporary and never sent to the iPhone.
 6. Two daily reporting windows begin at **07:00 and 22:00 Krasnoyarsk**.

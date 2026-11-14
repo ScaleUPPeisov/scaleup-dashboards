@@ -53,8 +53,10 @@ for local development, but it is not the zero-cost always-on deployment.
    ```
 
    Replace the placeholder with a real 24-character YouTube channel ID. The file
-   is gitignored. First version uses public counters only; no Google OAuth tokens
-   should be pasted into this repository or the browser.
+   is gitignored. Never paste Google OAuth tokens into this repository. The
+   Cloudflare dashboard can locally decrypt an owner-created `.vyron` migration
+   package and securely import its read-only profiles without uploading the
+   package password.
 
 2. Create a YouTube Data API v3 API key in your own Google Cloud project, restrict
    it to this API, and configure `VYRON_YOUTUBE_API_KEY` **on the server only**.

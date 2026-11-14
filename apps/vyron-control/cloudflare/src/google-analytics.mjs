@@ -76,8 +76,11 @@ export async function runAnalyticsBatch(env,controller,fetchImpl=fetch) {
   let done=0,errors=0;
   try{
     const result=await db.prepare(`
-      SELECT channel_id,refresh_token_cipher FROM google_oauth_profiles
-      ORDER BY channel_id LIMIT ? OFFSET ?
+      SELECT p.channel_id,p.refresh_token_cipher,
+        c.client_id_cipher,c.client_secret_cipher
+      FROM google_oauth_profiles p
+      LEFT JOIN google_oauth_client_credentials c ON c.channel_id=p.channel_id
+      ORDER BY p.channel_id LIMIT ? OFFSET ?
     `).bind(BATCH_SIZE,details.offset).all();
     const end=Date.UTC(details.date.getUTCFullYear(),details.date.getUTCMonth(),
       details.date.getUTCDate()-2);

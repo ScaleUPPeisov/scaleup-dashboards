@@ -2,6 +2,7 @@ import { acceptedCommand, pacificDay, safeEvent, validatedChannelList } from './
 import { manualSlot, runCountersSync, scheduledSync } from './sync.mjs';
 import { saveAnalytics } from './analytics.mjs';
 import { startOAuth,callbackOAuth,authorizedProfiles,disconnectProfile } from './oauth.mjs';
+import { importVyronProfiles } from './oauth-import.mjs';
 import { runAnalyticsBatch } from './google-analytics.mjs';
 import { registerPush,unregisterPush,vapidPublic,dispatchPush,PUSH_CRON } from './push.mjs';
 
@@ -9,7 +10,7 @@ const REQUIRED_TOKEN_LENGTH = 32;
 const EXPECTED_TABLES = Object.freeze([
   'channels','channel_snapshots','events','sync_runs','quota_buckets','devices',
   'commands','channel_analytics','google_oauth_sessions','google_oauth_profiles',
-  'cloud_analytics_runs','push_subscriptions','push_deliveries'
+  'google_oauth_client_credentials','cloud_analytics_runs','push_subscriptions','push_deliveries'
 ]);
 const BOOTSTRAP_STATEMENTS = Object.freeze([
   "CREATE TABLE IF NOT EXISTS channels (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, subscribers INTEGER, views INTEGER, videos INTEGER, hidden_subscribers INTEGER DEFAULT 0, max_milestone INTEGER, previous_subscribers INTEGER, updated_at TEXT)",
@@ -27,6 +28,7 @@ const BOOTSTRAP_STATEMENTS = Object.freeze([
   "CREATE INDEX IF NOT EXISTS idx_channel_analytics_received ON channel_analytics(received_at DESC)",
   "CREATE TABLE IF NOT EXISTS google_oauth_sessions (state_hash TEXT PRIMARY KEY NOT NULL, verifier_cipher TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL)",
   "CREATE TABLE IF NOT EXISTS google_oauth_profiles (channel_id TEXT PRIMARY KEY NOT NULL, channel_name TEXT NOT NULL, refresh_token_cipher TEXT NOT NULL, granted_scope TEXT NOT NULL, connected_at TEXT NOT NULL, last_success_at TEXT, last_error TEXT)",
+  "CREATE TABLE IF NOT EXISTS google_oauth_client_credentials (channel_id TEXT PRIMARY KEY NOT NULL, profile_uuid TEXT NOT NULL, client_id_cipher TEXT NOT NULL, client_secret_cipher TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'VYRON_MIGRATION', bundle_uuid TEXT NOT NULL, imported_at TEXT NOT NULL)",
   "CREATE TABLE IF NOT EXISTS cloud_analytics_runs (slot TEXT PRIMARY KEY NOT NULL, status TEXT NOT NULL CHECK(status IN ('running','success','error')), started_at TEXT NOT NULL, ended_at TEXT, updated_channels INTEGER DEFAULT 0, error TEXT)",
   "CREATE TABLE IF NOT EXISTS push_subscriptions (endpoint_hash TEXT PRIMARY KEY NOT NULL, subscription_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
   "CREATE TABLE IF NOT EXISTS push_deliveries (endpoint_hash TEXT NOT NULL, event_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'retry' CHECK(status IN ('retry','sending','sent','failed')), attempts INTEGER NOT NULL DEFAULT 0, last_attempt_at TEXT, updated_at TEXT NOT NULL, PRIMARY KEY(endpoint_hash,event_id))",
@@ -453,6 +455,8 @@ export default {
         return startOAuth(request,env);
       if (url.pathname==='/api/oauth/profiles'&&request.method==='GET')
         return json(await authorizedProfiles(env));
+      if (url.pathname==='/api/oauth/import-vyron'&&request.method==='POST')
+        return json(await importVyronProfiles(await readJson(request,262144),env));
       if (url.pathname==='/api/oauth/disconnect'&&request.method==='POST')
         return json(await disconnectProfile(request,env));
       if (url.pathname==='/api/events'&&request.method==='GET')
@@ -502,7 +506,7 @@ export default {
       const message=String(e.message||'Unknown failure');
       const status=message.includes('budget exhausted')?429:
         message.includes('already')?409:
-        /Invalid|Unexpected|not configured|No channels|Unsupported|too large/.test(message)?400:500;
+        /Invalid|^INVALID_|Unexpected|not configured|No channels|Unsupported|too large/.test(message)?400:500;
       if(status===500)console.error('VYRON CONTROL request:',message);
       return errorReply(status===500?'Internal service error':message,status);
     }

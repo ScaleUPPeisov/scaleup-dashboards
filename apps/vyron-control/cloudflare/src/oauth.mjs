@@ -72,13 +72,14 @@ function safeRedirect(url) {
     'Referrer-Policy':'no-referrer'
   }});
 }
-async function googleTokenExchange(env,body,fetchImpl) {
+async function googleTokenExchange(env,body,fetchImpl,credentials=null) {
+  const clientId=credentials?.clientId||env.GOOGLE_OAUTH_CLIENT_ID;
+  const clientSecret=credentials?.clientSecret||env.GOOGLE_OAUTH_CLIENT_SECRET;
   const reply=await fetchImpl(GOOGLE_TOKEN,{
     method:'POST',
     headers:{'Content-Type':'application/x-www-form-urlencoded','Accept':'application/json'},
     body:new URLSearchParams({
-      client_id:env.GOOGLE_OAUTH_CLIENT_ID,
-      client_secret:env.GOOGLE_OAUTH_CLIENT_SECRET,...body
+      client_id:clientId,client_secret:clientSecret,...body
     })
   });
   if(!reply.ok)throw new Error('Google OAuth token exchange failed');
@@ -182,11 +183,16 @@ export async function disconnectProfile(request,env) {
   return {disconnected:Number(removed.meta?.changes)===1};
 }
 export async function refreshAccessToken(profile,env,fetchImpl=fetch) {
-  requiresGoogleConfiguration(env);
   const refreshToken=await decryptSecret(profile.refresh_token_cipher,env);
+  let credentials=null;
+  if(profile.client_id_cipher&&profile.client_secret_cipher)credentials={
+    clientId:await decryptSecret(profile.client_id_cipher,env),
+    clientSecret:await decryptSecret(profile.client_secret_cipher,env)
+  };
+  if(!credentials)requiresGoogleConfiguration(env);
   const token=await googleTokenExchange(env,{
     refresh_token:refreshToken,grant_type:'refresh_token'
-  },fetchImpl);
+  },fetchImpl,credentials);
   if(!token.access_token)throw new Error('Google refresh failed');
   return token.access_token;
 }

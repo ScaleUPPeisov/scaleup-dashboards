@@ -62,8 +62,12 @@ input:focus{border-color:#7a9cf5;box-shadow:0 0 0 2px #5e80f43b}.primary{border:
 .oauth-profile span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
 .oauth-profile small{font-size:11px;color:#95accf}
 .oauth-profile .ghost{font-size:11px}
+.migration-import{display:grid;grid-template-columns:minmax(220px,1.4fr) minmax(180px,1fr) minmax(170px,1fr) auto;
+ align-items:center;gap:10px;margin-top:16px;padding:13px;border:1px solid #30476c;border-radius:12px;background:#0f1829}
+.migration-import>div{display:grid;gap:5px}.migration-import strong{font-size:12px}.migration-import small{font-size:10px;color:#8399ba;line-height:1.45}
+.migration-import input{font-size:11px;padding:10px 11px}.migration-import .caution{grid-column:1/-1}
 @media(max-width:600px){.oauth-section{padding:16px}.oauth-profile{grid-template-columns:1fr auto}
-.oauth-profile small{grid-row:2;grid-column:1/-1}}
+.oauth-profile small{grid-row:2;grid-column:1/-1}.migration-import{grid-template-columns:1fr}.migration-import .caution{grid-column:1}}
 
 /* Event timeline filters and pagination */
 select{border:1px solid #354665;border-radius:11px;background:#11192a;color:#f3f6ff;

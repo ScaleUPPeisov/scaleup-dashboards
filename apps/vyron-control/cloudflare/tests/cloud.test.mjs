@@ -7,6 +7,7 @@ import cloud from '../src/index.mjs';
 import { cronSlot, crossedMilestones, pacificDay, safeEvent, acceptedCommand } from '../src/core.mjs';
 import { manualSlot, reserveQuota, scheduledSync } from '../src/sync.mjs';
 import { startOAuth,callbackOAuth,authorizedProfiles,decryptSecret } from '../src/oauth.mjs';
+import { importVyronProfiles } from '../src/oauth-import.mjs';
 import { runAnalyticsBatch,nextAnalyticsSlot,parseDailyReport } from '../src/google-analytics.mjs';
 import { PUSH_CRON } from '../src/push.mjs';
 import { validSubscription,registerPush,dispatchPush } from '../src/push.mjs';
@@ -34,6 +35,7 @@ class MockD1 {
     this.native.exec(readFileSync(new URL('../migrations/0002_analytics.sql',import.meta.url),'utf8'));
     this.native.exec(readFileSync(new URL('../migrations/0003_google_oauth.sql',import.meta.url),'utf8'));
     this.native.exec(readFileSync(new URL('../migrations/0004_webpush.sql',import.meta.url),'utf8'));
+    this.native.exec(readFileSync(new URL('../migrations/0005_vyron_oauth_import.sql',import.meta.url),'utf8'));
   }
   prepare(sql){return new D1Query(this,sql);}
   async batch(stmts){
@@ -83,7 +85,7 @@ test('authenticated D1 bootstrap fills missing application tables idempotently',
   const firstBody=await first.json();
   assert.equal(firstBody.ok,true);
   assert.deepEqual(firstBody.createdTables,['push_deliveries']);
-  assert.equal(firstBody.presentTables,13);
+  assert.equal(firstBody.presentTables,14);
   const second=await cloud.fetch(req('/api/admin/bootstrap',control,'POST',{}),e);
   assert.equal(second.status,200);
   const secondBody=await second.json();
@@ -119,7 +121,7 @@ test('authorization, origin guard, static asset CSP and immutable endpoint behav
   assert.equal(health.status,200);
   const healthBody=await health.json();
   assert.equal(healthBody.app,'vyron-control');
-  assert.deepEqual(healthBody.d1,{bound:true,schema:true,expectedTables:13,presentTables:13});
+  assert.deepEqual(healthBody.d1,{bound:true,schema:true,expectedTables:14,presentTables:14});
   assert.equal((await cloud.fetch(req('/api/status','invalid'),e)).status,401);
   const good=await cloud.fetch(req('/api/status',control),e);
   assert.equal(good.status,200);
@@ -303,6 +305,54 @@ test('Google OAuth is PKCE protected, offline read-only and encrypted at rest',a
   assert.equal(summary.profiles.length,1);
   assert.equal(JSON.stringify(summary).includes('REFRESH_TOKEN_PRIVATE'),false);
   await assert.rejects(()=>callbackOAuth(callback,e,googleFetch),/expired/);
+});
+
+test('encrypted VYRON migration profiles import idempotently with their original OAuth client',async()=>{
+  const e=env(),channelId=id(7);
+  Object.assign(e,{OAUTH_ENCRYPTION_KEY:'b'.repeat(64),
+    GOOGLE_OAUTH_CLIENT_ID:'WEB_CLIENT',GOOGLE_OAUTH_CLIENT_SECRET:'WEB_SECRET'});
+  const clientId='471814393352-portableclient.apps.googleusercontent.com';
+  const clientSecret='PORTABLE_CLIENT_SECRET';
+  const refreshToken='PORTABLE_REFRESH_TOKEN_1234567890';
+  const fetchMock=async(url,opts)=>{
+    if(url.includes('oauth2.googleapis.com/token')){
+      const body=new URLSearchParams(opts.body);
+      assert.equal(body.get('client_id'),clientId);
+      assert.equal(body.get('client_secret'),clientSecret);
+      assert.equal(body.get('refresh_token'),refreshToken);
+      return new Response(JSON.stringify({access_token:'PORTABLE_ACCESS'}),{status:200});
+    }
+    if(url.includes('youtube/v3/channels'))return new Response(JSON.stringify({
+      items:[{id:channelId,snippet:{title:'Portable channel'}}]
+    }),{status:200});
+    if(url.includes('youtubeanalytics.googleapis.com'))return new Response(JSON.stringify({
+      columnHeaders:['day','views','estimatedMinutesWatched','averageViewDuration',
+        'averageViewPercentage','subscribersGained','subscribersLost'].map(name=>({name})),
+      rows:[['2026-11-11',77,880,120,55,4,1]]
+    }),{status:200});
+    throw new Error('unexpected endpoint');
+  };
+  const data={bundleUuid:'bundle-uuid-001',profiles:[{
+    profileUuid:'profile-uuid-001',channelId,channelName:'Portable channel',
+    refreshToken,clientId,clientSecret
+  }]};
+  const first=await importVyronProfiles(data,e,fetchMock);
+  const second=await importVyronProfiles(data,e,fetchMock);
+  assert.equal(first.imported,1);assert.equal(second.imported,1);
+  assert.equal(e.DB.native.prepare('SELECT count(*) AS n FROM google_oauth_profiles').get().n,1);
+  const stored=e.DB.native.prepare(`SELECT p.refresh_token_cipher,c.client_id_cipher,
+    c.client_secret_cipher,c.profile_uuid FROM google_oauth_profiles p
+    JOIN google_oauth_client_credentials c ON c.channel_id=p.channel_id`).get();
+  assert.equal(stored.profile_uuid,'profile-uuid-001');
+  assert.equal(await decryptSecret(stored.refresh_token_cipher,e),refreshToken);
+  assert.equal(await decryptSecret(stored.client_id_cipher,e),clientId);
+  assert.equal(await decryptSecret(stored.client_secret_cipher,e),clientSecret);
+  assert.equal(JSON.stringify(stored).includes(refreshToken),false);
+  const analytics=await runAnalyticsBatch(e,
+    {scheduledTime:Date.parse('2026-11-13T00:05:00Z')},fetchMock);
+  assert.equal(analytics.updated,1);
+  assert.equal(e.DB.native.prepare(
+    'SELECT views FROM channel_analytics WHERE channel_id=?').get(channelId).views,77);
 });
 
 test('authorized private Analytics can update while Mac sleeps, with 10-channel cron batches',async()=>{

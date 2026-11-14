@@ -79,8 +79,15 @@
           <button id="oauth-connect" class="primary" disabled>Подключить Google-каналы</button>
           <span class="caution" id="oauth-message">Требуется отдельная Google OAuth-конфигурация в Cloudflare.</span>
         </div>
+        <div class="migration-import">
+          <div><strong>Импорт 33 профилей из VYRON</strong><small>Пакет расшифровывается на этом устройстве. Пароль и файл не отправляются в Cloudflare.</small></div>
+          <input id="migration-file" type="file" accept=".vyron,application/json" aria-label="Пакет переноса VYRON">
+          <input id="migration-password" type="password" minlength="10" autocomplete="off" placeholder="Пароль пакета" aria-label="Пароль пакета VYRON">
+          <button id="migration-import" class="ghost">Проверить и импортировать</button>
+          <span id="migration-message" class="caution">Создай пакет в VYRON → Настройки → Backup &amp; Migration.</span>
+        </div>
         <div id="oauth-profiles" class="oauth-profiles"></div>
-        <p class="caution">Разрешение только на чтение. Для каждого Google-профиля требуется вход владельца; OAuth из macOS Keychain не копируется.</p>
+        <p class="caution">Разрешение только на чтение. Ручной Google-вход и импорт зашифрованного пакета используют один защищённый список профилей.</p>
       </section>
       <section class="card mac-section">
         <div class="section-title">
