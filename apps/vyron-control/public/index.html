@@ -3,7 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#0b1020">
+  <meta name="theme-color" content="#090e1b">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="VYRON CONTROL">
   <meta name="description" content="VYRON CONTROL — мониторинг сети YouTube-каналов">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" type="image/svg+xml" href="/icon.svg">
@@ -34,6 +37,78 @@
         <div class="refresh-actions"><button id="refresh" class="primary refresh">↻ Обновить всё</button><small id="refresh-feedback" class="refresh-feedback">Публичные счётчики + Analytics 360°</small></div>
       </div>
       <div class="status-line" data-mobile-view="overview"><span id="state-label">Загрузка данных…</span><span id="last-sync">—</span></div>
+      <section class="overview-console" data-mobile-view="overview" aria-labelledby="network-heading">
+        <div class="overview-console-head">
+          <div>
+            <span class="eyebrow">NETWORK PULSE / LIVE CONTROL</span>
+            <h2 id="network-heading">Вся сеть — в одном экране</h2>
+            <p>Состояние каналов, облачной аналитики и Mac Bridge</p>
+          </div>
+          <div id="network-status" class="network-status" data-state="loading">
+            <span class="network-status-dot"></span>
+            <span id="network-status-label">Проверяем систему</span>
+          </div>
+        </div>
+        <div class="overview-grid">
+          <article class="overview-card overview-main">
+            <div class="overview-main-copy">
+              <small>КАНАЛОВ В ОБЛАКЕ</small>
+              <strong id="overview-channel-count">—</strong>
+              <span id="overview-channel-caption">Проверяем реестр каналов</span>
+            </div>
+            <div class="overview-orbit" aria-hidden="true"><span>V</span></div>
+            <div class="overview-meter"><span id="overview-channel-progress"></span></div>
+            <div class="overview-meta">
+              <span id="overview-channel-coverage">Публичные счётчики: —</span>
+              <span>PUBLIC DATA</span>
+            </div>
+          </article>
+          <article class="overview-card">
+            <div class="overview-icon" aria-hidden="true">◷</div>
+            <small>ANALYTICS 360°</small>
+            <strong id="overview-analytics-count">—</strong>
+            <span id="overview-analytics-caption">Ожидаем данные Google</span>
+            <div class="overview-meter"><span id="overview-analytics-progress"></span></div>
+          </article>
+          <article class="overview-card">
+            <div class="overview-icon" aria-hidden="true">⌘</div>
+            <small>MAC BRIDGE</small>
+            <strong id="overview-mac-state">—</strong>
+            <span id="overview-mac-caption">Проверяем подключение</span>
+          </article>
+          <article class="overview-card">
+            <div class="overview-icon" aria-hidden="true">↻</div>
+            <small>ПОСЛЕДНЯЯ СИНХРОНИЗАЦИЯ</small>
+            <strong id="overview-sync-time">—</strong>
+            <span id="overview-sync-caption">Облачный цикл обновления</span>
+          </article>
+        </div>
+        <div class="overview-lower">
+          <article class="overview-panel overview-chart-panel">
+            <div class="overview-panel-head">
+              <div><span class="eyebrow">PERFORMANCE</span><strong>Динамика просмотров</strong></div>
+              <span class="overview-period">14 ДНЕЙ</span>
+            </div>
+            <svg id="overview-trend" viewBox="0 0 720 150" role="img" aria-label="Динамика просмотров сети за последние 14 дней"></svg>
+            <p id="overview-trend-caption" class="overview-caption">График появится после получения отчётов Google Analytics.</p>
+          </article>
+          <article class="overview-panel overview-activity-panel">
+            <div class="overview-panel-head">
+              <div><span class="eyebrow">LIVE JOURNAL</span><strong>Последние события</strong></div>
+              <button id="overview-events-open" class="text-action" type="button">Весь журнал ↗</button>
+            </div>
+            <div id="overview-events" class="overview-events">
+              <p class="overview-caption">Ожидаем первые события VYRON.</p>
+            </div>
+          </article>
+        </div>
+        <div class="sync-rhythm" aria-label="Расписание синхронизации">
+          <div class="sync-rhythm-item"><span class="sync-rhythm-dot"></span><div><strong>Новые каналы</strong><small>Автообнаружение каждые 45 секунд, пока Mac включён</small></div></div>
+          <div class="sync-rhythm-item"><span class="sync-rhythm-dot"></span><div><strong>Публичные счётчики</strong><small>Каждый час и отдельные циклы в 07:00 / 22:00 по Красноярску</small></div></div>
+          <div class="sync-rhythm-item"><span class="sync-rhythm-dot"></span><div><strong>Analytics 360°</strong><small>Обработка авторизованных каналов пакетами до 3 каждые 5 минут</small></div></div>
+        </div>
+        <p class="overview-disclaimer">Важно: уже подключённые каналы обновляются в облаке независимо от Mac. Обнаружение нового локального канала требует, чтобы Mac проснулся и Mac Bridge восстановил связь.</p>
+      </section>
       <div class="stats" data-mobile-view="overview">
         <article class="card metric"><div class="metric-label">Подписчики <span>♙</span></div><strong id="total-subs">—</strong><small id="subs-covered">—</small></article>
         <article class="card metric"><div class="metric-label">Просмотры <span>◉</span></div><strong id="total-views">—</strong><small id="views-covered">—</small></article>
@@ -242,7 +317,7 @@
         <button type="button" data-mobile-target="events" aria-pressed="false"><span>◌</span><small>События</small></button>
         <button type="button" data-mobile-target="system" aria-pressed="false"><span>⚙</span><small>Система</small></button>
       </nav>
-      <footer data-mobile-view="system">VYRON CONTROL · YouTube публичные счётчики + авторизованная Analytics 360° + зеркало Mac. Данные помечаются по времени последней синхронизации.</footer>
+      <footer data-mobile-view="system">VYRON CONTROL · Личный облачный командный центр YouTube-сети. Публичные показатели, авторизованная Analytics 360° и телеметрия Mac.</footer>
     </section>
   </main>
 </body>
