@@ -109,3 +109,29 @@ profile mappings and user media references before any release approval.
 - Gatekeeper acceptance and one-time GUI migration on the real M1 not tested.
 - Historic legacy signer remains quarantined. PR #22 Draft and stable feed
   remain unchanged; owner data untouched.
+
+## 2026-11-14 PR #22 follow-up — release remains frozen
+
+The tracked `tauri.617-rotated.conf.json` and `tauri.618-rotated.conf.json`
+files contain a candidate public-key value, but their presence and matching
+fingerprints do **not** prove that a fresh private/public key pair was generated
+offline or that the public fingerprint was independently authenticated.
+They are not release authority and must not be used to sign or publish an update.
+
+The previous `vyron-6118-macos-new-key-release.yml` workflow contained
+fallbacks to legacy repository signing secrets and could publish to the Stable
+feed after a branch push. It is frozen: no push trigger, no signing secrets,
+no build, no artifact publication and no Stable feed mutation. The stable feed
+remains at 6.1.15.
+
+The updater diagnostics now report the embedded Tauri configuration's actual
+endpoint, public-key format, key ID and SHA-256 fingerprint. A structurally
+valid public key is **not** a statement that its trust has been independently
+verified. The UI must explicitly show that distinction.
+
+The build script accepts an explicit numeric build revision, exact Git commit
+and update channel. A release build must supply those values; the local
+development defaults remain visibly marked as development.
+
+No key generation, private-key upload, release, merge or production update is
+authorized by this code change.

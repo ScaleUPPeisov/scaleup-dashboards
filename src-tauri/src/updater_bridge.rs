@@ -64,13 +64,14 @@ fn updater_config_diagnostics(app:&tauri::AppHandle)->serde_json::Value{
       .unwrap_or_default();
     let configured=key_valid&&!endpoints.is_empty();
     serde_json::json!({
-      "signatureConfigured":configured,
+      "updaterConfigurationValid":configured,
       "updaterPublicKeyConfigured":!encoded.trim().is_empty(),
       "updaterPublicKeyValid":key_valid,
       "updaterPublicKeyId":key_id,
       "updaterPublicKeySha256":key_sha256,
       "updaterEndpoint":endpoints.first().cloned(),
       "updaterEndpoints":endpoints,
+      "updaterPublicKeyTrust":"NOT_INDEPENDENTLY_VERIFIED",
       "secretValuesIncluded":false
     })
 }
@@ -78,7 +79,7 @@ fn updater_config_diagnostics(app:&tauri::AppHandle)->serde_json::Value{
 fn merge_updater_config_diagnostics(target:&mut serde_json::Value,app:&tauri::AppHandle){
     let diagnostics=updater_config_diagnostics(app);
     if let (Some(target),Some(source))=(target.as_object_mut(),diagnostics.as_object()){
-        for key in ["signatureConfigured","updaterPublicKeyConfigured","updaterPublicKeyValid","updaterPublicKeyId","updaterPublicKeySha256","updaterEndpoint","updaterEndpoints"]{
+        for key in ["updaterConfigurationValid","updaterPublicKeyConfigured","updaterPublicKeyTrust","updaterPublicKeyValid","updaterPublicKeyId","updaterPublicKeySha256","updaterEndpoint","updaterEndpoints"]{
             if let Some(value)=source.get(key){target.insert(key.to_string(),value.clone());}
         }
     }
@@ -284,7 +285,7 @@ pub fn updater_install_preflight(app:tauri::AppHandle)->Result<serde_json::Value
         if snapshot.get("runningFromDmg").and_then(|x|x.as_bool())==Some(true){
             return Err("RUNNING_FROM_DMG: VYRON запущен из DMG. Переместите VYRON.app в Applications.".into())
         }
-        if snapshot.get("signatureConfigured").and_then(|x|x.as_bool())!=Some(true){
+        if snapshot.get("updaterConfigurationValid").and_then(|x|x.as_bool())!=Some(true){
             return Err("UPDATER_PUBLIC_KEY_INVALID: embedded minisign public key or updater endpoint is missing/invalid".into())
         }
         Ok(snapshot)
@@ -645,4 +646,29 @@ mod owner_preview_revision_tests{
    assert!(owner_preview_available("3.1.0",321,"3.1.0-preview.322"));
    assert!(!owner_preview_available("3.1.0",321,"3.0.1-preview.999"));
  }
+}
+
+#[cfg(test)]
+mod updater_key_diagnostic_tests{
+    use super::*;
+
+    const VALID_PUBLIC_KEY:&str="dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDgxMzNDOTg3M0ZBQjc5QzEKUldUQmVhcy9oOGt6Z1owb2JOWjJjM1FOQjF3UkJnbm5mZGNZRTloMUZhYkJFRlZ6QWFoNk5VN3kK";
+
+    #[test]
+    fn reports_public_key_format_and_fingerprint_without_claiming_trust(){
+        let (valid,key_id,fingerprint)=updater_public_key_facts(VALID_PUBLIC_KEY);
+        assert!(valid);
+        assert_eq!(key_id.as_deref(),Some("8133C9873FAB79C1"));
+        assert_eq!(fingerprint.as_deref(),Some("cbd37c85807e9b80f30612a1bc3a35bc75819b758ac62bb2bfee1881e6db938b"));
+    }
+
+    #[test]
+    fn rejects_missing_or_malformed_public_keys(){
+        for value in ["","not-base64","e30=","dW50cnVzdGVkIGNvbW1lbnQ6IG5vdC1taW5pc2lnbiBrZXkK"]{
+            let (valid,key_id,fingerprint)=updater_public_key_facts(value);
+            assert!(!valid);
+            assert!(key_id.is_none());
+            assert!(fingerprint.is_none());
+        }
+    }
 }
