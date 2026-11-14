@@ -518,6 +518,69 @@ test('authorized private Analytics syncs 90-day trends and channel breakdowns in
   assert.equal(second.skipped,true);
 });
 
+test('manual refresh API processes every authorized channel in safe four-profile batches',async()=>{
+  const e=env();
+  Object.assign(e,{
+    GOOGLE_OAUTH_CLIENT_ID:'MANUAL_CLIENT',
+    GOOGLE_OAUTH_CLIENT_SECRET:'MANUAL_SECRET',
+    OAUTH_ENCRYPTION_KEY:'d'.repeat(64)
+  });
+  const {encryptSecret}=await import('../src/oauth.mjs');
+  for(let index=0;index<5;index++){
+    const channelId=id(40+index);
+    const encrypted=await encryptSecret('MANUAL_REFRESH_'+index,e);
+    await e.DB.prepare(
+      'INSERT INTO google_oauth_profiles(channel_id,channel_name,refresh_token_cipher,granted_scope,connected_at) VALUES (?,?,?,?,?)'
+    ).bind(channelId,'Manual '+index,encrypted,'read-only',new Date().toISOString()).run();
+  }
+  const mockFetch=async(url,opts)=>{
+    if(url.includes('oauth2.googleapis.com/token'))
+      return new Response(JSON.stringify({access_token:'MANUAL_ACCESS'}),{status:200});
+    if(url.includes('youtubeanalytics.googleapis.com')){
+      const dimensions=new URL(url).searchParams.get('dimensions');
+      const fixtures={
+        day:{columnHeaders:['day','views','estimatedMinutesWatched','averageViewDuration',
+          'averageViewPercentage','subscribersGained','subscribersLost','likes','comments','shares'],
+          rows:[['2026-11-11',20,100,30,50,2,1,3,1,1]]},
+        'video,creatorContentType':{columnHeaders:['video','creatorContentType','views',
+          'estimatedMinutesWatched','averageViewDuration','averageViewPercentage','likes','comments','shares'],
+          rows:[['MANUALVID001','VIDEOS',10,50,30,50,2,1,0]]},
+        insightTrafficSourceType:{columnHeaders:['insightTrafficSourceType','views','estimatedMinutesWatched'],
+          rows:[['YT_SEARCH',10,50]]},
+        deviceType:{columnHeaders:['deviceType','views','estimatedMinutesWatched'],
+          rows:[['MOBILE',10,50]]},
+        country:{columnHeaders:['country','views','estimatedMinutesWatched'],
+          rows:[['US',10,50]]},
+        'ageGroup,gender':{columnHeaders:['ageGroup','gender','viewerPercentage'],
+          rows:[['25-34','FEMALE',0.5]]}
+      };
+      const report=fixtures[dimensions];
+      return new Response(JSON.stringify({
+        columnHeaders:report.columnHeaders.map(name=>({name})),rows:report.rows
+      }),{status:200});
+    }
+    throw new Error('unexpected manual analytics endpoint');
+  };
+  const requestId='manualbatchrequest001';
+  const first=await cloud.fetch(req('/api/analytics/refresh',control,'POST',{
+    requestId,offset:0
+  }),{...e,fetch:mockFetch});
+  assert.equal(first.status,200);
+  const firstBody=await first.json();
+  assert.equal(firstBody.updated,4);
+  const second=await cloud.fetch(req('/api/analytics/refresh',control,'POST',{
+    requestId,offset:4
+  }),{...e,fetch:mockFetch});
+  assert.equal(second.status,200);
+  const secondBody=await second.json();
+  assert.equal(secondBody.updated,1);
+  const duplicate=await cloud.fetch(req('/api/analytics/refresh',control,'POST',{
+    requestId,offset:4
+  }),{...e,fetch:mockFetch});
+  assert.equal((await duplicate.json()).skipped,true);
+  assert.equal(e.DB.native.prepare('SELECT count(*) AS n FROM channel_analytics_reports').get().n,5);
+});
+
 test('full event history supports stable pagination and category filters',async()=>{
   const e=env(),now=new Date().toISOString();
   const events=[
