@@ -185,9 +185,11 @@ async function fetchStatus(env) {
       a.captured_at AS analytics_captured_at,
       a.source AS analytics_source,
       a.daily_json AS analytics_daily_json,
-      r.reports_json AS analytics_reports_json
+      r.reports_json AS analytics_reports_json,
+      o.channel_id IS NOT NULL AS analytics_authorized
       FROM channels c LEFT JOIN channel_analytics a ON c.id=a.channel_id
       LEFT JOIN channel_analytics_reports r ON c.id=r.channel_id
+      LEFT JOIN google_oauth_profiles o ON c.id=o.channel_id
       ORDER BY c.name LIMIT 120`).all(),
     db.prepare('SELECT id,kind,channel_id,title,payload_json,occurred_at,received_at FROM events ORDER BY received_at DESC LIMIT 80').all(),
     db.prepare('SELECT spent FROM quota_buckets WHERE day_pt=?').bind(day).first(),
@@ -203,6 +205,7 @@ async function fetchStatus(env) {
     views:number(row.views),videos:number(row.videos),
     previousSubscribers:number(row.previous_subscribers),
     updatedAt:row.updated_at,
+    analyticsAuthorized:row.analytics_authorized===1,
     analytics:row.analytics_captured_at?{
       periodDays:row.analytics_period_days,
       views:number(row.analytics_views),
@@ -290,7 +293,8 @@ async function fetchStatus(env) {
         averageViewPercentage:views?available.reduce((sum,ch)=>sum+
           (ch.analytics.avgViewPercentage??0)*(ch.analytics.views??0),0)/views:null,
         daily:[...daily.values()].sort((a,b)=>a.date.localeCompare(b.date)),
-        covered:available.length,total:channels.length,periodDays:90,
+        covered:available.length,total:channels.length,
+        authorized:channels.filter(ch=>ch.analyticsAuthorized).length,periodDays:90,
         note:'Авторизованные отчёты YouTube Analytics API. CTR миниатюр и доход без отдельных поддерживаемых прав не подменяются.'
       };
     })(),
