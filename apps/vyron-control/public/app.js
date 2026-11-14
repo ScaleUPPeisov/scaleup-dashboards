@@ -18,6 +18,7 @@ let activeMobileView = 'overview';
 const macAgentInstallCommand =
   'curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/feature/vyron-control-mobile-analytics-20261114/apps/vyron-control/public/install-mac-agent.sh | bash';
 const showLogin = error => {
+  activeMobileView='overview';
   $('login').hidden = false;
   $('dashboard').hidden = true;
   $('logout').hidden = true;
@@ -530,10 +531,12 @@ function renderOverview(data) {
     :device?'Облако работает; новый локальный канал обнаружится после пробуждения Mac'
       :'Установи Mac Bridge один раз для автообнаружения каналов';
 
+  $('topbar-status-text').textContent=navigator.onLine?'Облако подключено':'Нет интернета';
   const status=$('network-status');
-  const state=data.lastError?'warning':data.syncing?'syncing':data.configured?'online':'setup';
+  const state=!navigator.onLine?'warning':data.lastError?'warning':data.syncing?'syncing':data.configured?'online':'setup';
   status.dataset.state=state;
-  $('network-status-label').textContent=data.lastError?'Нужно внимание':
+  $('network-status-label').textContent=!navigator.onLine?'Нет интернета':
+    data.lastError?'Нужно внимание':
     data.syncing?'Синхронизация':data.configured?'Облако активно':'Нужна настройка API';
   if(data.lastSuccessAt) {
     $('overview-sync-time').textContent=new Intl.DateTimeFormat('ru-RU',{
@@ -1066,6 +1069,7 @@ window.addEventListener('offline',()=>{
     status.dataset.state='warning';
     $('network-status-label').textContent='Нет интернета';
   }
+  $('topbar-status-text').textContent='Нет интернета';
   if($('state-label'))$('state-label').textContent='Нет соединения. Показываем последнюю загруженную оболочку приложения.';
 });
 window.addEventListener('online',()=>{
