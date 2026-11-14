@@ -176,9 +176,12 @@ test('33 channels batched, scheduled milestones, no duplicate runs, local quota'
 test('manual channel refresh reports partial coverage instead of false success',async()=>{
   const e=env(),list=Array.from({length:33},(_,i)=>({id:id(i+100),name:'Network '+i}));
   await cloud.fetch(req('/api/channels',control,'POST',list),e);
+  let partialCalls=0;
   const partialFetch=async url=>{
+    partialCalls++;
     const requested=new URL(url).searchParams.get('id').split(',');
-    return {ok:true,json:async()=>({items:requested.slice(0,31).map(x=>({
+    const returned=partialCalls===1?requested.slice(0,31):[];
+    return {ok:true,json:async()=>({items:returned.map(x=>({
       id:x,snippet:{title:'Remote '+x},
       statistics:{subscriberCount:'10',viewCount:'100',videoCount:'2',hiddenSubscriberCount:false}
     }))})};
@@ -194,6 +197,35 @@ test('manual channel refresh reports partial coverage instead of false success',
   assert.equal(run.updated_channels,31);
   assert.match(run.error,/missing 2/);
   assert.equal(e.DB.native.prepare('SELECT count(*) AS n FROM channel_snapshots').get().n,31);
+});
+
+test('manual channel refresh retries omitted IDs and recovers complete 33-channel coverage',async()=>{
+  const e=env(),list=Array.from({length:33},(_,i)=>({id:id(i+200),name:'Network '+i}));
+  await cloud.fetch(req('/api/channels',control,'POST',list),e);
+  let calls=0;
+  const recoveringFetch=async url=>{
+    calls++;
+    const requested=new URL(url).searchParams.get('id').split(',');
+    const returned=calls===1?requested.slice(0,31):requested;
+    return {ok:true,json:async()=>({items:returned.map(x=>({
+      id:x,snippet:{title:'Recovered '+x},
+      statistics:{subscriberCount:'15',viewCount:'150',videoCount:'3',hiddenSubscriberCount:false}
+    }))})};
+  };
+  const outcome=await runCountersSync(e,{
+    source:'manual',slot:'manual:retry-missing',date:new Date('2026-11-14T10:05:00Z'),
+    fetchImpl:recoveringFetch
+  });
+  assert.equal(calls,2);
+  assert.equal(outcome.complete,true);
+  assert.equal(outcome.updatedChannels,33);
+  assert.equal(outcome.requestedChannels,33);
+  assert.equal(e.DB.native.prepare('SELECT count(*) AS n FROM channel_snapshots').get().n,33);
+  const run=e.DB.native.prepare(
+    "SELECT status,updated_channels FROM sync_runs WHERE slot='manual:retry-missing'"
+  ).get();
+  assert.equal(run.status,'success');
+  assert.equal(run.updated_channels,33);
 });
 
 test('quota guard blocks before sending requests',async()=>{
