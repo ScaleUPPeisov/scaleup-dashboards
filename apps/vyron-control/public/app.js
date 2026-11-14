@@ -1060,8 +1060,21 @@ $('channel-sort').addEventListener('change', () => {
   if (current) renderChannels(current.channels);
 });
 // Local UI polling is free: it does NOT make a YouTube API request.
-setInterval(() => { if (accessToken && !document.hidden) load(); }, 15_000);
+window.addEventListener('offline',()=>{
+  const status=$('network-status');
+  if(status){
+    status.dataset.state='warning';
+    $('network-status-label').textContent='Нет интернета';
+  }
+  if($('state-label'))$('state-label').textContent='Нет соединения. Показываем последнюю загруженную оболочку приложения.';
+});
+window.addEventListener('online',()=>{
+  if(accessToken)load();
+});
+setInterval(() => {
+  if (accessToken && navigator.onLine && !document.hidden) load();
+}, 15_000);
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && accessToken) load();
+  if (!document.hidden && accessToken && navigator.onLine) load();
 });
 load();
