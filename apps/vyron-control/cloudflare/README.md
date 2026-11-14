@@ -7,8 +7,9 @@ production logs to this public GitHub repository.
 
 ## Why Cloudflare
 
-- Public counter cron runs at `0 0 * * *` = 07:00 Krasnoyarsk and
-  `0 15 * * *` = 22:00 Krasnoyarsk (UTC+7). Private Analytics runs separately
+- Public counters refresh hourly, with dedicated `0 0 * * *` = 07:00 Krasnoyarsk and
+  `0 15 * * *` = 22:00 Krasnoyarsk (UTC+7) slots. Newly enrolled VYRON channels
+  receive an immediate targeted public-counter sync. Private Analytics runs separately
   in eleven three-channel batches at 07:05, 07:10, 07:15, 07:20, 07:25,
   07:30, 07:35, 07:40, 07:45, 07:50 and 07:55, then again at 22:05–22:55.
   Each batch stays below Workers Free's 50-subrequest limit and covers up to
@@ -75,8 +76,9 @@ For later schema changes, keep using versioned Wrangler migrations.
    ```
 
 6. Open the generated HTTPS `*.workers.dev` URL from iPhone; enter CONTROL_TOKEN
-   on the login screen. Add the channel IDs via the authenticated
-   `POST /api/channels` endpoint before the next scheduled run. Do not paste
+   on the login screen. Once the Mac Bridge is installed, new channels added in
+   VYRON are enrolled automatically; manual `POST /api/channels` is only a fallback.
+   Do not paste
    passwords/tokens into GitHub, commits, screenshots or this chat.
 
    Example request for an owner-controlled terminal:
@@ -220,15 +222,19 @@ keys and credentials are never intentionally transmitted.
 
 ## Automatic Mac integration with VYRON 6.1.15
 
-The Mac bridge now reads the **existing VYRON app-data state file** by default:
+The Mac bridge reads the **read-only state mirror explicitly written by VYRON** by default:
 
-`~/Library/Application Support/studio.channelflow.desktop/state.json`
+`~/Documents/VYRON/State/app-state.json`
+
+This is the path created by `src-tauri/src/storage.rs` (`state_mirror_file`), not
+VYRON's private application-data `state.json`.
 
 It does not modify, migrate or replace the state. Only allowlisted fields
 (channel IDs/names, job counters, permitted journal events, and summaries of
 cached analytics) are exported to a **private** `~/.vyron-control-agent/`
-folder. OAuth tokens, Keychain data, music paths, passwords, file paths and
-freeform metadata are never sent to Cloudflare.
+folder. The local `youtubeProfileId` is converted to a one-way SHA-256 binding
+fingerprint; the raw profile ID, OAuth tokens, Keychain data, music paths,
+passwords, file paths and freeform metadata are never sent to Cloudflare.
 
 No VYRON or ENDLUME application rebuild is needed for this initial,
 read-only connection. It uses the existing application journal and therefore
@@ -245,7 +251,12 @@ The dashboard includes a guided Mac setup button: **Подготовить по�
 
 The installer downloads the dedicated agent source from this repository, checks
 for macOS, Git and Node.js 22+, installs its dependency, and installs a separate
-studio.vyron.control.agent LaunchAgent. The token is stored only in
+studio.vyron.control.agent LaunchAgent. While the Mac is awake and online, it
+checks the VYRON state mirror every 45 seconds. A newly added VYRON channel is
+then enrolled in Cloudflare automatically, and its public counters are fetched
+immediately; subsequent public counters refresh hourly even while the Mac sleeps.
+If the Mac is asleep when a channel is added, enrollment resumes after wake.
+The token is stored only in
 ~/.vyron-control-agent/config.json with mode 0600; it is not placed in the plist
 or shell history. The LaunchAgent starts on login and retries safely after network
 loss while preserving event IDs/offsets for idempotent recovery. It runs only
@@ -259,6 +270,28 @@ To use another state mirror location, set
 `VYRON_AGENT_STATE_MIRROR=/full/path/to/app-state.json` **before launching
 the agent** and ensure the LaunchAgent has permission to read it. Never
 grant the bridge Full Disk Access unnecessarily.
+
+### Automatic channel and Analytics sync
+
+- Adding a YouTube channel in VYRON updates the native state mirror. The Mac Bridge
+  detects the change within its next 45-second cycle and sends only the channel ID,
+  display name and optional one-way OAuth-profile fingerprint.
+- Cloudflare inserts the channel idempotently and immediately fetches its public
+  counters. A failed initial sync is not cached by the Mac Bridge; it retries with
+  backoff. Public counters then refresh hourly from the cloud.
+- If the channel's fingerprint matches a VYRON OAuth profile already imported into
+  CONTROL, the Worker refreshes that profile and asks Google to confirm the new
+  channel before copying the encrypted token binding. No Keychain or local token
+  access is performed by the Bridge.
+- A new channel whose Google profile has never been authorized in CONTROL still
+  needs a one-time read-only Google authorization in CONTROL (or a new encrypted
+  VYRON migration import). After authorization, Analytics is queued automatically
+  and processed in batches of up to three profiles every five minutes. Existing
+  daily 07:05–07:55 and 22:05–22:55 reporting windows remain in place.
+- Public counters continue hourly while the Mac sleeps. Detecting a newly added
+  local VYRON channel necessarily waits until the Mac wakes and the Bridge can read
+  the local mirror; no cloud service can observe a local-only change while the Mac
+  is offline.
 
 ### Event coverage
 
