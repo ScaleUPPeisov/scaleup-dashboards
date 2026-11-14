@@ -11,15 +11,24 @@ const digest=value=>createHash('sha256').update(JSON.stringify(value)).digest('h
 
 async function fixture(password='temporary migration password') {
   const channelId='UC1234567890123456789012';
+  const mappedChannelId='UCabcdefghijklmnopqrstuv';
   const payload={
     schemaVersion:2,appVersion:'6.1.17',sourceOs:'macos',createdAt:'2026-11-14T00:00:00Z',
     bundleUuid:'bundle-test-001',
-    state:{channels:[{id:'local-1',youtubeChannelId:channelId,name:'Test channel'}]},
+    state:{channels:[
+      {id:'local-1',youtubeProfileId:'profile-1',youtubeChannelId:channelId,name:'Test channel'},
+      {id:'local-2',youtubeProfileId:'profile-2',youtubeChannelId:mappedChannelId,
+        name:'Legacy mapped channel'}
+    ]},
     oauthVault:{globalClientId:'471814393352-testclient.apps.googleusercontent.com',
       globalClientSecret:'TEST_GLOBAL_SECRET',profiles:{'profile-1':{
         profileUuid:'profile-1',expectedChannelId:channelId,
         refreshToken:'REFRESH_TOKEN_12345678901234567890',clientSecret:'',
         googleEmail:'owner@example.test'
+      },'profile-2':{
+        profileUuid:'profile-2',expectedChannelId:'',
+        refreshToken:'REFRESH_TOKEN_ABCDEFGHIJKLMNOPQRSTUVWXYZ',clientSecret:'',
+        googleEmail:'legacy@example.test'
       }}},
     youtubeMetadata:{},googleConfig:{},integrationSecrets:{},browserState:{},metadataQueue:{}
   };
@@ -36,16 +45,19 @@ async function fixture(password='temporary migration password') {
     createdAt:payload.createdAt,bundleUuid:payload.bundleUuid,
     kdf:'argon2id:m=65536,t=3,p=1 + XChaCha20-Poly1305',
     salt:b64(salt),nonce:b64(nonce),ciphertext:b64(ciphertext)};
-  return {bytes:enc.encode(JSON.stringify(envelope)).buffer,channelId};
+  return {bytes:enc.encode(JSON.stringify(envelope)).buffer,channelId,mappedChannelId};
 }
 
 test('browser decrypts native VYRON migration without sending its password',async()=>{
   const password='temporary migration password';
-  const {bytes,channelId}=await fixture(password);
+  const {bytes,channelId,mappedChannelId}=await fixture(password);
   const result=await decryptVyronMigration(bytes,password);
   assert.equal(result.bundleUuid,'bundle-test-001');
-  assert.equal(result.profiles.length,1);
-  assert.equal(result.profiles[0].channelId,channelId);
-  assert.equal(result.profiles[0].clientSecret,'TEST_GLOBAL_SECRET');
+  assert.equal(result.profiles.length,2);
+  assert.equal(result.profiles.find(x=>x.profileUuid==='profile-1')?.channelId,channelId);
+  const mapped=result.profiles.find(x=>x.profileUuid==='profile-2');
+  assert.equal(mapped?.channelId,mappedChannelId);
+  assert.equal(mapped?.channelName,'Legacy mapped channel');
+  assert.equal(mapped?.clientSecret,'TEST_GLOBAL_SECRET');
   await assert.rejects(()=>decryptVyronMigration(bytes,'wrong password value'),/Неверный пароль/);
 });

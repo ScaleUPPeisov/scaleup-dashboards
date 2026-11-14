@@ -63,14 +63,24 @@ export async function decryptVyronMigration(arrayBuffer,passphrase) {
   const globalSecret=String(vault.globalClientSecret||'').trim();
   if(!VALID_CLIENT.test(clientId)||!globalSecret)
     throw new Error('В пакете нет переносимого OAuth-клиента VYRON.');
-  const channels=new Map((Array.isArray(payload.state?.channels)?payload.state.channels:[])
+  const stateChannels=Array.isArray(payload.state?.channels)?payload.state.channels:[];
+  const channels=new Map(stateChannels
     .map(row=>[String(row.youtubeChannelId||''),String(row.name||row.title||row.youtubeChannelId||'')]));
+  // Some healthy VYRON profiles predate expectedChannelId in the encrypted vault.
+  // Their canonical binding still exists in state.channels via youtubeProfileId.
+  const channelByProfile=new Map();
+  for(const row of stateChannels) {
+    const profileId=String(row?.youtubeProfileId||'').trim();
+    const channelId=String(row?.youtubeChannelId||'').trim();
+    if(profileId&&VALID_CHANNEL.test(channelId))channelByProfile.set(profileId,channelId);
+  }
   const profiles=[];
   for(const [id,value] of Object.entries(vault.profiles||{})) {
-    const channelId=String(value?.expectedChannelId||'').trim();
+    const profileUuid=String(value?.profileUuid||id).trim();
+    const channelId=String(value?.expectedChannelId||
+      channelByProfile.get(profileUuid)||channelByProfile.get(id)||'').trim();
     const refreshToken=String(value?.refreshToken||'').trim();
     const clientSecret=String(value?.clientSecret||globalSecret).trim();
-    const profileUuid=String(value?.profileUuid||id).trim();
     if(!VALID_CHANNEL.test(channelId)||!refreshToken||!clientSecret||!profileUuid)continue;
     profiles.push({profileUuid,channelId,channelName:channels.get(channelId)||channelId,
       refreshToken,clientId,clientSecret});
