@@ -3,7 +3,7 @@ const PROGRESS_TYPES=new Set(['upload_progress','render_progress']);
 function isProgressEvent(event) {
   const type=String(event?.type||'');
   return PROGRESS_TYPES.has(type)||
-    (type==='agent_info'&&/^YOUTUBE PROCESSING\\b/.test(String(event?.title||event?.name||'')));
+    (type==='agent_info'&&/^YOUTUBE PROCESSING\b/.test(String(event?.title||event?.name||'')));
 }
 
 export function compactProgressEvents(events) {
@@ -17,7 +17,7 @@ export function compactProgressEvents(events) {
       continue;
     }
     const title=type==='agent_info'?String(event?.title||event?.name||''):'';
-    const key=[type,projectId,title].join('\\u0000');
+    const key=JSON.stringify([type,projectId,title]);
     const existing=progressByKey.get(key);
     if(!existing) {
       const row={event,count:1};
