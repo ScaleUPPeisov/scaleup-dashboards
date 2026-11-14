@@ -8,7 +8,7 @@ import { cronSlot, crossedMilestones, pacificDay, safeEvent, acceptedCommand } f
 import { manualSlot, reserveQuota, scheduledSync } from '../src/sync.mjs';
 import { startOAuth,callbackOAuth,authorizedProfiles,decryptSecret } from '../src/oauth.mjs';
 import { importVyronProfiles } from '../src/oauth-import.mjs';
-import { runAnalyticsBatch,nextAnalyticsSlot,parseDailyReport } from '../src/google-analytics.mjs';
+import { runAnalyticsBatch,runManualAnalyticsBatch,nextAnalyticsSlot,parseDailyReport } from '../src/google-analytics.mjs';
 import { PUSH_CRON } from '../src/push.mjs';
 import { validSubscription,registerPush,dispatchPush } from '../src/push.mjs';
 
@@ -422,7 +422,7 @@ test('one imported Google profile can bind multiple YouTube channels without dro
   ).get().n,2);
 });
 
-test('authorized private Analytics can update while Mac sleeps, with 10-channel cron batches',async()=>{
+test('authorized private Analytics syncs 90-day trends and channel breakdowns in four-profile batches',async()=>{
   const e=env(),channelId=id(5);
   Object.assign(e,{
     APP_ORIGIN:'https://vyron-control.example',
@@ -437,10 +437,11 @@ test('authorized private Analytics can update while Mac sleeps, with 10-channel 
   ).bind(channelId,'Test',encrypted,'read-only',new Date().toISOString()).run();
   await e.DB.prepare('INSERT INTO channels(id,name) VALUES (?,?)').bind(channelId,'Test').run();
   assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:05:00Z')}).offset,0);
-  assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:25:00Z')}).offset,40);
+  assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:25:00Z')}).offset,16);
+  assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:45:00Z')}).offset,32);
   assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:00:00Z')}),null);
   assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:01:00Z')}),null);
-  let analyticsAttempts=0;
+  let analyticsAttempts=0,coreAttempts=0;
   const mockFetch=async(url,opts)=>{
     if(url.includes('oauth2.googleapis.com/token')) {
       assert.equal(new URLSearchParams(opts.body).get('refresh_token'),'PRIVATE_REFRESH_TOKEN');
@@ -448,28 +449,70 @@ test('authorized private Analytics can update while Mac sleeps, with 10-channel 
     }
     if(url.includes('youtubeanalytics.googleapis.com')) {
       assert.equal(opts.headers.Authorization,'Bearer SHORT_LIVED_TOKEN');
-      assert.match(url,/ids=channel%3D%3DMINE/);
+      const params=new URL(url).searchParams;
+      assert.equal(params.get('ids'),'channel==MINE');
+      const dimensions=params.get('dimensions');
       analyticsAttempts++;
-      if(analyticsAttempts===1)return new Response('temporary',{status:503});
-      return new Response(JSON.stringify({
-        columnHeaders:['day','views','estimatedMinutesWatched',
-          'averageViewDuration','averageViewPercentage',
-          'subscribersGained','subscribersLost'].map(name=>({name})),
-        rows:[['2026-11-11',200,1000,160,62,9,1]]
-      }),{status:200});
+      if(dimensions==='day') {
+        coreAttempts++;
+        if(coreAttempts===1)return new Response('temporary',{status:503});
+        return new Response(JSON.stringify({
+          columnHeaders:['day','views','estimatedMinutesWatched','averageViewDuration',
+            'averageViewPercentage','subscribersGained','subscribersLost','likes','comments','shares']
+            .map(name=>({name})),
+          rows:[['2026-11-11',200,1000,160,62,9,1,18,4,2]]
+        }),{status:200});
+      }
+      const fixtures={
+        'video,creatorContentType':{
+          columnHeaders:['video','creatorContentType','views','estimatedMinutesWatched',
+            'averageViewDuration','averageViewPercentage','likes','comments','shares'],
+          rows:[['VIDEO1234567','SHORTS',120,400,110,65,12,3,1]]
+        },
+        'insightTrafficSourceType':{
+          columnHeaders:['insightTrafficSourceType','views','estimatedMinutesWatched'],
+          rows:[['RELATED_VIDEO',90,500],['YT_SEARCH',40,200]]
+        },
+        'deviceType':{
+          columnHeaders:['deviceType','views','estimatedMinutesWatched'],
+          rows:[['MOBILE',130,600],['TV',70,400]]
+        },
+        'country':{
+          columnHeaders:['country','views','estimatedMinutesWatched'],
+          rows:[['US',100,500],['GB',50,250]]
+        },
+        'ageGroup,gender':{
+          columnHeaders:['ageGroup','gender','viewerPercentage'],
+          rows:[['25-34','FEMALE',0.35],['25-34','MALE',0.4]]
+        }
+      };
+      return new Response(JSON.stringify(fixtures[dimensions]||{columnHeaders:[],rows:[]}),{status:200});
     }
     throw new Error('unexpected endpoint');
   };
   const outcome=await runAnalyticsBatch(e,
     {scheduledTime:Date.parse('2026-11-13T00:05:00Z')},mockFetch);
   assert.equal(outcome.updated,1);
-  assert.equal(analyticsAttempts,2);
+  assert.equal(outcome.failed,0);
+  assert.equal(outcome.periodDays,90);
+  assert.equal(analyticsAttempts,7);
   const stored=e.DB.native.prepare(
-    'SELECT source,views,watch_minutes FROM channel_analytics WHERE channel_id=?'
+    'SELECT source,views,watch_minutes,daily_json FROM channel_analytics WHERE channel_id=?'
   ).get(channelId);
   assert.equal(stored.source,'GOOGLE_ANALYTICS_API');
   assert.equal(stored.views,200);
   assert.equal(stored.watch_minutes,1000);
+  const daily=JSON.parse(stored.daily_json);
+  assert.equal(daily[0].likes,18);
+  assert.equal(daily[0].comments,4);
+  const reports=JSON.parse(e.DB.native.prepare(
+    'SELECT reports_json FROM channel_analytics_reports WHERE channel_id=?'
+  ).get(channelId).reports_json);
+  assert.equal(reports.topVideos[0].videoId,'VIDEO1234567');
+  assert.equal(reports.trafficSources[0].source,'RELATED_VIDEO');
+  assert.equal(reports.devices[0].deviceType,'MOBILE');
+  assert.equal(reports.countries[0].country,'US');
+  assert.equal(reports.demographics.length,2);
   const second=await runAnalyticsBatch(e,
     {scheduledTime:Date.parse('2026-11-13T00:05:00Z')},mockFetch);
   assert.equal(second.skipped,true);
