@@ -68,6 +68,13 @@
           <span class="pill" id="oauth-count">0 подключено</span>
         </div>
         <p class="muted">90 дней авторизованных данных YouTube: просмотры, время просмотра, удержание, подписки, реакции, топ-видео, источники трафика, устройства, география и аудитория.</p>
+        <details class="oauth-details oauth-fallback">
+          <summary>Резервное подключение Google — только если токена нет в пакете VYRON</summary>
+          <div class="mac-actions">
+            <button id="oauth-connect" class="ghost" disabled>Подключить новый Google-профиль</button>
+            <span class="caution" id="oauth-message">Основной путь — автоматический импорт всех привязок из пакета VYRON. Ручной вход не нужен для уже экспортированных токенов.</span>
+          </div>
+        </details>
         <div class="analytics-toolbar">
           <span id="analytics-updated" class="caution">Ожидаем первую синхронизацию Analytics API</span>
           <select id="analytics-period" aria-label="Период аналитики">
@@ -118,10 +125,6 @@
           <div><span>Каналов привязано</span><strong id="mac-channels-bound">—</strong></div>
         </div>
         <p class="caution">Дневные итоги — по календарю Красноярска. При спящем Mac это последний сохранённый снимок.</p>
-        <div class="mac-actions">
-          <button id="oauth-connect" class="primary" disabled>Подключить Google-каналы</button>
-          <span class="caution" id="oauth-message">Требуется отдельная Google OAuth-конфигурация в Cloudflare.</span>
-        </div>
         <details class="oauth-details">
           <summary>Импортировать все привязки из зашифрованного пакета VYRON</summary>
           <div class="migration-import">
