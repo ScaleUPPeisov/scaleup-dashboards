@@ -447,8 +447,9 @@ test('authorized private Analytics syncs 90-day trends and channel breakdowns in
   ).bind(channelId,'Test',encrypted,'read-only',new Date().toISOString()).run();
   await e.DB.prepare('INSERT INTO channels(id,name) VALUES (?,?)').bind(channelId,'Test').run();
   assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:05:00Z')}).offset,0);
-  assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:25:00Z')}).offset,16);
-  assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:45:00Z')}).offset,32);
+  assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:25:00Z')}).offset,12);
+  assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:45:00Z')}).offset,24);
+  assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:55:00Z')}).offset,30);
   assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:00:00Z')}),null);
   assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:01:00Z')}),null);
   let analyticsAttempts=0,coreAttempts=0;
@@ -467,17 +468,17 @@ test('authorized private Analytics syncs 90-day trends and channel breakdowns in
         coreAttempts++;
         if(coreAttempts===1)return new Response('temporary',{status:503});
         return new Response(JSON.stringify({
-          columnHeaders:['day','views','estimatedMinutesWatched','averageViewDuration',
-            'averageViewPercentage','subscribersGained','subscribersLost','likes','comments','shares']
+          columnHeaders:['day','views','engagedViews','estimatedMinutesWatched','averageViewDuration',
+            'averageViewPercentage','subscribersGained','subscribersLost','likes','dislikes','comments','shares']
             .map(name=>({name})),
-          rows:[['2026-11-11',200,1000,160,62,9,1,18,4,2]]
+          rows:[['2026-11-11',200,150,1000,160,62,9,1,18,3,4,2]]
         }),{status:200});
       }
       const fixtures={
         'video,creatorContentType':{
-          columnHeaders:['video','creatorContentType','views','estimatedMinutesWatched',
-            'averageViewDuration','averageViewPercentage','likes','comments','shares'],
-          rows:[['VIDEO1234567','SHORTS',120,400,110,65,12,3,1]]
+          columnHeaders:['video','creatorContentType','views','engagedViews','estimatedMinutesWatched',
+            'averageViewDuration','averageViewPercentage','likes','dislikes','comments','shares'],
+          rows:[['VIDEO1234567','SHORTS',120,90,400,110,65,12,2,3,1]]
         },
         'insightTrafficSourceType':{
           columnHeaders:['insightTrafficSourceType','views','estimatedMinutesWatched'],
@@ -493,7 +494,14 @@ test('authorized private Analytics syncs 90-day trends and channel breakdowns in
         },
         'ageGroup,gender':{
           columnHeaders:['ageGroup','gender','viewerPercentage'],
-          rows:[['25-34','FEMALE',0.35],['25-34','MALE',0.4]]
+          rows:[['25-34','FEMALE',35],['25-34','MALE',40]]
+        },
+        sharingService:{
+          columnHeaders:['sharingService','shares'],rows:[['COPY_TO_CLIPBOARD',8],['WHATSAPP',2]]
+        },
+        insightPlaybackLocationType:{
+          columnHeaders:['insightPlaybackLocationType','views','estimatedMinutesWatched'],
+          rows:[['WATCH',140,700],['EMBEDDED',60,300]]
         }
       };
       return new Response(JSON.stringify(fixtures[dimensions]||{columnHeaders:[],rows:[]}),{status:200});
@@ -505,7 +513,7 @@ test('authorized private Analytics syncs 90-day trends and channel breakdowns in
   assert.equal(outcome.updated,1);
   assert.equal(outcome.failed,0);
   assert.equal(outcome.periodDays,90);
-  assert.equal(analyticsAttempts,7);
+  assert.equal(analyticsAttempts,9);
   const stored=e.DB.native.prepare(
     'SELECT source,views,watch_minutes,daily_json FROM channel_analytics WHERE channel_id=?'
   ).get(channelId);
@@ -514,6 +522,8 @@ test('authorized private Analytics syncs 90-day trends and channel breakdowns in
   assert.equal(stored.watch_minutes,1000);
   const daily=JSON.parse(stored.daily_json);
   assert.equal(daily[0].likes,18);
+  assert.equal(daily[0].engagedViews,150);
+  assert.equal(daily[0].dislikes,3);
   assert.equal(daily[0].comments,4);
   const reports=JSON.parse(e.DB.native.prepare(
     'SELECT reports_json FROM channel_analytics_reports WHERE channel_id=?'
@@ -523,6 +533,9 @@ test('authorized private Analytics syncs 90-day trends and channel breakdowns in
   assert.equal(reports.devices[0].deviceType,'MOBILE');
   assert.equal(reports.countries[0].country,'US');
   assert.equal(reports.demographics.length,2);
+  assert.equal(reports.demographics[0].viewerPercentage,35);
+  assert.equal(reports.sharingServices[0].sharingService,'COPY_TO_CLIPBOARD');
+  assert.equal(reports.playbackLocations[0].playbackLocation,'WATCH');
   const second=await runAnalyticsBatch(e,
     {scheduledTime:Date.parse('2026-11-13T00:05:00Z')},mockFetch);
   assert.equal(second.skipped,true);
@@ -549,12 +562,12 @@ test('manual refresh API processes every authorized channel in safe four-profile
     if(url.includes('youtubeanalytics.googleapis.com')){
       const dimensions=new URL(url).searchParams.get('dimensions');
       const fixtures={
-        day:{columnHeaders:['day','views','estimatedMinutesWatched','averageViewDuration',
-          'averageViewPercentage','subscribersGained','subscribersLost','likes','comments','shares'],
-          rows:[['2026-11-11',20,100,30,50,2,1,3,1,1]]},
-        'video,creatorContentType':{columnHeaders:['video','creatorContentType','views',
-          'estimatedMinutesWatched','averageViewDuration','averageViewPercentage','likes','comments','shares'],
-          rows:[['MANUALVID001','VIDEOS',10,50,30,50,2,1,0]]},
+        day:{columnHeaders:['day','views','engagedViews','estimatedMinutesWatched','averageViewDuration',
+          'averageViewPercentage','subscribersGained','subscribersLost','likes','dislikes','comments','shares'],
+          rows:[['2026-11-11',20,15,100,30,50,2,1,3,0,1,1]]},
+        'video,creatorContentType':{columnHeaders:['video','creatorContentType','views','engagedViews',
+          'estimatedMinutesWatched','averageViewDuration','averageViewPercentage','likes','dislikes','comments','shares'],
+          rows:[['MANUALVID001','VIDEOS',10,7,50,30,50,2,0,1,0]]},
         insightTrafficSourceType:{columnHeaders:['insightTrafficSourceType','views','estimatedMinutesWatched'],
           rows:[['YT_SEARCH',10,50]]},
         deviceType:{columnHeaders:['deviceType','views','estimatedMinutesWatched'],
@@ -562,7 +575,10 @@ test('manual refresh API processes every authorized channel in safe four-profile
         country:{columnHeaders:['country','views','estimatedMinutesWatched'],
           rows:[['US',10,50]]},
         'ageGroup,gender':{columnHeaders:['ageGroup','gender','viewerPercentage'],
-          rows:[['25-34','FEMALE',0.5]]}
+          rows:[['25-34','FEMALE',50]]},
+        sharingService:{columnHeaders:['sharingService','shares'],rows:[['COPY_TO_CLIPBOARD',1]]},
+        insightPlaybackLocationType:{columnHeaders:['insightPlaybackLocationType','views','estimatedMinutesWatched'],
+          rows:[['WATCH',10,50]]}
       };
       const report=fixtures[dimensions];
       return new Response(JSON.stringify({
@@ -578,16 +594,16 @@ test('manual refresh API processes every authorized channel in safe four-profile
   }),e);
   assert.equal(first.status,200);
   const firstBody=await first.json();
-  assert.equal(firstBody.updated,4);
+  assert.equal(firstBody.updated,3);
   const second=await cloud.fetch(req('/api/analytics/refresh',control,'POST',{
-    requestId,offset:4
+    requestId,offset:3
   }),e);
   assert.equal(second.status,200);
   const secondBody=await second.json();
-  assert.equal(secondBody.updated,1);
+  assert.equal(secondBody.updated,2);
   const duplicate=await cloud.fetch(req('/api/analytics/refresh',control,'POST',{
-    requestId,offset:4
-  }),{...e,fetch:mockFetch});
+    requestId,offset:3
+  }),e);
   assert.equal((await duplicate.json()).skipped,true);
   assert.equal(e.DB.native.prepare('SELECT count(*) AS n FROM channel_analytics_reports').get().n,5);
 });
