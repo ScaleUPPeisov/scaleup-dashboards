@@ -16,7 +16,7 @@ let macAgentToken = '';
 let manualRefreshing = false;
 let activeMobileView = 'overview';
 const macAgentInstallCommand =
-  'curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/feature/vyron-control-cloud-mvp-20261113/apps/vyron-control/public/install-mac-agent.sh | bash';
+  'curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/feature/vyron-control-mobile-analytics-20261114/apps/vyron-control/public/install-mac-agent.sh | bash';
 const showLogin = error => {
   $('login').hidden = false;
   $('dashboard').hidden = true;
@@ -469,6 +469,101 @@ function renderEvents(events) {
     list.append(row);
   }
 }
+function renderOverviewTrend(rows) {
+  const svg=$('overview-trend'),caption=$('overview-trend-caption');
+  svg.replaceChildren();
+  const points=(rows||[]).slice(-14).map(row=>({
+    date:row.date,value:Math.max(0,Number(row.views)||0)
+  })).filter(row=>/^\\d{4}-\\d{2}-\\d{2}$/.test(row.date));
+  if(!points.length) {
+    caption.textContent='Нет дневных отчётов Google Analytics. Публичные просмотры обновляются отдельно.';
+    return;
+  }
+  const values=points.map(point=>point.value);
+  const max=Math.max(1,...values),width=720,height=150,left=12,right=12,top=12,bottom=12;
+  const plotWidth=width-left-right,plotHeight=height-top-bottom;
+  const y=value=>top+(max-value)/max*plotHeight;
+  for(let i=1;i<4;i++) {
+    const gy=top+i*plotHeight/4;
+    svg.append(svgNode('path',{d:'M '+left+' '+gy+' H '+(width-right),class:'overview-grid-line'}));
+  }
+  const coords=values.map((value,index)=>[
+    left+(values.length===1?plotWidth/2:index*plotWidth/(values.length-1)),y(value)
+  ]);
+  const line=coords.map((point,index)=>(index?'L ':'M ')+point[0]+' '+point[1]).join(' ');
+  const area=line+' L '+coords[coords.length-1][0]+' '+(height-bottom)+
+    ' L '+coords[0][0]+' '+(height-bottom)+' Z';
+  svg.append(svgNode('path',{d:area,class:'overview-area'}));
+  svg.append(svgNode('path',{d:line,class:'overview-line'}));
+  const last=coords[coords.length-1];
+  svg.append(svgNode('circle',{cx:last[0],cy:last[1],r:4,class:'overview-point'}));
+  const total=values.reduce((sum,value)=>sum+value,0);
+  caption.textContent=points[0].date+' — '+points[points.length-1].date+
+    ' · '+number(total)+' просмотров · '+points.length+' дней с данными';
+}
+function renderOverview(data) {
+  const channels=data.channels||[];
+  const total=channels.length;
+  const publicUpdated=channels.filter(channel=>Boolean(channel.updatedAt)).length;
+  const googleReports=channels.filter(channel=>channel.analytics?.source==='GOOGLE_ANALYTICS_API').length;
+  const authorized=data.analyticsSummary?.authorized??
+    channels.filter(channel=>channel.analyticsAuthorized===true).length;
+  const percent=(value,whole)=>whole?Math.max(0,Math.min(100,value/whole*100)):0;
+  $('overview-channel-count').textContent=number(total);
+  $('overview-channel-caption').textContent=total
+    ?publicUpdated+' из '+total+' каналов получили публичные счётчики'
+    :'Каналы ещё не добавлены в облако';
+  $('overview-channel-coverage').textContent='Счётчики '+publicUpdated+' / '+total;
+  $('overview-channel-progress').style.width=percent(publicUpdated,total)+'%';
+  $('overview-analytics-count').textContent=googleReports+' / '+total;
+  $('overview-analytics-caption').textContent=authorized+' OAuth-привязок · '+googleReports+' готовых отчётов';
+  $('overview-analytics-progress').style.width=percent(googleReports,total)+'%';
+
+  const devices=data.devices||[];
+  const device=devices.slice().sort((a,b)=>
+    (Date.parse(b.lastSeenAt||'')||0)-(Date.parse(a.lastSeenAt||'')||0))[0];
+  const age=device?.lastSeenAt?Date.now()-Date.parse(device.lastSeenAt):Infinity;
+  const macOnline=Boolean(device&&Number.isFinite(age)&&age>=0&&age<180000);
+  $('overview-mac-state').textContent=macOnline?'ONLINE':device?'SLEEP / OFFLINE':'НЕ ПОДКЛЮЧЁН';
+  $('overview-mac-caption').textContent=macOnline
+    ?'Последний сигнал '+time(device.lastSeenAt)
+    :device?'Облако работает; новый локальный канал обнаружится после пробуждения Mac'
+      :'Установи Mac Bridge один раз для автообнаружения каналов';
+
+  const status=$('network-status');
+  const state=data.lastError?'warning':data.syncing?'syncing':data.configured?'online':'setup';
+  status.dataset.state=state;
+  $('network-status-label').textContent=data.lastError?'Нужно внимание':
+    data.syncing?'Синхронизация':data.configured?'Облако активно':'Нужна настройка API';
+  if(data.lastSuccessAt) {
+    $('overview-sync-time').textContent=new Intl.DateTimeFormat('ru-RU',{
+      timeZone:'Asia/Krasnoyarsk',hour:'2-digit',minute:'2-digit'
+    }).format(new Date(data.lastSuccessAt));
+  } else $('overview-sync-time').textContent='—';
+  $('overview-sync-caption').textContent=data.lastError
+    ?'Последняя попытка завершилась ошибкой'
+    :'Последний успешный цикл · '+time(data.lastSuccessAt);
+  renderOverviewTrend(data.analyticsSummary?.daily||[]);
+
+  const list=$('overview-events');
+  list.replaceChildren();
+  const events=(data.events||[]).slice(0,3);
+  if(!events.length) {
+    list.append(make('p','overview-caption','Пока нет событий. Журнал заполнится после синхронизации VYRON.'));
+    return;
+  }
+  for(const event of events) {
+    const failed=['upload_failed','render_failed','agent_error'].includes(event.type);
+    const complete=['upload_completed','render_completed'].includes(event.type);
+    const row=make('div','overview-event');
+    row.append(make('span','overview-event-mark',failed?'!':complete?'✓':'·'));
+    const copy=make('div','overview-event-copy');
+    copy.append(make('strong','',event.name||event.title||'Событие VYRON'),
+      make('small','',time(event.detectedAt)));
+    row.append(copy);
+    list.append(row);
+  }
+}
 function render(data) {
   current = data;
   displayAggregate('total-subs', data.totalSubscribers);
@@ -485,9 +580,10 @@ function render(data) {
   $('refresh').disabled = !data.configured || data.syncing || manualRefreshing;
   renderChannels(data.channels);
   renderAnalytics(data);
-  applyMobileView();
   if (!eventHistoryExtended) renderEvents(data.events);
   renderDevices(data);
+  renderOverview(data);
+  applyMobileView();
 }
 async function load() {
   if (!accessToken) return showLogin('');
@@ -552,7 +648,7 @@ function applyMobileView() {
     analyticsGroupsMobileMode=mobile;
   }
   document.querySelectorAll('[data-mobile-view]').forEach(panel=>{
-    panel.classList.toggle('mobile-view-hidden',mobile&&panel.dataset.mobileView!==activeMobileView);
+    panel.classList.toggle('mobile-view-hidden',panel.dataset.mobileView!==activeMobileView);
   });
   document.querySelectorAll('[data-mobile-target]').forEach(button=>{
     const active=button.dataset.mobileTarget===activeMobileView;
@@ -566,6 +662,11 @@ document.querySelectorAll('[data-mobile-target]').forEach(button=>{
     applyMobileView();
     window.scrollTo({top:0,behavior:'smooth'});
   });
+});
+$('overview-events-open').addEventListener('click',()=>{
+  activeMobileView='events';
+  applyMobileView();
+  window.scrollTo({top:0,behavior:'smooth'});
 });
 window.addEventListener('resize',applyMobileView);
 $('analytics-period').addEventListener('change',()=>{
