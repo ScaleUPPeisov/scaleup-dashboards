@@ -68,7 +68,7 @@ const overlay = {
   }}
 };
 writeFileSync(output,JSON.stringify(overlay,null,2)+'\n',{flag:'wx',mode:0o600});
-const fingerprint=createHash('sha256').update(encoded).digest('hex');
+const fingerprint=createHash('sha256').update(publicBytes).digest('hex');
 process.stdout.write('ROTATED_UPDATER_OVERLAY_READY=PASS\n');
 process.stdout.write('PUBLIC_KEY_SHA256='+fingerprint+'\n');
 process.stdout.write('STABLE_FEED_PINNED=PASS\n');
