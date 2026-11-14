@@ -185,6 +185,21 @@ function renderChannels(channels) {
     list.append(row);
   }
 }
+function formatBytes(value) {
+  const bytes=Number(value);
+  if(!Number.isFinite(bytes)||bytes<0)return '—';
+  const units=['Б','КБ','МБ','ГБ','ТБ'];
+  let amount=bytes,index=0;
+  while(amount>=1024&&index<units.length-1){amount/=1024;index++;}
+  return new Intl.NumberFormat('ru-RU',{maximumFractionDigits:1}).format(amount)+' '+units[index];
+}
+function formatUptime(seconds) {
+  if(!Number.isSafeInteger(seconds)||seconds<0)return '—';
+  const days=Math.floor(seconds/86400);
+  const hours=Math.floor((seconds%86400)/3600);
+  const minutes=Math.floor((seconds%3600)/60);
+  return [days?days+' д':null,hours+' ч',minutes+' мин'].filter(Boolean).join(' ');
+}
 function formatDuration(seconds) {
   if(seconds==null||!Number.isFinite(Number(seconds)))return '—';
   const value=Math.max(0,Math.round(Number(seconds)));
@@ -664,14 +679,11 @@ async function load() {
     if (!schemaChecked) {
       const healthResponse = await fetch('/api/health', {cache:'no-store'});
       const health = await healthResponse.json().catch(() => null);
-      if (health?.d1?.bound && health?.d1?.schema === false) {
-        const bootstrapped = await api('/api/admin/bootstrap', 'POST', {});
-        if (!bootstrapped.ok) throw new Error('Не удалось подготовить схему D1.');
-        const verifyResponse = await fetch('/api/health', {cache:'no-store'});
-        const verified = await verifyResponse.json().catch(() => null);
-        if (!verifyResponse.ok || !verified?.ok) throw new Error('Схема D1 всё ещё неполная.');
-      } else if (!health?.ok) {
-        throw new Error(health?.error || 'Не удалось проверить базу D1.');
+      if (!health?.ok || health?.d1?.schema !== true) {
+        const missing=Array.isArray(health?.d1?.missing)
+          ?' · отсутствуют: '+health.d1.missing.join(', '):'';
+        throw new Error((health?.error||'Схема D1 неполная')+missing+
+          '. Автоматическое изменение базы отключено; используй guarded release workflow.');
       }
       schemaChecked = true;
     }
@@ -777,8 +789,9 @@ function renderDevices(data) {
     $('mac-uploaded').textContent = '—';
     for(const id of [
       'mac-uploaded-today','mac-rendered-today','mac-upload-failures','mac-channels-bound',
-      'mac-vyron-version','mac-endlume-version','mac-power-state','mac-disk-state',
-      'mac-ready-upload','mac-agent-error'
+      'mac-vyron-version','mac-endlume-version','mac-os-version','mac-model',
+      'mac-architecture','mac-uptime','mac-memory','mac-root-disk',
+      'mac-power-state','mac-disk-state','mac-ready-upload','mac-agent-error'
     ])$(id).textContent='—';
     $('mac-disk-state').classList.remove('state-bad');
     $('mac-agent-error').classList.remove('state-bad');
@@ -792,6 +805,14 @@ function renderDevices(data) {
   const s = device.status || {};
   $('mac-vyron-version').textContent=s.vyronVersion||'—';
   $('mac-endlume-version').textContent=s.endlumeVersion||'—';
+  $('mac-os-version').textContent=s.macOSVersion||'—';
+  $('mac-model').textContent=s.macModel||'—';
+  $('mac-architecture').textContent=s.architecture||'—';
+  $('mac-uptime').textContent=s.uptimeSeconds==null?'—':formatUptime(s.uptimeSeconds);
+  $('mac-memory').textContent=s.memoryFreeBytes==null||s.memoryTotalBytes==null
+    ?'—':formatBytes(s.memoryFreeBytes)+' / '+formatBytes(s.memoryTotalBytes);
+  $('mac-root-disk').textContent=s.rootDiskFreeBytes==null||s.rootDiskTotalBytes==null
+    ?'—':formatBytes(s.rootDiskFreeBytes)+' / '+formatBytes(s.rootDiskTotalBytes);
   $('mac-power-state').textContent=s.macAwake===true?'Активен':
     s.macAwake===false?'Сон':'Нет данных';
   $('mac-disk-state').textContent=s.diskOnline===true?'Подключён':
