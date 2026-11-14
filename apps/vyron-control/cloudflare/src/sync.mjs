@@ -35,7 +35,7 @@ export async function runCountersSync(env, { source, slot, date = new Date(), fe
     ).bind(slot).first();
     const failedAt=Date.parse(previous?.started_at||'');
     const retryReady=source==='manual'&&previous?.source==='manual'&&
-      previous.status==='error'&&Number.isFinite(failedAt)&&date.getTime()-failedAt>=120000;
+      previous?.status==='error'&&Number.isFinite(failedAt)&&date.getTime()-failedAt>=120000;
     if(!retryReady)return {skipped:true,reason:'slot_already_attempted'};
     const retry=await db.prepare(
       "UPDATE sync_runs SET status='running',started_at=?,ended_at=NULL,error=NULL,updated_channels=0 WHERE slot=? AND status='error'"
