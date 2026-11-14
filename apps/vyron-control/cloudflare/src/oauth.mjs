@@ -183,6 +183,10 @@ export async function disconnectProfile(request,env) {
   if(!VALID_CHANNEL.test(id))throw new Error('Invalid channel ID');
   const removed=await env.DB.prepare('DELETE FROM google_oauth_profiles WHERE channel_id=?')
     .bind(id).run();
+  await env.DB.prepare(`
+    UPDATE channel_analytics_queue SET completed_at=?,last_error='OAUTH_DISCONNECTED'
+    WHERE channel_id=? AND completed_at IS NULL
+  `).bind(new Date().toISOString(),id).run();
   return {disconnected:Number(removed.meta?.changes)===1};
 }
 export async function refreshAccessToken(profile,env,fetchImpl=fetch) {
