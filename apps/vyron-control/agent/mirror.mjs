@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import {
   appendFile, chmod, mkdir, readFile, rename, stat, statfs, writeFile
 } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { arch, cpus, freemem, homedir, totalmem, uptime } from 'node:os';
 
 // Read-only adapter for VYRON's EXISTING local state mirror written by
