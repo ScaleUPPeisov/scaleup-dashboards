@@ -12,13 +12,16 @@ const digest=value=>createHash('sha256').update(JSON.stringify(value)).digest('h
 async function fixture(password='temporary migration password') {
   const channelId='UC1234567890123456789012';
   const mappedChannelId='UCabcdefghijklmnopqrstuv';
+  const secondMappedChannelId='UCmnopqrstuvabcdefghijkl';
   const payload={
     schemaVersion:2,appVersion:'6.1.17',sourceOs:'macos',createdAt:'2026-11-14T00:00:00Z',
     bundleUuid:'bundle-test-001',
     state:{channels:[
       {id:'local-1',youtubeProfileId:'profile-1',youtubeChannelId:channelId,name:'Test channel'},
       {id:'local-2',youtubeProfileId:'profile-2',youtubeChannelId:mappedChannelId,
-        name:'Legacy mapped channel'}
+        name:'Legacy mapped channel'},
+      {id:'local-3',youtubeProfileId:'profile-2',youtubeChannelId:secondMappedChannelId,
+        name:'Second channel on same Google profile'}
     ]},
     oauthVault:{globalClientId:'471814393352-testclient.apps.googleusercontent.com',
       globalClientSecret:'TEST_GLOBAL_SECRET',profiles:{'profile-1':{
@@ -45,19 +48,21 @@ async function fixture(password='temporary migration password') {
     createdAt:payload.createdAt,bundleUuid:payload.bundleUuid,
     kdf:'argon2id:m=65536,t=3,p=1 + XChaCha20-Poly1305',
     salt:b64(salt),nonce:b64(nonce),ciphertext:b64(ciphertext)};
-  return {bytes:enc.encode(JSON.stringify(envelope)).buffer,channelId,mappedChannelId};
+  return {bytes:enc.encode(JSON.stringify(envelope)).buffer,channelId,mappedChannelId,secondMappedChannelId};
 }
 
 test('browser decrypts native VYRON migration without sending its password',async()=>{
   const password='temporary migration password';
-  const {bytes,channelId,mappedChannelId}=await fixture(password);
+  const {bytes,channelId,mappedChannelId,secondMappedChannelId}=await fixture(password);
   const result=await decryptVyronMigration(bytes,password);
   assert.equal(result.bundleUuid,'bundle-test-001');
-  assert.equal(result.profiles.length,2);
+  assert.equal(result.profiles.length,3);
   assert.equal(result.profiles.find(x=>x.profileUuid==='profile-1')?.channelId,channelId);
-  const mapped=result.profiles.find(x=>x.profileUuid==='profile-2');
-  assert.equal(mapped?.channelId,mappedChannelId);
-  assert.equal(mapped?.channelName,'Legacy mapped channel');
-  assert.equal(mapped?.clientSecret,'TEST_GLOBAL_SECRET');
+  const mapped=result.profiles.filter(x=>x.profileUuid==='profile-2');
+  assert.deepEqual(mapped.map(x=>x.channelId).sort(),[mappedChannelId,secondMappedChannelId].sort());
+  assert.equal(mapped.find(x=>x.channelId===mappedChannelId)?.channelName,'Legacy mapped channel');
+  assert.equal(mapped.find(x=>x.channelId===secondMappedChannelId)?.channelName,
+    'Second channel on same Google profile');
+  assert.equal(mapped[0]?.clientSecret,'TEST_GLOBAL_SECRET');
   await assert.rejects(()=>decryptVyronMigration(bytes,'wrong password value'),/Неверный пароль/);
 });
