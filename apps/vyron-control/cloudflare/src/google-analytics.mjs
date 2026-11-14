@@ -41,6 +41,7 @@ export function parseDailyReport(json,channelId,asOf,periodDays=PERIOD_DAYS) {
   if(required.some(name=>idx(name)<0))throw new Error('YouTube Analytics missing metrics');
   const rows=(json.rows||[]).slice(-periodDays);
   let views=0,engagedViews=0,dislikes=0,watchMinutes=0,gained=0,lost=0,likes=0,comments=0,shares=0;
+  let redViews=0,redWatchMinutes=0,playlistAdds=0,playlistRemoves=0,uniqueViewersSum=0,uniqueDays=0;
   let weightedSeconds=0,weightedPercent=0;
   const daily=rows.flatMap(row=>{
     const date=String(row[idx('day')]||'');
@@ -56,7 +57,17 @@ export function parseDailyReport(json,channelId,asOf,periodDays=PERIOD_DAYS) {
     const likeValue=idx('likes')<0?null:n(row[idx('likes')]);
     const commentValue=idx('comments')<0?null:n(row[idx('comments')]);
     const shareValue=idx('shares')<0?null:n(row[idx('shares')]);
+    const uniqueValue=idx('uniques')<0?null:n(row[idx('uniques')]);
+    const redViewValue=idx('redViews')<0?null:n(row[idx('redViews')]);
+    const redMinutesValue=idx('estimatedRedMinutesWatched')<0?null:n(row[idx('estimatedRedMinutesWatched')]);
+    const playlistAddValue=idx('videosAddedToPlaylists')<0?null:n(row[idx('videosAddedToPlaylists')]);
+    const playlistRemoveValue=idx('videosRemovedFromPlaylists')<0?null:n(row[idx('videosRemovedFromPlaylists')]);
     views+=v;engagedViews+=engaged;dislikes+=dislikeCount;watchMinutes+=w;gained+=g;lost+=l;
+    if(uniqueValue!==null){uniqueViewersSum+=uniqueValue;uniqueDays++;}
+    if(redViewValue!==null)redViews+=redViewValue;
+    if(redMinutesValue!==null)redWatchMinutes+=redMinutesValue;
+    if(playlistAddValue!==null)playlistAdds+=playlistAddValue;
+    if(playlistRemoveValue!==null)playlistRemoves+=playlistRemoveValue;
     if(likeValue!==null)likes+=likeValue;
     if(commentValue!==null)comments+=commentValue;
     if(shareValue!==null)shares+=shareValue;
@@ -65,7 +76,9 @@ export function parseDailyReport(json,channelId,asOf,periodDays=PERIOD_DAYS) {
       date,views:v,engagedViews:engaged,dislikes:dislikeCount,
       watchMinutes:w,averageViewDuration:d,
       averageViewPercentage:p,subscribersGained:g,subscribersLost:l,
-      likes:likeValue,comments:commentValue,shares:shareValue
+      likes:likeValue,comments:commentValue,shares:shareValue,
+      uniqueViewers:uniqueValue,redViews:redViewValue,redWatchMinutes:redMinutesValue,
+      playlistAdds:playlistAddValue,playlistRemoves:playlistRemoveValue
     }];
   });
   return {
@@ -73,6 +86,11 @@ export function parseDailyReport(json,channelId,asOf,periodDays=PERIOD_DAYS) {
     avgViewSeconds:views?weightedSeconds/views:null,
     avgViewPercentage:views?weightedPercent/views:null,
     subscribersGained:gained,subscribersLost:lost,
+    uniqueViewersDailyAverage:uniqueDays?uniqueViewersSum/uniqueDays:null,
+    redViews:idx('redViews')<0?null:redViews,
+    redWatchMinutes:idx('estimatedRedMinutesWatched')<0?null:redWatchMinutes,
+    playlistAdds:idx('videosAddedToPlaylists')<0?null:playlistAdds,
+    playlistRemoves:idx('videosRemovedFromPlaylists')<0?null:playlistRemoves,
     likes:idx('likes')<0?null:likes,
     comments:idx('comments')<0?null:comments,
     shares:idx('shares')<0?null:shares,
@@ -163,16 +181,19 @@ async function processBatch(env,details,fetchImpl=fetch) {
       try {
         const token=await refreshAccessToken(profile,env,fetchImpl);
         const dailyParams=reportParams(startDate,endDate,'day',
-          'views,engagedViews,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,'+
-          'subscribersGained,subscribersLost,likes,dislikes,comments,shares','day');
+          'views,engagedViews,redViews,estimatedMinutesWatched,estimatedRedMinutesWatched,'+
+          'averageViewDuration,averageViewPercentage,subscribersGained,subscribersLost,'+
+          'likes,dislikes,comments,shares,uniques,videosAddedToPlaylists,videosRemovedFromPlaylists','day');
         const dailyJson=await requestReport(token,dailyParams,fetchImpl,true);
         const snapshot=parseDailyReport(dailyJson,profile.channel_id,
           new Date().toISOString(),PERIOD_DAYS);
 
         const [topVideos,trafficSources,devices,countries,demographics,sharingServices,
-          playbackLocations,operatingSystems,liveOrOnDemand]=await Promise.all([
+          playbackLocations,operatingSystems,liveOrOnDemand,subscribedStatus]=await Promise.all([
           optionalReport(token,startDate,endDate,'video,creatorContentType',
-            'views,engagedViews,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,likes,dislikes,comments,shares',
+            'views,engagedViews,redViews,estimatedMinutesWatched,estimatedRedMinutesWatched,'+
+            'averageViewDuration,averageViewPercentage,likes,dislikes,comments,shares,'+
+            'videosAddedToPlaylists,videosRemovedFromPlaylists',
             fetchImpl,'-views',10),
           optionalReport(token,startDate,endDate,'insightTrafficSourceType',
             'views,estimatedMinutesWatched',fetchImpl,null,20),
@@ -189,6 +210,8 @@ async function processBatch(env,details,fetchImpl=fetch) {
           optionalReport(token,startDate,endDate,'operatingSystem',
             'views,estimatedMinutesWatched',fetchImpl,null,20),
           optionalReport(token,startDate,endDate,'liveOrOnDemand',
+            'views,engagedViews,estimatedMinutesWatched,averageViewDuration',fetchImpl,null,10),
+          optionalReport(token,startDate,endDate,'subscribedStatus',
             'views,engagedViews,estimatedMinutesWatched,averageViewDuration',fetchImpl,null,10)
         ]);
         const topVideoId=String(topVideos.rows[0]?.video||'');
@@ -200,18 +223,21 @@ async function processBatch(env,details,fetchImpl=fetch) {
         const reportErrors={};
         for(const [key,value] of Object.entries({
           topVideos,trafficSources,devices,countries,demographics,sharingServices,
-          playbackLocations,operatingSystems,liveOrOnDemand,audienceRetention
+          playbackLocations,operatingSystems,liveOrOnDemand,subscribedStatus,audienceRetention
         }))if(value.error)reportErrors[key]=value.error;
         if(Object.keys(reportErrors).length)partial++;
         const reports={
           topVideos:topVideos.rows.map(row=>({
             videoId:row.video,creatorContentType:row.creatorContentType||null,
-            views:row.views,engagedViews:row.engagedViews??null,
+            views:row.views,engagedViews:row.engagedViews??null,redViews:row.redViews??null,
             watchMinutes:row.estimatedMinutesWatched,
+            redWatchMinutes:row.estimatedRedMinutesWatched??null,
             averageViewDuration:row.averageViewDuration??null,
             averageViewPercentage:row.averageViewPercentage??null,
             likes:row.likes??null,dislikes:row.dislikes??null,
-            comments:row.comments??null,shares:row.shares??null
+            comments:row.comments??null,shares:row.shares??null,
+            playlistAdds:row.videosAddedToPlaylists??null,
+            playlistRemoves:row.videosRemovedFromPlaylists??null
           })),
           trafficSources:trafficSources.rows.map(row=>({
             source:row.insightTrafficSourceType,views:row.views,
@@ -242,6 +268,11 @@ async function processBatch(env,details,fetchImpl=fetch) {
           })),
           liveOrOnDemand:liveOrOnDemand.rows.map(row=>({
             liveOrOnDemand:row.liveOrOnDemand,views:row.views,
+            engagedViews:row.engagedViews,watchMinutes:row.estimatedMinutesWatched,
+            averageViewDuration:row.averageViewDuration
+          })),
+          subscribedStatus:subscribedStatus.rows.map(row=>({
+            subscribedStatus:row.subscribedStatus,views:row.views,
             engagedViews:row.engagedViews,watchMinutes:row.estimatedMinutesWatched,
             averageViewDuration:row.averageViewDuration
           })),
