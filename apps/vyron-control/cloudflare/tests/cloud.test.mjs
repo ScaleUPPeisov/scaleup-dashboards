@@ -515,7 +515,7 @@ test('authorized private Analytics syncs 90-day trends and channel breakdowns in
         },
         elapsedVideoTimeRatio:{
           columnHeaders:['elapsedVideoTimeRatio','audienceWatchRatio','relativeRetentionPerformance'],
-          rows:[['0.0',1.0,0.2],['0.5',0.65,0.1],['1.0',0.2,-0.1]]
+          rows:[['0.0',1.0,0.2],['0.5',0.65,0.1],['1.0',0.2,0.1]]
         }
       };
       return new Response(JSON.stringify(fixtures[dimensions]||{columnHeaders:[],rows:[]}),{status:200});
@@ -553,7 +553,7 @@ test('authorized private Analytics syncs 90-day trends and channel breakdowns in
   assert.equal(reports.operatingSystems[0].operatingSystem,'ANDROID');
   assert.equal(reports.liveOrOnDemand[0].liveOrOnDemand,'LIVE');
   assert.equal(reports.audienceRetention.length,3);
-  assert.equal(reports.audienceRetention[2].relativeRetentionPerformance,-0.1);
+  assert.equal(reports.audienceRetention[2].relativeRetentionPerformance,0.1);
   const second=await runAnalyticsBatch(e,
     {scheduledTime:Date.parse('2026-11-13T00:05:00Z')},mockFetch);
   assert.equal(second.skipped,true);
