@@ -9,6 +9,7 @@ const html=await readFile(resolve(publicDir,'index.html'),'utf8');
 const css=await readFile(resolve(publicDir,'styles.css'),'utf8');
 const app=await readFile(resolve(publicDir,'app.js'),'utf8');
 const installer=await readFile(resolve(publicDir,'install-mac-agent.sh'),'utf8');
+const serviceWorker=await readFile(resolve(publicDir,'service-worker.js'),'utf8');
 
 test('workspace HTML has unique element IDs',()=>{
   const ids=[...html.matchAll(/\bid="([^"]+)"/g)].map(match=>match[1]);
@@ -37,6 +38,12 @@ test('overview dashboard exposes live sync, Analytics and event containers',()=>
   ])assert.ok(html.includes('id="'+id+'"'),'missing overview element: '+id);
   assert.match(app,/function renderOverview\(data\)/);
   assert.match(app,/function renderOverviewTrend\(rows\)/);
+});
+
+test('PWA caches the static shell but never caches authenticated API responses',()=>{
+  assert.match(serviceWorker,/SHELL_ASSETS=.*\\/app\\.js/);
+  assert.match(serviceWorker,/url\\.pathname\\.startsWith\\('\\/api\\/'\\)/);
+  assert.match(serviceWorker,/caches\\.match\\('\\/'\\)/);
 });
 
 test('Mac installer and dashboard command use the same source branch',()=>{
