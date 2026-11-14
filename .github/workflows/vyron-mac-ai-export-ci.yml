@@ -36,6 +36,8 @@ on:
       - 'src-tauri/src/security.rs'
       - 'src-tauri/src/storage.rs'
       - 'src-tauri/src/lib.rs'
+      - 'src-tauri/src/updater_bridge.rs'
+      - 'src-tauri/build.rs'
       - 'src-tauri/Cargo.toml'
       - 'src-tauri/Cargo.lock'
       - '.github/workflows/vyron-mac-ai-export-ci.yml'
@@ -71,6 +73,7 @@ jobs:
           cargo test --locked --lib analytics_sqlite -- --nocapture
           cargo test --locked --lib analytics_reach -- --nocapture
           cargo test --locked --lib v213_storage_tests -- --nocapture
+          cargo test --locked --lib updater_key_diagnostic_tests -- --nocapture
           cargo check --locked
   sqlite-million-row-benchmark:
     if: contains(github.event.pull_request.body, '[run-sqlite-stress]')
@@ -179,5 +182,6 @@ jobs:
           cargo test --locked --lib analytics_sqlite -- --nocapture
           cargo test --locked --lib analytics_reach -- --nocapture
           cargo test --locked --lib v213_storage_tests -- --nocapture
+          cargo test --locked --lib updater_key_diagnostic_tests -- --nocapture
           cargo check --locked --target aarch64-apple-darwin
 
