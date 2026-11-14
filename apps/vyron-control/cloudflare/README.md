@@ -49,7 +49,7 @@ https://developers.cloudflare.com/workers/configuration/cron-triggers/
 After the D1 binding and `CONTROL_TOKEN` are configured, the first successful
 dashboard login checks `/api/health`. If application tables are missing, the
 authenticated dashboard runs a fixed, idempotent bootstrap that creates only the
-15 application tables and their indexes; it never drops or overwrites data.
+16 application tables and their indexes; it never drops or overwrites data.
 This removes the need to paste a multi-statement SQL script into the D1 Console.
 For later schema changes, keep using versioned Wrangler migrations.
 
@@ -90,8 +90,8 @@ For later schema changes, keep using versioned Wrangler migrations.
      --data '[{"id":"UCxxxxxxxxxxxxxxxxxxxxxx","name":"Example"}]'
    ```
 
-   Replace all placeholders with real values. A standalone Mac agent can later
-   import the registry exported by VYRON without manual channel-by-channel entry.
+   Replace all placeholders with real values. Once the Mac Bridge is installed,
+   VYRON channel changes are enrolled automatically; this manual endpoint is a fallback.
 
 ## Independent private YouTube Analytics (read-only OAuth)
 
@@ -287,7 +287,9 @@ grant the bridge Full Disk Access unnecessarily.
   needs a one-time read-only Google authorization in CONTROL (or a new encrypted
   VYRON migration import). After authorization, Analytics is queued automatically
   and processed in batches of up to three profiles every five minutes. Existing
-  daily 07:05–07:55 and 22:05–22:55 reporting windows remain in place.
+  newly authorized channels are queued and processed in batches of up to three
+  profiles every five minutes. The daily 07:05–07:55 and 22:05–22:55 reporting
+  windows remain in place.
 - Public counters continue hourly while the Mac sleeps. Detecting a newly added
   local VYRON channel necessarily waits until the Mac wakes and the Bridge can read
   the local mirror; no cloud service can observe a local-only change while the Mac
