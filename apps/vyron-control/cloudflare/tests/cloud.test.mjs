@@ -358,6 +358,46 @@ test('encrypted VYRON migration profiles import idempotently with their original
     'SELECT views FROM channel_analytics WHERE channel_id=?').get(channelId).views,77);
 });
 
+test('one imported Google profile can bind multiple YouTube channels without dropping either',async()=>{
+  const e=env(),firstChannel=id(21),secondChannel=id(22);
+  Object.assign(e,{OAUTH_ENCRYPTION_KEY:'c'.repeat(64),
+    GOOGLE_OAUTH_CLIENT_ID:'WEB_CLIENT',GOOGLE_OAUTH_CLIENT_SECRET:'WEB_SECRET'});
+  const clientId='471814393352-sharedclient.apps.googleusercontent.com';
+  const clientSecret='SHARED_CLIENT_SECRET';
+  const refreshToken='SHARED_REFRESH_TOKEN_1234567890';
+  const fetchMock=async(url,opts)=>{
+    if(url.includes('oauth2.googleapis.com/token')){
+      const body=new URLSearchParams(opts.body);
+      assert.equal(body.get('client_id'),clientId);
+      assert.equal(body.get('client_secret'),clientSecret);
+      assert.equal(body.get('refresh_token'),refreshToken);
+      return new Response(JSON.stringify({access_token:'SHARED_ACCESS'}),{status:200});
+    }
+    if(url.includes('youtube/v3/channels'))return new Response(JSON.stringify({
+      items:[
+        {id:firstChannel,snippet:{title:'First channel'}},
+        {id:secondChannel,snippet:{title:'Second channel'}}
+      ]
+    }),{status:200});
+    throw new Error('unexpected endpoint');
+  };
+  const data={bundleUuid:'bundle-shared-001',profiles:[
+    {profileUuid:'same-google-profile',channelId:firstChannel,channelName:'First channel',
+      refreshToken,clientId,clientSecret},
+    {profileUuid:'same-google-profile',channelId:secondChannel,channelName:'Second channel',
+      refreshToken,clientId,clientSecret}
+  ]};
+  const result=await importVyronProfiles(data,e,fetchMock);
+  assert.equal(result.received,2);
+  assert.equal(result.imported,2);
+  assert.equal(result.failed,0);
+  assert.deepEqual(result.results.map(x=>x.channelId).sort(),[firstChannel,secondChannel].sort());
+  assert.equal(e.DB.native.prepare('SELECT count(*) AS n FROM google_oauth_profiles').get().n,2);
+  assert.equal(e.DB.native.prepare(
+    "SELECT count(*) AS n FROM google_oauth_client_credentials WHERE profile_uuid='same-google-profile'"
+  ).get().n,2);
+});
+
 test('authorized private Analytics can update while Mac sleeps, with 10-channel cron batches',async()=>{
   const e=env(),channelId=id(5);
   Object.assign(e,{
