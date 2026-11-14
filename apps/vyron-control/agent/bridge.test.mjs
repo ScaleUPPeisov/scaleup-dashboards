@@ -104,6 +104,33 @@ test('bridge rejects unsafe remote commands',()=>{
   assert.equal(cleanEvent({kind:'unapproved',occurredAt:new Date().toISOString()},'macbook_m1',0),null);
 });
 
+test('Mac bridge retries transient Google OAuth profile binding failures',async()=>{
+  const dir=await mkdtemp(join(tmpdir(),'vyron-profile-binding-retry-'));
+  try {
+    const channelsFile=join(dir,'channels.json');
+    await writeFile(channelsFile,JSON.stringify([
+      {id:'UC'+('8'.repeat(22)),name:'New channel',profileBinding:'b'.repeat(64)}
+    ]));
+    let attempts=0;
+    const bridge=new MacBridge({
+      url:'https://control.example',token:'T'.repeat(40),channelsFile,
+      fetchImpl:async()=>{
+        attempts++;
+        return {ok:true,json:async()=>({
+          enrolled:1,publicSync:{complete:true},
+          analytics:{profileChecksFailed:attempts===1?1:0}
+        })};
+      }
+    });
+    assert.equal((await bridge.syncChannelRegistry()).reason,'profile_binding_retry');
+    assert.equal(bridge.lastChannelHash,null);
+    bridge.lastChannelSyncAttemptAt=0;
+    assert.equal((await bridge.syncChannelRegistry()).imported,1);
+    assert.ok(bridge.lastChannelHash);
+    assert.equal(attempts,2);
+  }finally{await rm(dir,{recursive:true,force:true});}
+});
+
 test('Mac agent bulk-imports exported YouTube channel registry once per change',async()=>{
   const dir=await mkdtemp(join(tmpdir(),'vyron-channels-'));
   try {
