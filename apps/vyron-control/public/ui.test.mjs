@@ -43,8 +43,15 @@ test('overview dashboard exposes live sync, Analytics and event containers',()=>
   assert.match(app,/function renderOverviewTrend\(rows\)/);
 });
 
-test('PWA caches the static shell but never caches authenticated API responses',()=>{
+test('PWA caches every imported browser module but never authenticated API responses',()=>{
   assert.ok(serviceWorker.includes("'/app.js'"));
+  const importedModules=[...app.matchAll(/from\\s+['"]\\.\\/([^'"]+)['"]/g)]
+    .map(match=>match[1]);
+  assert.ok(importedModules.length>0,'expected browser modules to be imported');
+  for(const modulePath of importedModules)
+    assert.ok(serviceWorker.includes("'/"+modulePath+"'"),
+      'offline shell is missing imported module: '+modulePath);
+  assert.ok(serviceWorker.includes("vyron-control-shell-v3"));
   assert.ok(serviceWorker.includes("url.pathname.startsWith('/api/')"));
   assert.ok(serviceWorker.includes("caches.match('/')"));
 });
