@@ -3,7 +3,7 @@ import { manualSlot, runCountersSync, scheduledSync } from './sync.mjs';
 import { saveAnalytics } from './analytics.mjs';
 import { startOAuth,callbackOAuth,authorizedProfiles,disconnectProfile } from './oauth.mjs';
 import { importVyronProfiles,bindExistingVYRONProfiles } from './oauth-import.mjs';
-import { runAnalyticsBatch,runManualAnalyticsBatch,runQueuedAnalyticsBatch } from './google-analytics.mjs';
+import { runAnalyticsBatch,runManualAnalyticsBatch,runQueuedAnalyticsBatch,ANALYTICS_QUEUE_CRON } from './google-analytics.mjs';
 import { registerPush,unregisterPush,vapidPublic,dispatchPush,PUSH_CRON } from './push.mjs';
 
 const REQUIRED_TOKEN_LENGTH = 32;
@@ -651,7 +651,8 @@ export default {
     ctx.waitUntil(Promise.allSettled([
       scheduledSync(controller,env),
       runAnalyticsBatch(env,controller),
-      ...(controller.cron===PUSH_CRON?[runQueuedAnalyticsBatch(env,controller),dispatchPush(env)]:[])
+      ...(controller.cron===ANALYTICS_QUEUE_CRON?[runQueuedAnalyticsBatch(env,controller)]:[]),
+      ...(controller.cron===PUSH_CRON?[dispatchPush(env)]:[])
     ]).then(results=>{
       for (const result of results) if(result.status==='rejected')
         console.error('VYRON CONTROL scheduled task failed:',
