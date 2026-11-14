@@ -9,7 +9,7 @@ import { registerPush,unregisterPush,vapidPublic,dispatchPush,PUSH_CRON } from '
 const REQUIRED_TOKEN_LENGTH = 32;
 const EXPECTED_TABLES = Object.freeze([
   'channels','channel_snapshots','events','sync_runs','quota_buckets','devices',
-  'commands','channel_analytics','google_oauth_sessions','google_oauth_profiles',
+  'commands','channel_analytics','channel_analytics_reports','google_oauth_sessions','google_oauth_profiles',
   'google_oauth_client_credentials','cloud_analytics_runs','push_subscriptions','push_deliveries'
 ]);
 const BOOTSTRAP_STATEMENTS = Object.freeze([
@@ -26,6 +26,8 @@ const BOOTSTRAP_STATEMENTS = Object.freeze([
   "CREATE INDEX IF NOT EXISTS idx_commands_pending ON commands(target_device,state,created_at)",
   "CREATE TABLE IF NOT EXISTS channel_analytics (channel_id TEXT PRIMARY KEY NOT NULL, period_days INTEGER NOT NULL, views INTEGER, watch_minutes REAL, avg_view_seconds REAL, avg_view_percentage REAL, subscribers_gained INTEGER, subscribers_lost INTEGER, impressions INTEGER, impression_ctr REAL, estimated_revenue REAL, currency TEXT, daily_json TEXT NOT NULL DEFAULT '[]', captured_at TEXT NOT NULL, received_at TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'VYRON_MAC_CACHE')",
   "CREATE INDEX IF NOT EXISTS idx_channel_analytics_received ON channel_analytics(received_at DESC)",
+  "CREATE TABLE IF NOT EXISTS channel_analytics_reports (channel_id TEXT PRIMARY KEY NOT NULL, reports_json TEXT NOT NULL DEFAULT '{}', captured_at TEXT NOT NULL, received_at TEXT NOT NULL)",
+  "CREATE INDEX IF NOT EXISTS idx_channel_analytics_reports_captured ON channel_analytics_reports(captured_at DESC)",
   "CREATE TABLE IF NOT EXISTS google_oauth_sessions (state_hash TEXT PRIMARY KEY NOT NULL, verifier_cipher TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL)",
   "CREATE TABLE IF NOT EXISTS google_oauth_profiles (channel_id TEXT PRIMARY KEY NOT NULL, channel_name TEXT NOT NULL, refresh_token_cipher TEXT NOT NULL, granted_scope TEXT NOT NULL, connected_at TEXT NOT NULL, last_success_at TEXT, last_error TEXT)",
   "CREATE TABLE IF NOT EXISTS google_oauth_client_credentials (channel_id TEXT PRIMARY KEY NOT NULL, profile_uuid TEXT NOT NULL, client_id_cipher TEXT NOT NULL, client_secret_cipher TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'VYRON_MIGRATION', bundle_uuid TEXT NOT NULL, imported_at TEXT NOT NULL)",
@@ -90,6 +92,10 @@ async function readJson(request, bytes=65536) {
   return JSON.parse(source);
 }
 function number(value) { return value == null ? null : Number(value); }
+function parsedJson(value,fallback) {
+  try {const result=JSON.parse(value||'');return result&&typeof result==='object'?result:fallback;}
+  catch {return fallback;}
+}
 function publicEventPayload(payload) {
   const projectId=typeof payload?.projectId==='string'&&
     /^[A-Za-z0-9_-]{1,150}$/.test(payload.projectId)?payload.projectId:null;
@@ -175,8 +181,11 @@ async function fetchStatus(env) {
       a.estimated_revenue AS analytics_revenue,
       a.currency AS analytics_currency,
       a.captured_at AS analytics_captured_at,
-      a.source AS analytics_source
+      a.source AS analytics_source,
+      a.daily_json AS analytics_daily_json,
+      r.reports_json AS analytics_reports_json
       FROM channels c LEFT JOIN channel_analytics a ON c.id=a.channel_id
+      LEFT JOIN channel_analytics_reports r ON c.id=r.channel_id
       ORDER BY c.name LIMIT 120`).all(),
     db.prepare('SELECT id,kind,channel_id,title,payload_json,occurred_at,received_at FROM events ORDER BY received_at DESC LIMIT 80').all(),
     db.prepare('SELECT spent FROM quota_buckets WHERE day_pt=?').bind(day).first(),
@@ -205,7 +214,9 @@ async function fetchStatus(env) {
       estimatedRevenue:number(row.analytics_revenue),
       currency:row.analytics_currency,
       updatedAt:row.analytics_captured_at,
-      source:row.analytics_source||'VYRON_MAC_CACHE'
+      source:row.analytics_source||'VYRON_MAC_CACHE',
+      daily:parsedJson(row.analytics_daily_json,[]),
+      reports:parsedJson(row.analytics_reports_json,{})
     }:null
   }));
   const sum=key=>({
@@ -237,12 +248,37 @@ async function fetchStatus(env) {
     lastError:latestError,lastSource:s?.source||null,
     syncing:s?.status==='running',
     channels,totalSubscribers:sum('subscribers'),totalViews:sum('views'),totalVideos:sum('videos'),
-    analyticsSummary:{
-      watchMinutes:channels.reduce((s,ch)=>s+(ch.analytics?.watchMinutes??0),0),
-      covered:channels.filter(ch=>ch.analytics!=null).length,
-      total:channels.length,
-      note:'Снимки из VYRON на Mac. Не являются новой аналитикой YouTube, пока Mac спит.'
-    },
+    analyticsSummary:(()=>{
+      const available=channels.filter(ch=>ch.analytics);
+      const views=available.reduce((sum,ch)=>sum+(ch.analytics.views??0),0);
+      const daily=new Map();
+      for(const channel of available)for(const row of channel.analytics.daily||[]){
+        const item=daily.get(row.date)||{
+          date:row.date,views:0,watchMinutes:0,subscribersGained:0,
+          subscribersLost:0,likes:0,comments:0,shares:0
+        };
+        item.views+=row.views??0;item.watchMinutes+=row.watchMinutes??0;
+        item.subscribersGained+=row.subscribersGained??0;
+        item.subscribersLost+=row.subscribersLost??0;
+        item.likes+=row.likes??0;item.comments+=row.comments??0;item.shares+=row.shares??0;
+        daily.set(row.date,item);
+      }
+      return {
+        views,watchMinutes:available.reduce((sum,ch)=>sum+(ch.analytics.watchMinutes??0),0),
+        subscribersGained:available.reduce((sum,ch)=>sum+(ch.analytics.subscribersGained??0),0),
+        subscribersLost:available.reduce((sum,ch)=>sum+(ch.analytics.subscribersLost??0),0),
+        likes:available.reduce((sum,ch)=>sum+(ch.analytics.daily||[]).reduce((n,row)=>n+(row.likes??0),0),0),
+        comments:available.reduce((sum,ch)=>sum+(ch.analytics.daily||[]).reduce((n,row)=>n+(row.comments??0),0),0),
+        shares:available.reduce((sum,ch)=>sum+(ch.analytics.daily||[]).reduce((n,row)=>n+(row.shares??0),0),0),
+        averageViewDuration:views?available.reduce((sum,ch)=>sum+
+          (ch.analytics.avgViewSeconds??0)*(ch.analytics.views??0),0)/views:null,
+        averageViewPercentage:views?available.reduce((sum,ch)=>sum+
+          (ch.analytics.avgViewPercentage??0)*(ch.analytics.views??0),0)/views:null,
+        daily:[...daily.values()].sort((a,b)=>a.date.localeCompare(b.date)),
+        covered:available.length,total:channels.length,periodDays:90,
+        note:'Авторизованные отчёты YouTube Analytics API. CTR миниатюр и доход без отдельных поддерживаемых прав не подменяются.'
+      };
+    })(),
     integrations:{
       youtubeDataApi:Boolean(env.YOUTUBE_API_KEY),
       macBridge:Boolean(env.AGENT_TOKEN||env.CONTROL_TOKEN),
