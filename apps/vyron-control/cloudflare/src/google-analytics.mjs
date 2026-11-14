@@ -4,8 +4,8 @@ import { refreshAccessToken } from './oauth.mjs';
 // One profile uses: token refresh + 6 Analytics reports + one D1 batch.
 // Four profiles plus the run claim/read/finalize remain below the limit.
 const ANALYTICS_HOURS=new Set([0,15]);
-const ANALYTICS_MINUTES=new Set([5,10,15,20,25,30,35,40,45]);
-const BATCH_SIZE=4;
+const ANALYTICS_MINUTES=new Set([5,10,15,20,25,30,35,40,45,50,55]);
+const BATCH_SIZE=3;
 const PERIOD_DAYS=90;
 
 function isoDay(ms){return new Date(ms).toISOString().slice(0,10);}
@@ -36,16 +36,18 @@ export function nextAnalyticsSlot(controller) {
 export function parseDailyReport(json,channelId,asOf,periodDays=PERIOD_DAYS) {
   const headers=columnHeaders(json);
   const idx=name=>headerIndex(headers,name);
-  const required=['day','views','estimatedMinutesWatched','averageViewDuration',
-    'averageViewPercentage','subscribersGained','subscribersLost'];
+  const required=['day','views','engagedViews','estimatedMinutesWatched','averageViewDuration',
+    'averageViewPercentage','subscribersGained','subscribersLost','dislikes'];
   if(required.some(name=>idx(name)<0))throw new Error('YouTube Analytics missing metrics');
   const rows=(json.rows||[]).slice(-periodDays);
-  let views=0,watchMinutes=0,gained=0,lost=0,likes=0,comments=0,shares=0;
+  let views=0,engagedViews=0,dislikes=0,watchMinutes=0,gained=0,lost=0,likes=0,comments=0,shares=0;
   let weightedSeconds=0,weightedPercent=0;
   const daily=rows.flatMap(row=>{
     const date=String(row[idx('day')]||'');
     if(!/^\d{4}-\d{2}-\d{2}$/.test(date))return [];
     const v=n(row[idx('views')]);
+    const engaged=n(row[idx('engagedViews')]);
+    const dislikeCount=n(row[idx('dislikes')]);
     const w=n(row[idx('estimatedMinutesWatched')]);
     const d=n(row[idx('averageViewDuration')]);
     const p=n(row[idx('averageViewPercentage')]);
@@ -54,19 +56,20 @@ export function parseDailyReport(json,channelId,asOf,periodDays=PERIOD_DAYS) {
     const likeValue=idx('likes')<0?null:n(row[idx('likes')]);
     const commentValue=idx('comments')<0?null:n(row[idx('comments')]);
     const shareValue=idx('shares')<0?null:n(row[idx('shares')]);
-    views+=v;watchMinutes+=w;gained+=g;lost+=l;
+    views+=v;engagedViews+=engaged;dislikes+=dislikeCount;watchMinutes+=w;gained+=g;lost+=l;
     if(likeValue!==null)likes+=likeValue;
     if(commentValue!==null)comments+=commentValue;
     if(shareValue!==null)shares+=shareValue;
     weightedSeconds+=v*d;weightedPercent+=v*p;
     return [{
-      date,views:v,watchMinutes:w,averageViewDuration:d,
+      date,views:v,engagedViews:engaged,dislikes:dislikeCount,
+      watchMinutes:w,averageViewDuration:d,
       averageViewPercentage:p,subscribersGained:g,subscribersLost:l,
       likes:likeValue,comments:commentValue,shares:shareValue
     }];
   });
   return {
-    channelId,periodDays,views,watchMinutes,
+    channelId,periodDays,views,engagedViews,dislikes,watchMinutes,
     avgViewSeconds:views?weightedSeconds/views:null,
     avgViewPercentage:views?weightedPercent/views:null,
     subscribersGained:gained,subscribersLost:lost,
@@ -162,9 +165,9 @@ async function processBatch(env,details,fetchImpl=fetch) {
         const snapshot=parseDailyReport(dailyJson,profile.channel_id,
           new Date().toISOString(),PERIOD_DAYS);
 
-        const [topVideos,trafficSources,devices,countries,demographics]=await Promise.all([
+        const [topVideos,trafficSources,devices,countries,demographics,sharingServices,playbackLocations]=await Promise.all([
           optionalReport(token,startDate,endDate,'video,creatorContentType',
-            'views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,likes,comments,shares',
+            'views,engagedViews,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,likes,dislikes,comments,shares',
             fetchImpl,'-views',10),
           optionalReport(token,startDate,endDate,'insightTrafficSourceType',
             'views,estimatedMinutesWatched',fetchImpl,'-views',20),
@@ -173,20 +176,26 @@ async function processBatch(env,details,fetchImpl=fetch) {
           optionalReport(token,startDate,endDate,'country',
             'views,estimatedMinutesWatched',fetchImpl,'-views',10),
           optionalReport(token,startDate,endDate,'ageGroup,gender',
-            'viewerPercentage',fetchImpl,null,20)
+            'viewerPercentage',fetchImpl,'-viewerPercentage',20),
+          optionalReport(token,startDate,endDate,'sharingService',
+            'shares',fetchImpl,'-shares',20),
+          optionalReport(token,startDate,endDate,'insightPlaybackLocationType',
+            'views,estimatedMinutesWatched',fetchImpl,'-views',20)
         ]);
         const reportErrors={};
         for(const [key,value] of Object.entries({
-          topVideos,trafficSources,devices,countries,demographics
+          topVideos,trafficSources,devices,countries,demographics,sharingServices,playbackLocations
         }))if(value.error)reportErrors[key]=value.error;
         if(Object.keys(reportErrors).length)partial++;
         const reports={
           topVideos:topVideos.rows.map(row=>({
             videoId:row.video,creatorContentType:row.creatorContentType||null,
-            views:row.views,watchMinutes:row.estimatedMinutesWatched,
+            views:row.views,engagedViews:row.engagedViews??null,
+            watchMinutes:row.estimatedMinutesWatched,
             averageViewDuration:row.averageViewDuration??null,
             averageViewPercentage:row.averageViewPercentage??null,
-            likes:row.likes??null,comments:row.comments??null,shares:row.shares??null
+            likes:row.likes??null,dislikes:row.dislikes??null,
+            comments:row.comments??null,shares:row.shares??null
           })),
           trafficSources:trafficSources.rows.map(row=>({
             source:row.insightTrafficSourceType,views:row.views,
@@ -203,6 +212,13 @@ async function processBatch(env,details,fetchImpl=fetch) {
           demographics:demographics.rows.map(row=>({
             ageGroup:row.ageGroup,gender:row.gender,
             viewerPercentage:row.viewerPercentage
+          })),
+          sharingServices:sharingServices.rows.map(row=>({
+            sharingService:row.sharingService,shares:row.shares
+          })),
+          playbackLocations:playbackLocations.rows.map(row=>({
+            playbackLocation:row.insightPlaybackLocationType,views:row.views,
+            watchMinutes:row.estimatedMinutesWatched
           })),
           errors:reportErrors,
           periodDays:PERIOD_DAYS,capturedAt:snapshot.capturedAt
