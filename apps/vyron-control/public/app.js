@@ -231,7 +231,8 @@ function renderAnalytics(data) {
     const item=dailyMap.get(row.date)||{
       date:row.date,views:0,engagedViews:0,dislikes:0,watchMinutes:0,
       subscribersGained:0,subscribersLost:0,likes:0,comments:0,shares:0,
-      weightedDuration:0,weightedRetention:0,weight:0
+      redViews:0,redWatchMinutes:0,playlistAdds:0,playlistRemoves:0,
+      uniqueViewers:0,uniqueDays:0,weightedDuration:0,weightedRetention:0,weight:0
     };
     const views=row.views||0;
     item.views+=views;item.engagedViews+=row.engagedViews||0;
@@ -239,6 +240,9 @@ function renderAnalytics(data) {
     item.subscribersGained+=row.subscribersGained||0;
     item.subscribersLost+=row.subscribersLost||0;
     item.likes+=row.likes||0;item.comments+=row.comments||0;item.shares+=row.shares||0;
+    item.redViews+=row.redViews||0;item.redWatchMinutes+=row.redWatchMinutes||0;
+    item.playlistAdds+=row.playlistAdds||0;item.playlistRemoves+=row.playlistRemoves||0;
+    if(row.uniqueViewers!=null){item.uniqueViewers+=row.uniqueViewers;item.uniqueDays++;}
     item.weightedDuration+=(row.averageViewDuration||0)*views;
     item.weightedRetention+=(row.averageViewPercentage||0)*views;
     item.weight+=views;dailyMap.set(row.date,item);
@@ -258,12 +262,19 @@ function renderAnalytics(data) {
     (row.averageViewPercentage||0)*(row.views||0),0)/weighted:null;
   $('analytics-views').textContent=number(views);
   $('analytics-engaged-views').textContent=number(sum('engagedViews'));
+  const uniqueDays=daily.filter(row=>row.uniqueDays>0);
+  $('analytics-unique-viewers').textContent=uniqueDays.length
+    ?number(Math.round(uniqueDays.reduce((total,row)=>total+row.uniqueViewers,0)/
+      uniqueDays.reduce((total,row)=>total+row.uniqueDays,0))):'—';
   $('analytics-watch-hours').textContent=number(Math.round(watchMinutes/60*10)/10);
   $('analytics-net-subs').textContent=(gained-lost>0?'+':'')+number(gained-lost);
   $('analytics-subs-note').textContent=number(gained)+' получено · '+number(lost)+' потеряно';
   $('analytics-retention').textContent=retention==null?'—':retention.toFixed(1)+'%';
   $('analytics-likes').textContent=number(sum('likes'));
   $('analytics-dislikes').textContent=number(sum('dislikes'));
+  $('analytics-red-views').textContent=number(sum('redViews'));
+  $('analytics-playlist-adds').textContent=number(sum('playlistAdds'));
+  $('analytics-playlist-removes').textContent=number(sum('playlistRemoves'));
   $('analytics-comments').textContent=number(sum('comments'));
   $('analytics-shares').textContent=number(sum('shares'));
   $('analytics-avg-duration').textContent=formatDuration(avgDuration);
@@ -274,7 +285,8 @@ function renderAnalytics(data) {
 
   const topVideos=[];
   const traffic=new Map(),devices=new Map(),countries=new Map(),demographics=new Map(),
-    sharing=new Map(),playback=new Map(),operatingSystems=new Map(),liveModes=new Map();
+    sharing=new Map(),playback=new Map(),operatingSystems=new Map(),liveModes=new Map(),
+    subscribed=new Map();
   const add=(map,key,row,weight=1)=>{
     if(!key)return;
     const item=map.get(key)||{label:key,value:0,sub:0};
@@ -307,6 +319,7 @@ function renderAnalytics(data) {
     for(const row of reports.playbackLocations||[])add(playback,row.playbackLocation,row);
     for(const row of reports.operatingSystems||[])add(operatingSystems,row.operatingSystem,row);
     for(const row of reports.liveOrOnDemand||[])add(liveModes,row.liveOrOnDemand,row);
+    for(const row of reports.subscribedStatus||[])add(subscribed,row.subscribedStatus,row);
   }
   const byViews=map=>[...map.values()].sort((a,b)=>b.value-a.value).slice(0,8);
   const sourceNames={
@@ -325,6 +338,7 @@ function renderAnalytics(data) {
   const osNames={ANDROID:'Android',IOS:'iOS',WINDOWS:'Windows',MAC_OS:'macOS',
     LINUX:'Linux',CHROME_OS:'ChromeOS',OTHER:'Другие ОС'};
   const liveNames={LIVE:'Прямые эфиры',ON_DEMAND:'Обычные видео / Shorts'};
+  const subscribedNames={SUBSCRIBED:'Подписчики',UNSUBSCRIBED:'Не подписаны'};
   renderRanking('analytics-top-videos',topVideos.sort((a,b)=>b.value-a.value).slice(0,10),{
     empty:'Нет данных о лучших видео. Google Analytics должен завершить первую синхронизацию.'
   });
@@ -352,6 +366,9 @@ function renderAnalytics(data) {
   renderRanking('analytics-os',byViews(operatingSystems).map(item=>({
     ...item,label:osNames[item.label]||item.label
   })),{empty:'Нет данных об операционных системах.'});
+  renderRanking('analytics-subscribed',byViews(subscribed).map(item=>({
+    ...item,label:subscribedNames[item.label]||item.label
+  })),{empty:'Нет данных о просмотрах подписчиков и новых зрителей.'});
   renderRanking('analytics-live',byViews(liveModes).map(item=>({
     ...item,label:liveNames[item.label]||item.label
   })),{empty:'Нет данных по прямым эфирам и видео.'});
