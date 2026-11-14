@@ -94,6 +94,22 @@ fn updater_config_diagnostics(app:&tauri::AppHandle)->serde_json::Value{
     })
 }
 
+fn updater_config_is_trusted(diagnostics:&serde_json::Value)->bool{
+    diagnostics.get("updaterConfigurationValid").and_then(|value|value.as_bool())==Some(true)
+      &&diagnostics.get("updaterPublicKeyTrustVerified").and_then(|value|value.as_bool())==Some(true)
+}
+
+fn require_trusted_updater_config(app:&tauri::AppHandle)->Result<(),String>{
+    let diagnostics=updater_config_diagnostics(app);
+    if !updater_config_is_trusted(&diagnostics){
+        let endpoint=diagnostics.get("updaterEndpoint").and_then(|value|value.as_str()).unwrap_or("missing");
+        let fingerprint=diagnostics.get("updaterPublicKeySha256").and_then(|value|value.as_str()).unwrap_or("missing");
+        let trust=diagnostics.get("updaterPublicKeyTrust").and_then(|value|value.as_str()).unwrap_or("unverified");
+        return Err(format!("UPDATER_KEY_TRUST_NOT_VERIFIED: endpoint={endpoint}; public_key_sha256={fingerprint}; trust={trust}"));
+    }
+    Ok(())
+}
+
 fn merge_updater_config_diagnostics(target:&mut serde_json::Value,app:&tauri::AppHandle){
     let diagnostics=updater_config_diagnostics(app);
     if let (Some(target),Some(source))=(target.as_object_mut(),diagnostics.as_object()){
@@ -274,6 +290,7 @@ fn manifest_platform_text(raw:&serde_json::Value,target:&str,key:&str)->Option<S
 }
 
 async fn stable_update(app:&tauri::AppHandle)->Result<Option<tauri_plugin_updater::Update>,String>{
+    require_trusted_updater_config(app)?;
     let updater=app.updater_builder().build().map_err(|e|format!("UPDATER_BUILD_FAILED: {e}"))?;
     updater.check().await.map_err(|e|format!("UPDATER_MANIFEST_FETCH_FAILED: {e}"))
 }
@@ -535,6 +552,7 @@ fn owner_preview_available(current_product:&str,current_revision:u64,remote_vers
 }
 
 async fn owner_preview_update(app:&tauri::AppHandle)->Result<Option<tauri_plugin_updater::Update>,String>{
+    require_trusted_updater_config(app)?;
     let current_revision=build_revision();
     let current_product=app.package_info().version.to_string();
     let endpoint=OWNER_PREVIEW_ENDPOINT.parse().map_err(|e|format!("OWNER_PREVIEW_ENDPOINT_INVALID: {e}"))?;
@@ -675,6 +693,17 @@ mod updater_key_diagnostic_tests{
         assert!(valid);
         assert_eq!(key_id.as_deref(),Some("8133C9873FAB79C1"));
         assert_eq!(fingerprint.as_deref(),Some("cbd37c85807e9b80f30612a1bc3a35bc75819b758ac62bb2bfee1881e6db938b"));
+    }
+
+    #[test]
+    fn backend_update_gate_requires_pinned_config_and_matching_trust_anchor(){
+        let trusted=serde_json::json!({"updaterConfigurationValid":true,"updaterPublicKeyTrustVerified":true});
+        let wrong_endpoint=serde_json::json!({"updaterConfigurationValid":false,"updaterPublicKeyTrustVerified":true});
+        let unverified_key=serde_json::json!({"updaterConfigurationValid":true,"updaterPublicKeyTrustVerified":false});
+        assert!(updater_config_is_trusted(&trusted));
+        assert!(!updater_config_is_trusted(&wrong_endpoint));
+        assert!(!updater_config_is_trusted(&unverified_key));
+        assert!(!updater_config_is_trusted(&serde_json::json!({})));
     }
 
     #[test]
