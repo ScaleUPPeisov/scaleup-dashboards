@@ -219,7 +219,8 @@ function renderRanking(targetId,items,{format=value=>number(value),empty='Нет
     const track=make('div','analytics-rank-track'),fill=make('span');
     fill.style.width=Math.max(0,Math.min(100,(Number(item.value)||0)/max*100))+'%';
     track.append(fill);row.append(track);
-    if(item.sub)row.append(make('small','analytics-rank-sub',item.sub));
+    const subText=typeof item.sub==='number'?number(item.sub)+' мин просмотра':item.sub;
+    if(subText)row.append(make('small','analytics-rank-sub',subText));
     container.append(row);
   }
 }
