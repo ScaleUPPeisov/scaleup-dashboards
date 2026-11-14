@@ -13,6 +13,8 @@ let eventCursor = null;
 let eventHistoryExtended = false;
 let eventRows = [];
 let macAgentToken = '';
+let manualRefreshing = false;
+let activeMobileView = 'overview';
 const macAgentInstallCommand =
   'curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/feature/vyron-control-cloud-mvp-20261113/apps/vyron-control/public/install-mac-agent.sh | bash';
 const showLogin = error => {
@@ -59,10 +61,17 @@ function renderChannels(channels) {
   const needle = $('search').value.trim().toLocaleLowerCase('ru-RU');
   const visible = channels.filter(ch =>
     ch.name.toLocaleLowerCase('ru-RU').includes(needle) || ch.id.toLowerCase().includes(needle));
-  if($('channel-sort').value==='growth')visible.sort((a,b)=>
+  const sortMode=$('channel-sort').value;
+  if(sortMode==='growth')visible.sort((a,b)=>
     ((b.subscribers??0)-(b.previousSubscribers??b.subscribers??0))-
     ((a.subscribers??0)-(a.previousSubscribers??a.subscribers??0))||
     a.name.localeCompare(b.name,'ru'));
+  else if(sortMode==='views')visible.sort((a,b)=>
+    (b.analytics?.views??b.views??0)-(a.analytics?.views??a.views??0));
+  else if(sortMode==='watchtime')visible.sort((a,b)=>
+    (b.analytics?.watchMinutes??0)-(a.analytics?.watchMinutes??0));
+  else if(sortMode==='retention')visible.sort((a,b)=>
+    (b.analytics?.averageViewPercentage??0)-(a.analytics?.averageViewPercentage??0));
   else visible.sort((a,b)=>a.name.localeCompare(b.name,'ru'));
   const list = $('channels');
   list.replaceChildren();
@@ -100,22 +109,198 @@ function renderChannels(channels) {
     if (ch.analytics) {
       const a = ch.analytics;
       const extras = make('div', 'channel-analytics');
+      const daily=a.daily||[];
+      const sum=key=>daily.reduce((total,item)=>total+(item[key]??0),0);
       const fields = [
         ['Период', number(a.periodDays) + ' дн.'],
-        ['Просмотры', number(a.views)],
+        ['Просмотры Analytics', number(a.views)],
         ['Время просмотра', a.watchMinutes == null ? '—' : number(Math.round(a.watchMinutes)) + ' мин'],
         ['Удержание', a.averageViewPercentage == null ? '—' : a.averageViewPercentage.toFixed(1) + '%'],
-        ['CTR', a.impressionCtr == null ? 'Нет данных API' : a.impressionCtr.toFixed(1) + '%']
+        ['Средняя длительность',a.avgViewSeconds==null?'—':formatDuration(a.avgViewSeconds)],
+        ['Чистый прирост',number((a.subscribersGained??0)-(a.subscribersLost??0))],
+        ['Лайки',number(sum('likes'))],['Комментарии',number(sum('comments'))],
+        ['Репосты',number(sum('shares'))],
+        ['CTR миниатюр','Не предоставляется текущим API']
       ];
-      for (const [label, value] of fields) {
-        const item = make('span', '', label + ': ' + value);
-        extras.append(item);
-      }
+      for (const [label, value] of fields)extras.append(make('span', '', label + ': ' + value));
       extras.append(make('span', 'mac-stale-label',
-        'Analytics 360° · кеш Mac от ' + time(a.updatedAt)));
-      row.append(extras);
+        (a.source==='GOOGLE_ANALYTICS_API'?'Google Analytics API':'Кеш VYRON / Mac')+' · '+time(a.updatedAt)));
+      const compact=window.matchMedia('(max-width:760px)').matches;
+      extras.hidden=compact;
+      const expand=make('button','channel-expand',compact?'Подробнее':'Свернуть');
+      expand.hidden=!compact;
+      expand.addEventListener('click',()=>{
+        extras.hidden=!extras.hidden;
+        expand.textContent=extras.hidden?'Подробнее':'Свернуть';
+      });
+      row.append(expand,extras);
     }
     list.append(row);
+  }
+}
+function formatDuration(seconds) {
+  if(seconds==null||!Number.isFinite(Number(seconds)))return '—';
+  const value=Math.max(0,Math.round(Number(seconds)));
+  const hours=Math.floor(value/3600),minutes=Math.floor((value%3600)/60),secs=value%60;
+  return hours?hours+' ч '+minutes+' мин':minutes?minutes+' мин '+secs+' с':secs+' с';
+}
+function svgNode(tag,attrs={}) {
+  const node=document.createElementNS('http://www.w3.org/2000/svg',tag);
+  for(const [key,value] of Object.entries(attrs))node.setAttribute(key,String(value));
+  return node;
+}
+function renderAnalyticsTrend(rows,period) {
+  const svg=$('analytics-trend'),caption=$('analytics-trend-caption');
+  svg.replaceChildren();
+  if(!rows.length) {
+    caption.textContent='Нет дневных данных Google Analytics. Проверь подключение OAuth и выполни «Обновить всё».';
+    return;
+  }
+  const width=720,height=190,left=34,right=14,top=16,bottom=24;
+  const values=rows.map(row=>row.views||0),max=Math.max(1,...values);
+  const plotWidth=width-left-right,plotHeight=height-top-bottom;
+  for(let i=0;i<4;i++){
+    const y=top+i*plotHeight/3;
+    svg.append(svgNode('path',{d:'M '+left+' '+y+' H '+(width-right),class:'trend-grid'}));
+  }
+  const points=values.map((value,index)=>{
+    const x=left+(rows.length===1?plotWidth/2:index*plotWidth/(rows.length-1));
+    const y=top+plotHeight-(value/max)*plotHeight;
+    return [x,y];
+  });
+  const line=points.map((point,index)=>(index?'L ':'M ')+point[0]+' '+point[1]).join(' ');
+  const area=line+' L '+points[points.length-1][0]+' '+(top+plotHeight)+
+    ' L '+points[0][0]+' '+(top+plotHeight)+' Z';
+  svg.append(svgNode('path',{d:area,class:'trend-area'}));
+  svg.append(svgNode('path',{d:line,class:'trend-line'}));
+  const first=rows[0].date,last=rows[rows.length-1].date;
+  caption.textContent=rows.length+' дней · '+first+' — '+last+
+    ' · всего '+number(values.reduce((sum,value)=>sum+value,0))+' просмотров';
+  $('analytics-trend-range').textContent=period+' дней';
+}
+function renderRanking(targetId,items,{format=value=>number(value),empty='Нет данных за выбранный период'}={}) {
+  const container=$(targetId);
+  container.replaceChildren();
+  if(!items.length){container.append(make('div','analytics-empty',empty));return;}
+  const max=Math.max(1,...items.map(item=>Number(item.value)||0));
+  for(const item of items){
+    const row=make('div','analytics-rank-row');
+    const label=make('div','analytics-rank-label');
+    if(item.href){
+      const link=make('a','',item.label);
+      link.href=item.href;link.target='_blank';link.rel='noopener noreferrer';
+      label.append(link);
+    }else label.textContent=item.label;
+    row.append(label,make('strong','analytics-rank-value',format(item.value)));
+    const track=make('div','analytics-rank-track'),fill=make('span');
+    fill.style.width=Math.max(0,Math.min(100,(Number(item.value)||0)/max*100))+'%';
+    track.append(fill);row.append(track);
+    if(item.sub)row.append(make('small','analytics-rank-sub',item.sub));
+    container.append(row);
+  }
+}
+function renderAnalytics(data) {
+  const connected=(data.channels||[]).filter(ch=>ch.analytics?.source==='GOOGLE_ANALYTICS_API');
+  const period=Number($('analytics-period').value||28);
+  const dailyMap=new Map();
+  for(const channel of connected)for(const row of channel.analytics.daily||[]){
+    const item=dailyMap.get(row.date)||{
+      date:row.date,views:0,watchMinutes:0,subscribersGained:0,subscribersLost:0,
+      likes:0,comments:0,shares:0,weightedDuration:0,weightedRetention:0,weight:0
+    };
+    const views=row.views||0;
+    item.views+=views;item.watchMinutes+=row.watchMinutes||0;
+    item.subscribersGained+=row.subscribersGained||0;
+    item.subscribersLost+=row.subscribersLost||0;
+    item.likes+=row.likes||0;item.comments+=row.comments||0;item.shares+=row.shares||0;
+    item.weightedDuration+=(row.averageViewDuration||0)*views;
+    item.weightedRetention+=(row.averageViewPercentage||0)*views;
+    item.weight+=views;dailyMap.set(row.date,item);
+  }
+  const allDaily=[...dailyMap.values()].sort((a,b)=>a.date.localeCompare(b.date)).map(row=>({
+    ...row,averageViewDuration:row.weight?row.weightedDuration/row.weight:null,
+    averageViewPercentage:row.weight?row.weightedRetention/row.weight:null
+  }));
+  const daily=allDaily.slice(-period);
+  const sum=key=>daily.reduce((total,row)=>total+(row[key]||0),0);
+  const views=sum('views'),watchMinutes=sum('watchMinutes');
+  const gained=sum('subscribersGained'),lost=sum('subscribersLost');
+  const weighted=daily.reduce((total,row)=>total+(row.views||0),0);
+  const avgDuration=weighted?daily.reduce((total,row)=>total+
+    (row.averageViewDuration||0)*(row.views||0),0)/weighted:null;
+  const retention=weighted?daily.reduce((total,row)=>total+
+    (row.averageViewPercentage||0)*(row.views||0),0)/weighted:null;
+  $('analytics-views').textContent=number(views);
+  $('analytics-watch-hours').textContent=number(Math.round(watchMinutes/60*10)/10);
+  $('analytics-net-subs').textContent=(gained-lost>0?'+':'')+number(gained-lost);
+  $('analytics-subs-note').textContent=number(gained)+' получено · '+number(lost)+' потеряно';
+  $('analytics-retention').textContent=retention==null?'—':retention.toFixed(1)+'%';
+  $('analytics-likes').textContent=number(sum('likes'));
+  $('analytics-comments').textContent=number(sum('comments'));
+  $('analytics-shares').textContent=number(sum('shares'));
+  $('analytics-avg-duration').textContent=formatDuration(avgDuration);
+  const latest=connected.map(ch=>ch.analytics.updatedAt).filter(Boolean).sort().at(-1);
+  $('analytics-updated').textContent='Google Analytics API: '+connected.length+' / '+(data.channels||[]).length+
+    ' каналов · последний снимок '+time(latest);
+  renderAnalyticsTrend(daily,period);
+
+  const topVideos=[];
+  const traffic=new Map(),devices=new Map(),countries=new Map(),demographics=new Map();
+  const add=(map,key,row,weight=1)=>{
+    if(!key)return;
+    const item=map.get(key)||{label:key,value:0,sub:0};
+    item.value+=Number(row.views)||0;
+    item.sub+=Number(row.watchMinutes)||0;
+    map.set(key,item);
+  };
+  for(const channel of connected){
+    const reports=channel.analytics.reports||{};
+    for(const video of reports.topVideos||[])topVideos.push({
+      label:video.videoId||'Видео',value:video.views||0,
+      sub:channel.name+' · '+(video.creatorContentType||'Видео'),
+      href:video.videoId?'https://www.youtube.com/watch?v='+encodeURIComponent(video.videoId):null
+    });
+    for(const row of reports.trafficSources||[])add(traffic,row.source,row);
+    for(const row of reports.devices||[])add(devices,row.deviceType,row);
+    for(const row of reports.countries||[])add(countries,row.country,row);
+    const channelWeight=Math.max(1,channel.analytics.views||0);
+    for(const row of reports.demographics||[]){
+      const key=(row.ageGroup||'Возраст не указан')+' · '+(row.gender||'Пол не указан');
+      const item=demographics.get(key)||{label:key,weighted:0,weight:0};
+      item.weighted+=(Number(row.viewerPercentage)||0)*channelWeight;
+      item.weight+=channelWeight;demographics.set(key,item);
+    }
+  }
+  const byViews=map=>[...map.values()].sort((a,b)=>b.value-a.value).slice(0,8);
+  const sourceNames={
+    RELATED_VIDEO:'Рекомендованные видео',YT_SEARCH:'Поиск YouTube',BROWSE_FEATURES:'Главная / Обзор',
+    EXTERNAL:'Внешние источники',SHORTS:'Лента Shorts',CHANNEL:'Страницы каналов',
+    PLAYLIST:'Плейлисты',NOTIFICATION:'Уведомления',END_SCREEN:'Конечные заставки',
+    ADVERTISING:'Реклама',DIRECT_OR_UNKNOWN:'Прямые / неизвестные',OTHER:'Другие'
+  };
+  const deviceNames={MOBILE:'Телефоны',DESKTOP:'Компьютеры',TV:'Телевизоры',
+    TABLET:'Планшеты',GAME_CONSOLE:'Игровые консоли',UNKNOWN:'Неизвестно'};
+  const formatHours=value=>number(Math.round(value/60*10)/10)+' ч';
+  renderRanking('analytics-top-videos',topVideos.sort((a,b)=>b.value-a.value).slice(0,10),{
+    empty:'Нет данных о лучших видео. Google Analytics должен завершить первую синхронизацию.'
+  });
+  renderRanking('analytics-traffic',byViews(traffic).map(item=>({
+    ...item,label:sourceNames[item.label]||item.label
+  })),{empty:'Источники трафика пока не получены.'});
+  renderRanking('analytics-devices',byViews(devices).map(item=>({
+    ...item,label:deviceNames[item.label]||item.label
+  })),{empty:'Разбивка по устройствам пока не получена.'});
+  renderRanking('analytics-countries',byViews(countries),{
+    empty:'География пока не получена.'
+  });
+  renderRanking('analytics-demographics',[...demographics.values()].map(item=>({
+    label:item.label,value:item.weight?item.weighted/item.weight:0
+  })).sort((a,b)=>b.value-a.value).slice(0,8),{
+    format:value=>value.toFixed(1)+'%',
+    empty:'YouTube не предоставил демографические данные для этого периода.'
+  });
+  if(!connected.length){
+    $('analytics-updated').textContent='Нет облачных отчётов Google Analytics. Импортируй пакет VYRON и нажми «Обновить всё».';
   }
 }
 function renderEvents(events) {
