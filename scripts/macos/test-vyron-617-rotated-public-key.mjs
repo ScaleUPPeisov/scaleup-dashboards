@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 const root=new URL('../../',import.meta.url);
 const appConfig=JSON.parse(readFileSync(fileURLToPath(new URL('src-tauri/tauri.conf.json',root)),'utf8'));
 const frozenWorkflow=readFileSync(fileURLToPath(new URL('.github/workflows/vyron-6118-macos-new-key-release.yml',root)),'utf8');
+const buildScript=readFileSync(fileURLToPath(new URL('src-tauri/build.rs',root)),'utf8');
 
 test('production updater config remains pinned to the existing 6.1.15 feed',()=>{
   assert.equal(appConfig.version,'6.1.15');
@@ -17,6 +18,11 @@ test('unauthenticated tracked rotated-key overlays are absent',()=>{
   for(const name of ['tauri.617-rotated.conf.json','tauri.618-rotated.conf.json']){
     assert.equal(existsSync(fileURLToPath(new URL('src-tauri/'+name,root))),false,name+' must be generated only from an independently authenticated offline public key');
   }
+});
+
+test('release profile refuses builds without an independently authenticated updater fingerprint',()=>{
+  assert.match(buildScript,/UPDATER_TRUST_FINGERPRINT_REQUIRED_FOR_RELEASE/);
+  assert.match(buildScript,/VYRON_TRUSTED_UPDATER_PUBLIC_KEY_SHA256/);
 });
 
 test('6.1.18 release workflow is inert and cannot access signing or publishing secrets',()=>{
