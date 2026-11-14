@@ -353,8 +353,10 @@ function render(data) {
   $('state-label').textContent = data.lastError ? 'Ошибка: ' + data.lastError :
     data.syncing ? 'Идёт синхронизация…' :
     data.configured ? 'Сервис готов к обновлению' : 'Требуется настройка YouTube API';
-  $('refresh').disabled = !data.configured || data.syncing;
+  $('refresh').disabled = !data.configured || data.syncing || manualRefreshing;
   renderChannels(data.channels);
+  renderAnalytics(data);
+  applyMobileView();
   if (!eventHistoryExtended) renderEvents(data.events);
   renderDevices(data);
 }
@@ -413,6 +415,28 @@ async function fetchEventHistory(reset=false) {
     }
   }
 }
+function applyMobileView() {
+  const mobile=window.matchMedia('(max-width:760px)').matches;
+  document.querySelectorAll('[data-mobile-view]').forEach(panel=>{
+    panel.classList.toggle('mobile-view-hidden',mobile&&panel.dataset.mobileView!==activeMobileView);
+  });
+  document.querySelectorAll('[data-mobile-target]').forEach(button=>{
+    const active=button.dataset.mobileTarget===activeMobileView;
+    button.classList.toggle('active',active);
+    button.setAttribute('aria-pressed',active?'true':'false');
+  });
+}
+document.querySelectorAll('[data-mobile-target]').forEach(button=>{
+  button.addEventListener('click',()=>{
+    activeMobileView=button.dataset.mobileTarget;
+    applyMobileView();
+    window.scrollTo({top:0,behavior:'smooth'});
+  });
+});
+window.addEventListener('resize',applyMobileView);
+$('analytics-period').addEventListener('change',()=>{
+  if(current)renderAnalytics(current);
+});
 $('event-filter').addEventListener('change',()=>{
   eventHistoryExtended=false;
   eventCursor=null;eventRows=[];
@@ -541,17 +565,25 @@ async function loadOauthProfiles() {
   const container=$('oauth-profiles');
   try {
     const result=await api('/api/oauth/profiles');
+    const profiles=result.profiles||[];
+    const connectedIds=new Set(profiles.map(profile=>profile.channel_id));
+    const allChannels=current?.channels||[];
+    const total=allChannels.length||profiles.length;
+    const missing=allChannels.filter(channel=>!connectedIds.has(channel.id));
     button.disabled=!result.configured;
-    counter.textContent=String(result.profiles?.length||0)+' подключено';
+    counter.textContent=profiles.length+' / '+total+' каналов';
     message.textContent=result.configured
-      ? 'Подключение защищено Google OAuth. На Mac ничего менять не требуется.'
+      ? (missing.length
+        ? 'Облачная аналитика подключена для '+profiles.length+' из '+total+
+          ' каналов. Оставшиеся привязки будут показаны отдельно — повторный импорт пакета должен восстановить их автоматически.'
+        : 'Все '+total+' каналов подключены к Google Analytics в режиме чтения.')
       : 'Google OAuth ещё не настроен в Cloudflare.';
     container.replaceChildren();
-    for(const profile of result.profiles||[]) {
+    for(const profile of profiles) {
       const line=make('div','oauth-profile');
       const name=make('span','',profile.channel_name+' · '+profile.channel_id);
       const status=make('small','',
-        profile.last_error?'Ошибка обновления: '+profile.last_error:
+        profile.last_error?'Проверить: '+profile.last_error:
         profile.last_success_at?'Обновлено '+time(profile.last_success_at):
         'Ожидает первой синхронизации');
       const disconnect=make('button','ghost','Отключить');
@@ -564,6 +596,12 @@ async function loadOauthProfiles() {
         }catch(e){message.textContent='Ошибка: '+e.message;disconnect.disabled=false;}
       });
       line.append(name,status,disconnect);
+      container.append(line);
+    }
+    for(const channel of missing) {
+      const line=make('div','oauth-profile oauth-profile-missing');
+      line.append(make('span','',channel.name+' · '+channel.id),
+        make('small','','Нет привязки refresh token в облаке. Повтори автоматический импорт пакета VYRON.'));
       container.append(line);
     }
   }catch(error){
@@ -602,21 +640,24 @@ $('migration-import').addEventListener('click',async()=>{
     message.textContent='Расшифровываю пакет локально…';
     const bundle=await decryptVyronMigration(await file.arrayBuffer(),password);
     let imported=0,failed=0,processed=0;
-    for(let offset=0;offset<bundle.profiles.length;offset+=8){
-      const chunk=bundle.profiles.slice(offset,offset+8);
-      message.textContent=`Проверяю OAuth-профили: ${processed} из ${bundle.profiles.length}…`;
-      const result=await api('/api/oauth/import-vyron','POST',{
-        bundleUuid:bundle.bundleUuid,profiles:chunk
-      });
-      imported+=result.imported||0;failed+=result.failed||0;processed+=chunk.length;
-      for(const profile of chunk){
+    try {
+      for(let offset=0;offset<bundle.profiles.length;offset+=8){
+        const chunk=bundle.profiles.slice(offset,offset+8);
+        message.textContent=`Проверяю привязки каналов: ${processed} из ${bundle.profiles.length}…`;
+        const result=await api('/api/oauth/import-vyron','POST',{
+          bundleUuid:bundle.bundleUuid,profiles:chunk
+        });
+        imported+=result.imported||0;failed+=result.failed||0;processed+=chunk.length;
+      }
+    } finally {
+      for(const profile of bundle.profiles){
         profile.refreshToken='';profile.clientSecret='';profile.clientId='';
       }
     }
     $('migration-password').value='';$('migration-file').value='';
     message.textContent=failed
-      ?`Импортировано ${imported}; не прошли проверку ${failed}. Рабочие профили сохранены.`
-      :`Готово: ${imported} OAuth-профилей импортировано и проверено Google.`;
+      ?`Подключено ${imported} из ${bundle.profiles.length} каналов; не прошли проверку ${failed}. Повторный импорт безопасен.`
+      :`Готово: ${imported} из ${bundle.profiles.length} каналов импортировано и проверено Google.`;
     await loadOauthProfiles();
   }catch(error){message.textContent='Импорт не выполнен: '+error.message;}
   finally{button.disabled=false;}
@@ -709,16 +750,54 @@ $('logout').addEventListener('click', () => {
   showLogin('');
 });
 $('refresh').addEventListener('click', async () => {
-  $('refresh').disabled = true;
-  $('state-label').textContent = 'Запрашиваем свежие счётчики YouTube…';
+  const button=$('refresh'),feedback=$('refresh-feedback');
+  manualRefreshing=true;button.disabled=true;
+  feedback.textContent='Шаг 1/2 · обновляем публичные счётчики всех каналов…';
+  $('state-label').textContent='Запрашиваем свежие данные YouTube…';
+  let publicResult=null,publicError='',analyticsTotal=0,analyticsUpdated=0,
+    analyticsFailed=0,analyticsPartial=0,analyticsErrors=[];
   try {
-    const result = await api('/api/refresh', 'POST');
-    render(result.status);
-  } catch (error) {
-    $('state-label').textContent = 'Ошибка: ' + error.message;
+    try {publicResult=await api('/api/refresh','POST',{});}
+    catch(error){publicError=error.message;}
+    try {
+      const oauth=await api('/api/oauth/profiles');
+      const profiles=oauth.profiles||[];
+      analyticsTotal=profiles.length;
+      if(analyticsTotal){
+        const requestId=crypto.randomUUID().replaceAll('-','');
+        for(let offset=0;offset<analyticsTotal;offset+=4){
+          const completed=Math.min(offset+4,analyticsTotal);
+          feedback.textContent='Шаг 2/2 · Google Analytics: '+completed+' / '+analyticsTotal+' каналов…';
+          try {
+            const batch=await api('/api/analytics/refresh','POST',{offset,requestId});
+            analyticsUpdated+=batch.updated||0;
+            analyticsFailed+=batch.failed||0;
+            analyticsPartial+=batch.partial||0;
+          }catch(error){analyticsErrors.push('пакет '+(offset+1)+': '+error.message);}
+        }
+      }
+    }catch(error){analyticsErrors.push(error.message);}
     await load();
+    const publicMatch=publicError.match(/updated (\d+)\/(\d+)/);
+    const publicSummary=publicError
+      ?'Счётчики '+(publicMatch?publicMatch[1]+'/'+publicMatch[2]:'ошибка')+' · '+publicError
+      :publicResult?.skipped?'Публичные счётчики уже обновлялись в этом 5-минутном окне'
+      :'Счётчики '+(publicResult?.updatedChannels??0)+' / '+(publicResult?.requestedChannels??0);
+    const analyticsSummary=analyticsTotal
+      ?'Analytics '+analyticsUpdated+' / '+analyticsTotal+
+        (analyticsFailed?' · ошибок '+analyticsFailed:'')+
+        (analyticsPartial?' · неполных отчётов '+analyticsPartial:'')
+      :'Analytics OAuth: нет подключённых каналов';
+    feedback.textContent=[publicSummary,analyticsSummary,...analyticsErrors].join(' · ');
+    $('state-label').textContent=publicError
+      ?'Публичное обновление завершилось не полностью. Смотри детали ниже.'
+      :analyticsFailed||analyticsErrors.length
+        ?'Публичные счётчики обновлены; часть Analytics-отчётов требует проверки.'
+        :'Синхронизация завершена.';
   } finally {
-    $('refresh').disabled = false;
+    manualRefreshing=false;
+    if(current)$('refresh').disabled=!current.configured||current.syncing;
+    else button.disabled=false;
   }
 });
 $('search').addEventListener('input', () => {
