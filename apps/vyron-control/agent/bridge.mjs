@@ -16,7 +16,7 @@ export class MacBridge {
     this.url=url.replace(/\/$/,'');
     this.token=token;this.deviceId=deviceId;this.eventsFile=eventsFile;
     this.statusFile=statusFile;this.channelsFile=channelsFile;this.analyticsFile=analyticsFile;this.cursorFile=cursorFile;this.fetchImpl=fetchImpl;
-    this.offset=0;this.busy=false;this.lastChannelHash=null;this.lastAnalyticsHash=null;
+    this.offset=0;this.busy=false;this.lastChannelHash=null;this.lastChannelSyncAttemptAt=0;this.lastAnalyticsHash=null;
   }
   async initialize() {
     try {
@@ -61,16 +61,27 @@ export class MacBridge {
     }
     const entries=Array.isArray(raw)?raw:raw?.channels;
     if (!Array.isArray(entries)) throw new Error('Expected channel export array');
+    const byId=new Map(entries.map(ch=>[String(ch.id??ch.channelId??''),ch]));
     const normalized=validatedChannelList(entries.map(ch=>({
       id:ch.id ?? ch.channelId,
       name:ch.name ?? ch.title
-    })));
+    }))).map(channel=>{
+      const source=byId.get(channel.id);
+      const binding=String(source?.profileBinding||'');
+      return /^[a-f0-9]{64}$/i.test(binding)
+        ?{...channel,profileBinding:binding.toLowerCase()}:channel;
+    });
     if (!normalized.length) return { imported:0, reason:'empty_export' };
     const hash=createHash('sha256').update(JSON.stringify(normalized)).digest('hex');
     if (hash===this.lastChannelHash) return {imported:0, reason:'unchanged'};
-    await this.api('/api/agent/channels','POST',normalized);
+    if(Date.now()-this.lastChannelSyncAttemptAt<120_000)
+      return {imported:0,reason:'retry_backoff'};
+    this.lastChannelSyncAttemptAt=Date.now();
+    const result=await this.api('/api/agent/channels','POST',normalized);
+    if(result.publicSync?.complete===false)
+      return {imported:0,reason:'initial_sync_pending',publicSync:result.publicSync};
     this.lastChannelHash=hash;
-    return { imported:normalized.length };
+    return {imported:normalized.length,result};
   }
   async syncAnalytics() {
     if(!this.analyticsFile)return {uploaded:0,reason:'no_export'};
