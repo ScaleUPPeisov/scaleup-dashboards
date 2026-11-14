@@ -513,7 +513,7 @@ export default {
       }
       if (url.pathname==='/api/analytics/refresh'&&request.method==='POST') {
         const body=await readJson(request,2000);
-        return json(await runManualAnalyticsBatch(env,body));
+        return json(await runManualAnalyticsBatch(env,body,env.FETCH_IMPL||fetch));
       }
       if (url.pathname==='/api/channels'&&request.method==='POST')
         return enrollChannels(env,request);
