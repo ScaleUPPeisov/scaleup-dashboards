@@ -97,13 +97,13 @@ export function parseDimensionReport(json,dimensions,metrics) {
   });
 }
 
-function reportParams(startDate,endDate,dimensions,metrics,sort,maxResults) {
+function reportParams(startDate,endDate,dimensions,metrics,sort,maxResults,filters) {
   const params=new URLSearchParams({
-    ids:'channel==MINE',startDate,endDate,
-    dimensions,metrics
+    ids:'channel==MINE',startDate,endDate,dimensions,metrics
   });
   if(sort)params.set('sort',sort);
   if(maxResults)params.set('maxResults',String(maxResults));
+  if(filters)params.set('filters',filters);
   return params;
 }
 async function requestReport(token,params,fetchImpl,retryTransient=false) {
@@ -120,9 +120,9 @@ async function requestReport(token,params,fetchImpl,retryTransient=false) {
   if(!response.ok)throw new Error('YouTube Analytics HTTP '+response.status);
   return response.json();
 }
-async function optionalReport(token,startDate,endDate,dimensions,metrics,fetchImpl,sort,maxResults) {
+async function optionalReport(token,startDate,endDate,dimensions,metrics,fetchImpl,sort,maxResults,filters) {
   try {
-    const params=reportParams(startDate,endDate,dimensions,metrics,sort,maxResults);
+    const params=reportParams(startDate,endDate,dimensions,metrics,sort,maxResults,filters);
     const json=await requestReport(token,params,fetchImpl,false);
     return {rows:parseDimensionReport(json,dimensions,metrics),error:null};
   } catch(error) {
@@ -165,26 +165,38 @@ async function processBatch(env,details,fetchImpl=fetch) {
         const snapshot=parseDailyReport(dailyJson,profile.channel_id,
           new Date().toISOString(),PERIOD_DAYS);
 
-        const [topVideos,trafficSources,devices,countries,demographics,sharingServices,playbackLocations]=await Promise.all([
+        const [topVideos,trafficSources,devices,countries,demographics,sharingServices,
+          playbackLocations,operatingSystems,liveOrOnDemand]=await Promise.all([
           optionalReport(token,startDate,endDate,'video,creatorContentType',
             'views,engagedViews,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,likes,dislikes,comments,shares',
             fetchImpl,'-views',10),
           optionalReport(token,startDate,endDate,'insightTrafficSourceType',
-            'views,estimatedMinutesWatched',fetchImpl,'-views',20),
+            'views,estimatedMinutesWatched',fetchImpl,null,20),
           optionalReport(token,startDate,endDate,'deviceType',
-            'views,estimatedMinutesWatched',fetchImpl,'-views',10),
+            'views,estimatedMinutesWatched',fetchImpl,null,10),
           optionalReport(token,startDate,endDate,'country',
-            'views,estimatedMinutesWatched',fetchImpl,'-views',10),
+            'views,estimatedMinutesWatched',fetchImpl,null,10),
           optionalReport(token,startDate,endDate,'ageGroup,gender',
-            'viewerPercentage',fetchImpl,'-viewerPercentage',20),
+            'viewerPercentage',fetchImpl,null,20),
           optionalReport(token,startDate,endDate,'sharingService',
-            'shares',fetchImpl,'-shares',20),
+            'shares',fetchImpl,null,20),
           optionalReport(token,startDate,endDate,'insightPlaybackLocationType',
-            'views,estimatedMinutesWatched',fetchImpl,'-views',20)
+            'views,estimatedMinutesWatched',fetchImpl,null,20),
+          optionalReport(token,startDate,endDate,'operatingSystem',
+            'views,estimatedMinutesWatched',fetchImpl,null,20),
+          optionalReport(token,startDate,endDate,'liveOrOnDemand',
+            'views,engagedViews,estimatedMinutesWatched,averageViewDuration',fetchImpl,null,10)
         ]);
+        const topVideoId=String(topVideos.rows[0]?.video||'');
+        const audienceRetention=topVideoId
+          ?await optionalReport(token,startDate,endDate,'elapsedVideoTimeRatio',
+            'audienceWatchRatio,relativeRetentionPerformance',fetchImpl,null,200,
+            'video=='+topVideoId)
+          :{rows:[],error:null};
         const reportErrors={};
         for(const [key,value] of Object.entries({
-          topVideos,trafficSources,devices,countries,demographics,sharingServices,playbackLocations
+          topVideos,trafficSources,devices,countries,demographics,sharingServices,
+          playbackLocations,operatingSystems,liveOrOnDemand,audienceRetention
         }))if(value.error)reportErrors[key]=value.error;
         if(Object.keys(reportErrors).length)partial++;
         const reports={
@@ -219,6 +231,20 @@ async function processBatch(env,details,fetchImpl=fetch) {
           playbackLocations:playbackLocations.rows.map(row=>({
             playbackLocation:row.insightPlaybackLocationType,views:row.views,
             watchMinutes:row.estimatedMinutesWatched
+          })),
+          operatingSystems:operatingSystems.rows.map(row=>({
+            operatingSystem:row.operatingSystem,views:row.views,
+            watchMinutes:row.estimatedMinutesWatched
+          })),
+          liveOrOnDemand:liveOrOnDemand.rows.map(row=>({
+            liveOrOnDemand:row.liveOrOnDemand,views:row.views,
+            engagedViews:row.engagedViews,watchMinutes:row.estimatedMinutesWatched,
+            averageViewDuration:row.averageViewDuration
+          })),
+          audienceRetention:audienceRetention.rows.map(row=>({
+            elapsedVideoTimeRatio:Number(row.elapsedVideoTimeRatio),
+            audienceWatchRatio:row.audienceWatchRatio,
+            relativeRetentionPerformance:row.relativeRetentionPerformance
           })),
           errors:reportErrors,
           periodDays:PERIOD_DAYS,capturedAt:snapshot.capturedAt
