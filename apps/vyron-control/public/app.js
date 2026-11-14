@@ -17,7 +17,7 @@ let macAgentToken = '';
 let manualRefreshing = false;
 let activeMobileView = 'overview';
 const macAgentInstallCommand =
-  'curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/feature/vyron-control-mobile-analytics-20261114/apps/vyron-control/public/install-mac-agent.sh | bash';
+  'curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/release/vyron-control-production/apps/vyron-control/public/install-mac-agent.sh | bash';
 
 let serviceWorkerRegistrationPromise=null;
 async function ensureServiceWorker() {
