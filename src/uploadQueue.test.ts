@@ -49,6 +49,16 @@ describe('multi-channel upload queue',()=>{
   expect(q.findDuplicate(spec(2,'B','profile-B',{projectId:'PROJECT_A',localVideoIdentity:'B:VIDEO_041',fingerprint}))).toBeUndefined();
   expect(()=>q.enqueue(spec(2,'B','profile-B',{projectId:'PROJECT_A',localVideoIdentity:'B:VIDEO_041',fingerprint}))).not.toThrow();
  });
+ // Historical title is retained for baseline matching; projectId alone is no longer a queue-wide lock.
+ it('scopes active fingerprint duplicates to channel while keeping project identity global',()=>{
+  const q=new MultiChannelUploadQueue(()=>new Promise<void>(()=>{}),1);
+  const first=spec(1,'A','profile-A',{projectId:'PROJECT_A',localVideoIdentity:'A:VIDEO_041',fingerprint:'d'.repeat(64)});
+  q.enqueue(first);
+  expect(q.hasDuplicate(spec(2,'A','profile-A',{projectId:'PROJECT_B',localVideoIdentity:'A:VIDEO_042',fingerprint:'d'.repeat(64)}))).toBe(true);
+  expect(q.hasDuplicate(spec(3,'B','profile-B',{projectId:'PROJECT_B',localVideoIdentity:'B:VIDEO_041',fingerprint:'d'.repeat(64)}))).toBe(false);
+  expect(q.hasDuplicate(spec(4,'C','profile-C',{projectId:'PROJECT_A',localVideoIdentity:'C:VIDEO_042',fingerprint:'e'.repeat(64)}))).toBe(false);
+  expect(q.findDuplicate(spec(5,'C','profile-C',{projectId:'PROJECT_A',localVideoIdentity:'A:VIDEO_041',fingerprint:'f'.repeat(64)}))?.kind).toBe('project_video_identity');
+ });
  it('keeps credentials isolated across simultaneous channels and UI-like switching',async()=>{const seen:Array<[string,string,string]>=[];const q=new MultiChannelUploadQueue(async s=>{seen.push([s.jobId,s.channelId,s.profileId])},2);q.enqueue(spec(1,'Beta Room','profile-fixture-alpha'));q.enqueue(spec(2,'Quartz Harbor','profile-lost'));await wait();await wait();expect(seen).toContainEqual(['j1','Beta Room','profile-fixture-alpha']);expect(seen).toContainEqual(['j2','Quartz Harbor','profile-lost'])});
  it('allows safe removal only while queued',async()=>{let release!:()=>void;const q=new MultiChannelUploadQueue(()=>new Promise<void>(r=>release=r),1);q.enqueue(spec(1,'A'));q.enqueue(spec(2,'B'));await wait();expect(q.removeQueued('j1')).toBe(false);expect(q.removeQueued('j2')).toBe(true);expect(q.snapshot().queued).toHaveLength(0);release()});
  it('waits for the exact submitted batch and returns every terminal failure beyond recent UI limits',async()=>{const q=new MultiChannelUploadQueue(async s=>{throw new Error(`boom-${s.jobId}`)},4);const ids:string[]=[];for(let i=1;i<=25;i++)ids.push(q.enqueue(spec(i,`C${i}`)).queueId);const rows=await q.waitForEntries(ids);expect(rows).toHaveLength(25);expect(rows.every(x=>x.state==='FAILED')).toBe(true);expect(rows.map(x=>x.spec.jobId)).toContain('j25')});
