@@ -29,28 +29,28 @@
       <p class="feedback" id="login-error" role="alert"></p>
     </section>
     <section id="dashboard" hidden>
-      <div class="headline">
+      <div class="headline" data-mobile-view="overview">
         <div><span class="eyebrow">YT NETWORK / ANALYTICS</span><h1>Панель управления</h1><p class="muted">Статистика YouTube даже при спящем Mac</p></div>
-        <button id="refresh" class="primary refresh">↻ Обновить каналы</button>
+        <div class="refresh-actions"><button id="refresh" class="primary refresh">↻ Обновить всё</button><small id="refresh-feedback" class="refresh-feedback">Публичные счётчики + Analytics 360°</small></div>
       </div>
-      <div class="status-line"><span id="state-label">Загрузка данных…</span><span id="last-sync">—</span></div>
-      <div class="stats">
+      <div class="status-line" data-mobile-view="overview"><span id="state-label">Загрузка данных…</span><span id="last-sync">—</span></div>
+      <div class="stats" data-mobile-view="overview">
         <article class="card metric"><div class="metric-label">Подписчики <span>♙</span></div><strong id="total-subs">—</strong><small id="subs-covered">—</small></article>
         <article class="card metric"><div class="metric-label">Просмотры <span>◉</span></div><strong id="total-views">—</strong><small id="views-covered">—</small></article>
         <article class="card metric"><div class="metric-label">Видео на YouTube <span>▣</span></div><strong id="total-videos">—</strong><small id="videos-covered">—</small></article>
         <article class="card metric"><div class="metric-label">Квота VYRON CONTROL <span>◈</span></div><strong id="quota">—</strong><small id="quota-day">—</small></article>
       </div>
-      <section class="card strip">
+      <section class="card strip" data-mobile-view="overview">
         <div class="strip-head"><div><span class="eyebrow">АВТОСИНХРОНИЗАЦИЯ</span><h2>07:00 и 22:00</h2></div><span class="pill">Красноярск · UTC+7</span></div>
         <p>Два запроса по расписанию для 1–50 каналов, если они в одной пакетной группе. Обновление с телефона вручную — по кнопке.</p>
         <div class="quota-track"><div id="quota-progress"></div></div>
         <small class="caution">Здесь учтены только запросы этого сервиса, не общая квота Google Cloud, VYRON на Mac или ENDLUME.</small>
       </section>
-      <section class="card channel-section">
+      <section class="card channel-section" data-mobile-view="channels">
         <div class="section-title"><div><span class="eyebrow">ВСЯ СЕТЬ</span><h2>Каналы <span id="channel-count"></span></h2></div><div class="channel-tools"><select id="channel-sort" aria-label="Сортировка каналов"><option value="name">По названию</option><option value="growth">По последнему приросту</option></select><input id="search" type="search" placeholder="Найти канал"></div></div>
         <div id="channels" class="channels"></div>
       </section>
-      <section class="card push-section">
+      <section class="card push-section" data-mobile-view="system">
         <div class="section-title">
           <div><span class="eyebrow">WEB PUSH / IPHONE</span><h2>Уведомления о важных событиях</h2></div>
           <span class="pill" id="push-state">Не подключены</span>
@@ -62,12 +62,55 @@
           <span id="push-message" class="caution">На iPhone открой сайт через «Добавить на экран Домой» — затем разреши уведомления.</span>
         </div>
       </section>
-      <section class="card oauth-section">
+      <section class="card oauth-section" data-mobile-view="analytics">
         <div class="section-title">
           <div><span class="eyebrow">GOOGLE / READ ONLY</span><h2>YouTube Analytics 360°</h2></div>
           <span class="pill" id="oauth-count">0 подключено</span>
         </div>
-        <p class="muted">Закрытая аналитика, просмотры за 28 дней, удержание, время просмотра и прирост подписчиков. Работает в облаке, даже если Mac спит, после отдельного разрешения Google.</p>
+        <p class="muted">90 дней авторизованных данных YouTube: просмотры, время просмотра, удержание, подписки, реакции, топ-видео, источники трафика, устройства, география и аудитория.</p>
+        <div class="analytics-toolbar">
+          <span id="analytics-updated" class="caution">Ожидаем первую синхронизацию Analytics API</span>
+          <select id="analytics-period" aria-label="Период аналитики">
+            <option value="7">7 дней</option><option value="28" selected>28 дней</option><option value="90">90 дней</option>
+          </select>
+        </div>
+        <div class="analytics-kpis">
+          <article class="analytics-kpi"><small>Просмотры</small><strong id="analytics-views">—</strong><span id="analytics-views-note">—</span></article>
+          <article class="analytics-kpi"><small>Время просмотра</small><strong id="analytics-watch-hours">—</strong><span>часов</span></article>
+          <article class="analytics-kpi"><small>Чистый прирост</small><strong id="analytics-net-subs">—</strong><span id="analytics-subs-note">подписчики</span></article>
+          <article class="analytics-kpi"><small>Среднее удержание</small><strong id="analytics-retention">—</strong><span>по просмотрам</span></article>
+          <article class="analytics-kpi"><small>Лайки</small><strong id="analytics-likes">—</strong><span>за период</span></article>
+          <article class="analytics-kpi"><small>Комментарии</small><strong id="analytics-comments">—</strong><span>за период</span></article>
+          <article class="analytics-kpi"><small>Репосты</small><strong id="analytics-shares">—</strong><span>за период</span></article>
+          <article class="analytics-kpi"><small>Средняя длительность</small><strong id="analytics-avg-duration">—</strong><span>на просмотр</span></article>
+        </div>
+        <div class="analytics-panels">
+          <article class="analytics-panel analytics-trend-panel">
+            <div class="analytics-panel-head"><strong>Динамика просмотров</strong><small id="analytics-trend-range">28 дней</small></div>
+            <svg id="analytics-trend" viewBox="0 0 720 190" role="img" aria-label="График просмотров по дням"></svg>
+            <div id="analytics-trend-caption" class="chart-caption">Данные появятся после синхронизации Google Analytics.</div>
+          </article>
+          <article class="analytics-panel">
+            <div class="analytics-panel-head"><strong>Лучшие видео</strong><small>топ сети · 90 дней</small></div>
+            <div id="analytics-top-videos" class="analytics-ranking"></div>
+          </article>
+          <article class="analytics-panel">
+            <div class="analytics-panel-head"><strong>Источники трафика</strong><small>просмотры</small></div>
+            <div id="analytics-traffic" class="analytics-ranking"></div>
+          </article>
+          <article class="analytics-panel">
+            <div class="analytics-panel-head"><strong>Устройства</strong><small>просмотры</small></div>
+            <div id="analytics-devices" class="analytics-ranking"></div>
+          </article>
+          <article class="analytics-panel">
+            <div class="analytics-panel-head"><strong>География</strong><small>страны · просмотры</small></div>
+            <div id="analytics-countries" class="analytics-ranking"></div>
+          </article>
+          <article class="analytics-panel">
+            <div class="analytics-panel-head"><strong>Аудитория</strong><small>возраст и пол · %</small></div>
+            <div id="analytics-demographics" class="analytics-ranking"></div>
+          </article>
+        </div>
         <div class="mac-daily">
           <div><span>Загружено сегодня</span><strong id="mac-uploaded-today">—</strong></div>
           <div><span>Рендеров завершено сегодня</span><strong id="mac-rendered-today">—</strong></div>
@@ -79,17 +122,23 @@
           <button id="oauth-connect" class="primary" disabled>Подключить Google-каналы</button>
           <span class="caution" id="oauth-message">Требуется отдельная Google OAuth-конфигурация в Cloudflare.</span>
         </div>
-        <div class="migration-import">
-          <div><strong>Импорт 33 профилей из VYRON</strong><small>Пакет расшифровывается на этом устройстве. Пароль и файл не отправляются в Cloudflare.</small></div>
-          <input id="migration-file" type="file" accept=".vyron,application/json" aria-label="Пакет переноса VYRON">
-          <input id="migration-password" type="password" minlength="10" autocomplete="off" placeholder="Пароль пакета" aria-label="Пароль пакета VYRON">
-          <button id="migration-import" class="ghost">Проверить и импортировать</button>
-          <span id="migration-message" class="caution">Создай пакет в VYRON → Настройки → Backup &amp; Migration.</span>
-        </div>
-        <div id="oauth-profiles" class="oauth-profiles"></div>
-        <p class="caution">Разрешение только на чтение. Ручной Google-вход и импорт зашифрованного пакета используют один защищённый список профилей.</p>
+        <details class="oauth-details">
+          <summary>Импортировать все привязки из зашифрованного пакета VYRON</summary>
+          <div class="migration-import">
+            <div><strong>Автоматическое сопоставление всех каналов</strong><small>Один Google-профиль может обслуживать несколько YouTube-каналов. Пакет расшифровывается локально; пароль и токены не отправляются в Cloudflare открытым текстом.</small></div>
+            <input id="migration-file" type="file" accept=".vyron,application/json" aria-label="Пакет переноса VYRON">
+            <input id="migration-password" type="password" minlength="10" autocomplete="off" placeholder="Пароль пакета" aria-label="Пароль пакета VYRON">
+            <button id="migration-import" class="ghost">Импортировать все каналы</button>
+            <span id="migration-message" class="caution">После импорта сверим каждый из 33 каналов отдельно.</span>
+          </div>
+        </details>
+        <details class="oauth-details">
+          <summary>Подключённые Google-профили и управление доступом</summary>
+          <div id="oauth-profiles" class="oauth-profiles"></div>
+        </details>
+        <p class="caution">Разрешение только на чтение. Один Google-профиль может быть связан с несколькими каналами; ручной вход нужен только при отсутствии действующего refresh token.</p>
       </section>
-      <section class="card mac-section">
+      <section class="card mac-section" data-mobile-view="system">
         <div class="section-title">
           <div><span class="eyebrow">LIVE DEVICES / CONTROL</span><h2>Mac + ENDLUME</h2></div>
           <span class="pill" id="mac-indicator">Не подключён</span>
@@ -114,7 +163,7 @@
         <div id="mac-command-list" class="command-list"></div>
         <p class="caution">Статус Mac считается актуальным, если от агента был сигнал за последние 3 минуты. При сне показываются последние сохранённые значения.</p>
       </section>
-      <section class="card event-section">
+      <section class="card event-section" data-mobile-view="events">
         <div class="section-title">
           <div><span class="eyebrow">LIVE JOURNAL</span><h2>Все события VYRON</h2></div>
           <select id="event-filter" aria-label="Фильтр событий">
@@ -129,7 +178,14 @@
         <button id="events-more" class="ghost" hidden>Загрузить ещё события</button>
         <p class="caution">YouTube округляет публичные значения подписчиков: уведомление означает зафиксированный публичный рубеж, а не точное число.</p>
       </section>
-      <footer>VYRON CONTROL · YouTube публичные счётчики + авторизованная Analytics 360° + зеркало Mac. Данные помечаются по времени последней синхронизации.</footer>
+      <nav id="mobile-nav" class="mobile-nav" aria-label="Основная навигация">
+        <button class="active" type="button" data-mobile-target="overview" aria-pressed="true"><span>⌂</span><small>Обзор</small></button>
+        <button type="button" data-mobile-target="channels" aria-pressed="false"><span>▦</span><small>Каналы</small></button>
+        <button type="button" data-mobile-target="analytics" aria-pressed="false"><span>◷</span><small>Аналитика</small></button>
+        <button type="button" data-mobile-target="events" aria-pressed="false"><span>◌</span><small>События</small></button>
+        <button type="button" data-mobile-target="system" aria-pressed="false"><span>⚙</span><small>Система</small></button>
+      </nav>
+      <footer data-mobile-view="system">VYRON CONTROL · YouTube публичные счётчики + авторизованная Analytics 360° + зеркало Mac. Данные помечаются по времени последней синхронизации.</footer>
     </section>
   </main>
 </body>
