@@ -535,12 +535,23 @@ async function fetchEventHistory(reset=false) {
     }
   }
 }
+let analyticsGroupsMobileMode=null;
 function applyMobileView() {
   const mobile=window.matchMedia('(max-width:760px)').matches;
+  if(analyticsGroupsMobileMode!==mobile) {
+    document.querySelectorAll('.analytics-group').forEach(group=>{group.open=!mobile;});
+    analyticsGroupsMobileMode=mobile;
+  }
   document.querySelectorAll('[data-mobile-view]').forEach(panel=>{
     panel.classList.toggle('mobile-view-hidden',mobile&&panel.dataset.mobileView!==activeMobileView);
   });
   document.querySelectorAll('[data-mobile-target]').forEach(button=>{
+    const active=button.dataset.mobileTarget===activeMobileView;
+    button.classList.toggle('active',active);
+    button.setAttribute('aria-pressed',active?'true':'false');
+  });
+}
+document.querySelectorAll('[data-mobile-target]').forEach(button=>{
     const active=button.dataset.mobileTarget===activeMobileView;
     button.classList.toggle('active',active);
     button.setAttribute('aria-pressed',active?'true':'false');
