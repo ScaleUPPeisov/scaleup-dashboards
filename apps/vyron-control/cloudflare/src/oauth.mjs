@@ -163,7 +163,7 @@ export async function callbackOAuth(request,env,fetchImpl=fetch) {
       'INSERT OR IGNORE INTO channels(id,name) VALUES (?,?)'
     ).bind(id,name).run();
     await env.DB.prepare(
-      'INSERT OR IGNORE INTO channel_analytics_queue(channel_id,queued_at) VALUES (?,?)'
+      'INSERT INTO channel_analytics_queue(channel_id,queued_at) VALUES (?,?) ON CONFLICT(channel_id) DO UPDATE SET queued_at=excluded.queued_at,attempts=0,last_attempt_at=NULL,last_error=NULL,completed_at=NULL'
     ).bind(id,at).run();
   }
   // Never put access/refresh tokens or one-time code in the response URL.
