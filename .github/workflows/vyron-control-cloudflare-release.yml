@@ -168,7 +168,7 @@ jobs:
         run: npx --yes wrangler@4.102.0 deploy --dry-run -c cloudflare/wrangler.jsonc
 
       - name: Require explicit production confirmation and merged application PR
-        if: ${{ inputs.operation == 'deploy' }}
+        if: ${{ env.OPERATION == 'deploy' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -196,11 +196,11 @@ jobs:
           echo "PR #25 is merged and release snapshot matches the reviewed branch HEAD: ${release_sha}"
 
       - name: Apply additive D1 migrations
-        if: ${{ inputs.operation == 'deploy' }}
+        if: ${{ env.OPERATION == 'deploy' }}
         run: npx --yes wrangler@4.102.0 d1 migrations apply vyron-control --remote -c cloudflare/wrangler.jsonc
 
       - name: Verify D1 application row counts survived migrations
-        if: ${{ inputs.operation == 'deploy' }}
+        if: ${{ env.OPERATION == 'deploy' }}
         shell: bash
         env:
           EXPECTED_ROW_COUNTS: ${{ steps.d1-audit.outputs.row_counts }}
@@ -242,11 +242,11 @@ jobs:
           NODE
 
       - name: Deploy Worker and static dashboard assets
-        if: ${{ inputs.operation == 'deploy' }}
+        if: ${{ env.OPERATION == 'deploy' }}
         run: npx --yes wrangler@4.102.0 deploy -c cloudflare/wrangler.jsonc --keep-vars --strict --message "VYRON CONTROL release $(git rev-parse --short HEAD)"
 
       - name: Verify deployed Worker and D1 schema
-        if: ${{ inputs.operation == 'deploy' }}
+        if: ${{ env.OPERATION == 'deploy' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -265,5 +265,5 @@ jobs:
           '
 
       - name: Confirm preflight-only run made no production changes
-        if: ${{ inputs.operation == 'preflight' }}
+        if: ${{ env.OPERATION == 'preflight' }}
         run: echo "Preflight complete. No D1 migrations were applied and no Worker was deployed."
