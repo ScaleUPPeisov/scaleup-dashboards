@@ -78,6 +78,47 @@ test('mirror mapping exports only public YouTube IDs, event allowlist, minimal c
     'private-profile-id','refresh_token','oauthToken'])
     assert.equal(serialized.includes(secret),false,'Secret leaked: '+secret);
 });
+test('Mac diagnostics are allowlisted, private paths stay local, and disk changes refresh status',async()=>{
+  const dir=await mkdtemp(join(tmpdir(),'vyron-telemetry-'));
+  try {
+    const mirrorFile=join(dir,'app-state.json'),outDir=join(dir,'export');
+    const state=sampleState();
+    state.settings.renderFolderPath='/Volumes/EXTERNAL DRIVE/VYRON';
+    state.activityJournal.push({
+      eventId:'telemetry_upload_failure',timestamp:'2026-11-15T12:00:00.000Z',
+      eventType:'UPLOAD_FAILED',errorCode:'YOUTUBE_RUNTIME',
+      localSourcePath:'/Volumes/EXTERNAL DRIVE/private/video.mp4'
+    });
+    await writeFile(mirrorFile,JSON.stringify(state));
+    let diskOnline=true;
+    const collectTelemetry=async()=>({
+      vyronVersion:'6.1.15',endlumeVersion:'10.0.15',
+      macOSVersion:'15.1',macModel:'Apple M1',architecture:'arm64',
+      uptimeSeconds:3600,memoryTotalBytes:16*1024**3,memoryFreeBytes:8*1024**3,
+      rootDiskTotalBytes:500*1024**3,rootDiskFreeBytes:200*1024**3,
+      diskOnline,privatePath:'/Users/private/secret'
+    });
+    const mirror=new MirrorExport({mirrorFile,outDir,collectTelemetry});
+    await mirror.initialize();
+    assert.equal((await mirror.refresh()).status,'exported');
+    let status=JSON.parse(await readFile(mirror.statusFile,'utf8'));
+    assert.equal(status.vyronVersion,'6.1.15');
+    assert.equal(status.endlumeVersion,'10.0.15');
+    assert.equal(status.macOSVersion,'15.1');
+    assert.equal(status.macModel,'Apple M1');
+    assert.equal(status.architecture,'arm64');
+    assert.equal(status.diskOnline,true);
+    assert.equal(status.lastError,'YOUTUBE_RUNTIME');
+    const serialized=JSON.stringify(status);
+    for(const secret of ['/Volumes/EXTERNAL DRIVE','/Users/private','privatePath'])
+      assert.equal(serialized.includes(secret),false,'Private telemetry leaked: '+secret);
+    diskOnline=false;
+    assert.equal((await mirror.refresh()).status,'exported');
+    status=JSON.parse(await readFile(mirror.statusFile,'utf8'));
+    assert.equal(status.diskOnline,false);
+  } finally {await rm(dir,{recursive:true,force:true});}
+});
+
 test('mirror disk export is idempotent, survives restart, and uses private permissions',async()=>{
   const dir=await mkdtemp(join(tmpdir(),'vyron-mirror-'));
   try {
