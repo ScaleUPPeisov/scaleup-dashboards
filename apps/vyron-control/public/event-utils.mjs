@@ -1,16 +1,23 @@
 const PROGRESS_TYPES=new Set(['upload_progress','render_progress']);
 
+function isProgressEvent(event) {
+  const type=String(event?.type||'');
+  return PROGRESS_TYPES.has(type)||
+    (type==='agent_info'&&/^YOUTUBE PROCESSING\\b/.test(String(event?.title||event?.name||'')));
+}
+
 export function compactProgressEvents(events) {
   const rows=[];
   const progressByKey=new Map();
   for(const event of Array.isArray(events)?events:[]) {
     const type=String(event?.type||'');
     const projectId=String(event?.projectId||'');
-    if(!PROGRESS_TYPES.has(type)||!projectId) {
+    if(!isProgressEvent(event)||!projectId) {
       rows.push({event,count:1});
       continue;
     }
-    const key=type+'\\u0000'+projectId;
+    const title=type==='agent_info'?String(event?.title||event?.name||''):'';
+    const key=[type,projectId,title].join('\\u0000');
     const existing=progressByKey.get(key);
     if(!existing) {
       const row={event,count:1};
