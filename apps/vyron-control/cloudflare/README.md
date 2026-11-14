@@ -47,7 +47,7 @@ https://developers.cloudflare.com/workers/configuration/cron-triggers/
 After the D1 binding and `CONTROL_TOKEN` are configured, the first successful
 dashboard login checks `/api/health`. If application tables are missing, the
 authenticated dashboard runs a fixed, idempotent bootstrap that creates only the
-13 application tables and their indexes; it never drops or overwrites data.
+15 application tables and their indexes; it never drops or overwrites data.
 This removes the need to paste a multi-statement SQL script into the D1 Console.
 For later schema changes, keep using versioned Wrangler migrations.
 
@@ -127,23 +127,29 @@ profiles are sent over HTTPS and re-encrypted with AES-256-GCM before D1 storage
 5. On the dashboard either select **Подключить Google-каналы** and authorize
    each Google identity, or export a package from VYRON under
    **Настройки → Backup & Migration** and import it with its one-time password.
-   Imported profiles are checked against Google and the expected YouTube
-   Channel ID in batches of eight. Repeated imports are idempotent and never
-   delete existing profiles.
+   The importer preserves one-to-many mappings: one Google OAuth profile can
+   be associated with several YouTube channels. Every mapped channel is checked
+   against Google and stored as its own channel binding. Repeated imports are
+   idempotent and never delete existing profiles.
    The cloud stores **AES-256-GCM encrypted** refresh tokens in D1; access
    tokens are temporary and never sent to the iPhone.
 6. Two daily reporting windows begin at **07:00 and 22:00 Krasnoyarsk**.
-   YouTube public counters refresh exactly at those times. Detailed private
-   reports are processed in batches of 10 authorized channels at **07:00,
-   07:05, 07:10, 07:15 and 07:20** and similarly at 22:00–22:20, respecting
-   the 50-subrequest Worker Free limit. Only data Google has already processed
-   will be available in the report.
+   YouTube public counters refresh exactly at those times. Private Analytics
+   runs in nine four-channel batches from :05 through :45 at each reporting
+   window. The dashboard's **Обновить всё** button runs public counters and
+   then processes all authorized Analytics channels in sequential four-profile
+   batches. Each private report covers 90 days and includes daily views/watch
+   time/retention/subscriber changes/likes/comments/shares, top videos, traffic
+   sources, devices, countries and age/gender aggregates. Only data Google has
+   already processed will be available in the report.
 
 Only `youtube.readonly` and `yt-analytics.readonly` OAuth scopes are
 requested. This does **not** grant YouTube publishing permission. Revenue
-requires a distinct monetary scope and explicit future owner consent;
-unavailable CTR metrics are never invented. Google OAuth refresh-token
-availability and expiry depend on Google consent-screen configuration.
+requires a distinct monetary scope, channel eligibility and explicit future
+owner consent. Thumbnail impression CTR is not returned by the channel reports
+used here, so the dashboard marks it unavailable instead of substituting an
+unrelated click metric. Google OAuth refresh-token availability and expiry
+depend on Google consent-screen configuration.
 Additional YouTube Analytics request/quota limits apply separately.
 
 ## Free-tier behavior and constraints
@@ -157,7 +163,7 @@ Additional YouTube Analytics request/quota limits apply separately.
 - `api/status` shows the number of YouTube Data API calls reserved by this
   service on the current Pacific-time quota date. Other project-level consumers
   are not included.
-- Private watch-time, average view duration, average view percentage and subscriber gains/losses have a read-only OAuth backend, but are **not live until Google consent/configuration is completed**. CTR and monetary reports remain unavailable unless supported by the authorized API.
+- Private Analytics is read-only and updates independently of the Mac. Reports are retained for 90 days and include engagement, top videos, traffic sources, devices, countries and audience age/gender where Google returns data. Missing breakdowns are explicitly marked; the service does not fabricate CTR or revenue.
 - PWA can show the last Mac state while the computer sleeps, but a sleeping Mac
   cannot render video or process commands. Commands stay queued until agent ACK.
 - No cloud URL, Google keys, Cloudflare deployment or live YouTube connections
