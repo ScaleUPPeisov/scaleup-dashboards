@@ -33,26 +33,21 @@ fn sha256_bytes(value:&[u8])->String{
 
 fn updater_public_key_facts(encoded:&str)->(bool,Option<String>,Option<String>){
     use base64::Engine as _;
-    let Ok(decoded)=base64::engine::general_purpose::STANDARD.decode(encoded.trim()) else{
-        return (false,None,None)
-    };
-    let text=String::from_utf8_lossy(&decoded);
-    let mut lines=text.lines().filter(|line|!line.trim().is_empty());
+    let b64=base64::engine::general_purpose::STANDARD;
+    let Ok(decoded)=b64.decode(encoded.trim()) else{return (false,None,None)};
+    if b64.encode(&decoded)!=encoded.trim(){return (false,None,None)}
+    let Ok(text)=String::from_utf8(decoded) else{return (false,None,None)};
+    let mut lines=text.lines();
     let Some(header)=lines.next() else{return (false,None,None)};
     let Some(key_line)=lines.next() else{return (false,None,None)};
     if lines.next().is_some(){return (false,None,None)}
-    let Some(key_id)=header.strip_prefix("untrusted comment: minisign public key:") else{
-        return (false,None,None)
-    };
-    let key_id=key_id.trim();
-    if key_id.len()!=16||!key_id.chars().all(|c|c.is_ascii_hexdigit()){
-        return (false,None,None)
-    }
-    let Ok(key_bytes)=base64::engine::general_purpose::STANDARD.decode(key_line.trim()) else{
-        return (false,None,None)
-    };
-    if key_bytes.len()!=42{return (false,None,None)}
-    (true,Some(key_id.to_ascii_uppercase()),Some(sha256_bytes(&key_bytes)))
+    let Some(key_id)=header.strip_prefix("untrusted comment: minisign public key: ") else{return (false,None,None)};
+    if key_id.len()!=16||!key_id.chars().all(|c|c.is_ascii_hexdigit()){return (false,None,None)}
+    let Ok(key_bytes)=b64.decode(key_line) else{return (false,None,None)};
+    if b64.encode(&key_bytes)!=key_line||key_bytes.len()!=42||&key_bytes[..2]!=b"Ed"{return (false,None,None)}
+    let embedded_id=key_bytes[2..10].iter().rev().map(|b|format!("{b:02X}")).collect::<String>();
+    if !key_id.eq_ignore_ascii_case(&embedded_id){return (false,None,None)}
+    (true,Some(embedded_id),Some(sha256_bytes(&key_bytes)))
 }
 
 const STABLE_UPDATER_ENDPOINT:&str="https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json";
@@ -61,10 +56,14 @@ fn stable_updater_endpoint_pinned(endpoints:&[String])->bool{
     endpoints.first().map(|endpoint|endpoint==STABLE_UPDATER_ENDPOINT).unwrap_or(false)
 }
 
+const COMPROMISED_LEGACY_UPDATER_KEY_SHA256:&str="aa6fb45ab082ef39279e841dc40b0f85e5b33f23746f77557b6f93e3e72c2c06";
+
 fn updater_public_key_trust_verified(actual:Option<&str>,expected:&str)->bool{
     expected.len()==64
       &&expected.chars().all(|c|c.is_ascii_hexdigit())
-      &&actual.map(|value|value.eq_ignore_ascii_case(expected)).unwrap_or(false)
+      &&!expected.eq_ignore_ascii_case(COMPROMISED_LEGACY_UPDATER_KEY_SHA256)
+      &&actual.map(|value|value.eq_ignore_ascii_case(expected)
+          &&!value.eq_ignore_ascii_case(COMPROMISED_LEGACY_UPDATER_KEY_SHA256)).unwrap_or(false)
 }
 
 fn updater_config_diagnostics(app:&tauri::AppHandle)->serde_json::Value{
@@ -713,6 +712,27 @@ mod updater_key_diagnostic_tests{
         assert!(!updater_public_key_trust_verified(Some(actual),"unverified"));
         assert!(!updater_public_key_trust_verified(Some(actual),"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
         assert!(!updater_public_key_trust_verified(None,actual));
+    }
+
+    #[test]
+    fn rejects_compromised_legacy_key_even_when_fingerprint_matches(){
+        assert!(!updater_public_key_trust_verified(
+          Some(COMPROMISED_LEGACY_UPDATER_KEY_SHA256),COMPROMISED_LEGACY_UPDATER_KEY_SHA256));
+    }
+
+    #[test]
+    fn rejects_forged_minisign_header_and_invalid_algorithm(){
+        use base64::Engine as _;
+        let b64=base64::engine::general_purpose::STANDARD;
+        let source=String::from_utf8(b64.decode(VALID_PUBLIC_KEY).unwrap()).unwrap();
+        let forged_header=source.replace("8133C9873FAB79C1","0000000000000000");
+        assert!(!updater_public_key_facts(&b64.encode(forged_header)).0);
+        let mut parts=source.lines();
+        let header=parts.next().unwrap();
+        let mut payload=b64.decode(parts.next().unwrap()).unwrap();
+        payload[0]=b'X';
+        let forged_algorithm=format!("{header}\n{}\n",b64.encode(payload));
+        assert!(!updater_public_key_facts(&b64.encode(forged_algorithm)).0);
     }
 
     #[test]

@@ -154,3 +154,22 @@ The owner-side `vyron-617-publish-new-key.sh` script is also frozen and exits
 before accessing GitHub or a private key. It must not be re-enabled until the
 offline key generation, independent fingerprint authentication, trusted
 bootstrap test and explicit owner release approval are complete.
+
+## 2026-11-15 follow-up — anti-rollback / build exemption hardening
+
+The exposed legacy 6.1.15 Minisign public-key payload has SHA-256
+`aa6fb45ab082ef39279e841dc40b0f85e5b33f23746f77557b6f93e3e72c2c06`. A future build explicitly rejects this fingerprint even if
+someone tries to declare it as an approved new key. The Rust updater trust gate
+also rejects it independently of the frontend.
+
+The non-distributable offline probe exception now requires **both** the explicit
+probe marker and a Tauri CLI `TAURI_CONFIG` overlay with the exact probe bundle
+identifier, updater artifacts disabled, an empty updater endpoint array and
+app-only bundle target. A marker alone cannot exempt a production-identity
+release build. The Tauri build helper reads the CLI-supplied JSON overlay.
+
+Minisign public-key parsing also checks canonical base64, the Ed25519 key
+algorithm marker, and correspondence between the displayed key ID and the
+embedded public key bytes. These checks verify structural integrity, not
+independent provenance; an offline owner-controlled trust decision is still
+required before any release.
