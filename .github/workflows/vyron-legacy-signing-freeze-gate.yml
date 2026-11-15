@@ -1,0 +1,29 @@
+name: VYRON legacy signer freeze gate
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/vyron-v0*.yml'
+      - '.github/workflows/vyron-legacy-signing-freeze-gate.yml'
+      - 'scripts/security/check-legacy-vyron-signers.mjs'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/vyron-v0*.yml'
+      - '.github/workflows/vyron-legacy-signing-freeze-gate.yml'
+      - 'scripts/security/check-legacy-vyron-signers.mjs'
+
+permissions:
+  contents: read
+
+jobs:
+  verify-signing-freeze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify obsolete release jobs cannot run
+        run: node --test scripts/security/check-legacy-vyron-signers.mjs
