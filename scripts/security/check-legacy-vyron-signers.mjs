@@ -32,15 +32,15 @@ test('no new GitHub Actions workflow may reference the compromised updater signi
   const directory=new URL('../../.github/workflows/',import.meta.url);
   const knownFrozen=new Set([...frozenFiles,'vyron-219-rc3-self-signed.yml']);
   const offenders=[];
-  for(const file of readdirSync(directory).filter(n=>/\\.ya?ml$/.test(n))){
+  for(const file of readdirSync(directory).filter(n=>/\.ya?ml$/.test(n))){
     const content=readFileSync(new URL(file,directory),'utf8');
-    if(!/secrets\\.TAURI_SIGNING_PRIVATE_KEY\\b/.test(content))continue;
+    if(!/secrets\.TAURI_SIGNING_PRIVATE_KEY\b/.test(content))continue;
     if(!knownFrozen.has(file)){
       offenders.push(file);
       continue;
     }
     if(file==='vyron-219-rc3-self-signed.yml'){
-      assert.match(content,/^  verify-build-publish-rc3:\\s*\\n    # SECURITY FREEZE 2026-11-15:[^\\n]*\\n    if: \\$\\{\\{ false \\}\\}\\s*$/m);
+      assert.match(content,/^  verify-build-publish-rc3:\s*\n    # SECURITY FREEZE 2026-11-15:[^\n]*\n    if: \$\{\{ false \}\}\s*$/m);
     }
   }
   assert.deepEqual(offenders,[],'Unexpected workflow references to compromised TAURI_SIGNING_PRIVATE_KEY secret');
