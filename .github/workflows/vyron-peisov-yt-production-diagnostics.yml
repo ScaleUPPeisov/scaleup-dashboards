@@ -117,6 +117,40 @@ jobs:
             throw new Error('Live channel/OAuth baseline is below the previously confirmed 33/31');
           NODE
 
+      - name: Classify live Analytics failures without exposing error messages
+        shell: bash
+        run: |
+          set -euo pipefail
+          SQL="SELECT CASE
+            WHEN lower(last_error) LIKE '%http 400%' THEN 'ANALYTICS_HTTP_400'
+            WHEN lower(last_error) LIKE '%http 401%' THEN 'ANALYTICS_HTTP_401'
+            WHEN lower(last_error) LIKE '%http 403%' THEN 'ANALYTICS_HTTP_403'
+            WHEN lower(last_error) LIKE '%http 429%' THEN 'ANALYTICS_HTTP_429'
+            WHEN lower(last_error) LIKE '%invalid_grant%' THEN 'OAUTH_INVALID_GRANT'
+            WHEN lower(last_error) LIKE '%breakdowns unavailable%' THEN 'PARTIAL_BREAKDOWNS'
+            WHEN lower(last_error) LIKE '%budget%' OR lower(last_error) LIKE '%quota%' THEN 'QUOTA_OR_BUDGET'
+            WHEN lower(last_error) LIKE '%token%' OR lower(last_error) LIKE '%oauth%' THEN 'OAUTH_OR_TOKEN'
+            ELSE 'OTHER_REDACTED'
+          END AS code,COUNT(*) AS n
+          FROM google_oauth_profiles
+          WHERE last_error IS NOT NULL AND last_error != ''
+          GROUP BY code;"
+          raw="$(npx --yes wrangler@4.102.0 d1 execute vyron-control --remote -c cloudflare/wrangler.jsonc --json --command "${SQL}")"
+          VYRON_CLASSIFIED_JSON="${raw}" node --input-type=module <<'NODE'
+          const data=JSON.parse(process.env.VYRON_CLASSIFIED_JSON||'[]');
+          const rows=data.flatMap(result=>Array.isArray(result.results)?result.results:[]);
+          const allowed=new Set(['ANALYTICS_HTTP_400','ANALYTICS_HTTP_401','ANALYTICS_HTTP_403',
+            'ANALYTICS_HTTP_429','OAUTH_INVALID_GRANT','PARTIAL_BREAKDOWNS',
+            'QUOTA_OR_BUDGET','OAUTH_OR_TOKEN','OTHER_REDACTED']);
+          const safe={};
+          for(const row of rows){
+            if(!allowed.has(row.code)||!Number.isSafeInteger(Number(row.n)))
+              throw new Error('Unexpected classified error result');
+            safe[row.code]=Number(row.n);
+          }
+          console.log('VYRON classified Analytics errors (aggregate only):',JSON.stringify(safe));
+          NODE
+
       - name: Configure all three VAPID secrets, only after manual authorization
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'setup_push' && inputs.confirm_push == true }}
         shell: bash
