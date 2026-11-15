@@ -669,7 +669,7 @@ test('first-time Analytics queue caps each invocation at two profiles',async()=>
   assert.deepEqual(rows.map(row=>row.attempts).sort(),[0,1,1]);
 });
 
-test('authorized private Analytics syncs 90-day trends and channel breakdowns in three-profile batches',async()=>{
+test('authorized private Analytics syncs 90-day trends and channel breakdowns in safe two-profile batches',async()=>{
   const e=env(),channelId=id(5);
   Object.assign(e,{
     APP_ORIGIN:'https://vyron-control.example',
@@ -684,9 +684,13 @@ test('authorized private Analytics syncs 90-day trends and channel breakdowns in
   ).bind(channelId,'Test',encrypted,'read-only',new Date().toISOString()).run();
   await e.DB.prepare('INSERT INTO channels(id,name) VALUES (?,?)').bind(channelId,'Test').run();
   assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:05:00Z')}).offset,0);
-  assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:25:00Z')}).offset,12);
-  assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:45:00Z')}).offset,24);
-  assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:55:00Z')}).offset,30);
+  assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:25:00Z')}).offset,8);
+  assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:45:00Z')}).offset,16);
+  assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:55:00Z')}).offset,20);
+  assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T15:05:00Z')}).offset,22);
+  assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T15:25:00Z')}).offset,30);
+  assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T15:45:00Z')}).offset,38);
+  assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T15:55:00Z')}).offset,42);
   assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:00:00Z')}),null);
   assert.equal(nextAnalyticsSlot({scheduledTime:Date.parse('2026-11-13T00:01:00Z')}),null);
   let analyticsAttempts=0,coreAttempts=0;
@@ -856,6 +860,52 @@ test('per-channel migrated credentials work without global Google client, with s
   assert.equal(JSON.parse(stored.reports_json).errors.dailyAdvanced,'ADVANCED_DAILY_METRICS_UNAVAILABLE');
 });
 
+
+test('unsupported extended daily metrics fall back to official minimal channel report',async()=>{
+  const e=env(),channelId=id(688);
+  e.OAUTH_ENCRYPTION_KEY='7'.repeat(64);
+  const refreshCipher=await encryptSecret('CHANNEL_REFRESH_TOKEN',e);
+  const clientIdCipher=await encryptSecret('CLIENT_ID',e);
+  const clientSecretCipher=await encryptSecret('CLIENT_SECRET',e);
+  await e.DB.prepare('INSERT INTO channels(id,name) VALUES (?,?)').bind(channelId,'Core only').run();
+  await e.DB.prepare('INSERT INTO google_oauth_profiles(channel_id,channel_name,refresh_token_cipher,granted_scope,connected_at) VALUES (?,?,?,?,?)')
+    .bind(channelId,'Core only',refreshCipher,'yt-analytics.readonly',new Date().toISOString()).run();
+  await e.DB.prepare('INSERT INTO google_oauth_client_credentials(channel_id,profile_uuid,client_id_cipher,client_secret_cipher,source,bundle_uuid,imported_at) VALUES (?,?,?,?,?,?,?)')
+    .bind(channelId,'minimal-profile',clientIdCipher,clientSecretCipher,'VYRON_MIGRATION','bundle-test',new Date().toISOString()).run();
+  let attempts=0;
+  const mockFetch=async url=>{
+    if(url.includes('oauth2.googleapis.com/token'))
+      return new Response(JSON.stringify({access_token:'AUTHORIZED_ACCESS'}),{status:200});
+    if(url.includes('youtubeanalytics.googleapis.com')){
+      const p=new URL(url).searchParams;
+      assert.equal(p.get('ids'),'channel=='+channelId);
+      const dims=p.get('dimensions'),metrics=p.get('metrics').split(',');
+      if(dims==='day'){
+        attempts++;
+        if(attempts<=2)return new Response('{}',{status:400});
+        assert.deepEqual(metrics,['views','estimatedMinutesWatched','averageViewDuration',
+          'averageViewPercentage','subscribersGained']);
+      }
+      return new Response(JSON.stringify({
+        columnHeaders:[...dims.split(','),...metrics].map(name=>({name})),
+        rows:dims==='day'?[['2026-11-12',...metrics.map(()=>5)]]:[]
+      }),{status:200});
+    }
+    throw new Error('Unexpected endpoint');
+  };
+  const result=await runManualAnalyticsBatch(e,{offset:0,requestId:'stable-core-profile-001'},mockFetch);
+  assert.equal(result.updated,1);
+  assert.equal(result.failed,0);
+  assert.equal(attempts,3);
+  const row=e.DB.native.prepare('SELECT daily_json FROM channel_analytics WHERE channel_id=?').get(channelId);
+  assert.ok(row);
+  const daily=JSON.parse(row.daily_json);
+  assert.equal(daily[0].views,5);
+  assert.equal(daily[0].subscribersLost,null);
+  const reports=e.DB.native.prepare('SELECT reports_json FROM channel_analytics_reports WHERE channel_id=?').get(channelId);
+  assert.equal(JSON.parse(reports.reports_json).errors.dailyAdvanced,'CORE_DAILY_METRICS_ONLY');
+});
+
 test('one shared Google profile requests Analytics for each concrete YouTube channel ID',async()=>{
   const e=env(),firstChannel=id(81),secondChannel=id(82);
   Object.assign(e,{
@@ -898,7 +948,7 @@ test('one shared Google profile requests Analytics for each concrete YouTube cha
   ].sort());
 });
 
-test('manual refresh API processes every authorized channel in safe three-profile batches',async()=>{
+test('manual refresh API processes every authorized channel in safe two-profile batches',async()=>{
   const e=env();
   Object.assign(e,{
     APP_ORIGIN:'https://vyron-control.example',
@@ -963,15 +1013,21 @@ test('manual refresh API processes every authorized channel in safe three-profil
   }),e);
   assert.equal(first.status,200);
   const firstBody=await first.json();
-  assert.equal(firstBody.updated,3);
+  assert.equal(firstBody.updated,2);
   const second=await cloud.fetch(req('/api/analytics/refresh',control,'POST',{
-    requestId,offset:3
+    requestId,offset:2
   }),e);
   assert.equal(second.status,200);
   const secondBody=await second.json();
   assert.equal(secondBody.updated,2);
+  const third=await cloud.fetch(req('/api/analytics/refresh',control,'POST',{
+    requestId,offset:4
+  }),e);
+  assert.equal(third.status,200);
+  const thirdBody=await third.json();
+  assert.equal(thirdBody.updated,1);
   const duplicate=await cloud.fetch(req('/api/analytics/refresh',control,'POST',{
-    requestId,offset:3
+    requestId,offset:2
   }),e);
   assert.equal((await duplicate.json()).skipped,true);
   assert.equal(e.DB.native.prepare('SELECT count(*) AS n FROM channel_analytics_reports').get().n,5);

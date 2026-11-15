@@ -1175,8 +1175,8 @@ $('refresh').addEventListener('click', async () => {
       missingAnalytics=allChannels.filter(channel=>!connectedIds.has(channel.id)).map(channel=>channel.name);
       if(analyticsTotal){
         const requestId=crypto.randomUUID().replaceAll('-','');
-        for(let offset=0;offset<analyticsTotal;offset+=3){
-          const completed=Math.min(offset+3,analyticsTotal);
+        for(let offset=0;offset<analyticsTotal;offset+=2){
+          const completed=Math.min(offset+2,analyticsTotal);
           feedback.textContent='Шаг 2/2 · Google Analytics: '+completed+' / '+analyticsTotal+
             ' подключённых каналов · всего '+analyticsExpected+'…';
           try {
