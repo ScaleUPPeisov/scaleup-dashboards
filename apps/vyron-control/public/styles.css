@@ -465,3 +465,65 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,su
   .mac-health-card{min-height:66px;padding:9px 10px}
   .mac-health-error{grid-column:1/-1}
 }
+
+/* VYRON PEISOV YT: compact safe-area design for iPhone 14 Pro at 393 CSS px. */
+html,body{width:100%;max-width:100%;overflow-x:clip}
+.shell,.card,.overview-console,.overview-panel,.overview-grid,.analytics-kpi,
+.analytics-panels,.analytics-group,.mac-health-card,.channel-row{min-width:0;max-width:100%}
+.overview-panel svg,.analytics-panel svg{max-width:100%;display:block}
+.brand strong{letter-spacing:.035em;overflow-wrap:anywhere}
+.network-attention,.analytics-health-note{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  margin:12px 0;padding:12px 14px;border:1px solid rgba(116,154,235,.25);
+  border-radius:14px;background:linear-gradient(115deg,rgba(35,58,99,.5),rgba(18,32,56,.52));
+  color:#d5e3ff;font-size:12px;line-height:1.5
+}
+.network-attention>span,.analytics-health-note{min-width:0;overflow-wrap:anywhere}
+.network-attention .text-action{flex:0 0 auto;min-height:38px}
+.analytics-health-note{display:block}
+@media(max-width:760px){
+  .shell{
+    width:100%;max-width:100%;
+    padding-left:max(12px,env(safe-area-inset-left,0px));
+    padding-right:max(12px,env(safe-area-inset-right,0px));
+    padding-bottom:calc(96px + env(safe-area-inset-bottom,0px))
+  }
+  .topbar{gap:8px;min-width:0}
+  .brand{min-width:0;flex:1;gap:7px}
+  .brand strong{font-size:13px;letter-spacing:.02em;line-height:1.1}
+  .brand small{font-size:8px;letter-spacing:.05em}
+  .top-right{flex:0 0 auto;gap:5px}
+  .top-right .online{font-size:0}
+  .top-right .dot{width:8px;height:8px}
+  .top-right #logout{font-size:10px;padding:8px}
+  .overview-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .overview-main{grid-column:auto}
+  .overview-orbit{display:none}
+  .overview-card:nth-child(n+3){display:none}
+  .overview-card,.overview-main{min-height:115px;padding:12px}
+  .overview-card>strong,.overview-main-copy strong{font-size:clamp(23px,7vw,30px)}
+  .overview-panel.overview-activity-panel,.sync-rhythm,.overview-disclaimer{display:none}
+  .overview-panel.overview-chart-panel{padding:13px}
+  .stats .metric:nth-child(n+3){display:none}
+  .stats{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .metric{min-height:98px;padding:12px}
+  .metric strong{font-size:clamp(20px,6vw,27px)}
+  .metric small{white-space:normal;overflow-wrap:anywhere}
+  .network-attention{align-items:flex-start;flex-direction:column;gap:7px;font-size:11px;padding:10px}
+  .network-attention .text-action{min-height:32px}
+  .analytics-health-note{font-size:11px;padding:10px 12px}
+  .mobile-nav{padding-left:max(8px,env(safe-area-inset-left,0px));padding-right:max(8px,env(safe-area-inset-right,0px))}
+  .mobile-nav button{min-width:0}
+  .analytics-kpi strong,.mac-health-card strong,.channel-name a{overflow-wrap:anywhere}
+  .analytics-panels,.analytics-groups,.channel-section,.mac-section{min-width:0}
+  .analytics-toolbar-controls{grid-template-columns:minmax(0,1fr) auto}
+  #overview-trend{width:100%;max-width:100%}
+}
+@media(min-width:375px) and (max-width:430px){
+  .shell{max-width:430px;margin-inline:auto}
+  .overview-console{padding:11px}
+  .overview-card{min-height:113px}
+  .overview-main-copy strong{font-size:29px}
+  .overview-card>strong{font-size:24px}
+  .mobile-nav button small{font-size:9px}
+}
