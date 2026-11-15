@@ -73,3 +73,51 @@ The current PR code verifies the downloaded archive with the configured Tauri up
 - **No-Terminal, in-app 6.1.16 → 6.1.17:** NOT PROVEN and must not be promised.
 - **Independent bootstrap validation:** REQUIRED.
 - **Case closure:** only after log/artifact removal, repo-wide old-secret revocation, inspection of release-authority credentials, new offline key and demonstrated physical-device migration or an approved alternative installation path.
+
+## 2026-11-15: default-branch legacy signer exposure audit
+
+Read-only GitHub repository audit confirmed the **default branch is `main`**.
+The following **11 workflow files on `main`** still reference
+`secrets.TAURI_SIGNING_PRIVATE_KEY` and
+`secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Nine also have a push trigger.
+These are **workflow references, not evidence that the secret is still present**:
+the available GitHub integration cannot inspect or delete Actions secrets.
+
+| Workflow on `main` | Configured trigger |
+| --- | --- |
+| [`vyron-v091-signed-release-v2.yml`](https://github.com/ScaleUPPeisov/scaleup-dashboards/blob/main/.github/workflows/vyron-v091-signed-release-v2.yml) | Manual dispatch |
+| [`vyron-v091-updater-bootstrap.yml`](https://github.com/ScaleUPPeisov/scaleup-dashboards/blob/main/.github/workflows/vyron-v091-updater-bootstrap.yml) | Manual dispatch |
+| [`vyron-v092-google-oauth-release.yml`](https://github.com/ScaleUPPeisov/scaleup-dashboards/blob/main/.github/workflows/vyron-v092-google-oauth-release.yml) | Manual dispatch + push |
+| [`vyron-v093-release.yml`](https://github.com/ScaleUPPeisov/scaleup-dashboards/blob/main/.github/workflows/vyron-v093-release.yml) | Manual dispatch + push |
+| [`vyron-v094-release.yml`](https://github.com/ScaleUPPeisov/scaleup-dashboards/blob/main/.github/workflows/vyron-v094-release.yml) | Manual dispatch + push |
+| [`vyron-v095-release.yml`](https://github.com/ScaleUPPeisov/scaleup-dashboards/blob/main/.github/workflows/vyron-v095-release.yml) | Manual dispatch + push |
+| [`vyron-v096-release.yml`](https://github.com/ScaleUPPeisov/scaleup-dashboards/blob/main/.github/workflows/vyron-v096-release.yml) | Manual dispatch + push |
+| [`vyron-v097-release.yml`](https://github.com/ScaleUPPeisov/scaleup-dashboards/blob/main/.github/workflows/vyron-v097-release.yml) | Manual dispatch + push |
+| [`vyron-v098-quota-session-release.yml`](https://github.com/ScaleUPPeisov/scaleup-dashboards/blob/main/.github/workflows/vyron-v098-quota-session-release.yml) | Manual dispatch + push |
+| [`vyron-v098-release.yml`](https://github.com/ScaleUPPeisov/scaleup-dashboards/blob/main/.github/workflows/vyron-v098-release.yml) | Manual dispatch + push |
+| [`vyron-v099-quota-planner-release.yml`](https://github.com/ScaleUPPeisov/scaleup-dashboards/blob/main/.github/workflows/vyron-v099-quota-planner-release.yml) | Manual dispatch + push |
+
+The Draft PR #22 branch is based on
+`backup/vyron-macos-6.1.15-before-ultimate-20261107`, **not `main`**,
+and does not contain these 11 older workflow files. Freezing the PR #22
+release workflow therefore **does not deactivate workflows already on
+`main`**. All status claims must explicitly distinguish those branches.
+
+**Urgent owner action in GitHub** (do not paste any secret value into
+chat, logs or issues):
+
+1. Open `ScaleUPPeisov/scaleup-dashboards → Settings → Secrets and variables → Actions`.
+   Delete the compromised `TAURI_SIGNING_PRIVATE_KEY` and
+   `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` if still present. Verify any
+   organization/environment-level exposure or secret overrides as well.
+2. In `Actions`, disable these 11 obsolete signer workflows in
+   the default branch using the GitHub UI, or merge a separate minimal
+   reviewed security-only change that disables every affected job.
+   Do **not** dispatch them to test the freeze.
+3. Audit and restrict any independent release-publishing token and
+   repository/environment permissions; do not write `updates/latest.json`.
+4. Remove exposed historical logs and quarantined artifacts named earlier.
+   Record an owner-confirmed timestamp for each revocation/disablement.
+
+No GitHub secret revocation, workflow disablement, main-branch edit,
+production release, or app installation was performed by this audit.
