@@ -37,6 +37,9 @@ jobs:
       CONFIRM_PUSH: ${{ inputs.confirm_push || false }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Main contains only release automation; app sources reside in the reviewed snapshot.
+          ref: release/vyron-control-production
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
