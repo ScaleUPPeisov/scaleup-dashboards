@@ -6,12 +6,32 @@ on:
       - '.github/workflows/vyron-v0*.yml'
       - '.github/workflows/vyron-legacy-signing-freeze-gate.yml'
       - 'scripts/security/check-legacy-vyron-signers.mjs'
+      - 'scripts/security/check-obsolete-vyron-publishers.mjs'
+      - '.github/workflows/vyron-219-rc3-self-signed.yml'
+      - '.github/workflows/vyron-300-stable-release.yml'
+      - '.github/workflows/vyron-512-macos-fast-promote.yml'
+      - '.github/workflows/vyron-512-windows-fast-promote.yml'
+      - '.github/workflows/vyron-inapp-updater.yml'
+      - '.github/workflows/vyron-v050-publish.yml'
+      - '.github/workflows/vyron-v091-key-normalizer-fix.yml'
+      - '.github/workflows/vyron-v091-kickoff.yml'
+      - '.github/workflows/vyron-v091-signed-release-v2-kickoff.yml'
   push:
     branches: [main]
     paths:
       - '.github/workflows/vyron-v0*.yml'
       - '.github/workflows/vyron-legacy-signing-freeze-gate.yml'
       - 'scripts/security/check-legacy-vyron-signers.mjs'
+      - 'scripts/security/check-obsolete-vyron-publishers.mjs'
+      - '.github/workflows/vyron-219-rc3-self-signed.yml'
+      - '.github/workflows/vyron-300-stable-release.yml'
+      - '.github/workflows/vyron-512-macos-fast-promote.yml'
+      - '.github/workflows/vyron-512-windows-fast-promote.yml'
+      - '.github/workflows/vyron-inapp-updater.yml'
+      - '.github/workflows/vyron-v050-publish.yml'
+      - '.github/workflows/vyron-v091-key-normalizer-fix.yml'
+      - '.github/workflows/vyron-v091-kickoff.yml'
+      - '.github/workflows/vyron-v091-signed-release-v2-kickoff.yml'
 
 permissions:
   contents: read
@@ -26,4 +46,4 @@ jobs:
         with:
           node-version: '22'
       - name: Verify obsolete release jobs cannot run
-        run: node --test scripts/security/check-legacy-vyron-signers.mjs
+        run: node --test scripts/security/check-legacy-vyron-signers.mjs scripts/security/check-obsolete-vyron-publishers.mjs

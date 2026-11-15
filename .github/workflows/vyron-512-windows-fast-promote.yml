@@ -20,6 +20,8 @@ env:
 
 jobs:
   promote:
+    # SECURITY FREEZE 2026-11-15: obsolete updater/release publisher; intentionally disabled.
+    if: ${{ false }}
     name: Promote verified Windows 5.1.2 candidate
     runs-on: ubuntu-latest
     timeout-minutes: 30

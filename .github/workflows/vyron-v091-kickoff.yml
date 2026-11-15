@@ -1,17 +1,16 @@
 name: Kick off VYRON 0.9.1 updater bootstrap
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/vyron-v091-kickoff.yml'
+  workflow_dispatch:
 
 permissions:
-  actions: write
+  actions: read
   contents: read
 
 jobs:
   dispatch:
+    # SECURITY FREEZE 2026-11-15: obsolete release automation; disabled.
+    if: ${{ false }}
     runs-on: ubuntu-latest
     steps:
       - name: Dispatch signed updater bootstrap

@@ -1,8 +1,6 @@
 name: VYRON In-App Updater Publisher
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       tag:
@@ -10,8 +8,7 @@ on:
         required: true
         type: string
 permissions:
-  contents: write
-
+  contents: read
 concurrency:
   group: vyron-inapp-updater
   cancel-in-progress: false
@@ -24,9 +21,8 @@ env:
 
 jobs:
   publish:
-    # Prereleases are NEVER promoted automatically. They may be promoted only by
-    # an explicit workflow_dispatch after physical operator acceptance.
-    if: github.event_name != 'release' || github.event.release.prerelease == false
+    # SECURITY FREEZE 2026-11-15: obsolete updater/release publisher; intentionally disabled.
+    if: ${{ false }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:

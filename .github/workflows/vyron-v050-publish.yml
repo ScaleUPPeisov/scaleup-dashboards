@@ -1,20 +1,17 @@
 name: Publish VYRON 0.5.0
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/vyron-v050-publish.yml'
   workflow_dispatch:
 
 permissions:
-  contents: write
-
+  contents: read
 env:
   ARTIFACT_ID: '9749657522'
 
 jobs:
   publish:
+    # SECURITY FREEZE 2026-11-15: obsolete release automation; disabled.
+    if: ${{ false }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
