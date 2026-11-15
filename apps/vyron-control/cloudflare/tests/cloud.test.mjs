@@ -824,7 +824,7 @@ test('per-channel migrated credentials work without global Google client, with s
   await e.DB.prepare('INSERT INTO google_oauth_profiles(channel_id,channel_name,refresh_token_cipher,granted_scope,connected_at) VALUES (?,?,?,?,?)')
     .bind(channelId,'Imported',refreshCipher,'yt-analytics.readonly',new Date().toISOString()).run();
   await e.DB.prepare('INSERT INTO google_oauth_client_credentials(channel_id,profile_uuid,client_id_cipher,client_secret_cipher,source,bundle_uuid,imported_at) VALUES (?,?,?,?,?,?,?)')
-    .bind(channelId,'local-profile',idCipher,secretCipher,'VYRON_MIGRATION',null,new Date().toISOString()).run();
+    .bind(channelId,'local-profile',idCipher,secretCipher,'VYRON_MIGRATION','test-bundle',new Date().toISOString()).run();
   let advancedAttempts=0,baseAttempts=0;
   const mockFetch=async(url,options)=>{
     if(url.includes('oauth2.googleapis.com/token'))
