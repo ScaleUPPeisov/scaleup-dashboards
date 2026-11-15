@@ -131,3 +131,13 @@ production release, or app installation was performed by this audit.
 - **NOT DONE:** offline new-key ceremony, independent verification and owner-key custody, physical Mac bootstrap test, notarized or otherwise independently trusted installer, release approval or in-app update. No old-key-signed bridge is eligible.
 
 These controls reduce attack surface but **do not revoke the old private key**, and old workflows on other branches or existing clones may still be reachable where GitHub permits it. Full incident containment remains incomplete until repository-wide secret revocation and audit are confirmed.
+
+## 2026-11-15: additional containment confirmed
+
+- [Source security PR #37](https://github.com/ScaleUPPeisov/scaleup-dashboards/pull/37) **MERGED**: the default-branch CI now inspects every workflow file for unexpected references to the compromised `secrets.TAURI_SIGNING_PRIVATE_KEY`, in addition to the 20 frozen-job assertions.
+- [Release mirror security PR #1](https://github.com/ScaleUPPeisov/vyron-releases/pull/1) **MERGED** in `ScaleUPPeisov/vyron-releases`: the obsolete `bootstrap-vyron-release-mirror.yml` publisher job is disabled, the automatic push trigger removed, the token permissions reduced to read-only and the read-only freeze CI passed.
+- The published release repository `updates/latest.json` was rechecked **after these merges** and still reports macOS Stable **6.1.15**.
+- **No GitHub Actions secret was read, deleted, rotated or replaced.** No historical run log or artifact was deleted by the integration. Private-key revocation remains the primary unresolved GitHub administration task.
+- The installed VYRON 6.1.17 on the user's Mac is outside the connector's access. Its local updater trust must be independently verified before any first trust-root migration.
+
+All confirmed merge and CI actions above are distinct from authorizing a production release. The trust incident is not closed.
