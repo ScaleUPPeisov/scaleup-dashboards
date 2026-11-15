@@ -1,0 +1,149 @@
+name: VYRON PEISOV YT — production diagnostics and Push
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/vyron-peisov-yt-production-diagnostics.yml"
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: "Read-only audit, or one-time VAPID setup (updates the live Worker)"
+        required: true
+        type: choice
+        options: [audit, setup_push]
+        default: audit
+      confirm_push:
+        description: "I authorize configuring VAPID secrets on the production Worker"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+concurrency:
+  group: vyron-peisov-yt-production-diagnostics
+  cancel-in-progress: false
+
+jobs:
+  diagnostics:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/vyron-control
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      ACTION_OPERATION: ${{ inputs.operation || 'audit' }}
+      CONFIRM_PUSH: ${{ inputs.confirm_push || false }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Verify authorized mode and Cloudflare credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${CLOUDFLARE_API_TOKEN:-}" || -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
+            echo "::error::Cloudflare credentials unavailable."
+            exit 1
+          fi
+          if [[ "${ACTION_OPERATION}" != "audit" && "${ACTION_OPERATION}" != "setup_push" ]]; then
+            echo "::error::Unknown operation."
+            exit 1
+          fi
+          if [[ "${ACTION_OPERATION}" == "setup_push" ]]; then
+            if [[ "${GITHUB_EVENT_NAME}" != "workflow_dispatch" ||
+                  "${GITHUB_REF}" != "refs/heads/main" ||
+                  "${CONFIRM_PUSH}" != "true" ]]; then
+              echo "::error::VAPID setup requires manual dispatch from main with explicit confirmation."
+              exit 1
+            fi
+          fi
+
+      - name: Audit live Worker secret names (no values)
+        id: secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          raw="$(npx --yes wrangler@4.102.0 secret list -c cloudflare/wrangler.jsonc --format json)"
+          VYRON_SECRET_NAMES_JSON="${raw}" node --input-type=module <<'NODE'
+          import {appendFile} from 'node:fs/promises';
+          const list=JSON.parse(process.env.VYRON_SECRET_NAMES_JSON||'[]');
+          if(!Array.isArray(list))throw new Error('Unexpected Wrangler secret list shape');
+          const present=new Set(list.map(v=>String(v.name||'')));
+          const vapid=['VAPID_PUBLIC_KEY','VAPID_PRIVATE_KEY','VAPID_SUBJECT'];
+          const configured=vapid.filter(name=>present.has(name)).length;
+          const indicators={
+            VAPID:configured+'/3',
+            OAUTH_ENCRYPTION_KEY:present.has('OAUTH_ENCRYPTION_KEY'),
+            GLOBAL_GOOGLE_OAUTH_CLIENT:present.has('GOOGLE_OAUTH_CLIENT_ID')&&present.has('GOOGLE_OAUTH_CLIENT_SECRET'),
+            YOUTUBE_API_KEY:present.has('YOUTUBE_API_KEY')
+          };
+          console.log('VYRON PEISOV YT production secret presence only:',JSON.stringify(indicators));
+          await appendFile(process.env.GITHUB_OUTPUT,'vapid_count='+configured+'\n');
+          NODE
+
+      - name: Read-only production Analytics, OAuth and notification inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          SQL="SELECT 'registered_channels' AS metric,COUNT(*) AS n FROM channels;
+          SELECT 'encrypted_oauth_profiles' AS metric,COUNT(*) AS n FROM google_oauth_profiles;
+          SELECT 'profile_clients' AS metric,COUNT(*) AS n FROM google_oauth_client_credentials;
+          SELECT 'profiles_with_last_success' AS metric,COUNT(*) AS n FROM google_oauth_profiles WHERE last_success_at IS NOT NULL;
+          SELECT 'profiles_with_error' AS metric,COUNT(*) AS n FROM google_oauth_profiles WHERE last_error IS NOT NULL AND last_error != '';
+          SELECT 'google_analytics_reports' AS metric,COUNT(*) AS n FROM channel_analytics_reports;
+          SELECT 'google_analytics_summaries' AS metric,COUNT(*) AS n FROM channel_analytics WHERE source='GOOGLE_ANALYTICS_API';
+          SELECT 'mac_analytics_summaries' AS metric,COUNT(*) AS n FROM channel_analytics WHERE source='VYRON_MAC_CACHE';
+          SELECT 'analytics_queue_pending' AS metric,COUNT(*) AS n FROM channel_analytics_queue WHERE completed_at IS NULL;
+          SELECT 'push_subscriptions' AS metric,COUNT(*) AS n FROM push_subscriptions;
+          SELECT 'push_sent' AS metric,COUNT(*) AS n FROM push_deliveries WHERE status='sent';"
+          raw="$(npx --yes wrangler@4.102.0 d1 execute vyron-control --remote -c cloudflare/wrangler.jsonc --json --command "${SQL}")"
+          VYRON_D1_AUDIT_JSON="${raw}" node --input-type=module <<'NODE'
+          const results=JSON.parse(process.env.VYRON_D1_AUDIT_JSON||'[]');
+          if(!Array.isArray(results))throw new Error('Unexpected D1 query result');
+          const rows=results.flatMap(part=>Array.isArray(part.results)?part.results:[]);
+          const counts=Object.fromEntries(rows.map(row=>[String(row.metric),Number(row.n)]));
+          if(Object.keys(counts).length!==11||Object.values(counts).some(n=>!Number.isSafeInteger(n)||n<0))
+            throw new Error('Incomplete or invalid D1 audit results');
+          // Display aggregate counts only. Never retrieve rows containing refresh tokens,
+          // encrypted client secrets, channel identifiers or push endpoints.
+          console.log('VYRON PEISOV YT D1 aggregate inventory:',JSON.stringify(counts));
+          if(counts.registered_channels<33||counts.encrypted_oauth_profiles<31)
+            throw new Error('Live channel/OAuth baseline is below the previously confirmed 33/31');
+          NODE
+
+      - name: Configure all three VAPID secrets, only after manual authorization
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'setup_push' && inputs.confirm_push == true }}
+        shell: bash
+        env:
+          FOUND_VAPID: ${{ steps.secrets.outputs.vapid_count }}
+        run: |
+          set -euo pipefail
+          if [[ "${FOUND_VAPID}" == "3" ]]; then
+            echo 'All three VAPID secrets already exist. Keeping original keys to preserve subscriptions.'
+            exit 0
+          fi
+          if [[ "${FOUND_VAPID}" != "0" ]]; then
+            echo "::error::Partial VAPID configuration detected: stop to avoid breaking existing Push subscriptions."
+            exit 1
+          fi
+          file="$(mktemp)"
+          chmod 600 "${file}"
+          trap 'rm -f "${file}"' EXIT
+          VYRON_VAPID_FILE="${file}" node --input-type=module <<'NODE'
+          import {createECDH} from 'node:crypto';
+          import {writeFile} from 'node:fs/promises';
+          const ecdh=createECDH('prime256v1');
+          ecdh.generateKeys();
+          await writeFile(process.env.VYRON_VAPID_FILE,JSON.stringify({
+            VAPID_PUBLIC_KEY:ecdh.getPublicKey('base64url','uncompressed'),
+            VAPID_PRIVATE_KEY:ecdh.getPrivateKey('base64url'),
+            VAPID_SUBJECT:'https://vyron-control.endlume-peisov-3ee6109f.workers.dev'
+          }),{mode:0o600});
+          NODE
+          # Wrangler secret bulk immediately deploys a new Worker version.
+          # Never print the secrets file, its values or command debugging.
+          npx --yes wrangler@4.102.0 secret bulk "${file}" -c cloudflare/wrangler.jsonc
+          echo 'VAPID secrets configured on the Worker. iPhone permission must still be granted inside the installed PWA.'
