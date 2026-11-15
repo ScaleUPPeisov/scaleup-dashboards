@@ -121,3 +121,13 @@ chat, logs or issues):
 
 No GitHub secret revocation, workflow disablement, main-branch edit,
 production release, or app installation was performed by this audit.
+
+## 2026-11-15: default-branch workflow containment implemented
+
+- [Security PR #32](https://github.com/ScaleUPPeisov/scaleup-dashboards/pull/32) **MERGED** to `main` as `9e8529ac8be5d5fb61f9d6f7bc0a020361c398ae`: 11 obsolete VYRON 0.9.x signing jobs frozen, nine `push` triggers removed, token scope reduced.
+- [Security PR #33](https://github.com/ScaleUPPeisov/scaleup-dashboards/pull/33) **MERGED** to `main` as `ccadfc610a3325583e742e0da344337f8648bb0a`: nine further legacy release publishers, dispatchers and automatic updater-feed publisher disabled, automated freeze tests expanded to 20 jobs.
+- The dedicated `VYRON legacy signer freeze gate` CI passed; both changes are now in `main`. Operational Cloudflare workflow, production VYRON app and remote Stable feed were not intentionally changed.
+- **NOT CONFIRMED:** repository/organization/environment-level deletion or revocation of exposed `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. The connected GitHub interface does not grant secret-management or log/artifact-deletion actions. Those still require authorized GitHub administration.
+- **NOT DONE:** offline new-key ceremony, independent verification and owner-key custody, physical Mac bootstrap test, notarized or otherwise independently trusted installer, release approval or in-app update. No old-key-signed bridge is eligible.
+
+These controls reduce attack surface but **do not revoke the old private key**, and old workflows on other branches or existing clones may still be reachable where GitHub permits it. Full incident containment remains incomplete until repository-wide secret revocation and audit are confirmed.

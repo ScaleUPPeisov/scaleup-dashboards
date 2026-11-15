@@ -173,3 +173,18 @@ algorithm marker, and correspondence between the displayed key ID and the
 embedded public key bytes. These checks verify structural integrity, not
 independent provenance; an offline owner-controlled trust decision is still
 required before any release.
+
+## 2026-11-15: implemented default-branch isolation
+
+Security PRs [#32](https://github.com/ScaleUPPeisov/scaleup-dashboards/pull/32)
+and [#33](https://github.com/ScaleUPPeisov/scaleup-dashboards/pull/33)
+were merged into `main`. All 20 identified obsolete release/signing/
+publisher jobs are disabled and covered by an automated freeze gate. This is
+not equivalent to revoking GitHub Actions secrets or securely transferring
+the updater trust root to the already installed 6.1.17 app.
+
+The Draft PR #22 remains based on the backup branch. There was **no** app
+upgrade, Stable feed promotion, offline key generation or new-signature
+publication. Any future release must additionally prove that the installed
+6.1.17 Mac binary has an independently trusted way to authenticate the initial
+replacement **before** installation, or use a separately trusted GUI bootstrap.
