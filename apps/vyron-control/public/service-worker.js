@@ -1,5 +1,5 @@
-/* VYRON CONTROL PWA shell cache. Private API responses are never cached. */
-const SHELL_CACHE='vyron-control-shell-v3';
+/* VYRON PEISOV YT PWA shell cache. Private API responses are never cached. */
+const SHELL_CACHE='vyron-peisov-yt-shell-v4';
 const SHELL_ASSETS=['/','/styles.css','/app.js','/migration-crypto.js','/event-utils.mjs','/manifest.webmanifest','/icon.svg'];
 
 self.addEventListener('install',event=>{
@@ -10,7 +10,7 @@ self.addEventListener('install',event=>{
 });
 self.addEventListener('activate',event=>{
   event.waitUntil(caches.keys().then(keys=>Promise.all(
-    keys.filter(key=>key.startsWith('vyron-control-shell-')&&key!==SHELL_CACHE)
+    keys.filter(key=>(key.startsWith('vyron-control-shell-')||key.startsWith('vyron-peisov-yt-shell-'))&&key!==SHELL_CACHE)
       .map(key=>caches.delete(key))
   )).then(()=>self.clients.claim()));
 });
@@ -53,7 +53,7 @@ self.addEventListener('fetch',event=>{
 self.addEventListener('push', event => {
   let data={};
   try {data=event.data?.json()||{};}catch{}
-  const title=String(data.title||'VYRON CONTROL').slice(0,100);
+  const title=String(data.title||'VYRON PEISOV YT').slice(0,100);
   const body=String(data.body||'Появилось новое событие').slice(0,200);
   const tag=String(data.tag||'vyron-control-event').slice(0,100);
   event.waitUntil(self.registration.showNotification(title,{

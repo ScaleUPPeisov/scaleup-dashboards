@@ -6,7 +6,7 @@ import { refreshAccessToken } from './oauth.mjs';
 export const ANALYTICS_QUEUE_CRON='4,9,14,19,24,29,34,39,44,49,54,59 * * * *';
 const ANALYTICS_HOURS=new Set([0,15]);
 const ANALYTICS_MINUTES=new Set([5,10,15,20,25,30,35,40,45,50,55]);
-const BATCH_SIZE=3;
+const BATCH_SIZE=2;
 const QUEUE_BATCH_SIZE=2;
 const PERIOD_DAYS=90;
 
@@ -30,7 +30,10 @@ export function nextAnalyticsSlot(controller) {
   const minuteText=String(minute).padStart(2,'0');
   return {
     slot:day+'@'+krskHour+':'+minuteText+':analytics',
-    offset:(Math.floor(minute/5)-1)*BATCH_SIZE,
+    // Morning covers 0-21, evening covers 22-43: all 31 registered OAuth channels.
+    // Two profiles leave room for a two-step HTTP 400 fallback on Workers Free.
+    offset:(date.getUTCHours()===15?11*BATCH_SIZE:0)+
+      (Math.floor(minute/5)-1)*BATCH_SIZE,
     date
   };
 }
@@ -38,8 +41,8 @@ export function nextAnalyticsSlot(controller) {
 export function parseDailyReport(json,channelId,asOf,periodDays=PERIOD_DAYS) {
   const headers=columnHeaders(json);
   const idx=name=>headerIndex(headers,name);
-  const required=['day','views','engagedViews','estimatedMinutesWatched','averageViewDuration',
-    'averageViewPercentage','subscribersGained','subscribersLost','dislikes'];
+  const required=['day','views','estimatedMinutesWatched','averageViewDuration',
+    'averageViewPercentage','subscribersGained'];
   if(required.some(name=>idx(name)<0))throw new Error('YouTube Analytics missing metrics');
   const rows=(json.rows||[]).slice(-periodDays);
   let views=0,engagedViews=0,dislikes=0,watchMinutes=0,gained=0,lost=0,likes=0,comments=0,shares=0;
@@ -49,13 +52,13 @@ export function parseDailyReport(json,channelId,asOf,periodDays=PERIOD_DAYS) {
     const date=String(row[idx('day')]||'');
     if(!/^\d{4}-\d{2}-\d{2}$/.test(date))return [];
     const v=n(row[idx('views')]);
-    const engaged=n(row[idx('engagedViews')]);
-    const dislikeCount=n(row[idx('dislikes')]);
+    const engaged=idx('engagedViews')<0?null:n(row[idx('engagedViews')]);
+    const dislikeCount=idx('dislikes')<0?null:n(row[idx('dislikes')]);
     const w=n(row[idx('estimatedMinutesWatched')]);
     const d=n(row[idx('averageViewDuration')]);
     const p=n(row[idx('averageViewPercentage')]);
     const g=n(row[idx('subscribersGained')]);
-    const l=n(row[idx('subscribersLost')]);
+    const l=idx('subscribersLost')<0?null:n(row[idx('subscribersLost')]);
     const likeValue=idx('likes')<0?null:n(row[idx('likes')]);
     const commentValue=idx('comments')<0?null:n(row[idx('comments')]);
     const shareValue=idx('shares')<0?null:n(row[idx('shares')]);
@@ -64,7 +67,10 @@ export function parseDailyReport(json,channelId,asOf,periodDays=PERIOD_DAYS) {
     const redMinutesValue=idx('estimatedRedMinutesWatched')<0?null:n(row[idx('estimatedRedMinutesWatched')]);
     const playlistAddValue=idx('videosAddedToPlaylists')<0?null:n(row[idx('videosAddedToPlaylists')]);
     const playlistRemoveValue=idx('videosRemovedFromPlaylists')<0?null:n(row[idx('videosRemovedFromPlaylists')]);
-    views+=v;engagedViews+=engaged;dislikes+=dislikeCount;watchMinutes+=w;gained+=g;lost+=l;
+    views+=v;
+    if(engaged!==null)engagedViews+=engaged;
+    if(dislikeCount!==null)dislikes+=dislikeCount;
+    watchMinutes+=w;gained+=g;if(l!==null)lost+=l;
     if(uniqueValue!==null){uniqueViewersSum+=uniqueValue;uniqueDays++;}
     if(redViewValue!==null)redViews+=redViewValue;
     if(redMinutesValue!==null)redWatchMinutes+=redMinutesValue;
@@ -84,10 +90,12 @@ export function parseDailyReport(json,channelId,asOf,periodDays=PERIOD_DAYS) {
     }];
   });
   return {
-    channelId,periodDays,views,engagedViews,dislikes,watchMinutes,
+    channelId,periodDays,views,
+    engagedViews:idx('engagedViews')<0?null:engagedViews,
+    dislikes:idx('dislikes')<0?null:dislikes,watchMinutes,
     avgViewSeconds:views?weightedSeconds/views:null,
     avgViewPercentage:views?weightedPercent/views:null,
-    subscribersGained:gained,subscribersLost:lost,
+    subscribersGained:gained,subscribersLost:idx('subscribersLost')<0?null:lost,
     uniqueViewersDailyAverage:uniqueDays?uniqueViewersSum/uniqueDays:null,
     redViews:idx('redViews')<0?null:redViews,
     redWatchMinutes:idx('estimatedRedMinutesWatched')<0?null:redWatchMinutes,
@@ -159,8 +167,9 @@ async function optionalReport(token,channelId,startDate,endDate,dimensions,metri
   }
 }
 function analyticsConfigured(env) {
-  return Boolean(env.GOOGLE_OAUTH_CLIENT_ID&&env.GOOGLE_OAUTH_CLIENT_SECRET&&
-    env.OAUTH_ENCRYPTION_KEY);
+  // Imported VYRON profiles have their own encrypted Google client credentials.
+  // A global Google client is optional when profile-level credentials exist.
+  return /^[a-fA-F0-9]{64}$/.test(String(env.OAUTH_ENCRYPTION_KEY||''));
 }
 
 async function processBatch(env,details,fetchImpl=fetch) {
@@ -202,7 +211,29 @@ async function processBatch(env,details,fetchImpl=fetch) {
           'views,engagedViews,redViews,estimatedMinutesWatched,estimatedRedMinutesWatched,'+
           'averageViewDuration,averageViewPercentage,subscribersGained,subscribersLost,'+
           'likes,dislikes,comments,shares,uniques,videosAddedToPlaylists,videosRemovedFromPlaylists','day');
-        const dailyJson=await requestReport(token,dailyParams,fetchImpl,true);
+        let dailyJson,dailyAdvancedError=null;
+        try {
+          dailyJson=await requestReport(token,dailyParams,fetchImpl,true);
+        } catch(error) {
+          // Advanced metrics can be unsupported for some content and channel types.
+          // Preserve the stable core metrics instead of losing the whole channel report.
+          if(!/YouTube Analytics HTTP 400/.test(String(error?.message||'')))throw error;
+          const stableParams=reportParams(profile.channel_id,startDate,endDate,'day',
+            'views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,'+
+            'subscribersGained,subscribersLost,likes,dislikes,comments,shares','day');
+          try {
+            dailyJson=await requestReport(token,stableParams,fetchImpl,true);
+            dailyAdvancedError='ADVANCED_DAILY_METRICS_UNAVAILABLE';
+          } catch(stableError) {
+            if(!/YouTube Analytics HTTP 400/.test(String(stableError?.message||'')))throw stableError;
+            // Matches the officially documented YouTube Analytics daily sample.
+            const minimalParams=reportParams(profile.channel_id,startDate,endDate,'day',
+              'views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,'+
+              'subscribersGained','day');
+            dailyJson=await requestReport(token,minimalParams,fetchImpl,true);
+            dailyAdvancedError='CORE_DAILY_METRICS_ONLY';
+          }
+        }
         const snapshot=parseDailyReport(dailyJson,profile.channel_id,
           new Date().toISOString(),PERIOD_DAYS);
 
@@ -239,6 +270,7 @@ async function processBatch(env,details,fetchImpl=fetch) {
             'video=='+topVideoId)
           :{rows:[],error:null};
         const reportErrors={};
+        if(dailyAdvancedError)reportErrors.dailyAdvanced=dailyAdvancedError;
         for(const [key,value] of Object.entries({
           topVideos,trafficSources,devices,countries,demographics,sharingServices,
           playbackLocations,operatingSystems,liveOrOnDemand,subscribedStatus,audienceRetention

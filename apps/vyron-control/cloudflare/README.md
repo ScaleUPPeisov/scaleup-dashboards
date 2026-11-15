@@ -15,7 +15,7 @@ Never commit any Google credentials, OAuth tokens, macOS Keychain data, private 
 - Public counters refresh hourly, with dedicated `0 0 * * *` = 07:00 Krasnoyarsk and
   `0 15 * * *` = 22:00 Krasnoyarsk (UTC+7) slots. Newly enrolled VYRON channels
   receive an immediate targeted public-counter sync. Private Analytics runs separately
-  in eleven three-channel batches at 07:05, 07:10, 07:15, 07:20, 07:25,
+  in eleven two-channel batches per morning/evening window at 07:05, 07:10, 07:15, 07:20, 07:25,
   07:30, 07:35, 07:40, 07:45, 07:50 and 07:55, then again at 22:05–22:55.
   Each batch stays below Workers Free's 50-subrequest limit and covers up to
   33 authorized channels per reporting window.
@@ -160,8 +160,8 @@ profiles are sent over HTTPS and re-encrypted with AES-256-GCM before D1 storage
    tokens are temporary and never sent to the iPhone.
 6. Public counters refresh hourly, with dedicated baseline slots at **07:00 and
    22:00 Krasnoyarsk**. Private Analytics reporting windows begin at those two
-   times and run in eleven three-channel batches from :05 through :55. The dashboard's **Обновить всё** button runs public counters and
-   then processes all authorized Analytics channels in sequential three-profile
+   times and run in eleven two-channel batches per morning/evening window from :05 through :55. The dashboard's **Обновить всё** button runs public counters and
+   then processes all authorized Analytics channels in sequential two-profile
    batches. Each private report covers 90 days and includes daily views, engaged
    and unique viewers, watch time, retention, subscriber changes, likes/dislikes/
    comments/shares, YouTube Premium views, playlist additions/removals, top videos,

@@ -5,7 +5,7 @@ import { buildPushPayload } from '@block65/webcrypto-web-push';
 export const PUSH_CRON='2,7,12,17,22,27,32,37,42,47,52,57 * * * *';
 const PUSH_KINDS=new Set([
   'subscriber_milestone','render_completed','render_failed','upload_completed',
-  'upload_failed','disk_offline','quota_warning','agent_error'
+  'upload_failed','disk_offline','quota_warning','agent_error','push_test'
 ]);
 const sha=async value=>{
   const data=new TextEncoder().encode(value);
@@ -61,8 +61,10 @@ export async function unregisterPush(env,request) {
   return {unsubscribed:true};
 }
 function notification(e) {
-  let title='VYRON CONTROL',body=String(e.title||'Новое событие').slice(0,150);
-  if(e.kind==='subscriber_milestone'){
+  let title='VYRON PEISOV YT',body=String(e.title||'Новое событие').slice(0,150);
+  if(e.kind==='push_test'){
+    title='🔔 VYRON PEISOV YT — тест';
+  }else if(e.kind==='subscriber_milestone'){
     title='🎉 Новый рубеж подписчиков';
   }else if(e.kind==='upload_completed'){
     title='✅ Загрузка видео завершена';
@@ -86,7 +88,7 @@ export async function dispatchPush(env,fetchImpl=fetch,buildPayload=buildPushPay
     LEFT JOIN push_deliveries d
       ON d.endpoint_hash=p.endpoint_hash AND d.event_id=e.id
     WHERE e.kind IN ('subscriber_milestone','render_completed','render_failed',
-      'upload_completed','upload_failed','disk_offline','quota_warning','agent_error')
+      'upload_completed','upload_failed','disk_offline','quota_warning','agent_error','push_test')
       AND (d.event_id IS NULL OR
         (d.status IN ('retry','sending') AND d.attempts < 3
           AND d.updated_at < ?))

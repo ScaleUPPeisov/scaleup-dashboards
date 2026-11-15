@@ -113,7 +113,7 @@ async function fetchStatus(env) {
   const db = env.DB;
   const now = new Date();
   const day = pacificDay(now);
-  const [c,e,q,s,d,cmd]=await Promise.all([
+  const [c,e,q,s,d,cmd,reportHealth,snapshotTrend]=await Promise.all([
     db.prepare(`SELECT c.id,c.name,c.subscribers,c.views,c.videos,c.hidden_subscribers,
       c.previous_subscribers,c.updated_at,
       a.period_days AS analytics_period_days,
@@ -140,7 +140,25 @@ async function fetchStatus(env) {
     db.prepare('SELECT spent FROM quota_buckets WHERE day_pt=?').bind(day).first(),
     db.prepare('SELECT slot,status,source,started_at,ended_at,error,updated_channels FROM sync_runs ORDER BY started_at DESC LIMIT 1').first(),
     db.prepare('SELECT id,label,last_seen_at,status_json FROM devices ORDER BY id LIMIT 20').all(),
-    db.prepare('SELECT id,target_device,kind,state,created_at,updated_at FROM commands ORDER BY created_at DESC LIMIT 25').all()
+    db.prepare('SELECT id,target_device,kind,state,created_at,updated_at FROM commands ORDER BY created_at DESC LIMIT 25').all(),
+    db.prepare(`SELECT COUNT(*) AS profiles,
+      SUM(CASE WHEN p.last_error IS NOT NULL AND p.last_error != '' THEN 1 ELSE 0 END) AS error_profiles,
+      SUM(CASE WHEN p.last_success_at IS NOT NULL THEN 1 ELSE 0 END) AS refreshed_profiles,
+      SUM(CASE WHEN c.client_id_cipher IS NOT NULL AND c.client_secret_cipher IS NOT NULL
+        THEN 1 ELSE 0 END) AS local_clients
+      FROM google_oauth_profiles p LEFT JOIN google_oauth_client_credentials c
+      ON c.channel_id=p.channel_id`).first(),
+    db.prepare(`WITH latest AS (
+      SELECT channel_id,substr(observed_at,1,10) AS day,
+        MAX(observed_at) AS latest_at
+      FROM channel_snapshots WHERE observed_at >= ?
+      GROUP BY channel_id,substr(observed_at,1,10)
+    )
+    SELECT latest.day,latest.channel_id,snap.views
+    FROM latest JOIN channel_snapshots snap ON
+      snap.channel_id=latest.channel_id AND snap.observed_at=latest.latest_at
+    ORDER BY latest.day,latest.channel_id LIMIT 1400`)
+      .bind(new Date(now.getTime()-21*86400000).toISOString()).all()
   ]);
   const channels=(c.results||[]).map(row=>({
     id:row.id,name:row.name,
@@ -169,6 +187,27 @@ async function fetchStatus(env) {
       reports:parsedJson(row.analytics_reports_json,{})
     }:null
   }));
+  // Public network totals are cumulative, not daily Analytics views.
+  // Carry forward each channel's last known daily snapshot and expose coverage.
+  const publicSnapshotsByDay=new Map();
+  for(const row of snapshotTrend.results||[]){
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(String(row.day||'')))continue;
+    if(!publicSnapshotsByDay.has(row.day))publicSnapshotsByDay.set(row.day,[]);
+    publicSnapshotsByDay.get(row.day).push(row);
+  }
+  const publicLatest=new Map(),publicTrend=[];
+  for(let daysAgo=13;daysAgo>=0;daysAgo--){
+    const day=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),
+      now.getUTCDate()-daysAgo)).toISOString().slice(0,10);
+    for(const row of publicSnapshotsByDay.get(day)||[]){
+      if(Number.isSafeInteger(Number(row.views))&&Number(row.views)>=0)
+        publicLatest.set(row.channel_id,Number(row.views));
+    }
+    publicTrend.push({
+      date:day,views:[...publicLatest.values()].reduce((total,n)=>total+n,0),
+      covered:publicLatest.size,total:channels.length
+    });
+  }
   const sum=key=>({
     value:channels.reduce((s,ch)=>s+(ch[key]??0),0),
     covered:channels.filter(ch=>ch[key]!==null).length,total:channels.length
@@ -190,14 +229,14 @@ async function fetchStatus(env) {
   return {
     timezone:'Asia/Krasnoyarsk',schedule:['hourly','07:00','22:00'],
     quota:{ day,spent:q?.spent??0,
-      budget:Number(env.QUOTA_DAILY_BUDGET||200),
+      budget:Number(env.QUOTA_DAILY_BUDGET||10000),
       scope:'vyron-control-local-only',
-      note:'This service tracks its own YouTube Data API requests, not other clients in Google Cloud.'
+      note:'Local Data API allowance for this Worker only; the Google Cloud project quota and VYRON Mac usage are separate.'
     },
     configured,lastAttemptAt:s?.started_at||null,lastSuccessAt:lastSuccess?.ended_at||null,
     lastError:latestError,lastSource:s?.source||null,
     syncing:s?.status==='running',
-    channels,totalSubscribers:sum('subscribers'),totalViews:sum('views'),totalVideos:sum('videos'),
+    channels,publicTrend,totalSubscribers:sum('subscribers'),totalViews:sum('views'),totalVideos:sum('videos'),
     analyticsSummary:(()=>{
       const available=channels.filter(ch=>ch.analytics);
       const views=available.reduce((sum,ch)=>sum+(ch.analytics.views??0),0);
@@ -243,11 +282,22 @@ async function fetchStatus(env) {
         note:'Авторизованные отчёты YouTube Analytics API. CTR миниатюр и доход без отдельных поддерживаемых прав не подменяются.'
       };
     })(),
+    analyticsHealth:{
+      linkedProfiles:Number(reportHealth?.profiles||0),
+      refreshedProfiles:Number(reportHealth?.refreshed_profiles||0),
+      profilesWithErrors:Number(reportHealth?.error_profiles||0),
+      profilesWithEncryptedClient:Number(reportHealth?.local_clients||0),
+      reportChannels:channels.filter(ch=>Object.keys(ch.analytics?.reports||{}).length>0).length,
+      needsAuthorization:channels.filter(ch=>!ch.analyticsAuthorized).map(ch=>({id:ch.id,name:ch.name})),
+      awaitingReports:channels.filter(ch=>ch.analyticsAuthorized&&
+        ch.analytics?.source!=='GOOGLE_ANALYTICS_API').map(ch=>({id:ch.id,name:ch.name}))
+    },
     integrations:{
       youtubeDataApi:Boolean(env.YOUTUBE_API_KEY),
       macBridge:Boolean(env.AGENT_TOKEN||env.CONTROL_TOKEN),
-      googleOAuth:Boolean(env.GOOGLE_OAUTH_CLIENT_ID&&env.GOOGLE_OAUTH_CLIENT_SECRET&&
-        env.OAUTH_ENCRYPTION_KEY&&env.APP_ORIGIN),
+      googleOAuth:Boolean(env.OAUTH_ENCRYPTION_KEY&&
+        (Number(reportHealth?.local_clients||0)>0||
+         env.GOOGLE_OAUTH_CLIENT_ID&&env.GOOGLE_OAUTH_CLIENT_SECRET)),
       webPush:Boolean(env.VAPID_PUBLIC_KEY&&env.VAPID_PRIVATE_KEY&&env.VAPID_SUBJECT)
     },
     events, devices:(d.results||[]).map(x=>{
@@ -419,7 +469,9 @@ async function heartbeat(env,request) {
   const data=await readJson(request,8000);
   const deviceId=String(data.deviceId||'');
   if (!/^[A-Za-z0-9_-]{3,50}$/.test(deviceId)) return errorReply('Invalid device ID');
-  const keys=['vyronVersion','endlumeVersion','macAwake','diskOnline',
+  const keys=['vyronVersion','endlumeVersion','macOSVersion','macModel','architecture',
+    'uptimeSeconds','memoryTotalBytes','memoryFreeBytes','rootDiskTotalBytes',
+    'rootDiskFreeBytes','macAwake','diskOnline',
     'rendersActive','uploadsQueued','uploadsCompleted','uploadsToday',
     'rendersCompletedToday','uploadFailuresToday','jobsReadyUpload',
     'channelsTotal','channelsBound','lastError','syncCursor'];
@@ -541,6 +593,17 @@ export default {
         return json({supported:Boolean(vapidPublic(env)),publicKey:vapidPublic(env)});
       if (url.pathname==='/api/push/subscribe'&&request.method==='POST')
         return json(await registerPush(env,request));
+      if (url.pathname==='/api/push/test'&&request.method==='POST') {
+        if(!vapidPublic(env)||!env.VAPID_PRIVATE_KEY||!env.VAPID_SUBJECT)
+          return errorReply('Web Push VAPID not configured',409);
+        const date=new Date().toISOString();
+        await env.DB.prepare(
+          "INSERT INTO events(id,kind,channel_id,title,payload_json,occurred_at,received_at) VALUES (?,'push_test',NULL,?,'{}',?,?)"
+        ).bind(crypto.randomUUID(),'Тестовое уведомление VYRON PEISOV YT',date,date).run();
+        const result=await dispatchPush(env,env.FETCH_IMPL||fetch);
+        return json({attempted:result.attempted||0,sent:result.sent||0,
+          failed:result.failed||0,note:'Sending is not proof of device delivery.'});
+      }
       if (url.pathname==='/api/push/unsubscribe'&&request.method==='POST')
         return json(await unregisterPush(env,request));
       if (url.pathname==='/api/status'&&request.method==='GET')

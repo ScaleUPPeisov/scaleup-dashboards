@@ -531,20 +531,23 @@ function renderEvents(events) {
     list.append(row);
   }
 }
-function renderOverviewTrend(rows) {
+function renderOverviewTrend(rows,source='analytics',channelTotal=0) {
   const svg=$('overview-trend'),caption=$('overview-trend-caption');
   svg.replaceChildren();
-  const points=(rows||[]).slice(-14).map(row=>({
+  const eligible=(rows||[]).slice(-14).filter(row=>source!=='public'||
+    (channelTotal>0&&row.covered===channelTotal));
+  const points=eligible.map(row=>({
     date:row.date,value:Math.max(0,Number(row.views)||0)
   })).filter(row=>/^\d{4}-\d{2}-\d{2}$/.test(row.date));
   if(!points.length) {
-    caption.textContent='Нет дневных отчётов Google Analytics. Публичные просмотры обновляются отдельно.';
+    caption.textContent=source==='public'?'Пока недостаточно полных снимков всех каналов.':'Нет дневных отчётов Analytics API.';
     return;
   }
   const values=points.map(point=>point.value);
-  const max=Math.max(1,...values),width=720,height=150,left=12,right=12,top=12,bottom=12;
+  const min=Math.min(...values),max=Math.max(...values),span=Math.max(1,max-min);
+  const width=720,height=150,left=12,right=12,top=12,bottom=12;
   const plotWidth=width-left-right,plotHeight=height-top-bottom;
-  const y=value=>top+(max-value)/max*plotHeight;
+  const y=value=>top+(max-value)/span*plotHeight;
   for(let i=1;i<4;i++) {
     const gy=top+i*plotHeight/4;
     svg.append(svgNode('path',{d:'M '+left+' '+gy+' H '+(width-right),class:'overview-grid-line'}));
@@ -560,8 +563,13 @@ function renderOverviewTrend(rows) {
   const last=coords[coords.length-1];
   svg.append(svgNode('circle',{cx:last[0],cy:last[1],r:4,class:'overview-point'}));
   const total=values.reduce((sum,value)=>sum+value,0);
-  caption.textContent=points[0].date+' — '+points[points.length-1].date+
-    ' · '+number(total)+' просмотров · '+points.length+' дней с данными';
+  const delta=values.at(-1)-values[0];
+  caption.textContent=points[0].date+' — '+points.at(-1).date+
+    (source==='public'
+      ?' · публичные счётчики, прирост '+(delta>=0?'+':'')+number(delta)+
+        ' · охват '+channelTotal+'/'+channelTotal
+      :' · '+number(total)+' просмотров за '+points.length+' дней')+
+    (source==='public'?' · накопительный показатель':' · Google Analytics');
 }
 function renderOverview(data) {
   const channels=data.channels||[];
@@ -608,7 +616,20 @@ function renderOverview(data) {
   $('overview-sync-caption').textContent=data.lastError
     ?'Последняя попытка завершилась ошибкой'
     :'Последний успешный цикл · '+time(data.lastSuccessAt);
-  renderOverviewTrend(data.analyticsSummary?.daily||[]);
+  const analyticsDays=data.analyticsSummary?.daily||[];
+  const publicDays=data.publicTrend||[];
+  const useAnalytics=analyticsDays.length>=2;
+  renderOverviewTrend(useAnalytics?analyticsDays:publicDays,useAnalytics?'analytics':'public',total);
+  const health=data.analyticsHealth||{};
+  const missing=health.needsAuthorization||[];
+  const pending=health.awaitingReports||[];
+  const failed=health.profilesWithErrors||0;
+  $('network-attention-message').textContent=missing.length
+    ?missing.length+' канал(ов) без OAuth · '+pending.length+' ожидают первый отчёт'+
+      (failed?' · ошибок: '+failed:'')
+    :pending.length?'Google Analytics: '+pending.length+' ожидают первый отчёт'+
+      (failed?' · ошибок: '+failed:'')
+    :'Каналы с OAuth готовы; подробности в разделе «Аналитика».';
 
   const list=$('overview-events');
   list.replaceChildren();
@@ -654,6 +675,12 @@ function renderOverview(data) {
 }
 function render(data) {
   current = data;
+  const health=data.analyticsHealth||{};
+  $('analytics-health-note').textContent='OAuth '+number(health.linkedProfiles??0)+' / '+
+    number(data.channels.length)+' · Google отчётов '+number(health.reportChannels??0)+
+    ' · без OAuth '+number(health.needsAuthorization?.length??0)+
+    ' · ошибки профилей '+number(health.profilesWithErrors??0)+
+    (health.reportChannels===0?' · Расширенные метрики не подтверждены.':'');
   displayAggregate('total-subs', data.totalSubscribers);
   displayAggregate('total-views', data.totalViews);
   displayAggregate('total-videos', data.totalVideos);
@@ -750,6 +777,11 @@ document.querySelectorAll('[data-mobile-target]').forEach(button=>{
 });
 $('overview-events-open').addEventListener('click',()=>{
   activeMobileView='events';
+  applyMobileView();
+  window.scrollTo({top:0,behavior:'smooth'});
+});
+$('overview-analytics-open').addEventListener('click',()=>{
+  activeMobileView='analytics';
   applyMobileView();
   window.scrollTo({top:0,behavior:'smooth'});
 });
@@ -1025,6 +1057,8 @@ function vapidKeyToBytes(value) {
 }
 async function updatePushState() {
   const state=$('push-state'),msg=$('push-message');
+  const testButton=$('push-test');
+  testButton.hidden=true;
   if(!('serviceWorker' in navigator)||!('PushManager' in window)||
       !('Notification' in window)||!window.isSecureContext){
     state.textContent='Не поддерживается';
@@ -1048,6 +1082,10 @@ async function updatePushState() {
     state.textContent=enabled?'● Активны':'Не подключены';
     $('push-enable').disabled=enabled;
     $('push-disable').hidden=!enabled;
+    testButton.hidden=!enabled;
+    msg.textContent=enabled
+      ?'Уведомления подключены. Нажми «Отправить тест» для проверки доставки.'
+      :'На iPhone: Safari → Поделиться → На экран «Домой» → открой приложение и разреши уведомления.';
   }catch(error){
     state.textContent='Недоступно';
     msg.textContent='Push сейчас недоступен: '+error.message;
@@ -1077,6 +1115,16 @@ $('push-enable').addEventListener('click',async()=>{
     msg.textContent='Не удалось включить: '+error.message;
     button.disabled=false;
   }
+});
+$('push-test').addEventListener('click',async()=>{
+  const button=$('push-test'),msg=$('push-message');
+  button.disabled=true;
+  try{
+    const result=await api('/api/push/test','POST',{});
+    msg.textContent=result.sent>0?'Тестовое уведомление отправлено.'
+      :'Проверка запущена. Доставка пока не подтверждена; проверь журнал и разрешения.';
+  }catch(error){msg.textContent='Тест Push: '+error.message;}
+  finally{button.disabled=false;}
 });
 $('push-disable').addEventListener('click',async()=>{
   const msg=$('push-message'),button=$('push-disable');
@@ -1127,8 +1175,8 @@ $('refresh').addEventListener('click', async () => {
       missingAnalytics=allChannels.filter(channel=>!connectedIds.has(channel.id)).map(channel=>channel.name);
       if(analyticsTotal){
         const requestId=crypto.randomUUID().replaceAll('-','');
-        for(let offset=0;offset<analyticsTotal;offset+=3){
-          const completed=Math.min(offset+3,analyticsTotal);
+        for(let offset=0;offset<analyticsTotal;offset+=2){
+          const completed=Math.min(offset+2,analyticsTotal);
           feedback.textContent='Шаг 2/2 · Google Analytics: '+completed+' / '+analyticsTotal+
             ' подключённых каналов · всего '+analyticsExpected+'…';
           try {

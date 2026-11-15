@@ -6,24 +6,24 @@
   <meta name="theme-color" content="#080d18">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="VYRON CONTROL">
-  <meta name="description" content="VYRON CONTROL — мониторинг сети YouTube-каналов">
+  <meta name="apple-mobile-web-app-title" content="VYRON PEISOV YT">
+  <meta name="description" content="VYRON PEISOV YT — мониторинг сети YouTube-каналов">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" type="image/svg+xml" href="/icon.svg">
   <link rel="stylesheet" href="/styles.css">
-  <title>VYRON CONTROL</title>
+  <title>VYRON PEISOV YT</title>
   <script type="module" src="/app.js"></script>
 </head>
 <body>
   <main class="shell">
     <header class="topbar">
-      <div class="brand"><img src="/icon.svg" alt="" width="42" height="42"><div><strong>VYRON</strong><small>CONTROL / CLOUD</small></div></div>
+      <div class="brand"><img src="/icon.svg" alt="" width="42" height="42"><div><strong>VYRON PEISOV YT</strong><small>PRIVATE YOUTUBE STUDIO</small></div></div>
       <div class="top-right"><span class="online" aria-live="polite"><span class="dot" id="topbar-dot"></span><span id="topbar-status-text">Контроль каналов</span></span><button id="logout" class="ghost" hidden>Выйти</button></div>
     </header>
     <section id="login" class="login card">
       <span class="eyebrow">Личный доступ</span>
       <h1>Твоя сеть каналов.<br>На iPhone.</h1>
-      <p class="muted">Введи секрет доступа к своему VYRON CONTROL. Он не отправляется сторонним сервисам.</p>
+      <p class="muted">Введи секрет доступа к своему VYRON PEISOV YT. Он не отправляется сторонним сервисам.</p>
       <form id="login-form">
         <label for="access-token">Ключ доступа</label>
         <input id="access-token" type="password" autocomplete="off" minlength="32" required placeholder="CONTROL_TOKEN — секрет из Cloudflare">
@@ -100,6 +100,10 @@
             <span id="overview-sync-caption">Облачный цикл обновления</span>
           </article>
         </div>
+        <div class="network-attention" id="network-attention" role="status" aria-live="polite">
+          <span id="network-attention-message">Проверяем синхронизацию Analytics и каналов…</span>
+          <button type="button" id="overview-analytics-open" class="text-action">Диагностика ↗</button>
+        </div>
         <div class="overview-lower">
           <article class="overview-panel overview-chart-panel">
             <div class="overview-panel-head">
@@ -122,7 +126,7 @@
         <div class="sync-rhythm" aria-label="Расписание синхронизации">
           <div class="sync-rhythm-item"><span class="sync-rhythm-dot"></span><div><strong>Новые каналы</strong><small>Автообнаружение каждые 45 секунд, пока Mac включён</small></div></div>
           <div class="sync-rhythm-item"><span class="sync-rhythm-dot"></span><div><strong>Публичные счётчики</strong><small>Каждый час и отдельные циклы в 07:00 / 22:00 по Красноярску</small></div></div>
-          <div class="sync-rhythm-item"><span class="sync-rhythm-dot"></span><div><strong>Analytics 360°</strong><small>Обработка авторизованных каналов пакетами до 3 каждые 5 минут</small></div></div>
+          <div class="sync-rhythm-item"><span class="sync-rhythm-dot"></span><div><strong>Analytics 360°</strong><small>Обработка авторизованных каналов пакетами до 2 каждые 5 минут</small></div></div>
         </div>
         <p class="overview-disclaimer">Важно: уже подключённые каналы обновляются в облаке независимо от Mac. Обнаружение нового локального канала требует, чтобы Mac проснулся и Mac Bridge восстановил связь.</p>
       </section>
@@ -130,9 +134,9 @@
         <article class="card metric"><div class="metric-label">Подписчики <span>♙</span></div><strong id="total-subs">—</strong><small id="subs-covered">—</small></article>
         <article class="card metric"><div class="metric-label">Просмотры <span>◉</span></div><strong id="total-views">—</strong><small id="views-covered">—</small></article>
         <article class="card metric"><div class="metric-label">Видео на YouTube <span>▣</span></div><strong id="total-videos">—</strong><small id="videos-covered">—</small></article>
-        <article class="card metric"><div class="metric-label">Квота VYRON CONTROL <span>◈</span></div><strong id="quota">—</strong><small id="quota-day">—</small></article>
+        <article class="card metric"><div class="metric-label">Квота VYRON PEISOV YT <span>◈</span></div><strong id="quota">—</strong><small id="quota-day">—</small></article>
       </div>
-      <section class="card strip" data-mobile-view="overview">
+      <section class="card strip" data-mobile-view="system">
         <div class="strip-head"><div><span class="eyebrow">АВТОСИНХРОНИЗАЦИЯ</span><h2>07:00 и 22:00</h2></div><span class="pill">Красноярск · UTC+7</span></div>
         <p>Публичные счётчики обновляются каждый час; дополнительные контрольные циклы — в 07:00 и 22:00 по Красноярску. Новый канал получает первый запрос сразу после обнаружения Mac Bridge.</p>
         <div class="quota-track"><div id="quota-progress"></div></div>
@@ -154,6 +158,7 @@
         <p class="muted">Новые рубежи 100/200/300 подписчиков, завершённые рендеры, успешные и неудачные загрузки. Уведомления приходят даже при закрытом экране приложения.</p>
         <div class="mac-actions">
           <button id="push-enable" class="primary">Включить уведомления</button>
+          <button id="push-test" class="ghost" hidden>Отправить тест</button>
           <button id="push-disable" class="ghost" hidden>Отключить</button>
           <span id="push-message" class="caution">На iPhone открой сайт через «Добавить на экран Домой» — затем разреши уведомления.</span>
         </div>
@@ -186,6 +191,7 @@
             </select>
           </div>
         </div>
+        <div id="analytics-health-note" class="analytics-health-note" role="status" aria-live="polite">Проверяем полноту Google Analytics…</div>
         <div class="analytics-kpis">
           <article class="analytics-kpi"><small>Просмотры</small><strong id="analytics-views">—</strong><span id="analytics-views-note">—</span></article>
           <article class="analytics-kpi"><small>Вовлечённые просмотры</small><strong id="analytics-engaged-views">—</strong><span>engaged views</span></article>
@@ -346,7 +352,7 @@
         <p class="caution">YouTube округляет публичные значения подписчиков: уведомление означает зафиксированный публичный рубеж, а не точное число.</p>
       </section>
 
-      <footer data-mobile-view="system">VYRON CONTROL · Личный облачный командный центр YouTube-сети. Публичные показатели, авторизованная Analytics 360° и телеметрия Mac.</footer>
+      <footer data-mobile-view="system">VYRON PEISOV YT · Личный облачный командный центр YouTube-сети. Публичные показатели, авторизованная Analytics 360° и телеметрия Mac.</footer>
     </section>
   </main>
 </body>
