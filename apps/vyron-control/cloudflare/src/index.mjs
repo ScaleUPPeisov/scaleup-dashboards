@@ -113,7 +113,7 @@ async function fetchStatus(env) {
   const db = env.DB;
   const now = new Date();
   const day = pacificDay(now);
-  const [c,e,q,s,d,cmd,reportHealth]=await Promise.all([
+  const [c,e,q,s,d,cmd,reportHealth,snapshotTrend]=await Promise.all([
     db.prepare(`SELECT c.id,c.name,c.subscribers,c.views,c.videos,c.hidden_subscribers,
       c.previous_subscribers,c.updated_at,
       a.period_days AS analytics_period_days,
@@ -147,7 +147,18 @@ async function fetchStatus(env) {
       SUM(CASE WHEN c.client_id_cipher IS NOT NULL AND c.client_secret_cipher IS NOT NULL
         THEN 1 ELSE 0 END) AS local_clients
       FROM google_oauth_profiles p LEFT JOIN google_oauth_client_credentials c
-      ON c.channel_id=p.channel_id`).first()
+      ON c.channel_id=p.channel_id`).first(),
+    db.prepare(`WITH latest AS (
+      SELECT channel_id,substr(observed_at,1,10) AS day,
+        MAX(observed_at) AS latest_at
+      FROM channel_snapshots WHERE observed_at >= ?
+      GROUP BY channel_id,substr(observed_at,1,10)
+    )
+    SELECT latest.day,latest.channel_id,snap.views
+    FROM latest JOIN channel_snapshots snap ON
+      snap.channel_id=latest.channel_id AND snap.observed_at=latest.latest_at
+    ORDER BY latest.day,latest.channel_id LIMIT 1400`)
+      .bind(new Date(now.getTime()-21*86400000).toISOString()).all()
   ]);
   const channels=(c.results||[]).map(row=>({
     id:row.id,name:row.name,
@@ -176,6 +187,27 @@ async function fetchStatus(env) {
       reports:parsedJson(row.analytics_reports_json,{})
     }:null
   }));
+  // Public network totals are cumulative, not daily Analytics views.
+  // Carry forward each channel's last known daily snapshot and expose coverage.
+  const publicSnapshotsByDay=new Map();
+  for(const row of snapshotTrend.results||[]){
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(String(row.day||'')))continue;
+    if(!publicSnapshotsByDay.has(row.day))publicSnapshotsByDay.set(row.day,[]);
+    publicSnapshotsByDay.get(row.day).push(row);
+  }
+  const publicLatest=new Map(),publicTrend=[];
+  for(let daysAgo=13;daysAgo>=0;daysAgo--){
+    const day=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),
+      now.getUTCDate()-daysAgo)).toISOString().slice(0,10);
+    for(const row of publicSnapshotsByDay.get(day)||[]){
+      if(Number.isSafeInteger(Number(row.views))&&Number(row.views)>=0)
+        publicLatest.set(row.channel_id,Number(row.views));
+    }
+    publicTrend.push({
+      date:day,views:[...publicLatest.values()].reduce((total,n)=>total+n,0),
+      covered:publicLatest.size,total:channels.length
+    });
+  }
   const sum=key=>({
     value:channels.reduce((s,ch)=>s+(ch[key]??0),0),
     covered:channels.filter(ch=>ch[key]!==null).length,total:channels.length
@@ -204,7 +236,7 @@ async function fetchStatus(env) {
     configured,lastAttemptAt:s?.started_at||null,lastSuccessAt:lastSuccess?.ended_at||null,
     lastError:latestError,lastSource:s?.source||null,
     syncing:s?.status==='running',
-    channels,totalSubscribers:sum('subscribers'),totalViews:sum('views'),totalVideos:sum('videos'),
+    channels,publicTrend,totalSubscribers:sum('subscribers'),totalViews:sum('views'),totalVideos:sum('videos'),
     analyticsSummary:(()=>{
       const available=channels.filter(ch=>ch.analytics);
       const views=available.reduce((sum,ch)=>sum+(ch.analytics.views??0),0);
