@@ -169,6 +169,14 @@ test('authorization, origin guard, static asset CSP and immutable endpoint behav
   assert.doesNotMatch(csp,/(?:^|\s)'unsafe-eval'(?:\s|;|$)/);
 });
 
+test('push test requires VAPID and does not mutate D1 without configuration',async()=>{
+  const e=env();
+  const result=await cloud.fetch(req('/api/push/test',control,'POST',{}),e);
+  assert.equal(result.status,409);
+  const events=e.DB.native.prepare("SELECT COUNT(*) AS count FROM events WHERE kind='push_test'").get();
+  assert.equal(events.count,0);
+});
+
 test('33 channels batched, scheduled milestones, no duplicate runs, local quota',async()=>{
   const e=env(),list=Array.from({length:33},(_,i)=>({id:id(i),name:'Network '+i}));
   const enrolled=await cloud.fetch(req('/api/channels',control,'POST',list),e);

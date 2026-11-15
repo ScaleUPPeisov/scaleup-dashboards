@@ -593,6 +593,17 @@ export default {
         return json({supported:Boolean(vapidPublic(env)),publicKey:vapidPublic(env)});
       if (url.pathname==='/api/push/subscribe'&&request.method==='POST')
         return json(await registerPush(env,request));
+      if (url.pathname==='/api/push/test'&&request.method==='POST') {
+        if(!vapidPublic(env)||!env.VAPID_PRIVATE_KEY||!env.VAPID_SUBJECT)
+          return errorReply('Web Push VAPID not configured',409);
+        const date=new Date().toISOString();
+        await env.DB.prepare(
+          "INSERT INTO events(id,kind,channel_id,title,payload_json,occurred_at,received_at) VALUES (?,'push_test',NULL,?,'{}',?,?)"
+        ).bind(crypto.randomUUID(),'Тестовое уведомление VYRON PEISOV YT',date,date).run();
+        const result=await dispatchPush(env,env.FETCH_IMPL||fetch);
+        return json({attempted:result.attempted||0,sent:result.sent||0,
+          failed:result.failed||0,note:'Sending is not proof of device delivery.'});
+      }
       if (url.pathname==='/api/push/unsubscribe'&&request.method==='POST')
         return json(await unregisterPush(env,request));
       if (url.pathname==='/api/status'&&request.method==='GET')
