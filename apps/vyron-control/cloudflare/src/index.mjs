@@ -113,7 +113,7 @@ async function fetchStatus(env) {
   const db = env.DB;
   const now = new Date();
   const day = pacificDay(now);
-  const [c,e,q,s,d,cmd]=await Promise.all([
+  const [c,e,q,s,d,cmd,reportHealth]=await Promise.all([
     db.prepare(`SELECT c.id,c.name,c.subscribers,c.views,c.videos,c.hidden_subscribers,
       c.previous_subscribers,c.updated_at,
       a.period_days AS analytics_period_days,
@@ -140,7 +140,14 @@ async function fetchStatus(env) {
     db.prepare('SELECT spent FROM quota_buckets WHERE day_pt=?').bind(day).first(),
     db.prepare('SELECT slot,status,source,started_at,ended_at,error,updated_channels FROM sync_runs ORDER BY started_at DESC LIMIT 1').first(),
     db.prepare('SELECT id,label,last_seen_at,status_json FROM devices ORDER BY id LIMIT 20').all(),
-    db.prepare('SELECT id,target_device,kind,state,created_at,updated_at FROM commands ORDER BY created_at DESC LIMIT 25').all()
+    db.prepare('SELECT id,target_device,kind,state,created_at,updated_at FROM commands ORDER BY created_at DESC LIMIT 25').all(),
+    db.prepare(`SELECT COUNT(*) AS profiles,
+      SUM(CASE WHEN p.last_error IS NOT NULL AND p.last_error != '' THEN 1 ELSE 0 END) AS error_profiles,
+      SUM(CASE WHEN p.last_success_at IS NOT NULL THEN 1 ELSE 0 END) AS refreshed_profiles,
+      SUM(CASE WHEN c.client_id_cipher IS NOT NULL AND c.client_secret_cipher IS NOT NULL
+        THEN 1 ELSE 0 END) AS local_clients
+      FROM google_oauth_profiles p LEFT JOIN google_oauth_client_credentials c
+      ON c.channel_id=p.channel_id`).first()
   ]);
   const channels=(c.results||[]).map(row=>({
     id:row.id,name:row.name,
@@ -190,9 +197,9 @@ async function fetchStatus(env) {
   return {
     timezone:'Asia/Krasnoyarsk',schedule:['hourly','07:00','22:00'],
     quota:{ day,spent:q?.spent??0,
-      budget:Number(env.QUOTA_DAILY_BUDGET||200),
+      budget:Number(env.QUOTA_DAILY_BUDGET||10000),
       scope:'vyron-control-local-only',
-      note:'This service tracks its own YouTube Data API requests, not other clients in Google Cloud.'
+      note:'Local Data API allowance for this Worker only; the Google Cloud project quota and VYRON Mac usage are separate.'
     },
     configured,lastAttemptAt:s?.started_at||null,lastSuccessAt:lastSuccess?.ended_at||null,
     lastError:latestError,lastSource:s?.source||null,
@@ -243,11 +250,22 @@ async function fetchStatus(env) {
         note:'Авторизованные отчёты YouTube Analytics API. CTR миниатюр и доход без отдельных поддерживаемых прав не подменяются.'
       };
     })(),
+    analyticsHealth:{
+      linkedProfiles:Number(reportHealth?.profiles||0),
+      refreshedProfiles:Number(reportHealth?.refreshed_profiles||0),
+      profilesWithErrors:Number(reportHealth?.error_profiles||0),
+      profilesWithEncryptedClient:Number(reportHealth?.local_clients||0),
+      reportChannels:channels.filter(ch=>Object.keys(ch.analytics?.reports||{}).length>0).length,
+      needsAuthorization:channels.filter(ch=>!ch.analyticsAuthorized).map(ch=>({id:ch.id,name:ch.name})),
+      awaitingReports:channels.filter(ch=>ch.analyticsAuthorized&&
+        ch.analytics?.source!=='GOOGLE_ANALYTICS_API').map(ch=>({id:ch.id,name:ch.name}))
+    },
     integrations:{
       youtubeDataApi:Boolean(env.YOUTUBE_API_KEY),
       macBridge:Boolean(env.AGENT_TOKEN||env.CONTROL_TOKEN),
-      googleOAuth:Boolean(env.GOOGLE_OAUTH_CLIENT_ID&&env.GOOGLE_OAUTH_CLIENT_SECRET&&
-        env.OAUTH_ENCRYPTION_KEY&&env.APP_ORIGIN),
+      googleOAuth:Boolean(env.OAUTH_ENCRYPTION_KEY&&
+        (Number(reportHealth?.local_clients||0)>0||
+         env.GOOGLE_OAUTH_CLIENT_ID&&env.GOOGLE_OAUTH_CLIENT_SECRET)),
       webPush:Boolean(env.VAPID_PUBLIC_KEY&&env.VAPID_PRIVATE_KEY&&env.VAPID_SUBJECT)
     },
     events, devices:(d.results||[]).map(x=>{
@@ -419,7 +437,9 @@ async function heartbeat(env,request) {
   const data=await readJson(request,8000);
   const deviceId=String(data.deviceId||'');
   if (!/^[A-Za-z0-9_-]{3,50}$/.test(deviceId)) return errorReply('Invalid device ID');
-  const keys=['vyronVersion','endlumeVersion','macAwake','diskOnline',
+  const keys=['vyronVersion','endlumeVersion','macOSVersion','macModel','architecture',
+    'uptimeSeconds','memoryTotalBytes','memoryFreeBytes','rootDiskTotalBytes',
+    'rootDiskFreeBytes','macAwake','diskOnline',
     'rendersActive','uploadsQueued','uploadsCompleted','uploadsToday',
     'rendersCompletedToday','uploadFailuresToday','jobsReadyUpload',
     'channelsTotal','channelsBound','lastError','syncCursor'];

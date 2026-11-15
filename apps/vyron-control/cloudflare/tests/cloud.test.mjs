@@ -65,6 +65,12 @@ function req(path,token,method='GET',body=undefined,origin=null){
 }
 const id=i=>'UC'+String(i).padStart(22,'0');
 
+test('10000-unit local Data API allowance is independent from Google Cloud project quota',async()=>{
+  const e=env(),date=new Date('2026-11-14T06:00:00Z');
+  await reserveQuota(e.DB,date,10000);
+  assert.equal(e.DB.native.prepare('SELECT spent FROM quota_buckets').get().spent,1);
+});
+
 test('cron times use Krasnoyarsk but Google quota resets in Pacific',async()=>{
   assert.equal(cronSlot('0 0 * * *',new Date('2026-11-13T00:00:00Z')),'2026-11-13@07:00');
   assert.equal(cronSlot('0 15 * * *',new Date('2026-11-13T15:00:00Z')),'2026-11-13@22:00');
@@ -796,6 +802,51 @@ test('authorized private Analytics syncs 90-day trends and channel breakdowns in
   assert.equal(second.skipped,true);
 });
 
+
+
+test('per-channel migrated credentials work without global Google client, with safe daily metrics fallback',async()=>{
+  const e=env(),channelId=id(661);
+  e.OAUTH_ENCRYPTION_KEY='7'.repeat(64);
+  delete e.GOOGLE_OAUTH_CLIENT_ID;
+  delete e.GOOGLE_OAUTH_CLIENT_SECRET;
+  const refreshCipher=await encryptSecret('MIGRATED_REFRESH_TOKEN',e);
+  const idCipher=await encryptSecret('MIGRATED_CLIENT_ID',e);
+  const secretCipher=await encryptSecret('MIGRATED_CLIENT_SECRET',e);
+  await e.DB.prepare('INSERT INTO channels(id,name) VALUES (?,?)').bind(channelId,'Imported').run();
+  await e.DB.prepare('INSERT INTO google_oauth_profiles(channel_id,channel_name,refresh_token_cipher,granted_scope,connected_at) VALUES (?,?,?,?,?)')
+    .bind(channelId,'Imported',refreshCipher,'yt-analytics.readonly',new Date().toISOString()).run();
+  await e.DB.prepare('INSERT INTO google_oauth_client_credentials(channel_id,profile_uuid,client_id_cipher,client_secret_cipher,source,bundle_uuid,imported_at) VALUES (?,?,?,?,?,?,?)')
+    .bind(channelId,'local-profile',idCipher,secretCipher,'VYRON_MIGRATION',null,new Date().toISOString()).run();
+  let advancedAttempts=0,baseAttempts=0;
+  const mockFetch=async(url,options)=>{
+    if(url.includes('oauth2.googleapis.com/token'))
+      return new Response(JSON.stringify({access_token:'MIGRATED_ACCESS'}),{status:200});
+    if(url.includes('youtubeanalytics.googleapis.com')){
+      const q=new URL(url).searchParams;
+      assert.equal(q.get('ids'),'channel=='+channelId);
+      const dims=q.get('dimensions'),metrics=q.get('metrics').split(',');
+      if(dims==='day'&&metrics.includes('engagedViews')){
+        advancedAttempts++;
+        return new Response(JSON.stringify({error:'unsupported metrics'}),{status:400});
+      }
+      if(dims==='day')baseAttempts++;
+      return new Response(JSON.stringify({
+        columnHeaders:[...dims.split(','),...metrics].map(name=>({name})),
+        rows:dims==='day'?[['2026-11-12',...metrics.map(()=>4)]]:[]
+      }),{status:200});
+    }
+    throw new Error('Unexpected mock endpoint');
+  };
+  const result=await runManualAnalyticsBatch(e,{offset:0,requestId:'migrated-profile-case-001'},mockFetch);
+  assert.equal(result.updated,1);
+  assert.equal(result.failed,0);
+  assert.equal(result.partial,1);
+  assert.ok(advancedAttempts>=1);
+  assert.equal(baseAttempts,1);
+  const stored=e.DB.native.prepare('SELECT reports_json FROM channel_analytics_reports WHERE channel_id=?').get(channelId);
+  assert.ok(stored);
+  assert.equal(JSON.parse(stored.reports_json).errors.dailyAdvanced,'ADVANCED_DAILY_METRICS_UNAVAILABLE');
+});
 
 test('one shared Google profile requests Analytics for each concrete YouTube channel ID',async()=>{
   const e=env(),firstChannel=id(81),secondChannel=id(82);

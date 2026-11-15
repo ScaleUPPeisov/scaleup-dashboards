@@ -5,7 +5,7 @@ import {
 function claimChanges(result) { return Number(result?.meta?.changes || 0); }
 
 function getQuotaBudget(env) {
-  const n = Number(env.QUOTA_DAILY_BUDGET || 200);
+  const n = Number(env.QUOTA_DAILY_BUDGET || 10000);
   if (!Number.isSafeInteger(n) || n < 1 || n > 10000) throw new Error('Invalid local quota budget');
   return n;
 }
