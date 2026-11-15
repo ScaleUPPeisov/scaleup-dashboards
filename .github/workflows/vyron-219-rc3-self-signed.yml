@@ -1,15 +1,10 @@
 name: VYRON 2.1.9 RC3 Stable Local Signing
 
 on:
-  push:
-    branches:
-      - release/vyron-219-rc3-self-signed
-    paths:
-      - '.github/workflows/vyron-219-rc3-self-signed.yml'
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
   actions: read
 
 env:
@@ -23,6 +18,8 @@ env:
 
 jobs:
   verify-build-publish-rc3:
+    # SECURITY FREEZE 2026-11-15: obsolete updater/release publisher; intentionally disabled.
+    if: ${{ false }}
     runs-on: macos-14
     timeout-minutes: 120
     env:

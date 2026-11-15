@@ -17,7 +17,7 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
   actions: read
 
 concurrency:
@@ -36,6 +36,8 @@ env:
 
 jobs:
   stable-release:
+    # SECURITY FREEZE 2026-11-15: obsolete updater/release publisher; intentionally disabled.
+    if: ${{ false }}
     name: Publish exact physically accepted macOS artifact
     runs-on: macos-14
     timeout-minutes: 90
