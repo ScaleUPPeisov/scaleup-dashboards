@@ -156,8 +156,8 @@ function safeAnalyticsErrorCode(payload) {
   const normalize=value=>String(value||'')
     .replace(/([a-z0-9])([A-Z])/g,'$1_$2')
     .replace(/[^A-Za-z0-9_]/g,'').toUpperCase();
-  const candidates=[normalize(error.status),...(Array.isArray(error.errors)
-    ?error.errors.map(item=>normalize(item?.reason)):[])];
+  const candidates=[...(Array.isArray(error.errors)
+    ?error.errors.map(item=>normalize(item?.reason)):[]),normalize(error.status)];
   return candidates.find(code=>SAFE_ANALYTICS_ERROR_CODES.has(code))||'UNKNOWN';
 }
 async function requestReport(token,params,fetchImpl,retryTransient=false) {
