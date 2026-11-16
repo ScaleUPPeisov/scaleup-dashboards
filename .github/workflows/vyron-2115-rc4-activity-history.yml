@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
   actions: read
 
 concurrency:
@@ -32,6 +32,8 @@ env:
 
 jobs:
   rc:
+    # SECURITY FREEZE 2026-11-16: legacy updater trust is compromised.
+    if: ${{ false }}
     runs-on: macos-14
     timeout-minutes: 180
     env:
