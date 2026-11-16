@@ -176,7 +176,7 @@ jobs:
           NODE
 
       - name: Configure all three VAPID secrets, only after manual authorization
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'setup_push' && inputs.confirm_push == true }}
+        if: ${{ env.ACTION_OPERATION == 'setup_push' && env.CONFIRM_PUSH == 'true' }}
         shell: bash
         env:
           FOUND_VAPID: ${{ steps.secrets.outputs.vapid_count }}
