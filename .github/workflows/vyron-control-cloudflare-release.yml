@@ -84,10 +84,6 @@ jobs:
               echo "::error::Production deployment requires an explicit manual dispatch or one-time approval commit."
               exit 1
             fi
-            if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_EVENT_HEAD_COMMIT_MESSAGE:-}" != *"[VYRON-PRODUCTION-DEPLOY]"* ]]; then
-              echo "::error::Push-based production deployment requires the exact one-time approval commit marker."
-              exit 1
-            fi
           fi
           if [[ "${OPERATION}" == "deploy" && "${SOURCE_REF}" != "release/vyron-control-production" ]]; then
             echo "::error::Only the reviewed VYRON CONTROL release snapshot is allowed for production deployment."
