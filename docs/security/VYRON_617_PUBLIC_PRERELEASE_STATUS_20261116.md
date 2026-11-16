@@ -55,3 +55,23 @@ Accordingly:
 ## Correction to earlier incident wording
 
 Any earlier statement that “the rotated-key 6.1.17 artifact was not built” is stale and must not be used as the current release inventory. A public 6.1.17 prerelease exists and its source/configuration evidence indicates use of the replacement updater key. Its installation and production eligibility remain blocked for the reasons above.
+
+
+## 2026-11-16: independent public-asset verification completed
+
+The read-only verifier workflow passed on the supported `macos-15` runner:
+
+- Run: https://github.com/ScaleUPPeisov/scaleup-dashboards/actions/runs/43888029560
+- Release metadata and exact asset allowlist: PASS.
+- `source-head.txt` matched `e65bae680637f5c2a8cc60a886a17691d5694263`: PASS.
+- Both public asset SHA-256 values: PASS.
+- Minisign signature on `VYRON.app.tar.gz` verified against the pinned rotated public key: PASS.
+- Mounted DMG app bundle version and identifier `studio.channelflow.desktop`: PASS.
+- macOS code-signature integrity check: PASS.
+- Signing authority reported by the bundle: `VYRON Local Code Signing`; `TeamIdentifier=not set`.
+- Gatekeeper assessment: **REJECTED_OR_UNTRUSTED**.
+- Notarization staple validation: **NOT_VERIFIED**.
+
+This resolves the earlier evidence gap: the public updater archive is signed by the rotated updater key and its downloaded bytes match the published checksums. It does **not** make the app installable under normal macOS Gatekeeper policy. The app uses a local code-signing identity with no Team ID, and Gatekeeper rejects it. Do not tell the user to bypass Gatekeeper, remove quarantine, or install this prerelease.
+
+**Disposition unchanged:** keep the stable feed at 6.1.15; do not enable automatic 6.1.16 → 6.1.17 migration. A production-ready installation path still requires a separately trusted bootstrap and an accepted Apple signing/notarization strategy, or another owner-approved installation method proven on a test Mac without weakening platform security.
