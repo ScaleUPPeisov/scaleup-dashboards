@@ -36,6 +36,7 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
       ACTION_OPERATION: ${{ inputs.operation || (github.event_name == 'push' && github.ref_name == 'main' && contains(github.event.head_commit.message, '[VYRON-PUSH-SETUP]') && 'setup_push') || 'audit' }}
       CONFIRM_PUSH: ${{ inputs.confirm_push || (github.event_name == 'push' && github.ref_name == 'main' && contains(github.event.head_commit.message, '[VYRON-PUSH-SETUP]') && 'true') || false }}
+      VYRON_CONTROL_URL: https://vyron-control.endlume-peisov-3ee6109f.workers.dev
     steps:
       - uses: actions/checkout@v4
         with:
@@ -208,3 +209,20 @@ jobs:
           # Never print the secrets file, its values or command debugging.
           npx --yes wrangler@4.102.0 secret bulk "${file}" -c cloudflare/wrangler.jsonc
           echo 'VAPID secrets configured on the Worker. iPhone permission must still be granted inside the installed PWA.'
+
+      - name: Verify live Worker health and Push public-key endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          health="$(curl --fail --silent --show-error --retry 5 --retry-delay 2 "${VYRON_CONTROL_URL}/api/health")"
+          push="$(curl --fail --silent --show-error --retry 5 --retry-delay 2 "${VYRON_CONTROL_URL}/api/push/public-key")"
+          HEALTH_JSON="${health}" PUSH_JSON="${push}" node --input-type=module <<'NODE'
+          const health=JSON.parse(process.env.HEALTH_JSON||'{}');
+          const push=JSON.parse(process.env.PUSH_JSON||'{}');
+          if(health.ok!==true||health.d1?.schema!==true||
+             health.d1?.expectedTables!==16||health.d1?.presentTables!==16)
+            throw new Error('Live Worker/D1 health check failed');
+          if(push.supported!==true||!/^[-_A-Za-z0-9]{85,100}$/.test(String(push.publicKey||'')))
+            throw new Error('Live Worker Push public-key endpoint is not ready');
+          console.log('Live Worker health: PASS; D1 schema: 16/16; Web Push public key: available (value redacted).');
+          NODE
