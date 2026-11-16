@@ -2,11 +2,11 @@
   "action": "deploy",
   "application": "VYRON PEISOV YT",
   "release_ref": "release/vyron-control-production",
-  "release_sha": "1796e1dccf775df39a99a22dfb5fa1cb6a1dd693",
+  "release_sha": "2a23f0313603a5877b288d3e0a726363ae642564",
   "authorized_by": "user instruction in current conversation",
   "instruction": "дальше продолжай сам",
   "one_time": true,
   "authorized_at": "2026-11-16T21:02:00+07:00",
-  "purpose": "Deploy deduplicated YouTube Analytics failure/partial/recovery Push notifications for the reviewed release. Preserve current D1, VAPID and local quota settings.",
-  "approval_id": "vyron-prod-2026-11-16-analytics-push-01"
+  "purpose": "Deploy deduplicated YouTube Analytics failure/partial/recovery Push notifications after reviewed release preflight. Preserve existing D1 data, VAPID secrets and local quota settings.",
+  "approval_id": "vyron-prod-2026-11-16-analytics-push-02"
 }
