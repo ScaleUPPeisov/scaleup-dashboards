@@ -79,7 +79,7 @@ jobs:
           import base64, os
           from pathlib import Path
           pub=base64.b64decode(os.environ['ROTATED_PUBLIC_KEY_B64'],validate=True)
-          assert pub.startswith(b'untrusted comment: minisign public key: 8133C9873FAB79C1\\n')
+          assert pub.splitlines()[0] == b'untrusted comment: minisign public key: 8133C9873FAB79C1'
           Path('rotated.pub').write_bytes(pub)
           sig=base64.b64decode(Path('VYRON.app.tar.gz.sig').read_text().strip(),validate=True)
           assert sig.startswith(b'untrusted comment:')
