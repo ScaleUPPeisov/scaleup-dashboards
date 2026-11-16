@@ -872,7 +872,7 @@ test('unsupported extended daily metrics fall back to official minimal channel r
     .bind(channelId,'Core only',refreshCipher,'yt-analytics.readonly',new Date().toISOString()).run();
   await e.DB.prepare('INSERT INTO google_oauth_client_credentials(channel_id,profile_uuid,client_id_cipher,client_secret_cipher,source,bundle_uuid,imported_at) VALUES (?,?,?,?,?,?,?)')
     .bind(channelId,'minimal-profile',clientIdCipher,clientSecretCipher,'VYRON_MIGRATION','bundle-test',new Date().toISOString()).run();
-  let attempts=0;
+  let attempts=0,countryError=true,forceMinimal=true;
   const mockFetch=async url=>{
     if(url.includes('oauth2.googleapis.com/token'))
       return new Response(JSON.stringify({access_token:'AUTHORIZED_ACCESS'}),{status:200});
@@ -881,14 +881,16 @@ test('unsupported extended daily metrics fall back to official minimal channel r
       assert.equal(p.get('ids'),'channel=='+channelId);
       const dims=p.get('dimensions'),metrics=p.get('metrics').split(',');
       if(dims==='day'){
-        attempts++;
-        if(attempts<=2)return new Response(JSON.stringify({
-          error:{status:'INVALID_ARGUMENT',errors:[{reason:'invalidParameter'}]}
-        }),{status:400});
-        assert.deepEqual(metrics,['views','estimatedMinutesWatched','averageViewDuration',
-          'averageViewPercentage','subscribersGained']);
+        if(forceMinimal){
+          attempts++;
+          if(attempts<=2)return new Response(JSON.stringify({
+            error:{status:'INVALID_ARGUMENT',errors:[{reason:'invalidParameter'}]}
+          }),{status:400});
+          assert.deepEqual(metrics,['views','estimatedMinutesWatched','averageViewDuration',
+            'averageViewPercentage','subscribersGained']);
+        }else assert.ok(metrics.includes('engagedViews'));
       }
-      if(dims==='country')return new Response(JSON.stringify({
+      if(dims==='country'&&countryError)return new Response(JSON.stringify({
         error:{status:'INVALID_ARGUMENT',errors:[{reason:'invalidParameter'}]}
       }),{status:400});
       return new Response(JSON.stringify({
@@ -911,6 +913,51 @@ test('unsupported extended daily metrics fall back to official minimal channel r
   const storedReports=JSON.parse(reports.reports_json);
   assert.equal(storedReports.errors.dailyAdvanced,'CORE_DAILY_METRICS_ONLY');
   assert.equal(storedReports.errors.countries,'HTTP 400: INVALID_PARAMETER');
+  assert.equal(e.DB.native.prepare("SELECT COUNT(*) AS n FROM events WHERE kind='analytics_partial'").get().n,1);
+  countryError=false;forceMinimal=false;
+  const recovered=await runManualAnalyticsBatch(e,{offset:0,requestId:'stable-core-profile-002'},mockFetch);
+  assert.equal(recovered.updated,1);
+  assert.equal(e.DB.native.prepare("SELECT COUNT(*) AS n FROM events WHERE kind='analytics_recovered'").get().n,1);
+});
+
+
+test('fatal Analytics errors create one Push transition and recovery event without repeated alerts',async()=>{
+  const e=env(),channelId=id(699);
+  e.OAUTH_ENCRYPTION_KEY='8'.repeat(64);
+  const refreshCipher=await encryptSecret('FATAL_REFRESH_TOKEN',e);
+  const clientIdCipher=await encryptSecret('FATAL_CLIENT_ID',e);
+  const clientSecretCipher=await encryptSecret('FATAL_CLIENT_SECRET',e);
+  await e.DB.prepare('INSERT INTO channels(id,name) VALUES (?,?)').bind(channelId,'Failure test').run();
+  await e.DB.prepare('INSERT INTO google_oauth_profiles(channel_id,channel_name,refresh_token_cipher,granted_scope,connected_at) VALUES (?,?,?,?,?)')
+    .bind(channelId,'Failure test',refreshCipher,'yt-analytics.readonly',new Date().toISOString()).run();
+  await e.DB.prepare('INSERT INTO google_oauth_client_credentials(channel_id,profile_uuid,client_id_cipher,client_secret_cipher,source,bundle_uuid,imported_at) VALUES (?,?,?,?,?,?,?)')
+    .bind(channelId,'failure-profile',clientIdCipher,clientSecretCipher,'VYRON_MIGRATION','failure-bundle',new Date().toISOString()).run();
+  let fail=true;
+  const mockFetch=async url=>{
+    if(url.includes('oauth2.googleapis.com/token'))
+      return new Response(JSON.stringify({access_token:'FAILURE_TEST_ACCESS'}),{status:200});
+    if(url.includes('youtubeanalytics.googleapis.com')){
+      if(fail)return new Response(JSON.stringify({
+        error:{status:'INVALID_ARGUMENT',errors:[{reason:'invalidParameter'}]}
+      }),{status:400});
+      const p=new URL(url).searchParams,dims=p.get('dimensions'),metrics=p.get('metrics').split(',');
+      return new Response(JSON.stringify({
+        columnHeaders:[...dims.split(','),...metrics].map(name=>({name})),
+        rows:[]
+      }),{status:200});
+    }
+    throw new Error('Unexpected endpoint');
+  };
+  const first=await runManualAnalyticsBatch(e,{offset:0,requestId:'fatal-alert-1'},mockFetch);
+  assert.equal(first.failed,1);
+  assert.equal(e.DB.native.prepare("SELECT COUNT(*) AS n FROM events WHERE kind='analytics_failed'").get().n,1);
+  const repeated=await runManualAnalyticsBatch(e,{offset:0,requestId:'fatal-alert-2'},mockFetch);
+  assert.equal(repeated.failed,1);
+  assert.equal(e.DB.native.prepare("SELECT COUNT(*) AS n FROM events WHERE kind='analytics_failed'").get().n,1);
+  fail=false;
+  const recovered=await runManualAnalyticsBatch(e,{offset:0,requestId:'fatal-alert-3'},mockFetch);
+  assert.equal(recovered.updated,1);
+  assert.equal(e.DB.native.prepare("SELECT COUNT(*) AS n FROM events WHERE kind='analytics_recovered'").get().n,1);
 });
 
 test('one shared Google profile requests Analytics for each concrete YouTube channel ID',async()=>{
