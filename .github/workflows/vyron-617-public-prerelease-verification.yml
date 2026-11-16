@@ -19,6 +19,7 @@ jobs:
       RELEASE_TAG: v6.1.17
       EXPECTED_SOURCE_SHA: e65bae680637f5c2a8cc60a886a17691d5694263
       ROTATED_PUBLIC_KEY_B64: dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDgxMzNDOTg3M0ZBQjc5QzEKUldUQmVhcy9oOGt6Z1owb2JOWjJjM1FOQjF3UkJnbm5mZGNZRTloMUZhYkJFRlZ6QWFoNk5VN3kK
+      EXPECTED_PUBLIC_KEY_SHA256: 6f95fd039839eaa94cb378a67a0205e42e449a84c978674e20c5fb5abcfdfb19
     steps:
       - name: Install Minisign verifier
         shell: bash
@@ -76,8 +77,9 @@ jobs:
           set -euo pipefail
           cd "$RUNNER_TEMP/vyron617"
           python3 - <<'PY'
-          import base64, os
+          import base64, hashlib, os
           from pathlib import Path
+          assert hashlib.sha256(os.environ['ROTATED_PUBLIC_KEY_B64'].encode()).hexdigest()==os.environ['EXPECTED_PUBLIC_KEY_SHA256']
           pub=base64.b64decode(os.environ['ROTATED_PUBLIC_KEY_B64'],validate=True)
           assert pub.splitlines()[0] == b'untrusted comment: minisign public key: 8133C9873FAB79C1'
           Path('rotated.pub').write_bytes(pub)
