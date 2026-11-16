@@ -1,0 +1,127 @@
+name: VYRON 6.1.17 rotated-key prerelease verification
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/vyron-617-public-prerelease-verification.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify-public-prerelease:
+    runs-on: macos-14
+    timeout-minutes: 20
+    env:
+      RELEASE_REPO: ScaleUPPeisov/vyron-releases
+      RELEASE_TAG: v6.1.17
+      EXPECTED_SOURCE_SHA: e65bae680637f5c2a8cc60a886a17691d5694263
+      ROTATED_PUBLIC_KEY_B64: dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDgxMzNDOTg3M0ZBQjc5QzEKUldUQmVhcy9oOGt6Z1owb2JOWjJjM1FOQjF3UkJnbm5mZGNZRTloMUZhYkJFRlZ6QWFoNk5VN3kK
+      EXPECTED_PUBLIC_KEY_SHA256: 6f95fd039839eaa94cb378a67a0205e42e449a84c978674e20c5fb5abcfdfb19
+    steps:
+      - name: Install Minisign verifier
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v minisign >/dev/null 2>&1; then
+            brew install minisign
+          fi
+          minisign -v
+
+      - name: Download public release and validate metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/vyron617"
+          cd "$RUNNER_TEMP/vyron617"
+          curl --fail --silent --show-error --location --retry 4 \
+            "https://api.github.com/repos/$RELEASE_REPO/releases/tags/$RELEASE_TAG" \
+            -o release.json
+          python3 - <<'PY'
+          import json, os
+          d=json.load(open('release.json'))
+          assert d['tag_name']==os.environ['RELEASE_TAG']
+          assert d['draft'] is False
+          assert d['prerelease'] is True
+          expected={
+            'source-head.txt',
+            'VYRON-6.1.17-arm64.dmg',
+            'VYRON-6.1.17-arm64.dmg.sha256',
+            'VYRON.app.tar.gz',
+            'VYRON.app.tar.gz.sha256',
+            'VYRON.app.tar.gz.sig',
+          }
+          names={x['name'] for x in d['assets']}
+          assert names==expected, {'missing':sorted(expected-names),'unexpected':sorted(names-expected)}
+          print('PUBLIC_PRERELEASE_METADATA=PASS')
+          PY
+          for name in \
+            source-head.txt \
+            VYRON-6.1.17-arm64.dmg \
+            VYRON-6.1.17-arm64.dmg.sha256 \
+            VYRON.app.tar.gz \
+            VYRON.app.tar.gz.sha256 \
+            VYRON.app.tar.gz.sig; do
+            curl --fail --silent --show-error --location --retry 4 \
+              "https://github.com/$RELEASE_REPO/releases/download/$RELEASE_TAG/$name" \
+              -o "$name"
+          done
+          test "$(cat source-head.txt)" = "$EXPECTED_SOURCE_SHA"
+          echo "RELEASE_SOURCE_HEAD=$EXPECTED_SOURCE_SHA"
+
+      - name: Verify SHA-256 and rotated Minisign signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/vyron617"
+          python3 - <<'PY'
+          import base64, hashlib, os
+          from pathlib import Path
+          assert hashlib.sha256(os.environ['ROTATED_PUBLIC_KEY_B64'].encode()).hexdigest()==os.environ['EXPECTED_PUBLIC_KEY_SHA256']
+          pub=base64.b64decode(os.environ['ROTATED_PUBLIC_KEY_B64'],validate=True)
+          assert pub.splitlines()[0] == b'untrusted comment: minisign public key: 8133C9873FAB79C1'
+          Path('rotated.pub').write_bytes(pub)
+          sig=base64.b64decode(Path('VYRON.app.tar.gz.sig').read_text().strip(),validate=True)
+          assert sig.startswith(b'untrusted comment:')
+          Path('rotated.sig').write_bytes(sig)
+          for filename in ('VYRON.app.tar.gz','VYRON-6.1.17-arm64.dmg'):
+            expected=Path(filename+'.sha256').read_text().strip().split()[0].lower()
+            import hashlib
+            actual=hashlib.sha256(Path(filename).read_bytes()).hexdigest()
+            assert len(expected)==64 and actual==expected, filename+' SHA256_MISMATCH'
+          print('RELEASE_ASSET_SHA256=PASS')
+          PY
+          minisign -Vm VYRON.app.tar.gz -x rotated.sig -p rotated.pub
+          echo "ROTATED_UPDATER_SIGNATURE=PASS"
+
+      - name: Verify app bundle identity and report macOS trust
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/vyron617"
+          MOUNT="$RUNNER_TEMP/vyron617/mount"
+          mkdir -p "$MOUNT"
+          hdiutil attach VYRON-6.1.17-arm64.dmg -nobrowse -readonly -mountpoint "$MOUNT"
+          cleanup(){ hdiutil detach "$MOUNT" -quiet || true; }
+          trap cleanup EXIT
+          APP="$MOUNT/VYRON.app"
+          test -d "$APP"
+          VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")"
+          BUNDLE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist")"
+          test "$VERSION" = "6.1.17"
+          test "$BUNDLE" = "studio.channelflow.desktop"
+          codesign --verify --deep --strict "$APP"
+          echo "MACOS_BUNDLE_IDENTITY=PASS"
+          codesign -dv --verbose=4 "$APP" 2>&1 | grep -E '^(Identifier|Authority|TeamIdentifier)=' || true
+          if spctl --assess --type execute --verbose=4 "$APP"; then
+            echo "GATEKEEPER_ASSESSMENT=ACCEPTED"
+          else
+            echo "GATEKEEPER_ASSESSMENT=REJECTED_OR_UNTRUSTED"
+          fi
+          if xcrun stapler validate "$APP"; then
+            echo "NOTARIZATION_STAPLE=VALID"
+          else
+            echo "NOTARIZATION_STAPLE=NOT_VERIFIED"
+          fi
