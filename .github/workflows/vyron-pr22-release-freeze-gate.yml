@@ -1,0 +1,27 @@
+name: VYRON PR22 release freeze gate
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+      - 'scripts/security/check-pr22-release-freeze.mjs'
+  push:
+    branches: [feature/vyron-macos-ultimate]
+    paths:
+      - '.github/workflows/**'
+      - 'scripts/security/check-pr22-release-freeze.mjs'
+
+permissions:
+  contents: read
+
+jobs:
+  verify-pr22-release-freeze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify legacy signing and publisher jobs remain disabled
+        run: node --test scripts/security/check-pr22-release-freeze.mjs
