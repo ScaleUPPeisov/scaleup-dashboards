@@ -27,3 +27,27 @@ jobs:
           node-version: '22'
       - name: Verify obsolete release jobs cannot run
         run: node --test scripts/security/check-legacy-vyron-signers.mjs scripts/security/check-obsolete-vyron-publishers.mjs
+
+  verify-compromised-secrets-revoked:
+    # Only inspect secret presence after code is merged to main.
+    # Never echo, hash, serialize, or otherwise expose secret values.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      LEGACY_UPDATER_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      LEGACY_UPDATER_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+    steps:
+      - name: Require revocation of compromised updater signing secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${LEGACY_UPDATER_PRIVATE_KEY:-}" ]]; then
+            echo "::error::Compromised TAURI_SIGNING_PRIVATE_KEY is still configured for this workflow context. Remove the repository/organization Actions secret."
+            exit 1
+          fi
+          if [[ -n "${LEGACY_UPDATER_PRIVATE_KEY_PASSWORD:-}" ]]; then
+            echo "::error::Compromised TAURI_SIGNING_PRIVATE_KEY_PASSWORD is still configured for this workflow context. Remove the repository/organization Actions secret."
+            exit 1
+          fi
+          echo "LEGACY_UPDATER_SIGNING_SECRETS_ABSENT=PASS"
