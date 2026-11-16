@@ -68,7 +68,10 @@ The current PR code verifies the downloaded archive with the configured Tauri up
 ## Current candidate verdict
 
 - **Legacy 6.1.17 production-identity artifacts:** QUARANTINED / CRYPTOGRAPHICALLY OLD-KEY SIGNED / NOT RELEASE ELIGIBLE.
-- **Rotated-key 6.1.17 artifact:** NOT BUILT (new key intentionally not generated in public CI).
+- **Public rotated-key 6.1.17 prerelease:** PUBLISHED at `https://github.com/ScaleUPPeisov/vyron-releases/releases/tag/v6.1.17` on 2026-11-12 10:28:39Z; `draft=false`, `prerelease=true`. This is distinct from the earlier legacy-key-signed GitHub Actions candidate artifacts.
+- **Replacement public-key fingerprint:** `6f95fd039839eaa94cb378a67a0205e42e449a84c978674e20c5fb5abcfdfb19`. The rotated config at source commit `e65bae680637f5c2a8cc60a886a17691d5694263` hashes to this value. The `source-head.txt` release-asset metadata digest matches this commit SHA followed by a newline. The publish script at that source commit verifies the archive with `minisign -Vm` against the rotated public key before upload.
+- **Evidence boundary:** the connected GitHub interface exposed asset metadata and digests, but not uploaded archive/signature bytes; independent post-upload Minisign verification remains pending.
+- **Installation eligibility:** NOT APPROVED. The prerelease states no Gatekeeper acceptance/notarization; no separately trusted pre-install bootstrap or physical-Mac migration has been demonstrated.
 - **Production feed and release:** FROZEN at 6.1.15.
 - **No-Terminal, in-app 6.1.16 → 6.1.17:** NOT PROVEN and must not be promised.
 - **Independent bootstrap validation:** REQUIRED.
@@ -163,3 +166,10 @@ The following status supersedes the earlier 2026-11-15 "NOT CONFIRMED / NOT DONE
 - Public mirrors, caches, and third-party copies of previously exposed logs/artifacts cannot be proven erased by GitHub's deletion response.
 
 **Current disposition: containment materially improved; incident remains OPEN; production updater release remains FROZEN at 6.1.15.**
+
+
+## 2026-11-16: public 6.1.17 prerelease inventory correction
+
+The public release API confirms a published **prerelease** `v6.1.17` with a DMG, updater archive, signature, checksums and source-head asset. It is not in the stable feed: `updates/latest.json` remains **6.1.15**. The release notes and source/config evidence indicate the prerelease uses the rotated updater key, not the legacy key exposed by the earlier Actions runs.
+
+A read-only verifier was added in [PR #49](https://github.com/ScaleUPPeisov/scaleup-dashboards/pull/49) and merged. Its first run was cancelled before steps began on `macos-14`; [PR #50](https://github.com/ScaleUPPeisov/scaleup-dashboards/pull/50) changes the verifier runner to `macos-15` and is awaiting merge. No release asset or feed has been changed.
