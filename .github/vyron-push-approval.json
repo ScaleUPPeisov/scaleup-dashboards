@@ -1,0 +1,11 @@
+{
+  "action": "setup_push",
+  "application": "VYRON PEISOV YT",
+  "release_ref": "release/vyron-control-production",
+  "release_sha": "334733b48db68088a4d959e57e8a1875eda28a22",
+  "authorized_by": "user instruction in current conversation",
+  "instruction": "включи все функции и уведомления обязательно; дальше продолжай сам",
+  "one_time": true,
+  "authorized_at": "2026-11-16T21:02:00+07:00",
+  "purpose": "Generate VAPID keys only if all three are absent, preserve any existing keypair, enable secure Web Push for the reviewed VYRON PEISOV YT Worker."
+}
