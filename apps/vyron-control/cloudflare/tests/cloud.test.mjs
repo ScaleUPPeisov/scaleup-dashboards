@@ -882,10 +882,15 @@ test('unsupported extended daily metrics fall back to official minimal channel r
       const dims=p.get('dimensions'),metrics=p.get('metrics').split(',');
       if(dims==='day'){
         attempts++;
-        if(attempts<=2)return new Response('{}',{status:400});
+        if(attempts<=2)return new Response(JSON.stringify({
+          error:{status:'INVALID_ARGUMENT',errors:[{reason:'invalidParameter'}]}
+        }),{status:400});
         assert.deepEqual(metrics,['views','estimatedMinutesWatched','averageViewDuration',
           'averageViewPercentage','subscribersGained']);
       }
+      if(dims==='country')return new Response(JSON.stringify({
+        error:{status:'INVALID_ARGUMENT',errors:[{reason:'invalidParameter'}]}
+      }),{status:400});
       return new Response(JSON.stringify({
         columnHeaders:[...dims.split(','),...metrics].map(name=>({name})),
         rows:dims==='day'?[['2026-11-12',...metrics.map(()=>5)]]:[]
@@ -903,7 +908,9 @@ test('unsupported extended daily metrics fall back to official minimal channel r
   assert.equal(daily[0].views,5);
   assert.equal(daily[0].subscribersLost,null);
   const reports=e.DB.native.prepare('SELECT reports_json FROM channel_analytics_reports WHERE channel_id=?').get(channelId);
-  assert.equal(JSON.parse(reports.reports_json).errors.dailyAdvanced,'CORE_DAILY_METRICS_ONLY');
+  const storedReports=JSON.parse(reports.reports_json);
+  assert.equal(storedReports.errors.dailyAdvanced,'CORE_DAILY_METRICS_ONLY');
+  assert.equal(storedReports.errors.countries,'HTTP 400: INVALID_PARAMETER');
 });
 
 test('one shared Google profile requests Analytics for each concrete YouTube channel ID',async()=>{
