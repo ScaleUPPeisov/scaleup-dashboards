@@ -190,6 +190,27 @@ async function optionalReport(token,channelId,startDate,endDate,dimensions,metri
     return {rows:[],error:match?'HTTP '+match[1]+(match[2]?': '+match[2]:''):'REPORT_UNAVAILABLE'};
   }
 }
+function analyticsTransitionStatement(db,profile,previousError,nextError,at) {
+  const previous=String(previousError||''),next=String(nextError||'');
+  if(previous===next)return null;
+  let kind,prefix;
+  if(next) {
+    const partial=next.startsWith('Some Analytics breakdowns unavailable:');
+    kind=partial?'analytics_partial':'analytics_failed';
+    prefix=partial?'Частичная аналитика':'Ошибка аналитики';
+  } else if(previous) {
+    kind='analytics_recovered';
+    prefix='Аналитика восстановлена';
+  } else return null;
+  const channel=String(profile.channel_name||'YouTube-канал')
+    .replace(/[\\r\\n]/g,' ').slice(0,80);
+  const title=prefix+': '+channel;
+  return db.prepare(
+    "INSERT INTO events(id,kind,channel_id,title,payload_json,occurred_at,received_at) "+
+    "VALUES (?,?,?,?,?,?,?)"
+  ).bind(crypto.randomUUID(),kind,profile.channel_id,title,'{}',at,at);
+}
+
 function analyticsConfigured(env) {
   // Imported VYRON profiles have their own encrypted Google client credentials.
   // A global Google client is optional when profile-level credentials exist.
@@ -212,13 +233,15 @@ async function processBatch(env,details,fetchImpl=fetch) {
       throw new Error('Invalid queued Analytics channel selection');
     const profileQuery=selectedIds
       ?db.prepare(
-        "SELECT p.channel_id,p.refresh_token_cipher,c.client_id_cipher,c.client_secret_cipher " +
+        "SELECT p.channel_id,p.channel_name,p.last_error,p.refresh_token_cipher,"+
+        "c.client_id_cipher,c.client_secret_cipher " +
         "FROM google_oauth_profiles p LEFT JOIN google_oauth_client_credentials c " +
         "ON c.channel_id=p.channel_id WHERE p.channel_id IN ("+
         selectedIds.map(()=>'?').join(',')+") ORDER BY p.channel_id"
       ).bind(...selectedIds)
       :db.prepare(
-        "SELECT p.channel_id,p.refresh_token_cipher,c.client_id_cipher,c.client_secret_cipher " +
+        "SELECT p.channel_id,p.channel_name,p.last_error,p.refresh_token_cipher,"+
+        "c.client_id_cipher,c.client_secret_cipher " +
         "FROM google_oauth_profiles p LEFT JOIN google_oauth_client_credentials c " +
         "ON c.channel_id=p.channel_id ORDER BY p.channel_id LIMIT ? OFFSET ?"
       ).bind(BATCH_SIZE,details.offset);
@@ -359,7 +382,9 @@ async function processBatch(env,details,fetchImpl=fetch) {
           periodDays:PERIOD_DAYS,capturedAt:snapshot.capturedAt
         };
         const receivedAt=new Date().toISOString();
-        await db.batch([
+        const nextError=Object.keys(reportErrors).length
+          ?'Some Analytics breakdowns unavailable: '+Object.keys(reportErrors).join(', '):null;
+        const statements=[
           db.prepare(
             "INSERT INTO channel_analytics (channel_id,period_days,views,watch_minutes,"+
             "avg_view_seconds,avg_view_percentage,subscribers_gained,subscribers_lost,"+
@@ -389,17 +414,22 @@ async function processBatch(env,details,fetchImpl=fetch) {
           ).bind(profile.channel_id,JSON.stringify(reports),snapshot.capturedAt,receivedAt),
           db.prepare(
             "UPDATE google_oauth_profiles SET last_success_at=?,last_error=? WHERE channel_id=?"
-          ).bind(snapshot.capturedAt,Object.keys(reportErrors).length?
-            'Some Analytics breakdowns unavailable: '+Object.keys(reportErrors).join(', '):null,
-            profile.channel_id)
-        ]);
+          ).bind(snapshot.capturedAt,nextError,profile.channel_id)
+        ];
+        const transition=analyticsTransitionStatement(db,profile,profile.last_error,nextError,receivedAt);
+        if(transition)statements.push(transition);
+        await db.batch(statements);
         done++;
       } catch(error) {
         errors++;
-        await db.prepare(
+        const at=new Date().toISOString();
+        const nextError=String(error.message||'Analytics refresh failed').slice(0,160);
+        const statements=[db.prepare(
           "UPDATE google_oauth_profiles SET last_error=? WHERE channel_id=?"
-        ).bind(String(error.message||'Analytics refresh failed').slice(0,160),
-          profile.channel_id).run();
+        ).bind(nextError,profile.channel_id)];
+        const transition=analyticsTransitionStatement(db,profile,profile.last_error,nextError,at);
+        if(transition)statements.push(transition);
+        await db.batch(statements);
       }
     }
     await db.prepare(
