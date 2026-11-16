@@ -141,3 +141,25 @@ These controls reduce attack surface but **do not revoke the old private key**, 
 - The installed VYRON 6.1.17 on the user's Mac is outside the connector's access. Its local updater trust must be independently verified before any first trust-root migration.
 
 All confirmed merge and CI actions above are distinct from authorizing a production release. The trust incident is not closed.
+
+## 2026-11-16: automated containment closeout
+
+The following status supersedes the earlier 2026-11-15 "NOT CONFIRMED / NOT DONE" items where explicitly stated:
+
+- [Security PR #32](https://github.com/ScaleUPPeisov/scaleup-dashboards/pull/32) **MERGED** (`9e8529ac8be5d5fb61f9d6f7bc0a020361c398ae`): 11 legacy signing release jobs disabled on `main`; 9 automatic push triggers removed; workflow token write permissions reduced.
+- [Security PR #33](https://github.com/ScaleUPPeisov/scaleup-dashboards/pull/33) **MERGED** (`ccadfc610a3325583e742e0da344337f8648bb0a`): nine additional obsolete release/publisher/dispatch jobs disabled; the old in-app updater's automatic `release: published` trigger removed.
+- [Security PR #40](https://github.com/ScaleUPPeisov/scaleup-dashboards/pull/40) **MERGED** (`b424309bb8a30591741af715b5b5f7dd16f8c09f`): a read-only presence gate now fails if either compromised updater signing secret is available to the default-branch workflow context.
+- Main-branch run [43883272792](https://github.com/ScaleUPPeisov/scaleup-dashboards/actions/runs/43883272792) passed `verify-compromised-secrets-revoked` and emitted only `LEGACY_UPDATER_SIGNING_SECRETS_ABSENT=PASS`. This verifies that `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` are not injected into that repository/org workflow context. No secret values were read or logged. This does not claim visibility into unrelated GitHub environments that are not attached to these workflows.
+- [Security PR #42](https://github.com/ScaleUPPeisov/scaleup-dashboards/pull/42) **MERGED** (`4d12c0c61f9106df4401cccd55465f3c0bad8ff9`). Cleanup run [43883715266](https://github.com/ScaleUPPeisov/scaleup-dashboards/actions/runs/43883715266) successfully deleted logs for runs `43162697963`, `43177013254`, and `43182381655`, preserving their run metadata. The four named quarantined artifacts (`13919076920`, `13925320276`, `13927306027`, `13926804169`) were already absent when deletion was attempted (HTTP 404); no artifact bytes were downloaded.
+- The 20 frozen-workflow regression assertions and the privacy gate passed on the main-branch closeout run.
+- Rechecked public stable feed `ScaleUPPeisov/vyron-releases/updates/latest.json`: still **6.1.15**. No release manifest or release asset was modified.
+
+### Remaining release blockers
+
+- No replacement updater private key was generated. Key creation remains an offline, owner-controlled ceremony; it was deliberately not generated in public CI or this hosted environment.
+- No new-key artifact was built or signed.
+- No independent pre-install verification or physical Mac bootstrap/Gatekeeper acceptance has been demonstrated.
+- No app was installed or updated on the user's Mac. The 6.1.17 candidate remains quarantined and is not release-eligible.
+- Public mirrors, caches, and third-party copies of previously exposed logs/artifacts cannot be proven erased by GitHub's deletion response.
+
+**Current disposition: containment materially improved; incident remains OPEN; production updater release remains FROZEN at 6.1.15.**
