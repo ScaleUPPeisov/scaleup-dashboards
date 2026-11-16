@@ -173,3 +173,16 @@ The following status supersedes the earlier 2026-11-15 "NOT CONFIRMED / NOT DONE
 The public release API confirms a published **prerelease** `v6.1.17` with a DMG, updater archive, signature, checksums and source-head asset. It is not in the stable feed: `updates/latest.json` remains **6.1.15**. The release notes and source/config evidence indicate the prerelease uses the rotated updater key, not the legacy key exposed by the earlier Actions runs.
 
 A read-only verifier was added in [PR #49](https://github.com/ScaleUPPeisov/scaleup-dashboards/pull/49) and merged. Its first run was cancelled before steps began on `macos-14`; [PR #50](https://github.com/ScaleUPPeisov/scaleup-dashboards/pull/50) changes the verifier runner to `macos-15` and is awaiting merge. No release asset or feed has been changed.
+
+
+## 2026-11-16: independent public 6.1.17 artifact verification
+
+- Read-only verification workflow: [run 43888029560](https://github.com/ScaleUPPeisov/scaleup-dashboards/actions/runs/43888029560) — **SUCCESS** on `macos-15`.
+- Exact source-head, release metadata and asset allowlist: PASS; source head is `e65bae680637f5c2a8cc60a886a17691d5694263`.
+- DMG and updater archive SHA-256: PASS.
+- `VYRON.app.tar.gz.sig` verified with Minisign against the pinned rotated public key: PASS.
+- DMG-mounted app version 6.1.17, Bundle ID `studio.channelflow.desktop`, and `codesign --verify --deep --strict`: PASS.
+- Actual macOS signing authority: `VYRON Local Code Signing`; `TeamIdentifier=not set`.
+- Gatekeeper: **REJECTED_OR_UNTRUSTED**. Notarization staple: **NOT_VERIFIED**.
+
+**Final candidate status:** 6.1.17 is confirmed as a rotated-updater-key-signed prerelease, not an old-key-signed artifact. Its updater archive integrity is verified. It is nevertheless **NOT APPROVED FOR INSTALLATION** because macOS Gatekeeper rejects the local signing identity and notarization is not verified. Do not bypass Gatekeeper, remove quarantine, or install it as a workaround. The stable feed remains 6.1.15; no 6.1.16 → 6.1.17 automatic migration is authorized.
