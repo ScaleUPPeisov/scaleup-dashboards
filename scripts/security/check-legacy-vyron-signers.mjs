@@ -35,6 +35,13 @@ test('no new GitHub Actions workflow may reference the compromised updater signi
   for(const file of readdirSync(directory).filter(n=>/\.ya?ml$/.test(n))){
     const content=readFileSync(new URL(file,directory),'utf8');
     if(!/secrets\.TAURI_SIGNING_PRIVATE_KEY\b/.test(content))continue;
+    if(file==='vyron-legacy-signing-freeze-gate.yml'){
+      // The only permitted references are the read-only presence checks below.
+      assert.match(content,/^  verify-compromised-secrets-revoked:\n[\\s\\S]*?if: github\\.event_name == 'push' && github\\.ref == 'refs\\/heads\\/main'/m);
+      assert.equal((content.match(/secrets\\.TAURI_SIGNING_PRIVATE_KEY\\b/g)||[]).length,1);
+      assert.equal((content.match(/secrets\\.TAURI_SIGNING_PRIVATE_KEY_PASSWORD\\b/g)||[]).length,1);
+      continue;
+    }
     if(!knownFrozen.has(file)){
       offenders.push(file);
       continue;
