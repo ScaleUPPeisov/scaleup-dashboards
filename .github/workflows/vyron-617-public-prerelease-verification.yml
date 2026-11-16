@@ -114,9 +114,18 @@ jobs:
           test "$BUNDLE" = "studio.channelflow.desktop"
           codesign --verify --deep --strict "$APP"
           echo "MACOS_BUNDLE_IDENTITY=PASS"
-          codesign -dv --verbose=4 "$APP" 2>&1 | grep -E '^(Identifier|Authority|TeamIdentifier)=' || true
+          SIGNING_DETAILS="$(codesign -dv --verbose=4 "$APP" 2>&1 || true)"
+          printf '%s\\n' "$SIGNING_DETAILS" | grep -E '^(Identifier|Authority|TeamIdentifier)=' || true
+          TEAM_ID="$(printf '%s\\n' "$SIGNING_DETAILS" | sed -n 's/^TeamIdentifier=//p' | tail -n 1)"
+          if [[ -n "$TEAM_ID" && "$TEAM_ID" != "not set" ]]; then
+            echo "APPLE_TEAM_ID=PRESENT"
+          else
+            echo "APPLE_TEAM_ID=MISSING"
+          fi
+          GATEKEEPER_OK=0
           if spctl --assess --type execute --verbose=4 "$APP"; then
             echo "GATEKEEPER_ASSESSMENT=ACCEPTED"
+            GATEKEEPER_OK=1
           else
             echo "GATEKEEPER_ASSESSMENT=REJECTED_OR_UNTRUSTED"
           fi
@@ -125,3 +134,8 @@ jobs:
           else
             echo "NOTARIZATION_STAPLE=NOT_VERIFIED"
           fi
+          if [[ "$GATEKEEPER_OK" -ne 1 || -z "$TEAM_ID" || "$TEAM_ID" == "not set" ]]; then
+            echo "::error::INSTALLATION_TRUST_GATE=FAIL; do not distribute or install this prerelease."
+            exit 1
+          fi
+          echo "INSTALLATION_TRUST_GATE=PASS"
