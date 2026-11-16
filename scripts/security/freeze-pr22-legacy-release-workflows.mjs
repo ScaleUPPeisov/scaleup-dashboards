@@ -62,8 +62,15 @@ for (const filename of files) {
 
     if (existingIf >= 0) {
       if (lines[existingIf].trim() !== 'if: ${{ false }}') {
+        const wasMultiline = /^    if:\\s*[|>]/.test(lines[existingIf]);
         lines[existingIf] = '    if: ${{ false }}';
         fileChanged = true;
+        if (wasMultiline) {
+          let continuation = existingIf + 1;
+          while (continuation < end && (/^\\s{6,}\\S/.test(lines[continuation]) || lines[continuation].trim() === '')) {
+            lines.splice(continuation, 1);
+          }
+        }
       }
     } else {
       lines.splice(header.index + 1, 0,
