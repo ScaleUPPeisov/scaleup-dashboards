@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
   actions: read
 
 concurrency:
@@ -32,6 +32,8 @@ env:
 
 jobs:
   windows_compile:
+    # SECURITY FREEZE 2026-11-16: legacy updater trust is compromised.
+    if: ${{ false }}
     name: Windows compile safety
     runs-on: windows-latest
     timeout-minutes: 90
@@ -65,6 +67,8 @@ jobs:
           Write-Output 'WINDOWS_RUST_CHECK=PASS'
 
   rc:
+    # SECURITY FREEZE 2026-11-16: legacy updater trust is compromised.
+    if: ${{ false }}
     needs: windows_compile
     runs-on: macos-14
     timeout-minutes: 180
