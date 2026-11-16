@@ -1,0 +1,74 @@
+name: VYRON compromised updater evidence cleanup
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/vyron-incident-evidence-cleanup.yml'
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: vyron-compromised-updater-evidence-cleanup
+  cancel-in-progress: false
+
+jobs:
+  remove-exposed-logs-and-quarantined-artifacts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Delete confirmed exposed workflow logs
+        shell: bash
+        run: |
+          set -euo pipefail
+          delete_endpoint() {
+            local endpoint="$1"
+            local label="$2"
+            local status
+            status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+              --request DELETE \
+              --header "Authorization: Bearer ${GH_TOKEN}" \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/${endpoint}")"
+            case "${status}" in
+              204) echo "${label}=DELETED" ;;
+              404) echo "${label}=ALREADY_ABSENT" ;;
+              *) echo "::error::${label} deletion failed (HTTP ${status}); response body suppressed"; return 1 ;;
+            esac
+          }
+
+          # These three runs exposed the legacy updater private key in public job logs.
+          delete_endpoint "actions/runs/43162697963/logs" "RUN_43162697963_LOGS"
+          delete_endpoint "actions/runs/43177013254/logs" "RUN_43177013254_LOGS"
+          delete_endpoint "actions/runs/43182381655/logs" "RUN_43182381655_LOGS"
+
+      - name: Delete quarantined legacy-signed artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          delete_artifact() {
+            local artifact_id="$1"
+            local status
+            status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+              --request DELETE \
+              --header "Authorization: Bearer ${GH_TOKEN}" \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}")"
+            case "${status}" in
+              204) echo "ARTIFACT_${artifact_id}=DELETED" ;;
+              404) echo "ARTIFACT_${artifact_id}=ALREADY_ABSENT" ;;
+              *) echo "::error::Artifact ${artifact_id} deletion failed (HTTP ${status}); response body suppressed"; return 1 ;;
+            esac
+          }
+
+          # Includes the three exposed candidates and the additional quarantined RC artifact.
+          delete_artifact "13919076920"
+          delete_artifact "13925320276"
+          delete_artifact "13927306027"
+          delete_artifact "13926804169"
