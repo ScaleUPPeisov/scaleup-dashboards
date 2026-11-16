@@ -75,9 +75,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "${OPERATION}" == "deploy" && "${GITHUB_REF}" != "refs/heads/main" ]]; then
-            echo "::error::Production deployment must be manually dispatched from main."
-            exit 1
+          if [[ "${OPERATION}" == "deploy" ]]; then
+            if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+              echo "::error::Production deployment must originate from main."
+              exit 1
+            fi
+            if [[ "${GITHUB_EVENT_NAME}" != "workflow_dispatch" && "${GITHUB_EVENT_NAME}" != "push" ]]; then
+              echo "::error::Production deployment requires an explicit manual dispatch or one-time approval commit."
+              exit 1
+            fi
+            if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_EVENT_HEAD_COMMIT_MESSAGE:-}" != *"[VYRON-PRODUCTION-DEPLOY]"* ]]; then
+              echo "::error::Push-based production deployment requires the exact one-time approval commit marker."
+              exit 1
+            fi
           fi
           if [[ "${OPERATION}" == "deploy" && "${SOURCE_REF}" != "release/vyron-control-production" ]]; then
             echo "::error::Only the reviewed VYRON CONTROL release snapshot is allowed for production deployment."
