@@ -142,6 +142,24 @@ function reportParams(channelId,startDate,endDate,dimensions,metrics,sort,maxRes
   if(filters)params.set('filters',filters);
   return params;
 }
+const SAFE_ANALYTICS_ERROR_CODES=new Set([
+  'INVALID_ARGUMENT','PERMISSION_DENIED','UNAUTHENTICATED','RESOURCE_EXHAUSTED',
+  'FAILED_PRECONDITION','NOT_FOUND','BAD_REQUEST','FORBIDDEN','INVALID_PARAMETER',
+  'INSUFFICIENT_PERMISSIONS','QUOTA_EXCEEDED','RATE_LIMIT_EXCEEDED',
+  'DAILY_LIMIT_EXCEEDED','ACCESS_NOT_CONFIGURED','CHANNEL_NOT_FOUND',
+  'CHANNEL_NOT_SUPPORTED','UNSUPPORTED_METRIC','UNSUPPORTED_DIMENSION',
+  'UNSUPPORTED_FILTER','INVALID_METRIC','INVALID_DIMENSION','INVALID_FILTERS',
+  'INVALID_SORT','YOUTUBE_SIGNUP_REQUIRED','AUTH_ERROR'
+]);
+function safeAnalyticsErrorCode(payload) {
+  const error=payload?.error||{};
+  const normalize=value=>String(value||'')
+    .replace(/([a-z0-9])([A-Z])/g,'$1_$2')
+    .replace(/[^A-Za-z0-9_]/g,'').toUpperCase();
+  const candidates=[normalize(error.status),...(Array.isArray(error.errors)
+    ?error.errors.map(item=>normalize(item?.reason)):[])];
+  return candidates.find(code=>SAFE_ANALYTICS_ERROR_CODES.has(code))||'UNKNOWN';
+}
 async function requestReport(token,params,fetchImpl,retryTransient=false) {
   const url='https://youtubeanalytics.googleapis.com/v2/reports?'+params;
   let response=await fetchImpl(url,{
@@ -153,7 +171,13 @@ async function requestReport(token,params,fetchImpl,retryTransient=false) {
       headers:{Authorization:'Bearer '+token,Accept:'application/json'}
     });
   }
-  if(!response.ok)throw new Error('YouTube Analytics HTTP '+response.status);
+  if(!response.ok) {
+    // Preserve only an allowlisted Google error enum. Never store raw response messages,
+    // request URLs, channel IDs, or OAuth data in D1 diagnostics.
+    const payload=await response.json().catch(()=>null);
+    throw new Error('YouTube Analytics HTTP '+response.status+': '+
+      safeAnalyticsErrorCode(payload));
+  }
   return response.json();
 }
 async function optionalReport(token,channelId,startDate,endDate,dimensions,metrics,fetchImpl,sort,maxResults,filters) {
@@ -162,8 +186,8 @@ async function optionalReport(token,channelId,startDate,endDate,dimensions,metri
     const json=await requestReport(token,params,fetchImpl,false);
     return {rows:parseDimensionReport(json,dimensions,metrics),error:null};
   } catch(error) {
-    const match=String(error?.message||'').match(/HTTP (\d{3})/);
-    return {rows:[],error:match?'HTTP '+match[1]:'REPORT_UNAVAILABLE'};
+    const match=String(error?.message||'').match(/HTTP (\d{3})(?:: ([A-Z_]+))?/);
+    return {rows:[],error:match?'HTTP '+match[1]+(match[2]?': '+match[2]:''):'REPORT_UNAVAILABLE'};
   }
 }
 function analyticsConfigured(env) {
