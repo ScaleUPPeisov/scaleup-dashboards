@@ -5,12 +5,14 @@ import { startOAuth,callbackOAuth,authorizedProfiles,disconnectProfile } from '.
 import { importVyronProfiles,bindExistingVYRONProfiles } from './oauth-import.mjs';
 import { runAnalyticsBatch,runManualAnalyticsBatch,runQueuedAnalyticsBatch,ANALYTICS_QUEUE_CRON } from './google-analytics.mjs';
 import { registerPush,unregisterPush,vapidPublic,dispatchPush,PUSH_CRON } from './push.mjs';
+import {receiveProduction,getProductionStatus} from './production.mjs';
 
 const REQUIRED_TOKEN_LENGTH = 32;
 const EXPECTED_TABLES = Object.freeze([
   'channels','channel_snapshots','events','sync_runs','quota_buckets','devices',
   'commands','channel_analytics','channel_analytics_reports','google_oauth_sessions','google_oauth_profiles',
-  'google_oauth_client_credentials','cloud_analytics_runs','channel_analytics_queue','push_subscriptions','push_deliveries'
+  'google_oauth_client_credentials','cloud_analytics_runs','channel_analytics_queue','push_subscriptions','push_deliveries',
+  'production_sync','production_jobs'
 ]);
 function json(body,status=200) {
   return new Response(JSON.stringify(body),{
@@ -158,7 +160,8 @@ async function fetchStatus(env) {
     FROM latest JOIN channel_snapshots snap ON
       snap.channel_id=latest.channel_id AND snap.observed_at=latest.latest_at
     ORDER BY latest.day,latest.channel_id LIMIT 1400`)
-      .bind(new Date(now.getTime()-21*86400000).toISOString()).all()
+      .bind(new Date(now.getTime()-21*86400000).toISOString()).all(),
+    getProductionStatus(db)
   ]);
   const channels=(c.results||[]).map(row=>({
     id:row.id,name:row.name,
@@ -300,6 +303,7 @@ async function fetchStatus(env) {
          env.GOOGLE_OAUTH_CLIENT_ID&&env.GOOGLE_OAUTH_CLIENT_SECRET)),
       webPush:Boolean(env.VAPID_PUBLIC_KEY&&env.VAPID_PRIVATE_KEY&&env.VAPID_SUBJECT)
     },
+    production,
     events, devices:(d.results||[]).map(x=>{
       let status={};try{status=JSON.parse(x.status_json||'{}');}catch{}
       return {id:x.id,label:x.label,lastSeenAt:x.last_seen_at,status};
@@ -606,6 +610,8 @@ export default {
       }
       if (url.pathname==='/api/push/unsubscribe'&&request.method==='POST')
         return json(await unregisterPush(env,request));
+      if (url.pathname==='/api/agent/production'&&request.method==='POST')
+        return json(await receiveProduction(env,request));
       if (url.pathname==='/api/status'&&request.method==='GET')
         return json(await fetchStatus(env));
       if (url.pathname==='/api/refresh'&&request.method==='POST') {
