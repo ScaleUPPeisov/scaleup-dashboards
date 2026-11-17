@@ -47,6 +47,7 @@ export type UploadQueueSnapshot={
   queued:UploadQueueEntry[];
   running:UploadQueueEntry[];
   recent:UploadQueueEntry[];
+  recoveryError?:string;
 };
 
 export type UploadQueuePersistence={load:()=>unknown;save:(value:unknown)=>void};
@@ -97,6 +98,7 @@ export class MultiChannelUploadQueue{
   private listeners=new Set<Listener>();
   private sequence=0;
   private pumping=false;
+  private recoveryError:string|undefined;
   constructor(private executor:Executor,private concurrency=2,private perChannelConcurrency=1,private options:UploadQueueOptions={}){this.concurrency=Math.max(1,Math.floor(concurrency||1));this.perChannelConcurrency=Math.max(1,Math.floor(perChannelConcurrency||1));this.restore()}
 
   setConcurrency(value:number){this.concurrency=Math.max(1,Math.floor(value||1));this.emit();void this.pump()}
@@ -109,7 +111,7 @@ export class MultiChannelUploadQueue{
     const queued=this.entries.filter(x=>x.state==='QUEUED').sort((a,b)=>a.submittedSequence-b.submittedSequence);
     const running=this.entries.filter(x=>x.state==='RUNNING').sort((a,b)=>a.submittedSequence-b.submittedSequence);
     const recent=this.entries.filter(x=>x.state==='SUCCEEDED'||x.state==='FAILED').slice(-20).reverse();
-    return{concurrency:this.concurrency,perChannelConcurrency:this.perChannelConcurrency,paused,queued,running,recent};
+    return{concurrency:this.concurrency,perChannelConcurrency:this.perChannelConcurrency,paused,queued,running,recent,recoveryError:this.recoveryError};
   }
   getRuntimeFacts(){return this.entries.filter(x=>x.state==='PAUSED'||x.state==='QUEUED'||x.state==='RUNNING').map(x=>({jobId:x.spec.jobId,channelId:x.spec.channelId,status:x.state==='RUNNING'?'UPLOADING' as const:'QUEUED' as const}))}
   findDuplicate(spec:ImmutableUploadJob,excludeQueueId?:string):UploadQueueDuplicateMatch|undefined{
@@ -122,6 +124,7 @@ export class MultiChannelUploadQueue{
   }
   hasDuplicate(spec:ImmutableUploadJob){return Boolean(this.findDuplicate(spec))}
   enqueue(input:ImmutableUploadJob){
+    if(this.recoveryError)throw new Error(this.recoveryError);
     assertSpecIntegrity(input);
     const spec=cloneSpec(input);
     const duplicate=this.findDuplicate(spec);
@@ -172,10 +175,15 @@ export class MultiChannelUploadQueue{
   private emit(){const snap=this.snapshot();for(const cb of this.listeners)cb(snap)}
   private replace(queueId:string,patch:Partial<UploadQueueEntry>){this.entries=this.entries.map(x=>x.queueId===queueId?Object.freeze({...x,...patch}):x);this.persist();this.emit()}
   private restore(){
-    let raw:unknown;try{raw=this.options.persistence?.load()}catch{return}
-    if(!raw||typeof raw!=='object')return;
-    const value=raw as {version?:unknown;entries?:unknown};if(value.version!==1||!Array.isArray(value.entries))return;
-    const entries=value.entries.map(restoredEntry).filter((x):x is UploadQueueEntry=>Boolean(x));
+    let raw:unknown;try{raw=this.options.persistence?.load()}catch{this.recoveryError='UPLOAD_QUEUE_RECOVERY_REQUIRED: durable queue storage cannot be read';return}
+    if(raw===undefined||raw===null)return;
+    if(!raw||typeof raw!=='object'){this.recoveryError='UPLOAD_QUEUE_RECOVERY_REQUIRED: durable queue snapshot is malformed';return}
+    const value=raw as {version?:unknown;entries?:unknown;recoveryIntegrityError?:unknown};
+    if(value.version!==1||!Array.isArray(value.entries)){this.recoveryError='UPLOAD_QUEUE_RECOVERY_REQUIRED: unknown or damaged queue format';return}
+    if(typeof value.recoveryIntegrityError==='string')this.recoveryError='UPLOAD_QUEUE_RECOVERY_REQUIRED: at least one persisted queue snapshot is unreadable';
+    const restored=value.entries.map(restoredEntry);
+    if(restored.some(entry=>!entry))this.recoveryError='UPLOAD_QUEUE_RECOVERY_REQUIRED: invalid persisted job preserved on disk; manual reconciliation required';
+    const entries=restored.filter((x):x is UploadQueueEntry=>Boolean(x));
     const conflicts=new Map<number,string[]>();
     for(let i=0;i<entries.length;i++){
       for(let j=0;j<i;j++){
@@ -189,9 +197,11 @@ export class MultiChannelUploadQueue{
       const conflict=conflicts.get(index);
       return conflict?Object.freeze({...row,error:`${row.error||'RECOVERED_AFTER_RESTART'} • ${conflict.join(' • ')}`}):row;
     });
-    this.sequence=this.entries.reduce((max,row)=>Math.max(max,row.submittedSequence),0);this.persist();
+    this.sequence=this.entries.reduce((max,row)=>Math.max(max,row.submittedSequence),0);
+    // Keep every original byte of a damaged snapshot for manual recovery.
+    if(!this.recoveryError)this.persist();
   }
-  private persist(){if(!this.options.persistence)return true;const entries=this.entries.filter(x=>x.state==='PAUSED'||x.state==='QUEUED'||x.state==='RUNNING');try{this.options.persistence.save({version:1,savedAt:nowIso(),entries});return true}catch{return false}}
+  private persist(){if(this.recoveryError)return false;if(!this.options.persistence)return true;const entries=this.entries.filter(x=>x.state==='PAUSED'||x.state==='QUEUED'||x.state==='RUNNING');try{this.options.persistence.save({version:1,savedAt:nowIso(),entries});return true}catch{return false}}
   private nextStartable(){
     const running=this.entries.filter(x=>x.state==='RUNNING'),counts=new Map<string,number>();
     for(const row of running)counts.set(row.spec.channelId,(counts.get(row.spec.channelId)||0)+1);

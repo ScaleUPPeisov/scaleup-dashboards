@@ -96,6 +96,20 @@ describe('multi-channel upload queue',()=>{
   expect(q.snapshot().recent).toHaveLength(0);
   expect((await settled)[0].state).toBe('PAUSED')
  });
+ it('keeps partially corrupted durable snapshots untouched and blocks new uploads',async()=>{
+  const good={queueId:'q1',spec:spec(1,'A'),state:'RUNNING',submittedSequence:1};
+  const original={version:1,entries:[good,{queueId:'corrupt',spec:{},state:'QUEUED',submittedSequence:2}]};
+  const save=vi.fn();const executor=vi.fn(async()=>{});
+  const q=new MultiChannelUploadQueue(executor,1,1,{persistence:{load:()=>original,save}});
+  expect(q.snapshot().paused.map(x=>x.queueId)).toEqual(['q1']);
+  expect(q.snapshot().recoveryError).toMatch(/RECOVERY_REQUIRED/);
+  expect(save).not.toHaveBeenCalled();
+  expect(()=>q.enqueue(spec(3,'B'))).toThrow(/RECOVERY_REQUIRED/);
+  expect(q.resumePaused('j1')).toBe(false);
+  expect(save).not.toHaveBeenCalled();
+  await wait();expect(executor).not.toHaveBeenCalled();
+  expect(original.entries).toHaveLength(2);
+ });
  it('preserves exact duplicate durable entries as paused conflicts instead of silently dropping either',()=>{
  const good={queueId:'q1',spec:spec(1,'A'),state:'RUNNING',submittedSequence:5};
  const executor=vi.fn(async()=>{});

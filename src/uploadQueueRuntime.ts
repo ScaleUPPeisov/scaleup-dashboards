@@ -8,6 +8,7 @@ import {useApp} from './store';
 import {acquireChannelUploadLock,beginPublishAttempt,completePublishAttempt,failPublishAttempt,isChannelUploadLocked,isYoutubeDailyUploadLimitError,releaseChannelUploadLock,safeDailyStatus} from './youtubePublishSafety';
 import {isYoutubeQuotaError,releaseYoutubeQuotaReservation,reserveYoutubeQuotaAtomic,type YoutubeQuotaOperation} from './youtubeQuota';
 import {MultiChannelUploadQueue,uploadQueueDuplicateError,type ImmutableUploadJob,type UploadQueuePersistence,type UploadQueueSnapshot} from './uploadQueue';
+import {selectDurableQueueSnapshot} from './uploadQueuePersistence';
 import {journal,journalProcessingState} from './activityJournalRuntime';
 import {attentionTask,cancelTask,completeTask,ensureTask,failTask,startTask} from './taskEngine';
 import {loadPublishWorkspace,retireCompletedWorkspaceMetadata,savePublishWorkspace} from './publishWorkspaceState';
@@ -124,9 +125,9 @@ const DURABLE_QUEUE_KEY='vyron:youtube-upload-queue:v1',DURABLE_QUEUE_STAGING_KE
 const durableQueuePersistence:UploadQueuePersistence={
  load(){
   if(typeof localStorage==='undefined')return;
-  // A leftover staging value is the newest complete JSON written before an
-  // interrupted primary commit, so it has precedence during recovery.
-  for(const key of [DURABLE_QUEUE_STAGING_KEY,DURABLE_QUEUE_KEY]){try{const raw=localStorage.getItem(key);if(raw)return JSON.parse(raw)}catch{}}
+  // Two corrupt snapshots must never be interpreted as an empty queue.
+  try{return selectDurableQueueSnapshot(localStorage.getItem(DURABLE_QUEUE_STAGING_KEY),localStorage.getItem(DURABLE_QUEUE_KEY))}
+  catch{return{version:1,entries:[],recoveryIntegrityError:'STORAGE_READ_FAILED'}}
  },
  save(value){
   if(typeof localStorage==='undefined')return;
