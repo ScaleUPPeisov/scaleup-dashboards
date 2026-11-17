@@ -154,6 +154,21 @@ export class MultiChannelUploadQueue{
       this.listeners.add(listener);listener();
     });
   }
+  // Starting videos.insert requires a durable RUNNING record. If the disk write
+  // fails, keep the job queued and visibly blocked; never call the executor.
+  private startDurably(queueId:string){
+    const previous=this.entries;
+    this.entries=this.entries.map(x=>x.queueId===queueId
+      ?Object.freeze({...x,state:'RUNNING' as const,startedAt:nowIso(),error:undefined}):x);
+    if(!this.persist()){
+      this.entries=previous.map(x=>x.queueId===queueId
+        ?Object.freeze({...x,error:'UPLOAD_QUEUE_PERSIST_FAILED: cannot start until queue storage is writable'}):x);
+      this.emit();
+      return false;
+    }
+    this.emit();
+    return true;
+  }
   private emit(){const snap=this.snapshot();for(const cb of this.listeners)cb(snap)}
   private replace(queueId:string,patch:Partial<UploadQueueEntry>){this.entries=this.entries.map(x=>x.queueId===queueId?Object.freeze({...x,...patch}):x);this.persist();this.emit()}
   private restore(){
@@ -188,7 +203,7 @@ export class MultiChannelUploadQueue{
       while(this.entries.filter(x=>x.state==='RUNNING').length<this.concurrency){
         const next=this.nextStartable();if(!next)break;
         try{assertSpecIntegrity(next.spec)}catch(error){this.replace(next.queueId,{state:'FAILED',finishedAt:nowIso(),error:String(error)});continue}
-        this.replace(next.queueId,{state:'RUNNING',startedAt:nowIso()});
+        if(!this.startDurably(next.queueId))break;
         void this.executor(next.spec).then(()=>this.replace(next.queueId,{state:'SUCCEEDED',finishedAt:nowIso()})).catch(error=>{if(this.options.pauseOnError?.(error,next.spec))this.replace(next.queueId,{state:'PAUSED',startedAt:undefined,finishedAt:undefined,error:String(error)});else this.replace(next.queueId,{state:'FAILED',finishedAt:nowIso(),error:String(error)})}).finally(()=>void this.pump());
       }
     }finally{this.pumping=false}
