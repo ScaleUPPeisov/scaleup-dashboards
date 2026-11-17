@@ -1314,3 +1314,47 @@ test('Mac production validation rejects private fields and preserves stored snap
   assert.equal(remain.production.items.length,1);
   assert.equal(remain.production.items[0].progress,24);
 });
+
+
+test('production snapshot refuses unknown channel IDs without archiving last-good jobs',async()=>{
+ const e=env(), good=id(109),missing=id(110),now=new Date().toISOString();
+ await e.DB.prepare('INSERT INTO channels(id,name) VALUES (?,?)').bind(good,'Known channel').run();
+ const job=(channelId,suffix)=>({id:'job_'+suffix.repeat(32),channelId,
+   status:'READY_UPLOAD',title:'Safe job',progress:null,
+   createdAt:now,plannedPublishAt:null,scheduleSource:'MAC_LOCAL_UNVERIFIED'});
+ const packet=items=>({deviceId:'macbook_m1',source:'VYRON_MAC',generatedAt:now,items,truncated:false});
+ assert.equal((await cloud.fetch(req('/api/agent/production',agent,'POST',
+   packet([job(good,'a')])),e)).status,200);
+ const partial=await cloud.fetch(req('/api/agent/production',agent,'POST',
+   packet([job(good,'a'),job(missing,'b')])),e);
+ assert.equal(partial.status,400);
+ const got=await (await cloud.fetch(req('/api/status',control),e)).json();
+ assert.equal(got.production.items.length,1);
+ assert.equal(got.production.items[0].channelId,good);
+ assert.equal(e.DB.native.prepare('SELECT count(*) n FROM production_jobs WHERE active=1').get().n,1);
+});
+
+test('notification preferences are owner-authenticated, persisted and validated',async()=>{
+ const e=env(),value={critical:true,production:false,analytics:true,system:false,milestones:true};
+ const unauth=await cloud.fetch(req('/api/notifications/preferences',agent,'POST',value),e);
+ assert.equal(unauth.status,401);
+ const accepted=await cloud.fetch(req('/api/notifications/preferences',control,'POST',value),e);
+ assert.equal(accepted.status,200);
+ const got=await (await cloud.fetch(req('/api/notifications',control),e)).json();
+ assert.deepEqual(got.categories,value);
+ const reject=await cloud.fetch(req('/api/notifications/preferences',control,'POST',
+   {...value,critical:'false'}),e);
+ assert.equal(reject.status,400);
+ assert.deepEqual((await (await cloud.fetch(req('/api/notifications',control),e)).json()).categories,value);
+});
+
+test('notification read receipts link to real events and do not forge unknown IDs',async()=>{
+ const e=env(),now=new Date().toISOString(),eventId='test_notification_123';
+ await e.DB.prepare("INSERT INTO events(id,kind,channel_id,title,payload_json,occurred_at,received_at) "+
+  "VALUES (?,'upload_completed',NULL,'Upload completed','{}',?,?)").bind(eventId,now,now).run();
+ const result=await cloud.fetch(req('/api/notifications/read',control,'POST',
+   {eventIds:[eventId,'fake_id']}),e);
+ assert.equal(result.status,200);
+ const found=await (await cloud.fetch(req('/api/notifications',control),e)).json();
+ assert.deepEqual(found.readIds,[eventId]);
+});
