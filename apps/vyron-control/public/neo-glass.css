@@ -252,3 +252,19 @@ button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible{
  border:1px solid var(--ng-stroke-strong);color:#efe7ff;font-size:14px;font-weight:750}
 .neo-channel-name>a,.neo-channel-name>small{grid-column:2}
 .neo-channel-name>.channel-runway{color:#bfaeff}
+
+.neo-notification-settings{padding:17px;margin:14px 0;border-radius:18px}
+.neo-notification-settings h2{font-size:15px}
+.neo-notification-prefs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin-top:14px}
+.neo-notification-prefs label{display:flex;align-items:center;gap:8px;min-width:0;
+ color:var(--ng-sub);font-size:12px}
+.neo-notification-prefs input[type=checkbox]{accent-color:var(--ng-accent);width:17px;height:17px;min-width:17px;margin:0}
+.neo-notification{display:flex;gap:13px;align-items:flex-start;padding:14px;
+ background:rgba(33,29,61,.62);border:1px solid var(--ng-stroke);border-radius:16px}
+.neo-notification.is-critical{border-color:rgba(255,155,168,.28)}
+.neo-notification.is-read{opacity:.76}
+.neo-notification-indicator{color:var(--ng-accent);font-size:12px}
+.neo-delivery-state{color:var(--ng-muted)}
+.neo-notifications-history{margin-top:20px;padding:14px;border:1px solid var(--ng-stroke);border-radius:16px}
+.neo-notifications-history>summary{cursor:pointer;color:#c9bcff;font-size:12px}
+@media(max-width:359px){.neo-notification-prefs{grid-template-columns:1fr}}
