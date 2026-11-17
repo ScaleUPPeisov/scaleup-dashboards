@@ -1430,6 +1430,49 @@ mod tests{
         let _=fs::remove_dir_all(one);
         let _=fs::remove_dir_all(two);
     }
+    #[test]fn thirty_three_synthetic_channel_migrations_preserve_sources_and_are_idempotent(){
+        // Synthetic, separate cache roots only. Never reference owner state or real OAuth.
+        for index in 1..=33 {
+            let (cache,original_id,generation)=sample_cache();
+            let channel_id=format!("UC{index:022}");
+            let root=cache.join("ui-generations").join(&generation);
+            let sources=[
+                cache.join("ui-current.json"),
+                root.join("overview.json"),
+                root.join("video-catalog.json"),
+                root.join("video-details").join(format!("{}.json",video_path_key("aBc1234-X_y")))
+            ];
+            for path in &sources {
+                let raw=fs::read_to_string(path).unwrap();
+                fs::write(path,raw.replace(&original_id,&channel_id)).unwrap();
+            }
+            let tracked=[
+                cache.join("ui-current.json"),
+                root.join("overview.json"),
+                root.join("video-catalog.json"),
+                root.join("channel-daily.json"),
+                root.join("reach-daily.json")
+            ];
+            let before:Vec<Vec<u8>>=tracked.iter().map(|p|fs::read(p).unwrap()).collect();
+            let first=migrate_generation(&cache,&channel_id).unwrap();
+            assert!(!first.skipped,"first migration must import channel {index}");
+            assert_channel_views(&cache,&channel_id,12);
+            let second=migrate_generation(&cache,&channel_id).unwrap();
+            assert!(second.skipped,"repeat migration must be idempotent for {index}");
+            assert_channel_views(&cache,&channel_id,12);
+            for (path,expected) in tracked.iter().zip(before.iter()) {
+                assert_eq!(&fs::read(path).unwrap(),expected,
+                    "original synthetic source must remain unchanged for {index}");
+            }
+            let conn=prepare_db(&cache.join(DB_NAME)).unwrap();
+            let receipts:i64=conn.query_row(
+                "SELECT COUNT(*) FROM analytics_migrations WHERE channel_id=?1 AND generation=?2",
+                params![channel_id,generation],|row|row.get(0)).unwrap();
+            assert_eq!(receipts,1,"no duplicate receipts for channel {index}");
+            drop(conn);
+            let _=fs::remove_dir_all(cache);
+        }
+    }
     #[test]fn five_migration_interruptions_preserve_previous_verified_sql_and_source_json(){
         let (cache,channel,original)=sample_cache();
         migrate_generation(&cache,&channel).unwrap();
