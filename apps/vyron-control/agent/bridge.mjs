@@ -114,7 +114,18 @@ export class MacBridge {
     const body={...data,deviceId:this.deviceId};
     const hash=createHash('sha256').update(JSON.stringify(data.items)).digest('hex');
     if(hash===this.lastProductionHash)return {uploaded:0,reason:'unchanged'};
-    const response=await this.api('/api/agent/production','POST',body);
+    // Old production Worker may not yet expose this endpoint. Keep uploads/events working.
+    if(this.productionUnsupportedUntil&&Date.now()<this.productionUnsupportedUntil)
+      return {uploaded:0,reason:'worker_not_upgraded'};
+    let response;
+    try{response=await this.api('/api/agent/production','POST',body);}
+    catch(error){
+      if(String(error?.message||'').includes('Cloud HTTP 404')){
+        this.productionUnsupportedUntil=Date.now()+10*60000;
+        return {uploaded:0,reason:'worker_not_upgraded'};
+      }
+      throw error;
+    }
     if(Number(response.unknownChannelIds)>0)
       return {uploaded:0,reason:'unknown_channel_retry',unknown:response.unknownChannelIds};
     this.lastProductionHash=hash;
@@ -190,9 +201,9 @@ export class MacBridge {
       await this.heartbeat();
       await this.syncChannelRegistry();
       await this.syncAnalytics();
-      await this.syncProduction();
       await this.syncEvents();
       await this.pendingCommands();
+      await this.syncProduction(); // optional telemetry must never block critical event delivery
     } finally {this.busy=false;}
   }
 }
