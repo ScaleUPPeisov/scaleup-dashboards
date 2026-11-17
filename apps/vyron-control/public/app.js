@@ -1247,7 +1247,8 @@ $('channel-sort').addEventListener('change', () => {
 $('channel-filter').addEventListener('change',()=>{
   if(current)renderChannels(current.channels);
 });
-// Local UI polling is free: it does NOT make a YouTube API request.
+// Visible-only status polling: cloud state reads do not call YouTube APIs.
+// 60-second cadence avoids re-rendering 33 channel cards on every 15-second tick.
 window.addEventListener('offline',()=>{
   const status=$('network-status');
   if(status){
@@ -1263,7 +1264,7 @@ window.addEventListener('online',()=>{
 });
 setInterval(() => {
   if (accessToken && navigator.onLine && !document.hidden) load();
-}, 15_000);
+}, 60_000);
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && accessToken && navigator.onLine) load();
 });
