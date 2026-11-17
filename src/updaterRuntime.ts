@@ -37,11 +37,11 @@ function recordFailure(stage:'check'|'download'|'install'|'relaunch',error:unkno
 
 async function ensureUpdaterInstallable(set:(x:Partial<UpdaterRuntimeState>)=>void){
   const fn=(api as typeof api&{updaterInstallPreflight?:()=>Promise<UpdaterInstallPreflight>}).updaterInstallPreflight;
-  if(!fn)return undefined;
+  if(!fn)throw new Error('UPDATER_PREFLIGHT_UNAVAILABLE: native updater preflight is required for safe installation');
   const preflight=await fn();set({preflight});
   if(preflight.runningFromDmg)throw new Error('RUNNING_FROM_DMG: VYRON запущен из DMG. Переместите VYRON.app в Applications.');
   if(!preflight.bundleReplaceable)throw new Error('APP_NOT_REPLACEABLE: установленный VYRON.app недоступен для безопасной замены');
-  if(preflight.updaterConfigurationValid===false)throw new Error('UPDATER_CONFIGURATION_INVALID: embedded updater key format or stable feed endpoint is not valid/pinned');
+  if(preflight.updaterConfigurationValid!==true||preflight.updaterEndpointPinned!==true)throw new Error('UPDATER_CONFIGURATION_INVALID: embedded updater key format or stable feed endpoint is not valid/pinned');
   if(preflight.updaterPublicKeyTrustVerified!==true)throw new Error('UPDATER_KEY_TRUST_NOT_VERIFIED: embedded updater public-key fingerprint is not independently pinned to this build');
   return preflight;
 }

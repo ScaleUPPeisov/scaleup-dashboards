@@ -1,6 +1,6 @@
 import {beforeEach,describe,expect,it,vi} from 'vitest';
 
-const {mockApi}=vi.hoisted(()=>({mockApi:{appVersion:vi.fn(),checkUpdate:vi.fn()}}));
+const {mockApi}=vi.hoisted(()=>({mockApi:{appVersion:vi.fn(),checkUpdate:vi.fn(),updaterInstallPreflight:vi.fn()}}));
 vi.mock('./api',()=>({api:mockApi}));
 import {resetUpdaterRuntimeForTests,useUpdaterRuntime} from './updaterRuntime';
 
@@ -14,7 +14,7 @@ function candidate(overrides:any={}){
 }
 
 describe('shared remote updater lifecycle',()=>{
- beforeEach(()=>{storage.clear();resetUpdaterRuntimeForTests();mockApi.appVersion.mockReset().mockResolvedValue('2.1.4');mockApi.checkUpdate.mockReset()});
+ beforeEach(()=>{storage.clear();resetUpdaterRuntimeForTests();mockApi.appVersion.mockReset().mockResolvedValue('2.1.4');mockApi.checkUpdate.mockReset();mockApi.updaterInstallPreflight.mockReset().mockResolvedValue({runningFromDmg:false,bundleReplaceable:true,updaterConfigurationValid:true,updaterEndpointPinned:true,updaterPublicKeyTrustVerified:true})});
  it('discovers an update without navigation to Settings and keeps one shared state',async()=>{mockApi.checkUpdate.mockResolvedValue(candidate());await useUpdaterRuntime.getState().check();const s=useUpdaterRuntime.getState();expect(s.status).toBe('AVAILABLE');expect(s.currentVersion).toBe('2.1.4');expect(s.latestVersion).toBe('2.1.5')});
  it('downloads with byte progress, then waits for explicit install/restart',async()=>{const c=candidate();mockApi.checkUpdate.mockResolvedValue(c);await useUpdaterRuntime.getState().check();await useUpdaterRuntime.getState().download();let s=useUpdaterRuntime.getState();expect(s.status).toBe('READY_TO_INSTALL');expect(s.progress).toBe(100);expect(s.downloadedBytes).toBe(100);expect(c.install).not.toHaveBeenCalled();expect(c.restart).not.toHaveBeenCalled();await useUpdaterRuntime.getState().installAndRestart([]);s=useUpdaterRuntime.getState();expect(c.install).toHaveBeenCalledTimes(1);expect(c.restart).toHaveBeenCalledTimes(1);expect(storage.get('vyron:update-installing-version')).toBe('2.1.5')});
  it('recovers a lost in-memory candidate before install instead of leaving a dead button',async()=>{
@@ -74,6 +74,33 @@ describe('shared remote updater lifecycle',()=>{
   finish();
   await Promise.all(downloads);
   expect(useUpdaterRuntime.getState().status).toBe('READY_TO_INSTALL');
+ });
+ it('blocks download when native preflight is unavailable instead of silently bypassing it',async()=>{
+  const c=candidate();
+  mockApi.checkUpdate.mockResolvedValue(c);
+  await useUpdaterRuntime.getState().check();
+  const original=mockApi.updaterInstallPreflight;
+  Object.assign(mockApi,{updaterInstallPreflight:undefined});
+  try{
+    await useUpdaterRuntime.getState().download();
+    expect(useUpdaterRuntime.getState().status).toBe('ERROR');
+    expect(useUpdaterRuntime.getState().errorCode).toBe('UPDATER_PREFLIGHT_UNAVAILABLE');
+    expect(c.download).not.toHaveBeenCalled();
+    expect(await useUpdaterRuntime.getState().installAndRestart([])).toBe(false);
+  }finally{Object.assign(mockApi,{updaterInstallPreflight:original})}
+ });
+ it('blocks a valid-shaped public key whose independent trust or feed pin cannot be verified',async()=>{
+  const c=candidate();
+  mockApi.checkUpdate.mockResolvedValue(c);
+  await useUpdaterRuntime.getState().check();
+  mockApi.updaterInstallPreflight.mockResolvedValueOnce({runningFromDmg:false,bundleReplaceable:true,updaterConfigurationValid:true,updaterEndpointPinned:false,updaterPublicKeyTrustVerified:true});
+  await useUpdaterRuntime.getState().download();
+  expect(useUpdaterRuntime.getState().errorCode).toBe('UPDATER_CONFIGURATION_INVALID');
+  expect(c.download).not.toHaveBeenCalled();
+  mockApi.updaterInstallPreflight.mockResolvedValueOnce({runningFromDmg:false,bundleReplaceable:true,updaterConfigurationValid:true,updaterEndpointPinned:true,updaterPublicKeyTrustVerified:false});
+  await useUpdaterRuntime.getState().download();
+  expect(useUpdaterRuntime.getState().errorCode).toBe('UPDATER_KEY_TRUST_NOT_VERIFIED');
+  expect(c.download).not.toHaveBeenCalled();
  });
  it('shows same-version state without update warning',async()=>{mockApi.checkUpdate.mockResolvedValue({none:true,current:'2.1.4',latest:'2.1.4',status:'UP_TO_DATE',endpoint:'feed',versionComparison:'current == latest'});await useUpdaterRuntime.getState().check();expect(useUpdaterRuntime.getState().status).toBe('UP_TO_DATE');expect(useUpdaterRuntime.getState().latestVersion).toBe('2.1.4')});
  it('coalesces 20 install clicks into exactly one install/restart',async()=>{
