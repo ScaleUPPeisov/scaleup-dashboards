@@ -8,6 +8,7 @@ import { arch, cpus, freemem, homedir, totalmem, uptime } from 'node:os';
 // Read-only adapter for VYRON's EXISTING local state mirror written by
 // src-tauri/src/storage.rs at ~/Documents/VYRON/State/app-state.json.
 // No OAuth/Keychain access or mutation of VYRON.
+import {mirrorProduction} from './production.mjs';
 const VALID_CHANNEL = /^UC[A-Za-z0-9_-]{22}$/;
 const MAP = Object.freeze({
   UPLOAD_QUEUED: 'upload_queued',
@@ -327,6 +328,7 @@ export class MirrorExport {
     this.channelsFile=join(outDir,'channels.json');
     this.statusFile=join(outDir,'status.json');
     this.analyticsFile=join(outDir,'analytics.json');
+    this.productionFile=join(outDir,'production.json');
     this.cursorFile=join(outDir,'mirror-seen.json');
     this.seen=new Set();
     this.initialized=false;
@@ -357,9 +359,11 @@ export class MirrorExport {
     const channels=mirrorChannels(state);
     const status=mirrorStatus(state,instant,telemetry);
     const analytics=mirrorAnalytics(state);
+    const production=mirrorProduction(state,instant);
     await privateJson(this.channelsFile,channels);
     await privateJson(this.statusFile,status);
     await privateJson(this.analyticsFile,analytics);
+    await privateJson(this.productionFile,production);
     const all=mirrorEvents(state);
     // The first start imports the most recent history rather than flooding
     // a free-tier Worker with years of old journal rows.
@@ -375,6 +379,6 @@ export class MirrorExport {
       this.seen=new Set(ids);
     }
     this.lastSignature=signature;
-    return {status:'exported',events:pending.length,channels:channels.length,analytics:analytics.length};
+    return {status:'exported',events:pending.length,channels:channels.length,analytics:analytics.length,production:production.items.length};
   }
 }
