@@ -40,17 +40,24 @@ export async function receiveProduction(env,request){
  const recognized=new Set((known.results||[]).map(row=>row.id));
  const items=data.items.filter(item=>recognized.has(item.channelId));
  if(items.length!==data.items.length)throw new Error('PRODUCTION_UNKNOWN_CHANNEL_IDS');
- const stmts=items.map(row=>env.DB.prepare(
-   "INSERT INTO production_jobs(device_id,id,channel_id,status,title,progress,"+
-   "planned_publish_at,created_at,schedule_source,active,generation,received_at) "+
-   "VALUES(?,?,?,?,?,?,?,?,?,1,?,?) ON CONFLICT(device_id,id) DO UPDATE SET "+
-   "channel_id=excluded.channel_id,status=excluded.status,title=excluded.title,"+
-   "progress=excluded.progress,planned_publish_at=excluded.planned_publish_at,"+
-   "created_at=excluded.created_at,schedule_source=excluded.schedule_source,"+
-   "active=1,generation=excluded.generation,received_at=excluded.received_at"
- ).bind(deviceId,row.id,row.channelId,row.status,row.title,row.progress,
-   row.plannedPublishAt,row.createdAt,row.scheduleSource,generation,now));
- for(let i=0;i<stmts.length;i+=25)await env.DB.batch(stmts.slice(i,i+25));
+ // One JSON1 bulk UPSERT rather than 300 D1 subrequests on Workers Free.
+ // WHERE 1 disambiguates SQLite's INSERT ... SELECT ... ON CONFLICT grammar.
+ if(items.length){
+   await env.DB.prepare(
+     "INSERT INTO production_jobs(device_id,id,channel_id,status,title,progress,"+
+     "planned_publish_at,created_at,schedule_source,active,generation,received_at) "+
+     "SELECT ?,json_extract(value,'$.id'),json_extract(value,'$.channelId'),"+
+     "json_extract(value,'$.status'),json_extract(value,'$.title'),"+
+     "json_extract(value,'$.progress'),json_extract(value,'$.plannedPublishAt'),"+
+     "json_extract(value,'$.createdAt'),json_extract(value,'$.scheduleSource'),"+
+     "1,?,? FROM json_each(?) WHERE 1 "+
+     "ON CONFLICT(device_id,id) DO UPDATE SET "+
+     "channel_id=excluded.channel_id,status=excluded.status,title=excluded.title,"+
+     "progress=excluded.progress,planned_publish_at=excluded.planned_publish_at,"+
+     "created_at=excluded.created_at,schedule_source=excluded.schedule_source,"+
+     "active=1,generation=excluded.generation,received_at=excluded.received_at"
+   ).bind(deviceId,generation,now,JSON.stringify(items)).run();
+ }
  await env.DB.batch([
    env.DB.prepare("INSERT INTO production_sync(device_id,source,generation,captured_at,received_at,item_count) "+
      "VALUES(?,?,?,?,?,?) ON CONFLICT(device_id) DO UPDATE SET "+
