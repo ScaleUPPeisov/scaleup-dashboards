@@ -6,13 +6,14 @@ import { importVyronProfiles,bindExistingVYRONProfiles } from './oauth-import.mj
 import { runAnalyticsBatch,runManualAnalyticsBatch,runQueuedAnalyticsBatch,ANALYTICS_QUEUE_CRON } from './google-analytics.mjs';
 import { registerPush,unregisterPush,vapidPublic,dispatchPush,PUSH_CRON } from './push.mjs';
 import {receiveProduction,getProductionStatus} from './production.mjs';
+import {readNotificationCenter,writePrefs,markRead} from './notifications.mjs';
 
 const REQUIRED_TOKEN_LENGTH = 32;
 const EXPECTED_TABLES = Object.freeze([
   'channels','channel_snapshots','events','sync_runs','quota_buckets','devices',
   'commands','channel_analytics','channel_analytics_reports','google_oauth_sessions','google_oauth_profiles',
   'google_oauth_client_credentials','cloud_analytics_runs','channel_analytics_queue','push_subscriptions','push_deliveries',
-  'production_sync','production_jobs'
+  'production_sync','production_jobs','notification_preferences','notification_reads'
 ]);
 function json(body,status=200) {
   return new Response(JSON.stringify(body),{
@@ -115,7 +116,7 @@ async function fetchStatus(env) {
   const db = env.DB;
   const now = new Date();
   const day = pacificDay(now);
-  const [c,e,q,s,d,cmd,reportHealth,snapshotTrend,production]=await Promise.all([
+  const [c,e,q,s,d,cmd,reportHealth,snapshotTrend,production,notifications]=await Promise.all([
     db.prepare(`SELECT c.id,c.name,c.subscribers,c.views,c.videos,c.hidden_subscribers,
       c.previous_subscribers,c.updated_at,
       a.period_days AS analytics_period_days,
@@ -161,7 +162,8 @@ async function fetchStatus(env) {
       snap.channel_id=latest.channel_id AND snap.observed_at=latest.latest_at
     ORDER BY latest.day,latest.channel_id LIMIT 1400`)
       .bind(new Date(now.getTime()-21*86400000).toISOString()).all(),
-    getProductionStatus(db)
+    getProductionStatus(db),
+    readNotificationCenter(db)
   ]);
   const channels=(c.results||[]).map(row=>({
     id:row.id,name:row.name,
@@ -303,7 +305,7 @@ async function fetchStatus(env) {
          env.GOOGLE_OAUTH_CLIENT_ID&&env.GOOGLE_OAUTH_CLIENT_SECRET)),
       webPush:Boolean(env.VAPID_PUBLIC_KEY&&env.VAPID_PRIVATE_KEY&&env.VAPID_SUBJECT)
     },
-    production,
+    production,notifications,
     events, devices:(d.results||[]).map(x=>{
       let status={};try{status=JSON.parse(x.status_json||'{}');}catch{}
       return {id:x.id,label:x.label,lastSeenAt:x.last_seen_at,status};
@@ -612,6 +614,12 @@ export default {
         return json(await unregisterPush(env,request));
       if (url.pathname==='/api/agent/production'&&request.method==='POST')
         return json(await receiveProduction(env,request));
+      if (url.pathname==='/api/notifications'&&request.method==='GET')
+        return json(await readNotificationCenter(env.DB));
+      if (url.pathname==='/api/notifications/preferences'&&request.method==='POST')
+        return json(await writePrefs(env.DB,request));
+      if (url.pathname==='/api/notifications/read'&&request.method==='POST')
+        return json(await markRead(env.DB,request));
       if (url.pathname==='/api/status'&&request.method==='GET')
         return json(await fetchStatus(env));
       if (url.pathname==='/api/refresh'&&request.method==='POST') {
