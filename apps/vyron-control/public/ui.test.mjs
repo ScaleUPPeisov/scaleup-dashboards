@@ -66,7 +66,7 @@ test('PWA caches every imported browser module but never authenticated API respo
   for(const modulePath of importedModules)
     assert.ok(serviceWorker.includes("'/"+modulePath+"'"),
       'offline shell is missing imported module: '+modulePath);
-  assert.ok(serviceWorker.includes("vyron-peisov-yt-shell-v6"));
+  assert.ok(serviceWorker.includes("vyron-peisov-yt-shell-v7"));
   assert.ok(app.includes('async function ensureServiceWorker()'));
   assert.ok(app.includes('void ensureServiceWorker().catch'));
   assert.ok(serviceWorker.includes("url.pathname.startsWith('/api/')"));
@@ -117,5 +117,6 @@ test('Neo Glass shell uses a real central scroll container with safe-area dock',
   assert.match(neoCss,/@media\(prefers-reduced-motion:reduce\)/);
   assert.ok(serviceWorker.includes("'/neo-glass.css'"));
   assert.ok(serviceWorker.includes("'/neo-glass.mjs'"));
+  assert.ok(serviceWorker.includes("'/insights-core.mjs'"));
   assert.ok(!neoJs.includes("fetch('/api/"),'UI must not initiate a second quota-consuming API request');
 });
