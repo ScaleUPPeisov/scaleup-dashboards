@@ -1,6 +1,6 @@
 /* VYRON PEISOV YT PWA shell cache. Private API responses are never cached. */
-const SHELL_CACHE='vyron-peisov-yt-shell-v4';
-const SHELL_ASSETS=['/','/styles.css','/app.js','/migration-crypto.js','/event-utils.mjs','/manifest.webmanifest','/icon.svg'];
+const SHELL_CACHE='vyron-peisov-yt-shell-v5';
+const SHELL_ASSETS=['/','/styles.css','/neo-glass.css','/app.js','/neo-glass.mjs','/migration-crypto.js','/event-utils.mjs','/manifest.webmanifest','/icon.svg'];
 
 self.addEventListener('install',event=>{
   event.waitUntil(caches.open(SHELL_CACHE)
