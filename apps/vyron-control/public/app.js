@@ -116,6 +116,8 @@ function renderChannels(channels) {
   else visible.sort((a,b)=>a.name.localeCompare(b.name,'ru'));
   const list = $('channels');
   list.replaceChildren();
+  if(sortMode==='content-days'&&!visible.some(ch=>Number.isFinite(ch.scheduledContentDays)))
+    list.append(make('div','empty','Остаток дней не рассчитан: облако не передаёт расписание будущих публикаций YouTube. Показываем каналы по названию.'));
   if (!visible.length) {
     const messages={
       analytics:'Нет каналов с готовыми отчётами Google Analytics.',
@@ -135,7 +137,12 @@ function renderChannels(channels) {
     link.href = 'https://www.youtube.com/channel/' + encodeURIComponent(ch.id);
     link.target = '_blank';
     link.rel = 'noopener noreferrer';
-    left.append(link,make('small','',ch.updatedAt?'Обновлено '+time(ch.updatedAt):'Ожидает первой синхронизации'));
+    const avatar=make('span','channel-avatar',ch.name.trim().slice(0,2).toLocaleUpperCase('ru-RU'));
+    avatar.setAttribute('aria-hidden','true');
+    left.classList.add('neo-channel-name');
+    left.append(avatar,link,make('small','',ch.updatedAt?'Обновлено '+time(ch.updatedAt):'Ожидает первой синхронизации'));
+    left.append(make('small','channel-runway',
+      'Остаток дней: '+(Number.isFinite(ch.scheduledContentDays)?number(ch.scheduledContentDays):'нет данных')));
     if(ch.analyticsAuthorized===false)
       left.append(make('small','caution','Google Analytics: требуется авторизация'));
     else if(ch.analyticsAuthorized===true&&!ch.analytics)
@@ -175,7 +182,7 @@ function renderChannels(channels) {
         ['Просмотры Analytics', number(a.views)],
         ['Время просмотра', a.watchMinutes == null ? '—' : number(Math.round(a.watchMinutes)) + ' мин'],
         ['Удержание', a.averageViewPercentage == null ? '—' : a.averageViewPercentage.toFixed(1) + '%'],
-        ['Средняя длительность',a.avgViewSeconds==null?'—':formatDuration(a.avgViewSeconds)],
+        ['Средняя длительность',a.averageViewDuration==null?'—':formatDuration(a.averageViewDuration)],
         ['Чистый прирост',number((a.subscribersGained??0)-(a.subscribersLost??0))],
         ['Лайки',number(sum('likes'))],['Комментарии',number(sum('comments'))],
         ['Репосты',number(sum('shares'))],
