@@ -1256,3 +1256,60 @@ test('Web Push retries abandoned sending claims without losing notifications',as
     async()=>({method:'POST'}));
   assert.equal(again.attempted,0);
 });
+
+
+test('Mac production snapshots are authenticated, idempotent and retain last good state offline',async()=>{
+  const e=env(),cid=id(100),now=new Date().toISOString();
+  await e.DB.prepare('INSERT INTO channels(id,name) VALUES (?,?)').bind(cid,'Safe Channel').run();
+  const make=items=>({deviceId:'macbook_m1',source:'VYRON_MAC',generatedAt:now,
+    items,truncated:false});
+  const job={id:'job_'+'a'.repeat(32),channelId:cid,status:'READY_UPLOAD',
+    title:'Ready video',progress:null,createdAt:now,
+    plannedPublishAt:'2026-11-25T07:00:00.000Z',
+    scheduleSource:'MAC_LOCAL_UNVERIFIED'};
+  const unauthorized=await cloud.fetch(req('/api/agent/production',control,'POST',make([job])),e);
+  assert.equal(unauthorized.status,401,'control token must not impersonate agent');
+  const rejectedOrigin=await cloud.fetch(req('/api/agent/production',agent,'POST',make([job]),
+    'https://evil.example'),e);
+  assert.equal(rejectedOrigin.status,403);
+  const accepted=await cloud.fetch(req('/api/agent/production',agent,'POST',make([job])),e);
+  assert.equal(accepted.status,200);
+  assert.equal((await accepted.json()).accepted,1);
+  let state=await (await cloud.fetch(req('/api/status',control),e)).json();
+  assert.equal(state.production.items.length,1);
+  assert.equal(state.production.items[0].scheduleSource,'MAC_LOCAL_UNVERIFIED');
+  assert.equal(state.production.confirmedYouTubeSchedule,false);
+  assert.equal(state.channels[0].scheduledContentDays,undefined);
+  const repeated=await cloud.fetch(req('/api/agent/production',agent,'POST',make([job])),e);
+  assert.equal(repeated.status,200);
+  assert.equal(e.DB.native.prepare('SELECT count(*) n FROM production_jobs').get().n,1);
+  state=await (await cloud.fetch(req('/api/status',control),e)).json();
+  assert.equal(state.production.items.length,1,'a missing Mac heartbeat must not erase jobs');
+  const removed=await cloud.fetch(req('/api/agent/production',agent,'POST',make([])),e);
+  assert.equal(removed.status,200);
+  state=await (await cloud.fetch(req('/api/status',control),e)).json();
+  assert.equal(state.production.items.length,0);
+  assert.equal(e.DB.native.prepare('SELECT count(*) n FROM production_jobs').get().n,1,
+    'removed jobs remain archived for audit');
+});
+test('Mac production validation rejects private fields and preserves stored snapshots',async()=>{
+  const e=env(),cid=id(101),now=new Date().toISOString();
+  await e.DB.prepare('INSERT INTO channels(id,name) VALUES (?,?)').bind(cid,'Safe Channel').run();
+  const packet={deviceId:'macbook_m1',source:'VYRON_MAC',generatedAt:now,items:[{
+    id:'job_'+'b'.repeat(32),channelId:cid,status:'UPLOADING',title:'Safe',
+    progress:24,createdAt:now,plannedPublishAt:null,scheduleSource:'MAC_LOCAL_UNVERIFIED',
+    localPath:'/Users/private/SHOULD_NEVER_BE_STORED',refreshToken:'SECRET'
+  }]};
+  const ok=await cloud.fetch(req('/api/agent/production',agent,'POST',packet),e);
+  assert.equal(ok.status,200);
+  const stored=e.DB.native.prepare('SELECT * FROM production_jobs').get();
+  assert.equal(JSON.stringify(stored).includes('/Users/'),false);
+  assert.equal(JSON.stringify(stored).includes('SECRET'),false);
+  const invalid=structuredClone(packet);
+  invalid.items[0].progress=200;
+  const reject=await cloud.fetch(req('/api/agent/production',agent,'POST',invalid),e);
+  assert.equal(reject.status,400);
+  const remain=await (await cloud.fetch(req('/api/status',control),e)).json();
+  assert.equal(remain.production.items.length,1);
+  assert.equal(remain.production.items[0].progress,24);
+});
