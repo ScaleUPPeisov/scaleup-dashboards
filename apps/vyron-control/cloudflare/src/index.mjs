@@ -7,6 +7,7 @@ import { runAnalyticsBatch,runManualAnalyticsBatch,runQueuedAnalyticsBatch,ANALY
 import { registerPush,unregisterPush,vapidPublic,dispatchPush,PUSH_CRON } from './push.mjs';
 import {receiveProduction,getProductionStatus} from './production.mjs';
 import {readNotificationCenter,writePrefs,markRead} from './notifications.mjs';
+import {detectOfflineMac} from './alert-probes.mjs';
 
 const REQUIRED_TOKEN_LENGTH = 32;
 const EXPECTED_TABLES = Object.freeze([
@@ -676,7 +677,7 @@ export default {
       scheduledSync(controller,env),
       runAnalyticsBatch(env,controller),
       ...(controller.cron===ANALYTICS_QUEUE_CRON?[runQueuedAnalyticsBatch(env,controller)]:[]),
-      ...(controller.cron===PUSH_CRON?[dispatchPush(env)]:[])
+      ...(controller.cron===PUSH_CRON?[detectOfflineMac(env).then(()=>dispatchPush(env))]:[])
     ]).then(results=>{
       for (const result of results) if(result.status==='rejected')
         console.error('VYRON CONTROL scheduled task failed:',
