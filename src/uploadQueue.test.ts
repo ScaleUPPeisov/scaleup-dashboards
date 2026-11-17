@@ -107,6 +107,22 @@ describe('multi-channel upload queue',()=>{
  expect(q.resumePaused('j1')).toBe(false);
  expect(executor).not.toHaveBeenCalled();
 });
+ it('never starts videos.insert if persisting QUEUED -> RUNNING fails and retries only after durability is restored',async()=>{
+  const executor=vi.fn(async()=>{});let writes=0,failTransition=true;
+  const persistence={load:()=>undefined,save:()=>{writes++;if(failTransition&&writes===2)throw new Error('disk full')}};
+  const q=new MultiChannelUploadQueue(executor,1,1,{persistence});
+  q.enqueue(spec(41,'A'));
+  await wait();
+  expect(executor).not.toHaveBeenCalled();
+  expect(q.snapshot().queued).toHaveLength(1);
+  expect(q.snapshot().running).toHaveLength(0);
+  expect(q.snapshot().queued[0].error).toContain('UPLOAD_QUEUE_PERSIST_FAILED');
+  failTransition=false;
+  q.setConcurrency(1);
+  await wait();
+  expect(executor).toHaveBeenCalledTimes(1);
+  expect(q.snapshot().recent.map(x=>x.state)).toEqual(['SUCCEEDED']);
+ });
  it('fails closed before executor start when durable enqueue cannot be written',async()=>{
   const executor=vi.fn(async()=>{}),q=new MultiChannelUploadQueue(executor,1,1,{persistence:{load:()=>undefined,save:()=>{throw new Error('disk full')}}});
   expect(()=>q.enqueue(spec(1,'A'))).toThrow(/UPLOAD_QUEUE_PERSIST_FAILED/);
