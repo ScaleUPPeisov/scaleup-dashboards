@@ -41,6 +41,7 @@ class MockD1 {
     this.native.exec(readFileSync(new URL('../migrations/0006_analytics_reports.sql',import.meta.url),'utf8'));
     this.native.exec(readFileSync(new URL('../migrations/0007_channel_analytics_queue.sql',import.meta.url),'utf8'));
     this.native.exec(readFileSync(new URL('../migrations/0008_production_snapshot.sql',import.meta.url),'utf8'));
+    this.native.exec(readFileSync(new URL('../migrations/0009_notification_center.sql',import.meta.url),'utf8'));
   }
   prepare(sql){return new D1Query(this,sql);}
   async batch(stmts){
@@ -151,7 +152,7 @@ test('authorization, origin guard, static asset CSP and immutable endpoint behav
   assert.equal(health.status,200);
   const healthBody=await health.json();
   assert.equal(healthBody.app,'vyron-control');
-  assert.deepEqual(healthBody.d1,{bound:true,schema:true,expectedTables:18,presentTables:18});
+  assert.deepEqual(healthBody.d1,{bound:true,schema:true,expectedTables:20,presentTables:20});
   assert.equal((await cloud.fetch(req('/api/status','invalid'),e)).status,401);
   const good=await cloud.fetch(req('/api/status',control),e);
   assert.equal(good.status,200);
