@@ -70,6 +70,9 @@ export const useUpdaterRuntime=create<UpdaterRuntimeState>((set,get)=>({
         candidate=result;
         set({currentVersion:result.current||prior.currentVersion,latestVersion:result.latest||result.version||'',currentBuildRevision:result.currentBuildRevision??prior.currentBuildRevision,latestBuildRevision:result.buildRevision??prior.latestBuildRevision,updateChannel:result.channel||prior.updateChannel,artifactSha256:result.artifactSha256,status:'AVAILABLE',notes:result.body||'',releaseDate:result.date,endpoint:result.endpoint||'',versionComparison:result.versionComparison||'',lastCheckedAt:checkedAt,lastCheckAttemptAt:attemptAt,nextAutomaticCheckAt:checkedAt+UPDATER_AUTO_INTERVAL_MS,consecutiveCheckFailures:0,hasChecked:true,progress:0,downloadedBytes:0,totalBytes:0});
       }catch(error){
+        // A failed refresh must not leave a previously checked update installable.
+        // The next download will re-check the feed rather than reuse stale state.
+        candidate=undefined;
         const current=get().currentVersion,target=get().latestVersion;const code=recordFailure('check',error,current,target);
         const checkedAt=Date.now(),failures=priorFailures+1;
         set({status:'ERROR',errorCode:code,errorMessage:String(error),lastCheckedAt:checkedAt,lastCheckAttemptAt:attemptAt,nextAutomaticCheckAt:updaterNextAutomaticCheckAt(checkedAt,failures,checkedAt),consecutiveCheckFailures:failures,hasChecked:true});
