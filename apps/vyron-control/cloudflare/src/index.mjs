@@ -146,7 +146,8 @@ async function fetchStatus(env) {
     db.prepare('SELECT id,label,last_seen_at,status_json FROM devices ORDER BY id LIMIT 20').all(),
     db.prepare('SELECT id,target_device,kind,state,created_at,updated_at FROM commands ORDER BY created_at DESC LIMIT 25').all(),
     db.prepare(`SELECT COUNT(*) AS profiles,
-      SUM(CASE WHEN p.last_error IS NOT NULL AND p.last_error != '' THEN 1 ELSE 0 END) AS error_profiles,
+      SUM(CASE WHEN p.last_error IS NOT NULL AND p.last_error != '' AND p.last_error NOT LIKE 'Some Analytics breakdowns unavailable:%' THEN 1 ELSE 0 END) AS error_profiles,
+      SUM(CASE WHEN p.last_error LIKE 'Some Analytics breakdowns unavailable:%' THEN 1 ELSE 0 END) AS warning_profiles,
       SUM(CASE WHEN p.last_success_at IS NOT NULL THEN 1 ELSE 0 END) AS refreshed_profiles,
       SUM(CASE WHEN c.client_id_cipher IS NOT NULL AND c.client_secret_cipher IS NOT NULL
         THEN 1 ELSE 0 END) AS local_clients
@@ -292,6 +293,7 @@ async function fetchStatus(env) {
       linkedProfiles:Number(reportHealth?.profiles||0),
       refreshedProfiles:Number(reportHealth?.refreshed_profiles||0),
       profilesWithErrors:Number(reportHealth?.error_profiles||0),
+      profilesWithWarnings:Number(reportHealth?.warning_profiles||0),
       profilesWithEncryptedClient:Number(reportHealth?.local_clients||0),
       reportChannels:channels.filter(ch=>Object.keys(ch.analytics?.reports||{}).length>0).length,
       needsAuthorization:channels.filter(ch=>!ch.analyticsAuthorized).map(ch=>({id:ch.id,name:ch.name})),
