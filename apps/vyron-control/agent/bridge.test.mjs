@@ -162,3 +162,38 @@ test('Mac agent bulk-imports exported YouTube channel registry once per change',
     assert.equal(sent[1].body[0].name,'Renamed channel');
   }finally{await rm(dir,{recursive:true,force:true});}
 });
+
+
+test('old Worker without production endpoint cannot block Mac events and commands',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'vyron-backward-compatible-'));
+ try{
+   const productionFile=join(dir,'production.json'),eventsFile=join(dir,'events.jsonl'),
+     cursorFile=join(dir,'cursor.json');
+   await writeFile(productionFile,JSON.stringify({
+     source:'VYRON_MAC',generatedAt:new Date().toISOString(),items:[],truncated:false
+   }));
+   await writeFile(eventsFile,JSON.stringify({
+     id:'compatibility_event',kind:'render_completed',title:'Completed',
+     occurredAt:new Date().toISOString()
+   })+'\n');
+   const calls=[];
+   const bridge=new MacBridge({
+     url:'https://control.example',token:'T'.repeat(40),productionFile,eventsFile,cursorFile,
+     fetchImpl:async(url)=>{
+       calls.push(url);
+       if(url.endsWith('/api/agent/production'))
+         return {ok:false,status:404,json:async()=>({error:'Not found'})};
+       if(url.includes('/api/agent/commands?'))
+         return {ok:true,json:async()=>({commands:[]})};
+       return {ok:true,json:async()=>({received:1})};
+     }
+   });
+   await bridge.initialize();
+   await bridge.tick();
+   assert.equal(calls.filter(u=>u.endsWith('/api/agent/events')).length,1);
+   assert.equal(calls.filter(u=>u.endsWith('/api/agent/production')).length,1);
+   const later=await bridge.syncProduction();
+   assert.equal(later.reason,'worker_not_upgraded');
+   assert.equal(calls.filter(u=>u.endsWith('/api/agent/production')).length,1);
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
