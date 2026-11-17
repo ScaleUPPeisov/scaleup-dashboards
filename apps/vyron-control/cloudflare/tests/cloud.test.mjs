@@ -1358,3 +1358,23 @@ test('notification read receipts link to real events and do not forge unknown ID
  const found=await (await cloud.fetch(req('/api/notifications',control),e)).json();
  assert.deepEqual(found.readIds,[eventId]);
 });
+
+
+test('production ingest preserves 300 tasks in one JSON1 bulk SQL statement',async()=>{
+ const e=env(),cid=id(120),now=new Date().toISOString();
+ await e.DB.prepare('INSERT INTO channels(id,name) VALUES (?,?)').bind(cid,'High volume').run();
+ const items=Array.from({length:300},(_,i)=>({
+   id:'job_'+i.toString(16).padStart(32,'0'),channelId:cid,
+   status:i%2?'READY_UPLOAD':'RENDERING',title:'Video '+i,
+   progress:i%2?null:i%101,plannedPublishAt:null,
+   createdAt:now,scheduleSource:'MAC_LOCAL_UNVERIFIED'
+ }));
+ const reqBody={deviceId:'macbook_m1',source:'VYRON_MAC',generatedAt:now,
+   items,truncated:false};
+ const response=await cloud.fetch(req('/api/agent/production',agent,'POST',reqBody),e);
+ assert.equal(response.status,200);
+ assert.equal((await response.json()).accepted,300);
+ assert.equal(e.DB.native.prepare('SELECT COUNT(*) AS n FROM production_jobs WHERE active=1').get().n,300);
+ const status=await (await cloud.fetch(req('/api/status',control),e)).json();
+ assert.equal(status.production.items.length,300);
+});
