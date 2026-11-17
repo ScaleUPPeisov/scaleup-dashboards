@@ -4,8 +4,8 @@
   "description": "Личный YouTube-дашборд, Analytics 360 и Mac Bridge",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#080d18",
-  "theme_color": "#080d18",
+  "background_color": "#070912",
+  "theme_color": "#070912",
   "icons": [
     {
       "src": "/icon.svg",
