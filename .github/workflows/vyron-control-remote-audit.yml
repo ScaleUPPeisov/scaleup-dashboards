@@ -36,6 +36,13 @@ jobs:
           SELECT 'google_oauth_profiles' k,COUNT(*) n FROM google_oauth_profiles;
           SELECT 'oauth_last_success' k,COUNT(*) n FROM google_oauth_profiles WHERE last_success_at IS NOT NULL;
           SELECT 'oauth_with_error' k,COUNT(*) n FROM google_oauth_profiles WHERE last_error IS NOT NULL AND last_error!='';
+          SELECT 'oauth_partial_breakdowns' k,COUNT(*) n FROM google_oauth_profiles WHERE last_error LIKE 'Some Analytics breakdowns unavailable:%';
+          SELECT 'oauth_invalid_grant' k,COUNT(*) n FROM google_oauth_profiles WHERE lower(last_error) LIKE '%invalid_grant%';
+          SELECT 'oauth_permission_error' k,COUNT(*) n FROM google_oauth_profiles WHERE lower(last_error) LIKE '%permission%' OR lower(last_error) LIKE '%403%';
+          SELECT 'oauth_other_error' k,COUNT(*) n FROM google_oauth_profiles WHERE last_error IS NOT NULL AND last_error!='' AND last_error NOT LIKE 'Some Analytics breakdowns unavailable:%' AND lower(last_error) NOT LIKE '%invalid_grant%' AND lower(last_error) NOT LIKE '%permission%' AND lower(last_error) NOT LIKE '%403%';
+          SELECT 'oauth_success_48h' k,COUNT(*) n FROM google_oauth_profiles WHERE julianday(last_success_at)>=julianday('now','-2 days');
+          SELECT 'analytics_48h' k,COUNT(*) n FROM channel_analytics WHERE julianday(captured_at)>=julianday('now','-2 days');
+          SELECT 'reports_48h' k,COUNT(*) n FROM channel_analytics_reports WHERE julianday(captured_at)>=julianday('now','-2 days');
           SELECT 'analytics_rows' k,COUNT(*) n FROM channel_analytics;
           SELECT 'analytics_reports' k,COUNT(*) n FROM channel_analytics_reports;
           SELECT 'glass_present' k,COUNT(*) n FROM channels WHERE lower(trim(name))='glass city lovers';
@@ -51,12 +58,16 @@ jobs:
             .filter(row=>typeof row.k==='string')
             .map(row=>[row.k,Number(row.n)]));
           const expected=['channels','google_oauth_profiles','oauth_last_success','oauth_with_error',
+            'oauth_partial_breakdowns','oauth_invalid_grant','oauth_permission_error',
+            'oauth_other_error','oauth_success_48h','analytics_48h','reports_48h',
             'analytics_rows','analytics_reports','glass_present','coffee_present',
             'glass_oauth','coffee_oauth','production_schema','notifications_schema'];
           if(expected.some(k=>!Number.isSafeInteger(counts[k])||counts[k]<0))
             throw Error('Read-only D1 result incomplete');
           console.log('REAL REMOTE D1 COUNTS (no row content or token values):');
           console.log(JSON.stringify(counts,null,2));
+          if(counts.oauth_partial_breakdowns===counts.oauth_with_error&&counts.oauth_with_error>0)
+            console.log('All OAuth warnings are non-fatal optional Analytics breakdown warnings; refresh succeeded.');
           if(counts.channels<33)console.log('::warning::Fewer than 33 remote channels');
           if(counts.glass_present!==1||counts.coffee_present!==1)
             console.log('::warning::Named channel missing from D1 registry');
