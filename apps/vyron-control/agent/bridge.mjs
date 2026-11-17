@@ -8,15 +8,15 @@ import { createHash } from 'node:crypto';
 
 export class MacBridge {
   constructor({ url, token, deviceId='macbook_m1', eventsFile=null,
-      statusFile=null, channelsFile=null, analyticsFile=null, cursorFile=join(homedir(),'.vyron-control-agent','cursor.json'),
+      statusFile=null, channelsFile=null, analyticsFile=null,productionFile=null,cursorFile=join(homedir(),'.vyron-control-agent','cursor.json'),
       fetchImpl=fetch }) {
     if (!/^https:\/\//.test(url) || !/^.{32,}$/.test(token))
       throw new Error('HTTPS URL and secure 32+ character agent token required');
     if (!/^[A-Za-z0-9_-]{3,50}$/.test(deviceId)) throw new Error('Invalid deviceId');
     this.url=url.replace(/\/$/,'');
     this.token=token;this.deviceId=deviceId;this.eventsFile=eventsFile;
-    this.statusFile=statusFile;this.channelsFile=channelsFile;this.analyticsFile=analyticsFile;this.cursorFile=cursorFile;this.fetchImpl=fetchImpl;
-    this.offset=0;this.busy=false;this.lastChannelHash=null;this.lastChannelSyncAttemptAt=0;this.lastAnalyticsHash=null;
+    this.statusFile=statusFile;this.channelsFile=channelsFile;this.analyticsFile=analyticsFile;this.productionFile=productionFile;this.cursorFile=cursorFile;this.fetchImpl=fetchImpl;
+    this.offset=0;this.busy=false;this.lastChannelHash=null;this.lastChannelSyncAttemptAt=0;this.lastAnalyticsHash=null;this.lastProductionHash=null;
   }
   async initialize() {
     try {
@@ -104,6 +104,22 @@ export class MacBridge {
     this.lastAnalyticsHash=hash;
     return {uploaded:raw.length};
   }
+  async syncProduction() {
+    if(!this.productionFile)return {uploaded:0,reason:'no_export'};
+    let data;
+    try {data=JSON.parse(await readFile(this.productionFile,'utf8'));}
+    catch(error){if(error.code==='ENOENT')return {uploaded:0,reason:'export_missing'};throw error;}
+    if(data?.source!=='VYRON_MAC'||!Array.isArray(data.items)||data.items.length>300||
+       data.truncated===true)throw new Error('Invalid production snapshot');
+    const body={...data,deviceId:this.deviceId};
+    const hash=createHash('sha256').update(JSON.stringify(data.items)).digest('hex');
+    if(hash===this.lastProductionHash)return {uploaded:0,reason:'unchanged'};
+    const response=await this.api('/api/agent/production','POST',body);
+    if(Number(response.unknownChannelIds)>0)
+      return {uploaded:0,reason:'unknown_channel_retry',unknown:response.unknownChannelIds};
+    this.lastProductionHash=hash;
+    return {uploaded:response.accepted||0};
+  }
   async syncEvents() {
     if(!this.eventsFile)return {transmitted:0};
     let fileStats;
@@ -174,6 +190,7 @@ export class MacBridge {
       await this.heartbeat();
       await this.syncChannelRegistry();
       await this.syncAnalytics();
+      await this.syncProduction();
       await this.syncEvents();
       await this.pendingCommands();
     } finally {this.busy=false;}
