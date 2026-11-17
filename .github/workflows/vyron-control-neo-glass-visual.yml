@@ -15,6 +15,12 @@ permissions:
 jobs:
   visual:
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [chromium, webkit]
+    env:
+      NEO_QA_BROWSER: ${{ matrix.engine }}
     timeout-minutes: 15
     defaults:
       run:
@@ -28,15 +34,15 @@ jobs:
           node-version: 22
       - name: Install pinned browser test dependency
         run: npm install --no-save --ignore-scripts --no-audit --no-fund playwright@1.56.1
-      - name: Install headless Chromium
-        run: npx playwright install --with-deps chromium
+      - name: Install headless browser
+        run: npx playwright install --with-deps ${{ matrix.engine }}
       - name: Check 8 screens across viewport matrix and capture QA screenshots
         run: node browser/neo-glass-visual-qa.mjs
       - name: Upload QA screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: vyron-control-neo-glass-screenshots
+          name: vyron-control-neo-glass-screenshots-${{ matrix.engine }}
           path: apps/vyron-control/qa-screenshots
           if-no-files-found: ignore
           retention-days: 7
