@@ -242,3 +242,13 @@ button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible{
 @media(prefers-reduced-motion:reduce){
  *,*::before,*::after{animation:none!important;scroll-behavior:auto!important;transition:none!important}
 }
+
+/* Progressive channel avatar fallback: current backend does not deliver channel thumbnails. */
+.neo-channel-name{display:grid;grid-template-columns:40px minmax(0,1fr);
+ column-gap:10px;row-gap:4px;align-items:center;min-width:0}
+.neo-channel-name .channel-avatar{grid-column:1;grid-row:1 / span 4;align-self:start;
+ display:grid;place-items:center;width:40px;height:40px;border-radius:14px;
+ background:linear-gradient(145deg,rgba(132,94,240,.4),rgba(78,60,139,.32));
+ border:1px solid var(--ng-stroke-strong);color:#efe7ff;font-size:14px;font-weight:750}
+.neo-channel-name>a,.neo-channel-name>small{grid-column:2}
+.neo-channel-name>.channel-runway{color:#bfaeff}
