@@ -20,6 +20,7 @@ import {batchFailureToast,type BatchFailure} from './errorPresentationPolicy';
 import {canonicalSelectedJobs,publisherGlobalBlockReasons,publisherPreflightItems,publisherUploadButtonLabel} from './publisherRuntime';
 import {classifyUploadState,clearStaleUploadLink,latestUploadRecord,markHistoryTrashed,nextProjectLifecycle,recordVerifiedUpload,successfulUploadForHash,updateUploadProcessing,updateUploadRemoteEvidence,uploadStateCounters,type CanonicalUploadState} from './storageLifecycle';
 import {configureUploadQueue,enqueueUpload,waitForUploadQueueEntries} from './uploadQueueRuntime';
+import {runSingleFlight} from './publisherSubmitSingleFlight';
 import {fingerprintForCurrentSource,type SourceFingerprint} from './publisherFingerprintIdentity';
 import {existingSyncIncompleteSummary,krasDateKey,readAuthoritativeExistingSnapshot,replaceExistingCacheFromSync} from './channelSchedule';
 import {journal} from './activityJournalRuntime';
@@ -62,6 +63,7 @@ function PublisherOSAdvanced({activityRef}:{activityRef?:React.MutableRefObject<
  const initialActive=loadActivePublishChannel();const first=orderedChannels.some(c=>c.id===initialActive)?initialActive:(orderedChannels[0]?.id||'');
  const [channelId,setChannelId]=useState(first),[draft,setDraft]=useState<PublishWorkspaceDraft>(()=>loadPublishWorkspace(first)),[busy,setBusy]=useState(false),[fingerprints,setFingerprints]=useState<Record<string,SourceFingerprint>>({}),[sessions,setSessions]=useState<YoutubeUploadSession[]>([]),[quotaRev,setQuotaRev]=useState(0),[clock,setClock]=useState(()=>youtubeQuotaClockSnapshot()),[removeRequest,setRemoveRequest]=useState<RemoveRequest|null>(null),[videoFilter,setVideoFilter]=useState<VideoFilter>('new'),[renderScanBusy,setRenderScanBusy]=useState(false),[renderScan,setRenderScan]=useState<RenderScanPreview|null>(null),[legacyRecoveryPreview,setLegacyRecoveryPreview]=useState<LegacyRecoveryPreview|null>(null),[lastQuotaReport,setLastQuotaReport]=useState<{plannedGeneral:number;actualGeneral:number;plannedUploads:number;actualUploads:number;remainingGeneral:number;remainingUploads:number|null}|null>(null),[quotaProjectKey,setQuotaProjectKey]=useState(''),[quotaProjectLabel,setQuotaProjectLabel]=useState('Не удалось определить API-проект для квоты');
  const initialChannelRef=useRef(first);
+ const batchSubmitRef=useRef(false);
  const [scheduleStartMode,setScheduleStartMode]=useState<'continue'|'manual'>('continue');
  const [scheduleSync,setScheduleSync]=useState<{state:'idle'|'loading'|'ready'|'error';lastScheduled?:string;suggestedStart?:string;note?:string;futureCount:number;occupied:string[];timezone:string;youtubeTime?:string;youtubeEvidenceCount?:number;youtubeEvidenceSource?:'scheduled'|'published';youtubeEvidenceAt?:string;syncedAt?:string}>({state:'idle',futureCount:0,occupied:[],timezone:PUBLISHER_TIMEZONE});
  const [globalDaily,setGlobalDaily]=useState(()=>globalDailyUploadStatus());
@@ -499,7 +501,8 @@ function PublisherOSAdvanced({activityRef}:{activityRef?:React.MutableRefObject<
   if(draft.scheduleMode==='2/2')updateChannel(channel.id,{scheduleMode:'pattern',publishDays:2,pauseDays:2,patternAnchorDate:anchor});
   else if(draft.scheduleMode==='3/1')updateChannel(channel.id,{scheduleMode:'pattern',publishDays:3,pauseDays:1,patternAnchorDate:anchor})
  }
- async function runBatch(requested?:number){
+ function runBatch(requested?:number){return runSingleFlight(batchSubmitRef,()=>runBatchOnce(requested))}
+ async function runBatchOnce(requested?:number){
   log(`[UPLOAD_QUEUE] submit clicked channel=${channelId} selected=${selected.length} ready=${uploadableSelected.length}`);
   if(!channel||!profileId){notifyWarning('Загрузка недоступна','Для канала не найден активный YouTube OAuth профиль.');return}
   if(sourceAvailability!=='ONLINE'){notifyWarning('Внешний диск недоступен','Подключите диск с текущими видео и повторите сканирование.');return}
