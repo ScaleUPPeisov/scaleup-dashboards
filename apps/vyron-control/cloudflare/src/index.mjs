@@ -669,7 +669,7 @@ export default {
         message.startsWith('YOUTUBE_CHANNELS_INCOMPLETE')||
           message.startsWith('YouTube channels.list HTTP')||
           message.startsWith('YouTube response missing items')?502:
-        /Invalid|^INVALID_|Unexpected|not configured|No channels|Unsupported|too large/.test(message)?400:500;
+        /Invalid|^INVALID_|^PRODUCTION_|Unexpected|not configured|No channels|Unsupported|too large/.test(message)?400:500;
       if(status===500)console.error('VYRON CONTROL request:',message);
       return errorReply(status===500?'Internal service error':message,status);
     }
