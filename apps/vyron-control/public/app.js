@@ -699,6 +699,7 @@ function render(data) {
     number(data.channels.length)+' · Google отчётов '+number(health.reportChannels??0)+
     ' · без OAuth '+number(health.needsAuthorization?.length??0)+
     ' · ошибки профилей '+number(health.profilesWithErrors??0)+
+    ' · неполные дополнительные отчёты '+number(health.profilesWithWarnings??0)+
     (health.reportChannels===0?' · Расширенные метрики не подтверждены.':'');
   displayAggregate('total-subs', data.totalSubscribers);
   displayAggregate('total-views', data.totalViews);
@@ -985,7 +986,9 @@ async function loadOauthProfiles() {
       const line=make('div','oauth-profile');
       const name=make('span','',profile.channel_name+' · '+profile.channel_id);
       const status=make('small','',
-        profile.last_error?'Проверить: '+profile.last_error:
+        profile.last_error?(profile.last_error.startsWith('Some Analytics breakdowns unavailable:')
+          ?'Дополнительная статистика частично недоступна'
+          :'Проверить: '+profile.last_error):
         profile.last_success_at?'Обновлено '+time(profile.last_success_at):
         'Ожидает первой синхронизации');
       const disconnect=make('button','ghost','Отключить');
