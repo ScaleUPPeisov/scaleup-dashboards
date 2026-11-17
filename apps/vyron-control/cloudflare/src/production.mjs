@@ -39,7 +39,7 @@ export async function receiveProduction(env,request){
  const known=await env.DB.prepare('SELECT id FROM channels').all();
  const recognized=new Set((known.results||[]).map(row=>row.id));
  const items=data.items.filter(item=>recognized.has(item.channelId));
- if(data.items.length>0&&items.length===0)throw new Error('PRODUCTION_CHANNEL_REGISTRY_EMPTY');
+ if(items.length!==data.items.length)throw new Error('PRODUCTION_UNKNOWN_CHANNEL_IDS');
  const stmts=items.map(row=>env.DB.prepare(
    "INSERT INTO production_jobs(device_id,id,channel_id,status,title,progress,"+
    "planned_publish_at,created_at,schedule_source,active,generation,received_at) "+
