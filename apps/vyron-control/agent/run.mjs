@@ -34,6 +34,7 @@ const bridge=new MacBridge({
   statusFile:process.env.VYRON_AGENT_STATUS_FILE||mirror?.statusFile||null,
   channelsFile:process.env.VYRON_AGENT_CHANNELS_FILE||mirror?.channelsFile||null,
   analyticsFile:process.env.VYRON_AGENT_ANALYTICS_FILE||mirror?.analyticsFile||null,
+  productionFile:process.env.VYRON_AGENT_PRODUCTION_FILE||mirror?.productionFile||null,
   cursorFile:process.env.VYRON_AGENT_CURSOR_FILE||undefined
 });
 await bridge.initialize();
