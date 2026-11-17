@@ -18,6 +18,7 @@ export type UpdaterRuntimeState={
 let candidate:CheckedUpdaterCandidate|undefined;
 let checkPromise:Promise<void>|undefined;
 let installPromise:Promise<boolean>|undefined;
+let downloadPromise:Promise<void>|undefined;
 let lastRecordedError='';
 const ERROR_FINGERPRINT_KEY='vyron:updater-last-error-fingerprint';
 const errorCode=(e:unknown)=>String(e??'').match(/([A-Z][A-Z0-9_]+):/)?.[1]||'UPDATER_INSTALL_FAILED';
@@ -80,7 +81,10 @@ export const useUpdaterRuntime=create<UpdaterRuntimeState>((set,get)=>({
     })();
     return checkPromise;
   },
-  download:async()=>{
+  download:()=>{
+    if(downloadPromise)return downloadPromise;
+    if(['CHECKING','DOWNLOADING','VERIFYING','READY_TO_INSTALL','INSTALLING','READY_TO_RESTART','RESTARTING'].includes(useUpdaterRuntime.getState().status))return Promise.resolve();
+    const task=(async()=>{
     try{
       // A WebView reload can lose the in-memory candidate while the UI still knows an update exists.
       // Re-check instead of leaving a dead button.
@@ -95,12 +99,23 @@ export const useUpdaterRuntime=create<UpdaterRuntimeState>((set,get)=>({
       await ensureUpdaterInstallable(set);
       await candidate.download((p:UpdaterTransferProgress)=>set({status:p.status==='VERIFYING'?'VERIFYING':'DOWNLOADING',progress:p.percent,downloadedBytes:p.downloadedBytes,totalBytes:p.totalBytes}));
       set({status:'READY_TO_INSTALL',progress:100});
-    }catch(error){const s=get();const code=recordFailure('download',error,s.currentVersion,s.latestVersion);set({status:'ERROR',errorCode:code,errorMessage:String(error)})}
+    }catch(error){
+      // Never reuse a partially downloaded or signature-rejected candidate.
+      candidate=undefined;
+      const s=get();const code=recordFailure('download',error,s.currentVersion,s.latestVersion);
+      set({status:'ERROR',errorCode:code,errorMessage:String(error),progress:0});
+    }
+    })();
+    downloadPromise=task.finally(()=>{downloadPromise=undefined});
+    return downloadPromise;
   },
   installAndRestart:async(blockers=[])=>{
     if(installPromise)return installPromise;
     const task=(async():Promise<boolean>=>{
     if(blockers.length){set({blockers});return false}
+    // A checked candidate is not an installed or signature-verified archive.
+    // In particular, never install after a failed or still-running download.
+    if(get().status!=='READY_TO_INSTALL')return false;
     try{
       // Candidate objects are intentionally memory-only. If the WebView/app shell was reloaded after
       // download, recover the exact target from the signed feed and re-download/verify it.
@@ -179,4 +194,4 @@ export const useUpdaterRuntime=create<UpdaterRuntimeState>((set,get)=>({
   clearBlockers:()=>set({blockers:[]})
 }));
 
-export function resetUpdaterRuntimeForTests(){candidate=undefined;checkPromise=undefined;installPromise=undefined;lastRecordedError='';try{globalThis.localStorage?.removeItem(ERROR_FINGERPRINT_KEY)}catch{}useUpdaterRuntime.setState({currentVersion:'',latestVersion:'',currentBuildRevision:0,latestBuildRevision:0,updateChannel:'stable',commit:'',artifactSha256:undefined,status:'UP_TO_DATE',progress:0,downloadedBytes:0,totalBytes:0,notes:'',releaseDate:undefined,endpoint:'',versionComparison:'',lastCheckedAt:undefined,lastCheckAttemptAt:undefined,nextAutomaticCheckAt:undefined,consecutiveCheckFailures:0,errorCode:undefined,errorMessage:undefined,blockers:[],hasChecked:false,preflight:undefined})}
+export function resetUpdaterRuntimeForTests(){candidate=undefined;checkPromise=undefined;installPromise=undefined;downloadPromise=undefined;lastRecordedError='';try{globalThis.localStorage?.removeItem(ERROR_FINGERPRINT_KEY)}catch{}useUpdaterRuntime.setState({currentVersion:'',latestVersion:'',currentBuildRevision:0,latestBuildRevision:0,updateChannel:'stable',commit:'',artifactSha256:undefined,status:'UP_TO_DATE',progress:0,downloadedBytes:0,totalBytes:0,notes:'',releaseDate:undefined,endpoint:'',versionComparison:'',lastCheckedAt:undefined,lastCheckAttemptAt:undefined,nextAutomaticCheckAt:undefined,consecutiveCheckFailures:0,errorCode:undefined,errorMessage:undefined,blockers:[],hasChecked:false,preflight:undefined})}

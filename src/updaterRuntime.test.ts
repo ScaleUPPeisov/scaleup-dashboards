@@ -43,6 +43,38 @@ describe('shared remote updater lifecycle',()=>{
   expect(useUpdaterRuntime.getState().status).toBe('READY_TO_INSTALL');
  });
  it('blocks a bad-signature package before install',async()=>{const c=candidate({download:vi.fn(async()=>{throw new Error('UPDATER_SIGNATURE_INVALID: bad signature')})});mockApi.checkUpdate.mockResolvedValue(c);await useUpdaterRuntime.getState().check();await useUpdaterRuntime.getState().download();expect(useUpdaterRuntime.getState().status).toBe('ERROR');expect(useUpdaterRuntime.getState().errorCode).toBe('UPDATER_SIGNATURE_INVALID');expect(c.install).not.toHaveBeenCalled()});
+ it('never installs before download or after a failed signature, then requires a fresh candidate',async()=>{
+  const rejected=candidate({download:vi.fn(async()=>{throw new Error('UPDATER_SIGNATURE_INVALID: corrupted archive')})});
+  mockApi.checkUpdate.mockResolvedValue(rejected);
+  await useUpdaterRuntime.getState().check();
+  expect(await useUpdaterRuntime.getState().installAndRestart([])).toBe(false);
+  expect(rejected.install).not.toHaveBeenCalled();
+  await useUpdaterRuntime.getState().download();
+  expect(useUpdaterRuntime.getState().status).toBe('ERROR');
+  expect(await useUpdaterRuntime.getState().installAndRestart([])).toBe(false);
+  expect(rejected.install).not.toHaveBeenCalled();
+  const trusted=candidate();
+  mockApi.checkUpdate.mockResolvedValue(trusted);
+  await useUpdaterRuntime.getState().download();
+  expect(mockApi.checkUpdate).toHaveBeenCalledTimes(2);
+  expect(trusted.download).toHaveBeenCalledTimes(1);
+  expect(useUpdaterRuntime.getState().status).toBe('READY_TO_INSTALL');
+ });
+ it('coalesces 20 download clicks and does not install during transfer',async()=>{
+  let finish!:()=>void;
+  const waitForDownload=new Promise<void>(resolve=>{finish=resolve});
+  const c=candidate({download:vi.fn(async()=>{await waitForDownload})});
+  mockApi.checkUpdate.mockResolvedValue(c);
+  await useUpdaterRuntime.getState().check();
+  const downloads=Array.from({length:20},()=>useUpdaterRuntime.getState().download());
+  await Promise.resolve();
+  expect(c.download).toHaveBeenCalledTimes(1);
+  expect(await useUpdaterRuntime.getState().installAndRestart([])).toBe(false);
+  expect(c.install).not.toHaveBeenCalled();
+  finish();
+  await Promise.all(downloads);
+  expect(useUpdaterRuntime.getState().status).toBe('READY_TO_INSTALL');
+ });
  it('shows same-version state without update warning',async()=>{mockApi.checkUpdate.mockResolvedValue({none:true,current:'2.1.4',latest:'2.1.4',status:'UP_TO_DATE',endpoint:'feed',versionComparison:'current == latest'});await useUpdaterRuntime.getState().check();expect(useUpdaterRuntime.getState().status).toBe('UP_TO_DATE');expect(useUpdaterRuntime.getState().latestVersion).toBe('2.1.4')});
  it('coalesces 20 install clicks into exactly one install/restart',async()=>{
   let releaseInstall!:()=>void;
