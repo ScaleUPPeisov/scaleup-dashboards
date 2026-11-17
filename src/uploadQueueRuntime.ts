@@ -14,6 +14,7 @@ import {attentionTask,cancelTask,completeTask,ensureTask,failTask,startTask} fro
 import {loadPublishWorkspace,retireCompletedWorkspaceMetadata,savePublishWorkspace} from './publishWorkspaceState';
 import {retryableYoutubeMetadataState} from './youtubeMetadataValidation';
 import {publisherIntegrityError,validateImmutableUploadSpec} from './publisherIntegrity';
+import {verifyQueuedSourceFingerprint} from './uploadQueueSourceVerification';
 
 function assertQueuePayloadIntegrity(spec:ImmutableUploadJob){const result=validateImmutableUploadSpec(spec,true);if(!result.valid)throw publisherIntegrityError(spec.videoNumber,result.issues)}
 
@@ -30,6 +31,9 @@ async function executeUpload(spec:ImmutableUploadJob){
   if(job.youtubeVideoId&&!spec.allowDuplicate)throw new Error(`UPLOAD_ALREADY_HAS_VIDEO_ID: ${job.youtubeVideoId}; verify existing YouTube state before explicit duplicate re-upload`);
   if(Date.parse(spec.publishAt)<=Date.now())throw new Error('UPLOAD_QUEUE_PUBLISH_AT_EXPIRED: publishAt is no longer in the future');
   if(successfulUploadForHash(state.uploadHistory,spec.fingerprint,spec.channelId,spec.fileSize))throw new Error('UPLOAD_QUEUE_DUPLICATE_VERIFIED: fingerprint already uploaded for this channel');
+  // A queued source may change before its transfer slot; compare full bytes now.
+  // Never accept an old size+mtime cache for an immutable upload spec.
+  await verifyQueuedSourceFingerprint(spec,path=>api.youtubeFileFingerprint(path));
   const daily=safeDailyStatus(spec.channelId,channel.safeDailyUploadLimit);if(daily.remaining!=null&&daily.remaining<=0)throw new Error('UPLOAD_QUEUE_CHANNEL_DAILY_LIMIT: safe rolling limit reached');
   const quota=reserveYoutubeQuotaAtomic(operationId,spec.quotaOperations as YoutubeQuotaOperation[],spec.quotaProjectKey||undefined);
   if(!quota.reserved)throw new Error('UPLOAD_QUEUE_QUOTA_RECHECK_FAILED: quota changed before start');
