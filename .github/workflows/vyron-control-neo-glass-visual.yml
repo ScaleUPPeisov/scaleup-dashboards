@@ -1,0 +1,42 @@
+name: VYRON CONTROL Neo Glass visual QA
+on:
+  push:
+    branches:
+      - "feature/vyron-control-neo-glass-*"
+    paths:
+      - "apps/vyron-control/public/**"
+      - "apps/vyron-control/browser/neo-glass-visual-qa.mjs"
+      - ".github/workflows/vyron-control-neo-glass-visual.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  visual:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/vyron-control
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install pinned browser test dependency
+        run: npm install --no-save --ignore-scripts --no-audit --no-fund playwright@1.56.1
+      - name: Install headless Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Check 8 screens across viewport matrix and capture QA screenshots
+        run: node browser/neo-glass-visual-qa.mjs
+      - name: Upload QA screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vyron-control-neo-glass-screenshots
+          path: apps/vyron-control/qa-screenshots
+          if-no-files-found: ignore
+          retention-days: 7
