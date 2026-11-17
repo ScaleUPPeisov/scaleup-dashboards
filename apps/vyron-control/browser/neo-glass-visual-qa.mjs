@@ -10,11 +10,58 @@ const shots=resolve(fileURLToPath(new URL('../qa-screenshots/',import.meta.url))
 const mime={'.html':'text/html;charset=utf-8','.css':'text/css;charset=utf-8',
   '.js':'text/javascript;charset=utf-8','.mjs':'text/javascript;charset=utf-8',
   '.json':'application/json','.webmanifest':'application/manifest+json','.svg':'image/svg+xml'};
+// Explicitly synthetic browser-only fixtures; never connected to live YouTube.
+const qaTime=new Date().toISOString();
+const qaDays=Array.from({length:28},(_,i)=>({date:'2026-10-'+String(i+1).padStart(2,'0'),
+  views:30+i*4,watchMinutes:100+i*2,subscribersGained:i%3===0?1:0,subscribersLost:0,
+  averageViewDuration:180,averageViewPercentage:47.3}));
+const qaChannels=Array.from({length:33},(_,i)=>{
+  const id='qa-fixture-'+String(i+1).padStart(2,'0');
+  return {id,name:'QA Fixture Channel '+String(i+1).padStart(2,'0'),
+    subscribers:100+i*15,previousSubscribers:98+i*15,views:2000+i*160,videos:18+i,
+    updatedAt:qaTime,subscribersHidden:false,analyticsAuthorized:i<31,
+    analytics:i>=31?null:{
+      source:'GOOGLE_ANALYTICS_API',updatedAt:qaTime,periodDays:28,
+      views:550+i*32,watchMinutes:1400+i*34,
+      subscribersGained:12,subscribersLost:2,averageViewDuration:180,
+      averageViewPercentage:47.3,daily:qaDays,
+      reports:{topVideos:[{videoId:'fixture-video-id',views:350}],
+        trafficSources:[{source:'YT_SEARCH',views:160}],
+        devices:[{deviceType:'MOBILE',views:320}],
+        countries:[{country:'RU',views:200}]}
+    }};
+});
+const qaEvents=[
+  {id:'qa-event-1',type:'render_started',title:'QA Fixture • render',name:'QA Fixture render',detectedAt:qaTime},
+  {id:'qa-event-2',type:'upload_started',title:'QA Fixture • upload',name:'QA Fixture upload',detectedAt:qaTime}
+];
+const qaStatus={
+  configured:true,syncing:false,lastError:null,lastSuccessAt:qaTime,
+  quota:{day:'2026-11-17',spent:100,budget:10000},
+  channels:qaChannels,
+  totalSubscribers:{value:11700,covered:33,total:33},
+  totalViews:{value:156000,covered:33,total:33},
+  totalVideos:{value:1100,covered:33,total:33},
+  publicTrend:qaDays.slice(-14).map(x=>({date:x.date,views:100000+x.views*33,covered:33,total:33})),
+  analyticsSummary:{authorized:31,daily:qaDays,views:31000},
+  analyticsHealth:{linkedProfiles:31,reportChannels:31,
+    needsAuthorization:['QA Fixture Channel 32','QA Fixture Channel 33'],
+    awaitingReports:[],profilesWithErrors:0},
+  events:qaEvents,
+  devices:[{id:'qa-device',lastSeenAt:qaTime,status:{rendersActive:1,uploadsQueued:2,jobsReadyUpload:3}}],
+  commands:[]
+};
 const server=createServer(async (req,res)=>{
   const url=new URL(req.url,'http://localhost');
   if(url.pathname.startsWith('/api/')){
-    res.writeHead(401,{'Content-Type':'application/json'}).end('{"error":"QA fixture: no backend"}');
-    return;
+    const payload=url.pathname==='/api/health'?{ok:true,d1:{schema:true}}:
+      url.pathname==='/api/status'?qaStatus:
+      url.pathname==='/api/oauth/profiles'?{configured:true,profiles:[]}:
+      url.pathname==='/api/push/public-key'?{supported:false}:
+      url.pathname==='/api/events'?{events:[],nextCursor:null}:
+      {ok:true};
+    res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'})
+      .end(JSON.stringify(payload));return;
   }
   const path=resolve(base,'.'+(url.pathname==='/'?'/index.html':url.pathname));
   if(!(path===join(base,'index.html')||path.startsWith(base+'/'))){
@@ -36,28 +83,16 @@ try {
     const page=await browser.newPage({viewport:{width,height:852},deviceScaleFactor:2});
     const errors=[];
     page.on('pageerror',err=>errors.push(err.message));
+    await page.addInitScript(()=>{
+      sessionStorage.setItem('vyron-control-access','QA_FIXTURE_NOT_A_REAL_CONTROL_TOKEN');
+    });
     await page.goto(url,{waitUntil:'networkidle'});
-    await page.waitForSelector('#login');
+    await page.waitForSelector('#dashboard:not([hidden])');
     await page.evaluate(async ()=>{
-      document.querySelector('#login').hidden=true;
-      document.querySelector('#dashboard').hidden=false;
-      document.querySelector('#logout').hidden=true;
       const ng=await import('/neo-glass.mjs');
-      const now=new Date().toISOString();
-      const fixture={
-        channels:[{id:'qa-fixture',name:'QA fixture channel',views:3301,subscribers:216,
-          previousSubscribers:212,updatedAt:now,analyticsAuthorized:true,
-          analytics:{source:'GOOGLE_ANALYTICS_API',periodDays:28,views:802,watchMinutes:1230,
-            subscribersGained:8,subscribersLost:2,averageViewPercentage:47.5,
-            avgViewSeconds:188,updatedAt:now,
-            daily:Array.from({length:14},(_,i)=>({date:'2026-11-'+String(i+1).padStart(2,'0'),views:12+i*4})),
-            reports:{topVideos:[{videoId:'qa-fixture',views:303}],trafficSources:[{source:'YT_SEARCH',views:160}]}}}],
-        devices:[{id:'qa-device',lastSeenAt:now,status:{rendersActive:1,uploadsQueued:2,jobsReadyUpload:3}}],
-        events:[{type:'render_started',name:'QA screenshot only',title:'Render started',detectedAt:now}],
-        analyticsHealth:{linkedProfiles:1},lastError:null
-      };
-      ng.selectNeoChannel('qa-fixture');
-      ng.renderNeoGlass(fixture);
+      const data=await (await fetch('/api/status')).json();
+      ng.selectNeoChannel(data.channels[0].id);
+      ng.renderNeoGlass(data);
     });
     const desktop=width>760;
     for(const view of screens){
