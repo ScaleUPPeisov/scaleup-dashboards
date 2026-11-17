@@ -3,10 +3,11 @@ import { readFile, mkdir } from 'node:fs/promises';
 import { resolve, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
-import { chromium } from 'playwright';
+import { chromium,webkit } from 'playwright';
 
 const base=resolve(fileURLToPath(new URL('../public/',import.meta.url)));
 const shots=resolve(fileURLToPath(new URL('../qa-screenshots/',import.meta.url)));
+
 const mime={'.html':'text/html;charset=utf-8','.css':'text/css;charset=utf-8',
   '.js':'text/javascript;charset=utf-8','.mjs':'text/javascript;charset=utf-8',
   '.json':'application/json','.webmanifest':'application/manifest+json','.svg':'image/svg+xml'};
@@ -74,7 +75,8 @@ const server=createServer(async (req,res)=>{
 });
 await new Promise(ok=>server.listen(0,'127.0.0.1',ok));
 const url='http://127.0.0.1:'+server.address().port+'/';
-const browser=await chromium.launch({headless:true});
+const engine=process.env.NEO_QA_BROWSER==='webkit'?'webkit':'chromium';
+const browser=await (engine==='webkit'?webkit:chromium).launch({headless:true});
 await mkdir(shots,{recursive:true});
 const widths=[320,375,390,393,402,430];
 const screens=['overview','channels','analytics','studio','insights','notifications','channel-detail','system'];
@@ -123,7 +125,7 @@ try {
       if(width<=430)assert.deepEqual(measurements.overflow,[],
         width+'px '+view+' element overflow');
       if(width===393||width===320||width===1280){
-        await page.screenshot({path:join(shots,String(width)+'-'+view+'.png'),fullPage:false});
+        await page.screenshot({path:join(shots,engine+'-'+String(width)+'-'+view+'.png'),fullPage:false});
       }
     }
     if(width===393){
@@ -142,7 +144,7 @@ try {
     }
     assert.deepEqual(errors,[],width+'px browser page error(s)');
     await page.close();
-    console.log('PASS '+width+'px / 8 views / overflow / browser errors');
+    console.log('PASS '+engine+' '+width+'px / 8 views / overflow / browser errors');
   }
 }finally{
   await browser.close();
