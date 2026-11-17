@@ -804,7 +804,7 @@ $('overview-events-open').addEventListener('click',()=>openMobileView('notificat
 $('overview-analytics-open').addEventListener('click',()=>openMobileView('analytics'));
 $('notifications-open').addEventListener('click',()=>openMobileView('notifications'));
 $('insights-open').addEventListener('click',()=>openMobileView('insights'));
-wireNeoGlass();
+wireNeoGlass({api,refresh:load});
 
 window.addEventListener('resize',applyMobileView);
 $('analytics-period').addEventListener('change',()=>{
