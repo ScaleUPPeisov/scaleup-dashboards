@@ -67,8 +67,7 @@ describe('shared remote updater lifecycle',()=>{
   mockApi.checkUpdate.mockResolvedValue(c);
   await useUpdaterRuntime.getState().check();
   const downloads=Array.from({length:20},()=>useUpdaterRuntime.getState().download());
-  await Promise.resolve();
-  expect(c.download).toHaveBeenCalledTimes(1);
+  await vi.waitFor(()=>expect(c.download).toHaveBeenCalledTimes(1));
   expect(await useUpdaterRuntime.getState().installAndRestart([])).toBe(false);
   expect(c.install).not.toHaveBeenCalled();
   finish();
@@ -111,8 +110,7 @@ describe('shared remote updater lifecycle',()=>{
   await useUpdaterRuntime.getState().check();
   await useUpdaterRuntime.getState().download();
   const calls=Array.from({length:20},()=>useUpdaterRuntime.getState().installAndRestart([]));
-  await Promise.resolve();
-  expect(c.install).toHaveBeenCalledTimes(1);
+  await vi.waitFor(()=>expect(c.install).toHaveBeenCalledTimes(1));
   releaseInstall();
   const results=await Promise.all(calls);
   expect(results.every(Boolean)).toBe(true);
