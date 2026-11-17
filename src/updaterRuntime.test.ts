@@ -30,6 +30,18 @@ describe('shared remote updater lifecycle',()=>{
  });
  it('does not install or restart while critical jobs exist',async()=>{const c=candidate();mockApi.checkUpdate.mockResolvedValue(c);await useUpdaterRuntime.getState().check();await useUpdaterRuntime.getState().download();const ok=await useUpdaterRuntime.getState().installAndRestart([{kind:'UPLOADS',label:'Uploads',count:3}]);expect(ok).toBe(false);expect(c.install).not.toHaveBeenCalled();expect(c.restart).not.toHaveBeenCalled();expect(useUpdaterRuntime.getState().blockers[0]?.count).toBe(3)});
  it('keeps app usable on network check failure and records ERROR state',async()=>{mockApi.checkUpdate.mockRejectedValue(new Error('UPDATER_MANIFEST_FETCH_FAILED: offline'));await useUpdaterRuntime.getState().check();expect(useUpdaterRuntime.getState().status).toBe('ERROR');expect(useUpdaterRuntime.getState().errorCode).toBe('UPDATER_MANIFEST_FETCH_FAILED')});
+ it('discards a stale candidate after failed feed refresh before download',async()=>{
+  const stale=candidate(),fresh=candidate({version:'2.1.6',latest:'2.1.6'});
+  mockApi.checkUpdate.mockResolvedValueOnce(stale).mockRejectedValueOnce(new Error('UPDATER_MANIFEST_FETCH_FAILED: offline')).mockResolvedValueOnce(fresh);
+  await useUpdaterRuntime.getState().check();
+  await useUpdaterRuntime.getState().check();
+  expect(useUpdaterRuntime.getState().status).toBe('ERROR');
+  await useUpdaterRuntime.getState().download();
+  expect(mockApi.checkUpdate).toHaveBeenCalledTimes(3);
+  expect(stale.download).not.toHaveBeenCalled();
+  expect(fresh.download).toHaveBeenCalledTimes(1);
+  expect(useUpdaterRuntime.getState().status).toBe('READY_TO_INSTALL');
+ });
  it('blocks a bad-signature package before install',async()=>{const c=candidate({download:vi.fn(async()=>{throw new Error('UPDATER_SIGNATURE_INVALID: bad signature')})});mockApi.checkUpdate.mockResolvedValue(c);await useUpdaterRuntime.getState().check();await useUpdaterRuntime.getState().download();expect(useUpdaterRuntime.getState().status).toBe('ERROR');expect(useUpdaterRuntime.getState().errorCode).toBe('UPDATER_SIGNATURE_INVALID');expect(c.install).not.toHaveBeenCalled()});
  it('shows same-version state without update warning',async()=>{mockApi.checkUpdate.mockResolvedValue({none:true,current:'2.1.4',latest:'2.1.4',status:'UP_TO_DATE',endpoint:'feed',versionComparison:'current == latest'});await useUpdaterRuntime.getState().check();expect(useUpdaterRuntime.getState().status).toBe('UP_TO_DATE');expect(useUpdaterRuntime.getState().latestVersion).toBe('2.1.4')});
  it('coalesces 20 install clicks into exactly one install/restart',async()=>{
