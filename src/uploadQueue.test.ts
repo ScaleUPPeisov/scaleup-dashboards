@@ -154,4 +154,29 @@ describe('multi-channel upload queue',()=>{
   expect(()=>q.enqueue(spec(1,'A'))).toThrow(/UPLOAD_QUEUE_PERSIST_FAILED/);
   await wait();expect(executor).not.toHaveBeenCalled();expect(q.snapshot().queued).toHaveLength(0)
  });
+ it('preserves failed VIDEO_041 in the durable queue after restart without retrying automatically',async()=>{
+  let durable:unknown;
+  const persistence={load:()=>durable,save:(value:unknown)=>{durable=JSON.parse(JSON.stringify(value))}};
+  const executor=vi.fn(async()=>{throw new Error('SYNTHETIC_YOUTUBE_FAILURE')});
+  const first=new MultiChannelUploadQueue(executor,1,1,{persistence});
+  first.enqueue(spec(41,'A'));
+  await wait();await wait();
+  expect(executor).toHaveBeenCalledTimes(1);
+  expect(first.snapshot().recent.some(x=>x.state==='FAILED'&&x.spec.jobId==='j41')).toBe(true);
+  const resumedExecutor=vi.fn(async()=>{});
+  const restarted=new MultiChannelUploadQueue(resumedExecutor,1,1,{persistence});
+  expect(restarted.snapshot().recent.some(x=>x.state==='FAILED'&&x.spec.jobId==='j41'&&x.error?.includes('SYNTHETIC_YOUTUBE_FAILURE'))).toBe(true);
+  expect(restarted.snapshot().paused).toHaveLength(0);
+  await wait();expect(resumedExecutor).not.toHaveBeenCalled();
+ });
+ it('quarantines unexpected persisted SUCCEEDED rows rather than making them retryable',()=>{
+  const invalid={version:1,entries:[{queueId:'bad',spec:spec(42,'A'),state:'SUCCEEDED',submittedSequence:1}]};
+  const save=vi.fn();
+  const q=new MultiChannelUploadQueue(vi.fn(async()=>{}),1,1,{persistence:{load:()=>invalid,save}});
+  expect(q.snapshot().recoveryError).toMatch(/RECOVERY_REQUIRED/);
+  expect(q.snapshot().paused).toHaveLength(0);
+  expect(save).not.toHaveBeenCalled();
+  expect(()=>q.enqueue(spec(43,'B'))).toThrow(/RECOVERY_REQUIRED/);
+ });
+
 });

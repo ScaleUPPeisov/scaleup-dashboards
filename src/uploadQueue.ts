@@ -87,10 +87,13 @@ function restoredEntry(value:unknown):UploadQueueEntry|undefined{
   if(!value||typeof value!=='object')return;
   const row=value as Partial<UploadQueueEntry>,spec=row.spec as ImmutableUploadJob|undefined;
   if(!spec||typeof row.queueId!=='string'||!Number.isFinite(row.submittedSequence))return;
+  // Reject unknown states; a persisted SUCCEEDED record must not become retryable.
+  if(!['PAUSED','QUEUED','RUNNING','FAILED'].includes(String(row.state)))return;
   try{assertSpecIntegrity(spec)}catch{return}
   // A process death invalidates in-memory ownership. Restore fail-closed so an
   // owner must verify the channel/source/quota before another videos.insert.
-  return Object.freeze({queueId:row.queueId,spec:cloneSpec(spec),state:'PAUSED',submittedSequence:Number(row.submittedSequence),startedAt:row.startedAt,error:'RECOVERED_AFTER_RESTART: verify channel, source and quota, then resume explicitly'});
+  if(row.state==='FAILED')return Object.freeze({queueId:row.queueId,spec:cloneSpec(spec),state:'FAILED' as const,submittedSequence:Number(row.submittedSequence),startedAt:row.startedAt,finishedAt:row.finishedAt,error:row.error||'UPLOAD_FAILED: verify job and remote ledger before retry'});
+  return Object.freeze({queueId:row.queueId,spec:cloneSpec(spec),state:'PAUSED' as const,submittedSequence:Number(row.submittedSequence),startedAt:row.startedAt,error:'RECOVERED_AFTER_RESTART: verify channel, source and quota, then resume explicitly'});
 }
 
 export class MultiChannelUploadQueue{
@@ -201,7 +204,12 @@ export class MultiChannelUploadQueue{
     // Keep every original byte of a damaged snapshot for manual recovery.
     if(!this.recoveryError)this.persist();
   }
-  private persist(){if(this.recoveryError)return false;if(!this.options.persistence)return true;const entries=this.entries.filter(x=>x.state==='PAUSED'||x.state==='QUEUED'||x.state==='RUNNING');try{this.options.persistence.save({version:1,savedAt:nowIso(),entries});return true}catch{return false}}
+  private persist(){if(this.recoveryError)return false;if(!this.options.persistence)return true;
+    // Preserve a bounded failure history across restarts, never autoplay FAILED.
+    const active=this.entries.filter(x=>x.state==='PAUSED'||x.state==='QUEUED'||x.state==='RUNNING');
+    const failed=this.entries.filter(x=>x.state==='FAILED').slice(-20);
+    const entries=[...active,...failed].sort((a,b)=>a.submittedSequence-b.submittedSequence);
+    try{this.options.persistence.save({version:1,savedAt:nowIso(),entries});return true}catch{return false}}
   private nextStartable(){
     const running=this.entries.filter(x=>x.state==='RUNNING'),counts=new Map<string,number>();
     for(const row of running)counts.set(row.spec.channelId,(counts.get(row.spec.channelId)||0)+1);
