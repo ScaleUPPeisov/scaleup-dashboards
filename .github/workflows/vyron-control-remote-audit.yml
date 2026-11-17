@@ -45,6 +45,13 @@ jobs:
           SELECT 'reports_48h' k,COUNT(*) n FROM channel_analytics_reports WHERE julianday(captured_at)>=julianday('now','-2 days');
           SELECT 'analytics_rows' k,COUNT(*) n FROM channel_analytics;
           SELECT 'analytics_reports' k,COUNT(*) n FROM channel_analytics_reports;
+          SELECT 'devices_total' k,COUNT(*) n FROM devices;
+          SELECT 'devices_seen_3m' k,COUNT(*) n FROM devices WHERE julianday(last_seen_at)>=julianday('now','-3 minutes');
+          SELECT 'devices_seen_24h' k,COUNT(*) n FROM devices WHERE julianday(last_seen_at)>=julianday('now','-1 day');
+          SELECT 'push_subscriptions' k,COUNT(*) n FROM push_subscriptions;
+          SELECT 'push_sent_attempts' k,COUNT(*) n FROM push_deliveries WHERE status='sent';
+          SELECT 'push_failed_attempts' k,COUNT(*) n FROM push_deliveries WHERE status='failed';
+          SELECT 'local_data_quota_latest' k,COALESCE((SELECT spent FROM quota_buckets ORDER BY day_pt DESC LIMIT 1),0) n;
           SELECT 'glass_present' k,COUNT(*) n FROM channels WHERE lower(trim(name))='glass city lovers';
           SELECT 'coffee_present' k,COUNT(*) n FROM channels WHERE trim(name)='珈琲小路';
           SELECT 'glass_oauth' k,COUNT(*) n FROM google_oauth_profiles p JOIN channels c ON c.id=p.channel_id WHERE lower(trim(c.name))='glass city lovers';
@@ -60,7 +67,9 @@ jobs:
           const expected=['channels','google_oauth_profiles','oauth_last_success','oauth_with_error',
             'oauth_partial_breakdowns','oauth_invalid_grant','oauth_permission_error',
             'oauth_other_error','oauth_success_48h','analytics_48h','reports_48h',
-            'analytics_rows','analytics_reports','glass_present','coffee_present',
+            'analytics_rows','analytics_reports','devices_total','devices_seen_3m',
+            'devices_seen_24h','push_subscriptions','push_sent_attempts','push_failed_attempts',
+            'local_data_quota_latest','glass_present','coffee_present',
             'glass_oauth','coffee_oauth','production_schema','notifications_schema'];
           if(expected.some(k=>!Number.isSafeInteger(counts[k])||counts[k]<0))
             throw Error('Read-only D1 result incomplete');
