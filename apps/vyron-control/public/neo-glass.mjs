@@ -33,12 +33,42 @@ function syncDetailTabs(){
     panel.hidden=panel.dataset.detailPanel!==selectedDetailTab;
   });
 }
-export function wireNeoGlass(){
+export function wireNeoGlass({api,refresh}={}){
   document.querySelectorAll('[data-detail-tab]').forEach(button=>{
     button.addEventListener('click',()=>{
       selectedDetailTab=button.dataset.detailTab;
       syncDetailTabs();
     });
+  });
+
+  const pushSettings=document.querySelectorAll('[data-push-category]');
+  for(const input of pushSettings)input.addEventListener('change',async()=>{
+    if(!api)return;
+    const value={};
+    for(const box of pushSettings)value[box.dataset.pushCategory]=box.checked;
+    const message=$('notification-settings-message');
+    input.disabled=true;
+    try{
+      await api('/api/notifications/preferences','POST',value);
+      message.textContent='Настройки сохранены в Cloudflare.';
+      if(refresh)await refresh();
+    }catch(error){
+      input.checked=!input.checked;
+      message.textContent='Не сохранено: '+error.message;
+    }finally{input.disabled=false;}
+  });
+  $('notifications-mark-read').addEventListener('click',async()=>{
+    if(!api||!latestSnapshot)return;
+    const ids=(latestSnapshot.events||[]).map(x=>x.id).filter(Boolean).slice(0,100);
+    if(!ids.length)return;
+    const button=$('notifications-mark-read');
+    button.disabled=true;
+    try{
+      await api('/api/notifications/read','POST',{eventIds:ids});
+      if(refresh)await refresh();
+    }catch(error){
+      $('notification-settings-message').textContent='Ошибка сохранения: '+error.message;
+    }finally{button.disabled=false;}
   });
 }
 function mostRecentDevice(data){
@@ -241,11 +271,38 @@ function renderChannel(data){
      '. Эти планы не используются для расчёта остатка дней.';
 }
 function renderNotifications(data){
-  const count=(data.events||[]).filter(e=>errors.has(e.type)).length;
-  $('attention-count').hidden=count===0;
-  $('attention-count').textContent=count>99?'99+':String(count);
-  $('notifications-open').setAttribute('aria-label',count
-    ?'Центр уведомлений, ошибок в последнем снимке: '+count:'Центр уведомлений');
+  const events=(data.events||[]).slice(0,80);
+  const state=data.notifications||{};
+  const read=new Set(state.readIds||[]);
+  const unread=events.filter(e=>e.id&&!read.has(e.id)&&
+    Date.now()-Date.parse(e.detectedAt||0)<7*86400000);
+  $('attention-count').hidden=unread.length===0;
+  $('attention-count').textContent=unread.length>99?'99+':String(unread.length);
+  $('notifications-open').setAttribute('aria-label',unread.length
+    ?'Центр уведомлений, непрочитанных: '+unread.length:'Центр уведомлений');
+  for(const box of document.querySelectorAll('[data-push-category]')){
+    box.checked=state.categories?.[box.dataset.pushCategory]!==false;
+  }
+  const feed=$('neo-notifications');feed.replaceChildren();
+  if(!events.length){
+    feed.append(node('p','empty','Событий пока нет. Уведомления не создаются искусственно.'));
+    return;
+  }
+  for(const e of events.slice(0,16)){
+    const row=node('article','neo-notification'+(read.has(e.id)?' is-read':'')+
+      (errors.has(e.type)?' is-critical':''));
+    const body=node('div','neo-feed-copy');
+    body.append(node('strong','',e.name||e.title||e.type||'Событие'),
+      node('small','',stamp(e.detectedAt)+' · '+(e.type||'system')));
+    const delivery=state.deliveries?.[e.id];
+    const deliveryState=delivery?.sent?'Push отправлен · '+delivery.sent:
+      delivery?.failed?'Ошибка Push · '+delivery.failed:
+      delivery?.sending?'Push отправляется':
+      delivery?.retry?'Повторная отправка':'Push: нет попыток отправки';
+    body.append(node('small','neo-delivery-state',deliveryState));
+    row.append(node('span','neo-notification-indicator',read.has(e.id)?'○':'●'),body);
+    feed.append(row);
+  }
 }
 export function renderNeoGlass(data){
   latestSnapshot=data;
