@@ -57,6 +57,11 @@ export function wireNeoGlass({api,refresh}={}){
       message.textContent='Не сохранено: '+error.message;
     }finally{input.disabled=false;}
   });
+  $('detail-oauth-connect').addEventListener('click',()=>{
+    const action=$('oauth-connect');
+    if(action&&!action.disabled)action.click();
+    else $('detail-meta').textContent='OAuth-подключение не настроено в облаке. Настройте Google OAuth client с read-only scopes.';
+  });
   $('notifications-mark-read').addEventListener('click',async()=>{
     if(!api||!latestSnapshot)return;
     const ids=(latestSnapshot.events||[]).map(x=>x.id).filter(Boolean).slice(0,100);
@@ -224,6 +229,7 @@ function renderChannel(data){
   }
   const a=ch.analytics?.source==='GOOGLE_ANALYTICS_API'?ch.analytics:null;
   $('detail-title').textContent=ch.name;
+  $('detail-oauth-connect').hidden=ch.analyticsAuthorized!==false;
   $('detail-meta').textContent=(ch.analyticsAuthorized===false?'Нет OAuth · ':'')+
     'Публичные данные: '+stamp(ch.updatedAt);
   $('detail-subs').textContent=ch.subscribersHidden?'Скрыты':fmt(ch.subscribers);
