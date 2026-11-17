@@ -1,9 +1,21 @@
+import {readFileSync} from 'node:fs';
 import {describe,it,expect,vi} from 'vitest';
 import {MultiChannelUploadQueue,type ImmutableUploadJob} from './uploadQueue';
 
 const wait=()=>new Promise<void>(r=>setTimeout(r,0));
 function spec(n:number,channelId:string,profileId=`profile-${channelId}`,overrides:Partial<ImmutableUploadJob>={}):ImmutableUploadJob{return{jobId:`j${n}`,projectId:`p${n}`,localVideoIdentity:`video-${n}`,videoNumber:n,channelId,channelName:channelId,profileId,filePath:`/${n}.mp4`,fingerprint:String(n).padStart(64,'a'),fileSize:100,modifiedAt:1,publishAt:'2030-01-01T00:00:00Z',title:`Video ${n}`,description:'d',tags:['x'],categoryId:'10',quotaOperations:[{method:'videos.insert',count:1},{method:'videos.list',count:1}],allowDuplicate:false,submittedAt:'2026-09-14T00:00:00Z',...overrides}}
 
+it('runtime commits queue durability before writing queued UI/job state or attempting resume',()=>{
+ const source=readFileSync('src/uploadQueueRuntime.ts','utf8');
+ const enqueue=source.slice(source.indexOf('export function enqueueUpload('),source.indexOf('export function removeQueuedUpload('));
+ expect(enqueue.indexOf('const entry=queue.enqueue(spec);')).toBeGreaterThan(-1);
+ expect(enqueue.indexOf('const entry=queue.enqueue(spec);')).toBeLessThan(enqueue.indexOf('ensureTask('));
+ expect(enqueue.indexOf('const entry=queue.enqueue(spec);')).toBeLessThan(enqueue.indexOf('patchJob('));
+ expect(enqueue.indexOf('const entry=queue.enqueue(spec);')).toBeLessThan(enqueue.indexOf('journal('));
+ const resume=source.slice(source.indexOf('export function resumePausedUpload('),source.indexOf('export function uploadQueueHasActiveJob('));
+ expect(resume.indexOf('if(!queue.resumePaused(jobId))return false;')).toBeGreaterThan(-1);
+ expect(resume.indexOf('if(!queue.resumePaused(jobId))return false;')).toBeLessThan(resume.indexOf('state.patchJob('));
+});
 describe('multi-channel upload queue',()=>{
  it('uses bounded concurrency and at most one active upload per channel',async()=>{const resolvers:Record<string,()=>void>={},started:string[]=[];const q=new MultiChannelUploadQueue(s=>new Promise<void>(r=>{started.push(s.jobId);resolvers[s.jobId]=r}),2);q.enqueue(spec(1,'A'));q.enqueue(spec(2,'A'));q.enqueue(spec(3,'B'));await wait();expect(started).toEqual(['j1','j3']);expect(q.snapshot().running.map(x=>x.spec.channelId).sort()).toEqual(['A','B']);resolvers.j1();await wait();expect(started).toEqual(['j1','j3','j2'])});
  it('supports explicit per-channel concurrency without globally blocking other channels',async()=>{const done:Record<string,()=>void>={},started:string[]=[];const q=new MultiChannelUploadQueue(s=>new Promise<void>(r=>{started.push(s.jobId);done[s.jobId]=r}),3,2);q.enqueue(spec(1,'A'));q.enqueue(spec(2,'A'));q.enqueue(spec(3,'B'));await wait();expect(started).toEqual(['j1','j2','j3']);expect(q.snapshot().perChannelConcurrency).toBe(2);done.j1();done.j2();done.j3();await wait()});

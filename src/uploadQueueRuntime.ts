@@ -150,16 +150,32 @@ export function uploadQueueSnapshot(){return queue.snapshot()}
 export function subscribeUploadQueue(cb:(snapshot:UploadQueueSnapshot)=>void){return queue.subscribe(cb)}
 export function uploadQueueRuntimeFacts(){return queue.getRuntimeFacts()}
 export function waitForUploadQueueEntries(queueIds:string[]){return queue.waitForEntries(queueIds)}
-export function enqueueUpload(spec:ImmutableUploadJob){assertQueuePayloadIntegrity(spec);const duplicate=queue.findDuplicate(spec);if(duplicate)throw uploadQueueDuplicateError(duplicate.kind);const batchId=spec.batchId||`upload-batch:${spec.channelId}:${spec.submittedAt}`;ensureTask({taskId:`upload:${spec.jobId}`,type:'UPLOAD',state:'QUEUED',channelId:spec.channelId,channelName:spec.channelName,profileId:spec.profileId,jobId:spec.jobId,label:`VIDEO_${String(spec.videoNumber).padStart(3,'0')}`,detail:baseName(spec.filePath),progress:0,bytesCompleted:0,bytesTotal:spec.fileSize,resourceKey:`upload:${spec.channelId}:${spec.jobId}`});useApp.getState().patchJob(spec.jobId,{status:'READY_UPLOAD',storageLifecycle:'QUEUED',uploadProgress:0,error:undefined,uploadFingerprint:spec.fingerprint,currentSourceFingerprint:spec.fingerprint,currentSourceFileSize:spec.fileSize,currentSourceModifiedAt:spec.modifiedAt,sourceGenerationKey:`${spec.channelId}:${spec.fingerprint}:${spec.fileSize}`});journal({eventType:'UPLOAD_QUEUED',status:'STARTED',source:'LIVE_OPERATION',timestamp:spec.submittedAt,operationId:batchId+':'+spec.jobId,batchId,channelId:spec.channelId,channelName:spec.channelName,profileId:spec.profileId,jobId:spec.jobId,localSourcePath:spec.filePath,details:{filename:baseName(spec.filePath),fileSize:spec.fileSize,title:spec.title,publishAt:spec.publishAt}});return queue.enqueue(spec)}
+export function enqueueUpload(spec:ImmutableUploadJob){
+ assertQueuePayloadIntegrity(spec);
+ const duplicate=queue.findDuplicate(spec);
+ if(duplicate)throw uploadQueueDuplicateError(duplicate.kind);
+ // Persist immutable queue ownership BEFORE mutating job state, task history or journal.
+ // A failed localStorage commit must not claim that the video was queued.
+ const entry=queue.enqueue(spec);
+ const isRunning=queue.snapshot().running.some(x=>x.queueId===entry.queueId);
+ const batchId=spec.batchId||`upload-batch:${spec.channelId}:${spec.submittedAt}`;
+ ensureTask({taskId:`upload:${spec.jobId}`,type:'UPLOAD',state:isRunning?'RUNNING':'QUEUED',channelId:spec.channelId,channelName:spec.channelName,profileId:spec.profileId,jobId:spec.jobId,label:`VIDEO_${String(spec.videoNumber).padStart(3,'0')}`,detail:baseName(spec.filePath),progress:0,bytesCompleted:0,bytesTotal:spec.fileSize,resourceKey:`upload:${spec.channelId}:${spec.jobId}`});
+ useApp.getState().patchJob(spec.jobId,{status:isRunning?'UPLOADING':'READY_UPLOAD',storageLifecycle:isRunning?'UPLOADING':'QUEUED',uploadProgress:0,error:undefined,uploadFingerprint:spec.fingerprint,currentSourceFingerprint:spec.fingerprint,currentSourceFileSize:spec.fileSize,currentSourceModifiedAt:spec.modifiedAt,sourceGenerationKey:`${spec.channelId}:${spec.fingerprint}:${spec.fileSize}`});
+ journal({eventType:'UPLOAD_QUEUED',status:'STARTED',source:'LIVE_OPERATION',timestamp:spec.submittedAt,operationId:batchId+':'+spec.jobId,batchId,channelId:spec.channelId,channelName:spec.channelName,profileId:spec.profileId,jobId:spec.jobId,localSourcePath:spec.filePath,details:{filename:baseName(spec.filePath),fileSize:spec.fileSize,title:spec.title,publishAt:spec.publishAt}});
+ return entry;
+}
 export function removeQueuedUpload(jobId:string){const ok=queue.removeQueued(jobId);if(ok){useApp.getState().patchJob(jobId,{status:'READY_UPLOAD',storageLifecycle:'NEW',uploadProgress:0});cancelTask(`upload:${jobId}`,'Убрано из очереди владельцем')}return ok}
 export function resumePausedUpload(jobId:string){
  const entry=queue.snapshot().paused.find(x=>x.spec.jobId===jobId);if(!entry)return false;
  const state=useApp.getState(),job=state.jobs.find(x=>x.id===jobId),channel=state.channels.find(x=>x.id===entry.spec.channelId);
  if(!job||!channel||job.channelId!==entry.spec.channelId||job.finalPath!==entry.spec.filePath)return false;
  if(job.youtubeVideoId&&!entry.spec.allowDuplicate)return false;
- ensureTask({taskId:`upload:${entry.spec.jobId}`,type:'UPLOAD',state:'QUEUED',channelId:entry.spec.channelId,channelName:entry.spec.channelName,profileId:entry.spec.profileId,jobId:entry.spec.jobId,label:`VIDEO_${String(entry.spec.videoNumber).padStart(3,'0')}`,detail:baseName(entry.spec.filePath),progress:0,bytesCompleted:0,bytesTotal:entry.spec.fileSize,resourceKey:`upload:${entry.spec.channelId}:${entry.spec.jobId}`});
- state.patchJob(jobId,{status:'READY_UPLOAD',storageLifecycle:'QUEUED',uploadProgress:0,error:undefined});
- return queue.resumePaused(jobId)
+ // Keep the existing PAUSED truth if the durable transition cannot be written.
+ if(!queue.resumePaused(jobId))return false;
+ const isRunning=queue.snapshot().running.some(x=>x.spec.jobId===jobId);
+ ensureTask({taskId:`upload:${entry.spec.jobId}`,type:'UPLOAD',state:isRunning?'RUNNING':'QUEUED',channelId:entry.spec.channelId,channelName:entry.spec.channelName,profileId:entry.spec.profileId,jobId:entry.spec.jobId,label:`VIDEO_${String(entry.spec.videoNumber).padStart(3,'0')}`,detail:baseName(entry.spec.filePath),progress:0,bytesCompleted:0,bytesTotal:entry.spec.fileSize,resourceKey:`upload:${entry.spec.channelId}:${entry.spec.jobId}`});
+ state.patchJob(jobId,{status:isRunning?'UPLOADING':'READY_UPLOAD',storageLifecycle:isRunning?'UPLOADING':'QUEUED',uploadProgress:0,error:undefined});
+ return true
 }
 export function uploadQueueHasActiveJob(jobId:string){const s=queue.snapshot();return [...s.paused,...s.queued,...s.running].some(x=>x.spec.jobId===jobId)}
 export function uploadQueueActiveCount(){return queue.snapshot().running.length}
