@@ -181,6 +181,16 @@ jobs:
             echo "::error::Production deployment requires confirm_production=true."
             exit 1
           fi
+          neo_merged="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/55" --jq '.merged')"
+          if [[ "${neo_merged}" != "true" ]]; then
+            echo "::error::Neo Glass PR #55 must be reviewed and merged before production deployment."
+            exit 1
+          fi
+          neo_base="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/55" --jq '.base.ref')"
+          if [[ "${neo_base}" != "feature/vyron-control-cloud-mvp-20261113" ]]; then
+            echo "::error::Neo Glass PR #55 target does not match reviewed integration branch."
+            exit 1
+          fi
           merged="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/25" --jq '.merged')"
           if [[ "${merged}" != "true" ]]; then
             echo "::error::Application PR #25 must be reviewed and merged before production deployment."
@@ -258,8 +268,8 @@ jobs:
           HEALTH_JSON="${body}" node --input-type=module -e '
             const health = JSON.parse(process.env.HEALTH_JSON || "{}");
             if (health.ok !== true || health.d1?.schema !== true ||
-                health.d1?.expectedTables !== 16 ||
-                health.d1?.presentTables !== 16) {
+                health.d1?.expectedTables !== 20 ||
+                health.d1?.presentTables !== 20) {
               console.error("Worker health/schema verification failed:", JSON.stringify({
                 ok: health.ok, d1: health.d1, error: health.error
               }));
