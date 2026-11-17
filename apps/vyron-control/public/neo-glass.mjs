@@ -63,6 +63,34 @@ function renderStudio(data){
   $('studio-uploads').textContent=fmt(telemetry.uploadsQueued);
   $('studio-ready').textContent=fmt(telemetry.jobsReadyUpload);
   $('studio-event-source').textContent=isOnline?'Живой канал событий':'Последние сохранённые события';
+  const snapshot=data.production||{};
+  const jobs=Array.isArray(snapshot.items)?snapshot.items:[];
+  const channelNames=new Map((data.channels||[]).map(ch=>[ch.id,ch.name]));
+  const jobTarget=$('studio-jobs');jobTarget.replaceChildren();
+  $('studio-jobs-source').textContent=snapshot.lastSyncAt
+    ?'Mac снимок: '+stamp(snapshot.lastSyncAt):'Снимок Mac ещё не получен';
+  if(!jobs.length)jobTarget.append(node('p','empty','Нет активных заданий в последнем снимке Mac.'));
+  for(const job of jobs.slice(0,40)){
+    const row=node('div','neo-feed-item'),body=node('div','neo-feed-copy');
+    body.append(node('strong','',job.title||'Видео без названия'),
+      node('small','',(channelNames.get(job.channelId)||job.channelId)+' · '+job.status+
+        (Number.isInteger(job.progress)?' · '+job.progress+'%':'')+
+        ' · '+stamp(job.updatedAt)));
+    row.append(node('span','neo-feed-mark',job.status==='ERROR'?'!':'•'),body);
+    jobTarget.append(row);
+  }
+  const calendar=$('studio-calendar');calendar.replaceChildren();
+  const planned=jobs.filter(x=>x.plannedPublishAt)
+    .slice().sort((a,b)=>Date.parse(a.plannedPublishAt)-Date.parse(b.plannedPublishAt));
+  if(!planned.length)calendar.append(node('p','empty',
+    'Подтверждённые публикации недоступны. Записи появятся после синхронизации Mac.'));
+  for(const item of planned.slice(0,60)){
+    const row=node('div','neo-feed-item'),body=node('div','neo-feed-copy');
+    body.append(node('strong','',channelNames.get(item.channelId)||item.channelId),
+      node('small','','План VYRON: '+stamp(item.plannedPublishAt)+
+        ' · YouTube не подтвердил · '+(item.title||'Видео')));
+    row.append(node('span','neo-feed-mark','○'),body);calendar.append(row);
+  }
   const target=$('studio-feed');
   target.replaceChildren();
   const rows=(data.events||[]).filter(e=>production.has(e.type)).slice(0,8);
@@ -203,9 +231,14 @@ function renderChannel(data){
     audience.append(row);
   }
   const days=ch.scheduledContentDays;
+  const localPlanned=(data.production?.items||[])
+    .filter(row=>row.channelId===ch.id&&row.plannedPublishAt)
+    .slice().sort((a,b)=>String(a.plannedPublishAt).localeCompare(String(b.plannedPublishAt)));
   $('detail-schedule-note').textContent=Number.isFinite(days)&&days>=0
     ?'Подтверждённый остаток по будущим публикациям: '+days+' дней.'
-    :'Нет подтверждённого расписания из YouTube. Количество файлов на диске Toshiba не используется.';
+    :'Подтверждённого расписания YouTube нет. Локальных планов VYRON: '+
+     localPlanned.length+'. Последний снимок Mac: '+stamp(data.production?.lastSyncAt)+
+     '. Эти планы не используются для расчёта остатка дней.';
 }
 function renderNotifications(data){
   const count=(data.events||[]).filter(e=>errors.has(e.type)).length;
