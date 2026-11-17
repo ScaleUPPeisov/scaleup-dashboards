@@ -1,4 +1,5 @@
 // Neo Glass views: presentation-only layer over the existing /api/status response.
+import {buildDeterministicInsights} from './insights-core.mjs';
 // No fake channel metrics, no backend writes, no new API quotas.
 const $ = id => document.getElementById(id);
 const fmt = n => n === null || n === undefined || !Number.isFinite(Number(n))
@@ -183,6 +184,11 @@ function renderInsights(data){
     target.append(insightCard('Лидер по просмотрам за 28 дней',
       'Проверь последние публикации и источники трафика лидера — это наблюдение, не прогноз.',
       best.name+': '+fmt(best.analytics.views)+' просмотров · YouTube Analytics'));count++;
+  }
+  for(const insight of buildDeterministicInsights(data).slice(0,8)){
+    target.append(insightCard(insight.title,insight.body,insight.evidence,
+      insight.severity==='critical'?'critical':'normal'));
+    count++;
   }
   if(!count)target.append(node('p','empty',channels.length?
     'По доступным полям нет подтверждённых приоритетных отклонений.':'Сеть пока не загружена.'));
