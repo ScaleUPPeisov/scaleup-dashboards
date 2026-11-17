@@ -191,7 +191,7 @@ function renderChannel(data){
   }
   const audience=$('detail-audience-metrics');audience.replaceChildren();
   const fields=[
-    ['Средняя длительность',a?.avgViewSeconds!=null?fmt(a.avgViewSeconds)+' сек':'Нет данных'],
+    ['Средняя длительность',a?.averageViewDuration!=null?fmt(a.averageViewDuration)+' сек':'Нет данных'],
     ['Среднее удержание',a?.averageViewPercentage!=null?fmt(a.averageViewPercentage)+'%':'Нет данных'],
     ['Подписчики: прирост',fmt(a?.subscribersGained)],
     ['Подписчики: отток',fmt(a?.subscribersLost)],
