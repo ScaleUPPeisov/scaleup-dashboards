@@ -393,8 +393,23 @@
             <option value="errors">Ошибки</option>
           </select>
         </div>
+        <div class="neo-notification-settings card">
+          <div class="neo-split"><h2>Push-категории</h2><small>Параметры в облаке</small></div>
+          <div class="neo-notification-prefs" role="group" aria-label="Категории уведомлений">
+            <label><input type="checkbox" data-push-category="critical"> Критические</label>
+            <label><input type="checkbox" data-push-category="production"> Производство</label>
+            <label><input type="checkbox" data-push-category="analytics"> Аналитика</label>
+            <label><input type="checkbox" data-push-category="system"> Система</label>
+            <label><input type="checkbox" data-push-category="milestones"> Рубежи подписчиков</label>
+          </div>
+          <p id="notification-settings-message" class="neo-data-note" role="status">Настройки загрузятся из Cloudflare.</p>
+        </div>
+        <div class="neo-split neo-section-title"><h2>Последние уведомления</h2><button id="notifications-mark-read" type="button" class="ghost">Прочитано всё</button></div>
+        <div id="neo-notifications" class="neo-feed"><p class="empty">Ожидаем реальные события.</p></div>
+        <details class="neo-notifications-history"><summary>Подробный журнал и фильтры</summary>
         <div id="events" class="events"></div>
         <button id="events-more" class="ghost" hidden>Загрузить ещё события</button>
+        </details>
         <p class="caution">YouTube округляет публичные значения подписчиков: уведомление означает зафиксированный публичный рубеж, а не точное число.</p>
       </section>
 
