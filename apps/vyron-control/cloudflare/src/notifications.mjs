@@ -4,7 +4,7 @@ export const CATEGORIES=['critical','production','analytics','system','milestone
 export const DEFAULT_PREFS=Object.freeze(Object.fromEntries(CATEGORIES.map(k=>[k,true])));
 export function categoryOfKind(kind){
   if(['render_failed','upload_failed','agent_error','disk_offline','oauth_failed',
-      'sync_failed','runway_critical','runway_low'].includes(kind))return 'critical';
+      'sync_failed','runway_critical','runway_low','mac_offline'].includes(kind))return 'critical';
   if(['render_started','render_progress','render_completed','upload_queued','upload_started',
       'upload_progress','upload_completed','schedule_changed'].includes(kind))return 'production';
   if(['analytics_failed','analytics_partial','analytics_recovered','quota_warning'].includes(kind))
