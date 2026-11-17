@@ -484,6 +484,74 @@ mod v213_storage_tests {
         let _=fs::remove_dir_all(root);
     }
     #[test]
+    fn synthetic_33_channel_v615_to_v617_state_continuity_and_corrupt_candidate_rollback(){
+        use sha2::{Digest,Sha256};
+        fn digest(value:&Value)->String{
+            format!("{:x}",Sha256::digest(serde_json::to_vec(value).unwrap()))
+        }
+        // Synthetic metadata only: no user files, OAuth refresh, or Keychain access.
+        let channels=(0..33).map(|i|json!({
+            "id":format!("synthetic-channel-{i:02}"),
+            "name":format!("Synthetic {i:02}"),
+            "youtubeProfileId":format!("synthetic-profile-{i:02}"),
+            "youtubeChannelId":format!("UC_SYNTHETIC_{i:02}"),
+            "renderFolderPath":format!("/synthetic/render/{i:02}"),
+            "projectsFolderPath":format!("/synthetic/projects/{i:02}"),
+            "enabled":true
+        })).collect::<Vec<_>>();
+        let jobs=(0..33).map(|i|json!({
+            "id":format!("synthetic-job-{i:02}"),
+            "channelId":format!("synthetic-channel-{i:02}"),
+            "status":"READY_UPLOAD",
+            "finalPath":format!("/synthetic/render/{i:02}/VIDEO_041.mp4"),
+            "publishAt":"2030-01-01T10:00:00Z"
+        })).collect::<Vec<_>>();
+        // v6.1.15 already persists schema v10. Unknown fields must survive unchanged.
+        let original=json!({
+            "version":10,"channels":channels,"jobs":jobs,
+            "settings":{"workspace":"/synthetic/workspace","endlumePath":"/synthetic/ENDLUME","autoCheckUpdates":true},
+            "uploadHistory":[{"id":"synthetic-upload","channelId":"synthetic-channel-00"}],
+            "activityJournal":[{"eventId":"synthetic-event","eventType":"PROJECT_CREATED"}],
+            "statisticsHistory":{"synthetic-channel-00":[{"views":42}]},
+            "fingerprintCache":{"synthetic-job-00":{"sha256":"synthetic-only"}},
+            "projectLifecycle":{"synthetic-job-00":{"state":"READY"}},
+            "queueState":{"paused":[{"jobId":"synthetic-job-01"}]},
+            "scheduleState":{"synthetic-channel-00":["2030-01-01T10:00:00Z"]},
+            "materials":{"synthetic-channel-00":"/synthetic/media"},
+            "errors":[{"code":"SYNTHETIC_ERROR"}],
+            "competitors":[],"logs":[{"message":"synthetic log"}]
+        });
+        let preserved=["channels","jobs","settings","uploadHistory","activityJournal",
+            "statisticsHistory","fingerprintCache","projectLifecycle","queueState",
+            "scheduleState","materials","errors","logs"];
+        let before=preserved.iter().map(|k|digest(&original[*k])).collect::<Vec<_>>();
+        assert!(state_looks_valid(&original));
+        assert_eq!(original["channels"].as_array().unwrap().len(),33);
+        let (migrated,changed)=migrate_state(original.clone());
+        assert!(!changed,"existing v6.1.15 v10 state should not need destructive migration");
+        let (clean,removed_channels,removed_jobs)=strip_performance_fixtures(migrated);
+        assert_eq!((removed_channels,removed_jobs),(0,0));
+        assert_eq!(clean["channels"].as_array().unwrap().len(),33);
+        for (index,key) in preserved.iter().enumerate(){
+            assert_eq!(digest(&clean[*key]),before[index],"changed preservation field: {key}");
+        }
+        let (repeat,changed_again)=migrate_state(clean.clone());
+        assert!(!changed_again);
+        assert_eq!(repeat,clean,"upgrade must be idempotent");
+        let root=std::env::temp_dir().join(format!("vyron-synthetic-upgrade-{}",uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let verified=root.join("verified-state.json");
+        let corrupt=root.join("candidate-corrupt.json");
+        atomic_write(&verified,&clean).unwrap();
+        fs::write(&corrupt,b"{ invalid synthetic upgrade").unwrap();
+        assert!(load_valid_candidate(&corrupt).is_none());
+        let restored=load_valid_candidate(&verified).expect("verified backup must survive corrupt attempt");
+        assert_eq!(digest(&restored),digest(&clean));
+        assert_eq!(restored["channels"].as_array().unwrap().len(),33);
+        let _=fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn sanitized_state_never_writes_api_secrets_to_disk() {
         let state = json!({"settings":{"youtubeApiKey":"AIza-secret","openaiApiKey":"sk-secret","workspace":"/tmp/vyron"},"channels":[{"id":"c1"}]});
         let disk = sanitized_state_for_disk(&state);
