@@ -3,12 +3,15 @@
   "productName": "VYRON PR22 Probe",
   "identifier": "studio.channelflow.desktop.pr22probe",
   "bundle": {
-    "targets": ["app"],
+    "targets": [
+      "app"
+    ],
     "createUpdaterArtifacts": false
   },
   "plugins": {
     "updater": {
       "endpoints": []
     }
-  }
+  },
+  "version": "6.1.17"
 }
