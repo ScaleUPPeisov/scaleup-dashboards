@@ -1,5 +1,6 @@
 import {decryptVyronMigration} from './migration-crypto.js';
 import {compactProgressEvents} from './event-utils.mjs';
+import {renderNeoGlass,selectNeoChannel,wireNeoGlass} from './neo-glass.mjs';
 
 const $ = id => document.getElementById(id);
 const number = value => value === null || value === undefined ? '—' : new Intl.NumberFormat('ru-RU').format(value);
@@ -15,7 +16,8 @@ let eventHistoryExtended = false;
 let eventRows = [];
 let macAgentToken = '';
 let manualRefreshing = false;
-let activeMobileView = 'overview';
+const neoViews = new Set(['overview','channels','analytics','studio','system','notifications','insights','channel-detail']);
+let activeMobileView = (()=>{try{const saved=localStorage.getItem('vyron-control-view');return neoViews.has(saved)&&saved!=='channel-detail'?saved:'overview';}catch{return 'overview';}})();
 const macAgentInstallCommand =
   'curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/release/vyron-control-production/apps/vyron-control/public/install-mac-agent.sh | bash';
 
@@ -41,7 +43,6 @@ if('serviceWorker' in navigator) {
   void ensureServiceWorker().catch(()=>{});
 }
 const showLogin = error => {
-  activeMobileView='overview';
   $('login').hidden = false;
   $('dashboard').hidden = true;
   $('logout').hidden = true;
@@ -108,6 +109,10 @@ function renderChannels(channels) {
     (b.analytics?.watchMinutes??0)-(a.analytics?.watchMinutes??0));
   else if(sortMode==='retention')visible.sort((a,b)=>
     (b.analytics?.averageViewPercentage??0)-(a.analytics?.averageViewPercentage??0));
+  else if(sortMode==='content-days')visible.sort((a,b)=>
+    (Number.isFinite(a.scheduledContentDays)?a.scheduledContentDays:Infinity)-
+    (Number.isFinite(b.scheduledContentDays)?b.scheduledContentDays:Infinity)||
+    a.name.localeCompare(b.name,'ru'));
   else visible.sort((a,b)=>a.name.localeCompare(b.name,'ru'));
   const list = $('channels');
   list.replaceChildren();
@@ -152,7 +157,14 @@ function renderChannels(channels) {
         (difference > 0 ? '+' : '') + number(difference));
       details.children[0].append(delta);
     }
-    row.append(left, details);
+    const detailButton=make('button','channel-detail-trigger','Открыть аналитику');
+    detailButton.type='button';
+    detailButton.addEventListener('click',()=>{
+      selectNeoChannel(ch.id);
+      openMobileView('channel-detail');
+      if(current)renderNeoGlass(current);
+    });
+    row.append(left, details, detailButton);
     if (ch.analytics) {
       const a = ch.analytics;
       const extras = make('div', 'channel-analytics');
@@ -698,6 +710,7 @@ function render(data) {
   if (!eventHistoryExtended) renderEvents(data.events);
   renderDevices(data);
   renderOverview(data);
+  renderNeoGlass(data);
   applyMobileView();
 }
 async function load() {
@@ -768,23 +781,24 @@ function applyMobileView() {
     button.setAttribute('aria-pressed',active?'true':'false');
   });
 }
+function openMobileView(view) {
+  if(!neoViews.has(view))return;
+  activeMobileView=view;
+  try{localStorage.setItem('vyron-control-view',view==='channel-detail'?'channels':view);}catch{}
+  applyMobileView();
+  const scroller=$('dashboard');
+  if(scroller)scroller.scrollTop=0;
+  window.scrollTo(0,0);
+}
 document.querySelectorAll('[data-mobile-target]').forEach(button=>{
-  button.addEventListener('click',()=>{
-    activeMobileView=button.dataset.mobileTarget;
-    applyMobileView();
-    window.scrollTo({top:0,behavior:'smooth'});
-  });
+  button.addEventListener('click',()=>openMobileView(button.dataset.mobileTarget));
 });
-$('overview-events-open').addEventListener('click',()=>{
-  activeMobileView='events';
-  applyMobileView();
-  window.scrollTo({top:0,behavior:'smooth'});
-});
-$('overview-analytics-open').addEventListener('click',()=>{
-  activeMobileView='analytics';
-  applyMobileView();
-  window.scrollTo({top:0,behavior:'smooth'});
-});
+$('overview-events-open').addEventListener('click',()=>openMobileView('notifications'));
+$('overview-analytics-open').addEventListener('click',()=>openMobileView('analytics'));
+$('notifications-open').addEventListener('click',()=>openMobileView('notifications'));
+$('insights-open').addEventListener('click',()=>openMobileView('insights'));
+wireNeoGlass();
+
 window.addEventListener('resize',applyMobileView);
 $('analytics-period').addEventListener('change',()=>{
   if(current)renderAnalytics(current);
