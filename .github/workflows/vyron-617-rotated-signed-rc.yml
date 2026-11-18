@@ -129,11 +129,12 @@ jobs:
           PASS="$(openssl rand -hex 24)"
           security create-keychain -p "$PASS" "$RUNNER_TEMP/vyron-signing.keychain-db"
           security unlock-keychain -p "$PASS" "$RUNNER_TEMP/vyron-signing.keychain-db"
-          security import "$RUNNER_TEMP/cert.p12" -P "$CERT_PASSWORD" -A -t cert -f pkcs12 -k "$RUNNER_TEMP/vyron-signing.keychain-db"
+          # Import BOTH Developer ID certificate and its private key. -t cert would discard the identity.
+          security import "$RUNNER_TEMP/cert.p12" -P "$CERT_PASSWORD" -f pkcs12 -T /usr/bin/codesign -T /usr/bin/security -k "$RUNNER_TEMP/vyron-signing.keychain-db"
           security list-keychain -d user -s "$RUNNER_TEMP/vyron-signing.keychain-db"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$PASS" "$RUNNER_TEMP/vyron-signing.keychain-db"
           IDENTITY="$(security find-identity -v -p codesigning "$RUNNER_TEMP/vyron-signing.keychain-db" | awk -F '"' '/Developer ID Application:/ { print $2; exit }')"
-          test -n "$IDENTITY"
+          test -n "$IDENTITY" || { echo DEVELOPER_ID_APPLICATION_CERT_AND_PRIVATE_KEY_REQUIRED; exit 1; }
           ACTUAL_CERT_SHA1="$(security find-identity -v -p codesigning "$RUNNER_TEMP/vyron-signing.keychain-db" | awk '/Developer ID Application:/ {print $2; exit}' | tr '[:lower:]' '[:upper:]')"
           if [[ -n "$EXPECTED_CERT_SHA1" ]]; then
             test "$ACTUAL_CERT_SHA1" = "$EXPECTED_CERT_SHA1" || { echo HISTORIC_APPLE_CERTIFICATE_FINGERPRINT_MISMATCH; exit 1; }

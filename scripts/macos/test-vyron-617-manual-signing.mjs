@@ -30,6 +30,7 @@ test('new signer and notarization have independent trust, hard failure, and no o
     'Authority=Developer ID Application:',
     '2C8B0BD4EE1C000D29DD0667BF1068D4673692C9',
     'HISTORIC_APPLE_CERTIFICATE_FINGERPRINT_MISMATCH',
+    'DEVELOPER_ID_APPLICATION_CERT_AND_PRIVATE_KEY_REQUIRED',
     'write-vyron-617-release-kit.mjs',
     'deliver_signed_rc_to_actions_artifact',
     'VYRON617-NOTARIZED-OWNER-RC-NOT-STABLE',
@@ -37,6 +38,8 @@ test('new signer and notarization have independent trust, hard failure, and no o
   ];
   for (const name of required) assert.ok(workflow.includes(name),'MISSING_RC_SECURITY_GATE: '+name);
   assert.doesNotMatch(workflow,/secrets\.TAURI_SIGNING_PRIVATE_KEY\b|secrets\.APPLE_CERTIFICATE\b/);
+  assert.doesNotMatch(workflow,/security import[^\n]*-t cert -f pkcs12/);
+  assert.match(workflow,/security import[^\n]*-f pkcs12 -T \/usr\/bin\/codesign/);
   assert.match(workflow,/rc-evidence\//);
   assert.match(workflow,/stable_feed=UNCHANGED/);
   assert.match(workflow,/owner_migration=NOT_TESTED/);
