@@ -87,6 +87,13 @@ export function ownerInventoryFromVideos(channelId:string,videos:YoutubeExisting
   }
 }
 
+export function scheduledCoverageEstablished(result:{scheduleComplete?:boolean;syncComplete?:boolean;complete?:boolean;scheduledCoverageVerified?:boolean;videos?:YoutubeExistingVideo[]},nowMs=Date.now()){
+  if(!(result.syncComplete??result.complete)||result.scheduleComplete!==true)return false;
+  const videos=Array.isArray(result.videos)?result.videos:[];
+  // Empty owner uploads and even empty owner search are not a proof of zero Scheduled.
+  return result.scheduledCoverageVerified===true||videos.some(v=>v.privacyStatus==='private'&&Boolean(v.publishAt)&&Date.parse(v.publishAt!)>nowMs);
+}
+
 export function ownerInventoryForChannel(channelId:string,nowMs=Date.now()):OwnerYoutubeInventorySnapshot{
   const snapshot=readAuthoritativeExistingSnapshot(channelId);
   if(!snapshot)return{channelId,available:false,complete:false,total:0,public:0,private:0,scheduled:0,unlisted:0,published:0,publishedToday:0};
@@ -113,6 +120,8 @@ export function aggregateOwnerInventories(channels:Channel[],nowMs=Date.now()):O
 
 export function ownerInventoryCacheStale(channelId:string,nowMs=Date.now(),ttlMs=OWNER_INVENTORY_TTL_MS){
   const cache=readExistingCache(channelId);
+  const runway=loadChannelRunwayStore().channels[channelId];
+  if(!runway||runway.status==='no-data'||runway.scheduledVideoCount===0)return true;
   const at=Date.parse(cache?.lastCompleteAt||cache?.updatedAt||'');
   return !Number.isFinite(at)||nowMs-at>=ttlMs
 }
@@ -194,7 +203,13 @@ export async function refreshOwnerInventoriesAuthoritative(
     const operationId='owner-inventory:'+(force?'manual':'background')+':'+channel.id+':'+Date.now();
     bindYoutubeQuotaTraceContext(operationId,{reason:'OWNER_INVENTORY_REFRESH',channelIds:[channel.id],mode:force?'MANUAL':'BACKGROUND',estimatedUnits});
     try{
-      const result=await api.youtubeListExisting(linked.profile.id,5000,operationId);
+      // Only explicit single-channel refreshes may use bounded owner-only search.
+      const targeted=force&&enabled.length===1;
+      const prior=readExistingCache(channel.id);
+      const knownScheduledIds=targeted?[...Object.values(prior?.baseline||{}),...(prior?.videos||[])]
+        .filter(v=>v.privacyStatus==='private'&&Boolean(v.publishAt)&&Date.parse(v.publishAt!)>Date.now())
+        .map(v=>v.id).filter((id,i,all)=>all.indexOf(id)===i).slice(0,50):[];
+      const result=await api.youtubeListExisting(linked.profile.id,5000,operationId,targeted,knownScheduledIds);
       const backendApi=Number(result.fullSyncApiRequests),backendQuota=Number(result.fullSyncEstimatedQuotaCost);
       const fallback=!Number.isFinite(backendApi)||backendApi<1?youtubeOperationActualCost(operationId):null;
       const apiRequests=Number.isFinite(backendApi)&&backendApi>=1?backendApi:Object.values(fallback?.methods||{}).reduce((n:number,x:any)=>n+Number(x.calls||0),0);
@@ -204,16 +219,22 @@ export async function refreshOwnerInventoriesAuthoritative(
         pushOwnerRow(summary,{channelId:channel.id,channelName:channel.name,status:'API_FAILED',profileId:linked.profile.id,youtubeChannelId:linked.youtubeChannelId,apiRequests,quotaUnits,error:'AUTHORITATIVE_CHANNEL_ID_MISMATCH'});
         continue
       }
+      // Do not mutate the last verified native inventory from an incomplete scan.
+      const ownerMixed=(result.videos||[]).some(v=>v.channelId&&v.channelId!==linked.youtubeChannelId);
+      const coverageOk=scheduledCoverageEstablished(result)&&scheduleSyncTruthFromInfo(result)==='complete'&&!ownerMixed;
+      if(!coverageOk){
+        const reason=ownerMixed?'AUTHORITATIVE_VIDEO_CHANNEL_MISMATCH':'AUTHORITATIVE_INVENTORY_INCOMPLETE';
+        pushOwnerRow(summary,{channelId:channel.id,channelName:channel.name,status:'API_FAILED',profileId:linked.profile.id,youtubeChannelId:linked.youtubeChannelId,apiRequests,quotaUnits,error:reason});
+        // Only a lower-bound observation; the Scheduled count and priority stay unconfirmed.
+        if(!ownerMixed)markRunwayRefreshIssue(channel,'PARTIAL_DATA',reason,new Date(),undefined,result.videos||[]);
+        continue
+      }
       const cache=await replaceExistingCacheFromSync(channel.id,result.videos||[],result);
       if(!cache.persisted){
         pushOwnerRow(summary,{channelId:channel.id,channelName:channel.name,status:'PERSISTENCE_FAILED',profileId:linked.profile.id,youtubeChannelId:linked.youtubeChannelId,apiRequests,quotaUnits,error:`Данные YouTube получены, но VYRON не смог сохранить их локально. API повторно не запускайте. Ошибка: ${cache.persistErrorCode||'STORAGE_WRITE_FAILED'}`});
         continue
       }
       markYoutubeCache('existing',channel.id);
-      if(!(result.syncComplete??result.complete)||scheduleSyncTruthFromInfo(result)!=='complete'){
-        pushOwnerRow(summary,{channelId:channel.id,channelName:channel.name,status:'API_FAILED',profileId:linked.profile.id,youtubeChannelId:linked.youtubeChannelId,apiRequests,quotaUnits,error:'AUTHORITATIVE_INVENTORY_INCOMPLETE'});
-        continue
-      }
       const now=new Date(),expected=deriveRunwayRecord(channel,result.videos||[],now,now.toISOString(),true);
       const runwayWrite=upsertChannelRunwayFromYoutube(channel,result.videos||[],now);
       const persisted=loadChannelRunwayStore().channels[channel.id];
