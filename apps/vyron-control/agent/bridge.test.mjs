@@ -150,15 +150,121 @@ test('Mac agent bulk-imports exported YouTube channel registry once per change',
     });
     assert.equal((await bridge.syncChannelRegistry()).imported,33);
     assert.equal(sent.length,1);
-    assert.equal(sent[0].body.length,33);
-    assert.equal(sent[0].body[0].id,list[0].channelId);
-    assert.equal(sent[0].body[0].profileBinding,'a'.repeat(64));
+    assert.equal(sent[0].body.channels.length,33);
+    assert.equal(sent[0].body.channels[0].id,list[0].channelId);
+    assert.equal(sent[0].body.complete,false,'missing state cannot archive');
+    assert.equal(sent[0].body.channels[0].profileBinding,'a'.repeat(64));
     assert.equal((await bridge.syncChannelRegistry()).reason,'unchanged');
     assert.equal(sent.length,1);
     list[0].title='Renamed channel';
     await writeFile(channelsFile,JSON.stringify({channels:list}));
     assert.equal((await bridge.syncChannelRegistry()).imported,33);
     assert.equal(sent.length,2);
-    assert.equal(sent[1].body[0].name,'Renamed channel');
+    assert.equal(sent[1].body.channels[0].name,'Renamed channel');
   }finally{await rm(dir,{recursive:true,force:true});}
+});
+
+
+test('old Worker without production endpoint cannot block Mac events and commands',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'vyron-backward-compatible-'));
+ try{
+   const productionFile=join(dir,'production.json'),eventsFile=join(dir,'events.jsonl'),
+     cursorFile=join(dir,'cursor.json');
+   await writeFile(productionFile,JSON.stringify({
+     source:'VYRON_MAC',generatedAt:new Date().toISOString(),items:[],truncated:false
+   }));
+   await writeFile(eventsFile,JSON.stringify({
+     id:'compatibility_event',kind:'render_completed',title:'Completed',
+     occurredAt:new Date().toISOString()
+   })+'\n');
+   const calls=[];
+   const bridge=new MacBridge({
+     url:'https://control.example',token:'T'.repeat(40),productionFile,eventsFile,cursorFile,
+     fetchImpl:async(url)=>{
+       calls.push(url);
+       if(url.endsWith('/api/agent/production'))
+         return {ok:false,status:404,json:async()=>({error:'Not found'})};
+       if(url.includes('/api/agent/commands?'))
+         return {ok:true,json:async()=>({commands:[]})};
+       return {ok:true,json:async()=>({received:1})};
+     }
+   });
+   await bridge.initialize();
+   await bridge.tick();
+   assert.equal(calls.filter(u=>u.endsWith('/api/agent/events')).length,1);
+   assert.equal(calls.filter(u=>u.endsWith('/api/agent/production')).length,1);
+   const later=await bridge.syncProduction();
+   assert.equal(later.reason,'worker_not_upgraded');
+   assert.equal(calls.filter(u=>u.endsWith('/api/agent/production')).length,1);
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
+
+
+test('Mac Bridge still heartbeats and drains events when Analytics upload fails',async()=>{
+  const dir=await mkdtemp(join(tmpdir(),'vyron-isolated-failure-'));
+  try{
+    const analyticsFile=join(dir,'analytics.json'),eventsFile=join(dir,'events.jsonl'),
+      cursorFile=join(dir,'cursor.json');
+    const id='UC'+'x'.repeat(22);
+    await writeFile(analyticsFile,JSON.stringify([{channelId:id,views:200}]));
+    await writeFile(eventsFile,JSON.stringify({
+      kind:'render_completed',id:'finished_render_20261118',title:'Rendered',
+      occurredAt:new Date().toISOString()
+    })+'\n');
+    const calls=[];
+    const agent=new MacBridge({url:'https://control.example',token:'T'.repeat(40),
+      analyticsFile,eventsFile,cursorFile,fetchImpl:async(url)=>{
+        calls.push(url);
+        if(url.endsWith('/api/agent/analytics'))return {
+          ok:false,status:503,json:async()=>({error:'Temporarily down'})
+        };
+        return {ok:true,json:async()=>url.includes('/commands?')?{commands:[]}:{received:1}};
+      }
+    });
+    await agent.initialize();
+    const first=await agent.tick();
+    assert.equal(first.analytics.failed,true);
+    assert.equal(first.analytics.code,'CLOUD_UNAVAILABLE');
+    assert.equal(first.events.transmitted,1);
+    assert.equal(JSON.parse(await readFile(cursorFile,'utf8')).offset,
+      Buffer.byteLength(await readFile(eventsFile)));
+    const second=await agent.tick();
+    assert.equal(second.analytics.deferred,true);
+    assert.equal(second.events.transmitted,0);
+    assert.equal(calls.filter(u=>u.endsWith('/api/agent/heartbeat')).length,2);
+  }finally{await rm(dir,{recursive:true,force:true});}
+});
+test('corrupted Mac state retains last-good counters for cloud heartbeat',async()=>{
+  const dir=await mkdtemp(join(tmpdir(),'vyron-state-last-good-'));
+  try{
+    const statusFile=join(dir,'status.json');
+    await writeFile(statusFile,JSON.stringify({rendersActive:3,endlumeVersion:'10.0.15'}));
+    const agent=new MacBridge({url:'https://control.example',token:'T'.repeat(40),statusFile});
+    const good=await agent.readStatus();
+    assert.equal(good.rendersActive,3);
+    assert.equal(good.agentStateSource,'MIRROR');
+    await writeFile(statusFile,'{truncated');
+    const fallback=await agent.readStatus();
+    assert.equal(fallback.rendersActive,3);
+    assert.equal(fallback.agentStateSource,'MIRROR_INVALID');
+    assert.equal(fallback.macAwake,true);
+    assert.equal(JSON.stringify(fallback).includes('{truncated'),false);
+  }finally{await rm(dir,{recursive:true,force:true});}
+});
+test('heartbeat network errors are never reported as successful Mac connection',async()=>{
+  let fail=true,successful=0;
+  const agent=new MacBridge({url:'https://control.example',token:'T'.repeat(40),
+    fetchImpl:async(url)=>{
+      if(url.endsWith('/api/agent/heartbeat')&&fail)
+        return {ok:false,status:503,json:async()=>({error:'unavailable'})};
+      if(url.endsWith('/api/agent/heartbeat'))successful++;
+      return {ok:true,json:async()=>({commands:[]})};
+    }});
+  await assert.rejects(()=>agent.tick(),/Cloud HTTP 503/);
+  assert.equal(agent.syncFailures.get('heartbeat').code,'CLOUD_UNAVAILABLE');
+  assert.equal(successful,0);
+  fail=false;
+  await agent.tick();
+  assert.equal(successful,1);
+  assert.equal(agent.syncFailures.has('heartbeat'),false);
 });

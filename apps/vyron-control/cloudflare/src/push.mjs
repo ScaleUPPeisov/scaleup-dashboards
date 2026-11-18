@@ -1,3 +1,4 @@
+import {readPrefs,categoryOfKind} from './notifications.mjs';
 // VYRON CONTROL Web Push: encrypted RFC 8291 + VAPID RFC 8292.
 // Sends only allowlisted event names, never user credentials or private files.
 import { buildPushPayload } from '@block65/webcrypto-web-push';
@@ -6,7 +7,8 @@ export const PUSH_CRON='2,7,12,17,22,27,32,37,42,47,52,57 * * * *';
 const PUSH_KINDS=new Set([
   'subscriber_milestone','render_completed','render_failed','upload_completed',
   'upload_failed','disk_offline','quota_warning','agent_error','push_test',
-  'analytics_failed','analytics_partial','analytics_recovered'
+  'analytics_failed','analytics_partial','analytics_recovered',
+  'mac_offline','oauth_failed','sync_failed','runway_low','runway_critical'
 ]);
 const sha=async value=>{
   const data=new TextEncoder().encode(value);
@@ -71,6 +73,14 @@ function notification(e) {
     title='ℹ️ Частичная аналитика YouTube';
   }else if(e.kind==='analytics_recovered'){
     title='✅ Аналитика YouTube восстановлена';
+  }else if(e.kind==='mac_offline'){
+    title='⚠️ Mac Bridge отключён';
+  }else if(e.kind==='runway_low'||e.kind==='runway_critical'){
+    title='⚠️ Запас публикаций заканчивается';
+  }else if(e.kind==='oauth_failed'){
+    title='⚠️ Google OAuth требует внимания';
+  }else if(e.kind==='sync_failed'){
+    title='⚠️ Ошибка синхронизации';
   }else if(e.kind==='subscriber_milestone'){
     title='🎉 Новый рубеж подписчиков';
   }else if(e.kind==='upload_completed'){
@@ -80,13 +90,20 @@ function notification(e) {
   }else if(e.kind==='render_failed'||e.kind==='upload_failed'||e.kind==='agent_error'){
     title='⚠️ Ошибка VYRON';
   }
-  return JSON.stringify({title,body,tag:e.id});
+  const view=['render_started','render_progress','render_completed','render_failed',
+    'upload_started','upload_queued','upload_progress','upload_completed','upload_failed',
+    'runway_low','runway_critical'].includes(e.kind)?'studio':
+    ['analytics_failed','analytics_partial','analytics_recovered'].includes(e.kind)?'analytics':
+    e.kind==='subscriber_milestone'?'channels':'notifications';
+  return JSON.stringify({title,body,tag:e.id,view});
 }
 export async function dispatchPush(env,fetchImpl=fetch,buildPayload=buildPushPayload) {
   if(!env.VAPID_PRIVATE_KEY||!vapidPublic(env)||!env.VAPID_SUBJECT)
     return {skipped:true,reason:'vapid_not_configured'};
   const now=new Date().toISOString();
   const retryBefore=new Date(Date.now()-5*60_000).toISOString();
+  const notOlderThan=new Date(Date.now()-24*3600_000).toISOString();
+  const preferences=await readPrefs(env.DB);
   const {results=[]}=await env.DB.prepare(`
     SELECT p.endpoint_hash,p.subscription_json,e.id,e.kind,e.title,
       e.received_at,d.attempts
@@ -96,14 +113,17 @@ export async function dispatchPush(env,fetchImpl=fetch,buildPayload=buildPushPay
       ON d.endpoint_hash=p.endpoint_hash AND d.event_id=e.id
     WHERE e.kind IN ('subscriber_milestone','render_completed','render_failed',
       'upload_completed','upload_failed','disk_offline','quota_warning','agent_error','push_test',
-      'analytics_failed','analytics_partial','analytics_recovered')
+      'analytics_failed','analytics_partial','analytics_recovered',
+      'mac_offline','oauth_failed','sync_failed','runway_low','runway_critical')
+      AND e.received_at >= ?
       AND (d.event_id IS NULL OR
         (d.status IN ('retry','sending') AND d.attempts < 3
           AND d.updated_at < ?))
     ORDER BY e.received_at ASC,e.id ASC LIMIT 8
-  `).bind(retryBefore).all();
+  `).bind(notOlderThan,retryBefore).all();
   let sent=0,failed=0;
   for(const row of results) {
+    if(preferences[categoryOfKind(row.kind)]===false)continue;
     const subscription=JSON.parse(row.subscription_json);
     const nowAt=new Date().toISOString();
     const inserted=await env.DB.prepare(`

@@ -20,7 +20,9 @@ export function cleanStatus(source) {
     'rootDiskFreeBytes','macAwake','diskOnline',
     'rendersActive','uploadsQueued','uploadsCompleted','uploadsToday',
     'rendersCompletedToday','uploadFailuresToday','jobsReadyUpload',
-    'channelsTotal','channelsBound','lastError','syncCursor'
+    'channelsTotal','channelsBound','lastError','syncCursor',
+    'agentVersion','agentStateSource','agentLastError','agentLastErrorAt',
+    'agentLastSuccessAt','agentRetrySeconds'
   ]) {
     const value = obj[key];
     if (typeof value === 'boolean' || (Number.isSafeInteger(value) && value >= 0) ||

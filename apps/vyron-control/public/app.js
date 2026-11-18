@@ -1,5 +1,8 @@
 import {decryptVyronMigration} from './migration-crypto.js';
 import {compactProgressEvents} from './event-utils.mjs';
+import {renderNeoGlass,selectNeoChannel,wireNeoGlass} from './neo-glass.mjs';
+import {analyticsDateWindow,analyticsWindowCoverage} from './analytics-window.mjs';
+import {summarizeConnection,inspectPwaVersion,inspectPushSubscription} from './diagnostics.mjs';
 
 const $ = id => document.getElementById(id);
 const number = value => value === null || value === undefined ? '—' : new Intl.NumberFormat('ru-RU').format(value);
@@ -15,7 +18,10 @@ let eventHistoryExtended = false;
 let eventRows = [];
 let macAgentToken = '';
 let manualRefreshing = false;
-let activeMobileView = 'overview';
+const neoViews = new Set(['overview','channels','analytics','studio','system','notifications','insights','channel-detail']);
+let activeMobileView = (()=>{const requested=new URLSearchParams(location.search).get('view');
+  if(neoViews.has(requested)&&requested!=='channel-detail')return requested;
+  try{const saved=localStorage.getItem('vyron-control-view');return neoViews.has(saved)&&saved!=='channel-detail'?saved:'overview';}catch{return 'overview';}})();
 const macAgentInstallCommand =
   'curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/release/vyron-control-production/apps/vyron-control/public/install-mac-agent.sh | bash';
 
@@ -31,17 +37,16 @@ async function ensureServiceWorker() {
   }
   return serviceWorkerRegistrationPromise;
 }
-let serviceWorkerReloading=false;
+// Never force reload while the owner is navigating or a diagnostic is running.
+// A newly active SW handles the next navigation; the current session stays intact.
 if('serviceWorker' in navigator) {
   navigator.serviceWorker.addEventListener('controllerchange',()=>{
-    if(serviceWorkerReloading)return;
-    serviceWorkerReloading=true;
-    window.location.reload();
+    const result=$('diag-version-result');
+    if(result)result.textContent='Service Worker обновлён. Для загрузки новых экранов переоткрой приложение.';
   });
   void ensureServiceWorker().catch(()=>{});
 }
 const showLogin = error => {
-  activeMobileView='overview';
   $('login').hidden = false;
   $('dashboard').hidden = true;
   $('logout').hidden = true;
@@ -108,9 +113,15 @@ function renderChannels(channels) {
     (b.analytics?.watchMinutes??0)-(a.analytics?.watchMinutes??0));
   else if(sortMode==='retention')visible.sort((a,b)=>
     (b.analytics?.averageViewPercentage??0)-(a.analytics?.averageViewPercentage??0));
+  else if(sortMode==='content-days')visible.sort((a,b)=>
+    (Number.isFinite(a.scheduledContentDays)?a.scheduledContentDays:Infinity)-
+    (Number.isFinite(b.scheduledContentDays)?b.scheduledContentDays:Infinity)||
+    a.name.localeCompare(b.name,'ru'));
   else visible.sort((a,b)=>a.name.localeCompare(b.name,'ru'));
   const list = $('channels');
   list.replaceChildren();
+  if(sortMode==='content-days'&&!visible.some(ch=>Number.isFinite(ch.scheduledContentDays)))
+    list.append(make('div','empty','Остаток дней не рассчитан: облако не передаёт расписание будущих публикаций YouTube. Показываем каналы по названию.'));
   if (!visible.length) {
     const messages={
       analytics:'Нет каналов с готовыми отчётами Google Analytics.',
@@ -130,11 +141,22 @@ function renderChannels(channels) {
     link.href = 'https://www.youtube.com/channel/' + encodeURIComponent(ch.id);
     link.target = '_blank';
     link.rel = 'noopener noreferrer';
-    left.append(link,make('small','',ch.updatedAt?'Обновлено '+time(ch.updatedAt):'Ожидает первой синхронизации'));
-    if(ch.analyticsAuthorized===false)
-      left.append(make('small','caution','Google Analytics: требуется авторизация'));
-    else if(ch.analyticsAuthorized===true&&!ch.analytics)
-      left.append(make('small','caution','Google Analytics: ожидает первой синхронизации'));
+    const avatar=make('span','channel-avatar',ch.name.trim().slice(0,2).toLocaleUpperCase('ru-RU'));
+    avatar.setAttribute('aria-hidden','true');
+    left.classList.add('neo-channel-name');
+    left.append(avatar,link,make('small','',ch.updatedAt?'Обновлено '+time(ch.updatedAt):'Ожидает первой синхронизации'));
+    left.append(make('small','channel-runway',
+      'Остаток дней: '+(Number.isFinite(ch.scheduledContentDays)?number(ch.scheduledContentDays):'Нет подтверждённого расписания')));
+    if(ch.archivedAt)left.append(make('small','caution',
+      'Архив VYRON · история сохранена · '+time(ch.archivedAt)));
+    const analyticsState={
+      CONNECTED:'Подключён',
+      REQUIRES_AUTH:'Требуется авторизация',
+      STALE:'Данные устарели',
+      ERROR:'Ошибка синхронизации'
+    }[ch.analyticsSyncStatus]||'Состояние уточняется';
+    left.append(make('small',ch.analyticsSyncStatus==='CONNECTED'?'':'caution',
+      'Google Analytics: '+analyticsState));
     const details = make('div', 'channel-details');
     const vals = [
       [ch.subscribersHidden ? 'Скрыто' : number(ch.subscribers), 'Подписчики'],
@@ -152,7 +174,14 @@ function renderChannels(channels) {
         (difference > 0 ? '+' : '') + number(difference));
       details.children[0].append(delta);
     }
-    row.append(left, details);
+    const detailButton=make('button','channel-detail-trigger','Открыть аналитику');
+    detailButton.type='button';
+    detailButton.addEventListener('click',()=>{
+      selectNeoChannel(ch.id);
+      openMobileView('channel-detail');
+      if(current)renderNeoGlass(current);
+    });
+    row.append(left, details, detailButton);
     if (ch.analytics) {
       const a = ch.analytics;
       const extras = make('div', 'channel-analytics');
@@ -163,7 +192,7 @@ function renderChannels(channels) {
         ['Просмотры Analytics', number(a.views)],
         ['Время просмотра', a.watchMinutes == null ? '—' : number(Math.round(a.watchMinutes)) + ' мин'],
         ['Удержание', a.averageViewPercentage == null ? '—' : a.averageViewPercentage.toFixed(1) + '%'],
-        ['Средняя длительность',a.avgViewSeconds==null?'—':formatDuration(a.avgViewSeconds)],
+        ['Средняя длительность',a.averageViewDuration==null?'—':formatDuration(a.averageViewDuration)],
         ['Чистый прирост',number((a.subscribersGained??0)-(a.subscribersLost??0))],
         ['Лайки',number(sum('likes'))],['Комментарии',number(sum('comments'))],
         ['Репосты',number(sum('shares'))],
@@ -341,7 +370,9 @@ function renderAnalytics(data) {
     ...row,averageViewDuration:row.weight?row.weightedDuration/row.weight:null,
     averageViewPercentage:row.weight?row.weightedRetention/row.weight:null
   }));
-  const daily=allDaily.slice(-period);
+  const window=analyticsDateWindow(period);
+  const daily=allDaily.filter(row=>row.date>=window.start&&row.date<=window.end);
+  const coverage=analyticsWindowCoverage(connected,window);
   const sum=key=>daily.reduce((total,row)=>total+(row[key]||0),0);
   const views=sum('views'),watchMinutes=sum('watchMinutes');
   const gained=sum('subscribersGained'),lost=sum('subscribersLost');
@@ -350,7 +381,13 @@ function renderAnalytics(data) {
     (row.averageViewDuration||0)*(row.views||0),0)/weighted:null;
   const retention=weighted?daily.reduce((total,row)=>total+
     (row.averageViewPercentage||0)*(row.views||0),0)/weighted:null;
-  $('analytics-views').textContent=number(views);
+  $('analytics-views').textContent=daily.length?number(views):'—';
+  $('analytics-views-note').textContent='Оценка по доступным дням '+window.start+
+    ' — '+window.end+'. Полное покрытие: '+coverage.complete+'/'+coverage.total+
+    ' каналов. Данные Google запаздывают примерно на 2 дня.'+
+    (data.public24h?.value!=null?' · Публичные просмотры ~24ч: '+
+      number(data.public24h.value)+' ('+data.public24h.covered+'/'+data.public24h.total+
+      ' каналов; приблизительно, не Analytics)':' · 24ч: нет сопоставимых публичных снимков');
   $('analytics-engaged-views').textContent=number(sum('engagedViews'));
   const uniqueDays=daily.filter(row=>row.uniqueDays>0);
   $('analytics-unique-viewers').textContent=uniqueDays.length
@@ -375,7 +412,9 @@ function renderAnalytics(data) {
   $('analytics-updated').textContent='Analytics: отчёты '+connected.length+' / '+totalChannels+
     ' · OAuth '+authorized+' / '+totalChannels+
     (needsAuthorization?' · требуется авторизация для '+needsAuthorization:'')+
-    ' · последний снимок '+time(latest);
+    ' · последний снимок '+time(latest)+
+    ' · полное покрытие '+period+' дней: '+coverage.complete+'/'+coverage.total+
+    (coverage.complete<coverage.total?' · неполные данные, суммы частичные':'');
   renderAnalyticsTrend(daily,period,$('analytics-trend-metric').value);
 
   const topVideos=[];
@@ -680,6 +719,7 @@ function render(data) {
     number(data.channels.length)+' · Google отчётов '+number(health.reportChannels??0)+
     ' · без OAuth '+number(health.needsAuthorization?.length??0)+
     ' · ошибки профилей '+number(health.profilesWithErrors??0)+
+    ' · неполные дополнительные отчёты '+number(health.profilesWithWarnings??0)+
     (health.reportChannels===0?' · Расширенные метрики не подтверждены.':'');
   displayAggregate('total-subs', data.totalSubscribers);
   displayAggregate('total-views', data.totalViews);
@@ -698,6 +738,7 @@ function render(data) {
   if (!eventHistoryExtended) renderEvents(data.events);
   renderDevices(data);
   renderOverview(data);
+  renderNeoGlass(data);
   applyMobileView();
 }
 async function load() {
@@ -768,23 +809,24 @@ function applyMobileView() {
     button.setAttribute('aria-pressed',active?'true':'false');
   });
 }
+function openMobileView(view) {
+  if(!neoViews.has(view))return;
+  activeMobileView=view;
+  try{localStorage.setItem('vyron-control-view',view==='channel-detail'?'channels':view);}catch{}
+  applyMobileView();
+  const scroller=$('dashboard');
+  if(scroller)scroller.scrollTop=0;
+  window.scrollTo(0,0);
+}
 document.querySelectorAll('[data-mobile-target]').forEach(button=>{
-  button.addEventListener('click',()=>{
-    activeMobileView=button.dataset.mobileTarget;
-    applyMobileView();
-    window.scrollTo({top:0,behavior:'smooth'});
-  });
+  button.addEventListener('click',()=>openMobileView(button.dataset.mobileTarget));
 });
-$('overview-events-open').addEventListener('click',()=>{
-  activeMobileView='events';
-  applyMobileView();
-  window.scrollTo({top:0,behavior:'smooth'});
-});
-$('overview-analytics-open').addEventListener('click',()=>{
-  activeMobileView='analytics';
-  applyMobileView();
-  window.scrollTo({top:0,behavior:'smooth'});
-});
+$('overview-events-open').addEventListener('click',()=>openMobileView('notifications'));
+$('overview-analytics-open').addEventListener('click',()=>openMobileView('analytics'));
+$('notifications-open').addEventListener('click',()=>openMobileView('notifications'));
+$('insights-open').addEventListener('click',()=>openMobileView('insights'));
+wireNeoGlass({api,refresh:load});
+
 window.addEventListener('resize',applyMobileView);
 $('analytics-period').addEventListener('change',()=>{
   if(current)renderAnalytics(current);
@@ -823,7 +865,8 @@ function renderDevices(data) {
       'mac-uploaded-today','mac-rendered-today','mac-upload-failures','mac-channels-bound',
       'mac-vyron-version','mac-endlume-version','mac-os-version','mac-model',
       'mac-architecture','mac-uptime','mac-memory','mac-root-disk',
-      'mac-power-state','mac-disk-state','mac-ready-upload','mac-agent-error'
+      'mac-power-state','mac-disk-state','mac-ready-upload','mac-agent-error',
+      'mac-agent-version','mac-last-job-sync','mac-jobs-count'
     ])$(id).textContent='—';
     $('mac-disk-state').classList.remove('state-bad');
     $('mac-agent-error').classList.remove('state-bad');
@@ -833,7 +876,8 @@ function renderDevices(data) {
     Date.now() - Date.parse(device.lastSeenAt) < 180000;
   $('mac-indicator').textContent = recent ? '● Mac онлайн' : '○ Mac спит / нет связи';
   $('mac-state').textContent = recent ? 'На связи' : 'Последнее состояние';
-  $('mac-last').textContent = 'Последний сигнал: ' + time(device.lastSeenAt);
+  $('mac-last').textContent = 'Последний сигнал: ' + time(device.lastSeenAt)+
+    (device.status?.agentStateSource?' · источник: '+device.status.agentStateSource:'');
   const s = device.status || {};
   $('mac-vyron-version').textContent=s.vyronVersion||'—';
   $('mac-endlume-version').textContent=s.endlumeVersion||'—';
@@ -850,7 +894,16 @@ function renderDevices(data) {
   $('mac-disk-state').textContent=s.diskOnline===true?'Подключён':
     s.diskOnline===false?'Недоступен':'Нет данных';
   $('mac-ready-upload').textContent=s.jobsReadyUpload==null?'—':number(s.jobsReadyUpload);
-  $('mac-agent-error').textContent=s.lastError?String(s.lastError).slice(0,150):'Нет активных ошибок';
+  $('mac-agent-version').textContent=s.agentVersion||'Старая версия или нет данных';
+  const deviceSync=(data.production?.devices||[]).find(x=>x.id===device.id);
+  $('mac-last-job-sync').textContent=deviceSync?.receivedAt?
+    time(deviceSync.receivedAt):'Нет подтверждённой передачи заданий';
+  $('mac-jobs-count').textContent=Number.isSafeInteger(deviceSync?.itemCount)
+    ?number(deviceSync.itemCount):'—';
+  $('mac-agent-error').textContent=s.agentLastError
+    ?'Mac Bridge: '+String(s.agentLastError).slice(0,80)+
+      (s.agentRetrySeconds?' · повтор через '+s.agentRetrySeconds+' с':'')
+    :s.lastError?String(s.lastError).slice(0,150):'Нет активных ошибок';
   $('mac-disk-state').classList.toggle('state-bad',s.diskOnline===false);
   $('mac-agent-error').classList.toggle('state-bad',Boolean(s.lastError));
   $('mac-renders').textContent = number(s.rendersActive);
@@ -964,7 +1017,9 @@ async function loadOauthProfiles() {
       const line=make('div','oauth-profile');
       const name=make('span','',profile.channel_name+' · '+profile.channel_id);
       const status=make('small','',
-        profile.last_error?'Проверить: '+profile.last_error:
+        profile.last_error?(profile.last_error.startsWith('Some Analytics breakdowns unavailable:')
+          ?'Дополнительная статистика частично недоступна'
+          :'Проверить: '+profile.last_error):
         profile.last_success_at?'Обновлено '+time(profile.last_success_at):
         'Ожидает первой синхронизации');
       const disconnect=make('button','ghost','Отключить');
@@ -1126,6 +1181,47 @@ $('push-test').addEventListener('click',async()=>{
   }catch(error){msg.textContent='Тест Push: '+error.message;}
   finally{button.disabled=false;}
 });
+
+function deviceDiagnosticsButton(buttonId,resultId,operation){
+  const button=$(buttonId),output=$(resultId);
+  button.addEventListener('click',async()=>{
+    button.disabled=true;
+    output.textContent='Проверяем…';
+    try{output.textContent=await operation();}
+    catch(error){
+      // A network exception is a failed test, never a success.
+      output.textContent='BLOCKED: '+(error?.message||'нет доступа');
+    }finally{button.disabled=false;}
+  });
+}
+deviceDiagnosticsButton('diag-connectivity','diag-connectivity-result',async()=>{
+  const response=await fetch('/api/health',{cache:'no-store'});
+  const health=await response.json().catch(()=>({}));
+  if(!response.ok||!health.ok)return 'FAIL: Worker / D1 не отвечает корректно';
+  const status=await api('/api/status');
+  const report=summarizeConnection(health,status);
+  return (report.ok?'PASS облака: ':'FAIL: ')+report.message+
+    '. Проверка Mac online требует сигнала с физического устройства.';
+});
+deviceDiagnosticsButton('diag-version','diag-version-result',async()=>{
+  const outcome=await inspectPwaVersion({
+    serviceWorker:navigator.serviceWorker,cachesApi:window.caches,fetchImpl:fetch
+  });
+  return outcome.state+': '+outcome.message+
+    ' · авторизация остаётся в текущей сессии браузера';
+});
+deviceDiagnosticsButton('diag-notification','diag-notification-result',async()=>{
+  const probe=await inspectPushSubscription({
+    serviceWorker:navigator.serviceWorker,NotificationClass:window.Notification
+  });
+  if(!probe.ready)return 'BLOCKED: '+probe.reason+
+    '. На iPhone открой установленную PWA с экрана «Домой» и включи уведомления в System.';
+  const result=await api('/api/push/test','POST',{});
+  return result.sent>0
+    ?'GATEWAY ACCEPTED: сервер принял отправку теста ('+result.sent+
+      '). Проверь баннер на физическом iPhone — доставка устройству не подтверждена.'
+    :'BLOCKED: сервер не подтвердил отправку Push. Проверь VAPID и настройки iOS.';
+});
 $('push-disable').addEventListener('click',async()=>{
   const msg=$('push-message'),button=$('push-disable');
   button.disabled=true;
@@ -1223,7 +1319,8 @@ $('channel-sort').addEventListener('change', () => {
 $('channel-filter').addEventListener('change',()=>{
   if(current)renderChannels(current.channels);
 });
-// Local UI polling is free: it does NOT make a YouTube API request.
+// Visible-only status polling: cloud state reads do not call YouTube APIs.
+// 60-second cadence avoids re-rendering 33 channel cards on every 15-second tick.
 window.addEventListener('offline',()=>{
   const status=$('network-status');
   if(status){
@@ -1239,7 +1336,7 @@ window.addEventListener('online',()=>{
 });
 setInterval(() => {
   if (accessToken && navigator.onLine && !document.hidden) load();
-}, 15_000);
+}, 60_000);
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && accessToken && navigator.onLine) load();
 });

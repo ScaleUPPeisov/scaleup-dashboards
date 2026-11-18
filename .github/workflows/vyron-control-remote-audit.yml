@@ -1,0 +1,142 @@
+name: VYRON CONTROL — read-only remote D1 release evidence
+on:
+  push:
+    branches: ["feature/vyron-control-neo-glass-20261117"]
+    paths: [".github/workflows/vyron-control-remote-audit.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  remote-evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/vyron-control
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check Cloudflare connector presence without printing secrets
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN" || { echo "::error::Cloudflare API token missing"; exit 1; }
+          test -n "$CLOUDFLARE_ACCOUNT_ID" || { echo "::error::Cloudflare account ID missing"; exit 1; }
+          echo "Read-only D1 inspection. No migrations, no Worker deployment."
+      - name: Read-only D1 counts and OAuth status
+        shell: bash
+        run: |
+          set -euo pipefail
+          SQL="SELECT 'channels' k,COUNT(*) n FROM channels;
+          SELECT 'google_oauth_profiles' k,COUNT(*) n FROM google_oauth_profiles;
+          SELECT 'oauth_last_success' k,COUNT(*) n FROM google_oauth_profiles WHERE last_success_at IS NOT NULL;
+          SELECT 'oauth_with_error' k,COUNT(*) n FROM google_oauth_profiles WHERE last_error IS NOT NULL AND last_error!='';
+          SELECT 'oauth_partial_breakdowns' k,COUNT(*) n FROM google_oauth_profiles WHERE last_error LIKE 'Some Analytics breakdowns unavailable:%';
+          SELECT 'oauth_invalid_grant' k,COUNT(*) n FROM google_oauth_profiles WHERE lower(last_error) LIKE '%invalid_grant%';
+          SELECT 'oauth_permission_error' k,COUNT(*) n FROM google_oauth_profiles WHERE lower(last_error) LIKE '%permission%' OR lower(last_error) LIKE '%403%';
+          SELECT 'oauth_other_error' k,COUNT(*) n FROM google_oauth_profiles WHERE last_error IS NOT NULL AND last_error!='' AND last_error NOT LIKE 'Some Analytics breakdowns unavailable:%' AND lower(last_error) NOT LIKE '%invalid_grant%' AND lower(last_error) NOT LIKE '%permission%' AND lower(last_error) NOT LIKE '%403%';
+          SELECT 'oauth_success_48h' k,COUNT(*) n FROM google_oauth_profiles WHERE julianday(last_success_at)>=julianday('now','-2 days');
+          SELECT 'analytics_48h' k,COUNT(*) n FROM channel_analytics WHERE julianday(captured_at)>=julianday('now','-2 days');
+          SELECT 'reports_48h' k,COUNT(*) n FROM channel_analytics_reports WHERE julianday(captured_at)>=julianday('now','-2 days');
+          SELECT 'analytics_rows' k,COUNT(*) n FROM channel_analytics;
+          SELECT 'analytics_reports' k,COUNT(*) n FROM channel_analytics_reports;
+          SELECT 'devices_total' k,COUNT(*) n FROM devices;
+          SELECT 'devices_seen_3m' k,COUNT(*) n FROM devices WHERE julianday(last_seen_at)>=julianday('now','-3 minutes');
+          SELECT 'devices_seen_24h' k,COUNT(*) n FROM devices WHERE julianday(last_seen_at)>=julianday('now','-1 day');
+          SELECT 'push_subscriptions' k,COUNT(*) n FROM push_subscriptions;
+          SELECT 'push_sent_attempts' k,COUNT(*) n FROM push_deliveries WHERE status='sent';
+          SELECT 'push_failed_attempts' k,COUNT(*) n FROM push_deliveries WHERE status='failed';
+          SELECT 'local_data_quota_latest' k,COALESCE((SELECT spent FROM quota_buckets ORDER BY day_pt DESC LIMIT 1),0) n;
+          SELECT 'glass_present' k,COUNT(*) n FROM channels WHERE lower(trim(name))='glass city lovers';
+          SELECT 'coffee_present' k,COUNT(*) n FROM channels WHERE trim(name)='珈琲小路';
+          SELECT 'glass_oauth' k,COUNT(*) n FROM google_oauth_profiles p JOIN channels c ON c.id=p.channel_id WHERE lower(trim(c.name))='glass city lovers';
+          SELECT 'coffee_oauth' k,COUNT(*) n FROM google_oauth_profiles p JOIN channels c ON c.id=p.channel_id WHERE trim(c.name)='珈琲小路';
+          SELECT 'production_schema' k,COUNT(*) n FROM sqlite_master WHERE type='table' AND name IN ('production_sync','production_jobs');
+          SELECT 'notifications_schema' k,COUNT(*) n FROM sqlite_master WHERE type='table' AND name IN ('notification_preferences','notification_reads');"
+          RAW="$(npx --yes wrangler@4.102.0 d1 execute vyron-control --remote -c cloudflare/wrangler.jsonc --json --command "$SQL")"
+          D1_AUDIT_JSON="$RAW" node --input-type=module <<'NODE'
+          const raw=JSON.parse(process.env.D1_AUDIT_JSON||'[]');
+          const counts=Object.fromEntries(raw.flatMap(x=>x.results||[])
+            .filter(row=>typeof row.k==='string')
+            .map(row=>[row.k,Number(row.n)]));
+          const expected=['channels','google_oauth_profiles','oauth_last_success','oauth_with_error',
+            'oauth_partial_breakdowns','oauth_invalid_grant','oauth_permission_error',
+            'oauth_other_error','oauth_success_48h','analytics_48h','reports_48h',
+            'analytics_rows','analytics_reports','devices_total','devices_seen_3m',
+            'devices_seen_24h','push_subscriptions','push_sent_attempts','push_failed_attempts',
+            'local_data_quota_latest','glass_present','coffee_present',
+            'glass_oauth','coffee_oauth','production_schema','notifications_schema'];
+          if(expected.some(k=>!Number.isSafeInteger(counts[k])||counts[k]<0))
+            throw Error('Read-only D1 result incomplete');
+          console.log('REAL REMOTE D1 COUNTS (no row content or token values):');
+          console.log(JSON.stringify(counts,null,2));
+          if(counts.oauth_partial_breakdowns===counts.oauth_with_error&&counts.oauth_with_error>0)
+            console.log('All OAuth warnings are non-fatal optional Analytics breakdown warnings; refresh succeeded.');
+          if(counts.channels<33)console.log('::warning::Fewer than 33 remote channels');
+          if(counts.glass_present!==1||counts.coffee_present!==1)
+            console.log('::warning::Named channel missing from D1 registry');
+          if(counts.glass_oauth!==1||counts.coffee_oauth!==1)
+            console.log('::warning::Named channel lacks OAuth authorization record');
+          if(counts.production_schema!==2||counts.notifications_schema!==2)
+            console.log('Pending production migrations 0008/0009 (no writes in this job).');
+          NODE
+      - name: Read-only public Worker health probe
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --max-time 20 \
+            https://vyron-control.endlume-peisov-3ee6109f.workers.dev/api/health \
+            | node --input-type=module -e '
+              let b="";for await(const c of process.stdin)b+=c;
+              const v=JSON.parse(b);
+              console.log("Public Worker health (no credentials):",JSON.stringify({
+                ok:v.ok,d1:v.d1?.schema,expectedTables:v.d1?.expectedTables,
+                presentTables:v.d1?.presentTables
+              }));
+              if(v.ok!==true)process.exitCode=1;
+            '
+      - name: Read-only D1 Time Travel recovery capability and bookmark
+        shell: bash
+        run: |
+          set -euo pipefail
+          INFO="$(npx --yes wrangler@4.102.0 d1 info vyron-control --json -c cloudflare/wrangler.jsonc)"
+          BOOKMARK="$(npx --yes wrangler@4.102.0 d1 time-travel info vyron-control --json -c cloudflare/wrangler.jsonc)"
+          D1_INFO_JSON="$INFO" D1_BOOKMARK_JSON="$BOOKMARK" node --input-type=module <<'NODE'
+          import {createHash} from 'node:crypto';
+          let info,timeTravel;
+          try {
+            info=JSON.parse(process.env.D1_INFO_JSON||'{}');
+            timeTravel=JSON.parse(process.env.D1_BOOKMARK_JSON||'{}');
+          }catch{throw Error('D1 recovery capability did not provide machine-readable JSON');}
+          const metadata=Array.isArray(info)?info[0]:info;
+          const body=Array.isArray(timeTravel)?timeTravel[0]:timeTravel;
+          const bookmark=body?.bookmark||body?.result?.bookmark;
+          if(metadata?.version&&metadata.version!=='production')
+            throw Error('Production D1 does not support the Time Travel backend');
+          if(typeof bookmark!=='string'||!/^[0-9a-fA-F-]{25,100}$/.test(bookmark))
+            throw Error('No validated current D1 Time Travel recovery bookmark');
+          console.log('READ ONLY: D1 Time Travel bookmark available.',
+            'fingerprint='+createHash('sha256').update(bookmark).digest('hex').slice(0,16));
+          console.log('This is a point-in-time recovery capability, not an exported cold backup.');
+          console.log('No restore or schema change has been performed.');
+          NODE
+      - name: Read-only currently deployed Worker version and deployment ID
+        shell: bash
+        run: |
+          set -euo pipefail
+          STATUS="$(npx --yes wrangler@4.102.0 deployments status --name vyron-control --json -c cloudflare/wrangler.jsonc)"
+          WORKER_STATUS_JSON="$STATUS" node --input-type=module <<'NODE'
+          const result=JSON.parse(process.env.WORKER_STATUS_JSON||'{}');
+          const body=Array.isArray(result)?result[0]:result;
+          const deploymentId=body?.id||body?.deployment_id||body?.deploymentId||null;
+          const versionIds=(body?.versions||[]).map(v=>v.version_id||v.versionId||v.id).filter(Boolean);
+          console.log('READ ONLY Production Worker deployment status:',
+            JSON.stringify({deploymentId,versionIds,observed:true}));
+          NODE
+      - name: Confirm no production mutation
+        if: always()
+        run: echo "READ-ONLY AUDIT ONLY — no deploy, no migration, no UPDATE/INSERT/DELETE."

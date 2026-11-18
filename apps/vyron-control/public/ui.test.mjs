@@ -7,6 +7,8 @@ import { dirname, resolve } from 'node:path';
 const publicDir=dirname(fileURLToPath(import.meta.url));
 const html=await readFile(resolve(publicDir,'index.html'),'utf8');
 const css=await readFile(resolve(publicDir,'styles.css'),'utf8');
+const neoCss=await readFile(resolve(publicDir,'neo-glass.css'),'utf8');
+const neoJs=await readFile(resolve(publicDir,'neo-glass.mjs'),'utf8');
 const app=await readFile(resolve(publicDir,'app.js'),'utf8');
 const installer=await readFile(resolve(publicDir,'install-mac-agent.sh'),'utf8');
 const serviceWorker=await readFile(resolve(publicDir,'service-worker.js'),'utf8');
@@ -25,9 +27,10 @@ test('every static app.js DOM lookup exists in the HTML',()=>{
 });
 
 test('five workspace navigation tabs resolve to real views',()=>{
-  const targets=[...html.matchAll(/data-mobile-target="([^"]+)"/g)].map(match=>match[1]).sort();
+  const nav=html.match(/<nav id="main-nav"[\s\S]*?<\/nav>/)?.[0]||'';
+  const targets=[...nav.matchAll(/data-mobile-target="([^"]+)"/g)].map(match=>match[1]).sort();
   const views=[...html.matchAll(/data-mobile-view="([^"]+)"/g)].map(match=>match[1]);
-  assert.deepEqual(targets,['analytics','channels','events','overview','system']);
+  assert.deepEqual(targets,['analytics','channels','overview','studio','system']);
   for(const target of targets)assert.ok(views.includes(target),'missing view: '+target);
   assert.ok(html.indexOf('id="main-nav"')<html.indexOf('class="headline"'),
     'desktop workspace navigation must appear before the active view');
@@ -63,7 +66,7 @@ test('PWA caches every imported browser module but never authenticated API respo
   for(const modulePath of importedModules)
     assert.ok(serviceWorker.includes("'/"+modulePath+"'"),
       'offline shell is missing imported module: '+modulePath);
-  assert.ok(serviceWorker.includes("vyron-peisov-yt-shell-v4"));
+  assert.ok(serviceWorker.includes("vyron-peisov-yt-shell-v10"));
   assert.ok(app.includes('async function ensureServiceWorker()'));
   assert.ok(app.includes('void ensureServiceWorker().catch'));
   assert.ok(serviceWorker.includes("url.pathname.startsWith('/api/')"));
@@ -90,4 +93,43 @@ test('VYRON PEISOV YT iPhone 14 Pro 393px viewport respects safe areas',()=>{
     assert.ok(html.includes('id="'+id+'"'),id+' missing');
   assert.match(app,/data.publicTrend/);
   assert.match(app,/channelTotal>0&&row.covered===channelTotal/);
+});
+
+test('Neo Glass screens preserve eight connected views and accessible navigation',()=>{
+  for(const view of ['overview','channels','analytics','studio','system','notifications','insights','channel-detail'])
+    assert.ok(html.includes('data-mobile-view="'+view+'"'),'screen missing: '+view);
+  for(const id of ['studio-feed','studio-mac-state','insights-priorities',
+    'detail-top-videos','detail-chart','notifications-open','attention-count'])
+    assert.ok(html.includes('id="'+id+'"'),'missing connected element: '+id);
+  assert.ok(html.includes('href="/neo-glass.css"'));
+  assert.ok(app.includes("from './neo-glass.mjs'"));
+  assert.match(neoJs,/export function renderNeoGlass\(data\)/);
+  assert.match(neoJs,/export function selectNeoChannel\(channelId\)/);
+  assert.match(neoJs,/data\.events\|\|\[\]/);
+  assert.match(neoJs,/data\.channels\|\|\[\]/);
+});
+test('Neo Glass shell uses a real central scroll container with safe-area dock',()=>{
+  assert.match(neoCss,/#dashboard\s*\{[\s\S]*?overflow-y:auto/);
+  assert.match(neoCss,/height:100dvh/);
+  assert.match(neoCss,/env\(safe-area-inset-top/);
+  assert.match(neoCss,/env\(safe-area-inset-bottom/);
+  assert.match(neoCss,/@media\(max-width:359px\)/);
+  assert.match(neoCss,/@media\(prefers-reduced-motion:reduce\)/);
+  assert.ok(serviceWorker.includes("'/neo-glass.css'"));
+  assert.ok(serviceWorker.includes("'/neo-glass.mjs'"));
+  assert.ok(serviceWorker.includes("'/insights-core.mjs'"));
+  assert.ok(!neoJs.includes("fetch('/api/"),'UI must not initiate a second quota-consuming API request');
+});
+
+test('iPhone device diagnostics are manual-only, reachable in System, and do not clear session',()=>{
+  for(const id of ['diag-notification','diag-connectivity','diag-version',
+    'diag-notification-result','diag-connectivity-result','diag-version-result'])
+    assert.ok(html.includes('id="'+id+'"'),id+' missing');
+  assert.match(app,/deviceDiagnosticsButton\('diag-connectivity'/);
+  assert.match(app,/deviceDiagnosticsButton\('diag-version'/);
+  assert.match(app,/deviceDiagnosticsButton\('diag-notification'/);
+  assert.ok(app.includes("from './diagnostics.mjs'"));
+  assert.ok(serviceWorker.includes("'/diagnostics.mjs'"));
+  assert.match(app,/navigator\.serviceWorker/);
+  assert.match(app,/cache:'no-store'/);
 });

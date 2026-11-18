@@ -40,6 +40,10 @@ class MockD1 {
     this.native.exec(readFileSync(new URL('../migrations/0005_vyron_oauth_import.sql',import.meta.url),'utf8'));
     this.native.exec(readFileSync(new URL('../migrations/0006_analytics_reports.sql',import.meta.url),'utf8'));
     this.native.exec(readFileSync(new URL('../migrations/0007_channel_analytics_queue.sql',import.meta.url),'utf8'));
+    this.native.exec(readFileSync(new URL('../migrations/0008_production_snapshot.sql',import.meta.url),'utf8'));
+    this.native.exec(readFileSync(new URL('../migrations/0009_notification_center.sql',import.meta.url),'utf8'));
+    this.native.exec(readFileSync(new URL('../migrations/0010_channel_presence.sql',import.meta.url),'utf8'));
+    this.native.exec(readFileSync(new URL('../migrations/0011_youtube_schedule.sql',import.meta.url),'utf8'));
   }
   prepare(sql){return new D1Query(this,sql);}
   async batch(stmts){
@@ -150,7 +154,7 @@ test('authorization, origin guard, static asset CSP and immutable endpoint behav
   assert.equal(health.status,200);
   const healthBody=await health.json();
   assert.equal(healthBody.app,'vyron-control');
-  assert.deepEqual(healthBody.d1,{bound:true,schema:true,expectedTables:16,presentTables:16});
+  assert.deepEqual(healthBody.d1,{bound:true,schema:true,expectedTables:22,presentTables:22});
   assert.equal((await cloud.fetch(req('/api/status','invalid'),e)).status,401);
   const good=await cloud.fetch(req('/api/status',control),e);
   assert.equal(good.status,200);
@@ -1254,4 +1258,196 @@ test('Web Push retries abandoned sending claims without losing notifications',as
   const again=await dispatchPush(e,async()=>{throw new Error('duplicate')},
     async()=>({method:'POST'}));
   assert.equal(again.attempted,0);
+});
+
+
+test('Mac production snapshots are authenticated, idempotent and retain last good state offline',async()=>{
+  const e=env(),cid=id(100),now=new Date().toISOString();
+  await e.DB.prepare('INSERT INTO channels(id,name) VALUES (?,?)').bind(cid,'Safe Channel').run();
+  const make=items=>({deviceId:'macbook_m1',source:'VYRON_MAC',generatedAt:now,
+    items,truncated:false});
+  const job={id:'job_'+'a'.repeat(32),channelId:cid,status:'READY_UPLOAD',
+    title:'Ready video',progress:null,createdAt:now,
+    plannedPublishAt:'2026-11-25T07:00:00.000Z',
+    scheduleSource:'MAC_LOCAL_UNVERIFIED'};
+  const unauthorized=await cloud.fetch(req('/api/agent/production',control,'POST',make([job])),e);
+  assert.equal(unauthorized.status,401,'control token must not impersonate agent');
+  const rejectedOrigin=await cloud.fetch(req('/api/agent/production',agent,'POST',make([job]),
+    'https://evil.example'),e);
+  assert.equal(rejectedOrigin.status,403);
+  const accepted=await cloud.fetch(req('/api/agent/production',agent,'POST',make([job])),e);
+  assert.equal(accepted.status,200);
+  assert.equal((await accepted.json()).accepted,1);
+  let state=await (await cloud.fetch(req('/api/status',control),e)).json();
+  assert.equal(state.production.items.length,1);
+  assert.equal(state.production.items[0].scheduleSource,'MAC_LOCAL_UNVERIFIED');
+  assert.equal(state.production.confirmedYouTubeSchedule,false);
+  assert.equal(state.channels[0].scheduledContentDays,null);
+  const repeated=await cloud.fetch(req('/api/agent/production',agent,'POST',make([job])),e);
+  assert.equal(repeated.status,200);
+  assert.equal(e.DB.native.prepare('SELECT count(*) n FROM production_jobs').get().n,1);
+  state=await (await cloud.fetch(req('/api/status',control),e)).json();
+  assert.equal(state.production.items.length,1,'a missing Mac heartbeat must not erase jobs');
+  const removed=await cloud.fetch(req('/api/agent/production',agent,'POST',make([])),e);
+  assert.equal(removed.status,200);
+  state=await (await cloud.fetch(req('/api/status',control),e)).json();
+  assert.equal(state.production.items.length,0);
+  assert.equal(e.DB.native.prepare('SELECT count(*) n FROM production_jobs').get().n,1,
+    'removed jobs remain archived for audit');
+});
+test('Mac production validation rejects private fields and preserves stored snapshots',async()=>{
+  const e=env(),cid=id(101),now=new Date().toISOString();
+  await e.DB.prepare('INSERT INTO channels(id,name) VALUES (?,?)').bind(cid,'Safe Channel').run();
+  const packet={deviceId:'macbook_m1',source:'VYRON_MAC',generatedAt:now,items:[{
+    id:'job_'+'b'.repeat(32),channelId:cid,status:'UPLOADING',title:'Safe',
+    progress:24,createdAt:now,plannedPublishAt:null,scheduleSource:'MAC_LOCAL_UNVERIFIED',
+    localPath:'/Users/private/SHOULD_NEVER_BE_STORED',refreshToken:'SECRET'
+  }]};
+  const ok=await cloud.fetch(req('/api/agent/production',agent,'POST',packet),e);
+  assert.equal(ok.status,200);
+  const stored=e.DB.native.prepare('SELECT * FROM production_jobs').get();
+  assert.equal(JSON.stringify(stored).includes('/Users/'),false);
+  assert.equal(JSON.stringify(stored).includes('SECRET'),false);
+  const invalid=structuredClone(packet);
+  invalid.items[0].progress=200;
+  const reject=await cloud.fetch(req('/api/agent/production',agent,'POST',invalid),e);
+  assert.equal(reject.status,400);
+  const remain=await (await cloud.fetch(req('/api/status',control),e)).json();
+  assert.equal(remain.production.items.length,1);
+  assert.equal(remain.production.items[0].progress,24);
+});
+
+
+test('production snapshot refuses unknown channel IDs without archiving last-good jobs',async()=>{
+ const e=env(), good=id(109),missing=id(110),now=new Date().toISOString();
+ await e.DB.prepare('INSERT INTO channels(id,name) VALUES (?,?)').bind(good,'Known channel').run();
+ const job=(channelId,suffix)=>({id:'job_'+suffix.repeat(32),channelId,
+   status:'READY_UPLOAD',title:'Safe job',progress:null,
+   createdAt:now,plannedPublishAt:null,scheduleSource:'MAC_LOCAL_UNVERIFIED'});
+ const packet=items=>({deviceId:'macbook_m1',source:'VYRON_MAC',generatedAt:now,items,truncated:false});
+ assert.equal((await cloud.fetch(req('/api/agent/production',agent,'POST',
+   packet([job(good,'a')])),e)).status,200);
+ const partial=await cloud.fetch(req('/api/agent/production',agent,'POST',
+   packet([job(good,'a'),job(missing,'b')])),e);
+ assert.equal(partial.status,400);
+ const got=await (await cloud.fetch(req('/api/status',control),e)).json();
+ assert.equal(got.production.items.length,1);
+ assert.equal(got.production.items[0].channelId,good);
+ assert.equal(e.DB.native.prepare('SELECT count(*) n FROM production_jobs WHERE active=1').get().n,1);
+});
+
+test('notification preferences are owner-authenticated, persisted and validated',async()=>{
+ const e=env(),value={critical:true,production:false,analytics:true,system:false,milestones:true};
+ const unauth=await cloud.fetch(req('/api/notifications/preferences',agent,'POST',value),e);
+ assert.equal(unauth.status,401);
+ const accepted=await cloud.fetch(req('/api/notifications/preferences',control,'POST',value),e);
+ assert.equal(accepted.status,200);
+ const got=await (await cloud.fetch(req('/api/notifications',control),e)).json();
+ assert.deepEqual(got.categories,value);
+ const reject=await cloud.fetch(req('/api/notifications/preferences',control,'POST',
+   {...value,critical:'false'}),e);
+ assert.equal(reject.status,400);
+ assert.deepEqual((await (await cloud.fetch(req('/api/notifications',control),e)).json()).categories,value);
+});
+
+test('notification read receipts link to real events and do not forge unknown IDs',async()=>{
+ const e=env(),now=new Date().toISOString(),eventId='test_notification_123';
+ await e.DB.prepare("INSERT INTO events(id,kind,channel_id,title,payload_json,occurred_at,received_at) "+
+  "VALUES (?,'upload_completed',NULL,'Upload completed','{}',?,?)").bind(eventId,now,now).run();
+ const result=await cloud.fetch(req('/api/notifications/read',control,'POST',
+   {eventIds:[eventId,'fake_id']}),e);
+ assert.equal(result.status,200);
+ const found=await (await cloud.fetch(req('/api/notifications',control),e)).json();
+ assert.deepEqual(found.readIds,[eventId]);
+});
+
+
+test('production ingest preserves 300 tasks in one JSON1 bulk SQL statement',async()=>{
+ const e=env(),cid=id(120),now=new Date().toISOString();
+ await e.DB.prepare('INSERT INTO channels(id,name) VALUES (?,?)').bind(cid,'High volume').run();
+ const items=Array.from({length:300},(_,i)=>({
+   id:'job_'+i.toString(16).padStart(32,'0'),channelId:cid,
+   status:i%2?'READY_UPLOAD':'RENDERING',title:'Video '+i,
+   progress:i%2?null:i%101,plannedPublishAt:null,
+   createdAt:now,scheduleSource:'MAC_LOCAL_UNVERIFIED'
+ }));
+ const reqBody={deviceId:'macbook_m1',source:'VYRON_MAC',generatedAt:now,
+   items,truncated:false};
+ const response=await cloud.fetch(req('/api/agent/production',agent,'POST',reqBody),e);
+ assert.equal(response.status,200);
+ assert.equal((await response.json()).accepted,300);
+ assert.equal(e.DB.native.prepare('SELECT COUNT(*) AS n FROM production_jobs WHERE active=1').get().n,300);
+ const status=await (await cloud.fetch(req('/api/status',control),e)).json();
+ assert.equal(status.production.items.length,300);
+});
+
+
+test('complete Mac registry snapshots soft archive missing channels without deleting history',async()=>{
+ const e=env(),at=new Date().toISOString(),a=id(840),b=id(841);
+ const packet=ids=>({deviceId:'macbook_m1',total:ids.length,complete:true,
+   generatedAt:at,channels:ids.map(channelId=>({id:channelId,name:'Real channel name'}))});
+ const first=await cloud.fetch(req('/api/agent/channels',agent,'POST',packet([a,b])),e);
+ assert.equal(first.status,200);
+ assert.equal((await first.json()).channelPresence.accepted,true);
+ assert.equal(e.DB.native.prepare('SELECT COUNT(*) n FROM channel_presence WHERE archived_at IS NOT NULL').get().n,0);
+ const second=await cloud.fetch(req('/api/agent/channels',agent,'POST',packet([a])),e);
+ assert.equal(second.status,200);
+ assert.equal((await second.json()).channelPresence.archived,1);
+ const archive=e.DB.native.prepare('SELECT archived_at FROM channel_presence WHERE channel_id=?').get(b);
+ assert.ok(archive.archived_at);
+ const raw=e.DB.native.prepare('SELECT id FROM channels WHERE id=?').get(b);
+ assert.equal(raw.id,b,'original registry row must remain');
+ const status=(await (await cloud.fetch(req('/api/status',control),e)).json());
+ assert.equal(status.channels.length,2);
+ assert.ok(status.channels.find(x=>x.id===b).archivedAt);
+ // Old agent array payload MUST NOT alter the authoritative active/archived state.
+ const legacy=await cloud.fetch(req('/api/agent/channels',agent,'POST',[{id:a,name:'Legacy'}]),e);
+ assert.equal(legacy.status,200);
+ assert.equal((await legacy.json()).channelPresence.accepted,false);
+ assert.ok(e.DB.native.prepare('SELECT archived_at FROM channel_presence WHERE channel_id=?').get(b).archived_at);
+});
+test('incomplete Mac channel snapshot cannot archive any old registry entries',async()=>{
+ const e=env(),a=id(850),b=id(851),at=new Date().toISOString();
+ const packet=(ids,complete,total)=>({deviceId:'macbook_m1',complete,total,generatedAt:at,
+   channels:ids.map(x=>({id:x,name:'Channel'}))});
+ await cloud.fetch(req('/api/agent/channels',agent,'POST',packet([a,b],true,2)),e);
+ const result=await cloud.fetch(req('/api/agent/channels',agent,'POST',packet([a],false,1)),e);
+ assert.equal(result.status,200);
+ assert.equal((await result.json()).channelPresence.archived,0);
+ assert.equal(e.DB.native.prepare('SELECT COUNT(*) n FROM channel_presence WHERE archived_at IS NULL').get().n,2);
+});
+
+
+test('owner-verified YouTube scheduled publications control content-days; partial and stale never do',async()=>{
+ const e=env(),cid=id(930),now=new Date().toISOString();
+ const publishAt=new Date(Date.now()+5*86400000).toISOString();
+ await e.DB.prepare('INSERT INTO channels(id,name) VALUES (?,?)').bind(cid,'Runway test').run();
+ await e.DB.prepare(
+  "INSERT INTO channel_schedule(channel_id,status,confirmed_json,scanned_count,complete,captured_at) "+
+  "VALUES(?,'COMPLETE',?,3,1,?)"
+ ).bind(cid,JSON.stringify([{videoId:'v'.repeat(11),publishAt}]),now).run();
+ let status=await (await cloud.fetch(req('/api/status',control),e)).json();
+ let ch=status.channels.find(x=>x.id===cid);
+ assert.ok(ch.scheduledContentDays>=4&&ch.scheduledContentDays<=6);
+ assert.equal(ch.youtubeSchedule.source,'YOUTUBE_DATA_API_OWNER_READONLY');
+ await e.DB.prepare("UPDATE channel_schedule SET status='PARTIAL',complete=0 WHERE channel_id=?")
+   .bind(cid).run();
+ status=await (await cloud.fetch(req('/api/status',control),e)).json();
+ assert.equal(status.channels.find(x=>x.id===cid).scheduledContentDays,null);
+ await e.DB.prepare(
+  "UPDATE channel_schedule SET status='COMPLETE',complete=1,captured_at='2026-01-01T00:00:00.000Z' WHERE channel_id=?"
+ ).bind(cid).run();
+ status=await (await cloud.fetch(req('/api/status',control),e)).json();
+ assert.equal(status.channels.find(x=>x.id===cid).scheduledContentDays,null);
+});
+
+test('manual schedule refresh rejects agent access, validates Channel ID and does not bypass OAuth',async()=>{
+ const e=env(),cid=id(931);
+ await e.DB.prepare('INSERT INTO channels(id,name) VALUES (?,?)').bind(cid,'Not authorized').run();
+ assert.equal((await cloud.fetch(req('/api/schedule/refresh',agent,'POST',{channelId:cid}),e)).status,401);
+ assert.equal((await cloud.fetch(req('/api/schedule/refresh',control,'POST',{channelId:'invalid'}),e)).status,400);
+ const result=await cloud.fetch(req('/api/schedule/refresh',control,'POST',{channelId:cid}),e);
+ assert.equal(result.status,200);
+ assert.deepEqual(await result.json(),{skipped:true,reason:'oauth_not_configured'});
+ assert.equal(e.DB.native.prepare('SELECT COUNT(*) AS n FROM channel_schedule').get().n,0);
 });

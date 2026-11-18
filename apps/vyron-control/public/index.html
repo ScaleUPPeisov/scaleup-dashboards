@@ -11,6 +11,7 @@
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" type="image/svg+xml" href="/icon.svg">
   <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/neo-glass.css">
   <title>VYRON PEISOV YT</title>
   <script type="module" src="/app.js"></script>
 </head>
@@ -18,7 +19,7 @@
   <main class="shell">
     <header class="topbar">
       <div class="brand"><img src="/icon.svg" alt="" width="42" height="42"><div><strong>VYRON PEISOV YT</strong><small>PRIVATE YOUTUBE STUDIO</small></div></div>
-      <div class="top-right"><span class="online" aria-live="polite"><span class="dot" id="topbar-dot"></span><span id="topbar-status-text">Контроль каналов</span></span><button id="logout" class="ghost" hidden>Выйти</button></div>
+      <div class="top-right"><button id="notifications-open" class="glass-icon-button" type="button" aria-label="Центр уведомлений" title="Центр уведомлений"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg><span id="attention-count" class="attention-count" hidden>0</span></button><span class="online" aria-live="polite"><span class="dot" id="topbar-dot"></span><span id="topbar-status-text">Контроль каналов</span></span><button id="logout" class="ghost" hidden>Выйти</button></div>
     </header>
     <section id="login" class="login card">
       <span class="eyebrow">Личный доступ</span>
@@ -42,16 +43,16 @@
         <button type="button" data-mobile-target="analytics" aria-pressed="false">
           <span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20h18M5 16l4-5 4 3 6-8"/><path d="M15 6h4v4"/></svg></span><small>Аналитика</small>
         </button>
-        <button type="button" data-mobile-target="events" aria-pressed="false">
-          <span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg></span><small>События</small>
+        <button type="button" data-mobile-target="studio" aria-pressed="false">
+          <span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg></span><small>Студия</small>
         </button>
         <button type="button" data-mobile-target="system" aria-pressed="false">
           <span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z"/><path d="m19.4 15 .1.1a1.7 1.7 0 0 1-2.4 2.4l-.1-.1a1.7 1.7 0 0 0-2.9 1.2v.2a1.7 1.7 0 0 1-3.4 0v-.2a1.7 1.7 0 0 0-2.9-1.2l-.1.1a1.7 1.7 0 0 1-2.4-2.4l.1-.1a1.7 1.7 0 0 0-1.2-2.9H4a1.7 1.7 0 0 1 0-3.4h.2a1.7 1.7 0 0 0 1.2-2.9l-.1-.1a1.7 1.7 0 0 1 2.4-2.4l.1.1a1.7 1.7 0 0 0 2.9-1.2V2a1.7 1.7 0 0 1 3.4 0v.2a1.7 1.7 0 0 0 2.9 1.2l.1-.1a1.7 1.7 0 0 1 2.4 2.4l-.1.1a1.7 1.7 0 0 0 1.2 2.9h.2a1.7 1.7 0 0 1 0 3.4h-.2a1.7 1.7 0 0 0-1.2 2.9Z"/></svg></span><small>Система</small>
         </button>
       </nav>
       <div class="headline" data-mobile-view="overview">
-        <div><span class="eyebrow">YT NETWORK / ANALYTICS</span><h1>Панель управления</h1><p class="muted">Статистика YouTube даже при спящем Mac</p></div>
-        <div class="refresh-actions"><button id="refresh" class="primary refresh">↻ Обновить всё</button><small id="refresh-feedback" class="refresh-feedback">Публичные счётчики + Analytics 360°</small></div>
+        <div><span class="eyebrow">YT NETWORK / ANALYTICS</span><h1>Command Center</h1><p class="muted">Статистика YouTube даже при спящем Mac</p></div>
+        <div class="refresh-actions"><button id="insights-open" type="button" class="ghost">AI Insights</button><button id="refresh" class="primary refresh">↻ Обновить всё</button><small id="refresh-feedback" class="refresh-feedback">Публичные счётчики + Analytics 360°</small></div>
       </div>
       <div class="status-line" data-mobile-view="overview"><span id="state-label">Загрузка данных…</span><span id="last-sync">—</span></div>
       <section class="overview-console" data-mobile-view="overview" aria-labelledby="network-heading">
@@ -144,7 +145,7 @@
       </section>
       <section class="card channel-section" data-mobile-view="channels">
         <div class="section-title"><div><span class="eyebrow">ВСЯ СЕТЬ</span><h2>Каналы <span id="channel-count"></span></h2></div><div class="channel-tools">
-          <select id="channel-sort" aria-label="Сортировка каналов"><option value="name">По названию</option><option value="growth">По приросту</option><option value="views">По просмотрам</option><option value="watchtime">По времени просмотра</option><option value="retention">По удержанию</option></select>
+          <select id="channel-sort" aria-label="Сортировка каналов"><option value="content-days">Остаток дней ↑</option><option value="name">По названию</option><option value="growth">По приросту</option><option value="views">По просмотрам</option><option value="watchtime">По времени просмотра</option><option value="retention">По удержанию</option></select>
           <select id="channel-filter" aria-label="Фильтр каналов"><option value="all">Все каналы</option><option value="analytics">Есть Analytics</option><option value="needs-auth">Нужна авторизация</option><option value="awaiting-report">Ожидают отчёта</option><option value="public-pending">Нет публичных данных</option></select>
           <input id="search" type="search" placeholder="Найти канал">
         </div></div>
@@ -314,6 +315,9 @@
           <div class="mac-health-card"><small>Внешний диск</small><strong id="mac-disk-state">—</strong></div>
           <div class="mac-health-card"><small>Готовы к загрузке</small><strong id="mac-ready-upload">—</strong></div>
           <div class="mac-health-card mac-health-error"><small>Последняя ошибка</small><strong id="mac-agent-error">—</strong></div>
+          <div class="mac-health-card"><small>Версия Mac Bridge</small><strong id="mac-agent-version">—</strong></div>
+          <div class="mac-health-card"><small>Синхронизация заданий</small><strong id="mac-last-job-sync">—</strong></div>
+          <div class="mac-health-card"><small>Заданий Mac</small><strong id="mac-jobs-count">—</strong></div>
         </div>
         <div class="mac-daily">
           <div><span>Загружено сегодня</span><strong id="mac-uploaded-today">—</strong></div>
@@ -336,9 +340,71 @@
         <div id="mac-command-list" class="command-list"></div>
         <p class="caution">Статус Mac считается актуальным, если от агента был сигнал за последние 3 минуты. При сне показываются последние сохранённые значения.</p>
       </section>
-      <section class="card event-section" data-mobile-view="events">
+
+      <section class="card device-diagnostics" data-mobile-view="system" aria-label="Диагностика установленного iPhone приложения">
         <div class="section-title">
-          <div><span class="eyebrow">LIVE JOURNAL</span><h2>Все события VYRON</h2></div>
+          <div><span class="eyebrow">IPHONЕ 14 PRO / SELF-TEST</span><h2>Проверка приложения</h2></div>
+          <span class="pill">Только по нажатию</span>
+        </div>
+        <p class="muted">Проверки выполняются на этом устройстве. Ответ Push-шлюза не означает, что уведомление появилось на iPhone. Установка обновления не удаляет ключ доступа.</p>
+        <div class="device-diagnostic-actions">
+          <button class="ghost" id="diag-notification" type="button">Проверить уведомление</button>
+          <button class="ghost" id="diag-connectivity" type="button">Проверить подключение</button>
+          <button class="ghost" id="diag-version" type="button">Проверить актуальность версии</button>
+        </div>
+        <div class="device-diagnostic-results" role="status" aria-live="polite">
+          <p id="diag-notification-result">Push: проверка не запускалась.</p>
+          <p id="diag-connectivity-result">Cloudflare / Mac: проверка не запускалась.</p>
+          <p id="diag-version-result">PWA: версия не проверялась.</p>
+        </div>
+      </section>
+      <!-- Neo Glass surfaces consume existing /api/status and do not mutate cloud data. -->
+      <section class="neo-screen neo-studio" data-mobile-view="studio" aria-labelledby="studio-title">
+        <div class="neo-page-heading"><div><span class="eyebrow">WORKFLOW / LIVE TELEMETRY</span><h1 id="studio-title">Production Studio</h1><p class="muted">ENDLUME → Rendering → Ready → Upload Queue → YouTube</p></div></div>
+        <div class="neo-stage-line" aria-label="Этапы видеопроизводства">
+          <span>ENDLUME</span><span>Рендер</span><span>Готово</span><span>Очередь</span><span>YouTube</span>
+        </div>
+        <div class="neo-studio-hero card">
+          <div class="neo-split"><div><span class="eyebrow">MAC BRIDGE / LAST SIGNAL</span><h2 id="studio-mac-state">Ожидаем телеметрию</h2><p class="muted" id="studio-mac-last">Нет данных</p></div><span class="neo-live-dot" id="studio-live-indicator"></span></div>
+          <div class="neo-three-metrics">
+            <div><small>Активные рендеры</small><strong id="studio-renders">—</strong></div>
+            <div><small>Очередь загрузки</small><strong id="studio-uploads">—</strong></div>
+            <div><small>Готово к загрузке</small><strong id="studio-ready">—</strong></div>
+          </div>
+        </div>
+        <div class="neo-panel card"><div class="neo-split"><h2>Очередь заданий</h2><small id="studio-jobs-source">Ожидаем Mac Bridge</small></div><div id="studio-jobs" class="neo-feed"><div class="empty">Нет актуального списка заданий.</div></div></div>
+        <div class="neo-panel card"><div class="neo-split"><h2>Календарь публикаций</h2><small>YouTube · VYRON</small></div><div id="studio-calendar" class="neo-feed"><p class="empty">Нет данных о запланированных локально публикациях.</p></div></div>
+        <div class="neo-panel card"><div class="neo-split"><h2>События производства</h2><small id="studio-event-source">Источник: Mac Bridge</small></div><div id="studio-feed" class="neo-feed"><div class="empty">Ожидаем реальные события Mac Bridge.</div></div></div>
+        <p class="neo-data-note">Если Mac offline, здесь показана последняя телеметрия. Точный прогресс и ETA отображаются только при наличии подтверждённых данных.</p>
+      </section>
+      <section class="neo-screen neo-insights" data-mobile-view="insights" aria-labelledby="insights-title">
+        <div class="neo-page-heading"><span class="eyebrow">DECISION ENGINE / RULE BASED</span><h1 id="insights-title">AI Insights</h1><p class="muted">Проверенные факты и приоритеты. Режим правил, без генеративного AI.</p></div>
+        <article class="neo-insight-lead card"><span class="eyebrow">MORNING BRIEF</span><h2 id="insights-brief">Ожидаем аналитику сети</h2><p id="insights-explainer">Расчёты появятся после загрузки подтверждённых данных YouTube.</p></article>
+        <div class="neo-split neo-section-title"><h2>Приоритеты сегодня</h2><small>Только реальные данные</small></div>
+        <div id="insights-priorities" class="neo-insight-list"><p class="empty">Нет подтверждённых данных для рекомендаций.</p></div>
+        <div class="neo-data-note">Источник: YouTube Analytics API, публичные счётчики и Mac Bridge. Прогнозы, ROI и выручка не моделируются.</div>
+      </section>
+      <section class="neo-screen neo-detail" data-mobile-view="channel-detail" aria-labelledby="detail-title">
+        <div class="neo-page-heading"><button class="neo-back" type="button" data-mobile-target="channels">← Все каналы</button><span class="eyebrow">CHANNEL INTELLIGENCE</span><h1 id="detail-title">Канал</h1><p id="detail-meta" class="muted">Откройте канал в каталоге.</p><button id="detail-oauth-connect" type="button" class="ghost" hidden>Подключить Google для этого канала</button><button id="detail-schedule-refresh" type="button" class="ghost">Проверить расписание YouTube</button><small id="detail-schedule-refresh-state" role="status"></small></div>
+        <div class="neo-detail-summary card"><div class="neo-three-metrics">
+          <div><small>Подписчики</small><strong id="detail-subs">—</strong></div><div><small>Просмотры</small><strong id="detail-views">—</strong></div><div><small>Watch time</small><strong id="detail-watch">—</strong></div>
+        </div><p class="neo-data-note" id="detail-source">Источник: нет данных</p></div>
+        <div class="neo-tabs" role="tablist" aria-label="Показатели канала">
+          <button class="active" type="button" data-detail-tab="overview" aria-selected="true">Overview</button>
+          <button type="button" data-detail-tab="videos" aria-selected="false">Videos</button>
+          <button type="button" data-detail-tab="audience" aria-selected="false">Audience</button>
+          <button type="button" data-detail-tab="schedule" aria-selected="false">Schedule</button>
+        </div>
+        <div id="detail-overview" class="neo-detail-panel card" data-detail-panel="overview">
+          <h2>Просмотры за период</h2><svg id="detail-chart" viewBox="0 0 320 124" aria-label="Реальная ежедневная динамика просмотров канала" role="img"></svg><p class="neo-data-note" id="detail-chart-caption">Нет отчёта</p>
+        </div>
+        <div id="detail-videos" class="neo-detail-panel card" data-detail-panel="videos" hidden><h2>Лучшие видео</h2><div id="detail-top-videos" class="neo-feed"><p class="empty">Нет данных по видео.</p></div></div>
+        <div id="detail-audience" class="neo-detail-panel card" data-detail-panel="audience" hidden><h2>Аудитория</h2><div id="detail-audience-metrics" class="neo-feed"><p class="empty">Нет данных об аудитории.</p></div></div>
+        <div id="detail-schedule" class="neo-detail-panel card" data-detail-panel="schedule" hidden><h2>Расписание публикаций</h2><p id="detail-schedule-note" class="neo-data-note">Нет подтверждённого расписания из YouTube. Локальные файлы не используются для расчёта остатка.</p></div>
+      </section>
+      <section class="card event-section neo-screen" data-mobile-view="notifications">
+        <div class="section-title">
+          <div><span class="eyebrow">ALERT CENTER / ACTIVITY</span><h2>Уведомления и события</h2></div>
           <select id="event-filter" aria-label="Фильтр событий">
             <option value="all">Все события</option>
             <option value="subscribers">Рубежи подписчиков</option>
@@ -347,8 +413,23 @@
             <option value="errors">Ошибки</option>
           </select>
         </div>
+        <div class="neo-notification-settings card">
+          <div class="neo-split"><h2>Push-категории</h2><small>Параметры в облаке</small></div>
+          <div class="neo-notification-prefs" role="group" aria-label="Категории уведомлений">
+            <label><input type="checkbox" data-push-category="critical"> Критические</label>
+            <label><input type="checkbox" data-push-category="production"> Производство</label>
+            <label><input type="checkbox" data-push-category="analytics"> Аналитика</label>
+            <label><input type="checkbox" data-push-category="system"> Система</label>
+            <label><input type="checkbox" data-push-category="milestones"> Рубежи подписчиков</label>
+          </div>
+          <p id="notification-settings-message" class="neo-data-note" role="status">Настройки загрузятся из Cloudflare.</p>
+        </div>
+        <div class="neo-split neo-section-title"><h2>Последние уведомления</h2><button id="notifications-mark-read" type="button" class="ghost">Прочитано всё</button></div>
+        <div id="neo-notifications" class="neo-feed"><p class="empty">Ожидаем реальные события.</p></div>
+        <details class="neo-notifications-history"><summary>Подробный журнал и фильтры</summary>
         <div id="events" class="events"></div>
         <button id="events-more" class="ghost" hidden>Загрузить ещё события</button>
+        </details>
         <p class="caution">YouTube округляет публичные значения подписчиков: уведомление означает зафиксированный публичный рубеж, а не точное число.</p>
       </section>
 

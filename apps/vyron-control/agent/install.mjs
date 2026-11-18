@@ -35,6 +35,7 @@ const plist=`<?xml version="1.0" encoding="UTF-8"?>
 </array>
 <key>RunAtLoad</key><true/>
 <key>KeepAlive</key><true/>
+<key>ThrottleInterval</key><integer>30</integer>
 <key>StandardOutPath</key><string>${escape(join(dir,'agent.log'))}</string>
 <key>StandardErrorPath</key><string>${escape(join(dir,'agent-error.log'))}</string>
 </dict></plist>`;

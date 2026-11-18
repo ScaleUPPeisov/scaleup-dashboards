@@ -5,12 +5,20 @@ import { startOAuth,callbackOAuth,authorizedProfiles,disconnectProfile } from '.
 import { importVyronProfiles,bindExistingVYRONProfiles } from './oauth-import.mjs';
 import { runAnalyticsBatch,runManualAnalyticsBatch,runQueuedAnalyticsBatch,ANALYTICS_QUEUE_CRON } from './google-analytics.mjs';
 import { registerPush,unregisterPush,vapidPublic,dispatchPush,PUSH_CRON } from './push.mjs';
+import {receiveProduction,getProductionStatus} from './production.mjs';
+import {readNotificationCenter,writePrefs,markRead} from './notifications.mjs';
+import {detectOfflineMac} from './alert-probes.mjs';
+import {derivePublic24hSnapshots} from './snapshot-windows.mjs';
+import {analyticsSyncStatus} from './channel-health.mjs';
+import {refreshDueYouTubeSchedules,scheduledContentDays} from './youtube-schedule.mjs';
 
 const REQUIRED_TOKEN_LENGTH = 32;
 const EXPECTED_TABLES = Object.freeze([
   'channels','channel_snapshots','events','sync_runs','quota_buckets','devices',
   'commands','channel_analytics','channel_analytics_reports','google_oauth_sessions','google_oauth_profiles',
-  'google_oauth_client_credentials','cloud_analytics_runs','channel_analytics_queue','push_subscriptions','push_deliveries'
+  'google_oauth_client_credentials','cloud_analytics_runs','channel_analytics_queue','push_subscriptions','push_deliveries',
+  'production_sync','production_jobs','notification_preferences','notification_reads',
+  'channel_presence','channel_schedule'
 ]);
 function json(body,status=200) {
   return new Response(JSON.stringify(body),{
@@ -113,7 +121,7 @@ async function fetchStatus(env) {
   const db = env.DB;
   const now = new Date();
   const day = pacificDay(now);
-  const [c,e,q,s,d,cmd,reportHealth,snapshotTrend]=await Promise.all([
+  const [c,e,q,s,d,cmd,reportHealth,snapshotTrend,production,notifications,public24hRows]=await Promise.all([
     db.prepare(`SELECT c.id,c.name,c.subscribers,c.views,c.videos,c.hidden_subscribers,
       c.previous_subscribers,c.updated_at,
       a.period_days AS analytics_period_days,
@@ -131,10 +139,18 @@ async function fetchStatus(env) {
       a.source AS analytics_source,
       a.daily_json AS analytics_daily_json,
       r.reports_json AS analytics_reports_json,
-      o.channel_id IS NOT NULL AS analytics_authorized
+      o.channel_id IS NOT NULL AS analytics_authorized,
+      o.last_error AS oauth_last_error,
+      p.archived_at AS archived_at,
+      ys.status AS schedule_status,ys.complete AS schedule_complete,
+      ys.confirmed_json AS schedule_json,ys.scanned_count AS schedule_scanned,
+      ys.captured_at AS schedule_captured,ys.last_error AS schedule_error,
+      ys.next_refresh_at AS schedule_next
       FROM channels c LEFT JOIN channel_analytics a ON c.id=a.channel_id
       LEFT JOIN channel_analytics_reports r ON c.id=r.channel_id
       LEFT JOIN google_oauth_profiles o ON c.id=o.channel_id
+      LEFT JOIN channel_presence p ON p.channel_id=c.id
+      LEFT JOIN channel_schedule ys ON ys.channel_id=c.id
       ORDER BY c.name LIMIT 120`).all(),
     db.prepare('SELECT id,kind,channel_id,title,payload_json,occurred_at,received_at FROM events ORDER BY received_at DESC LIMIT 80').all(),
     db.prepare('SELECT spent FROM quota_buckets WHERE day_pt=?').bind(day).first(),
@@ -142,7 +158,8 @@ async function fetchStatus(env) {
     db.prepare('SELECT id,label,last_seen_at,status_json FROM devices ORDER BY id LIMIT 20').all(),
     db.prepare('SELECT id,target_device,kind,state,created_at,updated_at FROM commands ORDER BY created_at DESC LIMIT 25').all(),
     db.prepare(`SELECT COUNT(*) AS profiles,
-      SUM(CASE WHEN p.last_error IS NOT NULL AND p.last_error != '' THEN 1 ELSE 0 END) AS error_profiles,
+      SUM(CASE WHEN p.last_error IS NOT NULL AND p.last_error != '' AND p.last_error NOT LIKE 'Some Analytics breakdowns unavailable:%' THEN 1 ELSE 0 END) AS error_profiles,
+      SUM(CASE WHEN p.last_error LIKE 'Some Analytics breakdowns unavailable:%' THEN 1 ELSE 0 END) AS warning_profiles,
       SUM(CASE WHEN p.last_success_at IS NOT NULL THEN 1 ELSE 0 END) AS refreshed_profiles,
       SUM(CASE WHEN c.client_id_cipher IS NOT NULL AND c.client_secret_cipher IS NOT NULL
         THEN 1 ELSE 0 END) AS local_clients
@@ -158,10 +175,21 @@ async function fetchStatus(env) {
     FROM latest JOIN channel_snapshots snap ON
       snap.channel_id=latest.channel_id AND snap.observed_at=latest.latest_at
     ORDER BY latest.day,latest.channel_id LIMIT 1400`)
-      .bind(new Date(now.getTime()-21*86400000).toISOString()).all()
+      .bind(new Date(now.getTime()-21*86400000).toISOString()).all(),
+    getProductionStatus(db),
+    readNotificationCenter(db),
+    db.prepare("SELECT channel_id,observed_at,views FROM channel_snapshots "+
+      "WHERE observed_at>=? ORDER BY observed_at DESC LIMIT 4000")
+      .bind(new Date(now.getTime()-28*3600000).toISOString()).all()
   ]);
   const channels=(c.results||[]).map(row=>({
-    id:row.id,name:row.name,
+    id:row.id,name:row.name,archivedAt:row.archived_at||null,
+    youtubeSchedule:row.schedule_status?{
+      status:row.schedule_status,complete:row.schedule_complete===1,
+      videos:parsedJson(row.schedule_json,[]),scanned:row.schedule_scanned,
+      capturedAt:row.schedule_captured,reason:row.schedule_error||null,
+      nextRefreshAt:row.schedule_next,source:'YOUTUBE_DATA_API_OWNER_READONLY'
+    }:null,
     subscribers:number(row.subscribers),
     subscribersHidden:row.hidden_subscribers===1,
     subscribersRounded:true,
@@ -169,6 +197,7 @@ async function fetchStatus(env) {
     previousSubscribers:number(row.previous_subscribers),
     updatedAt:row.updated_at,
     analyticsAuthorized:row.analytics_authorized===1,
+    analyticsSyncStatus:analyticsSyncStatus(row,now),
     analytics:row.analytics_captured_at?{
       periodDays:row.analytics_period_days,
       views:number(row.analytics_views),
@@ -187,6 +216,10 @@ async function fetchStatus(env) {
       reports:parsedJson(row.analytics_reports_json,{})
     }:null
   }));
+  const public24h=derivePublic24hSnapshots(public24hRows.results||[],now);
+  for(const channel of channels)channel.publicViews24h=public24h.byChannel[channel.id]||null;
+  for(const channel of channels)channel.scheduledContentDays=
+    scheduledContentDays(channel.youtubeSchedule,now);
   // Public network totals are cumulative, not daily Analytics views.
   // Carry forward each channel's last known daily snapshot and expose coverage.
   const publicSnapshotsByDay=new Map();
@@ -236,7 +269,8 @@ async function fetchStatus(env) {
     configured,lastAttemptAt:s?.started_at||null,lastSuccessAt:lastSuccess?.ended_at||null,
     lastError:latestError,lastSource:s?.source||null,
     syncing:s?.status==='running',
-    channels,publicTrend,totalSubscribers:sum('subscribers'),totalViews:sum('views'),totalVideos:sum('videos'),
+    channels,publicTrend,public24h:{...public24h.summary,total:channels.length},
+    totalSubscribers:sum('subscribers'),totalViews:sum('views'),totalVideos:sum('videos'),
     analyticsSummary:(()=>{
       const available=channels.filter(ch=>ch.analytics);
       const views=available.reduce((sum,ch)=>sum+(ch.analytics.views??0),0);
@@ -286,6 +320,7 @@ async function fetchStatus(env) {
       linkedProfiles:Number(reportHealth?.profiles||0),
       refreshedProfiles:Number(reportHealth?.refreshed_profiles||0),
       profilesWithErrors:Number(reportHealth?.error_profiles||0),
+      profilesWithWarnings:Number(reportHealth?.warning_profiles||0),
       profilesWithEncryptedClient:Number(reportHealth?.local_clients||0),
       reportChannels:channels.filter(ch=>Object.keys(ch.analytics?.reports||{}).length>0).length,
       needsAuthorization:channels.filter(ch=>!ch.analyticsAuthorized).map(ch=>({id:ch.id,name:ch.name})),
@@ -300,6 +335,7 @@ async function fetchStatus(env) {
          env.GOOGLE_OAUTH_CLIENT_ID&&env.GOOGLE_OAUTH_CLIENT_SECRET)),
       webPush:Boolean(env.VAPID_PUBLIC_KEY&&env.VAPID_PRIVATE_KEY&&env.VAPID_SUBJECT)
     },
+    production,notifications,
     events, devices:(d.results||[]).map(x=>{
       let status={};try{status=JSON.parse(x.status_json||'{}');}catch{}
       return {id:x.id,label:x.label,lastSeenAt:x.last_seen_at,status};
@@ -354,7 +390,8 @@ async function eventHistory(env,request) {
 }
 
 async function enrollChannels(env,request,{fromAgent=false}={}) {
-  const raw=await readJson(request,32000);
+  const packet=await readJson(request,32000);
+  const raw=Array.isArray(packet)?packet:packet?.channels;
   if(!Array.isArray(raw))return errorReply('Expected channel list',400);
   const items=validatedChannelList(raw.map(row=>({
     id:row?.id??row?.channelId,name:row?.name??row?.title
@@ -377,6 +414,31 @@ async function enrollChannels(env,request,{fromAgent=false}={}) {
     SELECT json_extract(value,'$.id'),json_extract(value,'$.name') FROM json_each(?) WHERE 1
     ON CONFLICT(id) DO UPDATE SET name=excluded.name
   `).bind(JSON.stringify(items)).run();
+
+  // Older agents submit an array and never archive. New agents must explicitly
+  // certify a complete, versioned snapshot before any soft archive is permitted.
+  let presence={accepted:false,archived:0,reason:'legacy_or_incomplete_snapshot'};
+  if(fromAgent&&!Array.isArray(packet)){
+    const deviceId=String(packet.deviceId||'');
+    const complete=packet.complete===true&&packet.total===items.length;
+    const generatedAt=Date.parse(packet.generatedAt);
+    if(/^[A-Za-z0-9_-]{3,50}$/.test(deviceId)&&complete&&
+       Number.isFinite(generatedAt)&&Math.abs(Date.now()-generatedAt)<3600_000){
+      const generation=crypto.randomUUID(),at=new Date().toISOString();
+      await env.DB.prepare(
+        "INSERT INTO channel_presence(channel_id,device_id,generation,last_seen_at,archived_at) "+
+        "SELECT json_extract(value,'$.id'),?,?,?,NULL FROM json_each(?) WHERE 1 "+
+        "ON CONFLICT(channel_id) DO UPDATE SET "+
+        "device_id=excluded.device_id,generation=excluded.generation,"+
+        "last_seen_at=excluded.last_seen_at,archived_at=NULL"
+      ).bind(deviceId,generation,at,JSON.stringify(items)).run();
+      const archived=await env.DB.prepare(
+        "UPDATE channel_presence SET archived_at=? WHERE device_id=? "+
+        "AND generation<>? AND archived_at IS NULL"
+      ).bind(at,deviceId,generation).run();
+      presence={accepted:true,archived:Number(archived.meta?.changes||0)};
+    }
+  }
 
   let binding={boundChannels:[],needsAuthorization:[]};
   if(fromAgent&&candidates.some(row=>row.profileBinding)) {
@@ -436,7 +498,7 @@ async function enrollChannels(env,request,{fromAgent=false}={}) {
   }
   return json({
     enrolled:items.length,newlyEnrolled:newlyEnrolled.length,
-    existingChannelsPreserved:true,publicSync,
+    existingChannelsPreserved:true,channelPresence:presence,publicSync,
     analytics:{autoBound:binding.boundChannels,
       needsAuthorization:analyticsNeedsAuthorization.length?analyticsNeedsAuthorization:binding.needsAuthorization,
       queued:analyticsQueued,profileChecksFailed:binding.profileChecksFailed||0}
@@ -474,7 +536,9 @@ async function heartbeat(env,request) {
     'rootDiskFreeBytes','macAwake','diskOnline',
     'rendersActive','uploadsQueued','uploadsCompleted','uploadsToday',
     'rendersCompletedToday','uploadFailuresToday','jobsReadyUpload',
-    'channelsTotal','channelsBound','lastError','syncCursor'];
+    'channelsTotal','channelsBound','lastError','syncCursor',
+    'agentVersion','agentStateSource','agentLastError','agentLastErrorAt',
+    'agentLastSuccessAt','agentRetrySeconds'];
   const status={};
   for(const key of keys){
     const value=data.status?.[key];
@@ -606,6 +670,21 @@ export default {
       }
       if (url.pathname==='/api/push/unsubscribe'&&request.method==='POST')
         return json(await unregisterPush(env,request));
+      if (url.pathname==='/api/agent/production'&&request.method==='POST')
+        return json(await receiveProduction(env,request));
+      if (url.pathname==='/api/notifications'&&request.method==='GET')
+        return json(await readNotificationCenter(env.DB));
+      if (url.pathname==='/api/notifications/preferences'&&request.method==='POST')
+        return json(await writePrefs(env.DB,request));
+      if (url.pathname==='/api/notifications/read'&&request.method==='POST')
+        return json(await markRead(env.DB,request));
+      if (url.pathname==='/api/schedule/refresh'&&request.method==='POST') {
+        const body=await readJson(request,1500);
+        const channelId=String(body?.channelId||'');
+        if(!/^UC[A-Za-z0-9_-]{22}$/.test(channelId))
+          return errorReply('Invalid YouTube channel ID',400);
+        return json(await refreshDueYouTubeSchedules(env,new Date(),env.FETCH_IMPL||fetch,channelId));
+      }
       if (url.pathname==='/api/status'&&request.method==='GET')
         return json(await fetchStatus(env));
       if (url.pathname==='/api/refresh'&&request.method==='POST') {
@@ -652,7 +731,7 @@ export default {
         message.startsWith('YOUTUBE_CHANNELS_INCOMPLETE')||
           message.startsWith('YouTube channels.list HTTP')||
           message.startsWith('YouTube response missing items')?502:
-        /Invalid|^INVALID_|Unexpected|not configured|No channels|Unsupported|too large/.test(message)?400:500;
+        /Invalid|^INVALID_|^PRODUCTION_|Unexpected|not configured|No channels|Unsupported|too large/.test(message)?400:500;
       if(status===500)console.error('VYRON CONTROL request:',message);
       return errorReply(status===500?'Internal service error':message,status);
     }
@@ -662,7 +741,10 @@ export default {
       scheduledSync(controller,env),
       runAnalyticsBatch(env,controller),
       ...(controller.cron===ANALYTICS_QUEUE_CRON?[runQueuedAnalyticsBatch(env,controller)]:[]),
-      ...(controller.cron===PUSH_CRON?[dispatchPush(env)]:[])
+      ...(controller.cron===PUSH_CRON?[
+        detectOfflineMac(env).then(()=>dispatchPush(env)),
+        refreshDueYouTubeSchedules(env,new Date(controller.scheduledTime??Date.now()))
+      ]:[])
     ]).then(results=>{
       for (const result of results) if(result.status==='rejected')
         console.error('VYRON CONTROL scheduled task failed:',
