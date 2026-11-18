@@ -4009,8 +4009,11 @@ fn owner_schedule_reconciliation_reasons(
         if search_limit_reached{reasons.push("OWNER_SEARCH_PAGE_LIMIT")}
         if supplement_missing{reasons.push("OWNER_SUPPLEMENT_HYDRATION_MISSING")}
         if !search_exhausted{reasons.push("OWNER_SEARCH_NOT_EXHAUSTED")}
-        if verified_supplement_scheduled>0{reasons.push("UPLOADS_PLAYLIST_SCHEDULE_COVERAGE_MISMATCH")}
     }
+    // Even when search.list is on cooldown, cached owner upload IDs can expose
+    // Scheduled videos absent from uploads. Positive evidence is real, but the
+    // union still does not prove exhaustive coverage.
+    if verified_supplement_scheduled>0{reasons.push("UPLOADS_PLAYLIST_SCHEDULE_COVERAGE_MISMATCH")}
     reasons
 }
 fn full_sync_estimate(video_count:usize)->Value{
@@ -4175,17 +4178,18 @@ pub async fn youtube_list_existing_videos(
             if search_page.is_none(){search_exhausted=true;break}
         }
         if !search_exhausted&&search_error.is_none(){search_limit_reached=true}
-        // Rehydrate the *known* Scheduled IDs from prior verified cache as another
-        // read-only source. At most 50 distinct IDs per explicit diagnostic.
-        let mut known_seen=std::collections::HashSet::<String>::new();
-        for id in known_scheduled_ids.unwrap_or_default().into_iter().filter(|id|
-            id.len()==11&&id.chars().all(|c|c.is_ascii_alphanumeric()||c=='-'||c=='_')
-        ){
-            if known_seen.len()>=50{break}
-            if !known_seen.insert(id.clone()){continue}
-            known_id_checks+=1;
-            if !seen.contains(&id)&&supplement_seen.insert(id.clone()){supplemental_ids.push(id)}
-        }
+    }
+    // Local owner-upload history is independent of search indexing. Hydrate its
+    // IDs through authenticated videos.list even when search.list is cooling
+    // down; never trust cached Scheduled state or channel ownership blindly.
+    let mut known_seen=std::collections::HashSet::<String>::new();
+    for id in known_scheduled_ids.unwrap_or_default().into_iter().filter(|id|
+        id.len()==11&&id.chars().all(|c|c.is_ascii_alphanumeric()||c=='-'||c=='_')
+    ){
+        if known_seen.len()>=50{break}
+        if !known_seen.insert(id.clone()){continue}
+        known_id_checks+=1;
+        if !seen.contains(&id)&&supplement_seen.insert(id.clone()){supplemental_ids.push(id)}
     }
     let mut search_hydration_calls=0usize;
     let mut supplemental_missing=Vec::<String>::new();
@@ -7945,6 +7949,8 @@ mod false_zero_owner_search_regression_tests{
    let (_,scheduled,_,_)=inventory_bucket_counts(&[verified],chrono::DateTime::parse_from_rfc3339("2026-11-18T00:00:00Z").unwrap().with_timezone(&Utc));
    assert_eq!(scheduled,1);
    assert!(owner_schedule_reconciliation_reasons(1,true,false,false,true,false,1)
+      .contains(&"UPLOADS_PLAYLIST_SCHEDULE_COVERAGE_MISMATCH"));
+   assert!(owner_schedule_reconciliation_reasons(1,false,false,false,false,false,1)
       .contains(&"UPLOADS_PLAYLIST_SCHEDULE_COVERAGE_MISMATCH"));
  }
  #[test]fn partial_search_and_wrong_channel_are_not_complete_evidence(){
