@@ -4156,9 +4156,10 @@ pub async fn youtube_list_existing_videos(
     for chunk in supplemental_ids.chunks(50){
         search_hydration_calls+=1;
         emit_youtube_api_request(&app,"videos.list",operation_id.as_deref());
+        let joined_supplement=chunk.join(",");
         let response=client.get("https://www.googleapis.com/youtube/v3/videos")
             .bearer_auth(&token)
-            .query(&[("part","snippet,status,contentDetails,statistics"),("id",chunk.join(",").as_str())])
+            .query(&[("part","snippet,status,contentDetails,statistics"),("id",joined_supplement.as_str())])
             .send().await;
         let result=match response{
             Ok(r)=>r,
@@ -4196,7 +4197,7 @@ pub async fn youtube_list_existing_videos(
     for (index,id) in supplemental_ids.iter().enumerate(){
         if let Some(item)=by_id.get(id){
             if let Some(row)=authoritative_inventory_row(item,ids.len()+index){
-                let (..,scheduled,_,_)=inventory_bucket_counts(&[row.clone()],Utc::now());
+                let (_,scheduled,_,_)=inventory_bucket_counts(&[row.clone()],Utc::now());
                 if scheduled>0{verified_supplement_scheduled+=1}
                 out.push(row);supplemental_hydrated+=1;
             }
