@@ -8,6 +8,12 @@ on:
       - "apps/vyron-control/browser/neo-glass-visual-qa.mjs"
       - "apps/vyron-control/browser/pwa-install-smoke.mjs"
       - ".github/workflows/vyron-control-neo-glass-visual.yml"
+  pull_request:
+    paths:
+      - "apps/vyron-control/public/**"
+      - "apps/vyron-control/browser/pwa-install-smoke.mjs"
+      - "apps/vyron-control/browser/neo-glass-visual-qa.mjs"
+      - ".github/workflows/vyron-control-neo-glass-visual.yml"
   workflow_dispatch:
 
 permissions:

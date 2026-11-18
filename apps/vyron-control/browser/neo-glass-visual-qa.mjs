@@ -55,7 +55,8 @@ const qaStatus={
 const server=createServer(async (req,res)=>{
   const url=new URL(req.url,'http://localhost');
   if(url.pathname.startsWith('/api/')){
-    const payload=url.pathname==='/api/health'?{ok:true,d1:{schema:true}}:
+    const payload=url.pathname==='/api/auth/session'?{authenticated:true,csrfToken:'a'.repeat(64)}:
+      url.pathname==='/api/health'?{ok:true,d1:{schema:true}}:
       url.pathname==='/api/status'?qaStatus:
       url.pathname==='/api/oauth/profiles'?{configured:true,profiles:[]}:
       url.pathname==='/api/push/public-key'?{supported:false}:
@@ -88,9 +89,6 @@ try {
       serviceWorkers:'block'});
     const errors=[];
     page.on('pageerror',err=>errors.push(err.message));
-    await page.addInitScript(()=>{
-      sessionStorage.setItem('vyron-control-access','QA_FIXTURE_NOT_A_REAL_CONTROL_TOKEN');
-    });
     await page.goto(url,{waitUntil:'networkidle'});
     await page.waitForSelector('#dashboard:not([hidden])');
     await page.evaluate(async ()=>{
