@@ -483,7 +483,9 @@ async function heartbeat(env,request) {
     'rootDiskFreeBytes','macAwake','diskOnline',
     'rendersActive','uploadsQueued','uploadsCompleted','uploadsToday',
     'rendersCompletedToday','uploadFailuresToday','jobsReadyUpload',
-    'channelsTotal','channelsBound','lastError','syncCursor'];
+    'channelsTotal','channelsBound','lastError','syncCursor',
+    'agentVersion','agentStateSource','agentLastError','agentLastErrorAt',
+    'agentLastSuccessAt','agentRetrySeconds'];
   const status={};
   for(const key of keys){
     const value=data.status?.[key];
