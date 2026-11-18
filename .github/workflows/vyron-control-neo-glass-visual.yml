@@ -1,0 +1,60 @@
+name: VYRON CONTROL Neo Glass visual QA
+on:
+  push:
+    branches:
+      - "feature/vyron-control-neo-glass-*"
+    paths:
+      - "apps/vyron-control/public/**"
+      - "apps/vyron-control/browser/neo-glass-visual-qa.mjs"
+      - "apps/vyron-control/browser/pwa-install-smoke.mjs"
+      - ".github/workflows/vyron-control-neo-glass-visual.yml"
+  pull_request:
+    paths:
+      - "apps/vyron-control/public/**"
+      - "apps/vyron-control/browser/pwa-install-smoke.mjs"
+      - "apps/vyron-control/browser/neo-glass-visual-qa.mjs"
+      - ".github/workflows/vyron-control-neo-glass-visual.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  visual:
+    runs-on: ubuntu-24.04
+    # Microsoft-pinned image supplies actual WebKit + dependencies. GitHub's
+    # apt/browser downloader repeatedly stalled before running the QA test.
+    container: mcr.microsoft.com/playwright:v1.56.1-noble
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [chromium, webkit]
+    env:
+      NEO_QA_BROWSER: ${{ matrix.engine }}
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/vyron-control
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install pinned browser test dependency
+        run: npm install --no-save --ignore-scripts --no-audit --no-fund playwright@1.56.1
+      - name: Verify pinned browser binaries are present
+        run: test -d /ms-playwright/webkit-2215 && test -d /ms-playwright/chromium-1194
+      - name: Verify installed PWA offline fallback, Service Worker upgrade and session preservation
+        run: node browser/pwa-install-smoke.mjs
+      - name: Check 8 screens across viewport matrix and capture QA screenshots
+        run: node browser/neo-glass-visual-qa.mjs
+      - name: Upload QA screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vyron-control-neo-glass-screenshots-${{ matrix.engine }}
+          path: apps/vyron-control/qa-screenshots
+          if-no-files-found: ignore
+          retention-days: 7

@@ -1,0 +1,195 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
+
+const publicDir=dirname(fileURLToPath(import.meta.url));
+const html=await readFile(resolve(publicDir,'index.html'),'utf8');
+const css=await readFile(resolve(publicDir,'styles.css'),'utf8');
+const neoCss=await readFile(resolve(publicDir,'neo-glass.css'),'utf8');
+const neoJs=await readFile(resolve(publicDir,'neo-glass.mjs'),'utf8');
+const app=await readFile(resolve(publicDir,'app.js'),'utf8');
+const installer=await readFile(resolve(publicDir,'install-mac-agent.sh'),'utf8');
+const serviceWorker=await readFile(resolve(publicDir,'service-worker.js'),'utf8');
+const manifest=JSON.parse(await readFile(resolve(publicDir,'manifest.webmanifest'),'utf8'));
+
+test('workspace HTML has unique element IDs',()=>{
+  const ids=[...html.matchAll(/\bid="([^"]+)"/g)].map(match=>match[1]);
+  assert.equal(ids.length,new Set(ids).size,'duplicate HTML id found');
+});
+
+test('every static app.js DOM lookup exists in the HTML',()=>{
+  const ids=new Set([...html.matchAll(/\bid="([^"]+)"/g)].map(match=>match[1]));
+  const refs=[...app.matchAll(/\$\('([^']+)'\)/g)].map(match=>match[1]);
+  const missing=[...new Set(refs.filter(id=>!ids.has(id)))];
+  assert.deepEqual(missing,[]);
+});
+
+test('five workspace navigation tabs resolve to real views',()=>{
+  const nav=html.match(/<nav id="main-nav"[\s\S]*?<\/nav>/)?.[0]||'';
+  const targets=[...nav.matchAll(/data-mobile-target="([^"]+)"/g)].map(match=>match[1]).sort();
+  const views=[...html.matchAll(/data-mobile-view="([^"]+)"/g)].map(match=>match[1]);
+  assert.deepEqual(targets,['analytics','channels','overview','studio','system']);
+  for(const target of targets)assert.ok(views.includes(target),'missing view: '+target);
+  assert.ok(html.indexOf('id="main-nav"')<html.indexOf('class="headline"'),
+    'desktop workspace navigation must appear before the active view');
+  assert.ok(html.includes('id="channel-filter"'),'channel status filter missing');
+  assert.match(css,/\.mobile-view-hidden\s*\{\s*display:none!important\s*\}/);
+});
+
+test('overview dashboard exposes live sync, Analytics and event containers',()=>{
+  for(const id of [
+    'network-status','overview-channel-count','overview-analytics-count',
+    'overview-mac-state','overview-sync-time','overview-trend','overview-events'
+  ])assert.ok(html.includes('id="'+id+'"'),'missing overview element: '+id);
+  assert.match(app,/function renderOverview\(data\)/);
+  assert.match(app,/function renderOverviewTrend\(rows,source=/);
+});
+
+test('Mac system diagnostics expose real telemetry fields',()=>{
+  for(const id of [
+    'mac-vyron-version','mac-endlume-version','mac-os-version','mac-model',
+    'mac-architecture','mac-uptime','mac-memory','mac-root-disk',
+    'mac-power-state','mac-disk-state','mac-agent-error'
+  ])assert.ok(html.includes('id="'+id+'"'),'missing Mac diagnostic: '+id);
+  assert.match(app,/function formatBytes\(value\)/);
+  assert.match(app,/s\.memoryFreeBytes/);
+  assert.match(app,/s\.rootDiskFreeBytes/);
+});
+
+test('PWA caches every imported browser module but never authenticated API responses',()=>{
+  assert.ok(serviceWorker.includes("'/app.js'"));
+  const importedModules=[...app.matchAll(/from\s+['"]\.\/([^'"]+)['"]/g)]
+    .map(match=>match[1]);
+  assert.ok(importedModules.length>0,'expected browser modules to be imported');
+  for(const modulePath of importedModules)
+    assert.ok(serviceWorker.includes("'/"+modulePath+"'"),
+      'offline shell is missing imported module: '+modulePath);
+  assert.ok(serviceWorker.includes("vyron-peisov-yt-shell-v13"));
+  assert.ok(app.includes('async function ensureServiceWorker()'));
+  assert.ok(app.includes('void ensureServiceWorker().catch'));
+  assert.ok(serviceWorker.includes("url.pathname.startsWith('/api/')"));
+  assert.ok(serviceWorker.includes("cache.match('/')"));
+});
+
+test('Mac installer and dashboard command use the same source branch',()=>{
+  const branch='release/vyron-control-production';
+  assert.ok(app.includes('/'+branch+'/apps/vyron-control/public/install-mac-agent.sh'));
+  assert.ok(installer.includes("BRANCH='"+branch+"'"));
+});
+
+
+test('VYRON PEISOV YT iPhone 14 Pro 393px viewport respects safe areas',()=>{
+  assert.equal(manifest.name,'VYRON PEISOV YT');
+  assert.equal(manifest.short_name,'VYRON PEISOV YT');
+  assert.match(html,/apple-mobile-web-app-title" content="VYRON PEISOV YT"/);
+  assert.match(css,/@media\(min-width:375px\) and \(max-width:430px\)/);
+  assert.match(css,/overflow-x:clip/);
+  assert.match(css,/safe-area-inset-left/);
+  assert.match(css,/safe-area-inset-bottom/);
+  for(const id of ['network-attention','network-attention-message','overview-analytics-open',
+    'analytics-health-note','push-test'])
+    assert.ok(html.includes('id="'+id+'"'),id+' missing');
+  assert.match(app,/data.publicTrend/);
+  assert.match(app,/channelTotal>0&&row.covered===channelTotal/);
+});
+
+test('Neo Glass screens preserve eight connected views and accessible navigation',()=>{
+  for(const view of ['overview','channels','analytics','studio','system','notifications','insights','channel-detail'])
+    assert.ok(html.includes('data-mobile-view="'+view+'"'),'screen missing: '+view);
+  for(const id of ['studio-feed','studio-mac-state','insights-priorities',
+    'detail-top-videos','detail-chart','notifications-open','attention-count'])
+    assert.ok(html.includes('id="'+id+'"'),'missing connected element: '+id);
+  assert.ok(html.includes('href="/neo-glass.css"'));
+  assert.ok(app.includes("from './neo-glass.mjs'"));
+  assert.match(neoJs,/export function renderNeoGlass\(data\)/);
+  assert.match(neoJs,/export function selectNeoChannel\(channelId\)/);
+  assert.match(neoJs,/data\.events\|\|\[\]/);
+  assert.match(neoJs,/data\.channels\|\|\[\]/);
+});
+test('Neo Glass shell uses a real central scroll container with safe-area dock',()=>{
+  assert.match(neoCss,/#dashboard\s*\{[\s\S]*?overflow-y:auto/);
+  assert.match(neoCss,/height:100dvh/);
+  assert.match(neoCss,/env\(safe-area-inset-top/);
+  assert.match(neoCss,/env\(safe-area-inset-bottom/);
+  assert.match(neoCss,/@media\(max-width:359px\)/);
+  assert.match(neoCss,/@media\(prefers-reduced-motion:reduce\)/);
+  assert.ok(serviceWorker.includes("'/neo-glass.css'"));
+  assert.ok(serviceWorker.includes("'/neo-glass.mjs'"));
+  assert.ok(serviceWorker.includes("'/insights-core.mjs'"));
+  assert.ok(!neoJs.includes("fetch('/api/"),'UI must not initiate a second quota-consuming API request');
+});
+
+test('iPhone device diagnostics are manual-only, reachable in System, and do not clear session',()=>{
+  for(const id of ['diag-notification','diag-connectivity','diag-version',
+    'diag-notification-result','diag-connectivity-result','diag-version-result'])
+    assert.ok(html.includes('id="'+id+'"'),id+' missing');
+  assert.match(app,/deviceDiagnosticsButton\('diag-connectivity'/);
+  assert.match(app,/deviceDiagnosticsButton\('diag-version'/);
+  assert.match(app,/deviceDiagnosticsButton\('diag-notification'/);
+  assert.ok(app.includes("from './diagnostics.mjs'"));
+  assert.ok(serviceWorker.includes("'/diagnostics.mjs'"));
+  assert.match(app,/navigator\.serviceWorker/);
+  assert.match(app,/cache:'no-store'/);
+});
+
+// Missing Google channels must have owner consent entry points, never token entry.
+test('each missing Google channel has an explicit one-tap OAuth button',()=>{
+ assert.ok(app.includes("make('button','ghost','Подключить Google')"));
+ assert.match(app,/connect\.addEventListener\('click'/);
+ assert.match(app,/button\.click\(\); \/\/ Reuses the existing owner-only OAuth flow/);
+ assert.ok(app.includes('аккаунт-владелец'));
+ assert.ok(!app.includes('Вставьте Google Client Secret'));
+});
+
+// The Mac installer must fail closed on unsigned source or missing CI.
+test('Mac install never executes unsigned code or unpinned npm install',()=>{
+ assert.match(installer,/commit\.commit\?\.verification\?\.verified!==true/);
+ assert.ok(installer.includes('VYRON CONTROL Security Gate'));
+ assert.ok(installer.includes('git -C "$SOURCE_DIR" reset --hard "$NEXT_SHA"'));
+ assert.ok(installer.indexOf("verified Mac Bridge")===-1 || installer.includes('Проверены подпись GitHub'));
+ assert.ok(installer.indexOf('RELEASE_SHA="$NEXT_SHA" node')<
+   installer.indexOf('git -C "$SOURCE_DIR" reset --hard "$NEXT_SHA"'));
+ assert.match(installer,/npm ci --omit=dev --ignore-scripts/);
+ assert.equal(installer.includes('npm install --omit=dev'),false);
+ assert.equal(installer.includes('git clone --depth 1'),false);
+});
+
+test('Mac reinstall reuses existing private agent token without copying credentials',()=>{
+ assert.ok(installer.includes('AGENT_HOME/config.json'));
+ assert.ok(installer.includes('metadata.mode&0o077'));
+ assert.ok(installer.includes('config.url!==process.env.AGENT_EXPECTED_URL'));
+ assert.ok(installer.includes("process.stdout.write(config.token)"));
+ assert.ok(installer.includes('if [[ -f "$AGENT_HOME/config.json" ]]'));
+ assert.ok(installer.includes("read -r -s -p 'Ключ агента"));
+});
+
+
+test('iPhone topbar uses an opaque contrast background and safe-area layout',()=>{
+  assert.match(neoCss,/\.topbar\s*\{[\s\S]*?background:linear-gradient\(125deg,#211c3e/);
+  assert.match(neoCss,/\.topbar \.brand strong\{color:#fff/);
+  assert.match(neoCss,/\.shell\s*\{[\s\S]*?safe-area-inset-top/);
+  assert.ok(html.indexOf('<header class="topbar">')<html.indexOf('<section id="login"'));
+});
+
+test('channel thumbnails come from status with fallback and no extra YouTube API calls',()=>{
+  assert.match(app,/safeChannelAvatarUrl\(ch\.thumbnailUrl\)/);
+  assert.match(app,/photo\.loading='lazy'/);
+  assert.match(app,/photo\.addEventListener\('error',\(\)=>photo\.remove\(\)/);
+  assert.match(neoCss,/\.channel-avatar\.has-photo \.channel-avatar-photo\{opacity:1\}/);
+  assert.ok(!app.includes('youtube/v3/channels'));
+});
+
+test('persistent owner session uses no CONTROL_TOKEN browser storage',()=>{
+ assert.ok(!app.includes('sessionStorage.getItem'));
+ assert.ok(!app.includes('sessionStorage.setItem'));
+ assert.ok(!app.includes("Authorization: 'Bearer ' + accessToken"));
+ assert.match(app,/\/api\/auth\/session/);
+ assert.match(app,/\/api\/auth\/logout/);
+ assert.match(serviceWorker,/vyron-peisov-yt-shell-v13/);
+ assert.ok(!serviceWorker.includes("await cache.put(request,response.clone())"));
+ assert.ok(serviceWorker.includes("url.pathname.startsWith('/api/')"));
+ assert.ok(html.includes('id="boot-recovery"'));
+ assert.ok(html.includes('src="/recovery.js"'));
+});

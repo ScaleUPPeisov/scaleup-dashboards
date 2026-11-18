@@ -1,0 +1,26 @@
+{
+  "name": "@vyron/control",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "dependencies": {
+    "@block65/webcrypto-web-push": "2.0.0",
+    "@noble/ciphers": "1.2.1",
+    "hash-wasm": "4.12.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12"
+  },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node --test src/*.test.mjs cloudflare/tests/*.test.mjs agent/*.test.mjs browser/*.test.mjs public/*.test.mjs",
+    "agent:start": "node agent/run.mjs",
+    "agent:install": "node agent/install.mjs",
+    "push:keys": "node agent/generate-push-keys.mjs",
+    "agent:uninstall": "node agent/uninstall.mjs",
+    "build:browser": "esbuild browser/migration-crypto-entry.mjs --bundle --format=esm --platform=browser --target=es2022 --minify --outfile=public/migration-crypto.js",
+    "cloud:dev": "npx wrangler dev -c cloudflare/wrangler.jsonc",
+    "cloud:deploy": "npx wrangler deploy -c cloudflare/wrangler.jsonc"
+  }
+}

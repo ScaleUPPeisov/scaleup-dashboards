@@ -1,0 +1,30 @@
+name: VYRON CONTROL Security Gate
+on:
+  push:
+    branches:
+      - "feature/vyron-control-neo-glass-20261117"
+      - "release/vyron-control-production"
+    paths:
+      - "apps/vyron-control/**"
+      - ".github/workflows/vyron-control-security-gate.yml"
+      - ".github/workflows/vyron-control-cloudflare-release.yml"
+  pull_request:
+    paths:
+      - "apps/vyron-control/**"
+      - ".github/workflows/vyron-control-security-gate.yml"
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Reject unsafe migrations, privileged commands, cached credentials and unguarded deploy
+        working-directory: apps/vyron-control
+        run: node browser/release-security-gate.mjs
