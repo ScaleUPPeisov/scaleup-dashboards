@@ -139,7 +139,9 @@ describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
       incompleteReasons:['SCHEDULE_DATA_INCOMPLETE']
     });
     const second=await refreshOwnerInventoriesAuthoritative([channel()],true,[profile]);
-    expect(second.rows[0].status).toBe('API_FAILED');
+    // A full owner read with incomplete Scheduled coverage is PARTIAL_DATA,
+    // not a network/API failure, and it must not erase the last verified runway.
+    expect(second.rows[0].status).toBe('PARTIAL_DATA');
     const retained=loadChannelRunwayStore().channels.lumiere;
     expect(retained.scheduledVideoCount).toBe(prior.scheduledVideoCount);
     expect(retained.scheduledUntil).toBe(prior.scheduledUntil);
@@ -147,6 +149,69 @@ describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
     expect(retained.runwayDays).toBeUndefined();
     expect(retained.status).toBe('no-data');
     }finally{vi.useRealTimers()}
+  });
+
+  it('Neon-shaped owner response never claims confirmed zero or API failure when only scheduled coverage is unverified',async()=>{
+    vi.useFakeTimers();vi.setSystemTime(new Date('2026-11-18T05:00:00Z'));
+    try{
+      fixture.responses.set(profile.id,{
+        ...response(),
+        videos:Array.from({length:190},(_,i)=>editable('published-'+i,'public',undefined,'2026-10-01T00:00:00Z')),
+        youtubeFound:190,uniqueVideoIds:190,videosHydrated:190,
+        privateCount:0,scheduledCount:0,publicCount:190,
+        syncComplete:true,complete:true,scheduleComplete:false,
+        incompleteReasons:['SCHEDULE_EMPTY_NOT_INDEPENDENTLY_VERIFIED'],
+        searchUsed:true,searchExhausted:true
+      });
+      const result=await refreshOwnerInventoriesAuthoritative([channel()],true,[profile]);
+      expect(result.rows[0].status).toBe('PARTIAL_DATA');
+      expect(result.rows[0].diagnosticReasons).toContain('SCHEDULE_EMPTY_NOT_INDEPENDENTLY_VERIFIED');
+      expect(result.rows[0].observedScheduled).toBe(0);
+      // The refresh remains unconfirmed even though classification is no longer API_FAILED.
+      expect(result.failed).toBe(1);
+      expect(fixture.inventoryFiles.has('lumiere')).toBe(false);
+      const runway=loadChannelRunwayStore().channels.lumiere;
+      expect(runway.dataState).toBe('PARTIAL_DATA');
+      expect(runway.runwayDays).toBeUndefined();
+      expect(runway.status).toBe('no-data');
+    }finally{vi.useRealTimers()}
+  });
+
+  it('recovers historical positive Scheduled count from native owner snapshot after newer failed refresh, without claiming fresh runway',async()=>{
+    vi.useFakeTimers();vi.setSystemTime(new Date('2026-11-18T05:00:00Z'));
+    try{
+      const ch=channel('historical-positive');
+      const future=editable('future-Dec12','private','2026-12-12T20:00:00+07:00');
+      const persisted=await replaceExistingCacheFromSync(ch.id,[future],{
+        channelId:'UC-LUMIERE',syncComplete:true,scheduleComplete:true
+      });
+      expect(persisted.persisted).toBe(true);
+      storage.seed(CHANNEL_RUNWAY_STORAGE_KEY,JSON.stringify({version:1,channels:{
+        [ch.id]:{
+          channelId:ch.id,channelName:ch.name,
+          scheduledVideoCount:0,dataState:'PARTIAL_DATA',
+          lastRefreshAttemptAt:'2026-11-18T05:01:00Z',
+          lastRefreshError:'AUTHORITATIVE_INVENTORY_INCOMPLETE',
+          lastLocalCalculation:'2026-11-18T05:01:00Z',
+          status:'no-data',priority:'unknown'
+        }
+      }}));
+      const r=recalculateChannelRunway([ch],new Date(),false,storage as any).channels[ch.id];
+      expect(r.scheduledVideoCount).toBe(1);
+      expect(r.scheduledUntil).toBe('2026-12-12');
+      expect(r.dataState).toBe('PARTIAL_DATA');
+      expect(r.status).toBe('no-data');
+      expect(r.runwayDays).toBeUndefined();
+      expect(r.lastRefreshError).toBe('AUTHORITATIVE_INVENTORY_INCOMPLETE');
+      expect(r.lastScheduleSync).toBeTruthy();
+    }finally{vi.useRealTimers()}
+  });
+
+  it('historical partial evidence is labeled as cache, not current confirmed YouTube schedule',()=>{
+    const screen=readFileSync('src/ChannelRunway.tsx','utf8');
+    expect(screen).toContain('Исторический кэш Scheduled: текущий запас не подтверждён');
+    expect(screen).toContain('последняя проверенная дата • актуальная полнота неизвестна');
+    expect(screen).toContain('(кэш)*');
   });
 
   it('legacy confirmed zero without source coverage is UNKNOWN even with fresh lastScheduleSync',()=>{
@@ -298,4 +363,11 @@ describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
     expect(src).toContain('"privacyStatus":st.get("privacyStatus")');
     expect(src).toContain('"publishAt":st.get("publishAt")');
   });
+  it('partial owner inventory UI never calls an unverified zero an actual schedule count',()=>{
+    const screen=readFileSync('src/ChannelRunway.tsx','utf8');
+    expect(screen).toContain('количество Scheduled неизвестно');
+    expect(screen).toContain('полнота НЕ подтверждена');
+    expect(screen).not.toContain('найдено минимум ${row.observedScheduled||0} Scheduled');
+  });
+
 });
