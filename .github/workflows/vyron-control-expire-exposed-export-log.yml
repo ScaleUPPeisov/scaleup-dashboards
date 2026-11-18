@@ -1,0 +1,22 @@
+name: VYRON CONTROL — purge exposed temporary D1 export URL logs
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/vyron-control-expire-exposed-export-log.yml"
+permissions:
+  contents: read
+  actions: write
+jobs:
+  purge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Delete logs with time-limited signed export URL
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh api --method DELETE "repos/${REPO}/actions/runs/44239014452/logs"
+          echo "Removed workflow logs containing expiring signed full-D1 export URL."
