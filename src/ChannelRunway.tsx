@@ -138,14 +138,19 @@ export function ChannelRunway(){
         return{channel,record,content,localRunway,uploadRemaining:quota.uploads.remaining,uploadLimitKnown:quota.uploads.limitKnown} satisfies RunwayRow;
       }catch{failures++;return null}
     }).filter((x):x is RunwayRow=>Boolean(x)).sort((a,b)=>{
-      const rank=(row:RunwayRow)=>({
-        channelName:row.channel.name,
-        remoteScheduledDays:row.content.remoteScheduledDays,
-        scheduledUntil:row.content.scheduledThrough||row.record.scheduledUntil,
-        known:row.record.status!=='no-data',
-        historicalScheduledDays:row.record.status==='no-data'&&row.record.dataState==='PARTIAL_DATA'&&row.record.scheduledVideoCount>0&&row.record.scheduledUntil
-          ?Math.max(0,calendarDaysBetween(todayKey,row.record.scheduledUntil)??0):undefined
-      });
+      const rank=(row:RunwayRow)=>{
+        const rec=row.record;
+        const fresh=rec.dataState==='PARTIAL_DATA'&&Number(rec.lastObservedScheduledCount||0)>0&&Boolean(rec.lastObservedScheduledUntil);
+        const shownDate=fresh?rec.lastObservedScheduledUntil:rec.scheduledUntil;
+        return{
+          channelName:row.channel.name,
+          remoteScheduledDays:row.content.remoteScheduledDays,
+          scheduledUntil:row.content.scheduledThrough||shownDate,
+          known:rec.status!=='no-data',
+          historicalScheduledDays:rec.status==='no-data'&&rec.dataState==='PARTIAL_DATA'&&shownDate
+            ?Math.max(0,calendarDaysBetween(todayKey,shownDate)??0):undefined
+        };
+      };
       return compareYoutubeOnlyRunwayPriority(rank(a),rank(b));
     });
     return{rows,failures}
