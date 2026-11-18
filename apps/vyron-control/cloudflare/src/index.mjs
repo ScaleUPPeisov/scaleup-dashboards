@@ -9,6 +9,7 @@ import {receiveProduction,getProductionStatus} from './production.mjs';
 import {readNotificationCenter,writePrefs,markRead} from './notifications.mjs';
 import {detectOfflineMac} from './alert-probes.mjs';
 import {derivePublic24hSnapshots} from './snapshot-windows.mjs';
+import {refreshDueYouTubeSchedules,scheduledContentDays} from './youtube-schedule.mjs';
 
 const REQUIRED_TOKEN_LENGTH = 32;
 const EXPECTED_TABLES = Object.freeze([
@@ -16,7 +17,7 @@ const EXPECTED_TABLES = Object.freeze([
   'commands','channel_analytics','channel_analytics_reports','google_oauth_sessions','google_oauth_profiles',
   'google_oauth_client_credentials','cloud_analytics_runs','channel_analytics_queue','push_subscriptions','push_deliveries',
   'production_sync','production_jobs','notification_preferences','notification_reads',
-  'channel_presence'
+  'channel_presence','channel_schedule'
 ]);
 function json(body,status=200) {
   return new Response(JSON.stringify(body),{
@@ -138,11 +139,16 @@ async function fetchStatus(env) {
       a.daily_json AS analytics_daily_json,
       r.reports_json AS analytics_reports_json,
       o.channel_id IS NOT NULL AS analytics_authorized,
-      p.archived_at AS archived_at
+      p.archived_at AS archived_at,
+      ys.status AS schedule_status,ys.complete AS schedule_complete,
+      ys.confirmed_json AS schedule_json,ys.scanned_count AS schedule_scanned,
+      ys.captured_at AS schedule_captured,ys.last_error AS schedule_error,
+      ys.next_refresh_at AS schedule_next
       FROM channels c LEFT JOIN channel_analytics a ON c.id=a.channel_id
       LEFT JOIN channel_analytics_reports r ON c.id=r.channel_id
       LEFT JOIN google_oauth_profiles o ON c.id=o.channel_id
       LEFT JOIN channel_presence p ON p.channel_id=c.id
+      LEFT JOIN channel_schedule ys ON ys.channel_id=c.id
       ORDER BY c.name LIMIT 120`).all(),
     db.prepare('SELECT id,kind,channel_id,title,payload_json,occurred_at,received_at FROM events ORDER BY received_at DESC LIMIT 80').all(),
     db.prepare('SELECT spent FROM quota_buckets WHERE day_pt=?').bind(day).first(),
@@ -176,6 +182,12 @@ async function fetchStatus(env) {
   ]);
   const channels=(c.results||[]).map(row=>({
     id:row.id,name:row.name,archivedAt:row.archived_at||null,
+    youtubeSchedule:row.schedule_status?{
+      status:row.schedule_status,complete:row.schedule_complete===1,
+      videos:parsedJson(row.schedule_json,[]),scanned:row.schedule_scanned,
+      capturedAt:row.schedule_captured,reason:row.schedule_error||null,
+      nextRefreshAt:row.schedule_next,source:'YOUTUBE_DATA_API_OWNER_READONLY'
+    }:null,
     subscribers:number(row.subscribers),
     subscribersHidden:row.hidden_subscribers===1,
     subscribersRounded:true,
@@ -203,6 +215,8 @@ async function fetchStatus(env) {
   }));
   const public24h=derivePublic24hSnapshots(public24hRows.results||[],now);
   for(const channel of channels)channel.publicViews24h=public24h.byChannel[channel.id]||null;
+  for(const channel of channels)channel.scheduledContentDays=
+    scheduledContentDays(channel.youtubeSchedule,now);
   // Public network totals are cumulative, not daily Analytics views.
   // Carry forward each channel's last known daily snapshot and expose coverage.
   const publicSnapshotsByDay=new Map();
@@ -661,6 +675,13 @@ export default {
         return json(await writePrefs(env.DB,request));
       if (url.pathname==='/api/notifications/read'&&request.method==='POST')
         return json(await markRead(env.DB,request));
+      if (url.pathname==='/api/schedule/refresh'&&request.method==='POST') {
+        const body=await readJson(request,1500);
+        const channelId=String(body?.channelId||'');
+        if(!/^UC[A-Za-z0-9_-]{22}$/.test(channelId))
+          return errorReply('Invalid YouTube channel ID',400);
+        return json(await refreshDueYouTubeSchedules(env,new Date(),env.FETCH_IMPL||fetch,channelId));
+      }
       if (url.pathname==='/api/status'&&request.method==='GET')
         return json(await fetchStatus(env));
       if (url.pathname==='/api/refresh'&&request.method==='POST') {
@@ -717,7 +738,10 @@ export default {
       scheduledSync(controller,env),
       runAnalyticsBatch(env,controller),
       ...(controller.cron===ANALYTICS_QUEUE_CRON?[runQueuedAnalyticsBatch(env,controller)]:[]),
-      ...(controller.cron===PUSH_CRON?[detectOfflineMac(env).then(()=>dispatchPush(env))]:[])
+      ...(controller.cron===PUSH_CRON?[
+        detectOfflineMac(env).then(()=>dispatchPush(env)),
+        refreshDueYouTubeSchedules(env,new Date(controller.scheduledTime??Date.now()))
+      ]:[])
     ]).then(results=>{
       for (const result of results) if(result.status==='rejected')
         console.error('VYRON CONTROL scheduled task failed:',
