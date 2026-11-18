@@ -5,7 +5,7 @@ import type {Channel,YoutubeExistingVideo} from './types';
 import {markYoutubeCache} from './youtubeCache';
 import {bindYoutubeQuotaTraceContext,youtubeOperationActualCost,youtubeQuotaState,youtubeQuotaUsage} from './youtubeQuota';
 import {classifyYoutubeChannels} from './youtubeStatisticsCenter';
-import {loadChannelRunwayStore,upsertChannelRunwayFromYoutube} from './channelRunwayStore';
+import {loadChannelRunwayStore,markRunwayRefreshIssue,upsertChannelRunwayFromYoutube} from './channelRunwayStore';
 
 export const OWNER_INVENTORY_TTL_MS=6*60*60*1000;
 export const OWNER_INVENTORY_EVENT='vyron:owner-inventory-refresh';
@@ -143,6 +143,12 @@ function duplicateExtraChannelIds(channels:Channel[],profiles:Awaited<ReturnType
 }
 function pushOwnerRow(summary:OwnerInventoryRefreshSummary,row:OwnerInventoryRefreshRow){
   summary.rows.push(row);summary.counts[row.status]++;
+  // One failed owner read must never turn a previously verified schedule into zero days.
+  if(row.status==='API_FAILED'){
+    markRunwayRefreshIssue({id:row.channelId,name:row.channelName},row.error==='AUTHORITATIVE_INVENTORY_INCOMPLETE'?'PARTIAL_DATA':'API_FAILED',row.error||'YouTube API failed');
+  }else if(row.status==='UNLINKED'||row.status==='MISMATCH'||row.status==='OAUTH_BLOCKED'||row.status==='DUPLICATE'){
+    markRunwayRefreshIssue({id:row.channelId,name:row.channelName},'AUTH_REQUIRED',row.error||row.status);
+  }
   if(row.status==='UPDATED')summary.updated++;
   else if(row.status==='API_FAILED'||row.status==='PERSISTENCE_FAILED')summary.failed++;
   else if(row.status==='FRESH_CACHE')summary.skippedFresh++;
@@ -194,7 +200,7 @@ export async function refreshOwnerInventoriesAuthoritative(
       const apiRequests=Number.isFinite(backendApi)&&backendApi>=1?backendApi:Object.values(fallback?.methods||{}).reduce((n:number,x:any)=>n+Number(x.calls||0),0);
       const quotaUnits=Number.isFinite(backendQuota)&&backendQuota>=0?backendQuota:Number(fallback?.buckets.general||apiRequests);
       summary.apiRequests+=apiRequests;summary.quotaUnits+=quotaUnits;
-      if(result.channelId&&String(result.channelId)!==String(linked.youtubeChannelId)){
+      if(!result.channelId||String(result.channelId)!==String(linked.youtubeChannelId)){
         pushOwnerRow(summary,{channelId:channel.id,channelName:channel.name,status:'API_FAILED',profileId:linked.profile.id,youtubeChannelId:linked.youtubeChannelId,apiRequests,quotaUnits,error:'AUTHORITATIVE_CHANNEL_ID_MISMATCH'});
         continue
       }
@@ -204,7 +210,7 @@ export async function refreshOwnerInventoriesAuthoritative(
         continue
       }
       markYoutubeCache('existing',channel.id);
-      if(!(result.syncComplete??result.complete)){
+      if(!(result.syncComplete??result.complete)||scheduleSyncTruthFromInfo(result)!=='complete'){
         pushOwnerRow(summary,{channelId:channel.id,channelName:channel.name,status:'API_FAILED',profileId:linked.profile.id,youtubeChannelId:linked.youtubeChannelId,apiRequests,quotaUnits,error:'AUTHORITATIVE_INVENTORY_INCOMPLETE'});
         continue
       }
