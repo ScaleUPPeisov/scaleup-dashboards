@@ -10,6 +10,9 @@ import {loadChannelRunwayStore,markRunwayRefreshIssue,upsertChannelRunwayFromYou
 export const OWNER_INVENTORY_TTL_MS=6*60*60*1000;
 export const OWNER_INVENTORY_EVENT='vyron:owner-inventory-refresh';
 const ownerInventoryRuns=new Map<string,Promise<OwnerInventoryRefreshSummary>>();
+const ownerAttemptAt=new Map<string,number>();
+const ownerSearchAt=new Map<string,number>();
+const OWNER_SEARCH_COOLDOWN_MS=10*60*1000;
 
 export type OwnerYoutubeInventorySnapshot={
   channelId:string;
@@ -120,8 +123,6 @@ export function aggregateOwnerInventories(channels:Channel[],nowMs=Date.now()):O
 
 export function ownerInventoryCacheStale(channelId:string,nowMs=Date.now(),ttlMs=OWNER_INVENTORY_TTL_MS){
   const cache=readExistingCache(channelId);
-  const runway=loadChannelRunwayStore().channels[channelId];
-  if(!runway||runway.status==='no-data'||runway.scheduledVideoCount===0)return true;
   const at=Date.parse(cache?.lastCompleteAt||cache?.updatedAt||'');
   return !Number.isFinite(at)||nowMs-at>=ttlMs
 }
@@ -187,7 +188,8 @@ export async function refreshOwnerInventoriesAuthoritative(
       pushOwnerRow(summary,{channelId:channel.id,channelName:channel.name,status:'OAUTH_BLOCKED',profileId:linked.profile.id,youtubeChannelId:linked.youtubeChannelId,apiRequests:0,quotaUnits:0,error:'credentialStatus='+String(linked.profile.credentialStatus||'UNKNOWN')});
       continue
     }
-    if(!force&&!ownerInventoryCacheStale(channel.id)){
+    if(!force&&(!ownerInventoryCacheStale(channel.id)||
+      Date.now()-(ownerAttemptAt.get(channel.id)||0)<OWNER_INVENTORY_TTL_MS)){
       pushOwnerRow(summary,{channelId:channel.id,channelName:channel.name,status:'FRESH_CACHE',profileId:linked.profile.id,youtubeChannelId:linked.youtubeChannelId,apiRequests:0,quotaUnits:0});
       continue
     }
@@ -204,12 +206,15 @@ export async function refreshOwnerInventoriesAuthoritative(
     bindYoutubeQuotaTraceContext(operationId,{reason:'OWNER_INVENTORY_REFRESH',channelIds:[channel.id],mode:force?'MANUAL':'BACKGROUND',estimatedUnits});
     try{
       // Only explicit single-channel refreshes may use bounded owner-only search.
-      const targeted=force&&enabled.length===1;
+      const targeted=force&&enabled.length===1&&
+        Date.now()-(ownerSearchAt.get(channel.id)||0)>=OWNER_SEARCH_COOLDOWN_MS;
       const prior=readExistingCache(channel.id);
       const knownScheduledIds=targeted?[...Object.values(prior?.baseline||{}),...(prior?.videos||[])]
         .filter(v=>v.privacyStatus==='private'&&Boolean(v.publishAt)&&Date.parse(v.publishAt!)>Date.now())
         .map(v=>v.id).filter((id,i,all)=>all.indexOf(id)===i).slice(0,50):[];
+      ownerAttemptAt.set(channel.id,Date.now());
       const result=await api.youtubeListExisting(linked.profile.id,5000,operationId,targeted,knownScheduledIds);
+      if(targeted&&result.searchUsed===true)ownerSearchAt.set(channel.id,Date.now());
       const backendApi=Number(result.fullSyncApiRequests),backendQuota=Number(result.fullSyncEstimatedQuotaCost);
       const fallback=!Number.isFinite(backendApi)||backendApi<1?youtubeOperationActualCost(operationId):null;
       const apiRequests=Number.isFinite(backendApi)&&backendApi>=1?backendApi:Object.values(fallback?.methods||{}).reduce((n:number,x:any)=>n+Number(x.calls||0),0);
