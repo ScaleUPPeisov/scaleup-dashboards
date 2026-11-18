@@ -2,6 +2,20 @@ import {
   baselineMilestone, chunk, crossedMilestones, pacificDay, publicCount, cronSlot, VIDEO_ID_PREFIX
 } from './core.mjs';
 
+// Official YouTube avatar URLs only; no additional YouTube API calls.
+export function youtubeChannelThumbnail(snippet) {
+  const t=snippet?.thumbnails;
+  const candidate=t?.medium?.url||t?.high?.url||t?.default?.url;
+  if(typeof candidate!=='string'||candidate.length>1600)return null;
+  try{
+    const u=new URL(candidate);
+    if(u.protocol!=='https:'||u.username||u.password||u.port||u.hash||
+      !['yt3.ggpht.com','yt3.googleusercontent.com','lh3.googleusercontent.com',
+        'i.ytimg.com'].includes(u.hostname.toLowerCase()))return null;
+    return u.href;
+  }catch{return null;}
+}
+
 function claimChanges(result) { return Number(result?.meta?.changes || 0); }
 
 function getQuotaBudget(env) {
@@ -100,7 +114,7 @@ export async function runCountersSync(env, { source, slot, date = new Date(), fe
           });
         }
         rows.push({
-          id: item.id, name, subscribers, views:publicCount(statistics.viewCount),
+          id: item.id, name, thumbnail_url:youtubeChannelThumbnail(item.snippet), subscribers, views:publicCount(statistics.viewCount),
           videos:publicCount(statistics.videoCount),
           hidden_subscribers: hidden ? 1 : 0,
           max_milestone: maxMilestone,
@@ -114,10 +128,11 @@ export async function runCountersSync(env, { source, slot, date = new Date(), fe
         const rowsJson = JSON.stringify(rows);
         const stmts = [
           db.prepare(`
-            INSERT INTO channels (id,name,subscribers,views,videos,hidden_subscribers,
+            INSERT INTO channels (id,name,thumbnail_url,subscribers,views,videos,hidden_subscribers,
               max_milestone,previous_subscribers,updated_at)
             SELECT
               json_extract(value,'$.id'), json_extract(value,'$.name'),
+              json_extract(value,'$.thumbnail_url'),
               json_extract(value,'$.subscribers'), json_extract(value,'$.views'),
               json_extract(value,'$.videos'), json_extract(value,'$.hidden_subscribers'),
               json_extract(value,'$.max_milestone'),
@@ -125,7 +140,8 @@ export async function runCountersSync(env, { source, slot, date = new Date(), fe
               json_extract(value,'$.updated_at')
             FROM json_each(?) WHERE 1
             ON CONFLICT(id) DO UPDATE SET
-              name=excluded.name,subscribers=excluded.subscribers,
+              name=excluded.name,thumbnail_url=COALESCE(excluded.thumbnail_url,channels.thumbnail_url),
+                subscribers=excluded.subscribers,
               views=excluded.views,videos=excluded.videos,
               hidden_subscribers=excluded.hidden_subscribers,
               max_milestone=excluded.max_milestone,
@@ -192,7 +208,7 @@ export async function runCountersSync(env, { source, slot, date = new Date(), fe
             occurred_at:observedAt,received_at:observedAt
           });
           rows.push({
-            id:item.id,name,subscribers,views:publicCount(statistics.viewCount),
+            id:item.id,name,thumbnail_url:youtubeChannelThumbnail(item.snippet),subscribers,views:publicCount(statistics.viewCount),
             videos:publicCount(statistics.videoCount),hidden_subscribers:hidden?1:0,
             max_milestone:maxMilestone,previous_subscribers:previous.subscribers,
             updated_at:observedAt
@@ -202,15 +218,17 @@ export async function runCountersSync(env, { source, slot, date = new Date(), fe
           const rowsJson=JSON.stringify(rows);
           const stmts=[
             db.prepare(`
-              INSERT INTO channels (id,name,subscribers,views,videos,hidden_subscribers,
+              INSERT INTO channels (id,name,thumbnail_url,subscribers,views,videos,hidden_subscribers,
                 max_milestone,previous_subscribers,updated_at)
               SELECT json_extract(value,'$.id'),json_extract(value,'$.name'),
+                json_extract(value,'$.thumbnail_url'),
                 json_extract(value,'$.subscribers'),json_extract(value,'$.views'),
                 json_extract(value,'$.videos'),json_extract(value,'$.hidden_subscribers'),
                 json_extract(value,'$.max_milestone'),json_extract(value,'$.previous_subscribers'),
                 json_extract(value,'$.updated_at')
               FROM json_each(?) WHERE 1
-              ON CONFLICT(id) DO UPDATE SET name=excluded.name,subscribers=excluded.subscribers,
+              ON CONFLICT(id) DO UPDATE SET name=excluded.name,thumbnail_url=COALESCE(excluded.thumbnail_url,channels.thumbnail_url),
+                subscribers=excluded.subscribers,
                 views=excluded.views,videos=excluded.videos,
                 hidden_subscribers=excluded.hidden_subscribers,max_milestone=excluded.max_milestone,
                 previous_subscribers=excluded.previous_subscribers,updated_at=excluded.updated_at

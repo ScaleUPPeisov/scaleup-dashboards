@@ -66,7 +66,7 @@ test('PWA caches every imported browser module but never authenticated API respo
   for(const modulePath of importedModules)
     assert.ok(serviceWorker.includes("'/"+modulePath+"'"),
       'offline shell is missing imported module: '+modulePath);
-  assert.ok(serviceWorker.includes("vyron-peisov-yt-shell-v11"));
+  assert.ok(serviceWorker.includes("vyron-peisov-yt-shell-v12"));
   assert.ok(app.includes('async function ensureServiceWorker()'));
   assert.ok(app.includes('void ensureServiceWorker().catch'));
   assert.ok(serviceWorker.includes("url.pathname.startsWith('/api/')"));
@@ -163,4 +163,20 @@ test('Mac reinstall reuses existing private agent token without copying credenti
  assert.ok(installer.includes("process.stdout.write(config.token)"));
  assert.ok(installer.includes('if [[ -f "$AGENT_HOME/config.json" ]]'));
  assert.ok(installer.includes("read -r -s -p 'Ключ агента"));
+});
+
+
+test('iPhone topbar uses an opaque contrast background and safe-area layout',()=>{
+  assert.match(neoCss,/\.topbar\s*\{[\s\S]*?background:linear-gradient\(125deg,#211c3e/);
+  assert.match(neoCss,/\.topbar \.brand strong\{color:#fff/);
+  assert.match(neoCss,/\.shell\s*\{[\s\S]*?safe-area-inset-top/);
+  assert.ok(html.indexOf('<header class="topbar">')<html.indexOf('<section id="login"'));
+});
+
+test('channel thumbnails come from status with fallback and no extra YouTube API calls',()=>{
+  assert.match(app,/safeChannelAvatarUrl\(ch\.thumbnailUrl\)/);
+  assert.match(app,/photo\.loading='lazy'/);
+  assert.match(app,/photo\.addEventListener\('error',\(\)=>photo\.remove\(\)/);
+  assert.match(neoCss,/\.channel-avatar\.has-photo \.channel-avatar-photo\{opacity:1\}/);
+  assert.ok(!app.includes('youtube/v3/channels'));
 });
