@@ -1,6 +1,8 @@
 import { MacBridge } from './bridge.mjs';
 import { MirrorExport } from './mirror.mjs';
 import { readFile,stat } from 'node:fs/promises';
+import {setTimeout as sleep} from 'node:timers/promises';
+import {diagnosticCode} from './retry.mjs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -40,10 +42,38 @@ const bridge=new MacBridge({
 await bridge.initialize();
 console.log('VYRON CONTROL Mac bridge started (no publishing or updater permissions).');
 let running=true;
-process.on('SIGTERM',()=>{running=false;});
-process.on('SIGINT',()=>{running=false;});
-while(running) {
-  try {if(mirror)await mirror.refresh();await bridge.tick();}
-  catch(e){console.error('Mac bridge sync failed:',e.message);}
-  await new Promise(resolve=>setTimeout(resolve,45_000));
+const stop=new AbortController();
+const shutdown=()=>{running=false;stop.abort();};
+process.on('SIGTERM',shutdown);
+process.on('SIGINT',shutdown);
+let consecutiveFailures=0;
+while(running){
+  try {
+    if(mirror){
+      try {
+        const result=await mirror.refresh();
+        bridge.setMirrorWarning(result.status==='mirror_missing'?
+          new Error('mirror_missing'):null);
+      }catch(error){
+        bridge.setMirrorWarning(error);
+        // A bad or missing local VYRON snapshot must never silence Cloudflare heartbeat.
+        console.error('Mac bridge local snapshot:',diagnosticCode(error));
+      }
+    }
+    const results=await bridge.tick();
+    consecutiveFailures=0;
+    for(const [operation,result] of Object.entries(results||{})){
+      if(result?.failed)console.error('Mac bridge '+operation+': '+result.code+
+        '; retry scheduled');
+    }
+  }catch(error){
+    consecutiveFailures=Math.min(consecutiveFailures+1,12);
+    console.error('Mac bridge heartbeat:',diagnosticCode(error));
+  }
+  if(!running)break;
+  const base=consecutiveFailures?
+    Math.min(15*60_000,15_000*2**(consecutiveFailures-1)):45_000;
+  const delay=consecutiveFailures?Math.round(base*(0.9+Math.random()*.2)):base;
+  try{await sleep(delay,undefined,{signal:stop.signal});}
+  catch(error){if(error.name!=='AbortError')console.error('Mac bridge sleep:',diagnosticCode(error));}
 }
