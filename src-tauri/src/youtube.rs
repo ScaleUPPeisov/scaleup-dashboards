@@ -4274,7 +4274,10 @@ pub async fn youtube_list_existing_videos(
     let expected=if playlist_exhausted&&!limit_truncated{unique_video_ids}else{std::cmp::min(std::cmp::max(playlist_reported_total,unique_video_ids),limit)};
     let (private_count,scheduled_count,public_count,unlisted_count)=inventory_bucket_counts(&out,Utc::now());
     let full_sync_api_requests=1+playlist_calls+video_calls+search_pages;
-    let full_sync_estimated_quota_cost=full_sync_api_requests;
+    // Since June 2026 search.list is charged in its own Search Queries
+    // bucket, not the General API quota. Keep all HTTP calls in apiRequests
+    // but charge General only for channels/playlistItems/videos calls.
+    let full_sync_estimated_quota_cost=1+playlist_calls+video_calls;
 
     Ok(json!({
         "channelId":profile.channel_id,
@@ -4326,6 +4329,7 @@ pub async fn youtube_list_existing_videos(
         "playlistCalls":playlist_calls,
         "videoCalls":video_calls,
         "searchCalls":search_pages,
+        "searchQuotaCost":search_pages,
         "fullSyncApiRequests":full_sync_api_requests,
         "fullSyncEstimatedQuotaCost":full_sync_estimated_quota_cost,
         "estimatedForInventory":full_sync_estimate(observed_total),
