@@ -36,7 +36,7 @@ const server=createServer(async(req,res)=>{
    let content=await readFile(path);
    if(url.pathname==='/service-worker.js'&&upgrade)
      content=Buffer.from(content.toString('utf8').replaceAll(
-       'vyron-peisov-yt-shell-v10','vyron-peisov-yt-shell-v11'));
+       'vyron-peisov-yt-shell-v11','vyron-peisov-yt-shell-v12'));
    res.writeHead(200,{'Content-Type':mime[extname(path)]||'application/octet-stream',
      'Cache-Control':'no-store'}).end(content);
  }catch{res.writeHead(404).end();}
@@ -50,6 +50,23 @@ try{
  const page=await context.newPage();
  page.on('pageerror',e=>console.error('PWA pageerror:',e.message));
  await page.goto(origin+'/',{waitUntil:'domcontentloaded'});
+ if(engine==='webkit'){
+   // Playwright documents Service Worker automation support only on Chromium.
+   // A headless WebKit SW activation result would NOT prove iPhone Safari Push,
+   // installed-PWA controller behavior, or an offline navigation. Fail neither
+   // the visual browser gate nor the physical-device gate on unsupported APIs.
+   const sw=await page.request.get(origin+'/service-worker.js');
+   assert.equal(sw.ok(),true);
+   assert.match(await sw.text(),/vyron-peisov-yt-shell-v11/);
+   const manifest=await page.request.get(origin+'/manifest.webmanifest');
+   assert.equal(manifest.ok(),true);
+   assert.equal((await manifest.json()).name,'VYRON PEISOV YT');
+   await page.evaluate(()=>sessionStorage.setItem('vyron-control-access','QA_SYNTHETIC_ONLY'));
+   await page.reload({waitUntil:'domcontentloaded'});
+   assert.equal(await page.evaluate(()=>sessionStorage.getItem('vyron-control-access')),
+     'QA_SYNTHETIC_ONLY','WebKit browser navigation must preserve session');
+   console.log('PASS webkit PWA shell/manifest/session; SKIP native SW activation, offline navigation and Push delivery (unsupported by Playwright WebKit; physical iPhone required).');
+ }else{
  // Set the fixture session ONCE, not on every reload, to prove real persistence.
  await page.evaluate(()=>sessionStorage.setItem('vyron-control-access','QA_SYNTHETIC_ONLY'));
  await page.reload({waitUntil:'domcontentloaded'});
@@ -58,10 +75,21 @@ try{
    return Boolean(reg?.active);
  },{timeout:20000});
  await page.waitForFunction(async()=>(
-   (await caches.keys()).includes('vyron-peisov-yt-shell-v10')
+   (await caches.keys()).includes('vyron-peisov-yt-shell-v11')
  ),{timeout:20000});
- await page.waitForFunction(()=>Boolean(navigator.serviceWorker?.controller),
-   undefined,{timeout:20000});
+ if(engine==='webkit'){
+   // WebKit headless can have a registered active SW without claiming a tab.
+   // Verify that offline shell bytes exist; real Home Screen control still
+   // requires physical Safari confirmation.
+   const ready=await page.evaluate(async()=>{
+     const reg=await navigator.serviceWorker.getRegistration();
+     return Boolean(reg?.active);
+   });
+   assert.equal(ready,true,'WebKit must register an active Service Worker');
+ }else{
+   await page.waitForFunction(()=>Boolean(navigator.serviceWorker?.controller),
+     undefined,{timeout:20000});
+ }
  const local=await page.evaluate(async()=>({
   cached:await caches.keys(),
   apiCached:await Promise.all((await caches.keys()).map(async key=>
@@ -91,35 +119,45 @@ try{
  await page.evaluate(()=>{
    void navigator.serviceWorker.getRegistration().then(reg=>reg.update());
  });
- // install can create the new cache before activate removes the old one.
- // Do not assert an activation side effect at install time.
- await page.waitForFunction(async()=>{
-   const reg=await navigator.serviceWorker.getRegistration();
-   if(!reg?.active)return false;
-   return await new Promise(resolve=>{
-     const channel=new MessageChannel();
-     const timeout=setTimeout(()=>resolve(false),550);
-     channel.port1.onmessage=event=>{
-       clearTimeout(timeout);
-       resolve(event.data?.cacheName==='vyron-peisov-yt-shell-v11'&&event.data?.complete===true);
-     };
-     reg.active.postMessage({type:'VYRON_PWA_VERSION_PROBE'},[channel.port2]);
-   });
- },undefined,{timeout:30000});
+ // Sequential, bounded handshakes prevent concurrent requestAnimationFrame
+ // polling from mixing retiring and newly active Service Worker responses.
+ const upgraded=await page.evaluate(async()=>{
+   const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+   const probe=async()=>{
+     const reg=await navigator.serviceWorker.getRegistration();
+     if(!reg?.active)return {name:null,complete:false};
+     return new Promise(resolve=>{
+       const channel=new MessageChannel();
+       const timeout=setTimeout(()=>resolve({name:'timeout',complete:false}),800);
+       channel.port1.onmessage=e=>{
+         clearTimeout(timeout);
+         resolve({name:e.data?.cacheName,complete:e.data?.complete===true});
+       };
+       reg.active.postMessage({type:'VYRON_PWA_VERSION_PROBE'},[channel.port2]);
+     });
+   };
+   let last={name:'not_started',complete:false};
+   for(let attempt=0;attempt<50;attempt++){
+     last=await probe();
+     if(last.name==='vyron-peisov-yt-shell-v12'&&last.complete){
+       await delay(150);
+       const again=await probe();
+       if(again.name==='vyron-peisov-yt-shell-v12'&&again.complete)
+         return {ok:true,cacheName:again.name};
+       last=again;
+     }
+     await delay(200);
+   }
+   return {ok:false,last};
+ });
+ assert.deepEqual(upgraded,{ok:true,cacheName:'vyron-peisov-yt-shell-v12'},
+   'new Service Worker must be stably active');
  assert.equal(await page.evaluate(()=>sessionStorage.getItem('vyron-control-access')),
    'QA_SYNTHETIC_ONLY','PWA update must not clear auth session');
- const activeCache=await page.evaluate(async()=>{
-   const reg=await navigator.serviceWorker.getRegistration();
-   return await new Promise(resolve=>{
-     const channel=new MessageChannel();
-     channel.port1.onmessage=e=>resolve(e.data?.cacheName);
-     reg.active.postMessage({type:'VYRON_PWA_VERSION_PROBE'},[channel.port2]);
-   });
- });
- assert.equal(activeCache,'vyron-peisov-yt-shell-v11','new Service Worker must actually be active');
  // Another request from the retiring worker may transiently recreate the old
  // public shell cache after activate. Its presence is not an active-version signal.
  // Service Worker activation and new cache are the actual update gate.
- console.log('PASS '+engine+' PWA: install, '+(engine==='webkit'?'offline cache readiness':'offline navigation')+', no cached API, session preservation, SW v10→v11 upgrade.');
+ console.log('PASS '+engine+' PWA: install, '+(engine==='webkit'?'offline cache readiness':'offline navigation')+', no cached API, session preservation, SW v11→v12 upgrade.');
+ }
  await context.close();
 }finally{await browser.close();server.close();}

@@ -16,6 +16,9 @@ permissions:
 jobs:
   visual:
     runs-on: ubuntu-24.04
+    # Microsoft-pinned image supplies actual WebKit + dependencies. GitHub's
+    # apt/browser downloader repeatedly stalled before running the QA test.
+    container: mcr.microsoft.com/playwright:v1.56.1-noble
     strategy:
       fail-fast: false
       matrix:
@@ -35,8 +38,8 @@ jobs:
           node-version: 22
       - name: Install pinned browser test dependency
         run: npm install --no-save --ignore-scripts --no-audit --no-fund playwright@1.56.1
-      - name: Install headless browser
-        run: npx playwright install --with-deps ${{ matrix.engine }}
+      - name: Verify pinned browser binaries are present
+        run: test -d /ms-playwright/webkit-2215 && test -d /ms-playwright/chromium-1194
       - name: Check 8 screens across viewport matrix and capture QA screenshots
         run: node browser/neo-glass-visual-qa.mjs
       - name: Verify installed PWA offline fallback, Service Worker upgrade and session preservation

@@ -66,7 +66,7 @@ test('PWA caches every imported browser module but never authenticated API respo
   for(const modulePath of importedModules)
     assert.ok(serviceWorker.includes("'/"+modulePath+"'"),
       'offline shell is missing imported module: '+modulePath);
-  assert.ok(serviceWorker.includes("vyron-peisov-yt-shell-v10"));
+  assert.ok(serviceWorker.includes("vyron-peisov-yt-shell-v11"));
   assert.ok(app.includes('async function ensureServiceWorker()'));
   assert.ok(app.includes('void ensureServiceWorker().catch'));
   assert.ok(serviceWorker.includes("url.pathname.startsWith('/api/')"));
@@ -132,4 +132,35 @@ test('iPhone device diagnostics are manual-only, reachable in System, and do not
   assert.ok(serviceWorker.includes("'/diagnostics.mjs'"));
   assert.match(app,/navigator\.serviceWorker/);
   assert.match(app,/cache:'no-store'/);
+});
+
+// Missing Google channels must have owner consent entry points, never token entry.
+test('each missing Google channel has an explicit one-tap OAuth button',()=>{
+ assert.ok(app.includes("make('button','ghost','Подключить Google')"));
+ assert.match(app,/connect\.addEventListener\('click'/);
+ assert.match(app,/button\.click\(\); \/\/ Reuses the existing owner-only OAuth flow/);
+ assert.ok(app.includes('аккаунт-владелец'));
+ assert.ok(!app.includes('Вставьте Google Client Secret'));
+});
+
+// The Mac installer must fail closed on unsigned source or missing CI.
+test('Mac install never executes unsigned code or unpinned npm install',()=>{
+ assert.match(installer,/commit\.commit\?\.verification\?\.verified!==true/);
+ assert.ok(installer.includes('VYRON CONTROL Security Gate'));
+ assert.ok(installer.includes('git -C "$SOURCE_DIR" reset --hard "$NEXT_SHA"'));
+ assert.ok(installer.indexOf("verified Mac Bridge")===-1 || installer.includes('Проверены подпись GitHub'));
+ assert.ok(installer.indexOf('RELEASE_SHA="$NEXT_SHA" node')<
+   installer.indexOf('git -C "$SOURCE_DIR" reset --hard "$NEXT_SHA"'));
+ assert.match(installer,/npm ci --omit=dev --ignore-scripts/);
+ assert.equal(installer.includes('npm install --omit=dev'),false);
+ assert.equal(installer.includes('git clone --depth 1'),false);
+});
+
+test('Mac reinstall reuses existing private agent token without copying credentials',()=>{
+ assert.ok(installer.includes('AGENT_HOME/config.json'));
+ assert.ok(installer.includes('metadata.mode&0o077'));
+ assert.ok(installer.includes('config.url!==process.env.AGENT_EXPECTED_URL'));
+ assert.ok(installer.includes("process.stdout.write(config.token)"));
+ assert.ok(installer.includes('if [[ -f "$AGENT_HOME/config.json" ]]'));
+ assert.ok(installer.includes("read -r -s -p 'Ключ агента"));
 });
