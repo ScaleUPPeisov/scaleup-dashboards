@@ -199,7 +199,10 @@ describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
         scheduledCount:1,uniqueVideoIds:0,videosHydrated:0,searchUsed:true,searchSupplementCount:1,
         syncComplete:true,scheduleComplete:false,incompleteReasons:['UPLOADS_PLAYLIST_SCHEDULE_COVERAGE_MISMATCH']});
       const second=await refreshOwnerInventoriesAuthoritative([channel()],true,[profile]);
-      expect(second.rows[0].status).toBe('API_FAILED');
+      expect(second.rows[0].status).toBe('PARTIAL_DATA');
+      expect(second.rows[0].observedScheduled).toBe(1);
+      expect(second.rows[0].observedThrough).toBe('2026-12-12T10:00:00Z');
+      expect(second.rows[0].diagnosticReasons).toContain('UPLOADS_PLAYLIST_SCHEDULE_COVERAGE_MISMATCH');
       expect(fixture.inventoryFiles.get('lumiere')).toEqual(saved);
       const r=loadChannelRunwayStore().channels.lumiere;
       expect(r.dataState).toBe('PARTIAL_DATA');
@@ -211,6 +214,38 @@ describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
       expect(afterReload.runwayDays).toBeUndefined();
       expect(afterReload.scheduledUntil).toBe('2026-12-12');
     }finally{vi.useRealTimers()}
+  });
+
+  it('owner search page limit with verified Scheduled is PARTIAL_DATA, not a false zero or API failure',async()=>{
+    vi.useFakeTimers();vi.setSystemTime(new Date('2026-11-18T05:00:00Z'));
+    try{
+      fixture.responses.set(profile.id,{...response(),videos:[editable('video-dec12','private','2026-12-12T20:00:00+07:00')],
+        scheduledCount:1,uniqueVideoIds:90,videosHydrated:90,searchUsed:true,searchExhausted:false,
+        searchPagesFetched:2,searchError:null,syncComplete:true,scheduleComplete:false,
+        incompleteReasons:['OWNER_SEARCH_PAGE_LIMIT','OWNER_SEARCH_NOT_EXHAUSTED']});
+      const result=await refreshOwnerInventoriesAuthoritative([channel()],true,[profile]);
+      expect(result.rows[0].status).toBe('PARTIAL_DATA');
+      expect(result.rows[0].observedScheduled).toBe(1);
+      expect(result.rows[0].diagnosticReasons).toContain('OWNER_SEARCH_PAGE_LIMIT');
+      const runway=loadChannelRunwayStore().channels.lumiere;
+      expect(runway.dataState).toBe('PARTIAL_DATA');
+      expect(runway.scheduledUntil).toBe('2026-12-12');
+      expect(runway.scheduledVideoCount).toBe(1);
+      expect(runway.runwayDays).toBeUndefined();
+      expect(runway.lastScheduleSync).toBeUndefined();
+      expect(fixture.inventoryFiles.has('lumiere')).toBe(false);
+    }finally{vi.useRealTimers()}
+  });
+
+  it('unowned video rows never become even partial Scheduled proof',async()=>{
+    fixture.responses.set(profile.id,{...response(),videos:[{...editable('other-owner','private','2099-12-12T10:00:00Z'),channelId:'UC_OTHER'}],
+      scheduledCount:1,syncComplete:true,scheduleComplete:false,
+      incompleteReasons:['OWNER_SEARCH_PAGE_LIMIT']});
+    const result=await refreshOwnerInventoriesAuthoritative([channel()],true,[profile]);
+    expect(result.rows[0].status).toBe('API_FAILED');
+    expect(result.rows[0].error).toBe('AUTHORITATIVE_VIDEO_CHANNEL_MISMATCH');
+    expect(result.rows[0].observedScheduled).toBe(0);
+    expect(loadChannelRunwayStore().channels.lumiere.dataState).not.toBe('CONFIRMED_SCHEDULE');
   });
 
   it('only explicit one-channel refresh enables bounded owner search, bulk does not',async()=>{
