@@ -49,4 +49,8 @@ jobs:
       - name: Rust production cleanup safety tests
         env:
           VYRON_TRUSTED_UPDATER_PUBLIC_KEY_SHA256: unverified
-        run: cargo test --manifest-path src-tauri/Cargo.toml production_manager::tests --lib
+        run: |
+          cargo test --manifest-path src-tauri/Cargo.toml production_manager:: --lib -- --list > /tmp/vyron-project-test-list.txt
+          test "$(grep -c '^production_manager::.*: test
+ /tmp/vyron-project-test-list.txt)" -gt 0
+          cargo test --manifest-path src-tauri/Cargo.toml production_manager:: --lib
