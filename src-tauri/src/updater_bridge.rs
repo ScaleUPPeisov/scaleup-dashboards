@@ -317,6 +317,21 @@ struct DownloadedStableUpdate{
     current_executable_sha256:String,
     bytes:Vec<u8>
 }
+// Native IPC must also reject overlapping transfers; the React guard is not a trust boundary.
+struct NativeDownloadLease<'a>(&'a std::sync::atomic::AtomicBool);
+impl<'a> NativeDownloadLease<'a>{
+    fn acquire(flag:&'a std::sync::atomic::AtomicBool)->Result<Self,String>{
+        use std::sync::atomic::Ordering;
+        flag.compare_exchange(false,true,Ordering::AcqRel,Ordering::Acquire)
+          .map_err(|_|"UPDATER_DOWNLOAD_ALREADY_IN_PROGRESS: another native download is running".to_string())?;
+        Ok(Self(flag))
+    }
+}
+impl Drop for NativeDownloadLease<'_>{
+    fn drop(&mut self){self.0.store(false,std::sync::atomic::Ordering::Release)}
+}
+#[cfg(target_os="macos")]
+static STABLE_DOWNLOAD_IN_FLIGHT:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
 static STABLE_UPDATE_DOWNLOAD:std::sync::OnceLock<std::sync::Mutex<Option<DownloadedStableUpdate>>>=std::sync::OnceLock::new();
 fn stable_update_download_state()->&'static std::sync::Mutex<Option<DownloadedStableUpdate>>{
     STABLE_UPDATE_DOWNLOAD.get_or_init(||std::sync::Mutex::new(None))
@@ -434,6 +449,10 @@ pub async fn updater_stable_download(app:tauri::AppHandle)->Result<serde_json::V
     {let _=app;return Err("UPDATER_STABLE_MAC_ONLY: staged stable download is only used on macOS".into())}
     #[cfg(target_os="macos")]
     {
+        let _lease=NativeDownloadLease::acquire(&STABLE_DOWNLOAD_IN_FLIGHT)?;
+        // Invalidate earlier archive before any I/O: a failed transfer must never
+        // leave stale bytes installable through a direct native IPC invocation.
+        *stable_update_download_state().lock().map_err(|_|"UPDATER_STABLE_DOWNLOAD_STATE_POISONED".to_string())?=None;
         let snapshot=mac_runtime_snapshot(&app,true)?;
         if snapshot.get("runningFromDmg").and_then(|x|x.as_bool())==Some(true){
             return Err("RUNNING_FROM_DMG: VYRON запущен из DMG. Переместите VYRON.app в Applications.".into())
@@ -694,6 +713,18 @@ mod updater_key_diagnostic_tests{
     use super::*;
 
     const VALID_PUBLIC_KEY:&str="dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDgxMzNDOTg3M0ZBQjc5QzEKUldUQmVhcy9oOGt6Z1owb2JOWjJjM1FOQjF3UkJnbm5mZGNZRTloMUZhYkJFRlZ6QWFoNk5VN3kK";
+
+    #[test]
+    fn native_single_flight_releases_on_completion_and_error(){
+        use std::sync::atomic::{AtomicBool,Ordering};
+        let flag=AtomicBool::new(false);
+        let first=NativeDownloadLease::acquire(&flag).expect("first transfer starts");
+        assert!(NativeDownloadLease::acquire(&flag).is_err(),"parallel native transfer rejected");
+        drop(first);
+        let second=NativeDownloadLease::acquire(&flag).expect("lease released for retry");
+        drop(second);
+        assert!(!flag.load(Ordering::Acquire));
+    }
 
     #[test]
     fn stable_sha256_is_required_and_validated_before_download_and_install(){
