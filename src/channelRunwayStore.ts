@@ -44,7 +44,7 @@ function normalizeStoredRecord(id:string,value:unknown):ChannelRunwayRecord|unde
     channelId,
     channelName,
     scheduledVideoCount,
-    dataState:VALID_DATA_STATE.has(String(raw.dataState))?raw.dataState:(raw.scheduledUntil?'STALE_CACHE':'UNKNOWN'),
+    dataState:raw.dataState==='CONFIRMED_EMPTY'&&raw.inventoryEvidenceVersion!==2?'UNKNOWN':VALID_DATA_STATE.has(String(raw.dataState))?raw.dataState:(raw.scheduledUntil?'STALE_CACHE':'UNKNOWN'),
     averagePublishIntervalDays,
     runwayDays,
     lastLocalCalculation:typeof raw.lastLocalCalculation==='string'&&raw.lastLocalCalculation?raw.lastLocalCalculation:'1970-01-01T00:00:00.000Z',
@@ -117,6 +117,15 @@ function confirmedBaseline(cache:ExistingCache|undefined){
   const values=cache.baseline&&typeof cache.baseline==='object'?Object.values(cache.baseline):[];
   return values.filter(Boolean);
 }
+const validTime=(raw?:string)=>{const n=Date.parse(raw||'');return Number.isFinite(n)?n:0};
+// A complete uploads playlist is not sufficient to prove a *zero* Scheduled inventory.
+// Positive videos.list + publishAt evidence may be used; negative evidence must be
+// explicitly independently validated (never claimed by the 6.1.18 backend).
+function trustedScheduledSnapshot(videos:YoutubeExistingVideo[],info:unknown,now:Date){
+  if(scheduleSyncTruthFromInfo(info)!=='complete')return false;
+  if((info as {scheduledCoverageVerified?:boolean}|null)?.scheduledCoverageVerified===true)return true;
+  return videos.some(v=>v.privacyStatus==='private'&&Boolean(v.publishAt)&&Date.parse(v.publishAt!)>now.getTime());
+}
 
 export function recalculateChannelRunway(
   channels:Channel[],
@@ -129,29 +138,36 @@ export function recalculateChannelRunway(
   for(const channel of channels){
     const prior=previous.channels[channel.id];
 
-    // Explicit Channel Runway sync is authoritative. Daily recalculation only advances the calendar.
-    if(prior?.lastScheduleSync){
-      next.channels[channel.id]=recalculateRunwayRecord({...prior,channelName:channel.name},now);
-      continue;
-    }
-
-    // 6.1.2 authoritative Existing Videos truth is native-disk backed.
-    // This synchronous snapshot reads only already-hydrated memory/legacy fallback and never calls YouTube.
+    // Prefer the newest *verified* inventory rather than pinning a stale previous
+    // value just because it has lastScheduleSync. Never trust legacy zero evidence.
     const native=readAuthoritativeExistingSnapshot(channel.id);
-    if(native&&scheduleSyncTruthFromInfo(native.syncInfo)==='complete'){
-      next.channels[channel.id]=recalculateRunwayRecord(deriveRunwayRecord(channel,native.videos,now,native.updatedAt,true),now);
-      continue;
-    }
-    // Legacy v1 cache remains a restart-safe fallback until verified migration retires it.
     const cached=readExistingRunwayCache(channel.id,storage);
     const baseline=confirmedBaseline(cached);
-    const cacheConfirmed=scheduleSyncTruthFromInfo(cached?.syncInfo)==='complete';
-    if(cacheConfirmed){
-      next.channels[channel.id]=recalculateRunwayRecord(deriveRunwayRecord(channel,baseline,now,cached?.updatedAt,true),now);
+    const candidates=[
+      native&&trustedScheduledSnapshot(native.videos,native.syncInfo,now)?{videos:native.videos,updatedAt:native.updatedAt}:undefined,
+      trustedScheduledSnapshot(baseline,cached?.syncInfo,now)?{videos:baseline,updatedAt:cached?.updatedAt}:undefined
+    ].filter((x):x is {videos:YoutubeExistingVideo[];updatedAt?:string}=>Boolean(x));
+    const latest=candidates.sort((a,b)=>validTime(b.updatedAt)-validTime(a.updatedAt))[0];
+    const priorIsTrusted=Boolean(prior?.lastScheduleSync)&&!(prior?.dataState==='CONFIRMED_EMPTY'&&prior.inventoryEvidenceVersion!==2);
+    const priorTime=priorIsTrusted?validTime(prior?.lastScheduleSync):0;
+    if(latest&&validTime(latest.updatedAt)>priorTime){
+      const verified=deriveRunwayRecord(channel,latest.videos,now,latest.updatedAt,true);
+      next.channels[channel.id]=recalculateRunwayRecord({...verified,inventoryEvidenceVersion:2},now);
       continue;
     }
-
-    next.channels[channel.id]=prior?recalculateRunwayRecord({...prior,channelName:channel.name},now):channelUnknown(channel,now);
+    if(prior){
+      const downgraded=prior.dataState==='CONFIRMED_EMPTY'&&prior.inventoryEvidenceVersion!==2
+        ?{...prior,dataState:'UNKNOWN' as const,runwayDays:undefined,status:'no-data' as const,priority:'unknown' as const}
+        :prior;
+      next.channels[channel.id]=recalculateRunwayRecord({...downgraded,channelName:channel.name},now);
+      continue;
+    }
+    if(latest){
+      const verified=deriveRunwayRecord(channel,latest.videos,now,latest.updatedAt,true);
+      next.channels[channel.id]=recalculateRunwayRecord({...verified,inventoryEvidenceVersion:2},now);
+      continue;
+    }
+    next.channels[channel.id]=channelUnknown(channel,now);
   }
   const validIds=new Set(channels.map(c=>c.id));
   for(const id of Object.keys(next.channels))if(!validIds.has(id))delete next.channels[id];
@@ -167,7 +183,7 @@ export function upsertChannelRunwayFromYoutube(
   storage:StorageLike|undefined=browserStorage()
 ){
   const current=loadChannelRunwayStore(storage);
-  const record=deriveRunwayRecord(channel,videos,now,now.toISOString(),true);
+  const record={...deriveRunwayRecord(channel,videos,now,now.toISOString(),true),inventoryEvidenceVersion:2 as const,lastRefreshError:undefined};
   const next:ChannelRunwayStore={
     ...current,
     version:1,
@@ -183,13 +199,20 @@ export function markRunwayRefreshIssue(
   dataState:Extract<RunwayDataState,'PARTIAL_DATA'|'AUTH_REQUIRED'|'API_FAILED'|'UNKNOWN'>,
   error:string,
   now=new Date(),
-  storage:StorageLike|undefined=browserStorage()
+  storage:StorageLike|undefined=browserStorage(),
+  observedVideos:YoutubeExistingVideo[]=[]
 ){
   const current=loadChannelRunwayStore(storage);
   const previous=current.channels[channel.id]||deriveRunwayRecord(channel,[],now,undefined,false);
+  const partial=deriveRunwayRecord(channel,observedVideos,now,undefined,false);
+  // Verified observations can only increase a lower-bound date/count here;
+  // they cannot establish the exhaustive scheduled inventory.
+  const mostRecent=[previous.scheduledUntil,partial.scheduledUntil].filter((x):x is string=>Boolean(x)).sort().at(-1);
   const record=recalculateRunwayRecord({
     ...previous,
     channelName:channel.name,
+    scheduledUntil:mostRecent,
+    scheduledVideoCount:Math.max(previous.scheduledVideoCount,partial.scheduledVideoCount),
     dataState,
     lastRefreshError:error,
     runwayDays:undefined,
