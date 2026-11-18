@@ -29,6 +29,19 @@ for(let i=0;i<45;i++){
 assert.equal(before.status,200,'Preview owner secret not active after bounded propagation grace');
 assert.equal(before.data.channels.length,33); // all fixtures only in ephemeral preview D1
 const at=new Date().toISOString();
+// Only QA fixtures: confirm an absent channel is soft-archived, never deleted.
+const all=Array.from({length:33},(_,i)=>({id:id(i),name:'Preview QA channel '+i}));
+const registry=channels=>({deviceId:'mac_test_preview',total:channels.length,
+  complete:true,generatedAt:new Date().toISOString(),channels});
+const a=await call('/api/agent/channels','POST',registry(all),agent);
+assert.equal(a.status,200);
+assert.equal(a.data.channelPresence.accepted,true);
+const b=await call('/api/agent/channels','POST',registry(all.slice(0,32)),agent);
+assert.equal(b.status,200);
+assert.equal(b.data.channelPresence.archived,1);
+const archived=await call('/api/status');
+assert.equal(archived.data.channels.length,33,'soft-archived channel stays in D1');
+assert.ok(archived.data.channels.find(x=>x.id===id(32)).archivedAt);
 // Both secret puts are independent Cloudflare deployment transitions.
 let beat;
 for(let i=0;i<45;i++){
@@ -79,5 +92,5 @@ assert.equal((await call('/api/push/test','POST',{})).status,409);
 const last=await call('/api/agent/production','POST',packet([]),agent);
 assert.equal(last.status,200);
 assert.equal((await call('/api/status')).data.production.items.length,0);
-console.log('PASS: remote preview (21 D1 tables), 33 isolated channels, auth, heartbeat, job UPSERT/idempotence, unknown-ID guard, events, owner notifications, read receipts, Push without VAPID blocked, archive.');
+console.log('PASS: remote preview (21 D1 tables), 33 isolated channels, auth, heartbeat, job UPSERT/idempotence, unknown-ID guard, soft channel archive, events, owner notifications, read receipts, Push without VAPID blocked.');
 console.log('All 33 channel IDs and jobs above are isolated QA fixtures; no production/owner data accessed.');
