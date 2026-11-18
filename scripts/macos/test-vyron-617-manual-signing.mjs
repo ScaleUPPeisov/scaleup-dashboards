@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
+import {readFileSync,writeFileSync,mkdirSync,mkdtempSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {spawnSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 const workflow=readFileSync(fileURLToPath(new URL('../../.github/workflows/vyron-617-rotated-signed-rc.yml',import.meta.url)),'utf8');
 
@@ -66,4 +70,44 @@ test('release kit is staged only after notarized GUI and signed updater, without
  }
  assert.match(workflow,/if: \${{ inputs.deliver_signed_rc_to_actions_artifact }}/);
  assert.doesNotMatch(script,/gh release|git push|git tag|curl.*sh|release published/i);
+});
+
+test('synthetic release-kit fixture preserves signed archive bytes in feed, hashes and release notes',()=>{
+ const root=mkdtempSync(join(tmpdir(),'vyron-617-kit-test-'));
+ try{
+  const evidence=join(root,'evidence'),output=join(root,'kit');mkdirSync(evidence);
+  const dmg=join(root,'VYRON-6.1.17-one-time-GUI.dmg'),archive=join(root,'VYRON.app.tar.gz');
+  writeFileSync(dmg,Buffer.alloc(200,0x23));
+  writeFileSync(archive,Buffer.alloc(256,0x45));
+  const minisign='untrusted comment: signature from tauri secret key\n'+Buffer.alloc(80,0x77).toString('base64')+'\ntrusted comment: timestamp:1770000000 file:VYRON.app.tar.gz\n'+Buffer.alloc(64,0x01).toString('base64')+'\n';
+  const signature=Buffer.from(minisign).toString('base64');
+  writeFileSync(archive+'.sig',signature);
+  writeFileSync(join(evidence,'gui-bridge-status.txt'),[
+   'gui_bootstrap=BUILT_NOT_PUBLISHED',
+   'notarized_app_archive=NEW_KEY_MINISIGN_VERIFIED',
+   'dmg_notarization=ACCEPTED',
+   'release=HOLD_UNTIL_OWNER_APPROVAL'
+  ].join('\n'));
+  const env={...process.env,VYRON_RC_DMG:dmg,VYRON_RC_ARCHIVE:archive,VYRON_RC_EVIDENCE_DIR:evidence,
+   VYRON_RC_RELEASE_KIT_DIR:output,VYRON_RC_SOURCE_SHA:'1'.repeat(40),VYRON_RC_TEAM_ID:'ABCDE12345',
+   VYRON_RC_PUBKEY_SHA256:'2'.repeat(64)};
+  const run=spawnSync(process.execPath,[fileURLToPath(new URL('./write-vyron-617-release-kit.mjs',import.meta.url))],{env,encoding:'utf8'});
+  assert.equal(run.status,0,run.stderr);
+  const expected=createHash('sha256').update(readFileSync(archive)).digest('hex');
+  const staged=JSON.parse(readFileSync(join(output,'updates/latest.staging.json'),'utf8'));
+  assert.equal(staged.version,'6.1.17');
+  assert.equal(staged.platforms['darwin-aarch64'].sha256,expected);
+  assert.equal(staged.platforms['darwin-aarch64'].signature,signature);
+  const manifest=JSON.parse(readFileSync(join(output,'release-manifest.json'),'utf8'));
+  assert.equal(manifest.owner_migration_verified,false);
+  assert.equal(manifest.stable_feed_changed,false);
+  assert.equal(manifest.assets['VYRON.app.tar.gz'],expected);
+  assert.match(readFileSync(join(output,'RELEASE-NOTES.md'),'utf8'),/33.channel migration/);
+  const forbidden=spawnSync(process.execPath,[fileURLToPath(new URL('./write-vyron-617-release-kit.mjs',import.meta.url))],{
+    env:{...env,VYRON_RC_PUBKEY_SHA256:'aa6fb45ab082ef39279e841dc40b0f85e5b33f23746f77557b6f93e3e72c2c06'},
+    encoding:'utf8'
+  });
+  assert.notEqual(forbidden.status,0);
+  assert.match(forbidden.stderr,/INVALID_OR_LEGACY_UPDATER_KEY/);
+ }finally{rmSync(root,{recursive:true,force:true})}
 });
