@@ -163,7 +163,32 @@ export function recalculateChannelRunway(
       const downgraded=prior.dataState==='CONFIRMED_EMPTY'&&prior.inventoryEvidenceVersion!==2
         ?{...prior,dataState:'UNKNOWN' as const,runwayDays:undefined,status:'no-data' as const,priority:'unknown' as const}
         :prior;
-      next.channels[channel.id]=recalculateRunwayRecord({...downgraded,channelName:channel.name},now);
+      const retained=recalculateRunwayRecord({...downgraded,channelName:channel.name},now);
+      // A later incomplete owner refresh invalidates the *current* schedule
+      // claim, not previously owner-verified positive videos. If the Runway
+      // record lost its count, recover positive observations from the last
+      // trustworthy native snapshot as historical evidence only. Never
+      // restore CONFIRMED_SCHEDULE, a confirmed zero or live runwayDays here.
+      if(retained.dataState==='PARTIAL_DATA'&&latest){
+        const observed=deriveRunwayRecord(channel,latest.videos,now,latest.updatedAt,false);
+        if(observed.scheduledVideoCount>0){
+          const until=[retained.scheduledUntil,observed.scheduledUntil]
+            .filter((x):x is string=>Boolean(x)).sort().at(-1);
+          next.channels[channel.id]=recalculateRunwayRecord({
+            ...retained,
+            scheduledVideoCount:Math.max(retained.scheduledVideoCount,observed.scheduledVideoCount),
+            scheduledUntil:until,
+            lastScheduleSync:retained.lastScheduleSync||latest.updatedAt,
+            inventoryEvidenceVersion:2,
+            dataState:'PARTIAL_DATA',
+            runwayDays:undefined,
+            status:'no-data',
+            priority:'unknown'
+          },now);
+          continue;
+        }
+      }
+      next.channels[channel.id]=retained;
       continue;
     }
     if(latest){
