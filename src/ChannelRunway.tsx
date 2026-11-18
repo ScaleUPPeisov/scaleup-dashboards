@@ -122,7 +122,7 @@ export function ChannelRunway(){
   const usage=youtubeQuotaUsage();
   const rowState=useMemo(()=>{
     let failures=0;
-    const now=new Date();
+    const now=new Date(),todayKey=krasnoyarskClock(now).dateKey;
     const rows=active.map(channel=>{
       try{
         const record=snapshot.channels[channel.id];if(!record){failures++;return null}
@@ -136,7 +136,17 @@ export function ChannelRunway(){
         const quota=contentRunwayQuotaView(usage,upload);
         return{channel,record,content,localRunway,uploadRemaining:quota.uploads.remaining,uploadLimitKnown:quota.uploads.limitKnown} satisfies RunwayRow;
       }catch{failures++;return null}
-    }).filter((x):x is RunwayRow=>Boolean(x)).sort((a,b)=>compareYoutubeOnlyRunwayPriority({channelName:a.channel.name,remoteScheduledDays:a.content.remoteScheduledDays,scheduledUntil:a.content.scheduledThrough,known:a.record.status!=='no-data'},{channelName:b.channel.name,remoteScheduledDays:b.content.remoteScheduledDays,scheduledUntil:b.content.scheduledThrough,known:b.record.status!=='no-data'}));
+    }).filter((x):x is RunwayRow=>Boolean(x)).sort((a,b)=>{
+      const rank=(row:RunwayRow)=>({
+        channelName:row.channel.name,
+        remoteScheduledDays:row.content.remoteScheduledDays,
+        scheduledUntil:row.content.scheduledThrough||row.record.scheduledUntil,
+        known:row.record.status!=='no-data',
+        historicalScheduledDays:row.record.status==='no-data'&&row.record.dataState==='PARTIAL_DATA'&&row.record.scheduledVideoCount>0&&row.record.scheduledUntil
+          ?Math.max(0,calendarDaysBetween(todayKey,row.record.scheduledUntil)??0):undefined
+      });
+      return compareYoutubeOnlyRunwayPriority(rank(a),rank(b));
+    });
     return{rows,failures}
   },[active,snapshot,jobs,uploadHistory,projectLifecycle,fingerprintCache,liveSnapshots,profileById,googleConfig,usage.ptDate,usage.used,usage.limit]);
   const rows=rowState.rows,rowFailures=rowState.failures;
@@ -254,24 +264,28 @@ export function ChannelRunway(){
         <span>Канал</span><span>На YouTube до</span><span>На диске</span><span>Остаток дней на YouTube</span><span>Scheduled</span><span>Ready</span><span>Cadence</span><span>Uploads</span><span>Статус</span><span>Действие</span>
       </div>
       {rows.length===0?<div className="empty"><b>Нет активных каналов</b><p>Content Runway не создаёт демонстрационные данные.</p></div>:rows.map(({channel,record,content,localRunway,uploadRemaining,uploadLimitKnown})=>{
-        const youtubeStatus=runwayStatus(content.remoteScheduledDays,record.status!=='no-data'),meta=statusMeta[youtubeStatus];
+        const youtubeStatus=runwayStatus(content.remoteScheduledDays,record.status!=='no-data');
         const partialObserved=record.dataState==='PARTIAL_DATA'&&record.scheduledVideoCount>0;
+        const meta=record.status==='no-data'&&partialObserved
+          ?{label:'ТРЕБУЕТ СВЕРКИ YOUTUBE',icon:'◐'}:statusMeta[youtubeStatus];
         const partialDays=partialObserved&&record.scheduledUntil?Math.max(0,calendarDaysBetween(krasnoyarskClock(new Date()).dateKey,record.scheduledUntil)??0):undefined;
         const historicalPartial=partialObserved&&Boolean(record.lastRefreshAttemptAt)&&
           Date.parse(record.lastRefreshAttemptAt||'')>Date.parse(record.lastScheduleSync||'');
         // This date is historical owner evidence, not a freshly confirmed
         // schedule: keep it visible without feeding priority or upload planning.
         const shownThrough=content.scheduledThrough||(partialObserved?record.scheduledUntil:undefined);
-        return <div className="runwayRow" key={channel.id}>
+        const visibleTone=record.status==='no-data'&&partialDays!==undefined?runwayStatus(partialDays,true):youtubeStatus;
+        const rowTone=record.status==='no-data'?(partialObserved?'partial':'unknown'):youtubeStatus;
+        return <div className={`runwayRow runwayRow-${rowTone}`} key={channel.id}>
           <span className="runwayChannel runwayChannelWithAvatar"><ChannelAvatar channel={channel} size="sm"/><span><b>{channel.name}</b><small>{syncLabel(record.lastScheduleSync)}</small><small title={record.lastRefreshError||''}>{evidenceLabel(record.dataState)}</small><small>{linkedByLocalId.has(channel.id)?`Subs ${subscriberStatLabel(channel.stats)} • Views ${compactChannelStat(channel.stats?.viewCount??channel.stats?.views)}`:'YouTube: НЕ ПОДКЛЮЧЁН'}</small></span></span>
           <span>{shownThrough?<><b>📺 {dateLabel(shownThrough)}</b><small>{record.status==='no-data'?(record.dataState==='PARTIAL_DATA'?'последняя проверенная дата • актуальная полнота неизвестна':'последняя сохранённая дата • не подтверждена'):content.remoteScheduledDays>0?`ещё ${content.remoteScheduledDays} дн.`:'подтверждённое расписание закончилось'}</small></>:<><b>{record.status==='no-data'?'📺 Нет подтверждённых данных':'📺 Будущих видео нет'}</b><small>{evidenceLabel(record.dataState)}</small></>}</span>
           <span>{content.readyVideoCount?<><b>💾 {content.readyVideoCount} видео</b><small>только локальные файлы</small></>:<><b>💾 0 видео</b><small>локального запаса нет</small></>}</span>
-          <span title="Остаток дней на YouTube — только подтверждённое расписание"><b className={`runwayDays ${youtubeStatus}`}>{record.status==='no-data'?(partialDays===undefined?'—':`${historicalPartial?'≈':'≥'}${partialDays} дн.*`):`${content.remoteScheduledDays} дн.`}</b><small>{record.status==='no-data'?(partialObserved?(historicalPartial?'* Исторический кэш Scheduled: текущий запас не подтверждён':'* Подтверждены отдельные Scheduled, полнота неизвестна'):evidenceLabel(record.dataState)):content.remoteScheduledDays>0&&content.scheduledThrough?`до ${dateLabel(content.scheduledThrough)}`:'пустое расписание подтверждено'}</small><small>{record.status==='no-data'?'Локальный прогноз с резервом':'Общий прогноз с локальным резервом'}: {localRunway.totalRunwayDays} дн.{localRunway.coverageThrough?` • до ${formatLocalCalendarDate(localRunway.coverageThrough)}`:''}</small></span>
+          <span title="Остаток дней на YouTube — только подтверждённое расписание"><b className={`runwayDays ${visibleTone} ${record.status==='no-data'?'historical':''}`}>{record.status==='no-data'?(partialDays===undefined?'—':`${historicalPartial?'≈':'≥'}${partialDays} дн.*`):`${content.remoteScheduledDays} дн.`}</b><small>{record.status==='no-data'?(partialObserved?(historicalPartial?'* Исторический кэш Scheduled: текущий запас не подтверждён':'* Подтверждены отдельные Scheduled, полнота неизвестна'):evidenceLabel(record.dataState)):content.remoteScheduledDays>0&&content.scheduledThrough?`до ${dateLabel(content.scheduledThrough)}`:'пустое расписание подтверждено'}</small><small>{record.status==='no-data'?'Локальный прогноз с резервом':'Общий прогноз с локальным резервом'}: {localRunway.totalRunwayDays} дн.{localRunway.coverageThrough?` • до ${formatLocalCalendarDate(localRunway.coverageThrough)}`:''}</small></span>
           <span title={evidenceLabel(record.dataState)}>{record.status==='no-data'?(partialObserved?(historicalPartial?`${record.scheduledVideoCount} (кэш)*`:`≥${record.scheduledVideoCount}*`):'—'):content.scheduledVideoCount}</span>
           <span><b>{content.readyVideoCount}</b></span>
           <span>{scheduleFrequencyTruthLabel(channel,record)}</span>
           <span className="runwayQuota">{uploadLimitKnown?<><b>{uploadRemaining}</b><small>доступно</small></>:<><b>—</b><small>лимит проекта не подтверждён</small></>}</span>
-          <span className={`runwayStatus ${youtubeStatus}`}><i>{meta.icon}</i>{meta.label}</span>
+          <span className={`runwayStatus ${rowTone}`}><i>{meta.icon}</i>{meta.label}</span>
           <span>{linkedByLocalId.has(channel.id)?<><button disabled={busy===channel.id} onClick={()=>void syncChannel(channel)}>{busy===channel.id?'СИНХРОНИЗАЦИЯ…':'ОБНОВИТЬ РАСПИСАНИЕ'}</button><button disabled={busy===`stats:${channel.id}`||statsBusy} onClick={()=>void refreshRowStats(channel)}>{busy===`stats:${channel.id}`?'↻…':'↻ YT'}</button><button onClick={()=>openStatistics(channel)}>Статистика</button></>:<button onClick={()=>openAccounts(channel)}>Подключить</button>}</span>
         </div>
       })}
