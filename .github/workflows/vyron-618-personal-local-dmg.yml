@@ -1,5 +1,5 @@
 name: VYRON 6.1.18 personal ARM64 DMG (no Apple Developer)
-# Rerun after TS-ambient-only targeted smoke correction; the previous job failed before bundling.
+# Private 6.1.18 owner RC: rebuild after false-zero owner-search/cache fixes; never publish stable.
 
 on:
   push:
