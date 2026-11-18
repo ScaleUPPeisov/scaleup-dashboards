@@ -28,6 +28,11 @@ for(let i=0;i<45;i++){
 }
 assert.equal(before.status,200,'Preview owner secret not active after bounded propagation grace');
 assert.equal(before.data.channels.length,33); // all fixtures only in ephemeral preview D1
+assert.equal(before.data.public24h.value,null,
+  '24-hour public views cannot be fabricated without two actual timestamped samples');
+assert.equal(before.data.public24h.covered,0);
+assert.equal(before.data.analyticsSummary.authorized,0,
+  'Isolated preview has zero owner OAuth profiles and must not invent authorized Analytics');
 const at=new Date().toISOString();
 // Only QA fixtures: confirm an absent channel is soft-archived, never deleted.
 const all=Array.from({length:33},(_,i)=>({id:id(i),name:'Preview QA channel '+i}));
