@@ -18,11 +18,15 @@ concurrency:
 
 jobs:
   macos-qa:
-    name: macOS Rust compile and cleanup regressions (hosted, not owner's Mac)
-    runs-on: macos-14
+    name: Linux Rust compile and cleanup regressions (hosted, not owner's Mac)
+    runs-on: ubuntu-latest
     timeout-minutes: 65
     steps:
       - uses: actions/checkout@v4
+      - name: Install Linux Tauri build prerequisites
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev libxdo-dev pkg-config
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
