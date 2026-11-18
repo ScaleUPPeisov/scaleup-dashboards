@@ -89,12 +89,19 @@ export class MacBridge {
         ?{...channel,profileBinding:binding.toLowerCase()}:channel;
     });
     if (!normalized.length) return { imported:0, reason:'empty_export' };
-    const hash=createHash('sha256').update(JSON.stringify(normalized)).digest('hex');
+    const localStatus=await this.readStatus();
+    // Only a full local state mirror is authoritative enough to archive removed channels.
+    const complete=Number.isSafeInteger(localStatus.channelsTotal)&&
+      localStatus.channelsTotal===normalized.length &&
+      localStatus.agentStateSource==='MIRROR';
+    const payload={deviceId:this.deviceId,total:normalized.length,complete,
+      generatedAt:new Date().toISOString(),channels:normalized};
+    const hash=createHash('sha256').update(JSON.stringify({normalized,complete})).digest('hex');
     if (hash===this.lastChannelHash) return {imported:0, reason:'unchanged'};
     if(Date.now()-this.lastChannelSyncAttemptAt<120_000)
       return {imported:0,reason:'retry_backoff'};
     this.lastChannelSyncAttemptAt=Date.now();
-    const result=await this.api('/api/agent/channels','POST',normalized);
+    const result=await this.api('/api/agent/channels','POST',payload);
     if(result.publicSync?.complete===false)
       return {imported:0,reason:'initial_sync_pending',publicSync:result.publicSync};
     if(Number(result.analytics?.profileChecksFailed||0)>0)
