@@ -1,0 +1,39 @@
+name: VYRON fleet YouTube audit, ordering and colors — safe verification
+
+on:
+  push:
+    branches:
+      - fix/vyron-619-runway-fleet-ui-deep-audit-20261118
+    paths:
+      - 'src/**'
+      - '.github/workflows/vyron-620-fleet-visual-owner-regression.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-620-fleet-visual-owner-regression
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Full 33-channel UI and YouTube inventory safety regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Fleet 33/33, ascending days and evidence colors
+        run: npx vitest run src/v610ChannelRunwayFleetRefresh.test.ts src/v611ChannelRunwayInventoryHotfix.test.ts src/channelRunway.test.ts src/vyron620FleetRunwayVisualSafety.test.ts
+      - name: Full frontend regressions
+        run: npx vitest run
+      - name: Production frontend build and TypeScript
+        run: npm run build
+      - name: Verify no release/auto-update was published
+        run: |
+          test "$(node -p 'require("./package.json").version')" = 6.1.15
+          echo "PRIVATE_CHANGESET_ONLY=PASS"

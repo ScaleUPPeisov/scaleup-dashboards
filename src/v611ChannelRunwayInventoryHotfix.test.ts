@@ -37,6 +37,7 @@ vi.mock('./youtubeQuota',()=>({
   bindYoutubeQuotaTraceContext:vi.fn(),
   youtubeOperationActualCost:vi.fn(()=>({methods:{'playlistItems.list':{calls:99}},buckets:{general:99}})),
   youtubeQuotaState:vi.fn(()=>({blocked:false})),
+  youtubeQuotaBucketUsage:vi.fn(()=>({available:100,used:0,limit:100,reserved:0})),
   youtubeQuotaUsage:vi.fn(()=>({used:0,limit:10000}))
 }));
 vi.mock('./youtubeCache',()=>({markYoutubeCache:vi.fn()}));
@@ -314,6 +315,22 @@ describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
   });
 
   it('only explicit one-channel refresh enables bounded owner search, bulk does not',async()=>{
+    // Preserve the legacy automatic/background bulk safety contract: a
+    // scheduled 33-channel scan must never invoke search.list. New explicit
+    // manual bulk reconciliation is tested separately below.
+    const b={...channel('bulk-background'),id:'bulk-background',slug:'bulk-background',name:'B',youtubeProfileId:'p-b',youtubeChannelId:'UC-B'} as Channel;
+    const profiles=[profile,{...profile,id:'p-b',channelId:'UC-B'}];
+    fixture.responses.set('p-b',{...response(),channelId:'UC-B',channelTitle:'B'});
+    await refreshOwnerInventoriesAuthoritative([channel(),b],false,profiles);
+    // Non-forced background sync may skip a channel still under its TTL.
+    // Every native request it *does* make must leave owner search disabled.
+    const backgroundCalls=(api.youtubeListExisting as any).mock.calls as any[][];
+    expect(backgroundCalls.length).toBeGreaterThan(0);
+    expect(backgroundCalls.length).toBeLessThanOrEqual(2);
+    expect(backgroundCalls.every(args=>args[3]===false)).toBe(true);
+  });
+
+  it('both single-channel and explicit bulk refresh can deep-check incomplete owner schedules',async()=>{
     await refreshOwnerInventoriesAuthoritative([channel()],true,[profile]);
     const call=(api.youtubeListExisting as any).mock.calls[0];
     expect(call[3]).toBe(true);
@@ -322,7 +339,8 @@ describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
     fixture.responses.set('p-b',{...response(),channelId:'UC-B',channelTitle:'B'});
     vi.mocked(api.youtubeListExisting).mockClear();
     await refreshOwnerInventoriesAuthoritative([channel(),b],true,profiles);
-    expect((api.youtubeListExisting as any).mock.calls.every((args:any[])=>args[3]===false)).toBe(true);
+    expect((api.youtubeListExisting as any).mock.calls).toHaveLength(2);
+    expect((api.youtubeListExisting as any).mock.calls.every((args:any[])=>args[3]===true)).toBe(true);
   });
 
   it('manual owner refresh passes local Scheduled upload IDs for videos.list hydration without requiring owner search',async()=>{

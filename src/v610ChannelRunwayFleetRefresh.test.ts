@@ -16,7 +16,7 @@ Object.defineProperty(globalThis,'localStorage',{value:storage,configurable:true
 
 const fixture=vi.hoisted(()=>({
  profiles:[] as YoutubeProfile[],
- responses:new Map<string,{videos:YoutubeExistingVideo[];syncComplete:boolean;complete:boolean;scheduleComplete:boolean;channelId:string}>(),
+ responses:new Map<string,{videos:YoutubeExistingVideo[];syncComplete:boolean;complete:boolean;scheduleComplete:boolean;channelId:string;fullSyncApiRequests?:number;fullSyncEstimatedQuotaCost?:number}>(),
  inventoryFiles:new Map<string,any>()
 }));
 vi.mock('./api',()=>({
@@ -32,6 +32,7 @@ vi.mock('./youtubeQuota',()=>({
  bindYoutubeQuotaTraceContext:vi.fn(),
  youtubeOperationActualCost:vi.fn(()=>({methods:{'playlistItems.list':{calls:1}},buckets:{general:1}})),
  youtubeQuotaState:vi.fn(()=>({blocked:false})),
+ youtubeQuotaBucketUsage:vi.fn(()=>({available:100,used:0,limit:100,reserved:0})),
  youtubeQuotaUsage:vi.fn(()=>({used:0,limit:10000}))
 }));
 vi.mock('./youtubeCache',()=>({markYoutubeCache:vi.fn()}));
@@ -39,6 +40,7 @@ vi.mock('./youtubeCache',()=>({markYoutubeCache:vi.fn()}));
 import {api} from './api';
 import {refreshOwnerInventoriesAuthoritative} from './youtubeOwnerInventory';
 import {loadChannelRunwayStore} from './channelRunwayStore';
+import {CHANNEL_RUNWAY_STORAGE_KEY} from './channelRunwayCore';
 
 const channel=(id:string,patch:Partial<Channel>={}):Channel=>({
  id,name:id,slug:id,cadenceDays:1,publishIntervalDays:1,targetBufferDays:60,publishHour:18,publishMinute:0,
@@ -112,13 +114,39 @@ describe('VYRON 6.1 authoritative fleet runway refresh',()=>{
   expect(result.apiRequests).toBe(30);
   expect(result.quotaUnits).toBe(30);
  });
+ it('audits 33/33, deep-checks all 33 incomplete channels when separate search quota permits and reports every row',async()=>{
+  const channels=Array.from({length:33},(_,i)=>channel('fleet'+(i+1),{youtubeProfileId:'p-fleet'+(i+1),youtubeChannelId:'UC-fleet'+(i+1)}));
+  fixture.profiles=channels.map(c=>profile(c.youtubeProfileId!,c.youtubeChannelId!));
+  for(const ch of channels)fixture.responses.set(ch.youtubeProfileId!,{
+   channelId:ch.youtubeChannelId!,videos:[],scheduleComplete:true,syncComplete:true,complete:true,
+   fullSyncApiRequests:2,fullSyncEstimatedQuotaCost:2
+  });
+  localStorage.setItem(CHANNEL_RUNWAY_STORAGE_KEY,JSON.stringify({version:1,channels:Object.fromEntries(
+   channels.map(ch=>[ch.id,{channelId:ch.id,channelName:ch.name,scheduledVideoCount:0,
+    status:'no-data',dataState:'PARTIAL_DATA',priority:'unknown',inventoryEvidenceVersion:2}])
+  )}));
+  const progress:Array<{done:number;total:number;status:string}>=[];
+  const result=await refreshOwnerInventoriesAuthoritative(channels,true,fixture.profiles,{'fleet1':['ABCDEFGHIJK']},p=>progress.push(p));
+  expect(result.rows).toHaveLength(33);
+  expect(progress.map(p=>p.done)).toEqual(Array.from({length:33},(_,i)=>i+1));
+  expect(progress.every(p=>p.total===33)).toBe(true);
+  expect(result.counts.PARTIAL_DATA).toBe(33);
+  expect(result.deepSearchChannels).toBe(33);
+  const calls=(api.youtubeListExisting as any).mock.calls as any[][];
+  expect(calls).toHaveLength(33);
+  expect(calls.filter(args=>args[3]===true)).toHaveLength(33);
+  expect(calls.filter(args=>args[3]===false)).toHaveLength(0);
+  expect(calls.find(args=>args[0]==='p-fleet1')?.[4]).toContain('ABCDEFGHIJK');
+  expect(new Set(result.rows.map(row=>row.channelId)).size).toBe(33);
+ });
+
  it('wires one full fleet action through stats + authoritative owner inventory + zero-quota local scan',()=>{
   const full=readFileSync('src/fullChannelRefresh.ts','utf8'),runway=readFileSync('src/ChannelRunway.tsx','utf8');
   expect(full).toContain("scanAllInventories('manual-all')");
   expect(full).toContain('refreshYoutubeChannelStatisticsSelection(channelIds,true)');
-  expect(full).toContain('refreshOwnerInventoriesAuthoritative(requested,true)');
+  expect(full).toContain('refreshOwnerInventoriesAuthoritative(requested,true,undefined,knownByChannel,onProgress)');
   expect(full).toContain('recalculateChannelRunway(enabled,new Date(),false)');
-  expect(runway).toContain('refreshAllChannelData(active.map(c=>c.id))');
+  expect(runway).toContain('refreshAllChannelData(active.map(c=>c.id),progress=>');
   expect(runway).toContain('↻ ОБНОВИТЬ ВСЕ КАНАЛЫ');
   expect(runway).toContain('LOCAL READY • ZERO API');
  });

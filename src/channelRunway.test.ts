@@ -55,6 +55,21 @@ describe('Channel Runway core',()=>{
     expect(rows.map(x=>x.channelName)).toEqual(['No future schedule','Channel A','Channel B','Unknown']);
   });
 
+  it('sorts by the visible days ascending, including explicitly historical partial evidence',()=>{
+    const rows=[
+      {channelName:'Green confirmed',remoteScheduledDays:49,known:true},
+      {channelName:'Unknown',remoteScheduledDays:0,known:false},
+      {channelName:'Historical 2',remoteScheduledDays:0,known:false,historicalScheduledDays:2},
+      {channelName:'Red confirmed',remoteScheduledDays:8,known:true},
+      {channelName:'Historical 21',remoteScheduledDays:0,known:false,historicalScheduledDays:21},
+      {channelName:'Confirmed 2',remoteScheduledDays:2,known:true},
+    ].sort(compareYoutubeOnlyRunwayPriority);
+    expect(rows.map(x=>x.channelName)).toEqual([
+      'Confirmed 2','Historical 2','Red confirmed','Historical 21','Green confirmed','Unknown'
+    ]);
+    expect(rows.at(-1)?.channelName).toBe('Unknown');
+  });
+
   it('uses schedule end date and channel name as deterministic tie-breakers',()=>{
     const rows=[
       {channelName:'Zulu',remoteScheduledDays:10,scheduledUntil:'2026-11-01',known:true},
