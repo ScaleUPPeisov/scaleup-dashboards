@@ -94,6 +94,8 @@ function renderStudio(data){
   $('studio-mac-state').textContent=isOnline?'Mac Bridge · Online':device?'Mac Bridge · Offline':'Mac Bridge · Нет подключения';
   $('studio-mac-last').textContent=device?'Последний сигнал: '+stamp(device.lastSeenAt):
     'Телеметрия появится после подключения Mac';
+  if(device?.status?.agentLastError)
+    $('studio-mac-last').textContent+=' · '+device.status.agentLastError;
   $('studio-live-indicator').classList.toggle('offline',!isOnline);
   $('studio-renders').textContent=fmt(telemetry.rendersActive);
   $('studio-uploads').textContent=fmt(telemetry.uploadsQueued);
