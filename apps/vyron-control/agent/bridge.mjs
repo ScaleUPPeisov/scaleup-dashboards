@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { cleanEvent,cleanStatus,checkRemoteCommand } from './logic.mjs';
 import { validatedChannelList } from '../cloudflare/src/core.mjs';
 import { createHash } from 'node:crypto';
+import {RetryBudget,diagnosticCode} from './retry.mjs';
 
 export class MacBridge {
   constructor({ url, token, deviceId='macbook_m1', eventsFile=null,
@@ -17,6 +18,9 @@ export class MacBridge {
     this.token=token;this.deviceId=deviceId;this.eventsFile=eventsFile;
     this.statusFile=statusFile;this.channelsFile=channelsFile;this.analyticsFile=analyticsFile;this.productionFile=productionFile;this.cursorFile=cursorFile;this.fetchImpl=fetchImpl;
     this.offset=0;this.busy=false;this.lastChannelHash=null;this.lastChannelSyncAttemptAt=0;this.lastAnalyticsHash=null;this.lastProductionHash=null;
+    this.retry=new RetryBudget();
+    this.syncFailures=new Map();this.lastSyncSuccessAt=null;this.lastHealthyStatus=null;
+    this.stateSource='NOT_LOADED';this.mirrorWarning=null;
   }
   async initialize() {
     try {
@@ -36,14 +40,27 @@ export class MacBridge {
     return result;
   }
   async readStatus() {
-    if (!this.statusFile) return cleanStatus({});
-    try {
-      const data=JSON.parse(await readFile(this.statusFile,'utf8'));
-      return cleanStatus(data);
-    } catch(e) {
-      if(e.code==='ENOENT') return cleanStatus({});
-      throw e;
-    }
+    let status=this.lastHealthyStatus||cleanStatus({});
+    if(this.statusFile){
+      try {
+        status=cleanStatus(JSON.parse(await readFile(this.statusFile,'utf8')));
+        this.lastHealthyStatus=status;
+        this.stateSource='MIRROR';
+      }catch(error){
+        this.stateSource=error?.code==='ENOENT'?'MIRROR_MISSING':'MIRROR_INVALID';
+      }
+    }else this.stateSource='NOT_CONFIGURED';
+    const failures=[...this.syncFailures.entries()].sort((a,b)=>
+      b[1].at.localeCompare(a[1].at));
+    return {...status,agentVersion:'bridge-3.0',agentStateSource:this.stateSource,
+      agentLastError:this.mirrorWarning||failures[0]?.[1]?.code||null,
+      agentLastErrorAt:this.mirrorWarningAt||failures[0]?.[1]?.at||null,
+      agentLastSuccessAt:this.lastSyncSuccessAt,
+      agentRetrySeconds:Math.ceil(this.retry.nextPendingMs()/1000)};
+  }
+  setMirrorWarning(error=null){
+    this.mirrorWarning=error?diagnosticCode(error):null;
+    this.mirrorWarningAt=error?new Date().toISOString():null;
   }
   async heartbeat() {
     return this.api('/api/agent/heartbeat','POST',{
@@ -195,15 +212,42 @@ export class MacBridge {
     }
   }
   async tick() {
-    if(this.busy)return;
+    if(this.busy)return {skipped:'already_running'};
     this.busy=true;
+    const outcomes={};
     try {
+      // A failed heartbeat means that remote status is genuinely offline.
+      // Do not pretend that Mac woke up or a network request succeeded.
       await this.heartbeat();
-      await this.syncChannelRegistry();
-      await this.syncAnalytics();
-      await this.syncEvents();
-      await this.pendingCommands();
-      await this.syncProduction(); // optional telemetry must never block critical event delivery
-    } finally {this.busy=false;}
+      this.retry.success('heartbeat');
+      const operations=[
+        ['channels',()=>this.syncChannelRegistry()],
+        ['analytics',()=>this.syncAnalytics()],
+        ['events',()=>this.syncEvents()],
+        ['commands',()=>this.pendingCommands()],
+        ['production',()=>this.syncProduction()]
+      ];
+      for(const [key,operation] of operations){
+        if(!this.retry.shouldRun(key)){
+          outcomes[key]={deferred:true,retryAfterMs:this.retry.remainingMs(key)};
+          continue;
+        }
+        try {
+          outcomes[key]=await operation();
+          this.retry.success(key);
+          this.syncFailures.delete(key);
+          this.lastSyncSuccessAt=new Date().toISOString();
+        }catch(error){
+          const failure=this.retry.fail(key,error);
+          this.syncFailures.set(key,{code:failure.code,at:new Date().toISOString()});
+          outcomes[key]={failed:true,code:failure.code,retryAfterMs:failure.delay};
+        }
+      }
+      return outcomes;
+    }catch(error){
+      const failure=this.retry.fail('heartbeat',error);
+      this.syncFailures.set('heartbeat',{code:failure.code,at:new Date().toISOString()});
+      throw error;
+    }finally{this.busy=false;}
   }
 }
