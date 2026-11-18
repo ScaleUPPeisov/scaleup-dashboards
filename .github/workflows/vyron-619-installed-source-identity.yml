@@ -1,0 +1,44 @@
+name: VYRON installed M1 6.1.18 source identity gate
+
+on:
+  push:
+    branches:
+      - release-candidate/vyron-619-integrated-safe-20261118
+    paths:
+      - '.github/workflows/vyron-619-installed-source-identity.yml'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  verify-installed-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download the last tested private 6.1.18 owner artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: VYRON-6.1.18-M1-PERSONAL-LOCAL-NOT-NOTARIZED
+          repository: ScaleUPPeisov/scaleup-dashboards
+          run-id: 44258834059
+          github-token: ${{ github.token }}
+          path: source-evidence
+      - name: Match recorded executable to installed Mac without reading secrets
+        run: |
+          set -Eeuo pipefail
+          FILE="$(find source-evidence -type f -name executable-sha256.txt -print -quit)"
+          STATUS="$(find source-evidence -type f -name status.txt -print -quit)"
+          test -n "$FILE"
+          test -n "$STATUS"
+          grep -Fxq 'source=cf014e7b88522a664e402e469b66d5c4f8e4b50c' "$STATUS"
+          grep -Fxq 'version=6.1.18' "$STATUS"
+          EXPECTED='af313fbac5515162edf19144ea4359f1c1319a553e35bedb1dfc50cbfd5daf29'
+          REPORTED="$(awk 'NR==1 {print $1}' "$FILE")"
+          if [ "$REPORTED" != "$EXPECTED" ]; then
+            echo 'INSTALLED_618_SOURCE_MISMATCH=BLOCK_RELEASE'
+            exit 1
+          fi
+          echo 'INSTALLED_618_ARTIFACT_EXACT_MATCH=PASS'
+          echo 'INSTALLED_618_SOURCE_SHA=cf014e7b88522a664e402e469b66d5c4f8e4b50c'
+          echo 'INSTALLED_618_APP=ADHOC_NOT_APPLE_DEVELOPER'
