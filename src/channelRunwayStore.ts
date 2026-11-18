@@ -143,10 +143,9 @@ export function recalculateChannelRunway(
     const native=readAuthoritativeExistingSnapshot(channel.id);
     const cached=readExistingRunwayCache(channel.id,storage);
     const baseline=confirmedBaseline(cached);
-    const candidates=[
-      native&&trustedScheduledSnapshot(native.videos,native.syncInfo,now)?{videos:native.videos,updatedAt:native.updatedAt}:undefined,
-      trustedScheduledSnapshot(baseline,cached?.syncInfo,now)?{videos:baseline,updatedAt:cached?.updatedAt}:undefined
-    ].filter((x):x is {videos:YoutubeExistingVideo[];updatedAt?:string}=>Boolean(x));
+    const candidates:Array<{videos:YoutubeExistingVideo[];updatedAt?:string}>=[];
+    if(native&&trustedScheduledSnapshot(native.videos,native.syncInfo,now))candidates.push({videos:native.videos,updatedAt:native.updatedAt});
+    if(trustedScheduledSnapshot(baseline,cached?.syncInfo,now))candidates.push({videos:baseline,updatedAt:cached?.updatedAt});
     const latest=candidates.sort((a,b)=>validTime(b.updatedAt)-validTime(a.updatedAt))[0];
     const priorIsTrusted=Boolean(prior?.lastScheduleSync)&&!(prior?.dataState==='CONFIRMED_EMPTY'&&prior.inventoryEvidenceVersion!==2);
     const priorTime=priorIsTrusted?validTime(prior?.lastScheduleSync):0;
