@@ -1,11 +1,12 @@
 import type {Channel,YoutubeExistingVideo} from './types';
-import {readAuthoritativeExistingSnapshot} from './channelSchedule';
+import {readAuthoritativeExistingSnapshot,scheduleSyncTruthFromInfo} from './channelSchedule';
 import {
   CHANNEL_RUNWAY_STORAGE_KEY,
   deriveRunwayRecord,
   krasnoyarskClock,
   recalculateRunwayRecord,
-  type ChannelRunwayRecord
+  type ChannelRunwayRecord,
+  type RunwayDataState
 } from './channelRunwayCore';
 
 export type ChannelRunwayStore={
@@ -21,6 +22,7 @@ const EVENT='vyron-channel-runway';
 const existingCacheKey=(channelId:string)=>`vyron:existing-cache:v1:${channelId}`;
 const VALID_STATUS=new Set(['large','plan','prepare','urgent','ended','no-data']);
 const VALID_PRIORITY=new Set(['low','normal','high','critical','unknown']);
+const VALID_DATA_STATE=new Set(['CONFIRMED_SCHEDULE','CONFIRMED_EMPTY','PARTIAL_DATA','STALE_CACHE','AUTH_REQUIRED','API_FAILED','UNKNOWN']);
 
 function defaultStore():ChannelRunwayStore{return{version:1,channels:{}}}
 function browserStorage(){return typeof localStorage==='undefined'?undefined:localStorage}
@@ -42,6 +44,7 @@ function normalizeStoredRecord(id:string,value:unknown):ChannelRunwayRecord|unde
     channelId,
     channelName,
     scheduledVideoCount,
+    dataState:VALID_DATA_STATE.has(String(raw.dataState))?raw.dataState:(raw.scheduledUntil?'STALE_CACHE':'UNKNOWN'),
     averagePublishIntervalDays,
     runwayDays,
     lastLocalCalculation:typeof raw.lastLocalCalculation==='string'&&raw.lastLocalCalculation?raw.lastLocalCalculation:'1970-01-01T00:00:00.000Z',
@@ -135,16 +138,16 @@ export function recalculateChannelRunway(
     // 6.1.2 authoritative Existing Videos truth is native-disk backed.
     // This synchronous snapshot reads only already-hydrated memory/legacy fallback and never calls YouTube.
     const native=readAuthoritativeExistingSnapshot(channel.id);
-    if(native?.videos.length){
-      next.channels[channel.id]=deriveRunwayRecord(channel,native.videos,now,native.updatedAt,true);
+    if(native&&scheduleSyncTruthFromInfo(native.syncInfo)==='complete'){
+      next.channels[channel.id]=recalculateRunwayRecord(deriveRunwayRecord(channel,native.videos,now,native.updatedAt,true),now);
       continue;
     }
     // Legacy v1 cache remains a restart-safe fallback until verified migration retires it.
     const cached=readExistingRunwayCache(channel.id,storage);
     const baseline=confirmedBaseline(cached);
-    const cacheKnown=Boolean(cached?.syncInfo||baseline.length);
-    if(cacheKnown){
-      next.channels[channel.id]=deriveRunwayRecord(channel,baseline,now,undefined,true);
+    const cacheConfirmed=scheduleSyncTruthFromInfo(cached?.syncInfo)==='complete';
+    if(cacheConfirmed){
+      next.channels[channel.id]=recalculateRunwayRecord(deriveRunwayRecord(channel,baseline,now,cached?.updatedAt,true),now);
       continue;
     }
 
@@ -172,6 +175,32 @@ export function upsertChannelRunwayFromYoutube(
     channels:{...current.channels,[channel.id]:record}
   };
   return saveChannelRunwayStore(next,storage);
+}
+
+// Failed/partial refresh never replaces the last verified date or count with zero.
+export function markRunwayRefreshIssue(
+  channel:Pick<Channel,'id'|'name'>,
+  dataState:Extract<RunwayDataState,'PARTIAL_DATA'|'AUTH_REQUIRED'|'API_FAILED'|'UNKNOWN'>,
+  error:string,
+  now=new Date(),
+  storage:StorageLike|undefined=browserStorage()
+){
+  const current=loadChannelRunwayStore(storage);
+  const previous=current.channels[channel.id]||deriveRunwayRecord(channel,[],now,undefined,false);
+  const record=recalculateRunwayRecord({
+    ...previous,
+    channelName:channel.name,
+    dataState,
+    lastRefreshError:error,
+    runwayDays:undefined,
+    status:'no-data',
+    priority:'unknown'
+  },now);
+  return saveChannelRunwayStore({
+    ...current,
+    lastLocalCalculation:now.toISOString(),
+    channels:{...current.channels,[channel.id]:record}
+  },storage);
 }
 
 export function shouldRunDailyChannelRunway(store:ChannelRunwayStore,now=new Date()){
