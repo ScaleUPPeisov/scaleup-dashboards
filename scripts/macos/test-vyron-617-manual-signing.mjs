@@ -79,7 +79,7 @@ test('release kit is staged only after notarized GUI and signed updater, without
  'RELEASE-NOTES.md','owner_migration_verified:false','stable_feed_changed:false']){
    assert.ok(script.includes(token),'MISSING_RELEASE_KIT_GUARD: '+token);
  }
- assert.ok(workflow.includes("if: ${{ github.event_name == 'workflow_dispatch' && inputs.deliver_signed_rc_to_actions_artifact }}"));
+ assert.ok(workflow.includes("if: ${{ (github.event_name == 'workflow_dispatch' && inputs.deliver_signed_rc_to_actions_artifact) || (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'vyron617-owner-approve-signed-rc') }}"));
  assert.doesNotMatch(script,/gh release|git push|git tag|curl.*sh|release published/i);
 });
 

@@ -223,7 +223,7 @@ jobs:
           VYRON_RC_RELEASE_KIT_DIR: ${{ runner.temp }}/vyron-617-release-kit
         run: node scripts/macos/write-vyron-617-release-kit.mjs
       - name: Deliver notarized owner RC kit ONLY with explicit owner opt-in
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.deliver_signed_rc_to_actions_artifact }}
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.deliver_signed_rc_to_actions_artifact) || (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'vyron617-owner-approve-signed-rc') }}
         uses: actions/upload-artifact@v4
         with:
           name: VYRON617-NOTARIZED-OWNER-RC-NOT-STABLE
