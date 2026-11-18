@@ -7,7 +7,7 @@ import {join,dirname} from 'node:path';
 
 export const RELEASE_ASSETS=Object.freeze([
  '/app.js','/neo-glass.mjs','/neo-glass.css','/styles.css',
- '/service-worker.js','/manifest.webmanifest','/index.html'
+ '/service-worker.js','/manifest.webmanifest','/'
 ]);
 const HERE=dirname(fileURLToPath(import.meta.url));
 const ROOT=join(HERE,'..');
@@ -15,7 +15,7 @@ const sha256=data=>createHash('sha256').update(data).digest('hex');
 export async function buildIntegrityManifest(commitSha,reader=readFile){
  if(!/^[0-9a-f]{40}$/.test(commitSha))throw new Error('Invalid exact release commit SHA');
  const assets={};
- for(const path of RELEASE_ASSETS)assets[path]=sha256(await reader(join(ROOT,'public',path.slice(1))));
+ for(const path of RELEASE_ASSETS)assets[path]=sha256(await reader(join(ROOT,'public',path==='/'?'index.html':path.slice(1))));
  return {app:'VYRON PEISOV YT',gitSha:commitSha,algorithm:'sha256',
    assets,generatedAt:new Date().toISOString()};
 }
