@@ -4054,9 +4054,15 @@ pub async fn youtube_list_existing_videos(
     let mut playlist_items_inspected=0usize;
     let mut playlist_duplicate_count=0usize;
     let mut playlist_unresolved_count=0usize;
+    let mut visited_page_tokens=std::collections::HashSet::<String>::new();
+    let max_playlist_pages=std::cmp::max(1,(limit+49)/50)+1;
 
     loop{
         if ids.len()>=limit{limit_truncated=true;break}
+        if playlist_calls>=max_playlist_pages{limit_truncated=true;break}
+        if let Some(ref token)=page{
+            if !visited_page_tokens.insert(token.clone()){limit_truncated=true;break}
+        }
         let mut q=client.get("https://www.googleapis.com/youtube/v3/playlistItems")
             .bearer_auth(&token)
             .query(&[("part","contentDetails"),("playlistId",uploads),("maxResults","50")]);
