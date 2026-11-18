@@ -17,7 +17,9 @@ let eventRows = [];
 let macAgentToken = '';
 let manualRefreshing = false;
 const neoViews = new Set(['overview','channels','analytics','studio','system','notifications','insights','channel-detail']);
-let activeMobileView = (()=>{try{const saved=localStorage.getItem('vyron-control-view');return neoViews.has(saved)&&saved!=='channel-detail'?saved:'overview';}catch{return 'overview';}})();
+let activeMobileView = (()=>{const requested=new URLSearchParams(location.search).get('view');
+  if(neoViews.has(requested)&&requested!=='channel-detail')return requested;
+  try{const saved=localStorage.getItem('vyron-control-view');return neoViews.has(saved)&&saved!=='channel-detail'?saved:'overview';}catch{return 'overview';}})();
 const macAgentInstallCommand =
   'curl -fsSL https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/release/vyron-control-production/apps/vyron-control/public/install-mac-agent.sh | bash';
 
