@@ -39,6 +39,8 @@ test('GUI bootstrap contains notarized app and re-signed Tauri update without pr
   const posRepack=script.indexOf('COPYFILE_DISABLE=1 tar -czf "$ARCHIVE"');
   const posResign=script.indexOf('npx tauri signer sign --app-version 6.1.17 "$ARCHIVE"');
   assert.ok(posStapled>=0&&posStapled<posRepack&&posRepack<posResign,'ticket must exist before update archive signing');
+  assert.ok(script.indexOf('tar -xzf "$ARCHIVE"')>posResign,'post-staple updater payload must be extracted and verified');
+  assert.match(script,/spctl --assess --type execute --verbose=4 "\$EXTRACTED\/VYRON\.app"/);
   for(const term of ['studio.channelflow.desktop','minisign -Vm','VYRON.app','hdiutil create','ln -s /Applications',
     'xcrun notarytool submit "$DMG"','xcrun stapler validate "$DMG"',
     'spctl --assess --type open','gui_bootstrap=BUILT_NOT_PUBLISHED']){
