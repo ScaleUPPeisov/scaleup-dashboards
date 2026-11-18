@@ -159,13 +159,21 @@ export function recalculateRunwayRecord(record:ChannelRunwayRecord,now=new Date(
   };
 }
 
-export type YoutubeOnlyRunwayPriority={channelName:string;remoteScheduledDays:number;scheduledUntil?:string;known:boolean};
+export type YoutubeOnlyRunwayPriority={channelName:string;remoteScheduledDays:number;scheduledUntil?:string;known:boolean;historicalScheduledDays?:number};
 export function compareYoutubeOnlyRunwayPriority(a:YoutubeOnlyRunwayPriority,b:YoutubeOnlyRunwayPriority){
-  if(a.known!==b.known)return a.known?-1:1;
-  if(!a.known)return a.channelName.localeCompare(b.channelName,'ru');
-  const ad=Number.isFinite(a.remoteScheduledDays)?Math.max(0,a.remoteScheduledDays):0;
-  const bd=Number.isFinite(b.remoteScheduledDays)?Math.max(0,b.remoteScheduledDays):0;
-  return ad-bd||(a.scheduledUntil||'').localeCompare(b.scheduledUntil||'')||a.channelName.localeCompare(b.channelName,'ru');
+  // Sort by the number actually displayed under "Остаток дней":
+  // verified YouTube first for ties, positive historical evidence second,
+  // and genuinely unknown days last. Local HDD stock never affects ordering.
+  const display=(row:YoutubeOnlyRunwayPriority)=>{
+    if(row.known&&Number.isFinite(row.remoteScheduledDays))return{days:Math.max(0,row.remoteScheduledDays),confidence:0};
+    if(!row.known&&row.historicalScheduledDays!==undefined&&Number.isFinite(row.historicalScheduledDays)&&row.historicalScheduledDays>=0)
+      return{days:row.historicalScheduledDays,confidence:1};
+    return{days:Number.POSITIVE_INFINITY,confidence:2};
+  };
+  const ad=display(a),bd=display(b);
+  return ad.days-bd.days||ad.confidence-bd.confidence||
+    (a.scheduledUntil||'').localeCompare(b.scheduledUntil||'')||
+    a.channelName.localeCompare(b.channelName,'ru');
 }
 export function compareRunwayRecords(a:ChannelRunwayRecord,b:ChannelRunwayRecord){
   const ad=a.runwayDays,bd=b.runwayDays;
