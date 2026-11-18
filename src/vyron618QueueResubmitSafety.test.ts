@@ -9,7 +9,7 @@ const spec=(n:number,channelId='channel-a'):ImmutableUploadJob=>({
  videoNumber:n,channelId,channelName:channelId,
  profileId:'profile-a',filePath:`/render/${n}.mp4`,
  fingerprint:n.toString(16).padStart(64,'0'),fileSize:1024,modifiedAt:1,
- publishAt:'2030-01-01T12:00:00Z',title:`VIDEO_${n}`,
+ publishAt:'2030-01-01T12:00:00Z',title:`Original ambient film ${n}`,
  description:'test',tags:['test'],categoryId:'10',
  quotaOperations:[{method:'videos.insert',count:1}],
  allowDuplicate:false,submittedAt:'2026-11-18T00:00:00Z'
