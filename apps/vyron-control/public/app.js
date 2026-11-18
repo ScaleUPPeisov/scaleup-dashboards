@@ -1,6 +1,7 @@
 import {decryptVyronMigration} from './migration-crypto.js';
 import {compactProgressEvents} from './event-utils.mjs';
 import {renderNeoGlass,selectNeoChannel,wireNeoGlass} from './neo-glass.mjs';
+import {analyticsDateWindow,analyticsWindowCoverage} from './analytics-window.mjs';
 
 const $ = id => document.getElementById(id);
 const number = value => value === null || value === undefined ? '—' : new Intl.NumberFormat('ru-RU').format(value);
@@ -364,7 +365,9 @@ function renderAnalytics(data) {
     ...row,averageViewDuration:row.weight?row.weightedDuration/row.weight:null,
     averageViewPercentage:row.weight?row.weightedRetention/row.weight:null
   }));
-  const daily=allDaily.slice(-period);
+  const window=analyticsDateWindow(period);
+  const daily=allDaily.filter(row=>row.date>=window.start&&row.date<=window.end);
+  const coverage=analyticsWindowCoverage(connected,window);
   const sum=key=>daily.reduce((total,row)=>total+(row[key]||0),0);
   const views=sum('views'),watchMinutes=sum('watchMinutes');
   const gained=sum('subscribersGained'),lost=sum('subscribersLost');
@@ -373,7 +376,13 @@ function renderAnalytics(data) {
     (row.averageViewDuration||0)*(row.views||0),0)/weighted:null;
   const retention=weighted?daily.reduce((total,row)=>total+
     (row.averageViewPercentage||0)*(row.views||0),0)/weighted:null;
-  $('analytics-views').textContent=number(views);
+  $('analytics-views').textContent=daily.length?number(views):'—';
+  $('analytics-views-note').textContent='Оценка по доступным дням '+window.start+
+    ' — '+window.end+'. Полное покрытие: '+coverage.complete+'/'+coverage.total+
+    ' каналов. Данные Google запаздывают примерно на 2 дня.'+
+    (data.public24h?.value!=null?' · Публичные просмотры ~24ч: '+
+      number(data.public24h.value)+' ('+data.public24h.covered+'/'+data.public24h.total+
+      ' каналов; приблизительно, не Analytics)':' · 24ч: нет сопоставимых публичных снимков');
   $('analytics-engaged-views').textContent=number(sum('engagedViews'));
   const uniqueDays=daily.filter(row=>row.uniqueDays>0);
   $('analytics-unique-viewers').textContent=uniqueDays.length
@@ -398,7 +407,9 @@ function renderAnalytics(data) {
   $('analytics-updated').textContent='Analytics: отчёты '+connected.length+' / '+totalChannels+
     ' · OAuth '+authorized+' / '+totalChannels+
     (needsAuthorization?' · требуется авторизация для '+needsAuthorization:'')+
-    ' · последний снимок '+time(latest);
+    ' · последний снимок '+time(latest)+
+    ' · полное покрытие '+period+' дней: '+coverage.complete+'/'+coverage.total+
+    (coverage.complete<coverage.total?' · неполные данные, суммы частичные':'');
   renderAnalyticsTrend(daily,period,$('analytics-trend-metric').value);
 
   const topVideos=[];
