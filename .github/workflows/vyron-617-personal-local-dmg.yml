@@ -105,7 +105,7 @@ jobs:
           grep -Fq 'Signature=adhoc' "$RUNNER_TEMP/evidence/codesign.txt"
           ARCHIVE="$RUNNER_TEMP/VYRON.app.tar.gz"
           COPYFILE_DISABLE=1 tar -czf "$ARCHIVE" -C "$(dirname "$APP")" VYRON.app
-          npx tauri signer sign --app-version 6.1.17 "$ARCHIVE" > "$RUNNER_TEMP/signer-output.txt"
+          npx tauri signer sign "$ARCHIVE" > "$RUNNER_TEMP/signer-output.txt"
           test -s "$ARCHIVE.sig"
           openssl base64 -d -A -in "$RUNNER_TEMP/vyron-rotated.pub" -out "$RUNNER_TEMP/new-key.minisign.pub"
           openssl base64 -d -A -in "$ARCHIVE.sig" -out "$RUNNER_TEMP/update.minisign.sig"
