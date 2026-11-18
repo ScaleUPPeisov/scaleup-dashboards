@@ -249,7 +249,13 @@ export async function refreshOwnerInventoriesAuthoritative(
         const reason=ownerMixed?'AUTHORITATIVE_VIDEO_CHANNEL_MISMATCH':'AUTHORITATIVE_INVENTORY_INCOMPLETE';
         // Distinguish a real API failure from a partial, verified-positive owner
         // inventory. Never promote search snippets or non-owner rows to proof.
-        const status=observed.length?'PARTIAL_DATA':'API_FAILED';
+        // A complete owner-scoped uploads/videos.list read can still lack proof of
+        // *Scheduled coverage*. That is incomplete evidence, not an HTTP/API
+        // failure: show PARTIAL_DATA rather than a misleading API_FAILED toast.
+        // Actual incomplete hydration and channel-ownership mismatches remain failures.
+        const ownerReadComplete=(result.syncComplete??result.complete)===true;
+        const status=ownerMixed?'API_FAILED'
+          :(observed.length>0||ownerReadComplete)?'PARTIAL_DATA':'API_FAILED';
         pushOwnerRow(summary,{channelId:channel.id,channelName:channel.name,status,profileId:linked.profile.id,youtubeChannelId:linked.youtubeChannelId,apiRequests,quotaUnits,error:reason,
           observedScheduled:observed.length,observedThrough,diagnosticReasons});
         // Preserve verified-positive Scheduled rows in Runway as LOWER-BOUND
