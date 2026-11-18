@@ -38,6 +38,8 @@ jobs:
         run: npx playwright install --with-deps ${{ matrix.engine }}
       - name: Check 8 screens across viewport matrix and capture QA screenshots
         run: node browser/neo-glass-visual-qa.mjs
+      - name: Verify installed PWA offline fallback, Service Worker upgrade and session preservation
+        run: node browser/pwa-install-smoke.mjs
       - name: Upload QA screenshots
         if: always()
         uses: actions/upload-artifact@v4
