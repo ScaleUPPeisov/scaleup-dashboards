@@ -150,16 +150,17 @@ test('Mac agent bulk-imports exported YouTube channel registry once per change',
     });
     assert.equal((await bridge.syncChannelRegistry()).imported,33);
     assert.equal(sent.length,1);
-    assert.equal(sent[0].body.length,33);
-    assert.equal(sent[0].body[0].id,list[0].channelId);
-    assert.equal(sent[0].body[0].profileBinding,'a'.repeat(64));
+    assert.equal(sent[0].body.channels.length,33);
+    assert.equal(sent[0].body.channels[0].id,list[0].channelId);
+    assert.equal(sent[0].body.complete,false,'missing state cannot archive');
+    assert.equal(sent[0].body.channels[0].profileBinding,'a'.repeat(64));
     assert.equal((await bridge.syncChannelRegistry()).reason,'unchanged');
     assert.equal(sent.length,1);
     list[0].title='Renamed channel';
     await writeFile(channelsFile,JSON.stringify({channels:list}));
     assert.equal((await bridge.syncChannelRegistry()).imported,33);
     assert.equal(sent.length,2);
-    assert.equal(sent[1].body[0].name,'Renamed channel');
+    assert.equal(sent[1].body.channels[0].name,'Renamed channel');
   }finally{await rm(dir,{recursive:true,force:true});}
 });
 
