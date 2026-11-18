@@ -1,8 +1,11 @@
 name: VYRON 6.1.17 personal ARM64 DMG (no Apple Developer)
 
 on:
-  pull_request:
-    types: [labeled]
+  push:
+    branches:
+      - feature/vyron-macos-ultimate
+    paths:
+      - .github/workflows/vyron-617-personal-local-dmg.yml
 
 permissions:
   contents: read
@@ -14,13 +17,13 @@ concurrency:
 jobs:
   personal-local-dmg:
     environment: vyron-rotated-key-rc
-    if: ${{ github.event.action == 'labeled' && github.event.label.name == 'vyron617-owner-approve-signed-rc' && github.event.pull_request.number == 22 && github.event.pull_request.head.ref == 'feature/vyron-macos-ultimate' && github.event.pull_request.head.repo.full_name == 'ScaleUPPeisov/scaleup-dashboards' }}
+    if: ${{ github.repository == 'ScaleUPPeisov/scaleup-dashboards' && github.ref == 'refs/heads/feature/vyron-macos-ultimate' }}
     runs-on: macos-15
     timeout-minutes: 100
     steps:
       - name: Pin exact PR source
         env:
-          SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+          SOURCE_SHA: ${{ github.sha }}
         run: |
           set -Eeuo pipefail
           [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
