@@ -13,6 +13,7 @@ concurrency:
 
 jobs:
   personal-local-dmg:
+    environment: vyron-rotated-key-rc
     if: ${{ github.event.action == 'labeled' && github.event.label.name == 'vyron617-owner-approve-signed-rc' && github.event.pull_request.number == 22 && github.event.pull_request.head.ref == 'feature/vyron-macos-ultimate' && github.event.pull_request.head.repo.full_name == 'ScaleUPPeisov/scaleup-dashboards' }}
     runs-on: macos-15
     timeout-minutes: 100
