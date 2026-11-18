@@ -30,7 +30,8 @@ test('authenticated read-only API verifies future private status.publishAt',asyn
  assert.equal(x.calls.length,3);
  assert.equal(x.calls[0].searchParams.get('mine'),'true');
  assert.equal(x.calls[2].searchParams.get('part'),'status,snippet');
- assert.equal(scheduledContentDays({...result,capturedAt:now.toISOString()},now),5);
+ assert.equal(scheduledContentDays({...result,capturedAt:now.toISOString()},now),6);
+ // Publishing 2026-11-23 17:00 UTC is already Nov 24 in Krasnoyarsk.
 });
 test('wrong authorized channel never scans other owners private videos',async()=>{
  const x=mockYoutube({authorized:false});
