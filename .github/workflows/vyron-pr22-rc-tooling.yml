@@ -13,6 +13,8 @@ on:
       - 'docs/VYRON_PR22_MAC_OWNER_RUNBOOK.md'
       - '.github/workflows/vyron-pr22-rc-tooling.yml'
       - '.github/workflows/vyron-pr22-remote-rc.yml'
+      - '.github/workflows/vyron-617-rotated-signed-rc.yml'
+      - 'scripts/macos/test-vyron-617-manual-signing.mjs'
       - 'docs/security/VYRON_617_UPDATER_KEY_INCIDENT_2026-11-12.md'
   workflow_dispatch:
 
@@ -64,6 +66,7 @@ jobs:
         run: |
           node --test scripts/macos/test-vyron-rotated-updater.mjs
           node --test scripts/macos/test-vyron-617-rotated-public-key.mjs
+          node --test scripts/macos/test-vyron-617-manual-signing.mjs
       - name: Python safety tests
         run: |
           python3 -m unittest scripts.macos.test_verify_vyron_pr22_performance scripts.test_vyron_macos_offline_preflight
