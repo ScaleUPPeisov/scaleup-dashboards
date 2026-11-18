@@ -197,3 +197,73 @@ test('old Worker without production endpoint cannot block Mac events and command
    assert.equal(calls.filter(u=>u.endsWith('/api/agent/production')).length,1);
  }finally{await rm(dir,{recursive:true,force:true});}
 });
+
+
+test('Mac Bridge still heartbeats and drains events when Analytics upload fails',async()=>{
+  const dir=await mkdtemp(join(tmpdir(),'vyron-isolated-failure-'));
+  try{
+    const analyticsFile=join(dir,'analytics.json'),eventsFile=join(dir,'events.jsonl'),
+      cursorFile=join(dir,'cursor.json');
+    const id='UC'+'x'.repeat(22);
+    await writeFile(analyticsFile,JSON.stringify([{channelId:id,views:200}]));
+    await writeFile(eventsFile,JSON.stringify({
+      kind:'render_completed',id:'finished_render_20261118',title:'Rendered',
+      occurredAt:new Date().toISOString()
+    })+'\n');
+    const calls=[];
+    const agent=new MacBridge({url:'https://control.example',token:'T'.repeat(40),
+      analyticsFile,eventsFile,cursorFile,fetchImpl:async(url)=>{
+        calls.push(url);
+        if(url.endsWith('/api/agent/analytics'))return {
+          ok:false,status:503,json:async()=>({error:'Temporarily down'})
+        };
+        return {ok:true,json:async()=>url.includes('/commands?')?{commands:[]}:{received:1}};
+      }
+    });
+    await agent.initialize();
+    const first=await agent.tick();
+    assert.equal(first.analytics.failed,true);
+    assert.equal(first.analytics.code,'CLOUD_UNAVAILABLE');
+    assert.equal(first.events.transmitted,1);
+    assert.equal(JSON.parse(await readFile(cursorFile,'utf8')).offset,
+      Buffer.byteLength(await readFile(eventsFile)));
+    const second=await agent.tick();
+    assert.equal(second.analytics.deferred,true);
+    assert.equal(second.events.transmitted,0);
+    assert.equal(calls.filter(u=>u.endsWith('/api/agent/heartbeat')).length,2);
+  }finally{await rm(dir,{recursive:true,force:true});}
+});
+test('corrupted Mac state retains last-good counters for cloud heartbeat',async()=>{
+  const dir=await mkdtemp(join(tmpdir(),'vyron-state-last-good-'));
+  try{
+    const statusFile=join(dir,'status.json');
+    await writeFile(statusFile,JSON.stringify({rendersActive:3,endlumeVersion:'10.0.15'}));
+    const agent=new MacBridge({url:'https://control.example',token:'T'.repeat(40),statusFile});
+    const good=await agent.readStatus();
+    assert.equal(good.rendersActive,3);
+    assert.equal(good.agentStateSource,'MIRROR');
+    await writeFile(statusFile,'{truncated');
+    const fallback=await agent.readStatus();
+    assert.equal(fallback.rendersActive,3);
+    assert.equal(fallback.agentStateSource,'MIRROR_INVALID');
+    assert.equal(fallback.macAwake,true);
+    assert.equal(JSON.stringify(fallback).includes('{truncated'),false);
+  }finally{await rm(dir,{recursive:true,force:true});}
+});
+test('heartbeat network errors are never reported as successful Mac connection',async()=>{
+  let fail=true,successful=0;
+  const agent=new MacBridge({url:'https://control.example',token:'T'.repeat(40),
+    fetchImpl:async(url)=>{
+      if(url.endsWith('/api/agent/heartbeat')&&fail)
+        return {ok:false,status:503,json:async()=>({error:'unavailable'})};
+      if(url.endsWith('/api/agent/heartbeat'))successful++;
+      return {ok:true,json:async()=>({commands:[]})};
+    }});
+  await assert.rejects(()=>agent.tick(),/Cloud HTTP 503/);
+  assert.equal(agent.syncFailures.get('heartbeat').code,'CLOUD_UNAVAILABLE');
+  assert.equal(successful,0);
+  fail=false;
+  await agent.tick();
+  assert.equal(successful,1);
+  assert.equal(agent.syncFailures.has('heartbeat'),false);
+});
