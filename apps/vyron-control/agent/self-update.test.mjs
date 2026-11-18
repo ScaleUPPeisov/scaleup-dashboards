@@ -30,3 +30,15 @@ test('auto-update requires signed SHA and successful release-branch CI',()=>{
   sha:'b'.repeat(40),commit:{verification:{verified:true,reason:'valid'}}
  },sha),false);
 });
+
+// Regression: the released agent must not cap Git history to 64 commits.
+// An installed Mac can legitimately be over 170 reviewed commits behind.
+test('Mac updater fetches full ancestry, then applies its signed release checks',async()=>{
+ const {readFile}=await import('node:fs/promises');
+ const {fileURLToPath}=await import('node:url');
+ const source=await readFile(fileURLToPath(new URL('./self-update.mjs',import.meta.url)),'utf8');
+ assert.ok(source.includes("cmd('git',['fetch','--no-tags','origin','refs/heads/'+BRANCH])"));
+ assert.equal(source.includes("'--depth=64'"),false);
+ assert.ok(source.includes("verifiedSignedReleaseCommit(await signedResponse.json(),next)"));
+ assert.ok(source.includes("verifiedReleaseChecks(await verifiedResponse.json(),next)"));
+});

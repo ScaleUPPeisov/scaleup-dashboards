@@ -133,3 +133,12 @@ test('iPhone device diagnostics are manual-only, reachable in System, and do not
   assert.match(app,/navigator\.serviceWorker/);
   assert.match(app,/cache:'no-store'/);
 });
+
+// Missing Google channels must have owner consent entry points, never token entry.
+test('each missing Google channel has an explicit one-tap OAuth button',()=>{
+ assert.ok(app.includes("make('button','ghost','Подключить Google')"));
+ assert.match(app,/connect\.addEventListener\('click'/);
+ assert.match(app,/button\.click\(\); \/\/ Reuses the existing owner-only OAuth flow/);
+ assert.ok(app.includes('аккаунт-владелец'));
+ assert.ok(!app.includes('Вставьте Google Client Secret'));
+});

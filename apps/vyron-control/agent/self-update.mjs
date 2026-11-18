@@ -43,7 +43,9 @@ export async function maybeUpdateAgent({
    const changes=cmd('git',['status','--porcelain']);
    if(changes)return {updated:false,reason:'uncommitted_source_changes'};
    const old=cmd('git',['rev-parse','HEAD']);
-   cmd('git',['fetch','--no-tags','--depth=64','origin','refs/heads/'+BRANCH]);
+   // Full release history is required: the installed agent may be >170 commits behind.
+   // A shallow fetch can hide a legitimate ancestor and permanently block updates.
+   cmd('git',['fetch','--no-tags','origin','refs/heads/'+BRANCH]);
    const next=cmd('git',['rev-parse','FETCH_HEAD']);
    if(!SHA.test(next))return {updated:false,reason:'invalid_commit_sha'};
    if(old===next)return {updated:false,reason:'up_to_date'};

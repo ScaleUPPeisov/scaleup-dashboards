@@ -1008,8 +1008,8 @@ async function loadOauthProfiles() {
     counter.textContent=profiles.length+' / '+total+' каналов';
     message.textContent=result.configured
       ? (missing.length
-        ? 'Облачная аналитика подключена для '+profiles.length+' из '+total+
-          ' каналов. Оставшиеся привязки будут показаны отдельно — повторный импорт пакета должен восстановить их автоматически.'
+        ? 'Google Analytics подключена для '+profiles.length+' из '+total+
+          ' каналов. Для остальных нажми «Подключить Google» и выбери аккаунт-владелец. Запрашивается только чтение.'
         : 'Все '+total+' каналов подключены к Google Analytics в режиме чтения.')
       : 'Google OAuth ещё не настроен в Cloudflare.';
     container.replaceChildren();
@@ -1037,7 +1037,18 @@ async function loadOauthProfiles() {
     for(const channel of missing) {
       const line=make('div','oauth-profile oauth-profile-missing');
       line.append(make('span','',channel.name+' · '+channel.id),
-        make('small','','Нет привязки refresh token в облаке. Повтори автоматический импорт пакета VYRON.'));
+        make('small','','Требуется авторизация владельца канала через Google.'));
+      if(result.configured){
+        const connect=make('button','ghost','Подключить Google');
+        connect.type='button';
+        connect.setAttribute('aria-label','Подключить Google для '+channel.name);
+        connect.addEventListener('click',()=>{
+          $('oauth-message').textContent='Для «'+channel.name+
+            '» выбери в Google аккаунт-владелец этого YouTube-канала.';
+          button.click(); // Reuses the existing owner-only OAuth flow and PKCE.
+        });
+        line.append(connect);
+      }
       container.append(line);
     }
   }catch(error){

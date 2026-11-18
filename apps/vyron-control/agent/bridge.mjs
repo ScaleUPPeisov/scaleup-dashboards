@@ -17,7 +17,7 @@ export class MacBridge {
     this.url=url.replace(/\/$/,'');
     this.token=token;this.deviceId=deviceId;this.eventsFile=eventsFile;
     this.statusFile=statusFile;this.channelsFile=channelsFile;this.analyticsFile=analyticsFile;this.productionFile=productionFile;this.cursorFile=cursorFile;this.fetchImpl=fetchImpl;
-    this.offset=0;this.busy=false;this.lastChannelHash=null;this.lastChannelSyncAttemptAt=0;this.lastAnalyticsHash=null;this.lastProductionHash=null;
+    this.offset=0;this.busy=false;this.lastChannelHash=null;this.lastChannelSyncAttemptAt=0;this.lastAnalyticsHash=null;this.lastProductionHash=null;this.lastProductionSyncAt=0;
     this.retry=new RetryBudget();
     this.syncFailures=new Map();this.lastSyncSuccessAt=null;this.lastHealthyStatus=null;
     this.stateSource='NOT_LOADED';this.mirrorWarning=null;
@@ -137,7 +137,11 @@ export class MacBridge {
        data.truncated===true)throw new Error('Invalid production snapshot');
     const body={...data,deviceId:this.deviceId};
     const hash=createHash('sha256').update(JSON.stringify(data.items)).digest('hex');
-    if(hash===this.lastProductionHash)return {uploaded:0,reason:'unchanged'};
+    // Re-confirm unchanged queues at most every 10 minutes so the PWA can
+     // distinguish a live Mac from an old cached job snapshot.
+     if(hash===this.lastProductionHash &&
+       Date.now()-this.lastProductionSyncAt<10*60000)
+       return {uploaded:0,reason:'unchanged'};
     // Old production Worker may not yet expose this endpoint. Keep uploads/events working.
     if(this.productionUnsupportedUntil&&Date.now()<this.productionUnsupportedUntil)
       return {uploaded:0,reason:'worker_not_upgraded'};
@@ -153,7 +157,9 @@ export class MacBridge {
     if(Number(response.unknownChannelIds)>0)
       return {uploaded:0,reason:'unknown_channel_retry',unknown:response.unknownChannelIds};
     this.lastProductionHash=hash;
-    return {uploaded:response.accepted||0};
+    this.lastProductionSyncAt=Date.now();
+    return {uploaded:response.accepted||0,confirmed:true,
+      receivedAt:response.receivedAt||null};
   }
   async syncEvents() {
     if(!this.eventsFile)return {transmitted:0};
@@ -204,6 +210,7 @@ export class MacBridge {
   }
   async pendingCommands() {
     const data=await this.api('/api/agent/commands?device='+encodeURIComponent(this.deviceId));
+    let processed=0;
     for(const command of data.commands||[]) {
       if(checkRemoteCommand(command).supported) {
         // Status query is safe, idempotent and actually performed before ACK.
@@ -216,7 +223,9 @@ export class MacBridge {
           deviceId:this.deviceId,state:'failed',message:'Unsafe or unsupported command'
         });
       }
+      processed++;
     }
+    return {processed};
   }
   async tick() {
     if(this.busy)return {skipped:'already_running'};
@@ -244,7 +253,15 @@ export class MacBridge {
           outcomes[key]=await operation();
           this.retry.success(key);
           this.syncFailures.delete(key);
-          this.lastSyncSuccessAt=new Date().toISOString();
+          // A no-op (no mirror, no export, unchanged data) is not a successful
+          // synchronization. Only cloud-acknowledged state counts.
+          const result=outcomes[key];
+          const confirmed=(key==='production'&&result?.confirmed===true)||
+            (key==='channels'&&result?.imported>0)||
+            (key==='analytics'&&result?.uploaded>0)||
+            (key==='events'&&result?.transmitted>0)||
+            (key==='commands'&&result?.processed>0);
+          if(confirmed)this.lastSyncSuccessAt=new Date().toISOString();
         }catch(error){
           const failure=this.retry.fail(key,error);
           this.syncFailures.set(key,{code:failure.code,at:new Date().toISOString()});

@@ -268,3 +268,40 @@ test('heartbeat network errors are never reported as successful Mac connection',
   assert.equal(successful,1);
   assert.equal(agent.syncFailures.has('heartbeat'),false);
 });
+
+// The Mac may be awake but the VYRON mirror may be absent: never invent job sync.
+test('heartbeat without any exported mirror does not forge last job sync',async()=>{
+ const calls=[];
+ const b=new MacBridge({url:'https://control.example',token:'A'.repeat(40),
+   fetchImpl:async(url)=>{
+     calls.push(url);
+     return {ok:true,json:async()=>url.includes('/commands?')?{commands:[]}:{received:1}};
+   }});
+ const result=await b.tick();
+ assert.ok(calls.some(url=>url.endsWith('/api/agent/heartbeat')));
+ assert.equal(b.lastSyncSuccessAt,null);
+ assert.equal(result.production.reason,'no_export');
+});
+test('unchanged production queue is re-confirmed every 10 minutes, including empty queue',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'vyron-prod-resync-'));
+ try{
+   const file=join(dir,'production.json');
+   await writeFile(file,JSON.stringify({source:'VYRON_MAC',
+     generatedAt:new Date().toISOString(),items:[],truncated:false}));
+   const calls=[];
+   const b=new MacBridge({url:'https://control.example',token:'A'.repeat(40),
+     productionFile:file,fetchImpl:async(url,opts)=>{
+       calls.push({url,body:JSON.parse(opts.body)});
+       return {ok:true,json:async()=>({accepted:0,receivedAt:new Date().toISOString()})};
+     }});
+   const first=await b.syncProduction();
+   assert.equal(first.confirmed,true);
+   assert.equal(first.uploaded,0);
+   assert.equal((await b.syncProduction()).reason,'unchanged');
+   b.lastProductionSyncAt=Date.now()-11*60000;
+   const renewed=await b.syncProduction();
+   assert.equal(renewed.confirmed,true);
+   assert.equal(calls.length,2);
+   assert.ok(calls.every(call=>call.body.items.length===0));
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
