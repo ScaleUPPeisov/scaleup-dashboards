@@ -28,7 +28,7 @@ describe('VYRON fleet runway evidence-aware visual contract',()=>{
   it('reports every channel with true progress, separately from confirmed inventory',()=>{
     const s=source();
     const full=readFileSync('src/fullChannelRefresh.ts','utf8');
-    expect(s).toContain('Анализ каналов: {fleetAudit.done}/{fleetAudit.total}');
+    expect(s).toContain('Обработано {fleetAudit.done}/{fleetAudit.total} каналов (полнота каждого расписания отдельно)');
     expect(s).toContain('Неполные данные {fleetAudit.partial}');
     expect(s).toContain('Не все каналы проверены!');
     expect(full).toContain('knownByChannel');
