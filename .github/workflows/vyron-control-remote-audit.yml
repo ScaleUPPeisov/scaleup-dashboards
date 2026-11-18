@@ -99,6 +99,31 @@ jobs:
               }));
               if(v.ok!==true)process.exitCode=1;
             '
+      - name: Read-only D1 Time Travel recovery capability and bookmark
+        shell: bash
+        run: |
+          set -euo pipefail
+          INFO="$(npx --yes wrangler@4.102.0 d1 info vyron-control --json -c cloudflare/wrangler.jsonc)"
+          BOOKMARK="$(npx --yes wrangler@4.102.0 d1 time-travel info vyron-control --json -c cloudflare/wrangler.jsonc)"
+          D1_INFO_JSON="$INFO" D1_BOOKMARK_JSON="$BOOKMARK" node --input-type=module <<'NODE'
+          import {createHash} from 'node:crypto';
+          let info,timeTravel;
+          try {
+            info=JSON.parse(process.env.D1_INFO_JSON||'{}');
+            timeTravel=JSON.parse(process.env.D1_BOOKMARK_JSON||'{}');
+          }catch{throw Error('D1 recovery capability did not provide machine-readable JSON');}
+          const metadata=Array.isArray(info)?info[0]:info;
+          const body=Array.isArray(timeTravel)?timeTravel[0]:timeTravel;
+          const bookmark=body?.bookmark||body?.result?.bookmark;
+          if(metadata?.version&&metadata.version!=='production')
+            throw Error('Production D1 does not support the Time Travel backend');
+          if(typeof bookmark!=='string'||!/^[0-9a-fA-F-]{25,100}$/.test(bookmark))
+            throw Error('No validated current D1 Time Travel recovery bookmark');
+          console.log('READ ONLY: D1 Time Travel bookmark available.',
+            'fingerprint='+createHash('sha256').update(bookmark).digest('hex').slice(0,16));
+          console.log('This is a point-in-time recovery capability, not an exported cold backup.');
+          console.log('No restore or schema change has been performed.');
+          NODE
       - name: Confirm no production mutation
         if: always()
         run: echo "READ-ONLY AUDIT ONLY — no deploy, no migration, no UPDATE/INSERT/DELETE."
