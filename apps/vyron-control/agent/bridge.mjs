@@ -220,6 +220,7 @@ export class MacBridge {
       // Do not pretend that Mac woke up or a network request succeeded.
       await this.heartbeat();
       this.retry.success('heartbeat');
+      this.syncFailures.delete('heartbeat');
       const operations=[
         ['channels',()=>this.syncChannelRegistry()],
         ['analytics',()=>this.syncAnalytics()],
