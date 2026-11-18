@@ -69,7 +69,7 @@ test('rejects a forged minisign key ID and noncanonical inner base64',t=>{
   assert.match(forged.stderr,/MINISIGN_KEY_ID_MISMATCH/);
   assert.equal(existsSync(f.out),false);
   const lines=original.trimEnd().split('\\n');
-  lines[1]=lines[1].replace(/=$/,'');
+  lines[1]+='='; // The 42-byte Minisign payload is unpadded; extra padding is noncanonical.
   writeFileSync(f.pub,Buffer.from(lines.join('\\n')+'\\n').toString('base64'));
   const noncanonical=run(f);
   assert.notEqual(noncanonical.status,0);
