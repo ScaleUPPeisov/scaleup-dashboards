@@ -59,6 +59,17 @@ function syncLabel(value?:string){
   return `Синхр. ${new Intl.DateTimeFormat('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}).format(d)}`;
 }
 
+function evidenceLabel(state?:ChannelRunwayRecord['dataState']){
+  switch(state){
+    case 'CONFIRMED_SCHEDULE':return'YouTube • расписание подтверждено';
+    case 'CONFIRMED_EMPTY':return'YouTube • пустое расписание подтверждено';
+    case 'PARTIAL_DATA':return'Часть данных YouTube • нельзя считать запас нулевым';
+    case 'STALE_CACHE':return'Устаревший кеш • требуется обновление';
+    case 'AUTH_REQUIRED':return'Требуется доступ OAuth';
+    case 'API_FAILED':return'Ошибка YouTube API • запас неизвестен';
+    default:return'Расписание не подтверждено';
+  }
+}
 function tempoLabel(days?:number){
   if(!days||!Number.isFinite(days))return'—';
   if(days>=1){
@@ -229,10 +240,10 @@ export function ChannelRunway(){
       {rows.length===0?<div className="empty"><b>Нет активных каналов</b><p>Content Runway не создаёт демонстрационные данные.</p></div>:rows.map(({channel,record,content,localRunway,uploadRemaining,uploadLimitKnown})=>{
         const youtubeStatus=runwayStatus(content.remoteScheduledDays,record.status!=='no-data'),meta=statusMeta[youtubeStatus];
         return <div className="runwayRow" key={channel.id}>
-          <span className="runwayChannel runwayChannelWithAvatar"><ChannelAvatar channel={channel} size="sm"/><span><b>{channel.name}</b><small>{syncLabel(record.lastScheduleSync)}</small><small>{linkedByLocalId.has(channel.id)?`Subs ${subscriberStatLabel(channel.stats)} • Views ${compactChannelStat(channel.stats?.viewCount??channel.stats?.views)}`:'YouTube: НЕ ПОДКЛЮЧЁН'}</small></span></span>
-          <span>{content.scheduledThrough?<><b>📺 {dateLabel(content.scheduledThrough)}</b><small>{content.remoteScheduledDays>0?`ещё ${content.remoteScheduledDays} дн.`:'будущих видео нет'}</small></>:<><b>📺 Будущих видео нет</b><small>remote YouTube schedule</small></>}</span>
+          <span className="runwayChannel runwayChannelWithAvatar"><ChannelAvatar channel={channel} size="sm"/><span><b>{channel.name}</b><small>{syncLabel(record.lastScheduleSync)}</small><small title={record.lastRefreshError||''}>{evidenceLabel(record.dataState)}</small><small>{linkedByLocalId.has(channel.id)?`Subs ${subscriberStatLabel(channel.stats)} • Views ${compactChannelStat(channel.stats?.viewCount??channel.stats?.views)}`:'YouTube: НЕ ПОДКЛЮЧЁН'}</small></span></span>
+          <span>{content.scheduledThrough?<><b>📺 {dateLabel(content.scheduledThrough)}</b><small>{record.status==='no-data'?'последняя сохранённая дата • не подтверждена':content.remoteScheduledDays>0?`ещё ${content.remoteScheduledDays} дн.`:'подтверждённое расписание закончилось'}</small></>:<><b>{record.status==='no-data'?'📺 Нет подтверждённых данных':'📺 Будущих видео нет'}</b><small>{evidenceLabel(record.dataState)}</small></>}</span>
           <span>{content.readyVideoCount?<><b>💾 {content.readyVideoCount} видео</b><small>только локальные файлы</small></>:<><b>💾 0 видео</b><small>локального запаса нет</small></>}</span>
-          <span title="Остаток дней на YouTube — только подтверждённое расписание"><b className={`runwayDays ${youtubeStatus}`}>{record.status==='no-data'?'—':`${content.remoteScheduledDays} дн.`}</b><small>{record.status==='no-data'?'нет подтверждённых данных':content.remoteScheduledDays>0&&content.scheduledThrough?`до ${dateLabel(content.scheduledThrough)}`:'будущих видео нет'}</small><small>{record.status==='no-data'?'Локальный прогноз с резервом':'Общий прогноз с локальным резервом'}: {localRunway.totalRunwayDays} дн.{localRunway.coverageThrough?` • до ${formatLocalCalendarDate(localRunway.coverageThrough)}`:''}</small></span>
+          <span title="Остаток дней на YouTube — только подтверждённое расписание"><b className={`runwayDays ${youtubeStatus}`}>{record.status==='no-data'?'—':`${content.remoteScheduledDays} дн.`}</b><small>{record.status==='no-data'?evidenceLabel(record.dataState):content.remoteScheduledDays>0&&content.scheduledThrough?`до ${dateLabel(content.scheduledThrough)}`:'пустое расписание подтверждено'}</small><small>{record.status==='no-data'?'Локальный прогноз с резервом':'Общий прогноз с локальным резервом'}: {localRunway.totalRunwayDays} дн.{localRunway.coverageThrough?` • до ${formatLocalCalendarDate(localRunway.coverageThrough)}`:''}</small></span>
           <span>{content.scheduledVideoCount}</span>
           <span><b>{content.readyVideoCount}</b></span>
           <span>{scheduleFrequencyTruthLabel(channel,record)}</span>
