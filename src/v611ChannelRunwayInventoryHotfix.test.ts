@@ -167,7 +167,8 @@ describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
       expect(result.rows[0].status).toBe('PARTIAL_DATA');
       expect(result.rows[0].diagnosticReasons).toContain('SCHEDULE_EMPTY_NOT_INDEPENDENTLY_VERIFIED');
       expect(result.rows[0].observedScheduled).toBe(0);
-      expect(result.failed).toBe(0);
+      // The refresh remains unconfirmed even though classification is no longer API_FAILED.
+      expect(result.failed).toBe(1);
       expect(fixture.inventoryFiles.has('lumiere')).toBe(false);
       const runway=loadChannelRunwayStore().channels.lumiere;
       expect(runway.dataState).toBe('PARTIAL_DATA');
