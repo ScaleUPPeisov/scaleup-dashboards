@@ -1379,3 +1379,39 @@ test('production ingest preserves 300 tasks in one JSON1 bulk SQL statement',asy
  const status=await (await cloud.fetch(req('/api/status',control),e)).json();
  assert.equal(status.production.items.length,300);
 });
+
+
+test('complete Mac registry snapshots soft archive missing channels without deleting history',async()=>{
+ const e=env(),at=new Date().toISOString(),a=id(840),b=id(841);
+ const packet=ids=>({deviceId:'macbook_m1',total:ids.length,complete:true,
+   generatedAt:at,channels:ids.map(channelId=>({id:channelId,name:'Real channel name'}))});
+ const first=await cloud.fetch(req('/api/agent/channels',agent,'POST',packet([a,b])),e);
+ assert.equal(first.status,200);
+ assert.equal((await first.json()).channelPresence.accepted,true);
+ assert.equal(e.DB.native.prepare('SELECT COUNT(*) n FROM channel_presence WHERE archived_at IS NOT NULL').get().n,0);
+ const second=await cloud.fetch(req('/api/agent/channels',agent,'POST',packet([a])),e);
+ assert.equal(second.status,200);
+ assert.equal((await second.json()).channelPresence.archived,1);
+ const archive=e.DB.native.prepare('SELECT archived_at FROM channel_presence WHERE channel_id=?').get(b);
+ assert.ok(archive.archived_at);
+ const raw=e.DB.native.prepare('SELECT id FROM channels WHERE id=?').get(b);
+ assert.equal(raw.id,b,'original registry row must remain');
+ const status=(await (await cloud.fetch(req('/api/status',control),e)).json());
+ assert.equal(status.channels.length,2);
+ assert.ok(status.channels.find(x=>x.id===b).archivedAt);
+ // Old agent array payload MUST NOT alter the authoritative active/archived state.
+ const legacy=await cloud.fetch(req('/api/agent/channels',agent,'POST',[{id:a,name:'Legacy'}]),e);
+ assert.equal(legacy.status,200);
+ assert.equal((await legacy.json()).channelPresence.accepted,false);
+ assert.ok(e.DB.native.prepare('SELECT archived_at FROM channel_presence WHERE channel_id=?').get(b).archived_at);
+});
+test('incomplete Mac channel snapshot cannot archive any old registry entries',async()=>{
+ const e=env(),a=id(850),b=id(851),at=new Date().toISOString();
+ const packet=(ids,complete,total)=>({deviceId:'macbook_m1',complete,total,generatedAt:at,
+   channels:ids.map(x=>({id:x,name:'Channel'}))});
+ await cloud.fetch(req('/api/agent/channels',agent,'POST',packet([a,b],true,2)),e);
+ const result=await cloud.fetch(req('/api/agent/channels',agent,'POST',packet([a],false,1)),e);
+ assert.equal(result.status,200);
+ assert.equal((await result.json()).channelPresence.archived,0);
+ assert.equal(e.DB.native.prepare('SELECT COUNT(*) n FROM channel_presence WHERE archived_at IS NULL').get().n,2);
+});
