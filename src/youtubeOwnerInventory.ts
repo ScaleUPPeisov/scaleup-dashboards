@@ -274,14 +274,22 @@ export async function refreshOwnerInventoriesAuthoritative(
         // *Scheduled coverage*. That is incomplete evidence, not an HTTP/API
         // failure: show PARTIAL_DATA rather than a misleading API_FAILED toast.
         // Actual incomplete hydration and channel-ownership mismatches remain failures.
-        const ownerReadComplete=(result.syncComplete??result.complete)===true;
-        const status=ownerMixed?'API_FAILED'
-          :(observed.length>0||ownerReadComplete)?'PARTIAL_DATA':'API_FAILED';
+        // A successful owner-scoped API response with incomplete coverage is
+        // PARTIAL_DATA even when zero future videos were found. Absence of a
+        // Scheduled result is NOT an HTTP/API failure and NOT a confirmed zero.
+        // Only an actual exception, wrong owner Channel ID or cross-owner
+        // video evidence may be classified API_FAILED.
+        const status=ownerMixed?'API_FAILED':'PARTIAL_DATA';
         report({channelId:channel.id,channelName:channel.name,status,profileId:linked.profile.id,youtubeChannelId:linked.youtubeChannelId,apiRequests,quotaUnits,error:reason,
           observedScheduled:observed.length,observedThrough,diagnosticReasons});
         // Preserve verified-positive Scheduled rows in Runway as LOWER-BOUND
         // evidence only; neither SQLite baseline nor last verified sync is overwritten.
-        if(!ownerMixed)markRunwayRefreshIssue(channel,'PARTIAL_DATA',reason,new Date(),undefined,observed);
+        if(!ownerMixed){
+          // Persist only static diagnostic codes; provider error text may include
+          // account context and must never be written into UI diagnostics.
+          const safeCodes=diagnosticReasons.filter(x=>/^[A-Z][A-Z0-9_]*$/.test(x)).slice(0,12);
+          markRunwayRefreshIssue(channel,'PARTIAL_DATA',[reason,...safeCodes].join(' | '),new Date(),undefined,observed);
+        }
         continue
       }
       const cache=await replaceExistingCacheFromSync(channel.id,result.videos||[],result);
