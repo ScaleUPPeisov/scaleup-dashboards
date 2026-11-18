@@ -338,6 +338,23 @@
         <p class="caution">Статус Mac считается актуальным, если от агента был сигнал за последние 3 минуты. При сне показываются последние сохранённые значения.</p>
       </section>
 
+      <section class="card device-diagnostics" data-mobile-view="system" aria-label="Диагностика установленного iPhone приложения">
+        <div class="section-title">
+          <div><span class="eyebrow">IPHONЕ 14 PRO / SELF-TEST</span><h2>Проверка приложения</h2></div>
+          <span class="pill">Только по нажатию</span>
+        </div>
+        <p class="muted">Проверки выполняются на этом устройстве. Ответ Push-шлюза не означает, что уведомление появилось на iPhone. Установка обновления не удаляет ключ доступа.</p>
+        <div class="device-diagnostic-actions">
+          <button class="ghost" id="diag-notification" type="button">Проверить уведомление</button>
+          <button class="ghost" id="diag-connectivity" type="button">Проверить подключение</button>
+          <button class="ghost" id="diag-version" type="button">Проверить актуальность версии</button>
+        </div>
+        <div class="device-diagnostic-results" role="status" aria-live="polite">
+          <p id="diag-notification-result">Push: проверка не запускалась.</p>
+          <p id="diag-connectivity-result">Cloudflare / Mac: проверка не запускалась.</p>
+          <p id="diag-version-result">PWA: версия не проверялась.</p>
+        </div>
+      </section>
       <!-- Neo Glass surfaces consume existing /api/status and do not mutate cloud data. -->
       <section class="neo-screen neo-studio" data-mobile-view="studio" aria-labelledby="studio-title">
         <div class="neo-page-heading"><div><span class="eyebrow">WORKFLOW / LIVE TELEMETRY</span><h1 id="studio-title">Production Studio</h1><p class="muted">ENDLUME → Rendering → Ready → Upload Queue → YouTube</p></div></div>
