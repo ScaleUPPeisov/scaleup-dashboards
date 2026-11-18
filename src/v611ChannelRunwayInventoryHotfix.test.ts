@@ -260,6 +260,14 @@ describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
     expect((api.youtubeListExisting as any).mock.calls.every((args:any[])=>args[3]===false)).toBe(true);
   });
 
+  it('manual owner refresh passes local Scheduled upload IDs for videos.list hydration without requiring owner search',async()=>{
+    const id='nEON1234aBc';
+    await refreshOwnerInventoriesAuthoritative([channel()],true,[profile],{lumiere:[id]});
+    const args=(api.youtubeListExisting as any).mock.calls[0];
+    expect(args[4]).toContain(id);
+    expect(args[3]).toBe(true);
+  });
+
   it('single refresh makes exactly one authoritative inventory call',async()=>{
     await refreshOwnerInventoriesAuthoritative([channel()],true,[profile]);
     expect(api.youtubeListExisting).toHaveBeenCalledTimes(1);
