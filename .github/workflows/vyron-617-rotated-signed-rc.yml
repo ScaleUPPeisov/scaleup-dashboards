@@ -104,7 +104,7 @@ jobs:
           security import "$RUNNER_TEMP/cert.p12" -P "$CERT_PASSWORD" -A -t cert -f pkcs12 -k "$RUNNER_TEMP/vyron-signing.keychain-db"
           security list-keychain -d user -s "$RUNNER_TEMP/vyron-signing.keychain-db"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$PASS" "$RUNNER_TEMP/vyron-signing.keychain-db"
-          IDENTITY="$(security find-identity -v -p codesigning "$RUNNER_TEMP/vyron-signing.keychain-db" | sed -n 's/.*"\\(Developer ID Application: [^"]*\\)".*/\\1/p' | head -n 1)"
+          IDENTITY="$(security find-identity -v -p codesigning "$RUNNER_TEMP/vyron-signing.keychain-db" | awk -F '"' '/Developer ID Application:/ { print $2; exit }')"
           test -n "$IDENTITY"
           echo "APPLE_SIGNING_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
           rm -f "$RUNNER_TEMP/cert.p12"
