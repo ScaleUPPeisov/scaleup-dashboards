@@ -149,10 +149,14 @@ function renderChannels(channels) {
       'Остаток дней: '+(Number.isFinite(ch.scheduledContentDays)?number(ch.scheduledContentDays):'Нет подтверждённого расписания')));
     if(ch.archivedAt)left.append(make('small','caution',
       'Архив VYRON · история сохранена · '+time(ch.archivedAt)));
-    if(ch.analyticsAuthorized===false)
-      left.append(make('small','caution','Google Analytics: требуется авторизация'));
-    else if(ch.analyticsAuthorized===true&&!ch.analytics)
-      left.append(make('small','caution','Google Analytics: ожидает первой синхронизации'));
+    const analyticsState={
+      CONNECTED:'Подключён',
+      REQUIRES_AUTH:'Требуется авторизация',
+      STALE:'Данные устарели',
+      ERROR:'Ошибка синхронизации'
+    }[ch.analyticsSyncStatus]||'Состояние уточняется';
+    left.append(make('small',ch.analyticsSyncStatus==='CONNECTED'?'':'caution',
+      'Google Analytics: '+analyticsState));
     const details = make('div', 'channel-details');
     const vals = [
       [ch.subscribersHidden ? 'Скрыто' : number(ch.subscribers), 'Подписчики'],
@@ -861,7 +865,8 @@ function renderDevices(data) {
       'mac-uploaded-today','mac-rendered-today','mac-upload-failures','mac-channels-bound',
       'mac-vyron-version','mac-endlume-version','mac-os-version','mac-model',
       'mac-architecture','mac-uptime','mac-memory','mac-root-disk',
-      'mac-power-state','mac-disk-state','mac-ready-upload','mac-agent-error'
+      'mac-power-state','mac-disk-state','mac-ready-upload','mac-agent-error',
+      'mac-agent-version','mac-last-job-sync','mac-jobs-count'
     ])$(id).textContent='—';
     $('mac-disk-state').classList.remove('state-bad');
     $('mac-agent-error').classList.remove('state-bad');
@@ -889,6 +894,12 @@ function renderDevices(data) {
   $('mac-disk-state').textContent=s.diskOnline===true?'Подключён':
     s.diskOnline===false?'Недоступен':'Нет данных';
   $('mac-ready-upload').textContent=s.jobsReadyUpload==null?'—':number(s.jobsReadyUpload);
+  $('mac-agent-version').textContent=s.agentVersion||'Старая версия или нет данных';
+  const deviceSync=(data.production?.devices||[]).find(x=>x.id===device.id);
+  $('mac-last-job-sync').textContent=deviceSync?.receivedAt?
+    time(deviceSync.receivedAt):'Нет подтверждённой передачи заданий';
+  $('mac-jobs-count').textContent=Number.isSafeInteger(deviceSync?.itemCount)
+    ?number(deviceSync.itemCount):'—';
   $('mac-agent-error').textContent=s.agentLastError
     ?'Mac Bridge: '+String(s.agentLastError).slice(0,80)+
       (s.agentRetrySeconds?' · повтор через '+s.agentRetrySeconds+' с':'')
