@@ -32,6 +32,7 @@ vi.mock('./youtubeQuota',()=>({
  bindYoutubeQuotaTraceContext:vi.fn(),
  youtubeOperationActualCost:vi.fn(()=>({methods:{'playlistItems.list':{calls:1}},buckets:{general:1}})),
  youtubeQuotaState:vi.fn(()=>({blocked:false})),
+ youtubeQuotaBucketUsage:vi.fn(()=>({available:100,used:0,limit:100,reserved:0})),
  youtubeQuotaUsage:vi.fn(()=>({used:0,limit:10000}))
 }));
 vi.mock('./youtubeCache',()=>({markYoutubeCache:vi.fn()}));
