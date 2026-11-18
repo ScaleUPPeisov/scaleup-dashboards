@@ -19,7 +19,7 @@ import {appendErrorHistory} from './errorHistory';
 import {batchFailureToast,type BatchFailure} from './errorPresentationPolicy';
 import {canonicalSelectedJobs,publisherGlobalBlockReasons,publisherPreflightItems,publisherUploadButtonLabel} from './publisherRuntime';
 import {classifyUploadState,clearStaleUploadLink,latestUploadRecord,markHistoryTrashed,nextProjectLifecycle,recordVerifiedUpload,successfulUploadForHash,updateUploadProcessing,updateUploadRemoteEvidence,uploadStateCounters,type CanonicalUploadState} from './storageLifecycle';
-import {configureUploadQueue,enqueueUpload,waitForUploadQueueEntries} from './uploadQueueRuntime';
+import {configureUploadQueue,enqueueUpload,uploadQueueSnapshot,waitForUploadQueueEntries} from './uploadQueueRuntime';
 import {runSingleFlight} from './publisherSubmitSingleFlight';
 import {fingerprintForCurrentSource,type SourceFingerprint} from './publisherFingerprintIdentity';
 import {existingSyncIncompleteSummary,krasDateKey,readAuthoritativeExistingSnapshot,replaceExistingCacheFromSync} from './channelSchedule';
@@ -510,9 +510,21 @@ function PublisherOSAdvanced({activityRef}:{activityRef?:React.MutableRefObject<
   if(blockedItems.length){for(const x of blockedItems){const j=selected.find(v=>v.id===x.id),message=`VIDEO_${String(x.number).padStart(3,'0')}: ${x.issues.map(i=>i.message).join(' • ')}`,pastOnly=x.issues.every(i=>i.code==='SKIPPED_PAST_DATE');if(j)patchJob(j.id,pastOnly?{error:'SKIPPED_PAST_DATE'}:{error:message});if(pastOnly)log(`[SCHEDULE] VIDEO_${String(x.number).padStart(3,'0')} SKIPPED_PAST_DATE`);else appendErrorHistory('Pre-flight: видео пропущено',message,x.issues.map(i=>i.code).join(','),{errorCode:x.issues[0]?.code,videoId:x.id,filePath:j?.finalPath,stage:'preflight'})}notifyWarning('Часть видео пропущена',`${blockedItems.length} видео не прошли pre-flight. Остальные ${uploadableSelected.length} можно поставить в очередь.`)}
   let batch=uploadableSelected.slice(0,requested||uploadableSelected.length);if(daily.remaining!=null)batch=batch.slice(0,daily.remaining);
   if(!batch.length){notifyWarning('Загрузка заблокирована',recovery.length?'Сначала продолжите или отмените сохранённую resumable session.':'По вашему локальному дневному лимиту VYRON сейчас нельзя ставить новые видео в очередь.');return}
-  configureUploadQueue(settings.youtubeUploadConcurrency||2,settings.youtubeUploadPerChannelConcurrency||1);setBusy(true);const batchId=`upload-batch:${channelId}:${Date.now()}`,queued:string[]=[],queueIds:string[]=[],failed:string[]=[],tagAdjustments:string[]=[],sanitizedDraftTags=new Map<number,string[]>();
+  configureUploadQueue(settings.youtubeUploadConcurrency||2,settings.youtubeUploadPerChannelConcurrency||1);setBusy(true);const batchId=`upload-batch:${channelId}:${Date.now()}`,queued:string[]=[],queueIds:string[]=[],failed:string[]=[],alreadyOwned:Array<{number:number;state:string}>=[],tagAdjustments:string[]=[],sanitizedDraftTags=new Map<number,string[]>();
   try{
-   for(const j of batch){let queueReserved=false;try{
+   for(const j of batch){
+    // The durable queue may already own the immutable upload after an app
+    // restart or an earlier click. Checking before metadata reservation, file
+    // hashing, or patchJob avoids corrupting the queued job's saved payload.
+    // PAUSED entries remain paused and must be resumed explicitly by the owner.
+    const existingQueue=uploadQueueSnapshot();
+    const existing=[...existingQueue.paused,...existingQueue.queued,...existingQueue.running]
+      .find(entry=>entry.spec.jobId===j.id);
+    if(existing){
+      alreadyOwned.push({number:j.number,state:existing.state});
+      continue;
+    }
+    let queueReserved=false;try{
     if(!j.finalPath)throw new Error('LOCAL_FILE_REQUIRED');
     const liveFile=await api.localSourceStatus(j.finalPath);if(!liveFile.exists||!liveFile.isFile)throw new Error('LOCAL_FILE_REQUIRED: файл сейчас недоступен');
     const fp=await fingerprintForJob(j,true),selectedIndex=selected.findIndex(x=>x.id===j.id);
@@ -539,6 +551,10 @@ function PublisherOSAdvanced({activityRef}:{activityRef?:React.MutableRefObject<
    }catch(error){const h=humanizeError(error,'upload');if(queueReserved)void api.metadataQueueMarkError(channel.id,j.id,h.message,j.folder||undefined).catch(()=>undefined);failed.push(`VIDEO_${String(j.number).padStart(3,'0')}: ${h.message}`);log(`[UPLOAD_QUEUE] submit failed job=${j.id}: ${h.message}`,'warn')}}
    if(sanitizedDraftTags.size)setDraftPatch({rows:draft.rows.map((r,i)=>sanitizedDraftTags.has(i)?{...r,tags:[...sanitizedDraftTags.get(i)!]}:r)});
    if(tagAdjustments.length)notifyInfo('Теги приведены к лимиту YouTube',tagAdjustments.join(' • '));
+   if(alreadyOwned.length){
+    const paused=alreadyOwned.filter(row=>row.state==='PAUSED').length;
+    notifyInfo('Видео уже в очереди',`${alreadyOwned.length} видео уже сохранены в очереди VYRON • повторное добавление не выполнялось.${paused?` Приостановлено: ${paused} — проверьте очередь перед ручным продолжением.`:''}`);
+   }
    if(queued.length){persistQueuedScheduleMode();setDraftPatch({selectedIds:draft.selectedIds.filter(id=>!queued.includes(id))});notifySuccess('Добавлено в очередь',`${queued.length} видео • канал ${channel.name} • concurrency ${settings.youtubeUploadConcurrency||2}. Переключение вкладок и каналов загрузку не остановит.`)}
    if(queueIds.length){void waitForUploadQueueEntries(queueIds).then(entries=>{
     const retryable=entries.filter(x=>x.state==='FAILED'&&Boolean(youtubeMetadataErrorCode(x.error||'')));

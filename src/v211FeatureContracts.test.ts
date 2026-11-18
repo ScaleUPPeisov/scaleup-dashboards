@@ -22,7 +22,7 @@ describe('VYRON 2.0.11 requested feature contracts',()=>{
   expect(ui).toContain('УДАЛИТЬ ВСЕ PROJECT ASSETS');
   expect(rust).toContain('cleanup_completed_production_assets');
   expect(rust).toContain('output_file');
-  const cleanupRust=rust.slice(rust.indexOf('fn cleanup_completed_assets'),rust.indexOf('pub fn delete_production_batch_projects'));
+  const cleanupRust=rust.slice(rust.indexOf('fn cleanup_completed_assets'),rust.indexOf('pub fn cleanup_completed_production_assets'));
   expect(cleanupRust).not.toContain('remove_dir_all');
  });
  it('Topbar errors are clickable and updates contain dated canonical history',()=>{
