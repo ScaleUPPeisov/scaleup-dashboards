@@ -9,6 +9,8 @@ import {refreshOwnerInventoriesAuthoritative} from './youtubeOwnerInventory';
 import {compactChannelStat,subscriberStatLabel} from './youtubeChannelStats';
 import {
   compareYoutubeOnlyRunwayPriority,
+  calendarDaysBetween,
+  dateKeyInKrasnoyarsk,
   runwayStatus,
   krasnoyarskClock,
   quotaRiskCount,
@@ -170,7 +172,10 @@ export function ChannelRunway(){
       setSnapshot(loadChannelRunwayStore());
       const r=loadChannelRunwayStore().channels[channel.id];
       if(row?.status==='UPDATED')toast(`${channel.name}: расписание обновлено • ${r?.scheduledVideoCount||0} запланировано • до ${dateLabel(r?.scheduledUntil)} • API ${row.apiRequests} • quota ${row.quotaUnits}`);
-      else toast(`${channel.name}: расписание не обновлено • ${row?.status||'API_FAILED'}${row?.error?' • '+row.error:''}`);
+      else if(row?.status==='PARTIAL_DATA'){
+        const until=row.observedThrough?dateLabel(dateKeyInKrasnoyarsk(row.observedThrough)):'—';
+        toast(`${channel.name}: через videos.list найдено минимум ${row.observedScheduled||0} Scheduled • до ${until} • полнота НЕ подтверждена • ${(row.diagnosticReasons||[]).join(', ')||row.error||'неполная выдача'}`);
+      }else toast(`${channel.name}: расписание не обновлено • ${row?.status||'API_FAILED'}${row?.error?' • '+row.error:''}${row?.diagnosticReasons?.length?' • '+row.diagnosticReasons.join(', '):''}`);
     }catch(e){
       toast(isYoutubeQuotaError(e)?youtubeQuotaMessage():`Расписание ${channel.name}: ${String(e)}`);
     }finally{setBusy('')}
@@ -191,6 +196,7 @@ export function ChannelRunway(){
         counts?.DUPLICATE?`DUPLICATE ${counts.DUPLICATE}`:'',
         counts?.OAUTH_BLOCKED?`OAUTH_BLOCKED ${counts.OAUTH_BLOCKED}`:'',
         counts?.API_FAILED?`API_FAILED ${counts.API_FAILED}`:'',
+        counts?.PARTIAL_DATA?`PARTIAL_DATA ${counts.PARTIAL_DATA}`:'',
         counts?.PERSISTENCE_FAILED?`PERSISTENCE_FAILED ${counts.PERSISTENCE_FAILED}`:'',
         counts?.QUOTA_STOPPED?`QUOTA_STOPPED ${counts.QUOTA_STOPPED}`:''
       ].filter(Boolean).join(' • ');
@@ -239,12 +245,14 @@ export function ChannelRunway(){
       </div>
       {rows.length===0?<div className="empty"><b>Нет активных каналов</b><p>Content Runway не создаёт демонстрационные данные.</p></div>:rows.map(({channel,record,content,localRunway,uploadRemaining,uploadLimitKnown})=>{
         const youtubeStatus=runwayStatus(content.remoteScheduledDays,record.status!=='no-data'),meta=statusMeta[youtubeStatus];
+        const partialObserved=record.dataState==='PARTIAL_DATA'&&record.scheduledVideoCount>0;
+        const partialDays=partialObserved&&record.scheduledUntil?Math.max(0,calendarDaysBetween(krasnoyarskClock(new Date()).dateKey,record.scheduledUntil)??0):undefined;
         return <div className="runwayRow" key={channel.id}>
           <span className="runwayChannel runwayChannelWithAvatar"><ChannelAvatar channel={channel} size="sm"/><span><b>{channel.name}</b><small>{syncLabel(record.lastScheduleSync)}</small><small title={record.lastRefreshError||''}>{evidenceLabel(record.dataState)}</small><small>{linkedByLocalId.has(channel.id)?`Subs ${subscriberStatLabel(channel.stats)} • Views ${compactChannelStat(channel.stats?.viewCount??channel.stats?.views)}`:'YouTube: НЕ ПОДКЛЮЧЁН'}</small></span></span>
           <span>{content.scheduledThrough?<><b>📺 {dateLabel(content.scheduledThrough)}</b><small>{record.status==='no-data'?(record.dataState==='PARTIAL_DATA'?'найдены отдельные видео • полнота расписания неизвестна':'последняя сохранённая дата • не подтверждена'):content.remoteScheduledDays>0?`ещё ${content.remoteScheduledDays} дн.`:'подтверждённое расписание закончилось'}</small></>:<><b>{record.status==='no-data'?'📺 Нет подтверждённых данных':'📺 Будущих видео нет'}</b><small>{evidenceLabel(record.dataState)}</small></>}</span>
           <span>{content.readyVideoCount?<><b>💾 {content.readyVideoCount} видео</b><small>только локальные файлы</small></>:<><b>💾 0 видео</b><small>локального запаса нет</small></>}</span>
-          <span title="Остаток дней на YouTube — только подтверждённое расписание"><b className={`runwayDays ${youtubeStatus}`}>{record.status==='no-data'?'—':`${content.remoteScheduledDays} дн.`}</b><small>{record.status==='no-data'?evidenceLabel(record.dataState):content.remoteScheduledDays>0&&content.scheduledThrough?`до ${dateLabel(content.scheduledThrough)}`:'пустое расписание подтверждено'}</small><small>{record.status==='no-data'?'Локальный прогноз с резервом':'Общий прогноз с локальным резервом'}: {localRunway.totalRunwayDays} дн.{localRunway.coverageThrough?` • до ${formatLocalCalendarDate(localRunway.coverageThrough)}`:''}</small></span>
-          <span title={evidenceLabel(record.dataState)}>{record.status==='no-data'?'—':content.scheduledVideoCount}</span>
+          <span title="Остаток дней на YouTube — только подтверждённое расписание"><b className={`runwayDays ${youtubeStatus}`}>{record.status==='no-data'?(partialDays===undefined?'—':`≥${partialDays} дн.*`):`${content.remoteScheduledDays} дн.`}</b><small>{record.status==='no-data'?(partialObserved?'* Нижняя граница: найдены отдельные Scheduled, полнота неизвестна':evidenceLabel(record.dataState)):content.remoteScheduledDays>0&&content.scheduledThrough?`до ${dateLabel(content.scheduledThrough)}`:'пустое расписание подтверждено'}</small><small>{record.status==='no-data'?'Локальный прогноз с резервом':'Общий прогноз с локальным резервом'}: {localRunway.totalRunwayDays} дн.{localRunway.coverageThrough?` • до ${formatLocalCalendarDate(localRunway.coverageThrough)}`:''}</small></span>
+          <span title={evidenceLabel(record.dataState)}>{record.status==='no-data'?(partialObserved?`≥${record.scheduledVideoCount}*`:'—'):content.scheduledVideoCount}</span>
           <span><b>{content.readyVideoCount}</b></span>
           <span>{scheduleFrequencyTruthLabel(channel,record)}</span>
           <span className="runwayQuota">{uploadLimitKnown?<><b>{uploadRemaining}</b><small>доступно</small></>:<><b>—</b><small>лимит проекта не подтверждён</small></>}</span>
