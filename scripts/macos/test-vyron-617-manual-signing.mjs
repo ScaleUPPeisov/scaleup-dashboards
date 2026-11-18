@@ -8,6 +8,8 @@ test('new-key RC pipeline runs only by manual approval and cannot publish',()=>{
   assert.match(workflow,/^on:\n  workflow_dispatch:/m);
   assert.doesNotMatch(workflow,/\n  (push|pull_request|schedule):/);
   assert.match(workflow,/environment: vyron-rotated-key-rc/);
+  assert.match(workflow,/runs-on: macos-15-arm64/);
+  assert.doesNotMatch(workflow,/runs-on: macos-15\n/);
   assert.match(workflow,/BUILD_ONLY_NO_RELEASE/);
   assert.match(workflow,/test "\$HEAD_SHA" = "\$GITHUB_SHA"/);
   assert.doesNotMatch(workflow,/gh release (create|upload)|git push|git tag|git merge/);

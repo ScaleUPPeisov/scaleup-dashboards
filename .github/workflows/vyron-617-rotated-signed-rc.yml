@@ -27,7 +27,7 @@ jobs:
   signed-rc:
     if: ${{ github.ref == 'refs/heads/feature/vyron-macos-ultimate' }}
     environment: vyron-rotated-key-rc
-    runs-on: macos-15
+    runs-on: macos-15-arm64
     timeout-minutes: 100
     steps:
       - name: Verify explicit authorization and source
@@ -157,8 +157,8 @@ jobs:
           printf 'source=%s\nversion=6.1.17\nbundle=studio.channelflow.desktop\narchitecture=arm64\ncodesign=PASS\nnew_updater_signature=PASS\nnotarization=PASS\ngatekeeper=PASS\nowner_migration=NOT_TESTED\nstable_feed=UNCHANGED\nrelease=BLOCKED_UNTIL_TRUSTED_BOOTSTRAP_AND_APPROVAL\n' "$GITHUB_SHA" > "$RUNNER_TEMP/rc-evidence/manifest.txt"
       - name: Create one-time notarized Finder GUI DMG and re-sign the stapled app update archive
         env:
-          VYRON_RC_APP: ${{ runner.workspace }}/scaleup-dashboards/scaleup-dashboards/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/VYRON.app
-          VYRON_RC_ARCHIVE: ${{ runner.workspace }}/scaleup-dashboards/scaleup-dashboards/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/VYRON.app.tar.gz
+          VYRON_RC_APP: ${{ github.workspace }}/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/VYRON.app
+          VYRON_RC_ARCHIVE: ${{ github.workspace }}/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/VYRON.app.tar.gz
           VYRON_RC_PUBLIC_KEY_B64_FILE: ${{ runner.temp }}/vyron-rotated.pub
           VYRON_RC_EVIDENCE_DIR: ${{ runner.temp }}/rc-evidence
           APPLE_TEAM_ID: ${{ secrets.VYRON617_APPLE_TEAM_ID }}
