@@ -122,6 +122,26 @@ describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
     const persisted=loadChannelRunwayStore();expect(persisted.channels.lumiere.scheduledVideoCount).toBe(7);expect(persisted.channels.lumiere.scheduledUntil).toBe('2026-10-10');
   });
 
+  it('partial schedule hydration retains the verified future date instead of confirming empty',async()=>{
+    const first=await refreshOwnerInventoriesAuthoritative([channel()],true,[profile]);
+    expect(first.rows[0].status).toBe('UPDATED');
+    const prior=loadChannelRunwayStore().channels.lumiere;
+    expect(prior.scheduledVideoCount).toBeGreaterThan(0);
+    fixture.responses.set(profile.id,{
+      ...response(),videos:[],scheduledCount:0,complete:true,syncComplete:true,
+      scheduleComplete:false,scheduleDataIncompleteCount:1,
+      incompleteReasons:['SCHEDULE_DATA_INCOMPLETE']
+    });
+    const second=await refreshOwnerInventoriesAuthoritative([channel()],true,[profile]);
+    expect(second.rows[0].status).toBe('API_FAILED');
+    const retained=loadChannelRunwayStore().channels.lumiere;
+    expect(retained.scheduledVideoCount).toBe(prior.scheduledVideoCount);
+    expect(retained.scheduledUntil).toBe(prior.scheduledUntil);
+    expect(retained.dataState).toBe('PARTIAL_DATA');
+    expect(retained.runwayDays).toBeUndefined();
+    expect(retained.status).toBe('no-data');
+  });
+
   it('single refresh makes exactly one authoritative inventory call',async()=>{
     await refreshOwnerInventoriesAuthoritative([channel()],true,[profile]);
     expect(api.youtubeListExisting).toHaveBeenCalledTimes(1);
