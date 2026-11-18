@@ -288,6 +288,17 @@ fn manifest_platform_text(raw:&serde_json::Value,target:&str,key:&str)->Option<S
       .filter(|x|!x.is_empty())
 }
 
+// Stable releases must carry a checkable digest in the signed update metadata.
+// Signature verification remains mandatory; SHA-256 is an additional integrity gate.
+fn required_manifest_sha256(raw:&serde_json::Value,target:&str)->Result<String,String>{
+    let value=manifest_platform_text(raw,target,"sha256")
+      .ok_or_else(||"UPDATER_MANIFEST_SHA_MISSING: signed stable feed must provide an archive SHA-256".to_string())?;
+    if value.len()!=64||!value.bytes().all(|b|b.is_ascii_hexdigit()){
+        return Err("UPDATER_MANIFEST_SHA_INVALID: archive SHA-256 must contain 64 hexadecimal characters".into())
+    }
+    Ok(value.to_ascii_lowercase())
+}
+
 async fn stable_update(app:&tauri::AppHandle)->Result<Option<tauri_plugin_updater::Update>,String>{
     require_trusted_updater_config(app)?;
     let updater=app.updater_builder().build().map_err(|e|format!("UPDATER_BUILD_FAILED: {e}"))?;
@@ -402,7 +413,7 @@ pub async fn updater_stable_check(app:tauri::AppHandle)->Result<serde_json::Valu
     let Some(update)=stable_update(&app).await? else{
         return Ok(serde_json::json!({"available":false,"currentVersion":current,"latestVersion":current,"channel":"stable"}))
     };
-    let expected_sha=manifest_platform_text(&update.raw_json,&update.target,"sha256");
+    let expected_sha=required_manifest_sha256(&update.raw_json,&update.target)?;
     Ok(serde_json::json!({
       "available":true,
       "currentVersion":current,
@@ -431,7 +442,7 @@ pub async fn updater_stable_download(app:tauri::AppHandle)->Result<serde_json::V
             return Err("APP_NOT_REPLACEABLE: установленный VYRON.app недоступен для безопасной замены".into())
         }
         let Some(update)=stable_update(&app).await? else{return Err("UPDATE_CANDIDATE_NOT_AVAILABLE: update feed no longer contains an installable candidate".into())};
-        let expected_sha=manifest_platform_text(&update.raw_json,&update.target,"sha256").map(|x|x.to_ascii_lowercase());
+        let expected_sha=required_manifest_sha256(&update.raw_json,&update.target)?;
         let target_version=update.version.clone();
         let target=update.target.clone();
         let signature_sha=sha256_text(&update.signature);
@@ -442,18 +453,13 @@ pub async fn updater_stable_download(app:tauri::AppHandle)->Result<serde_json::V
           ||{}
         ).await.map_err(|e|format!("UPDATER_ARCHIVE_DOWNLOAD_FAILED: {e}"))?;
         let actual_sha=sha256_hex(&bytes);
-        if let Some(ref expected)=expected_sha{
-            if expected.len()!=64||!expected.chars().all(|c|c.is_ascii_hexdigit()){
-                return Err("UPDATER_MANIFEST_SHA_INVALID: manifest sha256 is malformed".into())
-            }
-            if actual_sha!=*expected{
-                return Err(format!("UPDATER_ARTIFACT_SHA_MISMATCH: expected={expected} actual={actual_sha}"))
-            }
+        if actual_sha!=expected_sha{
+            return Err(format!("UPDATER_ARTIFACT_SHA_MISMATCH: expected={expected_sha} actual={actual_sha}"))
         }
         let bundle_path=snapshot.get("currentAppBundlePath").and_then(|x|x.as_str()).unwrap_or("").to_string();
         let old_sha=snapshot.get("currentExecutableSha256").and_then(|x|x.as_str()).unwrap_or("").to_string();
         *stable_update_download_state().lock().map_err(|_|"UPDATER_STABLE_DOWNLOAD_STATE_POISONED".to_string())?=Some(DownloadedStableUpdate{
-          version:update.version.clone(),target,artifact_sha256:actual_sha.clone(),expected_artifact_sha256:expected_sha.clone(),
+          version:update.version.clone(),target,artifact_sha256:actual_sha.clone(),expected_artifact_sha256:Some(expected_sha.clone()),
           manifest_signature_sha256:signature_sha.clone(),download_url:download_url.clone(),current_app_bundle_path:bundle_path.clone(),
           current_executable_sha256:old_sha.clone(),bytes
         });
@@ -480,9 +486,12 @@ pub async fn updater_stable_install(app:tauri::AppHandle,expected_version:String
             return Err(format!("UPDATE_TARGET_PATH_CHANGED: staged={} running={}",staged.current_app_bundle_path,now_bundle))
         }
         let Some(update)=stable_update(&app).await? else{return Err("UPDATE_CANDIDATE_LOST: signed update candidate is no longer available".into())};
-        let expected_sha=manifest_platform_text(&update.raw_json,&update.target,"sha256").map(|x|x.to_ascii_lowercase());
-        if update.version!=staged.version||update.target!=staged.target||sha256_text(&update.signature)!=staged.manifest_signature_sha256||expected_sha!=staged.expected_artifact_sha256||update.download_url.to_string()!=staged.download_url{
+        let expected_sha=required_manifest_sha256(&update.raw_json,&update.target)?;
+        if update.version!=staged.version||update.target!=staged.target||sha256_text(&update.signature)!=staged.manifest_signature_sha256||Some(expected_sha.clone())!=staged.expected_artifact_sha256||update.download_url.to_string()!=staged.download_url{
             return Err("UPDATE_MANIFEST_CHANGED: version/target/signature/hash/url changed after verified download".into())
+        }
+        if sha256_hex(&staged.bytes)!=expected_sha{
+            return Err("UPDATER_STAGED_ARCHIVE_SHA_MISMATCH: staged archive bytes changed before installation".into())
         }
         update.install(&staged.bytes).map_err(|e|format!("UPDATER_INSTALL_FAILED: {e}"))?;
         let verify=verify_installed_bundle(Path::new(&staged.current_app_bundle_path),&expected_version,&staged.current_executable_sha256)?;
@@ -685,6 +694,17 @@ mod updater_key_diagnostic_tests{
     use super::*;
 
     const VALID_PUBLIC_KEY:&str="dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDgxMzNDOTg3M0ZBQjc5QzEKUldUQmVhcy9oOGt6Z1owb2JOWjJjM1FOQjF3UkJnbm5mZGNZRTloMUZhYkJFRlZ6QWFoNk5VN3kK";
+
+    #[test]
+    fn stable_sha256_is_required_and_validated_before_download_and_install(){
+        let sha="A".repeat(64);
+        let good=serde_json::json!({"platforms":{"darwin-aarch64":{"sha256":sha}}});
+        assert_eq!(required_manifest_sha256(&good,"darwin-aarch64").unwrap(),"a".repeat(64));
+        assert!(required_manifest_sha256(&good,"darwin-x86_64").is_err());
+        for candidate in [serde_json::json!({}),serde_json::json!({"sha256":"not-a-hash"}),serde_json::json!({"sha256":"g".repeat(64)})]{
+            assert!(required_manifest_sha256(&candidate,"darwin-aarch64").is_err());
+        }
+    }
 
     #[test]
     fn reports_public_key_format_and_fingerprint_without_claiming_trust(){
