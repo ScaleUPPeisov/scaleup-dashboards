@@ -268,8 +268,10 @@ function renderChannel(data){
   $('detail-title').textContent=ch.name;
   $('detail-oauth-connect').hidden=ch.analyticsAuthorized!==false;
   $('detail-schedule-refresh').disabled=ch.analyticsAuthorized!==true;
-  $('detail-meta').textContent=(ch.analyticsAuthorized===false?'Нет OAuth · ':'')+
-    'Публичные данные: '+stamp(ch.updatedAt);
+  const stateText={CONNECTED:'Google подключён',REQUIRES_AUTH:'Требуется авторизация Google',
+    STALE:'Analytics устарела',ERROR:'Ошибка синхронизации Google'};
+  $('detail-meta').textContent=(stateText[ch.analyticsSyncStatus]||'Нет подтверждённого статуса')+
+    ' · Публичные данные: '+stamp(ch.updatedAt);
   $('detail-subs').textContent=ch.subscribersHidden?'Скрыты':fmt(ch.subscribers);
   $('detail-views').textContent=fmt(ch.views);
   $('detail-watch').textContent=a&&a.watchMinutes!=null?fmt(a.watchMinutes/60)+' ч':'Нет данных';
