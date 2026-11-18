@@ -2,7 +2,7 @@
 // Runs solely inside ~/.vyron-control-agent/source after GitHub CI verifies release HEAD.
 import {execFileSync} from 'node:child_process';
 import {homedir} from 'node:os';
-import {join,resolve} from 'node:path';
+import {dirname,join,resolve} from 'node:path';
 const REPO='https://github.com/ScaleUPPeisov/scaleup-dashboards.git';
 const BRANCH='release/vyron-control-production';
 const ROOT=join(homedir(),'.vyron-control-agent','source');
@@ -53,14 +53,14 @@ export async function maybeUpdateAgent({
    // All commands below affect ONLY the private Mac Bridge Git clone, never VYRON or ENDLUME.
    try{
      cmd('git',['reset','--hard',next]);
-     cmd('npm',['ci','--omit=dev','--ignore-scripts','--no-audit','--no-fund'],
+     cmd(join(dirname(process.execPath),'npm'),['ci','--omit=dev','--ignore-scripts','--no-audit','--no-fund'],
        {cwd:join(ROOT,'apps','vyron-control'),timeout:120000});
      cmd(process.execPath,['--test','agent/bridge.test.mjs','agent/retry.test.mjs'],
        {cwd:join(ROOT,'apps','vyron-control'),timeout:120000});
      return {updated:true,sha:next};
    }catch{
      cmd('git',['reset','--hard',old]);
-     try{cmd('npm',['ci','--omit=dev','--ignore-scripts','--no-audit','--no-fund'],
+     try{cmd(join(dirname(process.execPath),'npm'),['ci','--omit=dev','--ignore-scripts','--no-audit','--no-fund'],
        {cwd:join(ROOT,'apps','vyron-control'),timeout:120000});}catch{}
      return {updated:false,reason:'candidate_failed_rolled_back'};
    }
