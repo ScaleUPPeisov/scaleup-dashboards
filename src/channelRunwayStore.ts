@@ -229,11 +229,11 @@ export function markRunwayRefreshIssue(
   error:string,
   now=new Date(),
   storage:StorageLike|undefined=browserStorage(),
-  observedVideos:YoutubeExistingVideo[]=[]
+  observedVideos?:YoutubeExistingVideo[]
 ){
   const current=loadChannelRunwayStore(storage);
   const previous=current.channels[channel.id]||deriveRunwayRecord(channel,[],now,undefined,false);
-  const partial=deriveRunwayRecord(channel,observedVideos,now,undefined,false);
+  const partial=deriveRunwayRecord(channel,observedVideos||[],now,undefined,false);
   // Verified observations can only increase a lower-bound date/count here;
   // they cannot establish the exhaustive scheduled inventory.
   const mostRecent=[previous.scheduledUntil,partial.scheduledUntil].filter((x):x is string=>Boolean(x)).sort().at(-1);
@@ -245,6 +245,11 @@ export function markRunwayRefreshIssue(
     dataState,
     lastRefreshAttemptAt:now.toISOString(),
     lastRefreshError:error,
+    // Preserve the actual latest owner-visible evidence without overwriting
+    // the historic baseline with a falsely complete schedule or a false zero.
+    lastObservedAt:observedVideos===undefined?previous.lastObservedAt:now.toISOString(),
+    lastObservedScheduledCount:observedVideos===undefined?previous.lastObservedScheduledCount:partial.scheduledVideoCount,
+    lastObservedScheduledUntil:observedVideos===undefined?previous.lastObservedScheduledUntil:partial.scheduledUntil,
     runwayDays:undefined,
     status:'no-data',
     priority:'unknown'
