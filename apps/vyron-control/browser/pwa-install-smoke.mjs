@@ -49,8 +49,10 @@ try{
    deviceScaleFactor:2,serviceWorkers:'allow'});
  const page=await context.newPage();
  page.on('pageerror',e=>console.error('PWA pageerror:',e.message));
- await page.addInitScript(()=>sessionStorage.setItem('vyron-control-access','QA_SYNTHETIC_ONLY'));
  await page.goto(origin+'/',{waitUntil:'domcontentloaded'});
+ // Set the fixture session ONCE, not on every reload, to prove real persistence.
+ await page.evaluate(()=>sessionStorage.setItem('vyron-control-access','QA_SYNTHETIC_ONLY'));
+ await page.reload({waitUntil:'domcontentloaded'});
  await page.waitForFunction(async()=>{
    const reg=await navigator.serviceWorker?.getRegistration();
    return Boolean(reg?.active);
@@ -58,6 +60,8 @@ try{
  await page.waitForFunction(async()=>(
    (await caches.keys()).includes('vyron-peisov-yt-shell-v10')
  ),{timeout:20000});
+ await page.waitForFunction(()=>Boolean(navigator.serviceWorker?.controller),
+   undefined,{timeout:20000});
  const local=await page.evaluate(async()=>({
   cached:await caches.keys(),
   apiCached:await Promise.all((await caches.keys()).map(async key=>
@@ -73,9 +77,8 @@ try{
    'QA_SYNTHETIC_ONLY','PWA offline should not clear session');
  await context.setOffline(false);
  upgrade=true;
- await page.evaluate(async()=>{
-   const reg=await navigator.serviceWorker.getRegistration();
-   await reg.update();
+ await page.evaluate(()=>{
+   void navigator.serviceWorker.getRegistration().then(reg=>reg.update());
  });
  await page.waitForFunction(async()=>(
    (await caches.keys()).includes('vyron-peisov-yt-shell-v11')
