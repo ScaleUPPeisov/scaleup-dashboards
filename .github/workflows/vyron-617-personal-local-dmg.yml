@@ -6,6 +6,7 @@ on:
       - feature/vyron-macos-ultimate
     paths:
       - .github/workflows/vyron-617-personal-local-dmg.yml
+      - scripts/macos/prepare-vyron-rotated-updater.mjs
 
 permissions:
   contents: read
