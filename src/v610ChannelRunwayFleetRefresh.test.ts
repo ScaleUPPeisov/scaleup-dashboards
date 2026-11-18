@@ -16,13 +16,13 @@ Object.defineProperty(globalThis,'localStorage',{value:storage,configurable:true
 
 const fixture=vi.hoisted(()=>({
  profiles:[] as YoutubeProfile[],
- responses:new Map<string,{videos:YoutubeExistingVideo[];syncComplete:boolean;complete:boolean}>(),
+ responses:new Map<string,{videos:YoutubeExistingVideo[];syncComplete:boolean;complete:boolean;scheduleComplete:boolean;channelId:string}>(),
  inventoryFiles:new Map<string,any>()
 }));
 vi.mock('./api',()=>({
  api:{
   youtubeProfiles:vi.fn(async()=>fixture.profiles),
-  youtubeListExisting:vi.fn(async(profileId:string)=>fixture.responses.get(profileId)||{videos:[],syncComplete:true,complete:true}),
+  youtubeListExisting:vi.fn(async(profileId:string)=>fixture.responses.get(profileId)||{videos:[],syncComplete:false,complete:false,scheduleComplete:false,channelId:''}),
   youtubeInventoryRead:vi.fn(async(channelId:string)=>fixture.inventoryFiles.has(channelId)?{found:true,schemaVersion:2,channelId,path:'native',payload:fixture.inventoryFiles.get(channelId)}:{found:false,schemaVersion:2,channelId,path:'native'}),
   youtubeInventoryWrite:vi.fn(async(channelId:string,payload:any)=>{fixture.inventoryFiles.set(channelId,structuredClone(payload));return{ok:true,verified:true,schemaVersion:2,channelId,path:'native',bytes:JSON.stringify(payload).length}}),
   youtubeInventoryDelete:vi.fn(async(channelId:string)=>{fixture.inventoryFiles.delete(channelId);return{ok:true,channelId,deleted:true}})
@@ -50,7 +50,7 @@ const scheduled=(id:string,day:number):YoutubeExistingVideo=>({
  id,position:day,title:id,description:'',tags:[],categoryId:'10',privacyStatus:'private',
  publishAt:`2099-01-${String(Math.max(1,Math.min(28,day))).padStart(2,'0')}T18:00:00+07:00`,selected:false
 });
-function setResponse(profileId:string,count:number){fixture.responses.set(profileId,{videos:Array.from({length:count},(_,i)=>scheduled(profileId+'-'+i,i+1)),syncComplete:true,complete:true})}
+function setResponse(profileId:string,count:number){fixture.responses.set(profileId,{channelId:'UC'+profileId.slice(1),videos:Array.from({length:count},(_,i)=>scheduled(profileId+'-'+i,i+1)),scheduleComplete:true,syncComplete:true,complete:true})}
 
 describe('VYRON 6.1 authoritative fleet runway refresh',()=>{
  beforeEach(()=>{
