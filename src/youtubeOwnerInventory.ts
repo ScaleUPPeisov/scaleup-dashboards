@@ -14,9 +14,9 @@ const ownerAttemptAt=new Map<string,number>();
 const ownerSearchAt=new Map<string,number>();
 const OWNER_SEARCH_COOLDOWN_MS=10*60*1000;
 // Explicit full-fleet runs can deep-check incomplete channels only: 2 pages
-// per channel, up to 16 channels, with a search-bucket reserve for publishing.
-export const MANUAL_FLEET_DEEP_SEARCH_CHANNEL_CAP=16;
-export const MANUAL_FLEET_SEARCH_MIN_AVAILABLE=4;
+// per channel, up to 33 channels, with a search-bucket reserve for other work.
+export const MANUAL_FLEET_DEEP_SEARCH_CHANNEL_CAP=33;
+export const MANUAL_FLEET_SEARCH_MIN_AVAILABLE=12;
 
 export type OwnerYoutubeInventorySnapshot={
   channelId:string;
@@ -228,7 +228,8 @@ export async function refreshOwnerInventoriesAuthoritative(
       // verification for all 33 channels in a fleet refresh. Deep-check only
       // currently unverified channels, using the separate search bucket and a
       // hard per-run cap. Background refreshes remain zero-search.
-      const unverified=loadChannelRunwayStore().channels[channel.id]?.status==='no-data';
+      const stored=loadChannelRunwayStore().channels[channel.id];
+      const unverified=!stored||stored.status==='no-data';
       const searchBudgetOk=youtubeQuotaBucketUsage('search').available>=MANUAL_FLEET_SEARCH_MIN_AVAILABLE;
       const targeted=force&&searchBudgetOk&&
         Date.now()-(ownerSearchAt.get(channel.id)||0)>=OWNER_SEARCH_COOLDOWN_MS&&
