@@ -16,6 +16,9 @@ export type ChannelRunwayRecord={
   scheduledUntil?:string;
   scheduledVideoCount:number;
   dataState?:RunwayDataState;
+  // v2 means this record came from a source whose schedule coverage was checked.
+  // Legacy zeroes without this proof cannot claim CONFIRMED_EMPTY.
+  inventoryEvidenceVersion?:2;
   lastRefreshError?:string;
   averagePublishIntervalDays?:number;
   lastScheduleSync?:string;
