@@ -64,26 +64,34 @@ function reason(error){
  if(/^SCHEDULE_API_HTTP_/.test(raw))return 'GOOGLE_REQUEST_FAILED';
  return 'SCHEDULE_REFRESH_FAILED';
 }
-export async function refreshDueYouTubeSchedules(env,scheduledAt=new Date(),fetchImpl=fetch){
+export async function refreshDueYouTubeSchedules(env,scheduledAt=new Date(),fetchImpl=fetch,selectedChannelId=null){
  if(!/^[a-fA-F0-9]{64}$/.test(String(env.OAUTH_ENCRYPTION_KEY||'')))
    return {skipped:true,reason:'oauth_not_configured'};
+ if(selectedChannelId!==null&&!CHANNEL.test(selectedChannelId))
+   throw new Error('INVALID_SCHEDULE_CHANNEL');
  const now=scheduledAt.toISOString();
- // One channel per 5-minute worker invocation: ~3 hours to refresh 33 channels.
+ const manualCutoff=new Date(scheduledAt.getTime()-5*60000).toISOString();
+ const manual=selectedChannelId!==null;
+ // Background: one owned channel per 5-minute cron. Manual requests throttle by channel.
+ const where=manual?
+   "WHERE p.channel_id=? AND (s.updated_at IS NULL OR s.updated_at<=?) ":
+   "WHERE s.next_refresh_at IS NULL OR s.next_refresh_at<=? ";
  const row=await env.DB.prepare(
    "SELECT p.channel_id,p.channel_name,p.refresh_token_cipher,"+
    "c.client_id_cipher,c.client_secret_cipher "+
    "FROM google_oauth_profiles p LEFT JOIN google_oauth_client_credentials c "+
    "ON c.channel_id=p.channel_id LEFT JOIN channel_schedule s ON s.channel_id=p.channel_id "+
-   "WHERE s.next_refresh_at IS NULL OR s.next_refresh_at<=? "+
-   "ORDER BY COALESCE(s.next_refresh_at,'') ASC,p.channel_id LIMIT 1"
- ).bind(now).first();
- if(!row)return {skipped:true,reason:'all_channel_schedules_fresh'};
+   where+"ORDER BY COALESCE(s.next_refresh_at,'') ASC,p.channel_id LIMIT 1"
+ ).bind(...(manual?[selectedChannelId,manualCutoff]:[now])).first();
+ if(!row)return {skipped:true,reason:manual?'not_authorized_or_recently_checked':'all_channel_schedules_fresh'};
+ const claimLimit=manual?manualCutoff:now;
  const claimed=await env.DB.prepare(
    "INSERT INTO channel_schedule(channel_id,status,next_refresh_at,updated_at) "+
    "VALUES(?,'REFRESHING',?,?) ON CONFLICT(channel_id) DO UPDATE SET "+
    "status='REFRESHING',next_refresh_at=excluded.next_refresh_at,updated_at=excluded.updated_at "+
-   "WHERE channel_schedule.next_refresh_at IS NULL OR channel_schedule.next_refresh_at<=?"
- ).bind(row.channel_id,new Date(scheduledAt.getTime()+5*60000).toISOString(),now,now).run();
+   (manual?"WHERE channel_schedule.updated_at IS NULL OR channel_schedule.updated_at<=?":
+     "WHERE channel_schedule.next_refresh_at IS NULL OR channel_schedule.next_refresh_at<=?")
+ ).bind(row.channel_id,new Date(scheduledAt.getTime()+5*60000).toISOString(),now,claimLimit).run();
  if(Number(claimed.meta?.changes)!==1)return {skipped:true,reason:'concurrent_schedule_refresh'};
  try{
    const token=await refreshAccessToken(row,env,fetchImpl);
