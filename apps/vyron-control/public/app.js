@@ -145,6 +145,8 @@ function renderChannels(channels) {
     left.append(avatar,link,make('small','',ch.updatedAt?'Обновлено '+time(ch.updatedAt):'Ожидает первой синхронизации'));
     left.append(make('small','channel-runway',
       'Остаток дней: '+(Number.isFinite(ch.scheduledContentDays)?number(ch.scheduledContentDays):'нет данных')));
+    if(ch.archivedAt)left.append(make('small','caution',
+      'Архив VYRON · история сохранена · '+time(ch.archivedAt)));
     if(ch.analyticsAuthorized===false)
       left.append(make('small','caution','Google Analytics: требуется авторизация'));
     else if(ch.analyticsAuthorized===true&&!ch.analytics)
@@ -857,7 +859,8 @@ function renderDevices(data) {
     Date.now() - Date.parse(device.lastSeenAt) < 180000;
   $('mac-indicator').textContent = recent ? '● Mac онлайн' : '○ Mac спит / нет связи';
   $('mac-state').textContent = recent ? 'На связи' : 'Последнее состояние';
-  $('mac-last').textContent = 'Последний сигнал: ' + time(device.lastSeenAt);
+  $('mac-last').textContent = 'Последний сигнал: ' + time(device.lastSeenAt)+
+    (device.status?.agentStateSource?' · источник: '+device.status.agentStateSource:'');
   const s = device.status || {};
   $('mac-vyron-version').textContent=s.vyronVersion||'—';
   $('mac-endlume-version').textContent=s.endlumeVersion||'—';
@@ -874,7 +877,10 @@ function renderDevices(data) {
   $('mac-disk-state').textContent=s.diskOnline===true?'Подключён':
     s.diskOnline===false?'Недоступен':'Нет данных';
   $('mac-ready-upload').textContent=s.jobsReadyUpload==null?'—':number(s.jobsReadyUpload);
-  $('mac-agent-error').textContent=s.lastError?String(s.lastError).slice(0,150):'Нет активных ошибок';
+  $('mac-agent-error').textContent=s.agentLastError
+    ?'Mac Bridge: '+String(s.agentLastError).slice(0,80)+
+      (s.agentRetrySeconds?' · повтор через '+s.agentRetrySeconds+' с':'')
+    :s.lastError?String(s.lastError).slice(0,150):'Нет активных ошибок';
   $('mac-disk-state').classList.toggle('state-bad',s.diskOnline===false);
   $('mac-agent-error').classList.toggle('state-bad',Boolean(s.lastError));
   $('mac-renders').textContent = number(s.rendersActive);
