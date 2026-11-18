@@ -49,6 +49,21 @@ self.addEventListener('fetch',event=>{
   }
 });
 
+/* Active Service Worker version probe. Also repairs a shell cache that a retiring
+   worker may have evicted during concurrent activation on WebKit. No API caching. */
+self.addEventListener('message',event=>{
+  if(event.data?.type!=='VYRON_PWA_VERSION_PROBE')return;
+  event.waitUntil((async()=>{
+    let complete=false;
+    try{
+      const cache=await caches.open(SHELL_CACHE);
+      if(!await cache.match('/'))await cache.addAll(SHELL_ASSETS);
+      complete=Boolean(await cache.match('/'));
+    }catch{} // Offline: report incomplete rather than claim cache integrity.
+    event.ports?.[0]?.postMessage({cacheName:SHELL_CACHE,complete});
+  })());
+});
+
 /* Web Push for installed iPhone PWA. No API credentials. */
 self.addEventListener('push', event => {
   let data={};
