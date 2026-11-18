@@ -4275,7 +4275,7 @@ pub async fn youtube_list_existing_videos(
     Ok(json!({
         "channelId":profile.channel_id,
         "channelTitle":profile.channel_title,
-        "youtubeFound":observed_total,
+        "youtubeFound":std::cmp::max(observed_total,out.len()),
         "playlistFound":playlist_reported_total,
         "playlistReportedTotal":playlist_reported_total,
         "inventoryExpected":expected,
@@ -4285,7 +4285,7 @@ pub async fn youtube_list_existing_videos(
         "videosHydrated":videos_hydrated,
         "totalVerifiedRows":out.len(),
         "supplementalHydrated":supplemental_hydrated,
-        "received":videos_hydrated,
+        "received":out.len(),
         "requested":limit,
         "playlistExhausted":playlist_exhausted,
         "truncated":limit_truncated,
