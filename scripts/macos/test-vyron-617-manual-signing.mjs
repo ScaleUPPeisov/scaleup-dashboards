@@ -20,7 +20,7 @@ test('new-key RC pipeline runs only with manual approval or exact labeled PR22 a
   assert.doesNotMatch(workflow,/runs-on: macos-15\n/);
   assert.match(workflow,/BUILD_ONLY_NO_RELEASE/);
   assert.match(workflow,/test "\$HEAD_SHA" = "\$GITHUB_SHA"/);
-  assert.match(workflow,/ref: ${{ env.VYRON_RELEASE_SOURCE_SHA }}/);
+  assert.ok(workflow.includes("ref: ${{ env.VYRON_RELEASE_SOURCE_SHA }}"));
   assert.match(workflow,/test "\$\(git rev-parse HEAD\)" = "\$VYRON_RELEASE_SOURCE_SHA"/);
   assert.match(workflow,/vars.VYRON617_APPROVED_PUBKEY_SHA256/);
   assert.match(workflow,/vars.VYRON617_APPROVED_TEAM_ID/);
@@ -79,7 +79,7 @@ test('release kit is staged only after notarized GUI and signed updater, without
  'RELEASE-NOTES.md','owner_migration_verified:false','stable_feed_changed:false']){
    assert.ok(script.includes(token),'MISSING_RELEASE_KIT_GUARD: '+token);
  }
- assert.match(workflow,/if: \${{ github.event_name == 'workflow_dispatch' && inputs.deliver_signed_rc_to_actions_artifact }}/);
+ assert.ok(workflow.includes("if: ${{ github.event_name == 'workflow_dispatch' && inputs.deliver_signed_rc_to_actions_artifact }}"));
  assert.doesNotMatch(script,/gh release|git push|git tag|curl.*sh|release published/i);
 });
 
