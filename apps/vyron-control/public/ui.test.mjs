@@ -155,3 +155,12 @@ test('Mac install never executes unsigned code or unpinned npm install',()=>{
  assert.equal(installer.includes('npm install --omit=dev'),false);
  assert.equal(installer.includes('git clone --depth 1'),false);
 });
+
+test('Mac reinstall reuses existing private agent token without copying credentials',()=>{
+ assert.ok(installer.includes('AGENT_HOME/config.json'));
+ assert.ok(installer.includes('metadata.mode&0o077'));
+ assert.ok(installer.includes('config.url!==process.env.AGENT_EXPECTED_URL'));
+ assert.ok(installer.includes("process.stdout.write(config.token)"));
+ assert.ok(installer.includes('if [[ -f "$AGENT_HOME/config.json" ]]'));
+ assert.ok(installer.includes("read -r -s -p 'Ключ агента"));
+});

@@ -95,10 +95,29 @@ if ! npm ci --omit=dev --ignore-scripts --no-audit --no-fund; then
   fail 'Установка npm зависимостей не удалась. Исходники Mac Bridge восстановлены.'
 fi
 
-printf '\nКлюч агента доступен в панели VYRON CONTROL.\n'
-printf 'Вернись в браузер, нажми «Скопировать ключ агента» и вставь его ниже.\n'
-read -r -s -p 'Ключ агента (ввод скрыт): ' AGENT_TOKEN </dev/tty
-printf '\n' >/dev/tty
+# Reinstall without copy-pasting secrets when a previous private, owner-only
+# agent config already exists. Never display or upload that stored agent token.
+AGENT_TOKEN=''
+if [[ -f "$AGENT_HOME/config.json" ]]; then
+  AGENT_TOKEN="$(AGENT_CONFIG_FILE="$AGENT_HOME/config.json" AGENT_EXPECTED_URL="$WORKER_URL" node --input-type=module <<'NODE'
+import {readFile,stat} from 'node:fs/promises';
+const file=process.env.AGENT_CONFIG_FILE;
+const metadata=await stat(file);
+if((metadata.mode&0o077)!==0)throw Error('Existing agent configuration has unsafe permissions');
+const config=JSON.parse(await readFile(file,'utf8'));
+if(config.url!==process.env.AGENT_EXPECTED_URL||
+   typeof config.token!=='string'||config.token.length<32)
+  throw Error('Existing agent token configuration is invalid');
+process.stdout.write(config.token);
+NODE
+)"
+  printf 'Использую существующий приватный ключ Mac Bridge (значение не показывается).\n'
+else
+  printf '\nКлюч агента доступен в панели VYRON CONTROL.\n'
+  printf 'Вернись в браузер, нажми «Скопировать ключ агента» и вставь его ниже.\n'
+  read -r -s -p 'Ключ агента (ввод скрыт): ' AGENT_TOKEN </dev/tty
+  printf '\n' >/dev/tty
+fi
 if (( ${#AGENT_TOKEN} < 32 )); then
   fail 'Ключ короче 32 символов. Установка остановлена.'
 fi
