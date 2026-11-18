@@ -50,6 +50,23 @@ try{
  const page=await context.newPage();
  page.on('pageerror',e=>console.error('PWA pageerror:',e.message));
  await page.goto(origin+'/',{waitUntil:'domcontentloaded'});
+ if(engine==='webkit'){
+   // Playwright documents Service Worker automation support only on Chromium.
+   // A headless WebKit SW activation result would NOT prove iPhone Safari Push,
+   // installed-PWA controller behavior, or an offline navigation. Fail neither
+   // the visual browser gate nor the physical-device gate on unsupported APIs.
+   const sw=await page.request.get(origin+'/service-worker.js');
+   assert.equal(sw.ok(),true);
+   assert.match(await sw.text(),/vyron-peisov-yt-shell-v11/);
+   const manifest=await page.request.get(origin+'/manifest.webmanifest');
+   assert.equal(manifest.ok(),true);
+   assert.equal((await manifest.json()).name,'VYRON PEISOV YT');
+   await page.evaluate(()=>sessionStorage.setItem('vyron-control-access','QA_SYNTHETIC_ONLY'));
+   await page.reload({waitUntil:'domcontentloaded'});
+   assert.equal(await page.evaluate(()=>sessionStorage.getItem('vyron-control-access')),
+     'QA_SYNTHETIC_ONLY','WebKit browser navigation must preserve session');
+   console.log('PASS webkit PWA shell/manifest/session; SKIP native SW activation, offline navigation and Push delivery (unsupported by Playwright WebKit; physical iPhone required).');
+ }else{
  // Set the fixture session ONCE, not on every reload, to prove real persistence.
  await page.evaluate(()=>sessionStorage.setItem('vyron-control-access','QA_SYNTHETIC_ONLY'));
  await page.reload({waitUntil:'domcontentloaded'});
@@ -141,5 +158,6 @@ try{
  // public shell cache after activate. Its presence is not an active-version signal.
  // Service Worker activation and new cache are the actual update gate.
  console.log('PASS '+engine+' PWA: install, '+(engine==='webkit'?'offline cache readiness':'offline navigation')+', no cached API, session preservation, SW v11→v12 upgrade.');
+ }
  await context.close();
 }finally{await browser.close();server.close();}
