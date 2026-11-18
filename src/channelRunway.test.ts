@@ -104,7 +104,9 @@ describe('Channel Runway persistence and 06:00 KRAT scheduler',()=>{
     expect(loaded.channels.neon.scheduledUntil).toBe('2026-12-01');
     const recalculated=recalculateChannelRunway([channel()],new Date('2026-09-03T08:00:00Z'),false,storage as any);
     expect(recalculated.channels.neon.scheduledUntil).toBe('2026-12-01');
-    expect(recalculated.channels.neon.runwayDays).toBe(89);
+    expect(recalculated.channels.neon.dataState).toBe('STALE_CACHE');
+    expect(recalculated.channels.neon.runwayDays).toBeUndefined();
+    expect(recalculated.channels.neon.status).toBe('no-data');
   });
 
   it('empty Existing Videos cache is no-data, not falsely ended',()=>{
@@ -136,7 +138,8 @@ describe('Channel Runway persistence and 06:00 KRAT scheduler',()=>{
     storage.setItem('vyron:existing-cache:v1:neon',JSON.stringify({version:1,videos:[stale],baseline:{[stale.id]:stale},syncInfo:{complete:true}}));
     const result=recalculateChannelRunway([channel()],new Date('2026-09-03T08:00:00Z'),false,storage as any);
     expect(result.channels.neon.scheduledUntil).toBe('2026-12-01');
-    expect(result.channels.neon.runwayDays).toBe(89);
+    expect(result.channels.neon.dataState).toBe('STALE_CACHE');
+    expect(result.channels.neon.runwayDays).toBeUndefined();
   });
 
   it('does not run before 06:00 Krasnoyarsk and runs at 06:00',()=>{
