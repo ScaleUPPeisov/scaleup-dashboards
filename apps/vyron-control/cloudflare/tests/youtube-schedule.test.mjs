@@ -55,10 +55,10 @@ test('an unavailable private video must not be interpreted as a complete zero-vi
  assert.equal(result.complete,false);
  assert.equal(scheduledContentDays({...result,capturedAt:now.toISOString()},now),null);
 });
-test('verified empty schedule shows zero while stale verified data remains unknown',()=>{
+test('no future publishAt and stale data cannot be misreported as a zero-day schedule',()=>{
  const now=new Date('2026-11-18T10:00:00Z');
  assert.equal(scheduledContentDays({status:'COMPLETE',complete:true,
-   capturedAt:now.toISOString(),videos:[]},now),0);
+   capturedAt:now.toISOString(),videos:[]},now),null);
  assert.equal(scheduledContentDays({status:'COMPLETE',complete:true,
    capturedAt:'2026-11-01T10:00:00Z',videos:[]},now),null);
 });
