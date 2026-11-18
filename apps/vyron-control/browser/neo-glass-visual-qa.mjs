@@ -82,7 +82,10 @@ const widths=[320,375,390,393,402,430];
 const screens=['overview','channels','analytics','studio','insights','notifications','channel-detail','system'];
 try {
   for(const width of widths.concat([768,1280])){
-    const page=await browser.newPage({viewport:{width,height:852},deviceScaleFactor:2});
+    // Visual QA isolates viewport/layout from service-worker install/controllerchange
+    // reload races. Offline/PWA installation is covered by a separate browser gate.
+    const page=await browser.newPage({viewport:{width,height:852},deviceScaleFactor:2,
+      serviceWorkers:'block'});
     const errors=[];
     page.on('pageerror',err=>errors.push(err.message));
     await page.addInitScript(()=>{
