@@ -1,0 +1,234 @@
+# PR64: explicit 33-channel audit, accessible runway risk colors, no Stable publishing.
+# Release requires independent key pin, no Apple Developer ID, and must
+# never touch Stable feed or run with a compromised key. Authenticated owner only.
+name: VYRON 6.1.21 private ARM64 33-channel owner candidate (never publish)
+# Private 6.1.21 owner RC: rebuild after owner-history ID direct hydration and partial Scheduled UI repair; never publish stable.
+
+on:
+  push:
+    branches:
+      - feature/vyron-macos-ultimate
+    paths:
+      - .github/workflows/vyron-621-personal-rc.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-621-personal-local-dmg
+  cancel-in-progress: true
+
+jobs:
+  personal-local-dmg:
+    environment: vyron-rotated-key-rc
+    if: ${{ github.repository == 'ScaleUPPeisov/scaleup-dashboards' && github.ref == 'refs/heads/feature/vyron-macos-ultimate' }}
+    runs-on: macos-15
+    timeout-minutes: 100
+    steps:
+      - name: Pin exact PR source
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$(uname -m)" = arm64
+          echo "VYRON_RELEASE_SOURCE_SHA=$SOURCE_SHA" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.VYRON_RELEASE_SOURCE_SHA }}
+          persist-credentials: false
+
+      - name: Refuse wrong source or changed production identity
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$VYRON_RELEASE_SOURCE_SHA"
+          node -e "const c=require('./src-tauri/tauri.conf.json'); if(c.version!=='6.1.15'||c.identifier!=='studio.channelflow.desktop') process.exit(1)"
+          git diff --quiet
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'src-tauri -> target'
+
+      - name: Require independently pinned NEW updater key
+        env:
+          NEW_PRIVATE: ${{ secrets.VYRON617_NEW_TAURI_PRIVATE_KEY }}
+          NEW_PUBLIC: ${{ secrets.VYRON617_NEW_TAURI_PUBLIC_KEY_B64 }}
+          NEW_PRIVATE_PASSWORD: ${{ secrets.VYRON617_NEW_TAURI_PRIVATE_KEY_PASSWORD }}
+          APPROVED_SHA: ${{ vars.VYRON617_APPROVED_PUBKEY_SHA256 }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$NEW_PRIVATE" || { echo NEW_TAURI_PRIVATE_KEY_NOT_AVAILABLE_IN_REPOSITORY_SECRET; exit 1; }
+          test -n "$NEW_PUBLIC" || { echo NEW_TAURI_PUBLIC_KEY_NOT_AVAILABLE_IN_REPOSITORY_SECRET; exit 1; }
+          [[ "$APPROVED_SHA" =~ ^[a-f0-9]{64}$ ]] || { echo APPROVED_NEW_PUBLIC_KEY_FINGERPRINT_MISSING; exit 1; }
+          test "$APPROVED_SHA" != aa6fb45ab082ef39279e841dc40b0f85e5b33f23746f77557b6f93e3e72c2c06
+          test "$APPROVED_SHA" = 1c97657fd2a7ba4c2a0ce5b5361518eeacf76da274521b1977d57a55b8dbcec9 || { echo VYRON617_TO_618_PUBLIC_KEY_CHANGED; exit 1; }
+          printf '%s' "$NEW_PUBLIC" > "$RUNNER_TEMP/vyron-rotated.pub"
+          chmod 600 "$RUNNER_TEMP/vyron-rotated.pub"
+          node scripts/macos/prepare-vyron-rotated-updater.mjs --public-key-file "$RUNNER_TEMP/vyron-rotated.pub" --output "$RUNNER_TEMP/vyron-621-personal.json" --version 6.1.21 > "$RUNNER_TEMP/key-facts.txt"
+          grep -Fxq "PUBLIC_KEY_SHA256=$APPROVED_SHA" "$RUNNER_TEMP/key-facts.txt" || { echo NEW_KEY_FINGERPRINT_MISMATCH; exit 1; }
+          grep -Fxq 'STABLE_FEED_PINNED=PASS' "$RUNNER_TEMP/key-facts.txt"
+          echo "VYRON_TRUSTED_UPDATER_PUBLIC_KEY_SHA256=$APPROVED_SHA" >> "$GITHUB_ENV"
+
+      - name: Run targeted 6.1.21 regression gates without touching owner data
+        run: |
+          set -Eeuo pipefail
+          npm ci --no-audit --no-fund
+          npx vitest run
+          npm run build
+          cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
+
+      - name: Build ARM64 production-identity app with NEW updater key
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.VYRON617_NEW_TAURI_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.VYRON617_NEW_TAURI_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -Eeuo pipefail
+          export VYRON_COMMIT_SHA="$VYRON_RELEASE_SOURCE_SHA" VYRON_UPDATE_CHANNEL=stable
+          export TAURI_CONFIG="$(cat "$RUNNER_TEMP/vyron-621-personal.json")"
+          npx tauri build --target aarch64-apple-darwin --bundles app --config "$RUNNER_TEMP/vyron-621-personal.json"
+
+      - name: Apply local ad-hoc signature and recreate updater archive
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.VYRON617_NEW_TAURI_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.VYRON617_NEW_TAURI_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -Eeuo pipefail
+          APP="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)"
+          test -d "$APP"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist")" = studio.channelflow.desktop
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")" = 6.1.21
+          EXE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Contents/Info.plist")"
+          lipo -archs "$APP/Contents/MacOS/$EXE" | tr ' ' '\n' | grep -Fxq arm64
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          mkdir -p "$RUNNER_TEMP/evidence"
+          codesign -dv --verbose=4 "$APP" > "$RUNNER_TEMP/evidence/codesign.txt" 2>&1
+          grep -Fq 'Signature=adhoc' "$RUNNER_TEMP/evidence/codesign.txt"
+          ARCHIVE="$RUNNER_TEMP/VYRON.app.tar.gz"
+          COPYFILE_DISABLE=1 tar -czf "$ARCHIVE" -C "$(dirname "$APP")" VYRON.app
+          npx tauri signer sign "$ARCHIVE" > "$RUNNER_TEMP/signer-output.txt"
+          test -s "$ARCHIVE.sig"
+          openssl base64 -d -A -in "$RUNNER_TEMP/vyron-rotated.pub" -out "$RUNNER_TEMP/new-key.minisign.pub"
+          openssl base64 -d -A -in "$ARCHIVE.sig" -out "$RUNNER_TEMP/update.minisign.sig"
+          brew install minisign
+          minisign -Vm "$ARCHIVE" -p "$RUNNER_TEMP/new-key.minisign.pub" -x "$RUNNER_TEMP/update.minisign.sig"
+          EXTRACTED="$RUNNER_TEMP/extracted"
+          mkdir -p "$EXTRACTED"
+          tar -xzf "$ARCHIVE" -C "$EXTRACTED"
+          codesign --verify --deep --strict --verbose=2 "$EXTRACTED/VYRON.app"
+          shasum -a 256 "$APP/Contents/MacOS/$EXE" > "$RUNNER_TEMP/evidence/executable-sha256.txt"
+          shasum -a 256 "$ARCHIVE" > "$RUNNER_TEMP/evidence/updater-archive-sha256.txt"
+          shasum -a 256 "$ARCHIVE.sig" > "$RUNNER_TEMP/evidence/updater-signature-sha256.txt"
+          echo "VYRON_APP=$APP" >> "$GITHUB_ENV"
+          echo "VYRON_EXE=$EXE" >> "$GITHUB_ENV"
+          echo "VYRON_ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
+
+      - name: Record Gatekeeper truth
+        run: |
+          set -Eeuo pipefail
+          set +e
+          spctl --assess --type execute --verbose=4 "$VYRON_APP" > "$RUNNER_TEMP/evidence/gatekeeper.txt" 2>&1
+          STATUS=$?
+          set -e
+          if [[ "$STATUS" -eq 0 ]]; then
+            echo 'gatekeeper=ACCEPTED_UNEXPECTEDLY' >> "$RUNNER_TEMP/evidence/status.txt"
+          else
+            echo 'gatekeeper=REJECTED_EXPECTED_FOR_ADHOC_NO_DEVELOPER_ID' >> "$RUNNER_TEMP/evidence/status.txt"
+          fi
+          echo 'codesign=LOCAL_ADHOC_VERIFIED' >> "$RUNNER_TEMP/evidence/status.txt"
+          echo 'notarization=NOT_PERFORMED_NO_APPLE_DEVELOPER' >> "$RUNNER_TEMP/evidence/status.txt"
+
+      - name: Synthetic launch and app-data preservation check
+        run: |
+          set -Eeuo pipefail
+          TEST_HOME="$RUNNER_TEMP/test-home"
+          DATA="$TEST_HOME/Library/Application Support/studio.channelflow.desktop"
+          mkdir -p "$DATA"
+          printf 'preserve-me\n' > "$DATA/preexisting-data-sentinel.txt"
+          set +e
+          HOME="$TEST_HOME" "$VYRON_APP/Contents/MacOS/$VYRON_EXE" > "$RUNNER_TEMP/evidence/launch.log" 2>&1 &
+          PID=$!
+          sleep 8
+          if kill -0 "$PID" 2>/dev/null; then
+            echo 'synthetic_launch=PROCESS_ALIVE_AFTER_8_SECONDS' >> "$RUNNER_TEMP/evidence/status.txt"
+            kill "$PID" 2>/dev/null || true
+            wait "$PID" 2>/dev/null || true
+          else
+            wait "$PID"
+            EXIT=$?
+            echo "synthetic_launch=EXITED_$EXIT" >> "$RUNNER_TEMP/evidence/status.txt"
+            exit "$EXIT"
+          fi
+          set -e
+          grep -Fxq 'preserve-me' "$DATA/preexisting-data-sentinel.txt"
+          echo 'synthetic_app_data_sentinel=PRESERVED' >> "$RUNNER_TEMP/evidence/status.txt"
+          echo 'real_owner_sqlite_keychain_oauth=NOT_TESTED' >> "$RUNNER_TEMP/evidence/status.txt"
+
+      - name: Create Finder drag-and-replace DMG
+        run: |
+          set -Eeuo pipefail
+          STAGE="$RUNNER_TEMP/dmg-stage"
+          mkdir -p "$STAGE"
+          ditto "$VYRON_APP" "$STAGE/VYRON.app"
+          ln -s /Applications "$STAGE/Applications"
+          DMG="$RUNNER_TEMP/VYRON-6.1.21-M1-personal-local.dmg"
+          hdiutil create -quiet -volname 'VYRON 6.1.21' -srcfolder "$STAGE" -format UDZO -ov "$DMG"
+          test -s "$DMG"
+          shasum -a 256 "$DMG" > "$RUNNER_TEMP/evidence/dmg-sha256.txt"
+          test -s "$RUNNER_TEMP/VYRON.app.tar.gz"
+          test -s "$RUNNER_TEMP/VYRON.app.tar.gz.sig"
+          printf 'source=%s\nversion=6.1.21\nbundle_id=studio.channelflow.desktop\narchitecture=arm64\ninstallation=OPEN_DMG_DRAG_TO_APPLICATIONS_CONFIRM_REPLACE\nuser_data_location=UNCHANGED_BY_BUNDLE_ID\nstable_feed=UNCHANGED\n' "$VYRON_RELEASE_SOURCE_SHA" >> "$RUNNER_TEMP/evidence/status.txt"
+
+      - name: Stage local-only updater metadata and release notes (NEVER publish)
+        run: |
+          set -Eeuo pipefail
+          cp docs/releases/VYRON-6.1.21.md "$RUNNER_TEMP/evidence/RELEASE-NOTES.md"
+          python3 - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          archive=Path(os.environ['VYRON_ARCHIVE'])
+          signature=Path(str(archive)+'.sig').read_text().strip()
+          digest=hashlib.sha256(archive.read_bytes()).hexdigest()
+          manifest={
+            'version':'6.1.21',
+            'notes':'33-channel owner schedule audit, numeric ascending days and risk colors; historical evidence remains unverified',
+            'platforms':{'darwin-aarch64':{
+              'url':'http://127.0.0.1:18765/VYRON.app.tar.gz',
+              'signature':signature,
+              'sha256':digest
+            }}
+          }
+          output=Path(os.environ['RUNNER_TEMP'])/'evidence'/'isolated-update-manifest.NOT-PUBLISHED.json'
+          output.write_text(json.dumps(manifest,indent=2)+'\n')
+          with open(Path(os.environ['RUNNER_TEMP'])/'evidence'/'status.txt','a') as out:
+            out.write('isolated_manifest=STAGED_LOCAL_ONLY_NOT_PUBLISHED\n')
+            out.write('mac_619_to_620_gui_upgrade=NOT_TESTED\n')
+            out.write('owner_33_channel_api=NOT_VERIFIED_ON_LIVE_CHANNEL\n')
+          PY
+
+      - name: Upload authenticated owner-only personal kit
+        uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-6.1.21-M1-PERSONAL-LOCAL-NOT-NOTARIZED
+          path: |
+            ${{ runner.temp }}/VYRON-6.1.21-M1-personal-local.dmg
+            ${{ runner.temp }}/VYRON.app.tar.gz
+            ${{ runner.temp }}/VYRON.app.tar.gz.sig
+            ${{ runner.temp }}/evidence/
+          retention-days: 3
+          if-no-files-found: error
+
+      - name: Remove all temporary signing inputs
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/vyron-rotated.pub" "$RUNNER_TEMP/vyron-621-personal.json" "$RUNNER_TEMP/new-key.minisign.pub" "$RUNNER_TEMP/update.minisign.sig" "$RUNNER_TEMP/signer-output.txt"
