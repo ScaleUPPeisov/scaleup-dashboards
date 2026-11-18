@@ -29,12 +29,19 @@ for(let i=0;i<45;i++){
 assert.equal(before.status,200,'Preview owner secret not active after bounded propagation grace');
 assert.equal(before.data.channels.length,33); // all fixtures only in ephemeral preview D1
 const at=new Date().toISOString();
-const beat=await call('/api/agent/heartbeat','POST',{
-  deviceId:'mac_test_preview',label:'Isolated QA Mac',
-  status:{macAwake:true,agentVersion:'preview-qa',rendersActive:1,
-    agentStateSource:'MIRROR',agentLastError:'STATE_NOT_READY'}
-},agent);
-assert.equal(beat.status,200);
+// Both secret puts are independent Cloudflare deployment transitions.
+let beat;
+for(let i=0;i<45;i++){
+  beat=await call('/api/agent/heartbeat','POST',{
+    deviceId:'mac_test_preview',label:'Isolated QA Mac',
+    status:{macAwake:true,agentVersion:'preview-qa',rendersActive:1,
+      agentStateSource:'MIRROR',agentLastError:'STATE_NOT_READY'}
+  },agent);
+  if(beat.status===200)break;
+  if(beat.status!==401&&beat.status!==503)break;
+  await new Promise(resolve=>setTimeout(resolve,1000));
+}
+assert.equal(beat.status,200,'Preview Mac agent secret not yet active');
 const status=await call('/api/status');
 assert.equal(status.data.devices.length,1);
 assert.equal(status.data.devices[0].status.agentVersion,'preview-qa');
