@@ -121,6 +121,10 @@ fn music_library_configuration_survives_missing_index_channel_switch_and_offline
     fs::write(music_a.join("a.wav"), &original).unwrap();
     fs::write(music_b.join("b.wav"), wav_bytes(42)).unwrap();
     let ws = workspace.to_string_lossy().into_owned();
+    // macOS temp_dir() uses /var, while canonical filesystem paths use
+    // /private/var. Compare the canonical identity, not alias spellings.
+    let expected_music_a = fs::canonicalize(&music_a).unwrap().to_string_lossy().into_owned();
+    let expected_music_b = fs::canonicalize(&music_b).unwrap().to_string_lossy().into_owned();
 
     set_production_music_library(
         ws.clone(),
@@ -141,11 +145,11 @@ fn music_library_configuration_survives_missing_index_channel_switch_and_offline
     let b_without_index = production_channel_state(ws.clone(), "channel-b".into()).unwrap();
     assert_eq!(
         a_without_index.music.as_ref().unwrap().library_path,
-        music_a.to_string_lossy()
+        expected_music_a
     );
     assert_eq!(
         b_without_index.music.as_ref().unwrap().library_path,
-        music_b.to_string_lossy()
+        expected_music_b
     );
     assert_eq!(a_without_index.music.as_ref().unwrap().tracks, 0);
     assert!(a_without_index.batches.is_empty());
@@ -160,7 +164,7 @@ fn music_library_configuration_survives_missing_index_channel_switch_and_offline
     let offline = production_channel_state(ws.clone(), "channel-a".into()).unwrap();
     assert_eq!(
         offline.music.as_ref().unwrap().library_path,
-        music_a.to_string_lossy()
+        expected_music_a
     );
     assert!(!offline.music.as_ref().unwrap().available);
     assert_eq!(offline.music.as_ref().unwrap().tracks, 1);
@@ -170,7 +174,7 @@ fn music_library_configuration_survives_missing_index_channel_switch_and_offline
     assert!(reconnected.music.as_ref().unwrap().available);
     assert_eq!(
         reconnected.music.as_ref().unwrap().library_path,
-        music_a.to_string_lossy()
+        expected_music_a
     );
     let _ = fs::remove_dir_all(root);
 }
@@ -440,7 +444,10 @@ fn acceptance_separate_output_workspace_preserves_source_state() {
         .unwrap()
         .is_file());
     let (m, _) = load_manifest(&summary.manifest_path).unwrap();
-    assert!(Path::new(&m.output_dir).starts_with(&external));
+    // Render output path is intentionally canonicalized for root containment.
+    // /var and /private/var resolve to the same filesystem location on macOS.
+    let canonical_external = fs::canonicalize(&external).unwrap();
+    assert!(Path::new(&m.output_dir).starts_with(&canonical_external));
     assert_eq!(m.projects.len(), 4);
     cleanup(&ws);
 }
