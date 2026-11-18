@@ -103,6 +103,9 @@ fn require_trusted_updater_config(app:&tauri::AppHandle)->Result<(),String>{
     if !updater_config_is_trusted(&diagnostics){
         let endpoint=diagnostics.get("updaterEndpoint").and_then(|value|value.as_str()).unwrap_or("missing");
         let fingerprint=diagnostics.get("updaterPublicKeySha256").and_then(|value|value.as_str()).unwrap_or("missing");
+        if fingerprint.eq_ignore_ascii_case(COMPROMISED_LEGACY_UPDATER_KEY_SHA256){
+            return Err("UPDATER_TRUST_MIGRATION_REQUIRED: the 6.1.15 updater public key belongs to a compromised legacy signer; only a separately authenticated Apple-signed GUI replacement can establish the rotated key".into())
+        }
         let trust=diagnostics.get("updaterPublicKeyTrust").and_then(|value|value.as_str()).unwrap_or("unverified");
         return Err(format!("UPDATER_KEY_TRUST_NOT_VERIFIED: endpoint={endpoint}; public_key_sha256={fingerprint}; trust={trust}"));
     }

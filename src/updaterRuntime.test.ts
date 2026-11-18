@@ -101,6 +101,18 @@ describe('shared remote updater lifecycle',()=>{
   expect(useUpdaterRuntime.getState().errorCode).toBe('UPDATER_KEY_TRUST_NOT_VERIFIED');
   expect(c.download).not.toHaveBeenCalled();
  });
+ it('requires a separate trusted GUI migration for old 6.1.15 key and never invokes download/install',async()=>{
+  const c=candidate();
+  mockApi.checkUpdate.mockResolvedValue(c);
+  await useUpdaterRuntime.getState().check();
+  mockApi.updaterInstallPreflight.mockResolvedValueOnce({runningFromDmg:false,bundleReplaceable:true,updaterConfigurationValid:true,updaterEndpointPinned:true,updaterPublicKeyTrustVerified:false,updaterPublicKeySha256:'aa6fb45ab082ef39279e841dc40b0f85e5b33f23746f77557b6f93e3e72c2c06'});
+  await useUpdaterRuntime.getState().download();
+  expect(useUpdaterRuntime.getState().status).toBe('ERROR');
+  expect(useUpdaterRuntime.getState().errorCode).toBe('UPDATER_TRUST_MIGRATION_REQUIRED');
+  expect(c.download).not.toHaveBeenCalled();
+  expect(await useUpdaterRuntime.getState().installAndRestart([])).toBe(false);
+  expect(c.install).not.toHaveBeenCalled();
+ });
  it('shows same-version state without update warning',async()=>{mockApi.checkUpdate.mockResolvedValue({none:true,current:'2.1.4',latest:'2.1.4',status:'UP_TO_DATE',endpoint:'feed',versionComparison:'current == latest'});await useUpdaterRuntime.getState().check();expect(useUpdaterRuntime.getState().status).toBe('UP_TO_DATE');expect(useUpdaterRuntime.getState().latestVersion).toBe('2.1.4')});
  it('coalesces 20 install clicks into exactly one install/restart',async()=>{
   let releaseInstall!:()=>void;

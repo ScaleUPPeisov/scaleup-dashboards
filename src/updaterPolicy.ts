@@ -3,6 +3,9 @@ export const UPDATER_ENDPOINTS=[
   'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json'
 ] as const;
 
+// The 6.1.14 / 6.1.15 trust root was exposed; never authorize a key rollover with it.
+export const COMPROMISED_LEGACY_UPDATER_PUBLIC_KEY_SHA256='aa6fb45ab082ef39279e841dc40b0f85e5b33f23746f77557b6f93e3e72c2c06';
+
 export const UPDATER_CHECK_OPTIONS={
   timeout:30_000,
   headers:{
@@ -45,6 +48,7 @@ export function updaterVersionStatus(current:string,latest:string){
 export function classifyUpdaterError(error:unknown,stage:UpdaterStage){
   const detail=String(error??'');
   const s=detail.toLowerCase();
+  if(s.includes('updater_trust_migration_required'))return{code:'UPDATER_TRUST_MIGRATION_REQUIRED',detail};
   if(s.includes('updater_key_trust_not_verified'))return{code:'UPDATER_KEY_TRUST_NOT_VERIFIED',detail};
   if(s.includes('updater_configuration_invalid'))return{code:'UPDATER_CONFIGURATION_INVALID',detail};
   if(s.includes('running_from_dmg')||s.includes('запущен из установочного образа')||s.includes('запущен из dmg'))return{code:'RUNNING_FROM_DMG',detail};
@@ -62,6 +66,7 @@ export function classifyUpdaterError(error:unknown,stage:UpdaterStage){
 }
 
 export function updaterFailureMessage(code:string,detail:string){
+  if(code==='UPDATER_TRUST_MIGRATION_REQUIRED')return 'Для установленной 6.1.15 старый ключ обновления скомпрометирован. Прямое обновление через него запрещено. Требуется однократная проверенная Apple Developer ID / notarized GUI-замена VYRON с сохранением данных; после перехода на новый ключ следующие версии обновляются через Настройки.';
   if(code==='UPDATER_KEY_TRUST_NOT_VERIFIED')return `Обновление заблокировано: fingerprint встроенного ключа не подтверждён независимой доверенной записью. ${detail}`;
   if(code==='UPDATER_CONFIGURATION_INVALID')return `Встроенная конфигурация обновления VYRON не прошла проверку: публичный ключ или Stable feed не совпадает с ожидаемыми параметрами. ${detail}`;
   if(code==='RUNNING_FROM_DMG')return 'VYRON запущен из DMG. Переместите VYRON.app в Applications.';

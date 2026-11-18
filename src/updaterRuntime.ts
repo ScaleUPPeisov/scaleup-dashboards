@@ -4,6 +4,7 @@ import {appendErrorHistory,type ErrorStage} from './errorHistory';
 import type {UpdaterBlocker} from './updaterGuard';
 import type {UpdaterStatus} from './updaterPolicy';
 import {UPDATER_AUTO_INTERVAL_MS,updaterNextAutomaticCheckAt} from './updaterSchedule';
+import {COMPROMISED_LEGACY_UPDATER_PUBLIC_KEY_SHA256} from './updaterPolicy';
 
 export type RuntimeUpdaterStatus=UpdaterStatus|'READY_TO_INSTALL'|'RESTARTING'|'UPDATED';
 export type UpdaterRuntimeState={
@@ -39,6 +40,7 @@ async function ensureUpdaterInstallable(set:(x:Partial<UpdaterRuntimeState>)=>vo
   const fn=(api as typeof api&{updaterInstallPreflight?:()=>Promise<UpdaterInstallPreflight>}).updaterInstallPreflight;
   if(!fn)throw new Error('UPDATER_PREFLIGHT_UNAVAILABLE: native updater preflight is required for safe installation');
   const preflight=await fn();set({preflight});
+  if(preflight.updaterPublicKeySha256?.toLowerCase()===COMPROMISED_LEGACY_UPDATER_PUBLIC_KEY_SHA256)throw new Error('UPDATER_TRUST_MIGRATION_REQUIRED: compromised 6.1.15 updater key cannot authenticate a new root; a separately trusted GUI bootstrap is required');
   if(preflight.runningFromDmg)throw new Error('RUNNING_FROM_DMG: VYRON запущен из DMG. Переместите VYRON.app в Applications.');
   if(!preflight.bundleReplaceable)throw new Error('APP_NOT_REPLACEABLE: установленный VYRON.app недоступен для безопасной замены');
   if(preflight.updaterConfigurationValid!==true||preflight.updaterEndpointPinned!==true)throw new Error('UPDATER_CONFIGURATION_INVALID: embedded updater key format or stable feed endpoint is not valid/pinned');
