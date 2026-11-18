@@ -7,9 +7,9 @@ describe('VYRON fleet runway evidence-aware visual contract',()=>{
 
   it('orders historical and confirmed visible numeric days, without adding local files',()=>{
     const s=source();
-    expect(s).toContain('historicalScheduledDays:row.record.status');
+    expect(s).toContain('historicalScheduledDays:rec.status');
     expect(s).toContain('compareYoutubeOnlyRunwayPriority(rank(a),rank(b))');
-    expect(s).toContain('row.record.dataState===\'PARTIAL_DATA\'');
+    expect(s).toContain('rec.dataState===\'PARTIAL_DATA\'');
     expect(s).not.toContain('localReadyVideos:row.content.readyVideoCount');
   });
 
