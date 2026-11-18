@@ -33,3 +33,7 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - name: Verify fixed coverage without regressions
         run: npx vitest run src/v611ChannelRunwayInventoryHotfix.test.ts src/v610ChannelRunwayFleetRefresh.test.ts src/channelRunway.test.ts
+      - name: Full frontend regression suite
+        run: npx vitest run
+      - name: Verify frontend production compile
+        run: npm run build
