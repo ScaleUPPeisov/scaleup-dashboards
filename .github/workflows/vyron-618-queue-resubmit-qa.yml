@@ -1,0 +1,36 @@
+name: VYRON upload queue resubmit safety regression
+
+on:
+  push:
+    branches:
+      - fix/vyron-618-queue-resubmit-20261118
+    paths:
+      - src/PublisherOS.tsx
+      - src/vyron618QueueResubmitSafety.test.ts
+      - .github/workflows/vyron-618-queue-resubmit-qa.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-618-queue-resubmit-safety
+  cancel-in-progress: true
+
+jobs:
+  regression:
+    name: Queue idempotence and all frontend regressions
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Queue identity tests (read-only, synthetic)
+        run: npx vitest run src/vyron618QueueResubmitSafety.test.ts src/uploadQueue.test.ts src/uploadQueuePersistence.test.ts
+      - name: Full frontend regression
+        run: npx vitest run
+      - name: Production TypeScript and Vite compile
+        run: npm run build
