@@ -91,9 +91,14 @@ try{
  await page.evaluate(()=>{
    void navigator.serviceWorker.getRegistration().then(reg=>reg.update());
  });
- await page.waitForFunction(async()=>(
-   (await caches.keys()).includes('vyron-peisov-yt-shell-v11')
- ),{timeout:20000});
+ // install can create the new cache before activate removes the old one.
+ // Do not assert an activation side effect at install time.
+ await page.waitForFunction(async()=>{
+   const keys=await caches.keys();
+   return keys.includes('vyron-peisov-yt-shell-v11') &&
+     !keys.includes('vyron-peisov-yt-shell-v10') &&
+     (await navigator.serviceWorker.getRegistration())?.active?.scriptURL?.endsWith('/service-worker.js');
+ },undefined,{timeout:30000});
  assert.equal(await page.evaluate(()=>sessionStorage.getItem('vyron-control-access')),
    'QA_SYNTHETIC_ONLY','PWA update must not clear auth session');
  const cacheKeys=await page.evaluate(()=>caches.keys());
