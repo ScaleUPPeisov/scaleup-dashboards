@@ -44,8 +44,8 @@ vi.mock('./youtubeCache',()=>({markYoutubeCache:vi.fn()}));
 import {api} from './api';
 import {existingCacheKey,loadExistingCache,replaceExistingCacheFromSync} from './channelSchedule';
 import {CHANNEL_RUNWAY_STORAGE_KEY} from './channelRunwayCore';
-import {loadChannelRunwayStore} from './channelRunwayStore';
-import {ownerInventoryFromVideos,refreshOwnerInventoriesAuthoritative} from './youtubeOwnerInventory';
+import {loadChannelRunwayStore,recalculateChannelRunway} from './channelRunwayStore';
+import {ownerInventoryFromVideos,refreshOwnerInventoriesAuthoritative,scheduledCoverageEstablished} from './youtubeOwnerInventory';
 import {youtubeOperationActualCost} from './youtubeQuota';
 
 const channel=(id='lumiere'):Channel=>({
@@ -144,6 +144,78 @@ describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
     expect(retained.runwayDays).toBeUndefined();
     expect(retained.status).toBe('no-data');
     }finally{vi.useRealTimers()}
+  });
+
+  it('legacy confirmed zero without source coverage is UNKNOWN even with fresh lastScheduleSync',()=>{
+    const c=channel('legacy-zero');
+    storage.seed(CHANNEL_RUNWAY_STORAGE_KEY,JSON.stringify({version:1,channels:{'legacy-zero':{
+      channelId:c.id,channelName:c.name,scheduledVideoCount:0,dataState:'CONFIRMED_EMPTY',
+      lastScheduleSync:'2026-11-18T04:00:00Z',lastLocalCalculation:'2026-11-18T04:00:00Z',
+      runwayDays:0,priority:'critical',status:'ended'
+    }}}));
+    const r=recalculateChannelRunway([c],new Date('2026-11-18T05:00:00Z'),false,storage as any).channels[c.id];
+    expect(r.status).toBe('no-data');
+    expect(r.dataState).toBe('UNKNOWN');
+    expect(r.runwayDays).toBeUndefined();
+  });
+
+  it('newer verified native inventory supersedes stored lastScheduleSync zero',async()=>{
+    vi.useFakeTimers();vi.setSystemTime(new Date('2026-11-18T05:00:00Z'));
+    try{
+      const c=channel('newer-native');
+      storage.seed(CHANNEL_RUNWAY_STORAGE_KEY,JSON.stringify({version:1,channels:{'newer-native':{
+        channelId:c.id,channelName:c.name,scheduledVideoCount:0,dataState:'CONFIRMED_EMPTY',
+        lastScheduleSync:'2026-11-18T04:00:00Z',lastLocalCalculation:'2026-11-18T04:00:00Z',
+        runwayDays:0,priority:'critical',status:'ended'
+      }}}));
+      const future=editable('future-Dec12','private','2026-12-12T20:00:00+07:00');
+      const stored=await replaceExistingCacheFromSync(c.id,[future],{scheduleComplete:true,syncComplete:true,channelId:'UC-LUMIERE'});
+      expect(stored.persisted).toBe(true);
+      const r=recalculateChannelRunway([c],new Date(),false,storage as any).channels[c.id];
+      expect(r.scheduledUntil).toBe('2026-12-12');
+      expect(r.scheduledVideoCount).toBe(1);
+      expect(r.runwayDays).toBe(24);
+      expect(r.dataState).toBe('CONFIRMED_SCHEDULE');
+    }finally{vi.useRealTimers()}
+  });
+
+  it('uploads-only completed zero is NOT confirmed empty even when backend marks complete',()=>{
+    expect(scheduledCoverageEstablished({syncComplete:true,scheduleComplete:true,videos:[]},Date.parse('2026-11-18T05:00:00Z'))).toBe(false);
+    expect(scheduledCoverageEstablished({syncComplete:true,scheduleComplete:false,videos:[editable('s','private','2026-12-12T10:00:00Z')]},Date.parse('2026-11-18T05:00:00Z'))).toBe(false);
+    expect(scheduledCoverageEstablished({syncComplete:true,scheduleComplete:true,videos:[editable('s','private','2026-12-12T10:00:00Z')]},Date.parse('2026-11-18T05:00:00Z'))).toBe(true);
+  });
+
+  it('owner search discovers private Scheduled absent uploads without corrupting last verified inventory',async()=>{
+    vi.useFakeTimers();vi.setSystemTime(new Date('2026-11-18T05:00:00Z'));
+    try{
+      const firstFuture=editable('first','private','2026-12-05T10:00:00Z');
+      fixture.responses.set(profile.id,{...response(),videos:[firstFuture],scheduledCount:1,uniqueVideoIds:1,videosHydrated:1});
+      expect((await refreshOwnerInventoriesAuthoritative([channel()],true,[profile])).rows[0].status).toBe('UPDATED');
+      const saved=structuredClone(fixture.inventoryFiles.get('lumiere'));
+      fixture.responses.set(profile.id,{...response(),videos:[editable('not-in-uploads','private','2026-12-12T10:00:00Z')],
+        scheduledCount:1,uniqueVideoIds:0,videosHydrated:0,searchUsed:true,searchSupplementCount:1,
+        syncComplete:true,scheduleComplete:false,incompleteReasons:['UPLOADS_PLAYLIST_SCHEDULE_COVERAGE_MISMATCH']});
+      const second=await refreshOwnerInventoriesAuthoritative([channel()],true,[profile]);
+      expect(second.rows[0].status).toBe('API_FAILED');
+      expect(fixture.inventoryFiles.get('lumiere')).toEqual(saved);
+      const r=loadChannelRunwayStore().channels.lumiere;
+      expect(r.dataState).toBe('PARTIAL_DATA');
+      expect(r.status).toBe('no-data');
+      expect(r.runwayDays).toBeUndefined();
+      expect(r.scheduledUntil).toBe('2026-12-12');
+    }finally{vi.useRealTimers()}
+  });
+
+  it('only explicit one-channel refresh enables bounded owner search, bulk does not',async()=>{
+    await refreshOwnerInventoriesAuthoritative([channel()],true,[profile]);
+    const call=(api.youtubeListExisting as any).mock.calls[0];
+    expect(call[3]).toBe(true);
+    const b={...channel('bulk-b'),id:'bulk-b',slug:'bulk-b',name:'B',youtubeProfileId:'p-b',youtubeChannelId:'UC-B'} as Channel;
+    const profiles=[profile,{...profile,id:'p-b',channelId:'UC-B'}];
+    fixture.responses.set('p-b',{...response(),channelId:'UC-B',channelTitle:'B'});
+    vi.mocked(api.youtubeListExisting).mockClear();
+    await refreshOwnerInventoriesAuthoritative([channel(),b],true,profiles);
+    expect((api.youtubeListExisting as any).mock.calls.every((args:any[])=>args[3]===false)).toBe(true);
   });
 
   it('single refresh makes exactly one authoritative inventory call',async()=>{
