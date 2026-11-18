@@ -171,7 +171,8 @@ function pushOwnerRow(summary:OwnerInventoryRefreshSummary,row:OwnerInventoryRef
 export async function refreshOwnerInventoriesAuthoritative(
   channels:Channel[],
   force=false,
-  suppliedProfiles?:Awaited<ReturnType<typeof api.youtubeProfiles>>
+  suppliedProfiles?:Awaited<ReturnType<typeof api.youtubeProfiles>>,
+  ownerKnownScheduledIds?:Record<string,string[]>
 ):Promise<OwnerInventoryRefreshSummary>{
   const enabled=channels.filter(c=>c.enabled!==false);
   await hydrateExistingInventoryCaches(enabled.map(c=>c.id));
@@ -210,12 +211,17 @@ export async function refreshOwnerInventoriesAuthoritative(
     bindYoutubeQuotaTraceContext(operationId,{reason:'OWNER_INVENTORY_REFRESH',channelIds:[channel.id],mode:force?'MANUAL':'BACKGROUND',estimatedUnits});
     try{
       // Only explicit single-channel refreshes may use bounded owner-only search.
-      const targeted=force&&enabled.length===1&&
-        Date.now()-(ownerSearchAt.get(channel.id)||0)>=OWNER_SEARCH_COOLDOWN_MS;
+      const manualOne=force&&enabled.length===1;
+      const targeted=manualOne&&Date.now()-(ownerSearchAt.get(channel.id)||0)>=OWNER_SEARCH_COOLDOWN_MS;
       const prior=readExistingCache(channel.id);
-      const knownScheduledIds=targeted?[...Object.values(prior?.baseline||{}),...(prior?.videos||[])]
+      const cachedFuture=[...Object.values(prior?.baseline||{}),...(prior?.videos||[])]
         .filter(v=>v.privacyStatus==='private'&&Boolean(v.publishAt)&&Date.parse(v.publishAt!)>Date.now())
-        .map(v=>v.id).filter((id,i,all)=>all.indexOf(id)===i).slice(0,50):[];
+        .map(v=>v.id);
+      // Re-read owner-verified VYRON upload-history IDs even during a search
+      // cooldown: no extra search.list call, no history mutation, no OAuth reset.
+      const fromHistory=ownerKnownScheduledIds?.[channel.id]||[];
+      const knownScheduledIds=manualOne?[...new Set([...fromHistory,...cachedFuture])]
+        .filter(id=>/^[A-Za-z0-9_-]{11}$/.test(id)).slice(0,50):[];
       ownerAttemptAt.set(channel.id,Date.now());
       const result=await api.youtubeListExisting(linked.profile.id,5000,operationId,targeted,knownScheduledIds);
       if(targeted&&result.searchUsed===true)ownerSearchAt.set(channel.id,Date.now());
