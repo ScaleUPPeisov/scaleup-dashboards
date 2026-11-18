@@ -26,9 +26,9 @@ assert.match(bridge,/if \(command\?\.kind !== 'request_status'\) return \{ suppo
 assert.match(sw,/url\.pathname\.startsWith\('\/api\/'\)/);
 assert.doesNotMatch(sw,/\b(?:Authorization|refresh_token|CONTROL_TOKEN|accessToken)\b/);
 // Hotfix must remove browser-held CONTROL_TOKEN, not preserve the old vulnerability.
-assert.doesNotMatch(pwa,/sessionStorage\\.(?:getItem|setItem)\\('vyron-control-access'/);
-assert.doesNotMatch(pwa,/Authorization:\\s*'Bearer '\\s*\\+\\s*accessToken/);
-assert.match(pwa,/\\/api\\/auth\\/session/);
+assert.doesNotMatch(pwa,/sessionStorage\.(?:getItem|setItem)\('vyron-control-access'/);
+assert.doesNotMatch(pwa,/Authorization:\s*'Bearer '\s*\+\s*accessToken/);
+assert.match(pwa,/\/api\/auth\/session/);
 assert.match(pwa,/X-VYRON-CSRF/);
 assert.match(push,/Owner-initiated diagnostics/);
 assert.doesNotMatch(push,/api\/push\/test/);
