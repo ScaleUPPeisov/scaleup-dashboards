@@ -268,3 +268,19 @@ button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible{
 .neo-notifications-history{margin-top:20px;padding:14px;border:1px solid var(--ng-stroke);border-radius:16px}
 .neo-notifications-history>summary{cursor:pointer;color:#c9bcff;font-size:12px}
 @media(max-width:359px){.neo-notification-prefs{grid-template-columns:1fr}}
+
+/* Device-local PWA diagnostics; independent of remote Mac status and YouTube quota. */
+.device-diagnostics{padding:20px;margin:16px 0}
+.device-diagnostic-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:14px}
+.device-diagnostic-actions button{min-height:44px;white-space:normal;text-align:center;overflow-wrap:anywhere}
+.device-diagnostic-results{margin-top:14px;display:grid;gap:9px}
+.device-diagnostic-results p{
+ margin:0;padding:10px 12px;min-width:0;
+ border:1px solid var(--ng-stroke);border-radius:11px;
+ color:var(--ng-sub);font-size:12px;line-height:1.5;overflow-wrap:anywhere
+}
+@media(max-width:430px){
+ .device-diagnostics{padding:15px}
+ .device-diagnostic-actions{display:grid;grid-template-columns:minmax(0,1fr)}
+ .device-diagnostic-actions button{width:100%}
+}
