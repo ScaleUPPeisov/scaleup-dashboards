@@ -145,7 +145,7 @@ function renderChannels(channels) {
     left.classList.add('neo-channel-name');
     left.append(avatar,link,make('small','',ch.updatedAt?'Обновлено '+time(ch.updatedAt):'Ожидает первой синхронизации'));
     left.append(make('small','channel-runway',
-      'Остаток дней: '+(Number.isFinite(ch.scheduledContentDays)?number(ch.scheduledContentDays):'нет данных')));
+      'Остаток дней: '+(Number.isFinite(ch.scheduledContentDays)?number(ch.scheduledContentDays):'Нет подтверждённого расписания')));
     if(ch.archivedAt)left.append(make('small','caution',
       'Архив VYRON · история сохранена · '+time(ch.archivedAt)));
     if(ch.analyticsAuthorized===false)
