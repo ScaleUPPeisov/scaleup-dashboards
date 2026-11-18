@@ -19,7 +19,7 @@ const bridge=await read('agent/logic.mjs');
 const sw=await read('public/service-worker.js');
 const pwa=await read('public/app.js');
 const push=await read('public/diagnostics.mjs');
-const release=await read('../.github/workflows/vyron-control-cloudflare-release.yml');
+const release=await read('../../.github/workflows/vyron-control-cloudflare-release.yml');
 assert.match(worker,/authenticate\(request,env,agentRoute\?'agent':'control'\)/);
 assert.match(worker,/return errorReply\('Unauthorized',401\)/);
 assert.match(bridge,/if \(command\?\.kind !== 'request_status'\) return \{ supported:false \}/);
