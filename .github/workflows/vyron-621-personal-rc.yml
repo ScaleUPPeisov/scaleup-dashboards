@@ -10,6 +10,7 @@ on:
       - feature/vyron-macos-ultimate
     paths:
       - .github/workflows/vyron-621-personal-rc.yml
+      - src-tauri/src/updater_bridge.rs
 
 permissions:
   contents: read
@@ -85,6 +86,8 @@ jobs:
           npm ci --no-audit --no-fund
           npx vitest run
           npm run build
+          # Guard the actual short-ID trust parser regression before release.
+          cargo test --locked --manifest-path src-tauri/Cargo.toml --lib updater_key_diagnostic_tests
           cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
 
       - name: Build ARM64 production-identity app with NEW updater key
