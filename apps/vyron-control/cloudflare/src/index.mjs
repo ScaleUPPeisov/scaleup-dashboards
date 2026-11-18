@@ -8,6 +8,7 @@ import { registerPush,unregisterPush,vapidPublic,dispatchPush,PUSH_CRON } from '
 import {receiveProduction,getProductionStatus} from './production.mjs';
 import {readNotificationCenter,writePrefs,markRead} from './notifications.mjs';
 import {detectOfflineMac} from './alert-probes.mjs';
+import {derivePublic24hSnapshots} from './snapshot-windows.mjs';
 
 const REQUIRED_TOKEN_LENGTH = 32;
 const EXPECTED_TABLES = Object.freeze([
@@ -118,7 +119,7 @@ async function fetchStatus(env) {
   const db = env.DB;
   const now = new Date();
   const day = pacificDay(now);
-  const [c,e,q,s,d,cmd,reportHealth,snapshotTrend,production,notifications]=await Promise.all([
+  const [c,e,q,s,d,cmd,reportHealth,snapshotTrend,production,notifications,public24hRows]=await Promise.all([
     db.prepare(`SELECT c.id,c.name,c.subscribers,c.views,c.videos,c.hidden_subscribers,
       c.previous_subscribers,c.updated_at,
       a.period_days AS analytics_period_days,
@@ -168,7 +169,10 @@ async function fetchStatus(env) {
     ORDER BY latest.day,latest.channel_id LIMIT 1400`)
       .bind(new Date(now.getTime()-21*86400000).toISOString()).all(),
     getProductionStatus(db),
-    readNotificationCenter(db)
+    readNotificationCenter(db),
+    db.prepare("SELECT channel_id,observed_at,views FROM channel_snapshots "+
+      "WHERE observed_at>=? ORDER BY observed_at DESC LIMIT 4000")
+      .bind(new Date(now.getTime()-28*3600000).toISOString()).all()
   ]);
   const channels=(c.results||[]).map(row=>({
     id:row.id,name:row.name,archivedAt:row.archived_at||null,
@@ -197,6 +201,8 @@ async function fetchStatus(env) {
       reports:parsedJson(row.analytics_reports_json,{})
     }:null
   }));
+  const public24h=derivePublic24hSnapshots(public24hRows.results||[],now);
+  for(const channel of channels)channel.publicViews24h=public24h.byChannel[channel.id]||null;
   // Public network totals are cumulative, not daily Analytics views.
   // Carry forward each channel's last known daily snapshot and expose coverage.
   const publicSnapshotsByDay=new Map();
@@ -246,7 +252,8 @@ async function fetchStatus(env) {
     configured,lastAttemptAt:s?.started_at||null,lastSuccessAt:lastSuccess?.ended_at||null,
     lastError:latestError,lastSource:s?.source||null,
     syncing:s?.status==='running',
-    channels,publicTrend,totalSubscribers:sum('subscribers'),totalViews:sum('views'),totalVideos:sum('videos'),
+    channels,publicTrend,public24h:{...public24h.summary,total:channels.length},
+    totalSubscribers:sum('subscribers'),totalViews:sum('views'),totalVideos:sum('videos'),
     analyticsSummary:(()=>{
       const available=channels.filter(ch=>ch.analytics);
       const views=available.reduce((sum,ch)=>sum+(ch.analytics.views??0),0);
