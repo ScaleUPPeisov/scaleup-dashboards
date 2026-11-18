@@ -374,11 +374,18 @@ pub async fn scan_render_folder(path: String) -> Result<RenderFolderScanResult, 
 }
 
 #[tauri::command]
-pub fn trash_local_file(
+pub async fn trash_local_file(
     path: String,
     allowed_roots: Vec<String>,
 ) -> Result<TrashLocalFileResult, String> {
-    trash_local_file_impl(&path, &allowed_roots)
+    // macOS Finder Trash, particularly on external disks, can take seconds per
+    // file. Do not block Tauri's synchronous command handler / WebView event
+    // processing while the OS resolves or moves the file.
+    // All existing canonical-root, media-only and symlink checks stay inside
+    // trash_local_file_impl; no file is moved without those validations.
+    tauri::async_runtime::spawn_blocking(move || trash_local_file_impl(&path, &allowed_roots))
+        .await
+        .map_err(|e| format!("TRASH_TASK_FAILED: {e}"))?
 }
 
 #[cfg(test)]
