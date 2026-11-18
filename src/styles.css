@@ -329,3 +329,10 @@ button.secondary{background:rgba(255,255,255,.035);border-color:#294156;color:#9
 .channelRunway .runwayDays.historical.plan{color:#f2dca2}
 .channelRunway .runwayDays.historical.large{color:#c4dccf}
 @media(prefers-reduced-motion:reduce){.channelRunway .runwayRow{transition:none}}
+
+.channelRunway .runwayFleetAudit{display:flex;align-items:center;flex-wrap:wrap;gap:9px;margin:0 0 12px;padding:10px 12px;border:1px solid rgba(71,184,223,.27);border-radius:10px;background:rgba(39,114,152,.075);font-size:11px;color:#b3cbde}
+.channelRunway .runwayFleetAudit>b{font-size:12px;color:#e1f5ff}
+.channelRunway .runwayFleetAudit>span{padding:4px 7px;border-radius:6px;background:rgba(255,255,255,.045)}
+.channelRunway .runwayFleetAudit .fleetOk{color:#55e1ae}
+.channelRunway .runwayFleetAudit .fleetPartial,.channelRunway .runwayFleetAudit .fleetBlocked{color:#ffcd83}
+.channelRunway .runwayFleetAudit .fleetError,.channelRunway .runwayFleetAudit>strong{color:#ff8398}
