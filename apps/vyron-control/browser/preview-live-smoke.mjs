@@ -15,7 +15,7 @@ async function call(path,method='GET',body=undefined,token=owner){
 }
 const health=await call('/api/health','GET',undefined,'');
 assert.equal(health.status,200);
-assert.equal(health.data.d1.presentTables,20);
+assert.equal(health.data.d1.presentTables,21);
 assert.equal((await call('/api/status','GET',undefined,'')).status,401);
 assert.equal((await call('/api/status','GET',undefined,agent)).status,401);
 // Cloudflare secret puts can propagate after the CLI success response.
@@ -79,5 +79,5 @@ assert.equal((await call('/api/push/test','POST',{})).status,409);
 const last=await call('/api/agent/production','POST',packet([]),agent);
 assert.equal(last.status,200);
 assert.equal((await call('/api/status')).data.production.items.length,0);
-console.log('PASS: remote preview (20 D1 tables), 33 isolated channels, auth, heartbeat, job UPSERT/idempotence, unknown-ID guard, events, owner notifications, read receipts, Push without VAPID blocked, archive.');
+console.log('PASS: remote preview (21 D1 tables), 33 isolated channels, auth, heartbeat, job UPSERT/idempotence, unknown-ID guard, events, owner notifications, read receipts, Push without VAPID blocked, archive.');
 console.log('All 33 channel IDs and jobs above are isolated QA fixtures; no production/owner data accessed.');
