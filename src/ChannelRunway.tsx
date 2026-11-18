@@ -167,7 +167,14 @@ export function ChannelRunway(){
     if(!linked){toast(`${channel.name}: YouTube не связан точно с OAuth profile • API call не выполнен`);return}
     setBusy(channel.id);
     try{
-      const result=await refreshOwnerInventoriesAuthoritative([channel],true,profiles);
+      const knownOwnerVideoIds=uploadHistory
+        .filter(v=>v.channelId===channel.id&&v.status==='UPLOADED'&&
+          (!v.youtubeChannelId||v.youtubeChannelId===linked.youtubeChannelId)&&
+          (!v.profileId||v.profileId===linked.profile.id)&&
+          v.publishAt&&Date.parse(v.publishAt)>Date.now())
+        .sort((a,b)=>Date.parse(b.publishAt!)-Date.parse(a.publishAt!))
+        .map(v=>v.youtubeVideoId).filter(id=>/^[A-Za-z0-9_-]{11}$/.test(id)).slice(0,50);
+      const result=await refreshOwnerInventoriesAuthoritative([channel],true,profiles,{[channel.id]:knownOwnerVideoIds});
       const row=result.rows[0];
       setSnapshot(loadChannelRunwayStore());
       const r=loadChannelRunwayStore().channels[channel.id];
