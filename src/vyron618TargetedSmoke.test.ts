@@ -1,6 +1,5 @@
 import {describe,expect,it} from 'vitest';
 import {readFileSync} from 'node:fs';
-import {performance} from 'node:perf_hooks';
 import {deriveRunwayRecord,compareYoutubeOnlyRunwayPriority} from './channelRunwayCore';
 import {upsertChannelRunwayFromYoutube,markRunwayRefreshIssue,loadChannelRunwayStore} from './channelRunwayStore';
 import {shouldDisplayLiveBatch,shouldReconcileLiveBatch} from './productionNavigationGuards';
@@ -8,6 +7,7 @@ import type {YoutubeExistingVideo} from './types';
 import type {ProductionBuildRuntimeSnapshot} from './productionManagerApi';
 
 const now=new Date('2026-11-18T05:00:00Z');
+const heapUsed=()=>Number((globalThis as unknown as {process?:{memoryUsage?:()=>{heapUsed:number}}}).process?.memoryUsage?.().heapUsed??0);
 const video=(id:string,publishAt:string):YoutubeExistingVideo=>({
  id,position:0,title:id,description:'',tags:[],categoryId:'10',
  privacyStatus:'private',publishAt,selected:false
@@ -54,13 +54,13 @@ describe('VYRON 6.1.18 synthetic 33-channel and Production route guard',()=>{
    result:{status:'ready',availableImages:1,requestedProjects:1,batch:{batchId:'batch-1',channelId:'neon',channelName:'Neon Drive FM',createdAt:'2026-11-18T05:00:00Z',projectCount:1,tracksAssigned:10,status:'ready',manifestPath:'/not-mounted/manifest.json',rootPath:'/not-mounted/batch',completedProjects:1,errorProjects:0}}};
   const shown=new Set<string>(),reconciled=new Set<string>();
   let displayCount=0,reconcileCount=0;
-  const heapBefore=process.memoryUsage().heapUsed,start=performance.now();
+  const heapBefore=heapUsed(),start=performance.now();
   for(let n=0;n<20;n++){
    if(shouldDisplayLiveBatch(build,shown)){displayCount++;shown.add('batch-1')}
    if(shouldReconcileLiveBatch(build,'batch-1',reconciled)){reconcileCount++;reconciled.add('batch-1')}
    expect(shouldReconcileLiveBatch(build,'old-history-batch',reconciled)).toBe(false);
   }
-  const elapsed=performance.now()-start,heapDelta=process.memoryUsage().heapUsed-heapBefore;
+  const elapsed=performance.now()-start,heapDelta=heapUsed()-heapBefore;
   expect(displayCount).toBe(1);
   expect(reconcileCount).toBe(1);
   expect(Number.isFinite(elapsed)).toBe(true);
