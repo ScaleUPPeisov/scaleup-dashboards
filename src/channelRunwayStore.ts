@@ -147,8 +147,13 @@ export function recalculateChannelRunway(
     if(native&&trustedScheduledSnapshot(native.videos,native.syncInfo,now))candidates.push({videos:native.videos,updatedAt:native.updatedAt});
     if(trustedScheduledSnapshot(baseline,cached?.syncInfo,now))candidates.push({videos:baseline,updatedAt:cached?.updatedAt});
     const latest=candidates.sort((a,b)=>validTime(b.updatedAt)-validTime(a.updatedAt))[0];
-    const priorIsTrusted=Boolean(prior?.lastScheduleSync)&&!(prior?.dataState==='CONFIRMED_EMPTY'&&prior.inventoryEvidenceVersion!==2);
-    const priorTime=priorIsTrusted?validTime(prior?.lastScheduleSync):0;
+    // A later failed or partial read invalidates older snapshots without
+    // deleting them. Legacy zero cannot pin a misleading complete answer.
+    const invalidating=new Set(['PARTIAL_DATA','AUTH_REQUIRED','API_FAILED','UNKNOWN','STALE_CACHE']);
+    const priorTime=prior&&invalidating.has(String(prior.dataState))?
+      validTime(prior.lastRefreshAttemptAt):
+      prior?.dataState==='CONFIRMED_EMPTY'&&prior.inventoryEvidenceVersion!==2?0:
+      validTime(prior?.lastScheduleSync);
     if(latest&&validTime(latest.updatedAt)>priorTime){
       const verified=deriveRunwayRecord(channel,latest.videos,now,latest.updatedAt,true);
       next.channels[channel.id]=recalculateRunwayRecord({...verified,inventoryEvidenceVersion:2},now);
@@ -182,7 +187,7 @@ export function upsertChannelRunwayFromYoutube(
   storage:StorageLike|undefined=browserStorage()
 ){
   const current=loadChannelRunwayStore(storage);
-  const record={...deriveRunwayRecord(channel,videos,now,now.toISOString(),true),inventoryEvidenceVersion:2 as const,lastRefreshError:undefined};
+  const record={...deriveRunwayRecord(channel,videos,now,now.toISOString(),true),inventoryEvidenceVersion:2 as const,lastRefreshAttemptAt:now.toISOString(),lastRefreshError:undefined};
   const next:ChannelRunwayStore={
     ...current,
     version:1,
@@ -213,6 +218,7 @@ export function markRunwayRefreshIssue(
     scheduledUntil:mostRecent,
     scheduledVideoCount:Math.max(previous.scheduledVideoCount,partial.scheduledVideoCount),
     dataState,
+    lastRefreshAttemptAt:now.toISOString(),
     lastRefreshError:error,
     runwayDays:undefined,
     status:'no-data',
