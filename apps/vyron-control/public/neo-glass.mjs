@@ -307,7 +307,7 @@ function renderNotifications(data){
     body.append(node('strong','',e.name||e.title||e.type||'Событие'),
       node('small','',stamp(e.detectedAt)+' · '+(e.type||'system')));
     const delivery=state.deliveries?.[e.id];
-    const deliveryState=delivery?.sent?'Push отправлен · '+delivery.sent:
+    const deliveryState=delivery?.sent?'Передано Push-шлюзу · '+delivery.sent:
       delivery?.failed?'Ошибка Push · '+delivery.failed:
       delivery?.sending?'Push отправляется':
       delivery?.retry?'Повторная отправка':'Push: нет попыток отправки';
