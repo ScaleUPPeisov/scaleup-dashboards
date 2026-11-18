@@ -210,6 +210,26 @@ jobs:
           fi
           echo "PR #25 is merged and release snapshot matches the reviewed branch HEAD: ${release_sha}"
 
+      - name: Capture production D1 Time Travel rollback bookmark BEFORE migrating
+        if: ${{ env.OPERATION == 'deploy' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          BOOKMARK_RAW="$(npx --yes wrangler@4.102.0 d1 time-travel info vyron-control -c cloudflare/wrangler.jsonc --json)"
+          D1_BOOKMARK_JSON="$BOOKMARK_RAW" node --input-type=module <<'NODE'
+          import {appendFile} from 'node:fs/promises';
+          let parsed;
+          try{parsed=JSON.parse(process.env.D1_BOOKMARK_JSON||'{}');}
+          catch{throw Error('No JSON Time Travel bookmark: refusing production migration.');}
+          const bookmark=parsed.bookmark||parsed.result?.bookmark;
+          if(typeof bookmark!=='string'||!/^[0-9a-fA-F-]{25,100}$/.test(bookmark))
+            throw Error('D1 Time Travel recovery bookmark not validated: refusing production migration.');
+          await appendFile(process.env.GITHUB_STEP_SUMMARY,
+            '### Production D1 rollback checkpoint captured\n'+
+            'Bookmark: '+bookmark+'\n'+
+            'Restore requires separate owner approval and is destructive to subsequent writes.\n');
+          console.log('Read-only D1 pre-migration recovery bookmark verified; no restore invoked.');
+          NODE
       - name: Apply additive D1 migrations
         if: ${{ env.OPERATION == 'deploy' }}
         run: npx --yes wrangler@4.102.0 d1 migrations apply vyron-control --remote -c cloudflare/wrangler.jsonc
