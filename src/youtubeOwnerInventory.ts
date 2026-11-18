@@ -140,10 +140,17 @@ export type OwnerInventoryRefreshRow={
 export type OwnerInventoryRefreshSummary={
   requested:number;updated:number;failed:number;skippedFresh:number;skippedUnlinked:number;stoppedForQuota:boolean;
   apiRequests:number;quotaUnits:number;rows:OwnerInventoryRefreshRow[];
+  searchCalls?:number;
   counts:Record<OwnerInventoryFleetStatus,number>;
   deepSearchChannels?:number;
 };
 export type OwnerInventoryFleetProgress={done:number;total:number;channelName:string;status:OwnerInventoryFleetStatus};
+
+// A successful but non-exhaustive YouTube response is not an API outage.
+// Preserve a distinct PARTIAL_DATA status rather than implying HTTP failure.
+export function classifyIncompleteOwnerCoverage(ownerMixed:boolean):OwnerInventoryFleetStatus{
+  return ownerMixed?'API_FAILED':'PARTIAL_DATA';
+}
 
 const BLOCKED_OWNER_CREDENTIAL_STATES=new Set(['NEEDS_ONE_TIME_LOCAL_MIGRATION','CANONICAL_PRESENT_UNVERIFIED','CHECK_ON_USE','RECOVERABLE','KEYCHAIN_BLOCKED','RECONNECT_REQUIRED','MISSING','WRONG_CHANNEL','FAILED','KEYCHAIN_ERROR']);
 
@@ -251,6 +258,7 @@ export async function refreshOwnerInventoriesAuthoritative(
       const apiRequests=Number.isFinite(backendApi)&&backendApi>=1?backendApi:Object.values(fallback?.methods||{}).reduce((n:number,x:any)=>n+Number(x.calls||0),0);
       const quotaUnits=Number.isFinite(backendQuota)&&backendQuota>=0?backendQuota:Number(fallback?.buckets.general||apiRequests);
       summary.apiRequests+=apiRequests;summary.quotaUnits+=quotaUnits;
+      summary.searchCalls=(summary.searchCalls||0)+Math.max(0,Number(result.searchCalls)||0);
       if(!result.channelId||String(result.channelId)!==String(linked.youtubeChannelId)){
         report({channelId:channel.id,channelName:channel.name,status:'API_FAILED',profileId:linked.profile.id,youtubeChannelId:linked.youtubeChannelId,apiRequests,quotaUnits,error:'AUTHORITATIVE_CHANNEL_ID_MISMATCH'});
         continue
@@ -279,7 +287,7 @@ export async function refreshOwnerInventoriesAuthoritative(
         // Scheduled result is NOT an HTTP/API failure and NOT a confirmed zero.
         // Only an actual exception, wrong owner Channel ID or cross-owner
         // video evidence may be classified API_FAILED.
-        const status=ownerMixed?'API_FAILED':'PARTIAL_DATA';
+        const status=classifyIncompleteOwnerCoverage(ownerMixed);
         report({channelId:channel.id,channelName:channel.name,status,profileId:linked.profile.id,youtubeChannelId:linked.youtubeChannelId,apiRequests,quotaUnits,error:reason,
           observedScheduled:observed.length,observedThrough,diagnosticReasons});
         // Preserve verified-positive Scheduled rows in Runway as LOWER-BOUND
