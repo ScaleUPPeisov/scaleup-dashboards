@@ -6,6 +6,7 @@ on:
       - fix/vyron-618-schedule-safety-20261118
     paths:
       - src/youtubeOwnerInventory.ts
+      - src/ChannelRunway.tsx
       - src/v611ChannelRunwayInventoryHotfix.test.ts
       - src/v610ChannelRunwayFleetRefresh.test.ts
       - .github/workflows/vyron-618-schedule-safety-regression.yml
