@@ -18,8 +18,15 @@ assert.equal(health.status,200);
 assert.equal(health.data.d1.presentTables,20);
 assert.equal((await call('/api/status','GET',undefined,'')).status,401);
 assert.equal((await call('/api/status','GET',undefined,agent)).status,401);
-const before=await call('/api/status');
-assert.equal(before.status,200);
+// Cloudflare secret puts can propagate after the CLI success response.
+let before;
+for(let i=0;i<45;i++){
+  before=await call('/api/status');
+  if(before.status===200)break;
+  if(before.status!==401&&before.status!==503)break;
+  await new Promise(resolve=>setTimeout(resolve,1000));
+}
+assert.equal(before.status,200,'Preview owner secret not active after bounded propagation grace');
 assert.equal(before.data.channels.length,33); // all fixtures only in ephemeral preview D1
 const at=new Date().toISOString();
 const beat=await call('/api/agent/heartbeat','POST',{
