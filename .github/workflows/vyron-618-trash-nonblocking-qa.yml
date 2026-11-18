@@ -7,6 +7,7 @@ on:
     paths:
       - 'src-tauri/src/local_delete.rs'
       - 'src-tauri/src/production_manager.rs'
+      - 'src/v212CleanupCommandRegistration.test.ts'
       - '.github/workflows/vyron-618-trash-nonblocking-qa.yml'
 
 permissions:
