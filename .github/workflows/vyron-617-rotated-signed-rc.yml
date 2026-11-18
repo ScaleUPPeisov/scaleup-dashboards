@@ -63,6 +63,8 @@ jobs:
           NEW_PUBLIC: ${{ secrets.VYRON617_NEW_TAURI_PUBLIC_KEY_B64 }}
           CERT: ${{ secrets.VYRON617_APPLE_DEVELOPER_ID_P12 }}
           CERT_PASSWORD: ${{ secrets.VYRON617_APPLE_DEVELOPER_ID_PASSWORD }}
+          HISTORIC_APPLE_CERT: ${{ secrets.VYRON_MACOS_SIGNING_P12_BASE64 }}
+          HISTORIC_APPLE_CERT_PASSWORD: ${{ secrets.VYRON_MACOS_SIGNING_P12_PASSWORD }}
           NOTARY_ID: ${{ secrets.VYRON617_NOTARY_APPLE_ID }}
           NOTARY_PASSWORD: ${{ secrets.VYRON617_NOTARY_APP_PASSWORD }}
           TEAM_ID: ${{ secrets.VYRON617_APPLE_TEAM_ID }}
@@ -72,8 +74,10 @@ jobs:
           test "$TEAM_ID" = "$APPROVED_TEAM_ID" || { echo OWNER_APPLE_TEAM_PIN_MISMATCH; exit 1; }
           test -n "$NEW_PRIVATE" || { echo NEW_TAURI_KEY_UNAVAILABLE; exit 1; }
           test -n "$NEW_PUBLIC" || { echo NEW_TAURI_PUBLIC_KEY_UNAVAILABLE; exit 1; }
-          test -n "$CERT" || { echo DEVELOPER_ID_CERTIFICATE_UNAVAILABLE; exit 1; }
-          test -n "$CERT_PASSWORD" || { echo CERTIFICATE_PASSWORD_UNAVAILABLE; exit 1; }
+          if [[ -z "$CERT" || -z "$CERT_PASSWORD" ]]; then
+            test -n "$HISTORIC_APPLE_CERT" && test -n "$HISTORIC_APPLE_CERT_PASSWORD" || { echo DEVELOPER_ID_CERTIFICATE_UNAVAILABLE; exit 1; }
+            echo "APPROVED_EXISTING_DEVELOPER_ID_CERT_FALLBACK=ELIGIBLE"
+          fi
           test -n "$NOTARY_ID" || { echo APPLE_NOTARY_ID_UNAVAILABLE; exit 1; }
           test -n "$NOTARY_PASSWORD" || { echo APPLE_NOTARY_PASSWORD_UNAVAILABLE; exit 1; }
           test -n "$TEAM_ID" || { echo APPLE_TEAM_ID_UNAVAILABLE; exit 1; }
@@ -103,8 +107,19 @@ jobs:
         env:
           CERT: ${{ secrets.VYRON617_APPLE_DEVELOPER_ID_P12 }}
           CERT_PASSWORD: ${{ secrets.VYRON617_APPLE_DEVELOPER_ID_PASSWORD }}
+          HISTORIC_APPLE_CERT: ${{ secrets.VYRON_MACOS_SIGNING_P12_BASE64 }}
+          HISTORIC_APPLE_CERT_PASSWORD: ${{ secrets.VYRON_MACOS_SIGNING_P12_PASSWORD }}
         run: |
           set -Eeuo pipefail
+          if [[ -z "$CERT" || -z "$CERT_PASSWORD" ]]; then
+            CERT="$HISTORIC_APPLE_CERT"
+            CERT_PASSWORD="$HISTORIC_APPLE_CERT_PASSWORD"
+            # Publicly pinned SHA-1 of the Developer ID certificate used for signed 6.1.15.
+            # The old TAURI updater signing key is NEVER used as a fallback.
+            EXPECTED_CERT_SHA1=2C8B0BD4EE1C000D29DD0667BF1068D4673692C9
+          else
+            EXPECTED_CERT_SHA1=""
+          fi
           printf '%s' "$CERT" | openssl base64 -d -A -out "$RUNNER_TEMP/cert.p12"
           PASS="$(openssl rand -hex 24)"
           security create-keychain -p "$PASS" "$RUNNER_TEMP/vyron-signing.keychain-db"
@@ -114,6 +129,11 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$PASS" "$RUNNER_TEMP/vyron-signing.keychain-db"
           IDENTITY="$(security find-identity -v -p codesigning "$RUNNER_TEMP/vyron-signing.keychain-db" | awk -F '"' '/Developer ID Application:/ { print $2; exit }')"
           test -n "$IDENTITY"
+          ACTUAL_CERT_SHA1="$(security find-identity -v -p codesigning "$RUNNER_TEMP/vyron-signing.keychain-db" | awk '/Developer ID Application:/ {print $2; exit}' | tr '[:lower:]' '[:upper:]')"
+          if [[ -n "$EXPECTED_CERT_SHA1" ]]; then
+            test "$ACTUAL_CERT_SHA1" = "$EXPECTED_CERT_SHA1" || { echo HISTORIC_APPLE_CERTIFICATE_FINGERPRINT_MISMATCH; exit 1; }
+            echo "PINNED_615_DEVELOPER_ID_CERT_REUSED=PASS"
+          fi
           echo "APPLE_SIGNING_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
           rm -f "$RUNNER_TEMP/cert.p12"
       - name: Build signed 6.1.17 ARM64 app with new Tauri updater key

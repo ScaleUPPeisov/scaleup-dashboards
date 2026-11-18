@@ -18,12 +18,14 @@ test('new-key RC pipeline runs only by manual approval and cannot publish',()=>{
 test('new signer and notarization have independent trust, hard failure, and no old-key fallback',()=>{
   const required=[
     'VYRON617_NEW_TAURI_PRIVATE_KEY','VYRON617_NEW_TAURI_PUBLIC_KEY_B64',
-    'VYRON617_APPLE_DEVELOPER_ID_P12','VYRON617_NOTARY_APP_PASSWORD',
+    'VYRON617_APPLE_DEVELOPER_ID_P12','VYRON_MACOS_SIGNING_P12_BASE64','VYRON617_NOTARY_APP_PASSWORD',
     'approved_pubkey_sha256','approved_apple_team_id','OWNER_APPLE_TEAM_PIN_MISMATCH','prepare-vyron-rotated-updater.mjs',
     'grep -Fxq "PUBLIC_KEY_SHA256=$TRUST_SHA"',
     'VYRON_TRUSTED_UPDATER_PUBLIC_KEY_SHA256',
     'minisign -Vm','codesign --verify --deep --strict',
     'Authority=Developer ID Application:',
+    '2C8B0BD4EE1C000D29DD0667BF1068D4673692C9',
+    'HISTORIC_APPLE_CERTIFICATE_FINGERPRINT_MISMATCH',
     'xcrun notarytool submit','xcrun stapler validate','spctl --assess'
   ];
   for (const name of required) assert.ok(workflow.includes(name),'MISSING_RC_SECURITY_GATE: '+name);
