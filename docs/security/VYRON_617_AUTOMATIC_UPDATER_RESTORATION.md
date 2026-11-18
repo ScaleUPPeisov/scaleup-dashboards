@@ -1,5 +1,15 @@
 # VYRON 6.1.17 — restoring automatic updates for the owner and future public users
 
+## 18 Nov 2026: historical 6.1.14 → 6.1.15 compatibility verified
+
+Actual release sources compared: 6.1.14 product source `bba8e3aba15653f304f1ebd9ec3f18289420f884`, 6.1.15 product source `51ba3f9e3f9526e101ec69e86c1bdd2fe496a7e2`. Their `src-tauri/tauri.conf.json` retains the **same** `studio.channelflow.desktop` identifier, the same `vyron-releases/main/updates/latest.json` stable feed, and the same embedded Minisign public key. Release 6.1.15 published 21 October 2026 has `VYRON.app.tar.gz`, `VYRON.app.tar.gz.sig`, and `VYRON.app.tar.gz.sha256` for Darwin ARM64. The signed stable-update protocol was not replaced; `app.path().app_data_dir()` and the production identity remain unchanged.
+
+The break is the later **compromise of the old signing trust root**, release/signing freeze, and the absence of a trusted source of 6.1.17 bytes acceptable to already-installed 6.1.15. New code **cannot** be retroactively installed in 6.1.15 through GitHub. A new-key-only 6.1.17 fails the old installer's signature check, while signing with the compromised old private key cannot establish authentic provenance. The unchanged stable feed currently advertises 6.1.15, not 6.1.17. A PR-only probe uses `studio.channelflow.desktop.pr22probe`, updater disabled, and is intentionally **not** a production upgrade.
+
+**Owner goal remains unchanged:** a **single separately authenticated Apple Developer ID signed/notarized GUI replacement** retaining the exact production bundle ID, app-data location, and Keychain accessibility (subject to on-device verification). The replacement embeds a *new independently authenticated Minisign key* while retaining the **original stable feed URL and same Tauri check → download → install → relaunch implementation**. Future 6.1.18+ archives signed by the new key can then install from Settings without additional DMG downloads or Terminal. The one-time bootstrap cannot be advertised or silently installed until its provenance, Apple Team identity, owner-data backup/restore and rollback are verified.
+
+The existing manual-only GitHub signing workflow `.github/workflows/vyron-617-rotated-signed-rc.yml` prepares the candidate **only after** new updater-key credentials, independent fingerprint, Developer ID credentials, notary acceptance and Gatekeeper validation. It uploads evidence only in the public repository; it does **not** publish an app, switch the stable feed, or authenticate 6.1.15's old key chain. No consent to production release is implied by a passing CI build.
+
 **Status:** implementation prepared; release NOT authorized, signing key NOT rotated,
 no installer published. This note does not override
 `VYRON_617_UPDATER_KEY_INCIDENT_2026-11-12.md`.

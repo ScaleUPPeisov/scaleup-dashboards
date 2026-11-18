@@ -18,6 +18,12 @@ describe('VYRON updater discovery policy',()=>{
     expect(message).toContain('6.1.15');
   });
 
+  it('classifies missing or changed signed archive digest as a hard integrity error',()=>{
+    for(const detail of ['UPDATER_MANIFEST_SHA_MISSING: missing','UPDATER_STAGED_ARCHIVE_SHA_MISMATCH: modified']){
+      expect(classifyUpdaterError(detail,'download').code).toBe('UPDATER_ARTIFACT_HASH_MISMATCH');
+    }
+  });
+
   it('orders RC3 < RC4 < RC5 with semver prerelease rules',()=>{
     expect(compareUpdaterVersions('2.1.15-rc.3','2.1.15-rc.4')).toBeLessThan(0);
     expect(compareUpdaterVersions('2.1.15-rc.4','2.1.15-rc.5')).toBeLessThan(0);

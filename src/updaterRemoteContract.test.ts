@@ -17,6 +17,7 @@ describe('VYRON remote in-app update product contract',()=>{
    expect(settings).toContain('Проверить обновления');
    expect(settings).toContain('СКАЧАТЬ ОБНОВЛЕНИЕ');
    expect(settings).toContain('УСТАНОВИТЬ И ПЕРЕЗАПУСТИТЬ');
+   expect(settings).toContain("updaterErrorCode!=='UPDATER_TRUST_MIGRATION_REQUIRED'");
  });
  it('requires explicit install/restart after download and contains active-job blocking UI',()=>{expect(runtime).toContain("status:'READY_TO_INSTALL'");expect(runtime).toContain('if(blockers.length)');expect(app).toContain('Сначала завершите задачи');expect(settings).toContain('Сначала завершите активные операции')});
 });

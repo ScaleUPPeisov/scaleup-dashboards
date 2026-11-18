@@ -56,7 +56,7 @@ export function classifyUpdaterError(error:unknown,stage:UpdaterStage){
   if(s.includes('app_replacement_codesign_failed'))return{code:'APP_REPLACEMENT_CODESIGN_FAILED',detail};
   if(s.includes('update_target_path_changed')||s.includes('updater_restart_path_mismatch')||s.includes('updater_restart_path_missing'))return{code:'UPDATER_RESTART_PATH_MISMATCH',detail};
   if(s.includes('app_not_replaceable')||s.includes('bundle не найден')||s.includes('нет записи на том'))return{code:'APP_NOT_REPLACEABLE',detail};
-  if(s.includes('artifact_sha_mismatch')||s.includes('manifest_sha_invalid'))return{code:'UPDATER_ARTIFACT_HASH_MISMATCH',detail};
+  if(s.includes('artifact_sha_mismatch')||s.includes('manifest_sha_invalid')||s.includes('manifest_sha_missing')||s.includes('staged_archive_sha_mismatch'))return{code:'UPDATER_ARTIFACT_HASH_MISMATCH',detail};
   if(s.includes('signature')||s.includes('minisign')||s.includes('public key'))return{code:'UPDATER_SIGNATURE_INVALID',detail};
   if(s.includes('platform')||s.includes('darwin-aarch64')&&s.includes('not found'))return{code:'UPDATER_PLATFORM_NOT_FOUND',detail};
   if(stage==='check')return{code:'UPDATER_MANIFEST_FETCH_FAILED',detail};
