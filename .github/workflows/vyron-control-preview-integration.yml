@@ -1,0 +1,107 @@
+name: VYRON CONTROL — isolated Cloudflare preview integration
+on:
+  push:
+    branches: ["feature/vyron-control-neo-glass-20261117"]
+    paths: [".github/workflows/vyron-control-preview-integration.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: vyron-control-pr55-preview
+  cancel-in-progress: false
+jobs:
+  preview:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: apps/vyron-control
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      DB_NAME: vyron-control-pr55-${{ github.run_id }}
+      WORKER_NAME: vyron-control-pr55-${{ github.run_id }}
+      PREVIEW_CONFIG: cloudflare/wrangler.pr55-preview.jsonc
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Validate isolation and preview credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$DB_NAME" =~ ^vyron-control-pr55-[0-9]+$ ]] || exit 2
+          [[ "$WORKER_NAME" == "$DB_NAME" && "$DB_NAME" != "vyron-control" ]] || exit 2
+          [[ -n "$CLOUDFLARE_API_TOKEN" && -n "$CLOUDFLARE_ACCOUNT_ID" ]] ||
+            { echo "::error::Preview Cloudflare credentials missing"; exit 1; }
+      - name: Create isolated remote D1 and generate safe config
+        shell: bash
+        run: |
+          set -euo pipefail
+          CREATE="$(npx --yes wrangler@4.102.0 d1 create "$DB_NAME")"
+          DB_ID="$(printf '%s' "$CREATE" | grep -Eo '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1)"
+          test -n "$DB_ID"
+          PREVIEW_DB_ID="$DB_ID" node --input-type=module <<'NODE'
+          import {readFile,writeFile} from 'node:fs/promises';
+          const prod=JSON.parse(await readFile('cloudflare/wrangler.jsonc','utf8'));
+          const id=process.env.PREVIEW_DB_ID;
+          if(id===prod.d1_databases[0].database_id)throw Error('Production D1 alias forbidden');
+          const preview={...prod,name:process.env.WORKER_NAME,
+            triggers:{crons:[]},vars:{QUOTA_DAILY_BUDGET:'1'},
+            d1_databases:[{...prod.d1_databases[0],
+              database_name:process.env.DB_NAME,database_id:id}]};
+          await writeFile(process.env.PREVIEW_CONFIG,JSON.stringify(preview,null,2));
+          const sql=Array.from({length:33},(_,i)=>{
+            const channel='UC'+String(i).padStart(22,'0');
+            return "INSERT INTO channels(id,name) VALUES('"+channel+"','Preview QA channel "+i+"');";
+          }).join('\n');
+          await writeFile('cloudflare/pr55-preview-fixtures.sql',sql+'\n');
+          console.log('Separated preview D1 configured. No production resources referenced.');
+          NODE
+      - name: Apply migrations and verify 0008/0009 idempotently
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.102.0 d1 migrations apply "$DB_NAME" --remote -c "$PREVIEW_CONFIG"
+          npx --yes wrangler@4.102.0 d1 migrations apply "$DB_NAME" --remote -c "$PREVIEW_CONFIG"
+          OUT="$(npx --yes wrangler@4.102.0 d1 execute "$DB_NAME" --remote -c "$PREVIEW_CONFIG" --json --command "SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table' AND name IN ('production_jobs','production_sync','notification_preferences','notification_reads');")"
+          D1_JSON="$OUT" node --input-type=module -e '
+            const rows=JSON.parse(process.env.D1_JSON).flatMap(x=>x.results||[]);
+            if(Number(rows[0]?.n)!==4)throw Error("Missing isolated preview tables");
+            console.log("PASS: 4 additive D1 tables; second migration replay idempotent.");
+          '
+          npx --yes wrangler@4.102.0 d1 execute "$DB_NAME" --remote -c "$PREVIEW_CONFIG" --file cloudflare/pr55-preview-fixtures.sql
+      - name: Deploy isolated QA Worker with newly generated secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.102.0 deploy -c "$PREVIEW_CONFIG" --strict
+          CONTROL="$(openssl rand -hex 32)"
+          AGENT="$(openssl rand -hex 32)"
+          echo "::add-mask::$CONTROL"
+          echo "::add-mask::$AGENT"
+          printf '%s' "$CONTROL" | npx --yes wrangler@4.102.0 secret put CONTROL_TOKEN -c "$PREVIEW_CONFIG"
+          printf '%s' "$AGENT" | npx --yes wrangler@4.102.0 secret put AGENT_TOKEN -c "$PREVIEW_CONFIG"
+          {
+            echo "PREVIEW_CONTROL_TOKEN=$CONTROL"
+            echo "PREVIEW_AGENT_TOKEN=$AGENT"
+            echo "VYRON_PREVIEW_URL=https://$WORKER_NAME.endlume-peisov-3ee6109f.workers.dev"
+          } >> "$GITHUB_ENV"
+      - name: Check real preview HTTP integrations against separate D1
+        run: node browser/preview-live-smoke.mjs
+      - name: Remove ephemeral Worker and database even if smoke fails
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          [[ "$DB_NAME" =~ ^vyron-control-pr55-[0-9]+$ ]] || exit 2
+          if [[ -f "$PREVIEW_CONFIG" ]]; then
+            printf 'y\n' | npx --yes wrangler@4.102.0 delete -c "$PREVIEW_CONFIG" --name "$WORKER_NAME" >/dev/null 2>&1
+          fi
+          npx --yes wrangler@4.102.0 d1 delete "$DB_NAME" -y >/dev/null 2>&1
+          echo "Isolated preview cleanup attempted; no production name was used."
