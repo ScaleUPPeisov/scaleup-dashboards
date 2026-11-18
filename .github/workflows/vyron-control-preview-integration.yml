@@ -2,7 +2,7 @@ name: VYRON CONTROL — isolated Cloudflare preview integration
 on:
   push:
     branches: ["feature/vyron-control-neo-glass-20261117"]
-    paths: [".github/workflows/vyron-control-preview-integration.yml"]
+    paths: [".github/workflows/vyron-control-preview-integration.yml", "apps/vyron-control/browser/preview-live-smoke.mjs"]
   workflow_dispatch:
 permissions:
   contents: read
