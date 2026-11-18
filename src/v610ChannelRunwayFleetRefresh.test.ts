@@ -114,7 +114,7 @@ describe('VYRON 6.1 authoritative fleet runway refresh',()=>{
   expect(result.apiRequests).toBe(30);
   expect(result.quotaUnits).toBe(30);
  });
- it('audits 33/33, deep-checks at most 16 incomplete channels and reports every row',async()=>{
+ it('audits 33/33, deep-checks all 33 incomplete channels when separate search quota permits and reports every row',async()=>{
   const channels=Array.from({length:33},(_,i)=>channel('fleet'+(i+1),{youtubeProfileId:'p-fleet'+(i+1),youtubeChannelId:'UC-fleet'+(i+1)}));
   fixture.profiles=channels.map(c=>profile(c.youtubeProfileId!,c.youtubeChannelId!));
   for(const ch of channels)fixture.responses.set(ch.youtubeProfileId!,{
@@ -131,11 +131,11 @@ describe('VYRON 6.1 authoritative fleet runway refresh',()=>{
   expect(progress.map(p=>p.done)).toEqual(Array.from({length:33},(_,i)=>i+1));
   expect(progress.every(p=>p.total===33)).toBe(true);
   expect(result.counts.PARTIAL_DATA).toBe(33);
-  expect(result.deepSearchChannels).toBe(16);
+  expect(result.deepSearchChannels).toBe(33);
   const calls=(api.youtubeListExisting as any).mock.calls as any[][];
   expect(calls).toHaveLength(33);
-  expect(calls.filter(args=>args[3]===true)).toHaveLength(16);
-  expect(calls.filter(args=>args[3]===false)).toHaveLength(17);
+  expect(calls.filter(args=>args[3]===true)).toHaveLength(33);
+  expect(calls.filter(args=>args[3]===false)).toHaveLength(0);
   expect(calls.find(args=>args[0]==='p-fleet1')?.[4]).toContain('ABCDEFGHIJK');
   expect(new Set(result.rows.map(row=>row.channelId)).size).toBe(33);
  });
