@@ -33,6 +33,12 @@ assert.equal(before.data.public24h.value,null,
 assert.equal(before.data.public24h.covered,0);
 assert.equal(before.data.analyticsSummary.authorized,0,
   'Isolated preview has zero owner OAuth profiles and must not invent authorized Analytics');
+const scheduleDenied=await call('/api/schedule/refresh','POST',{channelId:id(0)});
+assert.equal(scheduleDenied.status,200);
+assert.equal(scheduleDenied.data.reason,'oauth_not_configured',
+  'Isolated preview must not impersonate a real YouTube owner');
+assert.ok(before.data.channels.every(ch=>ch.scheduledContentDays===null),
+  'No OAuth means no manufactured confirmed YouTube schedule');
 const at=new Date().toISOString();
 // Only QA fixtures: confirm an absent channel is soft-archived, never deleted.
 const all=Array.from({length:33},(_,i)=>({id:id(i),name:'Preview QA channel '+i}));
