@@ -139,13 +139,40 @@ describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
       incompleteReasons:['SCHEDULE_DATA_INCOMPLETE']
     });
     const second=await refreshOwnerInventoriesAuthoritative([channel()],true,[profile]);
-    expect(second.rows[0].status).toBe('API_FAILED');
+    // A full owner read with incomplete Scheduled coverage is PARTIAL_DATA,
+    // not a network/API failure, and it must not erase the last verified runway.
+    expect(second.rows[0].status).toBe('PARTIAL_DATA');
     const retained=loadChannelRunwayStore().channels.lumiere;
     expect(retained.scheduledVideoCount).toBe(prior.scheduledVideoCount);
     expect(retained.scheduledUntil).toBe(prior.scheduledUntil);
     expect(retained.dataState).toBe('PARTIAL_DATA');
     expect(retained.runwayDays).toBeUndefined();
     expect(retained.status).toBe('no-data');
+    }finally{vi.useRealTimers()}
+  });
+
+  it('Neon-shaped owner response never claims confirmed zero or API failure when only scheduled coverage is unverified',async()=>{
+    vi.useFakeTimers();vi.setSystemTime(new Date('2026-11-18T05:00:00Z'));
+    try{
+      fixture.responses.set(profile.id,{
+        ...response(),
+        videos:Array.from({length:190},(_,i)=>editable('published-'+i,'public',undefined,'2026-10-01T00:00:00Z')),
+        youtubeFound:190,uniqueVideoIds:190,videosHydrated:190,
+        privateCount:0,scheduledCount:0,publicCount:190,
+        syncComplete:true,complete:true,scheduleComplete:false,
+        incompleteReasons:['SCHEDULE_EMPTY_NOT_INDEPENDENTLY_VERIFIED'],
+        searchUsed:true,searchExhausted:true
+      });
+      const result=await refreshOwnerInventoriesAuthoritative([channel()],true,[profile]);
+      expect(result.rows[0].status).toBe('PARTIAL_DATA');
+      expect(result.rows[0].diagnosticReasons).toContain('SCHEDULE_EMPTY_NOT_INDEPENDENTLY_VERIFIED');
+      expect(result.rows[0].observedScheduled).toBe(0);
+      expect(result.failed).toBe(0);
+      expect(fixture.inventoryFiles.has('lumiere')).toBe(false);
+      const runway=loadChannelRunwayStore().channels.lumiere;
+      expect(runway.dataState).toBe('PARTIAL_DATA');
+      expect(runway.runwayDays).toBeUndefined();
+      expect(runway.status).toBe('no-data');
     }finally{vi.useRealTimers()}
   });
 
