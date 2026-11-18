@@ -127,10 +127,11 @@ export function ownerInventoryCacheStale(channelId:string,nowMs=Date.now(),ttlMs
   return !Number.isFinite(at)||nowMs-at>=ttlMs
 }
 
-export type OwnerInventoryFleetStatus='UPDATED'|'UNLINKED'|'MISMATCH'|'DUPLICATE'|'OAUTH_BLOCKED'|'API_FAILED'|'PERSISTENCE_FAILED'|'QUOTA_STOPPED'|'FRESH_CACHE';
+export type OwnerInventoryFleetStatus='UPDATED'|'PARTIAL_DATA'|'UNLINKED'|'MISMATCH'|'DUPLICATE'|'OAUTH_BLOCKED'|'API_FAILED'|'PERSISTENCE_FAILED'|'QUOTA_STOPPED'|'FRESH_CACHE';
 export type OwnerInventoryRefreshRow={
   channelId:string;channelName:string;status:OwnerInventoryFleetStatus;
   profileId?:string;youtubeChannelId?:string;apiRequests:number;quotaUnits:number;error?:string;
+  observedScheduled?:number;observedThrough?:string;diagnosticReasons?:string[];
 };
 export type OwnerInventoryRefreshSummary={
   requested:number;updated:number;failed:number;skippedFresh:number;skippedUnlinked:number;stoppedForQuota:boolean;
@@ -141,7 +142,7 @@ export type OwnerInventoryRefreshSummary={
 const BLOCKED_OWNER_CREDENTIAL_STATES=new Set(['NEEDS_ONE_TIME_LOCAL_MIGRATION','CANONICAL_PRESENT_UNVERIFIED','CHECK_ON_USE','RECOVERABLE','KEYCHAIN_BLOCKED','RECONNECT_REQUIRED','MISSING','WRONG_CHANNEL','FAILED','KEYCHAIN_ERROR']);
 
 function emptyOwnerCounts():Record<OwnerInventoryFleetStatus,number>{
-  return{UPDATED:0,UNLINKED:0,MISMATCH:0,DUPLICATE:0,OAUTH_BLOCKED:0,API_FAILED:0,PERSISTENCE_FAILED:0,QUOTA_STOPPED:0,FRESH_CACHE:0}
+  return{UPDATED:0,PARTIAL_DATA:0,UNLINKED:0,MISMATCH:0,DUPLICATE:0,OAUTH_BLOCKED:0,API_FAILED:0,PERSISTENCE_FAILED:0,QUOTA_STOPPED:0,FRESH_CACHE:0}
 }
 function duplicateExtraChannelIds(channels:Channel[],profiles:Awaited<ReturnType<typeof api.youtubeProfiles>>){
   const classification=classifyYoutubeChannels(channels,profiles),extras=new Set<string>();
@@ -161,6 +162,9 @@ function pushOwnerRow(summary:OwnerInventoryRefreshSummary,row:OwnerInventoryRef
   }
   if(row.status==='UPDATED')summary.updated++;
   else if(row.status==='API_FAILED'||row.status==='PERSISTENCE_FAILED')summary.failed++;
+  // Positive read-only videos.list evidence is usable as a lower bound, even
+  // when exhaustive coverage is unproven. Do not count it as a confirmed update.
+  else if(row.status==='PARTIAL_DATA')summary.failed++;
   else if(row.status==='FRESH_CACHE')summary.skippedFresh++;
   else if(row.status==='UNLINKED'||row.status==='MISMATCH'||row.status==='DUPLICATE'||row.status==='OAUTH_BLOCKED')summary.skippedUnlinked++;
 }
@@ -228,10 +232,23 @@ export async function refreshOwnerInventoriesAuthoritative(
       const ownerMixed=(result.videos||[]).some(v=>v.channelId&&v.channelId!==linked.youtubeChannelId);
       const coverageOk=scheduledCoverageEstablished(result)&&scheduleSyncTruthFromInfo(result)==='complete'&&!ownerMixed;
       if(!coverageOk){
+        const observed=ownerMixed?[]:(result.videos||[]).filter(v=>
+          v.channelId===linked.youtubeChannelId&&v.privacyStatus==='private'&&
+          Boolean(v.publishAt)&&Number.isFinite(Date.parse(v.publishAt!))&&Date.parse(v.publishAt!)>Date.now());
+        const observedThrough=observed.map(v=>v.publishAt!).sort((a,b)=>Date.parse(a)-Date.parse(b)).at(-1);
+        const diagnosticReasons=Array.isArray(result.incompleteReasons)?result.incompleteReasons.slice(0,12):[];
+        if(result.searchError)diagnosticReasons.push('OWNER_SEARCH_ERROR: '+String(result.searchError).slice(0,220));
+        if(result.searchUsed&&!result.searchExhausted&&!diagnosticReasons.includes('OWNER_SEARCH_NOT_EXHAUSTED'))
+          diagnosticReasons.push('OWNER_SEARCH_NOT_EXHAUSTED');
         const reason=ownerMixed?'AUTHORITATIVE_VIDEO_CHANNEL_MISMATCH':'AUTHORITATIVE_INVENTORY_INCOMPLETE';
-        pushOwnerRow(summary,{channelId:channel.id,channelName:channel.name,status:'API_FAILED',profileId:linked.profile.id,youtubeChannelId:linked.youtubeChannelId,apiRequests,quotaUnits,error:reason});
-        // Only a lower-bound observation; the Scheduled count and priority stay unconfirmed.
-        if(!ownerMixed)markRunwayRefreshIssue(channel,'PARTIAL_DATA',reason,new Date(),undefined,result.videos||[]);
+        // Distinguish a real API failure from a partial, verified-positive owner
+        // inventory. Never promote search snippets or non-owner rows to proof.
+        const status=observed.length?'PARTIAL_DATA':'API_FAILED';
+        pushOwnerRow(summary,{channelId:channel.id,channelName:channel.name,status,profileId:linked.profile.id,youtubeChannelId:linked.youtubeChannelId,apiRequests,quotaUnits,error:reason,
+          observedScheduled:observed.length,observedThrough,diagnosticReasons});
+        // Preserve verified-positive Scheduled rows in Runway as LOWER-BOUND
+        // evidence only; neither SQLite baseline nor last verified sync is overwritten.
+        if(!ownerMixed)markRunwayRefreshIssue(channel,'PARTIAL_DATA',reason,new Date(),undefined,observed);
         continue
       }
       const cache=await replaceExistingCacheFromSync(channel.id,result.videos||[],result);
