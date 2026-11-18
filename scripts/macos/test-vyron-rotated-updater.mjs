@@ -15,7 +15,7 @@ function fixture(){
   const pub=join(dir,'candidate.pub');
   const out=join(dir,'rotated-overlay.json');
   const fakeKey=Buffer.concat([Buffer.from('Ed'),Buffer.alloc(40,7)]).toString('base64');
-  const minisign='untrusted comment: minisign public key: TEST-ONLY-KEY\n'+fakeKey+'\n';
+  const minisign='untrusted comment: minisign public key: 0707070707070707\n'+fakeKey+'\n';
   writeFileSync(pub,Buffer.from(minisign).toString('base64'));
   return {dir,pub,out,release:()=>rmSync(dir,{recursive:true,force:true})};
 }
@@ -39,7 +39,7 @@ test('new rotated pubkey creates a temporary overlay, preserving app identity an
   const publicBytes=Buffer.from(decoded.trimEnd().split(/\r?\n/)[1],'base64');
   const expectedFingerprint=createHash('sha256').update(publicBytes).digest('hex');
   assert.match(result.stdout,new RegExp('PUBLIC_KEY_SHA256='+expectedFingerprint));
-  assert.doesNotMatch(result.stdout,/PRIVATE KEY|TEST-ONLY-KEY/);
+  assert.doesNotMatch(result.stdout,/PRIVATE KEY|0707070707070707/);
 });
 test('refuses compromised updater public key',t=>{
   const f=fixture();t.after(f.release);
@@ -58,6 +58,30 @@ test('refuses malformed public key and wrong versions',t=>{
   const old=spawnSync(process.execPath,[script,'--public-key-file',f.pub,'--output',f.out,'--version',stable.version],{encoding:'utf8'});
   assert.notEqual(old.status,0);
   assert.match(old.stderr,/VERSION_NOT_NEWER_THAN_STABLE/);
+  assert.equal(existsSync(f.out),false);
+});
+test('rejects a forged minisign key ID and noncanonical inner base64',t=>{
+  const f=fixture();t.after(f.release);
+  const original=Buffer.from(readFileSync(f.pub,'utf8'),'base64').toString('utf8');
+  writeFileSync(f.pub,Buffer.from(original.replace('0707070707070707','0000000000000000')).toString('base64'));
+  const forged=run(f);
+  assert.notEqual(forged.status,0);
+  assert.match(forged.stderr,/MINISIGN_KEY_ID_MISMATCH/);
+  assert.equal(existsSync(f.out),false);
+  const lines=original.trimEnd().split('\\n');
+  lines[1]=lines[1].replace(/=$/,'');
+  writeFileSync(f.pub,Buffer.from(lines.join('\\n')+'\\n').toString('base64'));
+  const noncanonical=run(f);
+  assert.notEqual(noncanonical.status,0);
+  assert.match(noncanonical.stderr,/NONCANONICAL_MINISIGN_KEY_PAYLOAD|INVALID_MINISIGN_PUBLIC_KEY/);
+});
+test('rejects an exposed legacy key even in a raw minisign file',t=>{
+  const f=fixture();t.after(f.release);
+  const exposed=Buffer.from(stable.plugins.updater.pubkey,'base64').toString('utf8');
+  writeFileSync(f.pub,exposed);
+  const result=run(f);
+  assert.notEqual(result.status,0);
+  assert.match(result.stderr,/COMPROMISED_LEGACY_KEY_FORBIDDEN/);
   assert.equal(existsSync(f.out),false);
 });
 test('never overwrites existing build configuration',t=>{

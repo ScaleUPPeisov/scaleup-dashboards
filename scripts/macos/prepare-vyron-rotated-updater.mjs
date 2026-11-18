@@ -51,13 +51,18 @@ if (supplied.startsWith('untrusted comment:')) {
   decoded = bytes.toString('utf8');
 }
 const lines = decoded.trimEnd().split(/\r?\n/);
-if (lines.length!==2 || !lines[0].startsWith('untrusted comment: minisign public key: ') ||
-    !/^[A-Za-z0-9+/]+={0,2}$/.test(lines[1])) throw new Error('INVALID_MINISIGN_PUBLIC_KEY');
+const header = lines.length===2 ? /^untrusted comment: minisign public key: ([0-9A-Fa-f]{16})$/.exec(lines[0]) : null;
+if (!header || !/^[A-Za-z0-9+/]+={0,2}$/.test(lines[1])) throw new Error('INVALID_MINISIGN_PUBLIC_KEY');
 const publicBytes = Buffer.from(lines[1],'base64');
+if (publicBytes.toString('base64')!==lines[1]) throw new Error('NONCANONICAL_MINISIGN_KEY_PAYLOAD');
 if (publicBytes.length!==42 || publicBytes[0]!==69 || publicBytes[1]!==100) {
   throw new Error('INVALID_MINISIGN_ED25519_KEY');
 }
-if (encoded===stable.plugins.updater.pubkey) throw new Error('COMPROMISED_LEGACY_KEY_FORBIDDEN');
+const embeddedKeyId=Buffer.from(publicBytes.subarray(2,10)).reverse().toString('hex').toUpperCase();
+if (header[1].toUpperCase()!==embeddedKeyId) throw new Error('MINISIGN_KEY_ID_MISMATCH');
+const fingerprint=createHash('sha256').update(publicBytes).digest('hex');
+const compromisedLegacyFingerprint='aa6fb45ab082ef39279e841dc40b0f85e5b33f23746f77557b6f93e3e72c2c06';
+if (fingerprint===compromisedLegacyFingerprint) throw new Error('COMPROMISED_LEGACY_KEY_FORBIDDEN');
 const overlay = {
   version,
   identifier: stable.identifier,
@@ -68,7 +73,6 @@ const overlay = {
   }}
 };
 writeFileSync(output,JSON.stringify(overlay,null,2)+'\n',{flag:'wx',mode:0o600});
-const fingerprint=createHash('sha256').update(publicBytes).digest('hex');
 process.stdout.write('ROTATED_UPDATER_OVERLAY_READY=PASS\n');
 process.stdout.write('PUBLIC_KEY_SHA256='+fingerprint+'\n');
 process.stdout.write('STABLE_FEED_PINNED=PASS\n');
