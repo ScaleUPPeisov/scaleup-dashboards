@@ -24,7 +24,7 @@ export async function discoverScheduledVideos(token,channelId,fetchImpl=fetch,no
  const playlistId=channel.contentDetails?.relatedPlaylists?.uploads;
  if(typeof playlistId!=='string'||!playlistId)
    return {status:'UPLOADS_NOT_AVAILABLE',complete:false,scanned:0,videos:[]};
- let pageToken='',scanned=0,hasMore=false;
+ let pageToken='',scanned=0,hasMore=false,unavailableVideos=0;
  const found=new Map();
  for(let page=0;page<LIMIT_PAGES;page++){
    const query={part:'contentDetails',playlistId,maxResults:'50'};
@@ -37,6 +37,8 @@ export async function discoverScheduledVideos(token,channelId,fetchImpl=fetch,no
      const response=await youtubeGet('videos',{
        part:'status,snippet',id:ids.join(','),maxResults:'50'
      },token,fetchImpl);
+     const returned=new Set((response.items||[]).map(item=>item.id));
+     unavailableVideos+=ids.filter(id=>!returned.has(id)).length;
      for(const video of response.items||[]){
        if(!ids.includes(video.id)||video.snippet?.channelId!==channelId ||
           video.status?.privacyStatus!=='private')continue;
@@ -49,7 +51,7 @@ export async function discoverScheduledVideos(token,channelId,fetchImpl=fetch,no
    hasMore=Boolean(pageToken);
    if(!hasMore)break;
  }
- const complete=!hasMore, videos=[...found.values()].sort((a,b)=>
+ const complete=!hasMore&&unavailableVideos===0, videos=[...found.values()].sort((a,b)=>
    a.publishAt.localeCompare(b.publishAt));
  return {status:complete?'COMPLETE':'PARTIAL',complete,scanned,videos};
 }
