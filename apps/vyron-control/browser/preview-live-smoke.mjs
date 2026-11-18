@@ -40,19 +40,6 @@ assert.equal(scheduleDenied.data.reason,'oauth_not_configured',
 assert.ok(before.data.channels.every(ch=>ch.scheduledContentDays===null),
   'No OAuth means no manufactured confirmed YouTube schedule');
 const at=new Date().toISOString();
-// Only QA fixtures: confirm an absent channel is soft-archived, never deleted.
-const all=Array.from({length:33},(_,i)=>({id:id(i),name:'Preview QA channel '+i}));
-const registry=channels=>({deviceId:'mac_test_preview',total:channels.length,
-  complete:true,generatedAt:new Date().toISOString(),channels});
-const a=await call('/api/agent/channels','POST',registry(all),agent);
-assert.equal(a.status,200);
-assert.equal(a.data.channelPresence.accepted,true);
-const b=await call('/api/agent/channels','POST',registry(all.slice(0,32)),agent);
-assert.equal(b.status,200);
-assert.equal(b.data.channelPresence.archived,1);
-const archived=await call('/api/status');
-assert.equal(archived.data.channels.length,33,'soft-archived channel stays in D1');
-assert.ok(archived.data.channels.find(x=>x.id===id(32)).archivedAt);
 // Both secret puts are independent Cloudflare deployment transitions.
 let beat;
 for(let i=0;i<45;i++){
@@ -66,6 +53,20 @@ for(let i=0;i<45;i++){
   await new Promise(resolve=>setTimeout(resolve,1000));
 }
 assert.equal(beat.status,200,'Preview Mac agent secret not yet active');
+
+// Only QA fixtures: confirm an absent channel is soft-archived, never deleted.
+const all=Array.from({length:33},(_,i)=>({id:id(i),name:'Preview QA channel '+i}));
+const registry=channels=>({deviceId:'mac_test_preview',total:channels.length,
+  complete:true,generatedAt:new Date().toISOString(),channels});
+const a=await call('/api/agent/channels','POST',registry(all),agent);
+assert.equal(a.status,200);
+assert.equal(a.data.channelPresence.accepted,true);
+const b=await call('/api/agent/channels','POST',registry(all.slice(0,32)),agent);
+assert.equal(b.status,200);
+assert.equal(b.data.channelPresence.archived,1);
+const archived=await call('/api/status');
+assert.equal(archived.data.channels.length,33,'soft-archived channel stays in D1');
+assert.ok(archived.data.channels.find(x=>x.id===id(32)).archivedAt);
 const status=await call('/api/status');
 assert.equal(status.data.devices.length,1);
 assert.equal(status.data.devices[0].status.agentVersion,'preview-qa');
