@@ -94,15 +94,29 @@ try{
  // install can create the new cache before activate removes the old one.
  // Do not assert an activation side effect at install time.
  await page.waitForFunction(async()=>{
-   const keys=await caches.keys();
-   return keys.includes('vyron-peisov-yt-shell-v11') &&
-     !keys.includes('vyron-peisov-yt-shell-v10') &&
-     (await navigator.serviceWorker.getRegistration())?.active?.scriptURL?.endsWith('/service-worker.js');
+   const reg=await navigator.serviceWorker.getRegistration();
+   if(!reg?.active)return false;
+   return await new Promise(resolve=>{
+     const channel=new MessageChannel();
+     const timeout=setTimeout(()=>resolve(false),550);
+     channel.port1.onmessage=event=>{
+       clearTimeout(timeout);
+       resolve(event.data?.cacheName==='vyron-peisov-yt-shell-v11'&&event.data?.complete===true);
+     };
+     reg.active.postMessage({type:'VYRON_PWA_VERSION_PROBE'},[channel.port2]);
+   });
  },undefined,{timeout:30000});
  assert.equal(await page.evaluate(()=>sessionStorage.getItem('vyron-control-access')),
    'QA_SYNTHETIC_ONLY','PWA update must not clear auth session');
- const cacheKeys=await page.evaluate(()=>caches.keys());
- assert.ok(cacheKeys.includes('vyron-peisov-yt-shell-v11'),'new PWA shell must remain cached');
+ const activeCache=await page.evaluate(async()=>{
+   const reg=await navigator.serviceWorker.getRegistration();
+   return await new Promise(resolve=>{
+     const channel=new MessageChannel();
+     channel.port1.onmessage=e=>resolve(e.data?.cacheName);
+     reg.active.postMessage({type:'VYRON_PWA_VERSION_PROBE'},[channel.port2]);
+   });
+ });
+ assert.equal(activeCache,'vyron-peisov-yt-shell-v11','new Service Worker must actually be active');
  // Another request from the retiring worker may transiently recreate the old
  // public shell cache after activate. Its presence is not an active-version signal.
  // Service Worker activation and new cache are the actual update gate.
