@@ -26,8 +26,10 @@ describe('VYRON 6.1.17 lightweight Production contracts',()=>{
 
   it('does not load batch history for Materials',()=>{
     const manager=read('src/ProductionManager.tsx');
-    expect(manager).toContain("async function refreshState(loadHistory=view!=='materials')");
-    expect(manager).toContain('if(!loadHistory){setBatches([]);return}');
+    expect(manager).toContain('async function refreshState(loadHistory=false)');
+    expect(manager).toContain('if(!loadHistory)return;');
+    expect(manager).toContain('ЗАГРУЗИТЬ ИСТОРИЮ');
+    expect(manager).not.toContain('void refreshState(view!==');
   });
 
   it('uses cached inventory and targeted watcher/reconnect scans',()=>{
