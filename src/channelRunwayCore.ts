@@ -6,12 +6,17 @@ export const RUNWAY_PLAN_THRESHOLD_DAYS=45;
 
 export type ChannelRunwayStatus='large'|'plan'|'prepare'|'urgent'|'ended'|'no-data';
 export type ChannelRunwayPriority='low'|'normal'|'high'|'critical'|'unknown';
+export type RunwayDataState='CONFIRMED_SCHEDULE'|'CONFIRMED_EMPTY'|'PARTIAL_DATA'|'STALE_CACHE'|'AUTH_REQUIRED'|'API_FAILED'|'UNKNOWN';
+export const RUNWAY_EVIDENCE_TTL_MS=6*60*60*1000;
+export const confirmedRunway=(state?:RunwayDataState)=>state==='CONFIRMED_SCHEDULE'||state==='CONFIRMED_EMPTY';
 
 export type ChannelRunwayRecord={
   channelId:string;
   channelName:string;
   scheduledUntil?:string;
   scheduledVideoCount:number;
+  dataState?:RunwayDataState;
+  lastRefreshError?:string;
   averagePublishIntervalDays?:number;
   lastScheduleSync?:string;
   lastLocalCalculation:string;
@@ -117,6 +122,7 @@ export function deriveRunwayRecord(
     channelName:channel.name,
     scheduledUntil,
     scheduledVideoCount:scheduled.length,
+    dataState:known?(scheduled.length?'CONFIRMED_SCHEDULE':'CONFIRMED_EMPTY'):'UNKNOWN',
     averagePublishIntervalDays:averageIntervalDays(scheduled),
     lastScheduleSync,
     lastLocalCalculation:now.toISOString(),
@@ -129,12 +135,18 @@ export function deriveRunwayRecord(
 
 export function recalculateRunwayRecord(record:ChannelRunwayRecord,now=new Date()):ChannelRunwayRecord{
   const today=krasnoyarskClock(now).dateKey;
-  const known=record.status!=='no-data'||Boolean(record.lastScheduleSync)||Boolean(record.scheduledUntil);
+  // Legacy zero-day records were not evidence of a fully successful owner sync.
+  const previous=record.dataState||(record.scheduledUntil?'STALE_CACHE':'UNKNOWN');
+  const at=Date.parse(record.lastScheduleSync||'');
+  const stale=confirmedRunway(previous)&&(!Number.isFinite(at)||now.getTime()-at>=RUNWAY_EVIDENCE_TTL_MS);
+  const dataState=stale?'STALE_CACHE':previous;
+  const known=confirmedRunway(dataState);
   const raw=record.scheduledUntil?calendarDaysBetween(today,record.scheduledUntil):undefined;
   const runwayDays=known?(raw===undefined?0:Math.max(0,raw)):undefined;
   const status=runwayStatus(runwayDays,known);
   return{
     ...record,
+    dataState,
     lastLocalCalculation:now.toISOString(),
     runwayDays,
     nextProductionDate:record.scheduledUntil?subtractCalendarDays(record.scheduledUntil,RUNWAY_PLAN_THRESHOLD_DAYS):undefined,
