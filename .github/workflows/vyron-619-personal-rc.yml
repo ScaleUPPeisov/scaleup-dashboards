@@ -1,3 +1,4 @@
+# PR63: retain all Rust acceptance checks; normalize only macOS /var path aliases.
 # Release requires independent key pin, no Apple Developer ID, and must
 # never touch Stable feed or run with a compromised key. Authenticated owner only.
 name: VYRON 6.1.19 private ARM64 owner candidate (never publish)
