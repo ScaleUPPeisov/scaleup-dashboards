@@ -137,6 +137,46 @@ jobs:
           console.log('READ ONLY Production Worker deployment status:',
             JSON.stringify({deploymentId,versionIds,observed:true}));
           NODE
+      - name: Post-release HTTP proof of Neo Glass SHA, seven assets and safe auth rejection
+        shell: bash
+        run: |
+          set -euo pipefail
+          ORIGIN="https://vyron-control.endlume-peisov-3ee6109f.workers.dev"
+          EXPECTED_SHA="72768d85407d4025ef1ea465853808ed2d89099e"
+          health="$(curl --fail --silent --show-error --retry 4 --max-time 20 "$ORIGIN/api/health")"
+          manifest="$(curl --fail --silent --show-error --retry 4 --max-time 20 "$ORIGIN/build-info.json")"
+          HEALTH_JSON="$health" MANIFEST_JSON="$manifest" EXPECTED_SHA="$EXPECTED_SHA" node --input-type=module <<'NODE'
+          const health=JSON.parse(process.env.HEALTH_JSON||'{}');
+          const manifest=JSON.parse(process.env.MANIFEST_JSON||'{}');
+          if(!health.ok||!health.d1?.schema||health.d1.expectedTables!==22||
+             health.d1.presentTables!==22)
+            throw Error('Production Worker/D1 22 table health mismatch');
+          if(manifest.gitSha!==process.env.EXPECTED_SHA||
+             manifest.algorithm!=='sha256'||Object.keys(manifest.assets||{}).length!==7)
+            throw Error('Production Neo Glass source SHA / asset manifest mismatch');
+          console.log('PASS LIVE PRODUCTION: Neo Glass SHA',
+            manifest.gitSha,'7 signed SHA256 asset checksums, D1 22/22.');
+          NODE
+          status_code="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 20 "$ORIGIN/api/status")"
+          test "$status_code" = 401 || { echo "::error::Private status API must reject unauthenticated clients"; exit 1; }
+          for path in / /app.js /neo-glass.css /manifest.webmanifest /service-worker.js; do
+            curl --fail --silent --show-error --max-time 20 --output /dev/null "$ORIGIN$path"
+          done
+          echo "PASS LIVE PRODUCTION: Neo Glass HTML, JS, CSS, PWA manifest, SW and 401 owner gate."
+      - name: Post-release read-only D1 core data preservation
+        shell: bash
+        run: |
+          set -euo pipefail
+          raw="$(npx --yes wrangler@4.102.0 d1 execute vyron-control --remote -c cloudflare/wrangler.jsonc --json --command "SELECT 'channels' k,COUNT(*) n FROM channels; SELECT 'oauth' k,COUNT(*) n FROM google_oauth_profiles; SELECT 'analytics_48h' k,COUNT(*) n FROM channel_analytics WHERE julianday(captured_at)>=julianday('now','-2 days'); SELECT 'reports_48h' k,COUNT(*) n FROM channel_analytics_reports WHERE julianday(captured_at)>=julianday('now','-2 days'); SELECT 'mac_24h' k,COUNT(*) n FROM devices WHERE julianday(last_seen_at)>=julianday('now','-1 day');")"
+          RAW="$raw" node --input-type=module <<'NODE'
+          const o=JSON.parse(process.env.RAW||'[]');
+          const counts=Object.fromEntries(o.flatMap(x=>x.results||[]).map(x=>[x.k,Number(x.n)]));
+          if(counts.channels!==33||counts.oauth!==31||
+             counts.analytics_48h<31||counts.reports_48h<31)
+            throw Error('Real Production D1 channel/OAuth/Analytics counts have regressed');
+          console.log('PASS LIVE PRODUCTION D1:',JSON.stringify(counts));
+          console.log('Physical Mac heartbeat and iPhone Push delivery are NOT inferred from these counts.');
+          NODE
       - name: Confirm no production mutation
         if: always()
         run: echo "READ-ONLY AUDIT ONLY — no deploy, no migration, no UPDATE/INSERT/DELETE."
