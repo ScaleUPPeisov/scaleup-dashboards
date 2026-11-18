@@ -2,11 +2,11 @@
   "action": "deploy",
   "application": "VYRON PEISOV YT",
   "release_ref": "release/vyron-control-production",
-  "release_sha": "76168b8524b68287762c29223c9e6870e9d5c9ca",
+  "release_sha": "874799dfe0c46592dc3c387f33ddbcb975249972",
   "one_time": true,
-  "approval_id": "vyron-integration-hotfix-6-20261118-76168b8524b6",
+  "approval_id": "vyron-emergency-hotfix-8-20261118-874799dfe0c4",
   "authorized_by": "user instruction in current conversation",
   "requested_on": "2026-11-18",
-  "purpose": "necessary hotfix: signed Mac Bridge installer, accurate Production Studio sync, Google OAuth buttons, iPhone PWA Service Worker reliability",
-  "scope": "additive existing D1 22 tables; do not touch VYRON 6.1.15; no synthetic device status"
+  "purpose": "Emergency Hotfix 8.0: secure persistent iPhone PWA login, CSRF, session revocation, atomic Service Worker cache and boot recovery",
+  "scope": "Apply additive D1 0012 channel thumbnails + 0013 device_sessions; preserve 33 YouTube channels, 31 OAuth profiles, analytics and desktop VYRON/ENDLUME"
 }
