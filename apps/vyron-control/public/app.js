@@ -2,6 +2,7 @@ import {decryptVyronMigration} from './migration-crypto.js';
 import {compactProgressEvents} from './event-utils.mjs';
 import {renderNeoGlass,selectNeoChannel,wireNeoGlass} from './neo-glass.mjs';
 import {analyticsDateWindow,analyticsWindowCoverage} from './analytics-window.mjs';
+import {summarizeConnection,inspectPwaVersion,inspectPushSubscription} from './diagnostics.mjs';
 
 const $ = id => document.getElementById(id);
 const number = value => value === null || value === undefined ? '—' : new Intl.NumberFormat('ru-RU').format(value);
@@ -1168,6 +1169,47 @@ $('push-test').addEventListener('click',async()=>{
       :'Проверка запущена. Доставка пока не подтверждена; проверь журнал и разрешения.';
   }catch(error){msg.textContent='Тест Push: '+error.message;}
   finally{button.disabled=false;}
+});
+
+function deviceDiagnosticsButton(buttonId,resultId,operation){
+  const button=$(buttonId),output=$(resultId);
+  button.addEventListener('click',async()=>{
+    button.disabled=true;
+    output.textContent='Проверяем…';
+    try{output.textContent=await operation();}
+    catch(error){
+      // A network exception is a failed test, never a success.
+      output.textContent='BLOCKED: '+(error?.message||'нет доступа');
+    }finally{button.disabled=false;}
+  });
+}
+deviceDiagnosticsButton('diag-connectivity','diag-connectivity-result',async()=>{
+  const response=await fetch('/api/health',{cache:'no-store'});
+  const health=await response.json().catch(()=>({}));
+  if(!response.ok||!health.ok)return 'FAIL: Worker / D1 не отвечает корректно';
+  const status=await api('/api/status');
+  const report=summarizeConnection(health,status);
+  return (report.ok?'PASS облака: ':'FAIL: ')+report.message+
+    '. Проверка Mac online требует сигнала с физического устройства.';
+});
+deviceDiagnosticsButton('diag-version','diag-version-result',async()=>{
+  const outcome=await inspectPwaVersion({
+    serviceWorker:navigator.serviceWorker,cachesApi:window.caches,fetchImpl:fetch
+  });
+  return outcome.state+': '+outcome.message+
+    ' · авторизация остаётся в текущей сессии браузера';
+});
+deviceDiagnosticsButton('diag-notification','diag-notification-result',async()=>{
+  const probe=await inspectPushSubscription({
+    serviceWorker:navigator.serviceWorker,NotificationClass:window.Notification
+  });
+  if(!probe.ready)return 'BLOCKED: '+probe.reason+
+    '. На iPhone открой установленную PWA с экрана «Домой» и включи уведомления в System.';
+  const result=await api('/api/push/test','POST',{});
+  return result.sent>0
+    ?'GATEWAY ACCEPTED: сервер принял отправку теста ('+result.sent+
+      '). Проверь баннер на физическом iPhone — доставка устройству не подтверждена.'
+    :'BLOCKED: сервер не подтвердил отправку Push. Проверь VAPID и настройки iOS.';
 });
 $('push-disable').addEventListener('click',async()=>{
   const msg=$('push-message'),button=$('push-disable');
