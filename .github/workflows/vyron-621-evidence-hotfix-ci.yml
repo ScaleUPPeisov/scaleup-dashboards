@@ -1,0 +1,61 @@
+name: VYRON 6.1.21 owner evidence and quota regression gates
+
+on:
+  push:
+    branches:
+      - fix/vyron-621-owner-evidence-truth-20261118
+    paths:
+      - .github/workflows/vyron-621-evidence-hotfix-ci.yml
+      - src/youtubeOwnerInventory.ts
+      - src/channelRunwayCore.ts
+      - src/channelRunwayStore.ts
+      - src/ChannelRunway.tsx
+      - src/v610ChannelRunwayFleetRefresh.test.ts
+      - src-tauri/src/youtube.rs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    name: 33-channel evidence, quota, all frontend and TypeScript
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Verify no production updater config or bundle identity modifications
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          node -e "const c=require('./src-tauri/tauri.conf.json');if(c.version!=='6.1.15'||c.identifier!=='studio.channelflow.desktop')process.exit(1)"
+          echo "VYRON_621_STABLE_IDENTITY=UNCHANGED"
+      - run: npm ci --no-audit --no-fund
+      - name: Targeted 6.1.21 evidence regressions
+        run: npx vitest run src/v610ChannelRunwayFleetRefresh.test.ts src/channelRunway.test.ts src/vyron620FleetRunwayVisualSafety.test.ts src/v611ChannelRunwayInventoryHotfix.test.ts
+      - name: Entire frontend regression suite
+        run: npx vitest run
+      - name: TypeScript and production frontend
+        run: npm run build
+  rust:
+    name: Rust native YouTube owner inventory and quota
+    runs-on: macos-15
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+      - name: Entire Rust library test suite
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
