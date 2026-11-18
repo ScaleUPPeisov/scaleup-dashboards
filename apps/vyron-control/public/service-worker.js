@@ -4,23 +4,26 @@ const SHELL_ASSETS=['/','/styles.css','/neo-glass.css','/app.js','/recovery.js',
  '/neo-glass.mjs','/insights-core.mjs','/analytics-window.mjs','/diagnostics.mjs',
  '/migration-crypto.js','/event-utils.mjs','/manifest.webmanifest','/icon.svg'];
 async function populateShell(cache){
- const all=await Promise.all(SHELL_ASSETS.map(async path=>{
-  const response=await fetch(new Request(path,{cache:'reload'}));
-  const contentType=response.headers.get('Content-Type')||'';
-  if(!response.ok||
-   (/\.(?:mjs|js)$/.test(path)&&!/javascript|ecmascript/i.test(contentType))||
-   (/\.css$/.test(path)&&!/text\/css/i.test(contentType))||
-   (path==='/'&&!/text\/html/i.test(contentType)))
-    throw Error('Unexpected asset '+path);
-  return {path,response};
- }));
- await Promise.all(all.map(({path,response})=>cache.put(path,response)));
+ // Cache.addAll has the proven SW install fetch semantics in Chromium/WebKit.
+ // Verify the entire coherent generation BEFORE activating; never mix versions.
+ await cache.addAll(SHELL_ASSETS);
+ const cached=await Promise.all(SHELL_ASSETS.map(async path=>({
+   path,response:await cache.match(path)
+ })));
+ for(const {path,response} of cached){
+  const type=response?.headers.get('Content-Type')||'';
+  if(!response?.ok||
+   (/\.(?:mjs|js)$/.test(path)&&!/javascript|ecmascript/i.test(type))||
+   (/\.css$/.test(path)&&!/text\/css/i.test(type))||
+   (path==='/'&&!/text\/html/i.test(type)))
+    throw Error('Invalid installed asset '+path);
+ }
 }
 self.addEventListener('install',event=>{
  event.waitUntil((async()=>{
   const cache=await caches.open(SHELL_CACHE);
   try{await populateShell(cache);await self.skipWaiting();}
-  catch(e){await caches.delete(SHELL_CACHE);throw e;}
+  catch(e){console.error('VYRON_PWA_INSTALL_FAILED',String(e?.message||'unknown'));await caches.delete(SHELL_CACHE);throw e;}
  })());
 });
 self.addEventListener('activate',event=>{
