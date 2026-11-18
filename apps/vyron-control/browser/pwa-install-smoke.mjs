@@ -99,6 +99,16 @@ try{
   assert.deepEqual(errors,[]);
   console.log('PASS WebKit browser: one-time login, HttpOnly cookie, close/reopen without secret, no JS exceptions. Native iOS SW/Push UNVERIFIED.');
  }else{
+  await page.waitForTimeout(1200);
+  const swDebug=await page.evaluate(async()=>{
+    const r=await navigator.serviceWorker?.getRegistration();
+    return {
+      secure:window.isSecureContext,supported:'serviceWorker' in navigator,
+      installing:r?.installing?.state||null,waiting:r?.waiting?.state||null,
+      active:r?.active?.state||null,scope:r?.scope||null,cacheKeys:await caches.keys()
+    };
+  });
+  console.log('PWA Chromium registration diagnostic:',JSON.stringify(swDebug));
   await page.waitForFunction(async()=>(await caches.keys()).includes('vyron-peisov-yt-shell-v13'),
    null,{timeout:20000});
   await page.waitForFunction(()=>Boolean(navigator.serviceWorker?.controller),
