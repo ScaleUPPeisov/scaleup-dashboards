@@ -19,6 +19,7 @@ export type ChannelRunwayRecord={
   // v2 means this record came from a source whose schedule coverage was checked.
   // Legacy zeroes without this proof cannot claim CONFIRMED_EMPTY.
   inventoryEvidenceVersion?:2;
+  lastRefreshAttemptAt?:string;
   lastRefreshError?:string;
   averagePublishIntervalDays?:number;
   lastScheduleSync?:string;
