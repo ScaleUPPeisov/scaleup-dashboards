@@ -9,6 +9,7 @@ import {receiveProduction,getProductionStatus} from './production.mjs';
 import {readNotificationCenter,writePrefs,markRead} from './notifications.mjs';
 import {detectOfflineMac} from './alert-probes.mjs';
 import {derivePublic24hSnapshots} from './snapshot-windows.mjs';
+import {analyticsSyncStatus} from './channel-health.mjs';
 import {refreshDueYouTubeSchedules,scheduledContentDays} from './youtube-schedule.mjs';
 
 const REQUIRED_TOKEN_LENGTH = 32;
@@ -139,6 +140,7 @@ async function fetchStatus(env) {
       a.daily_json AS analytics_daily_json,
       r.reports_json AS analytics_reports_json,
       o.channel_id IS NOT NULL AS analytics_authorized,
+      o.last_error AS oauth_last_error,
       p.archived_at AS archived_at,
       ys.status AS schedule_status,ys.complete AS schedule_complete,
       ys.confirmed_json AS schedule_json,ys.scanned_count AS schedule_scanned,
@@ -195,6 +197,7 @@ async function fetchStatus(env) {
     previousSubscribers:number(row.previous_subscribers),
     updatedAt:row.updated_at,
     analyticsAuthorized:row.analytics_authorized===1,
+    analyticsSyncStatus:analyticsSyncStatus(row,now),
     analytics:row.analytics_captured_at?{
       periodDays:row.analytics_period_days,
       views:number(row.analytics_views),
