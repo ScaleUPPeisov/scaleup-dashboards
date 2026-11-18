@@ -60,8 +60,19 @@ try{
  await page.waitForFunction(async()=>(
    (await caches.keys()).includes('vyron-peisov-yt-shell-v10')
  ),{timeout:20000});
- await page.waitForFunction(()=>Boolean(navigator.serviceWorker?.controller),
-   undefined,{timeout:20000});
+ if(engine==='webkit'){
+   // WebKit headless can have a registered active SW without claiming a tab.
+   // Verify that offline shell bytes exist; real Home Screen control still
+   // requires physical Safari confirmation.
+   const ready=await page.evaluate(async()=>{
+     const reg=await navigator.serviceWorker.getRegistration();
+     return Boolean(reg?.active);
+   });
+   assert.equal(ready,true,'WebKit must register an active Service Worker');
+ }else{
+   await page.waitForFunction(()=>Boolean(navigator.serviceWorker?.controller),
+     undefined,{timeout:20000});
+ }
  const local=await page.evaluate(async()=>({
   cached:await caches.keys(),
   apiCached:await Promise.all((await caches.keys()).map(async key=>
@@ -91,32 +102,41 @@ try{
  await page.evaluate(()=>{
    void navigator.serviceWorker.getRegistration().then(reg=>reg.update());
  });
- // install can create the new cache before activate removes the old one.
- // Do not assert an activation side effect at install time.
- await page.waitForFunction(async()=>{
-   const reg=await navigator.serviceWorker.getRegistration();
-   if(!reg?.active)return false;
-   return await new Promise(resolve=>{
-     const channel=new MessageChannel();
-     const timeout=setTimeout(()=>resolve(false),550);
-     channel.port1.onmessage=event=>{
-       clearTimeout(timeout);
-       resolve(event.data?.cacheName==='vyron-peisov-yt-shell-v11'&&event.data?.complete===true);
-     };
-     reg.active.postMessage({type:'VYRON_PWA_VERSION_PROBE'},[channel.port2]);
-   });
- },undefined,{timeout:30000});
+ // Sequential, bounded handshakes prevent concurrent requestAnimationFrame
+ // polling from mixing retiring and newly active Service Worker responses.
+ const upgraded=await page.evaluate(async()=>{
+   const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+   const probe=async()=>{
+     const reg=await navigator.serviceWorker.getRegistration();
+     if(!reg?.active)return {name:null,complete:false};
+     return new Promise(resolve=>{
+       const channel=new MessageChannel();
+       const timeout=setTimeout(()=>resolve({name:'timeout',complete:false}),800);
+       channel.port1.onmessage=e=>{
+         clearTimeout(timeout);
+         resolve({name:e.data?.cacheName,complete:e.data?.complete===true});
+       };
+       reg.active.postMessage({type:'VYRON_PWA_VERSION_PROBE'},[channel.port2]);
+     });
+   };
+   let last={name:'not_started',complete:false};
+   for(let attempt=0;attempt<50;attempt++){
+     last=await probe();
+     if(last.name==='vyron-peisov-yt-shell-v11'&&last.complete){
+       await delay(150);
+       const again=await probe();
+       if(again.name==='vyron-peisov-yt-shell-v11'&&again.complete)
+         return {ok:true,cacheName:again.name};
+       last=again;
+     }
+     await delay(200);
+   }
+   return {ok:false,last};
+ });
+ assert.deepEqual(upgraded,{ok:true,cacheName:'vyron-peisov-yt-shell-v11'},
+   'new Service Worker must be stably active');
  assert.equal(await page.evaluate(()=>sessionStorage.getItem('vyron-control-access')),
    'QA_SYNTHETIC_ONLY','PWA update must not clear auth session');
- const activeCache=await page.evaluate(async()=>{
-   const reg=await navigator.serviceWorker.getRegistration();
-   return await new Promise(resolve=>{
-     const channel=new MessageChannel();
-     channel.port1.onmessage=e=>resolve(e.data?.cacheName);
-     reg.active.postMessage({type:'VYRON_PWA_VERSION_PROBE'},[channel.port2]);
-   });
- });
- assert.equal(activeCache,'vyron-peisov-yt-shell-v11','new Service Worker must actually be active');
  // Another request from the retiring worker may transiently recreate the old
  // public shell cache after activate. Its presence is not an active-version signal.
  // Service Worker activation and new cache are the actual update gate.

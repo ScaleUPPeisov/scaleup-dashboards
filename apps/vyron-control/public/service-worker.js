@@ -3,10 +3,11 @@ const SHELL_CACHE='vyron-peisov-yt-shell-v10';
 const SHELL_ASSETS=['/','/styles.css','/neo-glass.css','/app.js','/neo-glass.mjs','/insights-core.mjs','/analytics-window.mjs','/diagnostics.mjs','/migration-crypto.js','/event-utils.mjs','/manifest.webmanifest','/icon.svg'];
 
 self.addEventListener('install',event=>{
+  // Never activate a new worker with an incomplete offline shell. Otherwise
+  // WebKit may discard the new version and revert to its previous controller.
   event.waitUntil(caches.open(SHELL_CACHE)
     .then(cache=>cache.addAll(SHELL_ASSETS))
-    .catch(()=>{}));
-  self.skipWaiting();
+    .then(()=>self.skipWaiting()));
 });
 self.addEventListener('activate',event=>{
   event.waitUntil(caches.keys().then(keys=>Promise.all(
