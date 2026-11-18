@@ -1,6 +1,6 @@
 import {useApp} from './store';
 import {scanAllInventories,useLiveInventory} from './renderInventoryRuntime';
-import {refreshOwnerInventoriesAuthoritative,type OwnerInventoryRefreshSummary} from './youtubeOwnerInventory';
+import {refreshOwnerInventoriesAuthoritative,type OwnerInventoryFleetProgress,type OwnerInventoryRefreshSummary} from './youtubeOwnerInventory';
 import {refreshYoutubeChannelStatisticsSelection,type ChannelStatisticsRefreshSummary} from './youtubeChannelStatsRuntime';
 import {youtubeQuotaUsage} from './youtubeQuota';
 import {recalculateChannelRunway} from './channelRunwayStore';
@@ -36,7 +36,7 @@ function localSummary():FullChannelRefreshLocalSummary{
   };
 }
 
-export async function refreshAllChannelData(channelIds:string[]):Promise<FullChannelRefreshSummary>{
+export async function refreshAllChannelData(channelIds:string[],onProgress?:(progress:OwnerInventoryFleetProgress)=>void):Promise<FullChannelRefreshSummary>{
   const errors:string[]=[];
   const quotaBefore=youtubeQuotaUsage().used;
   const enabled=useApp.getState().channels.filter(c=>c.enabled!==false);
@@ -59,7 +59,21 @@ export async function refreshAllChannelData(channelIds:string[]):Promise<FullCha
   try{
     // Owner inventory is the authoritative source for future publishAt / Scheduled.
     // It intentionally runs after the stats batch to avoid overlapping YouTube API traffic.
-    owner=await refreshOwnerInventoriesAuthoritative(requested,true);
+    const now=Date.now(),history=useApp.getState().uploadHistory;
+    // The full-fleet button must supply the same verified YouTube IDs that
+    // per-channel manual refresh supplies. These are hydrated by native
+    // videos.list against the exact authenticated owner Channel ID.
+    const knownByChannel:Record<string,string[]>={};
+    for(const channel of requested){
+      knownByChannel[channel.id]=[...new Set(history.filter(v=>
+        v.channelId===channel.id&&v.status==='UPLOADED'&&
+        (!v.youtubeChannelId||v.youtubeChannelId===channel.youtubeChannelId)&&
+        (!v.profileId||v.profileId===channel.youtubeProfileId)&&
+        Boolean(v.publishAt)&&Date.parse(v.publishAt!)>now)
+        .sort((a,b)=>Date.parse(b.publishAt!)-Date.parse(a.publishAt!))
+        .map(v=>v.youtubeVideoId).filter(id=>/^[A-Za-z0-9_-]{11}$/.test(id)))].slice(0,50);
+    }
+    owner=await refreshOwnerInventoriesAuthoritative(requested,true,undefined,knownByChannel,onProgress);
   }catch(error){
     errors.push('YOUTUBE_OWNER_INVENTORY: '+String(error));
   }
