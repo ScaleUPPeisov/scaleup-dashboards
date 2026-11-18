@@ -1282,7 +1282,7 @@ test('Mac production snapshots are authenticated, idempotent and retain last goo
   assert.equal(state.production.items.length,1);
   assert.equal(state.production.items[0].scheduleSource,'MAC_LOCAL_UNVERIFIED');
   assert.equal(state.production.confirmedYouTubeSchedule,false);
-  assert.equal(state.channels[0].scheduledContentDays,undefined);
+  assert.equal(state.channels[0].scheduledContentDays,null);
   const repeated=await cloud.fetch(req('/api/agent/production',agent,'POST',make([job])),e);
   assert.equal(repeated.status,200);
   assert.equal(e.DB.native.prepare('SELECT count(*) n FROM production_jobs').get().n,1);
