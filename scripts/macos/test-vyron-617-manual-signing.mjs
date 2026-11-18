@@ -29,4 +29,20 @@ test('new signer and notarization have independent trust, hard failure, and no o
   assert.match(workflow,/stable_feed=UNCHANGED/);
   assert.match(workflow,/owner_migration=NOT_TESTED/);
   assert.match(workflow,/release=BLOCKED_UNTIL_TRUSTED_BOOTSTRAP_AND_APPROVAL/);
+  assert.match(workflow,/finalize-vyron-617-gui-candidate.sh/);
+});
+test('GUI bootstrap contains notarized app and re-signed Tauri update without production publication',()=>{
+  const script=readFileSync(fileURLToPath(new URL('./finalize-vyron-617-gui-candidate.sh',import.meta.url)),'utf8');
+  const posStapled=script.indexOf('xcrun stapler validate "$APP"');
+  const posRepack=script.indexOf('COPYFILE_DISABLE=1 tar -czf "$ARCHIVE"');
+  const posResign=script.indexOf('npx tauri signer sign --app-version 6.1.17 "$ARCHIVE"');
+  assert.ok(posStapled>=0&&posStapled<posRepack&&posRepack<posResign,'ticket must exist before update archive signing');
+  for(const term of ['studio.channelflow.desktop','minisign -Vm','VYRON.app','hdiutil create','ln -s /Applications',
+    'xcrun notarytool submit "$DMG"','xcrun stapler validate "$DMG"',
+    'spctl --assess --type open','gui_bootstrap=BUILT_NOT_PUBLISHED']){
+    assert.ok(script.includes(term),'MISSING_GUI_BRIDGE_GATE: '+term);
+  }
+  assert.doesNotMatch(script,/gh release|git push|curl.*sh|spctl --master-disable|xattr -dr/);
+  assert.match(workflow,/VYRON617-SIGNED-RC-EVIDENCE-ONLY/);
+  assert.doesNotMatch(workflow,/upload-artifact@v4\s*\n\s*with:\s*\n\s*name: .*\.dmg/);
 });

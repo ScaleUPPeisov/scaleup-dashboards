@@ -66,6 +66,7 @@ jobs:
         run: |
           node --test scripts/macos/test-vyron-rotated-updater.mjs
           node --test scripts/macos/test-vyron-617-rotated-public-key.mjs
+          bash -n scripts/macos/finalize-vyron-617-gui-candidate.sh
           node --test scripts/macos/test-vyron-617-manual-signing.mjs
       - name: Python safety tests
         run: |
