@@ -272,9 +272,14 @@ jobs:
           set -euo pipefail
           umask 077
           BACKUP="$(mktemp /tmp/vyron-d1-before-migration-XXXXXXXX.sql)"
-          trap 'shred -u "$BACKUP" 2>/dev/null || rm -f "$BACKUP"' EXIT
-          # Remote D1 export contains OAuth credentials: never upload or print SQL.
-          npx --yes wrangler@4.102.0 d1 export vyron-control --remote --skip-confirmation -c cloudflare/wrangler.jsonc --output="$BACKUP"
+          PRIVATE_EXPORT_LOG="$(mktemp /tmp/vyron-d1-export-XXXXXXXX.log)"
+          trap 'shred -u "$BACKUP" "$PRIVATE_EXPORT_LOG" 2>/dev/null || rm -f "$BACKUP" "$PRIVATE_EXPORT_LOG"' EXIT
+          # Wrangler emits a temporary signed full-DB download URL in its output.
+          # The export contains OAuth data: NEVER print/upload stdout, stderr or SQL.
+          if ! npx --yes wrangler@4.102.0 d1 export vyron-control --remote --skip-confirmation -c cloudflare/wrangler.jsonc --output="$BACKUP" >"$PRIVATE_EXPORT_LOG" 2>&1; then
+            echo "::error::D1 SQL export failed; sensitive export logs intentionally suppressed."
+            exit 1
+          fi
           D1_BACKUP_PATH="$BACKUP" node --input-type=module <<'NODE'
           import {readFile,stat} from 'node:fs/promises';
           import {createHash} from 'node:crypto';
