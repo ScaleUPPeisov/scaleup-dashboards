@@ -34,3 +34,20 @@ test('invalid progress and private paths never escape',()=>{
   assert.equal(result.items[0].title,'Secret  title');
   assert.ok(!JSON.stringify(result).includes('token'));
 });
+
+
+test('ENDLUME render percent is never inferred from the YouTube upload progress field',()=>{
+  const youtube='UC'+'y'.repeat(22);
+  const state={channels:[{id:'local',youtubeChannelId:youtube}],jobs:[
+    {id:'render-1',channelId:'local',status:'RENDERING',title:'Render',
+      uploadProgress:75,createdAt:new Date().toISOString()},
+    {id:'upload-1',channelId:'local',status:'UPLOADING',title:'Upload',
+      uploadProgress:75,createdAt:new Date().toISOString()}
+  ]};
+  const result=mirrorProduction(state);
+  assert.equal(result.items.length,2);
+  const rendering=result.items.find(x=>x.status==='RENDERING');
+  const uploading=result.items.find(x=>x.status==='UPLOADING');
+  assert.equal(rendering.progress,null);
+  assert.equal(uploading.progress,75);
+});
