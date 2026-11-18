@@ -1,5 +1,5 @@
 name: VYRON 6.1.18 personal ARM64 DMG (no Apple Developer)
-# Private 6.1.18 owner RC: rebuild after false-zero owner-search/cache fixes; never publish stable.
+# Private 6.1.18 owner RC: rebuild after owner-history ID direct hydration and partial Scheduled UI repair; never publish stable.
 
 on:
   push:
