@@ -3988,6 +3988,15 @@ pub async fn youtube_list_existing_videos(
         .send().await.map_err(|e|format!("YouTube channel: {e}"))?;
     let st=r.status();let cv:Value=r.json().await.map_err(|e|e.to_string())?;
     if !st.is_success(){return Err(youtube_error(&cv,"Не удалось получить канал YouTube"))}
+    // channels.list(mine=true) must resolve to the OAuth owner's exact stored channel.
+    // A different first channel must not silently yield an empty inventory.
+    let actual_channel_id=cv.pointer("/items/0/id").and_then(Value::as_str)
+        .ok_or_else(||"OWNER_CHANNEL_MISSING: YouTube не вернул ID канала OAuth-владельца".to_string())?;
+    let expected_channel_id=profile.channel_id.as_deref().filter(|x|!x.trim().is_empty())
+        .ok_or_else(||"EXPECTED_CHANNEL_MISSING: у OAuth-профиля отсутствует Channel ID".to_string())?;
+    if actual_channel_id!=expected_channel_id {
+        return Err(format!("OWNER_CHANNEL_MISMATCH: OAuth profile channel does not match channels.list(mine=true) ({actual_channel_id})"));
+    }
     let uploads=cv.pointer("/items/0/contentDetails/relatedPlaylists/uploads").and_then(|x|x.as_str())
         .ok_or_else(||"YouTube не вернул playlist загрузок".to_string())?;
 
