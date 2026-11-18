@@ -1,0 +1,42 @@
+name: VYRON live cloud diagnostic READ ONLY
+on:
+  push:
+    branches: [feature/vyron-macos-ultimate]
+    paths: ['.github/workflows/vyron-live-cloud-audit-readonly.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Read live Cloudflare D1 without changes
+        shell: bash
+        working-directory: apps/vyron-control
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          OUT="$RUNNER_TEMP/vyron-audit"
+          mkdir -p "$OUT"
+          SQL="SELECT c.id,c.name,c.updated_at,c.videos AS public_videos,s.status AS schedule_status,s.complete AS schedule_complete,s.scanned_count,s.captured_at,CASE WHEN json_valid(s.confirmed_json) THEN json_array_length(s.confirmed_json) ELSE NULL END AS confirmed_scheduled,cp.device_id,cp.last_seen_at AS mac_presence_at,cp.archived_at FROM channels c LEFT JOIN channel_schedule s ON s.channel_id=c.id LEFT JOIN channel_presence cp ON cp.channel_id=c.id ORDER BY c.name LIMIT 100;"
+          npx --yes wrangler@4.102.0 d1 execute vyron-control --remote -c cloudflare/wrangler.jsonc --json --command "$SQL" > "$OUT/channels.json"
+          SQL="SELECT id AS device_id,last_seen_at,CASE WHEN json_valid(status_json) THEN json_extract(status_json,'$.vyronVersion') ELSE NULL END AS vyron_version,CASE WHEN json_valid(status_json) THEN json_extract(status_json,'$.agentStateSource') ELSE NULL END AS agent_source,CASE WHEN json_valid(status_json) THEN json_extract(status_json,'$.channelsTotal') ELSE NULL END AS channels_total FROM devices ORDER BY last_seen_at DESC LIMIT 10;"
+          npx --yes wrangler@4.102.0 d1 execute vyron-control --remote -c cloudflare/wrangler.jsonc --json --command "$SQL" > "$OUT/devices.json"
+          SQL="SELECT (SELECT COUNT(*) FROM channels) AS channels,(SELECT COUNT(*) FROM google_oauth_profiles) AS cloud_oauth_profiles,(SELECT COUNT(*) FROM channel_schedule) AS schedule_rows,(SELECT COUNT(*) FROM channel_presence WHERE archived_at IS NULL) AS mac_present_channels;"
+          npx --yes wrangler@4.102.0 d1 execute vyron-control --remote -c cloudflare/wrangler.jsonc --json --command "$SQL" > "$OUT/counts.json"
+          echo 'READ_ONLY_QUERY=COMPLETE; no secrets, no MAC SQLite, no deploy'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-CLOUD-LIVE-READONLY-DIAGNOSTICS
+          path: ${{ runner.temp }}/vyron-audit/*.json
+          retention-days: 1
+          if-no-files-found: error
