@@ -142,3 +142,16 @@ test('each missing Google channel has an explicit one-tap OAuth button',()=>{
  assert.ok(app.includes('аккаунт-владелец'));
  assert.ok(!app.includes('Вставьте Google Client Secret'));
 });
+
+// The Mac installer must fail closed on unsigned source or missing CI.
+test('Mac install never executes unsigned code or unpinned npm install',()=>{
+ assert.match(installer,/commit\.commit\?\.verification\?\.verified!==true/);
+ assert.ok(installer.includes('VYRON CONTROL Security Gate'));
+ assert.ok(installer.includes('git -C "$SOURCE_DIR" reset --hard "$NEXT_SHA"'));
+ assert.ok(installer.indexOf("verified Mac Bridge")===-1 || installer.includes('Проверены подпись GitHub'));
+ assert.ok(installer.indexOf('RELEASE_SHA="$NEXT_SHA" node')<
+   installer.indexOf('git -C "$SOURCE_DIR" reset --hard "$NEXT_SHA"'));
+ assert.match(installer,/npm ci --omit=dev --ignore-scripts/);
+ assert.equal(installer.includes('npm install --omit=dev'),false);
+ assert.equal(installer.includes('git clone --depth 1'),false);
+});

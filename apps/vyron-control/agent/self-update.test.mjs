@@ -13,9 +13,10 @@ test('agent only auto-updates reviewed VYRON CONTROL release paths',()=>{
 test('auto-update requires signed SHA and successful release-branch CI',()=>{
  const check=(name,head_sha=sha,conclusion='success',head_branch='release/vyron-control-production')=>
   ({name,head_sha,status:'completed',conclusion,event:'push',head_branch});
- const good={workflow_runs:[check('VYRON CONTROL isolated tests'),check('VYRON Privacy Gate')]};
+ const good={workflow_runs:[check('VYRON CONTROL isolated tests'),check('VYRON Privacy Gate'),check('VYRON CONTROL Security Gate')]};
  assert.equal(verifiedReleaseChecks(good,sha),true);
  assert.equal(verifiedReleaseChecks({workflow_runs:[check('VYRON CONTROL isolated tests')]},sha),false);
+ assert.equal(verifiedReleaseChecks({workflow_runs:[check('VYRON CONTROL isolated tests'),check('VYRON Privacy Gate')]},sha),false);
  assert.equal(verifiedReleaseChecks({workflow_runs:[check('VYRON CONTROL isolated tests'),check('VYRON Privacy Gate',sha,'success','feature/unreviewed')]},sha),false);
  assert.equal(verifiedReleaseChecks({workflow_runs:[check('VYRON CONTROL isolated tests'),check('VYRON Privacy Gate','b'.repeat(40))]},sha),false);
  assert.equal(verifiedSignedReleaseCommit({

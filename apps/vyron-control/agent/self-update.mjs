@@ -6,7 +6,7 @@ import {dirname,join,resolve} from 'node:path';
 const REPO='https://github.com/ScaleUPPeisov/scaleup-dashboards.git';
 const BRANCH='release/vyron-control-production';
 const ROOT=join(homedir(),'.vyron-control-agent','source');
-const CHECKS=new Set(['VYRON CONTROL isolated tests','VYRON Privacy Gate']);
+const CHECKS=new Set(['VYRON CONTROL isolated tests','VYRON Privacy Gate','VYRON CONTROL Security Gate']);
 const SHA=/^[0-9a-f]{40}$/;
 const ALLOWED=/^(apps\/vyron-control\/|\.github\/workflows\/vyron-control[-\w]*\.ya?ml$)/;
 
