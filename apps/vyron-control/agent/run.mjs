@@ -3,6 +3,7 @@ import { MirrorExport } from './mirror.mjs';
 import { readFile,stat } from 'node:fs/promises';
 import {setTimeout as sleep} from 'node:timers/promises';
 import {diagnosticCode} from './retry.mjs';
+import {maybeUpdateAgent} from './self-update.mjs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -47,6 +48,7 @@ const shutdown=()=>{running=false;stop.abort();};
 process.on('SIGTERM',shutdown);
 process.on('SIGINT',shutdown);
 let consecutiveFailures=0;
+let lastReleaseCheckAt=0;
 while(running){
   try {
     if(mirror){
@@ -62,6 +64,14 @@ while(running){
     }
     const results=await bridge.tick();
     consecutiveFailures=0;
+    if(Date.now()-lastReleaseCheckAt>6*3600_000){
+      lastReleaseCheckAt=Date.now();
+      const update=await maybeUpdateAgent();
+      if(update.updated){
+        console.log('Mac bridge verified release installed; restarting launchd agent');
+        process.exit(0); // LaunchAgent KeepAlive reloads reviewed release.
+      }
+    }
     for(const [operation,result] of Object.entries(results||{})){
       if(result?.failed)console.error('Mac bridge '+operation+': '+result.code+
         '; retry scheduled');
