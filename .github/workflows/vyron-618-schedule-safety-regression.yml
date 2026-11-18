@@ -7,6 +7,7 @@ on:
     paths:
       - src/youtubeOwnerInventory.ts
       - src/v611ChannelRunwayInventoryHotfix.test.ts
+      - src/v610ChannelRunwayFleetRefresh.test.ts
       - .github/workflows/vyron-618-schedule-safety-regression.yml
   workflow_dispatch:
 
