@@ -26,6 +26,9 @@ test('new signer and notarization have independent trust, hard failure, and no o
     'Authority=Developer ID Application:',
     '2C8B0BD4EE1C000D29DD0667BF1068D4673692C9',
     'HISTORIC_APPLE_CERTIFICATE_FINGERPRINT_MISMATCH',
+    'write-vyron-617-release-kit.mjs',
+    'deliver_signed_rc_to_actions_artifact',
+    'VYRON617-NOTARIZED-OWNER-RC-NOT-STABLE',
     'xcrun notarytool submit','xcrun stapler validate','spctl --assess'
   ];
   for (const name of required) assert.ok(workflow.includes(name),'MISSING_RC_SECURITY_GATE: '+name);
@@ -52,4 +55,15 @@ test('GUI bootstrap contains notarized app and re-signed Tauri update without pr
   assert.doesNotMatch(script,/gh release|git push|curl.*sh|spctl --master-disable|xattr -dr/);
   assert.match(workflow,/VYRON617-SIGNED-RC-EVIDENCE-ONLY/);
   assert.doesNotMatch(workflow,/upload-artifact@v4\s*\n\s*with:\s*\n\s*name: .*\.dmg/);
+});
+
+test('release kit is staged only after notarized GUI and signed updater, without automatic publication',()=>{
+ const script=readFileSync(fileURLToPath(new URL('./write-vyron-617-release-kit.mjs',import.meta.url)),'utf8');
+ for(const token of ['gui-bridge-status.txt','dmg_notarization=ACCEPTED','notarized_app_archive=NEW_KEY_MINISIGN_VERIFIED',
+ 'VYRON.app.tar.gz','one-time-GUI.dmg','latest.staging.json','release-manifest.json',
+ 'RELEASE-NOTES.md','owner_migration_verified:false','stable_feed_changed:false']){
+   assert.ok(script.includes(token),'MISSING_RELEASE_KIT_GUARD: '+token);
+ }
+ assert.match(workflow,/if: \${{ inputs.deliver_signed_rc_to_actions_artifact }}/);
+ assert.doesNotMatch(script,/gh release|git push|git tag|curl.*sh|release published/i);
 });
