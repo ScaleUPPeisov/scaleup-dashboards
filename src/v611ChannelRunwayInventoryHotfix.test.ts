@@ -114,12 +114,15 @@ describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
   });
 
   it('native write failure returns PERSISTENCE_FAILED and preserves previous runway truth',async()=>{
+    vi.useFakeTimers();vi.setSystemTime(new Date('2026-10-03T00:00:00Z'));
+    try{
     const previous={version:1,lastLocalCalculation:'2026-10-02T00:00:00.000Z',channels:{lumiere:{channelId:'lumiere',channelName:'Lumière de Minuit',scheduledUntil:'2026-10-10',scheduledVideoCount:7,lastScheduleSync:'2026-10-02T00:00:00.000Z',lastLocalCalculation:'2026-10-02T00:00:00.000Z',runwayDays:8,priority:'critical',status:'urgent'}}};
     storage.seed(CHANNEL_RUNWAY_STORAGE_KEY,JSON.stringify(previous));fixture.failNativeWrites=true;
     const result=await refreshOwnerInventoriesAuthoritative([channel()],true,[profile]);
     expect(result.rows[0].status).toBe('PERSISTENCE_FAILED');
     expect(result.updated).toBe(0);expect(result.failed).toBe(1);expect(result.rows[0].error).toContain('API повторно не запускайте');
     const persisted=loadChannelRunwayStore();expect(persisted.channels.lumiere.scheduledVideoCount).toBe(7);expect(persisted.channels.lumiere.scheduledUntil).toBe('2026-10-10');
+    }finally{vi.useRealTimers()}
   });
 
   it('partial schedule hydration retains the verified future date instead of confirming empty',async()=>{
