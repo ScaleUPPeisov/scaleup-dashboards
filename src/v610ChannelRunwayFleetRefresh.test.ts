@@ -16,7 +16,7 @@ Object.defineProperty(globalThis,'localStorage',{value:storage,configurable:true
 
 const fixture=vi.hoisted(()=>({
  profiles:[] as YoutubeProfile[],
- responses:new Map<string,{videos:YoutubeExistingVideo[];syncComplete:boolean;complete:boolean;scheduleComplete:boolean;channelId:string}>(),
+ responses:new Map<string,{videos:YoutubeExistingVideo[];syncComplete:boolean;complete:boolean;scheduleComplete:boolean;channelId:string;fullSyncApiRequests?:number;fullSyncEstimatedQuotaCost?:number}>(),
  inventoryFiles:new Map<string,any>()
 }));
 vi.mock('./api',()=>({
