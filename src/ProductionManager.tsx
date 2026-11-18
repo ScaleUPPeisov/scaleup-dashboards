@@ -7,6 +7,10 @@ import {notifyInfo,notifySuccess} from './notificationCenter';
 import {openRecoveryFlow} from './RecoveryGate';
 import {journal} from './activityJournalRuntime';
 
+// Process-local guards: navigation never turns historical results into new completions.
+const displayedLiveBatches=new Set<string>();
+const reconciledLiveBatches=new Set<string>();
+
 const MODES:Array<{id:DistributionMode;title:string;hint:string}>=[
   {id:'even',title:'Равномерно',hint:'Сначала используются треки с наименьшим числом использований.'},
   {id:'random',title:'Случайно',hint:'Случайные комбинации без дубля одного трека внутри проекта.'},
@@ -43,6 +47,7 @@ export function ProductionManager({view='all'}:{view?:'all'|'materials'|'builder
   const [resolvedImagesAvailable,setResolvedImagesAvailable]=useState(0);
   const [collectorCollected,setCollectorCollected]=useState(0);
   const [batches,setBatches]=useState<BatchSummary[]>([]);
+  const [historyLoaded,setHistoryLoaded]=useState(false);
   const [busy,setBusy]=useState('');
   const [progress,setProgress]=useState<{completed:number;total:number;stage:string}|null>(null);
   const [result,setResult]=useState<BuildResult|null>(null);
@@ -61,7 +66,7 @@ export function ProductionManager({view='all'}:{view?:'all'|'materials'|'builder
 
   useEffect(()=>{if(!prefs.selectedChannelId&&channels[0])patchPrefs({selectedChannelId:channels[0].id})},[prefs.selectedChannelId,channels.length]);
 
-  async function refreshState(loadHistory=view!=='materials'){
+  async function refreshState(loadHistory=false){
     if(!workspace||!channelId){setSession(null);setMusic(null);setImages(null);setResolvedImagesAvailable(0);setCollectorCollected(0);setBatches([]);return}
     try{
       const state:ChannelProductionState=await productionManagerApi.state(workspace,channelId);
@@ -70,24 +75,28 @@ export function ProductionManager({view='all'}:{view?:'all'|'materials'|'builder
       setResolvedImagesAvailable(state.resolvedImagesAvailable||0);
       setMusic(state.music||null);setImages(state.images||null);
     }catch{setSession(null);setMusic(null);setImages(null);setResolvedImagesAvailable(0);setCollectorCollected(0)}
-    if(!loadHistory){setBatches([]);return}
+    if(!loadHistory)return;
     let base:BatchSummary[]=[];
     try{base=await productionManagerApi.batches(workspace,channelId)}catch{}
     if(productionRoot&&productionRoot!==workspace){try{base=[...base,...await productionManagerApi.batches(productionRoot,channelId)]}catch{}}
     setBatches([...new Map(base.map(b=>[b.batchId,b])).values()].sort((a,b)=>b.createdAt.localeCompare(a.createdAt)));
   }
 
-  useEffect(()=>{void refreshState(view!=='materials');setResult(null);setValidation(null);setBatchStatus(null)},[workspace,productionRoot,channelId,view]);
+  useEffect(()=>{setBatches([]);setHistoryLoaded(false);void refreshState(false);setResult(null);setValidation(null);setBatchStatus(null)},[workspace,productionRoot,channelId,view]);
   useEffect(()=>{
     // Reconnect to the global operation rather than inventing a crash recovery
     // whenever the Production React page remounts after navigation.
     const sync=()=>{
       const task=productionBuildRuntime.snapshot(channelId);
       if(!task){setProgress(null);setBusy(v=>v==='build'?'':v);return}
-      setProgress(task.progress);
-      if(task.state==='RUNNING'){setBusy('build');return}
+      if(task.state==='RUNNING'){setProgress(task.progress);setBusy('build');return}
+      setProgress(null);
       setBusy(v=>v==='build'?'':v);
-      if(task.state==='COMPLETED'&&task.result)setResult(task.result);
+      const batch=task.result?.batch;
+      if(task.state==='COMPLETED'&&batch&&!displayedLiveBatches.has(batch.batchId)){
+        displayedLiveBatches.add(batch.batchId);
+        setResult(task.result!);
+      }
     };
     sync();
     return productionBuildRuntime.subscribe(sync);
@@ -101,8 +110,8 @@ export function ProductionManager({view='all'}:{view?:'all'|'materials'|'builder
     return()=>window.removeEventListener('vyron:production-materials-changed',onMaterialsChanged);
   },[workspace,productionRoot,channelId]);
   useEffect(()=>{let live=true;if(!productionRoot){setStorageStatus(null);return}productionManagerApi.storageStatus(productionRoot).then(s=>{if(live)setStorageStatus(s)}).catch(e=>{if(live)setStorageStatus({path:productionRoot,exists:false,writable:false,external:productionRoot.startsWith('/Volumes/'),freeBytes:null,error:String(e)})});return()=>{live=false}},[productionRoot]);
-  useEffect(()=>{if(result?.batch){productionManagerApi.status(result.batch.manifestPath).then(setBatchStatus).catch(()=>setBatchStatus(null));return}const last=channelPrefs.lastBatchId&&batches.find(b=>b.batchId===channelPrefs.lastBatchId);if(last)setResult({status:'ready',availableImages:collected,requestedProjects:last.projectCount,batch:last})},[batches,result?.batch?.batchId,channelPrefs.lastBatchId]);
-  useEffect(()=>{let live=true;const batch=result?.batch;if(!batch||!batchStatus?.projects?.length)return;void productionManagerApi.previewCompletedProjects(batch.manifestPath).then(ids=>{if(!live)return;const safe=new Set(ids);for(const row of batchStatus.projects){if(row.renderStatus!=='Completed'||!row.outputFile)continue;const isSafe=safe.has(row.projectId);const key=`${batch.batchId}:${row.projectId}`;patchProjectLifecycle(key,{projectId:row.projectId,jobId:row.jobId||undefined,projectPath:`${batch.rootPath}/${row.projectId}`,renderPath:row.outputFile,status:isSafe?'SAFE_TO_CLEAN':'RENDERED',renderExists:true,updatedAt:new Date().toISOString()});if(isSafe&&row.jobId){const j=useApp.getState().jobs.find(x=>x.id===row.jobId);if(j&&!j.finalPath)useApp.getState().patchJob(j.id,{finalPath:row.outputFile,storageLifecycle:'NEW'})}if(isSafe&&prefs.cleanupPolicy==='prompt')notifyInfo('РЕНДЕР ГОТОВ',`${channel?.name||batch.channelName} • ${row.projectId} • SAFE_TO_CLEAN. Render проверен, project можно очистить.`,{operationId:`render-safe-clean:${batch.batchId}:${row.projectId}`})}if(prefs.cleanupPolicy==='auto3d'||prefs.cleanupPolicy==='afterUpload'){const uploadedJobIds=uploadHistory.filter(x=>x.status==='UPLOADED'&&Boolean(x.youtubeVideoId)).map(x=>x.jobId);void productionManagerApi.applyCleanupPolicy(batch.manifestPath,prefs.cleanupPolicy,uploadedJobIds).then(x=>{if(x.cleanedProjects)notifySuccess('Автоочистка Production',`Удалено ${x.cleanedProjects} SAFE_TO_CLEAN project-папок • Render сохранены.`,{operationId:`auto-clean:${batch.batchId}:${prefs.cleanupPolicy}:${batchStatus.updatedAt||''}`})}).catch(e=>toast('Автоочистка не выполнена: '+String(e))) }}).catch(e=>toast('Не удалось проверить Render для SAFE_TO_CLEAN: '+String(e)));return()=>{live=false}},[result?.batch?.batchId,batchStatus?.updatedAt,uploadHistory,prefs.cleanupPolicy]);
+  useEffect(()=>{let live=true;const batch=result?.batch;if(!batch){setBatchStatus(null);return}void productionManagerApi.status(batch.manifestPath).then(status=>{if(live)setBatchStatus(status)}).catch(()=>{if(live)setBatchStatus(null)});return()=>{live=false}},[result?.batch?.batchId]);
+  useEffect(()=>{let live=true;const batch=result?.batch;if(!batch||!batchStatus?.projects?.length)return;const runtime=productionBuildRuntime.snapshot(channelId);if(runtime?.state!=='COMPLETED'||runtime.result?.batch?.batchId!==batch.batchId||reconciledLiveBatches.has(batch.batchId))return;reconciledLiveBatches.add(batch.batchId);void productionManagerApi.previewCompletedProjects(batch.manifestPath).then(ids=>{if(!live)return;const safe=new Set(ids);for(const row of batchStatus.projects){if(row.renderStatus!=='Completed'||!row.outputFile)continue;const isSafe=safe.has(row.projectId);const key=`${batch.batchId}:${row.projectId}`;patchProjectLifecycle(key,{projectId:row.projectId,jobId:row.jobId||undefined,projectPath:`${batch.rootPath}/${row.projectId}`,renderPath:row.outputFile,status:isSafe?'SAFE_TO_CLEAN':'RENDERED',renderExists:true,updatedAt:new Date().toISOString()});if(isSafe&&row.jobId){const j=useApp.getState().jobs.find(x=>x.id===row.jobId);if(j&&!j.finalPath)useApp.getState().patchJob(j.id,{finalPath:row.outputFile,storageLifecycle:'NEW'})}if(isSafe&&prefs.cleanupPolicy==='prompt')notifyInfo('РЕНДЕР ГОТОВ',`${channel?.name||batch.channelName} • ${row.projectId} • SAFE_TO_CLEAN. Render проверен, project можно очистить.`,{operationId:`render-safe-clean:${batch.batchId}:${row.projectId}`})}if(prefs.cleanupPolicy==='auto3d'||prefs.cleanupPolicy==='afterUpload'){const uploadedJobIds=uploadHistory.filter(x=>x.status==='UPLOADED'&&Boolean(x.youtubeVideoId)).map(x=>x.jobId);void productionManagerApi.applyCleanupPolicy(batch.manifestPath,prefs.cleanupPolicy,uploadedJobIds).then(x=>{if(x.cleanedProjects)notifySuccess('Автоочистка Production',`Удалено ${x.cleanedProjects} SAFE_TO_CLEAN project-папок • Render сохранены.`,{operationId:`auto-clean:${batch.batchId}:${prefs.cleanupPolicy}:${batchStatus.updatedAt||''}`})}).catch(e=>toast('Автоочистка не выполнена: '+String(e))) }}).catch(e=>toast('Не удалось проверить Render для SAFE_TO_CLEAN: '+String(e)));return()=>{live=false}},[result?.batch?.batchId,batchStatus?.updatedAt,uploadHistory,prefs.cleanupPolicy]);
 
   useEffect(()=>{
     let live=true;
@@ -187,7 +196,7 @@ export function ProductionManager({view='all'}:{view?:'all'|'materials'|'builder
     try{
       const built=await productionBuildRuntime.start({requestId,workspace,outputWorkspace:productionRoot||workspace,channelId:channel.id,channelName:channel.name,projectCount,tracksPerProject,mode,allowImageReuse:reuse,jobLinks:links.map(j=>({jobId:j.id,number:j.number})),recoveryUiContext:{page:'production',channelId:channel.id,productionTab:prefs.tab,selectedBatchId:result?.batch?.batchId||channelPrefs.lastBatchId,selectedProjectIds}});
       setResult(built);
-      if(built.batch){
+      if(built.batch){displayedLiveBatches.add(built.batch.batchId);
         setBatches(prev=>[built.batch!,...prev.filter(x=>x.batchId!==built.batch!.batchId)]);patchChannelProductionPrefs(channel.id,{lastBatchId:built.batch.batchId,selectedProjectIds:[]});
         journal({eventId:'production-build-completed:'+requestId,eventType:'PRODUCTION_BUILD_COMPLETED',status:'SUCCESS',source:'LIVE_OPERATION',timestamp:new Date().toISOString(),operationId:requestId,batchId:built.batch.batchId,channelId:channel.id,channelName:channel.name,details:{projectCount:built.batch.projectCount,tracksAssigned:built.batch.tracksAssigned}});
         notifySuccess('Проекты созданы',`${built.batch.projectCount.toLocaleString('ru-RU')} проектов готовы для ENDLUME.`,{operationId:`batch-built:${built.batch.batchId}`});
@@ -287,6 +296,6 @@ export function ProductionManager({view='all'}:{view?:'all'|'materials'|'builder
 
     {result?.batch&&<section className="panel pmResult"><div className="pmResultHead"><div><small>ГОТОВО ДЛЯ ENDLUME</small><h3>{batchLabel(result.batch)}</h3><p>{result.batch.projectCount} проектов • {result.batch.tracksAssigned} музыкальных назначений • manifest готов</p><code className="pmPath">Batch: {result.batch.rootPath}</code><div className="pmActions"><button onClick={()=>void productionManagerApi.openFolder(result.batch!.rootPath)}>ОТКРЫТЬ ПАПКУ BATCH</button></div></div>{validation&&<div className={`pmValidation ${validation.errors?'bad':'good'}`}>{validation.errors?`ОШИБОК ${validation.errors}`:`ГОТОВО ${validation.ready}/${result.batch.projectCount}`}</div>}</div><div className="pmChecklist"><span>Папки<b>{result.batch.projectCount}</b></span><span>Изображения<b>{result.batch.projectCount}</b></span><span>Музыка<b>{result.batch.tracksAssigned}</b></span><span>Manifest<b>готов</b></span><span>ENDLUME<b>{validation?.endlumeExists?'найден':endlumePath?'проверить':'не задан'}</b></span></div>{validation&&validation.errors>0&&<div className="pmErrors">{validation.items.filter(x=>!x.ok).slice(0,8).map(x=><div key={x.projectId}><b>{x.projectId}</b><span>{x.error||'Ошибка проверки'}</span></div>)}</div>}{batchStatus?.projects?.length?<div className="pmProjectSelection"><div className="pmBulkBar"><span>Проекты batch • выбрано <b>{selectedProjectIds.filter(id=>batchStatus.projects.some(p=>p.projectId===id)).length}</b> / {batchStatus.projects.length}</span><button onClick={()=>setSelectedProjects(batchStatus.projects.map(p=>p.projectId))}>Выбрать всё</button><button onClick={()=>setSelectedProjects([])}>Снять выделение</button><button className="danger" disabled={!selectedProjectIds.length||busy==='delete'} onClick={()=>void deleteBatchProjects(selectedProjectIds,false)}>Удалить выбранные</button><button className="danger" disabled={busy==='delete'} onClick={()=>void deleteBatchProjects(batchStatus.projects.map(p=>p.projectId),true)}>Удалить все</button></div><div className="pmProjectRows">{batchStatus.projects.map(p=><label key={p.projectId}><input type="checkbox" checked={selectedProjectIds.includes(p.projectId)} onChange={()=>toggleProject(p.projectId)}/><b>{p.projectId}</b><span>{p.renderStatus==='Waiting'&&p.handoffStatus==='SENT'?'SENT':p.renderStatus}{typeof p.progress==='number'?` • ${Math.round(p.progress)}%`:''}</span><small>{p.outputFile?'MP4 готов':p.error||(p.handoffStatus==='SENT'?'передано в ENDLUME':'готов к ENDLUME')}</small>{p.renderStatus==='Completed'&&<button type="button" disabled={busy==='cleanup:'+p.projectId} onClick={e=>{e.preventDefault();e.stopPropagation();void cleanupRenderedProject(p.projectId)}}>{busy==='cleanup:'+p.projectId?'…':'ОЧИСТИТЬ'}</button>}</label>)}</div></div>:null}<div className="pmActions resultActions"><button disabled={busy==='archive'} onClick={()=>void archiveRenderedVideos()}>{busy==='archive'?'АРХИВИРУЮ…':'АРХИВ MP4'}</button><button disabled={busy==='validate'} onClick={()=>void validateBatch()}>ПРОВЕРИТЬ</button><button className="primary" disabled={busy==='endlume'||!selectedProjectIds.length} onClick={()=>void openEndlume()}>ОТПРАВИТЬ В ENDLUME ({selectedProjectIds.length})</button></div></section>}
 
-    <section className="panel pmHistory"><div className="pmHistoryHead"><div><small>ИСТОРИЯ СБОРОК</small><h3>{channel?.name||'Канал'}</h3></div><div className="pmActions"><button onClick={openRecoveryFlow}>Восстановить незавершённую работу</button><button className="danger" disabled={busy==='cleanup-all'||!batches.length} onClick={()=>void cleanupAllRenderedProjectAssets()}>{busy==='cleanup-all'?'ОЧИЩАЮ…':'УДАЛИТЬ ВСЕ PROJECT ASSETS'}</button><button onClick={()=>void refreshState()}>↻ ОБНОВИТЬ</button></div></div><p className="pmHint">Очистка перемещает source PROJECT-папку в Корзину только после проверки Completed + валидного video/audio render вне PROJECT-папки. YouTube upload не требуется. Render и metadata не удаляются.</p>{batches.length?<div className="pmBatchRows">{batches.slice(0,20).map(batch=><button key={batch.batchId} className={result?.batch?.batchId===batch.batchId?'active':''} onClick={()=>{setResult({status:'ready',availableImages:collected,requestedProjects:batch.projectCount,batch});patchChannelProductionPrefs(channelId,{lastBatchId:batch.batchId,selectedProjectIds:[]});void productionManagerApi.status(batch.manifestPath).then(setBatchStatus).catch(()=>setBatchStatus(null))}}><span><b>{batch.batchId}</b><small>{new Date(batch.createdAt).toLocaleString('ru-RU')}</small></span><em>{batch.projectCount} проектов</em><em>{batch.completedProjects}/{batch.projectCount}</em><small>{batch.status}</small><strong onClick={e=>{e.stopPropagation();void resume(batch)}}>{busy===batch.batchId?'…':'ОТКРЫТЬ'}</strong></button>)}</div>:<div className="pmEmpty">Для этого канала ещё нет Production batches.</div>}</section></>}
+    <section className="panel pmHistory"><div className="pmHistoryHead"><div><small>ИСТОРИЯ СБОРОК</small><h3>{channel?.name||'Канал'}</h3></div><div className="pmActions"><button onClick={openRecoveryFlow}>Восстановить незавершённую работу</button><button className="danger" disabled={busy==='cleanup-all'||!batches.length} onClick={()=>void cleanupAllRenderedProjectAssets()}>{busy==='cleanup-all'?'ОЧИЩАЮ…':'УДАЛИТЬ ВСЕ PROJECT ASSETS'}</button><button onClick={()=>{setHistoryLoaded(true);void refreshState(true)}}>{historyLoaded?'↻ ОБНОВИТЬ ИСТОРИЮ':'ЗАГРУЗИТЬ ИСТОРИЮ'}</button></div></div><p className="pmHint">Очистка перемещает source PROJECT-папку в Корзину только после проверки Completed + валидного video/audio render вне PROJECT-папки. YouTube upload не требуется. Render и metadata не удаляются.</p>{!historyLoaded?<div className="pmEmpty">История сборок загружается только по запросу. Старые проекты не запускаются и не проверяются автоматически.</div>:batches.length?<div className="pmBatchRows">{batches.slice(0,20).map(batch=><button key={batch.batchId} className={result?.batch?.batchId===batch.batchId?'active':''} onClick={()=>{setResult({status:'ready',availableImages:collected,requestedProjects:batch.projectCount,batch});patchChannelProductionPrefs(channelId,{lastBatchId:batch.batchId,selectedProjectIds:[]});void productionManagerApi.status(batch.manifestPath).then(setBatchStatus).catch(()=>setBatchStatus(null))}}><span><b>{batch.batchId}</b><small>{new Date(batch.createdAt).toLocaleString('ru-RU')}</small></span><em>{batch.projectCount} проектов</em><em>{batch.completedProjects}/{batch.projectCount}</em><small>{batch.status}</small><strong onClick={e=>{e.stopPropagation();void resume(batch)}}>{busy===batch.batchId?'…':'ОТКРЫТЬ'}</strong></button>)}</div>:<div className="pmEmpty">Для этого канала ещё нет Production batches.</div>}</section></>}
   </div>
 }
