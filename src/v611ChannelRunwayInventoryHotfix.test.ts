@@ -326,4 +326,11 @@ describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
     expect(src).toContain('"privacyStatus":st.get("privacyStatus")');
     expect(src).toContain('"publishAt":st.get("publishAt")');
   });
+  it('partial owner inventory UI never calls an unverified zero an actual schedule count',()=>{
+    const screen=readFileSync('src/ChannelRunway.tsx','utf8');
+    expect(screen).toContain('количество Scheduled неизвестно');
+    expect(screen).toContain('полнота НЕ подтверждена');
+    expect(screen).not.toContain('найдено минимум ${row.observedScheduled||0} Scheduled');
+  });
+
 });
