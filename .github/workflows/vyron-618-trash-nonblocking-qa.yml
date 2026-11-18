@@ -1,0 +1,55 @@
+name: VYRON macOS nonblocking Trash safety QA
+
+on:
+  push:
+    branches:
+      - fix/vyron-618-trash-nonblocking-20261118
+    paths:
+      - 'src-tauri/src/local_delete.rs'
+      - 'src-tauri/src/production_manager.rs'
+      - 'src/v212CleanupCommandRegistration.test.ts'
+      - '.github/workflows/vyron-618-trash-nonblocking-qa.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-trash-nonblocking-qa
+  cancel-in-progress: true
+
+jobs:
+  macos-qa:
+    name: Linux Rust compile and cleanup regressions (hosted, not owner's Mac)
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux Tauri build prerequisites
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev libxdo-dev pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install exact frontend dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Verify existing cleanup UI contracts
+        run: npx vitest run src/v212CleanupCommandRegistration.test.ts src/globalCleanupExecutor.test.ts src/globalProjectCleanupState.test.ts
+      - name: Verify frontend production compile
+        run: npm run build
+      - name: Rust local-trash safety tests
+        env:
+          VYRON_TRUSTED_UPDATER_PUBLIC_KEY_SHA256: unverified
+        run: cargo test --manifest-path src-tauri/Cargo.toml local_delete::tests --lib
+      - name: Rust production cleanup safety tests
+        env:
+          VYRON_TRUSTED_UPDATER_PUBLIC_KEY_SHA256: unverified
+        run: |
+          cargo test --manifest-path src-tauri/Cargo.toml production_manager:: --lib -- --list > /tmp/vyron-project-test-list.txt
+          grep -q 'production_manager::' /tmp/vyron-project-test-list.txt
+          cargo test --manifest-path src-tauri/Cargo.toml production_manager:: --lib
