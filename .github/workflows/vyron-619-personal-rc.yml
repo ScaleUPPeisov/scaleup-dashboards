@@ -6,7 +6,7 @@ name: VYRON 6.1.19 private ARM64 owner candidate (never publish)
 on:
   push:
     branches:
-      - release-candidate/vyron-619-integrated-safe-20261118
+      - feature/vyron-macos-ultimate
     paths:
       - .github/workflows/vyron-619-personal-rc.yml
 
@@ -20,7 +20,7 @@ concurrency:
 jobs:
   personal-local-dmg:
     environment: vyron-rotated-key-rc
-    if: ${{ github.repository == 'ScaleUPPeisov/scaleup-dashboards' && github.ref == 'refs/heads/release-candidate/vyron-619-integrated-safe-20261118' }}
+    if: ${{ github.repository == 'ScaleUPPeisov/scaleup-dashboards' && github.ref == 'refs/heads/feature/vyron-macos-ultimate' }}
     runs-on: macos-15
     timeout-minutes: 100
     steps:
