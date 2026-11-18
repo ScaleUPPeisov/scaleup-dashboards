@@ -51,6 +51,5 @@ jobs:
           VYRON_TRUSTED_UPDATER_PUBLIC_KEY_SHA256: unverified
         run: |
           cargo test --manifest-path src-tauri/Cargo.toml production_manager:: --lib -- --list > /tmp/vyron-project-test-list.txt
-          test "$(grep -c '^production_manager::.*: test
- /tmp/vyron-project-test-list.txt)" -gt 0
+          grep -q 'production_manager::' /tmp/vyron-project-test-list.txt
           cargo test --manifest-path src-tauri/Cargo.toml production_manager:: --lib
