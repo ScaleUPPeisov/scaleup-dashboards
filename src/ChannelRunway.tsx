@@ -181,7 +181,10 @@ export function ChannelRunway(){
       if(row?.status==='UPDATED')toast(`${channel.name}: расписание обновлено • ${r?.scheduledVideoCount||0} запланировано • до ${dateLabel(r?.scheduledUntil)} • API ${row.apiRequests} • quota ${row.quotaUnits}`);
       else if(row?.status==='PARTIAL_DATA'){
         const until=row.observedThrough?dateLabel(dateKeyInKrasnoyarsk(row.observedThrough)):'—';
-        toast(`${channel.name}: через videos.list найдено минимум ${row.observedScheduled||0} Scheduled • до ${until} • полнота НЕ подтверждена • ${(row.diagnosticReasons||[]).join(', ')||row.error||'неполная выдача'}`);
+        const evidence=Number(row.observedScheduled||0)>0
+          ? `через videos.list подтверждено минимум ${row.observedScheduled} Scheduled • до ${until}`
+          : 'количество Scheduled неизвестно';
+        toast(`${channel.name}: ${evidence} • полнота НЕ подтверждена • ${(row.diagnosticReasons||[]).join(', ')||row.error||'неполная выдача'}`);
       }else toast(`${channel.name}: расписание не обновлено • ${row?.status||'API_FAILED'}${row?.error?' • '+row.error:''}${row?.diagnosticReasons?.length?' • '+row.diagnosticReasons.join(', '):''}`);
     }catch(e){
       toast(isYoutubeQuotaError(e)?youtubeQuotaMessage():`Расписание ${channel.name}: ${String(e)}`);
