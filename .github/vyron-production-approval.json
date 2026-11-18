@@ -2,16 +2,11 @@
   "action": "deploy",
   "application": "VYRON PEISOV YT",
   "release_ref": "release/vyron-control-production",
-  "release_sha": "834f96e15caad409f58556bb9fef7c0cedb86ded",
+  "release_sha": "72768d85407d4025ef1ea465853808ed2d89099e",
   "one_time": true,
-  "approval_id": "vyron-neoglass-5-20261118-834f96e15caa",
+  "approval_id": "vyron-neoglass-5-propagation-20261118-72768d85407d",
   "authorized_by": "user instruction in current conversation",
   "requested_on": "2026-11-18",
-  "mode": "analytics-core",
-  "unsupported_features": [
-    "mac-online-unverified",
-    "physical-push-unverified",
-    "youtube-schedule-unverified"
-  ],
-  "safety": "additive-d1-time-travel-worker-rollback"
+  "reason": "retry after corrected Cloudflare static asset propagation verification",
+  "safety": "D1 22 tables additive; protected Worker rollback; no Mac/Push assumptions"
 }
