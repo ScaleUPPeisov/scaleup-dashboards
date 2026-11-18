@@ -136,6 +136,7 @@ describe('VYRON 6.1 authoritative fleet runway refresh',()=>{
   expect(calls).toHaveLength(33);
   expect(calls.filter(args=>args[3]===true)).toHaveLength(33);
   expect(calls.filter(args=>args[3]===false)).toHaveLength(0);
+  expect(calls.every(args=>args[5]===4)).toBe(true); // fleet Search budget per channel
   expect(calls.find(args=>args[0]==='p-fleet1')?.[4]).toContain('ABCDEFGHIJK');
   expect(new Set(result.rows.map(row=>row.channelId)).size).toBe(33);
  });
@@ -164,6 +165,7 @@ describe('VYRON 6.1 authoritative fleet runway refresh',()=>{
   expect(result.counts.API_FAILED).toBe(0);
   expect(result.counts.PARTIAL_DATA).toBe(1);
   expect(result.searchCalls).toBe(2);
+  expect((api.youtubeListExisting as any).mock.calls[0][5]).toBe(12); // one-channel deep audit
   expect(result.quotaUnits).toBe(3);
   const record=loadChannelRunwayStore().channels.neon;
   expect(record.dataState).toBe('PARTIAL_DATA');
