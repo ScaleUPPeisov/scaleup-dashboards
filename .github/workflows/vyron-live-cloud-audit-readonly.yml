@@ -15,6 +15,9 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: release/vyron-control-production
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
