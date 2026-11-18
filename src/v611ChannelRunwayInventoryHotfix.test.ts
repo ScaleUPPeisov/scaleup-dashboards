@@ -314,6 +314,18 @@ describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
     expect(loadChannelRunwayStore().channels.lumiere.dataState).not.toBe('CONFIRMED_SCHEDULE');
   });
 
+  it('only explicit one-channel refresh enables bounded owner search, bulk does not',async()=>{
+    // Preserve the legacy automatic/background bulk safety contract: a
+    // scheduled 33-channel scan must never invoke search.list. New explicit
+    // manual bulk reconciliation is tested separately below.
+    const b={...channel('bulk-background'),id:'bulk-background',slug:'bulk-background',name:'B',youtubeProfileId:'p-b',youtubeChannelId:'UC-B'} as Channel;
+    const profiles=[profile,{...profile,id:'p-b',channelId:'UC-B'}];
+    fixture.responses.set('p-b',{...response(),channelId:'UC-B',channelTitle:'B'});
+    await refreshOwnerInventoriesAuthoritative([channel(),b],false,profiles);
+    expect((api.youtubeListExisting as any).mock.calls).toHaveLength(2);
+    expect((api.youtubeListExisting as any).mock.calls.every((args:any[])=>args[3]===false)).toBe(true);
+  });
+
   it('both single-channel and explicit bulk refresh can deep-check incomplete owner schedules',async()=>{
     await refreshOwnerInventoriesAuthoritative([channel()],true,[profile]);
     const call=(api.youtubeListExisting as any).mock.calls[0];
