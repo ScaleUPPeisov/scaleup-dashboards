@@ -173,6 +173,25 @@ button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible{
  .top-right{gap:7px}
  .top-right #logout{min-height:36px}
  .glass-icon-button{flex-basis:36px;width:36px;height:36px;border-radius:12px}
+ /* Readable iPhone header outside scroll content and below Dynamic Island. */
+ .topbar{
+   position:relative;isolation:isolate;z-index:52;min-height:60px;
+   padding:9px 10px;margin:0 0 10px;border-radius:16px;
+   border:1px solid rgba(192,170,255,.32);
+   background:linear-gradient(125deg,#211c3e 0%,#151629 65%,#121427 100%);
+   box-shadow:0 12px 28px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.08);
+   backdrop-filter:none;-webkit-backdrop-filter:none;
+ }
+ .topbar .brand{flex:1 1 auto;min-width:0;overflow:hidden}
+ .topbar .brand img{flex:0 0 34px;filter:none}
+ .topbar .brand strong{color:#fff;font-weight:800;font-size:12px;line-height:1.25;
+   letter-spacing:.015em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+ .topbar .brand small{color:#c7bce8;font-weight:700;letter-spacing:.06em;font-size:7px}
+ .topbar .top-right{flex:0 0 auto;gap:5px}
+ .topbar .glass-icon-button{color:#fff;background:#292445;border:1px solid rgba(190,167,255,.28)}
+ .topbar .online{padding:8px 9px;min-height:36px;background:#221e37;
+   border-color:rgba(190,167,255,.22)}
+ .topbar #logout{color:#f3edff;background:#26213e;border-color:rgba(190,167,255,.28)}
  #dashboard{
   display:block;flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:clip;
   overscroll-behavior:contain;-webkit-overflow-scrolling:touch;
@@ -243,13 +262,18 @@ button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible{
  *,*::before,*::after{animation:none!important;scroll-behavior:auto!important;transition:none!important}
 }
 
-/* Progressive channel avatar fallback: current backend does not deliver channel thumbnails. */
+/* Real YouTube channel thumbnails with letter fallback while images load or fail. */
 .neo-channel-name{display:grid;grid-template-columns:40px minmax(0,1fr);
  column-gap:10px;row-gap:4px;align-items:center;min-width:0}
 .neo-channel-name .channel-avatar{grid-column:1;grid-row:1 / span 4;align-self:start;
+  position:relative;overflow:hidden;isolation:isolate;
  display:grid;place-items:center;width:40px;height:40px;border-radius:14px;
  background:linear-gradient(145deg,rgba(132,94,240,.4),rgba(78,60,139,.32));
  border:1px solid var(--ng-stroke-strong);color:#efe7ff;font-size:14px;font-weight:750}
+.neo-channel-name .channel-avatar-photo{position:absolute;inset:0;width:100%;height:100%;
+  object-fit:cover;border-radius:inherit;opacity:0;transition:opacity .15s ease}
+.neo-channel-name .channel-avatar.has-photo{color:transparent}
+.neo-channel-name .channel-avatar.has-photo .channel-avatar-photo{opacity:1}
 .neo-channel-name>a,.neo-channel-name>small{grid-column:2}
 .neo-channel-name>.channel-runway{color:#bfaeff}
 

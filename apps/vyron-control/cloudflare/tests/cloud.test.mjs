@@ -6,7 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import cloud from '../src/index.mjs';
 import { cronSlot, crossedMilestones, pacificDay, safeEvent, acceptedCommand } from '../src/core.mjs';
-import { manualSlot, reserveQuota, scheduledSync, runCountersSync } from '../src/sync.mjs';
+import { manualSlot, reserveQuota, scheduledSync, runCountersSync, youtubeChannelThumbnail } from '../src/sync.mjs';
 import { startOAuth,callbackOAuth,authorizedProfiles,decryptSecret,encryptSecret } from '../src/oauth.mjs';
 import { importVyronProfiles,bindExistingVYRONProfiles } from '../src/oauth-import.mjs';
 import { runAnalyticsBatch,runManualAnalyticsBatch,runQueuedAnalyticsBatch,nextAnalyticsSlot,parseDailyReport } from '../src/google-analytics.mjs';
@@ -44,6 +44,7 @@ class MockD1 {
     this.native.exec(readFileSync(new URL('../migrations/0009_notification_center.sql',import.meta.url),'utf8'));
     this.native.exec(readFileSync(new URL('../migrations/0010_channel_presence.sql',import.meta.url),'utf8'));
     this.native.exec(readFileSync(new URL('../migrations/0011_youtube_schedule.sql',import.meta.url),'utf8'));
+    this.native.exec(readFileSync(new URL('../migrations/0012_channel_thumbnails.sql',import.meta.url),'utf8'));
   }
   prepare(sql){return new D1Query(this,sql);}
   async batch(stmts){
@@ -68,6 +69,28 @@ function req(path,token,method='GET',body=undefined,origin=null){
     body:body===undefined?undefined:JSON.stringify(body)});
 }
 const id=i=>'UC'+String(i).padStart(22,'0');
+
+test('real YouTube avatar URLs persist without new quota calls or token changes',async()=>{
+  const url='https://yt3.ggpht.com/real-channel-avatar=s240-c-k-c0x00ffffff-no-rj';
+  assert.equal(youtubeChannelThumbnail({thumbnails:{medium:{url}}}),url);
+  assert.equal(youtubeChannelThumbnail({thumbnails:{medium:{url:'javascript:alert(1)'}}}),null);
+  assert.equal(youtubeChannelThumbnail({thumbnails:{medium:{url:'https://evil.example/avatar.png'}}}),null);
+  const e=env(),channelId=id(991);
+  await e.DB.prepare('INSERT INTO channels(id,name) VALUES (?,?)').bind(channelId,'Avatar').run();
+  let includeThumbnail=true;
+  const mockFetch=async()=>new Response(JSON.stringify({items:[{
+    id:channelId,
+    snippet:{title:'Avatar channel',...(includeThumbnail?{thumbnails:{medium:{url}}}:{})},
+    statistics:{subscriberCount:'45',viewCount:'123',videoCount:'2',hiddenSubscriberCount:false}
+  }]}),{status:200});
+  await runCountersSync(e,{source:'manual',slot:'manual:avatars-1',fetchImpl:mockFetch});
+  let response=await cloud.fetch(req('/api/status',control),e);
+  assert.equal((await response.json()).channels[0].thumbnailUrl,url);
+  includeThumbnail=false;
+  await runCountersSync(e,{source:'manual',slot:'manual:avatars-2',fetchImpl:mockFetch});
+  response=await cloud.fetch(req('/api/status',control),e);
+  assert.equal((await response.json()).channels[0].thumbnailUrl,url);
+});
 
 test('10000-unit local Data API allowance is independent from Google Cloud project quota',async()=>{
   const e=env(),date=new Date('2026-11-14T06:00:00Z');

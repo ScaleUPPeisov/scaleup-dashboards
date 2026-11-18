@@ -122,7 +122,7 @@ async function fetchStatus(env) {
   const now = new Date();
   const day = pacificDay(now);
   const [c,e,q,s,d,cmd,reportHealth,snapshotTrend,production,notifications,public24hRows]=await Promise.all([
-    db.prepare(`SELECT c.id,c.name,c.subscribers,c.views,c.videos,c.hidden_subscribers,
+    db.prepare(`SELECT c.id,c.name,c.thumbnail_url,c.subscribers,c.views,c.videos,c.hidden_subscribers,
       c.previous_subscribers,c.updated_at,
       a.period_days AS analytics_period_days,
       a.views AS analytics_views,
@@ -183,7 +183,7 @@ async function fetchStatus(env) {
       .bind(new Date(now.getTime()-28*3600000).toISOString()).all()
   ]);
   const channels=(c.results||[]).map(row=>({
-    id:row.id,name:row.name,archivedAt:row.archived_at||null,
+    id:row.id,name:row.name,thumbnailUrl:row.thumbnail_url||null,archivedAt:row.archived_at||null,
     youtubeSchedule:row.schedule_status?{
       status:row.schedule_status,complete:row.schedule_complete===1,
       videos:parsedJson(row.schedule_json,[]),scanned:row.schedule_scanned,

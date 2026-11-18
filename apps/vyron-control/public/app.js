@@ -86,6 +86,17 @@ function displayAggregate(prefix, object) {
     prefix === 'total-views' ? 'views-covered' : 'videos-covered')
     .textContent = `${object.covered} из ${object.total} каналов`;
 }
+function safeChannelAvatarUrl(value) {
+  if(typeof value!=='string'||value.length>1600)return null;
+  try{
+    const u=new URL(value);
+    const trusted=['yt3.ggpht.com','yt3.googleusercontent.com',
+      'lh3.googleusercontent.com','i.ytimg.com'];
+    return u.protocol==='https:'&&trusted.includes(u.hostname.toLowerCase())&&
+      !u.username&&!u.password&&!u.port&&!u.hash?u.href:null;
+  }catch{return null;}
+}
+
 function renderChannels(channels) {
   const needle = $('search').value.trim().toLocaleLowerCase('ru-RU');
   const filterMode=$('channel-filter').value;
@@ -143,6 +154,16 @@ function renderChannels(channels) {
     link.rel = 'noopener noreferrer';
     const avatar=make('span','channel-avatar',ch.name.trim().slice(0,2).toLocaleUpperCase('ru-RU'));
     avatar.setAttribute('aria-hidden','true');
+    const thumbnail=safeChannelAvatarUrl(ch.thumbnailUrl);
+    if(thumbnail){
+      const photo=make('img','channel-avatar-photo');
+      photo.alt='';photo.width=40;photo.height=40;
+      photo.loading='lazy';photo.decoding='async';photo.referrerPolicy='no-referrer';
+      photo.addEventListener('load',()=>avatar.classList.add('has-photo'),{once:true});
+      photo.addEventListener('error',()=>photo.remove(),{once:true});
+      photo.src=thumbnail;
+      avatar.prepend(photo);
+    }
     left.classList.add('neo-channel-name');
     left.append(avatar,link,make('small','',ch.updatedAt?'Обновлено '+time(ch.updatedAt):'Ожидает первой синхронизации'));
     left.append(make('small','channel-runway',
