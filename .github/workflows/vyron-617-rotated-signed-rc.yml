@@ -1,0 +1,168 @@
+name: VYRON 6.1.17 rotated-key signed ARM64 RC (manual)
+# Source and signing isolation: never use old secrets, publish a release or change feed.
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact approved PR22 commit SHA
+        required: true
+        type: string
+      approved_pubkey_sha256:
+        description: Independently authenticated SHA-256 of 42-byte NEW Minisign public key
+        required: true
+        type: string
+      approval:
+        description: Must equal BUILD_ONLY_NO_RELEASE
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-617-rotated-signed-rc
+  cancel-in-progress: false
+
+jobs:
+  signed-rc:
+    if: ${{ github.ref == 'refs/heads/feature/vyron-macos-ultimate' }}
+    environment: vyron-rotated-key-rc
+    runs-on: macos-15
+    timeout-minutes: 100
+    steps:
+      - name: Verify explicit authorization and source
+        env:
+          HEAD_SHA: ${{ inputs.source_sha }}
+          TRUST_SHA: ${{ inputs.approved_pubkey_sha256 }}
+          APPROVAL: ${{ inputs.approval }}
+        run: |
+          set -Eeuo pipefail
+          test "$APPROVAL" = BUILD_ONLY_NO_RELEASE
+          [[ "$HEAD_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$HEAD_SHA" = "$GITHUB_SHA"
+          [[ "$TRUST_SHA" =~ ^[a-f0-9]{64}$ ]]
+          test "$TRUST_SHA" != aa6fb45ab082ef39279e841dc40b0f85e5b33f23746f77557b6f93e3e72c2c06
+          test "$(uname -m)" = arm64
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check frozen production source
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          node -e "const a=require('./src-tauri/tauri.conf.json');if(a.version!=='6.1.15'||a.identifier!=='studio.channelflow.desktop')process.exit(1)"
+      - name: Refuse absent new environment-scoped signing and notarization credentials
+        env:
+          NEW_PRIVATE: ${{ secrets.VYRON617_NEW_TAURI_PRIVATE_KEY }}
+          NEW_PUBLIC: ${{ secrets.VYRON617_NEW_TAURI_PUBLIC_KEY_B64 }}
+          CERT: ${{ secrets.VYRON617_APPLE_DEVELOPER_ID_P12 }}
+          CERT_PASSWORD: ${{ secrets.VYRON617_APPLE_DEVELOPER_ID_PASSWORD }}
+          NOTARY_ID: ${{ secrets.VYRON617_NOTARY_APPLE_ID }}
+          NOTARY_PASSWORD: ${{ secrets.VYRON617_NOTARY_APP_PASSWORD }}
+          TEAM_ID: ${{ secrets.VYRON617_APPLE_TEAM_ID }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$NEW_PRIVATE" || { echo NEW_TAURI_KEY_UNAVAILABLE; exit 1; }
+          test -n "$NEW_PUBLIC" || { echo NEW_TAURI_PUBLIC_KEY_UNAVAILABLE; exit 1; }
+          test -n "$CERT" || { echo DEVELOPER_ID_CERTIFICATE_UNAVAILABLE; exit 1; }
+          test -n "$CERT_PASSWORD" || { echo CERTIFICATE_PASSWORD_UNAVAILABLE; exit 1; }
+          test -n "$NOTARY_ID" || { echo APPLE_NOTARY_ID_UNAVAILABLE; exit 1; }
+          test -n "$NOTARY_PASSWORD" || { echo APPLE_NOTARY_PASSWORD_UNAVAILABLE; exit 1; }
+          test -n "$TEAM_ID" || { echo APPLE_TEAM_ID_UNAVAILABLE; exit 1; }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'src-tauri -> target'
+      - name: Prepare and independently pin new updater public key
+        env:
+          NEW_PUBLIC: ${{ secrets.VYRON617_NEW_TAURI_PUBLIC_KEY_B64 }}
+          TRUST_SHA: ${{ inputs.approved_pubkey_sha256 }}
+        run: |
+          set -Eeuo pipefail
+          printf '%s' "$NEW_PUBLIC" > "$RUNNER_TEMP/vyron-rotated.pub"
+          chmod 600 "$RUNNER_TEMP/vyron-rotated.pub"
+          node scripts/macos/prepare-vyron-rotated-updater.mjs --public-key-file "$RUNNER_TEMP/vyron-rotated.pub" --output "$RUNNER_TEMP/vyron-617.json" --version 6.1.17 > "$RUNNER_TEMP/updater-key-facts.txt"
+          grep -Fxq "PUBLIC_KEY_SHA256=$TRUST_SHA" "$RUNNER_TEMP/updater-key-facts.txt" || { echo NEW_KEY_FINGERPRINT_MISMATCH; exit 1; }
+          grep -Fxq 'STABLE_FEED_PINNED=PASS' "$RUNNER_TEMP/updater-key-facts.txt"
+          echo "VYRON_TRUSTED_UPDATER_PUBLIC_KEY_SHA256=$TRUST_SHA" >> "$GITHUB_ENV"
+      - name: Import Apple Developer ID certificate into temporary keychain
+        env:
+          CERT: ${{ secrets.VYRON617_APPLE_DEVELOPER_ID_P12 }}
+          CERT_PASSWORD: ${{ secrets.VYRON617_APPLE_DEVELOPER_ID_PASSWORD }}
+        run: |
+          set -Eeuo pipefail
+          printf '%s' "$CERT" | openssl base64 -d -A -out "$RUNNER_TEMP/cert.p12"
+          PASS="$(openssl rand -hex 24)"
+          security create-keychain -p "$PASS" "$RUNNER_TEMP/vyron-signing.keychain-db"
+          security unlock-keychain -p "$PASS" "$RUNNER_TEMP/vyron-signing.keychain-db"
+          security import "$RUNNER_TEMP/cert.p12" -P "$CERT_PASSWORD" -A -t cert -f pkcs12 -k "$RUNNER_TEMP/vyron-signing.keychain-db"
+          security list-keychain -d user -s "$RUNNER_TEMP/vyron-signing.keychain-db"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$PASS" "$RUNNER_TEMP/vyron-signing.keychain-db"
+          IDENTITY="$(security find-identity -v -p codesigning "$RUNNER_TEMP/vyron-signing.keychain-db" | sed -n 's/.*"\\(Developer ID Application: [^"]*\\)".*/\\1/p' | head -n 1)"
+          test -n "$IDENTITY"
+          echo "APPLE_SIGNING_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+          rm -f "$RUNNER_TEMP/cert.p12"
+      - name: Build signed 6.1.17 ARM64 app with new Tauri updater key
+        env:
+          NEW_PRIVATE: ${{ secrets.VYRON617_NEW_TAURI_PRIVATE_KEY }}
+          NEW_PRIVATE_PASSWORD: ${{ secrets.VYRON617_NEW_TAURI_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -Eeuo pipefail
+          export VYRON_COMMIT_SHA="$GITHUB_SHA" VYRON_UPDATE_CHANNEL=stable
+          export TAURI_CONFIG="$(cat "$RUNNER_TEMP/vyron-617.json")"
+          export TAURI_SIGNING_PRIVATE_KEY="$NEW_PRIVATE" TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$NEW_PRIVATE_PASSWORD"
+          npm ci --no-audit --no-fund
+          npx tauri build --target aarch64-apple-darwin --bundles app --config "$RUNNER_TEMP/vyron-617.json"
+      - name: Require new updater signature, Apple signing identity and archive hashes
+        env:
+          TEAM_ID: ${{ secrets.VYRON617_APPLE_TEAM_ID }}
+        run: |
+          set -Eeuo pipefail
+          APP="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)"
+          ARCHIVE="$(find src-tauri/target/aarch64-apple-darwin/release/bundle -type f -name 'VYRON.app.tar.gz' -print -quit)"
+          test -d "$APP" && test -s "$ARCHIVE" && test -s "$ARCHIVE.sig"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist")" = studio.channelflow.desktop
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")" = 6.1.17
+          EXE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Contents/Info.plist")"
+          lipo -archs "$APP/Contents/MacOS/$EXE" | tr ' ' '\n' | grep -qx arm64
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -dv --verbose=4 "$APP" 2>&1 | grep -Fx "TeamIdentifier=$TEAM_ID"
+          brew install minisign
+          openssl base64 -d -A -in "$RUNNER_TEMP/vyron-rotated.pub" -out "$RUNNER_TEMP/key.minisign.pub"
+          openssl base64 -d -A -in "$ARCHIVE.sig" -out "$RUNNER_TEMP/archive.minisign.sig"
+          minisign -Vm "$ARCHIVE" -p "$RUNNER_TEMP/key.minisign.pub" -x "$RUNNER_TEMP/archive.minisign.sig"
+          mkdir -p "$RUNNER_TEMP/rc-evidence"
+          shasum -a 256 "$APP/Contents/MacOS/$EXE" > "$RUNNER_TEMP/rc-evidence/executable-sha256.txt"
+          shasum -a 256 "$ARCHIVE" > "$RUNNER_TEMP/rc-evidence/archive-sha256.txt"
+          shasum -a 256 "$ARCHIVE.sig" > "$RUNNER_TEMP/rc-evidence/updater-signature-sha256.txt"
+      - name: Require Apple notarization, stapler and Gatekeeper acceptance
+        env:
+          NOTARY_ID: ${{ secrets.VYRON617_NOTARY_APPLE_ID }}
+          NOTARY_PASSWORD: ${{ secrets.VYRON617_NOTARY_APP_PASSWORD }}
+          TEAM_ID: ${{ secrets.VYRON617_APPLE_TEAM_ID }}
+        run: |
+          set -Eeuo pipefail
+          APP="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name 'VYRON.app' -print -quit)"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "$RUNNER_TEMP/vyron-notary.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/vyron-notary.zip" --apple-id "$NOTARY_ID" --password "$NOTARY_PASSWORD" --team-id "$TEAM_ID" --wait
+          xcrun stapler staple "$APP"
+          xcrun stapler validate "$APP"
+          spctl --assess --type execute --verbose=4 "$APP"
+          printf 'source=%s\nversion=6.1.17\nbundle=studio.channelflow.desktop\narchitecture=arm64\ncodesign=PASS\nnew_updater_signature=PASS\nnotarization=PASS\ngatekeeper=PASS\nowner_migration=NOT_TESTED\nstable_feed=UNCHANGED\nrelease=BLOCKED_UNTIL_TRUSTED_BOOTSTRAP_AND_APPROVAL\n' "$GITHUB_SHA" > "$RUNNER_TEMP/rc-evidence/manifest.txt"
+      - name: Upload evidence only; DO NOT expose public downloadable app from this public repository
+        uses: actions/upload-artifact@v4
+        with:
+          name: VYRON617-SIGNED-RC-EVIDENCE-ONLY
+          path: ${{ runner.temp }}/rc-evidence/
+          retention-days: 7
+          if-no-files-found: error
+      - name: Remove temporary signing inputs
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/cert.p12" "$RUNNER_TEMP/vyron-rotated.pub" "$RUNNER_TEMP/key.minisign.pub" "$RUNNER_TEMP/archive.minisign.sig" "$RUNNER_TEMP/vyron-notary.zip" "$RUNNER_TEMP/vyron-617.json"
