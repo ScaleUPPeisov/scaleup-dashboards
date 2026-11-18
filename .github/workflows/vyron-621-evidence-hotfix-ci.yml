@@ -6,6 +6,9 @@ on:
       - fix/vyron-621-owner-evidence-truth-20261118
     paths:
       - .github/workflows/vyron-621-evidence-hotfix-ci.yml
+      - src/api.ts
+      - src/v611ChannelRunwayInventoryHotfix.test.ts
+      - src/vyron620FleetRunwayVisualSafety.test.ts
       - src/youtubeOwnerInventory.ts
       - src/channelRunwayCore.ts
       - src/channelRunwayStore.ts
@@ -16,6 +19,10 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  group: vyron-621-owner-evidence-safety
+  cancel-in-progress: true
 
 jobs:
   frontend:
