@@ -66,7 +66,7 @@ test('PWA caches every imported browser module but never authenticated API respo
   for(const modulePath of importedModules)
     assert.ok(serviceWorker.includes("'/"+modulePath+"'"),
       'offline shell is missing imported module: '+modulePath);
-  assert.ok(serviceWorker.includes("vyron-peisov-yt-shell-v9"));
+  assert.ok(serviceWorker.includes("vyron-peisov-yt-shell-v10"));
   assert.ok(app.includes('async function ensureServiceWorker()'));
   assert.ok(app.includes('void ensureServiceWorker().catch'));
   assert.ok(serviceWorker.includes("url.pathname.startsWith('/api/')"));
@@ -119,4 +119,17 @@ test('Neo Glass shell uses a real central scroll container with safe-area dock',
   assert.ok(serviceWorker.includes("'/neo-glass.mjs'"));
   assert.ok(serviceWorker.includes("'/insights-core.mjs'"));
   assert.ok(!neoJs.includes("fetch('/api/"),'UI must not initiate a second quota-consuming API request');
+});
+
+test('iPhone device diagnostics are manual-only, reachable in System, and do not clear session',()=>{
+  for(const id of ['diag-notification','diag-connectivity','diag-version',
+    'diag-notification-result','diag-connectivity-result','diag-version-result'])
+    assert.ok(html.includes('id="'+id+'"'),id+' missing');
+  assert.match(app,/deviceDiagnosticsButton\('diag-connectivity'/);
+  assert.match(app,/deviceDiagnosticsButton\('diag-version'/);
+  assert.match(app,/deviceDiagnosticsButton\('diag-notification'/);
+  assert.ok(app.includes("from './diagnostics.mjs'"));
+  assert.ok(serviceWorker.includes("'/diagnostics.mjs'"));
+  assert.match(app,/navigator\.serviceWorker/);
+  assert.match(app,/cache:'no-store'/);
 });
