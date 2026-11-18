@@ -124,6 +124,19 @@ jobs:
           console.log('This is a point-in-time recovery capability, not an exported cold backup.');
           console.log('No restore or schema change has been performed.');
           NODE
+      - name: Read-only currently deployed Worker version and deployment ID
+        shell: bash
+        run: |
+          set -euo pipefail
+          STATUS="$(npx --yes wrangler@4.102.0 deployments status --name vyron-control --json -c cloudflare/wrangler.jsonc)"
+          WORKER_STATUS_JSON="$STATUS" node --input-type=module <<'NODE'
+          const result=JSON.parse(process.env.WORKER_STATUS_JSON||'{}');
+          const body=Array.isArray(result)?result[0]:result;
+          const deploymentId=body?.id||body?.deployment_id||body?.deploymentId||null;
+          const versionIds=(body?.versions||[]).map(v=>v.version_id||v.versionId||v.id).filter(Boolean);
+          console.log('READ ONLY Production Worker deployment status:',
+            JSON.stringify({deploymentId,versionIds,observed:true}));
+          NODE
       - name: Confirm no production mutation
         if: always()
         run: echo "READ-ONLY AUDIT ONLY — no deploy, no migration, no UPDATE/INSERT/DELETE."
