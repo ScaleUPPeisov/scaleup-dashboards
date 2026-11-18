@@ -4031,6 +4031,7 @@ pub async fn youtube_list_existing_videos(
     operation_id: Option<String>,
     verify_scheduled: Option<bool>,
     known_scheduled_ids: Option<Vec<String>>,
+    max_search_pages: Option<u32>,
 ) -> Result<Value, String> {
     let (token, profile) = valid_access_token(&app, &profile_id).await?;
     let limit = max_results.unwrap_or(1000).clamp(1, 5000) as usize;
@@ -4151,9 +4152,11 @@ pub async fn youtube_list_existing_videos(
     if verify{
         search_used=true;
         let mut search_page:Option<String>=None;
-        // The owner-only search API is bounded to two pages per explicit click.
+        // The caller reserves real Search Queries capacity before invoking.
+        // Full-fleet: <=4 pages/channel; single owner audit: <=12 pages.
         // A truncated search must never be mistaken for proof of zero Scheduled.
-        for _ in 0..2{
+        let max_pages=max_search_pages.unwrap_or(2).clamp(1,12);
+        for _ in 0..max_pages{
             let expected=profile.channel_id.as_deref().unwrap_or("");
             let mut request=client.get("https://www.googleapis.com/youtube/v3/search")
                 .bearer_auth(&token)
