@@ -13,6 +13,7 @@ import {
 } from './renderScanClassifier';
 import {uploadTelemetrySnapshot} from './uploadTelemetry';
 import {currentPhysicalUploadEligible,reconcilePublisherInventory} from './publisherInventoryReconcile';
+import {recordPerformanceOperation} from './performanceTelemetry';
 
 export type InventoryFolderState='ONLINE'|'OFFLINE'|'SCANNING'|'ERROR';
 export type InventoryLevel='NORMAL'|'SOON'|'LOW'|'EMPTY'|'OFFLINE';
@@ -228,6 +229,7 @@ function auditFor(previous:ChannelInventorySnapshot|undefined,next:ChannelInvent
 async function scanInventoryChannelOnce(channelId:string,reason:InventoryScanReason):Promise<ChannelInventorySnapshot|undefined>{
   const state=useApp.getState(),channel=state.channels.find(c=>c.id===channelId);
   if(!channel)return;
+  recordPerformanceOperation('inventory.scanChannel',reason);
   const store=useLiveInventory.getState(),previous=store.snapshots[channelId],root=String(channel.renderFolderPath||'').trim();
   if(!root){
     const next=offlineSnapshot(channel,previous,'RENDER_FOLDER_NOT_CONFIGURED');store.setSnapshot(next);auditFor(previous,next,reason);return next
@@ -290,6 +292,7 @@ export function scanInventoryChannel(channelId:string,reason:InventoryScanReason
 let allInventoryScanInFlight:Promise<void>|null=null;
 export function scanAllInventories(reason:InventoryScanReason='manual-all'):Promise<void>{
   if(allInventoryScanInFlight)return allInventoryScanInFlight;
+  recordPerformanceOperation('inventory.scanAll',reason);
   const run=(async()=>{
     const store=useLiveInventory.getState();store.setGlobalScanning(true);
     try{
@@ -330,3 +333,4 @@ export function refreshInventoryUploadCounts(){
 }
 export function inventorySnapshot(channelId:string){return useLiveInventory.getState().snapshots[channelId]}
 export function resetLiveInventoryForTests(){useLiveInventory.setState({snapshots:{},audit:[],globalScanning:false})}
+

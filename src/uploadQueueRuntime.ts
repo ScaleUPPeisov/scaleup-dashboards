@@ -7,12 +7,14 @@ import {recordVerifiedUpload,nextProjectLifecycle,successfulUploadForHash,update
 import {useApp} from './store';
 import {acquireChannelUploadLock,beginPublishAttempt,completePublishAttempt,failPublishAttempt,isChannelUploadLocked,isYoutubeDailyUploadLimitError,releaseChannelUploadLock,safeDailyStatus} from './youtubePublishSafety';
 import {isYoutubeQuotaError,releaseYoutubeQuotaReservation,reserveYoutubeQuotaAtomic,type YoutubeQuotaOperation} from './youtubeQuota';
-import {MultiChannelUploadQueue,type ImmutableUploadJob,type UploadQueueSnapshot} from './uploadQueue';
+import {MultiChannelUploadQueue,uploadQueueDuplicateError,type ImmutableUploadJob,type UploadQueuePersistence,type UploadQueueSnapshot} from './uploadQueue';
+import {selectDurableQueueSnapshot} from './uploadQueuePersistence';
 import {journal,journalProcessingState} from './activityJournalRuntime';
 import {attentionTask,cancelTask,completeTask,ensureTask,failTask,startTask} from './taskEngine';
 import {loadPublishWorkspace,retireCompletedWorkspaceMetadata,savePublishWorkspace} from './publishWorkspaceState';
 import {retryableYoutubeMetadataState} from './youtubeMetadataValidation';
 import {publisherIntegrityError,validateImmutableUploadSpec} from './publisherIntegrity';
+import {verifyQueuedSourceFingerprint} from './uploadQueueSourceVerification';
 
 function assertQueuePayloadIntegrity(spec:ImmutableUploadJob){const result=validateImmutableUploadSpec(spec,true);if(!result.valid)throw publisherIntegrityError(spec.videoNumber,result.issues)}
 
@@ -29,6 +31,9 @@ async function executeUpload(spec:ImmutableUploadJob){
   if(job.youtubeVideoId&&!spec.allowDuplicate)throw new Error(`UPLOAD_ALREADY_HAS_VIDEO_ID: ${job.youtubeVideoId}; verify existing YouTube state before explicit duplicate re-upload`);
   if(Date.parse(spec.publishAt)<=Date.now())throw new Error('UPLOAD_QUEUE_PUBLISH_AT_EXPIRED: publishAt is no longer in the future');
   if(successfulUploadForHash(state.uploadHistory,spec.fingerprint,spec.channelId,spec.fileSize))throw new Error('UPLOAD_QUEUE_DUPLICATE_VERIFIED: fingerprint already uploaded for this channel');
+  // A queued source may change before its transfer slot; compare full bytes now.
+  // Never accept an old size+mtime cache for an immutable upload spec.
+  await verifyQueuedSourceFingerprint(spec,path=>api.youtubeFileFingerprint(path));
   const daily=safeDailyStatus(spec.channelId,channel.safeDailyUploadLimit);if(daily.remaining!=null&&daily.remaining<=0)throw new Error('UPLOAD_QUEUE_CHANNEL_DAILY_LIMIT: safe rolling limit reached');
   const quota=reserveYoutubeQuotaAtomic(operationId,spec.quotaOperations as YoutubeQuotaOperation[],spec.quotaProjectKey||undefined);
   if(!quota.reserved)throw new Error('UPLOAD_QUEUE_QUOTA_RECHECK_FAILED: quota changed before start');
@@ -120,15 +125,59 @@ async function executeUpload(spec:ImmutableUploadJob){
  }finally{if(quotaReserved)releaseYoutubeQuotaReservation(operationId);if(lock)releaseChannelUploadLock(spec.channelId,lock)}
 }
 
-const queue=new MultiChannelUploadQueue(executeUpload,2);
+const DURABLE_QUEUE_KEY='vyron:youtube-upload-queue:v1',DURABLE_QUEUE_STAGING_KEY=DURABLE_QUEUE_KEY+':staging';
+const durableQueuePersistence:UploadQueuePersistence={
+ load(){
+  if(typeof localStorage==='undefined')return;
+  // Two corrupt snapshots must never be interpreted as an empty queue.
+  try{return selectDurableQueueSnapshot(localStorage.getItem(DURABLE_QUEUE_STAGING_KEY),localStorage.getItem(DURABLE_QUEUE_KEY))}
+  catch{return{version:1,entries:[],recoveryIntegrityError:'STORAGE_READ_FAILED'}}
+ },
+ save(value){
+  if(typeof localStorage==='undefined')return;
+  const raw=JSON.stringify(value);
+  // localStorage writes are atomic per key. The staging generation lets the
+  // next start recover if the primary write is interrupted or unavailable.
+  localStorage.setItem(DURABLE_QUEUE_STAGING_KEY,raw);
+  localStorage.setItem(DURABLE_QUEUE_KEY,raw);
+  localStorage.removeItem(DURABLE_QUEUE_STAGING_KEY);
+ }
+};
+function shouldPauseQueueEntry(error:unknown){const value=String(error||'');return value.includes('UPLOAD_QUEUE_QUOTA_RECHECK_FAILED')||value.includes('UPLOAD_QUEUE_CHANNEL_DAILY_LIMIT')||isYoutubeQuotaError(error)||isYoutubeDailyUploadLimitError(error)}
+const queue=new MultiChannelUploadQueue(executeUpload,2,1,{persistence:durableQueuePersistence,pauseOnError:shouldPauseQueueEntry});
 export function configureUploadQueue(concurrency:number,perChannelConcurrency=1){queue.setConcurrency(concurrency);queue.setPerChannelConcurrency(perChannelConcurrency)}
 export function uploadQueueSnapshot(){return queue.snapshot()}
 export function subscribeUploadQueue(cb:(snapshot:UploadQueueSnapshot)=>void){return queue.subscribe(cb)}
 export function uploadQueueRuntimeFacts(){return queue.getRuntimeFacts()}
 export function waitForUploadQueueEntries(queueIds:string[]){return queue.waitForEntries(queueIds)}
-export function enqueueUpload(spec:ImmutableUploadJob){assertQueuePayloadIntegrity(spec);if(queue.hasDuplicate(spec))throw new Error('UPLOAD_QUEUE_DUPLICATE: project/fingerprint already queued or running');const batchId=spec.batchId||`upload-batch:${spec.channelId}:${spec.submittedAt}`;ensureTask({taskId:`upload:${spec.jobId}`,type:'UPLOAD',state:'QUEUED',channelId:spec.channelId,channelName:spec.channelName,profileId:spec.profileId,jobId:spec.jobId,label:`VIDEO_${String(spec.videoNumber).padStart(3,'0')}`,detail:baseName(spec.filePath),progress:0,bytesCompleted:0,bytesTotal:spec.fileSize,resourceKey:`upload:${spec.channelId}:${spec.jobId}`});useApp.getState().patchJob(spec.jobId,{status:'READY_UPLOAD',storageLifecycle:'QUEUED',uploadProgress:0,error:undefined,uploadFingerprint:spec.fingerprint,currentSourceFingerprint:spec.fingerprint,currentSourceFileSize:spec.fileSize,currentSourceModifiedAt:spec.modifiedAt,sourceGenerationKey:`${spec.channelId}:${spec.fingerprint}:${spec.fileSize}`});journal({eventType:'UPLOAD_QUEUED',status:'STARTED',source:'LIVE_OPERATION',timestamp:spec.submittedAt,operationId:batchId+':'+spec.jobId,batchId,channelId:spec.channelId,channelName:spec.channelName,profileId:spec.profileId,jobId:spec.jobId,localSourcePath:spec.filePath,details:{filename:baseName(spec.filePath),fileSize:spec.fileSize,title:spec.title,publishAt:spec.publishAt}});return queue.enqueue(spec)}
+export function enqueueUpload(spec:ImmutableUploadJob){
+ assertQueuePayloadIntegrity(spec);
+ const duplicate=queue.findDuplicate(spec);
+ if(duplicate)throw uploadQueueDuplicateError(duplicate.kind);
+ // Persist immutable queue ownership BEFORE mutating job state, task history or journal.
+ // A failed localStorage commit must not claim that the video was queued.
+ const entry=queue.enqueue(spec);
+ const isRunning=queue.snapshot().running.some(x=>x.queueId===entry.queueId);
+ const batchId=spec.batchId||`upload-batch:${spec.channelId}:${spec.submittedAt}`;
+ ensureTask({taskId:`upload:${spec.jobId}`,type:'UPLOAD',state:isRunning?'RUNNING':'QUEUED',channelId:spec.channelId,channelName:spec.channelName,profileId:spec.profileId,jobId:spec.jobId,label:`VIDEO_${String(spec.videoNumber).padStart(3,'0')}`,detail:baseName(spec.filePath),progress:0,bytesCompleted:0,bytesTotal:spec.fileSize,resourceKey:`upload:${spec.channelId}:${spec.jobId}`});
+ useApp.getState().patchJob(spec.jobId,{status:isRunning?'UPLOADING':'READY_UPLOAD',storageLifecycle:isRunning?'UPLOADING':'QUEUED',uploadProgress:0,error:undefined,uploadFingerprint:spec.fingerprint,currentSourceFingerprint:spec.fingerprint,currentSourceFileSize:spec.fileSize,currentSourceModifiedAt:spec.modifiedAt,sourceGenerationKey:`${spec.channelId}:${spec.fingerprint}:${spec.fileSize}`});
+ journal({eventType:'UPLOAD_QUEUED',status:'STARTED',source:'LIVE_OPERATION',timestamp:spec.submittedAt,operationId:batchId+':'+spec.jobId,batchId,channelId:spec.channelId,channelName:spec.channelName,profileId:spec.profileId,jobId:spec.jobId,localSourcePath:spec.filePath,details:{filename:baseName(spec.filePath),fileSize:spec.fileSize,title:spec.title,publishAt:spec.publishAt}});
+ return entry;
+}
 export function removeQueuedUpload(jobId:string){const ok=queue.removeQueued(jobId);if(ok){useApp.getState().patchJob(jobId,{status:'READY_UPLOAD',storageLifecycle:'NEW',uploadProgress:0});cancelTask(`upload:${jobId}`,'Убрано из очереди владельцем')}return ok}
-export function uploadQueueHasActiveJob(jobId:string){const s=queue.snapshot();return [...s.queued,...s.running].some(x=>x.spec.jobId===jobId)}
+export function resumePausedUpload(jobId:string){
+ const entry=queue.snapshot().paused.find(x=>x.spec.jobId===jobId);if(!entry)return false;
+ const state=useApp.getState(),job=state.jobs.find(x=>x.id===jobId),channel=state.channels.find(x=>x.id===entry.spec.channelId);
+ if(!job||!channel||job.channelId!==entry.spec.channelId||job.finalPath!==entry.spec.filePath)return false;
+ if(job.youtubeVideoId&&!entry.spec.allowDuplicate)return false;
+ // Keep the existing PAUSED truth if the durable transition cannot be written.
+ if(!queue.resumePaused(jobId))return false;
+ const isRunning=queue.snapshot().running.some(x=>x.spec.jobId===jobId);
+ ensureTask({taskId:`upload:${entry.spec.jobId}`,type:'UPLOAD',state:isRunning?'RUNNING':'QUEUED',channelId:entry.spec.channelId,channelName:entry.spec.channelName,profileId:entry.spec.profileId,jobId:entry.spec.jobId,label:`VIDEO_${String(entry.spec.videoNumber).padStart(3,'0')}`,detail:baseName(entry.spec.filePath),progress:0,bytesCompleted:0,bytesTotal:entry.spec.fileSize,resourceKey:`upload:${entry.spec.channelId}:${entry.spec.jobId}`});
+ state.patchJob(jobId,{status:isRunning?'UPLOADING':'READY_UPLOAD',storageLifecycle:isRunning?'UPLOADING':'QUEUED',uploadProgress:0,error:undefined});
+ return true
+}
+export function uploadQueueHasActiveJob(jobId:string){const s=queue.snapshot();return [...s.paused,...s.queued,...s.running].some(x=>x.spec.jobId===jobId)}
 export function uploadQueueActiveCount(){return queue.snapshot().running.length}
-export function uploadQueueQueuedCount(){return queue.snapshot().queued.length}
+export function uploadQueueQueuedCount(){const s=queue.snapshot();return s.paused.length+s.queued.length}
 export function warnQueueFailure(message:string){notifyWarning('Очередь загрузки',message)}

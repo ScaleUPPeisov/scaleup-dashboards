@@ -1,7 +1,10 @@
 export const UPDATER_ENDPOINTS=[
-  'https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/vyron-updates/latest.json',
-  'https://github.com/ScaleUPPeisov/scaleup-dashboards/releases/latest/download/latest.json'
+  'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json',
+  'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/windows-latest.json'
 ] as const;
+
+// The 6.1.14 / 6.1.15 trust root was exposed; never authorize a key rollover with it.
+export const COMPROMISED_LEGACY_UPDATER_PUBLIC_KEY_SHA256='aa6fb45ab082ef39279e841dc40b0f85e5b33f23746f77557b6f93e3e72c2c06';
 
 export const UPDATER_CHECK_OPTIONS={
   timeout:30_000,
@@ -45,12 +48,15 @@ export function updaterVersionStatus(current:string,latest:string){
 export function classifyUpdaterError(error:unknown,stage:UpdaterStage){
   const detail=String(error??'');
   const s=detail.toLowerCase();
+  if(s.includes('updater_trust_migration_required'))return{code:'UPDATER_TRUST_MIGRATION_REQUIRED',detail};
+  if(s.includes('updater_key_trust_not_verified'))return{code:'UPDATER_KEY_TRUST_NOT_VERIFIED',detail};
+  if(s.includes('updater_configuration_invalid'))return{code:'UPDATER_CONFIGURATION_INVALID',detail};
   if(s.includes('running_from_dmg')||s.includes('запущен из установочного образа')||s.includes('запущен из dmg'))return{code:'RUNNING_FROM_DMG',detail};
   if(s.includes('app_replacement_not_applied'))return{code:'APP_REPLACEMENT_NOT_APPLIED',detail};
   if(s.includes('app_replacement_codesign_failed'))return{code:'APP_REPLACEMENT_CODESIGN_FAILED',detail};
   if(s.includes('update_target_path_changed')||s.includes('updater_restart_path_mismatch')||s.includes('updater_restart_path_missing'))return{code:'UPDATER_RESTART_PATH_MISMATCH',detail};
   if(s.includes('app_not_replaceable')||s.includes('bundle не найден')||s.includes('нет записи на том'))return{code:'APP_NOT_REPLACEABLE',detail};
-  if(s.includes('artifact_sha_mismatch')||s.includes('manifest_sha_invalid'))return{code:'UPDATER_ARTIFACT_HASH_MISMATCH',detail};
+  if(s.includes('artifact_sha_mismatch')||s.includes('manifest_sha_invalid')||s.includes('manifest_sha_missing')||s.includes('staged_archive_sha_mismatch'))return{code:'UPDATER_ARTIFACT_HASH_MISMATCH',detail};
   if(s.includes('signature')||s.includes('minisign')||s.includes('public key'))return{code:'UPDATER_SIGNATURE_INVALID',detail};
   if(s.includes('platform')||s.includes('darwin-aarch64')&&s.includes('not found'))return{code:'UPDATER_PLATFORM_NOT_FOUND',detail};
   if(stage==='check')return{code:'UPDATER_MANIFEST_FETCH_FAILED',detail};
@@ -60,6 +66,9 @@ export function classifyUpdaterError(error:unknown,stage:UpdaterStage){
 }
 
 export function updaterFailureMessage(code:string,detail:string){
+  if(code==='UPDATER_TRUST_MIGRATION_REQUIRED')return 'Для установленной 6.1.15 старый ключ обновления скомпрометирован. Прямое обновление через него запрещено. Требуется однократная проверенная Apple Developer ID / notarized GUI-замена VYRON с сохранением данных; после перехода на новый ключ следующие версии обновляются через Настройки.';
+  if(code==='UPDATER_KEY_TRUST_NOT_VERIFIED')return `Обновление заблокировано: fingerprint встроенного ключа не подтверждён независимой доверенной записью. ${detail}`;
+  if(code==='UPDATER_CONFIGURATION_INVALID')return `Встроенная конфигурация обновления VYRON не прошла проверку: публичный ключ или Stable feed не совпадает с ожидаемыми параметрами. ${detail}`;
   if(code==='RUNNING_FROM_DMG')return 'VYRON запущен из DMG. Переместите VYRON.app в Applications.';
   if(code==='APP_REPLACEMENT_NOT_APPLIED')return `Файл VYRON.app на диске не был заменён новой версией. Перезапуск отменён. ${detail}`;
   if(code==='APP_REPLACEMENT_CODESIGN_FAILED')return `Новая VYRON.app не прошла codesign-проверку. Перезапуск отменён. ${detail}`;

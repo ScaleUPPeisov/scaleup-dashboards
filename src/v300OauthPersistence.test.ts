@@ -30,9 +30,10 @@ describe('VYRON 3.0.0 OAuth persistence physical-blocker regression',()=>{
  it('startup no longer blasts statistics for all profiles',()=>expect(accounts).not.toContain('void refreshAllStats(false)'));
  it('app version change is credential-neutral while launch recovery uses saved profiles without browser reconnect',()=>{
   const app=fs.readFileSync('src/App.tsx','utf8');
-  expect(app).toContain('oauthBootRecoveryStarted');
-  expect(app).toContain('api.youtubeGoogleConfig()');
-  expect(app).toContain('api.youtubeOauthRecoverExistingProfiles()');
+  expect(app).not.toContain('oauthBootRecoveryStarted');
+  expect(app).not.toContain('api.youtubeOauthRecoverExistingProfiles()');
+  expect(recovery).toContain('api.youtubeOauthRecoverExistingProfiles()');
+  expect(recovery).not.toContain('oauthBootRecoveryStarted');
   expect(app).not.toContain('vyron:oauth-continuity-version');
  });
  it('recovery center automatically checks NOT_CHECKED saved profiles when GLOBAL OAuth is READY',()=>{
@@ -49,13 +50,14 @@ describe('VYRON 3.0.0 OAuth persistence physical-blocker regression',()=>{
  });
  it('post-update health restores saved profiles before reporting OAuth state and never opens browser',()=>{
   const app=fs.readFileSync('src/App.tsx','utf8');
-  const effect=app.split("localStorage.getItem('vyron:update-installing-version')").at(1)?.split('POST_UPDATE_BUILD_MISMATCH')[0]||'';
-  expect(effect).toContain('api.youtubeGoogleConfig()');
-  expect(effect).toContain('api.youtubeOauthRecoverExistingProfiles()');
+  const effect=app.split("localStorage.getItem('vyron:update-installing-target')").at(1)?.split('POST_UPDATE_IDENTITY_MISMATCH')[0]||'';
   expect(effect).toContain('api.youtubeProfiles()');
   expect(effect).toContain('api.youtubeOauthCredentialStates()');
   expect(effect).toContain('OAuth READY');
   expect(effect).toContain('Требуют входа');
+  expect(effect).toContain('states.youtubeApiRequests!==0||states.keychainSecretReads!==0');
+  expect(effect).not.toContain('youtubeOauthRecoverExistingProfiles');
+  expect(effect).not.toContain('youtubeGoogleConfig');
   expect(effect).not.toContain('youtubeReconnectExisting');
   expect(effect).not.toContain('youtubeOauthBrowsers');
  });

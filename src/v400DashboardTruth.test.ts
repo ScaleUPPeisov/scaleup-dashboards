@@ -15,10 +15,13 @@ describe('VYRON 4.0.0 dashboard truth separation',()=>{
    expect(dashboard).not.toContain('inventory.channels.reduce((n,x)=>n+x.scheduled');
  });
  it('does not use public channel videoCount as owner total',()=>{
-   expect(dashboard).toContain('OWNER-ВИДЕО');
-   expect(dashboard).toContain('ownerTotals.total');
-   expect(dashboard).not.toContain('stats?.videoCount');
-   expect(dashboard).not.toContain('stats?.videos');
+   // Owner-authorized uploads are a separate section from public channel stats.
+   expect(dashboard).toContain('const ownerVideoValue=ownerTotals.availableChannels?ownerPrefix+fmt(ownerTotals.total)');
+   expect(dashboard).toContain('<small>Всего owner-visible</small><b>{ownerVideoValue}</b>');
+   expect(dashboard).toContain('Public channel videoCount здесь не используется как абсолютн');
+   // Public statistics can still be shown independently, with a partial-data prefix.
+   expect(dashboard).toContain('const videoValues=enabled.map(c=>c.stats?.videoCount??c.stats?.videos)');
+   expect(dashboard).toContain('aggregate(videoValues,videoTotal)');
  });
  it('owner inventory classifies schedule only from real private + future publishAt',()=>{
    expect(owner).toContain("privacy==='private'");
@@ -30,8 +33,12 @@ describe('VYRON 4.0.0 dashboard truth separation',()=>{
  it('smart scheduler reuses cache and does not refresh on every page transition',()=>{
    expect(owner).toContain('OWNER_INVENTORY_TTL_MS=6*60*60*1000');
    expect(owner).toContain('ownerInventoryCacheStale');
-   expect(scheduler).toContain('setTimeout(run,2500)');
-   expect(scheduler).toContain('setInterval(run,OWNER_INVENTORY_TTL_MS)');
+   // Later 5.0.1 intentionally disables automatic owner refresh on navigation.
+   // Keep cache-first operation: never restore the old timers to satisfy a 4.0 assertion.
+   expect(scheduler).toContain('manual-only');
+   expect(scheduler).toContain('return null;');
+   expect(scheduler).not.toContain('setTimeout(');
+   expect(scheduler).not.toContain('setInterval(');
    expect(app).toContain('<OwnerInventoryScheduler/>');
  });
  it('Today block exposes daily operational state without using local stock as YouTube schedule',()=>{
@@ -42,6 +49,9 @@ describe('VYRON 4.0.0 dashboard truth separation',()=>{
  });
  it('dashboard treats missing subscriber data as unavailable, not zero',()=>{
    expect(dashboard).toContain("hiddenSubscriberCount?undefined");
-   expect(dashboard).toContain("subscriberValues.length?fmt(subscriberTotal):'—'");
+   expect(dashboard).toContain("const aggregate=(values:number[],total:number)=>values.length?");
+   expect(dashboard).toContain(":'—'");
+   expect(dashboard).toContain('aggregate(subscriberValues,subscriberTotal)');
+   expect(dashboard).toContain("values.length<enabled.length?'≥ ':'')");
  });
 });

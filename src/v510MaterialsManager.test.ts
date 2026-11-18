@@ -13,8 +13,9 @@ const pkg=JSON.parse(fs.readFileSync('package.json','utf8'));
 
 describe('VYRON 6.0.1 Materials Manager contract',()=>{
   it('uses one 6.0.1 application identity without changing updater endpoints',()=>{
-    expect(pkg.version).toBe('6.0.1');
-    expect(tauri.version).toBe('6.0.1');
+    expect(pkg.version).toBe('6.1.15');
+    expect(tauri.version).toBe('6.1.15');
+    expect(fs.readFileSync('src/releaseHistory.ts','utf8')).toContain('"version":"6.0.1"');
     expect(tauri.identifier).toBe('studio.channelflow.desktop');
     expect(tauri.plugins.updater.endpoints).toEqual([
       'https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json',
@@ -79,8 +80,8 @@ describe('VYRON 6.0.1 Materials Manager contract',()=>{
   });
 
   it('preserves legacy imports as fallback without migrating or deleting existing projects',()=>{
-    expect(productionRust).toContain('Legacy Import Session keeps its old allowImageReuse behavior');
-    expect(productionRust).toContain('if use_material_library');
+    expect(productionRust).toContain('if req.project_count > available_images && !req.allow_image_reuse');
+    expect(productionRust).toContain('if req.allow_image_reuse { None } else { image.asset_id.clone() }');
     expect(productionRust).not.toContain('remove_dir_all(&session.import_path');
     expect(materialsRuntime).not.toContain('remove_dir_all');
   });

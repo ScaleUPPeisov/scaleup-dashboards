@@ -6,12 +6,26 @@ export const RUNWAY_PLAN_THRESHOLD_DAYS=45;
 
 export type ChannelRunwayStatus='large'|'plan'|'prepare'|'urgent'|'ended'|'no-data';
 export type ChannelRunwayPriority='low'|'normal'|'high'|'critical'|'unknown';
+export type RunwayDataState='CONFIRMED_SCHEDULE'|'CONFIRMED_EMPTY'|'PARTIAL_DATA'|'STALE_CACHE'|'AUTH_REQUIRED'|'API_FAILED'|'UNKNOWN';
+export const RUNWAY_EVIDENCE_TTL_MS=6*60*60*1000;
+export const confirmedRunway=(state?:RunwayDataState)=>state==='CONFIRMED_SCHEDULE'||state==='CONFIRMED_EMPTY';
 
 export type ChannelRunwayRecord={
   channelId:string;
   channelName:string;
   scheduledUntil?:string;
   scheduledVideoCount:number;
+  dataState?:RunwayDataState;
+  // v2 means this record came from a source whose schedule coverage was checked.
+  // Legacy zeroes without this proof cannot claim CONFIRMED_EMPTY.
+  inventoryEvidenceVersion?:2;
+  lastRefreshAttemptAt?:string;
+  lastRefreshError?:string;
+  // Authenticated videos.list findings from the most recent incomplete read.
+  // These are lower bounds, distinct from the historic verified baseline.
+  lastObservedAt?:string;
+  lastObservedScheduledCount?:number;
+  lastObservedScheduledUntil?:string;
   averagePublishIntervalDays?:number;
   lastScheduleSync?:string;
   lastLocalCalculation:string;
@@ -117,6 +131,7 @@ export function deriveRunwayRecord(
     channelName:channel.name,
     scheduledUntil,
     scheduledVideoCount:scheduled.length,
+    dataState:known?(scheduled.length?'CONFIRMED_SCHEDULE':'CONFIRMED_EMPTY'):'UNKNOWN',
     averagePublishIntervalDays:averageIntervalDays(scheduled),
     lastScheduleSync,
     lastLocalCalculation:now.toISOString(),
@@ -129,12 +144,18 @@ export function deriveRunwayRecord(
 
 export function recalculateRunwayRecord(record:ChannelRunwayRecord,now=new Date()):ChannelRunwayRecord{
   const today=krasnoyarskClock(now).dateKey;
-  const known=record.status!=='no-data'||Boolean(record.lastScheduleSync)||Boolean(record.scheduledUntil);
+  // Legacy zero-day records were not evidence of a fully successful owner sync.
+  const previous=record.dataState||(record.scheduledUntil?'STALE_CACHE':'UNKNOWN');
+  const at=Date.parse(record.lastScheduleSync||'');
+  const stale=confirmedRunway(previous)&&(!Number.isFinite(at)||now.getTime()-at>=RUNWAY_EVIDENCE_TTL_MS);
+  const dataState=stale?'STALE_CACHE':previous;
+  const known=confirmedRunway(dataState);
   const raw=record.scheduledUntil?calendarDaysBetween(today,record.scheduledUntil):undefined;
   const runwayDays=known?(raw===undefined?0:Math.max(0,raw)):undefined;
   const status=runwayStatus(runwayDays,known);
   return{
     ...record,
+    dataState,
     lastLocalCalculation:now.toISOString(),
     runwayDays,
     nextProductionDate:record.scheduledUntil?subtractCalendarDays(record.scheduledUntil,RUNWAY_PLAN_THRESHOLD_DAYS):undefined,
@@ -143,6 +164,22 @@ export function recalculateRunwayRecord(record:ChannelRunwayRecord,now=new Date(
   };
 }
 
+export type YoutubeOnlyRunwayPriority={channelName:string;remoteScheduledDays:number;scheduledUntil?:string;known:boolean;historicalScheduledDays?:number};
+export function compareYoutubeOnlyRunwayPriority(a:YoutubeOnlyRunwayPriority,b:YoutubeOnlyRunwayPriority){
+  // Sort by the number actually displayed under "Остаток дней":
+  // verified YouTube first for ties, positive historical evidence second,
+  // and genuinely unknown days last. Local HDD stock never affects ordering.
+  const display=(row:YoutubeOnlyRunwayPriority)=>{
+    if(row.known&&Number.isFinite(row.remoteScheduledDays))return{days:Math.max(0,row.remoteScheduledDays),confidence:0};
+    if(!row.known&&row.historicalScheduledDays!==undefined&&Number.isFinite(row.historicalScheduledDays)&&row.historicalScheduledDays>=0)
+      return{days:row.historicalScheduledDays,confidence:1};
+    return{days:Number.POSITIVE_INFINITY,confidence:2};
+  };
+  const ad=display(a),bd=display(b);
+  return ad.days-bd.days||ad.confidence-bd.confidence||
+    (a.scheduledUntil||'').localeCompare(b.scheduledUntil||'')||
+    a.channelName.localeCompare(b.channelName,'ru');
+}
 export function compareRunwayRecords(a:ChannelRunwayRecord,b:ChannelRunwayRecord){
   const ad=a.runwayDays,bd=b.runwayDays;
   if(ad===undefined&&bd===undefined)return a.channelName.localeCompare(b.channelName,'ru');

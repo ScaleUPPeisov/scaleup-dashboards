@@ -33,8 +33,10 @@ describe('VYRON 4.0.0 black-screen regression guard',()=>{
   it('makes runway background persistence failures non-fatal',()=>{
     expect(scheduler).toContain('CHANNEL_RUNWAY_SCHEDULER_ERROR');
     expect(scheduler).toContain('try{void maybeRunDailyChannelRunway');
-    expect(store).toContain('try{if(storage)storage.setItem');
-    expect(store).toContain('catch{}');
+    expect(store).toContain('try{');
+    expect(store).toContain('storage.setItem(CHANNEL_RUNWAY_STORAGE_KEY,raw)');
+    expect(store).toContain("errorCode:name==='QuotaExceededError'");
+    expect(store).toContain("'STORAGE_WRITE_FAILED'");
   });
 
   it('does not add destructive auth recovery to the crash path',()=>{

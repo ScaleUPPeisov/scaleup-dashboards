@@ -153,7 +153,7 @@ export function reconcileExistingSyncAfterTargetedRetry(syncInfo:any,currentVide
  return{videos:merged,syncInfo:nextInfo};
 }
 export async function replaceExistingCacheFromSync(channelId:string,videos:YoutubeExistingVideo[],syncInfo:any){
- const rows=normalizeVideoArray(videos).map(cloneVideo),complete=syncInfo?.syncComplete===true||syncInfo?.complete===true,now=new Date().toISOString();
+ const rows=normalizeVideoArray(videos).map(cloneVideo),complete=scheduleSyncTruthFromInfo(syncInfo)==='complete',now=new Date().toISOString();
  let prev:ExistingCache|undefined;
  try{prev=await loadExistingCache(channelId)}catch(error){
   if(!complete)return{videos:rows,baseline:{},lastCompleteAt:undefined,persisted:false,persistErrorCode:'INVENTORY_STORAGE_CORRUPT' as const,persistError:String(error),persistedBytes:undefined};
@@ -163,17 +163,25 @@ export async function replaceExistingCacheFromSync(channelId:string,videos:Youtu
  const persistence=await writeExistingCache(channelId,{version:1,updatedAt:now,videos:displayRows,baseline,lastUndo:complete?[]:(prev?.lastUndo||[]),syncInfo:normalizeSyncInfo(syncInfo),lastCompleteAt:complete?now:prev?.lastCompleteAt,lastCompleteSyncInfo:complete?normalizeSyncInfo(syncInfo):prev?.lastCompleteSyncInfo});
  return{videos:displayRows,baseline,lastCompleteAt:complete?now:prev?.lastCompleteAt,persisted:persistence.ok,persistErrorCode:persistence.errorCode,persistError:persistence.error,persistedBytes:persistence.bytes};
 }
+// Only an explicitly complete schedule scan may prove the absence of future uploads.
+// A partial scan keeps the last verified baseline, including a verified empty baseline.
+function verifiedExistingSnapshot(cache:ExistingCache|undefined){
+  if(!cache)return;
+  const currentComplete=scheduleSyncTruthFromInfo(cache.syncInfo)==='complete';
+  const previousComplete=Boolean(cache.lastCompleteAt)&&scheduleSyncTruthFromInfo(cache.lastCompleteSyncInfo)==='complete';
+  if(!currentComplete&&!previousComplete)return;
+  const videos=(currentComplete?authoritativeCacheVideos(cache):Object.values(cache.baseline||{})).map(cloneVideo);
+  return{
+    videos,
+    updatedAt:currentComplete?cache.updatedAt:cache.lastCompleteAt,
+    syncInfo:currentComplete?cache.syncInfo:cache.lastCompleteSyncInfo
+  };
+}
 export function readAuthoritativeExistingSnapshot(channelId:string){
- const cache=readExistingCache(channelId),videos=authoritativeCacheVideos(cache).map(cloneVideo);
- if(!cache||!videos.length)return;
- const currentComplete=scheduleSyncTruthFromInfo(cache.syncInfo)==='complete';
- return{videos,updatedAt:cache.lastCompleteAt||(currentComplete?cache.updatedAt:undefined),syncInfo:cache.lastCompleteSyncInfo||(currentComplete?cache.syncInfo:null)};
+  return verifiedExistingSnapshot(readExistingCache(channelId));
 }
 export async function loadAuthoritativeExistingSnapshot(channelId:string){
- const cache=await loadExistingCache(channelId),videos=authoritativeCacheVideos(cache).map(cloneVideo);
- if(!cache||!videos.length)return;
- const currentComplete=scheduleSyncTruthFromInfo(cache.syncInfo)==='complete';
- return{videos,updatedAt:cache.lastCompleteAt||(currentComplete?cache.updatedAt:undefined),syncInfo:cache.lastCompleteSyncInfo||(currentComplete?cache.syncInfo:null)};
+  return verifiedExistingSnapshot(await loadExistingCache(channelId));
 }
 export async function mergeExistingCacheVideos(channelId:string,updates:YoutubeExistingVideo[]){const prev=await loadExistingCache(channelId);const map=new Map((prev?.videos||[]).map(v=>[v.id,cloneVideo(v)]));const base={...(prev?.baseline||{})};for(const u of normalizeVideoArray(updates)){map.set(u.id,cloneVideo(u));base[u.id]=compactBaselineVideo(u)}return await writeExistingCache(channelId,{version:1,updatedAt:new Date().toISOString(),videos:[...map.values()],baseline:base,lastUndo:prev?.lastUndo||[],syncInfo:prev?.syncInfo||null,lastCompleteAt:prev?.lastCompleteAt,lastCompleteSyncInfo:prev?.lastCompleteSyncInfo})}
 const pad=(n:number)=>String(n).padStart(2,'0');

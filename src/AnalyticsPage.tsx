@@ -8,6 +8,7 @@ import {YouTubeChannelBar} from './YouTubeChannelBar';
 import {api} from './api';
 import {notifyError,notifySuccess} from './notificationCenter';
 import {useStableRouteContent} from './useStableRouteContent';
+import {AiAnalyticsExport} from './AiAnalyticsExport';
 
 type Period='1'|'7'|'28'|'90';
 const num=(v?:number,d=0)=>v==null?'—':v.toLocaleString('ru-RU',{maximumFractionDigits:d});
@@ -39,6 +40,7 @@ export function AnalyticsPage(){
  if(exact&&analytics?.averageViewPercentage!=null)insights.push({title:'Средний процент просмотра',text:'Текущее значение за выбранный период: '+num(analytics.averageViewPercentage,1)+'%.'});
  const moneyAvailable=Boolean(exact&&analytics?.monetaryAuthorized);
  return <div className="analyticsPageV31"><div className="pageHeader"><div><small>YOUTUBE ANALYTICS</small><h1>Аналитика</h1><p>Приватная аналитика выбранного канала. Обновление выполняется здесь, без перехода в другие разделы.</p></div><div className="headerActions"><button className="primary" disabled={busy||!channel} onClick={()=>void refresh()}>{busy?'Обновляю…':'↻ Обновить аналитику'}</button></div></div>
+  <AiAnalyticsExport channels={channels} profiles={profiles}/>
   {stableRoute&&<YouTubeChannelBar/>}
   <div className="analyticsToolbar"><div className="periodTabs analyticsPeriods">{(['1','7','28','90'] as Period[]).map(x=><button key={x} className={period===x?'active':''} onClick={()=>setPeriod(x)}>{dayLabel(x)}</button>)}</div><span>Обновлено: <b>{analytics?.updatedAt?dateTime(analytics.updatedAt):'ещё нет'}</b></span></div>
   {stableRoute&&<>{!analyticsAuthorized&&channel?.youtubeProfileId&&<div className="publisherNotice analyticsConsent"><div><b>Для этого профиля нет расширенной YouTube Analytics авторизации</b><span>Рабочая публикация и Data API остаются подключёнными. Дополнительное согласие требуется только этому каналу.</span></div><button onClick={()=>{setPage('youtube');setTimeout(()=>window.dispatchEvent(new Event('vyron:youtube-accounts')),0)}}>Подключить расширенную аналитику</button></div>}

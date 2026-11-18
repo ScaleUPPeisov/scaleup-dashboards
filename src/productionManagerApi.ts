@@ -1,10 +1,12 @@
 import {invoke} from '@tauri-apps/api/core';
 import {listen,type UnlistenFn} from '@tauri-apps/api/event';
 import {open} from '@tauri-apps/plugin-dialog';
+import {recordPerformanceOperation} from './performanceTelemetry';
 
 export type DistributionMode='even'|'random'|'alphabetical'|'no-repeat';
 export type ImportSession={schemaVersion:number;sessionId:string;channelId:string;channelName:string;active:boolean;startedAt:string;stoppedAt?:string|null;downloadsPath:string;importPath:string;collected:{id:string;number:number;path:string;sourcePath:string;capturedAt:string}[]};
-export type MusicSummary={libraryPath:string;tracks:number;indexedAt:string};
+export type MusicSummary={libraryPath:string;tracks:number;indexedAt:string;configuredAt:string;available:boolean};
+export type ChannelSettings={musicLibrary:string;updatedAt:string;channelId:string;channelName:string};
 export type ImageSummary={total:number;available:number;assigned:number;used:number;missing:number;rootPath:string};
 export type MaterialsSummary={channelId:string;image:ImageSummary;musicLibraryPath:string;musicTotal:number;musicFree:number;musicAssigned:number;musicUsed:number};
 export type ImageImportResult={added:number;duplicates:number;skipped:number;available:number;libraryPath:string};
@@ -47,9 +49,9 @@ export const productionManagerApi={
   startImport:(workspace:string,channelId:string,channelName:string)=>invoke<ImportSession>('start_production_import',{workspace,channelId,channelName}),
   stopImport:(workspace:string,channelId:string)=>invoke<ImportSession>('stop_production_import',{workspace,channelId}),
   importStatus:(workspace:string,channelId:string)=>invoke<ImportSession>('production_import_status',{workspace,channelId}),
-  setMusicLibrary:(workspace:string,channelId:string,channelName:string,path:string)=>invoke('set_production_music_library',{workspace,channelId,channelName,path}),
-  indexMusic:(workspace:string,channelId:string)=>invoke<MusicSummary>('index_production_music_library',{workspace,channelId}),
-  state:(workspace:string,channelId:string)=>invoke<ChannelProductionState>('production_channel_state',{workspace,channelId}),
+  setMusicLibrary:(workspace:string,channelId:string,channelName:string,path:string)=>invoke<ChannelSettings>('set_production_music_library',{workspace,channelId,channelName,path}),
+  indexMusic:(workspace:string,channelId:string)=>{recordPerformanceOperation('music.index');return invoke<MusicSummary>('index_production_music_library',{workspace,channelId})},
+  state:(workspace:string,channelId:string)=>{recordPerformanceOperation('production.channelState');return invoke<ChannelProductionState>('production_channel_state',{workspace,channelId})},
   build:(request:BuildRequest)=>invoke<BuildResult>('build_production_batch',{request}),
   resume:(manifestOrRoot:string)=>invoke<BatchSummary>('resume_production_batch',{manifestOrRoot}),
   resumeRecovery:(recoverySessionId:string)=>invoke<BatchSummary>('resume_production_recovery',{recoverySessionId}),
@@ -59,7 +61,7 @@ export const productionManagerApi={
   markCleanShutdown:()=>invoke<void>('recovery_mark_clean_shutdown'),
   findRecovery:(workspaces:string[])=>invoke<RecoveryState[]>('find_production_recovery',{workspaces}),
   restartRecovery:(manifestOrRoot:string)=>invoke<BatchSummary>('restart_production_batch',{manifestOrRoot}),
-  batches:(workspace:string,channelId:string)=>invoke<BatchSummary[]>('list_production_batches',{workspace,channelId}),
+  batches:(workspace:string,channelId:string)=>{recordPerformanceOperation('production.listBatches');return invoke<BatchSummary[]>('list_production_batches',{workspace,channelId})},
   validate:(manifestPath:string,endlumePath:string)=>invoke<Validation>('validate_production_batch',{manifestPath,endlumePath}),
   validateProjects:(manifestPath:string,endlumePath:string,projectIds:string[])=>invoke<Validation>('validate_production_projects',{manifestPath,endlumePath,projectIds}),
   deleteBatchProjects:(manifestPath:string,projectIds:string[])=>invoke<DeleteResult>('delete_production_batch_projects',{manifestPath,projectIds}),
@@ -76,5 +78,68 @@ export const productionManagerApi={
   status:(manifestPath:string)=>invoke<BatchStatus>('read_production_batch_status',{manifestPath}),
   onImportProgress:(cb:(p:{channelId:string;collected:number;sessionId:string})=>void):Promise<UnlistenFn>=>listen('production-import-progress',e=>cb(e.payload as any)),
   onImportError:(cb:(p:{channelId:string;sessionId:string;message:string})=>void):Promise<UnlistenFn>=>listen('production-import-error',e=>cb(e.payload as any)),
-  onBatchProgress:(cb:(p:{batchId:string;completed:number;total:number;stage:string})=>void):Promise<UnlistenFn>=>listen('production-batch-progress',e=>cb(e.payload as any)),
+  onBatchProgress:(cb:(p:{batchId:string;requestId?:string;completed:number;total:number;stage:string})=>void):Promise<UnlistenFn>=>listen('production-batch-progress',e=>cb(e.payload as any)),
 };
+
+/**
+ * Production builds live at module scope rather than inside a React page.
+ * Switching away from Production must not discard the operation or its progress.
+ * Rust is the authoritative executor and recovery journal after process restart.
+ */
+export type ProductionBuildRuntimeSnapshot={
+  channelId:string;
+  requestId:string;
+  state:'RUNNING'|'COMPLETED'|'FAILED';
+  progress:{completed:number;total:number;stage:string}|null;
+  result?:BuildResult;
+  error?:string;
+};
+const productionSnapshots=new Map<string,ProductionBuildRuntimeSnapshot>();
+const productionSubscribers=new Set<()=>void>();
+let productionListener:Promise<UnlistenFn>|null=null;
+function broadcastProductionBuild(){for(const subscriber of productionSubscribers)subscriber()}
+function listenProductionBuild(){
+  if(!productionListener){
+    productionListener=productionManagerApi.onBatchProgress(p=>{
+      for(const task of productionSnapshots.values()){
+        if(task.state!=='RUNNING')continue;
+        // Recovery and a new production request may share the event stream.
+        // Never show progress belonging to another request.
+        if(p.requestId!==task.requestId)continue;
+        task.progress={completed:p.completed,total:p.total,stage:p.stage};
+        broadcastProductionBuild();
+      }
+    }).catch(error=>{productionListener=null;throw error});
+  }
+  return productionListener;
+}
+export const productionBuildRuntime={
+  snapshot:(channelId:string)=>productionSnapshots.get(channelId)||null,
+  subscribe:(callback:()=>void)=>{
+    productionSubscribers.add(callback);
+    return()=>{productionSubscribers.delete(callback)};
+  },
+  start:async(request:BuildRequest):Promise<BuildResult>=>{
+    const current=[...productionSnapshots.values()].find(task=>task.state==='RUNNING');
+    if(current)throw new Error(`Сборка уже выполняется для канала ${current.channelId}. Переключение вкладок не прерывает её.`);
+    const task:ProductionBuildRuntimeSnapshot={
+      channelId:request.channelId,requestId:request.requestId,state:'RUNNING',
+      progress:{completed:0,total:request.projectCount,stage:'Подготовка'}
+    };
+    productionSnapshots.set(request.channelId,task);
+    broadcastProductionBuild();
+    try{
+      await listenProductionBuild();
+      const result=await productionManagerApi.build(request);
+      task.state='COMPLETED';task.result=result;
+      task.progress={completed:result.batch?.projectCount||0,total:request.projectCount,stage:'Готово'};
+      broadcastProductionBuild();
+      return result;
+    }catch(error){
+      task.state='FAILED';task.error=String(error);
+      broadcastProductionBuild();
+      throw error;
+    }
+  }
+};
+

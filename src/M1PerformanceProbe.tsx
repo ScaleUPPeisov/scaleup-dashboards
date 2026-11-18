@@ -3,8 +3,9 @@ import {api} from './api';
 import {enterPerformanceProbeMode,exitPerformanceProbeMode,useApp} from './store';
 import type {Channel,Page,VideoJob} from './types';
 import type {MetadataQueueInput} from './metadataQueue';
+import {summarizeFrameIntervals,meetsM1FrameTarget,type FrameMetrics} from './m1FrameMetrics';
 
-type FpsMetrics={fps:number;p50:number;p95:number;p99:number;worst:number;dropped:number;long50:number;long100:number};
+type FpsMetrics=FrameMetrics;
 type RouteTiming={page:Page;samples:number[]};
 type ScenarioTimings=Map<string,number[]>;
 type RouteFrameTimings=Map<string,number[]>;
@@ -93,15 +94,31 @@ async function runNavigationRound(round:number,routeTimings:Map<Page,number[]>,s
 export function M1PerformanceProbe(){
   useEffect(()=>{
     let cancelled=false;
-    let latest:FpsMetrics|null=null;
+    let stopCurrentCapture:(()=>void)|null=null;
     let originalState:any;
     let probeMode=false;
-    const onMetrics=(event:Event)=>{latest=(event as CustomEvent<FpsMetrics>).detail};
-    window.addEventListener('vyron:fps-metrics',onMetrics);
+    let longTaskObserver:PerformanceObserver|null=null;
+    let longTaskObserverSupported=false;
+    const observedLongTasksMs:number[]=[];
+    let isolatedIpcProbeMs:number|null=null;
     void (async()=>{
       try{
         if(!(await api.performanceProbeEnabled()))return;
+        const ipcStarted=performance.now();
         await api.performanceProbeAssertIsolated();
+        isolatedIpcProbeMs=performance.now()-ipcStarted;
+        // WKWebView versions differ: record unsupported Long Tasks API as
+        // null, never synthesize measurements from CI or rAF approximations.
+        if(typeof PerformanceObserver!=='undefined'&&
+           PerformanceObserver.supportedEntryTypes?.includes('longtask')){
+          try{
+            longTaskObserver=new PerformanceObserver(list=>{
+              for(const item of list.getEntries())observedLongTasksMs.push(item.duration);
+            });
+            longTaskObserver.observe({entryTypes:['longtask']});
+            longTaskObserverSupported=true;
+          }catch{longTaskObserver=null}
+        }
         await enterPerformanceProbeMode();
         probeMode=true;
         const before=useApp.getState();
@@ -161,12 +178,21 @@ export function M1PerformanceProbe(){
         if(assignedJobs!==1000)throw new Error('METADATA_BATCH_ASSIGNMENT_INCOMPLETE:'+assignedJobs);
         const assignmentMs=performance.now()-assignmentStarted;
         await sleep(1000);
-        const rounds:FpsMetrics[]=[],routeTimings=new Map<Page,number[]>(),scenarioTimings:ScenarioTimings=new Map(),routeFrameTimings:RouteFrameTimings=new Map();
+        const rounds:FpsMetrics[]=[],roundIntervals:number[][]=[],roundForeground:boolean[]=[],routeTimings=new Map<Page,number[]>(),scenarioTimings:ScenarioTimings=new Map(),routeFrameTimings:RouteFrameTimings=new Map();
         for(let round=0;round<3&&!cancelled;round++){
-          latest=null;window.dispatchEvent(new CustomEvent('vyron:fps-reset'));await sleep(850);
-          await runNavigationRound(round,routeTimings,scenarioTimings,routeFrameTimings);
-          if(!latest)throw new Error('PERFORMANCE_METRICS_NOT_EMITTED');
-          rounds.push({...latest as FpsMetrics});
+          window.dispatchEvent(new CustomEvent('vyron:fps-reset'));await sleep(850);
+          const intervals:number[]=[];
+          let foreground=document.visibilityState==='visible',last:number|null=null,raf=0;
+          const visibility=()=>{if(document.visibilityState!=='visible')foreground=false};
+          const capture=(now:number)=>{if(last!==null)intervals.push(now-last);last=now;raf=requestAnimationFrame(capture)};
+          document.addEventListener('visibilitychange',visibility);
+          raf=requestAnimationFrame(capture);
+          stopCurrentCapture=()=>{cancelAnimationFrame(raf);document.removeEventListener('visibilitychange',visibility)};
+          try{await frames(2);await runNavigationRound(round,routeTimings,scenarioTimings,routeFrameTimings)}
+          finally{stopCurrentCapture();stopCurrentCapture=null}
+          const metrics=summarizeFrameIntervals(intervals);
+          if(!metrics)throw new Error('PERFORMANCE_FRAME_SAMPLES_INVALID');
+          rounds.push(metrics);roundIntervals.push(intervals);roundForeground.push(foreground);
         }
         if(cancelled||rounds.length!==3)return;
         const aggregate={
@@ -179,11 +205,31 @@ export function M1PerformanceProbe(){
           long50:Math.max(...rounds.map(x=>x.long50)),
           long100:Math.max(...rounds.map(x=>x.long100)),
         };
-        const target={fps:60,p50:16.7,p95:20,p99:33,dropped:2,long50:0};
-        const pass=aggregate.fps>=57&&aggregate.p50<=17.5&&aggregate.p95<=20.5&&aggregate.p99<=33.5&&aggregate.dropped<2&&aggregate.long50===0;
+        const target={fps:59,p50:16.7,p95:20,p99:33,dropped:1,long50:0};
+        const pass=roundForeground.every(Boolean)&&rounds.every(meetsM1FrameTarget);
+        const currentVersion=await api.appVersion().catch(()=>'unknown');
         await api.performanceProbeCleanup();
+        const sortedLongTasks=[...observedLongTasksMs].sort((a,b)=>a-b);
+        const observedLongTaskP95=sortedLongTasks.length?
+          sortedLongTasks[Math.min(sortedLongTasks.length-1,
+            Math.floor((sortedLongTasks.length-1)*.95))]:null;
         await api.performanceProbeReport({
-          schemaVersion:1,version:'6.1.0',at:new Date().toISOString(),pass,target,aggregate,rounds,
+          schemaVersion:3,version:currentVersion,at:new Date().toISOString(),pass,target,aggregate,rounds,
+          frameEvidence:{roundIntervalsMs:roundIntervals,roundForeground,
+            policy:'Every complete round must pass. No rolling window, FPS rounding or >=1000ms stall filtering. Hidden rounds invalidate PASS.',
+            droppedDefinition:'Observed rAF intervals >20ms / all observed intervals * 100',
+            longFrameDefinition:'long50/long100 count rAF intervals, not PerformanceObserver long tasks'},
+          additionalPhysicalInstrumentation:{
+            isolatedIpcProbeMs,
+            longTaskApiSupported:longTaskObserverSupported,
+            longTasksObserved:longTaskObserverSupported?sortedLongTasks.length:null,
+            longTaskDurationP95Ms:longTaskObserverSupported?observedLongTaskP95:null,
+            longestObservedLongTaskMs:longTaskObserverSupported&&sortedLongTasks.length?
+              sortedLongTasks[sortedLongTasks.length-1]:null,
+            source:'window.performance + native PerformanceObserver when supported',
+            note:'Physical WebKit foreground only. Unsupported APIs are null, not zero.'
+          },
+          measurementContext:'Physical foreground WKWebView observed frames; GitHub Actions results must not be described as physical MacBook Air M1 performance.',
           dataset:{channels:35,jobs:1000,metadataRecords:5000,assignedJobs,assignmentMs,navigationSwitchesPerRound:30,rounds:3},
           routeTimings:Object.fromEntries([...routeTimings.entries()].map(([page,samples])=>[page,{samples:samples.length,median:median(samples),p95:[...samples].sort((a,b)=>a-b)[Math.min(samples.length-1,Math.floor((samples.length-1)*.95))],worst:Math.max(...samples)}])),
           scenarioTimings:Object.fromEntries([...scenarioTimings.entries()].map(([label,samples])=>[label,{samples:samples.length,median:median(samples),p95:[...samples].sort((a,b)=>a-b)[Math.min(samples.length-1,Math.floor((samples.length-1)*.95))],worst:Math.max(...samples),values:samples}])),
@@ -192,8 +238,10 @@ export function M1PerformanceProbe(){
           scenarios:['Главная→Каналы→Производство→YouTube→Аналитика→Настройки × 30','Production Materials/Builder','YouTube Metadata + 5000-record queue','modal open/close','long scroll']
         });
       }catch(error){
-        if(await api.performanceProbeEnabled().catch(()=>false))await api.performanceProbeReport({schemaVersion:1,version:'6.1.0',pass:false,error:String(error),at:new Date().toISOString()}).catch(()=>undefined);
+        if(await api.performanceProbeEnabled().catch(()=>false))await api.performanceProbeReport({schemaVersion:2,version:await api.appVersion().catch(()=>'unknown'),pass:false,error:String(error),at:new Date().toISOString()}).catch(()=>undefined);
       }finally{
+        stopCurrentCapture?.();
+        longTaskObserver?.disconnect();
         if(originalState)useApp.setState(originalState);
         if(probeMode){
           await api.performanceProbeCleanup().catch(()=>undefined);
@@ -201,7 +249,8 @@ export function M1PerformanceProbe(){
         }
       }
     })();
-    return()=>{cancelled=true;window.removeEventListener('vyron:fps-metrics',onMetrics)};
+    return()=>{cancelled=true;stopCurrentCapture?.()};
   },[]);
   return null;
 }
+

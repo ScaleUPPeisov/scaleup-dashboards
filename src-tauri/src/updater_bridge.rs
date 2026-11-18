@@ -26,6 +26,105 @@ fn sha256_text(value:&str)->String{
     hex::encode(Sha256::digest(value.as_bytes()))
 }
 
+fn sha256_bytes(value:&[u8])->String{
+    use sha2::{Digest,Sha256};
+    hex::encode(Sha256::digest(value))
+}
+
+fn updater_public_key_facts(encoded:&str)->(bool,Option<String>,Option<String>){
+    use base64::Engine as _;
+    let b64=base64::engine::general_purpose::STANDARD;
+    let Ok(decoded)=b64.decode(encoded.trim()) else{return (false,None,None)};
+    if b64.encode(&decoded)!=encoded.trim(){return (false,None,None)}
+    let Ok(text)=String::from_utf8(decoded) else{return (false,None,None)};
+    let mut lines=text.lines();
+    let Some(header)=lines.next() else{return (false,None,None)};
+    let Some(key_line)=lines.next() else{return (false,None,None)};
+    if lines.next().is_some(){return (false,None,None)}
+    let Some(key_id)=header.strip_prefix("untrusted comment: minisign public key: ") else{return (false,None,None)};
+    // Tauri/Minisign CLI can omit leading zeroes from a public-key ID.
+    // The on-disk 6.1.20 rotated key uses 14 hex digits, while native
+    // preflight incorrectly demanded 16. Zero-pad for matching ONLY; never
+    // weaken the key material SHA-256 pin or signature verification.
+    if key_id.is_empty()||key_id.len()>16||!key_id.chars().all(|c|c.is_ascii_hexdigit()){return (false,None,None)}
+    let Ok(key_bytes)=b64.decode(key_line) else{return (false,None,None)};
+    if b64.encode(&key_bytes)!=key_line||key_bytes.len()!=42||&key_bytes[..2]!=b"Ed"{return (false,None,None)}
+    let embedded_id=key_bytes[2..10].iter().rev().map(|b|format!("{b:02X}")).collect::<String>();
+    if !format!("{key_id:0>16}").eq_ignore_ascii_case(&embedded_id){return (false,None,None)}
+    (true,Some(embedded_id),Some(sha256_bytes(&key_bytes)))
+}
+
+const STABLE_UPDATER_ENDPOINT:&str="https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json";
+
+fn stable_updater_endpoint_pinned(endpoints:&[String])->bool{
+    endpoints.first().map(|endpoint|endpoint==STABLE_UPDATER_ENDPOINT).unwrap_or(false)
+}
+
+const COMPROMISED_LEGACY_UPDATER_KEY_SHA256:&str="aa6fb45ab082ef39279e841dc40b0f85e5b33f23746f77557b6f93e3e72c2c06";
+
+fn updater_public_key_trust_verified(actual:Option<&str>,expected:&str)->bool{
+    expected.len()==64
+      &&expected.chars().all(|c|c.is_ascii_hexdigit())
+      &&!expected.eq_ignore_ascii_case(COMPROMISED_LEGACY_UPDATER_KEY_SHA256)
+      &&actual.map(|value|value.eq_ignore_ascii_case(expected)
+          &&!value.eq_ignore_ascii_case(COMPROMISED_LEGACY_UPDATER_KEY_SHA256)).unwrap_or(false)
+}
+
+fn updater_config_diagnostics(app:&tauri::AppHandle)->serde_json::Value{
+    let updater=app.config().plugins.0.get("updater");
+    let encoded=updater.and_then(|value|value.get("pubkey")).and_then(|value|value.as_str()).unwrap_or("");
+    let (key_valid,key_id,key_sha256)=updater_public_key_facts(encoded);
+    let endpoints=updater.and_then(|value|value.get("endpoints")).and_then(|value|value.as_array())
+      .map(|values|values.iter().filter_map(|value|value.as_str().map(str::to_string)).collect::<Vec<_>>())
+      .unwrap_or_default();
+    let endpoint_pinned=stable_updater_endpoint_pinned(&endpoints);
+    let expected_key_sha256=env!("VYRON_TRUSTED_UPDATER_PUBLIC_KEY_SHA256");
+    let trust_verified=updater_public_key_trust_verified(key_sha256.as_deref(),expected_key_sha256);
+    let trust_status=if expected_key_sha256=="unverified"{"NOT_INDEPENDENTLY_VERIFIED"}else if trust_verified{"FINGERPRINT_MATCH"}else{"FINGERPRINT_MISMATCH"};
+    let configured=key_valid&&endpoint_pinned;
+    serde_json::json!({
+      "updaterConfigurationValid":configured,
+      "updaterPublicKeyTrustVerified":trust_verified,
+      "updaterEndpointPinned":endpoint_pinned,
+      "updaterPublicKeyConfigured":!encoded.trim().is_empty(),
+      "updaterPublicKeyValid":key_valid,
+      "updaterPublicKeyId":key_id,
+      "updaterPublicKeySha256":key_sha256,
+      "updaterEndpoint":endpoints.first().cloned(),
+      "updaterEndpoints":endpoints,
+      "updaterPublicKeyTrust":trust_status,
+      "secretValuesIncluded":false
+    })
+}
+
+fn updater_config_is_trusted(diagnostics:&serde_json::Value)->bool{
+    diagnostics.get("updaterConfigurationValid").and_then(|value|value.as_bool())==Some(true)
+      &&diagnostics.get("updaterPublicKeyTrustVerified").and_then(|value|value.as_bool())==Some(true)
+}
+
+fn require_trusted_updater_config(app:&tauri::AppHandle)->Result<(),String>{
+    let diagnostics=updater_config_diagnostics(app);
+    if !updater_config_is_trusted(&diagnostics){
+        let endpoint=diagnostics.get("updaterEndpoint").and_then(|value|value.as_str()).unwrap_or("missing");
+        let fingerprint=diagnostics.get("updaterPublicKeySha256").and_then(|value|value.as_str()).unwrap_or("missing");
+        if fingerprint.eq_ignore_ascii_case(COMPROMISED_LEGACY_UPDATER_KEY_SHA256){
+            return Err("UPDATER_TRUST_MIGRATION_REQUIRED: the 6.1.15 updater public key belongs to a compromised legacy signer; only a separately authenticated Apple-signed GUI replacement can establish the rotated key".into())
+        }
+        let trust=diagnostics.get("updaterPublicKeyTrust").and_then(|value|value.as_str()).unwrap_or("unverified");
+        return Err(format!("UPDATER_KEY_TRUST_NOT_VERIFIED: endpoint={endpoint}; public_key_sha256={fingerprint}; trust={trust}"));
+    }
+    Ok(())
+}
+
+fn merge_updater_config_diagnostics(target:&mut serde_json::Value,app:&tauri::AppHandle){
+    let diagnostics=updater_config_diagnostics(app);
+    if let (Some(target),Some(source))=(target.as_object_mut(),diagnostics.as_object()){
+        for key in ["updaterConfigurationValid","updaterEndpointPinned","updaterPublicKeyTrustVerified","updaterPublicKeyConfigured","updaterPublicKeyTrust","updaterPublicKeyValid","updaterPublicKeyId","updaterPublicKeySha256","updaterEndpoint","updaterEndpoints"]{
+            if let Some(value)=source.get(key){target.insert(key.to_string(),value.clone());}
+        }
+    }
+}
+
 #[cfg(target_os="macos")]
 fn plist_raw(bundle:&Path,key:&str)->Option<String>{
     let info=bundle.join("Contents/Info.plist");
@@ -125,7 +224,7 @@ fn mac_runtime_snapshot(app:&tauri::AppHandle,probe_replace:bool)->Result<serde_
     let canonical_bundle=canonical_text(&bundle);
     let canonical_exe=canonical_text(&exe);
     let exe_sha=sha256_file(&exe).ok();
-    Ok(serde_json::json!({
+    let mut snapshot=serde_json::json!({
       "currentExecutablePath":exe.to_string_lossy(),
       "currentExecutableCanonicalPath":canonical_exe,
       "currentExecutableSha256":exe_sha,
@@ -146,9 +245,10 @@ fn mac_runtime_snapshot(app:&tauri::AppHandle,probe_replace:bool)->Result<serde_
       "duplicateAppCopies":copies,
       "duplicateCopies":duplicate_copies,
       "targetPlatform":if cfg!(target_arch="aarch64"){"darwin-aarch64"}else{"darwin-x86_64"},
-      "signatureConfigured":true,
       "secretValuesIncluded":false
-    }))
+    });
+    merge_updater_config_diagnostics(&mut snapshot,app);
+    Ok(snapshot)
 }
 
 #[cfg(target_os="macos")]
@@ -195,7 +295,19 @@ fn manifest_platform_text(raw:&serde_json::Value,target:&str,key:&str)->Option<S
       .filter(|x|!x.is_empty())
 }
 
+// Stable releases must carry a checkable digest in the signed update metadata.
+// Signature verification remains mandatory; SHA-256 is an additional integrity gate.
+fn required_manifest_sha256(raw:&serde_json::Value,target:&str)->Result<String,String>{
+    let value=manifest_platform_text(raw,target,"sha256")
+      .ok_or_else(||"UPDATER_MANIFEST_SHA_MISSING: signed stable feed must provide an archive SHA-256".to_string())?;
+    if value.len()!=64||!value.bytes().all(|b|b.is_ascii_hexdigit()){
+        return Err("UPDATER_MANIFEST_SHA_INVALID: archive SHA-256 must contain 64 hexadecimal characters".into())
+    }
+    Ok(value.to_ascii_lowercase())
+}
+
 async fn stable_update(app:&tauri::AppHandle)->Result<Option<tauri_plugin_updater::Update>,String>{
+    require_trusted_updater_config(app)?;
     let updater=app.updater_builder().build().map_err(|e|format!("UPDATER_BUILD_FAILED: {e}"))?;
     updater.check().await.map_err(|e|format!("UPDATER_MANIFEST_FETCH_FAILED: {e}"))
 }
@@ -212,6 +324,21 @@ struct DownloadedStableUpdate{
     current_executable_sha256:String,
     bytes:Vec<u8>
 }
+// Native IPC must also reject overlapping transfers; the React guard is not a trust boundary.
+struct NativeDownloadLease<'a>(&'a std::sync::atomic::AtomicBool);
+impl<'a> NativeDownloadLease<'a>{
+    fn acquire(flag:&'a std::sync::atomic::AtomicBool)->Result<Self,String>{
+        use std::sync::atomic::Ordering;
+        flag.compare_exchange(false,true,Ordering::AcqRel,Ordering::Acquire)
+          .map_err(|_|"UPDATER_DOWNLOAD_ALREADY_IN_PROGRESS: another native download is running".to_string())?;
+        Ok(Self(flag))
+    }
+}
+impl Drop for NativeDownloadLease<'_>{
+    fn drop(&mut self){self.0.store(false,std::sync::atomic::Ordering::Release)}
+}
+#[cfg(target_os="macos")]
+static STABLE_DOWNLOAD_IN_FLIGHT:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
 static STABLE_UPDATE_DOWNLOAD:std::sync::OnceLock<std::sync::Mutex<Option<DownloadedStableUpdate>>>=std::sync::OnceLock::new();
 fn stable_update_download_state()->&'static std::sync::Mutex<Option<DownloadedStableUpdate>>{
     STABLE_UPDATE_DOWNLOAD.get_or_init(||std::sync::Mutex::new(None))
@@ -229,7 +356,7 @@ pub fn updater_install_preflight(app:tauri::AppHandle)->Result<serde_json::Value
     }
     #[cfg(not(target_os="macos"))]
     {
-        Ok(serde_json::json!({
+        let mut snapshot=serde_json::json!({
           "currentExecutablePath":std::env::current_exe().ok().map(|p|p.to_string_lossy().to_string()),
           "currentExecutableCanonicalPath":serde_json::Value::Null,
           "currentExecutableSha256":serde_json::Value::Null,
@@ -237,9 +364,11 @@ pub fn updater_install_preflight(app:tauri::AppHandle)->Result<serde_json::Value
           "currentAppBundleCanonicalPath":serde_json::Value::Null,
           "underApplications":false,"runningLocation":"other","runningFromDmg":false,"bundleReplaceable":true,
           "currentVersion":app.package_info().version.to_string(),"bundleId":app.config().identifier.clone(),
-          "targetPlatform":std::env::consts::OS,"signatureConfigured":true,"secretValuesIncluded":false,
+          "targetPlatform":std::env::consts::OS,"secretValuesIncluded":false,
           "duplicateAppCopies":[],"duplicateCopies":false
-        }))
+        });
+        merge_updater_config_diagnostics(&mut snapshot,&app);
+        Ok(snapshot)
     }
 }
 
@@ -288,6 +417,7 @@ pub fn updater_runtime_identity(app:tauri::AppHandle)->serde_json::Value{
       "bundleId":app.config().identifier.clone(),
       "targetPlatform":if cfg!(target_os="macos"){if cfg!(target_arch="aarch64"){"darwin-aarch64"}else{"darwin-x86_64"}}else{std::env::consts::OS}
     });
+    merge_updater_config_diagnostics(&mut identity,&app);
     #[cfg(target_os="macos")]
     if let Ok(snapshot)=mac_runtime_snapshot(&app,false){
         if let (Some(dst),Some(src))=(identity.as_object_mut(),snapshot.as_object()){
@@ -305,7 +435,7 @@ pub async fn updater_stable_check(app:tauri::AppHandle)->Result<serde_json::Valu
     let Some(update)=stable_update(&app).await? else{
         return Ok(serde_json::json!({"available":false,"currentVersion":current,"latestVersion":current,"channel":"stable"}))
     };
-    let expected_sha=manifest_platform_text(&update.raw_json,&update.target,"sha256");
+    let expected_sha=required_manifest_sha256(&update.raw_json,&update.target)?;
     Ok(serde_json::json!({
       "available":true,
       "currentVersion":current,
@@ -326,6 +456,10 @@ pub async fn updater_stable_download(app:tauri::AppHandle)->Result<serde_json::V
     {let _=app;return Err("UPDATER_STABLE_MAC_ONLY: staged stable download is only used on macOS".into())}
     #[cfg(target_os="macos")]
     {
+        let _lease=NativeDownloadLease::acquire(&STABLE_DOWNLOAD_IN_FLIGHT)?;
+        // Invalidate earlier archive before any I/O: a failed transfer must never
+        // leave stale bytes installable through a direct native IPC invocation.
+        *stable_update_download_state().lock().map_err(|_|"UPDATER_STABLE_DOWNLOAD_STATE_POISONED".to_string())?=None;
         let snapshot=mac_runtime_snapshot(&app,true)?;
         if snapshot.get("runningFromDmg").and_then(|x|x.as_bool())==Some(true){
             return Err("RUNNING_FROM_DMG: VYRON запущен из DMG. Переместите VYRON.app в Applications.".into())
@@ -334,7 +468,7 @@ pub async fn updater_stable_download(app:tauri::AppHandle)->Result<serde_json::V
             return Err("APP_NOT_REPLACEABLE: установленный VYRON.app недоступен для безопасной замены".into())
         }
         let Some(update)=stable_update(&app).await? else{return Err("UPDATE_CANDIDATE_NOT_AVAILABLE: update feed no longer contains an installable candidate".into())};
-        let expected_sha=manifest_platform_text(&update.raw_json,&update.target,"sha256").map(|x|x.to_ascii_lowercase());
+        let expected_sha=required_manifest_sha256(&update.raw_json,&update.target)?;
         let target_version=update.version.clone();
         let target=update.target.clone();
         let signature_sha=sha256_text(&update.signature);
@@ -345,18 +479,13 @@ pub async fn updater_stable_download(app:tauri::AppHandle)->Result<serde_json::V
           ||{}
         ).await.map_err(|e|format!("UPDATER_ARCHIVE_DOWNLOAD_FAILED: {e}"))?;
         let actual_sha=sha256_hex(&bytes);
-        if let Some(ref expected)=expected_sha{
-            if expected.len()!=64||!expected.chars().all(|c|c.is_ascii_hexdigit()){
-                return Err("UPDATER_MANIFEST_SHA_INVALID: manifest sha256 is malformed".into())
-            }
-            if actual_sha!=*expected{
-                return Err(format!("UPDATER_ARTIFACT_SHA_MISMATCH: expected={expected} actual={actual_sha}"))
-            }
+        if actual_sha!=expected_sha{
+            return Err(format!("UPDATER_ARTIFACT_SHA_MISMATCH: expected={expected_sha} actual={actual_sha}"))
         }
         let bundle_path=snapshot.get("currentAppBundlePath").and_then(|x|x.as_str()).unwrap_or("").to_string();
         let old_sha=snapshot.get("currentExecutableSha256").and_then(|x|x.as_str()).unwrap_or("").to_string();
         *stable_update_download_state().lock().map_err(|_|"UPDATER_STABLE_DOWNLOAD_STATE_POISONED".to_string())?=Some(DownloadedStableUpdate{
-          version:update.version.clone(),target,artifact_sha256:actual_sha.clone(),expected_artifact_sha256:expected_sha.clone(),
+          version:update.version.clone(),target,artifact_sha256:actual_sha.clone(),expected_artifact_sha256:Some(expected_sha.clone()),
           manifest_signature_sha256:signature_sha.clone(),download_url:download_url.clone(),current_app_bundle_path:bundle_path.clone(),
           current_executable_sha256:old_sha.clone(),bytes
         });
@@ -383,9 +512,12 @@ pub async fn updater_stable_install(app:tauri::AppHandle,expected_version:String
             return Err(format!("UPDATE_TARGET_PATH_CHANGED: staged={} running={}",staged.current_app_bundle_path,now_bundle))
         }
         let Some(update)=stable_update(&app).await? else{return Err("UPDATE_CANDIDATE_LOST: signed update candidate is no longer available".into())};
-        let expected_sha=manifest_platform_text(&update.raw_json,&update.target,"sha256").map(|x|x.to_ascii_lowercase());
-        if update.version!=staged.version||update.target!=staged.target||sha256_text(&update.signature)!=staged.manifest_signature_sha256||expected_sha!=staged.expected_artifact_sha256||update.download_url.to_string()!=staged.download_url{
+        let expected_sha=required_manifest_sha256(&update.raw_json,&update.target)?;
+        if update.version!=staged.version||update.target!=staged.target||sha256_text(&update.signature)!=staged.manifest_signature_sha256||Some(expected_sha.clone())!=staged.expected_artifact_sha256||update.download_url.to_string()!=staged.download_url{
             return Err("UPDATE_MANIFEST_CHANGED: version/target/signature/hash/url changed after verified download".into())
+        }
+        if sha256_hex(&staged.bytes)!=expected_sha{
+            return Err("UPDATER_STAGED_ARCHIVE_SHA_MISMATCH: staged archive bytes changed before installation".into())
         }
         update.install(&staged.bytes).map_err(|e|format!("UPDATER_INSTALL_FAILED: {e}"))?;
         let verify=verify_installed_bundle(Path::new(&staged.current_app_bundle_path),&expected_version,&staged.current_executable_sha256)?;
@@ -454,6 +586,7 @@ fn owner_preview_available(current_product:&str,current_revision:u64,remote_vers
 }
 
 async fn owner_preview_update(app:&tauri::AppHandle)->Result<Option<tauri_plugin_updater::Update>,String>{
+    require_trusted_updater_config(app)?;
     let current_revision=build_revision();
     let current_product=app.package_info().version.to_string();
     let endpoint=OWNER_PREVIEW_ENDPOINT.parse().map_err(|e|format!("OWNER_PREVIEW_ENDPOINT_INVALID: {e}"))?;
@@ -580,4 +713,136 @@ mod owner_preview_revision_tests{
    assert!(owner_preview_available("3.1.0",321,"3.1.0-preview.322"));
    assert!(!owner_preview_available("3.1.0",321,"3.0.1-preview.999"));
  }
+}
+
+#[cfg(test)]
+mod updater_key_diagnostic_tests{
+    use super::*;
+
+    const VALID_PUBLIC_KEY:&str="dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDgxMzNDOTg3M0ZBQjc5QzEKUldUQmVhcy9oOGt6Z1owb2JOWjJjM1FOQjF3UkJnbm5mZGNZRTloMUZhYkJFRlZ6QWFoNk5VN3kK";
+
+    #[test]
+    fn native_single_flight_releases_on_completion_and_error(){
+        use std::sync::atomic::{AtomicBool,Ordering};
+        let flag=AtomicBool::new(false);
+        let first=NativeDownloadLease::acquire(&flag).expect("first transfer starts");
+        assert!(NativeDownloadLease::acquire(&flag).is_err(),"parallel native transfer rejected");
+        drop(first);
+        let second=NativeDownloadLease::acquire(&flag).expect("lease released for retry");
+        drop(second);
+        assert!(!flag.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn stable_sha256_is_required_and_validated_before_download_and_install(){
+        let sha="A".repeat(64);
+        let good=serde_json::json!({"platforms":{"darwin-aarch64":{"sha256":sha}}});
+        assert_eq!(required_manifest_sha256(&good,"darwin-aarch64").unwrap(),"a".repeat(64));
+        assert!(required_manifest_sha256(&good,"darwin-x86_64").is_err());
+        for candidate in [serde_json::json!({}),serde_json::json!({"sha256":"not-a-hash"}),serde_json::json!({"sha256":"g".repeat(64)})]{
+            assert!(required_manifest_sha256(&candidate,"darwin-aarch64").is_err());
+        }
+    }
+
+    #[test]
+    fn reports_public_key_format_and_fingerprint_without_claiming_trust(){
+        let (valid,key_id,fingerprint)=updater_public_key_facts(VALID_PUBLIC_KEY);
+        assert!(valid);
+        assert_eq!(key_id.as_deref(),Some("8133C9873FAB79C1"));
+        assert_eq!(fingerprint.as_deref(),Some("cbd37c85807e9b80f30612a1bc3a35bc75819b758ac62bb2bfee1881e6db938b"));
+    }
+
+    #[test]
+    fn accepts_minisign_cli_short_key_id_only_when_zero_padded_bytes_match(){
+        use base64::Engine as _;
+        let b64=base64::engine::general_purpose::STANDARD;
+        let raw=String::from_utf8(b64.decode(VALID_PUBLIC_KEY).unwrap()).unwrap();
+        let mut lines=raw.lines();
+        let _header=lines.next().unwrap();
+        let mut bytes=b64.decode(lines.next().unwrap()).unwrap();
+        // Synthesize a valid 14-character ID with two leading zero hex
+        // digits and unchanged Ed25519 algorithm / canonical payload.
+        bytes[9]=0;
+        let full_id=bytes[2..10].iter().rev().map(|b|format!("{b:02X}")).collect::<String>();
+        assert_eq!(full_id.len(),16);
+        assert!(full_id.starts_with("00"));
+        let short_id=full_id.trim_start_matches('0');
+        assert!(!short_id.is_empty());
+        let encoded=b64.encode(format!(
+            "untrusted comment: minisign public key: {short_id}\n{}\n", b64.encode(&bytes)
+        ));
+        let expected=sha256_bytes(&bytes);
+        let (valid,id,actual)=updater_public_key_facts(&encoded);
+        assert!(valid);
+        assert_eq!(id.as_deref(),Some(full_id.as_str()));
+        assert_eq!(actual.as_deref(),Some(expected.as_str()));
+        assert!(updater_public_key_trust_verified(actual.as_deref(),&expected));
+        assert!(!updater_public_key_trust_verified(actual.as_deref(),&"0".repeat(64)));
+
+        // Wrong shortened key ID must still fail (no implicit trust).
+        let incorrect=b64.encode(format!(
+            "untrusted comment: minisign public key: F{short_id}\n{}\n",b64.encode(&bytes)
+        ));
+        assert!(!updater_public_key_facts(&incorrect).0);
+    }
+
+    #[test]
+    fn backend_update_gate_requires_pinned_config_and_matching_trust_anchor(){
+        let trusted=serde_json::json!({"updaterConfigurationValid":true,"updaterPublicKeyTrustVerified":true});
+        let wrong_endpoint=serde_json::json!({"updaterConfigurationValid":false,"updaterPublicKeyTrustVerified":true});
+        let unverified_key=serde_json::json!({"updaterConfigurationValid":true,"updaterPublicKeyTrustVerified":false});
+        assert!(updater_config_is_trusted(&trusted));
+        assert!(!updater_config_is_trusted(&wrong_endpoint));
+        assert!(!updater_config_is_trusted(&unverified_key));
+        assert!(!updater_config_is_trusted(&serde_json::json!({})));
+    }
+
+    #[test]
+    fn trusts_only_an_independently_supplied_matching_fingerprint(){
+        let actual="cbd37c85807e9b80f30612a1bc3a35bc75819b758ac62bb2bfee1881e6db938b";
+        assert!(updater_public_key_trust_verified(Some(actual),actual));
+        assert!(!updater_public_key_trust_verified(Some(actual),"unverified"));
+        assert!(!updater_public_key_trust_verified(Some(actual),"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+        assert!(!updater_public_key_trust_verified(None,actual));
+    }
+
+    #[test]
+    fn rejects_compromised_legacy_key_even_when_fingerprint_matches(){
+        assert!(!updater_public_key_trust_verified(
+          Some(COMPROMISED_LEGACY_UPDATER_KEY_SHA256),COMPROMISED_LEGACY_UPDATER_KEY_SHA256));
+    }
+
+    #[test]
+    fn rejects_forged_minisign_header_and_invalid_algorithm(){
+        use base64::Engine as _;
+        let b64=base64::engine::general_purpose::STANDARD;
+        let source=String::from_utf8(b64.decode(VALID_PUBLIC_KEY).unwrap()).unwrap();
+        let forged_header=source.replace("8133C9873FAB79C1","0000000000000000");
+        assert!(!updater_public_key_facts(&b64.encode(forged_header)).0);
+        let mut parts=source.lines();
+        let header=parts.next().unwrap();
+        let mut payload=b64.decode(parts.next().unwrap()).unwrap();
+        payload[0]=b'X';
+        let forged_algorithm=format!("{header}\n{}\n",b64.encode(payload));
+        assert!(!updater_public_key_facts(&b64.encode(forged_algorithm)).0);
+    }
+
+    #[test]
+    fn pins_only_the_approved_stable_updater_feed(){
+        let approved=vec!["https://raw.githubusercontent.com/ScaleUPPeisov/vyron-releases/main/updates/latest.json".to_string()];
+        let legacy=vec!["https://raw.githubusercontent.com/ScaleUPPeisov/scaleup-dashboards/main/vyron-updates/latest.json".to_string()];
+        assert!(stable_updater_endpoint_pinned(&approved));
+        assert!(!stable_updater_endpoint_pinned(&legacy));
+        assert!(!stable_updater_endpoint_pinned(&[]));
+    }
+
+    #[test]
+    fn rejects_missing_or_malformed_public_keys(){
+        for value in ["","not-base64","e30=","dW50cnVzdGVkIGNvbW1lbnQ6IG5vdC1taW5pc2lnbiBrZXkK"]{
+            let (valid,key_id,fingerprint)=updater_public_key_facts(value);
+            assert!(!valid);
+            assert!(key_id.is_none());
+            assert!(fingerprint.is_none());
+        }
+    }
 }

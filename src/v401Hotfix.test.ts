@@ -5,13 +5,14 @@ const read=(p:string)=>fs.readFileSync(p,'utf8');
 
 describe('VYRON 4.0.1 hotfix contract',()=>{
   it('has one consistent 4.0.1 runtime identity',()=>{
-    expect(JSON.parse(read('package.json')).version).toBe('4.0.1');
+    expect(read('src/releaseHistory.ts')).toContain('"version":"4.0.1"');
+    expect(JSON.parse(read('package.json')).version).toBe('6.1.15');
     const lock=JSON.parse(read('package-lock.json'));
-    expect(lock.version).toBe('4.0.1');
-    expect(lock.packages[''].version).toBe('4.0.1');
-    expect(JSON.parse(read('src-tauri/tauri.conf.json')).version).toBe('4.0.1');
-    expect(read('src-tauri/Cargo.toml')).toContain('version = "4.0.1"');
-    expect(read('src-tauri/Cargo.lock')).toMatch(/name = "channelflow"\nversion = "4\.0\.1"/);
+    expect(lock.version).toBe('6.1.15');
+    expect(lock.packages[''].version).toBe('6.1.15');
+    expect(JSON.parse(read('src-tauri/tauri.conf.json')).version).toBe('6.1.15');
+    expect(read('src-tauri/Cargo.toml')).toContain('version = "6.1.15"');
+    expect(read('src-tauri/Cargo.lock')).toMatch(/name = "channelflow"\nversion = "6\.1\.15"/);
   });
 
   it('removes render scan state-write storms and blocking state saves',()=>{
@@ -23,7 +24,7 @@ describe('VYRON 4.0.1 hotfix contract',()=>{
     expect(inventory).toContain('cacheFingerprints(pendingCache)');
     expect(inventory).not.toContain('useApp.getState().cacheFingerprint(file.path');
     expect(store).toContain('persistInFlight');
-    expect(store).toContain('SAVE_DEBOUNCE_MS=550');
+    expect(store).toContain('SAVE_DEBOUNCE_MS=750');
     expect(store).toContain('cacheFingerprints:entries');
     expect(storage).toContain('spawn_blocking');
     expect(storage).toContain('STATE_WRITE_LOCK');

@@ -3,13 +3,20 @@ import type {VideoJob} from './types';
 import {assertFinalUploadPayload,metadataGenerationMatches} from './publisherIntegrity';
 
 const DATE_ONLY=/^\d{4}-\d{2}-\d{2}$/;
+/** Date.UTC and Date.parse normalize invalid days (e.g. Feb 30) into March. */
+function validCalendarDay(day:string){
+ if(!DATE_ONLY.test(day))return false;
+ const [y,m,d]=day.split('-').map(Number);
+ const ms=Date.UTC(y,m-1,d);
+ return Number.isFinite(ms)&&new Date(ms).toISOString().slice(0,10)===day;
+}
 function dateKey(raw?:string){if(!raw)return'';const m=String(raw).match(/^(\d{4}-\d{2}-\d{2})/);return m?.[1]||''}
 function timeParts(raw?:string){const m=String(raw||'').match(/^([01]\d|2[0-3]):([0-5]\d)$/);return m?[+m[1],+m[2]] as const:undefined}
 function fixedOffsetIso(day:string,time:string,offsetMinutes:number){
- const tm=timeParts(time);if(!DATE_ONLY.test(day)||!tm)return undefined;const[y,m,d]=day.split('-').map(Number);return new Date(Date.UTC(y,m-1,d,tm[0],tm[1])-offsetMinutes*60000).toISOString()
+ const tm=timeParts(time);if(!validCalendarDay(day)||!tm||!Number.isInteger(offsetMinutes)||Math.abs(offsetMinutes)>840)return undefined;const[y,m,d]=day.split('-').map(Number);return new Date(Date.UTC(y,m-1,d,tm[0],tm[1])-offsetMinutes*60000).toISOString()
 }
 function ianaLocalIso(day:string,time:string,timeZone:string){
- const tm=timeParts(time);if(!DATE_ONLY.test(day)||!tm)return undefined;const[y,m,d]=day.split('-').map(Number),target=Date.UTC(y,m-1,d,tm[0],tm[1]);let guess=target;
+ const tm=timeParts(time);if(!validCalendarDay(day)||!tm)return undefined;const[y,m,d]=day.split('-').map(Number),target=Date.UTC(y,m-1,d,tm[0],tm[1]);let guess=target;
  try{
   for(let n=0;n<3;n++){
    const parts=new Intl.DateTimeFormat('en-CA',{timeZone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date(guess));
@@ -22,6 +29,7 @@ function ianaLocalIso(day:string,time:string,timeZone:string){
 }
 function normalizedRowInstant(row:ImportedMetadata,defaultOffsetMinutes=420){
  const raw=row.publishAt,day=dateKey(raw),time=row.publishTime;
+ if(raw&&day&&!validCalendarDay(day))return undefined;
  if(raw&&time&&day){
   if(row.publishTimezone?.includes('/'))return ianaLocalIso(day,time,row.publishTimezone);
   const off=Number.isFinite(row.publishUtcOffsetMinutes)?Number(row.publishUtcOffsetMinutes):defaultOffsetMinutes;return fixedOffsetIso(day,time,off)
@@ -52,12 +60,15 @@ export function metadataRowForJob(rows:ImportedMetadata[],job:VideoJob,index:num
 }
 export function metadataPublishAt(row:ImportedMetadata|undefined,fallback?:string,defaultOffsetMinutes=420){
  if(!row)return fallback&&Number.isFinite(Date.parse(fallback))?new Date(fallback).toISOString():undefined;
+ // An explicitly impossible source day must not fall back to an unrelated job date.
+ const explicitDay=dateKey(row.publishAt);
+ if(explicitDay&&!validCalendarDay(explicitDay))return undefined;
  const direct=normalizedRowInstant(row,defaultOffsetMinutes);if(direct)return direct;
  if(row.publishTime&&fallback){const tz=row.publishTimezone?.includes('/')?row.publishTimezone:'Asia/Krasnoyarsk',day=new Intl.DateTimeFormat('en-CA',{timeZone:tz,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(fallback));return row.publishTimezone?.includes('/')?ianaLocalIso(day,row.publishTime,row.publishTimezone):fixedOffsetIso(day,row.publishTime,Number.isFinite(row.publishUtcOffsetMinutes)?Number(row.publishUtcOffsetMinutes):defaultOffsetMinutes)}
  return undefined
 }
 export function metadataPublishAtForDate(row:ImportedMetadata|undefined,day:string,defaultOffsetMinutes=420){
- if(!row?.publishTime||!DATE_ONLY.test(day))return undefined;
+ if(!row?.publishTime||!validCalendarDay(day))return undefined;
  return normalizedRowInstant({...row,publishAt:day},defaultOffsetMinutes)
 }
 export function resolvedUploadMetadata(job:VideoJob,row:ImportedMetadata|undefined,publishAt?:string,defaultCategory='10',safeMode=true){

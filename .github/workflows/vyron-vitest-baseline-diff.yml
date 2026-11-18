@@ -1,0 +1,70 @@
+name: VYRON full Vitest baseline regression gate (6.1.15 vs Draft)
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'package.json'
+      - 'package-lock.json'
+      - 'src/**'
+      - 'src-tauri/src/**'
+      - 'scripts/vyron_vitest_diff.py'
+      - 'scripts/test_vyron_vitest_diff.py'
+      - '.github/workflows/vyron-vitest-baseline-diff.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  actual-baseline-comparison:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Checkout exact stable 6.1.15 PR base in an isolated worktree
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || '51ba3f9e3f9526e101ec69e86c1bdd2fe496a7e2' }}
+        run: |
+          set -euo pipefail
+          git worktree add --detach /tmp/vyron-6_1_15-baseline "$BASE_SHA"
+          test -f /tmp/vyron-6_1_15-baseline/package-lock.json
+      - name: Run full historical baseline Vitest with real JSON output
+        run: |
+          set -euo pipefail
+          cd /tmp/vyron-6_1_15-baseline
+          npm ci
+          set +e
+          npx vitest run --reporter=json --outputFile=/tmp/vyron-baseline-test-results.json
+          status=$?
+          set -e
+          test -s /tmp/vyron-baseline-test-results.json
+          echo "Baseline actual Vitest exit status: $status"
+      - name: Run the full candidate Vitest suite, do not hide failures
+        run: |
+          set -euo pipefail
+          npm ci
+          set +e
+          npx vitest run --reporter=json --outputFile=/tmp/vyron-candidate-test-results.json
+          status=$?
+          set -e
+          test -s /tmp/vyron-candidate-test-results.json
+          echo "Candidate actual Vitest exit status: $status"
+      - name: Self-test the comparison policy against import failures and empty reports
+        run: python3 -m unittest discover -s scripts -p 'test_vyron_vitest_diff.py'
+      - name: Compare tests by stable relative source path and full test name
+        run: |
+          python3 scripts/vyron_vitest_diff.py \
+            /tmp/vyron-baseline-test-results.json \
+            /tmp/vyron-candidate-test-results.json
+      - name: Publish red/green regression classification (no tokens or secrets)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vyron-6_1_15-vitest-regression-report
+          path: vitest-regression-diff.md
+          if-no-files-found: ignore
+          retention-days: 14

@@ -21,7 +21,9 @@ describe('VYRON 2.0.12 cleanup command registration hotfix',()=>{
   it('cleanup still preserves rendered MP4 contract',()=>{
     const rust=read('../src-tauri/src/production_manager.rs');
     const start=rust.indexOf('fn cleanup_completed_assets');
-    const end=rust.indexOf('pub fn delete_production_batch_projects');
+    const end=rust.indexOf('pub async fn delete_production_batch_projects')>=0
+      ?rust.indexOf('pub async fn delete_production_batch_projects')
+      :rust.indexOf('pub fn delete_production_batch_projects');
     expect(start).toBeGreaterThanOrEqual(0);
     expect(end).toBeGreaterThan(start);
     const block=rust.slice(start,end);
@@ -30,5 +32,18 @@ describe('VYRON 2.0.12 cleanup command registration hotfix',()=>{
     expect(block).toContain('trash::delete(&candidate.folder)');
     expect(block).not.toContain('verified_jobs');
     expect(block).not.toContain('remove_dir_all');
+  });
+  it('manual and batch Trash operate off Tauri main handler without relaxing path validation',()=>{
+    const local=read('../src-tauri/src/local_delete.rs');
+    const production=read('../src-tauri/src/production_manager.rs');
+    expect(local).toContain('pub async fn trash_local_file(');
+    expect(local).toContain('spawn_blocking(move || trash_local_file_impl(&path, &allowed_roots))');
+    expect(local).toContain('validate_trash_path(&p, allowed_roots)?');
+    expect(production).toContain('pub async fn delete_production_batch_projects(');
+    expect(production).toContain('delete_production_batch_projects_inner(manifest_path, project_ids)');
+    expect(production).toContain('pub async fn delete_production_job_folder(');
+    expect(production).toContain('delete_production_job_folder_impl(workspace, folder, job_id)');
+    expect(production).toContain('canonical_under(&root, &p)?');
+    expect(production).toContain('canonical_under(&root, &dir)?');
   });
 });

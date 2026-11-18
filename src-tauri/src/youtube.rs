@@ -11,7 +11,7 @@ use std::{
     net::TcpListener,
     path::{Path, PathBuf},
     process::Command,
-    sync::{Mutex, OnceLock},
+    sync::{Arc, Mutex, OnceLock},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Emitter, Manager};
@@ -385,6 +385,19 @@ fn resolve_oauth_credential_states_local(app:&AppHandle)->Result<Vec<Value>,Stri
 struct SessionAccessToken{token:String,expires_at:i64}
 static ACCESS_TOKEN_SESSION:OnceLock<Mutex<HashMap<String,SessionAccessToken>>>=OnceLock::new();
 fn access_token_session()->&'static Mutex<HashMap<String,SessionAccessToken>>{ACCESS_TOKEN_SESSION.get_or_init(||Mutex::new(HashMap::new()))}
+// Prevent concurrent refresh_token HTTP requests for the same Google profile,
+// without ever serializing independent accounts or persisting secrets in locks.
+static PROFILE_REFRESH_LOCKS:OnceLock<Mutex<HashMap<String,Arc<tokio::sync::Mutex<()>>>>>=OnceLock::new();
+fn profile_refresh_lock(profile_id:&str)->Arc<tokio::sync::Mutex<()>>{
+ let registry=PROFILE_REFRESH_LOCKS.get_or_init(||Mutex::new(HashMap::new()));
+ let mut map=registry.lock().unwrap_or_else(|e|e.into_inner());
+ Arc::clone(map.entry(profile_id.to_string())
+  .or_insert_with(||Arc::new(tokio::sync::Mutex::new(()))))
+}
+fn refresh_error_requires_reconnect(error:&str)->bool{
+ error.starts_with("OAUTH_INVALID_GRANT:")
+}
+
 fn remember_access_token(profile_id:&str,token:&str,expires_at:i64){
  if token.trim().is_empty(){return}
  if let Ok(mut c)=access_token_session().lock(){c.insert(profile_id.to_string(),SessionAccessToken{token:token.to_string(),expires_at});}
@@ -2865,6 +2878,31 @@ async fn valid_access_token(app:&AppHandle,profile_id:&str)->Result<(String,OAut
       return Ok((token,s.profiles[idx].clone()))
     }
 
+    // Single-flight refresh per profile. A second request waits for the first
+    // refresh, then consumes the existing session token instead of exchanging
+    // the same refresh token twice. Other Google accounts proceed independently.
+    let lock=profile_refresh_lock(profile_id);
+    let _single_flight=lock.lock().await;
+    // A different call may have refreshed both token and metadata meanwhile.
+    s=load_store_metadata(app)?;
+    let idx=s.profiles.iter().position(|p|p.id==profile_id)
+        .ok_or_else(||"CREDENTIAL_MISSING: YouTube OAuth профиль отсутствует".to_string())?;
+    let needs_identity=s.profiles[idx].identity_validated_at.is_none()
+        ||s.profiles[idx].identity_validated_channel_id.as_deref()!=s.profiles[idx].channel_id.as_deref();
+    if let Some((token,expires_at))=session_access_token(profile_id){
+        s.profiles[idx].access_token=token.clone();
+        s.profiles[idx].expires_at=expires_at;
+        let expected_channel_id=s.profiles[idx].channel_id.clone();
+        if needs_identity{
+            validate_profile_identity(app,&mut s.profiles[idx],&token).await?;
+            let actual=s.profiles[idx].identity_validated_channel_id.clone();
+            record_profile_credential_validation(app,profile_id,"PASS",expected_channel_id.as_deref(),actual.as_deref())?;
+            write_oauth_metadata(&store_path(app)?,&s)?;
+        }else{
+            record_profile_credential_validation(app,profile_id,"TOKEN_REFRESH_PASS",expected_channel_id.as_deref(),None)?;
+        }
+        return Ok((token,s.profiles[idx].clone()))
+    }
     // Passive/background operations never read legacy Keychain. An explicit Sync
     // must migrate the profile refresh token first.
     let refresh=require_canonical_refresh(app,profile_id)?;
@@ -2875,7 +2913,7 @@ async fn valid_access_token(app:&AppHandle,profile_id:&str)->Result<(String,OAut
     let (token,expires)=match refresh_access_token_for_profile(app,profile_id,&client_id,&refresh).await{
       Ok(v)=>v,
       Err(e)=>{
-       if e.starts_with("OAUTH_INVALID_GRANT:"){
+       if refresh_error_requires_reconnect(&e){
         let _=record_profile_credential_validation(app,profile_id,"RECONNECT_REQUIRED",expected_channel_id.as_deref(),None);
        }
        return Err(e)
@@ -3865,10 +3903,14 @@ fn inventory_completeness_value(
     let sync_complete=incomplete.is_empty();
     let mut schedule_reasons=incomplete.clone();
     if schedule_data_incomplete_count>0{schedule_reasons.push("SCHEDULE_DATA_INCOMPLETE".into())}
-    let schedule_complete=schedule_reasons.is_empty();
     let mut warnings=Vec::<String>::new();
     let page_info_mismatch=playlist_exhausted&&!limit_truncated&&playlist_reported_total>0&&playlist_reported_total!=unique_video_ids;
-    if page_info_mismatch{warnings.push("PLAYLIST_TOTAL_METADATA_MISMATCH".into())}
+    if page_info_mismatch{
+        warnings.push("PLAYLIST_TOTAL_METADATA_MISMATCH".into());
+        // An unexpected provider total can hide video IDs: this is not a proof of an empty schedule.
+        schedule_reasons.push("PLAYLIST_TOTAL_METADATA_MISMATCH".into());
+    }
+    let schedule_complete=schedule_reasons.is_empty();
     json!({
         "syncComplete":sync_complete,
         "scheduleComplete":schedule_complete,
@@ -3925,6 +3967,59 @@ fn authoritative_inventory_row(item:&Value,position:usize)->Option<Value>{
         "draftCandidate":false
     }))
 }
+fn owner_uploads_playlist_for_profile<'a>(channels:&'a Value,expected:Option<&str>)->Result<&'a str,String>{
+    let expected=expected.filter(|x|!x.trim().is_empty())
+        .ok_or_else(||"EXPECTED_CHANNEL_MISSING: OAuth profile has no Channel ID".to_string())?;
+    let items=channels.get("items").and_then(Value::as_array)
+        .ok_or_else(||"OWNER_CHANNEL_MISSING: channels.list(mine=true) returned no channels".to_string())?;
+    let selected=items.iter().find(|item|item.get("id").and_then(Value::as_str)==Some(expected))
+        .ok_or_else(||"OWNER_CHANNEL_MISMATCH: OAuth owner does not match saved Channel ID".to_string())?;
+    selected.pointer("/contentDetails/relatedPlaylists/uploads").and_then(Value::as_str)
+        .filter(|x|!x.trim().is_empty())
+        .ok_or_else(||"OWNER_UPLOADS_MISSING: YouTube did not return uploads playlist".to_string())
+}
+fn append_owner_search_candidates(
+    page:&Value,expected_channel:&str,
+    playlist_seen:&std::collections::HashSet<String>,
+    supplement_seen:&mut std::collections::HashSet<String>,
+    supplemental_ids:&mut Vec<String>
+)->usize{
+    let mut candidates=0usize;
+    for item in page.get("items").and_then(Value::as_array).cloned().unwrap_or_default(){
+        let correct_channel=item.pointer("/snippet/channelId").and_then(Value::as_str)==Some(expected_channel);
+        let id=item.pointer("/id/videoId").and_then(Value::as_str).unwrap_or("");
+        if correct_channel&&!id.is_empty(){
+            candidates+=1;
+            if !playlist_seen.contains(id)&&supplement_seen.insert(id.to_string()){
+                supplemental_ids.push(id.to_string());
+            }
+        }
+    }
+    candidates
+}
+fn owner_schedule_reconciliation_reasons(
+    scheduled_count:usize,verify:bool,search_error:bool,
+    search_limit_reached:bool,search_exhausted:bool,
+    supplement_missing:bool,verified_supplement_scheduled:usize
+)->Vec<&'static str>{
+    let mut reasons=Vec::new();
+    if scheduled_count==0{reasons.push("SCHEDULE_EMPTY_NOT_INDEPENDENTLY_VERIFIED")}
+    if verify{
+        if search_error{reasons.push("OWNER_SEARCH_FAILED")}
+        if search_limit_reached{reasons.push("OWNER_SEARCH_PAGE_LIMIT")}
+        if supplement_missing{reasons.push("OWNER_SUPPLEMENT_HYDRATION_MISSING")}
+        if !search_exhausted{reasons.push("OWNER_SEARCH_NOT_EXHAUSTED")}
+    }
+    // Even when search.list is on cooldown, cached owner upload IDs can expose
+    // Scheduled videos absent from uploads. Positive evidence is real, but the
+    // union still does not prove exhaustive coverage.
+    if verified_supplement_scheduled>0{reasons.push("UPLOADS_PLAYLIST_SCHEDULE_COVERAGE_MISMATCH")}
+    reasons
+}
+fn owner_search_page_budget(requested:Option<u32>)->u32{
+    // The frontend reserves Search capacity; native code enforces a hard cap.
+    requested.unwrap_or(2).clamp(1,12)
+}
 fn full_sync_estimate(video_count:usize)->Value{
     let playlist_pages=std::cmp::max(1,(video_count+49)/50);
     let hydration_batches=if video_count==0{0}else{(video_count+49)/50};
@@ -3938,6 +4033,9 @@ pub async fn youtube_list_existing_videos(
     profile_id: String,
     max_results: Option<u32>,
     operation_id: Option<String>,
+    verify_scheduled: Option<bool>,
+    known_scheduled_ids: Option<Vec<String>>,
+    max_search_pages: Option<u32>,
 ) -> Result<Value, String> {
     let (token, profile) = valid_access_token(&app, &profile_id).await?;
     let limit = max_results.unwrap_or(1000).clamp(1, 5000) as usize;
@@ -3950,8 +4048,8 @@ pub async fn youtube_list_existing_videos(
         .send().await.map_err(|e|format!("YouTube channel: {e}"))?;
     let st=r.status();let cv:Value=r.json().await.map_err(|e|e.to_string())?;
     if !st.is_success(){return Err(youtube_error(&cv,"Не удалось получить канал YouTube"))}
-    let uploads=cv.pointer("/items/0/contentDetails/relatedPlaylists/uploads").and_then(|x|x.as_str())
-        .ok_or_else(||"YouTube не вернул playlist загрузок".to_string())?;
+    // Do not silently scan another Brand Account's uploads playlist.
+    let uploads=owner_uploads_playlist_for_profile(&cv,profile.channel_id.as_deref())?;
 
     let mut ids=Vec::<String>::new();
     let mut seen=std::collections::HashSet::<String>::new();
@@ -3964,9 +4062,15 @@ pub async fn youtube_list_existing_videos(
     let mut playlist_items_inspected=0usize;
     let mut playlist_duplicate_count=0usize;
     let mut playlist_unresolved_count=0usize;
+    let mut visited_page_tokens=std::collections::HashSet::<String>::new();
+    let max_playlist_pages=std::cmp::max(1,(limit+49)/50)+1;
 
     loop{
         if ids.len()>=limit{limit_truncated=true;break}
+        if playlist_calls>=max_playlist_pages{limit_truncated=true;break}
+        if let Some(ref token)=page{
+            if !visited_page_tokens.insert(token.clone()){limit_truncated=true;break}
+        }
         let mut q=client.get("https://www.googleapis.com/youtube/v3/playlistItems")
             .bearer_auth(&token)
             .query(&[("part","contentDetails"),("playlistId",uploads),("maxResults","50")]);
@@ -4035,6 +4139,96 @@ pub async fn youtube_list_existing_videos(
         }
     }
 
+    // An uploads playlist can be exhausted without proving that YouTube indexed every
+    // private Scheduled upload in that playlist. Independent read-only owner search is
+    // deliberately opt-in: only a single channel's explicit reconciliation enables it.
+    // No search is performed during an ordinary 33-channel background inventory scan.
+    let mut search_used=false;
+    let mut search_pages=0usize;
+    let mut search_exhausted=false;
+    let mut search_error:Option<String>=None;
+    let mut search_candidate_count=0usize;
+    let mut supplemental_ids=Vec::<String>::new();
+    let mut supplement_seen=std::collections::HashSet::<String>::new();
+    let mut known_id_checks=0usize;
+    let mut search_limit_reached=false;
+    let verify=verify_scheduled.unwrap_or(false);
+    if verify{
+        search_used=true;
+        let mut search_page:Option<String>=None;
+        // The caller reserves real Search Queries capacity before invoking.
+        // Full-fleet: <=4 pages/channel; single owner audit: <=12 pages.
+        // A truncated search must never be mistaken for proof of zero Scheduled.
+        let max_pages=owner_search_page_budget(max_search_pages);
+        for _ in 0..max_pages{
+            let expected=profile.channel_id.as_deref().unwrap_or("");
+            let mut request=client.get("https://www.googleapis.com/youtube/v3/search")
+                .bearer_auth(&token)
+                .query(&[("part","snippet"),("forMine","true"),("type","video"),("channelId",expected),("maxResults","50"),("order","date")]);
+            if let Some(ref token)=search_page{request=request.query(&[("pageToken",token.as_str())])}
+            search_pages+=1;
+            emit_youtube_api_request(&app,"search.list",operation_id.as_deref());
+            let response=match request.send().await{
+                Ok(r)=>r,
+                Err(e)=>{search_error=Some(format!("OWNER_SEARCH_NETWORK: {e}"));break}
+            };
+            let status=response.status();
+            let value:Value=response.json().await.unwrap_or_else(|_|json!({}));
+            if !status.is_success(){
+                search_error=Some(format!("OWNER_SEARCH_API: {}",youtube_error(&value,"Owner search unavailable")));
+                break
+            }
+            search_candidate_count+=append_owner_search_candidates(
+                &value,expected,&seen,&mut supplement_seen,&mut supplemental_ids
+            );
+            search_page=value.get("nextPageToken").and_then(Value::as_str).map(str::to_string);
+            if search_page.is_none(){search_exhausted=true;break}
+        }
+        if !search_exhausted&&search_error.is_none(){search_limit_reached=true}
+    }
+    // Local owner-upload history is independent of search indexing. Hydrate its
+    // IDs through authenticated videos.list even when search.list is cooling
+    // down; never trust cached Scheduled state or channel ownership blindly.
+    let mut known_seen=std::collections::HashSet::<String>::new();
+    for id in known_scheduled_ids.unwrap_or_default().into_iter().filter(|id|
+        id.len()==11&&id.chars().all(|c|c.is_ascii_alphanumeric()||c=='-'||c=='_')
+    ){
+        if known_seen.len()>=50{break}
+        if !known_seen.insert(id.clone()){continue}
+        known_id_checks+=1;
+        if !seen.contains(&id)&&supplement_seen.insert(id.clone()){supplemental_ids.push(id)}
+    }
+    let mut search_hydration_calls=0usize;
+    let mut supplemental_missing=Vec::<String>::new();
+    for chunk in supplemental_ids.chunks(50){
+        search_hydration_calls+=1;
+        emit_youtube_api_request(&app,"videos.list",operation_id.as_deref());
+        let joined_supplement=chunk.join(",");
+        let response=client.get("https://www.googleapis.com/youtube/v3/videos")
+            .bearer_auth(&token)
+            .query(&[("part","snippet,status,contentDetails,statistics"),("id",joined_supplement.as_str())])
+            .send().await;
+        let result=match response{
+            Ok(r)=>r,
+            Err(e)=>{hydration_errors.push(format!("supplement {search_hydration_calls}: {e}"));supplemental_missing.extend(chunk.iter().cloned());continue}
+        };
+        let status=result.status();
+        let payload:Value=result.json().await.unwrap_or_else(|_|json!({}));
+        if !status.is_success(){
+            hydration_errors.push(format!("supplement {search_hydration_calls}: {}",youtube_error(&payload,"Owner supplement hydration failed")));
+            supplemental_missing.extend(chunk.iter().cloned());
+            continue
+        }
+        for item in payload.get("items").and_then(Value::as_array).cloned().unwrap_or_default(){
+            if let Some(id)=item.get("id").and_then(Value::as_str){
+                if item.pointer("/snippet/channelId").and_then(Value::as_str)==profile.channel_id.as_deref(){
+                    by_id.insert(id.to_string(),item);
+                }
+            }
+        }
+        for id in chunk{if !by_id.contains_key(id){supplemental_missing.push(id.clone())}}
+    }
+    video_calls+=search_hydration_calls;
     let mut out=Vec::<Value>::new();
     for (position,id) in ids.iter().enumerate(){
         if let Some(item)=by_id.get(id){
@@ -4042,8 +4236,22 @@ pub async fn youtube_list_existing_videos(
         }
     }
 
+    // Source supplement rows are included only if the authenticated videos.list
+    // returned the exact owner Channel ID; search snippets are never authoritative.
+    let playlist_hydrated=out.len();
+    let mut supplemental_hydrated=0usize;
+    let mut verified_supplement_scheduled=0usize;
+    for (index,id) in supplemental_ids.iter().enumerate(){
+        if let Some(item)=by_id.get(id){
+            if let Some(row)=authoritative_inventory_row(item,ids.len()+index){
+                let (_,scheduled,_,_)=inventory_bucket_counts(&[row.clone()],Utc::now());
+                if scheduled>0{verified_supplement_scheduled+=1}
+                out.push(row);supplemental_hydrated+=1;
+            }
+        }
+    }
     let unique_video_ids=ids.len();
-    let videos_hydrated=out.len();
+    let videos_hydrated=playlist_hydrated;
     let missing_hydration_ids=ids.iter().filter(|id|!by_id.contains_key(*id)).cloned().collect::<Vec<_>>();
     let schedule_incomplete_ids=schedule_data_incomplete_ids(&out);
     let completeness=inventory_completeness_value(
@@ -4053,21 +4261,35 @@ pub async fn youtube_list_existing_videos(
         unique_video_ids,
         videos_hydrated,
         &hydration_errors,
-        schedule_incomplete_ids.len(),
+        schedule_incomplete_ids.len()+supplemental_missing.len(),
         playlist_reported_total,
     );
     let sync_complete=completeness.get("syncComplete").and_then(Value::as_bool).unwrap_or(false);
-    let schedule_complete=completeness.get("scheduleComplete").and_then(Value::as_bool).unwrap_or(false);
+    let mut reasons=completeness.get("incompleteReasons").and_then(Value::as_array).cloned().unwrap_or_default();
+    let mut reason=|code:&str|{
+        let value=Value::String(code.to_string());
+        if !reasons.contains(&value){reasons.push(value)}
+    };
+    let (_,scheduled_count_probe,_,_)=inventory_bucket_counts(&out,Utc::now());
+    for code in owner_schedule_reconciliation_reasons(
+        scheduled_count_probe,verify,search_error.is_some(),
+        search_limit_reached,search_exhausted,!supplemental_missing.is_empty(),
+        verified_supplement_scheduled
+    ){reason(code)}
+    let schedule_complete=reasons.is_empty();
     let observed_total=if playlist_exhausted&&!limit_truncated{unique_video_ids}else{std::cmp::max(playlist_reported_total,unique_video_ids)};
     let expected=if playlist_exhausted&&!limit_truncated{unique_video_ids}else{std::cmp::min(std::cmp::max(playlist_reported_total,unique_video_ids),limit)};
     let (private_count,scheduled_count,public_count,unlisted_count)=inventory_bucket_counts(&out,Utc::now());
-    let full_sync_api_requests=1+playlist_calls+video_calls;
-    let full_sync_estimated_quota_cost=full_sync_api_requests;
+    let full_sync_api_requests=1+playlist_calls+video_calls+search_pages;
+    // Since June 2026 search.list is charged in its own Search Queries
+    // bucket, not the General API quota. Keep all HTTP calls in apiRequests
+    // but charge General only for channels/playlistItems/videos calls.
+    let full_sync_estimated_quota_cost=1+playlist_calls+video_calls;
 
     Ok(json!({
         "channelId":profile.channel_id,
         "channelTitle":profile.channel_title,
-        "youtubeFound":observed_total,
+        "youtubeFound":std::cmp::max(observed_total,out.len()),
         "playlistFound":playlist_reported_total,
         "playlistReportedTotal":playlist_reported_total,
         "inventoryExpected":expected,
@@ -4075,7 +4297,9 @@ pub async fn youtube_list_existing_videos(
         "playlistItemsInspected":playlist_items_inspected,
         "uniqueVideoIds":unique_video_ids,
         "videosHydrated":videos_hydrated,
-        "received":videos_hydrated,
+        "totalVerifiedRows":out.len(),
+        "supplementalHydrated":supplemental_hydrated,
+        "received":out.len(),
         "requested":limit,
         "playlistExhausted":playlist_exhausted,
         "truncated":limit_truncated,
@@ -4090,21 +4314,29 @@ pub async fn youtube_list_existing_videos(
         "missingHydrationCount":missing_hydration_ids.len(),
         "missingHydrationIds":missing_hydration_ids,
         "failedHydrationIds":failed_hydration_ids,
-        "scheduleDataIncompleteCount":schedule_incomplete_ids.len(),
+        "scheduleDataIncompleteCount":schedule_incomplete_ids.len()+supplemental_missing.len(),
         "scheduleIncompleteIds":schedule_incomplete_ids,
         "hydrationErrors":hydration_errors,
-        "incompleteReasons":completeness.get("incompleteReasons").cloned().unwrap_or_else(||json!([])),
+        "incompleteReasons":reasons,
         "inventoryIncompleteReasons":completeness.get("inventoryIncompleteReasons").cloned().unwrap_or_else(||json!([])),
         "diagnosticWarnings":completeness.get("diagnosticWarnings").cloned().unwrap_or_else(||json!([])),
         "pageInfoTotalMismatch":completeness.get("pageInfoTotalMismatch").cloned().unwrap_or_else(||json!(false)),
         "complete":sync_complete,
         "syncComplete":sync_complete,
         "scheduleComplete":schedule_complete,
-        "draftCandidateCount":0,
-        "searchSupplementCount":0,
-        "searchUsed":false,
+        "draftCandidateCount":supplemental_ids.len(),
+        "searchSupplementCount":verified_supplement_scheduled,
+        "searchUsed":search_used,
+        "searchPagesFetched":search_pages,
+        "searchExhausted":search_exhausted,
+        "searchError":search_error,
+        "knownScheduledIdsChecked":known_id_checks,
+        "supplementalMissingCount":supplemental_missing.len(),
+        "supplementalCandidateCount":search_candidate_count,
         "playlistCalls":playlist_calls,
         "videoCalls":video_calls,
+        "searchCalls":search_pages,
+        "searchQuotaCost":search_pages,
         "fullSyncApiRequests":full_sync_api_requests,
         "fullSyncEstimatedQuotaCost":full_sync_estimated_quota_cost,
         "estimatedForInventory":full_sync_estimate(observed_total),
@@ -7091,11 +7323,11 @@ mod v2115_rc2_schedule_sync_hotfix_tests{
   assert_eq!(v["incompleteReasons"],json!([]));
  }
  #[test]
- fn stale_page_info_total_does_not_invalidate_exhausted_inventory(){
+ fn page_info_mismatch_cannot_prove_schedule_coverage(){
   let errors=Vec::<String>::new();
   let v=inventory_completeness_value(true,false,0,203,203,&errors,0,204);
   assert_eq!(v["syncComplete"],true);
-  assert_eq!(v["scheduleComplete"],true);
+  assert_eq!(v["scheduleComplete"],false);
   assert_eq!(v["pageInfoTotalMismatch"],true);
   assert_eq!(v["diagnosticWarnings"],json!(["PLAYLIST_TOTAL_METADATA_MISMATCH"]));
  }
@@ -7650,5 +7882,128 @@ mod v611_channel_runway_inventory_hotfix_tests {
         let estimate=full_sync_estimate(20);
         assert_eq!(estimate.get("apiRequests").and_then(Value::as_u64),Some(3));
         assert_eq!(estimate.get("estimatedQuotaCost").and_then(Value::as_u64),Some(3));
+    }
+}
+
+#[cfg(test)]
+mod v241_oauth_singleflight_tests {
+    use super::*;
+    #[test]
+    fn thirty_five_google_profiles_have_independent_refresh_locks() {
+        let locks=(0..35).map(|i|profile_refresh_lock(&format!("oauth-profile-{i}")))
+            .collect::<Vec<_>>();
+        for i in 0..35 {
+            let same=profile_refresh_lock(&format!("oauth-profile-{i}"));
+            assert!(Arc::ptr_eq(&locks[i],&same));
+            assert!(same.try_lock().is_ok());
+            for j in (i+1)..35 {
+                assert!(!Arc::ptr_eq(&locks[i],&locks[j]));
+            }
+        }
+        let guard=locks[0].try_lock().unwrap();
+        assert!(profile_refresh_lock("oauth-profile-0").try_lock().is_err());
+        // Contention on one YouTube account does not freeze the 34 others.
+        assert!(profile_refresh_lock("oauth-profile-1").try_lock().is_ok());
+        drop(guard);
+        assert!(profile_refresh_lock("oauth-profile-0").try_lock().is_ok());
+    }
+    #[test]
+    fn transient_http_quota_keychain_and_network_errors_never_require_google_reconnect() {
+        for code in ["temporarily_unavailable","server_error","backendError",
+            "rate_limit_exceeded","invalid_client","unauthorized_client"] {
+            let error=oauth_refresh_error(&json!({"error":code,"error_description":"synthetic test"}));
+            assert!(!refresh_error_requires_reconnect(&error),"{code}");
+        }
+        for error in [
+            "OAUTH_NETWORK_ERROR: timeout","OAUTH_REFRESH_FAILED: HTTP 401",
+            "OAUTH_REFRESH_FAILED: HTTP 403","OAUTH_REFRESH_FAILED: HTTP 429",
+            "OAUTH_REFRESH_FAILED: HTTP 500","KEYCHAIN_INTERACTION_REQUIRED",
+            "KEYCHAIN_AUTH_FAILED","OAUTH_CLIENT_SECRET_REQUIRED",
+        ] {
+            assert!(!refresh_error_requires_reconnect(error),"{error}");
+        }
+        assert!(refresh_error_requires_reconnect(
+            &oauth_refresh_error(&json!({"error":"invalid_grant","error_description":"revoked"}))));
+    }
+    #[test]
+    fn different_profiles_have_distinct_refresh_forms_and_original_refresh_tokens() {
+        let first=refresh_token_form("client-a","secret-a","refresh-a");
+        let second=refresh_token_form("client-b","secret-b","refresh-b");
+        assert_eq!(first.iter().find(|(k,_)|k=="refresh_token").unwrap().1,"refresh-a");
+        assert_eq!(second.iter().find(|(k,_)|k=="refresh_token").unwrap().1,"refresh-b");
+        assert_ne!(first,second);
+        assert_eq!(first.iter().find(|(k,_)|k=="grant_type").unwrap().1,"refresh_token");
+    }
+}
+
+#[cfg(test)]
+mod false_zero_owner_search_regression_tests{
+ use super::*;
+ #[test]fn owner_search_page_budget_clamps_invalid_or_excessive_caller_values(){
+   assert_eq!(owner_search_page_budget(None),2);
+   assert_eq!(owner_search_page_budget(Some(0)),1);
+   assert_eq!(owner_search_page_budget(Some(4)),4);
+   assert_eq!(owner_search_page_budget(Some(12)),12);
+   assert_eq!(owner_search_page_budget(Some(100)),12);
+ }
+ #[test]fn full_uploads_playlist_is_not_proof_of_empty_scheduled(){
+   assert_eq!(owner_schedule_reconciliation_reasons(0,false,false,false,false,false,0),
+     vec!["SCHEDULE_EMPTY_NOT_INDEPENDENTLY_VERIFIED"]);
+   assert!(owner_schedule_reconciliation_reasons(0,true,false,false,true,false,0)
+     .contains(&"SCHEDULE_EMPTY_NOT_INDEPENDENTLY_VERIFIED"));
+ }
+ #[test]fn private_scheduled_video_missing_from_uploads_is_recovered_by_owner_search(){
+   let playlist_seen=["VIDEO_A".to_string()].into_iter().collect::<std::collections::HashSet<_>>();
+   let mut seen=std::collections::HashSet::new();let mut supplemental=Vec::new();
+   let search=json!({"items":[
+     {"id":{"videoId":"VIDEO_A"},"snippet":{"channelId":"UC_NEON"}},
+     {"id":{"videoId":"VIDEO_B"},"snippet":{"channelId":"UC_NEON"}},
+     {"id":{"videoId":"VIDEO_C"},"snippet":{"channelId":"UC_OTHER"}}
+   ]});
+   assert_eq!(append_owner_search_candidates(&search,"UC_NEON",&playlist_seen,&mut seen,&mut supplemental),2);
+   assert_eq!(supplemental,vec!["VIDEO_B"]);
+   let hydration=json!({"id":"VIDEO_B","snippet":{"channelId":"UC_NEON"},"status":{"privacyStatus":"private","publishAt":"2026-12-12T12:00:00Z"}});
+   let verified=authoritative_inventory_row(&hydration,1).unwrap();
+   let (_,scheduled,_,_)=inventory_bucket_counts(&[verified],chrono::DateTime::parse_from_rfc3339("2026-11-18T00:00:00Z").unwrap().with_timezone(&Utc));
+   assert_eq!(scheduled,1);
+   assert!(owner_schedule_reconciliation_reasons(1,true,false,false,true,false,1)
+      .contains(&"UPLOADS_PLAYLIST_SCHEDULE_COVERAGE_MISMATCH"));
+   assert!(owner_schedule_reconciliation_reasons(1,false,false,false,false,false,1)
+      .contains(&"UPLOADS_PLAYLIST_SCHEDULE_COVERAGE_MISMATCH"));
+ }
+ #[test]fn partial_search_and_wrong_channel_are_not_complete_evidence(){
+   let seen=std::collections::HashSet::new();let mut candidates=std::collections::HashSet::new();let mut extra=Vec::new();
+   let page=json!({"items":[{"id":{"videoId":"VIDEO_X"},"snippet":{"channelId":"UC_OTHER"}}]});
+   assert_eq!(append_owner_search_candidates(&page,"UC_NEON",&seen,&mut candidates,&mut extra),0);
+   assert!(extra.is_empty());
+   assert!(owner_schedule_reconciliation_reasons(0,true,true,false,false,false,0).contains(&"OWNER_SEARCH_FAILED"));
+   assert!(owner_schedule_reconciliation_reasons(0,true,false,true,false,false,0).contains(&"OWNER_SEARCH_PAGE_LIMIT"));
+ }
+}
+
+#[cfg(test)]
+mod hotfix_runway_owner_identity_tests{
+    use super::*;
+    #[test]fn selects_exact_owner_even_if_not_first(){
+        let channels=json!({"items":[
+            {"id":"UC_OTHER","contentDetails":{"relatedPlaylists":{"uploads":"UU_OTHER"}}},
+            {"id":"UC_TARGET","contentDetails":{"relatedPlaylists":{"uploads":"UU_TARGET"}}}
+        ]});
+        assert_eq!(owner_uploads_playlist_for_profile(&channels,Some("UC_TARGET")),Ok("UU_TARGET"));
+        assert!(owner_uploads_playlist_for_profile(&channels,Some("UC_MISSING")).unwrap_err().contains("OWNER_CHANNEL_MISMATCH"));
+        assert!(owner_uploads_playlist_for_profile(&channels,None).unwrap_err().contains("EXPECTED_CHANNEL_MISSING"));
+    }
+    #[test]fn private_future_publish_at_remains_authoritative(){
+        let video=json!({"id":"v","snippet":{"channelId":"UC_TARGET","title":"Scheduled"},"status":{"privacyStatus":"private","publishAt":"2026-12-12T12:00:00Z"}});
+        let row=authoritative_inventory_row(&video,0).unwrap();
+        assert_eq!(row["publishAt"],"2026-12-12T12:00:00Z");
+        assert_eq!(row["privacyStatus"],"private");
+    }
+    #[test]fn incomplete_video_hydration_never_confirms_schedule(){
+        let r=inventory_completeness_value(true,false,0,100,50,&[],0,100);
+        assert_eq!(r["syncComplete"],false);
+        assert_eq!(r["scheduleComplete"],false);
+        let r=inventory_completeness_value(true,false,0,0,0,&[],0,0);
+        assert_eq!(r["scheduleComplete"],true);
     }
 }

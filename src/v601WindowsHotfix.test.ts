@@ -8,6 +8,7 @@ const settings=read('src/SettingsOS.tsx');
 const store=read('src/store.ts');
 const brand=read('src/vyronBrand.ts');
 const styles=read('src/styles.css');
+const layoutStyles=read('src/ui-layout-contract.css');
 const migration=read('src-tauri/src/migration.rs');
 const conf=JSON.parse(read('src-tauri/tauri.conf.json'));
 
@@ -23,9 +24,8 @@ describe('VYRON 6.0.1 Windows migration/UI hotfix contracts',()=>{
   });
 
   it('anchors owner and LOCAL CORE as one sidebar footer group',()=>{
-    expect(styles).toContain('.sidebar .sidebarFooter');
-    expect(styles).toMatch(/\.sidebar \.sidebarFooter\s*\{[^}]*margin-top:auto[^}]*flex-direction:column/s);
-    expect(styles).toContain('.sidebar .sidebarFooter .sideFoot');
+    expect(layoutStyles).toMatch(/\.sidebarFooter\s*\{[^}]*margin-top:auto[^}]*flex-direction:column/s);
+    expect(layoutStyles).toContain('.sidebarFooter .sideFoot');
   });
 
   it('keeps FPS HUD off by default and exposes its toggle only in Diagnostics',()=>{
@@ -39,7 +39,8 @@ describe('VYRON 6.0.1 Windows migration/UI hotfix contracts',()=>{
   });
 
   it('shows actual runtime version in the history while retaining canonical history',()=>{
-    expect(VYRON_CURRENT_RELEASE.version).toBe('6.0.1');
+    expect(VYRON_CURRENT_RELEASE.version).toBe('6.1.10');
+    expect(read('src/releaseHistory.ts')).toContain('"version":"6.0.1"');
     expect(settings).toContain('<ReleaseHistoryTimeline currentVersion={updaterCurrent||undefined}/>');
   });
 

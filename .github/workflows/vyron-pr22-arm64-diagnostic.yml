@@ -1,0 +1,118 @@
+name: VYRON 6.1.17 isolated ARM64 diagnostic app
+
+# Security hold: no private keys, no release publishing and no stable feed edits.
+# The actual .app is compiled then discarded; only build evidence is uploaded.
+on:
+  push:
+    branches: [feature/vyron-macos-ultimate]
+    paths:
+      - '.github/workflows/vyron-pr22-arm64-diagnostic.yml'
+      - 'src/**'
+      - 'src-tauri/**'
+      - 'package.json'
+      - 'package-lock.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-pr22-isolated-arm64-diagnostic
+  cancel-in-progress: true
+
+jobs:
+  diagnostic-app:
+    name: Compile isolated ARM64 .app (not a release)
+    runs-on: macos-15
+    timeout-minutes: 65
+    env:
+      VYRON_NON_DISTRIBUTABLE_PROBE: studio.channelflow.desktop.pr22probe
+      VYRON_UPDATE_CHANNEL: owner-preview
+      APPLE_SIGNING_IDENTITY: '-'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify frozen production and safe probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          node <<'NODE'
+          const assert=require('node:assert/strict'),fs=require('node:fs');
+          const prod=JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json','utf8'));
+          const probe=JSON.parse(fs.readFileSync('src-tauri/tauri.pr22-probe.conf.json','utf8'));
+          assert.equal(prod.identifier,'studio.channelflow.desktop');
+          assert.equal(prod.version,'6.1.15');
+          assert.equal(probe.identifier,'studio.channelflow.desktop.pr22probe');
+          assert.equal(probe.version,'6.1.17');
+          assert.deepEqual(probe.bundle.targets,['app']);
+          assert.equal(probe.bundle.createUpdaterArtifacts,false);
+          assert.deepEqual(probe.plugins.updater.endpoints,[]);
+          console.log('PRODUCTION_ISOLATED=PASS');
+          NODE
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+      - run: npm ci --no-audit --no-fund
+      - name: Build isolated ARM64 .app with updater disabled
+        shell: bash
+        run: |
+          set -euo pipefail
+          export VYRON_COMMIT_SHA="$GITHUB_SHA"
+          export TAURI_CONFIG="$(cat src-tauri/tauri.pr22-probe.conf.json)"
+          npx tauri build --target aarch64-apple-darwin --bundles app --config src-tauri/tauri.pr22-probe.conf.json
+      - name: Inspect .app, architecture, signatures and manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="$GITHUB_WORKSPACE/diagnostic-evidence"
+          mkdir -p "$OUT"
+          APP="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
+          test -n "$APP"
+          PLIST="$APP/Contents/Info.plist"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PLIST")" = studio.channelflow.desktop.pr22probe
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST")" = 6.1.17
+          EXE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$PLIST")"
+          test -f "$APP/Contents/MacOS/$EXE"
+          lipo -archs "$APP/Contents/MacOS/$EXE" | tr ' ' '\n' | grep -qx arm64
+          shasum -a 256 "$APP/Contents/MacOS/$EXE" > "$OUT/EXECUTABLE-SHA256.txt"
+          (cd "$APP" && find Contents -type f | sort) > "$OUT/APP-FILES.txt"
+          SIGN_STATUS=INVALID_OR_ADHOC
+          if codesign --verify --deep --strict "$APP" > "$OUT/codesign.txt" 2>&1; then SIGN_STATUS=VERIFY_PASS; fi
+          GATEKEEPER=NOT_ACCEPTED
+          if spctl --assess --type execute --verbose=4 "$APP" > "$OUT/gatekeeper.txt" 2>&1; then GATEKEEPER=ACCEPTED; fi
+          NOTARIZATION=NOT_VERIFIED
+          if xcrun stapler validate "$APP" > "$OUT/notarization.txt" 2>&1; then NOTARIZATION=STAPLER_VALID; fi
+          export SIGN_STATUS GATEKEEPER NOTARIZATION EXE OUT
+          python3 - <<'PY'
+          import json,os,pathlib,platform
+          out=pathlib.Path(os.environ['OUT'])
+          manifest=dict(kind='ISOLATED_BUILD_EVIDENCE_ONLY',version='6.1.17',
+            sourceSha=os.environ['GITHUB_SHA'],targetArch='aarch64-apple-darwin',
+            runnerArch=platform.machine(),bundleIdentifier='studio.channelflow.desktop.pr22probe',
+            executable=os.environ['EXE'],updaterEnabled=False,updaterArtifacts=False,
+            codesign=os.environ['SIGN_STATUS'],gatekeeper=os.environ['GATEKEEPER'],
+            notarization=os.environ['NOTARIZATION'],productionFeedModified=False,
+            ownerMacTested=False,releasable=False,
+            warning='The compiled app is deliberately not distributed or uploaded')
+          (out/'BUILD-MANIFEST.json').write_text(json.dumps(manifest,indent=2)+'\n')
+          PY
+          (cd "$OUT" && for x in BUILD-MANIFEST.json EXECUTABLE-SHA256.txt APP-FILES.txt codesign.txt gatekeeper.txt notarization.txt; do shasum -a 256 "$x"; done > SHA256SUMS.txt)
+          (cd "$OUT" && shasum -a 256 -c SHA256SUMS.txt)
+          echo 'ARM64_APP_STRUCTURE=PASS (isolated diagnostic only)' >> "$GITHUB_STEP_SUMMARY"
+          echo "GATEKEEPER=$GATEKEEPER; NOTARIZATION=$NOTARIZATION; RELEASE=BLOCKED" >> "$GITHUB_STEP_SUMMARY"
+      - name: Save diagnostic evidence only (no app/DMG)
+        uses: actions/upload-artifact@v4
+        with:
+          name: VYRON-617-ARM64-DIAGNOSTIC-EVIDENCE
+          path: diagnostic-evidence/
+          if-no-files-found: error
+          retention-days: 14

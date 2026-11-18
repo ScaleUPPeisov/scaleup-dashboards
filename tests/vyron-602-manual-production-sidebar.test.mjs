@@ -37,8 +37,12 @@ describe('VYRON 6.0.2 manual Production restore',()=>{
   it('honors explicit image reuse for both legacy and Materials Library sources',()=>{
     expect(backend).toContain('if req.project_count > available_images && !req.allow_image_reuse');
     expect(backend).toContain('if request.project_count > available && !request.allow_image_reuse');
-    expect(backend).toContain('material_images[i % material_images.len()]');
-    expect(backend).toContain('if req.allow_image_reuse { None } else { Some(image.asset_id.clone()) }');
+    // Unified resolver now deduplicates by SHA and combines both sources.
+    expect(backend).toContain('for image in materials_manager::available_images(workspace, channel_id)?');
+    expect(backend).toContain('for image in session.collected');
+    expect(backend).toContain('if !seen.insert(sha.clone()) { continue; }');
+    expect(backend).toContain('let image = &resolved_images[i % resolved_images.len()];');
+    expect(backend).toContain('let image_asset_id = if req.allow_image_reuse { None } else { image.asset_id.clone() };');
   });
 
   it('keeps ENDLUME handoff, selection and validation in the restored builder',()=>{

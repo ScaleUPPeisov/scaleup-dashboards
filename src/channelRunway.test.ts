@@ -2,6 +2,7 @@ import {describe,expect,it} from 'vitest';
 import type {Channel,YoutubeExistingVideo} from './types';
 import {
   calendarDaysBetween,
+  compareYoutubeOnlyRunwayPriority,
   deriveRunwayRecord,
   krasnoyarskClock,
   quotaRiskCount,
@@ -44,6 +45,39 @@ describe('Channel Runway core',()=>{
     expect(record.status).toBe('large');
   });
 
+  it('sorts by YouTube-only runway, ignores local reserve, and puts unconfirmed channels last',()=>{
+    const rows=[
+      {channelName:'Channel B',remoteScheduledDays:20,scheduledUntil:'2026-11-09',known:true,localReadyVideos:0},
+      {channelName:'Channel A',remoteScheduledDays:5,scheduledUntil:'2026-10-25',known:true,localReadyVideos:30},
+      {channelName:'No future schedule',remoteScheduledDays:0,known:true,localReadyVideos:50},
+      {channelName:'Unknown',remoteScheduledDays:0,known:false,localReadyVideos:80}
+    ].sort(compareYoutubeOnlyRunwayPriority);
+    expect(rows.map(x=>x.channelName)).toEqual(['No future schedule','Channel A','Channel B','Unknown']);
+  });
+
+  it('sorts by the visible days ascending, including explicitly historical partial evidence',()=>{
+    const rows=[
+      {channelName:'Green confirmed',remoteScheduledDays:49,known:true},
+      {channelName:'Unknown',remoteScheduledDays:0,known:false},
+      {channelName:'Historical 2',remoteScheduledDays:0,known:false,historicalScheduledDays:2},
+      {channelName:'Red confirmed',remoteScheduledDays:8,known:true},
+      {channelName:'Historical 21',remoteScheduledDays:0,known:false,historicalScheduledDays:21},
+      {channelName:'Confirmed 2',remoteScheduledDays:2,known:true},
+    ].sort(compareYoutubeOnlyRunwayPriority);
+    expect(rows.map(x=>x.channelName)).toEqual([
+      'Confirmed 2','Historical 2','Red confirmed','Historical 21','Green confirmed','Unknown'
+    ]);
+    expect(rows.at(-1)?.channelName).toBe('Unknown');
+  });
+
+  it('uses schedule end date and channel name as deterministic tie-breakers',()=>{
+    const rows=[
+      {channelName:'Zulu',remoteScheduledDays:10,scheduledUntil:'2026-11-01',known:true},
+      {channelName:'Beta',remoteScheduledDays:10,scheduledUntil:'2026-10-30',known:true},
+      {channelName:'Alpha',remoteScheduledDays:10,scheduledUntil:'2026-10-30',known:true}
+    ].sort(compareYoutubeOnlyRunwayPriority);
+    expect(rows.map(x=>x.channelName)).toEqual(['Alpha','Beta','Zulu']);
+  });
   it('counts only true YouTube Scheduled private + future publishAt',()=>{
     const now=new Date('2026-09-02T08:00:00Z');
     const good=scheduled('2026-10-01T04:00:00+07:00');
@@ -85,7 +119,9 @@ describe('Channel Runway persistence and 06:00 KRAT scheduler',()=>{
     expect(loaded.channels.neon.scheduledUntil).toBe('2026-12-01');
     const recalculated=recalculateChannelRunway([channel()],new Date('2026-09-03T08:00:00Z'),false,storage as any);
     expect(recalculated.channels.neon.scheduledUntil).toBe('2026-12-01');
-    expect(recalculated.channels.neon.runwayDays).toBe(89);
+    expect(recalculated.channels.neon.dataState).toBe('STALE_CACHE');
+    expect(recalculated.channels.neon.runwayDays).toBeUndefined();
+    expect(recalculated.channels.neon.status).toBe('no-data');
   });
 
   it('empty Existing Videos cache is no-data, not falsely ended',()=>{
@@ -117,7 +153,8 @@ describe('Channel Runway persistence and 06:00 KRAT scheduler',()=>{
     storage.setItem('vyron:existing-cache:v1:neon',JSON.stringify({version:1,videos:[stale],baseline:{[stale.id]:stale},syncInfo:{complete:true}}));
     const result=recalculateChannelRunway([channel()],new Date('2026-09-03T08:00:00Z'),false,storage as any);
     expect(result.channels.neon.scheduledUntil).toBe('2026-12-01');
-    expect(result.channels.neon.runwayDays).toBe(89);
+    expect(result.channels.neon.dataState).toBe('STALE_CACHE');
+    expect(result.channels.neon.runwayDays).toBeUndefined();
   });
 
   it('does not run before 06:00 Krasnoyarsk and runs at 06:00',()=>{
