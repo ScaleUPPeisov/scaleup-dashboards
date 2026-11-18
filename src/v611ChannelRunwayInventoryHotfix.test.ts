@@ -123,6 +123,9 @@ describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
   });
 
   it('partial schedule hydration retains the verified future date instead of confirming empty',async()=>{
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-03T00:00:00Z'));
+    try{
     const first=await refreshOwnerInventoriesAuthoritative([channel()],true,[profile]);
     expect(first.rows[0].status).toBe('UPDATED');
     const prior=loadChannelRunwayStore().channels.lumiere;
@@ -140,6 +143,7 @@ describe('VYRON 6.1.1 Channel Runway inventory hotfix',()=>{
     expect(retained.dataState).toBe('PARTIAL_DATA');
     expect(retained.runwayDays).toBeUndefined();
     expect(retained.status).toBe('no-data');
+    }finally{vi.useRealTimers()}
   });
 
   it('single refresh makes exactly one authoritative inventory call',async()=>{
