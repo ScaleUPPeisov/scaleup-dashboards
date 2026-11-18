@@ -30,7 +30,7 @@ export function mirrorProduction(state,now=new Date()){
     rows.push({
       id,channelId,status:job.status,
       title:text(job.title,120)||'Видео без названия',
-      progress:job.status==='RENDERING'||job.status==='UPLOADING'?percent(job.uploadProgress):null,
+      progress:job.status==='UPLOADING'?percent(job.uploadProgress):null, // Never label upload progress as ENDLUME render progress.
       plannedPublishAt:date(job.publishAt),
       createdAt:date(job.createdAt),
       // This is a local VYRON plan, NOT verified YouTube schedule.
