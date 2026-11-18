@@ -1,68 +1,79 @@
-/* VYRON PEISOV YT PWA shell cache. Private API responses are never cached. */
-const SHELL_CACHE='vyron-peisov-yt-shell-v12';
-const SHELL_ASSETS=['/','/styles.css','/neo-glass.css','/app.js','/neo-glass.mjs','/insights-core.mjs','/analytics-window.mjs','/diagnostics.mjs','/migration-crypto.js','/event-utils.mjs','/manifest.webmanifest','/icon.svg'];
-
+/* VYRON PWA v13: coherent, immutable static cache; APIs never cached. */
+const SHELL_CACHE='vyron-peisov-yt-shell-v13';
+const SHELL_ASSETS=['/','/styles.css','/neo-glass.css','/app.js','/recovery.js',
+ '/neo-glass.mjs','/insights-core.mjs','/analytics-window.mjs','/diagnostics.mjs',
+ '/migration-crypto.js','/event-utils.mjs','/manifest.webmanifest','/icon.svg'];
+async function populateShell(cache){
+ const all=await Promise.all(SHELL_ASSETS.map(async path=>{
+  const response=await fetch(new Request(path,{cache:'reload'}));
+  const contentType=response.headers.get('Content-Type')||'';
+  if(!response.ok||
+   (/\.(?:mjs|js)$/.test(path)&&!/javascript|ecmascript/i.test(contentType))||
+   (/\.css$/.test(path)&&!/text\/css/i.test(contentType))||
+   (path==='/'&&!/text\/html/i.test(contentType)))
+    throw Error('Unexpected asset '+path);
+  return {path,response};
+ }));
+ await Promise.all(all.map(({path,response})=>cache.put(path,response)));
+}
 self.addEventListener('install',event=>{
-  // Never activate a new worker with an incomplete offline shell. Otherwise
-  // WebKit may discard the new version and revert to its previous controller.
-  event.waitUntil(caches.open(SHELL_CACHE)
-    .then(cache=>cache.addAll(SHELL_ASSETS))
-    .then(()=>self.skipWaiting()));
+ event.waitUntil((async()=>{
+  const cache=await caches.open(SHELL_CACHE);
+  try{await populateShell(cache);await self.skipWaiting();}
+  catch(e){await caches.delete(SHELL_CACHE);throw e;}
+ })());
 });
 self.addEventListener('activate',event=>{
-  event.waitUntil(caches.keys().then(keys=>Promise.all(
-    keys.filter(key=>(key.startsWith('vyron-control-shell-')||key.startsWith('vyron-peisov-yt-shell-'))&&key!==SHELL_CACHE)
-      .map(key=>caches.delete(key))
-  )).then(()=>self.clients.claim()));
+ event.waitUntil((async()=>{
+  const cache=await caches.open(SHELL_CACHE);
+  const complete=(await Promise.all(SHELL_ASSETS.map(p=>cache.match(p)))).every(Boolean);
+  if(!complete)throw Error('Incomplete shell');
+  const keys=await caches.keys();
+  await Promise.all(keys.filter(k=>(k.startsWith('vyron-control-shell-')||
+    k.startsWith('vyron-peisov-yt-shell-'))&&k!==SHELL_CACHE)
+   .map(k=>caches.delete(k)));
+  await self.clients.claim();
+ })());
 });
+function recoveryPage(){
+ return new Response('<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VYRON восстановление</title><h1>VYRON не загрузился</h1><p>Подключись к интернету и обнови страницу. Сессия не удалена.</p><a href="/">Попробовать снова</a></html>',
+  {status:503,headers:{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}});
+}
 self.addEventListener('fetch',event=>{
-  const request=event.request;
-  if(request.method!=='GET')return;
-  const url=new URL(request.url);
-  if(url.origin!==self.location.origin||url.pathname.startsWith('/api/'))return;
-  if(request.mode==='navigate'){
-    event.respondWith((async()=>{
-      try{
-        const response=await fetch(request);
-        if(response.ok){
-          const cache=await caches.open(SHELL_CACHE);
-          await cache.put('/',response.clone());
-        }
-        return response;
-      }catch{
-        return await caches.match('/')||Response.error();
-      }
-    })());
-    return;
-  }
-  if(SHELL_ASSETS.includes(url.pathname)){
-    event.respondWith((async()=>{
-      const cache=await caches.open(SHELL_CACHE);
-      const cached=await cache.match(request);
-      try{
-        const response=await fetch(request);
-        if(response.ok)await cache.put(request,response.clone());
-        return response;
-      }catch{
-        return cached||Response.error();
-      }
-    })());
-  }
-});
-
-/* Active Service Worker version probe. Also repairs a shell cache that a retiring
-   worker may have evicted during concurrent activation on WebKit. No API caching. */
-self.addEventListener('message',event=>{
-  if(event.data?.type!=='VYRON_PWA_VERSION_PROBE')return;
-  event.waitUntil((async()=>{
-    let complete=false;
-    try{
-      const cache=await caches.open(SHELL_CACHE);
-      if(!await cache.match('/'))await cache.addAll(SHELL_ASSETS);
-      complete=Boolean(await cache.match('/'));
-    }catch{} // Offline: report incomplete rather than claim cache integrity.
-    event.ports?.[0]?.postMessage({cacheName:SHELL_CACHE,complete});
+ const request=event.request;
+ if(request.method!=='GET')return;
+ const url=new URL(request.url);
+ if(url.origin!==self.location.origin||url.pathname.startsWith('/api/')||
+    url.pathname==='/build-info.json')return;
+ if(request.mode==='navigate'){
+  event.respondWith((async()=>{
+   const cache=await caches.open(SHELL_CACHE);
+   const cached=await cache.match('/');
+   if(cached)return cached;
+   try{const response=await fetch(request);return response.ok?response:recoveryPage();}
+   catch{return recoveryPage();}
   })());
+  return;
+ }
+ if(SHELL_ASSETS.includes(url.pathname)){
+  event.respondWith((async()=>{
+   const cache=await caches.open(SHELL_CACHE);
+   const cached=await cache.match(url.pathname);
+   if(cached)return cached;
+   try{const response=await fetch(request);return response.ok?response:Response.error();}
+   catch{return Response.error();}
+  })());
+ }
+});
+self.addEventListener('message',event=>{
+ if(event.data?.type!=='VYRON_PWA_VERSION_PROBE')return;
+ event.waitUntil((async()=>{
+  let complete=false;
+  try{const cache=await caches.open(SHELL_CACHE);
+   complete=(await Promise.all(SHELL_ASSETS.map(path=>cache.match(path)))).every(Boolean);
+  }catch{}
+  event.ports?.[0]?.postMessage({cacheName:SHELL_CACHE,complete});
+ })());
 });
 
 /* Web Push for installed iPhone PWA. No API credentials. */

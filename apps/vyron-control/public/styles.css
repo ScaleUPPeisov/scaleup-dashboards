@@ -527,3 +527,15 @@ html,body{width:100%;max-width:100%;overflow-x:clip}
   .overview-card>strong{font-size:24px}
   .mobile-nav button small{font-size:9px}
 }
+
+/* CSP-safe emergency recovery and manual session management. */
+#boot-recovery{position:fixed;z-index:1200;top:calc(env(safe-area-inset-top,0px) + 76px);
+ left:14px;right:14px;max-width:520px;margin:0 auto;padding:18px;
+ background:#1b1831;border:1px solid #ab91ff;border-radius:18px;color:#fff;
+ box-shadow:0 12px 45px #0009}
+#boot-recovery[hidden]{display:none!important}
+#boot-recovery p{font-size:13px;color:#cec6ea;line-height:1.5}
+#trusted-devices-panel{padding:18px;margin-top:14px}
+#trusted-devices{display:grid;gap:8px;margin-top:10px}
+#trusted-devices .oauth-profile{display:flex;justify-content:space-between;align-items:center;gap:10px}
+#trusted-devices .oauth-profile span{font-size:12px;overflow-wrap:anywhere}

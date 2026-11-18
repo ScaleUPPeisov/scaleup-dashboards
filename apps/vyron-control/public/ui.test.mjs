@@ -66,11 +66,11 @@ test('PWA caches every imported browser module but never authenticated API respo
   for(const modulePath of importedModules)
     assert.ok(serviceWorker.includes("'/"+modulePath+"'"),
       'offline shell is missing imported module: '+modulePath);
-  assert.ok(serviceWorker.includes("vyron-peisov-yt-shell-v12"));
+  assert.ok(serviceWorker.includes("vyron-peisov-yt-shell-v13"));
   assert.ok(app.includes('async function ensureServiceWorker()'));
   assert.ok(app.includes('void ensureServiceWorker().catch'));
   assert.ok(serviceWorker.includes("url.pathname.startsWith('/api/')"));
-  assert.ok(serviceWorker.includes("caches.match('/')"));
+  assert.ok(serviceWorker.includes("cache.match('/')"));
 });
 
 test('Mac installer and dashboard command use the same source branch',()=>{
@@ -179,4 +179,17 @@ test('channel thumbnails come from status with fallback and no extra YouTube API
   assert.match(app,/photo\.addEventListener\('error',\(\)=>photo\.remove\(\)/);
   assert.match(neoCss,/\.channel-avatar\.has-photo \.channel-avatar-photo\{opacity:1\}/);
   assert.ok(!app.includes('youtube/v3/channels'));
+});
+
+test('persistent owner session uses no CONTROL_TOKEN browser storage',()=>{
+ assert.ok(!app.includes('sessionStorage.getItem'));
+ assert.ok(!app.includes('sessionStorage.setItem'));
+ assert.ok(!app.includes("Authorization: 'Bearer ' + accessToken"));
+ assert.match(app,/\/api\/auth\/session/);
+ assert.match(app,/\/api\/auth\/logout/);
+ assert.match(serviceWorker,/vyron-peisov-yt-shell-v13/);
+ assert.ok(!serviceWorker.includes("await cache.put(request,response.clone())"));
+ assert.ok(serviceWorker.includes("url.pathname.startsWith('/api/')"));
+ assert.ok(html.includes('id="boot-recovery"'));
+ assert.ok(html.includes('src="/recovery.js"'));
 });

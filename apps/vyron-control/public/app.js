@@ -10,7 +10,9 @@ const time = iso => iso ? new Intl.DateTimeFormat('ru-RU', {
   timeZone: 'Asia/Krasnoyarsk', day: '2-digit', month: '2-digit',
   hour: '2-digit', minute: '2-digit'
 }).format(new Date(iso)) + ' КРСК' : 'Нет данных';
-let accessToken = sessionStorage.getItem('vyron-control-access') || '';
+// CONTROL_TOKEN never persists in JavaScript: the HttpOnly session cookie is server-managed.
+let authenticated=false;
+let csrfToken=null;
 let schemaChecked = false;
 let current = null;
 let eventCursor = null;
@@ -47,21 +49,25 @@ if('serviceWorker' in navigator) {
   void ensureServiceWorker().catch(()=>{});
 }
 const showLogin = error => {
+  window.__vyronBootReady=true;
+  document.getElementById('boot-recovery')?.setAttribute('hidden','');
   $('login').hidden = false;
   $('dashboard').hidden = true;
   $('logout').hidden = true;
   $('login-error').textContent = error || '';
 };
 const showDashboard = () => {
+  window.__vyronBootReady=true;
+  document.getElementById('boot-recovery')?.setAttribute('hidden','');
   $('login').hidden = true;
   $('dashboard').hidden = false;
   $('logout').hidden = false;
 };
 async function api(path, method = 'GET', body = undefined) {
   const response = await fetch(path, {
-    method, cache: 'no-store',
+    method,cache:'no-store',credentials:'same-origin',
     headers: {
-      Authorization: 'Bearer ' + accessToken,
+      ...(method==='GET'?{}:{'X-VYRON-CSRF':csrfToken||''}),
       ...(body === undefined ? {} : {'Content-Type': 'application/json'})
     },
     ...(body === undefined ? {} : {body: JSON.stringify(body)})
@@ -763,7 +769,7 @@ function render(data) {
   applyMobileView();
 }
 async function load() {
-  if (!accessToken) return showLogin('');
+  if (!authenticated) return showLogin('');
   try {
     if (!schemaChecked) {
       const healthResponse = await fetch('/api/health', {cache:'no-store'});
@@ -784,11 +790,11 @@ async function load() {
     await updatePushState();
   } catch (error) {
     if (error.status === 401) {
-      sessionStorage.removeItem('vyron-control-access');
-      accessToken = '';
-      showLogin('Неверный ключ доступа.');
+      authenticated=false;csrfToken=null;
+      showLogin('Срок входа закончился или доступ был отозван. Войди заново.');
     } else {
-      $('state-label').textContent = error.message;
+      if(current)$('state-label').textContent='Ошибка загрузки: '+error.message;
+      else showLogin('Сервис временно недоступен: '+error.message+'. Сессия не удалена.');
     }
   }
 }
@@ -1270,19 +1276,66 @@ $('push-disable').addEventListener('click',async()=>{
     msg.textContent='Ошибка отключения: '+error.message;
   }finally{button.disabled=false;}
 });
-$('login-form').addEventListener('submit', async event => {
+async function restoreDeviceSession(){
+  try{
+    const response=await fetch('/api/auth/session',{cache:'no-store',credentials:'same-origin'});
+    if(response.status===401){authenticated=false;csrfToken=null;return showLogin('');}
+    const result=await response.json().catch(()=>({}));
+    if(!response.ok)throw new Error(result.error||'Session check failed');
+    csrfToken=result.csrfToken;authenticated=true;
+    await load();
+  }catch(error){showLogin('Ошибка проверки сессии: '+error.message);}
+}
+$('login-form').addEventListener('submit',async event=>{
   event.preventDefault();
-  accessToken = $('access-token').value.trim();
-  sessionStorage.setItem('vyron-control-access', accessToken);
-  await load();
+  const button=event.currentTarget.querySelector('button[type=submit]');
+  button.disabled=true;
+  try{
+    const response=await fetch('/api/auth/login',{
+      method:'POST',credentials:'same-origin',cache:'no-store',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({controlToken:$('access-token').value.trim()})
+    });
+    $('access-token').value='';
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok)throw new Error(data.error||'Login unavailable');
+    authenticated=true;csrfToken=data.csrfToken;
+    await load();
+  }catch(error){authenticated=false;csrfToken=null;showLogin('Ошибка входа: '+error.message);}
+  finally{button.disabled=false;}
 });
-$('logout').addEventListener('click', () => {
-  sessionStorage.removeItem('vyron-control-access');
-  accessToken = '';
-  current = null;
-  $('access-token').value = '';
-  showLogin('');
+$('logout').addEventListener('click',async()=>{
+  try{await api('/api/auth/logout','POST',{});}catch(error){
+    $('state-label').textContent='Выход не выполнен: '+error.message;return;
+  }
+  authenticated=false;csrfToken=null;current=null;
+  $('access-token').value='';showLogin('');
 });
+async function renderTrustedDevices(){
+  const container=$('trusted-devices'),message=$('trusted-devices-message');
+  try{
+    const {devices=[]}=await api('/api/auth/devices');
+    container.replaceChildren();
+    for(const device of devices){
+      const line=make('div','oauth-profile');
+      line.append(make('span','',device.label+' · '+
+        (device.current?'Это устройство':'Последний вход: '+time(device.lastSeenAt))));
+      if(!device.current){
+        const button=make('button','ghost','Отозвать доступ');
+        button.addEventListener('click',async()=>{
+          if(!confirm('Завершить сессию этого устройства?'))return;
+          button.disabled=true;
+          try{await api('/api/auth/revoke','POST',{sessionId:device.id});await renderTrustedDevices();}
+          catch(error){message.textContent='Ошибка: '+error.message;button.disabled=false;}
+        });
+        line.append(button);
+      }
+      container.append(line);
+    }
+    message.textContent='Активных доверенных сессий: '+devices.length;
+  }catch(error){message.textContent='Не удалось получить список: '+error.message;}
+}
+$('trusted-devices-refresh').addEventListener('click',renderTrustedDevices);
 $('refresh').addEventListener('click', async () => {
   const button=$('refresh'),feedback=$('refresh-feedback');
   manualRefreshing=true;button.disabled=true;
@@ -1364,12 +1417,12 @@ window.addEventListener('offline',()=>{
   if($('state-label'))$('state-label').textContent='Нет соединения. Показываем последнюю загруженную оболочку приложения.';
 });
 window.addEventListener('online',()=>{
-  if(accessToken)load();
+  if(authenticated)load();
 });
 setInterval(() => {
-  if (accessToken && navigator.onLine && !document.hidden) load();
+  if (authenticated && navigator.onLine && !document.hidden) load();
 }, 60_000);
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && accessToken && navigator.onLine) load();
+  if (!document.hidden && authenticated && navigator.onLine) load();
 });
-load();
+void restoreDeviceSession();
