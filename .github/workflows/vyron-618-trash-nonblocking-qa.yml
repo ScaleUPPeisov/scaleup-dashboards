@@ -1,0 +1,47 @@
+name: VYRON macOS nonblocking Trash safety QA
+
+on:
+  push:
+    branches:
+      - fix/vyron-618-trash-nonblocking-20261118
+    paths:
+      - 'src-tauri/src/local_delete.rs'
+      - 'src-tauri/src/production_manager.rs'
+      - '.github/workflows/vyron-618-trash-nonblocking-qa.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vyron-trash-nonblocking-qa
+  cancel-in-progress: true
+
+jobs:
+  macos-qa:
+    name: macOS Rust compile and cleanup regressions (hosted, not owner's Mac)
+    runs-on: macos-14
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install exact frontend dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Verify existing cleanup UI contracts
+        run: npx vitest run src/v212CleanupCommandRegistration.test.ts src/globalCleanupExecutor.test.ts src/globalProjectCleanupState.test.ts
+      - name: Verify frontend production compile
+        run: npm run build
+      - name: Rust local-trash safety tests
+        env:
+          VYRON_TRUSTED_UPDATER_PUBLIC_KEY_SHA256: unverified
+        run: cargo test --manifest-path src-tauri/Cargo.toml local_delete::tests --lib
+      - name: Rust production cleanup safety tests
+        env:
+          VYRON_TRUSTED_UPDATER_PUBLIC_KEY_SHA256: unverified
+        run: cargo test --manifest-path src-tauri/Cargo.toml production_manager::tests --lib
