@@ -3963,6 +3963,17 @@ fn authoritative_inventory_row(item:&Value,position:usize)->Option<Value>{
         "draftCandidate":false
     }))
 }
+fn owner_uploads_playlist_for_profile<'a>(channels:&'a Value,expected:Option<&str>)->Result<&'a str,String>{
+    let expected=expected.filter(|x|!x.trim().is_empty())
+        .ok_or_else(||"EXPECTED_CHANNEL_MISSING: OAuth profile has no Channel ID".to_string())?;
+    let items=channels.get("items").and_then(Value::as_array)
+        .ok_or_else(||"OWNER_CHANNEL_MISSING: channels.list(mine=true) returned no channels".to_string())?;
+    let selected=items.iter().find(|item|item.get("id").and_then(Value::as_str)==Some(expected))
+        .ok_or_else(||"OWNER_CHANNEL_MISMATCH: OAuth owner does not match saved Channel ID".to_string())?;
+    selected.pointer("/contentDetails/relatedPlaylists/uploads").and_then(Value::as_str)
+        .filter(|x|!x.trim().is_empty())
+        .ok_or_else(||"OWNER_UPLOADS_MISSING: YouTube did not return uploads playlist".to_string())
+}
 fn full_sync_estimate(video_count:usize)->Value{
     let playlist_pages=std::cmp::max(1,(video_count+49)/50);
     let hydration_batches=if video_count==0{0}else{(video_count+49)/50};
@@ -3988,17 +3999,8 @@ pub async fn youtube_list_existing_videos(
         .send().await.map_err(|e|format!("YouTube channel: {e}"))?;
     let st=r.status();let cv:Value=r.json().await.map_err(|e|e.to_string())?;
     if !st.is_success(){return Err(youtube_error(&cv,"Не удалось получить канал YouTube"))}
-    // channels.list(mine=true) must resolve to the OAuth owner's exact stored channel.
-    // A different first channel must not silently yield an empty inventory.
-    let actual_channel_id=cv.pointer("/items/0/id").and_then(Value::as_str)
-        .ok_or_else(||"OWNER_CHANNEL_MISSING: YouTube не вернул ID канала OAuth-владельца".to_string())?;
-    let expected_channel_id=profile.channel_id.as_deref().filter(|x|!x.trim().is_empty())
-        .ok_or_else(||"EXPECTED_CHANNEL_MISSING: у OAuth-профиля отсутствует Channel ID".to_string())?;
-    if actual_channel_id!=expected_channel_id {
-        return Err(format!("OWNER_CHANNEL_MISMATCH: OAuth profile channel does not match channels.list(mine=true) ({actual_channel_id})"));
-    }
-    let uploads=cv.pointer("/items/0/contentDetails/relatedPlaylists/uploads").and_then(|x|x.as_str())
-        .ok_or_else(||"YouTube не вернул playlist загрузок".to_string())?;
+    // Do not silently scan another Brand Account's uploads playlist.
+    let uploads=owner_uploads_playlist_for_profile(&cv,profile.channel_id.as_deref())?;
 
     let mut ids=Vec::<String>::new();
     let mut seen=std::collections::HashSet::<String>::new();
@@ -7748,5 +7750,32 @@ mod v241_oauth_singleflight_tests {
         assert_eq!(second.iter().find(|(k,_)|k=="refresh_token").unwrap().1,"refresh-b");
         assert_ne!(first,second);
         assert_eq!(first.iter().find(|(k,_)|k=="grant_type").unwrap().1,"refresh_token");
+    }
+}
+
+#[cfg(test)]
+mod hotfix_runway_owner_identity_tests{
+    use super::*;
+    #[test]fn selects_exact_owner_even_if_not_first(){
+        let channels=json!({"items":[
+            {"id":"UC_OTHER","contentDetails":{"relatedPlaylists":{"uploads":"UU_OTHER"}}},
+            {"id":"UC_TARGET","contentDetails":{"relatedPlaylists":{"uploads":"UU_TARGET"}}}
+        ]});
+        assert_eq!(owner_uploads_playlist_for_profile(&channels,Some("UC_TARGET")),Ok("UU_TARGET"));
+        assert!(owner_uploads_playlist_for_profile(&channels,Some("UC_MISSING")).unwrap_err().contains("OWNER_CHANNEL_MISMATCH"));
+        assert!(owner_uploads_playlist_for_profile(&channels,None).unwrap_err().contains("EXPECTED_CHANNEL_MISSING"));
+    }
+    #[test]fn private_future_publish_at_remains_authoritative(){
+        let video=json!({"id":"v","snippet":{"channelId":"UC_TARGET","title":"Scheduled"},"status":{"privacyStatus":"private","publishAt":"2026-12-12T12:00:00Z"}});
+        let row=authoritative_inventory_row(&video,0).unwrap();
+        assert_eq!(row["publishAt"],"2026-12-12T12:00:00Z");
+        assert_eq!(row["privacyStatus"],"private");
+    }
+    #[test]fn incomplete_video_hydration_never_confirms_schedule(){
+        let r=inventory_completeness_value(true,false,0,100,50,&[],0,100);
+        assert_eq!(r["syncComplete"],false);
+        assert_eq!(r["scheduleComplete"],false);
+        let r=inventory_completeness_value(true,false,0,0,0,&[],0,0);
+        assert_eq!(r["scheduleComplete"],true);
     }
 }
