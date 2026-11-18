@@ -169,6 +169,14 @@ jobs:
           await appendFile(process.env.GITHUB_OUTPUT, "row_counts=" + JSON.stringify(counts) + "\n");
           NODE
 
+      - name: Create deterministic source-SHA release integrity manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          RELEASE_SHA="$(git rev-parse HEAD)" node browser/release-integrity.mjs build
+          sha256sum public/build-info.json
+          echo "Public manifest includes only SHA and static asset hashes; no tokens."
+      
       - name: Build Cloudflare Worker without deploying
         run: npx --yes wrangler@4.102.0 deploy --dry-run -c cloudflare/wrangler.jsonc
 
@@ -297,6 +305,13 @@ jobs:
             }
             console.log("Worker healthy; D1 schema verified:", health.d1.presentTables + "/" + health.d1.expectedTables);
           '
+
+      - name: Verify exact published Git SHA and static asset integrity
+        if: ${{ env.OPERATION == 'deploy' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          RELEASE_SHA="$(git rev-parse HEAD)" node browser/release-integrity.mjs verify
 
       - name: Confirm preflight-only run made no production changes
         if: ${{ env.OPERATION == 'preflight' }}
