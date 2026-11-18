@@ -63,6 +63,20 @@ export function wireNeoGlass({api,refresh}={}){
     if(action&&!action.disabled)action.click();
     else $('detail-meta').textContent='OAuth-подключение не настроено в облаке. Настройте Google OAuth client с read-only scopes.';
   });
+  $('detail-schedule-refresh').addEventListener('click',async()=>{
+    const button=$('detail-schedule-refresh'),status=$('detail-schedule-refresh-state');
+    if(!api||!selectedChannelId)return;
+    button.disabled=true;status.textContent='Проверяю расписание через YouTube Data API…';
+    try{
+      const result=await api('/api/schedule/refresh','POST',{channelId:selectedChannelId});
+      status.textContent=result.skipped?'Проверка недоступна: '+(result.reason||'нет доступа'):
+        result.status==='ERROR'?'YouTube вернул ошибку: '+(result.errorCode||'unknown'):
+        result.complete?'Проверено: '+result.confirmedVideos+' будущих видео':
+        'Проверена часть списка. Точный остаток дней недоступен.';
+      if(refresh)await refresh();
+    }catch(error){status.textContent='Ошибка YouTube: '+error.message;}
+    finally{button.disabled=false;}
+  });
   $('notifications-mark-read').addEventListener('click',async()=>{
     if(!api||!latestSnapshot)return;
     const ids=(latestSnapshot.events||[]).map(x=>x.id).filter(Boolean).slice(0,100);
@@ -118,9 +132,24 @@ function renderStudio(data){
     jobTarget.append(row);
   }
   const calendar=$('studio-calendar');calendar.replaceChildren();
+  const verified=(data.channels||[]).flatMap(ch=>
+    (ch.youtubeSchedule?.videos||[]).map(v=>({...v,channelName:ch.name,
+      scheduleStatus:ch.youtubeSchedule.status,capturedAt:ch.youtubeSchedule.capturedAt}))
+  ).filter(x=>Date.parse(x.publishAt)>Date.now())
+    .sort((a,b)=>a.publishAt.localeCompare(b.publishAt));
+  for(const item of verified.slice(0,60)){
+    const row=node('div','neo-feed-item'),body=node('div','neo-feed-copy');
+    const provenance=item.scheduleStatus==='COMPLETE'
+      ?'YouTube · проверена полная доступная инвентаризация'
+      :'YouTube · неполная выборка, срок не рассчитан';
+    body.append(node('strong','',item.channelName),
+      node('small','',stamp(item.publishAt)+' · '+provenance+
+        ' · проверка '+stamp(item.capturedAt)));
+    row.append(node('span','neo-feed-mark','✓'),body);calendar.append(row);
+  }
   const planned=jobs.filter(x=>x.plannedPublishAt)
     .slice().sort((a,b)=>Date.parse(a.plannedPublishAt)-Date.parse(b.plannedPublishAt));
-  if(!planned.length)calendar.append(node('p','empty',
+  if(!planned.length&&!verified.length)calendar.append(node('p','empty',
     'Подтверждённые публикации недоступны. Записи появятся после синхронизации Mac.'));
   for(const item of planned.slice(0,60)){
     const row=node('div','neo-feed-item'),body=node('div','neo-feed-copy');
@@ -238,6 +267,7 @@ function renderChannel(data){
   const a=ch.analytics?.source==='GOOGLE_ANALYTICS_API'?ch.analytics:null;
   $('detail-title').textContent=ch.name;
   $('detail-oauth-connect').hidden=ch.analyticsAuthorized!==false;
+  $('detail-schedule-refresh').disabled=ch.analyticsAuthorized!==true;
   $('detail-meta').textContent=(ch.analyticsAuthorized===false?'Нет OAuth · ':'')+
     'Публичные данные: '+stamp(ch.updatedAt);
   $('detail-subs').textContent=ch.subscribersHidden?'Скрыты':fmt(ch.subscribers);
@@ -280,7 +310,7 @@ function renderChannel(data){
     .slice().sort((a,b)=>String(a.plannedPublishAt).localeCompare(String(b.plannedPublishAt)));
   $('detail-schedule-note').textContent=Number.isFinite(days)&&days>=0
     ?'Подтверждённый остаток по будущим публикациям: '+days+' дней.'
-    :'Подтверждённого расписания YouTube нет. Локальных планов VYRON: '+
+    :'Нет подтверждённого расписания YouTube ('+(ch.youtubeSchedule?.status||'не проверено')+'). Локальных планов VYRON: '+
      localPlanned.length+'. Последний снимок Mac: '+stamp(data.production?.lastSyncAt)+
      '. Эти планы не используются для расчёта остатка дней.';
 }
