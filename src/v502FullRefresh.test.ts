@@ -41,7 +41,7 @@ describe('VYRON 5.0.2 full refresh hotfix',()=>{
     expect(dashboard).toContain('refreshAllChannelData(plan.channelIds)');
     expect(pipeline).toContain("scanAllInventories('manual-all')");
     expect(pipeline).toContain('refreshYoutubeChannelStatisticsSelection(channelIds,true)');
-    expect(pipeline).toContain('refreshOwnerInventoriesAuthoritative(requested,true)');
+    expect(pipeline).toContain('refreshOwnerInventoriesAuthoritative(requested,true,undefined,knownByChannel,onProgress)');
     expect(pipeline).toContain('recalculateChannelRunway(enabled,new Date(),false)');
     expect(pipeline).toContain('Local Render scan is independent of YouTube');
     expect(pipeline).not.toContain('window.location.reload');
