@@ -90,7 +90,12 @@ function notification(e) {
   }else if(e.kind==='render_failed'||e.kind==='upload_failed'||e.kind==='agent_error'){
     title='⚠️ Ошибка VYRON';
   }
-  return JSON.stringify({title,body,tag:e.id});
+  const view=['render_started','render_progress','render_completed','render_failed',
+    'upload_started','upload_queued','upload_progress','upload_completed','upload_failed',
+    'runway_low','runway_critical'].includes(e.kind)?'studio':
+    ['analytics_failed','analytics_partial','analytics_recovered'].includes(e.kind)?'analytics':
+    e.kind==='subscriber_milestone'?'channels':'notifications';
+  return JSON.stringify({title,body,tag:e.id,view});
 }
 export async function dispatchPush(env,fetchImpl=fetch,buildPayload=buildPushPayload) {
   if(!env.VAPID_PRIVATE_KEY||!vapidPublic(env)||!env.VAPID_SUBJECT)
