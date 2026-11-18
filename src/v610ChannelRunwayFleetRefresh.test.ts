@@ -16,7 +16,7 @@ Object.defineProperty(globalThis,'localStorage',{value:storage,configurable:true
 
 const fixture=vi.hoisted(()=>({
  profiles:[] as YoutubeProfile[],
- responses:new Map<string,{videos:YoutubeExistingVideo[];syncComplete:boolean;complete:boolean;scheduleComplete:boolean;channelId:string;fullSyncApiRequests?:number;fullSyncEstimatedQuotaCost?:number}>(),
+ responses:new Map<string,{videos:YoutubeExistingVideo[];syncComplete:boolean;complete:boolean;scheduleComplete:boolean;channelId:string;fullSyncApiRequests?:number;fullSyncEstimatedQuotaCost?:number;searchCalls?:number;incompleteReasons?:string[]}>(),
  inventoryFiles:new Map<string,any>()
 }));
 vi.mock('./api',()=>({
@@ -39,7 +39,7 @@ vi.mock('./youtubeCache',()=>({markYoutubeCache:vi.fn()}));
 
 import {api} from './api';
 import {refreshOwnerInventoriesAuthoritative} from './youtubeOwnerInventory';
-import {loadChannelRunwayStore} from './channelRunwayStore';
+import {loadChannelRunwayStore,upsertChannelRunwayFromYoutube} from './channelRunwayStore';
 import {CHANNEL_RUNWAY_STORAGE_KEY} from './channelRunwayCore';
 
 const channel=(id:string,patch:Partial<Channel>={}):Channel=>({
@@ -136,6 +136,7 @@ describe('VYRON 6.1 authoritative fleet runway refresh',()=>{
   expect(calls).toHaveLength(33);
   expect(calls.filter(args=>args[3]===true)).toHaveLength(33);
   expect(calls.filter(args=>args[3]===false)).toHaveLength(0);
+  expect(calls.every(args=>args[5]===4)).toBe(true); // fleet Search budget per channel
   expect(calls.find(args=>args[0]==='p-fleet1')?.[4]).toContain('ABCDEFGHIJK');
   expect(new Set(result.rows.map(row=>row.channelId)).size).toBe(33);
  });
@@ -149,6 +150,68 @@ describe('VYRON 6.1 authoritative fleet runway refresh',()=>{
   expect(runway).toContain('refreshAllChannelData(active.map(c=>c.id),progress=>');
   expect(runway).toContain('↻ ОБНОВИТЬ ВСЕ КАНАЛЫ');
   expect(runway).toContain('LOCAL READY • ZERO API');
+ });
+
+ it('a successful owner response with zero Scheduled and incomplete coverage is PARTIAL, never a fabricated API failure or confirmed zero',async()=>{
+  const ch=channel('neon',{youtubeProfileId:'p-neon',youtubeChannelId:'UC-neon'});
+  fixture.profiles=[profile('p-neon','UC-neon')];
+  fixture.responses.set('p-neon',{
+   channelId:'UC-neon',videos:[],syncComplete:false,complete:false,scheduleComplete:false,
+   incompleteReasons:['OWNER_SEARCH_PAGE_LIMIT','SCHEDULE_EMPTY_NOT_INDEPENDENTLY_VERIFIED'],
+   fullSyncApiRequests:5,fullSyncEstimatedQuotaCost:3,searchCalls:2
+  });
+  const result=await refreshOwnerInventoriesAuthoritative([ch],true,fixture.profiles);
+  expect(result.rows[0].status).toBe('PARTIAL_DATA');
+  expect(result.counts.API_FAILED).toBe(0);
+  expect(result.counts.PARTIAL_DATA).toBe(1);
+  expect(result.searchCalls).toBe(2);
+  expect((api.youtubeListExisting as any).mock.calls[0][5]).toBe(12); // one-channel deep audit
+  expect(result.quotaUnits).toBe(3);
+  const record=loadChannelRunwayStore().channels.neon;
+  expect(record.dataState).toBe('PARTIAL_DATA');
+  expect(record.runwayDays).toBeUndefined();
+  expect(record.lastObservedScheduledCount).toBe(0);
+  expect(record.lastObservedScheduledUntil).toBeUndefined();
+  expect(record.lastRefreshError).toContain('OWNER_SEARCH_PAGE_LIMIT');
+  expect(record.lastRefreshError).toContain('SCHEDULE_EMPTY_NOT_INDEPENDENTLY_VERIFIED');
+ });
+
+ it('fresh owner-observed partial Scheduled stays separate from the historical cached last date',async()=>{
+  const ch=channel('history',{youtubeProfileId:'p-history',youtubeChannelId:'UC-history'});
+  fixture.profiles=[profile('p-history','UC-history')];
+  const oldTime=new Date('2026-11-18T10:00:00Z');
+  upsertChannelRunwayFromYoutube(ch,[scheduled('old-owner-video',25)],oldTime);
+  fixture.responses.set('p-history',{
+   channelId:'UC-history',
+   videos:[{...scheduled('fresh-owner-video',7),channelId:'UC-history'}],
+   syncComplete:true,complete:true,scheduleComplete:false,
+   incompleteReasons:['OWNER_SEARCH_NOT_EXHAUSTED','UPLOADS_PLAYLIST_SCHEDULE_COVERAGE_MISMATCH'],
+   fullSyncApiRequests:3,fullSyncEstimatedQuotaCost:2,searchCalls:1
+  });
+  const result=await refreshOwnerInventoriesAuthoritative([ch],true,fixture.profiles);
+  expect(result.rows[0].status).toBe('PARTIAL_DATA');
+  const rec=loadChannelRunwayStore().channels.history;
+  expect(rec.dataState).toBe('PARTIAL_DATA');
+  expect(rec.scheduledUntil).toBe('2099-01-25');
+  expect(rec.lastObservedScheduledCount).toBe(1);
+  expect(rec.lastObservedScheduledUntil).toBe('2099-01-07');
+  expect(rec.runwayDays).toBeUndefined();
+  expect(rec.lastRefreshError).toContain('OWNER_SEARCH_NOT_EXHAUSTED');
+  expect(rec.lastRefreshError).toContain('UPLOADS_PLAYLIST_SCHEDULE_COVERAGE_MISMATCH');
+ });
+
+ it('wrong-owner evidence is an actual failure and cannot become an owner Scheduled date',async()=>{
+  const ch=channel('wrong',{youtubeProfileId:'p-wrong',youtubeChannelId:'UC-wrong'});
+  fixture.profiles=[profile('p-wrong','UC-wrong')];
+  fixture.responses.set('p-wrong',{
+   channelId:'UC-wrong',
+   videos:[{...scheduled('foreign',9),channelId:'UC-OTHER'}],
+   syncComplete:true,complete:true,scheduleComplete:true
+  });
+  const result=await refreshOwnerInventoriesAuthoritative([ch],true,fixture.profiles);
+  expect(result.rows[0].status).toBe('API_FAILED');
+  expect(result.counts.API_FAILED).toBe(1);
+  expect(loadChannelRunwayStore().channels.wrong?.runwayDays).toBeUndefined();
  });
 
 });

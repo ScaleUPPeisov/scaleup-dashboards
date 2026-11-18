@@ -4016,6 +4016,10 @@ fn owner_schedule_reconciliation_reasons(
     if verified_supplement_scheduled>0{reasons.push("UPLOADS_PLAYLIST_SCHEDULE_COVERAGE_MISMATCH")}
     reasons
 }
+fn owner_search_page_budget(requested:Option<u32>)->u32{
+    // The frontend reserves Search capacity; native code enforces a hard cap.
+    requested.unwrap_or(2).clamp(1,12)
+}
 fn full_sync_estimate(video_count:usize)->Value{
     let playlist_pages=std::cmp::max(1,(video_count+49)/50);
     let hydration_batches=if video_count==0{0}else{(video_count+49)/50};
@@ -4031,6 +4035,7 @@ pub async fn youtube_list_existing_videos(
     operation_id: Option<String>,
     verify_scheduled: Option<bool>,
     known_scheduled_ids: Option<Vec<String>>,
+    max_search_pages: Option<u32>,
 ) -> Result<Value, String> {
     let (token, profile) = valid_access_token(&app, &profile_id).await?;
     let limit = max_results.unwrap_or(1000).clamp(1, 5000) as usize;
@@ -4151,9 +4156,11 @@ pub async fn youtube_list_existing_videos(
     if verify{
         search_used=true;
         let mut search_page:Option<String>=None;
-        // The owner-only search API is bounded to two pages per explicit click.
+        // The caller reserves real Search Queries capacity before invoking.
+        // Full-fleet: <=4 pages/channel; single owner audit: <=12 pages.
         // A truncated search must never be mistaken for proof of zero Scheduled.
-        for _ in 0..2{
+        let max_pages=owner_search_page_budget(max_search_pages);
+        for _ in 0..max_pages{
             let expected=profile.channel_id.as_deref().unwrap_or("");
             let mut request=client.get("https://www.googleapis.com/youtube/v3/search")
                 .bearer_auth(&token)
@@ -4274,7 +4281,10 @@ pub async fn youtube_list_existing_videos(
     let expected=if playlist_exhausted&&!limit_truncated{unique_video_ids}else{std::cmp::min(std::cmp::max(playlist_reported_total,unique_video_ids),limit)};
     let (private_count,scheduled_count,public_count,unlisted_count)=inventory_bucket_counts(&out,Utc::now());
     let full_sync_api_requests=1+playlist_calls+video_calls+search_pages;
-    let full_sync_estimated_quota_cost=full_sync_api_requests;
+    // Since June 2026 search.list is charged in its own Search Queries
+    // bucket, not the General API quota. Keep all HTTP calls in apiRequests
+    // but charge General only for channels/playlistItems/videos calls.
+    let full_sync_estimated_quota_cost=1+playlist_calls+video_calls;
 
     Ok(json!({
         "channelId":profile.channel_id,
@@ -4326,6 +4336,7 @@ pub async fn youtube_list_existing_videos(
         "playlistCalls":playlist_calls,
         "videoCalls":video_calls,
         "searchCalls":search_pages,
+        "searchQuotaCost":search_pages,
         "fullSyncApiRequests":full_sync_api_requests,
         "fullSyncEstimatedQuotaCost":full_sync_estimated_quota_cost,
         "estimatedForInventory":full_sync_estimate(observed_total),
@@ -7928,6 +7939,13 @@ mod v241_oauth_singleflight_tests {
 #[cfg(test)]
 mod false_zero_owner_search_regression_tests{
  use super::*;
+ #[test]fn owner_search_page_budget_clamps_invalid_or_excessive_caller_values(){
+   assert_eq!(owner_search_page_budget(None),2);
+   assert_eq!(owner_search_page_budget(Some(0)),1);
+   assert_eq!(owner_search_page_budget(Some(4)),4);
+   assert_eq!(owner_search_page_budget(Some(12)),12);
+   assert_eq!(owner_search_page_budget(Some(100)),12);
+ }
  #[test]fn full_uploads_playlist_is_not_proof_of_empty_scheduled(){
    assert_eq!(owner_schedule_reconciliation_reasons(0,false,false,false,false,false,0),
      vec!["SCHEDULE_EMPTY_NOT_INDEPENDENTLY_VERIFIED"]);

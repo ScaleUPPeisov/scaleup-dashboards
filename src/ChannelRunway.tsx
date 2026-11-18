@@ -138,14 +138,19 @@ export function ChannelRunway(){
         return{channel,record,content,localRunway,uploadRemaining:quota.uploads.remaining,uploadLimitKnown:quota.uploads.limitKnown} satisfies RunwayRow;
       }catch{failures++;return null}
     }).filter((x):x is RunwayRow=>Boolean(x)).sort((a,b)=>{
-      const rank=(row:RunwayRow)=>({
-        channelName:row.channel.name,
-        remoteScheduledDays:row.content.remoteScheduledDays,
-        scheduledUntil:row.content.scheduledThrough||row.record.scheduledUntil,
-        known:row.record.status!=='no-data',
-        historicalScheduledDays:row.record.status==='no-data'&&row.record.dataState==='PARTIAL_DATA'&&row.record.scheduledVideoCount>0&&row.record.scheduledUntil
-          ?Math.max(0,calendarDaysBetween(todayKey,row.record.scheduledUntil)??0):undefined
-      });
+      const rank=(row:RunwayRow)=>{
+        const rec=row.record;
+        const fresh=rec.dataState==='PARTIAL_DATA'&&Number(rec.lastObservedScheduledCount||0)>0&&Boolean(rec.lastObservedScheduledUntil);
+        const shownDate=fresh?rec.lastObservedScheduledUntil:rec.scheduledUntil;
+        return{
+          channelName:row.channel.name,
+          remoteScheduledDays:row.content.remoteScheduledDays,
+          scheduledUntil:row.content.scheduledThrough||shownDate,
+          known:rec.status!=='no-data',
+          historicalScheduledDays:rec.status==='no-data'&&rec.dataState==='PARTIAL_DATA'&&shownDate
+            ?Math.max(0,calendarDaysBetween(todayKey,shownDate)??0):undefined
+        };
+      };
       return compareYoutubeOnlyRunwayPriority(rank(a),rank(b));
     });
     return{rows,failures}
@@ -230,7 +235,7 @@ export function ChannelRunway(){
       ].filter(Boolean).join(' • ');
       const stats=result.stats;
       const complete=Boolean(owner&&updated===active.length&&!owner.failed&&!owner.stoppedForQuota&&!result.errors.length&&(!stats||(!stats.failed&&!stats.credentialBlocked)));
-      const text=`Проверено ${owner?.rows.length||0}/${active.length} • подтверждено ${updated} • глубокая сверка ${owner?.deepSearchChannels||0} • inventory API ${owner?.apiRequests||0} • inventory quota ${owner?.quotaUnits||0} • Render READY ${result.local.ready} • local quota 0${skipped?' • '+skipped:''}`;
+      const text=`Проверено ${owner?.rows.length||0}/${active.length} • подтверждено ${updated} • глубокая сверка ${owner?.deepSearchChannels||0} • inventory API ${owner?.apiRequests||0} • general quota ${owner?.quotaUnits||0} • search calls ${owner?.searchCalls||0} • Render READY ${result.local.ready} • local quota 0${skipped?' • '+skipped:''}`;
       toast((complete?'✓ ':'⚠ ')+text);
     }catch(e){
       setFleetAudit({done:0,total:active.length,confirmed:0,partial:0,blocked:0,searches:0,errors:1});
@@ -251,7 +256,7 @@ export function ChannelRunway(){
       <div className="headerActions"><span className="localOnlyBadge">LOCAL READY • ZERO API</span><button disabled={statsBusy||!active.length} onClick={()=>void refreshAllStats()}>{statsBusy?`↻ ${statsProgress.done} / ${statsProgress.total}`:'↻ ОБНОВИТЬ ВСЕ КАНАЛЫ'}</button></div>
     </div>
     {fleetAudit&&<div className="runwayFleetAudit" role="status">
-      <b>Анализ каналов: {fleetAudit.done}/{fleetAudit.total}</b>
+      <b>Обработано {fleetAudit.done}/{fleetAudit.total} каналов (полнота каждого расписания отдельно)</b>
       <span className="fleetOk">Подтверждено {fleetAudit.confirmed}</span>
       <span className="fleetPartial">Неполные данные {fleetAudit.partial}</span>
       <span className="fleetBlocked">Недоступно {fleetAudit.blocked}</span>
@@ -285,23 +290,29 @@ export function ChannelRunway(){
       </div>
       {rows.length===0?<div className="empty"><b>Нет активных каналов</b><p>Content Runway не создаёт демонстрационные данные.</p></div>:rows.map(({channel,record,content,localRunway,uploadRemaining,uploadLimitKnown})=>{
         const youtubeStatus=runwayStatus(content.remoteScheduledDays,record.status!=='no-data');
-        const partialObserved=record.dataState==='PARTIAL_DATA'&&record.scheduledVideoCount>0;
+        const freshObserved=record.dataState==='PARTIAL_DATA'&&Boolean(record.lastObservedAt)&&
+          Number(record.lastObservedScheduledCount||0)>0&&Boolean(record.lastObservedScheduledUntil);
+        const partialObserved=record.dataState==='PARTIAL_DATA'&&(record.scheduledVideoCount>0||freshObserved);
         const meta=record.status==='no-data'&&partialObserved
           ?{label:'ТРЕБУЕТ СВЕРКИ YOUTUBE',icon:'◐'}:statusMeta[youtubeStatus];
-        const partialDays=partialObserved&&record.scheduledUntil?Math.max(0,calendarDaysBetween(krasnoyarskClock(new Date()).dateKey,record.scheduledUntil)??0):undefined;
-        const historicalPartial=partialObserved&&Boolean(record.lastRefreshAttemptAt)&&
-          Date.parse(record.lastRefreshAttemptAt||'')>Date.parse(record.lastScheduleSync||'');
-        // This date is historical owner evidence, not a freshly confirmed
-        // schedule: keep it visible without feeding priority or upload planning.
-        const shownThrough=content.scheduledThrough||(partialObserved?record.scheduledUntil:undefined);
+        // Never silently display a ten-hour-old baseline as the current owner
+        // observation. Fresh owner-visible Scheduled IDs are lower bounds.
+        const shownThrough=record.status==='no-data'
+          ?(freshObserved?record.lastObservedScheduledUntil:partialObserved?record.scheduledUntil:undefined)
+          :content.scheduledThrough;
+        const partialDays=partialObserved&&shownThrough?Math.max(0,calendarDaysBetween(krasnoyarskClock(new Date()).dateKey,shownThrough)??0):undefined;
+        const historicalPartial=partialObserved&&!freshObserved;
+        const partialReason=record.dataState==='PARTIAL_DATA'
+          ?(record.lastRefreshError||'AUTHORITATIVE_INVENTORY_INCOMPLETE').split(' | ').filter(x=>x!=='AUTHORITATIVE_INVENTORY_INCOMPLETE').slice(0,2).join(' • ')||'COVERAGE_UNVERIFIED'
+          :'';
         const visibleTone=record.status==='no-data'&&partialDays!==undefined?runwayStatus(partialDays,true):youtubeStatus;
         const rowTone=record.status==='no-data'?(partialObserved?'partial':'unknown'):youtubeStatus;
         return <div className={`runwayRow runwayRow-${rowTone}`} key={channel.id}>
-          <span className="runwayChannel runwayChannelWithAvatar"><ChannelAvatar channel={channel} size="sm"/><span><b>{channel.name}</b><small>{syncLabel(record.lastScheduleSync)}</small><small title={record.lastRefreshError||''}>{evidenceLabel(record.dataState)}</small><small>{linkedByLocalId.has(channel.id)?`Subs ${subscriberStatLabel(channel.stats)} • Views ${compactChannelStat(channel.stats?.viewCount??channel.stats?.views)}`:'YouTube: НЕ ПОДКЛЮЧЁН'}</small></span></span>
-          <span>{shownThrough?<><b>📺 {dateLabel(shownThrough)}</b><small>{record.status==='no-data'?(record.dataState==='PARTIAL_DATA'?'последняя проверенная дата • актуальная полнота неизвестна':'последняя сохранённая дата • не подтверждена'):content.remoteScheduledDays>0?`ещё ${content.remoteScheduledDays} дн.`:'подтверждённое расписание закончилось'}</small></>:<><b>{record.status==='no-data'?'📺 Нет подтверждённых данных':'📺 Будущих видео нет'}</b><small>{evidenceLabel(record.dataState)}</small></>}</span>
+          <span className="runwayChannel runwayChannelWithAvatar"><ChannelAvatar channel={channel} size="sm"/><span><b>{channel.name}</b><small>{syncLabel(record.lastScheduleSync)}</small><small title={record.lastRefreshError||''}>{partialReason?('Причина: '+partialReason):evidenceLabel(record.dataState)}</small><small>{linkedByLocalId.has(channel.id)?`Subs ${subscriberStatLabel(channel.stats)} • Views ${compactChannelStat(channel.stats?.viewCount??channel.stats?.views)}`:'YouTube: НЕ ПОДКЛЮЧЁН'}</small></span></span>
+          <span>{shownThrough?<><b>📺 {dateLabel(shownThrough)}</b><small>{record.status==='no-data'?(record.dataState==='PARTIAL_DATA'?(freshObserved?'свежая дата owner-проверки • полнота неизвестна':'историческая дата • свежая полнота неизвестна'):'последняя сохранённая дата • не подтверждена'):content.remoteScheduledDays>0?`ещё ${content.remoteScheduledDays} дн.`:'подтверждённое расписание закончилось'}</small></>:<><b>{record.status==='no-data'?'📺 Нет подтверждённых данных':'📺 Будущих видео нет'}</b><small>{evidenceLabel(record.dataState)}</small></>}</span>
           <span>{content.readyVideoCount?<><b>💾 {content.readyVideoCount} видео</b><small>только локальные файлы</small></>:<><b>💾 0 видео</b><small>локального запаса нет</small></>}</span>
-          <span title="Остаток дней на YouTube — только подтверждённое расписание"><b className={`runwayDays ${visibleTone} ${record.status==='no-data'?'historical':''}`}>{record.status==='no-data'?(partialDays===undefined?'—':`${historicalPartial?'≈':'≥'}${partialDays} дн.*`):`${content.remoteScheduledDays} дн.`}</b><small>{record.status==='no-data'?(partialObserved?(historicalPartial?'* Исторический кэш Scheduled: текущий запас не подтверждён':'* Подтверждены отдельные Scheduled, полнота неизвестна'):evidenceLabel(record.dataState)):content.remoteScheduledDays>0&&content.scheduledThrough?`до ${dateLabel(content.scheduledThrough)}`:'пустое расписание подтверждено'}</small><small>{record.status==='no-data'?'Локальный прогноз с резервом':'Общий прогноз с локальным резервом'}: {localRunway.totalRunwayDays} дн.{localRunway.coverageThrough?` • до ${formatLocalCalendarDate(localRunway.coverageThrough)}`:''}</small></span>
-          <span title={evidenceLabel(record.dataState)}>{record.status==='no-data'?(partialObserved?(historicalPartial?`${record.scheduledVideoCount} (кэш)*`:`≥${record.scheduledVideoCount}*`):'—'):content.scheduledVideoCount}</span>
+          <span title="Остаток дней на YouTube — только подтверждённое расписание"><b className={`runwayDays ${visibleTone} ${record.status==='no-data'?'historical':''}`}>{record.status==='no-data'?(partialDays===undefined?'—':`${historicalPartial?'≈':'≥'}${partialDays} дн.*`):`${content.remoteScheduledDays} дн.`}</b><small>{record.status==='no-data'?(partialObserved?(historicalPartial?'* Исторический кэш Scheduled: текущий запас не подтверждён':'* Свежая owner-проверка: подтверждены отдельные Scheduled, полнота неизвестна'):evidenceLabel(record.dataState)):content.remoteScheduledDays>0&&content.scheduledThrough?`до ${dateLabel(content.scheduledThrough)}`:'пустое расписание подтверждено'}</small><small>{record.status==='no-data'?'Локальный прогноз с резервом':'Общий прогноз с локальным резервом'}: {localRunway.totalRunwayDays} дн.{localRunway.coverageThrough?` • до ${formatLocalCalendarDate(localRunway.coverageThrough)}`:''}</small></span>
+          <span title={evidenceLabel(record.dataState)}>{record.status==='no-data'?(partialObserved?(historicalPartial?`${record.scheduledVideoCount} (кэш)*`:`≥${record.lastObservedScheduledCount}*`):'—'):content.scheduledVideoCount}</span>
           <span><b>{content.readyVideoCount}</b></span>
           <span>{scheduleFrequencyTruthLabel(channel,record)}</span>
           <span className="runwayQuota">{uploadLimitKnown?<><b>{uploadRemaining}</b><small>доступно</small></>:<><b>—</b><small>лимит проекта не подтверждён</small></>}</span>

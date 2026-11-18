@@ -140,10 +140,17 @@ export type OwnerInventoryRefreshRow={
 export type OwnerInventoryRefreshSummary={
   requested:number;updated:number;failed:number;skippedFresh:number;skippedUnlinked:number;stoppedForQuota:boolean;
   apiRequests:number;quotaUnits:number;rows:OwnerInventoryRefreshRow[];
+  searchCalls?:number;
   counts:Record<OwnerInventoryFleetStatus,number>;
   deepSearchChannels?:number;
 };
 export type OwnerInventoryFleetProgress={done:number;total:number;channelName:string;status:OwnerInventoryFleetStatus};
+
+// A successful but non-exhaustive YouTube response is not an API outage.
+// Preserve a distinct PARTIAL_DATA status rather than implying HTTP failure.
+export function classifyIncompleteOwnerCoverage(ownerMixed:boolean):OwnerInventoryFleetStatus{
+  return ownerMixed?'API_FAILED':'PARTIAL_DATA';
+}
 
 const BLOCKED_OWNER_CREDENTIAL_STATES=new Set(['NEEDS_ONE_TIME_LOCAL_MIGRATION','CANONICAL_PRESENT_UNVERIFIED','CHECK_ON_USE','RECOVERABLE','KEYCHAIN_BLOCKED','RECONNECT_REQUIRED','MISSING','WRONG_CHANNEL','FAILED','KEYCHAIN_ERROR']);
 
@@ -230,8 +237,12 @@ export async function refreshOwnerInventoriesAuthoritative(
       // hard per-run cap. Background refreshes remain zero-search.
       const stored=loadChannelRunwayStore().channels[channel.id];
       const unverified=!stored||stored.status==='no-data';
-      const searchBudgetOk=youtubeQuotaBucketUsage('search').available>=MANUAL_FLEET_SEARCH_MIN_AVAILABLE;
-      const targeted=force&&searchBudgetOk&&
+      const searchAvailable=youtubeQuotaBucketUsage('search').available;
+      // Preserve the independent Search bucket reserve on every request.
+      // Individual owner reconciliations may inspect more result pages, while
+      // the full 33-channel audit stays bounded and cannot exhaust the bucket.
+      const allowedSearchPages=force?Math.max(0,Math.min(manualOne?12:4,Math.floor(searchAvailable)-MANUAL_FLEET_SEARCH_MIN_AVAILABLE)):0;
+      const targeted=force&&allowedSearchPages>0&&
         Date.now()-(ownerSearchAt.get(channel.id)||0)>=OWNER_SEARCH_COOLDOWN_MS&&
         (manualOne||(unverified&&fleetDeepSearches<MANUAL_FLEET_DEEP_SEARCH_CHANNEL_CAP));
       if(targeted){fleetDeepSearches++;summary.deepSearchChannels=fleetDeepSearches}
@@ -244,13 +255,14 @@ export async function refreshOwnerInventoriesAuthoritative(
       const knownScheduledIds=force?[...new Set([...fromHistory,...cachedFuture])]
         .filter(id=>/^[A-Za-z0-9_-]{11}$/.test(id)).slice(0,50):[];
       ownerAttemptAt.set(channel.id,Date.now());
-      const result=await api.youtubeListExisting(linked.profile.id,5000,operationId,targeted,knownScheduledIds);
+      const result=await api.youtubeListExisting(linked.profile.id,5000,operationId,targeted,knownScheduledIds,targeted?allowedSearchPages:0);
       if(targeted&&result.searchUsed===true)ownerSearchAt.set(channel.id,Date.now());
       const backendApi=Number(result.fullSyncApiRequests),backendQuota=Number(result.fullSyncEstimatedQuotaCost);
       const fallback=!Number.isFinite(backendApi)||backendApi<1?youtubeOperationActualCost(operationId):null;
       const apiRequests=Number.isFinite(backendApi)&&backendApi>=1?backendApi:Object.values(fallback?.methods||{}).reduce((n:number,x:any)=>n+Number(x.calls||0),0);
       const quotaUnits=Number.isFinite(backendQuota)&&backendQuota>=0?backendQuota:Number(fallback?.buckets.general||apiRequests);
       summary.apiRequests+=apiRequests;summary.quotaUnits+=quotaUnits;
+      summary.searchCalls=(summary.searchCalls||0)+Math.max(0,Number(result.searchCalls)||0);
       if(!result.channelId||String(result.channelId)!==String(linked.youtubeChannelId)){
         report({channelId:channel.id,channelName:channel.name,status:'API_FAILED',profileId:linked.profile.id,youtubeChannelId:linked.youtubeChannelId,apiRequests,quotaUnits,error:'AUTHORITATIVE_CHANNEL_ID_MISMATCH'});
         continue
@@ -274,14 +286,22 @@ export async function refreshOwnerInventoriesAuthoritative(
         // *Scheduled coverage*. That is incomplete evidence, not an HTTP/API
         // failure: show PARTIAL_DATA rather than a misleading API_FAILED toast.
         // Actual incomplete hydration and channel-ownership mismatches remain failures.
-        const ownerReadComplete=(result.syncComplete??result.complete)===true;
-        const status=ownerMixed?'API_FAILED'
-          :(observed.length>0||ownerReadComplete)?'PARTIAL_DATA':'API_FAILED';
+        // A successful owner-scoped API response with incomplete coverage is
+        // PARTIAL_DATA even when zero future videos were found. Absence of a
+        // Scheduled result is NOT an HTTP/API failure and NOT a confirmed zero.
+        // Only an actual exception, wrong owner Channel ID or cross-owner
+        // video evidence may be classified API_FAILED.
+        const status=classifyIncompleteOwnerCoverage(ownerMixed);
         report({channelId:channel.id,channelName:channel.name,status,profileId:linked.profile.id,youtubeChannelId:linked.youtubeChannelId,apiRequests,quotaUnits,error:reason,
           observedScheduled:observed.length,observedThrough,diagnosticReasons});
         // Preserve verified-positive Scheduled rows in Runway as LOWER-BOUND
         // evidence only; neither SQLite baseline nor last verified sync is overwritten.
-        if(!ownerMixed)markRunwayRefreshIssue(channel,'PARTIAL_DATA',reason,new Date(),undefined,observed);
+        if(!ownerMixed){
+          // Persist only static diagnostic codes; provider error text may include
+          // account context and must never be written into UI diagnostics.
+          const safeCodes=diagnosticReasons.filter(x=>/^[A-Z][A-Z0-9_]*$/.test(x)).slice(0,12);
+          markRunwayRefreshIssue(channel,'PARTIAL_DATA',[reason,...safeCodes].join(' | '),new Date(),undefined,observed);
+        }
         continue
       }
       const cache=await replaceExistingCacheFromSync(channel.id,result.videos||[],result);

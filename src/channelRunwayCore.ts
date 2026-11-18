@@ -21,6 +21,11 @@ export type ChannelRunwayRecord={
   inventoryEvidenceVersion?:2;
   lastRefreshAttemptAt?:string;
   lastRefreshError?:string;
+  // Authenticated videos.list findings from the most recent incomplete read.
+  // These are lower bounds, distinct from the historic verified baseline.
+  lastObservedAt?:string;
+  lastObservedScheduledCount?:number;
+  lastObservedScheduledUntil?:string;
   averagePublishIntervalDays?:number;
   lastScheduleSync?:string;
   lastLocalCalculation:string;
