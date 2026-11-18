@@ -10,7 +10,7 @@ const workflow=readFileSync(fileURLToPath(new URL('../../.github/workflows/vyron
 
 test('new-key RC pipeline runs only with manual approval or exact labeled PR22 and cannot publish',()=>{
   assert.match(workflow,/^on:\n  pull_request:\n    types: \[labeled\]\n  workflow_dispatch:/m);
-  assert.match(workflow,/github.event.label.name == 'vyron617-owner-approve-signed-rc'/);
+  assert.match(workflow,/github.event.label.name == 'vyron617-owner-approve-apple-notarized-rc'/);
   assert.match(workflow,/github.event.pull_request.number == 22/);
   assert.match(workflow,/github.event.pull_request.head.repo.full_name == 'ScaleUPPeisov\/scaleup-dashboards'/);
   assert.doesNotMatch(workflow,/\n  (push|schedule):/);
@@ -79,7 +79,7 @@ test('release kit is staged only after notarized GUI and signed updater, without
  'RELEASE-NOTES.md','owner_migration_verified:false','stable_feed_changed:false']){
    assert.ok(script.includes(token),'MISSING_RELEASE_KIT_GUARD: '+token);
  }
- assert.ok(workflow.includes("if: ${{ (github.event_name == 'workflow_dispatch' && inputs.deliver_signed_rc_to_actions_artifact) || (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'vyron617-owner-approve-signed-rc') }}"));
+ assert.ok(workflow.includes("if: ${{ (github.event_name == 'workflow_dispatch' && inputs.deliver_signed_rc_to_actions_artifact) || (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'vyron617-owner-approve-apple-notarized-rc') }}"));
  assert.doesNotMatch(script,/gh release|git push|git tag|curl.*sh|release published/i);
 });
 
