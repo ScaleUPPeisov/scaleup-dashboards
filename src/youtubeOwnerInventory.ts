@@ -237,8 +237,12 @@ export async function refreshOwnerInventoriesAuthoritative(
       // hard per-run cap. Background refreshes remain zero-search.
       const stored=loadChannelRunwayStore().channels[channel.id];
       const unverified=!stored||stored.status==='no-data';
-      const searchBudgetOk=youtubeQuotaBucketUsage('search').available>=MANUAL_FLEET_SEARCH_MIN_AVAILABLE;
-      const targeted=force&&searchBudgetOk&&
+      const searchAvailable=youtubeQuotaBucketUsage('search').available;
+      // Preserve the independent Search bucket reserve on every request.
+      // Individual owner reconciliations may inspect more result pages, while
+      // the full 33-channel audit stays bounded and cannot exhaust the bucket.
+      const allowedSearchPages=force?Math.max(0,Math.min(manualOne?12:4,Math.floor(searchAvailable)-MANUAL_FLEET_SEARCH_MIN_AVAILABLE)):0;
+      const targeted=force&&allowedSearchPages>0&&
         Date.now()-(ownerSearchAt.get(channel.id)||0)>=OWNER_SEARCH_COOLDOWN_MS&&
         (manualOne||(unverified&&fleetDeepSearches<MANUAL_FLEET_DEEP_SEARCH_CHANNEL_CAP));
       if(targeted){fleetDeepSearches++;summary.deepSearchChannels=fleetDeepSearches}
@@ -251,7 +255,7 @@ export async function refreshOwnerInventoriesAuthoritative(
       const knownScheduledIds=force?[...new Set([...fromHistory,...cachedFuture])]
         .filter(id=>/^[A-Za-z0-9_-]{11}$/.test(id)).slice(0,50):[];
       ownerAttemptAt.set(channel.id,Date.now());
-      const result=await api.youtubeListExisting(linked.profile.id,5000,operationId,targeted,knownScheduledIds);
+      const result=await api.youtubeListExisting(linked.profile.id,5000,operationId,targeted,knownScheduledIds,targeted?allowedSearchPages:0);
       if(targeted&&result.searchUsed===true)ownerSearchAt.set(channel.id,Date.now());
       const backendApi=Number(result.fullSyncApiRequests),backendQuota=Number(result.fullSyncEstimatedQuotaCost);
       const fallback=!Number.isFinite(backendApi)||backendApi<1?youtubeOperationActualCost(operationId):null;
