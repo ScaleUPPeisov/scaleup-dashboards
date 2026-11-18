@@ -66,7 +66,7 @@ test('PWA caches every imported browser module but never authenticated API respo
   for(const modulePath of importedModules)
     assert.ok(serviceWorker.includes("'/"+modulePath+"'"),
       'offline shell is missing imported module: '+modulePath);
-  assert.ok(serviceWorker.includes("vyron-peisov-yt-shell-v10"));
+  assert.ok(serviceWorker.includes("vyron-peisov-yt-shell-v11"));
   assert.ok(app.includes('async function ensureServiceWorker()'));
   assert.ok(app.includes('void ensureServiceWorker().catch'));
   assert.ok(serviceWorker.includes("url.pathname.startsWith('/api/')"));

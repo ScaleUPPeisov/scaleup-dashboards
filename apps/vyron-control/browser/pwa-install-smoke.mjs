@@ -36,7 +36,7 @@ const server=createServer(async(req,res)=>{
    let content=await readFile(path);
    if(url.pathname==='/service-worker.js'&&upgrade)
      content=Buffer.from(content.toString('utf8').replaceAll(
-       'vyron-peisov-yt-shell-v10','vyron-peisov-yt-shell-v11'));
+       'vyron-peisov-yt-shell-v11','vyron-peisov-yt-shell-v12'));
    res.writeHead(200,{'Content-Type':mime[extname(path)]||'application/octet-stream',
      'Cache-Control':'no-store'}).end(content);
  }catch{res.writeHead(404).end();}
@@ -58,7 +58,7 @@ try{
    return Boolean(reg?.active);
  },{timeout:20000});
  await page.waitForFunction(async()=>(
-   (await caches.keys()).includes('vyron-peisov-yt-shell-v10')
+   (await caches.keys()).includes('vyron-peisov-yt-shell-v11')
  ),{timeout:20000});
  if(engine==='webkit'){
    // WebKit headless can have a registered active SW without claiming a tab.
@@ -122,10 +122,10 @@ try{
    let last={name:'not_started',complete:false};
    for(let attempt=0;attempt<50;attempt++){
      last=await probe();
-     if(last.name==='vyron-peisov-yt-shell-v11'&&last.complete){
+     if(last.name==='vyron-peisov-yt-shell-v12'&&last.complete){
        await delay(150);
        const again=await probe();
-       if(again.name==='vyron-peisov-yt-shell-v11'&&again.complete)
+       if(again.name==='vyron-peisov-yt-shell-v12'&&again.complete)
          return {ok:true,cacheName:again.name};
        last=again;
      }
@@ -133,13 +133,13 @@ try{
    }
    return {ok:false,last};
  });
- assert.deepEqual(upgraded,{ok:true,cacheName:'vyron-peisov-yt-shell-v11'},
+ assert.deepEqual(upgraded,{ok:true,cacheName:'vyron-peisov-yt-shell-v12'},
    'new Service Worker must be stably active');
  assert.equal(await page.evaluate(()=>sessionStorage.getItem('vyron-control-access')),
    'QA_SYNTHETIC_ONLY','PWA update must not clear auth session');
  // Another request from the retiring worker may transiently recreate the old
  // public shell cache after activate. Its presence is not an active-version signal.
  // Service Worker activation and new cache are the actual update gate.
- console.log('PASS '+engine+' PWA: install, '+(engine==='webkit'?'offline cache readiness':'offline navigation')+', no cached API, session preservation, SW v10→v11 upgrade.');
+ console.log('PASS '+engine+' PWA: install, '+(engine==='webkit'?'offline cache readiness':'offline navigation')+', no cached API, session preservation, SW v11→v12 upgrade.');
  await context.close();
 }finally{await browser.close();server.close();}
